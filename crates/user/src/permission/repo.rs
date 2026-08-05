@@ -3,8 +3,8 @@ use sqlx::{FromRow, QueryBuilder, Row};
 use tinyiothub_core::error::Result;
 
 use super::types::{
-    CreatePermissionGroupRequest, CreatePermissionRequest, Permission, PermissionGroup,
-    PermissionQuery, UpdatePermissionRequest,
+    CreatePermissionGroupRequest, CreatePermissionRequest, Permission, PermissionGroup, PermissionQuery,
+    UpdatePermissionRequest,
 };
 
 // ── Traits ──────────────────────────────────────────────
@@ -154,7 +154,9 @@ impl PermissionRepository for SqlitePermissionRepository {
         .execute(self.database.pool())
         .await?;
 
-        self.find_by_id(&id).await?.ok_or(tinyiothub_core::error::Error::NotFound)
+        self.find_by_id(&id)
+            .await?
+            .ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
     async fn update(&self, id: &str, request: &UpdatePermissionRequest) -> Result<Permission> {
@@ -205,7 +207,10 @@ impl PermissionRepository for SqlitePermissionRepository {
         if has_updates {
             query.push(", updated_at = ").push_bind(&now);
         } else {
-            return self.find_by_id(id).await?.ok_or(tinyiothub_core::error::Error::NotFound);
+            return self
+                .find_by_id(id)
+                .await?
+                .ok_or(tinyiothub_core::error::Error::NotFound);
         }
 
         query.push(" WHERE id = ").push_bind(id);
@@ -216,7 +221,9 @@ impl PermissionRepository for SqlitePermissionRepository {
             return Err(tinyiothub_core::error::Error::NotFound);
         }
 
-        self.find_by_id(id).await?.ok_or(tinyiothub_core::error::Error::NotFound)
+        self.find_by_id(id)
+            .await?
+            .ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
     async fn delete(&self, id: &str) -> Result<u64> {
@@ -282,7 +289,10 @@ impl PermissionRepository for SqlitePermissionRepository {
             query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let rows = query.build_query_as::<PermissionRow>().fetch_all(self.database.pool()).await?;
+        let rows = query
+            .build_query_as::<PermissionRow>()
+            .fetch_all(self.database.pool())
+            .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
@@ -370,12 +380,11 @@ impl PermissionRepository for SqlitePermissionRepository {
     }
 
     async fn exists_by_code_exclude_id(&self, code: &str, exclude_id: &str) -> Result<bool> {
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM permissions WHERE code = ? AND id != ?")
-                .bind(code)
-                .bind(exclude_id)
-                .fetch_one(self.database.pool())
-                .await?;
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM permissions WHERE code = ? AND id != ?")
+            .bind(code)
+            .bind(exclude_id)
+            .fetch_one(self.database.pool())
+            .await?;
         Ok(count > 0)
     }
 
@@ -393,7 +402,10 @@ impl PermissionRepository for SqlitePermissionRepository {
         }
         separated.push_unseparated(")");
 
-        let rows = query.build_query_as::<PermissionRow>().fetch_all(self.database.pool()).await?;
+        let rows = query
+            .build_query_as::<PermissionRow>()
+            .fetch_all(self.database.pool())
+            .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
 }
@@ -412,7 +424,7 @@ impl SqlitePermissionGroupRepository {
 impl PermissionGroupRepository for SqlitePermissionGroupRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<PermissionGroup>> {
         let row = sqlx::query_as::<_, PermissionGroupRow>(
-            "SELECT id, name, description, permissions, created_at, updated_at FROM permission_groups WHERE id = ?"
+            "SELECT id, name, description, permissions, created_at, updated_at FROM permission_groups WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(self.database.pool())
@@ -422,7 +434,7 @@ impl PermissionGroupRepository for SqlitePermissionGroupRepository {
 
     async fn find_by_name(&self, name: &str) -> Result<Option<PermissionGroup>> {
         let row = sqlx::query_as::<_, PermissionGroupRow>(
-            "SELECT id, name, description, permissions, created_at, updated_at FROM permission_groups WHERE name = ?"
+            "SELECT id, name, description, permissions, created_at, updated_at FROM permission_groups WHERE name = ?",
         )
         .bind(name)
         .fetch_optional(self.database.pool())
@@ -433,14 +445,13 @@ impl PermissionGroupRepository for SqlitePermissionGroupRepository {
     async fn create(&self, request: &CreatePermissionGroupRequest) -> Result<PermissionGroup> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let permissions_json =
-            serde_json::to_string(&request.permission_ids).unwrap_or_else(|_| "[]".to_string());
+        let permissions_json = serde_json::to_string(&request.permission_ids).unwrap_or_else(|_| "[]".to_string());
 
         sqlx::query(
             r#"
             INSERT INTO permission_groups (id, name, description, permissions, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?)
-            "#
+            "#,
         )
         .bind(&id)
         .bind(&request.name)
@@ -451,7 +462,9 @@ impl PermissionGroupRepository for SqlitePermissionGroupRepository {
         .execute(self.database.pool())
         .await?;
 
-        self.find_by_id(&id).await?.ok_or(tinyiothub_core::error::Error::NotFound)
+        self.find_by_id(&id)
+            .await?
+            .ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
     async fn delete(&self, id: &str) -> Result<u64> {
@@ -464,7 +477,7 @@ impl PermissionGroupRepository for SqlitePermissionGroupRepository {
 
     async fn find_all(&self) -> Result<Vec<PermissionGroup>> {
         let rows = sqlx::query_as::<_, PermissionGroupRow>(
-            "SELECT id, name, description, permissions, created_at, updated_at FROM permission_groups ORDER BY name"
+            "SELECT id, name, description, permissions, created_at, updated_at FROM permission_groups ORDER BY name",
         )
         .fetch_all(self.database.pool())
         .await?;

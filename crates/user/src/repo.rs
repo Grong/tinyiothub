@@ -159,7 +159,9 @@ pub struct UserCriteriaBuilder {
 
 impl UserCriteriaBuilder {
     pub fn new() -> Self {
-        Self { criteria: UserCriteria::default() }
+        Self {
+            criteria: UserCriteria::default(),
+        }
     }
 
     pub fn username(mut self, username: String) -> Self {
@@ -336,7 +338,9 @@ impl UserRepository for SqliteUserRepository {
         }
 
         if let Some(display_name) = &criteria.display_name {
-            builder.push(" AND display_name LIKE ").push_bind(format!("%{}%", display_name));
+            builder
+                .push(" AND display_name LIKE ")
+                .push_bind(format!("%{}%", display_name));
         }
 
         if let Some(is_enabled) = &criteria.is_enabled {
@@ -372,7 +376,10 @@ impl UserRepository for SqliteUserRepository {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let rows = builder.build_query_as::<UserRow>().fetch_all(self.database.pool()).await?;
+        let rows = builder
+            .build_query_as::<UserRow>()
+            .fetch_all(self.database.pool())
+            .await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
     }
@@ -389,7 +396,9 @@ impl UserRepository for SqliteUserRepository {
         }
 
         if let Some(display_name) = &criteria.display_name {
-            builder.push(" AND display_name LIKE ").push_bind(format!("%{}%", display_name));
+            builder
+                .push(" AND display_name LIKE ")
+                .push_bind(format!("%{}%", display_name));
         }
 
         if let Some(is_enabled) = &criteria.is_enabled {
@@ -629,23 +638,25 @@ impl UserRepository for SqliteUserRepository {
             .fetch_one(self.database.pool())
             .await?;
 
-        let enabled_users: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE is_enabled = true")
+        let enabled_users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE is_enabled = true")
+            .fetch_one(self.database.pool())
+            .await?;
+
+        let disabled_users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE is_enabled = false")
+            .fetch_one(self.database.pool())
+            .await?;
+
+        let recent_logins: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE last_login_at >= datetime('now', '-7 days')")
                 .fetch_one(self.database.pool())
                 .await?;
 
-        let disabled_users: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE is_enabled = false")
-                .fetch_one(self.database.pool())
-                .await?;
-
-        let recent_logins: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM users WHERE last_login_at >= datetime('now', '-7 days')",
-        )
-        .fetch_one(self.database.pool())
-        .await?;
-
-        Ok(UserStatisticsNew { total_users, enabled_users, disabled_users, recent_logins })
+        Ok(UserStatisticsNew {
+            total_users,
+            enabled_users,
+            disabled_users,
+            recent_logins,
+        })
     }
 }
 

@@ -111,9 +111,7 @@ impl Permission {
     /// Check if permission allows action on resource
     pub fn allows_action(&self, resource_type: &str, action_type: &str) -> bool {
         (self.resource_type == resource_type || self.resource_type == "*")
-            && (self.action_type == action_type
-                || self.action_type == "*"
-                || self.action_type == "admin")
+            && (self.action_type == action_type || self.action_type == "*" || self.action_type == "admin")
     }
 
     /// Get permission priority
@@ -133,8 +131,7 @@ impl PermissionGroup {
     /// Create a new permission group
     pub fn new(request: CreatePermissionGroupRequest) -> Self {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let permissions_json =
-            serde_json::to_string(&request.permission_ids).unwrap_or_else(|_| "[]".to_string());
+        let permissions_json = serde_json::to_string(&request.permission_ids).unwrap_or_else(|_| "[]".to_string());
 
         Self {
             id: uuid::Uuid::new_v4().to_string(),
@@ -156,8 +153,7 @@ impl PermissionGroup {
         let mut permission_ids = self.get_permission_ids();
         if !permission_ids.contains(&permission_id) {
             permission_ids.push(permission_id);
-            self.permissions =
-                serde_json::to_string(&permission_ids).unwrap_or_else(|_| "[]".to_string());
+            self.permissions = serde_json::to_string(&permission_ids).unwrap_or_else(|_| "[]".to_string());
             self.updated_at = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         }
     }
@@ -167,8 +163,7 @@ impl PermissionGroup {
         let mut permission_ids = self.get_permission_ids();
         if let Some(pos) = permission_ids.iter().position(|x| x == permission_id) {
             permission_ids.remove(pos);
-            self.permissions =
-                serde_json::to_string(&permission_ids).unwrap_or_else(|_| "[]".to_string());
+            self.permissions = serde_json::to_string(&permission_ids).unwrap_or_else(|_| "[]".to_string());
             self.updated_at = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         }
     }
@@ -212,7 +207,10 @@ mod tests {
 
     #[test]
     fn test_permission_defaults() {
-        let req = CreatePermissionRequest { is_system: None, ..test_create_request() };
+        let req = CreatePermissionRequest {
+            is_system: None,
+            ..test_create_request()
+        };
         let perm = Permission::new(req);
         assert!(!perm.is_system);
     }
@@ -250,8 +248,10 @@ mod tests {
 
     #[test]
     fn test_allows_action_wildcard_resource() {
-        let req =
-            CreatePermissionRequest { resource_type: "*".to_string(), ..test_create_request() };
+        let req = CreatePermissionRequest {
+            resource_type: "*".to_string(),
+            ..test_create_request()
+        };
         let perm = Permission::new(req);
         assert!(perm.allows_action("device", "read"));
         assert!(perm.allows_action("alarm", "read"));
@@ -259,7 +259,10 @@ mod tests {
 
     #[test]
     fn test_allows_action_wildcard_action() {
-        let req = CreatePermissionRequest { action_type: "*".to_string(), ..test_create_request() };
+        let req = CreatePermissionRequest {
+            action_type: "*".to_string(),
+            ..test_create_request()
+        };
         let perm = Permission::new(req);
         assert!(perm.allows_action("device", "read"));
         assert!(perm.allows_action("device", "write"));
@@ -267,8 +270,10 @@ mod tests {
 
     #[test]
     fn test_allows_action_admin() {
-        let req =
-            CreatePermissionRequest { action_type: "admin".to_string(), ..test_create_request() };
+        let req = CreatePermissionRequest {
+            action_type: "admin".to_string(),
+            ..test_create_request()
+        };
         let perm = Permission::new(req);
         assert!(perm.allows_action("device", "delete"));
     }

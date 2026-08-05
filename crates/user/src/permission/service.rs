@@ -5,8 +5,8 @@ use tinyiothub_core::error::Result;
 use super::{
     repo::{PermissionGroupRepository, PermissionRepository},
     types::{
-        CreatePermissionGroupRequest, CreatePermissionRequest, Permission, PermissionGroup,
-        PermissionQuery, UpdatePermissionRequest,
+        CreatePermissionGroupRequest, CreatePermissionRequest, Permission, PermissionGroup, PermissionQuery,
+        UpdatePermissionRequest,
     },
 };
 
@@ -20,7 +20,10 @@ impl PermissionService {
         permission_repository: Arc<dyn PermissionRepository>,
         permission_group_repository: Arc<dyn PermissionGroupRepository>,
     ) -> Self {
-        Self { permission_repository, permission_group_repository }
+        Self {
+            permission_repository,
+            permission_group_repository,
+        }
     }
 
     pub async fn find_permission_by_id(&self, id: &str) -> Result<Option<Permission>> {
@@ -35,11 +38,7 @@ impl PermissionService {
         self.permission_repository.create(request).await
     }
 
-    pub async fn update_permission(
-        &self,
-        id: &str,
-        request: &UpdatePermissionRequest,
-    ) -> Result<Permission> {
+    pub async fn update_permission(&self, id: &str, request: &UpdatePermissionRequest) -> Result<Permission> {
         self.permission_repository.update(id, request).await
     }
 
@@ -59,17 +58,11 @@ impl PermissionService {
         self.permission_repository.count(params).await
     }
 
-    pub async fn find_permissions_by_resource_type(
-        &self,
-        resource_type: &str,
-    ) -> Result<Vec<Permission>> {
+    pub async fn find_permissions_by_resource_type(&self, resource_type: &str) -> Result<Vec<Permission>> {
         self.permission_repository.find_by_resource_type(resource_type).await
     }
 
-    pub async fn find_permissions_by_action_type(
-        &self,
-        action_type: &str,
-    ) -> Result<Vec<Permission>> {
+    pub async fn find_permissions_by_action_type(&self, action_type: &str) -> Result<Vec<Permission>> {
         self.permission_repository.find_by_action_type(action_type).await
     }
 
@@ -89,12 +82,10 @@ impl PermissionService {
         self.permission_repository.exists_by_code(code).await
     }
 
-    pub async fn permission_exists_by_code_exclude_id(
-        &self,
-        code: &str,
-        exclude_id: &str,
-    ) -> Result<bool> {
-        self.permission_repository.exists_by_code_exclude_id(code, exclude_id).await
+    pub async fn permission_exists_by_code_exclude_id(&self, code: &str, exclude_id: &str) -> Result<bool> {
+        self.permission_repository
+            .exists_by_code_exclude_id(code, exclude_id)
+            .await
     }
 
     pub async fn find_permissions_by_ids(&self, ids: &[String]) -> Result<Vec<Permission>> {
@@ -109,10 +100,7 @@ impl PermissionService {
         self.permission_group_repository.find_by_name(name).await
     }
 
-    pub async fn create_group(
-        &self,
-        request: &CreatePermissionGroupRequest,
-    ) -> Result<PermissionGroup> {
+    pub async fn create_group(&self, request: &CreatePermissionGroupRequest) -> Result<PermissionGroup> {
         self.permission_group_repository.create(request).await
     }
 

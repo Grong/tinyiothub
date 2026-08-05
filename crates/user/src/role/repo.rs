@@ -20,12 +20,8 @@ pub trait RoleRepository: Send + Sync {
     async fn find_admin_roles(&self, workspace_id: Option<&str>) -> Result<Vec<Role>>;
     async fn find_user_roles(&self, workspace_id: Option<&str>) -> Result<Vec<Role>>;
     async fn exists_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<bool>;
-    async fn exists_by_name_exclude_id(
-        &self,
-        name: &str,
-        exclude_id: &str,
-        workspace_id: Option<&str>,
-    ) -> Result<bool>;
+    async fn exists_by_name_exclude_id(&self, name: &str, exclude_id: &str, workspace_id: Option<&str>)
+    -> Result<bool>;
     async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Role>>;
     async fn find_roles_by_user_id(&self, user_id: &str) -> Result<Vec<Role>>;
     async fn is_administrator_role(&self, id: &str) -> Result<bool>;
@@ -91,16 +87,21 @@ impl RoleRepository for SqliteRoleRepository {
     }
 
     async fn find_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<Option<Role>> {
-        let mut query = QueryBuilder::new(
-            "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE name = ",
-        );
+        let mut query =
+            QueryBuilder::new("SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE name = ");
         query.push_bind(name);
 
         if let Some(ws) = workspace_id {
-            query.push(" AND (workspace_id = ").push_bind(ws).push(" OR workspace_id IS NULL)");
+            query
+                .push(" AND (workspace_id = ")
+                .push_bind(ws)
+                .push(" OR workspace_id IS NULL)");
         }
 
-        let row = query.build_query_as::<RoleRow>().fetch_optional(self.database.pool()).await?;
+        let row = query
+            .build_query_as::<RoleRow>()
+            .fetch_optional(self.database.pool())
+            .await?;
 
         Ok(row.map(Into::into))
     }
@@ -123,7 +124,9 @@ impl RoleRepository for SqliteRoleRepository {
         .execute(self.database.pool())
         .await?;
 
-        self.find_by_id(&id).await?.ok_or(tinyiothub_core::error::Error::NotFound)
+        self.find_by_id(&id)
+            .await?
+            .ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
     async fn update(&self, id: &str, request: &UpdateRoleRequest) -> Result<Role> {
@@ -163,7 +166,10 @@ impl RoleRepository for SqliteRoleRepository {
         }
 
         if !has_updates {
-            return self.find_by_id(id).await?.ok_or(tinyiothub_core::error::Error::NotFound);
+            return self
+                .find_by_id(id)
+                .await?
+                .ok_or(tinyiothub_core::error::Error::NotFound);
         }
 
         query.push(" WHERE id = ").push_bind(id);
@@ -174,7 +180,9 @@ impl RoleRepository for SqliteRoleRepository {
             return Err(tinyiothub_core::error::Error::NotFound);
         }
 
-        self.find_by_id(id).await?.ok_or(tinyiothub_core::error::Error::NotFound)
+        self.find_by_id(id)
+            .await?
+            .ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
     async fn delete(&self, id: &str) -> Result<u64> {
@@ -205,16 +213,17 @@ impl RoleRepository for SqliteRoleRepository {
     }
 
     async fn find_all(&self, params: &RoleQueryParams) -> Result<Vec<Role>> {
-        let mut query = QueryBuilder::new(
-            "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE 1=1",
-        );
+        let mut query =
+            QueryBuilder::new("SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE 1=1");
 
         if let Some(name) = &params.name {
             query.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
 
         if let Some(description) = &params.description {
-            query.push(" AND description LIKE ").push_bind(format!("%{}%", description));
+            query
+                .push(" AND description LIKE ")
+                .push_bind(format!("%{}%", description));
         }
 
         if let Some(is_administrator) = params.is_administrator {
@@ -236,7 +245,10 @@ impl RoleRepository for SqliteRoleRepository {
             query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let rows = query.build_query_as::<RoleRow>().fetch_all(self.database.pool()).await?;
+        let rows = query
+            .build_query_as::<RoleRow>()
+            .fetch_all(self.database.pool())
+            .await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
     }
@@ -249,7 +261,9 @@ impl RoleRepository for SqliteRoleRepository {
         }
 
         if let Some(description) = &params.description {
-            query.push(" AND description LIKE ").push_bind(format!("%{}%", description));
+            query
+                .push(" AND description LIKE ")
+                .push_bind(format!("%{}%", description));
         }
 
         if let Some(is_administrator) = params.is_administrator {
@@ -282,7 +296,10 @@ impl RoleRepository for SqliteRoleRepository {
         );
 
         if let Some(ws) = workspace_id {
-            query.push(" AND (workspace_id = ").push_bind(ws).push(" OR workspace_id IS NULL)");
+            query
+                .push(" AND (workspace_id = ")
+                .push_bind(ws)
+                .push(" OR workspace_id IS NULL)");
         }
 
         let row = query.build().fetch_one(self.database.pool()).await?;
@@ -302,12 +319,18 @@ impl RoleRepository for SqliteRoleRepository {
         );
 
         if let Some(ws) = workspace_id {
-            query.push(" AND (workspace_id = ").push_bind(ws).push(" OR workspace_id IS NULL)");
+            query
+                .push(" AND (workspace_id = ")
+                .push_bind(ws)
+                .push(" OR workspace_id IS NULL)");
         }
 
         query.push(" ORDER BY name");
 
-        let rows = query.build_query_as::<RoleRow>().fetch_all(self.database.pool()).await?;
+        let rows = query
+            .build_query_as::<RoleRow>()
+            .fetch_all(self.database.pool())
+            .await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
     }
@@ -318,12 +341,18 @@ impl RoleRepository for SqliteRoleRepository {
         );
 
         if let Some(ws) = workspace_id {
-            query.push(" AND (workspace_id = ").push_bind(ws).push(" OR workspace_id IS NULL)");
+            query
+                .push(" AND (workspace_id = ")
+                .push_bind(ws)
+                .push(" OR workspace_id IS NULL)");
         }
 
         query.push(" ORDER BY name");
 
-        let rows = query.build_query_as::<RoleRow>().fetch_all(self.database.pool()).await?;
+        let rows = query
+            .build_query_as::<RoleRow>()
+            .fetch_all(self.database.pool())
+            .await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
     }
@@ -333,7 +362,10 @@ impl RoleRepository for SqliteRoleRepository {
         query.push_bind(name);
 
         if let Some(ws) = workspace_id {
-            query.push(" AND (workspace_id = ").push_bind(ws).push(" OR workspace_id IS NULL)");
+            query
+                .push(" AND (workspace_id = ")
+                .push_bind(ws)
+                .push(" OR workspace_id IS NULL)");
         }
 
         let row = query.build().fetch_one(self.database.pool()).await?;
@@ -353,7 +385,10 @@ impl RoleRepository for SqliteRoleRepository {
         query.push(" AND id != ").push_bind(exclude_id);
 
         if let Some(ws) = workspace_id {
-            query.push(" AND (workspace_id = ").push_bind(ws).push(" OR workspace_id IS NULL)");
+            query
+                .push(" AND (workspace_id = ")
+                .push_bind(ws)
+                .push(" OR workspace_id IS NULL)");
         }
 
         let row = query.build().fetch_one(self.database.pool()).await?;
@@ -367,9 +402,8 @@ impl RoleRepository for SqliteRoleRepository {
             return Ok(vec![]);
         }
 
-        let mut query = QueryBuilder::new(
-            "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE id IN (",
-        );
+        let mut query =
+            QueryBuilder::new("SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE id IN (");
 
         let mut separated = query.separated(", ");
         for id in ids {
@@ -377,7 +411,10 @@ impl RoleRepository for SqliteRoleRepository {
         }
         separated.push_unseparated(")");
 
-        let rows = query.build_query_as::<RoleRow>().fetch_all(self.database.pool()).await?;
+        let rows = query
+            .build_query_as::<RoleRow>()
+            .fetch_all(self.database.pool())
+            .await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
     }
@@ -400,11 +437,10 @@ impl RoleRepository for SqliteRoleRepository {
     }
 
     async fn is_administrator_role(&self, id: &str) -> Result<bool> {
-        let role: Option<i32> =
-            sqlx::query_scalar("SELECT is_administrator FROM roles WHERE id = ?")
-                .bind(id)
-                .fetch_optional(self.database.pool())
-                .await?;
+        let role: Option<i32> = sqlx::query_scalar("SELECT is_administrator FROM roles WHERE id = ?")
+            .bind(id)
+            .fetch_optional(self.database.pool())
+            .await?;
 
         Ok(role.unwrap_or(0) == 1)
     }
@@ -436,12 +472,10 @@ impl RoleRepository for SqliteRoleRepository {
     }
 
     async fn get_permissions(&self, role_id: &str) -> Result<Vec<String>> {
-        let rows = sqlx::query_scalar::<_, String>(
-            "SELECT permission_id FROM role_permissions WHERE role_id = ?",
-        )
-        .bind(role_id)
-        .fetch_all(self.database.pool())
-        .await?;
+        let rows = sqlx::query_scalar::<_, String>("SELECT permission_id FROM role_permissions WHERE role_id = ?")
+            .bind(role_id)
+            .fetch_all(self.database.pool())
+            .await?;
 
         Ok(rows)
     }
@@ -456,14 +490,12 @@ impl RoleRepository for SqliteRoleRepository {
 
         for permission_id in permission_ids {
             let id = uuid::Uuid::new_v4().to_string();
-            sqlx::query(
-                "INSERT INTO role_permissions (id, role_id, permission_id) VALUES (?, ?, ?)",
-            )
-            .bind(&id)
-            .bind(role_id)
-            .bind(permission_id)
-            .execute(&mut *tx)
-            .await?;
+            sqlx::query("INSERT INTO role_permissions (id, role_id, permission_id) VALUES (?, ?, ?)")
+                .bind(&id)
+                .bind(role_id)
+                .bind(permission_id)
+                .execute(&mut *tx)
+                .await?;
         }
 
         tx.commit().await?;

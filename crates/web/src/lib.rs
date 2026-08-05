@@ -7,6 +7,7 @@ pub mod api_response;
 pub mod error_handling;
 pub mod handlers;
 pub mod middleware;
+pub mod pagination;
 pub mod response;
 pub mod security;
 pub mod state;

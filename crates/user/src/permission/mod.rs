@@ -7,8 +7,7 @@ pub mod types;
 
 pub use handler::create_router;
 pub use repo::{
-    PermissionGroupRepository, PermissionRepository, SqlitePermissionGroupRepository,
-    SqlitePermissionRepository,
+    PermissionGroupRepository, PermissionRepository, SqlitePermissionGroupRepository, SqlitePermissionRepository,
 };
 pub use service::PermissionService;
 pub use types::*;

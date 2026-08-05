@@ -4,11 +4,12 @@ use axum::{
     routing::get,
 };
 use serde::Serialize;
-use tinyiothub_auth::security::jwt::Claims;
+use tinyiothub_web::api_response::ApiResponse;
+use tinyiothub_web::middleware::workspace::AuthClaims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::{Permission, PermissionQuery};
-use crate::shared::{api_response::ApiResponse, app_state::AppState};
+use crate::UserState;
 
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -21,17 +22,18 @@ pub struct UserPermission {
     pub granted_directly: bool,
 }
 
-pub fn create_router() -> Router<AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    UserState: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/", get(list_permissions))
         .route("/{id}/permissions", get(get_user_permissions))
 }
 
 /// 获取所有权限列表
-async fn list_permissions(
-    State(state): State<AppState>,
-    _claims: Claims,
-) -> Json<ApiResponse<Vec<Permission>>> {
+async fn list_permissions(State(state): State<UserState>, _claims: AuthClaims) -> Json<ApiResponse<Vec<Permission>>> {
     let query = PermissionQuery::default();
     match state.permission_service.find_all_permissions(&query).await {
         Ok(permissions) => ApiResponseBuilder::success(permissions),
@@ -44,9 +46,9 @@ async fn list_permissions(
 
 /// 获取用户权限
 async fn get_user_permissions(
-    State(state): State<AppState>,
+    State(state): State<UserState>,
     Path(user_id): Path<String>,
-    _claims: Claims,
+    _claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<UserPermission>>> {
     let mut user_permissions: Vec<UserPermission> = vec![];
 

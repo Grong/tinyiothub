@@ -20,11 +20,7 @@ impl RoleService {
         self.role_repository.find_by_id(id).await
     }
 
-    pub async fn find_by_name(
-        &self,
-        name: &str,
-        workspace_id: Option<&str>,
-    ) -> Result<Option<Role>> {
+    pub async fn find_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<Option<Role>> {
         self.role_repository.find_by_name(name, workspace_id).await
     }
 
@@ -74,7 +70,9 @@ impl RoleService {
         exclude_id: &str,
         workspace_id: Option<&str>,
     ) -> Result<bool> {
-        self.role_repository.exists_by_name_exclude_id(name, exclude_id, workspace_id).await
+        self.role_repository
+            .exists_by_name_exclude_id(name, exclude_id, workspace_id)
+            .await
     }
 
     pub async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Role>> {
@@ -97,7 +95,9 @@ impl RoleService {
         page: u32,
         page_size: u32,
     ) -> Result<Vec<Role>> {
-        self.role_repository.find_with_filters(enabled, search, workspace_id, page, page_size).await
+        self.role_repository
+            .find_with_filters(enabled, search, workspace_id, page, page_size)
+            .await
     }
 
     pub async fn update_enabled_status(&self, id: &str, enabled: bool) -> Result<bool> {

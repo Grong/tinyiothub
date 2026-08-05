@@ -4,11 +4,12 @@ use axum::{
     routing::get,
 };
 use serde::Deserialize;
-use tinyiothub_auth::security::jwt::Claims;
+use tinyiothub_web::middleware::workspace::AuthClaims;
 use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::{api_response::ApiResponse, pagination::PaginationQuery};
 
 use super::types::{CreateRoleRequest, Role, UpdateRoleRequest};
-use crate::shared::{api_response::ApiResponse, app_state::AppState, pagination::PaginationQuery};
+use crate::UserState;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -24,21 +25,31 @@ pub struct UpdateRolePermissionsRequest {
     pub permission_ids: Vec<String>,
 }
 
-pub fn create_router() -> Router<AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    UserState: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/", get(list_roles).post(create_role))
         .route("/{id}", get(get_role).put(update_role).delete(delete_role))
-        .route("/{id}/permissions", get(get_role_permissions).put(update_role_permissions))
+        .route(
+            "/{id}/permissions",
+            get(get_role_permissions).put(update_role_permissions),
+        )
 }
 
 /// 获取角色列表
 async fn list_roles(
-    State(state): State<AppState>,
+    State(state): State<UserState>,
     Query(query): Query<RoleQuery>,
-    claims: Claims,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<Role>>> {
-    let workspace_id =
-        if claims.workspace_id.is_empty() { None } else { Some(claims.workspace_id.as_str()) };
+    let workspace_id = if claims.0.workspace_id.is_empty() {
+        None
+    } else {
+        Some(claims.0.workspace_id.as_str())
+    };
 
     match state
         .role_service
@@ -64,8 +75,8 @@ async fn list_roles(
 
 /// 创建角色
 async fn create_role(
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<UserState>,
+    claims: AuthClaims,
     Json(mut request): Json<CreateRoleRequest>,
 ) -> Json<ApiResponse<Role>> {
     // 验证输入
@@ -74,8 +85,8 @@ async fn create_role(
     }
 
     // 设置 workspace_id
-    if !claims.workspace_id.is_empty() {
-        request.workspace_id = Some(claims.workspace_id.clone());
+    if !claims.0.workspace_id.is_empty() {
+        request.workspace_id = Some(claims.0.workspace_id.clone());
     }
 
     let workspace_id = request.workspace_id.as_deref();
@@ -107,15 +118,15 @@ async fn create_role(
 
 /// 获取角色详情
 async fn get_role(
-    State(state): State<AppState>,
+    State(state): State<UserState>,
     Path(id): Path<String>,
-    claims: Claims,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<Role>> {
     match state.role_service.find_by_id(&id).await {
         Ok(Some(role)) => {
             // Verify workspace isolation
             if let Some(ref role_ws) = role.workspace_id
-                && role_ws != &claims.workspace_id
+                && role_ws != &claims.0.workspace_id
             {
                 return ApiResponseBuilder::error("角色不存在".to_string());
             }
@@ -132,16 +143,16 @@ async fn get_role(
 
 /// 更新角色
 async fn update_role(
-    State(state): State<AppState>,
+    State(state): State<UserState>,
     Path(id): Path<String>,
-    claims: Claims,
+    claims: AuthClaims,
     Json(request): Json<UpdateRoleRequest>,
 ) -> Json<ApiResponse<Role>> {
     // Verify workspace isolation: get current role first
     match state.role_service.find_by_id(&id).await {
         Ok(Some(ref role)) => {
             if let Some(ref role_ws) = role.workspace_id
-                && role_ws != &claims.workspace_id
+                && role_ws != &claims.0.workspace_id
             {
                 return ApiResponseBuilder::error("角色不存在".to_string());
             }
@@ -159,11 +170,18 @@ async fn update_role(
             return ApiResponseBuilder::error("角色名称不能为空".to_string());
         }
 
-        let workspace_id =
-            if claims.workspace_id.is_empty() { None } else { Some(claims.workspace_id.as_str()) };
+        let workspace_id = if claims.0.workspace_id.is_empty() {
+            None
+        } else {
+            Some(claims.0.workspace_id.as_str())
+        };
 
         // 检查角色名称是否已被其他角色使用
-        match state.role_service.exists_by_name_exclude_id(name, &id, workspace_id).await {
+        match state
+            .role_service
+            .exists_by_name_exclude_id(name, &id, workspace_id)
+            .await
+        {
             Ok(true) => {
                 return ApiResponseBuilder::error("角色名称已存在".to_string());
             }
@@ -180,9 +198,7 @@ async fn update_role(
             tracing::info!("Role updated: {}", role.name);
             ApiResponseBuilder::success(role)
         }
-        Err(tinyiothub_core::error::Error::NotFound) => {
-            ApiResponseBuilder::error("角色不存在".to_string())
-        }
+        Err(tinyiothub_core::error::Error::NotFound) => ApiResponseBuilder::error("角色不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to update role {}: {}", id, e);
             ApiResponseBuilder::error("更新角色失败".to_string())
@@ -192,15 +208,15 @@ async fn update_role(
 
 /// 删除角色
 async fn delete_role(
-    State(state): State<AppState>,
+    State(state): State<UserState>,
     Path(id): Path<String>,
-    claims: Claims,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<bool>> {
     // Verify workspace isolation: get current role first
     match state.role_service.find_by_id(&id).await {
         Ok(Some(ref role)) => {
             if let Some(ref role_ws) = role.workspace_id
-                && role_ws != &claims.workspace_id
+                && role_ws != &claims.0.workspace_id
             {
                 return ApiResponseBuilder::error("角色不存在".to_string());
             }
@@ -230,15 +246,15 @@ async fn delete_role(
 
 /// 获取角色权限
 async fn get_role_permissions(
-    State(state): State<AppState>,
+    State(state): State<UserState>,
     Path(id): Path<String>,
-    claims: Claims,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<String>>> {
     // Verify workspace isolation: get current role first
     match state.role_service.find_by_id(&id).await {
         Ok(Some(ref role)) => {
             if let Some(ref role_ws) = role.workspace_id
-                && role_ws != &claims.workspace_id
+                && role_ws != &claims.0.workspace_id
             {
                 return ApiResponseBuilder::error("角色不存在".to_string());
             }
@@ -261,16 +277,16 @@ async fn get_role_permissions(
 
 /// 更新角色权限
 async fn update_role_permissions(
-    State(state): State<AppState>,
+    State(state): State<UserState>,
     Path(id): Path<String>,
-    claims: Claims,
+    claims: AuthClaims,
     Json(request): Json<UpdateRolePermissionsRequest>,
 ) -> Json<ApiResponse<bool>> {
     // Verify workspace isolation: get current role first
     match state.role_service.find_by_id(&id).await {
         Ok(Some(ref role)) => {
             if let Some(ref role_ws) = role.workspace_id
-                && role_ws != &claims.workspace_id
+                && role_ws != &claims.0.workspace_id
             {
                 return ApiResponseBuilder::error("角色不存在".to_string());
             }
@@ -282,7 +298,11 @@ async fn update_role_permissions(
         }
     }
 
-    match state.role_service.update_permissions(&id, &request.permission_ids).await {
+    match state
+        .role_service
+        .update_permissions(&id, &request.permission_ids)
+        .await
+    {
         Ok(()) => ApiResponseBuilder::success(true),
         Err(e) => {
             tracing::error!("Failed to update permissions for role {}: {}", id, e);

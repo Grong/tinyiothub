@@ -4,16 +4,15 @@ use axum::{
     routing::{get, post, put},
 };
 use serde::Deserialize;
-use tinyiothub_auth::security::jwt::Claims;
+use tinyiothub_web::middleware::workspace::AuthClaims;
 use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::{
+    api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
+    pagination::PaginationQuery,
+};
 
 use super::types::{CreateUserRequest, UpdateUserRequest, UserDto, UserStatisticsNew};
-use crate::shared::{
-    api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
-    app_state::AppState,
-    pagination::PaginationQuery,
-    utils::password::verify_password,
-};
+use crate::{UserState, password::verify_password};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -31,7 +30,11 @@ pub struct PasswordChangeRequest {
     pub new_password: String,
 }
 
-pub fn create_router() -> Router<AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    UserState: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/", get(list_users).post(create_user))
         .route("/test", get(test_users_endpoint))
@@ -50,25 +53,37 @@ async fn test_users_endpoint() -> &'static str {
 
 /// 获取用户列表
 async fn list_users(
-    State(state): State<AppState>,
+    State(state): State<UserState>,
     Query(query): Query<UserQuery>,
-    _claims: Claims,
+    _claims: AuthClaims,
 ) -> Json<ApiResponse<PaginatedResponse<UserDto>>> {
     tracing::info!("list_users called with query: {:?}", query);
 
     let page = query.pagination.page.unwrap_or(1);
     let page_size = query.pagination.page_size.unwrap_or(20);
 
-    match state.user_service.list_users(query.enabled, query.search, page, page_size).await {
+    match state
+        .user_service
+        .list_users(query.enabled, query.search, page, page_size)
+        .await
+    {
         Ok((users, total)) => {
             let user_dtos = super::types::User::to_dto_list(users);
             let total_count = total as u64;
-            let total_pages =
-                if page_size > 0 { ((total as f64) / (page_size as f64)).ceil() as u32 } else { 0 };
+            let total_pages = if page_size > 0 {
+                ((total as f64) / (page_size as f64)).ceil() as u32
+            } else {
+                0
+            };
             tracing::info!("Retrieved {} users", user_dtos.len());
             ApiResponseBuilder::success(PaginatedResponse {
                 data: user_dtos,
-                pagination: PaginationInfo { page, page_size, total_pages, total_count },
+                pagination: PaginationInfo {
+                    page,
+                    page_size,
+                    total_pages,
+                    total_count,
+                },
             })
         }
         Err(e) => {
@@ -100,8 +115,8 @@ fn validate_password_strength(password: &str) -> Result<(), String> {
 
 /// 创建用户
 async fn create_user(
-    State(state): State<AppState>,
-    _claims: Claims,
+    State(state): State<UserState>,
+    _claims: AuthClaims,
     Json(request): Json<CreateUserRequest>,
 ) -> Json<ApiResponse<UserDto>> {
     if request.username.trim().is_empty() {
@@ -137,8 +152,8 @@ async fn create_user(
 
 /// 获取用户统计信息
 async fn get_user_statistics(
-    State(state): State<AppState>,
-    _claims: Claims,
+    State(state): State<UserState>,
+    _claims: AuthClaims,
 ) -> Json<ApiResponse<UserStatisticsNew>> {
     match state.user_service.get_user_statistics().await {
         Ok(statistics) => {
@@ -153,29 +168,26 @@ async fn get_user_statistics(
 }
 
 /// 获取用户详情
-async fn get_current_user(
-    State(state): State<AppState>,
-    claims: Claims,
-) -> Json<ApiResponse<UserDto>> {
-    match state.user_service.get_user_by_id(&claims.user_id).await {
+async fn get_current_user(State(state): State<UserState>, claims: AuthClaims) -> Json<ApiResponse<UserDto>> {
+    match state.user_service.get_user_by_id(&claims.0.user_id).await {
         Ok(Some(user)) => ApiResponseBuilder::success(user.to_dto()),
         Ok(None) => ApiResponseBuilder::error("用户不存在".to_string()),
         Err(e) => {
-            tracing::error!("Failed to get current user {}: {}", claims.user_id, e);
+            tracing::error!("Failed to get current user {}: {}", claims.0.user_id, e);
             ApiResponseBuilder::error("获取用户信息失败".to_string())
         }
     }
 }
 
 async fn get_user(
-    State(state): State<AppState>,
+    State(state): State<UserState>,
     Path(id): Path<String>,
-    claims: Claims,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<UserDto>> {
-    if claims.user_id != id {
+    if claims.0.user_id != id {
         tracing::warn!(
             "User {} attempted to access user {} without permission",
-            claims.user_id,
+            claims.0.user_id,
             id
         );
         return ApiResponseBuilder::error("无权限查看此用户".to_string());
@@ -196,19 +208,20 @@ async fn get_user(
 
 /// 更新用户
 async fn update_user(
-    State(state): State<AppState>,
+    State(state): State<UserState>,
     Path(id): Path<String>,
-    claims: Claims,
+    claims: AuthClaims,
     Json(request): Json<UpdateUserRequest>,
 ) -> Json<ApiResponse<UserDto>> {
-    let is_admin =
-        crate::shared::error_handling::AuthHelper::check_role(&state, &claims.user_id, "admin")
-            .await
-            .unwrap_or(false);
-    if claims.user_id != id && !is_admin {
+    let is_admin = state
+        .role_checker
+        .check_role(&claims.0.user_id, "admin")
+        .await
+        .unwrap_or(false);
+    if claims.0.user_id != id && !is_admin {
         tracing::warn!(
             "User {} attempted to update user {} without permission",
-            claims.user_id,
+            claims.0.user_id,
             id
         );
         return ApiResponseBuilder::error("无权限修改此用户".to_string());
@@ -236,9 +249,7 @@ async fn update_user(
             tracing::info!("User updated: {}", user.get_display_name());
             ApiResponseBuilder::success(user.to_dto())
         }
-        Err(crate::shared::error::Error::NotFound) => {
-            ApiResponseBuilder::error("用户不存在".to_string())
-        }
+        Err(tinyiothub_core::error::Error::NotFound) => ApiResponseBuilder::error("用户不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to update user {}: {}", id, e);
             ApiResponseBuilder::error("更新用户失败".to_string())
@@ -248,21 +259,22 @@ async fn update_user(
 
 /// 删除用户
 async fn delete_user(
-    State(state): State<AppState>,
+    State(state): State<UserState>,
     Path(id): Path<String>,
-    claims: Claims,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<bool>> {
-    if claims.user_id == id {
+    if claims.0.user_id == id {
         return ApiResponseBuilder::error("不能删除自己的账号".to_string());
     }
-    let is_admin =
-        crate::shared::error_handling::AuthHelper::check_role(&state, &claims.user_id, "admin")
-            .await
-            .unwrap_or(false);
+    let is_admin = state
+        .role_checker
+        .check_role(&claims.0.user_id, "admin")
+        .await
+        .unwrap_or(false);
     if !is_admin {
         tracing::warn!(
             "User {} attempted to delete user {} without admin permission",
-            claims.user_id,
+            claims.0.user_id,
             id
         );
         return ApiResponseBuilder::error("无权限删除用户".to_string());
@@ -286,14 +298,15 @@ async fn delete_user(
 
 /// 启用用户
 async fn enable_user(
-    State(state): State<AppState>,
+    State(state): State<UserState>,
     Path(id): Path<String>,
-    claims: Claims,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<bool>> {
-    let is_admin =
-        crate::shared::error_handling::AuthHelper::check_role(&state, &claims.user_id, "admin")
-            .await
-            .unwrap_or(false);
+    let is_admin = state
+        .role_checker
+        .check_role(&claims.0.user_id, "admin")
+        .await
+        .unwrap_or(false);
     if !is_admin {
         return ApiResponseBuilder::error("无权限启用用户".to_string());
     }
@@ -302,9 +315,7 @@ async fn enable_user(
             tracing::info!("User enabled: {}", id);
             ApiResponseBuilder::success(true)
         }
-        Err(crate::shared::error::Error::NotFound) => {
-            ApiResponseBuilder::error("用户不存在".to_string())
-        }
+        Err(tinyiothub_core::error::Error::NotFound) => ApiResponseBuilder::error("用户不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to enable user {}: {}", id, e);
             ApiResponseBuilder::error("启用用户失败".to_string())
@@ -314,14 +325,15 @@ async fn enable_user(
 
 /// 禁用用户
 async fn disable_user(
-    State(state): State<AppState>,
+    State(state): State<UserState>,
     Path(id): Path<String>,
-    claims: Claims,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<bool>> {
-    let is_admin =
-        crate::shared::error_handling::AuthHelper::check_role(&state, &claims.user_id, "admin")
-            .await
-            .unwrap_or(false);
+    let is_admin = state
+        .role_checker
+        .check_role(&claims.0.user_id, "admin")
+        .await
+        .unwrap_or(false);
     if !is_admin {
         return ApiResponseBuilder::error("无权限禁用用户".to_string());
     }
@@ -330,9 +342,7 @@ async fn disable_user(
             tracing::info!("User disabled: {}", id);
             ApiResponseBuilder::success(true)
         }
-        Err(crate::shared::error::Error::NotFound) => {
-            ApiResponseBuilder::error("用户不存在".to_string())
-        }
+        Err(tinyiothub_core::error::Error::NotFound) => ApiResponseBuilder::error("用户不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to disable user {}: {}", id, e);
             ApiResponseBuilder::error("禁用用户失败".to_string())
@@ -342,9 +352,9 @@ async fn disable_user(
 
 /// 修改用户密码
 async fn change_user_password(
-    State(state): State<AppState>,
+    State(state): State<UserState>,
     Path(id): Path<String>,
-    claims: Claims,
+    claims: AuthClaims,
     Json(request): Json<PasswordChangeRequest>,
 ) -> Json<ApiResponse<bool>> {
     if let Err(err) = validate_password_strength(&request.new_password) {
@@ -355,11 +365,12 @@ async fn change_user_password(
         return ApiResponseBuilder::error("新密码不能与旧密码相同".to_string());
     }
 
-    let requesting_user_id = &claims.user_id;
-    let is_admin =
-        crate::shared::error_handling::AuthHelper::check_role(&state, requesting_user_id, "admin")
-            .await
-            .unwrap_or(false);
+    let requesting_user_id = &claims.0.user_id;
+    let is_admin = state
+        .role_checker
+        .check_role(requesting_user_id, "admin")
+        .await
+        .unwrap_or(false);
 
     if requesting_user_id != &id && !is_admin {
         tracing::warn!(

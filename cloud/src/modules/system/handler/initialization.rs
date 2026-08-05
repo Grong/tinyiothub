@@ -1,11 +1,9 @@
 use axum::{Json, Router, extract::State, routing::post};
 use serde::{Deserialize, Serialize};
+use tinyiothub_user::CreateUserRequest;
 use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::{
-    modules::user::CreateUserRequest,
-    shared::{api_response::ApiResponse, app_state::AppState, error::Result},
-};
+use crate::shared::{api_response::ApiResponse, app_state::AppState, error::Result};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]

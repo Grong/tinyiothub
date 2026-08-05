@@ -4,10 +4,9 @@ use super::{
     repo::{UserCriteria, UserRepository, UserSortBy, UserSortOrder},
     types::{CreateUserRequest, UpdateUserRequest, User, UserQueryParams, UserStatisticsNew},
 };
-use crate::shared::{
-    error::{Error, Result},
-    utils::password::{hash_password, verify_password},
-};
+use tinyiothub_core::error::{Error, Result};
+
+use crate::password::{hash_password, verify_password};
 
 /// User domain service
 pub struct UserService {
@@ -27,10 +26,15 @@ impl UserService {
         page: u32,
         page_size: u32,
     ) -> Result<(Vec<User>, i64)> {
-        let users =
-            self.repository.find_with_filters(enabled, search.clone(), page, page_size).await?;
-        let criteria =
-            UserCriteria { is_enabled: enabled, search_text: search, ..Default::default() };
+        let users = self
+            .repository
+            .find_with_filters(enabled, search.clone(), page, page_size)
+            .await?;
+        let criteria = UserCriteria {
+            is_enabled: enabled,
+            search_text: search,
+            ..Default::default()
+        };
         let total = self.repository.count(&criteria).await?;
         Ok((users, total))
     }
@@ -88,19 +92,13 @@ impl UserService {
     }
 
     /// Change password (requires old password verification)
-    pub async fn change_password(
-        &self,
-        id: &str,
-        old_password: &str,
-        new_password: &str,
-    ) -> Result<bool> {
+    pub async fn change_password(&self, id: &str, old_password: &str, new_password: &str) -> Result<bool> {
         let user = self.repository.find_by_id(id).await?.ok_or(Error::NotFound)?;
 
         match verify_password(old_password, &user.password_hash) {
             Ok(true) => {
-                let new_hash = hash_password(new_password).map_err(|e| {
-                    Error::ValidationError(format!("Password hashing failed: {}", e))
-                })?;
+                let new_hash = hash_password(new_password)
+                    .map_err(|e| Error::ValidationError(format!("Password hashing failed: {}", e)))?;
                 self.repository.update_password(id, &new_hash).await?;
                 Ok(true)
             }

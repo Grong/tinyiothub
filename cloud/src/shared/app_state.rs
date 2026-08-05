@@ -109,7 +109,7 @@ pub struct AppState {
     pub agent_pool: Arc<AgentPool>,
 
     /// 用户服务 - CRUD 操作
-    pub user_service: Arc<crate::modules::user::UserService>,
+    pub user_service: Arc<tinyiothub_user::UserService>,
 
     /// 租户服务 - CRUD 操作
     pub tenant_service: Arc<crate::modules::tenant::TenantService>,
@@ -130,10 +130,10 @@ pub struct AppState {
     pub tag_repository: Arc<dyn tinyiothub_thing::tag::TagRepository>,
 
     /// 角色服务 - CRUD 操作
-    pub role_service: Arc<crate::modules::role::RoleService>,
+    pub role_service: Arc<tinyiothub_user::role::RoleService>,
 
     /// 权限服务 - CRUD 操作
-    pub permission_service: Arc<crate::modules::permission::PermissionService>,
+    pub permission_service: Arc<tinyiothub_user::permission::PermissionService>,
 
     /// Cron 任务仓库
     pub cron_job_repo: Arc<dyn crate::modules::cron::CronJobRepository>,
@@ -302,9 +302,9 @@ impl AppState {
         alarm_service.set_device_cache(device_cache.clone());
 
         // 用户服务
-        let user_repository: Arc<dyn crate::modules::user::UserRepository> =
-            Arc::new(crate::modules::user::SqliteUserRepository::new(database.as_ref().clone()));
-        let user_service = Arc::new(crate::modules::user::UserService::new(user_repository));
+        let user_repository: Arc<dyn tinyiothub_user::UserRepository> =
+            Arc::new(tinyiothub_user::SqliteUserRepository::new(database.as_ref().clone()));
+        let user_service = Arc::new(tinyiothub_user::UserService::new(user_repository));
 
         // 租户服务
         let tenant_repository: Arc<dyn crate::modules::tenant::TenantRepository> = Arc::new(
@@ -328,21 +328,21 @@ impl AppState {
         ));
 
         // 角色服务
-        let role_repository: Arc<dyn crate::modules::role::RoleRepository> =
-            Arc::new(crate::modules::role::SqliteRoleRepository::new(database.as_ref().clone()));
-        let role_service = Arc::new(crate::modules::role::RoleService::new(role_repository));
+        let role_repository: Arc<dyn tinyiothub_user::role::RoleRepository> =
+            Arc::new(tinyiothub_user::role::SqliteRoleRepository::new(database.as_ref().clone()));
+        let role_service = Arc::new(tinyiothub_user::role::RoleService::new(role_repository));
 
         // 权限服务
-        let permission_repository: Arc<dyn crate::modules::permission::PermissionRepository> =
-            Arc::new(crate::modules::permission::SqlitePermissionRepository::new(
+        let permission_repository: Arc<dyn tinyiothub_user::permission::PermissionRepository> =
+            Arc::new(tinyiothub_user::permission::SqlitePermissionRepository::new(
                 database.as_ref().clone(),
             ));
         let permission_group_repository: Arc<
-            dyn crate::modules::permission::PermissionGroupRepository,
-        > = Arc::new(crate::modules::permission::SqlitePermissionGroupRepository::new(
+            dyn tinyiothub_user::permission::PermissionGroupRepository,
+        > = Arc::new(tinyiothub_user::permission::SqlitePermissionGroupRepository::new(
             database.as_ref().clone(),
         ));
-        let permission_service = Arc::new(crate::modules::permission::PermissionService::new(
+        let permission_service = Arc::new(tinyiothub_user::permission::PermissionService::new(
             permission_repository,
             permission_group_repository,
         ));
@@ -796,7 +796,7 @@ impl axum::extract::FromRef<AppState> for tinyiothub_thing::ThingState {
 // ============================================================================
 
 /// Map the cloud user entity to the auth crate's byte-identical mirror.
-fn auth_user_from_user(user: crate::modules::user::User) -> tinyiothub_auth::user_store::AuthUser {
+fn auth_user_from_user(user: tinyiothub_user::User) -> tinyiothub_auth::user_store::AuthUser {
     tinyiothub_auth::user_store::AuthUser {
         id: user.id,
         username: user.username,
@@ -812,16 +812,24 @@ fn auth_user_from_user(user: crate::modules::user::User) -> tinyiothub_auth::use
     }
 }
 
-/// Identity-store seam: auth handlers consume `AuthUserStore`; until the
-/// user domain is extracted (Task 17), `UserService` fills the role.
+/// Identity-store seam adapter: auth handlers consume `AuthUserStore`.
+/// After Task 17a both the trait (auth crate) and `UserService` (user
+/// crate) are foreign to cloud, so the orphan rule requires this newtype
+/// wrapper — the adapter stays in cloud because the user crate must not
+/// depend on the auth crate (wrong dependency direction).
+pub struct UserServiceAuthAdapter {
+    pub service: Arc<tinyiothub_user::UserService>,
+}
+
 #[async_trait::async_trait]
-impl tinyiothub_auth::user_store::AuthUserStore for crate::modules::user::UserService {
+impl tinyiothub_auth::user_store::AuthUserStore for UserServiceAuthAdapter {
     async fn authenticate(
         &self,
         username: &str,
         password: &str,
     ) -> Result<Option<tinyiothub_auth::user_store::AuthUser>, String> {
-        crate::modules::user::UserService::authenticate(self, username, password)
+        self.service
+            .authenticate(username, password)
             .await
             .map_err(|e| e.to_string())
             .map(|o| o.map(auth_user_from_user))
@@ -831,41 +839,34 @@ impl tinyiothub_auth::user_store::AuthUserStore for crate::modules::user::UserSe
         &self,
         id: &str,
     ) -> Result<Option<tinyiothub_auth::user_store::AuthUser>, String> {
-        crate::modules::user::UserService::get_user_by_id(self, id)
+        self.service
+            .get_user_by_id(id)
             .await
             .map_err(|e| e.to_string())
             .map(|o| o.map(auth_user_from_user))
     }
 
     async fn update_last_login(&self, id: &str) -> Result<(), String> {
-        crate::modules::user::UserService::update_last_login(self, id)
-            .await
-            .map_err(|e| e.to_string())
+        self.service.update_last_login(id).await.map_err(|e| e.to_string())
     }
 
     async fn exists_by_username(&self, username: &str) -> Result<bool, String> {
-        crate::modules::user::UserService::exists_by_username(self, username)
-            .await
-            .map_err(|e| e.to_string())
+        self.service.exists_by_username(username).await.map_err(|e| e.to_string())
     }
 
     async fn exists_by_phone(&self, phone: &str) -> Result<bool, String> {
-        crate::modules::user::UserService::exists_by_phone(self, phone)
-            .await
-            .map_err(|e| e.to_string())
+        self.service.exists_by_phone(phone).await.map_err(|e| e.to_string())
     }
 
     async fn exists_by_email(&self, email: &str) -> Result<bool, String> {
-        crate::modules::user::UserService::exists_by_email(self, email)
-            .await
-            .map_err(|e| e.to_string())
+        self.service.exists_by_email(email).await.map_err(|e| e.to_string())
     }
 
     async fn create_user(
         &self,
         request: &tinyiothub_auth::user_store::AuthCreateUserRequest,
     ) -> Result<tinyiothub_auth::user_store::AuthUser, String> {
-        let create_request = crate::modules::user::types::CreateUserRequest {
+        let create_request = tinyiothub_user::types::CreateUserRequest {
             username: request.username.clone(),
             password: request.password.clone(),
             email: request.email.clone(),
@@ -874,7 +875,8 @@ impl tinyiothub_auth::user_store::AuthUserStore for crate::modules::user::UserSe
             is_enabled: request.is_enabled,
             parent_id: request.parent_id.clone(),
         };
-        crate::modules::user::UserService::create_user(self, &create_request)
+        self.service
+            .create_user(&create_request)
             .await
             .map_err(|e| e.to_string())
             .map(auth_user_from_user)
@@ -914,13 +916,47 @@ impl axum::extract::FromRef<AppState> for tinyiothub_auth::AuthState {
         let settings = crate::shared::config::get();
         tinyiothub_auth::AuthState {
             database: state.database.clone(),
-            users: state.user_service.clone(),
+            users: Arc::new(UserServiceAuthAdapter { service: state.user_service.clone() }),
             workspace_bootstrap: Arc::new(SystemWorkspaceBootstrap { state: state.clone() }),
             redis: state.redis.clone(),
             sse_token_issuer: state.sse_token_manager.clone(),
             sms_config: settings.sms.clone(),
             social_config: settings.social.clone(),
             harmonyos_enabled: settings.harmonyos.enabled,
+        }
+    }
+}
+
+// ============================================================================
+// P4-Task17a: user domain slice + role-check seam adapter
+// ============================================================================
+
+/// Role-check seam adapter: the user handlers' admin checks route through
+/// the event security plane (`AuthHelper` → `SecureEventService`), which
+/// stays in cloud until Tasks 18/24. Holds an `AppState` clone like
+/// `SystemWorkspaceBootstrap`.
+pub struct EventSecurityRoleChecker {
+    pub state: AppState,
+}
+
+#[async_trait::async_trait]
+impl tinyiothub_user::RoleChecker for EventSecurityRoleChecker {
+    async fn check_role(&self, user_id: &str, role: &str) -> Result<bool, String> {
+        crate::shared::error_handling::AuthHelper::check_role(&self.state, user_id, role).await
+    }
+}
+
+/// P4-Task17a: derive the user domain's state slice from the global
+/// AppState. Cloud mounts `tinyiothub_user::router()` (users),
+/// `role::create_router()` and `permission::create_router()` with this
+/// `FromRef` conversion.
+impl axum::extract::FromRef<AppState> for tinyiothub_user::UserState {
+    fn from_ref(state: &AppState) -> Self {
+        tinyiothub_user::UserState {
+            user_service: state.user_service.clone(),
+            role_service: state.role_service.clone(),
+            permission_service: state.permission_service.clone(),
+            role_checker: Arc::new(EventSecurityRoleChecker { state: state.clone() }),
         }
     }
 }
