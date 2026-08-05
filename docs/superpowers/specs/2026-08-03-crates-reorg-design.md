@@ -213,47 +213,47 @@ apps/*（只依赖领域 crate 和基础设施 crate；app 之间互不依赖；
 
 ## 9. Implementation Tasks
 
-- [ ] **T1 (P1, CC: ~30min)** — P0 — cargo-modules 全量 import 环扫描，核对 3 组已知环 + mcp 边无遗漏
+- [x] **T1 (P1, CC: ~30min)** — P0 — cargo-modules 全量 import 环扫描，核对 3 组已知环 + mcp 边无遗漏
   - Surfaced by: 架构评审发现4/外部声音 OV-4/OV-7
   - Files: cloud/src/modules/**
   - Verify: 环图输出与文档 §1.2.3 一致
-- [ ] **T2 (P1, CC: ~2h)** — P4.0a — 消灭 mcp::get_app_state() 单例，改 State 萃取
+- [x] **T2 (P1, CC: ~2h)** — P4.0a — 消灭 mcp::get_app_state() 单例，改 State 萃取
   - Surfaced by: 外部声音 OV-2（已核实 mcp/mod.rs static APP_STATE）
   - Files: cloud/src/modules/mcp/mod.rs, cloud/src/modules/thing/handler/actions.rs
   - Verify: `grep -rn "get_app_state" cloud/src` 调用数=0
-- [ ] **T3 (P1, CC: ~1h)** — P4.0b — 斩 thing→agent/mcp 边（agent 侧反向提供 API）
+- [x] **T3 (P1, CC: ~1h)** — P4.0b — 斩 thing→agent/mcp 边（agent 侧反向提供 API）
   - Surfaced by: 外部声音 OV-1（actions.rs:18,118,240,264,285）
   - Files: cloud/src/modules/thing/handler/actions.rs, cloud/src/modules/agent/tools/
   - Verify: `grep -n "modules::agent\|modules::mcp" cloud/src/modules/thing/` 无命中
-- [ ] **T4 (P1, CC: ~1h)** — P4.0c — 斩 event→notification 边（类型下沉 core）
+- [x] **T4 (P1, CC: ~1h)** — P4.0c — 斩 event→notification 边（类型下沉 core）
   - Surfaced by: 外部声音 OV-4（event/mod.rs:94, service.rs:354）
   - Files: cloud/src/modules/event/mod.rs, cloud/src/modules/event/service.rs, crates/tinyiothub-core/
   - Verify: `grep -n "modules::notification" cloud/src/modules/event/` 无命中
-- [ ] **T5 (P2, CC: ~10min)** — core 守门条款入 AGENTS.md
+- [x] **T5 (P2, CC: ~10min)** — core 守门条款入 AGENTS.md
   - Surfaced by: 架构评审发现5
   - Files: AGENTS.md
   - Verify: 条款文本评审通过
-- [ ] **T6 (P1, CC: ~1h)** — P5 CI/CD 路径迁移 + release dry-run
+- [x] **T6 (P1, CC: ~1h)** — P5 CI/CD 路径迁移 + release dry-run
   - Surfaced by: 架构评审发现1（Step 0 分布检查）
   - Files: Dockerfile, Dockerfile.dev, .github/workflows/*, deploy/docker/*, scripts/build-static.sh
   - Verify: CI 绿 + dry-run 成功
-- [ ] **T7 (P2, CC: ~15min)** — thing 试点落地 buzz 模式 db 平铺（thing.rs）+ FromRef 切片定型
+- [x] **T7 (P2, CC: ~15min)** — thing 试点落地 buzz 模式 db 平铺（thing.rs）+ FromRef 切片定型
   - Surfaced by: 架构评审发现2/发现3
   - Files: crates/db/src/thing.rs, apps/cloud/src/app_state.rs
   - Verify: 试点判据全绿（P4 行）
-- [ ] **T8 (P3, CC: ~5min)** — 心跳 Trigger 迁徙 TODOS 条目补 "Depends on: 重组 P4"
+- [x] **T8 (P3, CC: ~5min)** — 心跳 Trigger 迁徙 TODOS 条目补 "Depends on: 重组 P4"
   - Surfaced by: 架构评审发现4
   - Files: TODOS.md
   - Verify: 条目更新
-- [ ] **T9 (P1, CC: ~30min)** — P1 同步更新 AGENTS.md（依赖表/稳定性层级/目录约定/守门条款）
+- [x] **T9 (P1, CC: ~30min)** — P1 同步更新 AGENTS.md（依赖表/稳定性层级/目录约定/守门条款）
   - Surfaced by: CEO 评审 D6（防 6 周文档撒谎期）
   - Files: AGENTS.md
   - Verify: 与 P1 改名结果一致
-- [ ] **T10 (P1, CC: ~20min)** — P2 同步 Dockerfile migrations 行 + TODOS 安全锚点（#40/#41/#44）
+- [x] **T10 (P1, CC: ~20min)** — P2 同步 Dockerfile migrations 行 + TODOS 安全锚点（#40/#41/#44）
   - Surfaced by: CEO 评审 D4/D5（Dockerfile:79-80、ci.yml:98-118 硬编码路径）
   - Files: Dockerfile, TODOS.md
   - Verify: docker build 绿 + 锚点指向新路径
-- [ ] **T11 (P2, CC: 每领域 ~5min)** — P4 每领域抽取同步 ci.yml 守卫路径 + Dockerfile templates 行
+- [x] **T11 (P2, CC: 每领域 ~5min)** — P4 每领域抽取同步 ci.yml 守卫路径 + Dockerfile templates 行
   - Surfaced by: CEO 评审 D4
   - Files: .github/workflows/ci.yml, Dockerfile
   - Verify: 每领域 PR 的 CI 绿

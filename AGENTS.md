@@ -33,21 +33,37 @@ TinyIoTHub is a Rust + Lit 3 SaaS IoT platform for managing things (物) — dev
 ### Dependency Direction (one-way, irreversible)
 
 ```
-cloud/ (bin) → runtime / db / web / ai / memory / plugin / macros → core
+apps/* → domain crates (thing/auth/user/tenant/event/alarm/driver/notify/agent/mcp/admin)
+       → runtime / db / web / llm / memory / policy / skills / scheduler → core
 ```
+
+Allowed cross-domain edges only: driver→thing, notify→event, alarm→event, agent→{event,thing,tenant,policy,memory,skills,llm}, mcp→{alarm,agent}, user→tenant, auth→{user,tenant}.
 
 | Crate (dir = package) | Lib name | Role | Forbidden |
 |-------|------|------|-----------|
 | `core` | `tinyiothub_core` | Contract traits + value types (DTO/error/config). Absorbed former `tinyiothub-error` and `tinyiothub-config` (`core::error`, `core::config`). **Guardrail: traits + value types only; no logic functions, no I/O. Every new type must justify why it does not belong in a domain crate.** | Logic functions, I/O, DB access |
-| `db` | `tinyiothub_storage` | SQLite concrete implementations. (Planned: buzz-style flat per-domain modules, no trait inversion — later task.) | Depending on any crate except `core` |
-| `runtime` | `tinyiothub_runtime` | EventBus, DataServer, driver framework, executors, DLQ trait. (Planned: absorb `plugin` loader/registry/sandbox as `runtime::plugin` — P2.) | Depending on web or domain crates |
+| `db` | `tinyiothub_storage` | SQLite concrete implementations (buzz-style flat per-domain modules, no trait inversion) + `migrations/` | Depending on any crate except `core` |
+| `runtime` | `tinyiothub_runtime` | EventBus, DataServer, driver framework, executors, `runtime::plugin` (loader/registry/sandbox, FFI glue) | Depending on web or domain crates |
 | `web` | `tinyiothub_web` | HTTP middleware, ApiResponseBuilder, security extractors | Business logic |
-| `ai` | `tinyiothub_ai` | Agent loop, LLM orchestration; includes `thing_agent` (autonomous Thing Agent Loop: triggers/scheduler/streaming runner/pushback) | — |
-| `memory` | `tinyiothub_memory` | Agent memory store + reflection pipeline | — |
-| `plugin` | `tinyiothub_plugin` | Plugin loader/registry/sandbox. (Planned: merge into `runtime::plugin` — P2.) | — |
+| `scheduler` | `tinyiothub_scheduler` | Cron engine + scheduler | — |
+| `llm` | `tinyiothub_llm` | LLM provider contract, prompt, session | — |
+| `memory` | `tinyiothub_memory` | Agent memory store + reflection pipeline + knowledge | — |
+| `policy` | `tinyiothub_policy` | Policy engine + proposals | — |
+| `skills` | `tinyiothub_skills` | Skill/tool registries | — |
 | `plugin-sdk` | `tinyiothub_plugin_sdk` | Driver-author SDK; ABI contract single source of truth | Depending on runtime/web |
 | `macros` | `tinyiothub_macros` | Proc macros | — |
-| `cloud` (root bin) | — | Application orchestration, routing, business modules. (Planned: move to `apps/cloud` as a thin bin — later phase.) | Direct SQL in handlers |
+| `thing` | `tinyiothub_thing` | Thing ontology domain (+ template, tag, legacy device plane) | Depending on agent/mcp |
+| `auth` | `tinyiothub_auth` | Auth/JWT domain | — |
+| `user` | `tinyiothub_user` | User/role/permission domain (user→tenant) | — |
+| `tenant` | `tinyiothub_tenant` | Tenant/workspace domain | — |
+| `event` | `tinyiothub_event` | Event pipeline domain | — |
+| `alarm` | `tinyiothub_alarm` | Alarm rules domain (alarm→event) | — |
+| `driver` | `tinyiothub_driver` | Driver/gateway/plugin/heartbeat domain (driver→thing) | — |
+| `notify` | `tinyiothub_notify` | Notification domain (notify→event) | — |
+| `agent` | `tinyiothub_agent` | Agent loop + host + chat unified crate | — |
+| `mcp` | `tinyiothub_mcp` | Embedded MCP server (mcp→{alarm,agent}) | — |
+| `admin` | `tinyiothub_admin` | System/monitoring/batch/jobs/open domain (admin→scheduler) | — |
+| `apps/cloud` (bin) | — | Application composition root: thin `main.rs` + `bootstrap.rs` + router assembly | Direct SQL in handlers; business logic |
 
 **Naming rule**: crate directories and package names use short names (`core`, `db`, …); `[lib] name` is pinned to `tinyiothub_*` so `use tinyiothub_core::…` imports stay stable across directory moves.
 
@@ -63,41 +79,55 @@ cloud/ (bin) → runtime / db / web / ai / memory / plugin / macros → core
 | `db` | Beta | SQLite implementation — schema changes require migration |
 | `runtime` | Beta | EventBus, DataServer — breaking changes permitted in MINOR |
 | `memory` | Beta | Agent memory store + reflection pipeline |
-| `ai` | Experimental | Agent loop + LLM orchestration — under active development |
-| `plugin` | Experimental | Plugin loader/registry — planned merge into `runtime::plugin` (P2) |
+| `scheduler`, `llm`, `policy`, `skills` | Beta | Supporting crates extracted from `ai`/`runtime` |
+| domain crates (`thing`…`admin`) | Experimental | Extracted from former `cloud/src/modules` — no stability guarantee yet |
+| `agent` | Experimental | Agent loop + host + chat — under active development |
 | `macros` | Experimental | Internal proc macros |
-| `cloud` | Experimental | SaaS application layer — under active development |
+| `apps/*` | Experimental | Deployable binaries (cloud/edge/marketplace/cli) |
 
 **Tiers**: Stable = covered by breaking-change policy. Beta = breaking changes permitted in MINOR with changelog notes. Experimental = no stability guarantee. Tiers are promoted, never demoted, through deliberate team decision.
 
 ## Repository Map
 
 ```
-cloud/                       # SaaS application orchestration (main binary)
-  src/
-    api/                     # HTTP middleware (WorkspaceScope, auth)
-    modules/                 # Business modules (types → service → handler)
-      agent/                 # AI Agent (chat, config, tools, session, reflection, memory)
-      device/                # Device connection runtime (drivers, telemetry, heartbeat)
-      thing/                 # Thing ontology management (CRUD, hierarchy, ontology, resources, summary)
-      event/                 # Event pipeline (router, throttle, real-time, SSE, retention job)
-      alarm/                 # Alarm rules + notifications (rule_type='device' | 'event')
-      plugin/                # Plugin registry
-      ...
-    shared/                  # Cross-layer (persistence, security, error_handling, utils)
-    server.rs                # Axum server startup
+apps/
+  cloud/                     # SaaS composition root (main binary)
+    src/
+      main.rs                # Thin entry (<200 lines): config → AppState → router → serve
+      bootstrap.rs           # Startup logic (logging, driver rehydrate, device cache)
+      api/                   # Router mounting + HTTP middleware (WorkspaceScope, auth)
+      modules/marketplace/   # Marketplace client (HTTP DTO contract only)
+      server.rs              # Axum server startup
+      shared/                # Composition-layer glue (app_state, config, service_manager)
+    templates/               # Skill templates
+  edge/                      # Edge gateway binary
+  marketplace/               # Marketplace service binary
+  cli/                       # CLI binary
 crates/
   core/                      # Contracts: traits + value types (lib tinyiothub_core; absorbed error+config)
-  db/                        # Data: SQLite implementations (lib tinyiothub_storage)
-  runtime/                   # Infrastructure: EventBus, DataServer, drivers, executors (lib tinyiothub_runtime)
+  db/                        # Data: SQLite implementations, buzz flat per-domain (lib tinyiothub_storage)
+    migrations/              # SQL migration files
+  runtime/                   # Infrastructure: EventBus, DataServer, drivers, plugin loader (lib tinyiothub_runtime)
   web/                       # HTTP infrastructure: ApiResponseBuilder, middleware (lib tinyiothub_web)
-  ai/                        # Agent loop + LLM orchestration (lib tinyiothub_ai)
+  scheduler/                 # Cron engine + scheduler (lib tinyiothub_scheduler)
+  llm/                       # LLM provider contract, prompt, session (lib tinyiothub_llm)
   memory/                    # Agent memory store + reflection pipeline (lib tinyiothub_memory)
-  plugin/                    # Plugin loader/registry/sandbox (lib tinyiothub_plugin; P2: → runtime::plugin)
+  policy/                    # Policy engine + proposals (lib tinyiothub_policy)
+  skills/                    # Skill/tool registries (lib tinyiothub_skills)
   plugin-sdk/                # Driver-author SDK (package plugin-sdk, lib tinyiothub_plugin_sdk)
   macros/                    # Proc macros (lib tinyiothub_macros)
-# Planned (P2+): domain crates (auth/thing/event/alarm/agent/…) extracted from cloud/,
-# scheduler/ standalone crate, and apps/{cloud,edge,marketplace} thin binaries.
+  thing/                     # Thing ontology domain (+ template/tag/legacy device plane)
+  auth/                      # Auth/JWT domain
+  user/                      # User/role/permission domain
+  tenant/                    # Tenant/workspace domain
+  event/                     # Event pipeline domain
+  alarm/                     # Alarm rules domain
+  driver/                    # Driver/gateway/plugin/heartbeat domain
+  notify/                    # Notification domain
+  agent/                     # Agent loop + host + chat unified domain
+  mcp/                       # Embedded MCP server domain
+  admin/                     # System/monitoring/batch/jobs/open domain
+drivers/                     # Dynamic driver stubs (NOT workspace members; cdylib)
 web/                          # Lit 3 + Vite frontend
   src/ui/                    # Web Components (pages + components)
   src/api/                   # API client layer
@@ -108,23 +138,26 @@ web/                          # Lit 3 + Vite frontend
 docs/                        # Technical docs, guides, specs
 ```
 
-### cloud/ Module Structure
+### Domain Crate Structure (SEP — standard extraction procedure)
+
+Each domain crate (`crates/<domain>/`) exposes:
 
 ```
-modules/<module>/
+crates/<domain>/src/
   types.rs     # Request/response structs (never dto.rs)
-  service.rs   # Business logic (services/mod.rs for multi-service modules)
+  service.rs   # Business logic (services/ for multi-service domains)
   handler/     # HTTP handlers (call service, return ApiResponse)
-  repo.rs      # Database queries (Repository pattern, no SQL in handlers)
-shared/        # Cross-module (persistence, security, middleware)
+  lib.rs       # <Domain>State + router(); state sliced from AppState via FromRef
 ```
+
+DB access lives in `crates/db/src/<domain>.rs` (concrete structs, buzz pattern — no trait inversion).
 
 ### Thing Ontology Module
 
-The `thing` module (`cloud/src/modules/thing/`) manages the thing (物) management plane:
+The `thing` domain crate (`crates/thing/`) manages the thing (物) management plane:
 
 ```
-modules/thing/
+crates/thing/src/
   types.rs                       # ThingType, SummaryStatus, DTOs (ThingResponse, ThingTreeNode, etc.)
   errors.rs                      # ThingError → HTTP status codes
   repo.rs                        # ThingRepo: CRUD, tree, breadcrumb, cycle detection
@@ -153,15 +186,15 @@ modules/thing/
 ## Risk Tiers
 
 - **Low risk**: docs only, `.kiro/specs/**`, pure chore/ci changes without behavior impact, test-only changes
-- **Medium risk**: most `cloud/src/modules/*/service.rs` and `cloud/src/modules/*/handler/` behavior changes, `web/src/ui/**` component changes, `web/src/stores/**` state changes
-- **High risk**: `cloud/src/shared/security/**`, `cloud/src/shared/persistence/**`, `cloud/migrations/**`, `crates/core/src/**` (contract changes ripple everywhere), `crates/web/src/**`, `.github/workflows/**`, JWT/session boundary code, `cloud/src/modules/agent/**` (AI agent runtime has security implications)
+- **Medium risk**: most `crates/<domain>/src/service.rs` and `crates/<domain>/src/handler/` behavior changes, `web/src/ui/**` component changes, `web/src/stores/**` state changes
+- **High risk**: `apps/cloud/src/shared/**` (composition glue), `crates/db/**`, `crates/db/migrations/**`, `crates/core/src/**` (contract changes ripple everywhere), `crates/web/src/**`, `.github/workflows/**`, JWT/session boundary code (`crates/auth/**`), `crates/agent/**` (AI agent runtime has security implications)
 
 When uncertain, classify as higher risk.
 
 ## Workflow
 
 1. **Read before write** — inspect existing module structure, shared/ components, and adjacent tests before creating new code.
-2. **Search first** — check `cloud/src/shared/`, existing modules, crates, `web/src/api/`, `web/src/stores/` before creating anything new.
+2. **Search first** — check `crates/web/` infra, existing domain crates, `web/src/api/`, `web/src/stores/` before creating anything new.
 3. **One concern per PR** — avoid mixed feature+refactor+infra patches.
 4. **Implement minimal patch** — no speculative abstractions, no config keys without a concrete use case.
 5. **Validate by risk tier** — docs-only: lightweight checks. Code changes: full `just ci`.
@@ -179,10 +212,10 @@ Branch/commit/PR rules:
 
 ### Structural (enforced by CI architecture checks)
 
-- Do not create modules without searching `cloud/src/shared/` for reusable components first.
-- Do not use `dto.rs` naming (use `types.rs`).
-- Do not create `application/` subdirectories in modules (use `service.rs`).
-- Do not create scatter-shot `utils/` or `helpers/` in `cloud/src/` or any crate.
+- Do not create modules without searching existing domain crates and `crates/web/` for reusable components first.
+- Do not use `dto.rs` naming (use `types.rs`; `modules/marketplace/dto.rs` is a grandfathered external-API contract exception).
+- Do not create `application/` subdirectories in domain crates (use `service.rs`).
+- Do not create scatter-shot `utils/` or `helpers/` in `apps/cloud/src/` or any crate.
 - Do not call `fetch()` directly in front-end components (must use `web/src/api/` layer).
 - Do not write SQL in API handlers (must use Repository pattern).
 - Do not bypass `ApiResponseBuilder` — all responses must use the standard `{ code, msg, result }` format.
@@ -238,9 +271,9 @@ Branch/commit/PR rules:
 ## Async & Data Access (Rust)
 
 - All I/O must be `async/await` (`tokio::fs`, `tokio::net`); no blocking code in async fn
-- Database access must go through Repository (`cloud/src/shared/persistence/repositories/`)
+- Database access must go through the concrete repositories in `crates/db/src/` (buzz pattern, no SQL in handlers)
 - Shared state uses `Arc<RwLock<T>>` or `DashMap`; never `Rc<RefCell<T>>`
-- Migration files in `cloud/migrations/`, named `YYYYMMDDHHMMSS_description.sql`, must be idempotent
+- Migration files in `crates/db/migrations/`, named `YYYYMMDDHHMMSS_description.sql`, must be idempotent
 
 ## Design Docs
 
@@ -272,7 +305,7 @@ docs/guide/               # User guide
 - [ ] Database access through Repository?
 - [ ] No blocking code in async fn?
 - [ ] Corresponding tests exist?
-- [ ] Searched `shared/` to confirm no duplicate implementation?
+- [ ] Searched existing domain crates / `crates/web/` to confirm no duplicate implementation?
 
 ## Dev-Operational Contracts
 

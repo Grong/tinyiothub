@@ -72,7 +72,7 @@ body:
     attributes:
       label: 架构影响
       description: 涉及哪些子系统？（可选，维护者会在评审中评估）
-      placeholder: cloud/src/modules/device/、web/src/ui/views/device-detail.ts
+      placeholder: crates/driver/src/legacy/、web/src/ui/views/device-detail.ts
     validations:
       required: false
 

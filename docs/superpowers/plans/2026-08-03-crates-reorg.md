@@ -973,9 +973,9 @@ git commit -m "refactor(auth): extract auth domain crate (P4-Task16)"
 **Interfaces:**
 - Produces: 根 members = `["crates/*", "apps/*", "tests/integration"]`；`cargo build --bin tinyiothub-cloud` 不变
 
-- [ ] **Step 1: git mv + members 更新 + cargo check**
-- [ ] **Step 2: main.rs 薄壳化**（server.rs 逻辑拆为 `apps/cloud/src/bootstrap.rs`，main 只做组装）
-- [ ] **Step 3: CI/CD 全量路径替换 + 验证**
+- [x] **Step 1: git mv + members 更新 + cargo check**
+- [x] **Step 2: main.rs 薄壳化**（server.rs 逻辑拆为 `apps/cloud/src/bootstrap.rs`，main 只做组装）
+- [x] **Step 3: CI/CD 全量路径替换 + 验证**
 
 ```bash
 grep -rln "cloud/" Dockerfile Dockerfile.dev .github/ deploy/ scripts/build-static.sh \
@@ -984,7 +984,7 @@ grep -rln "cloud/" Dockerfile Dockerfile.dev .github/ deploy/ scripts/build-stat
 docker build -t tinyiothub-reorg-check .
 ```
 
-- [ ] **Step 4: Commit** `refactor(apps): relocate deployables to apps/, thin cloud main (P5-Task25)`
+- [x] **Step 4: Commit** `refactor(apps): relocate deployables to apps/, thin cloud main (P5-Task25)`
 
 ---
 
@@ -999,7 +999,7 @@ docker build -t tinyiothub-reorg-check .
 **Interfaces:**
 - Produces: `cargo metadata` 不再含 7 个空壳；E2E 全绿记录
 
-- [ ] **Step 1: 移出 + metadata 验证**
+- [x] **Step 1: 移出 + metadata 验证**
 
 ```bash
 git mv plugins drivers
@@ -1007,13 +1007,13 @@ git mv plugins drivers
 cargo metadata --no-deps --quiet | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d['packages']))"
 ```
 
-- [ ] **Step 2: E2E 验收**
+- [x] **Step 2: E2E 验收**
 
 Run: T19 E2E 脚本（路径见 cloud/src/tests 或 scripts/ 中 T19 提交 12681a45 引入的验收脚本；
 若路径随 apps/ 移动变更，先按新位置定位再执行）
 Expected: 全绿。**红则阻断**：按 phase 二分定位（git bisect P4 各 PR），修复后重跑。
 
-- [ ] **Step 3: Commit** `chore(workspace): drop stub members, drivers/ layout, E2E gate passed (P5-Task26)`
+- [x] **Step 3: Commit** `chore(workspace): drop stub members, drivers/ layout, E2E gate passed (P5-Task26)`
 
 ---
 
@@ -1026,9 +1026,9 @@ Expected: 全绿。**红则阻断**：按 phase 二分定位（git bisect P4 各
 **Interfaces:**
 - Produces: 文档与代码最终一致
 
-- [ ] **Step 1: README 结构树按最终 crates/ + apps/ + drivers/ 重写**
-- [ ] **Step 2: AGENTS.md 校对（目录约定、依赖方向、稳定性层级与现状一致）**
-- [ ] **Step 3: Commit** `docs: finalize reorg documentation (P6-Task27)`
+- [x] **Step 1: README 结构树按最终 crates/ + apps/ + drivers/ 重写**
+- [x] **Step 2: AGENTS.md 校对（目录约定、依赖方向、稳定性层级与现状一致）**
+- [x] **Step 3: Commit** `docs: finalize reorg documentation (P6-Task27)`
 
 ---
 

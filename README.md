@@ -40,18 +40,28 @@
 
 ```
 tinyiothub/
-├── cloud/                   # SaaS 应用编排层（主二进制）
-│   ├── src/                 # SaaS 领域逻辑（tenant, user, workspace, marketplace）
-│   ├── migrations/          # 数据库迁移
-│   ├── templates/           # 设备模板
-│   └── Cargo.toml           # Rust 项目配置
-├── crates/                  # 内部库 Crate
-│   ├── tinyiothub-core/     # 契约层：traits + 领域模型 + repository 接口
-│   ├── tinyiothub-runtime/  # 基础设施：EventBus, DataServer, drivers
-│   ├── tinyiothub-storage/  # 数据层：SQLite 实现（re-export core traits）
-│   ├── tinyiothub-web/      # HTTP 基础设施层（中间件、ApiResponseBuilder）
-│   ├── tinyiothub-error/    # 错误类型（带 `thiserror` 派生）
-│   └── ...（其他支持库）
+├── apps/                    # 可部署二进制
+│   ├── cloud/               # SaaS 组合根（薄 main.rs + bootstrap.rs + 路由组装）
+│   │   ├── src/
+│   │   └── templates/       # 技能模板
+│   ├── edge/                # 边缘网关
+│   ├── marketplace/         # 市场服务（驱动/物模板市场）
+│   └── cli/                 # 命令行工具
+├── crates/                  # 21 个单一职责库 Crate（package 短名，lib 钉住 tinyiothub_*）
+│   ├── core/                # 契约层：traits + 值类型（error/config 已并入）
+│   ├── db/                  # 数据层：SQLite 实现（buzz 平铺）+ migrations/
+│   ├── runtime/             # 基础设施：EventBus, DataServer, 驱动框架, plugin loader
+│   ├── web/                 # HTTP 基础设施（中间件、ApiResponseBuilder）
+│   ├── scheduler/           # Cron 引擎 + 调度器
+│   ├── llm/                 # LLM provider 契约、prompt、session
+│   ├── memory/              # Agent 记忆 + 反思管道
+│   ├── policy/              # 策略引擎 + 提案
+│   ├── skills/              # 技能/工具注册表
+│   ├── plugin-sdk/          # 驱动开发 SDK（ABI 契约）
+│   ├── macros/              # 过程宏
+│   └── <domain>/            # 领域 crate：thing, auth, user, tenant, event, alarm,
+│                            #   driver, notify, agent, mcp, admin
+├── drivers/                 # 动态驱动 stub（cdylib，不在 workspace 内）
 ├── web/                     # Lit 3 前端应用 (Web Components)
 │   ├── src/                 # 源代码
 │   │   ├── ui/             # Lit 组件、页面、聊天/A2UI
@@ -61,14 +71,9 @@ tinyiothub/
 │   │   └── stores/         # nanostore 状态管理
 │   ├── package.json         # Node.js 项目配置
 │   └── vite.config.ts      # Vite 构建配置
-├── sdks/                    # SDK 开发包
-│   └── plugin-sdk/         # 驱动开发 SDK
 ├── examples/                # 示例项目
 │   ├── example-plugin/     # 插件示例
 │   └── bacnet-driver/      # BACnet 驱动示例
-├── marketplace/            # 市场资源
-│   ├── drivers/            # 驱动市场
-│   └── templates/          # 模板市场
 ├── vendor/                  # 第三方依赖（本地 fork，如 onvif-rs）
 ├── scripts/                # 工具脚本
 ├── deploy/                 # Docker 部署（docker-compose、边缘镜像）
@@ -76,7 +81,7 @@ tinyiothub/
 └── skills/                 # AI prompts / skills
 ```
 
-**注意：本项目采用多 Crate 架构，依赖方向为单向不可逆：`cloud/edge → runtime → core ← storage`。详细架构见 [CLAUDE.md](CLAUDE.md)。**
+**注意：本项目采用多 Crate 架构，依赖方向为单向不可逆：`apps/* → 领域 crate → runtime/db/web → core`。详细架构见 [AGENTS.md](AGENTS.md)。**
 
 ## 快速开始
 
@@ -99,7 +104,7 @@ tinyiothub/
 
 **后端**:
 ```bash
-cd cloud
+cd apps/cloud
 cargo run
 ```
 
@@ -124,7 +129,7 @@ cargo build --release -p tinyiothub-cloud
 
 **运行**:
 ```bash
-cd cloud
+cd apps/cloud
 .\target\release\tinyiothub.exe  # Windows
 ./target/release/tinyiothub      # Linux/macOS
 ```
@@ -281,7 +286,7 @@ export const loadUsers = task(async (params?: { page?: number; pageSize?: number
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   Lit 3 UI      │    │   REST API      │    │   MQTT Client   │
-│   (web/)        │    │   (cloud/)      │    │   (rumqttc)     │
+│   (web/)        │    │ (apps/cloud/)   │    │   (rumqttc)     │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
          └───────────────────────┼───────────────────────┘
@@ -310,32 +315,27 @@ export const loadUsers = task(async (params?: { page?: number; pageSize?: number
          └─────────────────────────────────────────────────────┘
 ```
 
-### 后端目录结构 (cloud/)
+### 后端目录结构 (apps/cloud/)
 
 ```
-cloud/
+apps/cloud/
 ├── src/
+│   ├── main.rs               # 薄入口（<200 行）：读配置 → 建 AppState → 组装 router → serve
+│   ├── bootstrap.rs          # 启动逻辑（日志、驱动重载、设备缓存预热）
 │   ├── api/                  # 路由挂载 + HTTP 中间件（WorkspaceScope, auth）
-│   ├── modules/              # 业务模块（types → service → handler 三层结构）
-│   │   ├── thing/            # 物本体管理（CRUD、层级树、本体、资源、LLM 摘要）
-│   │   ├── device/           # 设备连接运行时（驱动、遥测、心跳）
-│   │   ├── event/            # 事件管道（router、throttle、real-time、SSE、保留任务）
-│   │   ├── alarm/            # 告警规则 + 通知（rule_type='device' | 'event'）
-│   │   ├── agent/            # AI Agent（chat、config、tools、session、memory）
-│   │   ├── template/         # 物模板（创建时蓝图）
-│   │   ├── marketplace/      # 应用市场（驱动 / 物模板）
-│   │   ├── workspace/        # 工作空间（含知识资源）
-│   │   ├── mcp/              # 内嵌 MCP Server
-│   │   └── ...               # auth, chat, cron, jobs, open, system 等
-│   ├── shared/               # 跨模块组件（persistence, security, error_handling, utils）
+│   ├── modules/marketplace/  # 市场客户端（仅 HTTP DTO 契约，无编译期依赖）
+│   ├── shared/               # 组合层胶水（app_state, config, service_manager）
 │   ├── tests/                # 集成测试
 │   ├── lib.rs                # 库入口
-│   └── main.rs               # 程序入口
-├── migrations/               # 数据库迁移文件
-├── templates/                # 物模板
+│   └── server.rs             # Axum 服务器启动
+├── templates/                # 技能模板
 ├── Cargo.toml                # Rust 项目配置
 └── README.md                 # 后端说明
 ```
+
+业务领域代码位于 `crates/<domain>/`（thing, auth, user, tenant, event, alarm, driver,
+notify, agent, mcp, admin），每个领域 crate 暴露 `<Domain>State + router()`，由
+apps/cloud 组合挂载；数据库迁移位于 `crates/db/migrations/`。
 
 ### 前端目录结构 (web/)
 
@@ -510,7 +510,7 @@ async fn list_items(
 
 #### 添加新设备驱动
 
-1. 在 `crates/tinyiothub-runtime/src/driver/drivers/` 创建驱动文件
+1. 在 `crates/runtime/src/driver/drivers/` 创建驱动文件
 2. 实现 `DeviceDriver` trait
 3. 在 `mod.rs` 中注册驱动
 
@@ -595,8 +595,7 @@ export class ItemList extends LitElement {
 #### 代码格式化和检查
 
 ```bash
-# 后端
-cd cloud
+# 后端（仓库根目录对整个 workspace 生效）
 cargo fmt          # 格式化代码
 cargo check        # 检查代码
 cargo clippy       # 代码检查

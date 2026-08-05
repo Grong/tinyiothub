@@ -62,7 +62,7 @@
 - **What:** HeartbeatRunner 的定时巡检改为 TimerTrigger 的一种配置，统一巡检语义。
 - **Why:** 消除心跳与 Thing Agent Loop 两套巡检并存（spec R4）；X6 已架桥，迁徙是自然后续。
 - **Context:** 心跳 runner 本期不动（O2 裁决仅加投递出口）；迁徙时保留 TrustEngine 适配路径。
-- **Effort:** M (human: ~2d / CC: ~2h) | **Depends on:** Thing Agent Loop 稳定运行一个迭代
+- **Effort:** M (human: ~2d / CC: ~2h) | **Depends on:** Thing Agent Loop 稳定运行一个迭代；重组 P4（2026-08-05 已完成：heartbeat 已归 crates/agent 与 crates/driver）
 
 ### P3 — POST /agent/tasks 前端面板
 - **What:** 管理 API `POST /api/workspaces/{id}/agent/tasks` 的前端入口（自治任务提交面板）。
