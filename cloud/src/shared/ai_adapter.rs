@@ -64,6 +64,28 @@ impl AgentPoolLike for CloudAgentPoolAdapter {
     }
 }
 
+/// Adapter: tinyiothub_ai AiEventPublisher -> tinyiothub_alarm AlarmAiPublisher
+///
+/// Composition-side implementation of the alarm crate's outbound port
+/// (P4-Task19): `AlarmService` publishes significant alarms through
+/// `AlarmAiPublisher` so the alarm crate never names ai types; the edge stays
+/// one-way (ai → alarm for the `AlarmEvent` payload type).
+pub struct AlarmAiPublisherAdapter {
+    publisher: Arc<tinyiothub_ai::event::bus::AiEventPublisher>,
+}
+
+impl AlarmAiPublisherAdapter {
+    pub fn new(publisher: Arc<tinyiothub_ai::event::bus::AiEventPublisher>) -> Self {
+        Self { publisher }
+    }
+}
+
+impl tinyiothub_alarm::AlarmAiPublisher for AlarmAiPublisherAdapter {
+    fn publish_alarm_created(&self, event: tinyiothub_alarm::AlarmEvent) {
+        self.publisher.publish(tinyiothub_ai::event::types::AiEvent::AlarmCreated(event));
+    }
+}
+
 /// Map a streaming tool call to the heartbeat audit record. `device_id`
 /// (snake_case) wins over the legacy `deviceId` (camelCase) arg key; a missing
 /// result string becomes empty details rather than a lossy "null".

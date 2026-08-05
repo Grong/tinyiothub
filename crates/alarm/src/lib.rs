@@ -1,0 +1,73 @@
+//! TinyIoTHub alarm domain crate — alarm rules, alarm lifecycle, recent-alarm
+//! queries, and notification dispatch (P4-Task19).
+//!
+//! Extracted from `cloud::modules::alarm` per the Task 15 SEP. The crate never
+//! names the composition layer's `AppState`: handlers take `State<AlarmState>`
+//! and every router is generic over the composition state `S` with an
+//! `AlarmState: FromRef<S>` bound.
+//!
+//! One-way edges:
+//! - alarm → event: consumes `tinyiothub_event` types and implements
+//!   `router::EventAlarmHook` for `AlarmService` (`event_hook`); the event
+//!   ingest pipeline fires the hook after persisting a thing event.
+//! - ai → alarm: crates/ai consumes `types_ai::AlarmEvent` for
+//!   `AiEvent::AlarmCreated(..)`; the alarm crate never names ai types —
+//!   `AlarmService` publishes through the `types_ai::AlarmAiPublisher` port
+//!   and cloud's composition layer adapts `AiEventPublisher` to it
+//!   (`cloud::shared::ai_adapter::AlarmAiPublisherAdapter`).
+//!
+//! Boundary notes:
+//! - `NotificationChannelType` etc. come from `tinyiothub_event::aggregates`
+//!   (sunk to core in P4.0-Task13) — there is NO alarm → modules::notification
+//!   edge; the notification domain extraction (Task 21) reclaims
+//!   `cloud::modules::notification` independently.
+//! - `RecentAlarm` moved here from `cloud::modules::monitoring::types`
+//!   (the `/alarms/recent` handler was its only consumer).
+
+use std::sync::Arc;
+
+pub mod alarm;
+pub mod event_hook;
+pub mod event_matcher;
+pub mod handler;
+pub mod notification;
+pub mod repo;
+pub mod service;
+pub mod types;
+pub mod types_ai;
+
+// Note: `alarm::BatchOperationResult` duplicates `types::BatchOperationResult`
+// (pre-existing); only the types one is glob-exported, as before.
+pub use event_matcher::*;
+pub use repo::*;
+pub use service::*;
+pub use types::*;
+pub use types_ai::*;
+
+/// Alarm domain state slice — Arc'd services only, derived from the
+/// composition layer's `AppState` via `FromRef` (cloud/src/shared/app_state.rs).
+#[derive(Clone)]
+pub struct AlarmState {
+    pub alarm_service: Arc<service::AlarmService>,
+    /// Recent-alarm SQL and device-name lookups run directly on the pool.
+    pub database: Arc<tinyiothub_storage::Database>,
+}
+
+/// Alarms API router (`/alarms`), generic over the composition state `S`.
+pub fn router<S>() -> axum::Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AlarmState: axum::extract::FromRef<S>,
+{
+    handler::create_alarm_router()
+}
+
+/// Alarm rules API router (`/alarm-rules`), generic over the composition
+/// state `S`.
+pub fn rule_router<S>() -> axum::Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AlarmState: axum::extract::FromRef<S>,
+{
+    handler::create_alarm_rule_router()
+}

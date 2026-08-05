@@ -741,8 +741,8 @@ pub struct AlarmDto {
     pub created_at: String,
 }
 
-impl From<crate::modules::alarm::Alarm> for AlarmDto {
-    fn from(alarm: crate::modules::alarm::Alarm) -> Self {
+impl From<crate::Alarm> for AlarmDto {
+    fn from(alarm: crate::Alarm) -> Self {
         Self {
             id: alarm.id,
             device_id: alarm.device_id,
@@ -791,8 +791,8 @@ pub struct AlarmRuleDto {
     pub updated_at: String,
 }
 
-impl From<crate::modules::alarm::AlarmRule> for AlarmRuleDto {
-    fn from(rule: crate::modules::alarm::AlarmRule) -> Self {
+impl From<crate::AlarmRule> for AlarmRuleDto {
+    fn from(rule: crate::AlarmRule) -> Self {
         Self {
             id: rule.id,
             name: rule.name,
@@ -823,8 +823,8 @@ pub struct AlarmStatisticsDto {
     pub resolved_count: u64,
 }
 
-impl From<crate::modules::alarm::AlarmStatistics> for AlarmStatisticsDto {
-    fn from(stats: crate::modules::alarm::AlarmStatistics) -> Self {
+impl From<crate::AlarmStatistics> for AlarmStatisticsDto {
+    fn from(stats: crate::AlarmStatistics) -> Self {
         Self {
             total_count: stats.total_count,
             active_count: stats.active_count,
@@ -894,7 +894,7 @@ pub struct CreateAlarmRuleRequest {
     pub description: Option<String>,
     pub device_id: Option<String>,
     pub property_id: Option<String>,
-    pub rule_type: crate::modules::alarm::RuleType,
+    pub rule_type: crate::RuleType,
     pub condition: serde_json::Value,
     pub alarm_level: String,
     pub notification_config: serde_json::Value,
@@ -1471,7 +1471,7 @@ mod tests {
 
     #[test]
     fn test_alarm_statistics_dto_from() {
-        use crate::modules::alarm::AlarmStatistics;
+        use crate::AlarmStatistics;
         let stats = AlarmStatistics {
             total_count: 10,
             active_count: 3,
@@ -1537,4 +1537,24 @@ mod tests {
         // recovery_duration_secs defaults to 30s to prevent single-tick auto-resolve
         assert_eq!(config.recovery_duration_secs, Some(std::time::Duration::from_secs(30)));
     }
+}
+
+/// 最新告警信息 (moved from `cloud::modules::monitoring::types` in P4-Task19 —
+/// the alarm `/recent` HTTP handler was its only consumer)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecentAlarm {
+    /// 告警ID
+    pub id: String,
+    /// 设备ID
+    pub device_id: String,
+    /// 设备名称
+    pub device_name: String,
+    /// 告警级别
+    pub level: String,
+    /// 告警消息
+    pub message: String,
+    /// 创建时间
+    pub created_at: DateTime<Utc>,
+    /// 告警状态
+    pub status: String,
 }

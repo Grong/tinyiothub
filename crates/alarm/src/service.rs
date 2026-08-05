@@ -8,16 +8,13 @@ use std::{
 
 use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
-use tinyiothub_ai::{
-    alarm::types::AlarmEvent,
-    event::{bus::AiEventPublisher, types::AiEvent},
-};
 use tinyiothub_storage::cache::DeviceCache;
 
-use super::{
+use crate::{
     notification::NotificationDispatcher,
     repo::{AlarmQueryCriteria, AlarmRepository, AlarmRuleRepository, TimeRange},
     types::*,
+    types_ai::{AlarmAiPublisher, AlarmEvent},
 };
 use tinyiothub_event::{
     aggregates::NotificationChannelType, entities::Event, value_objects::EventType,
@@ -28,7 +25,7 @@ pub struct AlarmService {
     alarm_repository: Arc<dyn AlarmRepository>,
     rule_repository: Arc<dyn AlarmRuleRepository>,
     rule_engine: Arc<RuleEngine>,
-    event_publisher: Mutex<Option<Arc<AiEventPublisher>>>,
+    event_publisher: Mutex<Option<Arc<dyn AlarmAiPublisher>>>,
     device_cache: std::sync::OnceLock<Arc<DeviceCache>>,
 }
 
@@ -47,7 +44,7 @@ impl AlarmService {
         }
     }
 
-    pub fn set_event_publisher(&self, publisher: Arc<AiEventPublisher>) {
+    pub fn set_event_publisher(&self, publisher: Arc<dyn AlarmAiPublisher>) {
         *self.event_publisher.lock().unwrap() = Some(publisher);
     }
 
@@ -75,7 +72,7 @@ impl AlarmService {
             created_at: alarm.alarm_time,
         };
         if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
-            publisher.publish(AiEvent::AlarmCreated(ai_alarm));
+            publisher.publish_alarm_created(ai_alarm);
         }
     }
 
@@ -1106,7 +1103,7 @@ impl AlarmEventHandler {
 }
 
 #[async_trait::async_trait]
-impl crate::shared::event::EventHandler for AlarmEventHandler {
+impl tinyiothub_core::event::EventHandler for AlarmEventHandler {
     #[allow(clippy::collapsible_if)]
     async fn handle(&self, event: &Event) -> tinyiothub_core::error::Result<()> {
         let result = self
@@ -1198,7 +1195,7 @@ mod tests {
     use tinyiothub_storage::sqlite::Database;
 
     use super::*;
-    use crate::modules::alarm::repo::SqliteAlarmRuleRepository;
+    use crate::repo::SqliteAlarmRuleRepository;
 
     async fn setup_test_db(pool: &sqlx::SqlitePool) {
         sqlx::query("PRAGMA foreign_keys = OFF").execute(pool).await.unwrap();
@@ -2026,7 +2023,7 @@ mod integration_tests {
     use tinyiothub_storage::sqlite::Database;
 
     use super::*;
-    use crate::modules::alarm::repo::{SqliteAlarmRepository, SqliteAlarmRuleRepository};
+    use crate::repo::{SqliteAlarmRepository, SqliteAlarmRuleRepository};
 
     async fn setup_full_schema(pool: &sqlx::SqlitePool) {
         sqlx::query("PRAGMA foreign_keys = OFF").execute(pool).await.unwrap();

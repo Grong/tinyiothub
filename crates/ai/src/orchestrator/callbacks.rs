@@ -825,7 +825,7 @@ pub(crate) mod tests {
         );
 
         // Non-critical alarm should not trigger heartbeat signal
-        let alarm = AiEvent::AlarmCreated(crate::alarm::types::AlarmEvent {
+        let alarm = AiEvent::AlarmCreated(tinyiothub_alarm::AlarmEvent {
             id: "a1".into(),
             workspace_id: "ws_1".into(),
             device_id: "d1".into(),

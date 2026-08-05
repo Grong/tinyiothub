@@ -8,16 +8,15 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
 
+use tinyiothub_alarm::{
+    AlarmCondition, AlarmLevel, AlarmQueryCriteria, AlarmRule, AlarmStatus, NotificationConfig,
+    SortOrder, TimeRange,
+};
+
 use crate::{
-    modules::{
-        alarm::{
-            AlarmCondition, AlarmLevel, AlarmQueryCriteria, AlarmRule, AlarmStatus,
-            NotificationConfig, SortOrder, TimeRange,
-        },
-        mcp::{
-            handlers::get_mcp_context,
-            tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler},
-        },
+    modules::mcp::{
+        handlers::get_mcp_context,
+        tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler},
     },
     shared::app_state::AppState,
 };
@@ -215,7 +214,7 @@ impl ToolHandler for AlarmListHandler {
 
         let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;
 
-        let alarms: Vec<crate::modules::alarm::types::AlarmDto> =
+        let alarms: Vec<tinyiothub_alarm::AlarmDto> =
             result.into_iter().map(|a| a.into()).collect();
 
         Ok(serde_json::json!({
@@ -463,11 +462,11 @@ impl ToolHandler for AlarmRuleAddHandler {
         };
 
         let rule_type = match input.rule_type.as_str() {
-            "threshold" => crate::modules::alarm::RuleType::Threshold,
-            "range" => crate::modules::alarm::RuleType::Range,
-            "change" => crate::modules::alarm::RuleType::Change,
-            "duration" => crate::modules::alarm::RuleType::Duration,
-            "composite" => crate::modules::alarm::RuleType::Composite,
+            "threshold" => tinyiothub_alarm::RuleType::Threshold,
+            "range" => tinyiothub_alarm::RuleType::Range,
+            "change" => tinyiothub_alarm::RuleType::Change,
+            "duration" => tinyiothub_alarm::RuleType::Duration,
+            "composite" => tinyiothub_alarm::RuleType::Composite,
             _ => {
                 return Err(ToolError::InvalidParams(format!(
                     "Invalid rule type: {}",

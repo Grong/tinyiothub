@@ -2,16 +2,14 @@
 //!
 //! Keeps the edge one-way (alarm → event): the event ingest pipeline calls
 //! this hook after persisting a thing event; the event crate never names
-//! alarm types.
-//!
-//! Reclaim task: Task 19 (alarm crate extraction) moves this impl into the
-//! alarm crate.
+//! alarm types. Moved from `cloud::modules::alarm::event_hook` in P4-Task19
+//! (this file is the alarm side of the seam Task 18 cut).
 
 use async_trait::async_trait;
 use tinyiothub_core::models::event::EventLevel;
 use tinyiothub_event::router::EventAlarmHook;
 
-use super::service::AlarmService;
+use crate::service::AlarmService;
 
 #[async_trait]
 impl EventAlarmHook for AlarmService {

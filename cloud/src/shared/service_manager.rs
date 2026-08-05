@@ -90,10 +90,10 @@ impl ServiceManager {
 
         // 注册报警事件处理器 - 评估报警规则并创建报警
         let notification_dispatcher =
-            Arc::new(crate::modules::alarm::notification::NotificationDispatcher::new(
+            Arc::new(tinyiothub_alarm::notification::NotificationDispatcher::new(
                 app_state.database.clone(),
             ));
-        let alarm_handler = Arc::new(crate::modules::alarm::AlarmEventHandler::new(
+        let alarm_handler = Arc::new(tinyiothub_alarm::AlarmEventHandler::new(
             app_state.alarm_service.clone(),
             notification_dispatcher,
         ));
@@ -166,7 +166,9 @@ impl ServiceManager {
                 ));
 
             // Wire event publisher to services that need cross-domain dispatching
-            app_state.alarm_service.set_event_publisher(event_publisher.clone());
+            app_state.alarm_service.set_event_publisher(Arc::new(
+                crate::shared::ai_adapter::AlarmAiPublisherAdapter::new(event_publisher.clone()),
+            ));
             app_state.workspace_service.set_event_publisher(event_publisher.clone());
             app_state.workspace_service.set_heartbeat_task_repo(heartbeat_task_repo.clone());
             app_state.workspace_service.set_agent_hooks(app_state.agent_hooks.clone());

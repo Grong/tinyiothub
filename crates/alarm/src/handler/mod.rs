@@ -7,29 +7,23 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
-use tinyiothub_auth::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::error_handling::ErrorCode;
+use tinyiothub_web::middleware::workspace::AuthClaims;
+use tinyiothub_web::response::{
+    ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo,
+};
 
-use super::{
+use crate::{
+    AlarmState,
     repo::{AlarmQueryCriteria, SortOrder, TimeRange},
     types::*,
 };
-use crate::{
-    modules::{
-        alarm::types::{
-            AlarmDto, AlarmRuleDto, AlarmStatisticsDto, CreateAlarmRuleRequest,
-            StatisticsQueryParams, ToggleRuleRequest, UpdateAlarmRuleRequest,
-        },
-        monitoring::types::RecentAlarm,
-    },
-    shared::{
-        api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
-        app_state::AppState,
-        error_handling::ErrorCode,
-    },
-};
 
-pub fn create_alarm_router() -> Router<AppState> {
+pub fn create_alarm_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AlarmState: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/", get(list_alarms))
         .route("/statistics", get(get_alarm_statistics))
@@ -41,7 +35,11 @@ pub fn create_alarm_router() -> Router<AppState> {
         .route("/batch/resolve", post(batch_resolve_alarms))
 }
 
-pub fn create_alarm_rule_router() -> Router<AppState> {
+pub fn create_alarm_rule_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AlarmState: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/", get(list_alarm_rules))
         .route("/", post(create_alarm_rule))
@@ -57,8 +55,8 @@ pub fn create_alarm_rule_router() -> Router<AppState> {
 
 async fn list_alarms(
     Query(params): Query<std::collections::HashMap<String, String>>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<AlarmState>,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<PaginatedResponse<AlarmDto>>> {
     let get_csv = |key: &str| -> Option<Vec<String>> {
         params
@@ -98,7 +96,7 @@ async fn list_alarms(
     });
 
     let criteria = AlarmQueryCriteria {
-        workspace_id: Some(claims.workspace_id.clone()),
+        workspace_id: Some(claims.0.workspace_id.clone()),
         device_ids: get_csv("device_ids"),
         property_ids: None,
         alarm_levels,
@@ -122,7 +120,7 @@ async fn list_alarms(
             };
             let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;
 
-            let pool = state.db_pool();
+            let pool = state.database.pool().clone();
             let device_names = load_device_names_map(&pool, &alarms).await;
             let data: Vec<AlarmDto> = alarms
                 .into_iter()
@@ -144,10 +142,10 @@ async fn list_alarms(
 
 async fn get_alarm(
     Path(id): Path<String>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<AlarmState>,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<AlarmDto>> {
-    match state.alarm_service.get_alarm_by_id(&id, Some(&claims.workspace_id)).await {
+    match state.alarm_service.get_alarm_by_id(&id, Some(&claims.0.workspace_id)).await {
         Ok(Some(alarm)) => ApiResponseBuilder::success(AlarmDto::from(alarm)),
         Ok(None) => ApiResponseBuilder::error_with_code(ErrorCode::NotFound.as_i32(), "报警不存在"),
         Err(e) => ApiResponseBuilder::error(format!("获取报警失败: {}", e)),
@@ -156,8 +154,8 @@ async fn get_alarm(
 
 async fn get_alarm_statistics(
     Query(params): Query<StatisticsQueryParams>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<AlarmState>,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<AlarmStatisticsDto>> {
     let start = params
         .start_time
@@ -173,7 +171,7 @@ async fn get_alarm_statistics(
 
     let time_range = TimeRange { start, end };
 
-    match state.alarm_service.get_alarm_statistics(time_range, &claims.workspace_id).await {
+    match state.alarm_service.get_alarm_statistics(time_range, &claims.0.workspace_id).await {
         Ok(stats) => ApiResponseBuilder::success(AlarmStatisticsDto::from(stats)),
         Err(e) => ApiResponseBuilder::error(format!("获取统计失败: {}", e)),
     }
@@ -191,14 +189,14 @@ pub struct RecentAlarmsQuery {
 }
 
 async fn get_recent_alarms(
-    State(state): State<AppState>,
+    State(state): State<AlarmState>,
     Query(query): Query<RecentAlarmsQuery>,
-    claims: Claims,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<RecentAlarm>>> {
-    let db = tinyiothub_storage::sqlite::Database::new(state.db_pool());
+    let db = tinyiothub_storage::sqlite::Database::new(state.database.pool().clone());
     let limit = query.limit.unwrap_or(10);
 
-    match get_recent_alarms_list(&db, limit, Some(&claims.workspace_id)).await {
+    match get_recent_alarms_list(&db, limit, Some(&claims.0.workspace_id)).await {
         Ok(alarms) => ApiResponseBuilder::success(alarms),
         Err(e) => {
             tracing::error!("获取最新告警列表失败: {}", e);
@@ -210,7 +208,7 @@ async fn get_recent_alarms(
 /// Batch load device names for a list of alarms.
 async fn load_device_names_map(
     pool: &sqlx::Pool<sqlx::Sqlite>,
-    alarms: &[crate::modules::alarm::Alarm],
+    alarms: &[crate::types::Alarm],
 ) -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
     if alarms.is_empty() {
@@ -342,13 +340,13 @@ pub struct RuleQueryParams {
 
 async fn list_alarm_rules(
     Query(params): Query<RuleQueryParams>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<AlarmState>,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<AlarmRuleDto>>> {
     let rules = if let Some(device_id) = params.device_id {
-        state.alarm_service.get_rules_by_device(&device_id, &claims.workspace_id).await
+        state.alarm_service.get_rules_by_device(&device_id, &claims.0.workspace_id).await
     } else {
-        state.alarm_service.get_all_rules(&claims.workspace_id).await
+        state.alarm_service.get_all_rules(&claims.0.workspace_id).await
     };
 
     match rules {
@@ -362,13 +360,13 @@ async fn list_alarm_rules(
 
 async fn get_alarm_rule(
     Path(id): Path<String>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<AlarmState>,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<AlarmRuleDto>> {
     match state.alarm_service.get_rule_by_id(&id).await {
         Ok(Some(rule)) => {
             if let Some(ref rule_ws) = rule.workspace_id
-                && rule_ws != &claims.workspace_id
+                && rule_ws != &claims.0.workspace_id
             {
                 return ApiResponseBuilder::error_with_code(
                     ErrorCode::NotFound.as_i32(),
@@ -383,8 +381,8 @@ async fn get_alarm_rule(
 }
 
 async fn create_alarm_rule(
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<AlarmState>,
+    claims: AuthClaims,
     Json(req): Json<CreateAlarmRuleRequest>,
 ) -> Json<ApiResponse<AlarmRuleDto>> {
     let alarm_level = match AlarmLevel::parse_str(&req.alarm_level) {
@@ -412,7 +410,7 @@ async fn create_alarm_rule(
         condition,
         alarm_level,
         notification_config,
-        claims.workspace_id.clone(),
+        claims.0.workspace_id.clone(),
     ) {
         Ok(r) => r,
         Err(e) => return ApiResponseBuilder::error(format!("创建规则失败: {}", e)),
@@ -425,8 +423,8 @@ async fn create_alarm_rule(
 }
 
 async fn update_alarm_rule(
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<AlarmState>,
+    claims: AuthClaims,
     Path(id): Path<String>,
     Json(req): Json<UpdateAlarmRuleRequest>,
 ) -> Json<ApiResponse<AlarmRuleDto>> {
@@ -437,7 +435,7 @@ async fn update_alarm_rule(
     };
 
     if let Some(ref rule_ws) = rule.workspace_id
-        && rule_ws != &claims.workspace_id
+        && rule_ws != &claims.0.workspace_id
     {
         return ApiResponseBuilder::error_with_code(404, "规则不存在");
     }
@@ -458,7 +456,7 @@ async fn update_alarm_rule(
         return ApiResponseBuilder::error(format!("更新规则失败: {}", e));
     }
 
-    match state.alarm_service.update_rule(rule.clone(), Some(&claims.workspace_id)).await {
+    match state.alarm_service.update_rule(rule.clone(), Some(&claims.0.workspace_id)).await {
         Ok(()) => ApiResponseBuilder::success(AlarmRuleDto::from(rule)),
         Err(e) => ApiResponseBuilder::error(format!("保存规则失败: {}", e)),
     }
@@ -466,24 +464,24 @@ async fn update_alarm_rule(
 
 async fn delete_alarm_rule(
     Path(id): Path<String>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<AlarmState>,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<()>> {
     // Verify workspace ownership before delete (DB-level WHERE clause enforces isolation)
-    match state.alarm_service.delete_rule(&id, Some(&claims.workspace_id)).await {
+    match state.alarm_service.delete_rule(&id, Some(&claims.0.workspace_id)).await {
         Ok(()) => ApiResponseBuilder::success(()),
         Err(e) => ApiResponseBuilder::error(format!("删除规则失败: {}", e)),
     }
 }
 
 async fn toggle_alarm_rule(
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<AlarmState>,
+    claims: AuthClaims,
     Path(id): Path<String>,
     Json(req): Json<ToggleRuleRequest>,
 ) -> Json<ApiResponse<()>> {
     // Verify workspace ownership before toggle (DB-level WHERE clause enforces isolation)
-    match state.alarm_service.set_rule_enabled(&id, req.enabled, Some(&claims.workspace_id)).await {
+    match state.alarm_service.set_rule_enabled(&id, req.enabled, Some(&claims.0.workspace_id)).await {
         Ok(()) => ApiResponseBuilder::success(()),
         Err(e) => ApiResponseBuilder::error(format!("切换规则状态失败: {}", e)),
     }
@@ -495,11 +493,11 @@ async fn toggle_alarm_rule(
 
 async fn acknowledge_alarm(
     Path(id): Path<String>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<AlarmState>,
+    claims: AuthClaims,
     Json(req): Json<AcknowledgeAlarmRequest>,
 ) -> Json<ApiResponse<()>> {
-    match state.alarm_service.get_alarm_by_id(&id, Some(&claims.workspace_id)).await {
+    match state.alarm_service.get_alarm_by_id(&id, Some(&claims.0.workspace_id)).await {
         Ok(Some(alarm)) => {
             if !alarm.can_acknowledge() {
                 return ApiResponseBuilder::error_with_code(
@@ -514,7 +512,7 @@ async fn acknowledge_alarm(
 
     match state
         .alarm_service
-        .acknowledge_alarm(&id, claims.user_id, &claims.workspace_id, req.note)
+        .acknowledge_alarm(&id, claims.0.user_id, &claims.0.workspace_id, req.note)
         .await
     {
         Ok(()) => ApiResponseBuilder::success(()),
@@ -524,8 +522,8 @@ async fn acknowledge_alarm(
 
 async fn resolve_alarm(
     Path(id): Path<String>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<AlarmState>,
+    claims: AuthClaims,
     Json(req): Json<ResolveAlarmRequest>,
 ) -> Json<ApiResponse<()>> {
     let resolution_type = match req.resolution_type.parse() {
@@ -533,7 +531,7 @@ async fn resolve_alarm(
         Err(_) => return ApiResponseBuilder::error("无效的解决方式"),
     };
 
-    match state.alarm_service.get_alarm_by_id(&id, Some(&claims.workspace_id)).await {
+    match state.alarm_service.get_alarm_by_id(&id, Some(&claims.0.workspace_id)).await {
         Ok(Some(alarm)) => {
             if !alarm.can_resolve() {
                 return ApiResponseBuilder::error_with_code(409, "告警已解决，无法重复操作");
@@ -545,7 +543,7 @@ async fn resolve_alarm(
 
     match state
         .alarm_service
-        .resolve_alarm(&id, claims.user_id, &claims.workspace_id, resolution_type, req.note)
+        .resolve_alarm(&id, claims.0.user_id, &claims.0.workspace_id, resolution_type, req.note)
         .await
     {
         Ok(()) => ApiResponseBuilder::success(()),
@@ -554,8 +552,8 @@ async fn resolve_alarm(
 }
 
 async fn batch_acknowledge_alarms(
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<AlarmState>,
+    claims: AuthClaims,
     Json(req): Json<BatchAcknowledgeRequest>,
 ) -> Json<ApiResponse<BatchOperationResult>> {
     if req.alarm_ids.is_empty() {
@@ -568,7 +566,7 @@ async fn batch_acknowledge_alarms(
     let total = req.alarm_ids.len();
     match state
         .alarm_service
-        .batch_acknowledge(req.alarm_ids, claims.user_id, &claims.workspace_id)
+        .batch_acknowledge(req.alarm_ids, claims.0.user_id, &claims.0.workspace_id)
         .await
     {
         Ok(count) => ApiResponseBuilder::success(BatchOperationResult {
@@ -580,8 +578,8 @@ async fn batch_acknowledge_alarms(
 }
 
 async fn batch_resolve_alarms(
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<AlarmState>,
+    claims: AuthClaims,
     Json(req): Json<BatchResolveRequest>,
 ) -> Json<ApiResponse<BatchOperationResult>> {
     if req.alarm_ids.is_empty() {
@@ -599,7 +597,7 @@ async fn batch_resolve_alarms(
     let total = req.alarm_ids.len();
     match state
         .alarm_service
-        .batch_resolve(req.alarm_ids, claims.user_id, &claims.workspace_id, resolution_type)
+        .batch_resolve(req.alarm_ids, claims.0.user_id, &claims.0.workspace_id, resolution_type)
         .await
     {
         Ok(count) => ApiResponseBuilder::success(BatchOperationResult {

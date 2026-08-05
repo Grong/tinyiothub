@@ -103,7 +103,7 @@ pub struct AppState {
     pub real_time_event_repository: Arc<dyn RealTimeEventRepository>,
 
     /// 报警服务 - 报警规则和报警管理
-    pub alarm_service: Arc<crate::modules::alarm::AlarmService>,
+    pub alarm_service: Arc<tinyiothub_alarm::AlarmService>,
 
     /// Agent Pool — central agent lifecycle manager
     pub agent_pool: Arc<AgentPool>,
@@ -208,10 +208,10 @@ impl AppState {
 
         // 创建报警服务
         let alarm_repository =
-            Arc::new(crate::modules::alarm::SqliteAlarmRepository::new(database.clone()));
+            Arc::new(tinyiothub_alarm::SqliteAlarmRepository::new(database.clone()));
         let alarm_rule_repository =
-            Arc::new(crate::modules::alarm::SqliteAlarmRuleRepository::new(database.clone()));
-        let alarm_service = Arc::new(crate::modules::alarm::AlarmService::new(
+            Arc::new(tinyiothub_alarm::SqliteAlarmRuleRepository::new(database.clone()));
+        let alarm_service = Arc::new(tinyiothub_alarm::AlarmService::new(
             alarm_repository.clone(),
             alarm_rule_repository,
         ));
@@ -1046,6 +1046,15 @@ impl axum::extract::FromRef<AppState> for tinyiothub_event::EventState {
         tinyiothub_event::EventState {
             event_repository: state.event_repository.clone(),
             real_time_event_repository: state.real_time_event_repository.clone(),
+        }
+    }
+}
+
+impl axum::extract::FromRef<AppState> for tinyiothub_alarm::AlarmState {
+    fn from_ref(state: &AppState) -> Self {
+        tinyiothub_alarm::AlarmState {
+            alarm_service: state.alarm_service.clone(),
+            database: state.database.clone(),
         }
     }
 }

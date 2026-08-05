@@ -169,6 +169,7 @@ auth = { path = "crates/auth" }
 user = { path = "crates/user" }
 tenant = { path = "crates/tenant" }
 event = { path = "crates/event" }
+alarm = { path = "crates/alarm" }
 
 [profile.release]
 opt-level = 2

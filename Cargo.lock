@@ -86,6 +86,7 @@ dependencies = [
 name = "ai"
 version = "0.4.6"
 dependencies = [
+ "alarm",
  "anyhow",
  "async-trait",
  "chrono",
@@ -110,6 +111,27 @@ dependencies = [
  "uuid",
  "zeroclaw-api",
  "zeroclawlabs",
+]
+
+[[package]]
+name = "alarm"
+version = "0.4.6"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "core",
+ "dashmap",
+ "db",
+ "event",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+ "web",
 ]
 
 [[package]]
@@ -6049,6 +6071,7 @@ version = "0.4.6"
 dependencies = [
  "aes-gcm",
  "ai",
+ "alarm",
  "anyhow",
  "async-stream",
  "async-trait",

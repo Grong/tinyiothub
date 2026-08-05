@@ -78,22 +78,3 @@ pub struct QuickDevice {
     /// 设备类型
     pub device_type: String,
 }
-
-/// 最新告警信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RecentAlarm {
-    /// 告警ID
-    pub id: String,
-    /// 设备ID
-    pub device_id: String,
-    /// 设备名称
-    pub device_name: String,
-    /// 告警级别
-    pub level: String,
-    /// 告警消息
-    pub message: String,
-    /// 创建时间
-    pub created_at: DateTime<Utc>,
-    /// 告警状态
-    pub status: String,
-}

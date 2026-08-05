@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::alarm::types::AlarmEvent;
+use tinyiothub_alarm::AlarmEvent;
 use crate::heartbeat::types::HeartbeatResult;
 use tinyiothub_llm::session::types::ChatTurnMessage;
 

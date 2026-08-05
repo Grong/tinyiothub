@@ -1,7 +1,6 @@
 //! AI subsystem for TinyIoTHub — agents, heartbeat, alarms, orchestration
 
 pub mod agent;
-pub mod alarm;
 pub mod event;
 pub mod heartbeat;
 pub mod orchestrator;

@@ -14,15 +14,12 @@ use tinyiothub_core::models::event::{
 };
 use tinyiothub_storage::Database;
 
-use crate::{
-    modules::{
-        alarm::{
-            AlarmRepository, AlarmRuleRepository, AlarmService, SqliteAlarmRepository,
-            SqliteAlarmRuleRepository,
-        },
-    },
-    test_utils::seed_test_workspace,
+use tinyiothub_alarm::{
+    AlarmRepository, AlarmRuleRepository, AlarmService, SqliteAlarmRepository,
+    SqliteAlarmRuleRepository,
 };
+
+use crate::test_utils::seed_test_workspace;
 use tinyiothub_event::{
     bus::ThingEventBus,
     repositories::RealTimeEventRepository,
