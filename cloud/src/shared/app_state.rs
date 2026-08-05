@@ -6,6 +6,11 @@ use tinyiothub_storage::{Database, DeviceRepositoryFactory, cache::DeviceCache};
 use tinyiothub_thing::template::{TemplateEngine, TemplateRepository, TemplateValidator};
 use tokio::sync::OnceCell;
 
+use tinyiothub_event::{
+    repositories::{EventRepository, RealTimeEventRepository},
+    sqlite_event::SqliteEventRepository,
+    sqlite_real_time_event::SqliteRealTimeEventRepository,
+};
 use crate::{
     modules::{
         agent::agent::AgentPool,
@@ -14,11 +19,6 @@ use crate::{
             performance_service::DevicePerformanceService, query_service::DeviceQueryService,
             service::DeviceService, trace_repository::DeviceTraceRepository,
             trace_service::DeviceTraceService,
-        },
-        event::{
-            repositories::{EventRepository, RealTimeEventRepository},
-            sqlite_event::SqliteEventRepository,
-            sqlite_real_time_event::SqliteRealTimeEventRepository,
         },
         notification::{
             NotificationManager,
@@ -154,7 +154,7 @@ pub struct AppState {
     pub mqtt_client: Option<Arc<crate::shared::mqtt_client::PlatformMqttClient>>,
 
     /// 全局物事件广播总线（T6）—— thing-agent loop 经此订阅事件信号
-    pub thing_event_bus: Arc<crate::modules::event::bus::ThingEventBus>,
+    pub thing_event_bus: Arc<tinyiothub_event::bus::ThingEventBus>,
 
     /// 用户指令投递入口（T14）—— HTTP 端点 / chat 工具经此向
     /// thing-agent loop 投递 WakeSignal。T15 用 ThingAgentManager 实现
@@ -382,8 +382,8 @@ impl AppState {
         let mqtt_port = config.mqtt.primary.port;
         let mqtt_username = config.mqtt.primary.username.clone().unwrap_or_default();
         let mqtt_password = config.mqtt.primary.password.clone().unwrap_or_default();
-        let throttle_state = Arc::new(crate::modules::event::router::ThrottleState::new(60));
-        let thing_event_bus = Arc::new(crate::modules::event::bus::ThingEventBus::new());
+        let throttle_state = Arc::new(tinyiothub_event::router::ThrottleState::new(60));
+        let thing_event_bus = Arc::new(tinyiothub_event::bus::ThingEventBus::new());
         let mqtt_db_pool = database.pool().clone();
         let mqtt_client = Arc::new(crate::shared::mqtt_client::PlatformMqttClient::new(
             &mqtt_broker,
@@ -1041,6 +1041,15 @@ impl tinyiothub_tenant::TagSuggester for MinimaxTagSuggester {
 /// AppState. `jwt_secret` / `tag_suggester` are derived from the
 /// process-global config at extraction time — identical semantics to the
 /// former per-request `config::get()` reads (set once at startup).
+impl axum::extract::FromRef<AppState> for tinyiothub_event::EventState {
+    fn from_ref(state: &AppState) -> Self {
+        tinyiothub_event::EventState {
+            event_repository: state.event_repository.clone(),
+            real_time_event_repository: state.real_time_event_repository.clone(),
+        }
+    }
+}
+
 impl axum::extract::FromRef<AppState> for tinyiothub_tenant::TenantState {
     fn from_ref(state: &AppState) -> Self {
         let settings = crate::shared::config::get();

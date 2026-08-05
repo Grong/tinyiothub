@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use sqlx::Row;
 use tinyiothub_storage::Database;
 
-use crate::modules::event::{
+use crate::{
     Result,
     entities::Event,
     repositories::{
@@ -236,7 +236,7 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
         if result.rows_affected() == 0 {
             // Event not found in this workspace (missing or cross-tenant) —
             // surface it instead of silently pretending the ack worked
-            return Err(crate::modules::event::EventError::NotFound {
+            return Err(crate::EventError::NotFound {
                 id: format!("{} (in workspace)", id),
             });
         }
@@ -363,7 +363,7 @@ impl SqliteRealTimeEventRepository {
 
         let id = EventId::from_string(id_str);
         let event_type: EventType = serde_json::from_str(&event_subtype_str).map_err(|e| {
-            crate::modules::event::EventError::Validation { message: e.to_string() }
+            crate::EventError::Validation { message: e.to_string() }
         })?;
         let level = EventLevel::from_numeric(event_level_int).unwrap_or(EventLevel::Info);
         let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)

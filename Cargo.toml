@@ -168,6 +168,7 @@ thing = { path = "crates/thing" }
 auth = { path = "crates/auth" }
 user = { path = "crates/user" }
 tenant = { path = "crates/tenant" }
+event = { path = "crates/event" }
 
 [profile.release]
 opt-level = 2

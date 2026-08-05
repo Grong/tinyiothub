@@ -10,10 +10,8 @@ use axum::response::Response;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info};
 
-use crate::{
-    modules::event::entities::Event,
-    shared::event::channels::sse_channel::{SseMessage, SseNotificationChannel},
-};
+use crate::shared::event::channels::sse_channel::{SseMessage, SseNotificationChannel};
+use tinyiothub_event::entities::Event;
 
 /// SSE Connection Manager
 ///
@@ -127,7 +125,7 @@ impl SseConnectionManager {
 
             // Extract new_value from content elements (look for "Current value: X")
             for element in event.content().elements() {
-                if let crate::modules::event::ContentElement::Text { content, .. } = element
+                if let tinyiothub_event::ContentElement::Text { content, .. } = element
                     && let Some(val) = content.strip_prefix("Current value: ")
                 {
                     data["new_value"] = serde_json::Value::String(val.to_string());

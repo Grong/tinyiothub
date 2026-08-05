@@ -1,8 +1,20 @@
-// Event module — 3-layer architecture
-// types: DTOs and query types
-// repo:  repository traits
-// service: aggregates, specifications, business logic
-// handler: HTTP routes
+// Event domain crate — extracted from cloud/src/modules/event (P4-Task18).
+//
+// Owns: event entity/DTO types, repository traits + SQLite impls, domain
+// services (aggregates, specifications), the thing-event ingest pipeline
+// (`router::route_thing_event` with throttle + persist + broadcast), the
+// in-process `bus::ThingEventBus`, and the query/overview/real-time HTTP API.
+//
+// Boundary (stays in cloud, reclaimed by the future notify/security-plane
+// extraction): the event security plane and SSE manager live in
+// `cloud::shared::event` (entangled with the notification module, not yet
+// extracted), so the `/events/security/*` and `/events/sse*` HTTP routes stay
+// there too (`cloud::shared::event::http`).
+//
+// One-way edges carried here: alarm → event (via `router::EventAlarmHook`,
+// injected by the composition layer), notify → event (notify consumes event
+// types), agent → event (`bus::ThingEventSignal` consumed by the thing-agent
+// loop in crates/ai).
 
 pub mod bus;
 pub mod errors;
@@ -13,6 +25,8 @@ pub mod service;
 pub mod sqlite_event;
 pub mod sqlite_real_time_event;
 pub mod types;
+
+use std::sync::Arc;
 
 // Backward compatibility: re-export core types as submodules
 pub mod entities {
@@ -63,8 +77,10 @@ impl From<&str> for EventError {
     }
 }
 
-impl From<crate::shared::error::Error> for EventError {
-    fn from(err: crate::shared::error::Error) -> Self {
+// Was `From<crate::shared::error::Error>` in cloud — that type is a re-export
+// of core's error, so the impl moves here unchanged.
+impl From<tinyiothub_core::error::Error> for EventError {
+    fn from(err: tinyiothub_core::error::Error) -> Self {
         EventError::Gateway(err.to_string())
     }
 }
@@ -102,3 +118,23 @@ pub use errors::{
     DomainError, DomainResult, EventDomainError, EventServiceDomainError, NotificationDomainError,
     PerformanceDomainError, SecurityDomainError,
 };
+
+/// State slice the event HTTP handlers need from the composition layer.
+#[derive(Clone)]
+pub struct EventState {
+    pub event_repository: Arc<dyn repo::EventRepository>,
+    pub real_time_event_repository: Arc<dyn repo::RealTimeEventRepository>,
+}
+
+/// Events API router, generic over the composition state `S`.
+///
+/// Handlers extract `State<EventState>`, which axum derives from `S` via
+/// `FromRef`. The security/SSE sub-routes are NOT here — see the crate-level
+/// boundary note.
+pub fn router<S>() -> axum::Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    EventState: axum::extract::FromRef<S>,
+{
+    handler::create_router()
+}

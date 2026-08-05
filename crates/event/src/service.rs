@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::modules::event::{
+use crate::{
     EventError, Result,
     entities::Event,
     errors::{DomainResult, EventDomainError, EventServiceDomainError},
@@ -346,20 +346,6 @@ impl EventService {
             .validate_for_persistence()
             .map_err(|e| EventDomainError::validation(e.to_string()))?;
         Ok(aggregate)
-    }
-
-    pub fn process_event_for_notifications(
-        &self,
-        event: &Event,
-        notification_rules: &[tinyiothub_core::notification_types::NotificationRuleRef],
-    ) -> DomainResult<Vec<String>> {
-        let mut matching_rules = Vec::new();
-        for rule_ref in notification_rules {
-            if rule_ref.matches_event(&event.event_type().to_string(), &event.level()) {
-                matching_rules.push(rule_ref.id.clone());
-            }
-        }
-        Ok(matching_rules)
     }
 
     pub fn get_processing_priority(&self, event: &Event) -> u8 {

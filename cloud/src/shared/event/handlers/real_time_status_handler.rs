@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
-use crate::{
-    modules::event::{entities::Event, repositories::RealTimeEventRepository},
-    shared::event::EventHandler,
-};
+use crate::shared::event::EventHandler;
+use tinyiothub_event::{entities::Event, repositories::RealTimeEventRepository};
 
 /// 实时状态处理器
 ///

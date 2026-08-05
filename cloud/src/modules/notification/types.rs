@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::modules::event::{
+use tinyiothub_event::{
     EventError, Result,
     value_objects::{EventId, EventLevel},
 };
@@ -218,17 +218,6 @@ impl NotificationAggregate {
 
     pub fn rule(&self) -> &NotificationRule {
         &self.rule
-    }
-
-    /// Conversion boundary (P4.0-Task13): produce the slim core view the event
-    /// domain consumes for rule matching, so event never imports this aggregate.
-    pub fn rule_ref(&self) -> tinyiothub_core::notification_types::NotificationRuleRef {
-        tinyiothub_core::notification_types::NotificationRuleRef {
-            id: self.rule.id.clone(),
-            enabled: self.rule.enabled,
-            event_type: self.rule.event_type.clone(),
-            event_level: self.rule.event_level,
-        }
     }
 
     pub fn records(&self) -> &[NotificationRecord] {
@@ -613,7 +602,7 @@ pub fn device_filter_to_json(filter: &DeviceFilterRequest) -> serde_json::Value 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::event::value_objects::EventId;
+    use tinyiothub_event::value_objects::EventId;
 
     #[test]
     fn test_create_notification_aggregate() {

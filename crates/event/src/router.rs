@@ -7,13 +7,30 @@ use std::{
 use chrono::Utc;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use tinyiothub_ai::thing_agent::ThingEventSignal;
 use tinyiothub_core::models::event::{EventId, EventLevel, EventSource};
 
-use super::bus::ThingEventBus;
-use crate::modules::alarm::service::AlarmService;
+use super::bus::{ThingEventBus, ThingEventSignal};
 
 // ── Core types ──────────────────────────────────────────────────
+
+/// Outbound hook the event pipeline fires after persisting a thing event so
+/// event-based alarm rules can be evaluated.
+///
+/// The alarm domain owns the implementation (`AlarmService`); the composition
+/// layer injects it, keeping the edge one-way (alarm → event). The event
+/// crate never names alarm types. Task 19 (alarm crate extraction) reclaims
+/// the cloud-side adapter.
+#[async_trait::async_trait]
+pub trait EventAlarmHook: Send + Sync {
+    async fn check_event_alarms(
+        &self,
+        workspace_id: &str,
+        thing_id: &str,
+        event_name: &str,
+        event_level: &EventLevel,
+        event_data: &serde_json::Value,
+    ) -> Result<(), String>;
+}
 
 /// Result of routing a single thing event through validation,
 /// throttling, and persistence.
@@ -114,7 +131,7 @@ pub struct ThingEventPayload {
 pub async fn route_thing_event(
     pool: &sqlx::SqlitePool,
     throttle: &ThrottleState,
-    alarm_service: Option<Arc<AlarmService>>,
+    alarm_hook: Option<Arc<dyn EventAlarmHook>>,
     event_bus: &ThingEventBus,
     actor: &str,
     input: ThingEventInput,
@@ -250,9 +267,9 @@ pub async fn route_thing_event(
                 actor: actor.to_string(),
             });
 
-            // Trigger event-based alarm rules if an AlarmService is available
-            if let Some(ref svc) = alarm_service
-                && let Err(e) = svc
+            // Trigger event-based alarm rules if an alarm hook is available
+            if let Some(ref hook) = alarm_hook
+                && let Err(e) = hook
                     .check_event_alarms(
                         &input.workspace_id,
                         &input.thing_id,

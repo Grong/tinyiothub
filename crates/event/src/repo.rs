@@ -8,7 +8,7 @@ pub use super::types::{
     DeviceStatusSummary, EventCriteria, EventStatistics, ExportFormat, GroupBy, RealTimeEvent,
     RealTimeFilter, SortBy, SortOrder, StatisticsGroup, StatisticsParams, StatusSummary,
 };
-use crate::modules::event::{
+use crate::{
     Result,
     entities::Event,
     value_objects::{EventId, EventLevel, EventType},
@@ -63,7 +63,7 @@ pub trait RealTimeEventRepository: Send + Sync {
     /// Remove real-time event status
     async fn remove_status(
         &self,
-        source: &crate::modules::event::value_objects::EventSource,
+        source: &crate::value_objects::EventSource,
         event_type: &EventType,
     ) -> Result<()>;
 

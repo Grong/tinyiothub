@@ -45,12 +45,12 @@ use crate::{
             thing_agent_host::CloudThingAgentHost,
             tools::DispatchThingTaskTool,
         },
-        event::{
-            bus::ThingEventBus,
-            router::{ThingEventInput, ThrottleState, route_thing_event},
-        },
     },
     test_utils::seed_test_workspace,
+};
+use tinyiothub_event::{
+    bus::ThingEventBus,
+    router::{ThingEventInput, ThrottleState, route_thing_event},
 };
 
 const WS: &str = "ws-loop";

@@ -64,17 +64,17 @@ impl NotificationDispatcher {
 
     async fn send_to_channel(
         db: &Database,
-        channel_type: &crate::modules::event::aggregates::NotificationChannelType,
+        channel_type: &tinyiothub_event::aggregates::NotificationChannelType,
         recipients: &[String],
         title: &str,
         body: &str,
         workspace_id: &str,
     ) {
         let channel_type_str = match channel_type {
-            crate::modules::event::aggregates::NotificationChannelType::Email => "email",
-            crate::modules::event::aggregates::NotificationChannelType::Sms => "sms",
-            crate::modules::event::aggregates::NotificationChannelType::Sse => "sse",
-            crate::modules::event::aggregates::NotificationChannelType::Webhook => "webhook",
+            tinyiothub_event::aggregates::NotificationChannelType::Email => "email",
+            tinyiothub_event::aggregates::NotificationChannelType::Sms => "sms",
+            tinyiothub_event::aggregates::NotificationChannelType::Sse => "sse",
+            tinyiothub_event::aggregates::NotificationChannelType::Webhook => "webhook",
         };
 
         let rows = sqlx::query(
@@ -105,16 +105,16 @@ impl NotificationDispatcher {
             let config_str: String = row.get("config");
 
             let result = match channel_type {
-                crate::modules::event::aggregates::NotificationChannelType::Email => {
+                tinyiothub_event::aggregates::NotificationChannelType::Email => {
                     Self::send_email(&config_str, recipients, title, body).await
                 }
-                crate::modules::event::aggregates::NotificationChannelType::Sms => {
+                tinyiothub_event::aggregates::NotificationChannelType::Sms => {
                     Self::send_sms(&config_str, recipients, body).await
                 }
-                crate::modules::event::aggregates::NotificationChannelType::Sse => {
+                tinyiothub_event::aggregates::NotificationChannelType::Sse => {
                     Self::send_sse(&config_str, title, body).await
                 }
-                crate::modules::event::aggregates::NotificationChannelType::Webhook => {
+                tinyiothub_event::aggregates::NotificationChannelType::Webhook => {
                     Self::send_webhook(&config_str, title, body).await
                 }
             };

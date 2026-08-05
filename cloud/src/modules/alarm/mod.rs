@@ -1,5 +1,6 @@
 // Alarm module — types, repo, service, handler
 
+pub mod event_hook;
 pub mod event_matcher;
 pub mod handler;
 pub mod notification;

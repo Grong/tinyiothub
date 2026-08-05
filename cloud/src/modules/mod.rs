@@ -9,7 +9,6 @@ pub mod cron;
 pub mod device;
 pub mod driver_health;
 pub mod drivers;
-pub mod event;
 pub mod gateway;
 pub mod heartbeat;
 pub mod jobs;

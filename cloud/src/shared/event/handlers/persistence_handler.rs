@@ -3,12 +3,12 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock;
 use tracing::{debug, error, trace};
 
+use tinyiothub_event::{
+    entities::Event,
+    repositories::EventRepository,
+    value_objects::{DeviceEventType, EventLevel, EventType},
+};
 use crate::{
-    modules::event::{
-        entities::Event,
-        repositories::EventRepository,
-        value_objects::{DeviceEventType, EventLevel, EventType},
-    },
     shared::event::EventHandler,
 };
 

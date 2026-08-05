@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 // ============================================================================
 use thiserror::Error;
 
-use crate::modules::event::aggregates::NotificationChannelType;
+use tinyiothub_event::aggregates::NotificationChannelType;
 
 /// 报警模块错误类型
 #[derive(Error, Debug)]
@@ -99,22 +99,22 @@ impl AlarmLevel {
         }
     }
 
-    pub fn to_event_level(&self) -> crate::modules::event::value_objects::EventLevel {
+    pub fn to_event_level(&self) -> tinyiothub_event::value_objects::EventLevel {
         match self {
-            AlarmLevel::Info => crate::modules::event::value_objects::EventLevel::Info,
-            AlarmLevel::Warning => crate::modules::event::value_objects::EventLevel::Warning,
-            AlarmLevel::Error => crate::modules::event::value_objects::EventLevel::Error,
-            AlarmLevel::Critical => crate::modules::event::value_objects::EventLevel::Critical,
+            AlarmLevel::Info => tinyiothub_event::value_objects::EventLevel::Info,
+            AlarmLevel::Warning => tinyiothub_event::value_objects::EventLevel::Warning,
+            AlarmLevel::Error => tinyiothub_event::value_objects::EventLevel::Error,
+            AlarmLevel::Critical => tinyiothub_event::value_objects::EventLevel::Critical,
         }
     }
 
-    pub fn from_event_level(level: &crate::modules::event::value_objects::EventLevel) -> Self {
+    pub fn from_event_level(level: &tinyiothub_event::value_objects::EventLevel) -> Self {
         match level {
-            crate::modules::event::value_objects::EventLevel::Debug => AlarmLevel::Info,
-            crate::modules::event::value_objects::EventLevel::Info => AlarmLevel::Info,
-            crate::modules::event::value_objects::EventLevel::Warning => AlarmLevel::Warning,
-            crate::modules::event::value_objects::EventLevel::Error => AlarmLevel::Error,
-            crate::modules::event::value_objects::EventLevel::Critical => AlarmLevel::Critical,
+            tinyiothub_event::value_objects::EventLevel::Debug => AlarmLevel::Info,
+            tinyiothub_event::value_objects::EventLevel::Info => AlarmLevel::Info,
+            tinyiothub_event::value_objects::EventLevel::Warning => AlarmLevel::Warning,
+            tinyiothub_event::value_objects::EventLevel::Error => AlarmLevel::Error,
+            tinyiothub_event::value_objects::EventLevel::Critical => AlarmLevel::Critical,
         }
     }
 

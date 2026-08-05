@@ -12,15 +12,13 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tinyiothub_auth::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::middleware::workspace::AuthClaims;
+use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder};
 
 use crate::{
-    modules::event::{
-        repositories::{RealTimeEvent, RealTimeFilter, StatusSummary},
-        value_objects::{EventId, EventLevel, EventType},
-    },
-    shared::{api_response::ApiResponse, app_state::AppState},
+    EventState,
+    repo::{RealTimeEvent, RealTimeFilter, StatusSummary},
+    value_objects::{EventId, EventLevel, EventType},
 };
 
 /// Query parameters for real-time event filtering
@@ -99,17 +97,16 @@ pub struct TypeStatusResponse {
 /// - source_types: Comma-separated source types
 /// - acknowledged: Filter by acknowledgment status (true/false)
 /// - min_level: Minimum event level (debug, info, warning, error, critical)
-#[axum::debug_handler]
 pub async fn get_real_time_events(
     Query(params): Query<RealTimeQueryParams>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<EventState>,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<RealTimeEventResponse>>> {
     tracing::info!("Getting real-time events with params: {:?}", params);
 
     // Build real-time filter (tenant-scoped — T1)
     let mut filter =
-        RealTimeFilter { workspace_id: Some(claims.workspace_id.clone()), ..Default::default() };
+        RealTimeFilter { workspace_id: Some(claims.0.workspace_id.clone()), ..Default::default() };
 
     // Device IDs
     if let Some(device_ids_str) = params.device_ids {
@@ -176,11 +173,10 @@ pub async fn get_real_time_events(
 /// Get real-time status summary
 ///
 /// Query parameters: Same as get_real_time_events
-#[axum::debug_handler]
 pub async fn get_status_summary(
     Query(params): Query<RealTimeQueryParams>,
-    State(state): State<AppState>,
-    _claims: Claims,
+    State(state): State<EventState>,
+    _claims: AuthClaims,
 ) -> Json<ApiResponse<StatusSummaryResponse>> {
     tracing::info!("Getting status summary with params: {:?}", params);
 
@@ -246,13 +242,12 @@ pub async fn get_status_summary(
 ///
 /// Path parameters:
 /// - id: Event ID to acknowledge
-#[axum::debug_handler]
 pub async fn acknowledge_event(
     Path(id): Path<String>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<EventState>,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<bool>> {
-    tracing::info!("Acknowledging event {} by user {}", id, claims.user_id);
+    tracing::info!("Acknowledging event {} by user {}", id, claims.0.user_id);
 
     // Parse event ID
     let event_id = EventId::from_string(id);
@@ -261,9 +256,9 @@ pub async fn acknowledge_event(
     let real_time_repo = &state.real_time_event_repository;
 
     // Acknowledge the event
-    match real_time_repo.acknowledge_event(&event_id, &claims.user_id, &claims.workspace_id).await {
+    match real_time_repo.acknowledge_event(&event_id, &claims.0.user_id, &claims.0.workspace_id).await {
         Ok(_) => {
-            tracing::info!("Event {} acknowledged by user {}", event_id, claims.user_id);
+            tracing::info!("Event {} acknowledged by user {}", event_id, claims.0.user_id);
             ApiResponseBuilder::success(true)
         }
         Err(e) => {

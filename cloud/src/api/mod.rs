@@ -53,7 +53,10 @@ pub fn create_router() -> Router<AppState> {
             crate::modules::notification::handler::create_channel_router(),
         )
         .nest("/tenants", tinyiothub_tenant::router())
-        .nest("/events", crate::modules::event::handler::create_router())
+        .nest(
+            "/events",
+            tinyiothub_event::router().merge(crate::shared::event::http::create_router()),
+        )
         .nest("/jobs", crate::modules::jobs::handler::create_router())
         .nest("/batch", crate::modules::batch::handler::create_router())
         .nest("/heartbeat", crate::modules::heartbeat::handler::create_router())
@@ -88,12 +91,12 @@ pub fn create_router() -> Router<AppState> {
         // 公开的SSE端点（不需要JWT header, 通过?token=鉴权）
         .route(
             "/events/sse/public",
-            get(crate::modules::event::handler::sse::handle_sse_connection_public),
+            get(crate::shared::event::http::sse::handle_sse_connection_public),
         )
         // SSE token 认证端点（不需要 JWT header，通过 ?sse_token= 鉴权）
         .route(
             "/events/sse/token",
-            get(crate::modules::event::handler::sse::handle_sse_connection_token),
+            get(crate::shared::event::http::sse::handle_sse_connection_token),
         )
         .merge(protected_routes);
 

@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
-use crate::{
-    modules::event::entities::Event,
-    shared::event::{EventHandler, SseConnectionManager},
-};
+use crate::shared::event::{EventHandler, SseConnectionManager};
+use tinyiothub_event::entities::Event;
 
 /// SSE 推送处理器
 ///

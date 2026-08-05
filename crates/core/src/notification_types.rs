@@ -1,10 +1,15 @@
 // Shared notification value types
 // Sunk from cloud/src/modules/notification/types.rs to cut the event→notification
 // edge (P4.0-Task13). Pure value types only — no domain service logic.
+//
+// P4-Task18 (F1 resolution): the slim `NotificationRuleRef` view and its
+// simplified `matches_event` were removed. They were dead code — the
+// production matching path is `NotificationFilterSpec::matches_filters` in
+// the notification module (wildcards, multiple types/levels, metadata
+// conditions), and nothing called the event-side consumer. Rule matching
+// lives solely in the notify domain.
 
 use serde::{Deserialize, Serialize};
-
-use crate::models::event::EventLevel;
 
 /// Notification Channel Type
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -36,30 +41,6 @@ impl NotificationChannelType {
     }
 }
 
-/// Slim read-only view of a notification rule, carrying exactly the fields
-/// the event domain needs for rule matching. The owning `NotificationAggregate`
-/// (with its full logic) stays in the notification module; conversion happens
-/// at the notify-side call boundary via `NotificationAggregate::rule_ref()`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct NotificationRuleRef {
-    pub id: String,
-    pub enabled: bool,
-    pub event_type: Option<String>,
-    pub event_level: Option<i32>,
-}
-
-impl NotificationRuleRef {
-    /// Pure matching logic identical to `NotificationAggregate::matches_event`.
-    pub fn matches_event(&self, event_type: &str, event_level: &EventLevel) -> bool {
-        if !self.enabled {
-            return false;
-        }
-        let type_match = self.event_type.is_none() || self.event_type.as_deref() == Some(event_type);
-        let level_match = self.event_level.is_none() || self.event_level == Some(*event_level as i32);
-        type_match && level_match
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,32 +56,5 @@ mod tests {
             assert_eq!(NotificationChannelType::parse_str(ch.as_str()), Some(ch));
         }
         assert_eq!(NotificationChannelType::parse_str("nope"), None);
-    }
-
-    #[test]
-    fn rule_ref_matches_event() {
-        let rule = NotificationRuleRef {
-            id: "r1".to_string(),
-            enabled: true,
-            event_type: Some("device".to_string()),
-            event_level: Some(EventLevel::Error as i32),
-        };
-        assert!(rule.matches_event("device", &EventLevel::Error));
-        assert!(!rule.matches_event("system", &EventLevel::Error));
-        assert!(!rule.matches_event("device", &EventLevel::Info));
-
-        let wildcard = NotificationRuleRef {
-            id: "r2".to_string(),
-            enabled: true,
-            event_type: None,
-            event_level: None,
-        };
-        assert!(wildcard.matches_event("anything", &EventLevel::Debug));
-
-        let disabled = NotificationRuleRef {
-            enabled: false,
-            ..wildcard.clone()
-        };
-        assert!(!disabled.matches_event("anything", &EventLevel::Debug));
     }
 }

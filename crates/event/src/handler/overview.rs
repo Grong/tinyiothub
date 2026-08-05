@@ -7,12 +7,12 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tinyiothub_auth::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::middleware::workspace::AuthClaims;
+use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder};
 
 use crate::{
-    modules::event::repo::{EventStatistics, GroupBy, StatisticsGroup, StatisticsParams},
-    shared::{api_response::ApiResponse, app_state::AppState},
+    EventState,
+    repo::{EventStatistics, GroupBy, StatisticsGroup, StatisticsParams},
 };
 
 /// Query parameters for event overview/statistics
@@ -129,11 +129,10 @@ pub struct RecentCriticalEvent {
 /// - end_time: End of time range (ISO 8601) - default: now
 /// - group_by: Grouping for trend data (hour, day, week, month) - default: hour
 /// - device_ids: Comma-separated device IDs to filter by
-#[axum::debug_handler]
 pub async fn get_event_overview(
     Query(params): Query<OverviewQueryParams>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<EventState>,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<EventOverviewResponse>> {
     tracing::info!("Getting event overview with params: {:?}", params);
 
@@ -178,13 +177,13 @@ pub async fn get_event_overview(
     };
 
     // Get real-time status for recent critical events
-    let real_time_filter = crate::modules::event::repo::RealTimeFilter {
+    let real_time_filter = crate::repo::RealTimeFilter {
         device_ids: device_ids.clone(),
         event_types: None,
         source_types: None,
         acknowledged: Some(false), // Only unacknowledged
-        min_level: Some(crate::modules::event::value_objects::EventLevel::Critical),
-        workspace_id: Some(claims.workspace_id.clone()), // tenant isolation (T1)
+        min_level: Some(crate::value_objects::EventLevel::Critical),
+        workspace_id: Some(claims.0.workspace_id.clone()), // tenant isolation (T1)
     };
 
     let recent_critical_events = match real_time_repo.find_active_events(&real_time_filter).await {

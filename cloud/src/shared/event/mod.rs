@@ -3,6 +3,7 @@
 
 pub mod channels;
 pub mod handlers;
+pub mod http;
 pub mod security;
 pub mod sse_manager;
 

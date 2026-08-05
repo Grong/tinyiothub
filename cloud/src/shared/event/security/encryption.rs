@@ -11,7 +11,7 @@ use base64::{Engine as _, engine::general_purpose};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::modules::event::{EventError, Result, value_objects::RichContent};
+use tinyiothub_event::{EventError, Result, value_objects::RichContent};
 
 /// Event content encryption service
 #[async_trait::async_trait]
@@ -127,7 +127,7 @@ impl AesEventEncryption {
         // Check content elements
         for element in content.elements() {
             match element {
-                crate::modules::event::value_objects::ContentElement::Text { content, .. } => {
+                tinyiothub_event::value_objects::ContentElement::Text { content, .. } => {
                     let content_lower = content.to_lowercase();
                     for keyword in &self.sensitive_keywords {
                         if content_lower.contains(keyword) {
@@ -135,7 +135,7 @@ impl AesEventEncryption {
                         }
                     }
                 }
-                crate::modules::event::value_objects::ContentElement::Code { content, .. } => {
+                tinyiothub_event::value_objects::ContentElement::Code { content, .. } => {
                     let content_lower = content.to_lowercase();
                     for keyword in &self.sensitive_keywords {
                         if content_lower.contains(keyword) {
@@ -326,7 +326,7 @@ impl EventEncryption for NoOpEncryption {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::event::value_objects::RichContent;
+    use tinyiothub_event::value_objects::RichContent;
 
     #[test]
     fn test_key_generation() {

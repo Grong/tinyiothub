@@ -21,16 +21,14 @@ const MSG_DEVICE_TYPE_VALUE_NA: &str = "N/A";
 use tinyiothub_thing::tag::TagRepository;
 
 use crate::{
-    modules::{
-        device::repository::{DeviceCriteria, DeviceRepository},
-        event::{
-            entities::Event as DomainEvent,
-            value_objects::{
-                ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
-            },
-        },
-    },
+    modules::device::repository::{DeviceCriteria, DeviceRepository},
     shared::{error::Error, event::EventBus, pagination::DataObjectWithPagination},
+};
+use tinyiothub_event::{
+    entities::Event as DomainEvent,
+    value_objects::{
+        ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
+    },
 };
 
 pub struct DeviceService {

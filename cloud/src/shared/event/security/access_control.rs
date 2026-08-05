@@ -1,7 +1,7 @@
 // Event access control implementations
 use std::sync::Arc;
 
-use crate::modules::event::{Result, entities::Event, value_objects::EventType};
+use tinyiothub_event::{Result, entities::Event, value_objects::EventType};
 
 /// Access control result
 #[derive(Debug, Clone, PartialEq)]
@@ -91,47 +91,47 @@ impl EventAccessControl for RoleBasedAccessControl {
 
         // Check if user has read permission for this event type
         let event_type_str = match event.event_type() {
-            crate::modules::event::value_objects::EventType::Device(device_type) => {
+            tinyiothub_event::value_objects::EventType::Device(device_type) => {
                 match device_type {
-                    crate::modules::event::value_objects::DeviceEventType::Connection => {
+                    tinyiothub_event::value_objects::DeviceEventType::Connection => {
                         "device_connection"
                     }
-                    crate::modules::event::value_objects::DeviceEventType::PropertyChange
-                    | crate::modules::event::value_objects::DeviceEventType::PropertyAlarm
-                    | crate::modules::event::value_objects::DeviceEventType::PropertyNormal => {
+                    tinyiothub_event::value_objects::DeviceEventType::PropertyChange
+                    | tinyiothub_event::value_objects::DeviceEventType::PropertyAlarm
+                    | tinyiothub_event::value_objects::DeviceEventType::PropertyNormal => {
                         "device_property"
                     }
-                    crate::modules::event::value_objects::DeviceEventType::CommandStarted
-                    | crate::modules::event::value_objects::DeviceEventType::CommandCompleted
-                    | crate::modules::event::value_objects::DeviceEventType::CommandFailed => {
+                    tinyiothub_event::value_objects::DeviceEventType::CommandStarted
+                    | tinyiothub_event::value_objects::DeviceEventType::CommandCompleted
+                    | tinyiothub_event::value_objects::DeviceEventType::CommandFailed => {
                         "device_command"
                     }
-                    crate::modules::event::value_objects::DeviceEventType::DeviceAlarm
-                    | crate::modules::event::value_objects::DeviceEventType::DeviceNormal => {
+                    tinyiothub_event::value_objects::DeviceEventType::DeviceAlarm
+                    | tinyiothub_event::value_objects::DeviceEventType::DeviceNormal => {
                         "device_alarm"
                     }
-                    crate::modules::event::value_objects::DeviceEventType::DeviceCreated
-                    | crate::modules::event::value_objects::DeviceEventType::DeviceUpdated
-                    | crate::modules::event::value_objects::DeviceEventType::DeviceDeleted => {
+                    tinyiothub_event::value_objects::DeviceEventType::DeviceCreated
+                    | tinyiothub_event::value_objects::DeviceEventType::DeviceUpdated
+                    | tinyiothub_event::value_objects::DeviceEventType::DeviceDeleted => {
                         "device_lifecycle"
                     }
                 }
             }
-            crate::modules::event::value_objects::EventType::System(system_type) => {
+            tinyiothub_event::value_objects::EventType::System(system_type) => {
                 match system_type {
-                    crate::modules::event::value_objects::SystemEventType::UserAuth => "user_auth",
-                    crate::modules::event::value_objects::SystemEventType::UserOperation => {
+                    tinyiothub_event::value_objects::SystemEventType::UserAuth => "user_auth",
+                    tinyiothub_event::value_objects::SystemEventType::UserOperation => {
                         "user_operation"
                     }
-                    crate::modules::event::value_objects::SystemEventType::SystemConfig => {
+                    tinyiothub_event::value_objects::SystemEventType::SystemConfig => {
                         "system_config"
                     }
-                    crate::modules::event::value_objects::SystemEventType::SystemError => {
+                    tinyiothub_event::value_objects::SystemEventType::SystemError => {
                         "system_error"
                     }
                 }
             }
-            crate::modules::event::value_objects::EventType::Ai(_) => "ai_event",
+            tinyiothub_event::value_objects::EventType::Ai(_) => "ai_event",
         };
 
         self.has_permission(user_id, event_type_str, "read").await
@@ -145,47 +145,47 @@ impl EventAccessControl for RoleBasedAccessControl {
 
         // Check specific permissions based on event type
         let event_type_str = match event_type {
-            crate::modules::event::value_objects::EventType::Device(device_type) => {
+            tinyiothub_event::value_objects::EventType::Device(device_type) => {
                 match device_type {
-                    crate::modules::event::value_objects::DeviceEventType::Connection => {
+                    tinyiothub_event::value_objects::DeviceEventType::Connection => {
                         "device_connection"
                     }
-                    crate::modules::event::value_objects::DeviceEventType::PropertyChange
-                    | crate::modules::event::value_objects::DeviceEventType::PropertyAlarm
-                    | crate::modules::event::value_objects::DeviceEventType::PropertyNormal => {
+                    tinyiothub_event::value_objects::DeviceEventType::PropertyChange
+                    | tinyiothub_event::value_objects::DeviceEventType::PropertyAlarm
+                    | tinyiothub_event::value_objects::DeviceEventType::PropertyNormal => {
                         "device_property"
                     }
-                    crate::modules::event::value_objects::DeviceEventType::CommandStarted
-                    | crate::modules::event::value_objects::DeviceEventType::CommandCompleted
-                    | crate::modules::event::value_objects::DeviceEventType::CommandFailed => {
+                    tinyiothub_event::value_objects::DeviceEventType::CommandStarted
+                    | tinyiothub_event::value_objects::DeviceEventType::CommandCompleted
+                    | tinyiothub_event::value_objects::DeviceEventType::CommandFailed => {
                         "device_command"
                     }
-                    crate::modules::event::value_objects::DeviceEventType::DeviceAlarm
-                    | crate::modules::event::value_objects::DeviceEventType::DeviceNormal => {
+                    tinyiothub_event::value_objects::DeviceEventType::DeviceAlarm
+                    | tinyiothub_event::value_objects::DeviceEventType::DeviceNormal => {
                         "device_alarm"
                     }
-                    crate::modules::event::value_objects::DeviceEventType::DeviceCreated
-                    | crate::modules::event::value_objects::DeviceEventType::DeviceUpdated
-                    | crate::modules::event::value_objects::DeviceEventType::DeviceDeleted => {
+                    tinyiothub_event::value_objects::DeviceEventType::DeviceCreated
+                    | tinyiothub_event::value_objects::DeviceEventType::DeviceUpdated
+                    | tinyiothub_event::value_objects::DeviceEventType::DeviceDeleted => {
                         "device_lifecycle"
                     }
                 }
             }
-            crate::modules::event::value_objects::EventType::System(system_type) => {
+            tinyiothub_event::value_objects::EventType::System(system_type) => {
                 match system_type {
-                    crate::modules::event::value_objects::SystemEventType::UserAuth => "user_auth",
-                    crate::modules::event::value_objects::SystemEventType::UserOperation => {
+                    tinyiothub_event::value_objects::SystemEventType::UserAuth => "user_auth",
+                    tinyiothub_event::value_objects::SystemEventType::UserOperation => {
                         "user_operation"
                     }
-                    crate::modules::event::value_objects::SystemEventType::SystemConfig => {
+                    tinyiothub_event::value_objects::SystemEventType::SystemConfig => {
                         "system_config"
                     }
-                    crate::modules::event::value_objects::SystemEventType::SystemError => {
+                    tinyiothub_event::value_objects::SystemEventType::SystemError => {
                         "system_error"
                     }
                 }
             }
-            crate::modules::event::value_objects::EventType::Ai(_) => "ai_event",
+            tinyiothub_event::value_objects::EventType::Ai(_) => "ai_event",
         };
 
         self.has_permission(user_id, event_type_str, "create").await

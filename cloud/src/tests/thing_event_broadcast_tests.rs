@@ -14,14 +14,12 @@ use tinyiothub_ai::thing_agent::ThingAgentHost;
 use tinyiothub_core::models::event::EventLevel;
 
 use crate::{
-    modules::{
-        agent::thing_agent_host::CloudThingAgentHost,
-        event::{
-            bus::ThingEventBus,
-            router::{ThingEventInput, ThrottleState, route_thing_event},
-        },
-    },
+    modules::agent::thing_agent_host::CloudThingAgentHost,
     test_utils::seed_test_workspace,
+};
+use tinyiothub_event::{
+    bus::ThingEventBus,
+    router::{ThingEventInput, ThrottleState, route_thing_event},
 };
 
 async fn test_pool() -> sqlx::SqlitePool {

@@ -6,11 +6,12 @@ use std::{
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use tokio::sync::mpsc;
 
+use tinyiothub_event::{
+    bus::ThingEventBus,
+    router::{ThingEventInput, ThingEventPayload, ThrottleState, route_thing_event},
+};
+
 use crate::modules::{
-    event::{
-        bus::ThingEventBus,
-        router::{ThingEventInput, ThingEventPayload, ThrottleState, route_thing_event},
-    },
     gateway::{
         service::MqttPublish,
         types::{
@@ -299,8 +300,10 @@ impl PlatformMqttClient {
         };
 
         // MQTT-ingested events are device-reported: actor "device" (T6).
+        let alarm_hook: Option<Arc<dyn tinyiothub_event::router::EventAlarmHook>> =
+            alarm_service.map(|svc| svc as Arc<dyn tinyiothub_event::router::EventAlarmHook>);
         let result =
-            route_thing_event(db_pool, throttle, alarm_service, event_bus, "device", input).await;
+            route_thing_event(db_pool, throttle, alarm_hook, event_bus, "device", input).await;
 
         if result.throttled {
             tracing::info!(

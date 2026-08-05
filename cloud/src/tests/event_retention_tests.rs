@@ -10,11 +10,9 @@ use tinyiothub_core::{cron::JobExecutor, models::cron_job::CronJob};
 use tinyiothub_runtime::cron_executors::EventRetentionExecutor;
 use tinyiothub_storage::sqlite::Database;
 
-use crate::{
-    modules::event::{
-        repo::RealTimeEventRepository, sqlite_real_time_event::SqliteRealTimeEventRepository,
-    },
-    test_utils::seed_test_workspace,
+use crate::test_utils::seed_test_workspace;
+use tinyiothub_event::{
+    repo::RealTimeEventRepository, sqlite_real_time_event::SqliteRealTimeEventRepository,
 };
 
 async fn test_pool() -> sqlx::SqlitePool {

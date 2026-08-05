@@ -4,7 +4,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::modules::event::value_objects::{EventId, EventLevel, EventSource, EventType};
+use crate::value_objects::{EventId, EventLevel, EventSource, EventType};
 
 // ──────────────────────────────────────────────
 // Event Repository DTOs (from event_repository.rs)
@@ -426,7 +426,7 @@ pub struct EventPattern {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::event::value_objects::SystemEventType;
+    use crate::value_objects::SystemEventType;
 
     #[test]
     fn test_criteria_builder() {

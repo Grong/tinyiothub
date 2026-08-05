@@ -45,7 +45,7 @@ use zeroclaw::tools::{Tool, ToolResult};
 use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
 use super::thing::{InvokeActionTool, take_pending_action, tool_err, tool_ok};
-use crate::modules::event::{
+use tinyiothub_event::{
     bus::ThingEventBus,
     router::{ThingEventInput, ThrottleState, route_thing_event},
 };

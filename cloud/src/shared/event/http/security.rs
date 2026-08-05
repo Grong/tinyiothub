@@ -13,8 +13,8 @@ use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::{handle_service_result, response::ApiResponseBuilder};
 use tokio::sync::OnceCell;
 
+use tinyiothub_event::value_objects::EventId;
 use crate::{
-    modules::event::value_objects::EventId,
     shared::{
         api_response::ApiResponse,
         app_state::AppState,

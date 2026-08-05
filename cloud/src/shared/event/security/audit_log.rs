@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
-use crate::modules::event::{
+use tinyiothub_event::{
     EventError, Result,
     entities::Event,
     value_objects::{EventId, EventLevel, EventType},

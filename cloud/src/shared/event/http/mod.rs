@@ -1,5 +1,13 @@
-// Events API module
-// Provides REST API endpoints for event querying and statistics
+// HTTP routes for the event security plane and SSE streaming.
+//
+// These handlers were part of `modules::event::handler` before the event
+// domain crate extraction (P4-Task18). They stay in cloud because they depend
+// on the event security plane (`shared::event::security`) and the SSE
+// manager/token manager (`shared::event::sse_manager`, auth SSE tokens), which
+// are entangled with the not-yet-extracted notification module.
+//
+// Reclaim task: the future notify/security-plane extraction should move these
+// routes (and the `shared::event` infrastructure) out of cloud.
 
 use axum::{
     Router,
@@ -8,21 +16,13 @@ use axum::{
 
 use crate::shared::app_state::AppState;
 
-pub mod overview;
-pub mod query;
-pub mod real_time;
 pub mod security;
 pub mod sse;
 
-/// Create the events API router
+/// Create the cloud-resident event routes (security + SSE), nested at
+/// `/events` alongside `tinyiothub_event::router()`.
 pub fn create_router() -> Router<AppState> {
     Router::new()
-        .route("/", get(query::get_events))
-        .route("/", post(query::create_event))
-        .route("/real-time", get(real_time::get_real_time_events))
-        .route("/real-time/status", get(real_time::get_status_summary))
-        .route("/real-time/{id}/acknowledge", post(real_time::acknowledge_event))
-        .route("/overview", get(overview::get_event_overview))
         .route("/security/permissions", get(security::get_user_permissions))
         .route("/security/config", get(security::get_security_config))
         .route("/security/config", put(security::update_security_config))

@@ -19,7 +19,7 @@ pub fn sanitize_filename(name: &str) -> String {
 #[cfg(feature = "harmonyos")]
 pub async fn publish_event_safe(
     event_bus: std::sync::Arc<crate::shared::event::EventBus>,
-    event: crate::modules::event::entities::Event,
+    event: tinyiothub_event::entities::Event,
 ) {
     // On HarmonyOS, publish inline
     if let Err(e) = event_bus.publish(event).await {
@@ -34,7 +34,7 @@ pub async fn publish_event_safe(
 #[cfg(not(feature = "harmonyos"))]
 pub async fn publish_event_safe(
     event_bus: std::sync::Arc<crate::shared::event::EventBus>,
-    event: crate::modules::event::entities::Event,
+    event: tinyiothub_event::entities::Event,
 ) {
     tokio::spawn(async move {
         if let Err(e) = event_bus.publish(event).await {

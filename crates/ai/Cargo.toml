@@ -18,6 +18,7 @@ llm = { workspace = true }
 memory = { workspace = true }
 policy = { workspace = true }
 skills = { workspace = true }
+event = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }

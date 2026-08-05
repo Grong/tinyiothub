@@ -3,13 +3,13 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 
+use tinyiothub_event::{
+    EventError, Result,
+    entities::Event,
+    repositories::EventRepository,
+    value_objects::{EventId, EventLevel, EventType, RichContent},
+};
 use crate::{
-    modules::event::{
-        EventError, Result,
-        entities::Event,
-        repositories::EventRepository,
-        value_objects::{EventId, EventLevel, EventType, RichContent},
-    },
     shared::event::security::{
         AccessResult, AccessType, EncryptedContent, EventAccessControl, EventAuditLog,
         EventEncryption, EventSecurityConfig,
@@ -127,7 +127,7 @@ impl SecureEventService {
             // Check if content appears to be encrypted (simplified check)
             if event.content().title() == "Encrypted Content"
                 && let Some(first_element) = event.content().elements().first()
-                && let crate::modules::event::value_objects::ContentElement::Text {
+                && let tinyiothub_event::value_objects::ContentElement::Text {
                     content, ..
                 } = first_element
                 && let Ok(encrypted_data) = serde_json::from_str::<EncryptedContent>(content)
@@ -162,7 +162,7 @@ impl SecureEventService {
         limit: Option<usize>,
     ) -> Result<Vec<Event>> {
         // Get events from repository
-        let criteria = crate::modules::event::repo::EventCriteria {
+        let criteria = tinyiothub_event::repo::EventCriteria {
             start_time,
             end_time,
             event_types: event_type.as_ref().map(|t| vec![t.clone()]),
@@ -181,7 +181,7 @@ impl SecureEventService {
                 if self.config.read().unwrap().enable_encryption
                     && event.content().title() == "Encrypted Content"
                     && let Some(first_element) = event.content().elements().first()
-                    && let crate::modules::event::value_objects::ContentElement::Text {
+                    && let tinyiothub_event::value_objects::ContentElement::Text {
                         content,
                         ..
                     } = first_element

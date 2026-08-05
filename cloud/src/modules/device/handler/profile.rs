@@ -10,14 +10,12 @@ use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
     api::middleware::WorkspaceScope,
-    modules::{
-        device::types::DeviceCommandResponse,
-        event::{
-            repositories::{EventCriteria, SortBy, SortOrder},
-            value_objects::EventType,
-        },
-    },
+    modules::device::types::DeviceCommandResponse,
     shared::{api_response::ApiResponse, app_state::AppState},
+};
+use tinyiothub_event::{
+    repositories::{EventCriteria, SortBy, SortOrder},
+    value_objects::EventType,
 };
 
 /// 设备完整配置文件
@@ -220,11 +218,11 @@ async fn fetch_recent_device_events(state: &AppState, device_id: &str) -> Vec<De
 
                     // 提取事件级别字符串
                     let level_str = match event.level() {
-                        crate::modules::event::value_objects::EventLevel::Debug => "Debug",
-                        crate::modules::event::value_objects::EventLevel::Info => "Info",
-                        crate::modules::event::value_objects::EventLevel::Warning => "Warning",
-                        crate::modules::event::value_objects::EventLevel::Error => "Error",
-                        crate::modules::event::value_objects::EventLevel::Critical => "Critical",
+                        tinyiothub_event::value_objects::EventLevel::Debug => "Debug",
+                        tinyiothub_event::value_objects::EventLevel::Info => "Info",
+                        tinyiothub_event::value_objects::EventLevel::Warning => "Warning",
+                        tinyiothub_event::value_objects::EventLevel::Error => "Error",
+                        tinyiothub_event::value_objects::EventLevel::Critical => "Critical",
                     };
 
                     // 提取内容
@@ -236,7 +234,7 @@ async fn fetch_recent_device_events(state: &AppState, device_id: &str) -> Vec<De
                         .elements()
                         .iter()
                         .find_map(|element| {
-                            if let crate::modules::event::value_objects::ContentElement::Text {
+                            if let tinyiothub_event::value_objects::ContentElement::Text {
                                 content,
                                 ..
                             } = element
@@ -338,13 +336,13 @@ async fn calculate_device_overview(
             let critical = events
                 .iter()
                 .filter(|e| {
-                    matches!(e.level(), crate::modules::event::value_objects::EventLevel::Critical)
+                    matches!(e.level(), tinyiothub_event::value_objects::EventLevel::Critical)
                 })
                 .count() as u32;
             let error = events
                 .iter()
                 .filter(|e| {
-                    matches!(e.level(), crate::modules::event::value_objects::EventLevel::Error)
+                    matches!(e.level(), tinyiothub_event::value_objects::EventLevel::Error)
                 })
                 .count() as u32;
             (total, critical, error)

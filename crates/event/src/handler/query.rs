@@ -7,19 +7,14 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tinyiothub_auth::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::middleware::workspace::AuthClaims;
+use tinyiothub_web::pagination::PaginationQuery;
+use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo};
 
 use crate::{
-    modules::event::{
-        repositories::{EventCriteria, SortBy, SortOrder},
-        value_objects::{EventLevel, EventType},
-    },
-    shared::{
-        api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
-        app_state::AppState,
-        pagination::PaginationQuery,
-    },
+    EventState,
+    repo::{EventCriteria, SortBy, SortOrder},
+    value_objects::{EventLevel, EventType},
 };
 
 /// Query parameters for event search
@@ -84,11 +79,10 @@ pub struct EventResponse {
 /// - search: Full-text search in title and content
 /// - sort_by: Sort field (timestamp, level, event_type, source) - default: timestamp
 /// - sort_order: Sort order (asc, desc) - default: desc
-#[axum::debug_handler]
 pub async fn get_events(
     Query(params): Query<EventQueryParams>,
-    State(state): State<AppState>,
-    _claims: Claims,
+    State(state): State<EventState>,
+    _claims: AuthClaims,
 ) -> Json<ApiResponse<PaginatedResponse<EventResponse>>> {
     tracing::info!("Getting events with params: {:?}", params);
 
@@ -270,11 +264,11 @@ fn parse_sort_order(sort_order: Option<&str>) -> Result<SortOrder, String> {
 }
 
 /// Generate a preview of the event content
-fn generate_content_preview(content: &crate::modules::event::value_objects::RichContent) -> String {
+fn generate_content_preview(content: &crate::value_objects::RichContent) -> String {
     // For now, just return the first text element or title
     if let Some(first_element) = content.elements().first() {
         match first_element {
-            crate::modules::event::value_objects::ContentElement::Text { content, .. } => {
+            crate::value_objects::ContentElement::Text { content, .. } => {
                 if content.len() > 100 { format!("{}...", &content[..97]) } else { content.clone() }
             }
             _ => content.title().to_string(),
@@ -325,13 +319,12 @@ mod tests {
 ///
 /// Creates a new event with the provided data. This endpoint supports
 /// creating events for testing and manual event generation.
-#[axum::debug_handler]
 pub async fn create_event(
-    State(_state): State<AppState>,
-    claims: Claims,
+    State(_state): State<EventState>,
+    claims: AuthClaims,
     Json(request): Json<CreateEventRequest>,
 ) -> Json<ApiResponse<EventResponse>> {
-    tracing::info!("Creating event requested by user: {}", claims.user_id);
+    tracing::info!("Creating event requested by user: {}", claims.0.user_id);
 
     // For now, return a mock response since we need to integrate with the secure event service
     let event_response = EventResponse {
@@ -347,7 +340,7 @@ pub async fn create_event(
             .unwrap_or("system".to_string()),
         source_id: request.source.as_ref().map(|s| s.source_id.clone()),
         device_id: request.source.as_ref().and_then(|s| s.device_id.clone()),
-        user_id: Some(claims.user_id),
+        user_id: Some(claims.0.user_id),
         title: request.content.title,
         content_preview: request.content.description.chars().take(100).collect(),
         timestamp: Utc::now(),

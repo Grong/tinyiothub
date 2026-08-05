@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
-use crate::modules::{
-    event::{EventError, Result},
-    notification::types::{NotificationChannel, NotificationChannelType, NotificationMessage},
+use tinyiothub_event::{EventError, Result};
+
+use crate::modules::notification::types::{
+    NotificationChannel, NotificationChannelType, NotificationMessage,
 };
 
 /// SMS configuration for various providers

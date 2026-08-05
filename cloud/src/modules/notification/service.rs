@@ -21,7 +21,7 @@ use super::{
         NotificationStatus,
     },
 };
-use crate::modules::event::{
+use tinyiothub_event::{
     EventError, Result,
     errors::{DomainResult, NotificationDomainError},
     value_objects::{EventId, EventLevel},
@@ -527,7 +527,7 @@ impl NotificationManager {
     /// Send notification for an event
     pub async fn notify(
         &self,
-        _event: &crate::modules::event::entities::Event,
+        _event: &tinyiothub_event::entities::Event,
     ) -> std::result::Result<(), String> {
         Ok(())
     }

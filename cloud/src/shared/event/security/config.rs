@@ -4,12 +4,12 @@ use std::sync::Arc;
 pub use tinyiothub_core::config::EventSecurityConfig;
 
 use crate::{
-    modules::event::{EventError, Result, repositories::EventRepository},
     shared::event::security::{
         AesEventEncryption, DatabaseAuditLog, EventAccessControl, EventAuditLog, EventEncryption,
         InMemoryAuditLog, NoOpEncryption, RoleBasedAccessControl, SecureEventService,
     },
 };
+use tinyiothub_event::{EventError, Result, repositories::EventRepository};
 
 /// Validate event security configuration
 fn validate_event_security_config(config: &EventSecurityConfig) -> Result<()> {
@@ -197,7 +197,7 @@ impl EventAccessControl for NoOpAccessControl {
     async fn can_read_event(
         &self,
         _user_id: &str,
-        _event: &crate::modules::event::entities::Event,
+        _event: &tinyiothub_event::entities::Event,
     ) -> Result<bool> {
         Ok(true) // Allow all access when RBAC is disabled
     }
@@ -205,7 +205,7 @@ impl EventAccessControl for NoOpAccessControl {
     async fn can_create_event(
         &self,
         _user_id: &str,
-        _event_type: &crate::modules::event::value_objects::EventType,
+        _event_type: &tinyiothub_event::value_objects::EventType,
     ) -> Result<bool> {
         Ok(true)
     }
@@ -213,7 +213,7 @@ impl EventAccessControl for NoOpAccessControl {
     async fn can_update_event(
         &self,
         _user_id: &str,
-        _event: &crate::modules::event::entities::Event,
+        _event: &tinyiothub_event::entities::Event,
     ) -> Result<bool> {
         Ok(true)
     }
@@ -221,7 +221,7 @@ impl EventAccessControl for NoOpAccessControl {
     async fn can_delete_event(
         &self,
         _user_id: &str,
-        _event: &crate::modules::event::entities::Event,
+        _event: &tinyiothub_event::entities::Event,
     ) -> Result<bool> {
         Ok(false) // Generally don't allow deletion even without RBAC
     }

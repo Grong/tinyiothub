@@ -20,14 +20,14 @@ use crate::{
             AlarmRepository, AlarmRuleRepository, AlarmService, SqliteAlarmRepository,
             SqliteAlarmRuleRepository,
         },
-        event::{
-            bus::ThingEventBus,
-            repositories::RealTimeEventRepository,
-            router::{ThingEventInput, ThrottleState, route_thing_event},
-            sqlite_real_time_event::SqliteRealTimeEventRepository,
-        },
     },
     test_utils::seed_test_workspace,
+};
+use tinyiothub_event::{
+    bus::ThingEventBus,
+    repositories::RealTimeEventRepository,
+    router::{ThingEventInput, ThrottleState, route_thing_event},
+    sqlite_real_time_event::SqliteRealTimeEventRepository,
 };
 
 /// Migrated single-connection in-memory pool (single connection so PRAGMAs

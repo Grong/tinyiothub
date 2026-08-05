@@ -8,17 +8,16 @@ use tinyiothub_core::models::device::CreateDeviceRequest;
 use tinyiothub_storage::DeviceRepositoryFactory;
 use tokio::sync::{RwLock, mpsc};
 
-use crate::modules::{
-    event::{
-        EventError,
-        entities::Event,
-        repositories::EventRepository,
-        value_objects::{ContentElement, DeviceEventType, EventLevel, EventSource, RichContent},
-    },
-    gateway::{
-        pairing::{PairingCache, PairingEntry},
-        types::*,
-    },
+use tinyiothub_event::{
+    EventError,
+    entities::Event,
+    repositories::EventRepository,
+    value_objects::{ContentElement, DeviceEventType, EventLevel, EventSource, RichContent},
+};
+
+use crate::modules::gateway::{
+    pairing::{PairingCache, PairingEntry},
+    types::*,
 };
 
 const MAX_PAIRING_REQUESTS_PER_IP_PER_MINUTE: usize = 3;
@@ -368,7 +367,7 @@ mod tests {
         let database = Arc::new(tinyiothub_storage::Database::new(pool));
         let factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
         let event_repo: Arc<dyn EventRepository> =
-            Arc::new(crate::modules::event::sqlite_event::SqliteEventRepository::new(
+            Arc::new(tinyiothub_event::sqlite_event::SqliteEventRepository::new(
                 database.as_ref().clone(),
             ));
         let service = GatewayService::new(factory, event_repo, cache, tx);
@@ -603,7 +602,7 @@ mod tests {
         let database = Arc::new(tinyiothub_storage::Database::new(pool));
         let factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
         let event_repo: Arc<dyn EventRepository> =
-            Arc::new(crate::modules::event::sqlite_event::SqliteEventRepository::new(
+            Arc::new(tinyiothub_event::sqlite_event::SqliteEventRepository::new(
                 database.as_ref().clone(),
             ));
         let svc2 = GatewayService::new(factory, event_repo, tiny_cache.clone(), tx);
@@ -654,7 +653,7 @@ mod tests {
         let database = Arc::new(tinyiothub_storage::Database::new(pool.clone()));
         let factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
         let event_repo: Arc<dyn EventRepository> =
-            Arc::new(crate::modules::event::sqlite_event::SqliteEventRepository::new(
+            Arc::new(tinyiothub_event::sqlite_event::SqliteEventRepository::new(
                 database.as_ref().clone(),
             ));
         let svc = GatewayService::new(factory, event_repo, cache.clone(), tx);

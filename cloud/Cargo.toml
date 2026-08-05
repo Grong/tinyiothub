@@ -112,6 +112,7 @@ thing = { workspace = true }
 auth = { workspace = true }
 user = { workspace = true }
 tenant = { workspace = true }
+event = { workspace = true }
 tinyiothub-marketplace = { path = "../marketplace" }
 
 # Dynamic loading

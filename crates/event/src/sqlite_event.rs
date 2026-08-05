@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use sqlx::Row;
 use tinyiothub_storage::Database;
 
-use crate::modules::event::{
+use crate::{
     Result,
     entities::Event,
     repositories::{

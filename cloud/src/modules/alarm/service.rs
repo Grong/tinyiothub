@@ -19,7 +19,7 @@ use super::{
     repo::{AlarmQueryCriteria, AlarmRepository, AlarmRuleRepository, TimeRange},
     types::*,
 };
-use crate::modules::event::{
+use tinyiothub_event::{
     aggregates::NotificationChannelType, entities::Event, value_objects::EventType,
 };
 

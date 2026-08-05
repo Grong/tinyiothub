@@ -3,22 +3,13 @@
 
 /// In-process signal emitted for every persisted thing event.
 ///
+/// Defined in `tinyiothub_event::bus` (the producing domain) and re-exported
+/// here so existing `thing_agent::ThingEventSignal` paths keep working.
+///
 /// `actor == "agent"` marks events produced by agent actions (invoke_action
 /// dispatch / heartbeat autonomous actions) — consumers must not wake the
 /// loop on those (resonance guard, O21).
-#[derive(Debug, Clone)]
-pub struct ThingEventSignal {
-    pub workspace_id: String,
-    pub thing_id: String,
-    pub event_name: String,
-    /// Monotonic cursor (events.rowid) — NOT the UUID `events.id`, which is
-    /// not orderable.
-    pub event_id: i64,
-    pub level: i32,
-    pub data: serde_json::Value,
-    pub is_unknown: bool,
-    pub actor: String,
-}
+pub use tinyiothub_event::bus::ThingEventSignal;
 
 #[async_trait::async_trait]
 pub trait ThingAgentHost: Send + Sync {
