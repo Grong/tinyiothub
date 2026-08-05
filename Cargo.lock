@@ -6273,55 +6273,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tinyiothub-driver-bacnet"
-version = "0.4.6"
-dependencies = [
- "plugin-sdk",
-]
-
-[[package]]
-name = "tinyiothub-driver-modbus"
-version = "0.4.6"
-dependencies = [
- "plugin-sdk",
-]
-
-[[package]]
-name = "tinyiothub-driver-mqtt"
-version = "0.4.6"
-dependencies = [
- "plugin-sdk",
-]
-
-[[package]]
-name = "tinyiothub-driver-mqtt-bridge"
-version = "0.4.6"
-dependencies = [
- "plugin-sdk",
-]
-
-[[package]]
-name = "tinyiothub-driver-onvif"
-version = "0.4.6"
-dependencies = [
- "plugin-sdk",
-]
-
-[[package]]
-name = "tinyiothub-driver-opcua"
-version = "0.4.6"
-dependencies = [
- "plugin-sdk",
-]
-
-[[package]]
-name = "tinyiothub-driver-snmp"
-version = "0.4.6"
-dependencies = [
- "plugin-sdk",
-]
-
-[[package]]
 name = "tinyiothub-edge"
 version = "0.4.6"
 dependencies = [

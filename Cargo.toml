@@ -3,7 +3,6 @@ resolver = "3"
 members = [
     "crates/*",
     "apps/*",
-    "plugins/*",
     "tests/integration",
 ]
 exclude = [
@@ -11,6 +10,8 @@ exclude = [
     "vendor/onvif-rs",
     # Frontend is built separately (Node/Vite)
     "web",
+    # Runtime test artifacts (created by cloud test runs)
+    "apps/data",
 ]
 
 [workspace.package]
