@@ -13,12 +13,13 @@ pub async fn create_app_router(app_state: AppState) -> Router {
 
     tracing::info!("Creating CORS layer...");
 
-    // Initialize MCP tools with AppState
+    // Initialize MCP tools with the mcp domain state slice
     tracing::info!("Initializing MCP tools...");
+    use axum::extract::FromRef;
     use std::sync::Arc;
-    let shared_state = Arc::new(app_state.clone());
-    crate::modules::mcp::register_tools(Some(shared_state.clone())).await;
-    crate::modules::mcp::agent_bridge::register_agent_bridge();
+    let mcp_state = Arc::new(tinyiothub_mcp::McpState::from_ref(&app_state));
+    tinyiothub_mcp::register_tools(Some(mcp_state)).await;
+    tinyiothub_mcp::agent_bridge::register_agent_bridge();
     app_state
         .agent_pool
         .set_runtime_context(tinyiothub_agent::host::tools::service::ToolRuntimeContext {

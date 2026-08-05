@@ -3198,6 +3198,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
+name = "mcp"
+version = "0.4.6"
+dependencies = [
+ "agent",
+ "alarm",
+ "async-trait",
+ "axum",
+ "chrono",
+ "core",
+ "cron 0.12.1",
+ "db",
+ "driver",
+ "runtime",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tenant",
+ "thing",
+ "tokio",
+ "tracing",
+ "uuid",
+ "web",
+]
+
+[[package]]
 name = "md-5"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6164,6 +6189,7 @@ dependencies = [
  "libloading",
  "llm",
  "macros",
+ "mcp",
  "memory",
  "mockall",
  "moka",

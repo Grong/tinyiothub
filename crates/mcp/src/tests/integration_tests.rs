@@ -6,9 +6,9 @@ use serde_json::json;
 /// Test that all expected tools are registered in the MCP registry
 #[tokio::test]
 async fn test_all_tools_registered() {
-    crate::modules::mcp::register_tools(None).await;
+    crate::register_tools(None).await;
 
-    let registry = crate::modules::mcp::get_mcp_registry().expect("Registry not initialized");
+    let registry = crate::get_mcp_registry().expect("Registry not initialized");
 
     let tools = registry.read().await.list_tools();
 
@@ -31,15 +31,15 @@ async fn test_all_tools_registered() {
 /// Test that search_things accepts empty keyword (returns all things)
 #[tokio::test]
 async fn test_search_things_accepts_empty_keyword() {
-    crate::modules::mcp::register_tools(None).await;
-    let registry = crate::modules::mcp::get_mcp_registry().unwrap();
+    crate::register_tools(None).await;
+    let registry = crate::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("search_things").unwrap();
 
     let result = handler.execute(json!({"keyword": ""})).await;
-    // Without AppState initialized, it returns Internal error — same as non-empty keyword
+    // Without McpState initialized, it returns Internal error — same as non-empty keyword
     assert!(
-        matches!(result, Err(crate::modules::mcp::ToolError::Internal(_))),
+        matches!(result, Err(crate::ToolError::Internal(_))),
         "Expected Internal error for uninitialized state, got {:?}",
         result
     );
@@ -48,8 +48,8 @@ async fn test_search_things_accepts_empty_keyword() {
 /// Test that search_things returns response object or graceful error
 #[tokio::test]
 async fn test_search_things_returns_valid_response() {
-    crate::modules::mcp::register_tools(None).await;
-    let registry = crate::modules::mcp::get_mcp_registry().unwrap();
+    crate::register_tools(None).await;
+    let registry = crate::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("search_things").unwrap();
 
@@ -61,7 +61,7 @@ async fn test_search_things_returns_valid_response() {
         }
         Err(e) => {
             assert!(
-                matches!(e, crate::modules::mcp::ToolError::Internal(_)),
+                matches!(e, crate::ToolError::Internal(_)),
                 "Expected Internal error for uninitialized state, got {:?}",
                 e
             );
@@ -72,8 +72,8 @@ async fn test_search_things_returns_valid_response() {
 /// Test all device-runtime (thing) tools are registered
 #[tokio::test]
 async fn test_all_device_tools_registered() {
-    crate::modules::mcp::register_tools(None).await;
-    let registry = crate::modules::mcp::get_mcp_registry().unwrap();
+    crate::register_tools(None).await;
+    let registry = crate::get_mcp_registry().unwrap();
     let tool_names = registry.read().await.list_names();
 
     let device_tools = [
@@ -98,8 +98,8 @@ async fn test_all_device_tools_registered() {
 /// Test all driver tools are registered
 #[tokio::test]
 async fn test_all_driver_tools_registered() {
-    crate::modules::mcp::register_tools(None).await;
-    let registry = crate::modules::mcp::get_mcp_registry().unwrap();
+    crate::register_tools(None).await;
+    let registry = crate::get_mcp_registry().unwrap();
     let tool_names = registry.read().await.list_names();
 
     let driver_tools = ["list_drivers", "test_driver"];
@@ -116,8 +116,8 @@ async fn test_all_driver_tools_registered() {
 /// Test that tool metadata is properly formatted
 #[tokio::test]
 async fn test_tool_metadata_format() {
-    crate::modules::mcp::register_tools(None).await;
-    let registry = crate::modules::mcp::get_mcp_registry().unwrap();
+    crate::register_tools(None).await;
+    let registry = crate::get_mcp_registry().unwrap();
     let tools = registry.read().await.list_tools();
 
     for tool in tools {
@@ -130,8 +130,8 @@ async fn test_tool_metadata_format() {
 /// Test that get_thing returns error for non-existent thing
 #[tokio::test]
 async fn test_get_thing_not_found() {
-    crate::modules::mcp::register_tools(None).await;
-    let registry = crate::modules::mcp::get_mcp_registry().unwrap();
+    crate::register_tools(None).await;
+    let registry = crate::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("get_thing").unwrap();
 

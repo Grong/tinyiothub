@@ -1,0 +1,52 @@
+[package]
+name = "mcp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MCP (Model Context Protocol) domain for TinyIoTHub — embedded MCP server exposing thing/driver/job/alarm tools to AI agents"
+
+[lib]
+name = "tinyiothub_mcp"
+
+[dependencies]
+# Workspace crates
+core = { workspace = true }
+db = { workspace = true }
+web = { workspace = true }
+runtime = { workspace = true }
+driver = { workspace = true }
+thing = { workspace = true }
+alarm = { workspace = true }
+agent = { workspace = true }
+tenant = { workspace = true }
+
+# Web framework
+axum = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+# Async trait
+async-trait = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Hashing (API key lookup)
+sha2 = { workspace = true }
+
+# IDs
+uuid = { workspace = true }
+
+# Cron expression validation (job tools)
+cron = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

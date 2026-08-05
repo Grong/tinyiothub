@@ -3,8 +3,10 @@
 //!
 //! The dependency rule is mcp → agent, never agent → mcp: the agent crate
 //! consumes externally-registered tools only through its port. This module
-//! is the composition-side adapter; it moves to the mcp crate when Task 23
-//! reclaims the MCP plane.
+//! is the mcp-side adapter (it implements the agent crate's
+//! `ExternalToolHandler`/`ExternalToolRegistry` traits and is registered at
+//! startup by the composition layer); it moved into the mcp crate in
+//! P4-Task23.
 //!
 //! The auth-context guard that used to wrap handler execution inside the
 //! agent crate (`IoTToolAdapter` / heartbeat proposal approval) is applied

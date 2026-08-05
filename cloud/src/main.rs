@@ -199,14 +199,14 @@ async fn main_impl() -> std::io::Result<()> {
 
     #[cfg(feature = "harmonyos")]
     let app = {
-        // Initialize MCP tools with AppState for harmonyos
+        // Initialize MCP tools with the mcp domain state slice (harmonyos)
         use std::sync::Arc;
 
-        use axum::Router;
+        use axum::{Router, extract::FromRef};
         use tower_http::services::ServeDir;
-        let shared_state = Arc::new(app_state.clone());
-        tinyiothub_cloud::modules::mcp::register_tools(Some(shared_state.clone())).await;
-        tinyiothub_cloud::modules::mcp::agent_bridge::register_agent_bridge();
+        let mcp_state = Arc::new(tinyiothub_mcp::McpState::from_ref(&app_state));
+        tinyiothub_mcp::register_tools(Some(mcp_state)).await;
+        tinyiothub_mcp::agent_bridge::register_agent_bridge();
         app_state
             .agent_pool
             .set_runtime_context(tinyiothub_agent::host::tools::service::ToolRuntimeContext {

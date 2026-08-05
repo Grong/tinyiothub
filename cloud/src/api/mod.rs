@@ -21,7 +21,7 @@ use crate::shared::app_state::AppState;
 // jobs — 已迁移至 modules/jobs/handler.rs
 // marketplace — 已迁移至 modules/marketplace/handler.rs
 pub mod middleware;
-// mcp — 已迁移至 modules/mcp/
+// mcp — 已迁移至 crates/mcp/ (P4-Task23)
 // monitoring — 已迁移至 modules/monitoring/handler/
 // notification_channels — 已迁移至 modules/notification/handler.rs
 // notifications — 已迁移至 modules/notification/handler.rs
@@ -61,7 +61,7 @@ pub fn create_router() -> Router<AppState> {
         .nest("/workspaces", tinyiothub_agent::host::memory::handler::create_router())
         .nest("/workspaces", tinyiothub_agent::host::handler::agent_tasks::create_workspace_router())
         .nest("/workspaces", tinyiothub_agent::host::handler::workspace_heartbeat::create_router())
-        .nest("/mcp", crate::modules::mcp::create_router())
+        .nest("/mcp", tinyiothub_mcp::router())
         .nest("/chat", tinyiothub_agent::chat::handler::create_router())
         .nest("/agents/skills", tinyiothub_agent::host::handler::skills::create_router())
         .nest("/tags", tinyiothub_thing::tag::create_router())

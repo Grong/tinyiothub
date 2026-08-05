@@ -10,13 +10,9 @@ use serde_json::Value;
 use tinyiothub_runtime::driver;
 
 use crate::{
-    modules::{
-        mcp::{
-            handlers::get_mcp_context,
-            tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler},
-        },
-    },
-    shared::app_state::AppState,
+    McpState,
+    handlers::get_mcp_context,
+    tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler},
 };
 
 /// Driver list response
@@ -110,11 +106,11 @@ impl ToolHandler for ListDriversHandler {
 
 // === Test Driver Handler ===
 pub struct TestDriverHandler {
-    state: Option<Arc<AppState>>,
+    state: Option<Arc<McpState>>,
 }
 
 impl TestDriverHandler {
-    pub fn new(state: Option<Arc<AppState>>) -> Self {
+    pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }
@@ -178,7 +174,7 @@ impl ToolHandler for TestDriverHandler {
             let _state = self
                 .state
                 .as_ref()
-                .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
+                .ok_or_else(|| ToolError::Internal("McpState not initialized".to_string()))?;
 
             let test_device = tinyiothub_core::models::device::Device {
                 id: uuid::Uuid::new_v4().to_string(),

@@ -5,9 +5,10 @@
 //! Three ports today:
 //!
 //! - [`ExternalToolRegistry`] — MCP-registered tools. The MCP plane lives in
-//!   cloud (`modules::mcp`, Task 23 reclaims it) and depends on the agent
-//!   crate, never vice versa. Cloud adapts its `HandlerRegistry` to this port
-//!   and registers it once at startup via [`set_external_tool_registry`].
+//!   the mcp crate (P4-Task23) and depends on the agent
+//!   crate, never vice versa. The mcp crate adapts its `HandlerRegistry` to
+//!   this port (`agent_bridge`) and cloud registers it once at startup via
+//!   [`set_external_tool_registry`].
 //! - [`WorkspaceAccess`] — workspace existence + tenant ownership lookup used
 //!   by HTTP handlers. Implemented in cloud over
 //!   `tinyiothub_tenant::WorkspaceService` (tenant → agent edge stays one-way;

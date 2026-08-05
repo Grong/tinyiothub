@@ -6,7 +6,6 @@ pub mod cron;
 pub mod device;
 pub mod jobs;
 pub mod marketplace;
-pub mod mcp;
 pub mod monitoring;
 pub mod open;
 pub mod system;

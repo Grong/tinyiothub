@@ -116,6 +116,7 @@ event = { workspace = true }
 alarm = { workspace = true }
 driver = { workspace = true }
 notify = { workspace = true }
+mcp = { workspace = true }
 tinyiothub-marketplace = { path = "../marketplace" }
 
 # Dynamic loading
