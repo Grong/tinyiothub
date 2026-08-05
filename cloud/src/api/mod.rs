@@ -60,6 +60,7 @@ pub fn create_router() -> Router<AppState> {
         .nest("/workspaces", tinyiothub_tenant::workspace_router())
         .nest("/workspaces", crate::modules::agent::memory::handler::create_router())
         .nest("/workspaces", crate::modules::agent::handler::agent_tasks::create_workspace_router())
+        .nest("/workspaces", crate::modules::agent::handler::workspace_heartbeat::create_router())
         .nest("/mcp", crate::modules::mcp::create_router())
         .nest("/chat", crate::modules::chat::handler::create_router())
         .nest("/agents/skills", crate::modules::agent::handler::skills::create_router())
