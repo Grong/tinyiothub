@@ -6,8 +6,7 @@ use tinyiothub_core::error::{Error, Result};
 use tinyiothub_storage::sqlite::Database;
 
 use super::types::{
-    ApiKey, ApiUsageStats, CreateApiKeyRequest, CreateTenantRequest, SubscriptionPlan, Tenant,
-    TenantUsage,
+    ApiKey, ApiUsageStats, CreateApiKeyRequest, CreateTenantRequest, SubscriptionPlan, Tenant, TenantUsage,
 };
 
 /// Repository interface for tenant persistence
@@ -41,11 +40,7 @@ pub trait TenantRepository: Send + Sync {
     async fn activate_tenant(&self, tenant_id: &str) -> Result<Tenant>;
 
     /// Create a new API key (returns the key and the raw key string)
-    async fn create_api_key(
-        &self,
-        workspace_id: &str,
-        req: &CreateApiKeyRequest,
-    ) -> Result<(ApiKey, String)>;
+    async fn create_api_key(&self, workspace_id: &str, req: &CreateApiKeyRequest) -> Result<(ApiKey, String)>;
 
     /// Find an API key by ID
     async fn find_api_key_by_id(&self, id: &str) -> Result<Option<ApiKey>>;
@@ -346,11 +341,7 @@ impl TenantRepository for SqliteTenantRepository {
         self.find_tenant_by_id(tenant_id).await?.ok_or(Error::NotFound)
     }
 
-    async fn create_api_key(
-        &self,
-        workspace_id: &str,
-        req: &CreateApiKeyRequest,
-    ) -> Result<(ApiKey, String)> {
+    async fn create_api_key(&self, workspace_id: &str, req: &CreateApiKeyRequest) -> Result<(ApiKey, String)> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -458,12 +449,11 @@ impl TenantRepository for SqliteTenantRepository {
     }
 
     async fn find_api_key_by_hash(&self, key_hash: &str) -> Result<Option<ApiKey>> {
-        let row =
-            sqlx::query("SELECT * FROM api_keys WHERE key_hash = ? AND is_revoked = 0 LIMIT 1")
-                .bind(key_hash)
-                .fetch_optional(self.database.pool())
-                .await
-                .map_err(|e| Error::DatabaseError(e.to_string()))?;
+        let row = sqlx::query("SELECT * FROM api_keys WHERE key_hash = ? AND is_revoked = 0 LIMIT 1")
+            .bind(key_hash)
+            .fetch_optional(self.database.pool())
+            .await
+            .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
         if let Some(row) = row {
             Ok(Some(ApiKey {
@@ -565,12 +555,11 @@ impl TenantRepository for SqliteTenantRepository {
         latency_ms: i32,
         ip_address: Option<&str>,
     ) -> Result<()> {
-        let tenant_id: Option<String> =
-            sqlx::query_scalar("SELECT tenant_id FROM workspaces WHERE id = ? LIMIT 1")
-                .bind(workspace_id)
-                .fetch_optional(self.database.pool())
-                .await
-                .map_err(|e| Error::DatabaseError(e.to_string()))?;
+        let tenant_id: Option<String> = sqlx::query_scalar("SELECT tenant_id FROM workspaces WHERE id = ? LIMIT 1")
+            .bind(workspace_id)
+            .fetch_optional(self.database.pool())
+            .await
+            .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
         let tenant_id = tenant_id.unwrap_or_default();
         let id = uuid::Uuid::new_v4().to_string();

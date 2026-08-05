@@ -1,11 +1,11 @@
 //! Identity-store seam — the user lookup/authenticate/create surface the
 //! auth handlers need.
 //!
-//! The user domain still lives in `cloud::modules::user` (extracted by
-//! Task 17); until then cloud implements this trait for `UserService` and
-//! maps between `modules::user::User`/`CreateUserRequest` and the
-//! byte-identical mirror types below. Task 17 may re-implement the trait
-//! natively inside the user crate and drop the cloud adapter.
+//! The user domain lives in `tinyiothub_user` (Task 17a). Cloud implements
+//! this trait for the `UserServiceAuthAdapter` newtype in `app_state.rs`
+//! (orphan rule: both this trait and `UserService` are foreign to cloud)
+//! and maps between `tinyiothub_user::User`/`CreateUserRequest` and the
+//! byte-identical mirror types below.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

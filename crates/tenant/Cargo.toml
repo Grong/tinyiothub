@@ -1,0 +1,31 @@
+[package]
+name = "tenant"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+name = "tinyiothub_tenant"
+
+[dependencies]
+core = { workspace = true }
+db = { workspace = true }
+web = { workspace = true }
+ai = { workspace = true }
+runtime = { workspace = true }
+axum = { workspace = true, features = ["multipart"] }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+sqlx = { workspace = true }
+bcrypt = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
+base64 = { workspace = true }
+rand = { workspace = true }

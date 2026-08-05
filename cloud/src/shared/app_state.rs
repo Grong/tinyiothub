@@ -112,10 +112,10 @@ pub struct AppState {
     pub user_service: Arc<tinyiothub_user::UserService>,
 
     /// 租户服务 - CRUD 操作
-    pub tenant_service: Arc<crate::modules::tenant::TenantService>,
+    pub tenant_service: Arc<tinyiothub_tenant::TenantService>,
 
     /// 工作空间服务 - CRUD 操作
-    pub workspace_service: Arc<crate::modules::workspace::WorkspaceService>,
+    pub workspace_service: Arc<tinyiothub_tenant::WorkspaceService>,
 
     /// 标签服务 - CRUD 操作
     pub tag_service: Arc<tinyiothub_thing::tag::TagService>,
@@ -307,19 +307,15 @@ impl AppState {
         let user_service = Arc::new(tinyiothub_user::UserService::new(user_repository));
 
         // 租户服务
-        let tenant_repository: Arc<dyn crate::modules::tenant::TenantRepository> = Arc::new(
-            crate::modules::tenant::SqliteTenantRepository::new(database.as_ref().clone()),
-        );
-        let tenant_service =
-            Arc::new(crate::modules::tenant::TenantService::new(tenant_repository));
+        let tenant_repository: Arc<dyn tinyiothub_tenant::TenantRepository> =
+            Arc::new(tinyiothub_tenant::SqliteTenantRepository::new(database.as_ref().clone()));
+        let tenant_service = Arc::new(tinyiothub_tenant::TenantService::new(tenant_repository));
 
         // 工作空间服务
-        let workspace_repository: Arc<dyn crate::modules::workspace::WorkspaceRepository> =
-            Arc::new(crate::modules::workspace::SqliteWorkspaceRepository::new(
-                database.as_ref().clone(),
-            ));
+        let workspace_repository: Arc<dyn tinyiothub_tenant::WorkspaceRepository> =
+            Arc::new(tinyiothub_tenant::SqliteWorkspaceRepository::new(database.as_ref().clone()));
         let workspace_service =
-            Arc::new(crate::modules::workspace::WorkspaceService::new(workspace_repository));
+            Arc::new(tinyiothub_tenant::WorkspaceService::new(workspace_repository));
 
         // 标签服务
         let tag_service = Arc::new(tinyiothub_thing::tag::TagService::new(
@@ -957,6 +953,109 @@ impl axum::extract::FromRef<AppState> for tinyiothub_user::UserState {
             role_service: state.role_service.clone(),
             permission_service: state.permission_service.clone(),
             role_checker: Arc::new(EventSecurityRoleChecker { state: state.clone() }),
+        }
+    }
+}
+
+// ============================================================================
+// P4-Task17b: tenant domain slice + seam adapters
+// ============================================================================
+
+/// Agent-lifecycle seam adapter: workspace create/delete provisions and
+/// tears down the per-workspace Agent via cloud's `AgentPool` (agent plane,
+/// not yet extracted).
+pub struct AgentPoolLifecycle {
+    pub pool: Arc<crate::modules::agent::agent::AgentPool>,
+}
+
+#[async_trait::async_trait]
+impl tinyiothub_tenant::WorkspaceAgentLifecycle for AgentPoolLifecycle {
+    async fn create_agent(&self, workspace_id: &str, name: &str) -> Result<String, String> {
+        self.pool
+            .create_agent(&crate::shared::agent::AgentConfig {
+                workspace_id: workspace_id.to_string(),
+                name: name.to_string(),
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn delete_agent(&self, agent_id: &str) -> Result<(), String> {
+        self.pool.delete_agent(agent_id).await.map_err(|e| e.to_string())
+    }
+}
+
+/// Tag-suggester seam adapter: prompt construction, provider creation and
+/// response parsing, byte-identical to the former inline workspace handler
+/// code. Keeps the zeroclaw provider type out of the tenant crate.
+pub struct MinimaxTagSuggester;
+
+#[async_trait::async_trait]
+impl tinyiothub_tenant::TagSuggester for MinimaxTagSuggester {
+    async fn suggest(
+        &self,
+        name: &str,
+        resource_type_label: &str,
+        description: Option<&str>,
+    ) -> Result<Vec<String>, String> {
+        let settings = crate::shared::config::get();
+        let model = settings
+            .minimax
+            .as_ref()
+            .map(|m| m.model.clone())
+            .unwrap_or_else(|| "minimax-m2".into());
+
+        let prompt = format!(
+            "你是一个资源标签生成助手。根据用户提供的资源信息，生成 3-5 个简洁的中文标签。\n\
+             严格只返回逗号分隔的标签，不要任何解释或额外文字。\n\n\
+             示例输出：3D模型, 工厂, 设备, 车间\n\n\
+             资源信息：\n- 文件名：{}\n- 资源类型：{}{}",
+            name,
+            resource_type_label,
+            description.map_or(String::new(), |d| format!("\n- 描述：{}", d)),
+        );
+
+        let provider = crate::shared::config::create_minimax_provider().map_err(|e| {
+            tracing::error!("Failed to create AI provider: {}", e);
+            "AI 服务初始化失败".to_string()
+        })?;
+
+        let response =
+            provider.chat_with_system(None, &prompt, &model, Some(0.3)).await.map_err(|e| {
+                tracing::error!("AI tag generation failed: {}", e);
+                "AI 生成标签失败，请稍后重试".to_string()
+            })?;
+
+        let tags: Vec<String> = response
+            .split([',', '，', '、', '\n'])
+            .map(|t| t.trim().trim_matches('"').trim_matches('\'').to_string())
+            .filter(|t| !t.is_empty() && t.len() < 20)
+            .collect();
+
+        if tags.is_empty() { Err("AI 未生成有效标签".to_string()) } else { Ok(tags) }
+    }
+}
+
+/// P4-Task17b: derive the tenant domain's state slice from the global
+/// AppState. `jwt_secret` / `tag_suggester` are derived from the
+/// process-global config at extraction time — identical semantics to the
+/// former per-request `config::get()` reads (set once at startup).
+impl axum::extract::FromRef<AppState> for tinyiothub_tenant::TenantState {
+    fn from_ref(state: &AppState) -> Self {
+        let settings = crate::shared::config::get();
+        tinyiothub_tenant::TenantState {
+            database: state.database.clone(),
+            tenant_service: state.tenant_service.clone(),
+            workspace_service: state.workspace_service.clone(),
+            agent_lifecycle: Arc::new(AgentPoolLifecycle { pool: state.agent_pool.clone() }),
+            tag_suggester: if settings.minimax.is_some() {
+                Some(Arc::new(MinimaxTagSuggester))
+            } else {
+                None
+            },
+            jwt_secret: settings.security.jwt.secret.clone(),
+            agents_base_dir: crate::shared::paths::agents_base_dir(),
         }
     }
 }

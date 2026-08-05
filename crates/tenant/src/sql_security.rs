@@ -22,7 +22,7 @@ pub fn is_safe_identifier(name: &str) -> bool {
 /// SQL 查询构建辅助 - 用于构建参数化查询
 ///
 /// # 示例
-/// ```
+/// ```text
 /// let query = build_where_clause(vec![
 ///     ("username", Some("john")),
 ///     ("email", Some("john@example.com")),

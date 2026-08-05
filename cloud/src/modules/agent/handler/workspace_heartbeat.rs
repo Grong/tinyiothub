@@ -15,12 +15,28 @@ use serde::{Deserialize, Serialize};
 use tinyiothub_ai::heartbeat::types::NewHeartbeatTask;
 use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_core::agent_hooks::HeartbeatTaskDef;
+use tinyiothub_tenant::verify_workspace_access;
 use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::{
-    shared::{api_response::ApiResponse, app_state::AppState, paths},
-    verify_workspace_access,
-};
+use crate::shared::{api_response::ApiResponse, app_state::AppState, paths};
+
+/// Heartbeat routes (`/{id}/heartbeat/*`), nested at `/workspaces` by the
+/// composition layer next to `tinyiothub_tenant::workspace_router()` —
+/// route-equivalent to the former in-module registration.
+pub fn create_router() -> axum::Router<AppState> {
+    use axum::routing::{get, post, put};
+    axum::Router::new()
+        .route("/{id}/heartbeat/config", get(get_config))
+        .route("/{id}/heartbeat/config", put(update_config))
+        .route("/{id}/heartbeat/trust", get(get_trust_config))
+        .route("/{id}/heartbeat/trust", put(update_trust_config))
+        .route("/{id}/heartbeat/logs", get(get_logs))
+        .route("/{id}/heartbeat/tasks", get(get_tasks))
+        .route("/{id}/heartbeat/tasks", put(update_tasks))
+        .route("/{id}/heartbeat/approvals", get(get_approvals))
+        .route("/{id}/heartbeat/approvals/{proposal_id}/approve", post(approve_proposal))
+        .route("/{id}/heartbeat/approvals/{proposal_id}/reject", post(reject_proposal))
+}
 
 // ── Response types ──
 

@@ -120,8 +120,7 @@ pub struct AgentPool {
     pub chat_handles:
         Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
     pub memory_store: Arc<dyn tinyiothub_core::memory::MemoryStore>,
-    pub workspace_service:
-        tokio::sync::RwLock<Option<Arc<crate::modules::workspace::WorkspaceService>>>,
+    pub workspace_service: tokio::sync::RwLock<Option<Arc<tinyiothub_tenant::WorkspaceService>>>,
     pub trust_configs: DashMap<String, tinyiothub_ai::types::TrustConfig>,
     pub memory_service: tokio::sync::RwLock<Option<Arc<tinyiothub_memory::service::MemoryService>>>,
     pub event_publisher:
@@ -218,10 +217,7 @@ impl AgentPool {
         *guard = Some(service);
     }
 
-    pub async fn set_workspace_service(
-        &self,
-        service: Arc<crate::modules::workspace::WorkspaceService>,
-    ) {
+    pub async fn set_workspace_service(&self, service: Arc<tinyiothub_tenant::WorkspaceService>) {
         let mut guard = self.workspace_service.write().await;
         *guard = Some(service);
     }

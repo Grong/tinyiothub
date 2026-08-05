@@ -1,21 +1,24 @@
 // Workspaces API handlers
-
-pub mod heartbeat;
+//
+// Heartbeat routes (`/{id}/heartbeat/*`) are AI/agent-plane endpoints and
+// live in cloud (`modules::agent::handler::workspace_heartbeat`), nested by
+// the composition layer — see crate `legacy/mod.rs`.
 
 use axum::{
     Json, Router,
-    extract::{Extension, Multipart, Path, Query, State},
+    extract::{Multipart, Path, Query, State},
     routing::{delete, get, post, put},
 };
-use tinyiothub_auth::security::jwt::Claims;
+use tinyiothub_web::middleware::workspace::AuthClaims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::{
-    AssignDeviceRequest, CreateResourceRequest, CreateWorkspaceRequest, ResourceQueryParams,
-    ResourceSearchResult, ResourceType, SuggestTagsRequest, UpdateResourceRequest,
-    UpdateWorkspaceRequest, WorkspaceQueryParams, WorkspaceResource, WorkspaceWithDeviceCount,
+    AssignDeviceRequest, CreateResourceRequest, CreateWorkspaceRequest, ResourceQueryParams, ResourceSearchResult,
+    ResourceType, SuggestTagsRequest, UpdateResourceRequest, UpdateWorkspaceRequest, WorkspaceQueryParams,
+    WorkspaceResource, WorkspaceWithDeviceCount,
 };
-use crate::shared::{api_response::ApiResponse, app_state::AppState};
+use crate::TenantState;
+use tinyiothub_web::api_response::ApiResponse;
 
 // ── Helper ──
 
@@ -41,7 +44,11 @@ macro_rules! verify_workspace_access {
 }
 
 /// Create workspaces router
-pub fn create_router() -> Router<AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    crate::TenantState: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/", get(list_workspaces))
         .route("/", post(create_workspace))
@@ -57,27 +64,15 @@ pub fn create_router() -> Router<AppState> {
         .route("/{id}/resources/{rid}", get(get_resource))
         .route("/{id}/resources/{rid}", put(update_resource))
         .route("/{id}/resources/{rid}", delete(delete_resource))
-        // Heartbeat routes (per-workspace AI autonomous inspection)
-        .route("/{id}/heartbeat/config", get(heartbeat::get_config))
-        .route("/{id}/heartbeat/config", put(heartbeat::update_config))
-        .route("/{id}/heartbeat/trust", get(heartbeat::get_trust_config))
-        .route("/{id}/heartbeat/trust", put(heartbeat::update_trust_config))
-        .route("/{id}/heartbeat/logs", get(heartbeat::get_logs))
-        .route("/{id}/heartbeat/tasks", get(heartbeat::get_tasks))
-        .route("/{id}/heartbeat/tasks", put(heartbeat::update_tasks))
-        .route("/{id}/heartbeat/approvals", get(heartbeat::get_approvals))
-        .route("/{id}/heartbeat/approvals/{proposal_id}/approve", post(heartbeat::approve_proposal))
-        .route("/{id}/heartbeat/approvals/{proposal_id}/reject", post(heartbeat::reject_proposal))
-    // Thing-agent user-directive entries (T14) live under the same
-    // /workspaces/{id}/agent/* paths but are registered by the agent module
-    // and nested by the composition layer (api/mod.rs) — P4.0d keeps the
-    // workspace module free of agent edges.
+    // Heartbeat (AI/agent plane) and thing-agent directive entries (T14)
+    // live under the same /workspaces/{id}/* paths but are registered by
+    // cloud's agent module and nested by the composition layer (api/mod.rs).
 }
 
 /// List workspaces for current tenant
 async fn list_workspaces(
-    State(state): State<AppState>,
-    Extension(claims): Extension<Claims>,
+    State(state): State<TenantState>,
+    AuthClaims(claims): AuthClaims,
     Query(params): Query<WorkspaceQueryParams>,
 ) -> Json<ApiResponse<Vec<WorkspaceWithDeviceCount>>> {
     match state
@@ -95,8 +90,8 @@ async fn list_workspaces(
 
 /// Get workspace by ID
 async fn get_workspace(
-    State(state): State<AppState>,
-    Extension(claims): Extension<Claims>,
+    State(state): State<TenantState>,
+    AuthClaims(claims): AuthClaims,
     Path(id): Path<String>,
 ) -> Json<ApiResponse<WorkspaceWithDeviceCount>> {
     match state.workspace_service.find_by_id(&id).await {
@@ -116,13 +111,19 @@ async fn get_workspace(
 
 /// Create workspace (synchronously creates Agent)
 async fn create_workspace(
-    State(state): State<AppState>,
-    Extension(claims): Extension<Claims>,
+    State(state): State<TenantState>,
+    AuthClaims(claims): AuthClaims,
     Json(payload): Json<CreateWorkspaceRequest>,
 ) -> Json<ApiResponse<WorkspaceWithDeviceCount>> {
     let workspace = match state
         .workspace_service
-        .create(&claims.tenant_id, &payload.name, payload.description.as_deref(), None, None)
+        .create(
+            &claims.tenant_id,
+            &payload.name,
+            payload.description.as_deref(),
+            None,
+            None,
+        )
         .await
     {
         Ok(ws) => ws,
@@ -132,14 +133,7 @@ async fn create_workspace(
         }
     };
 
-    let agent_result = state
-        .agent_pool
-        .create_agent(&crate::shared::agent::AgentConfig {
-            workspace_id: workspace.id.clone(),
-            name: workspace.name.clone(),
-            ..Default::default()
-        })
-        .await;
+    let agent_result = state.agent_lifecycle.create_agent(&workspace.id, &workspace.name).await;
 
     let (final_workspace, warning) = match agent_result {
         Ok(_agent_id) => {
@@ -205,8 +199,8 @@ async fn create_workspace(
 
 /// Update workspace
 async fn update_workspace(
-    State(state): State<AppState>,
-    Extension(claims): Extension<Claims>,
+    State(state): State<TenantState>,
+    AuthClaims(claims): AuthClaims,
     Path(id): Path<String>,
     Json(payload): Json<UpdateWorkspaceRequest>,
 ) -> Json<ApiResponse<WorkspaceWithDeviceCount>> {
@@ -246,8 +240,8 @@ async fn update_workspace(
 
 /// Delete workspace (synchronously deletes Agent)
 async fn delete_workspace(
-    State(state): State<AppState>,
-    Extension(claims): Extension<Claims>,
+    State(state): State<TenantState>,
+    AuthClaims(claims): AuthClaims,
     Path(id): Path<String>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let workspace = match state.workspace_service.find_by_id(&id).await {
@@ -266,12 +260,11 @@ async fn delete_workspace(
 
     // Guard: refuse to delete a workspace that still has things (design:
     // 应用层拒绝，不再依赖 SET NULL 产生孤儿物)
-    let thing_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE workspace_id = ?")
-            .bind(&id)
-            .fetch_one(state.database.pool())
-            .await
-            .unwrap_or(0);
+    let thing_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE workspace_id = ?")
+        .bind(&id)
+        .fetch_one(state.database.pool())
+        .await
+        .unwrap_or(0);
     if thing_count > 0 {
         return ApiResponseBuilder::error_with_code(
             409,
@@ -280,7 +273,7 @@ async fn delete_workspace(
     }
 
     if let Some(agent_id) = workspace.agent_id
-        && let Err(e) = state.agent_pool.delete_agent(&agent_id).await
+        && let Err(e) = state.agent_lifecycle.delete_agent(&agent_id).await
     {
         tracing::warn!(
             "Failed to delete agent {}: {}. Proceeding with workspace deletion.",
@@ -300,8 +293,8 @@ async fn delete_workspace(
 
 /// Assign device to workspace
 async fn assign_device(
-    State(state): State<AppState>,
-    Extension(claims): Extension<Claims>,
+    State(state): State<TenantState>,
+    AuthClaims(claims): AuthClaims,
     Path(workspace_id): Path<String>,
     Json(payload): Json<AssignDeviceRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
@@ -318,7 +311,11 @@ async fn assign_device(
         }
     };
 
-    match state.workspace_service.assign_device(&payload.device_id, &workspace_id).await {
+    match state
+        .workspace_service
+        .assign_device(&payload.device_id, &workspace_id)
+        .await
+    {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"success": true})),
         Err(e) => ApiResponseBuilder::error_with_code(409, e.to_string()),
     }
@@ -326,8 +323,8 @@ async fn assign_device(
 
 /// List resources in workspace
 async fn list_resources(
-    State(state): State<AppState>,
-    Extension(claims): Extension<Claims>,
+    State(state): State<TenantState>,
+    AuthClaims(claims): AuthClaims,
     Path(id): Path<String>,
     Query(params): Query<ResourceQueryParams>,
 ) -> Json<ApiResponse<Vec<WorkspaceResource>>> {
@@ -359,8 +356,8 @@ async fn list_resources(
 
 /// Search resources in workspace
 async fn search_resources(
-    State(state): State<AppState>,
-    Extension(claims): Extension<Claims>,
+    State(state): State<TenantState>,
+    AuthClaims(claims): AuthClaims,
     Path(id): Path<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Json<ApiResponse<Vec<ResourceSearchResult>>> {
@@ -384,9 +381,17 @@ async fn search_resources(
 
     let resource_type = params.get("type").and_then(|s| ResourceType::from_string(s));
 
-    let limit: i64 = params.get("limit").and_then(|s| s.parse().ok()).unwrap_or(10).clamp(1, 50);
+    let limit: i64 = params
+        .get("limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10)
+        .clamp(1, 50);
 
-    match state.workspace_service.search_resources(&id, query, resource_type, limit).await {
+    match state
+        .workspace_service
+        .search_resources(&id, query, resource_type, limit)
+        .await
+    {
         Ok(results) => ApiResponseBuilder::success(results),
         Err(e) => {
             tracing::error!("Failed to search resources: {}", e);
@@ -397,8 +402,8 @@ async fn search_resources(
 
 /// Get resource by ID
 async fn get_resource(
-    State(state): State<AppState>,
-    Extension(claims): Extension<Claims>,
+    State(state): State<TenantState>,
+    AuthClaims(claims): AuthClaims,
     Path((workspace_id, resource_id)): Path<(String, String)>,
 ) -> Json<ApiResponse<WorkspaceResource>> {
     match state.workspace_service.find_by_id(&workspace_id).await {
@@ -414,7 +419,11 @@ async fn get_resource(
         }
     }
 
-    match state.workspace_service.find_resource_by_id(&workspace_id, &resource_id).await {
+    match state
+        .workspace_service
+        .find_resource_by_id(&workspace_id, &resource_id)
+        .await
+    {
         Ok(Some(resource)) => ApiResponseBuilder::success(resource),
         Ok(None) => ApiResponseBuilder::error_with_code(404, "资源不存在"),
         Err(e) => {
@@ -426,8 +435,8 @@ async fn get_resource(
 
 /// Create resource in workspace
 async fn create_resource(
-    State(state): State<AppState>,
-    Extension(claims): Extension<Claims>,
+    State(state): State<TenantState>,
+    AuthClaims(claims): AuthClaims,
     Path(workspace_id): Path<String>,
     Json(payload): Json<CreateResourceRequest>,
 ) -> Json<ApiResponse<WorkspaceResource>> {
@@ -448,8 +457,9 @@ async fn create_resource(
         return ApiResponseBuilder::error_with_code(400, "无效的资源类型，仅支持 'file'");
     }
 
-    let sanitized_name =
-        payload.name.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
+    let sanitized_name = payload
+        .name
+        .replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
 
     let file_path = payload
         .file_path
@@ -478,8 +488,8 @@ async fn create_resource(
 
 /// Update resource in workspace
 async fn update_resource(
-    State(state): State<AppState>,
-    Extension(claims): Extension<Claims>,
+    State(state): State<TenantState>,
+    AuthClaims(claims): AuthClaims,
     Path((workspace_id, resource_id)): Path<(String, String)>,
     Json(payload): Json<UpdateResourceRequest>,
 ) -> Json<ApiResponse<WorkspaceResource>> {
@@ -519,8 +529,8 @@ async fn update_resource(
 
 /// Delete resource from workspace
 async fn delete_resource(
-    State(state): State<AppState>,
-    Extension(claims): Extension<Claims>,
+    State(state): State<TenantState>,
+    AuthClaims(claims): AuthClaims,
     Path((workspace_id, resource_id)): Path<(String, String)>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     match state.workspace_service.find_by_id(&workspace_id).await {
@@ -536,7 +546,12 @@ async fn delete_resource(
         }
     }
 
-    match state.workspace_service.delete_resource(&workspace_id, &resource_id).await {
+    let base_dir = state.agents_base_dir.join(&workspace_id);
+    match state
+        .workspace_service
+        .delete_resource(&base_dir, &workspace_id, &resource_id)
+        .await
+    {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"success": true})),
         Err(e) => {
             tracing::error!("Failed to delete resource: {}", e);
@@ -547,13 +562,13 @@ async fn delete_resource(
 
 /// Suggest tags for a resource using AI
 async fn suggest_tags(
-    State(_state): State<AppState>,
-    Extension(claims): Extension<Claims>,
+    State(state): State<TenantState>,
+    AuthClaims(claims): AuthClaims,
     Path(workspace_id): Path<String>,
     Json(payload): Json<SuggestTagsRequest>,
 ) -> Json<ApiResponse<Vec<String>>> {
     // Verify workspace access
-    match _state.workspace_service.find_by_id(&workspace_id).await {
+    match state.workspace_service.find_by_id(&workspace_id).await {
         Ok(Some(workspace)) => {
             if workspace.tenant_id != claims.tenant_id {
                 return ApiResponseBuilder::error_with_code(403, "无权访问此工作空间");
@@ -566,76 +581,48 @@ async fn suggest_tags(
         }
     }
 
-    // Verify minimax config exists
-    if crate::shared::config::get().minimax.is_none() {
+    // The suggester is None when no minimax config is present (checked by
+    // the composition layer at FromRef extraction, same freshness as the
+    // former per-request `config::get()`).
+    let Some(ref suggester) = state.tag_suggester else {
         return ApiResponseBuilder::error("AI 服务未配置");
-    }
-
-    let model = crate::shared::config::get()
-        .minimax
-        .as_ref()
-        .map(|m| m.model.clone())
-        .unwrap_or_else(|| "minimax-m2".into());
-
-    let type_label = payload.resource_type.label();
-
-    let prompt = format!(
-        "你是一个资源标签生成助手。根据用户提供的资源信息，生成 3-5 个简洁的中文标签。\n\
-         严格只返回逗号分隔的标签，不要任何解释或额外文字。\n\n\
-         示例输出：3D模型, 工厂, 设备, 车间\n\n\
-         资源信息：\n- 文件名：{}\n- 资源类型：{}{}",
-        payload.name,
-        type_label,
-        payload.description.as_deref().map_or(String::new(), |d| format!("\n- 描述：{}", d)),
-    );
-
-    let provider = match crate::shared::config::create_minimax_provider() {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!("Failed to create AI provider: {}", e);
-            return ApiResponseBuilder::error("AI 服务初始化失败");
-        }
     };
 
-    match provider.chat_with_system(None, &prompt, &model, Some(0.3)).await {
-        Ok(response) => {
-            let tags: Vec<String> = response
-                .split([',', '，', '、', '\n'])
-                .map(|t| t.trim().trim_matches('"').trim_matches('\'').to_string())
-                .filter(|t| !t.is_empty() && t.len() < 20)
-                .collect();
-
-            if tags.is_empty() {
-                ApiResponseBuilder::error("AI 未生成有效标签")
-            } else {
-                ApiResponseBuilder::success(tags)
-            }
-        }
-        Err(e) => {
-            tracing::error!("AI tag generation failed: {}", e);
-            ApiResponseBuilder::error("AI 生成标签失败，请稍后重试")
-        }
+    match suggester
+        .suggest(
+            &payload.name,
+            payload.resource_type.label(),
+            payload.description.as_deref(),
+        )
+        .await
+    {
+        Ok(tags) => ApiResponseBuilder::success(tags),
+        Err(e) => ApiResponseBuilder::error(&e),
     }
 }
 
 /// POST /{id}/resources/upload
 /// Upload a file to the workspace. Saves to data/uploads/ and returns the access path.
 async fn upload_file(
-    State(state): State<AppState>,
-    Extension(claims): Extension<Claims>,
+    State(state): State<TenantState>,
+    AuthClaims(claims): AuthClaims,
     Path(id): Path<String>,
     mut multipart: Multipart,
 ) -> Json<ApiResponse<serde_json::Value>> {
     verify_workspace_access!(state, claims, id);
 
     while let Ok(Some(field)) = multipart.next_field().await {
-        let Some(name) = field.name().map(|s| s.to_string()) else { continue };
+        let Some(name) = field.name().map(|s| s.to_string()) else {
+            continue;
+        };
 
         if name != "file" {
             continue;
         }
 
-        let Some(file_name) = field.file_name().map(|s| s.to_string()) else { continue };
+        let Some(file_name) = field.file_name().map(|s| s.to_string()) else {
+            continue;
+        };
         let content_type = field.content_type().map(|s| s.to_string());
 
         let data = match field.bytes().await {
@@ -651,14 +638,13 @@ async fn upload_file(
             }
         };
 
-        let uploads_dir = crate::shared::paths::workspace_uploads_dir(&id);
+        let uploads_dir = state.agents_base_dir.join(&id).join("uploads");
         if let Err(e) = tokio::fs::create_dir_all(&uploads_dir).await {
             tracing::error!("Failed to create uploads dir: {}", e);
             return ApiResponseBuilder::error("创建上传目录失败");
         }
 
-        let safe_name = file_name
-            .replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '_', "_");
+        let safe_name = file_name.replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '_', "_");
         let stored_name = format!("{}_{}", uuid::Uuid::new_v4(), safe_name);
 
         let dest = uploads_dir.join(&stored_name);

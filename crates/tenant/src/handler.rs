@@ -11,25 +11,22 @@ use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
 use sqlx::Row;
-use tinyiothub_auth::security::jwt::Claims;
+use tinyiothub_web::middleware::workspace::{AuthClaims, WorkspaceScope};
 use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::{api_response::ApiResponse, validation};
 
 use super::types::{
-    ApiKey, ApiUsageStats, CreateApiKeyRequest, CreateTenantRequest, SubscriptionPlan, Tenant,
-    TenantQueryParams, TenantUsage,
+    ApiKey, ApiUsageStats, CreateApiKeyRequest, CreateTenantRequest, SubscriptionPlan, Tenant, TenantQueryParams,
+    TenantUsage,
 };
-use crate::{
-    api::middleware::WorkspaceScope,
-    shared::{api_response::ApiResponse, app_state::AppState},
-};
+use crate::TenantState;
 
 type HmacSha256 = Hmac<Sha256>;
 
 // --- Token helpers ---
 
 fn sign_payload(payload: &str, secret: &str) -> String {
-    let mut mac =
-        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
     mac.update(payload.as_bytes());
     let result = mac.finalize();
     base64::Engine::encode(&base64::engine::general_purpose::STANDARD, result.into_bytes())
@@ -41,9 +38,7 @@ fn verify_signature(payload: &str, signature: &str, secret: &str) -> bool {
     expected.as_bytes().ct_eq(signature.as_bytes()).into()
 }
 
-fn generate_token(tenant_id: &str, user_id: &str) -> String {
-    let secret = crate::shared::config::get().security.jwt.secret.clone();
-
+fn generate_token(secret: &str, tenant_id: &str, user_id: &str) -> String {
     let exp = chrono::Utc::now().timestamp() + 86400 * 7;
     let payload = serde_json::json!({
         "tenant_id": tenant_id,
@@ -94,8 +89,7 @@ struct VerifyTokenParams {
 // --- Password helpers ---
 
 fn hash_password(password: &str) -> Result<String, String> {
-    bcrypt::hash(password, bcrypt::DEFAULT_COST)
-        .map_err(|e| format!("Failed to hash password: {}", e))
+    bcrypt::hash(password, bcrypt::DEFAULT_COST).map_err(|e| format!("Failed to hash password: {}", e))
 }
 
 fn verify_password(password: &str, hash: &str) -> Result<bool, String> {
@@ -105,7 +99,11 @@ fn verify_password(password: &str, hash: &str) -> Result<bool, String> {
 // --- Routers ---
 
 /// Create API Keys router
-pub fn create_api_key_router() -> Router<AppState> {
+pub fn create_api_key_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    TenantState: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/", get(list_api_keys))
         .route("/", post(create_api_key))
@@ -113,7 +111,11 @@ pub fn create_api_key_router() -> Router<AppState> {
 }
 
 /// Create tenants router (mounted at /v1/tenants)
-pub fn create_router() -> Router<AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    TenantState: axum::extract::FromRef<S>,
+{
     Router::new()
         // Tenant CRUD — paths already include /tenants prefix for nesting under /v1/tenants
         .route("/tenants", get(list_tenants))
@@ -127,7 +129,11 @@ pub fn create_router() -> Router<AppState> {
 }
 
 /// Create tenant auth router (mounted at /v1/tenants — public, no JWT)
-pub fn create_auth_router() -> Router<AppState> {
+pub fn create_auth_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    TenantState: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/register", post(register_tenant))
         .route("/login", post(login))
@@ -137,9 +143,7 @@ pub fn create_auth_router() -> Router<AppState> {
 
 // --- Auth handlers ---
 
-async fn list_plans(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<SubscriptionPlan>>, StatusCode> {
+async fn list_plans(State(state): State<TenantState>) -> Result<Json<Vec<SubscriptionPlan>>, StatusCode> {
     match state.tenant_service.find_all_plans().await {
         Ok(plans) => Ok(Json(plans)),
         Err(e) => {
@@ -150,21 +154,21 @@ async fn list_plans(
 }
 
 async fn register_tenant(
-    State(state): State<AppState>,
+    State(state): State<TenantState>,
     Json(payload): Json<RegisterRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let slug = payload.slug.trim().to_lowercase();
     let email = payload.email.trim().to_lowercase();
 
-    if !tinyiothub_auth::validation::is_valid_slug(&slug) {
+    if !validation::is_valid_slug(&slug) {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    if !tinyiothub_auth::validation::is_valid_email(&email) {
+    if !validation::is_valid_email(&email) {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    if !tinyiothub_auth::validation::is_strong_password(&payload.password) {
+    if !validation::is_strong_password(&payload.password) {
         return Err(StatusCode::BAD_REQUEST);
     }
 
@@ -195,8 +199,7 @@ async fn register_tenant(
     let db = state.database.clone();
 
     let user_id = uuid::Uuid::new_v4().to_string();
-    let password_hash =
-        hash_password(&payload.password).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let password_hash = hash_password(&payload.password).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
     sqlx::query(
@@ -219,7 +222,7 @@ async fn register_tenant(
     let tenant_user_id = uuid::Uuid::new_v4().to_string();
     sqlx::query(
         r#"INSERT INTO tenant_users (id, tenant_id, user_id, role, invitation_status, joined_at, created_at, updated_at)
-           VALUES (?, ?, ?, 'owner', 'accepted', ?, ?, ?)"#
+           VALUES (?, ?, ?, 'owner', 'accepted', ?, ?, ?)"#,
     )
     .bind(&tenant_user_id)
     .bind(&tenant.id)
@@ -233,14 +236,20 @@ async fn register_tenant(
 
     state
         .workspace_service
-        .create(&tenant.id, "默认工作空间", Some("系统自动创建的默认工作空间"), None, None)
+        .create(
+            &tenant.id,
+            "默认工作空间",
+            Some("系统自动创建的默认工作空间"),
+            None,
+            None,
+        )
         .await
         .map_err(|e| {
             tracing::error!("Failed to create default workspace: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    let token = generate_token(&tenant.id, &user_id);
+    let token = generate_token(&state.jwt_secret, &tenant.id, &user_id);
 
     Ok(Json(serde_json::json!({
         "token": token,
@@ -254,32 +263,32 @@ async fn register_tenant(
 }
 
 async fn login(
-    State(state): State<AppState>,
+    State(state): State<TenantState>,
     Json(payload): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, StatusCode> {
     let db = state.database.clone();
 
     let email = payload.email.trim().to_lowercase();
 
-    if !tinyiothub_auth::validation::is_valid_email(&email) {
+    if !validation::is_valid_email(&email) {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let rows = sqlx::query(
-        "SELECT id, username, password_hash FROM users WHERE email = ? AND is_enabled = 1 LIMIT 1",
-    )
-    .bind(&email)
-    .fetch_all(db.pool())
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let rows = sqlx::query("SELECT id, username, password_hash FROM users WHERE email = ? AND is_enabled = 1 LIMIT 1")
+        .bind(&email)
+        .fetch_all(db.pool())
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let user_row = rows.into_iter().next().ok_or(StatusCode::UNAUTHORIZED)?;
 
     let user_id: String = user_row.try_get("id").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let _username: String =
-        user_row.try_get("username").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let stored_hash: String =
-        user_row.try_get("password_hash").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let _username: String = user_row
+        .try_get("username")
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let stored_hash: String = user_row
+        .try_get("password_hash")
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let password_valid = verify_password(&payload.password, &stored_hash).unwrap_or(false);
 
@@ -301,11 +310,21 @@ async fn login(
     let tenant_row = tenant_rows.into_iter().next().ok_or(StatusCode::NOT_FOUND)?;
 
     let tenant = Tenant {
-        id: tenant_row.try_get("id").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        name: tenant_row.try_get("name").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        slug: tenant_row.try_get("slug").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        status: tenant_row.try_get("status").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        plan_id: tenant_row.try_get("plan_id").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        id: tenant_row
+            .try_get("id")
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        name: tenant_row
+            .try_get("name")
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        slug: tenant_row
+            .try_get("slug")
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        status: tenant_row
+            .try_get("status")
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        plan_id: tenant_row
+            .try_get("plan_id")
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
         subscription_status: tenant_row
             .try_get("subscription_status")
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
@@ -318,8 +337,12 @@ async fn login(
         billing_contact: tenant_row
             .try_get("billing_contact")
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        timezone: tenant_row.try_get("timezone").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        locale: tenant_row.try_get("locale").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        timezone: tenant_row
+            .try_get("timezone")
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        locale: tenant_row
+            .try_get("locale")
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
         custom_logo: tenant_row
             .try_get("custom_logo")
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
@@ -334,7 +357,7 @@ async fn login(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
     };
 
-    let token = generate_token(&tenant.id, &user_id);
+    let token = generate_token(&state.jwt_secret, &tenant.id, &user_id);
 
     Ok(Json(LoginResponse {
         token,
@@ -347,7 +370,7 @@ async fn login(
 }
 
 async fn verify_token(
-    State(_state): State<AppState>,
+    State(_state): State<TenantState>,
     Query(params): Query<VerifyTokenParams>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let token = params.token;
@@ -360,19 +383,15 @@ async fn verify_token(
     let signature = parts[0];
     let payload_encoded = parts[1];
 
-    let payload_bytes =
-        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payload_encoded)
-            .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let payload_bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payload_encoded)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
     let payload_str = String::from_utf8(payload_bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let secret = crate::shared::config::get().security.jwt.secret.clone();
-
-    if !verify_signature(&payload_str, signature, &secret) {
+    if !verify_signature(&payload_str, signature, &_state.jwt_secret) {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let payload: serde_json::Value =
-        serde_json::from_str(&payload_str).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let payload: serde_json::Value = serde_json::from_str(&payload_str).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let exp = payload["exp"].as_i64().ok_or(StatusCode::BAD_REQUEST)?;
     if chrono::Utc::now().timestamp() > exp {
@@ -390,14 +409,14 @@ async fn verify_token(
 // --- Tenant CRUD handlers ---
 
 async fn list_tenants(
-    State(_state): State<AppState>,
+    State(_state): State<TenantState>,
     Query(_params): Query<TenantQueryParams>,
 ) -> Json<ApiResponse<Vec<Tenant>>> {
     ApiResponseBuilder::success(vec![])
 }
 
 async fn create_tenant(
-    State(state): State<AppState>,
+    State(state): State<TenantState>,
     Json(payload): Json<CreateTenantRequest>,
 ) -> Json<ApiResponse<Tenant>> {
     match state.tenant_service.create_tenant(&payload).await {
@@ -409,10 +428,7 @@ async fn create_tenant(
     }
 }
 
-async fn get_tenant(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Json<ApiResponse<Tenant>> {
+async fn get_tenant(State(state): State<TenantState>, Path(id): Path<String>) -> Json<ApiResponse<Tenant>> {
     match state.tenant_service.find_tenant_by_id(&id).await {
         Ok(Some(tenant)) => ApiResponseBuilder::success(tenant),
         Ok(None) => ApiResponseBuilder::error_with_code(404, "租户不存在"),
@@ -424,7 +440,7 @@ async fn get_tenant(
 }
 
 async fn update_tenant(
-    State(_state): State<AppState>,
+    State(_state): State<TenantState>,
     Path(_id): Path<String>,
     Json(_payload): Json<super::types::UpdateTenantRequest>,
 ) -> Json<ApiResponse<Tenant>> {
@@ -432,7 +448,7 @@ async fn update_tenant(
 }
 
 async fn change_plan(
-    State(state): State<AppState>,
+    State(state): State<TenantState>,
     Path(id): Path<String>,
     Json(payload): Json<serde_json::Value>,
 ) -> Json<ApiResponse<Tenant>> {
@@ -451,7 +467,7 @@ async fn change_plan(
 }
 
 async fn get_tenant_usage(
-    State(state): State<AppState>,
+    State(state): State<TenantState>,
     Path(id): Path<String>,
 ) -> Json<ApiResponse<Option<TenantUsage>>> {
     match state.tenant_service.get_tenant_usage(&id).await {
@@ -463,7 +479,7 @@ async fn get_tenant_usage(
     }
 }
 
-async fn validate_workspace(state: &AppState, ws: &str, tenant_id: &str) -> Option<()> {
+async fn validate_workspace(state: &TenantState, ws: &str, tenant_id: &str) -> Option<()> {
     match state.workspace_service.find_by_id(ws).await {
         Ok(Some(ws_obj)) if ws_obj.tenant_id == tenant_id => Some(()),
         Ok(Some(_)) => None,
@@ -475,8 +491,8 @@ async fn validate_workspace(state: &AppState, ws: &str, tenant_id: &str) -> Opti
 // --- API Key handlers ---
 
 async fn list_api_keys(
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<TenantState>,
+    AuthClaims(claims): AuthClaims,
     WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<Vec<ApiKey>>> {
     let ws = match workspace_id {
@@ -498,8 +514,8 @@ async fn list_api_keys(
 }
 
 async fn create_api_key(
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<TenantState>,
+    AuthClaims(claims): AuthClaims,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Json(payload): Json<CreateApiKeyRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
@@ -516,7 +532,11 @@ async fn create_api_key(
         return ApiResponseBuilder::error_with_code(403, "workspace_id 不匹配");
     }
 
-    match state.tenant_service.create_api_key(&payload.workspace_id, &payload).await {
+    match state
+        .tenant_service
+        .create_api_key(&payload.workspace_id, &payload)
+        .await
+    {
         Ok((key, raw_key)) => ApiResponseBuilder::success(serde_json::json!({
             "api_key": key,
             "raw_key": raw_key
@@ -529,8 +549,8 @@ async fn create_api_key(
 }
 
 async fn revoke_api_key(
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<TenantState>,
+    AuthClaims(claims): AuthClaims,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> Json<ApiResponse<serde_json::Value>> {
@@ -550,15 +570,13 @@ async fn revoke_api_key(
     }
 
     match state.tenant_service.find_api_key_by_id(&id).await {
-        Ok(Some(key)) if key.workspace_id == ws => {
-            match state.tenant_service.revoke_api_key(&id).await {
-                Ok(_) => ApiResponseBuilder::success(serde_json::json!({"success": true})),
-                Err(e) => {
-                    tracing::error!("Failed to revoke api key: {}", e);
-                    ApiResponseBuilder::error("撤销 API Key 失败")
-                }
+        Ok(Some(key)) if key.workspace_id == ws => match state.tenant_service.revoke_api_key(&id).await {
+            Ok(_) => ApiResponseBuilder::success(serde_json::json!({"success": true})),
+            Err(e) => {
+                tracing::error!("Failed to revoke api key: {}", e);
+                ApiResponseBuilder::error("撤销 API Key 失败")
             }
-        }
+        },
         Ok(Some(_)) => ApiResponseBuilder::error_with_code(403, "无权操作此 API Key"),
         Ok(None) => ApiResponseBuilder::error_with_code(404, "API Key 不存在"),
         Err(e) => {
@@ -569,7 +587,7 @@ async fn revoke_api_key(
 }
 
 async fn get_usage_stats(
-    State(state): State<AppState>,
+    State(state): State<TenantState>,
     Path(tenant_id): Path<String>,
 ) -> Json<ApiResponse<ApiUsageStats>> {
     match state.tenant_service.get_api_usage_stats(&tenant_id, 30).await {
@@ -585,19 +603,30 @@ async fn get_usage_stats(
 mod tests {
     use super::*;
 
+    /// Compile-only stand-in for the composition state — routers are
+    /// generic; the bound must be satisfiable but is never exercised.
+    #[derive(Clone)]
+    struct TestState;
+
+    impl axum::extract::FromRef<TestState> for TenantState {
+        fn from_ref(_: &TestState) -> Self {
+            unimplemented!("compile-only router test never extracts state")
+        }
+    }
+
     #[test]
     fn test_create_api_key_router_compiles() {
-        let _router = create_api_key_router();
+        let _router = create_api_key_router::<TestState>();
     }
 
     #[test]
     fn test_create_router_compiles() {
-        let _router = create_router();
+        let _router = create_router::<TestState>();
     }
 
     #[test]
     fn test_api_keys_router_independent() {
-        let _tenants = create_router();
-        let _api_keys = create_api_key_router();
+        let _tenants = create_router::<TestState>();
+        let _api_keys = create_api_key_router::<TestState>();
     }
 }

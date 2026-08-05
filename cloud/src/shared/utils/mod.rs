@@ -1,5 +1,4 @@
 pub mod spawn;
-pub mod sql_security;
 pub mod trace_util;
 
 // Re-export commonly used utilities

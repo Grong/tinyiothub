@@ -11,6 +11,7 @@ pub mod pagination;
 pub mod response;
 pub mod security;
 pub mod state;
+pub mod validation;
 
 pub use api_response::ApiResponseBuilder;
 pub use error_handling::{ErrorCategory, ErrorCode, ErrorContext, ErrorHandler};

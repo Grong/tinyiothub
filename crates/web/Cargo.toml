@@ -39,3 +39,6 @@ tracing = { workspace = true }
 
 # HTTP headers (for Bearer token extraction)
 headers = { workspace = true }
+
+# Input validation (email/phone/username/slug patterns)
+regex = { workspace = true }

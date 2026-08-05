@@ -10,6 +10,7 @@ pub mod agent_tasks;
 pub mod files;
 pub mod skills;
 pub mod types;
+pub mod workspace_heartbeat;
 
 #[cfg(test)]
 mod tests;

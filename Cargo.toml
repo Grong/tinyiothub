@@ -167,6 +167,7 @@ llm = { path = "crates/llm" }
 thing = { path = "crates/thing" }
 auth = { path = "crates/auth" }
 user = { path = "crates/user" }
+tenant = { path = "crates/tenant" }
 
 [profile.release]
 opt-level = 2

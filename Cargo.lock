@@ -5818,6 +5818,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "tenant"
+version = "0.4.6"
+dependencies = [
+ "ai",
+ "async-trait",
+ "axum",
+ "base64 0.21.7",
+ "bcrypt",
+ "chrono",
+ "core",
+ "db",
+ "hmac 0.12.1",
+ "rand 0.8.6",
+ "runtime",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "subtle",
+ "tokio",
+ "tracing",
+ "uuid",
+ "web",
+]
+
+[[package]]
 name = "terminfo"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6057,6 +6083,7 @@ dependencies = [
  "subtle",
  "sysinfo",
  "tempfile",
+ "tenant",
  "thing",
  "thiserror 1.0.69",
  "tinyiothub-marketplace",
@@ -7119,6 +7146,7 @@ dependencies = [
  "core",
  "db",
  "headers",
+ "regex",
  "runtime",
  "serde",
  "serde_json",

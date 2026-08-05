@@ -34,7 +34,7 @@ pub fn create_open_router() -> Router<AppState> {
 async fn validate_api_key(
     state: &AppState,
     api_key: Option<String>,
-) -> Result<(crate::modules::tenant::ApiKey, crate::modules::tenant::Tenant, String), StatusCode> {
+) -> Result<(tinyiothub_tenant::ApiKey, tinyiothub_tenant::Tenant, String), StatusCode> {
     let raw_key = api_key.ok_or(StatusCode::UNAUTHORIZED)?;
     if raw_key.len() < 12 {
         return Err(StatusCode::UNAUTHORIZED);

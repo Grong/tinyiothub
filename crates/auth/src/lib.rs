@@ -20,7 +20,6 @@ pub mod security;
 pub mod sse;
 pub mod types;
 pub mod user_store;
-pub mod validation;
 
 use std::sync::Arc;
 

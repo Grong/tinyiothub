@@ -9,21 +9,19 @@ use std::{collections::HashMap, sync::Arc};
 use async_trait::async_trait;
 use sqlx::SqlitePool;
 use tinyiothub_ai::types::{TrustConfig, TrustDecision};
+use tinyiothub_tenant::WorkspaceService;
 use zeroclaw::tools::{Tool, ToolResult};
 use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
 use super::{canvas::CanvasTool, thing::create_thing_tools};
 use crate::{
-    modules::{
-        mcp::{
-            handlers::{McpAuthContext, McpContextGuard},
-            tool_metadata::{
-                IoTToolMetadata, PermissionLevel, name_infers_concurrency_safe,
-                name_infers_destructive, name_infers_read_only,
-            },
-            tool_registry::ToolHandler,
+    modules::mcp::{
+        handlers::{McpAuthContext, McpContextGuard},
+        tool_metadata::{
+            IoTToolMetadata, PermissionLevel, name_infers_concurrency_safe,
+            name_infers_destructive, name_infers_read_only,
         },
-        workspace::WorkspaceService,
+        tool_registry::ToolHandler,
     },
     shared::agent::config::AgentRuntimeConfig,
 };

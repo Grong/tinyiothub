@@ -20,5 +20,3 @@ pub mod notification;
 pub mod open;
 pub mod plugin;
 pub mod system;
-pub mod tenant;
-pub mod workspace;

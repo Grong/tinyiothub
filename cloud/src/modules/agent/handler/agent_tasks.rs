@@ -22,6 +22,7 @@ use tinyiothub_ai::thing_agent::{
 };
 use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy, PolicyRepository};
+use tinyiothub_tenant::verify_workspace_access;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
@@ -29,7 +30,6 @@ use crate::{
         agent_runs_repo::SqliteAgentRunsRepository, policy_repo::SqlitePolicyRepository,
     },
     shared::{api_response::ApiResponse, app_state::AppState},
-    verify_workspace_access,
 };
 
 /// admin 角色判定：用户持有任一 is_administrator 角色。DB 错误 fail-closed。

@@ -1,3 +1,5 @@
+// workspace submodule — workspaces CRUD + knowledge resources
+
 pub mod handler;
 pub mod repo;
 pub mod service;

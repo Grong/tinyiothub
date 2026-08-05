@@ -1,5 +1,6 @@
 use axum::{Json, Router, extract::State, routing::post};
 use serde::Deserialize;
+use tinyiothub_web::validation;
 use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder};
 
 use crate::{
@@ -7,7 +8,6 @@ use crate::{
     security::jwt,
     types::{LoginResponse, UserInfo},
     user_store::AuthCreateUserRequest,
-    validation,
 };
 
 #[derive(Deserialize)]

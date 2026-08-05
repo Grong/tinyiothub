@@ -8,11 +8,9 @@ use tinyiothub_core::agent_hooks::AgentHooks;
 
 use super::{
     repo::WorkspaceRepository,
-    types::{
-        ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount,
-    },
+    types::{ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount},
 };
-use crate::shared::error::Result;
+use tinyiothub_core::error::Result;
 
 pub struct WorkspaceService {
     repository: Arc<dyn WorkspaceRepository>,
@@ -68,11 +66,15 @@ impl WorkspaceService {
         agent_id: Option<&str>,
         agent_config: Option<&str>,
     ) -> Result<Workspace> {
-        let workspace =
-            self.repository.create(tenant_id, name, description, agent_id, agent_config).await?;
+        let workspace = self
+            .repository
+            .create(tenant_id, name, description, agent_id, agent_config)
+            .await?;
         self.seed_default_heartbeat_tasks(&workspace.id).await;
         if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
-            publisher.publish(AiEvent::WorkspaceCreated { workspace_id: workspace.id.clone() });
+            publisher.publish(AiEvent::WorkspaceCreated {
+                workspace_id: workspace.id.clone(),
+            });
         }
         Ok(workspace)
     }
@@ -87,7 +89,11 @@ impl WorkspaceService {
         let defaults: Vec<NewHeartbeatTask> = hooks
             .default_heartbeat_tasks()
             .into_iter()
-            .map(|t| NewHeartbeatTask { priority: t.priority, text: t.text, paused: t.paused })
+            .map(|t| NewHeartbeatTask {
+                priority: t.priority,
+                text: t.text,
+                paused: t.paused,
+            })
             .collect();
         if let Err(e) = repo.replace_all(workspace_id, &defaults).await {
             tracing::warn!(%workspace_id, "Failed to seed default heartbeat tasks: {}", e);
@@ -114,7 +120,9 @@ impl WorkspaceService {
         // workspace whose delete then fails.
         self.repository.delete(id).await?;
         if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
-            publisher.publish(AiEvent::WorkspaceDeleted { workspace_id: id.to_string() });
+            publisher.publish(AiEvent::WorkspaceDeleted {
+                workspace_id: id.to_string(),
+            });
         }
         Ok(())
     }
@@ -130,7 +138,9 @@ impl WorkspaceService {
         page: Option<u32>,
         page_size: Option<u32>,
     ) -> Result<Vec<WorkspaceResource>> {
-        self.repository.list_resources(workspace_id, resource_type, page, page_size).await
+        self.repository
+            .list_resources(workspace_id, resource_type, page, page_size)
+            .await
     }
 
     pub async fn find_resource_by_id(
@@ -178,12 +188,15 @@ impl WorkspaceService {
             .await
     }
 
-    pub async fn delete_resource(&self, workspace_id: &str, resource_id: &str) -> Result<()> {
+    pub async fn delete_resource(
+        &self,
+        workspace_base_dir: &std::path::Path,
+        workspace_id: &str,
+        resource_id: &str,
+    ) -> Result<()> {
         // Delete file first, then DB record
-        if let Ok(Some(res)) = self.repository.find_resource_by_id(workspace_id, resource_id).await
-        {
-            let base_dir = crate::shared::paths::workspace_dir(workspace_id);
-            let file_path = base_dir.join("resources").join(&res.file_path);
+        if let Ok(Some(res)) = self.repository.find_resource_by_id(workspace_id, resource_id).await {
+            let file_path = workspace_base_dir.join("resources").join(&res.file_path);
             if file_path.exists() {
                 let _ = tokio::fs::remove_file(&file_path).await;
             }
@@ -198,7 +211,9 @@ impl WorkspaceService {
         resource_type: Option<ResourceType>,
         limit: i64,
     ) -> Result<Vec<ResourceSearchResult>> {
-        self.repository.search_resources(workspace_id, query, resource_type, limit).await
+        self.repository
+            .search_resources(workspace_id, query, resource_type, limit)
+            .await
     }
 }
 
@@ -207,7 +222,7 @@ mod tests {
     use tinyiothub_ai::heartbeat::repo::HeartbeatTaskRepository;
 
     use super::*;
-    use crate::modules::workspace::types::WorkspaceResource;
+    use crate::workspace::types::WorkspaceResource;
 
     struct MockWorkspaceRepository {
         delete_fails: std::sync::atomic::AtomicBool,
@@ -215,7 +230,9 @@ mod tests {
 
     impl Default for MockWorkspaceRepository {
         fn default() -> Self {
-            Self { delete_fails: std::sync::atomic::AtomicBool::new(false) }
+            Self {
+                delete_fails: std::sync::atomic::AtomicBool::new(false),
+            }
         }
     }
 
@@ -336,7 +353,9 @@ mod tests {
 
     impl MockHeartbeatTaskRepo {
         fn new() -> Self {
-            Self { tasks: Mutex::new(Vec::new()) }
+            Self {
+                tasks: Mutex::new(Vec::new()),
+            }
         }
     }
 
@@ -404,18 +423,21 @@ mod tests {
         ) -> std::result::Result<(), tinyiothub_ai::heartbeat::repo::RepoError> {
             let mut store = self.tasks.lock().unwrap();
             store.retain(|t| t.workspace_id != workspace_id);
-            store.extend(tasks.iter().enumerate().map(|(i, t)| {
-                tinyiothub_ai::heartbeat::types::HeartbeatTask {
-                    id: i as i64 + 1,
-                    workspace_id: workspace_id.to_string(),
-                    priority: t.priority.clone(),
-                    text: t.text.clone(),
-                    paused: t.paused,
-                    version: 1,
-                    created_at: chrono::Utc::now(),
-                    updated_at: chrono::Utc::now(),
-                }
-            }));
+            store.extend(
+                tasks
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| tinyiothub_ai::heartbeat::types::HeartbeatTask {
+                        id: i as i64 + 1,
+                        workspace_id: workspace_id.to_string(),
+                        priority: t.priority.clone(),
+                        text: t.text.clone(),
+                        paused: t.paused,
+                        version: 1,
+                        created_at: chrono::Utc::now(),
+                        updated_at: chrono::Utc::now(),
+                    }),
+            );
             Ok(())
         }
 
@@ -462,8 +484,7 @@ mod tests {
         async fn read_legacy_heartbeat_tasks(
             &self,
             _workspace_dir: &std::path::Path,
-        ) -> std::result::Result<Vec<tinyiothub_core::agent_hooks::HeartbeatTaskDef>, String>
-        {
+        ) -> std::result::Result<Vec<tinyiothub_core::agent_hooks::HeartbeatTaskDef>, String> {
             unimplemented!()
         }
 
@@ -483,7 +504,10 @@ mod tests {
         service.set_heartbeat_task_repo(repo.clone());
         service.set_agent_hooks(Arc::new(StubAgentHooks));
 
-        service.create("tenant_1", "ws", None, None, None).await.expect("create");
+        service
+            .create("tenant_1", "ws", None, None, None)
+            .await
+            .expect("create");
 
         let tasks = repo.list_by_workspace("ws_test").await.expect("list tasks");
         assert_eq!(tasks.len(), 4, "new workspace gets the default heartbeat task set");
@@ -493,7 +517,10 @@ mod tests {
     #[tokio::test]
     async fn create_without_task_repo_still_succeeds() {
         let service = WorkspaceService::new(Arc::new(MockWorkspaceRepository::default()));
-        service.create("tenant_1", "ws", None, None, None).await.expect("create");
+        service
+            .create("tenant_1", "ws", None, None, None)
+            .await
+            .expect("create");
     }
 
     #[tokio::test]
@@ -501,8 +528,7 @@ mod tests {
         let repo = Arc::new(MockWorkspaceRepository::default());
         repo.delete_fails.store(true, std::sync::atomic::Ordering::SeqCst);
         let service = WorkspaceService::new(repo);
-        let publisher =
-            Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
+        let publisher = Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
         service.set_event_publisher(publisher.clone());
 
         let result = service.delete("ws_1").await;
@@ -519,8 +545,7 @@ mod tests {
     #[tokio::test]
     async fn delete_success_publishes_workspace_deleted() {
         let service = WorkspaceService::new(Arc::new(MockWorkspaceRepository::default()));
-        let publisher =
-            Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
+        let publisher = Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
         service.set_event_publisher(publisher.clone());
 
         service.delete("ws_1").await.expect("delete");

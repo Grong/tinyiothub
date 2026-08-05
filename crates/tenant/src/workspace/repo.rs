@@ -7,7 +7,7 @@ use super::types::{
     ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount,
     extract_file_path_from_content,
 };
-use crate::shared::utils::sql_security::escape_like_pattern;
+use crate::sql_security::escape_like_pattern;
 
 /// Repository interface for workspace persistence
 #[async_trait]
@@ -45,11 +45,7 @@ pub trait WorkspaceRepository: Send + Sync {
         page: Option<u32>,
         page_size: Option<u32>,
     ) -> Result<Vec<WorkspaceResource>>;
-    async fn find_resource_by_id(
-        &self,
-        workspace_id: &str,
-        resource_id: &str,
-    ) -> Result<Option<WorkspaceResource>>;
+    async fn find_resource_by_id(&self, workspace_id: &str, resource_id: &str) -> Result<Option<WorkspaceResource>>;
     async fn create_resource(
         &self,
         workspace_id: &str,
@@ -142,8 +138,7 @@ impl From<WorkspaceResourceRow> for WorkspaceResource {
         Self {
             id: row.id,
             workspace_id: row.workspace_id,
-            resource_type: ResourceType::from_string(&row.resource_type)
-                .unwrap_or(ResourceType::File),
+            resource_type: ResourceType::from_string(&row.resource_type).unwrap_or(ResourceType::File),
             name: row.name,
             description: row.description,
             content: row.content,
@@ -185,8 +180,7 @@ impl From<ResourceSearchResultRow> for ResourceSearchResult {
         Self {
             id: row.id,
             workspace_id: row.workspace_id,
-            resource_type: ResourceType::from_string(&row.resource_type)
-                .unwrap_or(ResourceType::File),
+            resource_type: ResourceType::from_string(&row.resource_type).unwrap_or(ResourceType::File),
             name: row.name,
             description: row.description,
             content: row.content,
@@ -474,11 +468,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    async fn find_resource_by_id(
-        &self,
-        workspace_id: &str,
-        resource_id: &str,
-    ) -> Result<Option<WorkspaceResource>> {
+    async fn find_resource_by_id(&self, workspace_id: &str, resource_id: &str) -> Result<Option<WorkspaceResource>> {
         let row = sqlx::query_as::<_, WorkspaceResourceRow>(
             r#"
             SELECT id, workspace_id, resource_type, name, description, content, file_path, file_size, tags, metadata, created_at, updated_at
@@ -690,8 +680,9 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
     }
 
     async fn find_all_ids(&self) -> Result<Vec<String>> {
-        let rows: Vec<(String,)> =
-            sqlx::query_as("SELECT id FROM workspaces").fetch_all(self.database.pool()).await?;
+        let rows: Vec<(String,)> = sqlx::query_as("SELECT id FROM workspaces")
+            .fetch_all(self.database.pool())
+            .await?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 }
@@ -703,19 +694,28 @@ mod extract_tests {
     #[test]
     fn test_extract_from_3d_code_block() {
         let content = "```3d\n/uploads/ws-001/uploads/factory.glb\n```\n这是描述";
-        assert_eq!(extract_file_path_from_content(content), "/uploads/ws-001/uploads/factory.glb");
+        assert_eq!(
+            extract_file_path_from_content(content),
+            "/uploads/ws-001/uploads/factory.glb"
+        );
     }
 
     #[test]
     fn test_extract_from_markdown_image() {
         let content = "![平面图.png](/uploads/ws-001/uploads/floor.png)\n这是平面图";
-        assert_eq!(extract_file_path_from_content(content), "/uploads/ws-001/uploads/floor.png");
+        assert_eq!(
+            extract_file_path_from_content(content),
+            "/uploads/ws-001/uploads/floor.png"
+        );
     }
 
     #[test]
     fn test_extract_fallback_raw_path() {
         let content = "请查看 /uploads/ws-001/uploads/data.bin 文件";
-        assert_eq!(extract_file_path_from_content(content), "/uploads/ws-001/uploads/data.bin");
+        assert_eq!(
+            extract_file_path_from_content(content),
+            "/uploads/ws-001/uploads/data.bin"
+        );
     }
 
     #[test]
