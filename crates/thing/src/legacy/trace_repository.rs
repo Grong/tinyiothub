@@ -5,9 +5,7 @@ use tinyiothub_core::{
 
 use tinyiothub_storage::Database;
 
-use crate::modules::device::trace_service::{
-    DeviceTrace, DeviceTraceStatistics, SystemTraceOverview,
-};
+use super::trace::{DeviceTrace, DeviceTraceStatistics, SystemTraceOverview};
 
 /// 设备追踪记录仓库 - 处理所有 device_traces 表的数据库操作
 #[derive(Debug, Clone)]

@@ -11,10 +11,10 @@ use tinyiothub_core::thing_hooks::ThingConfirmVerdict;
 use tinyiothub_web::response::ApiResponse;
 
 use super::super::service::ThingService;
-use crate::{
-    api::middleware::WorkspaceScope,
-    shared::{api_response::ApiResponseBuilder, app_state::AppState},
-};
+use tinyiothub_web::middleware::workspace::WorkspaceScope;
+use tinyiothub_web::response::ApiResponseBuilder;
+
+use crate::ThingState;
 
 fn thing_service(pool: &sqlx::SqlitePool) -> ThingService {
     ThingService::new(pool.clone())
@@ -31,7 +31,7 @@ pub struct ConfirmActionRequest {
 }
 
 pub async fn confirm_action(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path((thing_id, action_name)): Path<(String, String)>,
     Json(req): Json<ConfirmActionRequest>,
@@ -39,7 +39,7 @@ pub async fn confirm_action(
     let ws = workspace_id.unwrap_or_default();
 
     // 1. Validate token and retrieve pending action
-    let pending = match state.thing_action_hooks.take_pending(&req.token) {
+    let pending = match state.hooks.take_pending(&req.token) {
         Some(p) => p,
         None => {
             return (
@@ -112,7 +112,7 @@ pub async fn confirm_action(
     }
 
     // 5. Execute via DataServer if available
-    match state.data_server().cloned() {
+    match state.data_server.clone() {
         Some(data_server) => {
             let cmd = tinyiothub_core::models::device_command::DeviceCommand {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -169,7 +169,7 @@ pub struct InvokeActionRequest {
 /// `confirmation_required` (the UI opens the confirm modal with it); when
 /// OFF, dispatches immediately.
 pub async fn invoke_action(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path((thing_id, action_name)): Path<(String, String)>,
     Json(req): Json<InvokeActionRequest>,
@@ -232,7 +232,7 @@ pub async fn invoke_action(
             .flatten()
             .flatten();
     if let Some(ref schema) = action_schema
-        && let Err(msg) = state.thing_action_hooks.validate_params(schema, req.params.as_ref())
+        && let Err(msg) = state.hooks.validate_params(schema, req.params.as_ref())
     {
         return (StatusCode::UNPROCESSABLE_ENTITY, ApiResponseBuilder::error_with_code(422, msg));
     }
@@ -250,12 +250,12 @@ pub async fn invoke_action(
             .unwrap_or(1i32)
             != 0;
 
-    match state.thing_action_hooks.decide_confirm(&ws, &action_name, require_confirm).await {
+    match state.hooks.decide_confirm(&ws, &action_name, require_confirm).await {
         ThingConfirmVerdict::Deny { reason } => {
             return (StatusCode::FORBIDDEN, ApiResponseBuilder::error_with_code(403, reason));
         }
         ThingConfirmVerdict::RequireToken => {
-            let token = state.thing_action_hooks.store_pending(
+            let token = state.hooks.store_pending(
                 thing_id.clone(),
                 action_name.clone(),
                 req.params.clone(),
@@ -276,7 +276,7 @@ pub async fn invoke_action(
     }
 
     // 4. Dispatch immediately via the command channel
-    match state.data_server().cloned() {
+    match state.data_server.clone() {
         Some(data_server) => {
             let cmd = tinyiothub_core::models::device_command::DeviceCommand {
                 id: uuid::Uuid::new_v4().to_string(),

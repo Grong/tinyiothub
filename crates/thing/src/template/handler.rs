@@ -4,22 +4,17 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use serde::Deserialize;
-use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::middleware::workspace::AuthClaims;
+use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo};
 
-use crate::{
-    modules::template::{
-        service::{TemplateService, TemplateValidator},
-        types::{
-            CreateDeviceTemplateRequest, DeviceCreationInput, DevicePreview, DeviceTemplate,
-            TemplateCategory, TemplateQueryParams, UpdateDeviceTemplateRequest,
-        },
-    },
-    shared::{
-        api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
-        app_state::AppState,
-        security::jwt::Claims,
+use super::{
+    service::{TemplateService, TemplateValidator},
+    types::{
+        CreateDeviceTemplateRequest, DeviceCreationInput, DevicePreview, DeviceTemplate,
+        TemplateCategory, TemplateQueryParams, UpdateDeviceTemplateRequest,
     },
 };
+use crate::ThingState;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -33,7 +28,11 @@ pub struct TemplateQuery {
     pub page_size: Option<u32>,
 }
 
-pub fn create_router() -> Router<AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    crate::ThingState: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/", get(list_templates))
         .route("/{id}", get(get_template))
@@ -47,9 +46,9 @@ pub fn create_router() -> Router<AppState> {
 
 /// 获取模板列表
 async fn list_templates(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     Query(query): Query<TemplateQuery>,
-    _claims: Claims,
+    _claims: AuthClaims,
 ) -> Json<ApiResponse<PaginatedResponse<DeviceTemplate>>> {
     // 初始化模板服务
     let template_service = get_template_service(&state);
@@ -96,9 +95,9 @@ async fn list_templates(
 
 /// 获取模板详情
 async fn get_template(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    _claims: AuthClaims,
 ) -> Json<ApiResponse<Option<DeviceTemplate>>> {
     let template_service = get_template_service(&state);
 
@@ -113,8 +112,8 @@ async fn get_template(
 
 /// 获取模板分类
 async fn get_template_categories(
-    State(state): State<AppState>,
-    _claims: Claims,
+    State(state): State<ThingState>,
+    _claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<TemplateCategory>>> {
     let template_service = get_template_service(&state);
 
@@ -129,8 +128,8 @@ async fn get_template_categories(
 
 /// 创建模板
 async fn create_template(
-    State(state): State<AppState>,
-    _claims: Claims,
+    State(state): State<ThingState>,
+    _claims: AuthClaims,
     Json(req): Json<CreateDeviceTemplateRequest>,
 ) -> Json<ApiResponse<DeviceTemplate>> {
     let template_service = get_template_service(&state);
@@ -160,9 +159,9 @@ async fn create_template(
 
 /// 更新模板
 async fn update_template(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    _claims: AuthClaims,
     Json(req): Json<UpdateDeviceTemplateRequest>,
 ) -> Json<ApiResponse<DeviceTemplate>> {
     let template_service = get_template_service(&state);
@@ -186,9 +185,9 @@ async fn update_template(
 
 /// 删除模板
 async fn delete_template(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    _claims: AuthClaims,
 ) -> Json<ApiResponse<bool>> {
     let template_service = get_template_service(&state);
 
@@ -210,9 +209,9 @@ async fn delete_template(
 
 /// 验证用户输入
 async fn validate_template_input(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    _claims: AuthClaims,
     Json(input): Json<DeviceCreationInput>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let template_service = get_template_service(&state);
@@ -245,9 +244,9 @@ async fn validate_template_input(
 
 /// 预览基于模板的设备创建
 async fn preview_device_from_template(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    _claims: AuthClaims,
     Json(input): Json<DeviceCreationInput>,
 ) -> Json<ApiResponse<DevicePreview>> {
     let template_service = get_template_service(&state);
@@ -265,7 +264,7 @@ async fn preview_device_from_template(
     };
 
     // 使用已初始化的模板引擎预览设备
-    let engine = state.template_engine();
+    let engine = state.template_engine;
 
     match engine.preview_template(&id, &input).await {
         Ok(preview) => ApiResponseBuilder::success(preview),
@@ -277,6 +276,6 @@ async fn preview_device_from_template(
 }
 
 /// 初始化模板服务
-fn get_template_service(state: &AppState) -> TemplateService {
-    TemplateService::new(state.template_engine().get_repository_arc())
+fn get_template_service(state: &ThingState) -> TemplateService {
+    TemplateService::new(state.template_engine.get_repository_arc())
 }

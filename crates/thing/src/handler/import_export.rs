@@ -9,17 +9,17 @@ use serde_json::Value;
 use tinyiothub_web::response::ApiResponse;
 
 use super::super::service::import_export::{self, ImportError};
-use crate::{
-    api::middleware::WorkspaceScope,
-    shared::{api_response::ApiResponseBuilder, app_state::AppState},
-};
+use tinyiothub_web::middleware::workspace::WorkspaceScope;
+use tinyiothub_web::response::ApiResponseBuilder;
+
+use crate::ThingState;
 
 // ──────────────────────────────────────────────
 // POST /things/import/dtdl
 // ──────────────────────────────────────────────
 
 pub async fn import_dtdl(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     WorkspaceScope(ws): WorkspaceScope,
     Json(body): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse<Value>>) {
@@ -50,7 +50,7 @@ pub async fn import_dtdl(
 // ──────────────────────────────────────────────
 
 pub async fn import_wot(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     WorkspaceScope(ws): WorkspaceScope,
     Json(body): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse<Value>>) {
@@ -81,7 +81,7 @@ pub async fn import_wot(
 // ──────────────────────────────────────────────
 
 pub async fn export_dtdl(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<Value>>) {
     let pool = state.database.pool().clone();

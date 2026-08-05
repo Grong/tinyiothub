@@ -14,10 +14,10 @@ use super::super::{
         UpdateThingRequest,
     },
 };
-use crate::{
-    api::middleware::WorkspaceScope,
-    shared::{api_response::ApiResponseBuilder, app_state::AppState},
-};
+use tinyiothub_web::middleware::workspace::WorkspaceScope;
+use tinyiothub_web::response::ApiResponseBuilder;
+
+use crate::ThingState;
 
 fn thing_service(pool: &sqlx::SqlitePool) -> ThingService {
     ThingService::new(pool.clone())
@@ -28,7 +28,7 @@ fn thing_service(pool: &sqlx::SqlitePool) -> ThingService {
 // ──────────────────────────────────────────────
 
 pub async fn list_things(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Query(params): Query<ListThingsParams>,
 ) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
@@ -55,7 +55,7 @@ pub async fn list_things(
 // ──────────────────────────────────────────────
 
 pub async fn create_thing(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     WorkspaceScope(ws): WorkspaceScope,
     Json(req): Json<CreateThingRequest>,
 ) -> (StatusCode, Json<ApiResponse<ThingResponse>>) {
@@ -82,7 +82,7 @@ pub async fn create_thing(
 // ──────────────────────────────────────────────
 
 pub async fn get_thing(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<ThingResponse>>) {
@@ -105,7 +105,7 @@ pub async fn get_thing(
 // ──────────────────────────────────────────────
 
 pub async fn update_thing(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
     Json(req): Json<UpdateThingRequest>,
@@ -129,7 +129,7 @@ pub async fn update_thing(
 // ──────────────────────────────────────────────
 
 pub async fn delete_thing(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<()>>) {
@@ -153,7 +153,7 @@ pub async fn delete_thing(
 
 /// Alias for get_thing — returns the thing with its ontology summary.
 pub async fn get_thing_ontology(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<ThingResponse>>) {
@@ -165,7 +165,7 @@ pub async fn get_thing_ontology(
 // ──────────────────────────────────────────────
 
 pub async fn get_thing_profile(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<ThingProfileResponse>>) {
@@ -203,7 +203,7 @@ pub struct TreeQuery {
 }
 
 pub async fn get_thing_tree(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
     Query(query): Query<TreeQuery>,

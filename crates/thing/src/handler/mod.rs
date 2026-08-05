@@ -5,15 +5,22 @@ use axum::{
     routing::{delete, get, post, put},
 };
 
-use crate::shared::app_state::AppState;
+use crate::ThingState;
 
 pub mod actions;
 pub mod crud;
 pub mod import_export;
 pub mod resources;
 
-/// Create the thing API router at /api/v1/things
-pub fn create_router() -> Router<AppState> {
+/// Create the thing API router at /api/v1/things.
+///
+/// Generic over the composition layer's state `S`: handlers extract
+/// `State<ThingState>`, which axum derives from `S` via `FromRef`.
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    ThingState: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/", get(crud::list_things))
         .route("/", post(crud::create_thing))

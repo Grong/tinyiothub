@@ -6,17 +6,14 @@ use axum::{
     routing::{get, post},
 };
 use serde::Deserialize;
-use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::middleware::workspace::AuthClaims;
+use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo};
 
 use super::types::{
     BatchTagBindingRequest, CreateTagBindingRequest, CreateTagRequest, Tag, TagBinding, TagQuery,
     UpdateTagRequest,
 };
-use crate::shared::{
-    api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
-    app_state::AppState,
-    security::jwt::Claims,
-};
+use crate::ThingState;
 
 #[derive(Debug, Deserialize)]
 pub struct TagListQuery {
@@ -38,7 +35,11 @@ pub struct DeleteTagBindingQuery {
     pub target_id: String,
 }
 
-pub fn create_router() -> Router<AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    ThingState: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/", get(list_tags).post(create_tag))
         .route("/{id}", get(get_tag).put(update_tag).delete(delete_tag))
@@ -53,14 +54,14 @@ pub fn create_router() -> Router<AppState> {
 /// Get tag list
 pub async fn list_tags(
     Query(query): Query<TagListQuery>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<ThingState>,
+    claims: AuthClaims,
 ) -> Result<Json<ApiResponse<PaginatedResponse<Tag>>>, StatusCode> {
     let tag_query = TagQuery {
         name: query.name.clone(),
         tag_type: query.tag_type.clone(),
         target_id: None,
-        tenant_id: Some(claims.tenant_id),
+        tenant_id: Some(claims.0.tenant_id),
         page: query.page,
         page_size: query.page_size,
     };
@@ -94,12 +95,12 @@ pub async fn list_tags(
 /// Get tag by ID
 pub async fn get_tag(
     Path(id): Path<String>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<ThingState>,
+    claims: AuthClaims,
 ) -> Result<Json<ApiResponse<Tag>>, StatusCode> {
     match state.tag_service.find_tag_by_id(&id).await {
         Ok(Some(tag)) => {
-            if tag.tenant_id.as_ref() == Some(&claims.tenant_id) {
+            if tag.tenant_id.as_ref() == Some(&claims.0.tenant_id) {
                 Ok(ApiResponseBuilder::success(tag))
             } else {
                 Err(StatusCode::NOT_FOUND)
@@ -115,13 +116,13 @@ pub async fn get_tag(
 
 /// Create tag
 pub async fn create_tag(
-    claims: Claims,
-    State(state): State<AppState>,
+    claims: AuthClaims,
+    State(state): State<ThingState>,
     Json(request): Json<CreateTagRequest>,
 ) -> Result<Json<ApiResponse<Tag>>, StatusCode> {
     match state
         .tag_service
-        .tag_exists_by_name_and_type(&request.name, &request.tag_type, &claims.tenant_id)
+        .tag_exists_by_name_and_type(&request.name, &request.tag_type, &claims.0.tenant_id)
         .await
     {
         Ok(true) => return Err(StatusCode::CONFLICT),
@@ -132,7 +133,7 @@ pub async fn create_tag(
         }
     }
 
-    match state.tag_service.create_tag(&request, &claims.user_id, &claims.tenant_id).await {
+    match state.tag_service.create_tag(&request, &claims.0.user_id, &claims.0.tenant_id).await {
         Ok(tag) => Ok(ApiResponseBuilder::success_with_message(tag, "Tag created successfully")),
         Err(e) => {
             tracing::error!("Failed to create tag: {}", e);
@@ -144,8 +145,8 @@ pub async fn create_tag(
 /// Update tag
 pub async fn update_tag(
     Path(id): Path<String>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<ThingState>,
+    claims: AuthClaims,
     Json(request): Json<UpdateTagRequest>,
 ) -> Result<Json<ApiResponse<Tag>>, StatusCode> {
     if let Some(name) = &request.name {
@@ -158,7 +159,7 @@ pub async fn update_tag(
             }
         };
 
-        if current_tag.tenant_id.as_ref() != Some(&claims.tenant_id) {
+        if current_tag.tenant_id.as_ref() != Some(&claims.0.tenant_id) {
             return Err(StatusCode::NOT_FOUND);
         }
 
@@ -168,7 +169,7 @@ pub async fn update_tag(
                 name,
                 &current_tag.tag_type,
                 &id,
-                &claims.tenant_id,
+                &claims.0.tenant_id,
             )
             .await
         {
@@ -181,7 +182,7 @@ pub async fn update_tag(
         }
     }
 
-    match state.tag_service.update_tag(&id, &request, &claims.tenant_id).await {
+    match state.tag_service.update_tag(&id, &request, &claims.0.tenant_id).await {
         Ok(tag) => Ok(ApiResponseBuilder::success_with_message(tag, "Tag updated successfully")),
         Err(tinyiothub_core::error::Error::NotFound) => Err(StatusCode::NOT_FOUND),
         Err(e) => {
@@ -194,10 +195,10 @@ pub async fn update_tag(
 /// Delete tag
 pub async fn delete_tag(
     Path(id): Path<String>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<ThingState>,
+    claims: AuthClaims,
 ) -> Result<Json<ApiResponse<()>>, StatusCode> {
-    match state.tag_service.delete_tag(&id, &claims.tenant_id).await {
+    match state.tag_service.delete_tag(&id, &claims.0.tenant_id).await {
         Ok(rows_affected) => {
             if rows_affected > 0 {
                 Ok(ApiResponseBuilder::success_with_message((), "Tag deleted successfully"))
@@ -215,14 +216,14 @@ pub async fn delete_tag(
 /// Search tags
 pub async fn search_tags(
     Query(query): Query<TagListQuery>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<ThingState>,
+    claims: AuthClaims,
 ) -> Result<Json<ApiResponse<PaginatedResponse<Tag>>>, StatusCode> {
     let tag_query = TagQuery {
         name: query.name.clone(),
         tag_type: query.tag_type.clone(),
         target_id: None,
-        tenant_id: Some(claims.tenant_id),
+        tenant_id: Some(claims.0.tenant_id),
         page: query.page,
         page_size: query.page_size,
     };
@@ -255,10 +256,10 @@ pub async fn search_tags(
 
 /// Get tag stats
 pub async fn get_tag_stats(
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<ThingState>,
+    claims: AuthClaims,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, StatusCode> {
-    let tag_query = TagQuery { tenant_id: Some(claims.tenant_id), ..Default::default() };
+    let tag_query = TagQuery { tenant_id: Some(claims.0.tenant_id), ..Default::default() };
 
     match state.tag_service.find_all_tags(&tag_query).await {
         Ok(tags) => {
@@ -289,13 +290,13 @@ pub async fn get_tag_stats(
 
 /// Create tag binding (idempotent: returns existing if already exists)
 pub async fn create_tag_binding(
-    claims: Claims,
-    State(state): State<AppState>,
+    claims: AuthClaims,
+    State(state): State<ThingState>,
     Json(request): Json<CreateTagBindingRequest>,
 ) -> Result<Json<ApiResponse<TagBinding>>, StatusCode> {
     match state
         .tag_service
-        .find_binding_by_tag_and_target(&request.tag_id, &request.target_id, &claims.tenant_id)
+        .find_binding_by_tag_and_target(&request.tag_id, &request.target_id, &claims.0.tenant_id)
         .await
     {
         Ok(Some(existing)) => {
@@ -311,7 +312,7 @@ pub async fn create_tag_binding(
         }
     }
 
-    match state.tag_service.create_binding(&request, &claims.user_id, &claims.tenant_id).await {
+    match state.tag_service.create_binding(&request, &claims.0.user_id, &claims.0.tenant_id).await {
         Ok(binding) => Ok(ApiResponseBuilder::success_with_message(
             binding,
             "Tag binding created successfully",
@@ -326,12 +327,12 @@ pub async fn create_tag_binding(
 /// Delete tag binding
 pub async fn delete_tag_binding(
     Query(query): Query<DeleteTagBindingQuery>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<ThingState>,
+    claims: AuthClaims,
 ) -> Result<Json<ApiResponse<()>>, StatusCode> {
     match state
         .tag_service
-        .delete_binding_by_tag_and_target(&query.tag_id, &query.target_id, &claims.tenant_id)
+        .delete_binding_by_tag_and_target(&query.tag_id, &query.target_id, &claims.0.tenant_id)
         .await
     {
         Ok(rows_affected) => {
@@ -350,8 +351,8 @@ pub async fn delete_tag_binding(
 
 /// Batch create tag bindings
 pub async fn batch_create_bindings(
-    claims: Claims,
-    State(state): State<AppState>,
+    claims: AuthClaims,
+    State(state): State<ThingState>,
     Json(request): Json<BatchTagBindingRequest>,
 ) -> Result<Json<ApiResponse<Vec<TagBinding>>>, StatusCode> {
     let bindings: Vec<CreateTagBindingRequest> = request
@@ -366,7 +367,7 @@ pub async fn batch_create_bindings(
 
     match state
         .tag_service
-        .create_bindings_batch(&bindings, &claims.user_id, &claims.tenant_id)
+        .create_bindings_batch(&bindings, &claims.0.user_id, &claims.0.tenant_id)
         .await
     {
         Ok(created_bindings) => Ok(ApiResponseBuilder::success_with_message(
@@ -383,12 +384,12 @@ pub async fn batch_create_bindings(
 /// Batch delete tag bindings
 pub async fn batch_delete_bindings(
     Query(query): Query<TagBindingQuery>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<ThingState>,
+    claims: AuthClaims,
 ) -> Result<Json<ApiResponse<()>>, StatusCode> {
     match state
         .tag_service
-        .delete_all_bindings_by_target_id(&query.target_id, &claims.tenant_id)
+        .delete_all_bindings_by_target_id(&query.target_id, &claims.0.tenant_id)
         .await
     {
         Ok(_) => {
@@ -404,15 +405,15 @@ pub async fn batch_delete_bindings(
 /// Get target's tag bindings
 pub async fn get_target_bindings(
     Path(target_id): Path<String>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<ThingState>,
+    claims: AuthClaims,
 ) -> Result<Json<ApiResponse<PaginatedResponse<Tag>>>, StatusCode> {
     let page = 1u32;
     let page_size = 100u32;
 
     let (tags_result, count_result) = tokio::join!(
-        state.tag_service.find_tags_by_target_id(&target_id, &claims.tenant_id),
-        state.tag_service.count_bindings_by_target_id(&target_id, &claims.tenant_id),
+        state.tag_service.find_tags_by_target_id(&target_id, &claims.0.tenant_id),
+        state.tag_service.count_bindings_by_target_id(&target_id, &claims.0.tenant_id),
     );
 
     match tags_result {
@@ -436,15 +437,15 @@ pub async fn get_target_bindings(
 /// Get tag's bindings
 pub async fn get_tag_bindings(
     Path(tag_id): Path<String>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<ThingState>,
+    claims: AuthClaims,
 ) -> Result<Json<ApiResponse<PaginatedResponse<TagBinding>>>, StatusCode> {
     let page = 1u32;
     let page_size = 100u32;
 
     let (bindings_result, count_result) = tokio::join!(
-        state.tag_service.find_bindings_by_tag_id(&tag_id, &claims.tenant_id),
-        state.tag_service.count_bindings_by_tag_id(&tag_id, &claims.tenant_id),
+        state.tag_service.find_bindings_by_tag_id(&tag_id, &claims.0.tenant_id),
+        state.tag_service.count_bindings_by_tag_id(&tag_id, &claims.0.tenant_id),
     );
 
     match bindings_result {

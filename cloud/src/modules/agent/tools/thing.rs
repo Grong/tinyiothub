@@ -28,7 +28,7 @@ use tinyiothub_ai::types::ToolSafety;
 use zeroclaw::tools::{Tool, ToolResult};
 use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
-use crate::modules::thing::{service::ThingService, types::ListThingsParams};
+use tinyiothub_thing::{service::ThingService, types::ListThingsParams};
 
 // ============================================================================
 // Confirmation token store for invoke_action

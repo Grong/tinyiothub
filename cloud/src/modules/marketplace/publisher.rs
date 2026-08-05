@@ -4,7 +4,7 @@ use reqwest::Client;
 use tinyiothub_core::config::MarketplaceConfig;
 
 use super::error::{MarketplaceError, Result};
-use crate::modules::template::types::DeviceTemplate;
+use tinyiothub_thing::template::types::DeviceTemplate;
 
 /// Publishes templates and drivers to the Marketplace.
 pub struct MarketplacePublisher {

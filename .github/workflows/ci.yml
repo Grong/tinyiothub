@@ -103,7 +103,7 @@ jobs:
             fi
 
             # 2. 检查新 domain 文件是否有测试
-            if echo "$file" | grep -qE "^cloud/src/modules/.*\.rs$"; then
+            if echo "$file" | grep -qE "^(cloud/src/modules|crates)/.*\.rs$"; then
               if ! grep -qE "#\[cfg\(test\)\]|#\[test\]" "$file" 2>/dev/null; then
                 echo "⚠️  WARNING: New module file has no tests: $file"
               fi
@@ -115,7 +115,7 @@ jobs:
         run: |
           echo "=== Checking ALL modified files for critical violations ==="
 
-          MODIFIED_HANDLERS=$(git diff --name-only origin/${{ github.base_ref || 'main' }}...HEAD | grep -E "^cloud/src/modules/.*/handler.*\.rs$" || true)
+          MODIFIED_HANDLERS=$(git diff --name-only origin/${{ github.base_ref || 'main' }}...HEAD | grep -E "^(cloud/src/modules|crates)/.*/handler.*\.rs$" || true)
           if [ -n "$MODIFIED_HANDLERS" ]; then
             for file in $MODIFIED_HANDLERS; do
               if grep -qE "\.unwrap\(\)|\.expect\(\)" "$file" 2>/dev/null; then

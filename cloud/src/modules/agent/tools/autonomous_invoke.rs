@@ -379,9 +379,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        modules::{agent::policy_repo::SqlitePolicyRepository, thing::service::ThingService},
+        modules::agent::policy_repo::SqlitePolicyRepository,
         test_utils::seed_test_workspace,
     };
+    use tinyiothub_thing::service::ThingService;
 
     // ── helpers ────────────────────────────────────────────────
 

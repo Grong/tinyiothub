@@ -28,10 +28,10 @@ use crate::{
                 ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
             },
         },
-        tag::TagRepository,
     },
     shared::{error::Error, event::EventBus, pagination::DataObjectWithPagination},
 };
+use tinyiothub_thing::tag::TagRepository;
 
 pub struct DeviceService {
     repository: Arc<dyn DeviceRepository>,
@@ -74,9 +74,9 @@ impl DeviceService {
 
     pub async fn create_device_from_template(
         &self,
-        template_engine: &crate::modules::template::TemplateEngine,
+        template_engine: &tinyiothub_thing::template::TemplateEngine,
         template_id: &str,
-        device_input: &crate::modules::template::types::DeviceCreationInput,
+        device_input: &tinyiothub_thing::template::types::DeviceCreationInput,
     ) -> Result<Device, Error> {
         tracing::info!(
             "Creating device from template: template_id={}, device_name={}",
@@ -199,9 +199,9 @@ impl DeviceService {
 
     async fn get_template(
         &self,
-        template_engine: &crate::modules::template::TemplateEngine,
+        template_engine: &tinyiothub_thing::template::TemplateEngine,
         template_id: &str,
-    ) -> Result<crate::modules::template::types::DeviceTemplate, Error> {
+    ) -> Result<tinyiothub_thing::template::types::DeviceTemplate, Error> {
         template_engine
             .get_repository()
             .find_by_id(template_id)
@@ -212,9 +212,9 @@ impl DeviceService {
 
     async fn apply_template_and_create_device(
         &self,
-        template_engine: &crate::modules::template::TemplateEngine,
+        template_engine: &tinyiothub_thing::template::TemplateEngine,
         template_id: &str,
-        device_input: &crate::modules::template::types::DeviceCreationInput,
+        device_input: &tinyiothub_thing::template::types::DeviceCreationInput,
     ) -> Result<Device, Error> {
         if self.repository.exists_by_name(&device_input.name).await.unwrap_or(false) {
             return Err(Error::ValidationError(ERROR_DEVICE_NAME_EXISTS.to_string()));
@@ -228,9 +228,9 @@ impl DeviceService {
 
     async fn generate_and_create_properties(
         &self,
-        template_engine: &crate::modules::template::TemplateEngine,
-        template: &crate::modules::template::types::DeviceTemplate,
-        device_input: &crate::modules::template::types::DeviceCreationInput,
+        template_engine: &tinyiothub_thing::template::TemplateEngine,
+        template: &tinyiothub_thing::template::types::DeviceTemplate,
+        device_input: &tinyiothub_thing::template::types::DeviceCreationInput,
         device_id: &str,
     ) {
         match template_engine.generate_device_properties(template, device_input, device_id).await {
@@ -248,9 +248,9 @@ impl DeviceService {
 
     async fn generate_and_create_commands(
         &self,
-        template_engine: &crate::modules::template::TemplateEngine,
-        template: &crate::modules::template::types::DeviceTemplate,
-        device_input: &crate::modules::template::types::DeviceCreationInput,
+        template_engine: &tinyiothub_thing::template::TemplateEngine,
+        template: &tinyiothub_thing::template::types::DeviceTemplate,
+        device_input: &tinyiothub_thing::template::types::DeviceCreationInput,
         device_id: &str,
     ) {
         match template_engine.generate_device_commands(template, device_input, device_id).await {

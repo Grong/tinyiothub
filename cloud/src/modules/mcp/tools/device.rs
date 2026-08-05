@@ -11,12 +11,8 @@ use serde_json::Value;
 use tinyiothub_core::models::device::CreateDeviceRequest;
 use tinyiothub_storage::traits::device::{DeviceCriteria, DeviceSortBy, DeviceSortOrder};
 
-use crate::{
-    modules::{
-        mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler},
-        template::types::{CreateDeviceFromTemplateRequest, DeviceCreationInput},
-    },
-};
+use crate::modules::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
+use tinyiothub_thing::template::types::{CreateDeviceFromTemplateRequest, DeviceCreationInput};
 use tinyiothub_storage::{find_device_command_by_device_and_name, find_device_properties_by_device_id};
 
 use crate::modules::device::device_query::{

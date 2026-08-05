@@ -4,7 +4,7 @@ use tinyiothub_storage::{
     traits::device::{DeviceCriteria, DeviceRepository, DeviceSortBy, DeviceSortOrder},
 };
 
-use crate::modules::tag::{SqliteTagRepository, TagRepository};
+use crate::tag::{SqliteTagRepository, TagRepository};
 
 /// Find a device by ID (convenience wrapper for MCP tools compatibility)
 pub async fn find_device_by_id(db: &Database, id: &str) -> Result<Option<Device>, sqlx::Error> {

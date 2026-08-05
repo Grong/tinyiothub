@@ -54,6 +54,19 @@ fn ensure_test_config() {
 
         // Initialize config — panic if it fails so we know immediately
         crate::shared::config::initialize().expect("Failed to initialize test config");
+
+        // Register the tenant resolver (P4-Task15) so tinyiothub_web's
+        // WorkspaceScope/AuthClaims extractors validate test JWTs exactly as
+        // the binary does (mirrors main.rs). OnceLock makes re-set a no-op.
+        tinyiothub_web::middleware::workspace::set_tenant_resolver(Box::new(|token| {
+            crate::shared::security::jwt::validate_jwt(token).ok().map(|c| {
+                tinyiothub_web::middleware::workspace::TenantClaims {
+                    user_id: c.user_id,
+                    tenant_id: c.tenant_id,
+                    workspace_id: c.workspace_id,
+                }
+            })
+        }));
     });
 }
 

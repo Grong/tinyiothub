@@ -38,10 +38,8 @@ use super::tools::{
     AutonomousInvokeActionTool, RunContextSlot, create_thing_tools, new_run_context_slot,
     thing::InvokeActionTool,
 };
-use crate::modules::{
-    event::{bus::ThingEventBus, router::ThrottleState},
-    thing::service::ThingService,
-};
+use crate::modules::event::{bus::ThingEventBus, router::ThrottleState};
+use tinyiothub_thing::service::ThingService;
 use tinyiothub_memory::workspace_memory::WorkspaceScopedMemory;
 
 /// Builds a fresh model provider per agent (providers are per-agent in

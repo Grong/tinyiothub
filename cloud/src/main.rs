@@ -60,6 +60,19 @@ async fn main_impl() -> std::io::Result<()> {
             .map(tinyiothub_web::security::Claims::from)
     }));
 
+    // Register the tenant resolver (P4-Task15) — domain crates resolve
+    // workspace/tenant scope via tinyiothub_web extractors without depending
+    // on cloud's JWT implementation.
+    tinyiothub_web::middleware::workspace::set_tenant_resolver(Box::new(|token| {
+        tinyiothub_cloud::shared::security::jwt::validate_jwt(token).ok().map(|c| {
+            tinyiothub_web::middleware::workspace::TenantClaims {
+                user_id: c.user_id,
+                tenant_id: c.tenant_id,
+                workspace_id: c.workspace_id,
+            }
+        })
+    }));
+
     // Initialize global start time for uptime calculation (before any health checks)
     let _ = tinyiothub_cloud::modules::monitoring::handler::health::START_TIME
         .set(std::time::SystemTime::now());

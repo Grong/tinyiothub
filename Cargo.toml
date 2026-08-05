@@ -164,6 +164,7 @@ skills = { path = "crates/skills" }
 web = { path = "crates/web" }
 ai = { path = "crates/ai" }
 llm = { path = "crates/llm" }
+thing = { path = "crates/thing" }
 
 [profile.release]
 opt-level = 2

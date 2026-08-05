@@ -19,13 +19,13 @@ use crate::{
             template_installer::TemplateInstaller,
             thing_template_installer::ThingTemplateInstaller,
         },
-        template::TemplateRepository,
     },
     shared::{
         api_response::ApiResponse, app_state::AppState, config, error_handling::AuthHelper,
         security::jwt::Claims,
     },
 };
+use tinyiothub_thing::template::TemplateRepository;
 
 pub fn create_router() -> Router<AppState> {
     Router::new()
@@ -344,7 +344,7 @@ async fn publish_template_handler(
     }
 
     let workspace_id_str = workspace_id.as_deref().unwrap_or("");
-    let template = match crate::modules::template::types::DeviceTemplate::find_by_id(
+    let template = match tinyiothub_thing::template::types::DeviceTemplate::find_by_id(
         &state.database,
         &req.template_id,
         workspace_id_str,

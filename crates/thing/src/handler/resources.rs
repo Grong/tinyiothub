@@ -10,10 +10,10 @@ use serde::Deserialize;
 use tinyiothub_web::response::ApiResponse;
 
 use super::super::{service::ThingService, types::ThingResource};
-use crate::{
-    api::middleware::WorkspaceScope,
-    shared::{api_response::ApiResponseBuilder, app_state::AppState},
-};
+use tinyiothub_web::middleware::workspace::WorkspaceScope;
+use tinyiothub_web::response::ApiResponseBuilder;
+
+use crate::ThingState;
 
 #[derive(Deserialize)]
 pub struct AttachResourceRequest {
@@ -25,7 +25,7 @@ fn thing_service(pool: &sqlx::SqlitePool) -> ThingService {
 }
 
 pub async fn list_unassigned_resources(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> (StatusCode, Json<ApiResponse<Vec<ThingResource>>>) {
     let pool = state.database.pool().clone();
@@ -42,7 +42,7 @@ pub async fn list_unassigned_resources(
 }
 
 pub async fn attach_resource(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
     Json(req): Json<AttachResourceRequest>,
@@ -65,7 +65,7 @@ pub async fn attach_resource(
 // ──────────────────────────────────────────────
 
 pub async fn detach_resource(
-    State(state): State<AppState>,
+    State(state): State<ThingState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path((thing_id, resource_id)): Path<(String, String)>,
 ) -> (StatusCode, Json<ApiResponse<()>>) {

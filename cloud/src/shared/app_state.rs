@@ -14,7 +14,6 @@ use crate::{
         },
         event::repositories::{EventRepository, RealTimeEventRepository},
         notification::NotificationManager,
-        template::{TemplateEngine, TemplateRepository, TemplateValidator},
     },
     shared::{
         error::Error,
@@ -27,6 +26,7 @@ use crate::{
     },
 };
 use tinyiothub_storage::{Database, DeviceRepositoryFactory};
+use tinyiothub_thing::template::{TemplateEngine, TemplateRepository, TemplateValidator};
 
 use crate::modules::{
     device::trace_repository::DeviceTraceRepository,
@@ -120,7 +120,7 @@ pub struct AppState {
     pub workspace_service: Arc<crate::modules::workspace::WorkspaceService>,
 
     /// 标签服务 - CRUD 操作
-    pub tag_service: Arc<crate::modules::tag::TagService>,
+    pub tag_service: Arc<tinyiothub_thing::tag::TagService>,
 
     /// AI subsystem orchestrator (set during async startup)
     pub orchestrator: Option<Arc<tinyiothub_ai::orchestrator::Orchestrator>>,
@@ -129,7 +129,7 @@ pub struct AppState {
     pub heartbeat_runner: Option<Arc<tinyiothub_ai::heartbeat::runner::HeartbeatRunner>>,
 
     /// 标签仓库 - 用于设备服务的标签关联
-    pub tag_repository: Arc<dyn crate::modules::tag::TagRepository>,
+    pub tag_repository: Arc<dyn tinyiothub_thing::tag::TagRepository>,
 
     /// 角色服务 - CRUD 操作
     pub role_service: Arc<crate::modules::role::RoleService>,
@@ -228,10 +228,10 @@ impl AppState {
         // 这里只创建事件总线，处理器注册推迟到 register_event_handlers() 方法
 
         // 标签仓库（提前创建，供 DeviceService 使用）
-        let tag_repository: Arc<dyn crate::modules::tag::TagRepository> =
-            Arc::new(crate::modules::tag::SqliteTagRepository::new(database.as_ref().clone()));
-        let tag_binding_repository: Arc<dyn crate::modules::tag::TagBindingRepository> = Arc::new(
-            crate::modules::tag::SqliteTagBindingRepository::new(database.as_ref().clone()),
+        let tag_repository: Arc<dyn tinyiothub_thing::tag::TagRepository> =
+            Arc::new(tinyiothub_thing::tag::SqliteTagRepository::new(database.as_ref().clone()));
+        let tag_binding_repository: Arc<dyn tinyiothub_thing::tag::TagBindingRepository> = Arc::new(
+            tinyiothub_thing::tag::SqliteTagBindingRepository::new(database.as_ref().clone()),
         );
 
         // 基础服务 - 使用事件总线
@@ -326,7 +326,7 @@ impl AppState {
             Arc::new(crate::modules::workspace::WorkspaceService::new(workspace_repository));
 
         // 标签服务
-        let tag_service = Arc::new(crate::modules::tag::TagService::new(
+        let tag_service = Arc::new(tinyiothub_thing::tag::TagService::new(
             tag_repository.clone(),
             tag_binding_repository,
         ));
@@ -513,7 +513,6 @@ impl AppState {
     pub fn db_pool(&self) -> sqlx::SqlitePool {
         self.database.pool().clone()
     }
-
     /// 获取租户感知的设备服务
     ///
     /// 使用设备仓库工厂创建针对特定工作空间的租户感知设备仓库，
@@ -777,5 +776,21 @@ impl AppState {
         let device_cache = Arc::new(DeviceCache::new());
 
         Self::new(device_cache, pool)
+    }
+}
+
+/// P4-Task15 (SEP pilot): derive the thing domain's state slice from the
+/// global AppState. Cloud mounts `tinyiothub_thing::router()` (things),
+/// `template::handler::create_router()` and `tag::create_router()` with this
+/// `FromRef` conversion.
+impl axum::extract::FromRef<AppState> for tinyiothub_thing::ThingState {
+    fn from_ref(state: &AppState) -> Self {
+        tinyiothub_thing::ThingState {
+            database: state.database.clone(),
+            hooks: state.thing_action_hooks.clone(),
+            data_server: state.data_server.clone(),
+            template_engine: state.template_engine.clone(),
+            tag_service: state.tag_service.clone(),
+        }
     }
 }
