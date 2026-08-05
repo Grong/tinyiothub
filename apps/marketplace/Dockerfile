@@ -1,9 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ============================================
-# TinyIoTHub Dev Build（本地测试用）
-# 使用 dev profile，内存需求低（2GB 即可）
-# 生产环境请用 Dockerfile（release profile，需 4GB+ 内存）
+# TinyIoTHub Marketplace
 # ============================================
 
 # ============================================
@@ -18,20 +16,7 @@ COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 # ============================================
-# Stage 1: Frontend Builder
-# ============================================
-FROM node:20-alpine AS frontend-builder
-
-WORKDIR /frontend
-
-COPY web/package.json web/pnpm-lock.yaml ./
-RUN npm install -g pnpm && pnpm install --frozen-lockfile
-
-COPY web/ ./
-RUN pnpm build
-
-# ============================================
-# Stage 2: Backend Builder（dev profile，低内存）
+# Stage 1: Backend Builder
 # ============================================
 FROM rustlang/rust:nightly-bookworm AS backend-builder
 
@@ -49,19 +34,18 @@ WORKDIR /build
 COPY --from=planner /usr/local/cargo/bin/cargo-chef /usr/local/cargo/bin/cargo-chef
 
 COPY --from=planner /build/recipe.json recipe.json
-RUN cargo chef cook --recipe-path recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
 
 COPY . .
 
-ENV RUSTFLAGS="-C link-arg=-fuse-ld=mold" \
-    CARGO_BUILD_JOBS=1
+ENV RUSTFLAGS="-C link-arg=-fuse-ld=mold"
 
-RUN cargo build --bin tinyiothub-cloud && \
+RUN cargo build --release --bin tinyiothub-marketplace && \
     mkdir -p /out && \
-    cp /build/target/debug/tinyiothub-cloud /out/
+    cp /build/target/release/tinyiothub-marketplace /out/
 
 # ============================================
-# Stage 3: Runtime
+# Stage 2: Runtime
 # ============================================
 FROM debian:bookworm-slim
 
@@ -73,32 +57,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY --from=backend-builder /out/tinyiothub-cloud /app/
-COPY --from=backend-builder /build/crates/db/migrations /app/migrations
-COPY --from=backend-builder /build/apps/cloud/templates /app/templates
-COPY --from=frontend-builder /dist/ui /app/wwwroot
-COPY app_settings.example.toml /app/app_settings.toml
+COPY --from=backend-builder /out/tinyiothub-marketplace /app/
+COPY --from=backend-builder /build/apps/marketplace/templates /app/seed/templates
+COPY --from=backend-builder /build/apps/marketplace/drivers /app/seed/drivers
 
-RUN mkdir -p /app/data /app/logs /app/templates \
-    /app/templates/builtin/sensors \
-    /app/templates/builtin/cameras \
-    /app/templates/builtin/controllers \
-    /app/templates/builtin/robots \
-    /app/templates/custom \
-    /app/templates/schemas && \
-    chown -R 1001:1001 /app/data /app/logs /app/templates
+RUN mkdir -p /app/data /app/logs /app/seed && \
+    chown -R 1001:1001 /app/data /app/logs /app/seed
 
 ENV RUST_LOG=info \
     TZ=Asia/Shanghai \
     TINYIOTHUB__PROJECT_ROOT=/app \
     TINYIOTHUB__DATABASE__URL=/app/data/tinyiothub.db
 
-EXPOSE 3002
+EXPOSE 3003
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:3002/api/health || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3003/health || exit 1
 
 RUN groupadd -g 1001 appgroup && useradd -u 1001 -g appgroup appuser
 USER appuser
 
-CMD ["/app/tinyiothub-cloud"]
+CMD ["/app/tinyiothub-marketplace"]

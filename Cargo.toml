@@ -2,10 +2,7 @@
 resolver = "3"
 members = [
     "crates/*",
-    "cloud",
-    "edge",
-    "marketplace",
-    "cli",
+    "apps/*",
     "plugins/*",
     "tests/integration",
 ]

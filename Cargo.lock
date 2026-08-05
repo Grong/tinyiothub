@@ -6251,7 +6251,6 @@ dependencies = [
  "tenant",
  "thing",
  "thiserror 1.0.69",
- "tinyiothub-marketplace",
  "tokio",
  "tokio-cron-scheduler",
  "tokio-postgres",
