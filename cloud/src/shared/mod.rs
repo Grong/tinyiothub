@@ -11,7 +11,6 @@ pub mod network;
 
 pub mod paths;
 
-pub mod security;
 
 pub mod utils;
 
@@ -31,4 +30,3 @@ pub mod config;
 pub mod event;
 pub mod hardware;
 pub mod mqtt_client;
-pub mod redis;

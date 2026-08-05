@@ -1,13 +1,13 @@
 use axum::{Json, Router, extract::State, routing::post};
 use serde::Deserialize;
-use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder};
 
 use crate::{
-    modules::{
-        auth::types::{LoginResponse, UserInfo},
-        user::types::CreateUserRequest,
-    },
-    shared::{api_response::ApiResponse, app_state::AppState, security::jwt, utils::validation},
+    AuthState,
+    security::jwt,
+    types::{LoginResponse, UserInfo},
+    user_store::AuthCreateUserRequest,
+    validation,
 };
 
 #[derive(Deserialize)]
@@ -23,7 +23,11 @@ pub struct LogoutRequest {
     pub token: Option<String>,
 }
 
-pub fn create_router() -> Router<AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AuthState: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/login", post(login))
         .route("/register", post(register))
@@ -32,8 +36,8 @@ pub fn create_router() -> Router<AppState> {
 
 /// 用户注册（公开接口）
 async fn register(
-    State(state): State<AppState>,
-    Json(request): Json<CreateUserRequest>,
+    State(state): State<AuthState>,
+    Json(request): Json<AuthCreateUserRequest>,
 ) -> Json<ApiResponse<LoginResponse>> {
     let username = request.username.trim();
     let password = request.password.clone();
@@ -81,7 +85,7 @@ async fn register(
     }
 
     // 检查用户名是否已存在
-    match state.user_service.exists_by_username(username).await {
+    match state.users.exists_by_username(username).await {
         Ok(true) => return ApiResponseBuilder::error("用户名已存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to check username existence: {}", e);
@@ -91,7 +95,7 @@ async fn register(
     }
 
     // 检查手机号是否已注册
-    match state.user_service.exists_by_phone(phone).await {
+    match state.users.exists_by_phone(phone).await {
         Ok(true) => return ApiResponseBuilder::error("手机号已注册".to_string()),
         Err(e) => {
             tracing::error!("Failed to check phone existence: {}", e);
@@ -102,7 +106,7 @@ async fn register(
 
     // 检查邮箱是否已注册（若提供了邮箱）
     if let Some(ref email) = email {
-        match state.user_service.exists_by_email(email).await {
+        match state.users.exists_by_email(email).await {
             Ok(true) => return ApiResponseBuilder::error("邮箱已注册".to_string()),
             Err(e) => {
                 tracing::error!("Failed to check email existence: {}", e);
@@ -113,7 +117,7 @@ async fn register(
     }
 
     // 构造创建请求，确保 phone / display_name 正确填充
-    let create_request = CreateUserRequest {
+    let create_request = AuthCreateUserRequest {
         username: username.to_string(),
         password,
         phone: Some(phone.to_string()),
@@ -124,7 +128,7 @@ async fn register(
     };
 
     // 创建用户（依赖数据库 UNIQUE 约束兜底竞态条件）
-    let user = match state.user_service.create_user(&create_request).await {
+    let user = match state.users.create_user(&create_request).await {
         Ok(u) => u,
         Err(e) => {
             let msg = e.to_string();
@@ -145,9 +149,7 @@ async fn register(
     };
 
     // 确保新用户关联到默认租户和工作空间（幂等）
-    if let Err(e) =
-        crate::modules::system::handler::ensure_user_has_workspace(&state, &user.id).await
-    {
+    if let Err(e) = state.workspace_bootstrap.ensure_user_has_workspace(&user.id).await {
         tracing::warn!("[REGISTER] Failed to ensure workspace for user {}: {}", user.id, e);
     }
 
@@ -185,7 +187,7 @@ async fn register(
 
 /// 用户登录
 async fn login(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     Json(request): Json<LoginRequest>,
 ) -> Json<ApiResponse<LoginResponse>> {
     tracing::info!("Login attempt for user: {}", request.username);
@@ -198,7 +200,7 @@ async fn login(
     tracing::debug!("Authenticating user: {}", request.username);
 
     // 验证用户凭据
-    match state.user_service.authenticate(&request.username, &request.password).await {
+    match state.users.authenticate(&request.username, &request.password).await {
         Ok(Some(user)) => {
             tracing::debug!("User authenticated: {}", user.id);
 
@@ -210,9 +212,9 @@ async fn login(
             tracing::debug!("Updating last login time for user: {}", user.id);
 
             // Skip database write on HarmonyOS (causes Signal 11)
-            if !crate::shared::config::get().harmonyos.enabled {
+            if !state.harmonyos_enabled {
                 // 更新最后登录时间
-                if let Err(e) = state.user_service.update_last_login(&user.id).await {
+                if let Err(e) = state.users.update_last_login(&user.id).await {
                     tracing::warn!("Failed to update last logon time for user {}: {}", user.id, e);
                 }
             } else {
@@ -281,7 +283,7 @@ async fn login(
 
 /// 用户登出
 async fn logout(
-    State(_state): State<AppState>,
+    State(_state): State<AuthState>,
     Json(_request): Json<LogoutRequest>,
 ) -> Json<ApiResponse<String>> {
     // 在实际应用中，这里可能需要将 token 加入黑名单
@@ -295,17 +297,17 @@ async fn logout(
 /// 返回 (tenant_id, workspace_id)。tenant_id 缺省为 "default"；
 /// workspace_id 优先取用户自己的 ws-{user_id}，否则取租户下第一个。
 async fn resolve_user_login_context(
-    state: &AppState,
+    state: &AuthState,
     user_id: &str,
-) -> Result<(String, Option<String>), crate::shared::error::Error> {
-    let pool = state.database().pool();
+) -> Result<(String, Option<String>), String> {
+    let pool = state.database.pool();
 
     let tenant_id: Option<String> =
         sqlx::query_scalar("SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1")
             .bind(user_id)
             .fetch_optional(pool)
             .await
-            .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+            .map_err(|e| e.to_string())?;
 
     let tenant_id = tenant_id.unwrap_or_else(|| "default".to_string());
 
@@ -318,7 +320,7 @@ async fn resolve_user_login_context(
     .bind(&user_ws_id)
     .fetch_optional(pool)
     .await
-    .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+    .map_err(|e| e.to_string())?;
 
     Ok((tenant_id, workspace_id))
 }

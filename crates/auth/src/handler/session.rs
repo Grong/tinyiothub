@@ -4,15 +4,12 @@ use axum::{
     routing::{get, post},
 };
 use serde::Serialize;
-use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder};
 
 use crate::{
-    modules::auth::types::{RefreshTokenResponse, UserInfo},
-    shared::{
-        api_response::ApiResponse,
-        app_state::AppState,
-        security::jwt::{Claims, generate_token},
-    },
+    AuthState,
+    security::jwt::{Claims, generate_token},
+    types::{RefreshTokenResponse, UserInfo},
 };
 
 #[derive(Serialize)]
@@ -23,7 +20,11 @@ pub struct SessionInfo {
     pub is_valid: bool,
 }
 
-pub fn create_router() -> Router<AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AuthState: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/session/profile", get(get_profile))
         .route("/session/refresh", post(refresh_token))
@@ -31,8 +32,11 @@ pub fn create_router() -> Router<AppState> {
 }
 
 /// 获取当前用户信息
-async fn get_profile(State(state): State<AppState>, claims: Claims) -> Json<ApiResponse<UserInfo>> {
-    match state.user_service.get_user_by_id(&claims.user_id).await {
+async fn get_profile(
+    State(state): State<AuthState>,
+    claims: Claims,
+) -> Json<ApiResponse<UserInfo>> {
+    match state.users.get_user_by_id(&claims.user_id).await {
         Ok(Some(user)) => {
             tracing::debug!("Retrieved profile for user: {}", user.get_display_name());
             ApiResponseBuilder::success(UserInfo::from(user))
@@ -69,11 +73,11 @@ async fn refresh_token(claims: Claims) -> Json<ApiResponse<RefreshTokenResponse>
 
 /// 验证会话有效性
 async fn validate_session(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     claims: Claims,
 ) -> Json<ApiResponse<SessionInfo>> {
     // 检查用户是否仍然存在且未被禁用
-    match state.user_service.get_user_by_id(&claims.user_id).await {
+    match state.users.get_user_by_id(&claims.user_id).await {
         Ok(Some(user)) => {
             // 从 JWT claims 中获取真实的过期时间
             let token_expires_at = claims.exp.unwrap_or_else(|| {

@@ -22,9 +22,9 @@ use crate::{
             channels::NotificationChannelFactory,
             security::{EventSecurityFactory, SecureEventService},
         },
-        redis::RedisClient,
     },
 };
+use tinyiothub_auth::redis::RedisClient;
 use tinyiothub_storage::{Database, DeviceRepositoryFactory};
 use tinyiothub_thing::template::{TemplateEngine, TemplateRepository, TemplateValidator};
 
@@ -791,6 +791,140 @@ impl axum::extract::FromRef<AppState> for tinyiothub_thing::ThingState {
             data_server: state.data_server.clone(),
             template_engine: state.template_engine.clone(),
             tag_service: state.tag_service.clone(),
+        }
+    }
+}
+
+// ============================================================================
+// P4-Task16: auth domain slice + seam adapters
+// ============================================================================
+
+/// Map the cloud user entity to the auth crate's byte-identical mirror.
+fn auth_user_from_user(user: crate::modules::user::User) -> tinyiothub_auth::user_store::AuthUser {
+    tinyiothub_auth::user_store::AuthUser {
+        id: user.id,
+        username: user.username,
+        password_hash: user.password_hash,
+        email: user.email,
+        phone: user.phone,
+        display_name: user.display_name,
+        is_enabled: user.is_enabled,
+        parent_id: user.parent_id,
+        created_at: user.created_at,
+        updated_at: user.updated_at,
+        last_login_at: user.last_login_at,
+    }
+}
+
+/// Identity-store seam: auth handlers consume `AuthUserStore`; until the
+/// user domain is extracted (Task 17), `UserService` fills the role.
+#[async_trait::async_trait]
+impl tinyiothub_auth::user_store::AuthUserStore for crate::modules::user::UserService {
+    async fn authenticate(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<Option<tinyiothub_auth::user_store::AuthUser>, String> {
+        crate::modules::user::UserService::authenticate(self, username, password)
+            .await
+            .map_err(|e| e.to_string())
+            .map(|o| o.map(auth_user_from_user))
+    }
+
+    async fn get_user_by_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<tinyiothub_auth::user_store::AuthUser>, String> {
+        crate::modules::user::UserService::get_user_by_id(self, id)
+            .await
+            .map_err(|e| e.to_string())
+            .map(|o| o.map(auth_user_from_user))
+    }
+
+    async fn update_last_login(&self, id: &str) -> Result<(), String> {
+        crate::modules::user::UserService::update_last_login(self, id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn exists_by_username(&self, username: &str) -> Result<bool, String> {
+        crate::modules::user::UserService::exists_by_username(self, username)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn exists_by_phone(&self, phone: &str) -> Result<bool, String> {
+        crate::modules::user::UserService::exists_by_phone(self, phone)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn exists_by_email(&self, email: &str) -> Result<bool, String> {
+        crate::modules::user::UserService::exists_by_email(self, email)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn create_user(
+        &self,
+        request: &tinyiothub_auth::user_store::AuthCreateUserRequest,
+    ) -> Result<tinyiothub_auth::user_store::AuthUser, String> {
+        let create_request = crate::modules::user::types::CreateUserRequest {
+            username: request.username.clone(),
+            password: request.password.clone(),
+            email: request.email.clone(),
+            phone: request.phone.clone(),
+            display_name: request.display_name.clone(),
+            is_enabled: request.is_enabled,
+            parent_id: request.parent_id.clone(),
+        };
+        crate::modules::user::UserService::create_user(self, &create_request)
+            .await
+            .map_err(|e| e.to_string())
+            .map(auth_user_from_user)
+    }
+}
+
+/// Workspace-bootstrap seam: post-registration tenant/workspace scaffolding
+/// stays in cloud (`modules::system::handler`, entangled with the agent
+/// plane); this adapter carries the AppState the function needs.
+pub struct SystemWorkspaceBootstrap {
+    pub state: AppState,
+}
+
+#[async_trait::async_trait]
+impl tinyiothub_auth::bootstrap::WorkspaceBootstrap for SystemWorkspaceBootstrap {
+    async fn ensure_user_has_workspace(&self, user_id: &str) -> Result<(), String> {
+        crate::modules::system::handler::ensure_user_has_workspace(&self.state, user_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// SSE token issuer seam: the manager stays in cloud (shared with the event
+/// plane's SSE handlers).
+impl tinyiothub_auth::sse::SseTokenIssuer for crate::shared::sse_token::SseTokenManager {
+    fn generate_token(&self, user_id: &str, workspace_id: &str) -> String {
+        crate::shared::sse_token::SseTokenManager::generate_token(self, user_id, workspace_id)
+    }
+}
+
+/// P4-Task16: derive the auth domain's state slice from the global AppState.
+/// Config slices are cloned from the process-global settings at extraction
+/// time — identical semantics to the former per-request `config::get()`
+/// reads (the global config is set once at startup and never reloaded).
+impl axum::extract::FromRef<AppState> for tinyiothub_auth::AuthState {
+    fn from_ref(state: &AppState) -> Self {
+        let settings = crate::shared::config::get();
+        tinyiothub_auth::AuthState {
+            database: state.database.clone(),
+            users: state.user_service.clone(),
+            workspace_bootstrap: Arc::new(SystemWorkspaceBootstrap { state: state.clone() }),
+            redis: state.redis.clone(),
+            sse_token_issuer: state.sse_token_manager.clone(),
+            sms_config: settings.sms.clone(),
+            social_config: settings.social.clone(),
+            harmonyos_enabled: settings.harmonyos.enabled,
         }
     }
 }

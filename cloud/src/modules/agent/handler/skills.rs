@@ -10,6 +10,7 @@ use axum::{
     routing::get,
 };
 use serde::Deserialize;
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 use tokio::fs;
 
@@ -17,7 +18,6 @@ use crate::shared::{
     api_response::ApiResponse,
     app_state::AppState,
     paths::{self, global_skills_dir, workspace_skills_dir},
-    security::jwt::Claims,
 };
 
 #[derive(Debug, Deserialize)]

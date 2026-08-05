@@ -4,6 +4,7 @@ use axum::{
     routing::{get, post, put},
 };
 use serde::Deserialize;
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::{CreateUserRequest, UpdateUserRequest, UserDto, UserStatisticsNew};
@@ -11,7 +12,6 @@ use crate::shared::{
     api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
     app_state::AppState,
     pagination::PaginationQuery,
-    security::jwt::Claims,
     utils::password::verify_password,
 };
 

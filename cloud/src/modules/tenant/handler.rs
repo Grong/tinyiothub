@@ -11,6 +11,7 @@ use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
 use sqlx::Row;
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::{
@@ -19,7 +20,7 @@ use super::types::{
 };
 use crate::{
     api::middleware::WorkspaceScope,
-    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
+    shared::{api_response::ApiResponse, app_state::AppState, },
 };
 
 type HmacSha256 = Hmac<Sha256>;
@@ -155,15 +156,15 @@ async fn register_tenant(
     let slug = payload.slug.trim().to_lowercase();
     let email = payload.email.trim().to_lowercase();
 
-    if !crate::shared::utils::validation::is_valid_slug(&slug) {
+    if !tinyiothub_auth::validation::is_valid_slug(&slug) {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    if !crate::shared::utils::validation::is_valid_email(&email) {
+    if !tinyiothub_auth::validation::is_valid_email(&email) {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    if !crate::shared::utils::validation::is_strong_password(&payload.password) {
+    if !tinyiothub_auth::validation::is_strong_password(&payload.password) {
         return Err(StatusCode::BAD_REQUEST);
     }
 
@@ -260,7 +261,7 @@ async fn login(
 
     let email = payload.email.trim().to_lowercase();
 
-    if !crate::shared::utils::validation::is_valid_email(&email) {
+    if !tinyiothub_auth::validation::is_valid_email(&email) {
         return Err(StatusCode::BAD_REQUEST);
     }
 

@@ -10,17 +10,15 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder};
 
-use crate::{
-    modules::user::User,
-    shared::{
-        api_response::ApiResponse, app_state::AppState, config::get as get_config,
-        redis::RedisClient, security::jwt,
-    },
-};
+use crate::{AuthState, redis::RedisClient, security::jwt, user_store::AuthUser as User};
 
-pub fn create_router() -> Router<AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AuthState: axum::extract::FromRef<S>,
+{
     Router::new()
         // 微信扫码登录
         .route("/wechat/qrcode", get(get_wechat_qrcode))
@@ -136,13 +134,11 @@ pub struct UpdateSocialConfigRequest {
 
 /// 获取微信扫码二维码
 async fn get_wechat_qrcode(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     Query(params): Query<WeChatQRCodeRequest>,
 ) -> Json<ApiResponse<WeChatQRCodeResponse>> {
     // 从配置获取微信设置
-    let config = get_config();
-
-    let wechat_config = match &config.social.wechat {
+    let wechat_config = match &state.social_config.wechat {
         Some(c) => c,
         None => {
             return ApiResponseBuilder::error("微信登录未配置".to_string());
@@ -207,7 +203,7 @@ async fn get_wechat_qrcode(
 
 /// 微信回调处理
 async fn wechat_callback(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     Query(params): Query<WeChatCallbackQuery>,
 ) -> Response {
     if let Some(error) = params.error_description {
@@ -247,7 +243,7 @@ async fn wechat_callback(
     }
 
     // 换取 access_token 和 openid
-    let config = match get_wechat_config(state.database()).await {
+    let config = match get_wechat_config(&state.database).await {
         Some(c) => c,
         None => {
             let html = r#"<!DOCTYPE html><html><body><script>window.opener.postMessage({type:'wechat_callback',error:'微信配置错误'},window.location.origin);window.close();</script></body></html>"#.to_string();
@@ -270,7 +266,7 @@ async fn wechat_callback(
     };
 
     // 查找或创建用户
-    let db = state.database();
+    let db = &state.database;
     let user = match find_or_create_user_by_wechat(db, &token_resp.openid).await {
         Ok(u) => u,
         Err(e) => {
@@ -314,7 +310,7 @@ async fn wechat_callback(
 
     // 存储社交绑定（如果不存在）
     if let Err(e) =
-        save_social_binding(state.database(), &user.id, "wechat", &token_resp.openid).await
+        save_social_binding(&state.database, &user.id, "wechat", &token_resp.openid).await
     {
         tracing::warn!("Failed to save social binding: {:?}", e);
     }
@@ -335,7 +331,7 @@ async fn wechat_callback(
 
 /// 微信登录（使用授权码）
 async fn wechat_login(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     Json(request): Json<WeChatLoginCodeRequest>,
 ) -> Json<ApiResponse<WeChatLoginResponse>> {
     let code = request.code.trim();
@@ -344,7 +340,7 @@ async fn wechat_login(
         return ApiResponseBuilder::error("授权码不能为空".to_string());
     }
 
-    let db = state.database();
+    let db = &state.database;
 
     // 获取微信配置
     let config = match get_wechat_config(db).await {
@@ -399,7 +395,7 @@ pub struct WeChatLoginCodeRequest {
 
 /// 微信小程序登录
 async fn wechat_miniprogram_login(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     Json(request): Json<WeChatMiniProgramLoginRequest>,
 ) -> Json<ApiResponse<WeChatLoginResponse>> {
     let code = request.code.trim();
@@ -408,7 +404,7 @@ async fn wechat_miniprogram_login(
         return ApiResponseBuilder::error("code 不能为空".to_string());
     }
 
-    let db = state.database();
+    let db = &state.database;
 
     // 获取微信配置
     let _config = match get_wechat_config(db).await {
@@ -446,7 +442,7 @@ async fn wechat_miniprogram_login(
 
 /// 绑定社交账号
 async fn bind_social_account(
-    State(_state): State<AppState>,
+    State(_state): State<AuthState>,
     Json(_request): Json<BindSocialRequest>,
 ) -> Json<ApiResponse<String>> {
     // TODO: 实现绑定逻辑
@@ -456,7 +452,7 @@ async fn bind_social_account(
 
 /// 解绑社交账号
 async fn unbind_social_account(
-    State(_state): State<AppState>,
+    State(_state): State<AuthState>,
     Json(_request): Json<UnbindSocialRequest>,
 ) -> Json<ApiResponse<String>> {
     // TODO: 实现解绑逻辑
@@ -465,8 +461,8 @@ async fn unbind_social_account(
 }
 
 /// 获取社交登录配置
-async fn get_social_config(State(state): State<AppState>) -> Json<ApiResponse<Vec<SocialConfig>>> {
-    let db = state.database();
+async fn get_social_config(State(state): State<AuthState>) -> Json<ApiResponse<Vec<SocialConfig>>> {
+    let db = &state.database;
 
     let sql = "SELECT provider, app_id, app_secret, redirect_uri, is_enabled FROM social_configs";
 
@@ -495,10 +491,10 @@ async fn get_social_config(State(state): State<AppState>) -> Json<ApiResponse<Ve
 
 /// 更新社交登录配置
 async fn update_social_config(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     Json(request): Json<UpdateSocialConfigRequest>,
 ) -> Json<ApiResponse<String>> {
-    let db = state.database();
+    let db = &state.database;
 
     let result = sqlx::query(
         r#"UPDATE social_configs

@@ -4,11 +4,12 @@ use axum::{
     routing::{get, post},
 };
 use serde::Deserialize;
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
     modules::device::trace_service::{DeviceTrace, DeviceTraceStatistics, SystemTraceOverview},
-    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
+    shared::{api_response::ApiResponse, app_state::AppState, },
 };
 
 #[derive(Deserialize)]

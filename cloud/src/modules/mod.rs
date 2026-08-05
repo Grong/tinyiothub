@@ -3,7 +3,6 @@
 
 pub mod agent;
 pub mod alarm;
-pub mod auth;
 pub mod batch;
 pub mod chat;
 pub mod cron;

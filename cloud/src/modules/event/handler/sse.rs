@@ -14,6 +14,7 @@ use axum::{
     response::{IntoResponse, Json as JsonResponse, Response},
 };
 use serde::Deserialize;
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 use tracing::{info, warn};
 
@@ -23,7 +24,6 @@ use crate::{
         api_response::ApiResponse,
         app_state::AppState,
         event::sse_manager::{SseConnectionInfo, SseOverview},
-        security::jwt::Claims,
     },
 };
 

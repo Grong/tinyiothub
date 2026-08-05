@@ -4,12 +4,12 @@ use axum::{
     routing::get,
 };
 use serde::Deserialize;
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::{CreateRoleRequest, Role, UpdateRoleRequest};
 use crate::shared::{
     api_response::ApiResponse, app_state::AppState, pagination::PaginationQuery,
-    security::jwt::Claims,
 };
 
 #[derive(Deserialize)]

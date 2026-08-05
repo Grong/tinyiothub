@@ -6,6 +6,7 @@ use axum::{
     extract::{Path, Query, State},
     response::{IntoResponse, Response, Sse, sse::Event as SseEvent},
 };
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::*;
@@ -14,7 +15,7 @@ use crate::{
         handler::types::{AgentConfigUpdateRequest, ToolToggleRequest},
         session::SessionKey,
     },
-    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
+    shared::{api_response::ApiResponse, app_state::AppState, },
 };
 
 /// POST /api/v1/chat/stream — SSE streaming chat

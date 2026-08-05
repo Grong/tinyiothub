@@ -4,6 +4,7 @@ use axum::{
     routing::get,
 };
 use serde::Serialize;
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_core::models::{device::Device, device_property::DeviceProperty};
 use tinyiothub_web::response::ApiResponseBuilder;
 
@@ -16,7 +17,7 @@ use crate::{
             value_objects::EventType,
         },
     },
-    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
+    shared::{api_response::ApiResponse, app_state::AppState, },
 };
 
 /// 设备完整配置文件

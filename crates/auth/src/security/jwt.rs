@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use axum::{extract::FromRequestParts, http::request::Parts};
 use chrono::{Duration as ChronoDuration, Local};
 use headers::{Authorization, HeaderMapExt, authorization::Bearer};
@@ -8,6 +10,27 @@ use sha2::{Digest, Sha256};
 use tinyiothub_web::security::{AuthBody, AuthError as WebAuthError, Claims as WebClaims};
 
 type HmacSha256 = Hmac<Sha256>;
+
+/// JWT settings captured once at startup — replaces the former per-call
+/// `cloud::shared::config::get()` reads (the global config was likewise set
+/// once and never reloaded, so semantics are identical).
+#[derive(Debug, Clone)]
+pub struct JwtSettings {
+    pub secret: String,
+    pub harmonyos_enabled: bool,
+}
+
+static JWT_SETTINGS: OnceLock<JwtSettings> = OnceLock::new();
+
+/// Register JWT settings once at startup (idempotent; mirrors the
+/// `set_jwt_validator`/`set_tenant_resolver` one-time registration pattern).
+pub fn init_jwt_settings(settings: JwtSettings) {
+    let _ = JWT_SETTINGS.set(settings);
+}
+
+fn jwt_settings() -> Result<&'static JwtSettings, String> {
+    JWT_SETTINGS.get().ok_or_else(|| "JWT settings not initialized".to_string())
+}
 
 /// Cloud-specific JWT claims with tenant and workspace isolation
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -46,9 +69,9 @@ impl From<WebClaims> for Claims {
     }
 }
 
-// 获取 JWT 密钥的辅助函数 - 从统一配置读取
+// 获取 JWT 密钥的辅助函数 - 从启动时注册的 JWT 设置读取
 fn get_jwt_key() -> Result<HS256Key, String> {
-    let secret = crate::shared::config::get().security.jwt.secret.clone();
+    let secret = jwt_settings()?.secret.clone();
 
     // 验证密钥长度
     if secret.len() < 32 {
@@ -70,7 +93,7 @@ fn get_jwt_key() -> Result<HS256Key, String> {
 
 // 检查是否在 HarmonyOS 环境
 fn is_harmonyos() -> bool {
-    crate::shared::config::get().harmonyos.enabled
+    JWT_SETTINGS.get().map(|s| s.harmonyos_enabled).unwrap_or(false)
 }
 
 // ============================================================================
@@ -108,7 +131,7 @@ fn create_harmonyos_token(
     tenant_id: &str,
     workspace_id: &str,
 ) -> Result<String, String> {
-    let secret = crate::shared::config::get().security.jwt.secret.clone();
+    let secret = jwt_settings()?.secret.clone();
     let timestamp = Local::now().timestamp();
     let random_suffix = timestamp % 1000000; // 使用时间戳作为随机数
 
@@ -131,7 +154,7 @@ fn create_harmonyos_token(
 
 // HarmonyOS 专用：验证安全 token（使用 HMAC-SHA256）
 fn verify_harmonyos_token(token: &str) -> Result<Claims, String> {
-    let secret = crate::shared::config::get().security.jwt.secret.clone();
+    let secret = jwt_settings()?.secret.clone();
 
     // 解码
     let token_data = decode_simple(token)?;

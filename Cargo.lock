@@ -319,6 +319,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "auth"
+version = "0.4.6"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.21.7",
+ "chrono",
+ "core",
+ "db",
+ "headers",
+ "hex",
+ "hmac 0.12.1",
+ "jwt-simple",
+ "rand 0.8.6",
+ "redis",
+ "regex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2 0.10.9",
+ "sqlx",
+ "subtle",
+ "tokio",
+ "tracing",
+ "urlencoding",
+ "uuid",
+ "web",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5975,6 +6006,7 @@ dependencies = [
  "anyhow",
  "async-stream",
  "async-trait",
+ "auth",
  "axum",
  "backoff",
  "base64 0.21.7",

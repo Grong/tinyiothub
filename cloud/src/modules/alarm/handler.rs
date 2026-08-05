@@ -7,6 +7,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::{
@@ -25,7 +26,6 @@ use crate::{
         api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
         app_state::AppState,
         error_handling::ErrorCode,
-        security::jwt::Claims,
     },
 };
 

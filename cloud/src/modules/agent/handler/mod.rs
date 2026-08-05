@@ -16,9 +16,10 @@ mod tests;
 
 use axum::{Router, routing::get};
 
+use tinyiothub_auth::security::jwt::Claims;
 use crate::{
     modules::chat::handler::proxy as chat_proxy,
-    shared::{app_state::AppState, security::jwt::Claims},
+    shared::{app_state::AppState, },
 };
 
 pub fn create_router() -> Router<AppState> {

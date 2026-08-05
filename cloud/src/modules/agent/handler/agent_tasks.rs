@@ -17,6 +17,7 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_ai::thing_agent::{AgentRunsRepository, EnqueueError, Priority, TriggerSource, WakeSignal};
 use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy, PolicyRepository};
 use tinyiothub_web::response::ApiResponseBuilder;
@@ -25,7 +26,7 @@ use crate::{
     modules::agent::{
         agent_runs_repo::SqliteAgentRunsRepository, policy_repo::SqlitePolicyRepository,
     },
-    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
+    shared::{api_response::ApiResponse, app_state::AppState, },
     verify_workspace_access,
 };
 

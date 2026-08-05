@@ -14,17 +14,18 @@ use axum::{
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder};
 
-use crate::shared::{
-    api_response::ApiResponse, app_state::AppState, config::get as get_config, redis::RedisClient,
-    security::jwt,
-};
+use crate::{AuthState, security::jwt};
 
 // 验证码有效期（秒）
 const CODE_EXPIRE_SECONDS: u64 = 300; // 5 分钟
 
-pub fn create_router() -> Router<AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AuthState: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/send", post(send_code))
         .route("/login", post(login_with_code))
@@ -89,17 +90,16 @@ enum RateLimitResult {
 
 /// 检查发送频率限制
 async fn check_rate_limit(
-    redis: &Option<RedisClient>,
+    state: &AuthState,
     phone: &str,
     ip: Option<&str>,
 ) -> Result<RateLimitResult, StatusCode> {
-    let config = get_config();
-    let rate_limit = config.sms.rate_limit.as_ref();
+    let rate_limit = state.sms_config.rate_limit.as_ref();
 
     let interval_secs = rate_limit.and_then(|r| r.interval_secs).unwrap_or(90) as i64;
     let daily_limit = rate_limit.and_then(|r| r.daily_limit).unwrap_or(5) as i64;
 
-    let redis = match redis {
+    let redis = match &state.redis {
         Some(r) => r,
         None => return Ok(RateLimitResult::Allowed), // 无 Redis 时跳过检查（仅用于测试）
     };
@@ -136,9 +136,13 @@ async fn check_rate_limit(
 // ============== CAPTCHA 验证 ==============
 
 /// 验证腾讯防水墙票据
-async fn verify_captcha(_ticket: &str, _randstr: &str, _ip: &str) -> Result<bool, StatusCode> {
-    let config = get_config();
-    let captcha_config = match config.sms.captcha.as_ref() {
+async fn verify_captcha(
+    state: &AuthState,
+    _ticket: &str,
+    _randstr: &str,
+    _ip: &str,
+) -> Result<bool, StatusCode> {
+    let captcha_config = match state.sms_config.captcha.as_ref() {
         Some(c) if c.enabled => c,
         None | Some(_) => return Ok(true), // 未配置或未启用时跳过
     };
@@ -293,13 +297,13 @@ fn percent_encode(s: &str) -> String {
 
 /// 发送验证码
 async fn send_code(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     ConnectInfo(ip_addr): ConnectInfo<SocketAddr>,
     Json(request): Json<SendCodeRequest>,
 ) -> Json<ApiResponse<SendCodeResponse>> {
     // 检查 SMS 是否启用
-    let config = get_config();
-    if !config.sms.enabled {
+    let config = &state.sms_config;
+    if !config.enabled {
         return ApiResponseBuilder::error("短信服务未启用".to_string());
     }
 
@@ -314,7 +318,7 @@ async fn send_code(
     let ip_str = ip_addr.to_string();
 
     // 频率限制检查
-    match check_rate_limit(&state.redis, phone, Some(&ip_str)).await {
+    match check_rate_limit(&state, phone, Some(&ip_str)).await {
         Ok(RateLimitResult::NeedsWait(secs)) => {
             return ApiResponseBuilder::error(format!("操作太频繁，请 {} 秒后重试", secs));
         }
@@ -331,7 +335,7 @@ async fn send_code(
     // CAPTCHA 验证（如果频率异常，需要验证）
     if let Some(ticket) = &request.captcha_ticket {
         let randstr = request.captcha_randstr.as_deref().unwrap_or("");
-        match verify_captcha(ticket, randstr, &ip_str).await {
+        match verify_captcha(&state, ticket, randstr, &ip_str).await {
             Ok(true) => {}
             Ok(false) => {
                 return ApiResponseBuilder::error("验证失败，请重试".to_string());
@@ -358,8 +362,7 @@ async fn send_code(
 
         // 设置发送间隔（90秒）
         let interval_key = format!("sms:interval:{}", phone);
-        let interval_secs =
-            config.sms.rate_limit.as_ref().and_then(|r| r.interval_secs).unwrap_or(90);
+        let interval_secs = config.rate_limit.as_ref().and_then(|r| r.interval_secs).unwrap_or(90);
         if let Err(e) = r.set_ex(&interval_key, "1", interval_secs).await {
             tracing::error!("Failed to set rate limit interval: {}", e);
         }
@@ -386,7 +389,7 @@ async fn send_code(
         }
     } else {
         // 无 Redis 时降级到数据库存储
-        let db = state.database();
+        let db = &state.database;
         let now = chrono::Utc::now();
         let expires_at = now + chrono::Duration::seconds(CODE_EXPIRE_SECONDS as i64);
 
@@ -409,7 +412,7 @@ async fn send_code(
     }
 
     // 发送短信或返回测试模式验证码
-    if let Some(aliyun_config) = &config.sms.aliyun {
+    if let Some(aliyun_config) = &config.aliyun {
         match send_aliyun_sms(phone, &code, aliyun_config).await {
             Ok(_) => ApiResponseBuilder::success(SendCodeResponse {
                 expires_in: CODE_EXPIRE_SECONDS,
@@ -439,7 +442,7 @@ async fn send_code(
 
 /// 验证码登录
 async fn login_with_code(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     Json(request): Json<LoginWithCodeRequest>,
 ) -> Json<ApiResponse<LoginWithCodeResponse>> {
     let phone = request.phone.trim();
@@ -510,7 +513,7 @@ async fn login_with_code(
     }
 
     // 查找或创建用户（复用现有逻辑）
-    let db = state.database();
+    let db = &state.database;
     let user = match find_or_create_user_by_phone(db, phone).await {
         Ok(u) => u,
         Err(e) => {
@@ -520,9 +523,7 @@ async fn login_with_code(
     };
 
     // 确保新用户关联到默认租户和工作空间（幂等）
-    if let Err(e) =
-        crate::modules::system::handler::ensure_user_has_workspace(&state, &user.id).await
-    {
+    if let Err(e) = state.workspace_bootstrap.ensure_user_has_workspace(&user.id).await {
         tracing::warn!("[SMS] Failed to ensure workspace for user {}: {}", user.id, e);
     }
 
@@ -573,7 +574,7 @@ async fn login_with_code(
 
 /// 验证验证码（查询状态）
 async fn verify_code(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     Query(params): Query<VerifyCodeQuery>,
 ) -> Json<ApiResponse<VerifyCodeResponse>> {
     let phone = params.phone.unwrap_or_default();
@@ -641,8 +642,8 @@ pub struct VerifyCodeResponse {
 // ============== 辅助函数 ==============
 
 /// 从数据库获取验证码（Redis 不可用时的 fallback）
-async fn get_code_from_db(state: &AppState, phone: &str) -> Option<String> {
-    let db = state.database();
+async fn get_code_from_db(state: &AuthState, phone: &str) -> Option<String> {
+    let db = &state.database;
 
     let rows = match sqlx::query(
         r#"SELECT code, expires_at FROM sms_codes
@@ -705,7 +706,7 @@ fn generate_code() -> String {
 async fn find_or_create_user_by_phone(
     db: &tinyiothub_storage::Database,
     phone: &str,
-) -> Result<crate::modules::user::User, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<crate::user_store::AuthUser, Box<dyn std::error::Error + Send + Sync>> {
     // 最多重试 3 次，处理并发创建导致的唯一约束冲突
     for attempt in 0..3 {
         // 查找现有用户
@@ -715,7 +716,7 @@ async fn find_or_create_user_by_phone(
             .await?;
 
         if let Some(row) = rows.into_iter().next() {
-            return Ok(crate::modules::user::User {
+            return Ok(crate::user_store::AuthUser {
                 id: row.try_get("id")?,
                 username: row.try_get("username")?,
                 password_hash: row.try_get("password_hash")?,
@@ -751,7 +752,7 @@ async fn find_or_create_user_by_phone(
         match insert_result {
             Ok(result) => {
                 if result.rows_affected() > 0 {
-                    return Ok(crate::modules::user::User {
+                    return Ok(crate::user_store::AuthUser {
                         id: user_id,
                         username: phone.to_string(),
                         password_hash: String::new(),
@@ -788,7 +789,7 @@ async fn find_or_create_user_by_phone(
         .await?;
 
     if let Some(row) = rows.into_iter().next() {
-        Ok(crate::modules::user::User {
+        Ok(crate::user_store::AuthUser {
             id: row.try_get("id")?,
             username: row.try_get("username")?,
             password_hash: row.try_get("password_hash")?,

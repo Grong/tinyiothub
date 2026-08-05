@@ -165,6 +165,7 @@ web = { path = "crates/web" }
 ai = { path = "crates/ai" }
 llm = { path = "crates/llm" }
 thing = { path = "crates/thing" }
+auth = { path = "crates/auth" }
 
 [profile.release]
 opt-level = 2

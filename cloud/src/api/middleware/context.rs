@@ -7,9 +7,9 @@ use axum::{
 };
 use headers::{Authorization, HeaderMapExt, authorization::Bearer};
 
+use tinyiothub_auth::security::jwt::{is_token_blacklisted, validate_jwt};
 use crate::shared::{
     api_response::{ReqCtx, UserInfo},
-    security::jwt::{is_token_blacklisted, validate_jwt},
 };
 
 /// Context middleware for request processing with Axum

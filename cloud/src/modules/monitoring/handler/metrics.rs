@@ -1,10 +1,10 @@
 use axum::{Json, Router, extract::State, routing::get};
 use serde::{Deserialize, Serialize};
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::shared::{
     api_response::ApiResponse, app_state::AppState, error_handling::AuthHelper,
-    security::jwt::Claims,
 };
 
 #[derive(Serialize, Deserialize, Debug)]

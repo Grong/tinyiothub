@@ -14,7 +14,8 @@ use super::types::{
     ResourceSearchResult, ResourceType, SuggestTagsRequest, UpdateResourceRequest,
     UpdateWorkspaceRequest, WorkspaceQueryParams, WorkspaceResource, WorkspaceWithDeviceCount,
 };
-use crate::shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims};
+use crate::shared::{api_response::ApiResponse, app_state::AppState};
+use tinyiothub_auth::security::jwt::Claims;
 
 // ── Helper ──
 

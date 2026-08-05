@@ -7,6 +7,7 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use chrono::Utc;
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_core::models::notification_channel::{
     ChannelStatistics, CreateNotificationChannelRequest, NotificationChannel,
     NotificationChannelQueryParams, SendMessageRequest, UpdateNotificationChannelRequest,
@@ -29,7 +30,6 @@ use crate::{
     shared::{
         api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
         app_state::AppState,
-        security::jwt::Claims,
     },
 };
 use tinyiothub_storage::{

@@ -12,6 +12,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
@@ -19,7 +20,7 @@ use crate::{
         repositories::{RealTimeEvent, RealTimeFilter, StatusSummary},
         value_objects::{EventId, EventLevel, EventType},
     },
-    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
+    shared::{api_response::ApiResponse, app_state::AppState, },
 };
 
 /// Query parameters for real-time event filtering

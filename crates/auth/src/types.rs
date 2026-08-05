@@ -30,8 +30,8 @@ pub struct UserInfo {
     pub parent_id: Option<String>,
 }
 
-impl From<crate::modules::user::User> for UserInfo {
-    fn from(user: crate::modules::user::User) -> Self {
+impl From<crate::user_store::AuthUser> for UserInfo {
+    fn from(user: crate::user_store::AuthUser) -> Self {
         Self {
             id: user.id.clone(),
             name: user.get_display_name().to_string(),

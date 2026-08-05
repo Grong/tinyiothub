@@ -9,6 +9,7 @@ use axum::{
     routing::{get, post},
 };
 use serde::Deserialize;
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_core::models::{
     cron_job::{
         CreateCronJobRequest, CronJob, CronJobQuery, CronRun, CronRunQuery, UpdateCronJobRequest,
@@ -25,7 +26,6 @@ use crate::shared::{
     api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
     app_state::AppState,
     error::Error,
-    security::jwt::Claims,
 };
 
 /// Create jobs router

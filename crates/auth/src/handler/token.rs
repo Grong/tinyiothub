@@ -4,21 +4,28 @@
 use axum::{Router, extract::State, response::Json, routing::post};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
-use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder};
 
-use crate::shared::{
-    api_response::ApiResponse,
-    app_state::AppState,
+use crate::{
+    AuthState,
     security::jwt::{Claims, validate_jwt},
 };
 
 /// 创建不受 JWT middleware 保护的路由（login, logout, refresh）
-pub fn create_router() -> Router<AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AuthState: axum::extract::FromRef<S>,
+{
     Router::new().route("/refresh", post(refresh_token)).route("/logout", post(logout))
 }
 
 /// 创建受 JWT middleware 保护的路由（需要已验证的 Claims）
-pub fn create_protected_router() -> Router<AppState> {
+pub fn create_protected_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AuthState: axum::extract::FromRef<S>,
+{
     Router::new().route("/sse-token", post(generate_sse_token))
 }
 
@@ -55,7 +62,7 @@ pub struct SseTokenResponse {
 
 /// 刷新 Token
 async fn refresh_token(
-    State(_state): State<AppState>,
+    State(_state): State<AuthState>,
     Json(request): Json<RefreshTokenRequest>,
 ) -> Json<ApiResponse<RefreshTokenResponse>> {
     // 验证当前 token
@@ -68,7 +75,7 @@ async fn refresh_token(
     };
 
     // 生成新的 token
-    match crate::shared::security::jwt::generate_token(
+    match crate::security::jwt::generate_token(
         &claims.user_id,
         &claims.username,
         &claims.tenant_id,
@@ -95,14 +102,14 @@ async fn refresh_token(
 /// 通过 URL 查询参数传递会导致 token 泄露到日志中。这个端点返回
 /// 一个短期（5分钟）、一次性使用的 token，在 SSE 连接中使用。
 async fn generate_sse_token(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     claims: Claims,
 ) -> Json<ApiResponse<SseTokenResponse>> {
     let user_id = claims.user_id;
     let workspace_id = claims.workspace_id;
 
     // 生成短期 SSE token
-    let token = state.get_sse_token_manager().generate_token(&user_id, &workspace_id);
+    let token = state.sse_token_issuer.generate_token(&user_id, &workspace_id);
 
     tracing::debug!("SSE token generated for user: {} workspace: {}", user_id, workspace_id);
 
@@ -114,12 +121,12 @@ async fn generate_sse_token(
 
 /// 登出（将 token 加入黑名单）
 async fn logout(
-    State(state): State<AppState>,
+    State(state): State<AuthState>,
     Json(request): Json<LogoutRequest>,
 ) -> Json<ApiResponse<String>> {
     if let Some(token) = request.token {
         // 将 token 加入黑名单
-        let db = state.database();
+        let db = &state.database;
 
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();

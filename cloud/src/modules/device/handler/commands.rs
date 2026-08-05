@@ -8,7 +8,8 @@ use tinyiothub_web::response::ApiResponseBuilder;
 
 use tinyiothub_storage::find_device_command_by_id;
 
-use crate::shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims};
+use crate::shared::{api_response::ApiResponse, app_state::AppState};
+use tinyiothub_auth::security::jwt::Claims;
 
 #[derive(Debug, Deserialize)]
 pub struct ExecuteCommandRequest {

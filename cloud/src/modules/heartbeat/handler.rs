@@ -7,6 +7,7 @@ use axum::{
 };
 use chrono::Utc;
 use serde::Deserialize;
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
@@ -16,7 +17,7 @@ use crate::{
             ConfigureHeartbeatRequest, HeartbeatConfig, HeartbeatStatus, ReportHeartbeatResponse,
         },
     },
-    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
+    shared::{api_response::ApiResponse, app_state::AppState, },
 };
 
 /// Create the heartbeat router

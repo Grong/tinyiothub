@@ -9,6 +9,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 use tokio::sync::OnceCell;
 
@@ -23,7 +24,6 @@ use crate::{
         event::security::AuditLogEntry,
         pagination::PaginationQuery,
         performance::Cache,
-        security::jwt::Claims,
     },
 };
 

@@ -109,6 +109,7 @@ web = { workspace = true }
 ai = { workspace = true }
 llm = { workspace = true }
 thing = { workspace = true }
+auth = { workspace = true }
 tinyiothub-marketplace = { path = "../marketplace" }
 
 # Dynamic loading

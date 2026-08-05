@@ -3,6 +3,7 @@ use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
 };
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder};
 
 use crate::{
@@ -10,7 +11,7 @@ use crate::{
         service::PairingError,
         types::{PairingRequest, PairingResponse},
     },
-    shared::{app_state::AppState, security::jwt::Claims},
+    shared::{app_state::AppState, },
 };
 
 fn extract_client_ip(headers: &HeaderMap) -> Option<String> {

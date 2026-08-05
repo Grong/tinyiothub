@@ -11,7 +11,7 @@ use crate::shared::app_state::AppState;
 // agents — 已迁移至 modules/agent/handler/
 // alarms — 已迁移至 modules/alarm/handler.rs
 // alarm_rules — 已迁移至 modules/alarm/handler.rs
-// auth — 已迁移至 modules/auth/handler/
+// auth — 已迁移至 crates/auth（tinyiothub_auth）
 // batch — 已迁移至 modules/batch/handler.rs
 // chat — 已迁移至 modules/chat/handler/
 // devices — 已迁移至 modules/device/handler/
@@ -74,17 +74,16 @@ pub fn create_router() -> Router<AppState> {
         .route("/tools/catalog", get(crate::modules::chat::handler::proxy::tools_catalog))
         .route("/tools/effective", get(crate::modules::chat::handler::proxy::tools_effective))
         .route("/tools/toggle", post(crate::modules::chat::handler::proxy::tools_toggle))
-        .nest("/auth", crate::modules::auth::handler::session::create_router())
-        .nest("/auth", crate::modules::auth::handler::token::create_protected_router())
+        .nest("/auth", tinyiothub_auth::router())
         .route("/test-auth", get(test_auth_endpoint))
         .layer(axum_middleware::from_fn(crate::api::middleware::context::jwt_auth_middleware));
 
     // 创建v1版本的API路由
     let v1_routes = Router::new()
-        .nest("/auth", crate::modules::auth::handler::login::create_router())
-        .nest("/auth/token", crate::modules::auth::handler::token::create_router())
-        .nest("/auth/sms", crate::modules::auth::handler::sms::create_router())
-        .nest("/auth/social", crate::modules::auth::handler::social::create_router())
+        .nest("/auth", tinyiothub_auth::handler::login::create_router())
+        .nest("/auth/token", tinyiothub_auth::handler::token::create_router())
+        .nest("/auth/sms", tinyiothub_auth::handler::sms::create_router())
+        .nest("/auth/social", tinyiothub_auth::handler::social::create_router())
         .nest("/tenants", crate::modules::tenant::create_auth_router())
         .nest("/system", crate::modules::system::handler::create_router())
         .route("/gateway/pair", post(crate::modules::gateway::handler::pairing::pair_device))

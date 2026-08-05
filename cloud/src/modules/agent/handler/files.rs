@@ -20,11 +20,12 @@ use axum::{
     response::Json,
 };
 use serde::{Deserialize, Serialize};
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
     api::middleware::WorkspaceScope,
-    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
+    shared::{api_response::ApiResponse, app_state::AppState, },
 };
 
 /// Supported workspace files (pub(crate) for testing)
