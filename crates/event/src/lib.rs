@@ -14,8 +14,11 @@
 // One-way edges carried here: alarm → event (via `router::EventAlarmHook`,
 // injected by the composition layer), notify → event (notify consumes event
 // types), agent → event (`bus::ThingEventSignal` consumed by the thing-agent
-// loop in crates/ai).
+// loop in crates/agent).
 
+pub use alarm_event::AlarmEvent;
+
+pub mod alarm_event;
 pub mod bus;
 pub mod errors;
 pub mod handler;

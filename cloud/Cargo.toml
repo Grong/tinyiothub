@@ -106,7 +106,7 @@ memory = { workspace = true }
 policy = { workspace = true }
 skills = { workspace = true }
 web = { workspace = true }
-ai = { workspace = true }
+agent = { workspace = true }
 llm = { workspace = true }
 thing = { workspace = true }
 auth = { workspace = true }

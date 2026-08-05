@@ -74,43 +74,53 @@ dependencies = [
 ]
 
 [[package]]
-name = "aho-corasick"
-version = "1.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddd31a130427c27518df266943a5308ed92d4b226cc639f5a8f1002816174301"
-dependencies = [
- "memchr",
-]
-
-[[package]]
-name = "ai"
+name = "agent"
 version = "0.4.6"
 dependencies = [
- "alarm",
  "anyhow",
+ "async-stream",
  "async-trait",
+ "auth",
+ "axum",
  "chrono",
  "core",
  "dashmap",
+ "db",
  "event",
+ "futures",
+ "hex",
  "llm",
  "memory",
  "mockall",
  "parking_lot 0.12.5",
  "policy",
  "regex",
+ "reqwest 0.12.28",
  "runtime",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "skills",
+ "sqlx",
  "tempfile",
+ "thing",
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",
  "tracing",
  "uuid",
+ "web",
  "zeroclaw-api",
  "zeroclawlabs",
+]
+
+[[package]]
+name = "aho-corasick"
+version = "1.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddd31a130427c27518df266943a5308ed92d4b226cc639f5a8f1002816174301"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -5915,7 +5925,7 @@ dependencies = [
 name = "tenant"
 version = "0.4.6"
 dependencies = [
- "ai",
+ "agent",
  "async-trait",
  "axum",
  "base64 0.21.7",
@@ -6122,7 +6132,7 @@ name = "tinyiothub-cloud"
 version = "0.4.6"
 dependencies = [
  "aes-gcm",
- "ai",
+ "agent",
  "alarm",
  "anyhow",
  "async-stream",

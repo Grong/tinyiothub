@@ -29,7 +29,7 @@ pub struct TenantState {
     pub tenant_service: Arc<TenantService>,
     pub workspace_service: Arc<WorkspaceService>,
     /// Workspace create/delete synchronously manages the per-workspace
-    /// Agent — the AgentPool stays in cloud's agent plane, consumed through
+    /// Agent — the AgentPool lives in the agent crate, consumed through
     /// this seam (see `legacy/mod.rs`).
     pub agent_lifecycle: Arc<dyn WorkspaceAgentLifecycle>,
     /// AI tag suggestions for workspace resources. `None` when no minimax
@@ -50,7 +50,7 @@ pub struct TenantState {
 
 /// Agent lifecycle seam: workspace creation/deletion provisions and tears
 /// down the workspace's Agent. Cloud implements this over
-/// `modules::agent::AgentPool` (agent plane, not yet extracted).
+/// `tinyiothub_agent::host::agent::AgentPool` (agent crate, P4-Task22).
 #[async_trait::async_trait]
 pub trait WorkspaceAgentLifecycle: Send + Sync {
     async fn create_agent(&self, workspace_id: &str, name: &str) -> Result<String, String>;

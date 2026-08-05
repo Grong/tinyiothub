@@ -10,13 +10,12 @@
 
 use std::sync::Arc;
 
-use tinyiothub_ai::thing_agent::ThingAgentHost;
+use tinyiothub_agent::loop_::thing_agent::ThingAgentHost;
 use tinyiothub_core::models::event::EventLevel;
 
-use crate::{
-    modules::agent::thing_agent_host::CloudThingAgentHost,
-    test_utils::seed_test_workspace,
-};
+use tinyiothub_agent::host::thing_agent_host::CloudThingAgentHost;
+
+use crate::test_utils::seed_test_workspace;
 use tinyiothub_event::{
     bus::ThingEventBus,
     router::{ThingEventInput, ThrottleState, route_thing_event},

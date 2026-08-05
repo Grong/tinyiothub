@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use tinyiothub_ai::{
+use tinyiothub_agent::loop_::{
     event::{bus::AiEventPublisher, types::AiEvent},
     heartbeat::{repo::HeartbeatTaskRepository, types::NewHeartbeatTask},
 };
@@ -219,7 +219,7 @@ impl WorkspaceService {
 
 #[cfg(test)]
 mod tests {
-    use tinyiothub_ai::heartbeat::repo::HeartbeatTaskRepository;
+    use tinyiothub_agent::loop_::heartbeat::repo::HeartbeatTaskRepository;
 
     use super::*;
     use crate::workspace::types::WorkspaceResource;
@@ -348,7 +348,7 @@ mod tests {
     /// In-memory heartbeat task repo — the concrete Sqlite repo lives in the
     /// agent module, which workspace must not reference (P4.0d).
     struct MockHeartbeatTaskRepo {
-        tasks: Mutex<Vec<tinyiothub_ai::heartbeat::types::HeartbeatTask>>,
+        tasks: Mutex<Vec<tinyiothub_agent::loop_::heartbeat::types::HeartbeatTask>>,
     }
 
     impl MockHeartbeatTaskRepo {
@@ -365,8 +365,8 @@ mod tests {
             &self,
             workspace_id: &str,
         ) -> std::result::Result<
-            Vec<tinyiothub_ai::heartbeat::types::HeartbeatTask>,
-            tinyiothub_ai::heartbeat::repo::RepoError,
+            Vec<tinyiothub_agent::loop_::heartbeat::types::HeartbeatTask>,
+            tinyiothub_agent::loop_::heartbeat::repo::RepoError,
         > {
             Ok(self
                 .tasks
@@ -381,9 +381,9 @@ mod tests {
         async fn upsert(
             &self,
             _workspace_id: &str,
-            _task: &tinyiothub_ai::heartbeat::types::HeartbeatTask,
+            _task: &tinyiothub_agent::loop_::heartbeat::types::HeartbeatTask,
             _expected_version: i64,
-        ) -> std::result::Result<bool, tinyiothub_ai::heartbeat::repo::RepoError> {
+        ) -> std::result::Result<bool, tinyiothub_agent::loop_::heartbeat::repo::RepoError> {
             unimplemented!()
         }
 
@@ -393,8 +393,8 @@ mod tests {
             _priority: &str,
             _text: &str,
         ) -> std::result::Result<
-            tinyiothub_ai::heartbeat::types::HeartbeatTask,
-            tinyiothub_ai::heartbeat::repo::RepoError,
+            tinyiothub_agent::loop_::heartbeat::types::HeartbeatTask,
+            tinyiothub_agent::loop_::heartbeat::repo::RepoError,
         > {
             unimplemented!()
         }
@@ -404,7 +404,7 @@ mod tests {
             _workspace_id: &str,
             _task_id: i64,
             _paused: bool,
-        ) -> std::result::Result<(), tinyiothub_ai::heartbeat::repo::RepoError> {
+        ) -> std::result::Result<(), tinyiothub_agent::loop_::heartbeat::repo::RepoError> {
             unimplemented!()
         }
 
@@ -412,7 +412,7 @@ mod tests {
             &self,
             _workspace_id: &str,
             _task_id: i64,
-        ) -> std::result::Result<(), tinyiothub_ai::heartbeat::repo::RepoError> {
+        ) -> std::result::Result<(), tinyiothub_agent::loop_::heartbeat::repo::RepoError> {
             unimplemented!()
         }
 
@@ -420,14 +420,14 @@ mod tests {
             &self,
             workspace_id: &str,
             tasks: &[NewHeartbeatTask],
-        ) -> std::result::Result<(), tinyiothub_ai::heartbeat::repo::RepoError> {
+        ) -> std::result::Result<(), tinyiothub_agent::loop_::heartbeat::repo::RepoError> {
             let mut store = self.tasks.lock().unwrap();
             store.retain(|t| t.workspace_id != workspace_id);
             store.extend(
                 tasks
                     .iter()
                     .enumerate()
-                    .map(|(i, t)| tinyiothub_ai::heartbeat::types::HeartbeatTask {
+                    .map(|(i, t)| tinyiothub_agent::loop_::heartbeat::types::HeartbeatTask {
                         id: i as i64 + 1,
                         workspace_id: workspace_id.to_string(),
                         priority: t.priority.clone(),
@@ -444,8 +444,8 @@ mod tests {
         async fn insert_result(
             &self,
             _workspace_id: &str,
-            _result: &tinyiothub_ai::heartbeat::types::HeartbeatResult,
-        ) -> std::result::Result<(), tinyiothub_ai::heartbeat::repo::RepoError> {
+            _result: &tinyiothub_agent::loop_::heartbeat::types::HeartbeatResult,
+        ) -> std::result::Result<(), tinyiothub_agent::loop_::heartbeat::repo::RepoError> {
             unimplemented!()
         }
     }

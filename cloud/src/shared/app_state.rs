@@ -15,9 +15,10 @@ use tinyiothub_event::{
     sqlite_event::SqliteEventRepository,
     sqlite_real_time_event::SqliteRealTimeEventRepository,
 };
+use tinyiothub_agent::host::agent::AgentPool;
+
 use crate::{
     modules::{
-        agent::agent::AgentPool,
         device::{
             monitoring_service::DeviceMonitoringService,
             performance_service::DevicePerformanceService, query_service::DeviceQueryService,
@@ -120,10 +121,10 @@ pub struct AppState {
     pub tag_service: Arc<tinyiothub_thing::tag::TagService>,
 
     /// AI subsystem orchestrator (set during async startup)
-    pub orchestrator: Option<Arc<tinyiothub_ai::orchestrator::Orchestrator>>,
+    pub orchestrator: Option<Arc<tinyiothub_agent::loop_::orchestrator::Orchestrator>>,
 
     /// AI subsystem heartbeat runner (set during async startup)
-    pub heartbeat_runner: Option<Arc<tinyiothub_ai::heartbeat::runner::HeartbeatRunner>>,
+    pub heartbeat_runner: Option<Arc<tinyiothub_agent::loop_::heartbeat::runner::HeartbeatRunner>>,
 
     /// 标签仓库 - 用于设备服务的标签关联
     pub tag_repository: Arc<dyn tinyiothub_thing::tag::TagRepository>,
@@ -141,7 +142,7 @@ pub struct AppState {
     pub cron_run_repo: Arc<dyn crate::modules::cron::CronRunRepository>,
 
     /// 会话服务 - Agent 聊天会话管理
-    pub session_service: Arc<crate::modules::agent::SessionService>,
+    pub session_service: Arc<tinyiothub_agent::host::SessionService>,
 
     /// 缓存的系统信息对象，避免每次请求重新扫描
     pub sysinfo_system: Arc<std::sync::Mutex<sysinfo::System>>,
@@ -158,7 +159,7 @@ pub struct AppState {
     /// 用户指令投递入口（T14）—— HTTP 端点 / chat 工具经此向
     /// thing-agent loop 投递 WakeSignal。T15 用 ThingAgentManager 实现
     /// 并注入；None 时指令入口返回 503。
-    pub directive_sink: Option<Arc<dyn tinyiothub_ai::thing_agent::DirectiveSink>>,
+    pub directive_sink: Option<Arc<dyn tinyiothub_agent::loop_::thing_agent::DirectiveSink>>,
 
     /// Agent 记忆存储 - 持久化 agent 记忆到 SQLite
     pub memory_store: Arc<dyn MemoryStore>,
@@ -279,10 +280,20 @@ impl AppState {
 
         // Agent Runtime - 使用 zeroclaw 内置的 OpenAiCompatibleProvider (MiniMax)
         // Validate minimax config exists (used by get_or_create_agent at provider creation time)
-        let _minimax_config = crate::shared::config::get()
+        let minimax_config = crate::shared::config::get()
             .minimax
             .clone()
             .expect("minimax config is required - set [minimax] in app_settings.toml");
+        // Register the agent crate's config ports (minimax provider settings
+        // + default model) — the agent crate no longer reads cloud's global
+        // config directly (P4-Task22).
+        tinyiothub_agent::host::ports::set_minimax_settings(
+            tinyiothub_agent::host::ports::MinimaxSettings {
+                base_url: minimax_config.base_url.clone(),
+                auth_token: minimax_config.auth_token.clone(),
+                model: minimax_config.model.clone(),
+            },
+        );
         let agent_settings = crate::shared::config::get().agent.clone();
         tracing::info!(
             "TinyIoTHub Agent runtime initialized (memory_backend={}, observer_backend={})",
@@ -294,8 +305,13 @@ impl AppState {
             Arc::new(tinyiothub_memory::SqliteAgentMemoryRepository::new(database.pool().clone()));
 
         let agent_pool: Arc<AgentPool> = Arc::new(
-            AgentPool::new(database.pool().clone(), memory_store.clone(), &agent_settings)
-                .expect("failed to build AgentPool"),
+            AgentPool::new(
+                database.pool().clone(),
+                memory_store.clone(),
+                &agent_settings,
+                tinyiothub_agent::host::autonomous_factory::minimax_provider_factory(),
+            )
+            .expect("failed to build AgentPool"),
         );
 
         alarm_service.set_device_cache(device_cache.clone());
@@ -353,12 +369,12 @@ impl AppState {
             ));
 
         // 会话服务 - 用于 Agent 聊天会话管理
-        let session_repository: Arc<dyn crate::modules::agent::SessionRepository> =
-            Arc::new(crate::modules::agent::session_repository::SqliteSessionRepository::new(
+        let session_repository: Arc<dyn tinyiothub_agent::host::SessionRepository> =
+            Arc::new(tinyiothub_agent::host::session_repository::SqliteSessionRepository::new(
                 database.as_ref().clone(),
             ));
         let session_service =
-            Arc::new(crate::modules::agent::SessionService::new(Arc::clone(&session_repository)));
+            Arc::new(tinyiothub_agent::host::SessionService::new(Arc::clone(&session_repository)));
 
         // === 网关配对服务 ===
         let (mqtt_tx, mqtt_rx) =
@@ -418,14 +434,14 @@ impl AppState {
 
         // Thing action hooks（P4.0b）—— agent 侧实现 core trait，注入给 thing handler
         let thing_action_hooks: Arc<dyn tinyiothub_core::thing_hooks::ThingActionHooks> =
-            Arc::new(crate::modules::agent::thing_action_hooks::AgentThingActionHooks::new(
+            Arc::new(tinyiothub_agent::host::thing_action_hooks::AgentThingActionHooks::new(
                 database.pool().clone(),
             ));
 
         // Agent hooks（P4.0d）—— agent 侧实现 core trait，注入给 workspace 域
         let agent_hooks: Arc<dyn tinyiothub_core::agent_hooks::AgentHooks> =
-            Arc::new(crate::modules::agent::agent_hooks::AgentHooksImpl::new(Arc::new(
-                crate::modules::agent::heartbeat_repo::SqliteHeartbeatTaskRepository::new(
+            Arc::new(tinyiothub_agent::host::agent_hooks::AgentHooksImpl::new(Arc::new(
+                tinyiothub_agent::host::heartbeat_repo::SqliteHeartbeatTaskRepository::new(
                     database.pool().clone(),
                 ),
             )));
@@ -476,7 +492,7 @@ impl AppState {
     }
 
     /// 注入用户指令投递入口（T15 闭环接线调用）
-    pub fn set_directive_sink(&mut self, sink: Arc<dyn tinyiothub_ai::thing_agent::DirectiveSink>) {
+    pub fn set_directive_sink(&mut self, sink: Arc<dyn tinyiothub_agent::loop_::thing_agent::DirectiveSink>) {
         self.directive_sink = Some(sink);
     }
 
@@ -964,14 +980,14 @@ impl axum::extract::FromRef<AppState> for tinyiothub_user::UserState {
 /// tears down the per-workspace Agent via cloud's `AgentPool` (agent plane,
 /// not yet extracted).
 pub struct AgentPoolLifecycle {
-    pub pool: Arc<crate::modules::agent::agent::AgentPool>,
+    pub pool: Arc<tinyiothub_agent::host::agent::AgentPool>,
 }
 
 #[async_trait::async_trait]
 impl tinyiothub_tenant::WorkspaceAgentLifecycle for AgentPoolLifecycle {
     async fn create_agent(&self, workspace_id: &str, name: &str) -> Result<String, String> {
         self.pool
-            .create_agent(&crate::shared::agent::AgentConfig {
+            .create_agent(&tinyiothub_agent::host::shared::AgentConfig {
                 workspace_id: workspace_id.to_string(),
                 name: name.to_string(),
                 ..Default::default()
@@ -1091,6 +1107,51 @@ impl axum::extract::FromRef<AppState> for tinyiothub_tenant::TenantState {
             },
             jwt_secret: settings.security.jwt.secret.clone(),
             agents_base_dir: crate::shared::paths::agents_base_dir(),
+        }
+    }
+}
+
+// ============================================================================
+// P4-Task22: agent domain slice + workspace-access seam adapter
+// ============================================================================
+
+/// Workspace-access seam adapter: the agent crate's `WorkspaceAccess` port
+/// over the tenant crate's `WorkspaceService` (tenant → agent edge stays
+/// one-way; agent never names tenant types).
+pub struct TenantWorkspaceAccess {
+    pub workspace_service: Arc<tinyiothub_tenant::WorkspaceService>,
+}
+
+#[async_trait::async_trait]
+impl tinyiothub_agent::host::ports::WorkspaceAccess for TenantWorkspaceAccess {
+    async fn workspace_tenant_id(&self, workspace_id: &str) -> Result<Option<String>, String> {
+        self.workspace_service
+            .find_by_id(workspace_id)
+            .await
+            .map(|ws| ws.map(|w| w.tenant_id))
+            .map_err(|e| e.to_string())
+    }
+}
+
+impl axum::extract::FromRef<AppState> for tinyiothub_agent::AgentState {
+    fn from_ref(state: &AppState) -> Self {
+        tinyiothub_agent::AgentState {
+            database: state.database.clone(),
+            agent_pool: state.agent_pool.clone(),
+            session_service: state.session_service.clone(),
+            memory_store: state.memory_store.clone(),
+            directive_sink: state.directive_sink.clone(),
+            workspace_access: Arc::new(TenantWorkspaceAccess {
+                workspace_service: state.workspace_service.clone(),
+            }),
+            data_server: state.data_server.clone(),
+            device_cache: state.device_cache.clone(),
+            heartbeat_runner: state.heartbeat_runner.clone(),
+            orchestrator: state.orchestrator.clone(),
+            agent_hooks: state.agent_hooks.clone(),
+            system_prompts: Arc::new(
+                crate::shared::config::get().agent.system_prompts.clone(),
+            ),
         }
     }
 }

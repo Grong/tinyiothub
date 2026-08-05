@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
+pub mod agent_bridge;
 pub mod handlers;
 pub mod tool_metadata;
 pub mod tool_registry;

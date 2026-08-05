@@ -9,7 +9,7 @@
 use std::sync::{Arc, Mutex};
 
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
-use tinyiothub_ai::{
+use tinyiothub_agent::loop_::{
     heartbeat::types::{HeartbeatResult, HeartbeatStatus},
     orchestrator::callbacks::HeartbeatBridge,
     thing_agent::{
@@ -18,7 +18,7 @@ use tinyiothub_ai::{
 };
 use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 
-use crate::modules::agent::agent_runs_repo::SqliteAgentRunsRepository;
+use tinyiothub_agent::host::agent_runs_repo::SqliteAgentRunsRepository;
 
 const WS: &str = "ws_bridge";
 

@@ -2,9 +2,10 @@
 //! (SEP addendum rule 3).
 //!
 //! - Per-workspace heartbeat handlers (`/workspaces/{id}/heartbeat/*`) — moved to
-//!   `cloud/src/modules/agent/handler/workspace_heartbeat.rs`. They are AI/agent-plane code
-//!   (HeartbeatRunner from `tinyiothub_ai`, `agent_actions` table, MCP tool registry +
-//!   `McpContextGuard` for proposal execution) that happens to be mounted under workspace paths;
+//!   the agent crate (`crates/agent/src/host/handler/workspace_heartbeat.rs`, P4-Task22).
+//!   They are AI/agent-plane code
+//!   (HeartbeatRunner from `tinyiothub_agent::loop_`, `agent_actions` table, external
+//!   tool registry port for proposal execution) that happens to be mounted under workspace paths;
 //!   the composition layer nests them at `/workspaces` next to this crate's router (same pattern as
 //!   the T14 directive entries). Reclaim when the MCP plane is extracted.
 //! - `WorkspaceAgentLifecycle` / `TagSuggester` seams — implemented in

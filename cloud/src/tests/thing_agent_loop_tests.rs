@@ -24,7 +24,7 @@ use std::{
 
 use serde_json::json;
 use sqlx::Row;
-use tinyiothub_ai::thing_agent::{
+use tinyiothub_agent::loop_::thing_agent::{
     DirectiveSink, EnqueueError, Runner, ThingAgentManager, ThingAgentManagerConfig, TriggerSource,
     WakeSignal,
 };
@@ -36,18 +36,15 @@ use zeroclaw::{
 };
 use zeroclaw_api::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
 
-use crate::{
-    modules::{
-        agent::{
-            agent_runs_repo::SqliteAgentRunsRepository,
-            autonomous_factory::{AutonomousAgentFactory, ProviderFactory},
-            policy_repo::SqlitePolicyRepository,
-            thing_agent_host::CloudThingAgentHost,
-            tools::DispatchThingTaskTool,
-        },
-    },
-    test_utils::seed_test_workspace,
+use tinyiothub_agent::host::{
+    agent_runs_repo::SqliteAgentRunsRepository,
+    autonomous_factory::{AutonomousAgentFactory, ProviderFactory},
+    policy_repo::SqlitePolicyRepository,
+    thing_agent_host::CloudThingAgentHost,
+    tools::DispatchThingTaskTool,
 };
+
+use crate::test_utils::seed_test_workspace;
 use tinyiothub_event::{
     bus::ThingEventBus,
     router::{ThingEventInput, ThrottleState, route_thing_event},
@@ -387,7 +384,7 @@ async fn build_fixture(
         observer,
         provider_factory,
         "stub-model".to_string(),
-        None,
+        Default::default(),
     ));
 
     let manager = Arc::new(ThingAgentManager::new(
@@ -639,14 +636,14 @@ async fn user_directive_runs_and_pushes_assistant_message() {
     fx.manager.start(WS);
 
     const SESSION: &str = "agent:ws-loop:default/s1";
-    crate::modules::agent::chat::history::ensure_session(&fx.pool, SESSION, WS, "default")
+    tinyiothub_agent::host::chat::history::ensure_session(&fx.pool, SESSION, WS, "default")
         .await
         .expect("ensure session");
 
     let sink: &dyn DirectiveSink = fx.manager.as_ref();
     sink.enqueue(WakeSignal {
         workspace_id: WS.to_string(),
-        priority: tinyiothub_ai::thing_agent::Priority::High,
+        priority: tinyiothub_agent::loop_::thing_agent::Priority::High,
         source: TriggerSource::UserDirective {
             user_id: "u1".to_string(),
             text: "把车间温度降到 26 度".to_string(),
@@ -662,7 +659,7 @@ async fn user_directive_runs_and_pushes_assistant_message() {
     // yield 轮询即可（暂停时钟下 sleep 轮询反而会跳进 30s 巡检窗口）。
     let mut pushed = false;
     for _ in 0..20_000 {
-        let messages = crate::modules::agent::chat::history::list_messages(&fx.pool, SESSION, 10)
+        let messages = tinyiothub_agent::host::chat::history::list_messages(&fx.pool, SESSION, 10)
             .await
             .expect("list messages");
         if messages.iter().any(|(role, _)| role == "assistant") {
@@ -673,7 +670,7 @@ async fn user_directive_runs_and_pushes_assistant_message() {
     }
     assert!(pushed, "directive run must push an assistant message");
 
-    let messages = crate::modules::agent::chat::history::list_messages(&fx.pool, SESSION, 10)
+    let messages = tinyiothub_agent::host::chat::history::list_messages(&fx.pool, SESSION, 10)
         .await
         .expect("list messages");
     let assistant =
@@ -693,7 +690,7 @@ async fn user_directive_runs_and_pushes_assistant_message() {
     // 未知工作区指令 → Closed（端点映射为错误而非静默）。
     let err = sink.enqueue(WakeSignal {
         workspace_id: "ws-nope".to_string(),
-        priority: tinyiothub_ai::thing_agent::Priority::High,
+        priority: tinyiothub_agent::loop_::thing_agent::Priority::High,
         source: TriggerSource::UserDirective {
             user_id: "u1".to_string(),
             text: "hi".to_string(),
@@ -711,7 +708,7 @@ async fn user_directive_runs_and_pushes_assistant_message() {
 
 #[tokio::test]
 async fn policy_denial_streak_triggers_relax_hint_with_real_repo() {
-    use tinyiothub_ai::thing_agent::{
+    use tinyiothub_agent::loop_::thing_agent::{
         ActionRecord, ActionResult, AgentRunsRepository, Outcome, Priority, RunReport, pushback,
     };
 
@@ -832,7 +829,7 @@ async fn duplicate_directive_via_dispatch_tool_yields_single_run() {
     let fx = fixture("loop_dedup_directive").await;
     fx.manager.start(WS);
     let sink: Arc<dyn DirectiveSink> = fx.manager.clone();
-    let tool = DispatchThingTaskTool::new(WS, Some(sink), None);
+    let tool = DispatchThingTaskTool::new(WS, Some(sink));
 
     let first = tool.execute(json!({"text": "重启网关"})).await.expect("first dispatch");
     assert!(first.success, "first directive accepted: {:?}", first.error);
@@ -933,7 +930,7 @@ async fn queue_full_51st_directive_rejected_and_user_informed() {
     .await;
     parts.manager.start(WS);
     let sink: Arc<dyn DirectiveSink> = parts.manager.clone();
-    let tool = DispatchThingTaskTool::new(WS, Some(sink), None);
+    let tool = DispatchThingTaskTool::new(WS, Some(sink));
 
     // 第一条占住串行 consumer（LLM 永久挂起，60s 预算内不会收尾）。
     let first = tool.execute(json!({"text": "占住执行位的指令"})).await.expect("first dispatch");

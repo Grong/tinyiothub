@@ -18,7 +18,15 @@ pub async fn create_app_router(app_state: AppState) -> Router {
     use std::sync::Arc;
     let shared_state = Arc::new(app_state.clone());
     crate::modules::mcp::register_tools(Some(shared_state.clone())).await;
-    app_state.agent_pool.set_app_state(shared_state).await;
+    crate::modules::mcp::agent_bridge::register_agent_bridge();
+    app_state
+        .agent_pool
+        .set_runtime_context(tinyiothub_agent::host::tools::service::ToolRuntimeContext {
+            device_cache: Some(app_state.device_cache.clone()),
+            data_server: app_state.data_server.clone(),
+            directive_sink: app_state.directive_sink.clone(),
+        })
+        .await;
     tracing::info!("MCP tools initialized");
 
     // Refresh agent tools after MCP registration

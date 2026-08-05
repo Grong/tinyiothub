@@ -90,12 +90,6 @@ pub fn workspace_uploads_dir(workspace_id: &str) -> PathBuf {
     workspace_dir(workspace_id).join("uploads")
 }
 
-/// Agent prompt templates directory: <project_root>/cloud/templates/agent/
-/// Note: these are embedded at compile time via include_str!, this path is for reference.
-pub fn agent_templates_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("templates").join("agent")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

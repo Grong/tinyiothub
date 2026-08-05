@@ -117,7 +117,6 @@ async fn main_impl() -> std::io::Result<()> {
 
     // === 3. 创建 AppState（包含所有核心组件）===
     let mut app_state = tinyiothub_cloud::shared::app_state::AppState::new(device_cache, db_pool);
-    app_state.agent_pool.set_workspace_service(app_state.workspace_service.clone()).await;
     info!("✅ AppState created");
 
     // === 4. 驱动（静态编译，无需加载） ===
@@ -207,7 +206,15 @@ async fn main_impl() -> std::io::Result<()> {
         use tower_http::services::ServeDir;
         let shared_state = Arc::new(app_state.clone());
         tinyiothub_cloud::modules::mcp::register_tools(Some(shared_state.clone())).await;
-        app_state.agent_pool.set_app_state(shared_state).await;
+        tinyiothub_cloud::modules::mcp::agent_bridge::register_agent_bridge();
+        app_state
+            .agent_pool
+            .set_runtime_context(tinyiothub_agent::host::tools::service::ToolRuntimeContext {
+                device_cache: Some(app_state.device_cache.clone()),
+                data_server: app_state.data_server.clone(),
+                directive_sink: app_state.directive_sink.clone(),
+            })
+            .await;
         // Refresh agent tools after MCP registration
         if let Err(e) = app_state.agent_pool.refresh_tools().await {
             tracing::error!("Failed to refresh agent tools: {}", e);

@@ -162,7 +162,7 @@ memory = { path = "crates/memory" }
 policy = { path = "crates/policy" }
 skills = { path = "crates/skills" }
 web = { path = "crates/web" }
-ai = { path = "crates/ai" }
+agent = { path = "crates/agent" }
 llm = { path = "crates/llm" }
 thing = { path = "crates/thing" }
 auth = { path = "crates/auth" }

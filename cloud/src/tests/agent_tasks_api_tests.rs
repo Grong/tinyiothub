@@ -12,15 +12,14 @@ use axum::{
     http::{Request, StatusCode},
 };
 use serde_json::{Value, json};
-use tinyiothub_ai::thing_agent::{EnqueueError, TriggerSource};
+use tinyiothub_agent::loop_::thing_agent::{EnqueueError, TriggerSource};
 use tower::ServiceExt;
 
-use crate::{
-    modules::agent::directive_sink::StubDirectiveSink,
-    test_utils::{
-        auth_header, create_test_token, response_parts, seed_test_workspace,
-        setup_test_app_with_pool,
-    },
+use tinyiothub_agent::host::directive_sink::StubDirectiveSink;
+
+use crate::test_utils::{
+    auth_header, create_test_token, response_parts, seed_test_workspace,
+    setup_test_app_with_pool,
 };
 
 const WS: &str = "ws-agent-t14";

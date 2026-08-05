@@ -10,10 +10,11 @@
 //! - alarm → event: consumes `tinyiothub_event` types and implements
 //!   `router::EventAlarmHook` for `AlarmService` (`event_hook`); the event
 //!   ingest pipeline fires the hook after persisting a thing event.
-//! - ai → alarm: crates/ai consumes `types_ai::AlarmEvent` for
-//!   `AiEvent::AlarmCreated(..)`; the alarm crate never names ai types —
-//!   `AlarmService` publishes through the `types_ai::AlarmAiPublisher` port
-//!   and cloud's composition layer adapts `AiEventPublisher` to it
+//! - alarm ↔ agent (no direct edge): the `AlarmEvent` payload lives in the
+//!   event crate (re-homed in P4-Task22 so the agent crate needs no alarm
+//!   dependency); the alarm crate never names agent types — `AlarmService`
+//!   publishes through the `types_ai::AlarmAiPublisher` port and cloud's
+//!   composition layer adapts `AiEventPublisher` to it
 //!   (`cloud::shared::ai_adapter::AlarmAiPublisherAdapter`).
 //!
 //! Boundary notes:

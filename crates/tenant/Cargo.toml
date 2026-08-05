@@ -12,7 +12,7 @@ name = "tinyiothub_tenant"
 core = { workspace = true }
 db = { workspace = true }
 web = { workspace = true }
-ai = { workspace = true }
+agent = { workspace = true }
 runtime = { workspace = true }
 axum = { workspace = true, features = ["multipart"] }
 tokio = { workspace = true }
