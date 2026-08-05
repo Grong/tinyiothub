@@ -344,12 +344,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::PolicyEngine for VecEngine {
-        async fn evaluate(
-            &self,
-            workspace_id: &str,
-            category: PolicyCategory,
-            target: &str,
-        ) -> crate::PolicyDecision {
+        async fn evaluate(&self, workspace_id: &str, category: PolicyCategory, target: &str) -> crate::PolicyDecision {
             crate::evaluate_rules(&self.0, workspace_id, category, target)
         }
         async fn add_rule(&self, _rule: PolicyRule) -> anyhow::Result<()> {

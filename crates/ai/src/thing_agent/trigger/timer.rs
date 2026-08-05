@@ -11,8 +11,8 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use super::Trigger;
-use tinyiothub_policy::autonomy::{AutonomyMode, PolicyRepository};
 use crate::thing_agent::types::{Priority, TriggerSource, WakeSignal};
+use tinyiothub_policy::autonomy::{AutonomyMode, PolicyRepository};
 
 /// Emits a [`WakeSignal`] with `priority: Normal`, `source: Timer` and
 /// `dedup_key: Some("timer:{workspace_id}")` every `interval`, unless the

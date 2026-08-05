@@ -10,10 +10,8 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tinyiothub_auth::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::{handle_service_result, response::ApiResponseBuilder};
 use tokio::sync::OnceCell;
-
-use tinyiothub_web::handle_service_result;
 
 use crate::{
     modules::event::value_objects::EventId,

@@ -10,8 +10,8 @@ use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder, PaginatedRespons
 use super::{
     service::{TemplateService, TemplateValidator},
     types::{
-        CreateDeviceTemplateRequest, DeviceCreationInput, DevicePreview, DeviceTemplate,
-        TemplateCategory, TemplateQueryParams, UpdateDeviceTemplateRequest,
+        CreateDeviceTemplateRequest, DeviceCreationInput, DevicePreview, DeviceTemplate, TemplateCategory,
+        TemplateQueryParams, UpdateDeviceTemplateRequest,
     },
 };
 use crate::ThingState;
@@ -83,7 +83,12 @@ async fn list_templates(
 
             ApiResponseBuilder::success(PaginatedResponse {
                 data: templates,
-                pagination: PaginationInfo { page, page_size, total_pages, total_count },
+                pagination: PaginationInfo {
+                    page,
+                    page_size,
+                    total_pages,
+                    total_count,
+                },
             })
         }
         Err(e) => {

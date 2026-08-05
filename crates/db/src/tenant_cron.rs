@@ -5,9 +5,7 @@ use std::collections::HashSet;
 use async_trait::async_trait;
 use tinyiothub_core::{
     error::Result,
-    models::cron_job::{
-        CreateCronJobRequest, CronJob, CronJobQuery, CronRun, CronRunQuery, UpdateCronJobRequest,
-    },
+    models::cron_job::{CreateCronJobRequest, CronJob, CronJobQuery, CronRun, CronRunQuery, UpdateCronJobRequest},
 };
 
 use crate::Database;
@@ -27,7 +25,11 @@ pub struct TenantCronJobRepository<R: CronJobRepository> {
 impl<R: CronJobRepository> TenantCronJobRepository<R> {
     /// Create a new tenant-aware cron job repository adapter
     pub fn new(inner: R, workspace_id: String, database: Database) -> Self {
-        Self { inner, workspace_id, database }
+        Self {
+            inner,
+            workspace_id,
+            database,
+        }
     }
 
     /// Get the workspace ID this adapter is filtering for
@@ -37,11 +39,10 @@ impl<R: CronJobRepository> TenantCronJobRepository<R> {
 
     /// Check if a cron job belongs to this workspace
     async fn job_belongs_to_workspace(&self, job_id: &str) -> Result<bool> {
-        let result: Option<(String,)> =
-            sqlx::query_as("SELECT workspace_id FROM cron_jobs WHERE id = ?")
-                .bind(job_id)
-                .fetch_optional(self.database.pool())
-                .await?;
+        let result: Option<(String,)> = sqlx::query_as("SELECT workspace_id FROM cron_jobs WHERE id = ?")
+            .bind(job_id)
+            .fetch_optional(self.database.pool())
+            .await?;
 
         match result {
             Some((workspace_id,)) => Ok(workspace_id == self.workspace_id),
@@ -65,11 +66,7 @@ impl<R: CronJobRepository + Send + Sync> CronJobRepository for TenantCronJobRepo
         self.inner.find_all(&filtered_query).await
     }
 
-    async fn create(
-        &self,
-        job: &CreateCronJobRequest,
-        created_by: Option<&str>,
-    ) -> Result<CronJob> {
+    async fn create(&self, job: &CreateCronJobRequest, created_by: Option<&str>) -> Result<CronJob> {
         self.inner.create(job, created_by).await
     }
 
@@ -102,11 +99,10 @@ impl<R: CronJobRepository + Send + Sync> CronJobRepository for TenantCronJobRepo
     }
 
     async fn find_due_jobs(&self) -> Result<Vec<CronJob>> {
-        let ws_job_ids: Vec<(String,)> =
-            sqlx::query_as("SELECT id FROM cron_jobs WHERE workspace_id = ?")
-                .bind(&self.workspace_id)
-                .fetch_all(self.database.pool())
-                .await?;
+        let ws_job_ids: Vec<(String,)> = sqlx::query_as("SELECT id FROM cron_jobs WHERE workspace_id = ?")
+            .bind(&self.workspace_id)
+            .fetch_all(self.database.pool())
+            .await?;
 
         let ws_ids: HashSet<String> = ws_job_ids.into_iter().map(|(id,)| id).collect();
 
@@ -132,32 +128,27 @@ impl<R: CronJobRepository + Send + Sync> CronJobRepository for TenantCronJobRepo
     }
 
     async fn count(&self, _workspace_id: &str) -> Result<i64> {
-        let result: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM cron_jobs WHERE workspace_id = ?")
-                .bind(&self.workspace_id)
-                .fetch_one(self.database.pool())
-                .await?;
+        let result: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cron_jobs WHERE workspace_id = ?")
+            .bind(&self.workspace_id)
+            .fetch_one(self.database.pool())
+            .await?;
         Ok(result.0)
     }
 
     async fn count_by_enabled(&self, _workspace_id: &str, is_enabled: bool) -> Result<i64> {
-        let result: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM cron_jobs WHERE workspace_id = ? AND is_enabled = ?",
-        )
-        .bind(&self.workspace_id)
-        .bind(if is_enabled { 1 } else { 0 })
-        .fetch_one(self.database.pool())
-        .await?;
+        let result: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cron_jobs WHERE workspace_id = ? AND is_enabled = ?")
+            .bind(&self.workspace_id)
+            .bind(if is_enabled { 1 } else { 0 })
+            .fetch_one(self.database.pool())
+            .await?;
         Ok(result.0)
     }
 
     async fn count_running(&self, _workspace_id: &str) -> Result<i64> {
-        let result: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM cron_jobs WHERE workspace_id = ? AND is_running = 1",
-        )
-        .bind(&self.workspace_id)
-        .fetch_one(self.database.pool())
-        .await?;
+        let result: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cron_jobs WHERE workspace_id = ? AND is_running = 1")
+            .bind(&self.workspace_id)
+            .fetch_one(self.database.pool())
+            .await?;
         Ok(result.0)
     }
 
@@ -200,7 +191,9 @@ impl<R: CronRunRepository + Send + Sync> CronRunRepository for TenantCronRunRepo
         trigger_type: &str,
         triggered_by: Option<&str>,
     ) -> Result<CronRun> {
-        self.inner.create(job_id, &self.workspace_id, trigger_type, triggered_by).await
+        self.inner
+            .create(job_id, &self.workspace_id, trigger_type, triggered_by)
+            .await
     }
 
     async fn complete(
@@ -212,15 +205,12 @@ impl<R: CronRunRepository + Send + Sync> CronRunRepository for TenantCronRunRepo
         error: Option<&str>,
         duration_ms: i64,
     ) -> Result<CronRun> {
-        self.inner.complete(id, &self.workspace_id, status, output, error, duration_ms).await
+        self.inner
+            .complete(id, &self.workspace_id, status, output, error, duration_ms)
+            .await
     }
 
-    async fn find_by_job_id(
-        &self,
-        job_id: &str,
-        _workspace_id: &str,
-        query: &CronRunQuery,
-    ) -> Result<Vec<CronRun>> {
+    async fn find_by_job_id(&self, job_id: &str, _workspace_id: &str, query: &CronRunQuery) -> Result<Vec<CronRun>> {
         self.inner.find_by_job_id(job_id, &self.workspace_id, query).await
     }
 

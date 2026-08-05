@@ -174,7 +174,8 @@ mod tests {
 
     #[test]
     fn test_sanitize_expanded_keys() {
-        let input = r#"{"api_key":"ak","private_key":"pk","passwd":"pw","credential":"cred_value","cert":"crt","key":"k"}"#;
+        let input =
+            r#"{"api_key":"ak","private_key":"pk","passwd":"pw","credential":"cred_value","cert":"crt","key":"k"}"#;
         let result = TemplateExporter::sanitize_driver_options(Some(input)).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["api_key"], "__REDACTED__");
@@ -246,7 +247,10 @@ mod tests {
         let result = TemplateExporter::map_commands(Some(&cmds));
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "reboot");
-        assert_eq!(result[0].parameters, Some(r#"{"delay":{"type":"integer"}}"#.to_string()));
+        assert_eq!(
+            result[0].parameters,
+            Some(r#"{"delay":{"type":"integer"}}"#.to_string())
+        );
         assert_eq!(result[0].display_name.get("zh"), Some(&"重启".to_string()));
     }
 

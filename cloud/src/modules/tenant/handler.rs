@@ -20,7 +20,7 @@ use super::types::{
 };
 use crate::{
     api::middleware::WorkspaceScope,
-    shared::{api_response::ApiResponse, app_state::AppState, },
+    shared::{api_response::ApiResponse, app_state::AppState},
 };
 
 type HmacSha256 = Hmac<Sha256>;

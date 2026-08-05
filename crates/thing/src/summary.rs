@@ -12,10 +12,7 @@ use tokio::sync::Notify;
 // ──────────────────────────────────────────────
 
 /// Called when a thing's resources change (attach/detach/update).
-pub async fn mark_dirty_for_resource_change(
-    pool: &SqlitePool,
-    thing_id: &str,
-) -> Result<(), sqlx::Error> {
+pub async fn mark_dirty_for_resource_change(pool: &SqlitePool, thing_id: &str) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE devices SET summary_status = 'dirty' WHERE id = ?")
         .bind(thing_id)
         .execute(pool)
@@ -24,10 +21,7 @@ pub async fn mark_dirty_for_resource_change(
 }
 
 /// Called when thing name/parent changes — dirty thing + entire subtree.
-pub async fn mark_dirty_for_name_or_parent_change(
-    pool: &SqlitePool,
-    thing_id: &str,
-) -> Result<u64, sqlx::Error> {
+pub async fn mark_dirty_for_name_or_parent_change(pool: &SqlitePool, thing_id: &str) -> Result<u64, sqlx::Error> {
     // Use recursive CTE to find subtree
     let result = sqlx::query(
         "WITH RECURSIVE subtree AS (
@@ -106,7 +100,9 @@ impl Default for SummaryComputer {
 
 impl SummaryComputer {
     pub fn new() -> Self {
-        Self { single_flight: Arc::new(DashMap::new()) }
+        Self {
+            single_flight: Arc::new(DashMap::new()),
+        }
     }
 
     /// Get or compute the ontology summary for a thing.
@@ -169,16 +165,18 @@ impl SummaryComputer {
         };
 
         // RAII guard: releases the single-flight entry on every exit path.
-        let _flight =
-            FlightGuard { map: self.single_flight.clone(), thing_id: thing_id.to_string(), notify };
+        let _flight = FlightGuard {
+            map: self.single_flight.clone(),
+            thing_id: thing_id.to_string(),
+            notify,
+        };
 
         // 4. Build prompt from thing metadata, model, and docs
         let prompt = build_prompt_for_thing(thing_id, pool).await?;
 
         // 5. Call LLM with 10s timeout
         let llm_start = std::time::Instant::now();
-        let result =
-            tokio::time::timeout(Duration::from_secs(10), llm.complete(&prompt, 500)).await;
+        let result = tokio::time::timeout(Duration::from_secs(10), llm.complete(&prompt, 500)).await;
 
         // 6. Handle result: persist or mark failed
         // (returned directly; the FlightGuard drops after evaluation, before
@@ -292,10 +290,7 @@ async fn build_prompt_for_thing(thing_id: &str, pool: &SqlitePool) -> Result<Str
     Ok(build_prompt(&name, &thing_type, &breadcrumb, &model_def, &docs))
 }
 
-async fn build_breadcrumb_string(
-    thing_id: &str,
-    pool: &SqlitePool,
-) -> Result<String, SummaryError> {
+async fn build_breadcrumb_string(thing_id: &str, pool: &SqlitePool) -> Result<String, SummaryError> {
     let rows: Vec<(String,)> = sqlx::query_as(
         "WITH RECURSIVE ancestors AS (
             SELECT id, name, parent_id, 0 AS depth FROM devices WHERE id = ?
@@ -316,18 +311,16 @@ async fn build_breadcrumb_string(
 /// Build the model definition string from the thing's OWN property/action
 /// instances (blueprint model — templates are creation-time blueprints only).
 async fn fetch_thing_model_definition(thing_id: &str, pool: &SqlitePool) -> String {
-    let props: Vec<(String,)> =
-        sqlx::query_as("SELECT name FROM thing_properties WHERE device_id = ? ORDER BY name")
-            .bind(thing_id)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
-    let acts: Vec<(String,)> =
-        sqlx::query_as("SELECT name FROM thing_actions WHERE device_id = ? ORDER BY name")
-            .bind(thing_id)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
+    let props: Vec<(String,)> = sqlx::query_as("SELECT name FROM thing_properties WHERE device_id = ? ORDER BY name")
+        .bind(thing_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+    let acts: Vec<(String,)> = sqlx::query_as("SELECT name FROM thing_actions WHERE device_id = ? ORDER BY name")
+        .bind(thing_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
 
     let mut def = String::new();
     if !props.is_empty() {
@@ -345,15 +338,16 @@ async fn fetch_thing_model_definition(thing_id: &str, pool: &SqlitePool) -> Stri
 }
 
 async fn fetch_knowledge_docs(thing_id: &str, pool: &SqlitePool) -> Vec<(String, String)> {
-    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT name, content FROM resources WHERE device_id = ? ORDER BY created_at DESC LIMIT 5",
-    )
-    .bind(thing_id)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    let rows: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT name, content FROM resources WHERE device_id = ? ORDER BY created_at DESC LIMIT 5")
+            .bind(thing_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
 
-    rows.into_iter().map(|(name, content)| (name, content.unwrap_or_default())).collect()
+    rows.into_iter()
+        .map(|(name, content)| (name, content.unwrap_or_default()))
+        .collect()
 }
 
 // ──────────────────────────────────────────────
@@ -389,10 +383,17 @@ mod tests {
         // The PRAGMA is per-connection, so the drops must run on the SAME
         // acquired connection — a fresh pool connection would have FK on.
         let mut conn = pool.acquire().await.unwrap();
-        sqlx::query("PRAGMA foreign_keys = OFF").execute(&mut *conn).await.unwrap();
-        for table in
-            ["device_alarm_rules", "resources", "thing_properties", "thing_actions", "devices"]
-        {
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        for table in [
+            "device_alarm_rules",
+            "resources",
+            "thing_properties",
+            "thing_actions",
+            "devices",
+        ] {
             sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE IF EXISTS {}", table)))
                 .execute(&mut *conn)
                 .await
@@ -471,11 +472,10 @@ mod tests {
 
         mark_dirty_for_resource_change(&pool, "d1").await.unwrap();
 
-        let status: String =
-            sqlx::query_scalar("SELECT summary_status FROM devices WHERE id = 'd1'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let status: String = sqlx::query_scalar("SELECT summary_status FROM devices WHERE id = 'd1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(status, "dirty");
     }
 
@@ -516,11 +516,10 @@ mod tests {
         assert_eq!(affected, 3); // root + c1 + c2
 
         // 'other' should NOT be dirtied
-        let other_status: Option<String> =
-            sqlx::query_scalar("SELECT summary_status FROM devices WHERE id = 'other'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let other_status: Option<String> = sqlx::query_scalar("SELECT summary_status FROM devices WHERE id = 'other'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(other_status, None);
     }
 
@@ -566,12 +565,10 @@ mod tests {
         // the summary-persist UPDATE failing) used to leave the entry
         // occupied forever — every later request for the thing hung.
         setup_test_db(&pool).await;
-        sqlx::query(
-            "INSERT INTO devices (id, name, summary_status) VALUES ('d1', 'Test', 'dirty')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO devices (id, name, summary_status) VALUES ('d1', 'Test', 'dirty')")
+            .execute(&pool)
+            .await
+            .unwrap();
 
         // LLM that closes the pool inside complete(): the subsequent
         // persist UPDATE fails, forcing the early-error exit path.
@@ -618,12 +615,10 @@ mod tests {
     async fn test_summary_get_or_compute_computes(pool: SqlitePool) {
         setup_test_db(&pool).await;
 
-        sqlx::query(
-            "INSERT INTO devices (id, name, summary_status) VALUES ('d1', 'Test', 'dirty')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO devices (id, name, summary_status) VALUES ('d1', 'Test', 'dirty')")
+            .execute(&pool)
+            .await
+            .unwrap();
 
         let computer = SummaryComputer::new();
         let llm = StubLlmClient;
@@ -633,11 +628,10 @@ mod tests {
         assert!(!result.as_ref().unwrap().is_empty());
 
         // Verify status updated to 'ok'
-        let status: String =
-            sqlx::query_scalar("SELECT summary_status FROM devices WHERE id = 'd1'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let status: String = sqlx::query_scalar("SELECT summary_status FROM devices WHERE id = 'd1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(status, "ok");
     }
 
@@ -656,12 +650,10 @@ mod tests {
     async fn test_summary_single_flight(pool: SqlitePool) {
         setup_test_db(&pool).await;
 
-        sqlx::query(
-            "INSERT INTO devices (id, name, summary_status) VALUES ('d1', 'Test', 'dirty')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO devices (id, name, summary_status) VALUES ('d1', 'Test', 'dirty')")
+            .execute(&pool)
+            .await
+            .unwrap();
 
         let computer = Arc::new(SummaryComputer::new());
         let call_count = Arc::new(AtomicU32::new(0));
@@ -684,7 +676,10 @@ mod tests {
         // Spawn first computation with a slow client
         let pool1 = pool.clone();
         let comp1 = computer.clone();
-        let cc1 = CountingClient { count: call_count.clone(), delay_ms: 200 };
+        let cc1 = CountingClient {
+            count: call_count.clone(),
+            delay_ms: 200,
+        };
         let h = tokio::spawn(async move { comp1.get_or_compute("d1", &pool1, &cc1).await });
 
         // Give the spawned task a head start to acquire the single-flight lock
@@ -692,7 +687,10 @@ mod tests {
 
         // Second call: should wait on the single-flight Notify and get the
         // same result without calling the LLM again.
-        let cc2 = CountingClient { count: call_count.clone(), delay_ms: 0 };
+        let cc2 = CountingClient {
+            count: call_count.clone(),
+            delay_ms: 0,
+        };
         let result2 = computer.get_or_compute("d1", &pool, &cc2).await.unwrap();
 
         let result1 = h.await.unwrap().unwrap();
@@ -730,11 +728,10 @@ mod tests {
 
         // Stale summary returned, status marked failed
         assert_eq!(result, Some("旧摘要".to_string()));
-        let status: String =
-            sqlx::query_scalar("SELECT summary_status FROM devices WHERE id = 'd1'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let status: String = sqlx::query_scalar("SELECT summary_status FROM devices WHERE id = 'd1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(status, "failed");
 
         // The single-flight entry is released (no deadlock after failure)
@@ -753,18 +750,14 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query(
-            "INSERT INTO thing_properties (id, device_id, name) VALUES ('p1', 'd1', 'temperature')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO thing_actions (id, device_id, name) VALUES ('a1', 'd1', 'reboot')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('p1', 'd1', 'temperature')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO thing_actions (id, device_id, name) VALUES ('a1', 'd1', 'reboot')")
+            .execute(&pool)
+            .await
+            .unwrap();
 
         // Insert a knowledge doc
         sqlx::query(
@@ -781,11 +774,10 @@ mod tests {
 
         assert!(result.is_some());
 
-        let status: String =
-            sqlx::query_scalar("SELECT summary_status FROM devices WHERE id = 'd1'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let status: String = sqlx::query_scalar("SELECT summary_status FROM devices WHERE id = 'd1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(status, "ok");
     }
 }

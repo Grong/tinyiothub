@@ -60,8 +60,7 @@ pub struct AuthCreateUserRequest {
 /// byte-identically.
 #[async_trait]
 pub trait AuthUserStore: Send + Sync {
-    async fn authenticate(&self, username: &str, password: &str)
-    -> Result<Option<AuthUser>, String>;
+    async fn authenticate(&self, username: &str, password: &str) -> Result<Option<AuthUser>, String>;
 
     async fn get_user_by_id(&self, id: &str) -> Result<Option<AuthUser>, String>;
 

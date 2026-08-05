@@ -29,11 +29,7 @@ impl ThingRepo {
 
     /// Workspace-scoped lookup (eng-review T1): strict workspace match,
     /// same semantics as list().
-    pub async fn get_by_id_scoped(
-        &self,
-        id: &str,
-        workspace_id: &str,
-    ) -> Result<Option<ThingRow>, sqlx::Error> {
+    pub async fn get_by_id_scoped(&self, id: &str, workspace_id: &str) -> Result<Option<ThingRow>, sqlx::Error> {
         sqlx::query_as::<_, ThingRow>("SELECT * FROM devices WHERE id = ? AND workspace_id = ?")
             .bind(id)
             .bind(workspace_id)
@@ -53,11 +49,7 @@ impl ThingRepo {
     }
 
     /// Workspace-scoped name lookup.
-    pub async fn find_by_name(
-        &self,
-        workspace_id: &str,
-        name: &str,
-    ) -> Result<Option<ThingRow>, sqlx::Error> {
+    pub async fn find_by_name(&self, workspace_id: &str, name: &str) -> Result<Option<ThingRow>, sqlx::Error> {
         sqlx::query_as::<_, ThingRow>("SELECT * FROM devices WHERE workspace_id = ? AND name = ?")
             .bind(workspace_id)
             .bind(name)
@@ -75,8 +67,7 @@ impl ThingRepo {
         let offset = params.offset() as i64;
 
         // Build COUNT query
-        let mut count_builder =
-            QueryBuilder::new("SELECT COUNT(*) FROM devices WHERE workspace_id = ");
+        let mut count_builder = QueryBuilder::new("SELECT COUNT(*) FROM devices WHERE workspace_id = ");
         count_builder.push_bind(workspace_id);
         Self::push_where_clauses(&mut count_builder, params);
 
@@ -91,7 +82,10 @@ impl ThingRepo {
         select_builder.push(" OFFSET ");
         select_builder.push_bind(offset);
 
-        let rows = select_builder.build_query_as::<ThingRow>().fetch_all(&self.pool).await?;
+        let rows = select_builder
+            .build_query_as::<ThingRow>()
+            .fetch_all(&self.pool)
+            .await?;
 
         Ok((rows, total as u64))
     }
@@ -204,8 +198,10 @@ impl ThingRepo {
     /// DELETE — checks children count first.
     /// Returns `Some(child_count)` if children exist, or rows_affected on success.
     pub async fn delete(&self, id: &str) -> Result<u64, sqlx::Error> {
-        let result =
-            sqlx::query("DELETE FROM devices WHERE id = ?").bind(id).execute(&self.pool).await?;
+        let result = sqlx::query("DELETE FROM devices WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
 
         Ok(result.rows_affected())
     }
@@ -329,8 +325,7 @@ impl ThingRepo {
         builder.push(depth_val);
         builder.push(") SELECT id, name, thing_type FROM ancestors ORDER BY depth DESC");
 
-        let rows: Vec<BreadcrumbRow> =
-            builder.build_query_as::<BreadcrumbRow>().fetch_all(&self.pool).await?;
+        let rows: Vec<BreadcrumbRow> = builder.build_query_as::<BreadcrumbRow>().fetch_all(&self.pool).await?;
 
         Ok(rows
             .into_iter()
@@ -346,11 +341,7 @@ impl ThingRepo {
     /// `candidate_parent_id` (eng-review T11 — was up to 50 sequential
     /// round-trips with a depth-50 cap that contradicted the design's 10).
     /// Returns `true` if `thing_id` is on the candidate's ancestor chain.
-    pub async fn check_cycle(
-        &self,
-        thing_id: &str,
-        candidate_parent_id: &str,
-    ) -> Result<bool, sqlx::Error> {
+    pub async fn check_cycle(&self, thing_id: &str, candidate_parent_id: &str) -> Result<bool, sqlx::Error> {
         sqlx::query_scalar(CHECK_CYCLE_SQL)
             .bind(candidate_parent_id)
             .bind(thing_id)
@@ -417,7 +408,9 @@ impl ThingRepo {
         builder.build().execute(&mut *tx).await?;
 
         tx.commit().await?;
-        Ok(super::types::UpdateGuardedOutcome::Updated(self.get_by_id(id).await?.map(Box::new)))
+        Ok(super::types::UpdateGuardedOutcome::Updated(
+            self.get_by_id(id).await?.map(Box::new),
+        ))
     }
 
     /// Breadcrumbs for MANY things in ONE recursive-CTE query
@@ -427,8 +420,7 @@ impl ThingRepo {
         &self,
         ids: &[String],
         max_depth: u32,
-    ) -> Result<std::collections::HashMap<String, Vec<super::types::BreadcrumbNode>>, sqlx::Error>
-    {
+    ) -> Result<std::collections::HashMap<String, Vec<super::types::BreadcrumbNode>>, sqlx::Error> {
         if ids.is_empty() {
             return Ok(Default::default());
         }
@@ -445,16 +437,16 @@ impl ThingRepo {
         qb.push_bind(max_depth.min(10) as i32);
         qb.push(") SELECT root, id, name, thing_type FROM ancestors ORDER BY root, depth DESC");
 
-        let rows =
-            qb.build_query_as::<(String, String, String, String)>().fetch_all(&self.pool).await?;
+        let rows = qb
+            .build_query_as::<(String, String, String, String)>()
+            .fetch_all(&self.pool)
+            .await?;
         let mut map: std::collections::HashMap<String, Vec<super::types::BreadcrumbNode>> =
             std::collections::HashMap::new();
         for (root, id, name, thing_type) in rows {
-            map.entry(root).or_default().push(super::types::BreadcrumbNode {
-                id,
-                name,
-                thing_type,
-            });
+            map.entry(root)
+                .or_default()
+                .push(super::types::BreadcrumbNode { id, name, thing_type });
         }
         Ok(map)
     }
@@ -486,14 +478,13 @@ impl ThingRepo {
         resource_id: &str,
         workspace_id: &str,
     ) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query(
-            "UPDATE resources SET device_id = NULL WHERE id = ? AND device_id = ? AND workspace_id = ?",
-        )
-        .bind(resource_id)
-        .bind(thing_id)
-        .bind(workspace_id)
-        .execute(&self.pool)
-        .await?;
+        let result =
+            sqlx::query("UPDATE resources SET device_id = NULL WHERE id = ? AND device_id = ? AND workspace_id = ?")
+                .bind(resource_id)
+                .bind(thing_id)
+                .bind(workspace_id)
+                .execute(&self.pool)
+                .await?;
         Ok(result.rows_affected())
     }
 
@@ -503,26 +494,20 @@ impl ThingRepo {
         resource_id: &str,
         workspace_id: &str,
     ) -> Result<u64, sqlx::Error> {
-        let result =
-            sqlx::query("UPDATE resources SET device_id = ? WHERE id = ? AND workspace_id = ?")
-                .bind(thing_id)
-                .bind(resource_id)
-                .bind(workspace_id)
-                .execute(&self.pool)
-                .await?;
+        let result = sqlx::query("UPDATE resources SET device_id = ? WHERE id = ? AND workspace_id = ?")
+            .bind(thing_id)
+            .bind(resource_id)
+            .bind(workspace_id)
+            .execute(&self.pool)
+            .await?;
         Ok(result.rows_affected())
     }
 
-    pub async fn list_unassigned_resources(
-        &self,
-        workspace_id: &str,
-    ) -> Result<Vec<ThingResource>, sqlx::Error> {
-        sqlx::query_as::<_, ThingResource>(
-            "SELECT * FROM resources WHERE workspace_id = ? AND device_id IS NULL",
-        )
-        .bind(workspace_id)
-        .fetch_all(&self.pool)
-        .await
+    pub async fn list_unassigned_resources(&self, workspace_id: &str) -> Result<Vec<ThingResource>, sqlx::Error> {
+        sqlx::query_as::<_, ThingResource>("SELECT * FROM resources WHERE workspace_id = ? AND device_id IS NULL")
+            .bind(workspace_id)
+            .fetch_all(&self.pool)
+            .await
     }
 }
 
@@ -574,10 +559,11 @@ impl ThingRepo {
             .build_query_as::<(String, String, String, Option<String>)>()
             .fetch_all(&self.pool)
             .await?;
-        let mut map: std::collections::HashMap<String, Vec<super::types::TagInfo>> =
-            std::collections::HashMap::new();
+        let mut map: std::collections::HashMap<String, Vec<super::types::TagInfo>> = std::collections::HashMap::new();
         for (target_id, id, name, color) in rows {
-            map.entry(target_id).or_default().push(super::types::TagInfo { id, name, color });
+            map.entry(target_id)
+                .or_default()
+                .push(super::types::TagInfo { id, name, color });
         }
         Ok(map)
     }

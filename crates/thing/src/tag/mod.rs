@@ -6,8 +6,6 @@ pub mod service;
 pub mod types;
 
 pub use handler::create_router;
-pub use repo::{
-    SqliteTagBindingRepository, SqliteTagRepository, TagBindingRepository, TagRepository,
-};
+pub use repo::{SqliteTagBindingRepository, SqliteTagRepository, TagBindingRepository, TagRepository};
 pub use service::TagService;
 pub use types::*;

@@ -43,10 +43,7 @@ pub struct SecurityComponents {
 
 impl EventSecurityFactory {
     /// Create a new security factory
-    pub fn new(
-        db: Arc<tinyiothub_storage::Database>,
-        config: EventSecurityConfig,
-    ) -> Result<Self> {
+    pub fn new(db: Arc<tinyiothub_storage::Database>, config: EventSecurityConfig) -> Result<Self> {
         validate_event_security_config(&config)?;
 
         Ok(Self { db, config })

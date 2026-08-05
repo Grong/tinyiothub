@@ -7,7 +7,6 @@ use tinyiothub_core::models::{
     device_command::{CreateDeviceCommandRequest, DeviceCommand},
     device_property::DeviceProperty,
 };
-
 use tinyiothub_storage::{
     Database, bulk_create_device_commands, create_device_command, create_device_properties_batch,
     find_device_commands_by_device_id, find_device_properties_by_device_id,
@@ -18,6 +17,8 @@ const ERROR_TEMPLATE_APPLICATION_FAILED: &str = "Template application failed";
 const ERROR_DEVICE_DRIVER_NOT_CONFIGURED: &str = "Device driver not configured";
 const ERROR_DEVICE_ADDRESS_NOT_CONFIGURED: &str = "Device address not configured";
 const MSG_DEVICE_TYPE_VALUE_NA: &str = "N/A";
+
+use tinyiothub_thing::tag::TagRepository;
 
 use crate::{
     modules::{
@@ -31,7 +32,6 @@ use crate::{
     },
     shared::{error::Error, event::EventBus, pagination::DataObjectWithPagination},
 };
-use tinyiothub_thing::tag::TagRepository;
 
 pub struct DeviceService {
     repository: Arc<dyn DeviceRepository>,

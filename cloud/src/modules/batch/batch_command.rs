@@ -4,9 +4,8 @@
 use std::sync::Arc;
 
 use thiserror::Error;
-use uuid::Uuid;
-
 use tinyiothub_storage::Database;
+use uuid::Uuid;
 
 use crate::modules::device::service::DeviceService;
 

@@ -12,6 +12,7 @@ use std::{sync::Arc, time::Instant};
 use anyhow::anyhow;
 use dashmap::DashMap;
 use sqlx::SqlitePool;
+use tinyiothub_memory::workspace_memory::WorkspaceScopedMemory;
 use zeroclaw::{
     agent::{
         dispatcher::NativeToolDispatcher,
@@ -28,7 +29,6 @@ use super::{
     tools::service as tool_service,
 };
 use crate::shared::agent::config::{AgentConfig, AgentError, AgentInfo, AgentRuntimeConfig};
-use tinyiothub_memory::workspace_memory::WorkspaceScopedMemory;
 
 // ============================================================================
 // Skills Section (zeroclaw SystemPromptBuilder integration)
@@ -123,14 +123,12 @@ pub struct AgentPool {
     pub workspace_service:
         tokio::sync::RwLock<Option<Arc<crate::modules::workspace::WorkspaceService>>>,
     pub trust_configs: DashMap<String, tinyiothub_ai::types::TrustConfig>,
-    pub memory_service:
-        tokio::sync::RwLock<Option<Arc<tinyiothub_memory::service::MemoryService>>>,
+    pub memory_service: tokio::sync::RwLock<Option<Arc<tinyiothub_memory::service::MemoryService>>>,
     pub event_publisher:
         tokio::sync::RwLock<Option<Arc<tinyiothub_ai::event::bus::AiEventPublisher>>>,
     /// Late-bound app state (set once at startup after AppState construction;
     /// the pool is part of AppState so it cannot receive it at build time).
-    pub(crate) app_state:
-        tokio::sync::RwLock<Option<Arc<crate::shared::app_state::AppState>>>,
+    pub(crate) app_state: tokio::sync::RwLock<Option<Arc<crate::shared::app_state::AppState>>>,
 }
 
 impl AgentPool {

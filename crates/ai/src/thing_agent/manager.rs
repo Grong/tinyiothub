@@ -28,7 +28,6 @@ use dashmap::DashMap;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use tinyiothub_policy::autonomy::{AutonomyMode, PolicyRepository};
 use crate::thing_agent::prompt::build_prompt;
 use crate::thing_agent::pushback::deliver;
 use crate::thing_agent::report::AgentRunsRepository;
@@ -37,6 +36,7 @@ use crate::thing_agent::scheduler::{EnqueueError, Scheduler, SchedulerHandle};
 use crate::thing_agent::traits::{DirectiveSink, ThingAgentHost};
 use crate::thing_agent::trigger::{ThingEventTrigger, TimerTrigger, Trigger};
 use crate::thing_agent::types::{TriggerSource, WakeSignal};
+use tinyiothub_policy::autonomy::{AutonomyMode, PolicyRepository};
 
 /// Capacity of the per-workspace trigger→scheduler channel. Backpressure
 /// beyond this parks the thing-event trigger, which then lags the broadcast
@@ -336,9 +336,9 @@ pub(crate) mod tests {
     use zeroclaw::providers::{ChatRequest, ChatResponse};
     use zeroclaw_api::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
 
-    use tinyiothub_policy::autonomy::AutonomyPolicy;
     use crate::thing_agent::traits::ThingEventSignal;
     use crate::thing_agent::types::{Outcome, Priority, RunReport};
+    use tinyiothub_policy::autonomy::AutonomyPolicy;
 
     const WS: &str = "ws_01";
 

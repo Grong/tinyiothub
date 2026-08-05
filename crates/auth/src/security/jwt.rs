@@ -29,7 +29,9 @@ pub fn init_jwt_settings(settings: JwtSettings) {
 }
 
 fn jwt_settings() -> Result<&'static JwtSettings, String> {
-    JWT_SETTINGS.get().ok_or_else(|| "JWT settings not initialized".to_string())
+    JWT_SETTINGS
+        .get()
+        .ok_or_else(|| "JWT settings not initialized".to_string())
 }
 
 /// Cloud-specific JWT claims with tenant and workspace isolation
@@ -83,9 +85,7 @@ fn get_jwt_key() -> Result<HS256Key, String> {
 
     // 检查是否使用弱密钥
     if secret.len() < 64 {
-        tracing::warn!(
-            "⚠️  JWT secret is shorter than 64 characters, consider using a longer secret"
-        );
+        tracing::warn!("⚠️  JWT secret is shorter than 64 characters, consider using a longer secret");
     }
 
     Ok(HS256Key::from_bytes(secret.as_bytes()))
@@ -102,8 +102,7 @@ fn is_harmonyos() -> bool {
 
 // 使用 HMAC-SHA256 计算消息认证码
 fn hmac_sha256(message: &str, key: &str) -> String {
-    let mut mac =
-        HmacSha256::new_from_slice(key.as_bytes()).expect("HMAC can take key of any size");
+    let mut mac = HmacSha256::new_from_slice(key.as_bytes()).expect("HMAC can take key of any size");
     mac.update(message.as_bytes());
     let result = mac.finalize();
     // 返回十六进制编码的 HMAC
@@ -117,8 +116,10 @@ fn encode_simple(s: &str) -> String {
 
 // 简单的字符串解码
 fn decode_simple(s: &str) -> Result<String, String> {
-    let bytes: Result<Vec<u8>, _> =
-        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16)).collect();
+    let bytes: Result<Vec<u8>, _> = (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16))
+        .collect();
 
     let bytes = bytes.map_err(|_| "Invalid encoding".to_string())?;
     String::from_utf8(bytes).map_err(|_| "Invalid UTF-8".to_string())
@@ -163,12 +164,11 @@ fn verify_harmonyos_token(token: &str) -> Result<Claims, String> {
     //   新格式(7部分): user_id:username:tenant_id:workspace_id:timestamp:random:signature
     //   旧格式(6部分): user_id:username:tenant_id:timestamp:random:signature
     let parts: Vec<&str> = token_data.split(':').collect();
-    let (user_id, username, tenant_id, workspace_id, timestamp_str, random_suffix, signature) =
-        match parts.len() {
-            7 => (parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]),
-            6 => (parts[0], parts[1], parts[2], "", parts[3], parts[4], parts[5]),
-            _ => return Err("Invalid token format".to_string()),
-        };
+    let (user_id, username, tenant_id, workspace_id, timestamp_str, random_suffix, signature) = match parts.len() {
+        7 => (parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]),
+        6 => (parts[0], parts[1], parts[2], "", parts[3], parts[4], parts[5]),
+        _ => return Err("Invalid token format".to_string()),
+    };
 
     let timestamp: i64 = timestamp_str.parse().map_err(|_| "Invalid timestamp".to_string())?;
 
@@ -221,12 +221,7 @@ pub fn create_jwt(payload: AuthPayload) -> Result<AuthBody, String> {
     if is_harmonyos() {
         tracing::warn!("🔧 HarmonyOS: Using simple secure token (no crypto libs)");
 
-        let token = create_harmonyos_token(
-            &payload.id,
-            &payload.name,
-            &payload.tenant_id,
-            &payload.workspace_id,
-        )?;
+        let token = create_harmonyos_token(&payload.id, &payload.name, &payload.tenant_id, &payload.workspace_id)?;
         let jwt_exp_seconds = 86400; // 24小时
         let exp = iat + ChronoDuration::seconds(jwt_exp_seconds);
 
@@ -254,12 +249,12 @@ pub fn create_jwt(payload: AuthPayload) -> Result<AuthBody, String> {
     let key = get_jwt_key()?;
 
     // 使用 jwt-simple 创建 token（exp 由 jwt-simple 自动添加）
-    let jwt_claims = jwt_simple::claims::Claims::with_custom_claims(
-        custom_claims,
-        Duration::from_secs(jwt_exp_seconds as u64),
-    );
+    let jwt_claims =
+        jwt_simple::claims::Claims::with_custom_claims(custom_claims, Duration::from_secs(jwt_exp_seconds as u64));
 
-    let token = key.authenticate(jwt_claims).map_err(|e| format!("Token creation error: {}", e))?;
+    let token = key
+        .authenticate(jwt_claims)
+        .map_err(|e| format!("Token creation error: {}", e))?;
 
     tracing::debug!("JWT token created successfully with pure-rust implementation");
     Ok(AuthBody::new(token, exp.timestamp(), jwt_exp_seconds))
@@ -301,10 +296,7 @@ pub fn validate_jwt(token: &str) -> Result<Claims, String> {
 // 检查 token 是否在黑名单中（使用阻塞 DB 调用）
 /// 异步检查 token 是否在黑名单中（推荐使用）
 /// 用于 async middleware 和其他异步上下文
-pub async fn is_token_blacklisted(
-    db: &tinyiothub_storage::Database,
-    token: &str,
-) -> bool {
+pub async fn is_token_blacklisted(db: &tinyiothub_storage::Database, token: &str) -> bool {
     let token_hash = format!("{:x}", sha2::Sha256::digest(token.as_bytes()));
 
     sqlx::query("SELECT 1 FROM token_blacklist WHERE token_hash = ? LIMIT 1")
@@ -319,10 +311,7 @@ pub async fn is_token_blacklisted(
 ///
 /// 这个函数使用 block_on 休眠当前线程，可能导致
 /// tokio 运行时线程池饥饿。新代码应使用 is_token_blacklisted()。
-pub fn is_token_blacklisted_sync(
-    db: &tinyiothub_storage::Database,
-    token: &str,
-) -> bool {
+pub fn is_token_blacklisted_sync(db: &tinyiothub_storage::Database, token: &str) -> bool {
     let token_hash = format!("{:x}", Sha256::digest(token.as_bytes()));
 
     // Use try_with to check if we're in a Tokio runtime
@@ -340,12 +329,7 @@ pub fn is_token_blacklisted_sync(
 }
 
 // 生成 JWT token 的便捷函数
-pub fn generate_token(
-    user_id: &str,
-    username: &str,
-    tenant_id: &str,
-    workspace_id: &str,
-) -> Result<String, String> {
+pub fn generate_token(user_id: &str, username: &str, tenant_id: &str, workspace_id: &str) -> Result<String, String> {
     let payload = AuthPayload {
         id: user_id.to_string(),
         name: username.to_string(),

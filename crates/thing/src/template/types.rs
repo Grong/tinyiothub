@@ -292,26 +292,23 @@ impl DeviceTemplate {
     }
 
     /// 创建新设备模板
-    pub async fn create(
-        db: &Database,
-        request: &CreateDeviceTemplateRequest,
-    ) -> Result<DeviceTemplate, sqlx::Error> {
+    pub async fn create(db: &Database, request: &CreateDeviceTemplateRequest) -> Result<DeviceTemplate, sqlx::Error> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         // 序列化复杂字段为JSON
-        let display_name_json = serde_json::to_string(&request.display_name).map_err(|e| {
-            sqlx::Error::Protocol(format!("Failed to serialize display_name: {}", e))
-        })?;
-        let description_json =
-            request.description.as_ref().map(serde_json::to_string).transpose().map_err(|e| {
-                sqlx::Error::Protocol(format!("Failed to serialize description: {}", e))
-            })?;
+        let display_name_json = serde_json::to_string(&request.display_name)
+            .map_err(|e| sqlx::Error::Protocol(format!("Failed to serialize display_name: {}", e)))?;
+        let description_json = request
+            .description
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| sqlx::Error::Protocol(format!("Failed to serialize description: {}", e)))?;
         let tags_json = serde_json::to_string(&request.tags)
             .map_err(|e| sqlx::Error::Protocol(format!("Failed to serialize tags: {}", e)))?;
-        let device_info_json = serde_json::to_string(&request.device_info).map_err(|e| {
-            sqlx::Error::Protocol(format!("Failed to serialize device_info: {}", e))
-        })?;
+        let device_info_json = serde_json::to_string(&request.device_info)
+            .map_err(|e| sqlx::Error::Protocol(format!("Failed to serialize device_info: {}", e)))?;
         let properties_json = serde_json::to_string(&request.properties)
             .map_err(|e| sqlx::Error::Protocol(format!("Failed to serialize properties: {}", e)))?;
         let commands_json = serde_json::to_string(&request.commands)
@@ -381,9 +378,8 @@ impl DeviceTemplate {
             if has_updates {
                 query.push(", ");
             }
-            let display_name_json = serde_json::to_string(display_name).map_err(|e| {
-                sqlx::Error::Protocol(format!("Failed to serialize display_name: {}", e))
-            })?;
+            let display_name_json = serde_json::to_string(display_name)
+                .map_err(|e| sqlx::Error::Protocol(format!("Failed to serialize display_name: {}", e)))?;
             query.push("display_name = ").push_bind(display_name_json);
             has_updates = true;
         }
@@ -392,9 +388,8 @@ impl DeviceTemplate {
             if has_updates {
                 query.push(", ");
             }
-            let description_json = serde_json::to_string(description).map_err(|e| {
-                sqlx::Error::Protocol(format!("Failed to serialize description: {}", e))
-            })?;
+            let description_json = serde_json::to_string(description)
+                .map_err(|e| sqlx::Error::Protocol(format!("Failed to serialize description: {}", e)))?;
             query.push("description = ").push_bind(description_json);
             has_updates = true;
         }
@@ -469,9 +464,8 @@ impl DeviceTemplate {
             if has_updates {
                 query.push(", ");
             }
-            let device_info_json = serde_json::to_string(device_info).map_err(|e| {
-                sqlx::Error::Protocol(format!("Failed to serialize device_info: {}", e))
-            })?;
+            let device_info_json = serde_json::to_string(device_info)
+                .map_err(|e| sqlx::Error::Protocol(format!("Failed to serialize device_info: {}", e)))?;
             query.push("device_info = ").push_bind(device_info_json);
             has_updates = true;
         }
@@ -480,9 +474,8 @@ impl DeviceTemplate {
             if has_updates {
                 query.push(", ");
             }
-            let properties_json = serde_json::to_string(properties).map_err(|e| {
-                sqlx::Error::Protocol(format!("Failed to serialize properties: {}", e))
-            })?;
+            let properties_json = serde_json::to_string(properties)
+                .map_err(|e| sqlx::Error::Protocol(format!("Failed to serialize properties: {}", e)))?;
             query.push("properties = ").push_bind(properties_json);
             has_updates = true;
         }
@@ -491,9 +484,8 @@ impl DeviceTemplate {
             if has_updates {
                 query.push(", ");
             }
-            let commands_json = serde_json::to_string(commands).map_err(|e| {
-                sqlx::Error::Protocol(format!("Failed to serialize commands: {}", e))
-            })?;
+            let commands_json = serde_json::to_string(commands)
+                .map_err(|e| sqlx::Error::Protocol(format!("Failed to serialize commands: {}", e)))?;
             query.push("actions = ").push_bind(commands_json);
             has_updates = true;
         }
@@ -519,12 +511,11 @@ impl DeviceTemplate {
     pub async fn delete(db: &Database, id: &str) -> Result<u64, sqlx::Error> {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        let result =
-            sqlx::query("UPDATE thing_templates SET is_active = 0, updated_at = ? WHERE id = ?")
-                .bind(now)
-                .bind(id)
-                .execute(db.pool())
-                .await?;
+        let result = sqlx::query("UPDATE thing_templates SET is_active = 0, updated_at = ? WHERE id = ?")
+            .bind(now)
+            .bind(id)
+            .execute(db.pool())
+            .await?;
 
         Ok(result.rows_affected())
     }
@@ -601,13 +592,8 @@ impl DeviceTemplate {
     }
 
     /// 统计设备模板数量
-    pub async fn count(
-        db: &Database,
-        params: &TemplateQueryParams,
-        workspace_id: &str,
-    ) -> Result<i64, sqlx::Error> {
-        let mut query =
-            QueryBuilder::new("SELECT COUNT(*) as count FROM thing_templates WHERE is_active = 1");
+    pub async fn count(db: &Database, params: &TemplateQueryParams, workspace_id: &str) -> Result<i64, sqlx::Error> {
+        let mut query = QueryBuilder::new("SELECT COUNT(*) as count FROM thing_templates WHERE is_active = 1");
         query.push(" AND (workspace_id IS NULL OR workspace_id = ");
         query.push_bind(workspace_id);
         query.push(")");
@@ -730,12 +716,10 @@ impl DeviceTemplate {
 
     /// 检查模板名称是否存在
     pub async fn exists_by_name(db: &Database, name: &str) -> Result<bool, sqlx::Error> {
-        let row = sqlx::query(
-            "SELECT COUNT(*) as count FROM thing_templates WHERE name = ? AND is_active = 1",
-        )
-        .bind(name)
-        .fetch_one(db.pool())
-        .await?;
+        let row = sqlx::query("SELECT COUNT(*) as count FROM thing_templates WHERE name = ? AND is_active = 1")
+            .bind(name)
+            .fetch_one(db.pool())
+            .await?;
 
         let count: i64 = row.get("count");
         Ok(count > 0)
@@ -743,9 +727,7 @@ impl DeviceTemplate {
 
     /// 解析显示名称（多语言支持）
     pub fn get_display_name(&self, language: &str) -> String {
-        if let Ok(display_names) =
-            serde_json::from_str::<HashMap<String, String>>(&self.display_name)
-        {
+        if let Ok(display_names) = serde_json::from_str::<HashMap<String, String>>(&self.display_name) {
             display_names
                 .get(language)
                 .or_else(|| display_names.get("zh")) // 回退到中文
@@ -760,15 +742,15 @@ impl DeviceTemplate {
     /// 解析描述（多语言支持）
     pub fn get_description(&self, language: &str) -> Option<String> {
         self.description.as_ref().and_then(|desc_json| {
-            serde_json::from_str::<HashMap<String, String>>(desc_json).ok().and_then(
-                |descriptions| {
+            serde_json::from_str::<HashMap<String, String>>(desc_json)
+                .ok()
+                .and_then(|descriptions| {
                     descriptions
                         .get(language)
                         .or_else(|| descriptions.get("zh")) // 回退到中文
                         .or_else(|| descriptions.values().next()) // 回退到任意语言
                         .cloned()
-                },
-            )
+                })
         })
     }
 
@@ -818,12 +800,11 @@ impl TemplateCategory {
 
         // 为每个分类计算模板数量
         for category in &mut categories {
-            let count_row = sqlx::query(
-                "SELECT COUNT(*) as count FROM thing_templates WHERE category = ? AND is_active = 1"
-            )
-            .bind(&category.name)
-            .fetch_one(db.pool())
-            .await?;
+            let count_row =
+                sqlx::query("SELECT COUNT(*) as count FROM thing_templates WHERE category = ? AND is_active = 1")
+                    .bind(&category.name)
+                    .fetch_one(db.pool())
+                    .await?;
 
             category.template_count = count_row.get("count");
         }
@@ -833,9 +814,7 @@ impl TemplateCategory {
 
     /// 解析显示名称（多语言支持）
     pub fn get_display_name(&self, language: &str) -> String {
-        if let Ok(display_names) =
-            serde_json::from_str::<HashMap<String, String>>(&self.display_name)
-        {
+        if let Ok(display_names) = serde_json::from_str::<HashMap<String, String>>(&self.display_name) {
             display_names
                 .get(language)
                 .or_else(|| display_names.get("zh")) // 回退到中文
@@ -850,15 +829,15 @@ impl TemplateCategory {
     /// 解析描述（多语言支持）
     pub fn get_description(&self, language: &str) -> Option<String> {
         self.description.as_ref().and_then(|desc_json| {
-            serde_json::from_str::<HashMap<String, String>>(desc_json).ok().and_then(
-                |descriptions| {
+            serde_json::from_str::<HashMap<String, String>>(desc_json)
+                .ok()
+                .and_then(|descriptions| {
                     descriptions
                         .get(language)
                         .or_else(|| descriptions.get("zh")) // 回退到中文
                         .or_else(|| descriptions.values().next()) // 回退到任意语言
                         .cloned()
-                },
-            )
+                })
         })
     }
 }

@@ -304,11 +304,7 @@ async fn load_all_tools_with_safety(
     // 用户指令派发工具（T14）—— chat Agent 专用；自治 thing-agent 工厂
     // （autonomous_factory.rs）不注册它，避免 loop 自我派发。
     tools.push((
-        Box::new(super::dispatch_task::DispatchThingTaskTool::new(
-            workspace_id,
-            None,
-            app_state,
-        )),
+        Box::new(super::dispatch_task::DispatchThingTaskTool::new(workspace_id, None, app_state)),
         classify_tool_safety("dispatch_thing_task"),
     ));
 

@@ -6,15 +6,13 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
 use crate::sqlite::config::DatabaseConfig;
 
-pub async fn create_pool(
-    config: &DatabaseConfig,
-    is_harmonyos: bool,
-) -> Result<SqlitePool, sqlx::Error> {
+pub async fn create_pool(config: &DatabaseConfig, is_harmonyos: bool) -> Result<SqlitePool, sqlx::Error> {
     tracing::info!("Creating database connection pool with config: {:?}", config);
 
     // Parse connection options
-    let connect_options =
-        SqliteConnectOptions::from_str(&config.url)?.create_if_missing(true).foreign_keys(true);
+    let connect_options = SqliteConnectOptions::from_str(&config.url)?
+        .create_if_missing(true)
+        .foreign_keys(true);
 
     // For HarmonyOS: Use conservative settings to prevent issues
     #[cfg(target_os = "linux")]

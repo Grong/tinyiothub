@@ -119,8 +119,7 @@ pub async fn send_message(
                 } else {
                     hit.cleaned_message
                 };
-                let turn =
-                    tinyiothub_skills::wrap_injected_skill(&hit.name, &hit.body, &user_text);
+                let turn = tinyiothub_skills::wrap_injected_skill(&hit.name, &hit.body, &user_text);
                 (turn, user_text)
             }
             None => (message.to_string(), message.to_string()),

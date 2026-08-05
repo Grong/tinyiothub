@@ -12,7 +12,7 @@ use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
     modules::event::repo::{EventStatistics, GroupBy, StatisticsGroup, StatisticsParams},
-    shared::{api_response::ApiResponse, app_state::AppState, },
+    shared::{api_response::ApiResponse, app_state::AppState},
 };
 
 /// Query parameters for event overview/statistics

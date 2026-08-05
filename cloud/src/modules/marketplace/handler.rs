@@ -10,22 +10,17 @@ use axum::{
 use reqwest::Client;
 use serde::Deserialize;
 use tinyiothub_auth::security::jwt::Claims;
+use tinyiothub_thing::template::TemplateRepository;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
     api::middleware::WorkspaceScope,
-    modules::{
-        marketplace::{
-            client::MarketplaceClient, driver_installer::DriverInstaller,
-            template_installer::TemplateInstaller,
-            thing_template_installer::ThingTemplateInstaller,
-        },
+    modules::marketplace::{
+        client::MarketplaceClient, driver_installer::DriverInstaller,
+        template_installer::TemplateInstaller, thing_template_installer::ThingTemplateInstaller,
     },
-    shared::{
-        api_response::ApiResponse, app_state::AppState, config, error_handling::AuthHelper,
-    },
+    shared::{api_response::ApiResponse, app_state::AppState, config, error_handling::AuthHelper},
 };
-use tinyiothub_thing::template::TemplateRepository;
 
 pub fn create_router() -> Router<AppState> {
     Router::new()

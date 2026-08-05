@@ -12,13 +12,13 @@ use axum::{
     extract::{Extension, Path, State},
 };
 use serde::{Deserialize, Serialize};
-use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_ai::heartbeat::types::NewHeartbeatTask;
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_core::agent_hooks::HeartbeatTaskDef;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
-    shared::{api_response::ApiResponse, app_state::AppState, paths, },
+    shared::{api_response::ApiResponse, app_state::AppState, paths},
     verify_workspace_access,
 };
 

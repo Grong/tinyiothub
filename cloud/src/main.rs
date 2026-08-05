@@ -53,10 +53,12 @@ async fn main_impl() -> std::io::Result<()> {
 
     // Register JWT settings with the auth crate (P4-Task16) — replaces the
     // former per-call global config reads inside the JWT service.
-    tinyiothub_auth::security::jwt::init_jwt_settings(tinyiothub_auth::security::jwt::JwtSettings {
-        secret: config::get().security.jwt.secret.clone(),
-        harmonyos_enabled: config::get().harmonyos.enabled,
-    });
+    tinyiothub_auth::security::jwt::init_jwt_settings(
+        tinyiothub_auth::security::jwt::JwtSettings {
+            secret: config::get().security.jwt.secret.clone(),
+            harmonyos_enabled: config::get().harmonyos.enabled,
+        },
+    );
 
     // Initialize logging system
     initialize_logging().await?;

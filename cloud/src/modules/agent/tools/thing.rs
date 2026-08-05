@@ -25,10 +25,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tinyiothub_ai::types::ToolSafety;
+use tinyiothub_thing::{service::ThingService, types::ListThingsParams};
 use zeroclaw::tools::{Tool, ToolResult};
 use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
-
-use tinyiothub_thing::{service::ThingService, types::ListThingsParams};
 
 // ============================================================================
 // Confirmation token store for invoke_action
@@ -1143,7 +1142,12 @@ pub fn create_thing_tools(
         read_only(Box::new(SearchKnowledgeTool { pool: pool.clone(), workspace_id: ws.clone() })),
         read_only(Box::new(ReadDocumentTool { pool: pool.clone(), workspace_id: ws.clone() })),
         // Destructive tool (1)
-        destructive(Box::new(InvokeActionTool { thing_service, pool, workspace_id: ws, app_state })),
+        destructive(Box::new(InvokeActionTool {
+            thing_service,
+            pool,
+            workspace_id: ws,
+            app_state,
+        })),
     ]
 }
 

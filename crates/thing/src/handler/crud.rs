@@ -10,8 +10,7 @@ use tinyiothub_web::response::ApiResponse;
 use super::super::{
     service::ThingService,
     types::{
-        CreateThingRequest, ListThingsParams, ThingProfileResponse, ThingResponse, ThingTreeNode,
-        UpdateThingRequest,
+        CreateThingRequest, ListThingsParams, ThingProfileResponse, ThingResponse, ThingTreeNode, UpdateThingRequest,
     },
 };
 use tinyiothub_web::middleware::workspace::WorkspaceScope;
@@ -45,7 +44,10 @@ pub async fn list_things(
         Err(e) => {
             let status = e.status_code();
             tracing::error!(?e, "Failed to list things");
-            (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()))
+            (
+                status,
+                ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()),
+            )
         }
     }
 }
@@ -95,7 +97,10 @@ pub async fn get_thing(
         Err(e) => {
             let status = e.status_code();
             tracing::error!(?e, "Failed to get thing");
-            (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()))
+            (
+                status,
+                ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()),
+            )
         }
     }
 }
@@ -119,7 +124,10 @@ pub async fn update_thing(
         Err(e) => {
             let status = e.status_code();
             tracing::error!(?e, "Failed to update thing");
-            (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()))
+            (
+                status,
+                ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()),
+            )
         }
     }
 }
@@ -142,7 +150,10 @@ pub async fn delete_thing(
         Err(e) => {
             let status = e.status_code();
             tracing::error!(?e, "Failed to delete thing");
-            (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()))
+            (
+                status,
+                ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()),
+            )
         }
     }
 }
@@ -188,7 +199,10 @@ pub async fn get_thing_profile(
         Err(e) => {
             let status = e.status_code();
             tracing::error!(?e, thing_id = %id, "Failed to get thing profile");
-            (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()))
+            (
+                status,
+                ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()),
+            )
         }
     }
 }
@@ -218,7 +232,10 @@ pub async fn get_thing_tree(
         Err(e) => {
             let status = e.status_code();
             tracing::error!(?e, "Failed to get thing tree");
-            (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()))
+            (
+                status,
+                ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()),
+            )
         }
     }
 }

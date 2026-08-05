@@ -68,8 +68,7 @@ mod tests {
 
     #[test]
     fn test_from_entity_with_valid_json_params() {
-        let entity =
-            test_entity_with_params(Some(r#"{"interval": 30, "unit": "seconds"}"#.to_string()));
+        let entity = test_entity_with_params(Some(r#"{"interval": 30, "unit": "seconds"}"#.to_string()));
         let response = DeviceCommandResponse::from(entity);
 
         assert_eq!(response.id, "cmd-1");

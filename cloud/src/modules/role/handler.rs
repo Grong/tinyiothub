@@ -8,9 +8,7 @@ use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::{CreateRoleRequest, Role, UpdateRoleRequest};
-use crate::shared::{
-    api_response::ApiResponse, app_state::AppState, pagination::PaginationQuery,
-};
+use crate::shared::{api_response::ApiResponse, app_state::AppState, pagination::PaginationQuery};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]

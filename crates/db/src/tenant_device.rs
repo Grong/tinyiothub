@@ -1,5 +1,7 @@
 //! Tenant-aware device repository adapter (workspace-isolating wrapper).
 
+use crate::Database;
+use crate::traits::device::{DeviceCriteria, DeviceRepository};
 use async_trait::async_trait;
 use sqlx::Row;
 use tinyiothub_core::{
@@ -8,8 +10,6 @@ use tinyiothub_core::{
     models::device::{CreateDeviceRequest, Device, DeviceStatusUpdate, UpdateDeviceRequest},
     now_string,
 };
-use crate::Database;
-use crate::traits::device::{DeviceCriteria, DeviceRepository};
 
 /// Tenant-aware device repository adapter
 ///
@@ -25,7 +25,11 @@ pub struct TenantDeviceRepository<R: DeviceRepository> {
 impl<R: DeviceRepository> TenantDeviceRepository<R> {
     /// Create a new tenant-aware device repository adapter
     pub fn new(inner: R, workspace_id: String, database: Database) -> Self {
-        Self { inner, workspace_id, database }
+        Self {
+            inner,
+            workspace_id,
+            database,
+        }
     }
 
     /// Get the workspace ID this adapter is filtering for
@@ -35,11 +39,10 @@ impl<R: DeviceRepository> TenantDeviceRepository<R> {
 
     /// Check if a device belongs to this workspace
     async fn device_belongs_to_workspace(&self, device_id: &str) -> Result<bool> {
-        let result: Option<(String,)> =
-            sqlx::query_as("SELECT workspace_id FROM devices WHERE id = ?")
-                .bind(device_id)
-                .fetch_optional(self.database.pool())
-                .await?;
+        let result: Option<(String,)> = sqlx::query_as("SELECT workspace_id FROM devices WHERE id = ?")
+            .bind(device_id)
+            .fetch_optional(self.database.pool())
+            .await?;
 
         match result {
             Some((workspace_id,)) => Ok(workspace_id == self.workspace_id),
@@ -71,10 +74,7 @@ impl<R: DeviceRepository> TenantDeviceRepository<R> {
     }
 
     /// Filter device state updates to only those belonging to this workspace
-    async fn filter_state_updates_by_workspace(
-        &self,
-        updates: &[(String, i32)],
-    ) -> Result<Vec<(String, i32)>> {
+    async fn filter_state_updates_by_workspace(&self, updates: &[(String, i32)]) -> Result<Vec<(String, i32)>> {
         if updates.is_empty() {
             return Ok(Vec::new());
         }
@@ -85,8 +85,11 @@ impl<R: DeviceRepository> TenantDeviceRepository<R> {
         // Create a set for fast lookup
         let filtered_set: std::collections::HashSet<String> = filtered_ids.into_iter().collect();
 
-        let filtered_updates: Vec<(String, i32)> =
-            updates.iter().filter(|(id, _)| filtered_set.contains(id)).cloned().collect();
+        let filtered_updates: Vec<(String, i32)> = updates
+            .iter()
+            .filter(|(id, _)| filtered_set.contains(id))
+            .cloned()
+            .collect();
 
         Ok(filtered_updates)
     }
@@ -188,10 +191,7 @@ impl<R: DeviceRepository + Send + Sync> DeviceRepository for TenantDeviceReposit
 
         // Fetch the created device
         self.find_by_id(&id).await?.ok_or_else(|| {
-            tinyiothub_core::error::Error::InvalidArgument(format!(
-                "Failed to find created device with id {}",
-                id
-            ))
+            tinyiothub_core::error::Error::InvalidArgument(format!("Failed to find created device with id {}", id))
         })
     }
 

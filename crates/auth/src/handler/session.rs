@@ -32,10 +32,7 @@ where
 }
 
 /// 获取当前用户信息
-async fn get_profile(
-    State(state): State<AuthState>,
-    claims: Claims,
-) -> Json<ApiResponse<UserInfo>> {
+async fn get_profile(State(state): State<AuthState>, claims: Claims) -> Json<ApiResponse<UserInfo>> {
     match state.users.get_user_by_id(&claims.user_id).await {
         Ok(Some(user)) => {
             tracing::debug!("Retrieved profile for user: {}", user.get_display_name());
@@ -54,8 +51,12 @@ async fn get_profile(
 
 /// 刷新访问令牌
 async fn refresh_token(claims: Claims) -> Json<ApiResponse<RefreshTokenResponse>> {
-    match generate_token(&claims.user_id, &claims.username, &claims.tenant_id, &claims.workspace_id)
-    {
+    match generate_token(
+        &claims.user_id,
+        &claims.username,
+        &claims.tenant_id,
+        &claims.workspace_id,
+    ) {
         Ok(new_token) => {
             tracing::info!("Token refreshed for user: {}", claims.user_id);
             ApiResponseBuilder::success(RefreshTokenResponse {
@@ -72,10 +73,7 @@ async fn refresh_token(claims: Claims) -> Json<ApiResponse<RefreshTokenResponse>
 }
 
 /// 验证会话有效性
-async fn validate_session(
-    State(state): State<AuthState>,
-    claims: Claims,
-) -> Json<ApiResponse<SessionInfo>> {
+async fn validate_session(State(state): State<AuthState>, claims: Claims) -> Json<ApiResponse<SessionInfo>> {
     // 检查用户是否仍然存在且未被禁用
     match state.users.get_user_by_id(&claims.user_id).await {
         Ok(Some(user)) => {
@@ -95,10 +93,7 @@ async fn validate_session(
                 tracing::debug!("Session validated for user: {}", user.get_display_name());
                 ApiResponseBuilder::success(session_info)
             } else {
-                tracing::warn!(
-                    "Session validation failed - user disabled: {}",
-                    user.get_display_name()
-                );
+                tracing::warn!("Session validation failed - user disabled: {}", user.get_display_name());
                 ApiResponseBuilder::error("用户账户已被禁用".to_string())
             }
         }

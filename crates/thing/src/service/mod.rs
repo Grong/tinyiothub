@@ -12,13 +12,13 @@ use super::{
     repo::ThingRepo,
     summary::{self, StubLlmClient, SummaryComputer},
     types::{
-        CreateThingRequest, ListThingsParams, ListThingsResult, ThingProfileResponse,
-        ThingResource, ThingResponse, ThingRow, ThingTreeNode, ThingType, UpdateThingRequest,
+        CreateThingRequest, ListThingsParams, ListThingsResult, ThingProfileResponse, ThingResource, ThingResponse,
+        ThingRow, ThingTreeNode, ThingType, UpdateThingRequest,
     },
 };
 use tinyiothub_storage::{
-    Database, create_device_command, create_device_properties_batch,
-    find_device_commands_by_device_id, find_device_properties_by_device_id,
+    Database, create_device_command, create_device_properties_batch, find_device_commands_by_device_id,
+    find_device_properties_by_device_id,
 };
 
 pub struct ThingService {
@@ -29,7 +29,11 @@ pub struct ThingService {
 
 impl ThingService {
     pub fn new(pool: SqlitePool) -> Self {
-        Self { repo: ThingRepo::new(pool.clone()), pool, summary_computer: SummaryComputer::new() }
+        Self {
+            repo: ThingRepo::new(pool.clone()),
+            pool,
+            summary_computer: SummaryComputer::new(),
+        }
     }
 
     // ──────────────────────────────────────────
@@ -63,18 +67,20 @@ impl ThingService {
 
         let unassigned = self.repo.list_unassigned_resources(workspace_id).await?.len() as u64;
 
-        Ok(ListThingsResult { items, total, limit, offset, unassigned_resource_count: unassigned })
+        Ok(ListThingsResult {
+            items,
+            total,
+            limit,
+            offset,
+            unassigned_resource_count: unassigned,
+        })
     }
 
     // ──────────────────────────────────────────
     // Get
     // ──────────────────────────────────────────
 
-    pub async fn get_thing(
-        &self,
-        id: &str,
-        workspace_id: &str,
-    ) -> Result<ThingResponse, ThingError> {
+    pub async fn get_thing(&self, id: &str, workspace_id: &str) -> Result<ThingResponse, ThingError> {
         let mut row = self
             .repo
             .get_by_id_scoped(id, workspace_id)
@@ -107,11 +113,7 @@ impl ThingService {
     }
 
     /// Full profile: thing + properties + recent events + knowledge docs.
-    pub async fn get_thing_profile(
-        &self,
-        id: &str,
-        workspace_id: &str,
-    ) -> Result<ThingProfileResponse, ThingError> {
+    pub async fn get_thing_profile(&self, id: &str, workspace_id: &str) -> Result<ThingProfileResponse, ThingError> {
         let thing = self.get_thing(id, workspace_id).await?;
 
         let properties = self.load_properties(id).await.unwrap_or_default();
@@ -210,49 +212,46 @@ impl ThingService {
     }
 
     async fn copy_template_props(&self, thing_id: &str, tid: &str) -> Result<(), sqlx::Error> {
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT properties FROM thing_templates WHERE id=?")
-                .bind(tid)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row: Option<(String,)> = sqlx::query_as("SELECT properties FROM thing_templates WHERE id=?")
+            .bind(tid)
+            .fetch_optional(&self.pool)
+            .await?;
         let Some((json,)) = row else {
             return Ok(());
         };
         // Inserts go through the storage layer (single source of SQL for
         // thing_properties — eng-review T9)
-        let requests: Vec<CreateDevicePropertyRequest> = serde_json::from_str::<
-            Vec<serde_json::Value>,
-        >(&json)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|p| CreateDevicePropertyRequest {
-            device_id: thing_id.to_string(),
-            name: p["name"].as_str().unwrap_or("").to_string(),
-            display_name: p.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string()),
-            description: None,
-            data_type: Some(
-                p.get("dataType").and_then(|v| v.as_str()).unwrap_or("string").to_string(),
-            ),
-            unit: Some(p.get("unit").and_then(|v| v.as_str()).unwrap_or("").to_string()),
-            min_value: p.get("minValue").and_then(|v| v.as_f64()),
-            max_value: p.get("maxValue").and_then(|v| v.as_f64()),
-            default_value: p.get("defaultValue").and_then(|v| v.as_str()).map(|s| s.to_string()),
-            is_read_only: Some(
-                p.get("isReadOnly").and_then(|v| v.as_bool()).unwrap_or(false) as i32
-            ),
-        })
-        .collect();
+        let requests: Vec<CreateDevicePropertyRequest> = serde_json::from_str::<Vec<serde_json::Value>>(&json)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| CreateDevicePropertyRequest {
+                device_id: thing_id.to_string(),
+                name: p["name"].as_str().unwrap_or("").to_string(),
+                display_name: p.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                description: None,
+                data_type: Some(
+                    p.get("dataType")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("string")
+                        .to_string(),
+                ),
+                unit: Some(p.get("unit").and_then(|v| v.as_str()).unwrap_or("").to_string()),
+                min_value: p.get("minValue").and_then(|v| v.as_f64()),
+                max_value: p.get("maxValue").and_then(|v| v.as_f64()),
+                default_value: p.get("defaultValue").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                is_read_only: Some(p.get("isReadOnly").and_then(|v| v.as_bool()).unwrap_or(false) as i32),
+            })
+            .collect();
         let db = Database::new(self.pool.clone());
         create_device_properties_batch(&db, &requests).await?;
         Ok(())
     }
 
     async fn copy_template_acts(&self, thing_id: &str, tid: &str) -> Result<(), sqlx::Error> {
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT actions FROM thing_templates WHERE id=?")
-                .bind(tid)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row: Option<(String,)> = sqlx::query_as("SELECT actions FROM thing_templates WHERE id=?")
+            .bind(tid)
+            .fetch_optional(&self.pool)
+            .await?;
         let Some((json,)) = row else {
             return Ok(());
         };
@@ -397,10 +396,7 @@ impl ThingService {
         Ok(())
     }
 
-    pub async fn list_unassigned_resources(
-        &self,
-        workspace_id: &str,
-    ) -> Result<Vec<ThingResource>, ThingError> {
+    pub async fn list_unassigned_resources(&self, workspace_id: &str) -> Result<Vec<ThingResource>, ThingError> {
         Ok(self.repo.list_unassigned_resources(workspace_id).await?)
     }
 
@@ -408,10 +404,7 @@ impl ThingService {
     // Helpers
     // ──────────────────────────────────────────
 
-    fn row_to_response(
-        row: &ThingRow,
-        breadcrumb: Vec<super::types::BreadcrumbNode>,
-    ) -> ThingResponse {
+    fn row_to_response(row: &ThingRow, breadcrumb: Vec<super::types::BreadcrumbNode>) -> ThingResponse {
         ThingResponse {
             id: row.id.clone(),
             workspace_id: row.workspace_id.clone(),

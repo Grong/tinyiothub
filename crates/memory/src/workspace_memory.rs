@@ -24,7 +24,10 @@ pub struct WorkspaceScopedMemory {
 impl WorkspaceScopedMemory {
     /// Create a new WorkspaceScopedMemory wrapping an existing memory backend.
     pub fn new(inner: Arc<dyn Memory>, workspace_id: String) -> Self {
-        Self { inner, namespace: workspace_id }
+        Self {
+            inner,
+            namespace: workspace_id,
+        }
     }
 }
 
@@ -54,7 +57,9 @@ impl Memory for WorkspaceScopedMemory {
         since: Option<&str>,
         until: Option<&str>,
     ) -> anyhow::Result<Vec<MemoryEntry>> {
-        self.inner.recall_namespaced(&self.namespace, query, limit, session_id, since, until).await
+        self.inner
+            .recall_namespaced(&self.namespace, query, limit, session_id, since, until)
+            .await
     }
 
     async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>> {

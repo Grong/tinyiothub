@@ -23,8 +23,7 @@ pub struct TenantClaims {
 }
 
 #[allow(clippy::type_complexity)]
-static TENANT_RESOLVER: OnceLock<Box<dyn Fn(&str) -> Option<TenantClaims> + Send + Sync>> =
-    OnceLock::new();
+static TENANT_RESOLVER: OnceLock<Box<dyn Fn(&str) -> Option<TenantClaims> + Send + Sync>> = OnceLock::new();
 
 /// Register the tenant resolver (must be called once at application startup).
 pub fn set_tenant_resolver(resolver: Box<dyn Fn(&str) -> Option<TenantClaims> + Send + Sync>) {
@@ -72,8 +71,9 @@ where
     type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let claims_ws =
-            resolve(parts).filter(|c| !c.workspace_id.is_empty()).map(|c| c.workspace_id);
+        let claims_ws = resolve(parts)
+            .filter(|c| !c.workspace_id.is_empty())
+            .map(|c| c.workspace_id);
         Ok(WorkspaceScope(claims_ws))
     }
 }

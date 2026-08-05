@@ -11,7 +11,6 @@ pub mod network;
 
 pub mod paths;
 
-
 pub mod utils;
 
 pub mod app_state;

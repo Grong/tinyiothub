@@ -38,8 +38,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tinyiothub_ai::thing_agent::RunContextInner;
-use tinyiothub_policy::autonomy::{GateVerdict, PolicyRepository, gate_check};
 use tinyiothub_core::models::event::EventLevel;
+use tinyiothub_policy::autonomy::{GateVerdict, PolicyRepository, gate_check};
 use tokio::sync::RwLock;
 use zeroclaw::tools::{Tool, ToolResult};
 use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
@@ -375,14 +375,13 @@ impl Tool for AutonomousInvokeActionTool {
 mod tests {
     use tinyiothub_ai::thing_agent::RunContextInner;
     use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
+    use tinyiothub_thing::service::ThingService;
     use zeroclaw::tools::Tool;
 
     use super::*;
     use crate::{
-        modules::agent::policy_repo::SqlitePolicyRepository,
-        test_utils::seed_test_workspace,
+        modules::agent::policy_repo::SqlitePolicyRepository, test_utils::seed_test_workspace,
     };
-    use tinyiothub_thing::service::ThingService;
 
     // ── helpers ────────────────────────────────────────────────
 

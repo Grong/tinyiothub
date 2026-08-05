@@ -17,7 +17,7 @@ use crate::{
             ConfigureHeartbeatRequest, HeartbeatConfig, HeartbeatStatus, ReportHeartbeatResponse,
         },
     },
-    shared::{api_response::ApiResponse, app_state::AppState, },
+    shared::{api_response::ApiResponse, app_state::AppState},
 };
 
 /// Create the heartbeat router

@@ -15,7 +15,9 @@ pub struct RedisClient {
 impl RedisClient {
     /// 创建新的 Redis 客户端
     pub fn new(url: &str) -> Result<Self, redis::RedisError> {
-        Ok(Self { client: Client::open(url)? })
+        Ok(Self {
+            client: Client::open(url)?,
+        })
     }
 
     /// 获取键值

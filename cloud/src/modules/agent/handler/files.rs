@@ -25,7 +25,7 @@ use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
     api::middleware::WorkspaceScope,
-    shared::{api_response::ApiResponse, app_state::AppState, },
+    shared::{api_response::ApiResponse, app_state::AppState},
 };
 
 /// Supported workspace files (pub(crate) for testing)

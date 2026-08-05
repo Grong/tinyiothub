@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::Row;
-
 use tinyiothub_storage::Database;
 
 use crate::modules::event::{

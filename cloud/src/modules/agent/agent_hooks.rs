@@ -4,8 +4,7 @@
 //! legacy `HEARTBEAT.md` parsing, file→DB migration) to the core trait so
 //! `modules::workspace` carries no `modules::agent` dependency edge.
 
-use std::path::Path;
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use tinyiothub_ai::heartbeat::repo::HeartbeatTaskRepository;
 use tinyiothub_core::agent_hooks::{AgentHooks, HeartbeatTaskDef};

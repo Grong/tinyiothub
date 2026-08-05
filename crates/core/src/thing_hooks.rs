@@ -56,10 +56,6 @@ pub trait ThingActionHooks: Send + Sync {
 
     /// Policy confirm gate: Block → Deny; RequireApproval → RequireToken;
     /// otherwise the workspace `require_action_confirm` toggle decides.
-    async fn decide_confirm(
-        &self,
-        workspace_id: &str,
-        action_name: &str,
-        require_confirm: bool,
-    ) -> ThingConfirmVerdict;
+    async fn decide_confirm(&self, workspace_id: &str, action_name: &str, require_confirm: bool)
+    -> ThingConfirmVerdict;
 }

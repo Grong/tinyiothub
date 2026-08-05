@@ -202,10 +202,7 @@ async fn get_wechat_qrcode(
 }
 
 /// 微信回调处理
-async fn wechat_callback(
-    State(state): State<AuthState>,
-    Query(params): Query<WeChatCallbackQuery>,
-) -> Response {
+async fn wechat_callback(State(state): State<AuthState>, Query(params): Query<WeChatCallbackQuery>) -> Response {
     if let Some(error) = params.error_description {
         let html = format!(
             r#"<!DOCTYPE html><html><body><script>window.opener.postMessage({{type:'wechat_callback',error:'{}'}},window.location.origin);window.close();</script></body></html>"#,
@@ -277,29 +274,22 @@ async fn wechat_callback(
     };
 
     // 生成 JWT
-    let tenant_id: String =
-        sqlx::query_scalar("SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1")
-            .bind(&user.id)
-            .fetch_optional(db.pool())
-            .await
-            .unwrap_or(None)
-            .unwrap_or_else(|| "default".to_string());
+    let tenant_id: String = sqlx::query_scalar("SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1")
+        .bind(&user.id)
+        .fetch_optional(db.pool())
+        .await
+        .unwrap_or(None)
+        .unwrap_or_else(|| "default".to_string());
 
     // 查找该租户的第一个 workspace 作为默认 workspace
-    let workspace_id: Option<String> =
-        sqlx::query_scalar("SELECT id FROM workspaces WHERE tenant_id = ? LIMIT 1")
-            .bind(&tenant_id)
-            .fetch_optional(db.pool())
-            .await
-            .unwrap_or(None);
+    let workspace_id: Option<String> = sqlx::query_scalar("SELECT id FROM workspaces WHERE tenant_id = ? LIMIT 1")
+        .bind(&tenant_id)
+        .fetch_optional(db.pool())
+        .await
+        .unwrap_or(None);
 
     let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
-    let jwt_token = match jwt::generate_token(
-        &user.id,
-        &user.username,
-        &tenant_id,
-        &workspace_id_for_token,
-    ) {
+    let jwt_token = match jwt::generate_token(&user.id, &user.username, &tenant_id, &workspace_id_for_token) {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("Failed to generate JWT: {}", e);
@@ -309,9 +299,7 @@ async fn wechat_callback(
     };
 
     // 存储社交绑定（如果不存在）
-    if let Err(e) =
-        save_social_binding(&state.database, &user.id, "wechat", &token_resp.openid).await
-    {
+    if let Err(e) = save_social_binding(&state.database, &user.id, "wechat", &token_resp.openid).await {
         tracing::warn!("Failed to save social binding: {:?}", e);
     }
 
@@ -551,8 +539,7 @@ async fn verify_oauth_state(redis: &Option<RedisClient>, state: &str) -> Result<
     let redis = redis.as_ref().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let key = format!("wechat:state:{}", state);
-    let exists: Option<String> =
-        redis.get(&key).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let exists: Option<String> = redis.get(&key).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if exists.is_some() {
         // 删除 state（一次性使用）
@@ -564,17 +551,18 @@ async fn verify_oauth_state(redis: &Option<RedisClient>, state: &str) -> Result<
 }
 
 /// 调用微信 API 换取 access_token 和 openid
-async fn exchange_wechat_code(
-    code: &str,
-    config: &WechatOAuthConfig,
-) -> Result<WechatTokenResponse, String> {
+async fn exchange_wechat_code(code: &str, config: &WechatOAuthConfig) -> Result<WechatTokenResponse, String> {
     let url = format!(
         "https://api.weixin.qq.com/sns/oauth2/access_token?appid={}&secret={}&code={}&grant_type=authorization_code",
         config.app_id, config.app_secret, code
     );
 
     let client = reqwest::Client::new();
-    let resp = client.get(&url).send().await.map_err(|e| format!("Network error: {}", e))?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
 
     #[derive(Deserialize)]
     struct WechatErrorResponse {
@@ -607,22 +595,17 @@ struct WechatTokenResponse {
 }
 
 /// 根据微信 openid 查找或创建用户
-async fn find_or_create_user_by_wechat(
-    db: &tinyiothub_storage::Database,
-    openid: &str,
-) -> Result<User, StatusCode> {
+async fn find_or_create_user_by_wechat(db: &tinyiothub_storage::Database, openid: &str) -> Result<User, StatusCode> {
     // 查找 social_bindings
-    let rows = sqlx::query(
-        "SELECT user_id FROM social_bindings WHERE provider = 'wechat' AND provider_user_id = ? LIMIT 1",
-    )
-    .bind(openid)
-    .fetch_all(db.pool())
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let rows =
+        sqlx::query("SELECT user_id FROM social_bindings WHERE provider = 'wechat' AND provider_user_id = ? LIMIT 1")
+            .bind(openid)
+            .fetch_all(db.pool())
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if let Some(row) = rows.into_iter().next() {
-        let user_id: String =
-            row.try_get("user_id").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let user_id: String = row.try_get("user_id").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         // 获取用户信息
         let user_rows = sqlx::query("SELECT * FROM users WHERE id = ? LIMIT 1")
@@ -658,7 +641,11 @@ async fn find_or_create_user_by_wechat(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    user_rows.into_iter().next().map(user_from_row).ok_or(StatusCode::INTERNAL_SERVER_ERROR)
+    user_rows
+        .into_iter()
+        .next()
+        .map(user_from_row)
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 fn user_from_row(row: sqlx::sqlite::SqliteRow) -> User {

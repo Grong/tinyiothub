@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
+use tinyiothub_thing::template::TemplateRepository;
+
 use super::{
     client::MarketplaceClient,
     error::{MarketplaceError, Result},
 };
-use tinyiothub_thing::template::TemplateRepository;
 
 pub struct TemplateInstaller {
     client: Arc<MarketplaceClient>,

@@ -2,11 +2,9 @@
 
 use std::sync::Arc;
 
-use tinyiothub_storage::cache::DeviceCache;
+use tinyiothub_storage::{Database, cache::DeviceCache};
 
 use super::{super::alarm::repo::AlarmRepository, monitoring::DeviceMonitoringService};
-use tinyiothub_storage::Database;
-
 use crate::shared::error::Error;
 
 pub struct DevicePerformanceService {

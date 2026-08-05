@@ -7,6 +7,7 @@ use axum::{
     extract::{Extension, Multipart, Path, Query, State},
     routing::{delete, get, post, put},
 };
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::{
@@ -15,7 +16,6 @@ use super::types::{
     UpdateWorkspaceRequest, WorkspaceQueryParams, WorkspaceResource, WorkspaceWithDeviceCount,
 };
 use crate::shared::{api_response::ApiResponse, app_state::AppState};
-use tinyiothub_auth::security::jwt::Claims;
 
 // ── Helper ──
 

@@ -15,7 +15,7 @@ use crate::{
         handler::types::{AgentConfigUpdateRequest, ToolToggleRequest},
         session::SessionKey,
     },
-    shared::{api_response::ApiResponse, app_state::AppState, },
+    shared::{api_response::ApiResponse, app_state::AppState},
 };
 
 /// POST /api/v1/chat/stream — SSE streaming chat

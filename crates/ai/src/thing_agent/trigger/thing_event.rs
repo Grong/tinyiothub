@@ -21,9 +21,9 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
 
 use super::Trigger;
-use tinyiothub_policy::autonomy::{AutonomyMode, PolicyRepository};
 use crate::thing_agent::traits::{ThingAgentHost, ThingEventSignal};
 use crate::thing_agent::types::{Priority, TriggerSource, WakeSignal};
+use tinyiothub_policy::autonomy::{AutonomyMode, PolicyRepository};
 
 /// Wakes the thing-agent loop on noteworthy thing events from one workspace.
 pub struct ThingEventTrigger {

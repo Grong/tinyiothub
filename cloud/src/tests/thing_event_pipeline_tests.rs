@@ -12,7 +12,6 @@ use tinyiothub_core::models::event::{
     ContentElement, DeviceEventType, Event, EventLevel, EventSource, EventType, RichContent,
     TextFormat,
 };
-
 use tinyiothub_storage::Database;
 
 use crate::{

@@ -14,7 +14,7 @@ use crate::{
             DevicePerformanceMetrics, PerformanceAlert, SystemPerformanceOverview,
         },
     },
-    shared::{api_response::ApiResponse, app_state::AppState, },
+    shared::{api_response::ApiResponse, app_state::AppState},
 };
 
 #[derive(Deserialize)]

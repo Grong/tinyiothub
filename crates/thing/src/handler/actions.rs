@@ -85,29 +85,28 @@ pub async fn confirm_action(
             StatusCode::BAD_REQUEST,
             ApiResponseBuilder::error_with_code(
                 400,
-                format!("操作不支持: 物类型为 '{}'，仅 'device' 类型物支持操作", thing.thing_type),
+                format!(
+                    "操作不支持: 物类型为 '{}'，仅 'device' 类型物支持操作",
+                    thing.thing_type
+                ),
             ),
         );
     }
 
     // 4. Verify the command exists
-    let command_exists: bool = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM thing_actions WHERE device_id = ? AND name = ?",
-    )
-    .bind(&thing_id)
-    .bind(&action_name)
-    .fetch_one(&pool)
-    .await
-    .map(|c| c > 0)
-    .unwrap_or(false);
+    let command_exists: bool =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM thing_actions WHERE device_id = ? AND name = ?")
+            .bind(&thing_id)
+            .bind(&action_name)
+            .fetch_one(&pool)
+            .await
+            .map(|c| c > 0)
+            .unwrap_or(false);
 
     if !command_exists {
         return (
             StatusCode::NOT_FOUND,
-            ApiResponseBuilder::error_with_code(
-                404,
-                format!("操作 '{}' 未在物 {} 上注册", action_name, thing_id),
-            ),
+            ApiResponseBuilder::error_with_code(404, format!("操作 '{}' 未在物 {} 上注册", action_name, thing_id)),
         );
     }
 
@@ -194,28 +193,27 @@ pub async fn invoke_action(
             StatusCode::BAD_REQUEST,
             ApiResponseBuilder::error_with_code(
                 400,
-                format!("操作不支持: 物类型为 '{}'，仅 'device' 类型物支持操作", thing.thing_type),
+                format!(
+                    "操作不支持: 物类型为 '{}'，仅 'device' 类型物支持操作",
+                    thing.thing_type
+                ),
             ),
         );
     }
 
     // 2. Action must be registered on the thing
-    let registered: bool = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM thing_actions WHERE device_id = ? AND name = ?",
-    )
-    .bind(&thing_id)
-    .bind(&action_name)
-    .fetch_one(&pool)
-    .await
-    .map(|c| c > 0)
-    .unwrap_or(false);
+    let registered: bool =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM thing_actions WHERE device_id = ? AND name = ?")
+            .bind(&thing_id)
+            .bind(&action_name)
+            .fetch_one(&pool)
+            .await
+            .map(|c| c > 0)
+            .unwrap_or(false);
     if !registered {
         return (
             StatusCode::NOT_FOUND,
-            ApiResponseBuilder::error_with_code(
-                404,
-                format!("操作 '{}' 未在物 {} 上注册", action_name, thing_id),
-            ),
+            ApiResponseBuilder::error_with_code(404, format!("操作 '{}' 未在物 {} 上注册", action_name, thing_id)),
         );
     }
 
@@ -234,33 +232,33 @@ pub async fn invoke_action(
     if let Some(ref schema) = action_schema
         && let Err(msg) = state.hooks.validate_params(schema, req.params.as_ref())
     {
-        return (StatusCode::UNPROCESSABLE_ENTITY, ApiResponseBuilder::error_with_code(422, msg));
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            ApiResponseBuilder::error_with_code(422, msg),
+        );
     }
 
     // 3. Unified policy gate (X3/T16): a Block rule denies before any confirm
     // decision; a RequireApproval rule mints a confirmation token; otherwise
     // the legacy require_action_confirm toggle decides (fail closed — T7).
-    let require_confirm: bool =
-        sqlx::query_scalar("SELECT require_action_confirm FROM workspaces WHERE id = ?")
-            .bind(&ws)
-            .fetch_optional(&pool)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(1i32)
-            != 0;
+    let require_confirm: bool = sqlx::query_scalar("SELECT require_action_confirm FROM workspaces WHERE id = ?")
+        .bind(&ws)
+        .fetch_optional(&pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(1i32)
+        != 0;
 
     match state.hooks.decide_confirm(&ws, &action_name, require_confirm).await {
         ThingConfirmVerdict::Deny { reason } => {
             return (StatusCode::FORBIDDEN, ApiResponseBuilder::error_with_code(403, reason));
         }
         ThingConfirmVerdict::RequireToken => {
-            let token = state.hooks.store_pending(
-                thing_id.clone(),
-                action_name.clone(),
-                req.params.clone(),
-                ws.clone(),
-            );
+            let token =
+                state
+                    .hooks
+                    .store_pending(thing_id.clone(), action_name.clone(), req.params.clone(), ws.clone());
             return (
                 StatusCode::OK,
                 ApiResponseBuilder::success(json!({

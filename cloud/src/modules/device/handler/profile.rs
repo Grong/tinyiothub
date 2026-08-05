@@ -17,7 +17,7 @@ use crate::{
             value_objects::EventType,
         },
     },
-    shared::{api_response::ApiResponse, app_state::AppState, },
+    shared::{api_response::ApiResponse, app_state::AppState},
 };
 
 /// 设备完整配置文件

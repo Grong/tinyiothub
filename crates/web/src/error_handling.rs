@@ -115,9 +115,7 @@ impl ErrorHandler {
     /// Log error with structured information
     fn log_error(context: &ErrorContext, error: &impl std::fmt::Display) {
         let log_level = match context.category {
-            ErrorCategory::Authentication
-            | ErrorCategory::Authorization
-            | ErrorCategory::Security => "WARN",
+            ErrorCategory::Authentication | ErrorCategory::Authorization | ErrorCategory::Security => "WARN",
             ErrorCategory::Validation | ErrorCategory::NotFound => "INFO",
             _ => "ERROR",
         };
@@ -154,8 +152,7 @@ macro_rules! handle_service_result {
     ($result:expr, $category:expr, $operation:expr, $user_message:expr, $user_id:expr) => {
         $crate::error_handling::ErrorHandler::handle_service_error(
             $result,
-            $crate::error_handling::ErrorContext::new($category, $operation)
-                .with_user($user_id),
+            $crate::error_handling::ErrorContext::new($category, $operation).with_user($user_id),
             $user_message,
         )
     };

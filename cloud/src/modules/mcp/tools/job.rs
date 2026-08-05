@@ -4,15 +4,16 @@
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
-
-use crate::shared::app_state::AppState;
 use serde::Deserialize;
 use serde_json::Value;
 use tinyiothub_core::models::cron_job::{CreateCronJobRequest, CronJobQuery, UpdateCronJobRequest};
 
-use crate::modules::mcp::{
-    handlers::get_mcp_context,
-    tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler},
+use crate::{
+    modules::mcp::{
+        handlers::get_mcp_context,
+        tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler},
+    },
+    shared::app_state::AppState,
 };
 
 /// Tool input: List schedules
@@ -205,7 +206,9 @@ impl ToolHandler for ListSchedulesHandler {
         let _claims = get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
-        let state = self.state.as_ref()
+        let state = self
+            .state
+            .as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         let query = CronJobQuery {
@@ -342,7 +345,9 @@ impl ToolHandler for CreateScheduleHandler {
         let claims = get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
-        let state = self.state.as_ref()
+        let state = self
+            .state
+            .as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         // SECURITY: Verify target_device_id belongs to authenticated workspace if provided
@@ -462,7 +467,9 @@ impl ToolHandler for UpdateScheduleHandler {
         let _claims = get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
-        let state = self.state.as_ref()
+        let state = self
+            .state
+            .as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         // Normalize 5-field cron to 6-field (prepend seconds=0)
@@ -531,7 +538,9 @@ impl ToolHandler for DeleteScheduleHandler {
         let _claims = get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
-        let state = self.state.as_ref()
+        let state = self
+            .state
+            .as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         // Verify the job exists and belongs to the workspace

@@ -2,10 +2,8 @@
 // Portable error types live in tinyiothub_web::error_handling — re-exported here
 // so existing `shared::error_handling::{...}` imports keep working.
 use axum::response::Json;
-use tinyiothub_web::api_response::ApiResponse;
-use tinyiothub_web::response::ApiResponseBuilder;
-
 pub use tinyiothub_web::error_handling::{ErrorCategory, ErrorCode, ErrorContext, ErrorHandler};
+use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder};
 
 use crate::shared::app_state::AppState;
 

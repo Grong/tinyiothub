@@ -22,12 +22,12 @@ use crate::event::types::AiEvent;
 use crate::heartbeat::repo::HeartbeatTaskRepository;
 use crate::heartbeat::runner::HeartbeatRunner;
 use crate::heartbeat::types::{HeartbeatResult, SignalPriority};
-use tinyiothub_memory::service::MemoryService;
-use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 use crate::thing_agent::manager::ThingAgentManager;
 use crate::thing_agent::report::AgentRunsRepository;
 use crate::thing_agent::traits::DirectiveSink;
 use crate::thing_agent::types::{Outcome, Priority, TriggerSource, WakeSignal};
+use tinyiothub_memory::service::MemoryService;
+use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 
 /// X6 心跳桥（O21 裁决）：订阅既有 `AiEvent::HeartbeatCompleted`（loop_.rs
 /// 零改动），从心跳报告的结构化 proposals 提取问题，按 O11 dedup 后投递
@@ -1142,11 +1142,11 @@ pub(crate) mod tests {
 
     mod heartbeat_bridge {
         use super::*;
-        use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
         use crate::thing_agent::report::AgentRunsRepository;
         use crate::thing_agent::scheduler::{EnqueueError, Scheduler};
         use crate::thing_agent::traits::DirectiveSink;
         use crate::thing_agent::types::{Outcome, Priority, RunReport, TriggerSource, WakeSignal};
+        use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 
         /// 内存 run 集：(outcome, verified, acked, age_hours)。窗口语义与
         /// Sqlite 实现一致（严格小于窗口不计入边界外）。

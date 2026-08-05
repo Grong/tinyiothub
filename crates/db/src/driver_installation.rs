@@ -64,10 +64,7 @@ impl DriverInstallationRepo {
             .await
     }
 
-    pub async fn find_by_workspace(
-        &self,
-        workspace_id: &str,
-    ) -> Result<Vec<DriverInstallation>, sqlx::Error> {
+    pub async fn find_by_workspace(&self, workspace_id: &str) -> Result<Vec<DriverInstallation>, sqlx::Error> {
         sqlx::query_as::<_, DriverInstallation>(
             "SELECT * FROM driver_installations WHERE workspace_id = ? ORDER BY driver_name",
         )
@@ -77,27 +74,19 @@ impl DriverInstallationRepo {
     }
 
     pub async fn find_all(&self) -> Result<Vec<DriverInstallation>, sqlx::Error> {
-        sqlx::query_as::<_, DriverInstallation>(
-            "SELECT * FROM driver_installations ORDER BY workspace_id, driver_name",
-        )
-        .fetch_all(self.db.pool())
-        .await
+        sqlx::query_as::<_, DriverInstallation>("SELECT * FROM driver_installations ORDER BY workspace_id, driver_name")
+            .fetch_all(self.db.pool())
+            .await
     }
 
-    pub async fn delete(
-        &self,
-        workspace_id: &str,
-        driver_name: &str,
-        version: &str,
-    ) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query(
-            "DELETE FROM driver_installations WHERE workspace_id = ? AND driver_name = ? AND version = ?"
-        )
-        .bind(workspace_id)
-        .bind(driver_name)
-        .bind(version)
-        .execute(self.db.pool())
-        .await?;
+    pub async fn delete(&self, workspace_id: &str, driver_name: &str, version: &str) -> Result<u64, sqlx::Error> {
+        let result =
+            sqlx::query("DELETE FROM driver_installations WHERE workspace_id = ? AND driver_name = ? AND version = ?")
+                .bind(workspace_id)
+                .bind(driver_name)
+                .bind(version)
+                .execute(self.db.pool())
+                .await?;
 
         Ok(result.rows_affected())
     }

@@ -13,28 +13,22 @@ pub async fn find_device_by_id(db: &Database, id: &str) -> Result<Option<Device>
 }
 
 /// Load tags for a single device
-pub async fn load_device_tags(
-    device: &mut Device,
-    db: &Database,
-    tenant_id: &str,
-) -> Result<(), sqlx::Error> {
+pub async fn load_device_tags(device: &mut Device, db: &Database, tenant_id: &str) -> Result<(), sqlx::Error> {
     let tag_repo = SqliteTagRepository::new(db.clone());
     let tags = tag_repo
         .find_by_target_id(&device.id, tenant_id)
         .await
         .map_err(|_| sqlx::Error::RowNotFound)?;
-    let tag_values: Vec<serde_json::Value> =
-        tags.into_iter().map(|t| serde_json::to_value(t).unwrap_or_default()).collect();
+    let tag_values: Vec<serde_json::Value> = tags
+        .into_iter()
+        .map(|t| serde_json::to_value(t).unwrap_or_default())
+        .collect();
     device.tags = Some(tag_values);
     Ok(())
 }
 
 /// Load tags for multiple devices
-pub async fn load_tags_for_devices(
-    db: &Database,
-    devices: &mut [Device],
-    tenant_id: &str,
-) -> Result<(), sqlx::Error> {
+pub async fn load_tags_for_devices(db: &Database, devices: &mut [Device], tenant_id: &str) -> Result<(), sqlx::Error> {
     let tag_repo = SqliteTagRepository::new(db.clone());
 
     for device in devices {
@@ -42,8 +36,10 @@ pub async fn load_tags_for_devices(
             .find_by_target_id(&device.id, tenant_id)
             .await
             .map_err(|_| sqlx::Error::RowNotFound)?;
-        let tag_values: Vec<serde_json::Value> =
-            tags.into_iter().map(|t| serde_json::to_value(t).unwrap_or_default()).collect();
+        let tag_values: Vec<serde_json::Value> = tags
+            .into_iter()
+            .map(|t| serde_json::to_value(t).unwrap_or_default())
+            .collect();
         device.tags = Some(tag_values);
     }
 

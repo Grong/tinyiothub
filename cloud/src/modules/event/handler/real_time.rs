@@ -20,7 +20,7 @@ use crate::{
         repositories::{RealTimeEvent, RealTimeFilter, StatusSummary},
         value_objects::{EventId, EventLevel, EventType},
     },
-    shared::{api_response::ApiResponse, app_state::AppState, },
+    shared::{api_response::ApiResponse, app_state::AppState},
 };
 
 /// Query parameters for real-time event filtering

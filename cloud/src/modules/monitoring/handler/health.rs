@@ -2,10 +2,10 @@ use std::{sync::OnceLock, time::SystemTime};
 
 use axum::{Json, Router, extract::State, routing::get};
 use serde::{Deserialize, Serialize};
+use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::shared::{api_response::ApiResponse, app_state::AppState};
-use tinyiothub_auth::security::jwt::Claims;
 
 /// Global start time for uptime calculation (shared with metrics)
 pub static START_TIME: OnceLock<SystemTime> = OnceLock::new();

@@ -37,21 +37,19 @@ pub fn load_migrations() -> Result<Vec<Migration>, sqlx::migrate::MigrateError> 
 /// Run migrations with full safety checks.
 ///
 /// 1. Clean up orphaned records in `_sqlx_migrations` for deleted versions.
-/// 2. Back up the database file to `data/backups/` (only when migrations
-///    are actually pending).
+/// 2. Back up the database file to `data/backups/` (only when migrations are actually pending).
 /// 3. Run the migration set.
-/// 4. Post-migration repair: drop pre-Thing-Ontology tables (data already
-///    merged inline by the cleanup migration), backfill `events.workspace_id`.
+/// 4. Post-migration repair: drop pre-Thing-Ontology tables (data already merged inline by the
+///    cleanup migration), backfill `events.workspace_id`.
 /// 5. Repair schema inconsistencies (add missing columns).
-/// 6. Enforce referential integrity — abort startup on FK violations
-///    (`PRAGMA foreign_key_check` inside a migration script only returns
-///    rows; sqlx discards them, so the check must happen here).
+/// 6. Enforce referential integrity — abort startup on FK violations (`PRAGMA foreign_key_check`
+///    inside a migration script only returns rows; sqlx discards them, so the check must happen
+///    here).
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     cleanup_orphaned_migration_records(pool).await?;
 
-    let migrations = load_migrations().map_err(|e| {
-        sqlx::Error::Configuration(format!("Failed to load migrations: {}", e).into())
-    })?;
+    let migrations = load_migrations()
+        .map_err(|e| sqlx::Error::Configuration(format!("Failed to load migrations: {}", e).into()))?;
 
     if pending_migrations_exist(pool, &migrations).await? {
         backup_before_migrate(pool).await?;
@@ -83,10 +81,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 }
 
 /// True when at least one migration in the set has not been applied yet.
-async fn pending_migrations_exist(
-    pool: &SqlitePool,
-    migrations: &[Migration],
-) -> Result<bool, sqlx::Error> {
+async fn pending_migrations_exist(pool: &SqlitePool, migrations: &[Migration]) -> Result<bool, sqlx::Error> {
     let table_exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(
             SELECT 1 FROM sqlite_master
@@ -101,11 +96,10 @@ async fn pending_migrations_exist(
     }
 
     for m in migrations {
-        let applied: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version = ?)")
-                .bind(m.version)
-                .fetch_one(pool)
-                .await?;
+        let applied: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version = ?)")
+            .bind(m.version)
+            .fetch_one(pool)
+            .await?;
         if !applied {
             return Ok(true);
         }
@@ -120,10 +114,9 @@ async fn pending_migrations_exist(
 /// aborts startup — per the Thing Ontology design (section 七 step 0), the
 /// mega-migration must never run without a restore point.
 async fn backup_before_migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    let db_file: Option<String> =
-        sqlx::query_scalar("SELECT file FROM pragma_database_list WHERE name = 'main'")
-            .fetch_optional(pool)
-            .await?;
+    let db_file: Option<String> = sqlx::query_scalar("SELECT file FROM pragma_database_list WHERE name = 'main'")
+        .fetch_optional(pool)
+        .await?;
 
     let Some(db_file) = db_file else { return Ok(()) };
     if db_file.is_empty() {
@@ -132,10 +125,12 @@ async fn backup_before_migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     }
 
     let db_path = std::path::Path::new(&db_file);
-    let backup_dir = db_path.parent().unwrap_or_else(|| std::path::Path::new(".")).join("backups");
-    std::fs::create_dir_all(&backup_dir).map_err(|e| {
-        sqlx::Error::Configuration(format!("Failed to create backup directory: {}", e).into())
-    })?;
+    let backup_dir = db_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("backups");
+    std::fs::create_dir_all(&backup_dir)
+        .map_err(|e| sqlx::Error::Configuration(format!("Failed to create backup directory: {}", e).into()))?;
 
     let stem = db_path.file_stem().and_then(|s| s.to_str()).unwrap_or("database");
     let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S");
@@ -168,12 +163,11 @@ async fn prepare_thing_model_copy(pool: &SqlitePool) -> Result<(), sqlx::Error> 
     // Only create shells when the base schema migration (20260106000002,
     // which CREATEs these tables) has already run — otherwise it would
     // collide with "table already exists" on fresh databases.
-    let base_applied: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version = 20260106000002)",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or(false);
+    let base_applied: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version = 20260106000002)")
+            .fetch_one(pool)
+            .await
+            .unwrap_or(false);
     if !base_applied {
         return Ok(());
     }
@@ -219,16 +213,14 @@ async fn prepare_thing_model_copy(pool: &SqlitePool) -> Result<(), sqlx::Error> 
 /// The real-data copy happens INLINE in 20260727000001 (UNION into the
 /// rebuild inserts) — doing it here would run AFTER the FK repoints commit,
 /// leaving dangling parents and boot-looping the deploy (DM-1). This step:
-/// 1. Drops the old device_properties / device_commands tables (data already
-///    merged by the migration; empty shells where nothing ever existed).
-/// 2. Backfills events.workspace_id from the owning device (design 七·1 OV6;
-///    rows whose device is gone keep '' and are logged).
+/// 1. Drops the old device_properties / device_commands tables (data already merged by the
+///    migration; empty shells where nothing ever existed).
+/// 2. Backfills events.workspace_id from the owning device (design 七·1 OV6; rows whose device is
+///    gone keep '' and are logged).
 async fn repair_thing_model_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     if table_exists(pool, "device_properties").await? {
         sqlx::query("DROP TABLE device_properties").execute(pool).await?;
-        tracing::info!(
-            "dropped device_properties (data merged into thing_properties by migration)"
-        );
+        tracing::info!("dropped device_properties (data merged into thing_properties by migration)");
     }
 
     if table_exists(pool, "device_commands").await? {
@@ -258,19 +250,20 @@ async fn repair_thing_model_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .fetch_one(pool)
     .await?;
     if dangling > 0 {
-        tracing::warn!(rows = dangling, "events with dangling device_id keep empty workspace_id");
+        tracing::warn!(
+            rows = dangling,
+            "events with dangling device_id keep empty workspace_id"
+        );
     }
 
     Ok(())
 }
 
 async fn table_exists(pool: &SqlitePool, table: &str) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)",
-    )
-    .bind(table)
-    .fetch_one(pool)
-    .await
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)")
+        .bind(table)
+        .fetch_one(pool)
+        .await
 }
 
 /// Abort startup when referential integrity is broken after migrations.

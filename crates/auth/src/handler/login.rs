@@ -163,12 +163,7 @@ async fn register(
     };
 
     let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
-    let token = match jwt::generate_token(
-        &user.id,
-        user.get_display_name(),
-        &tenant_id,
-        &workspace_id_for_token,
-    ) {
+    let token = match jwt::generate_token(&user.id, user.get_display_name(), &tenant_id, &workspace_id_for_token) {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("Failed to generate token: {}", e);
@@ -186,10 +181,7 @@ async fn register(
 }
 
 /// 用户登录
-async fn login(
-    State(state): State<AuthState>,
-    Json(request): Json<LoginRequest>,
-) -> Json<ApiResponse<LoginResponse>> {
+async fn login(State(state): State<AuthState>, Json(request): Json<LoginRequest>) -> Json<ApiResponse<LoginResponse>> {
     tracing::info!("Login attempt for user: {}", request.username);
 
     // 验证输入参数
@@ -218,15 +210,12 @@ async fn login(
                     tracing::warn!("Failed to update last logon time for user {}: {}", user.id, e);
                 }
             } else {
-                tracing::warn!(
-                    "⚠️  Skipping last login update on HarmonyOS (database write causes Signal 11)"
-                );
+                tracing::warn!("⚠️  Skipping last login update on HarmonyOS (database write causes Signal 11)");
             }
 
             tracing::debug!("Generating JWT token for user: {}", user.id);
 
-            let (tenant_id, workspace_id) = match resolve_user_login_context(&state, &user.id).await
-            {
+            let (tenant_id, workspace_id) = match resolve_user_login_context(&state, &user.id).await {
                 Ok(ctx) => ctx,
                 Err(e) => {
                     tracing::error!("Failed to resolve user login context: {}", e);
@@ -243,12 +232,7 @@ async fn login(
 
             // 生成 JWT 令牌（HarmonyOS 会自动使用 HMAC-SHA256）
             let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
-            match jwt::generate_token(
-                &user.id,
-                user.get_display_name(),
-                &tenant_id,
-                &workspace_id_for_token,
-            ) {
+            match jwt::generate_token(&user.id, user.get_display_name(), &tenant_id, &workspace_id_for_token) {
                 Ok(token) => {
                     let login_response = LoginResponse {
                         access_token: token,
@@ -282,10 +266,7 @@ async fn login(
 }
 
 /// 用户登出
-async fn logout(
-    State(_state): State<AuthState>,
-    Json(_request): Json<LogoutRequest>,
-) -> Json<ApiResponse<String>> {
+async fn logout(State(_state): State<AuthState>, Json(_request): Json<LogoutRequest>) -> Json<ApiResponse<String>> {
     // 在实际应用中，这里可能需要将 token 加入黑名单
     // 目前只是返回成功响应
     tracing::info!("User logged out");
@@ -296,18 +277,14 @@ async fn logout(
 ///
 /// 返回 (tenant_id, workspace_id)。tenant_id 缺省为 "default"；
 /// workspace_id 优先取用户自己的 ws-{user_id}，否则取租户下第一个。
-async fn resolve_user_login_context(
-    state: &AuthState,
-    user_id: &str,
-) -> Result<(String, Option<String>), String> {
+async fn resolve_user_login_context(state: &AuthState, user_id: &str) -> Result<(String, Option<String>), String> {
     let pool = state.database.pool();
 
-    let tenant_id: Option<String> =
-        sqlx::query_scalar("SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1")
-            .bind(user_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| e.to_string())?;
+    let tenant_id: Option<String> = sqlx::query_scalar("SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
     let tenant_id = tenant_id.unwrap_or_else(|| "default".to_string());
 

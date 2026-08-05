@@ -336,7 +336,10 @@ async fn handle_mcp_request(
 }
 
 /// Handle tools/list endpoint
-async fn handle_tools_list(headers: axum::http::HeaderMap, State(state): State<AppState>) -> Response {
+async fn handle_tools_list(
+    headers: axum::http::HeaderMap,
+    State(state): State<AppState>,
+) -> Response {
     let ctx = match extract_api_key(&headers, &state).await {
         Ok(c) => c,
         Err(e) => {

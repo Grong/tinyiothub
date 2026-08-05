@@ -23,7 +23,9 @@ use anyhow::anyhow;
 use dashmap::DashMap;
 use sqlx::SqlitePool;
 use tinyiothub_ai::thing_agent::{AgentHandle, RunContextInner, manager::AutonomousAgentProvider};
+use tinyiothub_memory::workspace_memory::WorkspaceScopedMemory;
 use tinyiothub_policy::autonomy::PolicyRepository;
+use tinyiothub_thing::service::ThingService;
 use tokio::sync::RwLock;
 use zeroclaw::{
     agent::{dispatcher::NativeToolDispatcher, prompt::SystemPromptBuilder},
@@ -39,8 +41,6 @@ use super::tools::{
     thing::InvokeActionTool,
 };
 use crate::modules::event::{bus::ThingEventBus, router::ThrottleState};
-use tinyiothub_thing::service::ThingService;
-use tinyiothub_memory::workspace_memory::WorkspaceScopedMemory;
 
 /// Builds a fresh model provider per agent (providers are per-agent in
 /// zeroclaw). Production wires [`minimax_provider_factory`]; tests inject a

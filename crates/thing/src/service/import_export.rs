@@ -250,8 +250,11 @@ fn resolve_schema_value(schema: &Value) -> Value {
 ///   actions     → our action schema
 ///   events      → our event schema
 pub fn parse_wot_td(json: &Value) -> Result<ParsedTemplate, ImportError> {
-    let name =
-        json["title"].as_str().or_else(|| json["id"].as_str()).unwrap_or("Untitled").to_string();
+    let name = json["title"]
+        .as_str()
+        .or_else(|| json["id"].as_str())
+        .unwrap_or("Untitled")
+        .to_string();
 
     let description = json["description"].as_str().map(|s| s.to_string());
     let thing_type = "device".to_string();
@@ -677,7 +680,11 @@ mod tests {
         });
         let result = parse_dtdl(&json).unwrap();
         assert_eq!(result.name, "EmptyInterface");
-        assert!(serde_json::from_str::<Vec<Value>>(&result.properties).unwrap().is_empty());
+        assert!(
+            serde_json::from_str::<Vec<Value>>(&result.properties)
+                .unwrap()
+                .is_empty()
+        );
         assert!(serde_json::from_str::<Vec<Value>>(&result.actions).unwrap().is_empty());
         assert!(serde_json::from_str::<Vec<Value>>(&result.events).unwrap().is_empty());
     }
@@ -791,7 +798,11 @@ mod tests {
         });
         let result = parse_wot_td(&json).unwrap();
         assert_eq!(result.name, "MinimalSensor");
-        assert!(serde_json::from_str::<Vec<Value>>(&result.properties).unwrap().is_empty());
+        assert!(
+            serde_json::from_str::<Vec<Value>>(&result.properties)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -805,12 +816,7 @@ mod tests {
 
     // ── DTDL Export ──
 
-    fn make_template_row(
-        name: &str,
-        properties_json: &str,
-        actions_json: &str,
-        events_json: &str,
-    ) -> ThingTemplateRow {
+    fn make_template_row(name: &str, properties_json: &str, actions_json: &str, events_json: &str) -> ThingTemplateRow {
         ThingTemplateRow {
             id: "tmpl-test-001".to_string(),
             name: name.to_string(),

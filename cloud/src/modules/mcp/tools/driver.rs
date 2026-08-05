@@ -4,17 +4,18 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-
-use crate::shared::app_state::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::modules::{
-    device::driver,
-    mcp::{
-        handlers::get_mcp_context,
-        tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler},
+use crate::{
+    modules::{
+        device::driver,
+        mcp::{
+            handlers::get_mcp_context,
+            tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler},
+        },
     },
+    shared::app_state::AppState,
 };
 
 /// Driver list response
@@ -173,7 +174,9 @@ impl ToolHandler for TestDriverHandler {
         }
 
         if input.driver_name == "SimulatedDriver" {
-            let _state = self.state.as_ref()
+            let _state = self
+                .state
+                .as_ref()
                 .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
             let test_device = tinyiothub_core::models::device::Device {

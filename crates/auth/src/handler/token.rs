@@ -17,7 +17,9 @@ where
     S: Clone + Send + Sync + 'static,
     AuthState: axum::extract::FromRef<S>,
 {
-    Router::new().route("/refresh", post(refresh_token)).route("/logout", post(logout))
+    Router::new()
+        .route("/refresh", post(refresh_token))
+        .route("/logout", post(logout))
 }
 
 /// 创建受 JWT middleware 保护的路由（需要已验证的 Claims）
@@ -101,10 +103,7 @@ async fn refresh_token(
 /// SSE 使用 EventSource API 无法设置自定义 HTTP headers，因此 JWT
 /// 通过 URL 查询参数传递会导致 token 泄露到日志中。这个端点返回
 /// 一个短期（5分钟）、一次性使用的 token，在 SSE 连接中使用。
-async fn generate_sse_token(
-    State(state): State<AuthState>,
-    claims: Claims,
-) -> Json<ApiResponse<SseTokenResponse>> {
+async fn generate_sse_token(State(state): State<AuthState>, claims: Claims) -> Json<ApiResponse<SseTokenResponse>> {
     let user_id = claims.user_id;
     let workspace_id = claims.workspace_id;
 
@@ -120,10 +119,7 @@ async fn generate_sse_token(
 }
 
 /// 登出（将 token 加入黑名单）
-async fn logout(
-    State(state): State<AuthState>,
-    Json(request): Json<LogoutRequest>,
-) -> Json<ApiResponse<String>> {
+async fn logout(State(state): State<AuthState>, Json(request): Json<LogoutRequest>) -> Json<ApiResponse<String>> {
     if let Some(token) = request.token {
         // 将 token 加入黑名单
         let db = &state.database;
@@ -139,15 +135,14 @@ async fn logout(
         use sha2::Sha256;
         let token_hash = format!("{:x}", Sha256::digest(token.as_bytes()));
 
-        let result = sqlx::query(
-            "INSERT INTO token_blacklist (id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?)",
-        )
-        .bind(&id)
-        .bind(&token_hash)
-        .bind(&expires_at)
-        .bind(&now)
-        .execute(db.pool())
-        .await;
+        let result =
+            sqlx::query("INSERT INTO token_blacklist (id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?)")
+                .bind(&id)
+                .bind(&token_hash)
+                .bind(&expires_at)
+                .bind(&now)
+                .execute(db.pool())
+                .await;
 
         match result {
             Ok(_) => {

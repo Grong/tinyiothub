@@ -9,9 +9,9 @@ pub mod errors;
 pub mod handler;
 pub mod repo;
 pub mod router;
+pub mod service;
 pub mod sqlite_event;
 pub mod sqlite_real_time_event;
-pub mod service;
 pub mod types;
 
 // Backward compatibility: re-export core types as submodules
@@ -92,8 +92,9 @@ pub use service::EventAggregate;
 
 /// Backward compatibility: old aggregates::NotificationChannelType path
 pub mod aggregates {
-    pub use super::service::EventAggregate;
     pub use tinyiothub_core::notification_types::NotificationChannelType;
+
+    pub use super::service::EventAggregate;
 }
 
 // Re-export errors module types at top level for convenience

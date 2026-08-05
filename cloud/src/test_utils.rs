@@ -148,9 +148,7 @@ async fn create_test_app_state() -> AppState {
 
     // Run migrations via centralized module (handles skip lists, orphaned
     // records, and schema consistency automatically).
-    tinyiothub_storage::migrations::run_migrations(&pool)
-        .await
-        .expect("Failed to run migrations");
+    tinyiothub_storage::migrations::run_migrations(&pool).await.expect("Failed to run migrations");
 
     // Seed a test user so FK constraints (created_by REFERENCES users(id)) don't fail
     sqlx::query(
@@ -177,8 +175,13 @@ async fn create_test_app_state() -> AppState {
 
 /// Generate a valid JWT token for testing authenticated endpoints.
 pub fn create_test_token(user_id: &str, tenant_id: &str) -> String {
-    tinyiothub_auth::security::jwt::generate_token(user_id, "test-user", tenant_id, "ws-default-001")
-        .expect("Failed to generate test token")
+    tinyiothub_auth::security::jwt::generate_token(
+        user_id,
+        "test-user",
+        tenant_id,
+        "ws-default-001",
+    )
+    .expect("Failed to generate test token")
 }
 
 /// Generate a JWT token with explicit workspace_id for cross-tenant isolation tests.

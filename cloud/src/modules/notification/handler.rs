@@ -12,6 +12,11 @@ use tinyiothub_core::models::notification_channel::{
     ChannelStatistics, CreateNotificationChannelRequest, NotificationChannel,
     NotificationChannelQueryParams, SendMessageRequest, UpdateNotificationChannelRequest,
 };
+use tinyiothub_storage::{
+    count_notification_channels, create_notification_channel, delete_notification_channel,
+    find_all_notification_channels, find_notification_channel_by_id,
+    get_notification_channel_statistics, update_notification_channel,
+};
 use tinyiothub_web::response::ApiResponseBuilder;
 use tracing::{error, info};
 use uuid::Uuid;
@@ -31,11 +36,6 @@ use crate::{
         api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
         app_state::AppState,
     },
-};
-use tinyiothub_storage::{
-    count_notification_channels, create_notification_channel, delete_notification_channel,
-    find_all_notification_channels, find_notification_channel_by_id,
-    get_notification_channel_statistics, update_notification_channel,
 };
 
 // ──────────────────────────────────────────────

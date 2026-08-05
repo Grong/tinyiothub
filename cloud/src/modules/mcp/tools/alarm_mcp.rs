@@ -4,21 +4,22 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-
-use crate::shared::app_state::AppState;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::modules::{
-    alarm::{
-        AlarmCondition, AlarmLevel, AlarmQueryCriteria, AlarmRule, AlarmStatus, NotificationConfig,
-        SortOrder, TimeRange,
+use crate::{
+    modules::{
+        alarm::{
+            AlarmCondition, AlarmLevel, AlarmQueryCriteria, AlarmRule, AlarmStatus,
+            NotificationConfig, SortOrder, TimeRange,
+        },
+        mcp::{
+            handlers::get_mcp_context,
+            tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler},
+        },
     },
-    mcp::{
-        handlers::get_mcp_context,
-        tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler},
-    },
+    shared::app_state::AppState,
 };
 
 /// Tool input: List alarms
@@ -152,7 +153,9 @@ impl ToolHandler for AlarmListHandler {
         let claims = get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
-        let state = self.state.as_ref()
+        let state = self
+            .state
+            .as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         let page = input.page.unwrap_or(1);
@@ -274,7 +277,9 @@ impl ToolHandler for AlarmAcknowledgeHandler {
         let claims = get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
-        let state = self.state.as_ref()
+        let state = self
+            .state
+            .as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         // SECURITY: Verify alarm belongs to the authenticated workspace before acknowledging
@@ -435,7 +440,9 @@ impl ToolHandler for AlarmRuleAddHandler {
             ));
         }
 
-        let state = self.state.as_ref()
+        let state = self
+            .state
+            .as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         // Parse alarm level

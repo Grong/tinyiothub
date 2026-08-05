@@ -9,7 +9,7 @@ use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
     modules::device::trace_service::{DeviceTrace, DeviceTraceStatistics, SystemTraceOverview},
-    shared::{api_response::ApiResponse, app_state::AppState, },
+    shared::{api_response::ApiResponse, app_state::AppState},
 };
 
 #[derive(Deserialize)]

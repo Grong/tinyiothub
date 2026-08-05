@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use sqlx::Row;
-
 use tinyiothub_storage::Database;
 
 use crate::modules::agent::types::{Session, SessionError, SessionRepository};

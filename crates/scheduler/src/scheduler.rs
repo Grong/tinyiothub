@@ -196,7 +196,10 @@ async fn execute_job(
             Err(_) => Err(ExecutorError::Timeout(timeout_secs)),
         }
     } else {
-        Err(ExecutorError::InvalidConfig(format!("no executor for job type {}", job.job_type)))
+        Err(ExecutorError::InvalidConfig(format!(
+            "no executor for job type {}",
+            job.job_type
+        )))
     };
 
     // Update run record and job stats
@@ -216,8 +219,9 @@ async fn execute_job(
                 error!("Failed to complete run {}: {}", run_id, e);
             }
 
-            if let Err(e) =
-                job_repo.update_run_stats(&job.id, &res.status, res.error_message.as_deref()).await
+            if let Err(e) = job_repo
+                .update_run_stats(&job.id, &res.status, res.error_message.as_deref())
+                .await
             {
                 error!("Failed to update run stats for job {}: {}", job.id, e);
             }

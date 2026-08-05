@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
+use tinyiothub_auth::redis::RedisClient;
 use tinyiothub_core::{memory::MemoryStore, models::device_property::DeviceProperty};
-use tinyiothub_storage::cache::DeviceCache;
+use tinyiothub_storage::{Database, DeviceRepositoryFactory, cache::DeviceCache};
+use tinyiothub_thing::template::{TemplateEngine, TemplateRepository, TemplateValidator};
 use tokio::sync::OnceCell;
 
 use crate::{
@@ -10,10 +12,18 @@ use crate::{
         device::{
             monitoring_service::DeviceMonitoringService,
             performance_service::DevicePerformanceService, query_service::DeviceQueryService,
-            service::DeviceService, trace_service::DeviceTraceService,
+            service::DeviceService, trace_repository::DeviceTraceRepository,
+            trace_service::DeviceTraceService,
         },
-        event::repositories::{EventRepository, RealTimeEventRepository},
-        notification::NotificationManager,
+        event::{
+            repositories::{EventRepository, RealTimeEventRepository},
+            sqlite_event::SqliteEventRepository,
+            sqlite_real_time_event::SqliteRealTimeEventRepository,
+        },
+        notification::{
+            NotificationManager,
+            repo::{NotificationHistoryRepositoryImpl, NotificationRuleRepositoryImpl},
+        },
     },
     shared::{
         error::Error,
@@ -23,18 +33,6 @@ use crate::{
             security::{EventSecurityFactory, SecureEventService},
         },
     },
-};
-use tinyiothub_auth::redis::RedisClient;
-use tinyiothub_storage::{Database, DeviceRepositoryFactory};
-use tinyiothub_thing::template::{TemplateEngine, TemplateRepository, TemplateValidator};
-
-use crate::modules::{
-    device::trace_repository::DeviceTraceRepository,
-    event::{
-        sqlite_event::SqliteEventRepository,
-        sqlite_real_time_event::SqliteRealTimeEventRepository,
-    },
-    notification::repo::{NotificationHistoryRepositoryImpl, NotificationRuleRepositoryImpl},
 };
 
 /// 应用程序状态 - 使用 Axum 推荐的依赖注入模式
@@ -236,9 +234,7 @@ impl AppState {
 
         // 基础服务 - 使用事件总线
         let device_repository: Arc<dyn crate::modules::device::repository::DeviceRepository> =
-            Arc::new(tinyiothub_storage::SqliteDeviceRepository::new(
-                database.as_ref().clone(),
-            ));
+            Arc::new(tinyiothub_storage::SqliteDeviceRepository::new(database.as_ref().clone()));
         let device_service = Arc::new(
             DeviceService::with_event_bus(device_repository, database.clone(), event_bus.clone())
                 .with_tag_repository(tag_repository.clone()),

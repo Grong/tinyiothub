@@ -11,8 +11,8 @@ use tracing::{debug, info, warn};
 use super::{
     repo::TemplateRepository,
     types::{
-        CommandInfo, CommandTemplate, CreateDeviceTemplateRequest, DeviceCreationInput,
-        DevicePreview, DeviceTemplate, PropertyInfo, PropertyTemplate, TemplateRequirements,
+        CommandInfo, CommandTemplate, CreateDeviceTemplateRequest, DeviceCreationInput, DevicePreview, DeviceTemplate,
+        PropertyInfo, PropertyTemplate, TemplateRequirements,
     },
 };
 
@@ -27,11 +27,11 @@ pub struct TemplateEngine {
 
 impl TemplateEngine {
     /// 创建新的模板引擎实例
-    pub fn new(
-        template_repository: Arc<TemplateRepository>,
-        validator: Arc<TemplateValidator>,
-    ) -> Self {
-        Self { template_repository, validator }
+    pub fn new(template_repository: Arc<TemplateRepository>, validator: Arc<TemplateValidator>) -> Self {
+        Self {
+            template_repository,
+            validator,
+        }
     }
 
     /// 应用模板创建设备 (需求 3.6)
@@ -40,32 +40,40 @@ impl TemplateEngine {
         template_id: &str,
         user_input: &DeviceCreationInput,
     ) -> Result<CreateDeviceRequest, TemplateError> {
-        info!("应用模板创建设备: template_id={}, device_name={}", template_id, user_input.name);
+        info!(
+            "应用模板创建设备: template_id={}, device_name={}",
+            template_id, user_input.name
+        );
 
         // 获取模板
-        let template = self
-            .template_repository
-            .find_by_id(template_id)
-            .await?
-            .ok_or_else(|| TemplateError::TemplateNotFound { id: template_id.to_string() })?;
+        let template =
+            self.template_repository
+                .find_by_id(template_id)
+                .await?
+                .ok_or_else(|| TemplateError::TemplateNotFound {
+                    id: template_id.to_string(),
+                })?;
 
         // 验证用户输入 (需求 3.7)
         let validation_result = self.validator.validate_user_input(&template, user_input);
         if validation_result.has_errors() {
-            return Err(TemplateError::ValidationFailed { errors: validation_result.errors });
+            return Err(TemplateError::ValidationFailed {
+                errors: validation_result.errors,
+            });
         }
 
         // 解析模板信息
-        let device_info = template.get_device_info().map_err(|e| {
-            TemplateError::JsonFormatError { message: format!("设备信息解析失败: {}", e) }
+        let device_info = template.get_device_info().map_err(|e| TemplateError::JsonFormatError {
+            message: format!("设备信息解析失败: {}", e),
         })?;
 
         // 应用模板创建设备请求 (需求 3.5)
         let device_request = CreateDeviceRequest {
             name: user_input.name.clone(),
-            display_name: user_input.display_name.clone().or_else(|| {
-                self.apply_name_pattern(&device_info.default_display_name_pattern, user_input)
-            }),
+            display_name: user_input
+                .display_name
+                .clone()
+                .or_else(|| self.apply_name_pattern(&device_info.default_display_name_pattern, user_input)),
             device_type: Some(template.device_type.clone()),
             address: user_input.address.clone(),
             description: user_input.description.clone().or_else(|| {
@@ -74,7 +82,10 @@ impl TemplateEngine {
                     .as_ref()
                     .and_then(|desc| self.get_localized_description(desc, "zh"))
             }),
-            position: user_input.position.clone().or_else(|| device_info.default_position.clone()),
+            position: user_input
+                .position
+                .clone()
+                .or_else(|| device_info.default_position.clone()),
             driver_name: user_input.driver_name.clone().or_else(|| template.driver_name.clone()),
             device_model: template.manufacturer.clone(),
             protocol_type: template.protocol_type.clone(),
@@ -101,14 +112,19 @@ impl TemplateEngine {
         template_id: &str,
         user_input: &DeviceCreationInput,
     ) -> Result<DevicePreview, TemplateError> {
-        info!("预览模板设备创建: template_id={}, device_name={}", template_id, user_input.name);
+        info!(
+            "预览模板设备创建: template_id={}, device_name={}",
+            template_id, user_input.name
+        );
 
         // 获取模板
-        let template = self
-            .template_repository
-            .find_by_id(template_id)
-            .await?
-            .ok_or_else(|| TemplateError::TemplateNotFound { id: template_id.to_string() })?;
+        let template =
+            self.template_repository
+                .find_by_id(template_id)
+                .await?
+                .ok_or_else(|| TemplateError::TemplateNotFound {
+                    id: template_id.to_string(),
+                })?;
 
         // 验证用户输入
         let validation_result = self.validator.validate_user_input(&template, user_input);
@@ -117,12 +133,14 @@ impl TemplateEngine {
         let device_info = self.apply_template(template_id, user_input).await?;
 
         // 生成属性列表
-        let properties =
-            self.generate_device_properties(&template, user_input, "temp_device_id").await?;
+        let properties = self
+            .generate_device_properties(&template, user_input, "temp_device_id")
+            .await?;
 
         // 生成命令列表
-        let commands =
-            self.generate_device_commands(&template, user_input, "temp_device_id").await?;
+        let commands = self
+            .generate_device_commands(&template, user_input, "temp_device_id")
+            .await?;
 
         // 收集警告信息
         let mut warnings = Vec::new();
@@ -135,7 +153,12 @@ impl TemplateEngine {
             warnings.push("模板未指定驱动程序，可能需要手动配置".to_string());
         }
 
-        let preview = DevicePreview { device_info, properties, commands, warnings };
+        let preview = DevicePreview {
+            device_info,
+            properties,
+            commands,
+            warnings,
+        };
 
         debug!(
             "设备预览已生成: 属性数={}, 命令数={}, 警告数={}",
@@ -156,11 +179,13 @@ impl TemplateEngine {
         info!("验证用户输入: template_id={}", template_id);
 
         // 获取模板
-        let template = self
-            .template_repository
-            .find_by_id(template_id)
-            .await?
-            .ok_or_else(|| TemplateError::TemplateNotFound { id: template_id.to_string() })?;
+        let template =
+            self.template_repository
+                .find_by_id(template_id)
+                .await?
+                .ok_or_else(|| TemplateError::TemplateNotFound {
+                    id: template_id.to_string(),
+                })?;
 
         // 使用验证器验证输入
         let result = self.validator.validate_user_input(&template, user_input);
@@ -240,9 +265,7 @@ impl TemplateEngine {
                 let device_command = CreateDeviceCommandRequest {
                     device_id: device_id.to_string(),
                     name: command.name.clone(),
-                    display_name: Some(
-                        self.get_localized_display_name(&command.display_name, "zh"),
-                    ),
+                    display_name: Some(self.get_localized_display_name(&command.display_name, "zh")),
                     description: command
                         .description
                         .as_ref()
@@ -282,11 +305,7 @@ impl TemplateEngine {
     }
 
     /// 获取本地化显示名称
-    fn get_localized_display_name(
-        &self,
-        display_names: &HashMap<String, String>,
-        language: &str,
-    ) -> String {
+    fn get_localized_display_name(&self, display_names: &HashMap<String, String>, language: &str) -> String {
         display_names
             .get(language)
             .or_else(|| display_names.get("zh")) // 回退到中文
@@ -296,11 +315,7 @@ impl TemplateEngine {
     }
 
     /// 获取本地化描述
-    fn get_localized_description(
-        &self,
-        descriptions: &HashMap<String, String>,
-        language: &str,
-    ) -> Option<String> {
+    fn get_localized_description(&self, descriptions: &HashMap<String, String>, language: &str) -> Option<String> {
         descriptions
             .get(language)
             .or_else(|| descriptions.get("zh")) // 回退到中文
@@ -323,22 +338,21 @@ impl TemplateEngine {
     }
 
     /// 获取模板的必需字段信息 (用于设备创建向导)
-    pub async fn get_template_requirements(
-        &self,
-        template_id: &str,
-    ) -> Result<TemplateRequirements, TemplateError> {
+    pub async fn get_template_requirements(&self, template_id: &str) -> Result<TemplateRequirements, TemplateError> {
         info!("获取模板必需字段信息: template_id={}", template_id);
 
         // 获取模板
-        let template = self
-            .template_repository
-            .find_by_id(template_id)
-            .await?
-            .ok_or_else(|| TemplateError::TemplateNotFound { id: template_id.to_string() })?;
+        let template =
+            self.template_repository
+                .find_by_id(template_id)
+                .await?
+                .ok_or_else(|| TemplateError::TemplateNotFound {
+                    id: template_id.to_string(),
+                })?;
 
         // 解析设备信息
-        let device_info = template.get_device_info().map_err(|e| {
-            TemplateError::JsonFormatError { message: format!("设备信息解析失败: {}", e) }
+        let device_info = template.get_device_info().map_err(|e| TemplateError::JsonFormatError {
+            message: format!("设备信息解析失败: {}", e),
         })?;
 
         // 解析属性模板
@@ -354,10 +368,8 @@ impl TemplateEngine {
         let requirements = TemplateRequirements {
             template_id: template_id.to_string(),
             template_name: template.name.clone(),
-            display_name: self.get_localized_display_name(
-                &serde_json::from_str(&template.display_name).unwrap_or_default(),
-                "zh",
-            ),
+            display_name: self
+                .get_localized_display_name(&serde_json::from_str(&template.display_name).unwrap_or_default(), "zh"),
             required_fields: device_info.required_fields,
             available_properties: properties
                 .iter()
@@ -404,11 +416,13 @@ impl TemplateEngine {
         );
 
         // 获取模板
-        let template = self
-            .template_repository
-            .find_by_id(template_id)
-            .await?
-            .ok_or_else(|| TemplateError::TemplateNotFound { id: template_id.to_string() })?;
+        let template =
+            self.template_repository
+                .find_by_id(template_id)
+                .await?
+                .ok_or_else(|| TemplateError::TemplateNotFound {
+                    id: template_id.to_string(),
+                })?;
 
         // 使用验证器验证单个字段
         let result = self.validator.validate_field(&template, field_name, field_value);
@@ -461,7 +475,11 @@ impl TemplateValidator {
         // 需求 6.5: 验证驱动引用
         self.validate_driver_reference(template, &mut result);
 
-        debug!("模板验证完成，错误数: {}, 警告数: {}", result.errors.len(), result.warnings.len());
+        debug!(
+            "模板验证完成，错误数: {}, 警告数: {}",
+            result.errors.len(),
+            result.warnings.len()
+        );
 
         // 需求 6.7: 如果验证失败，记录详细错误日志
         if result.has_errors() {
@@ -472,13 +490,9 @@ impl TemplateValidator {
     }
 
     /// 验证JSON格式 (需求 6.1)
-    pub fn validate_json_format(
-        &self,
-        json: &str,
-    ) -> Result<CreateDeviceTemplateRequest, ValidationError> {
-        serde_json::from_str(json).map_err(|e| {
-            ValidationError::new("json", &format!("JSON格式错误: {}", e), "INVALID_JSON")
-        })
+    pub fn validate_json_format(&self, json: &str) -> Result<CreateDeviceTemplateRequest, ValidationError> {
+        serde_json::from_str(json)
+            .map_err(|e| ValidationError::new("json", &format!("JSON格式错误: {}", e), "INVALID_JSON"))
     }
 
     /// 验证属性模板 (需求 6.3)
@@ -490,11 +504,7 @@ impl TemplateValidator {
 
             // 验证属性名称
             if property.name.trim().is_empty() {
-                result.add_error(
-                    &format!("{}.name", field_prefix),
-                    "属性名称不能为空",
-                    "REQUIRED_FIELD",
-                );
+                result.add_error(&format!("{}.name", field_prefix), "属性名称不能为空", "REQUIRED_FIELD");
             }
 
             // 验证数据类型
@@ -524,10 +534,7 @@ impl TemplateValidator {
             {
                 result.add_warning(
                     &format!("{}.default_value", field_prefix),
-                    &format!(
-                        "默认值 '{}' 与数据类型 '{}' 不匹配",
-                        default_value, property.data_type
-                    ),
+                    &format!("默认值 '{}' 与数据类型 '{}' 不匹配", default_value, property.data_type),
                     "TYPE_MISMATCH",
                 );
             }
@@ -560,11 +567,7 @@ impl TemplateValidator {
 
             // 验证命令名称
             if command.name.trim().is_empty() {
-                result.add_error(
-                    &format!("{}.name", field_prefix),
-                    "命令名称不能为空",
-                    "REQUIRED_FIELD",
-                );
+                result.add_error(&format!("{}.name", field_prefix), "命令名称不能为空", "REQUIRED_FIELD");
             }
 
             // 验证多语言显示名称
@@ -611,11 +614,7 @@ impl TemplateValidator {
     }
 
     /// 验证用户输入
-    pub fn validate_user_input(
-        &self,
-        template: &DeviceTemplate,
-        input: &DeviceCreationInput,
-    ) -> ValidationResult {
+    pub fn validate_user_input(&self, template: &DeviceTemplate, input: &DeviceCreationInput) -> ValidationResult {
         info!("验证用户输入，模板: {}", template.name);
 
         let mut result = ValidationResult::success();
@@ -634,22 +633,13 @@ impl TemplateValidator {
         if let Ok(device_info) = template.get_device_info() {
             for required_field in &device_info.required_fields {
                 match required_field.as_str() {
-                    "driver_options"
-                        if input
-                            .driver_options
-                            .as_ref()
-                            .is_none_or(|opt| opt.trim().is_empty()) =>
-                    {
+                    "driver_options" if input.driver_options.as_ref().is_none_or(|opt| opt.trim().is_empty()) => {
                         result.add_error("driver_options", "驱动选项是必填字段", "REQUIRED_FIELD");
                     }
-                    "parent_id"
-                        if input.parent_id.as_ref().is_none_or(|id| id.trim().is_empty()) =>
-                    {
+                    "parent_id" if input.parent_id.as_ref().is_none_or(|id| id.trim().is_empty()) => {
                         result.add_error("parent_id", "父设备ID是必填字段", "REQUIRED_FIELD");
                     }
-                    "template_id"
-                        if input.template_id.as_ref().is_none_or(|id| id.trim().is_empty()) =>
-                    {
+                    "template_id" if input.template_id.as_ref().is_none_or(|id| id.trim().is_empty()) => {
                         result.add_error("template_id", "产品ID是必填字段", "REQUIRED_FIELD");
                     }
                     _ => {
@@ -666,10 +656,7 @@ impl TemplateValidator {
                     if !self.validate_value_type(prop_value, &property.data_type) {
                         result.add_error(
                             &format!("property_values.{}", prop_name),
-                            &format!(
-                                "属性值 '{}' 与数据类型 '{}' 不匹配",
-                                prop_value, property.data_type
-                            ),
+                            &format!("属性值 '{}' 与数据类型 '{}' 不匹配", prop_value, property.data_type),
                             "TYPE_MISMATCH",
                         );
                     }
@@ -765,11 +752,7 @@ impl TemplateValidator {
     fn validate_json_fields(&self, template: &DeviceTemplate, result: &mut ValidationResult) {
         // 验证显示名称JSON
         if let Err(e) = serde_json::from_str::<HashMap<String, String>>(&template.display_name) {
-            result.add_error(
-                "display_name",
-                &format!("显示名称JSON格式错误: {}", e),
-                "INVALID_JSON",
-            );
+            result.add_error("display_name", &format!("显示名称JSON格式错误: {}", e), "INVALID_JSON");
         }
 
         // 验证描述JSON
@@ -786,11 +769,7 @@ impl TemplateValidator {
 
         // 验证设备信息JSON
         if let Err(e) = template.get_device_info() {
-            result.add_error(
-                "device_info",
-                &format!("设备信息JSON格式错误: {}", e),
-                "INVALID_JSON",
-            );
+            result.add_error("device_info", &format!("设备信息JSON格式错误: {}", e), "INVALID_JSON");
         }
 
         // 验证属性JSON
@@ -805,11 +784,7 @@ impl TemplateValidator {
     }
 
     /// 验证属性模板 (需求 6.3)
-    fn validate_property_templates_internal(
-        &self,
-        template: &DeviceTemplate,
-        result: &mut ValidationResult,
-    ) {
+    fn validate_property_templates_internal(&self, template: &DeviceTemplate, result: &mut ValidationResult) {
         if let Ok(properties) = template.get_properties() {
             let property_result = self.validate_property_templates(&properties);
             result.merge(property_result);
@@ -817,11 +792,7 @@ impl TemplateValidator {
     }
 
     /// 验证命令模板 (需求 6.4)
-    fn validate_command_templates_internal(
-        &self,
-        template: &DeviceTemplate,
-        result: &mut ValidationResult,
-    ) {
+    fn validate_command_templates_internal(&self, template: &DeviceTemplate, result: &mut ValidationResult) {
         if let Ok(commands) = template.get_commands() {
             let command_result = self.validate_command_templates(&commands);
             result.merge(command_result);
@@ -924,13 +895,11 @@ impl TemplateValidator {
     }
 
     /// 验证单个字段 (用于向导的实时验证)
-    pub fn validate_field(
-        &self,
-        template: &DeviceTemplate,
-        field_name: &str,
-        field_value: &str,
-    ) -> ValidationResult {
-        debug!("验证单个字段: 模板={}, 字段={}, 值={}", template.name, field_name, field_value);
+    pub fn validate_field(&self, template: &DeviceTemplate, field_name: &str, field_value: &str) -> ValidationResult {
+        debug!(
+            "验证单个字段: 模板={}, 字段={}, 值={}",
+            template.name, field_name, field_value
+        );
 
         let mut result = ValidationResult::success();
 
@@ -941,8 +910,7 @@ impl TemplateValidator {
                     result.add_error("name", "设备名称不能为空", "FIELD_REQUIRED");
                 } else if field_value.len() > 100 {
                     result.add_error("name", "设备名称长度不能超过100个字符", "FIELD_TOO_LONG");
-                } else if !field_value.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
-                {
+                } else if !field_value.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
                     result.add_error(
                         "name",
                         "设备名称只能包含字母、数字、下划线和连字符",
@@ -952,11 +920,7 @@ impl TemplateValidator {
             }
             "display_name" => {
                 if !field_value.trim().is_empty() && field_value.len() > 200 {
-                    result.add_error(
-                        "display_name",
-                        "显示名称长度不能超过200个字符",
-                        "FIELD_TOO_LONG",
-                    );
+                    result.add_error("display_name", "显示名称长度不能超过200个字符", "FIELD_TOO_LONG");
                 }
             }
             "address" => {

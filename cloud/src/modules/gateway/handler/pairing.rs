@@ -11,7 +11,7 @@ use crate::{
         service::PairingError,
         types::{PairingRequest, PairingResponse},
     },
-    shared::{app_state::AppState, },
+    shared::app_state::AppState,
 };
 
 fn extract_client_ip(headers: &HeaderMap) -> Option<String> {

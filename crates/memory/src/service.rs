@@ -11,10 +11,10 @@ use dashmap::DashMap;
 use tinyiothub_core::memory::{Confidence, MemoryInput, MemorySource, MemoryStore, MemoryZone, QueueCandidateInput};
 use tracing::{debug, info, warn};
 
+use crate::metrics::Metrics;
 use crate::provider::LlmProvider;
 use crate::reflect::{build_reflection_prompt, parse_facts};
 use crate::types::MemoryError;
-use crate::metrics::Metrics;
 use tinyiothub_llm::session::types::ChatTurnMessage;
 
 /// Dedup window: skip reflection if same session was processed within this duration.

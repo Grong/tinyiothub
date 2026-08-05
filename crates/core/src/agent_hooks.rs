@@ -32,17 +32,10 @@ pub trait AgentHooks: Send + Sync {
 
     /// Read tasks from the legacy `HEARTBEAT.md` file. Returns the default
     /// set when the file is absent.
-    async fn read_legacy_heartbeat_tasks(
-        &self,
-        workspace_dir: &Path,
-    ) -> Result<Vec<HeartbeatTaskDef>, String>;
+    async fn read_legacy_heartbeat_tasks(&self, workspace_dir: &Path) -> Result<Vec<HeartbeatTaskDef>, String>;
 
     /// One-time import of legacy `HEARTBEAT.md` tasks into the DB. No-op
     /// when the DB already has tasks for the workspace or the file is
     /// absent. Returns true when a migration happened.
-    async fn migrate_legacy_heartbeat_tasks(
-        &self,
-        workspace_id: &str,
-        workspace_dir: &Path,
-    ) -> Result<bool, String>;
+    async fn migrate_legacy_heartbeat_tasks(&self, workspace_id: &str, workspace_dir: &Path) -> Result<bool, String>;
 }

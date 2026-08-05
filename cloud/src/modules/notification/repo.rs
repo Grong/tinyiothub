@@ -6,14 +6,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::Row;
+use tinyiothub_storage::Database;
 use tracing::{debug, error, info};
 
 use super::types::{
     HistoryStatistics, NotificationChannelType, NotificationRecord, NotificationRule,
     NotificationStatus, RuleStatistics,
 };
-use tinyiothub_storage::Database;
-
 use crate::modules::event::{EventError, Result};
 
 // ──────────────────────────────────────────────

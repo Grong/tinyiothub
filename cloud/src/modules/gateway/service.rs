@@ -8,20 +8,16 @@ use tinyiothub_core::models::device::CreateDeviceRequest;
 use tinyiothub_storage::DeviceRepositoryFactory;
 use tokio::sync::{RwLock, mpsc};
 
-use crate::{
-    modules::{
-        event::{
-            EventError,
-            entities::Event,
-            repositories::EventRepository,
-            value_objects::{
-                ContentElement, DeviceEventType, EventLevel, EventSource, RichContent,
-            },
-        },
-        gateway::{
-            pairing::{PairingCache, PairingEntry},
-            types::*,
-        },
+use crate::modules::{
+    event::{
+        EventError,
+        entities::Event,
+        repositories::EventRepository,
+        value_objects::{ContentElement, DeviceEventType, EventLevel, EventSource, RichContent},
+    },
+    gateway::{
+        pairing::{PairingCache, PairingEntry},
+        types::*,
     },
 };
 

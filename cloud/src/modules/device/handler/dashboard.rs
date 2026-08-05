@@ -11,7 +11,7 @@ use tracing::{error, info};
 use crate::{
     api::middleware::WorkspaceScope,
     modules::monitoring::types::{DeviceStatusDistribution, QuickDevice},
-    shared::{api_response::ApiResponse, app_state::AppState, },
+    shared::{api_response::ApiResponse, app_state::AppState},
 };
 
 #[derive(Debug, Deserialize)]

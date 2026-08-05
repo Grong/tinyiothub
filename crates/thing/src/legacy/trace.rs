@@ -82,7 +82,9 @@ impl DeviceTraceService {
         }
         let limit = limit.unwrap_or(50);
         let offset = offset.unwrap_or(0);
-        self.repository.find_traces(device_id, trace_types, levels, limit, offset).await
+        self.repository
+            .find_traces(device_id, trace_types, levels, limit, offset)
+            .await
     }
 
     pub async fn get_device_trace_statistics(

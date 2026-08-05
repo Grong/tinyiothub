@@ -7,9 +7,7 @@ use serde::{Deserialize, Serialize};
 use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::shared::{
-    api_response::ApiResponse, app_state::AppState, pagination::PaginationQuery,
-};
+use crate::shared::{api_response::ApiResponse, app_state::AppState, pagination::PaginationQuery};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]

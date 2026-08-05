@@ -107,11 +107,14 @@ fn import_error_response(e: ImportError) -> (StatusCode, Json<ApiResponse<Value>
     let status = match &e {
         ImportError::NotFound(_) => StatusCode::NOT_FOUND,
         ImportError::NameConflict(_) => StatusCode::CONFLICT,
-        ImportError::UnsupportedType(_)
-        | ImportError::MissingField(_)
-        | ImportError::InvalidJson(_) => StatusCode::BAD_REQUEST,
+        ImportError::UnsupportedType(_) | ImportError::MissingField(_) | ImportError::InvalidJson(_) => {
+            StatusCode::BAD_REQUEST
+        }
         ImportError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     tracing::error!(?e, "Import/export error");
-    (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()))
+    (
+        status,
+        ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()),
+    )
 }

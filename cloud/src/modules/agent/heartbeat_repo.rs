@@ -348,7 +348,9 @@ mod tests {
             .expect("create in-memory sqlite");
         for migration in [
             include_str!("../../../../crates/db/migrations/20260615120000_agent_actions.sql"),
-            include_str!("../../../../crates/db/migrations/20260629000001_create_heartbeat_tasks.sql"),
+            include_str!(
+                "../../../../crates/db/migrations/20260629000001_create_heartbeat_tasks.sql"
+            ),
         ] {
             for stmt in migration.split(';') {
                 let stmt = stmt.trim();

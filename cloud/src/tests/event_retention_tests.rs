@@ -11,8 +11,9 @@ use tinyiothub_runtime::cron_executors::EventRetentionExecutor;
 use tinyiothub_storage::sqlite::Database;
 
 use crate::{
-    modules::event::repo::RealTimeEventRepository,
-    modules::event::sqlite_real_time_event::SqliteRealTimeEventRepository,
+    modules::event::{
+        repo::RealTimeEventRepository, sqlite_real_time_event::SqliteRealTimeEventRepository,
+    },
     test_utils::seed_test_workspace,
 };
 

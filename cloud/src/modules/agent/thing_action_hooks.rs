@@ -10,13 +10,11 @@
 
 use sqlx::SqlitePool;
 use tinyiothub_ai::types::{ChatConfirmAdapter, ChatConfirmVerdict};
-use tinyiothub_core::thing_hooks::{
-    PendingThingAction, ThingActionHooks, ThingConfirmVerdict,
-};
+use tinyiothub_core::thing_hooks::{PendingThingAction, ThingActionHooks, ThingConfirmVerdict};
 
-use crate::modules::agent::policy_engine::SqlitePolicyEngine;
-use crate::modules::agent::tools::thing::{
-    store_pending_action, take_pending_action, validate_action_params,
+use crate::modules::agent::{
+    policy_engine::SqlitePolicyEngine,
+    tools::thing::{store_pending_action, take_pending_action, validate_action_params},
 };
 
 /// [`ThingActionHooks`] backed by the agent domain's real implementations.

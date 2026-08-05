@@ -36,7 +36,10 @@ pub async fn list_unassigned_resources(
         Err(e) => {
             let status = e.status_code();
             tracing::error!(?e, "Failed to list unassigned resources");
-            (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()))
+            (
+                status,
+                ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()),
+            )
         }
     }
 }
@@ -55,7 +58,10 @@ pub async fn attach_resource(
         Err(e) => {
             let status = e.status_code();
             tracing::error!(?e, thing_id = %id, "Failed to attach resource");
-            (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()))
+            (
+                status,
+                ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()),
+            )
         }
     }
 }
@@ -77,7 +83,10 @@ pub async fn detach_resource(
         Err(e) => {
             let status = e.status_code();
             tracing::error!(?e, thing_id = %thing_id, resource_id = %resource_id, "Failed to detach resource");
-            (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()))
+            (
+                status,
+                ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()),
+            )
         }
     }
 }

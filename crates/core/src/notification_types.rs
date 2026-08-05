@@ -54,10 +54,8 @@ impl NotificationRuleRef {
         if !self.enabled {
             return false;
         }
-        let type_match =
-            self.event_type.is_none() || self.event_type.as_deref() == Some(event_type);
-        let level_match =
-            self.event_level.is_none() || self.event_level == Some(*event_level as i32);
+        let type_match = self.event_type.is_none() || self.event_type.as_deref() == Some(event_type);
+        let level_match = self.event_level.is_none() || self.event_level == Some(*event_level as i32);
         type_match && level_match
     }
 }
@@ -99,7 +97,10 @@ mod tests {
         };
         assert!(wildcard.matches_event("anything", &EventLevel::Debug));
 
-        let disabled = NotificationRuleRef { enabled: false, ..wildcard.clone() };
+        let disabled = NotificationRuleRef {
+            enabled: false,
+            ..wildcard.clone()
+        };
         assert!(!disabled.matches_event("anything", &EventLevel::Debug));
     }
 }

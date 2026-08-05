@@ -5,8 +5,7 @@ use tinyiothub_core::models::template_error::TemplateError;
 use tracing::{debug, info, warn};
 
 use super::types::{
-    CreateDeviceTemplateRequest, DeviceTemplate, TemplateCategory, TemplateQueryParams,
-    UpdateDeviceTemplateRequest,
+    CreateDeviceTemplateRequest, DeviceTemplate, TemplateCategory, TemplateQueryParams, UpdateDeviceTemplateRequest,
 };
 use tinyiothub_storage::Database;
 
@@ -23,14 +22,14 @@ pub struct TemplateRepository {
 impl TemplateRepository {
     pub fn new(database: Arc<Database>) -> Self {
         let search_service = TemplateSearchService::new(database.clone());
-        Self { database, search_service }
+        Self {
+            database,
+            search_service,
+        }
     }
 
     /// 查找所有模板（支持分页和筛选）
-    pub async fn find_all(
-        &self,
-        params: &TemplateQueryParams,
-    ) -> Result<Vec<DeviceTemplate>, TemplateError> {
+    pub async fn find_all(&self, params: &TemplateQueryParams) -> Result<Vec<DeviceTemplate>, TemplateError> {
         Ok(DeviceTemplate::find_all(&self.database, params, "").await?)
     }
 
@@ -40,10 +39,7 @@ impl TemplateRepository {
     }
 
     /// 根据分类查找模板
-    pub async fn find_by_category(
-        &self,
-        category: &str,
-    ) -> Result<Vec<DeviceTemplate>, TemplateError> {
+    pub async fn find_by_category(&self, category: &str) -> Result<Vec<DeviceTemplate>, TemplateError> {
         Ok(DeviceTemplate::find_by_category(&self.database, category, "").await?)
     }
 
@@ -53,10 +49,7 @@ impl TemplateRepository {
     }
 
     /// 高级搜索模板
-    pub async fn advanced_search(
-        &self,
-        params: &TemplateQueryParams,
-    ) -> Result<Vec<DeviceTemplate>, TemplateError> {
+    pub async fn advanced_search(&self, params: &TemplateQueryParams) -> Result<Vec<DeviceTemplate>, TemplateError> {
         self.search_service.advanced_search(params).await
     }
 
@@ -88,19 +81,12 @@ impl TemplateRepository {
     }
 
     /// 多条件组合筛选
-    pub async fn filter_templates(
-        &self,
-        filters: &TemplateFilters,
-    ) -> Result<Vec<DeviceTemplate>, TemplateError> {
+    pub async fn filter_templates(&self, filters: &TemplateFilters) -> Result<Vec<DeviceTemplate>, TemplateError> {
         self.search_service.filter_templates(filters).await
     }
 
     /// 获取搜索建议
-    pub async fn get_search_suggestions(
-        &self,
-        keyword: &str,
-        limit: u32,
-    ) -> Result<Vec<String>, TemplateError> {
+    pub async fn get_search_suggestions(&self, keyword: &str, limit: u32) -> Result<Vec<String>, TemplateError> {
         self.search_service.get_search_suggestions(keyword, limit).await
     }
 
@@ -110,27 +96,25 @@ impl TemplateRepository {
     }
 
     /// 统计搜索结果数量
-    pub async fn count_search_results(
-        &self,
-        params: &TemplateQueryParams,
-    ) -> Result<i64, TemplateError> {
+    pub async fn count_search_results(&self, params: &TemplateQueryParams) -> Result<i64, TemplateError> {
         self.search_service.count_search_results(params).await
     }
 
     /// 创建新模板
-    pub async fn create(
-        &self,
-        request: &CreateDeviceTemplateRequest,
-    ) -> Result<DeviceTemplate, TemplateError> {
+    pub async fn create(&self, request: &CreateDeviceTemplateRequest) -> Result<DeviceTemplate, TemplateError> {
         info!("创建新设备模板: {}", request.name);
 
         if DeviceTemplate::exists_by_name(&self.database, &request.name).await? {
-            return Err(TemplateError::TemplateNameExists { name: request.name.clone() });
+            return Err(TemplateError::TemplateNameExists {
+                name: request.name.clone(),
+            });
         }
 
         let categories = TemplateCategory::get_categories(&self.database).await?;
         if !categories.iter().any(|c| c.name == request.category) {
-            return Err(TemplateError::CategoryNotFound { category: request.category.clone() });
+            return Err(TemplateError::CategoryNotFound {
+                category: request.category.clone(),
+            });
         }
 
         let template = DeviceTemplate::create(&self.database, request).await?;
@@ -163,7 +147,9 @@ impl TemplateRepository {
         if let Some(new_category) = &request.category {
             let categories = TemplateCategory::get_categories(&self.database).await?;
             if !categories.iter().any(|c| c.name == *new_category) {
-                return Err(TemplateError::CategoryNotFound { category: new_category.clone() });
+                return Err(TemplateError::CategoryNotFound {
+                    category: new_category.clone(),
+                });
             }
         }
 
@@ -229,10 +215,7 @@ impl TemplateSearchService {
     }
 
     /// 高级搜索模板
-    pub async fn advanced_search(
-        &self,
-        params: &TemplateQueryParams,
-    ) -> Result<Vec<DeviceTemplate>, TemplateError> {
+    pub async fn advanced_search(&self, params: &TemplateQueryParams) -> Result<Vec<DeviceTemplate>, TemplateError> {
         info!("执行高级模板搜索，参数: {:?}", params);
 
         let mut query = QueryBuilder::new(
@@ -260,19 +243,17 @@ impl TemplateSearchService {
             query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let templates =
-            query.build_query_as::<DeviceTemplate>().fetch_all(self.database.pool()).await?;
+        let templates = query
+            .build_query_as::<DeviceTemplate>()
+            .fetch_all(self.database.pool())
+            .await?;
 
         info!("高级搜索找到 {} 个模板", templates.len());
         Ok(templates)
     }
 
     /// 构建搜索条件
-    fn build_search_conditions(
-        &self,
-        query: &mut QueryBuilder<sqlx::Sqlite>,
-        params: &TemplateQueryParams,
-    ) {
+    fn build_search_conditions(&self, query: &mut QueryBuilder<sqlx::Sqlite>, params: &TemplateQueryParams) {
         // 分类筛选
         if let Some(category) = &params.category {
             query.push(" AND category = ").push_bind(category);
@@ -334,8 +315,10 @@ impl TemplateSearchService {
             query.push(" LIMIT ").push_bind(limit as i64);
         }
 
-        let templates =
-            query.build_query_as::<DeviceTemplate>().fetch_all(self.database.pool()).await?;
+        let templates = query
+            .build_query_as::<DeviceTemplate>()
+            .fetch_all(self.database.pool())
+            .await?;
 
         info!("在分类 {} 中找到 {} 个模板", category, templates.len());
         Ok(templates)
@@ -366,8 +349,10 @@ impl TemplateSearchService {
             query.push(" LIMIT ").push_bind(limit as i64);
         }
 
-        let templates =
-            query.build_query_as::<DeviceTemplate>().fetch_all(self.database.pool()).await?;
+        let templates = query
+            .build_query_as::<DeviceTemplate>()
+            .fetch_all(self.database.pool())
+            .await?;
 
         info!("厂商 {} 的模板找到 {} 个", manufacturer, templates.len());
         Ok(templates)
@@ -398,18 +383,17 @@ impl TemplateSearchService {
             query.push(" LIMIT ").push_bind(limit as i64);
         }
 
-        let templates =
-            query.build_query_as::<DeviceTemplate>().fetch_all(self.database.pool()).await?;
+        let templates = query
+            .build_query_as::<DeviceTemplate>()
+            .fetch_all(self.database.pool())
+            .await?;
 
         info!("协议类型 {} 的模板找到 {} 个", protocol_type, templates.len());
         Ok(templates)
     }
 
     /// 多条件组合筛选
-    pub async fn filter_templates(
-        &self,
-        filters: &TemplateFilters,
-    ) -> Result<Vec<DeviceTemplate>, TemplateError> {
+    pub async fn filter_templates(&self, filters: &TemplateFilters) -> Result<Vec<DeviceTemplate>, TemplateError> {
         info!("执行多条件组合筛选: {:?}", filters);
 
         let mut query = QueryBuilder::new(
@@ -486,19 +470,17 @@ impl TemplateSearchService {
             }
         }
 
-        let templates =
-            query.build_query_as::<DeviceTemplate>().fetch_all(self.database.pool()).await?;
+        let templates = query
+            .build_query_as::<DeviceTemplate>()
+            .fetch_all(self.database.pool())
+            .await?;
 
         info!("组合筛选找到 {} 个模板", templates.len());
         Ok(templates)
     }
 
     /// 获取搜索建议
-    pub async fn get_search_suggestions(
-        &self,
-        keyword: &str,
-        limit: u32,
-    ) -> Result<Vec<String>, TemplateError> {
+    pub async fn get_search_suggestions(&self, keyword: &str, limit: u32) -> Result<Vec<String>, TemplateError> {
         info!("获取搜索建议，关键词: {}", keyword);
 
         let search_pattern = format!("%{}%", keyword);
@@ -528,8 +510,10 @@ impl TemplateSearchService {
         .fetch_all(self.database.pool())
         .await?;
 
-        let suggestions: Vec<String> =
-            suggestions.into_iter().map(|row| row.get::<String, _>("suggestion")).collect();
+        let suggestions: Vec<String> = suggestions
+            .into_iter()
+            .map(|row| row.get::<String, _>("suggestion"))
+            .collect();
 
         debug!("找到 {} 个搜索建议", suggestions.len());
         Ok(suggestions)
@@ -560,20 +544,15 @@ impl TemplateSearchService {
         .fetch_all(self.database.pool())
         .await?;
 
-        let keywords: Vec<String> =
-            popular.into_iter().map(|row| row.get::<String, _>("keyword")).collect();
+        let keywords: Vec<String> = popular.into_iter().map(|row| row.get::<String, _>("keyword")).collect();
 
         debug!("找到 {} 个热门关键词", keywords.len());
         Ok(keywords)
     }
 
     /// 统计搜索结果数量
-    pub async fn count_search_results(
-        &self,
-        params: &TemplateQueryParams,
-    ) -> Result<i64, TemplateError> {
-        let mut query =
-            QueryBuilder::new("SELECT COUNT(*) as count FROM thing_templates WHERE is_active = 1");
+    pub async fn count_search_results(&self, params: &TemplateQueryParams) -> Result<i64, TemplateError> {
+        let mut query = QueryBuilder::new("SELECT COUNT(*) as count FROM thing_templates WHERE is_active = 1");
 
         self.build_search_conditions(&mut query, params);
 

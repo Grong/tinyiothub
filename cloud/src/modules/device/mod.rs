@@ -13,11 +13,6 @@ pub mod service;
 // device_query) moved to the thing crate (P4-Task15). Re-exported here so
 // existing `modules::device::*` import paths keep working until the
 // remaining consumers migrate.
-pub use tinyiothub_thing::legacy::device_query;
-pub use tinyiothub_thing::legacy::trace;
-pub use tinyiothub_thing::legacy::trace_repository;
-pub use tinyiothub_thing::legacy::types;
-
 // Backward compatibility aliases (domain::device::trace_service → modules::device::trace)
 pub use monitoring as monitoring_service;
 pub use monitoring::{DeviceMetrics, DeviceMonitoringService, SystemOverview};
@@ -33,7 +28,8 @@ pub use tinyiothub_storage::traits::device as repository;
 pub use tinyiothub_storage::traits::device::{
     DeviceCriteria, DeviceRepository, DeviceSortBy, DeviceSortOrder,
 };
-pub use tinyiothub_thing::legacy::trace as trace_service;
-pub use tinyiothub_thing::legacy::trace::{
-    DeviceTrace, DeviceTraceService, DeviceTraceStatistics, SystemTraceOverview,
+pub use tinyiothub_thing::legacy::{
+    device_query, trace, trace as trace_service,
+    trace::{DeviceTrace, DeviceTraceService, DeviceTraceStatistics, SystemTraceOverview},
+    trace_repository, types,
 };

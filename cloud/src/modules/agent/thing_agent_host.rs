@@ -171,9 +171,7 @@ mod tests {
             .await
             .expect("in-memory pool");
         sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await.unwrap();
-        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
-            .await
-            .expect("migrations");
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool).await.expect("migrations");
         pool
     }
 

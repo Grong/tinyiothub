@@ -38,8 +38,8 @@ where
 #[serde(rename_all = "snake_case")]
 pub struct SendCodeRequest {
     pub phone: String,
-    pub purpose: Option<String>,        // login, register, reset_password
-    pub captcha_ticket: Option<String>, // 腾讯防水墙票据
+    pub purpose: Option<String>,         // login, register, reset_password
+    pub captcha_ticket: Option<String>,  // 腾讯防水墙票据
     pub captcha_randstr: Option<String>, // 腾讯防水墙随机串
 }
 
@@ -89,11 +89,7 @@ enum RateLimitResult {
 }
 
 /// 检查发送频率限制
-async fn check_rate_limit(
-    state: &AuthState,
-    phone: &str,
-    ip: Option<&str>,
-) -> Result<RateLimitResult, StatusCode> {
+async fn check_rate_limit(state: &AuthState, phone: &str, ip: Option<&str>) -> Result<RateLimitResult, StatusCode> {
     let rate_limit = state.sms_config.rate_limit.as_ref();
 
     let interval_secs = rate_limit.and_then(|r| r.interval_secs).unwrap_or(90) as i64;
@@ -136,12 +132,7 @@ async fn check_rate_limit(
 // ============== CAPTCHA 验证 ==============
 
 /// 验证腾讯防水墙票据
-async fn verify_captcha(
-    state: &AuthState,
-    _ticket: &str,
-    _randstr: &str,
-    _ip: &str,
-) -> Result<bool, StatusCode> {
+async fn verify_captcha(state: &AuthState, _ticket: &str, _randstr: &str, _ip: &str) -> Result<bool, StatusCode> {
     let captcha_config = match state.sms_config.captcha.as_ref() {
         Some(c) if c.enabled => c,
         None | Some(_) => return Ok(true), // 未配置或未启用时跳过
@@ -204,17 +195,17 @@ async fn send_aliyun_sms(
         .join("&");
 
     // 构建待签名字符串
-    let string_to_sign =
-        format!("GET&{}&{}", percent_encode("/"), percent_encode(canonical_query_string.as_str()));
+    let string_to_sign = format!(
+        "GET&{}&{}",
+        percent_encode("/"),
+        percent_encode(canonical_query_string.as_str())
+    );
 
     // 计算 HMAC-SHA1 签名
     let mut mac = HmacSha1::new_from_slice(format!("{}&", config.access_key_secret).as_bytes())
         .map_err(|e| format!("HMAC error: {}", e))?;
     mac.update(string_to_sign.as_bytes());
-    let signature = base64::Engine::encode(
-        &base64::engine::general_purpose::STANDARD,
-        mac.finalize().into_bytes(),
-    );
+    let signature = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, mac.finalize().into_bytes());
 
     // 构建完整 URL
     let url = format!(
@@ -231,10 +222,17 @@ async fn send_aliyun_sms(
 
     // 发送请求
     let client = reqwest::Client::new();
-    let resp = client.get(&url).send().await.map_err(|e| format!("Request failed: {}", e))?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
 
     let status = resp.status();
-    let body = resp.text().await.map_err(|e| format!("Failed to read response body: {}", e))?;
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response body: {}", e))?;
 
     tracing::debug!("[SMS] Aliyun response status={}, body={}", status, body);
 
@@ -251,10 +249,8 @@ async fn send_aliyun_sms(
         Err(json_err) => {
             // Aliyun returns XML on some errors (e.g. RequestParameterMalformed)
             if body.trim_start().starts_with("<?xml") {
-                let code =
-                    extract_xml_text(&body, "Code").unwrap_or_else(|| "UnknownError".to_string());
-                let message =
-                    extract_xml_text(&body, "Message").unwrap_or_else(|| json_err.to_string());
+                let code = extract_xml_text(&body, "Code").unwrap_or_else(|| "UnknownError".to_string());
+                let message = extract_xml_text(&body, "Message").unwrap_or_else(|| json_err.to_string());
                 AliyunResponse { code, message }
             } else {
                 return Err(format!("Failed to parse response: {} — body: {}", json_err, body));
@@ -528,13 +524,12 @@ async fn login_with_code(
     }
 
     // 查找该用户关联的租户和默认 workspace
-    let tenant_id: String =
-        sqlx::query_scalar("SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1")
-            .bind(&user.id)
-            .fetch_optional(db.pool())
-            .await
-            .unwrap_or(None)
-            .unwrap_or_else(|| "default".to_string());
+    let tenant_id: String = sqlx::query_scalar("SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1")
+        .bind(&user.id)
+        .fetch_optional(db.pool())
+        .await
+        .unwrap_or(None)
+        .unwrap_or_else(|| "default".to_string());
 
     // 优先查找用户自己的 workspace (ws-{user_id})，fallback 到 tenant 下第一个
     let user_ws_id = format!("ws-{}", user.id);
@@ -549,14 +544,13 @@ async fn login_with_code(
     .unwrap_or(None);
 
     let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
-    let token =
-        match jwt::generate_token(&user.id, &user.username, &tenant_id, &workspace_id_for_token) {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::error!("Failed to generate token: {}", e);
-                return ApiResponseBuilder::error("登录失败，请稍后重试".to_string());
-            }
-        };
+    let token = match jwt::generate_token(&user.id, &user.username, &tenant_id, &workspace_id_for_token) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("Failed to generate token: {}", e);
+            return ApiResponseBuilder::error("登录失败，请稍后重试".to_string());
+        }
+    };
 
     ApiResponseBuilder::success(LoginWithCodeResponse {
         access_token: token,
@@ -845,7 +839,11 @@ mod tests {
             let code = generate_code();
             // 验证码应该是6位数字
             assert_eq!(code.len(), 6, "Code {} should be 6 digits", code);
-            assert!(code.chars().all(|c| c.is_ascii_digit()), "Code {} should be all digits", code);
+            assert!(
+                code.chars().all(|c| c.is_ascii_digit()),
+                "Code {} should be all digits",
+                code
+            );
         }
     }
 
@@ -886,7 +884,10 @@ mod tests {
     <Message>Request parameters has malformed encoded characters.</Message>
     <Recommend><![CDATA[...]]></Recommend>
 </Error>"#;
-        assert_eq!(extract_xml_text(xml, "Code"), Some("RequestParameterMalformed".to_string()));
+        assert_eq!(
+            extract_xml_text(xml, "Code"),
+            Some("RequestParameterMalformed".to_string())
+        );
         assert_eq!(
             extract_xml_text(xml, "Message"),
             Some("Request parameters has malformed encoded characters.".to_string())
