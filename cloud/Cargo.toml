@@ -114,6 +114,7 @@ user = { workspace = true }
 tenant = { workspace = true }
 event = { workspace = true }
 alarm = { workspace = true }
+driver = { workspace = true }
 tinyiothub-marketplace = { path = "../marketplace" }
 
 # Dynamic loading

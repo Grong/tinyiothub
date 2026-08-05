@@ -170,6 +170,7 @@ user = { path = "crates/user" }
 tenant = { path = "crates/tenant" }
 event = { path = "crates/event" }
 alarm = { path = "crates/alarm" }
+driver = { path = "crates/driver" }
 
 [profile.release]
 opt-level = 2

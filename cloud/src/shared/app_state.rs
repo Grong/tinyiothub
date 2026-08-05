@@ -148,7 +148,7 @@ pub struct AppState {
     pub sysinfo_system: Arc<std::sync::Mutex<sysinfo::System>>,
 
     /// 网关服务 - MQTT 网关配对
-    pub gateway_service: Arc<crate::modules::gateway::service::GatewayService>,
+    pub gateway_service: Arc<tinyiothub_driver::gateway::service::GatewayService>,
 
     /// MQTT 客户端（可选，未配置时为空）
     pub mqtt_client: Option<Arc<crate::shared::mqtt_client::PlatformMqttClient>>,
@@ -363,13 +363,13 @@ impl AppState {
 
         // === 网关配对服务 ===
         let (mqtt_tx, mqtt_rx) =
-            tokio::sync::mpsc::channel::<crate::modules::gateway::service::MqttPublish>(100);
+            tokio::sync::mpsc::channel::<tinyiothub_driver::gateway::service::MqttPublish>(100);
         let (announce_tx, mut announce_rx) =
-            tokio::sync::mpsc::channel::<crate::modules::gateway::types::PairingAnnounce>(1000);
+            tokio::sync::mpsc::channel::<tinyiothub_driver::gateway::types::PairingAnnounce>(1000);
         let (data_tx, mut data_rx) =
-            tokio::sync::mpsc::channel::<crate::modules::gateway::types::GatewayDataMessage>(1000);
-        let pairing_cache = Arc::new(crate::modules::gateway::pairing::PairingCache::new(10000));
-        let gateway_service = Arc::new(crate::modules::gateway::service::GatewayService::new(
+            tokio::sync::mpsc::channel::<tinyiothub_driver::gateway::types::GatewayDataMessage>(1000);
+        let pairing_cache = Arc::new(tinyiothub_driver::gateway::pairing::PairingCache::new(10000));
+        let gateway_service = Arc::new(tinyiothub_driver::gateway::service::GatewayService::new(
             device_repository_factory.clone(),
             event_repository.clone(),
             pairing_cache,
@@ -1056,6 +1056,12 @@ impl axum::extract::FromRef<AppState> for tinyiothub_alarm::AlarmState {
             alarm_service: state.alarm_service.clone(),
             database: state.database.clone(),
         }
+    }
+}
+
+impl axum::extract::FromRef<AppState> for tinyiothub_driver::DriverState {
+    fn from_ref(state: &AppState) -> Self {
+        tinyiothub_driver::DriverState { gateway_service: state.gateway_service.clone() }
     }
 }
 

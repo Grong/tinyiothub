@@ -11,13 +11,11 @@ use tinyiothub_event::{
     router::{ThingEventInput, ThingEventPayload, ThrottleState, route_thing_event},
 };
 
-use crate::modules::{
-    gateway::{
-        service::MqttPublish,
-        types::{
-            DeviceDiscoverMessage, DeviceTelemetryMessage, GatewayDataMessage, PairingAnnounce,
-            StatusMessage, TelemetryMessage,
-        },
+use tinyiothub_driver::gateway::{
+    service::MqttPublish,
+    types::{
+        DeviceDiscoverMessage, DeviceTelemetryMessage, GatewayDataMessage, PairingAnnounce,
+        StatusMessage, TelemetryMessage,
     },
 };
 

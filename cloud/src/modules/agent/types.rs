@@ -1,6 +1,5 @@
 // Agent types — domain types and DTOs
 
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -575,10 +574,8 @@ impl MemoryContext {
 
 // --- Plugin context ---
 
-/// Application context shared by plugins
-pub struct AppContext {
-    pub device_cache: Arc<tinyiothub_storage::cache::DeviceCache>,
-}
+// `AppContext` moved to `tinyiothub_driver::plugin::registry` (P4-Task20) —
+// the plugin registry was its only consumer; no agent-plane code uses it.
 
 // --- Session repository trait ---
 

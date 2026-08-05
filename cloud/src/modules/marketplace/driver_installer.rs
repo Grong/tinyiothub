@@ -4,7 +4,8 @@ use super::{
     client::MarketplaceClient,
     error::{MarketplaceError, Result},
 };
-use crate::{modules::device::driver, shared::utils::sanitize_filename};
+use crate::shared::utils::sanitize_filename;
+use tinyiothub_runtime::driver;
 
 pub struct DriverInstaller {
     client: Arc<MarketplaceClient>,

@@ -7,9 +7,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use tinyiothub_runtime::driver;
+
 use crate::{
     modules::{
-        device::driver,
         mcp::{
             handlers::get_mcp_context,
             tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler},

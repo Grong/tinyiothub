@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Dashboard 统计信息
@@ -51,30 +50,7 @@ pub struct NetworkMetrics {
     pub outbound: i64,
 }
 
-/// 设备状态分布
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeviceStatusDistribution {
-    /// 在线设备数
-    pub online: i64,
-    /// 离线设备数
-    pub offline: i64,
-    /// 故障设备数
-    pub error: i64,
-    /// 维护中设备数
-    pub maintenance: i64,
-}
+// `DeviceStatusDistribution` / `QuickDevice` moved to
+// `tinyiothub_driver::legacy::types` (P4-Task20) — the device plane
+// (query service + dashboard handler) was their only consumer.
 
-/// 关键设备信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuickDevice {
-    /// 设备ID
-    pub id: String,
-    /// 设备名称
-    pub name: String,
-    /// 设备状态
-    pub status: String,
-    /// 最后在线时间
-    pub last_seen: DateTime<Utc>,
-    /// 设备类型
-    pub device_type: String,
-}
