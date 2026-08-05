@@ -18,6 +18,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "admin"
+version = "0.4.6"
+dependencies = [
+ "async-trait",
+ "auth",
+ "axum",
+ "chrono",
+ "core",
+ "cron 0.12.1",
+ "db",
+ "driver",
+ "event",
+ "runtime",
+ "scheduler",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "subtle",
+ "sysinfo",
+ "tenant",
+ "thing",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+ "web",
+]
+
+[[package]]
 name = "aead"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6156,6 +6186,7 @@ dependencies = [
 name = "tinyiothub-cloud"
 version = "0.4.6"
 dependencies = [
+ "admin",
  "aes-gcm",
  "agent",
  "alarm",

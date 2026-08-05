@@ -168,7 +168,7 @@ async fn create_test_app_state() -> AppState {
 
     // Initialize START_TIME for uptime tests
     let _ =
-        crate::modules::monitoring::handler::health::START_TIME.set(std::time::SystemTime::now());
+        tinyiothub_admin::monitoring::handler::health::START_TIME.set(std::time::SystemTime::now());
 
     AppState::new(device_cache, pool)
 }

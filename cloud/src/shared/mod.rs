@@ -7,6 +7,13 @@ pub mod error;
 
 pub mod identifier;
 
+/// System bootstrap / initialization (default admin user, default tenant,
+/// per-user workspace + Agent provisioning). Stayed in the composition
+/// layer at P4-Task24 — entangled with the agent plane
+/// (tinyiothub_agent::host::scaffold / AgentPool / shared::paths);
+/// boundary documented in `tinyiothub_admin::legacy`.
+pub mod initialization;
+
 pub mod network;
 
 pub mod paths;

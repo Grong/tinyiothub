@@ -173,6 +173,7 @@ alarm = { path = "crates/alarm" }
 driver = { path = "crates/driver" }
 notify = { path = "crates/notify" }
 mcp = { path = "crates/mcp" }
+admin = { path = "crates/admin" }
 
 [profile.release]
 opt-level = 2

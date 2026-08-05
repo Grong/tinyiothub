@@ -1,37 +1,32 @@
 use std::sync::Arc;
 
+use tinyiothub_agent::host::agent::AgentPool;
 use tinyiothub_auth::redis::RedisClient;
 use tinyiothub_core::{memory::MemoryStore, models::device_property::DeviceProperty};
-use tinyiothub_notify::{
-    NotificationHistoryRepositoryImpl, NotificationManager, NotificationRuleRepositoryImpl,
-    channels::NotificationChannelFactory,
+use tinyiothub_driver::legacy::{
+    DeviceMonitoringService, DevicePerformanceService, DeviceQueryService, DeviceService,
 };
-use tinyiothub_storage::{Database, DeviceRepositoryFactory, cache::DeviceCache};
-use tinyiothub_thing::template::{TemplateEngine, TemplateRepository, TemplateValidator};
-use tokio::sync::OnceCell;
-
 use tinyiothub_event::{
     repositories::{EventRepository, RealTimeEventRepository},
     sqlite_event::SqliteEventRepository,
     sqlite_real_time_event::SqliteRealTimeEventRepository,
 };
-use tinyiothub_agent::host::agent::AgentPool;
+use tinyiothub_notify::{
+    NotificationHistoryRepositoryImpl, NotificationManager, NotificationRuleRepositoryImpl,
+    channels::NotificationChannelFactory,
+};
+use tinyiothub_storage::{Database, DeviceRepositoryFactory, cache::DeviceCache};
+use tinyiothub_thing::{
+    legacy::{trace::DeviceTraceService, trace_repository::DeviceTraceRepository},
+    template::{TemplateEngine, TemplateRepository, TemplateValidator},
+};
+use tokio::sync::OnceCell;
 
-use crate::{
-    modules::{
-        device::{
-            monitoring_service::DeviceMonitoringService,
-            performance_service::DevicePerformanceService, query_service::DeviceQueryService,
-            service::DeviceService, trace_repository::DeviceTraceRepository,
-            trace_service::DeviceTraceService,
-        },
-    },
-    shared::{
-        error::Error,
-        event::{
-            EventBus, SseConnectionManager,
-            security::{EventSecurityFactory, SecureEventService},
-        },
+use crate::shared::{
+    error::Error,
+    event::{
+        EventBus, SseConnectionManager,
+        security::{EventSecurityFactory, SecureEventService},
     },
 };
 
@@ -136,10 +131,10 @@ pub struct AppState {
     pub permission_service: Arc<tinyiothub_user::permission::PermissionService>,
 
     /// Cron 任务仓库
-    pub cron_job_repo: Arc<dyn crate::modules::cron::CronJobRepository>,
+    pub cron_job_repo: Arc<dyn tinyiothub_storage::traits::cron::CronJobRepository>,
 
     /// Cron 执行记录仓库
-    pub cron_run_repo: Arc<dyn crate::modules::cron::CronRunRepository>,
+    pub cron_run_repo: Arc<dyn tinyiothub_storage::traits::cron::CronRunRepository>,
 
     /// 会话服务 - Agent 聊天会话管理
     pub session_service: Arc<tinyiothub_agent::host::SessionService>,
@@ -233,16 +228,15 @@ impl AppState {
         );
 
         // 基础服务 - 使用事件总线
-        let device_repository: Arc<dyn crate::modules::device::repository::DeviceRepository> =
+        let device_repository: Arc<dyn tinyiothub_storage::traits::device::DeviceRepository> =
             Arc::new(tinyiothub_storage::SqliteDeviceRepository::new(database.as_ref().clone()));
         let device_service = Arc::new(
             DeviceService::with_event_bus(device_repository, database.clone(), event_bus.clone())
                 .with_tag_repository(tag_repository.clone()),
         );
-        let device_query_service: Arc<dyn DeviceQueryService> =
-            Arc::new(crate::modules::device::query_service_impl::SqliteDeviceQueryService::new(
-                database.as_ref().clone(),
-            ));
+        let device_query_service: Arc<dyn DeviceQueryService> = Arc::new(
+            tinyiothub_driver::legacy::SqliteDeviceQueryService::new(database.as_ref().clone()),
+        );
 
         // 监控服务 - 依赖数据库、缓存和告警仓库
         let monitoring_service = Arc::new(DeviceMonitoringService::new(
@@ -359,11 +353,11 @@ impl AppState {
         ));
 
         // Cron 仓库
-        let cron_job_repo: Arc<dyn crate::modules::cron::CronJobRepository> =
+        let cron_job_repo: Arc<dyn tinyiothub_storage::traits::cron::CronJobRepository> =
             Arc::new(tinyiothub_storage::sqlite::cron_job::SqliteCronJobRepository::new(
                 database.as_ref().clone(),
             ));
-        let cron_run_repo: Arc<dyn crate::modules::cron::CronRunRepository> =
+        let cron_run_repo: Arc<dyn tinyiothub_storage::traits::cron::CronRunRepository> =
             Arc::new(tinyiothub_storage::sqlite::cron_run::SqliteCronRunRepository::new(
                 database.as_ref().clone(),
             ));
@@ -895,8 +889,9 @@ impl tinyiothub_auth::user_store::AuthUserStore for UserServiceAuthAdapter {
 }
 
 /// Workspace-bootstrap seam: post-registration tenant/workspace scaffolding
-/// stays in cloud (`modules::system::handler`, entangled with the agent
-/// plane); this adapter carries the AppState the function needs.
+/// stays in cloud (`shared::initialization`, entangled with the agent
+/// plane; P4-Task24 boundary — see `tinyiothub_admin::legacy`); this
+/// adapter carries the AppState the function needs.
 pub struct SystemWorkspaceBootstrap {
     pub state: AppState,
 }
@@ -904,7 +899,7 @@ pub struct SystemWorkspaceBootstrap {
 #[async_trait::async_trait]
 impl tinyiothub_auth::bootstrap::WorkspaceBootstrap for SystemWorkspaceBootstrap {
     async fn ensure_user_has_workspace(&self, user_id: &str) -> Result<(), String> {
-        crate::modules::system::handler::ensure_user_has_workspace(&self.state, user_id)
+        crate::shared::initialization::ensure_user_has_workspace(&self.state, user_id)
             .await
             .map_err(|e| e.to_string())
     }
@@ -1178,6 +1173,65 @@ impl axum::extract::FromRef<AppState> for tinyiothub_mcp::McpState {
             cron_job_repo: state.cron_job_repo.clone(),
             cron_run_repo: state.cron_run_repo.clone(),
             event_bus: state.event_bus.clone(),
+        }
+    }
+}
+
+// ============================================================================
+// P4-Task24: admin domain slice + admin-role seam adapter
+// ============================================================================
+
+/// Admin-role seam adapter: the admin crate's privileged-operation guard
+/// routes through cloud's event-security plane (`AuthHelper` →
+/// `SecureEventService`), which stays in cloud. Same shape as
+/// `EventSecurityRoleChecker` (P4-Task17a).
+pub struct EventSecurityAdminRoleChecker {
+    pub state: AppState,
+}
+
+#[async_trait::async_trait]
+impl tinyiothub_admin::AdminRoleChecker for EventSecurityAdminRoleChecker {
+    async fn require_admin_role(&self, user_id: &str, operation: &str) -> Result<(), String> {
+        crate::shared::error_handling::AuthHelper::require_admin_role(
+            &self.state,
+            user_id,
+            operation,
+        )
+        .await
+        .map_err(|_| "Access denied: admin role required".to_string())
+    }
+}
+
+/// P4-Task24: derive the admin domain's state slice from the global
+/// AppState. Cloud mounts the admin routers (/devices, /system,
+/// /monitoring, /batch, /jobs, /open) with this `FromRef` conversion.
+/// Config slices are cloned from the process-global settings at extraction
+/// time — identical semantics to the former per-request `config::get()`
+/// reads (set once at startup, never reloaded).
+impl axum::extract::FromRef<AppState> for tinyiothub_admin::AdminState {
+    fn from_ref(state: &AppState) -> Self {
+        let settings = crate::shared::config::get();
+        tinyiothub_admin::AdminState {
+            database: state.database.clone(),
+            device_cache: state.device_cache.clone(),
+            device_repository_factory: state.device_repository_factory.clone(),
+            tag_repository: state.tag_repository.clone(),
+            tag_service: state.tag_service.clone(),
+            event_bus: state.event_bus.clone(),
+            event_repository: state.event_repository.clone(),
+            data_server: state.data_server.clone(),
+            device_query_service: state.device_query_service.clone(),
+            monitoring_service: state.monitoring_service.clone(),
+            performance_service: state.performance_service.clone(),
+            trace_service: state.trace_service.clone(),
+            workspace_service: state.workspace_service.clone(),
+            tenant_service: state.tenant_service.clone(),
+            cron_job_repo: state.cron_job_repo.clone(),
+            cron_run_repo: state.cron_run_repo.clone(),
+            sysinfo_system: state.sysinfo_system.clone(),
+            role_checker: Arc::new(EventSecurityAdminRoleChecker { state: state.clone() }),
+            network_defaults: settings.network.defaults.clone(),
+            mqtt_primary: settings.mqtt.primary.clone(),
         }
     }
 }

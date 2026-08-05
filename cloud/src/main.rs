@@ -83,8 +83,8 @@ async fn main_impl() -> std::io::Result<()> {
     }));
 
     // Initialize global start time for uptime calculation (before any health checks)
-    let _ = tinyiothub_cloud::modules::monitoring::handler::health::START_TIME
-        .set(std::time::SystemTime::now());
+    let _ =
+        tinyiothub_admin::monitoring::handler::health::START_TIME.set(std::time::SystemTime::now());
 
     info!("🚀 TinyIoTHub Starting...");
     info!("Environment: {}", config::environment());
@@ -188,7 +188,7 @@ async fn main_impl() -> std::io::Result<()> {
     #[cfg(not(feature = "harmonyos"))]
     {
         if let Err(e) =
-            tinyiothub_cloud::modules::system::handler::ensure_default_admin_user(&app_state).await
+            tinyiothub_cloud::shared::initialization::ensure_default_admin_user(&app_state).await
         {
             error!("Failed to ensure default admin user: {}", e);
         }
