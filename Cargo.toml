@@ -17,6 +17,7 @@ exclude = [
 [workspace.package]
 version = "0.4.6"
 edition = "2024"
+rust-version = "1.85"
 authors = ["TinyIoTHub Team"]
 license = "MIT"
 repository = "https://github.com/Grong/tinyiothub"
