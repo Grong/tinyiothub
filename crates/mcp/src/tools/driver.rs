@@ -82,8 +82,8 @@ impl ToolHandler for ListDriversHandler {
     }
 
     async fn execute(&self, _args: Value) -> Result<Value, ToolError> {
-        let _claims = get_mcp_context()
-            .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
+        let _claims =
+            get_mcp_context().ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
         let all_names = driver::get_all_driver_names();
 
@@ -152,8 +152,8 @@ impl ToolHandler for TestDriverHandler {
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let _claims = get_mcp_context()
-            .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
+        let _claims =
+            get_mcp_context().ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
         let input: TestDriverInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 

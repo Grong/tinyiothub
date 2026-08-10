@@ -7,9 +7,7 @@ use tokio_postgres::NoTls;
 use tracing::{debug, error};
 
 use super::{super::config::PostgresConfig, StorageHandler};
-use crate::{
-    plugin::{PluginHandler, PluginManifest, PluginType, storage::StorageData},
-};
+use crate::plugin::{PluginHandler, PluginManifest, PluginType, storage::StorageData};
 use tinyiothub_core::error::Error;
 
 pub struct PostgresHandler {
@@ -46,7 +44,11 @@ impl PostgresHandler {
 #[async_trait]
 impl StorageHandler for PostgresHandler {
     async fn write(&self, data: &StorageData) -> Result<(), Error> {
-        debug!("Writing {} values to Postgres for device {}", data.values.len(), data.device_id);
+        debug!(
+            "Writing {} values to Postgres for device {}",
+            data.values.len(),
+            data.device_id
+        );
 
         let query = format!(
             "INSERT INTO {} (device_id, timestamp, data) VALUES ($1, $2, $3)",

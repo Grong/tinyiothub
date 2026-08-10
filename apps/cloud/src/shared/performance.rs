@@ -35,7 +35,11 @@ where
 {
     /// Create a new cache with specified TTL and maximum size
     pub fn new(ttl: Duration, max_size: usize) -> Self {
-        Self { data: Arc::new(RwLock::new(HashMap::new())), ttl, max_size }
+        Self {
+            data: Arc::new(RwLock::new(HashMap::new())),
+            ttl,
+            max_size,
+        }
     }
 
     /// Get value from cache if it exists and hasn't expired
@@ -192,11 +196,7 @@ impl StringOptimizer {
     }
 
     /// Efficient string formatting with pre-allocated capacity
-    pub fn format_with_capacity(
-        capacity: usize,
-        template: &str,
-        replacements: &[(&str, &str)],
-    ) -> String {
+    pub fn format_with_capacity(capacity: usize, template: &str, replacements: &[(&str, &str)]) -> String {
         let mut result = String::with_capacity(capacity);
         result.push_str(template);
 
@@ -299,7 +299,11 @@ where
         let connections = self.connections.read().await;
         let current_size = *self.current_size.read().await;
 
-        PoolStats { available: connections.len(), total: current_size, max_size: self.max_size }
+        PoolStats {
+            available: connections.len(),
+            total: current_size,
+            max_size: self.max_size,
+        }
     }
 }
 
@@ -329,7 +333,9 @@ pub mod efficient_collections {
 
     impl PreAllocatedString {
         pub fn new(capacity: usize) -> Self {
-            Self { buffer: String::with_capacity(capacity) }
+            Self {
+                buffer: String::with_capacity(capacity),
+            }
         }
 
         pub fn format(&mut self, template: &str, args: &[&str]) -> &str {
@@ -369,7 +375,10 @@ impl PerformanceMetrics {
     /// Record operation time
     pub async fn record_operation_time(&self, operation: &str, duration: Duration) {
         let mut times = self.operation_times.write().await;
-        times.entry(operation.to_string()).or_insert_with(Vec::new).push(duration);
+        times
+            .entry(operation.to_string())
+            .or_insert_with(Vec::new)
+            .push(duration);
 
         // Keep only last 100 measurements to prevent memory growth
         if let Some(measurements) = times.get_mut(operation)
@@ -420,7 +429,10 @@ impl PerformanceMetrics {
             }
         }
 
-        MetricsSnapshot { operation_averages, error_counts: errors.clone() }
+        MetricsSnapshot {
+            operation_averages,
+            error_counts: errors.clone(),
+        }
     }
 }
 
@@ -510,8 +522,7 @@ mod tests {
         let result = StringOptimizer::concat_small(&parts);
         assert_eq!(result, "Hello World!");
 
-        let formatted =
-            StringOptimizer::format_with_capacity(20, "Hello {name}!", &[("{name}", "Rust")]);
+        let formatted = StringOptimizer::format_with_capacity(20, "Hello {name}!", &[("{name}", "Rust")]);
         assert_eq!(formatted, "Hello Rust!");
     }
 
@@ -519,8 +530,12 @@ mod tests {
     async fn test_performance_metrics() {
         let metrics = PerformanceMetrics::new();
 
-        metrics.record_operation_time("test_op", Duration::from_millis(100)).await;
-        metrics.record_operation_time("test_op", Duration::from_millis(200)).await;
+        metrics
+            .record_operation_time("test_op", Duration::from_millis(100))
+            .await;
+        metrics
+            .record_operation_time("test_op", Duration::from_millis(200))
+            .await;
         metrics.record_error("test_op").await;
 
         let avg_time = metrics.get_average_time("test_op").await;

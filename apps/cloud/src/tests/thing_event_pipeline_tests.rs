@@ -9,12 +9,10 @@ use std::sync::Arc;
 
 use sqlx::Row;
 use tinyiothub_alarm::{
-    AlarmRepository, AlarmRuleRepository, AlarmService, SqliteAlarmRepository,
-    SqliteAlarmRuleRepository,
+    AlarmRepository, AlarmRuleRepository, AlarmService, SqliteAlarmRepository, SqliteAlarmRuleRepository,
 };
 use tinyiothub_core::models::event::{
-    ContentElement, DeviceEventType, Event, EventLevel, EventSource, EventType, RichContent,
-    TextFormat,
+    ContentElement, DeviceEventType, Event, EventLevel, EventSource, EventType, RichContent, TextFormat,
 };
 use tinyiothub_event::{
     bus::ThingEventBus,
@@ -34,7 +32,9 @@ async fn test_pool() -> sqlx::SqlitePool {
         .connect("sqlite::memory:")
         .await
         .expect("in-memory pool");
-    tinyiothub_storage::migrations::run_migrations(&pool).await.expect("migrations");
+    tinyiothub_storage::migrations::run_migrations(&pool)
+        .await
+        .expect("migrations");
     pool
 }
 
@@ -89,12 +89,7 @@ async fn insert_device_with_template(
         .expect("insert device with template");
 }
 
-fn input(
-    thing_id: &str,
-    workspace_id: &str,
-    event_name: &str,
-    level: EventLevel,
-) -> ThingEventInput {
+fn input(thing_id: &str, workspace_id: &str, event_name: &str, level: EventLevel) -> ThingEventInput {
     ThingEventInput {
         thing_id: thing_id.to_string(),
         workspace_id: workspace_id.to_string(),
@@ -140,7 +135,10 @@ async fn test_route_event_persists_row_with_expected_shape() {
     .unwrap();
 
     let subtype: String = row.get("event_subtype");
-    assert_eq!(subtype, "temp_high", "event_subtype must be the raw event name, not enum JSON");
+    assert_eq!(
+        subtype, "temp_high",
+        "event_subtype must be the raw event name, not enum JSON"
+    );
     assert_eq!(row.get::<i32, _>("event_level"), EventLevel::Warning.to_numeric());
     assert_eq!(row.get::<String, _>("workspace_id"), "ws-1");
 
@@ -166,8 +164,7 @@ async fn test_route_event_persists_row_with_expected_shape() {
 #[tokio::test]
 async fn test_unknown_event_name_degrades_to_info_flagged() {
     let pool = test_pool().await;
-    insert_device_with_template(&pool, "dev-t", "ws-1", "tpl-1", r#"[{"name":"known_event"}]"#)
-        .await;
+    insert_device_with_template(&pool, "dev-t", "ws-1", "tpl-1", r#"[{"name":"known_event"}]"#).await;
     let throttle = ThrottleState::new(60);
     let bus = ThingEventBus::new();
 
@@ -181,8 +178,14 @@ async fn test_unknown_event_name_degrades_to_info_flagged() {
     )
     .await;
 
-    assert!(result.unknown_event, "event not in the template's events list must be flagged");
-    assert!(!result.malformed, "unknown event is degraded, never an error to the device");
+    assert!(
+        result.unknown_event,
+        "event not in the template's events list must be flagged"
+    );
+    assert!(
+        !result.malformed,
+        "unknown event is degraded, never an error to the device"
+    );
 
     let row = sqlx::query("SELECT event_level, metadata FROM events WHERE id = ?")
         .bind(&result.event_id)
@@ -204,8 +207,7 @@ async fn test_unknown_event_name_degrades_to_info_flagged() {
 #[tokio::test]
 async fn test_known_template_event_not_flagged() {
     let pool = test_pool().await;
-    insert_device_with_template(&pool, "dev-k", "ws-1", "tpl-k", r#"[{"name":"known_event"}]"#)
-        .await;
+    insert_device_with_template(&pool, "dev-k", "ws-1", "tpl-k", r#"[{"name":"known_event"}]"#).await;
     let throttle = ThrottleState::new(60);
     let bus = ThingEventBus::new();
 
@@ -245,7 +247,10 @@ async fn test_device_without_template_not_flagged() {
     )
     .await;
 
-    assert!(!result.unknown_event, "device without a template accepts all names unflagged");
+    assert!(
+        !result.unknown_event,
+        "device without a template accepts all names unflagged"
+    );
     let level: i32 = sqlx::query_scalar("SELECT event_level FROM events WHERE id = ?")
         .bind(&result.event_id)
         .fetch_one(&pool)
@@ -273,8 +278,7 @@ async fn test_event_alarm_rule_fires_device_alarm() {
 
     let db = Arc::new(Database::new(pool.clone()));
     let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
-    let rule_repo: Arc<dyn AlarmRuleRepository> =
-        Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
+    let rule_repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
     let alarm_service = Arc::new(AlarmService::new(alarm_repo, rule_repo));
 
     let throttle = ThrottleState::new(60);
@@ -290,12 +294,11 @@ async fn test_event_alarm_rule_fires_device_alarm() {
     .await;
     assert!(!result.malformed);
 
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-al' AND rule_id = 'rule-ev'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-al' AND rule_id = 'rule-ev'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(count, 1, "matching event rule must create a device_alarms row");
 
     // A different event name must NOT fire the rule.
@@ -309,12 +312,11 @@ async fn test_event_alarm_rule_fires_device_alarm() {
         input("dev-al", "ws-al", "other_event", EventLevel::Critical),
     )
     .await;
-    let count_after: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-al' AND rule_id = 'rule-ev'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let count_after: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-al' AND rule_id = 'rule-ev'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(count_after, 1, "non-matching event name must not fire the rule");
 }
 
@@ -333,8 +335,7 @@ async fn test_event_alarm_rule_respects_min_level() {
 
     let db = Arc::new(Database::new(pool.clone()));
     let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
-    let rule_repo: Arc<dyn AlarmRuleRepository> =
-        Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
+    let rule_repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
     let alarm_service = Arc::new(AlarmService::new(alarm_repo, rule_repo));
 
     // Warning < min_level error → no alarm.
@@ -350,11 +351,10 @@ async fn test_event_alarm_rule_respects_min_level() {
     )
     .await;
 
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-ml'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-ml'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(count, 0, "event below min_level must not fire the rule");
 }
 
@@ -412,11 +412,10 @@ async fn test_throttle_admits_60_rejects_61st_but_spares_critical() {
     assert!(!rc.throttled, "critical events are exempt from throttling");
     assert!(!rc.malformed);
 
-    let count_after: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE device_id = 'dev-th'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE device_id = 'dev-th'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(count_after, 61, "critical event during the storm must be admitted");
 }
 
@@ -445,13 +444,15 @@ async fn test_append_events_same_subtype_both_insert() {
         assert!(!r.event_id.is_empty());
     }
 
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM events WHERE device_id = 'dev-dd' AND event_subtype = 'door_open'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(count, 2, "dedup index only covers is_status=1 rows; appends are allowed");
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE device_id = 'dev-dd' AND event_subtype = 'door_open'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        count, 2,
+        "dedup index only covers is_status=1 rows; appends are allowed"
+    );
 }
 
 // ──────────────────────────────────────────────
@@ -463,16 +464,15 @@ async fn test_append_events_same_subtype_both_insert() {
 fn status_event(device_id: &str, level: EventLevel) -> Event {
     let content = RichContent::new(
         format!("status from {device_id}"),
-        vec![ContentElement::Text { content: "status".to_string(), format: TextFormat::Plain }],
+        vec![ContentElement::Text {
+            content: "status".to_string(),
+            format: TextFormat::Plain,
+        }],
     );
     Event::new(
         EventType::Device(DeviceEventType::PropertyChange),
         level,
-        EventSource::device_property(
-            device_id.to_string(),
-            "temperature".to_string(),
-            "test".to_string(),
-        ),
+        EventSource::device_property(device_id.to_string(), "temperature".to_string(), "test".to_string()),
         content,
     )
     .expect("valid status event")
@@ -487,13 +487,17 @@ async fn test_status_upsert_via_repo_merges_repeat_occurrences() {
     insert_device(&pool, "dev-st", "ws-st").await;
     let repo = SqliteRealTimeEventRepository::new(Database::new(pool.clone()));
 
-    repo.upsert_status(&status_event("dev-st", EventLevel::Warning)).await.unwrap();
+    repo.upsert_status(&status_event("dev-st", EventLevel::Warning))
+        .await
+        .unwrap();
     // acknowledge the row, then a second (escalated) occurrence arrives
     sqlx::query("UPDATE events SET acknowledged = 1, acknowledged_by = 'u1', acknowledged_at = '2026-01-01' WHERE device_id = 'dev-st'")
         .execute(&pool)
         .await
         .unwrap();
-    repo.upsert_status(&status_event("dev-st", EventLevel::Critical)).await.unwrap();
+    repo.upsert_status(&status_event("dev-st", EventLevel::Critical))
+        .await
+        .unwrap();
 
     let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM events WHERE device_id = 'dev-st'")
         .fetch_one(&pool)
@@ -501,14 +505,17 @@ async fn test_status_upsert_via_repo_merges_repeat_occurrences() {
         .unwrap();
     assert_eq!(count, 1, "repeat status occurrence must merge into one row");
 
-    let (occ, level, ack): (i64, i64, i64) = sqlx::query_as(
-        "SELECT occurrence_count, event_level, acknowledged FROM events WHERE device_id = 'dev-st'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let (occ, level, ack): (i64, i64, i64) =
+        sqlx::query_as("SELECT occurrence_count, event_level, acknowledged FROM events WHERE device_id = 'dev-st'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(occ, 2, "occurrence_count accumulates");
-    assert_eq!(level, EventLevel::Critical.to_numeric() as i64, "level refreshed to latest");
+    assert_eq!(
+        level,
+        EventLevel::Critical.to_numeric() as i64,
+        "level refreshed to latest"
+    );
     assert_eq!(ack, 0, "acknowledgment resets on new occurrence");
 }
 
@@ -540,8 +547,7 @@ async fn test_status_upsert_merges_repeat_occurrences() {
             acknowledged_by = NULL,
             acknowledged_at = NULL
     "#;
-    let subtype =
-        serde_json::to_string(&EventType::Device(DeviceEventType::PropertyChange)).unwrap();
+    let subtype = serde_json::to_string(&EventType::Device(DeviceEventType::PropertyChange)).unwrap();
     let now = chrono::Utc::now().to_rfc3339();
 
     sqlx::query(upsert)
@@ -556,12 +562,10 @@ async fn test_status_upsert_merges_repeat_occurrences() {
 
     // Simulate a human acknowledging the status row, then a repeat occurrence
     // at a higher level arrives.
-    sqlx::query(
-        "UPDATE events SET acknowledged = 1, acknowledged_by = 'user-1' WHERE device_id = 'dev-st'",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query("UPDATE events SET acknowledged = 1, acknowledged_by = 'user-1' WHERE device_id = 'dev-st'")
+        .execute(&pool)
+        .await
+        .unwrap();
 
     sqlx::query(upsert)
         .bind("evt-2")
@@ -584,7 +588,10 @@ async fn test_status_upsert_merges_repeat_occurrences() {
     assert_eq!(rows.len(), 1, "repeat status event must upsert, not append");
     let row = &rows[0];
     assert_eq!(row.get::<i64, _>("occurrence_count"), 2);
-    assert!(!row.get::<bool, _>("acknowledged"), "new occurrence resets acknowledgment");
+    assert!(
+        !row.get::<bool, _>("acknowledged"),
+        "new occurrence resets acknowledgment"
+    );
     assert!(row.get::<Option<String>, _>("acknowledged_by").is_none());
     assert_eq!(
         row.get::<i32, _>("event_level"),
@@ -602,7 +609,9 @@ async fn test_status_upsert_ignores_info_level_events() {
     let repo = SqliteRealTimeEventRepository::new(Database::new(pool.clone()));
 
     // Info-level device events do not satisfy should_update_real_time_status().
-    repo.upsert_status(&status_event("dev-si", EventLevel::Info)).await.unwrap();
+    repo.upsert_status(&status_event("dev-si", EventLevel::Info))
+        .await
+        .unwrap();
 
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE device_id = 'dev-si'")
         .fetch_one(&pool)

@@ -63,15 +63,17 @@ fn turn_event_to_chat_event(evt: &TurnEvent, run_id: &str, session_key: &str) ->
             tool_name: name.clone(),
             result: output.clone(),
         },
-        TurnEvent::ApprovalRequest { tool_name, arguments_summary, .. } => {
-            ChatEvent::ToolCallStart {
-                run_id: run_id.to_string(),
-                session_key: session_key.to_string(),
-                tool_name: tool_name.clone(),
-                tool_args: arguments_summary.clone(),
-                a2ui: None,
-            }
-        }
+        TurnEvent::ApprovalRequest {
+            tool_name,
+            arguments_summary,
+            ..
+        } => ChatEvent::ToolCallStart {
+            run_id: run_id.to_string(),
+            session_key: session_key.to_string(),
+            tool_name: tool_name.clone(),
+            tool_args: arguments_summary.clone(),
+            a2ui: None,
+        },
         TurnEvent::Usage { .. } => {
             // Usage events are informational only; filter these out downstream
             ChatEvent::Delta {
@@ -93,9 +95,7 @@ pub async fn send_message(
     run_id: &str,
     session_key: &str,
     system_prompt: &str,
-    chat_handles: &Arc<
-        tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>,
-    >,
+    chat_handles: &Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
     memory_service: Option<std::sync::Arc<tinyiothub_memory::service::MemoryService>>,
     event_publisher: Option<std::sync::Arc<crate::loop_::event::bus::AiEventPublisher>>,
     enable_reflection: bool,
@@ -172,18 +172,13 @@ pub async fn send_message(
         // the history in between.
         let mut ag = agent.lock().await;
 
-        if let Err(e) =
-            super::history::ensure_session(&db_pool, &session_key, &workspace_id, &agent_id).await
-        {
+        if let Err(e) = super::history::ensure_session(&db_pool, &session_key, &workspace_id, &agent_id).await {
             tracing::warn!(error = %e, %session_key, "Failed to ensure chat session row");
         }
-        let prior = super::history::list_messages(
-            &db_pool,
-            &session_key,
-            super::history::SESSION_CONTEXT_MESSAGE_LIMIT,
-        )
-        .await
-        .unwrap_or_default();
+        let prior =
+            super::history::list_messages(&db_pool, &session_key, super::history::SESSION_CONTEXT_MESSAGE_LIMIT)
+                .await
+                .unwrap_or_default();
         ag.clear_history();
         if !system_prompt.is_empty() || !prior.is_empty() {
             let mut seed = Vec::with_capacity(prior.len() + 1);
@@ -194,21 +189,13 @@ pub async fn send_message(
                 });
             }
             seed.extend(
-                prior.into_iter().map(|(role, content)| zeroclaw::providers::traits::ChatMessage {
-                    role,
-                    content,
-                }),
+                prior
+                    .into_iter()
+                    .map(|(role, content)| zeroclaw::providers::traits::ChatMessage { role, content }),
             );
             ag.seed_history(&seed);
         }
-        if let Err(e) = super::history::append_message(
-            &db_pool,
-            &session_key,
-            "user",
-            &reflect_message,
-            &run_id,
-        )
-        .await
+        if let Err(e) = super::history::append_message(&db_pool, &session_key, "user", &reflect_message, &run_id).await
         {
             tracing::warn!(error = %e, %session_key, "Failed to persist user message");
         }
@@ -258,14 +245,8 @@ pub async fn send_message(
         };
 
         if let Some(ref assistant_text) = final_text
-            && let Err(e) = super::history::append_message(
-                &db_pool,
-                &session_key,
-                "assistant",
-                assistant_text,
-                &run_id,
-            )
-            .await
+            && let Err(e) =
+                super::history::append_message(&db_pool, &session_key, "assistant", assistant_text, &run_id).await
         {
             tracing::warn!(error = %e, %session_key, "Failed to persist assistant message");
         }
@@ -323,10 +304,16 @@ mod tests {
 
     #[test]
     fn test_turn_event_chunk_to_delta() {
-        let evt = TurnEvent::Chunk { delta: "Hello".to_string() };
+        let evt = TurnEvent::Chunk {
+            delta: "Hello".to_string(),
+        };
         let chat_evt = turn_event_to_chat_event(&evt, "run1", "sess1");
         match chat_evt {
-            ChatEvent::Delta { run_id, session_key, message } => {
+            ChatEvent::Delta {
+                run_id,
+                session_key,
+                message,
+            } => {
                 assert_eq!(run_id, "run1");
                 assert_eq!(session_key, "sess1");
                 let content = message["content"][0]["text"].as_str().unwrap();
@@ -338,7 +325,9 @@ mod tests {
 
     #[test]
     fn test_turn_event_thinking() {
-        let evt = TurnEvent::Thinking { delta: "Hmm...".to_string() };
+        let evt = TurnEvent::Thinking {
+            delta: "Hmm...".to_string(),
+        };
         let chat_evt = turn_event_to_chat_event(&evt, "r", "s");
         match chat_evt {
             ChatEvent::Thinking { thinking, .. } => assert_eq!(thinking, "Hmm..."),
@@ -391,7 +380,9 @@ mod tests {
         };
         let chat_evt = turn_event_to_chat_event(&evt, "r", "s");
         match chat_evt {
-            ChatEvent::ToolCallStart { tool_name, tool_args, .. } => {
+            ChatEvent::ToolCallStart {
+                tool_name, tool_args, ..
+            } => {
                 assert_eq!(tool_name, "delete_device");
                 assert_eq!(tool_args, "Delete device X");
             }

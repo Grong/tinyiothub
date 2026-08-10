@@ -13,8 +13,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::test_utils::{
-    auth_header, create_test_token_with_workspace, response_parts, seed_test_workspace,
-    setup_test_app_with_pool,
+    auth_header, create_test_token_with_workspace, response_parts, seed_test_workspace, setup_test_app_with_pool,
 };
 
 fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Request<Body> {
@@ -37,13 +36,7 @@ async fn setup(workspace_id: &str) -> (axum::Router, sqlx::SqlitePool, String) {
     (app, pool, token)
 }
 
-async fn create_thing(
-    app: &axum::Router,
-    token: &str,
-    workspace_id: &str,
-    name: &str,
-    thing_type: &str,
-) -> String {
+async fn create_thing(app: &axum::Router, token: &str, workspace_id: &str, name: &str, thing_type: &str) -> String {
     let body = json!({"name": name, "thingType": thing_type, "workspaceId": workspace_id});
     let response = app
         .clone()
@@ -56,24 +49,17 @@ async fn create_thing(
 }
 
 async fn register_action(pool: &sqlx::SqlitePool, thing_id: &str, action_name: &str) {
-    sqlx::query(
-        "INSERT INTO thing_actions (id, device_id, name, display_name) VALUES (?, ?, ?, ?)",
-    )
-    .bind(format!("act-{action_name}"))
-    .bind(thing_id)
-    .bind(action_name)
-    .bind(action_name)
-    .execute(pool)
-    .await
-    .expect("register action");
+    sqlx::query("INSERT INTO thing_actions (id, device_id, name, display_name) VALUES (?, ?, ?, ?)")
+        .bind(format!("act-{action_name}"))
+        .bind(thing_id)
+        .bind(action_name)
+        .bind(action_name)
+        .execute(pool)
+        .await
+        .expect("register action");
 }
 
-async fn invoke(
-    app: &axum::Router,
-    token: &str,
-    thing_id: &str,
-    action: &str,
-) -> (StatusCode, Value) {
+async fn invoke(app: &axum::Router, token: &str, thing_id: &str, action: &str) -> (StatusCode, Value) {
     let r = app
         .clone()
         .oneshot(auth_request(
@@ -121,7 +107,10 @@ async fn test_invoke_requires_confirmation_then_confirm_executes() {
     let (status, body) = invoke(&app, &token, &thing, "reboot").await;
     assert_eq!(status, StatusCode::OK, "invoke failed: {body:?}");
     assert_eq!(body["result"]["status"], "confirmation_required");
-    let confirm_token = body["result"]["token"].as_str().expect("token must be issued").to_string();
+    let confirm_token = body["result"]["token"]
+        .as_str()
+        .expect("token must be issued")
+        .to_string();
 
     // 2. Confirm with the token → executed/simulated
     let (status, body) = confirm(&app, &token, &thing, "reboot", &confirm_token).await;
@@ -134,7 +123,11 @@ async fn test_invoke_requires_confirmation_then_confirm_executes() {
 
     // 3. Replay the same token → 404 (tokens are single-use)
     let (status, body) = confirm(&app, &token, &thing, "reboot", &confirm_token).await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "replayed token must be 404, got {status}: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "replayed token must be 404, got {status}: {body:?}"
+    );
 }
 
 #[tokio::test]
@@ -178,7 +171,10 @@ async fn test_invoke_without_confirm_gate_executes_immediately() {
         final_status == "executed" || final_status == "simulated",
         "gate-off invoke must dispatch immediately, got: {final_status}"
     );
-    assert!(body["result"]["token"].is_null(), "gate-off invoke must not issue a token: {body:?}");
+    assert!(
+        body["result"]["token"].is_null(),
+        "gate-off invoke must not issue a token: {body:?}"
+    );
 }
 
 // ──────────────────────────────────────────────
@@ -235,8 +231,15 @@ async fn test_invoke_denied_by_policy_block_rule() {
     .unwrap();
 
     let (status, body) = invoke(&app, &token, &thing, "wipe").await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "blocked action must be 403, got {status}: {body:?}");
-    assert!(body["result"]["token"].is_null(), "blocked action must not issue a token: {body:?}");
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "blocked action must be 403, got {status}: {body:?}"
+    );
+    assert!(
+        body["result"]["token"].is_null(),
+        "blocked action must not issue a token: {body:?}"
+    );
 
     // Other actions in the same workspace are unaffected (toggle ON → token).
     register_action(&pool, &thing, "reboot").await;

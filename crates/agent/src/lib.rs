@@ -32,26 +32,21 @@ pub mod types {
     pub use tinyiothub_llm::prompt::PromptRegistry;
     pub use tinyiothub_llm::prompt::types::PromptTemplate;
     pub use tinyiothub_llm::provider::{LlmCallMetadata, LlmProvider, LlmResponse};
-    pub use tinyiothub_memory::knowledge::{
-        KnowledgeEntity, KnowledgeGraph, KnowledgeRelation, NoopKnowledgeGraph,
-    };
+    pub use tinyiothub_memory::knowledge::{KnowledgeEntity, KnowledgeGraph, KnowledgeRelation, NoopKnowledgeGraph};
     pub use tinyiothub_memory::reflect::{
-        build_reflection_input, build_reflection_prompt, contains_injection, parse_facts,
-        sanitize_input,
+        build_reflection_input, build_reflection_prompt, contains_injection, parse_facts, sanitize_input,
     };
     pub use tinyiothub_memory::types::MemoryFact;
-    pub use tinyiothub_policy::adapters::{
-        ChatConfirmAdapter, ChatConfirmVerdict, HeartbeatTrustAdapter,
-    };
+    pub use tinyiothub_policy::adapters::{ChatConfirmAdapter, ChatConfirmVerdict, HeartbeatTrustAdapter};
     pub use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
     pub use tinyiothub_policy::{
-        NoopPolicyEngine, PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule,
-        evaluate_rules, sanitize_llm_input, target_matches, validate_llm_output,
+        NoopPolicyEngine, PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule, evaluate_rules,
+        sanitize_llm_input, target_matches, validate_llm_output,
     };
     pub use tinyiothub_skills::registry::{OutputSchema, ToolDescriptor, ToolParameter, ToolRegistry};
     pub use tinyiothub_skills::trust::{
-        ToolSafety, TrustConfig, TrustDecision, TrustLevel, classify_tool_safety,
-        evaluate_tool_trust, evaluate_tool_trust_with_safety, risk_for_tool,
+        ToolSafety, TrustConfig, TrustDecision, TrustLevel, classify_tool_safety, evaluate_tool_trust,
+        evaluate_tool_trust_with_safety, risk_for_tool,
     };
 }
 

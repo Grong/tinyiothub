@@ -21,16 +21,9 @@ impl EventAlarmHook for AlarmService {
         event_level: &EventLevel,
         event_data: &serde_json::Value,
     ) -> Result<(), String> {
-        AlarmService::check_event_alarms(
-            self,
-            workspace_id,
-            thing_id,
-            event_name,
-            event_level,
-            event_data,
-        )
-        .await
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+        AlarmService::check_event_alarms(self, workspace_id, thing_id, event_name, event_level, event_data)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 }

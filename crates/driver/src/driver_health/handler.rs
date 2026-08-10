@@ -13,9 +13,7 @@ where
     Router::new().route("/drivers", get(list_driver_health))
 }
 
-async fn list_driver_health(
-    WorkspaceScope(workspace_id): WorkspaceScope,
-) -> Json<ApiResponse<serde_json::Value>> {
+async fn list_driver_health(WorkspaceScope(workspace_id): WorkspaceScope) -> Json<ApiResponse<serde_json::Value>> {
     let ws_id = workspace_id.as_deref().unwrap_or("");
     let registry = tinyiothub_runtime::driver_registry().read();
     let health = DriverHealthService::get_workspace_health(&registry, ws_id);

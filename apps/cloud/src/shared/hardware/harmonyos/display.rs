@@ -23,7 +23,10 @@ pub struct HarmonyDisplayManager {
 impl HarmonyDisplayManager {
     /// 创建新的显示管理器
     pub fn new() -> Self {
-        Self { config: Mutex::new(None), initialized: Mutex::new(false) }
+        Self {
+            config: Mutex::new(None),
+            initialized: Mutex::new(false),
+        }
     }
 
     /// 初始化显示设备
@@ -82,14 +85,7 @@ impl HarmonyDisplayManager {
     }
 
     /// 显示图像
-    pub fn display_image(
-        &self,
-        x: u32,
-        y: u32,
-        width: u32,
-        height: u32,
-        _data: &[u8],
-    ) -> Result<(), std::io::Error> {
+    pub fn display_image(&self, x: u32, y: u32, width: u32, height: u32, _data: &[u8]) -> Result<(), std::io::Error> {
         if !self.is_initialized() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
@@ -97,7 +93,10 @@ impl HarmonyDisplayManager {
             ));
         }
 
-        debug!("Displaying image {}x{} at ({}, {}) on HarmonyOS display", width, height, x, y);
+        debug!(
+            "Displaying image {}x{} at ({}, {}) on HarmonyOS display",
+            width, height, x, y
+        );
 
         Ok(())
     }

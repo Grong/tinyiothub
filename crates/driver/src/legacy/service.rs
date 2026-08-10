@@ -21,15 +21,13 @@ const MSG_DEVICE_TYPE_VALUE_NA: &str = "N/A";
 use tinyiothub_thing::tag::TagRepository;
 
 use tinyiothub_core::error::Error;
+use tinyiothub_event::{
+    entities::Event as DomainEvent,
+    value_objects::{ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat},
+};
 use tinyiothub_runtime::event_bus::EventBus;
 use tinyiothub_storage::traits::device::{DeviceCriteria, DeviceRepository};
 use tinyiothub_web::pagination::DataObjectWithPagination;
-use tinyiothub_event::{
-    entities::Event as DomainEvent,
-    value_objects::{
-        ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
-    },
-};
 
 pub struct DeviceService {
     repository: Arc<dyn DeviceRepository>,
@@ -40,7 +38,12 @@ pub struct DeviceService {
 
 impl DeviceService {
     pub fn new(repository: Arc<dyn DeviceRepository>, database: Arc<Database>) -> Self {
-        Self { repository, database, event_bus: None, tag_repository: None }
+        Self {
+            repository,
+            database,
+            event_bus: None,
+            tag_repository: None,
+        }
     }
 
     pub fn with_event_bus(
@@ -48,7 +51,12 @@ impl DeviceService {
         database: Arc<Database>,
         event_bus: Arc<EventBus>,
     ) -> Self {
-        Self { repository, database, event_bus: Some(event_bus), tag_repository: None }
+        Self {
+            repository,
+            database,
+            event_bus: Some(event_bus),
+            tag_repository: None,
+        }
     }
 
     pub fn with_tag_repository(mut self, tag_repository: Arc<dyn TagRepository>) -> Self {
@@ -63,8 +71,10 @@ impl DeviceService {
         }
         let created_device = self.repository.create(request).await?;
         // 加载完整设备信息（含属性、指令）再发布事件
-        let complete_device =
-            self.load_complete_device(&created_device.id).await?.unwrap_or(created_device.clone());
+        let complete_device = self
+            .load_complete_device(&created_device.id)
+            .await?
+            .unwrap_or(created_device.clone());
         self.publish_device_created_event(&complete_device).await;
         tracing::info!("Device {} created successfully", created_device.id);
         Ok(created_device)
@@ -85,23 +95,15 @@ impl DeviceService {
             .apply_template_and_create_device(template_engine, template_id, device_input)
             .await?;
         let template = self.get_template(template_engine, template_id).await?;
-        self.generate_and_create_properties(
-            template_engine,
-            &template,
-            device_input,
-            &created_device.id,
-        )
-        .await;
-        self.generate_and_create_commands(
-            template_engine,
-            &template,
-            device_input,
-            &created_device.id,
-        )
-        .await;
+        self.generate_and_create_properties(template_engine, &template, device_input, &created_device.id)
+            .await;
+        self.generate_and_create_commands(template_engine, &template, device_input, &created_device.id)
+            .await;
         // 加载完整设备信息（含属性、指令）再发布事件
-        let complete_device =
-            self.load_complete_device(&created_device.id).await?.unwrap_or(created_device.clone());
+        let complete_device = self
+            .load_complete_device(&created_device.id)
+            .await?
+            .unwrap_or(created_device.clone());
         self.publish_device_created_event(&complete_device).await;
         tracing::info!(
             "Device created successfully from template: device_id={}",
@@ -122,7 +124,10 @@ impl DeviceService {
     }
 
     fn create_text_element(&self, content: String) -> ContentElement {
-        ContentElement::Text { content, format: TextFormat::Plain }
+        ContentElement::Text {
+            content,
+            format: TextFormat::Plain,
+        }
     }
 
     fn io_error(&self, e: impl std::fmt::Display) -> Error {
@@ -180,8 +185,7 @@ impl DeviceService {
         metadata_value: serde_json::Value,
     ) -> Result<(), Error> {
         if let Some(ref event_bus) = self.event_bus {
-            let content = RichContent::new(title, content_elements)
-                .with_metadata("device".to_string(), metadata_value);
+            let content = RichContent::new(title, content_elements).with_metadata("device".to_string(), metadata_value);
             let event = DomainEvent::new_device_event(
                 event_type,
                 level,
@@ -214,13 +218,18 @@ impl DeviceService {
         template_id: &str,
         device_input: &tinyiothub_thing::template::types::DeviceCreationInput,
     ) -> Result<Device, Error> {
-        if self.repository.exists_by_name(&device_input.name).await.unwrap_or(false) {
+        if self
+            .repository
+            .exists_by_name(&device_input.name)
+            .await
+            .unwrap_or(false)
+        {
             return Err(Error::ValidationError(ERROR_DEVICE_NAME_EXISTS.to_string()));
         }
-        let device_request =
-            template_engine.apply_template(template_id, device_input).await.map_err(|e| {
-                Error::ValidationError(format!("{}: {}", ERROR_TEMPLATE_APPLICATION_FAILED, e))
-            })?;
+        let device_request = template_engine
+            .apply_template(template_id, device_input)
+            .await
+            .map_err(|e| Error::ValidationError(format!("{}: {}", ERROR_TEMPLATE_APPLICATION_FAILED, e)))?;
         self.repository.create(&device_request).await
     }
 
@@ -231,7 +240,10 @@ impl DeviceService {
         device_input: &tinyiothub_thing::template::types::DeviceCreationInput,
         device_id: &str,
     ) {
-        match template_engine.generate_device_properties(template, device_input, device_id).await {
+        match template_engine
+            .generate_device_properties(template, device_input, device_id)
+            .await
+        {
             Ok(properties) => {
                 if !properties.is_empty() {
                     let db = self.database.clone();
@@ -251,7 +263,10 @@ impl DeviceService {
         device_input: &tinyiothub_thing::template::types::DeviceCreationInput,
         device_id: &str,
     ) {
-        match template_engine.generate_device_commands(template, device_input, device_id).await {
+        match template_engine
+            .generate_device_commands(template, device_input, device_id)
+            .await
+        {
             Ok(commands) => {
                 if !commands.is_empty() {
                     let db = self.database.clone();
@@ -264,15 +279,12 @@ impl DeviceService {
         }
     }
 
-    pub async fn update_device(
-        &self,
-        device_id: &str,
-        request: &UpdateDeviceRequest,
-    ) -> Result<Device, Error> {
+    pub async fn update_device(&self, device_id: &str, request: &UpdateDeviceRequest) -> Result<Device, Error> {
         tracing::info!("Updating device: {}", device_id);
         let old_device = self.repository.find_by_id(device_id).await?.ok_or(Error::NotFound)?;
         let updated_device = self.repository.update(device_id, request).await?;
-        self.publish_device_updated_event(&old_device, request, &updated_device).await;
+        self.publish_device_updated_event(&old_device, request, &updated_device)
+            .await;
         tracing::info!("Device {} updated successfully", device_id);
         Ok(updated_device)
     }
@@ -309,10 +321,7 @@ impl DeviceService {
         }
         if !changes.is_empty() {
             let mut elements =
-                vec![self.create_text_element(format!(
-                    "Device '{}' has been updated",
-                    updated_device.name
-                ))];
+                vec![self.create_text_element(format!("Device '{}' has been updated", updated_device.name))];
             for change in changes {
                 elements.push(self.create_text_element(change));
             }
@@ -355,10 +364,8 @@ impl DeviceService {
     }
 
     async fn publish_device_deleted_event(&self, device: &Device) {
-        let content_elements = self.build_device_info_elements(
-            device,
-            format!("Device '{}' has been deleted", device.name),
-        );
+        let content_elements =
+            self.build_device_info_elements(device, format!("Device '{}' has been deleted", device.name));
         let _ = self
             .publish_device_event(
                 DeviceEventType::DeviceDeleted,
@@ -405,12 +412,7 @@ impl DeviceService {
         Ok(())
     }
 
-    async fn publish_device_state_updated_event(
-        &self,
-        device: &Device,
-        old_state: i32,
-        new_state: i32,
-    ) {
+    async fn publish_device_state_updated_event(&self, device: &Device, old_state: i32, new_state: i32) {
         let content_elements = vec![
             self.create_text_element(format!(
                 "Device '{}' state changed from {} to {}",
@@ -430,14 +432,17 @@ impl DeviceService {
     }
 
     pub async fn get_device_by_id(&self, device_id: &str) -> Result<Option<Device>, Error> {
-        self.repository.find_by_id(device_id).await.map_err(|e| self.io_error(e))
+        self.repository
+            .find_by_id(device_id)
+            .await
+            .map_err(|e| self.io_error(e))
     }
 
-    pub async fn get_device_by_id_with_tags(
-        &self,
-        device_id: &str,
-    ) -> Result<Option<Device>, Error> {
-        self.repository.find_by_id(device_id).await.map_err(|e| self.io_error(e))
+    pub async fn get_device_by_id_with_tags(&self, device_id: &str) -> Result<Option<Device>, Error> {
+        self.repository
+            .find_by_id(device_id)
+            .await
+            .map_err(|e| self.io_error(e))
     }
 
     pub async fn get_device_by_name(&self, name: &str) -> Result<Option<Device>, Error> {
@@ -480,11 +485,7 @@ impl DeviceService {
         self.repository.count(&criteria).await.map_err(|e| self.io_error(e))
     }
 
-    pub async fn update_device_enabled_status(
-        &self,
-        device_id: &str,
-        enabled: bool,
-    ) -> Result<bool, Error> {
+    pub async fn update_device_enabled_status(&self, device_id: &str, enabled: bool) -> Result<bool, Error> {
         self.repository
             .update_enabled_status(device_id, enabled)
             .await
@@ -505,23 +506,31 @@ impl DeviceService {
     }
 
     pub async fn get_child_devices(&self, parent_id: &str) -> Result<Vec<Device>, Error> {
-        self.repository.find_children(parent_id).await.map_err(|e| self.io_error(e))
+        self.repository
+            .find_children(parent_id)
+            .await
+            .map_err(|e| self.io_error(e))
     }
 
     pub async fn get_devices_by_template(&self, template_id: &str) -> Result<Vec<Device>, Error> {
-        self.repository.find_by_template_id(template_id).await.map_err(|e| self.io_error(e))
+        self.repository
+            .find_by_template_id(template_id)
+            .await
+            .map_err(|e| self.io_error(e))
     }
 
     pub async fn get_devices_by_driver(&self, driver_name: &str) -> Result<Vec<Device>, Error> {
-        self.repository.find_by_driver_name(driver_name).await.map_err(|e| self.io_error(e))
+        self.repository
+            .find_by_driver_name(driver_name)
+            .await
+            .map_err(|e| self.io_error(e))
     }
 
-    pub async fn get_device_properties(
-        &self,
-        device_id: &str,
-    ) -> Result<Vec<DeviceProperty>, Error> {
+    pub async fn get_device_properties(&self, device_id: &str) -> Result<Vec<DeviceProperty>, Error> {
         let db = self.database.clone();
-        find_device_properties_by_device_id(&db, device_id).await.map_err(|e| self.io_error(e))
+        find_device_properties_by_device_id(&db, device_id)
+            .await
+            .map_err(|e| self.io_error(e))
     }
 
     pub async fn get_device_property_by_name(
@@ -549,7 +558,9 @@ impl DeviceService {
 
     pub async fn get_device_commands(&self, device_id: &str) -> Result<Vec<DeviceCommand>, Error> {
         let db = self.database.clone();
-        find_device_commands_by_device_id(&db, device_id).await.map_err(|e| self.io_error(e))
+        find_device_commands_by_device_id(&db, device_id)
+            .await
+            .map_err(|e| self.io_error(e))
     }
 
     pub async fn get_device_command_by_name(
@@ -561,10 +572,7 @@ impl DeviceService {
         Ok(commands.into_iter().find(|c| c.name == command_name))
     }
 
-    pub async fn create_devices_batch(
-        &self,
-        requests: &[CreateDeviceRequest],
-    ) -> Result<Vec<Device>, Error> {
+    pub async fn create_devices_batch(&self, requests: &[CreateDeviceRequest]) -> Result<Vec<Device>, Error> {
         for request in requests {
             if self.repository.exists_by_name(&request.name).await.unwrap_or(false) {
                 return Err(Error::ValidationError(format!(
@@ -581,10 +589,8 @@ impl DeviceService {
     }
 
     async fn publish_batch_device_created_event(&self, device: &Device) {
-        let content_elements = self.build_device_info_elements(
-            device,
-            format!("Device '{}' created in batch operation", device.name),
-        );
+        let content_elements =
+            self.build_device_info_elements(device, format!("Device '{}' created in batch operation", device.name));
         let _ = self
             .publish_device_event(
                 DeviceEventType::DeviceCreated,
@@ -597,10 +603,8 @@ impl DeviceService {
     }
 
     async fn publish_batch_device_deleted_event(&self, device: &Device) {
-        let content_elements = self.build_device_info_elements(
-            device,
-            format!("Device '{}' deleted in batch operation", device.name),
-        );
+        let content_elements =
+            self.build_device_info_elements(device, format!("Device '{}' deleted in batch operation", device.name));
         let _ = self
             .publish_device_event(
                 DeviceEventType::DeviceDeleted,
@@ -621,10 +625,7 @@ impl DeviceService {
         Ok(deleted_count)
     }
 
-    pub async fn update_device_states_batch(
-        &self,
-        updates: &[(String, i32)],
-    ) -> Result<u64, Error> {
+    pub async fn update_device_states_batch(&self, updates: &[(String, i32)]) -> Result<u64, Error> {
         self.repository.update_states_batch(updates).await
     }
 
@@ -737,11 +738,11 @@ impl DeviceService {
     ) -> Result<String, Error> {
         let device = self.repository.find_by_id(device_id).await?.ok_or(Error::NotFound)?;
         let command_id = uuid::Uuid::new_v4().to_string();
-        let create_request =
-            self.build_device_command_request(device_id, command_name, command_type, params);
+        let create_request = self.build_device_command_request(device_id, command_name, command_type, params);
         let db = self.database.clone();
         let _ = create_device_command(&db, &create_request).await;
-        self.publish_command_started_event(&device, command_name, command_type, &command_id).await;
+        self.publish_command_started_event(&device, command_name, command_type, &command_id)
+            .await;
         Ok(command_id)
     }
 }

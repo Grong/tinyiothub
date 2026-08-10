@@ -9,8 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use tinyiothub_alarm::{
-    AlarmCondition, AlarmLevel, AlarmQueryCriteria, AlarmRule, AlarmStatus, NotificationConfig,
-    SortOrder, TimeRange,
+    AlarmCondition, AlarmLevel, AlarmQueryCriteria, AlarmRule, AlarmStatus, NotificationConfig, SortOrder, TimeRange,
 };
 
 use crate::{
@@ -100,9 +99,7 @@ impl ToolHandler for AlarmListHandler {
             "levels".to_string(),
             PropertySchema {
                 prop_type: "array".to_string(),
-                description: Some(
-                    "Filter by alarm levels (info, warning, error, critical)".to_string(),
-                ),
+                description: Some("Filter by alarm levels (info, warning, error, critical)".to_string()),
             },
         );
         props.insert(
@@ -147,8 +144,8 @@ impl ToolHandler for AlarmListHandler {
         let input: ListAlarmsInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let claims = get_mcp_context()
-            .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
+        let claims =
+            get_mcp_context().ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
         let state = self
             .state
@@ -177,14 +174,12 @@ impl ToolHandler for AlarmListHandler {
         };
 
         let alarm_levels = input.levels.as_ref().and_then(|l| {
-            let parsed: Vec<AlarmLevel> =
-                l.iter().filter_map(|level| AlarmLevel::parse_str(level)).collect();
+            let parsed: Vec<AlarmLevel> = l.iter().filter_map(|level| AlarmLevel::parse_str(level)).collect();
             if parsed.is_empty() { None } else { Some(parsed) }
         });
 
         let statuses = input.statuses.as_ref().and_then(|s| {
-            let parsed: Vec<AlarmStatus> =
-                s.iter().filter_map(|status| AlarmStatus::parse_str(status)).collect();
+            let parsed: Vec<AlarmStatus> = s.iter().filter_map(|status| AlarmStatus::parse_str(status)).collect();
             if parsed.is_empty() { None } else { Some(parsed) }
         });
 
@@ -212,8 +207,7 @@ impl ToolHandler for AlarmListHandler {
 
         let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;
 
-        let alarms: Vec<tinyiothub_alarm::AlarmDto> =
-            result.into_iter().map(|a| a.into()).collect();
+        let alarms: Vec<tinyiothub_alarm::AlarmDto> = result.into_iter().map(|a| a.into()).collect();
 
         Ok(serde_json::json!({
             "data": alarms,
@@ -271,8 +265,8 @@ impl ToolHandler for AlarmAcknowledgeHandler {
         let input: AcknowledgeAlarmInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let claims = get_mcp_context()
-            .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
+        let claims =
+            get_mcp_context().ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
         let state = self
             .state
@@ -297,8 +291,7 @@ impl ToolHandler for AlarmAcknowledgeHandler {
             .map_err(|e| ToolError::Internal(format!("Failed to fetch device: {}", e)))?
             .ok_or_else(|| {
                 ToolError::NotFound(
-                    "Device associated with alarm not found or does not belong to workspace"
-                        .to_string(),
+                    "Device associated with alarm not found or does not belong to workspace".to_string(),
                 )
             })?;
 
@@ -426,8 +419,8 @@ impl ToolHandler for AlarmRuleAddHandler {
         let input: CreateAlarmRuleInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let claims = get_mcp_context()
-            .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
+        let claims =
+            get_mcp_context().ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
         // SECURITY: Verify workspace_id matches the authenticated context
         // Prevents creating rules in other workspaces
@@ -443,9 +436,8 @@ impl ToolHandler for AlarmRuleAddHandler {
             .ok_or_else(|| ToolError::Internal("McpState not initialized".to_string()))?;
 
         // Parse alarm level
-        let alarm_level = AlarmLevel::parse_str(&input.alarm_level).ok_or_else(|| {
-            ToolError::InvalidParams(format!("Invalid alarm level: {}", input.alarm_level))
-        })?;
+        let alarm_level = AlarmLevel::parse_str(&input.alarm_level)
+            .ok_or_else(|| ToolError::InvalidParams(format!("Invalid alarm level: {}", input.alarm_level)))?;
 
         // Parse condition
         let condition: AlarmCondition = serde_json::from_value(input.condition.clone())
@@ -453,9 +445,8 @@ impl ToolHandler for AlarmRuleAddHandler {
 
         // Parse notification config
         let notification_config: NotificationConfig = match &input.notification_config {
-            Some(nc) => serde_json::from_value(nc.clone()).map_err(|e| {
-                ToolError::InvalidParams(format!("Invalid notification config: {}", e))
-            })?,
+            Some(nc) => serde_json::from_value(nc.clone())
+                .map_err(|e| ToolError::InvalidParams(format!("Invalid notification config: {}", e)))?,
             None => NotificationConfig::default(),
         };
 

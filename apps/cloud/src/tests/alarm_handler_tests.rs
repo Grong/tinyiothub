@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::test_utils::{
-    auth_header, create_test_token, create_test_token_with_workspace, response_parts,
-    seed_test_workspace, setup_test_app, setup_test_app_with_pool,
+    auth_header, create_test_token, create_test_token_with_workspace, response_parts, seed_test_workspace,
+    setup_test_app, setup_test_app_with_pool,
 };
 
 /// Helper: build a request with auth and optional body.
@@ -39,8 +39,10 @@ async fn test_list_alarm_rules() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/alarm-rules", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/alarm-rules", &token, None))
+        .await
+        .unwrap();
 
     let status = response.status();
     assert_eq!(status, StatusCode::OK, "Handler should return 200");
@@ -77,8 +79,10 @@ async fn test_create_alarm_rule() {
         }
     });
 
-    let response =
-        app.oneshot(auth_request("POST", "/api/v1/alarm-rules", &token, Some(body))).await.unwrap();
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/alarm-rules", &token, Some(body)))
+        .await
+        .unwrap();
 
     let (status, json) = response_parts(response).await;
 
@@ -100,7 +104,12 @@ async fn test_get_alarm_rule_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/alarm-rules/nonexistent-rule-12345", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/alarm-rules/nonexistent-rule-12345",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
 
@@ -149,7 +158,12 @@ async fn test_delete_alarm_rule_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("DELETE", "/api/v1/alarm-rules/nonexistent-rule-12345", &token, None))
+        .oneshot(auth_request(
+            "DELETE",
+            "/api/v1/alarm-rules/nonexistent-rule-12345",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
 
@@ -171,8 +185,10 @@ async fn test_get_alarm_statistics() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/alarms/statistics", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/alarms/statistics", &token, None))
+        .await
+        .unwrap();
 
     let (status, json) = response_parts(response).await;
 
@@ -250,7 +266,10 @@ async fn test_list_alarms() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["code"], 0, "Expected success code");
-    assert!(json["result"]["data"].is_array(), "Expected data array in paginated response");
+    assert!(
+        json["result"]["data"].is_array(),
+        "Expected data array in paginated response"
+    );
 }
 
 // ============================================================================
@@ -377,7 +396,12 @@ async fn test_get_alarm_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/alarms/nonexistent-alarm-12345", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/alarms/nonexistent-alarm-12345",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
 

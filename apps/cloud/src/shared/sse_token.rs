@@ -42,7 +42,10 @@ impl Default for SseTokenManager {
 
 impl SseTokenManager {
     pub fn new(ttl: Duration) -> Self {
-        Self { tokens: Arc::new(DashMap::new()), ttl }
+        Self {
+            tokens: Arc::new(DashMap::new()),
+            ttl,
+        }
     }
 
     /// 为用户生成一个新的 SSE token
@@ -73,7 +76,8 @@ impl SseTokenManager {
     /// 清理过期 token
     pub fn cleanup_expired(&self) {
         let now = Instant::now();
-        self.tokens.retain(|_, entry| now.duration_since(entry.created_at) < self.ttl);
+        self.tokens
+            .retain(|_, entry| now.duration_since(entry.created_at) < self.ttl);
     }
 
     /// 获取当前 token 数量

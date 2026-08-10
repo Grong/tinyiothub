@@ -7,12 +7,12 @@
 //   GET  /tasks — read heartbeat tasks (DB)
 //   PUT  /tasks — replace heartbeat tasks (DB)
 
+use crate::loop_::heartbeat::types::NewHeartbeatTask;
 use axum::{
     Json,
     extract::{Extension, Path, State},
 };
 use serde::{Deserialize, Serialize};
-use crate::loop_::heartbeat::types::NewHeartbeatTask;
 use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_core::agent_hooks::HeartbeatTaskDef;
 use tinyiothub_web::api_response::ApiResponse;
@@ -40,7 +40,10 @@ where
         .route("/{id}/heartbeat/tasks", get(get_tasks))
         .route("/{id}/heartbeat/tasks", put(update_tasks))
         .route("/{id}/heartbeat/approvals", get(get_approvals))
-        .route("/{id}/heartbeat/approvals/{proposal_id}/approve", post(approve_proposal))
+        .route(
+            "/{id}/heartbeat/approvals/{proposal_id}/approve",
+            post(approve_proposal),
+        )
         .route("/{id}/heartbeat/approvals/{proposal_id}/reject", post(reject_proposal))
 }
 
@@ -160,9 +163,7 @@ pub async fn update_config(
     let enabled = req.enabled.unwrap_or(is_active);
     let interval = req.interval_minutes.unwrap_or(current_interval);
 
-    let config = match crate::loop_::heartbeat::types::WorkspaceHeartbeatConfig::validated(
-        enabled, interval,
-    ) {
+    let config = match crate::loop_::heartbeat::types::WorkspaceHeartbeatConfig::validated(enabled, interval) {
         Ok(c) => c,
         Err(e) => return ApiResponseBuilder::error(&e),
     };
@@ -264,7 +265,10 @@ pub async fn get_logs(
                         summaries.push((action_type, content, created_at));
                     }
                     "auto_executed" | "proposal" => {
-                        details.entry(created_at.clone()).or_default().push((action_type, content));
+                        details
+                            .entry(created_at.clone())
+                            .or_default()
+                            .push((action_type, content));
                     }
                     _ => {}
                 }
@@ -285,15 +289,9 @@ pub async fn get_logs(
                     for (a_type, a_content) in related {
                         match a_type.as_str() {
                             "auto_executed" => {
-                                if let Ok(parsed) =
-                                    serde_json::from_str::<serde_json::Value>(&a_content)
-                                {
+                                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&a_content) {
                                     auto_executed.push(ActionDetail {
-                                        tool: parsed
-                                            .get("tool")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string(),
+                                        tool: parsed.get("tool").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                         device_id: parsed
                                             .get("deviceId")
                                             .and_then(|v| v.as_str())
@@ -308,15 +306,9 @@ pub async fn get_logs(
                                 }
                             }
                             "proposal" => {
-                                if let Ok(parsed) =
-                                    serde_json::from_str::<serde_json::Value>(&a_content)
-                                {
+                                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&a_content) {
                                     pending_proposals.push(ProposalDetail {
-                                        level: parsed
-                                            .get("level")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string(),
+                                        level: parsed.get("level").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                         tool_name: parsed
                                             .get("toolName")
                                             .and_then(|v| v.as_str())
@@ -337,21 +329,9 @@ pub async fn get_logs(
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("")
                                             .to_string(),
-                                        reason: parsed
-                                            .get("reason")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string(),
-                                        risk: parsed
-                                            .get("risk")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string(),
-                                        status: parsed
-                                            .get("status")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string(),
+                                        reason: parsed.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                        risk: parsed.get("risk").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                        status: parsed.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                     });
                                 }
                             }
@@ -556,8 +536,7 @@ async fn approve_and_execute(
     let Some((id, content)) = row else {
         return Err("提案不存在".to_string());
     };
-    let parsed: serde_json::Value =
-        serde_json::from_str(&content).map_err(|e| format!("解析失败: {}", e))?;
+    let parsed: serde_json::Value = serde_json::from_str(&content).map_err(|e| format!("解析失败: {}", e))?;
     if parsed["status"].as_str() != Some("pending") {
         return Err("提案已处理".to_string());
     }
@@ -688,8 +667,10 @@ async fn update_proposal_status(
 async fn load_tasks(state: &AgentState, workspace_id: &str) -> Vec<HeartbeatTaskDef> {
     if let Some(ref runner) = state.heartbeat_runner {
         let workspace_dir = paths::workspace_dir(workspace_id);
-        if let Err(e) =
-            state.agent_hooks.migrate_legacy_heartbeat_tasks(workspace_id, &workspace_dir).await
+        if let Err(e) = state
+            .agent_hooks
+            .migrate_legacy_heartbeat_tasks(workspace_id, &workspace_dir)
+            .await
         {
             tracing::warn!(%workspace_id, "Heartbeat task migration failed: {}", e);
         }
@@ -710,17 +691,24 @@ async fn load_tasks(state: &AgentState, workspace_id: &str) -> Vec<HeartbeatTask
         }
     }
     let workspace_dir = paths::workspace_dir(workspace_id);
-    state.agent_hooks.read_legacy_heartbeat_tasks(&workspace_dir).await.unwrap_or_else(|e| {
-        tracing::warn!(%workspace_id, "Failed to read HEARTBEAT.md: {}", e);
-        state.agent_hooks.default_heartbeat_tasks()
-    })
+    state
+        .agent_hooks
+        .read_legacy_heartbeat_tasks(&workspace_dir)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(%workspace_id, "Failed to read HEARTBEAT.md: {}", e);
+            state.agent_hooks.default_heartbeat_tasks()
+        })
 }
 
 fn parse_action_content(content: &str) -> (u32, Option<String>) {
     // New format: {"taskCount": N, "result": "..."} or {"taskCount": N, "error": "..."}
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(content) {
-        let task_count =
-            parsed.get("taskCount").and_then(|v| v.as_u64()).map(|n| n as u32).unwrap_or(0);
+        let task_count = parsed
+            .get("taskCount")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32)
+            .unwrap_or(0);
         let message = parsed
             .get("result")
             .or_else(|| parsed.get("error"))
@@ -791,12 +779,16 @@ mod tests {
     }
 
     fn registry_with(handler: RecordingHandler) -> Arc<dyn ExternalToolRegistry> {
-        Arc::new(TestRegistry { handler: Arc::new(handler) })
+        Arc::new(TestRegistry {
+            handler: Arc::new(handler),
+        })
     }
 
     async fn test_pool() -> SqlitePool {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        tinyiothub_storage::test_helpers::run_all_migrations(&pool).await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
         pool
     }
 
@@ -839,11 +831,16 @@ mod tests {
     async fn approve_executes_tool_with_stored_parameters() {
         let pool = test_pool().await;
         seed_proposal(&pool, "p1", "pending").await;
-        let handler = RecordingHandler { calls: Arc::new(Mutex::new(vec![])), fail: false };
+        let handler = RecordingHandler {
+            calls: Arc::new(Mutex::new(vec![])),
+            fail: false,
+        };
         let calls = handler.calls.clone();
         let registry = registry_with(handler);
 
-        approve_and_execute(&pool, "ws_1", "p1", &registry).await.expect("approve");
+        approve_and_execute(&pool, "ws_1", "p1", &registry)
+            .await
+            .expect("approve");
 
         // Handler ran with the persisted parameters
         {
@@ -871,7 +868,10 @@ mod tests {
     async fn approve_twice_does_not_reexecute() {
         let pool = test_pool().await;
         seed_proposal(&pool, "p1", "pending").await;
-        let handler = RecordingHandler { calls: Arc::new(Mutex::new(vec![])), fail: false };
+        let handler = RecordingHandler {
+            calls: Arc::new(Mutex::new(vec![])),
+            fail: false,
+        };
         let calls = handler.calls.clone();
         let registry = registry_with(handler);
 
@@ -886,7 +886,10 @@ mod tests {
     async fn approve_records_failed_execution() {
         let pool = test_pool().await;
         seed_proposal(&pool, "p1", "pending").await;
-        let handler = RecordingHandler { calls: Arc::new(Mutex::new(vec![])), fail: true };
+        let handler = RecordingHandler {
+            calls: Arc::new(Mutex::new(vec![])),
+            fail: true,
+        };
         let registry = registry_with(handler);
 
         let result = approve_and_execute(&pool, "ws_1", "p1", &registry).await;
@@ -905,7 +908,10 @@ mod tests {
     #[tokio::test]
     async fn approve_unknown_proposal_fails() {
         let pool = test_pool().await;
-        let handler = RecordingHandler { calls: Arc::new(Mutex::new(vec![])), fail: false };
+        let handler = RecordingHandler {
+            calls: Arc::new(Mutex::new(vec![])),
+            fail: false,
+        };
         let calls = handler.calls.clone();
         let registry = registry_with(handler);
         let result = approve_and_execute(&pool, "ws_1", "nope", &registry).await;
@@ -929,8 +935,7 @@ mod tests {
         })
         .to_string();
 
-        let p = proposal_from_row(&content, "2026-07-20 10:00:00".to_string())
-            .expect("pending proposal maps");
+        let p = proposal_from_row(&content, "2026-07-20 10:00:00".to_string()).expect("pending proposal maps");
 
         assert_eq!(p.proposal_id, "p1");
         assert_eq!(p.parameters["properties"]["target_temp"], 22);

@@ -11,9 +11,7 @@ use crate::{
     EventError, Result,
     entities::Event,
     errors::{DomainResult, EventDomainError, EventServiceDomainError},
-    value_objects::{
-        DeviceEventType, EventId, EventLevel, EventSource, EventType, RichContent, SystemEventType,
-    },
+    value_objects::{DeviceEventType, EventId, EventLevel, EventSource, EventType, RichContent, SystemEventType},
 };
 
 // ════════════════════════════════════════════════
@@ -28,18 +26,21 @@ pub struct EventAggregate {
 }
 
 impl EventAggregate {
-    pub fn new(
-        event_type: EventType,
-        level: EventLevel,
-        source: EventSource,
-        content: RichContent,
-    ) -> Result<Self> {
+    pub fn new(event_type: EventType, level: EventLevel, source: EventSource, content: RichContent) -> Result<Self> {
         let event = Event::new(event_type, level, source, content)?;
-        Ok(Self { event, metadata: HashMap::new(), version: 1 })
+        Ok(Self {
+            event,
+            metadata: HashMap::new(),
+            version: 1,
+        })
     }
 
     pub fn from_event(event: Event) -> Self {
-        Self { event, metadata: HashMap::new(), version: 1 }
+        Self {
+            event,
+            metadata: HashMap::new(),
+            version: 1,
+        }
     }
 
     pub fn event(&self) -> &Event {
@@ -262,7 +263,9 @@ impl EventValidationSpec {
     pub fn validate(&self, event: &Event) -> Result<()> {
         for spec in &self.specs {
             if !spec.is_satisfied_by(event) {
-                return Err(EventError::Validation { message: spec.error_message() });
+                return Err(EventError::Validation {
+                    message: spec.error_message(),
+                });
             }
         }
         Ok(())
@@ -327,7 +330,9 @@ pub struct EventService {
 
 impl EventService {
     pub fn new() -> Self {
-        Self { validation_spec: EventValidationSpec::new() }
+        Self {
+            validation_spec: EventValidationSpec::new(),
+        }
     }
 
     pub fn create_event(
@@ -360,11 +365,7 @@ impl EventService {
         EventPrioritySpec::should_persist(event)
     }
 
-    pub fn validate_event_update(
-        &self,
-        current_event: &Event,
-        new_content: &RichContent,
-    ) -> DomainResult<()> {
+    pub fn validate_event_update(&self, current_event: &Event, new_content: &RichContent) -> DomainResult<()> {
         let now = Utc::now();
         let time_diff = now.signed_duration_since(current_event.timestamp());
         if time_diff.num_minutes() > EVENT_UPDATE_TIME_LIMIT_MINUTES {
@@ -375,10 +376,7 @@ impl EventService {
             .into());
         }
         if new_content.is_empty() {
-            return Err(EventDomainError::invalid_content(
-                "Event content cannot be empty".to_string(),
-            )
-            .into());
+            return Err(EventDomainError::invalid_content("Event content cannot be empty".to_string()).into());
         }
         Ok(())
     }
@@ -401,10 +399,7 @@ impl EventService {
         score
     }
 
-    pub fn group_events_by_category<'a>(
-        &self,
-        events: &'a [Event],
-    ) -> HashMap<String, Vec<&'a Event>> {
+    pub fn group_events_by_category<'a>(&self, events: &'a [Event]) -> HashMap<String, Vec<&'a Event>> {
         let mut groups = HashMap::new();
         for event in events {
             let category = match event.event_type() {
@@ -608,10 +603,7 @@ mod tests {
             EventType::Device(DeviceEventType::Connection),
             EventLevel::Error,
             EventSource::device("device-1".to_string(), Some("Device 1".to_string())),
-            RichContent::new_text(
-                "Connection Lost".to_string(),
-                "Device connection lost".to_string(),
-            ),
+            RichContent::new_text("Connection Lost".to_string(), "Device connection lost".to_string()),
         )
         .unwrap();
         assert!(spec.is_satisfied_by(&device_event));
@@ -632,10 +624,7 @@ mod tests {
             EventType::Device(DeviceEventType::DeviceCreated),
             EventLevel::Critical,
             EventSource::device("device-1".to_string(), Some("Device 1".to_string())),
-            RichContent::new_text(
-                "Critical Error".to_string(),
-                "Critical error occurred".to_string(),
-            ),
+            RichContent::new_text("Critical Error".to_string(), "Critical error occurred".to_string()),
         )
         .unwrap();
         assert_eq!(EventPrioritySpec::get_priority(&critical_event), 1);
@@ -717,8 +706,7 @@ mod tests {
         let critical_event = create_test_event(EventLevel::Critical);
         let info_event = create_test_event(EventLevel::Info);
         let events = vec![critical_event, info_event];
-        let filtered =
-            service.filter_events_by_criteria(&events, Some(EventLevel::Error), None, None, None);
+        let filtered = service.filter_events_by_criteria(&events, Some(EventLevel::Error), None, None, None);
         assert_eq!(filtered.len(), 1);
     }
 

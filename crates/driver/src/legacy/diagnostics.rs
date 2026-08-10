@@ -131,8 +131,7 @@ impl DiagnosticsService {
                     timestamp: stats.last_trace_time.clone(),
                 });
                 fault_score += 15;
-                recommendations
-                    .push("Consider checking physical connections and signal strength".to_string());
+                recommendations.push("Consider checking physical connections and signal strength".to_string());
             }
 
             // No recent traces
@@ -236,7 +235,11 @@ impl DiagnosticsService {
             }
         };
 
-        Ok(PropertyComparison { property: property_name.to_string(), values, statistics })
+        Ok(PropertyComparison {
+            property: property_name.to_string(),
+            values,
+            statistics,
+        })
     }
 
     /// Scan for available serial ports.

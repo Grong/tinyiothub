@@ -45,7 +45,10 @@ impl AgentPoolLike for HostAgentPoolAdapter {
             .await
             .map_err(|e| anyhow::anyhow!("LLM error: {}", e))?;
         let tool_calls = result.tool_calls.into_iter().map(map_tool_call).collect();
-        Ok(AgentRunOutput { text: result.final_text, tool_calls })
+        Ok(AgentRunOutput {
+            text: result.final_text,
+            tool_calls,
+        })
     }
 
     async fn shutdown(&self) {
@@ -85,7 +88,12 @@ mod tests {
     use super::*;
 
     fn call(args: serde_json::Value, result: Option<String>) -> StreamingToolCall {
-        StreamingToolCall { name: "set_temperature".into(), args, result, success: true }
+        StreamingToolCall {
+            name: "set_temperature".into(),
+            args,
+            result,
+            success: true,
+        }
     }
 
     #[test]

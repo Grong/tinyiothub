@@ -16,9 +16,7 @@ use crate::{
     types::*,
     types_ai::{AlarmAiPublisher, AlarmEvent},
 };
-use tinyiothub_event::{
-    aggregates::NotificationChannelType, entities::Event, value_objects::EventType,
-};
+use tinyiothub_event::{aggregates::NotificationChannelType, entities::Event, value_objects::EventType};
 
 /// 报警业务服务
 pub struct AlarmService {
@@ -30,10 +28,7 @@ pub struct AlarmService {
 }
 
 impl AlarmService {
-    pub fn new(
-        alarm_repository: Arc<dyn AlarmRepository>,
-        rule_repository: Arc<dyn AlarmRuleRepository>,
-    ) -> Self {
+    pub fn new(alarm_repository: Arc<dyn AlarmRepository>, rule_repository: Arc<dyn AlarmRuleRepository>) -> Self {
         let rule_engine = Arc::new(RuleEngine::new(rule_repository.clone()));
         Self {
             alarm_repository,
@@ -82,11 +77,7 @@ impl AlarmService {
         Ok(alarm)
     }
 
-    pub async fn get_alarm_by_id(
-        &self,
-        id: &str,
-        workspace_id: Option<&str>,
-    ) -> AlarmResult<Option<Alarm>> {
+    pub async fn get_alarm_by_id(&self, id: &str, workspace_id: Option<&str>) -> AlarmResult<Option<Alarm>> {
         self.alarm_repository.find_by_id(id, workspace_id).await
     }
 
@@ -149,8 +140,9 @@ impl AlarmService {
     ) -> AlarmResult<usize> {
         let mut count = 0;
         for alarm_id in alarm_ids {
-            if let Ok(()) =
-                self.acknowledge_alarm(&alarm_id, user_id.clone(), workspace_id, None).await
+            if let Ok(()) = self
+                .acknowledge_alarm(&alarm_id, user_id.clone(), workspace_id, None)
+                .await
             {
                 count += 1;
             }
@@ -213,14 +205,20 @@ impl AlarmService {
             statuses: Some(vec![AlarmStatus::Acknowledged]),
             ..base_criteria.clone()
         };
-        let acknowledged_count =
-            self.alarm_repository.count_by_criteria(&acknowledged_criteria).await?;
+        let acknowledged_count = self.alarm_repository.count_by_criteria(&acknowledged_criteria).await?;
 
-        let resolved_criteria =
-            AlarmQueryCriteria { statuses: Some(vec![AlarmStatus::Resolved]), ..base_criteria };
+        let resolved_criteria = AlarmQueryCriteria {
+            statuses: Some(vec![AlarmStatus::Resolved]),
+            ..base_criteria
+        };
         let resolved_count = self.alarm_repository.count_by_criteria(&resolved_criteria).await?;
 
-        Ok(AlarmStatistics { total_count, active_count, acknowledged_count, resolved_count })
+        Ok(AlarmStatistics {
+            total_count,
+            active_count,
+            acknowledged_count,
+            resolved_count,
+        })
     }
 
     pub async fn auto_resolve_alarm(&self, alarm_id: &str, workspace_id: &str) -> AlarmResult<()> {
@@ -250,19 +248,11 @@ impl AlarmService {
         self.rule_repository.find_enabled(Some(workspace_id)).await
     }
 
-    pub async fn get_rules_by_device(
-        &self,
-        device_id: &str,
-        workspace_id: &str,
-    ) -> AlarmResult<Vec<AlarmRule>> {
+    pub async fn get_rules_by_device(&self, device_id: &str, workspace_id: &str) -> AlarmResult<Vec<AlarmRule>> {
         self.rule_repository.find_by_device(device_id, Some(workspace_id)).await
     }
 
-    pub async fn update_rule(
-        &self,
-        rule: AlarmRule,
-        workspace_id: Option<&str>,
-    ) -> AlarmResult<()> {
+    pub async fn update_rule(&self, rule: AlarmRule, workspace_id: Option<&str>) -> AlarmResult<()> {
         AlarmSpecifications::is_valid_rule(&rule).map_err(AlarmError::InvalidRuleConfig)?;
         self.rule_repository.update(&rule, workspace_id).await
     }
@@ -271,12 +261,7 @@ impl AlarmService {
         self.rule_repository.delete(id, workspace_id).await
     }
 
-    pub async fn set_rule_enabled(
-        &self,
-        id: &str,
-        enabled: bool,
-        workspace_id: Option<&str>,
-    ) -> AlarmResult<()> {
+    pub async fn set_rule_enabled(&self, id: &str, enabled: bool, workspace_id: Option<&str>) -> AlarmResult<()> {
         self.rule_repository.set_enabled(id, enabled, workspace_id).await
     }
 
@@ -301,7 +286,10 @@ impl AlarmService {
 
         // 1. Query device_alarm_rules WHERE workspace_id=? AND rule_type='event'
         //    AND (device_id=? OR device_id IS NULL)
-        let rules = self.rule_repository.find_event_rules(workspace_id, Some(thing_id)).await?;
+        let rules = self
+            .rule_repository
+            .find_event_rules(workspace_id, Some(thing_id))
+            .await?;
 
         if rules.is_empty() {
             return Ok(Vec::new());
@@ -311,27 +299,25 @@ impl AlarmService {
 
         // 2. For each rule, deserialize condition_config → EventAlarmCondition
         for rule_row in &rules {
-            let condition: EventAlarmCondition =
-                match serde_json::from_str(&rule_row.condition_config) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        tracing::warn!(
-                            rule_id = %rule_row.id,
-                            condition_config = %rule_row.condition_config,
-                            error = %e,
-                            "Failed to parse event alarm condition"
-                        );
-                        continue;
-                    }
-                };
+            let condition: EventAlarmCondition = match serde_json::from_str(&rule_row.condition_config) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(
+                        rule_id = %rule_row.id,
+                        condition_config = %rule_row.condition_config,
+                        error = %e,
+                        "Failed to parse event alarm condition"
+                    );
+                    continue;
+                }
+            };
 
             // 3. If matches(event_name, event_level) → trigger alarm
             if !condition.matches(event_name, event_level) {
                 continue;
             }
 
-            let alarm_level =
-                AlarmLevel::parse_str(&rule_row.alarm_level).unwrap_or(AlarmLevel::Warning);
+            let alarm_level = AlarmLevel::parse_str(&rule_row.alarm_level).unwrap_or(AlarmLevel::Warning);
 
             let message = format!(
                 "[{}] Event '{}' at level {}: {}",
@@ -342,7 +328,9 @@ impl AlarmService {
                 thing_id.to_string(),
                 None, // property_id: not applicable for event rules
                 Some(rule_row.id.clone()),
-                AlarmType::Custom { name: format!("event_{}", event_name) },
+                AlarmType::Custom {
+                    name: format!("event_{}", event_name),
+                },
                 alarm_level,
                 message,
                 Some(format!("{}", event_level)),
@@ -455,8 +443,7 @@ impl RuleEngine {
             let context = EvaluationContext::from_event(event);
 
             // Evaluate whether the alarm condition is currently met
-            let condition_met =
-                self.check_condition(&rule.condition, &context, device_id, &rule.id)?;
+            let condition_met = self.check_condition(&rule.condition, &context, device_id, &rule.id)?;
 
             // --- Trigger debounce ---
             let trigger_duration = rule.notification_config.trigger_duration_secs;
@@ -578,14 +565,14 @@ impl RuleEngine {
             }
         }
 
-        Ok(EvaluationResult { triggers, non_triggered_rule_ids, pending_trigger_rule_ids })
+        Ok(EvaluationResult {
+            triggers,
+            non_triggered_rule_ids,
+            pending_trigger_rule_ids,
+        })
     }
 
-    pub async fn evaluate_rule(
-        &self,
-        rule: &AlarmRule,
-        event: &Event,
-    ) -> AlarmResult<Option<AlarmTrigger>> {
+    pub async fn evaluate_rule(&self, rule: &AlarmRule, event: &Event) -> AlarmResult<Option<AlarmTrigger>> {
         let context = EvaluationContext::from_event(event);
         let device_id = event.source().device_id().unwrap_or_else(|| event.source().source_id());
 
@@ -617,15 +604,13 @@ impl RuleEngine {
         rule_id: &str,
     ) -> AlarmResult<bool> {
         match condition {
-            AlarmCondition::Threshold { operator, value, .. } => {
-                self.check_threshold(operator, *value, context)
-            }
-            AlarmCondition::Range { min, max, inclusive } => {
-                self.check_range(*min, *max, *inclusive, context)
-            }
-            AlarmCondition::Change { change_type, threshold, time_window } => {
-                self.check_change(change_type, *threshold, *time_window, context)
-            }
+            AlarmCondition::Threshold { operator, value, .. } => self.check_threshold(operator, *value, context),
+            AlarmCondition::Range { min, max, inclusive } => self.check_range(*min, *max, *inclusive, context),
+            AlarmCondition::Change {
+                change_type,
+                threshold,
+                time_window,
+            } => self.check_change(change_type, *threshold, *time_window, context),
             AlarmCondition::Duration { condition, duration } => {
                 self.check_duration(condition, *duration, context, device_id, rule_id)
             }
@@ -684,8 +669,7 @@ impl RuleEngine {
             return Ok(false);
         };
 
-        let Some(previous) = context.previous_value.as_ref().and_then(|v| v.parse::<f64>().ok())
-        else {
+        let Some(previous) = context.previous_value.as_ref().and_then(|v| v.parse::<f64>().ok()) else {
             return Ok(false);
         };
 
@@ -738,8 +722,10 @@ impl RuleEngine {
         // Check if condition has been sustained long enough.
         // Read the guard into an owned value and drop it before mutating the
         // same DashMap — a `.get()` shard guard held across `remove` deadlocks.
-        let first_seen_elapsed =
-            self.duration_first_seen.get(&key).map(|first_seen| first_seen.elapsed());
+        let first_seen_elapsed = self
+            .duration_first_seen
+            .get(&key)
+            .map(|first_seen| first_seen.elapsed());
         match first_seen_elapsed {
             Some(elapsed) => {
                 if elapsed >= duration {
@@ -784,9 +770,7 @@ impl RuleEngine {
             }
             LogicalOperator::Not => {
                 if conditions.len() != 1 {
-                    return Err(AlarmError::InvalidCondition(
-                        "NOT 运算符只能有一个条件".to_string(),
-                    ));
+                    return Err(AlarmError::InvalidCondition("NOT 运算符只能有一个条件".to_string()));
                 }
                 Ok(!self.check_condition(&conditions[0], context, device_id, rule_id)?)
             }
@@ -800,7 +784,12 @@ impl RuleEngine {
     /// For all other conditions, recovery = condition is no longer met.
     fn check_recovery(&self, condition: &AlarmCondition, context: &EvaluationContext) -> bool {
         match condition {
-            AlarmCondition::Threshold { operator, value, recovery_threshold, .. } => {
+            AlarmCondition::Threshold {
+                operator,
+                value,
+                recovery_threshold,
+                ..
+            } => {
                 let Some(current) = context.get_numeric_value() else {
                     // Non-numeric values: can't evaluate, treat as recovered
                     return true;
@@ -810,11 +799,10 @@ impl RuleEngine {
                     // For > / >= operators, recovery means value dropped below recovery_val.
                     // For < / <= operators, recovery means value rose above recovery_val.
                     match operator {
-                        ComparisonOperator::GreaterThan
-                        | ComparisonOperator::GreaterThanOrEqual => current < *recovery_val,
-                        ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => {
-                            current > *recovery_val
+                        ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual => {
+                            current < *recovery_val
                         }
+                        ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => current > *recovery_val,
                         ComparisonOperator::Equal | ComparisonOperator::NotEqual => {
                             // For equality checks, recovery = value no longer equals trigger value
                             !operator.evaluate(current, *value)
@@ -835,28 +823,26 @@ impl RuleEngine {
 
     /// Check the "raw" condition without any state tracking (Duration, debounce, etc.).
     /// This is a pure function that only looks at the current value against the condition.
-    fn check_condition_strict(
-        &self,
-        condition: &AlarmCondition,
-        context: &EvaluationContext,
-    ) -> bool {
+    fn check_condition_strict(&self, condition: &AlarmCondition, context: &EvaluationContext) -> bool {
         match condition {
-            AlarmCondition::Threshold { operator, value, .. } => {
-                context.get_numeric_value().is_some_and(|v| operator.evaluate(v, *value))
-            }
+            AlarmCondition::Threshold { operator, value, .. } => context
+                .get_numeric_value()
+                .is_some_and(|v| operator.evaluate(v, *value)),
             AlarmCondition::Range { min, max, inclusive } => {
-                let Some(val) = context.get_numeric_value() else { return false };
-                let below_min = min
-                    .is_some_and(|min_val| if *inclusive { val < min_val } else { val <= min_val });
-                let above_max = max
-                    .is_some_and(|max_val| if *inclusive { val > max_val } else { val >= max_val });
+                let Some(val) = context.get_numeric_value() else {
+                    return false;
+                };
+                let below_min = min.is_some_and(|min_val| if *inclusive { val < min_val } else { val <= min_val });
+                let above_max = max.is_some_and(|max_val| if *inclusive { val > max_val } else { val >= max_val });
                 below_min || above_max
             }
-            AlarmCondition::Change { change_type, threshold, .. } => {
-                let Some(current) = context.get_numeric_value() else { return false };
-                let Some(previous) =
-                    context.previous_value.as_ref().and_then(|v| v.parse::<f64>().ok())
-                else {
+            AlarmCondition::Change {
+                change_type, threshold, ..
+            } => {
+                let Some(current) = context.get_numeric_value() else {
+                    return false;
+                };
+                let Some(previous) = context.previous_value.as_ref().and_then(|v| v.parse::<f64>().ok()) else {
                     return false;
                 };
                 let delta = current - previous;
@@ -866,28 +852,16 @@ impl RuleEngine {
                     ChangeType::Any => delta.abs() > *threshold,
                 }
             }
-            AlarmCondition::Duration { condition, .. } => {
-                self.check_condition_strict(condition, context)
-            }
+            AlarmCondition::Duration { condition, .. } => self.check_condition_strict(condition, context),
             AlarmCondition::Composite { operator, conditions } => match operator {
-                LogicalOperator::And => {
-                    conditions.iter().all(|c| self.check_condition_strict(c, context))
-                }
-                LogicalOperator::Or => {
-                    conditions.iter().any(|c| self.check_condition_strict(c, context))
-                }
-                LogicalOperator::Not => {
-                    conditions.len() == 1 && !self.check_condition_strict(&conditions[0], context)
-                }
+                LogicalOperator::And => conditions.iter().all(|c| self.check_condition_strict(c, context)),
+                LogicalOperator::Or => conditions.iter().any(|c| self.check_condition_strict(c, context)),
+                LogicalOperator::Not => conditions.len() == 1 && !self.check_condition_strict(&conditions[0], context),
             },
         }
     }
 
-    async fn load_relevant_rules(
-        &self,
-        device_id: &str,
-        property_id: Option<&str>,
-    ) -> AlarmResult<Vec<AlarmRule>> {
+    async fn load_relevant_rules(&self, device_id: &str, property_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>> {
         let mut rules = Vec::new();
         rules.extend(self.rule_repository.find_global_rules().await?);
         rules.extend(self.rule_repository.find_by_device(device_id, None).await?);
@@ -901,12 +875,7 @@ impl RuleEngine {
         AlarmType::PropertyThreshold
     }
 
-    fn generate_message(
-        &self,
-        event: &Event,
-        rule: &AlarmRule,
-        _context: &EvaluationContext,
-    ) -> String {
+    fn generate_message(&self, event: &Event, rule: &AlarmRule, _context: &EvaluationContext) -> String {
         format!("{}: {}", rule.name, event.content().title())
     }
 
@@ -967,7 +936,11 @@ impl EvaluationContext {
         let metadata = event.content().metadata().clone();
         let current_value = metadata.get("value").and_then(|v| v.as_str()).map(String::from);
         let previous_value = metadata.get("old_value").and_then(|v| v.as_str()).map(String::from);
-        Self { current_value, previous_value, metadata }
+        Self {
+            current_value,
+            previous_value,
+            metadata,
+        }
     }
 
     pub fn get_numeric_value(&self) -> Option<f64> {
@@ -1017,9 +990,11 @@ impl AlarmSpecifications {
             if rule.notification_config.channels.is_empty() {
                 return Err("启用通知时至少需要配置一个通知渠道".to_string());
             }
-            let needs_recipients = rule.notification_config.channels.iter().any(|ch| {
-                matches!(ch, NotificationChannelType::Email | NotificationChannelType::Sms)
-            });
+            let needs_recipients = rule
+                .notification_config
+                .channels
+                .iter()
+                .any(|ch| matches!(ch, NotificationChannelType::Email | NotificationChannelType::Sms));
             if needs_recipients && rule.notification_config.recipients.is_empty() {
                 return Err("使用邮件或短信通知时需要配置接收人".to_string());
             }
@@ -1049,24 +1024,20 @@ pub struct AlarmEventHandler {
 }
 
 impl AlarmEventHandler {
-    pub fn new(
-        alarm_service: Arc<AlarmService>,
-        notification_dispatcher: Arc<NotificationDispatcher>,
-    ) -> Self {
+    pub fn new(alarm_service: Arc<AlarmService>, notification_dispatcher: Arc<NotificationDispatcher>) -> Self {
         let rule_engine = alarm_service.rule_engine();
-        Self { alarm_service, rule_engine, notification_dispatcher }
+        Self {
+            alarm_service,
+            rule_engine,
+            notification_dispatcher,
+        }
     }
 
     #[allow(clippy::collapsible_if)]
     /// Auto-resolve active alarms when property values return to normal.
-    async fn auto_resolve_recovered_alarms(
-        &self,
-        event: &Event,
-        non_triggered_rule_ids: &[String],
-    ) {
+    async fn auto_resolve_recovered_alarms(&self, event: &Event, non_triggered_rule_ids: &[String]) {
         let device_id = event.source().device_id().unwrap_or_else(|| event.source().source_id());
-        let event_property_id =
-            event.content().metadata().get("property_id").and_then(|v| v.as_str());
+        let event_property_id = event.content().metadata().get("property_id").and_then(|v| v.as_str());
 
         let active_alarms = match self.alarm_service.get_active_alarms(Some(device_id)).await {
             Ok(alarms) => alarms,
@@ -1114,7 +1085,8 @@ impl tinyiothub_core::event::EventHandler for AlarmEventHandler {
 
         // Auto-resolve alarms for rules that were evaluated but did NOT trigger
         if !result.non_triggered_rule_ids.is_empty() {
-            self.auto_resolve_recovered_alarms(event, &result.non_triggered_rule_ids).await;
+            self.auto_resolve_recovered_alarms(event, &result.non_triggered_rule_ids)
+                .await;
         }
 
         if result.triggers.is_empty() {
@@ -1122,8 +1094,7 @@ impl tinyiothub_core::event::EventHandler for AlarmEventHandler {
         }
 
         for trigger in result.triggers {
-            let device_id =
-                event.source().device_id().unwrap_or_else(|| event.source().source_id());
+            let device_id = event.source().device_id().unwrap_or_else(|| event.source().source_id());
 
             // Suppress duplicate: don't create alarm if one is already active for this device+rule
             if let Ok(active) = self.alarm_service.get_active_alarms(Some(device_id)).await {
@@ -1199,7 +1170,10 @@ mod tests {
 
     async fn setup_test_db(pool: &sqlx::SqlitePool) {
         sqlx::query("PRAGMA foreign_keys = OFF").execute(pool).await.unwrap();
-        sqlx::query("DROP TABLE IF EXISTS device_alarm_rules").execute(pool).await.unwrap();
+        sqlx::query("DROP TABLE IF EXISTS device_alarm_rules")
+            .execute(pool)
+            .await
+            .unwrap();
         sqlx::query("DROP TABLE IF EXISTS devices").execute(pool).await.unwrap();
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS devices (
@@ -1230,8 +1204,14 @@ mod tests {
 
     fn make_property_change_event(device_id: &str, property_name: &str, value: f64) -> Event {
         let metadata: std::collections::HashMap<String, serde_json::Value> = [
-            ("property_id".to_string(), serde_json::Value::String(property_name.to_string())),
-            ("property_name".to_string(), serde_json::Value::String(property_name.to_string())),
+            (
+                "property_id".to_string(),
+                serde_json::Value::String(property_name.to_string()),
+            ),
+            (
+                "property_name".to_string(),
+                serde_json::Value::String(property_name.to_string()),
+            ),
             ("value".to_string(), serde_json::Value::String(value.to_string())),
         ]
         .into();
@@ -1251,27 +1231,27 @@ mod tests {
         Event::new_device_event(
             DeviceEventType::PropertyChange,
             EventLevel::Info,
-            EventSource::device_property(
-                device_id.to_string(),
-                property_name.to_string(),
-                "test".to_string(),
-            ),
+            EventSource::device_property(device_id.to_string(), property_name.to_string(), "test".to_string()),
             content,
         )
         .expect("failed to create test event")
     }
 
-    fn make_property_change_event_with_old(
-        device_id: &str,
-        property_name: &str,
-        value: f64,
-        old_value: f64,
-    ) -> Event {
+    fn make_property_change_event_with_old(device_id: &str, property_name: &str, value: f64, old_value: f64) -> Event {
         let metadata: std::collections::HashMap<String, serde_json::Value> = [
-            ("property_id".to_string(), serde_json::Value::String(property_name.to_string())),
-            ("property_name".to_string(), serde_json::Value::String(property_name.to_string())),
+            (
+                "property_id".to_string(),
+                serde_json::Value::String(property_name.to_string()),
+            ),
+            (
+                "property_name".to_string(),
+                serde_json::Value::String(property_name.to_string()),
+            ),
             ("value".to_string(), serde_json::Value::String(value.to_string())),
-            ("old_value".to_string(), serde_json::Value::String(old_value.to_string())),
+            (
+                "old_value".to_string(),
+                serde_json::Value::String(old_value.to_string()),
+            ),
         ]
         .into();
 
@@ -1290,11 +1270,7 @@ mod tests {
         Event::new_device_event(
             DeviceEventType::PropertyChange,
             EventLevel::Info,
-            EventSource::device_property(
-                device_id.to_string(),
-                property_name.to_string(),
-                "test".to_string(),
-            ),
+            EventSource::device_property(device_id.to_string(), property_name.to_string(), "test".to_string()),
             content,
         )
         .expect("failed to create test event")
@@ -1328,7 +1304,10 @@ mod tests {
 
         let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
 
-        assert!(!triggers.is_empty(), "Should trigger alarm when value exceeds threshold");
+        assert!(
+            !triggers.is_empty(),
+            "Should trigger alarm when value exceeds threshold"
+        );
         assert_eq!(triggers[0].rule_id, "rule-1");
         assert_eq!(triggers[0].alarm_level, AlarmLevel::Warning);
         assert_eq!(triggers[0].triggered_value.as_deref(), Some("85"));
@@ -1381,7 +1360,10 @@ mod tests {
         // temperature = 85 > 80 → should trigger immediately (0s duration)
         let event = make_property_change_event("dev-1", "temperature", 85.0);
         let result = engine.evaluate_event(&event).await.unwrap();
-        assert!(!result.triggers.is_empty(), "Duration with 0s should trigger immediately");
+        assert!(
+            !result.triggers.is_empty(),
+            "Duration with 0s should trigger immediately"
+        );
     }
 
     #[sqlx::test]
@@ -1624,7 +1606,10 @@ mod tests {
         // so 85 > 80 AND 85 > 60 → both true → triggers
         let event = make_property_change_event("dev-1", "temperature", 85.0);
         let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
-        assert!(!triggers.is_empty(), "AND composite with both conditions true should trigger");
+        assert!(
+            !triggers.is_empty(),
+            "AND composite with both conditions true should trigger"
+        );
     }
 
     #[sqlx::test]
@@ -1647,7 +1632,10 @@ mod tests {
         // 85 > 80 is true, but 85 is NOT > 90 → AND fails
         let event = make_property_change_event("dev-1", "temperature", 85.0);
         let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
-        assert!(triggers.is_empty(), "AND composite with partial condition should not trigger");
+        assert!(
+            triggers.is_empty(),
+            "AND composite with partial condition should not trigger"
+        );
     }
 
     #[sqlx::test]
@@ -1671,7 +1659,10 @@ mod tests {
         // 85 > 80 (true) OR 85 > 90 (false) → OR succeeds
         let event = make_property_change_event("dev-1", "temperature", 85.0);
         let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
-        assert!(!triggers.is_empty(), "OR composite with one true condition should trigger");
+        assert!(
+            !triggers.is_empty(),
+            "OR composite with one true condition should trigger"
+        );
     }
 
     /// --- Trigger debounce tests ---
@@ -1698,7 +1689,10 @@ mod tests {
             .evaluate_event(&make_property_change_event("dev-1", "temperature", 85.0))
             .await
             .unwrap();
-        assert!(result.triggers.is_empty(), "Should not trigger immediately with debounce");
+        assert!(
+            result.triggers.is_empty(),
+            "Should not trigger immediately with debounce"
+        );
         assert!(
             result.pending_trigger_rule_ids.contains(&"rule-tdb1".to_string()),
             "Rule should be pending during debounce"
@@ -1731,7 +1725,10 @@ mod tests {
             .evaluate_event(&make_property_change_event("dev-1", "temperature", 85.0))
             .await
             .unwrap();
-        assert!(!result.triggers.is_empty(), "Zero-duration debounce should trigger immediately");
+        assert!(
+            !result.triggers.is_empty(),
+            "Zero-duration debounce should trigger immediately"
+        );
     }
 
     #[sqlx::test]
@@ -2016,9 +2013,7 @@ mod integration_tests {
     use sqlx::Row;
     use tinyiothub_core::{
         event::EventHandler,
-        models::event::{
-            ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
-        },
+        models::event::{ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat},
     };
     use tinyiothub_storage::sqlite::Database;
 
@@ -2027,9 +2022,18 @@ mod integration_tests {
 
     async fn setup_full_schema(pool: &sqlx::SqlitePool) {
         sqlx::query("PRAGMA foreign_keys = OFF").execute(pool).await.unwrap();
-        sqlx::query("DROP TABLE IF EXISTS device_alarms").execute(pool).await.unwrap();
-        sqlx::query("DROP TABLE IF EXISTS device_alarm_rules").execute(pool).await.unwrap();
-        sqlx::query("DROP TABLE IF EXISTS thing_properties").execute(pool).await.unwrap();
+        sqlx::query("DROP TABLE IF EXISTS device_alarms")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DROP TABLE IF EXISTS device_alarm_rules")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("DROP TABLE IF EXISTS thing_properties")
+            .execute(pool)
+            .await
+            .unwrap();
         sqlx::query("DROP TABLE IF EXISTS devices").execute(pool).await.unwrap();
 
         // Match production schema with FK constraints
@@ -2118,18 +2122,13 @@ mod integration_tests {
         .with_metadata("value".to_string(), serde_json::Value::String(value.to_string()));
 
         if let Some(old) = old_value {
-            content = content
-                .with_metadata("old_value".to_string(), serde_json::Value::String(old.to_string()));
+            content = content.with_metadata("old_value".to_string(), serde_json::Value::String(old.to_string()));
         }
 
         Event::new_device_event(
             DeviceEventType::PropertyChange,
             EventLevel::Info,
-            EventSource::device_property(
-                device_id.to_string(),
-                property_id.to_string(),
-                "test".to_string(),
-            ),
+            EventSource::device_property(device_id.to_string(), property_id.to_string(), "test".to_string()),
             content,
         )
         .expect("failed to create test event")
@@ -2145,15 +2144,16 @@ mod integration_tests {
             .await
             .unwrap();
         sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('prop-1', 'dev-1', 'temperature')")
-            .execute(&pool).await.unwrap();
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-1', 'dev-1', 'prop-1', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
         let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
-        let rule_repo: Arc<dyn AlarmRuleRepository> =
-            Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
+        let rule_repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
         let alarm_service = Arc::new(AlarmService::new(alarm_repo.clone(), rule_repo));
         let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
         let handler = AlarmEventHandler::new(alarm_service, notification_dispatcher);
@@ -2177,8 +2177,10 @@ mod integration_tests {
         assert!(!is_res, "new alarm should not be resolved");
 
         // Round-trip test: read back via repo (exercises row_to_alarm datetime parsing)
-        let alarm_opt =
-            alarm_repo.find_by_id(row.get::<String, _>("id").as_str(), None).await.unwrap();
+        let alarm_opt = alarm_repo
+            .find_by_id(row.get::<String, _>("id").as_str(), None)
+            .await
+            .unwrap();
         assert!(alarm_opt.is_some(), "Should be able to read alarm back via repo");
         let alarm = alarm_opt.unwrap();
         assert_eq!(alarm.device_id, "dev-1");
@@ -2196,15 +2198,16 @@ mod integration_tests {
             .await
             .unwrap();
         sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('prop-1', 'dev-1', 'temperature')")
-            .execute(&pool).await.unwrap();
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-1', 'dev-1', 'prop-1', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
         let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
-        let rule_repo: Arc<dyn AlarmRuleRepository> =
-            Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
+        let rule_repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
         let alarm_service = Arc::new(AlarmService::new(alarm_repo.clone(), rule_repo));
         let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
         let handler = AlarmEventHandler::new(alarm_service, notification_dispatcher);
@@ -2213,11 +2216,10 @@ mod integration_tests {
         let event = make_test_event("dev-1", "prop-1", "temperature", 25.0, None);
         handler.handle(&event).await.unwrap();
 
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-1'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(count, 0, "Should not create alarm when value is below threshold");
     }
 
@@ -2229,17 +2231,20 @@ mod integration_tests {
         let db = Arc::new(Database::new(pool.clone()));
 
         sqlx::query("INSERT INTO devices (id, name, workspace_id) VALUES ('dev-ar', 'AutoResolve Device', 'ws-ar')")
-            .execute(&pool).await.unwrap();
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('prop-ar', 'dev-ar', 'temperature')")
-            .execute(&pool).await.unwrap();
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, workspace_id, created_at, updated_at)
              VALUES ('rule-ar1', 'dev-ar', 'prop-ar', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', 'ws-ar', datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
         let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
-        let rule_repo: Arc<dyn AlarmRuleRepository> =
-            Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
+        let rule_repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
         let alarm_service = Arc::new(AlarmService::new(alarm_repo.clone(), rule_repo));
         let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
         let handler = AlarmEventHandler::new(alarm_service.clone(), notification_dispatcher);
@@ -2249,12 +2254,11 @@ mod integration_tests {
             .handle(&make_test_event("dev-ar", "prop-ar", "temperature", 85.0, None))
             .await
             .unwrap();
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-ar' AND is_resolved = 0",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-ar' AND is_resolved = 0")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(count, 1, "Should have one active alarm");
 
         // Step 2: Value drops below threshold → auto-resolve
@@ -2263,13 +2267,15 @@ mod integration_tests {
             .await
             .unwrap();
 
-        let active_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-ar' AND is_resolved = 0",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(active_count, 0, "Alarm should be auto-resolved when value returns to normal");
+        let active_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-ar' AND is_resolved = 0")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            active_count, 0,
+            "Alarm should be auto-resolved when value returns to normal"
+        );
     }
 
     #[sqlx::test]
@@ -2278,17 +2284,20 @@ mod integration_tests {
         let db = Arc::new(Database::new(pool.clone()));
 
         sqlx::query("INSERT INTO devices (id, name, workspace_id) VALUES ('dev-arm', 'Meta Device', 'ws-arm')")
-            .execute(&pool).await.unwrap();
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('prop-arm', 'dev-arm', 'humidity')")
-            .execute(&pool).await.unwrap();
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, workspace_id, created_at, updated_at)
              VALUES ('rule-arm', 'dev-arm', 'prop-arm', 'High Humidity', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":70.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', 'ws-arm', datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
         let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
-        let rule_repo: Arc<dyn AlarmRuleRepository> =
-            Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
+        let rule_repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
         let alarm_service = Arc::new(AlarmService::new(alarm_repo.clone(), rule_repo));
         let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
         let handler = AlarmEventHandler::new(alarm_service.clone(), notification_dispatcher);
@@ -2312,7 +2321,10 @@ mod integration_tests {
             resolved_by.is_none(),
             "Auto-resolve should leave resolved_by NULL (no human actor)"
         );
-        assert_eq!(resolution_type, "auto_resolved", "Auto-resolve should set resolution_type");
+        assert_eq!(
+            resolution_type, "auto_resolved",
+            "Auto-resolve should set resolution_type"
+        );
     }
 
     /// --- Suppress duplicate test ---
@@ -2327,15 +2339,16 @@ mod integration_tests {
             .await
             .unwrap();
         sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('prop-sd', 'dev-sd', 'temperature')")
-            .execute(&pool).await.unwrap();
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-sd', 'dev-sd', 'prop-sd', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
         let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
-        let rule_repo: Arc<dyn AlarmRuleRepository> =
-            Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
+        let rule_repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
         let alarm_service = Arc::new(AlarmService::new(alarm_repo.clone(), rule_repo));
         let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
         let handler = AlarmEventHandler::new(alarm_service.clone(), notification_dispatcher);
@@ -2351,11 +2364,10 @@ mod integration_tests {
             .await
             .unwrap();
 
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-sd'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-sd'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(count, 1, "Should not create duplicate alarm for same device+rule");
     }
 }

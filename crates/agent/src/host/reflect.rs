@@ -16,7 +16,10 @@ mod tests {
     #[test]
     fn prompt_template_loaded() {
         let instruction = include_str!("../../templates/agent/REFLECTION_PROMPT.md");
-        assert!(instruction.contains("FACT|"), "prompt must contain FACT| format instruction");
+        assert!(
+            instruction.contains("FACT|"),
+            "prompt must contain FACT| format instruction"
+        );
         assert!(instruction.contains("NO_FACTS"));
         assert!(instruction.len() > 50);
     }

@@ -68,8 +68,7 @@ async fn report_heartbeat(
     status.gateway_id = request.gateway_id.unwrap_or_else(|| status.gateway_id.clone());
     status.timestamp = Utc::now();
     status.cpu_usage_percent = request.cpu_usage_percent.unwrap_or(status.cpu_usage_percent);
-    status.memory_usage_percent =
-        request.memory_usage_percent.unwrap_or(status.memory_usage_percent);
+    status.memory_usage_percent = request.memory_usage_percent.unwrap_or(status.memory_usage_percent);
     status.disk_usage_percent = request.disk_usage_percent.unwrap_or(status.disk_usage_percent);
     status.network_status = request.network_status.unwrap_or_else(|| status.network_status.clone());
     status.connected_devices = request.connected_devices.unwrap_or(status.connected_devices);
@@ -81,8 +80,7 @@ async fn report_heartbeat(
     // Calculate overall status
     status.status = calculate_health_status(&status, &config);
 
-    let next_heartbeat =
-        status.timestamp + chrono::Duration::seconds(config.probe_interval_secs as i64);
+    let next_heartbeat = status.timestamp + chrono::Duration::seconds(config.probe_interval_secs as i64);
 
     let response = ReportHeartbeatResponse {
         accepted: true,
@@ -94,9 +92,7 @@ async fn report_heartbeat(
 }
 
 /// Get heartbeat status endpoint
-async fn get_heartbeat(
-    _claims: AuthClaims,
-) -> Json<ApiResponse<HeartbeatStatus>> {
+async fn get_heartbeat(_claims: AuthClaims) -> Json<ApiResponse<HeartbeatStatus>> {
     let status_lock = match get_heartbeat_status() {
         Some(s) => s,
         None => {
@@ -135,9 +131,7 @@ async fn get_heartbeat(
 }
 
 /// Get heartbeat configuration endpoint
-async fn get_config(
-    _claims: AuthClaims,
-) -> Json<ApiResponse<HeartbeatConfig>> {
+async fn get_config(_claims: AuthClaims) -> Json<ApiResponse<HeartbeatConfig>> {
     let config_lock = match get_heartbeat_config() {
         Some(c) => c,
         None => {

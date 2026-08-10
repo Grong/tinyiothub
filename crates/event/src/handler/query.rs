@@ -160,8 +160,7 @@ pub async fn get_events(
 
     // Sorting
     criteria.sort_by = parse_sort_by(params.sort_by.as_deref()).unwrap_or(SortBy::Timestamp);
-    criteria.sort_order =
-        parse_sort_order(params.sort_order.as_deref()).unwrap_or(SortOrder::Descending);
+    criteria.sort_order = parse_sort_order(params.sort_order.as_deref()).unwrap_or(SortOrder::Descending);
 
     // Pagination
     criteria.limit = Some(page_size);
@@ -206,7 +205,12 @@ pub async fn get_events(
             };
             let paginated_data = PaginatedResponse {
                 data: event_responses,
-                pagination: PaginationInfo { page, page_size, total_pages, total_count },
+                pagination: PaginationInfo {
+                    page,
+                    page_size,
+                    total_pages,
+                    total_count,
+                },
             };
 
             ApiResponseBuilder::success(paginated_data)
@@ -269,7 +273,11 @@ fn generate_content_preview(content: &crate::value_objects::RichContent) -> Stri
     if let Some(first_element) = content.elements().first() {
         match first_element {
             crate::value_objects::ContentElement::Text { content, .. } => {
-                if content.len() > 100 { format!("{}...", &content[..97]) } else { content.clone() }
+                if content.len() > 100 {
+                    format!("{}...", &content[..97])
+                } else {
+                    content.clone()
+                }
             }
             _ => content.title().to_string(),
         }

@@ -52,8 +52,7 @@ impl ProtocolHandler for HttpPollHandler {
         debug!("HTTP poll: {} {}", self.config.method, url);
 
         let mut request = self.client.request(
-            reqwest::Method::from_bytes(self.config.method.as_bytes())
-                .unwrap_or(reqwest::Method::GET),
+            reqwest::Method::from_bytes(self.config.method.as_bytes()).unwrap_or(reqwest::Method::GET),
             &url,
         );
 
@@ -87,8 +86,8 @@ impl ProtocolHandler for HttpPollHandler {
             .await
             .map_err(|e| Error::IOError(format!("Failed to read response: {}", e)))?;
 
-        let json: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|e| Error::ValidationError(format!("Invalid JSON: {}", e)))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&body).map_err(|e| Error::ValidationError(format!("Invalid JSON: {}", e)))?;
 
         let mut results = Vec::new();
         for (field_name, path) in &self.mapping {

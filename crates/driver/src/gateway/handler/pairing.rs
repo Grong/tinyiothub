@@ -38,7 +38,11 @@ pub async fn pair_device(
 ) -> Result<Json<ApiResponse<PairingResponse>>, (StatusCode, Json<ApiResponse<PairingResponse>>)> {
     let client_ip = extract_client_ip(&headers);
 
-    match state.gateway_service.pair_device(&claims.0.user_id, client_ip.as_deref(), req).await {
+    match state
+        .gateway_service
+        .pair_device(&claims.0.user_id, client_ip.as_deref(), req)
+        .await
+    {
         Ok(response) => Ok(ApiResponseBuilder::success(response)),
         Err(e) => {
             let (status, code, msg) = match &e {
@@ -49,9 +53,11 @@ pub async fn pair_device(
                     (StatusCode::TOO_MANY_REQUESTS, 429, e.to_string())
                 }
                 PairingError::ServiceBusy => (StatusCode::SERVICE_UNAVAILABLE, 503, e.to_string()),
-                _ => {
-                    (StatusCode::INTERNAL_SERVER_ERROR, -1, "配对暂时失败，请稍后重试".to_string())
-                }
+                _ => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    -1,
+                    "配对暂时失败，请稍后重试".to_string(),
+                ),
             };
             Err((status, ApiResponseBuilder::error_with_code(code, msg)))
         }

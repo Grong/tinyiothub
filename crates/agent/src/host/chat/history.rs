@@ -75,10 +75,7 @@ pub async fn list_messages(
 }
 
 /// Format persisted messages for the chat history API response.
-pub fn messages_to_history_json(
-    messages: Vec<(String, String)>,
-    session_key: &str,
-) -> serde_json::Value {
+pub fn messages_to_history_json(messages: Vec<(String, String)>, session_key: &str) -> serde_json::Value {
     let msgs: Vec<serde_json::Value> = messages
         .into_iter()
         .map(|(role, content)| {
@@ -98,7 +95,9 @@ mod tests {
     async fn test_pool() -> SqlitePool {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await.unwrap();
-        tinyiothub_storage::test_helpers::run_all_migrations(&pool).await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
         pool
     }
 
@@ -106,8 +105,12 @@ mod tests {
     async fn append_and_list_roundtrip_chronological() {
         let pool = test_pool().await;
         ensure_session(&pool, "agent:ws:a/s1", "ws", "a").await.unwrap();
-        append_message(&pool, "agent:ws:a/s1", "user", "hello", "r1").await.unwrap();
-        append_message(&pool, "agent:ws:a/s1", "assistant", "hi there", "r1").await.unwrap();
+        append_message(&pool, "agent:ws:a/s1", "user", "hello", "r1")
+            .await
+            .unwrap();
+        append_message(&pool, "agent:ws:a/s1", "assistant", "hi there", "r1")
+            .await
+            .unwrap();
 
         let msgs = list_messages(&pool, "agent:ws:a/s1", 200).await.unwrap();
         assert_eq!(
@@ -124,8 +127,12 @@ mod tests {
         let pool = test_pool().await;
         ensure_session(&pool, "agent:ws:a/s1", "ws", "a").await.unwrap();
         ensure_session(&pool, "agent:ws:a/s2", "ws", "a").await.unwrap();
-        append_message(&pool, "agent:ws:a/s1", "user", "session one", "r1").await.unwrap();
-        append_message(&pool, "agent:ws:a/s2", "user", "session two", "r2").await.unwrap();
+        append_message(&pool, "agent:ws:a/s1", "user", "session one", "r1")
+            .await
+            .unwrap();
+        append_message(&pool, "agent:ws:a/s2", "user", "session two", "r2")
+            .await
+            .unwrap();
 
         let s1 = list_messages(&pool, "agent:ws:a/s1", 200).await.unwrap();
         assert_eq!(s1.len(), 1);
@@ -159,7 +166,9 @@ mod tests {
         assert!(result.is_err(), "FK must reject messages for unknown sessions");
 
         ensure_session(&pool, "agent:ws:a/missing", "ws", "a").await.unwrap();
-        append_message(&pool, "agent:ws:a/missing", "user", "hello", "r1").await.unwrap();
+        append_message(&pool, "agent:ws:a/missing", "user", "hello", "r1")
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

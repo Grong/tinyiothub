@@ -29,7 +29,9 @@ pub struct HarmonyNetworkManager {
 impl HarmonyNetworkManager {
     /// 创建新的网络管理器
     pub fn new() -> Self {
-        Self { interfaces: Mutex::new(HashMap::new()) }
+        Self {
+            interfaces: Mutex::new(HashMap::new()),
+        }
     }
 
     /// 获取所有网络接口
@@ -54,12 +56,7 @@ impl HarmonyNetworkManager {
     }
 
     /// 设置网络接口IP地址
-    pub fn set_interface_ip(
-        &self,
-        name: &str,
-        ip: IpAddr,
-        netmask: IpAddr,
-    ) -> Result<(), std::io::Error> {
+    pub fn set_interface_ip(&self, name: &str, ip: IpAddr, netmask: IpAddr) -> Result<(), std::io::Error> {
         info!("Setting IP address for interface '{}' to {} on HarmonyOS", name, ip);
 
         let mut interfaces = self.interfaces.lock().unwrap();

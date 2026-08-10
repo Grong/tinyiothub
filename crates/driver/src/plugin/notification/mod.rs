@@ -10,9 +10,7 @@ use std::sync::Arc;
 pub use config::{DingtalkConfig, FeishuConfig};
 pub use handlers::{DingtalkHandler, FeishuHandler, NotificationHandler};
 
-use crate::{
-    plugin::{AppContext, PluginHandler},
-};
+use crate::plugin::{AppContext, PluginHandler};
 use tinyiothub_core::error::Error;
 
 pub struct Notification {
@@ -22,10 +20,7 @@ pub struct Notification {
     pub extras: std::collections::HashMap<String, String>,
 }
 
-pub fn create_handler(
-    config: &toml::Value,
-    _context: Arc<AppContext>,
-) -> Result<Box<dyn PluginHandler>, Error> {
+pub fn create_handler(config: &toml::Value, _context: Arc<AppContext>) -> Result<Box<dyn PluginHandler>, Error> {
     let notification_cfg = config
         .get("notification")
         .ok_or_else(|| Error::ValidationError("Missing [notification] section".to_string()))?;

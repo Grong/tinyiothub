@@ -12,8 +12,8 @@ mod tests;
 use std::sync::Arc;
 
 pub use registry::{
-    AppContext, PluginEntry, PluginFactory, PluginHandler, PluginManifest, PluginRegistry,
-    PluginType, get_global_registry,
+    AppContext, PluginEntry, PluginFactory, PluginHandler, PluginManifest, PluginRegistry, PluginType,
+    get_global_registry,
 };
 
 use tinyiothub_core::error::Error;

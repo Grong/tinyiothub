@@ -75,12 +75,10 @@ impl McpState {
     /// 只读调用 `get_device_by_id`（不发布事件），行为与原先
     /// `tenant_device_service(&Some(..))` 完全一致。
     pub fn tenant_device_service_str(&self, workspace_id: &str) -> Arc<DeviceService> {
-        let repository =
-            self.device_repository_factory.create_for_workspace(workspace_id.to_string());
-        Arc::new(
-            DeviceService::new(repository, self.database.clone())
-                .with_tag_repository(self.tag_repository.clone()),
-        )
+        let repository = self
+            .device_repository_factory
+            .create_for_workspace(workspace_id.to_string());
+        Arc::new(DeviceService::new(repository, self.database.clone()).with_tag_repository(self.tag_repository.clone()))
     }
 
     /// 更新设备属性值
@@ -95,9 +93,7 @@ impl McpState {
         property_id: &str,
         value: &str,
     ) -> Result<(), String> {
-        use tinyiothub_core::models::event::{
-            ContentElement, EventSource, RichContent, TextFormat,
-        };
+        use tinyiothub_core::models::event::{ContentElement, EventSource, RichContent, TextFormat};
 
         // 1. 验证设备存在且属于指定的workspace
         let tenant_device_service = self.tenant_device_service_str(workspace_id);
@@ -108,12 +104,7 @@ impl McpState {
             .ok_or_else(|| "not found".to_string())?;
 
         // 2. 验证属性存在且属于该设备
-        let property = match tinyiothub_storage::find_device_property_by_id(
-            self.database(),
-            property_id,
-        )
-        .await
-        {
+        let property = match tinyiothub_storage::find_device_property_by_id(self.database(), property_id).await {
             Ok(Some(p)) if p.device_id == device_id => p,
             Ok(Some(_)) => {
                 return Err("Property does not belong to device".to_string());
@@ -173,7 +164,9 @@ static MCP_REGISTRY: std::sync::OnceLock<Arc<RwLock<HandlerRegistry>>> = std::sy
 /// The first call wins (OnceLock semantics); tool handlers are (re-)built
 /// from the state passed to [`register_tools`].
 pub fn init_mcp_registry(state: Option<Arc<McpState>>) -> Arc<RwLock<HandlerRegistry>> {
-    MCP_REGISTRY.get_or_init(|| Arc::new(RwLock::new(HandlerRegistry::new(state)))).clone()
+    MCP_REGISTRY
+        .get_or_init(|| Arc::new(RwLock::new(HandlerRegistry::new(state))))
+        .clone()
 }
 
 /// Get the global MCP registry (returns None if not yet initialized)

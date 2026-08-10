@@ -86,7 +86,10 @@ pub fn get_interface_ip(interface: &str) -> Option<String> {
 
 /// Ping a host to check connectivity
 pub fn ping_host(host: &str, timeout_secs: u64) -> bool {
-    match Command::new("ping").args(["-c", "1", "-W", &timeout_secs.to_string(), host]).output() {
+    match Command::new("ping")
+        .args(["-c", "1", "-W", &timeout_secs.to_string(), host])
+        .output()
+    {
         Ok(output) => output.status.success(),
         Err(_) => false,
     }

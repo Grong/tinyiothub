@@ -70,7 +70,11 @@ pub struct PropertySchema {
 impl InputSchema {
     /// Create a simple object schema with required properties
     pub fn object(required: Vec<String>, properties: HashMap<String, PropertySchema>) -> Self {
-        Self { schema_type: "object".to_string(), required, properties }
+        Self {
+            schema_type: "object".to_string(),
+            required,
+            properties,
+        }
     }
 
     /// Convert to JSON value for MCP protocol
@@ -144,7 +148,10 @@ pub struct HandlerRegistry {
 impl HandlerRegistry {
     /// Create a new empty registry holding the given app state
     pub fn new(state: Option<Arc<McpState>>) -> Self {
-        Self { state, handlers: HashMap::new() }
+        Self {
+            state,
+            handlers: HashMap::new(),
+        }
     }
 
     /// The app state this registry was initialized with
@@ -154,7 +161,8 @@ impl HandlerRegistry {
 
     /// Register a tool handler
     pub fn register<H: ToolHandler + 'static>(&mut self, handler: H) -> &mut Self {
-        self.handlers.insert(handler.name().to_string(), std::sync::Arc::new(handler));
+        self.handlers
+            .insert(handler.name().to_string(), std::sync::Arc::new(handler));
         self
     }
 
@@ -175,7 +183,10 @@ impl HandlerRegistry {
 
     /// List all tool metadata
     pub fn list_tools(&self) -> Vec<ToolMetadata> {
-        self.handlers.values().map(|h| ToolMetadata::from_handler(h.as_ref())).collect()
+        self.handlers
+            .values()
+            .map(|h| ToolMetadata::from_handler(h.as_ref()))
+            .collect()
     }
 
     /// Check if a tool is registered

@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::test_utils::{
-    auth_header, create_test_token, create_test_token_with_workspace, response_parts,
-    seed_test_workspace, setup_test_app, setup_test_app_with_pool,
+    auth_header, create_test_token, create_test_token_with_workspace, response_parts, seed_test_workspace,
+    setup_test_app, setup_test_app_with_pool,
 };
 
 fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Request<Body> {
@@ -68,8 +68,10 @@ async fn test_create_job() {
         "config": "{\"command\":\"echo hello\"}"
     });
 
-    let response =
-        app.oneshot(auth_request("POST", "/api/v1/jobs", &token, Some(body))).await.unwrap();
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/jobs", &token, Some(body)))
+        .await
+        .unwrap();
 
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
@@ -98,8 +100,10 @@ async fn test_create_job_invalid_cron() {
         "config": "{}"
     });
 
-    let response =
-        app.oneshot(auth_request("POST", "/api/v1/jobs", &token, Some(body))).await.unwrap();
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/jobs", &token, Some(body)))
+        .await
+        .unwrap();
 
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
@@ -149,7 +153,12 @@ async fn test_update_job_not_found() {
     });
 
     let response = app
-        .oneshot(auth_request("PUT", "/api/v1/jobs/nonexistent-job-id", &token, Some(body)))
+        .oneshot(auth_request(
+            "PUT",
+            "/api/v1/jobs/nonexistent-job-id",
+            &token,
+            Some(body),
+        ))
         .await
         .unwrap();
 
@@ -196,13 +205,18 @@ async fn test_job_statistics() {
 
     let token = create_test_token("user-1", "tenant-1");
 
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/jobs/statistics", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/jobs/statistics", &token, None))
+        .await
+        .unwrap();
 
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["code"], 0);
-    assert!(json["result"]["total_jobs"].is_number(), "Expected total_jobs in statistics");
+    assert!(
+        json["result"]["total_jobs"].is_number(),
+        "Expected total_jobs in statistics"
+    );
 }
 
 // ============================================================================
@@ -257,8 +271,12 @@ async fn test_job_workspace_isolation() {
     // Once the handler is fixed to scope by workspace, this test should verify
     // that User B cannot see workspace A's jobs.
     if json["result"].is_array() {
-        let job_ids: Vec<&str> =
-            json["result"].as_array().unwrap().iter().filter_map(|j| j["id"].as_str()).collect();
+        let job_ids: Vec<&str> = json["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|j| j["id"].as_str())
+            .collect();
         // When workspace scoping is implemented, uncomment:
         // assert!(!job_ids.contains(&job_id.as_str()), "SECURITY BUG...");
         let _ = job_ids; // suppress unused warning

@@ -56,12 +56,10 @@ fn ensure_test_config() {
         crate::shared::config::initialize().expect("Failed to initialize test config");
 
         // Register JWT settings with the auth crate (P4-Task16), mirroring main.rs.
-        tinyiothub_auth::security::jwt::init_jwt_settings(
-            tinyiothub_auth::security::jwt::JwtSettings {
-                secret: crate::shared::config::get().security.jwt.secret.clone(),
-                harmonyos_enabled: crate::shared::config::get().harmonyos.enabled,
-            },
-        );
+        tinyiothub_auth::security::jwt::init_jwt_settings(tinyiothub_auth::security::jwt::JwtSettings {
+            secret: crate::shared::config::get().security.jwt.secret.clone(),
+            harmonyos_enabled: crate::shared::config::get().harmonyos.enabled,
+        });
 
         // Register the tenant resolver (P4-Task15) so tinyiothub_web's
         // WorkspaceScope/AuthClaims extractors validate test JWTs exactly as
@@ -148,7 +146,9 @@ async fn create_test_app_state() -> AppState {
 
     // Run migrations via centralized module (handles skip lists, orphaned
     // records, and schema consistency automatically).
-    tinyiothub_storage::migrations::run_migrations(&pool).await.expect("Failed to run migrations");
+    tinyiothub_storage::migrations::run_migrations(&pool)
+        .await
+        .expect("Failed to run migrations");
 
     // Seed a test user so FK constraints (created_by REFERENCES users(id)) don't fail
     sqlx::query(
@@ -167,29 +167,19 @@ async fn create_test_app_state() -> AppState {
     let device_cache = Arc::new(DeviceCache::new());
 
     // Initialize START_TIME for uptime tests
-    let _ =
-        tinyiothub_admin::monitoring::handler::health::START_TIME.set(std::time::SystemTime::now());
+    let _ = tinyiothub_admin::monitoring::handler::health::START_TIME.set(std::time::SystemTime::now());
 
     AppState::new(device_cache, pool)
 }
 
 /// Generate a valid JWT token for testing authenticated endpoints.
 pub fn create_test_token(user_id: &str, tenant_id: &str) -> String {
-    tinyiothub_auth::security::jwt::generate_token(
-        user_id,
-        "test-user",
-        tenant_id,
-        "ws-default-001",
-    )
-    .expect("Failed to generate test token")
+    tinyiothub_auth::security::jwt::generate_token(user_id, "test-user", tenant_id, "ws-default-001")
+        .expect("Failed to generate test token")
 }
 
 /// Generate a JWT token with explicit workspace_id for cross-tenant isolation tests.
-pub fn create_test_token_with_workspace(
-    user_id: &str,
-    tenant_id: &str,
-    workspace_id: &str,
-) -> String {
+pub fn create_test_token_with_workspace(user_id: &str, tenant_id: &str, workspace_id: &str) -> String {
     tinyiothub_auth::security::jwt::generate_token(user_id, "test-user", tenant_id, workspace_id)
         .expect("Failed to generate test token")
 }
@@ -202,9 +192,8 @@ pub fn auth_header(token: &str) -> String {
 /// Extract the response body as JSON `Value`.
 pub async fn response_json(response: axum::response::Response) -> Value {
     let body = response.into_body().collect().await.unwrap().to_bytes();
-    serde_json::from_slice(&body).unwrap_or_else(|_| {
-        panic!("Failed to parse response as JSON: {}", String::from_utf8_lossy(&body))
-    })
+    serde_json::from_slice(&body)
+        .unwrap_or_else(|_| panic!("Failed to parse response as JSON: {}", String::from_utf8_lossy(&body)))
 }
 
 /// Extract the response status code and body as JSON.

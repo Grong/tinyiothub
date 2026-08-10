@@ -17,9 +17,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tinyiothub_agent::host::ports::{
-    ExternalToolContext, ExternalToolHandler, ExternalToolMeta, ExternalToolRegistry,
-};
+use tinyiothub_agent::host::ports::{ExternalToolContext, ExternalToolHandler, ExternalToolMeta, ExternalToolRegistry};
 use tokio::sync::RwLock;
 
 use super::handlers::{McpAuthContext, McpContextGuard};
@@ -45,11 +43,7 @@ impl ExternalToolHandler for BridgedToolHandler {
         self.inner.input_schema().to_json()
     }
 
-    async fn execute(
-        &self,
-        ctx: &ExternalToolContext,
-        args: serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
+    async fn execute(&self, ctx: &ExternalToolContext, args: serde_json::Value) -> Result<serde_json::Value, String> {
         let _guard = McpContextGuard::new(McpAuthContext::for_heartbeat(
             ctx.workspace_id.clone(),
             ctx.actor.clone(),
@@ -82,7 +76,8 @@ impl ExternalToolRegistry for McpExternalToolRegistry {
 
     async fn get_handler(&self, name: &str) -> Option<Arc<dyn ExternalToolHandler>> {
         let reg = self.registry.read().await;
-        reg.get_owned(name).map(|h| Arc::new(BridgedToolHandler { inner: h }) as _)
+        reg.get_owned(name)
+            .map(|h| Arc::new(BridgedToolHandler { inner: h }) as _)
     }
 }
 
@@ -90,9 +85,7 @@ impl ExternalToolRegistry for McpExternalToolRegistry {
 /// Call after [`super::register_tools`] has initialized the global registry.
 pub fn register_agent_bridge() {
     if let Some(registry) = super::get_mcp_registry() {
-        tinyiothub_agent::host::ports::set_external_tool_registry(Arc::new(
-            McpExternalToolRegistry { registry },
-        ));
+        tinyiothub_agent::host::ports::set_external_tool_registry(Arc::new(McpExternalToolRegistry { registry }));
     } else {
         tracing::warn!("MCP registry not initialized; agent external tools unavailable");
     }

@@ -8,11 +8,9 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
 use super::super::config::WeComConfig;
-use crate::{
-    plugin::{
-        PluginHandler, PluginManifest, PluginType,
-        integration::{IntegrationRequest, handlers::IntegrationHandler},
-    },
+use crate::plugin::{
+    PluginHandler, PluginManifest, PluginType,
+    integration::{IntegrationRequest, handlers::IntegrationHandler},
 };
 use tinyiothub_core::error::Error;
 
@@ -59,10 +57,12 @@ impl WeComHandler {
             self.config.corp_id, self.config.corp_secret
         );
 
-        let resp =
-            self.client.get(&url).send().await.map_err(|e| {
-                Error::NetworkError(format!("Failed to get WeCom access token: {}", e))
-            })?;
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| Error::NetworkError(format!("Failed to get WeCom access token: {}", e)))?;
 
         let token_resp: WeComAccessTokenResponse = resp
             .json()
@@ -85,7 +85,11 @@ impl IntegrationHandler for WeComHandler {
         );
 
         let send_req = WeComSendRequest {
-            touser: if self.config.party_id.is_some() { None } else { Some("@all".to_string()) },
+            touser: if self.config.party_id.is_some() {
+                None
+            } else {
+                Some("@all".to_string())
+            },
             toparty: self.config.party_id.clone(),
             totag: self.config.tag_id.clone(),
             msgtype: request.msg_type.clone(),

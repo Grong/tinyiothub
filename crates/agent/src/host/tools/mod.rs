@@ -11,7 +11,5 @@ pub use autonomous_invoke::{AutonomousInvokeActionTool, RunContextSlot, new_run_
 pub use canvas::CanvasTool;
 pub use dispatch_task::DispatchThingTaskTool;
 pub use get_skill::GetSkillTool;
-pub use service::{
-    IoTToolAdapter, build_catalog, filter_by_denylist, load_all_tools, resolve_tools_for_agent,
-};
+pub use service::{IoTToolAdapter, build_catalog, filter_by_denylist, load_all_tools, resolve_tools_for_agent};
 pub use thing::{create_thing_tools, take_pending_action};

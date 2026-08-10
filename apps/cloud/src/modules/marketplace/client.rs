@@ -31,17 +31,19 @@ impl MarketplaceClient {
             return Err(MarketplaceError::Disabled);
         }
 
-        let http_client =
-            Client::builder().timeout(Duration::from_secs(config.download_timeout_secs)).build()?;
+        let http_client = Client::builder()
+            .timeout(Duration::from_secs(config.download_timeout_secs))
+            .build()?;
 
         Ok(Self { http_client, config })
     }
 
     /// Get API base URL (includes /api/v1).
     fn api_base(&self) -> Result<&str> {
-        self.config.api_url.as_deref().ok_or_else(|| {
-            MarketplaceError::InvalidConfig("No marketplace API URL configured".to_string())
-        })
+        self.config
+            .api_url
+            .as_deref()
+            .ok_or_else(|| MarketplaceError::InvalidConfig("No marketplace API URL configured".to_string()))
     }
 
     /// Fetch template list from marketplace API.
@@ -50,8 +52,7 @@ impl MarketplaceClient {
         let url = format!("{}/templates", base);
         tracing::info!("Fetching templates from: {}", url);
 
-        let response: ApiResponse<PaginatedList<MTemplate>> =
-            self.http_client.get(&url).send().await?.json().await?;
+        let response: ApiResponse<PaginatedList<MTemplate>> = self.http_client.get(&url).send().await?.json().await?;
 
         let templates = response
             .result
@@ -69,12 +70,19 @@ impl MarketplaceClient {
                     manufacturer: t.manufacturer.unwrap_or_default(),
                     description: t.description.zh.or(t.description.en).unwrap_or_default(),
                     tags: t.tags,
-                    author: AuthorInfo { name: t.author, email: String::new() },
+                    author: AuthorInfo {
+                        name: t.author,
+                        email: String::new(),
+                    },
                     icon: t.icon,
                     downloads: t.downloads as u64,
                     rating: t.rating.unwrap_or(0.0) as f32,
                     reviews: t.reviews.unwrap_or(0) as u32,
-                    license: if t.license.is_empty() { "MIT".to_string() } else { t.license },
+                    license: if t.license.is_empty() {
+                        "MIT".to_string()
+                    } else {
+                        t.license
+                    },
                     checksum: String::new(),
                     size: 0,
                     created_at: t.created_at,
@@ -93,8 +101,7 @@ impl MarketplaceClient {
         let url = format!("{}/templates/{}", base, urlencoding::encode(name));
         tracing::info!("Fetching template from: {}", url);
 
-        let response: ApiResponse<serde_json::Value> =
-            self.http_client.get(&url).send().await?.json().await?;
+        let response: ApiResponse<serde_json::Value> = self.http_client.get(&url).send().await?.json().await?;
 
         Ok(response.result)
     }
@@ -105,8 +112,7 @@ impl MarketplaceClient {
         let url = format!("{}/drivers", base);
         tracing::info!("Fetching drivers from: {}", url);
 
-        let response: ApiResponse<PaginatedList<MDriver>> =
-            self.http_client.get(&url).send().await?.json().await?;
+        let response: ApiResponse<PaginatedList<MDriver>> = self.http_client.get(&url).send().await?.json().await?;
 
         let drivers = response
             .result
@@ -134,12 +140,11 @@ impl MarketplaceClient {
                     .platforms
                     .and_then(|v| serde_json::from_value(v).ok())
                     .unwrap_or_default(),
-                requirements: d
-                    .requirements
-                    .and_then(|v| serde_json::from_value(v).ok())
-                    .unwrap_or(super::metadata::DriverRequirements {
+                requirements: d.requirements.and_then(|v| serde_json::from_value(v).ok()).unwrap_or(
+                    super::metadata::DriverRequirements {
                         min_version: "0.1.0".to_string(),
-                    }),
+                    },
+                ),
                 created_at: d.created_at,
                 updated_at: d.updated_at,
             })

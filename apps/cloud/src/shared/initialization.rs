@@ -132,9 +132,7 @@ pub async fn ensure_default_admin_user(state: &AppState) -> Result<()> {
                     admin_user.get_display_name(),
                     admin_user.id
                 );
-                tracing::warn!(
-                    "Default admin password is 'admin123', please change it immediately!"
-                );
+                tracing::warn!("Default admin password is 'admin123', please change it immediately!");
                 admin_user.id
             }
             Err(e) => {
@@ -165,23 +163,20 @@ pub async fn ensure_user_has_workspace(state: &AppState, user_id: &str) -> Resul
 async fn ensure_tenant_membership(state: &AppState, user_id: &str) -> Result<()> {
     let pool = state.database().pool();
 
-    let has_tenant: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM tenant_users WHERE user_id = ?)",
-    )
-    .bind(user_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+    let has_tenant: bool = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM tenant_users WHERE user_id = ?)")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
 
     if !has_tenant {
         tracing::info!("[init] User {} has no tenant, bootstrapping default tenant...", user_id);
 
-        let tenant_exists: bool = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM tenants WHERE id = 'tenant-default-001')",
-        )
-        .fetch_one(pool)
-        .await
-        .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+        let tenant_exists: bool =
+            sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM tenants WHERE id = 'tenant-default-001')")
+                .fetch_one(pool)
+                .await
+                .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
 
         if !tenant_exists {
             sqlx::query(
@@ -222,12 +217,11 @@ async fn ensure_user_workspace(state: &AppState, user_id: &str) -> Result<()> {
     let pool = state.database().pool();
     let ws_id = format!("ws-{}", user_id);
 
-    let ws_exists: bool =
-        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?)")
-            .bind(&ws_id)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+    let ws_exists: bool = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?)")
+        .bind(&ws_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
 
     if ws_exists {
         return Ok(());
@@ -236,20 +230,19 @@ async fn ensure_user_workspace(state: &AppState, user_id: &str) -> Result<()> {
     tracing::info!("[init] Creating per-user workspace {} for user {}", ws_id, user_id);
 
     // 获取用户信息用于 workspace 名称
-    let user_name: Option<String> =
-        sqlx::query_scalar("SELECT display_name FROM users WHERE id = ?")
-            .bind(user_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?
-            .flatten();
+    let user_name: Option<String> = sqlx::query_scalar("SELECT display_name FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?
+        .flatten();
 
     let ws_name = user_name.unwrap_or_else(|| user_id.to_string());
 
     sqlx::query(
         r#"INSERT INTO workspaces
            (id, name, description, tenant_id, created_at, updated_at)
-           VALUES (?, ?, '用户个人工作空间', 'tenant-default-001', datetime('now'), datetime('now'))"#
+           VALUES (?, ?, '用户个人工作空间', 'tenant-default-001', datetime('now'), datetime('now'))"#,
     )
     .bind(&ws_id)
     .bind(format!("{}的工作空间", ws_name))
@@ -339,17 +332,13 @@ async fn ensure_default_tenant(state: &AppState, user_id: &str) -> Result<()> {
 }
 
 /// 确保默认工作空间存在，若无则创建并同步创建 Agent；若存在但缺少 agent_id 则 backfill
-async fn ensure_default_workspace_and_agent(
-    state: &AppState,
-    pool: &sqlx::Pool<sqlx::Sqlite>,
-) -> Result<()> {
+async fn ensure_default_workspace_and_agent(state: &AppState, pool: &sqlx::Pool<sqlx::Sqlite>) -> Result<()> {
     // 检查默认工作空间是否存在
-    let ws_exists: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = 'ws-default-001')",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+    let ws_exists: bool =
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = 'ws-default-001')")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
 
     if !ws_exists {
         sqlx::query(

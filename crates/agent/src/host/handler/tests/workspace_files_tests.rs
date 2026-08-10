@@ -42,7 +42,10 @@ fn test_path_validation_rejects_traversal() {
 fn test_workspace_file_info_serde() {
     use crate::host::handler::files::{WorkspaceFileInfo, WorkspaceFileResponse};
 
-    let info = WorkspaceFileInfo { name: "IDENTITY.md".to_string(), is_override: false };
+    let info = WorkspaceFileInfo {
+        name: "IDENTITY.md".to_string(),
+        is_override: false,
+    };
 
     let json = serde_json::to_string(&info).unwrap();
     assert!(json.contains("IDENTITY.md"));

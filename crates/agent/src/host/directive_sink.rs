@@ -45,6 +45,9 @@ impl DirectiveSink for StubDirectiveSink {
     }
 
     async fn drain(&self, workspace_id: &str) {
-        self.drained.lock().expect("drained lock").push(workspace_id.to_string());
+        self.drained
+            .lock()
+            .expect("drained lock")
+            .push(workspace_id.to_string());
     }
 }

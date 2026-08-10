@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::test_utils::{
-    auth_header, create_test_token, create_test_token_with_workspace, response_parts,
-    seed_test_workspace, setup_test_app, setup_test_app_with_pool,
+    auth_header, create_test_token, create_test_token_with_workspace, response_parts, seed_test_workspace,
+    setup_test_app, setup_test_app_with_pool,
 };
 
 /// Helper: build a request with auth and optional body.
@@ -48,8 +48,10 @@ async fn test_create_device() {
         "protocol_type": "modbus"
     });
 
-    let response =
-        app.oneshot(auth_request("POST", "/api/v1/devices", &token, Some(body))).await.unwrap();
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/devices", &token, Some(body)))
+        .await
+        .unwrap();
 
     let status = response.status();
     // Handler should respond with valid HTTP status — not panic
@@ -129,7 +131,12 @@ async fn test_update_thing_not_found() {
     });
 
     let response = app
-        .oneshot(auth_request("PUT", "/api/v1/things/nonexistent-id-12345", &token, Some(body)))
+        .oneshot(auth_request(
+            "PUT",
+            "/api/v1/things/nonexistent-id-12345",
+            &token,
+            Some(body),
+        ))
         .await
         .unwrap();
 
@@ -149,7 +156,12 @@ async fn test_delete_thing_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("DELETE", "/api/v1/things/nonexistent-id-12345", &token, None))
+        .oneshot(auth_request(
+            "DELETE",
+            "/api/v1/things/nonexistent-id-12345",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
 
@@ -171,14 +183,20 @@ async fn test_create_thing_missing_name() {
     // Empty body — name is required
     let body = json!({});
 
-    let response =
-        app.oneshot(auth_request("POST", "/api/v1/things", &token, Some(body))).await.unwrap();
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/things", &token, Some(body)))
+        .await
+        .unwrap();
 
     let status = response.status();
 
     // Axum's Json extractor returns 422 for deserialization failures (missing required field)
     // This is expected behavior — the handler correctly rejects invalid input
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "Expected 422 for missing name");
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "Expected 422 for missing name"
+    );
 }
 
 // NOTE: empty-name rejection is covered by
@@ -251,7 +269,12 @@ async fn test_cross_workspace_isolation() {
     // User B reads workspace A's thing by id — must be denied (404)
     let response = app
         .clone()
-        .oneshot(auth_request("GET", &format!("/api/v1/things/{}", thing_id), &token_b, None))
+        .oneshot(auth_request(
+            "GET",
+            &format!("/api/v1/things/{}", thing_id),
+            &token_b,
+            None,
+        ))
         .await
         .unwrap();
     let (status, _json) = response_parts(response).await;
@@ -282,7 +305,12 @@ async fn test_cross_workspace_isolation() {
     // User B deletes workspace A's thing — must be denied (404)
     let response = app
         .clone()
-        .oneshot(auth_request("DELETE", &format!("/api/v1/things/{}", thing_id), &token_b, None))
+        .oneshot(auth_request(
+            "DELETE",
+            &format!("/api/v1/things/{}", thing_id),
+            &token_b,
+            None,
+        ))
         .await
         .unwrap();
     let (status, _json) = response_parts(response).await;
@@ -318,7 +346,12 @@ async fn test_get_device_profile_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/nonexistent-id-12345/profile", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/devices/nonexistent-id-12345/profile",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
 
@@ -378,12 +411,21 @@ async fn test_get_thing_profile_success() {
         .unwrap();
 
     let (_status, create_json) = response_parts(response).await;
-    assert_eq!(create_json["code"], 0, "Expected success creating thing: {}", create_json);
+    assert_eq!(
+        create_json["code"], 0,
+        "Expected success creating thing: {}",
+        create_json
+    );
     let thing_id = create_json["result"]["id"].as_str().unwrap().to_string();
 
     // Get thing profile
     let response = app
-        .oneshot(auth_request("GET", &format!("/api/v1/things/{}/profile", thing_id), &token, None))
+        .oneshot(auth_request(
+            "GET",
+            &format!("/api/v1/things/{}/profile", thing_id),
+            &token,
+            None,
+        ))
         .await
         .unwrap();
 
@@ -393,8 +435,14 @@ async fn test_get_thing_profile_success() {
     assert_eq!(json["code"], 0, "Expected success code: {}", json);
     // ThingResponse is flattened into the profile
     assert_eq!(json["result"]["id"], thing_id, "Profile should contain the thing");
-    assert!(json["result"]["properties"].is_array(), "Profile should have properties array");
-    assert!(json["result"]["actions"].is_array(), "Profile should have actions array");
+    assert!(
+        json["result"]["properties"].is_array(),
+        "Profile should have properties array"
+    );
+    assert!(
+        json["result"]["actions"].is_array(),
+        "Profile should have actions array"
+    );
 }
 
 // ============================================================================
@@ -407,7 +455,12 @@ async fn test_get_device_status_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/nonexistent-id-12345/status", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/devices/nonexistent-id-12345/status",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
 
@@ -426,7 +479,12 @@ async fn test_get_device_metrics_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/nonexistent-id-12345/metrics", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/devices/nonexistent-id-12345/metrics",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     let (status, json) = response_parts(response).await;
@@ -494,8 +552,10 @@ async fn test_get_device_performance_alerts_not_found() {
 async fn test_get_system_overview() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/devices/overview", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/devices/overview", &token, None))
+        .await
+        .unwrap();
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
     assert!(json["code"].is_number(), "Expected numeric code");
@@ -506,7 +566,12 @@ async fn test_get_system_performance_overview() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/performance/overview", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/devices/performance/overview",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     let (status, json) = response_parts(response).await;
@@ -536,7 +601,12 @@ async fn test_get_device_traces_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/nonexistent-id-12345/traces", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/devices/nonexistent-id-12345/traces",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     let (status, json) = response_parts(response).await;
@@ -571,7 +641,12 @@ async fn test_get_system_trace_overview() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/system/traces/overview", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/devices/system/traces/overview",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     let (status, json) = response_parts(response).await;
@@ -709,7 +784,12 @@ async fn test_cleanup_expired_traces() {
     let body = json!({"days_to_keep": 30});
 
     let response = app
-        .oneshot(auth_request("POST", "/api/v1/devices/system/traces/cleanup", &token, Some(body)))
+        .oneshot(auth_request(
+            "POST",
+            "/api/v1/devices/system/traces/cleanup",
+            &token,
+            Some(body),
+        ))
         .await
         .unwrap();
 

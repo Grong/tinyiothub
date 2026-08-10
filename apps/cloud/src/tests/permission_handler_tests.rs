@@ -33,8 +33,10 @@ async fn test_list_permissions() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/users/permissions", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/users/permissions", &token, None))
+        .await
+        .unwrap();
 
     let status = response.status();
     assert!(
@@ -56,7 +58,12 @@ async fn test_get_user_permissions_stub() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/users/permissions/user-1/permissions", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/users/permissions/user-1/permissions",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
 

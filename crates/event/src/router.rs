@@ -70,7 +70,10 @@ pub struct ThrottleState {
 
 impl ThrottleState {
     pub fn new(max_per_minute: usize) -> Self {
-        Self { windows: Arc::new(DashMap::new()), max_per_minute }
+        Self {
+            windows: Arc::new(DashMap::new()),
+            max_per_minute,
+        }
     }
 
     /// Check whether `thing_id` with `level` should be admitted.

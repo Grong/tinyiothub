@@ -39,11 +39,7 @@ async fn test_list_schedules_returns_array() {
         }
         Err(e) => {
             assert!(
-                matches!(
-                    e,
-                    crate::ToolError::Internal(_)
-                        | crate::ToolError::Unauthorized(_)
-                ),
+                matches!(e, crate::ToolError::Internal(_) | crate::ToolError::Unauthorized(_)),
                 "Expected Internal or Unauthorized error, got {:?}",
                 e
             );
@@ -69,11 +65,7 @@ async fn test_list_schedules_with_filters() {
         .await;
 
     match result {
-        Ok(_)
-        | Err(
-            crate::ToolError::Internal(_)
-            | crate::ToolError::Unauthorized(_),
-        ) => {}
+        Ok(_) | Err(crate::ToolError::Internal(_) | crate::ToolError::Unauthorized(_)) => {}
         Err(e) => panic!("Unexpected error: {:?}", e),
     }
 }
@@ -144,11 +136,7 @@ async fn test_alarm_list_with_filters() {
         .await;
 
     match result {
-        Ok(_)
-        | Err(
-            crate::ToolError::Internal(_)
-            | crate::ToolError::Unauthorized(_),
-        ) => {}
+        Ok(_) | Err(crate::ToolError::Internal(_) | crate::ToolError::Unauthorized(_)) => {}
         Err(e) => panic!("Unexpected error: {:?}", e),
     }
 }

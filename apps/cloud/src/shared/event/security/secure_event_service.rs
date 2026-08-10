@@ -10,8 +10,7 @@ use tinyiothub_event::{
 };
 
 use crate::shared::event::security::{
-    AccessResult, AccessType, EncryptedContent, EventAccessControl, EventAuditLog, EventEncryption,
-    EventSecurityConfig,
+    AccessResult, AccessType, EncryptedContent, EventAccessControl, EventAuditLog, EventEncryption, EventSecurityConfig,
 };
 
 /// Secure event service that wraps the event repository with security features
@@ -47,7 +46,11 @@ impl SecureEventService {
     /// Create an event with security checks
     pub async fn create_event(&self, user_id: &str, mut event: Event) -> Result<EventId> {
         // Check access control
-        if !self.access_control.can_create_event(user_id, event.event_type()).await? {
+        if !self
+            .access_control
+            .can_create_event(user_id, event.event_type())
+            .await?
+        {
             self.audit_log
                 .log_access_denied(
                     user_id,
@@ -63,9 +66,7 @@ impl SecureEventService {
         }
 
         // Encrypt sensitive content if enabled
-        if self.config.read().unwrap().enable_encryption
-            && self.encryption.should_encrypt(event.content())
-        {
+        if self.config.read().unwrap().enable_encryption && self.encryption.should_encrypt(event.content()) {
             let encrypted_content = self.encryption.encrypt_content(event.content())?;
             // Convert encrypted content back to RichContent for storage
             // This is a simplified approach - in practice you might store encrypted data differently
@@ -107,12 +108,7 @@ impl SecureEventService {
         // Check access control
         if !self.access_control.can_read_event(user_id, &event).await? {
             self.audit_log
-                .log_access_denied(
-                    user_id,
-                    "get_event",
-                    &event_id.to_string(),
-                    "Insufficient permissions",
-                )
+                .log_access_denied(user_id, "get_event", &event_id.to_string(), "Insufficient permissions")
                 .await?;
 
             return Err(EventError::AccessDenied(
@@ -125,8 +121,7 @@ impl SecureEventService {
             // Check if content appears to be encrypted (simplified check)
             if event.content().title() == "Encrypted Content"
                 && let Some(first_element) = event.content().elements().first()
-                && let tinyiothub_event::value_objects::ContentElement::Text { content, .. } =
-                    first_element
+                && let tinyiothub_event::value_objects::ContentElement::Text { content, .. } = first_element
                 && let Ok(encrypted_data) = serde_json::from_str::<EncryptedContent>(content)
                 && let Ok(decrypted_content) = self.encryption.decrypt_content(&encrypted_data)
             {
@@ -178,8 +173,7 @@ impl SecureEventService {
                 if self.config.read().unwrap().enable_encryption
                     && event.content().title() == "Encrypted Content"
                     && let Some(first_element) = event.content().elements().first()
-                    && let tinyiothub_event::value_objects::ContentElement::Text { content, .. } =
-                        first_element
+                    && let tinyiothub_event::value_objects::ContentElement::Text { content, .. } = first_element
                     && let Ok(encrypted_data) = serde_json::from_str::<EncryptedContent>(content)
                     && let Ok(decrypted_content) = self.encryption.decrypt_content(&encrypted_data)
                 {
@@ -199,31 +193,21 @@ impl SecureEventService {
 
         // Log the query
         self.audit_log
-            .log_event_query(
-                user_id,
-                event_type,
-                level,
-                start_time,
-                end_time,
-                filtered_events.len(),
-            )
+            .log_event_query(user_id, event_type, level, start_time, end_time, filtered_events.len())
             .await?;
 
         Ok(filtered_events)
     }
 
     /// Update an event with security checks
-    pub async fn update_event(
-        &self,
-        user_id: &str,
-        event_id: &EventId,
-        mut updated_event: Event,
-    ) -> Result<()> {
+    pub async fn update_event(&self, user_id: &str, event_id: &EventId, mut updated_event: Event) -> Result<()> {
         // Get the existing event
         let existing_event = match self.event_repository.find_by_id(event_id).await? {
             Some(event) => event,
             None => {
-                return Err(EventError::NotFound { id: format!("Event {} not found", event_id) });
+                return Err(EventError::NotFound {
+                    id: format!("Event {} not found", event_id),
+                });
             }
         };
 
@@ -244,9 +228,7 @@ impl SecureEventService {
         }
 
         // Encrypt content if enabled
-        if self.config.read().unwrap().enable_encryption
-            && self.encryption.should_encrypt(updated_event.content())
-        {
+        if self.config.read().unwrap().enable_encryption && self.encryption.should_encrypt(updated_event.content()) {
             let encrypted_content = self.encryption.encrypt_content(updated_event.content())?;
             let encrypted_rich_content = RichContent::new_text(
                 "Encrypted Content".to_string(),
@@ -282,7 +264,9 @@ impl SecureEventService {
         let existing_event = match self.event_repository.find_by_id(event_id).await? {
             Some(event) => event,
             None => {
-                return Err(EventError::NotFound { id: format!("Event {} not found", event_id) });
+                return Err(EventError::NotFound {
+                    id: format!("Event {} not found", event_id),
+                });
             }
         };
 
@@ -307,7 +291,9 @@ impl SecureEventService {
         // self.event_repository.delete_event(event_id).await?;
 
         // Log the action
-        self.audit_log.log_event_deleted(user_id, event_id, &existing_event).await?;
+        self.audit_log
+            .log_event_deleted(user_id, event_id, &existing_event)
+            .await?;
 
         Ok(())
     }
@@ -334,16 +320,15 @@ impl SecureEventService {
             permissions.insert(resource_type.to_string(), perms);
         }
 
-        Ok(UserAccessSummary { user_id: user_id.to_string(), roles, permissions })
+        Ok(UserAccessSummary {
+            user_id: user_id.to_string(),
+            roles,
+            permissions,
+        })
     }
 
     /// Check if user can perform an action on a resource
-    pub async fn check_access(
-        &self,
-        user_id: &str,
-        action: AccessType,
-        _resource: &str,
-    ) -> Result<AccessResult> {
+    pub async fn check_access(&self, user_id: &str, action: AccessType, _resource: &str) -> Result<AccessResult> {
         match action {
             AccessType::Read => {
                 // For read access, we need to check the specific event
@@ -396,14 +381,13 @@ impl SecureEventService {
     pub async fn save_config_to_db(&self) -> Result<()> {
         let json = {
             let cfg = self.config.read().unwrap();
-            serde_json::to_string(&*cfg).map_err(|e| {
-                EventError::Configuration(format!("Failed to serialize config: {}", e))
-            })?
+            serde_json::to_string(&*cfg)
+                .map_err(|e| EventError::Configuration(format!("Failed to serialize config: {}", e)))?
         };
 
         sqlx::query(
             "INSERT INTO system_settings (key, value, updated_at) VALUES ('event_security_config', ?, datetime('now'))
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
         )
         .bind(json)
         .execute(self.db.pool())

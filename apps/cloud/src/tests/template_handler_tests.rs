@@ -35,7 +35,12 @@ async fn test_list_templates() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/device-templates?page=1&page_size=20", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/device-templates?page=1&page_size=20",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
 
@@ -75,7 +80,12 @@ async fn test_create_template_missing_fields() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("POST", "/api/v1/device-templates", &token, Some(json!({}))))
+        .oneshot(auth_request(
+            "POST",
+            "/api/v1/device-templates",
+            &token,
+            Some(json!({})),
+        ))
         .await
         .unwrap();
 

@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::test_utils::{
-    auth_header, create_test_token, create_test_token_with_workspace, response_parts,
-    setup_test_app, setup_test_app_with_pool,
+    auth_header, create_test_token, create_test_token_with_workspace, response_parts, setup_test_app,
+    setup_test_app_with_pool,
 };
 
 fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Request<Body> {
@@ -28,7 +28,10 @@ fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Re
 async fn test_list_agents() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response = app.oneshot(auth_request("GET", "/api/v1/agents", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/agents", &token, None))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number());
@@ -39,7 +42,12 @@ async fn test_get_agent_config_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/agents/nonexistent-agent-12345/config", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/agents/nonexistent-agent-12345/config",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -72,7 +80,12 @@ async fn test_list_agent_files_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/agents/nonexistent-agent-12345/files", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/agents/nonexistent-agent-12345/files",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -86,8 +99,10 @@ async fn test_list_agent_files_not_found() {
 async fn test_list_skills() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/agents/skills", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/agents/skills", &token, None))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number());
@@ -101,10 +116,7 @@ async fn test_create_skill_missing_fields() {
         .oneshot(auth_request("POST", "/api/v1/agents/skills", &token, Some(json!({}))))
         .await
         .unwrap();
-    assert!(
-        response.status() == StatusCode::UNPROCESSABLE_ENTITY
-            || response.status() == StatusCode::OK
-    );
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
 }
 
 #[tokio::test]
@@ -112,7 +124,12 @@ async fn test_get_skill_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/agents/skills/nonexistent-skill-12345", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/agents/skills/nonexistent-skill-12345",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     assert!(response.status() == StatusCode::NOT_FOUND || response.status() == StatusCode::OK);
@@ -212,8 +229,11 @@ async fn test_list_agents_isolated_by_workspace() {
 
     // Token for workspace "ws-tenant-1" should see the agent
     let token_a = create_test_token_with_workspace("user-1", "tenant-1", "ws-tenant-1");
-    let response =
-        app.clone().oneshot(auth_request("GET", "/api/v1/agents", &token_a, None)).await.unwrap();
+    let response = app
+        .clone()
+        .oneshot(auth_request("GET", "/api/v1/agents", &token_a, None))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert_eq!(json["code"], 0);
@@ -223,8 +243,10 @@ async fn test_list_agents_isolated_by_workspace() {
 
     // Token for workspace "ws-tenant-2" should see NO agents
     let token_b = create_test_token_with_workspace("user-2", "tenant-2", "ws-tenant-2");
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/agents", &token_b, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/agents", &token_b, None))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert_eq!(json["code"], 0);
@@ -308,7 +330,12 @@ async fn test_set_agent_config_isolated_by_workspace() {
     let token_b = create_test_token_with_workspace("user-2", "tenant-2", "ws-tenant-2");
     let body = json!({"config": {"model": "hacked"}});
     let response = app
-        .oneshot(auth_request("PUT", "/api/v1/agents/agent-1/config", &token_b, Some(body)))
+        .oneshot(auth_request(
+            "PUT",
+            "/api/v1/agents/agent-1/config",
+            &token_b,
+            Some(body),
+        ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);

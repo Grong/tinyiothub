@@ -88,8 +88,11 @@ fn build_config_from_input(input: &CreateScheduleInput) -> String {
 }
 
 fn map_create_input(input: &CreateScheduleInput, workspace_id: &str) -> CreateCronJobRequest {
-    let job_type =
-        if input.job_type == "script" { "shell".to_string() } else { input.job_type.clone() };
+    let job_type = if input.job_type == "script" {
+        "shell".to_string()
+    } else {
+        input.job_type.clone()
+    };
 
     CreateCronJobRequest {
         name: input.name.clone(),
@@ -121,7 +124,11 @@ fn map_update_input(input: &UpdateScheduleInput) -> UpdateCronJobRequest {
             if let Some(ref params) = input.target_command_params {
                 cfg.insert("params".to_string(), serde_json::Value::String(params.clone()));
             }
-            if !cfg.is_empty() { Some(serde_json::Value::Object(cfg).to_string()) } else { None }
+            if !cfg.is_empty() {
+                Some(serde_json::Value::Object(cfg).to_string())
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -182,9 +189,7 @@ impl ToolHandler for ListSchedulesHandler {
             "jobType".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some(
-                    "Filter by job type (e.g., device_command, shell, agent)".to_string(),
-                ),
+                description: Some("Filter by job type (e.g., device_command, shell, agent)".to_string()),
             },
         );
         props.insert(
@@ -201,8 +206,8 @@ impl ToolHandler for ListSchedulesHandler {
         let input: ListSchedulesInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let _claims = get_mcp_context()
-            .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
+        let _claims =
+            get_mcp_context().ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
         let state = self
             .state
@@ -273,8 +278,7 @@ impl ToolHandler for CreateScheduleHandler {
             PropertySchema {
                 prop_type: "string".to_string(),
                 description: Some(
-                    "Job type: 'device_command' (IoT device), 'shell' (script), 'agent' (AI task)"
-                        .to_string(),
+                    "Job type: 'device_command' (IoT device), 'shell' (script), 'agent' (AI task)".to_string(),
                 ),
             },
         );
@@ -289,7 +293,10 @@ impl ToolHandler for CreateScheduleHandler {
             "targetDeviceId".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Device ID for device_command jobs (e.g., 'device-env-01'). Must belong to your workspace.".to_string()),
+                description: Some(
+                    "Device ID for device_command jobs (e.g., 'device-env-01'). Must belong to your workspace."
+                        .to_string(),
+                ),
             },
         );
         props.insert(
@@ -303,10 +310,7 @@ impl ToolHandler for CreateScheduleHandler {
             "targetCommandParams".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some(
-                    "Optional command parameters as JSON string (e.g., '{\"speed\": 50}')"
-                        .to_string(),
-                ),
+                description: Some("Optional command parameters as JSON string (e.g., '{\"speed\": 50}')".to_string()),
             },
         );
         props.insert(
@@ -340,8 +344,8 @@ impl ToolHandler for CreateScheduleHandler {
         let mut input: CreateScheduleInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let claims = get_mcp_context()
-            .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
+        let claims =
+            get_mcp_context().ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
         let state = self
             .state
@@ -365,15 +369,11 @@ impl ToolHandler for CreateScheduleHandler {
                         claims.workspace_id
                     );
                     return Err(ToolError::Forbidden(
-                        "Access denied: target device does not belong to authenticated workspace"
-                            .to_string(),
+                        "Access denied: target device does not belong to authenticated workspace".to_string(),
                     ));
                 }
                 Err(e) => {
-                    return Err(ToolError::Internal(format!(
-                        "failed to verify device ownership: {}",
-                        e
-                    )));
+                    return Err(ToolError::Internal(format!("failed to verify device ownership: {}", e)));
                 }
             }
         }
@@ -462,8 +462,8 @@ impl ToolHandler for UpdateScheduleHandler {
         let mut input: UpdateScheduleInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let _claims = get_mcp_context()
-            .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
+        let _claims =
+            get_mcp_context().ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
         let state = self
             .state
@@ -533,8 +533,8 @@ impl ToolHandler for DeleteScheduleHandler {
         let input: DeleteScheduleInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let _claims = get_mcp_context()
-            .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
+        let _claims =
+            get_mcp_context().ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
         let state = self
             .state

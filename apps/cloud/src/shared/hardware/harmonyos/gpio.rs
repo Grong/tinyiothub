@@ -37,7 +37,9 @@ pub struct HarmonyGpioManager {
 impl HarmonyGpioManager {
     /// 创建新的GPIO管理器
     pub fn new() -> Self {
-        Self { pins: Mutex::new(HashMap::new()) }
+        Self {
+            pins: Mutex::new(HashMap::new()),
+        }
     }
 
     /// 导出GPIO引脚
@@ -47,20 +49,23 @@ impl HarmonyGpioManager {
         let mut pins = self.pins.lock().unwrap();
         pins.insert(
             (chip, pin),
-            GpioPin { chip, pin, direction: GpioDirection::Input, value: GpioValue::Low },
+            GpioPin {
+                chip,
+                pin,
+                direction: GpioDirection::Input,
+                value: GpioValue::Low,
+            },
         );
 
         Ok(())
     }
 
     /// 设置GPIO引脚方向
-    pub fn set_direction(
-        &self,
-        chip: u32,
-        pin: u32,
-        direction: GpioDirection,
-    ) -> Result<(), std::io::Error> {
-        debug!("Setting GPIO pin {}/{} direction to {:?} on HarmonyOS", chip, pin, direction);
+    pub fn set_direction(&self, chip: u32, pin: u32, direction: GpioDirection) -> Result<(), std::io::Error> {
+        debug!(
+            "Setting GPIO pin {}/{} direction to {:?} on HarmonyOS",
+            chip, pin, direction
+        );
 
         let mut pins = self.pins.lock().unwrap();
         if let Some(gpio_pin) = pins.get_mut(&(chip, pin)) {
@@ -130,8 +135,7 @@ impl Default for HarmonyGpioManager {
 }
 
 /// 全局GPIO管理器实例
-static GPIO_MANAGER: std::sync::LazyLock<HarmonyGpioManager> =
-    std::sync::LazyLock::new(HarmonyGpioManager::new);
+static GPIO_MANAGER: std::sync::LazyLock<HarmonyGpioManager> = std::sync::LazyLock::new(HarmonyGpioManager::new);
 
 /// 获取全局GPIO管理器
 pub fn get_gpio_manager() -> &'static HarmonyGpioManager {

@@ -33,8 +33,7 @@ use tinyiothub_agent::{
         tools::DispatchThingTaskTool,
     },
     loop_::thing_agent::{
-        DirectiveSink, EnqueueError, Runner, ThingAgentManager, ThingAgentManagerConfig,
-        TriggerSource, WakeSignal,
+        DirectiveSink, EnqueueError, Runner, ThingAgentManager, ThingAgentManagerConfig, TriggerSource, WakeSignal,
     },
 };
 use tinyiothub_core::models::event::EventLevel;
@@ -256,8 +255,7 @@ impl zeroclaw::providers::traits::ModelProvider for InjectionProvider {
                 tool_calls: vec![ToolCall {
                     id: "c-inject".to_string(),
                     name: "invoke_action".to_string(),
-                    arguments: serde_json::json!({"thingId": THING, "actionName": "factory_reset"})
-                        .to_string(),
+                    arguments: serde_json::json!({"thingId": THING, "actionName": "factory_reset"}).to_string(),
                     extra_content: None,
                 }],
                 usage: None,
@@ -294,33 +292,33 @@ async fn test_pool(name: &str) -> (sqlx::SqlitePool, tempfile::TempDir) {
         .connect(&url)
         .await
         .expect("temp file pool");
-    tinyiothub_storage::migrations::run_migrations(&pool).await.expect("migrations");
+    tinyiothub_storage::migrations::run_migrations(&pool)
+        .await
+        .expect("migrations");
     (pool, dir)
 }
 
 async fn seed_device(pool: &sqlx::SqlitePool) {
     seed_test_workspace(pool, "tenant-1", WS).await;
-    sqlx::query(
-        "INSERT INTO devices (id, name, workspace_id, thing_type) VALUES (?, ?, ?, 'device')",
-    )
-    .bind(THING)
-    .bind("Loop Device")
-    .bind(WS)
-    .execute(pool)
-    .await
-    .expect("insert device");
-    sqlx::query(
-        "INSERT INTO thing_actions (id, device_id, name) VALUES ('act-set_fan', ?, 'set_fan')",
-    )
-    .bind(THING)
-    .execute(pool)
-    .await
-    .expect("register action");
-    sqlx::query("INSERT INTO thing_properties (id, device_id, name, data_type) VALUES ('prop-temp', ?, 'temp', 'float')")
+    sqlx::query("INSERT INTO devices (id, name, workspace_id, thing_type) VALUES (?, ?, ?, 'device')")
+        .bind(THING)
+        .bind("Loop Device")
+        .bind(WS)
+        .execute(pool)
+        .await
+        .expect("insert device");
+    sqlx::query("INSERT INTO thing_actions (id, device_id, name) VALUES ('act-set_fan', ?, 'set_fan')")
         .bind(THING)
         .execute(pool)
         .await
-        .expect("register property");
+        .expect("register action");
+    sqlx::query(
+        "INSERT INTO thing_properties (id, device_id, name, data_type) VALUES ('prop-temp', ?, 'temp', 'float')",
+    )
+    .bind(THING)
+    .execute(pool)
+    .await
+    .expect("register property");
 }
 
 struct LoopFixture {
@@ -367,15 +365,18 @@ async fn build_fixture(
     seed_device(&pool).await;
 
     let policy_repo = Arc::new(SqlitePolicyRepository::new(pool.clone()));
-    policy_repo.save_autonomy(WS, &policy, "test").await.expect("save policy");
+    policy_repo
+        .save_autonomy(WS, &policy, "test")
+        .await
+        .expect("save policy");
 
     let bus = Arc::new(ThingEventBus::new());
-    let observer: Arc<dyn zeroclaw::observability::Observer> = Arc::from(
-        zeroclaw::observability::create_observer(&zeroclaw::config::schema::ObservabilityConfig {
+    let observer: Arc<dyn zeroclaw::observability::Observer> = Arc::from(zeroclaw::observability::create_observer(
+        &zeroclaw::config::schema::ObservabilityConfig {
             backend: zeroclaw::config::schema::ObservabilityBackend::None,
             ..Default::default()
-        }),
-    );
+        },
+    ));
     let factory = Arc::new(AutonomousAgentFactory::new(
         pool.clone(),
         policy_repo.clone(),
@@ -403,14 +404,19 @@ async fn build_fixture(
         },
     ));
 
-    FixtureParts { pool, bus, manager, factory, policy_repo, _dir: dir }
+    FixtureParts {
+        pool,
+        bus,
+        manager,
+        factory,
+        policy_repo,
+        _dir: dir,
+    }
 }
 
 fn scripted_provider_factory(provider: &LoopScriptedProvider) -> ProviderFactory {
     let provider = provider.clone();
-    Arc::new(move || {
-        Ok(Box::new(provider.clone()) as Box<dyn zeroclaw::providers::traits::ModelProvider>)
-    })
+    Arc::new(move || Ok(Box::new(provider.clone()) as Box<dyn zeroclaw::providers::traits::ModelProvider>))
 }
 
 async fn fixture(name: &str) -> LoopFixture {
@@ -448,8 +454,7 @@ fn warning_event() -> ThingEventInput {
 
 async fn route(fx: &LoopFixture, actor: &str) {
     let throttle = ThrottleState::new(60);
-    let result =
-        route_thing_event(&fx.pool, &throttle, None, &fx.bus, actor, warning_event()).await;
+    let result = route_thing_event(&fx.pool, &throttle, None, &fx.bus, actor, warning_event()).await;
     assert!(
         !result.malformed && !result.throttled && !result.unknown_event,
         "route failed: {result:?}"
@@ -457,14 +462,12 @@ async fn route(fx: &LoopFixture, actor: &str) {
 }
 
 async fn run_count(pool: &sqlx::SqlitePool, dedup_key: &str) -> i64 {
-    sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM agent_runs WHERE workspace_id = ? AND dedup_key = ?",
-    )
-    .bind(WS)
-    .bind(dedup_key)
-    .fetch_one(pool)
-    .await
-    .expect("count runs")
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_runs WHERE workspace_id = ? AND dedup_key = ?")
+        .bind(WS)
+        .bind(dedup_key)
+        .fetch_one(pool)
+        .await
+        .expect("count runs")
 }
 
 async fn wait_subscribed(bus: &ThingEventBus) {
@@ -531,26 +534,26 @@ async fn warning_event_runs_full_loop_and_persists_verified_report() {
     assert_eq!(row.get::<String, _>("trigger_context"), EVENT_KEY);
 
     // 动作清单：set_fan 经策略门下发到模拟驱动（DataServer 缺省 → simulated）。
-    let report: serde_json::Value =
-        serde_json::from_str(&row.get::<String, _>("report")).expect("report json");
+    let report: serde_json::Value = serde_json::from_str(&row.get::<String, _>("report")).expect("report json");
     assert_eq!(report["action_count"], 1);
     assert_eq!(report["actions"][0]["action_name"], "set_fan");
     assert_eq!(report["actions"][0]["thing_id"], THING);
     assert_eq!(report["actions"][0]["verified"], true);
-    let status = report["actions"][0]["result"]["success"]["status"].as_str().unwrap_or_default();
+    let status = report["actions"][0]["result"]["success"]["status"]
+        .as_str()
+        .unwrap_or_default();
     assert!(
         status == "simulated" || status == "executed",
         "命令必须真实下发（模拟驱动），got: {status}"
     );
 
     // T6 硬交接：agent 动作以 actor='agent' 落 events 表。
-    let (actor, subtype): (String, String) = sqlx::query_as(
-        "SELECT actor, event_subtype FROM events WHERE device_id = ? AND actor = 'agent'",
-    )
-    .bind(THING)
-    .fetch_one(&fx.pool)
-    .await
-    .expect("agent action event");
+    let (actor, subtype): (String, String) =
+        sqlx::query_as("SELECT actor, event_subtype FROM events WHERE device_id = ? AND actor = 'agent'")
+            .bind(THING)
+            .fetch_one(&fx.pool)
+            .await
+            .expect("agent action event");
     assert_eq!(actor, "agent");
     assert_eq!(subtype, "set_fan");
 
@@ -674,10 +677,16 @@ async fn user_directive_runs_and_pushes_assistant_message() {
     let messages = tinyiothub_agent::host::chat::history::list_messages(&fx.pool, SESSION, 10)
         .await
         .expect("list messages");
-    let assistant =
-        messages.iter().find(|(role, _)| role == "assistant").expect("assistant message");
+    let assistant = messages
+        .iter()
+        .find(|(role, _)| role == "assistant")
+        .expect("assistant message");
     assert!(assistant.1.contains("done"), "回推内容含结果摘要: {}", assistant.1);
-    assert!(assistant.1.contains("已验证"), "回推内容含 verified 徽标: {}", assistant.1);
+    assert!(
+        assistant.1.contains("已验证"),
+        "回推内容含 verified 徽标: {}",
+        assistant.1
+    );
 
     let (trigger_type, outcome): (String, String) =
         sqlx::query_as("SELECT trigger_type, outcome FROM agent_runs WHERE workspace_id = ? AND trigger_type = 'user'")
@@ -728,9 +737,7 @@ async fn policy_denial_streak_triggers_relax_hint_with_real_repo() {
             thing_id: THING.to_string(),
             action_name: "reboot".to_string(),
             params: serde_json::Value::Null,
-            result: ActionResult::Success(
-                serde_json::json!({"denied": true, "reason": "action_not_allowed"}),
-            ),
+            result: ActionResult::Success(serde_json::json!({"denied": true, "reason": "action_not_allowed"})),
             verified: false,
         }],
         verified: false,
@@ -741,7 +748,9 @@ async fn policy_denial_streak_triggers_relax_hint_with_real_repo() {
 
     // 当前 run 在 alert 之前已落库 → recent_runs_by_dedup_key 第一条即当前 run。
     for id in ["run_1", "run_2", "run_3"] {
-        repo.insert_run(&denied_report(id), None, Some(EVENT_KEY)).await.expect("insert run");
+        repo.insert_run(&denied_report(id), None, Some(EVENT_KEY))
+            .await
+            .expect("insert run");
     }
 
     let signal = WakeSignal {
@@ -812,13 +821,11 @@ async fn wait_for_sync(what: &str, mut cond: impl FnMut() -> bool) {
 }
 
 async fn user_run_count(pool: &sqlx::SqlitePool) -> i64 {
-    sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM agent_runs WHERE workspace_id = ? AND trigger_type = 'user'",
-    )
-    .bind(WS)
-    .fetch_one(pool)
-    .await
-    .expect("count user runs")
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_runs WHERE workspace_id = ? AND trigger_type = 'user'")
+        .bind(WS)
+        .fetch_one(pool)
+        .await
+        .expect("count user runs")
 }
 
 // ── 行1: 指令 60s 去重 —— 经 dispatch 入口（DispatchThingTaskTool →
@@ -835,7 +842,10 @@ async fn duplicate_directive_via_dispatch_tool_yields_single_run() {
     let first = tool.execute(json!({"text": "重启网关"})).await.expect("first dispatch");
     assert!(first.success, "first directive accepted: {:?}", first.error);
 
-    let dup = tool.execute(json!({"text": "重启网关"})).await.expect("second dispatch");
+    let dup = tool
+        .execute(json!({"text": "重启网关"}))
+        .await
+        .expect("second dispatch");
     assert!(!dup.success, "same text within 60s must be rejected");
     assert!(
         dup.error.as_deref().unwrap_or_default().contains("去重"),
@@ -875,8 +885,14 @@ async fn critical_event_bypasses_30s_merge_window_end_to_end() {
     wait_subscribed(&parts.bus).await;
 
     let started = Instant::now();
-    route_event(&parts.pool, &parts.bus, "device", EventLevel::Critical, json!({"value": 99.9}))
-        .await;
+    route_event(
+        &parts.pool,
+        &parts.bus,
+        "device",
+        EventLevel::Critical,
+        json!({"value": 99.9}),
+    )
+    .await;
 
     // 5s ≪ 30s 合并窗口：若 critical 误入窗口，这里必然超时。
     let deadline = started + Duration::from_secs(5);
@@ -915,9 +931,7 @@ async fn queue_full_51st_directive_rejected_and_user_informed() {
     let hanging = HangingProvider::default();
     let provider_factory: ProviderFactory = {
         let provider = hanging.clone();
-        Arc::new(move || {
-            Ok(Box::new(provider.clone()) as Box<dyn zeroclaw::providers::traits::ModelProvider>)
-        })
+        Arc::new(move || Ok(Box::new(provider.clone()) as Box<dyn zeroclaw::providers::traits::ModelProvider>))
     };
     let parts = build_fixture(
         "loop_queue_full",
@@ -934,19 +948,27 @@ async fn queue_full_51st_directive_rejected_and_user_informed() {
     let tool = DispatchThingTaskTool::new(WS, Some(sink));
 
     // 第一条占住串行 consumer（LLM 永久挂起，60s 预算内不会收尾）。
-    let first = tool.execute(json!({"text": "占住执行位的指令"})).await.expect("first dispatch");
+    let first = tool
+        .execute(json!({"text": "占住执行位的指令"}))
+        .await
+        .expect("first dispatch");
     assert!(first.success, "first directive accepted: {:?}", first.error);
     wait_for_sync("first run in flight (LLM hung)", || hanging.call_count() >= 1).await;
 
     // 投满 ready 队列（容量 50）。
     for i in 0..50 {
-        let r =
-            tool.execute(json!({"text": format!("排队指令 {i}")})).await.expect("queued dispatch");
+        let r = tool
+            .execute(json!({"text": format!("排队指令 {i}")}))
+            .await
+            .expect("queued dispatch");
         assert!(r.success, "directive {i} must fit the queue: {:?}", r.error);
     }
 
     // 第 51 条拒收并告知。
-    let overflow = tool.execute(json!({"text": "溢出指令"})).await.expect("overflow dispatch");
+    let overflow = tool
+        .execute(json!({"text": "溢出指令"}))
+        .await
+        .expect("overflow dispatch");
     assert!(!overflow.success, "51st directive must be rejected");
     assert!(
         overflow.error.as_deref().unwrap_or_default().contains("队列已满"),
@@ -962,7 +984,10 @@ async fn queue_full_51st_directive_rejected_and_user_informed() {
 #[tokio::test]
 async fn mode_off_suppresses_event_and_timer_wakes_end_to_end() {
     let provider = LoopScriptedProvider::default();
-    let off_policy = AutonomyPolicy { mode: AutonomyMode::Off, ..act_policy() };
+    let off_policy = AutonomyPolicy {
+        mode: AutonomyMode::Off,
+        ..act_policy()
+    };
     let parts = build_fixture(
         "loop_mode_off",
         off_policy,
@@ -977,8 +1002,14 @@ async fn mode_off_suppresses_event_and_timer_wakes_end_to_end() {
     wait_subscribed(&parts.bus).await;
 
     // 事件源：critical 事件（绕过一切调度层门槛的最强信号）。
-    route_event(&parts.pool, &parts.bus, "device", EventLevel::Critical, json!({"value": 99.9}))
-        .await;
+    route_event(
+        &parts.pool,
+        &parts.bus,
+        "device",
+        EventLevel::Critical,
+        json!({"value": 99.9}),
+    )
+    .await;
 
     // 观察窗 ≥ 5 个 timer tick + 合并窗口：任何漏网信号都会落成 Run。
     tokio::time::sleep(Duration::from_millis(600)).await;
@@ -991,7 +1022,11 @@ async fn mode_off_suppresses_event_and_timer_wakes_end_to_end() {
     assert_eq!(provider.call_count(), 0, "mode=off：零 LLM 调用");
 
     // 门控不是死锁：翻回 Act 后 timer 恢复唤醒（证明上面不是 loop 坏了）。
-    parts.policy_repo.save_autonomy(WS, &act_policy(), "test").await.expect("flip to act");
+    parts
+        .policy_repo
+        .save_autonomy(WS, &act_policy(), "test")
+        .await
+        .expect("flip to act");
     wait_for("timer wake after mode flip", || {
         let pool = parts.pool.clone();
         Box::pin(async move { run_count(&pool, &format!("timer:{WS}")).await >= 1 })
@@ -1009,9 +1044,7 @@ async fn hung_llm_run_forced_closed_as_budget_exceeded() {
     let hanging = HangingProvider::default();
     let provider_factory: ProviderFactory = {
         let provider = hanging.clone();
-        Arc::new(move || {
-            Ok(Box::new(provider.clone()) as Box<dyn zeroclaw::providers::traits::ModelProvider>)
-        })
+        Arc::new(move || Ok(Box::new(provider.clone()) as Box<dyn zeroclaw::providers::traits::ModelProvider>))
     };
     let parts = build_fixture(
         "loop_hung_llm",
@@ -1027,8 +1060,14 @@ async fn hung_llm_run_forced_closed_as_budget_exceeded() {
     parts.manager.start(WS);
     wait_subscribed(&parts.bus).await;
 
-    route_event(&parts.pool, &parts.bus, "device", EventLevel::Warning, json!({"value": 87.5}))
-        .await;
+    route_event(
+        &parts.pool,
+        &parts.bus,
+        "device",
+        EventLevel::Warning,
+        json!({"value": 87.5}),
+    )
+    .await;
 
     wait_for("forced-close run persisted", || run_count_is(&parts.pool, EVENT_KEY, 1)).await;
     assert!(hanging.call_count() >= 1, "LLM 确实被调用且挂起");
@@ -1054,12 +1093,12 @@ async fn injected_event_payload_cannot_bypass_denylist() {
     let injection = InjectionProvider::default();
     let provider_factory: ProviderFactory = {
         let provider = injection.clone();
-        Arc::new(move || {
-            Ok(Box::new(provider.clone()) as Box<dyn zeroclaw::providers::traits::ModelProvider>)
-        })
+        Arc::new(move || Ok(Box::new(provider.clone()) as Box<dyn zeroclaw::providers::traits::ModelProvider>))
     };
-    let deny_policy =
-        AutonomyPolicy { denied_actions: vec!["factory_reset".to_string()], ..act_policy() };
+    let deny_policy = AutonomyPolicy {
+        denied_actions: vec!["factory_reset".to_string()],
+        ..act_policy()
+    };
     let parts = build_fixture(
         "loop_injection",
         deny_policy,
@@ -1095,9 +1134,12 @@ async fn injected_event_payload_cannot_bypass_denylist() {
         .fetch_one(&parts.pool)
         .await
         .expect("injection run row");
-    assert_eq!(row.get::<String, _>("outcome"), "rejected", "denylist 动作被全量拒绝 → rejected");
-    let report: serde_json::Value =
-        serde_json::from_str(&row.get::<String, _>("report")).expect("report json");
+    assert_eq!(
+        row.get::<String, _>("outcome"),
+        "rejected",
+        "denylist 动作被全量拒绝 → rejected"
+    );
+    let report: serde_json::Value = serde_json::from_str(&row.get::<String, _>("report")).expect("report json");
     assert_eq!(report["actions"][0]["action_name"], "factory_reset");
     assert_eq!(
         report["actions"][0]["result"]["success"]["denied"], true,

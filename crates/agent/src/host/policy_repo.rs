@@ -41,12 +41,7 @@ impl PolicyRepository for SqlitePolicyRepository {
         }))
     }
 
-    async fn save_autonomy(
-        &self,
-        workspace_id: &str,
-        policy: &AutonomyPolicy,
-        updated_by: &str,
-    ) -> anyhow::Result<()> {
+    async fn save_autonomy(&self, workspace_id: &str, policy: &AutonomyPolicy, updated_by: &str) -> anyhow::Result<()> {
         sqlx::query(
             "INSERT INTO workspace_autonomy_policy
                  (workspace_id, mode, allowed_actions, denied_actions,
@@ -98,8 +93,7 @@ mod tests {
             .connect(":memory:")
             .await
             .expect("create in-memory sqlite");
-        let migration =
-            include_str!("../../../../crates/db/migrations/20260729000001_thing_agent_loop.sql");
+        let migration = include_str!("../../../../crates/db/migrations/20260729000001_thing_agent_loop.sql");
         for stmt in migration.split(';') {
             let stmt = stmt.trim();
             // Skip the events ALTER — the events table is not part of this pool.
@@ -157,21 +151,14 @@ mod tests {
         assert_eq!(loaded.mode, AutonomyMode::Diagnose);
         assert_eq!(loaded.max_actions_per_hour, 5);
 
-        let (n,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM workspace_autonomy_policy WHERE workspace_id = 'ws_1'",
-        )
-        .fetch_one(&repo.pool)
-        .await
-        .expect("count rows");
+        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM workspace_autonomy_policy WHERE workspace_id = 'ws_1'")
+            .fetch_one(&repo.pool)
+            .await
+            .expect("count rows");
         assert_eq!(n, 1, "upsert must keep a single row per workspace");
     }
 
-    async fn insert_run(
-        pool: &SqlitePool,
-        workspace_id: &str,
-        action_count: i64,
-        age_modifier: &str,
-    ) {
+    async fn insert_run(pool: &SqlitePool, workspace_id: &str, action_count: i64, age_modifier: &str) {
         // age_modifier e.g. "-59 minutes"; bound as a datetime() modifier parameter
         sqlx::query(
             "INSERT INTO agent_runs (id, workspace_id, trigger_type, outcome, report, created_at)

@@ -105,8 +105,10 @@ pub async fn get_real_time_events(
     tracing::info!("Getting real-time events with params: {:?}", params);
 
     // Build real-time filter (tenant-scoped — T1)
-    let mut filter =
-        RealTimeFilter { workspace_id: Some(claims.0.workspace_id.clone()), ..Default::default() };
+    let mut filter = RealTimeFilter {
+        workspace_id: Some(claims.0.workspace_id.clone()),
+        ..Default::default()
+    };
 
     // Device IDs
     if let Some(device_ids_str) = params.device_ids {
@@ -256,7 +258,10 @@ pub async fn acknowledge_event(
     let real_time_repo = &state.real_time_event_repository;
 
     // Acknowledge the event
-    match real_time_repo.acknowledge_event(&event_id, &claims.0.user_id, &claims.0.workspace_id).await {
+    match real_time_repo
+        .acknowledge_event(&event_id, &claims.0.user_id, &claims.0.workspace_id)
+        .await
+    {
         Ok(_) => {
             tracing::info!("Event {} acknowledged by user {}", event_id, claims.0.user_id);
             ApiResponseBuilder::success(true)

@@ -19,11 +19,7 @@ impl TemplateInstaller {
 
     /// Install template from marketplace.
     /// Fetches the template definition from the marketplace API and imports directly into the database.
-    pub async fn install_from_marketplace(
-        &self,
-        template_id: &str,
-        version: Option<&str>,
-    ) -> Result<String> {
+    pub async fn install_from_marketplace(&self, template_id: &str, version: Option<&str>) -> Result<String> {
         tracing::info!("Installing template {} from marketplace", template_id);
 
         // 1. Fetch template from marketplace API
@@ -45,9 +41,8 @@ impl TemplateInstaller {
 
         // 4. Import to database directly
         let request: tinyiothub_thing::template::types::CreateDeviceTemplateRequest =
-            serde_json::from_value(template_data).map_err(|e| {
-                MarketplaceError::Template(format!("Invalid template format: {}", e))
-            })?;
+            serde_json::from_value(template_data)
+                .map_err(|e| MarketplaceError::Template(format!("Invalid template format: {}", e)))?;
 
         self.repository
             .create(&request)

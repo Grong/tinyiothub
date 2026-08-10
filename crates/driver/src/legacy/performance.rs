@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tinyiothub_storage::{Database, cache::DeviceCache};
 
-use super::{monitoring::DeviceMonitoringService};
+use super::monitoring::DeviceMonitoringService;
 use tinyiothub_alarm::AlarmRepository;
 use tinyiothub_core::error::Error;
 
@@ -22,18 +22,17 @@ impl DevicePerformanceService {
         device_cache: Arc<DeviceCache>,
         alarm_repository: Arc<dyn AlarmRepository>,
     ) -> Self {
-        let monitoring_service = DeviceMonitoringService::new(
-            database.clone(),
-            device_cache.clone(),
-            alarm_repository.clone(),
-        );
-        Self { database, device_cache, monitoring_service, alarm_repository }
+        let monitoring_service =
+            DeviceMonitoringService::new(database.clone(), device_cache.clone(), alarm_repository.clone());
+        Self {
+            database,
+            device_cache,
+            monitoring_service,
+            alarm_repository,
+        }
     }
 
-    pub async fn get_device_performance_metrics(
-        &self,
-        device_id: &str,
-    ) -> Option<DevicePerformanceMetrics> {
+    pub async fn get_device_performance_metrics(&self, device_id: &str) -> Option<DevicePerformanceMetrics> {
         if let Some(device) = self.device_cache.get(device_id) {
             let mut metrics = DevicePerformanceMetrics {
                 device_id: device_id.to_string(),
@@ -47,21 +46,16 @@ impl DevicePerformanceService {
                 last_updated: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
             };
             if let Some(last_heartbeat) = &device.last_heartbeat
-                && let Ok(heartbeat_time) = chrono::DateTime::parse_from_str(
-                    &format!("{} +00:00", last_heartbeat),
-                    "%Y-%m-%d %H:%M:%S %z",
-                )
+                && let Ok(heartbeat_time) =
+                    chrono::DateTime::parse_from_str(&format!("{} +00:00", last_heartbeat), "%Y-%m-%d %H:%M:%S %z")
             {
                 let now = chrono::Utc::now();
-                let response_time =
-                    (now - heartbeat_time.with_timezone(&chrono::Utc)).num_milliseconds() as f64;
+                let response_time = (now - heartbeat_time.with_timezone(&chrono::Utc)).num_milliseconds() as f64;
                 if (0.0..300000.0).contains(&response_time) {
                     metrics.response_time_ms = Some(response_time);
                 }
             }
-            if let Some(connection_quality) =
-                self.monitoring_service.get_device_connection_quality(device_id)
-            {
+            if let Some(connection_quality) = self.monitoring_service.get_device_connection_quality(device_id) {
                 let estimated_latency = match connection_quality {
                     90..=100 => 10.0 + (100 - connection_quality) as f64 * 0.5,
                     80..=89 => 15.0 + (90 - connection_quality) as f64 * 1.0,
@@ -74,8 +68,7 @@ impl DevicePerformanceService {
             metrics.uptime_percentage = self.calculate_device_uptime_percentage(device_id).await;
             if let Some(stats) = self.monitoring_service.get_device_metrics(device_id).await {
                 if stats.total_properties > 0 {
-                    let error_rate =
-                        (stats.active_alarms as f64 / stats.total_properties as f64) * 0.1;
+                    let error_rate = (stats.active_alarms as f64 / stats.total_properties as f64) * 0.1;
                     metrics.error_rate = Some(error_rate.min(1.0));
                 }
                 if stats.online_properties > 0 {
@@ -100,25 +93,29 @@ impl DevicePerformanceService {
     async fn calculate_device_uptime_percentage(&self, device_id: &str) -> Option<f64> {
         if let Some(device) = self.device_cache.get(device_id)
             && let Some(created_at) = &device.created_at
-            && let Ok(created_time) = chrono::DateTime::parse_from_str(
-                &format!("{} +00:00", created_at),
-                "%Y-%m-%d %H:%M:%S %z",
-            )
+            && let Ok(created_time) =
+                chrono::DateTime::parse_from_str(&format!("{} +00:00", created_at), "%Y-%m-%d %H:%M:%S %z")
         {
             let now = chrono::Utc::now();
             let total_time = (now - created_time.with_timezone(&chrono::Utc)).num_hours() as f64;
             if total_time > 0.0 {
                 let offline_hours = self.calculate_device_offline_hours(device_id).await;
-                let uptime_percentage =
-                    ((total_time - offline_hours) / total_time * 100.0).clamp(0.0, 100.0);
+                let uptime_percentage = ((total_time - offline_hours) / total_time * 100.0).clamp(0.0, 100.0);
                 return Some(uptime_percentage);
             }
         }
-        if self.monitoring_service.is_device_online(device_id) { Some(95.0) } else { Some(85.0) }
+        if self.monitoring_service.is_device_online(device_id) {
+            Some(95.0)
+        } else {
+            Some(85.0)
+        }
     }
 
     async fn calculate_device_offline_hours(&self, device_id: &str) -> f64 {
-        self.alarm_repository.count_offline_alarms(device_id, 30).await.unwrap_or(0) as f64
+        self.alarm_repository
+            .count_offline_alarms(device_id, 30)
+            .await
+            .unwrap_or(0) as f64
     }
 
     async fn estimate_device_resource_usage(&self, device_id: &str) -> (Option<f64>, Option<f64>) {
@@ -127,20 +124,19 @@ impl DevicePerformanceService {
             let command_count = device.commands.as_ref().map(|c| c.len()).unwrap_or(0) as f64;
             let base_cpu = 5.0;
             let base_memory = 10.0;
-            let online_factor =
-                if self.monitoring_service.is_device_online(device_id) { 1.2 } else { 0.3 };
+            let online_factor = if self.monitoring_service.is_device_online(device_id) {
+                1.2
+            } else {
+                0.3
+            };
             let quality_factor = self
                 .monitoring_service
                 .get_device_connection_quality(device_id)
                 .map(|q| 0.5 + (q as f64 / 100.0) * 0.5)
                 .unwrap_or(0.7);
-            let cpu = ((base_cpu + property_count * 0.5 + command_count * 0.3)
-                * online_factor
-                * quality_factor)
+            let cpu = ((base_cpu + property_count * 0.5 + command_count * 0.3) * online_factor * quality_factor)
                 .clamp(1.0, 95.0);
-            let mem = ((base_memory + property_count * 1.0 + command_count * 0.5)
-                * online_factor
-                * quality_factor)
+            let mem = ((base_memory + property_count * 1.0 + command_count * 0.5) * online_factor * quality_factor)
                 .clamp(5.0, 90.0);
             (Some(cpu), Some(mem))
         } else {
@@ -169,8 +165,7 @@ impl DevicePerformanceService {
                     metrics.memory_usage = Some((memory * variation_factor).clamp(0.0, 100.0));
                 }
                 if let Some(latency) = metrics.network_latency_ms {
-                    metrics.network_latency_ms =
-                        Some((latency * (2.0 - variation_factor)).max(1.0));
+                    metrics.network_latency_ms = Some((latency * (2.0 - variation_factor)).max(1.0));
                 }
                 metrics.last_updated = timestamp.format("%Y-%m-%d %H:%M:%S").to_string();
                 history.push(metrics);
@@ -350,8 +345,7 @@ impl DevicePerformanceService {
                 }
             }
         }
-        let avg =
-            |total: f64, count: u32| if count > 0 { Some(total / count as f64) } else { None };
+        let avg = |total: f64, count: u32| if count > 0 { Some(total / count as f64) } else { None };
         SystemPerformanceOverview {
             total_devices,
             devices_with_metrics,

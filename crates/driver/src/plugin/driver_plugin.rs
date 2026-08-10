@@ -21,12 +21,7 @@ pub struct DriverPluginHandler {
 
 impl DriverPluginHandler {
     /// 从设备创建设动插件处理器
-    pub fn new(
-        driver_name: String,
-        version: String,
-        device: Device,
-        _context: Arc<AppContext>,
-    ) -> Result<Self, Error> {
+    pub fn new(driver_name: String, version: String, device: Device, _context: Arc<AppContext>) -> Result<Self, Error> {
         let manifest = PluginManifest {
             name: driver_name.clone(),
             version: Some(version),
@@ -131,6 +126,9 @@ pub fn init_plugins(_context: Arc<AppContext>) -> Result<(), Error> {
         tracing::warn!("Failed to load some plugins from {:?}: {}", plugins_dir, e);
     }
 
-    tracing::info!("Plugin system initialized with {} plugins", registry.plugin_names().len());
+    tracing::info!(
+        "Plugin system initialized with {} plugins",
+        registry.plugin_names().len()
+    );
     Ok(())
 }

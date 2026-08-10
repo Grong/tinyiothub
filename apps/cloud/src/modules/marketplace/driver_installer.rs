@@ -19,11 +19,7 @@ impl DriverInstaller {
     }
 
     /// Install driver from marketplace
-    pub async fn install_from_marketplace(
-        &self,
-        driver_id: &str,
-        version: Option<&str>,
-    ) -> Result<String> {
+    pub async fn install_from_marketplace(&self, driver_id: &str, version: Option<&str>) -> Result<String> {
         tracing::info!("Installing driver {} from marketplace", driver_id);
 
         // 1. Fetch driver list
@@ -56,9 +52,7 @@ impl DriverInstaller {
         let driver_file = self.download_driver(driver_id, binary_info, &platform).await?;
 
         // 6. Verify checksum (skip in development mode)
-        if !binary_info.checksum.starts_with("sha256:test")
-            && !binary_info.checksum.contains("test")
-        {
+        if !binary_info.checksum.starts_with("sha256:test") && !binary_info.checksum.contains("test") {
             self.client.verify_checksum(&driver_file, &binary_info.checksum).await?;
         } else {
             tracing::warn!("Skipping checksum verification for test/development driver");
@@ -102,8 +96,7 @@ impl DriverInstaller {
     /// Load driver (static drivers are compiled in; dynamic loading not supported)
     async fn load_driver(&self, _driver_file: &PathBuf) -> Result<String> {
         Err(MarketplaceError::InstallationFailed(
-            "Dynamic driver loading is not supported. Drivers must be compiled into the binary."
-                .to_string(),
+            "Dynamic driver loading is not supported. Drivers must be compiled into the binary.".to_string(),
         ))
     }
 
@@ -114,6 +107,8 @@ impl DriverInstaller {
 
     /// Uninstall driver (static drivers cannot be uninstalled at runtime)
     pub async fn uninstall(&self, _driver_name: &str) -> Result<()> {
-        Err(MarketplaceError::Driver("Dynamic driver unloading is not supported.".to_string()))
+        Err(MarketplaceError::Driver(
+            "Dynamic driver unloading is not supported.".to_string(),
+        ))
     }
 }

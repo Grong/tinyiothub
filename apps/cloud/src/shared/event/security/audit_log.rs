@@ -86,12 +86,7 @@ pub trait EventAuditLog: Send + Sync {
     async fn log(&self, entry: AuditLogEntry) -> Result<()>;
 
     /// Log event creation
-    async fn log_event_created(
-        &self,
-        user_id: &str,
-        event_id: &EventId,
-        event: &Event,
-    ) -> Result<()>;
+    async fn log_event_created(&self, user_id: &str, event_id: &EventId, event: &Event) -> Result<()>;
 
     /// Log event access
     async fn log_event_accessed(&self, user_id: &str, event_id: &EventId) -> Result<()>;
@@ -106,21 +101,10 @@ pub trait EventAuditLog: Send + Sync {
     ) -> Result<()>;
 
     /// Log event deletion
-    async fn log_event_deleted(
-        &self,
-        user_id: &str,
-        event_id: &EventId,
-        event: &Event,
-    ) -> Result<()>;
+    async fn log_event_deleted(&self, user_id: &str, event_id: &EventId, event: &Event) -> Result<()>;
 
     /// Log access denied
-    async fn log_access_denied(
-        &self,
-        user_id: &str,
-        action: &str,
-        resource: &str,
-        reason: &str,
-    ) -> Result<()>;
+    async fn log_access_denied(&self, user_id: &str, action: &str, resource: &str, reason: &str) -> Result<()>;
 
     /// Log event query
     async fn log_event_query(
@@ -134,25 +118,13 @@ pub trait EventAuditLog: Send + Sync {
     ) -> Result<()>;
 
     /// Get user audit logs
-    async fn get_user_audit_logs(
-        &self,
-        user_id: &str,
-        limit: Option<usize>,
-    ) -> Result<Vec<AuditLogEntry>>;
+    async fn get_user_audit_logs(&self, user_id: &str, limit: Option<usize>) -> Result<Vec<AuditLogEntry>>;
 
     /// Get event audit logs
-    async fn get_event_audit_logs(
-        &self,
-        event_id: &EventId,
-        limit: Option<usize>,
-    ) -> Result<Vec<AuditLogEntry>>;
+    async fn get_event_audit_logs(&self, event_id: &EventId, limit: Option<usize>) -> Result<Vec<AuditLogEntry>>;
 
     /// Get all audit logs (admin only)
-    async fn get_all_audit_logs(
-        &self,
-        limit: Option<usize>,
-        offset: Option<usize>,
-    ) -> Result<Vec<AuditLogEntry>>;
+    async fn get_all_audit_logs(&self, limit: Option<usize>, offset: Option<usize>) -> Result<Vec<AuditLogEntry>>;
 
     /// Clean up old logs
     async fn cleanup_old_logs(&self, retention_days: u32) -> Result<usize>;
@@ -201,7 +173,10 @@ impl DatabaseAuditLog {
         ];
 
         for sql in create_indexes_sql {
-            sqlx::query(sql).execute(self.db.pool()).await.map_err(EventError::Database)?;
+            sqlx::query(sql)
+                .execute(self.db.pool())
+                .await
+                .map_err(EventError::Database)?;
         }
 
         info!("Audit log database initialized successfully");
@@ -241,12 +216,7 @@ impl EventAuditLog for DatabaseAuditLog {
         Ok(())
     }
 
-    async fn log_event_created(
-        &self,
-        user_id: &str,
-        event_id: &EventId,
-        event: &Event,
-    ) -> Result<()> {
+    async fn log_event_created(&self, user_id: &str, event_id: &EventId, event: &Event) -> Result<()> {
         let entry = AuditLogEntry::new("event_created".to_string(), Some(user_id.to_string()))
             .with_event_id(event_id.to_string())
             .with_event_type(event.event_type().to_string())
@@ -279,12 +249,7 @@ impl EventAuditLog for DatabaseAuditLog {
         self.log(entry).await
     }
 
-    async fn log_event_deleted(
-        &self,
-        user_id: &str,
-        event_id: &EventId,
-        event: &Event,
-    ) -> Result<()> {
+    async fn log_event_deleted(&self, user_id: &str, event_id: &EventId, event: &Event) -> Result<()> {
         let entry = AuditLogEntry::new("event_deleted".to_string(), Some(user_id.to_string()))
             .with_event_id(event_id.to_string())
             .with_event_type(event.event_type().to_string())
@@ -294,13 +259,7 @@ impl EventAuditLog for DatabaseAuditLog {
         self.log(entry).await
     }
 
-    async fn log_access_denied(
-        &self,
-        user_id: &str,
-        action: &str,
-        resource: &str,
-        reason: &str,
-    ) -> Result<()> {
+    async fn log_access_denied(&self, user_id: &str, action: &str, resource: &str, reason: &str) -> Result<()> {
         let entry = AuditLogEntry::new("access_denied".to_string(), Some(user_id.to_string()))
             .with_result("denied".to_string())
             .with_details(format!(
@@ -328,17 +287,13 @@ impl EventAuditLog for DatabaseAuditLog {
             "result_count": result_count
         });
 
-        let entry = AuditLogEntry::new("event_query".to_string(), Some(user_id.to_string()))
-            .with_details(details.to_string());
+        let entry =
+            AuditLogEntry::new("event_query".to_string(), Some(user_id.to_string())).with_details(details.to_string());
 
         self.log(entry).await
     }
 
-    async fn get_user_audit_logs(
-        &self,
-        user_id: &str,
-        limit: Option<usize>,
-    ) -> Result<Vec<AuditLogEntry>> {
+    async fn get_user_audit_logs(&self, user_id: &str, limit: Option<usize>) -> Result<Vec<AuditLogEntry>> {
         let limit = limit.unwrap_or(100).min(1000);
 
         let sql = r#"
@@ -408,11 +363,7 @@ impl EventAuditLog for DatabaseAuditLog {
         Ok(entries)
     }
 
-    async fn get_event_audit_logs(
-        &self,
-        event_id: &EventId,
-        limit: Option<usize>,
-    ) -> Result<Vec<AuditLogEntry>> {
+    async fn get_event_audit_logs(&self, event_id: &EventId, limit: Option<usize>) -> Result<Vec<AuditLogEntry>> {
         let limit = limit.unwrap_or(100).min(1000);
 
         let sql = r#"
@@ -482,11 +433,7 @@ impl EventAuditLog for DatabaseAuditLog {
         Ok(entries)
     }
 
-    async fn get_all_audit_logs(
-        &self,
-        limit: Option<usize>,
-        offset: Option<usize>,
-    ) -> Result<Vec<AuditLogEntry>> {
+    async fn get_all_audit_logs(&self, limit: Option<usize>, offset: Option<usize>) -> Result<Vec<AuditLogEntry>> {
         let limit = limit.unwrap_or(100).min(1000);
         let offset = offset.unwrap_or(0);
 
@@ -588,7 +535,9 @@ impl Default for InMemoryAuditLog {
 
 impl InMemoryAuditLog {
     pub fn new() -> Self {
-        Self { entries: Arc::new(tokio::sync::RwLock::new(Vec::new())) }
+        Self {
+            entries: Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        }
     }
 }
 
@@ -600,12 +549,7 @@ impl EventAuditLog for InMemoryAuditLog {
         Ok(())
     }
 
-    async fn log_event_created(
-        &self,
-        user_id: &str,
-        event_id: &EventId,
-        event: &Event,
-    ) -> Result<()> {
+    async fn log_event_created(&self, user_id: &str, event_id: &EventId, event: &Event) -> Result<()> {
         let entry = AuditLogEntry::new("event_created".to_string(), Some(user_id.to_string()))
             .with_event_id(event_id.to_string())
             .with_event_type(event.event_type().to_string())
@@ -636,12 +580,7 @@ impl EventAuditLog for InMemoryAuditLog {
         self.log(entry).await
     }
 
-    async fn log_event_deleted(
-        &self,
-        user_id: &str,
-        event_id: &EventId,
-        event: &Event,
-    ) -> Result<()> {
+    async fn log_event_deleted(&self, user_id: &str, event_id: &EventId, event: &Event) -> Result<()> {
         let entry = AuditLogEntry::new("event_deleted".to_string(), Some(user_id.to_string()))
             .with_event_id(event_id.to_string())
             .with_event_type(event.event_type().to_string())
@@ -650,13 +589,7 @@ impl EventAuditLog for InMemoryAuditLog {
         self.log(entry).await
     }
 
-    async fn log_access_denied(
-        &self,
-        user_id: &str,
-        action: &str,
-        resource: &str,
-        reason: &str,
-    ) -> Result<()> {
+    async fn log_access_denied(&self, user_id: &str, action: &str, resource: &str, reason: &str) -> Result<()> {
         let entry = AuditLogEntry::new("access_denied".to_string(), Some(user_id.to_string()))
             .with_result("denied".to_string())
             .with_details(format!(
@@ -682,11 +615,7 @@ impl EventAuditLog for InMemoryAuditLog {
         self.log(entry).await
     }
 
-    async fn get_user_audit_logs(
-        &self,
-        user_id: &str,
-        limit: Option<usize>,
-    ) -> Result<Vec<AuditLogEntry>> {
+    async fn get_user_audit_logs(&self, user_id: &str, limit: Option<usize>) -> Result<Vec<AuditLogEntry>> {
         let entries = self.entries.read().await;
         let limit = limit.unwrap_or(100);
 
@@ -700,11 +629,7 @@ impl EventAuditLog for InMemoryAuditLog {
         Ok(filtered)
     }
 
-    async fn get_event_audit_logs(
-        &self,
-        event_id: &EventId,
-        limit: Option<usize>,
-    ) -> Result<Vec<AuditLogEntry>> {
+    async fn get_event_audit_logs(&self, event_id: &EventId, limit: Option<usize>) -> Result<Vec<AuditLogEntry>> {
         let entries = self.entries.read().await;
         let limit = limit.unwrap_or(100);
 
@@ -718,17 +643,12 @@ impl EventAuditLog for InMemoryAuditLog {
         Ok(filtered)
     }
 
-    async fn get_all_audit_logs(
-        &self,
-        limit: Option<usize>,
-        offset: Option<usize>,
-    ) -> Result<Vec<AuditLogEntry>> {
+    async fn get_all_audit_logs(&self, limit: Option<usize>, offset: Option<usize>) -> Result<Vec<AuditLogEntry>> {
         let entries = self.entries.read().await;
         let limit = limit.unwrap_or(100);
         let offset = offset.unwrap_or(0);
 
-        let filtered: Vec<AuditLogEntry> =
-            entries.iter().skip(offset).take(limit).cloned().collect();
+        let filtered: Vec<AuditLogEntry> = entries.iter().skip(offset).take(limit).cloned().collect();
 
         Ok(filtered)
     }

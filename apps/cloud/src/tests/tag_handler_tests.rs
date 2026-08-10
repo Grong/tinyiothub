@@ -24,8 +24,11 @@ fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Re
 /// Helper: create a tag via POST and return the response JSON.
 async fn create_tag(app: &axum::Router, token: &str, name: &str, tag_type: &str) -> Value {
     let body = json!({"name": name, "type": tag_type});
-    let response =
-        app.clone().oneshot(auth_request("POST", "/api/v1/tags", token, Some(body))).await.unwrap();
+    let response = app
+        .clone()
+        .oneshot(auth_request("POST", "/api/v1/tags", token, Some(body)))
+        .await
+        .unwrap();
     let (_s, json) = response_parts(response).await;
     json
 }
@@ -38,8 +41,10 @@ async fn test_create_tag() {
     let token = create_test_token("user-1", "tenant-1");
 
     let body = json!({"name": "test-tag-001", "type": "device"});
-    let response =
-        app.oneshot(auth_request("POST", "/api/v1/tags", &token, Some(body))).await.unwrap();
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/tags", &token, Some(body)))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert_eq!(json["code"], 0, "Expected success");
@@ -68,19 +73,21 @@ async fn test_list_tags_with_data() {
     let (_s, json) = response_parts(response).await;
     assert_eq!(json["code"], 0, "Expected success");
     // This exercises FromRow deserialization with real data
-    assert!(json["result"].is_array() || json["result"].is_object(), "Expected data in result");
+    assert!(
+        json["result"].is_array() || json["result"].is_object(),
+        "Expected data in result"
+    );
 }
 
 #[tokio::test]
 async fn test_create_tag_missing_fields() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("POST", "/api/v1/tags", &token, Some(json!({})))).await.unwrap();
-    assert!(
-        response.status() == StatusCode::UNPROCESSABLE_ENTITY
-            || response.status() == StatusCode::OK
-    );
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/tags", &token, Some(json!({}))))
+        .await
+        .unwrap();
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
 }
 
 #[tokio::test]
@@ -137,7 +144,12 @@ async fn test_delete_tag_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("DELETE", "/api/v1/tags/nonexistent-tag-12345", &token, None))
+        .oneshot(auth_request(
+            "DELETE",
+            "/api/v1/tags/nonexistent-tag-12345",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     assert!(response.status() == StatusCode::NOT_FOUND || response.status() == StatusCode::OK);
@@ -157,7 +169,12 @@ async fn test_search_tags_with_data() {
     // Test: search should find it (exercises FromRow)
     let response = app
         .clone()
-        .oneshot(auth_request("GET", "/api/v1/tags/search?q=searchable-unique", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/tags/search?q=searchable-unique",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -176,8 +193,11 @@ async fn test_get_tag_stats_with_data() {
     create_tag(&app, &token, "stats-tag-2", "app").await;
 
     // Test: stats should reflect created tags
-    let response =
-        app.clone().oneshot(auth_request("GET", "/api/v1/tags/stats", &token, None)).await.unwrap();
+    let response = app
+        .clone()
+        .oneshot(auth_request("GET", "/api/v1/tags/stats", &token, None))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert_eq!(json["code"], 0, "Expected success");
@@ -193,10 +213,7 @@ async fn test_create_tag_binding_missing_fields() {
         .oneshot(auth_request("POST", "/api/v1/tags/bindings", &token, Some(json!({}))))
         .await
         .unwrap();
-    assert!(
-        response.status() == StatusCode::UNPROCESSABLE_ENTITY
-            || response.status() == StatusCode::OK
-    );
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
 }
 
 #[tokio::test]
@@ -251,13 +268,15 @@ async fn test_batch_create_bindings_missing_fields() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("POST", "/api/v1/tags/bindings/batch", &token, Some(json!({}))))
+        .oneshot(auth_request(
+            "POST",
+            "/api/v1/tags/bindings/batch",
+            &token,
+            Some(json!({})),
+        ))
         .await
         .unwrap();
-    assert!(
-        response.status() == StatusCode::UNPROCESSABLE_ENTITY
-            || response.status() == StatusCode::OK
-    );
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
 }
 
 #[tokio::test]
@@ -265,7 +284,12 @@ async fn test_batch_delete_bindings_missing_fields() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("DELETE", "/api/v1/tags/bindings/batch", &token, Some(json!({}))))
+        .oneshot(auth_request(
+            "DELETE",
+            "/api/v1/tags/bindings/batch",
+            &token,
+            Some(json!({})),
+        ))
         .await
         .unwrap();
     assert!(response.status().is_success() || response.status().is_client_error());
@@ -303,7 +327,12 @@ async fn test_tag_lifecycle() {
     let body = json!({"name": "lifecycle-tag-updated"});
     let response = app
         .clone()
-        .oneshot(auth_request("PUT", &format!("/api/v1/tags/{}", tag_id), &token, Some(body)))
+        .oneshot(auth_request(
+            "PUT",
+            &format!("/api/v1/tags/{}", tag_id),
+            &token,
+            Some(body),
+        ))
         .await
         .unwrap();
     let (_s, json) = response_parts(response).await;
@@ -312,7 +341,12 @@ async fn test_tag_lifecycle() {
 
     // 4. Delete
     let response = app
-        .oneshot(auth_request("DELETE", &format!("/api/v1/tags/{}", tag_id), &token, None))
+        .oneshot(auth_request(
+            "DELETE",
+            &format!("/api/v1/tags/{}", tag_id),
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     let (_s, json) = response_parts(response).await;

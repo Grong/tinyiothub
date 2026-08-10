@@ -210,9 +210,9 @@ impl AlarmType {
             "property_threshold" => AlarmType::PropertyThreshold,
             "property_anomaly" => AlarmType::PropertyAnomaly,
             "command_failed" => AlarmType::CommandFailed,
-            s if s.starts_with("custom_") => {
-                AlarmType::Custom { name: s.strip_prefix("custom_").unwrap_or(s).to_string() }
-            }
+            s if s.starts_with("custom_") => AlarmType::Custom {
+                name: s.strip_prefix("custom_").unwrap_or(s).to_string(),
+            },
             _ => AlarmType::Custom { name: s.to_string() },
         }
     }
@@ -311,7 +311,11 @@ pub struct Acknowledgement {
 
 impl Acknowledgement {
     pub fn new(user_id: String, note: Option<String>) -> Self {
-        Self { acknowledged_by: user_id, acknowledged_at: Utc::now(), note }
+        Self {
+            acknowledged_by: user_id,
+            acknowledged_at: Utc::now(),
+            note,
+        }
     }
 }
 
@@ -326,7 +330,12 @@ pub struct Resolution {
 
 impl Resolution {
     pub fn new(user_id: String, resolution_type: ResolutionType, note: Option<String>) -> Self {
-        Self { resolved_by: user_id, resolved_at: Utc::now(), note, resolution_type }
+        Self {
+            resolved_by: user_id,
+            resolved_at: Utc::now(),
+            note,
+            resolution_type,
+        }
     }
 }
 
@@ -673,9 +682,10 @@ impl AlarmRule {
             ));
         }
         if notification_config.enabled {
-            let needs_recipients = notification_config.channels.iter().any(|ch| {
-                matches!(ch, NotificationChannelType::Email | NotificationChannelType::Sms)
-            });
+            let needs_recipients = notification_config
+                .channels
+                .iter()
+                .any(|ch| matches!(ch, NotificationChannelType::Email | NotificationChannelType::Sms));
             if needs_recipients && notification_config.recipients.is_empty() {
                 return Err(AlarmError::InvalidRuleConfig(
                     "使用邮件或短信通知时需要配置接收人".to_string(),
@@ -805,8 +815,7 @@ impl From<crate::AlarmRule> for AlarmRuleDto {
             condition: serde_json::to_value(&rule.condition).unwrap_or(serde_json::Value::Null),
             alarm_level: rule.alarm_level.as_str().to_string(),
             is_enabled: rule.is_enabled,
-            notification_config: serde_json::to_value(&rule.notification_config)
-                .unwrap_or(serde_json::Value::Null),
+            notification_config: serde_json::to_value(&rule.notification_config).unwrap_or(serde_json::Value::Null),
             created_at: rule.created_at.to_rfc3339(),
             updated_at: rule.updated_at.to_rfc3339(),
         }
@@ -869,7 +878,12 @@ where
     D: serde::Deserializer<'de>,
 {
     let raw: Option<String> = Option::deserialize(d)?;
-    Ok(raw.map(|s| s.split(',').map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).collect()))
+    Ok(raw.map(|s| {
+        s.split(',')
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .collect()
+    }))
 }
 
 /// 报警查询参数
@@ -1005,7 +1019,13 @@ mod tests {
         assert_eq!(AlarmType::PropertyThreshold.as_str(), "property_threshold");
         assert_eq!(AlarmType::PropertyAnomaly.as_str(), "property_anomaly");
         assert_eq!(AlarmType::CommandFailed.as_str(), "command_failed");
-        assert_eq!(AlarmType::Custom { name: "special".to_string() }.as_str(), "custom_special");
+        assert_eq!(
+            AlarmType::Custom {
+                name: "special".to_string()
+            }
+            .as_str(),
+            "custom_special"
+        );
     }
 
     #[test]
@@ -1017,9 +1037,16 @@ mod tests {
         assert_eq!(AlarmType::parse_str("command_failed"), AlarmType::CommandFailed);
         assert_eq!(
             AlarmType::parse_str("custom_foo"),
-            AlarmType::Custom { name: "foo".to_string() }
+            AlarmType::Custom {
+                name: "foo".to_string()
+            }
         );
-        assert_eq!(AlarmType::parse_str("other"), AlarmType::Custom { name: "other".to_string() });
+        assert_eq!(
+            AlarmType::parse_str("other"),
+            AlarmType::Custom {
+                name: "other".to_string()
+            }
+        );
     }
 
     #[test]
@@ -1099,7 +1126,11 @@ mod tests {
             None,
             None,
         );
-        assert!(alarm.acknowledge("user-1".to_string(), Some("ack note".to_string())).is_ok());
+        assert!(
+            alarm
+                .acknowledge("user-1".to_string(), Some("ack note".to_string()))
+                .is_ok()
+        );
         assert_eq!(alarm.status, AlarmStatus::Acknowledged);
         assert!(alarm.acknowledgement.is_some());
     }
@@ -1169,7 +1200,9 @@ mod tests {
             None,
             None,
         );
-        alarm.resolve("user-1".to_string(), ResolutionType::Fixed, None).unwrap();
+        alarm
+            .resolve("user-1".to_string(), ResolutionType::Fixed, None)
+            .unwrap();
         let result = alarm.resolve("user-1".to_string(), ResolutionType::Fixed, None);
         assert!(result.is_err());
     }
@@ -1242,7 +1275,9 @@ mod tests {
         assert!(alarm.can_resolve());
         alarm.acknowledge("user-1".to_string(), None).unwrap();
         assert!(alarm.can_resolve());
-        alarm.resolve("user-1".to_string(), ResolutionType::Fixed, None).unwrap();
+        alarm
+            .resolve("user-1".to_string(), ResolutionType::Fixed, None)
+            .unwrap();
         assert!(!alarm.can_resolve());
     }
 
@@ -1262,7 +1297,9 @@ mod tests {
         assert!(alarm.is_active());
         alarm.acknowledge("user-1".to_string(), None).unwrap();
         assert!(alarm.is_active());
-        alarm.resolve("user-1".to_string(), ResolutionType::Fixed, None).unwrap();
+        alarm
+            .resolve("user-1".to_string(), ResolutionType::Fixed, None)
+            .unwrap();
         assert!(!alarm.is_active());
     }
 
@@ -1490,7 +1527,11 @@ mod tests {
         let json = r#"{"type":"threshold","operator":"greater_than","value":80.0,"recovery_threshold":75.0}"#;
         let condition: AlarmCondition = serde_json::from_str(json).unwrap();
         match condition {
-            AlarmCondition::Threshold { operator, value, recovery_threshold } => {
+            AlarmCondition::Threshold {
+                operator,
+                value,
+                recovery_threshold,
+            } => {
                 assert_eq!(operator, ComparisonOperator::GreaterThan);
                 assert!((value - 80.0).abs() < f64::EPSILON);
                 assert_eq!(recovery_threshold, Some(75.0));
@@ -1514,7 +1555,8 @@ mod tests {
 
     #[test]
     fn test_notification_config_deser_new_duration_fields() {
-        let json = r#"{"enabled":false,"channels":[],"recipients":[],"trigger_duration_secs":30,"recovery_duration_secs":60}"#;
+        let json =
+            r#"{"enabled":false,"channels":[],"recipients":[],"trigger_duration_secs":30,"recovery_duration_secs":60}"#;
         let config: NotificationConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.trigger_duration_secs, Some(Duration::from_secs(30)));
         assert_eq!(config.recovery_duration_secs, Some(Duration::from_secs(60)));

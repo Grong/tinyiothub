@@ -13,9 +13,7 @@ use tinyiothub_storage::{
 };
 use tinyiothub_thing::template::types::{CreateDeviceFromTemplateRequest, DeviceCreationInput};
 
-use tinyiothub_thing::legacy::device_query::{
-    find_device_by_id, find_device_by_id_with_tags, load_tags_for_devices,
-};
+use tinyiothub_thing::legacy::device_query::{find_device_by_id, find_device_by_id_with_tags, load_tags_for_devices};
 
 use crate::{
     McpState,
@@ -228,8 +226,7 @@ impl ToolHandler for DevicePropertyGetHandler {
             property_name: String,
         }
 
-        let input: Input =
-            serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+        let input: Input = serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
         let state = self
             .state
@@ -245,13 +242,14 @@ impl ToolHandler for DevicePropertyGetHandler {
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.device_id)))?;
 
-        let all_properties =
-            find_device_properties_by_device_id(state.database(), &input.device_id)
-                .await
-                .map_err(|e| ToolError::Internal(e.to_string()))?;
+        let all_properties = find_device_properties_by_device_id(state.database(), &input.device_id)
+            .await
+            .map_err(|e| ToolError::Internal(e.to_string()))?;
 
-        let prop =
-            all_properties.iter().find(|p| p.name == input.property_name).ok_or_else(|| {
+        let prop = all_properties
+            .iter()
+            .find(|p| p.name == input.property_name)
+            .ok_or_else(|| {
                 ToolError::NotFound(format!(
                     "Property '{}' not found on thing {}",
                     input.property_name, input.device_id
@@ -356,10 +354,9 @@ impl ToolHandler for WritePropertiesHandler {
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.device_id)))?;
 
-        let device_properties =
-            find_device_properties_by_device_id(state.database(), &input.device_id)
-                .await
-                .map_err(|e| ToolError::Internal(e.to_string()))?;
+        let device_properties = find_device_properties_by_device_id(state.database(), &input.device_id)
+            .await
+            .map_err(|e| ToolError::Internal(e.to_string()))?;
 
         let mut updated_count = 0;
         let mut results = Vec::new();
@@ -386,12 +383,7 @@ impl ToolHandler for WritePropertiesHandler {
                     }
 
                     match state
-                        .update_device_property_value(
-                            &workspace_id,
-                            &input.device_id,
-                            &def.id,
-                            value,
-                        )
+                        .update_device_property_value(&workspace_id, &input.device_id, &def.id, value)
                         .await
                     {
                         Ok(_) => {
@@ -513,13 +505,9 @@ impl ToolHandler for DeviceCommandHandler {
             .unwrap());
         }
 
-        let command = find_device_command_by_device_and_name(
-            state.database(),
-            &input.device_id,
-            &input.command_name,
-        )
-        .await
-        .map_err(|e| ToolError::Internal(e.to_string()))?;
+        let command = find_device_command_by_device_and_name(state.database(), &input.device_id, &input.command_name)
+            .await
+            .map_err(|e| ToolError::Internal(e.to_string()))?;
 
         let command_def = match command {
             Some(c) => c,
@@ -543,7 +531,9 @@ impl ToolHandler for DeviceCommandHandler {
         }
 
         let result = if let Some(data_server) = state.data_server() {
-            data_server.execute_command(cmd).map_err(|e| ToolError::Internal(e.to_string()))
+            data_server
+                .execute_command(cmd)
+                .map_err(|e| ToolError::Internal(e.to_string()))
         } else {
             tracing::warn!("DataServer not available, command execution simulated");
             Ok(())
@@ -599,9 +589,7 @@ impl ToolHandler for CreateDeviceHandler {
             "templateId".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some(
-                    "Device template ID (required for template-based creation)".to_string(),
-                ),
+                description: Some("Device template ID (required for template-based creation)".to_string()),
             },
         );
         props.insert(
@@ -643,9 +631,7 @@ impl ToolHandler for CreateDeviceHandler {
             "propertyValues".to_string(),
             PropertySchema {
                 prop_type: "object".to_string(),
-                description: Some(
-                    "Property values to set at creation (property name -> value)".to_string(),
-                ),
+                description: Some("Property values to set at creation (property name -> value)".to_string()),
             },
         );
         props.insert(
@@ -689,20 +675,19 @@ impl ToolHandler for CreateDeviceHandler {
                 tenant_id: None,
                 workspace_id: None,
             };
-            let request =
-                CreateDeviceFromTemplateRequest { template_id: template_id.clone(), device_input };
+            let request = CreateDeviceFromTemplateRequest {
+                template_id: template_id.clone(),
+                device_input,
+            };
             match tenant_device_service
-                .create_device_from_template(
-                    state.template_engine(),
-                    &request.template_id,
-                    &request.device_input,
-                )
+                .create_device_from_template(state.template_engine(), &request.template_id, &request.device_input)
                 .await
             {
                 Ok(device) => Ok(serde_json::to_value(device).unwrap()),
-                Err(e) => {
-                    Err(ToolError::Internal(format!("Failed to create thing from template: {}", e)))
-                }
+                Err(e) => Err(ToolError::Internal(format!(
+                    "Failed to create thing from template: {}",
+                    e
+                ))),
             }
         } else {
             let request = CreateDeviceRequest {
@@ -851,8 +836,7 @@ impl ToolHandler for SearchDevicesHandler {
             PropertySchema {
                 prop_type: "string".to_string(),
                 description: Some(
-                    "Search keyword (partial match on name, display name, address, description)"
-                        .to_string(),
+                    "Search keyword (partial match on name, display name, address, description)".to_string(),
                 ),
             },
         );
@@ -888,7 +872,9 @@ impl ToolHandler for SearchDevicesHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let repository = state.device_repository_factory.create_for_workspace(workspace_id.clone());
+        let repository = state
+            .device_repository_factory
+            .create_for_workspace(workspace_id.clone());
 
         let criteria = DeviceCriteria {
             workspace_id: Some(workspace_id),

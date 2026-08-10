@@ -51,12 +51,7 @@ impl ModelProvider for ScriptedProvider {
         Ok("fallback".into())
     }
 
-    async fn chat(
-        &self,
-        _request: ChatRequest<'_>,
-        _model: &str,
-        _temperature: Option<f64>,
-    ) -> Result<ChatResponse> {
+    async fn chat(&self, _request: ChatRequest<'_>, _model: &str, _temperature: Option<f64>) -> Result<ChatResponse> {
         let mut guard = self.responses.lock().unwrap();
         if guard.is_empty() {
             return Ok(ChatResponse {
@@ -102,7 +97,11 @@ impl Tool for SlowTool {
 
     async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
         tokio::time::sleep(Duration::from_secs(SLOW_TOOL_SECS)).await;
-        Ok(ToolResult { success: true, output: "slow tool finished".into(), error: None })
+        Ok(ToolResult {
+            success: true,
+            output: "slow tool finished".into(),
+            error: None,
+        })
     }
 }
 
@@ -121,10 +120,11 @@ fn build_agent() -> Agent {
         }]),
     });
 
-    let memory_cfg =
-        zeroclaw::config::schema::MemoryConfig { backend: "none".into(), ..Default::default() };
-    let memory = zeroclaw::memory::create_memory(&memory_cfg, &std::env::temp_dir(), None)
-        .expect("create noop memory");
+    let memory_cfg = zeroclaw::config::schema::MemoryConfig {
+        backend: "none".into(),
+        ..Default::default()
+    };
+    let memory = zeroclaw::memory::create_memory(&memory_cfg, &std::env::temp_dir(), None).expect("create noop memory");
     let memory: Arc<dyn zeroclaw::memory::Memory> = Arc::from(memory);
     let observer: Arc<dyn Observer> = Arc::from(NoopObserver {});
 
@@ -166,9 +166,7 @@ async fn main() {
 
     let mut failures: Vec<String> = Vec::new();
     match &result {
-        Ok(_) => {
-            failures.push("turn_streamed returned Ok — cancellation did not abort the loop".into())
-        }
+        Ok(_) => failures.push("turn_streamed returned Ok — cancellation did not abort the loop".into()),
         Err(e) => {
             println!("[spike] error: {e:#}");
             if !is_tool_loop_cancelled(e) {
@@ -177,8 +175,9 @@ async fn main() {
         }
     }
     if elapsed >= GO_BUDGET {
-        failures
-            .push(format!("elapsed {elapsed:?} >= {GO_BUDGET:?} — in-flight tool was NOT dropped"));
+        failures.push(format!(
+            "elapsed {elapsed:?} >= {GO_BUDGET:?} — in-flight tool was NOT dropped"
+        ));
     }
 
     if failures.is_empty() {

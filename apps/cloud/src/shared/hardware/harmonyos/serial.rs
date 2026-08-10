@@ -41,7 +41,11 @@ pub struct HarmonySerialConnection {
 impl HarmonySerialConnection {
     /// 创建新的串口连接
     pub fn new(config: SerialConfig) -> Self {
-        Self { config, file: None, is_open: false }
+        Self {
+            config,
+            file: None,
+            is_open: false,
+        }
     }
 
     /// 打开串口连接
@@ -86,7 +90,11 @@ impl HarmonySerialConnection {
             ));
         }
 
-        debug!("Writing {} bytes to HarmonyOS serial port: {}", data.len(), self.config.port);
+        debug!(
+            "Writing {} bytes to HarmonyOS serial port: {}",
+            data.len(),
+            self.config.port
+        );
 
         match &mut self.file {
             Some(file) => {
@@ -214,7 +222,9 @@ pub struct HarmonySerialManager {
 impl HarmonySerialManager {
     /// 创建新的串口管理器
     pub fn new() -> Self {
-        Self { connections: Mutex::new(HashMap::new()) }
+        Self {
+            connections: Mutex::new(HashMap::new()),
+        }
     }
 
     /// 创建串口连接
@@ -313,8 +323,7 @@ impl Default for HarmonySerialManager {
 }
 
 /// 全局串口管理器实例
-static SERIAL_MANAGER: std::sync::LazyLock<HarmonySerialManager> =
-    std::sync::LazyLock::new(HarmonySerialManager::new);
+static SERIAL_MANAGER: std::sync::LazyLock<HarmonySerialManager> = std::sync::LazyLock::new(HarmonySerialManager::new);
 
 /// 获取全局串口管理器
 pub fn get_serial_manager() -> &'static HarmonySerialManager {
@@ -357,10 +366,7 @@ pub async fn write_serial_data_async(port: &str, data: &[u8]) -> Result<usize, s
 }
 
 /// 异步从串口读取数据
-pub async fn read_serial_data_async(
-    port: &str,
-    buffer_size: usize,
-) -> Result<Vec<u8>, std::io::Error> {
+pub async fn read_serial_data_async(port: &str, buffer_size: usize) -> Result<Vec<u8>, std::io::Error> {
     let port = port.to_string();
 
     tokio::task::spawn_blocking(move || {

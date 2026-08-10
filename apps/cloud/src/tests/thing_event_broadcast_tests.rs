@@ -10,9 +10,7 @@
 
 use std::sync::Arc;
 
-use tinyiothub_agent::{
-    host::thing_agent_host::CloudThingAgentHost, loop_::thing_agent::ThingAgentHost,
-};
+use tinyiothub_agent::{host::thing_agent_host::CloudThingAgentHost, loop_::thing_agent::ThingAgentHost};
 use tinyiothub_core::models::event::EventLevel;
 use tinyiothub_event::{
     bus::ThingEventBus,
@@ -27,7 +25,9 @@ async fn test_pool() -> sqlx::SqlitePool {
         .connect("sqlite::memory:")
         .await
         .expect("in-memory pool");
-    tinyiothub_storage::migrations::run_migrations(&pool).await.expect("migrations");
+    tinyiothub_storage::migrations::run_migrations(&pool)
+        .await
+        .expect("migrations");
     pool
 }
 
@@ -42,12 +42,7 @@ async fn insert_device(pool: &sqlx::SqlitePool, id: &str, workspace_id: &str) {
         .expect("insert device");
 }
 
-fn input(
-    thing_id: &str,
-    workspace_id: &str,
-    event_name: &str,
-    level: EventLevel,
-) -> ThingEventInput {
+fn input(thing_id: &str, workspace_id: &str, event_name: &str, level: EventLevel) -> ThingEventInput {
     ThingEventInput {
         thing_id: thing_id.to_string(),
         workspace_id: workspace_id.to_string(),
@@ -94,7 +89,10 @@ async fn test_routed_event_broadcasts_signal_with_all_fields() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(signal.event_id, rowid, "signal event_id must be the events.rowid cursor");
+    assert_eq!(
+        signal.event_id, rowid,
+        "signal event_id must be the events.rowid cursor"
+    );
 }
 
 #[tokio::test]
@@ -115,12 +113,10 @@ async fn test_unknown_event_signal_carries_flag_and_degraded_level() {
     .execute(&pool)
     .await
     .unwrap();
-    sqlx::query(
-        "INSERT INTO devices (id, name, workspace_id, template_id) VALUES ('dev-u', 'D', 'ws-u', 'tpl-u')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query("INSERT INTO devices (id, name, workspace_id, template_id) VALUES ('dev-u', 'D', 'ws-u', 'tpl-u')")
+        .execute(&pool)
+        .await
+        .unwrap();
     let throttle = ThrottleState::new(60);
     let bus = ThingEventBus::new();
     let mut rx = bus.subscribe();
@@ -171,7 +167,10 @@ async fn test_actor_agent_persisted_and_signaled() {
     assert_eq!(actor, "agent", "actor must persist on the events row");
 
     let signal = rx.recv().await.expect("signal");
-    assert_eq!(signal.actor, "agent", "signal must carry the agent mark (resonance guard)");
+    assert_eq!(
+        signal.actor, "agent",
+        "signal must carry the agent mark (resonance guard)"
+    );
 }
 
 #[tokio::test]
@@ -215,7 +214,10 @@ async fn test_no_subscriber_still_persists() {
         input("dev-n", "ws-n", "ping", EventLevel::Info),
     )
     .await;
-    assert!(!result.malformed, "broadcast send failure (no subscribers) must not fail routing");
+    assert!(
+        !result.malformed,
+        "broadcast send failure (no subscribers) must not fail routing"
+    );
     assert!(!result.event_id.is_empty());
 }
 
@@ -259,9 +261,16 @@ async fn test_replay_events_since_filters_cursor_and_min_level() {
     assert_eq!(replayed.len(), 2, "min_level=error must drop info/warning");
     assert_eq!(replayed[0].event_name, "lvl_err");
     assert_eq!(replayed[1].event_name, "lvl_crit");
-    assert!(replayed[0].event_id < replayed[1].event_id, "replay must be rowid-ordered");
+    assert!(
+        replayed[0].event_id < replayed[1].event_id,
+        "replay must be rowid-ordered"
+    );
     assert!(replayed.iter().all(|s| s.level >= min_level));
-    assert!(replayed.iter().all(|s| s.workspace_id == "ws-r" && s.thing_id == "dev-r"));
+    assert!(
+        replayed
+            .iter()
+            .all(|s| s.workspace_id == "ws-r" && s.thing_id == "dev-r")
+    );
 
     // Cursor filter: strictly greater than the first rowid.
     let after_first = host.replay_events_since(first_rowid, 1).await.expect("replay");
@@ -344,7 +353,10 @@ async fn test_replay_actor_round_trip() {
 
     let replayed = host.replay_events_since(0, 1).await.expect("replay");
     assert_eq!(replayed.len(), 1);
-    assert_eq!(replayed[0].actor, "agent", "replayed signal must carry the persisted actor");
+    assert_eq!(
+        replayed[0].actor, "agent",
+        "replayed signal must carry the persisted actor"
+    );
     assert!(!replayed[0].is_unknown);
     assert_eq!(replayed[0].data, serde_json::json!({"value": 42}));
 }

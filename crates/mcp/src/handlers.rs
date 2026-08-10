@@ -45,12 +45,20 @@ impl McpAuthContext {
 
     /// Create context for JWT-authenticated user requests
     pub fn for_jwt(workspace_id: String, user_id: String) -> Self {
-        Self { workspace_id, api_key_id: "jwt".to_string(), api_key_name: user_id }
+        Self {
+            workspace_id,
+            api_key_id: "jwt".to_string(),
+            api_key_name: user_id,
+        }
     }
 
     /// Create context for heartbeat system tasks
     pub fn for_heartbeat(workspace_id: String, agent_id: String) -> Self {
-        Self { workspace_id, api_key_id: "heartbeat".to_string(), api_key_name: agent_id }
+        Self {
+            workspace_id,
+            api_key_id: "heartbeat".to_string(),
+            api_key_name: agent_id,
+        }
     }
 }
 
@@ -161,10 +169,7 @@ where
 
 /// Extract and validate API Key from X-API-Key header.
 /// Returns McpAuthContext on success, ToolError on failure.
-async fn extract_api_key(
-    headers: &axum::http::HeaderMap,
-    state: &McpState,
-) -> Result<McpAuthContext, ToolError> {
+async fn extract_api_key(headers: &axum::http::HeaderMap, state: &McpState) -> Result<McpAuthContext, ToolError> {
     let raw_key = headers
         .get("X-API-Key")
         .and_then(|v| v.to_str().ok())
@@ -215,8 +220,7 @@ async fn handle_mcp_request(
     let ctx = match extract_api_key(&headers, &state).await {
         Ok(c) => c,
         Err(e) => {
-            return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string())
-                .into_response();
+            return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string()).into_response();
         }
     };
     let _guard = McpContextGuard::new(ctx.clone());
@@ -224,11 +228,8 @@ async fn handle_mcp_request(
     let registry = match super::get_mcp_registry() {
         Some(reg) => reg,
         None => {
-            return ApiResponseBuilder::error_with_code::<serde_json::Value>(
-                500,
-                "MCP registry not initialized",
-            )
-            .into_response();
+            return ApiResponseBuilder::error_with_code::<serde_json::Value>(500, "MCP registry not initialized")
+                .into_response();
         }
     };
 
@@ -265,8 +266,7 @@ async fn handle_mcp_request(
         }
         JsonRpcMethod::ToolsCall(params) => {
             let args_for_log = params.arguments.clone();
-            let sanitized_args = serde_json::to_string(&args_for_log)
-                .unwrap_or_else(|_| "<invalid JSON>".to_string());
+            let sanitized_args = serde_json::to_string(&args_for_log).unwrap_or_else(|_| "<invalid JSON>".to_string());
             let start = Instant::now();
 
             match registry.get(&params.name) {
@@ -313,11 +313,7 @@ async fn handle_mcp_request(
                             ToolError::ApiError(_, _) => 500,
                             ToolError::Internal(_) => 500,
                         };
-                        ApiResponseBuilder::error_with_code::<serde_json::Value>(
-                            code,
-                            e.to_string(),
-                        )
-                        .into_response()
+                        ApiResponseBuilder::error_with_code::<serde_json::Value>(code, e.to_string()).into_response()
                     }
                 },
                 None => {
@@ -344,15 +340,11 @@ async fn handle_mcp_request(
 }
 
 /// Handle tools/list endpoint
-async fn handle_tools_list(
-    headers: axum::http::HeaderMap,
-    State(state): State<McpState>,
-) -> Response {
+async fn handle_tools_list(headers: axum::http::HeaderMap, State(state): State<McpState>) -> Response {
     let ctx = match extract_api_key(&headers, &state).await {
         Ok(c) => c,
         Err(e) => {
-            return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string())
-                .into_response();
+            return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string()).into_response();
         }
     };
     let _guard = McpContextGuard::new(ctx);
@@ -360,11 +352,8 @@ async fn handle_tools_list(
     let registry = match super::get_mcp_registry() {
         Some(reg) => reg,
         None => {
-            return ApiResponseBuilder::error_with_code::<serde_json::Value>(
-                500,
-                "MCP registry not initialized",
-            )
-            .into_response();
+            return ApiResponseBuilder::error_with_code::<serde_json::Value>(500, "MCP registry not initialized")
+                .into_response();
         }
     };
 
@@ -382,8 +371,7 @@ async fn handle_tools_call(
     let ctx = match extract_api_key(&headers, &state).await {
         Ok(c) => c,
         Err(e) => {
-            return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string())
-                .into_response();
+            return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string()).into_response();
         }
     };
     let _guard = McpContextGuard::new(ctx.clone());
@@ -391,19 +379,15 @@ async fn handle_tools_call(
     let registry = match super::get_mcp_registry() {
         Some(reg) => reg,
         None => {
-            return ApiResponseBuilder::error_with_code::<serde_json::Value>(
-                500,
-                "MCP registry not initialized",
-            )
-            .into_response();
+            return ApiResponseBuilder::error_with_code::<serde_json::Value>(500, "MCP registry not initialized")
+                .into_response();
         }
     };
 
     let registry = registry.read().await;
 
     let args_for_log = params.arguments.clone();
-    let sanitized_args =
-        serde_json::to_string(&args_for_log).unwrap_or_else(|_| "<invalid JSON>".to_string());
+    let sanitized_args = serde_json::to_string(&args_for_log).unwrap_or_else(|_| "<invalid JSON>".to_string());
     let start = Instant::now();
 
     match registry.get(&params.name) {
@@ -443,8 +427,7 @@ async fn handle_tools_call(
                     ToolError::ApiError(code, _) => *code,
                     ToolError::Internal(_) => 500,
                 };
-                ApiResponseBuilder::error_with_code::<serde_json::Value>(code, e.to_string())
-                    .into_response()
+                ApiResponseBuilder::error_with_code::<serde_json::Value>(code, e.to_string()).into_response()
             }
         },
         None => {
@@ -459,11 +442,8 @@ async fn handle_tools_call(
                 error = "Tool not found",
                 "MCP tool not found"
             );
-            ApiResponseBuilder::error_with_code::<serde_json::Value>(
-                404,
-                format!("Tool not found: {}", params.name),
-            )
-            .into_response()
+            ApiResponseBuilder::error_with_code::<serde_json::Value>(404, format!("Tool not found: {}", params.name))
+                .into_response()
         }
     }
 }
@@ -489,10 +469,7 @@ mod tests {
         }
 
         fn input_schema(&self) -> crate::tool_registry::InputSchema {
-            crate::tool_registry::InputSchema::object(
-                vec![],
-                std::collections::HashMap::new(),
-            )
+            crate::tool_registry::InputSchema::object(vec![], std::collections::HashMap::new())
         }
 
         async fn execute(&self, args: Value) -> Result<Value, ToolError> {
@@ -509,7 +486,8 @@ mod tests {
 
     #[test]
     fn test_json_rpc_call_params_deserialize() {
-        let json = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"test_tool","arguments":{"foo":"bar"}}}"#;
+        let json =
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"test_tool","arguments":{"foo":"bar"}}}"#;
         let request: JsonRpcRequest = serde_json::from_str(json).unwrap();
         assert!(matches!(request.method, JsonRpcMethod::ToolsCall(_)));
     }

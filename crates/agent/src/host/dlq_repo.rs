@@ -1,8 +1,8 @@
 //! SQLite implementation of DeadLetterQueue trait.
 
+use crate::loop_::event::dlq::{DeadLetterEntry, DeadLetterQueue};
 use async_trait::async_trait;
 use sqlx::SqlitePool;
-use crate::loop_::event::dlq::{DeadLetterEntry, DeadLetterQueue};
 use uuid::Uuid;
 
 pub struct SqliteDeadLetterQueue {

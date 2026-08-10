@@ -23,8 +23,7 @@ const SHARED_TEMPLATE_FILES: &[(&str, &str)] = &[
 ];
 
 /// Files created per workspace (user-customizable overrides)
-const WORKSPACE_ONLY_FILES: &[(&str, &str)] =
-    &[("USER.md", include_str!("../../templates/agent/USER.md"))];
+const WORKSPACE_ONLY_FILES: &[(&str, &str)] = &[("USER.md", include_str!("../../templates/agent/USER.md"))];
 
 /// Subdirectories to create in each workspace
 const WORKSPACE_SUBDIRS: &[&str] = &["sessions", "memory", "state", "cron", "skills"];
@@ -53,7 +52,11 @@ pub async fn scaffold_shared_base() -> Result<WorkspaceScaffoldResult> {
         created += 1;
     }
 
-    Ok(WorkspaceScaffoldResult { created_files: created, skipped_files: skipped, created_dirs: 1 })
+    Ok(WorkspaceScaffoldResult {
+        created_files: created,
+        skipped_files: skipped,
+        created_dirs: 1,
+    })
 }
 
 /// Scaffold a workspace by creating subdirectories and per-workspace files (USER.md only).
@@ -88,15 +91,25 @@ pub async fn scaffold_workspace(workspace_dir: &Path) -> Result<WorkspaceScaffol
         }
     }
 
-    Ok(WorkspaceScaffoldResult { created_files, skipped_files, created_dirs })
+    Ok(WorkspaceScaffoldResult {
+        created_files,
+        skipped_files,
+        created_dirs,
+    })
 }
 
 fn get_shared_template_content(filename: &str) -> Option<&'static str> {
-    SHARED_TEMPLATE_FILES.iter().find(|(name, _)| *name == filename).map(|(_, content)| *content)
+    SHARED_TEMPLATE_FILES
+        .iter()
+        .find(|(name, _)| *name == filename)
+        .map(|(_, content)| *content)
 }
 
 fn get_workspace_template_content(filename: &str) -> Option<&'static str> {
-    WORKSPACE_ONLY_FILES.iter().find(|(name, _)| *name == filename).map(|(_, content)| *content)
+    WORKSPACE_ONLY_FILES
+        .iter()
+        .find(|(name, _)| *name == filename)
+        .map(|(_, content)| *content)
 }
 
 #[derive(Debug, Clone)]
@@ -134,7 +147,10 @@ mod tests {
 
         // Should only create USER.md, not the shared files
         assert!(ws_dir.join("USER.md").exists(), "USER.md should exist");
-        assert!(!ws_dir.join("IDENTITY.md").exists(), "IDENTITY.md should NOT be in workspace");
+        assert!(
+            !ws_dir.join("IDENTITY.md").exists(),
+            "IDENTITY.md should NOT be in workspace"
+        );
         assert!(!ws_dir.join("SOUL.md").exists(), "SOUL.md should NOT be in workspace");
 
         for subdir in WORKSPACE_SUBDIRS {

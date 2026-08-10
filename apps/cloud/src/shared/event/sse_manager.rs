@@ -74,7 +74,10 @@ impl SseConnectionManager {
         _event_types: Option<Vec<String>>,
         _event_levels: Option<Vec<String>>,
     ) -> Response {
-        info!("Creating public SSE connection for user: {} workspace: {}", user_id, workspace_id);
+        info!(
+            "Creating public SSE connection for user: {} workspace: {}",
+            user_id, workspace_id
+        );
 
         self.sse_channel.create_sse_stream(user_id, workspace_id).await
     }
@@ -85,8 +88,11 @@ impl SseConnectionManager {
     /// * `event` - The event to broadcast
     pub async fn broadcast_event(&self, event: &Event) {
         // Build dotted event_type string matching frontend expectations (e.g. "device.connection")
-        let event_type_str =
-            format!("{}.{}", event.event_type().type_string(), event.event_type().subtype_string());
+        let event_type_str = format!(
+            "{}.{}",
+            event.event_type().type_string(),
+            event.event_type().subtype_string()
+        );
 
         // Extract device_id from source if present
         let device_id = event.source().device_id().map(|s| s.to_string());
@@ -210,7 +216,9 @@ impl SseConnectionManager {
     /// Clean up stale connections
     pub async fn cleanup_stale_connections(&self) {
         debug!("Cleaning up stale SSE connections");
-        self.sse_channel.cleanup_stale_connections(std::time::Duration::from_secs(300)).await;
+        self.sse_channel
+            .cleanup_stale_connections(std::time::Duration::from_secs(300))
+            .await;
     }
 }
 

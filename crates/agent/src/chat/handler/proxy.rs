@@ -28,8 +28,7 @@ pub async fn chat_stream(
     // the session_key.
     let session_workspace = extract_workspace_from_session_key(&req.session_key);
     if session_workspace != claims.workspace_id {
-        let err: Json<ApiResponse<()>> =
-            ApiResponseBuilder::error_with_code(404, "Session not found");
+        let err: Json<ApiResponse<()>> = ApiResponseBuilder::error_with_code(404, "Session not found");
         return err.into_response();
     }
 
@@ -67,13 +66,19 @@ pub async fn chat_stream(
 
     let mut rx = match state
         .agent_pool
-        .chat_send(&agent_id, &session_key, &message, &run_id, &full_prompt, &claims.workspace_id)
+        .chat_send(
+            &agent_id,
+            &session_key,
+            &message,
+            &run_id,
+            &full_prompt,
+            &claims.workspace_id,
+        )
         .await
     {
         Ok(rx) => rx,
         Err(e) => {
-            let err: Json<ApiResponse<()>> =
-                ApiResponseBuilder::error(format!("Chat stream failed: {}", e));
+            let err: Json<ApiResponse<()>> = ApiResponseBuilder::error(format!("Chat stream failed: {}", e));
             return err.into_response();
         }
     };
@@ -202,10 +207,7 @@ pub async fn delete_session(
 }
 
 /// GET /api/v1/agents
-pub async fn list_agents(
-    State(state): State<AgentState>,
-    claims: Claims,
-) -> Json<ApiResponse<serde_json::Value>> {
+pub async fn list_agents(State(state): State<AgentState>, claims: Claims) -> Json<ApiResponse<serde_json::Value>> {
     match state.agent_pool.list_agents(&claims.workspace_id).await {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to list agents: {}", e)),
@@ -317,7 +319,10 @@ mod tests {
 
     #[test]
     fn extract_workspace_from_standard_key() {
-        assert_eq!(extract_workspace_from_session_key("agent:ws-1:agent_main/sess_9"), "ws-1");
+        assert_eq!(
+            extract_workspace_from_session_key("agent:ws-1:agent_main/sess_9"),
+            "ws-1"
+        );
     }
 
     #[test]

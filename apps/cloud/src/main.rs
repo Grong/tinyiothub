@@ -29,20 +29,17 @@ async fn main_impl() -> std::io::Result<()> {
 
     // Register JWT settings with the auth crate (P4-Task16) — replaces the
     // former per-call global config reads inside the JWT service.
-    tinyiothub_auth::security::jwt::init_jwt_settings(
-        tinyiothub_auth::security::jwt::JwtSettings {
-            secret: config::get().security.jwt.secret.clone(),
-            harmonyos_enabled: config::get().harmonyos.enabled,
-        },
-    );
+    tinyiothub_auth::security::jwt::init_jwt_settings(tinyiothub_auth::security::jwt::JwtSettings {
+        secret: config::get().security.jwt.secret.clone(),
+        harmonyos_enabled: config::get().harmonyos.enabled,
+    });
 
     // Initialize logging system
     bootstrap::initialize_logging().await?;
 
     // Register JWT validator with tinyiothub-web (so Claims extractor works)
     tinyiothub_web::security::set_jwt_validator(Box::new(|token| {
-        tinyiothub_auth::security::jwt::validate_jwt(token)
-            .map(tinyiothub_web::security::Claims::from)
+        tinyiothub_auth::security::jwt::validate_jwt(token).map(tinyiothub_web::security::Claims::from)
     }));
 
     // Register the tenant resolver (P4-Task15) — domain crates resolve
@@ -59,8 +56,7 @@ async fn main_impl() -> std::io::Result<()> {
     }));
 
     // Initialize global start time for uptime calculation (before any health checks)
-    let _ =
-        tinyiothub_admin::monitoring::handler::health::START_TIME.set(std::time::SystemTime::now());
+    let _ = tinyiothub_admin::monitoring::handler::health::START_TIME.set(std::time::SystemTime::now());
 
     info!("🚀 TinyIoTHub Starting...");
     info!("Environment: {}", config::environment());
@@ -111,9 +107,7 @@ async fn main_impl() -> std::io::Result<()> {
     // === 5. 确保默认管理员用户存在 ===
     #[cfg(not(feature = "harmonyos"))]
     {
-        if let Err(e) =
-            tinyiothub_cloud::shared::initialization::ensure_default_admin_user(&app_state).await
-        {
+        if let Err(e) = tinyiothub_cloud::shared::initialization::ensure_default_admin_user(&app_state).await {
             error!("Failed to ensure default admin user: {}", e);
         }
     }
@@ -178,9 +172,11 @@ async fn main_impl() -> std::io::Result<()> {
 
     #[cfg(feature = "harmonyos")]
     {
-        if let Err(e) =
-            axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>())
-                .await
+        if let Err(e) = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
         {
             error!("Server error: {}", e);
         }

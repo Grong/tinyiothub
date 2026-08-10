@@ -6,10 +6,7 @@ pub struct DriverHealthService;
 
 impl DriverHealthService {
     /// Get health information for all drivers loaded in a workspace.
-    pub fn get_workspace_health(
-        registry: &DriverRegistry,
-        workspace_id: &str,
-    ) -> WorkspaceDriverHealth {
+    pub fn get_workspace_health(registry: &DriverRegistry, workspace_id: &str) -> WorkspaceDriverHealth {
         let drivers = registry.list_for_workspace(workspace_id);
         let entries: Vec<DriverHealthEntry> = drivers
             .into_iter()
@@ -17,7 +14,11 @@ impl DriverHealthService {
                 driver_name: name,
                 version,
                 loaded_at: loaded_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-                status: if ref_count > 0 { "active".to_string() } else { "idle".to_string() },
+                status: if ref_count > 0 {
+                    "active".to_string()
+                } else {
+                    "idle".to_string()
+                },
                 ref_count,
             })
             .collect();

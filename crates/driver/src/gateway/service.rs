@@ -126,19 +126,21 @@ impl GatewayService {
                 event: format!("tinyiothub/{}/gateway/{}/event", workspace_id, device_id),
                 command: format!("tinyiothub/{}/gateway/{}/command", workspace_id, device_id),
                 config: format!("tinyiothub/{}/gateway/{}/config", workspace_id, device_id),
-                device_discover: format!(
-                    "tinyiothub/{}/gateway/{}/device/discover",
-                    workspace_id, device_id
-                ),
-                device_telemetry: format!(
-                    "tinyiothub/{}/gateway/{}/device/+/telemetry",
-                    workspace_id, device_id
-                ),
+                device_discover: format!("tinyiothub/{}/gateway/{}/device/discover", workspace_id, device_id),
+                device_telemetry: format!("tinyiothub/{}/gateway/{}/device/+/telemetry", workspace_id, device_id),
             },
             keepalive: 60,
         };
 
-        if self.mqtt_tx.send(MqttPublish::PairingAck { code: code.clone(), ack }).await.is_err() {
+        if self
+            .mqtt_tx
+            .send(MqttPublish::PairingAck {
+                code: code.clone(),
+                ack,
+            })
+            .await
+            .is_err()
+        {
             let _ = repo.delete(&device_id).await;
             // Restore the code to cache so the gateway can still be paired
             self.cache
@@ -166,7 +168,12 @@ impl GatewayService {
             "Pairing successful"
         );
 
-        Ok(PairingResponse { device_id, device_name, hostname: announce.hostname, ip: announce.ip })
+        Ok(PairingResponse {
+            device_id,
+            device_name,
+            hostname: announce.hostname,
+            ip: announce.ip,
+        })
     }
 
     async fn check_ip_rate_limit(&self, ip: &str) -> bool {
@@ -259,30 +266,42 @@ impl GatewayService {
 
     pub async fn handle_gateway_data(&self, data: GatewayDataMessage) {
         match &data {
-            GatewayDataMessage::Status { gateway_id, workspace_id, .. } => {
+            GatewayDataMessage::Status {
+                gateway_id,
+                workspace_id,
+                ..
+            } => {
                 let repo = self.device_repo_factory.create_for_workspace(workspace_id.clone());
                 if let Err(e) = repo.update_state(gateway_id, 1i32).await {
                     tracing::warn!(?e, gateway_id = %gateway_id, "Failed to update gateway last_seen");
                 }
                 tracing::debug!(gateway_id = %gateway_id, "Gateway status received, last_seen updated");
             }
-            GatewayDataMessage::DeviceDiscover { gateway_id, workspace_id, msg } => {
-                if let Err(e) =
-                    self.handle_device_discover(gateway_id, workspace_id, msg.clone()).await
-                {
+            GatewayDataMessage::DeviceDiscover {
+                gateway_id,
+                workspace_id,
+                msg,
+            } => {
+                if let Err(e) = self.handle_device_discover(gateway_id, workspace_id, msg.clone()).await {
                     tracing::error!(?e, gateway_id = %gateway_id, "Failed to handle device discover");
                 }
             }
-            GatewayDataMessage::Telemetry { gateway_id, workspace_id, msg } => {
+            GatewayDataMessage::Telemetry {
+                gateway_id,
+                workspace_id,
+                msg,
+            } => {
                 if let Err(e) = self.store_telemetry_event(gateway_id, workspace_id, msg).await {
                     tracing::warn!(?e, gateway_id = %gateway_id, "Failed to store gateway telemetry");
                 }
                 tracing::debug!(gateway_id = %gateway_id, "Gateway telemetry stored");
             }
-            GatewayDataMessage::DeviceTelemetry { gateway_id, workspace_id, msg } => {
-                if let Err(e) =
-                    self.store_device_telemetry_event(gateway_id, workspace_id, msg).await
-                {
+            GatewayDataMessage::DeviceTelemetry {
+                gateway_id,
+                workspace_id,
+                msg,
+            } => {
+                if let Err(e) = self.store_device_telemetry_event(gateway_id, workspace_id, msg).await {
                     tracing::warn!(?e, gateway_id = %gateway_id, device_id = %msg.device_id, "Failed to store device telemetry");
                 }
                 tracing::debug!(gateway_id = %gateway_id, device_id = %msg.device_id, "Device telemetry stored");
@@ -336,7 +355,9 @@ impl GatewayService {
 fn generate_device_password() -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();
-    (0..32).map(|_| rng.sample(rand::distributions::Alphanumeric) as char).collect()
+    (0..32)
+        .map(|_| rng.sample(rand::distributions::Alphanumeric) as char)
+        .collect()
 }
 
 #[cfg(test)]
@@ -348,7 +369,9 @@ mod tests {
 
     async fn make_pool() -> SqlitePool {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        tinyiothub_storage::test_helpers::run_all_migrations(&pool).await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
         // Create a tenant and workspace for FK references
         sqlx::query("INSERT INTO tenants (id, name, slug, created_at, updated_at) VALUES ('tenant1', 'test', 'tenant1', '2025-01-01', '2025-01-01')")
             .execute(&pool)
@@ -366,10 +389,9 @@ mod tests {
         let cache = Arc::new(PairingCache::new(1000));
         let database = Arc::new(tinyiothub_storage::Database::new(pool));
         let factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
-        let event_repo: Arc<dyn EventRepository> =
-            Arc::new(tinyiothub_event::sqlite_event::SqliteEventRepository::new(
-                database.as_ref().clone(),
-            ));
+        let event_repo: Arc<dyn EventRepository> = Arc::new(
+            tinyiothub_event::sqlite_event::SqliteEventRepository::new(database.as_ref().clone()),
+        );
         let service = GatewayService::new(factory, event_repo, cache, tx);
         (service, rx)
     }
@@ -392,7 +414,10 @@ mod tests {
     async fn pair_device_invalid_code_short() {
         let pool = make_pool().await;
         let (svc, _rx) = make_service(pool);
-        let req = PairingRequest { code: "12345".into(), workspace_id: None };
+        let req = PairingRequest {
+            code: "12345".into(),
+            workspace_id: None,
+        };
         let result = svc.pair_device("user1", None, req).await;
         assert!(matches!(result, Err(PairingError::InvalidCode)));
     }
@@ -401,7 +426,10 @@ mod tests {
     async fn pair_device_invalid_code_alpha() {
         let pool = make_pool().await;
         let (svc, _rx) = make_service(pool);
-        let req = PairingRequest { code: "12a456".into(), workspace_id: None };
+        let req = PairingRequest {
+            code: "12a456".into(),
+            workspace_id: None,
+        };
         let result = svc.pair_device("user1", None, req).await;
         assert!(matches!(result, Err(PairingError::InvalidCode)));
     }
@@ -410,7 +438,10 @@ mod tests {
     async fn pair_device_code_not_found() {
         let pool = make_pool().await;
         let (svc, _rx) = make_service(pool);
-        let req = PairingRequest { code: "123456".into(), workspace_id: None };
+        let req = PairingRequest {
+            code: "123456".into(),
+            workspace_id: None,
+        };
         let result = svc.pair_device("user1", None, req).await;
         assert!(matches!(result, Err(PairingError::CodeNotFound)));
     }
@@ -423,12 +454,18 @@ mod tests {
         svc.cache.insert(code.into(), make_announce(code)).await;
 
         for _ in 0..5 {
-            let req = PairingRequest { code: code.into(), workspace_id: None };
+            let req = PairingRequest {
+                code: code.into(),
+                workspace_id: None,
+            };
             let _result = svc.pair_device("user1", None, req).await;
             // First 5 attempts may succeed or fail based on attempt counting
             // but the 6th should fail with TooManyAttempts
         }
-        let req = PairingRequest { code: code.into(), workspace_id: None };
+        let req = PairingRequest {
+            code: code.into(),
+            workspace_id: None,
+        };
         let result = svc.pair_device("user1", None, req).await;
         assert!(matches!(result, Err(PairingError::TooManyAttempts)));
     }
@@ -444,12 +481,18 @@ mod tests {
         for _ in 0..3 {
             // These will succeed or fail depending on attempt counting for different codes
             // but they should pass IP rate limiting
-            let req = PairingRequest { code: code.into(), workspace_id: None };
+            let req = PairingRequest {
+                code: code.into(),
+                workspace_id: None,
+            };
             // Don't check result, just burn attempts from this IP
             let _ = svc.pair_device("user1", Some("10.0.0.1"), req).await;
         }
         // 4th request from same IP should be rate-limited
-        let req = PairingRequest { code: code.into(), workspace_id: None };
+        let req = PairingRequest {
+            code: code.into(),
+            workspace_id: None,
+        };
         let result = svc.pair_device("user1", Some("10.0.0.1"), req).await;
         assert!(matches!(result, Err(PairingError::TooManyAttemptsIp)));
     }
@@ -461,7 +504,10 @@ mod tests {
         let code = "123456";
         svc.cache.insert(code.into(), make_announce(code)).await;
 
-        let req = PairingRequest { code: code.into(), workspace_id: Some("ws1".into()) };
+        let req = PairingRequest {
+            code: code.into(),
+            workspace_id: Some("ws1".into()),
+        };
         let result = svc.pair_device("user1", None, req).await;
         assert!(result.is_ok(), "pair_device failed: {:?}", result.err());
         let response = result.unwrap();
@@ -472,12 +518,11 @@ mod tests {
         assert_eq!(response.ip, "192.168.1.100");
 
         // Verify device was inserted into DB
-        let row =
-            sqlx::query("SELECT id, name, fingerprint, workspace_id FROM devices WHERE id = ?1")
-                .bind(&response.device_id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let row = sqlx::query("SELECT id, name, fingerprint, workspace_id FROM devices WHERE id = ?1")
+            .bind(&response.device_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(row.get::<String, _>("name"), "gw-01");
         assert_eq!(row.get::<String, _>("workspace_id"), "ws1");
 
@@ -545,13 +590,12 @@ mod tests {
         svc.handle_device_discover(&gw_id, "ws1", msg).await.unwrap();
 
         // Verify sub-devices created
-        let rows: Vec<(String, String, String)> = sqlx::query_as(
-            "SELECT name, linked_gateway, parent_id FROM devices WHERE linked_gateway = ?1",
-        )
-        .bind(&gw_id)
-        .fetch_all(&pool)
-        .await
-        .unwrap();
+        let rows: Vec<(String, String, String)> =
+            sqlx::query_as("SELECT name, linked_gateway, parent_id FROM devices WHERE linked_gateway = ?1")
+                .bind(&gw_id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].1, gw_id); // linked_gateway
@@ -563,7 +607,10 @@ mod tests {
         let pool = make_pool().await;
         let (svc, _rx) = make_service(pool);
 
-        let msg = DeviceDiscoverMessage { msg_type: "device_discover".into(), devices: vec![] };
+        let msg = DeviceDiscoverMessage {
+            msg_type: "device_discover".into(),
+            devices: vec![],
+        };
 
         svc.handle_device_discover("gw-xyz", "ws1", msg).await.unwrap();
     }
@@ -601,10 +648,9 @@ mod tests {
         let (tx, _rx2) = mpsc::channel(1);
         let database = Arc::new(tinyiothub_storage::Database::new(pool));
         let factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
-        let event_repo: Arc<dyn EventRepository> =
-            Arc::new(tinyiothub_event::sqlite_event::SqliteEventRepository::new(
-                database.as_ref().clone(),
-            ));
+        let event_repo: Arc<dyn EventRepository> = Arc::new(
+            tinyiothub_event::sqlite_event::SqliteEventRepository::new(database.as_ref().clone()),
+        );
         let svc2 = GatewayService::new(factory, event_repo, tiny_cache.clone(), tx);
 
         // Fill the cache
@@ -636,7 +682,10 @@ mod tests {
         }
         assert!(svc.cache.is_full().await);
 
-        let req = PairingRequest { code: "123456".into(), workspace_id: None };
+        let req = PairingRequest {
+            code: "123456".into(),
+            workspace_id: None,
+        };
         let result = svc.pair_device("user1", None, req).await;
         assert!(matches!(result, Err(PairingError::ServiceBusy)));
     }
@@ -652,16 +701,18 @@ mod tests {
         let cache = Arc::new(PairingCache::new(1000));
         let database = Arc::new(tinyiothub_storage::Database::new(pool.clone()));
         let factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
-        let event_repo: Arc<dyn EventRepository> =
-            Arc::new(tinyiothub_event::sqlite_event::SqliteEventRepository::new(
-                database.as_ref().clone(),
-            ));
+        let event_repo: Arc<dyn EventRepository> = Arc::new(
+            tinyiothub_event::sqlite_event::SqliteEventRepository::new(database.as_ref().clone()),
+        );
         let svc = GatewayService::new(factory, event_repo, cache.clone(), tx);
 
         let code = "123456";
         cache.insert(code.into(), make_announce(code)).await;
 
-        let req = PairingRequest { code: code.into(), workspace_id: Some("ws1".into()) };
+        let req = PairingRequest {
+            code: code.into(),
+            workspace_id: Some("ws1".into()),
+        };
         let result = svc.pair_device("user1", None, req).await;
         assert!(matches!(result, Err(PairingError::MqttPublishFailed)));
 
@@ -687,18 +738,27 @@ mod tests {
         // Burn attempts from IP 10.0.0.1
         for _ in 0..3 {
             svc.cache.insert(code.into(), make_announce(code)).await;
-            let req = PairingRequest { code: code.into(), workspace_id: None };
+            let req = PairingRequest {
+                code: code.into(),
+                workspace_id: None,
+            };
             let _ = svc.pair_device("user1", Some("10.0.0.1"), req).await;
         }
         // 4th attempt from 10.0.0.1 should be rate-limited
         svc.cache.insert(code.into(), make_announce(code)).await;
-        let req = PairingRequest { code: code.into(), workspace_id: None };
+        let req = PairingRequest {
+            code: code.into(),
+            workspace_id: None,
+        };
         let result = svc.pair_device("user1", Some("10.0.0.1"), req).await;
         assert!(matches!(result, Err(PairingError::TooManyAttemptsIp)));
 
         // Same code from DIFFERENT IP should NOT be rate-limited
         svc.cache.insert(code.into(), make_announce(code)).await;
-        let req = PairingRequest { code: code.into(), workspace_id: None };
+        let req = PairingRequest {
+            code: code.into(),
+            workspace_id: None,
+        };
         let result = svc.pair_device("user1", Some("10.0.0.2"), req).await;
         // Should NOT be TooManyAttemptsIp (may succeed or fail for other reasons)
         assert!(!matches!(result, Err(PairingError::TooManyAttemptsIp)));
@@ -716,7 +776,10 @@ mod tests {
         entry.created_at = Instant::now() - Duration::from_secs(301);
         svc.cache.insert(code.into(), entry).await;
 
-        let req = PairingRequest { code: code.into(), workspace_id: None };
+        let req = PairingRequest {
+            code: code.into(),
+            workspace_id: None,
+        };
         let result = svc.pair_device("user1", None, req).await;
         assert!(matches!(result, Err(PairingError::CodeExpired)));
     }

@@ -20,8 +20,14 @@ async fn test_all_tools_registered() {
         tool_names.contains(&"search_things".to_string()),
         "search_things should be registered"
     );
-    assert!(tool_names.contains(&"create_thing".to_string()), "create_thing should be registered");
-    assert!(tool_names.contains(&"alarm_list".to_string()), "alarm_list should be registered");
+    assert!(
+        tool_names.contains(&"create_thing".to_string()),
+        "create_thing should be registered"
+    );
+    assert!(
+        tool_names.contains(&"alarm_list".to_string()),
+        "alarm_list should be registered"
+    );
     assert!(
         tool_names.contains(&"list_schedules".to_string()),
         "list_schedules should be registered"

@@ -33,11 +33,11 @@
 
 use std::sync::Arc;
 
+use crate::loop_::thing_agent::RunContextInner;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
-use crate::loop_::thing_agent::RunContextInner;
 use tinyiothub_core::models::event::EventLevel;
 use tinyiothub_policy::autonomy::{GateVerdict, PolicyRepository, gate_check};
 use tokio::sync::RwLock;
@@ -134,7 +134,15 @@ impl AutonomousInvokeActionTool {
         event_bus: Arc<ThingEventBus>,
         throttle: Arc<ThrottleState>,
     ) -> Self {
-        Self { inner, policy_repo, run_ctx, pool, workspace_id, event_bus, throttle }
+        Self {
+            inner,
+            policy_repo,
+            run_ctx,
+            pool,
+            workspace_id,
+            event_bus,
+            throttle,
+        }
     }
 
     /// Consume the confirmation token minted by the inner tool and dispatch
@@ -144,8 +152,11 @@ impl AutonomousInvokeActionTool {
     /// than leaking the confirmation_required payload (and its token) to the
     /// LLM.
     fn auto_confirm(&self, inner_output: &str, input: &Input) -> Option<ToolResult> {
-        let token =
-            serde_json::from_str::<Value>(inner_output).ok()?.get("token")?.as_str()?.to_string();
+        let token = serde_json::from_str::<Value>(inner_output)
+            .ok()?
+            .get("token")?
+            .as_str()?
+            .to_string();
         let pending = take_pending_action(&token)?;
         if pending.thing_id != input.thing_id
             || pending.action_name != input.action_name
@@ -180,15 +191,7 @@ impl AutonomousInvokeActionTool {
             template_events: None,
         };
         // No AlarmService: an agent action record is not a device condition.
-        let routed = route_thing_event(
-            &self.pool,
-            &self.throttle,
-            None,
-            &self.event_bus,
-            "agent",
-            event_input,
-        )
-        .await;
+        let routed = route_thing_event(&self.pool, &self.throttle, None, &self.event_bus, "agent", event_input).await;
         if routed.malformed {
             tracing::warn!(
                 thing_id = %input.thing_id,
@@ -245,8 +248,7 @@ impl Tool for AutonomousInvokeActionTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        let input: Input = serde_json::from_value(args.clone())
-            .map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
+        let input: Input = serde_json::from_value(args.clone()).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
         let denied = |reason: &str| {
             // O14：所有拒绝统一在此打点（策略门 / 保险丝 / 读失败）。
@@ -309,9 +311,7 @@ impl Tool for AutonomousInvokeActionTool {
             None => 0,
         };
 
-        if let GateVerdict::Deny { reason } =
-            gate_check(policy.as_ref(), &input.action_name, prior_actions, hourly)
-        {
+        if let GateVerdict::Deny { reason } = gate_check(policy.as_ref(), &input.action_name, prior_actions, hourly) {
             return denied(&reason);
         }
 
@@ -334,11 +334,8 @@ impl Tool for AutonomousInvokeActionTool {
             // auto-confirm failure: it carries a live token to the LLM.
             match self.auto_confirm(&result.output, &input) {
                 Some(r) => r,
-                None => tool_err(
-                    "auto-confirm failed: token mismatch or expired; action NOT dispatched"
-                        .to_string(),
-                )
-                .expect("static message"),
+                None => tool_err("auto-confirm failed: token mismatch or expired; action NOT dispatched".to_string())
+                    .expect("static message"),
             }
         } else {
             result
@@ -389,7 +386,9 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .expect("in-memory pool");
-        tinyiothub_storage::migrations::run_migrations(&pool).await.expect("migrations");
+        tinyiothub_storage::migrations::run_migrations(&pool)
+            .await
+            .expect("migrations");
         pool
     }
 
@@ -453,7 +452,13 @@ mod tests {
             bus.clone(),
             Arc::new(ThrottleState::new(60)),
         );
-        Fixture { pool, tool, ctx, bus, policy_repo }
+        Fixture {
+            pool,
+            tool,
+            ctx,
+            bus,
+            policy_repo,
+        }
     }
 
     fn args(thing_id: &str, action: &str) -> Value {
@@ -467,18 +472,21 @@ mod tests {
     /// Mirror the production dispatch order: the T9 runner counts the
     /// ToolCall event BEFORE zeroclaw invokes `Tool::execute`.
     async fn dispatch(fx: &Fixture, thing_id: &str, action: &str) -> ToolResult {
-        *fx.ctx.write().await.action_counts.entry(thing_id.to_string()).or_insert(0) += 1;
+        *fx.ctx
+            .write()
+            .await
+            .action_counts
+            .entry(thing_id.to_string())
+            .or_insert(0) += 1;
         fx.tool.execute(args(thing_id, action)).await.expect("execute")
     }
 
     async fn agent_event_count(pool: &SqlitePool, thing_id: &str) -> i64 {
-        sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM events WHERE device_id = ? AND actor = 'agent'",
-        )
-        .bind(thing_id)
-        .fetch_one(pool)
-        .await
-        .expect("count agent events")
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM events WHERE device_id = ? AND actor = 'agent'")
+            .bind(thing_id)
+            .fetch_one(pool)
+            .await
+            .expect("count agent events")
     }
 
     // ── deny cases (structured, LLM-readable) ──────────────────
@@ -493,11 +501,18 @@ mod tests {
         fx.policy_repo.save_autonomy("ws-off", &policy, "test").await.unwrap();
 
         let result = dispatch(&fx, "dev-1", "reboot").await;
-        assert!(result.success, "deny must be a readable result, not an error: {result:?}");
+        assert!(
+            result.success,
+            "deny must be a readable result, not an error: {result:?}"
+        );
         let out = output_json(&result);
         assert_eq!(out["denied"], true);
         assert_eq!(out["reason"], "autonomy_not_act");
-        assert_eq!(agent_event_count(&fx.pool, "dev-1").await, 0, "denied action writes no event");
+        assert_eq!(
+            agent_event_count(&fx.pool, "dev-1").await,
+            0,
+            "denied action writes no event"
+        );
     }
 
     #[tokio::test]
@@ -517,7 +532,10 @@ mod tests {
         let fx = fixture("ws-bl").await;
         seed_device(&fx.pool, "ws-bl", "dev-1", "device").await;
         register_action(&fx.pool, "dev-1", "wipe_device").await;
-        fx.policy_repo.save_autonomy("ws-bl", &act_policy(), "test").await.unwrap();
+        fx.policy_repo
+            .save_autonomy("ws-bl", &act_policy(), "test")
+            .await
+            .unwrap();
 
         let result = dispatch(&fx, "dev-1", "wipe_device").await;
         let out = output_json(&result);
@@ -546,7 +564,10 @@ mod tests {
         let fx = fixture("ws-cap").await;
         seed_device(&fx.pool, "ws-cap", "dev-1", "device").await;
         register_action(&fx.pool, "dev-1", "reboot").await;
-        fx.policy_repo.save_autonomy("ws-cap", &act_policy(), "test").await.unwrap();
+        fx.policy_repo
+            .save_autonomy("ws-cap", &act_policy(), "test")
+            .await
+            .unwrap();
 
         // max_actions_per_run = 3: the first three dispatches pass, the
         // fourth is denied — the hard cap is enforced inside the tool (O9).
@@ -601,12 +622,7 @@ mod tests {
             async fn load_autonomy(&self, _: &str) -> anyhow::Result<Option<AutonomyPolicy>> {
                 anyhow::bail!("db down")
             }
-            async fn save_autonomy(
-                &self,
-                _: &str,
-                _: &AutonomyPolicy,
-                _: &str,
-            ) -> anyhow::Result<()> {
+            async fn save_autonomy(&self, _: &str, _: &AutonomyPolicy, _: &str) -> anyhow::Result<()> {
                 Ok(())
             }
             async fn count_actions_last_hour(&self, _: &str) -> anyhow::Result<u32> {
@@ -649,7 +665,10 @@ mod tests {
         let fx = fixture("ws-ok").await;
         seed_device(&fx.pool, "ws-ok", "dev-1", "device").await;
         register_action(&fx.pool, "dev-1", "reboot").await;
-        fx.policy_repo.save_autonomy("ws-ok", &act_policy(), "test").await.unwrap();
+        fx.policy_repo
+            .save_autonomy("ws-ok", &act_policy(), "test")
+            .await
+            .unwrap();
         let mut rx = fx.bus.subscribe();
 
         let result = dispatch(&fx, "dev-1", "reboot").await;
@@ -665,12 +684,11 @@ mod tests {
 
         // T6 hard handoff: the action's event is marked actor="agent".
         assert_eq!(agent_event_count(&fx.pool, "dev-1").await, 1);
-        let (actor, subtype): (String, String) = sqlx::query_as(
-            "SELECT actor, event_subtype FROM events WHERE device_id = 'dev-1' AND actor = 'agent'",
-        )
-        .fetch_one(&fx.pool)
-        .await
-        .expect("agent event row");
+        let (actor, subtype): (String, String) =
+            sqlx::query_as("SELECT actor, event_subtype FROM events WHERE device_id = 'dev-1' AND actor = 'agent'")
+                .fetch_one(&fx.pool)
+                .await
+                .expect("agent event row");
         assert_eq!(actor, "agent");
         assert_eq!(subtype, "reboot");
 
@@ -688,13 +706,14 @@ mod tests {
         let fx = fixture("ws-conf").await;
         seed_device(&fx.pool, "ws-conf", "dev-1", "device").await;
         register_action(&fx.pool, "dev-1", "reboot").await;
-        fx.policy_repo.save_autonomy("ws-conf", &act_policy(), "test").await.unwrap();
-        let require: i64 = sqlx::query_scalar(
-            "SELECT require_action_confirm FROM workspaces WHERE id = 'ws-conf'",
-        )
-        .fetch_one(&fx.pool)
-        .await
-        .unwrap();
+        fx.policy_repo
+            .save_autonomy("ws-conf", &act_policy(), "test")
+            .await
+            .unwrap();
+        let require: i64 = sqlx::query_scalar("SELECT require_action_confirm FROM workspaces WHERE id = 'ws-conf'")
+            .fetch_one(&fx.pool)
+            .await
+            .unwrap();
         assert_eq!(require, 1, "test precondition: confirm gate defaults ON");
 
         let result = dispatch(&fx, "dev-1", "reboot").await;
@@ -720,7 +739,10 @@ mod tests {
         let pool = test_pool().await;
         seed_test_workspace(&pool, "tenant-1", outer_ws).await;
         let policy_repo = Arc::new(SqlitePolicyRepository::new(pool.clone()));
-        policy_repo.save_autonomy(outer_ws, &act_policy(), "test").await.unwrap();
+        policy_repo
+            .save_autonomy(outer_ws, &act_policy(), "test")
+            .await
+            .unwrap();
         let ctx = Arc::new(RwLock::new(RunContextInner::default()));
         let inner = InvokeActionTool {
             thing_service: Arc::new(ThingService::new(pool.clone())),
@@ -750,7 +772,10 @@ mod tests {
         *ctx.write().await.action_counts.entry("dev-1".to_string()).or_insert(0) += 1;
 
         let result = tool.execute(args("dev-1", "reboot")).await.expect("execute");
-        assert!(!result.success, "cross-workspace token must not auto-confirm: {result:?}");
+        assert!(
+            !result.success,
+            "cross-workspace token must not auto-confirm: {result:?}"
+        );
         assert!(result.error.as_deref().unwrap_or("").contains("auto-confirm"));
         assert_eq!(agent_event_count(&pool, "dev-1").await, 0, "no dispatch, no event");
     }
@@ -774,7 +799,11 @@ mod tests {
 
         // Unit-level: an unknown/vanished token also yields None (mapped to
         // the same tool_err above), never a passthrough.
-        let input = Input { thing_id: "dev-1".into(), action_name: "reboot".into(), params: None };
+        let input = Input {
+            thing_id: "dev-1".into(),
+            action_name: "reboot".into(),
+            params: None,
+        };
         let fake = json!({"status": "confirmation_required", "token": "no-such-token"}).to_string();
         assert!(tool.auto_confirm(&fake, &input).is_none());
     }
@@ -785,7 +814,10 @@ mod tests {
     async fn non_device_thing_returns_inner_error_without_event() {
         let fx = fixture("ws-space").await;
         seed_device(&fx.pool, "ws-space", "space-1", "space").await;
-        fx.policy_repo.save_autonomy("ws-space", &act_policy(), "test").await.unwrap();
+        fx.policy_repo
+            .save_autonomy("ws-space", &act_policy(), "test")
+            .await
+            .unwrap();
 
         let result = dispatch(&fx, "space-1", "reboot").await;
         assert!(!result.success, "non-device thing must be rejected by inner validation");
@@ -797,7 +829,10 @@ mod tests {
     async fn unregistered_action_returns_inner_error_without_event() {
         let fx = fixture("ws-unreg").await;
         seed_device(&fx.pool, "ws-unreg", "dev-1", "device").await;
-        fx.policy_repo.save_autonomy("ws-unreg", &act_policy(), "test").await.unwrap();
+        fx.policy_repo
+            .save_autonomy("ws-unreg", &act_policy(), "test")
+            .await
+            .unwrap();
 
         let result = dispatch(&fx, "dev-1", "not_registered").await;
         assert!(!result.success);
@@ -813,7 +848,10 @@ mod tests {
         seed_device(&pool, "ws-norun", "dev-1", "device").await;
         register_action(&pool, "dev-1", "reboot").await;
         let policy_repo = Arc::new(SqlitePolicyRepository::new(pool.clone()));
-        policy_repo.save_autonomy("ws-norun", &act_policy(), "test").await.unwrap();
+        policy_repo
+            .save_autonomy("ws-norun", &act_policy(), "test")
+            .await
+            .unwrap();
         let inner = InvokeActionTool {
             thing_service: Arc::new(ThingService::new(pool.clone())),
             pool: pool.clone(),

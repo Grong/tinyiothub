@@ -15,17 +15,18 @@ async fn migrated_pool() -> sqlx::SqlitePool {
         .connect("sqlite::memory:")
         .await
         .expect("in-memory pool");
-    tinyiothub_storage::migrations::run_migrations(&pool).await.expect("migrations");
+    tinyiothub_storage::migrations::run_migrations(&pool)
+        .await
+        .expect("migrations");
     pool
 }
 
 async fn table_exists(pool: &sqlx::SqlitePool, table: &str) -> bool {
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?")
-            .bind(table)
-            .fetch_one(pool)
-            .await
-            .unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .bind(table)
+        .fetch_one(pool)
+        .await
+        .unwrap();
     count > 0
 }
 
@@ -81,14 +82,17 @@ async fn test_agent_runs_full_insert_and_indexed_query() {
     assert_eq!(row.get::<i64, _>("duration_ms"), 4200);
     assert_eq!(row.get::<String, _>("acked_by"), "user-1");
 
-    for index in ["idx_agent_runs_ws_created", "idx_agent_runs_problem", "idx_agent_runs_dedup"] {
-        let exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?)",
-        )
-        .bind(index)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    for index in [
+        "idx_agent_runs_ws_created",
+        "idx_agent_runs_problem",
+        "idx_agent_runs_dedup",
+    ] {
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?)")
+                .bind(index)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert!(exists, "{index} must exist");
     }
 }
@@ -180,18 +184,15 @@ async fn test_autonomy_policy_mode_check_rejects_invalid() {
             .unwrap_or_else(|e| panic!("valid mode {mode} must be accepted: {e}"));
     }
 
-    let invalid = sqlx::query(
-        "INSERT INTO workspace_autonomy_policy (workspace_id, mode) VALUES ('ws-bad', 'yolo')",
-    )
-    .execute(&pool)
-    .await;
+    let invalid = sqlx::query("INSERT INTO workspace_autonomy_policy (workspace_id, mode) VALUES ('ws-bad', 'yolo')")
+        .execute(&pool)
+        .await;
     assert!(invalid.is_err(), "mode CHECK must reject 'yolo'");
 
-    let default_mode: String = sqlx::query_scalar(
-        "SELECT mode FROM workspace_autonomy_policy WHERE workspace_id = 'ws-off'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let default_mode: String =
+        sqlx::query_scalar("SELECT mode FROM workspace_autonomy_policy WHERE workspace_id = 'ws-off'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(default_mode, "off");
 }

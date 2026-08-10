@@ -52,7 +52,12 @@ async fn test_create_notification_rule_missing_fields() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("POST", "/api/v1/notifications/rules", &token, Some(json!({}))))
+        .oneshot(auth_request(
+            "POST",
+            "/api/v1/notifications/rules",
+            &token,
+            Some(json!({})),
+        ))
         .await
         .unwrap();
 
@@ -153,7 +158,12 @@ async fn test_send_test_notification_missing_fields() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("POST", "/api/v1/notifications/test", &token, Some(json!({}))))
+        .oneshot(auth_request(
+            "POST",
+            "/api/v1/notifications/test",
+            &token,
+            Some(json!({})),
+        ))
         .await
         .unwrap();
 

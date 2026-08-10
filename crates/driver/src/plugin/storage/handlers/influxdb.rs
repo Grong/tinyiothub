@@ -8,9 +8,7 @@ use influxdb2::{Client as InfluxClient, models::DataPoint};
 use tracing::debug;
 
 use super::{super::config::InfluxdbConfig, StorageHandler};
-use crate::{
-    plugin::{PluginHandler, PluginManifest, PluginType, storage::StorageData},
-};
+use crate::plugin::{PluginHandler, PluginManifest, PluginType, storage::StorageData};
 use tinyiothub_core::error::Error;
 
 pub struct InfluxdbHandler {
@@ -38,7 +36,11 @@ impl InfluxdbHandler {
 #[async_trait]
 impl StorageHandler for InfluxdbHandler {
     async fn write(&self, data: &StorageData) -> Result<(), Error> {
-        debug!("Writing {} values to InfluxDB for device {}", data.values.len(), data.device_id);
+        debug!(
+            "Writing {} values to InfluxDB for device {}",
+            data.values.len(),
+            data.device_id
+        );
 
         let measurement = self.config.measurement.as_deref().unwrap_or("device_data");
 

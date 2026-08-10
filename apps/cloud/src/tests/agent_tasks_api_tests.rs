@@ -43,14 +43,12 @@ async fn grant_admin(pool: &sqlx::SqlitePool, user_id: &str) {
     .execute(pool)
     .await
     .expect("seed admin role");
-    sqlx::query(
-        "INSERT OR IGNORE INTO user_roles (id, user_id, role_id) VALUES (?, ?, 'role-admin')",
-    )
-    .bind(format!("ur-{user_id}"))
-    .bind(user_id)
-    .execute(pool)
-    .await
-    .expect("grant admin");
+    sqlx::query("INSERT OR IGNORE INTO user_roles (id, user_id, role_id) VALUES (?, ?, 'role-admin')")
+        .bind(format!("ur-{user_id}"))
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .expect("grant admin");
 }
 
 /// 构造注入 stub sink 的完整路由（生产同款路由树）。
@@ -112,7 +110,9 @@ async fn create_task_dispatches_user_directive() {
     assert_eq!(signals.len(), 1);
     assert_eq!(signals[0].workspace_id, WS);
     match &signals[0].source {
-        TriggerSource::UserDirective { user_id, text, source, .. } => {
+        TriggerSource::UserDirective {
+            user_id, text, source, ..
+        } => {
             assert_eq!(user_id, "user-1");
             assert_eq!(text, "把 3 号产线温度调到 25 度", "text trimmed before dispatch");
             assert!(source.is_none());
@@ -186,17 +186,23 @@ async fn endpoints_require_admin_role() {
     let non_admin = create_test_token("user-2", "tenant-1");
 
     for (method, uri, body) in [
-        ("POST", format!("/api/v1/workspaces/{WS}/agent/tasks"), Some(json!({"text": "x"}))),
+        (
+            "POST",
+            format!("/api/v1/workspaces/{WS}/agent/tasks"),
+            Some(json!({"text": "x"})),
+        ),
         ("GET", format!("/api/v1/workspaces/{WS}/agent/runs"), None),
         ("POST", format!("/api/v1/workspaces/{WS}/agent/runs/run-1/ack"), None),
         ("GET", format!("/api/v1/workspaces/{WS}/agent/policy"), None),
-        ("PUT", format!("/api/v1/workspaces/{WS}/agent/policy"), Some(json!({"mode": "act"}))),
+        (
+            "PUT",
+            format!("/api/v1/workspaces/{WS}/agent/policy"),
+            Some(json!({"mode": "act"})),
+        ),
     ] {
         let app = app.clone();
-        let (_status, json) = response_parts(
-            app.oneshot(auth_request(method, &uri, &non_admin, body)).await.unwrap(),
-        )
-        .await;
+        let (_status, json) =
+            response_parts(app.oneshot(auth_request(method, &uri, &non_admin, body)).await.unwrap()).await;
         assert_eq!(json["code"], 403, "{method} {uri} non-admin must be 403: {json}");
     }
 }
@@ -342,11 +348,10 @@ async fn ack_run_is_idempotent_and_workspace_scoped() {
     assert_eq!(json["code"], 0, "repeat ack stays 200 (idempotent): {json}");
     assert_eq!(json["result"]["firstAck"], false);
 
-    let (acked_by,): (String,) =
-        sqlx::query_as("SELECT acked_by FROM agent_runs WHERE id = 'run-1'")
-            .fetch_one(&pool)
-            .await
-            .expect("acked_by");
+    let (acked_by,): (String,) = sqlx::query_as("SELECT acked_by FROM agent_runs WHERE id = 'run-1'")
+        .fetch_one(&pool)
+        .await
+        .expect("acked_by");
     assert_eq!(acked_by, "user-1");
 
     // 不存在 / 其他工作区的 run → 404（不泄露存在性）
@@ -487,5 +492,9 @@ async fn policy_mode_to_off_drains_pending_queue() {
     // off：drain 一次，目标为本工作区。
     let json = put_policy(&app, &token, "off").await;
     assert_eq!(json["code"], 0, "PUT off: {json}");
-    assert_eq!(stub.drained(), vec![WS.to_string()], "mode→off must drain the workspace queue");
+    assert_eq!(
+        stub.drained(),
+        vec![WS.to_string()],
+        "mode→off must drain the workspace queue"
+    );
 }

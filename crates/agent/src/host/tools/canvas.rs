@@ -87,7 +87,8 @@ mod tests {
     #[tokio::test]
     async fn test_canvas_tool_execute_a2ui_push() {
         let tool = CanvasTool;
-        let args = serde_json::json!({"action": "a2ui_push", "jsonl": "{\"createSurface\":{}}\n{\"updateComponents\":{}}"});
+        let args =
+            serde_json::json!({"action": "a2ui_push", "jsonl": "{\"createSurface\":{}}\n{\"updateComponents\":{}}"});
         let result = tool.execute(args).await.unwrap();
         assert!(result.success);
     }

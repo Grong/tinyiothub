@@ -10,9 +10,7 @@ use std::sync::Arc;
 pub use config::{IntegrationConfig, WeComConfig, WechatConfig};
 pub use handlers::{IntegrationHandler, WeComHandler, WechatHandler};
 
-use crate::{
-    plugin::{AppContext, PluginHandler},
-};
+use crate::plugin::{AppContext, PluginHandler};
 use tinyiothub_core::error::Error;
 
 pub struct IntegrationRequest {
@@ -21,10 +19,7 @@ pub struct IntegrationRequest {
     pub extras: std::collections::HashMap<String, String>,
 }
 
-pub fn create_handler(
-    config: &toml::Value,
-    _context: Arc<AppContext>,
-) -> Result<Box<dyn PluginHandler>, Error> {
+pub fn create_handler(config: &toml::Value, _context: Arc<AppContext>) -> Result<Box<dyn PluginHandler>, Error> {
     let integration_cfg = config
         .get("integration")
         .ok_or_else(|| Error::ValidationError("Missing [integration] section".to_string()))?;

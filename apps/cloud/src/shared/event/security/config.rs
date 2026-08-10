@@ -5,8 +5,8 @@ pub use tinyiothub_core::config::EventSecurityConfig;
 use tinyiothub_event::{EventError, Result, repositories::EventRepository};
 
 use crate::shared::event::security::{
-    AesEventEncryption, DatabaseAuditLog, EventAccessControl, EventAuditLog, EventEncryption,
-    InMemoryAuditLog, NoOpEncryption, RoleBasedAccessControl, SecureEventService,
+    AesEventEncryption, DatabaseAuditLog, EventAccessControl, EventAuditLog, EventEncryption, InMemoryAuditLog,
+    NoOpEncryption, RoleBasedAccessControl, SecureEventService,
 };
 
 /// Validate event security configuration
@@ -78,7 +78,11 @@ impl EventSecurityFactory {
             Arc::new(InMemoryAuditLog::new())
         };
 
-        Ok(SecurityComponents { access_control, encryption, audit_log })
+        Ok(SecurityComponents {
+            access_control,
+            encryption,
+            audit_log,
+        })
     }
 
     /// Create a secure event service with all security components
@@ -126,8 +130,7 @@ impl EventSecurityFactory {
         // Generate encryption key if needed and not provided
         if config.enable_encryption && config.encryption_key.is_none() {
             let key = AesEventEncryption::generate_key();
-            let key_base64 =
-                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, key);
+            let key_base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, key);
             config.encryption_key = Some(key_base64);
 
             tracing::warn!(
@@ -142,16 +145,13 @@ impl EventSecurityFactory {
 
     /// Load security configuration from database, falling back to current config
     pub async fn load_config_from_db(&self) -> Result<EventSecurityConfig> {
-        match sqlx::query_scalar::<_, String>(
-            "SELECT value FROM system_settings WHERE key = 'event_security_config'",
-        )
-        .fetch_optional(self.db.pool())
-        .await
+        match sqlx::query_scalar::<_, String>("SELECT value FROM system_settings WHERE key = 'event_security_config'")
+            .fetch_optional(self.db.pool())
+            .await
         {
             Ok(Some(json)) => {
-                let config: EventSecurityConfig = serde_json::from_str(&json).map_err(|e| {
-                    EventError::Configuration(format!("Failed to parse config: {}", e))
-                })?;
+                let config: EventSecurityConfig = serde_json::from_str(&json)
+                    .map_err(|e| EventError::Configuration(format!("Failed to parse config: {}", e)))?;
                 validate_event_security_config(&config)?;
                 Ok(config)
             }
@@ -170,7 +170,7 @@ impl EventSecurityFactory {
 
         sqlx::query(
             "INSERT INTO system_settings (key, value, updated_at) VALUES ('event_security_config', ?, datetime('now'))
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
         )
         .bind(json)
         .execute(self.db.pool())
@@ -192,11 +192,7 @@ struct NoOpAccessControl;
 
 #[async_trait::async_trait]
 impl EventAccessControl for NoOpAccessControl {
-    async fn can_read_event(
-        &self,
-        _user_id: &str,
-        _event: &tinyiothub_event::entities::Event,
-    ) -> Result<bool> {
+    async fn can_read_event(&self, _user_id: &str, _event: &tinyiothub_event::entities::Event) -> Result<bool> {
         Ok(true) // Allow all access when RBAC is disabled
     }
 
@@ -208,19 +204,11 @@ impl EventAccessControl for NoOpAccessControl {
         Ok(true)
     }
 
-    async fn can_update_event(
-        &self,
-        _user_id: &str,
-        _event: &tinyiothub_event::entities::Event,
-    ) -> Result<bool> {
+    async fn can_update_event(&self, _user_id: &str, _event: &tinyiothub_event::entities::Event) -> Result<bool> {
         Ok(true)
     }
 
-    async fn can_delete_event(
-        &self,
-        _user_id: &str,
-        _event: &tinyiothub_event::entities::Event,
-    ) -> Result<bool> {
+    async fn can_delete_event(&self, _user_id: &str, _event: &tinyiothub_event::entities::Event) -> Result<bool> {
         Ok(false) // Generally don't allow deletion even without RBAC
     }
 
@@ -228,11 +216,7 @@ impl EventAccessControl for NoOpAccessControl {
         Ok(vec!["user".to_string()])
     }
 
-    async fn get_user_permissions(
-        &self,
-        _user_id: &str,
-        _resource_type: &str,
-    ) -> Result<Vec<String>> {
+    async fn get_user_permissions(&self, _user_id: &str, _resource_type: &str) -> Result<Vec<String>> {
         Ok(vec!["read".to_string(), "create".to_string(), "update".to_string()])
     }
 }

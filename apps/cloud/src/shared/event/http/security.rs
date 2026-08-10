@@ -24,8 +24,7 @@ use crate::shared::{
 };
 
 /// Cache for user permissions to improve performance
-static PERMISSIONS_CACHE: OnceCell<Arc<Cache<String, UserPermissionsResponse>>> =
-    OnceCell::const_new();
+static PERMISSIONS_CACHE: OnceCell<Arc<Cache<String, UserPermissionsResponse>>> = OnceCell::const_new();
 
 /// Initialize the permissions cache
 async fn get_permissions_cache() -> &'static Arc<Cache<String, UserPermissionsResponse>> {
@@ -125,32 +124,34 @@ pub async fn get_user_permissions(
         }
 
         // Cache miss, compute permissions
-        get_user_permissions_impl(&state, &claims.user_id).await.inspect(|response| {
-            // Cache the result asynchronously
-            // HarmonyOS: Skip async cache update
-            #[cfg(not(feature = "harmonyos"))]
-            {
-                let cache_clone = cache.clone();
-                let key_clone = cache_key.clone();
-                let response_clone = response.clone();
-                use std::panic;
-                tokio::spawn(async move {
-                    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-                        tokio::runtime::Handle::current().block_on(async {
-                            cache_clone.set(key_clone, response_clone).await;
-                        })
-                    }));
-                    if let Err(e) = result {
-                        tracing::error!("Cache update panicked: {:?}", e);
-                    }
-                });
-            }
+        get_user_permissions_impl(&state, &claims.user_id)
+            .await
+            .inspect(|response| {
+                // Cache the result asynchronously
+                // HarmonyOS: Skip async cache update
+                #[cfg(not(feature = "harmonyos"))]
+                {
+                    let cache_clone = cache.clone();
+                    let key_clone = cache_key.clone();
+                    let response_clone = response.clone();
+                    use std::panic;
+                    tokio::spawn(async move {
+                        let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                            tokio::runtime::Handle::current().block_on(async {
+                                cache_clone.set(key_clone, response_clone).await;
+                            })
+                        }));
+                        if let Err(e) = result {
+                            tracing::error!("Cache update panicked: {:?}", e);
+                        }
+                    });
+                }
 
-            #[cfg(feature = "harmonyos")]
-            {
-                drop((cache, cache_key, response));
-            }
-        })
+                #[cfg(feature = "harmonyos")]
+                {
+                    drop((cache, cache_key, response));
+                }
+            })
     }
     .await;
 
@@ -171,10 +172,7 @@ pub async fn get_user_permissions(
 }
 
 /// Implementation function for getting user permissions
-async fn get_user_permissions_impl(
-    state: &AppState,
-    user_id: &str,
-) -> Result<UserPermissionsResponse, String> {
+async fn get_user_permissions_impl(state: &AppState, user_id: &str) -> Result<UserPermissionsResponse, String> {
     // Initialize secure event service if needed
     let secure_service = state
         .initialize_secure_event_service()
@@ -241,11 +239,10 @@ pub async fn get_event_audit_logs(
 
     // Check if user has permission to view audit logs for this event
     let access_control = secure_service.access_control();
-    let has_permission =
-        match access_control.get_user_permissions(&claims.user_id, "audit_log").await {
-            Ok(perms) => perms.contains(&"read".to_string()),
-            Err(_) => false,
-        };
+    let has_permission = match access_control.get_user_permissions(&claims.user_id, "audit_log").await {
+        Ok(perms) => perms.contains(&"read".to_string()),
+        Err(_) => false,
+    };
 
     if !has_permission {
         // Log access denied
@@ -254,9 +251,7 @@ pub async fn get_event_audit_logs(
                 .log_access_denied(&claims.user_id, "read", "audit_log", "insufficient permissions")
                 .await;
         }
-        return ApiResponseBuilder::error(
-            "Access denied: insufficient permissions to view audit logs",
-        );
+        return ApiResponseBuilder::error("Access denied: insufficient permissions to view audit logs");
     }
 
     // Get audit logs from the audit service
@@ -315,7 +310,10 @@ pub async fn get_user_audit_logs(
         }
     };
 
-    let entries = match audit_log.get_user_audit_logs(&claims.user_id, Some(limit as usize)).await {
+    let entries = match audit_log
+        .get_user_audit_logs(&claims.user_id, Some(limit as usize))
+        .await
+    {
         Ok(entries) => entries,
         Err(e) => {
             tracing::error!("Failed to get user audit logs: {}", e);
@@ -367,8 +365,7 @@ pub async fn get_user_audit_logs(
         .collect();
 
     // Convert to response format
-    let logs: Vec<AuditLogResponse> =
-        filtered_entries.into_iter().map(convert_audit_log_entry).collect();
+    let logs: Vec<AuditLogResponse> = filtered_entries.into_iter().map(convert_audit_log_entry).collect();
 
     ApiResponseBuilder::success(logs)
 }
@@ -386,7 +383,10 @@ pub async fn get_all_audit_logs(
     let operation = "get_all_audit_logs";
 
     // Check admin permissions first
-    if AuthHelper::require_admin_role(&state, &claims.user_id, operation).await.is_err() {
+    if AuthHelper::require_admin_role(&state, &claims.user_id, operation)
+        .await
+        .is_err()
+    {
         return ApiResponseBuilder::error_with_code(403, "Access denied: admin role required");
     }
 
@@ -462,8 +462,7 @@ async fn get_all_audit_logs_impl(
         .collect();
 
     // Convert to response format
-    let logs: Vec<AuditLogResponse> =
-        filtered_entries.into_iter().map(convert_audit_log_entry).collect();
+    let logs: Vec<AuditLogResponse> = filtered_entries.into_iter().map(convert_audit_log_entry).collect();
 
     // Log the admin audit access
     let _ = audit_log
@@ -481,14 +480,14 @@ async fn get_all_audit_logs_impl(
 /// Removes audit log entries older than the configured retention period.
 /// This endpoint requires admin permissions.
 #[axum::debug_handler]
-pub async fn cleanup_audit_logs(
-    State(state): State<AppState>,
-    claims: Claims,
-) -> Json<ApiResponse<u64>> {
+pub async fn cleanup_audit_logs(State(state): State<AppState>, claims: Claims) -> Json<ApiResponse<u64>> {
     let operation = "cleanup_audit_logs";
 
     // Check admin permissions first
-    if AuthHelper::require_admin_role(&state, &claims.user_id, operation).await.is_err() {
+    if AuthHelper::require_admin_role(&state, &claims.user_id, operation)
+        .await
+        .is_err()
+    {
         return ApiResponseBuilder::error_with_code(403, "Access denied: admin role required");
     }
 
@@ -528,17 +527,15 @@ async fn cleanup_audit_logs_impl(state: &AppState, user_id: &str) -> Result<u64,
     let cleaned_count = audit_log
         .cleanup_old_logs(retention_days)
         .await
-        .map_err(|e| format!("Failed to cleanup audit logs: {}", e))?
-        as u64;
+        .map_err(|e| format!("Failed to cleanup audit logs: {}", e))? as u64;
 
     // Log the cleanup operation
     let _ = audit_log
         .log(
-            AuditLogEntry::new("audit_cleanup".to_string(), Some(user_id.to_string()))
-                .with_details(format!(
-                    "Cleaned up {} old audit log entries (retention: {} days)",
-                    cleaned_count, retention_days
-                )),
+            AuditLogEntry::new("audit_cleanup".to_string(), Some(user_id.to_string())).with_details(format!(
+                "Cleaned up {} old audit log entries (retention: {} days)",
+                cleaned_count, retention_days
+            )),
         )
         .await;
 
@@ -569,8 +566,7 @@ pub async fn get_security_config(
 
     // Check if user has permission to view security config
     let access_control = secure_service.access_control();
-    let has_permission = match access_control.get_user_permissions(&claims.user_id, "system").await
-    {
+    let has_permission = match access_control.get_user_permissions(&claims.user_id, "system").await {
         Ok(perms) => perms.contains(&"read".to_string()),
         Err(_) => false,
     };
@@ -579,17 +575,10 @@ pub async fn get_security_config(
         // Log access denied
         if let Some(audit_log) = secure_service.audit_log() {
             let _ = audit_log
-                .log_access_denied(
-                    &claims.user_id,
-                    "read",
-                    "security_config",
-                    "insufficient permissions",
-                )
+                .log_access_denied(&claims.user_id, "read", "security_config", "insufficient permissions")
                 .await;
         }
-        return ApiResponseBuilder::error(
-            "Access denied: insufficient permissions to view security configuration",
-        );
+        return ApiResponseBuilder::error("Access denied: insufficient permissions to view security configuration");
     }
 
     // Get configuration from secure service
@@ -652,12 +641,7 @@ pub async fn update_security_config(
         // Log access denied
         if let Some(audit_log) = secure_service.audit_log() {
             let _ = audit_log
-                .log_access_denied(
-                    &claims.user_id,
-                    "update",
-                    "security_config",
-                    "admin role required",
-                )
+                .log_access_denied(&claims.user_id, "update", "security_config", "admin role required")
                 .await;
         }
         return ApiResponseBuilder::error("Access denied: admin role required");
@@ -667,9 +651,7 @@ pub async fn update_security_config(
     if let Some(retention_days) = request.audit_retention_days
         && !(1..=3650).contains(&retention_days)
     {
-        return ApiResponseBuilder::error(
-            "Invalid audit retention days: must be between 1 and 3650",
-        );
+        return ApiResponseBuilder::error("Invalid audit retention days: must be between 1 and 3650");
     }
 
     // Get current configuration
@@ -722,7 +704,10 @@ pub async fn update_security_config(
             .await;
     }
 
-    tracing::info!("Security configuration updated successfully by user: {}", claims.user_id);
+    tracing::info!(
+        "Security configuration updated successfully by user: {}",
+        claims.user_id
+    );
 
     ApiResponseBuilder::success(response)
 }
@@ -731,10 +716,7 @@ pub async fn update_security_config(
 ///
 /// Returns the roles assigned to the current user.
 #[axum::debug_handler]
-pub async fn get_user_roles(
-    State(state): State<AppState>,
-    claims: Claims,
-) -> Json<ApiResponse<Vec<String>>> {
+pub async fn get_user_roles(State(state): State<AppState>, claims: Claims) -> Json<ApiResponse<Vec<String>>> {
     tracing::info!("Getting roles for user: {}", claims.user_id);
 
     // Initialize secure event service if needed

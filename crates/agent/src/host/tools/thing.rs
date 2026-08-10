@@ -19,12 +19,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::loop_::types::ToolSafety;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
-use crate::loop_::types::ToolSafety;
 use tinyiothub_thing::{service::ThingService, types::ListThingsParams};
 use zeroclaw::tools::{Tool, ToolResult};
 use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
@@ -45,8 +45,7 @@ pub struct PendingAction {
 }
 
 /// Global store of pending action confirmations (DashMap + 30min TTL).
-static PENDING_ACTIONS: std::sync::OnceLock<Arc<DashMap<String, PendingAction>>> =
-    std::sync::OnceLock::new();
+static PENDING_ACTIONS: std::sync::OnceLock<Arc<DashMap<String, PendingAction>>> = std::sync::OnceLock::new();
 
 fn pending_actions() -> &'static Arc<DashMap<String, PendingAction>> {
     PENDING_ACTIONS.get_or_init(|| Arc::new(DashMap::new()))
@@ -104,7 +103,11 @@ pub(crate) fn tool_ok(payload: impl serde::Serialize) -> anyhow::Result<ToolResu
 
 /// Wrap an error message into a failed ToolResult.
 pub(crate) fn tool_err(msg: impl Into<String>) -> anyhow::Result<ToolResult> {
-    Ok(ToolResult { success: false, output: String::new(), error: Some(msg.into()) })
+    Ok(ToolResult {
+        success: false,
+        output: String::new(),
+        error: Some(msg.into()),
+    })
 }
 
 /// Clamp limit to [1, max], defaulting when None.
@@ -188,8 +191,7 @@ impl Tool for ListThingsTool {
             offset: Option<u32>,
         }
 
-        let input: Input =
-            serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
+        let input: Input = serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
         let limit = clamp_limit(input.limit, 50, 200);
         let offset = input.offset.unwrap_or(0);
@@ -374,8 +376,7 @@ impl Tool for GetThingTreeTool {
             depth: Option<u32>,
         }
 
-        let input: Input =
-            serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
+        let input: Input = serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
         let depth = Some(input.depth.unwrap_or(3).clamp(1, 10));
 
@@ -446,8 +447,7 @@ impl Tool for ReadPropertyTool {
             property_name: String,
         }
 
-        let input: Input =
-            serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
+        let input: Input = serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
         // Verify thing exists
         self.thing_service
@@ -479,9 +479,7 @@ impl Tool for ReadPropertyTool {
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
-        .ok_or_else(|| {
-            anyhow::anyhow!("属性 '{}' 在物 {} 上未找到", input.property_name, input.thing_id)
-        })?;
+        .ok_or_else(|| anyhow::anyhow!("属性 '{}' 在物 {} 上未找到", input.property_name, input.thing_id))?;
 
         // Try device_cache for live value; design 六: no cache → null + hint
         let cached = self
@@ -585,8 +583,7 @@ impl Tool for InvokeActionTool {
             params: Option<Value>,
         }
 
-        let input: Input =
-            serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
+        let input: Input = serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
         // 1. Verify thing exists and check type
         let thing = self
@@ -604,8 +601,7 @@ impl Tool for InvokeActionTool {
         }
 
         // 2. Check require_action_confirm from workspace
-        let require_confirm: bool =
-            sqlx::query_scalar("SELECT require_action_confirm FROM workspaces WHERE id = ?")
+        let require_confirm: bool = sqlx::query_scalar("SELECT require_action_confirm FROM workspaces WHERE id = ?")
                 .bind(&self.workspace_id)
                 .fetch_optional(&self.pool)
                 .await
@@ -613,18 +609,17 @@ impl Tool for InvokeActionTool {
                 // Fail CLOSED (eng-review T7): a missing workspace row means
                 // something is wrong — require confirmation (design default ON)
                 .unwrap_or(1i32)
-                != 0;
+            != 0;
 
         // 3. Check if action exists in device_commands table
-        let command_exists: bool = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM thing_actions WHERE device_id = ? AND name = ?",
-        )
-        .bind(&input.thing_id)
-        .bind(&input.action_name)
-        .fetch_one(&self.pool)
-        .await
-        .map(|c| c > 0)
-        .unwrap_or(false);
+        let command_exists: bool =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM thing_actions WHERE device_id = ? AND name = ?")
+                .bind(&input.thing_id)
+                .bind(&input.action_name)
+                .fetch_one(&self.pool)
+                .await
+                .map(|c| c > 0)
+                .unwrap_or(false);
 
         if !command_exists {
             return tool_err(format!(
@@ -635,15 +630,14 @@ impl Tool for InvokeActionTool {
 
         // 3b. Validate params against the action's parameter schema (design 三;
         // eng-review T7)
-        let params_schema: Option<String> = sqlx::query_scalar(
-            "SELECT parameters FROM thing_actions WHERE device_id = ? AND name = ?",
-        )
-        .bind(&input.thing_id)
-        .bind(&input.action_name)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
-        .flatten();
+        let params_schema: Option<String> =
+            sqlx::query_scalar("SELECT parameters FROM thing_actions WHERE device_id = ? AND name = ?")
+                .bind(&input.thing_id)
+                .bind(&input.action_name)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
+                .flatten();
         if let Some(ref schema_json) = params_schema
             && let Err(msg) = validate_action_params(schema_json, input.params.as_ref())
         {
@@ -775,8 +769,7 @@ impl Tool for QueryEventsTool {
             limit: Option<u32>,
         }
 
-        let input: Input =
-            serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
+        let input: Input = serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
         let limit = clamp_limit(input.limit, 50, 200) as i64;
 
@@ -902,8 +895,7 @@ impl Tool for SearchKnowledgeTool {
             limit: Option<u32>,
         }
 
-        let input: Input =
-            serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
+        let input: Input = serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
         let limit = clamp_limit(input.limit, 50, 200) as i64;
         let like_pattern = format!("%{}%", input.q);
@@ -1011,8 +1003,7 @@ impl Tool for ReadDocumentTool {
             resource_id: String,
         }
 
-        let input: Input =
-            serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
+        let input: Input = serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
         #[derive(Debug, serde::Serialize, sqlx::FromRow)]
         struct DocFull {
@@ -1057,8 +1048,8 @@ impl Tool for ReadDocumentTool {
 /// Rules: required params present, no unknown params, primitive type match.
 /// Returns a Chinese error message on mismatch (design 六: 校验明细定位字段).
 pub fn validate_action_params(schema_json: &str, params: Option<&Value>) -> Result<(), String> {
-    let schema: Vec<Value> = serde_json::from_str(schema_json)
-        .map_err(|e| format!("操作参数 schema 解析失败: {}", e))?;
+    let schema: Vec<Value> =
+        serde_json::from_str(schema_json).map_err(|e| format!("操作参数 schema 解析失败: {}", e))?;
     if schema.is_empty() {
         return Ok(());
     }
@@ -1089,8 +1080,10 @@ pub fn validate_action_params(schema_json: &str, params: Option<&Value>) -> Resu
     }
 
     if let Some(obj) = provided {
-        let known: Vec<&str> =
-            schema.iter().filter_map(|sp| sp.get("name").and_then(|n| n.as_str())).collect();
+        let known: Vec<&str> = schema
+            .iter()
+            .filter_map(|sp| sp.get("name").and_then(|n| n.as_str()))
+            .collect();
         for key in obj.keys() {
             if !known.contains(&key.as_str()) {
                 return Err(format!("未知参数 '{}', 可用参数: {}", key, known.join(", ")));
@@ -1138,9 +1131,18 @@ pub fn create_thing_tools(
             workspace_id: ws.clone(),
             device_cache: runtime.device_cache.clone(),
         })),
-        read_only(Box::new(QueryEventsTool { pool: pool.clone(), workspace_id: ws.clone() })),
-        read_only(Box::new(SearchKnowledgeTool { pool: pool.clone(), workspace_id: ws.clone() })),
-        read_only(Box::new(ReadDocumentTool { pool: pool.clone(), workspace_id: ws.clone() })),
+        read_only(Box::new(QueryEventsTool {
+            pool: pool.clone(),
+            workspace_id: ws.clone(),
+        })),
+        read_only(Box::new(SearchKnowledgeTool {
+            pool: pool.clone(),
+            workspace_id: ws.clone(),
+        })),
+        read_only(Box::new(ReadDocumentTool {
+            pool: pool.clone(),
+            workspace_id: ws.clone(),
+        })),
         // Destructive tool (1)
         destructive(Box::new(InvokeActionTool {
             thing_service,

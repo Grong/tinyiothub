@@ -16,7 +16,9 @@ async fn migrated_pool() -> sqlx::SqlitePool {
         .connect("sqlite::memory:")
         .await
         .expect("in-memory pool");
-    tinyiothub_storage::migrations::run_migrations(&pool).await.expect("migrations");
+    tinyiothub_storage::migrations::run_migrations(&pool)
+        .await
+        .expect("migrations");
     pool
 }
 
@@ -32,12 +34,11 @@ async fn column_names(pool: &sqlx::SqlitePool, table: &str) -> Vec<String> {
 }
 
 async fn table_exists(pool: &sqlx::SqlitePool, table: &str) -> bool {
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?")
-            .bind(table)
-            .fetch_one(pool)
-            .await
-            .unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .bind(table)
+        .fetch_one(pool)
+        .await
+        .unwrap();
     count > 0
 }
 
@@ -77,7 +78,10 @@ async fn test_thing_properties_unique_device_name() {
         sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('prop-2', 'dev-u', 'temperature')")
             .execute(&pool)
             .await;
-    assert!(dup.is_err(), "UNIQUE(device_id, name) must reject duplicate property names");
+    assert!(
+        dup.is_err(),
+        "UNIQUE(device_id, name) must reject duplicate property names"
+    );
 
     // Same name on a DIFFERENT device is allowed.
     insert_device(&pool, "dev-v").await;
@@ -95,20 +99,18 @@ async fn test_thing_properties_unique_device_name() {
 async fn test_no_synthetic_seed_rows() {
     let pool = migrated_pool().await;
 
-    let prop_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM thing_properties WHERE name = 'status' AND display_name = '在线状态'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let prop_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM thing_properties WHERE name = 'status' AND display_name = '在线状态'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(prop_count, 0, "synthetic 'status' property seed must be deleted");
 
-    let action_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM thing_actions WHERE name = 'reboot' AND display_name = '重启设备'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let action_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM thing_actions WHERE name = 'reboot' AND display_name = '重启设备'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(action_count, 0, "synthetic 'reboot' action seed must be deleted");
 }
 
@@ -120,7 +122,10 @@ async fn test_no_synthetic_seed_rows() {
 async fn test_deprecated_tables_dropped() {
     let pool = migrated_pool().await;
     for table in ["device_event_triggers", "device_properties", "device_commands"] {
-        assert!(!table_exists(&pool, table).await, "{table} must not exist after migrations");
+        assert!(
+            !table_exists(&pool, table).await,
+            "{table} must not exist after migrations"
+        );
     }
 }
 
@@ -132,8 +137,14 @@ async fn test_deprecated_tables_dropped() {
 async fn test_resources_schema() {
     let pool = migrated_pool().await;
     let cols = column_names(&pool, "resources").await;
-    assert!(cols.contains(&"resource_type".to_string()), "resources must have resource_type");
-    assert!(!cols.contains(&"parse_status".to_string()), "resources.parse_status must be dropped");
+    assert!(
+        cols.contains(&"resource_type".to_string()),
+        "resources must have resource_type"
+    );
+    assert!(
+        !cols.contains(&"parse_status".to_string()),
+        "resources.parse_status must be dropped"
+    );
 }
 
 // ──────────────────────────────────────────────
@@ -152,12 +163,11 @@ async fn test_events_is_status_default_and_dedup_index() {
     let default: Option<String> = is_status_row.get("dflt_value");
     assert_eq!(default.as_deref(), Some("0"), "is_status must default to 0");
 
-    let index_sql: Option<String> = sqlx::query_scalar(
-        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_events_status_dedup'",
-    )
-    .fetch_optional(&pool)
-    .await
-    .unwrap();
+    let index_sql: Option<String> =
+        sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_events_status_dedup'")
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
     let sql = index_sql.expect("idx_events_status_dedup must exist");
     assert!(
         sql.contains("is_status = 1"),
@@ -175,11 +185,10 @@ async fn test_workspaces_require_action_confirm_defaults_to_1() {
     // Seed WITHOUT specifying require_action_confirm.
     seed_test_workspace(&pool, "tenant-mig", "ws-mig").await;
 
-    let value: i64 =
-        sqlx::query_scalar("SELECT require_action_confirm FROM workspaces WHERE id = 'ws-mig'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let value: i64 = sqlx::query_scalar("SELECT require_action_confirm FROM workspaces WHERE id = 'ws-mig'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(value, 1, "require_action_confirm must default to 1 (fail closed)");
 }
 
@@ -219,18 +228,16 @@ async fn test_alarm_fks_reference_thing_properties() {
         .await
         .expect("property delete must succeed (FK references thing_properties)");
 
-    let rule_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM device_alarm_rules WHERE id = 'rule-fk'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let rule_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_alarm_rules WHERE id = 'rule-fk'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(rule_count, 0, "rule must CASCADE when its property is deleted");
 
-    let alarm_prop: Option<String> =
-        sqlx::query_scalar("SELECT property_id FROM device_alarms WHERE id = 'alarm-fk'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let alarm_prop: Option<String> = sqlx::query_scalar("SELECT property_id FROM device_alarms WHERE id = 'alarm-fk'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(alarm_prop, None, "alarm property_id must be SET NULL");
 
     // Regression (gateway rollback bug): DELETE FROM devices must work with
@@ -256,11 +263,10 @@ async fn test_alarm_fks_reference_thing_properties() {
         .await
         .expect("DELETE FROM devices with alarm children must succeed");
 
-    let orphan_rules: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM device_alarm_rules WHERE device_id = 'dev-gw'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let orphan_rules: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_alarm_rules WHERE device_id = 'dev-gw'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(orphan_rules, 0, "device delete must cascade its alarm rules");
 }
 
@@ -279,7 +285,10 @@ async fn test_upgrade_path_with_alarm_rules_no_boot_loop() {
         .expect("in-memory pool");
     let all = tinyiothub_storage::migrations::load_migrations().expect("load");
     let pre: Vec<_> = all.into_iter().filter(|m| m.version < 20260727000001).collect();
-    sqlx::migrate::Migrator::with_migrations(pre).run(&pool).await.expect("pre-chain");
+    sqlx::migrate::Migrator::with_migrations(pre)
+        .run(&pool)
+        .await
+        .expect("pre-chain");
 
     // 2. Seed the #80-lineage state
     seed_test_workspace(&pool, "tenant-1", "ws-1").await;
@@ -337,12 +346,11 @@ async fn test_upgrade_path_with_alarm_rules_no_boot_loop() {
         .expect("upgrade must not boot-loop");
 
     // 4. Real rows preserved with metadata and IDs; seeds gone; refs resolve
-    let (desc, min_v): (Option<String>, Option<f64>) = sqlx::query_as(
-        "SELECT description, min_value FROM thing_properties WHERE id = 'prop-real'",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("real property preserved with metadata");
+    let (desc, min_v): (Option<String>, Option<f64>) =
+        sqlx::query_as("SELECT description, min_value FROM thing_properties WHERE id = 'prop-real'")
+            .fetch_one(&pool)
+            .await
+            .expect("real property preserved with metadata");
     assert_eq!(desc.as_deref(), Some("real prop"));
     assert_eq!(min_v, Some(0.0));
 
@@ -354,11 +362,10 @@ async fn test_upgrade_path_with_alarm_rules_no_boot_loop() {
     .unwrap();
     assert_eq!(seed_count, 0, "synthetic seed deleted");
 
-    let cmd_exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM thing_actions WHERE id = 'cmd-real')")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let cmd_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM thing_actions WHERE id = 'cmd-real')")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert!(cmd_exists, "real command preserved");
 
     let resolved: Option<String> = sqlx::query_scalar(

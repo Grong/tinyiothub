@@ -12,6 +12,10 @@ pub struct SchedulerConfig {
 
 impl Default for SchedulerConfig {
     fn default() -> Self {
-        Self { scheduler_type: "cron".to_string(), cron: "0 * * * * *".to_string(), enabled: true }
+        Self {
+            scheduler_type: "cron".to_string(),
+            cron: "0 * * * * *".to_string(),
+            enabled: true,
+        }
     }
 }

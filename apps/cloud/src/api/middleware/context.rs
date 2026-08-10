@@ -81,7 +81,11 @@ async fn extract_user_from_jwt(
     let claims = validate_jwt(&token).ok()?;
 
     // Convert claims to UserInfo
-    Some(UserInfo { id: claims.user_id, name: claims.username, token_id: claims.token_id })
+    Some(UserInfo {
+        id: claims.user_id,
+        name: claims.username,
+        token_id: claims.token_id,
+    })
 }
 
 /// JWT authentication middleware - requires valid JWT token

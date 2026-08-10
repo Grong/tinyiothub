@@ -13,13 +13,6 @@ pub trait DeviceQueryService: Send + Sync {
     async fn get_stats_by_type(&self) -> Result<Vec<(String, i64)>>;
     async fn get_stats_by_driver(&self) -> Result<Vec<(String, i64)>>;
     async fn get_device_tree(&self, root_id: Option<&str>) -> Result<Vec<Device>>;
-    async fn get_device_status_distribution(
-        &self,
-        workspace_id: Option<&str>,
-    ) -> Result<DeviceStatusDistribution>;
-    async fn get_quick_devices_list(
-        &self,
-        limit: i32,
-        workspace_id: Option<&str>,
-    ) -> Result<Vec<QuickDevice>>;
+    async fn get_device_status_distribution(&self, workspace_id: Option<&str>) -> Result<DeviceStatusDistribution>;
+    async fn get_quick_devices_list(&self, limit: i32, workspace_id: Option<&str>) -> Result<Vec<QuickDevice>>;
 }

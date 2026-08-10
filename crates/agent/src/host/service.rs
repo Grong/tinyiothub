@@ -32,11 +32,7 @@ impl SessionService {
         Ok(session)
     }
 
-    pub async fn update_label(
-        &self,
-        session_key: &str,
-        label: impl Into<String>,
-    ) -> Result<Session, SessionError> {
+    pub async fn update_label(&self, session_key: &str, label: impl Into<String>) -> Result<Session, SessionError> {
         let mut session = self
             .repo
             .get(session_key)

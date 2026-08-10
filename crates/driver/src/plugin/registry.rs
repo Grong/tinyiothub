@@ -50,16 +50,21 @@ pub struct PluginManifest {
 /// 插件条目
 pub enum PluginEntry {
     /// 静态插件（编译时注册）
-    Static { manifest: PluginManifest, factory: PluginFactory },
+    Static {
+        manifest: PluginManifest,
+        factory: PluginFactory,
+    },
     /// 动态插件（.dll/.so 路径）
     Dynamic { manifest: PluginManifest, path: PathBuf },
     /// 配置插件（TOML 配置）
-    Config { manifest: PluginManifest, config: toml::Value },
+    Config {
+        manifest: PluginManifest,
+        config: toml::Value,
+    },
 }
 
 /// 插件工厂函数
-pub type PluginFactory =
-    Box<dyn Fn(Arc<AppContext>) -> Result<Box<dyn PluginHandler>, Error> + Send + Sync>;
+pub type PluginFactory = Box<dyn Fn(Arc<AppContext>) -> Result<Box<dyn PluginHandler>, Error> + Send + Sync>;
 
 /// 插件处理器接口（所有插件的共同接口）
 pub trait PluginHandler: Any + Send + Sync {
@@ -84,27 +89,36 @@ pub struct PluginRegistry {
 
 impl PluginRegistry {
     pub fn new() -> Self {
-        Self { entries: DashMap::new(), handlers: DashMap::new() }
+        Self {
+            entries: DashMap::new(),
+            handlers: DashMap::new(),
+        }
     }
 
     /// 注册静态插件
     pub fn register_static(&self, manifest: PluginManifest, factory: PluginFactory) {
-        debug!("Registering static plugin: {} ({})", manifest.name, manifest.plugin_type.as_str());
-        self.entries.insert(manifest.name.clone(), PluginEntry::Static { manifest, factory });
+        debug!(
+            "Registering static plugin: {} ({})",
+            manifest.name,
+            manifest.plugin_type.as_str()
+        );
+        self.entries
+            .insert(manifest.name.clone(), PluginEntry::Static { manifest, factory });
     }
 
     /// 注册配置插件
     pub fn register_config(&self, manifest: PluginManifest, config: toml::Value) {
-        info!("Registering config plugin: {} ({})", manifest.name, manifest.plugin_type.as_str());
-        self.entries.insert(manifest.name.clone(), PluginEntry::Config { manifest, config });
+        info!(
+            "Registering config plugin: {} ({})",
+            manifest.name,
+            manifest.plugin_type.as_str()
+        );
+        self.entries
+            .insert(manifest.name.clone(), PluginEntry::Config { manifest, config });
     }
 
     /// 创建插件实例
-    pub fn create_plugin(
-        &self,
-        name: &str,
-        context: Arc<AppContext>,
-    ) -> Result<Arc<dyn PluginHandler>, Error> {
+    pub fn create_plugin(&self, name: &str, context: Arc<AppContext>) -> Result<Arc<dyn PluginHandler>, Error> {
         if let Some(handler) = self.handlers.get(name) {
             return Ok(handler.value().clone());
         }
@@ -134,12 +148,11 @@ impl PluginRegistry {
         Ok(arc_handler)
     }
 
-    fn create_dynamic_plugin(
-        &self,
-        name: &str,
-        _path: &Path,
-    ) -> Result<Box<dyn PluginHandler>, Error> {
-        Err(Error::Unsupported(format!("Dynamic plugin loading not implemented yet: {}", name)))
+    fn create_dynamic_plugin(&self, name: &str, _path: &Path) -> Result<Box<dyn PluginHandler>, Error> {
+        Err(Error::Unsupported(format!(
+            "Dynamic plugin loading not implemented yet: {}",
+            name
+        )))
     }
 
     fn create_config_plugin(
@@ -154,8 +167,7 @@ impl PluginRegistry {
                 Ok(handler)
             }
             PluginType::Notification => {
-                let handler =
-                    crate::plugin::notification::create_handler(config, context)?;
+                let handler = crate::plugin::notification::create_handler(config, context)?;
                 Ok(handler)
             }
             PluginType::Scheduler => {
@@ -221,8 +233,8 @@ impl PluginRegistry {
 
     fn load_toml_plugin(&self, path: &Path) -> Result<String, Error> {
         let content = std::fs::read_to_string(path)?;
-        let value: toml::Value = toml::from_str(&content)
-            .map_err(|e| Error::ValidationError(format!("Invalid TOML: {}", e)))?;
+        let value: toml::Value =
+            toml::from_str(&content).map_err(|e| Error::ValidationError(format!("Invalid TOML: {}", e)))?;
 
         let manifest: PluginManifest = value
             .get("plugin")
@@ -243,8 +255,7 @@ impl Default for PluginRegistry {
     }
 }
 
-static GLOBAL_REGISTRY: std::sync::LazyLock<PluginRegistry> =
-    std::sync::LazyLock::new(PluginRegistry::new);
+static GLOBAL_REGISTRY: std::sync::LazyLock<PluginRegistry> = std::sync::LazyLock::new(PluginRegistry::new);
 
 pub fn get_global_registry() -> &'static PluginRegistry {
     &GLOBAL_REGISTRY

@@ -8,13 +8,13 @@ use axum::{
 };
 use chrono::Utc;
 use tinyiothub_core::models::notification_channel::{
-    ChannelStatistics, CreateNotificationChannelRequest, NotificationChannel,
-    NotificationChannelQueryParams, SendMessageRequest, UpdateNotificationChannelRequest,
+    ChannelStatistics, CreateNotificationChannelRequest, NotificationChannel, NotificationChannelQueryParams,
+    SendMessageRequest, UpdateNotificationChannelRequest,
 };
 use tinyiothub_storage::{
     count_notification_channels, create_notification_channel, delete_notification_channel,
-    find_all_notification_channels, find_notification_channel_by_id,
-    get_notification_channel_statistics, update_notification_channel,
+    find_all_notification_channels, find_notification_channel_by_id, get_notification_channel_statistics,
+    update_notification_channel,
 };
 use tinyiothub_web::middleware::workspace::AuthClaims;
 use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo};
@@ -25,10 +25,9 @@ use crate::{
     NotifyState,
     service::{NotificationMessage, send_notification_message},
     types::{
-        CreateNotificationRuleRequest, NotificationChannelType, NotificationHistoryQuery,
-        NotificationHistoryResponse, NotificationLevel, NotificationRule, NotificationRuleQuery,
-        NotificationRuleResponse, TestNotificationRequest, UpdateNotificationRuleRequest,
-        convert_device_filter, device_filter_to_json,
+        CreateNotificationRuleRequest, NotificationChannelType, NotificationHistoryQuery, NotificationHistoryResponse,
+        NotificationLevel, NotificationRule, NotificationRuleQuery, NotificationRuleResponse, TestNotificationRequest,
+        UpdateNotificationRuleRequest, convert_device_filter, device_filter_to_json,
     },
 };
 
@@ -99,8 +98,10 @@ async fn get_notification_rules_impl(
     query: NotificationRuleQuery,
     workspace_id: &str,
 ) -> Result<Vec<NotificationRuleResponse>, String> {
-    let notification_manager =
-        state.notification_manager.as_deref().ok_or("Notification manager not available")?;
+    let notification_manager = state
+        .notification_manager
+        .as_deref()
+        .ok_or("Notification manager not available")?;
 
     let rules = notification_manager
         .get_rules()
@@ -177,15 +178,16 @@ async fn create_notification_rule_impl(
     request: CreateNotificationRuleRequest,
     workspace_id: &str,
 ) -> Result<NotificationRuleResponse, String> {
-    let notification_manager =
-        state.notification_manager.as_deref().ok_or("Notification manager not available")?;
+    let notification_manager = state
+        .notification_manager
+        .as_deref()
+        .ok_or("Notification manager not available")?;
 
     let notification_methods: Result<Vec<NotificationChannelType>, _> = request
         .notification_methods
         .iter()
         .map(|method| {
-            NotificationChannelType::parse_str(method)
-                .ok_or_else(|| format!("Invalid notification method: {}", method))
+            NotificationChannelType::parse_str(method).ok_or_else(|| format!("Invalid notification method: {}", method))
         })
         .collect();
     let notification_methods = notification_methods?;
@@ -266,8 +268,10 @@ async fn get_notification_rule_impl(
     rule_id: &str,
     workspace_id: &str,
 ) -> Result<Option<NotificationRuleResponse>, String> {
-    let notification_manager =
-        state.notification_manager.as_deref().ok_or("Notification manager not available")?;
+    let notification_manager = state
+        .notification_manager
+        .as_deref()
+        .ok_or("Notification manager not available")?;
 
     let rules = notification_manager
         .get_rules()
@@ -329,16 +333,20 @@ async fn update_notification_rule_impl(
     request: UpdateNotificationRuleRequest,
     workspace_id: &str,
 ) -> Result<NotificationRuleResponse, String> {
-    let notification_manager =
-        state.notification_manager.as_deref().ok_or("Notification manager not available")?;
+    let notification_manager = state
+        .notification_manager
+        .as_deref()
+        .ok_or("Notification manager not available")?;
 
     let rules = notification_manager
         .get_rules()
         .await
         .map_err(|e| format!("Failed to get notification rules: {}", e))?;
 
-    let mut rule =
-        rules.into_iter().find(|r| r.id == rule_id).ok_or("Notification rule not found")?;
+    let mut rule = rules
+        .into_iter()
+        .find(|r| r.id == rule_id)
+        .ok_or("Notification rule not found")?;
 
     // Verify workspace ownership
     if let Some(ref rule_ws) = rule.workspace_id
@@ -430,13 +438,11 @@ pub async fn delete_notification_rule(
     }
 }
 
-async fn delete_notification_rule_impl(
-    state: &NotifyState,
-    rule_id: &str,
-    workspace_id: &str,
-) -> Result<(), String> {
-    let notification_manager =
-        state.notification_manager.as_deref().ok_or("Notification manager not available")?;
+async fn delete_notification_rule_impl(state: &NotifyState, rule_id: &str, workspace_id: &str) -> Result<(), String> {
+    let notification_manager = state
+        .notification_manager
+        .as_deref()
+        .ok_or("Notification manager not available")?;
 
     // Verify workspace ownership before delete
     let rules = notification_manager
@@ -478,8 +484,10 @@ async fn get_notification_history_impl(
     query: NotificationHistoryQuery,
     _workspace_id: &str,
 ) -> Result<Vec<NotificationHistoryResponse>, String> {
-    let notification_manager =
-        state.notification_manager.as_deref().ok_or("Notification manager not available")?;
+    let notification_manager = state
+        .notification_manager
+        .as_deref()
+        .ok_or("Notification manager not available")?;
 
     let history = if let Some(event_id) = query.event_id {
         notification_manager
@@ -532,8 +540,10 @@ async fn send_test_notification_impl(
     request: TestNotificationRequest,
     _workspace_id: &str,
 ) -> Result<(), String> {
-    let notification_manager =
-        state.notification_manager.as_deref().ok_or("Notification manager not available")?;
+    let notification_manager = state
+        .notification_manager
+        .as_deref()
+        .ok_or("Notification manager not available")?;
 
     let level = NotificationLevel::parse_str(&request.level)
         .map_err(|_e| format!("Invalid notification level: {}", request.level))?;
@@ -548,13 +558,7 @@ async fn send_test_notification_impl(
         .collect();
     let channels = channels?;
 
-    let message = NotificationMessage::new(
-        request.title,
-        request.content,
-        level,
-        channels,
-        request.recipients,
-    );
+    let message = NotificationMessage::new(request.title, request.content, level, channels, request.recipients);
 
     notification_manager
         .send_notification(&message)
@@ -588,11 +592,19 @@ async fn list_channels(
         Ok(channels) => {
             let total = count_result.unwrap_or(0);
             let total_count = total as u64;
-            let total_pages =
-                if page_size > 0 { ((total as f64) / (page_size as f64)).ceil() as u32 } else { 0 };
+            let total_pages = if page_size > 0 {
+                ((total as f64) / (page_size as f64)).ceil() as u32
+            } else {
+                0
+            };
             ApiResponseBuilder::success(PaginatedResponse {
                 data: channels,
-                pagination: PaginationInfo { page, page_size, total_pages, total_count },
+                pagination: PaginationInfo {
+                    page,
+                    page_size,
+                    total_pages,
+                    total_count,
+                },
             })
         }
         Err(e) => {
@@ -756,10 +768,7 @@ async fn test_channel(
 }
 
 /// Get channel statistics
-async fn get_statistics(
-    State(state): State<NotifyState>,
-    claims: AuthClaims,
-) -> Json<ApiResponse<ChannelStatistics>> {
+async fn get_statistics(State(state): State<NotifyState>, claims: AuthClaims) -> Json<ApiResponse<ChannelStatistics>> {
     let db = state.database.clone();
     match get_notification_channel_statistics(&db, Some(&claims.0.workspace_id)).await {
         Ok(stats) => ApiResponseBuilder::success(stats),

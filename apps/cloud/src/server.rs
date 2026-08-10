@@ -140,14 +140,11 @@ async fn spa_handler(uri: axum::http::Uri) -> axum::response::Response {
         Err(_) => {
             let html_path = format!("{}.html", file_path);
             match tokio::fs::read(&html_path).await {
-                Ok(content) => {
-                    ([(axum::http::header::CONTENT_TYPE, "text/html")], content).into_response()
-                }
+                Ok(content) => ([(axum::http::header::CONTENT_TYPE, "text/html")], content).into_response(),
                 Err(_) => {
                     tracing::info!("Serving index.html for SPA route: {}", path);
                     match tokio::fs::read("wwwroot/index.html").await {
-                        Ok(content) => ([(axum::http::header::CONTENT_TYPE, "text/html")], content)
-                            .into_response(),
+                        Ok(content) => ([(axum::http::header::CONTENT_TYPE, "text/html")], content).into_response(),
                         Err(_) => (StatusCode::NOT_FOUND, "index.html not found").into_response(),
                     }
                 }

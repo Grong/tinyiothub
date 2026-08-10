@@ -48,10 +48,7 @@ impl SqliteSessionRepository {
             row.try_get::<String, _>("created_at").and_then(|s| {
                 Self::parse_timestamp(&s).ok_or_else(|| sqlx::Error::ColumnDecode {
                     index: "created_at".into(),
-                    source: Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "invalid datetime",
-                    )),
+                    source: Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid datetime")),
                 })
             })
         })?;
@@ -59,17 +56,13 @@ impl SqliteSessionRepository {
             row.try_get::<String, _>("updated_at").and_then(|s| {
                 Self::parse_timestamp(&s).ok_or_else(|| sqlx::Error::ColumnDecode {
                     index: "updated_at".into(),
-                    source: Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "invalid datetime",
-                    )),
+                    source: Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid datetime")),
                 })
             })
         })?;
 
         let metadata_str: String = row.try_get("metadata").unwrap_or_else(|_| "{}".to_string());
-        let metadata: serde_json::Value =
-            serde_json::from_str(&metadata_str).unwrap_or_else(|_| serde_json::json!({}));
+        let metadata: serde_json::Value = serde_json::from_str(&metadata_str).unwrap_or_else(|_| serde_json::json!({}));
 
         Ok(Session {
             session_key,
@@ -104,8 +97,8 @@ impl SessionRepository for SqliteSessionRepository {
     }
 
     async fn create(&self, session: &Session) -> Result<(), SessionError> {
-        let metadata_str = serde_json::to_string(&session.metadata)
-            .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
+        let metadata_str =
+            serde_json::to_string(&session.metadata).map_err(|e| SessionError::RepositoryError(e.to_string()))?;
 
         sqlx::query(
             "INSERT INTO chat_sessions (session_key, workspace_id, agent_id, label, created_at, updated_at, metadata) \
@@ -126,8 +119,8 @@ impl SessionRepository for SqliteSessionRepository {
     }
 
     async fn update(&self, session: &Session) -> Result<(), SessionError> {
-        let metadata_str = serde_json::to_string(&session.metadata)
-            .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
+        let metadata_str =
+            serde_json::to_string(&session.metadata).map_err(|e| SessionError::RepositoryError(e.to_string()))?;
 
         let result = sqlx::query(
             "UPDATE chat_sessions \
@@ -170,7 +163,9 @@ impl SessionRepository for SqliteSessionRepository {
             .execute(&mut *tx)
             .await
             .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
-        tx.commit().await.map_err(|e| SessionError::RepositoryError(e.to_string()))?;
+        tx.commit()
+            .await
+            .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
 
         if result.rows_affected() == 0 {
             return Err(SessionError::NotFound(session_key.to_string()));
@@ -210,10 +205,7 @@ impl SessionRepository for SqliteSessionRepository {
 
         let mut sessions = Vec::with_capacity(rows.len());
         for row in rows {
-            sessions.push(
-                Self::map_session_row(row)
-                    .map_err(|e| SessionError::RepositoryError(e.to_string()))?,
-            );
+            sessions.push(Self::map_session_row(row).map_err(|e| SessionError::RepositoryError(e.to_string()))?);
         }
 
         Ok(sessions)
@@ -227,7 +219,9 @@ mod tests {
 
     async fn create_test_repo() -> SqliteSessionRepository {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        tinyiothub_storage::test_helpers::run_all_migrations(&pool).await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
         SqliteSessionRepository::new(Database::new(pool))
     }
 
@@ -297,7 +291,9 @@ mod tests {
         // in the original schema, so delete must remove messages first.
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await.unwrap();
-        tinyiothub_storage::test_helpers::run_all_migrations(&pool).await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
         let repo = SqliteSessionRepository::new(Database::new(pool.clone()));
 
         let session = Session::new(
@@ -306,30 +302,26 @@ mod tests {
             "agent1".to_string(),
         );
         repo.create(&session).await.unwrap();
-        sqlx::query(
-            "INSERT INTO chat_messages (session_key, role, content, timestamp) VALUES (?, 'user', 'hi', 1)",
-        )
-        .bind(&session.session_key)
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO chat_messages (session_key, role, content, timestamp) VALUES (?, 'user', 'hi', 1)")
+            .bind(&session.session_key)
+            .execute(&pool)
+            .await
+            .unwrap();
 
         repo.delete(&session.session_key).await.unwrap();
 
-        let remaining: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM chat_messages WHERE session_key = ?")
-                .bind(&session.session_key)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let remaining: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM chat_messages WHERE session_key = ?")
+            .bind(&session.session_key)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(remaining.0, 0, "messages must be deleted with the session");
     }
 
     #[tokio::test]
     async fn test_update_nonexistent_session() {
         let repo = create_test_repo().await;
-        let session =
-            Session::new("nonexistent:key".to_string(), "ws".to_string(), "agent".to_string());
+        let session = Session::new("nonexistent:key".to_string(), "ws".to_string(), "agent".to_string());
         let result = repo.update(&session).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), SessionError::NotFound(_)));

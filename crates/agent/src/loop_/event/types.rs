@@ -2,8 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use tinyiothub_event::AlarmEvent;
 use crate::loop_::heartbeat::types::HeartbeatResult;
+use tinyiothub_event::AlarmEvent;
 use tinyiothub_llm::session::types::ChatTurnMessage;
 
 /// AI subsystem domain events.

@@ -8,8 +8,8 @@
 //! The adapter owns construction of the [`SqlitePolicyEngine`] — callers
 //! only hand it a connection pool.
 
-use sqlx::SqlitePool;
 use crate::loop_::types::{ChatConfirmAdapter, ChatConfirmVerdict};
+use sqlx::SqlitePool;
 use tinyiothub_core::thing_hooks::{PendingThingAction, ThingActionHooks, ThingConfirmVerdict};
 
 use crate::host::{
@@ -30,11 +30,7 @@ impl AgentThingActionHooks {
 
 #[async_trait::async_trait]
 impl ThingActionHooks for AgentThingActionHooks {
-    fn validate_params(
-        &self,
-        schema_json: &str,
-        params: Option<&serde_json::Value>,
-    ) -> Result<(), String> {
+    fn validate_params(&self, schema_json: &str, params: Option<&serde_json::Value>) -> Result<(), String> {
         validate_action_params(schema_json, params)
     }
 
@@ -63,9 +59,7 @@ impl ThingActionHooks for AgentThingActionHooks {
         action_name: &str,
         require_confirm: bool,
     ) -> ThingConfirmVerdict {
-        let adapter = ChatConfirmAdapter::new(std::sync::Arc::new(SqlitePolicyEngine::new(
-            self.pool.clone(),
-        )));
+        let adapter = ChatConfirmAdapter::new(std::sync::Arc::new(SqlitePolicyEngine::new(self.pool.clone())));
         match adapter.decide(workspace_id, action_name, require_confirm).await {
             ChatConfirmVerdict::Execute => ThingConfirmVerdict::Execute,
             ChatConfirmVerdict::RequireToken => ThingConfirmVerdict::RequireToken,

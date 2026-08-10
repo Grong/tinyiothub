@@ -11,15 +11,13 @@
 // AuthHelper::check_role 依赖 user_roles.role_name/is_active 列，
 // 现行 schema 无此二列（查询必失败回落 "user"），不可用。
 
+use crate::loop_::thing_agent::{AgentRunsRepository, EnqueueError, Priority, TriggerSource, WakeSignal};
 use axum::{
     Json, Router,
     extract::{Extension, Path, Query, State},
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
-use crate::loop_::thing_agent::{
-    AgentRunsRepository, EnqueueError, Priority, TriggerSource, WakeSignal,
-};
 use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy, PolicyRepository};
 use tinyiothub_web::api_response::ApiResponse;
@@ -110,15 +108,9 @@ pub async fn create_task(
             "taskId": uuid::Uuid::new_v4().to_string(),
             "status": "accepted",
         })),
-        Err(EnqueueError::Rejected) => {
-            ApiResponseBuilder::error_with_code(429, "任务队列已满，请稍后重试")
-        }
-        Err(EnqueueError::Duplicate) => {
-            ApiResponseBuilder::error_with_code(409, "相同指令已在队列中，请稍候")
-        }
-        Err(EnqueueError::Closed) => {
-            ApiResponseBuilder::error_with_code(503, "Agent 任务服务已停止")
-        }
+        Err(EnqueueError::Rejected) => ApiResponseBuilder::error_with_code(429, "任务队列已满，请稍后重试"),
+        Err(EnqueueError::Duplicate) => ApiResponseBuilder::error_with_code(409, "相同指令已在队列中，请稍候"),
+        Err(EnqueueError::Closed) => ApiResponseBuilder::error_with_code(503, "Agent 任务服务已停止"),
         Err(other) => {
             tracing::error!(%workspace_id, "directive enqueue failed: {}", other);
             ApiResponseBuilder::error("指令投递失败")
@@ -198,12 +190,11 @@ pub async fn ack_run(
     verify_agent_admin!(state, claims, workspace_id);
 
     // 存在性 + workspace 归属：不存在与跨区统一 404（不泄露存在性）
-    let owner: Option<String> =
-        sqlx::query_scalar("SELECT workspace_id FROM agent_runs WHERE id = ?")
-            .bind(&run_id)
-            .fetch_optional(state.database.pool())
-            .await
-            .unwrap_or(None);
+    let owner: Option<String> = sqlx::query_scalar("SELECT workspace_id FROM agent_runs WHERE id = ?")
+        .bind(&run_id)
+        .fetch_optional(state.database.pool())
+        .await
+        .unwrap_or(None);
     match owner {
         Some(ref ws) if ws == &workspace_id => {}
         _ => return ApiResponseBuilder::error_with_code(404, "运行记录不存在"),

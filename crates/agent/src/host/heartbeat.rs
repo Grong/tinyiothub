@@ -15,9 +15,7 @@ pub struct HeartbeatTask {
 }
 
 /// Read tasks from HEARTBEAT.md
-pub async fn read_heartbeat_tasks(
-    workspace_dir: &std::path::Path,
-) -> anyhow::Result<Vec<HeartbeatTask>> {
+pub async fn read_heartbeat_tasks(workspace_dir: &std::path::Path) -> anyhow::Result<Vec<HeartbeatTask>> {
     let path = workspace_dir.join("HEARTBEAT.md");
     if !path.exists() {
         return Ok(get_default_tasks());
@@ -69,7 +67,11 @@ fn parse_heartbeat_md(content: &str) -> Vec<HeartbeatTask> {
                 (priority_part.to_string(), false)
             };
             if !text.is_empty() {
-                tasks.push(HeartbeatTask { priority, text: text.to_string(), paused });
+                tasks.push(HeartbeatTask {
+                    priority,
+                    text: text.to_string(),
+                    paused,
+                });
             }
         } else if let Some(text) = line.strip_prefix("- ") {
             let text = text.trim();
@@ -89,8 +91,11 @@ fn parse_heartbeat_md(content: &str) -> Vec<HeartbeatTask> {
 pub(crate) fn build_heartbeat_md(tasks: &[HeartbeatTask]) -> String {
     let mut s = "# Periodic Tasks\n".to_string();
     for task in tasks {
-        let flag =
-            if task.paused { format!("{}|paused", task.priority) } else { task.priority.clone() };
+        let flag = if task.paused {
+            format!("{}|paused", task.priority)
+        } else {
+            task.priority.clone()
+        };
         s.push_str(&format!("- [{}] {}\n", flag, task.text));
     }
     s
@@ -134,7 +139,11 @@ pub async fn migrate_file_tasks_to_db(
         .await
         .map_err(|e| anyhow::anyhow!("replace tasks: {e}"))?;
     tokio::fs::rename(&path, workspace_dir.join("HEARTBEAT.md.migrated")).await?;
-    tracing::info!(workspace_id, count = new_tasks.len(), "Migrated HEARTBEAT.md tasks to DB");
+    tracing::info!(
+        workspace_id,
+        count = new_tasks.len(),
+        "Migrated HEARTBEAT.md tasks to DB"
+    );
     Ok(true)
 }
 
@@ -197,9 +206,15 @@ mod tests {
     fn test_build_heartbeat_md_roundtrip() {
         let tasks = vec![
             HeartbeatTask {
-                priority: "high".into(), text: "检查离线设备".into(), paused: false
+                priority: "high".into(),
+                text: "检查离线设备".into(),
+                paused: false,
             },
-            HeartbeatTask { priority: "low".into(), text: "生成报表".into(), paused: true },
+            HeartbeatTask {
+                priority: "low".into(),
+                text: "生成报表".into(),
+                paused: true,
+            },
         ];
         let md = build_heartbeat_md(&tasks);
         let parsed = parse_heartbeat_md(&md);
@@ -209,17 +224,14 @@ mod tests {
         assert!(parsed[1].paused);
     }
 
-    async fn migration_test_repo()
-    -> crate::host::heartbeat_repo::SqliteHeartbeatTaskRepository {
+    async fn migration_test_repo() -> crate::host::heartbeat_repo::SqliteHeartbeatTaskRepository {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
             .await
             .expect("in-memory sqlite");
-        for stmt in include_str!(
-            "../../../../crates/db/migrations/20260629000001_create_heartbeat_tasks.sql"
-        )
-        .split(';')
+        for stmt in
+            include_str!("../../../../crates/db/migrations/20260629000001_create_heartbeat_tasks.sql").split(';')
         {
             let stmt = stmt.trim();
             if !stmt.is_empty() {
@@ -232,8 +244,11 @@ mod tests {
     #[tokio::test]
     async fn test_migrate_file_tasks_to_db_once() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("HEARTBEAT.md"), "- [high] 检查设备\n- [low|paused] 日报")
-            .unwrap();
+        std::fs::write(
+            dir.path().join("HEARTBEAT.md"),
+            "- [high] 检查设备\n- [low|paused] 日报",
+        )
+        .unwrap();
         let repo = migration_test_repo().await;
 
         let migrated = migrate_file_tasks_to_db(&repo, "ws_1", dir.path()).await.unwrap();
@@ -242,7 +257,11 @@ mod tests {
         use crate::loop_::heartbeat::repo::HeartbeatTaskRepository;
         let tasks = repo.list_by_workspace("ws_1").await.unwrap();
         assert_eq!(tasks.len(), 2);
-        assert!(tasks.iter().any(|t| t.text == "检查设备" && t.priority == "high" && !t.paused));
+        assert!(
+            tasks
+                .iter()
+                .any(|t| t.text == "检查设备" && t.priority == "high" && !t.paused)
+        );
         assert!(tasks.iter().any(|t| t.text == "日报" && t.paused));
         assert!(!dir.path().join("HEARTBEAT.md").exists());
         assert!(dir.path().join("HEARTBEAT.md.migrated").exists());

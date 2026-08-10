@@ -46,7 +46,10 @@ async fn test_list_driver_names() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
-    let response = app.oneshot(auth_request("GET", "/api/v1/drivers/names", &token)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/drivers/names", &token))
+        .await
+        .unwrap();
 
     let status = response.status();
     assert_eq!(status, StatusCode::OK);
@@ -107,7 +110,11 @@ async fn test_check_driver_support_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/drivers/nonexistent-driver/supported", &token))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/drivers/nonexistent-driver/supported",
+            &token,
+        ))
         .await
         .unwrap();
 

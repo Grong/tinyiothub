@@ -38,12 +38,11 @@ async fn test_list_events() {
 async fn test_create_event_missing_fields() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("POST", "/api/v1/events", &token, Some(json!({})))).await.unwrap();
-    assert!(
-        response.status() == StatusCode::UNPROCESSABLE_ENTITY
-            || response.status() == StatusCode::OK
-    );
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/events", &token, Some(json!({}))))
+        .await
+        .unwrap();
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
 }
 
 // ── Real-time ──
@@ -52,8 +51,10 @@ async fn test_create_event_missing_fields() {
 async fn test_get_real_time_events() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/events/real-time", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/events/real-time", &token, None))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number());
@@ -96,8 +97,10 @@ async fn test_acknowledge_event_not_found() {
 async fn test_get_event_overview() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/events/overview", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/events/overview", &token, None))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number());
@@ -165,7 +168,12 @@ async fn test_get_all_audit_logs() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/events/security/audit-logs/all", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/events/security/audit-logs/all",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     assert!(response.status().is_success() || response.status().is_client_error());
@@ -211,7 +219,12 @@ async fn test_update_security_config() {
     let token = create_test_token("user-1", "tenant-1");
     let body = json!({"audit_log_retention_days": 90, "max_login_attempts": 5});
     let response = app
-        .oneshot(auth_request("PUT", "/api/v1/events/security/config", &token, Some(body)))
+        .oneshot(auth_request(
+            "PUT",
+            "/api/v1/events/security/config",
+            &token,
+            Some(body),
+        ))
         .await
         .unwrap();
     assert!(response.status().is_success() || response.status().is_client_error());

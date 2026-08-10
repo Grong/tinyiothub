@@ -209,11 +209,19 @@ impl NotificationAggregate {
             is_active: true,
         };
 
-        Ok(Self { rule, records: Vec::new(), version: 1 })
+        Ok(Self {
+            rule,
+            records: Vec::new(),
+            version: 1,
+        })
     }
 
     pub fn from_rule(rule: NotificationRule) -> Self {
-        Self { rule, records: Vec::new(), version: 1 }
+        Self {
+            rule,
+            records: Vec::new(),
+            version: 1,
+        }
     }
 
     pub fn rule(&self) -> &NotificationRule {
@@ -232,18 +240,13 @@ impl NotificationAggregate {
         if !self.rule.enabled {
             return false;
         }
-        let type_match = self.rule.event_type.is_none()
-            || self.rule.event_type.as_ref() == Some(&event_type.to_string());
-        let level_match =
-            self.rule.event_level.is_none() || self.rule.event_level == Some(*event_level as i32);
+        let type_match =
+            self.rule.event_type.is_none() || self.rule.event_type.as_ref() == Some(&event_type.to_string());
+        let level_match = self.rule.event_level.is_none() || self.rule.event_level == Some(*event_level as i32);
         type_match && level_match
     }
 
-    pub fn create_notifications(
-        &mut self,
-        event_id: String,
-        _message: String,
-    ) -> Result<Vec<NotificationRecord>> {
+    pub fn create_notifications(&mut self, event_id: String, _message: String) -> Result<Vec<NotificationRecord>> {
         if !self.rule.enabled {
             return Ok(Vec::new());
         }
@@ -276,7 +279,9 @@ impl NotificationAggregate {
             self.version += 1;
             Ok(())
         } else {
-            Err(EventError::NotFound { id: notification_id.to_string() })
+            Err(EventError::NotFound {
+                id: notification_id.to_string(),
+            })
         }
     }
 
@@ -287,7 +292,9 @@ impl NotificationAggregate {
             self.version += 1;
             Ok(())
         } else {
-            Err(EventError::NotFound { id: notification_id.to_string() })
+            Err(EventError::NotFound {
+                id: notification_id.to_string(),
+            })
         }
     }
 
@@ -344,11 +351,17 @@ impl NotificationAggregate {
     }
 
     pub fn pending_notifications_count(&self) -> usize {
-        self.records.iter().filter(|r| matches!(r.status, NotificationStatus::Pending)).count()
+        self.records
+            .iter()
+            .filter(|r| matches!(r.status, NotificationStatus::Pending))
+            .count()
     }
 
     pub fn retryable_notifications(&self) -> Vec<&NotificationRecord> {
-        self.records.iter().filter(|r| matches!(r.status, NotificationStatus::Failed)).collect()
+        self.records
+            .iter()
+            .filter(|r| matches!(r.status, NotificationStatus::Failed))
+            .collect()
     }
 }
 
@@ -575,13 +588,19 @@ pub struct TestNotificationRequest {
 pub fn convert_device_filter(filter: &serde_json::Value) -> DeviceFilterResponse {
     DeviceFilterResponse {
         device_ids: filter.get("device_ids").and_then(|v| v.as_array()).map(|arr| {
-            arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<String>>()
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect::<Vec<String>>()
         }),
         device_types: filter.get("device_types").and_then(|v| v.as_array()).map(|arr| {
-            arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<String>>()
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect::<Vec<String>>()
         }),
         tags: filter.get("tags").and_then(|v| v.as_array()).map(|arr| {
-            arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<String>>()
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect::<Vec<String>>()
         }),
     }
 }
@@ -679,7 +698,9 @@ mod tests {
         assert!(record.sent_at.is_some());
 
         // Mark as failed
-        aggregate.mark_notification_failed(notification_id, "Network error".to_string()).unwrap();
+        aggregate
+            .mark_notification_failed(notification_id, "Network error".to_string())
+            .unwrap();
         let record = aggregate.records().iter().find(|r| r.id == *notification_id).unwrap();
         assert!(matches!(record.status, NotificationStatus::Failed));
     }

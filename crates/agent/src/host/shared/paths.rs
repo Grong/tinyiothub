@@ -20,7 +20,10 @@ pub fn set_project_root(root: PathBuf) {
 /// Project root: the tinyiothub/ directory.
 /// 可通过环境变量 TINYIOTHUB__PROJECT_ROOT 覆盖（Docker 等场景）
 pub fn project_root() -> PathBuf {
-    if let Some(root) = PROJECT_ROOT_OVERRIDE.read().expect("project root lock poisoned").as_ref()
+    if let Some(root) = PROJECT_ROOT_OVERRIDE
+        .read()
+        .expect("project root lock poisoned")
+        .as_ref()
     {
         return root.clone();
     }

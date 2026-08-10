@@ -24,10 +24,7 @@ use zeroclaw::{
     tools::Tool,
 };
 
-use super::{
-    chat::service as chat_service, config::service as config_service,
-    tools::service as tool_service,
-};
+use super::{chat::service as chat_service, config::service as config_service, tools::service as tool_service};
 use crate::host::shared::config::{AgentConfig, AgentError, AgentInfo, AgentRuntimeConfig};
 
 // ============================================================================
@@ -48,9 +45,7 @@ impl PromptSection for TinyIoTHubSkillsSection {
 }
 
 /// Load skills for a workspace, workspace-specific dir overriding the global one.
-pub(crate) fn load_workspace_skills(
-    workspace_dir: &std::path::Path,
-) -> Vec<tinyiothub_skills::LoadedSkill> {
+pub(crate) fn load_workspace_skills(workspace_dir: &std::path::Path) -> Vec<tinyiothub_skills::LoadedSkill> {
     let dirs = vec![workspace_dir.join("skills"), std::path::PathBuf::from("data/skills")];
     tinyiothub_skills::load_skills_from_dirs(&dirs)
 }
@@ -117,13 +112,11 @@ pub struct AgentPool {
     pub(crate) response_cache: Option<Arc<zeroclaw::memory::ResponseCache>>,
     #[allow(dead_code)]
     pub(crate) agent_settings: tinyiothub_core::config::AgentSettings,
-    pub chat_handles:
-        Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
+    pub chat_handles: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
     pub memory_store: Arc<dyn tinyiothub_core::memory::MemoryStore>,
     pub trust_configs: DashMap<String, crate::loop_::types::TrustConfig>,
     pub memory_service: tokio::sync::RwLock<Option<Arc<tinyiothub_memory::service::MemoryService>>>,
-    pub event_publisher:
-        tokio::sync::RwLock<Option<Arc<crate::loop_::event::bus::AiEventPublisher>>>,
+    pub event_publisher: tokio::sync::RwLock<Option<Arc<crate::loop_::event::bus::AiEventPublisher>>>,
     /// Builds a fresh model provider per agent (injected by the composition
     /// layer — providers are per-agent in zeroclaw).
     provider_factory: super::autonomous_factory::ProviderFactory,
@@ -152,26 +145,22 @@ impl AgentPool {
             ..Default::default()
         };
 
-        let memory = zeroclaw::memory::create_memory(&memory_config, &workspace_dir, None)
-            .map_err(|e| {
-                anyhow!(
-                    "Failed to create memory backend '{}': {}",
-                    agent_settings.memory_backend,
-                    e
-                )
-            })?;
+        let memory = zeroclaw::memory::create_memory(&memory_config, &workspace_dir, None).map_err(|e| {
+            anyhow!(
+                "Failed to create memory backend '{}': {}",
+                agent_settings.memory_backend,
+                e
+            )
+        })?;
         let shared_memory: Arc<dyn Memory> = Arc::from(memory);
 
-        let response_cache =
-            zeroclaw::memory::create_response_cache(&memory_config, &workspace_dir).map(Arc::new);
+        let response_cache = zeroclaw::memory::create_response_cache(&memory_config, &workspace_dir).map(Arc::new);
 
         let observer_backend = match agent_settings.observer_backend.as_str() {
             "none" | "noop" => zeroclaw::config::schema::ObservabilityBackend::None,
             "verbose" => zeroclaw::config::schema::ObservabilityBackend::Verbose,
             "prometheus" => zeroclaw::config::schema::ObservabilityBackend::Prometheus,
-            "otel" | "opentelemetry" | "otlp" => {
-                zeroclaw::config::schema::ObservabilityBackend::Otel
-            }
+            "otel" | "opentelemetry" | "otlp" => zeroclaw::config::schema::ObservabilityBackend::Otel,
             _ => zeroclaw::config::schema::ObservabilityBackend::Log,
         };
         let observer_config = zeroclaw::config::schema::ObservabilityConfig {
@@ -205,18 +194,12 @@ impl AgentPool {
         *guard = ctx;
     }
 
-    pub async fn set_event_publisher(
-        &self,
-        publisher: Arc<crate::loop_::event::bus::AiEventPublisher>,
-    ) {
+    pub async fn set_event_publisher(&self, publisher: Arc<crate::loop_::event::bus::AiEventPublisher>) {
         let mut guard = self.event_publisher.write().await;
         *guard = Some(publisher);
     }
 
-    pub async fn set_memory_service(
-        &self,
-        service: Arc<tinyiothub_memory::service::MemoryService>,
-    ) {
+    pub async fn set_memory_service(&self, service: Arc<tinyiothub_memory::service::MemoryService>) {
         let mut guard = self.memory_service.write().await;
         *guard = Some(service);
     }
@@ -270,8 +253,10 @@ impl AgentPool {
 
         let ws_dir = crate::host::shared::paths::workspace_dir(workspace_id);
 
-        let trust_config =
-            self.trust_configs.get(workspace_id).map(|e| std::sync::Arc::new(e.value().clone()));
+        let trust_config = self
+            .trust_configs
+            .get(workspace_id)
+            .map(|e| std::sync::Arc::new(e.value().clone()));
         let tools = {
             let runtime = self.runtime.read().await.clone();
             tool_service::resolve_tools_for_agent(
@@ -363,8 +348,7 @@ impl AgentPool {
     ) -> anyhow::Result<zeroclaw::agent::Agent> {
         let tool_dispatcher = Box::new(NativeToolDispatcher);
 
-        let prompt_builder =
-            SystemPromptBuilder::with_defaults().add_section(Box::new(TinyIoTHubSkillsSection));
+        let prompt_builder = SystemPromptBuilder::with_defaults().add_section(Box::new(TinyIoTHubSkillsSection));
 
         zeroclaw::agent::Agent::builder()
             .model_provider(provider)
@@ -429,18 +413,20 @@ impl AgentPool {
 
     pub async fn get_agent(&self, agent_id: &str) -> Result<AgentInfo, AgentError> {
         let agent_id = agent_id.to_string();
-        let row: Option<(String, String, String, String)> = sqlx::query_as(
-            "SELECT agent_id, workspace_id, name, status FROM agents WHERE agent_id = ?",
-        )
-        .bind(&agent_id)
-        .fetch_optional(&self.db_pool)
-        .await
-        .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+        let row: Option<(String, String, String, String)> =
+            sqlx::query_as("SELECT agent_id, workspace_id, name, status FROM agents WHERE agent_id = ?")
+                .bind(&agent_id)
+                .fetch_optional(&self.db_pool)
+                .await
+                .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
 
         match row {
-            Some((id, _workspace, name, status)) => {
-                Ok(AgentInfo { id, name, status, created_at: None })
-            }
+            Some((id, _workspace, name, status)) => Ok(AgentInfo {
+                id,
+                name,
+                status,
+                created_at: None,
+            }),
             None => Err(AgentError::NotFound(agent_id)),
         }
     }
@@ -468,11 +454,7 @@ impl AgentPool {
     // Config (delegated to ConfigService)
     // ========================================================================
 
-    pub async fn get_agent_config(
-        &self,
-        agent_id: &str,
-        workspace_id: &str,
-    ) -> Result<serde_json::Value, AgentError> {
+    pub async fn get_agent_config(&self, agent_id: &str, workspace_id: &str) -> Result<serde_json::Value, AgentError> {
         config_service::verify_agent_workspace(&self.db_pool, agent_id, workspace_id).await?;
         config_service::get_config_json(&self.db_pool, agent_id).await
     }
@@ -500,11 +482,7 @@ impl AgentPool {
         Ok(tool_service::build_catalog().await)
     }
 
-    pub async fn tools_effective(
-        &self,
-        agent_id: &str,
-        workspace_id: &str,
-    ) -> Result<serde_json::Value, AgentError> {
+    pub async fn tools_effective(&self, agent_id: &str, workspace_id: &str) -> Result<serde_json::Value, AgentError> {
         config_service::verify_agent_workspace(&self.db_pool, agent_id, workspace_id).await?;
         let config = config_service::get_config(&self.db_pool, agent_id).await?;
         let all_tools = {
@@ -530,8 +508,7 @@ impl AgentPool {
         } else if !config.tool_denylist.contains(&tool_name.to_string()) {
             config.tool_denylist.push(tool_name.to_string());
         }
-        let config_str =
-            serde_json::to_string(&config).map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+        let config_str = serde_json::to_string(&config).map_err(|e| AgentError::RequestFailed(e.to_string()))?;
         config_service::set_config(&self.db_pool, agent_id, &config_str).await?;
         self.invalidate(agent_id);
         Ok(())
@@ -635,18 +612,16 @@ impl AgentPool {
     // Run single (for cron jobs)
     // ========================================================================
 
-    pub async fn run_single(
-        &self,
-        workspace_id: &str,
-        message: &str,
-    ) -> Result<String, AgentError> {
+    pub async fn run_single(&self, workspace_id: &str, message: &str) -> Result<String, AgentError> {
         // Per-workspace agent key prevents cross-workspace tool context leak.
         // "__heartbeat__" has no DB row, so it always falls back to
         // AgentRuntimeConfig::default() → server-level [minimax] model.
         let agent_id = format!("__heartbeat__:{}", workspace_id);
         let agent = self.get_or_create(&agent_id, workspace_id).await?;
         let mut ag = agent.lock().await;
-        ag.run_single(message).await.map_err(|e| AgentError::RequestFailed(e.to_string()))
+        ag.run_single(message)
+            .await
+            .map_err(|e| AgentError::RequestFailed(e.to_string()))
     }
 
     // ========================================================================
@@ -655,11 +630,7 @@ impl AgentPool {
 
     /// Run the heartbeat agent with streaming TurnEvents, enabling per-tool-call
     /// interception (trust gate, action recording).
-    pub async fn run_streaming(
-        &self,
-        workspace_id: &str,
-        message: &str,
-    ) -> Result<StreamingRunResult, AgentError> {
+    pub async fn run_streaming(&self, workspace_id: &str, message: &str) -> Result<StreamingRunResult, AgentError> {
         let agent_id = format!("__heartbeat__:{}", workspace_id);
         let agent = self.get_or_create(&agent_id, workspace_id).await?;
 
@@ -674,7 +645,12 @@ impl AgentPool {
                 match evt {
                     zeroclaw::agent::TurnEvent::ToolCall { name, args, .. } => {
                         let mut calls = tool_calls_clone.lock().unwrap();
-                        calls.push(StreamingToolCall { name, args, result: None, success: true });
+                        calls.push(StreamingToolCall {
+                            name,
+                            args,
+                            result: None,
+                            success: true,
+                        });
                     }
                     zeroclaw::agent::TurnEvent::ToolResult { name, output, .. } => {
                         let mut calls = tool_calls_clone.lock().unwrap();
@@ -749,7 +725,9 @@ mod tests {
 
     async fn test_db() -> SqlitePool {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        tinyiothub_storage::test_helpers::run_all_migrations(&pool).await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
         pool
     }
 
@@ -792,23 +770,12 @@ mod tests {
     async fn chat_history_with_unscoped_token_reads_persisted_messages() {
         let pool = test_agent_pool().await;
         let key = "agent:ws1:agent_main/s1";
-        crate::host::chat::history::ensure_session(
-            &pool.db_pool,
-            key,
-            "ws1",
-            "agent_main",
-        )
-        .await
-        .unwrap();
-        crate::host::chat::history::append_message(
-            &pool.db_pool,
-            key,
-            "user",
-            "hello",
-            "r1",
-        )
-        .await
-        .unwrap();
+        crate::host::chat::history::ensure_session(&pool.db_pool, key, "ws1", "agent_main")
+            .await
+            .unwrap();
+        crate::host::chat::history::append_message(&pool.db_pool, key, "user", "hello", "r1")
+            .await
+            .unwrap();
 
         // Empty authorized_workspace = unscoped (admin) token: no workspace
         // check, history served straight from the DB.
@@ -837,6 +804,8 @@ mod tests {
             matches!(err, AgentError::NotFound(_)),
             "unknown run_id must not silently succeed: {err:?}"
         );
-        pool.chat_abort("agent_main", "agent:ws1:agent_main/s1", None, "").await.unwrap();
+        pool.chat_abort("agent_main", "agent:ws1:agent_main/s1", None, "")
+            .await
+            .unwrap();
     }
 }

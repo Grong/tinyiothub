@@ -62,8 +62,11 @@ pub async fn handle_sse_connection(
 ) -> Response {
     // Workspace: query param > X-Workspace-Id header > claims.workspace_id
     let user_id = claims.user_id.clone();
-    let workspace_id =
-        query.workspace_id.clone().or_else(|| workspace_scope.0.clone()).unwrap_or_else(|| {
+    let workspace_id = query
+        .workspace_id
+        .clone()
+        .or_else(|| workspace_scope.0.clone())
+        .unwrap_or_else(|| {
             if claims.workspace_id.is_empty() {
                 "default".to_string()
             } else {
@@ -80,7 +83,9 @@ pub async fn handle_sse_connection(
     let event_levels = parse_event_levels(&query.event_levels);
 
     let sse_manager = state.get_sse_manager();
-    sse_manager.create_connection(user_id, workspace_id, event_types, event_levels).await
+    sse_manager
+        .create_connection(user_id, workspace_id, event_types, event_levels)
+        .await
 }
 
 /// Handle SSE connection via SSE token（无需 JWT middleware）
@@ -106,29 +111,33 @@ pub async fn handle_sse_connection_token(
         }
     };
 
-    let (user_id, workspace_id) =
-        match state.get_sse_token_manager().validate_and_consume(sse_token) {
-            Some(v) => v,
-            None => {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    JsonResponse(serde_json::json!({
-                        "error": "Invalid or expired SSE token"
-                    })),
-                )
-                    .into_response();
-            }
-        };
+    let (user_id, workspace_id) = match state.get_sse_token_manager().validate_and_consume(sse_token) {
+        Some(v) => v,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                JsonResponse(serde_json::json!({
+                    "error": "Invalid or expired SSE token"
+                })),
+            )
+                .into_response();
+        }
+    };
 
     let workspace_id = query.workspace_id.clone().unwrap_or(workspace_id);
 
-    info!("New SSE token connection from user: {} workspace: {}", user_id, workspace_id);
+    info!(
+        "New SSE token connection from user: {} workspace: {}",
+        user_id, workspace_id
+    );
 
     let event_types = parse_event_types(&query.event_types);
     let event_levels = parse_event_levels(&query.event_levels);
 
     let sse_manager = state.get_sse_manager();
-    sse_manager.create_connection(user_id, workspace_id, event_types, event_levels).await
+    sse_manager
+        .create_connection(user_id, workspace_id, event_types, event_levels)
+        .await
 }
 
 /// Handle public (unauthenticated) SSE connection
@@ -154,7 +163,9 @@ pub async fn handle_sse_connection_public(
 
     // Create public SSE connection
     let sse_manager = state.get_sse_manager();
-    sse_manager.create_public_connection(user_id, workspace_id, event_types, event_levels).await
+    sse_manager
+        .create_public_connection(user_id, workspace_id, event_types, event_levels)
+        .await
 }
 
 /// Get SSE connection overview
@@ -162,10 +173,7 @@ pub async fn handle_sse_connection_public(
 /// Returns metrics about active SSE connections, including total count,
 /// events sent, and average latency.
 #[axum::debug_handler]
-pub async fn get_sse_overview(
-    State(state): State<AppState>,
-    _claims: Claims,
-) -> Json<ApiResponse<SseOverview>> {
+pub async fn get_sse_overview(State(state): State<AppState>, _claims: Claims) -> Json<ApiResponse<SseOverview>> {
     let sse_manager = state.get_sse_manager();
     let overview = sse_manager.get_overview().await;
 
@@ -191,16 +199,22 @@ pub async fn get_sse_connections(
 
 /// Parse comma-separated event types from query string
 fn parse_event_types(types_str: &Option<String>) -> Option<Vec<String>> {
-    types_str
-        .as_ref()
-        .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
+    types_str.as_ref().map(|s| {
+        s.split(',')
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect()
+    })
 }
 
 /// Parse comma-separated event levels from query string
 fn parse_event_levels(levels_str: &Option<String>) -> Option<Vec<String>> {
-    levels_str
-        .as_ref()
-        .map(|s| s.split(',').map(|l| l.trim().to_lowercase()).filter(|l| !l.is_empty()).collect())
+    levels_str.as_ref().map(|s| {
+        s.split(',')
+            .map(|l| l.trim().to_lowercase())
+            .filter(|l| !l.is_empty())
+            .collect()
+    })
 }
 
 #[cfg(test)]
@@ -210,7 +224,10 @@ mod tests {
     #[test]
     fn test_parse_event_types() {
         let types = parse_event_types(&Some("system.auth,device.connection".to_string()));
-        assert_eq!(types, Some(vec!["system.auth".to_string(), "device.connection".to_string()]));
+        assert_eq!(
+            types,
+            Some(vec!["system.auth".to_string(), "device.connection".to_string()])
+        );
 
         let empty = parse_event_types(&None);
         assert_eq!(empty, None);

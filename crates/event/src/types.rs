@@ -152,7 +152,9 @@ pub struct EventCriteriaBuilder {
 
 impl EventCriteriaBuilder {
     pub fn new() -> Self {
-        Self { criteria: EventCriteria::default() }
+        Self {
+            criteria: EventCriteria::default(),
+        }
     }
 
     pub fn start_time(mut self, start: DateTime<Utc>) -> Self {
@@ -273,7 +275,9 @@ pub struct RealTimeFilterBuilder {
 
 impl RealTimeFilterBuilder {
     pub fn new() -> Self {
-        Self { filter: RealTimeFilter::default() }
+        Self {
+            filter: RealTimeFilter::default(),
+        }
     }
 
     pub fn device_ids(mut self, device_ids: Vec<String>) -> Self {

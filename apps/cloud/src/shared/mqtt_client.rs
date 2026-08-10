@@ -7,8 +7,8 @@ use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use tinyiothub_driver::gateway::{
     service::MqttPublish,
     types::{
-        DeviceDiscoverMessage, DeviceTelemetryMessage, GatewayDataMessage, PairingAnnounce,
-        StatusMessage, TelemetryMessage,
+        DeviceDiscoverMessage, DeviceTelemetryMessage, GatewayDataMessage, PairingAnnounce, StatusMessage,
+        TelemetryMessage,
     },
 };
 use tinyiothub_event::{
@@ -163,11 +163,7 @@ impl PlatformMqttClient {
     /// Parse topic and route to appropriate GatewayDataMessage variant.
     /// Topic format: tinyiothub/{ws_id}/gateway/{gw_id}/{category}
     ///           or: tinyiothub/{ws_id}/gateway/{gw_id}/device/{sub_id}/telemetry
-    async fn route_data_message(
-        topic: &str,
-        payload: &[u8],
-        data_tx: &mpsc::Sender<GatewayDataMessage>,
-    ) {
+    async fn route_data_message(topic: &str, payload: &[u8], data_tx: &mpsc::Sender<GatewayDataMessage>) {
         let parts: Vec<&str> = topic.split('/').collect();
         if parts.len() < 5 {
             return;
@@ -177,12 +173,24 @@ impl PlatformMqttClient {
         let gateway_id = parts[3].to_string();
 
         let msg = match parts.get(4).copied() {
-            Some("status") => serde_json::from_slice::<StatusMessage>(payload)
-                .ok()
-                .map(|msg| GatewayDataMessage::Status { gateway_id, workspace_id, msg }),
-            Some("telemetry") => serde_json::from_slice::<TelemetryMessage>(payload)
-                .ok()
-                .map(|msg| GatewayDataMessage::Telemetry { gateway_id, workspace_id, msg }),
+            Some("status") => {
+                serde_json::from_slice::<StatusMessage>(payload)
+                    .ok()
+                    .map(|msg| GatewayDataMessage::Status {
+                        gateway_id,
+                        workspace_id,
+                        msg,
+                    })
+            }
+            Some("telemetry") => {
+                serde_json::from_slice::<TelemetryMessage>(payload)
+                    .ok()
+                    .map(|msg| GatewayDataMessage::Telemetry {
+                        gateway_id,
+                        workspace_id,
+                        msg,
+                    })
+            }
             Some("event") => {
                 // Events are logged but not yet handled by GatewayService
                 tracing::debug!(gateway_id = %gateway_id, "Gateway event received (not yet handled)");
@@ -191,13 +199,21 @@ impl PlatformMqttClient {
             Some("device") if parts.len() >= 7 && parts[5] == "discover" => {
                 serde_json::from_slice::<DeviceDiscoverMessage>(payload)
                     .ok()
-                    .map(|msg| GatewayDataMessage::DeviceDiscover { gateway_id, workspace_id, msg })
+                    .map(|msg| GatewayDataMessage::DeviceDiscover {
+                        gateway_id,
+                        workspace_id,
+                        msg,
+                    })
             }
             Some("device") if parts.len() >= 7 && parts[5] != "discover" => {
                 let sub_id = parts[5].to_string();
-                serde_json::from_slice::<DeviceTelemetryMessage>(payload).ok().map(|msg| {
-                    GatewayDataMessage::DeviceTelemetry { gateway_id: sub_id, workspace_id, msg }
-                })
+                serde_json::from_slice::<DeviceTelemetryMessage>(payload)
+                    .ok()
+                    .map(|msg| GatewayDataMessage::DeviceTelemetry {
+                        gateway_id: sub_id,
+                        workspace_id,
+                        msg,
+                    })
             }
             _ => None,
         };
@@ -272,8 +288,7 @@ impl PlatformMqttClient {
         .await
         .ok()
         .flatten();
-        let workspace_id: String =
-            thing_row.as_ref().and_then(|(ws, _)| ws.clone()).unwrap_or_default();
+        let workspace_id: String = thing_row.as_ref().and_then(|(ws, _)| ws.clone()).unwrap_or_default();
         let template_events = thing_row.and_then(|(_, ev)| ev);
         if workspace_id.is_empty() {
             tracing::warn!(
@@ -298,8 +313,7 @@ impl PlatformMqttClient {
         // MQTT-ingested events are device-reported: actor "device" (T6).
         let alarm_hook: Option<Arc<dyn tinyiothub_event::router::EventAlarmHook>> =
             alarm_service.map(|svc| svc as Arc<dyn tinyiothub_event::router::EventAlarmHook>);
-        let result =
-            route_thing_event(db_pool, throttle, alarm_hook, event_bus, "device", input).await;
+        let result = route_thing_event(db_pool, throttle, alarm_hook, event_bus, "device", input).await;
 
         if result.throttled {
             tracing::info!(
@@ -328,8 +342,7 @@ impl PlatformMqttClient {
         let telemetry = format!("tinyiothub/{}/gateway/{}/telemetry", workspace_id, device_id);
         let event = format!("tinyiothub/{}/gateway/{}/event", workspace_id, device_id);
         let discover = format!("tinyiothub/{}/gateway/{}/device/discover", workspace_id, device_id);
-        let device_telemetry =
-            format!("tinyiothub/{}/gateway/{}/device/+/telemetry", workspace_id, device_id);
+        let device_telemetry = format!("tinyiothub/{}/gateway/{}/device/+/telemetry", workspace_id, device_id);
 
         self.client.subscribe(&status, QoS::AtMostOnce).await.ok();
         self.client.subscribe(&telemetry, QoS::AtMostOnce).await.ok();

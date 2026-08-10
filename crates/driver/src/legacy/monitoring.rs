@@ -18,7 +18,11 @@ impl DeviceMonitoringService {
         device_cache: Arc<DeviceCache>,
         alarm_repository: Arc<dyn AlarmRepository>,
     ) -> Self {
-        Self { database, device_cache, alarm_repository }
+        Self {
+            database,
+            device_cache,
+            alarm_repository,
+        }
     }
 
     pub fn is_device_online(&self, device_id: &str) -> bool {
@@ -30,10 +34,8 @@ impl DeviceMonitoringService {
                 // For simulation drivers, skip this check
             }
             if let Some(last_heartbeat) = &device.last_heartbeat
-                && let Ok(heartbeat_time) = chrono::DateTime::parse_from_str(
-                    &format!("{} +00:00", last_heartbeat),
-                    "%Y-%m-%d %H:%M:%S %z",
-                )
+                && let Ok(heartbeat_time) =
+                    chrono::DateTime::parse_from_str(&format!("{} +00:00", last_heartbeat), "%Y-%m-%d %H:%M:%S %z")
             {
                 let now = chrono::Utc::now();
                 let heartbeat_threshold = now - chrono::Duration::minutes(5);
@@ -42,10 +44,8 @@ impl DeviceMonitoringService {
                 }
             }
             if let Some(updated_at) = &device.updated_at
-                && let Ok(update_time) = chrono::DateTime::parse_from_str(
-                    &format!("{} +00:00", updated_at),
-                    "%Y-%m-%d %H:%M:%S %z",
-                )
+                && let Ok(update_time) =
+                    chrono::DateTime::parse_from_str(&format!("{} +00:00", updated_at), "%Y-%m-%d %H:%M:%S %z")
             {
                 let now = chrono::Utc::now();
                 let update_threshold = now - chrono::Duration::hours(24);
@@ -63,13 +63,11 @@ impl DeviceMonitoringService {
         if let Some(device) = self.device_cache.get(device_id) {
             let mut score = 100u8;
             if let Some(last_heartbeat) = &device.last_heartbeat {
-                if let Ok(heartbeat_time) = chrono::DateTime::parse_from_str(
-                    &format!("{} +00:00", last_heartbeat),
-                    "%Y-%m-%d %H:%M:%S %z",
-                ) {
+                if let Ok(heartbeat_time) =
+                    chrono::DateTime::parse_from_str(&format!("{} +00:00", last_heartbeat), "%Y-%m-%d %H:%M:%S %z")
+                {
                     let now = chrono::Utc::now();
-                    let minutes_since_heartbeat =
-                        (now - heartbeat_time.with_timezone(&chrono::Utc)).num_minutes();
+                    let minutes_since_heartbeat = (now - heartbeat_time.with_timezone(&chrono::Utc)).num_minutes();
                     match minutes_since_heartbeat {
                         0..=1 => {}
                         2..=3 => score = score.saturating_sub(10),
@@ -94,8 +92,7 @@ impl DeviceMonitoringService {
                                 "%Y-%m-%d %H:%M:%S %z",
                             )
                         {
-                            let minutes_since_update =
-                                (now - update_time.with_timezone(&chrono::Utc)).num_minutes();
+                            let minutes_since_update = (now - update_time.with_timezone(&chrono::Utc)).num_minutes();
                             return minutes_since_update <= 5;
                         }
                         false
@@ -116,15 +113,15 @@ impl DeviceMonitoringService {
 
     pub async fn get_device_metrics(&self, device_id: &str) -> Option<DeviceMetrics> {
         if let Some(_device) = self.device_cache.get(device_id) {
-            let device_repository: Arc<dyn tinyiothub_storage::traits::device::DeviceRepository> =
-                Arc::new(tinyiothub_storage::SqliteDeviceRepository::new(
-                    self.database.as_ref().clone(),
-                ));
-            let device_service =
-                super::service::DeviceService::new(device_repository, self.database.clone());
+            let device_repository: Arc<dyn tinyiothub_storage::traits::device::DeviceRepository> = Arc::new(
+                tinyiothub_storage::SqliteDeviceRepository::new(self.database.as_ref().clone()),
+            );
+            let device_service = super::service::DeviceService::new(device_repository, self.database.clone());
 
-            let properties =
-                device_service.get_device_properties(device_id).await.unwrap_or_default();
+            let properties = device_service
+                .get_device_properties(device_id)
+                .await
+                .unwrap_or_default();
             let commands = device_service.get_device_commands(device_id).await.unwrap_or_default();
 
             let total_properties = properties.len() as u32;
@@ -136,10 +133,8 @@ impl DeviceMonitoringService {
                 .iter()
                 .filter(|p| {
                     if let Some(last_update) = &p.updated_at
-                        && let Ok(update_time) = chrono::DateTime::parse_from_str(
-                            &format!("{} +00:00", last_update),
-                            "%Y-%m-%d %H:%M:%S %z",
-                        )
+                        && let Ok(update_time) =
+                            chrono::DateTime::parse_from_str(&format!("{} +00:00", last_update), "%Y-%m-%d %H:%M:%S %z")
                     {
                         return update_time.with_timezone(&chrono::Utc) > online_threshold;
                     }
@@ -165,8 +160,11 @@ impl DeviceMonitoringService {
 
     async fn get_device_events_and_alarms(&self, device_id: &str) -> (u32, u32) {
         let total_events = 0u32;
-        let active_alarms =
-            self.alarm_repository.count_active_alarms_by_device(device_id).await.unwrap_or(0);
+        let active_alarms = self
+            .alarm_repository
+            .count_active_alarms_by_device(device_id)
+            .await
+            .unwrap_or(0);
         (total_events, active_alarms)
     }
 

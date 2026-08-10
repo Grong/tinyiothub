@@ -423,21 +423,18 @@ mod tests {
         ) -> std::result::Result<(), tinyiothub_agent::loop_::heartbeat::repo::RepoError> {
             let mut store = self.tasks.lock().unwrap();
             store.retain(|t| t.workspace_id != workspace_id);
-            store.extend(
-                tasks
-                    .iter()
-                    .enumerate()
-                    .map(|(i, t)| tinyiothub_agent::loop_::heartbeat::types::HeartbeatTask {
-                        id: i as i64 + 1,
-                        workspace_id: workspace_id.to_string(),
-                        priority: t.priority.clone(),
-                        text: t.text.clone(),
-                        paused: t.paused,
-                        version: 1,
-                        created_at: chrono::Utc::now(),
-                        updated_at: chrono::Utc::now(),
-                    }),
-            );
+            store.extend(tasks.iter().enumerate().map(|(i, t)| {
+                tinyiothub_agent::loop_::heartbeat::types::HeartbeatTask {
+                    id: i as i64 + 1,
+                    workspace_id: workspace_id.to_string(),
+                    priority: t.priority.clone(),
+                    text: t.text.clone(),
+                    paused: t.paused,
+                    version: 1,
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                }
+            }));
             Ok(())
         }
 

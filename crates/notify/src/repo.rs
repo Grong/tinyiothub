@@ -10,8 +10,8 @@ use tinyiothub_storage::Database;
 use tracing::{debug, error, info};
 
 use super::types::{
-    HistoryStatistics, NotificationChannelType, NotificationRecord, NotificationRule,
-    NotificationStatus, RuleStatistics,
+    HistoryStatistics, NotificationChannelType, NotificationRecord, NotificationRule, NotificationStatus,
+    RuleStatistics,
 };
 use tinyiothub_event::{EventError, Result};
 
@@ -63,8 +63,7 @@ impl NotificationRuleRepositoryImpl {
         if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%d %H:%M:%S") {
             return Ok(dt.and_utc());
         }
-        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%d %H:%M:%S%.f")
-        {
+        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%d %H:%M:%S%.f") {
             return Ok(dt.and_utc());
         }
         Err(EventError::Validation {
@@ -88,15 +87,11 @@ impl NotificationRuleRepositoryImpl {
         let notification_methods = notification_methods?;
 
         let recipients_str: String = row.try_get("recipients")?;
-        let recipients: Vec<String> =
-            serde_json::from_str(&recipients_str).map_err(EventError::Serialization)?;
+        let recipients: Vec<String> = serde_json::from_str(&recipients_str).map_err(EventError::Serialization)?;
 
         let device_filter_str: Option<String> = row.try_get("device_filter")?;
         let device_filter = if let Some(filter_str) = device_filter_str {
-            Some(
-                serde_json::from_str::<serde_json::Value>(&filter_str)
-                    .map_err(EventError::Serialization)?,
-            )
+            Some(serde_json::from_str::<serde_json::Value>(&filter_str).map_err(EventError::Serialization)?)
         } else {
             None
         };
@@ -134,10 +129,7 @@ impl NotificationRuleRepositoryImpl {
     }
 
     /// Get rules by notification method
-    pub async fn get_rules_by_method(
-        &self,
-        method: NotificationChannelType,
-    ) -> Result<Vec<NotificationRule>> {
+    pub async fn get_rules_by_method(&self, method: NotificationChannelType) -> Result<Vec<NotificationRule>> {
         let pool = self.db.pool();
         let method_str = method.as_str();
         let escaped_method = Self::escape_like(method_str);
@@ -175,16 +167,17 @@ impl NotificationRuleRepositoryImpl {
     /// Enable or disable a rule
     pub async fn set_rule_enabled(&self, rule_id: &str, enabled: bool) -> Result<()> {
         let pool = self.db.pool();
-        let result =
-            sqlx::query("UPDATE notification_rules SET enabled = ?, updated_at = ? WHERE id = ?")
-                .bind(enabled)
-                .bind(Utc::now().to_rfc3339())
-                .bind(rule_id)
-                .execute(pool)
-                .await?;
+        let result = sqlx::query("UPDATE notification_rules SET enabled = ?, updated_at = ? WHERE id = ?")
+            .bind(enabled)
+            .bind(Utc::now().to_rfc3339())
+            .bind(rule_id)
+            .execute(pool)
+            .await?;
 
         if result.rows_affected() == 0 {
-            return Err(EventError::NotFound { id: rule_id.to_string() });
+            return Err(EventError::NotFound {
+                id: rule_id.to_string(),
+            });
         }
         info!("Set notification rule {} enabled: {}", rule_id, enabled);
         Ok(())
@@ -221,9 +214,8 @@ impl NotificationRuleRepositoryImpl {
 impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
     async fn create_rule(&self, rule: &NotificationRule) -> Result<()> {
         let pool = self.db.pool();
-        let notification_methods_json = serde_json::to_string(
-            &rule.notification_methods.iter().map(|m| m.as_str()).collect::<Vec<_>>(),
-        )?;
+        let notification_methods_json =
+            serde_json::to_string(&rule.notification_methods.iter().map(|m| m.as_str()).collect::<Vec<_>>())?;
         let recipients_json = serde_json::to_string(&rule.recipients)?;
         let device_filter_json = if let Some(ref filter) = rule.device_filter {
             Some(serde_json::to_string(filter)?)
@@ -339,9 +331,8 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
 
     async fn update_rule(&self, rule: &NotificationRule) -> Result<()> {
         let pool = self.db.pool();
-        let notification_methods_json = serde_json::to_string(
-            &rule.notification_methods.iter().map(|m| m.as_str()).collect::<Vec<_>>(),
-        )?;
+        let notification_methods_json =
+            serde_json::to_string(&rule.notification_methods.iter().map(|m| m.as_str()).collect::<Vec<_>>())?;
         let recipients_json = serde_json::to_string(&rule.recipients)?;
         let device_filter_json = if let Some(ref filter) = rule.device_filter {
             Some(serde_json::to_string(filter)?)
@@ -386,7 +377,9 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
             .await?;
 
         if result.rows_affected() == 0 {
-            return Err(EventError::NotFound { id: rule_id.to_string() });
+            return Err(EventError::NotFound {
+                id: rule_id.to_string(),
+            });
         }
         info!("Deleted notification rule: {}", rule_id);
         Ok(())
@@ -440,7 +433,11 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
                 }
             }
         }
-        debug!("Retrieved {} notification rules for event type: {}", rules.len(), event_type);
+        debug!(
+            "Retrieved {} notification rules for event type: {}",
+            rules.len(),
+            event_type
+        );
         Ok(rules)
     }
 }
@@ -472,23 +469,17 @@ impl NotificationHistoryRepositoryImpl {
         Self { db }
     }
 
-    fn row_to_notification_record(
-        &self,
-        row: &sqlx::sqlite::SqliteRow,
-    ) -> Result<NotificationRecord> {
+    fn row_to_notification_record(&self, row: &sqlx::sqlite::SqliteRow) -> Result<NotificationRecord> {
         let method_str: String = row.try_get("notification_method")?;
         let notification_method =
-            NotificationChannelType::parse_str(&method_str).ok_or_else(|| {
-                EventError::Validation {
-                    message: format!("Invalid notification method: {}", method_str),
-                }
+            NotificationChannelType::parse_str(&method_str).ok_or_else(|| EventError::Validation {
+                message: format!("Invalid notification method: {}", method_str),
             })?;
 
         let status_str: String = row.try_get("status")?;
-        let status =
-            NotificationStatus::parse_str(&status_str).ok_or_else(|| EventError::Validation {
-                message: format!("Invalid notification status: {}", status_str),
-            })?;
+        let status = NotificationStatus::parse_str(&status_str).ok_or_else(|| EventError::Validation {
+            message: format!("Invalid notification status: {}", status_str),
+        })?;
 
         let sent_at_str: Option<String> = row.try_get("sent_at")?;
         let sent_at = if let Some(sent_at_str) = sent_at_str {
@@ -554,10 +545,7 @@ impl NotificationHistoryRepositoryImpl {
     }
 
     /// Get notification records by status
-    pub async fn get_records_by_status(
-        &self,
-        status: NotificationStatus,
-    ) -> Result<Vec<NotificationRecord>> {
+    pub async fn get_records_by_status(&self, status: NotificationStatus) -> Result<Vec<NotificationRecord>> {
         let pool = self.db.pool();
         let rows = sqlx::query(
             r#"
@@ -582,7 +570,11 @@ impl NotificationHistoryRepositoryImpl {
                 }
             }
         }
-        debug!("Retrieved {} notification records with status: {}", records.len(), status);
+        debug!(
+            "Retrieved {} notification records with status: {}",
+            records.len(),
+            status
+        );
         Ok(records)
     }
 
@@ -639,17 +631,16 @@ impl NotificationHistoryRepositoryImpl {
 
         let deleted_count = result.rows_affected();
         if deleted_count > 0 {
-            info!("Cleaned up {} old notification records older than {} days", deleted_count, days);
+            info!(
+                "Cleaned up {} old notification records older than {} days",
+                deleted_count, days
+            );
         }
         Ok(deleted_count)
     }
 
     /// Get notification records with pagination
-    pub async fn get_records_paginated(
-        &self,
-        offset: u32,
-        limit: u32,
-    ) -> Result<(Vec<NotificationRecord>, u64)> {
+    pub async fn get_records_paginated(&self, offset: u32, limit: u32) -> Result<(Vec<NotificationRecord>, u64)> {
         let pool = self.db.pool();
 
         let count_row = sqlx::query("SELECT COUNT(*) as total FROM notification_history")
@@ -740,7 +731,11 @@ impl NotificationHistoryStore for NotificationHistoryRepositoryImpl {
                 }
             }
         }
-        debug!("Retrieved {} notification records for event: {}", records.len(), event_id);
+        debug!(
+            "Retrieved {} notification records for event: {}",
+            records.len(),
+            event_id
+        );
         Ok(records)
     }
 
@@ -751,8 +746,11 @@ impl NotificationHistoryStore for NotificationHistoryRepositoryImpl {
         error_message: Option<String>,
     ) -> Result<()> {
         let pool = self.db.pool();
-        let sent_at =
-            if status == NotificationStatus::Sent { Some(Utc::now().to_rfc3339()) } else { None };
+        let sent_at = if status == NotificationStatus::Sent {
+            Some(Utc::now().to_rfc3339())
+        } else {
+            None
+        };
 
         let result = sqlx::query(
             r#"
@@ -769,7 +767,9 @@ impl NotificationHistoryStore for NotificationHistoryRepositoryImpl {
         .await?;
 
         if result.rows_affected() == 0 {
-            return Err(EventError::NotFound { id: record_id.to_string() });
+            return Err(EventError::NotFound {
+                id: record_id.to_string(),
+            });
         }
         debug!("Updated notification record {} status to: {}", record_id, status);
         Ok(())

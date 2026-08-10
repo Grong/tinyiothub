@@ -14,9 +14,7 @@ use tinyiothub_agent::{
     loop_::{
         heartbeat::types::{HeartbeatResult, HeartbeatStatus},
         orchestrator::callbacks::HeartbeatBridge,
-        thing_agent::{
-            AgentRunsRepository, DirectiveSink, EnqueueError, Priority, TriggerSource, WakeSignal,
-        },
+        thing_agent::{AgentRunsRepository, DirectiveSink, EnqueueError, Priority, TriggerSource, WakeSignal},
     },
 };
 use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
@@ -29,8 +27,7 @@ async fn test_pool() -> SqlitePool {
         .connect(":memory:")
         .await
         .expect("create in-memory sqlite");
-    let migration =
-        include_str!("../../../../crates/db/migrations/20260729000001_thing_agent_loop.sql");
+    let migration = include_str!("../../../../crates/db/migrations/20260729000001_thing_agent_loop.sql");
     for stmt in migration.split(';') {
         let stmt = stmt.trim();
         // Skip the events ALTER — the events table is not part of this pool.
@@ -122,7 +119,9 @@ fn bridge(pool: &SqlitePool) -> (HeartbeatBridge, Arc<RecordingSink>) {
 /// problem_key 为 `tool:dev-1` 的提案经 dedup 后是否投递。
 async fn dispatched_count(pool: &SqlitePool, tool: &str) -> usize {
     let (bridge, sink) = bridge(pool);
-    bridge.dispatch_proposals(WS, &result_with(vec![proposal(tool, Some("dev-1"))])).await;
+    bridge
+        .dispatch_proposals(WS, &result_with(vec![proposal(tool, Some("dev-1"))]))
+        .await;
     sink.signals.lock().unwrap().len()
 }
 
@@ -140,7 +139,16 @@ async fn outcome_matrix_against_real_db() {
         ("t_acted_unverified", "acted", false, true), // 窗口内仅 1 次 → 放行一次
     ] {
         let key = format!("{tool}:dev-1");
-        insert_run(&pool, &format!("run_{tool}"), outcome, verified, false, &key, "-1 hours").await;
+        insert_run(
+            &pool,
+            &format!("run_{tool}"),
+            outcome,
+            verified,
+            false,
+            &key,
+            "-1 hours",
+        )
+        .await;
         assert_eq!(
             dispatched_count(&pool, tool).await,
             usize::from(expect_dispatch),
@@ -187,7 +195,11 @@ async fn ack_suppression_windows_against_real_db() {
     assert_eq!(dispatched_count(&pool, "k2").await, 0, "acked within 7d suppressed");
 
     insert_run(&pool, "ack_8d", "acted", true, true, "k3:dev-1", "-8 days").await;
-    assert_eq!(dispatched_count(&pool, "k3").await, 1, "ack older than 7d no longer suppresses");
+    assert_eq!(
+        dispatched_count(&pool, "k3").await,
+        1,
+        "ack older than 7d no longer suppresses"
+    );
 }
 
 // HeartbeatCompleted 无 proposals → 不投递。
@@ -205,7 +217,9 @@ async fn no_proposals_dispatches_nothing_against_real_db() {
 async fn heartbeat_directive_shape_against_real_db() {
     let pool = test_pool().await;
     let (bridge, sink) = bridge(&pool);
-    bridge.dispatch_proposals(WS, &result_with(vec![proposal("set_hvac", Some("dev-1"))])).await;
+    bridge
+        .dispatch_proposals(WS, &result_with(vec![proposal("set_hvac", Some("dev-1"))]))
+        .await;
 
     let signals = sink.signals.lock().unwrap();
     assert_eq!(signals.len(), 1);
@@ -213,7 +227,13 @@ async fn heartbeat_directive_shape_against_real_db() {
     assert_eq!(sig.priority, Priority::Normal);
     assert_eq!(sig.dedup_key, None);
     match &sig.source {
-        TriggerSource::UserDirective { user_id, text, source, problem_key, .. } => {
+        TriggerSource::UserDirective {
+            user_id,
+            text,
+            source,
+            problem_key,
+            ..
+        } => {
             assert_eq!(user_id, "heartbeat");
             assert_eq!(source.as_deref(), Some("heartbeat"));
             assert_eq!(problem_key.as_deref(), Some("set_hvac:dev-1"));

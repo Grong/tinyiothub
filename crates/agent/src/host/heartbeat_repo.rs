@@ -1,11 +1,11 @@
 //! SQLite implementations of AI crate heartbeat repository traits.
 
-use async_trait::async_trait;
-use sqlx::SqlitePool;
 use crate::loop_::heartbeat::{
     repo::{HeartbeatTaskRepository, RepoError},
     types::{HeartbeatResult, HeartbeatStatus, HeartbeatTask, NewHeartbeatTask},
 };
+use async_trait::async_trait;
+use sqlx::SqlitePool;
 
 /// DB row struct with sqlx::FromRow — maps to domain HeartbeatTask.
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -61,12 +61,7 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         Ok(rows.into_iter().map(HeartbeatTask::from).collect())
     }
 
-    async fn upsert(
-        &self,
-        workspace_id: &str,
-        task: &HeartbeatTask,
-        expected_version: i64,
-    ) -> Result<bool, RepoError> {
+    async fn upsert(&self, workspace_id: &str, task: &HeartbeatTask, expected_version: i64) -> Result<bool, RepoError> {
         let result = sqlx::query(
             "UPDATE heartbeat_tasks
              SET priority = ?, text = ?, paused = ?, version = version + 1,
@@ -86,12 +81,7 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    async fn insert(
-        &self,
-        workspace_id: &str,
-        priority: &str,
-        text: &str,
-    ) -> Result<HeartbeatTask, RepoError> {
+    async fn insert(&self, workspace_id: &str, priority: &str, text: &str) -> Result<HeartbeatTask, RepoError> {
         let row = sqlx::query_as::<_, HeartbeatTaskRow>(
             "INSERT INTO heartbeat_tasks (workspace_id, priority, text)
              VALUES (?, ?, ?)
@@ -108,12 +98,7 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         Ok(HeartbeatTask::from(row))
     }
 
-    async fn set_paused(
-        &self,
-        workspace_id: &str,
-        task_id: i64,
-        paused: bool,
-    ) -> Result<(), RepoError> {
+    async fn set_paused(&self, workspace_id: &str, task_id: i64, paused: bool) -> Result<(), RepoError> {
         sqlx::query(
             "UPDATE heartbeat_tasks SET paused = ?, updated_at = CURRENT_TIMESTAMP
              WHERE workspace_id = ? AND id = ?",
@@ -137,28 +122,26 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         Ok(())
     }
 
-    async fn replace_all(
-        &self,
-        workspace_id: &str,
-        tasks: &[NewHeartbeatTask],
-    ) -> Result<(), RepoError> {
-        let mut tx = self.pool.begin().await.map_err(|e| RepoError::Database(e.to_string()))?;
+    async fn replace_all(&self, workspace_id: &str, tasks: &[NewHeartbeatTask]) -> Result<(), RepoError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| RepoError::Database(e.to_string()))?;
         sqlx::query("DELETE FROM heartbeat_tasks WHERE workspace_id = ?")
             .bind(workspace_id)
             .execute(&mut *tx)
             .await
             .map_err(|e| RepoError::Database(e.to_string()))?;
         for task in tasks {
-            sqlx::query(
-                "INSERT INTO heartbeat_tasks (workspace_id, priority, text, paused) VALUES (?, ?, ?, ?)",
-            )
-            .bind(workspace_id)
-            .bind(&task.priority)
-            .bind(&task.text)
-            .bind(task.paused)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| RepoError::Database(e.to_string()))?;
+            sqlx::query("INSERT INTO heartbeat_tasks (workspace_id, priority, text, paused) VALUES (?, ?, ?, ?)")
+                .bind(workspace_id)
+                .bind(&task.priority)
+                .bind(&task.text)
+                .bind(task.paused)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| RepoError::Database(e.to_string()))?;
         }
         tx.commit().await.map_err(|e| RepoError::Database(e.to_string()))?;
         Ok(())
@@ -168,12 +151,11 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         &self,
         workspace_id: &str,
     ) -> Result<Option<tinyiothub_skills::trust::TrustConfig>, RepoError> {
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT heartbeat_trust_config FROM workspaces WHERE id = ?")
-                .bind(workspace_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| RepoError::Database(e.to_string()))?;
+        let row: Option<(String,)> = sqlx::query_as("SELECT heartbeat_trust_config FROM workspaces WHERE id = ?")
+            .bind(workspace_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| RepoError::Database(e.to_string()))?;
         Ok(row.and_then(|(json,)| {
             if json.trim().is_empty() {
                 None
@@ -201,15 +183,12 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         &self,
         workspace_id: &str,
     ) -> Result<Option<crate::loop_::heartbeat::types::WorkspaceHeartbeatConfig>, RepoError> {
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT heartbeat_config FROM workspaces WHERE id = ?")
-                .bind(workspace_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| RepoError::Database(e.to_string()))?;
-        Ok(row.and_then(|(json,)| {
-            crate::loop_::heartbeat::types::WorkspaceHeartbeatConfig::from_db_json(Some(&json))
-        }))
+        let row: Option<(String,)> = sqlx::query_as("SELECT heartbeat_config FROM workspaces WHERE id = ?")
+            .bind(workspace_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| RepoError::Database(e.to_string()))?;
+        Ok(row.and_then(|(json,)| crate::loop_::heartbeat::types::WorkspaceHeartbeatConfig::from_db_json(Some(&json))))
     }
 
     async fn save_heartbeat_config(
@@ -226,22 +205,25 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         Ok(())
     }
 
-    async fn insert_result(
-        &self,
-        workspace_id: &str,
-        result: &HeartbeatResult,
-    ) -> Result<(), RepoError> {
+    async fn insert_result(&self, workspace_id: &str, result: &HeartbeatResult) -> Result<(), RepoError> {
         // Row format must match the readers in workspace/handler/heartbeat.rs:
         // one summary|error row per tick, one auto_executed row per action,
         // one proposal row per proposal, all sharing one created_at so the
         // log query can group details under their tick.
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let agent_id = format!("__heartbeat__:{workspace_id}");
-        let mut tx = self.pool.begin().await.map_err(|e| RepoError::Database(e.to_string()))?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| RepoError::Database(e.to_string()))?;
 
         let (action_type, content) = if result.status == HeartbeatStatus::Error {
             let message = result.error.as_deref().unwrap_or(&result.summary);
-            ("error", serde_json::json!({"taskCount": result.task_count, "error": message}))
+            (
+                "error",
+                serde_json::json!({"taskCount": result.task_count, "error": message}),
+            )
         } else {
             (
                 "summary",
@@ -292,15 +274,7 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
                 "risk": proposal.risk,
                 "parameters": proposal.parameters,
             });
-            insert_action_row(
-                &mut tx,
-                workspace_id,
-                &agent_id,
-                "proposal",
-                &content.to_string(),
-                &now,
-            )
-            .await?;
+            insert_action_row(&mut tx, workspace_id, &agent_id, "proposal", &content.to_string(), &now).await?;
         }
 
         tx.commit().await.map_err(|e| RepoError::Database(e.to_string()))?;
@@ -334,8 +308,8 @@ async fn insert_action_row(
 
 #[cfg(test)]
 mod tests {
-    use sqlx::sqlite::SqlitePoolOptions;
     use crate::loop_::heartbeat::types::{ExecutedAction, HeartbeatStatus, NewHeartbeatTask};
+    use sqlx::sqlite::SqlitePoolOptions;
     use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 
     use super::*;
@@ -348,9 +322,7 @@ mod tests {
             .expect("create in-memory sqlite");
         for migration in [
             include_str!("../../../../crates/db/migrations/20260615120000_agent_actions.sql"),
-            include_str!(
-                "../../../../crates/db/migrations/20260629000001_create_heartbeat_tasks.sql"
-            ),
+            include_str!("../../../../crates/db/migrations/20260629000001_create_heartbeat_tasks.sql"),
         ] {
             for stmt in migration.split(';') {
                 let stmt = stmt.trim();
@@ -368,8 +340,16 @@ mod tests {
         let repo = SqliteHeartbeatTaskRepository::new(pool.clone());
 
         let initial = vec![
-            NewHeartbeatTask { priority: "high".into(), text: "task A".into(), paused: false },
-            NewHeartbeatTask { priority: "low".into(), text: "task B".into(), paused: true },
+            NewHeartbeatTask {
+                priority: "high".into(),
+                text: "task A".into(),
+                paused: false,
+            },
+            NewHeartbeatTask {
+                priority: "low".into(),
+                text: "task B".into(),
+                paused: true,
+            },
         ];
         repo.replace_all("ws_1", &initial).await.expect("seed tasks");
 
@@ -496,8 +476,7 @@ mod tests {
         let repo = SqliteHeartbeatTaskRepository::new(pool.clone());
 
         let mut result = sample_result();
-        result.proposals[0].parameters =
-            Some(serde_json::json!({"device_id": "dev_2", "version": "1.2.3"}));
+        result.proposals[0].parameters = Some(serde_json::json!({"device_id": "dev_2", "version": "1.2.3"}));
         repo.insert_result("ws_1", &result).await.expect("insert_result");
 
         let (content,): (String,) = sqlx::query_as(
@@ -526,12 +505,11 @@ mod tests {
         };
         repo.insert_result("ws_1", &result).await.expect("insert error result");
 
-        let (action_type, content): (String, String) = sqlx::query_as(
-            "SELECT action_type, content FROM agent_actions WHERE workspace_id = 'ws_1'",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("one row");
+        let (action_type, content): (String, String) =
+            sqlx::query_as("SELECT action_type, content FROM agent_actions WHERE workspace_id = 'ws_1'")
+                .fetch_one(&pool)
+                .await
+                .expect("one row");
         assert_eq!(action_type, "error");
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["error"], "llm timeout");
@@ -567,7 +545,11 @@ mod tests {
             interval_minutes: 30,
         };
         repo.save_heartbeat_config("ws_c", &cfg).await.expect("save");
-        let loaded = repo.load_heartbeat_config("ws_c").await.expect("load").expect("persisted");
+        let loaded = repo
+            .load_heartbeat_config("ws_c")
+            .await
+            .expect("load")
+            .expect("persisted");
         assert_eq!(loaded.interval_minutes, 30);
         assert!(loaded.enabled);
     }

@@ -10,8 +10,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::test_utils::{
-    auth_header, create_test_token_with_workspace, response_parts, seed_test_workspace,
-    setup_test_app_with_pool,
+    auth_header, create_test_token_with_workspace, response_parts, seed_test_workspace, setup_test_app_with_pool,
 };
 
 fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Request<Body> {
@@ -50,7 +49,12 @@ async fn test_create_thing_empty_name_rejected() {
             .await
             .unwrap();
         let (status, _json) = response_parts(response).await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "name {:?} must be rejected", name);
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "name {:?} must be rejected",
+            name
+        );
     }
 }
 
@@ -67,8 +71,10 @@ async fn test_create_thing() {
         "workspaceId": "ws-default"
     });
 
-    let response =
-        app.oneshot(auth_request("POST", "/api/v1/things", &token, Some(body))).await.unwrap();
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/things", &token, Some(body)))
+        .await
+        .unwrap();
 
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::CREATED, "Expected 201, got {}: {:?}", status, json);
@@ -103,7 +109,10 @@ async fn test_name_conflict_same_workspace() {
     assert_eq!(s1, StatusCode::CREATED, "First create should succeed");
 
     // Second create same name — should fail with 409
-    let r2 = app.oneshot(auth_request("POST", "/api/v1/things", &token, Some(body))).await.unwrap();
+    let r2 = app
+        .oneshot(auth_request("POST", "/api/v1/things", &token, Some(body)))
+        .await
+        .unwrap();
     let (s2, j2) = response_parts(r2).await;
     assert_eq!(s2, StatusCode::CONFLICT, "Expected 409, got {}: {:?}", s2, j2);
     assert!(j2["code"].as_i64().unwrap_or(0) != 0, "Expected error code");
@@ -178,8 +187,17 @@ async fn test_parent_id_cycle_rejected() {
         .await
         .unwrap();
     let (s_cycle, j_cycle) = response_parts(r_cycle).await;
-    assert_eq!(s_cycle, StatusCode::CONFLICT, "Expected 409, got {}: {:?}", s_cycle, j_cycle);
-    assert!(j_cycle["code"].as_i64().unwrap_or(0) != 0, "Expected error code for cycle");
+    assert_eq!(
+        s_cycle,
+        StatusCode::CONFLICT,
+        "Expected 409, got {}: {:?}",
+        s_cycle,
+        j_cycle
+    );
+    assert!(
+        j_cycle["code"].as_i64().unwrap_or(0) != 0,
+        "Expected error code for cycle"
+    );
 }
 
 // ──────────────────────────────────────────────
@@ -192,8 +210,7 @@ async fn test_delete_with_children_rejected() {
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-delete");
 
     // Create parent thing
-    let body_parent =
-        json!({"name": "parent-thing", "thingType": "space", "workspaceId": "ws-delete"});
+    let body_parent = json!({"name": "parent-thing", "thingType": "space", "workspaceId": "ws-delete"});
     let r_p = app
         .clone()
         .oneshot(auth_request("POST", "/api/v1/things", &token, Some(body_parent)))
@@ -219,12 +236,20 @@ async fn test_delete_with_children_rejected() {
 
     // Try to delete parent → 409
     let r_del = app
-        .oneshot(auth_request("DELETE", &format!("/api/v1/things/{}", parent_id), &token, None))
+        .oneshot(auth_request(
+            "DELETE",
+            &format!("/api/v1/things/{}", parent_id),
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     let (s_del, j_del) = response_parts(r_del).await;
     assert_eq!(s_del, StatusCode::CONFLICT, "Expected 409, got {}: {:?}", s_del, j_del);
-    assert!(j_del["code"].as_i64().unwrap_or(0) != 0, "Expected error code for children");
+    assert!(
+        j_del["code"].as_i64().unwrap_or(0) != 0,
+        "Expected error code for children"
+    );
 }
 
 // ──────────────────────────────────────────────

@@ -35,7 +35,11 @@ pub struct PersistenceConfig {
 
 impl Default for PersistenceConfig {
     fn default() -> Self {
-        Self { batch_size: 100, flush_interval: Duration::from_secs(5), enable_batching: true }
+        Self {
+            batch_size: 100,
+            flush_interval: Duration::from_secs(5),
+            enable_batching: true,
+        }
     }
 }
 
@@ -44,7 +48,10 @@ impl PersistenceEventHandler {
     pub fn new(repository: Arc<dyn EventRepository>, config: PersistenceConfig) -> Self {
         // HarmonyOS: 强制禁用批量写入，避免后台任务
         #[cfg(feature = "harmonyos")]
-        let config = PersistenceConfig { enable_batching: false, ..config };
+        let config = PersistenceConfig {
+            enable_batching: false,
+            ..config
+        };
 
         let buffer = Arc::new(RwLock::new(EventBuffer::new(config.batch_size)));
 
@@ -53,7 +60,11 @@ impl PersistenceEventHandler {
             Self::start_flush_task(buffer.clone(), repository.clone(), config.flush_interval);
         }
 
-        Self { repository, buffer, config }
+        Self {
+            repository,
+            buffer,
+            config,
+        }
     }
 
     /// 判断是否应该持久化
@@ -75,9 +86,7 @@ impl PersistenceEventHandler {
                     // PropertyAlarm 和 PropertyNormal 总是持久化
                     matches!(
                         event.event_type(),
-                        EventType::Device(
-                            DeviceEventType::PropertyAlarm | DeviceEventType::PropertyNormal
-                        )
+                        EventType::Device(DeviceEventType::PropertyAlarm | DeviceEventType::PropertyNormal)
                     ) || event.content().metadata().contains_key("alarm_triggered")
                 } else {
                     true
@@ -91,17 +100,11 @@ impl PersistenceEventHandler {
     }
 
     /// 启动定时刷新任务
-    fn start_flush_task(
-        buffer: Arc<RwLock<EventBuffer>>,
-        repository: Arc<dyn EventRepository>,
-        interval: Duration,
-    ) {
+    fn start_flush_task(buffer: Arc<RwLock<EventBuffer>>, repository: Arc<dyn EventRepository>, interval: Duration) {
         // HarmonyOS: 禁用后台刷新任务（current_thread runtime不支持spawn）
         #[cfg(feature = "harmonyos")]
         {
-            tracing::warn!(
-                "Event buffer auto-flush disabled on HarmonyOS (current_thread runtime)"
-            );
+            tracing::warn!("Event buffer auto-flush disabled on HarmonyOS (current_thread runtime)");
             drop((buffer, repository, interval));
         }
 
@@ -212,7 +215,10 @@ struct EventBuffer {
 
 impl EventBuffer {
     fn new(capacity: usize) -> Self {
-        Self { events: Vec::with_capacity(capacity), capacity }
+        Self {
+            events: Vec::with_capacity(capacity),
+            capacity,
+        }
     }
 
     fn add(&mut self, event: Event) {

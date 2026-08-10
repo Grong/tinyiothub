@@ -12,11 +12,7 @@ pub struct AuthHelper;
 
 impl AuthHelper {
     /// Check if user has required role
-    pub async fn check_role(
-        state: &AppState,
-        user_id: &str,
-        required_role: &str,
-    ) -> Result<bool, String> {
+    pub async fn check_role(state: &AppState, user_id: &str, required_role: &str) -> Result<bool, String> {
         let secure_service = state
             .initialize_secure_event_service()
             .await

@@ -138,7 +138,9 @@ pub async fn get_event_overview(
 
     // Set default time range (last 24 hours)
     let end_time = params.end_time.unwrap_or_else(Utc::now);
-    let start_time = params.start_time.unwrap_or_else(|| end_time - chrono::Duration::hours(24));
+    let start_time = params
+        .start_time
+        .unwrap_or_else(|| end_time - chrono::Duration::hours(24));
 
     // Parse grouping
     let group_by = parse_group_by(params.group_by.as_deref()).unwrap_or(GroupBy::Hour);
@@ -205,8 +207,7 @@ pub async fn get_event_overview(
     };
 
     // Build response
-    let overview =
-        build_overview_response(statistics, start_time, end_time, recent_critical_events);
+    let overview = build_overview_response(statistics, start_time, end_time, recent_critical_events);
 
     ApiResponseBuilder::success(overview)
 }
@@ -236,7 +237,11 @@ fn build_overview_response(
 
     // Calculate time range info
     let duration_hours = (end_time - start_time).num_hours();
-    let time_range = TimeRangeInfo { start_time, end_time, duration_hours };
+    let time_range = TimeRangeInfo {
+        start_time,
+        end_time,
+        duration_hours,
+    };
 
     // Build level summary
     let level_summary = build_level_summary(&statistics.groups, total_count);
@@ -285,12 +290,31 @@ fn build_level_summary(groups: &[StatisticsGroup], total_count: u64) -> LevelSum
 
     // Calculate percentages
     let total = total_count as f64;
-    let critical_percentage =
-        if total > 0.0 { (critical_count as f64 / total) * 100.0 } else { 0.0 };
-    let error_percentage = if total > 0.0 { (error_count as f64 / total) * 100.0 } else { 0.0 };
-    let warning_percentage = if total > 0.0 { (warning_count as f64 / total) * 100.0 } else { 0.0 };
-    let info_percentage = if total > 0.0 { (info_count as f64 / total) * 100.0 } else { 0.0 };
-    let debug_percentage = if total > 0.0 { (debug_count as f64 / total) * 100.0 } else { 0.0 };
+    let critical_percentage = if total > 0.0 {
+        (critical_count as f64 / total) * 100.0
+    } else {
+        0.0
+    };
+    let error_percentage = if total > 0.0 {
+        (error_count as f64 / total) * 100.0
+    } else {
+        0.0
+    };
+    let warning_percentage = if total > 0.0 {
+        (warning_count as f64 / total) * 100.0
+    } else {
+        0.0
+    };
+    let info_percentage = if total > 0.0 {
+        (info_count as f64 / total) * 100.0
+    } else {
+        0.0
+    };
+    let debug_percentage = if total > 0.0 {
+        (debug_count as f64 / total) * 100.0
+    } else {
+        0.0
+    };
 
     LevelSummary {
         critical_count,
@@ -335,10 +359,24 @@ fn build_type_summary(groups: &[StatisticsGroup], total_count: u64) -> TypeSumma
 
     // Calculate percentages
     let total = total_count as f64;
-    let system_percentage = if total > 0.0 { (system_events as f64 / total) * 100.0 } else { 0.0 };
-    let device_percentage = if total > 0.0 { (device_events as f64 / total) * 100.0 } else { 0.0 };
+    let system_percentage = if total > 0.0 {
+        (system_events as f64 / total) * 100.0
+    } else {
+        0.0
+    };
+    let device_percentage = if total > 0.0 {
+        (device_events as f64 / total) * 100.0
+    } else {
+        0.0
+    };
 
-    TypeSummary { system_events, device_events, system_percentage, device_percentage, by_subtype }
+    TypeSummary {
+        system_events,
+        device_events,
+        system_percentage,
+        device_percentage,
+        by_subtype,
+    }
 }
 
 #[cfg(test)]
@@ -358,9 +396,21 @@ mod tests {
     #[test]
     fn test_build_level_summary() {
         let groups = vec![
-            StatisticsGroup { key: "Critical".to_string(), count: 5, percentage: 10.0 },
-            StatisticsGroup { key: "Error".to_string(), count: 15, percentage: 30.0 },
-            StatisticsGroup { key: "Warning".to_string(), count: 30, percentage: 60.0 },
+            StatisticsGroup {
+                key: "Critical".to_string(),
+                count: 5,
+                percentage: 10.0,
+            },
+            StatisticsGroup {
+                key: "Error".to_string(),
+                count: 15,
+                percentage: 30.0,
+            },
+            StatisticsGroup {
+                key: "Warning".to_string(),
+                count: 30,
+                percentage: 60.0,
+            },
         ];
 
         let summary = build_level_summary(&groups, 50);

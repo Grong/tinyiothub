@@ -38,8 +38,8 @@ pub mod entities {
 
 pub mod value_objects {
     pub use tinyiothub_core::models::event::{
-        ConnectionStatus, ContentElement, DeviceEventType, EventId, EventLevel, EventSource,
-        EventType, LinkTarget, RichContent, SystemEventType, TextFormat,
+        ConnectionStatus, ContentElement, DeviceEventType, EventId, EventLevel, EventSource, EventType, LinkTarget,
+        RichContent, SystemEventType, TextFormat,
     };
 }
 
@@ -76,7 +76,9 @@ impl From<String> for EventError {
 
 impl From<&str> for EventError {
     fn from(msg: &str) -> Self {
-        EventError::Validation { message: msg.to_string() }
+        EventError::Validation {
+            message: msg.to_string(),
+        }
     }
 }
 
@@ -96,8 +98,8 @@ pub use repo::*;
 #[allow(ambiguous_glob_reexports)]
 pub use service::*;
 pub use tinyiothub_core::models::event::{
-    ConnectionStatus, ContentElement, DeviceEventType, Event, EventId, EventLevel, EventSource,
-    EventType, LinkTarget, RichContent, SystemEventType, TextFormat,
+    ConnectionStatus, ContentElement, DeviceEventType, Event, EventId, EventLevel, EventSource, EventType, LinkTarget,
+    RichContent, SystemEventType, TextFormat,
 };
 pub use types::*;
 

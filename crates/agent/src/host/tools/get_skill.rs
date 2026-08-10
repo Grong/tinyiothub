@@ -93,7 +93,11 @@ impl Tool for GetSkillTool {
                         error: Some(format!("Skill '{}' is empty", skill_name)),
                     });
                 }
-                Ok(ToolResult { success: true, output: content, error: None })
+                Ok(ToolResult {
+                    success: true,
+                    output: content,
+                    error: None,
+                })
             }
             Err(_) => Ok(ToolResult {
                 success: false,
@@ -124,7 +128,11 @@ fn available_skills() -> String {
         })
         .collect();
     names.sort();
-    if names.is_empty() { "(none)".to_string() } else { names.join(", ") }
+    if names.is_empty() {
+        "(none)".to_string()
+    } else {
+        names.join(", ")
+    }
 }
 
 /// Resolve the `data/skills` directory robustly across dev/test/production layouts.

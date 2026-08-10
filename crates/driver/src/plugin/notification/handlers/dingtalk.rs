@@ -7,9 +7,7 @@ use reqwest::Client;
 use tracing::{debug, error};
 
 use super::{super::config::DingtalkConfig, NotificationHandler};
-use crate::{
-    plugin::{PluginHandler, PluginManifest, PluginType, notification::Notification},
-};
+use crate::plugin::{PluginHandler, PluginManifest, PluginType, notification::Notification};
 use tinyiothub_core::error::Error;
 
 pub struct DingtalkHandler {

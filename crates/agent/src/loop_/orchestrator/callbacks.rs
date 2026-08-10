@@ -244,19 +244,20 @@ impl AiEventHandler {
             AiEvent::AlarmCreated(alarm) => {
                 let severity = alarm.severity.to_lowercase();
                 if severity == "critical" || severity == "error" {
-                    self.heartbeat_runner.signal(crate::loop_::heartbeat::types::HeartbeatSignal {
-                        workspace_id: alarm.workspace_id.clone(),
-                        reason: format!("Alarm: {}", alarm.message),
-                        context: format!("device_id={}, alarm_type={}", alarm.device_id, alarm.alarm_type),
-                        priority: if severity == "critical" {
-                            SignalPriority::Critical
-                        } else {
-                            SignalPriority::High
-                        },
-                        device_id: Some(alarm.device_id.clone()),
-                        alarm_type: Some(alarm.alarm_type.clone()),
-                        rule_id: alarm.rule_id.clone(),
-                    });
+                    self.heartbeat_runner
+                        .signal(crate::loop_::heartbeat::types::HeartbeatSignal {
+                            workspace_id: alarm.workspace_id.clone(),
+                            reason: format!("Alarm: {}", alarm.message),
+                            context: format!("device_id={}, alarm_type={}", alarm.device_id, alarm.alarm_type),
+                            priority: if severity == "critical" {
+                                SignalPriority::Critical
+                            } else {
+                                SignalPriority::High
+                            },
+                            device_id: Some(alarm.device_id.clone()),
+                            alarm_type: Some(alarm.alarm_type.clone()),
+                            rule_id: alarm.rule_id.clone(),
+                        });
                 }
             }
             AiEvent::HeartbeatCompleted { workspace_id, result } => {

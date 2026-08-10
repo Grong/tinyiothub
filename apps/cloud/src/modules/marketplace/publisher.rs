@@ -31,7 +31,11 @@ impl MarketplacePublisher {
             .build()
             .map_err(MarketplaceError::Network)?;
 
-        Ok(Self { client, base_url, api_key })
+        Ok(Self {
+            client,
+            base_url,
+            api_key,
+        })
     }
 
     /// Publish a device template to the Marketplace.
@@ -82,8 +86,7 @@ impl MarketplacePublisher {
             )));
         }
 
-        let value: serde_json::Value =
-            serde_json::from_str(&body_text).map_err(MarketplaceError::JsonParse)?;
+        let value: serde_json::Value = serde_json::from_str(&body_text).map_err(MarketplaceError::JsonParse)?;
         Ok(value)
     }
 }

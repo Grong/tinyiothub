@@ -6,9 +6,7 @@
 pub mod config;
 pub mod paths;
 
-pub use config::{
-    AgentConfig, AgentError, AgentInfo, AgentRuntimeConfig, compute_hash, default_agent_config,
-};
+pub use config::{AgentConfig, AgentError, AgentInfo, AgentRuntimeConfig, compute_hash, default_agent_config};
 
 /// Returns the static catalog of all available TinyIoTHub tools grouped by category.
 /// Aligned with the 16 MCP-registered handlers in modules/mcp/mod.rs.
@@ -275,8 +273,10 @@ mod tests {
         assert!(!groups.is_empty(), "catalog should have at least one tool group");
 
         // Verify at least the device and workspace groups exist
-        let group_ids: Vec<&str> =
-            groups.iter().filter_map(|g| g.get("id").and_then(|v| v.as_str())).collect();
+        let group_ids: Vec<&str> = groups
+            .iter()
+            .filter_map(|g| g.get("id").and_then(|v| v.as_str()))
+            .collect();
 
         assert!(group_ids.contains(&"device"), "catalog should have a 'device' group");
         assert!(group_ids.contains(&"alarm"), "catalog should have an 'alarm' group");
@@ -290,8 +290,10 @@ mod tests {
             assert!(g_obj.contains_key("label"), "group should have 'label' field");
             assert!(g_obj.contains_key("tools"), "group should have 'tools' field");
 
-            let tools =
-                g_obj.get("tools").and_then(|v| v.as_array()).expect("tools should be an array");
+            let tools = g_obj
+                .get("tools")
+                .and_then(|v| v.as_array())
+                .expect("tools should be an array");
 
             for tool in tools {
                 let t_obj = tool.as_object().expect("tool should be an object");

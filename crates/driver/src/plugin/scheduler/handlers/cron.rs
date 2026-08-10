@@ -8,9 +8,7 @@ use tokio_cron_scheduler::{Job, JobScheduler};
 use tracing::{debug, error, info};
 
 use super::{super::config::SchedulerConfig, SchedulerHandler};
-use crate::{
-    plugin::{PluginHandler, PluginManifest, PluginType, scheduler::ScheduledTask},
-};
+use crate::plugin::{PluginHandler, PluginManifest, PluginType, scheduler::ScheduledTask};
 use tinyiothub_core::error::Error;
 
 pub struct CronHandler {
@@ -80,9 +78,10 @@ impl CronHandler {
     pub async fn shutdown(&self) -> Result<(), Error> {
         let mut guard = self.scheduler.write().await;
         if let Some(ref mut sched) = *guard {
-            sched.shutdown().await.map_err(|e| {
-                Error::Internal(format!("Failed to shutdown cron scheduler: {}", e))
-            })?;
+            sched
+                .shutdown()
+                .await
+                .map_err(|e| Error::Internal(format!("Failed to shutdown cron scheduler: {}", e)))?;
             info!("Cron scheduler shut down");
         }
         *guard = None;

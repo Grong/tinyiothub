@@ -44,8 +44,7 @@ pub trait EventAccessControl: Send + Sync {
     async fn get_user_roles(&self, user_id: &str) -> Result<Vec<String>>;
 
     /// Get user permissions for a resource type
-    async fn get_user_permissions(&self, user_id: &str, resource_type: &str)
-    -> Result<Vec<String>>;
+    async fn get_user_permissions(&self, user_id: &str, resource_type: &str) -> Result<Vec<String>>;
 }
 
 /// Role-based access control implementation
@@ -65,12 +64,7 @@ impl RoleBasedAccessControl {
     }
 
     /// Check if user has required permission
-    async fn has_permission(
-        &self,
-        user_id: &str,
-        resource_type: &str,
-        permission: &str,
-    ) -> Result<bool> {
+    async fn has_permission(&self, user_id: &str, resource_type: &str, permission: &str) -> Result<bool> {
         let permissions = self.get_user_permissions(user_id, resource_type).await?;
         Ok(permissions.contains(&permission.to_string()))
     }
@@ -95,21 +89,15 @@ impl EventAccessControl for RoleBasedAccessControl {
                 tinyiothub_event::value_objects::DeviceEventType::Connection => "device_connection",
                 tinyiothub_event::value_objects::DeviceEventType::PropertyChange
                 | tinyiothub_event::value_objects::DeviceEventType::PropertyAlarm
-                | tinyiothub_event::value_objects::DeviceEventType::PropertyNormal => {
-                    "device_property"
-                }
+                | tinyiothub_event::value_objects::DeviceEventType::PropertyNormal => "device_property",
                 tinyiothub_event::value_objects::DeviceEventType::CommandStarted
                 | tinyiothub_event::value_objects::DeviceEventType::CommandCompleted
-                | tinyiothub_event::value_objects::DeviceEventType::CommandFailed => {
-                    "device_command"
-                }
+                | tinyiothub_event::value_objects::DeviceEventType::CommandFailed => "device_command",
                 tinyiothub_event::value_objects::DeviceEventType::DeviceAlarm
                 | tinyiothub_event::value_objects::DeviceEventType::DeviceNormal => "device_alarm",
                 tinyiothub_event::value_objects::DeviceEventType::DeviceCreated
                 | tinyiothub_event::value_objects::DeviceEventType::DeviceUpdated
-                | tinyiothub_event::value_objects::DeviceEventType::DeviceDeleted => {
-                    "device_lifecycle"
-                }
+                | tinyiothub_event::value_objects::DeviceEventType::DeviceDeleted => "device_lifecycle",
             },
             tinyiothub_event::value_objects::EventType::System(system_type) => match system_type {
                 tinyiothub_event::value_objects::SystemEventType::UserAuth => "user_auth",
@@ -135,21 +123,15 @@ impl EventAccessControl for RoleBasedAccessControl {
                 tinyiothub_event::value_objects::DeviceEventType::Connection => "device_connection",
                 tinyiothub_event::value_objects::DeviceEventType::PropertyChange
                 | tinyiothub_event::value_objects::DeviceEventType::PropertyAlarm
-                | tinyiothub_event::value_objects::DeviceEventType::PropertyNormal => {
-                    "device_property"
-                }
+                | tinyiothub_event::value_objects::DeviceEventType::PropertyNormal => "device_property",
                 tinyiothub_event::value_objects::DeviceEventType::CommandStarted
                 | tinyiothub_event::value_objects::DeviceEventType::CommandCompleted
-                | tinyiothub_event::value_objects::DeviceEventType::CommandFailed => {
-                    "device_command"
-                }
+                | tinyiothub_event::value_objects::DeviceEventType::CommandFailed => "device_command",
                 tinyiothub_event::value_objects::DeviceEventType::DeviceAlarm
                 | tinyiothub_event::value_objects::DeviceEventType::DeviceNormal => "device_alarm",
                 tinyiothub_event::value_objects::DeviceEventType::DeviceCreated
                 | tinyiothub_event::value_objects::DeviceEventType::DeviceUpdated
-                | tinyiothub_event::value_objects::DeviceEventType::DeviceDeleted => {
-                    "device_lifecycle"
-                }
+                | tinyiothub_event::value_objects::DeviceEventType::DeviceDeleted => "device_lifecycle",
             },
             tinyiothub_event::value_objects::EventType::System(system_type) => match system_type {
                 tinyiothub_event::value_objects::SystemEventType::UserAuth => "user_auth",
@@ -188,7 +170,11 @@ impl EventAccessControl for RoleBasedAccessControl {
         // Query user roles from database
         let query = "SELECT role_name FROM user_roles WHERE user_id = ? AND is_active = 1";
 
-        match sqlx::query_scalar::<_, String>(query).bind(user_id).fetch_all(self.db.pool()).await {
+        match sqlx::query_scalar::<_, String>(query)
+            .bind(user_id)
+            .fetch_all(self.db.pool())
+            .await
+        {
             Ok(roles) => {
                 if roles.is_empty() {
                     // Default role for authenticated users
@@ -209,17 +195,14 @@ impl EventAccessControl for RoleBasedAccessControl {
         }
     }
 
-    async fn get_user_permissions(
-        &self,
-        user_id: &str,
-        resource_type: &str,
-    ) -> Result<Vec<String>> {
+    async fn get_user_permissions(&self, user_id: &str, resource_type: &str) -> Result<Vec<String>> {
         let roles = self.get_user_roles(user_id).await?;
 
         let mut permissions = Vec::new();
 
         // Query user-specific permissions from database
-        let user_permissions_query = "SELECT permission FROM user_permissions WHERE user_id = ? AND resource_type = ? AND is_active = 1";
+        let user_permissions_query =
+            "SELECT permission FROM user_permissions WHERE user_id = ? AND resource_type = ? AND is_active = 1";
 
         match sqlx::query_scalar::<_, String>(user_permissions_query)
             .bind(user_id)
@@ -246,7 +229,8 @@ impl EventAccessControl for RoleBasedAccessControl {
 
         // Add role-based permissions from the role_permissions table
         for role in roles {
-            let role_permissions_query = "SELECT permission FROM role_permissions WHERE role_name = ? AND resource_type = ? AND is_active = 1";
+            let role_permissions_query =
+                "SELECT permission FROM role_permissions WHERE role_name = ? AND resource_type = ? AND is_active = 1";
 
             match sqlx::query_scalar::<_, String>(role_permissions_query)
                 .bind(&role)

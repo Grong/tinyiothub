@@ -23,8 +23,10 @@ fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Re
 async fn test_list_chat_sessions() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/chat/sessions", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/chat/sessions", &token, None))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number());
@@ -34,8 +36,10 @@ async fn test_list_chat_sessions() {
 async fn test_get_chat_history() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/chat/history", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/chat/history", &token, None))
+        .await
+        .unwrap();
     assert!(response.status().is_success() || response.status().is_client_error());
 }
 
@@ -81,8 +85,10 @@ async fn test_update_session_label_not_found() {
 async fn test_tools_catalog() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/tools/catalog", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/tools/catalog", &token, None))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number());
@@ -92,8 +98,10 @@ async fn test_tools_catalog() {
 async fn test_tools_effective() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/tools/effective", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/tools/effective", &token, None))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number());

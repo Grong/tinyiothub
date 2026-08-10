@@ -42,8 +42,10 @@ mod tests {
 
     #[test]
     fn test_event_alarm_matches() {
-        let cond =
-            EventAlarmCondition { event_name: "temp_high".into(), min_level: "warning".into() };
+        let cond = EventAlarmCondition {
+            event_name: "temp_high".into(),
+            min_level: "warning".into(),
+        };
         assert!(cond.matches("temp_high", &EventLevel::Warning));
         assert!(cond.matches("temp_high", &EventLevel::Critical));
         assert!(!cond.matches("temp_low", &EventLevel::Critical));
@@ -52,7 +54,10 @@ mod tests {
 
     #[test]
     fn test_event_alarm_min_level_error() {
-        let cond = EventAlarmCondition { event_name: "overheat".into(), min_level: "error".into() };
+        let cond = EventAlarmCondition {
+            event_name: "overheat".into(),
+            min_level: "error".into(),
+        };
         assert!(cond.matches("overheat", &EventLevel::Error));
         assert!(cond.matches("overheat", &EventLevel::Critical));
         assert!(!cond.matches("overheat", &EventLevel::Warning));
@@ -61,22 +66,29 @@ mod tests {
 
     #[test]
     fn test_event_alarm_min_level_info_matches_all() {
-        let cond =
-            EventAlarmCondition { event_name: "status_update".into(), min_level: "info".into() };
+        let cond = EventAlarmCondition {
+            event_name: "status_update".into(),
+            min_level: "info".into(),
+        };
         assert!(cond.matches("status_update", &EventLevel::Info));
         assert!(cond.matches("status_update", &EventLevel::Critical));
     }
 
     #[test]
     fn test_event_alarm_different_name_no_match() {
-        let cond =
-            EventAlarmCondition { event_name: "door_open".into(), min_level: "warning".into() };
+        let cond = EventAlarmCondition {
+            event_name: "door_open".into(),
+            min_level: "warning".into(),
+        };
         assert!(!cond.matches("door_closed", &EventLevel::Critical));
     }
 
     #[test]
     fn test_event_alarm_unknown_min_level() {
-        let cond = EventAlarmCondition { event_name: "test".into(), min_level: "unknown".into() };
+        let cond = EventAlarmCondition {
+            event_name: "test".into(),
+            min_level: "unknown".into(),
+        };
         // Unknown min_level maps to 5 (critical), so only critical matches
         assert!(cond.matches("test", &EventLevel::Critical));
         assert!(!cond.matches("test", &EventLevel::Error));

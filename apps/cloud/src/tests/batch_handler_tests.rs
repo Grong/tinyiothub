@@ -23,7 +23,10 @@ fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Re
 async fn test_list_batches() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response = app.oneshot(auth_request("GET", "/api/v1/batch", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/batch", &token, None))
+        .await
+        .unwrap();
     // May return 200 with JSON or 400 if required params missing
     assert!(response.status().is_success() || response.status().is_client_error());
     if response.status() == StatusCode::OK {
@@ -37,7 +40,12 @@ async fn test_list_batches_with_workspace() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/batch?workspace_id=ws-default-001", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/batch?workspace_id=ws-default-001",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -49,12 +57,11 @@ async fn test_list_batches_with_workspace() {
 async fn test_create_batch_missing_fields() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("POST", "/api/v1/batch", &token, Some(json!({})))).await.unwrap();
-    assert!(
-        response.status() == StatusCode::UNPROCESSABLE_ENTITY
-            || response.status() == StatusCode::OK
-    );
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/batch", &token, Some(json!({}))))
+        .await
+        .unwrap();
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
 }
 
 #[tokio::test]
@@ -62,7 +69,12 @@ async fn test_get_batch_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/batch/nonexistent-batch-12345", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/batch/nonexistent-batch-12345",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);

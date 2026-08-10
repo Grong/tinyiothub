@@ -3,9 +3,7 @@ use std::sync::Arc;
 use tinyiothub_agent::host::agent::AgentPool;
 use tinyiothub_auth::redis::RedisClient;
 use tinyiothub_core::{memory::MemoryStore, models::device_property::DeviceProperty};
-use tinyiothub_driver::legacy::{
-    DeviceMonitoringService, DevicePerformanceService, DeviceQueryService, DeviceService,
-};
+use tinyiothub_driver::legacy::{DeviceMonitoringService, DevicePerformanceService, DeviceQueryService, DeviceService};
 use tinyiothub_event::{
     repositories::{EventRepository, RealTimeEventRepository},
     sqlite_event::SqliteEventRepository,
@@ -202,10 +200,8 @@ impl AppState {
         let event_bus = Arc::new(EventBus::new());
 
         // 创建报警服务
-        let alarm_repository =
-            Arc::new(tinyiothub_alarm::SqliteAlarmRepository::new(database.clone()));
-        let alarm_rule_repository =
-            Arc::new(tinyiothub_alarm::SqliteAlarmRuleRepository::new(database.clone()));
+        let alarm_repository = Arc::new(tinyiothub_alarm::SqliteAlarmRepository::new(database.clone()));
+        let alarm_rule_repository = Arc::new(tinyiothub_alarm::SqliteAlarmRuleRepository::new(database.clone()));
         let alarm_service = Arc::new(tinyiothub_alarm::AlarmService::new(
             alarm_repository.clone(),
             alarm_rule_repository,
@@ -221,15 +217,17 @@ impl AppState {
         // 这里只创建事件总线，处理器注册推迟到 register_event_handlers() 方法
 
         // 标签仓库（提前创建，供 DeviceService 使用）
-        let tag_repository: Arc<dyn tinyiothub_thing::tag::TagRepository> =
-            Arc::new(tinyiothub_thing::tag::SqliteTagRepository::new(database.as_ref().clone()));
+        let tag_repository: Arc<dyn tinyiothub_thing::tag::TagRepository> = Arc::new(
+            tinyiothub_thing::tag::SqliteTagRepository::new(database.as_ref().clone()),
+        );
         let tag_binding_repository: Arc<dyn tinyiothub_thing::tag::TagBindingRepository> = Arc::new(
             tinyiothub_thing::tag::SqliteTagBindingRepository::new(database.as_ref().clone()),
         );
 
         // 基础服务 - 使用事件总线
-        let device_repository: Arc<dyn tinyiothub_storage::traits::device::DeviceRepository> =
-            Arc::new(tinyiothub_storage::SqliteDeviceRepository::new(database.as_ref().clone()));
+        let device_repository: Arc<dyn tinyiothub_storage::traits::device::DeviceRepository> = Arc::new(
+            tinyiothub_storage::SqliteDeviceRepository::new(database.as_ref().clone()),
+        );
         let device_service = Arc::new(
             DeviceService::with_event_bus(device_repository, database.clone(), event_bus.clone())
                 .with_tag_repository(tag_repository.clone()),
@@ -259,8 +257,7 @@ impl AppState {
         // 模板引擎 - 内置模板通过 migration seed 写入 DB
         let template_repository = Arc::new(TemplateRepository::new(database.clone()));
         let template_validator = Arc::new(TemplateValidator::new());
-        let template_engine =
-            Arc::new(TemplateEngine::new(template_repository, template_validator));
+        let template_engine = Arc::new(TemplateEngine::new(template_repository, template_validator));
 
         // 创建安全事件服务 - 可选服务，依赖配置
         // Note: Secure event service requires async initialization, so we'll create it lazily
@@ -281,13 +278,11 @@ impl AppState {
         // Register the agent crate's config ports (minimax provider settings
         // + default model) — the agent crate no longer reads cloud's global
         // config directly (P4-Task22).
-        tinyiothub_agent::host::ports::set_minimax_settings(
-            tinyiothub_agent::host::ports::MinimaxSettings {
-                base_url: minimax_config.base_url.clone(),
-                auth_token: minimax_config.auth_token.clone(),
-                model: minimax_config.model.clone(),
-            },
-        );
+        tinyiothub_agent::host::ports::set_minimax_settings(tinyiothub_agent::host::ports::MinimaxSettings {
+            base_url: minimax_config.base_url.clone(),
+            auth_token: minimax_config.auth_token.clone(),
+            model: minimax_config.model.clone(),
+        });
         let agent_settings = crate::shared::config::get().agent.clone();
         tracing::info!(
             "TinyIoTHub Agent runtime initialized (memory_backend={}, observer_backend={})",
@@ -295,8 +290,9 @@ impl AppState {
             agent_settings.observer_backend
         );
         // Agent Memory Store
-        let memory_store: Arc<dyn MemoryStore> =
-            Arc::new(tinyiothub_memory::SqliteAgentMemoryRepository::new(database.pool().clone()));
+        let memory_store: Arc<dyn MemoryStore> = Arc::new(tinyiothub_memory::SqliteAgentMemoryRepository::new(
+            database.pool().clone(),
+        ));
 
         let agent_pool: Arc<AgentPool> = Arc::new(
             AgentPool::new(
@@ -316,15 +312,16 @@ impl AppState {
         let user_service = Arc::new(tinyiothub_user::UserService::new(user_repository));
 
         // 租户服务
-        let tenant_repository: Arc<dyn tinyiothub_tenant::TenantRepository> =
-            Arc::new(tinyiothub_tenant::SqliteTenantRepository::new(database.as_ref().clone()));
+        let tenant_repository: Arc<dyn tinyiothub_tenant::TenantRepository> = Arc::new(
+            tinyiothub_tenant::SqliteTenantRepository::new(database.as_ref().clone()),
+        );
         let tenant_service = Arc::new(tinyiothub_tenant::TenantService::new(tenant_repository));
 
         // 工作空间服务
-        let workspace_repository: Arc<dyn tinyiothub_tenant::WorkspaceRepository> =
-            Arc::new(tinyiothub_tenant::SqliteWorkspaceRepository::new(database.as_ref().clone()));
-        let workspace_service =
-            Arc::new(tinyiothub_tenant::WorkspaceService::new(workspace_repository));
+        let workspace_repository: Arc<dyn tinyiothub_tenant::WorkspaceRepository> = Arc::new(
+            tinyiothub_tenant::SqliteWorkspaceRepository::new(database.as_ref().clone()),
+        );
+        let workspace_service = Arc::new(tinyiothub_tenant::WorkspaceService::new(workspace_repository));
 
         // 标签服务
         let tag_service = Arc::new(tinyiothub_thing::tag::TagService::new(
@@ -333,51 +330,45 @@ impl AppState {
         ));
 
         // 角色服务
-        let role_repository: Arc<dyn tinyiothub_user::role::RoleRepository> =
-            Arc::new(tinyiothub_user::role::SqliteRoleRepository::new(database.as_ref().clone()));
+        let role_repository: Arc<dyn tinyiothub_user::role::RoleRepository> = Arc::new(
+            tinyiothub_user::role::SqliteRoleRepository::new(database.as_ref().clone()),
+        );
         let role_service = Arc::new(tinyiothub_user::role::RoleService::new(role_repository));
 
         // 权限服务
-        let permission_repository: Arc<dyn tinyiothub_user::permission::PermissionRepository> =
-            Arc::new(tinyiothub_user::permission::SqlitePermissionRepository::new(
-                database.as_ref().clone(),
-            ));
-        let permission_group_repository: Arc<
-            dyn tinyiothub_user::permission::PermissionGroupRepository,
-        > = Arc::new(tinyiothub_user::permission::SqlitePermissionGroupRepository::new(
-            database.as_ref().clone(),
-        ));
+        let permission_repository: Arc<dyn tinyiothub_user::permission::PermissionRepository> = Arc::new(
+            tinyiothub_user::permission::SqlitePermissionRepository::new(database.as_ref().clone()),
+        );
+        let permission_group_repository: Arc<dyn tinyiothub_user::permission::PermissionGroupRepository> = Arc::new(
+            tinyiothub_user::permission::SqlitePermissionGroupRepository::new(database.as_ref().clone()),
+        );
         let permission_service = Arc::new(tinyiothub_user::permission::PermissionService::new(
             permission_repository,
             permission_group_repository,
         ));
 
         // Cron 仓库
-        let cron_job_repo: Arc<dyn tinyiothub_storage::traits::cron::CronJobRepository> =
-            Arc::new(tinyiothub_storage::sqlite::cron_job::SqliteCronJobRepository::new(
-                database.as_ref().clone(),
-            ));
-        let cron_run_repo: Arc<dyn tinyiothub_storage::traits::cron::CronRunRepository> =
-            Arc::new(tinyiothub_storage::sqlite::cron_run::SqliteCronRunRepository::new(
-                database.as_ref().clone(),
-            ));
+        let cron_job_repo: Arc<dyn tinyiothub_storage::traits::cron::CronJobRepository> = Arc::new(
+            tinyiothub_storage::sqlite::cron_job::SqliteCronJobRepository::new(database.as_ref().clone()),
+        );
+        let cron_run_repo: Arc<dyn tinyiothub_storage::traits::cron::CronRunRepository> = Arc::new(
+            tinyiothub_storage::sqlite::cron_run::SqliteCronRunRepository::new(database.as_ref().clone()),
+        );
 
         // 会话服务 - 用于 Agent 聊天会话管理
-        let session_repository: Arc<dyn tinyiothub_agent::host::SessionRepository> =
-            Arc::new(tinyiothub_agent::host::session_repository::SqliteSessionRepository::new(
-                database.as_ref().clone(),
-            ));
-        let session_service =
-            Arc::new(tinyiothub_agent::host::SessionService::new(Arc::clone(&session_repository)));
+        let session_repository: Arc<dyn tinyiothub_agent::host::SessionRepository> = Arc::new(
+            tinyiothub_agent::host::session_repository::SqliteSessionRepository::new(database.as_ref().clone()),
+        );
+        let session_service = Arc::new(tinyiothub_agent::host::SessionService::new(Arc::clone(
+            &session_repository,
+        )));
 
         // === 网关配对服务 ===
-        let (mqtt_tx, mqtt_rx) =
-            tokio::sync::mpsc::channel::<tinyiothub_driver::gateway::service::MqttPublish>(100);
+        let (mqtt_tx, mqtt_rx) = tokio::sync::mpsc::channel::<tinyiothub_driver::gateway::service::MqttPublish>(100);
         let (announce_tx, mut announce_rx) =
             tokio::sync::mpsc::channel::<tinyiothub_driver::gateway::types::PairingAnnounce>(1000);
-        let (data_tx, mut data_rx) = tokio::sync::mpsc::channel::<
-            tinyiothub_driver::gateway::types::GatewayDataMessage,
-        >(1000);
+        let (data_tx, mut data_rx) =
+            tokio::sync::mpsc::channel::<tinyiothub_driver::gateway::types::GatewayDataMessage>(1000);
         let pairing_cache = Arc::new(tinyiothub_driver::gateway::pairing::PairingCache::new(10000));
         let gateway_service = Arc::new(tinyiothub_driver::gateway::service::GatewayService::new(
             device_repository_factory.clone(),
@@ -428,17 +419,14 @@ impl AppState {
         });
 
         // Thing action hooks（P4.0b）—— agent 侧实现 core trait，注入给 thing handler
-        let thing_action_hooks: Arc<dyn tinyiothub_core::thing_hooks::ThingActionHooks> =
-            Arc::new(tinyiothub_agent::host::thing_action_hooks::AgentThingActionHooks::new(
-                database.pool().clone(),
-            ));
+        let thing_action_hooks: Arc<dyn tinyiothub_core::thing_hooks::ThingActionHooks> = Arc::new(
+            tinyiothub_agent::host::thing_action_hooks::AgentThingActionHooks::new(database.pool().clone()),
+        );
 
         // Agent hooks（P4.0d）—— agent 侧实现 core trait，注入给 workspace 域
         let agent_hooks: Arc<dyn tinyiothub_core::agent_hooks::AgentHooks> =
             Arc::new(tinyiothub_agent::host::agent_hooks::AgentHooksImpl::new(Arc::new(
-                tinyiothub_agent::host::heartbeat_repo::SqliteHeartbeatTaskRepository::new(
-                    database.pool().clone(),
-                ),
+                tinyiothub_agent::host::heartbeat_repo::SqliteHeartbeatTaskRepository::new(database.pool().clone()),
             )));
 
         Self {
@@ -487,10 +475,7 @@ impl AppState {
     }
 
     /// 注入用户指令投递入口（T15 闭环接线调用）
-    pub fn set_directive_sink(
-        &mut self,
-        sink: Arc<dyn tinyiothub_agent::loop_::thing_agent::DirectiveSink>,
-    ) {
+    pub fn set_directive_sink(&mut self, sink: Arc<dyn tinyiothub_agent::loop_::thing_agent::DirectiveSink>) {
         self.directive_sink = Some(sink);
     }
 
@@ -525,12 +510,10 @@ impl AppState {
     ///
     /// 获取租户感知的设备服务（接受字符串 workspace_id）
     pub fn tenant_device_service_str(&self, workspace_id: &str) -> Arc<DeviceService> {
-        let repository =
-            self.device_repository_factory.create_for_workspace(workspace_id.to_string());
-        Arc::new(
-            DeviceService::new(repository, self.database.clone())
-                .with_tag_repository(self.tag_repository.clone()),
-        )
+        let repository = self
+            .device_repository_factory
+            .create_for_workspace(workspace_id.to_string());
+        Arc::new(DeviceService::new(repository, self.database.clone()).with_tag_repository(self.tag_repository.clone()))
     }
 
     /// Returns a tenant-scoped device service.
@@ -550,23 +533,15 @@ impl AppState {
 
         // 创建设备服务（使用现有的事件总线和标签仓库）
         Arc::new(
-            DeviceService::with_event_bus(
-                repository,
-                self.database.clone(),
-                self.event_bus.clone(),
-            )
-            .with_tag_repository(self.tag_repository.clone()),
+            DeviceService::with_event_bus(repository, self.database.clone(), self.event_bus.clone())
+                .with_tag_repository(self.tag_repository.clone()),
         )
     }
 
     /// Resolve workspace ID for a tenant.
     /// If an explicit workspace_id is provided, returns it directly.
     /// Otherwise queries the database for the tenant's default workspace.
-    pub async fn resolve_workspace(
-        &self,
-        tenant_id: &str,
-        explicit: Option<String>,
-    ) -> Result<String, (i32, String)> {
+    pub async fn resolve_workspace(&self, tenant_id: &str, explicit: Option<String>) -> Result<String, (i32, String)> {
         if let Some(ws) = explicit {
             return Ok(ws);
         }
@@ -584,11 +559,7 @@ impl AppState {
     // 用于渐进式迁移，避免一次性修改所有代码
 
     /// 通过设备名称和属性名称获取属性
-    pub fn get_device_prop_by_name(
-        &self,
-        device_name: &str,
-        property_name: &str,
-    ) -> Option<DeviceProperty> {
+    pub fn get_device_prop_by_name(&self, device_name: &str, property_name: &str) -> Option<DeviceProperty> {
         self.device_cache.get_by_name(device_name).and_then(|d| {
             d.properties
                 .as_ref()
@@ -608,9 +579,7 @@ impl AppState {
         property_id: &str,
         value: &str,
     ) -> Result<(), Error> {
-        use tinyiothub_core::models::event::{
-            ContentElement, EventSource, RichContent, TextFormat,
-        };
+        use tinyiothub_core::models::event::{ContentElement, EventSource, RichContent, TextFormat};
 
         // 1. 验证设备存在且属于指定的workspace
         let tenant_device_service = self.tenant_device_service(&Some(workspace_id.to_string()));
@@ -620,17 +589,10 @@ impl AppState {
         };
 
         // 2. 验证属性存在且属于该设备
-        let property = match tinyiothub_storage::find_device_property_by_id(
-            self.database(),
-            property_id,
-        )
-        .await
-        {
+        let property = match tinyiothub_storage::find_device_property_by_id(self.database(), property_id).await {
             Ok(Some(p)) if p.device_id == device_id => p,
             Ok(Some(_)) => {
-                return Err(Error::ValidationError(
-                    "Property does not belong to device".to_string(),
-                ));
+                return Err(Error::ValidationError("Property does not belong to device".to_string()));
             }
             Ok(None) => return Err(Error::NotFound),
             Err(e) => return Err(Error::IOError(format!("DB error: {}", e))),
@@ -660,7 +622,10 @@ impl AppState {
         )
         .map_err(|e| Error::ValidationError(e.to_string()))?;
 
-        self.event_bus.publish(event).await.map_err(|e| Error::IOError(e.to_string()))?;
+        self.event_bus
+            .publish(event)
+            .await
+            .map_err(|e| Error::IOError(e.to_string()))?;
 
         Ok(())
     }
@@ -719,8 +684,9 @@ impl AppState {
         let security_factory = EventSecurityFactory::new(self.database.clone(), config)?;
 
         // Create secure event service
-        let secure_service =
-            security_factory.create_secure_event_service(self.event_repository.clone()).await?;
+        let secure_service = security_factory
+            .create_secure_event_service(self.event_repository.clone())
+            .await?;
 
         // Store in OnceCell
         let service_arc = Arc::new(secure_service);
@@ -776,7 +742,9 @@ impl AppState {
         let database_url = format!("sqlite://{}", db_path.to_str().unwrap());
         let pool = sqlx::SqlitePool::connect(&database_url).await.unwrap();
 
-        tinyiothub_storage::test_helpers::run_all_migrations(&pool).await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
 
         let device_cache = Arc::new(DeviceCache::new());
 
@@ -844,10 +812,7 @@ impl tinyiothub_auth::user_store::AuthUserStore for UserServiceAuthAdapter {
             .map(|o| o.map(auth_user_from_user))
     }
 
-    async fn get_user_by_id(
-        &self,
-        id: &str,
-    ) -> Result<Option<tinyiothub_auth::user_store::AuthUser>, String> {
+    async fn get_user_by_id(&self, id: &str) -> Result<Option<tinyiothub_auth::user_store::AuthUser>, String> {
         self.service
             .get_user_by_id(id)
             .await
@@ -860,7 +825,10 @@ impl tinyiothub_auth::user_store::AuthUserStore for UserServiceAuthAdapter {
     }
 
     async fn exists_by_username(&self, username: &str) -> Result<bool, String> {
-        self.service.exists_by_username(username).await.map_err(|e| e.to_string())
+        self.service
+            .exists_by_username(username)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     async fn exists_by_phone(&self, phone: &str) -> Result<bool, String> {
@@ -926,7 +894,9 @@ impl axum::extract::FromRef<AppState> for tinyiothub_auth::AuthState {
         let settings = crate::shared::config::get();
         tinyiothub_auth::AuthState {
             database: state.database.clone(),
-            users: Arc::new(UserServiceAuthAdapter { service: state.user_service.clone() }),
+            users: Arc::new(UserServiceAuthAdapter {
+                service: state.user_service.clone(),
+            }),
             workspace_bootstrap: Arc::new(SystemWorkspaceBootstrap { state: state.clone() }),
             redis: state.redis.clone(),
             sse_token_issuer: state.sse_token_manager.clone(),
@@ -1035,8 +1005,10 @@ impl tinyiothub_tenant::TagSuggester for MinimaxTagSuggester {
             "AI 服务初始化失败".to_string()
         })?;
 
-        let response =
-            provider.chat_with_system(None, &prompt, &model, Some(0.3)).await.map_err(|e| {
+        let response = provider
+            .chat_with_system(None, &prompt, &model, Some(0.3))
+            .await
+            .map_err(|e| {
                 tracing::error!("AI tag generation failed: {}", e);
                 "AI 生成标签失败，请稍后重试".to_string()
             })?;
@@ -1047,7 +1019,11 @@ impl tinyiothub_tenant::TagSuggester for MinimaxTagSuggester {
             .filter(|t| !t.is_empty() && t.len() < 20)
             .collect();
 
-        if tags.is_empty() { Err("AI 未生成有效标签".to_string()) } else { Ok(tags) }
+        if tags.is_empty() {
+            Err("AI 未生成有效标签".to_string())
+        } else {
+            Ok(tags)
+        }
     }
 }
 
@@ -1075,7 +1051,9 @@ impl axum::extract::FromRef<AppState> for tinyiothub_alarm::AlarmState {
 
 impl axum::extract::FromRef<AppState> for tinyiothub_driver::DriverState {
     fn from_ref(state: &AppState) -> Self {
-        tinyiothub_driver::DriverState { gateway_service: state.gateway_service.clone() }
+        tinyiothub_driver::DriverState {
+            gateway_service: state.gateway_service.clone(),
+        }
     }
 }
 
@@ -1098,7 +1076,9 @@ impl axum::extract::FromRef<AppState> for tinyiothub_tenant::TenantState {
             database: state.database.clone(),
             tenant_service: state.tenant_service.clone(),
             workspace_service: state.workspace_service.clone(),
-            agent_lifecycle: Arc::new(AgentPoolLifecycle { pool: state.agent_pool.clone() }),
+            agent_lifecycle: Arc::new(AgentPoolLifecycle {
+                pool: state.agent_pool.clone(),
+            }),
             tag_suggester: if settings.minimax.is_some() {
                 Some(Arc::new(MinimaxTagSuggester))
             } else {
@@ -1194,13 +1174,9 @@ pub struct EventSecurityAdminRoleChecker {
 #[async_trait::async_trait]
 impl tinyiothub_admin::AdminRoleChecker for EventSecurityAdminRoleChecker {
     async fn require_admin_role(&self, user_id: &str, operation: &str) -> Result<(), String> {
-        crate::shared::error_handling::AuthHelper::require_admin_role(
-            &self.state,
-            user_id,
-            operation,
-        )
-        .await
-        .map_err(|_| "Access denied: admin role required".to_string())
+        crate::shared::error_handling::AuthHelper::require_admin_role(&self.state, user_id, operation)
+            .await
+            .map_err(|_| "Access denied: admin role required".to_string())
     }
 }
 

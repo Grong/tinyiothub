@@ -20,7 +20,10 @@ where
     axum::Router::new()
         .route("/memories", get(list_active_memories))
         .route("/memories/queue", get(get_pending_queue))
-        .route("/memories/queue/{queue_id}/resolve", axum::routing::post(resolve_queue_item))
+        .route(
+            "/memories/queue/{queue_id}/resolve",
+            axum::routing::post(resolve_queue_item),
+        )
         .route("/memories/{memory_id}/pin", axum::routing::put(pin_memory))
         .route("/memories/profile/compile", axum::routing::post(compile_profile))
         .route("/memories/digest/weekly", axum::routing::post(generate_weekly_digest))
@@ -44,8 +47,7 @@ async fn get_pending_queue(
     State(state): State<AgentState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Query(query): Query<ListMemoriesQuery>,
-) -> Json<tinyiothub_web::response::ApiResponse<Vec<tinyiothub_core::memory::ReflectionQueueItem>>>
-{
+) -> Json<tinyiothub_web::response::ApiResponse<Vec<tinyiothub_core::memory::ReflectionQueueItem>>> {
     let ws = workspace_id.unwrap_or_default();
     match state.memory_store.get_pending_queue(&ws, &query.agent_id).await {
         Ok(items) => ApiResponseBuilder::success(items),
@@ -110,15 +112,17 @@ async fn compile_profile(
 ) -> Json<tinyiothub_web::response::ApiResponse<serde_json::Value>> {
     let ws = workspace_id.unwrap_or_default();
 
-    let model =
-        crate::host::config::service::get_config(&state.db_pool(), &query.agent_id)
-            .await
-            .map(|c| c.model)
-            .unwrap_or_else(|_| default_model());
+    let model = crate::host::config::service::get_config(&state.db_pool(), &query.agent_id)
+        .await
+        .map(|c| c.model)
+        .unwrap_or_else(|_| default_model());
 
     match state.orchestrator.as_ref() {
         Some(orchestrator) => {
-            match orchestrator.memory_service().compile_profile(&ws, &query.agent_id, &model).await
+            match orchestrator
+                .memory_service()
+                .compile_profile(&ws, &query.agent_id, &model)
+                .await
             {
                 Ok(profile) => ApiResponseBuilder::success(serde_json::json!({"profile": profile})),
                 Err(e) => ApiResponseBuilder::error(format!("Failed to compile profile: {}", e)),
@@ -136,11 +140,10 @@ async fn generate_weekly_digest(
 ) -> Json<tinyiothub_web::response::ApiResponse<serde_json::Value>> {
     let ws = workspace_id.unwrap_or_default();
 
-    let model =
-        crate::host::config::service::get_config(&state.db_pool(), &query.agent_id)
-            .await
-            .map(|c| c.model)
-            .unwrap_or_else(|_| default_model());
+    let model = crate::host::config::service::get_config(&state.db_pool(), &query.agent_id)
+        .await
+        .map(|c| c.model)
+        .unwrap_or_else(|_| default_model());
 
     match state.orchestrator.as_ref() {
         Some(orchestrator) => {

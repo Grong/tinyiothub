@@ -65,14 +65,15 @@ where
 }
 
 fn resolve_workspace_id(claims: &Claims) -> &str {
-    if claims.workspace_id.is_empty() { paths::DEFAULT_WORKSPACE_ID } else { &claims.workspace_id }
+    if claims.workspace_id.is_empty() {
+        paths::DEFAULT_WORKSPACE_ID
+    } else {
+        &claims.workspace_id
+    }
 }
 
 // GET /api/v1/agents/skills
-pub async fn list_skills(
-    _state: State<AgentState>,
-    claims: Claims,
-) -> Json<ApiResponse<Vec<SkillInfoDto>>> {
+pub async fn list_skills(_state: State<AgentState>, claims: Claims) -> Json<ApiResponse<Vec<SkillInfoDto>>> {
     let workspace_id = resolve_workspace_id(&claims);
     // List workspace-specific skills
     let ws_skills = list_skill_files(&workspace_skills_dir(workspace_id)).await;
@@ -125,8 +126,7 @@ pub async fn create_skill(
 ) -> Result<Json<ApiResponse<SkillInfoDto>>, StatusCode> {
     let workspace_id = resolve_workspace_id(&claims);
     // Validate path
-    let file_path =
-        skill_file_path(workspace_id, &req.skill_name).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let file_path = skill_file_path(workspace_id, &req.skill_name).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     if file_path.exists() {
         return Err(StatusCode::CONFLICT); // File already exists
@@ -189,7 +189,9 @@ pub async fn delete_skill(
     let file_path = skill_file_path(workspace_id, &name).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     if fs::metadata(&file_path).await.is_ok() {
-        fs::remove_file(&file_path).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        fs::remove_file(&file_path)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         tracing::info!("Skill deleted: {:?}", file_path);
     }
 

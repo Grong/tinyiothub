@@ -2,9 +2,7 @@
 pub use tinyiothub_core::config::*;
 
 pub mod settings {
-    pub use tinyiothub_core::config::{
-        AliyunSmsConfig, ApplicationSettings, MarketplaceConfig, SmsConfig,
-    };
+    pub use tinyiothub_core::config::{AliyunSmsConfig, ApplicationSettings, MarketplaceConfig, SmsConfig};
 }
 
 use std::sync::OnceLock;
@@ -54,7 +52,9 @@ pub fn load_configuration() -> Result<ApplicationSettings, ConfigError> {
 
 /// Get the global configuration instance
 pub fn get() -> &'static ApplicationSettings {
-    CONFIG.get().expect("Configuration not initialized. Call config::initialize() first")
+    CONFIG
+        .get()
+        .expect("Configuration not initialized. Call config::initialize() first")
 }
 
 /// Get the global configuration if initialized, otherwise None.
@@ -66,16 +66,11 @@ pub fn try_get() -> Option<&'static ApplicationSettings> {
 ///
 /// Reads `[minimax]` section from app_settings.toml. Returns an error if the
 /// section is missing or if provider construction fails.
-pub fn create_minimax_provider()
--> anyhow::Result<Box<dyn zeroclaw::providers::traits::ModelProvider>> {
+pub fn create_minimax_provider() -> anyhow::Result<Box<dyn zeroclaw::providers::traits::ModelProvider>> {
     let cfg = try_get()
         .and_then(|s| s.minimax.as_ref())
         .ok_or_else(|| anyhow::anyhow!("[minimax] config section is required but not found"))?;
-    zeroclaw::providers::create_model_provider_with_url(
-        "minimaxi",
-        Some(&cfg.auth_token),
-        Some(&cfg.base_url),
-    )
+    zeroclaw::providers::create_model_provider_with_url("minimaxi", Some(&cfg.auth_token), Some(&cfg.base_url))
 }
 
 /// Get environment name

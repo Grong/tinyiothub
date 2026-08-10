@@ -144,10 +144,7 @@ impl DeviceQueryService for SqliteDeviceQueryService {
         Ok(devices)
     }
 
-    async fn get_device_status_distribution(
-        &self,
-        workspace_id: Option<&str>,
-    ) -> Result<DeviceStatusDistribution> {
+    async fn get_device_status_distribution(&self, workspace_id: Option<&str>) -> Result<DeviceStatusDistribution> {
         let mut builder = QueryBuilder::new(
             "SELECT
                 SUM(CASE WHEN state = 1 THEN 1 ELSE 0 END) as online,
@@ -171,13 +168,8 @@ impl DeviceQueryService for SqliteDeviceQueryService {
         })
     }
 
-    async fn get_quick_devices_list(
-        &self,
-        limit: i32,
-        workspace_id: Option<&str>,
-    ) -> Result<Vec<QuickDevice>> {
-        let mut builder =
-            QueryBuilder::new("SELECT id, name, device_type, state, updated_at FROM devices");
+    async fn get_quick_devices_list(&self, limit: i32, workspace_id: Option<&str>) -> Result<Vec<QuickDevice>> {
+        let mut builder = QueryBuilder::new("SELECT id, name, device_type, state, updated_at FROM devices");
 
         if let Some(wid) = workspace_id {
             builder.push(" WHERE workspace_id = ").push_bind(wid);

@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 pub use super::types::{
-    DeviceStatusSummary, EventCriteria, EventStatistics, ExportFormat, GroupBy, RealTimeEvent,
-    RealTimeFilter, SortBy, SortOrder, StatisticsGroup, StatisticsParams, StatusSummary,
+    DeviceStatusSummary, EventCriteria, EventStatistics, ExportFormat, GroupBy, RealTimeEvent, RealTimeFilter, SortBy,
+    SortOrder, StatisticsGroup, StatisticsParams, StatusSummary,
 };
 use crate::{
     Result,
@@ -47,11 +47,7 @@ pub trait EventRepository: Send + Sync {
     async fn cleanup_old_events(&self, before: DateTime<Utc>) -> Result<u64>;
 
     /// Export events in the specified format
-    async fn export_events(
-        &self,
-        criteria: &EventCriteria,
-        format: ExportFormat,
-    ) -> Result<Vec<u8>>;
+    async fn export_events(&self, criteria: &EventCriteria, format: ExportFormat) -> Result<Vec<u8>>;
 }
 
 /// Repository interface for real-time event status
@@ -61,11 +57,7 @@ pub trait RealTimeEventRepository: Send + Sync {
     async fn upsert_status(&self, event: &Event) -> Result<()>;
 
     /// Remove real-time event status
-    async fn remove_status(
-        &self,
-        source: &crate::value_objects::EventSource,
-        event_type: &EventType,
-    ) -> Result<()>;
+    async fn remove_status(&self, source: &crate::value_objects::EventSource, event_type: &EventType) -> Result<()>;
 
     /// Find active events matching the filter
     async fn find_active_events(&self, filter: &RealTimeFilter) -> Result<Vec<RealTimeEvent>>;
@@ -74,12 +66,7 @@ pub trait RealTimeEventRepository: Send + Sync {
     async fn get_status_summary(&self, filter: &RealTimeFilter) -> Result<StatusSummary>;
 
     /// Acknowledge an event
-    async fn acknowledge_event(
-        &self,
-        id: &EventId,
-        user_id: &str,
-        workspace_id: &str,
-    ) -> Result<()>;
+    async fn acknowledge_event(&self, id: &EventId, user_id: &str, workspace_id: &str) -> Result<()>;
 
     /// Clear all acknowledged events
     async fn clear_acknowledged_events(&self) -> Result<u64>;

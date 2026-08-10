@@ -7,8 +7,7 @@ use crate::{
     Result,
     entities::Event,
     repositories::{
-        EventCriteria, EventRepository, EventStatistics, ExportFormat, SortBy, SortOrder,
-        StatisticsParams,
+        EventCriteria, EventRepository, EventStatistics, ExportFormat, SortBy, SortOrder, StatisticsParams,
     },
     value_objects::{EventId, EventLevel, EventSource, EventType, RichContent},
 };
@@ -73,8 +72,10 @@ impl EventRepository for SqliteEventRepository {
             WHERE id = ?
         "#;
 
-        let row =
-            sqlx::query(sql).bind(id.to_string()).fetch_optional(self.database.pool()).await?;
+        let row = sqlx::query(sql)
+            .bind(id.to_string())
+            .fetch_optional(self.database.pool())
+            .await?;
 
         if let Some(row) = row {
             let event = self.row_to_event(row)?;
@@ -277,7 +278,10 @@ impl EventRepository for SqliteEventRepository {
         // Simplified implementation - in real version would implement full statistics
         let total_count = self.get_total_count().await?;
 
-        Ok(EventStatistics { total_count, groups: vec![] })
+        Ok(EventStatistics {
+            total_count,
+            groups: vec![],
+        })
     }
 
     async fn cleanup_old_events(&self, before: DateTime<Utc>) -> Result<u64> {
@@ -289,11 +293,7 @@ impl EventRepository for SqliteEventRepository {
         Ok(result.rows_affected())
     }
 
-    async fn export_events(
-        &self,
-        criteria: &EventCriteria,
-        format: ExportFormat,
-    ) -> Result<Vec<u8>> {
+    async fn export_events(&self, criteria: &EventCriteria, format: ExportFormat) -> Result<Vec<u8>> {
         let events = self.find_by_criteria(criteria).await?;
 
         match format {

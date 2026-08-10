@@ -1,6 +1,5 @@
 // Agent types — domain types and DTOs
 
-
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -485,8 +484,7 @@ impl MemoryContext {
     pub fn add_item(&mut self, item: AgentMemoryItem) {
         match item.item_type.as_str() {
             "device_snapshot" => {
-                let snapshot_data =
-                    item.value.get("snapshot").cloned().unwrap_or(item.value.clone());
+                let snapshot_data = item.value.get("snapshot").cloned().unwrap_or(item.value.clone());
                 self.device_snapshots.push(DeviceSnapshot {
                     device_id: item.key.clone(),
                     workspace_id: item
@@ -561,7 +559,10 @@ impl MemoryContext {
     }
 
     pub fn get_device_snapshots(&self, device_id: &str) -> Vec<&DeviceSnapshot> {
-        self.device_snapshots.iter().filter(|s| s.device_id == device_id).collect()
+        self.device_snapshots
+            .iter()
+            .filter(|s| s.device_id == device_id)
+            .collect()
     }
 
     pub fn get_latest_device_snapshot(&self, device_id: &str) -> Option<&DeviceSnapshot> {
@@ -636,8 +637,7 @@ mod tests {
 
     #[test]
     fn test_session_new() {
-        let session =
-            Session::new("agent:ws:agent/sess".to_string(), "ws".to_string(), "agent".to_string());
+        let session = Session::new("agent:ws:agent/sess".to_string(), "ws".to_string(), "agent".to_string());
         assert_eq!(session.session_key, "agent:ws:agent/sess");
         assert_eq!(session.workspace_id, "ws");
         assert_eq!(session.agent_id, "agent");
@@ -646,8 +646,7 @@ mod tests {
 
     #[test]
     fn test_session_set_label() {
-        let mut session =
-            Session::new("agent:ws:agent/sess".to_string(), "ws".to_string(), "agent".to_string());
+        let mut session = Session::new("agent:ws:agent/sess".to_string(), "ws".to_string(), "agent".to_string());
         let before = session.updated_at;
         std::thread::sleep(std::time::Duration::from_millis(10));
         session.set_label("Test Session");
@@ -838,10 +837,7 @@ mod tests {
         let pref_item = AgentMemoryItem::user_preference("theme", serde_json::json!("dark"));
         assert_eq!(pref_item.item_type, "user_preference");
 
-        let summary_item = AgentMemoryItem::conversation_summary(
-            "Talked about devices",
-            vec!["devices".to_string()],
-        );
+        let summary_item = AgentMemoryItem::conversation_summary("Talked about devices", vec!["devices".to_string()]);
         assert_eq!(summary_item.item_type, "conversation_summary");
     }
 

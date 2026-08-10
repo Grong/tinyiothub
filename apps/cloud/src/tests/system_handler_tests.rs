@@ -25,8 +25,10 @@ fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Re
 async fn test_get_system_config() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/system/system", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/system/system", &token, None))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number());
@@ -36,8 +38,10 @@ async fn test_get_system_config() {
 async fn test_get_network_config() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/system/network", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/system/network", &token, None))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number());
@@ -47,8 +51,10 @@ async fn test_get_network_config() {
 async fn test_get_mqtt_config() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/system/mqtt", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/system/mqtt", &token, None))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number());
@@ -60,8 +66,10 @@ async fn test_get_mqtt_config() {
 async fn test_get_system_features() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/system/features", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/system/features", &token, None))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number());
@@ -74,7 +82,12 @@ async fn test_list_system_tasks() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/system/tasks?page=1&page_size=20", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/system/tasks?page=1&page_size=20",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     assert!(response.status().is_success() || response.status().is_client_error());
@@ -92,10 +105,7 @@ async fn test_create_system_task_missing_fields() {
         .oneshot(auth_request("POST", "/api/v1/system/tasks", &token, Some(json!({}))))
         .await
         .unwrap();
-    assert!(
-        response.status() == StatusCode::UNPROCESSABLE_ENTITY
-            || response.status() == StatusCode::OK
-    );
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
 }
 
 #[tokio::test]
@@ -103,7 +113,12 @@ async fn test_get_system_task_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/system/tasks/nonexistent-task-12345", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/system/tasks/nonexistent-task-12345",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -215,7 +230,12 @@ async fn test_initialize_system() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("POST", "/api/v1/system/initialize", &token, Some(json!({}))))
+        .oneshot(auth_request(
+            "POST",
+            "/api/v1/system/initialize",
+            &token,
+            Some(json!({})),
+        ))
         .await
         .unwrap();
     assert!(response.status().is_success() || response.status().is_client_error());
@@ -229,8 +249,10 @@ async fn test_initialize_system() {
 async fn test_restart_system() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("POST", "/api/v1/system/restart", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/system/restart", &token, None))
+        .await
+        .unwrap();
     assert!(response.status().is_success() || response.status().is_client_error());
 }
 
@@ -238,8 +260,10 @@ async fn test_restart_system() {
 async fn test_shutdown_system() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("POST", "/api/v1/system/shutdown", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/system/shutdown", &token, None))
+        .await
+        .unwrap();
     assert!(response.status().is_success() || response.status().is_client_error());
 }
 

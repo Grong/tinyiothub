@@ -13,8 +13,8 @@
 
 use std::sync::Arc;
 
-use sqlx::Row;
 use crate::loop_::thing_agent::{ThingAgentHost, ThingEventSignal};
+use sqlx::Row;
 
 use tinyiothub_event::bus::ThingEventBus;
 
@@ -35,11 +35,7 @@ impl ThingAgentHost for CloudThingAgentHost {
         self.bus.subscribe()
     }
 
-    async fn replay_events_since(
-        &self,
-        cursor: i64,
-        min_level: i32,
-    ) -> anyhow::Result<Vec<ThingEventSignal>> {
+    async fn replay_events_since(&self, cursor: i64, min_level: i32) -> anyhow::Result<Vec<ThingEventSignal>> {
         // The UUID `events.id` is not orderable — the cursor is the implicit
         // SQLite rowid, which is monotonic for appends (retention deletes
         // never lower max(rowid)).
@@ -83,30 +79,19 @@ impl ThingAgentHost for CloudThingAgentHost {
     /// O12：SQLite 直写 assistant 消息，零 LLM 成本。会话行必须已存在
     /// （用户会话在打开时由 chat service ensure_session 创建）——append_message
     /// 的 FK 会拒绝未知 session_key，这里先显式检查以给出可读错误。
-    async fn push_chat_message(
-        &self,
-        session_key: &str,
-        content: &str,
-        run_id: &str,
-    ) -> anyhow::Result<()> {
-        let exists: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM chat_sessions WHERE session_key = ?)")
-                .bind(session_key)
-                .fetch_one(&self.pool)
-                .await?;
-        anyhow::ensure!(exists, "unknown chat session: {session_key}");
-        super::chat::history::append_message(&self.pool, session_key, "assistant", content, run_id)
+    async fn push_chat_message(&self, session_key: &str, content: &str, run_id: &str) -> anyhow::Result<()> {
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM chat_sessions WHERE session_key = ?)")
+            .bind(session_key)
+            .fetch_one(&self.pool)
             .await?;
+        anyhow::ensure!(exists, "unknown chat session: {session_key}");
+        super::chat::history::append_message(&self.pool, session_key, "assistant", content, run_id).await?;
         Ok(())
     }
 
     /// 挂既有通知发布点：写入 events 表（source_type/actor = 'agent'，
     /// event_subtype = 'thing_agent_alert'，Error 级），前端事件流/SSE 已消费该表。
-    async fn notify_alert(
-        &self,
-        workspace_id: &str,
-        payload: serde_json::Value,
-    ) -> anyhow::Result<()> {
+    async fn notify_alert(&self, workspace_id: &str, payload: serde_json::Value) -> anyhow::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         let title = payload
             .get("summary")
@@ -136,10 +121,7 @@ impl ThingAgentHost for CloudThingAgentHost {
     /// `chat_sessions.user_id` 列存在但写入路径（history.rs / session_repository_impl.rs）
     /// 均不填值，schema 暂无 admin 维度。单用户工作区形态下可接受（CEO 0E 决议）；
     /// 多用户防泄漏的 admin 收窄已入 TODOS（"chat 会话 admin 维度"）。
-    async fn recent_active_admin_session(
-        &self,
-        workspace_id: &str,
-    ) -> anyhow::Result<Option<String>> {
+    async fn recent_active_admin_session(&self, workspace_id: &str) -> anyhow::Result<Option<String>> {
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(30)).timestamp_millis();
         let row = sqlx::query(
             "SELECT cs.session_key, MAX(cm.timestamp) AS last_ts \
@@ -171,7 +153,9 @@ mod tests {
             .await
             .expect("in-memory pool");
         sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await.unwrap();
-        tinyiothub_storage::test_helpers::run_all_migrations(&pool).await.expect("migrations");
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .expect("migrations");
         pool
     }
 
@@ -210,9 +194,11 @@ mod tests {
         ensure_session(&pool, "agent:other:a/s", "other", "a").await.unwrap();
         // 直接写时间戳控制先后（append_message 用当前时间，无法排序）。
         let now = chrono::Utc::now().timestamp_millis();
-        for (key, ts) in
-            [("agent:ws:a/old", now - 60_000), ("agent:ws:a/new", now), ("agent:other:a/s", now)]
-        {
+        for (key, ts) in [
+            ("agent:ws:a/old", now - 60_000),
+            ("agent:ws:a/new", now),
+            ("agent:other:a/s", now),
+        ] {
             sqlx::query("INSERT INTO chat_messages (session_key, role, content, timestamp, run_id) VALUES (?, 'user', 'm', ?, 'r')")
                 .bind(key)
                 .bind(ts)
@@ -230,12 +216,14 @@ mod tests {
         let pool = test_pool().await;
         ensure_session(&pool, "agent:ws:a/stale", "ws", "a").await.unwrap();
         let stale = (chrono::Utc::now() - chrono::Duration::days(31)).timestamp_millis();
-        sqlx::query("INSERT INTO chat_messages (session_key, role, content, timestamp, run_id) VALUES (?, 'user', 'm', ?, 'r')")
-            .bind("agent:ws:a/stale")
-            .bind(stale)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO chat_messages (session_key, role, content, timestamp, run_id) VALUES (?, 'user', 'm', ?, 'r')",
+        )
+        .bind("agent:ws:a/stale")
+        .bind(stale)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let got = host(pool).recent_active_admin_session("ws").await.expect("query");
         assert_eq!(got, None);
@@ -257,7 +245,10 @@ mod tests {
             "run_id": "run_1",
             "summary": "调低设定值失败",
         });
-        host(pool.clone()).notify_alert("ws", payload.clone()).await.expect("alert");
+        host(pool.clone())
+            .notify_alert("ws", payload.clone())
+            .await
+            .expect("alert");
 
         let row = sqlx::query(
             "SELECT event_type, event_subtype, event_level, source_type, actor, title, content, workspace_id \
@@ -283,7 +274,9 @@ mod tests {
     async fn append_message_smoke_via_history_module() {
         let pool = test_pool().await;
         ensure_session(&pool, "agent:ws:a/s1", "ws", "a").await.unwrap();
-        append_message(&pool, "agent:ws:a/s1", "assistant", "pong", "run_2").await.unwrap();
+        append_message(&pool, "agent:ws:a/s1", "assistant", "pong", "run_2")
+            .await
+            .unwrap();
         let msgs = list_messages(&pool, "agent:ws:a/s1", 10).await.unwrap();
         assert_eq!(msgs[0].1, "pong");
     }

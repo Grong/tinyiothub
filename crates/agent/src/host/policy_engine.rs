@@ -8,9 +8,7 @@
 
 use async_trait::async_trait;
 use sqlx::{Row, SqlitePool};
-use tinyiothub_policy::{
-    PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule, evaluate_rules,
-};
+use tinyiothub_policy::{PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule, evaluate_rules};
 
 /// PolicyEngine backed by the `policy_rules` table.
 ///
@@ -33,15 +31,12 @@ impl SqlitePolicyEngine {
 
 #[async_trait]
 impl PolicyEngine for SqlitePolicyEngine {
-    async fn evaluate(
-        &self,
-        workspace_id: &str,
-        category: PolicyCategory,
-        target: &str,
-    ) -> PolicyDecision {
+    async fn evaluate(&self, workspace_id: &str, category: PolicyCategory, target: &str) -> PolicyDecision {
         match self.load_rules(workspace_id).await {
             Ok(rules) => evaluate_rules(&rules, workspace_id, category, target),
-            Err(_) => PolicyDecision::RequireApproval { reason: "policy_read_failed".to_string() },
+            Err(_) => PolicyDecision::RequireApproval {
+                reason: "policy_read_failed".to_string(),
+            },
         }
     }
 
@@ -96,13 +91,10 @@ impl SqlitePolicyEngine {
 
         let mut rules = Vec::with_capacity(rows.len());
         for row in rows {
-            let Some(category) =
-                PolicyCategory::from_db(row.try_get::<String, _>("category")?.as_str())
-            else {
+            let Some(category) = PolicyCategory::from_db(row.try_get::<String, _>("category")?.as_str()) else {
                 continue;
             };
-            let Some(action) = PolicyAction::from_db(row.try_get::<String, _>("action")?.as_str())
-            else {
+            let Some(action) = PolicyAction::from_db(row.try_get::<String, _>("action")?.as_str()) else {
                 continue;
             };
             rules.push(PolicyRule {
@@ -122,9 +114,7 @@ impl SqlitePolicyEngine {
 #[cfg(test)]
 mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
-    use tinyiothub_policy::{
-        PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule,
-    };
+    use tinyiothub_policy::{PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule};
 
     use super::*;
 
@@ -134,8 +124,7 @@ mod tests {
             .connect(":memory:")
             .await
             .expect("create in-memory sqlite");
-        let migration =
-            include_str!("../../../../crates/db/migrations/20260729000001_thing_agent_loop.sql");
+        let migration = include_str!("../../../../crates/db/migrations/20260729000001_thing_agent_loop.sql");
         for stmt in migration.split(';') {
             let stmt = stmt.trim();
             // Skip the events ALTER — the events table is not part of this pool.
@@ -167,7 +156,10 @@ mod tests {
             .add_rule(rule("r1", "ws1", PolicyAction::Block, "reboot", 10))
             .await
             .expect("add r1");
-        engine.add_rule(rule("r2", "ws1", PolicyAction::Allow, "*", 1)).await.expect("add r2");
+        engine
+            .add_rule(rule("r2", "ws1", PolicyAction::Allow, "*", 1))
+            .await
+            .expect("add r2");
 
         let rules = engine.list_rules("ws1").await;
         assert_eq!(rules.len(), 2);
@@ -188,7 +180,10 @@ mod tests {
         let pool = test_pool().await;
         let engine = SqlitePolicyEngine::new(pool);
 
-        engine.add_rule(rule("allow-low", "ws1", PolicyAction::Allow, "reboot", 1)).await.unwrap();
+        engine
+            .add_rule(rule("allow-low", "ws1", PolicyAction::Allow, "reboot", 1))
+            .await
+            .unwrap();
         engine
             .add_rule(rule("block-high", "ws1", PolicyAction::Block, "reboot", 10))
             .await
@@ -200,12 +195,16 @@ mod tests {
 
         assert_eq!(
             engine.evaluate("ws1", PolicyCategory::AgentAction, "reboot").await,
-            PolicyDecision::Block { reason: "reason-block-high".to_string() }
+            PolicyDecision::Block {
+                reason: "reason-block-high".to_string()
+            }
         );
         // Star rule fires for unlisted targets.
         assert_eq!(
             engine.evaluate("ws1", PolicyCategory::AgentAction, "shutdown").await,
-            PolicyDecision::RequireApproval { reason: "reason-ra-star".to_string() }
+            PolicyDecision::RequireApproval {
+                reason: "reason-ra-star".to_string()
+            }
         );
         // Category filter: no tool_execution rules → default Allow.
         assert_eq!(
@@ -219,7 +218,10 @@ mod tests {
         let pool = test_pool().await;
         let engine = SqlitePolicyEngine::new(pool);
 
-        engine.add_rule(rule("r1", "ws1", PolicyAction::Block, "reboot", 10)).await.unwrap();
+        engine
+            .add_rule(rule("r1", "ws1", PolicyAction::Block, "reboot", 10))
+            .await
+            .unwrap();
 
         assert!(matches!(
             engine.evaluate("ws2", PolicyCategory::AgentAction, "reboot").await,

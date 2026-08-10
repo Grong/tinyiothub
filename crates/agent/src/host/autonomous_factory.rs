@@ -19,10 +19,10 @@
 
 use std::sync::Arc;
 
+use crate::loop_::thing_agent::{AgentHandle, RunContextInner, manager::AutonomousAgentProvider};
 use anyhow::anyhow;
 use dashmap::DashMap;
 use sqlx::SqlitePool;
-use crate::loop_::thing_agent::{AgentHandle, RunContextInner, manager::AutonomousAgentProvider};
 use tinyiothub_memory::workspace_memory::WorkspaceScopedMemory;
 use tinyiothub_policy::autonomy::PolicyRepository;
 use tinyiothub_thing::service::ThingService;
@@ -37,8 +37,7 @@ use zeroclaw::{
 };
 
 use super::tools::{
-    AutonomousInvokeActionTool, RunContextSlot, create_thing_tools, new_run_context_slot,
-    thing::InvokeActionTool,
+    AutonomousInvokeActionTool, RunContextSlot, create_thing_tools, new_run_context_slot, thing::InvokeActionTool,
 };
 use tinyiothub_event::{bus::ThingEventBus, router::ThrottleState};
 
@@ -167,7 +166,10 @@ impl AutonomousAgentFactory {
             }
             Entry::Vacant(vacant) => {
                 let handle: AgentHandle = Arc::new(tokio::sync::Mutex::new(agent));
-                vacant.insert(AutonomousEntry { handle: Arc::clone(&handle), run_ctx_slot: slot });
+                vacant.insert(AutonomousEntry {
+                    handle: Arc::clone(&handle),
+                    run_ctx_slot: slot,
+                });
                 tracing::info!(
                     workspace_id = workspace_id,
                     pool_size = self.agents.len(),
@@ -219,12 +221,11 @@ pub(crate) fn build_autonomous_tools(
 ) -> Vec<Box<dyn Tool>> {
     // The 9 ontology tools minus the chat invoke_action (confirmation-token
     // flow), plus the autonomous invoke_action (policy-gated).
-    let mut tools: Vec<Box<dyn Tool>> =
-        create_thing_tools(pool.clone(), workspace_id, runtime)
-            .into_iter()
-            .filter(|(tool, _)| tool.name() != "invoke_action")
-            .map(|(tool, _)| tool)
-            .collect();
+    let mut tools: Vec<Box<dyn Tool>> = create_thing_tools(pool.clone(), workspace_id, runtime)
+        .into_iter()
+        .filter(|(tool, _)| tool.name() != "invoke_action")
+        .map(|(tool, _)| tool)
+        .collect();
 
     let inner = InvokeActionTool {
         thing_service: Arc::new(ThingService::new(pool.clone())),
@@ -266,7 +267,9 @@ mod tests {
 
     impl ScriptedModelProvider {
         fn new() -> Self {
-            Self { responses: Mutex::new(vec![]) }
+            Self {
+                responses: Mutex::new(vec![]),
+            }
         }
     }
 
@@ -322,7 +325,9 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .expect("in-memory pool");
-        tinyiothub_storage::migrations::run_migrations(&pool).await.expect("migrations");
+        tinyiothub_storage::migrations::run_migrations(&pool)
+            .await
+            .expect("migrations");
         pool
     }
 
@@ -382,7 +387,10 @@ mod tests {
             ],
             "autonomous agent must carry exactly the 9 ontology tools"
         );
-        let invoke = tools.iter().find(|t| t.name() == "invoke_action").expect("invoke_action");
+        let invoke = tools
+            .iter()
+            .find(|t| t.name() == "invoke_action")
+            .expect("invoke_action");
         assert!(
             invoke.description().contains("自治"),
             "invoke_action must be the autonomous variant, got: {}",
@@ -413,7 +421,10 @@ mod tests {
         let factory = test_factory(pool);
 
         let ctx_run1 = run_ctx();
-        factory.get_or_create("ws-1", Arc::clone(&ctx_run1)).await.expect("run 1");
+        factory
+            .get_or_create("ws-1", Arc::clone(&ctx_run1))
+            .await
+            .expect("run 1");
         {
             let entry = factory.agents.get("ws-1").expect("cached");
             let slot = entry.run_ctx_slot.read().await;
@@ -422,7 +433,10 @@ mod tests {
         }
 
         let ctx_run2 = run_ctx();
-        factory.get_or_create("ws-1", Arc::clone(&ctx_run2)).await.expect("run 2");
+        factory
+            .get_or_create("ws-1", Arc::clone(&ctx_run2))
+            .await
+            .expect("run 2");
         {
             let entry = factory.agents.get("ws-1").expect("cached");
             let slot = entry.run_ctx_slot.read().await;

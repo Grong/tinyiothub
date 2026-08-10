@@ -124,11 +124,7 @@ impl ThingTemplateInstaller {
     /// Name conflict handling: if the template name already exists in the
     /// target workspace, appends " (来自市场)" suffix and retries.
     /// If the suffixed name also conflicts, appends a number.
-    pub async fn install(
-        pool: &SqlitePool,
-        template_id: &str,
-        target_workspace_id: &str,
-    ) -> Result<InstalledTemplate> {
+    pub async fn install(pool: &SqlitePool, template_id: &str, target_workspace_id: &str) -> Result<InstalledTemplate> {
         // 1. Fetch the source template
         let source = sqlx::query_as::<_, ThingTemplateFullRow>(
             "SELECT name, display_name, description, version, author, category, \
@@ -140,12 +136,14 @@ impl ThingTemplateInstaller {
         .fetch_optional(pool)
         .await
         .map_err(|e| MarketplaceError::Template(e.to_string()))?
-        .ok_or_else(|| {
-            MarketplaceError::NotFound(format!("thing_template {} not found", template_id))
-        })?;
+        .ok_or_else(|| MarketplaceError::NotFound(format!("thing_template {} not found", template_id)))?;
 
         // 2. Resolve name conflict in target workspace
-        let ws_key = if target_workspace_id.is_empty() { "" } else { target_workspace_id };
+        let ws_key = if target_workspace_id.is_empty() {
+            ""
+        } else {
+            target_workspace_id
+        };
         let final_name = resolve_template_name(pool, ws_key, &source.name).await?;
 
         // 3. Insert copy with new id and workspace_id
@@ -193,7 +191,10 @@ impl ThingTemplateInstaller {
             ws_key
         );
 
-        Ok(InstalledTemplate { id: new_id, name: final_name })
+        Ok(InstalledTemplate {
+            id: new_id,
+            name: final_name,
+        })
     }
 }
 
@@ -203,7 +204,9 @@ impl ThingTemplateInstaller {
 
 /// Count elements in a JSON array string. Returns 0 for malformed JSON.
 fn json_array_len(s: &str) -> usize {
-    serde_json::from_str::<Vec<serde_json::Value>>(s).map(|v| v.len()).unwrap_or(0)
+    serde_json::from_str::<Vec<serde_json::Value>>(s)
+        .map(|v| v.len())
+        .unwrap_or(0)
 }
 
 /// Resolve name conflicts in the target workspace.
@@ -212,11 +215,7 @@ fn json_array_len(s: &str) -> usize {
 /// 1. If name does not exist → return name as-is.
 /// 2. Append " (来自市场)" suffix → retry. If still no conflict → return that.
 /// 3. Fallback: append " (N)" for N=1..99 until a free name is found.
-async fn resolve_template_name(
-    pool: &SqlitePool,
-    workspace_key: &str,
-    name: &str,
-) -> Result<String> {
+async fn resolve_template_name(pool: &SqlitePool, workspace_key: &str, name: &str) -> Result<String> {
     // Check original name
     if name_is_available(pool, workspace_key, name).await {
         return Ok(name.to_string());

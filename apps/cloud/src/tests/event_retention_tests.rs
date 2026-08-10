@@ -7,9 +7,7 @@
 
 use chrono::{Duration, Utc};
 use tinyiothub_core::{cron::JobExecutor, models::cron_job::CronJob};
-use tinyiothub_event::{
-    repo::RealTimeEventRepository, sqlite_real_time_event::SqliteRealTimeEventRepository,
-};
+use tinyiothub_event::{repo::RealTimeEventRepository, sqlite_real_time_event::SqliteRealTimeEventRepository};
 use tinyiothub_runtime::cron_executors::EventRetentionExecutor;
 use tinyiothub_storage::sqlite::Database;
 
@@ -21,18 +19,14 @@ async fn test_pool() -> sqlx::SqlitePool {
         .connect("sqlite::memory:")
         .await
         .expect("in-memory pool");
-    tinyiothub_storage::migrations::run_migrations(&pool).await.expect("migrations");
+    tinyiothub_storage::migrations::run_migrations(&pool)
+        .await
+        .expect("migrations");
     pool
 }
 
 /// Insert an event row. `is_status` distinguishes occurrence (0) from status (1).
-async fn insert_event(
-    pool: &sqlx::SqlitePool,
-    id: &str,
-    age_days: i64,
-    is_status: i64,
-    acknowledged: i64,
-) {
+async fn insert_event(pool: &sqlx::SqlitePool, id: &str, age_days: i64, is_status: i64, acknowledged: i64) {
     // event_subtype varies by id so status rows don't collide on the
     // (correct) status-dedup unique index
     let ts = (Utc::now() - Duration::days(age_days)).to_rfc3339();
@@ -107,7 +101,10 @@ async fn test_retention_executor_deletes_only_old_occurrence_rows() {
 
     assert!(result.output.unwrap().contains("deleted 1 "));
     assert!(!event_exists(&pool, "old-occ").await, "old occurrence purged");
-    assert!(event_exists(&pool, "old-status").await, "old status EXEMPT — it is live state");
+    assert!(
+        event_exists(&pool, "old-status").await,
+        "old status EXEMPT — it is live state"
+    );
     assert!(event_exists(&pool, "new-occ").await);
     assert!(event_exists(&pool, "new-status").await);
 }
@@ -123,7 +120,10 @@ async fn test_cleanup_old_events_exempts_status_rows() {
 
     assert_eq!(deleted, 1);
     assert!(!event_exists(&pool, "old-occ").await);
-    assert!(event_exists(&pool, "old-status").await, "status rows exempt from time purge");
+    assert!(
+        event_exists(&pool, "old-status").await,
+        "status rows exempt from time purge"
+    );
 }
 
 #[tokio::test]
@@ -138,19 +138,21 @@ async fn test_clear_acknowledged_only_removes_occurrence_rows() {
 
     assert_eq!(deleted, 1);
     assert!(!event_exists(&pool, "ack-occ").await);
-    assert!(event_exists(&pool, "ack-status").await, "acknowledged status row is still live state");
+    assert!(
+        event_exists(&pool, "ack-status").await,
+        "acknowledged status row is still live state"
+    );
     assert!(event_exists(&pool, "unack-occ").await);
 }
 
 #[tokio::test]
 async fn test_retention_job_seeded_by_migration() {
     let pool = test_pool().await;
-    let (job_type, enabled): (String, i64) = sqlx::query_as(
-        "SELECT job_type, is_enabled FROM cron_jobs WHERE id = 'sys-event-retention'",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("retention job seeded");
+    let (job_type, enabled): (String, i64) =
+        sqlx::query_as("SELECT job_type, is_enabled FROM cron_jobs WHERE id = 'sys-event-retention'")
+            .fetch_one(&pool)
+            .await
+            .expect("retention job seeded");
     assert_eq!(job_type, "event_retention");
     assert_eq!(enabled, 1);
 }

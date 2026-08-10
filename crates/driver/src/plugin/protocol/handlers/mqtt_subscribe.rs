@@ -47,8 +47,8 @@ impl ProtocolHandler for MqttSubscribeHandler {
             None => return Ok(vec![]),
         };
 
-        let json: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|e| Error::ValidationError(format!("Invalid MQTT JSON: {}", e)))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&body).map_err(|e| Error::ValidationError(format!("Invalid MQTT JSON: {}", e)))?;
 
         let mut results = Vec::new();
         for (field_name, path) in &self.mapping {

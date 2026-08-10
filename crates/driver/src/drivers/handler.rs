@@ -11,9 +11,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tinyiothub_core::models::component::{Component, ComponentOption};
 use tinyiothub_runtime::driver::get_driver_list;
-use tinyiothub_web::response::{
-    ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo,
-};
+use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo};
 
 /// 驱动详情响应
 #[derive(Serialize, Deserialize)]
@@ -62,8 +60,11 @@ async fn list_drivers(
     let page_size: u32 = params.get("page_size").and_then(|s| s.parse().ok()).unwrap_or(20);
 
     let total_count = total as u64;
-    let total_pages =
-        if page_size > 0 { ((total as f64) / (page_size as f64)).ceil() as u32 } else { 0 };
+    let total_pages = if page_size > 0 {
+        ((total as f64) / (page_size as f64)).ceil() as u32
+    } else {
+        0
+    };
 
     let start = ((page.saturating_sub(1)) * page_size) as usize;
     let end = (start + page_size as usize).min(total);
@@ -73,7 +74,12 @@ async fn list_drivers(
 
     ApiResponseBuilder::success(PaginatedResponse {
         data: paged.to_vec(),
-        pagination: PaginationInfo { page, page_size, total_pages, total_count },
+        pagination: PaginationInfo {
+            page,
+            page_size,
+            total_pages,
+            total_count,
+        },
     })
 }
 
@@ -92,9 +98,7 @@ async fn get_driver_detail(Path(name): Path<String>) -> Json<ApiResponse<DriverD
 }
 
 /// 检查驱动支持状态
-async fn check_driver_support(
-    Path(name): Path<String>,
-) -> Json<ApiResponse<PaginatedResponse<Component>>> {
+async fn check_driver_support(Path(name): Path<String>) -> Json<ApiResponse<PaginatedResponse<Component>>> {
     tracing::info!("Checking if driver is supported: {}", name);
 
     let is_supported = tinyiothub_runtime::driver::has_driver(&name);
@@ -102,7 +106,12 @@ async fn check_driver_support(
     let total_count = if is_supported { 1 } else { 0 };
     let response = PaginatedResponse {
         data: vec![],
-        pagination: PaginationInfo { page: 1, page_size: 1, total_pages: 1, total_count },
+        pagination: PaginationInfo {
+            page: 1,
+            page_size: 1,
+            total_pages: 1,
+            total_count,
+        },
     };
 
     tracing::info!("Driver {} support status: {}", name, is_supported);
@@ -124,7 +133,11 @@ async fn get_driver_config(Path(name): Path<String>) -> Json<ApiResponse<DriverC
             default_config.insert(option.name.clone(), option.default_value.clone());
         }
 
-        tracing::info!("Found {} config options for driver: {}", config_options.len(), driver.name);
+        tracing::info!(
+            "Found {} config options for driver: {}",
+            config_options.len(),
+            driver.name
+        );
 
         ApiResponseBuilder::success(DriverConfigResponse {
             driver_name: driver.name,

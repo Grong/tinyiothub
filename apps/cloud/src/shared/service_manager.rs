@@ -61,18 +61,17 @@ impl ServiceManager {
     }
 
     /// 启动所有服务
-    pub async fn start_all(
-        &mut self,
-        app_state: &mut crate::shared::app_state::AppState,
-    ) -> Result<(), Error> {
+    pub async fn start_all(&mut self, app_state: &mut crate::shared::app_state::AppState) -> Result<(), Error> {
         info!("🚀 Starting all background services...");
 
         // 更新状态为启动中
         *self.status.write().await = ServiceStatus::Starting;
 
         // 1. 创建并启动数据服务器
-        let data_server =
-            Arc::new(DataServer::new(app_state.device_cache.clone(), app_state.event_bus.clone()));
+        let data_server = Arc::new(DataServer::new(
+            app_state.device_cache.clone(),
+            app_state.event_bus.clone(),
+        ));
 
         // 启动数据服务器
         let shutdown_rx = self.shutdown_tx.subscribe();
@@ -89,9 +88,9 @@ impl ServiceManager {
         info!("✅ SseEventHandler registered");
 
         // 注册报警事件处理器 - 评估报警规则并创建报警
-        let notification_dispatcher = Arc::new(
-            tinyiothub_alarm::notification::NotificationDispatcher::new(app_state.database.clone()),
-        );
+        let notification_dispatcher = Arc::new(tinyiothub_alarm::notification::NotificationDispatcher::new(
+            app_state.database.clone(),
+        ));
         let alarm_handler = Arc::new(tinyiothub_alarm::AlarmEventHandler::new(
             app_state.alarm_service.clone(),
             notification_dispatcher,
@@ -101,10 +100,9 @@ impl ServiceManager {
 
         // 注册实时状态事件处理器 - 状态类事件 upsert 到 events 当前态视图
         // (occurrence_count 累加 + 去重; eng-review T2)
-        let real_time_status_handler =
-            Arc::new(crate::shared::event::handlers::RealTimeStatusHandler::new(
-                app_state.real_time_event_repository.clone(),
-            ));
+        let real_time_status_handler = Arc::new(crate::shared::event::handlers::RealTimeStatusHandler::new(
+            app_state.real_time_event_repository.clone(),
+        ));
         app_state.event_bus.register_handler(real_time_status_handler);
         info!("✅ RealTimeStatusHandler registered");
 
@@ -138,7 +136,8 @@ impl ServiceManager {
 
         // 3. 启动健康检查服务
         #[cfg(not(feature = "harmonyos"))]
-        self.start_health_monitor(data_server.clone(), app_state.database.clone()).await?;
+        self.start_health_monitor(data_server.clone(), app_state.database.clone())
+            .await?;
 
         // 4. Build and start AI subsystem (tinyiothub-ai Orchestrator)
         #[cfg(not(feature = "harmonyos"))]
@@ -154,33 +153,31 @@ impl ServiceManager {
                 interval_minutes: 15,
             };
             let event_publisher = Arc::new(
-                tinyiothub_agent::loop_::event::bus::AiEventPublisher::new(
-                    app_state.event_bus.clone(),
-                )
-                .with_drop_notifier(Arc::new(
-                    tinyiothub_agent::loop_::event::bus::LoggingDropNotifier,
-                )),
+                tinyiothub_agent::loop_::event::bus::AiEventPublisher::new(app_state.event_bus.clone())
+                    .with_drop_notifier(Arc::new(tinyiothub_agent::loop_::event::bus::LoggingDropNotifier)),
             );
-            let heartbeat_runner =
-                Arc::new(tinyiothub_agent::loop_::heartbeat::runner::HeartbeatRunner::new(
-                    heartbeat_task_repo.clone(),
-                    event_publisher.clone(),
-                    heartbeat_config,
-                ));
+            let heartbeat_runner = Arc::new(tinyiothub_agent::loop_::heartbeat::runner::HeartbeatRunner::new(
+                heartbeat_task_repo.clone(),
+                event_publisher.clone(),
+                heartbeat_config,
+            ));
 
             // Wire event publisher to services that need cross-domain dispatching
             app_state.alarm_service.set_event_publisher(Arc::new(
                 crate::shared::ai_adapter::AlarmAiPublisherAdapter::new(event_publisher.clone()),
             ));
             app_state.workspace_service.set_event_publisher(event_publisher.clone());
-            app_state.workspace_service.set_heartbeat_task_repo(heartbeat_task_repo.clone());
-            app_state.workspace_service.set_agent_hooks(app_state.agent_hooks.clone());
+            app_state
+                .workspace_service
+                .set_heartbeat_task_repo(heartbeat_task_repo.clone());
+            app_state
+                .workspace_service
+                .set_agent_hooks(app_state.agent_hooks.clone());
 
             // Wire agent pool via adapter
-            let ai_adapter =
-                Arc::new(tinyiothub_agent::host::pool_adapter::HostAgentPoolAdapter::new(
-                    app_state.agent_pool.clone(),
-                ));
+            let ai_adapter = Arc::new(tinyiothub_agent::host::pool_adapter::HostAgentPoolAdapter::new(
+                app_state.agent_pool.clone(),
+            ));
             heartbeat_runner.set_agent_pool(ai_adapter).await;
 
             let memory_service = Arc::new(
@@ -201,50 +198,44 @@ impl ServiceManager {
             // 三触发器（物事件/定时巡检/用户指令）汇入 per-workspace 调度器。
             let thing_agent_manager = {
                 let pool = app_state.database.pool().clone();
-                let policy_repo = Arc::new(
-                    tinyiothub_agent::host::policy_repo::SqlitePolicyRepository::new(pool.clone()),
-                );
-                let runs_repo = Arc::new(
-                    tinyiothub_agent::host::agent_runs_repo::SqliteAgentRunsRepository::new(
-                        pool.clone(),
-                    ),
-                );
+                let policy_repo = Arc::new(tinyiothub_agent::host::policy_repo::SqlitePolicyRepository::new(
+                    pool.clone(),
+                ));
+                let runs_repo = Arc::new(tinyiothub_agent::host::agent_runs_repo::SqliteAgentRunsRepository::new(
+                    pool.clone(),
+                ));
                 let manager = Arc::new(tinyiothub_agent::loop_::thing_agent::ThingAgentManager::new(
                     Arc::new(tinyiothub_agent::host::thing_agent_host::CloudThingAgentHost::new(
                         pool.clone(),
                         app_state.thing_event_bus.clone(),
                     )),
                     policy_repo.clone(),
-                    Arc::new(
-                        tinyiothub_agent::host::autonomous_factory::AutonomousAgentFactory::new(
-                            pool.clone(),
-                            policy_repo,
-                            app_state.thing_event_bus.clone(),
-                            Arc::new(tinyiothub_event::router::ThrottleState::new(60)),
-                            app_state.agent_pool.shared_memory(),
-                            app_state.agent_pool.observer(),
-                            tinyiothub_agent::host::autonomous_factory::minimax_provider_factory(),
-                            tinyiothub_agent::host::shared::config::AgentRuntimeConfig::default().model,
-                            tinyiothub_agent::host::tools::service::ToolRuntimeContext {
-                                device_cache: Some(app_state.device_cache.clone()),
-                                data_server: app_state.data_server.clone(),
-                                // autonomous factory never registers the dispatch tool
-                                directive_sink: None,
-                            },
-                        ),
-                    ),
+                    Arc::new(tinyiothub_agent::host::autonomous_factory::AutonomousAgentFactory::new(
+                        pool.clone(),
+                        policy_repo,
+                        app_state.thing_event_bus.clone(),
+                        Arc::new(tinyiothub_event::router::ThrottleState::new(60)),
+                        app_state.agent_pool.shared_memory(),
+                        app_state.agent_pool.observer(),
+                        tinyiothub_agent::host::autonomous_factory::minimax_provider_factory(),
+                        tinyiothub_agent::host::shared::config::AgentRuntimeConfig::default().model,
+                        tinyiothub_agent::host::tools::service::ToolRuntimeContext {
+                            device_cache: Some(app_state.device_cache.clone()),
+                            data_server: app_state.data_server.clone(),
+                            // autonomous factory never registers the dispatch tool
+                            directive_sink: None,
+                        },
+                    )),
                     runs_repo.clone(),
                     Arc::new(tinyiothub_agent::loop_::thing_agent::Runner::new()),
                     tinyiothub_agent::loop_::thing_agent::ThingAgentManagerConfig::default(),
                 ));
                 // T18 X6 心跳桥：HeartbeatCompleted 的结构化 proposals 经 O11
                 // dedup 后投递 UserDirective 进 thing-agent loop。
-                let bridge = Arc::new(
-                    tinyiothub_agent::loop_::orchestrator::callbacks::HeartbeatBridge::new(
-                        runs_repo,
-                        manager.clone(),
-                    ),
-                );
+                let bridge = Arc::new(tinyiothub_agent::loop_::orchestrator::callbacks::HeartbeatBridge::new(
+                    runs_repo,
+                    manager.clone(),
+                ));
                 (manager, bridge)
             };
             let (thing_agent_manager, heartbeat_bridge) = thing_agent_manager;
@@ -302,7 +293,8 @@ impl ServiceManager {
         }
 
         // 5. Start SSE token cleanup to prevent expired tokens from accumulating in memory.
-        self.start_sse_token_cleanup(app_state.sse_token_manager.clone()).await?;
+        self.start_sse_token_cleanup(app_state.sse_token_manager.clone())
+            .await?;
 
         // 更新状态为运行中
         *self.status.write().await = ServiceStatus::Running;
@@ -491,8 +483,7 @@ pub async fn setup_graceful_shutdown() {
     {
         use tokio::signal::unix::{SignalKind, signal};
 
-        let mut sigterm =
-            signal(SignalKind::terminate()).expect("Failed to create SIGTERM handler");
+        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to create SIGTERM handler");
         let mut sigint = signal(SignalKind::interrupt()).expect("Failed to create SIGINT handler");
 
         tokio::select! {

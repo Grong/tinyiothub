@@ -28,7 +28,10 @@ pub struct PairingEntry {
 
 impl PairingCache {
     pub fn new(max_entries: usize) -> Self {
-        let cache = Self { entries: Arc::new(RwLock::new(HashMap::new())), max_entries };
+        let cache = Self {
+            entries: Arc::new(RwLock::new(HashMap::new())),
+            max_entries,
+        };
         cache.spawn_cleanup_task();
         cache
     }
@@ -36,7 +39,11 @@ impl PairingCache {
     pub async fn get(&self, code: &str) -> Option<PairingEntry> {
         let entries = self.entries.read().await;
         entries.get(code).and_then(|e| {
-            if e.created_at.elapsed() > PAIRING_CODE_TTL { None } else { Some(e.clone()) }
+            if e.created_at.elapsed() > PAIRING_CODE_TTL {
+                None
+            } else {
+                Some(e.clone())
+            }
         })
     }
 

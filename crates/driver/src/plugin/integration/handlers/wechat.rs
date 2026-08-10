@@ -8,11 +8,9 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
 use super::super::config::WechatConfig;
-use crate::{
-    plugin::{
-        PluginHandler, PluginManifest, PluginType,
-        integration::{IntegrationRequest, handlers::IntegrationHandler},
-    },
+use crate::plugin::{
+    PluginHandler, PluginManifest, PluginType,
+    integration::{IntegrationRequest, handlers::IntegrationHandler},
 };
 use tinyiothub_core::error::Error;
 
@@ -57,9 +55,12 @@ impl WechatHandler {
             self.config.app_id, self.config.app_secret
         );
 
-        let resp = self.client.get(&url).send().await.map_err(|e| {
-            Error::NetworkError(format!("Failed to get WeChat access token: {}", e))
-        })?;
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| Error::NetworkError(format!("Failed to get WeChat access token: {}", e)))?;
 
         let token_resp: WechatAccessTokenResponse = resp
             .json()
@@ -88,10 +89,13 @@ impl IntegrationHandler for WechatHandler {
             text: serde_json::json!({ "content": request.content.clone() }),
         };
 
-        let resp =
-            self.client.post(&url).json(&send_req).send().await.map_err(|e| {
-                Error::NetworkError(format!("Failed to send WeChat message: {}", e))
-            })?;
+        let resp = self
+            .client
+            .post(&url)
+            .json(&send_req)
+            .send()
+            .await
+            .map_err(|e| Error::NetworkError(format!("Failed to send WeChat message: {}", e)))?;
 
         if !resp.status().is_success() {
             error!("WeChat API returned: {}", resp.status());

@@ -11,9 +11,7 @@ use uuid::Uuid;
 
 use tinyiothub_event::Result;
 
-use crate::types::{
-    NotificationChannel, NotificationChannelType, NotificationMessage,
-};
+use crate::types::{NotificationChannel, NotificationChannelType, NotificationMessage};
 
 /// SSE connection information
 #[derive(Debug, Clone)]
@@ -47,7 +45,11 @@ impl SseNotificationChannel {
     pub fn new() -> Self {
         let (sender, receiver) = broadcast::channel(1000);
 
-        Self { connections: Arc::new(RwLock::new(HashMap::new())), sender, _receiver: receiver }
+        Self {
+            connections: Arc::new(RwLock::new(HashMap::new())),
+            sender,
+            _receiver: receiver,
+        }
     }
 
     /// Create an SSE response for a client connection
@@ -67,7 +69,10 @@ impl SseNotificationChannel {
             connections.insert(connection_id.clone(), connection);
         }
 
-        info!("New SSE connection established: {} for user: {}", connection_id, user_id);
+        info!(
+            "New SSE connection established: {} for user: {}",
+            connection_id, user_id
+        );
 
         // Create a receiver for this connection
         let mut receiver = self.sender.subscribe();
@@ -190,8 +195,7 @@ impl SseNotificationChannel {
 
     /// Clean up stale connections
     pub async fn cleanup_stale_connections(&self, max_idle_duration: Duration) -> usize {
-        let cutoff_time =
-            chrono::Utc::now() - chrono::Duration::from_std(max_idle_duration).unwrap_or_default();
+        let cutoff_time = chrono::Utc::now() - chrono::Duration::from_std(max_idle_duration).unwrap_or_default();
         let mut connections = self.connections.write().await;
         let initial_count = connections.len();
 
@@ -236,7 +240,12 @@ fn should_send_to_user(user_id: &str, workspace_id: &str, message: &SseMessage) 
 impl SseMessage {
     /// Create a new SSE message
     pub fn new(event_type: String, data: serde_json::Value) -> Self {
-        Self { id: Uuid::new_v4().to_string(), event_type, data, timestamp: chrono::Utc::now() }
+        Self {
+            id: Uuid::new_v4().to_string(),
+            event_type,
+            data,
+            timestamp: chrono::Utc::now(),
+        }
     }
 
     /// Create a notification message
@@ -315,9 +324,7 @@ mod tests {
     use tokio::time::Duration;
 
     use super::*;
-    use crate::types::{
-        NotificationChannel, NotificationLevel, NotificationMessage,
-    };
+    use crate::types::{NotificationChannel, NotificationLevel, NotificationMessage};
 
     #[tokio::test]
     async fn test_sse_channel_creation() {
@@ -344,8 +351,7 @@ mod tests {
     async fn test_broadcast_message() {
         let channel = SseNotificationChannel::new();
 
-        let message =
-            SseMessage::notification("Test".to_string(), "Content".to_string(), "info".to_string());
+        let message = SseMessage::notification("Test".to_string(), "Content".to_string(), "info".to_string());
 
         // Should succeed even with no connections
         let result: tinyiothub_event::Result<usize> = channel.broadcast(message).await;
@@ -420,10 +426,8 @@ mod tests {
 
         // Manually add a stale connection for testing
         {
-            let mut connections: tokio::sync::RwLockWriteGuard<
-                '_,
-                std::collections::HashMap<String, SseConnection>,
-            > = channel.connections.write().await;
+            let mut connections: tokio::sync::RwLockWriteGuard<'_, std::collections::HashMap<String, SseConnection>> =
+                channel.connections.write().await;
             connections.insert(
                 "stale_connection".to_string(),
                 SseConnection {

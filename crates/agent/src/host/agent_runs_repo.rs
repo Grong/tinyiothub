@@ -6,9 +6,9 @@
 //! - `agent_tokens_daily{workspace}` —— 每次 run 携带 tokens，日聚合由
 //!   日志管线 / `agent_daily_cost` 视图完成
 
+use crate::loop_::thing_agent::{AgentRunsRepository, Outcome, RunReport, format_summary};
 use async_trait::async_trait;
 use sqlx::SqlitePool;
-use crate::loop_::thing_agent::{AgentRunsRepository, Outcome, RunReport, format_summary};
 
 pub struct SqliteAgentRunsRepository {
     pool: SqlitePool,
@@ -80,11 +80,7 @@ impl AgentRunsRepository for SqliteAgentRunsRepository {
         Ok(())
     }
 
-    async fn recent_summaries(
-        &self,
-        workspace_id: &str,
-        limit: u32,
-    ) -> anyhow::Result<Vec<String>> {
+    async fn recent_summaries(&self, workspace_id: &str, limit: u32) -> anyhow::Result<Vec<String>> {
         // rowid 决胜：created_at 秒级精度，同秒批量插入仍保持插入序。
         let rows: Vec<(String, String)> = sqlx::query_as(
             "SELECT outcome, summary FROM agent_runs
@@ -99,12 +95,7 @@ impl AgentRunsRepository for SqliteAgentRunsRepository {
         Ok(rows.into_iter().map(|(o, s)| format_summary(&o, &s)).collect())
     }
 
-    async fn history_by_dedup_key(
-        &self,
-        workspace_id: &str,
-        key: &str,
-        limit: u32,
-    ) -> anyhow::Result<Vec<String>> {
+    async fn history_by_dedup_key(&self, workspace_id: &str, key: &str, limit: u32) -> anyhow::Result<Vec<String>> {
         let rows: Vec<(String, String)> = sqlx::query_as(
             "SELECT outcome, summary FROM agent_runs
              WHERE workspace_id = ? AND dedup_key = ?
@@ -174,16 +165,15 @@ impl AgentRunsRepository for SqliteAgentRunsRepository {
         .await?;
         // 未知 outcome 字符串 fail-closed 到 Failed（X6 dedup 保守方向）。
         Ok(row.map(|(o, verified, acked_at)| {
-            (Outcome::from_db(&o).unwrap_or(Outcome::Failed), verified, acked_at.is_some())
+            (
+                Outcome::from_db(&o).unwrap_or(Outcome::Failed),
+                verified,
+                acked_at.is_some(),
+            )
         }))
     }
 
-    async fn count_problem_runs(
-        &self,
-        workspace_id: &str,
-        problem_key: &str,
-        since_hours: u32,
-    ) -> anyhow::Result<u32> {
+    async fn count_problem_runs(&self, workspace_id: &str, problem_key: &str, since_hours: u32) -> anyhow::Result<u32> {
         let (n,): (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM agent_runs
              WHERE workspace_id = ? AND problem_key = ?
@@ -200,8 +190,8 @@ impl AgentRunsRepository for SqliteAgentRunsRepository {
 
 #[cfg(test)]
 mod tests {
-    use sqlx::sqlite::SqlitePoolOptions;
     use crate::loop_::thing_agent::{ActionRecord, ActionResult};
+    use sqlx::sqlite::SqlitePoolOptions;
 
     use super::*;
 
@@ -211,8 +201,7 @@ mod tests {
             .connect(":memory:")
             .await
             .expect("create in-memory sqlite");
-        let migration =
-            include_str!("../../../../crates/db/migrations/20260729000001_thing_agent_loop.sql");
+        let migration = include_str!("../../../../crates/db/migrations/20260729000001_thing_agent_loop.sql");
         for stmt in migration.split(';') {
             let stmt = stmt.trim();
             // Skip the events ALTER — the events table is not part of this pool.
@@ -325,22 +314,19 @@ mod tests {
         assert_eq!(row.9.as_deref(), Some("thing:t1:event:temp_high"));
 
         // T4 count_actions_last_hour 依赖 json_extract(report,'$.action_count')。
-        let (action_count,): (i64,) = sqlx::query_as(
-            "SELECT json_extract(report, '$.action_count') FROM agent_runs WHERE id = 'run_1'",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("action_count");
+        let (action_count,): (i64,) =
+            sqlx::query_as("SELECT json_extract(report, '$.action_count') FROM agent_runs WHERE id = 'run_1'")
+                .fetch_one(&pool)
+                .await
+                .expect("action_count");
         assert_eq!(action_count, 2);
 
         // report JSON 列保留完整 RunReport（round-trip）。
-        let (report_json,): (String,) =
-            sqlx::query_as("SELECT report FROM agent_runs WHERE id = 'run_1'")
-                .fetch_one(&pool)
-                .await
-                .expect("report json");
-        let back: RunReport =
-            serde_json::from_str(&report_json).expect("report json parses as RunReport");
+        let (report_json,): (String,) = sqlx::query_as("SELECT report FROM agent_runs WHERE id = 'run_1'")
+            .fetch_one(&pool)
+            .await
+            .expect("report json");
+        let back: RunReport = serde_json::from_str(&report_json).expect("report json parses as RunReport");
         assert_eq!(back.run_id, "run_1");
         assert_eq!(back.actions.len(), 2);
         assert_eq!(back.outcome, Outcome::Acted);
@@ -398,7 +384,12 @@ mod tests {
         assert_eq!(history[2], "[acted] 同类2");
         assert!(!history.iter().any(|s| s.contains("另一类") || s.contains("他区")));
 
-        assert!(repo.history_by_dedup_key("ws_1", "missing", 3).await.expect("empty").is_empty());
+        assert!(
+            repo.history_by_dedup_key("ws_1", "missing", 3)
+                .await
+                .expect("empty")
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -415,12 +406,12 @@ mod tests {
             thing_id: "t1".to_string(),
             action_name: "reboot".to_string(),
             params: serde_json::Value::Null,
-            result: ActionResult::Success(
-                serde_json::json!({"denied": true, "reason": "action_not_allowed"}),
-            ),
+            result: ActionResult::Success(serde_json::json!({"denied": true, "reason": "action_not_allowed"})),
             verified: false,
         }];
-        repo.insert_run(&denied, None, Some("key1")).await.expect("insert denied");
+        repo.insert_run(&denied, None, Some("key1"))
+            .await
+            .expect("insert denied");
         repo.insert_run(&sample_report("other_key", "ws_1", "其他 key"), None, Some("key2"))
             .await
             .expect("insert other key");
@@ -437,7 +428,10 @@ mod tests {
         assert_eq!(runs[1].outcome, Outcome::Acted);
 
         assert!(
-            repo.recent_runs_by_dedup_key("ws_1", "missing", 3).await.expect("empty").is_empty()
+            repo.recent_runs_by_dedup_key("ws_1", "missing", 3)
+                .await
+                .expect("empty")
+                .is_empty()
         );
     }
 
@@ -445,7 +439,9 @@ mod tests {
     async fn ack_run_is_idempotent() {
         let pool = test_pool().await;
         let repo = SqliteAgentRunsRepository::new(pool.clone());
-        repo.insert_run(&sample_report("run_1", "ws_1", "s"), None, None).await.expect("insert");
+        repo.insert_run(&sample_report("run_1", "ws_1", "s"), None, None)
+            .await
+            .expect("insert");
 
         assert!(repo.ack_run("run_1", "user_1").await.expect("first ack"));
         // 重复确认：false，且 acked_by 不被覆盖
@@ -453,11 +449,10 @@ mod tests {
         // 不存在的 run：false
         assert!(!repo.ack_run("run_missing", "user_1").await.expect("missing ack"));
 
-        let (acked_by,): (String,) =
-            sqlx::query_as("SELECT acked_by FROM agent_runs WHERE id = 'run_1'")
-                .fetch_one(&pool)
-                .await
-                .expect("acked_by");
+        let (acked_by,): (String,) = sqlx::query_as("SELECT acked_by FROM agent_runs WHERE id = 'run_1'")
+            .fetch_one(&pool)
+            .await
+            .expect("acked_by");
         assert_eq!(acked_by, "user_1");
     }
 
@@ -471,17 +466,40 @@ mod tests {
         assert!(repo.last_problem_run("ws_1", "p1", 6).await.expect("query").is_none());
 
         // 窗口内两条：返回最新（-1h）的 (outcome, verified, acked)
-        insert_raw(&pool, "older_in_window", "ws_1", "acted", Some("p1"), None, 0, "-5 hours")
-            .await;
-        insert_raw(&pool, "newest", "ws_1", "budget_exceeded", Some("p1"), None, 0, "-1 hours")
-            .await;
-        sqlx::query("UPDATE agent_runs SET verified = 1, acked_at = datetime('now'), acked_by = 'u1' WHERE id = 'newest'")
-            .execute(&pool)
-            .await
-            .expect("ack newest");
+        insert_raw(
+            &pool,
+            "older_in_window",
+            "ws_1",
+            "acted",
+            Some("p1"),
+            None,
+            0,
+            "-5 hours",
+        )
+        .await;
+        insert_raw(
+            &pool,
+            "newest",
+            "ws_1",
+            "budget_exceeded",
+            Some("p1"),
+            None,
+            0,
+            "-1 hours",
+        )
+        .await;
+        sqlx::query(
+            "UPDATE agent_runs SET verified = 1, acked_at = datetime('now'), acked_by = 'u1' WHERE id = 'newest'",
+        )
+        .execute(&pool)
+        .await
+        .expect("ack newest");
 
-        let (outcome, verified, acked) =
-            repo.last_problem_run("ws_1", "p1", 6).await.expect("query").expect("found");
+        let (outcome, verified, acked) = repo
+            .last_problem_run("ws_1", "p1", 6)
+            .await
+            .expect("query")
+            .expect("found");
         assert_eq!(outcome, Outcome::BudgetExceeded);
         assert!(verified);
         assert!(acked);
@@ -501,8 +519,11 @@ mod tests {
 
         // 未知 outcome 字符串 fail-closed 到 Failed（T18 dedup 保守方向）
         insert_raw(&pool, "legacy", "ws_1", "success", Some("p3"), None, 0, "-1 hours").await;
-        let (outcome, ..) =
-            repo.last_problem_run("ws_1", "p3", 6).await.expect("query").expect("legacy row");
+        let (outcome, ..) = repo
+            .last_problem_run("ws_1", "p3", 6)
+            .await
+            .expect("query")
+            .expect("legacy row");
         assert_eq!(outcome, Outcome::Failed);
     }
 

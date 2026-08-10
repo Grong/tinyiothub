@@ -51,11 +51,7 @@ pub trait ExternalToolHandler: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
     fn input_schema(&self) -> serde_json::Value;
-    async fn execute(
-        &self,
-        ctx: &ExternalToolContext,
-        args: serde_json::Value,
-    ) -> Result<serde_json::Value, String>;
+    async fn execute(&self, ctx: &ExternalToolContext, args: serde_json::Value) -> Result<serde_json::Value, String>;
 
     /// Declared safety classification — authoritative for trust evaluation.
     fn safety(&self) -> ToolSafety {
@@ -104,12 +100,7 @@ pub trait WorkspaceAccess: Send + Sync {
 #[macro_export]
 macro_rules! verify_workspace_access {
     ($state:expr, $claims:expr, $id:expr) => {{
-        match $crate::host::ports::WorkspaceAccess::workspace_tenant_id(
-            $state.workspace_access.as_ref(),
-            &$id,
-        )
-        .await
-        {
+        match $crate::host::ports::WorkspaceAccess::workspace_tenant_id($state.workspace_access.as_ref(), &$id).await {
             Ok(Some(tenant_id)) => {
                 if tenant_id != $claims.tenant_id {
                     return ApiResponseBuilder::error_with_code(403, "无权访问此工作空间");
@@ -172,13 +163,8 @@ pub fn minimax_settings() -> Option<MinimaxSettings> {
 }
 
 /// Create a MiniMax model provider from the registered settings.
-pub fn create_minimax_provider()
--> anyhow::Result<Box<dyn zeroclaw::providers::traits::ModelProvider>> {
-    let cfg = minimax_settings()
-        .ok_or_else(|| anyhow::anyhow!("[minimax] config section is required but not found"))?;
-    zeroclaw::providers::create_model_provider_with_url(
-        "minimaxi",
-        Some(&cfg.auth_token),
-        Some(&cfg.base_url),
-    )
+pub fn create_minimax_provider() -> anyhow::Result<Box<dyn zeroclaw::providers::traits::ModelProvider>> {
+    let cfg =
+        minimax_settings().ok_or_else(|| anyhow::anyhow!("[minimax] config section is required but not found"))?;
+    zeroclaw::providers::create_model_provider_with_url("minimaxi", Some(&cfg.auth_token), Some(&cfg.base_url))
 }

@@ -51,8 +51,7 @@ impl NotificationDispatcher {
                 let db = self.db.clone();
                 let ws_id = workspace_id.to_string();
                 tokio::spawn(async move {
-                    Self::send_to_channel(&db, &channel_type, &recipients, &title, &body, &ws_id)
-                        .await;
+                    Self::send_to_channel(&db, &channel_type, &recipients, &title, &body, &ws_id).await;
                 })
             })
             .collect();
@@ -137,12 +136,7 @@ impl NotificationDispatcher {
         }
     }
 
-    async fn send_email(
-        _config: &str,
-        recipients: &[String],
-        title: &str,
-        body: &str,
-    ) -> Result<(), String> {
+    async fn send_email(_config: &str, recipients: &[String], title: &str, body: &str) -> Result<(), String> {
         // Parse SMTP config from channel config JSON
         // Full SMTP sending requires an external crate (lettre, etc.)
         // For now, log the intent. SMTP integration is a follow-up.
@@ -179,8 +173,8 @@ impl NotificationDispatcher {
     }
 
     async fn send_webhook(config: &str, title: &str, body: &str) -> Result<(), String> {
-        let config: serde_json::Value = serde_json::from_str(config)
-            .map_err(|e| format!("webhook config parse failed: {}", e))?;
+        let config: serde_json::Value =
+            serde_json::from_str(config).map_err(|e| format!("webhook config parse failed: {}", e))?;
         let url = config.get("url").and_then(|v| v.as_str()).unwrap_or("");
         if url.is_empty() {
             return Err("webhook URL not configured".to_string());

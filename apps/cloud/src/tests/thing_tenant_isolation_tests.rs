@@ -13,8 +13,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::test_utils::{
-    auth_header, create_test_token_with_workspace, response_parts, seed_test_workspace,
-    setup_test_app_with_pool,
+    auth_header, create_test_token_with_workspace, response_parts, seed_test_workspace, setup_test_app_with_pool,
 };
 
 fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Request<Body> {
@@ -67,7 +66,12 @@ async fn test_cross_workspace_crud_returns_404() {
     // GET from workspace B → 404 (invisible, not 403)
     let r = app
         .clone()
-        .oneshot(auth_request("GET", &format!("/api/v1/things/{thing_a}"), &token_b, None))
+        .oneshot(auth_request(
+            "GET",
+            &format!("/api/v1/things/{thing_a}"),
+            &token_b,
+            None,
+        ))
         .await
         .unwrap();
     let (status, body) = response_parts(r).await;
@@ -98,7 +102,12 @@ async fn test_cross_workspace_crud_returns_404() {
     // DELETE from workspace B → 404
     let r = app
         .clone()
-        .oneshot(auth_request("DELETE", &format!("/api/v1/things/{thing_a}"), &token_b, None))
+        .oneshot(auth_request(
+            "DELETE",
+            &format!("/api/v1/things/{thing_a}"),
+            &token_b,
+            None,
+        ))
         .await
         .unwrap();
     let (status, body) = response_parts(r).await;
@@ -110,7 +119,12 @@ async fn test_cross_workspace_crud_returns_404() {
 
     // Thing still intact for workspace A.
     let r = app
-        .oneshot(auth_request("GET", &format!("/api/v1/things/{thing_a}"), &token_a, None))
+        .oneshot(auth_request(
+            "GET",
+            &format!("/api/v1/things/{thing_a}"),
+            &token_a,
+            None,
+        ))
         .await
         .unwrap();
     let (status, _) = response_parts(r).await;
@@ -203,11 +217,10 @@ async fn test_cross_workspace_attach_detach_resource_error() {
     );
 
     // Resource untouched.
-    let device_id: Option<String> =
-        sqlx::query_scalar("SELECT device_id FROM resources WHERE id = 'res-b'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let device_id: Option<String> = sqlx::query_scalar("SELECT device_id FROM resources WHERE id = 'res-b'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(device_id, None, "cross-workspace attach must not modify the resource");
 }
 

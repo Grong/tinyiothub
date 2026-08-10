@@ -12,8 +12,10 @@ use tower::ServiceExt;
 use crate::test_utils::{auth_header, create_test_token, response_parts, setup_test_app};
 
 fn public_request(method: &str, uri: &str, body: Option<Value>) -> Request<Body> {
-    let builder =
-        Request::builder().method(method).uri(uri).header("Content-Type", "application/json");
+    let builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("Content-Type", "application/json");
     let body_str = body.map(|v| v.to_string()).unwrap_or_default();
     builder.body(Body::from(body_str)).unwrap()
 }
@@ -37,7 +39,13 @@ async fn test_health_endpoint() {
     let app = setup_test_app().await;
 
     let response = app
-        .oneshot(Request::builder().method("GET").uri("/api/health").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 
@@ -65,7 +73,11 @@ async fn test_unauthorized_access_no_token() {
         .unwrap();
 
     // JWT middleware should reject requests without a token
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "Expected 401 for missing token");
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "Expected 401 for missing token"
+    );
 }
 
 // ============================================================================
@@ -90,7 +102,11 @@ async fn test_invalid_token() {
         .unwrap();
 
     // JWT middleware should reject requests with invalid tokens
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "Expected 401 for invalid token");
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "Expected 401 for invalid token"
+    );
 }
 
 // ============================================================================
@@ -100,12 +116,11 @@ async fn test_invalid_token() {
 #[tokio::test]
 async fn test_login_missing_fields() {
     let app = setup_test_app().await;
-    let response =
-        app.oneshot(public_request("POST", "/api/v1/auth/login", Some(json!({})))).await.unwrap();
-    assert!(
-        response.status() == StatusCode::UNPROCESSABLE_ENTITY
-            || response.status() == StatusCode::OK
-    );
+    let response = app
+        .oneshot(public_request("POST", "/api/v1/auth/login", Some(json!({}))))
+        .await
+        .unwrap();
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
 }
 
 #[tokio::test]
@@ -115,16 +130,16 @@ async fn test_register_missing_fields() {
         .oneshot(public_request("POST", "/api/v1/auth/register", Some(json!({}))))
         .await
         .unwrap();
-    assert!(
-        response.status() == StatusCode::UNPROCESSABLE_ENTITY
-            || response.status() == StatusCode::OK
-    );
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
 }
 
 #[tokio::test]
 async fn test_logout_missing_session() {
     let app = setup_test_app().await;
-    let response = app.oneshot(public_request("POST", "/api/v1/auth/logout", None)).await.unwrap();
+    let response = app
+        .oneshot(public_request("POST", "/api/v1/auth/logout", None))
+        .await
+        .unwrap();
     assert!(
         response.status() == StatusCode::UNAUTHORIZED
             || response.status().is_success()
@@ -140,8 +155,10 @@ async fn test_logout_missing_session() {
 async fn test_get_profile() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/auth/session/profile", &token)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/auth/session/profile", &token))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number());
@@ -151,8 +168,10 @@ async fn test_get_profile() {
 async fn test_validate_session() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/auth/session/validate", &token)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/auth/session/validate", &token))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number());
@@ -162,12 +181,17 @@ async fn test_validate_session() {
 async fn test_refresh_token_returns_new_token() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("POST", "/api/v1/auth/session/refresh", &token)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/auth/session/refresh", &token))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert_eq!(json["code"].as_i64(), Some(0), "Token refresh should succeed");
-    assert!(json["result"]["access_token"].as_str().is_some(), "Should return a new access token");
+    assert!(
+        json["result"]["access_token"].as_str().is_some(),
+        "Should return a new access token"
+    );
     assert_eq!(json["result"]["token_type"], "Bearer");
     assert_eq!(json["result"]["expires_in"].as_i64(), Some(24 * 60 * 60));
 }
@@ -186,9 +210,7 @@ async fn test_sms_send_missing_fields() {
     // SMS handler may return 500 if SMS provider isn't configured in test env
     let status = response.status();
     assert!(
-        status.is_success()
-            || status.is_client_error()
-            || status == StatusCode::INTERNAL_SERVER_ERROR,
+        status.is_success() || status.is_client_error() || status == StatusCode::INTERNAL_SERVER_ERROR,
         "Unexpected status: {}",
         status
     );
@@ -201,17 +223,16 @@ async fn test_sms_login_missing_fields() {
         .oneshot(public_request("POST", "/api/v1/auth/sms/login", Some(json!({}))))
         .await
         .unwrap();
-    assert!(
-        response.status() == StatusCode::UNPROCESSABLE_ENTITY
-            || response.status() == StatusCode::OK
-    );
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
 }
 
 #[tokio::test]
 async fn test_sms_verify_missing_fields() {
     let app = setup_test_app().await;
-    let response =
-        app.oneshot(public_request("GET", "/api/v1/auth/sms/verify", None)).await.unwrap();
+    let response = app
+        .oneshot(public_request("GET", "/api/v1/auth/sms/verify", None))
+        .await
+        .unwrap();
     assert!(response.status().is_success() || response.status().is_client_error());
 }
 
@@ -233,20 +254,23 @@ async fn test_get_wechat_qrcode() {
 async fn test_wechat_login_missing_fields() {
     let app = setup_test_app().await;
     let response = app
-        .oneshot(public_request("POST", "/api/v1/auth/social/wechat/login", Some(json!({}))))
+        .oneshot(public_request(
+            "POST",
+            "/api/v1/auth/social/wechat/login",
+            Some(json!({})),
+        ))
         .await
         .unwrap();
-    assert!(
-        response.status() == StatusCode::UNPROCESSABLE_ENTITY
-            || response.status() == StatusCode::OK
-    );
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
 }
 
 #[tokio::test]
 async fn test_get_social_config() {
     let app = setup_test_app().await;
-    let response =
-        app.oneshot(public_request("GET", "/api/v1/auth/social/config", None)).await.unwrap();
+    let response = app
+        .oneshot(public_request("GET", "/api/v1/auth/social/config", None))
+        .await
+        .unwrap();
     assert!(response.status().is_success() || response.status().is_client_error());
 }
 
@@ -254,8 +278,10 @@ async fn test_get_social_config() {
 async fn test_update_social_config() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response =
-        app.oneshot(auth_request("POST", "/api/v1/auth/social/config", &token)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/auth/social/config", &token))
+        .await
+        .unwrap();
     assert!(response.status().is_success() || response.status().is_client_error());
 }
 
@@ -284,10 +310,7 @@ async fn test_wechat_miniprogram_login_missing_fields() {
         ))
         .await
         .unwrap();
-    assert!(
-        response.status() == StatusCode::UNPROCESSABLE_ENTITY
-            || response.status() == StatusCode::OK
-    );
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
 }
 
 #[tokio::test]
@@ -297,10 +320,7 @@ async fn test_bind_social_account_missing_fields() {
         .oneshot(public_request("POST", "/api/v1/auth/social/bind", Some(json!({}))))
         .await
         .unwrap();
-    assert!(
-        response.status() == StatusCode::UNPROCESSABLE_ENTITY
-            || response.status() == StatusCode::OK
-    );
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
 }
 
 #[tokio::test]
@@ -310,10 +330,7 @@ async fn test_unbind_social_account_missing_fields() {
         .oneshot(public_request("POST", "/api/v1/auth/social/unbind", Some(json!({}))))
         .await
         .unwrap();
-    assert!(
-        response.status() == StatusCode::UNPROCESSABLE_ENTITY
-            || response.status() == StatusCode::OK
-    );
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
 }
 
 // ============================================================================
@@ -382,8 +399,10 @@ async fn test_register_duplicate_username() {
     assert_eq!(json["code"].as_i64(), Some(0), "First registration should succeed");
 
     // Second registration with same username should fail
-    let response =
-        app.oneshot(public_request("POST", "/api/v1/auth/register", Some(body))).await.unwrap();
+    let response = app
+        .oneshot(public_request("POST", "/api/v1/auth/register", Some(body)))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert_ne!(json["code"].as_i64(), Some(0), "Expected error for duplicate username");
@@ -409,7 +428,10 @@ async fn test_register_success() {
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert_eq!(json["code"].as_i64(), Some(0), "Registration should succeed");
-    assert!(json["result"]["access_token"].as_str().is_some(), "Should return access token");
+    assert!(
+        json["result"]["access_token"].as_str().is_some(),
+        "Should return access token"
+    );
     assert_eq!(json["result"]["token_type"], "Bearer");
     assert!(json["result"]["user_info"]["name"].as_str().is_some());
 }
@@ -458,8 +480,10 @@ async fn test_register_duplicate_phone() {
         "phone": "13800138010",
         "password": "password123"
     });
-    let response =
-        app.oneshot(public_request("POST", "/api/v1/auth/register", Some(body2))).await.unwrap();
+    let response = app
+        .oneshot(public_request("POST", "/api/v1/auth/register", Some(body2)))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert_ne!(json["code"].as_i64(), Some(0), "Expected error for duplicate phone");
@@ -665,7 +689,10 @@ async fn test_login_success() {
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert_eq!(json["code"].as_i64(), Some(0), "Login should succeed");
-    assert!(json["result"]["access_token"].as_str().is_some(), "Should return access token");
+    assert!(
+        json["result"]["access_token"].as_str().is_some(),
+        "Should return access token"
+    );
     assert_eq!(json["result"]["token_type"], "Bearer");
     assert_eq!(json["result"]["expires_in"], 24 * 60 * 60);
     assert_eq!(json["result"]["user_info"]["name"], "Login Success");
@@ -674,8 +701,10 @@ async fn test_login_success() {
 #[tokio::test]
 async fn test_logout_success() {
     let app = setup_test_app().await;
-    let response =
-        app.oneshot(public_request("POST", "/api/v1/auth/logout", Some(json!({})))).await.unwrap();
+    let response = app
+        .oneshot(public_request("POST", "/api/v1/auth/logout", Some(json!({}))))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert_eq!(json["code"].as_i64(), Some(0), "Logout should succeed");

@@ -65,7 +65,12 @@ pub async fn initialize_logging() -> std::io::Result<()> {
             .filename_prefix("app")
             .filename_suffix("log")
             .max_log_files(config.logging.max_files as usize)
-            .build(config.log_file_path().parent().unwrap_or_else(|| std::path::Path::new("logs")))
+            .build(
+                config
+                    .log_file_path()
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("logs")),
+            )
             .unwrap();
 
         // Create non-blocking writer
@@ -128,7 +133,11 @@ pub async fn rehydrate_drivers(app_state: &AppState) {
 /// 从数据库加载完整设备（含属性、指令）到缓存
 pub async fn load_device_cache(app_state: &AppState) {
     use tinyiothub_core::models::device::DeviceQueryParams;
-    match app_state.device_service.get_devices(&DeviceQueryParams::default()).await {
+    match app_state
+        .device_service
+        .get_devices(&DeviceQueryParams::default())
+        .await
+    {
         Ok(devices) => {
             let device_ids: Vec<String> = devices.iter().map(|d| d.id.clone()).collect();
             let count = device_ids.len();

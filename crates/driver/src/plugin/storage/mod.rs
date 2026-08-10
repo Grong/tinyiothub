@@ -10,9 +10,7 @@ use std::sync::Arc;
 pub use config::{InfluxdbConfig, PostgresConfig, StorageConfig};
 pub use handlers::{InfluxdbHandler, PostgresHandler, StorageHandler};
 
-use crate::{
-    plugin::{AppContext, PluginHandler},
-};
+use crate::plugin::{AppContext, PluginHandler};
 use tinyiothub_core::error::Error;
 
 pub struct StorageData {
@@ -21,10 +19,7 @@ pub struct StorageData {
     pub values: std::collections::HashMap<String, serde_json::Value>,
 }
 
-pub fn create_handler(
-    config: &toml::Value,
-    _context: Arc<AppContext>,
-) -> Result<Box<dyn PluginHandler>, Error> {
+pub fn create_handler(config: &toml::Value, _context: Arc<AppContext>) -> Result<Box<dyn PluginHandler>, Error> {
     let storage_cfg = config
         .get("storage")
         .ok_or_else(|| Error::ValidationError("Missing [storage] section".to_string()))?;
@@ -41,10 +36,9 @@ pub fn create_handler(
             let cfg: PostgresConfig = serde_json::from_value(json_val)
                 .map_err(|e| Error::ValidationError(format!("Invalid Postgres config: {}", e)))?;
             // Use block_on since we're in sync context but handler init is async
-            let handler =
-                tokio::runtime::Handle::current().block_on(PostgresHandler::new(cfg)).map_err(
-                    |e| Error::Internal(format!("Failed to create Postgres handler: {}", e)),
-                )?;
+            let handler = tokio::runtime::Handle::current()
+                .block_on(PostgresHandler::new(cfg))
+                .map_err(|e| Error::Internal(format!("Failed to create Postgres handler: {}", e)))?;
             Ok(Box::new(handler) as Box<dyn PluginHandler>)
         }
         Some("influxdb") => {
@@ -61,8 +55,9 @@ pub fn create_handler(
             let handler = InfluxdbHandler::new(cfg);
             Ok(Box::new(handler) as Box<dyn PluginHandler>)
         }
-        _ => {
-            Err(Error::Unsupported(format!("Unknown storage type: {:?}", storage_cfg.get("type"))))
-        }
+        _ => Err(Error::Unsupported(format!(
+            "Unknown storage type: {:?}",
+            storage_cfg.get("type")
+        ))),
     }
 }

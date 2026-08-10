@@ -404,7 +404,11 @@ mod tests {
         ) -> Result<(), crate::loop_::heartbeat::repo::RepoError> {
             Ok(())
         }
-        async fn delete(&self, _workspace_id: &str, _task_id: i64) -> Result<(), crate::loop_::heartbeat::repo::RepoError> {
+        async fn delete(
+            &self,
+            _workspace_id: &str,
+            _task_id: i64,
+        ) -> Result<(), crate::loop_::heartbeat::repo::RepoError> {
             Ok(())
         }
         async fn insert_result(

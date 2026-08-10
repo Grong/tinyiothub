@@ -28,8 +28,7 @@ impl LlmProvider for MinimaxLlmProvider {
         model: &str,
         temperature: f32,
     ) -> anyhow::Result<LlmResponse> {
-        let provider = crate::shared::config::create_minimax_provider()
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        let provider = crate::shared::config::create_minimax_provider().map_err(|e| anyhow::anyhow!("{}", e))?;
         let content = provider
             .chat_with_system(system, prompt, model, Some(temperature as f64))
             .await

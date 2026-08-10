@@ -45,7 +45,10 @@ pub fn create_router() -> Router<AppState> {
         .nest("/users", tinyiothub_user::router())
         .nest("/users/roles", tinyiothub_user::role::create_router())
         .nest("/users/permissions", tinyiothub_user::permission::create_router())
-        .nest("/device-templates", tinyiothub_thing::template::handler::create_router())
+        .nest(
+            "/device-templates",
+            tinyiothub_thing::template::handler::create_router(),
+        )
         .nest("/marketplace", crate::modules::marketplace::handler::create_router())
         .nest("/notifications", tinyiothub_notify::router())
         .nest("/notification-channels", tinyiothub_notify::channel_router())
@@ -63,21 +66,38 @@ pub fn create_router() -> Router<AppState> {
             "/workspaces",
             tinyiothub_agent::host::handler::agent_tasks::create_workspace_router(),
         )
-        .nest("/workspaces", tinyiothub_agent::host::handler::workspace_heartbeat::create_router())
+        .nest(
+            "/workspaces",
+            tinyiothub_agent::host::handler::workspace_heartbeat::create_router(),
+        )
         .nest("/mcp", tinyiothub_mcp::router())
         .nest("/chat", tinyiothub_agent::chat::handler::create_router())
-        .nest("/agents/skills", tinyiothub_agent::host::handler::skills::create_router())
+        .nest(
+            "/agents/skills",
+            tinyiothub_agent::host::handler::skills::create_router(),
+        )
         .nest("/tags", tinyiothub_thing::tag::create_router())
         .nest("/api-keys", tinyiothub_tenant::api_key_router())
         .nest("/agents", tinyiothub_agent::host::handler::create_router())
         .nest("/driver-health", tinyiothub_driver::driver_health_router())
         .nest("/things", tinyiothub_thing::router())
-        .route("/tools/catalog", get(tinyiothub_agent::chat::handler::proxy::tools_catalog))
-        .route("/tools/effective", get(tinyiothub_agent::chat::handler::proxy::tools_effective))
-        .route("/tools/toggle", post(tinyiothub_agent::chat::handler::proxy::tools_toggle))
+        .route(
+            "/tools/catalog",
+            get(tinyiothub_agent::chat::handler::proxy::tools_catalog),
+        )
+        .route(
+            "/tools/effective",
+            get(tinyiothub_agent::chat::handler::proxy::tools_effective),
+        )
+        .route(
+            "/tools/toggle",
+            post(tinyiothub_agent::chat::handler::proxy::tools_toggle),
+        )
         .nest("/auth", tinyiothub_auth::router())
         .route("/test-auth", get(test_auth_endpoint))
-        .layer(axum_middleware::from_fn(crate::api::middleware::context::jwt_auth_middleware));
+        .layer(axum_middleware::from_fn(
+            crate::api::middleware::context::jwt_auth_middleware,
+        ));
 
     // 创建v1版本的API路由
     let v1_routes = Router::new()

@@ -122,11 +122,7 @@ fn get_embedded_template(filename: &str) -> Option<&'static str> {
     }
 }
 
-async fn verify_workspace_access(
-    state: &AgentState,
-    workspace_id: &str,
-    tenant_id: &str,
-) -> Result<(), (u16, String)> {
+async fn verify_workspace_access(state: &AgentState, workspace_id: &str, tenant_id: &str) -> Result<(), (u16, String)> {
     match state.workspace_access.workspace_tenant_id(workspace_id).await {
         Ok(Some(tid)) if tid != tenant_id => Err((403, "无权访问此工作空间".to_string())),
         Ok(None) => Err((404, "工作空间不存在".to_string())),
@@ -158,8 +154,7 @@ pub async fn list_workspace_files(
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code as i32, &msg),
     };
 
-    if let Err((code, msg)) = verify_workspace_access(&state, workspace_id, &claims.tenant_id).await
-    {
+    if let Err((code, msg)) = verify_workspace_access(&state, workspace_id, &claims.tenant_id).await {
         return ApiResponseBuilder::error_with_code(code as i32, &msg);
     }
 
@@ -168,7 +163,10 @@ pub async fn list_workspace_files(
     let mut files = Vec::new();
     for name in WORKSPACE_FILES {
         let is_override = ws_dir.join(name).exists();
-        files.push(WorkspaceFileInfo { name: name.to_string(), is_override });
+        files.push(WorkspaceFileInfo {
+            name: name.to_string(),
+            is_override,
+        });
     }
 
     ApiResponseBuilder::success(WorkspaceFilesListResponse { files })
@@ -194,15 +192,16 @@ pub async fn get_workspace_file(
         ));
     }
 
-    if let Err((code, msg)) = verify_workspace_access(&state, workspace_id, &claims.tenant_id).await
-    {
+    if let Err((code, msg)) = verify_workspace_access(&state, workspace_id, &claims.tenant_id).await {
         return ApiResponseBuilder::error_with_code(code as i32, &msg);
     }
 
     match resolve_file(workspace_id, &filename).await {
-        Ok((content, source)) => {
-            ApiResponseBuilder::success(WorkspaceFileResponse { name: filename, content, source })
-        }
+        Ok((content, source)) => ApiResponseBuilder::success(WorkspaceFileResponse {
+            name: filename,
+            content,
+            source,
+        }),
         Err(msg) => ApiResponseBuilder::error(&msg),
     }
 }
@@ -228,8 +227,7 @@ pub async fn put_workspace_file(
         ));
     }
 
-    if let Err((code, msg)) = verify_workspace_access(&state, workspace_id, &claims.tenant_id).await
-    {
+    if let Err((code, msg)) = verify_workspace_access(&state, workspace_id, &claims.tenant_id).await {
         return ApiResponseBuilder::error_with_code(code as i32, &msg);
     }
 
@@ -280,8 +278,7 @@ pub async fn delete_workspace_file(
         ));
     }
 
-    if let Err((code, msg)) = verify_workspace_access(&state, workspace_id, &claims.tenant_id).await
-    {
+    if let Err((code, msg)) = verify_workspace_access(&state, workspace_id, &claims.tenant_id).await {
         return ApiResponseBuilder::error_with_code(code as i32, &msg);
     }
 
@@ -297,9 +294,11 @@ pub async fn delete_workspace_file(
 
     // Return the fallback content
     match resolve_file(workspace_id, &filename).await {
-        Ok((content, source)) => {
-            ApiResponseBuilder::success(WorkspaceFileResponse { name: filename, content, source })
-        }
+        Ok((content, source)) => ApiResponseBuilder::success(WorkspaceFileResponse {
+            name: filename,
+            content,
+            source,
+        }),
         Err(msg) => ApiResponseBuilder::error(&msg),
     }
 }

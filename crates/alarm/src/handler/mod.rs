@@ -9,9 +9,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use tinyiothub_web::error_handling::ErrorCode;
 use tinyiothub_web::middleware::workspace::AuthClaims;
-use tinyiothub_web::response::{
-    ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo,
-};
+use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo};
 
 use crate::{
     AlarmState,
@@ -61,7 +59,12 @@ async fn list_alarms(
     let get_csv = |key: &str| -> Option<Vec<String>> {
         params
             .get(key)
-            .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+            .map(|v| {
+                v.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
             .filter(|v: &Vec<String>| !v.is_empty())
     };
 
@@ -133,7 +136,12 @@ async fn list_alarms(
 
             ApiResponseBuilder::success(PaginatedResponse {
                 data,
-                pagination: PaginationInfo { page, page_size, total_pages, total_count: total },
+                pagination: PaginationInfo {
+                    page,
+                    page_size,
+                    total_pages,
+                    total_count: total,
+                },
             })
         }
         Err(e) => ApiResponseBuilder::error(format!("查询报警失败: {}", e)),
@@ -145,7 +153,11 @@ async fn get_alarm(
     State(state): State<AlarmState>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<AlarmDto>> {
-    match state.alarm_service.get_alarm_by_id(&id, Some(&claims.0.workspace_id)).await {
+    match state
+        .alarm_service
+        .get_alarm_by_id(&id, Some(&claims.0.workspace_id))
+        .await
+    {
         Ok(Some(alarm)) => ApiResponseBuilder::success(AlarmDto::from(alarm)),
         Ok(None) => ApiResponseBuilder::error_with_code(ErrorCode::NotFound.as_i32(), "报警不存在"),
         Err(e) => ApiResponseBuilder::error(format!("获取报警失败: {}", e)),
@@ -171,7 +183,11 @@ async fn get_alarm_statistics(
 
     let time_range = TimeRange { start, end };
 
-    match state.alarm_service.get_alarm_statistics(time_range, &claims.0.workspace_id).await {
+    match state
+        .alarm_service
+        .get_alarm_statistics(time_range, &claims.0.workspace_id)
+        .await
+    {
         Ok(stats) => ApiResponseBuilder::success(AlarmStatisticsDto::from(stats)),
         Err(e) => ApiResponseBuilder::error(format!("获取统计失败: {}", e)),
     }
@@ -215,8 +231,10 @@ async fn load_device_names_map(
         return map;
     }
     let placeholders = vec!["?"; alarms.len()].join(",");
-    let query =
-        format!("SELECT id, display_name, name FROM devices WHERE id IN ({})", placeholders);
+    let query = format!(
+        "SELECT id, display_name, name FROM devices WHERE id IN ({})",
+        placeholders
+    );
     let mut q = sqlx::query(sqlx::AssertSqlSafe(query));
     for a in alarms {
         q = q.bind(&a.device_id);
@@ -296,16 +314,7 @@ async fn get_recent_alarms_list(
     let recent_alarms = alarms
         .into_iter()
         .map(
-            |(
-                id,
-                device_id,
-                device_name,
-                level,
-                message,
-                alarm_time,
-                is_acknowledged,
-                is_resolved,
-            )| {
+            |(id, device_id, device_name, level, message, alarm_time, is_acknowledged, is_resolved)| {
                 let status = if is_resolved {
                     "resolved".to_string()
                 } else if is_acknowledged {
@@ -344,7 +353,10 @@ async fn list_alarm_rules(
     claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<AlarmRuleDto>>> {
     let rules = if let Some(device_id) = params.device_id {
-        state.alarm_service.get_rules_by_device(&device_id, &claims.0.workspace_id).await
+        state
+            .alarm_service
+            .get_rules_by_device(&device_id, &claims.0.workspace_id)
+            .await
     } else {
         state.alarm_service.get_all_rules(&claims.0.workspace_id).await
     };
@@ -368,10 +380,7 @@ async fn get_alarm_rule(
             if let Some(ref rule_ws) = rule.workspace_id
                 && rule_ws != &claims.0.workspace_id
             {
-                return ApiResponseBuilder::error_with_code(
-                    ErrorCode::NotFound.as_i32(),
-                    "规则不存在",
-                );
+                return ApiResponseBuilder::error_with_code(ErrorCode::NotFound.as_i32(), "规则不存在");
             }
             ApiResponseBuilder::success(AlarmRuleDto::from(rule))
         }
@@ -395,11 +404,10 @@ async fn create_alarm_rule(
         Err(e) => return ApiResponseBuilder::error(format!("无效的条件配置: {}", e)),
     };
 
-    let notification_config: NotificationConfig =
-        match serde_json::from_value(req.notification_config) {
-            Ok(nc) => nc,
-            Err(e) => return ApiResponseBuilder::error(format!("无效的通知配置: {}", e)),
-        };
+    let notification_config: NotificationConfig = match serde_json::from_value(req.notification_config) {
+        Ok(nc) => nc,
+        Err(e) => return ApiResponseBuilder::error(format!("无效的通知配置: {}", e)),
+    };
 
     let rule = match AlarmRule::new(
         req.name,
@@ -442,8 +450,7 @@ async fn update_alarm_rule(
 
     let condition = req.condition.and_then(|c| serde_json::from_value(c).ok());
     let alarm_level = req.alarm_level.and_then(|l| AlarmLevel::parse_str(&l));
-    let notification_config =
-        req.notification_config.and_then(|nc| serde_json::from_value(nc).ok());
+    let notification_config = req.notification_config.and_then(|nc| serde_json::from_value(nc).ok());
 
     if let Err(e) = rule.update(
         req.name,
@@ -456,7 +463,11 @@ async fn update_alarm_rule(
         return ApiResponseBuilder::error(format!("更新规则失败: {}", e));
     }
 
-    match state.alarm_service.update_rule(rule.clone(), Some(&claims.0.workspace_id)).await {
+    match state
+        .alarm_service
+        .update_rule(rule.clone(), Some(&claims.0.workspace_id))
+        .await
+    {
         Ok(()) => ApiResponseBuilder::success(AlarmRuleDto::from(rule)),
         Err(e) => ApiResponseBuilder::error(format!("保存规则失败: {}", e)),
     }
@@ -481,7 +492,11 @@ async fn toggle_alarm_rule(
     Json(req): Json<ToggleRuleRequest>,
 ) -> Json<ApiResponse<()>> {
     // Verify workspace ownership before toggle (DB-level WHERE clause enforces isolation)
-    match state.alarm_service.set_rule_enabled(&id, req.enabled, Some(&claims.0.workspace_id)).await {
+    match state
+        .alarm_service
+        .set_rule_enabled(&id, req.enabled, Some(&claims.0.workspace_id))
+        .await
+    {
         Ok(()) => ApiResponseBuilder::success(()),
         Err(e) => ApiResponseBuilder::error(format!("切换规则状态失败: {}", e)),
     }
@@ -497,13 +512,14 @@ async fn acknowledge_alarm(
     claims: AuthClaims,
     Json(req): Json<AcknowledgeAlarmRequest>,
 ) -> Json<ApiResponse<()>> {
-    match state.alarm_service.get_alarm_by_id(&id, Some(&claims.0.workspace_id)).await {
+    match state
+        .alarm_service
+        .get_alarm_by_id(&id, Some(&claims.0.workspace_id))
+        .await
+    {
         Ok(Some(alarm)) => {
             if !alarm.can_acknowledge() {
-                return ApiResponseBuilder::error_with_code(
-                    409,
-                    "告警已确认或已解决，无法重复确认",
-                );
+                return ApiResponseBuilder::error_with_code(409, "告警已确认或已解决，无法重复确认");
             }
         }
         Ok(None) => return ApiResponseBuilder::error_with_code(404, "告警不存在"),
@@ -531,7 +547,11 @@ async fn resolve_alarm(
         Err(_) => return ApiResponseBuilder::error("无效的解决方式"),
     };
 
-    match state.alarm_service.get_alarm_by_id(&id, Some(&claims.0.workspace_id)).await {
+    match state
+        .alarm_service
+        .get_alarm_by_id(&id, Some(&claims.0.workspace_id))
+        .await
+    {
         Ok(Some(alarm)) => {
             if !alarm.can_resolve() {
                 return ApiResponseBuilder::error_with_code(409, "告警已解决，无法重复操作");
@@ -825,11 +845,10 @@ mod tests {
         ).execute(&pool).await.unwrap();
 
         use sqlx::Row;
-        let row =
-            sqlx::query("SELECT is_resolved FROM device_alarms WHERE id = 'alarm-resolved-done'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let row = sqlx::query("SELECT is_resolved FROM device_alarms WHERE id = 'alarm-resolved-done'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         let is_res: bool = row.get("is_resolved");
         assert!(is_res);
     }

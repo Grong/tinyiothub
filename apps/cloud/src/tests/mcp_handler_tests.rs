@@ -40,10 +40,7 @@ async fn test_mcp_tools_call_missing_params() {
         .oneshot(auth_request("POST", "/api/v1/mcp/tools/call", &token, Some(json!({}))))
         .await
         .unwrap();
-    assert!(
-        response.status() == StatusCode::UNPROCESSABLE_ENTITY
-            || response.status() == StatusCode::OK
-    );
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
 }
 
 #[tokio::test]

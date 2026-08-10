@@ -10,11 +10,9 @@
 
 use std::sync::Arc;
 
+use crate::loop_::thing_agent::{DirectiveSink, EnqueueError, Priority, TriggerSource, WakeSignal};
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use crate::loop_::thing_agent::{
-    DirectiveSink, EnqueueError, Priority, TriggerSource, WakeSignal,
-};
 use zeroclaw::tools::{Tool, ToolResult};
 use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
@@ -27,7 +25,10 @@ pub struct DispatchThingTaskTool {
 
 impl DispatchThingTaskTool {
     pub fn new(workspace_id: &str, sink: Option<Arc<dyn DirectiveSink>>) -> Self {
-        Self { workspace_id: workspace_id.to_string(), sink }
+        Self {
+            workspace_id: workspace_id.to_string(),
+            sink,
+        }
     }
 
     fn resolve_sink(&self) -> Option<Arc<dyn DirectiveSink>> {
@@ -103,9 +104,7 @@ impl Tool for DispatchThingTaskTool {
                 "message": "已受理，完成后回报",
             })),
             Err(EnqueueError::Rejected) => tool_err("任务队列已满（上限 50 条），请稍后重试"),
-            Err(EnqueueError::Duplicate) => {
-                tool_err("相同指令已在队列中（60 秒内去重），无需重复投递")
-            }
+            Err(EnqueueError::Duplicate) => tool_err("相同指令已在队列中（60 秒内去重），无需重复投递"),
             Err(EnqueueError::Closed) => tool_err("Agent 任务服务已停止"),
             Err(other) => tool_err(format!("指令投递失败: {}", other)),
         }
@@ -153,8 +152,10 @@ mod tests {
         let stub = Arc::new(StubDirectiveSink::default());
         let tool = tool_with(stub.clone());
 
-        let result =
-            tool.execute(json!({"text": "  把 3 号产线温度调到 25 度 "})).await.expect("execute");
+        let result = tool
+            .execute(json!({"text": "  把 3 号产线温度调到 25 度 "}))
+            .await
+            .expect("execute");
         assert!(result.success, "dispatch must succeed: {:?}", result.error);
         let output: Value = serde_json::from_str(&result.output).expect("output json");
         assert_eq!(output["status"], "accepted");

@@ -53,6 +53,10 @@ fn get_mapping(config: &toml::Value) -> Result<std::collections::HashMap<String,
     config
         .get("mapping")
         .and_then(|v| v.as_table())
-        .map(|t| t.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
+        .map(|t| {
+            t.iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                .collect()
+        })
         .ok_or_else(|| Error::ValidationError("Missing [mapping] section".to_string()))
 }

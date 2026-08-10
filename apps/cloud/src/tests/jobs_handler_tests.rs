@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::test_utils::{
-    auth_header, create_test_token_with_workspace, response_parts, seed_test_workspace,
-    setup_test_app, setup_test_app_with_pool,
+    auth_header, create_test_token_with_workspace, response_parts, seed_test_workspace, setup_test_app,
+    setup_test_app_with_pool,
 };
 
 fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Request<Body> {
@@ -70,8 +70,10 @@ async fn test_create_job() {
         "retry_count": 3
     });
 
-    let response =
-        app.oneshot(auth_request("POST", "/api/v1/jobs", &token, Some(body))).await.unwrap();
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/jobs", &token, Some(body)))
+        .await
+        .unwrap();
 
     let status = response.status();
     assert!(
@@ -93,8 +95,10 @@ async fn test_create_job_invalid_cron() {
         "config": "{}"
     });
 
-    let response =
-        app.oneshot(auth_request("POST", "/api/v1/jobs", &token, Some(body))).await.unwrap();
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/jobs", &token, Some(body)))
+        .await
+        .unwrap();
 
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
@@ -114,8 +118,10 @@ async fn test_create_job_with_5_field_cron() {
         "config": "{}"
     });
 
-    let response =
-        app.oneshot(auth_request("POST", "/api/v1/jobs", &token, Some(body))).await.unwrap();
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/jobs", &token, Some(body)))
+        .await
+        .unwrap();
 
     let status = response.status();
     assert!(
@@ -161,7 +167,12 @@ async fn test_update_job_not_found() {
     let body = json!({ "name": "updated-job" });
 
     let response = app
-        .oneshot(auth_request("PUT", "/api/v1/jobs/nonexistent-id-12345", &token, Some(body)))
+        .oneshot(auth_request(
+            "PUT",
+            "/api/v1/jobs/nonexistent-id-12345",
+            &token,
+            Some(body),
+        ))
         .await
         .unwrap();
 
@@ -203,8 +214,10 @@ async fn test_get_job_statistics() {
     let app = setup_test_app().await;
     let token = test_token();
 
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/jobs/statistics", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/jobs/statistics", &token, None))
+        .await
+        .unwrap();
 
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
@@ -224,8 +237,10 @@ async fn test_get_job_statistics_no_workspace() {
     // Token with a tenant that has no workspace — simulates the production bug
     let token = create_test_token_with_workspace("user-1", "tenant-no-workspace", "ws-default-001");
 
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/jobs/statistics", &token, None)).await.unwrap();
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/jobs/statistics", &token, None))
+        .await
+        .unwrap();
 
     let (status, json) = response_parts(response).await;
     // HTTP status is 200, but the API returns a JSON error body
@@ -248,7 +263,12 @@ async fn test_list_all_executions() {
     let token = test_token();
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/jobs/executions?page=1&page_size=20", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/jobs/executions?page=1&page_size=20",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
 

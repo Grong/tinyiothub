@@ -243,8 +243,7 @@ impl EventEncryption for AesEventEncryption {
         let content_json = String::from_utf8(decrypted_data)
             .map_err(|e| EventError::Configuration(format!("Invalid UTF-8 data: {}", e)))?;
 
-        let content: RichContent =
-            serde_json::from_str(&content_json).map_err(EventError::Serialization)?;
+        let content: RichContent = serde_json::from_str(&content_json).map_err(EventError::Serialization)?;
 
         // Verify content integrity
         let calculated_hash = self.calculate_content_hash(&content);
@@ -308,11 +307,10 @@ impl EventEncryption for NoOpEncryption {
             .decode(&encrypted.data)
             .map_err(|e| EventError::Configuration(format!("Invalid data: {}", e)))?;
 
-        let content_str = String::from_utf8(content_json)
-            .map_err(|e| EventError::Configuration(format!("Invalid UTF-8: {}", e)))?;
+        let content_str =
+            String::from_utf8(content_json).map_err(|e| EventError::Configuration(format!("Invalid UTF-8: {}", e)))?;
 
-        let content: RichContent =
-            serde_json::from_str(&content_str).map_err(EventError::Serialization)?;
+        let content: RichContent = serde_json::from_str(&content_str).map_err(EventError::Serialization)?;
 
         Ok(content)
     }
@@ -362,10 +360,8 @@ mod tests {
         };
 
         // Test sensitive content
-        let sensitive_content = RichContent::new_text(
-            "User password changed".to_string(),
-            "Password was updated".to_string(),
-        );
+        let sensitive_content =
+            RichContent::new_text("User password changed".to_string(), "Password was updated".to_string());
         assert!(encryption.should_encrypt(&sensitive_content));
 
         // Test non-sensitive content

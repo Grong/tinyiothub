@@ -61,7 +61,14 @@ impl IoTToolAdapter {
         workspace_id: String,
     ) -> Self {
         let safety = handler.safety();
-        Self { name, description, input_schema, handler, workspace_id, safety }
+        Self {
+            name,
+            description,
+            input_schema,
+            handler,
+            workspace_id,
+            safety,
+        }
     }
 
     /// Handler-declared safety — authoritative for trust evaluation.
@@ -131,12 +138,12 @@ pub struct TrustAwareTool {
 }
 
 impl TrustAwareTool {
-    pub fn new(
-        inner: Box<dyn Tool>,
-        trust_config: Arc<TrustConfig>,
-        safety: crate::loop_::types::ToolSafety,
-    ) -> Self {
-        Self { inner, trust_config, safety }
+    pub fn new(inner: Box<dyn Tool>, trust_config: Arc<TrustConfig>, safety: crate::loop_::types::ToolSafety) -> Self {
+        Self {
+            inner,
+            trust_config,
+            safety,
+        }
     }
 }
 
@@ -171,18 +178,18 @@ impl Tool for TrustAwareTool {
         // TrustConfig input the adapter's verdict equals
         // evaluate_tool_trust_with_safety (verified by the adapter's
         // parameterized equivalence tests).
-        match crate::loop_::types::HeartbeatTrustAdapter::evaluate(
-            &self.trust_config,
-            tool_name,
-            self.safety,
-        ) {
+        match crate::loop_::types::HeartbeatTrustAdapter::evaluate(&self.trust_config, tool_name, self.safety) {
             TrustDecision::Allow => self.inner.execute(args).await,
-            TrustDecision::Block { reason } => {
-                Ok(ToolResult { success: false, output: String::new(), error: Some(reason) })
-            }
-            TrustDecision::Propose { reason } => {
-                Ok(ToolResult { success: false, output: String::new(), error: Some(reason) })
-            }
+            TrustDecision::Block { reason } => Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(reason),
+            }),
+            TrustDecision::Propose { reason } => Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(reason),
+            }),
         }
     }
 }
@@ -266,13 +273,7 @@ async fn load_all_tools_with_safety(
             let description = meta.description.clone();
             let input_schema = meta.input_schema.clone();
             if let Some(handler) = registry.get_handler(&name).await {
-                let adapter = IoTToolAdapter::new(
-                    name,
-                    description,
-                    input_schema,
-                    handler,
-                    workspace_id.to_string(),
-                );
+                let adapter = IoTToolAdapter::new(name, description, input_schema, handler, workspace_id.to_string());
                 let safety = adapter.safety();
                 tools.push((Box::new(adapter), safety));
             }
@@ -317,8 +318,7 @@ pub async fn resolve_tools_for_agent(
     db_pool: Option<SqlitePool>,
     runtime: &ToolRuntimeContext,
 ) -> Vec<Box<dyn Tool>> {
-    let all_tools =
-        load_all_tools_with_safety(workspace_id, db_pool, runtime).await;
+    let all_tools = load_all_tools_with_safety(workspace_id, db_pool, runtime).await;
     let filtered: Vec<(Box<dyn Tool>, crate::loop_::types::ToolSafety)> = all_tools
         .into_iter()
         .filter(|(tool, _)| {
@@ -331,8 +331,7 @@ pub async fn resolve_tools_for_agent(
         Some(tc) => filtered
             .into_iter()
             .map(|(tool, safety)| {
-                let wrapped: Box<dyn Tool> =
-                    Box::new(TrustAwareTool::new(tool, Arc::clone(&tc), safety));
+                let wrapped: Box<dyn Tool> = Box::new(TrustAwareTool::new(tool, Arc::clone(&tc), safety));
                 wrapped
             })
             .collect(),
@@ -386,9 +385,7 @@ fn tool_label(name: &str) -> &str {
 fn tool_group(name: &str) -> (&str, &str) {
     if name == "search_workspace_resources" {
         ("workspace", "工作空间")
-    } else if name.starts_with("search_")
-        || matches!(name, "read_properties" | "write_properties" | "send_command")
-    {
+    } else if name.starts_with("search_") || matches!(name, "read_properties" | "write_properties" | "send_command") {
         ("device", "设备管理")
     } else if matches!(
         name,
@@ -579,7 +576,11 @@ mod tests {
             serde_json::json!({})
         }
         async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
-            Ok(ToolResult { success: true, output: "ran".into(), error: None })
+            Ok(ToolResult {
+                success: true,
+                output: "ran".into(),
+                error: None,
+            })
         }
     }
 
@@ -591,9 +592,14 @@ mod tests {
             Arc::new(TrustConfig::default()),
             crate::loop_::types::ToolSafety::ReadOnly,
         );
-        let result =
-            <TrustAwareTool as Tool>::execute(&wrapped, serde_json::json!({})).await.unwrap();
-        assert!(result.success, "declared read-only must auto-execute: {:?}", result.error);
+        let result = <TrustAwareTool as Tool>::execute(&wrapped, serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(
+            result.success,
+            "declared read-only must auto-execute: {:?}",
+            result.error
+        );
     }
 
     #[tokio::test]
@@ -604,8 +610,9 @@ mod tests {
             Arc::new(TrustConfig::default()),
             crate::loop_::types::ToolSafety::Destructive,
         );
-        let result =
-            <TrustAwareTool as Tool>::execute(&wrapped, serde_json::json!({})).await.unwrap();
+        let result = <TrustAwareTool as Tool>::execute(&wrapped, serde_json::json!({}))
+            .await
+            .unwrap();
         assert!(!result.success);
         assert!(result.error.unwrap().contains("destructive"));
     }
@@ -634,7 +641,8 @@ mod tests {
             Ok(serde_json::json!({}))
         }
         fn safety(&self) -> crate::loop_::types::ToolSafety {
-            self.safety.unwrap_or_else(|| crate::loop_::types::classify_tool_safety(self.name()))
+            self.safety
+                .unwrap_or_else(|| crate::loop_::types::classify_tool_safety(self.name()))
         }
     }
 
@@ -653,7 +661,10 @@ mod tests {
         );
         assert_eq!(adapter.safety(), crate::loop_::types::ToolSafety::Destructive);
 
-        let defaulted = SafetyDeclaringHandler { tool_name: "get_thing", safety: None };
+        let defaulted = SafetyDeclaringHandler {
+            tool_name: "get_thing",
+            safety: None,
+        };
         let adapter = IoTToolAdapter::new(
             defaulted.name().to_string(),
             defaulted.description().to_string(),

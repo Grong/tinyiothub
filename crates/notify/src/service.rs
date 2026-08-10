@@ -11,15 +11,10 @@ use tinyiothub_core::models::notification_channel::{
 };
 
 // Re-export types from types.rs so they're accessible via service path
-pub use super::types::{
-    NotificationChannel, NotificationLevel, NotificationMessage, NotificationStatistics,
-};
+pub use super::types::{NotificationChannel, NotificationLevel, NotificationMessage, NotificationStatistics};
 use super::{
     repo::NotificationRuleRepository,
-    types::{
-        NotificationAggregate, NotificationChannelType, NotificationRecord, NotificationRule,
-        NotificationStatus,
-    },
+    types::{NotificationAggregate, NotificationChannelType, NotificationRecord, NotificationRule, NotificationStatus},
 };
 use tinyiothub_event::{
     EventError, Result,
@@ -63,7 +58,9 @@ impl NotificationSpecification for EmailRecipientsValidSpec {
         if !rule.channels.contains(&NotificationChannelType::Email) {
             return true;
         }
-        rule.recipients.iter().all(|recipient| recipient.contains('@') && recipient.contains('.'))
+        rule.recipients
+            .iter()
+            .all(|recipient| recipient.contains('@') && recipient.contains('.'))
     }
     fn error_message(&self) -> String {
         "Email recipients must have valid email format".to_string()
@@ -76,9 +73,9 @@ impl NotificationSpecification for SmsRecipientsValidSpec {
         if !rule.channels.contains(&NotificationChannelType::Sms) {
             return true;
         }
-        rule.recipients.iter().all(|recipient| {
-            recipient.starts_with('+') && recipient[1..].chars().all(|c| c.is_ascii_digit())
-        })
+        rule.recipients
+            .iter()
+            .all(|recipient| recipient.starts_with('+') && recipient[1..].chars().all(|c| c.is_ascii_digit()))
     }
     fn error_message(&self) -> String {
         "SMS recipients must have valid phone number format (+1234567890)".to_string()
@@ -87,17 +84,13 @@ impl NotificationSpecification for SmsRecipientsValidSpec {
 
 pub struct CriticalEventsImmediateChannelsSpec;
 impl CriticalEventsImmediateChannelsSpec {
-    pub fn is_satisfied_by_event_level(
-        &self,
-        rule: &NotificationRule,
-        event_level: &EventLevel,
-    ) -> bool {
+    pub fn is_satisfied_by_event_level(&self, rule: &NotificationRule, event_level: &EventLevel) -> bool {
         if !matches!(event_level, EventLevel::Critical | EventLevel::Error) {
             return true;
         }
-        rule.channels.iter().any(|channel| {
-            matches!(channel, NotificationChannelType::Sms | NotificationChannelType::Sse)
-        })
+        rule.channels
+            .iter()
+            .any(|channel| matches!(channel, NotificationChannelType::Sms | NotificationChannelType::Sse))
     }
 }
 impl NotificationSpecification for CriticalEventsImmediateChannelsSpec {
@@ -112,8 +105,7 @@ impl NotificationSpecification for CriticalEventsImmediateChannelsSpec {
         true
     }
     fn error_message(&self) -> String {
-        "Rules for critical events must include immediate notification channels (SMS or SSE)"
-            .to_string()
+        "Rules for critical events must include immediate notification channels (SMS or SSE)".to_string()
     }
 }
 
@@ -130,9 +122,9 @@ impl NotificationSpecification for NotificationNameValidSpec {
 pub struct EventTypesValidSpec;
 impl NotificationSpecification for EventTypesValidSpec {
     fn is_satisfied_by(&self, rule: &NotificationRule) -> bool {
-        rule.event_types.iter().all(|event_type| {
-            event_type.contains('.') && !event_type.starts_with('.') && !event_type.ends_with('.')
-        })
+        rule.event_types
+            .iter()
+            .all(|event_type| event_type.contains('.') && !event_type.starts_with('.') && !event_type.ends_with('.'))
     }
     fn error_message(&self) -> String {
         "Event types must follow format 'category.subcategory' (e.g., 'device.error')".to_string()
@@ -162,7 +154,9 @@ impl NotificationValidationSpec {
     pub fn validate(&self, rule: &NotificationRule) -> Result<()> {
         for spec in &self.specs {
             if !spec.is_satisfied_by(rule) {
-                return Err(EventError::Validation { message: spec.error_message() });
+                return Err(EventError::Validation {
+                    message: spec.error_message(),
+                });
             }
         }
         Ok(())
@@ -230,10 +224,15 @@ impl NotificationFilterSpec {
         event_metadata: &HashMap<String, String>,
     ) -> bool {
         let type_match = rule.event_types.is_empty()
-            || rule.event_types.iter().any(|pattern| Self::matches_pattern(event_type, pattern));
+            || rule
+                .event_types
+                .iter()
+                .any(|pattern| Self::matches_pattern(event_type, pattern));
         let level_match = rule.event_levels.is_empty() || rule.event_levels.contains(event_level);
-        let conditions_match =
-            rule.conditions.iter().all(|(key, value)| event_metadata.get(key) == Some(value));
+        let conditions_match = rule
+            .conditions
+            .iter()
+            .all(|(key, value)| event_metadata.get(key) == Some(value));
         type_match && level_match && conditions_match
     }
 
@@ -283,7 +282,9 @@ pub struct NotificationChannelManager {
 
 impl NotificationChannelManager {
     pub fn new() -> Self {
-        Self { channels: HashMap::new() }
+        Self {
+            channels: HashMap::new(),
+        }
     }
 
     pub fn register_channel(&mut self, channel: Box<dyn NotificationChannelHandler>) {
@@ -341,10 +342,7 @@ pub async fn send_notification_message(
     }
 }
 
-async fn send_sms(
-    channel: &CoreNotificationChannel,
-    req: &SendMessageRequest,
-) -> std::result::Result<String, String> {
+async fn send_sms(channel: &CoreNotificationChannel, req: &SendMessageRequest) -> std::result::Result<String, String> {
     let config: serde_json::Value =
         serde_json::from_str(&channel.config).map_err(|e| format!("Invalid config JSON: {}", e))?;
     let provider = config.get("provider").and_then(|v| v.as_str()).unwrap_or("aliyun");
@@ -364,8 +362,10 @@ async fn send_email(
     let config: serde_json::Value =
         serde_json::from_str(&channel.config).map_err(|e| format!("Invalid config JSON: {}", e))?;
     let smtp_host = config.get("smtp_host").and_then(|v| v.as_str()).unwrap_or("");
-    let from =
-        config.get("from").and_then(|v| v.as_str()).unwrap_or("TinyIoT <noreply@tinyiot.com>");
+    let from = config
+        .get("from")
+        .and_then(|v| v.as_str())
+        .unwrap_or("TinyIoT <noreply@tinyiot.com>");
     tracing::info!("Sending email via {} from {} to {}", smtp_host, from, req.recipient);
     Ok(format!(
         "Email sent to {} (from: {}, subject: {})",
@@ -381,7 +381,10 @@ async fn send_webhook(
 ) -> std::result::Result<String, String> {
     let config: serde_json::Value =
         serde_json::from_str(&channel.config).map_err(|e| format!("Invalid config JSON: {}", e))?;
-    let url = config.get("url").and_then(|v| v.as_str()).ok_or("Missing URL in config")?;
+    let url = config
+        .get("url")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing URL in config")?;
     let method = config.get("method").and_then(|v| v.as_str()).unwrap_or("POST");
     tracing::info!("Sending webhook {} {} to {}", method, url, req.recipient);
     let body = serde_json::json!({
@@ -418,10 +421,7 @@ impl NotificationManager {
         self.channels.insert(channel_type, channel);
     }
 
-    pub async fn send_notification(
-        &self,
-        message: &NotificationMessage,
-    ) -> std::result::Result<(), String> {
+    pub async fn send_notification(&self, message: &NotificationMessage) -> std::result::Result<(), String> {
         if let Some(channel) = self.channels.get(&message.channel) {
             if channel.is_available().await {
                 channel.send(message).await
@@ -502,18 +502,17 @@ impl NotificationManager {
     }
 
     /// Update an existing notification rule
-    pub async fn update_rule(
-        &self,
-        rule_id: &str,
-        mut rule: NotificationRule,
-    ) -> std::result::Result<(), String> {
+    pub async fn update_rule(&self, rule_id: &str, mut rule: NotificationRule) -> std::result::Result<(), String> {
         rule.id = rule_id.to_string();
         self.rule_repository.update_rule(&rule).await.map_err(|e| e.to_string())
     }
 
     /// Remove a notification rule
     pub async fn remove_rule(&self, rule_id: &str) -> std::result::Result<(), String> {
-        self.rule_repository.delete_rule(rule_id).await.map_err(|e| e.to_string())
+        self.rule_repository
+            .delete_rule(rule_id)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Get notification history for an event
@@ -525,10 +524,7 @@ impl NotificationManager {
     }
 
     /// Send notification for an event
-    pub async fn notify(
-        &self,
-        _event: &tinyiothub_event::entities::Event,
-    ) -> std::result::Result<(), String> {
+    pub async fn notify(&self, _event: &tinyiothub_event::entities::Event) -> std::result::Result<(), String> {
         Ok(())
     }
 }
@@ -544,7 +540,9 @@ pub struct NotificationService {
 
 impl NotificationService {
     pub fn new() -> Self {
-        Self { validation_spec: NotificationValidationSpec::new() }
+        Self {
+            validation_spec: NotificationValidationSpec::new(),
+        }
     }
 
     pub fn create_notification_rule(
@@ -555,9 +553,8 @@ impl NotificationService {
         channels: Vec<NotificationChannelType>,
         recipients: Vec<String>,
     ) -> DomainResult<NotificationAggregate> {
-        let aggregate =
-            NotificationAggregate::new(name, event_types, event_levels, channels, recipients)
-                .map_err(|e| NotificationDomainError::rule_validation(e.to_string()))?;
+        let aggregate = NotificationAggregate::new(name, event_types, event_levels, channels, recipients)
+            .map_err(|e| NotificationDomainError::rule_validation(e.to_string()))?;
 
         self.validation_spec
             .validate(aggregate.rule())
@@ -578,12 +575,7 @@ impl NotificationService {
         let mut all_notifications = Vec::new();
 
         for rule_aggregate in notification_rules {
-            if NotificationFilterSpec::matches_filters(
-                rule_aggregate.rule(),
-                event_type,
-                event_level,
-                event_metadata,
-            ) {
+            if NotificationFilterSpec::matches_filters(rule_aggregate.rule(), event_type, event_level, event_metadata) {
                 let notifications = rule_aggregate
                     .create_notifications(event_id.to_string(), message.clone())
                     .map_err(|e| NotificationDomainError::rule_validation(e.to_string()))?;
@@ -616,8 +608,7 @@ impl NotificationService {
         let mut groups = HashMap::new();
         for notification in notifications {
             if self.should_batch_notifications(&notification.notification_method) {
-                let key =
-                    (notification.notification_method.clone(), notification.recipient.clone());
+                let key = (notification.notification_method.clone(), notification.recipient.clone());
                 groups.entry(key).or_insert_with(Vec::new).push(notification);
             }
         }
@@ -639,7 +630,10 @@ impl NotificationService {
         &self,
         notifications: &'a [NotificationRecord],
     ) -> Vec<&'a NotificationRecord> {
-        notifications.iter().filter(|n| matches!(n.status, NotificationStatus::Pending)).collect()
+        notifications
+            .iter()
+            .filter(|n| matches!(n.status, NotificationStatus::Pending))
+            .collect()
     }
 
     pub fn get_retryable_notifications<'a>(
@@ -648,36 +642,40 @@ impl NotificationService {
     ) -> Vec<&'a NotificationRecord> {
         notifications
             .iter()
-            .filter(|n| {
-                matches!(n.status, NotificationStatus::Failed) && self.should_retry_notification(n)
-            })
+            .filter(|n| matches!(n.status, NotificationStatus::Failed) && self.should_retry_notification(n))
             .collect()
     }
 
-    pub fn calculate_notification_statistics(
-        &self,
-        notifications: &[NotificationRecord],
-    ) -> NotificationStatistics {
+    pub fn calculate_notification_statistics(&self, notifications: &[NotificationRecord]) -> NotificationStatistics {
         let total = notifications.len();
         let pending = notifications
             .iter()
             .filter(|n| matches!(n.status, NotificationStatus::Pending))
             .count();
-        let sent =
-            notifications.iter().filter(|n| matches!(n.status, NotificationStatus::Sent)).count();
-        let failed =
-            notifications.iter().filter(|n| matches!(n.status, NotificationStatus::Failed)).count();
+        let sent = notifications
+            .iter()
+            .filter(|n| matches!(n.status, NotificationStatus::Sent))
+            .count();
+        let failed = notifications
+            .iter()
+            .filter(|n| matches!(n.status, NotificationStatus::Failed))
+            .count();
         let acknowledged = notifications
             .iter()
             .filter(|n| matches!(n.status, NotificationStatus::Acknowledged))
             .count();
 
-        let success_rate = if total > 0 { (sent as f64 / total as f64) * 100.0 } else { 0.0 };
+        let success_rate = if total > 0 {
+            (sent as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
 
         let delivery_times: Vec<_> = notifications
             .iter()
             .filter_map(|n| {
-                n.sent_at.map(|sent_at| sent_at.signed_duration_since(n.created_at).num_seconds())
+                n.sent_at
+                    .map(|sent_at| sent_at.signed_duration_since(n.created_at).num_seconds())
             })
             .collect();
 

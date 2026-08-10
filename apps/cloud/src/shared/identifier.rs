@@ -18,7 +18,11 @@ pub fn get_sn() -> String {
     match fs::read_to_string(SN_FILE) {
         Ok(sn) => {
             let trimmed = sn.trim();
-            if trimmed.is_empty() { DEFAULT_SN.to_string() } else { trimmed.to_string() }
+            if trimmed.is_empty() {
+                DEFAULT_SN.to_string()
+            } else {
+                trimmed.to_string()
+            }
         }
         Err(_) => {
             tracing::warn!("Failed to read SN file, using default");
@@ -128,7 +132,11 @@ pub struct MemoryInfo {
 impl MemoryInfo {
     /// Get memory usage percentage
     pub fn usage_percentage(&self) -> f32 {
-        if self.total == 0 { 0.0 } else { (self.used as f32 / self.total as f32) * 100.0 }
+        if self.total == 0 {
+            0.0
+        } else {
+            (self.used as f32 / self.total as f32) * 100.0
+        }
     }
 }
 
@@ -157,7 +165,11 @@ pub struct DiskInfo {
 impl DiskInfo {
     /// Get disk usage percentage
     pub fn usage_percentage(&self) -> f32 {
-        if self.total == 0 { 0.0 } else { (self.used as f32 / self.total as f32) * 100.0 }
+        if self.total == 0 {
+            0.0
+        } else {
+            (self.used as f32 / self.total as f32) * 100.0
+        }
     }
 }
 /// Generate a unique ID using UUID v4
@@ -228,22 +240,42 @@ mod tests {
 
     #[test]
     fn test_memory_info_usage_percentage() {
-        let mem = MemoryInfo { total: 1024, used: 512, free: 512 };
+        let mem = MemoryInfo {
+            total: 1024,
+            used: 512,
+            free: 512,
+        };
         assert!((mem.usage_percentage() - 50.0).abs() < f32::EPSILON);
 
-        let mem_zero = MemoryInfo { total: 0, used: 0, free: 0 };
+        let mem_zero = MemoryInfo {
+            total: 0,
+            used: 0,
+            free: 0,
+        };
         assert_eq!(mem_zero.usage_percentage(), 0.0);
 
-        let mem_full = MemoryInfo { total: 100, used: 100, free: 0 };
+        let mem_full = MemoryInfo {
+            total: 100,
+            used: 100,
+            free: 0,
+        };
         assert!((mem_full.usage_percentage() - 100.0).abs() < f32::EPSILON);
     }
 
     #[test]
     fn test_disk_info_usage_percentage() {
-        let disk = DiskInfo { total: 1024, used: 256, free: 768 };
+        let disk = DiskInfo {
+            total: 1024,
+            used: 256,
+            free: 768,
+        };
         assert!((disk.usage_percentage() - 25.0).abs() < f32::EPSILON);
 
-        let disk_zero = DiskInfo { total: 0, used: 0, free: 0 };
+        let disk_zero = DiskInfo {
+            total: 0,
+            used: 0,
+            free: 0,
+        };
         assert_eq!(disk_zero.usage_percentage(), 0.0);
     }
 }

@@ -178,7 +178,10 @@ async fn test_create_thing_handler_metadata() {
     let schema = handler.input_schema();
     let json_schema = schema.to_json();
     let required = json_schema["required"].as_array().unwrap();
-    assert!(required.iter().any(|r| r == "name"), "name should be required for create_thing");
+    assert!(
+        required.iter().any(|r| r == "name"),
+        "name should be required for create_thing"
+    );
 }
 
 /// Test delete_thing handler metadata
