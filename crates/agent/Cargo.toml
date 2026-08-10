@@ -74,3 +74,6 @@ zeroclaw-api = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-pa
 tokio = { workspace = true, features = ["test-util"] }
 mockall = { workspace = true }
 tempfile = { workspace = true }
+
+[lints]
+workspace = true

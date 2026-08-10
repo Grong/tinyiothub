@@ -32,3 +32,6 @@ zeroclaw-api = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-pa
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

@@ -34,3 +34,6 @@ base64 = { workspace = true }
 urlencoding = { workspace = true }
 regex = { workspace = true }
 redis = { workspace = true }
+
+[lints]
+workspace = true

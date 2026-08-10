@@ -182,3 +182,7 @@ strip = true
 
 [profile.dev]
 opt-level = 0
+
+[workspace.lints.rust]
+# FFI/动态加载例外见 core、plugin-sdk、runtime、edge 的本地 [lints.rust] 表
+unsafe_code = "deny"

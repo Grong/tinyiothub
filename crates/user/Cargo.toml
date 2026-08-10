@@ -22,3 +22,6 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 sqlx = { workspace = true }
 bcrypt = { workspace = true }
+
+[lints]
+workspace = true

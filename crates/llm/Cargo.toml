@@ -19,3 +19,6 @@ async-trait = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }
+
+[lints]
+workspace = true

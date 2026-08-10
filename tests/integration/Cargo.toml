@@ -10,3 +10,6 @@ db = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 uuid = { workspace = true }
+
+[lints]
+workspace = true

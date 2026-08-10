@@ -42,3 +42,6 @@ headers = { workspace = true }
 
 # Input validation (email/phone/username/slug patterns)
 regex = { workspace = true }
+
+[lints]
+workspace = true

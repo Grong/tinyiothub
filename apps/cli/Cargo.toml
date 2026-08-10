@@ -12,3 +12,6 @@ path = "src/main.rs"
 [dependencies]
 core = { workspace = true }
 runtime = { workspace = true }
+
+[lints]
+workspace = true
