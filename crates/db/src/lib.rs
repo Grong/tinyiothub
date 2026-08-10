@@ -27,6 +27,8 @@ pub mod device_property;
 pub mod device_row_mapper;
 /// Driver installation persistence.
 pub mod driver_installation;
+/// Database error type.
+pub mod error;
 /// Repository factory.
 pub mod factory;
 /// Embedded migrations runner.
@@ -35,6 +37,8 @@ pub mod migrations;
 pub mod models;
 /// Notification channel persistence.
 pub mod notification_channel;
+/// Notification rule/history persistence + row types.
+pub mod notify;
 /// Migrating SQLite pool creation (foreign keys on, runs embedded migrations).
 pub mod pool;
 /// Unified storage facade.
@@ -70,6 +74,7 @@ pub use device_command::*;
 pub use device_property::*;
 pub use device_row_mapper::*;
 pub use driver_installation::{DriverInstallation, DriverInstallationRepo};
+pub use error::{DbError, Result};
 pub use factory::DeviceRepositoryFactory;
 pub use models::{Filter, FilterOp, Pagination, RowMetadata, SortOrder};
 pub use notification_channel::*;

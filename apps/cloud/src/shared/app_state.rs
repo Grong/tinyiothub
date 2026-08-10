@@ -10,7 +10,7 @@ use tinyiothub_event::{
     sqlite_real_time_event::SqliteRealTimeEventRepository,
 };
 use tinyiothub_notify::{
-    NotificationHistoryRepositoryImpl, NotificationManager, NotificationRuleRepositoryImpl,
+    NotificationHistoryRepository, NotificationManager, NotificationRuleRepository,
     channels::NotificationChannelFactory,
 };
 use tinyiothub_storage::{Database, DeviceRepositoryFactory, cache::DeviceCache};
@@ -715,10 +715,10 @@ impl AppState {
         database: Arc<Database>,
     ) -> Result<Arc<NotificationManager>, Box<dyn std::error::Error + Send + Sync>> {
         // Create notification history store
-        let _history_store = Arc::new(NotificationHistoryRepositoryImpl::new(database.clone()));
+        let _history_store = Arc::new(NotificationHistoryRepository::new(database.clone()));
 
         // Create notification rule repository
-        let rule_repo = Arc::new(NotificationRuleRepositoryImpl::new(database));
+        let rule_repo = Arc::new(NotificationRuleRepository::new(database));
 
         // Create notification manager with rule repository
         let mut notification_manager = NotificationManager::new(rule_repo);

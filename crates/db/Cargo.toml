@@ -11,6 +11,7 @@ description = "Repository traits and SQLite persistence implementations"
 name = "tinyiothub_storage"
 
 [dependencies]
+thiserror = { workspace = true }
 core = { workspace = true, features = ["sqlx"] }
 
 # Async runtime

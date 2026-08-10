@@ -1,57 +1,202 @@
-// Notification repository implementations
-// Consolidated from infrastructure/persistence/repositories/notification_*_repository_impl.rs
+//! Notification 持久化：规则与投递记录（P-集中化 E1，自 notify crate 迁入）。
+//!
+//! 类型随 repo 住 db（方案 B）：NotificationRule/NotificationRecord 为 DB 行类型，
+//! notify crate 保留 API DTO 与渠道策略，经 re-export 兼容。
 
+use std::collections::HashMap;
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use tinyiothub_core::models::event::EventLevel;
+
+use crate::error::{DbError, Result};
+
+// ──────────────────────────────────────────────
+// 持久化类型（DB 行）
+// ──────────────────────────────────────────────
+
+/// Notification Status
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum NotificationStatus {
+    Pending,
+    Sent,
+    Failed,
+    Acknowledged,
+}
+
+impl std::fmt::Display for NotificationStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NotificationStatus::Pending => write!(f, "Pending"),
+            NotificationStatus::Sent => write!(f, "Sent"),
+            NotificationStatus::Failed => write!(f, "Failed"),
+            NotificationStatus::Acknowledged => write!(f, "Acknowledged"),
+        }
+    }
+}
+
+impl NotificationStatus {
+    pub fn parse_str(s: &str) -> Option<Self> {
+        match s {
+            "pending" => Some(NotificationStatus::Pending),
+            "sent" => Some(NotificationStatus::Sent),
+            "acknowledged" => Some(NotificationStatus::Acknowledged),
+            s if s.starts_with("failed") => Some(NotificationStatus::Failed),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            NotificationStatus::Pending => "pending",
+            NotificationStatus::Sent => "sent",
+            NotificationStatus::Failed => "failed",
+            NotificationStatus::Acknowledged => "acknowledged",
+        }
+    }
+}
+
+/// Notification Rule Entity
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationRule {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub event_type: Option<String>,
+    pub event_subtype: Option<String>,
+    pub event_level: Option<i32>,
+    pub device_filter: Option<serde_json::Value>,
+    pub notification_methods: Vec<NotificationChannelType>,
+    pub recipients: Vec<String>,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub workspace_id: Option<String>,
+
+    // Legacy compatibility fields
+    pub event_types: Vec<String>,
+    pub event_levels: Vec<EventLevel>,
+    pub channels: Vec<NotificationChannelType>,
+    pub conditions: HashMap<String, String>,
+    pub is_active: bool,
+}
+
+impl NotificationRule {
+    pub fn new(
+        id: String,
+        name: String,
+        description: Option<String>,
+        notification_methods: Vec<NotificationChannelType>,
+        recipients: Vec<String>,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            id,
+            name,
+            description,
+            event_type: None,
+            event_subtype: None,
+            event_level: None,
+            device_filter: None,
+            notification_methods: notification_methods.clone(),
+            recipients,
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+            workspace_id: None,
+            event_types: Vec::new(),
+            event_levels: Vec::new(),
+            channels: notification_methods,
+            conditions: HashMap::new(),
+            is_active: true,
+        }
+    }
+
+    pub fn set_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self.updated_at = Utc::now();
+        self
+    }
+
+    pub fn with_event_type(mut self, event_type: String) -> Self {
+        self.event_type = Some(event_type);
+        self.updated_at = Utc::now();
+        self
+    }
+
+    pub fn with_event_subtype(mut self, event_subtype: String) -> Self {
+        self.event_subtype = Some(event_subtype);
+        self.updated_at = Utc::now();
+        self
+    }
+
+    pub fn with_event_level(mut self, event_level: i32) -> Self {
+        self.event_level = Some(event_level);
+        self.updated_at = Utc::now();
+        self
+    }
+
+    pub fn with_device_filter(mut self, device_filter: serde_json::Value) -> Self {
+        self.device_filter = Some(device_filter);
+        self.updated_at = Utc::now();
+        self
+    }
+}
+
+/// Notification Record Entity
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationRecord {
+    pub id: String,
+    pub event_id: String,
+    pub rule_id: String,
+    pub notification_method: NotificationChannelType,
+    pub recipient: String,
+    pub status: NotificationStatus,
+    pub sent_at: Option<DateTime<Utc>>,
+    pub error_message: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Notification rule statistics (from rule repository)
+#[derive(Debug, Clone)]
+pub struct RuleStatistics {
+    pub total_rules: u64,
+    pub enabled_rules: u64,
+    pub disabled_rules: u64,
+}
+
+/// Notification history statistics (from history repository)
+#[derive(Debug, Clone)]
+pub struct HistoryStatistics {
+    pub total_notifications: u64,
+    pub sent_count: u64,
+    pub failed_count: u64,
+    pub pending_count: u64,
+    pub success_rate: f64,
+    pub period_days: i32,
+}
+
+// ──────────────────────────────────────────────
+// Repositories
+// ──────────────────────────────────────────────
+
+use sqlx::Row;
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use sqlx::Row;
-use tinyiothub_storage::Database;
+use crate::database::Database;
+use tinyiothub_core::notification_types::NotificationChannelType;
 use tracing::{debug, error, info};
-
-use super::types::{
-    HistoryStatistics, NotificationChannelType, NotificationRecord, NotificationRule, NotificationStatus,
-    RuleStatistics,
-};
-use tinyiothub_event::{EventError, Result};
 
 // ──────────────────────────────────────────────
 // Notification Rule Repository
 // ──────────────────────────────────────────────
 
-/// Notification rule store trait
-#[async_trait]
-pub trait NotificationRuleStore: Send + Sync {
-    async fn create_rule(&self, rule: &NotificationRule) -> Result<()>;
-    async fn get_rule(&self, rule_id: &str) -> Result<Option<NotificationRule>>;
-    async fn update_rule(&self, rule: &NotificationRule) -> Result<()>;
-    async fn delete_rule(&self, rule_id: &str) -> Result<()>;
-    async fn list_rules(&self) -> Result<Vec<NotificationRule>>;
-    async fn get_active_rules(&self) -> Result<Vec<NotificationRule>>;
-}
-
-/// Repository trait for notification rules
-#[async_trait]
-pub trait NotificationRuleRepository: Send + Sync {
-    async fn create_rule(&self, rule: &NotificationRule) -> Result<()>;
-    async fn get_rule(&self, rule_id: &str) -> Result<Option<NotificationRule>>;
-    async fn get_all_rules(&self) -> Result<Vec<NotificationRule>>;
-    async fn get_enabled_rules(&self) -> Result<Vec<NotificationRule>>;
-    async fn update_rule(&self, rule: &NotificationRule) -> Result<()>;
-    async fn delete_rule(&self, rule_id: &str) -> Result<()>;
-    async fn get_rules_by_event_type(
-        &self,
-        event_type: &str,
-        event_subtype: Option<&str>,
-    ) -> Result<Vec<NotificationRule>>;
-}
-
 /// SQLite implementation of notification rule repository
-pub struct NotificationRuleRepositoryImpl {
+pub struct NotificationRuleRepository {
     db: Arc<Database>,
 }
 
-impl NotificationRuleRepositoryImpl {
+impl NotificationRuleRepository {
     pub fn new(db: Arc<Database>) -> Self {
         Self { db }
     }
@@ -66,7 +211,7 @@ impl NotificationRuleRepositoryImpl {
         if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%d %H:%M:%S%.f") {
             return Ok(dt.and_utc());
         }
-        Err(EventError::Validation {
+        Err(DbError::Validation {
             message: format!("Invalid {} timestamp: {}", field_name, timestamp_str),
         })
     }
@@ -74,12 +219,12 @@ impl NotificationRuleRepositoryImpl {
     fn row_to_notification_rule(&self, row: &sqlx::sqlite::SqliteRow) -> Result<NotificationRule> {
         let notification_methods_str: String = row.try_get("notification_methods")?;
         let notification_methods: Vec<String> =
-            serde_json::from_str(&notification_methods_str).map_err(EventError::Serialization)?;
+            serde_json::from_str(&notification_methods_str).map_err(DbError::Serialization)?;
 
         let notification_methods: Result<Vec<NotificationChannelType>> = notification_methods
             .into_iter()
             .map(|method| {
-                NotificationChannelType::parse_str(&method).ok_or_else(|| EventError::Validation {
+                NotificationChannelType::parse_str(&method).ok_or_else(|| DbError::Validation {
                     message: format!("Invalid notification method: {}", method),
                 })
             })
@@ -87,11 +232,11 @@ impl NotificationRuleRepositoryImpl {
         let notification_methods = notification_methods?;
 
         let recipients_str: String = row.try_get("recipients")?;
-        let recipients: Vec<String> = serde_json::from_str(&recipients_str).map_err(EventError::Serialization)?;
+        let recipients: Vec<String> = serde_json::from_str(&recipients_str).map_err(DbError::Serialization)?;
 
         let device_filter_str: Option<String> = row.try_get("device_filter")?;
         let device_filter = if let Some(filter_str) = device_filter_str {
-            Some(serde_json::from_str::<serde_json::Value>(&filter_str).map_err(EventError::Serialization)?)
+            Some(serde_json::from_str::<serde_json::Value>(&filter_str).map_err(DbError::Serialization)?)
         } else {
             None
         };
@@ -175,7 +320,7 @@ impl NotificationRuleRepositoryImpl {
             .await?;
 
         if result.rows_affected() == 0 {
-            return Err(EventError::NotFound {
+            return Err(DbError::NotFound {
                 id: rule_id.to_string(),
             });
         }
@@ -210,9 +355,8 @@ impl NotificationRuleRepositoryImpl {
     }
 }
 
-#[async_trait]
-impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
-    async fn create_rule(&self, rule: &NotificationRule) -> Result<()> {
+impl NotificationRuleRepository {
+    pub async fn create_rule(&self, rule: &NotificationRule) -> Result<()> {
         let pool = self.db.pool();
         let notification_methods_json =
             serde_json::to_string(&rule.notification_methods.iter().map(|m| m.as_str()).collect::<Vec<_>>())?;
@@ -251,7 +395,7 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
         Ok(())
     }
 
-    async fn get_rule(&self, rule_id: &str) -> Result<Option<NotificationRule>> {
+    pub async fn get_rule(&self, rule_id: &str) -> Result<Option<NotificationRule>> {
         let pool = self.db.pool();
         let row = sqlx::query(
             r#"
@@ -274,7 +418,7 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
         }
     }
 
-    async fn get_all_rules(&self) -> Result<Vec<NotificationRule>> {
+    pub async fn get_all_rules(&self) -> Result<Vec<NotificationRule>> {
         let pool = self.db.pool();
         let rows = sqlx::query(
             r#"
@@ -301,7 +445,7 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
         Ok(rules)
     }
 
-    async fn get_enabled_rules(&self) -> Result<Vec<NotificationRule>> {
+    pub async fn get_enabled_rules(&self) -> Result<Vec<NotificationRule>> {
         let pool = self.db.pool();
         let rows = sqlx::query(
             r#"
@@ -329,7 +473,7 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
         Ok(rules)
     }
 
-    async fn update_rule(&self, rule: &NotificationRule) -> Result<()> {
+    pub async fn update_rule(&self, rule: &NotificationRule) -> Result<()> {
         let pool = self.db.pool();
         let notification_methods_json =
             serde_json::to_string(&rule.notification_methods.iter().map(|m| m.as_str()).collect::<Vec<_>>())?;
@@ -363,13 +507,13 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
         .await?;
 
         if result.rows_affected() == 0 {
-            return Err(EventError::NotFound { id: rule.id.clone() });
+            return Err(DbError::NotFound { id: rule.id.clone() });
         }
         info!("Updated notification rule: {} ({})", rule.name, rule.id);
         Ok(())
     }
 
-    async fn delete_rule(&self, rule_id: &str) -> Result<()> {
+    pub async fn delete_rule(&self, rule_id: &str) -> Result<()> {
         let pool = self.db.pool();
         let result = sqlx::query("DELETE FROM notification_rules WHERE id = ?")
             .bind(rule_id)
@@ -377,7 +521,7 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
             .await?;
 
         if result.rows_affected() == 0 {
-            return Err(EventError::NotFound {
+            return Err(DbError::NotFound {
                 id: rule_id.to_string(),
             });
         }
@@ -385,7 +529,7 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
         Ok(())
     }
 
-    async fn get_rules_by_event_type(
+    pub async fn get_rules_by_event_type(
         &self,
         event_type: &str,
         event_subtype: Option<&str>,
@@ -446,25 +590,12 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
 // Notification History Repository
 // ──────────────────────────────────────────────
 
-/// Notification history store trait
-#[async_trait]
-pub trait NotificationHistoryStore: Send + Sync {
-    async fn store_record(&self, record: &NotificationRecord) -> Result<()>;
-    async fn get_records(&self, event_id: &str) -> Result<Vec<NotificationRecord>>;
-    async fn update_status(
-        &self,
-        record_id: &str,
-        status: NotificationStatus,
-        error_message: Option<String>,
-    ) -> Result<()>;
-}
-
 /// SQLite implementation of notification history store
-pub struct NotificationHistoryRepositoryImpl {
+pub struct NotificationHistoryRepository {
     db: Arc<Database>,
 }
 
-impl NotificationHistoryRepositoryImpl {
+impl NotificationHistoryRepository {
     pub fn new(db: Arc<Database>) -> Self {
         Self { db }
     }
@@ -472,12 +603,12 @@ impl NotificationHistoryRepositoryImpl {
     fn row_to_notification_record(&self, row: &sqlx::sqlite::SqliteRow) -> Result<NotificationRecord> {
         let method_str: String = row.try_get("notification_method")?;
         let notification_method =
-            NotificationChannelType::parse_str(&method_str).ok_or_else(|| EventError::Validation {
+            NotificationChannelType::parse_str(&method_str).ok_or_else(|| DbError::Validation {
                 message: format!("Invalid notification method: {}", method_str),
             })?;
 
         let status_str: String = row.try_get("status")?;
-        let status = NotificationStatus::parse_str(&status_str).ok_or_else(|| EventError::Validation {
+        let status = NotificationStatus::parse_str(&status_str).ok_or_else(|| DbError::Validation {
             message: format!("Invalid notification status: {}", status_str),
         })?;
 
@@ -485,7 +616,7 @@ impl NotificationHistoryRepositoryImpl {
         let sent_at = if let Some(sent_at_str) = sent_at_str {
             Some(
                 DateTime::parse_from_rfc3339(&sent_at_str)
-                    .map_err(|e| EventError::Validation {
+                    .map_err(|e| DbError::Validation {
                         message: format!("Invalid sent_at timestamp: {}", e),
                     })?
                     .with_timezone(&Utc),
@@ -496,7 +627,7 @@ impl NotificationHistoryRepositoryImpl {
 
         let created_at_str: String = row.try_get("created_at")?;
         let created_at = DateTime::parse_from_rfc3339(&created_at_str)
-            .map_err(|e| EventError::Validation {
+            .map_err(|e| DbError::Validation {
                 message: format!("Invalid created_at timestamp: {}", e),
             })?
             .with_timezone(&Utc);
@@ -676,9 +807,8 @@ impl NotificationHistoryRepositoryImpl {
     }
 }
 
-#[async_trait]
-impl NotificationHistoryStore for NotificationHistoryRepositoryImpl {
-    async fn store_record(&self, record: &NotificationRecord) -> Result<()> {
+impl NotificationHistoryRepository {
+    pub async fn store_record(&self, record: &NotificationRecord) -> Result<()> {
         let pool = self.db.pool();
         let sent_at_str = record.sent_at.map(|dt| dt.to_rfc3339());
 
@@ -706,7 +836,7 @@ impl NotificationHistoryStore for NotificationHistoryRepositoryImpl {
         Ok(())
     }
 
-    async fn get_records(&self, event_id: &str) -> Result<Vec<NotificationRecord>> {
+    pub async fn get_records(&self, event_id: &str) -> Result<Vec<NotificationRecord>> {
         let pool = self.db.pool();
         let rows = sqlx::query(
             r#"
@@ -739,7 +869,7 @@ impl NotificationHistoryStore for NotificationHistoryRepositoryImpl {
         Ok(records)
     }
 
-    async fn update_status(
+    pub async fn update_status(
         &self,
         record_id: &str,
         status: NotificationStatus,
@@ -767,7 +897,7 @@ impl NotificationHistoryStore for NotificationHistoryRepositoryImpl {
         .await?;
 
         if result.rows_affected() == 0 {
-            return Err(EventError::NotFound {
+            return Err(DbError::NotFound {
                 id: record_id.to_string(),
             });
         }

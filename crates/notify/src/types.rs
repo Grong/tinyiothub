@@ -16,150 +16,13 @@ use tinyiothub_event::{
 // Core domain types (from notification_aggregate.rs)
 // ──────────────────────────────────────────────
 
-/// Notification Status
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum NotificationStatus {
-    Pending,
-    Sent,
-    Failed,
-    Acknowledged,
-}
-
-impl std::fmt::Display for NotificationStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            NotificationStatus::Pending => write!(f, "Pending"),
-            NotificationStatus::Sent => write!(f, "Sent"),
-            NotificationStatus::Failed => write!(f, "Failed"),
-            NotificationStatus::Acknowledged => write!(f, "Acknowledged"),
-        }
-    }
-}
-
-impl NotificationStatus {
-    pub fn parse_str(s: &str) -> Option<Self> {
-        match s {
-            "pending" => Some(NotificationStatus::Pending),
-            "sent" => Some(NotificationStatus::Sent),
-            "acknowledged" => Some(NotificationStatus::Acknowledged),
-            s if s.starts_with("failed") => Some(NotificationStatus::Failed),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        match self {
-            NotificationStatus::Pending => "pending",
-            NotificationStatus::Sent => "sent",
-            NotificationStatus::Failed => "failed",
-            NotificationStatus::Acknowledged => "acknowledged",
-        }
-    }
-}
-
 // Re-export from core (sunk in P4.0-Task13); keep parse_str/as_str methods there.
 pub use tinyiothub_core::notification_types::NotificationChannelType;
 
-/// Notification Rule Entity
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NotificationRule {
-    pub id: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub event_type: Option<String>,
-    pub event_subtype: Option<String>,
-    pub event_level: Option<i32>,
-    pub device_filter: Option<serde_json::Value>,
-    pub notification_methods: Vec<NotificationChannelType>,
-    pub recipients: Vec<String>,
-    pub enabled: bool,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub workspace_id: Option<String>,
-
-    // Legacy compatibility fields
-    pub event_types: Vec<String>,
-    pub event_levels: Vec<EventLevel>,
-    pub channels: Vec<NotificationChannelType>,
-    pub conditions: HashMap<String, String>,
-    pub is_active: bool,
-}
-
-impl NotificationRule {
-    pub fn new(
-        id: String,
-        name: String,
-        description: Option<String>,
-        notification_methods: Vec<NotificationChannelType>,
-        recipients: Vec<String>,
-    ) -> Self {
-        let now = Utc::now();
-        Self {
-            id,
-            name,
-            description,
-            event_type: None,
-            event_subtype: None,
-            event_level: None,
-            device_filter: None,
-            notification_methods: notification_methods.clone(),
-            recipients,
-            enabled: true,
-            created_at: now,
-            updated_at: now,
-            workspace_id: None,
-            event_types: Vec::new(),
-            event_levels: Vec::new(),
-            channels: notification_methods,
-            conditions: HashMap::new(),
-            is_active: true,
-        }
-    }
-
-    pub fn set_enabled(mut self, enabled: bool) -> Self {
-        self.enabled = enabled;
-        self.updated_at = Utc::now();
-        self
-    }
-
-    pub fn with_event_type(mut self, event_type: String) -> Self {
-        self.event_type = Some(event_type);
-        self.updated_at = Utc::now();
-        self
-    }
-
-    pub fn with_event_subtype(mut self, event_subtype: String) -> Self {
-        self.event_subtype = Some(event_subtype);
-        self.updated_at = Utc::now();
-        self
-    }
-
-    pub fn with_event_level(mut self, event_level: i32) -> Self {
-        self.event_level = Some(event_level);
-        self.updated_at = Utc::now();
-        self
-    }
-
-    pub fn with_device_filter(mut self, device_filter: serde_json::Value) -> Self {
-        self.device_filter = Some(device_filter);
-        self.updated_at = Utc::now();
-        self
-    }
-}
-
-/// Notification Record Entity
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NotificationRecord {
-    pub id: String,
-    pub event_id: String,
-    pub rule_id: String,
-    pub notification_method: NotificationChannelType,
-    pub recipient: String,
-    pub status: NotificationStatus,
-    pub sent_at: Option<DateTime<Utc>>,
-    pub error_message: Option<String>,
-    pub created_at: DateTime<Utc>,
-}
+// Persisted row types live in the db crate (E1 集中化); re-exported for compatibility.
+pub use tinyiothub_storage::notify::{
+    HistoryStatistics, NotificationRecord, NotificationRule, NotificationStatus, RuleStatistics,
+};
 
 /// Notification Aggregate Root
 pub struct NotificationAggregate {
@@ -457,25 +320,6 @@ pub struct NotificationStatistics {
 // ──────────────────────────────────────────────
 // Repository types (from *_repository_impl.rs)
 // ──────────────────────────────────────────────
-
-/// Notification rule statistics (from rule repository)
-#[derive(Debug, Clone)]
-pub struct RuleStatistics {
-    pub total_rules: u64,
-    pub enabled_rules: u64,
-    pub disabled_rules: u64,
-}
-
-/// Notification history statistics (from history repository)
-#[derive(Debug, Clone)]
-pub struct HistoryStatistics {
-    pub total_notifications: u64,
-    pub sent_count: u64,
-    pub failed_count: u64,
-    pub pending_count: u64,
-    pub success_rate: f64,
-    pub period_days: i32,
-}
 
 // ──────────────────────────────────────────────
 // API DTOs (from api/notifications/management.rs)

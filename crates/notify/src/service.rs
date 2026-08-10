@@ -11,16 +11,16 @@ use tinyiothub_core::models::notification_channel::{
 };
 
 // Re-export types from types.rs so they're accessible via service path
-pub use super::types::{NotificationChannel, NotificationLevel, NotificationMessage, NotificationStatistics};
-use super::{
-    repo::NotificationRuleRepository,
-    types::{NotificationAggregate, NotificationChannelType, NotificationRecord, NotificationRule, NotificationStatus},
+use super::types::{
+    NotificationAggregate, NotificationChannelType, NotificationRecord, NotificationRule, NotificationStatus,
 };
+pub use super::types::{NotificationChannel, NotificationLevel, NotificationMessage, NotificationStatistics};
 use tinyiothub_event::{
     EventError, Result,
     errors::{DomainResult, NotificationDomainError},
     value_objects::{EventId, EventLevel},
 };
+use tinyiothub_storage::notify::NotificationRuleRepository;
 
 // ──────────────────────────────────────────────
 // Specifications (from notification_specifications.rs)
@@ -404,11 +404,11 @@ async fn send_webhook(
 pub struct NotificationManager {
     channels: HashMap<NotificationChannelType, Box<dyn NotificationChannel>>,
     notification_service: NotificationService,
-    rule_repository: Arc<dyn NotificationRuleRepository>,
+    rule_repository: Arc<NotificationRuleRepository>,
 }
 
 impl NotificationManager {
-    pub fn new(rule_repository: Arc<dyn NotificationRuleRepository>) -> Self {
+    pub fn new(rule_repository: Arc<NotificationRuleRepository>) -> Self {
         Self {
             channels: HashMap::new(),
             notification_service: NotificationService::new(),

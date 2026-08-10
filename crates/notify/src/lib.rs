@@ -28,12 +28,12 @@ use std::sync::Arc;
 
 pub mod channels;
 pub mod handler;
-pub mod repo;
 pub mod service;
 pub mod types;
 
-pub use repo::*;
+// Repositories live in the db crate (E1 集中化); re-exported for compatibility.
 pub use service::*;
+pub use tinyiothub_storage::notify::{NotificationHistoryRepository, NotificationRuleRepository};
 pub use types::*;
 
 /// Notify domain state slice — Arc'd slices only, derived from the
