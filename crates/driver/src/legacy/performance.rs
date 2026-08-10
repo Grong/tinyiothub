@@ -13,14 +13,14 @@ pub struct DevicePerformanceService {
     database: Arc<Database>,
     device_cache: Arc<DeviceCache>,
     monitoring_service: DeviceMonitoringService,
-    alarm_repository: Arc<dyn AlarmRepository>,
+    alarm_repository: Arc<AlarmRepository>,
 }
 
 impl DevicePerformanceService {
     pub fn new(
         database: Arc<Database>,
         device_cache: Arc<DeviceCache>,
-        alarm_repository: Arc<dyn AlarmRepository>,
+        alarm_repository: Arc<AlarmRepository>,
     ) -> Self {
         let monitoring_service =
             DeviceMonitoringService::new(database.clone(), device_cache.clone(), alarm_repository.clone());

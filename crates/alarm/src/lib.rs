@@ -35,7 +35,6 @@ pub mod event_hook;
 pub mod event_matcher;
 pub mod handler;
 pub mod notification;
-pub mod repo;
 pub mod service;
 pub mod types;
 pub mod types_ai;
@@ -43,8 +42,9 @@ pub mod types_ai;
 // Note: `alarm::BatchOperationResult` duplicates `types::BatchOperationResult`
 // (pre-existing); only the types one is glob-exported, as before.
 pub use event_matcher::*;
-pub use repo::*;
+// Repositories live in the db crate (E2 集中化); re-exported for compatibility.
 pub use service::*;
+pub use tinyiothub_storage::alarm::{AlarmRepository, AlarmRuleRepository};
 pub use types::*;
 pub use types_ai::*;
 

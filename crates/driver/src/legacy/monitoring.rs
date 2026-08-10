@@ -9,14 +9,14 @@ use tinyiothub_alarm::AlarmRepository;
 pub struct DeviceMonitoringService {
     database: Arc<Database>,
     device_cache: Arc<DeviceCache>,
-    alarm_repository: Arc<dyn AlarmRepository>,
+    alarm_repository: Arc<AlarmRepository>,
 }
 
 impl DeviceMonitoringService {
     pub fn new(
         database: Arc<Database>,
         device_cache: Arc<DeviceCache>,
-        alarm_repository: Arc<dyn AlarmRepository>,
+        alarm_repository: Arc<AlarmRepository>,
     ) -> Self {
         Self {
             database,

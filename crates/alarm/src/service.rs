@@ -12,23 +12,23 @@ use tinyiothub_storage::cache::DeviceCache;
 
 use crate::{
     notification::NotificationDispatcher,
-    repo::{AlarmQueryCriteria, AlarmRepository, AlarmRuleRepository, TimeRange},
     types::*,
+    types::{AlarmQueryCriteria, AlarmRepository, AlarmRuleRepository, TimeRange},
     types_ai::{AlarmAiPublisher, AlarmEvent},
 };
 use tinyiothub_event::{aggregates::NotificationChannelType, entities::Event, value_objects::EventType};
 
 /// 报警业务服务
 pub struct AlarmService {
-    alarm_repository: Arc<dyn AlarmRepository>,
-    rule_repository: Arc<dyn AlarmRuleRepository>,
+    alarm_repository: Arc<AlarmRepository>,
+    rule_repository: Arc<AlarmRuleRepository>,
     rule_engine: Arc<RuleEngine>,
     event_publisher: Mutex<Option<Arc<dyn AlarmAiPublisher>>>,
     device_cache: std::sync::OnceLock<Arc<DeviceCache>>,
 }
 
 impl AlarmService {
-    pub fn new(alarm_repository: Arc<dyn AlarmRepository>, rule_repository: Arc<dyn AlarmRuleRepository>) -> Self {
+    pub fn new(alarm_repository: Arc<AlarmRepository>, rule_repository: Arc<AlarmRuleRepository>) -> Self {
         let rule_engine = Arc::new(RuleEngine::new(rule_repository.clone()));
         Self {
             alarm_repository,
@@ -78,7 +78,10 @@ impl AlarmService {
     }
 
     pub async fn get_alarm_by_id(&self, id: &str, workspace_id: Option<&str>) -> AlarmResult<Option<Alarm>> {
-        self.alarm_repository.find_by_id(id, workspace_id).await
+        self.alarm_repository
+            .find_by_id(id, workspace_id)
+            .await
+            .map_err(AlarmError::from)
     }
 
     pub async fn acknowledge_alarm(
@@ -170,15 +173,24 @@ impl AlarmService {
     }
 
     pub async fn get_active_alarms(&self, device_id: Option<&str>) -> AlarmResult<Vec<Alarm>> {
-        self.alarm_repository.find_active(device_id).await
+        self.alarm_repository
+            .find_active(device_id)
+            .await
+            .map_err(AlarmError::from)
     }
 
     pub async fn get_alarm_history(&self, criteria: AlarmQueryCriteria) -> AlarmResult<Vec<Alarm>> {
-        self.alarm_repository.find_by_criteria(&criteria).await
+        self.alarm_repository
+            .find_by_criteria(&criteria)
+            .await
+            .map_err(AlarmError::from)
     }
 
     pub async fn count_alarms(&self, criteria: AlarmQueryCriteria) -> AlarmResult<u64> {
-        self.alarm_repository.count_by_criteria(&criteria).await
+        self.alarm_repository
+            .count_by_criteria(&criteria)
+            .await
+            .map_err(AlarmError::from)
     }
 
     pub async fn get_alarm_statistics(
@@ -241,28 +253,43 @@ impl AlarmService {
     }
 
     pub async fn get_rule_by_id(&self, id: &str) -> AlarmResult<Option<AlarmRule>> {
-        self.rule_repository.find_by_id(id).await
+        self.rule_repository.find_by_id(id).await.map_err(AlarmError::from)
     }
 
     pub async fn get_all_rules(&self, workspace_id: &str) -> AlarmResult<Vec<AlarmRule>> {
-        self.rule_repository.find_enabled(Some(workspace_id)).await
+        self.rule_repository
+            .find_enabled(Some(workspace_id))
+            .await
+            .map_err(AlarmError::from)
     }
 
     pub async fn get_rules_by_device(&self, device_id: &str, workspace_id: &str) -> AlarmResult<Vec<AlarmRule>> {
-        self.rule_repository.find_by_device(device_id, Some(workspace_id)).await
+        self.rule_repository
+            .find_by_device(device_id, Some(workspace_id))
+            .await
+            .map_err(AlarmError::from)
     }
 
     pub async fn update_rule(&self, rule: AlarmRule, workspace_id: Option<&str>) -> AlarmResult<()> {
         AlarmSpecifications::is_valid_rule(&rule).map_err(AlarmError::InvalidRuleConfig)?;
-        self.rule_repository.update(&rule, workspace_id).await
+        self.rule_repository
+            .update(&rule, workspace_id)
+            .await
+            .map_err(AlarmError::from)
     }
 
     pub async fn delete_rule(&self, id: &str, workspace_id: Option<&str>) -> AlarmResult<()> {
-        self.rule_repository.delete(id, workspace_id).await
+        self.rule_repository
+            .delete(id, workspace_id)
+            .await
+            .map_err(AlarmError::from)
     }
 
     pub async fn set_rule_enabled(&self, id: &str, enabled: bool, workspace_id: Option<&str>) -> AlarmResult<()> {
-        self.rule_repository.set_enabled(id, enabled, workspace_id).await
+        self.rule_repository
+            .set_enabled(id, enabled, workspace_id)
+            .await
+            .map_err(AlarmError::from)
     }
 
     pub fn rule_engine(&self) -> Arc<RuleEngine> {
@@ -380,7 +407,7 @@ pub struct AlarmStatistics {
 
 /// 规则引擎
 pub struct RuleEngine {
-    rule_repository: Arc<dyn AlarmRuleRepository>,
+    rule_repository: Arc<AlarmRuleRepository>,
     throttle: DashMap<(String, String), Instant>,
     /// Tracks the first time a Duration condition started being true.
     /// Key: (device_id, rule_id), Value: first_seen_instant.
@@ -394,7 +421,7 @@ pub struct RuleEngine {
 }
 
 impl RuleEngine {
-    pub fn new(rule_repository: Arc<dyn AlarmRuleRepository>) -> Self {
+    pub fn new(rule_repository: Arc<AlarmRuleRepository>) -> Self {
         Self {
             rule_repository,
             throttle: DashMap::new(),
@@ -896,7 +923,7 @@ impl RuleEngine {
     }
 
     pub async fn get_rule(&self, rule_id: &str) -> AlarmResult<Option<AlarmRule>> {
-        self.rule_repository.find_by_id(rule_id).await
+        self.rule_repository.find_by_id(rule_id).await.map_err(AlarmError::from)
     }
 }
 
@@ -1166,7 +1193,7 @@ mod tests {
     use tinyiothub_storage::Database;
 
     use super::*;
-    use crate::repo::SqliteAlarmRuleRepository;
+    use crate::types::AlarmRuleRepository;
 
     async fn setup_test_db(pool: &sqlx::SqlitePool) {
         sqlx::query("PRAGMA foreign_keys = OFF").execute(pool).await.unwrap();
@@ -1296,7 +1323,7 @@ mod tests {
         .await
         .unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         // Simulate property change event: temperature = 85 (> 80)
@@ -1328,7 +1355,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         // temperature = 25 (below threshold)
@@ -1354,7 +1381,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         // temperature = 85 > 80 → should trigger immediately (0s duration)
@@ -1381,7 +1408,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         // First call: condition is true but not yet sustained
@@ -1408,7 +1435,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         // Trigger → condition true
@@ -1455,7 +1482,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         // Value 50 is within [20, 80] → no alarm
@@ -1478,7 +1505,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         // Value 85 is above max 80 → should trigger
@@ -1502,7 +1529,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         // Value exactly at boundary (inclusive) → no alarm
@@ -1528,7 +1555,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         // With time_window=0s, we compare previous_value (old) with current_value
@@ -1551,7 +1578,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         let event = make_property_change_event_with_old("dev-1", "temperature", 85.0, 80.0);
@@ -1573,7 +1600,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         let event = make_property_change_event_with_old("dev-1", "temperature", 65.0, 80.0);
@@ -1598,7 +1625,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         // Value 85 > 80 (first condition true) BUT we can only test one value per event.
@@ -1626,7 +1653,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         // 85 > 80 is true, but 85 is NOT > 90 → AND fails
@@ -1653,7 +1680,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         // 85 > 80 (true) OR 85 > 90 (false) → OR succeeds
@@ -1682,7 +1709,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         let result = engine
@@ -1718,7 +1745,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         let result = engine
@@ -1745,7 +1772,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         // First call starts debounce
@@ -1792,7 +1819,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         // Trigger alarm
@@ -1842,7 +1869,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         // Trigger alarm
@@ -1880,7 +1907,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         // First call → triggers
@@ -1917,7 +1944,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         let event = make_property_change_event("dev-1", "temperature", 85.0);
@@ -1941,7 +1968,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         let event = make_property_change_event("dev-1", "battery", 15.0);
@@ -1963,7 +1990,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         let event = make_property_change_event("dev-1", "answer", 42.0);
@@ -1993,7 +2020,7 @@ mod tests {
         )
         .execute(&pool).await.unwrap();
 
-        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db));
         let engine = RuleEngine::new(repo);
 
         let event = make_property_change_event("dev-1", "temperature", 85.0);
@@ -2018,7 +2045,7 @@ mod integration_tests {
     use tinyiothub_storage::Database;
 
     use super::*;
-    use crate::repo::{SqliteAlarmRepository, SqliteAlarmRuleRepository};
+    use crate::types::{AlarmRepository, AlarmRuleRepository};
 
     async fn setup_full_schema(pool: &sqlx::SqlitePool) {
         sqlx::query("PRAGMA foreign_keys = OFF").execute(pool).await.unwrap();
@@ -2152,8 +2179,8 @@ mod integration_tests {
              VALUES ('rule-1', 'dev-1', 'prop-1', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
-        let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
-        let rule_repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
+        let alarm_repo: Arc<AlarmRepository> = Arc::new(AlarmRepository::new(db.clone()));
+        let rule_repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db.clone()));
         let alarm_service = Arc::new(AlarmService::new(alarm_repo.clone(), rule_repo));
         let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
         let handler = AlarmEventHandler::new(alarm_service, notification_dispatcher);
@@ -2206,8 +2233,8 @@ mod integration_tests {
              VALUES ('rule-1', 'dev-1', 'prop-1', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
-        let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
-        let rule_repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
+        let alarm_repo: Arc<AlarmRepository> = Arc::new(AlarmRepository::new(db.clone()));
+        let rule_repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db.clone()));
         let alarm_service = Arc::new(AlarmService::new(alarm_repo.clone(), rule_repo));
         let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
         let handler = AlarmEventHandler::new(alarm_service, notification_dispatcher);
@@ -2243,8 +2270,8 @@ mod integration_tests {
              VALUES ('rule-ar1', 'dev-ar', 'prop-ar', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', 'ws-ar', datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
-        let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
-        let rule_repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
+        let alarm_repo: Arc<AlarmRepository> = Arc::new(AlarmRepository::new(db.clone()));
+        let rule_repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db.clone()));
         let alarm_service = Arc::new(AlarmService::new(alarm_repo.clone(), rule_repo));
         let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
         let handler = AlarmEventHandler::new(alarm_service.clone(), notification_dispatcher);
@@ -2296,8 +2323,8 @@ mod integration_tests {
              VALUES ('rule-arm', 'dev-arm', 'prop-arm', 'High Humidity', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":70.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', 'ws-arm', datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
-        let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
-        let rule_repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
+        let alarm_repo: Arc<AlarmRepository> = Arc::new(AlarmRepository::new(db.clone()));
+        let rule_repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db.clone()));
         let alarm_service = Arc::new(AlarmService::new(alarm_repo.clone(), rule_repo));
         let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
         let handler = AlarmEventHandler::new(alarm_service.clone(), notification_dispatcher);
@@ -2347,8 +2374,8 @@ mod integration_tests {
              VALUES ('rule-sd', 'dev-sd', 'prop-sd', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
-        let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
-        let rule_repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
+        let alarm_repo: Arc<AlarmRepository> = Arc::new(AlarmRepository::new(db.clone()));
+        let rule_repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db.clone()));
         let alarm_service = Arc::new(AlarmService::new(alarm_repo.clone(), rule_repo));
         let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
         let handler = AlarmEventHandler::new(alarm_service.clone(), notification_dispatcher);

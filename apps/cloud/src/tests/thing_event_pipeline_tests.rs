@@ -8,9 +8,7 @@
 use std::sync::Arc;
 
 use sqlx::Row;
-use tinyiothub_alarm::{
-    AlarmRepository, AlarmRuleRepository, AlarmService, SqliteAlarmRepository, SqliteAlarmRuleRepository,
-};
+use tinyiothub_alarm::{AlarmRepository, AlarmRuleRepository, AlarmService};
 use tinyiothub_core::models::event::{
     ContentElement, DeviceEventType, Event, EventLevel, EventSource, EventType, RichContent, TextFormat,
 };
@@ -277,8 +275,8 @@ async fn test_event_alarm_rule_fires_device_alarm() {
     .expect("insert event rule");
 
     let db = Arc::new(Database::new(pool.clone()));
-    let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
-    let rule_repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
+    let alarm_repo: Arc<AlarmRepository> = Arc::new(AlarmRepository::new(db.clone()));
+    let rule_repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db.clone()));
     let alarm_service = Arc::new(AlarmService::new(alarm_repo, rule_repo));
 
     let throttle = ThrottleState::new(60);
@@ -334,8 +332,8 @@ async fn test_event_alarm_rule_respects_min_level() {
     .expect("insert event rule");
 
     let db = Arc::new(Database::new(pool.clone()));
-    let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
-    let rule_repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
+    let alarm_repo: Arc<AlarmRepository> = Arc::new(AlarmRepository::new(db.clone()));
+    let rule_repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db.clone()));
     let alarm_service = Arc::new(AlarmService::new(alarm_repo, rule_repo));
 
     // Warning < min_level error → no alarm.

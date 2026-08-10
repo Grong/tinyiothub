@@ -13,7 +13,7 @@
 //!   driver registry, plugin loader) lives in the runtime crate; this crate
 //!   is the management API over it.
 //! - driver → alarm (documented): `legacy::{monitoring, performance}` hold
-//!   `Arc<dyn AlarmRepository>` for read-only alarm counts on device data.
+//!   `Arc<AlarmRepository>` for read-only alarm counts on device data.
 //! - driver → thing (documented): `legacy::diagnostics` reads
 //!   `DeviceTraceStatistics` from `tinyiothub_thing::legacy::trace`.
 //! - driver → event: gateway pairing persists pairing events via

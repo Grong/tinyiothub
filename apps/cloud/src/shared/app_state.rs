@@ -200,8 +200,8 @@ impl AppState {
         let event_bus = Arc::new(EventBus::new());
 
         // 创建报警服务
-        let alarm_repository = Arc::new(tinyiothub_alarm::SqliteAlarmRepository::new(database.clone()));
-        let alarm_rule_repository = Arc::new(tinyiothub_alarm::SqliteAlarmRuleRepository::new(database.clone()));
+        let alarm_repository = Arc::new(tinyiothub_alarm::AlarmRepository::new(database.clone()));
+        let alarm_rule_repository = Arc::new(tinyiothub_alarm::AlarmRuleRepository::new(database.clone()));
         let alarm_service = Arc::new(tinyiothub_alarm::AlarmService::new(
             alarm_repository.clone(),
             alarm_rule_repository,

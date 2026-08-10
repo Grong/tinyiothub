@@ -1,54 +1,687 @@
-// Alarm repository traits + SQLite implementations
+//! Alarm 持久化：报警与报警规则（P-集中化 E2，自 alarm crate 迁入）。
+//!
+//! 类型随 repo 住 db（方案 B）：Alarm/AlarmRule 及嵌入枚举为 DB 行类型，
+//! alarm crate 保留 DTO/规则评估/通知分发，经 re-export 兼容。
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use tinyiothub_storage::Database;
+use serde::{Deserialize, Serialize};
 
-use super::types::*;
+use tinyiothub_core::notification_types::NotificationChannelType;
 
-/// 报警仓储接口
-#[async_trait]
-pub trait AlarmRepository: Send + Sync {
-    async fn create(&self, alarm: &Alarm) -> AlarmResult<()>;
-    async fn update(&self, alarm: &Alarm) -> AlarmResult<()>;
-    async fn find_by_id(&self, id: &str, workspace_id: Option<&str>) -> AlarmResult<Option<Alarm>>;
-    async fn find_by_criteria(&self, criteria: &AlarmQueryCriteria) -> AlarmResult<Vec<Alarm>>;
-    async fn find_active(&self, device_id: Option<&str>) -> AlarmResult<Vec<Alarm>>;
-    async fn find_unacknowledged(&self, device_id: Option<&str>) -> AlarmResult<Vec<Alarm>>;
-    async fn count_by_criteria(&self, criteria: &AlarmQueryCriteria) -> AlarmResult<u64>;
-    async fn batch_update_status(
-        &self,
-        alarm_ids: &[String],
-        status: AlarmStatus,
-        workspace_id: &str,
-    ) -> AlarmResult<usize>;
-    async fn delete_old_alarms(&self, before: DateTime<Utc>) -> AlarmResult<usize>;
-    async fn count_active_alarms_by_device(&self, device_id: &str) -> AlarmResult<u32>;
-    async fn count_all_active_alarms(&self) -> AlarmResult<u32>;
-    async fn count_offline_alarms(&self, device_id: &str, days: u32) -> AlarmResult<u32>;
+use crate::database::Database;
+use crate::error::{DbError, Result};
+
+// ──────────────────────────────────────────────
+// 持久化类型（DB 行）— 自 alarm/types.rs 迁入
+// ──────────────────────────────────────────────
+
+/// 报警级别
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AlarmLevel {
+    Info,
+    Warning,
+    Error,
+    Critical,
 }
 
-/// 报警规则仓储接口
-#[async_trait]
-pub trait AlarmRuleRepository: Send + Sync {
-    async fn create(&self, rule: &AlarmRule) -> AlarmResult<()>;
-    /// 更新规则；workspace_id 用于 WHERE 子句确保租户隔离
-    async fn update(&self, rule: &AlarmRule, workspace_id: Option<&str>) -> AlarmResult<()>;
-    /// 删除规则；workspace_id 用于 WHERE 子句确保租户隔离
-    async fn delete(&self, id: &str, workspace_id: Option<&str>) -> AlarmResult<()>;
-    async fn find_by_id(&self, id: &str) -> AlarmResult<Option<AlarmRule>>;
-    async fn find_enabled(&self, workspace_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>>;
-    async fn find_by_device(&self, device_id: &str, workspace_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>>;
-    async fn find_by_property(&self, device_id: &str, property_id: &str) -> AlarmResult<Vec<AlarmRule>>;
-    async fn find_global_rules(&self) -> AlarmResult<Vec<AlarmRule>>;
-    /// 启用/禁用规则；workspace_id 用于 WHERE 子句确保租户隔离
-    async fn set_enabled(&self, id: &str, enabled: bool, workspace_id: Option<&str>) -> AlarmResult<()>;
-    /// Find enabled event-type alarm rules matching a workspace and optionally a device.
-    /// Returns raw rows so the caller can deserialize `condition_config` as `EventAlarmCondition`.
-    async fn find_event_rules(&self, workspace_id: &str, device_id: Option<&str>) -> AlarmResult<Vec<EventRuleRow>>;
+impl AlarmLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AlarmLevel::Info => "info",
+            AlarmLevel::Warning => "warning",
+            AlarmLevel::Error => "error",
+            AlarmLevel::Critical => "critical",
+        }
+    }
+
+    pub fn parse_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "info" => Some(AlarmLevel::Info),
+            "warning" => Some(AlarmLevel::Warning),
+            "error" => Some(AlarmLevel::Error),
+            "critical" => Some(AlarmLevel::Critical),
+            _ => None,
+        }
+    }
+
+    pub fn to_event_level(&self) -> tinyiothub_core::models::event::EventLevel {
+        match self {
+            AlarmLevel::Info => tinyiothub_core::models::event::EventLevel::Info,
+            AlarmLevel::Warning => tinyiothub_core::models::event::EventLevel::Warning,
+            AlarmLevel::Error => tinyiothub_core::models::event::EventLevel::Error,
+            AlarmLevel::Critical => tinyiothub_core::models::event::EventLevel::Critical,
+        }
+    }
+
+    pub fn from_event_level(level: &tinyiothub_core::models::event::EventLevel) -> Self {
+        match level {
+            tinyiothub_core::models::event::EventLevel::Debug => AlarmLevel::Info,
+            tinyiothub_core::models::event::EventLevel::Info => AlarmLevel::Info,
+            tinyiothub_core::models::event::EventLevel::Warning => AlarmLevel::Warning,
+            tinyiothub_core::models::event::EventLevel::Error => AlarmLevel::Error,
+            tinyiothub_core::models::event::EventLevel::Critical => AlarmLevel::Critical,
+        }
+    }
+
+    pub fn priority(&self) -> u8 {
+        match self {
+            AlarmLevel::Info => 1,
+            AlarmLevel::Warning => 2,
+            AlarmLevel::Error => 3,
+            AlarmLevel::Critical => 4,
+        }
+    }
 }
+
+impl std::fmt::Display for AlarmLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// 报警状态
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AlarmStatus {
+    Active,
+    Acknowledged,
+    Resolved,
+    Suppressed,
+}
+
+impl AlarmStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AlarmStatus::Active => "active",
+            AlarmStatus::Acknowledged => "acknowledged",
+            AlarmStatus::Resolved => "resolved",
+            AlarmStatus::Suppressed => "suppressed",
+        }
+    }
+
+    pub fn parse_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "active" => Some(AlarmStatus::Active),
+            "acknowledged" => Some(AlarmStatus::Acknowledged),
+            "resolved" => Some(AlarmStatus::Resolved),
+            "suppressed" => Some(AlarmStatus::Suppressed),
+            _ => None,
+        }
+    }
+
+    pub fn is_active(&self) -> bool {
+        matches!(self, AlarmStatus::Active | AlarmStatus::Acknowledged)
+    }
+
+    pub fn is_resolved(&self) -> bool {
+        matches!(self, AlarmStatus::Resolved)
+    }
+}
+
+impl std::fmt::Display for AlarmStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// 报警类型
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AlarmType {
+    DeviceOffline,
+    DeviceError,
+    PropertyThreshold,
+    PropertyAnomaly,
+    CommandFailed,
+    Custom { name: String },
+}
+
+impl AlarmType {
+    pub fn as_str(&self) -> String {
+        match self {
+            AlarmType::DeviceOffline => "device_offline".to_string(),
+            AlarmType::DeviceError => "device_error".to_string(),
+            AlarmType::PropertyThreshold => "property_threshold".to_string(),
+            AlarmType::PropertyAnomaly => "property_anomaly".to_string(),
+            AlarmType::CommandFailed => "command_failed".to_string(),
+            AlarmType::Custom { name } => format!("custom_{}", name),
+        }
+    }
+
+    pub fn parse_str(s: &str) -> Self {
+        match s {
+            "device_offline" => AlarmType::DeviceOffline,
+            "device_error" => AlarmType::DeviceError,
+            "property_threshold" => AlarmType::PropertyThreshold,
+            "property_anomaly" => AlarmType::PropertyAnomaly,
+            "command_failed" => AlarmType::CommandFailed,
+            s if s.starts_with("custom_") => AlarmType::Custom {
+                name: s.strip_prefix("custom_").unwrap_or(s).to_string(),
+            },
+            _ => AlarmType::Custom { name: s.to_string() },
+        }
+    }
+}
+
+impl std::fmt::Display for AlarmType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// 报警条件
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AlarmCondition {
+    Threshold {
+        operator: ComparisonOperator,
+        value: f64,
+        /// 恢复阈值（迟滞）。当设置了该值时，恢复条件使用此阈值而非原始阈值。
+        /// 例如：触发条件 `> 80`，恢复阈值 `75`，恢复需要值 `< 75`。
+        #[serde(default)]
+        recovery_threshold: Option<f64>,
+    },
+    Range {
+        min: Option<f64>,
+        max: Option<f64>,
+        inclusive: bool,
+    },
+    Change {
+        change_type: ChangeType,
+        threshold: f64,
+        #[serde(with = "duration_serde")]
+        time_window: Duration,
+    },
+    Duration {
+        condition: Box<AlarmCondition>,
+        #[serde(with = "duration_serde")]
+        duration: Duration,
+    },
+    Composite {
+        operator: LogicalOperator,
+        conditions: Vec<AlarmCondition>,
+    },
+}
+
+/// 比较运算符
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComparisonOperator {
+    GreaterThan,
+    LessThan,
+    GreaterThanOrEqual,
+    LessThanOrEqual,
+    Equal,
+    NotEqual,
+}
+
+impl ComparisonOperator {
+    pub fn evaluate(&self, left: f64, right: f64) -> bool {
+        match self {
+            ComparisonOperator::GreaterThan => left > right,
+            ComparisonOperator::LessThan => left < right,
+            ComparisonOperator::GreaterThanOrEqual => left >= right,
+            ComparisonOperator::LessThanOrEqual => left <= right,
+            ComparisonOperator::Equal => (left - right).abs() < f64::EPSILON,
+            ComparisonOperator::NotEqual => (left - right).abs() >= f64::EPSILON,
+        }
+    }
+}
+
+/// 变化类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeType {
+    Increase,
+    Decrease,
+    Any,
+}
+
+/// 逻辑运算符
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LogicalOperator {
+    And,
+    Or,
+    Not,
+}
+
+/// 确认信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Acknowledgement {
+    pub acknowledged_by: String,
+    pub acknowledged_at: DateTime<Utc>,
+    pub note: Option<String>,
+}
+
+impl Acknowledgement {
+    pub fn new(user_id: String, note: Option<String>) -> Self {
+        Self {
+            acknowledged_by: user_id,
+            acknowledged_at: Utc::now(),
+            note,
+        }
+    }
+}
+
+/// 解决信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Resolution {
+    pub resolved_by: String,
+    pub resolved_at: DateTime<Utc>,
+    pub note: Option<String>,
+    pub resolution_type: ResolutionType,
+}
+
+impl Resolution {
+    pub fn new(user_id: String, resolution_type: ResolutionType, note: Option<String>) -> Self {
+        Self {
+            resolved_by: user_id,
+            resolved_at: Utc::now(),
+            note,
+            resolution_type,
+        }
+    }
+}
+
+/// 解决方式
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResolutionType {
+    Fixed,
+    FalseAlarm,
+    Ignored,
+    AutoResolved,
+}
+
+impl ResolutionType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ResolutionType::Fixed => "fixed",
+            ResolutionType::FalseAlarm => "false_alarm",
+            ResolutionType::Ignored => "ignored",
+            ResolutionType::AutoResolved => "auto_resolved",
+        }
+    }
+}
+
+impl std::str::FromStr for ResolutionType {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "Fixed" => Ok(ResolutionType::Fixed),
+            "FalseAlarm" => Ok(ResolutionType::FalseAlarm),
+            "Ignored" => Ok(ResolutionType::Ignored),
+            "AutoResolved" => Ok(ResolutionType::AutoResolved),
+            _ => Err(format!("invalid resolution type: {}", s)),
+        }
+    }
+}
+
+/// 通知配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationConfig {
+    pub enabled: bool,
+    pub channels: Vec<NotificationChannelType>,
+    pub recipients: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none", with = "optional_duration_serde", default)]
+    pub suppress_duration: Option<Duration>,
+    #[serde(skip_serializing_if = "Option::is_none", with = "optional_duration_serde", default)]
+    pub repeat_interval: Option<Duration>,
+    /// 触发去抖动时长：条件必须持续满足该时长后才触发告警。
+    /// None = 立即触发（保持现有行为）。
+    #[serde(skip_serializing_if = "Option::is_none", with = "optional_duration_serde", default)]
+    pub trigger_duration_secs: Option<Duration>,
+    /// 恢复去抖动时长：恢复条件必须持续满足该时长后才自动恢复告警。
+    /// 默认 30 秒，防止边界振荡导致的瞬间报警恢复。
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "optional_duration_serde",
+        default = "default_recovery_duration"
+    )]
+    pub recovery_duration_secs: Option<Duration>,
+}
+
+fn default_recovery_duration() -> Option<Duration> {
+    Some(Duration::from_secs(30))
+}
+
+impl Default for NotificationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            channels: Vec::new(),
+            recipients: Vec::new(),
+            suppress_duration: None,
+            repeat_interval: None,
+            trigger_duration_secs: None,
+            // Default 30s recovery debounce to prevent single-tick
+            // boundary oscillation from immediately auto-resolving.
+            recovery_duration_secs: Some(std::time::Duration::from_secs(30)),
+        }
+    }
+}
+
+// Duration 序列化辅助模块
+mod duration_serde {
+    use std::time::Duration;
+
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u64(duration.as_secs())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> std::result::Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let secs = u64::deserialize(deserializer)?;
+        Ok(Duration::from_secs(secs))
+    }
+}
+
+mod optional_duration_serde {
+    use std::time::Duration;
+
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(duration: &Option<Duration>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match duration {
+            Some(d) => serializer.serialize_some(&d.as_secs()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> std::result::Result<Option<Duration>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let opt: Option<u64> = Option::deserialize(deserializer)?;
+        Ok(opt.map(Duration::from_secs))
+    }
+}
+
+// ============================================================================
+// Entities
+// ============================================================================
+
+/// 报警实例实体
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Alarm {
+    pub id: String,
+    pub device_id: String,
+    pub property_id: Option<String>,
+    pub rule_id: Option<String>,
+    pub alarm_type: AlarmType,
+    pub alarm_level: AlarmLevel,
+    pub message: String,
+    pub alarm_value: Option<String>,
+    pub threshold_value: Option<String>,
+    pub alarm_time: DateTime<Utc>,
+    pub status: AlarmStatus,
+    pub acknowledgement: Option<Acknowledgement>,
+    pub resolution: Option<Resolution>,
+    pub workspace_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl Alarm {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        device_id: String,
+        property_id: Option<String>,
+        rule_id: Option<String>,
+        alarm_type: AlarmType,
+        alarm_level: AlarmLevel,
+        message: String,
+        alarm_value: Option<String>,
+        threshold_value: Option<String>,
+        workspace_id: Option<String>,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            device_id,
+            property_id,
+            rule_id,
+            alarm_type,
+            alarm_level,
+            message,
+            alarm_value,
+            threshold_value,
+            alarm_time: now,
+            status: AlarmStatus::Active,
+            acknowledgement: None,
+            resolution: None,
+            workspace_id,
+            created_at: now,
+        }
+    }
+
+    pub fn acknowledge(&mut self, user_id: String, note: Option<String>) -> Result<()> {
+        if self.status != AlarmStatus::Active {
+            return Err(DbError::Validation {
+                message: format!(
+                    "无效的报警状态转换: 从 {} 到 {}",
+                    self.status.as_str().to_string(),
+                    "acknowledged".to_string()
+                ),
+            });
+        }
+        self.acknowledgement = Some(Acknowledgement::new(user_id, note));
+        self.status = AlarmStatus::Acknowledged;
+        Ok(())
+    }
+
+    pub fn resolve(&mut self, user_id: String, resolution_type: ResolutionType, note: Option<String>) -> Result<()> {
+        if !matches!(self.status, AlarmStatus::Active | AlarmStatus::Acknowledged) {
+            return Err(DbError::Validation {
+                message: format!(
+                    "无效的报警状态转换: 从 {} 到 {}",
+                    self.status.as_str().to_string(),
+                    "resolved".to_string()
+                ),
+            });
+        }
+        self.resolution = Some(Resolution::new(user_id, resolution_type, note));
+        self.status = AlarmStatus::Resolved;
+        Ok(())
+    }
+
+    pub fn suppress(&mut self) -> Result<()> {
+        if self.status != AlarmStatus::Active {
+            return Err(DbError::Validation {
+                message: format!(
+                    "无效的报警状态转换: 从 {} 到 {}",
+                    self.status.as_str().to_string(),
+                    "suppressed".to_string()
+                ),
+            });
+        }
+        self.status = AlarmStatus::Suppressed;
+        Ok(())
+    }
+
+    pub fn can_acknowledge(&self) -> bool {
+        self.status == AlarmStatus::Active
+    }
+
+    pub fn can_resolve(&self) -> bool {
+        matches!(self.status, AlarmStatus::Active | AlarmStatus::Acknowledged)
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.status.is_active()
+    }
+}
+
+/// 报警规则实体
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlarmRule {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub device_id: Option<String>,
+    pub property_id: Option<String>,
+    pub rule_type: RuleType,
+    pub condition: AlarmCondition,
+    pub alarm_level: AlarmLevel,
+    pub is_enabled: bool,
+    pub notification_config: NotificationConfig,
+    pub workspace_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl AlarmRule {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        name: String,
+        description: Option<String>,
+        device_id: Option<String>,
+        property_id: Option<String>,
+        rule_type: RuleType,
+        condition: AlarmCondition,
+        alarm_level: AlarmLevel,
+        notification_config: NotificationConfig,
+        workspace_id: String,
+    ) -> Result<Self> {
+        Self::validate_config(&name, &condition, &notification_config)?;
+
+        let now = Utc::now();
+        Ok(Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            name,
+            description,
+            device_id,
+            property_id,
+            rule_type,
+            condition,
+            alarm_level,
+            is_enabled: true,
+            notification_config,
+            workspace_id: Some(workspace_id),
+            created_at: now,
+            updated_at: now,
+        })
+    }
+
+    pub fn update(
+        &mut self,
+        name: Option<String>,
+        description: Option<String>,
+        property_id: Option<String>,
+        condition: Option<AlarmCondition>,
+        alarm_level: Option<AlarmLevel>,
+        notification_config: Option<NotificationConfig>,
+    ) -> Result<()> {
+        if let Some(n) = name {
+            if n.is_empty() {
+                return Err(DbError::Validation {
+                    message: "规则名称不能为空".to_string(),
+                });
+            }
+            self.name = n;
+        }
+        if let Some(d) = description {
+            self.description = Some(d);
+        }
+        if property_id.is_some() {
+            self.property_id = property_id;
+        }
+        if let Some(c) = condition {
+            self.condition = c;
+        }
+        if let Some(l) = alarm_level {
+            self.alarm_level = l;
+        }
+        if let Some(nc) = notification_config {
+            self.notification_config = nc;
+        }
+        self.updated_at = Utc::now();
+        Ok(())
+    }
+
+    pub fn enable(&mut self) {
+        self.is_enabled = true;
+        self.updated_at = Utc::now();
+    }
+
+    pub fn disable(&mut self) {
+        self.is_enabled = false;
+        self.updated_at = Utc::now();
+    }
+
+    fn validate_config(
+        name: &str,
+        _condition: &AlarmCondition,
+        notification_config: &NotificationConfig,
+    ) -> Result<()> {
+        if name.is_empty() {
+            return Err(DbError::Validation {
+                message: "规则名称不能为空".to_string(),
+            });
+        }
+        if notification_config.enabled && notification_config.channels.is_empty() {
+            return Err(DbError::Validation {
+                message: "启用通知时至少需要配置一个通知渠道".to_string(),
+            });
+        }
+        if notification_config.enabled {
+            let needs_recipients = notification_config
+                .channels
+                .iter()
+                .any(|ch| matches!(ch, NotificationChannelType::Email | NotificationChannelType::Sms));
+            if needs_recipients && notification_config.recipients.is_empty() {
+                return Err(DbError::Validation {
+                    message: "使用邮件或短信通知时需要配置接收人".to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+/// 规则类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleType {
+    Threshold,
+    Range,
+    Change,
+    Duration,
+    Composite,
+    /// Event-based alarm rule: triggered when a thing event matches event_name + min_level
+    Event,
+}
+
+impl RuleType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RuleType::Threshold => "threshold",
+            RuleType::Range => "range",
+            RuleType::Change => "change",
+            RuleType::Duration => "duration",
+            RuleType::Composite => "composite",
+            RuleType::Event => "event",
+        }
+    }
+}
+
+// ──────────────────────────────────────────────
+// Repositories
+// ──────────────────────────────────────────────
 
 /// Raw row for an event-type alarm rule (rule_type='event').
 ///
@@ -95,7 +728,7 @@ pub enum SortOrder {
 }
 
 /// Parse legacy condition format: {"operator": "gt", "value": 85} → AlarmCondition::Threshold
-fn parse_legacy_condition(json: &str) -> Result<AlarmCondition, String> {
+fn parse_legacy_condition(json: &str) -> std::result::Result<AlarmCondition, String> {
     let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("legacy parse: {}", e))?;
     let op_str = v
         .get("operator")
@@ -122,7 +755,7 @@ fn parse_legacy_condition(json: &str) -> Result<AlarmCondition, String> {
 }
 
 /// Parse a datetime string from the database, handling both RFC3339 and SQLite formats.
-fn parse_db_datetime(s: &str) -> Result<DateTime<Utc>, String> {
+fn parse_db_datetime(s: &str) -> std::result::Result<DateTime<Utc>, String> {
     // Try RFC3339 first (format used by new code)
     if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
         return Ok(dt.with_timezone(&Utc));
@@ -143,16 +776,16 @@ fn parse_db_datetime(s: &str) -> Result<DateTime<Utc>, String> {
 // ============================================================================
 
 /// 报警仓储实现
-pub struct SqliteAlarmRepository {
+pub struct AlarmRepository {
     database: Arc<Database>,
 }
 
-impl SqliteAlarmRepository {
+impl AlarmRepository {
     pub fn new(database: Arc<Database>) -> Self {
         Self { database }
     }
 
-    fn row_to_alarm(&self, row: sqlx::sqlite::SqliteRow) -> AlarmResult<Alarm> {
+    fn row_to_alarm(&self, row: sqlx::sqlite::SqliteRow) -> Result<Alarm> {
         use sqlx::Row;
 
         let id: String = row.get("id");
@@ -175,8 +808,9 @@ impl SqliteAlarmRepository {
         let created_at_str: String = row.get("created_at");
         let workspace_id: Option<String> = row.get("workspace_id");
 
-        let alarm_level = AlarmLevel::parse_str(&alarm_level_str)
-            .ok_or_else(|| AlarmError::InvalidRuleConfig(format!("Unknown alarm level: {}", alarm_level_str)))?;
+        let alarm_level = AlarmLevel::parse_str(&alarm_level_str).ok_or_else(|| DbError::Validation {
+            message: format!("Unknown alarm level: {}", alarm_level_str),
+        })?;
 
         let alarm_type = AlarmType::PropertyThreshold;
 
@@ -257,9 +891,8 @@ impl SqliteAlarmRepository {
     }
 }
 
-#[async_trait]
-impl AlarmRepository for SqliteAlarmRepository {
-    async fn create(&self, alarm: &Alarm) -> AlarmResult<()> {
+impl AlarmRepository {
+    pub async fn create(&self, alarm: &Alarm) -> Result<()> {
         let query = r#"
             INSERT INTO device_alarms (
                 id, device_id, property_id, rule_id, alarm_level,
@@ -297,7 +930,7 @@ impl AlarmRepository for SqliteAlarmRepository {
         Ok(())
     }
 
-    async fn update(&self, alarm: &Alarm) -> AlarmResult<()> {
+    pub async fn update(&self, alarm: &Alarm) -> Result<()> {
         let query = r#"
             UPDATE device_alarms SET
                 is_acknowledged = ?,
@@ -329,7 +962,7 @@ impl AlarmRepository for SqliteAlarmRepository {
         Ok(())
     }
 
-    async fn find_by_id(&self, id: &str, workspace_id: Option<&str>) -> AlarmResult<Option<Alarm>> {
+    pub async fn find_by_id(&self, id: &str, workspace_id: Option<&str>) -> Result<Option<Alarm>> {
         let query = if workspace_id.is_some() {
             "SELECT * FROM device_alarms WHERE id = ? AND workspace_id = ?"
         } else {
@@ -347,7 +980,7 @@ impl AlarmRepository for SqliteAlarmRepository {
         }
     }
 
-    async fn find_by_criteria(&self, criteria: &AlarmQueryCriteria) -> AlarmResult<Vec<Alarm>> {
+    pub async fn find_by_criteria(&self, criteria: &AlarmQueryCriteria) -> Result<Vec<Alarm>> {
         let mut query = String::from("SELECT * FROM device_alarms WHERE 1=1");
         let mut bindings: Vec<String> = Vec::new();
 
@@ -425,7 +1058,7 @@ impl AlarmRepository for SqliteAlarmRepository {
         let rows = sqlx_query
             .fetch_all(self.database.pool())
             .await
-            .map_err(|e| AlarmError::InternalError(format!("Query failed: {}", e)))?;
+            .map_err(|e| DbError::Internal(format!("Query failed: {}", e)))?;
 
         let mut alarms = Vec::new();
         for row in rows {
@@ -435,7 +1068,7 @@ impl AlarmRepository for SqliteAlarmRepository {
         Ok(alarms)
     }
 
-    async fn find_active(&self, device_id: Option<&str>) -> AlarmResult<Vec<Alarm>> {
+    pub async fn find_active(&self, device_id: Option<&str>) -> Result<Vec<Alarm>> {
         let query = if device_id.is_some() {
             "SELECT * FROM device_alarms WHERE is_resolved = false AND device_id = ? ORDER BY alarm_time DESC"
         } else {
@@ -450,7 +1083,7 @@ impl AlarmRepository for SqliteAlarmRepository {
         let rows = sqlx_query
             .fetch_all(self.database.pool())
             .await
-            .map_err(|e| AlarmError::InternalError(format!("find_active query failed: {}", e)))?;
+            .map_err(|e| DbError::Internal(format!("find_active query failed: {}", e)))?;
 
         let mut alarms = Vec::new();
         for row in rows {
@@ -460,7 +1093,7 @@ impl AlarmRepository for SqliteAlarmRepository {
         Ok(alarms)
     }
 
-    async fn find_unacknowledged(&self, device_id: Option<&str>) -> AlarmResult<Vec<Alarm>> {
+    pub async fn find_unacknowledged(&self, device_id: Option<&str>) -> Result<Vec<Alarm>> {
         let query = if device_id.is_some() {
             "SELECT * FROM device_alarms WHERE is_acknowledged = false AND is_resolved = false AND device_id = ? ORDER BY alarm_time DESC"
         } else {
@@ -475,7 +1108,7 @@ impl AlarmRepository for SqliteAlarmRepository {
         let rows = sqlx_query
             .fetch_all(self.database.pool())
             .await
-            .map_err(|e| AlarmError::InternalError(format!("find_unacknowledged query failed: {}", e)))?;
+            .map_err(|e| DbError::Internal(format!("find_unacknowledged query failed: {}", e)))?;
 
         let mut alarms = Vec::new();
         for row in rows {
@@ -485,7 +1118,7 @@ impl AlarmRepository for SqliteAlarmRepository {
         Ok(alarms)
     }
 
-    async fn count_by_criteria(&self, criteria: &AlarmQueryCriteria) -> AlarmResult<u64> {
+    pub async fn count_by_criteria(&self, criteria: &AlarmQueryCriteria) -> Result<u64> {
         let mut query = String::from("SELECT COUNT(*) as count FROM device_alarms WHERE 1=1");
         let mut bindings: Vec<String> = Vec::new();
 
@@ -551,19 +1184,19 @@ impl AlarmRepository for SqliteAlarmRepository {
         let row = sqlx_query
             .fetch_one(self.database.pool())
             .await
-            .map_err(|e| AlarmError::InternalError(format!("Count query failed: {}", e)))?;
+            .map_err(|e| DbError::Internal(format!("Count query failed: {}", e)))?;
 
         use sqlx::Row;
         let count: i64 = row.get("count");
         Ok(count as u64)
     }
 
-    async fn batch_update_status(
+    pub async fn batch_update_status(
         &self,
         alarm_ids: &[String],
         status: AlarmStatus,
         workspace_id: &str,
-    ) -> AlarmResult<usize> {
+    ) -> Result<usize> {
         if alarm_ids.is_empty() {
             return Ok(0);
         }
@@ -618,12 +1251,12 @@ impl AlarmRepository for SqliteAlarmRepository {
         let result = sqlx_query
             .execute(self.database.pool())
             .await
-            .map_err(|e| AlarmError::InternalError(format!("batch_update_status failed: {}", e)))?;
+            .map_err(|e| DbError::Internal(format!("batch_update_status failed: {}", e)))?;
 
         Ok(result.rows_affected() as usize)
     }
 
-    async fn delete_old_alarms(&self, before: DateTime<Utc>) -> AlarmResult<usize> {
+    pub async fn delete_old_alarms(&self, before: DateTime<Utc>) -> Result<usize> {
         let query = "DELETE FROM device_alarms WHERE created_at < ? AND is_resolved = true";
         let result = sqlx::query(query)
             .bind(before.to_rfc3339())
@@ -632,7 +1265,7 @@ impl AlarmRepository for SqliteAlarmRepository {
         Ok(result.rows_affected() as usize)
     }
 
-    async fn count_active_alarms_by_device(&self, device_id: &str) -> AlarmResult<u32> {
+    pub async fn count_active_alarms_by_device(&self, device_id: &str) -> Result<u32> {
         let count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = ? AND is_resolved = 0")
                 .bind(device_id)
@@ -641,14 +1274,14 @@ impl AlarmRepository for SqliteAlarmRepository {
         Ok(count as u32)
     }
 
-    async fn count_all_active_alarms(&self) -> AlarmResult<u32> {
+    pub async fn count_all_active_alarms(&self) -> Result<u32> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE is_resolved = 0")
             .fetch_one(self.database.pool())
             .await?;
         Ok(count as u32)
     }
 
-    async fn count_offline_alarms(&self, device_id: &str, days: u32) -> AlarmResult<u32> {
+    pub async fn count_offline_alarms(&self, device_id: &str, days: u32) -> Result<u32> {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM device_alarms WHERE device_id = ? AND alarm_message LIKE '%离线%' AND alarm_time > datetime('now', ?)",
         )
@@ -666,16 +1299,16 @@ impl AlarmRepository for SqliteAlarmRepository {
 // ============================================================================
 
 /// 报警规则仓储实现
-pub struct SqliteAlarmRuleRepository {
+pub struct AlarmRuleRepository {
     database: Arc<Database>,
 }
 
-impl SqliteAlarmRuleRepository {
+impl AlarmRuleRepository {
     pub fn new(database: Arc<Database>) -> Self {
         Self { database }
     }
 
-    fn row_to_alarm_rule(&self, row: sqlx::sqlite::SqliteRow) -> AlarmResult<AlarmRule> {
+    fn row_to_alarm_rule(&self, row: sqlx::sqlite::SqliteRow) -> Result<AlarmRule> {
         use sqlx::Row;
 
         let id: String = row.get("id");
@@ -698,10 +1331,9 @@ impl SqliteAlarmRuleRepository {
             "composite" => RuleType::Composite,
             "event" => RuleType::Event,
             _ => {
-                return Err(AlarmError::InvalidRuleConfig(format!(
-                    "未知的规则类型: {}",
-                    rule_type_str
-                )));
+                return Err(DbError::Validation {
+                    message: format!("未知的规则类型: {}", rule_type_str),
+                });
             }
         };
 
@@ -721,8 +1353,9 @@ impl SqliteAlarmRuleRepository {
                 }
             });
 
-        let alarm_level = AlarmLevel::parse_str(&alarm_level_str)
-            .ok_or_else(|| AlarmError::InvalidRuleConfig(format!("未知的告警级别: {}", alarm_level_str)))?;
+        let alarm_level = AlarmLevel::parse_str(&alarm_level_str).ok_or_else(|| DbError::Validation {
+            message: format!("未知的告警级别: {}", alarm_level_str),
+        })?;
 
         let created_at = parse_db_datetime(&created_at_str)
             .unwrap_or_else(|e| {
@@ -759,11 +1392,10 @@ impl SqliteAlarmRuleRepository {
     }
 }
 
-#[async_trait]
-impl AlarmRuleRepository for SqliteAlarmRuleRepository {
-    async fn create(&self, rule: &AlarmRule) -> AlarmResult<()> {
+impl AlarmRuleRepository {
+    pub async fn create(&self, rule: &AlarmRule) -> Result<()> {
         let condition_json = serde_json::to_string(&rule.condition)
-            .map_err(|e| AlarmError::InternalError(format!("序列化条件配置失败: {}", e)))?;
+            .map_err(|e| DbError::Internal(format!("序列化条件配置失败: {}", e)))?;
 
         let device_id = rule.device_id.as_ref().filter(|s| !s.is_empty());
         let property_id = rule.property_id.as_ref().filter(|s| !s.is_empty());
@@ -794,14 +1426,14 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
             .bind(rule.updated_at.to_rfc3339())
             .execute(self.database.pool())
             .await
-            .map_err(|e| AlarmError::InternalError(format!("创建规则失败: {}", e)))?;
+            .map_err(|e| DbError::Internal(format!("创建规则失败: {}", e)))?;
 
         Ok(())
     }
 
-    async fn update(&self, rule: &AlarmRule, workspace_id: Option<&str>) -> AlarmResult<()> {
+    pub async fn update(&self, rule: &AlarmRule, workspace_id: Option<&str>) -> Result<()> {
         let condition_json = serde_json::to_string(&rule.condition)
-            .map_err(|e| AlarmError::InternalError(format!("序列化条件配置失败: {}", e)))?;
+            .map_err(|e| DbError::Internal(format!("序列化条件配置失败: {}", e)))?;
         let notification_config_json = serde_json::to_string(&rule.notification_config).ok();
 
         let query = if workspace_id.is_some() {
@@ -848,12 +1480,12 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         sqlx_query
             .execute(self.database.pool())
             .await
-            .map_err(|e| AlarmError::InternalError(format!("更新规则失败: {}", e)))?;
+            .map_err(|e| DbError::Internal(format!("更新规则失败: {}", e)))?;
 
         Ok(())
     }
 
-    async fn delete(&self, id: &str, workspace_id: Option<&str>) -> AlarmResult<()> {
+    pub async fn delete(&self, id: &str, workspace_id: Option<&str>) -> Result<()> {
         let query = if workspace_id.is_some() {
             "DELETE FROM device_alarm_rules WHERE id = ? AND workspace_id = ?"
         } else {
@@ -866,17 +1498,17 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         sqlx_query
             .execute(self.database.pool())
             .await
-            .map_err(|e| AlarmError::InternalError(format!("删除规则失败: {}", e)))?;
+            .map_err(|e| DbError::Internal(format!("删除规则失败: {}", e)))?;
         Ok(())
     }
 
-    async fn find_by_id(&self, id: &str) -> AlarmResult<Option<AlarmRule>> {
+    pub async fn find_by_id(&self, id: &str) -> Result<Option<AlarmRule>> {
         let query = "SELECT * FROM device_alarm_rules WHERE id = ?";
         let row = sqlx::query(query)
             .bind(id)
             .fetch_optional(self.database.pool())
             .await
-            .map_err(|e| AlarmError::InternalError(format!("查询规则失败: {}", e)))?;
+            .map_err(|e| DbError::Internal(format!("查询规则失败: {}", e)))?;
 
         if let Some(row) = row {
             Ok(Some(self.row_to_alarm_rule(row)?))
@@ -885,7 +1517,7 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         }
     }
 
-    async fn find_enabled(&self, workspace_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>> {
+    pub async fn find_enabled(&self, workspace_id: Option<&str>) -> Result<Vec<AlarmRule>> {
         let (query, bind_val) = if let Some(ws) = workspace_id {
             (
                 "SELECT * FROM device_alarm_rules WHERE is_enabled = true AND workspace_id = ? ORDER BY created_at DESC",
@@ -904,7 +1536,7 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         let rows = sqlx_query
             .fetch_all(self.database.pool())
             .await
-            .map_err(|e| AlarmError::InternalError(format!("查询启用规则失败: {}", e)))?;
+            .map_err(|e| DbError::Internal(format!("查询启用规则失败: {}", e)))?;
 
         let mut rules = Vec::new();
         for row in rows {
@@ -913,7 +1545,7 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         Ok(rules)
     }
 
-    async fn find_by_device(&self, device_id: &str, workspace_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>> {
+    pub async fn find_by_device(&self, device_id: &str, workspace_id: Option<&str>) -> Result<Vec<AlarmRule>> {
         let (query, bind_ws) = if let Some(ws) = workspace_id {
             (
                 "SELECT * FROM device_alarm_rules WHERE device_id = ? AND workspace_id = ? ORDER BY created_at DESC",
@@ -932,7 +1564,7 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         let rows = sqlx_query
             .fetch_all(self.database.pool())
             .await
-            .map_err(|e| AlarmError::InternalError(format!("查询设备规则失败: {}", e)))?;
+            .map_err(|e| DbError::Internal(format!("查询设备规则失败: {}", e)))?;
 
         let mut rules = Vec::new();
         for row in rows {
@@ -941,14 +1573,14 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         Ok(rules)
     }
 
-    async fn find_by_property(&self, device_id: &str, property_id: &str) -> AlarmResult<Vec<AlarmRule>> {
+    pub async fn find_by_property(&self, device_id: &str, property_id: &str) -> Result<Vec<AlarmRule>> {
         let query = "SELECT * FROM device_alarm_rules WHERE device_id = ? AND property_id = ? ORDER BY created_at DESC";
         let rows = sqlx::query(query)
             .bind(device_id)
             .bind(property_id)
             .fetch_all(self.database.pool())
             .await
-            .map_err(|e| AlarmError::InternalError(format!("查询属性规则失败: {}", e)))?;
+            .map_err(|e| DbError::Internal(format!("查询属性规则失败: {}", e)))?;
 
         let mut rules = Vec::new();
         for row in rows {
@@ -957,12 +1589,12 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         Ok(rules)
     }
 
-    async fn find_global_rules(&self) -> AlarmResult<Vec<AlarmRule>> {
+    pub async fn find_global_rules(&self) -> Result<Vec<AlarmRule>> {
         let query = "SELECT * FROM device_alarm_rules WHERE device_id IS NULL ORDER BY created_at DESC";
         let rows = sqlx::query(query)
             .fetch_all(self.database.pool())
             .await
-            .map_err(|e| AlarmError::InternalError(format!("查询全局规则失败: {}", e)))?;
+            .map_err(|e| DbError::Internal(format!("查询全局规则失败: {}", e)))?;
 
         let mut rules = Vec::new();
         for row in rows {
@@ -971,7 +1603,7 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         Ok(rules)
     }
 
-    async fn set_enabled(&self, id: &str, enabled: bool, workspace_id: Option<&str>) -> AlarmResult<()> {
+    pub async fn set_enabled(&self, id: &str, enabled: bool, workspace_id: Option<&str>) -> Result<()> {
         let query = if workspace_id.is_some() {
             "UPDATE device_alarm_rules SET is_enabled = ?, updated_at = ? WHERE id = ? AND workspace_id = ?"
         } else {
@@ -984,11 +1616,11 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         sqlx_query
             .execute(self.database.pool())
             .await
-            .map_err(|e| AlarmError::InternalError(format!("更新规则状态失败: {}", e)))?;
+            .map_err(|e| DbError::Internal(format!("更新规则状态失败: {}", e)))?;
         Ok(())
     }
 
-    async fn find_event_rules(&self, workspace_id: &str, device_id: Option<&str>) -> AlarmResult<Vec<EventRuleRow>> {
+    pub async fn find_event_rules(&self, workspace_id: &str, device_id: Option<&str>) -> Result<Vec<EventRuleRow>> {
         use sqlx::Row;
 
         let query = if device_id.is_some() {
@@ -1017,7 +1649,7 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         let rows = sqlx_query
             .fetch_all(self.database.pool())
             .await
-            .map_err(|e| AlarmError::InternalError(format!("查询事件规则失败: {}", e)))?;
+            .map_err(|e| DbError::Internal(format!("查询事件规则失败: {}", e)))?;
 
         let mut event_rules = Vec::new();
         for row in rows {

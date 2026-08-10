@@ -13,8 +13,8 @@ use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder, PaginatedRespons
 
 use crate::{
     AlarmState,
-    repo::{AlarmQueryCriteria, SortOrder, TimeRange},
     types::*,
+    types::{AlarmQueryCriteria, SortOrder, TimeRange},
 };
 
 pub fn create_alarm_router<S>() -> Router<S>

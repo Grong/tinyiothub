@@ -7,6 +7,8 @@
 //! - 具体 struct、按领域平铺（traits/ 残留待逐领域评估削除）
 //! - 测试使用真实 SQLite（test_helpers::run_all_migrations）
 
+/// Alarm + alarm rule persistence and row types.
+pub mod alarm;
 /// Device cache (in-memory).
 pub mod cache;
 /// Database connection configuration.

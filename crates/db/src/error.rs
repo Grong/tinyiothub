@@ -29,6 +29,10 @@ pub enum DbError {
         id: String,
     },
 
+    /// Catch-all for invariant violations inside repositories.
+    #[error("internal error: {0}")]
+    Internal(String),
+
     /// The caller lacks permission for the requested operation.
     #[error("access denied: {0}")]
     AccessDenied(String),
