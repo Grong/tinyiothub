@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use sqlx::{QueryBuilder, Row};
 
-use crate::sqlite::database::Database;
+use crate::database::Database;
 use crate::traits::cron::CronRunRepository;
 use tinyiothub_core::error::Result;
 use tinyiothub_core::models::cron_job::{CronRun, CronRunQuery};
@@ -259,7 +259,7 @@ impl CronRunRepository for SqliteCronRunRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sqlite::database::Database;
+    use crate::database::Database;
     use crate::traits::cron::CronRunRepository;
 
     async fn setup_repo() -> SqliteCronRunRepository {

@@ -4,7 +4,7 @@ use cron::Schedule;
 use sqlx::{QueryBuilder, Row};
 use std::str::FromStr;
 
-use crate::sqlite::database::Database;
+use crate::database::Database;
 use crate::traits::cron::CronJobRepository;
 use tinyiothub_core::error::Result;
 use tinyiothub_core::models::cron_job::{CreateCronJobRequest, CronJob, CronJobQuery, UpdateCronJobRequest};

@@ -2,13 +2,13 @@ use std::sync::Arc;
 use tinyiothub_edge::config::EdgeConfig;
 use tinyiothub_edge::modules::offline::{BufferMessage, BufferPriority, OfflineBuffer};
 
-async fn test_db() -> Arc<tinyiothub_storage::sqlite::Database> {
-    use tinyiothub_storage::sqlite::{DatabaseConfig, create_pool};
+async fn test_db() -> Arc<tinyiothub_storage::Database> {
+    use tinyiothub_storage::{DatabaseConfig, create_pool_without_migrations};
     let config = DatabaseConfig {
         url: "sqlite::memory:".into(),
         ..Default::default()
     };
-    let pool = create_pool(&config).await.unwrap();
+    let pool = create_pool_without_migrations(&config).await.unwrap();
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS offline_buffer (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -23,7 +23,7 @@ async fn test_db() -> Arc<tinyiothub_storage::sqlite::Database> {
     .execute(&pool)
     .await
     .unwrap();
-    Arc::new(tinyiothub_storage::sqlite::Database::new(pool))
+    Arc::new(tinyiothub_storage::Database::new(pool))
 }
 
 fn test_config() -> EdgeConfig {

@@ -7,17 +7,43 @@
 //! - 具体 struct、按领域平铺（traits/ 残留待逐领域评估削除）
 //! - 测试使用真实 SQLite（test_helpers::run_all_migrations）
 
-
+/// Device cache (in-memory).
 pub mod cache;
+/// Database connection configuration.
+pub mod config;
+/// Cron job persistence.
+pub mod cron_job;
+/// Cron run persistence.
+pub mod cron_run;
+/// Database facade (connection + domain accessors).
+pub mod database;
+/// Device persistence.
+pub mod device;
+/// Device command persistence.
+pub mod device_command;
+/// Device property persistence.
+pub mod device_property;
+/// Device row mapping helpers.
+pub mod device_row_mapper;
+/// Driver installation persistence.
 pub mod driver_installation;
+/// Repository factory.
 pub mod factory;
+/// Embedded migrations runner.
 pub mod migrations;
+/// Shared query model types.
 pub mod models;
+/// Notification channel persistence.
+pub mod notification_channel;
+/// Migrating SQLite pool creation (foreign keys on, runs embedded migrations).
 pub mod pool;
-pub mod sqlite;
+/// Unified storage facade.
 pub mod storage;
+/// Tenant-aware cron repository adapters.
 pub mod tenant_cron;
+/// Tenant-aware device repository adapters.
 pub mod tenant_device;
+/// Repository traits (legacy inversion — 逐领域评估削除).
 pub mod traits;
 
 /// Test helpers for crates that need a fully-migrated in-memory pool.
@@ -35,15 +61,19 @@ pub mod test_helpers {
 
 // Re-export commonly used items
 pub use cache::DeviceCache;
+pub use config::DatabaseConfig;
+pub use cron_job::SqliteCronJobRepository;
+pub use cron_run::SqliteCronRunRepository;
+pub use database::Database;
+pub use device::SqliteDeviceRepository;
+pub use device_command::*;
+pub use device_property::*;
+pub use device_row_mapper::*;
 pub use driver_installation::{DriverInstallation, DriverInstallationRepo};
 pub use factory::DeviceRepositoryFactory;
 pub use models::{Filter, FilterOp, Pagination, RowMetadata, SortOrder};
-pub use pool::create_pool;
-pub use sqlite::{
-    Database, DatabaseConfig, create_pool_from_url, create_pool_with_harmonyos, cron_job::SqliteCronJobRepository,
-    cron_run::SqliteCronRunRepository, device::SqliteDeviceRepository, device_command::*, device_property::*,
-    device_row_mapper::*, notification_channel::*,
-};
+pub use notification_channel::*;
+pub use pool::{create_pool, create_pool_without_migrations};
 pub use storage::Storage;
 pub use tenant_cron::{TenantCronJobRepository, TenantCronRunRepository};
 pub use tenant_device::TenantDeviceRepository;

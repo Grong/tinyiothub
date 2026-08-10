@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::Database;
-use crate::sqlite::device::SqliteDeviceRepository;
+use crate::device::SqliteDeviceRepository;
 use crate::tenant_device::TenantDeviceRepository;
 use crate::traits::device::DeviceRepository;
 

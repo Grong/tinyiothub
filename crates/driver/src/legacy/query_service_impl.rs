@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use sqlx::{QueryBuilder, Row};
 use tinyiothub_core::models::device::{Device, DeviceStats};
-use tinyiothub_storage::{Database, sqlite::device_row_mapper};
+use tinyiothub_storage::{Database, device_row_mapper};
 
 use super::{
     query::DeviceQueryService,

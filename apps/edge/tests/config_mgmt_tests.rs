@@ -1,14 +1,14 @@
 use std::sync::Arc;
 use tinyiothub_edge::config::EdgeConfig;
 use tinyiothub_edge::modules::config_mgmt::ConfigService;
-use tinyiothub_storage::sqlite::{Database, DatabaseConfig, create_pool};
+use tinyiothub_storage::{Database, DatabaseConfig, create_pool_without_migrations};
 
 async fn test_db() -> Arc<Database> {
     let config = DatabaseConfig {
         url: "sqlite::memory:".into(),
         ..Default::default()
     };
-    let pool = create_pool(&config).await.unwrap();
+    let pool = create_pool_without_migrations(&config).await.unwrap();
     // Create config_meta table
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS config_meta (

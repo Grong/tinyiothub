@@ -1,6 +1,6 @@
 use tinyiothub_core::models::device::{Device, DeviceQueryParams};
 use tinyiothub_storage::{
-    sqlite::{database::Database, device::SqliteDeviceRepository},
+    Database, SqliteDeviceRepository,
     traits::device::{DeviceCriteria, DeviceRepository, DeviceSortBy, DeviceSortOrder},
 };
 

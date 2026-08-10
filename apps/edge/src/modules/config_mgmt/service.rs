@@ -4,7 +4,7 @@ use tokio::sync::RwLock;
 
 use crate::config::EdgeConfig;
 use crate::shared::error::EdgeResult;
-use tinyiothub_storage::sqlite::Database;
+use tinyiothub_storage::Database;
 
 pub struct ConfigService {
     db: Arc<Database>,

@@ -1,6 +1,6 @@
 use sqlx::Row;
 
-use crate::sqlite::database::Database;
+use crate::database::Database;
 use tinyiothub_core::generate_id;
 use tinyiothub_core::models::notification_channel::*;
 

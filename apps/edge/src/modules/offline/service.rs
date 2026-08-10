@@ -4,7 +4,7 @@ use crate::shared::error::EdgeResult;
 use sqlx::Row;
 use std::future::Future;
 use std::sync::Arc;
-use tinyiothub_storage::sqlite::Database;
+use tinyiothub_storage::Database;
 
 pub struct OfflineBuffer {
     db: Arc<Database>,

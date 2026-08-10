@@ -11,12 +11,12 @@ use crate::modules::telemetry::TelemetryService;
 use crate::shared::error::EdgeResult;
 use crate::shared::storage::init_database;
 use std::sync::Arc;
-use tinyiothub_storage::sqlite::device::SqliteDeviceRepository;
+use tinyiothub_storage::device::SqliteDeviceRepository;
 
 pub struct AppState {
     pub config: EdgeConfig,
     pub credentials: GatewayCredentials,
-    pub db: Arc<tinyiothub_storage::sqlite::Database>,
+    pub db: Arc<tinyiothub_storage::Database>,
     pub device_service: Arc<DeviceService>,
     pub driver_service: Arc<DriverService>,
     pub gateway_service: Arc<GatewayService>,

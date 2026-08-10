@@ -1,6 +1,6 @@
 use sqlx::FromRow;
 
-use crate::sqlite::database::Database;
+use crate::database::Database;
 use tinyiothub_core::models::device_property::*;
 use tinyiothub_core::{generate_id, now_string};
 

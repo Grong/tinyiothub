@@ -349,10 +349,10 @@ impl AppState {
 
         // Cron 仓库
         let cron_job_repo: Arc<dyn tinyiothub_storage::traits::cron::CronJobRepository> = Arc::new(
-            tinyiothub_storage::sqlite::cron_job::SqliteCronJobRepository::new(database.as_ref().clone()),
+            tinyiothub_storage::cron_job::SqliteCronJobRepository::new(database.as_ref().clone()),
         );
         let cron_run_repo: Arc<dyn tinyiothub_storage::traits::cron::CronRunRepository> = Arc::new(
-            tinyiothub_storage::sqlite::cron_run::SqliteCronRunRepository::new(database.as_ref().clone()),
+            tinyiothub_storage::cron_run::SqliteCronRunRepository::new(database.as_ref().clone()),
         );
 
         // 会话服务 - 用于 Agent 聊天会话管理

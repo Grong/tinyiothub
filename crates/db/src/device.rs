@@ -1,13 +1,13 @@
 use async_trait::async_trait;
 use sqlx::{QueryBuilder, Row};
 
-use crate::sqlite::database::Database;
+use crate::database::Database;
 use crate::traits::device::{DeviceCriteria, DeviceRepository, DeviceSortBy, DeviceSortOrder};
 use tinyiothub_core::error::{Error, Result};
 use tinyiothub_core::models::device::{CreateDeviceRequest, Device, DeviceStatusUpdate, UpdateDeviceRequest};
 use tinyiothub_core::{generate_id, now_string};
 
-use super::device_row_mapper;
+use crate::device_row_mapper;
 
 /// SQLite implementation of DeviceRepository
 #[derive(Debug, Clone)]

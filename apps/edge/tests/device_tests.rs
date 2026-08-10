@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use tinyiothub_core::models::device::CreateDeviceRequest;
 use tinyiothub_core::repository::device::DeviceRepository;
-use tinyiothub_storage::sqlite::device::SqliteDeviceRepository;
-use tinyiothub_storage::sqlite::{Database, DatabaseConfig, create_pool};
+use tinyiothub_storage::device::SqliteDeviceRepository;
+use tinyiothub_storage::{Database, DatabaseConfig, create_pool_without_migrations};
 
 use tinyiothub_edge::modules::device::DeviceService;
 
@@ -38,7 +38,7 @@ async fn setup_test_repo() -> Result<(Arc<Database>, Arc<SqliteDeviceRepository>
         url: "sqlite::memory:".to_string(),
         ..Default::default()
     };
-    let pool = create_pool(&config).await?;
+    let pool = create_pool_without_migrations(&config).await?;
     let db = Arc::new(Database::new(pool));
 
     // Create devices table
