@@ -18,7 +18,7 @@
 - **Effort:** M (human: ~1d / CC: ~1h) | **Depends on:** sqlx 0.9 GA
 
 ### TODOS 维护注记（2026-08-03 核实）
-- "AI Subsystem → P1 — Wire DropNotifier + DeadLetterQueue" **已实际完成**：`cloud/src/shared/service_manager.rs:151,235-236` 接线 LoggingDropNotifier + SqliteDeadLetterQueue（modules/agent/dlq_repo.rs）。条目过期，应归档。
+- "AI Subsystem → P1 — Wire DropNotifier + DeadLetterQueue" **已实际完成**：`apps/cloud/src/shared/service_manager.rs:151,235-236` 接线 LoggingDropNotifier + SqliteDeadLetterQueue（crates/agent/src/host/dlq_repo.rs）。条目过期，应归档。
 
 ## Thing Agent Loop — Deferred (from /plan-ceo-review 2026-07-29, spec v2 O1-O16)
 
@@ -82,22 +82,22 @@
 ### P1 — Wire DropNotifier + DeadLetterQueue
 - **What:** 实现 DropNotifier（至少 logging 级别）和 DeadLetterQueue（SQLite 存储），在 ServiceManager 中注入。
 - **Why:** 当前 AiEventPublisher 发布失败时事件静默丢失。retry_with_backoff 中的 DLQ 逻辑是死代码（dlq 始终为 None）。
-- **Files:** `cloud/src/shared/service_manager.rs:169-170`, `crates/tinyiothub-ai/src/event/bus.rs`, `crates/tinyiothub-ai/src/event/dlq.rs`
+- **Files:** `apps/cloud/src/shared/service_manager.rs:169-170`, `crates/agent/src/loop_/event/bus.rs`, `crates/agent/src/loop_/event/dlq.rs`
 - **Effort:** S (human: ~4h / CC: ~30min)
 
 ### P2 — ~~Wire TrustConfig DB loading~~（已失效，2026-07-29 核实删除）
-- **核实结果：** `crates/tinyiothub-ai/src/heartbeat/runner.rs:341-350` 经 `task_repo.load_trust_config` 从 `workspaces.heartbeat_trust_config` 列加载（heartbeat_repo.rs:167-180，含测试 :593-603）。DB 加载已接线，本条作废。
+- **核实结果：** `crates/agent/src/loop_/heartbeat/runner.rs:341-350` 经 `task_repo.load_trust_config` 从 `workspaces.heartbeat_trust_config` 列加载（heartbeat_repo.rs:167-180，含测试 :593-603）。DB 加载已接线，本条作废。
 
 ### P2 — Add dynamic task/config refresh to heartbeat loop (Outside Voice)
 - **What:** 运行中的心跳循环无法获取最新的任务列表或 TrustConfig。任务增删需完整 stop/restart。TrustConfig 更新对运行中的循环不生效。
 - **Why:** Outside Voice 发现的设计限制。当前 stop/restart 模式可工作但不够优雅。
-- **Files:** `crates/tinyiothub-ai/src/heartbeat/loop_.rs`, `runner.rs`
+- **Files:** `crates/agent/src/loop_/heartbeat/loop_.rs`, `runner.rs`
 - **Effort:** M (human: ~1d / CC: ~1h)
 
 ### P3 — Cache regex in extract_json
 - **What:** `report.rs:37` 的 `Regex::new` 每次调用重新编译，改为 `std::sync::LazyLock` 缓存。
 - **Why:** 微优化，心跳每 15min tick 一次，对性能无明显影响。纯粹代码质量改进。
-- **Files:** `crates/tinyiothub-ai/src/heartbeat/report.rs:37`
+- **Files:** `crates/agent/src/loop_/heartbeat/report.rs:37`
 - **Effort:** S (human: ~5min / CC: ~1min)
 
 ## AI Deep Review — Deferred (from /ship pre-landing review 2026-07-21)
@@ -106,34 +106,34 @@
 
 ### A3 — chat_history 不应向普通会话暴露 toolCalls
 - **What:** `chat_history` 返回的消息 JSON 携带 `toolCalls` 明细；评审建议对非管理端裁剪。
-- **Files:** `cloud/src/modules/agent/chat/history.rs`
+- **Files:** `crates/agent/src/host/chat/history.rs`
 
 ### S4 — trust config 端点缺角色校验
 - **What:** heartbeat trust 配置读写端点仅校验 workspace 归属，未区分 admin/member 角色。
-- **Files:** `cloud/src/modules/workspace/handler/heartbeat.rs`
+- **Files:** `crates/agent/src/host/handler/workspace_heartbeat.rs`
 
 ### P1 — json_extract 查询无表达式索引
 - **What:** `json_extract(content, '$.proposalId')` 查询走全表扫描；可加表达式索引或独立列。
-- **Files:** `cloud/src/modules/workspace/handler/heartbeat.rs`（approve/reject 查询）
+- **Files:** `crates/agent/src/host/handler/workspace_heartbeat.rs`（approve/reject 查询）
 
 ### P2 — get_or_create 缺 single-flight
 - **What:** AgentPool::get_or_create 并发下可能重复构建 agent（double-checked DashMap 已缓解但未完全消除）。
-- **Files:** `cloud/src/modules/agent/agent.rs`
+- **Files:** `crates/agent/src/host/agent.rs`
 
 ### A2 — abort 首事件前窗口
 - **What:** run_id 由首个 SSE 事件带回客户端；此前客户端无法 abort 该 run。
-- **Files:** `cloud/src/modules/chat/handler/proxy.rs`
+- **Files:** `crates/agent/src/chat/handler/proxy.rs`
 
 ### A5 — 部署历史重置说明
 - **What:** agent deploy 后历史上下文重置的行为需在 API 文档/前端明示。
 
 ### M2–M6 — 重复代码与魔法常量
 - **What:** 三个 PendingProposal 前端接口重复（DRY）；审批状态/优先级等字符串常量散落多处；部分 handler 错误消息重复拼接模式。
-- **Files:** `web/src/ui/views/{heartbeat,agents-heartbeat-tab,ai-ops}.ts`, `cloud/src/modules/workspace/handler/heartbeat.rs`
+- **Files:** `web/src/ui/views/{heartbeat,agents-heartbeat-tab,ai-ops}.ts`, `crates/agent/src/host/handler/workspace_heartbeat.rs`
 
 ### T3–T6 — 补充测试
 - **What:** chat/service.rs reseed+persist 降级路径、get_or_create 并发竞态（需真实 provider/LLM，单测成本高）。
-- **Files:** `cloud/src/modules/agent/chat/service.rs`, `cloud/src/modules/agent/agent.rs`
+- **Files:** `crates/agent/src/host/chat/service.rs`, `crates/agent/src/host/agent.rs`
 
 ---
 
@@ -184,7 +184,7 @@ Source: `/plan-ceo-review` on `feat/device-ecosystem-v0.2` (2026-05-08)
 
 ### P1 — HIGH
 
-- **[#41] TemplateExporter (`cloud/src/modules/template/exporter.rs`) secret stripping is shallow**
+- **[#41] TemplateExporter (`crates/thing/src/template/exporter.rs`) secret stripping is shallow**
   - Only strips top-level keys; nested JSON like `{"auth": {"password": "secret"}}` leaks
   - Missing variants: `passwd`, `key`, `credential`, `cert`
   - **Action:** Recursive JSON traversal + expanded sensitive key list
@@ -193,7 +193,7 @@ Source: `/plan-ceo-review` on `feat/device-ecosystem-v0.2` (2026-05-08)
 ### P2 — MEDIUM
 
 - **[#42] Exported templates lose device properties and commands**
-  - `cloud/src/modules/template/exporter.rs` created empty `properties` and `commands` vectors
+  - `crates/thing/src/template/exporter.rs` created empty `properties` and `commands` vectors
   - Users export a configured device and get a hollow template
   - **Action:** Map `device.properties` → `PropertyTemplate`, `device.commands` → `CommandTemplate`
   - **Owner:** TBD
@@ -369,7 +369,7 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 ### P3 — search_knowledge 升级 FTS5 trigram
 - **What:** thing_resources 全文检索从 `LIKE '%q%'` 扫描升级为 SQLite FTS5 trigram 虚拟表（含同步触发器）。
 - **Why:** 工程评审 D14 裁决本期维持 LIKE（预发布文档量级几十篇无感）；但 search_knowledge 是 Agent 高频调用路径，文档上千篇后全表扫描劣化。FTS5 默认 unicode61 分词对中文无效，需 trigram tokenizer（SQLite ≥3.34）。
-- **Context:** 现有 LIKE 实现见 `cloud/src/modules/workspace/repo/knowledge.rs:265`（图谱拆除后平移至 thing_resources repo）。升级点：建 fts 虚拟表 + INSERT/UPDATE/DELETE 同步触发器 + repo 查询改 MATCH。
+- **Context:** 现有 LIKE 实现见 `crates/tenant/src/workspace/repo.rs:636`（图谱拆除后平移至 thing_resources repo）。升级点：建 fts 虚拟表 + INSERT/UPDATE/DELETE 同步触发器 + repo 查询改 MATCH。
 - **Depends on:** Thing Ontology mega-branch 落地（thing_resources 表存在后）。
 - **Effort:** M (human: ~1d / CC: ~1h)
 

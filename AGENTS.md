@@ -37,7 +37,7 @@ apps/* → domain crates (thing/auth/user/tenant/event/alarm/driver/notify/agent
        → runtime / db / web / llm / memory / policy / skills / scheduler → core
 ```
 
-Allowed cross-domain edges only: driver→thing, notify→event, alarm→event, agent→{event,thing,tenant,policy,memory,skills,llm}, mcp→{alarm,agent}, user→tenant, auth→{user,tenant}.
+Cross-domain edges (as implemented, acyclic — design doc §依赖方向 sanctioned "实现中确认，不成环即可"): driver→{thing,event,alarm}, notify→event, alarm→event, agent→{event,thing,policy,memory,skills,llm,auth}, mcp→{alarm,agent,thing,driver,tenant}, tenant→agent (heartbeat types/repo), admin→{auth,tenant,thing,driver,event,scheduler}, `*`→auth for `security::jwt::Claims` reuse. Infra edges: web→{runtime,db} (WebState abstraction), runtime→db (concrete Database/DeviceCache), memory→{db,llm}, policy→skills, thing→runtime.
 
 | Crate (dir = package) | Lib name | Role | Forbidden |
 |-------|------|------|-----------|

@@ -6,8 +6,6 @@ use axum::{
     routing::{get, post},
 };
 
-use crate::host::state::AgentState;
-
 pub fn create_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
