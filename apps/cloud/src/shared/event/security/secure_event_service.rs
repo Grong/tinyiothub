@@ -15,7 +15,7 @@ use crate::shared::event::security::{
 
 /// Secure event service that wraps the event repository with security features
 pub struct SecureEventService {
-    event_repository: Arc<dyn EventRepository>,
+    event_repository: Arc<EventRepository>,
     access_control: Arc<dyn EventAccessControl>,
     encryption: Arc<dyn EventEncryption>,
     audit_log: Arc<dyn EventAuditLog>,
@@ -26,7 +26,7 @@ pub struct SecureEventService {
 impl SecureEventService {
     /// Create a new secure event service
     pub fn new(
-        event_repository: Arc<dyn EventRepository>,
+        event_repository: Arc<EventRepository>,
         access_control: Arc<dyn EventAccessControl>,
         encryption: Arc<dyn EventEncryption>,
         audit_log: Arc<dyn EventAuditLog>,
@@ -154,7 +154,7 @@ impl SecureEventService {
         limit: Option<usize>,
     ) -> Result<Vec<Event>> {
         // Get events from repository
-        let criteria = tinyiothub_event::repo::EventCriteria {
+        let criteria = tinyiothub_event::repositories::EventCriteria {
             start_time,
             end_time,
             event_types: event_type.as_ref().map(|t| vec![t.clone()]),

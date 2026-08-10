@@ -116,7 +116,7 @@ pub fn new_run_context_slot(ctx: Arc<RwLock<RunContextInner>>) -> RunContextSlot
 /// Thin autonomous wrapper around [`InvokeActionTool`].
 pub struct AutonomousInvokeActionTool {
     inner: InvokeActionTool,
-    policy_repo: Arc<dyn PolicyRepository>,
+    policy_repo: Arc<PolicyRepository>,
     run_ctx: RunContextSlot,
     pool: SqlitePool,
     workspace_id: String,
@@ -127,7 +127,7 @@ pub struct AutonomousInvokeActionTool {
 impl AutonomousInvokeActionTool {
     pub fn new(
         inner: InvokeActionTool,
-        policy_repo: Arc<dyn PolicyRepository>,
+        policy_repo: Arc<PolicyRepository>,
         run_ctx: RunContextSlot,
         pool: SqlitePool,
         workspace_id: String,
@@ -376,7 +376,8 @@ mod tests {
     use zeroclaw::tools::Tool;
 
     use super::*;
-    use crate::host::{policy_repo::SqlitePolicyRepository, test_utils::seed_test_workspace};
+    use crate::host::test_utils::seed_test_workspace;
+    use tinyiothub_storage::policy::PolicyRepository;
 
     // ── helpers ────────────────────────────────────────────────
 
@@ -429,12 +430,12 @@ mod tests {
         tool: AutonomousInvokeActionTool,
         ctx: Arc<RwLock<RunContextInner>>,
         bus: Arc<ThingEventBus>,
-        policy_repo: Arc<SqlitePolicyRepository>,
+        policy_repo: Arc<tinyiothub_storage::policy::PolicyRepository>,
     }
 
     async fn fixture(workspace_id: &str) -> Fixture {
         let pool = test_pool().await;
-        let policy_repo = Arc::new(SqlitePolicyRepository::new(pool.clone()));
+        let policy_repo = Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone()));
         let ctx = Arc::new(RwLock::new(RunContextInner::default()));
         let bus = Arc::new(ThingEventBus::new());
         let inner = InvokeActionTool {
@@ -616,19 +617,16 @@ mod tests {
 
     #[tokio::test]
     async fn deny_when_policy_read_fails() {
-        struct FailingRepo;
-        #[async_trait::async_trait]
-        impl PolicyRepository for FailingRepo {
-            async fn load_autonomy(&self, _: &str) -> anyhow::Result<Option<AutonomyPolicy>> {
-                anyhow::bail!("db down")
-            }
-            async fn save_autonomy(&self, _: &str, _: &AutonomyPolicy, _: &str) -> anyhow::Result<()> {
-                Ok(())
-            }
-            async fn count_actions_last_hour(&self, _: &str) -> anyhow::Result<u32> {
-                Ok(0)
-            }
-        }
+        // 无 trait 后故障注入方式变更（E3）：给 PolicyRepository 一个缺
+        // workspace_autonomy_policy 表的空库，load_autonomy 必然 DbError，
+        // 与原 FailingRepo 的 "db down" 等效（fail-closed 路径一致）。
+        let failing_repo = PolicyRepository::new(
+            sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect(":memory:")
+                .await
+                .expect("empty pool"),
+        );
 
         let pool = test_pool().await;
         seed_device(&pool, "ws-err", "dev-1", "device").await;
@@ -642,7 +640,7 @@ mod tests {
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
-            Arc::new(FailingRepo),
+            Arc::new(failing_repo),
             new_run_context_slot(Arc::clone(&ctx)),
             pool.clone(),
             "ws-err".to_string(),
@@ -738,7 +736,7 @@ mod tests {
     ) -> (SqlitePool, AutonomousInvokeActionTool, Arc<RwLock<RunContextInner>>) {
         let pool = test_pool().await;
         seed_test_workspace(&pool, "tenant-1", outer_ws).await;
-        let policy_repo = Arc::new(SqlitePolicyRepository::new(pool.clone()));
+        let policy_repo = Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone()));
         policy_repo
             .save_autonomy(outer_ws, &act_policy(), "test")
             .await
@@ -847,7 +845,7 @@ mod tests {
         let pool = test_pool().await;
         seed_device(&pool, "ws-norun", "dev-1", "device").await;
         register_action(&pool, "dev-1", "reboot").await;
-        let policy_repo = Arc::new(SqlitePolicyRepository::new(pool.clone()));
+        let policy_repo = Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone()));
         policy_repo
             .save_autonomy("ws-norun", &act_policy(), "test")
             .await

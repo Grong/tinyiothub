@@ -12,7 +12,7 @@ use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder};
 
 use crate::{
     EventState,
-    repo::{EventStatistics, GroupBy, StatisticsGroup, StatisticsParams},
+    types::{EventStatistics, GroupBy, StatisticsGroup, StatisticsParams},
 };
 
 /// Query parameters for event overview/statistics
@@ -179,7 +179,7 @@ pub async fn get_event_overview(
     };
 
     // Get real-time status for recent critical events
-    let real_time_filter = crate::repo::RealTimeFilter {
+    let real_time_filter = crate::types::RealTimeFilter {
         device_ids: device_ids.clone(),
         event_types: None,
         source_types: None,

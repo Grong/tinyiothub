@@ -11,6 +11,7 @@ description = "Policy engine — workspace guardrails, autonomy gates, and HITL 
 name = "tinyiothub_policy"
 
 [dependencies]
+db = { workspace = true }
 skills = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -88,7 +88,7 @@ impl EventSecurityFactory {
     /// Create a secure event service with all security components
     pub async fn create_secure_event_service(
         &self,
-        event_repository: Arc<dyn EventRepository>,
+        event_repository: Arc<EventRepository>,
     ) -> Result<SecureEventService> {
         let components = self.create_security_components().await?;
 

@@ -12,11 +12,11 @@ use crate::shared::event::EventHandler;
 /// - 根据 Event 实体的业务规则判断是否需要更新实时状态
 ///   (event.should_update_real_time_status())。
 pub struct RealTimeStatusHandler {
-    repository: Arc<dyn RealTimeEventRepository>,
+    repository: Arc<RealTimeEventRepository>,
 }
 
 impl RealTimeStatusHandler {
-    pub fn new(repository: Arc<dyn RealTimeEventRepository>) -> Self {
+    pub fn new(repository: Arc<RealTimeEventRepository>) -> Self {
         Self { repository }
     }
 }

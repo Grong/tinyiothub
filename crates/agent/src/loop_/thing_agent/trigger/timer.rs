@@ -20,7 +20,7 @@ use tinyiothub_policy::autonomy::{AutonomyMode, PolicyRepository};
 pub struct TimerTrigger {
     pub workspace_id: String,
     pub interval: Duration,
-    pub policy_repo: Arc<dyn PolicyRepository>,
+    pub policy_repo: Arc<PolicyRepository>,
 }
 
 #[async_trait::async_trait]
@@ -65,11 +65,11 @@ impl Trigger for TimerTrigger {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
     use tokio::time::{advance, pause};
 
-    use tinyiothub_policy::autonomy::AutonomyPolicy;
+    use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
+    use tinyiothub_storage::policy::PolicyRepository;
 
     fn policy(mode: AutonomyMode) -> AutonomyPolicy {
         AutonomyPolicy {
@@ -81,56 +81,41 @@ mod tests {
         }
     }
 
-    struct StubPolicyRepo {
-        policy: Mutex<Option<AutonomyPolicy>>,
-        fail: Mutex<bool>,
+    /// 真实 SQLite 版 policy repo（E3 去 trait 后替代 StubPolicyRepo）：
+    /// 内存库跑全量迁移 + save_autonomy 播种指定模式。
+    async fn real_repo(ws: &str, mode: AutonomyMode) -> Arc<PolicyRepository> {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(std::time::Duration::from_secs(86400 * 365)) // 暂停时钟防瞬杀
+            .connect(":memory:")
+            .await
+            .expect("in-memory sqlite");
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .expect("migrations");
+        let repo = Arc::new(PolicyRepository::new(pool));
+        repo.save_autonomy(ws, &policy(mode), "test")
+            .await
+            .expect("seed policy");
+        repo
     }
 
-    impl StubPolicyRepo {
-        fn with_mode(mode: AutonomyMode) -> Self {
-            Self {
-                policy: Mutex::new(Some(policy(mode))),
-                fail: Mutex::new(false),
-            }
-        }
-
-        fn set_mode(&self, mode: AutonomyMode) {
-            *self.policy.lock().expect("policy lock") = Some(policy(mode));
-        }
-
-        fn set_fail(&self, fail: bool) {
-            *self.fail.lock().expect("fail lock") = fail;
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl PolicyRepository for StubPolicyRepo {
-        async fn load_autonomy(&self, _workspace_id: &str) -> anyhow::Result<Option<AutonomyPolicy>> {
-            if *self.fail.lock().expect("fail lock") {
-                anyhow::bail!("policy store unavailable");
-            }
-            Ok(self.policy.lock().expect("policy lock").clone())
-        }
-
-        async fn save_autonomy(
-            &self,
-            _workspace_id: &str,
-            policy: &AutonomyPolicy,
-            _updated_by: &str,
-        ) -> anyhow::Result<()> {
-            *self.policy.lock().expect("policy lock") = Some(policy.clone());
-            Ok(())
-        }
-
-        async fn count_actions_last_hour(&self, _workspace_id: &str) -> anyhow::Result<u32> {
-            Ok(0)
-        }
+    /// 无 workspace_autonomy_policy 表的空库 —— load_autonomy 必失败，
+    /// 等效原 StubPolicyRepo::set_fail(true) 的故障注入。
+    async fn broken_repo() -> Arc<PolicyRepository> {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(std::time::Duration::from_secs(86400 * 365))
+            .connect(":memory:")
+            .await
+            .expect("empty pool");
+        Arc::new(PolicyRepository::new(pool))
     }
 
     fn spawn_trigger(
         workspace_id: &str,
         interval: Duration,
-        repo: Arc<StubPolicyRepo>,
+        repo: Arc<PolicyRepository>,
     ) -> (mpsc::Receiver<WakeSignal>, tokio::task::JoinHandle<anyhow::Result<()>>) {
         let trigger = TimerTrigger {
             workspace_id: workspace_id.to_string(),
@@ -147,7 +132,7 @@ mod tests {
     async fn emits_one_signal_per_interval_with_timer_dedup_key() {
         pause();
 
-        let repo = Arc::new(StubPolicyRepo::with_mode(AutonomyMode::Act));
+        let repo = real_repo("ws_01", AutonomyMode::Act).await;
         let (mut rx, handle) = spawn_trigger("ws_01", Duration::from_secs(60), repo);
 
         // First tick of tokio::time::interval fires immediately.
@@ -182,7 +167,7 @@ mod tests {
     async fn mode_off_emits_zero_signals_until_policy_changes() {
         pause();
 
-        let repo = Arc::new(StubPolicyRepo::with_mode(AutonomyMode::Off));
+        let repo = real_repo("ws_off", AutonomyMode::Off).await;
         let (mut rx, handle) = spawn_trigger("ws_off", Duration::from_secs(60), repo.clone());
 
         // 180s parked → ~3 ticks fire, all gated on Off → not one signal.
@@ -191,11 +176,20 @@ mod tests {
 
         // Flip the kill switch on; the next tick must emit — proving the
         // ticks above produced nothing and mode is re-read per tick.
-        repo.set_mode(AutonomyMode::Act);
-        let signal = tokio::time::timeout(Duration::from_secs(120), rx.recv())
+        repo.save_autonomy("ws_off", &policy(AutonomyMode::Act), "test")
             .await
-            .expect("signal after policy flip")
-            .expect("wake channel closed");
+            .expect("flip policy");
+        // 同 policy_read_failure：步进泵替代长 timeout，防暂停时钟空转假失败。
+        let mut signal = None;
+        for _ in 0..240 {
+            tokio::time::advance(Duration::from_secs(1)).await;
+            tokio::task::yield_now().await;
+            if let Ok(sig) = rx.try_recv() {
+                signal = Some(sig);
+                break;
+            }
+        }
+        let signal = signal.expect("signal after policy flip");
         assert_eq!(signal.workspace_id, "ws_off");
         assert_eq!(signal.dedup_key.as_deref(), Some("timer:ws_off"));
 
@@ -208,7 +202,7 @@ mod tests {
     async fn diagnose_mode_emits_signals() {
         pause();
 
-        let repo = Arc::new(StubPolicyRepo::with_mode(AutonomyMode::Diagnose));
+        let repo = real_repo("ws_diag", AutonomyMode::Diagnose).await;
         let (mut rx, handle) = spawn_trigger("ws_diag", Duration::from_secs(60), repo);
 
         let first = rx.recv().await.expect("first tick fires immediately");
@@ -229,19 +223,30 @@ mod tests {
     async fn policy_read_failure_emits_no_signals() {
         pause();
 
-        let repo = Arc::new(StubPolicyRepo::with_mode(AutonomyMode::Act));
-        repo.set_fail(true);
-        let (mut rx, handle) = spawn_trigger("ws_err", Duration::from_secs(60), repo.clone());
+        let repo = broken_repo().await;
+        let (mut rx, handle) = spawn_trigger("ws_err", Duration::from_secs(60), repo);
 
         // Several ticks fire while reads fail; none may produce a signal.
         let res = tokio::time::timeout(Duration::from_secs(180), rx.recv()).await;
         assert!(res.is_err(), "policy read failure must fail-closed");
 
-        repo.set_fail(false);
-        let signal = tokio::time::timeout(Duration::from_secs(120), rx.recv())
-            .await
-            .expect("signal after recovery")
-            .expect("wake channel closed");
+        // 故障恢复：换一个可用的 repo 重启 trigger（真实库无法中途恢复闭合的连接）。
+        drop(rx);
+        handle.abort();
+        let repo = real_repo("ws_err", AutonomyMode::Act).await;
+        let (mut rx, handle) = spawn_trigger("ws_err", Duration::from_secs(60), repo);
+        // 暂停时钟下 park 在长 timeout 上会让运行时在 trigger 的真实 I/O 完成前
+        // 空转跳进 120s（Elapsed 假失败）；改为 1s 步进 + try_recv 泵，确定性强。
+        let mut signal = None;
+        for _ in 0..240 {
+            tokio::time::advance(Duration::from_secs(1)).await;
+            tokio::task::yield_now().await;
+            if let Ok(s) = rx.try_recv() {
+                signal = Some(s);
+                break;
+            }
+        }
+        let signal = signal.expect("signal after recovery");
         assert_eq!(signal.workspace_id, "ws_err");
 
         drop(rx);
@@ -252,7 +257,7 @@ mod tests {
     async fn run_returns_ok_when_receiver_dropped() {
         pause();
 
-        let repo = Arc::new(StubPolicyRepo::with_mode(AutonomyMode::Act));
+        let repo = real_repo("ws_02", AutonomyMode::Act).await;
         let trigger = TimerTrigger {
             workspace_id: "ws_02".to_string(),
             interval: Duration::from_secs(10),

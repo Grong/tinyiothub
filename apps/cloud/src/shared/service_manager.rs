@@ -198,9 +198,7 @@ impl ServiceManager {
             // 三触发器（物事件/定时巡检/用户指令）汇入 per-workspace 调度器。
             let thing_agent_manager = {
                 let pool = app_state.database.pool().clone();
-                let policy_repo = Arc::new(tinyiothub_agent::host::policy_repo::SqlitePolicyRepository::new(
-                    pool.clone(),
-                ));
+                let policy_repo = Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone()));
                 let runs_repo = Arc::new(tinyiothub_agent::host::agent_runs_repo::SqliteAgentRunsRepository::new(
                     pool.clone(),
                 ));

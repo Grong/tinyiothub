@@ -67,7 +67,7 @@ pub struct AdminState {
     /// 事件总线 - 属性变更事件发布（update_device_property_value）
     pub event_bus: Arc<tinyiothub_runtime::event_bus::EventBus>,
     /// 事件历史仓库 - 设备 profile 的最近事件查询
-    pub event_repository: Arc<dyn tinyiothub_event::repositories::EventRepository>,
+    pub event_repository: Arc<tinyiothub_event::repositories::EventRepository>,
     /// 数据服务器 - 设备命令执行
     pub data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
     /// 设备查询服务 - dashboard 报表和只读查询

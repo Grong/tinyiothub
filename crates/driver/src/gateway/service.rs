@@ -25,7 +25,7 @@ const IP_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
 
 pub struct GatewayService {
     device_repo_factory: Arc<DeviceRepositoryFactory>,
-    event_repository: Arc<dyn EventRepository>,
+    event_repository: Arc<EventRepository>,
     cache: Arc<PairingCache>,
     mqtt_tx: mpsc::Sender<MqttPublish>,
     ip_attempts: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
@@ -38,7 +38,7 @@ pub enum MqttPublish {
 impl GatewayService {
     pub fn new(
         device_repo_factory: Arc<DeviceRepositoryFactory>,
-        event_repository: Arc<dyn EventRepository>,
+        event_repository: Arc<EventRepository>,
         cache: Arc<PairingCache>,
         mqtt_tx: mpsc::Sender<MqttPublish>,
     ) -> Self {
@@ -389,9 +389,9 @@ mod tests {
         let cache = Arc::new(PairingCache::new(1000));
         let database = Arc::new(tinyiothub_storage::Database::new(pool));
         let factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
-        let event_repo: Arc<dyn EventRepository> = Arc::new(
-            tinyiothub_event::sqlite_event::SqliteEventRepository::new(database.as_ref().clone()),
-        );
+        let event_repo: Arc<EventRepository> = Arc::new(tinyiothub_storage::event::EventRepository::new(
+            database.as_ref().clone(),
+        ));
         let service = GatewayService::new(factory, event_repo, cache, tx);
         (service, rx)
     }
@@ -648,9 +648,9 @@ mod tests {
         let (tx, _rx2) = mpsc::channel(1);
         let database = Arc::new(tinyiothub_storage::Database::new(pool));
         let factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
-        let event_repo: Arc<dyn EventRepository> = Arc::new(
-            tinyiothub_event::sqlite_event::SqliteEventRepository::new(database.as_ref().clone()),
-        );
+        let event_repo: Arc<EventRepository> = Arc::new(tinyiothub_storage::event::EventRepository::new(
+            database.as_ref().clone(),
+        ));
         let svc2 = GatewayService::new(factory, event_repo, tiny_cache.clone(), tx);
 
         // Fill the cache
@@ -701,9 +701,9 @@ mod tests {
         let cache = Arc::new(PairingCache::new(1000));
         let database = Arc::new(tinyiothub_storage::Database::new(pool.clone()));
         let factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
-        let event_repo: Arc<dyn EventRepository> = Arc::new(
-            tinyiothub_event::sqlite_event::SqliteEventRepository::new(database.as_ref().clone()),
-        );
+        let event_repo: Arc<EventRepository> = Arc::new(tinyiothub_storage::event::EventRepository::new(
+            database.as_ref().clone(),
+        ));
         let svc = GatewayService::new(factory, event_repo, cache.clone(), tx);
 
         let code = "123456";

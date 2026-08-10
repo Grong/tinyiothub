@@ -882,7 +882,7 @@ pub(crate) mod tests {
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
         let memory = make_memory_service();
-        let parts = crate::loop_::thing_agent::manager::tests::stub_manager();
+        let parts = crate::loop_::thing_agent::manager::tests::stub_manager().await;
         let manager = parts.manager.clone();
 
         let handler = AiEventHandler::new(

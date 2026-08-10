@@ -27,11 +27,8 @@ pub mod alarm_event;
 pub mod bus;
 pub mod errors;
 pub mod handler;
-pub mod repo;
 pub mod router;
 pub mod service;
-pub mod sqlite_event;
-pub mod sqlite_real_time_event;
 pub mod types;
 
 use std::sync::Arc;
@@ -73,6 +70,16 @@ pub enum EventError {
 
 pub type Result<T> = std::result::Result<T, EventError>;
 
+impl From<tinyiothub_storage::DbError> for EventError {
+    fn from(err: tinyiothub_storage::DbError) -> Self {
+        match err {
+            tinyiothub_storage::DbError::NotFound { id } => EventError::NotFound { id },
+            tinyiothub_storage::DbError::Validation { message } => EventError::Validation { message },
+            other => EventError::Notification(other.to_string()),
+        }
+    }
+}
+
 impl From<String> for EventError {
     fn from(msg: String) -> Self {
         EventError::Validation { message: msg }
@@ -99,7 +106,6 @@ impl From<tinyiothub_core::error::Error> for EventError {
 #[allow(ambiguous_glob_reexports)]
 pub use handler::*;
 #[allow(ambiguous_glob_reexports)]
-pub use repo::*;
 #[allow(ambiguous_glob_reexports)]
 pub use service::*;
 pub use tinyiothub_core::models::event::{
@@ -110,7 +116,7 @@ pub use types::*;
 
 // Backward compatibility: old module paths
 pub mod repositories {
-    pub use super::repo::*;
+    pub use tinyiothub_storage::event::*;
 }
 
 /// Re-export EventAggregate for backward compat (was in aggregates/ subdirectory)
@@ -132,8 +138,8 @@ pub use errors::{
 /// State slice the event HTTP handlers need from the composition layer.
 #[derive(Clone)]
 pub struct EventState {
-    pub event_repository: Arc<dyn repo::EventRepository>,
-    pub real_time_event_repository: Arc<dyn repo::RealTimeEventRepository>,
+    pub event_repository: Arc<tinyiothub_storage::event::EventRepository>,
+    pub real_time_event_repository: Arc<tinyiothub_storage::event::RealTimeEventRepository>,
 }
 
 /// Events API router, generic over the composition state `S`.

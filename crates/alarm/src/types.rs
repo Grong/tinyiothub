@@ -7,8 +7,6 @@ use serde::{Deserialize, Serialize};
 // ============================================================================
 use thiserror::Error;
 
-use tinyiothub_event::aggregates::NotificationChannelType;
-
 /// 报警模块错误类型
 #[derive(Error, Debug)]
 pub enum AlarmError {

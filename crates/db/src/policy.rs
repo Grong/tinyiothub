@@ -1,22 +1,74 @@
-//! SQLite implementation of the AI crate autonomy PolicyRepository trait.
+//! Policy 持久化：工作区自治策略 + 动作频率读取（P-集中化 E3，自 agent crate 归位）。
+//!
+//! 类型随 repo 住 db（方案 B）：AutonomyPolicy/AutonomyMode 为 DB 行类型，
+//! policy crate 保留 GateVerdict 评估纯逻辑，经 re-export 兼容。
+//! 注意：实现读取 agent_runs 表（动作频率熔断）——db 拥有全部表。
 
-use async_trait::async_trait;
 use sqlx::SqlitePool;
-use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy, PolicyRepository};
 
-pub struct SqlitePolicyRepository {
+use crate::error::Result;
+
+// ──────────────────────────────────────────────
+// 持久化类型（DB 行）— 自 policy/autonomy.rs 迁入
+// ──────────────────────────────────────────────
+
+/// Three-state autonomy mode for a workspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutonomyMode {
+    Off,
+    Diagnose,
+    Act,
+}
+
+impl AutonomyMode {
+    /// Stable string stored in `workspace_autonomy_policy.mode`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AutonomyMode::Off => "off",
+            AutonomyMode::Diagnose => "diagnose",
+            AutonomyMode::Act => "act",
+        }
+    }
+
+    /// Inverse of `as_str`; unknown values return None (treat as fail-closed).
+    pub fn from_db(s: &str) -> Option<Self> {
+        match s {
+            "off" => Some(AutonomyMode::Off),
+            "diagnose" => Some(AutonomyMode::Diagnose),
+            "act" => Some(AutonomyMode::Act),
+            _ => None,
+        }
+    }
+}
+
+/// Workspace-level autonomy policy for the thing-agent loop.
+#[derive(Debug, Clone)]
+pub struct AutonomyPolicy {
+    pub mode: AutonomyMode,
+    /// Allowed action names; `["*"]` means all actions.
+    pub allowed_actions: Vec<String>,
+    /// Denied action names (exact match); checked before the allowlist.
+    pub denied_actions: Vec<String>,
+    pub max_actions_per_run: u32,
+    pub max_actions_per_hour: u32,
+}
+
+// ──────────────────────────────────────────────
+// Repository
+// ──────────────────────────────────────────────
+
+pub struct PolicyRepository {
     pool: SqlitePool,
 }
 
-impl SqlitePolicyRepository {
+impl PolicyRepository {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 }
 
-#[async_trait]
-impl PolicyRepository for SqlitePolicyRepository {
-    async fn load_autonomy(&self, workspace_id: &str) -> anyhow::Result<Option<AutonomyPolicy>> {
+impl PolicyRepository {
+    pub async fn load_autonomy(&self, workspace_id: &str) -> Result<Option<AutonomyPolicy>> {
         let row: Option<(String, String, String, i64, i64)> = sqlx::query_as(
             "SELECT mode, allowed_actions, denied_actions,
                     max_actions_per_run, max_actions_per_hour
@@ -41,7 +93,7 @@ impl PolicyRepository for SqlitePolicyRepository {
         }))
     }
 
-    async fn save_autonomy(&self, workspace_id: &str, policy: &AutonomyPolicy, updated_by: &str) -> anyhow::Result<()> {
+    pub async fn save_autonomy(&self, workspace_id: &str, policy: &AutonomyPolicy, updated_by: &str) -> Result<()> {
         sqlx::query(
             "INSERT INTO workspace_autonomy_policy
                  (workspace_id, mode, allowed_actions, denied_actions,
@@ -68,7 +120,7 @@ impl PolicyRepository for SqlitePolicyRepository {
         Ok(())
     }
 
-    async fn count_actions_last_hour(&self, workspace_id: &str) -> anyhow::Result<u32> {
+    pub async fn count_actions_last_hour(&self, workspace_id: &str) -> Result<u32> {
         let (count,): (i64,) = sqlx::query_as(
             "SELECT COALESCE(SUM(json_extract(report, '$.action_count')), 0)
              FROM agent_runs
@@ -87,13 +139,13 @@ mod tests {
 
     use super::*;
 
-    async fn test_pool() -> SqlitePool {
+    pub async fn test_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
             .await
             .expect("create in-memory sqlite");
-        let migration = include_str!("../../../../crates/db/migrations/20260729000001_thing_agent_loop.sql");
+        let migration = include_str!("../migrations/20260729000001_thing_agent_loop.sql");
         for stmt in migration.split(';') {
             let stmt = stmt.trim();
             // Skip the events ALTER — the events table is not part of this pool.
@@ -115,9 +167,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn save_then_load_roundtrips() {
+    pub async fn save_then_load_roundtrips() {
         let pool = test_pool().await;
-        let repo = SqlitePolicyRepository::new(pool);
+        let repo = PolicyRepository::new(pool);
 
         repo.save_autonomy("ws_1", &act_policy(), "user_1").await.expect("save");
         let loaded = repo.load_autonomy("ws_1").await.expect("load").expect("persisted");
@@ -130,16 +182,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn load_missing_row_returns_none() {
+    pub async fn load_missing_row_returns_none() {
         let pool = test_pool().await;
-        let repo = SqlitePolicyRepository::new(pool);
+        let repo = PolicyRepository::new(pool);
         assert!(repo.load_autonomy("ws_missing").await.expect("load").is_none());
     }
 
     #[tokio::test]
-    async fn save_twice_updates_in_place() {
+    pub async fn save_twice_updates_in_place() {
         let pool = test_pool().await;
-        let repo = SqlitePolicyRepository::new(pool);
+        let repo = PolicyRepository::new(pool);
 
         repo.save_autonomy("ws_1", &act_policy(), "user_1").await.expect("save");
         let mut updated = act_policy();
@@ -158,7 +210,7 @@ mod tests {
         assert_eq!(n, 1, "upsert must keep a single row per workspace");
     }
 
-    async fn insert_run(pool: &SqlitePool, workspace_id: &str, action_count: i64, age_modifier: &str) {
+    pub async fn insert_run(pool: &SqlitePool, workspace_id: &str, action_count: i64, age_modifier: &str) {
         // age_modifier e.g. "-59 minutes"; bound as a datetime() modifier parameter
         sqlx::query(
             "INSERT INTO agent_runs (id, workspace_id, trigger_type, outcome, report, created_at)
@@ -174,9 +226,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn count_actions_last_hour_sums_in_window_and_ignores_old_rows() {
+    pub async fn count_actions_last_hour_sums_in_window_and_ignores_old_rows() {
         let pool = test_pool().await;
-        let repo = SqlitePolicyRepository::new(pool.clone());
+        let repo = PolicyRepository::new(pool.clone());
 
         // Empty table -> 0
         assert_eq!(repo.count_actions_last_hour("ws_1").await.expect("count"), 0);

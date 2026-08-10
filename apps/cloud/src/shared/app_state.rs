@@ -4,11 +4,7 @@ use tinyiothub_agent::host::agent::AgentPool;
 use tinyiothub_auth::redis::RedisClient;
 use tinyiothub_core::{memory::MemoryStore, models::device_property::DeviceProperty};
 use tinyiothub_driver::legacy::{DeviceMonitoringService, DevicePerformanceService, DeviceQueryService, DeviceService};
-use tinyiothub_event::{
-    repositories::{EventRepository, RealTimeEventRepository},
-    sqlite_event::SqliteEventRepository,
-    sqlite_real_time_event::SqliteRealTimeEventRepository,
-};
+use tinyiothub_event::repositories::{EventRepository, RealTimeEventRepository};
 use tinyiothub_notify::{
     NotificationHistoryRepository, NotificationManager, NotificationRuleRepository,
     channels::NotificationChannelFactory,
@@ -90,10 +86,10 @@ pub struct AppState {
 
     /// === 事件系统仓库 ===
     /// 事件历史仓库 - 事件持久化存储
-    pub event_repository: Arc<dyn EventRepository>,
+    pub event_repository: Arc<EventRepository>,
 
     /// 实时事件状态仓库 - 当前活跃事件管理
-    pub real_time_event_repository: Arc<dyn RealTimeEventRepository>,
+    pub real_time_event_repository: Arc<RealTimeEventRepository>,
 
     /// 报警服务 - 报警规则和报警管理
     pub alarm_service: Arc<tinyiothub_alarm::AlarmService>,
@@ -188,10 +184,12 @@ impl AppState {
         // 按照依赖关系顺序创建，避免循环依赖
 
         // === 创建事件系统仓库 ===
-        let event_repository: Arc<dyn EventRepository> =
-            Arc::new(SqliteEventRepository::new(database.as_ref().clone()));
-        let real_time_event_repository: Arc<dyn RealTimeEventRepository> =
-            Arc::new(SqliteRealTimeEventRepository::new(database.as_ref().clone()));
+        let event_repository: Arc<EventRepository> = Arc::new(tinyiothub_storage::event::EventRepository::new(
+            database.as_ref().clone(),
+        ));
+        let real_time_event_repository: Arc<RealTimeEventRepository> = Arc::new(
+            tinyiothub_storage::event::RealTimeEventRepository::new(database.as_ref().clone()),
+        );
 
         // 通知管理器 - 可选服务，依赖数据库
         let notification_manager = Self::create_notification_manager(database.clone()).ok();

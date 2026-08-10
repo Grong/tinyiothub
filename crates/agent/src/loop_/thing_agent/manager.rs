@@ -85,7 +85,7 @@ impl Default for ThingAgentManagerConfig {
 #[derive(Clone)]
 struct PipelineDeps {
     host: Arc<dyn ThingAgentHost>,
-    policy_repo: Arc<dyn PolicyRepository>,
+    policy_repo: Arc<PolicyRepository>,
     runs_repo: Arc<dyn AgentRunsRepository>,
     agent_provider: Arc<dyn AutonomousAgentProvider>,
     runner: Arc<Runner>,
@@ -111,7 +111,7 @@ pub struct ThingAgentManager {
 impl ThingAgentManager {
     pub fn new(
         host: Arc<dyn ThingAgentHost>,
-        policy_repo: Arc<dyn PolicyRepository>,
+        policy_repo: Arc<PolicyRepository>,
         agent_provider: Arc<dyn AutonomousAgentProvider>,
         runs_repo: Arc<dyn AgentRunsRepository>,
         runner: Arc<Runner>,
@@ -494,43 +494,32 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) struct StubPolicyRepo {
-        policy: Mutex<Option<AutonomyPolicy>>,
-    }
-
-    impl StubPolicyRepo {
-        pub(crate) fn act() -> Self {
-            Self {
-                policy: Mutex::new(Some(AutonomyPolicy {
-                    mode: AutonomyMode::Act,
-                    allowed_actions: vec!["*".to_string()],
-                    denied_actions: vec![],
-                    max_actions_per_run: 3,
-                    max_actions_per_hour: 30,
-                })),
-            }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl PolicyRepository for StubPolicyRepo {
-        async fn load_autonomy(&self, _workspace_id: &str) -> anyhow::Result<Option<AutonomyPolicy>> {
-            Ok(self.policy.lock().unwrap().clone())
-        }
-
-        async fn save_autonomy(
-            &self,
-            _workspace_id: &str,
-            policy: &AutonomyPolicy,
-            _updated_by: &str,
-        ) -> anyhow::Result<()> {
-            *self.policy.lock().unwrap() = Some(policy.clone());
-            Ok(())
-        }
-
-        async fn count_actions_last_hour(&self, _workspace_id: &str) -> anyhow::Result<u32> {
-            Ok(0)
-        }
+    /// 真实 SQLite 版 policy repo（E3 去 trait 后替代 StubPolicyRepo）。
+    pub(crate) async fn real_policy_repo(ws: &str) -> Arc<PolicyRepository> {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(std::time::Duration::from_secs(86400 * 365))
+            .connect(":memory:")
+            .await
+            .expect("in-memory sqlite");
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .expect("migrations");
+        let repo = Arc::new(PolicyRepository::new(pool));
+        repo.save_autonomy(
+            ws,
+            &AutonomyPolicy {
+                mode: AutonomyMode::Act,
+                allowed_actions: vec!["*".to_string()],
+                denied_actions: vec![],
+                max_actions_per_run: 3,
+                max_actions_per_hour: 30,
+            },
+            "test",
+        )
+        .await
+        .expect("seed policy");
+        repo
     }
 
     #[derive(Debug, Clone)]
@@ -631,13 +620,13 @@ pub(crate) mod tests {
     /// Manager with all-stub deps and a 24h timer interval (the timer's
     /// immediate first tick still parks one signal in a merge window;
     /// assertions filter by dedup_key).
-    pub(crate) fn stub_manager() -> StubManagerParts {
+    pub(crate) async fn stub_manager() -> StubManagerParts {
         let host = Arc::new(StubHost::new());
         let runs = Arc::new(StubRunsRepo::default());
         let agents = Arc::new(StubAgentProvider::new());
         let manager = Arc::new(ThingAgentManager::new(
             host.clone(),
-            Arc::new(StubPolicyRepo::act()),
+            real_policy_repo(WS).await,
             agents.clone(),
             runs.clone(),
             Arc::new(Runner::new()),
@@ -707,7 +696,7 @@ pub(crate) mod tests {
     // run persisted with the event dedup key, pushback falls back to alert.
     #[tokio::test(start_paused = true)]
     async fn critical_event_runs_full_pipeline() {
-        let parts = stub_manager();
+        let parts = stub_manager().await;
         parts.manager.start(WS);
         assert!(parts.manager.is_running(WS));
         wait_subscribed(&parts.host).await;
@@ -741,14 +730,19 @@ pub(crate) mod tests {
     // 5 same-key warning events inside the 30s merge window → exactly 1 run.
     #[tokio::test(start_paused = true)]
     async fn normal_events_merge_into_single_run() {
-        let parts = stub_manager();
+        let parts = stub_manager().await;
         parts.manager.start(WS);
         wait_subscribed(&parts.host).await;
 
         for id in 1..=5 {
             parts.host.tx.send(event(id, 3, "device")).expect("send event");
         }
-        settle().await;
+        // 真实 SQLite repo（E3）每个事件的政策读取产生 I/O 让出点；10 次 yield
+        // 不足以让 5 个事件全部进入合并窗口（窗口提前 flush 会裂成两个 run）。
+        // 泵足够多的 yield 槽位排空 trigger 处理管线，时钟保持冻结。
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
 
         tokio::time::advance(Duration::from_secs(30)).await;
         wait_until(|| parts.runs.runs_with_dedup(EVENT_KEY) == 1, "merged run").await;
@@ -766,7 +760,7 @@ pub(crate) mod tests {
     // at critical level.
     #[tokio::test(start_paused = true)]
     async fn agent_actor_event_does_not_wake() {
-        let parts = stub_manager();
+        let parts = stub_manager().await;
         parts.manager.start(WS);
         wait_subscribed(&parts.host).await;
 
@@ -794,7 +788,7 @@ pub(crate) mod tests {
     // double every wake).
     #[tokio::test(start_paused = true)]
     async fn start_is_idempotent() {
-        let parts = stub_manager();
+        let parts = stub_manager().await;
         parts.manager.start(WS);
         parts.manager.start(WS);
         assert_eq!(parts.manager.workspace_count(), 1);
@@ -813,7 +807,7 @@ pub(crate) mod tests {
     // stop(): triggers aborted, queued signals drained, later events ignored.
     #[tokio::test(start_paused = true)]
     async fn stop_halts_loop() {
-        let parts = stub_manager();
+        let parts = stub_manager().await;
         parts.manager.start(WS);
         wait_subscribed(&parts.host).await;
 
@@ -834,7 +828,7 @@ pub(crate) mod tests {
     // 泄漏缓存实例）。
     #[tokio::test(start_paused = true)]
     async fn stop_invalidates_cached_agent() {
-        let parts = stub_manager();
+        let parts = stub_manager().await;
         parts.manager.start(WS);
         wait_subscribed(&parts.host).await;
 
@@ -854,7 +848,7 @@ pub(crate) mod tests {
     // 调度器，清空合并窗口里待处理的信号；未知工作区 no-op。
     #[tokio::test(start_paused = true)]
     async fn directive_sink_drain_clears_pending_queue() {
-        let parts = stub_manager();
+        let parts = stub_manager().await;
         parts.manager.start(WS);
         wait_subscribed(&parts.host).await;
 
@@ -881,7 +875,7 @@ pub(crate) mod tests {
     // immediately (no merge window); the T13 pushback hits the user session.
     #[tokio::test(start_paused = true)]
     async fn directive_sink_routes_and_pushes_to_session() {
-        let parts = stub_manager();
+        let parts = stub_manager().await;
         parts.manager.start(WS);
 
         let sink: &dyn DirectiveSink = parts.manager.as_ref();
@@ -933,7 +927,7 @@ pub(crate) mod tests {
     // problem_key —— run 落库必须带上，否则 O11 dedup 永远查不到历史。
     #[tokio::test(start_paused = true)]
     async fn heartbeat_directive_run_records_problem_key() {
-        let parts = stub_manager();
+        let parts = stub_manager().await;
         parts.manager.start(WS);
 
         let sink: &dyn DirectiveSink = parts.manager.as_ref();

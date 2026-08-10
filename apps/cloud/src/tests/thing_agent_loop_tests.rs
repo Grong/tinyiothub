@@ -28,7 +28,6 @@ use tinyiothub_agent::{
     host::{
         agent_runs_repo::SqliteAgentRunsRepository,
         autonomous_factory::{AutonomousAgentFactory, ProviderFactory},
-        policy_repo::SqlitePolicyRepository,
         thing_agent_host::CloudThingAgentHost,
         tools::DispatchThingTaskTool,
     },
@@ -41,7 +40,7 @@ use tinyiothub_event::{
     bus::ThingEventBus,
     router::{ThingEventInput, ThrottleState, route_thing_event},
 };
-use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy, PolicyRepository};
+use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
 use zeroclaw::{
     providers::{ChatRequest, ChatResponse, ToolCall},
     tools::Tool,
@@ -345,7 +344,7 @@ struct FixtureParts {
     bus: Arc<ThingEventBus>,
     manager: Arc<ThingAgentManager>,
     factory: Arc<AutonomousAgentFactory>,
-    policy_repo: Arc<SqlitePolicyRepository>,
+    policy_repo: Arc<tinyiothub_storage::policy::PolicyRepository>,
     _dir: tempfile::TempDir,
 }
 
@@ -364,7 +363,7 @@ async fn build_fixture(
     let (pool, dir) = test_pool(name).await;
     seed_device(&pool).await;
 
-    let policy_repo = Arc::new(SqlitePolicyRepository::new(pool.clone()));
+    let policy_repo = Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone()));
     policy_repo
         .save_autonomy(WS, &policy, "test")
         .await

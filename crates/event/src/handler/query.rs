@@ -13,7 +13,7 @@ use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder, PaginatedRespons
 
 use crate::{
     EventState,
-    repo::{EventCriteria, SortBy, SortOrder},
+    types::{EventCriteria, SortBy, SortOrder},
     value_objects::{EventLevel, EventType},
 };
 

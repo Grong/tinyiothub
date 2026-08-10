@@ -16,7 +16,6 @@ use tinyiothub_event::{
     bus::ThingEventBus,
     repositories::RealTimeEventRepository,
     router::{ThingEventInput, ThrottleState, route_thing_event},
-    sqlite_real_time_event::SqliteRealTimeEventRepository,
 };
 use tinyiothub_storage::Database;
 
@@ -483,7 +482,7 @@ fn status_event(device_id: &str, level: EventLevel) -> Event {
 async fn test_status_upsert_via_repo_merges_repeat_occurrences() {
     let pool = test_pool().await;
     insert_device(&pool, "dev-st", "ws-st").await;
-    let repo = SqliteRealTimeEventRepository::new(Database::new(pool.clone()));
+    let repo = RealTimeEventRepository::new(Database::new(pool.clone()));
 
     repo.upsert_status(&status_event("dev-st", EventLevel::Warning))
         .await
@@ -604,7 +603,7 @@ async fn test_status_upsert_merges_repeat_occurrences() {
 async fn test_status_upsert_ignores_info_level_events() {
     let pool = test_pool().await;
     insert_device(&pool, "dev-si", "ws-si").await;
-    let repo = SqliteRealTimeEventRepository::new(Database::new(pool.clone()));
+    let repo = RealTimeEventRepository::new(Database::new(pool.clone()));
 
     // Info-level device events do not satisfy should_update_real_time_status().
     repo.upsert_status(&status_event("dev-si", EventLevel::Info))

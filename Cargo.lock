@@ -4083,6 +4083,7 @@ version = "0.4.6"
 dependencies = [
  "anyhow",
  "async-trait",
+ "db",
  "serde",
  "serde_json",
  "skills",

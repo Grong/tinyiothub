@@ -17,7 +17,7 @@ use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder};
 
 use crate::{
     EventState,
-    repo::{RealTimeEvent, RealTimeFilter, StatusSummary},
+    types::{RealTimeEvent, RealTimeFilter, StatusSummary},
     value_objects::{EventId, EventLevel, EventType},
 };
 

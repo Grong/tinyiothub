@@ -17,7 +17,7 @@ use crate::shared::event::EventHandler;
 /// - 实现批量写入优化
 /// - 管理事件缓冲区
 pub struct PersistenceEventHandler {
-    repository: Arc<dyn EventRepository>,
+    repository: Arc<EventRepository>,
     buffer: Arc<RwLock<EventBuffer>>,
     config: PersistenceConfig,
 }
@@ -45,7 +45,7 @@ impl Default for PersistenceConfig {
 
 impl PersistenceEventHandler {
     /// 创建新的持久化处理器
-    pub fn new(repository: Arc<dyn EventRepository>, config: PersistenceConfig) -> Self {
+    pub fn new(repository: Arc<EventRepository>, config: PersistenceConfig) -> Self {
         // HarmonyOS: 强制禁用批量写入，避免后台任务
         #[cfg(feature = "harmonyos")]
         let config = PersistenceConfig {
@@ -100,7 +100,7 @@ impl PersistenceEventHandler {
     }
 
     /// 启动定时刷新任务
-    fn start_flush_task(buffer: Arc<RwLock<EventBuffer>>, repository: Arc<dyn EventRepository>, interval: Duration) {
+    fn start_flush_task(buffer: Arc<RwLock<EventBuffer>>, repository: Arc<EventRepository>, interval: Duration) {
         // HarmonyOS: 禁用后台刷新任务（current_thread runtime不支持spawn）
         #[cfg(feature = "harmonyos")]
         {
@@ -134,7 +134,7 @@ impl PersistenceEventHandler {
     /// 刷新缓冲区
     async fn flush_buffer(
         buffer: &Arc<RwLock<EventBuffer>>,
-        repository: &Arc<dyn EventRepository>,
+        repository: &Arc<EventRepository>,
     ) -> tinyiothub_core::error::Result<()> {
         let events = {
             let mut buf = buffer.write().await;

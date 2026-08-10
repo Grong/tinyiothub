@@ -31,7 +31,6 @@ pub mod dlq_repo;
 pub mod heartbeat;
 pub mod heartbeat_repo;
 pub mod policy_engine;
-pub mod policy_repo;
 pub mod pool_adapter;
 pub mod scaffold;
 pub mod session;

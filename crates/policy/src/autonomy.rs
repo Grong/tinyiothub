@@ -5,57 +5,8 @@
 //! is fail-closed: any doubt (no policy, unknown mode, DB error mapped by the
 //! caller) results in Deny.
 
-/// Three-state autonomy mode for a workspace.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AutonomyMode {
-    Off,
-    Diagnose,
-    Act,
-}
-
-impl AutonomyMode {
-    /// Stable string stored in `workspace_autonomy_policy.mode`.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            AutonomyMode::Off => "off",
-            AutonomyMode::Diagnose => "diagnose",
-            AutonomyMode::Act => "act",
-        }
-    }
-
-    /// Inverse of `as_str`; unknown values return None (treat as fail-closed).
-    pub fn from_db(s: &str) -> Option<Self> {
-        match s {
-            "off" => Some(AutonomyMode::Off),
-            "diagnose" => Some(AutonomyMode::Diagnose),
-            "act" => Some(AutonomyMode::Act),
-            _ => None,
-        }
-    }
-}
-
-/// Workspace-level autonomy policy for the thing-agent loop.
-#[derive(Debug, Clone)]
-pub struct AutonomyPolicy {
-    pub mode: AutonomyMode,
-    /// Allowed action names; `["*"]` means all actions.
-    pub allowed_actions: Vec<String>,
-    /// Denied action names (exact match); checked before the allowlist.
-    pub denied_actions: Vec<String>,
-    pub max_actions_per_run: u32,
-    pub max_actions_per_hour: u32,
-}
-
-/// Persistence for autonomy policy and action-rate reads.
-///
-/// Implemented per-backend (e.g. `SqlitePolicyRepository` in the cloud crate).
-/// Callers must map any Err to fail-closed `GateVerdict::Deny("policy_read_failed")`.
-#[async_trait::async_trait]
-pub trait PolicyRepository: Send + Sync {
-    async fn load_autonomy(&self, workspace_id: &str) -> anyhow::Result<Option<AutonomyPolicy>>;
-    async fn save_autonomy(&self, workspace_id: &str, policy: &AutonomyPolicy, updated_by: &str) -> anyhow::Result<()>;
-    async fn count_actions_last_hour(&self, workspace_id: &str) -> anyhow::Result<u32>;
-}
+// Row types + repository live in the db crate (E3 集中化); re-exported for compatibility.
+pub use tinyiothub_storage::policy::{AutonomyMode, AutonomyPolicy, PolicyRepository};
 
 /// Verdict of the autonomy policy gate.
 #[derive(Debug, Clone, PartialEq, Eq)]

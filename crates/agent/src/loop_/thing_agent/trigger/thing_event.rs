@@ -28,7 +28,7 @@ use tinyiothub_policy::autonomy::{AutonomyMode, PolicyRepository};
 /// Wakes the thing-agent loop on noteworthy thing events from one workspace.
 pub struct ThingEventTrigger {
     host: Arc<dyn ThingAgentHost>,
-    policy_repo: Arc<dyn PolicyRepository>,
+    policy_repo: Arc<PolicyRepository>,
     workspace_id: String,
     min_wake_level: i32,
 }
@@ -36,7 +36,7 @@ pub struct ThingEventTrigger {
 impl ThingEventTrigger {
     pub fn new(
         host: Arc<dyn ThingAgentHost>,
-        policy_repo: Arc<dyn PolicyRepository>,
+        policy_repo: Arc<PolicyRepository>,
         workspace_id: impl Into<String>,
         min_wake_level: i32,
     ) -> Self {
@@ -194,48 +194,22 @@ mod tests {
         }
     }
 
-    struct StubPolicyRepo {
-        policy: Mutex<Option<AutonomyPolicy>>,
-        load_calls: Mutex<usize>,
-    }
-
-    impl StubPolicyRepo {
-        fn with_mode(mode: AutonomyMode) -> Self {
-            Self {
-                policy: Mutex::new(Some(policy(mode))),
-                load_calls: Mutex::new(0),
-            }
-        }
-
-        fn set_mode(&self, mode: AutonomyMode) {
-            *self.policy.lock().expect("policy lock") = Some(policy(mode));
-        }
-
-        fn load_count(&self) -> usize {
-            *self.load_calls.lock().expect("load_calls lock")
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl PolicyRepository for StubPolicyRepo {
-        async fn load_autonomy(&self, _workspace_id: &str) -> anyhow::Result<Option<AutonomyPolicy>> {
-            *self.load_calls.lock().expect("load_calls lock") += 1;
-            Ok(self.policy.lock().expect("policy lock").clone())
-        }
-
-        async fn save_autonomy(
-            &self,
-            _workspace_id: &str,
-            policy: &AutonomyPolicy,
-            _updated_by: &str,
-        ) -> anyhow::Result<()> {
-            *self.policy.lock().expect("policy lock") = Some(policy.clone());
-            Ok(())
-        }
-
-        async fn count_actions_last_hour(&self, _workspace_id: &str) -> anyhow::Result<u32> {
-            Ok(0)
-        }
+    /// 真实 SQLite 版 policy repo（E3 去 trait 后替代 StubPolicyRepo）。
+    async fn real_repo(ws: &str, mode: AutonomyMode) -> Arc<PolicyRepository> {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(std::time::Duration::from_secs(86400 * 365))
+            .connect(":memory:")
+            .await
+            .expect("in-memory sqlite");
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .expect("migrations");
+        let repo = Arc::new(PolicyRepository::new(pool));
+        repo.save_autonomy(ws, &policy(mode), "test")
+            .await
+            .expect("seed policy");
+        repo
     }
 
     struct StubHost {
@@ -318,7 +292,7 @@ mod tests {
 
     fn spawn_trigger(
         host: Arc<StubHost>,
-        repo: Arc<StubPolicyRepo>,
+        repo: Arc<PolicyRepository>,
         min_wake_level: i32,
     ) -> (mpsc::Receiver<WakeSignal>, tokio::task::JoinHandle<anyhow::Result<()>>) {
         let trigger = ThingEventTrigger::new(host, repo, WS, min_wake_level);
@@ -372,7 +346,7 @@ mod tests {
     #[tokio::test]
     async fn below_min_wake_level_is_ignored() {
         let host = Arc::new(StubHost::new(16));
-        let repo = Arc::new(StubPolicyRepo::with_mode(AutonomyMode::Act));
+        let repo = real_repo(WS, AutonomyMode::Act).await;
         let (mut rx, handle) = spawn_trigger(host.clone(), repo, 3);
         wait_subscribed(&host).await;
 
@@ -390,7 +364,7 @@ mod tests {
     #[tokio::test]
     async fn unknown_event_is_ignored() {
         let host = Arc::new(StubHost::new(16));
-        let repo = Arc::new(StubPolicyRepo::with_mode(AutonomyMode::Act));
+        let repo = real_repo(WS, AutonomyMode::Act).await;
         let (mut rx, handle) = spawn_trigger(host.clone(), repo, 3);
         wait_subscribed(&host).await;
 
@@ -410,7 +384,7 @@ mod tests {
     #[tokio::test]
     async fn agent_actor_is_ignored_even_at_critical_level() {
         let host = Arc::new(StubHost::new(16));
-        let repo = Arc::new(StubPolicyRepo::with_mode(AutonomyMode::Act));
+        let repo = real_repo(WS, AutonomyMode::Act).await;
         let (mut rx, handle) = spawn_trigger(host.clone(), repo, 3);
         wait_subscribed(&host).await;
 
@@ -430,25 +404,21 @@ mod tests {
     #[tokio::test]
     async fn mode_off_emits_zero_signals_until_policy_changes() {
         let host = Arc::new(StubHost::new(16));
-        let repo = Arc::new(StubPolicyRepo::with_mode(AutonomyMode::Off));
+        let repo = real_repo(WS, AutonomyMode::Off).await;
         let (mut rx, handle) = spawn_trigger(host.clone(), repo.clone(), 3);
         wait_subscribed(&host).await;
 
         host.tx.send(ev(1, 5)).expect("send event while off");
 
-        // Wait until the trigger has gated event 1 on the Off policy (its
-        // skip decision is then fixed), proving mode=off yields zero signals.
-        for _ in 0..1000 {
-            if repo.load_count() >= 1 {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-        assert!(repo.load_count() >= 1, "trigger never consulted the policy");
+        // 真实库无法统计读取次数：给 trigger 一个真实时间窗口完成 event 1 的
+        // Off 门控（内存 SQLite 读取为微秒级），再翻策略。
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // Flip the kill switch back on; the next event must wake — proving
         // the off event above produced nothing and mode is re-read per event.
-        repo.set_mode(AutonomyMode::Act);
+        repo.save_autonomy(WS, &policy(AutonomyMode::Act), "test")
+            .await
+            .expect("flip policy");
         host.tx.send(ev(2, 3)).expect("send sentinel");
 
         let signal = next_signal(&mut rx).await;
@@ -462,7 +432,7 @@ mod tests {
     #[tokio::test]
     async fn critical_event_passes_through_with_critical_priority() {
         let host = Arc::new(StubHost::new(16));
-        let repo = Arc::new(StubPolicyRepo::with_mode(AutonomyMode::Act));
+        let repo = real_repo(WS, AutonomyMode::Act).await;
         let (mut rx, handle) = spawn_trigger(host.clone(), repo, 3);
         wait_subscribed(&host).await;
 
@@ -496,7 +466,7 @@ mod tests {
     #[tokio::test]
     async fn normal_event_emits_mergeable_signal() {
         let host = Arc::new(StubHost::new(16));
-        let repo = Arc::new(StubPolicyRepo::with_mode(AutonomyMode::Act));
+        let repo = real_repo(WS, AutonomyMode::Act).await;
         let (mut rx, handle) = spawn_trigger(host.clone(), repo, 3);
         wait_subscribed(&host).await;
 
@@ -520,7 +490,7 @@ mod tests {
             .lock()
             .expect("replay_queue lock")
             .push_back(vec![ev(6, 4), ev(7, 4), ev(8, 2)]);
-        let repo = Arc::new(StubPolicyRepo::with_mode(AutonomyMode::Act));
+        let repo = real_repo(WS, AutonomyMode::Act).await;
         let (mut rx, handle) = spawn_trigger(host.clone(), repo, 3);
 
         let mut ids = Vec::new();
@@ -551,7 +521,7 @@ mod tests {
         // arrive → second lag (retains 12,13). The second replay call must
         // use cursor = max(10, 5) = 10, not 5.
         *host.flood_on_replay.lock().expect("flood lock") = vec![ev(11, 3), ev(12, 3), ev(13, 3)];
-        let repo = Arc::new(StubPolicyRepo::with_mode(AutonomyMode::Act));
+        let repo = real_repo(WS, AutonomyMode::Act).await;
         let (mut rx, handle) = spawn_trigger(host.clone(), repo, 3);
 
         let mut ids = Vec::new();
@@ -568,7 +538,7 @@ mod tests {
     #[tokio::test]
     async fn other_workspace_event_is_ignored() {
         let host = Arc::new(StubHost::new(16));
-        let repo = Arc::new(StubPolicyRepo::with_mode(AutonomyMode::Act));
+        let repo = real_repo(WS, AutonomyMode::Act).await;
         let (mut rx, handle) = spawn_trigger(host.clone(), repo, 3);
         wait_subscribed(&host).await;
 

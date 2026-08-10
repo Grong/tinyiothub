@@ -19,12 +19,12 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tinyiothub_auth::security::jwt::Claims;
-use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy, PolicyRepository};
+use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::response::ApiResponseBuilder;
 
+use crate::host::agent_runs_repo::SqliteAgentRunsRepository;
 use crate::host::state::AgentState;
-use crate::host::{agent_runs_repo::SqliteAgentRunsRepository, policy_repo::SqlitePolicyRepository};
 use crate::verify_workspace_access;
 
 /// admin 角色判定：用户持有任一 is_administrator 角色。DB 错误 fail-closed。
@@ -275,7 +275,7 @@ pub async fn get_policy(
 ) -> Json<ApiResponse<PolicyView>> {
     verify_agent_admin!(state, claims, workspace_id);
 
-    let repo = SqlitePolicyRepository::new(state.database.pool().clone());
+    let repo = tinyiothub_storage::policy::PolicyRepository::new(state.database.pool().clone());
     match repo.load_autonomy(&workspace_id).await {
         Ok(Some(policy)) => ApiResponseBuilder::success(PolicyView::from(policy)),
         Ok(None) => ApiResponseBuilder::success(PolicyView::default_off()),
@@ -305,7 +305,7 @@ pub async fn update_policy(
         max_actions_per_hour: req.max_actions_per_hour,
     };
 
-    let repo = SqlitePolicyRepository::new(state.database.pool().clone());
+    let repo = tinyiothub_storage::policy::PolicyRepository::new(state.database.pool().clone());
     if let Err(e) = repo.save_autonomy(&workspace_id, &policy, &claims.user_id).await {
         tracing::error!(%workspace_id, "Failed to save autonomy policy: {}", e);
         return ApiResponseBuilder::error("保存策略失败");

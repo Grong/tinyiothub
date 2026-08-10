@@ -31,6 +31,8 @@ pub mod device_row_mapper;
 pub mod driver_installation;
 /// Database error type.
 pub mod error;
+/// Event + real-time status persistence and query types.
+pub mod event;
 /// Repository factory.
 pub mod factory;
 /// Embedded migrations runner.
@@ -41,6 +43,8 @@ pub mod models;
 pub mod notification_channel;
 /// Notification rule/history persistence + row types.
 pub mod notify;
+/// Autonomy policy persistence + row types.
+pub mod policy;
 /// Migrating SQLite pool creation (foreign keys on, runs embedded migrations).
 pub mod pool;
 /// Unified storage facade.
