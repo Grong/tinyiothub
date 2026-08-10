@@ -3,6 +3,10 @@
 //! Policies layer on top of the TrustEngine:
 //! - TrustEngine: intrinsic tool safety (read/write/destructive)
 //! - PolicyEngine: workspace-specific rules (rate limits, allowlists, content filters)
+//!
+//! ## 设计不变量
+//! - 策略裁决纯逻辑 + SQLite 持久化；不感知 HTTP/agent 细节
+
 
 pub mod adapters;
 pub mod autonomy;

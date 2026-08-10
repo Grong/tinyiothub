@@ -8,6 +8,11 @@
 //! global `AppState` via `impl FromRef<AppState> for ThingState` and mounts
 //! [`router()`] (things), [`template::handler::create_router()`] (device
 //! templates) and [`tag::create_router()`] (tags).
+//!
+//! ## 设计不变量
+//! - 禁止依赖 agent/mcp —— 动作确认经 core::thing_hooks 反向注入
+//! - devices 表即 things 表；名称查询按 workspace 作用域
+
 
 pub mod errors;
 pub mod handler;

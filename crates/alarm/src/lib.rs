@@ -24,6 +24,10 @@
 //!   and alarm's notification dispatch stays independent of it.
 //! - `RecentAlarm` moved here from `cloud::modules::monitoring::types`
 //!   (the `/alarms/recent` handler was its only consumer).
+//!
+//! ## 设计不变量
+//! - 只许 alarm→event 单向边；AI 发布经组合层适配器（AlarmAiPublisher）
+
 
 use std::sync::Arc;
 

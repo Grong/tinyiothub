@@ -20,6 +20,10 @@
 //! - `channels::sse_channel::{SseMessage, SseNotificationChannel}` is also
 //!   consumed by cloud's `shared::event::sse_manager` (composition-layer SSE
 //!   connection manager, not yet extracted — rides with the event plane).
+//!
+//! ## 设计不变量
+//! - 只许 notify→event 单向边；渠道类型来自 core::notification_types
+
 
 use std::sync::Arc;
 

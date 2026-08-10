@@ -10,6 +10,8 @@ description = "Core types, traits and utilities for TinyIoTHub"
 [lib]
 name = "tinyiothub_core"
 
+# 守门：core 只许 trait + 值类型，禁止逻辑函数与 I/O。
+# NO tokio, NO axum, NO reqwest —— zero-I/O；sqlx 仅 feature 门控的错误转换。
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }

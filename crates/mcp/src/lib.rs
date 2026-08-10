@@ -1,3 +1,8 @@
+//! MCP domain crate — embedded MCP server and tool registry.
+//!
+//! ## 设计不变量
+//! - 工具 handler 经 McpState 萃取状态，禁止全局单例（get_app_state 已消灭）
+
 // MCP API Module
 // Embedded MCP server for AI Agent integration
 

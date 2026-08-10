@@ -1,3 +1,8 @@
+//! Internal proc macros for TinyIoTHub.
+//!
+//! ## 设计不变量
+//! - 过程宏；不依赖任何 workspace crate
+
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Attribute, DeriveInput, Lit, Meta, NestedMeta, Token, parse_macro_input, punctuated::Punctuated};

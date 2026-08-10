@@ -1,6 +1,12 @@
 //! TinyIoTHub storage layer
 //!
 //! Repository traits, SQLite implementations, caches, and the unified Storage facade.
+//!
+//! ## 设计不变量
+//! - 只依赖 core，禁止依赖其他任何 workspace crate
+//! - 具体 struct、按领域平铺（traits/ 残留待逐领域评估削除）
+//! - 测试使用真实 SQLite（test_helpers::run_all_migrations）
+
 
 pub mod cache;
 pub mod driver_installation;

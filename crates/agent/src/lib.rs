@@ -8,6 +8,11 @@
 //! - [`host`] — the HTTP/service host: AgentPool, session/chat services,
 //!   tools, handlers, repos, prompt scaffolding. Consumes `loop_`.
 //! - [`chat`] — the chat session proxy plane (OpenClaw-facing handlers).
+//!
+//! ## 设计不变量
+//! - 三层隔离：loop_（纯运行时，不依赖 web/axum）← host（HTTP/工具）+ chat
+//! - 跨领域调用只许 agent→{event,thing,policy,memory,skills,llm,auth}
+
 
 pub mod chat;
 pub mod host;

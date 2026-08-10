@@ -1,3 +1,8 @@
+//! Admin domain crate — system, monitoring, batch, jobs, open API.
+//!
+//! ## 设计不变量
+//! - 系统/监控/批处理/开放 API；调度接 scheduler crate（admin→scheduler）
+
 // Admin domain crate (P4-Task24) — the final modules/ extraction.
 //
 // Covers the platform-administration API surface formerly under

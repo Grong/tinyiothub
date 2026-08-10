@@ -26,6 +26,11 @@
 //!
 //! export_driver!(MyDriver);
 //! ```
+//!
+//! ## 设计不变量
+//! - 驱动作者 SDK；FFI ABI 契约的唯一事实源
+//! - 禁止依赖 runtime/web；unsafe 仅限 FFI 边界
+
 
 pub mod config;
 pub mod driver;

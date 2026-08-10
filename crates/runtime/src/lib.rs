@@ -6,6 +6,11 @@
 //! - `driver`      — Driver wrapper, retry, status, concrete drivers
 //! - `event_bus`   — Event bus and handler dispatch
 //! - `cron_executors` — Db-bound cron executors (device command, event retention)
+//!
+//! ## 设计不变量
+//! - 禁止依赖 web 与任何领域 crate
+//! - unsafe 仅限驱动/plugin 动态加载路径（manifest lint 例外已标注）
+
 
 pub mod cron_executors;
 pub mod data_server;

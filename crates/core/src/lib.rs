@@ -1,3 +1,10 @@
+//! TinyIoTHub contract crate — traits + value types (DTO/error/config).
+//!
+//! ## 设计不变量
+//! - 只许 trait + 值类型（DTO/error/config）；禁止业务逻辑函数与 I/O
+//! - 禁止 tokio/axum 依赖；sqlx 仅以 feature 门控的错误转换形式存在
+//! - 新类型必须论证为何不属于某个领域 crate
+
 pub mod agent_hooks;
 pub mod config;
 pub mod constants;

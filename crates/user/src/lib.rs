@@ -4,6 +4,10 @@
 //! SEP. The crate never names the composition layer's `AppState`: handlers
 //! take `State<UserState>` and every router is generic over the composition
 //! state `S` with a `UserState: FromRef<S>` bound.
+//!
+//! ## 设计不变量
+//! - 用户/角色/权限领域；不依赖其他领域 crate
+
 
 use std::sync::Arc;
 

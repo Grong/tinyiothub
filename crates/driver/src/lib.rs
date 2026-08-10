@@ -21,6 +21,10 @@
 //!
 //! NOT consumed: agent / mcp / notification (see `legacy/mod.rs` and
 //! `plugin::registry::AppContext` docs for boundary notes).
+//!
+//! ## 设计不变量
+//! - 只许 driver→{thing,event,alarm} 单向边；写数据经 thing，不反向
+
 
 use std::sync::Arc;
 

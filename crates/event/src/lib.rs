@@ -1,3 +1,8 @@
+//! Event domain crate — event pipeline (router, throttle, real-time, SSE, retention).
+//!
+//! ## 设计不变量
+//! - 单向边承载者：只许 notify→event、alarm→event、agent→event，event 不反向依赖
+
 // Event domain crate — extracted from cloud/src/modules/event (P4-Task18).
 //
 // Owns: event entity/DTO types, repository traits + SQLite impls, domain
