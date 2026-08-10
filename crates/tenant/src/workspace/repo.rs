@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use sqlx::{FromRow, QueryBuilder};
 use tinyiothub_core::error::{Error, Result};
-use tinyiothub_storage::sqlite::Database;
+use tinyiothub_storage::Database;
 
 use super::types::{
     ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount,

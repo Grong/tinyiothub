@@ -15,7 +15,6 @@
 //! ## 设计不变量
 //! - security::jwt::Claims 可供其他领域 crate 复用（web 萃取器经组合层注入 validator）
 
-
 pub mod bootstrap;
 pub mod handler;
 pub mod legacy;

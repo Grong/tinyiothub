@@ -13,7 +13,6 @@
 //! - 三层隔离：loop_（纯运行时，不依赖 web/axum）← host（HTTP/工具）+ chat
 //! - 跨领域调用只许 agent→{event,thing,policy,memory,skills,llm,auth}
 
-
 pub mod chat;
 pub mod host;
 pub mod loop_;

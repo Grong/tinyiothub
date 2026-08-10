@@ -64,11 +64,11 @@ impl From<RoleRow> for Role {
 // ── SQLite implementation ───────────────────────────────
 
 pub struct SqliteRoleRepository {
-    database: tinyiothub_storage::sqlite::Database,
+    database: tinyiothub_storage::Database,
 }
 
 impl SqliteRoleRepository {
-    pub fn new(database: tinyiothub_storage::sqlite::Database) -> Self {
+    pub fn new(database: tinyiothub_storage::Database) -> Self {
         Self { database }
     }
 }

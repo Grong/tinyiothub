@@ -209,7 +209,7 @@ async fn get_recent_alarms(
     Query(query): Query<RecentAlarmsQuery>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<RecentAlarm>>> {
-    let db = tinyiothub_storage::sqlite::Database::new(state.database.pool().clone());
+    let db = tinyiothub_storage::Database::new(state.database.pool().clone());
     let limit = query.limit.unwrap_or(10);
 
     match get_recent_alarms_list(&db, limit, Some(&claims.0.workspace_id)).await {
@@ -254,7 +254,7 @@ async fn load_device_names_map(
 }
 
 async fn get_recent_alarms_list(
-    db: &tinyiothub_storage::sqlite::Database,
+    db: &tinyiothub_storage::Database,
     limit: i32,
     workspace_id: Option<&str>,
 ) -> Result<Vec<RecentAlarm>, sqlx::Error> {
@@ -631,7 +631,7 @@ async fn batch_resolve_alarms(
 #[cfg(test)]
 mod tests {
     use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
-    use tinyiothub_storage::sqlite::Database;
+    use tinyiothub_storage::Database;
 
     use super::*;
 

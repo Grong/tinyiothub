@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
 use tinyiothub_core::error::{Error, Result};
-use tinyiothub_storage::sqlite::Database;
+use tinyiothub_storage::Database;
 
 use super::types::{CreateUserRequest, UpdateUserRequest, User, UserStatisticsNew};
 

@@ -97,11 +97,11 @@ impl From<PermissionGroupRow> for PermissionGroup {
 // ── SQLite implementations ──────────────────────────────
 
 pub struct SqlitePermissionRepository {
-    database: tinyiothub_storage::sqlite::Database,
+    database: tinyiothub_storage::Database,
 }
 
 impl SqlitePermissionRepository {
-    pub fn new(database: tinyiothub_storage::sqlite::Database) -> Self {
+    pub fn new(database: tinyiothub_storage::Database) -> Self {
         Self { database }
     }
 }
@@ -411,11 +411,11 @@ impl PermissionRepository for SqlitePermissionRepository {
 }
 
 pub struct SqlitePermissionGroupRepository {
-    database: tinyiothub_storage::sqlite::Database,
+    database: tinyiothub_storage::Database,
 }
 
 impl SqlitePermissionGroupRepository {
-    pub fn new(database: tinyiothub_storage::sqlite::Database) -> Self {
+    pub fn new(database: tinyiothub_storage::Database) -> Self {
         Self { database }
     }
 }

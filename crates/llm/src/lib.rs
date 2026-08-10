@@ -6,7 +6,6 @@
 //! ## 设计不变量
 //! - 只定义 LLM provider 契约与值类型；具体 provider 实现在组合层
 
-
 pub mod prompt;
 pub mod provider;
 pub mod session;

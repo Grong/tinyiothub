@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use tinyiothub_storage::sqlite::Database;
+use tinyiothub_storage::Database;
 
 use super::types::*;
 

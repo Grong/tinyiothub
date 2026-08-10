@@ -13,7 +13,7 @@ use serde_json::Value;
 
 pub use tinyiothub_core::cron::{ExecutionResult, ExecutorError, JobExecutor};
 use tinyiothub_core::models::cron_job::CronJob;
-use tinyiothub_storage::sqlite::database::Database;
+use tinyiothub_storage::database::Database;
 
 /// Executes device commands via DataServer.
 pub struct DeviceCommandExecutor {
@@ -44,7 +44,7 @@ impl JobExecutor for DeviceCommandExecutor {
         let start = Instant::now();
 
         // Look up the device command from DB
-        let mut command = tinyiothub_storage::sqlite::device_command::find_device_command_by_device_and_name(
+        let mut command = tinyiothub_storage::device_command::find_device_command_by_device_and_name(
             &self.database,
             &device_id,
             &command_name,

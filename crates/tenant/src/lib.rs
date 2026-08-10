@@ -9,7 +9,6 @@
 //! - 租户/工作区领域；心跳任务类型复用 agent crate（tenant→agent 单向，无环）
 //! - 对 agent 服务的调用经 core::agent_hooks 注入，不直接依赖
 
-
 use std::sync::Arc;
 
 pub mod handler;

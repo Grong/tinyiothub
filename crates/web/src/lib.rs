@@ -6,7 +6,6 @@
 //! ## 设计不变量
 //! - 无业务逻辑、无 SQL；只做 HTTP 基础设施（middleware/响应构建/安全萃取）
 
-
 pub mod api_response;
 pub mod error_handling;
 pub mod handlers;

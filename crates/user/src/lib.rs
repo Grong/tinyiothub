@@ -8,7 +8,6 @@
 //! ## 设计不变量
 //! - 用户/角色/权限领域；不依赖其他领域 crate
 
-
 use std::sync::Arc;
 
 pub mod handler;

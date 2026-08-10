@@ -28,7 +28,6 @@
 //! ## 设计不变量
 //! - 只许 alarm→event 单向边；AI 发布经组合层适配器（AlarmAiPublisher）
 
-
 use std::sync::Arc;
 
 pub mod alarm;

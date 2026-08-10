@@ -5,7 +5,6 @@
 //! ## 设计不变量
 //! - 技能/工具注册表；不依赖其他领域 crate
 
-
 pub mod loader;
 pub mod registry;
 pub mod tool_types;

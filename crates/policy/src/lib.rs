@@ -7,7 +7,6 @@
 //! ## 设计不变量
 //! - 策略裁决纯逻辑 + SQLite 持久化；不感知 HTTP/agent 细节
 
-
 pub mod adapters;
 pub mod autonomy;
 pub mod proposal;

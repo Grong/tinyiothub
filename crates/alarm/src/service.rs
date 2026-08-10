@@ -1163,7 +1163,7 @@ mod tests {
     use tinyiothub_core::models::event::{
         ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
     };
-    use tinyiothub_storage::sqlite::Database;
+    use tinyiothub_storage::Database;
 
     use super::*;
     use crate::repo::SqliteAlarmRuleRepository;
@@ -2015,7 +2015,7 @@ mod integration_tests {
         event::EventHandler,
         models::event::{ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat},
     };
-    use tinyiothub_storage::sqlite::Database;
+    use tinyiothub_storage::Database;
 
     use super::*;
     use crate::repo::{SqliteAlarmRepository, SqliteAlarmRuleRepository};

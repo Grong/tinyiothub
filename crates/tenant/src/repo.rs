@@ -3,7 +3,7 @@ use rand::RngCore;
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use tinyiothub_core::error::{Error, Result};
-use tinyiothub_storage::sqlite::Database;
+use tinyiothub_storage::Database;
 
 use super::types::{
     ApiKey, ApiUsageStats, CreateApiKeyRequest, CreateTenantRequest, SubscriptionPlan, Tenant, TenantUsage,

@@ -24,7 +24,6 @@
 //! ## 设计不变量
 //! - 只许 notify→event 单向边；渠道类型来自 core::notification_types
 
-
 use std::sync::Arc;
 
 pub mod channels;

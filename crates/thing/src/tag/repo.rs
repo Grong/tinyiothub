@@ -105,11 +105,11 @@ impl From<TagBindingRow> for TagBinding {
 // ── SQLite implementations ──────────────────────────────
 
 pub struct SqliteTagRepository {
-    database: tinyiothub_storage::sqlite::Database,
+    database: tinyiothub_storage::Database,
 }
 
 impl SqliteTagRepository {
-    pub fn new(database: tinyiothub_storage::sqlite::Database) -> Self {
+    pub fn new(database: tinyiothub_storage::Database) -> Self {
         Self { database }
     }
 }
@@ -322,11 +322,11 @@ impl TagRepository for SqliteTagRepository {
 }
 
 pub struct SqliteTagBindingRepository {
-    database: tinyiothub_storage::sqlite::Database,
+    database: tinyiothub_storage::Database,
 }
 
 impl SqliteTagBindingRepository {
-    pub fn new(database: tinyiothub_storage::sqlite::Database) -> Self {
+    pub fn new(database: tinyiothub_storage::Database) -> Self {
         Self { database }
     }
 }
