@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::{
-    repo::TenantRepository,
+    types::TenantRepository,
     types::{ApiKey, ApiUsageStats, CreateApiKeyRequest, CreateTenantRequest, SubscriptionPlan, Tenant, TenantUsage},
 };
 use tinyiothub_core::error::{Error, Result};
@@ -13,11 +13,11 @@ const RESOURCE_TYPE_USER: &str = "user";
 
 /// Tenant domain service
 pub struct TenantService {
-    repository: Arc<dyn TenantRepository>,
+    repository: Arc<TenantRepository>,
 }
 
 impl TenantService {
-    pub fn new(repository: Arc<dyn TenantRepository>) -> Self {
+    pub fn new(repository: Arc<TenantRepository>) -> Self {
         Self { repository }
     }
 

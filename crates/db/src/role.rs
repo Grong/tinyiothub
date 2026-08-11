@@ -1,42 +1,99 @@
-use async_trait::async_trait;
+//! Role 持久化：角色（P-集中化 E4，自 user crate 迁入）。
+
+use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
 use tinyiothub_core::error::Result;
 
-use super::types::{CreateRoleRequest, Role, RoleQueryParams, RoleStats, UpdateRoleRequest};
+use crate::database::Database;
 
-// ── Trait ───────────────────────────────────────────────
+// ──────────────────────────────────────────────
+// 持久化类型（DB 行 + 仓储契约）— 自领域 crate 迁入
+// ──────────────────────────────────────────────
 
-#[async_trait]
-pub trait RoleRepository: Send + Sync {
-    async fn find_by_id(&self, id: &str) -> Result<Option<Role>>;
-    async fn find_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<Option<Role>>;
-    async fn create(&self, request: &CreateRoleRequest) -> Result<Role>;
-    async fn update(&self, id: &str, request: &UpdateRoleRequest) -> Result<Role>;
-    async fn delete(&self, id: &str) -> Result<u64>;
-    async fn delete_by_ids(&self, ids: &[String]) -> Result<u64>;
-    async fn find_all(&self, params: &RoleQueryParams) -> Result<Vec<Role>>;
-    async fn count(&self, params: &RoleQueryParams) -> Result<i64>;
-    async fn get_stats(&self, workspace_id: Option<&str>) -> Result<RoleStats>;
-    async fn find_admin_roles(&self, workspace_id: Option<&str>) -> Result<Vec<Role>>;
-    async fn find_user_roles(&self, workspace_id: Option<&str>) -> Result<Vec<Role>>;
-    async fn exists_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<bool>;
-    async fn exists_by_name_exclude_id(&self, name: &str, exclude_id: &str, workspace_id: Option<&str>)
-    -> Result<bool>;
-    async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Role>>;
-    async fn find_roles_by_user_id(&self, user_id: &str) -> Result<Vec<Role>>;
-    async fn is_administrator_role(&self, id: &str) -> Result<bool>;
-    async fn find_with_filters(
-        &self,
-        enabled: Option<bool>,
-        search: Option<&str>,
-        workspace_id: Option<&str>,
-        page: u32,
-        page_size: u32,
-    ) -> Result<Vec<Role>>;
-    async fn update_enabled_status(&self, id: &str, enabled: bool) -> Result<bool>;
-    async fn get_permissions(&self, role_id: &str) -> Result<Vec<String>>;
-    async fn update_permissions(&self, role_id: &str, permission_ids: &[String]) -> Result<()>;
+/// Role entity
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct Role {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub is_administrator: i32,
+    pub workspace_id: Option<String>,
 }
+
+/// Role query parameters
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct RoleQueryParams {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub is_administrator: Option<i32>,
+    pub workspace_id: Option<String>,
+    pub page: Option<u32>,
+    pub page_size: Option<u32>,
+}
+
+/// Create role request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CreateRoleRequest {
+    pub name: String,
+    pub description: Option<String>,
+    pub is_administrator: Option<i32>,
+    pub workspace_id: Option<String>,
+}
+
+/// Update role request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct UpdateRoleRequest {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub is_administrator: Option<i32>,
+    pub workspace_id: Option<String>,
+}
+
+/// Role statistics
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct RoleStats {
+    pub total_roles: i64,
+    pub admin_roles: i64,
+    pub user_roles: i64,
+}
+
+impl Default for Role {
+    fn default() -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: String::new(),
+            description: None,
+            is_administrator: 0,
+            workspace_id: None,
+        }
+    }
+}
+
+/// Backward compatibility alias
+pub type RoleDto = Role;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_role_default() {
+        let role = Role::default();
+        assert!(!role.id.is_empty());
+        assert!(role.name.is_empty());
+        assert_eq!(role.description, None);
+        assert_eq!(role.is_administrator, 0);
+    }
+}
+
+// ──────────────────────────────────────────────
+// Repository
+// ──────────────────────────────────────────────
 
 // ── Row type (internal) ─────────────────────────────────
 
@@ -63,19 +120,18 @@ impl From<RoleRow> for Role {
 
 // ── SQLite implementation ───────────────────────────────
 
-pub struct SqliteRoleRepository {
-    database: tinyiothub_storage::Database,
+pub struct RoleRepository {
+    database: crate::database::Database,
 }
 
-impl SqliteRoleRepository {
-    pub fn new(database: tinyiothub_storage::Database) -> Self {
+impl RoleRepository {
+    pub fn new(database: crate::database::Database) -> Self {
         Self { database }
     }
 }
 
-#[async_trait]
-impl RoleRepository for SqliteRoleRepository {
-    async fn find_by_id(&self, id: &str) -> Result<Option<Role>> {
+impl RoleRepository {
+    pub async fn find_by_id(&self, id: &str) -> Result<Option<Role>> {
         let row = sqlx::query_as::<_, RoleRow>(
             "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE id = ?",
         )
@@ -86,7 +142,7 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(row.map(Into::into))
     }
 
-    async fn find_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<Option<Role>> {
+    pub async fn find_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<Option<Role>> {
         let mut query =
             QueryBuilder::new("SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE name = ");
         query.push_bind(name);
@@ -106,7 +162,7 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(row.map(Into::into))
     }
 
-    async fn create(&self, request: &CreateRoleRequest) -> Result<Role> {
+    pub async fn create(&self, request: &CreateRoleRequest) -> Result<Role> {
         let id = uuid::Uuid::new_v4().to_string();
         let is_admin = request.is_administrator.unwrap_or(0);
 
@@ -129,7 +185,7 @@ impl RoleRepository for SqliteRoleRepository {
             .ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
-    async fn update(&self, id: &str, request: &UpdateRoleRequest) -> Result<Role> {
+    pub async fn update(&self, id: &str, request: &UpdateRoleRequest) -> Result<Role> {
         let mut query = QueryBuilder::new("UPDATE roles SET ");
         let mut has_updates = false;
 
@@ -185,7 +241,7 @@ impl RoleRepository for SqliteRoleRepository {
             .ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
-    async fn delete(&self, id: &str) -> Result<u64> {
+    pub async fn delete(&self, id: &str) -> Result<u64> {
         let result = sqlx::query("DELETE FROM roles WHERE id = ?")
             .bind(id)
             .execute(self.database.pool())
@@ -194,7 +250,7 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(result.rows_affected())
     }
 
-    async fn delete_by_ids(&self, ids: &[String]) -> Result<u64> {
+    pub async fn delete_by_ids(&self, ids: &[String]) -> Result<u64> {
         if ids.is_empty() {
             return Ok(0);
         }
@@ -212,7 +268,7 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(result.rows_affected())
     }
 
-    async fn find_all(&self, params: &RoleQueryParams) -> Result<Vec<Role>> {
+    pub async fn find_all(&self, params: &RoleQueryParams) -> Result<Vec<Role>> {
         let mut query =
             QueryBuilder::new("SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE 1=1");
 
@@ -253,7 +309,7 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    async fn count(&self, params: &RoleQueryParams) -> Result<i64> {
+    pub async fn count(&self, params: &RoleQueryParams) -> Result<i64> {
         let mut query = QueryBuilder::new("SELECT COUNT(*) as count FROM roles WHERE 1=1");
 
         if let Some(name) = &params.name {
@@ -283,7 +339,7 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(count)
     }
 
-    async fn get_stats(&self, workspace_id: Option<&str>) -> Result<RoleStats> {
+    pub async fn get_stats(&self, workspace_id: Option<&str>) -> Result<RoleStats> {
         let mut query = QueryBuilder::new(
             r#"
             SELECT
@@ -313,7 +369,7 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(stats)
     }
 
-    async fn find_admin_roles(&self, workspace_id: Option<&str>) -> Result<Vec<Role>> {
+    pub async fn find_admin_roles(&self, workspace_id: Option<&str>) -> Result<Vec<Role>> {
         let mut query = QueryBuilder::new(
             "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE is_administrator = 1",
         );
@@ -335,7 +391,7 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    async fn find_user_roles(&self, workspace_id: Option<&str>) -> Result<Vec<Role>> {
+    pub async fn find_user_roles(&self, workspace_id: Option<&str>) -> Result<Vec<Role>> {
         let mut query = QueryBuilder::new(
             "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE is_administrator = 0",
         );
@@ -357,7 +413,7 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    async fn exists_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<bool> {
+    pub async fn exists_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<bool> {
         let mut query = QueryBuilder::new("SELECT COUNT(*) FROM roles WHERE name = ");
         query.push_bind(name);
 
@@ -374,7 +430,7 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(count > 0)
     }
 
-    async fn exists_by_name_exclude_id(
+    pub async fn exists_by_name_exclude_id(
         &self,
         name: &str,
         exclude_id: &str,
@@ -397,7 +453,7 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(count > 0)
     }
 
-    async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Role>> {
+    pub async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Role>> {
         if ids.is_empty() {
             return Ok(vec![]);
         }
@@ -419,7 +475,7 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    async fn find_roles_by_user_id(&self, user_id: &str) -> Result<Vec<Role>> {
+    pub async fn find_roles_by_user_id(&self, user_id: &str) -> Result<Vec<Role>> {
         let rows = sqlx::query_as::<_, RoleRow>(
             r#"
             SELECT r.id, r.name, r.description, r.is_administrator, r.workspace_id
@@ -436,7 +492,7 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    async fn is_administrator_role(&self, id: &str) -> Result<bool> {
+    pub async fn is_administrator_role(&self, id: &str) -> Result<bool> {
         let role: Option<i32> = sqlx::query_scalar("SELECT is_administrator FROM roles WHERE id = ?")
             .bind(id)
             .fetch_optional(self.database.pool())
@@ -445,7 +501,7 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(role.unwrap_or(0) == 1)
     }
 
-    async fn find_with_filters(
+    pub async fn find_with_filters(
         &self,
         _enabled: Option<bool>,
         search: Option<&str>,
@@ -464,14 +520,14 @@ impl RoleRepository for SqliteRoleRepository {
         self.find_all(&params).await
     }
 
-    async fn update_enabled_status(&self, id: &str, _enabled: bool) -> Result<bool> {
+    pub async fn update_enabled_status(&self, id: &str, _enabled: bool) -> Result<bool> {
         match self.find_by_id(id).await? {
             Some(_) => Ok(true),
             None => Ok(false),
         }
     }
 
-    async fn get_permissions(&self, role_id: &str) -> Result<Vec<String>> {
+    pub async fn get_permissions(&self, role_id: &str) -> Result<Vec<String>> {
         let rows = sqlx::query_scalar::<_, String>("SELECT permission_id FROM role_permissions WHERE role_id = ?")
             .bind(role_id)
             .fetch_all(self.database.pool())
@@ -480,7 +536,7 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(rows)
     }
 
-    async fn update_permissions(&self, role_id: &str, permission_ids: &[String]) -> Result<()> {
+    pub async fn update_permissions(&self, role_id: &str, permission_ids: &[String]) -> Result<()> {
         let mut tx = self.database.pool().begin().await?;
 
         sqlx::query("DELETE FROM role_permissions WHERE role_id = ?")

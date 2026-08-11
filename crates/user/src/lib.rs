@@ -14,13 +14,13 @@ pub mod handler;
 pub mod legacy;
 pub mod password;
 pub mod permission;
-pub mod repo;
 pub mod role;
 pub mod service;
 pub mod types;
 
-pub use repo::*;
+// Repositories live in the db crate (E4 集中化); re-exported for compatibility.
 pub use service::UserService;
+pub use tinyiothub_storage::user::UserRepository;
 pub use types::*;
 
 /// User domain state slice — Arc'd services only, derived from the

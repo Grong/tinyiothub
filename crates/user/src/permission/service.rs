@@ -3,22 +3,22 @@ use std::sync::Arc;
 use tinyiothub_core::error::Result;
 
 use super::{
-    repo::{PermissionGroupRepository, PermissionRepository},
     types::{
         CreatePermissionGroupRequest, CreatePermissionRequest, Permission, PermissionGroup, PermissionQuery,
         UpdatePermissionRequest,
     },
+    types::{PermissionGroupRepository, PermissionRepository},
 };
 
 pub struct PermissionService {
-    permission_repository: Arc<dyn PermissionRepository>,
-    permission_group_repository: Arc<dyn PermissionGroupRepository>,
+    permission_repository: Arc<PermissionRepository>,
+    permission_group_repository: Arc<PermissionGroupRepository>,
 }
 
 impl PermissionService {
     pub fn new(
-        permission_repository: Arc<dyn PermissionRepository>,
-        permission_group_repository: Arc<dyn PermissionGroupRepository>,
+        permission_repository: Arc<PermissionRepository>,
+        permission_group_repository: Arc<PermissionGroupRepository>,
     ) -> Self {
         Self {
             permission_repository,

@@ -43,18 +43,30 @@ pub mod models;
 pub mod notification_channel;
 /// Notification rule/history persistence + row types.
 pub mod notify;
+/// Permission + permission group persistence and row types.
+pub mod permission;
 /// Autonomy policy persistence + row types.
 pub mod policy;
 /// Migrating SQLite pool creation (foreign keys on, runs embedded migrations).
 pub mod pool;
+/// Role persistence and row types.
+pub mod role;
+/// SQL escaping helpers.
+pub mod sql_security;
 /// Unified storage facade.
 pub mod storage;
+/// Tenant + API key persistence and row types.
+pub mod tenant;
 /// Tenant-aware cron repository adapters.
 pub mod tenant_cron;
 /// Tenant-aware device repository adapters.
 pub mod tenant_device;
 /// Repository traits (legacy inversion — 逐领域评估削除).
 pub mod traits;
+/// User persistence and row types.
+pub mod user;
+/// Workspace + knowledge resource persistence and row types.
+pub mod workspace;
 
 /// Test helpers for crates that need a fully-migrated in-memory pool.
 pub mod test_helpers {

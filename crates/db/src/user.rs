@@ -1,68 +1,157 @@
-use async_trait::async_trait;
+//! User 持久化：用户账户（P-集中化 E4，自 user crate 迁入）。
+
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
 use tinyiothub_core::error::{Error, Result};
-use tinyiothub_storage::Database;
 
-use super::types::{CreateUserRequest, UpdateUserRequest, User, UserStatisticsNew};
+use crate::database::Database;
 
-/// Repository interface for user persistence
-#[async_trait]
-pub trait UserRepository: Send + Sync {
-    /// Find a user by its ID
-    async fn find_by_id(&self, id: &str) -> Result<Option<User>>;
+// ──────────────────────────────────────────────
+// 持久化类型（DB 行 + 仓储契约）— 自领域 crate 迁入
+// ──────────────────────────────────────────────
 
-    /// Find a user by its username
-    async fn find_by_username(&self, username: &str) -> Result<Option<User>>;
-
-    /// Find a user by its email
-    async fn find_by_email(&self, email: &str) -> Result<Option<User>>;
-
-    /// Find users matching the given criteria
-    async fn find_all(&self, criteria: &UserCriteria) -> Result<Vec<User>>;
-
-    /// Count users matching the given criteria
-    async fn count(&self, criteria: &UserCriteria) -> Result<i64>;
-
-    /// Create a new user
-    async fn create(&self, request: &CreateUserRequest) -> Result<User>;
-
-    /// Update an existing user
-    async fn update(&self, id: &str, request: &UpdateUserRequest) -> Result<User>;
-
-    /// Delete a user by its ID
-    async fn delete(&self, id: &str) -> Result<u64>;
-
-    /// Find users with enabled/search filters and pagination
-    async fn find_with_filters(
-        &self,
-        enabled: Option<bool>,
-        search: Option<String>,
-        page: u32,
-        page_size: u32,
-    ) -> Result<Vec<User>>;
-
-    /// Check if a user with the given username exists
-    async fn exists_by_username(&self, username: &str) -> Result<bool>;
-
-    /// Check if a user with the given email exists
-    async fn exists_by_email(&self, email: &str) -> Result<bool>;
-
-    /// Check if a user with the given phone exists
-    async fn exists_by_phone(&self, phone: &str) -> Result<bool>;
-
-    /// Update the enabled status of a user
-    async fn update_enabled_status(&self, id: &str, enabled: bool) -> Result<User>;
-
-    /// Update the password of a user (already hashed)
-    async fn update_password(&self, id: &str, hashed_password: &str) -> Result<()>;
-
-    /// Update the last login time of a user
-    async fn update_last_login(&self, id: &str) -> Result<()>;
-
-    /// Get user statistics
-    async fn get_user_statistics(&self) -> Result<UserStatisticsNew>;
+/// User entity
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct User {
+    pub id: String,
+    pub username: String,
+    pub password_hash: String,
+    pub email: Option<String>,
+    pub phone: Option<String>,
+    pub display_name: Option<String>,
+    pub is_enabled: bool,
+    pub parent_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_login_at: Option<String>,
 }
+
+/// UserDTO (for API responses)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct UserDto {
+    pub id: String,
+    pub username: String,
+    pub email: Option<String>,
+    pub phone: Option<String>,
+    pub display_name: Option<String>,
+    pub is_enabled: bool,
+    pub parent_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_login_at: Option<String>,
+}
+
+/// User statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct UserStatistics {
+    pub total_users: i64,
+    pub enabled_users: i64,
+    pub disabled_users: i64,
+    pub recent_logins: i64,
+}
+
+/// Backward compatibility alias
+pub type UserStatisticsNew = UserStatistics;
+
+/// User query parameters
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct UserQueryParams {
+    pub username: Option<String>,
+    pub email: Option<String>,
+    pub display_name: Option<String>,
+    pub is_enabled: Option<bool>,
+    pub parent_id: Option<String>,
+    pub page: Option<u32>,
+    pub page_size: Option<u32>,
+}
+
+/// Create user request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CreateUserRequest {
+    pub username: String,
+    pub password: String,
+    pub email: Option<String>,
+    pub phone: Option<String>,
+    #[serde(alias = "name")]
+    pub display_name: Option<String>,
+    pub is_enabled: Option<bool>,
+    pub parent_id: Option<String>,
+}
+
+/// Update user request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct UpdateUserRequest {
+    pub username: Option<String>,
+    pub email: Option<String>,
+    pub phone: Option<String>,
+    pub display_name: Option<String>,
+    pub is_enabled: Option<bool>,
+    pub parent_id: Option<String>,
+}
+
+/// Login request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+/// Change password request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ChangePasswordRequest {
+    pub old_password: String,
+    pub new_password: String,
+}
+
+impl User {
+    /// Get user display name
+    pub fn get_display_name(&self) -> &str {
+        self.display_name.as_ref().unwrap_or(&self.username)
+    }
+
+    /// Check if user is enabled
+    pub fn is_enabled(&self) -> bool {
+        self.is_enabled
+    }
+
+    /// Check if user has parent
+    pub fn has_parent(&self) -> bool {
+        self.parent_id.is_some()
+    }
+
+    /// Convert user to DTO
+    pub fn to_dto(&self) -> UserDto {
+        UserDto {
+            id: self.id.clone(),
+            username: self.username.clone(),
+            email: self.email.clone(),
+            phone: self.phone.clone(),
+            display_name: self.display_name.clone(),
+            is_enabled: self.is_enabled,
+            parent_id: self.parent_id.clone(),
+            created_at: self.created_at.clone(),
+            updated_at: self.updated_at.clone(),
+            last_login_at: self.last_login_at.clone(),
+        }
+    }
+
+    /// Convert user list to DTO list
+    pub fn to_dto_list(users: Vec<User>) -> Vec<UserDto> {
+        users.into_iter().map(|user| user.to_dto()).collect()
+    }
+}
+
+// ──────────────────────────────────────────────
+// Repository
+// ──────────────────────────────────────────────
 
 /// Criteria for querying users
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -263,19 +352,18 @@ impl From<UserRow> for User {
 
 /// SQLite implementation of UserRepository
 #[derive(Debug, Clone)]
-pub struct SqliteUserRepository {
+pub struct UserRepository {
     database: Database,
 }
 
-impl SqliteUserRepository {
+impl UserRepository {
     pub fn new(database: Database) -> Self {
         Self { database }
     }
 }
 
-#[async_trait]
-impl UserRepository for SqliteUserRepository {
-    async fn find_by_id(&self, id: &str) -> Result<Option<User>> {
+impl UserRepository {
+    pub async fn find_by_id(&self, id: &str) -> Result<Option<User>> {
         let row = sqlx::query_as::<_, UserRow>(
             r#"
             SELECT id, username, password_hash, email, phone, display_name,
@@ -290,7 +378,7 @@ impl UserRepository for SqliteUserRepository {
         Ok(row.map(Into::into))
     }
 
-    async fn find_by_username(&self, username: &str) -> Result<Option<User>> {
+    pub async fn find_by_username(&self, username: &str) -> Result<Option<User>> {
         let row = sqlx::query_as::<_, UserRow>(
             r#"
             SELECT id, username, password_hash, email, phone, display_name,
@@ -305,7 +393,7 @@ impl UserRepository for SqliteUserRepository {
         Ok(row.map(Into::into))
     }
 
-    async fn find_by_email(&self, email: &str) -> Result<Option<User>> {
+    pub async fn find_by_email(&self, email: &str) -> Result<Option<User>> {
         let row = sqlx::query_as::<_, UserRow>(
             r#"
             SELECT id, username, password_hash, email, phone, display_name,
@@ -320,7 +408,7 @@ impl UserRepository for SqliteUserRepository {
         Ok(row.map(Into::into))
     }
 
-    async fn find_all(&self, criteria: &UserCriteria) -> Result<Vec<User>> {
+    pub async fn find_all(&self, criteria: &UserCriteria) -> Result<Vec<User>> {
         let mut builder = QueryBuilder::new(
             r#"
             SELECT id, username, password_hash, email, phone, display_name,
@@ -384,7 +472,7 @@ impl UserRepository for SqliteUserRepository {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    async fn count(&self, criteria: &UserCriteria) -> Result<i64> {
+    pub async fn count(&self, criteria: &UserCriteria) -> Result<i64> {
         let mut builder = QueryBuilder::new("SELECT COUNT(*) as count FROM users WHERE 1=1");
 
         if let Some(username) = &criteria.username {
@@ -422,7 +510,7 @@ impl UserRepository for SqliteUserRepository {
         Ok(count)
     }
 
-    async fn create(&self, request: &CreateUserRequest) -> Result<User> {
+    pub async fn create(&self, request: &CreateUserRequest) -> Result<User> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -450,7 +538,7 @@ impl UserRepository for SqliteUserRepository {
         self.find_by_id(&id).await?.ok_or(Error::NotFound)
     }
 
-    async fn update(&self, id: &str, request: &UpdateUserRequest) -> Result<User> {
+    pub async fn update(&self, id: &str, request: &UpdateUserRequest) -> Result<User> {
         let mut tx = self.database.pool().begin().await?;
 
         let mut builder = QueryBuilder::new("UPDATE users SET ");
@@ -537,7 +625,7 @@ impl UserRepository for SqliteUserRepository {
         }
     }
 
-    async fn delete(&self, id: &str) -> Result<u64> {
+    pub async fn delete(&self, id: &str) -> Result<u64> {
         let result = sqlx::query("DELETE FROM users WHERE id = ?")
             .bind(id)
             .execute(self.database.pool())
@@ -545,7 +633,7 @@ impl UserRepository for SqliteUserRepository {
         Ok(result.rows_affected())
     }
 
-    async fn find_with_filters(
+    pub async fn find_with_filters(
         &self,
         enabled: Option<bool>,
         search: Option<String>,
@@ -563,7 +651,7 @@ impl UserRepository for SqliteUserRepository {
         self.find_all(&criteria).await
     }
 
-    async fn exists_by_username(&self, username: &str) -> Result<bool> {
+    pub async fn exists_by_username(&self, username: &str) -> Result<bool> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE username = ?")
             .bind(username)
             .fetch_one(self.database.pool())
@@ -571,7 +659,7 @@ impl UserRepository for SqliteUserRepository {
         Ok(count > 0)
     }
 
-    async fn exists_by_email(&self, email: &str) -> Result<bool> {
+    pub async fn exists_by_email(&self, email: &str) -> Result<bool> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE email = ?")
             .bind(email)
             .fetch_one(self.database.pool())
@@ -579,7 +667,7 @@ impl UserRepository for SqliteUserRepository {
         Ok(count > 0)
     }
 
-    async fn exists_by_phone(&self, phone: &str) -> Result<bool> {
+    pub async fn exists_by_phone(&self, phone: &str) -> Result<bool> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE phone = ?")
             .bind(phone)
             .fetch_one(self.database.pool())
@@ -587,7 +675,7 @@ impl UserRepository for SqliteUserRepository {
         Ok(count > 0)
     }
 
-    async fn update_enabled_status(&self, id: &str, enabled: bool) -> Result<User> {
+    pub async fn update_enabled_status(&self, id: &str, enabled: bool) -> Result<User> {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         let result = sqlx::query("UPDATE users SET is_enabled = ?, updated_at = ? WHERE id = ?")
@@ -604,7 +692,7 @@ impl UserRepository for SqliteUserRepository {
         self.find_by_id(id).await?.ok_or(Error::NotFound)
     }
 
-    async fn update_password(&self, id: &str, hashed_password: &str) -> Result<()> {
+    pub async fn update_password(&self, id: &str, hashed_password: &str) -> Result<()> {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         let result = sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
@@ -621,7 +709,7 @@ impl UserRepository for SqliteUserRepository {
         Ok(())
     }
 
-    async fn update_last_login(&self, id: &str) -> Result<()> {
+    pub async fn update_last_login(&self, id: &str) -> Result<()> {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         sqlx::query("UPDATE users SET last_login_at = ? WHERE id = ?")
@@ -633,7 +721,7 @@ impl UserRepository for SqliteUserRepository {
         Ok(())
     }
 
-    async fn get_user_statistics(&self) -> Result<UserStatisticsNew> {
+    pub async fn get_user_statistics(&self) -> Result<UserStatisticsNew> {
         let total_users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
             .fetch_one(self.database.pool())
             .await?;

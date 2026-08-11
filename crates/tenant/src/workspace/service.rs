@@ -7,20 +7,20 @@ use tinyiothub_agent::loop_::{
 use tinyiothub_core::agent_hooks::AgentHooks;
 
 use super::{
-    repo::WorkspaceRepository,
+    types::WorkspaceRepository,
     types::{ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount},
 };
 use tinyiothub_core::error::Result;
 
 pub struct WorkspaceService {
-    repository: Arc<dyn WorkspaceRepository>,
+    repository: Arc<WorkspaceRepository>,
     event_publisher: Mutex<Option<Arc<AiEventPublisher>>>,
     heartbeat_task_repo: Mutex<Option<Arc<dyn HeartbeatTaskRepository>>>,
     agent_hooks: Mutex<Option<Arc<dyn AgentHooks>>>,
 }
 
 impl WorkspaceService {
-    pub fn new(repository: Arc<dyn WorkspaceRepository>) -> Self {
+    pub fn new(repository: Arc<WorkspaceRepository>) -> Self {
         Self {
             repository,
             event_publisher: Mutex::new(None),
@@ -224,129 +224,30 @@ mod tests {
     use super::*;
     use crate::workspace::types::WorkspaceResource;
 
-    struct MockWorkspaceRepository {
-        delete_fails: std::sync::atomic::AtomicBool,
+    /// 真实 SQLite 版 workspace repo（E4 去 trait 后替代 MockWorkspaceRepository）。
+    /// 返回 (repo, pool)：pool 用于 delete-failure 测试 DROP TABLE 注入故障。
+    async fn real_repo() -> (Arc<WorkspaceRepository>, sqlx::SqlitePool) {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .expect("in-memory sqlite");
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .expect("migrations");
+        // workspaces.tenant_id FK：预置 tenant_1（测试租户）
+        sqlx::query("INSERT INTO tenants (id, name, slug) VALUES ('tenant_1', 'T1', 't1')")
+            .execute(&pool)
+            .await
+            .expect("seed tenant");
+        (
+            Arc::new(WorkspaceRepository::new(tinyiothub_storage::Database::new(
+                pool.clone(),
+            ))),
+            pool,
+        )
     }
 
-    impl Default for MockWorkspaceRepository {
-        fn default() -> Self {
-            Self {
-                delete_fails: std::sync::atomic::AtomicBool::new(false),
-            }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl WorkspaceRepository for MockWorkspaceRepository {
-        async fn find_by_id(&self, _id: &str) -> Result<Option<WorkspaceWithDeviceCount>> {
-            unimplemented!()
-        }
-        async fn find_by_tenant(
-            &self,
-            _tenant_id: &str,
-            _page: Option<u32>,
-            _page_size: Option<u32>,
-        ) -> Result<Vec<WorkspaceWithDeviceCount>> {
-            unimplemented!()
-        }
-        async fn create(
-            &self,
-            tenant_id: &str,
-            name: &str,
-            description: Option<&str>,
-            _agent_id: Option<&str>,
-            _agent_config: Option<&str>,
-        ) -> Result<Workspace> {
-            Ok(Workspace {
-                id: "ws_test".to_string(),
-                name: name.to_string(),
-                description: description.map(|s| s.to_string()),
-                tenant_id: tenant_id.to_string(),
-                agent_id: None,
-                agent_config: None,
-                require_action_confirm: true,
-                created_at: String::new(),
-                updated_at: String::new(),
-            })
-        }
-        async fn update(
-            &self,
-            _id: &str,
-            _name: Option<&str>,
-            _description: Option<&str>,
-            _agent_id: Option<&str>,
-            _agent_config: Option<&str>,
-            _require_action_confirm: Option<bool>,
-        ) -> Result<Option<WorkspaceWithDeviceCount>> {
-            unimplemented!()
-        }
-        async fn delete(&self, _id: &str) -> Result<()> {
-            if self.delete_fails.load(std::sync::atomic::Ordering::SeqCst) {
-                return Err(tinyiothub_core::error::Error::Internal("db down".into()));
-            }
-            Ok(())
-        }
-        async fn assign_device(&self, _device_id: &str, _workspace_id: &str) -> Result<()> {
-            unimplemented!()
-        }
-        async fn list_resources(
-            &self,
-            _workspace_id: &str,
-            _resource_type: Option<ResourceType>,
-            _page: Option<u32>,
-            _page_size: Option<u32>,
-        ) -> Result<Vec<WorkspaceResource>> {
-            unimplemented!()
-        }
-        async fn find_resource_by_id(
-            &self,
-            _workspace_id: &str,
-            _resource_id: &str,
-        ) -> Result<Option<WorkspaceResource>> {
-            unimplemented!()
-        }
-        async fn create_resource(
-            &self,
-            _workspace_id: &str,
-            _resource_type: ResourceType,
-            _name: &str,
-            _description: Option<&str>,
-            _file_path: &str,
-            _tags: &[String],
-            _metadata: Option<&str>,
-        ) -> Result<WorkspaceResource> {
-            unimplemented!()
-        }
-        async fn update_resource(
-            &self,
-            _workspace_id: &str,
-            _resource_id: &str,
-            _name: Option<&str>,
-            _description: Option<&str>,
-            _tags: Option<&[String]>,
-            _metadata: Option<&str>,
-        ) -> Result<Option<WorkspaceResource>> {
-            unimplemented!()
-        }
-        async fn delete_resource(&self, _workspace_id: &str, _resource_id: &str) -> Result<()> {
-            unimplemented!()
-        }
-        async fn search_resources(
-            &self,
-            _workspace_id: &str,
-            _query: &str,
-            _resource_type: Option<ResourceType>,
-            _limit: i64,
-        ) -> Result<Vec<ResourceSearchResult>> {
-            unimplemented!()
-        }
-        async fn find_all_ids(&self) -> Result<Vec<String>> {
-            unimplemented!()
-        }
-    }
-
-    /// In-memory heartbeat task repo — the concrete Sqlite repo lives in the
-    /// agent module, which workspace must not reference (P4.0d).
     struct MockHeartbeatTaskRepo {
         tasks: Mutex<Vec<tinyiothub_agent::loop_::heartbeat::types::HeartbeatTask>>,
     }
@@ -496,24 +397,26 @@ mod tests {
 
     #[tokio::test]
     async fn create_seeds_default_heartbeat_tasks() {
-        let service = WorkspaceService::new(Arc::new(MockWorkspaceRepository::default()));
+        let (ws_repo, _pool) = real_repo().await;
+        let service = WorkspaceService::new(ws_repo);
         let repo = Arc::new(MockHeartbeatTaskRepo::new());
         service.set_heartbeat_task_repo(repo.clone());
         service.set_agent_hooks(Arc::new(StubAgentHooks));
 
-        service
+        let ws = service
             .create("tenant_1", "ws", None, None, None)
             .await
             .expect("create");
 
-        let tasks = repo.list_by_workspace("ws_test").await.expect("list tasks");
+        let tasks = repo.list_by_workspace(&ws.id).await.expect("list tasks");
         assert_eq!(tasks.len(), 4, "new workspace gets the default heartbeat task set");
         assert!(tasks.iter().any(|t| t.priority == "high" && !t.paused));
     }
 
     #[tokio::test]
     async fn create_without_task_repo_still_succeeds() {
-        let service = WorkspaceService::new(Arc::new(MockWorkspaceRepository::default()));
+        let (ws_repo, _pool) = real_repo().await;
+        let service = WorkspaceService::new(ws_repo);
         service
             .create("tenant_1", "ws", None, None, None)
             .await
@@ -522,9 +425,13 @@ mod tests {
 
     #[tokio::test]
     async fn delete_failure_does_not_publish_workspace_deleted() {
-        let repo = Arc::new(MockWorkspaceRepository::default());
-        repo.delete_fails.store(true, std::sync::atomic::Ordering::SeqCst);
-        let service = WorkspaceService::new(repo);
+        let (ws_repo, pool) = real_repo().await;
+        // 故障注入：DROP workspaces 表使 delete 必然报错（等效原 mock 的 delete_fails）
+        sqlx::query("DROP TABLE workspaces")
+            .execute(&pool)
+            .await
+            .expect("drop table");
+        let service = WorkspaceService::new(ws_repo);
         let publisher = Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
         service.set_event_publisher(publisher.clone());
 
@@ -541,7 +448,8 @@ mod tests {
 
     #[tokio::test]
     async fn delete_success_publishes_workspace_deleted() {
-        let service = WorkspaceService::new(Arc::new(MockWorkspaceRepository::default()));
+        let (ws_repo, _pool) = real_repo().await;
+        let service = WorkspaceService::new(ws_repo);
         let publisher = Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
         service.set_event_publisher(publisher.clone());
 

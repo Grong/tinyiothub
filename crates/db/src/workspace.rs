@@ -1,80 +1,316 @@
-use async_trait::async_trait;
+//! Workspace 持久化：工作区与知识资源（P-集中化 E4，自 tenant crate 迁入）。
+
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder};
 use tinyiothub_core::error::{Error, Result};
-use tinyiothub_storage::Database;
 
-use super::types::{
-    ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount,
-    extract_file_path_from_content,
-};
+use crate::database::Database;
 use crate::sql_security::escape_like_pattern;
 
-/// Repository interface for workspace persistence
-#[async_trait]
-pub trait WorkspaceRepository: Send + Sync {
-    async fn find_by_id(&self, id: &str) -> Result<Option<WorkspaceWithDeviceCount>>;
-    async fn find_by_tenant(
-        &self,
-        tenant_id: &str,
-        page: Option<u32>,
-        page_size: Option<u32>,
-    ) -> Result<Vec<WorkspaceWithDeviceCount>>;
-    async fn create(
-        &self,
-        tenant_id: &str,
-        name: &str,
-        description: Option<&str>,
-        agent_id: Option<&str>,
-        agent_config: Option<&str>,
-    ) -> Result<Workspace>;
-    async fn update(
-        &self,
-        id: &str,
-        name: Option<&str>,
-        description: Option<&str>,
-        agent_id: Option<&str>,
-        agent_config: Option<&str>,
-        require_action_confirm: Option<bool>,
-    ) -> Result<Option<WorkspaceWithDeviceCount>>;
-    async fn delete(&self, id: &str) -> Result<()>;
-    async fn assign_device(&self, device_id: &str, workspace_id: &str) -> Result<()>;
-    async fn list_resources(
-        &self,
-        workspace_id: &str,
-        resource_type: Option<ResourceType>,
-        page: Option<u32>,
-        page_size: Option<u32>,
-    ) -> Result<Vec<WorkspaceResource>>;
-    async fn find_resource_by_id(&self, workspace_id: &str, resource_id: &str) -> Result<Option<WorkspaceResource>>;
-    async fn create_resource(
-        &self,
-        workspace_id: &str,
-        resource_type: ResourceType,
-        name: &str,
-        description: Option<&str>,
-        file_path: &str,
-        tags: &[String],
-        metadata: Option<&str>,
-    ) -> Result<WorkspaceResource>;
-    async fn update_resource(
-        &self,
-        workspace_id: &str,
-        resource_id: &str,
-        name: Option<&str>,
-        description: Option<&str>,
-        tags: Option<&[String]>,
-        metadata: Option<&str>,
-    ) -> Result<Option<WorkspaceResource>>;
-    async fn delete_resource(&self, workspace_id: &str, resource_id: &str) -> Result<()>;
-    async fn search_resources(
-        &self,
-        workspace_id: &str,
-        query: &str,
-        resource_type: Option<ResourceType>,
-        limit: i64,
-    ) -> Result<Vec<ResourceSearchResult>>;
-    async fn find_all_ids(&self) -> Result<Vec<String>>;
+// ──────────────────────────────────────────────
+// 持久化类型（DB 行 + 仓储契约）— 自领域 crate 迁入
+// ──────────────────────────────────────────────
+
+/// Workspace entity
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct Workspace {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub tenant_id: String,
+    pub agent_id: Option<String>,
+    pub agent_config: Option<String>,
+    pub require_action_confirm: bool,
+    pub created_at: String,
+    pub updated_at: String,
 }
+
+/// Workspace with device count (for list responses)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkspaceWithDeviceCount {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub tenant_id: String,
+    pub agent_id: Option<String>,
+    pub require_action_confirm: Option<bool>,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+}
+
+/// Create workspace request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CreateWorkspaceRequest {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+/// Update workspace request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct UpdateWorkspaceRequest {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub agent_config: Option<String>,
+    pub require_action_confirm: Option<bool>,
+}
+
+/// Assign device request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AssignDeviceRequest {
+    pub device_id: String,
+}
+
+/// Resource type: File (uploaded binaries) or Document (markdown knowledge).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceType {
+    File,
+    Document,
+}
+
+impl ResourceType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Document => "document",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::File => "文件",
+            Self::Document => "文档",
+        }
+    }
+
+    pub fn from_string(s: &str) -> Option<Self> {
+        match s {
+            "file" => Some(Self::File),
+            "document" => Some(Self::Document),
+            _ => None,
+        }
+    }
+
+    pub fn all() -> [Self; 2] {
+        [Self::File, Self::Document]
+    }
+}
+
+impl fmt::Display for ResourceType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Unified workspace resource (replaces workspace_resources + knowledge_documents)
+/// - type="document": content field is used
+/// - type="file": file_path is used (uploaded binaries)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkspaceResource {
+    pub id: String,
+    pub workspace_id: String,
+    pub resource_type: ResourceType,
+    pub name: String,
+    pub description: Option<String>,
+    pub content: Option<String>,
+    pub file_path: String,
+    pub file_size: Option<i64>,
+    pub tags: Vec<String>,
+    pub metadata: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Search result with relevance score
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ResourceSearchResult {
+    pub id: String,
+    pub workspace_id: String,
+    pub resource_type: ResourceType,
+    pub name: String,
+    pub description: Option<String>,
+    pub content: Option<String>,
+    pub file_path: String,
+    pub file_size: Option<i64>,
+    pub tags: Vec<String>,
+    pub metadata: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub relevance: i64,
+}
+
+/// Create resource request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CreateResourceRequest {
+    pub name: String,
+    pub description: Option<String>,
+    pub resource_type: ResourceType,
+    pub content: Option<String>,
+    pub tags: Vec<String>,
+    pub metadata: Option<String>,
+    pub file_path: Option<String>,
+}
+
+/// Update resource request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct UpdateResourceRequest {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub content: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub metadata: Option<String>,
+}
+
+/// Suggest tags request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SuggestTagsRequest {
+    pub name: String,
+    pub resource_type: ResourceType,
+    pub description: Option<String>,
+}
+
+/// Resource query params
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct ResourceQueryParams {
+    pub page: Option<u32>,
+    pub page_size: Option<u32>,
+    pub resource_type: Option<ResourceType>,
+}
+
+/// Workspace query params
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkspaceQueryParams {
+    pub page: Option<u32>,
+    pub page_size: Option<u32>,
+}
+
+/// Extract a file path from document content when file_path is empty.
+/// Handles markdown image syntax `![alt](path)` and code blocks `\`\`\`3d\npath\n\`\`\``.
+pub fn extract_file_path_from_content(content: &str) -> String {
+    // Try markdown 3d code block first
+    if let Some(start) = content.find("```3d") {
+        let after = &content[start + 5..];
+        if let Some(nl) = after.find('\n') {
+            let rest = &after[nl + 1..];
+            if let Some(end) = rest.find("```") {
+                return rest[..end].trim().to_string();
+            }
+        }
+    }
+
+    // Try markdown image: ![alt](path)
+    if let Some(start) = content.find("![") {
+        let after = &content[start + 2..];
+        if let Some(close_bracket) = after.find("](") {
+            let after_path = &after[close_bracket + 2..];
+            if let Some(close_paren) = after_path.find(')') {
+                return after_path[..close_paren].trim().to_string();
+            }
+        }
+    }
+
+    // Fallback: raw /uploads/ path
+    if let Some(start) = content.find("/uploads/") {
+        let rest = &content[start..];
+        let end = rest.find(|c: char| c.is_whitespace() || c == ')').unwrap_or(rest.len());
+        return rest[..end].trim().to_string();
+    }
+
+    String::new()
+}
+
+impl Workspace {
+    pub fn new(id: String, name: String, description: Option<String>, tenant_id: String) -> Self {
+        let now = chrono::Utc::now().to_rfc3339();
+        Self {
+            id,
+            name,
+            description,
+            tenant_id,
+            agent_id: None,
+            agent_config: None,
+            require_action_confirm: true,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    pub fn with_agent(mut self, agent_id: String) -> Self {
+        self.agent_id = Some(agent_id);
+        self
+    }
+
+    pub fn with_config(mut self, config: String) -> Self {
+        self.agent_config = Some(config);
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_workspace_new() {
+        let ws = Workspace::new(
+            "ws-1".to_string(),
+            "Test Workspace".to_string(),
+            Some("A test workspace".to_string()),
+            "tenant-1".to_string(),
+        );
+        assert_eq!(ws.id, "ws-1");
+        assert_eq!(ws.name, "Test Workspace");
+        assert_eq!(ws.description, Some("A test workspace".to_string()));
+        assert_eq!(ws.tenant_id, "tenant-1");
+        assert!(ws.agent_id.is_none());
+        assert!(ws.agent_config.is_none());
+    }
+
+    #[test]
+    fn test_workspace_with_agent() {
+        let ws = Workspace::new("ws-1".to_string(), "Test".to_string(), None, "tenant-1".to_string())
+            .with_agent("agent-1".to_string());
+        assert_eq!(ws.agent_id, Some("agent-1".to_string()));
+    }
+
+    #[test]
+    fn test_workspace_with_config() {
+        let ws = Workspace::new("ws-1".to_string(), "Test".to_string(), None, "tenant-1".to_string())
+            .with_config(r#"{"model": "gpt-4"}"#.to_string());
+        assert_eq!(ws.agent_config, Some(r#"{"model": "gpt-4"}"#.to_string()));
+    }
+
+    #[test]
+    fn test_workspace_with_agent_and_config() {
+        let ws = Workspace::new("ws-1".to_string(), "Test".to_string(), None, "tenant-1".to_string())
+            .with_agent("agent-1".to_string())
+            .with_config("config".to_string());
+        assert_eq!(ws.agent_id, Some("agent-1".to_string()));
+        assert_eq!(ws.agent_config, Some("config".to_string()));
+    }
+}
+
+// ──────────────────────────────────────────────
+// Repository
+// ──────────────────────────────────────────────
 
 // --- SQLite implementation ---
 
@@ -196,19 +432,18 @@ impl From<ResourceSearchResultRow> for ResourceSearchResult {
 }
 
 #[derive(Debug, Clone)]
-pub struct SqliteWorkspaceRepository {
+pub struct WorkspaceRepository {
     database: Database,
 }
 
-impl SqliteWorkspaceRepository {
+impl WorkspaceRepository {
     pub fn new(database: Database) -> Self {
         Self { database }
     }
 }
 
-#[async_trait]
-impl WorkspaceRepository for SqliteWorkspaceRepository {
-    async fn find_by_id(&self, id: &str) -> Result<Option<WorkspaceWithDeviceCount>> {
+impl WorkspaceRepository {
+    pub async fn find_by_id(&self, id: &str) -> Result<Option<WorkspaceWithDeviceCount>> {
         let row = sqlx::query_as::<_, WorkspaceWithDeviceCountRow>(
             r#"
             SELECT
@@ -234,7 +469,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         Ok(row.map(Into::into))
     }
 
-    async fn find_by_tenant(
+    pub async fn find_by_tenant(
         &self,
         tenant_id: &str,
         page: Option<u32>,
@@ -273,7 +508,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    async fn create(
+    pub async fn create(
         &self,
         tenant_id: &str,
         name: &str,
@@ -314,7 +549,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         })
     }
 
-    async fn update(
+    pub async fn update(
         &self,
         id: &str,
         name: Option<&str>,
@@ -382,7 +617,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         self.find_by_id(id).await
     }
 
-    async fn delete(&self, id: &str) -> Result<()> {
+    pub async fn delete(&self, id: &str) -> Result<()> {
         sqlx::query("DELETE FROM workspaces WHERE id = ?")
             .bind(id)
             .execute(self.database.pool())
@@ -390,7 +625,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         Ok(())
     }
 
-    async fn assign_device(&self, device_id: &str, workspace_id: &str) -> Result<()> {
+    pub async fn assign_device(&self, device_id: &str, workspace_id: &str) -> Result<()> {
         let device: Option<(String, Option<String>)> =
             sqlx::query_as("SELECT id, workspace_id FROM devices WHERE id = ?")
                 .bind(device_id)
@@ -421,7 +656,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         Ok(())
     }
 
-    async fn list_resources(
+    pub async fn list_resources(
         &self,
         workspace_id: &str,
         resource_type: Option<ResourceType>,
@@ -468,7 +703,11 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    async fn find_resource_by_id(&self, workspace_id: &str, resource_id: &str) -> Result<Option<WorkspaceResource>> {
+    pub async fn find_resource_by_id(
+        &self,
+        workspace_id: &str,
+        resource_id: &str,
+    ) -> Result<Option<WorkspaceResource>> {
         let row = sqlx::query_as::<_, WorkspaceResourceRow>(
             r#"
             SELECT id, workspace_id, resource_type, name, description, content, file_path, file_size, tags, metadata, created_at, updated_at
@@ -484,7 +723,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         Ok(row.map(Into::into))
     }
 
-    async fn create_resource(
+    pub async fn create_resource(
         &self,
         workspace_id: &str,
         resource_type: ResourceType,
@@ -533,7 +772,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         })
     }
 
-    async fn update_resource(
+    pub async fn update_resource(
         &self,
         workspace_id: &str,
         resource_id: &str,
@@ -595,7 +834,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         self.find_resource_by_id(workspace_id, resource_id).await
     }
 
-    async fn delete_resource(&self, workspace_id: &str, resource_id: &str) -> Result<()> {
+    pub async fn delete_resource(&self, workspace_id: &str, resource_id: &str) -> Result<()> {
         sqlx::query("DELETE FROM resources WHERE workspace_id = ? AND id = ?")
             .bind(workspace_id)
             .bind(resource_id)
@@ -604,7 +843,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         Ok(())
     }
 
-    async fn search_resources(
+    pub async fn search_resources(
         &self,
         workspace_id: &str,
         query: &str,
@@ -679,7 +918,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    async fn find_all_ids(&self) -> Result<Vec<String>> {
+    pub async fn find_all_ids(&self) -> Result<Vec<String>> {
         let rows: Vec<(String,)> = sqlx::query_as("SELECT id FROM workspaces")
             .fetch_all(self.database.pool())
             .await?;
@@ -730,3 +969,4 @@ mod extract_tests {
         assert_eq!(extract_file_path_from_content(content), "/uploads/model.glb");
     }
 }
+

@@ -1,92 +1,171 @@
-use async_trait::async_trait;
+//! Tenant 持久化：租户与 API Key（P-集中化 E4，自 tenant crate 迁入）。
+//!
+//! 类型随 repo 住 db（方案 B）：Tenant/ApiKey 及请求/查询契约为 DB 行类型，
+//! tenant crate 保留 service/handler，经 re-export 兼容。
+
+use std::sync::Arc;
+
+use chrono::{DateTime, Utc};
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use tinyiothub_core::error::{Error, Result};
-use tinyiothub_storage::Database;
 
-use super::types::{
-    ApiKey, ApiUsageStats, CreateApiKeyRequest, CreateTenantRequest, SubscriptionPlan, Tenant, TenantUsage,
-};
+use crate::database::Database;
 
-/// Repository interface for tenant persistence
-#[async_trait]
-pub trait TenantRepository: Send + Sync {
-    /// Find all subscription plans
-    async fn find_all_plans(&self) -> Result<Vec<SubscriptionPlan>>;
+// ──────────────────────────────────────────────
+// 持久化类型（DB 行 + 仓储契约）— 自 tenant/types.rs 迁入
+// ──────────────────────────────────────────────
 
-    /// Find a subscription plan by ID
-    async fn find_plan_by_id(&self, id: &str) -> Result<Option<SubscriptionPlan>>;
-
-    /// Create a new tenant
-    async fn create_tenant(&self, req: &CreateTenantRequest) -> Result<Tenant>;
-
-    /// Find a tenant by ID
-    async fn find_tenant_by_id(&self, id: &str) -> Result<Option<Tenant>>;
-
-    /// Find a tenant by slug
-    async fn find_tenant_by_slug(&self, slug: &str) -> Result<Option<Tenant>>;
-
-    /// Get tenant usage statistics
-    async fn get_tenant_usage(&self, tenant_id: &str) -> Result<Option<TenantUsage>>;
-
-    /// Change tenant subscription plan
-    async fn change_plan(&self, tenant_id: &str, plan_id: &str) -> Result<Tenant>;
-
-    /// Suspend a tenant
-    async fn suspend_tenant(&self, tenant_id: &str) -> Result<Tenant>;
-
-    /// Activate a tenant
-    async fn activate_tenant(&self, tenant_id: &str) -> Result<Tenant>;
-
-    /// Create a new API key (returns the key and the raw key string)
-    async fn create_api_key(&self, workspace_id: &str, req: &CreateApiKeyRequest) -> Result<(ApiKey, String)>;
-
-    /// Find an API key by ID
-    async fn find_api_key_by_id(&self, id: &str) -> Result<Option<ApiKey>>;
-
-    /// Find an API key by prefix
-    async fn find_api_key_by_prefix(&self, prefix: &str) -> Result<Option<ApiKey>>;
-
-    /// Find an API key by hash
-    async fn find_api_key_by_hash(&self, key_hash: &str) -> Result<Option<ApiKey>>;
-
-    /// Find all API keys for a workspace
-    async fn find_api_keys_by_workspace(&self, workspace_id: &str) -> Result<Vec<ApiKey>>;
-
-    /// Revoke an API key
-    async fn revoke_api_key(&self, id: &str) -> Result<()>;
-
-    /// Enable an API key
-    async fn enable_api_key(&self, id: &str) -> Result<()>;
-
-    /// Disable an API key
-    async fn disable_api_key(&self, id: &str) -> Result<()>;
-
-    /// Record API usage
-    async fn record_api_usage(
-        &self,
-        workspace_id: &str,
-        api_key_id: Option<&str>,
-        method: &str,
-        path: &str,
-        status_code: i32,
-        latency_ms: i32,
-        ip_address: Option<&str>,
-    ) -> Result<()>;
-
-    /// Get API usage statistics
-    async fn get_api_usage_stats(&self, tenant_id: &str, days: i32) -> Result<ApiUsageStats>;
+/// Subscription plan
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SubscriptionPlan {
+    pub id: String,
+    pub name: String,
+    pub display_name: String,
+    pub description: Option<String>,
+    pub device_limit: i32,
+    pub api_call_limit: i32,
+    pub storage_mb: i32,
+    pub user_limit: i32,
+    pub price_monthly: f64,
+    pub price_yearly: f64,
+    pub features: String,
+    pub sort_order: i32,
+    pub created_at: String,
+    pub updated_at: String,
 }
+
+/// Tenant entity
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct Tenant {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    pub status: String,
+    pub plan_id: String,
+    pub subscription_status: String,
+    pub trial_expires_at: Option<String>,
+    pub billing_email: Option<String>,
+    pub billing_contact: Option<String>,
+    pub timezone: String,
+    pub locale: String,
+    pub custom_logo: Option<String>,
+    pub custom_theme: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Tenant query parameters
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct TenantQueryParams {
+    pub status: Option<String>,
+    pub plan_id: Option<String>,
+    pub page: Option<u32>,
+    pub page_size: Option<u32>,
+}
+
+/// Create tenant request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CreateTenantRequest {
+    pub name: String,
+    pub slug: String,
+    pub billing_email: Option<String>,
+    pub billing_contact: Option<String>,
+    pub timezone: Option<String>,
+    pub locale: Option<String>,
+}
+
+/// Update tenant request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct UpdateTenantRequest {
+    pub name: Option<String>,
+    pub billing_email: Option<String>,
+    pub billing_contact: Option<String>,
+    pub timezone: Option<String>,
+    pub locale: Option<String>,
+    pub custom_logo: Option<String>,
+    pub custom_theme: Option<String>,
+}
+
+/// Tenant usage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct TenantUsage {
+    pub id: String,
+    pub tenant_id: String,
+    pub device_count: i32,
+    pub api_call_count: i32,
+    pub api_call_reset_at: Option<String>,
+    pub storage_used_bytes: i64,
+    pub user_count: i32,
+    pub total_api_calls: i64,
+    pub total_api_errors: i64,
+    pub updated_at: String,
+}
+
+/// API Key entity
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ApiKey {
+    pub id: String,
+    pub workspace_id: String,
+    pub name: String,
+    pub key_hash: String,
+    pub prefix: String,
+    pub permissions: String,
+    pub rate_limit: i32,
+    pub is_enabled: bool,
+    pub is_revoked: bool,
+    pub last_used_at: Option<String>,
+    pub last_used_ip: Option<String>,
+    pub request_count: i64,
+    pub expires_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Create API Key request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CreateApiKeyRequest {
+    pub workspace_id: String,
+    pub name: String,
+    pub permissions: Option<Vec<String>>,
+    pub rate_limit: Option<i32>,
+    pub expires_in_days: Option<i32>,
+}
+
+/// API usage statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ApiUsageStats {
+    pub total_calls: i64,
+    pub success_calls: i64,
+    pub error_calls: i64,
+    pub avg_latency_ms: f64,
+    pub period_start: String,
+    pub period_end: String,
+}
+
+// ──────────────────────────────────────────────
+// Repository
+// ──────────────────────────────────────────────
 
 // --- SQLite implementation ---
 
 #[derive(Debug, Clone)]
-pub struct SqliteTenantRepository {
+pub struct TenantRepository {
     database: Database,
 }
 
-impl SqliteTenantRepository {
+impl TenantRepository {
     pub fn new(database: Database) -> Self {
         Self { database }
     }
@@ -99,9 +178,8 @@ fn generate_secure_key() -> String {
     bytes.iter().map(|b| CHARS[(b % 62) as usize] as char).collect()
 }
 
-#[async_trait]
-impl TenantRepository for SqliteTenantRepository {
-    async fn find_all_plans(&self) -> Result<Vec<SubscriptionPlan>> {
+impl TenantRepository {
+    pub async fn find_all_plans(&self) -> Result<Vec<SubscriptionPlan>> {
         let sql = "SELECT * FROM subscription_plans ORDER BY sort_order ASC";
 
         let plans = self
@@ -130,7 +208,7 @@ impl TenantRepository for SqliteTenantRepository {
         Ok(plans)
     }
 
-    async fn find_plan_by_id(&self, id: &str) -> Result<Option<SubscriptionPlan>> {
+    pub async fn find_plan_by_id(&self, id: &str) -> Result<Option<SubscriptionPlan>> {
         let row = sqlx::query("SELECT * FROM subscription_plans WHERE id = ? LIMIT 1")
             .bind(id)
             .fetch_optional(self.database.pool())
@@ -159,7 +237,7 @@ impl TenantRepository for SqliteTenantRepository {
         }
     }
 
-    async fn create_tenant(&self, req: &CreateTenantRequest) -> Result<Tenant> {
+    pub async fn create_tenant(&self, req: &CreateTenantRequest) -> Result<Tenant> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -207,7 +285,7 @@ impl TenantRepository for SqliteTenantRepository {
         self.find_tenant_by_id(&id).await?.ok_or(Error::NotFound)
     }
 
-    async fn find_tenant_by_id(&self, id: &str) -> Result<Option<Tenant>> {
+    pub async fn find_tenant_by_id(&self, id: &str) -> Result<Option<Tenant>> {
         let row = sqlx::query("SELECT * FROM tenants WHERE id = ? LIMIT 1")
             .bind(id)
             .fetch_optional(self.database.pool())
@@ -237,7 +315,7 @@ impl TenantRepository for SqliteTenantRepository {
         }
     }
 
-    async fn find_tenant_by_slug(&self, slug: &str) -> Result<Option<Tenant>> {
+    pub async fn find_tenant_by_slug(&self, slug: &str) -> Result<Option<Tenant>> {
         let row = sqlx::query("SELECT * FROM tenants WHERE slug = ? LIMIT 1")
             .bind(slug)
             .fetch_optional(self.database.pool())
@@ -267,7 +345,7 @@ impl TenantRepository for SqliteTenantRepository {
         }
     }
 
-    async fn get_tenant_usage(&self, tenant_id: &str) -> Result<Option<TenantUsage>> {
+    pub async fn get_tenant_usage(&self, tenant_id: &str) -> Result<Option<TenantUsage>> {
         let row = sqlx::query("SELECT * FROM tenant_usage WHERE tenant_id = ? LIMIT 1")
             .bind(tenant_id)
             .fetch_optional(self.database.pool())
@@ -292,7 +370,7 @@ impl TenantRepository for SqliteTenantRepository {
         }
     }
 
-    async fn change_plan(&self, tenant_id: &str, plan_id: &str) -> Result<Tenant> {
+    pub async fn change_plan(&self, tenant_id: &str, plan_id: &str) -> Result<Tenant> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         sqlx::query(
@@ -315,7 +393,7 @@ impl TenantRepository for SqliteTenantRepository {
         self.find_tenant_by_id(tenant_id).await?.ok_or(Error::NotFound)
     }
 
-    async fn suspend_tenant(&self, tenant_id: &str) -> Result<Tenant> {
+    pub async fn suspend_tenant(&self, tenant_id: &str) -> Result<Tenant> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         sqlx::query("UPDATE tenants SET status = 'suspended', updated_at = ? WHERE id = ?")
@@ -328,7 +406,7 @@ impl TenantRepository for SqliteTenantRepository {
         self.find_tenant_by_id(tenant_id).await?.ok_or(Error::NotFound)
     }
 
-    async fn activate_tenant(&self, tenant_id: &str) -> Result<Tenant> {
+    pub async fn activate_tenant(&self, tenant_id: &str) -> Result<Tenant> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         sqlx::query("UPDATE tenants SET status = 'active', updated_at = ? WHERE id = ?")
@@ -341,7 +419,7 @@ impl TenantRepository for SqliteTenantRepository {
         self.find_tenant_by_id(tenant_id).await?.ok_or(Error::NotFound)
     }
 
-    async fn create_api_key(&self, workspace_id: &str, req: &CreateApiKeyRequest) -> Result<(ApiKey, String)> {
+    pub async fn create_api_key(&self, workspace_id: &str, req: &CreateApiKeyRequest) -> Result<(ApiKey, String)> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -388,7 +466,7 @@ impl TenantRepository for SqliteTenantRepository {
         Ok((key, raw_key))
     }
 
-    async fn find_api_key_by_id(&self, id: &str) -> Result<Option<ApiKey>> {
+    pub async fn find_api_key_by_id(&self, id: &str) -> Result<Option<ApiKey>> {
         let row = sqlx::query("SELECT * FROM api_keys WHERE id = ? LIMIT 1")
             .bind(id)
             .fetch_optional(self.database.pool())
@@ -418,7 +496,7 @@ impl TenantRepository for SqliteTenantRepository {
         }
     }
 
-    async fn find_api_key_by_prefix(&self, prefix: &str) -> Result<Option<ApiKey>> {
+    pub async fn find_api_key_by_prefix(&self, prefix: &str) -> Result<Option<ApiKey>> {
         let row = sqlx::query("SELECT * FROM api_keys WHERE prefix = ? AND is_revoked = 0 LIMIT 1")
             .bind(prefix)
             .fetch_optional(self.database.pool())
@@ -448,7 +526,7 @@ impl TenantRepository for SqliteTenantRepository {
         }
     }
 
-    async fn find_api_key_by_hash(&self, key_hash: &str) -> Result<Option<ApiKey>> {
+    pub async fn find_api_key_by_hash(&self, key_hash: &str) -> Result<Option<ApiKey>> {
         let row = sqlx::query("SELECT * FROM api_keys WHERE key_hash = ? AND is_revoked = 0 LIMIT 1")
             .bind(key_hash)
             .fetch_optional(self.database.pool())
@@ -478,7 +556,7 @@ impl TenantRepository for SqliteTenantRepository {
         }
     }
 
-    async fn find_api_keys_by_workspace(&self, workspace_id: &str) -> Result<Vec<ApiKey>> {
+    pub async fn find_api_keys_by_workspace(&self, workspace_id: &str) -> Result<Vec<ApiKey>> {
         let sql = "SELECT * FROM api_keys WHERE workspace_id = ? AND is_revoked = 0 ORDER BY created_at DESC";
 
         let mut rows = sqlx::query(sql)
@@ -509,7 +587,7 @@ impl TenantRepository for SqliteTenantRepository {
             .collect())
     }
 
-    async fn revoke_api_key(&self, id: &str) -> Result<()> {
+    pub async fn revoke_api_key(&self, id: &str) -> Result<()> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         sqlx::query("UPDATE api_keys SET is_revoked = 1, updated_at = ? WHERE id = ?")
@@ -521,7 +599,7 @@ impl TenantRepository for SqliteTenantRepository {
         Ok(())
     }
 
-    async fn enable_api_key(&self, id: &str) -> Result<()> {
+    pub async fn enable_api_key(&self, id: &str) -> Result<()> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         sqlx::query("UPDATE api_keys SET is_enabled = 1, updated_at = ? WHERE id = ?")
@@ -533,7 +611,7 @@ impl TenantRepository for SqliteTenantRepository {
         Ok(())
     }
 
-    async fn disable_api_key(&self, id: &str) -> Result<()> {
+    pub async fn disable_api_key(&self, id: &str) -> Result<()> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         sqlx::query("UPDATE api_keys SET is_enabled = 0, updated_at = ? WHERE id = ?")
@@ -545,7 +623,7 @@ impl TenantRepository for SqliteTenantRepository {
         Ok(())
     }
 
-    async fn record_api_usage(
+    pub async fn record_api_usage(
         &self,
         workspace_id: &str,
         api_key_id: Option<&str>,
@@ -627,7 +705,7 @@ impl TenantRepository for SqliteTenantRepository {
         Ok(())
     }
 
-    async fn get_api_usage_stats(&self, tenant_id: &str, days: i32) -> Result<ApiUsageStats> {
+    pub async fn get_api_usage_stats(&self, tenant_id: &str, days: i32) -> Result<ApiUsageStats> {
         let cutoff_date = (chrono::Utc::now() - chrono::Duration::days(days as i64))
             .format("%Y-%m-%d %H:%M:%S")
             .to_string();

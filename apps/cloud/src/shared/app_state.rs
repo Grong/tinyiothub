@@ -305,19 +305,19 @@ impl AppState {
         alarm_service.set_device_cache(device_cache.clone());
 
         // 用户服务
-        let user_repository: Arc<dyn tinyiothub_user::UserRepository> =
-            Arc::new(tinyiothub_user::SqliteUserRepository::new(database.as_ref().clone()));
+        let user_repository: Arc<tinyiothub_user::UserRepository> =
+            Arc::new(tinyiothub_storage::user::UserRepository::new(database.as_ref().clone()));
         let user_service = Arc::new(tinyiothub_user::UserService::new(user_repository));
 
         // 租户服务
-        let tenant_repository: Arc<dyn tinyiothub_tenant::TenantRepository> = Arc::new(
-            tinyiothub_tenant::SqliteTenantRepository::new(database.as_ref().clone()),
+        let tenant_repository: Arc<tinyiothub_tenant::TenantRepository> = Arc::new(
+            tinyiothub_storage::tenant::TenantRepository::new(database.as_ref().clone()),
         );
         let tenant_service = Arc::new(tinyiothub_tenant::TenantService::new(tenant_repository));
 
         // 工作空间服务
-        let workspace_repository: Arc<dyn tinyiothub_tenant::WorkspaceRepository> = Arc::new(
-            tinyiothub_tenant::SqliteWorkspaceRepository::new(database.as_ref().clone()),
+        let workspace_repository: Arc<tinyiothub_tenant::WorkspaceRepository> = Arc::new(
+            tinyiothub_storage::workspace::WorkspaceRepository::new(database.as_ref().clone()),
         );
         let workspace_service = Arc::new(tinyiothub_tenant::WorkspaceService::new(workspace_repository));
 
@@ -328,17 +328,16 @@ impl AppState {
         ));
 
         // 角色服务
-        let role_repository: Arc<dyn tinyiothub_user::role::RoleRepository> = Arc::new(
-            tinyiothub_user::role::SqliteRoleRepository::new(database.as_ref().clone()),
-        );
+        let role_repository: Arc<tinyiothub_user::role::RoleRepository> =
+            Arc::new(tinyiothub_storage::role::RoleRepository::new(database.as_ref().clone()));
         let role_service = Arc::new(tinyiothub_user::role::RoleService::new(role_repository));
 
         // 权限服务
-        let permission_repository: Arc<dyn tinyiothub_user::permission::PermissionRepository> = Arc::new(
-            tinyiothub_user::permission::SqlitePermissionRepository::new(database.as_ref().clone()),
+        let permission_repository: Arc<tinyiothub_user::permission::PermissionRepository> = Arc::new(
+            tinyiothub_storage::permission::PermissionRepository::new(database.as_ref().clone()),
         );
-        let permission_group_repository: Arc<dyn tinyiothub_user::permission::PermissionGroupRepository> = Arc::new(
-            tinyiothub_user::permission::SqlitePermissionGroupRepository::new(database.as_ref().clone()),
+        let permission_group_repository: Arc<tinyiothub_user::permission::PermissionGroupRepository> = Arc::new(
+            tinyiothub_storage::permission::PermissionGroupRepository::new(database.as_ref().clone()),
         );
         let permission_service = Arc::new(tinyiothub_user::permission::PermissionService::new(
             permission_repository,

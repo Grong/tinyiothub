@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use super::{
-    repo::{UserCriteria, UserRepository, UserSortBy, UserSortOrder},
     types::{CreateUserRequest, UpdateUserRequest, User, UserQueryParams, UserStatisticsNew},
+    types::{UserCriteria, UserRepository, UserSortBy, UserSortOrder},
 };
 use tinyiothub_core::error::{Error, Result};
 
@@ -10,11 +10,11 @@ use crate::password::{hash_password, verify_password};
 
 /// User domain service
 pub struct UserService {
-    repository: Arc<dyn UserRepository>,
+    repository: Arc<UserRepository>,
 }
 
 impl UserService {
-    pub fn new(repository: Arc<dyn UserRepository>) -> Self {
+    pub fn new(repository: Arc<UserRepository>) -> Self {
         Self { repository }
     }
 

@@ -3,16 +3,16 @@ use std::sync::Arc;
 use tinyiothub_core::error::Result;
 
 use super::{
-    repo::RoleRepository,
+    types::RoleRepository,
     types::{CreateRoleRequest, Role, RoleQueryParams, RoleStats, UpdateRoleRequest},
 };
 
 pub struct RoleService {
-    role_repository: Arc<dyn RoleRepository>,
+    role_repository: Arc<RoleRepository>,
 }
 
 impl RoleService {
-    pub fn new(role_repository: Arc<dyn RoleRepository>) -> Self {
+    pub fn new(role_repository: Arc<RoleRepository>) -> Self {
         Self { role_repository }
     }
 

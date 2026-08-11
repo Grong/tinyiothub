@@ -1,11 +1,10 @@
 // workspace submodule — workspaces CRUD + knowledge resources
 
 pub mod handler;
-pub mod repo;
 pub mod service;
 pub mod types;
 
 pub use handler::create_router;
-pub use repo::*;
 pub use service::WorkspaceService;
+pub use tinyiothub_storage::workspace::WorkspaceRepository;
 pub use types::*;
