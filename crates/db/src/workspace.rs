@@ -1,6 +1,7 @@
 //! Workspace 持久化：工作区与知识资源（P-集中化 E4，自 tenant crate 迁入）。
 
 use std::fmt;
+use tinyiothub_core::models::workspace::ResourceType;
 
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder};
@@ -46,73 +47,6 @@ pub struct WorkspaceWithDeviceCount {
     pub warning: Option<String>,
 }
 
-/// Create workspace request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct CreateWorkspaceRequest {
-    pub name: String,
-    pub description: Option<String>,
-}
-
-/// Update workspace request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct UpdateWorkspaceRequest {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub agent_config: Option<String>,
-    pub require_action_confirm: Option<bool>,
-}
-
-/// Assign device request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct AssignDeviceRequest {
-    pub device_id: String,
-}
-
-/// Resource type: File (uploaded binaries) or Document (markdown knowledge).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResourceType {
-    File,
-    Document,
-}
-
-impl ResourceType {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::File => "file",
-            Self::Document => "document",
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::File => "文件",
-            Self::Document => "文档",
-        }
-    }
-
-    pub fn from_string(s: &str) -> Option<Self> {
-        match s {
-            "file" => Some(Self::File),
-            "document" => Some(Self::Document),
-            _ => None,
-        }
-    }
-
-    pub fn all() -> [Self; 2] {
-        [Self::File, Self::Document]
-    }
-}
-
-impl fmt::Display for ResourceType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
 /// Unified workspace resource (replaces workspace_resources + knowledge_documents)
 /// - type="document": content field is used
 /// - type="file": file_path is used (uploaded binaries)
@@ -150,39 +84,6 @@ pub struct ResourceSearchResult {
     pub created_at: String,
     pub updated_at: String,
     pub relevance: i64,
-}
-
-/// Create resource request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct CreateResourceRequest {
-    pub name: String,
-    pub description: Option<String>,
-    pub resource_type: ResourceType,
-    pub content: Option<String>,
-    pub tags: Vec<String>,
-    pub metadata: Option<String>,
-    pub file_path: Option<String>,
-}
-
-/// Update resource request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct UpdateResourceRequest {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub content: Option<String>,
-    pub tags: Option<Vec<String>>,
-    pub metadata: Option<String>,
-}
-
-/// Suggest tags request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct SuggestTagsRequest {
-    pub name: String,
-    pub resource_type: ResourceType,
-    pub description: Option<String>,
 }
 
 /// Resource query params

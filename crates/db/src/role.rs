@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
 use tinyiothub_core::error::Result;
+use tinyiothub_core::models::role::{CreateRoleRequest, UpdateRoleRequest};
 
 use crate::database::Database;
 
@@ -31,26 +32,6 @@ pub struct RoleQueryParams {
     pub workspace_id: Option<String>,
     pub page: Option<u32>,
     pub page_size: Option<u32>,
-}
-
-/// Create role request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct CreateRoleRequest {
-    pub name: String,
-    pub description: Option<String>,
-    pub is_administrator: Option<i32>,
-    pub workspace_id: Option<String>,
-}
-
-/// Update role request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct UpdateRoleRequest {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub is_administrator: Option<i32>,
-    pub workspace_id: Option<String>,
 }
 
 /// Role statistics

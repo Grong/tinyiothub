@@ -1,6 +1,6 @@
 use axum::{Json, Router, extract::State, routing::post};
 use serde::{Deserialize, Serialize};
-use tinyiothub_storage::user::CreateUserRequest;
+use tinyiothub_core::models::user::CreateUserRequest;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::shared::{api_response::ApiResponse, app_state::AppState, error::Result};

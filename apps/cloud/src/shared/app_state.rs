@@ -891,7 +891,7 @@ impl crate::domains::auth::user_store::AuthUserStore for UserServiceAuthAdapter 
         &self,
         request: &crate::domains::auth::user_store::AuthCreateUserRequest,
     ) -> Result<crate::domains::auth::user_store::AuthUser, String> {
-        let create_request = tinyiothub_storage::user::CreateUserRequest {
+        let create_request = tinyiothub_core::models::user::CreateUserRequest {
             username: request.username.clone(),
             password: request.password.clone(),
             email: request.email.clone(),

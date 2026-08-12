@@ -4,6 +4,7 @@
 //! tenant crate 保留 service/handler，经 re-export 兼容。
 
 use std::sync::Arc;
+use tinyiothub_core::models::tenant::{CreateApiKeyRequest, CreateTenantRequest};
 
 use chrono::{DateTime, Utc};
 use rand::RngCore;
@@ -69,31 +70,6 @@ pub struct TenantQueryParams {
     pub page_size: Option<u32>,
 }
 
-/// Create tenant request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct CreateTenantRequest {
-    pub name: String,
-    pub slug: String,
-    pub billing_email: Option<String>,
-    pub billing_contact: Option<String>,
-    pub timezone: Option<String>,
-    pub locale: Option<String>,
-}
-
-/// Update tenant request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct UpdateTenantRequest {
-    pub name: Option<String>,
-    pub billing_email: Option<String>,
-    pub billing_contact: Option<String>,
-    pub timezone: Option<String>,
-    pub locale: Option<String>,
-    pub custom_logo: Option<String>,
-    pub custom_theme: Option<String>,
-}
-
 /// Tenant usage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -129,17 +105,6 @@ pub struct ApiKey {
     pub expires_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-}
-
-/// Create API Key request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct CreateApiKeyRequest {
-    pub workspace_id: String,
-    pub name: String,
-    pub permissions: Option<Vec<String>>,
-    pub rate_limit: Option<i32>,
-    pub expires_in_days: Option<i32>,
 }
 
 /// API usage statistics

@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
 use tinyiothub_core::error::{Error, Result};
+use tinyiothub_core::models::user::{CreateUserRequest, UpdateUserRequest};
 
 use crate::database::Database;
 
@@ -67,48 +68,6 @@ pub struct UserQueryParams {
     pub parent_id: Option<String>,
     pub page: Option<u32>,
     pub page_size: Option<u32>,
-}
-
-/// Create user request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct CreateUserRequest {
-    pub username: String,
-    pub password: String,
-    pub email: Option<String>,
-    pub phone: Option<String>,
-    #[serde(alias = "name")]
-    pub display_name: Option<String>,
-    pub is_enabled: Option<bool>,
-    pub parent_id: Option<String>,
-}
-
-/// Update user request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct UpdateUserRequest {
-    pub username: Option<String>,
-    pub email: Option<String>,
-    pub phone: Option<String>,
-    pub display_name: Option<String>,
-    pub is_enabled: Option<bool>,
-    pub parent_id: Option<String>,
-}
-
-/// Login request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct LoginRequest {
-    pub username: String,
-    pub password: String,
-}
-
-/// Change password request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct ChangePasswordRequest {
-    pub old_password: String,
-    pub new_password: String,
 }
 
 impl User {
