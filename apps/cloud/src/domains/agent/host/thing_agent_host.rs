@@ -16,7 +16,7 @@ use std::sync::Arc;
 use crate::domains::agent::loop_::thing_agent::{ThingAgentHost, ThingEventSignal};
 use sqlx::Row;
 
-use tinyiothub_event::bus::ThingEventBus;
+use crate::domains::event::bus::ThingEventBus;
 
 pub struct CloudThingAgentHost {
     pool: sqlx::SqlitePool,

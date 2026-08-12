@@ -20,11 +20,11 @@ const MSG_DEVICE_TYPE_VALUE_NA: &str = "N/A";
 
 use tinyiothub_storage::tag::TagRepository;
 
-use tinyiothub_core::error::Error;
-use tinyiothub_event::{
+use crate::domains::event::{
     entities::Event as DomainEvent,
     value_objects::{ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat},
 };
+use tinyiothub_core::error::Error;
 use tinyiothub_runtime::event_bus::EventBus;
 use tinyiothub_storage::device::{DeviceCriteria, DeviceRepository};
 use tinyiothub_web::pagination::DataObjectWithPagination;

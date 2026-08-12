@@ -4,7 +4,7 @@ use tinyiothub_core::notification_types::NotificationChannelType;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
-use tinyiothub_event::{EventError, Result};
+use crate::domains::event::{EventError, Result};
 
 use crate::domains::notify::dto::{NotificationChannel, NotificationLevel, NotificationMessage};
 

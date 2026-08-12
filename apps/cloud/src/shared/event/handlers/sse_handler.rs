@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tinyiothub_event::entities::Event;
+use tinyiothub_core::models::event::Event;
 
 use crate::shared::event::{EventHandler, SseConnectionManager};
 

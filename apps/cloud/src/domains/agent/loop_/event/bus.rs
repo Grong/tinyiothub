@@ -295,7 +295,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_variant_names() {
-        let alarm = AiEvent::AlarmCreated(tinyiothub_event::AlarmEvent {
+        let alarm = AiEvent::AlarmCreated(crate::domains::event::AlarmEvent {
             id: "a1".into(),
             workspace_id: "ws".into(),
             device_id: "d1".into(),

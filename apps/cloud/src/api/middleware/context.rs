@@ -1,3 +1,4 @@
+use crate::domains::auth::security::jwt::{is_token_blacklisted, validate_jwt};
 use axum::{
     Json,
     extract::{Request, State},
@@ -6,7 +7,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use headers::{Authorization, HeaderMapExt, authorization::Bearer};
-use tinyiothub_auth::security::jwt::{is_token_blacklisted, validate_jwt};
 
 use crate::shared::api_response::{ReqCtx, UserInfo};
 

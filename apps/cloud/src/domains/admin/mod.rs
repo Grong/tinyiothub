@@ -33,7 +33,7 @@ pub mod system;
 /// routes through cloud's event-security plane (`AuthHelper` →
 /// `SecureEventService`), which stays in the composition layer. Cloud
 /// injects the adapter via `FromRef<AppState> for AdminState`
-/// (same seam shape as `tinyiothub_user::RoleChecker`, P4-Task17a).
+/// (same seam shape as `crate::domains::user::RoleChecker`, P4-Task17a).
 #[async_trait::async_trait]
 pub trait AdminRoleChecker: Send + Sync {
     async fn require_admin_role(&self, user_id: &str, operation: &str) -> Result<(), String>;

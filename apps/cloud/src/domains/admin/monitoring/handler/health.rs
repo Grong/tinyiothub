@@ -1,9 +1,9 @@
 use crate::shared::app_state::AppState;
 use std::{sync::OnceLock, time::SystemTime};
 
+use crate::domains::auth::security::jwt::Claims;
 use axum::{Json, Router, extract::State, routing::get};
 use serde::{Deserialize, Serialize};
-use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use tinyiothub_web::api_response::ApiResponse;

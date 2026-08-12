@@ -3,14 +3,14 @@
 
 use std::{sync::Arc, time::Duration};
 
+use crate::domains::auth::security::jwt::Claims;
 use axum::{
     extract::{Path, Query, State},
     response::Json,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tinyiothub_auth::security::jwt::Claims;
-use tinyiothub_event::value_objects::EventId;
+use tinyiothub_core::models::event::EventId;
 use tinyiothub_web::{handle_service_result, response::ApiResponseBuilder};
 use tokio::sync::OnceCell;
 

@@ -8,14 +8,14 @@
 use std::sync::Arc;
 
 use crate::domains::alarm::{AlarmRepository, AlarmRuleRepository, AlarmService};
-use sqlx::Row;
-use tinyiothub_core::models::event::{
-    ContentElement, DeviceEventType, Event, EventLevel, EventSource, EventType, RichContent, TextFormat,
-};
-use tinyiothub_event::{
+use crate::domains::event::{
     bus::ThingEventBus,
     repositories::RealTimeEventRepository,
     router::{ThingEventInput, ThrottleState, route_thing_event},
+};
+use sqlx::Row;
+use tinyiothub_core::models::event::{
+    ContentElement, DeviceEventType, Event, EventLevel, EventSource, EventType, RichContent, TextFormat,
 };
 use tinyiothub_storage::Database;
 

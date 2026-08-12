@@ -21,7 +21,7 @@ pub mod security;
 pub mod sse;
 
 /// Create the cloud-resident event routes (security + SSE), nested at
-/// `/events` alongside `tinyiothub_event::router()`.
+/// `/events` alongside `crate::domains::event::router()`.
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/security/permissions", get(security::get_user_permissions))

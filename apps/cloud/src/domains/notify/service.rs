@@ -15,7 +15,7 @@ use tinyiothub_core::models::notification_channel::{
 // Re-export types from types.rs so they're accessible via service path
 use super::dto::NotificationAggregate;
 pub use super::dto::{NotificationChannel, NotificationLevel, NotificationMessage, NotificationStatistics};
-use tinyiothub_event::{
+use crate::domains::event::{
     EventError, Result,
     errors::{DomainResult, NotificationDomainError},
     value_objects::{EventId, EventLevel},
@@ -524,7 +524,7 @@ impl NotificationManager {
     }
 
     /// Send notification for an event
-    pub async fn notify(&self, _event: &tinyiothub_event::entities::Event) -> std::result::Result<(), String> {
+    pub async fn notify(&self, _event: &tinyiothub_core::models::event::Event) -> std::result::Result<(), String> {
         Ok(())
     }
 }

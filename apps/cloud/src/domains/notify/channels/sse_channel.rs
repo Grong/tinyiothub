@@ -10,7 +10,7 @@ use tokio::sync::{RwLock, broadcast};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use tinyiothub_event::Result;
+use crate::domains::event::Result;
 
 use crate::domains::notify::dto::{NotificationChannel, NotificationMessage};
 
@@ -355,7 +355,7 @@ mod tests {
         let message = SseMessage::notification("Test".to_string(), "Content".to_string(), "info".to_string());
 
         // Should succeed even with no connections
-        let result: tinyiothub_event::Result<usize> = channel.broadcast(message).await;
+        let result: crate::domains::event::Result<usize> = channel.broadcast(message).await;
         assert!(result.is_ok());
     }
 

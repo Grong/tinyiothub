@@ -1,7 +1,7 @@
 // Event access control implementations
 use std::sync::Arc;
 
-use tinyiothub_event::{Result, entities::Event, value_objects::EventType};
+use crate::domains::event::{Result, entities::Event, value_objects::EventType};
 
 /// Access control result
 #[derive(Debug, Clone, PartialEq)]
@@ -85,27 +85,27 @@ impl EventAccessControl for RoleBasedAccessControl {
 
         // Check if user has read permission for this event type
         let event_type_str = match event.event_type() {
-            tinyiothub_event::value_objects::EventType::Device(device_type) => match device_type {
-                tinyiothub_event::value_objects::DeviceEventType::Connection => "device_connection",
-                tinyiothub_event::value_objects::DeviceEventType::PropertyChange
-                | tinyiothub_event::value_objects::DeviceEventType::PropertyAlarm
-                | tinyiothub_event::value_objects::DeviceEventType::PropertyNormal => "device_property",
-                tinyiothub_event::value_objects::DeviceEventType::CommandStarted
-                | tinyiothub_event::value_objects::DeviceEventType::CommandCompleted
-                | tinyiothub_event::value_objects::DeviceEventType::CommandFailed => "device_command",
-                tinyiothub_event::value_objects::DeviceEventType::DeviceAlarm
-                | tinyiothub_event::value_objects::DeviceEventType::DeviceNormal => "device_alarm",
-                tinyiothub_event::value_objects::DeviceEventType::DeviceCreated
-                | tinyiothub_event::value_objects::DeviceEventType::DeviceUpdated
-                | tinyiothub_event::value_objects::DeviceEventType::DeviceDeleted => "device_lifecycle",
+            tinyiothub_core::models::event::EventType::Device(device_type) => match device_type {
+                tinyiothub_core::models::event::DeviceEventType::Connection => "device_connection",
+                tinyiothub_core::models::event::DeviceEventType::PropertyChange
+                | tinyiothub_core::models::event::DeviceEventType::PropertyAlarm
+                | tinyiothub_core::models::event::DeviceEventType::PropertyNormal => "device_property",
+                tinyiothub_core::models::event::DeviceEventType::CommandStarted
+                | tinyiothub_core::models::event::DeviceEventType::CommandCompleted
+                | tinyiothub_core::models::event::DeviceEventType::CommandFailed => "device_command",
+                tinyiothub_core::models::event::DeviceEventType::DeviceAlarm
+                | tinyiothub_core::models::event::DeviceEventType::DeviceNormal => "device_alarm",
+                tinyiothub_core::models::event::DeviceEventType::DeviceCreated
+                | tinyiothub_core::models::event::DeviceEventType::DeviceUpdated
+                | tinyiothub_core::models::event::DeviceEventType::DeviceDeleted => "device_lifecycle",
             },
-            tinyiothub_event::value_objects::EventType::System(system_type) => match system_type {
-                tinyiothub_event::value_objects::SystemEventType::UserAuth => "user_auth",
-                tinyiothub_event::value_objects::SystemEventType::UserOperation => "user_operation",
-                tinyiothub_event::value_objects::SystemEventType::SystemConfig => "system_config",
-                tinyiothub_event::value_objects::SystemEventType::SystemError => "system_error",
+            tinyiothub_core::models::event::EventType::System(system_type) => match system_type {
+                tinyiothub_core::models::event::SystemEventType::UserAuth => "user_auth",
+                tinyiothub_core::models::event::SystemEventType::UserOperation => "user_operation",
+                tinyiothub_core::models::event::SystemEventType::SystemConfig => "system_config",
+                tinyiothub_core::models::event::SystemEventType::SystemError => "system_error",
             },
-            tinyiothub_event::value_objects::EventType::Ai(_) => "ai_event",
+            tinyiothub_core::models::event::EventType::Ai(_) => "ai_event",
         };
 
         self.has_permission(user_id, event_type_str, "read").await
@@ -119,27 +119,27 @@ impl EventAccessControl for RoleBasedAccessControl {
 
         // Check specific permissions based on event type
         let event_type_str = match event_type {
-            tinyiothub_event::value_objects::EventType::Device(device_type) => match device_type {
-                tinyiothub_event::value_objects::DeviceEventType::Connection => "device_connection",
-                tinyiothub_event::value_objects::DeviceEventType::PropertyChange
-                | tinyiothub_event::value_objects::DeviceEventType::PropertyAlarm
-                | tinyiothub_event::value_objects::DeviceEventType::PropertyNormal => "device_property",
-                tinyiothub_event::value_objects::DeviceEventType::CommandStarted
-                | tinyiothub_event::value_objects::DeviceEventType::CommandCompleted
-                | tinyiothub_event::value_objects::DeviceEventType::CommandFailed => "device_command",
-                tinyiothub_event::value_objects::DeviceEventType::DeviceAlarm
-                | tinyiothub_event::value_objects::DeviceEventType::DeviceNormal => "device_alarm",
-                tinyiothub_event::value_objects::DeviceEventType::DeviceCreated
-                | tinyiothub_event::value_objects::DeviceEventType::DeviceUpdated
-                | tinyiothub_event::value_objects::DeviceEventType::DeviceDeleted => "device_lifecycle",
+            tinyiothub_core::models::event::EventType::Device(device_type) => match device_type {
+                tinyiothub_core::models::event::DeviceEventType::Connection => "device_connection",
+                tinyiothub_core::models::event::DeviceEventType::PropertyChange
+                | tinyiothub_core::models::event::DeviceEventType::PropertyAlarm
+                | tinyiothub_core::models::event::DeviceEventType::PropertyNormal => "device_property",
+                tinyiothub_core::models::event::DeviceEventType::CommandStarted
+                | tinyiothub_core::models::event::DeviceEventType::CommandCompleted
+                | tinyiothub_core::models::event::DeviceEventType::CommandFailed => "device_command",
+                tinyiothub_core::models::event::DeviceEventType::DeviceAlarm
+                | tinyiothub_core::models::event::DeviceEventType::DeviceNormal => "device_alarm",
+                tinyiothub_core::models::event::DeviceEventType::DeviceCreated
+                | tinyiothub_core::models::event::DeviceEventType::DeviceUpdated
+                | tinyiothub_core::models::event::DeviceEventType::DeviceDeleted => "device_lifecycle",
             },
-            tinyiothub_event::value_objects::EventType::System(system_type) => match system_type {
-                tinyiothub_event::value_objects::SystemEventType::UserAuth => "user_auth",
-                tinyiothub_event::value_objects::SystemEventType::UserOperation => "user_operation",
-                tinyiothub_event::value_objects::SystemEventType::SystemConfig => "system_config",
-                tinyiothub_event::value_objects::SystemEventType::SystemError => "system_error",
+            tinyiothub_core::models::event::EventType::System(system_type) => match system_type {
+                tinyiothub_core::models::event::SystemEventType::UserAuth => "user_auth",
+                tinyiothub_core::models::event::SystemEventType::UserOperation => "user_operation",
+                tinyiothub_core::models::event::SystemEventType::SystemConfig => "system_config",
+                tinyiothub_core::models::event::SystemEventType::SystemError => "system_error",
             },
-            tinyiothub_event::value_objects::EventType::Ai(_) => "ai_event",
+            tinyiothub_core::models::event::EventType::Ai(_) => "ai_event",
         };
 
         self.has_permission(user_id, event_type_str, "create").await

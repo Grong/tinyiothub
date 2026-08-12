@@ -1,3 +1,4 @@
+use crate::domains::auth::security::jwt::Claims;
 use crate::shared::app_state::AppState;
 use axum::{
     Json, Router,
@@ -5,7 +6,6 @@ use axum::{
     routing::get,
 };
 use serde::Deserialize;
-use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 use tracing::{error, info};
 

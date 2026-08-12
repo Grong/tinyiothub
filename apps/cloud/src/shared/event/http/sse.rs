@@ -7,6 +7,7 @@
 //    用于向后兼容
 // 3. JWT 在 URL 中（?token=xxx）— 仅用于不支持 header 的场景
 
+use crate::domains::auth::security::jwt::Claims;
 use axum::{
     Json,
     extract::{Query, State},
@@ -14,7 +15,6 @@ use axum::{
     response::{IntoResponse, Json as JsonResponse, Response},
 };
 use serde::Deserialize;
-use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 use tracing::{info, warn};
 

@@ -17,7 +17,7 @@
 //! - driver → thing (documented): `legacy::diagnostics` reads
 //!   `DeviceTraceStatistics` from `crate::domains::thing::legacy::trace`.
 //! - driver → event: gateway pairing persists pairing events via
-//!   `tinyiothub_event::repositories::EventRepository`.
+//!   `tinyiothub_storage::event::EventRepository`.
 //!
 //! NOT consumed: agent / mcp / notification (see `legacy/mod.rs` and
 //! `plugin::registry::AppContext` docs for boundary notes).

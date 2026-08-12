@@ -1,3 +1,4 @@
+use crate::domains::auth::security::jwt::Claims;
 use crate::shared::app_state::AppState;
 use axum::{
     Json, Router,
@@ -5,7 +6,6 @@ use axum::{
     routing::get,
 };
 use serde::Serialize;
-use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_core::models::{device::Device, device_property::DeviceProperty};
 use tinyiothub_web::response::ApiResponseBuilder;
 
@@ -13,7 +13,7 @@ use crate::domains::thing::legacy::types::DeviceCommandResponse;
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::middleware::workspace::WorkspaceScope;
 
-use tinyiothub_event::{
+use crate::domains::event::{
     repositories::{EventCriteria, SortBy, SortOrder},
     value_objects::EventType,
 };
@@ -209,11 +209,11 @@ async fn fetch_recent_device_events(state: &AppState, device_id: &str) -> Vec<De
 
                     // 提取事件级别字符串
                     let level_str = match event.level() {
-                        tinyiothub_event::value_objects::EventLevel::Debug => "Debug",
-                        tinyiothub_event::value_objects::EventLevel::Info => "Info",
-                        tinyiothub_event::value_objects::EventLevel::Warning => "Warning",
-                        tinyiothub_event::value_objects::EventLevel::Error => "Error",
-                        tinyiothub_event::value_objects::EventLevel::Critical => "Critical",
+                        tinyiothub_core::models::event::EventLevel::Debug => "Debug",
+                        tinyiothub_core::models::event::EventLevel::Info => "Info",
+                        tinyiothub_core::models::event::EventLevel::Warning => "Warning",
+                        tinyiothub_core::models::event::EventLevel::Error => "Error",
+                        tinyiothub_core::models::event::EventLevel::Critical => "Critical",
                     };
 
                     // 提取内容
@@ -225,7 +225,7 @@ async fn fetch_recent_device_events(state: &AppState, device_id: &str) -> Vec<De
                         .elements()
                         .iter()
                         .find_map(|element| {
-                            if let tinyiothub_event::value_objects::ContentElement::Text { content, .. } = element {
+                            if let tinyiothub_core::models::event::ContentElement::Text { content, .. } = element {
                                 Some(content.clone())
                             } else {
                                 None
@@ -315,11 +315,11 @@ async fn calculate_device_overview(
                 let total = events.len() as u32;
                 let critical = events
                     .iter()
-                    .filter(|e| matches!(e.level(), tinyiothub_event::value_objects::EventLevel::Critical))
+                    .filter(|e| matches!(e.level(), tinyiothub_core::models::event::EventLevel::Critical))
                     .count() as u32;
                 let error = events
                     .iter()
-                    .filter(|e| matches!(e.level(), tinyiothub_event::value_objects::EventLevel::Error))
+                    .filter(|e| matches!(e.level(), tinyiothub_core::models::event::EventLevel::Error))
                     .count() as u32;
                 (total, critical, error)
             }

@@ -18,7 +18,7 @@
 //!   (`cloud::shared::ai_adapter::AlarmAiPublisherAdapter`).
 //!
 //! Boundary notes:
-//! - `NotificationChannelType` etc. come from `tinyiothub_event::aggregates`
+//! - `NotificationChannelType` etc. come from `crate::domains::event::aggregates`
 //!   (sunk to core in P4.0-Task13) — there is NO alarm → notify edge; the
 //!   notification domain was extracted in P4-Task21 (`tinyiothub_notify`)
 //!   and alarm's notification dispatch stays independent of it.

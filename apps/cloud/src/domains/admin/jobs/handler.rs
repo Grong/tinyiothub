@@ -4,13 +4,13 @@
 use crate::shared::app_state::AppState;
 use std::{str::FromStr, sync::Arc};
 
+use crate::domains::auth::security::jwt::Claims;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
     routing::{get, post},
 };
 use serde::Deserialize;
-use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_core::models::{
     cron_job::{CreateCronJobRequest, CronJob, CronJobQuery, CronRun, CronRunQuery, UpdateCronJobRequest},
     job::{

@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use crate::domains::agent::host::agent::AgentPool;
+use crate::domains::auth::redis::RedisClient;
 use crate::domains::driver::legacy::{
     DeviceMonitoringService, DevicePerformanceService, DeviceQueryService, DeviceService,
 };
-use tinyiothub_auth::redis::RedisClient;
 use tinyiothub_core::models::device_property::DeviceProperty;
-use tinyiothub_event::repositories::{EventRepository, RealTimeEventRepository};
+use tinyiothub_storage::event::{EventRepository, RealTimeEventRepository};
 use tinyiothub_storage::notify::{NotificationHistoryRepository, NotificationRuleRepository};
 
 use crate::domains::notify::channels::NotificationChannelFactory;
@@ -101,7 +101,7 @@ pub struct AppState {
     pub agent_pool: Arc<AgentPool>,
 
     /// 用户服务 - CRUD 操作
-    pub user_service: Arc<tinyiothub_user::UserService>,
+    pub user_service: Arc<crate::domains::user::UserService>,
 
     /// 租户服务 - CRUD 操作
     pub tenant_service: Arc<crate::domains::tenant::TenantService>,
@@ -122,10 +122,10 @@ pub struct AppState {
     pub tag_repository: Arc<crate::domains::thing::tag::TagRepository>,
 
     /// 角色服务 - CRUD 操作
-    pub role_service: Arc<tinyiothub_user::role::RoleService>,
+    pub role_service: Arc<crate::domains::user::role::RoleService>,
 
     /// 权限服务 - CRUD 操作
-    pub permission_service: Arc<tinyiothub_user::permission::PermissionService>,
+    pub permission_service: Arc<crate::domains::user::permission::PermissionService>,
 
     /// Cron 任务仓库
     pub cron_job_repo: Arc<tinyiothub_storage::CronJobRepository>,
@@ -146,7 +146,7 @@ pub struct AppState {
     pub mqtt_client: Option<Arc<crate::shared::mqtt_client::PlatformMqttClient>>,
 
     /// 全局物事件广播总线（T6）—— thing-agent loop 经此订阅事件信号
-    pub thing_event_bus: Arc<tinyiothub_event::bus::ThingEventBus>,
+    pub thing_event_bus: Arc<crate::domains::event::bus::ThingEventBus>,
 
     /// 用户指令投递入口（T14）—— HTTP 端点 / chat 工具经此向
     /// thing-agent loop 投递 WakeSignal。T15 用 ThingAgentManager 实现
@@ -181,9 +181,32 @@ pub struct AppState {
     pub network_defaults: tinyiothub_core::config::NetworkDefaultsConfig,
     /// 主 MQTT 配置切片
     pub mqtt_primary: tinyiothub_core::config::MqttBrokerConfig,
+    /// SMS 配置切片
+    pub sms_config: tinyiothub_core::config::SmsConfig,
+    /// 社交登录配置切片
+    pub social_config: tinyiothub_core::config::SocialConfig,
+    /// HarmonyOS 开关
+    pub harmonyos_enabled: bool,
 }
 
 impl AppState {
+    /// user 域角色校验适配（原 UserState.role_checker，每次萃取新建语义保持）
+    pub fn role_checker(&self) -> Arc<dyn crate::domains::user::RoleChecker> {
+        Arc::new(EventSecurityRoleChecker { state: self.clone() })
+    }
+
+    /// Auth 域身份存储适配（原 AuthState.users，FromRef 每次萃取新建语义保持）
+    pub fn auth_users(&self) -> Arc<dyn crate::domains::auth::user_store::AuthUserStore> {
+        Arc::new(UserServiceAuthAdapter {
+            service: self.user_service.clone(),
+        })
+    }
+
+    /// 注册后 tenant/workspace 引导适配（原 AuthState.workspace_bootstrap）
+    pub fn workspace_bootstrap(&self) -> Arc<dyn crate::domains::auth::bootstrap::WorkspaceBootstrap> {
+        Arc::new(SystemWorkspaceBootstrap { state: self.clone() })
+    }
+
     /// 创建应用程序状态
     ///
     /// 采用依赖注入容器模式，在应用启动时一次性创建所有服务
@@ -321,9 +344,9 @@ impl AppState {
         alarm_service.set_device_cache(device_cache.clone());
 
         // 用户服务
-        let user_repository: Arc<tinyiothub_user::UserRepository> =
+        let user_repository: Arc<tinyiothub_storage::user::UserRepository> =
             Arc::new(tinyiothub_storage::user::UserRepository::new(database.as_ref().clone()));
-        let user_service = Arc::new(tinyiothub_user::UserService::new(user_repository));
+        let user_service = Arc::new(crate::domains::user::UserService::new(user_repository));
 
         // 租户服务
         let tenant_repository: Arc<tinyiothub_storage::tenant::TenantRepository> = Arc::new(
@@ -344,18 +367,18 @@ impl AppState {
         ));
 
         // 角色服务
-        let role_repository: Arc<tinyiothub_user::role::RoleRepository> =
+        let role_repository: Arc<tinyiothub_storage::role::RoleRepository> =
             Arc::new(tinyiothub_storage::role::RoleRepository::new(database.as_ref().clone()));
-        let role_service = Arc::new(tinyiothub_user::role::RoleService::new(role_repository));
+        let role_service = Arc::new(crate::domains::user::role::RoleService::new(role_repository));
 
         // 权限服务
-        let permission_repository: Arc<tinyiothub_user::permission::PermissionRepository> = Arc::new(
+        let permission_repository: Arc<tinyiothub_storage::permission::PermissionRepository> = Arc::new(
             tinyiothub_storage::permission::PermissionRepository::new(database.as_ref().clone()),
         );
-        let permission_group_repository: Arc<tinyiothub_user::permission::PermissionGroupRepository> = Arc::new(
+        let permission_group_repository: Arc<tinyiothub_storage::permission::PermissionGroupRepository> = Arc::new(
             tinyiothub_storage::permission::PermissionGroupRepository::new(database.as_ref().clone()),
         );
-        let permission_service = Arc::new(tinyiothub_user::permission::PermissionService::new(
+        let permission_service = Arc::new(crate::domains::user::permission::PermissionService::new(
             permission_repository,
             permission_group_repository,
         ));
@@ -395,8 +418,8 @@ impl AppState {
         let mqtt_port = config.mqtt.primary.port;
         let mqtt_username = config.mqtt.primary.username.clone().unwrap_or_default();
         let mqtt_password = config.mqtt.primary.password.clone().unwrap_or_default();
-        let throttle_state = Arc::new(tinyiothub_event::router::ThrottleState::new(60));
-        let thing_event_bus = Arc::new(tinyiothub_event::bus::ThingEventBus::new());
+        let throttle_state = Arc::new(crate::domains::event::router::ThrottleState::new(60));
+        let thing_event_bus = Arc::new(crate::domains::event::bus::ThingEventBus::new());
         let mqtt_db_pool = database.pool().clone();
         let mqtt_client = Arc::new(crate::shared::mqtt_client::PlatformMqttClient::new(
             &mqtt_broker,
@@ -454,6 +477,9 @@ impl AppState {
         let agents_base_dir = crate::shared::paths::agents_base_dir();
         let network_defaults = settings.network.defaults.clone();
         let mqtt_primary = settings.mqtt.primary.clone();
+        let sms_config = settings.sms.clone();
+        let social_config = settings.social.clone();
+        let harmonyos_enabled = settings.harmonyos.enabled;
 
         Self {
             device_cache,
@@ -463,6 +489,9 @@ impl AppState {
             agents_base_dir,
             network_defaults,
             mqtt_primary,
+            sms_config,
+            social_config,
+            harmonyos_enabled,
             workspace_access: Arc::new(TenantWorkspaceAccess {
                 workspace_service: workspace_service.clone(),
             }),
@@ -792,8 +821,8 @@ impl AppState {
 // ============================================================================
 
 /// Map the cloud user entity to the auth crate's byte-identical mirror.
-fn auth_user_from_user(user: tinyiothub_user::User) -> tinyiothub_auth::user_store::AuthUser {
-    tinyiothub_auth::user_store::AuthUser {
+fn auth_user_from_user(user: tinyiothub_storage::user::User) -> crate::domains::auth::user_store::AuthUser {
+    crate::domains::auth::user_store::AuthUser {
         id: user.id,
         username: user.username,
         password_hash: user.password_hash,
@@ -814,16 +843,16 @@ fn auth_user_from_user(user: tinyiothub_user::User) -> tinyiothub_auth::user_sto
 /// wrapper — the adapter stays in cloud because the user crate must not
 /// depend on the auth crate (wrong dependency direction).
 pub struct UserServiceAuthAdapter {
-    pub service: Arc<tinyiothub_user::UserService>,
+    pub service: Arc<crate::domains::user::UserService>,
 }
 
 #[async_trait::async_trait]
-impl tinyiothub_auth::user_store::AuthUserStore for UserServiceAuthAdapter {
+impl crate::domains::auth::user_store::AuthUserStore for UserServiceAuthAdapter {
     async fn authenticate(
         &self,
         username: &str,
         password: &str,
-    ) -> Result<Option<tinyiothub_auth::user_store::AuthUser>, String> {
+    ) -> Result<Option<crate::domains::auth::user_store::AuthUser>, String> {
         self.service
             .authenticate(username, password)
             .await
@@ -831,7 +860,7 @@ impl tinyiothub_auth::user_store::AuthUserStore for UserServiceAuthAdapter {
             .map(|o| o.map(auth_user_from_user))
     }
 
-    async fn get_user_by_id(&self, id: &str) -> Result<Option<tinyiothub_auth::user_store::AuthUser>, String> {
+    async fn get_user_by_id(&self, id: &str) -> Result<Option<crate::domains::auth::user_store::AuthUser>, String> {
         self.service
             .get_user_by_id(id)
             .await
@@ -860,9 +889,9 @@ impl tinyiothub_auth::user_store::AuthUserStore for UserServiceAuthAdapter {
 
     async fn create_user(
         &self,
-        request: &tinyiothub_auth::user_store::AuthCreateUserRequest,
-    ) -> Result<tinyiothub_auth::user_store::AuthUser, String> {
-        let create_request = tinyiothub_user::types::CreateUserRequest {
+        request: &crate::domains::auth::user_store::AuthCreateUserRequest,
+    ) -> Result<crate::domains::auth::user_store::AuthUser, String> {
+        let create_request = tinyiothub_storage::user::CreateUserRequest {
             username: request.username.clone(),
             password: request.password.clone(),
             email: request.email.clone(),
@@ -888,7 +917,7 @@ pub struct SystemWorkspaceBootstrap {
 }
 
 #[async_trait::async_trait]
-impl tinyiothub_auth::bootstrap::WorkspaceBootstrap for SystemWorkspaceBootstrap {
+impl crate::domains::auth::bootstrap::WorkspaceBootstrap for SystemWorkspaceBootstrap {
     async fn ensure_user_has_workspace(&self, user_id: &str) -> Result<(), String> {
         crate::shared::initialization::ensure_user_has_workspace(&self.state, user_id)
             .await
@@ -898,34 +927,11 @@ impl tinyiothub_auth::bootstrap::WorkspaceBootstrap for SystemWorkspaceBootstrap
 
 /// SSE token issuer seam: the manager stays in cloud (shared with the event
 /// plane's SSE handlers).
-impl tinyiothub_auth::sse::SseTokenIssuer for crate::shared::sse_token::SseTokenManager {
+impl crate::domains::auth::sse::SseTokenIssuer for crate::shared::sse_token::SseTokenManager {
     fn generate_token(&self, user_id: &str, workspace_id: &str) -> String {
         crate::shared::sse_token::SseTokenManager::generate_token(self, user_id, workspace_id)
     }
 }
-
-/// P4-Task16: derive the auth domain's state slice from the global AppState.
-/// Config slices are cloned from the process-global settings at extraction
-/// time — identical semantics to the former per-request `config::get()`
-/// reads (the global config is set once at startup and never reloaded).
-impl axum::extract::FromRef<AppState> for tinyiothub_auth::AuthState {
-    fn from_ref(state: &AppState) -> Self {
-        let settings = crate::shared::config::get();
-        tinyiothub_auth::AuthState {
-            database: state.database.clone(),
-            users: Arc::new(UserServiceAuthAdapter {
-                service: state.user_service.clone(),
-            }),
-            workspace_bootstrap: Arc::new(SystemWorkspaceBootstrap { state: state.clone() }),
-            redis: state.redis.clone(),
-            sse_token_issuer: state.sse_token_manager.clone(),
-            sms_config: settings.sms.clone(),
-            social_config: settings.social.clone(),
-            harmonyos_enabled: settings.harmonyos.enabled,
-        }
-    }
-}
-
 // ============================================================================
 // P4-Task17a: user domain slice + role-check seam adapter
 // ============================================================================
@@ -939,27 +945,11 @@ pub struct EventSecurityRoleChecker {
 }
 
 #[async_trait::async_trait]
-impl tinyiothub_user::RoleChecker for EventSecurityRoleChecker {
+impl crate::domains::user::RoleChecker for EventSecurityRoleChecker {
     async fn check_role(&self, user_id: &str, role: &str) -> Result<bool, String> {
         crate::shared::error_handling::AuthHelper::check_role(&self.state, user_id, role).await
     }
 }
-
-/// P4-Task17a: derive the user domain's state slice from the global
-/// AppState. Cloud mounts `tinyiothub_user::router()` (users),
-/// `role::create_router()` and `permission::create_router()` with this
-/// `FromRef` conversion.
-impl axum::extract::FromRef<AppState> for tinyiothub_user::UserState {
-    fn from_ref(state: &AppState) -> Self {
-        tinyiothub_user::UserState {
-            user_service: state.user_service.clone(),
-            role_service: state.role_service.clone(),
-            permission_service: state.permission_service.clone(),
-            role_checker: Arc::new(EventSecurityRoleChecker { state: state.clone() }),
-        }
-    }
-}
-
 // ============================================================================
 // P4-Task17b: tenant domain slice + seam adapters
 // ============================================================================
@@ -1042,19 +1032,6 @@ impl crate::domains::tenant::TagSuggester for MinimaxTagSuggester {
             Err("AI 未生成有效标签".to_string())
         } else {
             Ok(tags)
-        }
-    }
-}
-
-/// P4-Task17b: derive the tenant domain's state slice from the global
-/// AppState. `jwt_secret` / `tag_suggester` are derived from the
-/// process-global config at extraction time — identical semantics to the
-/// former per-request `config::get()` reads (set once at startup).
-impl axum::extract::FromRef<AppState> for tinyiothub_event::EventState {
-    fn from_ref(state: &AppState) -> Self {
-        tinyiothub_event::EventState {
-            event_repository: state.event_repository.clone(),
-            real_time_event_repository: state.real_time_event_repository.clone(),
         }
     }
 }

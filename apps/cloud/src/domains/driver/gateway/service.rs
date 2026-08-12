@@ -8,7 +8,7 @@ use tinyiothub_core::models::device::CreateDeviceRequest;
 use tinyiothub_storage::DeviceRepositoryFactory;
 use tokio::sync::{RwLock, mpsc};
 
-use tinyiothub_event::{
+use crate::domains::event::{
     EventError,
     entities::Event,
     repositories::EventRepository,

@@ -3,8 +3,11 @@
 pub mod admin;
 pub mod agent;
 pub mod alarm;
+pub mod auth;
 pub mod driver;
+pub mod event;
 pub mod mcp;
 pub mod notify;
 pub mod tenant;
 pub mod thing;
+pub mod user;

@@ -32,13 +32,13 @@ use crate::domains::agent::{
         DirectiveSink, EnqueueError, Runner, ThingAgentManager, ThingAgentManagerConfig, TriggerSource, WakeSignal,
     },
 };
-use serde_json::json;
-use sqlx::Row;
-use tinyiothub_core::models::event::EventLevel;
-use tinyiothub_event::{
+use crate::domains::event::{
     bus::ThingEventBus,
     router::{ThingEventInput, ThrottleState, route_thing_event},
 };
+use serde_json::json;
+use sqlx::Row;
+use tinyiothub_core::models::event::EventLevel;
 use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
 use zeroclaw::{
     providers::{ChatRequest, ChatResponse, ToolCall},

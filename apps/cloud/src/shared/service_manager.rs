@@ -209,7 +209,7 @@ impl ServiceManager {
                             pool.clone(),
                             policy_repo,
                             app_state.thing_event_bus.clone(),
-                            Arc::new(tinyiothub_event::router::ThrottleState::new(60)),
+                            Arc::new(crate::domains::event::router::ThrottleState::new(60)),
                             app_state.agent_pool.shared_memory(),
                             app_state.agent_pool.observer(),
                             crate::domains::agent::host::autonomous_factory::minimax_provider_factory(),

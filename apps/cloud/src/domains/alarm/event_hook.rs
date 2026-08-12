@@ -5,9 +5,9 @@
 //! alarm types. Moved from `cloud::modules::alarm::event_hook` in P4-Task19
 //! (this file is the alarm side of the seam Task 18 cut).
 
+use crate::domains::event::router::EventAlarmHook;
 use async_trait::async_trait;
 use tinyiothub_core::models::event::EventLevel;
-use tinyiothub_event::router::EventAlarmHook;
 
 use crate::domains::alarm::service::AlarmService;
 

@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 
+use crate::domains::event::{EventError, Result, value_objects::RichContent};
 use aes_gcm::{
     Aes256Gcm, Key, Nonce,
     aead::{Aead, KeyInit, OsRng},
@@ -10,7 +11,6 @@ use aes_gcm::{
 use base64::{Engine as _, engine::general_purpose};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use tinyiothub_event::{EventError, Result, value_objects::RichContent};
 
 /// Event content encryption service
 #[async_trait::async_trait]
@@ -126,7 +126,7 @@ impl AesEventEncryption {
         // Check content elements
         for element in content.elements() {
             match element {
-                tinyiothub_event::value_objects::ContentElement::Text { content, .. } => {
+                tinyiothub_core::models::event::ContentElement::Text { content, .. } => {
                     let content_lower = content.to_lowercase();
                     for keyword in &self.sensitive_keywords {
                         if content_lower.contains(keyword) {
@@ -134,7 +134,7 @@ impl AesEventEncryption {
                         }
                     }
                 }
-                tinyiothub_event::value_objects::ContentElement::Code { content, .. } => {
+                tinyiothub_core::models::event::ContentElement::Code { content, .. } => {
                     let content_lower = content.to_lowercase();
                     for keyword in &self.sensitive_keywords {
                         if content_lower.contains(keyword) {
@@ -322,7 +322,7 @@ impl EventEncryption for NoOpEncryption {
 
 #[cfg(test)]
 mod tests {
-    use tinyiothub_event::value_objects::RichContent;
+    use tinyiothub_core::models::event::RichContent;
 
     use super::*;
 

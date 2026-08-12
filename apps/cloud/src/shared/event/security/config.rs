@@ -1,8 +1,8 @@
 // Event security configuration and factory
 use std::sync::Arc;
 
+use crate::domains::event::{EventError, Result, repositories::EventRepository};
 pub use tinyiothub_core::config::EventSecurityConfig;
-use tinyiothub_event::{EventError, Result, repositories::EventRepository};
 
 use crate::shared::event::security::{
     AesEventEncryption, DatabaseAuditLog, EventAccessControl, EventAuditLog, EventEncryption, InMemoryAuditLog,
@@ -192,23 +192,23 @@ struct NoOpAccessControl;
 
 #[async_trait::async_trait]
 impl EventAccessControl for NoOpAccessControl {
-    async fn can_read_event(&self, _user_id: &str, _event: &tinyiothub_event::entities::Event) -> Result<bool> {
+    async fn can_read_event(&self, _user_id: &str, _event: &tinyiothub_core::models::event::Event) -> Result<bool> {
         Ok(true) // Allow all access when RBAC is disabled
     }
 
     async fn can_create_event(
         &self,
         _user_id: &str,
-        _event_type: &tinyiothub_event::value_objects::EventType,
+        _event_type: &tinyiothub_core::models::event::EventType,
     ) -> Result<bool> {
         Ok(true)
     }
 
-    async fn can_update_event(&self, _user_id: &str, _event: &tinyiothub_event::entities::Event) -> Result<bool> {
+    async fn can_update_event(&self, _user_id: &str, _event: &tinyiothub_core::models::event::Event) -> Result<bool> {
         Ok(true)
     }
 
-    async fn can_delete_event(&self, _user_id: &str, _event: &tinyiothub_event::entities::Event) -> Result<bool> {
+    async fn can_delete_event(&self, _user_id: &str, _event: &tinyiothub_core::models::event::Event) -> Result<bool> {
         Ok(false) // Generally don't allow deletion even without RBAC
     }
 

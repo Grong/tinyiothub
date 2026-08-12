@@ -10,11 +10,11 @@ use crate::domains::driver::gateway::{
         TelemetryMessage,
     },
 };
-use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
-use tinyiothub_event::{
+use crate::domains::event::{
     bus::ThingEventBus,
     router::{ThingEventInput, ThingEventPayload, ThrottleState, route_thing_event},
 };
+use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use tokio::sync::mpsc;
 
 const ANNOUNCE_MAX_BURST: usize = 50;
@@ -311,8 +311,8 @@ impl PlatformMqttClient {
         };
 
         // MQTT-ingested events are device-reported: actor "device" (T6).
-        let alarm_hook: Option<Arc<dyn tinyiothub_event::router::EventAlarmHook>> =
-            alarm_service.map(|svc| svc as Arc<dyn tinyiothub_event::router::EventAlarmHook>);
+        let alarm_hook: Option<Arc<dyn crate::domains::event::router::EventAlarmHook>> =
+            alarm_service.map(|svc| svc as Arc<dyn crate::domains::event::router::EventAlarmHook>);
         let result = route_thing_event(db_pool, throttle, alarm_hook, event_bus, "device", input).await;
 
         if result.throttled {

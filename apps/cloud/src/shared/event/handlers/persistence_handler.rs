@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use tinyiothub_event::{
+use crate::domains::event::{
     entities::Event,
     repositories::EventRepository,
     value_objects::{DeviceEventType, EventLevel, EventType},

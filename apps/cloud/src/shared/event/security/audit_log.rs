@@ -1,13 +1,13 @@
 // Event audit logging implementations
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use tinyiothub_event::{
+use crate::domains::event::{
     EventError, Result,
     entities::Event,
     value_objects::{EventId, EventLevel, EventType},
 };
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 /// Audit log entry

@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::domains::auth::security::jwt::Claims;
 use crate::domains::thing::template::TemplateRepository;
 use axum::{
     Json, Router,
@@ -10,7 +11,6 @@ use axum::{
 };
 use reqwest::Client;
 use serde::Deserialize;
-use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{

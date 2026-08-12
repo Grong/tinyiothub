@@ -1,13 +1,13 @@
 use crate::shared::app_state::AppState;
 use std::collections::HashMap;
 
+use crate::domains::auth::security::jwt::Claims;
 use async_stream::stream;
 use axum::{
     Json,
     extract::{Path, Query, State},
     response::{IntoResponse, Response, Sse, sse::Event as SseEvent},
 };
-use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::*;

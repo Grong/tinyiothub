@@ -9,7 +9,7 @@ use std::sync::{
 use crate::domains::notify::channels::sse_channel::{SseMessage, SseNotificationChannel};
 use axum::response::Response;
 use serde::{Deserialize, Serialize};
-use tinyiothub_event::entities::Event;
+use tinyiothub_core::models::event::Event;
 use tracing::{debug, error, info};
 
 /// SSE Connection Manager
@@ -130,7 +130,7 @@ impl SseConnectionManager {
 
             // Extract new_value from content elements (look for "Current value: X")
             for element in event.content().elements() {
-                if let tinyiothub_event::ContentElement::Text { content, .. } = element
+                if let crate::domains::event::ContentElement::Text { content, .. } = element
                     && let Some(val) = content.strip_prefix("Current value: ")
                 {
                     data["new_value"] = serde_json::Value::String(val.to_string());

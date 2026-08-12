@@ -3,13 +3,13 @@
 
 /// In-process signal emitted for every persisted thing event.
 ///
-/// Defined in `tinyiothub_event::bus` (the producing domain) and re-exported
+/// Defined in `crate::domains::event::bus` (the producing domain) and re-exported
 /// here so existing `thing_agent::ThingEventSignal` paths keep working.
 ///
 /// `actor == "agent"` marks events produced by agent actions (invoke_action
 /// dispatch / heartbeat autonomous actions) — consumers must not wake the
 /// loop on those (resonance guard, O21).
-pub use tinyiothub_event::bus::ThingEventSignal;
+pub use crate::domains::event::bus::ThingEventSignal;
 
 #[async_trait::async_trait]
 pub trait ThingAgentHost: Send + Sync {

@@ -1,13 +1,13 @@
 // Secure event service with access control, encryption, and audit logging
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
-use tinyiothub_event::{
+use crate::domains::event::{
     EventError, Result,
     entities::Event,
     repositories::EventRepository,
     value_objects::{EventId, EventLevel, EventType, RichContent},
 };
+use chrono::{DateTime, Utc};
 
 use crate::shared::event::security::{
     AccessResult, AccessType, EncryptedContent, EventAccessControl, EventAuditLog, EventEncryption, EventSecurityConfig,
@@ -121,7 +121,7 @@ impl SecureEventService {
             // Check if content appears to be encrypted (simplified check)
             if event.content().title() == "Encrypted Content"
                 && let Some(first_element) = event.content().elements().first()
-                && let tinyiothub_event::value_objects::ContentElement::Text { content, .. } = first_element
+                && let tinyiothub_core::models::event::ContentElement::Text { content, .. } = first_element
                 && let Ok(encrypted_data) = serde_json::from_str::<EncryptedContent>(content)
                 && let Ok(decrypted_content) = self.encryption.decrypt_content(&encrypted_data)
             {
@@ -154,7 +154,7 @@ impl SecureEventService {
         limit: Option<usize>,
     ) -> Result<Vec<Event>> {
         // Get events from repository
-        let criteria = tinyiothub_event::repositories::EventCriteria {
+        let criteria = tinyiothub_storage::event::EventCriteria {
             start_time,
             end_time,
             event_types: event_type.as_ref().map(|t| vec![t.clone()]),
@@ -173,7 +173,7 @@ impl SecureEventService {
                 if self.config.read().unwrap().enable_encryption
                     && event.content().title() == "Encrypted Content"
                     && let Some(first_element) = event.content().elements().first()
-                    && let tinyiothub_event::value_objects::ContentElement::Text { content, .. } = first_element
+                    && let tinyiothub_core::models::event::ContentElement::Text { content, .. } = first_element
                     && let Ok(encrypted_data) = serde_json::from_str::<EncryptedContent>(content)
                     && let Ok(decrypted_content) = self.encryption.decrypt_content(&encrypted_data)
                 {

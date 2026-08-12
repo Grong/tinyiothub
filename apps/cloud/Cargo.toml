@@ -108,9 +108,6 @@ policy = { workspace = true }
 skills = { workspace = true }
 web = { workspace = true }
 llm = { workspace = true }
-auth = { workspace = true }
-user = { workspace = true }
-event = { workspace = true }
 
 # Dynamic loading
 libloading = { workspace = true }

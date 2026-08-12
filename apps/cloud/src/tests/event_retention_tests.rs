@@ -7,9 +7,9 @@
 
 use chrono::{Duration, Utc};
 use tinyiothub_core::{cron::JobExecutor, models::cron_job::CronJob};
-use tinyiothub_event::repositories::RealTimeEventRepository;
 use tinyiothub_runtime::cron_executors::EventRetentionExecutor;
 use tinyiothub_storage::Database;
+use tinyiothub_storage::event::RealTimeEventRepository;
 
 use crate::test_utils::seed_test_workspace;
 

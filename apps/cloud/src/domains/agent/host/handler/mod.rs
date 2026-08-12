@@ -15,9 +15,9 @@ pub mod workspace_heartbeat;
 #[cfg(test)]
 mod tests;
 
+use crate::domains::auth::security::jwt::Claims;
 use crate::shared::app_state::AppState;
 use axum::{Router, routing::get};
-use tinyiothub_auth::security::jwt::Claims;
 
 use crate::domains::agent::chat::handler::proxy as chat_proxy;
 

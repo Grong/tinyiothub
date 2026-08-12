@@ -11,11 +11,11 @@
 use std::sync::Arc;
 
 use crate::domains::agent::{host::thing_agent_host::CloudThingAgentHost, loop_::thing_agent::ThingAgentHost};
-use tinyiothub_core::models::event::EventLevel;
-use tinyiothub_event::{
+use crate::domains::event::{
     bus::ThingEventBus,
     router::{ThingEventInput, ThrottleState, route_thing_event},
 };
+use tinyiothub_core::models::event::EventLevel;
 
 use crate::test_utils::seed_test_workspace;
 

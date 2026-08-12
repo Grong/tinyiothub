@@ -39,7 +39,7 @@ use zeroclaw::{
 use super::tools::{
     AutonomousInvokeActionTool, RunContextSlot, create_thing_tools, new_run_context_slot, thing::InvokeActionTool,
 };
-use tinyiothub_event::{bus::ThingEventBus, router::ThrottleState};
+use crate::domains::event::{bus::ThingEventBus, router::ThrottleState};
 
 /// Builds a fresh model provider per agent (providers are per-agent in
 /// zeroclaw). Production wires [`minimax_provider_factory`]; tests inject a

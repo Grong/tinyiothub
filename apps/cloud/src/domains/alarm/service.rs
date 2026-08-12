@@ -12,7 +12,7 @@ use dashmap::DashMap;
 use tinyiothub_storage::cache::DeviceCache;
 
 use crate::domains::alarm::{dto::*, notification::NotificationDispatcher};
-use tinyiothub_event::{aggregates::NotificationChannelType, entities::Event, value_objects::EventType};
+use crate::domains::event::{aggregates::NotificationChannelType, entities::Event, value_objects::EventType};
 
 /// 报警业务服务
 pub struct AlarmService {

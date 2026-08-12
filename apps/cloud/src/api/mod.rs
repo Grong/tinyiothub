@@ -45,9 +45,9 @@ pub fn create_router() -> Router<AppState> {
             "/monitoring",
             crate::domains::admin::monitoring::handler::create_router(),
         )
-        .nest("/users", tinyiothub_user::router())
-        .nest("/users/roles", tinyiothub_user::role::create_router())
-        .nest("/users/permissions", tinyiothub_user::permission::create_router())
+        .nest("/users", crate::domains::user::router())
+        .nest("/users/roles", crate::domains::user::role::create_router())
+        .nest("/users/permissions", crate::domains::user::permission::create_router())
         .nest(
             "/device-templates",
             crate::domains::thing::template::handler::create_router(),
@@ -61,7 +61,7 @@ pub fn create_router() -> Router<AppState> {
         .nest("/tenants", crate::domains::tenant::router())
         .nest(
             "/events",
-            tinyiothub_event::router().merge(crate::shared::event::http::create_router()),
+            crate::domains::event::router().merge(crate::shared::event::http::create_router()),
         )
         .nest("/jobs", crate::domains::admin::jobs::handler::create_router())
         .nest("/batch", crate::domains::admin::batch::handler::create_router())
@@ -102,7 +102,7 @@ pub fn create_router() -> Router<AppState> {
             "/tools/toggle",
             post(crate::domains::agent::chat::handler::proxy::tools_toggle),
         )
-        .nest("/auth", tinyiothub_auth::router())
+        .nest("/auth", crate::domains::auth::router())
         .route("/test-auth", get(test_auth_endpoint))
         .layer(axum_middleware::from_fn(
             crate::api::middleware::context::jwt_auth_middleware,
@@ -110,10 +110,10 @@ pub fn create_router() -> Router<AppState> {
 
     // 创建v1版本的API路由
     let v1_routes = Router::new()
-        .nest("/auth", tinyiothub_auth::handler::login::create_router())
-        .nest("/auth/token", tinyiothub_auth::handler::token::create_router())
-        .nest("/auth/sms", tinyiothub_auth::handler::sms::create_router())
-        .nest("/auth/social", tinyiothub_auth::handler::social::create_router())
+        .nest("/auth", crate::domains::auth::handler::login::create_router())
+        .nest("/auth/token", crate::domains::auth::handler::token::create_router())
+        .nest("/auth/sms", crate::domains::auth::handler::sms::create_router())
+        .nest("/auth/social", crate::domains::auth::handler::social::create_router())
         .nest("/tenants", crate::domains::tenant::auth_router())
         .nest("/system", crate::domains::admin::system::create_router())
         .nest("/system", crate::shared::initialization::create_router())

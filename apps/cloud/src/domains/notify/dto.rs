@@ -5,11 +5,11 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use tinyiothub_core::notification_types::NotificationChannelType;
-use tinyiothub_event::{
+use crate::domains::event::{
     EventError, Result,
     value_objects::{EventId, EventLevel},
 };
+use tinyiothub_core::notification_types::NotificationChannelType;
 use tinyiothub_storage::notify::{NotificationRecord, NotificationRule, NotificationStatus};
 
 // ──────────────────────────────────────────────
@@ -457,7 +457,7 @@ pub fn device_filter_to_json(filter: &DeviceFilterRequest) -> serde_json::Value 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tinyiothub_event::value_objects::EventId;
+    use tinyiothub_core::models::event::EventId;
 
     #[test]
     fn test_create_notification_aggregate() {
