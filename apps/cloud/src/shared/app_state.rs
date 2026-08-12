@@ -95,7 +95,7 @@ pub struct AppState {
     pub real_time_event_repository: Arc<RealTimeEventRepository>,
 
     /// 报警服务 - 报警规则和报警管理
-    pub alarm_service: Arc<tinyiothub_alarm::AlarmService>,
+    pub alarm_service: Arc<crate::domains::alarm::service::AlarmService>,
 
     /// Agent Pool — central agent lifecycle manager
     pub agent_pool: Arc<AgentPool>,
@@ -217,9 +217,9 @@ impl AppState {
         let event_bus = Arc::new(EventBus::new());
 
         // 创建报警服务
-        let alarm_repository = Arc::new(tinyiothub_alarm::AlarmRepository::new(database.clone()));
-        let alarm_rule_repository = Arc::new(tinyiothub_alarm::AlarmRuleRepository::new(database.clone()));
-        let alarm_service = Arc::new(tinyiothub_alarm::AlarmService::new(
+        let alarm_repository = Arc::new(crate::domains::alarm::AlarmRepository::new(database.clone()));
+        let alarm_rule_repository = Arc::new(crate::domains::alarm::AlarmRuleRepository::new(database.clone()));
+        let alarm_service = Arc::new(crate::domains::alarm::service::AlarmService::new(
             alarm_repository.clone(),
             alarm_rule_repository,
         ));
@@ -1059,20 +1059,8 @@ impl axum::extract::FromRef<AppState> for tinyiothub_event::EventState {
     }
 }
 
-impl axum::extract::FromRef<AppState> for tinyiothub_alarm::AlarmState {
-    fn from_ref(state: &AppState) -> Self {
-        tinyiothub_alarm::AlarmState {
-            alarm_service: state.alarm_service.clone(),
-            database: state.database.clone(),
-        }
-    }
-} // ============================================================================
-// P4-Task22: agent domain slice + workspace-access seam adapter
-// ============================================================================
-
 /// Workspace-access seam adapter: the agent crate's `WorkspaceAccess` port
-/// over the tenant crate's `WorkspaceService` (tenant → agent edge stays
-/// one-way; agent never names tenant types).
+/// over the tenant crate's `WorkspaceService`.
 pub struct TenantWorkspaceAccess {
     pub workspace_service: Arc<crate::domains::tenant::WorkspaceService>,
 }

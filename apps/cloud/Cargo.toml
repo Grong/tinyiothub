@@ -111,7 +111,6 @@ llm = { workspace = true }
 auth = { workspace = true }
 user = { workspace = true }
 event = { workspace = true }
-alarm = { workspace = true }
 
 # Dynamic loading
 libloading = { workspace = true }

@@ -6,16 +6,12 @@ use std::{
     time::Instant,
 };
 
+use crate::domains::alarm::types_ai::{AlarmAiPublisher, AlarmEvent};
 use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
 use tinyiothub_storage::cache::DeviceCache;
 
-use crate::{
-    notification::NotificationDispatcher,
-    types::*,
-    types::{AlarmQueryCriteria, AlarmRepository, AlarmRuleRepository, TimeRange},
-    types_ai::{AlarmAiPublisher, AlarmEvent},
-};
+use crate::domains::alarm::{dto::*, notification::NotificationDispatcher};
 use tinyiothub_event::{aggregates::NotificationChannelType, entities::Event, value_objects::EventType};
 
 /// 报警业务服务
@@ -1193,7 +1189,7 @@ mod tests {
     use tinyiothub_storage::Database;
 
     use super::*;
-    use crate::types::AlarmRuleRepository;
+    use tinyiothub_storage::alarm::AlarmRuleRepository;
 
     async fn setup_test_db(pool: &sqlx::SqlitePool) {
         sqlx::query("PRAGMA foreign_keys = OFF").execute(pool).await.unwrap();
@@ -2045,7 +2041,7 @@ mod integration_tests {
     use tinyiothub_storage::Database;
 
     use super::*;
-    use crate::types::{AlarmRepository, AlarmRuleRepository};
+    use tinyiothub_storage::alarm::{AlarmRepository, AlarmRuleRepository};
 
     async fn setup_full_schema(pool: &sqlx::SqlitePool) {
         sqlx::query("PRAGMA foreign_keys = OFF").execute(pool).await.unwrap();

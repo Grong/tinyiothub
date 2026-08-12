@@ -21,8 +21,8 @@ impl AlarmAiPublisherAdapter {
     }
 }
 
-impl tinyiothub_alarm::AlarmAiPublisher for AlarmAiPublisherAdapter {
-    fn publish_alarm_created(&self, event: tinyiothub_alarm::AlarmEvent) {
+impl crate::domains::alarm::AlarmAiPublisher for AlarmAiPublisherAdapter {
+    fn publish_alarm_created(&self, event: crate::domains::alarm::AlarmEvent) {
         self.publisher
             .publish(crate::domains::agent::loop_::event::types::AiEvent::AlarmCreated(event));
     }

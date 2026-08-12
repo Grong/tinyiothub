@@ -39,8 +39,8 @@ pub fn create_router() -> Router<AppState> {
     let protected_routes = Router::new()
         .nest("/devices", crate::domains::admin::device::create_router())
         .nest("/drivers", crate::domains::driver::router())
-        .nest("/alarms", tinyiothub_alarm::router())
-        .nest("/alarm-rules", tinyiothub_alarm::rule_router())
+        .nest("/alarms", crate::domains::alarm::router())
+        .nest("/alarm-rules", crate::domains::alarm::rule_router())
         .nest(
             "/monitoring",
             crate::domains::admin::monitoring::handler::create_router(),

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tinyiothub_storage::{Database, cache::DeviceCache};
 
-use tinyiothub_alarm::AlarmRepository;
+use tinyiothub_storage::alarm::AlarmRepository;
 
 pub struct DeviceMonitoringService {
     database: Arc<Database>,

@@ -1,4 +1,5 @@
 #[allow(clippy::module_inception)]
+pub mod alarm_event;
 pub mod event;
 pub mod event_id;
 pub mod event_level;
@@ -9,6 +10,7 @@ pub mod rich_content;
 // Backward compatibility: ConnectionStatus unified into DeviceStatus
 pub use crate::models::device::DeviceStatus as ConnectionStatus;
 
+pub use alarm_event::AlarmEvent;
 pub use event::Event;
 pub use event_id::EventId;
 pub use event_level::EventLevel;

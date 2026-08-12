@@ -5,8 +5,8 @@ use std::sync::Arc;
 use tinyiothub_storage::{Database, cache::DeviceCache};
 
 use super::monitoring::DeviceMonitoringService;
-use tinyiothub_alarm::AlarmRepository;
 use tinyiothub_core::error::Error;
+use tinyiothub_storage::alarm::AlarmRepository;
 
 pub struct DevicePerformanceService {
     #[allow(dead_code)]

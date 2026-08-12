@@ -1,5 +1,6 @@
 // Alarm HTTP handlers — query + recent + alarm rules CRUD
 
+use crate::shared::app_state::AppState;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -7,20 +8,17 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
+use tinyiothub_storage::alarm::{AlarmQueryCriteria, SortOrder, TimeRange};
 use tinyiothub_web::error_handling::ErrorCode;
 use tinyiothub_web::middleware::workspace::AuthClaims;
 use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo};
 
-use crate::{
-    AlarmState,
-    types::*,
-    types::{AlarmQueryCriteria, SortOrder, TimeRange},
-};
+use crate::domains::alarm::dto::*;
 
 pub fn create_alarm_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
-    AlarmState: axum::extract::FromRef<S>,
+    AppState: axum::extract::FromRef<S>,
 {
     Router::new()
         .route("/", get(list_alarms))
@@ -36,7 +34,7 @@ where
 pub fn create_alarm_rule_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
-    AlarmState: axum::extract::FromRef<S>,
+    AppState: axum::extract::FromRef<S>,
 {
     Router::new()
         .route("/", get(list_alarm_rules))
@@ -53,7 +51,7 @@ where
 
 async fn list_alarms(
     Query(params): Query<std::collections::HashMap<String, String>>,
-    State(state): State<AlarmState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<PaginatedResponse<AlarmDto>>> {
     let get_csv = |key: &str| -> Option<Vec<String>> {
@@ -150,7 +148,7 @@ async fn list_alarms(
 
 async fn get_alarm(
     Path(id): Path<String>,
-    State(state): State<AlarmState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<AlarmDto>> {
     match state
@@ -166,7 +164,7 @@ async fn get_alarm(
 
 async fn get_alarm_statistics(
     Query(params): Query<StatisticsQueryParams>,
-    State(state): State<AlarmState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<AlarmStatisticsDto>> {
     let start = params
@@ -205,7 +203,7 @@ pub struct RecentAlarmsQuery {
 }
 
 async fn get_recent_alarms(
-    State(state): State<AlarmState>,
+    State(state): State<AppState>,
     Query(query): Query<RecentAlarmsQuery>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<RecentAlarm>>> {
@@ -224,7 +222,7 @@ async fn get_recent_alarms(
 /// Batch load device names for a list of alarms.
 async fn load_device_names_map(
     pool: &sqlx::Pool<sqlx::Sqlite>,
-    alarms: &[crate::types::Alarm],
+    alarms: &[tinyiothub_storage::alarm::Alarm],
 ) -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
     if alarms.is_empty() {
@@ -349,7 +347,7 @@ pub struct RuleQueryParams {
 
 async fn list_alarm_rules(
     Query(params): Query<RuleQueryParams>,
-    State(state): State<AlarmState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<AlarmRuleDto>>> {
     let rules = if let Some(device_id) = params.device_id {
@@ -372,7 +370,7 @@ async fn list_alarm_rules(
 
 async fn get_alarm_rule(
     Path(id): Path<String>,
-    State(state): State<AlarmState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<AlarmRuleDto>> {
     match state.alarm_service.get_rule_by_id(&id).await {
@@ -390,7 +388,7 @@ async fn get_alarm_rule(
 }
 
 async fn create_alarm_rule(
-    State(state): State<AlarmState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
     Json(req): Json<CreateAlarmRuleRequest>,
 ) -> Json<ApiResponse<AlarmRuleDto>> {
@@ -431,7 +429,7 @@ async fn create_alarm_rule(
 }
 
 async fn update_alarm_rule(
-    State(state): State<AlarmState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
     Path(id): Path<String>,
     Json(req): Json<UpdateAlarmRuleRequest>,
@@ -475,7 +473,7 @@ async fn update_alarm_rule(
 
 async fn delete_alarm_rule(
     Path(id): Path<String>,
-    State(state): State<AlarmState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<()>> {
     // Verify workspace ownership before delete (DB-level WHERE clause enforces isolation)
@@ -486,7 +484,7 @@ async fn delete_alarm_rule(
 }
 
 async fn toggle_alarm_rule(
-    State(state): State<AlarmState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
     Path(id): Path<String>,
     Json(req): Json<ToggleRuleRequest>,
@@ -508,7 +506,7 @@ async fn toggle_alarm_rule(
 
 async fn acknowledge_alarm(
     Path(id): Path<String>,
-    State(state): State<AlarmState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
     Json(req): Json<AcknowledgeAlarmRequest>,
 ) -> Json<ApiResponse<()>> {
@@ -538,7 +536,7 @@ async fn acknowledge_alarm(
 
 async fn resolve_alarm(
     Path(id): Path<String>,
-    State(state): State<AlarmState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
     Json(req): Json<ResolveAlarmRequest>,
 ) -> Json<ApiResponse<()>> {
@@ -572,7 +570,7 @@ async fn resolve_alarm(
 }
 
 async fn batch_acknowledge_alarms(
-    State(state): State<AlarmState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
     Json(req): Json<BatchAcknowledgeRequest>,
 ) -> Json<ApiResponse<BatchOperationResult>> {
@@ -598,7 +596,7 @@ async fn batch_acknowledge_alarms(
 }
 
 async fn batch_resolve_alarms(
-    State(state): State<AlarmState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
     Json(req): Json<BatchResolveRequest>,
 ) -> Json<ApiResponse<BatchOperationResult>> {

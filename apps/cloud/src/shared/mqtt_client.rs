@@ -38,7 +38,7 @@ impl PlatformMqttClient {
         throttle: Arc<ThrottleState>,
         event_bus: Arc<ThingEventBus>,
         db_pool: sqlx::SqlitePool,
-        alarm_service: Option<Arc<tinyiothub_alarm::AlarmService>>,
+        alarm_service: Option<Arc<crate::domains::alarm::service::AlarmService>>,
     ) -> Self {
         let broker_url = broker_url.to_string();
         let username = username.to_string();
@@ -231,7 +231,7 @@ impl PlatformMqttClient {
         throttle: &ThrottleState,
         event_bus: &ThingEventBus,
         db_pool: &sqlx::SqlitePool,
-        alarm_service: Option<Arc<tinyiothub_alarm::AlarmService>>,
+        alarm_service: Option<Arc<crate::domains::alarm::service::AlarmService>>,
     ) {
         // Parse topic: thing/{thing_id}/event/{event_name}
         let parts: Vec<&str> = topic.split('/').collect();

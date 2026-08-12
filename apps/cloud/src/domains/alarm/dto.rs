@@ -103,8 +103,8 @@ pub struct AlarmDto {
     pub created_at: String,
 }
 
-impl From<crate::Alarm> for AlarmDto {
-    fn from(alarm: crate::Alarm) -> Self {
+impl From<crate::domains::alarm::Alarm> for AlarmDto {
+    fn from(alarm: crate::domains::alarm::Alarm) -> Self {
         Self {
             id: alarm.id,
             device_id: alarm.device_id,
@@ -153,8 +153,8 @@ pub struct AlarmRuleDto {
     pub updated_at: String,
 }
 
-impl From<crate::AlarmRule> for AlarmRuleDto {
-    fn from(rule: crate::AlarmRule) -> Self {
+impl From<crate::domains::alarm::AlarmRule> for AlarmRuleDto {
+    fn from(rule: crate::domains::alarm::AlarmRule) -> Self {
         Self {
             id: rule.id,
             name: rule.name,
@@ -184,8 +184,8 @@ pub struct AlarmStatisticsDto {
     pub resolved_count: u64,
 }
 
-impl From<crate::AlarmStatistics> for AlarmStatisticsDto {
-    fn from(stats: crate::AlarmStatistics) -> Self {
+impl From<crate::domains::alarm::AlarmStatistics> for AlarmStatisticsDto {
+    fn from(stats: crate::domains::alarm::AlarmStatistics) -> Self {
         Self {
             total_count: stats.total_count,
             active_count: stats.active_count,
@@ -260,7 +260,7 @@ pub struct CreateAlarmRuleRequest {
     pub description: Option<String>,
     pub device_id: Option<String>,
     pub property_id: Option<String>,
-    pub rule_type: crate::RuleType,
+    pub rule_type: tinyiothub_storage::alarm::RuleType,
     pub condition: serde_json::Value,
     pub alarm_level: String,
     pub notification_config: serde_json::Value,
@@ -861,7 +861,7 @@ mod tests {
 
     #[test]
     fn test_alarm_statistics_dto_from() {
-        use crate::AlarmStatistics;
+        use crate::domains::alarm::AlarmStatistics;
         let stats = AlarmStatistics {
             total_count: 10,
             active_count: 3,

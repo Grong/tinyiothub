@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tinyiothub_storage::Database;
 
-use super::types::*;
+use super::dto::*;
 
 /// Sends notifications for a triggered alarm based on rule config.
 pub struct NotificationDispatcher {
@@ -63,17 +63,17 @@ impl NotificationDispatcher {
 
     async fn send_to_channel(
         db: &Database,
-        channel_type: &tinyiothub_event::aggregates::NotificationChannelType,
+        channel_type: &tinyiothub_core::notification_types::NotificationChannelType,
         recipients: &[String],
         title: &str,
         body: &str,
         workspace_id: &str,
     ) {
         let channel_type_str = match channel_type {
-            tinyiothub_event::aggregates::NotificationChannelType::Email => "email",
-            tinyiothub_event::aggregates::NotificationChannelType::Sms => "sms",
-            tinyiothub_event::aggregates::NotificationChannelType::Sse => "sse",
-            tinyiothub_event::aggregates::NotificationChannelType::Webhook => "webhook",
+            tinyiothub_core::notification_types::NotificationChannelType::Email => "email",
+            tinyiothub_core::notification_types::NotificationChannelType::Sms => "sms",
+            tinyiothub_core::notification_types::NotificationChannelType::Sse => "sse",
+            tinyiothub_core::notification_types::NotificationChannelType::Webhook => "webhook",
         };
 
         let rows = sqlx::query(
@@ -104,16 +104,16 @@ impl NotificationDispatcher {
             let config_str: String = row.get("config");
 
             let result = match channel_type {
-                tinyiothub_event::aggregates::NotificationChannelType::Email => {
+                tinyiothub_core::notification_types::NotificationChannelType::Email => {
                     Self::send_email(&config_str, recipients, title, body).await
                 }
-                tinyiothub_event::aggregates::NotificationChannelType::Sms => {
+                tinyiothub_core::notification_types::NotificationChannelType::Sms => {
                     Self::send_sms(&config_str, recipients, body).await
                 }
-                tinyiothub_event::aggregates::NotificationChannelType::Sse => {
+                tinyiothub_core::notification_types::NotificationChannelType::Sse => {
                     Self::send_sse(&config_str, title, body).await
                 }
-                tinyiothub_event::aggregates::NotificationChannelType::Webhook => {
+                tinyiothub_core::notification_types::NotificationChannelType::Webhook => {
                     Self::send_webhook(&config_str, title, body).await
                 }
             };

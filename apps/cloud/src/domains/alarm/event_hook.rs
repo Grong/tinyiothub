@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use tinyiothub_core::models::event::EventLevel;
 use tinyiothub_event::router::EventAlarmHook;
 
-use crate::service::AlarmService;
+use crate::domains::alarm::service::AlarmService;
 
 #[async_trait]
 impl EventAlarmHook for AlarmService {

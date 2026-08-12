@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
 
-use tinyiothub_alarm::{
+use crate::domains::alarm::{
     AlarmCondition, AlarmLevel, AlarmQueryCriteria, AlarmRule, AlarmStatus, NotificationConfig, SortOrder, TimeRange,
 };
 
@@ -205,7 +205,7 @@ impl ToolHandler for AlarmListHandler {
 
         let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;
 
-        let alarms: Vec<tinyiothub_alarm::AlarmDto> = result.into_iter().map(|a| a.into()).collect();
+        let alarms: Vec<crate::domains::alarm::dto::AlarmDto> = result.into_iter().map(|a| a.into()).collect();
 
         Ok(serde_json::json!({
             "data": alarms,
@@ -449,11 +449,11 @@ impl ToolHandler for AlarmRuleAddHandler {
         };
 
         let rule_type = match input.rule_type.as_str() {
-            "threshold" => tinyiothub_alarm::RuleType::Threshold,
-            "range" => tinyiothub_alarm::RuleType::Range,
-            "change" => tinyiothub_alarm::RuleType::Change,
-            "duration" => tinyiothub_alarm::RuleType::Duration,
-            "composite" => tinyiothub_alarm::RuleType::Composite,
+            "threshold" => tinyiothub_storage::alarm::RuleType::Threshold,
+            "range" => tinyiothub_storage::alarm::RuleType::Range,
+            "change" => tinyiothub_storage::alarm::RuleType::Change,
+            "duration" => tinyiothub_storage::alarm::RuleType::Duration,
+            "composite" => tinyiothub_storage::alarm::RuleType::Composite,
             _ => {
                 return Err(ToolError::InvalidParams(format!(
                     "Invalid rule type: {}",

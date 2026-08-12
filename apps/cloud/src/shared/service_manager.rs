@@ -88,10 +88,10 @@ impl ServiceManager {
         info!("✅ SseEventHandler registered");
 
         // 注册报警事件处理器 - 评估报警规则并创建报警
-        let notification_dispatcher = Arc::new(tinyiothub_alarm::notification::NotificationDispatcher::new(
+        let notification_dispatcher = Arc::new(crate::domains::alarm::notification::NotificationDispatcher::new(
             app_state.database.clone(),
         ));
-        let alarm_handler = Arc::new(tinyiothub_alarm::AlarmEventHandler::new(
+        let alarm_handler = Arc::new(crate::domains::alarm::AlarmEventHandler::new(
             app_state.alarm_service.clone(),
             notification_dispatcher,
         ));
