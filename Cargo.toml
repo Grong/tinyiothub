@@ -170,7 +170,6 @@ tenant = { path = "crates/tenant" }
 event = { path = "crates/event" }
 alarm = { path = "crates/alarm" }
 driver = { path = "crates/driver" }
-mcp = { path = "crates/mcp" }
 admin = { path = "crates/admin" }
 
 [profile.release]

@@ -8,11 +8,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use tinyiothub_core::models::cron_job::{CreateCronJobRequest, CronJobQuery, UpdateCronJobRequest};
 
-use crate::{
-    McpState,
-    handlers::get_mcp_context,
-    tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler},
-};
+use crate::domains::mcp::handlers::get_mcp_context;
+use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
+use crate::shared::app_state::AppState;
 
 /// Tool input: List schedules
 #[derive(Debug, Deserialize)]
@@ -150,11 +148,11 @@ fn map_update_input(input: &UpdateScheduleInput) -> UpdateCronJobRequest {
 
 /// List schedules tool handler
 pub struct ListSchedulesHandler {
-    state: Option<Arc<McpState>>,
+    state: Option<Arc<AppState>>,
 }
 
 impl ListSchedulesHandler {
-    pub fn new(state: Option<Arc<McpState>>) -> Self {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
         Self { state }
     }
 }
@@ -212,7 +210,7 @@ impl ToolHandler for ListSchedulesHandler {
         let state = self
             .state
             .as_ref()
-            .ok_or_else(|| ToolError::Internal("McpState not initialized".to_string()))?;
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         let query = CronJobQuery {
             name: None,
@@ -235,11 +233,11 @@ impl ToolHandler for ListSchedulesHandler {
 
 /// Create schedule tool handler
 pub struct CreateScheduleHandler {
-    state: Option<Arc<McpState>>,
+    state: Option<Arc<AppState>>,
 }
 
 impl CreateScheduleHandler {
-    pub fn new(state: Option<Arc<McpState>>) -> Self {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
         Self { state }
     }
 }
@@ -350,7 +348,7 @@ impl ToolHandler for CreateScheduleHandler {
         let state = self
             .state
             .as_ref()
-            .ok_or_else(|| ToolError::Internal("McpState not initialized".to_string()))?;
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         // SECURITY: Verify target_device_id belongs to authenticated workspace if provided
         if let Some(ref device_id) = input.target_device_id {
@@ -406,11 +404,11 @@ impl ToolHandler for CreateScheduleHandler {
 
 /// Update schedule tool handler
 pub struct UpdateScheduleHandler {
-    state: Option<Arc<McpState>>,
+    state: Option<Arc<AppState>>,
 }
 
 impl UpdateScheduleHandler {
-    pub fn new(state: Option<Arc<McpState>>) -> Self {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
         Self { state }
     }
 }
@@ -468,7 +466,7 @@ impl ToolHandler for UpdateScheduleHandler {
         let state = self
             .state
             .as_ref()
-            .ok_or_else(|| ToolError::Internal("McpState not initialized".to_string()))?;
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         // Normalize 5-field cron to 6-field (prepend seconds=0)
         if let Some(ref cron) = input.cron_expression {
@@ -498,11 +496,11 @@ impl ToolHandler for UpdateScheduleHandler {
 
 /// Delete schedule tool handler
 pub struct DeleteScheduleHandler {
-    state: Option<Arc<McpState>>,
+    state: Option<Arc<AppState>>,
 }
 
 impl DeleteScheduleHandler {
-    pub fn new(state: Option<Arc<McpState>>) -> Self {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
         Self { state }
     }
 }
@@ -539,7 +537,7 @@ impl ToolHandler for DeleteScheduleHandler {
         let state = self
             .state
             .as_ref()
-            .ok_or_else(|| ToolError::Internal("McpState not initialized".to_string()))?;
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         // Verify the job exists and belongs to the workspace
         let existing = state

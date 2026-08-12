@@ -73,7 +73,7 @@ pub fn create_router() -> Router<AppState> {
             "/workspaces",
             tinyiothub_agent::host::handler::workspace_heartbeat::create_router(),
         )
-        .nest("/mcp", tinyiothub_mcp::router())
+        .nest("/mcp", crate::domains::mcp::router())
         .nest("/chat", tinyiothub_agent::chat::handler::create_router())
         .nest(
             "/agents/skills",

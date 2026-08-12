@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::McpState;
+use crate::shared::app_state::AppState;
 
 /// MCP tool execution errors
 #[derive(Debug, Clone)]
@@ -139,15 +139,15 @@ impl ToolMetadata {
 
 /// Handler registry for managing MCP tools
 pub struct HandlerRegistry {
-    /// McpState injected at startup; tool handlers are constructed with it.
+    /// AppState injected at startup; tool handlers are constructed with it.
     /// `None` in tests that exercise handlers without a full app state.
-    state: Option<Arc<McpState>>,
+    state: Option<Arc<AppState>>,
     handlers: HashMap<String, Arc<dyn ToolHandler>>,
 }
 
 impl HandlerRegistry {
     /// Create a new empty registry holding the given app state
-    pub fn new(state: Option<Arc<McpState>>) -> Self {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
         Self {
             state,
             handlers: HashMap::new(),
@@ -155,7 +155,7 @@ impl HandlerRegistry {
     }
 
     /// The app state this registry was initialized with
-    pub fn state(&self) -> Option<&Arc<McpState>> {
+    pub fn state(&self) -> Option<&Arc<AppState>> {
         self.state.as_ref()
     }
 

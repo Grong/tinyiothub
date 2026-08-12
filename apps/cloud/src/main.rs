@@ -122,9 +122,8 @@ async fn main_impl() -> std::io::Result<()> {
 
         use axum::{Router, extract::FromRef};
         use tower_http::services::ServeDir;
-        let mcp_state = Arc::new(tinyiothub_mcp::McpState::from_ref(&app_state));
-        tinyiothub_mcp::register_tools(Some(mcp_state)).await;
-        tinyiothub_mcp::agent_bridge::register_agent_bridge();
+        crate::domains::mcp::register_tools(Some(Arc::new(app_state.clone()))).await;
+        crate::domains::mcp::agent_bridge::register_agent_bridge();
         app_state
             .agent_pool
             .set_runtime_context(tinyiothub_agent::host::tools::service::ToolRuntimeContext {

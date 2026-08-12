@@ -1118,28 +1118,6 @@ impl axum::extract::FromRef<AppState> for tinyiothub_agent::AgentState {
 // P4-Task23: mcp domain slice
 // ============================================================================
 
-/// P4-Task23: derive the mcp domain's state slice from the global AppState.
-/// Cloud mounts `tinyiothub_mcp::router()` (/mcp) with this `FromRef`
-/// conversion and passes an `Arc<McpState>` to
-/// `tinyiothub_mcp::register_tools` at startup (server.rs / main.rs).
-impl axum::extract::FromRef<AppState> for tinyiothub_mcp::McpState {
-    fn from_ref(state: &AppState) -> Self {
-        tinyiothub_mcp::McpState {
-            database: state.database.clone(),
-            device_cache: state.device_cache.clone(),
-            device_repository_factory: state.device_repository_factory.clone(),
-            tag_repository: state.tag_repository.clone(),
-            template_engine: state.template_engine.clone(),
-            data_server: state.data_server.clone(),
-            alarm_service: state.alarm_service.clone(),
-            tenant_service: state.tenant_service.clone(),
-            cron_job_repo: state.cron_job_repo.clone(),
-            cron_run_repo: state.cron_run_repo.clone(),
-            event_bus: state.event_bus.clone(),
-        }
-    }
-}
-
 // ============================================================================
 // P4-Task24: admin domain slice + admin-role seam adapter
 // ============================================================================

@@ -16,7 +16,7 @@ use sha2::Digest;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::tool_registry::{ToolError, ToolMetadata};
-use crate::McpState;
+use crate::shared::app_state::AppState;
 
 /// MCP auth context: workspace isolation for API Key authentication.
 /// Unlike JWT-based auth (which had user_id/tenant_id), API Keys are bound
@@ -155,11 +155,11 @@ pub struct JsonRpcResult {
 ///
 /// Generic over the composition state `S` (SEP contract): the router nests
 /// into the composition layer's `Router<AppState>`; handlers extract
-/// `State<McpState>` via `FromRef`.
+/// `State<AppState>` via `FromRef`.
 pub fn create_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
-    McpState: axum::extract::FromRef<S>,
+    AppState: axum::extract::FromRef<S>,
 {
     Router::new()
         .route("/", post(handle_mcp_request))
@@ -169,7 +169,7 @@ where
 
 /// Extract and validate API Key from X-API-Key header.
 /// Returns McpAuthContext on success, ToolError on failure.
-async fn extract_api_key(headers: &axum::http::HeaderMap, state: &McpState) -> Result<McpAuthContext, ToolError> {
+async fn extract_api_key(headers: &axum::http::HeaderMap, state: &AppState) -> Result<McpAuthContext, ToolError> {
     let raw_key = headers
         .get("X-API-Key")
         .and_then(|v| v.to_str().ok())
@@ -214,7 +214,7 @@ async fn extract_api_key(headers: &axum::http::HeaderMap, state: &McpState) -> R
 /// Handle all MCP requests
 async fn handle_mcp_request(
     headers: axum::http::HeaderMap,
-    State(state): State<McpState>,
+    State(state): State<AppState>,
     Json(request): Json<JsonRpcRequest>,
 ) -> Response {
     let ctx = match extract_api_key(&headers, &state).await {
@@ -340,7 +340,7 @@ async fn handle_mcp_request(
 }
 
 /// Handle tools/list endpoint
-async fn handle_tools_list(headers: axum::http::HeaderMap, State(state): State<McpState>) -> Response {
+async fn handle_tools_list(headers: axum::http::HeaderMap, State(state): State<AppState>) -> Response {
     let ctx = match extract_api_key(&headers, &state).await {
         Ok(c) => c,
         Err(e) => {
@@ -365,7 +365,7 @@ async fn handle_tools_list(headers: axum::http::HeaderMap, State(state): State<M
 /// Handle tools/call endpoint
 async fn handle_tools_call(
     headers: axum::http::HeaderMap,
-    State(state): State<McpState>,
+    State(state): State<AppState>,
     Json(params): Json<ToolCallParams>,
 ) -> Response {
     let ctx = match extract_api_key(&headers, &state).await {
@@ -453,7 +453,7 @@ mod tests {
     use async_trait::async_trait;
 
     use super::*;
-    use crate::tool_registry::ToolHandler;
+    use crate::domains::mcp::tool_registry::ToolHandler;
 
     #[allow(dead_code)]
     struct DummyHandler;
@@ -468,8 +468,8 @@ mod tests {
             "A test tool"
         }
 
-        fn input_schema(&self) -> crate::tool_registry::InputSchema {
-            crate::tool_registry::InputSchema::object(vec![], std::collections::HashMap::new())
+        fn input_schema(&self) -> crate::domains::mcp::tool_registry::InputSchema {
+            crate::domains::mcp::tool_registry::InputSchema::object(vec![], std::collections::HashMap::new())
         }
 
         async fn execute(&self, args: Value) -> Result<Value, ToolError> {

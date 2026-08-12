@@ -12,11 +12,9 @@ use tinyiothub_alarm::{
     AlarmCondition, AlarmLevel, AlarmQueryCriteria, AlarmRule, AlarmStatus, NotificationConfig, SortOrder, TimeRange,
 };
 
-use crate::{
-    McpState,
-    handlers::get_mcp_context,
-    tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler},
-};
+use crate::domains::mcp::handlers::get_mcp_context;
+use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
+use crate::shared::app_state::AppState;
 
 /// Tool input: List alarms
 #[derive(Debug, Deserialize)]
@@ -60,11 +58,11 @@ struct CreateAlarmRuleInput {
 
 /// List alarms tool handler
 pub struct AlarmListHandler {
-    state: Option<Arc<McpState>>,
+    state: Option<Arc<AppState>>,
 }
 
 impl AlarmListHandler {
-    pub fn new(state: Option<Arc<McpState>>) -> Self {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
         Self { state }
     }
 }
@@ -150,7 +148,7 @@ impl ToolHandler for AlarmListHandler {
         let state = self
             .state
             .as_ref()
-            .ok_or_else(|| ToolError::Internal("McpState not initialized".to_string()))?;
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         let page = input.page.unwrap_or(1);
         let page_size = input.page_size.unwrap_or(20);
@@ -223,11 +221,11 @@ impl ToolHandler for AlarmListHandler {
 
 /// Acknowledge alarm tool handler
 pub struct AlarmAcknowledgeHandler {
-    state: Option<Arc<McpState>>,
+    state: Option<Arc<AppState>>,
 }
 
 impl AlarmAcknowledgeHandler {
-    pub fn new(state: Option<Arc<McpState>>) -> Self {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
         Self { state }
     }
 }
@@ -271,7 +269,7 @@ impl ToolHandler for AlarmAcknowledgeHandler {
         let state = self
             .state
             .as_ref()
-            .ok_or_else(|| ToolError::Internal("McpState not initialized".to_string()))?;
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         // SECURITY: Verify alarm belongs to the authenticated workspace before acknowledging
         // 1. Fetch the alarm
@@ -320,11 +318,11 @@ impl ToolHandler for AlarmAcknowledgeHandler {
 
 /// Create alarm rule tool handler
 pub struct AlarmRuleAddHandler {
-    state: Option<Arc<McpState>>,
+    state: Option<Arc<AppState>>,
 }
 
 impl AlarmRuleAddHandler {
-    pub fn new(state: Option<Arc<McpState>>) -> Self {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
         Self { state }
     }
 }
@@ -433,7 +431,7 @@ impl ToolHandler for AlarmRuleAddHandler {
         let state = self
             .state
             .as_ref()
-            .ok_or_else(|| ToolError::Internal("McpState not initialized".to_string()))?;
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         // Parse alarm level
         let alarm_level = AlarmLevel::parse_str(&input.alarm_level)

@@ -15,10 +15,8 @@ use tinyiothub_thing::template::types::{CreateDeviceFromTemplateRequest, DeviceC
 
 use tinyiothub_thing::legacy::device_query::{find_device_by_id, find_device_by_id_with_tags, load_tags_for_devices};
 
-use crate::{
-    McpState,
-    tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler},
-};
+use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
+use crate::shared::app_state::AppState;
 
 /// Tool input: Get single device
 #[derive(Debug, Deserialize)]
@@ -105,11 +103,11 @@ struct CommandResponse {
 
 // === Get Device Profile Handler ===
 pub struct DeviceProfileHandler {
-    state: Option<Arc<McpState>>,
+    state: Option<Arc<AppState>>,
 }
 
 impl DeviceProfileHandler {
-    pub fn new(state: Option<Arc<McpState>>) -> Self {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
         Self { state }
     }
 }
@@ -150,11 +148,11 @@ impl ToolHandler for DeviceProfileHandler {
         let state = self
             .state
             .as_ref()
-            .ok_or_else(|| ToolError::Internal("McpState not initialized".to_string()))?;
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         let include_properties = input.include_properties.unwrap_or(true);
 
-        let _workspace_id = crate::handlers::get_mcp_context()
+        let _workspace_id = crate::domains::mcp::handlers::get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
@@ -180,11 +178,11 @@ impl ToolHandler for DeviceProfileHandler {
 
 // === Device Property Get Handler ===
 pub struct DevicePropertyGetHandler {
-    state: Option<Arc<McpState>>,
+    state: Option<Arc<AppState>>,
 }
 
 impl DevicePropertyGetHandler {
-    pub fn new(state: Option<Arc<McpState>>) -> Self {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
         Self { state }
     }
 }
@@ -231,9 +229,9 @@ impl ToolHandler for DevicePropertyGetHandler {
         let state = self
             .state
             .as_ref()
-            .ok_or_else(|| ToolError::Internal("McpState not initialized".to_string()))?;
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        let _workspace_id = crate::handlers::get_mcp_context()
+        let _workspace_id = crate::domains::mcp::handlers::get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
@@ -298,11 +296,11 @@ impl ToolHandler for DevicePropertyGetHandler {
 
 // === Write Properties Handler ===
 pub struct WritePropertiesHandler {
-    state: Option<Arc<McpState>>,
+    state: Option<Arc<AppState>>,
 }
 
 impl WritePropertiesHandler {
-    pub fn new(state: Option<Arc<McpState>>) -> Self {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
         Self { state }
     }
 }
@@ -343,9 +341,9 @@ impl ToolHandler for WritePropertiesHandler {
         let state = self
             .state
             .as_ref()
-            .ok_or_else(|| ToolError::Internal("McpState not initialized".to_string()))?;
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        let workspace_id = crate::handlers::get_mcp_context()
+        let workspace_id = crate::domains::mcp::handlers::get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
@@ -425,11 +423,11 @@ impl ToolHandler for WritePropertiesHandler {
 
 // === Device Command Handler ===
 pub struct DeviceCommandHandler {
-    state: Option<Arc<McpState>>,
+    state: Option<Arc<AppState>>,
 }
 
 impl DeviceCommandHandler {
-    pub fn new(state: Option<Arc<McpState>>) -> Self {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
         Self { state }
     }
 }
@@ -477,9 +475,9 @@ impl ToolHandler for DeviceCommandHandler {
         let state = self
             .state
             .as_ref()
-            .ok_or_else(|| ToolError::Internal("McpState not initialized".to_string()))?;
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        let _workspace_id = crate::handlers::get_mcp_context()
+        let _workspace_id = crate::domains::mcp::handlers::get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
@@ -564,11 +562,11 @@ impl ToolHandler for DeviceCommandHandler {
 
 // === Create Device Handler ===
 pub struct CreateDeviceHandler {
-    state: Option<Arc<McpState>>,
+    state: Option<Arc<AppState>>,
 }
 
 impl CreateDeviceHandler {
-    pub fn new(state: Option<Arc<McpState>>) -> Self {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
         Self { state }
     }
 }
@@ -651,9 +649,9 @@ impl ToolHandler for CreateDeviceHandler {
         let state = self
             .state
             .as_ref()
-            .ok_or_else(|| ToolError::Internal("McpState not initialized".to_string()))?;
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        let workspace_id = crate::handlers::get_mcp_context()
+        let workspace_id = crate::domains::mcp::handlers::get_mcp_context()
             .map(|c| c.workspace_id)
             .ok_or_else(|| ToolError::Unauthorized("MCP context not available".to_string()))?;
 
@@ -719,11 +717,11 @@ impl ToolHandler for CreateDeviceHandler {
 
 // === Delete Device Handler ===
 pub struct DeleteDeviceHandler {
-    state: Option<Arc<McpState>>,
+    state: Option<Arc<AppState>>,
 }
 
 impl DeleteDeviceHandler {
-    pub fn new(state: Option<Arc<McpState>>) -> Self {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
         Self { state }
     }
 }
@@ -757,9 +755,9 @@ impl ToolHandler for DeleteDeviceHandler {
         let state = self
             .state
             .as_ref()
-            .ok_or_else(|| ToolError::Internal("McpState not initialized".to_string()))?;
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        let workspace_id = crate::handlers::get_mcp_context()
+        let workspace_id = crate::domains::mcp::handlers::get_mcp_context()
             .map(|c| c.workspace_id)
             .ok_or_else(|| ToolError::Unauthorized("MCP context not available".to_string()))?;
 
@@ -810,11 +808,11 @@ struct SearchDevicesResponse {
 }
 
 pub struct SearchDevicesHandler {
-    state: Option<Arc<McpState>>,
+    state: Option<Arc<AppState>>,
 }
 
 impl SearchDevicesHandler {
-    pub fn new(state: Option<Arc<McpState>>) -> Self {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
         Self { state }
     }
 }
@@ -866,9 +864,9 @@ impl ToolHandler for SearchDevicesHandler {
         let state = self
             .state
             .as_ref()
-            .ok_or_else(|| ToolError::Internal("McpState not initialized".to_string()))?;
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        let workspace_id = crate::handlers::get_mcp_context()
+        let workspace_id = crate::domains::mcp::handlers::get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 

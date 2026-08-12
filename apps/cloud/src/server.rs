@@ -15,12 +15,9 @@ pub async fn create_app_router(app_state: AppState) -> Router {
 
     // Initialize MCP tools with the mcp domain state slice
     tracing::info!("Initializing MCP tools...");
-    use std::sync::Arc;
 
-    use axum::extract::FromRef;
-    let mcp_state = Arc::new(tinyiothub_mcp::McpState::from_ref(&app_state));
-    tinyiothub_mcp::register_tools(Some(mcp_state)).await;
-    tinyiothub_mcp::agent_bridge::register_agent_bridge();
+    crate::domains::mcp::register_tools(Some(std::sync::Arc::new(app_state.clone()))).await;
+    crate::domains::mcp::agent_bridge::register_agent_bridge();
     app_state
         .agent_pool
         .set_runtime_context(tinyiothub_agent::host::tools::service::ToolRuntimeContext {

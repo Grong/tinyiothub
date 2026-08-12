@@ -115,7 +115,6 @@ tenant = { workspace = true }
 event = { workspace = true }
 alarm = { workspace = true }
 driver = { workspace = true }
-mcp = { workspace = true }
 admin = { workspace = true }
 
 # Dynamic loading
