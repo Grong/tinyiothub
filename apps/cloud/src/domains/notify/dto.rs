@@ -1,28 +1,20 @@
-// Notification module types
-// Consolidated from domain/event/aggregates/notification_aggregate.rs,
-// domain/event/services/notification_service.rs, and api/notifications/management.rs
+// Notification API DTOs and domain views (rows live in tinyiothub_storage::notify).
 
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use tinyiothub_core::notification_types::NotificationChannelType;
 use tinyiothub_event::{
     EventError, Result,
     value_objects::{EventId, EventLevel},
 };
+use tinyiothub_storage::notify::{NotificationRecord, NotificationRule, NotificationStatus};
 
 // ──────────────────────────────────────────────
 // Core domain types (from notification_aggregate.rs)
 // ──────────────────────────────────────────────
-
-// Re-export from core (sunk in P4.0-Task13); keep parse_str/as_str methods there.
-pub use tinyiothub_core::notification_types::NotificationChannelType;
-
-// Persisted row types live in the db crate (E1 集中化); re-exported for compatibility.
-pub use tinyiothub_storage::notify::{
-    HistoryStatistics, NotificationRecord, NotificationRule, NotificationStatus, RuleStatistics,
-};
 
 /// Notification Aggregate Root
 pub struct NotificationAggregate {

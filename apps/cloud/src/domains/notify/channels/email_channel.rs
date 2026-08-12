@@ -1,11 +1,12 @@
 use std::collections::HashMap;
+use tinyiothub_core::notification_types::NotificationChannelType;
 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 use tinyiothub_event::{EventError, Result};
 
-use crate::types::{NotificationChannel, NotificationChannelType, NotificationLevel, NotificationMessage};
+use crate::domains::notify::dto::{NotificationChannel, NotificationLevel, NotificationMessage};
 
 /// Email configuration for SMTP
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -418,7 +419,7 @@ impl NotificationChannel for EmailNotificationChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::NotificationMessage;
+    use crate::domains::notify::dto::NotificationMessage;
 
     #[test]
     fn test_email_channel_creation() {

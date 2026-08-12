@@ -1,4 +1,5 @@
 use std::{collections::HashMap, convert::Infallible, sync::Arc, time::Duration};
+use tinyiothub_core::notification_types::NotificationChannelType;
 
 use axum::response::{
     IntoResponse, Response, Sse,
@@ -11,7 +12,7 @@ use uuid::Uuid;
 
 use tinyiothub_event::Result;
 
-use crate::types::{NotificationChannel, NotificationChannelType, NotificationMessage};
+use crate::domains::notify::dto::{NotificationChannel, NotificationMessage};
 
 /// SSE connection information
 #[derive(Debug, Clone)]
@@ -324,7 +325,7 @@ mod tests {
     use tokio::time::Duration;
 
     use super::*;
-    use crate::types::{NotificationChannel, NotificationLevel, NotificationMessage};
+    use crate::domains::notify::dto::{NotificationChannel, NotificationLevel, NotificationMessage};
 
     #[tokio::test]
     async fn test_sse_channel_creation() {

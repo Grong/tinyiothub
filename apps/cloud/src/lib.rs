@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod bootstrap;
+pub mod domains;
 pub mod modules;
 pub mod server;
 pub mod shared;

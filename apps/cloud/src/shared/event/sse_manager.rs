@@ -6,10 +6,10 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
+use crate::domains::notify::channels::sse_channel::{SseMessage, SseNotificationChannel};
 use axum::response::Response;
 use serde::{Deserialize, Serialize};
 use tinyiothub_event::entities::Event;
-use tinyiothub_notify::channels::sse_channel::{SseMessage, SseNotificationChannel};
 use tracing::{debug, error, info};
 
 /// SSE Connection Manager

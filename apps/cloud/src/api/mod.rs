@@ -50,8 +50,11 @@ pub fn create_router() -> Router<AppState> {
             tinyiothub_thing::template::handler::create_router(),
         )
         .nest("/marketplace", crate::modules::marketplace::handler::create_router())
-        .nest("/notifications", tinyiothub_notify::router())
-        .nest("/notification-channels", tinyiothub_notify::channel_router())
+        .nest("/notifications", crate::domains::notify::handler::create_router())
+        .nest(
+            "/notification-channels",
+            crate::domains::notify::handler::create_channel_router(),
+        )
         .nest("/tenants", tinyiothub_tenant::router())
         .nest(
             "/events",

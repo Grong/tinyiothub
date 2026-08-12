@@ -4,6 +4,8 @@
 // domain/event/specifications/notification_specifications.rs
 
 use std::{collections::HashMap, sync::Arc};
+use tinyiothub_core::notification_types::NotificationChannelType;
+use tinyiothub_storage::notify::{NotificationRecord, NotificationRule, NotificationStatus};
 
 use chrono::{DateTime, Utc};
 use tinyiothub_core::models::notification_channel::{
@@ -11,10 +13,8 @@ use tinyiothub_core::models::notification_channel::{
 };
 
 // Re-export types from types.rs so they're accessible via service path
-use super::types::{
-    NotificationAggregate, NotificationChannelType, NotificationRecord, NotificationRule, NotificationStatus,
-};
-pub use super::types::{NotificationChannel, NotificationLevel, NotificationMessage, NotificationStatistics};
+use super::dto::NotificationAggregate;
+pub use super::dto::{NotificationChannel, NotificationLevel, NotificationMessage, NotificationStatistics};
 use tinyiothub_event::{
     EventError, Result,
     errors::{DomainResult, NotificationDomainError},

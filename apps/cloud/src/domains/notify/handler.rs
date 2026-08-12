@@ -21,26 +21,24 @@ use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder, PaginatedRespons
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::{
-    NotifyState,
-    service::{NotificationMessage, send_notification_message},
-    types::{
-        CreateNotificationRuleRequest, NotificationChannelType, NotificationHistoryQuery, NotificationHistoryResponse,
-        NotificationLevel, NotificationRule, NotificationRuleQuery, NotificationRuleResponse, TestNotificationRequest,
-        UpdateNotificationRuleRequest, convert_device_filter, device_filter_to_json,
+use crate::domains::notify::{
+    dto::{
+        CreateNotificationRuleRequest, NotificationHistoryQuery, NotificationHistoryResponse, NotificationLevel,
+        NotificationRuleQuery, NotificationRuleResponse, TestNotificationRequest, UpdateNotificationRuleRequest,
+        convert_device_filter, device_filter_to_json,
     },
+    service::{NotificationMessage, send_notification_message},
 };
+use crate::shared::app_state::AppState;
+use tinyiothub_core::notification_types::NotificationChannelType;
+use tinyiothub_storage::notify::NotificationRule;
 
 // ──────────────────────────────────────────────
 // Notification Rules Router
 // ──────────────────────────────────────────────
 
 /// Create notification rules router
-pub fn create_router<S>() -> Router<S>
-where
-    S: Clone + Send + Sync + 'static,
-    NotifyState: axum::extract::FromRef<S>,
-{
+pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/rules", get(get_notification_rules).post(create_notification_rule))
         .route(
@@ -58,11 +56,7 @@ where
 // ──────────────────────────────────────────────
 
 /// Create notification channels router
-pub fn create_channel_router<S>() -> Router<S>
-where
-    S: Clone + Send + Sync + 'static,
-    NotifyState: axum::extract::FromRef<S>,
-{
+pub fn create_channel_router() -> Router<AppState> {
     Router::new()
         .route("/notification-channels", get(list_channels))
         .route("/notification-channels", post(create_channel))
@@ -81,7 +75,7 @@ where
 #[axum::debug_handler]
 pub async fn get_notification_rules(
     Query(query): Query<NotificationRuleQuery>,
-    State(state): State<NotifyState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<NotificationRuleResponse>>> {
     match get_notification_rules_impl(&state, query, &claims.0.workspace_id).await {
@@ -94,7 +88,7 @@ pub async fn get_notification_rules(
 }
 
 async fn get_notification_rules_impl(
-    state: &NotifyState,
+    state: &AppState,
     query: NotificationRuleQuery,
     workspace_id: &str,
 ) -> Result<Vec<NotificationRuleResponse>, String> {
@@ -160,7 +154,7 @@ async fn get_notification_rules_impl(
 /// Create a new notification rule
 #[axum::debug_handler]
 pub async fn create_notification_rule(
-    State(state): State<NotifyState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
     Json(request): Json<CreateNotificationRuleRequest>,
 ) -> Json<ApiResponse<NotificationRuleResponse>> {
@@ -174,7 +168,7 @@ pub async fn create_notification_rule(
 }
 
 async fn create_notification_rule_impl(
-    state: &NotifyState,
+    state: &AppState,
     request: CreateNotificationRuleRequest,
     workspace_id: &str,
 ) -> Result<NotificationRuleResponse, String> {
@@ -250,7 +244,7 @@ async fn create_notification_rule_impl(
 #[axum::debug_handler]
 pub async fn get_notification_rule(
     Path(rule_id): Path<String>,
-    State(state): State<NotifyState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<NotificationRuleResponse>> {
     match get_notification_rule_impl(&state, &rule_id, &claims.0.workspace_id).await {
@@ -264,7 +258,7 @@ pub async fn get_notification_rule(
 }
 
 async fn get_notification_rule_impl(
-    state: &NotifyState,
+    state: &AppState,
     rule_id: &str,
     workspace_id: &str,
 ) -> Result<Option<NotificationRuleResponse>, String> {
@@ -313,7 +307,7 @@ async fn get_notification_rule_impl(
 /// Update a notification rule
 #[axum::debug_handler]
 pub async fn update_notification_rule(
-    State(state): State<NotifyState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
     Path(rule_id): Path<String>,
     Json(request): Json<UpdateNotificationRuleRequest>,
@@ -328,7 +322,7 @@ pub async fn update_notification_rule(
 }
 
 async fn update_notification_rule_impl(
-    state: &NotifyState,
+    state: &AppState,
     rule_id: &str,
     request: UpdateNotificationRuleRequest,
     workspace_id: &str,
@@ -423,7 +417,7 @@ async fn update_notification_rule_impl(
 #[axum::debug_handler]
 pub async fn delete_notification_rule(
     Path(rule_id): Path<String>,
-    State(state): State<NotifyState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<bool>> {
     match delete_notification_rule_impl(&state, &rule_id, &claims.0.workspace_id).await {
@@ -438,7 +432,7 @@ pub async fn delete_notification_rule(
     }
 }
 
-async fn delete_notification_rule_impl(state: &NotifyState, rule_id: &str, workspace_id: &str) -> Result<(), String> {
+async fn delete_notification_rule_impl(state: &AppState, rule_id: &str, workspace_id: &str) -> Result<(), String> {
     let notification_manager = state
         .notification_manager
         .as_deref()
@@ -467,7 +461,7 @@ async fn delete_notification_rule_impl(state: &NotifyState, rule_id: &str, works
 #[axum::debug_handler]
 pub async fn get_notification_history(
     Query(query): Query<NotificationHistoryQuery>,
-    State(state): State<NotifyState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<NotificationHistoryResponse>>> {
     match get_notification_history_impl(&state, query, &claims.0.workspace_id).await {
@@ -480,7 +474,7 @@ pub async fn get_notification_history(
 }
 
 async fn get_notification_history_impl(
-    state: &NotifyState,
+    state: &AppState,
     query: NotificationHistoryQuery,
     _workspace_id: &str,
 ) -> Result<Vec<NotificationHistoryResponse>, String> {
@@ -519,7 +513,7 @@ async fn get_notification_history_impl(
 /// Send a test notification
 #[axum::debug_handler]
 pub async fn send_test_notification(
-    State(state): State<NotifyState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
     Json(request): Json<TestNotificationRequest>,
 ) -> Json<ApiResponse<bool>> {
@@ -536,7 +530,7 @@ pub async fn send_test_notification(
 }
 
 async fn send_test_notification_impl(
-    state: &NotifyState,
+    state: &AppState,
     request: TestNotificationRequest,
     _workspace_id: &str,
 ) -> Result<(), String> {
@@ -574,7 +568,7 @@ async fn send_test_notification_impl(
 
 /// List notification channels
 async fn list_channels(
-    State(state): State<NotifyState>,
+    State(state): State<AppState>,
     Query(mut params): Query<NotificationChannelQueryParams>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<PaginatedResponse<NotificationChannel>>> {
@@ -616,7 +610,7 @@ async fn list_channels(
 
 /// Get a single channel by ID
 async fn get_channel(
-    State(state): State<NotifyState>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<NotificationChannel>> {
@@ -640,7 +634,7 @@ async fn get_channel(
 
 /// Create a new notification channel
 async fn create_channel(
-    State(state): State<NotifyState>,
+    State(state): State<AppState>,
     claims: AuthClaims,
     Json(payload): Json<CreateNotificationChannelRequest>,
 ) -> Json<ApiResponse<NotificationChannel>> {
@@ -666,7 +660,7 @@ async fn create_channel(
 
 /// Update an existing notification channel
 async fn update_channel(
-    State(state): State<NotifyState>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
     claims: AuthClaims,
     Json(payload): Json<UpdateNotificationChannelRequest>,
@@ -705,7 +699,7 @@ async fn update_channel(
 
 /// Delete a notification channel
 async fn delete_channel(
-    State(state): State<NotifyState>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<bool>> {
@@ -722,7 +716,7 @@ async fn delete_channel(
 
 /// Test a notification channel
 async fn test_channel(
-    State(state): State<NotifyState>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
     claims: AuthClaims,
     Json(payload): Json<SendMessageRequest>,
@@ -768,7 +762,7 @@ async fn test_channel(
 }
 
 /// Get channel statistics
-async fn get_statistics(State(state): State<NotifyState>, claims: AuthClaims) -> Json<ApiResponse<ChannelStatistics>> {
+async fn get_statistics(State(state): State<AppState>, claims: AuthClaims) -> Json<ApiResponse<ChannelStatistics>> {
     let db = state.database.clone();
     match get_notification_channel_statistics(&db, Some(&claims.0.workspace_id)).await {
         Ok(stats) => ApiResponseBuilder::success(stats),

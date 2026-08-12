@@ -5,10 +5,10 @@ use tinyiothub_auth::redis::RedisClient;
 use tinyiothub_core::models::device_property::DeviceProperty;
 use tinyiothub_driver::legacy::{DeviceMonitoringService, DevicePerformanceService, DeviceQueryService, DeviceService};
 use tinyiothub_event::repositories::{EventRepository, RealTimeEventRepository};
-use tinyiothub_notify::{
-    NotificationHistoryRepository, NotificationManager, NotificationRuleRepository,
-    channels::NotificationChannelFactory,
-};
+use tinyiothub_storage::notify::{NotificationHistoryRepository, NotificationRuleRepository};
+
+use crate::domains::notify::channels::NotificationChannelFactory;
+use crate::domains::notify::service::NotificationManager;
 use tinyiothub_storage::memory::MemoryStore;
 use tinyiothub_storage::{Database, DeviceRepositoryFactory, cache::DeviceCache};
 use tinyiothub_thing::{
@@ -1046,18 +1046,6 @@ impl axum::extract::FromRef<AppState> for tinyiothub_driver::DriverState {
     fn from_ref(state: &AppState) -> Self {
         tinyiothub_driver::DriverState {
             gateway_service: state.gateway_service.clone(),
-        }
-    }
-}
-
-/// P4-Task21: derive the notify domain's state slice from the global
-/// AppState. Cloud mounts `tinyiothub_notify::router()` (/notifications) and
-/// `tinyiothub_notify::channel_router()` (/notification-channels).
-impl axum::extract::FromRef<AppState> for tinyiothub_notify::NotifyState {
-    fn from_ref(state: &AppState) -> Self {
-        tinyiothub_notify::NotifyState {
-            database: state.database.clone(),
-            notification_manager: state.notification_manager.clone(),
         }
     }
 }

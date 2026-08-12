@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
+use tinyiothub_core::notification_types::NotificationChannelType;
 use tracing::{debug, info};
 
 use tinyiothub_event::{EventError, Result};
 
-use crate::types::{NotificationChannel, NotificationChannelType, NotificationMessage};
+use crate::domains::notify::dto::{NotificationChannel, NotificationMessage};
 
 /// SMS configuration for various providers
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -340,7 +341,7 @@ impl NotificationChannel for SmsNotificationChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{NotificationChannel, NotificationLevel, NotificationMessage};
+    use crate::domains::notify::dto::{NotificationChannel, NotificationLevel, NotificationMessage};
 
     #[test]
     fn test_sms_channel_creation() {
