@@ -5,7 +5,7 @@ use std::{
 };
 
 use tinyiothub_core::models::device::CreateDeviceRequest;
-use tinyiothub_storage::DeviceRepositoryFactory;
+use tinyiothub_storage::DeviceRepository;
 use tokio::sync::{RwLock, mpsc};
 
 use crate::domains::event::{
@@ -24,7 +24,7 @@ const MAX_PAIRING_REQUESTS_PER_IP_PER_MINUTE: usize = 3;
 const IP_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
 
 pub struct GatewayService {
-    device_repo_factory: Arc<DeviceRepositoryFactory>,
+    database_for_repos: Arc<tinyiothub_storage::Database>,
     event_repository: Arc<EventRepository>,
     cache: Arc<PairingCache>,
     mqtt_tx: mpsc::Sender<MqttPublish>,
@@ -37,13 +37,13 @@ pub enum MqttPublish {
 
 impl GatewayService {
     pub fn new(
-        device_repo_factory: Arc<DeviceRepositoryFactory>,
+        database_for_repos: Arc<tinyiothub_storage::Database>,
         event_repository: Arc<EventRepository>,
         cache: Arc<PairingCache>,
         mqtt_tx: mpsc::Sender<MqttPublish>,
     ) -> Self {
         let service = Self {
-            device_repo_factory,
+            database_for_repos,
             event_repository,
             cache,
             mqtt_tx,
@@ -89,7 +89,9 @@ impl GatewayService {
         let workspace_id = req.workspace_id.clone().unwrap_or_default();
         let password = generate_device_password();
 
-        let repo = self.device_repo_factory.create_for_workspace(workspace_id.clone());
+        let repo = Arc::new(
+            DeviceRepository::new(self.database_for_repos.as_ref().clone()).for_workspace(workspace_id.clone()),
+        );
         let create_req = CreateDeviceRequest {
             name: device_name.clone(),
             device_type: Some("gateway".into()),
@@ -243,7 +245,9 @@ impl GatewayService {
             return Ok(());
         }
 
-        let repo = self.device_repo_factory.create_for_workspace(workspace_id.to_string());
+        let repo = Arc::new(
+            DeviceRepository::new(self.database_for_repos.as_ref().clone()).for_workspace(workspace_id.to_string()),
+        );
         let requests: Vec<CreateDeviceRequest> = msg
             .devices
             .iter()
@@ -271,7 +275,9 @@ impl GatewayService {
                 workspace_id,
                 ..
             } => {
-                let repo = self.device_repo_factory.create_for_workspace(workspace_id.clone());
+                let repo = Arc::new(
+                    DeviceRepository::new(self.database_for_repos.as_ref().clone()).for_workspace(workspace_id.clone()),
+                );
                 if let Err(e) = repo.update_state(gateway_id, 1i32).await {
                     tracing::warn!(?e, gateway_id = %gateway_id, "Failed to update gateway last_seen");
                 }
@@ -388,7 +394,7 @@ mod tests {
         let (tx, rx) = mpsc::channel(100);
         let cache = Arc::new(PairingCache::new(1000));
         let database = Arc::new(tinyiothub_storage::Database::new(pool));
-        let factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
+        let factory = database.clone();
         let event_repo: Arc<EventRepository> = Arc::new(tinyiothub_storage::event::EventRepository::new(
             database.as_ref().clone(),
         ));
@@ -647,7 +653,7 @@ mod tests {
         let tiny_cache = Arc::new(PairingCache::new(1));
         let (tx, _rx2) = mpsc::channel(1);
         let database = Arc::new(tinyiothub_storage::Database::new(pool));
-        let factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
+        let factory = database.clone();
         let event_repo: Arc<EventRepository> = Arc::new(tinyiothub_storage::event::EventRepository::new(
             database.as_ref().clone(),
         ));
@@ -700,7 +706,7 @@ mod tests {
 
         let cache = Arc::new(PairingCache::new(1000));
         let database = Arc::new(tinyiothub_storage::Database::new(pool.clone()));
-        let factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
+        let factory = database.clone();
         let event_repo: Arc<EventRepository> = Arc::new(tinyiothub_storage::event::EventRepository::new(
             database.as_ref().clone(),
         ));

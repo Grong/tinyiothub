@@ -8,17 +8,14 @@
 
 pub mod api_response;
 pub mod error_handling;
-pub mod handlers;
 pub mod middleware;
 pub mod pagination;
 pub mod response;
 pub mod security;
-pub mod state;
 pub mod validation;
 
 pub use api_response::ApiResponseBuilder;
 pub use error_handling::{ErrorCategory, ErrorCode, ErrorContext, ErrorHandler};
-pub use state::WebState;
 
 /// Re-export common dependencies for handlers.
 pub use axum;

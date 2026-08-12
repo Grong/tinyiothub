@@ -35,7 +35,6 @@ pub mod event_matcher;
 pub mod handler;
 pub mod notification;
 pub mod service;
-pub mod types_ai;
 
 // Note: `alarm::BatchOperationResult` duplicates `types::BatchOperationResult`
 // (pre-existing); only the types one is glob-exported, as before.
@@ -43,8 +42,8 @@ pub use event_matcher::*;
 // Repositories live in the db crate (E2 集中化); re-exported for compatibility.
 pub use dto::*;
 pub use service::*;
+pub use tinyiothub_core::models::event::AlarmEvent;
 pub use tinyiothub_storage::alarm::{AlarmRepository, AlarmRuleRepository};
-pub use types_ai::{AlarmAiPublisher, AlarmEvent};
 
 /// Alarms API router (`/alarms`), generic over the composition state `S`.
 pub fn router() -> axum::Router<crate::shared::app_state::AppState> {

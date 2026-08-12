@@ -6,9 +6,9 @@ use std::{
     time::Instant,
 };
 
-use crate::domains::alarm::types_ai::{AlarmAiPublisher, AlarmEvent};
 use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
+use tinyiothub_core::models::event::AlarmEvent;
 use tinyiothub_storage::cache::DeviceCache;
 
 use crate::domains::alarm::{dto::*, notification::NotificationDispatcher};
@@ -19,7 +19,7 @@ pub struct AlarmService {
     alarm_repository: Arc<AlarmRepository>,
     rule_repository: Arc<AlarmRuleRepository>,
     rule_engine: Arc<RuleEngine>,
-    event_publisher: Mutex<Option<Arc<dyn AlarmAiPublisher>>>,
+    event_publisher: Mutex<Option<Arc<crate::shared::ai_adapter::AlarmAiPublisherAdapter>>>,
     device_cache: std::sync::OnceLock<Arc<DeviceCache>>,
 }
 
@@ -35,7 +35,7 @@ impl AlarmService {
         }
     }
 
-    pub fn set_event_publisher(&self, publisher: Arc<dyn AlarmAiPublisher>) {
+    pub fn set_event_publisher(&self, publisher: Arc<crate::shared::ai_adapter::AlarmAiPublisherAdapter>) {
         *self.event_publisher.lock().unwrap() = Some(publisher);
     }
 

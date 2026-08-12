@@ -1,5 +1,6 @@
 // Thing action handlers (invoke + confirm)
 
+use crate::domains::agent::host::thing_action_hooks::ThingConfirmVerdict;
 use crate::shared::app_state::AppState;
 use axum::{
     Json,
@@ -8,7 +9,6 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use tinyiothub_core::thing_hooks::ThingConfirmVerdict;
 use tinyiothub_web::response::ApiResponse;
 
 use super::super::service::ThingService;

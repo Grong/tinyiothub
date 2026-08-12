@@ -872,9 +872,7 @@ impl ToolHandler for SearchDevicesHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let repository = state
-            .device_repository_factory
-            .create_for_workspace(workspace_id.clone());
+        let repository = state.device_repo_for(workspace_id.clone());
 
         let criteria = DeviceCriteria {
             workspace_id: Some(workspace_id),

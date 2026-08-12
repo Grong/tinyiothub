@@ -16,7 +16,7 @@ use crate::domains::thing::{
     template::{TemplateEngine, TemplateRepository, TemplateValidator},
 };
 use tinyiothub_storage::memory::MemoryStore;
-use tinyiothub_storage::{Database, DeviceRepositoryFactory, cache::DeviceCache};
+use tinyiothub_storage::{Database, DeviceRepository, cache::DeviceCache};
 use tokio::sync::OnceCell;
 
 use crate::shared::{
@@ -43,7 +43,6 @@ pub struct AppState {
     pub database: Arc<Database>,
 
     /// 设备仓库工厂 - 用于创建租户感知的设备仓库
-    pub device_repository_factory: Arc<DeviceRepositoryFactory>,
 
     /// === 应用服务层 ===
     /// 数据服务器 - 设备数据采集和命令执行
@@ -159,18 +158,18 @@ pub struct AppState {
     /// Thing action hooks（P4.0b）—— thing handler 经此调用 agent 侧的
     /// 参数校验 / 确认令牌存储 / 策略裁决，斩断 thing→agent 依赖边。
     /// 由组合层（此处）注入 agent 实现；thing 域只依赖 core trait。
-    pub thing_action_hooks: Arc<dyn tinyiothub_core::thing_hooks::ThingActionHooks>,
+    pub thing_action_hooks: Arc<crate::domains::agent::host::thing_action_hooks::AgentThingActionHooks>,
 
     /// Agent hooks（P4.0d）—— workspace 域经此使用 agent 侧的默认心跳
     /// 任务集 /  legacy HEARTBEAT.md 解析与迁移，斩断 workspace→agent
     /// 依赖边。由组合层（此处）注入 agent 实现；workspace 域只依赖 core trait。
-    pub agent_hooks: Arc<dyn tinyiothub_core::agent_hooks::AgentHooks>,
+    pub agent_hooks: Arc<crate::domains::agent::host::agent_hooks::AgentHooksImpl>,
     /// 工作空间访问校验（agent 域 seam）
-    pub workspace_access: Arc<dyn crate::domains::agent::host::ports::WorkspaceAccess>,
+    pub workspace_access: Arc<TenantWorkspaceAccess>,
     /// System prompts config（chat proxy 构造 full prompt）
     pub system_prompts: Arc<crate::shared::config::SystemPromptsConfig>,
     /// Workspace 创建/删除时的 agent 生命周期 seam（tenant 域）
-    pub agent_lifecycle: Arc<dyn crate::domains::tenant::WorkspaceAgentLifecycle>,
+    pub agent_lifecycle: Arc<AgentPoolLifecycle>,
     /// AI 标签建议（无 minimax 配置时 None）
     pub tag_suggester: Option<Arc<dyn crate::domains::tenant::TagSuggester>>,
     /// 租户 tj_* token 密钥（启动时从 config 克隆）
@@ -190,6 +189,11 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// 租户作用域设备仓储（原 DeviceRepositoryFactory.create_for_workspace）
+    pub fn device_repo_for(&self, workspace_id: String) -> Arc<DeviceRepository> {
+        Arc::new(DeviceRepository::new(self.database.as_ref().clone()).for_workspace(workspace_id))
+    }
+
     /// user 域角色校验适配（原 UserState.role_checker，每次萃取新建语义保持）
     pub fn role_checker(&self) -> Arc<dyn crate::domains::user::RoleChecker> {
         Arc::new(EventSecurityRoleChecker { state: self.clone() })
@@ -220,7 +224,6 @@ impl AppState {
         let database = Arc::new(Database::new(db_pool));
 
         // 创建设备仓库工厂
-        let device_repository_factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
 
         // === 创建领域服务 ===
         // 按照依赖关系顺序创建，避免循环依赖
@@ -406,7 +409,7 @@ impl AppState {
             tokio::sync::mpsc::channel::<crate::domains::driver::gateway::types::GatewayDataMessage>(1000);
         let pairing_cache = Arc::new(crate::domains::driver::gateway::pairing::PairingCache::new(10000));
         let gateway_service = Arc::new(crate::domains::driver::gateway::service::GatewayService::new(
-            device_repository_factory.clone(),
+            database.clone(),
             event_repository.clone(),
             pairing_cache,
             mqtt_tx,
@@ -454,18 +457,18 @@ impl AppState {
         });
 
         // Thing action hooks（P4.0b）—— agent 侧实现 core trait，注入给 thing handler
-        let thing_action_hooks: Arc<dyn tinyiothub_core::thing_hooks::ThingActionHooks> = Arc::new(
+        let thing_action_hooks: Arc<crate::domains::agent::host::thing_action_hooks::AgentThingActionHooks> = Arc::new(
             crate::domains::agent::host::thing_action_hooks::AgentThingActionHooks::new(database.pool().clone()),
         );
 
         // Agent hooks（P4.0d）—— agent 侧实现 core trait，注入给 workspace 域
-        let agent_hooks: Arc<dyn tinyiothub_core::agent_hooks::AgentHooks> =
+        let agent_hooks: Arc<crate::domains::agent::host::agent_hooks::AgentHooksImpl> =
             Arc::new(crate::domains::agent::host::agent_hooks::AgentHooksImpl::new(Arc::new(
                 tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(database.pool().clone()),
             )));
 
         let settings = crate::shared::config::get();
-        let agent_lifecycle: Arc<dyn crate::domains::tenant::WorkspaceAgentLifecycle> = Arc::new(AgentPoolLifecycle {
+        let agent_lifecycle: Arc<AgentPoolLifecycle> = Arc::new(AgentPoolLifecycle {
             pool: agent_pool.clone(),
         });
         let tag_suggester: Option<Arc<dyn crate::domains::tenant::TagSuggester>> = if settings.minimax.is_some() {
@@ -497,7 +500,6 @@ impl AppState {
             }),
             system_prompts: Arc::new(crate::shared::config::get().agent.system_prompts.clone()),
             database,
-            device_repository_factory,
             data_server: None, // DataServer 由 ServiceManager 设置
             device_service,
             device_query_service,
@@ -575,9 +577,7 @@ impl AppState {
     ///
     /// 获取租户感知的设备服务（接受字符串 workspace_id）
     pub fn tenant_device_service_str(&self, workspace_id: &str) -> Arc<DeviceService> {
-        let repository = self
-            .device_repository_factory
-            .create_for_workspace(workspace_id.to_string());
+        let repository = self.device_repo_for(workspace_id.to_string());
         Arc::new(DeviceService::new(repository, self.database.clone()).with_tag_repository(self.tag_repository.clone()))
     }
 
@@ -594,7 +594,7 @@ impl AppState {
             );
             String::new()
         });
-        let repository = self.device_repository_factory.create_for_workspace(ws_id);
+        let repository = self.device_repo_for(ws_id);
 
         // 创建设备服务（使用现有的事件总线和标签仓库）
         Arc::new(
@@ -961,9 +961,8 @@ pub struct AgentPoolLifecycle {
     pub pool: Arc<crate::domains::agent::host::agent::AgentPool>,
 }
 
-#[async_trait::async_trait]
-impl crate::domains::tenant::WorkspaceAgentLifecycle for AgentPoolLifecycle {
-    async fn create_agent(&self, workspace_id: &str, name: &str) -> Result<String, String> {
+impl AgentPoolLifecycle {
+    pub async fn create_agent(&self, workspace_id: &str, name: &str) -> Result<String, String> {
         self.pool
             .create_agent(&crate::domains::agent::host::shared::AgentConfig {
                 workspace_id: workspace_id.to_string(),
@@ -974,7 +973,7 @@ impl crate::domains::tenant::WorkspaceAgentLifecycle for AgentPoolLifecycle {
             .map_err(|e| e.to_string())
     }
 
-    async fn delete_agent(&self, agent_id: &str) -> Result<(), String> {
+    pub async fn delete_agent(&self, agent_id: &str) -> Result<(), String> {
         self.pool.delete_agent(agent_id).await.map_err(|e| e.to_string())
     }
 }
@@ -1042,9 +1041,8 @@ pub struct TenantWorkspaceAccess {
     pub workspace_service: Arc<crate::domains::tenant::WorkspaceService>,
 }
 
-#[async_trait::async_trait]
-impl crate::domains::agent::host::ports::WorkspaceAccess for TenantWorkspaceAccess {
-    async fn workspace_tenant_id(&self, workspace_id: &str) -> Result<Option<String>, String> {
+impl TenantWorkspaceAccess {
+    pub async fn workspace_tenant_id(&self, workspace_id: &str) -> Result<Option<String>, String> {
         self.workspace_service
             .find_by_id(workspace_id)
             .await

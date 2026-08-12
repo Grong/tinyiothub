@@ -100,12 +100,7 @@ pub trait WorkspaceAccess: Send + Sync {
 #[macro_export]
 macro_rules! verify_workspace_access_port {
     ($state:expr, $claims:expr, $id:expr) => {{
-        match $crate::domains::agent::host::ports::WorkspaceAccess::workspace_tenant_id(
-            $state.workspace_access.as_ref(),
-            &$id,
-        )
-        .await
-        {
+        match $state.workspace_access.workspace_tenant_id(&$id).await {
             Ok(Some(tenant_id)) => {
                 if tenant_id != $claims.tenant_id {
                     return ApiResponseBuilder::error_with_code(403, "无权访问此工作空间");

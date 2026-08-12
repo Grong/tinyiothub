@@ -25,14 +25,6 @@ pub use workspace::WorkspaceService;
 /// Tenant domain state slice — Arc'd services + config slices, derived from
 /// the composition layer's `AppState` via `FromRef`
 /// (cloud/src/shared/app_state.rs).
-/// Agent lifecycle seam: workspace creation/deletion provisions and tears
-/// down the workspace's Agent. Cloud implements this over
-/// `crate::domains::agent::host::agent::AgentPool` (agent crate, P4-Task22).
-#[async_trait::async_trait]
-pub trait WorkspaceAgentLifecycle: Send + Sync {
-    async fn create_agent(&self, workspace_id: &str, name: &str) -> Result<String, String>;
-    async fn delete_agent(&self, agent_id: &str) -> Result<(), String>;
-}
 
 /// AI tag-suggestion seam for workspace resources. Cloud implements this
 /// over the minimax model provider (`shared::config::create_minimax_provider`

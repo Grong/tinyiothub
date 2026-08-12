@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use tinyiothub_storage::heartbeat::{HeartbeatTaskRepository, NewHeartbeatTask};
 
+use crate::domains::agent::host::agent_hooks::AgentHooksImpl;
 use crate::domains::agent::loop_::event::{bus::AiEventPublisher, types::AiEvent};
-use tinyiothub_core::agent_hooks::AgentHooks;
 
 use super::{
     types::WorkspaceRepository,
@@ -15,7 +15,7 @@ pub struct WorkspaceService {
     repository: Arc<WorkspaceRepository>,
     event_publisher: Mutex<Option<Arc<AiEventPublisher>>>,
     heartbeat_task_repo: Mutex<Option<Arc<HeartbeatTaskRepository>>>,
-    agent_hooks: Mutex<Option<Arc<dyn AgentHooks>>>,
+    agent_hooks: Mutex<Option<Arc<AgentHooksImpl>>>,
 }
 
 impl WorkspaceService {
@@ -36,7 +36,7 @@ impl WorkspaceService {
         *self.heartbeat_task_repo.lock().unwrap() = Some(repo);
     }
 
-    pub fn set_agent_hooks(&self, hooks: Arc<dyn AgentHooks>) {
+    pub fn set_agent_hooks(&self, hooks: Arc<AgentHooksImpl>) {
         *self.agent_hooks.lock().unwrap() = Some(hooks);
     }
 
@@ -245,53 +245,6 @@ mod tests {
         )
     }
 
-    /// Stub hooks — the real default task set lives in the agent domain; here
-    /// we only verify the service seeds whatever the hooks provide.
-    struct StubAgentHooks;
-
-    #[async_trait::async_trait]
-    impl AgentHooks for StubAgentHooks {
-        fn default_heartbeat_tasks(&self) -> Vec<tinyiothub_core::agent_hooks::HeartbeatTaskDef> {
-            vec![
-                tinyiothub_core::agent_hooks::HeartbeatTaskDef {
-                    priority: "high".into(),
-                    text: "检查离线设备并尝试自动重连".into(),
-                    paused: false,
-                },
-                tinyiothub_core::agent_hooks::HeartbeatTaskDef {
-                    priority: "medium".into(),
-                    text: "扫描未处理的高优先级告警".into(),
-                    paused: false,
-                },
-                tinyiothub_core::agent_hooks::HeartbeatTaskDef {
-                    priority: "medium".into(),
-                    text: "生成设备状态日报摘要".into(),
-                    paused: false,
-                },
-                tinyiothub_core::agent_hooks::HeartbeatTaskDef {
-                    priority: "low".into(),
-                    text: "检查系统磁盘和内存使用率".into(),
-                    paused: true,
-                },
-            ]
-        }
-
-        async fn read_legacy_heartbeat_tasks(
-            &self,
-            _workspace_dir: &std::path::Path,
-        ) -> std::result::Result<Vec<tinyiothub_core::agent_hooks::HeartbeatTaskDef>, String> {
-            unimplemented!()
-        }
-
-        async fn migrate_legacy_heartbeat_tasks(
-            &self,
-            _workspace_id: &str,
-            _workspace_dir: &std::path::Path,
-        ) -> std::result::Result<bool, String> {
-            unimplemented!()
-        }
-    }
-
     #[tokio::test]
     async fn create_seeds_default_heartbeat_tasks() {
         let (ws_repo, _pool) = real_repo().await;
@@ -306,7 +259,17 @@ mod tests {
             .expect("migrations");
         let repo = Arc::new(tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(hb_pool));
         service.set_heartbeat_task_repo(repo.clone());
-        service.set_agent_hooks(Arc::new(StubAgentHooks));
+        let hb_pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .expect("hb pool");
+        tinyiothub_storage::test_helpers::run_all_migrations(&hb_pool)
+            .await
+            .expect("migrations");
+        service.set_agent_hooks(Arc::new(crate::domains::agent::host::agent_hooks::AgentHooksImpl::new(
+            Arc::new(tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(hb_pool)),
+        )));
 
         let ws = service
             .create("tenant_1", "ws", None, None, None)

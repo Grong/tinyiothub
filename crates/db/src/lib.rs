@@ -35,8 +35,6 @@ pub mod driver_installation;
 pub mod error;
 /// Event + real-time status persistence and query types.
 pub mod event;
-/// Repository factory.
-pub mod factory;
 /// Heartbeat task/result/trust persistence and row types.
 pub mod heartbeat;
 /// Agent memory persistence.
@@ -61,8 +59,6 @@ pub mod role;
 pub mod session;
 /// SQL escaping helpers.
 pub mod sql_security;
-/// Unified storage facade.
-pub mod storage;
 /// Tag + tag binding persistence and row types.
 pub mod tag;
 /// Tenant + API key persistence and row types.
@@ -97,8 +93,6 @@ pub use device_property::*;
 pub use device_row_mapper::*;
 pub use driver_installation::{DriverInstallation, DriverInstallationRepo};
 pub use error::{DbError, Result};
-pub use factory::DeviceRepositoryFactory;
 pub use models::{Filter, FilterOp, Pagination, RowMetadata, SortOrder};
 pub use notification_channel::*;
 pub use pool::{create_pool, create_pool_without_migrations};
-pub use storage::Storage;

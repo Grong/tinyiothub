@@ -7,6 +7,7 @@
 //   GET  /tasks — read heartbeat tasks (DB)
 //   PUT  /tasks — replace heartbeat tasks (DB)
 
+use crate::domains::agent::host::agent_hooks::HeartbeatTaskDef;
 use crate::domains::agent::loop_::heartbeat::types::NewHeartbeatTask;
 use crate::domains::auth::security::jwt::Claims;
 use crate::verify_workspace_access_port;
@@ -15,7 +16,6 @@ use axum::{
     extract::{Extension, Path, State},
 };
 use serde::{Deserialize, Serialize};
-use tinyiothub_core::agent_hooks::HeartbeatTaskDef;
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::response::ApiResponseBuilder;
 
