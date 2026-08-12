@@ -1,20 +1,22 @@
 use std::sync::Arc;
 
 use crate::domains::agent::host::agent::AgentPool;
+use crate::domains::driver::legacy::{
+    DeviceMonitoringService, DevicePerformanceService, DeviceQueryService, DeviceService,
+};
 use tinyiothub_auth::redis::RedisClient;
 use tinyiothub_core::models::device_property::DeviceProperty;
-use tinyiothub_driver::legacy::{DeviceMonitoringService, DevicePerformanceService, DeviceQueryService, DeviceService};
 use tinyiothub_event::repositories::{EventRepository, RealTimeEventRepository};
 use tinyiothub_storage::notify::{NotificationHistoryRepository, NotificationRuleRepository};
 
 use crate::domains::notify::channels::NotificationChannelFactory;
 use crate::domains::notify::service::NotificationManager;
-use tinyiothub_storage::memory::MemoryStore;
-use tinyiothub_storage::{Database, DeviceRepositoryFactory, cache::DeviceCache};
-use tinyiothub_thing::{
+use crate::domains::thing::{
     legacy::{trace::DeviceTraceService, trace_repository::DeviceTraceRepository},
     template::{TemplateEngine, TemplateRepository, TemplateValidator},
 };
+use tinyiothub_storage::memory::MemoryStore;
+use tinyiothub_storage::{Database, DeviceRepositoryFactory, cache::DeviceCache};
 use tokio::sync::OnceCell;
 
 use crate::shared::{
@@ -108,7 +110,7 @@ pub struct AppState {
     pub workspace_service: Arc<crate::domains::tenant::WorkspaceService>,
 
     /// 标签服务 - CRUD 操作
-    pub tag_service: Arc<tinyiothub_thing::tag::TagService>,
+    pub tag_service: Arc<crate::domains::thing::tag::TagService>,
 
     /// AI subsystem orchestrator (set during async startup)
     pub orchestrator: Option<Arc<crate::domains::agent::loop_::orchestrator::Orchestrator>>,
@@ -117,7 +119,7 @@ pub struct AppState {
     pub heartbeat_runner: Option<Arc<crate::domains::agent::loop_::heartbeat::runner::HeartbeatRunner>>,
 
     /// 标签仓库 - 用于设备服务的标签关联
-    pub tag_repository: Arc<tinyiothub_thing::tag::TagRepository>,
+    pub tag_repository: Arc<crate::domains::thing::tag::TagRepository>,
 
     /// 角色服务 - CRUD 操作
     pub role_service: Arc<tinyiothub_user::role::RoleService>,
@@ -138,7 +140,7 @@ pub struct AppState {
     pub sysinfo_system: Arc<std::sync::Mutex<sysinfo::System>>,
 
     /// 网关服务 - MQTT 网关配对
-    pub gateway_service: Arc<tinyiothub_driver::gateway::service::GatewayService>,
+    pub gateway_service: Arc<crate::domains::driver::gateway::service::GatewayService>,
 
     /// MQTT 客户端（可选，未配置时为空）
     pub mqtt_client: Option<Arc<crate::shared::mqtt_client::PlatformMqttClient>>,
@@ -232,10 +234,10 @@ impl AppState {
         // 这里只创建事件总线，处理器注册推迟到 register_event_handlers() 方法
 
         // 标签仓库（提前创建，供 DeviceService 使用）
-        let tag_repository: Arc<tinyiothub_thing::tag::TagRepository> =
-            Arc::new(tinyiothub_thing::tag::TagRepository::new(database.as_ref().clone()));
-        let tag_binding_repository: Arc<tinyiothub_thing::tag::TagBindingRepository> = Arc::new(
-            tinyiothub_thing::tag::TagBindingRepository::new(database.as_ref().clone()),
+        let tag_repository: Arc<crate::domains::thing::tag::TagRepository> =
+            Arc::new(tinyiothub_storage::tag::TagRepository::new(database.as_ref().clone()));
+        let tag_binding_repository: Arc<crate::domains::thing::tag::TagBindingRepository> = Arc::new(
+            tinyiothub_storage::tag::TagBindingRepository::new(database.as_ref().clone()),
         );
 
         // 基础服务 - 使用事件总线
@@ -246,7 +248,7 @@ impl AppState {
                 .with_tag_repository(tag_repository.clone()),
         );
         let device_query_service: Arc<dyn DeviceQueryService> = Arc::new(
-            tinyiothub_driver::legacy::SqliteDeviceQueryService::new(database.as_ref().clone()),
+            crate::domains::driver::legacy::SqliteDeviceQueryService::new(database.as_ref().clone()),
         );
 
         // 监控服务 - 依赖数据库、缓存和告警仓库
@@ -336,7 +338,7 @@ impl AppState {
         let workspace_service = Arc::new(crate::domains::tenant::WorkspaceService::new(workspace_repository));
 
         // 标签服务
-        let tag_service = Arc::new(tinyiothub_thing::tag::TagService::new(
+        let tag_service = Arc::new(crate::domains::thing::tag::TagService::new(
             tag_repository.clone(),
             tag_binding_repository,
         ));
@@ -373,13 +375,14 @@ impl AppState {
         )));
 
         // === 网关配对服务 ===
-        let (mqtt_tx, mqtt_rx) = tokio::sync::mpsc::channel::<tinyiothub_driver::gateway::service::MqttPublish>(100);
+        let (mqtt_tx, mqtt_rx) =
+            tokio::sync::mpsc::channel::<crate::domains::driver::gateway::service::MqttPublish>(100);
         let (announce_tx, mut announce_rx) =
-            tokio::sync::mpsc::channel::<tinyiothub_driver::gateway::types::PairingAnnounce>(1000);
+            tokio::sync::mpsc::channel::<crate::domains::driver::gateway::types::PairingAnnounce>(1000);
         let (data_tx, mut data_rx) =
-            tokio::sync::mpsc::channel::<tinyiothub_driver::gateway::types::GatewayDataMessage>(1000);
-        let pairing_cache = Arc::new(tinyiothub_driver::gateway::pairing::PairingCache::new(10000));
-        let gateway_service = Arc::new(tinyiothub_driver::gateway::service::GatewayService::new(
+            tokio::sync::mpsc::channel::<crate::domains::driver::gateway::types::GatewayDataMessage>(1000);
+        let pairing_cache = Arc::new(crate::domains::driver::gateway::pairing::PairingCache::new(10000));
+        let gateway_service = Arc::new(crate::domains::driver::gateway::service::GatewayService::new(
             device_repository_factory.clone(),
             event_repository.clone(),
             pairing_cache,
@@ -784,23 +787,6 @@ impl AppState {
         Self::new(device_cache, pool)
     }
 }
-
-/// P4-Task15 (SEP pilot): derive the thing domain's state slice from the
-/// global AppState. Cloud mounts `tinyiothub_thing::router()` (things),
-/// `template::handler::create_router()` and `tag::create_router()` with this
-/// `FromRef` conversion.
-impl axum::extract::FromRef<AppState> for tinyiothub_thing::ThingState {
-    fn from_ref(state: &AppState) -> Self {
-        tinyiothub_thing::ThingState {
-            database: state.database.clone(),
-            hooks: state.thing_action_hooks.clone(),
-            data_server: state.data_server.clone(),
-            template_engine: state.template_engine.clone(),
-            tag_service: state.tag_service.clone(),
-        }
-    }
-}
-
 // ============================================================================
 // P4-Task16: auth domain slice + seam adapters
 // ============================================================================
@@ -1080,16 +1066,7 @@ impl axum::extract::FromRef<AppState> for tinyiothub_alarm::AlarmState {
             database: state.database.clone(),
         }
     }
-}
-
-impl axum::extract::FromRef<AppState> for tinyiothub_driver::DriverState {
-    fn from_ref(state: &AppState) -> Self {
-        tinyiothub_driver::DriverState {
-            gateway_service: state.gateway_service.clone(),
-        }
-    }
-}
-// ============================================================================
+} // ============================================================================
 // P4-Task22: agent domain slice + workspace-access seam adapter
 // ============================================================================
 

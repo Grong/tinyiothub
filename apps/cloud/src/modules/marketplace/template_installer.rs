@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tinyiothub_thing::template::TemplateRepository;
+use crate::domains::thing::template::TemplateRepository;
 
 use super::{
     client::MarketplaceClient,
@@ -40,7 +40,7 @@ impl TemplateInstaller {
         }
 
         // 4. Import to database directly
-        let request: tinyiothub_thing::template::types::CreateDeviceTemplateRequest =
+        let request: crate::domains::thing::template::types::CreateDeviceTemplateRequest =
             serde_json::from_value(template_data)
                 .map_err(|e| MarketplaceError::Template(format!("Invalid template format: {}", e)))?;
 

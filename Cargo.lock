@@ -1420,37 +1420,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1435fa1053d8b2fbbe9be7e97eca7f33d37b28409959813daefc1446a14247f1"
 
 [[package]]
-name = "driver"
-version = "0.4.6"
-dependencies = [
- "alarm",
- "async-trait",
- "axum",
- "chrono",
- "core",
- "dashmap",
- "db",
- "event",
- "futures",
- "influxdb2",
- "rand 0.8.6",
- "reqwest 0.12.28",
- "runtime",
- "serde",
- "serde_json",
- "sqlx",
- "thing",
- "thiserror 1.0.69",
- "tokio",
- "tokio-cron-scheduler",
- "tokio-postgres",
- "toml 0.8.23",
- "tracing",
- "uuid",
- "web",
-]
-
-[[package]]
 name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5933,27 +5902,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "thing"
-version = "0.4.6"
-dependencies = [
- "async-trait",
- "axum",
- "chrono",
- "core",
- "dashmap",
- "db",
- "runtime",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
- "web",
-]
-
-[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6064,7 +6012,6 @@ dependencies = [
  "cron 0.12.1",
  "dashmap",
  "db",
- "driver",
  "elsa",
  "event",
  "futures",
@@ -6105,7 +6052,6 @@ dependencies = [
  "subtle",
  "sysinfo",
  "tempfile",
- "thing",
  "thiserror 1.0.69",
  "tokio",
  "tokio-cron-scheduler",

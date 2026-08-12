@@ -58,7 +58,7 @@ pub async fn register_tools(state: Option<Arc<AppState>>) {
     let mut reg = registry.write().await;
 
     // Initialize heartbeat state (used by REST API handler)
-    tinyiothub_driver::heartbeat::init_heartbeat_state();
+    crate::domains::driver::heartbeat::init_heartbeat_state();
 
     // Thing tools (7)
     reg.register(crate::domains::mcp::tools::device::DeviceProfileHandler::new(

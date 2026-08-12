@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::domains::thing::template::TemplateRepository;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -10,7 +11,6 @@ use axum::{
 use reqwest::Client;
 use serde::Deserialize;
 use tinyiothub_auth::security::jwt::Claims;
-use tinyiothub_thing::template::TemplateRepository;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
@@ -339,7 +339,7 @@ async fn publish_template_handler(
     }
 
     let workspace_id_str = workspace_id.as_deref().unwrap_or("");
-    let template = match tinyiothub_thing::template::types::DeviceTemplate::find_by_id(
+    let template = match crate::domains::thing::template::types::DeviceTemplate::find_by_id(
         &state.database,
         &req.template_id,
         workspace_id_str,

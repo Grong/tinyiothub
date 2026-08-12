@@ -3,6 +3,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use crate::domains::thing::template::types::{CreateDeviceFromTemplateRequest, DeviceCreationInput};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -11,9 +12,10 @@ use tinyiothub_storage::{
     device::{DeviceCriteria, DeviceSortBy, DeviceSortOrder},
     find_device_command_by_device_and_name, find_device_properties_by_device_id,
 };
-use tinyiothub_thing::template::types::{CreateDeviceFromTemplateRequest, DeviceCreationInput};
 
-use tinyiothub_thing::legacy::device_query::{find_device_by_id, find_device_by_id_with_tags, load_tags_for_devices};
+use crate::domains::thing::legacy::device_query::{
+    find_device_by_id, find_device_by_id_with_tags, load_tags_for_devices,
+};
 
 use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
 use crate::shared::app_state::AppState;

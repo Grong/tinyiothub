@@ -8,7 +8,7 @@ use serde::Deserialize;
 use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
-use tinyiothub_thing::legacy::trace::{DeviceTrace, DeviceTraceStatistics, SystemTraceOverview};
+use crate::domains::thing::legacy::trace::{DeviceTrace, DeviceTraceStatistics, SystemTraceOverview};
 use tinyiothub_web::api_response::ApiResponse;
 
 #[derive(Deserialize)]

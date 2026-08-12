@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tinyiothub_thing::legacy::trace::DeviceTraceService;
+use crate::domains::thing::legacy::trace::DeviceTraceService;
 
 /// 设备追踪工具类
 pub struct DeviceTracer {

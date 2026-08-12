@@ -9,7 +9,7 @@ use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 use tracing::{error, info};
 
-use tinyiothub_driver::legacy::{DeviceStatusDistribution, QuickDevice};
+use crate::domains::driver::legacy::{DeviceStatusDistribution, QuickDevice};
 
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::middleware::workspace::WorkspaceScope;

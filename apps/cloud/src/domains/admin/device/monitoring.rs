@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
-use tinyiothub_driver::legacy::{
+use crate::domains::driver::legacy::{
     DeviceMetrics, DevicePerformanceMetrics, PerformanceAlert, SystemOverview, SystemPerformanceOverview,
 };
 use tinyiothub_web::api_response::ApiResponse;

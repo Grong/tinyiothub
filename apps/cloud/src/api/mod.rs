@@ -38,7 +38,7 @@ pub fn create_router() -> Router<AppState> {
     // 创建需要认证的路由
     let protected_routes = Router::new()
         .nest("/devices", crate::domains::admin::device::create_router())
-        .nest("/drivers", tinyiothub_driver::router())
+        .nest("/drivers", crate::domains::driver::router())
         .nest("/alarms", tinyiothub_alarm::router())
         .nest("/alarm-rules", tinyiothub_alarm::rule_router())
         .nest(
@@ -50,7 +50,7 @@ pub fn create_router() -> Router<AppState> {
         .nest("/users/permissions", tinyiothub_user::permission::create_router())
         .nest(
             "/device-templates",
-            tinyiothub_thing::template::handler::create_router(),
+            crate::domains::thing::template::handler::create_router(),
         )
         .nest("/marketplace", crate::modules::marketplace::handler::create_router())
         .nest("/notifications", crate::domains::notify::handler::create_router())
@@ -65,7 +65,7 @@ pub fn create_router() -> Router<AppState> {
         )
         .nest("/jobs", crate::domains::admin::jobs::handler::create_router())
         .nest("/batch", crate::domains::admin::batch::handler::create_router())
-        .nest("/heartbeat", tinyiothub_driver::heartbeat_router())
+        .nest("/heartbeat", crate::domains::driver::heartbeat_router())
         .nest("/workspaces", crate::domains::tenant::workspace_router())
         .nest(
             "/workspaces",
@@ -85,11 +85,11 @@ pub fn create_router() -> Router<AppState> {
             "/agents/skills",
             crate::domains::agent::host::handler::skills::create_router(),
         )
-        .nest("/tags", tinyiothub_thing::tag::create_router())
+        .nest("/tags", crate::domains::thing::tag::create_router())
         .nest("/api-keys", crate::domains::tenant::api_key_router())
         .nest("/agents", crate::domains::agent::host::handler::create_router())
-        .nest("/driver-health", tinyiothub_driver::driver_health_router())
-        .nest("/things", tinyiothub_thing::router())
+        .nest("/driver-health", crate::domains::driver::driver_health_router())
+        .nest("/things", crate::domains::thing::router())
         .route(
             "/tools/catalog",
             get(crate::domains::agent::chat::handler::proxy::tools_catalog),
@@ -117,7 +117,7 @@ pub fn create_router() -> Router<AppState> {
         .nest("/tenants", crate::domains::tenant::auth_router())
         .nest("/system", crate::domains::admin::system::create_router())
         .nest("/system", crate::shared::initialization::create_router())
-        .route("/gateway/pair", post(tinyiothub_driver::gateway::handler::pairing::pair_device))
+        .route("/gateway/pair", post(crate::domains::driver::gateway::handler::pairing::pair_device))
         // 公开的SSE端点（不需要JWT header, 通过?token=鉴权）
         .route(
             "/events/sse/public",

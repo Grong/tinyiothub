@@ -371,8 +371,8 @@ impl Tool for AutonomousInvokeActionTool {
 #[cfg(test)]
 mod tests {
     use crate::domains::agent::loop_::thing_agent::RunContextInner;
+    use crate::domains::thing::service::ThingService;
     use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
-    use tinyiothub_thing::service::ThingService;
     use zeroclaw::tools::Tool;
 
     use super::*;

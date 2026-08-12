@@ -20,12 +20,12 @@ use std::{
 };
 
 use crate::domains::agent::loop_::types::ToolSafety;
+use crate::domains::thing::{service::ThingService, types::ListThingsParams};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
-use tinyiothub_thing::{service::ThingService, types::ListThingsParams};
 use zeroclaw::tools::{Tool, ToolResult};
 use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 

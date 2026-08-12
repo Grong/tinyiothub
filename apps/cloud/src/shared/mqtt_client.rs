@@ -3,14 +3,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
-use tinyiothub_driver::gateway::{
+use crate::domains::driver::gateway::{
     service::MqttPublish,
     types::{
         DeviceDiscoverMessage, DeviceTelemetryMessage, GatewayDataMessage, PairingAnnounce, StatusMessage,
         TelemetryMessage,
     },
 };
+use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use tinyiothub_event::{
     bus::ThingEventBus,
     router::{ThingEventInput, ThingEventPayload, ThrottleState, route_thing_event},

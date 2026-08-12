@@ -20,12 +20,12 @@
 use std::sync::Arc;
 
 use crate::domains::agent::loop_::thing_agent::{AgentHandle, RunContextInner, manager::AutonomousAgentProvider};
+use crate::domains::thing::service::ThingService;
 use anyhow::anyhow;
 use dashmap::DashMap;
 use sqlx::SqlitePool;
 use tinyiothub_memory::workspace_memory::WorkspaceScopedMemory;
 use tinyiothub_policy::autonomy::PolicyRepository;
-use tinyiothub_thing::service::ThingService;
 use tokio::sync::RwLock;
 use zeroclaw::{
     agent::{dispatcher::NativeToolDispatcher, prompt::SystemPromptBuilder},

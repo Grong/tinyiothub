@@ -2,6 +2,8 @@
 
 pub mod admin;
 pub mod agent;
+pub mod driver;
 pub mod mcp;
 pub mod notify;
 pub mod tenant;
+pub mod thing;

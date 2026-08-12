@@ -7,7 +7,7 @@ use thiserror::Error;
 use tinyiothub_storage::Database;
 use uuid::Uuid;
 
-use tinyiothub_driver::legacy::DeviceService;
+use crate::domains::driver::legacy::DeviceService;
 
 #[derive(Error, Debug)]
 pub enum BatchCommandError {

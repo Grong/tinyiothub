@@ -9,7 +9,7 @@ use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_core::models::{device::Device, device_property::DeviceProperty};
 use tinyiothub_web::response::ApiResponseBuilder;
 
-use tinyiothub_thing::legacy::types::DeviceCommandResponse;
+use crate::domains::thing::legacy::types::DeviceCommandResponse;
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::middleware::workspace::WorkspaceScope;
 

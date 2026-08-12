@@ -51,5 +51,5 @@ pub struct NetworkMetrics {
 }
 
 // `DeviceStatusDistribution` / `QuickDevice` moved to
-// `tinyiothub_driver::legacy::types` (P4-Task20) — the device plane
+// `crate::domains::driver::legacy::types` (P4-Task20) — the device plane
 // (query service + dashboard handler) was their only consumer.

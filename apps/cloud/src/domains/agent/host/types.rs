@@ -504,7 +504,7 @@ impl MemoryContext {
 
 // --- Plugin context ---
 
-// `AppContext` moved to `tinyiothub_driver::plugin::registry` (P4-Task20) —
+// `AppContext` moved to `crate::domains::driver::plugin::registry` (P4-Task20) —
 // the plugin registry was its only consumer; no agent-plane code uses it.
 
 #[cfg(test)]
