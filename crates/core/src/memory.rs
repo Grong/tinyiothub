@@ -2,10 +2,8 @@
 //!
 //! Definitions live in `core`; implementations live in `tinyiothub-memory`.
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
 
 // ---------------------------------------------------------------------------
 // Enums
