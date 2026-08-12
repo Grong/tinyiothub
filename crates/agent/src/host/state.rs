@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use tinyiothub_core::agent_hooks::AgentHooks;
 use tinyiothub_core::config::SystemPromptsConfig;
-use tinyiothub_core::memory::MemoryStore;
 use tinyiothub_storage::Database;
 use tinyiothub_storage::cache::DeviceCache;
+use tinyiothub_storage::memory::MemoryStore;
 
 use crate::host::agent::AgentPool;
 use crate::host::ports::WorkspaceAccess;
@@ -27,7 +27,7 @@ pub struct AgentState {
     /// 会话服务 - Agent 聊天会话管理
     pub session_service: Arc<SessionService>,
     /// Agent 记忆存储
-    pub memory_store: Arc<dyn MemoryStore>,
+    pub memory_store: Arc<MemoryStore>,
     /// 用户指令投递入口（T14）—— None 时指令入口返回 503
     pub directive_sink: Option<Arc<dyn DirectiveSink>>,
     /// 工作空间访问校验（tenant seam，组合层注入）

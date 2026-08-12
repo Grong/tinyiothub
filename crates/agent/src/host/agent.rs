@@ -113,7 +113,7 @@ pub struct AgentPool {
     #[allow(dead_code)]
     pub(crate) agent_settings: tinyiothub_core::config::AgentSettings,
     pub chat_handles: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
-    pub memory_store: Arc<dyn tinyiothub_core::memory::MemoryStore>,
+    pub memory_store: Arc<tinyiothub_storage::memory::MemoryStore>,
     pub trust_configs: DashMap<String, crate::loop_::types::TrustConfig>,
     pub memory_service: tokio::sync::RwLock<Option<Arc<tinyiothub_memory::service::MemoryService>>>,
     pub event_publisher: tokio::sync::RwLock<Option<Arc<crate::loop_::event::bus::AiEventPublisher>>>,
@@ -130,7 +130,7 @@ impl AgentPool {
     /// Create a new AgentPool with shared memory and observer backends.
     pub fn new(
         db_pool: SqlitePool,
-        memory_store: Arc<dyn tinyiothub_core::memory::MemoryStore>,
+        memory_store: Arc<tinyiothub_storage::memory::MemoryStore>,
         agent_settings: &tinyiothub_core::config::AgentSettings,
         provider_factory: super::autonomous_factory::ProviderFactory,
     ) -> anyhow::Result<Self> {
@@ -733,8 +733,8 @@ mod tests {
 
     async fn test_agent_pool() -> AgentPool {
         let db = test_db().await;
-        let memory_store: Arc<dyn tinyiothub_core::memory::MemoryStore> =
-            Arc::new(tinyiothub_memory::SqliteAgentMemoryRepository::new(db.clone()));
+        let memory_store: Arc<tinyiothub_storage::memory::MemoryStore> =
+            Arc::new(tinyiothub_storage::memory::MemoryStore::new(db.clone()));
         AgentPool::new(
             db,
             memory_store,

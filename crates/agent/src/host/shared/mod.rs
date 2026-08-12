@@ -77,7 +77,7 @@ pub async fn build_full_system_prompt(
     system_prompts: &tinyiothub_core::config::SystemPromptsConfig,
     workspace_id: Option<&str>,
     agent_id: Option<&str>,
-    memory_store: Option<&std::sync::Arc<dyn tinyiothub_core::memory::MemoryStore>>,
+    memory_store: Option<&std::sync::Arc<tinyiothub_storage::memory::MemoryStore>>,
 ) -> String {
     let workspace_dir = get_workspace_dir(system_prompts, workspace_id);
 
@@ -205,7 +205,7 @@ fn get_embedded_template(filename: &str) -> Option<&'static str> {
 /// Build the dynamic memory layer for the system prompt.
 /// Prefers PROFILE.md if available; otherwise injects top active memories.
 async fn build_memory_layer(
-    memory_store: &dyn tinyiothub_core::memory::MemoryStore,
+    memory_store: &tinyiothub_storage::memory::MemoryStore,
     workspace_dir: &std::path::Path,
     workspace_id: &str,
     agent_id: &str,

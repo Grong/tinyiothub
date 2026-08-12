@@ -137,7 +137,7 @@ mod tests {
         }
     }
 
-    fn make_orchestrator(
+    async fn make_orchestrator(
         bus: Arc<EventBus>,
         repo: Arc<tinyiothub_storage::heartbeat::HeartbeatTaskRepository>,
     ) -> Orchestrator {
@@ -146,14 +146,14 @@ mod tests {
             Arc::new(AiEventPublisher::new(bus.clone())),
             HeartbeatConfig::default(),
         ));
-        Orchestrator::new(bus, runner, repo, make_memory_service(), None, None, None, None)
+        Orchestrator::new(bus, runner, repo, make_memory_service().await, None, None, None, None)
     }
 
     #[tokio::test]
     async fn start_is_idempotent() {
         let bus = Arc::new(EventBus::new());
         let (repo, pool) = real_repo().await;
-        let orch = make_orchestrator(bus, repo);
+        let orch = make_orchestrator(bus, repo).await;
 
         orch.start();
         orch.start();
@@ -182,7 +182,7 @@ mod tests {
             .execute(&pool)
             .await
             .expect("drop table");
-        let orch = make_orchestrator(bus, repo);
+        let orch = make_orchestrator(bus, repo).await;
         orch.start();
 
         orch.event_publisher().publish(AiEvent::HeartbeatCompleted {

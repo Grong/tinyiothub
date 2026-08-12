@@ -1,23 +1,24 @@
-//! SqliteAgentMemoryRepository — SQLite implementation of MemoryStore.
-use async_trait::async_trait;
+//! Agent memory 持久化（P-集中化 E6c，自 memory crate 迁入）。
+//!
+//! 行类型（AgentMemory/MemoryInput 等）留在 core::memory（全域共享值类型），
+//! 本文件只有具体仓储 struct MemoryStore（trait 已削除）。
+
 use sqlx::SqlitePool;
 use tinyiothub_core::error::Result;
 use tinyiothub_core::memory::*;
 
-/// SQLite-backed implementation of [`MemoryStore`].
-pub struct SqliteAgentMemoryRepository {
+pub struct MemoryStore {
     pool: SqlitePool,
 }
 
-impl SqliteAgentMemoryRepository {
+impl MemoryStore {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 }
 
-#[async_trait]
-impl MemoryStore for SqliteAgentMemoryRepository {
-    async fn put(&self, input: MemoryInput) -> Result<AgentMemory> {
+impl MemoryStore {
+    pub async fn put(&self, input: MemoryInput) -> Result<AgentMemory> {
         let id = uuid::Uuid::new_v4().to_string();
         let tags_json = serde_json::to_string(&input.tags).unwrap_or_default();
 
@@ -74,7 +75,7 @@ impl MemoryStore for SqliteAgentMemoryRepository {
         })
     }
 
-    async fn get(&self, id: &str) -> Result<Option<AgentMemory>> {
+    pub async fn get(&self, id: &str) -> Result<Option<AgentMemory>> {
         let row = sqlx::query_as::<_, MemoryRow>("SELECT * FROM agent_memories WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
@@ -83,7 +84,7 @@ impl MemoryStore for SqliteAgentMemoryRepository {
         Ok(row.map(|r| r.into()))
     }
 
-    async fn get_all(&self, workspace_id: &str, agent_id: &str) -> Result<Vec<AgentMemory>> {
+    pub async fn get_all(&self, workspace_id: &str, agent_id: &str) -> Result<Vec<AgentMemory>> {
         let rows = sqlx::query_as::<_, MemoryRow>(
             "SELECT * FROM agent_memories WHERE workspace_id = ? AND agent_id = ? ORDER BY created_at DESC",
         )
@@ -95,7 +96,7 @@ impl MemoryStore for SqliteAgentMemoryRepository {
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 
-    async fn list_active(&self, workspace_id: &str, agent_id: &str) -> Result<Vec<AgentMemory>> {
+    pub async fn list_active(&self, workspace_id: &str, agent_id: &str) -> Result<Vec<AgentMemory>> {
         // Push superseded filtering to SQL — avoids O(n²) in-memory transitive closure.
         // Memories whose id appears in any supersedes column are considered replaced.
         let rows = sqlx::query_as::<_, MemoryRow>(
@@ -115,7 +116,7 @@ impl MemoryStore for SqliteAgentMemoryRepository {
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 
-    async fn get_since(&self, workspace_id: &str, agent_id: &str, since: &str) -> Result<Vec<AgentMemory>> {
+    pub async fn get_since(&self, workspace_id: &str, agent_id: &str, since: &str) -> Result<Vec<AgentMemory>> {
         let rows = sqlx::query_as::<_, MemoryRow>(
             "SELECT * FROM agent_memories WHERE workspace_id = ? AND agent_id = ? AND created_at > ? ORDER BY created_at DESC",
         )
@@ -128,7 +129,7 @@ impl MemoryStore for SqliteAgentMemoryRepository {
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 
-    async fn set_pinned(&self, id: &str, pinned: bool) -> Result<()> {
+    pub async fn set_pinned(&self, id: &str, pinned: bool) -> Result<()> {
         sqlx::query("UPDATE agent_memories SET pinned = ?, updated_at = datetime('now') WHERE id = ?")
             .bind(pinned as i32)
             .bind(id)
@@ -138,7 +139,7 @@ impl MemoryStore for SqliteAgentMemoryRepository {
         Ok(())
     }
 
-    async fn record_load(&self, id: &str) -> Result<()> {
+    pub async fn record_load(&self, id: &str) -> Result<()> {
         sqlx::query("UPDATE agent_memories SET load_count = load_count + 1, updated_at = datetime('now') WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
@@ -148,7 +149,7 @@ impl MemoryStore for SqliteAgentMemoryRepository {
     }
 
     /// Atomic read-modify-write — no SELECT needed, no race condition.
-    async fn record_reference(&self, id: &str) -> Result<()> {
+    pub async fn record_reference(&self, id: &str) -> Result<()> {
         sqlx::query(
             "UPDATE agent_memories SET \
              load_count = load_count + 1, \
@@ -164,7 +165,7 @@ impl MemoryStore for SqliteAgentMemoryRepository {
         Ok(())
     }
 
-    async fn get_pending_queue(&self, workspace_id: &str, agent_id: &str) -> Result<Vec<ReflectionQueueItem>> {
+    pub async fn get_pending_queue(&self, workspace_id: &str, agent_id: &str) -> Result<Vec<ReflectionQueueItem>> {
         let rows = sqlx::query_as::<_, QueueRow>(
             "SELECT id, workspace_id, agent_id, session_key, candidate_type, candidate_data, status, created_at \
              FROM reflection_queue WHERE workspace_id = ? AND agent_id = ? AND status = 'pending' \
@@ -178,7 +179,7 @@ impl MemoryStore for SqliteAgentMemoryRepository {
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 
-    async fn resolve_queue_item(
+    pub async fn resolve_queue_item(
         &self,
         id: &str,
         workspace_id: &str,
@@ -199,7 +200,7 @@ impl MemoryStore for SqliteAgentMemoryRepository {
         Ok(())
     }
 
-    async fn enqueue_candidate(&self, item: QueueCandidateInput) -> Result<String> {
+    pub async fn enqueue_candidate(&self, item: QueueCandidateInput) -> Result<String> {
         let id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
             "INSERT INTO reflection_queue (id, workspace_id, agent_id, session_key, candidate_type, candidate_data) \
@@ -217,7 +218,7 @@ impl MemoryStore for SqliteAgentMemoryRepository {
         Ok(id)
     }
 
-    async fn count_by_source(&self, workspace_id: &str, agent_id: &str, source: MemorySource) -> Result<u64> {
+    pub async fn count_by_source(&self, workspace_id: &str, agent_id: &str, source: MemorySource) -> Result<u64> {
         let source_str = match source {
             MemorySource::User => "user",
             MemorySource::Reflection => "reflection",

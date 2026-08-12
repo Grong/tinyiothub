@@ -533,12 +533,14 @@ pub(crate) mod tests {
     }
 
     pub(crate) async fn result_rows(pool: &sqlx::SqlitePool, ws: &str) -> i64 {
-        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM agent_actions WHERE workspace_id = ? AND action_type IN ('summary', 'error')")
-            .bind(ws)
-            .fetch_one(pool)
-            .await
-            .expect("count")
-            .0
+        sqlx::query_as::<_, (i64,)>(
+            "SELECT COUNT(*) FROM agent_actions WHERE workspace_id = ? AND action_type IN ('summary', 'error')",
+        )
+        .bind(ws)
+        .fetch_one(pool)
+        .await
+        .expect("count")
+        .0
     }
 
     struct MockLlmProvider;
@@ -556,95 +558,19 @@ pub(crate) mod tests {
         }
     }
 
-    struct MockMemoryStore;
-
-    #[async_trait::async_trait]
-    impl tinyiothub_core::memory::MemoryStore for MockMemoryStore {
-        async fn put(
-            &self,
-            _input: tinyiothub_core::memory::MemoryInput,
-        ) -> tinyiothub_core::error::Result<tinyiothub_core::memory::AgentMemory> {
-            unimplemented!()
-        }
-
-        async fn get(&self, _id: &str) -> tinyiothub_core::error::Result<Option<tinyiothub_core::memory::AgentMemory>> {
-            Ok(None)
-        }
-
-        async fn get_all(
-            &self,
-            _workspace_id: &str,
-            _agent_id: &str,
-        ) -> tinyiothub_core::error::Result<Vec<tinyiothub_core::memory::AgentMemory>> {
-            Ok(vec![])
-        }
-
-        async fn list_active(
-            &self,
-            _workspace_id: &str,
-            _agent_id: &str,
-        ) -> tinyiothub_core::error::Result<Vec<tinyiothub_core::memory::AgentMemory>> {
-            Ok(vec![])
-        }
-
-        async fn get_since(
-            &self,
-            _workspace_id: &str,
-            _agent_id: &str,
-            _since: &str,
-        ) -> tinyiothub_core::error::Result<Vec<tinyiothub_core::memory::AgentMemory>> {
-            Ok(vec![])
-        }
-
-        async fn set_pinned(&self, _id: &str, _pinned: bool) -> tinyiothub_core::error::Result<()> {
-            Ok(())
-        }
-
-        async fn record_load(&self, _id: &str) -> tinyiothub_core::error::Result<()> {
-            Ok(())
-        }
-
-        async fn record_reference(&self, _id: &str) -> tinyiothub_core::error::Result<()> {
-            Ok(())
-        }
-
-        async fn get_pending_queue(
-            &self,
-            _workspace_id: &str,
-            _agent_id: &str,
-        ) -> tinyiothub_core::error::Result<Vec<tinyiothub_core::memory::ReflectionQueueItem>> {
-            Ok(vec![])
-        }
-
-        async fn resolve_queue_item(
-            &self,
-            _id: &str,
-            _workspace_id: &str,
-            _approved: bool,
-            _reviewer_note: Option<&str>,
-        ) -> tinyiothub_core::error::Result<()> {
-            Ok(())
-        }
-
-        async fn enqueue_candidate(
-            &self,
-            _item: tinyiothub_core::memory::QueueCandidateInput,
-        ) -> tinyiothub_core::error::Result<String> {
-            Ok("mock_id".into())
-        }
-
-        async fn count_by_source(
-            &self,
-            _workspace_id: &str,
-            _agent_id: &str,
-            _source: tinyiothub_core::memory::MemorySource,
-        ) -> tinyiothub_core::error::Result<u64> {
-            Ok(0)
-        }
-    }
-
-    pub(crate) fn make_memory_service() -> Arc<MemoryService> {
-        Arc::new(MemoryService::new(Arc::new(MockLlmProvider), Arc::new(MockMemoryStore)))
+    pub(crate) async fn make_memory_service() -> Arc<MemoryService> {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .expect("in-memory sqlite");
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .expect("migrations");
+        Arc::new(MemoryService::new(
+            Arc::new(MockLlmProvider),
+            Arc::new(tinyiothub_storage::memory::MemoryStore::new(pool)),
+        ))
     }
 
     fn make_publisher() -> Arc<AiEventPublisher> {
@@ -679,7 +605,7 @@ pub(crate) mod tests {
         let (repo, _pool) = real_repo().await;
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
-        let memory = make_memory_service();
+        let memory = make_memory_service().await;
 
         let handler = AiEventHandler::new(
             runner,
@@ -699,7 +625,7 @@ pub(crate) mod tests {
         let (repo, _pool) = real_repo().await;
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
-        let memory = make_memory_service();
+        let memory = make_memory_service().await;
 
         let handler = AiEventHandler::new(
             runner,
@@ -734,7 +660,7 @@ pub(crate) mod tests {
         let repo: Arc<crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = repo;
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
-        let memory = make_memory_service();
+        let memory = make_memory_service().await;
 
         let handler = AiEventHandler::new(
             runner,
@@ -773,7 +699,7 @@ pub(crate) mod tests {
         let (repo, _pool) = real_repo().await;
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
-        let memory = make_memory_service();
+        let memory = make_memory_service().await;
 
         let handler = AiEventHandler::new(
             runner,
@@ -809,7 +735,7 @@ pub(crate) mod tests {
         let (repo, _pool) = real_repo().await;
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
-        let memory = make_memory_service();
+        let memory = make_memory_service().await;
 
         let handler = AiEventHandler::new(
             runner,
@@ -842,7 +768,7 @@ pub(crate) mod tests {
         let (repo, _pool) = real_repo().await;
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
-        let memory = make_memory_service();
+        let memory = make_memory_service().await;
         let parts = crate::loop_::thing_agent::manager::tests::stub_manager().await;
         let manager = parts.manager.clone();
 
@@ -876,7 +802,7 @@ pub(crate) mod tests {
         let (repo, _pool) = real_repo().await;
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
-        let memory = make_memory_service();
+        let memory = make_memory_service().await;
 
         let handler = AiEventHandler::new(
             runner,
@@ -925,7 +851,7 @@ pub(crate) mod tests {
         let repo: Arc<crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = repo;
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
-        let memory = make_memory_service();
+        let memory = make_memory_service().await;
 
         let handler = AiEventHandler::new(
             runner,
@@ -1399,7 +1325,7 @@ pub(crate) mod tests {
             let repo: Arc<crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = repo;
             let runner = make_heartbeat_runner(Arc::clone(&repo));
             let publisher = make_publisher();
-            let memory = make_memory_service();
+            let memory = make_memory_service().await;
 
             let (bridge, sink) = bridge(real_runs(&[]).await);
             let handler = AiEventHandler::new(
@@ -1433,7 +1359,7 @@ pub(crate) mod tests {
             let handler = AiEventHandler::new(
                 runner,
                 Arc::clone(&repo),
-                make_memory_service(),
+                make_memory_service().await,
                 make_publisher(),
                 None,
                 None,

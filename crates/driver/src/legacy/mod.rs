@@ -3,7 +3,7 @@
 //! (P4-Task20).
 //!
 //! Boundary notes:
-//! - `monitoring`/`performance` hold `Arc<dyn tinyiothub_alarm::AlarmRepository>`
+//! - `monitoring`/`performance` hold `Arc<tinyiothub_alarm::AlarmRepository>`（E2 后 AlarmRepository 为具体 struct）
 //!   for read-only alarm counts (`count_active_alarms_by_device` etc.) —
 //!   driver → alarm is a deliberate one-way edge (real-time alarm context on
 //!   device data); the alarm crate never names driver types.

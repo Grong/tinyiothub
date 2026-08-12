@@ -2,13 +2,14 @@ use std::sync::Arc;
 
 use tinyiothub_agent::host::agent::AgentPool;
 use tinyiothub_auth::redis::RedisClient;
-use tinyiothub_core::{memory::MemoryStore, models::device_property::DeviceProperty};
+use tinyiothub_core::models::device_property::DeviceProperty;
 use tinyiothub_driver::legacy::{DeviceMonitoringService, DevicePerformanceService, DeviceQueryService, DeviceService};
 use tinyiothub_event::repositories::{EventRepository, RealTimeEventRepository};
 use tinyiothub_notify::{
     NotificationHistoryRepository, NotificationManager, NotificationRuleRepository,
     channels::NotificationChannelFactory,
 };
+use tinyiothub_storage::memory::MemoryStore;
 use tinyiothub_storage::{Database, DeviceRepositoryFactory, cache::DeviceCache};
 use tinyiothub_thing::{
     legacy::{trace::DeviceTraceService, trace_repository::DeviceTraceRepository},
@@ -151,7 +152,7 @@ pub struct AppState {
     pub directive_sink: Option<Arc<dyn tinyiothub_agent::loop_::thing_agent::DirectiveSink>>,
 
     /// Agent 记忆存储 - 持久化 agent 记忆到 SQLite
-    pub memory_store: Arc<dyn MemoryStore>,
+    pub memory_store: Arc<MemoryStore>,
 
     /// Thing action hooks（P4.0b）—— thing handler 经此调用 agent 侧的
     /// 参数校验 / 确认令牌存储 / 策略裁决，斩断 thing→agent 依赖边。
@@ -286,9 +287,8 @@ impl AppState {
             agent_settings.observer_backend
         );
         // Agent Memory Store
-        let memory_store: Arc<dyn MemoryStore> = Arc::new(tinyiothub_memory::SqliteAgentMemoryRepository::new(
-            database.pool().clone(),
-        ));
+        let memory_store: Arc<MemoryStore> =
+            Arc::new(tinyiothub_storage::memory::MemoryStore::new(database.pool().clone()));
 
         let agent_pool: Arc<AgentPool> = Arc::new(
             AgentPool::new(

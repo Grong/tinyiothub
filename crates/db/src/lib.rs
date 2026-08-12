@@ -39,6 +39,8 @@ pub mod event;
 pub mod factory;
 /// Heartbeat task/result/trust persistence and row types.
 pub mod heartbeat;
+/// Agent memory persistence.
+pub mod memory;
 /// Embedded migrations runner.
 pub mod migrations;
 /// Shared query model types.
