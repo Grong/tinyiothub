@@ -41,26 +41,25 @@
 ```
 tinyiothub/
 ├── apps/                    # 可部署二进制
-│   ├── cloud/               # SaaS 组合根（薄 main.rs + bootstrap.rs + 路由组装）
+│   ├── cloud/               # relay：全部行为（domains/ 按域分模块）+ 组合根
 │   │   ├── src/
+│   │   │   └── domains/     # thing/auth/user/tenant/event/alarm/driver/notify/agent/mcp/admin
 │   │   └── templates/       # 技能模板
 │   ├── edge/                # 边缘网关
 │   ├── marketplace/         # 市场服务（驱动/物模板市场）
 │   └── cli/                 # 命令行工具
-├── crates/                  # 21 个单一职责库 Crate（package 短名，lib 钉住 tinyiothub_*）
-│   ├── core/                # 契约层：traits + 值类型（error/config 已并入）
-│   ├── db/                  # 数据层：SQLite 实现（buzz 平铺）+ migrations/
-│   ├── runtime/             # 基础设施：EventBus, DataServer, 驱动框架, plugin loader
+├── crates/                  # 能力库 Crate（relay 范式：只提供能力，不做编排）
+│   ├── core/                # 纯值类型（零 I/O、零 API 语义）
+│   ├── db/                  # 全部 SQL：行类型+查询契约+具体 repo（buzz 平铺）+ migrations/
+│   ├── runtime/             # EventBus, DataServer, 驱动框架, plugin loader
 │   ├── web/                 # HTTP 基础设施（中间件、ApiResponseBuilder）
-│   ├── scheduler/           # Cron 引擎 + 调度器
-│   ├── llm/                 # LLM provider 契约、prompt、session
-│   ├── memory/              # Agent 记忆 + 反思管道
-│   ├── policy/              # 策略引擎 + 提案
-│   ├── skills/              # 技能/工具注册表
+│   ├── scheduler/           # Cron 引擎
+│   ├── llm/                 # LLM provider 契约
+│   ├── memory/              # Agent 记忆引擎（纯逻辑）
+│   ├── policy/              # 策略门评估（纯逻辑）
+│   ├── skills/              # 技能/信任引擎
 │   ├── plugin-sdk/          # 驱动开发 SDK（ABI 契约）
-│   ├── macros/              # 过程宏
-│   └── <domain>/            # 领域 crate：thing, auth, user, tenant, event, alarm,
-│                            #   driver, notify, agent, mcp, admin
+│   └── macros/              # 过程宏
 ├── drivers/                 # 动态驱动 stub（cdylib，不在 workspace 内）
 ├── web/                     # Lit 3 前端应用 (Web Components)
 │   ├── src/                 # 源代码
@@ -81,7 +80,7 @@ tinyiothub/
 └── skills/                 # AI prompts / skills
 ```
 
-**注意：本项目采用多 Crate 架构，依赖方向为单向不可逆：`apps/* → 领域 crate → runtime/db/web → core`。详细架构见 [AGENTS.md](AGENTS.md)。**
+**注意：本项目采用 relay 范式（buzz-relay 模型）：apps/cloud 拥有全部行为，crates/ 为互不惊扰的能力库，依赖方向 `apps/* → crates/* → core` 单向不可逆。详细架构见 [AGENTS.md](AGENTS.md)。**
 
 ## 快速开始
 
@@ -333,9 +332,9 @@ apps/cloud/
 └── README.md                 # 后端说明
 ```
 
-业务领域代码位于 `crates/<domain>/`（thing, auth, user, tenant, event, alarm, driver,
-notify, agent, mcp, admin），每个领域 crate 暴露 `<Domain>State + router()`，由
-apps/cloud 组合挂载；数据库迁移位于 `crates/db/migrations/`。
+业务行为代码位于 `apps/cloud/src/domains/<domain>/`（thing, auth, user, tenant, event,
+alarm, driver, notify, agent, mcp, admin），每域含 handler/service/dto；路由在
+`apps/cloud/src/api/mod.rs` 集中挂载；全部 SQL 与迁移位于 `crates/db/`。
 
 ### 前端目录结构 (web/)
 

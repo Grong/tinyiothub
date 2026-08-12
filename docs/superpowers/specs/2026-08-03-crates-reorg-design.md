@@ -317,3 +317,22 @@ CRITICAL GAP：无（唯一的无救援路径"中间态行为微差"为用户显
   E2E 仅 P5、不测编译基线）均为用户显式裁决并记录在 §3。下一步：P0（T1 cargo-modules 环扫描）。
 
 NO UNRESOLVED DECISIONS
+
+---
+
+## 10. 范式变更附录（2026-08-12，用户裁决）
+
+本文档 P4 的"渐进领域抽取"（每域一 crate + State 切片 + FromRef）在执行后被推翻。
+用户裁决：全量采用 buzz-relay 范式。P4 的产物（领域 crate）已全部回流：
+
+- **F0-F6（relay 化）**：11 个领域 crate 解散回 `apps/cloud/src/domains/<domain>/`；
+  XxxState/FromRef 矩阵、hooks 端口（thing_hooks/agent_hooks）、WorkspaceAccess/
+  WorkspaceAgentLifecycle/AlarmAiPublisher seam、Storage facade、
+  DeviceRepositoryFactory 全部删除；领域间调用变同 crate 模块直调。
+- **E1-E6（db 集中化）**：全部 SQL 归 `crates/db`（buzz 平铺），21 个 repository
+  trait 归零，行类型随 repo 住 db。
+- 终态：`apps/* → crates/*（能力库）→ core`，crates/ 仅余 core/db/runtime/web/
+  scheduler/llm/memory/policy/skills/plugin-sdk/macros 11 个能力库。
+
+P4 的 SEP/State 切片设计文档仅作历史记录保留；以 AGENTS.md「The Relay Paradigm」
+为现行事实源。
