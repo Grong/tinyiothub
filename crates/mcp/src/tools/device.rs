@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tinyiothub_core::models::device::CreateDeviceRequest;
 use tinyiothub_storage::{
+    device::{DeviceCriteria, DeviceSortBy, DeviceSortOrder},
     find_device_command_by_device_and_name, find_device_properties_by_device_id,
-    traits::device::{DeviceCriteria, DeviceSortBy, DeviceSortOrder},
 };
 use tinyiothub_thing::template::types::{CreateDeviceFromTemplateRequest, DeviceCreationInput};
 

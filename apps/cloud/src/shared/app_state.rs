@@ -222,9 +222,8 @@ impl AppState {
         );
 
         // 基础服务 - 使用事件总线
-        let device_repository: Arc<dyn tinyiothub_storage::traits::device::DeviceRepository> = Arc::new(
-            tinyiothub_storage::SqliteDeviceRepository::new(database.as_ref().clone()),
-        );
+        let device_repository: Arc<tinyiothub_storage::device::DeviceRepository> =
+            Arc::new(tinyiothub_storage::DeviceRepository::new(database.as_ref().clone()));
         let device_service = Arc::new(
             DeviceService::with_event_bus(device_repository, database.clone(), event_bus.clone())
                 .with_tag_repository(tag_repository.clone()),

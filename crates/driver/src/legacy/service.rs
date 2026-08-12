@@ -26,18 +26,18 @@ use tinyiothub_event::{
     value_objects::{ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat},
 };
 use tinyiothub_runtime::event_bus::EventBus;
-use tinyiothub_storage::traits::device::{DeviceCriteria, DeviceRepository};
+use tinyiothub_storage::device::{DeviceCriteria, DeviceRepository};
 use tinyiothub_web::pagination::DataObjectWithPagination;
 
 pub struct DeviceService {
-    repository: Arc<dyn DeviceRepository>,
+    repository: Arc<DeviceRepository>,
     database: Arc<Database>,
     event_bus: Option<Arc<EventBus>>,
     tag_repository: Option<Arc<TagRepository>>,
 }
 
 impl DeviceService {
-    pub fn new(repository: Arc<dyn DeviceRepository>, database: Arc<Database>) -> Self {
+    pub fn new(repository: Arc<DeviceRepository>, database: Arc<Database>) -> Self {
         Self {
             repository,
             database,
@@ -47,7 +47,7 @@ impl DeviceService {
     }
 
     pub fn with_event_bus(
-        repository: Arc<dyn DeviceRepository>,
+        repository: Arc<DeviceRepository>,
         database: Arc<Database>,
         event_bus: Arc<EventBus>,
     ) -> Self {
@@ -760,8 +760,8 @@ fn params_to_criteria(params: &DeviceQueryParams) -> DeviceCriteria {
         workspace_id: None,
         search_text: None,
         tag_name: None,
-        sort_by: tinyiothub_storage::traits::device::DeviceSortBy::CreatedAt,
-        sort_order: tinyiothub_storage::traits::device::DeviceSortOrder::Descending,
+        sort_by: tinyiothub_storage::device::DeviceSortBy::CreatedAt,
+        sort_order: tinyiothub_storage::device::DeviceSortOrder::Descending,
         limit: params.page_size,
         offset: params.page.map(|p| p.saturating_sub(1) * params.page_size.unwrap_or(0)),
     }

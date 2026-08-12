@@ -1,14 +1,14 @@
 use tinyiothub_core::models::device::{Device, DeviceQueryParams};
 use tinyiothub_storage::{
-    Database, SqliteDeviceRepository,
-    traits::device::{DeviceCriteria, DeviceRepository, DeviceSortBy, DeviceSortOrder},
+    Database, DeviceRepository,
+    device::{DeviceCriteria, DeviceSortBy, DeviceSortOrder},
 };
 
 use crate::tag::TagRepository;
 
 /// Find a device by ID (convenience wrapper for MCP tools compatibility)
 pub async fn find_device_by_id(db: &Database, id: &str) -> Result<Option<Device>, sqlx::Error> {
-    let repo = SqliteDeviceRepository::new(db.clone());
+    let repo = DeviceRepository::new(db.clone());
     repo.find_by_id(id).await.map_err(|_| sqlx::Error::RowNotFound)
 }
 
@@ -84,7 +84,7 @@ pub async fn find_all_devices_with_tags(
         limit: params.page_size,
         offset: params.page.map(|p| p.saturating_sub(1) * params.page_size.unwrap_or(0)),
     };
-    let repo = SqliteDeviceRepository::new(db.clone());
+    let repo = DeviceRepository::new(db.clone());
     let mut devices = repo.find_all(&criteria).await.map_err(|_| sqlx::Error::RowNotFound)?;
     let tenant_id_for_tags = tenant_id.as_deref().unwrap_or("");
     load_tags_for_devices(db, &mut devices, tenant_id_for_tags).await?;

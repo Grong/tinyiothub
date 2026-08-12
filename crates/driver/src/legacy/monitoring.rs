@@ -113,8 +113,8 @@ impl DeviceMonitoringService {
 
     pub async fn get_device_metrics(&self, device_id: &str) -> Option<DeviceMetrics> {
         if let Some(_device) = self.device_cache.get(device_id) {
-            let device_repository: Arc<dyn tinyiothub_storage::traits::device::DeviceRepository> = Arc::new(
-                tinyiothub_storage::SqliteDeviceRepository::new(self.database.as_ref().clone()),
+            let device_repository: Arc<tinyiothub_storage::device::DeviceRepository> = Arc::new(
+                tinyiothub_storage::DeviceRepository::new(self.database.as_ref().clone()),
             );
             let device_service = super::service::DeviceService::new(device_repository, self.database.clone());
 

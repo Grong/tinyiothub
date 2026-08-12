@@ -59,10 +59,6 @@ pub mod storage;
 pub mod tag;
 /// Tenant + API key persistence and row types.
 pub mod tenant;
-/// Tenant-aware device repository adapters.
-pub mod tenant_device;
-/// Repository traits (legacy inversion — 逐领域评估削除).
-pub mod traits;
 /// User persistence and row types.
 pub mod user;
 /// Workspace + knowledge resource persistence and row types.
@@ -87,7 +83,7 @@ pub use config::DatabaseConfig;
 pub use cron_job::CronJobRepository;
 pub use cron_run::CronRunRepository;
 pub use database::Database;
-pub use device::SqliteDeviceRepository;
+pub use device::DeviceRepository;
 pub use device_command::*;
 pub use device_property::*;
 pub use device_row_mapper::*;
@@ -98,5 +94,3 @@ pub use models::{Filter, FilterOp, Pagination, RowMetadata, SortOrder};
 pub use notification_channel::*;
 pub use pool::{create_pool, create_pool_without_migrations};
 pub use storage::Storage;
-pub use tenant_device::TenantDeviceRepository;
-pub use traits::*;
