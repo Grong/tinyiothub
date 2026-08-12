@@ -108,7 +108,7 @@ pub(crate) fn build_heartbeat_md(tasks: &[HeartbeatTask]) -> String {
 /// the file exists. On success the file is renamed to HEARTBEAT.md.migrated
 /// so it never re-seeds. Returns true when a migration happened.
 pub async fn migrate_file_tasks_to_db(
-    repo: &dyn crate::loop_::heartbeat::repo::HeartbeatTaskRepository,
+    repo: &crate::loop_::heartbeat::repo::HeartbeatTaskRepository,
     workspace_id: &str,
     workspace_dir: &std::path::Path,
 ) -> anyhow::Result<bool> {
@@ -224,7 +224,7 @@ mod tests {
         assert!(parsed[1].paused);
     }
 
-    async fn migration_test_repo() -> crate::host::heartbeat_repo::SqliteHeartbeatTaskRepository {
+    async fn migration_test_repo() -> tinyiothub_storage::heartbeat::HeartbeatTaskRepository {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
@@ -238,7 +238,7 @@ mod tests {
                 sqlx::query(stmt).execute(&pool).await.expect("apply migration");
             }
         }
-        crate::host::heartbeat_repo::SqliteHeartbeatTaskRepository::new(pool)
+        tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(pool)
     }
 
     #[tokio::test]

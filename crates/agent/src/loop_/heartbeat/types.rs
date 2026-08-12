@@ -1,5 +1,11 @@
 //! Heartbeat types — periodic check tasks and execution results.
 
+// 持久化行类型已迁 db（E6b）；re-export 兼容。
+pub use tinyiothub_storage::heartbeat::{
+    ExecutedAction, HeartbeatResult, HeartbeatStatus, HeartbeatTask, MIN_HEARTBEAT_INTERVAL_MINUTES, NewHeartbeatTask,
+    WorkspaceHeartbeatConfig,
+};
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -42,60 +48,6 @@ impl HeartbeatSignal {
         }
     }
 }
-
-/// Status of a heartbeat tick.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum HeartbeatStatus {
-    Complete,
-    Partial,
-    Error,
-}
-
-/// A single action executed during a heartbeat tick.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutedAction {
-    pub tool_name: String,
-    pub device_id: Option<String>,
-    pub success: bool,
-    pub details: String,
-}
-
-/// Result of a heartbeat tick.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HeartbeatResult {
-    pub workspace_id: String,
-    pub status: HeartbeatStatus,
-    pub summary: String,
-    /// Number of tasks executed this tick (set by the loop, not the LLM).
-    #[serde(default)]
-    pub task_count: u32,
-    pub executed_actions: Vec<ExecutedAction>,
-    pub proposals: Vec<tinyiothub_policy::proposal::Proposal>,
-    pub error: Option<String>,
-}
-
-/// A periodic heartbeat check task.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HeartbeatTask {
-    pub id: i64,
-    pub workspace_id: String,
-    pub priority: String,
-    pub text: String,
-    pub paused: bool,
-    pub version: i64,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-/// Input for creating/replacing heartbeat tasks (no server-assigned fields).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NewHeartbeatTask {
-    pub priority: String,
-    pub text: String,
-    pub paused: bool,
-}
-
-/// Configuration for the heartbeat runner.
 #[derive(Debug, Clone)]
 pub struct HeartbeatConfig {
     pub enabled: bool,
@@ -108,44 +60,6 @@ impl Default for HeartbeatConfig {
             enabled: true,
             interval_minutes: 15,
         }
-    }
-}
-
-/// Lowest interval a workspace may configure — a tick can take minutes
-/// (LLM call + tool execution), so tighter loops just pile up.
-pub const MIN_HEARTBEAT_INTERVAL_MINUTES: u32 = 5;
-
-/// Per-workspace heartbeat settings, persisted as JSON on the workspace row.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct WorkspaceHeartbeatConfig {
-    pub enabled: bool,
-    pub interval_minutes: u32,
-}
-
-impl WorkspaceHeartbeatConfig {
-    pub fn validated(enabled: bool, interval_minutes: u32) -> Result<Self, String> {
-        if interval_minutes < MIN_HEARTBEAT_INTERVAL_MINUTES {
-            return Err(format!(
-                "interval_minutes must be >= {}",
-                MIN_HEARTBEAT_INTERVAL_MINUTES
-            ));
-        }
-        Ok(Self {
-            enabled,
-            interval_minutes,
-        })
-    }
-
-    pub fn from_db_json(json: Option<&str>) -> Option<Self> {
-        let json = json?.trim();
-        if json.is_empty() {
-            return None;
-        }
-        serde_json::from_str(json).ok()
-    }
-
-    pub fn to_db_json(&self) -> String {
-        serde_json::to_string(self).unwrap_or_default()
     }
 }
 

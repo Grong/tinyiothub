@@ -23,7 +23,6 @@ use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::host::agent_runs_repo::SqliteAgentRunsRepository;
 use crate::host::state::AgentState;
 use crate::verify_workspace_access;
 
@@ -200,7 +199,7 @@ pub async fn ack_run(
         _ => return ApiResponseBuilder::error_with_code(404, "运行记录不存在"),
     }
 
-    let repo = SqliteAgentRunsRepository::new(state.database.pool().clone());
+    let repo = AgentRunsRepository::new(state.database.pool().clone());
     match repo.ack_run(&run_id, &claims.user_id).await {
         // 幂等：重复确认仍 200，firstAck=false 表示本次未改状态
         Ok(first_ack) => ApiResponseBuilder::success(serde_json::json!({

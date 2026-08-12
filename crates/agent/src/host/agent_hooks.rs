@@ -15,11 +15,11 @@ use crate::host::heartbeat::{self, HeartbeatTask};
 pub struct AgentHooksImpl {
     /// Repo used by the legacy file→DB migration. Same underlying pool as
     /// the heartbeat runner's repo; constructed by the composition layer.
-    task_repo: Arc<dyn HeartbeatTaskRepository>,
+    task_repo: Arc<HeartbeatTaskRepository>,
 }
 
 impl AgentHooksImpl {
-    pub fn new(task_repo: Arc<dyn HeartbeatTaskRepository>) -> Self {
+    pub fn new(task_repo: Arc<HeartbeatTaskRepository>) -> Self {
         Self { task_repo }
     }
 }

@@ -26,7 +26,6 @@ use serde_json::json;
 use sqlx::Row;
 use tinyiothub_agent::{
     host::{
-        agent_runs_repo::SqliteAgentRunsRepository,
         autonomous_factory::{AutonomousAgentFactory, ProviderFactory},
         thing_agent_host::CloudThingAgentHost,
         tools::DispatchThingTaskTool,
@@ -392,7 +391,7 @@ async fn build_fixture(
         Arc::new(CloudThingAgentHost::new(pool.clone(), bus.clone())),
         policy_repo.clone(),
         factory.clone(),
-        Arc::new(SqliteAgentRunsRepository::new(pool.clone())),
+        Arc::new(tinyiothub_storage::agent_runs::AgentRunsRepository::new(pool.clone())),
         runner,
         ThingAgentManagerConfig {
             // 定时巡检不干扰断言（首 tick 停在合并窗口；按 dedup_key 过滤）。
@@ -717,13 +716,11 @@ async fn user_directive_runs_and_pushes_assistant_message() {
 
 #[tokio::test]
 async fn policy_denial_streak_triggers_relax_hint_with_real_repo() {
-    use tinyiothub_agent::loop_::thing_agent::{
-        ActionRecord, ActionResult, AgentRunsRepository, Outcome, Priority, RunReport, pushback,
-    };
+    use tinyiothub_agent::loop_::thing_agent::{ActionRecord, ActionResult, Outcome, Priority, RunReport, pushback};
 
     let (pool, _dir) = test_pool("loop_relax_hint").await;
     seed_test_workspace(&pool, "tenant-1", WS).await;
-    let repo = SqliteAgentRunsRepository::new(pool.clone());
+    let repo = tinyiothub_storage::agent_runs::AgentRunsRepository::new(pool.clone());
     let host = CloudThingAgentHost::new(pool.clone(), Arc::new(ThingEventBus::new()));
 
     let denied_report = |run_id: &str| RunReport {

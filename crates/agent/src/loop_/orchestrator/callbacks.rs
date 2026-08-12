@@ -37,7 +37,7 @@ use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 /// problem_key 从结构化字段派生（`{tool_name}:{device_id}`），不用自由文本
 /// 摘要——LLM 措辞变化会击穿去重（O21）。
 pub struct HeartbeatBridge {
-    runs_repo: Arc<dyn AgentRunsRepository>,
+    runs_repo: Arc<AgentRunsRepository>,
     sink: Arc<dyn DirectiveSink>,
 }
 
@@ -48,7 +48,7 @@ pub const PROBLEM_WINDOW_HOURS: u32 = 6;
 pub const ACK_SUPPRESS_HOURS: u32 = 7 * 24;
 
 impl HeartbeatBridge {
-    pub fn new(runs_repo: Arc<dyn AgentRunsRepository>, sink: Arc<dyn DirectiveSink>) -> Self {
+    pub fn new(runs_repo: Arc<AgentRunsRepository>, sink: Arc<dyn DirectiveSink>) -> Self {
         Self { runs_repo, sink }
     }
 
@@ -164,7 +164,7 @@ fn heartbeat_directive(workspace_id: &str, problem_key: String, proposal: &Propo
 /// Cross-domain callback handler.
 pub struct AiEventHandler {
     heartbeat_runner: Arc<HeartbeatRunner>,
-    task_repo: Arc<dyn HeartbeatTaskRepository>,
+    task_repo: Arc<HeartbeatTaskRepository>,
     memory_service: Arc<MemoryService>,
     event_publisher: Arc<AiEventPublisher>,
     dlq: Option<Arc<dyn DeadLetterQueue>>,
@@ -181,7 +181,7 @@ pub struct AiEventHandler {
 impl AiEventHandler {
     pub fn new(
         heartbeat_runner: Arc<HeartbeatRunner>,
-        task_repo: Arc<dyn HeartbeatTaskRepository>,
+        task_repo: Arc<HeartbeatTaskRepository>,
         memory_service: Arc<MemoryService>,
         event_publisher: Arc<AiEventPublisher>,
         dlq: Option<Arc<dyn DeadLetterQueue>>,
@@ -510,69 +510,35 @@ pub(crate) mod tests {
     use tinyiothub_llm::provider::{LlmProvider, LlmResponse};
     use tinyiothub_memory::service::MemoryService;
 
-    pub(crate) struct MockTaskRepo {
-        pub(crate) fail_insert: bool,
-        insert_result_calls: Arc<Mutex<Vec<(String, HeartbeatResult)>>>,
+    /// 真实 SQLite 版 heartbeat repo（E6b 去 trait 后替代 MockTaskRepo）；
+    /// 返回 pool 供断言查询 agent_actions 行数。
+    pub(crate) async fn real_repo() -> (
+        Arc<crate::loop_::heartbeat::repo::HeartbeatTaskRepository>,
+        sqlx::SqlitePool,
+    ) {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .expect("in-memory sqlite");
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .expect("migrations");
+        (
+            Arc::new(crate::loop_::heartbeat::repo::HeartbeatTaskRepository::new(
+                pool.clone(),
+            )),
+            pool,
+        )
     }
 
-    impl MockTaskRepo {
-        pub(crate) fn new() -> Self {
-            Self {
-                fail_insert: false,
-                insert_result_calls: Arc::new(Mutex::new(Vec::new())),
-            }
-        }
-
-        /// Every insert_result fails — drives the retry/backoff path.
-        pub(crate) fn failing() -> Self {
-            Self {
-                fail_insert: true,
-                insert_result_calls: Arc::new(Mutex::new(Vec::new())),
-            }
-        }
-
-        pub(crate) fn insert_result_calls(&self) -> Arc<Mutex<Vec<(String, HeartbeatResult)>>> {
-            Arc::clone(&self.insert_result_calls)
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl crate::loop_::heartbeat::repo::HeartbeatTaskRepository for MockTaskRepo {
-        async fn list_by_workspace(&self, _workspace_id: &str) -> Result<Vec<HeartbeatTask>, RepoError> {
-            Ok(vec![])
-        }
-
-        async fn upsert(
-            &self,
-            _workspace_id: &str,
-            _task: &HeartbeatTask,
-            _expected_version: i64,
-        ) -> Result<bool, RepoError> {
-            Ok(true)
-        }
-
-        async fn insert(&self, _workspace_id: &str, _priority: &str, _text: &str) -> Result<HeartbeatTask, RepoError> {
-            Err(RepoError::Database("mock".into()))
-        }
-
-        async fn set_paused(&self, _workspace_id: &str, _task_id: i64, _paused: bool) -> Result<(), RepoError> {
-            Ok(())
-        }
-
-        async fn delete(&self, _workspace_id: &str, _task_id: i64) -> Result<(), RepoError> {
-            Ok(())
-        }
-
-        async fn insert_result(&self, workspace_id: &str, result: &HeartbeatResult) -> Result<(), RepoError> {
-            self.insert_result_calls
-                .lock()
-                .unwrap()
-                .push((workspace_id.to_string(), result.clone()));
-            if self.fail_insert {
-                return Err(RepoError::Database("mock insert failure".into()));
-            }
-            Ok(())
-        }
+    pub(crate) async fn result_rows(pool: &sqlx::SqlitePool, ws: &str) -> i64 {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM agent_actions WHERE workspace_id = ? AND action_type IN ('summary', 'error')")
+            .bind(ws)
+            .fetch_one(pool)
+            .await
+            .expect("count")
+            .0
     }
 
     struct MockLlmProvider;
@@ -686,7 +652,7 @@ pub(crate) mod tests {
     }
 
     fn make_heartbeat_runner(
-        task_repo: Arc<dyn crate::loop_::heartbeat::repo::HeartbeatTaskRepository>,
+        task_repo: Arc<crate::loop_::heartbeat::repo::HeartbeatTaskRepository>,
     ) -> Arc<HeartbeatRunner> {
         Arc::new(HeartbeatRunner::new(
             task_repo,
@@ -710,7 +676,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_handler_construction() {
-        let repo: Arc<dyn crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(MockTaskRepo::new());
+        let (repo, _pool) = real_repo().await;
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
         let memory = make_memory_service();
@@ -730,7 +696,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_should_handle_filters_ai_events() {
-        let repo: Arc<dyn crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(MockTaskRepo::new());
+        let (repo, _pool) = real_repo().await;
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
         let memory = make_memory_service();
@@ -764,9 +730,8 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_heartbeat_completed_inserts_result() {
-        let repo = Arc::new(MockTaskRepo::new());
-        let insert_calls = repo.insert_result_calls();
-        let repo: Arc<dyn crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = repo;
+        let (repo, pool) = real_repo().await;
+        let repo: Arc<crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = repo;
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
         let memory = make_memory_service();
@@ -800,16 +765,12 @@ pub(crate) mod tests {
         let event = wrap_ai_event(&ai_event);
         handler.handle_ai_event(&event).await;
 
-        let calls = insert_calls.lock().unwrap();
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].0, "ws_test");
-        assert_eq!(calls[0].1.workspace_id, "ws_test");
-        assert_eq!(calls[0].1.status, HeartbeatStatus::Complete);
+        assert_eq!(result_rows(&pool, "ws_test").await, 1, "result persisted");
     }
 
     #[tokio::test]
     async fn test_alarm_created_non_critical_no_signal() {
-        let repo: Arc<dyn crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(MockTaskRepo::new());
+        let (repo, _pool) = real_repo().await;
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
         let memory = make_memory_service();
@@ -845,7 +806,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_workspace_created_and_deleted_no_panic() {
-        let repo: Arc<dyn crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(MockTaskRepo::new());
+        let (repo, _pool) = real_repo().await;
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
         let memory = make_memory_service();
@@ -878,7 +839,7 @@ pub(crate) mod tests {
     // alongside the heartbeat runner.
     #[tokio::test]
     async fn test_workspace_lifecycle_drives_thing_agent_manager() {
-        let repo: Arc<dyn crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(MockTaskRepo::new());
+        let (repo, _pool) = real_repo().await;
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
         let memory = make_memory_service();
@@ -912,7 +873,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_self_referential_events_are_noop() {
-        let repo: Arc<dyn crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(MockTaskRepo::new());
+        let (repo, _pool) = real_repo().await;
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
         let memory = make_memory_service();
@@ -960,9 +921,8 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_shutting_down_skips_handling() {
-        let repo = Arc::new(MockTaskRepo::new());
-        let insert_calls = repo.insert_result_calls();
-        let repo: Arc<dyn crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = repo;
+        let (repo, pool) = real_repo().await;
+        let repo: Arc<crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = repo;
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
         let memory = make_memory_service();
@@ -995,8 +955,11 @@ pub(crate) mod tests {
         handler.handle_ai_event(&event).await;
 
         // insert_result should NOT have been called because shutting_down is true
-        let calls = insert_calls.lock().unwrap();
-        assert!(calls.is_empty());
+        assert_eq!(
+            result_rows(&pool, "ws_test").await,
+            0,
+            "shutting down must skip persist"
+        );
     }
 
     #[tokio::test]
@@ -1149,91 +1112,48 @@ pub(crate) mod tests {
         use crate::loop_::thing_agent::types::{Outcome, Priority, RunReport, TriggerSource, WakeSignal};
         use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 
-        /// 内存 run 集：(outcome, verified, acked, age_hours)。窗口语义与
-        /// Sqlite 实现一致（严格小于窗口不计入边界外）。
-        struct MemRuns {
-            runs: Vec<(Outcome, bool, bool, u32)>,
-            fail: bool,
+        /// 真实 SQLite 版 runs repo（E6b 去 trait 后替代 MemRuns）：
+        /// 元组 (outcome, verified, acked, age_hours) 逐行落库，
+        /// problem_key 固定为桥接测试的 "set_hvac:dev-1"。
+        async fn real_runs(runs: &[(Outcome, bool, bool, u32)]) -> AgentRunsRepository {
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect(":memory:")
+                .await
+                .expect("in-memory sqlite");
+            tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+                .await
+                .expect("migrations");
+            for (i, (outcome, verified, acked, age_hours)) in runs.iter().enumerate() {
+                sqlx::query(
+                    "INSERT INTO agent_runs
+                     (id, workspace_id, trigger_type, outcome, report, verified, problem_key, acked_at, created_at)
+                     VALUES (?, 'ws_1', 'heartbeat', ?, '{}', ?, 'set_hvac:dev-1', ?, datetime('now', ?))",
+                )
+                .bind(format!("run_{i}"))
+                .bind(outcome.as_str())
+                .bind(*verified as i32)
+                .bind(if *acked {
+                    Some("2026-01-01 00:00:00".to_string())
+                } else {
+                    None
+                })
+                .bind(format!("-{age_hours} hours"))
+                .execute(&pool)
+                .await
+                .expect("seed run");
+            }
+            AgentRunsRepository::new(pool)
         }
 
-        impl MemRuns {
-            fn new(runs: Vec<(Outcome, bool, bool, u32)>) -> Self {
-                Self { runs, fail: false }
-            }
-
-            fn failing() -> Self {
-                Self {
-                    runs: vec![],
-                    fail: true,
-                }
-            }
-        }
-
-        #[async_trait::async_trait]
-        impl AgentRunsRepository for MemRuns {
-            async fn insert_run(
-                &self,
-                _report: &RunReport,
-                _problem_key: Option<&str>,
-                _dedup_key: Option<&str>,
-            ) -> anyhow::Result<()> {
-                Ok(())
-            }
-
-            async fn recent_summaries(&self, _workspace_id: &str, _limit: u32) -> anyhow::Result<Vec<String>> {
-                Ok(vec![])
-            }
-
-            async fn history_by_dedup_key(
-                &self,
-                _workspace_id: &str,
-                _key: &str,
-                _limit: u32,
-            ) -> anyhow::Result<Vec<String>> {
-                Ok(vec![])
-            }
-
-            async fn recent_runs_by_dedup_key(
-                &self,
-                _workspace_id: &str,
-                _key: &str,
-                _limit: u32,
-            ) -> anyhow::Result<Vec<RunReport>> {
-                Ok(vec![])
-            }
-
-            async fn ack_run(&self, _run_id: &str, _actor: &str) -> anyhow::Result<bool> {
-                Ok(false)
-            }
-
-            async fn last_problem_run(
-                &self,
-                _workspace_id: &str,
-                _problem_key: &str,
-                since_hours: u32,
-            ) -> anyhow::Result<Option<(Outcome, bool, bool)>> {
-                if self.fail {
-                    anyhow::bail!("repo down");
-                }
-                Ok(self
-                    .runs
-                    .iter()
-                    .filter(|(_, _, _, age)| *age < since_hours)
-                    .min_by_key(|(_, _, _, age)| *age)
-                    .map(|(o, v, a, _)| (*o, *v, *a)))
-            }
-
-            async fn count_problem_runs(
-                &self,
-                _workspace_id: &str,
-                _problem_key: &str,
-                since_hours: u32,
-            ) -> anyhow::Result<u32> {
-                if self.fail {
-                    anyhow::bail!("repo down");
-                }
-                Ok(self.runs.iter().filter(|(_, _, _, age)| *age < since_hours).count() as u32)
-            }
+        /// 无 agent_runs 表的空库 —— 查询必失败（等效原 MemRuns::failing()）。
+        async fn broken_runs() -> AgentRunsRepository {
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect(":memory:")
+                .await
+                .expect("empty pool");
+            AgentRunsRepository::new(pool)
         }
 
         #[derive(Default)]
@@ -1276,13 +1196,13 @@ pub(crate) mod tests {
             }
         }
 
-        fn bridge(runs: MemRuns) -> (HeartbeatBridge, Arc<RecordingSink>) {
+        fn bridge(repo: AgentRunsRepository) -> (HeartbeatBridge, Arc<RecordingSink>) {
             let sink = Arc::new(RecordingSink::default());
-            (HeartbeatBridge::new(Arc::new(runs), sink.clone()), sink)
+            (HeartbeatBridge::new(Arc::new(repo), sink.clone()), sink)
         }
 
         async fn dispatched(runs: Vec<(Outcome, bool, bool, u32)>) -> Arc<RecordingSink> {
-            let (bridge, sink) = bridge(MemRuns::new(runs));
+            let (bridge, sink) = bridge(real_runs(&runs).await);
             bridge
                 .dispatch_proposals("ws_1", &result_with(vec![proposal("set_hvac", Some("dev-1"))]))
                 .await;
@@ -1392,7 +1312,7 @@ pub(crate) mod tests {
 
         #[tokio::test]
         async fn repo_failure_skips_dispatch_fail_closed() {
-            let (bridge, sink) = bridge(MemRuns::failing());
+            let (bridge, sink) = bridge(broken_runs().await);
             bridge
                 .dispatch_proposals("ws_1", &result_with(vec![proposal("set_hvac", Some("dev-1"))]))
                 .await;
@@ -1407,7 +1327,7 @@ pub(crate) mod tests {
             let sink = dispatched(vec![]).await; // sanity: one proposal dispatches
             assert_eq!(sink.signals.lock().unwrap().len(), 1);
 
-            let (bridge, sink) = bridge(MemRuns::new(vec![]));
+            let (bridge, sink) = bridge(real_runs(&[]).await);
             bridge.dispatch_proposals("ws_1", &result_with(vec![])).await;
             assert!(
                 sink.signals.lock().unwrap().is_empty(),
@@ -1420,7 +1340,7 @@ pub(crate) mod tests {
         #[tokio::test]
         async fn decided_proposals_are_not_dispatched() {
             for status in [ProposalStatus::Approved, ProposalStatus::Rejected] {
-                let (bridge, sink) = bridge(MemRuns::new(vec![]));
+                let (bridge, sink) = bridge(real_runs(&[]).await);
                 let mut decided = proposal("set_hvac", Some("dev-1"));
                 decided.status = status.clone();
                 bridge.dispatch_proposals("ws_1", &result_with(vec![decided])).await;
@@ -1475,14 +1395,13 @@ pub(crate) mod tests {
         // Orchestrator 接线：HeartbeatCompleted 落库后驱动心跳桥投递。
         #[tokio::test]
         async fn heartbeat_completed_drives_bridge_after_persist() {
-            let repo = Arc::new(MockTaskRepo::new());
-            let insert_calls = repo.insert_result_calls();
-            let repo: Arc<dyn crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = repo;
+            let (repo, pool) = real_repo().await;
+            let repo: Arc<crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = repo;
             let runner = make_heartbeat_runner(Arc::clone(&repo));
             let publisher = make_publisher();
             let memory = make_memory_service();
 
-            let (bridge, sink) = bridge(MemRuns::new(vec![]));
+            let (bridge, sink) = bridge(real_runs(&[]).await);
             let handler = AiEventHandler::new(
                 runner,
                 Arc::clone(&repo),
@@ -1500,16 +1419,15 @@ pub(crate) mod tests {
             });
             handler.handle_ai_event(&event).await;
 
-            assert_eq!(insert_calls.lock().unwrap().len(), 1, "result still persisted");
+            assert_eq!(result_rows(&pool, "ws_1").await, 1, "result still persisted");
             assert_eq!(sink.signals.lock().unwrap().len(), 1, "bridge dispatched the proposal");
         }
 
         // 无桥（None）时 HeartbeatCompleted 仅落库，不 panic。
         #[tokio::test]
         async fn heartbeat_completed_without_bridge_only_persists() {
-            let repo = Arc::new(MockTaskRepo::new());
-            let insert_calls = repo.insert_result_calls();
-            let repo: Arc<dyn crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = repo;
+            let (repo, pool) = real_repo().await;
+            let repo: Arc<crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = repo;
             let runner = make_heartbeat_runner(Arc::clone(&repo));
 
             let handler = AiEventHandler::new(
@@ -1528,7 +1446,7 @@ pub(crate) mod tests {
                 result: result_with(vec![proposal("set_hvac", Some("dev-1"))]),
             });
             handler.handle_ai_event(&event).await;
-            assert_eq!(insert_calls.lock().unwrap().len(), 1);
+            assert_eq!(result_rows(&pool, "ws_1").await, 1);
         }
     }
 }

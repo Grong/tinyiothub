@@ -349,8 +349,8 @@ impl AppState {
             Arc::new(tinyiothub_storage::CronRunRepository::new(database.as_ref().clone()));
 
         // 会话服务 - 用于 Agent 聊天会话管理
-        let session_repository: Arc<dyn tinyiothub_agent::host::SessionRepository> = Arc::new(
-            tinyiothub_agent::host::session_repository::SqliteSessionRepository::new(database.as_ref().clone()),
+        let session_repository: Arc<tinyiothub_storage::session::SessionRepository> = Arc::new(
+            tinyiothub_storage::session::SessionRepository::new(database.as_ref().clone()),
         );
         let session_service = Arc::new(tinyiothub_agent::host::SessionService::new(Arc::clone(
             &session_repository,
@@ -419,7 +419,7 @@ impl AppState {
         // Agent hooks（P4.0d）—— agent 侧实现 core trait，注入给 workspace 域
         let agent_hooks: Arc<dyn tinyiothub_core::agent_hooks::AgentHooks> =
             Arc::new(tinyiothub_agent::host::agent_hooks::AgentHooksImpl::new(Arc::new(
-                tinyiothub_agent::host::heartbeat_repo::SqliteHeartbeatTaskRepository::new(database.pool().clone()),
+                tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(database.pool().clone()),
             )));
 
         Self {

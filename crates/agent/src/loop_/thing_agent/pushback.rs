@@ -24,7 +24,7 @@ const POLICY_DENIAL_LOOKBACK: u32 = POLICY_DENIAL_STREAK as u32;
 pub async fn deliver(
     report: &RunReport,
     signal: &WakeSignal,
-    runs_repo: &dyn AgentRunsRepository,
+    runs_repo: &AgentRunsRepository,
     host: &dyn ThingAgentHost,
 ) {
     let content = format_report_message(report);
@@ -111,7 +111,7 @@ struct PolicyRelaxHint<'a> {
 async fn policy_relax_hint<'a>(
     report: &'a RunReport,
     signal: &'a WakeSignal,
-    runs_repo: &dyn AgentRunsRepository,
+    runs_repo: &AgentRunsRepository,
 ) -> Option<PolicyRelaxHint<'a>> {
     // 仅 Critical 事件触发；用户指令/定时器/普通事件无此升级。
     if signal.priority != Priority::Critical {
@@ -347,72 +347,23 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct StubRunsRepo {
-        reports: Mutex<Vec<RunReport>>,
-    }
-
-    #[async_trait::async_trait]
-    impl AgentRunsRepository for StubRunsRepo {
-        async fn insert_run(
-            &self,
-            _report: &RunReport,
-            _problem_key: Option<&str>,
-            _dedup_key: Option<&str>,
-        ) -> anyhow::Result<()> {
-            Ok(())
+    /// 真实 SQLite 版 runs repo（E6b 去 trait 后替代 StubRunsRepo）；
+    /// 以 trigger 串作 dedup_key 逐条落库（与原 stub 的语义对齐）。
+    async fn real_runs_with(reports: Vec<RunReport>) -> AgentRunsRepository {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .expect("in-memory sqlite");
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .expect("migrations");
+        let repo = AgentRunsRepository::new(pool);
+        for r in &reports {
+            let dedup = r.trigger.clone();
+            repo.insert_run(r, None, Some(&dedup)).await.expect("seed run");
         }
-
-        async fn recent_summaries(&self, _workspace_id: &str, _limit: u32) -> anyhow::Result<Vec<String>> {
-            Ok(vec![])
-        }
-
-        async fn history_by_dedup_key(
-            &self,
-            _workspace_id: &str,
-            _key: &str,
-            _limit: u32,
-        ) -> anyhow::Result<Vec<String>> {
-            Ok(vec![])
-        }
-
-        async fn recent_runs_by_dedup_key(
-            &self,
-            _workspace_id: &str,
-            _key: &str,
-            limit: u32,
-        ) -> anyhow::Result<Vec<RunReport>> {
-            Ok(self
-                .reports
-                .lock()
-                .unwrap()
-                .iter()
-                .take(limit as usize)
-                .cloned()
-                .collect())
-        }
-
-        async fn ack_run(&self, _run_id: &str, _actor: &str) -> anyhow::Result<bool> {
-            Ok(false)
-        }
-
-        async fn last_problem_run(
-            &self,
-            _workspace_id: &str,
-            _problem_key: &str,
-            _since_hours: u32,
-        ) -> anyhow::Result<Option<(Outcome, bool, bool)>> {
-            Ok(None)
-        }
-
-        async fn count_problem_runs(
-            &self,
-            _workspace_id: &str,
-            _problem_key: &str,
-            _since_hours: u32,
-        ) -> anyhow::Result<u32> {
-            Ok(0)
-        }
+        repo
     }
 
     fn report(outcome: Outcome, verified: bool, actions: Vec<ActionRecord>) -> RunReport {
@@ -521,7 +472,7 @@ mod tests {
     #[tokio::test]
     async fn user_directive_with_session_pushes_assistant_message() {
         let host = StubHost::default();
-        let runs = StubRunsRepo::default();
+        let runs = real_runs_with(vec![]).await;
         let r = report(Outcome::Acted, true, vec![ok_action()]);
         deliver(&r, &user_signal(Some("agent:ws_1:a/s1")), &runs, &host).await;
 
@@ -542,7 +493,7 @@ mod tests {
             admin_session: Some("agent:ws_1:a/admin".to_string()),
             ..Default::default()
         };
-        let runs = StubRunsRepo::default();
+        let runs = real_runs_with(vec![]).await;
         let r = report(Outcome::Acted, true, vec![ok_action()]);
         deliver(&r, &event_signal(Priority::Normal), &runs, &host).await;
 
@@ -556,7 +507,7 @@ mod tests {
     #[tokio::test]
     async fn no_active_session_falls_back_to_alert_without_panic() {
         let host = StubHost::default(); // admin_session = None
-        let runs = StubRunsRepo::default();
+        let runs = real_runs_with(vec![]).await;
         let r = report(Outcome::NoActionNeeded, true, vec![]);
         deliver(&r, &event_signal(Priority::Normal), &runs, &host).await;
 
@@ -571,7 +522,7 @@ mod tests {
     #[tokio::test]
     async fn failed_outcome_sends_additional_alert_with_checklist() {
         let host = StubHost::default();
-        let runs = StubRunsRepo::default();
+        let runs = real_runs_with(vec![]).await;
         let r = report(
             Outcome::Failed,
             false,
@@ -605,7 +556,7 @@ mod tests {
             (Outcome::BudgetExceeded, "run_budget_exceeded"),
         ] {
             let host = StubHost::default();
-            let runs = StubRunsRepo::default();
+            let runs = real_runs_with(vec![]).await;
             let r = report(outcome, false, vec![]);
             deliver(&r, &user_signal(Some("agent:ws_1:a/s1")), &runs, &host).await;
 
@@ -623,7 +574,7 @@ mod tests {
     #[tokio::test]
     async fn merged_signal_finds_nested_user_session() {
         let host = StubHost::default();
-        let runs = StubRunsRepo::default();
+        let runs = real_runs_with(vec![]).await;
         let merged = WakeSignal {
             workspace_id: "ws_1".to_string(),
             priority: Priority::Normal,
@@ -644,14 +595,13 @@ mod tests {
     #[tokio::test]
     async fn three_consecutive_policy_denials_trigger_relax_hint() {
         let host = StubHost::default();
-        let runs = StubRunsRepo {
-            reports: Mutex::new(vec![
-                rejected_run("run_3", "reboot", "action_not_allowed"),
-                rejected_run("run_2", "reboot", "action_not_allowed"),
-                // 当前 run（第 3 次）在 alert 之前已落库，所以查询结果第一条就是当前 run。
-                rejected_run("run_1", "reboot", "action_not_allowed"),
-            ]),
-        };
+        let runs = real_runs_with(vec![
+            rejected_run("run_3", "reboot", "action_not_allowed"),
+            rejected_run("run_2", "reboot", "action_not_allowed"),
+            // 当前 run（第 3 次）在 alert 之前已落库，所以查询结果第一条就是当前 run。
+            rejected_run("run_1", "reboot", "action_not_allowed"),
+        ])
+        .await;
         let r = rejected_run("run_3", "reboot", "action_not_allowed");
         deliver(&r, &event_signal(Priority::Critical), &runs, &host).await;
 
@@ -671,12 +621,11 @@ mod tests {
     #[tokio::test]
     async fn two_consecutive_denials_do_not_trigger_relax_hint() {
         let host = StubHost::default();
-        let runs = StubRunsRepo {
-            reports: Mutex::new(vec![
-                rejected_run("run_2", "reboot", "action_not_allowed"),
-                rejected_run("run_1", "reboot", "action_not_allowed"),
-            ]),
-        };
+        let runs = real_runs_with(vec![
+            rejected_run("run_2", "reboot", "action_not_allowed"),
+            rejected_run("run_1", "reboot", "action_not_allowed"),
+        ])
+        .await;
         let r = rejected_run("run_2", "reboot", "action_not_allowed");
         deliver(&r, &event_signal(Priority::Critical), &runs, &host).await;
 
@@ -694,13 +643,12 @@ mod tests {
     #[tokio::test]
     async fn non_critical_event_does_not_trigger_relax_hint() {
         let host = StubHost::default();
-        let runs = StubRunsRepo {
-            reports: Mutex::new(vec![
-                rejected_run("run_3", "reboot", "action_not_allowed"),
-                rejected_run("run_2", "reboot", "action_not_allowed"),
-                rejected_run("run_1", "reboot", "action_not_allowed"),
-            ]),
-        };
+        let runs = real_runs_with(vec![
+            rejected_run("run_3", "reboot", "action_not_allowed"),
+            rejected_run("run_2", "reboot", "action_not_allowed"),
+            rejected_run("run_1", "reboot", "action_not_allowed"),
+        ])
+        .await;
         let r = rejected_run("run_3", "reboot", "action_not_allowed");
         deliver(&r, &event_signal(Priority::Normal), &runs, &host).await;
 
@@ -740,9 +688,7 @@ mod tests {
             ..rejected_run(run_id, "reboot", "action_not_allowed")
         };
         let host = StubHost::default();
-        let runs = StubRunsRepo {
-            reports: Mutex::new(vec![run("run_3"), run("run_2"), run("run_1")]),
-        };
+        let runs = real_runs_with(vec![run("run_3"), run("run_2"), run("run_1")]).await;
         deliver(&run("run_3"), &event_signal(Priority::Critical), &runs, &host).await;
 
         let alerts = host.alerts.lock().unwrap();
@@ -758,13 +704,12 @@ mod tests {
     #[tokio::test]
     async fn hourly_fuse_reason_does_not_trigger_relax_hint() {
         let host = StubHost::default();
-        let runs = StubRunsRepo {
-            reports: Mutex::new(vec![
-                rejected_run("run_3", "reboot", "action_not_allowed"),
-                rejected_run("run_2", "reboot", "action_not_allowed"),
-                rejected_run("run_1", "reboot", "hourly_fuse"),
-            ]),
-        };
+        let runs = real_runs_with(vec![
+            rejected_run("run_3", "reboot", "action_not_allowed"),
+            rejected_run("run_2", "reboot", "action_not_allowed"),
+            rejected_run("run_1", "reboot", "hourly_fuse"),
+        ])
+        .await;
         let r = rejected_run("run_3", "reboot", "action_not_allowed");
         deliver(&r, &event_signal(Priority::Critical), &runs, &host).await;
 
@@ -782,16 +727,15 @@ mod tests {
     #[tokio::test]
     async fn mixed_streak_breaks_relax_hint() {
         let host = StubHost::default();
-        let runs = StubRunsRepo {
-            reports: Mutex::new(vec![
-                rejected_run("run_3", "reboot", "action_not_allowed"),
-                rejected_run("run_2", "reboot", "action_not_allowed"),
-                RunReport {
-                    outcome: Outcome::Acted,
-                    ..rejected_run("run_1", "reboot", "action_not_allowed")
-                },
-            ]),
-        };
+        let runs = real_runs_with(vec![
+            rejected_run("run_3", "reboot", "action_not_allowed"),
+            rejected_run("run_2", "reboot", "action_not_allowed"),
+            RunReport {
+                outcome: Outcome::Acted,
+                ..rejected_run("run_1", "reboot", "action_not_allowed")
+            },
+        ])
+        .await;
         let r = rejected_run("run_3", "reboot", "action_not_allowed");
         deliver(&r, &event_signal(Priority::Critical), &runs, &host).await;
 

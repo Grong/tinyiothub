@@ -9,11 +9,11 @@ use super::types::{Session, SessionError, SessionRepository};
 
 /// Session index service for managing session lifecycle
 pub struct SessionService {
-    repo: Arc<dyn SessionRepository>,
+    repo: Arc<SessionRepository>,
 }
 
 impl SessionService {
-    pub fn new(repo: Arc<dyn SessionRepository>) -> Self {
+    pub fn new(repo: Arc<SessionRepository>) -> Self {
         Self { repo }
     }
 

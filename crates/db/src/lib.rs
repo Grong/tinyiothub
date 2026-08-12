@@ -7,6 +7,8 @@
 //! - 具体 struct、按领域平铺（traits/ 残留待逐领域评估削除）
 //! - 测试使用真实 SQLite（test_helpers::run_all_migrations）
 
+/// Agent run reports persistence and row types.
+pub mod agent_runs;
 /// Alarm + alarm rule persistence and row types.
 pub mod alarm;
 /// Device cache (in-memory).
@@ -35,6 +37,8 @@ pub mod error;
 pub mod event;
 /// Repository factory.
 pub mod factory;
+/// Heartbeat task/result/trust persistence and row types.
+pub mod heartbeat;
 /// Embedded migrations runner.
 pub mod migrations;
 /// Shared query model types.
@@ -51,6 +55,8 @@ pub mod policy;
 pub mod pool;
 /// Role persistence and row types.
 pub mod role;
+/// Session persistence and row types.
+pub mod session;
 /// SQL escaping helpers.
 pub mod sql_security;
 /// Unified storage facade.

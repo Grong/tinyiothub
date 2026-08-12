@@ -23,18 +23,15 @@ pub mod state;
 pub mod tools;
 
 pub mod agent_hooks;
-pub mod agent_runs_repo;
 // Test stub, also used by cloud's integration tests (agent_tasks_api_tests)
 // — compiled unconditionally so downstream test harnesses can consume it.
 pub mod directive_sink;
 pub mod dlq_repo;
 pub mod heartbeat;
-pub mod heartbeat_repo;
 pub mod policy_engine;
 pub mod pool_adapter;
 pub mod scaffold;
 pub mod session;
-pub mod session_repository;
 pub mod thing_action_hooks;
 pub mod thing_agent_host;
 

@@ -37,7 +37,7 @@ impl Orchestrator {
     pub fn new(
         event_bus: Arc<EventBus>,
         heartbeat_runner: Arc<HeartbeatRunner>,
-        task_repo: Arc<dyn HeartbeatTaskRepository>,
+        task_repo: Arc<HeartbeatTaskRepository>,
         memory_service: Arc<MemoryService>,
         drop_notifier: Option<Arc<dyn DropNotifier>>,
         dlq: Option<Arc<dyn DeadLetterQueue>>,
@@ -123,7 +123,7 @@ mod tests {
 
     use crate::loop_::event::types::AiEvent;
     use crate::loop_::heartbeat::types::{HeartbeatConfig, HeartbeatResult, HeartbeatStatus};
-    use crate::loop_::orchestrator::callbacks::tests::{MockTaskRepo, make_memory_service};
+    use crate::loop_::orchestrator::callbacks::tests::{make_memory_service, real_repo, result_rows};
 
     fn sample_result() -> HeartbeatResult {
         HeartbeatResult {
@@ -137,7 +137,10 @@ mod tests {
         }
     }
 
-    fn make_orchestrator(bus: Arc<EventBus>, repo: Arc<MockTaskRepo>) -> Orchestrator {
+    fn make_orchestrator(
+        bus: Arc<EventBus>,
+        repo: Arc<tinyiothub_storage::heartbeat::HeartbeatTaskRepository>,
+    ) -> Orchestrator {
         let runner = Arc::new(HeartbeatRunner::new(
             repo.clone(),
             Arc::new(AiEventPublisher::new(bus.clone())),
@@ -149,8 +152,7 @@ mod tests {
     #[tokio::test]
     async fn start_is_idempotent() {
         let bus = Arc::new(EventBus::new());
-        let repo = Arc::new(MockTaskRepo::new());
-        let calls = repo.insert_result_calls();
+        let (repo, pool) = real_repo().await;
         let orch = make_orchestrator(bus, repo);
 
         orch.start();
@@ -164,7 +166,7 @@ mod tests {
         orch.shutdown().await;
 
         assert_eq!(
-            calls.lock().unwrap().len(),
+            result_rows(&pool, "ws_1").await,
             1,
             "duplicate start() must not double-register the handler"
         );
@@ -173,7 +175,13 @@ mod tests {
     #[tokio::test]
     async fn shutdown_drains_in_flight_retries() {
         let bus = Arc::new(EventBus::new());
-        let repo = Arc::new(MockTaskRepo::failing());
+        let (repo, pool) = real_repo().await;
+        // 故障注入：DROP agent_actions 表使 insert_result 必失败
+        // （等效原 MockTaskRepo::failing() 的 always-fail）
+        sqlx::query("DROP TABLE agent_actions")
+            .execute(&pool)
+            .await
+            .expect("drop table");
         let orch = make_orchestrator(bus, repo);
         orch.start();
 

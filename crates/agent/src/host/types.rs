@@ -1,84 +1,14 @@
 // Agent types — domain types and DTOs
 
+// Session 行类型/错误/仓储已迁 db（E6b）；re-export 兼容。
+pub use tinyiothub_storage::session::{Session, SessionError, SessionRepository};
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 // Re-export sub-domain types
 pub use super::skill::{AgentSkill, SkillType};
-
-// --- Session types ---
-
-/// Errors that can occur during session operations
-#[derive(Debug, Error)]
-pub enum SessionError {
-    #[error("Session not found: {0}")]
-    NotFound(String),
-
-    #[error("Session already exists: {0}")]
-    AlreadyExists(String),
-
-    #[error("Repository error: {0}")]
-    RepositoryError(String),
-
-    #[error("Invalid session data: {0}")]
-    InvalidData(String),
-}
-
-/// A chat session representing a conversation between user and agent
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Session {
-    /// Unique session key: "agent:{workspace_id}:{agent_id}/{session_uuid}"
-    pub session_key: String,
-    /// Associated workspace ID
-    pub workspace_id: String,
-    /// Associated agent ID
-    pub agent_id: String,
-    /// Optional session label/title
-    pub label: Option<String>,
-    /// Session creation timestamp (Unix millis)
-    pub created_at: i64,
-    /// Last update timestamp (Unix millis)
-    pub updated_at: i64,
-    /// Session metadata (arbitrary JSON)
-    #[serde(default)]
-    pub metadata: serde_json::Value,
-}
-
-impl Session {
-    /// Create a new session
-    pub fn new(session_key: String, workspace_id: String, agent_id: String) -> Self {
-        let now = chrono::Utc::now().timestamp_millis();
-        Self {
-            session_key,
-            workspace_id,
-            agent_id,
-            label: None,
-            created_at: now,
-            updated_at: now,
-            metadata: serde_json::Value::Object(serde_json::Map::new()),
-        }
-    }
-
-    /// Update the label
-    pub fn set_label(&mut self, label: impl Into<String>) {
-        self.label = Some(label.into());
-        self.updated_at = chrono::Utc::now().timestamp_millis();
-    }
-
-    /// Update metadata
-    pub fn set_metadata(&mut self, key: impl Into<String>, value: serde_json::Value) {
-        if let Some(obj) = self.metadata.as_object_mut() {
-            obj.insert(key.into(), value);
-        }
-        self.updated_at = chrono::Utc::now().timestamp_millis();
-    }
-
-    /// Touch the session (update updated_at)
-    pub fn touch(&mut self) {
-        self.updated_at = chrono::Utc::now().timestamp_millis();
-    }
-}
 
 /// A single chat message within a session
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -577,59 +507,6 @@ impl MemoryContext {
 
 // `AppContext` moved to `tinyiothub_driver::plugin::registry` (P4-Task20) —
 // the plugin registry was its only consumer; no agent-plane code uses it.
-
-// --- Session repository trait ---
-
-/// Repository trait for session persistence
-#[async_trait]
-pub trait SessionRepository: Send + Sync {
-    async fn get(&self, session_key: &str) -> Result<Option<Session>, SessionError>;
-    async fn create(&self, session: &Session) -> Result<(), SessionError>;
-    async fn update(&self, session: &Session) -> Result<(), SessionError>;
-    async fn delete(&self, session_key: &str) -> Result<(), SessionError>;
-    async fn list(
-        &self,
-        workspace_id: Option<&str>,
-        agent_id: Option<&str>,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Vec<Session>, SessionError>;
-
-    async fn get_or_create(&self, session_key: &str) -> Result<Session, SessionError> {
-        if let Some(session) = self.get(session_key).await? {
-            return Ok(session);
-        }
-
-        let parts: Vec<&str> = session_key.split('/').collect();
-        if parts.len() != 2 {
-            return Err(SessionError::InvalidData(format!(
-                "Invalid session key format: {}",
-                session_key
-            )));
-        }
-
-        let prefix_parts: Vec<&str> = parts[0].split(':').collect();
-        if prefix_parts.len() != 3 || prefix_parts[0] != "agent" {
-            return Err(SessionError::InvalidData(format!(
-                "Invalid session key prefix: {}",
-                session_key
-            )));
-        }
-
-        let workspace_id = prefix_parts[1].to_string();
-        let agent_id = prefix_parts[2].to_string();
-        let session = Session::new(session_key.to_string(), workspace_id, agent_id);
-
-        match self.create(&session).await {
-            Ok(()) => Ok(session),
-            Err(SessionError::RepositoryError(ref e)) if e.contains("UNIQUE") => self
-                .get(session_key)
-                .await?
-                .ok_or_else(|| SessionError::NotFound(session_key.to_string())),
-            Err(e) => Err(e),
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

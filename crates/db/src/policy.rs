@@ -252,3 +252,48 @@ mod tests {
         assert_eq!(repo.count_actions_last_hour("ws_2").await.expect("count"), 11);
     }
 }
+
+// ── 行动提案（自 policy/proposal.rs 迁入，E6b）──
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Proposal {
+    pub id: String,
+    pub workspace_id: String,
+    pub agent_id: String,
+    /// Tool or action name being proposed.
+    pub tool_name: String,
+    /// Target device or resource.
+    pub device_id: Option<String>,
+    /// Human-readable summary of what this will do.
+    pub summary: String,
+    /// Why the agent wants to take this action.
+    pub reason: String,
+    /// Risk assessment (low/medium/high).
+    pub risk: String,
+    /// Proposed parameters (tool-specific).
+    pub parameters: Option<serde_json::Value>,
+    /// ISO 8601 timestamp.
+    pub created_at: String,
+    /// Status lifecycle: Pending → Approved / Rejected.
+    pub status: ProposalStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProposalStatus {
+    Pending,
+    Approved,
+    Rejected,
+}
+
+impl std::fmt::Display for ProposalStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProposalStatus::Pending => write!(f, "pending"),
+            ProposalStatus::Approved => write!(f, "approved"),
+            ProposalStatus::Rejected => write!(f, "rejected"),
+        }
+    }
+}

@@ -1,10 +1,168 @@
-//! SQLite implementations of AI crate heartbeat repository traits.
+//! Heartbeat 持久化：巡检任务/结果/信任配置（P-集中化 E6b，自 agent crate 迁入）。
+//!
+//! 类型随 repo 住 db（方案 B）：HeartbeatTask/HeartbeatResult/WorkspaceHeartbeatConfig
+//! 及 TrustConfig（DB 行序列化格式在此定义）为 DB 行类型；
+//! agent/skills crate 经 re-export 兼容。
 
-use crate::loop_::heartbeat::{
-    repo::{HeartbeatTaskRepository, RepoError},
-    types::{HeartbeatResult, HeartbeatStatus, HeartbeatTask, NewHeartbeatTask},
-};
-use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+// ──────────────────────────────────────────────
+// 持久化类型（DB 行）— 自 skills/trust.rs 与 agent/loop_/heartbeat 迁入
+// ──────────────────────────────────────────────
+
+/// Trust level for automatic tool execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TrustLevel {
+    /// All tools require human approval.
+    ApprovalRequired,
+    /// Read-only tools auto-execute; write tools require approval.
+    ReadOnlyAuto,
+    /// All tools auto-execute.
+    FullAuto,
+}
+
+/// Per-workspace trust configuration for tool auto-execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrustConfig {
+    pub trust_level: TrustLevel,
+    pub max_auto_actions_per_tick: u32,
+    pub allowed_tool_categories: Vec<String>,
+    pub blocked_tools: Vec<String>,
+    /// Destructive tools explicitly allowlisted by workspace admin.
+    /// Only takes effect under FullAuto; all other levels still require approval.
+    #[serde(default)]
+    pub allowed_destructive_tools: Vec<String>,
+}
+
+impl Default for TrustConfig {
+    fn default() -> Self {
+        Self {
+            trust_level: TrustLevel::ReadOnlyAuto,
+            max_auto_actions_per_tick: 10,
+            allowed_tool_categories: vec!["read".into(), "query".into(), "write".into()],
+            blocked_tools: vec![],
+            allowed_destructive_tools: vec![],
+        }
+    }
+}
+
+impl TrustConfig {
+    /// Load from DB JSON column, falling back to safe default.
+    pub fn from_db_json(json: Option<&str>) -> Self {
+        json.and_then(|j| serde_json::from_str(j).ok()).unwrap_or_default()
+    }
+
+    /// Serialize to JSON for DB storage.
+    pub fn to_db_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_default()
+    }
+}
+
+/// Status of a heartbeat tick.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HeartbeatStatus {
+    Complete,
+    Partial,
+    Error,
+}
+
+/// A single action executed during a heartbeat tick.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutedAction {
+    pub tool_name: String,
+    pub device_id: Option<String>,
+    pub success: bool,
+    pub details: String,
+}
+
+/// Result of a heartbeat tick.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatResult {
+    pub workspace_id: String,
+    pub status: HeartbeatStatus,
+    pub summary: String,
+    /// Number of tasks executed this tick (set by the loop, not the LLM).
+    #[serde(default)]
+    pub task_count: u32,
+    pub executed_actions: Vec<ExecutedAction>,
+    pub proposals: Vec<crate::policy::Proposal>,
+    pub error: Option<String>,
+}
+
+/// A periodic heartbeat check task.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatTask {
+    pub id: i64,
+    pub workspace_id: String,
+    pub priority: String,
+    pub text: String,
+    pub paused: bool,
+    pub version: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Input for creating/replacing heartbeat tasks (no server-assigned fields).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewHeartbeatTask {
+    pub priority: String,
+    pub text: String,
+    pub paused: bool,
+}
+
+/// Lowest interval a workspace may configure — a tick can take minutes
+/// (LLM call + tool execution), so tighter loops just pile up.
+pub const MIN_HEARTBEAT_INTERVAL_MINUTES: u32 = 5;
+
+/// Per-workspace heartbeat settings, persisted as JSON on the workspace row.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceHeartbeatConfig {
+    pub enabled: bool,
+    pub interval_minutes: u32,
+}
+
+impl WorkspaceHeartbeatConfig {
+    pub fn validated(enabled: bool, interval_minutes: u32) -> Result<Self, String> {
+        if interval_minutes < MIN_HEARTBEAT_INTERVAL_MINUTES {
+            return Err(format!(
+                "interval_minutes must be >= {}",
+                MIN_HEARTBEAT_INTERVAL_MINUTES
+            ));
+        }
+        Ok(Self {
+            enabled,
+            interval_minutes,
+        })
+    }
+
+    pub fn from_db_json(json: Option<&str>) -> Option<Self> {
+        let json = json?.trim();
+        if json.is_empty() {
+            return None;
+        }
+        serde_json::from_str(json).ok()
+    }
+
+    pub fn to_db_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_default()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RepoError {
+    #[error("Database error: {0}")]
+    Database(String),
+    #[error("Not found")]
+    NotFound,
+    #[error("Serialization error: {0}")]
+    Serialization(String),
+}
+
+// ──────────────────────────────────────────────
+// Repository
+// ──────────────────────────────────────────────
+
 use sqlx::SqlitePool;
 
 /// DB row struct with sqlx::FromRow — maps to domain HeartbeatTask.
@@ -35,19 +193,18 @@ impl From<HeartbeatTaskRow> for HeartbeatTask {
     }
 }
 
-pub struct SqliteHeartbeatTaskRepository {
+pub struct HeartbeatTaskRepository {
     pool: SqlitePool,
 }
 
-impl SqliteHeartbeatTaskRepository {
+impl HeartbeatTaskRepository {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 }
 
-#[async_trait]
-impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
-    async fn list_by_workspace(&self, workspace_id: &str) -> Result<Vec<HeartbeatTask>, RepoError> {
+impl HeartbeatTaskRepository {
+    pub async fn list_by_workspace(&self, workspace_id: &str) -> Result<Vec<HeartbeatTask>, RepoError> {
         let rows = sqlx::query_as::<_, HeartbeatTaskRow>(
             "SELECT id, workspace_id, priority, text, paused, version,
                     created_at, updated_at
@@ -61,7 +218,12 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         Ok(rows.into_iter().map(HeartbeatTask::from).collect())
     }
 
-    async fn upsert(&self, workspace_id: &str, task: &HeartbeatTask, expected_version: i64) -> Result<bool, RepoError> {
+    pub async fn upsert(
+        &self,
+        workspace_id: &str,
+        task: &HeartbeatTask,
+        expected_version: i64,
+    ) -> Result<bool, RepoError> {
         let result = sqlx::query(
             "UPDATE heartbeat_tasks
              SET priority = ?, text = ?, paused = ?, version = version + 1,
@@ -81,7 +243,7 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    async fn insert(&self, workspace_id: &str, priority: &str, text: &str) -> Result<HeartbeatTask, RepoError> {
+    pub async fn insert(&self, workspace_id: &str, priority: &str, text: &str) -> Result<HeartbeatTask, RepoError> {
         let row = sqlx::query_as::<_, HeartbeatTaskRow>(
             "INSERT INTO heartbeat_tasks (workspace_id, priority, text)
              VALUES (?, ?, ?)
@@ -98,7 +260,7 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         Ok(HeartbeatTask::from(row))
     }
 
-    async fn set_paused(&self, workspace_id: &str, task_id: i64, paused: bool) -> Result<(), RepoError> {
+    pub async fn set_paused(&self, workspace_id: &str, task_id: i64, paused: bool) -> Result<(), RepoError> {
         sqlx::query(
             "UPDATE heartbeat_tasks SET paused = ?, updated_at = CURRENT_TIMESTAMP
              WHERE workspace_id = ? AND id = ?",
@@ -112,7 +274,7 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         Ok(())
     }
 
-    async fn delete(&self, workspace_id: &str, task_id: i64) -> Result<(), RepoError> {
+    pub async fn delete(&self, workspace_id: &str, task_id: i64) -> Result<(), RepoError> {
         sqlx::query("DELETE FROM heartbeat_tasks WHERE workspace_id = ? AND id = ?")
             .bind(workspace_id)
             .bind(task_id)
@@ -122,7 +284,7 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         Ok(())
     }
 
-    async fn replace_all(&self, workspace_id: &str, tasks: &[NewHeartbeatTask]) -> Result<(), RepoError> {
+    pub async fn replace_all(&self, workspace_id: &str, tasks: &[NewHeartbeatTask]) -> Result<(), RepoError> {
         let mut tx = self
             .pool
             .begin()
@@ -147,10 +309,10 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         Ok(())
     }
 
-    async fn load_trust_config(
+    pub async fn load_trust_config(
         &self,
         workspace_id: &str,
-    ) -> Result<Option<tinyiothub_skills::trust::TrustConfig>, RepoError> {
+    ) -> Result<Option<crate::heartbeat::TrustConfig>, RepoError> {
         let row: Option<(String,)> = sqlx::query_as("SELECT heartbeat_trust_config FROM workspaces WHERE id = ?")
             .bind(workspace_id)
             .fetch_optional(&self.pool)
@@ -160,15 +322,15 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
             if json.trim().is_empty() {
                 None
             } else {
-                Some(tinyiothub_skills::trust::TrustConfig::from_db_json(Some(&json)))
+                Some(crate::heartbeat::TrustConfig::from_db_json(Some(&json)))
             }
         }))
     }
 
-    async fn save_trust_config(
+    pub async fn save_trust_config(
         &self,
         workspace_id: &str,
-        config: &tinyiothub_skills::trust::TrustConfig,
+        config: &crate::heartbeat::TrustConfig,
     ) -> Result<(), RepoError> {
         sqlx::query("UPDATE workspaces SET heartbeat_trust_config = ? WHERE id = ?")
             .bind(config.to_db_json())
@@ -179,22 +341,22 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         Ok(())
     }
 
-    async fn load_heartbeat_config(
+    pub async fn load_heartbeat_config(
         &self,
         workspace_id: &str,
-    ) -> Result<Option<crate::loop_::heartbeat::types::WorkspaceHeartbeatConfig>, RepoError> {
+    ) -> Result<Option<crate::heartbeat::WorkspaceHeartbeatConfig>, RepoError> {
         let row: Option<(String,)> = sqlx::query_as("SELECT heartbeat_config FROM workspaces WHERE id = ?")
             .bind(workspace_id)
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| RepoError::Database(e.to_string()))?;
-        Ok(row.and_then(|(json,)| crate::loop_::heartbeat::types::WorkspaceHeartbeatConfig::from_db_json(Some(&json))))
+        Ok(row.and_then(|(json,)| crate::heartbeat::WorkspaceHeartbeatConfig::from_db_json(Some(&json))))
     }
 
-    async fn save_heartbeat_config(
+    pub async fn save_heartbeat_config(
         &self,
         workspace_id: &str,
-        config: &crate::loop_::heartbeat::types::WorkspaceHeartbeatConfig,
+        config: &crate::heartbeat::WorkspaceHeartbeatConfig,
     ) -> Result<(), RepoError> {
         sqlx::query("UPDATE workspaces SET heartbeat_config = ? WHERE id = ?")
             .bind(config.to_db_json())
@@ -205,7 +367,7 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         Ok(())
     }
 
-    async fn insert_result(&self, workspace_id: &str, result: &HeartbeatResult) -> Result<(), RepoError> {
+    pub async fn insert_result(&self, workspace_id: &str, result: &HeartbeatResult) -> Result<(), RepoError> {
         // Row format must match the readers in workspace/handler/heartbeat.rs:
         // one summary|error row per tick, one auto_executed row per action,
         // one proposal row per proposal, all sharing one created_at so the
@@ -308,21 +470,21 @@ async fn insert_action_row(
 
 #[cfg(test)]
 mod tests {
-    use crate::loop_::heartbeat::types::{ExecutedAction, HeartbeatStatus, NewHeartbeatTask};
+    use crate::heartbeat::{ExecutedAction, HeartbeatStatus, NewHeartbeatTask};
+    use crate::policy::{Proposal, ProposalStatus};
     use sqlx::sqlite::SqlitePoolOptions;
-    use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 
     use super::*;
 
-    async fn test_pool() -> SqlitePool {
+    pub async fn test_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
             .await
             .expect("create in-memory sqlite");
         for migration in [
-            include_str!("../../../../crates/db/migrations/20260615120000_agent_actions.sql"),
-            include_str!("../../../../crates/db/migrations/20260629000001_create_heartbeat_tasks.sql"),
+            include_str!("../migrations/20260615120000_agent_actions.sql"),
+            include_str!("../migrations/20260629000001_create_heartbeat_tasks.sql"),
         ] {
             for stmt in migration.split(';') {
                 let stmt = stmt.trim();
@@ -335,9 +497,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replace_all_replaces_task_set() {
+    pub async fn replace_all_replaces_task_set() {
         let pool = test_pool().await;
-        let repo = SqliteHeartbeatTaskRepository::new(pool.clone());
+        let repo = HeartbeatTaskRepository::new(pool.clone());
 
         let initial = vec![
             NewHeartbeatTask {
@@ -405,9 +567,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn insert_result_roundtrips_through_log_and_approval_queries() {
+    pub async fn insert_result_roundtrips_through_log_and_approval_queries() {
         let pool = test_pool().await;
-        let repo = SqliteHeartbeatTaskRepository::new(pool.clone());
+        let repo = HeartbeatTaskRepository::new(pool.clone());
 
         repo.insert_result("ws_1", &sample_result())
             .await
@@ -470,10 +632,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn insert_result_persists_proposal_parameters() {
+    pub async fn insert_result_persists_proposal_parameters() {
         // Approve-and-execute needs the tool arguments back out of the DB.
         let pool = test_pool().await;
-        let repo = SqliteHeartbeatTaskRepository::new(pool.clone());
+        let repo = HeartbeatTaskRepository::new(pool.clone());
 
         let mut result = sample_result();
         result.proposals[0].parameters = Some(serde_json::json!({"device_id": "dev_2", "version": "1.2.3"}));
@@ -490,9 +652,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn insert_result_error_status_writes_error_row() {
+    pub async fn insert_result_error_status_writes_error_row() {
         let pool = test_pool().await;
-        let repo = SqliteHeartbeatTaskRepository::new(pool.clone());
+        let repo = HeartbeatTaskRepository::new(pool.clone());
 
         let result = HeartbeatResult {
             workspace_id: "ws_1".to_string(),
@@ -515,7 +677,7 @@ mod tests {
         assert_eq!(parsed["error"], "llm timeout");
     }
 
-    async fn create_workspaces_table(pool: &SqlitePool) {
+    pub async fn create_workspaces_table(pool: &SqlitePool) {
         for stmt in [
             "CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, tenant_id TEXT NOT NULL, agent_id TEXT, agent_config TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
             "ALTER TABLE workspaces ADD COLUMN heartbeat_trust_config TEXT NOT NULL DEFAULT ''",
@@ -526,7 +688,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn heartbeat_config_save_and_load_roundtrip() {
+    pub async fn heartbeat_config_save_and_load_roundtrip() {
         let pool = test_pool().await;
         create_workspaces_table(&pool).await;
         sqlx::query(
@@ -536,11 +698,11 @@ mod tests {
         .execute(&pool)
         .await
         .expect("insert workspace");
-        let repo = SqliteHeartbeatTaskRepository::new(pool.clone());
+        let repo = HeartbeatTaskRepository::new(pool.clone());
 
         assert!(repo.load_heartbeat_config("ws_c").await.expect("load").is_none());
 
-        let cfg = crate::loop_::heartbeat::types::WorkspaceHeartbeatConfig {
+        let cfg = crate::heartbeat::WorkspaceHeartbeatConfig {
             enabled: true,
             interval_minutes: 30,
         };
@@ -555,7 +717,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn save_trust_config_persists_to_workspace_column() {
+    pub async fn save_trust_config_persists_to_workspace_column() {
         let pool = test_pool().await;
         create_workspaces_table(&pool).await;
         sqlx::query(
@@ -565,25 +727,25 @@ mod tests {
         .execute(&pool)
         .await
         .expect("insert workspace");
-        let repo = SqliteHeartbeatTaskRepository::new(pool.clone());
+        let repo = HeartbeatTaskRepository::new(pool.clone());
 
-        let cfg = tinyiothub_skills::trust::TrustConfig {
-            trust_level: tinyiothub_skills::trust::TrustLevel::FullAuto,
+        let cfg = crate::heartbeat::TrustConfig {
+            trust_level: crate::heartbeat::TrustLevel::FullAuto,
             ..Default::default()
         };
         repo.save_trust_config("ws_t", &cfg).await.expect("save");
         let loaded = repo.load_trust_config("ws_t").await.expect("load").expect("persisted");
-        assert_eq!(loaded.trust_level, tinyiothub_skills::trust::TrustLevel::FullAuto);
+        assert_eq!(loaded.trust_level, crate::heartbeat::TrustLevel::FullAuto);
     }
 
     #[tokio::test]
-    async fn load_trust_config_reads_workspace_column() {
+    pub async fn load_trust_config_reads_workspace_column() {
         let pool = test_pool().await;
         create_workspaces_table(&pool).await;
-        let repo = SqliteHeartbeatTaskRepository::new(pool.clone());
+        let repo = HeartbeatTaskRepository::new(pool.clone());
 
-        let config = tinyiothub_skills::trust::TrustConfig {
-            trust_level: tinyiothub_skills::trust::TrustLevel::FullAuto,
+        let config = crate::heartbeat::TrustConfig {
+            trust_level: crate::heartbeat::TrustLevel::FullAuto,
             ..Default::default()
         };
         sqlx::query(
@@ -605,7 +767,7 @@ mod tests {
         let loaded = repo.load_trust_config("ws_full").await.expect("load");
         assert_eq!(
             loaded.map(|c| c.trust_level),
-            Some(tinyiothub_skills::trust::TrustLevel::FullAuto)
+            Some(crate::heartbeat::TrustLevel::FullAuto)
         );
 
         // Empty column and unknown workspace both mean "no persisted config".

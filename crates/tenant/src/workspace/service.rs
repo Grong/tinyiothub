@@ -15,7 +15,7 @@ use tinyiothub_core::error::Result;
 pub struct WorkspaceService {
     repository: Arc<WorkspaceRepository>,
     event_publisher: Mutex<Option<Arc<AiEventPublisher>>>,
-    heartbeat_task_repo: Mutex<Option<Arc<dyn HeartbeatTaskRepository>>>,
+    heartbeat_task_repo: Mutex<Option<Arc<HeartbeatTaskRepository>>>,
     agent_hooks: Mutex<Option<Arc<dyn AgentHooks>>>,
 }
 
@@ -33,7 +33,7 @@ impl WorkspaceService {
         *self.event_publisher.lock().unwrap() = Some(publisher);
     }
 
-    pub fn set_heartbeat_task_repo(&self, repo: Arc<dyn HeartbeatTaskRepository>) {
+    pub fn set_heartbeat_task_repo(&self, repo: Arc<HeartbeatTaskRepository>) {
         *self.heartbeat_task_repo.lock().unwrap() = Some(repo);
     }
 
@@ -248,106 +248,6 @@ mod tests {
         )
     }
 
-    struct MockHeartbeatTaskRepo {
-        tasks: Mutex<Vec<tinyiothub_agent::loop_::heartbeat::types::HeartbeatTask>>,
-    }
-
-    impl MockHeartbeatTaskRepo {
-        fn new() -> Self {
-            Self {
-                tasks: Mutex::new(Vec::new()),
-            }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl HeartbeatTaskRepository for MockHeartbeatTaskRepo {
-        async fn list_by_workspace(
-            &self,
-            workspace_id: &str,
-        ) -> std::result::Result<
-            Vec<tinyiothub_agent::loop_::heartbeat::types::HeartbeatTask>,
-            tinyiothub_agent::loop_::heartbeat::repo::RepoError,
-        > {
-            Ok(self
-                .tasks
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|t| t.workspace_id == workspace_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn upsert(
-            &self,
-            _workspace_id: &str,
-            _task: &tinyiothub_agent::loop_::heartbeat::types::HeartbeatTask,
-            _expected_version: i64,
-        ) -> std::result::Result<bool, tinyiothub_agent::loop_::heartbeat::repo::RepoError> {
-            unimplemented!()
-        }
-
-        async fn insert(
-            &self,
-            _workspace_id: &str,
-            _priority: &str,
-            _text: &str,
-        ) -> std::result::Result<
-            tinyiothub_agent::loop_::heartbeat::types::HeartbeatTask,
-            tinyiothub_agent::loop_::heartbeat::repo::RepoError,
-        > {
-            unimplemented!()
-        }
-
-        async fn set_paused(
-            &self,
-            _workspace_id: &str,
-            _task_id: i64,
-            _paused: bool,
-        ) -> std::result::Result<(), tinyiothub_agent::loop_::heartbeat::repo::RepoError> {
-            unimplemented!()
-        }
-
-        async fn delete(
-            &self,
-            _workspace_id: &str,
-            _task_id: i64,
-        ) -> std::result::Result<(), tinyiothub_agent::loop_::heartbeat::repo::RepoError> {
-            unimplemented!()
-        }
-
-        async fn replace_all(
-            &self,
-            workspace_id: &str,
-            tasks: &[NewHeartbeatTask],
-        ) -> std::result::Result<(), tinyiothub_agent::loop_::heartbeat::repo::RepoError> {
-            let mut store = self.tasks.lock().unwrap();
-            store.retain(|t| t.workspace_id != workspace_id);
-            store.extend(tasks.iter().enumerate().map(|(i, t)| {
-                tinyiothub_agent::loop_::heartbeat::types::HeartbeatTask {
-                    id: i as i64 + 1,
-                    workspace_id: workspace_id.to_string(),
-                    priority: t.priority.clone(),
-                    text: t.text.clone(),
-                    paused: t.paused,
-                    version: 1,
-                    created_at: chrono::Utc::now(),
-                    updated_at: chrono::Utc::now(),
-                }
-            }));
-            Ok(())
-        }
-
-        async fn insert_result(
-            &self,
-            _workspace_id: &str,
-            _result: &tinyiothub_agent::loop_::heartbeat::types::HeartbeatResult,
-        ) -> std::result::Result<(), tinyiothub_agent::loop_::heartbeat::repo::RepoError> {
-            unimplemented!()
-        }
-    }
-
     /// Stub hooks — the real default task set lives in the agent domain; here
     /// we only verify the service seeds whatever the hooks provide.
     struct StubAgentHooks;
@@ -399,7 +299,15 @@ mod tests {
     async fn create_seeds_default_heartbeat_tasks() {
         let (ws_repo, _pool) = real_repo().await;
         let service = WorkspaceService::new(ws_repo);
-        let repo = Arc::new(MockHeartbeatTaskRepo::new());
+        let hb_pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .expect("in-memory sqlite");
+        tinyiothub_storage::test_helpers::run_all_migrations(&hb_pool)
+            .await
+            .expect("migrations");
+        let repo = Arc::new(tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(hb_pool));
         service.set_heartbeat_task_repo(repo.clone());
         service.set_agent_hooks(Arc::new(StubAgentHooks));
 

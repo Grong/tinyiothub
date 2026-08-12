@@ -73,7 +73,7 @@ pub struct HeartbeatRunner {
     loops: Arc<DashMap<String, LoopHandle>>,
     signal_senders: Arc<DashMap<String, mpsc::Sender<LoopSignal>>>,
     trust_configs: DashMap<String, TrustConfig>,
-    task_repo: Arc<dyn HeartbeatTaskRepository>,
+    task_repo: Arc<HeartbeatTaskRepository>,
     event_publisher: Arc<AiEventPublisher>,
     agent_pool: RwLock<Option<Arc<dyn AgentPoolLike>>>,
     config: HeartbeatConfig,
@@ -87,7 +87,7 @@ pub struct HeartbeatRunner {
 
 impl HeartbeatRunner {
     pub fn new(
-        task_repo: Arc<dyn HeartbeatTaskRepository>,
+        task_repo: Arc<HeartbeatTaskRepository>,
         event_publisher: Arc<AiEventPublisher>,
         config: HeartbeatConfig,
     ) -> Self {
@@ -325,7 +325,7 @@ impl HeartbeatRunner {
     }
 
     /// Access the task repository (used by API handlers for task CRUD).
-    pub fn task_repo(&self) -> Arc<dyn HeartbeatTaskRepository> {
+    pub fn task_repo(&self) -> Arc<HeartbeatTaskRepository> {
         self.task_repo.clone()
     }
 
@@ -357,77 +357,33 @@ mod tests {
     use crate::loop_::heartbeat::repo::RepoError;
     use crate::loop_::heartbeat::types::HeartbeatTask;
 
-    struct MockTaskRepo {
-        tasks: Vec<HeartbeatTask>,
-        trust: Option<tinyiothub_skills::trust::TrustConfig>,
-        hb_config: Option<crate::loop_::heartbeat::types::WorkspaceHeartbeatConfig>,
-        saved_trust: std::sync::Mutex<Vec<tinyiothub_skills::trust::TrustConfig>>,
+    /// 真实 SQLite 版 heartbeat repo（E6b 去 trait 后替代 MockTaskRepo）。
+    async fn real_repo() -> Arc<HeartbeatTaskRepository> {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .expect("in-memory sqlite");
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .expect("migrations");
+        // workspaces 行是 trust/hb config UPDATE 的目标（无行则静默 no-op）
+        sqlx::query("INSERT INTO tenants (id, name, slug) VALUES ('t1', 'T', 't')")
+            .execute(&pool)
+            .await
+            .expect("seed tenant");
+        sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws_1', 'WS', 't1', '2026-01-01', '2026-01-01')")
+            .execute(&pool)
+            .await
+            .expect("seed workspace");
+        Arc::new(HeartbeatTaskRepository::new(pool))
     }
 
-    impl MockTaskRepo {
-        fn new(tasks: Vec<HeartbeatTask>) -> Self {
-            Self {
-                tasks,
-                trust: None,
-                hb_config: None,
-                saved_trust: std::sync::Mutex::new(vec![]),
-            }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl HeartbeatTaskRepository for MockTaskRepo {
-        async fn list_by_workspace(&self, _workspace_id: &str) -> Result<Vec<HeartbeatTask>, RepoError> {
-            Ok(self.tasks.clone())
-        }
-        async fn load_trust_config(
-            &self,
-            _workspace_id: &str,
-        ) -> Result<Option<tinyiothub_skills::trust::TrustConfig>, RepoError> {
-            Ok(self.trust.clone())
-        }
-        async fn save_trust_config(
-            &self,
-            _workspace_id: &str,
-            config: &tinyiothub_skills::trust::TrustConfig,
-        ) -> Result<(), RepoError> {
-            self.saved_trust.lock().unwrap().push(config.clone());
-            Ok(())
-        }
-        async fn load_heartbeat_config(
-            &self,
-            workspace_id: &str,
-        ) -> Result<Option<crate::loop_::heartbeat::types::WorkspaceHeartbeatConfig>, RepoError> {
-            Ok(if workspace_id == "ws_1" {
-                self.hb_config.clone()
-            } else {
-                None
-            })
-        }
-        async fn upsert(
-            &self,
-            _workspace_id: &str,
-            _task: &HeartbeatTask,
-            _expected_version: i64,
-        ) -> Result<bool, RepoError> {
-            Ok(true)
-        }
-        async fn insert(&self, _workspace_id: &str, _priority: &str, _text: &str) -> Result<HeartbeatTask, RepoError> {
-            Err(RepoError::Database("mock".into()))
-        }
-        async fn set_paused(&self, _workspace_id: &str, _task_id: i64, _paused: bool) -> Result<(), RepoError> {
-            Ok(())
-        }
-        async fn delete(&self, _workspace_id: &str, _task_id: i64) -> Result<(), RepoError> {
-            Ok(())
-        }
-        async fn insert_result(
-            &self,
-            _workspace_id: &str,
-            _result: &crate::loop_::heartbeat::types::HeartbeatResult,
-        ) -> Result<(), RepoError> {
-            Ok(())
-        }
+    /// 预置一条 high/test 任务（新库 rowid=1，与原 mock 的 id:1 一致）。
+    async fn real_repo_with_task() -> Arc<HeartbeatTaskRepository> {
+        let repo = real_repo().await;
+        repo.insert("ws_1", "high", "test").await.expect("seed task");
+        repo
     }
 
     fn make_publisher() -> Arc<AiEventPublisher> {
@@ -436,7 +392,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_runner_construction() {
-        let repo = Arc::new(MockTaskRepo::new(vec![]));
+        let repo = real_repo().await;
         let publisher = make_publisher();
         let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
         assert_eq!(runner.active_loop_count(), 0);
@@ -445,7 +401,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_with_no_tasks_exits_early() {
-        let repo = Arc::new(MockTaskRepo::new(vec![]));
+        let repo = real_repo().await;
         let publisher = make_publisher();
         let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
         runner.start("ws_1").await;
@@ -454,7 +410,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_nonexistent_is_noop() {
-        let repo = Arc::new(MockTaskRepo::new(vec![]));
+        let repo = real_repo().await;
         let publisher = make_publisher();
         let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
         runner.stop("nonexistent").await;
@@ -463,16 +419,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_when_disabled() {
-        let repo = Arc::new(MockTaskRepo::new(vec![HeartbeatTask {
-            id: 1,
-            workspace_id: "ws_1".into(),
-            priority: "high".into(),
-            text: "test".into(),
-            paused: false,
-            version: 1,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        }]));
+        let repo = real_repo_with_task().await;
         let publisher = make_publisher();
         let config = HeartbeatConfig {
             enabled: false,
@@ -485,16 +432,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_pending_starts_queued_when_pool_not_ready() {
-        let repo = Arc::new(MockTaskRepo::new(vec![HeartbeatTask {
-            id: 1,
-            workspace_id: "ws_1".into(),
-            priority: "high".into(),
-            text: "test".into(),
-            paused: false,
-            version: 1,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        }]));
+        let repo = real_repo_with_task().await;
         let publisher = make_publisher();
         let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
         runner.start("ws_1").await;
@@ -506,16 +444,7 @@ mod tests {
         // Repeated start() calls while the pool is down must not pile up
         // duplicate entries — each would trigger a redundant stop+start when
         // the pool arrives.
-        let repo = Arc::new(MockTaskRepo::new(vec![HeartbeatTask {
-            id: 1,
-            workspace_id: "ws_1".into(),
-            priority: "high".into(),
-            text: "test".into(),
-            paused: false,
-            version: 1,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        }]));
+        let repo = real_repo_with_task().await;
         let publisher = make_publisher();
         let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
         runner.start("ws_1").await;
@@ -577,16 +506,7 @@ mod tests {
     async fn panicking_loop_is_reaped_by_supervisor() {
         // A crashed loop must not linger in the maps: its entry and signal
         // sender are removed so later starts/signals behave correctly.
-        let repo = Arc::new(MockTaskRepo::new(vec![HeartbeatTask {
-            id: 1,
-            workspace_id: "ws_1".into(),
-            priority: "high".into(),
-            text: "test".into(),
-            paused: false,
-            version: 1,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        }]));
+        let repo = real_repo_with_task().await;
         let publisher = make_publisher();
         let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
         runner.set_agent_pool(Arc::new(PanicPool)).await;
@@ -607,13 +527,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_loads_trust_config_from_repo() {
-        let repo = Arc::new(MockTaskRepo {
-            trust: Some(tinyiothub_skills::trust::TrustConfig {
+        let repo = real_repo().await;
+        repo.save_trust_config(
+            "ws_1",
+            &tinyiothub_skills::trust::TrustConfig {
                 trust_level: tinyiothub_skills::trust::TrustLevel::FullAuto,
                 ..Default::default()
-            }),
-            ..MockTaskRepo::new(vec![])
-        });
+            },
+        )
+        .await
+        .expect("seed trust");
         let publisher = make_publisher();
         let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
         runner.start("ws_1").await;
@@ -624,7 +547,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_falls_back_to_default_trust_config() {
-        let repo = Arc::new(MockTaskRepo::new(vec![]));
+        let repo = real_repo().await;
         let publisher = make_publisher();
         let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
         runner.start("ws_1").await;
@@ -635,7 +558,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_trust_config_persists_via_repo() {
-        let repo = Arc::new(MockTaskRepo::new(vec![]));
+        let repo = real_repo().await;
         let publisher = make_publisher();
         let runner = HeartbeatRunner::new(repo.clone(), publisher, HeartbeatConfig::default());
 
@@ -645,38 +568,27 @@ mod tests {
         };
         runner.update_trust_config("ws_1", cfg).await;
 
-        let saved = repo.saved_trust.lock().unwrap();
-        assert_eq!(saved.len(), 1, "update_trust_config must persist to the repo");
-        assert_eq!(saved[0].trust_level, tinyiothub_skills::trust::TrustLevel::FullAuto);
+        let saved = repo.load_trust_config("ws_1").await.expect("load").expect("persisted");
+        assert_eq!(saved.trust_level, tinyiothub_skills::trust::TrustLevel::FullAuto);
     }
 
     #[tokio::test]
     async fn test_effective_interval_uses_workspace_config() {
-        let repo = Arc::new(MockTaskRepo {
-            hb_config: Some(crate::loop_::heartbeat::types::WorkspaceHeartbeatConfig {
+        let repo = real_repo().await;
+        repo.save_heartbeat_config(
+            "ws_1",
+            &crate::loop_::heartbeat::types::WorkspaceHeartbeatConfig {
                 enabled: true,
                 interval_minutes: 30,
-            }),
-            ..MockTaskRepo::new(vec![])
-        });
+            },
+        )
+        .await
+        .expect("seed hb config");
         let publisher = make_publisher();
         let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
 
         assert_eq!(runner.effective_interval_minutes("ws_1").await, 30);
         assert_eq!(runner.effective_interval_minutes("ws_other").await, 15);
-    }
-
-    fn sample_task() -> HeartbeatTask {
-        HeartbeatTask {
-            id: 1,
-            workspace_id: "ws_1".into(),
-            priority: "high".into(),
-            text: "test".into(),
-            paused: false,
-            version: 1,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        }
     }
 
     struct OkPool;
@@ -705,7 +617,7 @@ mod tests {
 
     #[tokio::test]
     async fn metrics_track_loop_lifecycle() {
-        let repo = Arc::new(MockTaskRepo::new(vec![sample_task()]));
+        let repo = real_repo_with_task().await;
         let publisher = make_publisher();
         let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
         runner.set_agent_pool(Arc::new(OkPool)).await;
@@ -734,7 +646,7 @@ mod tests {
 
     #[tokio::test]
     async fn crashed_loop_counts_as_failed_in_metrics() {
-        let repo = Arc::new(MockTaskRepo::new(vec![sample_task()]));
+        let repo = real_repo_with_task().await;
         let publisher = make_publisher();
         let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
         runner.set_agent_pool(Arc::new(PanicPool)).await;

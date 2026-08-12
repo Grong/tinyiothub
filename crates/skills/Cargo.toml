@@ -11,6 +11,7 @@ description = "Agent skills and tool registry — skill loading, tool trust engi
 name = "tinyiothub_skills"
 
 [dependencies]
+db = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }

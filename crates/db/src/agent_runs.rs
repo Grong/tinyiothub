@@ -1,20 +1,97 @@
-//! SQLite implementation of the AI crate AgentRunsRepository trait (T12).
+//! Agent runs 持久化：自治 run 报告（P-集中化 E6b，自 agent crate 迁入）。
 //!
-//! 落库后同步发 X4 指标（结构化日志 `metric` 字段，与事件管线
-//! router.rs 的 events_ingested/events_throttled 先例同款）：
-//! - `agent_run_completed{outcome}` —— 每次 run 一条
-//! - `agent_tokens_daily{workspace}` —— 每次 run 携带 tokens，日聚合由
-//!   日志管线 / `agent_daily_cost` 视图完成
+//! 类型随 repo 住 db（方案 B）：RunReport/Outcome/ActionRecord 为 DB 行类型
+//! （report JSON 列的序列化格式在此定义）；agent crate 经 re-export 兼容。
 
-use crate::loop_::thing_agent::{AgentRunsRepository, Outcome, RunReport, format_summary};
-use async_trait::async_trait;
 use sqlx::SqlitePool;
 
-pub struct SqliteAgentRunsRepository {
+use crate::error::Result;
+use crate::policy::Proposal;
+
+// ──────────────────────────────────────────────
+// 持久化类型（DB 行）— 自 agent/loop_/thing_agent 迁入
+// ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Outcome {
+    Acted,
+    NoActionNeeded,
+    Failed,
+    BudgetExceeded,
+    Rejected,
+}
+
+impl Outcome {
+    /// DB/metric 字符串（snake_case，与 serde 表示一致）。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Outcome::Acted => "acted",
+            Outcome::NoActionNeeded => "no_action_needed",
+            Outcome::Failed => "failed",
+            Outcome::BudgetExceeded => "budget_exceeded",
+            Outcome::Rejected => "rejected",
+        }
+    }
+
+    /// 从 DB 字符串解析；未知值 None（调用方 fail-closed）。
+    pub fn from_db(s: &str) -> Option<Self> {
+        Some(match s {
+            "acted" => Outcome::Acted,
+            "no_action_needed" => Outcome::NoActionNeeded,
+            "failed" => Outcome::Failed,
+            "budget_exceeded" => Outcome::BudgetExceeded,
+            "rejected" => Outcome::Rejected,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ActionRecord {
+    pub thing_id: String,
+    pub action_name: String,
+    pub params: serde_json::Value,
+    pub result: ActionResult,
+    pub verified: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionResult {
+    Success(serde_json::Value),
+    Failed(String),
+    UnknownCancelled,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RunReport {
+    pub run_id: String,
+    pub workspace_id: String,
+    pub trigger: String, // TriggerSource 的序列化
+    pub outcome: Outcome,
+    pub summary: String,
+    pub actions: Vec<ActionRecord>,
+    pub verified: bool,
+    pub duration_ms: u64,
+    pub tool_calls: u32,
+    pub tokens: u64,
+}
+
+/// 记忆/历史段统一条目格式：`"[acted] 调低设定值成功"`。
+pub fn format_summary(outcome: &str, summary: &str) -> String {
+    format!("[{outcome}] {summary}")
+}
+
+// ──────────────────────────────────────────────
+// Repository
+// ──────────────────────────────────────────────
+
+pub struct AgentRunsRepository {
     pool: SqlitePool,
 }
 
-impl SqliteAgentRunsRepository {
+impl AgentRunsRepository {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
@@ -26,14 +103,13 @@ fn trigger_type_of(trigger: &str) -> &str {
     trigger.split(':').next().unwrap_or(trigger)
 }
 
-#[async_trait]
-impl AgentRunsRepository for SqliteAgentRunsRepository {
-    async fn insert_run(
+impl AgentRunsRepository {
+    pub async fn insert_run(
         &self,
         report: &RunReport,
         problem_key: Option<&str>,
         dedup_key: Option<&str>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         // RunReport 结构体无 action_count 字段，但 T4 count_actions_last_hour
         // 依赖 json_extract(report,'$.action_count') —— 落库时显式补写。
         let mut report_json = serde_json::to_value(report)?;
@@ -80,7 +156,7 @@ impl AgentRunsRepository for SqliteAgentRunsRepository {
         Ok(())
     }
 
-    async fn recent_summaries(&self, workspace_id: &str, limit: u32) -> anyhow::Result<Vec<String>> {
+    pub async fn recent_summaries(&self, workspace_id: &str, limit: u32) -> Result<Vec<String>> {
         // rowid 决胜：created_at 秒级精度，同秒批量插入仍保持插入序。
         let rows: Vec<(String, String)> = sqlx::query_as(
             "SELECT outcome, summary FROM agent_runs
@@ -95,7 +171,7 @@ impl AgentRunsRepository for SqliteAgentRunsRepository {
         Ok(rows.into_iter().map(|(o, s)| format_summary(&o, &s)).collect())
     }
 
-    async fn history_by_dedup_key(&self, workspace_id: &str, key: &str, limit: u32) -> anyhow::Result<Vec<String>> {
+    pub async fn history_by_dedup_key(&self, workspace_id: &str, key: &str, limit: u32) -> Result<Vec<String>> {
         let rows: Vec<(String, String)> = sqlx::query_as(
             "SELECT outcome, summary FROM agent_runs
              WHERE workspace_id = ? AND dedup_key = ?
@@ -110,12 +186,7 @@ impl AgentRunsRepository for SqliteAgentRunsRepository {
         Ok(rows.into_iter().map(|(o, s)| format_summary(&o, &s)).collect())
     }
 
-    async fn recent_runs_by_dedup_key(
-        &self,
-        workspace_id: &str,
-        key: &str,
-        limit: u32,
-    ) -> anyhow::Result<Vec<RunReport>> {
+    pub async fn recent_runs_by_dedup_key(&self, workspace_id: &str, key: &str, limit: u32) -> Result<Vec<RunReport>> {
         let rows: Vec<(String,)> = sqlx::query_as(
             "SELECT report FROM agent_runs
              WHERE workspace_id = ? AND dedup_key = ?
@@ -132,7 +203,7 @@ impl AgentRunsRepository for SqliteAgentRunsRepository {
             .collect()
     }
 
-    async fn ack_run(&self, run_id: &str, actor: &str) -> anyhow::Result<bool> {
+    pub async fn ack_run(&self, run_id: &str, actor: &str) -> Result<bool> {
         // 幂等：仅首认生效（acked_at IS NULL），重复确认/不存在 rows_affected = 0。
         let result = sqlx::query(
             "UPDATE agent_runs SET acked_at = datetime('now'), acked_by = ?
@@ -145,12 +216,12 @@ impl AgentRunsRepository for SqliteAgentRunsRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    async fn last_problem_run(
+    pub async fn last_problem_run(
         &self,
         workspace_id: &str,
         problem_key: &str,
         since_hours: u32,
-    ) -> anyhow::Result<Option<(Outcome, bool, bool)>> {
+    ) -> Result<Option<(Outcome, bool, bool)>> {
         let row: Option<(String, bool, Option<String>)> = sqlx::query_as(
             "SELECT outcome, verified, acked_at FROM agent_runs
              WHERE workspace_id = ? AND problem_key = ?
@@ -173,7 +244,7 @@ impl AgentRunsRepository for SqliteAgentRunsRepository {
         }))
     }
 
-    async fn count_problem_runs(&self, workspace_id: &str, problem_key: &str, since_hours: u32) -> anyhow::Result<u32> {
+    pub async fn count_problem_runs(&self, workspace_id: &str, problem_key: &str, since_hours: u32) -> Result<u32> {
         let (n,): (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM agent_runs
              WHERE workspace_id = ? AND problem_key = ?
@@ -190,18 +261,18 @@ impl AgentRunsRepository for SqliteAgentRunsRepository {
 
 #[cfg(test)]
 mod tests {
-    use crate::loop_::thing_agent::{ActionRecord, ActionResult};
+    use crate::agent_runs::{ActionRecord, ActionResult};
     use sqlx::sqlite::SqlitePoolOptions;
 
     use super::*;
 
-    async fn test_pool() -> SqlitePool {
+    pub async fn test_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
             .await
             .expect("create in-memory sqlite");
-        let migration = include_str!("../../../../crates/db/migrations/20260729000001_thing_agent_loop.sql");
+        let migration = include_str!("../migrations/20260729000001_thing_agent_loop.sql");
         for stmt in migration.split(';') {
             let stmt = stmt.trim();
             // Skip the events ALTER — the events table is not part of this pool.
@@ -244,7 +315,7 @@ mod tests {
 
     /// Raw insert with explicit created_at / problem_key / dedup_key for
     /// window and view tests.
-    async fn insert_raw(
+    pub async fn insert_raw(
         pool: &SqlitePool,
         id: &str,
         workspace_id: &str,
@@ -274,9 +345,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn insert_run_persists_row_with_action_count_in_report_json() {
+    pub async fn insert_run_persists_row_with_action_count_in_report_json() {
         let pool = test_pool().await;
-        let repo = SqliteAgentRunsRepository::new(pool.clone());
+        let repo = AgentRunsRepository::new(pool.clone());
 
         let report = sample_report("run_1", "ws_1", "调低设定值成功");
         repo.insert_run(&report, Some("temp_high:t1"), Some("thing:t1:event:temp_high"))
@@ -333,9 +404,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recent_summaries_returns_latest_first_capped_and_formatted() {
+    pub async fn recent_summaries_returns_latest_first_capped_and_formatted() {
         let pool = test_pool().await;
-        let repo = SqliteAgentRunsRepository::new(pool.clone());
+        let repo = AgentRunsRepository::new(pool.clone());
 
         for i in 1..=7 {
             let mut report = sample_report(&format!("run_{i}"), "ws_1", &format!("摘要{i}"));
@@ -358,9 +429,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn history_by_dedup_key_filters_and_caps() {
+    pub async fn history_by_dedup_key_filters_and_caps() {
         let pool = test_pool().await;
-        let repo = SqliteAgentRunsRepository::new(pool.clone());
+        let repo = AgentRunsRepository::new(pool.clone());
 
         for i in 1..=4 {
             repo.insert_run(
@@ -393,9 +464,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recent_runs_by_dedup_key_returns_parsed_reports_newest_first() {
+    pub async fn recent_runs_by_dedup_key_returns_parsed_reports_newest_first() {
         let pool = test_pool().await;
-        let repo = SqliteAgentRunsRepository::new(pool.clone());
+        let repo = AgentRunsRepository::new(pool.clone());
 
         repo.insert_run(&sample_report("acted", "ws_1", "已处理"), None, Some("key1"))
             .await
@@ -436,9 +507,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ack_run_is_idempotent() {
+    pub async fn ack_run_is_idempotent() {
         let pool = test_pool().await;
-        let repo = SqliteAgentRunsRepository::new(pool.clone());
+        let repo = AgentRunsRepository::new(pool.clone());
         repo.insert_run(&sample_report("run_1", "ws_1", "s"), None, None)
             .await
             .expect("insert");
@@ -457,9 +528,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn last_problem_run_respects_window_and_returns_flags() {
+    pub async fn last_problem_run_respects_window_and_returns_flags() {
         let pool = test_pool().await;
-        let repo = SqliteAgentRunsRepository::new(pool.clone());
+        let repo = AgentRunsRepository::new(pool.clone());
 
         // 窗口外（-7h）：不得命中
         insert_raw(&pool, "old", "ws_1", "failed", Some("p1"), None, 0, "-7 hours").await;
@@ -528,9 +599,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn count_problem_runs_respects_window_key_and_workspace() {
+    pub async fn count_problem_runs_respects_window_key_and_workspace() {
         let pool = test_pool().await;
-        let repo = SqliteAgentRunsRepository::new(pool.clone());
+        let repo = AgentRunsRepository::new(pool.clone());
 
         insert_raw(&pool, "in_1", "ws_1", "acted", Some("p1"), None, 0, "-1 hours").await;
         insert_raw(&pool, "in_2", "ws_1", "acted", Some("p1"), None, 0, "-5 hours").await;
@@ -550,9 +621,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn agent_daily_cost_view_aggregates_by_workspace_and_day() {
+    pub async fn agent_daily_cost_view_aggregates_by_workspace_and_day() {
         let pool = test_pool().await;
-        let repo = SqliteAgentRunsRepository::new(pool.clone());
+        let repo = AgentRunsRepository::new(pool.clone());
 
         let mut r1 = sample_report("run_1", "ws_1", "s1");
         r1.tokens = 100;
@@ -575,5 +646,72 @@ mod tests {
         assert_eq!(runs, 2);
         assert_eq!(tokens, 300);
         assert_eq!(duration_ms, 30);
+    }
+    #[test]
+    fn run_report_json_round_trip() {
+        let report = RunReport {
+            run_id: "run_01".to_string(),
+            workspace_id: "ws_01".to_string(),
+            trigger: "thing:t1:event:temp_high".to_string(),
+            outcome: Outcome::Acted,
+            summary: "cooled down".to_string(),
+            actions: vec![
+                ActionRecord {
+                    thing_id: "t1".to_string(),
+                    action_name: "set_fan".to_string(),
+                    params: serde_json::json!({"speed": 3}),
+                    result: ActionResult::Success(serde_json::json!({"ok": true})),
+                    verified: true,
+                },
+                ActionRecord {
+                    thing_id: "t2".to_string(),
+                    action_name: "reboot".to_string(),
+                    params: serde_json::json!({}),
+                    result: ActionResult::Failed("timeout".to_string()),
+                    verified: false,
+                },
+                ActionRecord {
+                    thing_id: "t3".to_string(),
+                    action_name: "poll".to_string(),
+                    params: serde_json::Value::Null,
+                    result: ActionResult::UnknownCancelled,
+                    verified: false,
+                },
+            ],
+            verified: true,
+            duration_ms: 1234,
+            tool_calls: 5,
+            tokens: 6789,
+        };
+
+        let json = serde_json::to_string(&report).expect("serialize");
+        let back: RunReport = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(back.run_id, report.run_id);
+        assert_eq!(back.workspace_id, report.workspace_id);
+        assert_eq!(back.trigger, report.trigger);
+        assert_eq!(back.outcome, report.outcome);
+        assert_eq!(back.summary, report.summary);
+        assert_eq!(back.actions.len(), 3);
+        assert_eq!(back.actions[0].thing_id, "t1");
+        assert_eq!(back.actions[0].action_name, "set_fan");
+        assert!(back.actions[0].verified);
+        assert_eq!(back.verified, report.verified);
+        assert_eq!(back.duration_ms, report.duration_ms);
+        assert_eq!(back.tool_calls, report.tool_calls);
+        assert_eq!(back.tokens, report.tokens);
+    }
+
+    #[test]
+    fn outcome_serializes_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&Outcome::BudgetExceeded).expect("serialize"),
+            "\"budget_exceeded\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Outcome::NoActionNeeded).expect("serialize"),
+            "\"no_action_needed\""
+        );
+        assert_eq!(serde_json::to_string(&Outcome::Acted).expect("serialize"), "\"acted\"");
     }
 }

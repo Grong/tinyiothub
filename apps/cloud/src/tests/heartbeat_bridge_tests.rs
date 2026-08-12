@@ -9,13 +9,10 @@
 use std::sync::{Arc, Mutex};
 
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
-use tinyiothub_agent::{
-    host::agent_runs_repo::SqliteAgentRunsRepository,
-    loop_::{
-        heartbeat::types::{HeartbeatResult, HeartbeatStatus},
-        orchestrator::callbacks::HeartbeatBridge,
-        thing_agent::{AgentRunsRepository, DirectiveSink, EnqueueError, Priority, TriggerSource, WakeSignal},
-    },
+use tinyiothub_agent::loop_::{
+    heartbeat::types::{HeartbeatResult, HeartbeatStatus},
+    orchestrator::callbacks::HeartbeatBridge,
+    thing_agent::{AgentRunsRepository, DirectiveSink, EnqueueError, Priority, TriggerSource, WakeSignal},
 };
 use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 
@@ -112,7 +109,8 @@ fn result_with(proposals: Vec<Proposal>) -> HeartbeatResult {
 
 fn bridge(pool: &SqlitePool) -> (HeartbeatBridge, Arc<RecordingSink>) {
     let sink = Arc::new(RecordingSink::default());
-    let repo: Arc<dyn AgentRunsRepository> = Arc::new(SqliteAgentRunsRepository::new(pool.clone()));
+    let repo: Arc<AgentRunsRepository> =
+        Arc::new(tinyiothub_storage::agent_runs::AgentRunsRepository::new(pool.clone()));
     (HeartbeatBridge::new(repo, sink.clone()), sink)
 }
 

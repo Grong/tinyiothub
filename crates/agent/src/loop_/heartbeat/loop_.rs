@@ -27,7 +27,7 @@ pub async fn heartbeat_loop(
     tasks: Arc<RwLock<Vec<HeartbeatTask>>>,
     trust_config: Arc<RwLock<TrustConfig>>,
     agent_pool: Option<Arc<dyn crate::loop_::agent::pool::AgentPoolLike>>,
-    task_repo: Arc<dyn crate::loop_::heartbeat::repo::HeartbeatTaskRepository>,
+    task_repo: Arc<crate::loop_::heartbeat::repo::HeartbeatTaskRepository>,
     event_publisher: Arc<AiEventPublisher>,
     config: HeartbeatConfig,
     mut signal_rx: mpsc::Receiver<LoopSignal>,
@@ -370,54 +370,19 @@ mod tests {
         }
     }
 
-    struct NoopRepo;
-
-    #[async_trait::async_trait]
-    impl crate::loop_::heartbeat::repo::HeartbeatTaskRepository for NoopRepo {
-        async fn list_by_workspace(
-            &self,
-            _workspace_id: &str,
-        ) -> Result<Vec<HeartbeatTask>, crate::loop_::heartbeat::repo::RepoError> {
-            Ok(vec![])
-        }
-        async fn upsert(
-            &self,
-            _workspace_id: &str,
-            _task: &HeartbeatTask,
-            _expected_version: i64,
-        ) -> Result<bool, crate::loop_::heartbeat::repo::RepoError> {
-            Ok(true)
-        }
-        async fn insert(
-            &self,
-            _workspace_id: &str,
-            _priority: &str,
-            _text: &str,
-        ) -> Result<HeartbeatTask, crate::loop_::heartbeat::repo::RepoError> {
-            Err(crate::loop_::heartbeat::repo::RepoError::Database("noop".into()))
-        }
-        async fn set_paused(
-            &self,
-            _workspace_id: &str,
-            _task_id: i64,
-            _paused: bool,
-        ) -> Result<(), crate::loop_::heartbeat::repo::RepoError> {
-            Ok(())
-        }
-        async fn delete(
-            &self,
-            _workspace_id: &str,
-            _task_id: i64,
-        ) -> Result<(), crate::loop_::heartbeat::repo::RepoError> {
-            Ok(())
-        }
-        async fn insert_result(
-            &self,
-            _workspace_id: &str,
-            _result: &crate::loop_::heartbeat::types::HeartbeatResult,
-        ) -> Result<(), crate::loop_::heartbeat::repo::RepoError> {
-            Ok(())
-        }
+    /// 真实 SQLite 版 heartbeat repo（E6b 去 trait 后替代 NoopRepo）：
+    /// 迁移后空库的读取行为与原 noop 等效（空任务集）。
+    async fn real_repo() -> Arc<crate::loop_::heartbeat::repo::HeartbeatTaskRepository> {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(std::time::Duration::from_secs(86400 * 365)) // 暂停时钟防瞬杀
+            .connect(":memory:")
+            .await
+            .expect("in-memory sqlite");
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .expect("migrations");
+        Arc::new(crate::loop_::heartbeat::repo::HeartbeatTaskRepository::new(pool))
     }
 
     #[tokio::test]
@@ -479,7 +444,7 @@ mod tests {
         let tasks = Arc::new(RwLock::new(vec![sample_task()]));
         let trust = Arc::new(RwLock::new(TrustConfig::default()));
         let pool: Arc<dyn AgentPoolLike> = Arc::new(FailPool);
-        let repo: Arc<dyn crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(NoopRepo);
+        let repo: Arc<crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = real_repo().await;
         let publisher = Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
         let config = HeartbeatConfig {
             enabled: true,
@@ -542,7 +507,7 @@ mod tests {
         let tasks = Arc::new(RwLock::new(vec![sample_task()]));
         let trust = Arc::new(RwLock::new(TrustConfig::default()));
         let pool: Arc<dyn AgentPoolLike> = Arc::new(FailPool);
-        let repo: Arc<dyn crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(NoopRepo);
+        let repo: Arc<crate::loop_::heartbeat::repo::HeartbeatTaskRepository> = real_repo().await;
         let publisher = Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
         let config = HeartbeatConfig {
             enabled: true,

@@ -142,11 +142,9 @@ impl ServiceManager {
         // 4. Build and start AI subsystem (tinyiothub-ai Orchestrator)
         #[cfg(not(feature = "harmonyos"))]
         {
-            let heartbeat_task_repo = Arc::new(
-                tinyiothub_agent::host::heartbeat_repo::SqliteHeartbeatTaskRepository::new(
-                    app_state.database.pool().clone(),
-                ),
-            );
+            let heartbeat_task_repo = Arc::new(tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(
+                app_state.database.pool().clone(),
+            ));
 
             let heartbeat_config = tinyiothub_agent::loop_::heartbeat::types::HeartbeatConfig {
                 enabled: true,
@@ -199,9 +197,7 @@ impl ServiceManager {
             let thing_agent_manager = {
                 let pool = app_state.database.pool().clone();
                 let policy_repo = Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone()));
-                let runs_repo = Arc::new(tinyiothub_agent::host::agent_runs_repo::SqliteAgentRunsRepository::new(
-                    pool.clone(),
-                ));
+                let runs_repo = Arc::new(tinyiothub_storage::agent_runs::AgentRunsRepository::new(pool.clone()));
                 let manager = Arc::new(tinyiothub_agent::loop_::thing_agent::ThingAgentManager::new(
                     Arc::new(tinyiothub_agent::host::thing_agent_host::CloudThingAgentHost::new(
                         pool.clone(),

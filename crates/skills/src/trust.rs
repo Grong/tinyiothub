@@ -5,55 +5,8 @@
 //! 2. TrustConfig overrides (block specific tools, allow specific write tools)
 //! 3. Global trust_level fallback (ReadOnlyAuto / FullAuto / ApprovalRequired)
 
-use serde::{Deserialize, Serialize};
-
-/// Trust level for automatic tool execution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TrustLevel {
-    /// All tools require human approval.
-    ApprovalRequired,
-    /// Read-only tools auto-execute; write tools require approval.
-    ReadOnlyAuto,
-    /// All tools auto-execute.
-    FullAuto,
-}
-
-/// Per-workspace trust configuration for tool auto-execution.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrustConfig {
-    pub trust_level: TrustLevel,
-    pub max_auto_actions_per_tick: u32,
-    pub allowed_tool_categories: Vec<String>,
-    pub blocked_tools: Vec<String>,
-    /// Destructive tools explicitly allowlisted by workspace admin.
-    /// Only takes effect under FullAuto; all other levels still require approval.
-    #[serde(default)]
-    pub allowed_destructive_tools: Vec<String>,
-}
-
-impl Default for TrustConfig {
-    fn default() -> Self {
-        Self {
-            trust_level: TrustLevel::ReadOnlyAuto,
-            max_auto_actions_per_tick: 10,
-            allowed_tool_categories: vec!["read".into(), "query".into(), "write".into()],
-            blocked_tools: vec![],
-            allowed_destructive_tools: vec![],
-        }
-    }
-}
-
-impl TrustConfig {
-    /// Load from DB JSON column, falling back to safe default.
-    pub fn from_db_json(json: Option<&str>) -> Self {
-        json.and_then(|j| serde_json::from_str(j).ok()).unwrap_or_default()
-    }
-
-    /// Serialize to JSON for DB storage.
-    pub fn to_db_json(&self) -> String {
-        serde_json::to_string(self).unwrap_or_default()
-    }
-}
+// TrustConfig/TrustLevel 行类型已迁 db（E6b 集中化）；re-export 兼容。
+pub use tinyiothub_storage::heartbeat::{TrustConfig, TrustLevel};
 
 /// Intrinsic safety classification derived from tool naming conventions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

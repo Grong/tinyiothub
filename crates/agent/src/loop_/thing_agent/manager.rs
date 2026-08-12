@@ -86,7 +86,7 @@ impl Default for ThingAgentManagerConfig {
 struct PipelineDeps {
     host: Arc<dyn ThingAgentHost>,
     policy_repo: Arc<PolicyRepository>,
-    runs_repo: Arc<dyn AgentRunsRepository>,
+    runs_repo: Arc<AgentRunsRepository>,
     agent_provider: Arc<dyn AutonomousAgentProvider>,
     runner: Arc<Runner>,
 }
@@ -113,7 +113,7 @@ impl ThingAgentManager {
         host: Arc<dyn ThingAgentHost>,
         policy_repo: Arc<PolicyRepository>,
         agent_provider: Arc<dyn AutonomousAgentProvider>,
-        runs_repo: Arc<dyn AgentRunsRepository>,
+        runs_repo: Arc<AgentRunsRepository>,
         runner: Arc<Runner>,
         config: ThingAgentManagerConfig,
     ) -> Self {
@@ -531,89 +531,53 @@ pub(crate) mod tests {
         pub(crate) dedup_key: Option<String>,
     }
 
-    #[derive(Default)]
-    pub(crate) struct StubRunsRepo {
-        pub(crate) runs: Mutex<Vec<RecordedRun>>,
+    /// 只读 run 探针（E6b 去 trait 后替代 StubRunsRepo）：直查 agent_runs 表。
+    #[derive(Clone)]
+    pub(crate) struct RunsProbe {
+        pool: sqlx::SqlitePool,
     }
 
-    impl StubRunsRepo {
-        pub(crate) fn runs_with_dedup(&self, key: &str) -> usize {
-            self.runs
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|r| r.dedup_key.as_deref() == Some(key))
-                .count()
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl AgentRunsRepository for StubRunsRepo {
-        async fn insert_run(
-            &self,
-            report: &RunReport,
-            problem_key: Option<&str>,
-            dedup_key: Option<&str>,
-        ) -> anyhow::Result<()> {
-            self.runs.lock().unwrap().push(RecordedRun {
-                run_id: report.run_id.clone(),
-                trigger: report.trigger.clone(),
-                outcome: report.outcome,
-                problem_key: problem_key.map(str::to_string),
-                dedup_key: dedup_key.map(str::to_string),
-            });
-            Ok(())
+    impl RunsProbe {
+        pub(crate) async fn runs_with_dedup(&self, key: &str) -> usize {
+            let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agent_runs WHERE dedup_key = ?")
+                .bind(key)
+                .fetch_one(&self.pool)
+                .await
+                .expect("count by dedup");
+            n as usize
         }
 
-        async fn recent_summaries(&self, _workspace_id: &str, _limit: u32) -> anyhow::Result<Vec<String>> {
-            Ok(vec![])
+        pub(crate) async fn all(&self) -> Vec<RecordedRun> {
+            sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>)>(
+                "SELECT id, trigger_context, outcome, problem_key, dedup_key FROM agent_runs ORDER BY created_at",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .expect("list runs")
+            .into_iter()
+            .map(|(id, trigger, outcome, problem_key, dedup_key)| RecordedRun {
+                run_id: id,
+                trigger,
+                outcome: Outcome::from_db(&outcome).expect("known outcome"),
+                problem_key,
+                dedup_key,
+            })
+            .collect()
         }
 
-        async fn history_by_dedup_key(
-            &self,
-            _workspace_id: &str,
-            _key: &str,
-            _limit: u32,
-        ) -> anyhow::Result<Vec<String>> {
-            Ok(vec![])
+        pub(crate) async fn is_empty(&self) -> bool {
+            self.all().await.is_empty()
         }
 
-        async fn recent_runs_by_dedup_key(
-            &self,
-            _workspace_id: &str,
-            _key: &str,
-            _limit: u32,
-        ) -> anyhow::Result<Vec<RunReport>> {
-            Ok(vec![])
-        }
-
-        async fn ack_run(&self, _run_id: &str, _actor: &str) -> anyhow::Result<bool> {
-            Ok(false)
-        }
-
-        async fn last_problem_run(
-            &self,
-            _workspace_id: &str,
-            _problem_key: &str,
-            _since_hours: u32,
-        ) -> anyhow::Result<Option<(Outcome, bool, bool)>> {
-            Ok(None)
-        }
-
-        async fn count_problem_runs(
-            &self,
-            _workspace_id: &str,
-            _problem_key: &str,
-            _since_hours: u32,
-        ) -> anyhow::Result<u32> {
-            Ok(0)
+        pub(crate) async fn len(&self) -> usize {
+            self.all().await.len()
         }
     }
 
     pub(crate) struct StubManagerParts {
         pub(crate) manager: Arc<ThingAgentManager>,
         pub(crate) host: Arc<StubHost>,
-        pub(crate) runs: Arc<StubRunsRepo>,
+        pub(crate) runs: RunsProbe,
         pub(crate) agents: Arc<StubAgentProvider>,
     }
 
@@ -622,13 +586,23 @@ pub(crate) mod tests {
     /// assertions filter by dedup_key).
     pub(crate) async fn stub_manager() -> StubManagerParts {
         let host = Arc::new(StubHost::new());
-        let runs = Arc::new(StubRunsRepo::default());
+        let runs_pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(std::time::Duration::from_secs(86400 * 365))
+            .connect(":memory:")
+            .await
+            .expect("runs pool");
+        tinyiothub_storage::test_helpers::run_all_migrations(&runs_pool)
+            .await
+            .expect("runs migrations");
+        let runs_repo = Arc::new(AgentRunsRepository::new(runs_pool.clone()));
+        let runs = RunsProbe { pool: runs_pool };
         let agents = Arc::new(StubAgentProvider::new());
         let manager = Arc::new(ThingAgentManager::new(
             host.clone(),
             real_policy_repo(WS).await,
             agents.clone(),
-            runs.clone(),
+            runs_repo.clone(),
             Arc::new(Runner::new()),
             ThingAgentManagerConfig {
                 timer_interval: Duration::from_secs(24 * 3600),
@@ -683,6 +657,20 @@ pub(crate) mod tests {
         panic!("timed out waiting for {what}");
     }
 
+    async fn wait_until_async<F, Fut>(mut cond: F, what: &str)
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = bool>,
+    {
+        for _ in 0..20_000 {
+            if cond().await {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("timed out waiting for {what}");
+    }
+
     /// Let the trigger→forward→merger chain pick up freshly sent events.
     async fn settle() {
         for _ in 0..10 {
@@ -703,9 +691,13 @@ pub(crate) mod tests {
 
         parts.host.tx.send(event(1, 5, "device")).expect("send critical event");
 
-        wait_until(|| parts.runs.runs_with_dedup(EVENT_KEY) == 1, "run persisted").await;
+        wait_until_async(
+            || async { parts.runs.runs_with_dedup(EVENT_KEY).await == 1 },
+            "run persisted",
+        )
+        .await;
 
-        let runs = parts.runs.runs.lock().unwrap().clone();
+        let runs = parts.runs.all().await;
         let run = runs.iter().find(|r| r.dedup_key.as_deref() == Some(EVENT_KEY)).unwrap();
         assert_eq!(run.trigger, EVENT_KEY, "trigger label must be the event dedup key");
         // Scripted LLM replies plain text without tool calls → no actions.
@@ -745,12 +737,16 @@ pub(crate) mod tests {
         }
 
         tokio::time::advance(Duration::from_secs(30)).await;
-        wait_until(|| parts.runs.runs_with_dedup(EVENT_KEY) == 1, "merged run").await;
+        wait_until_async(
+            || async { parts.runs.runs_with_dedup(EVENT_KEY).await == 1 },
+            "merged run",
+        )
+        .await;
 
         tokio::time::advance(Duration::from_secs(60)).await;
         settle().await;
         assert_eq!(
-            parts.runs.runs_with_dedup(EVENT_KEY),
+            parts.runs.runs_with_dedup(EVENT_KEY).await,
             1,
             "5 events in one window must collapse into exactly 1 run"
         );
@@ -772,16 +768,16 @@ pub(crate) mod tests {
         settle().await;
         // No time advance: any wake would have run by now (critical bypasses
         // the merge window); the timer's first tick is parked unflushed.
-        assert_eq!(
-            parts.runs.runs.lock().unwrap().len(),
-            0,
-            "agent-actor event must not wake"
-        );
+        assert_eq!(parts.runs.len().await, 0, "agent-actor event must not wake");
 
         // A device-actor event at the same level DOES wake — the block above
         // was the actor filter, not a dead loop.
         parts.host.tx.send(event(2, 5, "device")).expect("send device event");
-        wait_until(|| parts.runs.runs_with_dedup(EVENT_KEY) == 1, "device event wakes").await;
+        wait_until_async(
+            || async { parts.runs.runs_with_dedup(EVENT_KEY).await == 1 },
+            "device event wakes",
+        )
+        .await;
     }
 
     // Duplicate start() must not spawn a second loop (two triggers would
@@ -795,10 +791,14 @@ pub(crate) mod tests {
         wait_subscribed(&parts.host).await;
 
         parts.host.tx.send(event(1, 5, "device")).expect("send event");
-        wait_until(|| parts.runs.runs_with_dedup(EVENT_KEY) == 1, "single run").await;
+        wait_until_async(
+            || async { parts.runs.runs_with_dedup(EVENT_KEY).await == 1 },
+            "single run",
+        )
+        .await;
         settle().await;
         assert_eq!(
-            parts.runs.runs_with_dedup(EVENT_KEY),
+            parts.runs.runs_with_dedup(EVENT_KEY).await,
             1,
             "duplicate start must not double runs"
         );
@@ -818,7 +818,7 @@ pub(crate) mod tests {
         // Broadcast with zero receivers errors — the loop is gone, as intended.
         let _ = parts.host.tx.send(event(1, 5, "device"));
         settle().await;
-        assert!(parts.runs.runs.lock().unwrap().is_empty(), "stopped loop must not run");
+        assert!(parts.runs.is_empty().await, "stopped loop must not run");
 
         // Stop is idempotent.
         parts.manager.stop(WS).await;
@@ -865,7 +865,7 @@ pub(crate) mod tests {
         tokio::time::advance(Duration::from_secs(60)).await;
         settle().await;
         assert_eq!(
-            parts.runs.runs_with_dedup(EVENT_KEY),
+            parts.runs.runs_with_dedup(EVENT_KEY).await,
             0,
             "drained pending signal must not run"
         );
@@ -898,7 +898,7 @@ pub(crate) mod tests {
         assert_eq!(pushes[0].0, "agent:ws_01:a/s1");
         assert!(pushes[0].1.contains("done"), "assistant message carries the summary");
 
-        let runs = parts.runs.runs.lock().unwrap();
+        let runs = parts.runs.all().await;
         let run = runs
             .iter()
             .find(|r| r.trigger == "user:u1")
@@ -945,8 +945,8 @@ pub(crate) mod tests {
         })
         .expect("heartbeat directive accepted");
 
-        wait_until(|| !parts.runs.runs.lock().unwrap().is_empty(), "run persisted").await;
-        let runs = parts.runs.runs.lock().unwrap();
+        wait_until_async(|| async { !parts.runs.is_empty().await }, "run persisted").await;
+        let runs = parts.runs.all().await;
         let run = runs
             .iter()
             .find(|r| r.problem_key.as_deref() == Some("set_hvac:dev-1"))

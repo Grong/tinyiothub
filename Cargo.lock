@@ -5475,6 +5475,7 @@ name = "skills"
 version = "0.4.6"
 dependencies = [
  "async-trait",
+ "db",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
