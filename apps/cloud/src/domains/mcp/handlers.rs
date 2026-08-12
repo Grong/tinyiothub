@@ -156,11 +156,7 @@ pub struct JsonRpcResult {
 /// Generic over the composition state `S` (SEP contract): the router nests
 /// into the composition layer's `Router<AppState>`; handlers extract
 /// `State<AppState>` via `FromRef`.
-pub fn create_router<S>() -> Router<S>
-where
-    S: Clone + Send + Sync + 'static,
-    AppState: axum::extract::FromRef<S>,
-{
+pub fn create_router() -> Router<crate::shared::app_state::AppState> {
     Router::new()
         .route("/", post(handle_mcp_request))
         .route("/tools/list", post(handle_tools_list))

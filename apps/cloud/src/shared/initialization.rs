@@ -252,7 +252,7 @@ async fn ensure_user_workspace(state: &AppState, user_id: &str) -> Result<()> {
     tracing::info!("[init] Created workspace {} for user {}", ws_id, user_id);
 
     // Scaffold shared base directory (once for all workspaces)
-    match tinyiothub_agent::host::scaffold::scaffold_shared_base().await {
+    match crate::domains::agent::host::scaffold::scaffold_shared_base().await {
         Ok(result) => {
             tracing::info!("[init] Scaffolded shared agent base (_default): {}", result);
         }
@@ -263,7 +263,7 @@ async fn ensure_user_workspace(state: &AppState, user_id: &str) -> Result<()> {
 
     // Scaffold workspace directory
     let ws_dir = crate::shared::paths::workspace_dir(&ws_id);
-    match tinyiothub_agent::host::scaffold::scaffold_workspace(&ws_dir).await {
+    match crate::domains::agent::host::scaffold::scaffold_workspace(&ws_dir).await {
         Ok(result) => {
             tracing::info!("[init] Scaffolded workspace {}: {}", ws_id, result);
         }
@@ -275,7 +275,7 @@ async fn ensure_user_workspace(state: &AppState, user_id: &str) -> Result<()> {
     // Create agent for workspace
     let agent_result = state
         .agent_pool
-        .create_agent(&tinyiothub_agent::host::shared::AgentConfig {
+        .create_agent(&crate::domains::agent::host::shared::AgentConfig {
             workspace_id: ws_id.clone(),
             name: format!("{}的工作空间", ws_name),
             ..Default::default()
@@ -354,7 +354,7 @@ async fn ensure_default_workspace_and_agent(state: &AppState, pool: &sqlx::Pool<
         tracing::info!("[init] Created default workspace");
 
         // Scaffold shared base directory (once for all workspaces)
-        match tinyiothub_agent::host::scaffold::scaffold_shared_base().await {
+        match crate::domains::agent::host::scaffold::scaffold_shared_base().await {
             Ok(result) => {
                 tracing::info!("[init] Scaffolded shared agent base (_default): {}", result);
             }
@@ -365,7 +365,7 @@ async fn ensure_default_workspace_and_agent(state: &AppState, pool: &sqlx::Pool<
 
         // Scaffold workspace directory with prompt templates and subdirectories
         let workspace_dir = crate::shared::paths::default_workspace_dir();
-        match tinyiothub_agent::host::scaffold::scaffold_workspace(&workspace_dir).await {
+        match crate::domains::agent::host::scaffold::scaffold_workspace(&workspace_dir).await {
             Ok(result) => {
                 tracing::info!("[init] Scaffolded workspace directory: {}", result);
             }
@@ -386,7 +386,7 @@ async fn ensure_default_workspace_and_agent(state: &AppState, pool: &sqlx::Pool<
     if needs_agent {
         let agent_result = state
             .agent_pool
-            .create_agent(&tinyiothub_agent::host::shared::AgentConfig {
+            .create_agent(&crate::domains::agent::host::shared::AgentConfig {
                 workspace_id: "ws-default-001".to_string(),
                 name: "默认工作空间".to_string(),
                 ..Default::default()

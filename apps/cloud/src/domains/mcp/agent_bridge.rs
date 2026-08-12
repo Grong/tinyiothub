@@ -16,8 +16,10 @@
 
 use std::sync::Arc;
 
+use crate::domains::agent::host::ports::{
+    ExternalToolContext, ExternalToolHandler, ExternalToolMeta, ExternalToolRegistry,
+};
 use async_trait::async_trait;
-use tinyiothub_agent::host::ports::{ExternalToolContext, ExternalToolHandler, ExternalToolMeta, ExternalToolRegistry};
 use tokio::sync::RwLock;
 
 use super::handlers::{McpAuthContext, McpContextGuard};
@@ -51,7 +53,7 @@ impl ExternalToolHandler for BridgedToolHandler {
         self.inner.execute(args).await.map_err(|e| e.to_string())
     }
 
-    fn safety(&self) -> tinyiothub_agent::types::ToolSafety {
+    fn safety(&self) -> crate::domains::agent::types::ToolSafety {
         self.inner.safety()
     }
 }
@@ -85,7 +87,7 @@ impl ExternalToolRegistry for McpExternalToolRegistry {
 /// Call after [`super::register_tools`] has initialized the global registry.
 pub fn register_agent_bridge() {
     if let Some(registry) = super::get_mcp_registry() {
-        tinyiothub_agent::host::ports::set_external_tool_registry(Arc::new(McpExternalToolRegistry { registry }));
+        crate::domains::agent::host::ports::set_external_tool_registry(Arc::new(McpExternalToolRegistry { registry }));
     } else {
         tracing::warn!("MCP registry not initialized; agent external tools unavailable");
     }

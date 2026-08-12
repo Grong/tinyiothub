@@ -12,11 +12,11 @@
 use std::sync::Arc;
 
 pub struct AlarmAiPublisherAdapter {
-    publisher: Arc<tinyiothub_agent::loop_::event::bus::AiEventPublisher>,
+    publisher: Arc<crate::domains::agent::loop_::event::bus::AiEventPublisher>,
 }
 
 impl AlarmAiPublisherAdapter {
-    pub fn new(publisher: Arc<tinyiothub_agent::loop_::event::bus::AiEventPublisher>) -> Self {
+    pub fn new(publisher: Arc<crate::domains::agent::loop_::event::bus::AiEventPublisher>) -> Self {
         Self { publisher }
     }
 }
@@ -24,6 +24,6 @@ impl AlarmAiPublisherAdapter {
 impl tinyiothub_alarm::AlarmAiPublisher for AlarmAiPublisherAdapter {
     fn publish_alarm_created(&self, event: tinyiothub_alarm::AlarmEvent) {
         self.publisher
-            .publish(tinyiothub_agent::loop_::event::types::AiEvent::AlarmCreated(event));
+            .publish(crate::domains::agent::loop_::event::types::AiEvent::AlarmCreated(event));
     }
 }

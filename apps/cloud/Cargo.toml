@@ -15,6 +15,7 @@ name = "tinyiothub-cloud"
 path = "src/main.rs"
 
 [dependencies]
+tokio-util = { version = "0.7", features = ["rt"] }
 # Core async runtime
 tokio = { workspace = true }
 
@@ -106,16 +107,13 @@ memory = { workspace = true }
 policy = { workspace = true }
 skills = { workspace = true }
 web = { workspace = true }
-agent = { workspace = true }
 llm = { workspace = true }
 thing = { workspace = true }
 auth = { workspace = true }
 user = { workspace = true }
-tenant = { workspace = true }
 event = { workspace = true }
 alarm = { workspace = true }
 driver = { workspace = true }
-admin = { workspace = true }
 
 # Dynamic loading
 libloading = { workspace = true }
@@ -167,12 +165,12 @@ serial = ["serialport"]
 test-utils = []
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 proptest = { workspace = true }
 tempfile = { workspace = true }
 mockall = { workspace = true }
 http-body-util = { workspace = true }
-# abort_spike example: CancellationToken for zeroclaw turn_streamed (matches zeroclaw's 0.7)
-tokio-util = "0.7"
+
 
 [lints.rust]
 dead_code = "deny"

@@ -34,13 +34,13 @@ pub struct ServiceManager {
     cron_scheduler: Arc<RwLock<Option<tinyiothub_scheduler::CronSchedulerService>>>,
 
     /// AI orchestrator (set during start_all)
-    orchestrator: Option<Arc<tinyiothub_agent::loop_::orchestrator::Orchestrator>>,
+    orchestrator: Option<Arc<crate::domains::agent::loop_::orchestrator::Orchestrator>>,
 
     /// AI heartbeat runner (set during start_all)
-    heartbeat_runner: Option<Arc<tinyiothub_agent::loop_::heartbeat::runner::HeartbeatRunner>>,
+    heartbeat_runner: Option<Arc<crate::domains::agent::loop_::heartbeat::runner::HeartbeatRunner>>,
 
     /// Shared AI event publisher (set during start_all, drained on shutdown)
-    event_publisher: Option<Arc<tinyiothub_agent::loop_::event::bus::AiEventPublisher>>,
+    event_publisher: Option<Arc<crate::domains::agent::loop_::event::bus::AiEventPublisher>>,
 }
 
 impl ServiceManager {
@@ -146,15 +146,15 @@ impl ServiceManager {
                 app_state.database.pool().clone(),
             ));
 
-            let heartbeat_config = tinyiothub_agent::loop_::heartbeat::types::HeartbeatConfig {
+            let heartbeat_config = crate::domains::agent::loop_::heartbeat::types::HeartbeatConfig {
                 enabled: true,
                 interval_minutes: 15,
             };
             let event_publisher = Arc::new(
-                tinyiothub_agent::loop_::event::bus::AiEventPublisher::new(app_state.event_bus.clone())
-                    .with_drop_notifier(Arc::new(tinyiothub_agent::loop_::event::bus::LoggingDropNotifier)),
+                crate::domains::agent::loop_::event::bus::AiEventPublisher::new(app_state.event_bus.clone())
+                    .with_drop_notifier(Arc::new(crate::domains::agent::loop_::event::bus::LoggingDropNotifier)),
             );
-            let heartbeat_runner = Arc::new(tinyiothub_agent::loop_::heartbeat::runner::HeartbeatRunner::new(
+            let heartbeat_runner = Arc::new(crate::domains::agent::loop_::heartbeat::runner::HeartbeatRunner::new(
                 heartbeat_task_repo.clone(),
                 event_publisher.clone(),
                 heartbeat_config,
@@ -173,7 +173,7 @@ impl ServiceManager {
                 .set_agent_hooks(app_state.agent_hooks.clone());
 
             // Wire agent pool via adapter
-            let ai_adapter = Arc::new(tinyiothub_agent::host::pool_adapter::HostAgentPoolAdapter::new(
+            let ai_adapter = Arc::new(crate::domains::agent::host::pool_adapter::HostAgentPoolAdapter::new(
                 app_state.agent_pool.clone(),
             ));
             heartbeat_runner.set_agent_pool(ai_adapter).await;
@@ -198,51 +198,57 @@ impl ServiceManager {
                 let pool = app_state.database.pool().clone();
                 let policy_repo = Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone()));
                 let runs_repo = Arc::new(tinyiothub_storage::agent_runs::AgentRunsRepository::new(pool.clone()));
-                let manager = Arc::new(tinyiothub_agent::loop_::thing_agent::ThingAgentManager::new(
-                    Arc::new(tinyiothub_agent::host::thing_agent_host::CloudThingAgentHost::new(
+                let manager = Arc::new(crate::domains::agent::loop_::thing_agent::ThingAgentManager::new(
+                    Arc::new(crate::domains::agent::host::thing_agent_host::CloudThingAgentHost::new(
                         pool.clone(),
                         app_state.thing_event_bus.clone(),
                     )),
                     policy_repo.clone(),
-                    Arc::new(tinyiothub_agent::host::autonomous_factory::AutonomousAgentFactory::new(
-                        pool.clone(),
-                        policy_repo,
-                        app_state.thing_event_bus.clone(),
-                        Arc::new(tinyiothub_event::router::ThrottleState::new(60)),
-                        app_state.agent_pool.shared_memory(),
-                        app_state.agent_pool.observer(),
-                        tinyiothub_agent::host::autonomous_factory::minimax_provider_factory(),
-                        tinyiothub_agent::host::shared::config::AgentRuntimeConfig::default().model,
-                        tinyiothub_agent::host::tools::service::ToolRuntimeContext {
-                            device_cache: Some(app_state.device_cache.clone()),
-                            data_server: app_state.data_server.clone(),
-                            // autonomous factory never registers the dispatch tool
-                            directive_sink: None,
-                        },
-                    )),
+                    Arc::new(
+                        crate::domains::agent::host::autonomous_factory::AutonomousAgentFactory::new(
+                            pool.clone(),
+                            policy_repo,
+                            app_state.thing_event_bus.clone(),
+                            Arc::new(tinyiothub_event::router::ThrottleState::new(60)),
+                            app_state.agent_pool.shared_memory(),
+                            app_state.agent_pool.observer(),
+                            crate::domains::agent::host::autonomous_factory::minimax_provider_factory(),
+                            crate::domains::agent::host::shared::config::AgentRuntimeConfig::default().model,
+                            crate::domains::agent::host::tools::service::ToolRuntimeContext {
+                                device_cache: Some(app_state.device_cache.clone()),
+                                data_server: app_state.data_server.clone(),
+                                // autonomous factory never registers the dispatch tool
+                                directive_sink: None,
+                            },
+                        ),
+                    ),
                     runs_repo.clone(),
-                    Arc::new(tinyiothub_agent::loop_::thing_agent::Runner::new()),
-                    tinyiothub_agent::loop_::thing_agent::ThingAgentManagerConfig::default(),
+                    Arc::new(crate::domains::agent::loop_::thing_agent::Runner::new()),
+                    crate::domains::agent::loop_::thing_agent::ThingAgentManagerConfig::default(),
                 ));
                 // T18 X6 心跳桥：HeartbeatCompleted 的结构化 proposals 经 O11
                 // dedup 后投递 UserDirective 进 thing-agent loop。
-                let bridge = Arc::new(tinyiothub_agent::loop_::orchestrator::callbacks::HeartbeatBridge::new(
-                    runs_repo,
-                    manager.clone(),
-                ));
+                let bridge = Arc::new(
+                    crate::domains::agent::loop_::orchestrator::callbacks::HeartbeatBridge::new(
+                        runs_repo,
+                        manager.clone(),
+                    ),
+                );
                 (manager, bridge)
             };
             let (thing_agent_manager, heartbeat_bridge) = thing_agent_manager;
 
-            let orchestrator = Arc::new(tinyiothub_agent::loop_::orchestrator::Orchestrator::new(
+            let orchestrator = Arc::new(crate::domains::agent::loop_::orchestrator::Orchestrator::new(
                 app_state.event_bus.clone(),
                 heartbeat_runner.clone(),
                 heartbeat_task_repo,
                 memory_service,
-                Some(Arc::new(tinyiothub_agent::loop_::event::bus::LoggingDropNotifier)),
-                Some(Arc::new(tinyiothub_agent::host::dlq_repo::SqliteDeadLetterQueue::new(
-                    app_state.database.pool().clone(),
-                ))),
+                Some(Arc::new(crate::domains::agent::loop_::event::bus::LoggingDropNotifier)),
+                Some(Arc::new(
+                    crate::domains::agent::host::dlq_repo::SqliteDeadLetterQueue::new(
+                        app_state.database.pool().clone(),
+                    ),
+                )),
                 Some(thing_agent_manager.clone()),
                 Some(heartbeat_bridge),
             ));
@@ -257,7 +263,7 @@ impl ServiceManager {
                 Ok(ws_ids) => {
                     for ws_id in &ws_ids {
                         let workspace_dir = crate::shared::paths::workspace_dir(ws_id);
-                        if let Err(e) = tinyiothub_agent::host::heartbeat::migrate_file_tasks_to_db(
+                        if let Err(e) = crate::domains::agent::host::heartbeat::migrate_file_tasks_to_db(
                             heartbeat_runner.task_repo().as_ref(),
                             ws_id,
                             &workspace_dir,

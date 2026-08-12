@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tinyiothub_agent::host::agent::AgentPool;
+use crate::domains::agent::host::agent::AgentPool;
 use tinyiothub_auth::redis::RedisClient;
 use tinyiothub_core::models::device_property::DeviceProperty;
 use tinyiothub_driver::legacy::{DeviceMonitoringService, DevicePerformanceService, DeviceQueryService, DeviceService};
@@ -102,19 +102,19 @@ pub struct AppState {
     pub user_service: Arc<tinyiothub_user::UserService>,
 
     /// 租户服务 - CRUD 操作
-    pub tenant_service: Arc<tinyiothub_tenant::TenantService>,
+    pub tenant_service: Arc<crate::domains::tenant::TenantService>,
 
     /// 工作空间服务 - CRUD 操作
-    pub workspace_service: Arc<tinyiothub_tenant::WorkspaceService>,
+    pub workspace_service: Arc<crate::domains::tenant::WorkspaceService>,
 
     /// 标签服务 - CRUD 操作
     pub tag_service: Arc<tinyiothub_thing::tag::TagService>,
 
     /// AI subsystem orchestrator (set during async startup)
-    pub orchestrator: Option<Arc<tinyiothub_agent::loop_::orchestrator::Orchestrator>>,
+    pub orchestrator: Option<Arc<crate::domains::agent::loop_::orchestrator::Orchestrator>>,
 
     /// AI subsystem heartbeat runner (set during async startup)
-    pub heartbeat_runner: Option<Arc<tinyiothub_agent::loop_::heartbeat::runner::HeartbeatRunner>>,
+    pub heartbeat_runner: Option<Arc<crate::domains::agent::loop_::heartbeat::runner::HeartbeatRunner>>,
 
     /// 标签仓库 - 用于设备服务的标签关联
     pub tag_repository: Arc<tinyiothub_thing::tag::TagRepository>,
@@ -132,7 +132,7 @@ pub struct AppState {
     pub cron_run_repo: Arc<tinyiothub_storage::CronRunRepository>,
 
     /// 会话服务 - Agent 聊天会话管理
-    pub session_service: Arc<tinyiothub_agent::host::SessionService>,
+    pub session_service: Arc<crate::domains::agent::host::SessionService>,
 
     /// 缓存的系统信息对象，避免每次请求重新扫描
     pub sysinfo_system: Arc<std::sync::Mutex<sysinfo::System>>,
@@ -149,7 +149,7 @@ pub struct AppState {
     /// 用户指令投递入口（T14）—— HTTP 端点 / chat 工具经此向
     /// thing-agent loop 投递 WakeSignal。T15 用 ThingAgentManager 实现
     /// 并注入；None 时指令入口返回 503。
-    pub directive_sink: Option<Arc<dyn tinyiothub_agent::loop_::thing_agent::DirectiveSink>>,
+    pub directive_sink: Option<Arc<dyn crate::domains::agent::loop_::thing_agent::DirectiveSink>>,
 
     /// Agent 记忆存储 - 持久化 agent 记忆到 SQLite
     pub memory_store: Arc<MemoryStore>,
@@ -163,6 +163,22 @@ pub struct AppState {
     /// 任务集 /  legacy HEARTBEAT.md 解析与迁移，斩断 workspace→agent
     /// 依赖边。由组合层（此处）注入 agent 实现；workspace 域只依赖 core trait。
     pub agent_hooks: Arc<dyn tinyiothub_core::agent_hooks::AgentHooks>,
+    /// 工作空间访问校验（agent 域 seam）
+    pub workspace_access: Arc<dyn crate::domains::agent::host::ports::WorkspaceAccess>,
+    /// System prompts config（chat proxy 构造 full prompt）
+    pub system_prompts: Arc<crate::shared::config::SystemPromptsConfig>,
+    /// Workspace 创建/删除时的 agent 生命周期 seam（tenant 域）
+    pub agent_lifecycle: Arc<dyn crate::domains::tenant::WorkspaceAgentLifecycle>,
+    /// AI 标签建议（无 minimax 配置时 None）
+    pub tag_suggester: Option<Arc<dyn crate::domains::tenant::TagSuggester>>,
+    /// 租户 tj_* token 密钥（启动时从 config 克隆）
+    pub jwt_secret: String,
+    /// 每工作区文件数据根目录
+    pub agents_base_dir: std::path::PathBuf,
+    /// 网络默认值配置切片
+    pub network_defaults: tinyiothub_core::config::NetworkDefaultsConfig,
+    /// 主 MQTT 配置切片
+    pub mqtt_primary: tinyiothub_core::config::MqttBrokerConfig,
 }
 
 impl AppState {
@@ -275,7 +291,7 @@ impl AppState {
         // Register the agent crate's config ports (minimax provider settings
         // + default model) — the agent crate no longer reads cloud's global
         // config directly (P4-Task22).
-        tinyiothub_agent::host::ports::set_minimax_settings(tinyiothub_agent::host::ports::MinimaxSettings {
+        crate::domains::agent::host::ports::set_minimax_settings(crate::domains::agent::host::ports::MinimaxSettings {
             base_url: minimax_config.base_url.clone(),
             auth_token: minimax_config.auth_token.clone(),
             model: minimax_config.model.clone(),
@@ -295,7 +311,7 @@ impl AppState {
                 database.pool().clone(),
                 memory_store.clone(),
                 &agent_settings,
-                tinyiothub_agent::host::autonomous_factory::minimax_provider_factory(),
+                crate::domains::agent::host::autonomous_factory::minimax_provider_factory(),
             )
             .expect("failed to build AgentPool"),
         );
@@ -308,16 +324,16 @@ impl AppState {
         let user_service = Arc::new(tinyiothub_user::UserService::new(user_repository));
 
         // 租户服务
-        let tenant_repository: Arc<tinyiothub_tenant::TenantRepository> = Arc::new(
+        let tenant_repository: Arc<tinyiothub_storage::tenant::TenantRepository> = Arc::new(
             tinyiothub_storage::tenant::TenantRepository::new(database.as_ref().clone()),
         );
-        let tenant_service = Arc::new(tinyiothub_tenant::TenantService::new(tenant_repository));
+        let tenant_service = Arc::new(crate::domains::tenant::TenantService::new(tenant_repository));
 
         // 工作空间服务
-        let workspace_repository: Arc<tinyiothub_tenant::WorkspaceRepository> = Arc::new(
+        let workspace_repository: Arc<tinyiothub_storage::workspace::WorkspaceRepository> = Arc::new(
             tinyiothub_storage::workspace::WorkspaceRepository::new(database.as_ref().clone()),
         );
-        let workspace_service = Arc::new(tinyiothub_tenant::WorkspaceService::new(workspace_repository));
+        let workspace_service = Arc::new(crate::domains::tenant::WorkspaceService::new(workspace_repository));
 
         // 标签服务
         let tag_service = Arc::new(tinyiothub_thing::tag::TagService::new(
@@ -352,7 +368,7 @@ impl AppState {
         let session_repository: Arc<tinyiothub_storage::session::SessionRepository> = Arc::new(
             tinyiothub_storage::session::SessionRepository::new(database.as_ref().clone()),
         );
-        let session_service = Arc::new(tinyiothub_agent::host::SessionService::new(Arc::clone(
+        let session_service = Arc::new(crate::domains::agent::host::SessionService::new(Arc::clone(
             &session_repository,
         )));
 
@@ -413,17 +429,41 @@ impl AppState {
 
         // Thing action hooks（P4.0b）—— agent 侧实现 core trait，注入给 thing handler
         let thing_action_hooks: Arc<dyn tinyiothub_core::thing_hooks::ThingActionHooks> = Arc::new(
-            tinyiothub_agent::host::thing_action_hooks::AgentThingActionHooks::new(database.pool().clone()),
+            crate::domains::agent::host::thing_action_hooks::AgentThingActionHooks::new(database.pool().clone()),
         );
 
         // Agent hooks（P4.0d）—— agent 侧实现 core trait，注入给 workspace 域
         let agent_hooks: Arc<dyn tinyiothub_core::agent_hooks::AgentHooks> =
-            Arc::new(tinyiothub_agent::host::agent_hooks::AgentHooksImpl::new(Arc::new(
+            Arc::new(crate::domains::agent::host::agent_hooks::AgentHooksImpl::new(Arc::new(
                 tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(database.pool().clone()),
             )));
 
+        let settings = crate::shared::config::get();
+        let agent_lifecycle: Arc<dyn crate::domains::tenant::WorkspaceAgentLifecycle> = Arc::new(AgentPoolLifecycle {
+            pool: agent_pool.clone(),
+        });
+        let tag_suggester: Option<Arc<dyn crate::domains::tenant::TagSuggester>> = if settings.minimax.is_some() {
+            Some(Arc::new(MinimaxTagSuggester))
+        } else {
+            None
+        };
+        let jwt_secret = settings.security.jwt.secret.clone();
+        let agents_base_dir = crate::shared::paths::agents_base_dir();
+        let network_defaults = settings.network.defaults.clone();
+        let mqtt_primary = settings.mqtt.primary.clone();
+
         Self {
             device_cache,
+            agent_lifecycle,
+            tag_suggester,
+            jwt_secret,
+            agents_base_dir,
+            network_defaults,
+            mqtt_primary,
+            workspace_access: Arc::new(TenantWorkspaceAccess {
+                workspace_service: workspace_service.clone(),
+            }),
+            system_prompts: Arc::new(crate::shared::config::get().agent.system_prompts.clone()),
             database,
             device_repository_factory,
             data_server: None, // DataServer 由 ServiceManager 设置
@@ -468,7 +508,7 @@ impl AppState {
     }
 
     /// 注入用户指令投递入口（T15 闭环接线调用）
-    pub fn set_directive_sink(&mut self, sink: Arc<dyn tinyiothub_agent::loop_::thing_agent::DirectiveSink>) {
+    pub fn set_directive_sink(&mut self, sink: Arc<dyn crate::domains::agent::loop_::thing_agent::DirectiveSink>) {
         self.directive_sink = Some(sink);
     }
 
@@ -942,14 +982,14 @@ impl axum::extract::FromRef<AppState> for tinyiothub_user::UserState {
 /// tears down the per-workspace Agent via cloud's `AgentPool` (agent plane,
 /// not yet extracted).
 pub struct AgentPoolLifecycle {
-    pub pool: Arc<tinyiothub_agent::host::agent::AgentPool>,
+    pub pool: Arc<crate::domains::agent::host::agent::AgentPool>,
 }
 
 #[async_trait::async_trait]
-impl tinyiothub_tenant::WorkspaceAgentLifecycle for AgentPoolLifecycle {
+impl crate::domains::tenant::WorkspaceAgentLifecycle for AgentPoolLifecycle {
     async fn create_agent(&self, workspace_id: &str, name: &str) -> Result<String, String> {
         self.pool
-            .create_agent(&tinyiothub_agent::host::shared::AgentConfig {
+            .create_agent(&crate::domains::agent::host::shared::AgentConfig {
                 workspace_id: workspace_id.to_string(),
                 name: name.to_string(),
                 ..Default::default()
@@ -969,7 +1009,7 @@ impl tinyiothub_tenant::WorkspaceAgentLifecycle for AgentPoolLifecycle {
 pub struct MinimaxTagSuggester;
 
 #[async_trait::async_trait]
-impl tinyiothub_tenant::TagSuggester for MinimaxTagSuggester {
+impl crate::domains::tenant::TagSuggester for MinimaxTagSuggester {
     async fn suggest(
         &self,
         name: &str,
@@ -1049,28 +1089,6 @@ impl axum::extract::FromRef<AppState> for tinyiothub_driver::DriverState {
         }
     }
 }
-
-impl axum::extract::FromRef<AppState> for tinyiothub_tenant::TenantState {
-    fn from_ref(state: &AppState) -> Self {
-        let settings = crate::shared::config::get();
-        tinyiothub_tenant::TenantState {
-            database: state.database.clone(),
-            tenant_service: state.tenant_service.clone(),
-            workspace_service: state.workspace_service.clone(),
-            agent_lifecycle: Arc::new(AgentPoolLifecycle {
-                pool: state.agent_pool.clone(),
-            }),
-            tag_suggester: if settings.minimax.is_some() {
-                Some(Arc::new(MinimaxTagSuggester))
-            } else {
-                None
-            },
-            jwt_secret: settings.security.jwt.secret.clone(),
-            agents_base_dir: crate::shared::paths::agents_base_dir(),
-        }
-    }
-}
-
 // ============================================================================
 // P4-Task22: agent domain slice + workspace-access seam adapter
 // ============================================================================
@@ -1079,11 +1097,11 @@ impl axum::extract::FromRef<AppState> for tinyiothub_tenant::TenantState {
 /// over the tenant crate's `WorkspaceService` (tenant → agent edge stays
 /// one-way; agent never names tenant types).
 pub struct TenantWorkspaceAccess {
-    pub workspace_service: Arc<tinyiothub_tenant::WorkspaceService>,
+    pub workspace_service: Arc<crate::domains::tenant::WorkspaceService>,
 }
 
 #[async_trait::async_trait]
-impl tinyiothub_agent::host::ports::WorkspaceAccess for TenantWorkspaceAccess {
+impl crate::domains::agent::host::ports::WorkspaceAccess for TenantWorkspaceAccess {
     async fn workspace_tenant_id(&self, workspace_id: &str) -> Result<Option<String>, String> {
         self.workspace_service
             .find_by_id(workspace_id)
@@ -1092,28 +1110,6 @@ impl tinyiothub_agent::host::ports::WorkspaceAccess for TenantWorkspaceAccess {
             .map_err(|e| e.to_string())
     }
 }
-
-impl axum::extract::FromRef<AppState> for tinyiothub_agent::AgentState {
-    fn from_ref(state: &AppState) -> Self {
-        tinyiothub_agent::AgentState {
-            database: state.database.clone(),
-            agent_pool: state.agent_pool.clone(),
-            session_service: state.session_service.clone(),
-            memory_store: state.memory_store.clone(),
-            directive_sink: state.directive_sink.clone(),
-            workspace_access: Arc::new(TenantWorkspaceAccess {
-                workspace_service: state.workspace_service.clone(),
-            }),
-            data_server: state.data_server.clone(),
-            device_cache: state.device_cache.clone(),
-            heartbeat_runner: state.heartbeat_runner.clone(),
-            orchestrator: state.orchestrator.clone(),
-            agent_hooks: state.agent_hooks.clone(),
-            system_prompts: Arc::new(crate::shared::config::get().agent.system_prompts.clone()),
-        }
-    }
-}
-
 // ============================================================================
 // P4-Task23: mcp domain slice
 // ============================================================================
@@ -1131,44 +1127,10 @@ pub struct EventSecurityAdminRoleChecker {
 }
 
 #[async_trait::async_trait]
-impl tinyiothub_admin::AdminRoleChecker for EventSecurityAdminRoleChecker {
+impl crate::domains::admin::AdminRoleChecker for EventSecurityAdminRoleChecker {
     async fn require_admin_role(&self, user_id: &str, operation: &str) -> Result<(), String> {
         crate::shared::error_handling::AuthHelper::require_admin_role(&self.state, user_id, operation)
             .await
             .map_err(|_| "Access denied: admin role required".to_string())
-    }
-}
-
-/// P4-Task24: derive the admin domain's state slice from the global
-/// AppState. Cloud mounts the admin routers (/devices, /system,
-/// /monitoring, /batch, /jobs, /open) with this `FromRef` conversion.
-/// Config slices are cloned from the process-global settings at extraction
-/// time — identical semantics to the former per-request `config::get()`
-/// reads (set once at startup, never reloaded).
-impl axum::extract::FromRef<AppState> for tinyiothub_admin::AdminState {
-    fn from_ref(state: &AppState) -> Self {
-        let settings = crate::shared::config::get();
-        tinyiothub_admin::AdminState {
-            database: state.database.clone(),
-            device_cache: state.device_cache.clone(),
-            device_repository_factory: state.device_repository_factory.clone(),
-            tag_repository: state.tag_repository.clone(),
-            tag_service: state.tag_service.clone(),
-            event_bus: state.event_bus.clone(),
-            event_repository: state.event_repository.clone(),
-            data_server: state.data_server.clone(),
-            device_query_service: state.device_query_service.clone(),
-            monitoring_service: state.monitoring_service.clone(),
-            performance_service: state.performance_service.clone(),
-            trace_service: state.trace_service.clone(),
-            workspace_service: state.workspace_service.clone(),
-            tenant_service: state.tenant_service.clone(),
-            cron_job_repo: state.cron_job_repo.clone(),
-            cron_run_repo: state.cron_run_repo.clone(),
-            sysinfo_system: state.sysinfo_system.clone(),
-            role_checker: Arc::new(EventSecurityAdminRoleChecker { state: state.clone() }),
-            network_defaults: settings.network.defaults.clone(),
-            mqtt_primary: settings.mqtt.primary.clone(),
-        }
     }
 }

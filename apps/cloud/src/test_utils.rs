@@ -167,7 +167,7 @@ async fn create_test_app_state() -> AppState {
     let device_cache = Arc::new(DeviceCache::new());
 
     // Initialize START_TIME for uptime tests
-    let _ = tinyiothub_admin::monitoring::handler::health::START_TIME.set(std::time::SystemTime::now());
+    let _ = crate::domains::admin::monitoring::handler::health::START_TIME.set(std::time::SystemTime::now());
 
     AppState::new(device_cache, pool)
 }

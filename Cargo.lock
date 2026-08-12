@@ -18,36 +18,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "admin"
-version = "0.4.6"
-dependencies = [
- "async-trait",
- "auth",
- "axum",
- "chrono",
- "core",
- "cron 0.12.1",
- "db",
- "driver",
- "event",
- "runtime",
- "scheduler",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "sqlx",
- "subtle",
- "sysinfo",
- "tenant",
- "thing",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
- "web",
-]
-
-[[package]]
 name = "aead"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -101,47 +71,6 @@ checksum = "10b6f24a1f796bc46415a1d0d18dc0a8203ccba088acf5def3291c4f61225522"
 dependencies = [
  "aes 0.9.0",
  "byteorder",
-]
-
-[[package]]
-name = "agent"
-version = "0.4.6"
-dependencies = [
- "anyhow",
- "async-stream",
- "async-trait",
- "auth",
- "axum",
- "chrono",
- "core",
- "dashmap",
- "db",
- "event",
- "futures",
- "hex",
- "llm",
- "memory",
- "mockall",
- "parking_lot 0.12.5",
- "policy",
- "regex",
- "reqwest 0.12.28",
- "runtime",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "skills",
- "sqlx",
- "tempfile",
- "thing",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
- "web",
- "zeroclaw-api",
- "zeroclawlabs",
 ]
 
 [[package]]
@@ -5935,32 +5864,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tenant"
-version = "0.4.6"
-dependencies = [
- "agent",
- "async-trait",
- "axum",
- "base64 0.21.7",
- "bcrypt",
- "chrono",
- "core",
- "db",
- "hmac 0.12.1",
- "rand 0.8.6",
- "runtime",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "sqlx",
- "subtle",
- "tokio",
- "tracing",
- "uuid",
- "web",
-]
-
-[[package]]
 name = "terminfo"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6144,9 +6047,7 @@ dependencies = [
 name = "tinyiothub-cloud"
 version = "0.4.6"
 dependencies = [
- "admin",
  "aes-gcm",
- "agent",
  "alarm",
  "anyhow",
  "async-stream",
@@ -6204,7 +6105,6 @@ dependencies = [
  "subtle",
  "sysinfo",
  "tempfile",
- "tenant",
  "thing",
  "thiserror 1.0.69",
  "tokio",
@@ -6484,6 +6384,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

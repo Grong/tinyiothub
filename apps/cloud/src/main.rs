@@ -56,7 +56,7 @@ async fn main_impl() -> std::io::Result<()> {
     }));
 
     // Initialize global start time for uptime calculation (before any health checks)
-    let _ = tinyiothub_admin::monitoring::handler::health::START_TIME.set(std::time::SystemTime::now());
+    let _ = tinyiothub_cloud::domains::admin::monitoring::handler::health::START_TIME.set(std::time::SystemTime::now());
 
     info!("🚀 TinyIoTHub Starting...");
     info!("Environment: {}", config::environment());
@@ -126,7 +126,7 @@ async fn main_impl() -> std::io::Result<()> {
         crate::domains::mcp::agent_bridge::register_agent_bridge();
         app_state
             .agent_pool
-            .set_runtime_context(tinyiothub_agent::host::tools::service::ToolRuntimeContext {
+            .set_runtime_context(crate::domains::agent::host::tools::service::ToolRuntimeContext {
                 device_cache: Some(app_state.device_cache.clone()),
                 data_server: app_state.data_server.clone(),
                 directive_sink: app_state.directive_sink.clone(),

@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use tinyiothub_agent::{host::thing_agent_host::CloudThingAgentHost, loop_::thing_agent::ThingAgentHost};
+use crate::domains::agent::{host::thing_agent_host::CloudThingAgentHost, loop_::thing_agent::ThingAgentHost};
 use tinyiothub_core::models::event::EventLevel;
 use tinyiothub_event::{
     bus::ThingEventBus,

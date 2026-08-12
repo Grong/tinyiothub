@@ -37,11 +37,14 @@ pub mod middleware;
 pub fn create_router() -> Router<AppState> {
     // 创建需要认证的路由
     let protected_routes = Router::new()
-        .nest("/devices", tinyiothub_admin::device::create_router())
+        .nest("/devices", crate::domains::admin::device::create_router())
         .nest("/drivers", tinyiothub_driver::router())
         .nest("/alarms", tinyiothub_alarm::router())
         .nest("/alarm-rules", tinyiothub_alarm::rule_router())
-        .nest("/monitoring", tinyiothub_admin::monitoring::handler::create_router())
+        .nest(
+            "/monitoring",
+            crate::domains::admin::monitoring::handler::create_router(),
+        )
         .nest("/users", tinyiothub_user::router())
         .nest("/users/roles", tinyiothub_user::role::create_router())
         .nest("/users/permissions", tinyiothub_user::permission::create_router())
@@ -55,46 +58,49 @@ pub fn create_router() -> Router<AppState> {
             "/notification-channels",
             crate::domains::notify::handler::create_channel_router(),
         )
-        .nest("/tenants", tinyiothub_tenant::router())
+        .nest("/tenants", crate::domains::tenant::router())
         .nest(
             "/events",
             tinyiothub_event::router().merge(crate::shared::event::http::create_router()),
         )
-        .nest("/jobs", tinyiothub_admin::jobs::handler::create_router())
-        .nest("/batch", tinyiothub_admin::batch::handler::create_router())
+        .nest("/jobs", crate::domains::admin::jobs::handler::create_router())
+        .nest("/batch", crate::domains::admin::batch::handler::create_router())
         .nest("/heartbeat", tinyiothub_driver::heartbeat_router())
-        .nest("/workspaces", tinyiothub_tenant::workspace_router())
-        .nest("/workspaces", tinyiothub_agent::host::memory::handler::create_router())
+        .nest("/workspaces", crate::domains::tenant::workspace_router())
         .nest(
             "/workspaces",
-            tinyiothub_agent::host::handler::agent_tasks::create_workspace_router(),
+            crate::domains::agent::host::memory::handler::create_router(),
         )
         .nest(
             "/workspaces",
-            tinyiothub_agent::host::handler::workspace_heartbeat::create_router(),
+            crate::domains::agent::host::handler::agent_tasks::create_workspace_router(),
+        )
+        .nest(
+            "/workspaces",
+            crate::domains::agent::host::handler::workspace_heartbeat::create_router(),
         )
         .nest("/mcp", crate::domains::mcp::router())
-        .nest("/chat", tinyiothub_agent::chat::handler::create_router())
+        .nest("/chat", crate::domains::agent::chat::handler::create_router())
         .nest(
             "/agents/skills",
-            tinyiothub_agent::host::handler::skills::create_router(),
+            crate::domains::agent::host::handler::skills::create_router(),
         )
         .nest("/tags", tinyiothub_thing::tag::create_router())
-        .nest("/api-keys", tinyiothub_tenant::api_key_router())
-        .nest("/agents", tinyiothub_agent::host::handler::create_router())
+        .nest("/api-keys", crate::domains::tenant::api_key_router())
+        .nest("/agents", crate::domains::agent::host::handler::create_router())
         .nest("/driver-health", tinyiothub_driver::driver_health_router())
         .nest("/things", tinyiothub_thing::router())
         .route(
             "/tools/catalog",
-            get(tinyiothub_agent::chat::handler::proxy::tools_catalog),
+            get(crate::domains::agent::chat::handler::proxy::tools_catalog),
         )
         .route(
             "/tools/effective",
-            get(tinyiothub_agent::chat::handler::proxy::tools_effective),
+            get(crate::domains::agent::chat::handler::proxy::tools_effective),
         )
         .route(
             "/tools/toggle",
-            post(tinyiothub_agent::chat::handler::proxy::tools_toggle),
+            post(crate::domains::agent::chat::handler::proxy::tools_toggle),
         )
         .nest("/auth", tinyiothub_auth::router())
         .route("/test-auth", get(test_auth_endpoint))
@@ -108,8 +114,8 @@ pub fn create_router() -> Router<AppState> {
         .nest("/auth/token", tinyiothub_auth::handler::token::create_router())
         .nest("/auth/sms", tinyiothub_auth::handler::sms::create_router())
         .nest("/auth/social", tinyiothub_auth::handler::social::create_router())
-        .nest("/tenants", tinyiothub_tenant::auth_router())
-        .nest("/system", tinyiothub_admin::system::create_router())
+        .nest("/tenants", crate::domains::tenant::auth_router())
+        .nest("/system", crate::domains::admin::system::create_router())
         .nest("/system", crate::shared::initialization::create_router())
         .route("/gateway/pair", post(tinyiothub_driver::gateway::handler::pairing::pair_device))
         // 公开的SSE端点（不需要JWT header, 通过?token=鉴权）
@@ -127,7 +133,7 @@ pub fn create_router() -> Router<AppState> {
     // 合并所有路由
     Router::new()
         .nest("/v1", v1_routes)
-        .nest("/open", tinyiothub_admin::open::create_open_router())
+        .nest("/open", crate::domains::admin::open::create_open_router())
         .route("/health", get(health_check))
 }
 
