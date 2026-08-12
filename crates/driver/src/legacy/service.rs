@@ -33,7 +33,7 @@ pub struct DeviceService {
     repository: Arc<dyn DeviceRepository>,
     database: Arc<Database>,
     event_bus: Option<Arc<EventBus>>,
-    tag_repository: Option<Arc<dyn TagRepository>>,
+    tag_repository: Option<Arc<TagRepository>>,
 }
 
 impl DeviceService {
@@ -59,7 +59,7 @@ impl DeviceService {
         }
     }
 
-    pub fn with_tag_repository(mut self, tag_repository: Arc<dyn TagRepository>) -> Self {
+    pub fn with_tag_repository(mut self, tag_repository: Arc<TagRepository>) -> Self {
         self.tag_repository = Some(tag_repository);
         self
     }

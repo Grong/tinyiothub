@@ -4,7 +4,7 @@ use chrono::Utc;
 use cron::Schedule;
 use tinyiothub_core::error::{Error, Result};
 use tinyiothub_core::models::cron_job::CronJob;
-use tinyiothub_core::repository::cron::{CronJobRepository, CronRunRepository};
+use tinyiothub_storage::{CronJobRepository, CronRunRepository};
 use tokio::{
     sync::{Semaphore, broadcast},
     task::JoinHandle,
@@ -15,8 +15,8 @@ use crate::engine::{ExecutionResult, ExecutorError, ExecutorRegistry};
 
 /// Cron job scheduler service that polls for due jobs and executes them.
 pub struct CronSchedulerService {
-    job_repo: Arc<dyn CronJobRepository>,
-    run_repo: Arc<dyn CronRunRepository>,
+    job_repo: Arc<CronJobRepository>,
+    run_repo: Arc<CronRunRepository>,
     registry: Arc<ExecutorRegistry>,
     shutdown_tx: broadcast::Sender<()>,
     poll_interval: std::time::Duration,
@@ -27,11 +27,7 @@ impl CronSchedulerService {
     /// Create a new scheduler service with the given repositories and executor
     /// registry. Concrete (db-bound) executors are registered by the caller —
     /// see `ExecutorRegistry::register`.
-    pub fn new(
-        job_repo: Arc<dyn CronJobRepository>,
-        run_repo: Arc<dyn CronRunRepository>,
-        registry: ExecutorRegistry,
-    ) -> Self {
+    pub fn new(job_repo: Arc<CronJobRepository>, run_repo: Arc<CronRunRepository>, registry: ExecutorRegistry) -> Self {
         Self {
             job_repo,
             run_repo,
@@ -95,8 +91,8 @@ impl CronSchedulerService {
 
 /// Single polling cycle: find due jobs and execute them with concurrency limit.
 async fn tick_impl(
-    job_repo: Arc<dyn CronJobRepository>,
-    run_repo: Arc<dyn CronRunRepository>,
+    job_repo: Arc<CronJobRepository>,
+    run_repo: Arc<CronRunRepository>,
     registry: Arc<ExecutorRegistry>,
     max_concurrent: usize,
 ) -> Result<()> {
@@ -143,8 +139,8 @@ async fn tick_impl(
 /// Execute a single cron job: atomically claim, create run record, execute, update stats.
 async fn execute_job(
     job: CronJob,
-    job_repo: Arc<dyn CronJobRepository>,
-    run_repo: Arc<dyn CronRunRepository>,
+    job_repo: Arc<CronJobRepository>,
+    run_repo: Arc<CronRunRepository>,
     registry: Arc<ExecutorRegistry>,
 ) -> Result<()> {
     // Atomically claim the job (prevents race between scheduler and manual trigger)

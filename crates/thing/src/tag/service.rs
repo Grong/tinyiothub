@@ -3,17 +3,17 @@ use std::sync::Arc;
 use tinyiothub_core::error::{Error, Result};
 
 use super::{
-    repo::{TagBindingRepository, TagRepository},
     types::{CreateTagBindingRequest, CreateTagRequest, Tag, TagBinding, TagQuery, UpdateTagRequest},
+    types::{TagBindingRepository, TagRepository},
 };
 
 pub struct TagService {
-    tag_repository: Arc<dyn TagRepository>,
-    tag_binding_repository: Arc<dyn TagBindingRepository>,
+    tag_repository: Arc<TagRepository>,
+    tag_binding_repository: Arc<TagBindingRepository>,
 }
 
 impl TagService {
-    pub fn new(tag_repository: Arc<dyn TagRepository>, tag_binding_repository: Arc<dyn TagBindingRepository>) -> Self {
+    pub fn new(tag_repository: Arc<TagRepository>, tag_binding_repository: Arc<TagBindingRepository>) -> Self {
         Self {
             tag_repository,
             tag_binding_repository,

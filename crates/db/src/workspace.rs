@@ -969,4 +969,3 @@ mod extract_tests {
         assert_eq!(extract_file_path_from_content(content), "/uploads/model.glb");
     }
 }
-

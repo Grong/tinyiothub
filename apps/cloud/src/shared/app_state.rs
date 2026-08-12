@@ -116,7 +116,7 @@ pub struct AppState {
     pub heartbeat_runner: Option<Arc<tinyiothub_agent::loop_::heartbeat::runner::HeartbeatRunner>>,
 
     /// 标签仓库 - 用于设备服务的标签关联
-    pub tag_repository: Arc<dyn tinyiothub_thing::tag::TagRepository>,
+    pub tag_repository: Arc<tinyiothub_thing::tag::TagRepository>,
 
     /// 角色服务 - CRUD 操作
     pub role_service: Arc<tinyiothub_user::role::RoleService>,
@@ -125,10 +125,10 @@ pub struct AppState {
     pub permission_service: Arc<tinyiothub_user::permission::PermissionService>,
 
     /// Cron 任务仓库
-    pub cron_job_repo: Arc<dyn tinyiothub_storage::traits::cron::CronJobRepository>,
+    pub cron_job_repo: Arc<tinyiothub_storage::CronJobRepository>,
 
     /// Cron 执行记录仓库
-    pub cron_run_repo: Arc<dyn tinyiothub_storage::traits::cron::CronRunRepository>,
+    pub cron_run_repo: Arc<tinyiothub_storage::CronRunRepository>,
 
     /// 会话服务 - Agent 聊天会话管理
     pub session_service: Arc<tinyiothub_agent::host::SessionService>,
@@ -215,11 +215,10 @@ impl AppState {
         // 这里只创建事件总线，处理器注册推迟到 register_event_handlers() 方法
 
         // 标签仓库（提前创建，供 DeviceService 使用）
-        let tag_repository: Arc<dyn tinyiothub_thing::tag::TagRepository> = Arc::new(
-            tinyiothub_thing::tag::SqliteTagRepository::new(database.as_ref().clone()),
-        );
-        let tag_binding_repository: Arc<dyn tinyiothub_thing::tag::TagBindingRepository> = Arc::new(
-            tinyiothub_thing::tag::SqliteTagBindingRepository::new(database.as_ref().clone()),
+        let tag_repository: Arc<tinyiothub_thing::tag::TagRepository> =
+            Arc::new(tinyiothub_thing::tag::TagRepository::new(database.as_ref().clone()));
+        let tag_binding_repository: Arc<tinyiothub_thing::tag::TagBindingRepository> = Arc::new(
+            tinyiothub_thing::tag::TagBindingRepository::new(database.as_ref().clone()),
         );
 
         // 基础服务 - 使用事件总线
@@ -345,12 +344,10 @@ impl AppState {
         ));
 
         // Cron 仓库
-        let cron_job_repo: Arc<dyn tinyiothub_storage::traits::cron::CronJobRepository> = Arc::new(
-            tinyiothub_storage::cron_job::SqliteCronJobRepository::new(database.as_ref().clone()),
-        );
-        let cron_run_repo: Arc<dyn tinyiothub_storage::traits::cron::CronRunRepository> = Arc::new(
-            tinyiothub_storage::cron_run::SqliteCronRunRepository::new(database.as_ref().clone()),
-        );
+        let cron_job_repo: Arc<tinyiothub_storage::CronJobRepository> =
+            Arc::new(tinyiothub_storage::CronJobRepository::new(database.as_ref().clone()));
+        let cron_run_repo: Arc<tinyiothub_storage::CronRunRepository> =
+            Arc::new(tinyiothub_storage::CronRunRepository::new(database.as_ref().clone()));
 
         // 会话服务 - 用于 Agent 聊天会话管理
         let session_repository: Arc<dyn tinyiothub_agent::host::SessionRepository> = Arc::new(

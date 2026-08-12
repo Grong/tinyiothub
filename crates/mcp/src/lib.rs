@@ -41,7 +41,7 @@ pub struct McpState {
     /// 设备仓库工厂 - 用于创建租户感知的设备仓库
     pub device_repository_factory: Arc<DeviceRepositoryFactory>,
     /// 标签仓库 - 用于设备服务的标签关联
-    pub tag_repository: Arc<dyn tinyiothub_thing::tag::TagRepository>,
+    pub tag_repository: Arc<tinyiothub_thing::tag::TagRepository>,
     /// 模板引擎 - 设备模板管理
     pub template_engine: Arc<TemplateEngine>,
     /// 数据服务器 - 设备数据采集和命令执行
@@ -51,9 +51,9 @@ pub struct McpState {
     /// 租户服务 - API Key 认证（X-API-Key 头校验）
     pub tenant_service: Arc<tinyiothub_tenant::TenantService>,
     /// Cron 任务仓库
-    pub cron_job_repo: Arc<dyn tinyiothub_storage::traits::cron::CronJobRepository>,
+    pub cron_job_repo: Arc<tinyiothub_storage::CronJobRepository>,
     /// Cron 执行记录仓库
-    pub cron_run_repo: Arc<dyn tinyiothub_storage::traits::cron::CronRunRepository>,
+    pub cron_run_repo: Arc<tinyiothub_storage::CronRunRepository>,
     /// 事件总线 - 属性变更事件发布（update_device_property_value）
     pub event_bus: Arc<tinyiothub_runtime::event_bus::EventBus>,
 }

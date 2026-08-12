@@ -1,20 +1,18 @@
-use async_trait::async_trait;
 use chrono::Utc;
 use cron::Schedule;
 use sqlx::{QueryBuilder, Row};
 use std::str::FromStr;
 
 use crate::database::Database;
-use crate::traits::cron::CronJobRepository;
 use tinyiothub_core::error::Result;
 use tinyiothub_core::models::cron_job::{CreateCronJobRequest, CronJob, CronJobQuery, UpdateCronJobRequest};
 use tinyiothub_core::{generate_id, now_string};
 
-pub struct SqliteCronJobRepository {
+pub struct CronJobRepository {
     database: Database,
 }
 
-impl SqliteCronJobRepository {
+impl CronJobRepository {
     pub fn new(database: Database) -> Self {
         Self { database }
     }
@@ -60,9 +58,8 @@ fn compute_next_run_at(cron_expression: &str) -> Option<String> {
     Some(next.format("%Y-%m-%d %H:%M:%S").to_string())
 }
 
-#[async_trait]
-impl CronJobRepository for SqliteCronJobRepository {
-    async fn find_by_id(&self, id: &str) -> Result<Option<CronJob>> {
+impl CronJobRepository {
+    pub async fn find_by_id(&self, id: &str) -> Result<Option<CronJob>> {
         let row = sqlx::query(
             r#"
             SELECT id, workspace_id, name, description, job_type, cron_expression, config,
@@ -80,7 +77,7 @@ impl CronJobRepository for SqliteCronJobRepository {
         Ok(row.map(|r| map_cron_job_row(&r)).transpose()?)
     }
 
-    async fn find_all(&self, query: &CronJobQuery) -> Result<Vec<CronJob>> {
+    pub async fn find_all(&self, query: &CronJobQuery) -> Result<Vec<CronJob>> {
         let mut builder = QueryBuilder::<sqlx::Sqlite>::new(
             r#"
             SELECT id, workspace_id, name, description, job_type, cron_expression, config,
@@ -128,7 +125,7 @@ impl CronJobRepository for SqliteCronJobRepository {
         Ok(jobs)
     }
 
-    async fn create(&self, job: &CreateCronJobRequest, created_by: Option<&str>) -> Result<CronJob> {
+    pub async fn create(&self, job: &CreateCronJobRequest, created_by: Option<&str>) -> Result<CronJob> {
         let id = generate_id();
         let now = now_string();
         let timeout_seconds = job.timeout_seconds.unwrap_or(300);
@@ -166,7 +163,7 @@ impl CronJobRepository for SqliteCronJobRepository {
             .ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
-    async fn update(&self, id: &str, req: &UpdateCronJobRequest) -> Result<CronJob> {
+    pub async fn update(&self, id: &str, req: &UpdateCronJobRequest) -> Result<CronJob> {
         let now = now_string();
 
         let mut builder = QueryBuilder::<sqlx::Sqlite>::new("UPDATE cron_jobs SET updated_at = ");
@@ -245,7 +242,7 @@ impl CronJobRepository for SqliteCronJobRepository {
             .ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
-    async fn delete(&self, id: &str) -> Result<bool> {
+    pub async fn delete(&self, id: &str) -> Result<bool> {
         let result = sqlx::query("DELETE FROM cron_jobs WHERE id = ?")
             .bind(id)
             .execute(self.database.pool())
@@ -254,7 +251,7 @@ impl CronJobRepository for SqliteCronJobRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    async fn update_run_stats(&self, id: &str, status: &str, error: Option<&str>) -> Result<bool> {
+    pub async fn update_run_stats(&self, id: &str, status: &str, error: Option<&str>) -> Result<bool> {
         let now = now_string();
         let success_inc = if status == "success" { 1 } else { 0 };
         let fail_inc = if status == "failed" { 1 } else { 0 };
@@ -285,7 +282,7 @@ impl CronJobRepository for SqliteCronJobRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    async fn set_running(&self, id: &str, running: bool) -> Result<bool> {
+    pub async fn set_running(&self, id: &str, running: bool) -> Result<bool> {
         let now = now_string();
 
         let result = sqlx::query("UPDATE cron_jobs SET is_running = ?, updated_at = ? WHERE id = ?")
@@ -298,7 +295,7 @@ impl CronJobRepository for SqliteCronJobRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    async fn find_due_jobs(&self) -> Result<Vec<CronJob>> {
+    pub async fn find_due_jobs(&self) -> Result<Vec<CronJob>> {
         let mut builder = QueryBuilder::<sqlx::Sqlite>::new(
             r#"
             SELECT id, workspace_id, name, description, job_type, cron_expression, config,
@@ -322,7 +319,7 @@ impl CronJobRepository for SqliteCronJobRepository {
         Ok(jobs)
     }
 
-    async fn claim_job(&self, id: &str) -> Result<bool> {
+    pub async fn claim_job(&self, id: &str) -> Result<bool> {
         let now = now_string();
         let result = sqlx::query("UPDATE cron_jobs SET is_running = 1, updated_at = ? WHERE id = ? AND is_running = 0")
             .bind(&now)
@@ -333,7 +330,7 @@ impl CronJobRepository for SqliteCronJobRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    async fn clear_all_running(&self) -> Result<u64> {
+    pub async fn clear_all_running(&self) -> Result<u64> {
         let now = now_string();
         let mut builder = QueryBuilder::<sqlx::Sqlite>::new("UPDATE cron_jobs SET is_running = 0, updated_at = ");
         builder.push_bind(&now);
@@ -343,7 +340,7 @@ impl CronJobRepository for SqliteCronJobRepository {
         Ok(result.rows_affected())
     }
 
-    async fn count(&self, workspace_id: &str) -> Result<i64> {
+    pub async fn count(&self, workspace_id: &str) -> Result<i64> {
         let row = sqlx::query("SELECT COUNT(*) as count FROM cron_jobs WHERE workspace_id = ?")
             .bind(workspace_id)
             .fetch_one(self.database.pool())
@@ -353,7 +350,7 @@ impl CronJobRepository for SqliteCronJobRepository {
         Ok(count)
     }
 
-    async fn count_by_enabled(&self, workspace_id: &str, is_enabled: bool) -> Result<i64> {
+    pub async fn count_by_enabled(&self, workspace_id: &str, is_enabled: bool) -> Result<i64> {
         let row = sqlx::query("SELECT COUNT(*) as count FROM cron_jobs WHERE workspace_id = ? AND is_enabled = ?")
             .bind(workspace_id)
             .bind(if is_enabled { 1 } else { 0 })
@@ -364,7 +361,7 @@ impl CronJobRepository for SqliteCronJobRepository {
         Ok(count)
     }
 
-    async fn count_running(&self, workspace_id: &str) -> Result<i64> {
+    pub async fn count_running(&self, workspace_id: &str) -> Result<i64> {
         let row = sqlx::query("SELECT COUNT(*) as count FROM cron_jobs WHERE workspace_id = ? AND is_running = 1")
             .bind(workspace_id)
             .fetch_one(self.database.pool())
@@ -374,7 +371,7 @@ impl CronJobRepository for SqliteCronJobRepository {
         Ok(count)
     }
 
-    async fn update_next_run_at(&self, id: &str, next_run_at: Option<&str>) -> Result<bool> {
+    pub async fn update_next_run_at(&self, id: &str, next_run_at: Option<&str>) -> Result<bool> {
         let now = now_string();
 
         let result = sqlx::query("UPDATE cron_jobs SET next_run_at = ?, updated_at = ? WHERE id = ?")

@@ -4,7 +4,7 @@ use tinyiothub_storage::{
     traits::device::{DeviceCriteria, DeviceRepository, DeviceSortBy, DeviceSortOrder},
 };
 
-use crate::tag::{SqliteTagRepository, TagRepository};
+use crate::tag::TagRepository;
 
 /// Find a device by ID (convenience wrapper for MCP tools compatibility)
 pub async fn find_device_by_id(db: &Database, id: &str) -> Result<Option<Device>, sqlx::Error> {
@@ -14,7 +14,7 @@ pub async fn find_device_by_id(db: &Database, id: &str) -> Result<Option<Device>
 
 /// Load tags for a single device
 pub async fn load_device_tags(device: &mut Device, db: &Database, tenant_id: &str) -> Result<(), sqlx::Error> {
-    let tag_repo = SqliteTagRepository::new(db.clone());
+    let tag_repo = TagRepository::new(db.clone());
     let tags = tag_repo
         .find_by_target_id(&device.id, tenant_id)
         .await
@@ -29,7 +29,7 @@ pub async fn load_device_tags(device: &mut Device, db: &Database, tenant_id: &st
 
 /// Load tags for multiple devices
 pub async fn load_tags_for_devices(db: &Database, devices: &mut [Device], tenant_id: &str) -> Result<(), sqlx::Error> {
-    let tag_repo = SqliteTagRepository::new(db.clone());
+    let tag_repo = TagRepository::new(db.clone());
 
     for device in devices {
         let tags = tag_repo

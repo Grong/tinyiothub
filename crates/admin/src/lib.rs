@@ -27,7 +27,7 @@ use tinyiothub_core::error::Error;
 use tinyiothub_core::models::device::Device;
 use tinyiothub_core::models::device_property::DeviceProperty;
 use tinyiothub_driver::legacy::{DeviceMonitoringService, DevicePerformanceService, DeviceQueryService, DeviceService};
-use tinyiothub_storage::traits::cron::{CronJobRepository, CronRunRepository};
+use tinyiothub_storage::{CronJobRepository, CronRunRepository};
 use tinyiothub_storage::{Database, DeviceRepositoryFactory, cache::DeviceCache};
 use tinyiothub_thing::legacy::trace::DeviceTraceService;
 
@@ -61,7 +61,7 @@ pub struct AdminState {
     /// 设备仓库工厂 - 用于创建租户感知的设备仓库
     pub device_repository_factory: Arc<DeviceRepositoryFactory>,
     /// 标签仓库 - 用于设备服务的标签关联
-    pub tag_repository: Arc<dyn tinyiothub_thing::tag::TagRepository>,
+    pub tag_repository: Arc<tinyiothub_thing::tag::TagRepository>,
     /// 标签服务 - 设备 profile 的标签加载
     pub tag_service: Arc<tinyiothub_thing::tag::TagService>,
     /// 事件总线 - 属性变更事件发布（update_device_property_value）
@@ -83,9 +83,9 @@ pub struct AdminState {
     /// 租户服务 - open API 的 API Key 校验与配额
     pub tenant_service: Arc<tinyiothub_tenant::TenantService>,
     /// Cron 任务仓库 - jobs API
-    pub cron_job_repo: Arc<dyn CronJobRepository>,
+    pub cron_job_repo: Arc<CronJobRepository>,
     /// Cron 执行记录仓库 - jobs API
-    pub cron_run_repo: Arc<dyn CronRunRepository>,
+    pub cron_run_repo: Arc<CronRunRepository>,
     /// 缓存的系统信息对象，避免每次请求重新扫描
     pub sysinfo_system: Arc<std::sync::Mutex<sysinfo::System>>,
     /// 管理员角色检查（event-security seam）

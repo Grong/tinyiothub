@@ -17,4 +17,4 @@ pub mod scheduler;
 
 pub use engine::{AgentExecutor, ExecutionResult, ExecutorError, ExecutorRegistry, JobExecutor, ShellExecutor};
 pub use scheduler::CronSchedulerService;
-pub use tinyiothub_core::repository::cron::{CronJobRepository, CronRunRepository};
+pub use tinyiothub_storage::{CronJobRepository, CronRunRepository};

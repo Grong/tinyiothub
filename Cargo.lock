@@ -5090,6 +5090,7 @@ dependencies = [
  "chrono",
  "core",
  "cron 0.12.1",
+ "db",
  "serde",
  "serde_json",
  "tokio",
