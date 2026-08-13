@@ -14,7 +14,6 @@ pub mod event;
 pub mod memory;
 pub mod models;
 pub mod notification_types;
-pub mod rule;
 pub mod types;
 pub mod version;
 
