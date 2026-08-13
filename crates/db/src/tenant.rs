@@ -3,10 +3,8 @@
 //! 类型随 repo 住 db（方案 B）：Tenant/ApiKey 及请求/查询契约为 DB 行类型，
 //! tenant crate 保留 service/handler，经 re-export 兼容。
 
-use std::sync::Arc;
 use tinyiothub_core::models::tenant::{CreateApiKeyRequest, CreateTenantRequest};
 
-use chrono::{DateTime, Utc};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

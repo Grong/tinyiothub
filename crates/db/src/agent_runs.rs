@@ -6,7 +6,6 @@
 use sqlx::SqlitePool;
 
 use crate::error::Result;
-use crate::policy::Proposal;
 
 // ──────────────────────────────────────────────
 // 持久化类型（DB 行）— 自 agent/loop_/thing_agent 迁入

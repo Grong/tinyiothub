@@ -7,7 +7,6 @@ use tinyiothub_core::models::permission::{
     CreatePermissionGroupRequest, CreatePermissionRequest, UpdatePermissionRequest,
 };
 
-use crate::database::Database;
 
 // ──────────────────────────────────────────────
 // 持久化类型（DB 行 + 仓储契约）— 自领域 crate 迁入

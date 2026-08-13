@@ -1,6 +1,5 @@
 //! Workspace 持久化：工作区与知识资源（P-集中化 E4，自 tenant crate 迁入）。
 
-use std::fmt;
 use tinyiothub_core::models::workspace::ResourceType;
 
 use serde::{Deserialize, Serialize};

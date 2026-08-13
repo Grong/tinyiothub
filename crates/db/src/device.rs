@@ -1145,7 +1145,7 @@ impl DeviceRepository {
     }
 
     pub async fn update(&self, id: &str, request: &UpdateDeviceRequest) -> Result<Device> {
-        let Some(ws) = self.workspace_scope.clone() else {
+        let Some(_ws) = self.workspace_scope.clone() else {
             return self.update_inner(id, request).await;
         };
         // Verify device belongs to this workspace before updating
@@ -1158,7 +1158,7 @@ impl DeviceRepository {
     }
 
     pub async fn delete(&self, id: &str) -> Result<u64> {
-        let Some(ws) = self.workspace_scope.clone() else {
+        let Some(_ws) = self.workspace_scope.clone() else {
             return self.delete_inner(id).await;
         };
         // Verify device belongs to this workspace before deleting
@@ -1329,7 +1329,7 @@ impl DeviceRepository {
     }
 
     pub async fn exists_by_name(&self, name: &str) -> Result<bool> {
-        let Some(ws) = self.workspace_scope.clone() else {
+        let Some(_ws) = self.workspace_scope.clone() else {
             return self.exists_by_name_inner(name).await;
         };
         // Check within this workspace
@@ -1358,7 +1358,7 @@ impl DeviceRepository {
         page: u32,
         page_size: u32,
     ) -> Result<Vec<Device>> {
-        let Some(ws) = self.workspace_scope.clone() else {
+        let Some(_ws) = self.workspace_scope.clone() else {
             return self.find_with_filters_inner(enabled, search, page, page_size).await;
         };
         use crate::device::DeviceCriteria;

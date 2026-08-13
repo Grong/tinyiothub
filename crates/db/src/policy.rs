@@ -255,7 +255,6 @@ mod tests {
 
 // ── 行动提案（自 policy/proposal.rs 迁入，E6b）──
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
