@@ -14,7 +14,8 @@
 use std::sync::Arc;
 
 use crate::{PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule, evaluate_rules};
-use tinyiothub_skills::trust::{ToolSafety, TrustConfig, TrustDecision, TrustLevel, safety_category};
+use tinyiothub_skills::trust::{ToolSafety, TrustDecision, safety_category};
+use tinyiothub_storage::heartbeat::{TrustConfig, TrustLevel};
 
 // ── ChatConfirmAdapter ──────────────────────────────────────────
 
@@ -232,8 +233,9 @@ mod tests {
     use super::*;
     use crate::{NoopPolicyEngine, PolicyAction, PolicyCategory, PolicyRule};
     use tinyiothub_skills::trust::{
-        ToolSafety, TrustConfig, TrustLevel, classify_tool_safety, evaluate_tool_trust, evaluate_tool_trust_with_safety,
+        ToolSafety, classify_tool_safety, evaluate_tool_trust, evaluate_tool_trust_with_safety,
     };
+    use tinyiothub_storage::heartbeat::{TrustConfig, TrustLevel};
 
     // ── HeartbeatTrustAdapter equivalence (O23) ─────────────────
 

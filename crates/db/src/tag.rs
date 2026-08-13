@@ -5,7 +5,6 @@ use tinyiothub_core::models::tag::{CreateTagBindingRequest, CreateTagRequest, Up
 
 use tinyiothub_core::error::Result;
 
-
 // ──────────────────────────────────────────────
 // 持久化类型（DB 行 + 仓储契约）— 自 thing/tag/types.rs 迁入
 // ──────────────────────────────────────────────

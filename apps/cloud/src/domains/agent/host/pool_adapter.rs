@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tinyiothub_skills::trust::TrustConfig;
+use tinyiothub_storage::heartbeat::TrustConfig;
 
 use crate::domains::agent::host::agent::{AgentPool, StreamingToolCall};
 use crate::domains::agent::loop_::agent::pool::{AgentPoolLike, AgentRunOutput, ToolCallRecord};

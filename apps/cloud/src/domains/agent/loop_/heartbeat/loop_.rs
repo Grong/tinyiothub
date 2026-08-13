@@ -11,7 +11,7 @@ use super::metrics::Metrics;
 use super::types::{HeartbeatConfig, HeartbeatStatus, HeartbeatTask, LoopSignal};
 use crate::domains::agent::loop_::event::bus::AiEventPublisher;
 use crate::domains::agent::loop_::event::types::AiEvent;
-use tinyiothub_skills::trust::TrustConfig;
+use tinyiothub_storage::heartbeat::TrustConfig;
 
 const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 

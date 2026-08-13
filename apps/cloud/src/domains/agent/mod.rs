@@ -49,9 +49,10 @@ pub mod types {
     };
     pub use tinyiothub_skills::registry::{OutputSchema, ToolDescriptor, ToolParameter, ToolRegistry};
     pub use tinyiothub_skills::trust::{
-        ToolSafety, TrustConfig, TrustDecision, TrustLevel, classify_tool_safety, evaluate_tool_trust,
-        evaluate_tool_trust_with_safety, risk_for_tool,
+        ToolSafety, TrustDecision, classify_tool_safety, evaluate_tool_trust, evaluate_tool_trust_with_safety,
+        risk_for_tool,
     };
+    pub use tinyiothub_storage::heartbeat::{TrustConfig, TrustLevel};
 }
 
 // AppState 削除（F3 relay 化）：handler 直取 AppState。

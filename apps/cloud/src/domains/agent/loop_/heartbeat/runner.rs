@@ -15,7 +15,7 @@ use super::repo::HeartbeatTaskRepository;
 use super::types::{HeartbeatConfig, HeartbeatSignal, LoopSignal};
 use crate::domains::agent::loop_::agent::pool::AgentPoolLike;
 use crate::domains::agent::loop_::event::bus::AiEventPublisher;
-use tinyiothub_skills::trust::TrustConfig;
+use tinyiothub_storage::heartbeat::TrustConfig;
 
 struct LoopHandle {
     cancel_tx: oneshot::Sender<()>,
@@ -528,8 +528,8 @@ mod tests {
         let repo = real_repo().await;
         repo.save_trust_config(
             "ws_1",
-            &tinyiothub_skills::trust::TrustConfig {
-                trust_level: tinyiothub_skills::trust::TrustLevel::FullAuto,
+            &tinyiothub_storage::heartbeat::TrustConfig {
+                trust_level: tinyiothub_storage::heartbeat::TrustLevel::FullAuto,
                 ..Default::default()
             },
         )
@@ -540,7 +540,7 @@ mod tests {
         runner.start("ws_1").await;
 
         let loaded = runner.get_trust_config("ws_1").expect("trust config cached on start");
-        assert_eq!(loaded.trust_level, tinyiothub_skills::trust::TrustLevel::FullAuto);
+        assert_eq!(loaded.trust_level, tinyiothub_storage::heartbeat::TrustLevel::FullAuto);
     }
 
     #[tokio::test]
@@ -551,7 +551,10 @@ mod tests {
         runner.start("ws_1").await;
 
         let loaded = runner.get_trust_config("ws_1").expect("trust config cached on start");
-        assert_eq!(loaded.trust_level, tinyiothub_skills::trust::TrustLevel::ReadOnlyAuto);
+        assert_eq!(
+            loaded.trust_level,
+            tinyiothub_storage::heartbeat::TrustLevel::ReadOnlyAuto
+        );
     }
 
     #[tokio::test]
@@ -560,14 +563,14 @@ mod tests {
         let publisher = make_publisher();
         let runner = HeartbeatRunner::new(repo.clone(), publisher, HeartbeatConfig::default());
 
-        let cfg = tinyiothub_skills::trust::TrustConfig {
-            trust_level: tinyiothub_skills::trust::TrustLevel::FullAuto,
+        let cfg = tinyiothub_storage::heartbeat::TrustConfig {
+            trust_level: tinyiothub_storage::heartbeat::TrustLevel::FullAuto,
             ..Default::default()
         };
         runner.update_trust_config("ws_1", cfg).await;
 
         let saved = repo.load_trust_config("ws_1").await.expect("load").expect("persisted");
-        assert_eq!(saved.trust_level, tinyiothub_skills::trust::TrustLevel::FullAuto);
+        assert_eq!(saved.trust_level, tinyiothub_storage::heartbeat::TrustLevel::FullAuto);
     }
 
     #[tokio::test]

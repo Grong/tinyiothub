@@ -52,7 +52,7 @@ pub fn create_router() -> Router<AppState> {
             "/device-templates",
             crate::domains::thing::template::handler::create_router(),
         )
-        .nest("/marketplace", crate::modules::marketplace::handler::create_router())
+        .nest("/marketplace", crate::domains::marketplace::handler::create_router())
         .nest("/notifications", crate::domains::notify::handler::create_router())
         .nest(
             "/notification-channels",

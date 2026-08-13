@@ -15,7 +15,7 @@ use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
     api::middleware::WorkspaceScope,
-    modules::marketplace::{
+    domains::marketplace::{
         client::MarketplaceClient, driver_installer::DriverInstaller, template_installer::TemplateInstaller,
         thing_template_installer::ThingTemplateInstaller,
     },
@@ -360,7 +360,7 @@ async fn publish_template_handler(
         }
     };
 
-    let publisher = match crate::modules::marketplace::MarketplacePublisher::new(marketplace_config) {
+    let publisher = match crate::domains::marketplace::MarketplacePublisher::new(marketplace_config) {
         Ok(p) => p,
         Err(e) => {
             return ApiResponseBuilder::error(format!("发布器初始化失败: {}", e));

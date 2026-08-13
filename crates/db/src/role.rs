@@ -5,7 +5,6 @@ use sqlx::{FromRow, QueryBuilder, Row};
 use tinyiothub_core::error::Result;
 use tinyiothub_core::models::role::{CreateRoleRequest, UpdateRoleRequest};
 
-
 // ──────────────────────────────────────────────
 // 持久化类型（DB 行 + 仓储契约）— 自领域 crate 迁入
 // ──────────────────────────────────────────────

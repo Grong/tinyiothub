@@ -11,9 +11,6 @@ description = "HTTP handlers and middleware for TinyIoTHub (placeholder)"
 name = "tinyiothub_web"
 
 [dependencies]
-core = { workspace = true }
-runtime = { workspace = true }
-db = { workspace = true }
 
 # Web framework
 axum = { workspace = true }

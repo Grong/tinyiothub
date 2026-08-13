@@ -5,8 +5,7 @@
 //! 2. TrustConfig overrides (block specific tools, allow specific write tools)
 //! 3. Global trust_level fallback (ReadOnlyAuto / FullAuto / ApprovalRequired)
 
-// TrustConfig/TrustLevel 行类型已迁 db（E6b 集中化）；re-export 兼容。
-pub use tinyiothub_storage::heartbeat::{TrustConfig, TrustLevel};
+use tinyiothub_storage::heartbeat::{TrustConfig, TrustLevel};
 
 /// Intrinsic safety classification derived from tool naming conventions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

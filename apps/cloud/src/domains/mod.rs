@@ -6,6 +6,7 @@ pub mod alarm;
 pub mod auth;
 pub mod driver;
 pub mod event;
+pub mod marketplace;
 pub mod mcp;
 pub mod notify;
 pub mod tenant;
