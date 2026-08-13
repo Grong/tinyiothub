@@ -8,13 +8,10 @@ use tinyiothub_core::models::{
 };
 use tracing::{debug, info, warn};
 
-use super::{
-    repo::TemplateRepository,
-    types::{
-        CommandInfo, CommandTemplate, CreateDeviceTemplateRequest, DeviceCreationInput, DevicePreview, DeviceTemplate,
-        PropertyInfo, PropertyTemplate, TemplateRequirements,
-    },
-};
+use super::repo::TemplateRepository;
+use crate::domains::thing::template::types::CreateDeviceTemplateRequest;
+use crate::domains::thing::template::types::DeviceCreationInput;
+use crate::domains::thing::template::types::DevicePreview;
 
 // ─── TemplateEngine ───────────────────────────────────────────
 
@@ -439,6 +436,12 @@ impl TemplateEngine {
 
 // ─── TemplateValidator ────────────────────────────────────────
 
+use crate::domains::thing::template::types::CommandInfo;
+use crate::domains::thing::template::types::CommandTemplate;
+use crate::domains::thing::template::types::DeviceTemplate;
+use crate::domains::thing::template::types::PropertyInfo;
+use crate::domains::thing::template::types::PropertyTemplate;
+use crate::domains::thing::template::types::TemplateRequirements;
 use std::collections::HashSet;
 
 /// 模板验证器 - 负责验证模板格式和内容的正确性

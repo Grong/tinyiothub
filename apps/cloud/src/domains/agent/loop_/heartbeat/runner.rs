@@ -3,6 +3,7 @@
 //! Owns a DashMap of cancel channels and handles. Start/stop are idempotent.
 //! TrustConfig is loaded from DB on start and cached in memory.
 
+use super::types::{HeartbeatConfig, HeartbeatSignal, LoopSignal};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -12,7 +13,6 @@ use tracing::{debug, error, info, warn};
 
 use super::metrics::Metrics;
 use super::repo::HeartbeatTaskRepository;
-use super::types::{HeartbeatConfig, HeartbeatSignal, LoopSignal};
 use crate::domains::agent::loop_::agent::pool::AgentPoolLike;
 use crate::domains::agent::loop_::event::bus::AiEventPublisher;
 use tinyiothub_storage::heartbeat::TrustConfig;
@@ -303,7 +303,7 @@ impl HeartbeatRunner {
         match self.task_repo.load_heartbeat_config(workspace_id).await {
             Ok(Some(cfg)) => cfg
                 .interval_minutes
-                .max(crate::domains::agent::loop_::heartbeat::types::MIN_HEARTBEAT_INTERVAL_MINUTES),
+                .max(tinyiothub_storage::heartbeat::MIN_HEARTBEAT_INTERVAL_MINUTES),
             Ok(None) => self.config.interval_minutes,
             Err(e) => {
                 warn!(workspace_id, error = %e, "Failed to load heartbeat config, using default interval");

@@ -3,10 +3,9 @@ use sqlx::{QueryBuilder, Row};
 use tinyiothub_core::models::device::{Device, DeviceStats};
 use tinyiothub_storage::{Database, device_row_mapper};
 
-use super::{
-    query::DeviceQueryService,
-    types::{DeviceStatusDistribution, QuickDevice},
-};
+use super::query::DeviceQueryService;
+use crate::domains::driver::legacy::types::DeviceStatusDistribution;
+use crate::domains::driver::legacy::types::QuickDevice;
 use tinyiothub_core::error::Result;
 
 /// SQLite implementation of DeviceQueryService

@@ -1,8 +1,9 @@
 // Thing repository — database access layer
 
+use crate::domains::thing::types::ListThingsParams;
+use crate::domains::thing::types::ThingResource;
+use crate::domains::thing::types::ThingRow;
 use sqlx::{QueryBuilder, SqlitePool};
-
-use super::types::{ListThingsParams, ThingResource, ThingRow};
 
 /// Single-query cycle check: walk UP from the candidate parent; if the
 /// thing itself is on that chain, reparenting creates a cycle. Depth cap 10

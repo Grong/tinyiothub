@@ -13,10 +13,12 @@ use axum::{
 use tinyiothub_web::middleware::workspace::AuthClaims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
-use super::types::{
-    AssignDeviceRequest, CreateResourceRequest, CreateWorkspaceRequest, ResourceQueryParams, ResourceSearchResult,
-    ResourceType, SuggestTagsRequest, UpdateResourceRequest, UpdateWorkspaceRequest, WorkspaceQueryParams,
-    WorkspaceResource, WorkspaceWithDeviceCount,
+use tinyiothub_core::models::workspace::{
+    AssignDeviceRequest, CreateResourceRequest, CreateWorkspaceRequest, ResourceType, SuggestTagsRequest,
+    UpdateResourceRequest, UpdateWorkspaceRequest,
+};
+use tinyiothub_storage::workspace::{
+    ResourceQueryParams, ResourceSearchResult, WorkspaceQueryParams, WorkspaceResource, WorkspaceWithDeviceCount,
 };
 use tinyiothub_web::api_response::ApiResponse;
 

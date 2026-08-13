@@ -4,8 +4,7 @@
 // This service only maintains the session index for listing/labeling/deleting sessions.
 
 use std::sync::Arc;
-
-use super::types::{Session, SessionError, SessionRepository};
+use tinyiothub_storage::session::{Session, SessionError, SessionRepository};
 
 /// Session index service for managing session lifecycle
 pub struct SessionService {

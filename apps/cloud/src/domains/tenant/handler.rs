@@ -16,10 +16,8 @@ use tinyiothub_web::middleware::workspace::{AuthClaims, WorkspaceScope};
 use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::{api_response::ApiResponse, validation};
 
-use super::types::{
-    ApiKey, ApiUsageStats, CreateApiKeyRequest, CreateTenantRequest, SubscriptionPlan, Tenant, TenantQueryParams,
-    TenantUsage,
-};
+use tinyiothub_core::models::tenant::{CreateApiKeyRequest, CreateTenantRequest};
+use tinyiothub_storage::tenant::{ApiKey, ApiUsageStats, SubscriptionPlan, Tenant, TenantQueryParams, TenantUsage};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -430,7 +428,7 @@ async fn get_tenant(State(state): State<AppState>, Path(id): Path<String>) -> Js
 async fn update_tenant(
     State(_state): State<AppState>,
     Path(_id): Path<String>,
-    Json(_payload): Json<super::types::UpdateTenantRequest>,
+    Json(_payload): Json<tinyiothub_core::models::tenant::UpdateTenantRequest>,
 ) -> Json<ApiResponse<Tenant>> {
     ApiResponseBuilder::error_with_code(501, "功能未实现")
 }

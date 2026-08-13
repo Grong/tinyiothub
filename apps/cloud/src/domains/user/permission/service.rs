@@ -2,12 +2,11 @@ use std::sync::Arc;
 
 use tinyiothub_core::error::Result;
 
-use super::{
-    types::{
-        CreatePermissionGroupRequest, CreatePermissionRequest, Permission, PermissionGroup, PermissionQuery,
-        UpdatePermissionRequest,
-    },
-    types::{PermissionGroupRepository, PermissionRepository},
+use tinyiothub_core::models::permission::{
+    CreatePermissionGroupRequest, CreatePermissionRequest, UpdatePermissionRequest,
+};
+use tinyiothub_storage::permission::{
+    Permission, PermissionGroup, PermissionGroupRepository, PermissionQuery, PermissionRepository,
 };
 
 pub struct PermissionService {

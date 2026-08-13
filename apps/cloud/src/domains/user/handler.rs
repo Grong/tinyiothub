@@ -12,8 +12,9 @@ use tinyiothub_web::{
     pagination::PaginationQuery,
 };
 
-use super::types::{CreateUserRequest, UpdateUserRequest, UserDto, UserStatisticsNew};
 use crate::domains::user::password::verify_password;
+use tinyiothub_core::models::user::{CreateUserRequest, UpdateUserRequest};
+use tinyiothub_storage::user::{UserDto, UserStatisticsNew};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -69,7 +70,7 @@ async fn list_users(
         .await
     {
         Ok((users, total)) => {
-            let user_dtos = super::types::User::to_dto_list(users);
+            let user_dtos = tinyiothub_storage::user::User::to_dto_list(users);
             let total_count = total as u64;
             let total_pages = if page_size > 0 {
                 ((total as f64) / (page_size as f64)).ceil() as u32

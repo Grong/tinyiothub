@@ -9,7 +9,7 @@ use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::middleware::workspace::AuthClaims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
-use super::types::{Permission, PermissionQuery};
+use tinyiothub_storage::permission::{Permission, PermissionQuery};
 
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]

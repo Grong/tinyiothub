@@ -2,10 +2,8 @@ use std::sync::Arc;
 
 use tinyiothub_core::error::{Error, Result};
 
-use super::{
-    types::{CreateTagBindingRequest, CreateTagRequest, Tag, TagBinding, TagQuery, UpdateTagRequest},
-    types::{TagBindingRepository, TagRepository},
-};
+use tinyiothub_core::models::tag::{CreateTagBindingRequest, CreateTagRequest, UpdateTagRequest};
+use tinyiothub_storage::tag::{Tag, TagBinding, TagBindingRepository, TagQuery, TagRepository};
 
 pub struct TagService {
     tag_repository: Arc<TagRepository>,

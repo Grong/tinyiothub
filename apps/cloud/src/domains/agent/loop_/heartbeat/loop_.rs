@@ -8,10 +8,11 @@ use tokio::sync::{RwLock, mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use super::metrics::Metrics;
-use super::types::{HeartbeatConfig, HeartbeatStatus, HeartbeatTask, LoopSignal};
 use crate::domains::agent::loop_::event::bus::AiEventPublisher;
 use crate::domains::agent::loop_::event::types::AiEvent;
-use tinyiothub_storage::heartbeat::TrustConfig;
+
+use super::types::{HeartbeatConfig, LoopSignal};
+use tinyiothub_storage::heartbeat::{HeartbeatStatus, HeartbeatTask, TrustConfig};
 
 const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 

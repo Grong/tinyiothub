@@ -4,9 +4,11 @@ use sqlx::{QueryBuilder, Row};
 use tinyiothub_core::models::template_error::TemplateError;
 use tracing::{debug, info, warn};
 
-use super::types::{
-    CreateDeviceTemplateRequest, DeviceTemplate, TemplateCategory, TemplateQueryParams, UpdateDeviceTemplateRequest,
-};
+use crate::domains::thing::template::types::CreateDeviceTemplateRequest;
+use crate::domains::thing::template::types::DeviceTemplate;
+use crate::domains::thing::template::types::TemplateCategory;
+use crate::domains::thing::template::types::TemplateQueryParams;
+use crate::domains::thing::template::types::UpdateDeviceTemplateRequest;
 use tinyiothub_storage::Database;
 
 // ─── TemplateRepository ───────────────────────────────────────

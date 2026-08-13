@@ -5,11 +5,11 @@ use tinyiothub_storage::heartbeat::{HeartbeatTaskRepository, NewHeartbeatTask};
 use crate::domains::agent::host::agent_hooks::AgentHooksImpl;
 use crate::domains::agent::loop_::event::{bus::AiEventPublisher, types::AiEvent};
 
-use super::{
-    types::WorkspaceRepository,
-    types::{ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount},
-};
 use tinyiothub_core::error::Result;
+use tinyiothub_core::models::workspace::ResourceType;
+use tinyiothub_storage::workspace::{
+    ResourceSearchResult, Workspace, WorkspaceRepository, WorkspaceResource, WorkspaceWithDeviceCount,
+};
 
 pub struct WorkspaceService {
     repository: Arc<WorkspaceRepository>,

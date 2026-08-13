@@ -9,7 +9,8 @@ use tinyiothub_web::middleware::workspace::AuthClaims;
 use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::{api_response::ApiResponse, pagination::PaginationQuery};
 
-use super::types::{CreateRoleRequest, Role, UpdateRoleRequest};
+use tinyiothub_core::models::role::{CreateRoleRequest, UpdateRoleRequest};
+use tinyiothub_storage::role::Role;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -1,10 +1,14 @@
 use std::sync::Arc;
+use tinyiothub_storage::tenant::TenantRepository;
 
-use super::{
-    types::TenantRepository,
-    types::{ApiKey, ApiUsageStats, CreateApiKeyRequest, CreateTenantRequest, SubscriptionPlan, Tenant, TenantUsage},
-};
 use tinyiothub_core::error::{Error, Result};
+use tinyiothub_core::models::tenant::CreateApiKeyRequest;
+use tinyiothub_core::models::tenant::CreateTenantRequest;
+use tinyiothub_storage::tenant::ApiKey;
+use tinyiothub_storage::tenant::ApiUsageStats;
+use tinyiothub_storage::tenant::SubscriptionPlan;
+use tinyiothub_storage::tenant::Tenant;
+use tinyiothub_storage::tenant::TenantUsage;
 
 // Resource type constants for quota checking
 const RESOURCE_TYPE_DEVICE: &str = "device";

@@ -12,14 +12,12 @@
 pub mod handler;
 pub mod legacy;
 pub mod service;
-pub mod types;
 pub mod workspace;
 
 // Repositories live in the db crate (E4 集中化); re-exported for compatibility.
 pub use service::TenantService;
 pub use tinyiothub_storage::tenant::TenantRepository;
 pub use tinyiothub_storage::workspace::WorkspaceRepository;
-pub use types::*;
 pub use workspace::WorkspaceService;
 
 /// Tenant domain state slice — Arc'd services + config slices, derived from

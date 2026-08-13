@@ -2,9 +2,11 @@
 
 use std::collections::HashMap;
 
+use crate::domains::thing::template::types::CommandTemplate;
+use crate::domains::thing::template::types::DeviceInfo;
+use crate::domains::thing::template::types::DeviceTemplate;
+use crate::domains::thing::template::types::PropertyTemplate;
 use tinyiothub_core::models::device::Device;
-
-use super::types::{CommandTemplate, DeviceInfo, DeviceTemplate, PropertyTemplate};
 
 pub struct TemplateExporter;
 

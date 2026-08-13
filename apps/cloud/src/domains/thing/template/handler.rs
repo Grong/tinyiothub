@@ -8,13 +8,14 @@ use serde::Deserialize;
 use tinyiothub_web::middleware::workspace::AuthClaims;
 use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo};
 
-use super::{
-    service::{TemplateService, TemplateValidator},
-    types::{
-        CreateDeviceTemplateRequest, DeviceCreationInput, DevicePreview, DeviceTemplate, TemplateCategory,
-        TemplateQueryParams, UpdateDeviceTemplateRequest,
-    },
-};
+use super::service::{TemplateService, TemplateValidator};
+use crate::domains::thing::template::types::CreateDeviceTemplateRequest;
+use crate::domains::thing::template::types::DeviceCreationInput;
+use crate::domains::thing::template::types::DevicePreview;
+use crate::domains::thing::template::types::DeviceTemplate;
+use crate::domains::thing::template::types::TemplateCategory;
+use crate::domains::thing::template::types::TemplateQueryParams;
+use crate::domains::thing::template::types::UpdateDeviceTemplateRequest;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]

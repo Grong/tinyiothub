@@ -11,11 +11,17 @@ use super::{
     errors::ThingError,
     repo::ThingRepo,
     summary::{self, StubLlmClient, SummaryComputer},
-    types::{
-        CreateThingRequest, ListThingsParams, ListThingsResult, ThingProfileResponse, ThingResource, ThingResponse,
-        ThingRow, ThingTreeNode, ThingType, UpdateThingRequest,
-    },
 };
+use crate::domains::thing::types::CreateThingRequest;
+use crate::domains::thing::types::ListThingsParams;
+use crate::domains::thing::types::ListThingsResult;
+use crate::domains::thing::types::ThingProfileResponse;
+use crate::domains::thing::types::ThingResource;
+use crate::domains::thing::types::ThingResponse;
+use crate::domains::thing::types::ThingRow;
+use crate::domains::thing::types::ThingTreeNode;
+use crate::domains::thing::types::ThingType;
+use crate::domains::thing::types::UpdateThingRequest;
 use tinyiothub_storage::{
     Database, create_device_command, create_device_properties_batch, find_device_commands_by_device_id,
     find_device_properties_by_device_id,

@@ -2,9 +2,7 @@
 
 pub mod handler;
 pub mod service;
-pub mod types;
 
 pub use handler::create_router;
 pub use service::RoleService;
 pub use tinyiothub_storage::role::RoleRepository;
-pub use types::*;

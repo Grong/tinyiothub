@@ -1,6 +1,6 @@
+use crate::domains::driver::driver_health::types::DriverHealthEntry;
+use crate::domains::driver::driver_health::types::WorkspaceDriverHealth;
 use tinyiothub_runtime::driver::registry::DriverRegistry;
-
-use super::types::{DriverHealthEntry, WorkspaceDriverHealth};
 
 pub struct DriverHealthService;
 

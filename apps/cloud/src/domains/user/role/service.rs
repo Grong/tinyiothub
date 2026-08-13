@@ -2,10 +2,8 @@ use std::sync::Arc;
 
 use tinyiothub_core::error::Result;
 
-use super::{
-    types::RoleRepository,
-    types::{CreateRoleRequest, Role, RoleQueryParams, RoleStats, UpdateRoleRequest},
-};
+use tinyiothub_core::models::role::{CreateRoleRequest, UpdateRoleRequest};
+use tinyiothub_storage::role::{Role, RoleQueryParams, RoleRepository, RoleStats};
 
 pub struct RoleService {
     role_repository: Arc<RoleRepository>,

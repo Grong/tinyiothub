@@ -1,10 +1,12 @@
 use std::sync::Arc;
+use tinyiothub_core::models::user::{CreateUserRequest, UpdateUserRequest};
+use tinyiothub_storage::user::{User, UserQueryParams, UserStatisticsNew};
 
-use super::{
-    types::{CreateUserRequest, UpdateUserRequest, User, UserQueryParams, UserStatisticsNew},
-    types::{UserCriteria, UserRepository, UserSortBy, UserSortOrder},
-};
 use tinyiothub_core::error::{Error, Result};
+use tinyiothub_storage::user::UserCriteria;
+use tinyiothub_storage::user::UserRepository;
+use tinyiothub_storage::user::UserSortBy;
+use tinyiothub_storage::user::UserSortOrder;
 
 use crate::domains::user::password::{hash_password, verify_password};
 

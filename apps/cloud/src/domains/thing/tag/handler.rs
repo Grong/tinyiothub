@@ -10,9 +10,10 @@ use serde::Deserialize;
 use tinyiothub_web::middleware::workspace::AuthClaims;
 use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo};
 
-use super::types::{
-    BatchTagBindingRequest, CreateTagBindingRequest, CreateTagRequest, Tag, TagBinding, TagQuery, UpdateTagRequest,
+use tinyiothub_core::models::tag::{
+    BatchTagBindingRequest, CreateTagBindingRequest, CreateTagRequest, UpdateTagRequest,
 };
+use tinyiothub_storage::tag::{Tag, TagBinding, TagQuery};
 
 #[derive(Debug, Deserialize)]
 pub struct TagListQuery {
