@@ -14,11 +14,11 @@ use tinyiothub_core::models::event::EventId;
 use tinyiothub_web::{handle_service_result, response::ApiResponseBuilder};
 use tokio::sync::OnceCell;
 
+use crate::domains::event::security::AuditLogEntry;
 use crate::shared::{
     api_response::ApiResponse,
     app_state::AppState,
     error_handling::{AuthHelper, ErrorCategory},
-    event::security::AuditLogEntry,
     pagination::PaginationQuery,
     performance::Cache,
 };
@@ -595,7 +595,7 @@ pub async fn get_security_config(
     if let Some(audit_log) = secure_service.audit_log() {
         let _ = audit_log
             .log(
-                crate::shared::event::security::AuditLogEntry::new(
+                crate::domains::event::security::AuditLogEntry::new(
                     "security_config_access".to_string(),
                     Some(claims.user_id.clone()),
                 )
@@ -695,7 +695,7 @@ pub async fn update_security_config(
 
         let _ = audit_log
             .log(
-                crate::shared::event::security::AuditLogEntry::new(
+                crate::domains::event::security::AuditLogEntry::new(
                     "security_config_update".to_string(),
                     Some(claims.user_id.clone()),
                 )
@@ -742,7 +742,7 @@ pub async fn get_user_roles(State(state): State<AppState>, claims: Claims) -> Js
     if let Some(audit_log) = secure_service.audit_log() {
         let _ = audit_log
             .log(
-                crate::shared::event::security::AuditLogEntry::new(
+                crate::domains::event::security::AuditLogEntry::new(
                     "user_roles_access".to_string(),
                     Some(claims.user_id.clone()),
                 )

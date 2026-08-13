@@ -9,7 +9,7 @@ use crate::domains::event::{
 };
 use chrono::{DateTime, Utc};
 
-use crate::shared::event::security::{
+use crate::domains::event::security::{
     AccessResult, AccessType, EncryptedContent, EventAccessControl, EventAuditLog, EventEncryption, EventSecurityConfig,
 };
 

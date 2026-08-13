@@ -18,13 +18,10 @@ use serde::Deserialize;
 use tinyiothub_web::response::ApiResponseBuilder;
 use tracing::{info, warn};
 
+use crate::domains::event::sse_manager::{SseConnectionInfo, SseOverview};
 use crate::{
     api::middleware::WorkspaceScope,
-    shared::{
-        api_response::ApiResponse,
-        app_state::AppState,
-        event::sse_manager::{SseConnectionInfo, SseOverview},
-    },
+    shared::{api_response::ApiResponse, app_state::AppState},
 };
 
 /// SSE connection query parameters

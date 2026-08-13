@@ -32,6 +32,5 @@ pub mod service_manager;
 pub mod sse_token;
 
 pub mod config;
-pub mod event;
 pub mod hardware;
 pub mod mqtt_client;

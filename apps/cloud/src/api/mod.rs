@@ -61,7 +61,7 @@ pub fn create_router() -> Router<AppState> {
         .nest("/tenants", crate::domains::tenant::router())
         .nest(
             "/events",
-            crate::domains::event::router().merge(crate::shared::event::http::create_router()),
+            crate::domains::event::router().merge(crate::domains::event::http::create_router()),
         )
         .nest("/jobs", crate::domains::admin::jobs::handler::create_router())
         .nest("/batch", crate::domains::admin::batch::handler::create_router())
@@ -121,12 +121,12 @@ pub fn create_router() -> Router<AppState> {
         // 公开的SSE端点（不需要JWT header, 通过?token=鉴权）
         .route(
             "/events/sse/public",
-            get(crate::shared::event::http::sse::handle_sse_connection_public),
+            get(crate::domains::event::http::sse::handle_sse_connection_public),
         )
         // SSE token 认证端点（不需要 JWT header，通过 ?sse_token= 鉴权）
         .route(
             "/events/sse/token",
-            get(crate::shared::event::http::sse::handle_sse_connection_token),
+            get(crate::domains::event::http::sse::handle_sse_connection_token),
         )
         .merge(protected_routes);
 

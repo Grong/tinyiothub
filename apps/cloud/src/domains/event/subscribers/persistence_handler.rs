@@ -8,7 +8,7 @@ use crate::domains::event::{
 use tokio::sync::RwLock;
 use tracing::{debug, error, trace};
 
-use crate::shared::event::EventHandler;
+use tinyiothub_core::event::EventHandler;
 
 /// 持久化事件处理器
 ///

@@ -81,7 +81,7 @@ impl ServiceManager {
         app_state.event_bus.register_handler(data_server.clone());
 
         // 注册 SSE 事件处理器 - 将事件实时推送到前端
-        let sse_handler = Arc::new(crate::shared::event::handlers::SseEventHandler::new(
+        let sse_handler = Arc::new(crate::domains::event::subscribers::SseEventHandler::new(
             app_state.sse_manager.clone(),
         ));
         app_state.event_bus.register_handler(sse_handler);
@@ -100,7 +100,7 @@ impl ServiceManager {
 
         // 注册实时状态事件处理器 - 状态类事件 upsert 到 events 当前态视图
         // (occurrence_count 累加 + 去重; eng-review T2)
-        let real_time_status_handler = Arc::new(crate::shared::event::handlers::RealTimeStatusHandler::new(
+        let real_time_status_handler = Arc::new(crate::domains::event::subscribers::RealTimeStatusHandler::new(
             app_state.real_time_event_repository.clone(),
         ));
         app_state.event_bus.register_handler(real_time_status_handler);

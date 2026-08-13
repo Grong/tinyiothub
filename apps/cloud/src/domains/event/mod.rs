@@ -27,8 +27,12 @@ pub mod alarm_event;
 pub mod bus;
 pub mod errors;
 pub mod handler;
+pub mod http;
 pub mod router;
+pub mod security;
 pub mod service;
+pub mod sse_manager;
+pub mod subscribers;
 pub mod types;
 
 // Backward compatibility: re-export core types as submodules

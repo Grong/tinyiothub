@@ -18,7 +18,7 @@ pub fn sanitize_filename(name: &str) -> String {
 /// On other platforms: spawns background task
 #[cfg(feature = "harmonyos")]
 pub async fn publish_event_safe(
-    event_bus: std::sync::Arc<crate::shared::event::EventBus>,
+    event_bus: std::sync::Arc<tinyiothub_runtime::event_bus::EventBus>,
     event: tinyiothub_core::models::event::Event,
 ) {
     // On HarmonyOS, publish inline
@@ -33,7 +33,7 @@ pub async fn publish_event_safe(
 /// On other platforms: spawns background task
 #[cfg(not(feature = "harmonyos"))]
 pub async fn publish_event_safe(
-    event_bus: std::sync::Arc<crate::shared::event::EventBus>,
+    event_bus: std::sync::Arc<tinyiothub_runtime::event_bus::EventBus>,
     event: tinyiothub_core::models::event::Event,
 ) {
     tokio::spawn(async move {

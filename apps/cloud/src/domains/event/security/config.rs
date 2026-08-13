@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::domains::event::{EventError, Result, repositories::EventRepository};
 pub use tinyiothub_core::config::EventSecurityConfig;
 
-use crate::shared::event::security::{
+use crate::domains::event::security::{
     AesEventEncryption, DatabaseAuditLog, EventAccessControl, EventAuditLog, EventEncryption, InMemoryAuditLog,
     NoOpEncryption, RoleBasedAccessControl, SecureEventService,
 };

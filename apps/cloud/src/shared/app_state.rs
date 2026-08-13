@@ -19,13 +19,10 @@ use tinyiothub_storage::memory::MemoryStore;
 use tinyiothub_storage::{Database, DeviceRepository, cache::DeviceCache};
 use tokio::sync::OnceCell;
 
-use crate::shared::{
-    error::Error,
-    event::{
-        EventBus, SseConnectionManager,
-        security::{EventSecurityFactory, SecureEventService},
-    },
-};
+use crate::domains::event::security::{EventSecurityFactory, SecureEventService};
+use crate::domains::event::sse_manager::SseConnectionManager;
+use crate::shared::error::Error;
+use tinyiothub_runtime::event_bus::EventBus;
 
 /// 应用程序状态 - 使用 Axum 推荐的依赖注入模式
 ///
