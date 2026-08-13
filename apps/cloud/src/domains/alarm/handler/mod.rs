@@ -19,6 +19,7 @@ pub fn create_alarm_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
     AppState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new()
         .route("/", get(list_alarms))
@@ -35,6 +36,7 @@ pub fn create_alarm_rule_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
     AppState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new()
         .route("/", get(list_alarm_rules))

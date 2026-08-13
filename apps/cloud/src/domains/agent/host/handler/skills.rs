@@ -2,7 +2,6 @@
 
 use std::path::PathBuf;
 
-use crate::domains::auth::security::jwt::Claims;
 use axum::{
     Router,
     extract::{Path, State},
@@ -11,6 +10,7 @@ use axum::{
     routing::get,
 };
 use serde::Deserialize;
+use tinyiothub_authn::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 use tokio::fs;
 
@@ -58,6 +58,7 @@ pub fn create_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
     crate::shared::app_state::AppState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new()
         .route("/", get(list_skills).post(create_skill))

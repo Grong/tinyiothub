@@ -314,7 +314,7 @@ async fn test_list_alarms_filter_by_status() {
     .await
     .expect("Failed to seed test alarm");
 
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
     let token = create_test_token("user-1", "tenant-1");
 
@@ -447,7 +447,7 @@ async fn test_alarm_rule_workspace_isolation() {
     seed_test_workspace(&pool, "tenant-a", "ws-a").await;
     seed_test_workspace(&pool, "tenant-b", "ws-b").await;
 
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     // User A creates an alarm rule

@@ -30,7 +30,7 @@ fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Re
 async fn setup(workspace_id: &str) -> (axum::Router, sqlx::SqlitePool, String) {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", workspace_id).await;
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
     let token = create_test_token_with_workspace("user-1", "tenant-1", workspace_id);
     (app, pool, token)

@@ -9,13 +9,13 @@
 
 use crate::domains::agent::host::agent_hooks::HeartbeatTaskDef;
 use crate::domains::agent::loop_::heartbeat::types::NewHeartbeatTask;
-use crate::domains::auth::security::jwt::Claims;
 use crate::verify_workspace_access_port;
 use axum::{
     Json,
     extract::{Extension, Path, State},
 };
 use serde::{Deserialize, Serialize};
+use tinyiothub_authn::jwt::Claims;
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::response::ApiResponseBuilder;
 
@@ -29,6 +29,7 @@ pub fn create_router<S>() -> axum::Router<S>
 where
     S: Clone + Send + Sync + 'static,
     AppState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     use axum::routing::{get, post, put};
     axum::Router::new()

@@ -25,6 +25,7 @@ pub fn create_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
     AppState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new()
         .route("/", get(query::get_events))

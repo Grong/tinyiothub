@@ -150,7 +150,7 @@ async fn test_workspace_cross_tenant_isolation() {
     seed_test_workspace(&pool, "tenant-a", "ws-a").await;
     seed_test_workspace(&pool, "tenant-b", "ws-b").await;
 
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     let token_a = create_test_token_with_workspace("user-a", "tenant-a", "ws-a");

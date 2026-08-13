@@ -16,6 +16,7 @@ pub fn create_router<S>() -> axum::Router<S>
 where
     S: Clone + Send + Sync + 'static,
     AppState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     axum::Router::new()
         .route("/memories", get(list_active_memories))

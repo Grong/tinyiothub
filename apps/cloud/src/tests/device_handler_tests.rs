@@ -69,7 +69,7 @@ async fn test_create_device() {
 async fn setup_with_workspace(tenant_id: &str, workspace_id: &str) -> axum::Router {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, tenant_id, workspace_id).await;
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     axum::Router::new().nest("/api", api_router).with_state(app_state)
 }
 
@@ -218,7 +218,7 @@ async fn test_cross_workspace_isolation() {
     seed_test_workspace(&pool, "tenant-a", "ws-a").await;
     seed_test_workspace(&pool, "tenant-b", "ws-b").await;
 
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     // User A (workspace ws-a) creates a thing

@@ -31,7 +31,7 @@ async fn setup_two_workspaces() -> (axum::Router, sqlx::SqlitePool) {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-a").await;
     seed_test_workspace(&pool, "tenant-1", "ws-b").await;
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
     (app, pool)
 }

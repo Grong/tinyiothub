@@ -1,0 +1,37 @@
+[package]
+name = "authn"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Authentication mechanisms — JWT, SSE tokens, password hashing, API keys (no HTTP, no business flow)"
+
+[lib]
+name = "tinyiothub_authn"
+
+[dependencies]
+core = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+async-trait = { workspace = true }
+jwt-simple = { workspace = true }
+bcrypt = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+subtle = { workspace = true }
+dashmap = { workspace = true }
+axum = { workspace = true }
+headers = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+db = { workspace = true }
+hex = { workspace = true }
+sqlx = { workspace = true }
+web = { workspace = true }
+
+[lints]
+workspace = true

@@ -56,7 +56,7 @@ async fn test_create_job() {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-job-test-001").await;
 
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-job-test-001");
@@ -88,7 +88,7 @@ async fn test_create_job_invalid_cron() {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-job-test-001").await;
 
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     let token = create_test_token("user-1", "tenant-1");
@@ -119,7 +119,7 @@ async fn test_get_job_not_found() {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-job-test-001").await;
 
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     let token = create_test_token("user-1", "tenant-1");
@@ -143,7 +143,7 @@ async fn test_update_job_not_found() {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-job-test-001").await;
 
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     let token = create_test_token("user-1", "tenant-1");
@@ -176,7 +176,7 @@ async fn test_delete_job_not_found() {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-job-test-001").await;
 
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     let token = create_test_token("user-1", "tenant-1");
@@ -200,7 +200,7 @@ async fn test_job_statistics() {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-job-test-001").await;
 
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     let token = create_test_token("user-1", "tenant-1");
@@ -230,7 +230,7 @@ async fn test_job_workspace_isolation() {
     seed_test_workspace(&pool, "tenant-a", "ws-a").await;
     seed_test_workspace(&pool, "tenant-b", "ws-b").await;
 
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     // User A (ws-a) creates a job

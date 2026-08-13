@@ -12,7 +12,7 @@ use tinyiothub_web::{
     pagination::PaginationQuery,
 };
 
-use crate::domains::user::password::verify_password;
+use tinyiothub_authn::password::verify_password;
 use tinyiothub_core::models::user::{CreateUserRequest, UpdateUserRequest};
 use tinyiothub_storage::user::{UserDto, UserStatisticsNew};
 
@@ -36,6 +36,7 @@ pub fn create_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
     AppState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new()
         .route("/", get(list_users).post(create_user))

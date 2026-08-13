@@ -7,13 +7,14 @@ use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder};
 
-use crate::domains::auth::security::jwt::{Claims, validate_jwt};
+use tinyiothub_authn::jwt::Claims;
 
 /// 创建不受 JWT middleware 保护的路由（login, logout, refresh）
 pub fn create_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
     AppState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new()
         .route("/refresh", post(refresh_token))
@@ -25,6 +26,7 @@ pub fn create_protected_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
     AppState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new().route("/sse-token", post(generate_sse_token))
 }
@@ -62,11 +64,11 @@ pub struct SseTokenResponse {
 
 /// 刷新 Token
 async fn refresh_token(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(request): Json<RefreshTokenRequest>,
 ) -> Json<ApiResponse<RefreshTokenResponse>> {
     // 验证当前 token
-    let claims = match validate_jwt(&request.token) {
+    let claims = match state.jwt_service.validate_jwt(&request.token) {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!("Token refresh failed: {}", e);
@@ -75,7 +77,7 @@ async fn refresh_token(
     };
 
     // 生成新的 token
-    match crate::domains::auth::security::jwt::generate_token(
+    match state.jwt_service.generate_token(
         &claims.user_id,
         &claims.username,
         &claims.tenant_id,

@@ -8,7 +8,7 @@ use tinyiothub_storage::user::UserRepository;
 use tinyiothub_storage::user::UserSortBy;
 use tinyiothub_storage::user::UserSortOrder;
 
-use crate::domains::user::password::{hash_password, verify_password};
+use tinyiothub_authn::password::{hash_password, verify_password};
 
 /// User domain service
 pub struct UserService {

@@ -34,7 +34,7 @@ pub mod middleware;
 // workspaces — 已迁移至 modules/workspace/handler.rs
 
 /// Create the main API router
-pub fn create_router() -> Router<AppState> {
+pub fn create_router(app_state: &AppState) -> Router<AppState> {
     // 创建需要认证的路由
     let protected_routes = Router::new()
         .nest("/devices", crate::domains::admin::device::create_router())
@@ -104,7 +104,8 @@ pub fn create_router() -> Router<AppState> {
         )
         .nest("/auth", crate::domains::auth::router())
         .route("/test-auth", get(test_auth_endpoint))
-        .layer(axum_middleware::from_fn(
+        .layer(axum_middleware::from_fn_with_state(
+            app_state.clone(),
             crate::api::middleware::context::jwt_auth_middleware,
         ));
 

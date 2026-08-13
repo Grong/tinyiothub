@@ -99,7 +99,7 @@ async fn setup_open_app_with_key(
     .await
     .unwrap();
 
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
     (app, raw_key.to_string(), pool)
 }
@@ -188,7 +188,7 @@ async fn test_open_api_key_expired_rejected() {
     .execute(&pool)
     .await
     .unwrap();
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
     let req = Request::builder()
         .method("GET")

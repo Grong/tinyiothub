@@ -69,7 +69,7 @@ pub async fn create_app_router(app_state: AppState) -> Router {
         .allow_headers(allowed_headers);
 
     tracing::info!("Creating API router...");
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
 
     tracing::info!("Building main router...");
     tracing::info!("Serving static files from wwwroot/ (SPA mode)");

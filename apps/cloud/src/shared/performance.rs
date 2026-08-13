@@ -315,10 +315,6 @@ mod tests {
         assert_eq!(result2, Ok("computed_value".to_string()));
     }
 
-    
-
-    
-
     #[tokio::test]
     async fn test_performance_metrics() {
         let metrics = PerformanceMetrics::new();

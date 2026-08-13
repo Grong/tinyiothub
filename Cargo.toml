@@ -151,6 +151,7 @@ mockall = "0.13"
 http-body-util = "0.1"
 
 # Workspace crates (path deps — not published yet)
+authn = { path = "crates/authn" }
 macros = { path = "crates/macros" }
 core = { path = "crates/core" }
 db = { path = "crates/db" }

@@ -13,12 +13,13 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder};
 
-use crate::domains::auth::{redis::RedisClient, security::jwt, user_store::AuthUser as User};
+use crate::domains::auth::{redis::RedisClient, user_store::AuthUser as User};
 
 pub fn create_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
     AppState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new()
         // 微信扫码登录
@@ -290,7 +291,12 @@ async fn wechat_callback(State(state): State<AppState>, Query(params): Query<WeC
         .unwrap_or(None);
 
     let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
-    let jwt_token = match jwt::generate_token(&user.id, &user.username, &tenant_id, &workspace_id_for_token) {
+    let jwt_token = match state.jwt_service.generate_token(
+        &user.id,
+        &user.username,
+        &tenant_id,
+        &workspace_id_for_token,
+    ) {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("Failed to generate JWT: {}", e);

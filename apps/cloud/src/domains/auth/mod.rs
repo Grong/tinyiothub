@@ -19,7 +19,6 @@ pub mod bootstrap;
 pub mod handler;
 pub mod legacy;
 pub mod redis;
-pub mod security;
 pub mod sse;
 pub mod types;
 pub mod user_store;

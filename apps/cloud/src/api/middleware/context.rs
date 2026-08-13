@@ -1,4 +1,3 @@
-use crate::domains::auth::security::jwt::{is_token_blacklisted, validate_jwt};
 use axum::{
     Json,
     extract::{Request, State},
@@ -22,9 +21,14 @@ pub async fn context_middleware(
     let path = request.uri().path().to_string();
 
     // Try to extract and validate JWT token
-    let user_info = extract_user_from_jwt(request.headers(), request.uri(), Some(&state.database))
-        .await
-        .unwrap_or_default();
+    let user_info = extract_user_from_jwt(
+        request.headers(),
+        request.uri(),
+        Some(&state.database),
+        &state.jwt_service,
+    )
+    .await
+    .unwrap_or_default();
 
     // Create context with user information
     let ctx = ReqCtx {
@@ -66,19 +70,20 @@ async fn extract_user_from_jwt(
     headers: &HeaderMap,
     uri: &axum::http::Uri,
     db: Option<&tinyiothub_storage::Database>,
+    jwt: &tinyiothub_authn::jwt::JwtService,
 ) -> Option<UserInfo> {
     let token = extract_bearer_token(headers, uri)?;
 
     // Check token blacklist if DB is available（异步查询，不阻塞线程）
     if let Some(database) = db
-        && is_token_blacklisted(database, &token).await
+        && jwt.is_token_blacklisted(database, &token).await
     {
         tracing::warn!("Rejected blacklisted token");
         return None;
     }
 
     // Validate JWT token
-    let claims = validate_jwt(&token).ok()?;
+    let claims = jwt.validate_jwt(&token).ok()?;
 
     // Convert claims to UserInfo
     Some(UserInfo {
@@ -89,7 +94,11 @@ async fn extract_user_from_jwt(
 }
 
 /// JWT authentication middleware - requires valid JWT token
-pub async fn jwt_auth_middleware(mut request: Request, next: Next) -> Response {
+pub async fn jwt_auth_middleware(
+    State(state): State<crate::shared::app_state::AppState>,
+    mut request: Request,
+    next: Next,
+) -> Response {
     let uri = request.uri().to_string();
     tracing::debug!("JWT middleware called for: {}", uri);
 
@@ -112,7 +121,7 @@ pub async fn jwt_auth_middleware(mut request: Request, next: Next) -> Response {
     tracing::debug!("Found token for: {}, length: {}", uri, token.len());
 
     // Validate JWT token
-    match validate_jwt(&token) {
+    match state.jwt_service.validate_jwt(&token) {
         Ok(claims) => {
             tracing::debug!("JWT validation successful for user: {} at: {}", claims.username, uri);
             // Add claims to request extensions for handlers to use

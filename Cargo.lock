@@ -290,6 +290,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "authn"
+version = "0.4.6"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.21.7",
+ "bcrypt",
+ "chrono",
+ "core",
+ "dashmap",
+ "db",
+ "headers",
+ "hex",
+ "hmac 0.12.1",
+ "jwt-simple",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "subtle",
+ "tokio",
+ "tracing",
+ "uuid",
+ "web",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5928,6 +5955,7 @@ dependencies = [
  "anyhow",
  "async-stream",
  "async-trait",
+ "authn",
  "axum",
  "backoff",
  "base64 0.21.7",

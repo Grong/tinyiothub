@@ -17,8 +17,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder};
 
-use crate::domains::auth::security::jwt;
-
 // 验证码有效期（秒）
 const CODE_EXPIRE_SECONDS: u64 = 300; // 5 分钟
 
@@ -26,6 +24,7 @@ pub fn create_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
     AppState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new()
         .route("/send", post(send_code))
@@ -545,7 +544,10 @@ async fn login_with_code(
     .unwrap_or(None);
 
     let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
-    let token = match jwt::generate_token(&user.id, &user.username, &tenant_id, &workspace_id_for_token) {
+    let token = match state
+        .jwt_service
+        .generate_token(&user.id, &user.username, &tenant_id, &workspace_id_for_token)
+    {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("Failed to generate token: {}", e);

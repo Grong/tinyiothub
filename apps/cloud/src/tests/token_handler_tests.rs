@@ -142,7 +142,7 @@ async fn test_logout_without_token() {
 #[tokio::test]
 async fn test_logout_blacklists_token() {
     let (app_state, pool) = setup_test_app_with_pool().await;
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
     let token = create_test_token("user-1", "tenant-1");
 

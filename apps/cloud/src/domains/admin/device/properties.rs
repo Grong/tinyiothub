@@ -1,4 +1,3 @@
-use crate::domains::auth::security::jwt::Claims;
 use crate::shared::app_state::AppState;
 use axum::{
     Json, Router,
@@ -6,6 +5,7 @@ use axum::{
     routing::{get, put},
 };
 use serde::Deserialize;
+use tinyiothub_authn::jwt::Claims;
 use tinyiothub_core::models::device_property::DeviceProperty;
 use tinyiothub_web::response::ApiResponseBuilder;
 

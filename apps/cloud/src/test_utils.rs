@@ -55,23 +55,27 @@ fn ensure_test_config() {
         // Initialize config — panic if it fails so we know immediately
         crate::shared::config::initialize().expect("Failed to initialize test config");
 
-        // Register JWT settings with the auth crate (P4-Task16), mirroring main.rs.
-        crate::domains::auth::security::jwt::init_jwt_settings(crate::domains::auth::security::jwt::JwtSettings {
-            secret: crate::shared::config::get().security.jwt.secret.clone(),
-            harmonyos_enabled: crate::shared::config::get().harmonyos.enabled,
-        });
+        // JWT 机制服务（G2 构造注入）。测试进程级 OnceLock 注册一次；
+        // resolver 闭包共享同一实例（JwtService 无内部状态，克隆廉价）。
+        let jwt_service = std::sync::Arc::new(tinyiothub_authn::jwt::JwtService::new(
+            tinyiothub_authn::jwt::JwtSettings {
+                secret: crate::shared::config::get().security.jwt.secret.clone(),
+                harmonyos_enabled: crate::shared::config::get().harmonyos.enabled,
+            },
+        ));
 
         // Register the tenant resolver (P4-Task15) so tinyiothub_web's
         // WorkspaceScope/AuthClaims extractors validate test JWTs exactly as
         // the binary does (mirrors main.rs). OnceLock makes re-set a no-op.
-        tinyiothub_web::middleware::workspace::set_tenant_resolver(Box::new(|token| {
-            crate::domains::auth::security::jwt::validate_jwt(token).ok().map(|c| {
-                tinyiothub_web::middleware::workspace::TenantClaims {
+        let svc = jwt_service.clone();
+        tinyiothub_web::middleware::workspace::set_tenant_resolver(Box::new(move |token| {
+            svc.validate_jwt(token)
+                .ok()
+                .map(|c| tinyiothub_web::middleware::workspace::TenantClaims {
                     user_id: c.user_id,
                     tenant_id: c.tenant_id,
                     workspace_id: c.workspace_id,
-                }
-            })
+                })
         }));
     });
 }
@@ -86,7 +90,7 @@ pub async fn setup_test_app() -> Router {
     let (app_state, _pool) = setup_test_app_with_pool().await;
 
     // Create API router (same as production, without MCP/agent init)
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
 
     Router::new().nest("/api", api_router).with_state(app_state)
 }
@@ -172,15 +176,24 @@ async fn create_test_app_state() -> AppState {
     AppState::new(device_cache, pool)
 }
 
+fn test_jwt_service() -> tinyiothub_authn::jwt::JwtService {
+    tinyiothub_authn::jwt::JwtService::new(tinyiothub_authn::jwt::JwtSettings {
+        secret: crate::shared::config::get().security.jwt.secret.clone(),
+        harmonyos_enabled: crate::shared::config::get().harmonyos.enabled,
+    })
+}
+
 /// Generate a valid JWT token for testing authenticated endpoints.
 pub fn create_test_token(user_id: &str, tenant_id: &str) -> String {
-    crate::domains::auth::security::jwt::generate_token(user_id, "test-user", tenant_id, "ws-default-001")
+    test_jwt_service()
+        .generate_token(user_id, "test-user", tenant_id, "ws-default-001")
         .expect("Failed to generate test token")
 }
 
 /// Generate a JWT token with explicit workspace_id for cross-tenant isolation tests.
 pub fn create_test_token_with_workspace(user_id: &str, tenant_id: &str, workspace_id: &str) -> String {
-    crate::domains::auth::security::jwt::generate_token(user_id, "test-user", tenant_id, workspace_id)
+    test_jwt_service()
+        .generate_token(user_id, "test-user", tenant_id, workspace_id)
         .expect("Failed to generate test token")
 }
 

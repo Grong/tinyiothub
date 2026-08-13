@@ -224,7 +224,7 @@ async fn test_list_agents_isolated_by_workspace() {
     .unwrap();
 
     // Build router with shared state
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     // Token for workspace "ws-tenant-1" should see the agent
@@ -281,7 +281,7 @@ async fn test_get_agent_config_isolated_by_workspace() {
     .await
     .unwrap();
 
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     // Correct workspace should succeed
@@ -323,7 +323,7 @@ async fn test_set_agent_config_isolated_by_workspace() {
     .await
     .unwrap();
 
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     // Wrong workspace should fail

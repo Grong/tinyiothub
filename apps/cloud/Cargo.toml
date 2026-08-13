@@ -15,6 +15,7 @@ name = "tinyiothub-cloud"
 path = "src/main.rs"
 
 [dependencies]
+authn = { workspace = true }
 tokio-util = { version = "0.7", features = ["rt"] }
 # Core async runtime
 tokio = { workspace = true }

@@ -15,12 +15,12 @@
 //
 // Supported files: IDENTITY.md, SOUL.md, AGENTS.md, USER.md, TOOLS.md, MEMORY.md, HEARTBEAT.md, BOOTSTRAP.md
 
-use crate::domains::auth::security::jwt::Claims;
 use axum::{
     extract::{Path, State},
     response::Json,
 };
 use serde::{Deserialize, Serialize};
+use tinyiothub_authn::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use tinyiothub_web::api_response::ApiResponse;

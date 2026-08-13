@@ -74,7 +74,7 @@ pub struct AppState {
     pub sse_manager: Arc<SseConnectionManager>,
 
     /// SSE Token管理器 - 生成和验证短期SSE连接token
-    pub sse_token_manager: Arc<crate::shared::sse_token::SseTokenManager>,
+    pub sse_token_manager: Arc<tinyiothub_authn::sse_token::SseTokenManager>,
 
     /// 安全事件服务 - 带权限控制和加密的事件服务（懒加载）
     pub secure_event_service: OnceCell<Arc<SecureEventService>>,
@@ -183,6 +183,14 @@ pub struct AppState {
     pub social_config: tinyiothub_core::config::SocialConfig,
     /// HarmonyOS 开关
     pub harmonyos_enabled: bool,
+    /// JWT 机制服务（G2 构造注入，消灭 OnceLock 全局态）
+    pub jwt_service: std::sync::Arc<tinyiothub_authn::jwt::JwtService>,
+}
+
+impl axum::extract::FromRef<AppState> for std::sync::Arc<tinyiothub_authn::jwt::JwtService> {
+    fn from_ref(state: &AppState) -> Self {
+        state.jwt_service.clone()
+    }
 }
 
 impl AppState {
@@ -251,7 +259,7 @@ impl AppState {
         let sse_manager = Arc::new(SseConnectionManager::new());
 
         // SSE Token 管理器 — 生成短期令牌用于 SSE 连接认证（替代 URL 中的 JWT）
-        let sse_token_manager = Arc::new(crate::shared::sse_token::SseTokenManager::default());
+        let sse_token_manager = Arc::new(tinyiothub_authn::sse_token::SseTokenManager::default());
 
         // 注册事件处理器将在异步初始化中完成
         // 这里只创建事件总线，处理器注册推迟到 register_event_handlers() 方法
@@ -480,6 +488,12 @@ impl AppState {
         let sms_config = settings.sms.clone();
         let social_config = settings.social.clone();
         let harmonyos_enabled = settings.harmonyos.enabled;
+        let jwt_service = std::sync::Arc::new(tinyiothub_authn::jwt::JwtService::new(
+            tinyiothub_authn::jwt::JwtSettings {
+                secret: settings.security.jwt.secret.clone(),
+                harmonyos_enabled: settings.harmonyos.enabled,
+            },
+        ));
 
         Self {
             device_cache,
@@ -492,6 +506,7 @@ impl AppState {
             sms_config,
             social_config,
             harmonyos_enabled,
+            jwt_service,
             workspace_access: Arc::new(TenantWorkspaceAccess {
                 workspace_service: workspace_service.clone(),
             }),
@@ -718,7 +733,7 @@ impl AppState {
     }
 
     /// 获取 SSE Token 管理器
-    pub fn get_sse_token_manager(&self) -> &crate::shared::sse_token::SseTokenManager {
+    pub fn get_sse_token_manager(&self) -> &tinyiothub_authn::sse_token::SseTokenManager {
         &self.sse_token_manager
     }
 
@@ -924,9 +939,9 @@ impl crate::domains::auth::bootstrap::WorkspaceBootstrap for SystemWorkspaceBoot
 
 /// SSE token issuer seam: the manager stays in cloud (shared with the event
 /// plane's SSE handlers).
-impl crate::domains::auth::sse::SseTokenIssuer for crate::shared::sse_token::SseTokenManager {
+impl crate::domains::auth::sse::SseTokenIssuer for tinyiothub_authn::sse_token::SseTokenManager {
     fn generate_token(&self, user_id: &str, workspace_id: &str) -> String {
-        crate::shared::sse_token::SseTokenManager::generate_token(self, user_id, workspace_id)
+        tinyiothub_authn::sse_token::SseTokenManager::generate_token(self, user_id, workspace_id)
     }
 }
 // ============================================================================

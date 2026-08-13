@@ -356,7 +356,7 @@ async fn login(
 }
 
 async fn verify_token(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Query(params): Query<VerifyTokenParams>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let token = params.token;
@@ -373,7 +373,7 @@ async fn verify_token(
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     let payload_str = String::from_utf8(payload_bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    if !verify_signature(&payload_str, signature, &_state.jwt_secret) {
+    if !verify_signature(&payload_str, signature, &state.jwt_secret) {
         return Err(StatusCode::UNAUTHORIZED);
     }
 

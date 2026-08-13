@@ -363,7 +363,7 @@ impl ServiceManager {
     /// without cleanup the DashMap would grow unbounded.
     async fn start_sse_token_cleanup(
         &self,
-        manager: Arc<crate::shared::sse_token::SseTokenManager>,
+        manager: Arc<tinyiothub_authn::sse_token::SseTokenManager>,
     ) -> Result<(), Error> {
         let mut shutdown_rx = self.shutdown_tx.subscribe();
 

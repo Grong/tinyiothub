@@ -5,7 +5,6 @@ use tinyiothub_web::validation;
 use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder};
 
 use crate::domains::auth::{
-    security::jwt,
     types::{LoginResponse, UserInfo},
     user_store::AuthCreateUserRequest,
 };
@@ -27,6 +26,7 @@ pub fn create_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
     AppState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new()
         .route("/login", post(login))
@@ -163,13 +163,17 @@ async fn register(
     };
 
     let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
-    let token = match jwt::generate_token(&user.id, user.get_display_name(), &tenant_id, &workspace_id_for_token) {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::error!("Failed to generate token: {}", e);
-            return ApiResponseBuilder::error("注册成功，但登录失败".to_string());
-        }
-    };
+    let token =
+        match state
+            .jwt_service
+            .generate_token(&user.id, user.get_display_name(), &tenant_id, &workspace_id_for_token)
+        {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!("Failed to generate token: {}", e);
+                return ApiResponseBuilder::error("注册成功，但登录失败".to_string());
+            }
+        };
 
     ApiResponseBuilder::success(LoginResponse {
         access_token: token,
@@ -236,7 +240,12 @@ async fn login(State(state): State<AppState>, Json(request): Json<LoginRequest>)
 
             // 生成 JWT 令牌（HarmonyOS 会自动使用 HMAC-SHA256）
             let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
-            match jwt::generate_token(&user.id, user.get_display_name(), &tenant_id, &workspace_id_for_token) {
+            match state.jwt_service.generate_token(
+                &user.id,
+                user.get_display_name(),
+                &tenant_id,
+                &workspace_id_for_token,
+            ) {
                 Ok(token) => {
                     let login_response = LoginResponse {
                         access_token: token,

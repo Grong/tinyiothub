@@ -14,13 +14,13 @@
 use crate::domains::agent::loop_::thing_agent::{
     AgentRunsRepository, EnqueueError, Priority, TriggerSource, WakeSignal,
 };
-use crate::domains::auth::security::jwt::Claims;
 use axum::{
     Json, Router,
     extract::{Extension, Path, Query, State},
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
+use tinyiothub_authn::jwt::Claims;
 use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::response::ApiResponseBuilder;

@@ -57,7 +57,7 @@ async fn app_with_sink(sink: Arc<StubDirectiveSink>) -> (Router, sqlx::SqlitePoo
     app_state.set_directive_sink(sink);
     seed_test_workspace(&pool, "tenant-1", WS).await;
     grant_admin(&pool, "user-1").await;
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     (Router::new().nest("/api", api_router).with_state(app_state), pool)
 }
 
@@ -66,7 +66,7 @@ async fn app_without_sink() -> (Router, sqlx::SqlitePool) {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", WS).await;
     grant_admin(&pool, "user-1").await;
-    let api_router = crate::api::create_router();
+    let api_router = crate::api::create_router(&app_state);
     (Router::new().nest("/api", api_router).with_state(app_state), pool)
 }
 

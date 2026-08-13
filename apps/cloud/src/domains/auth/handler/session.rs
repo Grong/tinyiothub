@@ -7,10 +7,8 @@ use axum::{
 use serde::Serialize;
 use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder};
 
-use crate::domains::auth::{
-    security::jwt::{Claims, generate_token},
-    types::{RefreshTokenResponse, UserInfo},
-};
+use crate::domains::auth::types::{RefreshTokenResponse, UserInfo};
+use tinyiothub_authn::jwt::Claims;
 
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -24,6 +22,7 @@ pub fn create_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
     AppState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new()
         .route("/session/profile", get(get_profile))
@@ -50,8 +49,8 @@ async fn get_profile(State(state): State<AppState>, claims: Claims) -> Json<ApiR
 }
 
 /// 刷新访问令牌
-async fn refresh_token(claims: Claims) -> Json<ApiResponse<RefreshTokenResponse>> {
-    match generate_token(
+async fn refresh_token(State(state): State<AppState>, claims: Claims) -> Json<ApiResponse<RefreshTokenResponse>> {
+    match state.jwt_service.generate_token(
         &claims.user_id,
         &claims.username,
         &claims.tenant_id,
