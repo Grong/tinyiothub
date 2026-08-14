@@ -232,6 +232,10 @@ pub(crate) fn build_autonomous_tools(
         pool: pool.clone(),
         workspace_id: workspace_id.to_string(),
         data_server: runtime.data_server.clone(),
+        pending_actions: runtime
+            .pending_actions
+            .clone()
+            .expect("pending_actions must be wired in ToolRuntimeContext"),
     };
     tools.push(Box::new(AutonomousInvokeActionTool::new(
         inner,
@@ -347,7 +351,10 @@ mod tests {
             observer,
             scripted_provider_factory(),
             "minimax-m2".to_string(),
-            Default::default(),
+            super::super::tools::service::ToolRuntimeContext {
+                pending_actions: Some(Arc::new(dashmap::DashMap::new())),
+                ..Default::default()
+            },
         )
     }
 
@@ -367,7 +374,10 @@ mod tests {
             new_run_context_slot(run_ctx()),
             Arc::new(ThingEventBus::new()),
             Arc::new(ThrottleState::new(60)),
-            &Default::default(),
+            &super::super::tools::service::ToolRuntimeContext {
+                pending_actions: Some(Arc::new(dashmap::DashMap::new())),
+                ..Default::default()
+            },
         );
 
         let mut names: Vec<&str> = tools.iter().map(|t| t.name()).collect();

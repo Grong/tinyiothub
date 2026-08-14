@@ -59,9 +59,6 @@ async fn main_impl() -> std::io::Result<()> {
             })
     }));
 
-    // Initialize global start time for uptime calculation (before any health checks)
-    let _ = tinyiothub_cloud::domains::admin::monitoring::handler::health::START_TIME.set(std::time::SystemTime::now());
-
     info!("🚀 TinyIoTHub Starting...");
     info!("Environment: {}", config::environment());
     info!("Server: {}", config::get().server_bind_address());
@@ -127,13 +124,13 @@ async fn main_impl() -> std::io::Result<()> {
         use axum::{Router, extract::FromRef};
         use tower_http::services::ServeDir;
         crate::domains::mcp::register_tools(Some(Arc::new(app_state.clone()))).await;
-        crate::domains::mcp::agent_bridge::register_agent_bridge();
         app_state
             .agent_pool
             .set_runtime_context(crate::domains::agent::host::tools::service::ToolRuntimeContext {
                 device_cache: Some(app_state.device_cache.clone()),
                 data_server: app_state.data_server.clone(),
                 directive_sink: app_state.directive_sink.clone(),
+                pending_actions: Some(app_state.pending_actions.clone()),
             })
             .await;
         // Refresh agent tools after MCP registration

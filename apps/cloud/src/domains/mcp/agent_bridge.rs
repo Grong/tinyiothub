@@ -58,8 +58,16 @@ impl ExternalToolHandler for BridgedToolHandler {
     }
 }
 
-struct McpExternalToolRegistry {
+/// MCP-backed external tool registry (bridge adapter over the MCP registry).
+pub struct McpExternalToolRegistry {
     registry: Arc<RwLock<HandlerRegistry>>,
+}
+
+impl McpExternalToolRegistry {
+    /// Wrap an existing MCP handler registry.
+    pub fn new(registry: Arc<RwLock<HandlerRegistry>>) -> Self {
+        Self { registry }
+    }
 }
 
 #[async_trait]
@@ -80,15 +88,5 @@ impl ExternalToolRegistry for McpExternalToolRegistry {
         let reg = self.registry.read().await;
         reg.get_owned(name)
             .map(|h| Arc::new(BridgedToolHandler { inner: h }) as _)
-    }
-}
-
-/// Register the MCP registry as the agent crate's external tool source.
-/// Call after [`super::register_tools`] has initialized the global registry.
-pub fn register_agent_bridge() {
-    if let Some(registry) = super::get_mcp_registry() {
-        crate::domains::agent::host::ports::set_external_tool_registry(Arc::new(McpExternalToolRegistry { registry }));
-    } else {
-        tracing::warn!("MCP registry not initialized; agent external tools unavailable");
     }
 }

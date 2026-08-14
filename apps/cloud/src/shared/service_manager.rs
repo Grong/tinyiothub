@@ -219,6 +219,7 @@ impl ServiceManager {
                                 data_server: app_state.data_server.clone(),
                                 // autonomous factory never registers the dispatch tool
                                 directive_sink: None,
+                                pending_actions: Some(app_state.pending_actions.clone()),
                             },
                         ),
                     ),

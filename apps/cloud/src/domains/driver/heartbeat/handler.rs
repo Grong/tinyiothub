@@ -2,6 +2,7 @@
 
 use axum::{
     Json, Router,
+    extract::State,
     routing::{get, post},
 };
 use chrono::Utc;
@@ -11,16 +12,12 @@ use tinyiothub_web::{
     response::{ApiResponse, ApiResponseBuilder},
 };
 
-use crate::domains::driver::heartbeat::{
-    get_heartbeat_config, get_heartbeat_status,
-    types::{ConfigureHeartbeatRequest, HeartbeatConfig, HeartbeatStatus, ReportHeartbeatResponse},
+use crate::domains::driver::heartbeat::types::{
+    ConfigureHeartbeatRequest, HeartbeatConfig, HeartbeatStatus, ReportHeartbeatResponse,
 };
 
 /// Create the heartbeat router
-pub fn create_router<S>() -> Router<S>
-where
-    S: Clone + Send + Sync + 'static,
-{
+pub fn create_router() -> Router<crate::shared::app_state::AppState> {
     Router::new()
         .route("/", post(report_heartbeat).get(get_heartbeat))
         .route("/config", get(get_config).put(configure_heartbeat))
@@ -44,22 +41,13 @@ pub struct ReportHeartbeatApiRequest {
 
 /// Report heartbeat endpoint
 async fn report_heartbeat(
+    State(state): State<crate::shared::app_state::AppState>,
     _claims: AuthClaims,
     Json(request): Json<ReportHeartbeatApiRequest>,
 ) -> Json<ApiResponse<ReportHeartbeatResponse>> {
-    let status_lock = match get_heartbeat_status() {
-        Some(s) => s,
-        None => {
-            return ApiResponseBuilder::error("Heartbeat system not initialized");
-        }
-    };
+    let status_lock = state.driver_heartbeat_status.clone();
 
-    let config_lock = match get_heartbeat_config() {
-        Some(c) => c,
-        None => {
-            return ApiResponseBuilder::error("Heartbeat config not initialized");
-        }
-    };
+    let config_lock = state.driver_heartbeat_config.clone();
 
     let mut status = status_lock.write().await;
     let config = config_lock.read().await;
@@ -92,20 +80,13 @@ async fn report_heartbeat(
 }
 
 /// Get heartbeat status endpoint
-async fn get_heartbeat(_claims: AuthClaims) -> Json<ApiResponse<HeartbeatStatus>> {
-    let status_lock = match get_heartbeat_status() {
-        Some(s) => s,
-        None => {
-            return ApiResponseBuilder::error("Heartbeat system not initialized");
-        }
-    };
+async fn get_heartbeat(
+    State(state): State<crate::shared::app_state::AppState>,
+    _claims: AuthClaims,
+) -> Json<ApiResponse<HeartbeatStatus>> {
+    let status_lock = state.driver_heartbeat_status.clone();
 
-    let config_lock = match get_heartbeat_config() {
-        Some(c) => c,
-        None => {
-            return ApiResponseBuilder::error("Heartbeat config not initialized");
-        }
-    };
+    let config_lock = state.driver_heartbeat_config.clone();
 
     let status = status_lock.read().await;
     let config = config_lock.read().await;
@@ -131,13 +112,11 @@ async fn get_heartbeat(_claims: AuthClaims) -> Json<ApiResponse<HeartbeatStatus>
 }
 
 /// Get heartbeat configuration endpoint
-async fn get_config(_claims: AuthClaims) -> Json<ApiResponse<HeartbeatConfig>> {
-    let config_lock = match get_heartbeat_config() {
-        Some(c) => c,
-        None => {
-            return ApiResponseBuilder::error("Heartbeat config not initialized");
-        }
-    };
+async fn get_config(
+    State(state): State<crate::shared::app_state::AppState>,
+    _claims: AuthClaims,
+) -> Json<ApiResponse<HeartbeatConfig>> {
+    let config_lock = state.driver_heartbeat_config.clone();
 
     let config = config_lock.read().await;
     ApiResponseBuilder::success(config.clone())
@@ -145,15 +124,11 @@ async fn get_config(_claims: AuthClaims) -> Json<ApiResponse<HeartbeatConfig>> {
 
 /// Configure heartbeat endpoint
 async fn configure_heartbeat(
+    State(state): State<crate::shared::app_state::AppState>,
     _claims: AuthClaims,
     Json(request): Json<ConfigureHeartbeatRequest>,
 ) -> Json<ApiResponse<HeartbeatConfig>> {
-    let config_lock = match get_heartbeat_config() {
-        Some(c) => c,
-        None => {
-            return ApiResponseBuilder::error("Heartbeat config not initialized");
-        }
-    };
+    let config_lock = state.driver_heartbeat_config.clone();
 
     let mut config = config_lock.write().await;
 

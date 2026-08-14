@@ -174,12 +174,8 @@ async fn get_gateway_metrics(State(state): State<AppState>, claims: Claims) -> J
         }
     }
 
-    // Real uptime from global start time
-    let uptime_seconds = crate::domains::admin::monitoring::handler::health::START_TIME
-        .get()
-        .and_then(|t| t.elapsed().ok())
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    // Uptime from AppState field (G3 — replaces former START_TIME static)
+    let uptime_seconds = state.started_at.elapsed().map(|d| d.as_secs()).unwrap_or(0);
 
     let metrics = GatewayMetrics {
         total_devices,

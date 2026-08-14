@@ -1,5 +1,4 @@
 use crate::shared::app_state::AppState;
-use std::{sync::OnceLock, time::SystemTime};
 
 use axum::{Json, Router, extract::State, routing::get};
 use serde::{Deserialize, Serialize};
@@ -9,11 +8,9 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::api_response::ApiResponse;
 
 /// Global start time for uptime calculation (shared with metrics)
-pub static START_TIME: OnceLock<SystemTime> = OnceLock::new();
 
-fn get_uptime_seconds() -> u64 {
-    let start = START_TIME.get_or_init(SystemTime::now);
-    start.elapsed().unwrap_or_default().as_secs()
+fn get_uptime_seconds(state: &AppState) -> u64 {
+    state.started_at.elapsed().unwrap_or_default().as_secs()
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -56,7 +53,7 @@ async fn get_health(State(state): State<AppState>) -> Json<ApiResponse<HealthSta
     let health = HealthStatus {
         status: status.to_string(),
         timestamp: chrono::Utc::now(),
-        uptime_seconds: get_uptime_seconds(),
+        uptime_seconds: get_uptime_seconds(&state),
     };
 
     ApiResponseBuilder::success(health)
@@ -123,7 +120,7 @@ async fn get_detailed_health(State(state): State<AppState>, claims: Claims) -> J
     let detailed_health = DetailedHealthStatus {
         overall_status: overall_status.to_string(),
         timestamp: chrono::Utc::now(),
-        uptime_seconds: get_uptime_seconds(),
+        uptime_seconds: get_uptime_seconds(&state),
         database_status: database_status.to_string(),
         mqtt_status: mqtt_status.to_string(),
         device_count,

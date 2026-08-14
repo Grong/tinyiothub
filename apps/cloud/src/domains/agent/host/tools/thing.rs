@@ -44,17 +44,14 @@ pub struct PendingAction {
     pub created_at: Instant,
 }
 
-/// Global store of pending action confirmations (DashMap + 30min TTL).
-static PENDING_ACTIONS: std::sync::OnceLock<Arc<DashMap<String, PendingAction>>> = std::sync::OnceLock::new();
-
-fn pending_actions() -> &'static Arc<DashMap<String, PendingAction>> {
-    PENDING_ACTIONS.get_or_init(|| Arc::new(DashMap::new()))
-}
+/// Pending-action confirmation store type (G3 — injected, no global).
+pub type PendingActionStore = DashMap<String, PendingAction>;
 
 const CONFIRMATION_TTL: Duration = Duration::from_secs(30 * 60);
 
 /// Store a pending action and return its confirmation token.
 pub fn store_pending_action(
+    store: &PendingActionStore,
     thing_id: String,
     action_name: String,
     params: Option<Value>,
@@ -69,14 +66,14 @@ pub fn store_pending_action(
         workspace_id,
         created_at: Instant::now(),
     };
-    pending_actions().insert(token.clone(), pending);
+    store.insert(token.clone(), pending);
     token
 }
 
 /// Retrieve and consume a pending action by token (returns None if expired or not found).
-pub fn take_pending_action(token: &str) -> Option<PendingAction> {
-    cleanup_expired_tokens();
-    let entry = pending_actions().remove(token)?;
+pub fn take_pending_action(store: &PendingActionStore, token: &str) -> Option<PendingAction> {
+    cleanup_expired_tokens(store);
+    let entry = store.remove(token)?;
     if entry.1.created_at.elapsed() > CONFIRMATION_TTL {
         return None;
     }
@@ -84,8 +81,8 @@ pub fn take_pending_action(token: &str) -> Option<PendingAction> {
 }
 
 /// Cleanup expired tokens (called on every take — keeps the map bounded).
-pub fn cleanup_expired_tokens() {
-    pending_actions().retain(|_, v| v.created_at.elapsed() <= CONFIRMATION_TTL);
+pub fn cleanup_expired_tokens(store: &PendingActionStore) {
+    store.retain(|_, v| v.created_at.elapsed() <= CONFIRMATION_TTL);
 }
 
 // ============================================================================
@@ -530,6 +527,7 @@ pub struct InvokeActionTool {
     pub(crate) pool: SqlitePool,
     pub(crate) workspace_id: String,
     pub(crate) data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
+    pub(crate) pending_actions: Arc<PendingActionStore>,
 }
 
 impl Attributable for InvokeActionTool {
@@ -647,6 +645,7 @@ impl Tool for InvokeActionTool {
         // 4. Execute or request confirmation
         if require_confirm {
             let token = store_pending_action(
+                &self.pending_actions,
                 input.thing_id.clone(),
                 input.action_name.clone(),
                 input.params.clone(),
@@ -1149,6 +1148,10 @@ pub fn create_thing_tools(
             pool,
             workspace_id: ws,
             data_server: runtime.data_server.clone(),
+            pending_actions: runtime
+                .pending_actions
+                .clone()
+                .expect("pending_actions must be wired in ToolRuntimeContext"),
         })),
     ]
 }

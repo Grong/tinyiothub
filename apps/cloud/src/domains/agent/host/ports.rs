@@ -7,8 +7,8 @@
 //! - [`ExternalToolRegistry`] — MCP-registered tools. The MCP plane lives in
 //!   the mcp crate (P4-Task23) and depends on the agent
 //!   crate, never vice versa. The mcp crate adapts its `HandlerRegistry` to
-//!   this port (`agent_bridge`) and cloud registers it once at startup via
-//!   [`set_external_tool_registry`].
+//!   this port (`agent_bridge`); [`external_tool_registry`] derives the adapter
+//!   on demand from the MCP registry (G3 — no registration static).
 //! - [`WorkspaceAccess`] — workspace existence + tenant ownership lookup used
 //!   by HTTP handlers. Implemented in cloud over
 //!   `crate::domains::tenant::WorkspaceService` (tenant → agent edge stays one-way;
@@ -16,7 +16,7 @@
 //! - [`set_default_model`] — the fallback model id for agent runtime configs,
 //!   previously read from cloud's global `[minimax]` config section.
 
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 
@@ -66,18 +66,14 @@ pub trait ExternalToolRegistry: Send + Sync {
     async fn get_handler(&self, name: &str) -> Option<Arc<dyn ExternalToolHandler>>;
 }
 
-static EXTERNAL_TOOL_REGISTRY: OnceLock<Arc<dyn ExternalToolRegistry>> = OnceLock::new();
-
-/// Register the external tool registry (once, composition layer at startup).
-pub fn set_external_tool_registry(registry: Arc<dyn ExternalToolRegistry>) {
-    if EXTERNAL_TOOL_REGISTRY.set(registry).is_err() {
-        tracing::warn!("external tool registry already initialized; keeping the first");
-    }
-}
-
-/// The registered external tool registry, if the composition layer set one.
+/// The external tool registry, derived on demand from the MCP tool registry
+/// (G3 — OnceLock eliminated; MCP_REGISTRY is the single source of truth).
 pub fn external_tool_registry() -> Option<Arc<dyn ExternalToolRegistry>> {
-    EXTERNAL_TOOL_REGISTRY.get().cloned()
+    crate::domains::mcp::get_mcp_registry().map(|registry| {
+        Arc::new(crate::domains::mcp::agent_bridge::McpExternalToolRegistry::new(
+            registry,
+        )) as Arc<dyn ExternalToolRegistry>
+    })
 }
 
 // ---------------------------------------------------------------------------

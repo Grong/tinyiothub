@@ -157,7 +157,7 @@ impl AutonomousInvokeActionTool {
             .get("token")?
             .as_str()?
             .to_string();
-        let pending = take_pending_action(&token)?;
+        let pending = take_pending_action(&self.inner.pending_actions, &token)?;
         if pending.thing_id != input.thing_id
             || pending.action_name != input.action_name
             || pending.workspace_id != self.workspace_id
@@ -443,6 +443,7 @@ mod tests {
             pool: pool.clone(),
             workspace_id: workspace_id.to_string(),
             data_server: None,
+            pending_actions: self_pending_actions(),
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -637,6 +638,7 @@ mod tests {
             pool: pool.clone(),
             workspace_id: "ws-err".to_string(),
             data_server: None,
+            pending_actions: self_pending_actions(),
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -747,6 +749,7 @@ mod tests {
             pool: pool.clone(),
             workspace_id: inner_ws.to_string(),
             data_server: None,
+            pending_actions: self_pending_actions(),
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -855,6 +858,7 @@ mod tests {
             pool: pool.clone(),
             workspace_id: "ws-norun".to_string(),
             data_server: None,
+            pending_actions: self_pending_actions(),
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -868,4 +872,9 @@ mod tests {
         let result = tool.execute(args("dev-1", "reboot")).await.expect("execute");
         assert!(result.success);
     }
+}
+
+#[cfg(test)]
+fn self_pending_actions() -> Arc<super::thing::PendingActionStore> {
+    Arc::new(super::thing::PendingActionStore::new())
 }

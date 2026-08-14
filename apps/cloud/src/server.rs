@@ -17,13 +17,13 @@ pub async fn create_app_router(app_state: AppState) -> Router {
     tracing::info!("Initializing MCP tools...");
 
     crate::domains::mcp::register_tools(Some(std::sync::Arc::new(app_state.clone()))).await;
-    crate::domains::mcp::agent_bridge::register_agent_bridge();
     app_state
         .agent_pool
         .set_runtime_context(crate::domains::agent::host::tools::service::ToolRuntimeContext {
             device_cache: Some(app_state.device_cache.clone()),
             data_server: app_state.data_server.clone(),
             directive_sink: app_state.directive_sink.clone(),
+            pending_actions: Some(app_state.pending_actions.clone()),
         })
         .await;
     tracing::info!("MCP tools initialized");

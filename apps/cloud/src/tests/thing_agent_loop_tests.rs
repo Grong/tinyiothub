@@ -384,7 +384,10 @@ async fn build_fixture(
         observer,
         provider_factory,
         "stub-model".to_string(),
-        Default::default(),
+        crate::domains::agent::host::tools::service::ToolRuntimeContext {
+            pending_actions: Some(std::sync::Arc::new(dashmap::DashMap::new())),
+            ..Default::default()
+        },
     ));
 
     let manager = Arc::new(ThingAgentManager::new(

@@ -27,13 +27,15 @@ fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Re
 }
 
 /// App with two seeded workspaces in one tenant.
-async fn setup_two_workspaces() -> (axum::Router, sqlx::SqlitePool) {
+async fn setup_two_workspaces() -> (axum::Router, sqlx::SqlitePool, crate::shared::app_state::AppState) {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-a").await;
     seed_test_workspace(&pool, "tenant-1", "ws-b").await;
     let api_router = crate::api::create_router(&app_state);
-    let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
-    (app, pool)
+    let app = axum::Router::new()
+        .nest("/api", api_router)
+        .with_state(app_state.clone());
+    (app, pool, app_state)
 }
 
 fn token(workspace_id: &str) -> String {
@@ -58,7 +60,7 @@ async fn create_thing(app: &axum::Router, token: &str, workspace_id: &str, name:
 
 #[tokio::test]
 async fn test_cross_workspace_crud_returns_404() {
-    let (app, _pool) = setup_two_workspaces().await;
+    let (app, _pool, _app_state) = setup_two_workspaces().await;
     let token_a = token("ws-a");
     let token_b = token("ws-b");
     let thing_a = create_thing(&app, &token_a, "ws-a", "thing-in-a").await;
@@ -137,7 +139,7 @@ async fn test_cross_workspace_crud_returns_404() {
 
 #[tokio::test]
 async fn test_cross_workspace_profile_and_ontology_404() {
-    let (app, _pool) = setup_two_workspaces().await;
+    let (app, _pool, _app_state) = setup_two_workspaces().await;
     let token_a = token("ws-a");
     let token_b = token("ws-b");
     let thing_a = create_thing(&app, &token_a, "ws-a", "thing-profile-a").await;
@@ -168,7 +170,7 @@ async fn test_cross_workspace_profile_and_ontology_404() {
 
 #[tokio::test]
 async fn test_cross_workspace_attach_detach_resource_error() {
-    let (app, pool) = setup_two_workspaces().await;
+    let (app, pool, _state) = setup_two_workspaces().await;
     let token_a = token("ws-a");
     let thing_a = create_thing(&app, &token_a, "ws-a", "thing-res-a").await;
 
@@ -230,13 +232,14 @@ async fn test_cross_workspace_attach_detach_resource_error() {
 
 #[tokio::test]
 async fn test_cross_workspace_confirm_token_403() {
-    let (app, _pool) = setup_two_workspaces().await;
+    let (app, _pool, app_state) = setup_two_workspaces().await;
     let token_a = token("ws-a");
     let token_b = token("ws-b");
     let thing_a = create_thing(&app, &token_a, "ws-a", "thing-confirm-a").await;
 
     // Mint a pending-action token scoped to workspace A directly.
     let confirm_token = crate::domains::agent::host::tools::thing::store_pending_action(
+        &app_state.pending_actions,
         thing_a.clone(),
         "reboot".to_string(),
         None,

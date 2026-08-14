@@ -25,6 +25,8 @@ pub struct ToolRuntimeContext {
     pub device_cache: Option<Arc<DeviceCache>>,
     pub data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
     pub directive_sink: Option<Arc<dyn DirectiveSink>>,
+    /// 待确认动作暂存（G3 注入版，与 AppState 共享同一 Arc）
+    pub pending_actions: Option<Arc<crate::domains::agent::host::tools::thing::PendingActionStore>>,
 }
 
 /// 根据工具名称推断是否危险操作 (mirrored from cloud's `mcp::tool_metadata`

@@ -43,11 +43,15 @@ use crate::domains::agent::host::{
 /// [`ThingActionHooks`] backed by the agent domain's real implementations.
 pub struct AgentThingActionHooks {
     pool: SqlitePool,
+    pending_actions: std::sync::Arc<crate::domains::agent::host::tools::thing::PendingActionStore>,
 }
 
 impl AgentThingActionHooks {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(
+        pool: SqlitePool,
+        pending_actions: std::sync::Arc<crate::domains::agent::host::tools::thing::PendingActionStore>,
+    ) -> Self {
+        Self { pool, pending_actions }
     }
 }
 
@@ -63,11 +67,11 @@ impl AgentThingActionHooks {
         params: Option<serde_json::Value>,
         workspace_id: String,
     ) -> String {
-        store_pending_action(thing_id, action_name, params, workspace_id)
+        store_pending_action(&self.pending_actions, thing_id, action_name, params, workspace_id)
     }
 
     pub fn take_pending(&self, token: &str) -> Option<PendingThingAction> {
-        take_pending_action(token).map(|p| PendingThingAction {
+        take_pending_action(&self.pending_actions, token).map(|p| PendingThingAction {
             thing_id: p.thing_id,
             action_name: p.action_name,
             params: p.params,

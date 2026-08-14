@@ -185,6 +185,15 @@ pub struct AppState {
     pub harmonyos_enabled: bool,
     /// JWT 机制服务（G2 构造注入，消灭 OnceLock 全局态）
     pub jwt_service: std::sync::Arc<tinyiothub_authn::jwt::JwtService>,
+    /// 进程启动时间（G3，替代 health::START_TIME 全局静态）
+    pub started_at: std::time::SystemTime,
+    /// 待确认动作暂存（G3，替代 PENDING_ACTIONS 全局静态）
+    pub pending_actions: std::sync::Arc<crate::domains::agent::host::tools::thing::PendingActionStore>,
+    /// 驱动心跳状态/配置（G3，替代 HEARTBEAT_STATUS/CONFIG 双全局静态）
+    pub driver_heartbeat_status:
+        std::sync::Arc<tokio::sync::RwLock<crate::domains::driver::heartbeat::types::HeartbeatStatus>>,
+    pub driver_heartbeat_config:
+        std::sync::Arc<tokio::sync::RwLock<crate::domains::driver::heartbeat::types::HeartbeatConfig>>,
 }
 
 impl axum::extract::FromRef<AppState> for std::sync::Arc<tinyiothub_authn::jwt::JwtService> {
@@ -461,9 +470,15 @@ impl AppState {
             }
         });
 
+        let pending_actions: std::sync::Arc<crate::domains::agent::host::tools::thing::PendingActionStore> =
+            std::sync::Arc::new(dashmap::DashMap::new());
+
         // Thing action hooks（P4.0b）—— agent 侧实现 core trait，注入给 thing handler
         let thing_action_hooks: Arc<crate::domains::agent::host::thing_action_hooks::AgentThingActionHooks> = Arc::new(
-            crate::domains::agent::host::thing_action_hooks::AgentThingActionHooks::new(database.pool().clone()),
+            crate::domains::agent::host::thing_action_hooks::AgentThingActionHooks::new(
+                database.pool().clone(),
+                pending_actions.clone(),
+            ),
         );
 
         // Agent hooks（P4.0d）—— agent 侧实现 core trait，注入给 workspace 域
@@ -507,6 +522,10 @@ impl AppState {
             social_config,
             harmonyos_enabled,
             jwt_service,
+            started_at: std::time::SystemTime::now(),
+            pending_actions,
+            driver_heartbeat_status: std::sync::Arc::new(tokio::sync::RwLock::new(Default::default())),
+            driver_heartbeat_config: std::sync::Arc::new(tokio::sync::RwLock::new(Default::default())),
             workspace_access: Arc::new(TenantWorkspaceAccess {
                 workspace_service: workspace_service.clone(),
             }),

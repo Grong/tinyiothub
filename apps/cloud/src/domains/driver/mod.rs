@@ -54,9 +54,6 @@ where
 
 /// Device/gateway heartbeat API router (`/heartbeat`). Stateless — heartbeat
 /// state lives in the module-level `OnceLock` (as before the extraction).
-pub fn heartbeat_router<S>() -> axum::Router<S>
-where
-    S: Clone + Send + Sync + 'static,
-{
+pub fn heartbeat_router() -> axum::Router<crate::shared::app_state::AppState> {
     heartbeat::handler::create_router()
 }
