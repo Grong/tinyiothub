@@ -2,7 +2,7 @@
 //!
 //! Extracted from `main.rs` to separate server wiring from runtime initialization.
 
-use axum::{Router, extract::DefaultBodyLimit};
+use axum::{Router, extract::DefaultBodyLimit, extract::FromRef};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::state::AppState;
@@ -16,7 +16,10 @@ pub async fn create_app_router(app_state: AppState) -> Router {
     // Initialize MCP tools with the mcp domain state slice
     tracing::info!("Initializing MCP tools...");
 
-    crate::domains::mcp::register_tools(Some(std::sync::Arc::new(app_state.clone()))).await;
+    crate::domains::mcp::register_tools(Some(std::sync::Arc::new(crate::domains::mcp::McpState::from_ref(
+        &app_state,
+    ))))
+    .await;
     app_state
         .agent_pool
         .set_runtime_context(crate::domains::agent::host::tools::service::ToolRuntimeContext {

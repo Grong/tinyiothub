@@ -10,7 +10,7 @@ use tinyiothub_core::models::cron_job::{CreateCronJobRequest, CronJobQuery, Upda
 
 use crate::domains::mcp::handlers::get_mcp_context;
 use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::state::AppState;
+use crate::domains::mcp::McpState;
 
 /// Tool input: List schedules
 #[derive(Debug, Deserialize)]
@@ -148,11 +148,11 @@ fn map_update_input(input: &UpdateScheduleInput) -> UpdateCronJobRequest {
 
 /// List schedules tool handler
 pub struct ListSchedulesHandler {
-    state: Option<Arc<AppState>>,
+    state: Option<Arc<McpState>>,
 }
 
 impl ListSchedulesHandler {
-    pub fn new(state: Option<Arc<AppState>>) -> Self {
+    pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }
@@ -233,11 +233,11 @@ impl ToolHandler for ListSchedulesHandler {
 
 /// Create schedule tool handler
 pub struct CreateScheduleHandler {
-    state: Option<Arc<AppState>>,
+    state: Option<Arc<McpState>>,
 }
 
 impl CreateScheduleHandler {
-    pub fn new(state: Option<Arc<AppState>>) -> Self {
+    pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }
@@ -404,11 +404,11 @@ impl ToolHandler for CreateScheduleHandler {
 
 /// Update schedule tool handler
 pub struct UpdateScheduleHandler {
-    state: Option<Arc<AppState>>,
+    state: Option<Arc<McpState>>,
 }
 
 impl UpdateScheduleHandler {
-    pub fn new(state: Option<Arc<AppState>>) -> Self {
+    pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }
@@ -496,11 +496,11 @@ impl ToolHandler for UpdateScheduleHandler {
 
 /// Delete schedule tool handler
 pub struct DeleteScheduleHandler {
-    state: Option<Arc<AppState>>,
+    state: Option<Arc<McpState>>,
 }
 
 impl DeleteScheduleHandler {
-    pub fn new(state: Option<Arc<AppState>>) -> Self {
+    pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }

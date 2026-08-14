@@ -18,7 +18,7 @@ use crate::domains::thing::legacy::device_query::{
 };
 
 use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::state::AppState;
+use crate::domains::mcp::McpState;
 
 /// Tool input: Get single device
 #[derive(Debug, Deserialize)]
@@ -105,11 +105,11 @@ struct CommandResponse {
 
 // === Get Device Profile Handler ===
 pub struct DeviceProfileHandler {
-    state: Option<Arc<AppState>>,
+    state: Option<Arc<McpState>>,
 }
 
 impl DeviceProfileHandler {
-    pub fn new(state: Option<Arc<AppState>>) -> Self {
+    pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }
@@ -180,11 +180,11 @@ impl ToolHandler for DeviceProfileHandler {
 
 // === Device Property Get Handler ===
 pub struct DevicePropertyGetHandler {
-    state: Option<Arc<AppState>>,
+    state: Option<Arc<McpState>>,
 }
 
 impl DevicePropertyGetHandler {
-    pub fn new(state: Option<Arc<AppState>>) -> Self {
+    pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }
@@ -298,11 +298,11 @@ impl ToolHandler for DevicePropertyGetHandler {
 
 // === Write Properties Handler ===
 pub struct WritePropertiesHandler {
-    state: Option<Arc<AppState>>,
+    state: Option<Arc<McpState>>,
 }
 
 impl WritePropertiesHandler {
-    pub fn new(state: Option<Arc<AppState>>) -> Self {
+    pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }
@@ -425,11 +425,11 @@ impl ToolHandler for WritePropertiesHandler {
 
 // === Device Command Handler ===
 pub struct DeviceCommandHandler {
-    state: Option<Arc<AppState>>,
+    state: Option<Arc<McpState>>,
 }
 
 impl DeviceCommandHandler {
-    pub fn new(state: Option<Arc<AppState>>) -> Self {
+    pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }
@@ -564,11 +564,11 @@ impl ToolHandler for DeviceCommandHandler {
 
 // === Create Device Handler ===
 pub struct CreateDeviceHandler {
-    state: Option<Arc<AppState>>,
+    state: Option<Arc<McpState>>,
 }
 
 impl CreateDeviceHandler {
-    pub fn new(state: Option<Arc<AppState>>) -> Self {
+    pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }
@@ -719,11 +719,11 @@ impl ToolHandler for CreateDeviceHandler {
 
 // === Delete Device Handler ===
 pub struct DeleteDeviceHandler {
-    state: Option<Arc<AppState>>,
+    state: Option<Arc<McpState>>,
 }
 
 impl DeleteDeviceHandler {
-    pub fn new(state: Option<Arc<AppState>>) -> Self {
+    pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }
@@ -810,11 +810,11 @@ struct SearchDevicesResponse {
 }
 
 pub struct SearchDevicesHandler {
-    state: Option<Arc<AppState>>,
+    state: Option<Arc<McpState>>,
 }
 
 impl SearchDevicesHandler {
-    pub fn new(state: Option<Arc<AppState>>) -> Self {
+    pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }

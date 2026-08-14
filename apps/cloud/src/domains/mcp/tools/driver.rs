@@ -11,7 +11,7 @@ use tinyiothub_runtime::driver;
 
 use crate::domains::mcp::handlers::get_mcp_context;
 use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::state::AppState;
+use crate::domains::mcp::McpState;
 
 /// Driver list response
 #[derive(Debug, Serialize)]
@@ -104,11 +104,11 @@ impl ToolHandler for ListDriversHandler {
 
 // === Test Driver Handler ===
 pub struct TestDriverHandler {
-    state: Option<Arc<AppState>>,
+    state: Option<Arc<McpState>>,
 }
 
 impl TestDriverHandler {
-    pub fn new(state: Option<Arc<AppState>>) -> Self {
+    pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }

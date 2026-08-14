@@ -14,7 +14,7 @@ use crate::domains::alarm::{
 
 use crate::domains::mcp::handlers::get_mcp_context;
 use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::state::AppState;
+use crate::domains::mcp::McpState;
 
 /// Tool input: List alarms
 #[derive(Debug, Deserialize)]
@@ -58,11 +58,11 @@ struct CreateAlarmRuleInput {
 
 /// List alarms tool handler
 pub struct AlarmListHandler {
-    state: Option<Arc<AppState>>,
+    state: Option<Arc<McpState>>,
 }
 
 impl AlarmListHandler {
-    pub fn new(state: Option<Arc<AppState>>) -> Self {
+    pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }
@@ -221,11 +221,11 @@ impl ToolHandler for AlarmListHandler {
 
 /// Acknowledge alarm tool handler
 pub struct AlarmAcknowledgeHandler {
-    state: Option<Arc<AppState>>,
+    state: Option<Arc<McpState>>,
 }
 
 impl AlarmAcknowledgeHandler {
-    pub fn new(state: Option<Arc<AppState>>) -> Self {
+    pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }
@@ -318,11 +318,11 @@ impl ToolHandler for AlarmAcknowledgeHandler {
 
 /// Create alarm rule tool handler
 pub struct AlarmRuleAddHandler {
-    state: Option<Arc<AppState>>,
+    state: Option<Arc<McpState>>,
 }
 
 impl AlarmRuleAddHandler {
-    pub fn new(state: Option<Arc<AppState>>) -> Self {
+    pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }

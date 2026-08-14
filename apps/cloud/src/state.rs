@@ -1094,6 +1094,27 @@ impl TenantWorkspaceAccess {
 // P4-Task23: mcp domain slice
 // ============================================================================
 
+/// Mcp 域状态切片注入（G7）—— mcp handlers 萃取 `State<McpState>`，路由器
+/// 对组合态 `S` 泛型（`McpState: FromRef<S>`）；此处是唯一的
+/// AppState → McpState 派生点。全局 MCP_REGISTRY 持有的 `Arc<McpState>`
+/// 也经此派生（router.rs / main.rs 启动路径）。
+impl axum::extract::FromRef<AppState> for crate::domains::mcp::McpState {
+    fn from_ref(state: &AppState) -> Self {
+        crate::domains::mcp::McpState {
+            database: state.database.clone(),
+            device_cache: state.device_cache.clone(),
+            tag_repository: state.tag_repository.clone(),
+            event_bus: state.event_bus.clone(),
+            data_server: state.data_server.clone(),
+            template_engine: state.template_engine.clone(),
+            cron_job_repo: state.cron_job_repo.clone(),
+            cron_run_repo: state.cron_run_repo.clone(),
+            alarm_service: state.alarm_service.clone(),
+            tenant_service: state.tenant_service.clone(),
+        }
+    }
+}
+
 // ============================================================================
 // P4-Task24: admin domain slice + admin-role seam adapter
 // ============================================================================

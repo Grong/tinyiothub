@@ -119,7 +119,7 @@ async fn main_impl() -> std::io::Result<()> {
 
         use axum::{Router, extract::FromRef};
         use tower_http::services::ServeDir;
-        crate::domains::mcp::register_tools(Some(Arc::new(app_state.clone()))).await;
+        crate::domains::mcp::register_tools(Some(Arc::new(crate::domains::mcp::McpState::from_ref(&app_state)))).await;
         app_state
             .agent_pool
             .set_runtime_context(crate::domains::agent::host::tools::service::ToolRuntimeContext {
