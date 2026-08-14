@@ -152,10 +152,10 @@ pub struct AppState {
     /// Agent 记忆存储 - 持久化 agent 记忆到 SQLite
     pub memory_store: Arc<MemoryStore>,
 
-    /// Thing action hooks（P4.0b）—— thing handler 经此调用 agent 侧的
+    /// Thing action hooks（G5a）—— thing handler 经此调用 agent 侧的
     /// 参数校验 / 确认令牌存储 / 策略裁决，斩断 thing→agent 依赖边。
-    /// 由组合层（此处）注入 agent 实现；thing 域只依赖 core trait。
-    pub thing_action_hooks: Arc<crate::domains::agent::host::thing_action_hooks::AgentThingActionHooks>,
+    /// 由组合层（此处）注入 agent 实现；thing 域只依赖自有 trait。
+    pub thing_action_hooks: Arc<dyn crate::domains::thing::hooks::ThingActionHooks>,
 
     /// Agent hooks（P4.0d）—— workspace 域经此使用 agent 侧的默认心跳
     /// 任务集 /  legacy HEARTBEAT.md 解析与迁移，斩断 workspace→agent
@@ -473,8 +473,8 @@ impl AppState {
         let pending_actions: std::sync::Arc<crate::domains::agent::host::tools::thing::PendingActionStore> =
             std::sync::Arc::new(dashmap::DashMap::new());
 
-        // Thing action hooks（P4.0b）—— agent 侧实现 core trait，注入给 thing handler
-        let thing_action_hooks: Arc<crate::domains::agent::host::thing_action_hooks::AgentThingActionHooks> = Arc::new(
+        // Thing action hooks（G5a）—— agent 侧实现 thing 域 trait，注入给 thing handler
+        let thing_action_hooks: Arc<dyn crate::domains::thing::hooks::ThingActionHooks> = Arc::new(
             crate::domains::agent::host::thing_action_hooks::AgentThingActionHooks::new(
                 database.pool().clone(),
                 pending_actions.clone(),

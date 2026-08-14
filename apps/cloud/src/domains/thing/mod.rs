@@ -10,11 +10,12 @@
 //! templates) and [`tag::create_router()`] (tags).
 //!
 //! ## 设计不变量
-//! - 禁止依赖 agent/mcp —— 动作确认经 core::thing_hooks 反向注入
+//! - 禁止依赖 agent/mcp —— 动作确认经 [`hooks::ThingActionHooks`] 反向注入
 //! - devices 表即 things 表；名称查询按 workspace 作用域
 
 pub mod errors;
 pub mod handler;
+pub mod hooks;
 pub mod legacy;
 pub mod repo;
 pub mod service;
