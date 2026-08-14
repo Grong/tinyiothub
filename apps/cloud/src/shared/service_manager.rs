@@ -164,7 +164,9 @@ impl ServiceManager {
             app_state.alarm_service.set_event_publisher(Arc::new(
                 crate::shared::ai_adapter::AlarmAiPublisherAdapter::new(event_publisher.clone()),
             ));
-            app_state.workspace_service.set_event_publisher(event_publisher.clone());
+            app_state.workspace_service.set_event_publisher(Arc::new(
+                crate::shared::ai_adapter::WorkspaceAiPublisherAdapter::new(event_publisher.clone()),
+            ));
             app_state
                 .workspace_service
                 .set_heartbeat_task_repo(heartbeat_task_repo.clone());

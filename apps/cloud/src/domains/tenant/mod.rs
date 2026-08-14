@@ -6,10 +6,11 @@
 //! state `S` with a `TenantState: FromRef<S>` bound.
 //!
 //! ## 设计不变量
-//! - 租户/工作区领域；心跳任务类型复用 agent crate（tenant→agent 单向，无环）
-//! - 对 agent 服务的调用经 core::agent_hooks 注入，不直接依赖
+//! - 租户/工作区领域；对 agent 能力的调用经自有 `hooks` 端口注入（G5b），
+//!   不直接依赖 agent 域（依赖方向 agent → tenant，无环）
 
 pub mod handler;
+pub mod hooks;
 pub mod legacy;
 pub mod service;
 pub mod workspace;

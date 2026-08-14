@@ -2,8 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use tinyiothub_storage::heartbeat::{HeartbeatTaskRepository, NewHeartbeatTask};
 
-use crate::domains::agent::host::agent_hooks::AgentHooksImpl;
-use crate::domains::agent::loop_::event::{bus::AiEventPublisher, types::AiEvent};
+use crate::domains::tenant::hooks::{AgentHooks, WorkspaceEventPublisher};
 
 use tinyiothub_core::error::Result;
 use tinyiothub_core::models::workspace::ResourceType;
@@ -13,9 +12,9 @@ use tinyiothub_storage::workspace::{
 
 pub struct WorkspaceService {
     repository: Arc<WorkspaceRepository>,
-    event_publisher: Mutex<Option<Arc<AiEventPublisher>>>,
+    event_publisher: Mutex<Option<Arc<dyn WorkspaceEventPublisher>>>,
     heartbeat_task_repo: Mutex<Option<Arc<HeartbeatTaskRepository>>>,
-    agent_hooks: Mutex<Option<Arc<AgentHooksImpl>>>,
+    agent_hooks: Mutex<Option<Arc<dyn AgentHooks>>>,
 }
 
 impl WorkspaceService {
@@ -28,7 +27,7 @@ impl WorkspaceService {
         }
     }
 
-    pub fn set_event_publisher(&self, publisher: Arc<AiEventPublisher>) {
+    pub fn set_event_publisher(&self, publisher: Arc<dyn WorkspaceEventPublisher>) {
         *self.event_publisher.lock().unwrap() = Some(publisher);
     }
 
@@ -36,7 +35,7 @@ impl WorkspaceService {
         *self.heartbeat_task_repo.lock().unwrap() = Some(repo);
     }
 
-    pub fn set_agent_hooks(&self, hooks: Arc<AgentHooksImpl>) {
+    pub fn set_agent_hooks(&self, hooks: Arc<dyn AgentHooks>) {
         *self.agent_hooks.lock().unwrap() = Some(hooks);
     }
 
@@ -71,9 +70,7 @@ impl WorkspaceService {
             .await?;
         self.seed_default_heartbeat_tasks(&workspace.id).await;
         if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
-            publisher.publish(AiEvent::WorkspaceCreated {
-                workspace_id: workspace.id.clone(),
-            });
+            publisher.publish_workspace_created(workspace.id.clone());
         }
         Ok(workspace)
     }
@@ -119,9 +116,7 @@ impl WorkspaceService {
         // workspace whose delete then fails.
         self.repository.delete(id).await?;
         if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
-            publisher.publish(AiEvent::WorkspaceDeleted {
-                workspace_id: id.to_string(),
-            });
+            publisher.publish_workspace_deleted(id.to_string());
         }
         Ok(())
     }
@@ -220,6 +215,44 @@ impl WorkspaceService {
 mod tests {
 
     use super::*;
+    use crate::domains::tenant::hooks::HeartbeatTaskDef;
+
+    /// Tenant-local stub of the agent-owned default-task capability — the
+    /// real set lives in the agent domain and must not be named here (G5b).
+    struct StubAgentHooks;
+
+    impl AgentHooks for StubAgentHooks {
+        fn default_heartbeat_tasks(&self) -> Vec<HeartbeatTaskDef> {
+            vec![
+                HeartbeatTaskDef { priority: "high".into(), text: "t1".into(), paused: false },
+                HeartbeatTaskDef { priority: "medium".into(), text: "t2".into(), paused: false },
+                HeartbeatTaskDef { priority: "low".into(), text: "t3".into(), paused: true },
+                HeartbeatTaskDef { priority: "low".into(), text: "t4".into(), paused: true },
+            ]
+        }
+    }
+
+    /// Records published workspace lifecycle events (synchronously, so no
+    /// drain/shutdown is needed unlike the real queued publisher).
+    #[derive(Default)]
+    struct RecordingEventPublisher {
+        events: std::sync::Mutex<Vec<&'static str>>,
+    }
+
+    impl WorkspaceEventPublisher for RecordingEventPublisher {
+        fn publish_workspace_created(&self, _workspace_id: String) {
+            self.events.lock().unwrap().push("created");
+        }
+        fn publish_workspace_deleted(&self, _workspace_id: String) {
+            self.events.lock().unwrap().push("deleted");
+        }
+    }
+
+    impl RecordingEventPublisher {
+        fn count(&self) -> usize {
+            self.events.lock().unwrap().len()
+        }
+    }
 
     /// 真实 SQLite 版 workspace repo（E4 去 trait 后替代 MockWorkspaceRepository）。
     /// 返回 (repo, pool)：pool 用于 delete-failure 测试 DROP TABLE 注入故障。
@@ -259,17 +292,7 @@ mod tests {
             .expect("migrations");
         let repo = Arc::new(tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(hb_pool));
         service.set_heartbeat_task_repo(repo.clone());
-        let hb_pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
-            .await
-            .expect("hb pool");
-        tinyiothub_storage::test_helpers::run_all_migrations(&hb_pool)
-            .await
-            .expect("migrations");
-        service.set_agent_hooks(Arc::new(crate::domains::agent::host::agent_hooks::AgentHooksImpl::new(
-            Arc::new(tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(hb_pool)),
-        )));
+        service.set_agent_hooks(Arc::new(StubAgentHooks));
 
         let ws = service
             .create("tenant_1", "ws", None, None, None)
@@ -300,15 +323,13 @@ mod tests {
             .await
             .expect("drop table");
         let service = WorkspaceService::new(ws_repo);
-        let publisher = Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
+        let publisher = Arc::new(RecordingEventPublisher::default());
         service.set_event_publisher(publisher.clone());
 
         let result = service.delete("ws_1").await;
         assert!(result.is_err());
-        // shutdown() drains the publisher queue deterministically — no sleep.
-        publisher.shutdown().await;
         assert_eq!(
-            publisher.events_published(),
+            publisher.count(),
             0,
             "failed delete must not publish WorkspaceDeleted — listeners would tear down a live workspace"
         );
@@ -318,11 +339,10 @@ mod tests {
     async fn delete_success_publishes_workspace_deleted() {
         let (ws_repo, _pool) = real_repo().await;
         let service = WorkspaceService::new(ws_repo);
-        let publisher = Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
+        let publisher = Arc::new(RecordingEventPublisher::default());
         service.set_event_publisher(publisher.clone());
 
         service.delete("ws_1").await.expect("delete");
-        publisher.shutdown().await;
-        assert_eq!(publisher.events_published(), 1);
+        assert_eq!(publisher.count(), 1);
     }
 }

@@ -1,7 +1,7 @@
 // Workspaces API handlers
 //
 // Heartbeat routes (`/{id}/heartbeat/*`) are AI/agent-plane endpoints and
-// live in the agent crate (`crate::domains::agent::host::handler::workspace_heartbeat`), nested by
+// live in the agent domain (`agent::host::handler::workspace_heartbeat`), nested by
 // the composition layer — see crate `legacy/mod.rs`.
 
 use crate::shared::app_state::AppState;

@@ -124,6 +124,16 @@ jobs:
             done
           fi
 
+      - name: Domain Dependency Guard (G5)
+        run: |
+          echo "=== Checking thing/tenant domains carry no agent dependency edge ==="
+          if grep -rn "domains::agent" apps/cloud/src/domains/thing apps/cloud/src/domains/tenant; then
+            echo "❌ DEPENDENCY VIOLATION: domains/thing and domains/tenant must not reference domains::agent"
+            echo "   ✅ Consume agent capabilities via the domain-owned hooks traits (G5a ThingActionHooks / G5b AgentHooks)"
+            exit 1
+          fi
+          echo "✅ Domain dependency guard passed"
+
   # -----------------------------------------------------------------------------
   # 前端检查
   # -----------------------------------------------------------------------------

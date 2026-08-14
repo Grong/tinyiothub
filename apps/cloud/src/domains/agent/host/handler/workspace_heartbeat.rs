@@ -7,7 +7,7 @@
 //   GET  /tasks — read heartbeat tasks (DB)
 //   PUT  /tasks — replace heartbeat tasks (DB)
 
-use crate::domains::agent::host::agent_hooks::HeartbeatTaskDef;
+use crate::domains::agent::host::heartbeat;
 use crate::domains::agent::loop_::heartbeat::types::NewHeartbeatTask;
 use crate::verify_workspace_access_port;
 use axum::{
@@ -49,6 +49,16 @@ where
 }
 
 // ── Response types ──
+
+/// A heartbeat task as exposed by this API (priority/text/paused only;
+/// server-assigned fields like id/version/timestamps never leave the wire).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeartbeatTaskDef {
+    pub priority: String,
+    pub text: String,
+    pub paused: bool,
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -667,12 +677,17 @@ async fn update_proposal_status(
 /// HEARTBEAT.md on first access; falls back to file/defaults when the
 /// heartbeat runner (and thus the repo) is unavailable.
 async fn load_tasks(state: &AppState, workspace_id: &str) -> Vec<HeartbeatTaskDef> {
+    fn to_def(t: heartbeat::HeartbeatTask) -> HeartbeatTaskDef {
+        HeartbeatTaskDef {
+            priority: t.priority,
+            text: t.text,
+            paused: t.paused,
+        }
+    }
     if let Some(ref runner) = state.heartbeat_runner {
         let workspace_dir = paths::workspace_dir(workspace_id);
-        if let Err(e) = state
-            .agent_hooks
-            .migrate_legacy_heartbeat_tasks(workspace_id, &workspace_dir)
-            .await
+        if let Err(e) =
+            heartbeat::migrate_file_tasks_to_db(runner.task_repo().as_ref(), workspace_id, &workspace_dir).await
         {
             tracing::warn!(%workspace_id, "Heartbeat task migration failed: {}", e);
         }
@@ -693,13 +708,12 @@ async fn load_tasks(state: &AppState, workspace_id: &str) -> Vec<HeartbeatTaskDe
         }
     }
     let workspace_dir = paths::workspace_dir(workspace_id);
-    state
-        .agent_hooks
-        .read_legacy_heartbeat_tasks(&workspace_dir)
+    heartbeat::read_heartbeat_tasks(&workspace_dir)
         .await
+        .map(|tasks| tasks.into_iter().map(to_def).collect())
         .unwrap_or_else(|e| {
             tracing::warn!(%workspace_id, "Failed to read HEARTBEAT.md: {}", e);
-            state.agent_hooks.default_heartbeat_tasks()
+            heartbeat::get_default_tasks().into_iter().map(to_def).collect()
         })
 }
 
