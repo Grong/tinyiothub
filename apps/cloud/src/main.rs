@@ -21,23 +21,26 @@ async fn main_impl() -> std::io::Result<()> {
     // Set up global panic handler to prevent crashes
     bootstrap::install_panic_hook();
 
-    // === 1. 初始化配置系统 ===
-    if let Err(e) = config::initialize() {
-        eprintln!("Failed to initialize configuration: {}", e);
-        std::process::exit(1);
-    }
+    // === 1. 初始化配置系统（G6：局部 ApplicationSettings，经 AppState 注入，无进程级全局）===
+    let settings = match config::load_configuration() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to initialize configuration: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     // JWT 机制服务（G2）：构造注入，无全局态。web 的 resolver
     // 缝在 AppState 之前注册，JwtService 无状态可安全共享。
     let jwt_service = std::sync::Arc::new(tinyiothub_authn::jwt::JwtService::new(
         tinyiothub_authn::jwt::JwtSettings {
-            secret: config::get().security.jwt.secret.clone(),
-            harmonyos_enabled: config::get().harmonyos.enabled,
+            secret: settings.security.jwt.secret.clone(),
+            harmonyos_enabled: settings.harmonyos.enabled,
         },
     ));
 
     // Initialize logging system
-    bootstrap::initialize_logging().await?;
+    bootstrap::initialize_logging(&settings).await?;
 
     // Register the tenant resolver (P4-Task15) — domain crates resolve
     // workspace/tenant scope via tinyiothub_web extractors without depending
@@ -54,15 +57,14 @@ async fn main_impl() -> std::io::Result<()> {
     }));
 
     info!("🚀 TinyIoTHub Starting...");
-    info!("Environment: {}", config::environment());
-    info!("Server: {}", config::get().server_bind_address());
-    info!("Database: {}", config::get().database.url);
-    info!("MQTT: {}", config::get().mqtt_broker_address());
+    info!("Environment: {}", settings.environment());
+    info!("Server: {}", settings.server_bind_address());
+    info!("Database: {}", settings.database.url);
+    info!("MQTT: {}", settings.mqtt_broker_address());
     info!("CPUs: {}", num_cpus::get());
 
     // === 2. 初始化数据库 ===
     use tinyiothub_storage::DatabaseConfig;
-    let settings = config::get();
     let db_url = if settings.database.url.starts_with("sqlite:") {
         settings.database.url.clone()
     } else {
@@ -83,7 +85,7 @@ async fn main_impl() -> std::io::Result<()> {
     info!("✅ Database pool & device cache initialized");
 
     // === 3. 创建 AppState（包含所有核心组件）===
-    let mut app_state = tinyiothub_cloud::shared::app_state::AppState::new(device_cache, db_pool);
+    let mut app_state = tinyiothub_cloud::shared::app_state::AppState::new(device_cache, db_pool, &settings);
     info!("✅ AppState created");
 
     // === 4. 驱动（静态编译，无需加载）+ 动态驱动重载 + 设备缓存预热 ===
@@ -141,7 +143,7 @@ async fn main_impl() -> std::io::Result<()> {
     #[cfg(not(feature = "harmonyos"))]
     let app = server::create_app_router(app_state).await;
 
-    let bind_address = config::get().server_bind_address();
+    let bind_address = settings.server_bind_address();
     info!("🚀 Server listening on {}", bind_address);
 
     let listener = TcpListener::bind(&bind_address).await?;

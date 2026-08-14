@@ -5,17 +5,21 @@ use async_trait::async_trait;
 use tinyiothub_llm::provider::{LlmCallMetadata, LlmProvider, LlmResponse};
 
 /// Wraps zeroclaw's ModelProvider to implement AI crate's LlmProvider trait.
-pub struct MinimaxLlmProvider;
+/// Holds its MiniMax config slice (G6 — no process-global config reads);
+/// when None, `chat` errors exactly as the former missing-`[minimax]` path did.
+pub struct MinimaxLlmProvider {
+    minimax: Option<tinyiothub_core::config::MinimaxConfig>,
+}
 
 impl MinimaxLlmProvider {
-    pub fn new() -> Self {
-        Self
+    pub fn new(minimax: Option<tinyiothub_core::config::MinimaxConfig>) -> Self {
+        Self { minimax }
     }
 }
 
 impl Default for MinimaxLlmProvider {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
@@ -28,7 +32,11 @@ impl LlmProvider for MinimaxLlmProvider {
         model: &str,
         temperature: f32,
     ) -> anyhow::Result<LlmResponse> {
-        let provider = crate::shared::config::create_minimax_provider().map_err(|e| anyhow::anyhow!("{}", e))?;
+        let cfg = self
+            .minimax
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("[minimax] config section is required but not found"))?;
+        let provider = crate::shared::config::create_minimax_provider(cfg).map_err(|e| anyhow::anyhow!("{}", e))?;
         let content = provider
             .chat_with_system(system, prompt, model, Some(temperature as f64))
             .await

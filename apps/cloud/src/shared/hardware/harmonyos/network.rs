@@ -202,7 +202,10 @@ pub fn get_network_manager() -> &'static HarmonyNetworkManager {
 }
 
 /// 兼容性函数：获取本地IP地址（与Linux版本兼容）
-pub fn get_local_ip() -> Result<String, std::io::Error> {
+///
+/// `default_ip`：无可用接口时的回退地址（调用方传
+/// `state.network_defaults.ip_address`，G6 —— 不再读取进程级配置全局）。
+pub fn get_local_ip(default_ip: &str) -> Result<String, std::io::Error> {
     let manager = get_network_manager();
     let interfaces = manager.get_interfaces()?;
 
@@ -214,8 +217,8 @@ pub fn get_local_ip() -> Result<String, std::io::Error> {
         }
     }
 
-    // 返回配置的默认IP或环境变量
-    Ok(crate::shared::config::get().network.defaults.ip_address.clone())
+    // 返回调用方注入的默认IP
+    Ok(default_ip.to_string())
 }
 
 /// 兼容性函数：检查网络连接

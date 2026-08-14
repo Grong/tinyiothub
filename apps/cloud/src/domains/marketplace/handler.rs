@@ -19,7 +19,7 @@ use crate::{
         client::MarketplaceClient, driver_installer::DriverInstaller, template_installer::TemplateInstaller,
         thing_template_installer::ThingTemplateInstaller,
     },
-    shared::{api_response::ApiResponse, app_state::AppState, config, error_handling::AuthHelper},
+    shared::{api_response::ApiResponse, app_state::AppState, error_handling::AuthHelper},
 };
 
 pub fn create_router() -> Router<AppState> {
@@ -35,9 +35,8 @@ pub fn create_router() -> Router<AppState> {
         .route("/thing-templates/{id}/install", post(install_thing_template))
 }
 
-fn marketplace_api_url() -> String {
-    let config = config::get();
-    config
+fn marketplace_api_url(state: &AppState) -> String {
+    state
         .marketplace
         .api_url
         .clone()
@@ -129,10 +128,10 @@ fn normalize_marketplace_response(data: serde_json::Value) -> Json<ApiResponse<s
 }
 
 async fn proxy_marketplace_templates(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    let mut url = format!("{}/templates", marketplace_api_url());
+    let mut url = format!("{}/templates", marketplace_api_url(&state));
 
     if !params.is_empty() {
         let query_string = params
@@ -161,10 +160,10 @@ async fn proxy_marketplace_templates(
 }
 
 async fn proxy_marketplace_template(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    let url = format!("{}/templates/{}", marketplace_api_url(), name);
+    let url = format!("{}/templates/{}", marketplace_api_url(&state), name);
     tracing::info!("Proxying marketplace template request to: {}", url);
 
     match HTTP_CLIENT.get(&url).send().await {
@@ -183,10 +182,10 @@ async fn proxy_marketplace_template(
 }
 
 async fn proxy_marketplace_drivers(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    let mut url = format!("{}/drivers", marketplace_api_url());
+    let mut url = format!("{}/drivers", marketplace_api_url(&state));
 
     if !params.is_empty() {
         let query_string = params
@@ -215,10 +214,10 @@ async fn proxy_marketplace_drivers(
 }
 
 async fn proxy_marketplace_driver(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    let url = format!("{}/drivers/{}", marketplace_api_url(), id);
+    let url = format!("{}/drivers/{}", marketplace_api_url(&state), id);
     tracing::info!("Proxying marketplace driver request to: {}", url);
 
     match HTTP_CLIENT.get(&url).send().await {
@@ -242,9 +241,7 @@ async fn install_marketplace_template(
     _claims: Claims,
     Json(req): Json<InstallRequest>,
 ) -> Json<ApiResponse<String>> {
-    let config = config::get();
-
-    let client = match MarketplaceClient::new(config.marketplace.clone()) {
+    let client = match MarketplaceClient::new(state.marketplace.clone()) {
         Ok(client) => Arc::new(client),
         Err(e) => {
             tracing::error!("Failed to create marketplace client: {}", e);
@@ -283,9 +280,7 @@ async fn install_marketplace_driver(
         }
     }
 
-    let config = config::get();
-
-    let client = match MarketplaceClient::new(config.marketplace.clone()) {
+    let client = match MarketplaceClient::new(state.marketplace.clone()) {
         Ok(client) => Arc::new(client),
         Err(e) => {
             tracing::error!("Failed to create marketplace client: {}", e);
@@ -293,10 +288,7 @@ async fn install_marketplace_driver(
         }
     };
 
-    let installer = DriverInstaller::new(
-        client,
-        std::path::PathBuf::from(&config.device.drivers.dynamic_drivers_dir),
-    );
+    let installer = DriverInstaller::new(client, std::path::PathBuf::from(&state.dynamic_drivers_dir));
 
     match installer.install_from_marketplace(&id, req.version.as_deref()).await {
         Ok(driver_name) => {
@@ -329,8 +321,7 @@ async fn publish_template_handler(
             return ApiResponseBuilder::error("权限检查失败");
         }
     }
-    let config = crate::shared::config::get();
-    let marketplace_config = &config.marketplace;
+    let marketplace_config = &state.marketplace;
     if !marketplace_config.enabled {
         return ApiResponseBuilder::error("市场未启用");
     }

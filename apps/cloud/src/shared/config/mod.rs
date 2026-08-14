@@ -1,24 +1,12 @@
 // Configuration Module - Using config crate for zero-boilerplate config management
+//
+// 禁止新增进程级配置全局（G6 裁决）；配置经 AppState 注入。
+// main.rs 启动时调用 `load_configuration()` 得到局部 `ApplicationSettings`，
+// 随后传入 `AppState::new`；handler 从 `State` 取切片，service 经构造参数获取。
 pub use tinyiothub_core::config::*;
 
 pub mod settings {
     pub use tinyiothub_core::config::{AliyunSmsConfig, ApplicationSettings, MarketplaceConfig, SmsConfig};
-}
-
-use std::sync::OnceLock;
-
-/// Global configuration instance
-static CONFIG: OnceLock<ApplicationSettings> = OnceLock::new();
-
-/// Initialize the global configuration
-pub fn initialize() -> Result<(), ConfigError> {
-    let settings = load_configuration()?;
-    CONFIG
-        .set(settings)
-        .map_err(|_| ConfigError::ValidationError("Failed to initialize config".to_string()))?;
-
-    tracing::info!("Configuration initialized successfully");
-    Ok(())
 }
 
 /// Load configuration using config crate
@@ -50,30 +38,11 @@ pub fn load_configuration() -> Result<ApplicationSettings, ConfigError> {
     Ok(app_settings)
 }
 
-/// Get the global configuration instance
-pub fn get() -> &'static ApplicationSettings {
-    CONFIG
-        .get()
-        .expect("Configuration not initialized. Call config::initialize() first")
-}
-
-/// Get the global configuration if initialized, otherwise None.
-pub fn try_get() -> Option<&'static ApplicationSettings> {
-    CONFIG.get()
-}
-
 /// Create a MiniMax model provider using the configured base_url and auth_token.
 ///
-/// Reads `[minimax]` section from app_settings.toml. Returns an error if the
-/// section is missing or if provider construction fails.
-pub fn create_minimax_provider() -> anyhow::Result<Box<dyn zeroclaw::providers::traits::ModelProvider>> {
-    let cfg = try_get()
-        .and_then(|s| s.minimax.as_ref())
-        .ok_or_else(|| anyhow::anyhow!("[minimax] config section is required but not found"))?;
+/// Takes the `[minimax]` config slice from the caller (G6 — injected, not global).
+pub fn create_minimax_provider(
+    cfg: &MinimaxConfig,
+) -> anyhow::Result<Box<dyn zeroclaw::providers::traits::ModelProvider>> {
     zeroclaw::providers::create_model_provider_with_url("minimaxi", Some(&cfg.auth_token), Some(&cfg.base_url))
-}
-
-/// Get environment name
-pub fn environment() -> &'static str {
-    get().environment()
 }

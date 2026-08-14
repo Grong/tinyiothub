@@ -9,17 +9,20 @@ use std::sync::OnceLock;
 use axum::Router;
 use http_body_util::BodyExt;
 use serde_json::Value;
+use tinyiothub_core::config::ApplicationSettings;
 
 use crate::shared::app_state::AppState;
 
-static TEST_CONFIG: OnceLock<()> = OnceLock::new();
+static TEST_SETTINGS: OnceLock<ApplicationSettings> = OnceLock::new();
 
 /// Initialize test configuration (runs once across all tests).
 ///
-/// Sets environment variables for test config, then initializes the global config.
-/// Uses `OnceCell` to ensure it only runs once, even with parallel tests.
-fn ensure_test_config() {
-    TEST_CONFIG.get_or_init(|| {
+/// Sets environment variables for test config, then loads the settings.
+/// Uses `OnceLock` to ensure it only runs once, even with parallel tests.
+/// (G6: the loaded settings live in this test-harness OnceLock and are
+/// passed into `AppState::new` — no process-global config accessor.)
+fn ensure_test_config() -> &'static ApplicationSettings {
+    TEST_SETTINGS.get_or_init(|| {
         // SAFETY: set_var is called once during test initialization, before any threads read env vars.
         // This is safe because tests run sequentially per process and config is initialized once via OnceCell.
         unsafe {
@@ -52,15 +55,15 @@ fn ensure_test_config() {
             std::env::set_var("TINYIOTHUB__AGENT__MEMORY_BACKEND", "none");
         }
 
-        // Initialize config — panic if it fails so we know immediately
-        crate::shared::config::initialize().expect("Failed to initialize test config");
+        // Load config — panic if it fails so we know immediately
+        let settings = crate::shared::config::load_configuration().expect("Failed to load test config");
 
         // JWT 机制服务（G2 构造注入）。测试进程级 OnceLock 注册一次；
         // resolver 闭包共享同一实例（JwtService 无内部状态，克隆廉价）。
         let jwt_service = std::sync::Arc::new(tinyiothub_authn::jwt::JwtService::new(
             tinyiothub_authn::jwt::JwtSettings {
-                secret: crate::shared::config::get().security.jwt.secret.clone(),
-                harmonyos_enabled: crate::shared::config::get().harmonyos.enabled,
+                secret: settings.security.jwt.secret.clone(),
+                harmonyos_enabled: settings.harmonyos.enabled,
             },
         ));
 
@@ -77,7 +80,9 @@ fn ensure_test_config() {
                     workspace_id: c.workspace_id,
                 })
         }));
-    });
+
+        settings
+    })
 }
 
 /// Create a test application router with in-memory SQLite database.
@@ -97,9 +102,9 @@ pub async fn setup_test_app() -> Router {
 
 /// Create test AppState and return it along with the pool (for seeding test data).
 pub async fn setup_test_app_with_pool() -> (AppState, sqlx::SqlitePool) {
-    ensure_test_config();
+    let settings = ensure_test_config();
 
-    let app_state = create_test_app_state().await;
+    let app_state = create_test_app_state(settings).await;
     let pool = app_state.db_pool().clone();
     (app_state, pool)
 }
@@ -138,7 +143,7 @@ pub async fn seed_test_workspace(pool: &sqlx::SqlitePool, tenant_id: &str, works
 ///
 /// Runs cloud migrations, skipping test-data migrations that reference
 /// non-existent devices.
-async fn create_test_app_state() -> AppState {
+async fn create_test_app_state(settings: &ApplicationSettings) -> AppState {
     use std::sync::Arc;
 
     use tinyiothub_storage::cache::DeviceCache;
@@ -170,13 +175,14 @@ async fn create_test_app_state() -> AppState {
 
     let device_cache = Arc::new(DeviceCache::new());
 
-    AppState::new(device_cache, pool)
+    AppState::new(device_cache, pool, settings)
 }
 
 fn test_jwt_service() -> tinyiothub_authn::jwt::JwtService {
+    let settings = ensure_test_config();
     tinyiothub_authn::jwt::JwtService::new(tinyiothub_authn::jwt::JwtSettings {
-        secret: crate::shared::config::get().security.jwt.secret.clone(),
-        harmonyos_enabled: crate::shared::config::get().harmonyos.enabled,
+        secret: settings.security.jwt.secret.clone(),
+        harmonyos_enabled: settings.harmonyos.enabled,
     })
 }
 

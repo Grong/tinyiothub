@@ -177,6 +177,16 @@ pub struct AppState {
     pub network_defaults: tinyiothub_core::config::NetworkDefaultsConfig,
     /// 主 MQTT 配置切片
     pub mqtt_primary: tinyiothub_core::config::MqttBrokerConfig,
+    /// Marketplace 配置切片
+    pub marketplace: tinyiothub_core::config::MarketplaceConfig,
+    /// 动态驱动安装目录（device.drivers.dynamic_drivers_dir）
+    pub dynamic_drivers_dir: String,
+    /// CORS 允许来源（server.cors_origins）
+    pub cors_origins: Vec<String>,
+    /// 事件安全配置切片（secure event service 懒加载用）
+    pub event_security: tinyiothub_core::config::EventSecurityConfig,
+    /// MiniMax 配置切片（llm provider / tag suggester 用；未配置时 None）
+    pub minimax: Option<tinyiothub_core::config::MinimaxConfig>,
     /// SMS 配置切片
     pub sms_config: tinyiothub_core::config::SmsConfig,
     /// 社交登录配置切片
@@ -233,7 +243,11 @@ impl AppState {
     /// 2. 依赖管理 - 清晰的服务依赖关系
     /// 3. 测试友好 - 便于单元测试和集成测试
     /// 4. 类型安全 - 编译时检查所有依赖
-    pub fn new(device_cache: Arc<DeviceCache>, db_pool: sqlx::SqlitePool) -> Self {
+    pub fn new(
+        device_cache: Arc<DeviceCache>,
+        db_pool: sqlx::SqlitePool,
+        settings: &tinyiothub_core::config::ApplicationSettings,
+    ) -> Self {
         // 创建共享的数据库连接
         let database = Arc::new(Database::new(db_pool));
 
@@ -319,14 +333,11 @@ impl AppState {
         let secure_event_service = OnceCell::new();
 
         // Redis 客户端 - 可选服务，依赖配置
-        let redis = crate::shared::config::get()
-            .redis
-            .as_ref()
-            .and_then(|config| RedisClient::new(&config.url).ok());
+        let redis = settings.redis.as_ref().and_then(|config| RedisClient::new(&config.url).ok());
 
         // Agent Runtime - 使用 zeroclaw 内置的 OpenAiCompatibleProvider (MiniMax)
         // Validate minimax config exists (used by get_or_create_agent at provider creation time)
-        let minimax_config = crate::shared::config::get()
+        let minimax_config = settings
             .minimax
             .clone()
             .expect("minimax config is required - set [minimax] in app_settings.toml");
@@ -338,7 +349,7 @@ impl AppState {
             auth_token: minimax_config.auth_token.clone(),
             model: minimax_config.model.clone(),
         });
-        let agent_settings = crate::shared::config::get().agent.clone();
+        let agent_settings = settings.agent.clone();
         tracing::info!(
             "TinyIoTHub Agent runtime initialized (memory_backend={}, observer_backend={})",
             agent_settings.memory_backend,
@@ -430,11 +441,10 @@ impl AppState {
         ));
 
         // MQTT 客户端
-        let config = crate::shared::config::get();
-        let mqtt_broker = config.mqtt.primary.host.clone();
-        let mqtt_port = config.mqtt.primary.port;
-        let mqtt_username = config.mqtt.primary.username.clone().unwrap_or_default();
-        let mqtt_password = config.mqtt.primary.password.clone().unwrap_or_default();
+        let mqtt_broker = settings.mqtt.primary.host.clone();
+        let mqtt_port = settings.mqtt.primary.port;
+        let mqtt_username = settings.mqtt.primary.username.clone().unwrap_or_default();
+        let mqtt_password = settings.mqtt.primary.password.clone().unwrap_or_default();
         let throttle_state = Arc::new(crate::domains::event::router::ThrottleState::new(60));
         let thing_event_bus = Arc::new(crate::domains::event::bus::ThingEventBus::new());
         let mqtt_db_pool = database.pool().clone();
@@ -485,15 +495,13 @@ impl AppState {
         let agent_hooks: Arc<dyn crate::domains::tenant::hooks::AgentHooks> =
             Arc::new(crate::domains::agent::host::agent_hooks::AgentHooksImpl::new());
 
-        let settings = crate::shared::config::get();
         let agent_lifecycle: Arc<AgentPoolLifecycle> = Arc::new(AgentPoolLifecycle {
             pool: agent_pool.clone(),
         });
-        let tag_suggester: Option<Arc<dyn crate::domains::tenant::TagSuggester>> = if settings.minimax.is_some() {
-            Some(Arc::new(MinimaxTagSuggester))
-        } else {
-            None
-        };
+        let tag_suggester: Option<Arc<dyn crate::domains::tenant::TagSuggester>> = settings
+            .minimax
+            .clone()
+            .map(|minimax| Arc::new(MinimaxTagSuggester { minimax }) as Arc<dyn crate::domains::tenant::TagSuggester>);
         let jwt_secret = settings.security.jwt.secret.clone();
         let agents_base_dir = crate::shared::paths::agents_base_dir();
         let network_defaults = settings.network.defaults.clone();
@@ -516,6 +524,11 @@ impl AppState {
             agents_base_dir,
             network_defaults,
             mqtt_primary,
+            marketplace: settings.marketplace.clone(),
+            dynamic_drivers_dir: settings.device.drivers.dynamic_drivers_dir.clone(),
+            cors_origins: settings.server.cors_origins.clone(),
+            event_security: settings.event.security.clone(),
+            minimax: settings.minimax.clone(),
             sms_config,
             social_config,
             harmonyos_enabled,
@@ -527,7 +540,7 @@ impl AppState {
             workspace_access: Arc::new(TenantWorkspaceAccess {
                 workspace_service: workspace_service.clone(),
             }),
-            system_prompts: Arc::new(crate::shared::config::get().agent.system_prompts.clone()),
+            system_prompts: Arc::new(settings.agent.system_prompts.clone()),
             database,
             data_server: None, // DataServer 由 ServiceManager 设置
             device_service,
@@ -771,8 +784,8 @@ impl AppState {
             return Ok(service.as_ref()); // Already initialized
         }
 
-        // Get security configuration from unified config
-        let config = crate::shared::config::get().event.security.clone();
+        // Get security configuration from AppState config slice (G6)
+        let config = self.event_security.clone();
 
         // Create security factory
         let security_factory = EventSecurityFactory::new(self.database.clone(), config)?;
@@ -828,7 +841,7 @@ impl AppState {
 
     /// Create AppState for testing
     #[cfg(test)]
-    pub async fn new_for_testing() -> Self {
+    pub async fn new_for_testing(settings: &tinyiothub_core::config::ApplicationSettings) -> Self {
         use tempfile::tempdir;
 
         let temp_dir = tempdir().unwrap();
@@ -842,7 +855,7 @@ impl AppState {
 
         let device_cache = Arc::new(DeviceCache::new());
 
-        Self::new(device_cache, pool)
+        Self::new(device_cache, pool, settings)
     }
 }
 // ============================================================================
@@ -1010,7 +1023,10 @@ impl AgentPoolLifecycle {
 /// Tag-suggester seam adapter: prompt construction, provider creation and
 /// response parsing, byte-identical to the former inline workspace handler
 /// code. Keeps the zeroclaw provider type out of the tenant crate.
-pub struct MinimaxTagSuggester;
+/// Holds its MiniMax config slice (G6 — no process-global config reads).
+pub struct MinimaxTagSuggester {
+    pub minimax: tinyiothub_core::config::MinimaxConfig,
+}
 
 #[async_trait::async_trait]
 impl crate::domains::tenant::TagSuggester for MinimaxTagSuggester {
@@ -1020,12 +1036,7 @@ impl crate::domains::tenant::TagSuggester for MinimaxTagSuggester {
         resource_type_label: &str,
         description: Option<&str>,
     ) -> Result<Vec<String>, String> {
-        let settings = crate::shared::config::get();
-        let model = settings
-            .minimax
-            .as_ref()
-            .map(|m| m.model.clone())
-            .unwrap_or_else(|| "minimax-m2".into());
+        let model = self.minimax.model.clone();
 
         let prompt = format!(
             "你是一个资源标签生成助手。根据用户提供的资源信息，生成 3-5 个简洁的中文标签。\n\
@@ -1037,7 +1048,7 @@ impl crate::domains::tenant::TagSuggester for MinimaxTagSuggester {
             description.map_or(String::new(), |d| format!("\n- 描述：{}", d)),
         );
 
-        let provider = crate::shared::config::create_minimax_provider().map_err(|e| {
+        let provider = crate::shared::config::create_minimax_provider(&self.minimax).map_err(|e| {
             tracing::error!("Failed to create AI provider: {}", e);
             "AI 服务初始化失败".to_string()
         })?;

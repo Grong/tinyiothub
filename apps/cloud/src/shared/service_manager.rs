@@ -182,7 +182,9 @@ impl ServiceManager {
 
             let memory_service = Arc::new(
                 tinyiothub_memory::service::MemoryService::new(
-                    Arc::new(crate::shared::llm_provider::MinimaxLlmProvider::new()),
+                    Arc::new(crate::shared::llm_provider::MinimaxLlmProvider::new(
+                        app_state.minimax.clone(),
+                    )),
                     app_state.memory_store.clone(),
                 )
                 // Share the runner's Metrics so reflection stats land in the same snapshot.

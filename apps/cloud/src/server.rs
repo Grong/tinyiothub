@@ -33,9 +33,8 @@ pub async fn create_app_router(app_state: AppState) -> Router {
         tracing::error!("Failed to refresh agent tools: {}", e);
     }
 
-    // CORS layer
-    let config = crate::shared::config::get();
-    let cors_origins = &config.server.cors_origins;
+    // CORS layer（G6：来源切片经 AppState 注入）
+    let cors_origins = app_state.cors_origins.clone();
 
     let allowed_headers = [
         axum::http::header::CONTENT_TYPE,

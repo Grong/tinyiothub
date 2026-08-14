@@ -9,7 +9,8 @@ use tracing_appender::{
 };
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::shared::{app_state::AppState, config};
+use crate::shared::app_state::AppState;
+use tinyiothub_core::config::ApplicationSettings;
 
 /// Set up global panic handler to prevent crashes
 pub fn install_panic_hook() {
@@ -36,9 +37,7 @@ pub fn install_panic_hook() {
 }
 
 /// Initialize the logging system based on configuration
-pub async fn initialize_logging() -> std::io::Result<()> {
-    let config = config::get();
-
+pub async fn initialize_logging(config: &ApplicationSettings) -> std::io::Result<()> {
     // Declare _guard variable to retain WorkerGuard for main function lifetime
     let _guard;
 
