@@ -26,7 +26,7 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::middleware::workspace::WorkspaceScope;
 
-use crate::state::AppState;
+use crate::domains::agent::AgentState;
 
 /// Supported workspace files (pub(crate) for testing)
 pub(crate) const WORKSPACE_FILES: &[&str] = &[
@@ -122,7 +122,7 @@ fn get_embedded_template(filename: &str) -> Option<&'static str> {
     }
 }
 
-async fn verify_workspace_access(state: &AppState, workspace_id: &str, tenant_id: &str) -> Result<(), (u16, String)> {
+async fn verify_workspace_access(state: &AgentState, workspace_id: &str, tenant_id: &str) -> Result<(), (u16, String)> {
     match state.workspace_access.workspace_tenant_id(workspace_id).await {
         Ok(Some(tid)) if tid != tenant_id => Err((403, "无权访问此工作空间".to_string())),
         Ok(None) => Err((404, "工作空间不存在".to_string())),
@@ -144,7 +144,7 @@ fn resolve_workspace_id(workspace: &WorkspaceScope) -> Result<&str, (u16, String
 /// GET /api/v1/agents/{id}/files
 /// Returns all 8 files with their source (workspace override, shared base, or embedded).
 pub async fn list_workspace_files(
-    state: State<AppState>,
+    state: State<AgentState>,
     claims: Claims,
     workspace: WorkspaceScope,
     Path(_agent_id): Path<String>,
@@ -175,7 +175,7 @@ pub async fn list_workspace_files(
 /// GET /api/v1/agents/{id}/files/{filename}
 /// Returns file content from workspace → shared base → embedded template, with source info.
 pub async fn get_workspace_file(
-    state: State<AppState>,
+    state: State<AgentState>,
     claims: Claims,
     workspace: WorkspaceScope,
     Path((_agent_id, filename)): Path<(String, String)>,
@@ -209,7 +209,7 @@ pub async fn get_workspace_file(
 /// PUT /api/v1/agents/{id}/files/{filename}
 /// Always writes to the workspace directory (creates a workspace-specific override).
 pub async fn put_workspace_file(
-    state: State<AppState>,
+    state: State<AgentState>,
     claims: Claims,
     workspace: WorkspaceScope,
     Path((_agent_id, filename)): Path<(String, String)>,
@@ -261,7 +261,7 @@ pub async fn put_workspace_file(
 /// DELETE /api/v1/agents/{id}/files/{filename}
 /// Deletes the workspace-specific override, reverting to the shared base or embedded template.
 pub async fn delete_workspace_file(
-    state: State<AppState>,
+    state: State<AgentState>,
     claims: Claims,
     workspace: WorkspaceScope,
     Path((_agent_id, filename)): Path<(String, String)>,

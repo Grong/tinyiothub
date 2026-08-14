@@ -9,14 +9,13 @@ use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::ListMemoriesQuery;
 use crate::domains::agent::host::shared::config::default_model;
-use crate::state::AppState;
+use crate::domains::agent::AgentState;
 use tinyiothub_web::middleware::workspace::WorkspaceScope;
 
 pub fn create_router<S>() -> axum::Router<S>
 where
     S: Clone + Send + Sync + 'static,
-    AppState: axum::extract::FromRef<S>,
-    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+    AgentState: axum::extract::FromRef<S>,
 {
     axum::Router::new()
         .route("/memories", get(list_active_memories))
@@ -32,7 +31,7 @@ where
 
 /// GET /memories?agent_id=...
 async fn list_active_memories(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Query(query): Query<ListMemoriesQuery>,
 ) -> Json<tinyiothub_web::response::ApiResponse<Vec<AgentMemory>>> {
@@ -45,7 +44,7 @@ async fn list_active_memories(
 
 /// GET /memories/queue?agent_id=...
 async fn get_pending_queue(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Query(query): Query<ListMemoriesQuery>,
 ) -> Json<tinyiothub_web::response::ApiResponse<Vec<tinyiothub_core::memory::ReflectionQueueItem>>> {
@@ -65,7 +64,7 @@ struct ResolveBody {
 }
 
 async fn resolve_queue_item(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(queue_id): Path<String>,
     Json(body): Json<ResolveBody>,
@@ -88,7 +87,7 @@ struct PinBody {
 }
 
 async fn pin_memory(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(memory_id): Path<String>,
     Json(body): Json<PinBody>,
@@ -107,7 +106,7 @@ struct ProfileCompileQuery {
 }
 
 async fn compile_profile(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Query(query): Query<ProfileCompileQuery>,
 ) -> Json<tinyiothub_web::response::ApiResponse<serde_json::Value>> {
@@ -135,7 +134,7 @@ async fn compile_profile(
 
 /// POST /memories/digest/weekly?agent_id=...
 async fn generate_weekly_digest(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Query(query): Query<ProfileCompileQuery>,
 ) -> Json<tinyiothub_web::response::ApiResponse<serde_json::Value>> {

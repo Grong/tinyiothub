@@ -17,7 +17,7 @@ use tokio::fs;
 use tinyiothub_web::api_response::ApiResponse;
 
 use crate::domains::agent::host::shared::paths::{self, global_skills_dir, workspace_skills_dir};
-use crate::state::AppState;
+use crate::domains::agent::AgentState;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateSkillRequest {
@@ -57,7 +57,7 @@ fn skill_file_path(workspace_id: &str, skill_name: &str) -> Result<PathBuf, Stri
 pub fn create_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
-    crate::state::AppState: axum::extract::FromRef<S>,
+    AgentState: axum::extract::FromRef<S>,
     std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new()
@@ -74,7 +74,7 @@ fn resolve_workspace_id(claims: &Claims) -> &str {
 }
 
 // GET /api/v1/agents/skills
-pub async fn list_skills(_state: State<AppState>, claims: Claims) -> Json<ApiResponse<Vec<SkillInfoDto>>> {
+pub async fn list_skills(_state: State<AgentState>, claims: Claims) -> Json<ApiResponse<Vec<SkillInfoDto>>> {
     let workspace_id = resolve_workspace_id(&claims);
     // List workspace-specific skills
     let ws_skills = list_skill_files(&workspace_skills_dir(workspace_id)).await;
@@ -92,7 +92,7 @@ pub async fn list_skills(_state: State<AppState>, claims: Claims) -> Json<ApiRes
 
 // GET /api/v1/agents/skills/{name}
 pub async fn get_skill(
-    _state: State<AppState>,
+    _state: State<AgentState>,
     Path(name): Path<String>,
     claims: Claims,
 ) -> Result<Json<ApiResponse<SkillInfoDto>>, StatusCode> {
@@ -121,7 +121,7 @@ pub async fn get_skill(
 
 // POST /api/v1/agents/skills
 pub async fn create_skill(
-    _state: State<AppState>,
+    _state: State<AgentState>,
     claims: Claims,
     Json(req): Json<CreateSkillRequest>,
 ) -> Result<Json<ApiResponse<SkillInfoDto>>, StatusCode> {
@@ -155,7 +155,7 @@ pub async fn create_skill(
 
 // PUT /api/v1/agents/skills/{name}
 pub async fn update_skill(
-    _state: State<AppState>,
+    _state: State<AgentState>,
     Path(name): Path<String>,
     claims: Claims,
     Json(req): Json<UpdateSkillRequest>,
@@ -182,7 +182,7 @@ pub async fn update_skill(
 
 // DELETE /api/v1/agents/skills/{name}
 pub async fn delete_skill(
-    _state: State<AppState>,
+    _state: State<AgentState>,
     Path(name): Path<String>,
     claims: Claims,
 ) -> Result<Json<ApiResponse<()>>, StatusCode> {

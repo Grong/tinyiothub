@@ -25,11 +25,11 @@ use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::state::AppState;
+use crate::domains::agent::AgentState;
 use crate::verify_workspace_access;
 
 /// admin 角色判定：用户持有任一 is_administrator 角色。DB 错误 fail-closed。
-async fn is_admin(state: &AppState, user_id: &str) -> bool {
+async fn is_admin(state: &AgentState, user_id: &str) -> bool {
     sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM user_roles ur JOIN roles r ON ur.role_id = r.id \
          WHERE ur.user_id = ? AND r.is_administrator = 1",
@@ -56,7 +56,11 @@ macro_rules! verify_agent_admin {
 /// Workspace-scoped agent directive routes (`/workspaces/{id}/agent/*`).
 /// Registered by the composition layer (api/mod.rs) so the workspace module
 /// carries no agent dependency edge (P4.0d).
-pub fn create_workspace_router() -> Router<crate::state::AppState> {
+pub fn create_workspace_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AgentState: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/{id}/agent/tasks", post(create_task))
         .route("/{id}/agent/runs", get(list_runs))
@@ -70,7 +74,7 @@ pub struct CreateTaskRequest {
 }
 
 pub async fn create_task(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path(workspace_id): Path<String>,
     Json(req): Json<CreateTaskRequest>,
@@ -141,7 +145,7 @@ pub struct AgentRunRow {
 }
 
 pub async fn list_runs(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path(workspace_id): Path<String>,
     Query(params): Query<ListRunsParams>,
@@ -180,7 +184,7 @@ pub async fn list_runs(
 // ── POST /{id}/agent/runs/{run_id}/ack ──
 
 pub async fn ack_run(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path((workspace_id, run_id)): Path<(String, String)>,
 ) -> Json<ApiResponse<serde_json::Value>> {
@@ -266,7 +270,7 @@ impl From<AutonomyPolicy> for PolicyView {
 }
 
 pub async fn get_policy(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path(workspace_id): Path<String>,
 ) -> Json<ApiResponse<PolicyView>> {
@@ -284,7 +288,7 @@ pub async fn get_policy(
 }
 
 pub async fn update_policy(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path(workspace_id): Path<String>,
     Json(req): Json<PolicyView>,

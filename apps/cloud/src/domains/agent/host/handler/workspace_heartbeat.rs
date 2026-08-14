@@ -19,8 +19,8 @@ use tinyiothub_web::security::Claims;
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::response::ApiResponseBuilder;
 
+use crate::domains::agent::AgentState;
 use crate::domains::agent::host::shared::paths;
-use crate::state::AppState;
 
 /// Heartbeat routes (`/{id}/heartbeat/*`), nested at `/workspaces` by the
 /// composition layer next to `tinyiothub_tenant::workspace_router()` —
@@ -28,8 +28,7 @@ use crate::state::AppState;
 pub fn create_router<S>() -> axum::Router<S>
 where
     S: Clone + Send + Sync + 'static,
-    AppState: axum::extract::FromRef<S>,
-    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+    AgentState: axum::extract::FromRef<S>,
 {
     use axum::routing::{get, post, put};
     axum::Router::new()
@@ -125,7 +124,7 @@ pub struct UpdateHeartbeatTasksRequest {
 // ── GET /{id}/heartbeat/config ──
 
 pub async fn get_config(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path(workspace_id): Path<String>,
 ) -> Json<ApiResponse<HeartbeatConfigResponse>> {
@@ -156,7 +155,7 @@ pub async fn get_config(
 // ── PUT /{id}/heartbeat/config ──
 
 pub async fn update_config(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path(workspace_id): Path<String>,
     Json(req): Json<UpdateHeartbeatConfigRequest>,
@@ -201,7 +200,7 @@ pub async fn update_config(
 // ── GET /{id}/heartbeat/trust ──
 
 pub async fn get_trust_config(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path(workspace_id): Path<String>,
 ) -> Json<ApiResponse<serde_json::Value>> {
@@ -227,7 +226,7 @@ pub async fn get_trust_config(
 // ── PUT /{id}/heartbeat/trust ──
 
 pub async fn update_trust_config(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path(workspace_id): Path<String>,
     Json(config): Json<tinyiothub_storage::heartbeat::TrustConfig>,
@@ -247,7 +246,7 @@ pub async fn update_trust_config(
 // ── GET /{id}/heartbeat/logs ──
 
 pub async fn get_logs(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path(workspace_id): Path<String>,
 ) -> Json<ApiResponse<HeartbeatLogsResponse>> {
@@ -375,7 +374,7 @@ pub async fn get_logs(
 // ── GET /{id}/heartbeat/tasks ──
 
 pub async fn get_tasks(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path(workspace_id): Path<String>,
 ) -> Json<ApiResponse<Vec<HeartbeatTaskDef>>> {
@@ -389,7 +388,7 @@ pub async fn get_tasks(
 // ── PUT /{id}/heartbeat/tasks ──
 
 pub async fn update_tasks(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path(workspace_id): Path<String>,
     Json(req): Json<UpdateHeartbeatTasksRequest>,
@@ -473,7 +472,7 @@ pub struct ApprovalsResponse {
 }
 
 pub async fn get_approvals(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path(workspace_id): Path<String>,
 ) -> Json<ApiResponse<ApprovalsResponse>> {
@@ -505,7 +504,7 @@ pub async fn get_approvals(
 // ── POST /{id}/heartbeat/approvals/{proposal_id}/approve ──
 
 pub async fn approve_proposal(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path((workspace_id, proposal_id)): Path<(String, String)>,
 ) -> Json<ApiResponse<serde_json::Value>> {
@@ -621,7 +620,7 @@ async fn approve_and_execute(
 // ── POST /{id}/heartbeat/approvals/{proposal_id}/reject ──
 
 pub async fn reject_proposal(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path((workspace_id, proposal_id)): Path<(String, String)>,
 ) -> Json<ApiResponse<serde_json::Value>> {
@@ -634,7 +633,7 @@ pub async fn reject_proposal(
 }
 
 async fn update_proposal_status(
-    state: &AppState,
+    state: &AgentState,
     workspace_id: &str,
     proposal_id: &str,
     new_status: &str,
@@ -676,7 +675,7 @@ async fn update_proposal_status(
 /// DB is the single source of truth for heartbeat tasks. Migrates legacy
 /// HEARTBEAT.md on first access; falls back to file/defaults when the
 /// heartbeat runner (and thus the repo) is unavailable.
-async fn load_tasks(state: &AppState, workspace_id: &str) -> Vec<HeartbeatTaskDef> {
+async fn load_tasks(state: &AgentState, workspace_id: &str) -> Vec<HeartbeatTaskDef> {
     fn to_def(t: heartbeat::HeartbeatTask) -> HeartbeatTaskDef {
         HeartbeatTaskDef {
             priority: t.priority,

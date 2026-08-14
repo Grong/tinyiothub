@@ -15,7 +15,7 @@ pub mod workspace_heartbeat;
 #[cfg(test)]
 mod tests;
 
-use crate::state::AppState;
+use crate::domains::agent::AgentState;
 use axum::{Router, routing::get};
 use tinyiothub_web::security::Claims;
 
@@ -24,7 +24,7 @@ use crate::domains::agent::chat::handler::proxy as chat_proxy;
 pub fn create_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
-    crate::state::AppState: axum::extract::FromRef<S>,
+    AgentState: axum::extract::FromRef<S>,
     std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new()
@@ -44,7 +44,7 @@ where
 
 /// GET /api/v1/agents
 async fn list_agents(
-    state: axum::extract::State<AppState>,
+    state: axum::extract::State<AgentState>,
     claims: Claims,
 ) -> axum::Json<tinyiothub_web::api_response::ApiResponse<serde_json::Value>> {
     chat_proxy::list_agents(state, claims).await
@@ -52,7 +52,7 @@ async fn list_agents(
 
 /// GET /api/v1/agents/{id}/config
 async fn get_agent_config(
-    state: axum::extract::State<AppState>,
+    state: axum::extract::State<AgentState>,
     path: axum::extract::Path<String>,
     claims: Claims,
 ) -> axum::Json<tinyiothub_web::api_response::ApiResponse<serde_json::Value>> {
@@ -61,7 +61,7 @@ async fn get_agent_config(
 
 /// PUT /api/v1/agents/{id}/config
 async fn set_agent_config(
-    state: axum::extract::State<AppState>,
+    state: axum::extract::State<AgentState>,
     path: axum::extract::Path<String>,
     claims: Claims,
     json: axum::Json<types::AgentConfigUpdateRequest>,

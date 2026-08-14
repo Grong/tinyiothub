@@ -6,7 +6,12 @@ use axum::{
     routing::{get, post},
 };
 
-pub fn create_router() -> Router<crate::state::AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    crate::domains::agent::AgentState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/stream", post(proxy::chat_stream))
         .route("/history", get(proxy::chat_history))

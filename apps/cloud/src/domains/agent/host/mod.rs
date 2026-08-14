@@ -55,7 +55,12 @@ use axum::routing::{get, post};
 ///
 /// Mounted at the API root by the composition layer; every sub-router keeps
 /// its own generic `create_router::<S>()` for individual mounting.
-pub fn router() -> Router<crate::state::AppState> {
+pub fn router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    crate::domains::agent::AgentState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new()
         // /agents/skills before /agents so the literal wins over /{id}
         .nest("/agents/skills", handler::skills::create_router())

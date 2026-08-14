@@ -1,4 +1,4 @@
-use crate::state::AppState;
+use crate::domains::agent::AgentState;
 use std::collections::HashMap;
 
 use async_stream::stream;
@@ -19,7 +19,7 @@ use tinyiothub_web::api_response::ApiResponse;
 
 /// POST /api/v1/chat/stream — SSE streaming chat
 pub async fn chat_stream(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     claims: Claims,
     Json(req): Json<ChatStreamRequest>,
 ) -> Response {
@@ -95,7 +95,7 @@ pub async fn chat_stream(
 
 /// GET /api/v1/chat/history
 pub async fn chat_history(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Query(query): Query<ChatHistoryQuery>,
     claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
@@ -123,7 +123,7 @@ pub async fn chat_history(
 
 /// POST /api/v1/chat/abort
 pub async fn chat_abort(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     claims: Claims,
     Json(req): Json<ChatAbortRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
@@ -150,7 +150,7 @@ pub async fn chat_abort(
 
 /// GET /api/v1/chat/sessions
 pub async fn list_sessions(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Query(query): Query<ChatSessionsQuery>,
     claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
@@ -173,7 +173,7 @@ pub async fn list_sessions(
 
 /// POST /api/v1/chat/sessions/{session_key}/label
 pub async fn update_session_label(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Path(session_key): Path<String>,
     claims: Claims,
     Json(req): Json<UpdateSessionLabelRequest>,
@@ -191,7 +191,7 @@ pub async fn update_session_label(
 
 /// DELETE /api/v1/chat/sessions/{session_key}
 pub async fn delete_session(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Path(session_key): Path<String>,
     claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
@@ -207,7 +207,7 @@ pub async fn delete_session(
 }
 
 /// GET /api/v1/agents
-pub async fn list_agents(State(state): State<AppState>, claims: Claims) -> Json<ApiResponse<serde_json::Value>> {
+pub async fn list_agents(State(state): State<AgentState>, claims: Claims) -> Json<ApiResponse<serde_json::Value>> {
     match state.agent_pool.list_agents(&claims.workspace_id).await {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to list agents: {}", e)),
@@ -216,7 +216,7 @@ pub async fn list_agents(State(state): State<AppState>, claims: Claims) -> Json<
 
 /// GET /api/v1/agents/{id}/config
 pub async fn get_agent_config(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Path(agent_id): Path<String>,
     claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
@@ -228,7 +228,7 @@ pub async fn get_agent_config(
 
 /// PUT /api/v1/agents/{id}/config
 pub async fn set_agent_config(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Path(agent_id): Path<String>,
     claims: Claims,
     Json(req): Json<AgentConfigUpdateRequest>,
@@ -247,7 +247,7 @@ pub async fn set_agent_config(
 
 /// GET /api/v1/tools/catalog
 pub async fn tools_catalog(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Query(params): Query<HashMap<String, String>>,
     _claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
@@ -260,7 +260,7 @@ pub async fn tools_catalog(
 
 /// GET /api/v1/tools/effective
 pub async fn tools_effective(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     Query(params): Query<HashMap<String, String>>,
     claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
@@ -273,7 +273,7 @@ pub async fn tools_effective(
 
 /// POST /api/v1/tools/toggle
 pub async fn tools_toggle(
-    State(state): State<AppState>,
+    State(state): State<AgentState>,
     claims: Claims,
     Json(req): Json<ToolToggleRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {

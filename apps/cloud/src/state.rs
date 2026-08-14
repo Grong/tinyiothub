@@ -1,3 +1,8 @@
+//! 应用组合态（AppState）与各域状态切片（`<Domain>State`）的唯一派生点。
+//!
+//! G7 裁决：新增域必须走 `<Domain>State + FromRef` 切片；禁止 handler 直接
+//! 吃 `State<AppState>`。
+
 use std::sync::Arc;
 
 use crate::domains::agent::host::agent::AgentPool;
@@ -1163,6 +1168,30 @@ impl axum::extract::FromRef<AppState> for crate::domains::admin::AdminState {
             network_defaults: state.network_defaults.clone(),
             mqtt_primary: state.mqtt_primary.clone(),
             started_at: state.started_at,
+        }
+    }
+}
+
+// ============================================================================
+// P4-Task25: agent domain slice
+// ============================================================================
+
+/// Agent 域状态切片注入（G7）—— agent host/chat handlers 萃取
+/// `State<AgentState>`，路由器对组合态 `S` 泛型（`AgentState: FromRef<S>`）；
+/// 此处是唯一的 AppState → AgentState 派生点。
+impl axum::extract::FromRef<AppState> for crate::domains::agent::AgentState {
+    fn from_ref(state: &AppState) -> Self {
+        crate::domains::agent::AgentState {
+            database: state.database.clone(),
+            workspace_service: state.workspace_service.clone(),
+            workspace_access: state.workspace_access.clone(),
+            directive_sink: state.directive_sink.clone(),
+            heartbeat_runner: state.heartbeat_runner.clone(),
+            orchestrator: state.orchestrator.clone(),
+            memory_store: state.memory_store.clone(),
+            agent_pool: state.agent_pool.clone(),
+            session_service: state.session_service.clone(),
+            system_prompts: state.system_prompts.clone(),
         }
     }
 }
