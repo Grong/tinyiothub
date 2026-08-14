@@ -5,7 +5,7 @@ use axum::{
     routing::get,
 };
 use serde::Serialize;
-use tinyiothub_authn::jwt::Claims;
+use tinyiothub_web::security::Claims;
 use tinyiothub_core::models::{device::Device, device_property::DeviceProperty};
 use tinyiothub_web::response::ApiResponseBuilder;
 

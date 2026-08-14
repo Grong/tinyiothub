@@ -1,16 +1,34 @@
-//! JWT 机制：HS256 签发/校验 + 黑名单 + HarmonyOS HMAC 变体。
+//! JWT 机制：HS256 签发/校验 + HarmonyOS HMAC 变体。
 //! 构造注入（JwtService::new），零全局态（G2，替代原 OnceLock 设计）。
+//! G4：axum extractor 与黑名单查询迁出 —— extractor 住 crates/web，业务查询住 apps/cloud。
 
-use axum::{extract::FromRef, extract::FromRequestParts, http::request::Parts};
 use chrono::{Duration as ChronoDuration, Local};
-use headers::{Authorization, HeaderMapExt, authorization::Bearer};
 use hmac::{Hmac, Mac};
 use jwt_simple::prelude::*;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use tinyiothub_web::security::{AuthBody, AuthError as WebAuthError, Claims as WebClaims};
+use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
+
+/// 认证响应体（G4：自 crates/web 迁入，机制产物归属机制 crate）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AuthBody {
+    pub token: String,
+    pub token_type: String,
+    pub exp: i64,
+    pub expired: i64,
+}
+
+impl AuthBody {
+    pub fn new(access_token: String, exp: i64, exp_in: i64) -> Self {
+        Self {
+            token: access_token,
+            token_type: "Bearer".to_string(),
+            exp,
+            expired: exp_in,
+        }
+    }
+}
 
 /// JWT settings — constructor-injected, no globals (G2).
 #[derive(Debug, Clone)]
@@ -19,7 +37,7 @@ pub struct JwtSettings {
     pub harmonyos_enabled: bool,
 }
 
-/// JWT 机制服务：签发/校验/黑名单。构造注入，零全局态。
+/// JWT 机制服务：签发/校验。构造注入，零全局态。
 #[derive(Debug, Clone)]
 pub struct JwtService {
     settings: JwtSettings,
@@ -70,11 +88,6 @@ impl JwtService {
             ));
         }
 
-        // 检查是否使用弱密钥
-        if secret.len() < 64 {
-            tracing::warn!("⚠️  JWT secret is shorter than 64 characters, consider using a longer secret");
-        }
-
         Ok(HS256Key::from_bytes(secret.as_bytes()))
     }
 
@@ -93,7 +106,7 @@ impl JwtService {
         mac.update(message.as_bytes());
         let result = mac.finalize();
         // 返回十六进制编码的 HMAC
-        hex::encode(result.into_bytes())
+        result.into_bytes().iter().map(|b| format!("{b:02x}")).collect()
     }
 
     // 简单的字符串编码（不使用 base64 库）
@@ -137,7 +150,6 @@ impl JwtService {
         let token_data = format!("{}:{}", data, signature);
         let token = Self::encode_simple(&token_data);
 
-        tracing::debug!("HarmonyOS token created with HMAC-SHA256");
         Ok(token)
     }
 
@@ -181,8 +193,6 @@ impl JwtService {
             return Err("Token expired".to_string());
         }
 
-        tracing::debug!("HarmonyOS token verified successfully with HMAC-SHA256");
-
         Ok(Claims {
             user_id: user_id.to_string(),
             token_id: timestamp.to_string(),
@@ -199,8 +209,6 @@ impl JwtService {
 
         // HarmonyOS: 使用不依赖加密库的安全 token
         if self.is_harmonyos() {
-            tracing::warn!("🔧 HarmonyOS: Using simple secure token (no crypto libs)");
-
             let token =
                 self.create_harmonyos_token(&payload.id, &payload.name, &payload.tenant_id, &payload.workspace_id)?;
             let jwt_exp_seconds = 86400; // 24小时
@@ -224,8 +232,6 @@ impl JwtService {
             exp: None, // 不设置，让 jwt-simple 自动管理
         };
 
-        tracing::debug!("Creating JWT token with jwt-simple (HS256, pure-rust)");
-
         // 获取 JWT 密钥
         let key = self.get_jwt_key()?;
 
@@ -237,7 +243,6 @@ impl JwtService {
             .authenticate(jwt_claims)
             .map_err(|e| format!("Token creation error: {}", e))?;
 
-        tracing::debug!("JWT token created successfully with pure-rust implementation");
         Ok(AuthBody::new(token, exp.timestamp(), jwt_exp_seconds))
     }
 
@@ -249,17 +254,12 @@ impl JwtService {
         }
 
         // 标准 JWT 验证（非 HarmonyOS）
-        tracing::debug!("Validating JWT token with jwt-simple");
-
         // 获取 JWT 密钥
         let key = self.get_jwt_key()?;
 
-        let jwt_claims = key.verify_token::<Claims>(token, None).map_err(|e| {
-            tracing::warn!("JWT validation failed: {}", e);
-            format!("JWT verification error: {}", e)
-        })?;
-
-        tracing::debug!("JWT token validated successfully");
+        let jwt_claims = key
+            .verify_token::<Claims>(token, None)
+            .map_err(|e| format!("JWT verification error: {}", e))?;
 
         // 从 jwt-simple 的 JWTClaims 中提取过期时间
         let exp = jwt_claims.expires_at.map(|d| d.as_secs() as i64);
@@ -272,41 +272,6 @@ impl JwtService {
             workspace_id: jwt_claims.custom.workspace_id,
             exp,
         })
-    }
-
-    // 检查 token 是否在黑名单中（使用阻塞 DB 调用）
-    /// 异步检查 token 是否在黑名单中（推荐使用）
-    /// 用于 async middleware 和其他异步上下文
-    pub async fn is_token_blacklisted(&self, db: &tinyiothub_storage::Database, token: &str) -> bool {
-        let token_hash = format!("{:x}", sha2::Sha256::digest(token.as_bytes()));
-
-        sqlx::query("SELECT 1 FROM token_blacklist WHERE token_hash = ? LIMIT 1")
-            .bind(&token_hash)
-            .fetch_optional(db.pool())
-            .await
-            .map(|r| r.is_some())
-            .unwrap_or(false)
-    }
-
-    /// 同步检查 token 是否在黑名单中（已弃用，使用 is_token_blacklisted async 版本）
-    ///
-    /// 这个函数使用 block_on 休眠当前线程，可能导致
-    /// tokio 运行时线程池饥饿。新代码应使用 is_token_blacklisted()。
-    pub fn is_token_blacklisted_sync(&self, db: &tinyiothub_storage::Database, token: &str) -> bool {
-        let token_hash = format!("{:x}", Sha256::digest(token.as_bytes()));
-
-        // Use try_with to check if we're in a Tokio runtime
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.block_on(async {
-                let row = sqlx::query("SELECT 1 FROM token_blacklist WHERE token_hash = ? LIMIT 1")
-                    .bind(&token_hash)
-                    .fetch_optional(db.pool())
-                    .await;
-                row.map(|r| r.is_some()).unwrap_or(false)
-            })
-        } else {
-            false
-        }
     }
 
     // 生成 JWT token 的便捷函数
@@ -326,61 +291,5 @@ impl JwtService {
 
         let auth_body = self.create_jwt(payload)?;
         Ok(auth_body.token)
-    }
-}
-
-impl From<Claims> for WebClaims {
-    fn from(claims: Claims) -> Self {
-        WebClaims {
-            user_id: claims.user_id,
-            token_id: claims.token_id,
-            username: claims.username,
-            exp: claims.exp,
-        }
-    }
-}
-
-impl From<WebClaims> for Claims {
-    fn from(web_claims: WebClaims) -> Self {
-        Claims {
-            user_id: web_claims.user_id,
-            token_id: web_claims.token_id,
-            username: web_claims.username,
-            tenant_id: String::new(), // Default empty, caller should fill from JWT custom claims
-            workspace_id: String::new(),
-            exp: web_claims.exp,
-        }
-    }
-}
-
-/// 为 Cloud Claims 实现 FromRequestParts，使其可以直接在 handler 中作为 extractor 使用
-impl<S> FromRequestParts<S> for Claims
-where
-    S: Send + Sync,
-    std::sync::Arc<JwtService>: axum::extract::FromRef<S>,
-{
-    type Rejection = WebAuthError;
-
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let service = std::sync::Arc::<JwtService>::from_ref(state);
-        // Try Authorization header first
-        if let Some(auth_header) = parts.headers.typed_get::<Authorization<Bearer>>() {
-            let token = auth_header.token();
-            return service.validate_jwt(token).map_err(WebAuthError::InvalidToken);
-        }
-
-        // Fallback: query string ?token=xxx (needed for EventSource which can't set headers)
-        if let Some(query) = parts.uri.query() {
-            for pair in query.split('&') {
-                let mut kv = pair.splitn(2, '=');
-                if kv.next() == Some("token")
-                    && let Some(token) = kv.next()
-                {
-                    return service.validate_jwt(token).map_err(WebAuthError::InvalidToken);
-                }
-            }
-        }
-
-        Err(WebAuthError::MissingToken)
     }
 }

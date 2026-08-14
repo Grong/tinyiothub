@@ -76,7 +76,7 @@ async fn extract_user_from_jwt(
 
     // Check token blacklist if DB is available（异步查询，不阻塞线程）
     if let Some(database) = db
-        && jwt.is_token_blacklisted(database, &token).await
+        && is_token_blacklisted(database, &token).await
     {
         tracing::warn!("Rejected blacklisted token");
         return None;
@@ -91,6 +91,20 @@ async fn extract_user_from_jwt(
         name: claims.username,
         token_id: claims.token_id,
     })
+}
+
+/// 检查 token 是否在黑名单中（G4：自 authn 迁入 —— 业务查询住 apps/cloud）
+async fn is_token_blacklisted(db: &tinyiothub_storage::Database, token: &str) -> bool {
+    use sha2::Digest;
+
+    let token_hash = format!("{:x}", sha2::Sha256::digest(token.as_bytes()));
+
+    sqlx::query("SELECT 1 FROM token_blacklist WHERE token_hash = ? LIMIT 1")
+        .bind(&token_hash)
+        .fetch_optional(db.pool())
+        .await
+        .map(|r| r.is_some())
+        .unwrap_or(false)
 }
 
 /// JWT authentication middleware - requires valid JWT token
@@ -125,7 +139,7 @@ pub async fn jwt_auth_middleware(
         Ok(claims) => {
             tracing::debug!("JWT validation successful for user: {} at: {}", claims.username, uri);
             // Add claims to request extensions for handlers to use
-            request.extensions_mut().insert(claims);
+            request.extensions_mut().insert(tinyiothub_web::security::Claims::from(claims));
             next.run(request).await
         }
         Err(e) => {

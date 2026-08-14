@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder};
 
-use tinyiothub_authn::jwt::Claims;
+use tinyiothub_web::security::Claims;
 
 /// 创建不受 JWT middleware 保护的路由（login, logout, refresh）
 pub fn create_router<S>() -> Router<S>

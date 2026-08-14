@@ -9,7 +9,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tinyiothub_authn::jwt::Claims;
+use tinyiothub_web::security::Claims;
 use tinyiothub_core::models::event::EventId;
 use tinyiothub_web::{handle_service_result, response::ApiResponseBuilder};
 use tokio::sync::OnceCell;

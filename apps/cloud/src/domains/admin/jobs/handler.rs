@@ -10,7 +10,7 @@ use axum::{
     routing::{get, post},
 };
 use serde::Deserialize;
-use tinyiothub_authn::jwt::Claims;
+use tinyiothub_web::security::Claims;
 use tinyiothub_core::models::{
     cron_job::{CreateCronJobRequest, CronJob, CronJobQuery, CronRun, CronRunQuery, UpdateCronJobRequest},
     job::{

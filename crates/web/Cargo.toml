@@ -12,6 +12,9 @@ name = "tinyiothub_web"
 
 [dependencies]
 
+# Authn mechanisms (JWT sign/verify) — extractor glue lives here (G4)
+authn = { workspace = true }
+
 # Web framework
 axum = { workspace = true }
 tower = { workspace = true }

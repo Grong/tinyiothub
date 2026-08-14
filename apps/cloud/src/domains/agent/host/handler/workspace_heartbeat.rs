@@ -15,7 +15,7 @@ use axum::{
     extract::{Extension, Path, State},
 };
 use serde::{Deserialize, Serialize};
-use tinyiothub_authn::jwt::Claims;
+use tinyiothub_web::security::Claims;
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::response::ApiResponseBuilder;
 

@@ -8,7 +8,7 @@ use serde::Serialize;
 use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder};
 
 use crate::domains::auth::types::{RefreshTokenResponse, UserInfo};
-use tinyiothub_authn::jwt::Claims;
+use tinyiothub_web::security::Claims;
 
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]

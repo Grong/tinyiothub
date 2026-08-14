@@ -7,7 +7,7 @@ use axum::{
     extract::{Path, Query, State},
     response::{IntoResponse, Response, Sse, sse::Event as SseEvent},
 };
-use tinyiothub_authn::jwt::Claims;
+use tinyiothub_web::security::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::*;

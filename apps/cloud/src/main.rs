@@ -27,7 +27,7 @@ async fn main_impl() -> std::io::Result<()> {
         std::process::exit(1);
     }
 
-    // JWT 机制服务（G2）：构造注入，无全局态。web 的 validator/resolver
+    // JWT 机制服务（G2）：构造注入，无全局态。web 的 resolver
     // 缝在 AppState 之前注册，JwtService 无状态可安全共享。
     let jwt_service = std::sync::Arc::new(tinyiothub_authn::jwt::JwtService::new(
         tinyiothub_authn::jwt::JwtSettings {
@@ -38,12 +38,6 @@ async fn main_impl() -> std::io::Result<()> {
 
     // Initialize logging system
     bootstrap::initialize_logging().await?;
-
-    // Register JWT validator with tinyiothub-web (so Claims extractor works)
-    let svc = jwt_service.clone();
-    tinyiothub_web::security::set_jwt_validator(Box::new(move |token| {
-        svc.validate_jwt(token).map(tinyiothub_web::security::Claims::from)
-    }));
 
     // Register the tenant resolver (P4-Task15) — domain crates resolve
     // workspace/tenant scope via tinyiothub_web extractors without depending

@@ -17,7 +17,7 @@ mod tests;
 
 use crate::shared::app_state::AppState;
 use axum::{Router, routing::get};
-use tinyiothub_authn::jwt::Claims;
+use tinyiothub_web::security::Claims;
 
 use crate::domains::agent::chat::handler::proxy as chat_proxy;
 

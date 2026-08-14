@@ -293,27 +293,14 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 name = "authn"
 version = "0.4.6"
 dependencies = [
- "async-trait",
- "axum",
- "base64 0.21.7",
  "bcrypt",
  "chrono",
- "core",
  "dashmap",
- "db",
- "headers",
- "hex",
  "hmac 0.12.1",
  "jwt-simple",
  "serde",
- "serde_json",
  "sha2 0.10.9",
- "sqlx",
- "subtle",
- "tokio",
- "tracing",
  "uuid",
- "web",
 ]
 
 [[package]]
@@ -6993,6 +6980,7 @@ name = "web"
 version = "0.4.6"
 dependencies = [
  "async-trait",
+ "authn",
  "axum",
  "chrono",
  "headers",
