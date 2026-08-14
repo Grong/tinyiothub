@@ -1114,3 +1114,34 @@ impl crate::domains::admin::AdminRoleChecker for EventSecurityAdminRoleChecker {
             .map_err(|_| "Access denied: admin role required".to_string())
     }
 }
+
+/// Admin 域状态切片注入（G7）—— admin handlers 萃取 `State<AdminState>`，
+/// 路由器对组合态 `S` 泛型（`AdminState: FromRef<S>`）；此处是唯一的
+/// AppState → AdminState 派生点。`role_checker` 每次萃取新建，与原先
+/// handler 内按需构造 `EventSecurityAdminRoleChecker` 的语义一致。
+impl axum::extract::FromRef<AppState> for crate::domains::admin::AdminState {
+    fn from_ref(state: &AppState) -> Self {
+        crate::domains::admin::AdminState {
+            database: state.database.clone(),
+            device_cache: state.device_cache.clone(),
+            tag_repository: state.tag_repository.clone(),
+            tag_service: state.tag_service.clone(),
+            event_bus: state.event_bus.clone(),
+            event_repository: state.event_repository.clone(),
+            data_server: state.data_server.clone(),
+            device_query_service: state.device_query_service.clone(),
+            monitoring_service: state.monitoring_service.clone(),
+            performance_service: state.performance_service.clone(),
+            trace_service: state.trace_service.clone(),
+            workspace_service: state.workspace_service.clone(),
+            tenant_service: state.tenant_service.clone(),
+            cron_job_repo: state.cron_job_repo.clone(),
+            cron_run_repo: state.cron_run_repo.clone(),
+            sysinfo_system: state.sysinfo_system.clone(),
+            role_checker: Arc::new(EventSecurityAdminRoleChecker { state: state.clone() }),
+            network_defaults: state.network_defaults.clone(),
+            mqtt_primary: state.mqtt_primary.clone(),
+            started_at: state.started_at,
+        }
+    }
+}

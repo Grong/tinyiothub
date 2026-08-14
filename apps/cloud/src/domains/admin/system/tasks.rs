@@ -1,4 +1,4 @@
-use crate::state::AppState;
+use crate::domains::admin::AdminState;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -58,7 +58,12 @@ pub struct UpdateTaskRequest {
     pub enabled: Option<bool>,
 }
 
-pub fn create_router() -> Router<crate::state::AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/", get(list_tasks).post(create_task))
         .route("/{id}", get(get_task).put(update_task).delete(delete_task))
@@ -69,7 +74,7 @@ pub fn create_router() -> Router<crate::state::AppState> {
 
 /// 获取定时任务列表
 async fn list_tasks(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
     Query(_query): Query<TaskQuery>,
     _claims: Claims,
 ) -> Json<ApiResponse<Vec<TimeTask>>> {
@@ -81,7 +86,7 @@ async fn list_tasks(
 
 /// 创建定时任务
 async fn create_task(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
     _claims: Claims,
     Json(request): Json<CreateTaskRequest>,
 ) -> Json<ApiResponse<TimeTask>> {
@@ -105,7 +110,7 @@ async fn create_task(
 
 /// 获取定时任务详情
 async fn get_task(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
     Path(id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<Option<TimeTask>>> {
@@ -116,7 +121,7 @@ async fn get_task(
 
 /// 更新定时任务
 async fn update_task(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
     Path(id): Path<String>,
     _claims: Claims,
     Json(_request): Json<UpdateTaskRequest>,
@@ -128,7 +133,7 @@ async fn update_task(
 
 /// 删除定时任务
 async fn delete_task(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
     Path(id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<bool>> {
@@ -139,7 +144,7 @@ async fn delete_task(
 
 /// 启用定时任务
 async fn enable_task(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
     Path(id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<bool>> {
@@ -150,7 +155,7 @@ async fn enable_task(
 
 /// 禁用定时任务
 async fn disable_task(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
     Path(id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<bool>> {
@@ -161,7 +166,7 @@ async fn disable_task(
 
 /// 立即运行定时任务
 async fn run_task_now(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
     Path(id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<bool>> {

@@ -1,10 +1,17 @@
 use axum::Router;
 
+use crate::domains::admin::AdminState;
+
 mod configuration;
 pub mod features; // 公开features模块
 mod tasks;
 
-pub fn create_router() -> Router<crate::state::AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new()
         .merge(configuration::create_router())
         .merge(features::create_router())

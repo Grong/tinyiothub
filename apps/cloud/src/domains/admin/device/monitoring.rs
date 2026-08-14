@@ -1,4 +1,4 @@
-use crate::state::AppState;
+use crate::domains::admin::AdminState;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -28,7 +28,12 @@ pub struct DeviceOnlineStatus {
     pub last_check: String,
 }
 
-pub fn create_router() -> Router<crate::state::AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new()
         // 设备状态相关
         .route("/{device_id}/status", get(get_device_online_status))
@@ -45,7 +50,7 @@ pub fn create_router() -> Router<crate::state::AppState> {
 
 /// 获取设备在线状态
 async fn get_device_online_status(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(device_id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<DeviceOnlineStatus>> {
@@ -68,7 +73,7 @@ async fn get_device_online_status(
 
 /// 获取设备指标信息
 async fn get_device_metrics(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(device_id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<Option<DeviceMetrics>>> {
@@ -83,14 +88,14 @@ async fn get_device_metrics(
 }
 
 /// 获取系统概览
-async fn get_system_overview(State(state): State<AppState>, _claims: Claims) -> Json<ApiResponse<SystemOverview>> {
+async fn get_system_overview(State(state): State<AdminState>, _claims: Claims) -> Json<ApiResponse<SystemOverview>> {
     let overview = state.monitoring_service.get_system_overview().await;
     ApiResponseBuilder::success(overview)
 }
 
 /// 获取设备性能指标
 async fn get_device_performance_metrics(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(device_id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<Option<DevicePerformanceMetrics>>> {
@@ -110,7 +115,7 @@ async fn get_device_performance_metrics(
 
 /// 获取设备性能历史数据
 async fn get_device_performance_history(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(device_id): Path<String>,
     Query(params): Query<PerformanceHistoryQuery>,
     _claims: Claims,
@@ -138,7 +143,7 @@ async fn get_device_performance_history(
 
 /// 获取系统性能概览
 async fn get_system_performance_overview(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     _claims: Claims,
 ) -> Json<ApiResponse<SystemPerformanceOverview>> {
     let overview = state.performance_service.get_system_performance_overview().await;
@@ -147,7 +152,7 @@ async fn get_system_performance_overview(
 
 /// 获取设备性能告警
 async fn get_device_performance_alerts(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(device_id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<Vec<PerformanceAlert>>> {
@@ -164,7 +169,7 @@ async fn get_device_performance_alerts(
 
 /// 获取所有设备性能告警
 async fn get_all_performance_alerts(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     _claims: Claims,
 ) -> Json<ApiResponse<Vec<PerformanceAlert>>> {
     // 获取所有设备的告警

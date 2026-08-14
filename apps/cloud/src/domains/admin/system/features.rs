@@ -1,4 +1,4 @@
-use crate::state::AppState;
+use crate::domains::admin::AdminState;
 use axum::{Json, Router, extract::State, routing::get};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -139,7 +139,12 @@ impl Default for SystemFeatures {
     }
 }
 
-pub fn create_router() -> Router<crate::state::AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new().route("/features", get(get_system_features))
 }
 
@@ -147,7 +152,7 @@ pub fn create_router() -> Router<crate::state::AppState> {
 ///
 /// 返回系统支持的功能特性、版本信息、许可证信息等
 /// 这个接口通常用于前端初始化时获取系统能力
-async fn get_system_features(State(_state): State<AppState>) -> Json<ApiResponse<SystemFeatures>> {
+async fn get_system_features(State(_state): State<AdminState>) -> Json<ApiResponse<SystemFeatures>> {
     let features = SystemFeatures::default();
 
     tracing::debug!(

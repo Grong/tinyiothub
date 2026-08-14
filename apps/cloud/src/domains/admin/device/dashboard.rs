@@ -1,4 +1,4 @@
-use crate::state::AppState;
+use crate::domains::admin::AdminState;
 use axum::{
     Json, Router,
     extract::{Query, State},
@@ -21,7 +21,7 @@ pub struct QuickDevicesQuery {
 
 /// 获取设备状态分布
 pub async fn get_device_distribution(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     _claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<DeviceStatusDistribution>> {
@@ -42,7 +42,7 @@ pub async fn get_device_distribution(
 
 /// 获取关键设备列表
 pub async fn get_quick_devices(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Query(query): Query<QuickDevicesQuery>,
     _claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
@@ -63,7 +63,12 @@ pub async fn get_quick_devices(
     }
 }
 
-pub fn create_router() -> Router<crate::state::AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/distribution", get(get_device_distribution))
         .route("/quick", get(get_quick_devices))

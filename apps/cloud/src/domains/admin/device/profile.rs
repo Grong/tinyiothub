@@ -1,4 +1,4 @@
-use crate::state::AppState;
+use crate::domains::admin::AdminState;
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -83,13 +83,18 @@ pub struct DeviceProfileOverview {
     pub updated_at: Option<String>,
 }
 
-pub fn create_router() -> Router<crate::state::AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new().route("/{id}/profile", get(get_device_profile))
 }
 
 /// 获取设备完整配置文件
 async fn get_device_profile(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(device_id): Path<String>,
     claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
@@ -185,7 +190,7 @@ async fn get_device_profile(
 }
 
 /// 获取设备最近的事件
-async fn fetch_recent_device_events(state: &AppState, device_id: &str) -> Vec<DeviceEventSummary> {
+async fn fetch_recent_device_events(state: &AdminState, device_id: &str) -> Vec<DeviceEventSummary> {
     // 构建查询条件：查询该设备最近 10 条事件
     let criteria = EventCriteria::builder()
         .device_ids(vec![device_id.to_string()])
@@ -261,7 +266,7 @@ async fn fetch_recent_device_events(state: &AppState, device_id: &str) -> Vec<De
 
 /// 计算设备概述信息
 async fn calculate_device_overview(
-    state: &AppState,
+    state: &AdminState,
     device_id: &str,
     properties: &[DeviceProperty],
     commands: &[DeviceCommandResponse],

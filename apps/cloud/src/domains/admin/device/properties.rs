@@ -1,4 +1,4 @@
-use crate::state::AppState;
+use crate::domains::admin::AdminState;
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -18,7 +18,12 @@ pub struct UpdatePropertyValueRequest {
     pub value: String,
 }
 
-pub fn create_router() -> Router<crate::state::AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/{device_id}/properties", get(get_device_properties))
         .route(
@@ -33,7 +38,7 @@ pub fn create_router() -> Router<crate::state::AppState> {
 
 /// 获取设备属性列表
 async fn get_device_properties(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(device_id): Path<String>,
     _claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
@@ -53,7 +58,7 @@ async fn get_device_properties(
 
 /// 通过设备名称和属性名称获取属性
 async fn get_device_property_by_name(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path((device_name, property_name)): Path<(String, String)>,
     _claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
@@ -76,7 +81,7 @@ async fn get_device_property_by_name(
 
 /// 更新设备属性值
 async fn update_property_value(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path((device_id, property_id)): Path<(String, String)>,
     claims: Claims,
     Json(req): Json<UpdatePropertyValueRequest>,

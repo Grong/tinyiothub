@@ -1,7 +1,7 @@
 // Jobs API — moved from api/jobs/mod.rs
 // Compatibility layer over new cron system
 
-use crate::state::AppState;
+use crate::domains::admin::AdminState;
 use std::{str::FromStr, sync::Arc};
 
 use axum::{
@@ -24,7 +24,12 @@ use tinyiothub_core::error::Error;
 use tinyiothub_web::api_response::{ApiResponse, PaginatedResponse, PaginationInfo};
 
 /// Create jobs router
-pub fn create_router() -> Router<crate::state::AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/", get(list_jobs).post(create_job))
         .route("/{id}", get(get_job).put(update_job).delete(delete_job))
@@ -41,7 +46,7 @@ struct WorkspaceQuery {
     workspace_id: Option<String>,
 }
 
-// NOTE: resolve_workspace is now a method on AppState (state.rs)
+// NOTE: resolve_workspace is now a method on AdminState (admin/mod.rs)
 // Use state.resolve_workspace(&claims.tenant_id, explicit_workspace_id).await
 
 // ─── DTO mapping: legacy Job <-> CronJob ──────────────────────────────────
@@ -212,7 +217,7 @@ fn map_execution_query(params: &JobExecutionQueryParams) -> CronRunQuery {
 // ─── Handlers ─────────────────────────────────────────────────────────────
 
 async fn list_jobs(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Query(params): Query<JobQueryParams>,
     claims: Claims,
 ) -> Json<ApiResponse<Vec<Job>>> {
@@ -231,7 +236,7 @@ async fn list_jobs(
 }
 
 async fn get_job(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(id): Path<String>,
     Query(q): Query<WorkspaceQuery>,
     claims: Claims,
@@ -252,7 +257,7 @@ async fn get_job(
 
 async fn create_job(
     claims: Claims,
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Json(mut payload): Json<CreateJobRequest>,
 ) -> Json<ApiResponse<Job>> {
     // Normalize 5-field cron to 6-field (prepend seconds=0)
@@ -285,7 +290,7 @@ async fn create_job(
 
 async fn update_job(
     claims: Claims,
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(id): Path<String>,
     Json(mut payload): Json<UpdateJobRequest>,
 ) -> Json<ApiResponse<Job>> {
@@ -321,7 +326,7 @@ async fn update_job(
 }
 
 async fn delete_job(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(id): Path<String>,
     Query(q): Query<WorkspaceQuery>,
     claims: Claims,
@@ -344,7 +349,7 @@ async fn delete_job(
 }
 
 async fn run_job_now(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(id): Path<String>,
     claims: Claims,
 ) -> Json<ApiResponse<JobExecution>> {
@@ -455,7 +460,7 @@ async fn run_job_now(
 }
 
 async fn list_job_executions(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(id): Path<String>,
     Query(params): Query<JobExecutionQueryParams>,
     claims: Claims,
@@ -480,7 +485,7 @@ async fn list_job_executions(
     }
 }
 
-async fn get_statistics(State(state): State<AppState>, claims: Claims) -> Json<ApiResponse<JobStatistics>> {
+async fn get_statistics(State(state): State<AdminState>, claims: Claims) -> Json<ApiResponse<JobStatistics>> {
     let ws_id = match state.resolve_workspace(&claims.tenant_id, None).await {
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
@@ -514,7 +519,7 @@ async fn get_statistics(State(state): State<AppState>, claims: Claims) -> Json<A
 }
 
 async fn list_all_executions(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Query(params): Query<JobExecutionQueryParams>,
     claims: Claims,
 ) -> Json<ApiResponse<PaginatedResponse<JobExecution>>> {

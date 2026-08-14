@@ -1,4 +1,4 @@
-use crate::state::AppState;
+use crate::domains::admin::AdminState;
 use axum::{Json, Router, extract::State, routing::get};
 use serde::{Deserialize, Serialize};
 use tinyiothub_web::security::Claims;
@@ -40,7 +40,12 @@ pub struct GatewayMetrics {
     pub uptime_seconds: u64,
 }
 
-pub fn create_router() -> Router<crate::state::AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/system", get(get_system_metrics))
         .route("/devices", get(get_device_metrics))
@@ -48,15 +53,12 @@ pub fn create_router() -> Router<crate::state::AppState> {
 }
 
 /// 获取系统指标（仅管理员可访问）
-async fn get_system_metrics(State(state): State<AppState>, claims: Claims) -> Json<ApiResponse<SystemMetrics>> {
-    // 原 AdminState::role_checker 为 FromRef 每次萃取新建 —— 保持同语义，按需构造
-    let role_checker = crate::state::EventSecurityAdminRoleChecker { state: state.clone() };
-    match crate::domains::admin::AdminRoleChecker::require_admin_role(
-        &role_checker,
-        &claims.user_id,
-        "get_system_metrics",
-    )
-    .await
+async fn get_system_metrics(State(state): State<AdminState>, claims: Claims) -> Json<ApiResponse<SystemMetrics>> {
+    // AdminState::role_checker 为 FromRef 每次萃取新建 —— 保持原按需构造语义
+    match state
+        .role_checker
+        .require_admin_role(&claims.user_id, "get_system_metrics")
+        .await
     {
         Ok(()) => {}
         Err(_) => {
@@ -105,7 +107,7 @@ async fn get_system_metrics(State(state): State<AppState>, claims: Claims) -> Js
 }
 
 /// 获取设备指标
-async fn get_device_metrics(State(state): State<AppState>, claims: Claims) -> Json<ApiResponse<Vec<DeviceMetrics>>> {
+async fn get_device_metrics(State(state): State<AdminState>, claims: Claims) -> Json<ApiResponse<Vec<DeviceMetrics>>> {
     let workspace_id = match state.resolve_workspace(&claims.tenant_id, None).await {
         Ok(ws) => Some(ws),
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
@@ -148,7 +150,7 @@ async fn get_device_metrics(State(state): State<AppState>, claims: Claims) -> Js
 }
 
 /// 获取网关指标
-async fn get_gateway_metrics(State(state): State<AppState>, claims: Claims) -> Json<ApiResponse<GatewayMetrics>> {
+async fn get_gateway_metrics(State(state): State<AdminState>, claims: Claims) -> Json<ApiResponse<GatewayMetrics>> {
     let workspace_id = match state.resolve_workspace(&claims.tenant_id, None).await {
         Ok(ws) => Some(ws),
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
@@ -174,7 +176,7 @@ async fn get_gateway_metrics(State(state): State<AppState>, claims: Claims) -> J
         }
     }
 
-    // Uptime from AppState field (G3 — replaces former START_TIME static)
+    // Uptime from AdminState field (G3 — replaces former START_TIME static)
     let uptime_seconds = state.started_at.elapsed().map(|d| d.as_secs()).unwrap_or(0);
 
     let metrics = GatewayMetrics {

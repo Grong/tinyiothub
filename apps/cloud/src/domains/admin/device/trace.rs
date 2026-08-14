@@ -1,4 +1,4 @@
-use crate::state::AppState;
+use crate::domains::admin::AdminState;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -54,7 +54,12 @@ pub struct SystemTraceQuery {
     pub days: Option<u32>,
 }
 
-pub fn create_router() -> Router<crate::state::AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/{device_id}/traces", post(record_device_trace))
         .route("/{device_id}/traces", get(get_device_traces))
@@ -66,7 +71,7 @@ pub fn create_router() -> Router<crate::state::AppState> {
 
 /// 记录设备追踪信息
 async fn record_device_trace(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(device_id): Path<String>,
     _claims: Claims,
     Json(req): Json<RecordTraceRequest>,
@@ -102,7 +107,7 @@ async fn record_device_trace(
 
 /// 获取设备追踪记录
 async fn get_device_traces(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(device_id): Path<String>,
     Query(params): Query<TraceQuery>,
     _claims: Claims,
@@ -130,7 +135,7 @@ async fn get_device_traces(
 
 /// 获取设备追踪记录摘要
 async fn get_device_trace_summary(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(device_id): Path<String>,
     Query(params): Query<TraceStatisticsQuery>,
     _claims: Claims,
@@ -155,7 +160,7 @@ async fn get_device_trace_summary(
 
 /// 清理设备追踪记录
 async fn clear_device_traces(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(device_id): Path<String>,
     _claims: Claims,
     Json(req): Json<ClearTracesRequest>,
@@ -179,7 +184,7 @@ async fn clear_device_traces(
 
 /// 获取系统追踪记录概览
 async fn get_system_trace_overview(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Query(params): Query<SystemTraceQuery>,
     _claims: Claims,
 ) -> Json<ApiResponse<SystemTraceOverview>> {
@@ -189,7 +194,7 @@ async fn get_system_trace_overview(
 
 /// 清理过期的追踪记录
 async fn cleanup_expired_traces(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     _claims: Claims,
     Json(req): Json<CleanupTracesRequest>,
 ) -> Json<ApiResponse<u32>> {

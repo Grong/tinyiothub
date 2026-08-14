@@ -1,4 +1,4 @@
-use crate::state::AppState;
+use crate::domains::admin::AdminState;
 use axum::{
     Json, Router,
     extract::State,
@@ -43,7 +43,12 @@ pub struct MqttConfig {
     pub clean_session: bool,
 }
 
-pub fn create_router() -> Router<crate::state::AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/system", get(get_system_config).post(update_system_config))
         .route("/network", get(get_network_config).post(update_network_config))
@@ -53,7 +58,7 @@ pub fn create_router() -> Router<crate::state::AppState> {
 }
 
 /// 获取系统配置
-async fn get_system_config(State(_state): State<AppState>, _claims: Claims) -> Json<ApiResponse<SystemConfig>> {
+async fn get_system_config(State(_state): State<AdminState>, _claims: Claims) -> Json<ApiResponse<SystemConfig>> {
     let config = SystemConfig {
         system_name: "TinyIoTHub".to_string(),
         system_version: "1.0.0".to_string(),
@@ -67,7 +72,7 @@ async fn get_system_config(State(_state): State<AppState>, _claims: Claims) -> J
 
 /// 更新系统配置
 async fn update_system_config(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
     _claims: Claims,
     Json(config): Json<SystemConfig>,
 ) -> Json<ApiResponse<bool>> {
@@ -77,7 +82,7 @@ async fn update_system_config(
 }
 
 /// 获取网络配置
-async fn get_network_config(State(state): State<AppState>, _claims: Claims) -> Json<ApiResponse<NetworkConfig>> {
+async fn get_network_config(State(state): State<AdminState>, _claims: Claims) -> Json<ApiResponse<NetworkConfig>> {
     // 从注入的配置切片读取网络配置（FromRef 时克隆自进程全局配置）
     let defaults = &state.network_defaults;
     let config = NetworkConfig {
@@ -94,7 +99,7 @@ async fn get_network_config(State(state): State<AppState>, _claims: Claims) -> J
 
 /// 更新网络配置
 async fn update_network_config(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
     _claims: Claims,
     Json(config): Json<NetworkConfig>,
 ) -> Json<ApiResponse<bool>> {
@@ -104,7 +109,7 @@ async fn update_network_config(
 }
 
 /// 获取MQTT配置
-async fn get_mqtt_config(State(state): State<AppState>, _claims: Claims) -> Json<ApiResponse<MqttConfig>> {
+async fn get_mqtt_config(State(state): State<AdminState>, _claims: Claims) -> Json<ApiResponse<MqttConfig>> {
     // 从注入的配置切片读取MQTT配置（FromRef 时克隆自进程全局配置）
     let primary = &state.mqtt_primary;
     let config = MqttConfig {
@@ -122,7 +127,7 @@ async fn get_mqtt_config(State(state): State<AppState>, _claims: Claims) -> Json
 
 /// 更新MQTT配置
 async fn update_mqtt_config(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
     _claims: Claims,
     Json(config): Json<MqttConfig>,
 ) -> Json<ApiResponse<bool>> {
@@ -132,14 +137,14 @@ async fn update_mqtt_config(
 }
 
 /// 重启系统
-async fn restart_system(State(_state): State<AppState>, _claims: Claims) -> Json<ApiResponse<bool>> {
+async fn restart_system(State(_state): State<AdminState>, _claims: Claims) -> Json<ApiResponse<bool>> {
     tracing::warn!("System restart requested");
 
     ApiResponseBuilder::success(true)
 }
 
 /// 关闭系统
-async fn shutdown_system(State(_state): State<AppState>, _claims: Claims) -> Json<ApiResponse<bool>> {
+async fn shutdown_system(State(_state): State<AdminState>, _claims: Claims) -> Json<ApiResponse<bool>> {
     tracing::warn!("System shutdown requested");
 
     ApiResponseBuilder::success(true)

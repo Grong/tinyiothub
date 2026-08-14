@@ -1,4 +1,4 @@
-use crate::state::AppState;
+use crate::domains::admin::AdminState;
 use axum::{Router, extract::State, response::Json, routing::get};
 use serde::Deserialize;
 use tinyiothub_web::security::Claims;
@@ -20,7 +20,7 @@ pub struct TrendQuery {
 /// 获取 Dashboard 统计信息
 /// GET /api/monitoring/stats
 pub async fn get_dashboard_stats(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<DashboardStats>> {
@@ -68,7 +68,7 @@ pub async fn get_dashboard_stats(
 /// 获取系统性能指标
 /// GET /api/monitoring/metrics
 pub async fn get_dashboard_metrics(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
     claims: Claims,
 ) -> Json<ApiResponse<DashboardMetrics>> {
     info!("获取系统性能指标, 用户: {}", claims.username);
@@ -203,7 +203,12 @@ async fn get_network_outbound() -> Result<i64, Box<dyn std::error::Error>> {
     Ok(1024 * 1024 * 30) // 30MB
 }
 
-pub fn create_router() -> Router<crate::state::AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/stats", get(get_dashboard_stats))
         .route("/metrics", get(get_dashboard_metrics))

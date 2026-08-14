@@ -1,6 +1,6 @@
 // Batch Command API — moved from api/batch/mod.rs
 
-use crate::state::AppState;
+use crate::domains::admin::AdminState;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -24,7 +24,12 @@ pub struct ListBatchesQuery {
 }
 
 /// Create router
-pub fn create_router() -> Router<crate::state::AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/", post(create_batch))
         .route("/", get(list_batches))
@@ -34,7 +39,7 @@ pub fn create_router() -> Router<crate::state::AppState> {
 
 /// Create a new batch command
 async fn create_batch(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Json(payload): Json<CreateBatchCommandRequest>,
 ) -> Json<ApiResponse<BatchCommandWithItems>> {
     let db = state.database.clone();
@@ -66,7 +71,7 @@ async fn create_batch(
 
 /// List batches for a workspace
 async fn list_batches(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Query(params): Query<ListBatchesQuery>,
 ) -> Json<ApiResponse<Vec<crate::domains::admin::batch::batch_command::BatchCommand>>> {
     let db = state.database.clone();
@@ -83,7 +88,7 @@ async fn list_batches(
 
 /// Get a batch with its items
 async fn get_batch(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(batch_id): Path<String>,
 ) -> Json<ApiResponse<BatchCommandWithItems>> {
     let db = state.database.clone();
@@ -100,7 +105,7 @@ async fn get_batch(
 
 /// Execute a batch command (send commands to all devices)
 async fn execute_batch(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(batch_id): Path<String>,
     WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<BatchCommandWithItems>> {

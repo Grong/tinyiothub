@@ -1,7 +1,7 @@
 // Open API Module
 // Public API for AI platform integration
 
-use crate::state::AppState;
+use crate::domains::admin::AdminState;
 use axum::{
     Json, Router,
     body::Body,
@@ -18,7 +18,12 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::api_response::ApiResponse;
 
 /// Create open API router (public API, requires API Key)
-pub fn create_open_router() -> Router<crate::state::AppState> {
+pub fn create_open_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/open/health", get(open_health))
         .route("/open/things", get(list_things))
@@ -33,7 +38,7 @@ pub fn create_open_router() -> Router<crate::state::AppState> {
 
 /// Validate API Key
 async fn validate_api_key(
-    state: &AppState,
+    state: &AdminState,
     api_key: Option<String>,
 ) -> Result<
     (
@@ -121,7 +126,7 @@ async fn validate_api_key(
 
 /// Record API usage
 async fn record_api_usage(
-    state: &AppState,
+    state: &AdminState,
     workspace_id: &str,
     api_key_id: Option<&str>,
     method: &str,
@@ -144,7 +149,7 @@ async fn record_api_usage(
 }
 
 /// Open API health check
-async fn open_health(State(_state): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
+async fn open_health(State(_state): State<AdminState>) -> Result<Json<serde_json::Value>, StatusCode> {
     Ok(Json(serde_json::json!({
         "status": "ok",
         "service": "TinyIoTHub Open API",
@@ -154,7 +159,7 @@ async fn open_health(State(_state): State<AppState>) -> Result<Json<serde_json::
 }
 
 /// List things
-async fn list_things(State(state): State<AppState>, headers: HeaderMap) -> Result<Response<Body>, StatusCode> {
+async fn list_things(State(state): State<AdminState>, headers: HeaderMap) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
     let api_key = extract_api_key_header(&headers);
@@ -201,7 +206,7 @@ async fn list_things(State(state): State<AppState>, headers: HeaderMap) -> Resul
 
 /// Get thing details
 async fn get_thing(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response<Body>, StatusCode> {
@@ -268,7 +273,7 @@ async fn get_thing(
 
 /// Get thing properties
 async fn get_thing_properties(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response<Body>, StatusCode> {
@@ -335,7 +340,7 @@ async fn get_thing_properties(
 
 /// List thing commands
 async fn list_commands(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response<Body>, StatusCode> {
@@ -397,7 +402,7 @@ async fn list_commands(
 
 /// Send thing command
 async fn send_command(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     headers: HeaderMap,
     Path(id): Path<String>,
     Json(payload): Json<serde_json::Value>,
@@ -490,7 +495,7 @@ async fn send_command(
 
 /// Get thing events
 async fn list_events(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response<Body>, StatusCode> {
@@ -548,7 +553,7 @@ async fn list_events(
 }
 
 /// Get all events
-async fn list_all_events(State(state): State<AppState>, headers: HeaderMap) -> Result<Response<Body>, StatusCode> {
+async fn list_all_events(State(state): State<AdminState>, headers: HeaderMap) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
     let api_key = extract_api_key_header(&headers);

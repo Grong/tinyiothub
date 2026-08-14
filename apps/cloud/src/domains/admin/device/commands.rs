@@ -1,4 +1,4 @@
-use crate::state::AppState;
+use crate::domains::admin::AdminState;
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -30,7 +30,12 @@ pub struct CommandExecution {
     pub completed_at: Option<String>,
 }
 
-pub fn create_router() -> Router<crate::state::AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new().route(
         "/{device_id}/commands/{command_id}/execute",
         post(execute_device_command),
@@ -39,7 +44,7 @@ pub fn create_router() -> Router<crate::state::AppState> {
 
 /// 执行设备指令
 async fn execute_device_command(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path((device_id, command_id)): Path<(String, String)>,
     _claims: Claims,
     Json(req): Json<ExecuteCommandRequest>,

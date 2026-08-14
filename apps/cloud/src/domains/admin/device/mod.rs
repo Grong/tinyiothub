@@ -12,7 +12,14 @@ pub mod trace;
 // the need for explicit tenant verification in API handlers.
 use axum::Router;
 
-pub fn create_router() -> Router<crate::state::AppState> {
+use crate::domains::admin::AdminState;
+
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new()
         .merge(management::create_router())
         .merge(properties::create_router())

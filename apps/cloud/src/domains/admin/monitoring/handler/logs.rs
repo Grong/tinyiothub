@@ -1,4 +1,4 @@
-use crate::state::AppState;
+use crate::domains::admin::AdminState;
 use axum::{
     Json, Router,
     extract::{Query, State},
@@ -41,7 +41,12 @@ pub struct LogQuery {
     pub pagination: PaginationQuery,
 }
 
-pub fn create_router() -> Router<crate::state::AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/", get(get_logs))
         .route("/levels", get(get_log_levels))
@@ -49,7 +54,7 @@ pub fn create_router() -> Router<crate::state::AppState> {
 
 /// 获取日志列表（已启用 workspace 隔离）
 async fn get_logs(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Query(query): Query<LogQuery>,
     claims: Claims,
 ) -> Json<ApiResponse<Vec<LogEntry>>> {
@@ -128,7 +133,7 @@ async fn get_logs(
 }
 
 /// 获取日志级别列表
-async fn get_log_levels(State(_state): State<AppState>, _claims: Claims) -> Json<ApiResponse<Vec<LogLevel>>> {
+async fn get_log_levels(State(_state): State<AdminState>, _claims: Claims) -> Json<ApiResponse<Vec<LogLevel>>> {
     let levels = vec![
         LogLevel {
             name: "ERROR".to_string(),

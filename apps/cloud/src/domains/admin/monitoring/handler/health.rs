@@ -1,4 +1,4 @@
-use crate::state::AppState;
+use crate::domains::admin::AdminState;
 
 use axum::{Json, Router, extract::State, routing::get};
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,7 @@ use tinyiothub_web::api_response::ApiResponse;
 
 /// Global start time for uptime calculation (shared with metrics)
 
-fn get_uptime_seconds(state: &AppState) -> u64 {
+fn get_uptime_seconds(state: &AdminState) -> u64 {
     state.started_at.elapsed().unwrap_or_default().as_secs()
 }
 
@@ -35,14 +35,19 @@ pub struct DetailedHealthStatus {
     pub cpu_usage_percent: f64,
 }
 
-pub fn create_router() -> Router<crate::state::AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/", get(get_health))
         .route("/detailed", get(get_detailed_health))
 }
 
 /// 基础健康检查
-async fn get_health(State(state): State<AppState>) -> Json<ApiResponse<HealthStatus>> {
+async fn get_health(State(state): State<AdminState>) -> Json<ApiResponse<HealthStatus>> {
     let db_status = sqlx::query("SELECT 1").fetch_optional(state.database().pool()).await;
 
     let status = match db_status {
@@ -60,7 +65,7 @@ async fn get_health(State(state): State<AppState>) -> Json<ApiResponse<HealthSta
 }
 
 /// 详细健康状态
-async fn get_detailed_health(State(state): State<AppState>, claims: Claims) -> Json<ApiResponse<DetailedHealthStatus>> {
+async fn get_detailed_health(State(state): State<AdminState>, claims: Claims) -> Json<ApiResponse<DetailedHealthStatus>> {
     let db_status = sqlx::query("SELECT 1").fetch_optional(state.database().pool()).await;
 
     let (overall_status, database_status) = match db_status {
