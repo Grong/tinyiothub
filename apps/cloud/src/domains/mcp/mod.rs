@@ -18,7 +18,7 @@ use tokio::sync::RwLock;
 pub use handlers::{ToolCallParams, create_router};
 pub use tool_registry::*;
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use tool_registry::HandlerRegistry;
 
 /// Create the MCP router (mounted at `/mcp` by the composition layer).

@@ -1,4 +1,4 @@
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -58,7 +58,7 @@ pub struct UpdateTaskRequest {
     pub enabled: Option<bool>,
 }
 
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/", get(list_tasks).post(create_task))
         .route("/{id}", get(get_task).put(update_task).delete(delete_task))

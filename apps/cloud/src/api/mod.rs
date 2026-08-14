@@ -6,7 +6,7 @@ use axum::{
     routing::{get, post},
 };
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 
 // agents — 已迁移至 modules/agent/handler/
 // alarms — 已迁移至 modules/alarm/handler.rs

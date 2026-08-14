@@ -9,7 +9,7 @@ use tracing_appender::{
 };
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use tinyiothub_core::config::ApplicationSettings;
 
 /// Set up global panic handler to prevent crashes

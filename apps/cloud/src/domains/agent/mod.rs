@@ -59,6 +59,6 @@ pub mod types {
 
 /// The composed agent router: host (agent/chat capability HTTP APIs) + chat
 /// (session proxy) planes, generic over the composition state `S`.
-pub fn router() -> axum::Router<crate::shared::app_state::AppState> {
+pub fn router() -> axum::Router<crate::state::AppState> {
     host::router()
 }

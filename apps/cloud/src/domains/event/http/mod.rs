@@ -15,7 +15,7 @@ use axum::{
     routing::{get, post, put},
 };
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 
 pub mod security;
 pub mod sse;

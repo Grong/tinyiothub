@@ -9,7 +9,7 @@ use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::ListMemoriesQuery;
 use crate::domains::agent::host::shared::config::default_model;
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use tinyiothub_web::middleware::workspace::WorkspaceScope;
 
 pub fn create_router<S>() -> axum::Router<S>

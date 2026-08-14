@@ -5,7 +5,7 @@ use axum::{
     routing::{delete, get, post, put},
 };
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 
 pub mod actions;
 pub mod crud;

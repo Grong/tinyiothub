@@ -1,4 +1,4 @@
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use std::collections::HashMap;
 
 use async_stream::stream;

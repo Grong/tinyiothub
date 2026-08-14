@@ -23,7 +23,7 @@ pub use workspace::WorkspaceService;
 
 /// Tenant domain state slice — Arc'd services + config slices, derived from
 /// the composition layer's `AppState` via `FromRef`
-/// (cloud/src/shared/app_state.rs).
+/// (cloud/src/state.rs).
 
 /// AI tag-suggestion seam for workspace resources. Cloud implements this
 /// over the minimax model provider (`shared::config::create_minimax_provider`
@@ -40,21 +40,21 @@ pub trait TagSuggester: Send + Sync {
 }
 
 /// Tenants router (tenant CRUD + usage; mounted at `/tenants`).
-pub fn router() -> axum::Router<crate::shared::app_state::AppState> {
+pub fn router() -> axum::Router<crate::state::AppState> {
     handler::create_router()
 }
 
 /// API keys router (mounted at `/api-keys`).
-pub fn api_key_router() -> axum::Router<crate::shared::app_state::AppState> {
+pub fn api_key_router() -> axum::Router<crate::state::AppState> {
     handler::create_api_key_router()
 }
 
 /// Public tenant auth router (register/login/verify/plans; no JWT).
-pub fn auth_router() -> axum::Router<crate::shared::app_state::AppState> {
+pub fn auth_router() -> axum::Router<crate::state::AppState> {
     handler::create_auth_router()
 }
 
 /// Workspaces router (CRUD + resources; mounted at `/workspaces`).
-pub fn workspace_router() -> axum::Router<crate::shared::app_state::AppState> {
+pub fn workspace_router() -> axum::Router<crate::state::AppState> {
     workspace::create_router()
 }

@@ -11,7 +11,7 @@ use crate::shared::api_response::{ReqCtx, UserInfo};
 
 /// Context middleware for request processing with Axum
 pub async fn context_middleware(
-    State(state): State<crate::shared::app_state::AppState>,
+    State(state): State<crate::state::AppState>,
     mut request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
@@ -109,7 +109,7 @@ async fn is_token_blacklisted(db: &tinyiothub_storage::Database, token: &str) ->
 
 /// JWT authentication middleware - requires valid JWT token
 pub async fn jwt_auth_middleware(
-    State(state): State<crate::shared::app_state::AppState>,
+    State(state): State<crate::state::AppState>,
     mut request: Request,
     next: Next,
 ) -> Response {

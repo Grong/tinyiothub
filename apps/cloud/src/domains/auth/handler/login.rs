@@ -1,4 +1,4 @@
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{Json, Router, extract::State, routing::post};
 use serde::Deserialize;
 use tinyiothub_web::validation;

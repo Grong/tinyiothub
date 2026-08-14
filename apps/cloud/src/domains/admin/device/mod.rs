@@ -12,7 +12,7 @@ pub mod trace;
 // the need for explicit tenant verification in API handlers.
 use axum::Router;
 
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         .merge(management::create_router())
         .merge(properties::create_router())

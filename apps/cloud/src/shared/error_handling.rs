@@ -5,7 +5,7 @@ use axum::response::Json;
 pub use tinyiothub_web::error_handling::{ErrorCategory, ErrorCode, ErrorContext, ErrorHandler};
 use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder};
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 
 /// Authorization helper functions
 pub struct AuthHelper;

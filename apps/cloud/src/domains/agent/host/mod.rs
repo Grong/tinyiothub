@@ -55,7 +55,7 @@ use axum::routing::{get, post};
 ///
 /// Mounted at the API root by the composition layer; every sub-router keeps
 /// its own generic `create_router::<S>()` for individual mounting.
-pub fn router() -> Router<crate::shared::app_state::AppState> {
+pub fn router() -> Router<crate::state::AppState> {
     Router::new()
         // /agents/skills before /agents so the literal wins over /{id}
         .nest("/agents/skills", handler::skills::create_router())

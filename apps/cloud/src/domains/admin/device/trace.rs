@@ -1,4 +1,4 @@
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -54,7 +54,7 @@ pub struct SystemTraceQuery {
     pub days: Option<u32>,
 }
 
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/{device_id}/traces", post(record_device_trace))
         .route("/{device_id}/traces", get(get_device_traces))

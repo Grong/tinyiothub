@@ -12,7 +12,7 @@ use crate::domains::driver::gateway::{
     service::PairingError,
     types::{PairingRequest, PairingResponse},
 };
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 
 fn extract_client_ip(headers: &HeaderMap) -> Option<String> {
     if let Some(forwarded) = headers.get("x-forwarded-for")

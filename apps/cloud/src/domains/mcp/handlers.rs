@@ -16,7 +16,7 @@ use sha2::Digest;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::tool_registry::{ToolError, ToolMetadata};
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 
 /// MCP auth context: workspace isolation for API Key authentication.
 /// Unlike JWT-based auth (which had user_id/tenant_id), API Keys are bound
@@ -156,7 +156,7 @@ pub struct JsonRpcResult {
 /// Generic over the composition state `S` (SEP contract): the router nests
 /// into the composition layer's `Router<AppState>`; handlers extract
 /// `State<AppState>` via `FromRef`.
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/", post(handle_mcp_request))
         .route("/tools/list", post(handle_tools_list))

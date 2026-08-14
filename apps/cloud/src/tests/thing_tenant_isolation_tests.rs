@@ -27,7 +27,7 @@ fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Re
 }
 
 /// App with two seeded workspaces in one tenant.
-async fn setup_two_workspaces() -> (axum::Router, sqlx::SqlitePool, crate::shared::app_state::AppState) {
+async fn setup_two_workspaces() -> (axum::Router, sqlx::SqlitePool, crate::state::AppState) {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-a").await;
     seed_test_workspace(&pool, "tenant-1", "ws-b").await;

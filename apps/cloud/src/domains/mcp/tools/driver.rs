@@ -11,7 +11,7 @@ use tinyiothub_runtime::driver;
 
 use crate::domains::mcp::handlers::get_mcp_context;
 use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 
 /// Driver list response
 #[derive(Debug, Serialize)]

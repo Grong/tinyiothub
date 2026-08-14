@@ -29,7 +29,7 @@ use crate::domains::notify::{
     },
     service::{NotificationMessage, send_notification_message},
 };
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use tinyiothub_core::notification_types::NotificationChannelType;
 use tinyiothub_storage::notify::NotificationRule;
 

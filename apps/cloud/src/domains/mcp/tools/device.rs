@@ -18,7 +18,7 @@ use crate::domains::thing::legacy::device_query::{
 };
 
 use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 
 /// Tool input: Get single device
 #[derive(Debug, Deserialize)]

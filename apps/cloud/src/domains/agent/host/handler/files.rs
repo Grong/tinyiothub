@@ -26,7 +26,7 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::middleware::workspace::WorkspaceScope;
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 
 /// Supported workspace files (pub(crate) for testing)
 pub(crate) const WORKSPACE_FILES: &[&str] = &[

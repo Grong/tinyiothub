@@ -17,7 +17,7 @@ use crate::domains::driver::heartbeat::types::{
 };
 
 /// Create the heartbeat router
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/", post(report_heartbeat).get(get_heartbeat))
         .route("/config", get(get_config).put(configure_heartbeat))
@@ -41,7 +41,7 @@ pub struct ReportHeartbeatApiRequest {
 
 /// Report heartbeat endpoint
 async fn report_heartbeat(
-    State(state): State<crate::shared::app_state::AppState>,
+    State(state): State<crate::state::AppState>,
     _claims: AuthClaims,
     Json(request): Json<ReportHeartbeatApiRequest>,
 ) -> Json<ApiResponse<ReportHeartbeatResponse>> {
@@ -81,7 +81,7 @@ async fn report_heartbeat(
 
 /// Get heartbeat status endpoint
 async fn get_heartbeat(
-    State(state): State<crate::shared::app_state::AppState>,
+    State(state): State<crate::state::AppState>,
     _claims: AuthClaims,
 ) -> Json<ApiResponse<HeartbeatStatus>> {
     let status_lock = state.driver_heartbeat_status.clone();
@@ -113,7 +113,7 @@ async fn get_heartbeat(
 
 /// Get heartbeat configuration endpoint
 async fn get_config(
-    State(state): State<crate::shared::app_state::AppState>,
+    State(state): State<crate::state::AppState>,
     _claims: AuthClaims,
 ) -> Json<ApiResponse<HeartbeatConfig>> {
     let config_lock = state.driver_heartbeat_config.clone();
@@ -124,7 +124,7 @@ async fn get_config(
 
 /// Configure heartbeat endpoint
 async fn configure_heartbeat(
-    State(state): State<crate::shared::app_state::AppState>,
+    State(state): State<crate::state::AppState>,
     _claims: AuthClaims,
     Json(request): Json<ConfigureHeartbeatRequest>,
 ) -> Json<ApiResponse<HeartbeatConfig>> {

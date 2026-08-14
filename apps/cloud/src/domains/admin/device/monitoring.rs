@@ -1,4 +1,4 @@
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -28,7 +28,7 @@ pub struct DeviceOnlineStatus {
     pub last_check: String,
 }
 
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         // 设备状态相关
         .route("/{device_id}/status", get(get_device_online_status))

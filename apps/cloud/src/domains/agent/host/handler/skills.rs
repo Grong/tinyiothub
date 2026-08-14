@@ -17,7 +17,7 @@ use tokio::fs;
 use tinyiothub_web::api_response::ApiResponse;
 
 use crate::domains::agent::host::shared::paths::{self, global_skills_dir, workspace_skills_dir};
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateSkillRequest {
@@ -57,7 +57,7 @@ fn skill_file_path(workspace_id: &str, skill_name: &str) -> Result<PathBuf, Stri
 pub fn create_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
-    crate::shared::app_state::AppState: axum::extract::FromRef<S>,
+    crate::state::AppState: axum::extract::FromRef<S>,
     std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new()

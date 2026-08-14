@@ -9,7 +9,7 @@
 //!   the composition layer nests them at `/workspaces` next to this crate's router (same pattern as
 //!   the T14 directive entries). Reclaim when the MCP plane is extracted.
 //! - `WorkspaceAgentLifecycle` / `TagSuggester` seams — implemented in
-//!   `cloud/src/shared/app_state.rs` over `AgentPool` (agent plane) and the minimax provider
+//!   `cloud/src/state.rs` over `AgentPool` (agent plane) and the minimax provider
 //!   (zeroclaw type), respectively.
 //! - `cloud::shared::paths` — stays in cloud (consumed by server, service_manager, agent, system
 //!   modules); the crate receives the computed `agents_base_dir` via `AppState` because

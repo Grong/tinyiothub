@@ -6,7 +6,7 @@ use axum::{
     routing::{get, post},
 };
 
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/stream", post(proxy::chat_stream))
         .route("/history", get(proxy::chat_history))

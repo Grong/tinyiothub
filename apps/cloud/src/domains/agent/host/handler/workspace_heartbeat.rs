@@ -20,7 +20,7 @@ use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::domains::agent::host::shared::paths;
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 
 /// Heartbeat routes (`/{id}/heartbeat/*`), nested at `/workspaces` by the
 /// composition layer next to `tinyiothub_tenant::workspace_router()` —

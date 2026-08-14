@@ -1,7 +1,7 @@
 // Event query API endpoints
 // Provides event search, filtering, and pagination functionality
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     extract::{Query, State},
     response::Json,

@@ -19,7 +19,8 @@ use crate::{
         client::MarketplaceClient, driver_installer::DriverInstaller, template_installer::TemplateInstaller,
         thing_template_installer::ThingTemplateInstaller,
     },
-    shared::{api_response::ApiResponse, app_state::AppState, error_handling::AuthHelper},
+    shared::{api_response::ApiResponse, error_handling::AuthHelper},
+    state::AppState,
 };
 
 pub fn create_router() -> Router<AppState> {

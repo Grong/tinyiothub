@@ -61,7 +61,7 @@ impl ServiceManager {
     }
 
     /// 启动所有服务
-    pub async fn start_all(&mut self, app_state: &mut crate::shared::app_state::AppState) -> Result<(), Error> {
+    pub async fn start_all(&mut self, app_state: &mut crate::state::AppState) -> Result<(), Error> {
         info!("🚀 Starting all background services...");
 
         // 更新状态为启动中
@@ -466,7 +466,7 @@ impl ServiceManager {
     pub async fn restart_service(
         &mut self,
         _service_name: &str,
-        _app_state: &mut crate::shared::app_state::AppState,
+        _app_state: &mut crate::state::AppState,
     ) -> Result<(), Error> {
         Err(Error::IOError("Service restart not implemented".to_string()))
     }

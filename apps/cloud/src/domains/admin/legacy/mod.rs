@@ -13,5 +13,5 @@
 //
 // 2. `AuthHelper::require_admin_role` (`cloud/src/shared/error_handling.rs`): routes through
 //    `SecureEventService` (event-security plane, still in cloud). The admin crate consumes it via
-//    the `AdminRoleChecker` port; cloud injects the adapter in `app_state.rs`. Reclaim when the
+//    the `AdminRoleChecker` port; cloud injects the adapter in `state.rs`. Reclaim when the
 //    event-security plane is extracted.

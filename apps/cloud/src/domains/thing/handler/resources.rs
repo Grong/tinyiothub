@@ -1,7 +1,7 @@
 // Thing resource handlers — attach/detach existing resources.
 // File upload is handled by the workspace module (POST /workspaces/{id}/resources/upload).
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     Json,
     extract::{Path, State},

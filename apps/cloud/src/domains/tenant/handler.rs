@@ -1,6 +1,6 @@
 // Tenant API handlers — includes CRUD, auth, and API key management
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     Router,
     extract::{Path, Query, State},
@@ -97,7 +97,7 @@ fn verify_password(password: &str, hash: &str) -> Result<bool, String> {
 // --- Routers ---
 
 /// Create API Keys router
-pub fn create_api_key_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_api_key_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/", get(list_api_keys))
         .route("/", post(create_api_key))
@@ -105,7 +105,7 @@ pub fn create_api_key_router() -> Router<crate::shared::app_state::AppState> {
 }
 
 /// Create tenants router (mounted at /v1/tenants)
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         // Tenant CRUD — paths already include /tenants prefix for nesting under /v1/tenants
         .route("/tenants", get(list_tenants))
@@ -119,7 +119,7 @@ pub fn create_router() -> Router<crate::shared::app_state::AppState> {
 }
 
 /// Create tenant auth router (mounted at /v1/tenants — public, no JWT)
-pub fn create_auth_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_auth_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/register", post(register_tenant))
         .route("/login", post(login))

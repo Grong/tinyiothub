@@ -1,7 +1,7 @@
 // 第三方登录模块
 // 支持微信扫码登录
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     Router,
     extract::{Query, State},

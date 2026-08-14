@@ -1,4 +1,4 @@
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{Json, Router, extract::State, routing::get};
 use serde::{Deserialize, Serialize};
 use tinyiothub_web::security::Claims;
@@ -40,7 +40,7 @@ pub struct GatewayMetrics {
     pub uptime_seconds: u64,
 }
 
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/system", get(get_system_metrics))
         .route("/devices", get(get_device_metrics))
@@ -50,7 +50,7 @@ pub fn create_router() -> Router<crate::shared::app_state::AppState> {
 /// 获取系统指标（仅管理员可访问）
 async fn get_system_metrics(State(state): State<AppState>, claims: Claims) -> Json<ApiResponse<SystemMetrics>> {
     // 原 AdminState::role_checker 为 FromRef 每次萃取新建 —— 保持同语义，按需构造
-    let role_checker = crate::shared::app_state::EventSecurityAdminRoleChecker { state: state.clone() };
+    let role_checker = crate::state::EventSecurityAdminRoleChecker { state: state.clone() };
     match crate::domains::admin::AdminRoleChecker::require_admin_role(
         &role_checker,
         &claims.user_id,

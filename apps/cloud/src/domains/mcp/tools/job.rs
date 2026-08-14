@@ -10,7 +10,7 @@ use tinyiothub_core::models::cron_job::{CreateCronJobRequest, CronJobQuery, Upda
 
 use crate::domains::mcp::handlers::get_mcp_context;
 use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 
 /// Tool input: List schedules
 #[derive(Debug, Deserialize)]

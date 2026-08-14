@@ -1,4 +1,4 @@
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -18,7 +18,7 @@ pub struct UpdatePropertyValueRequest {
     pub value: String,
 }
 
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/{device_id}/properties", get(get_device_properties))
         .route(

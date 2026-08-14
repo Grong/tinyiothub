@@ -33,7 +33,7 @@ pub mod legacy;
 pub mod plugin;
 
 /// Driver domain state slice — Arc'd services only, derived from the
-/// composition layer's `AppState` via `FromRef` (cloud/src/shared/app_state.rs).
+/// composition layer's `AppState` via `FromRef` (cloud/src/state.rs).
 /// Drivers metadata API router (`/drivers`). Stateless — driver metadata
 /// comes from the runtime registry.
 pub fn router<S>() -> axum::Router<S>
@@ -54,6 +54,6 @@ where
 
 /// Device/gateway heartbeat API router (`/heartbeat`). Stateless — heartbeat
 /// state lives in the module-level `OnceLock` (as before the extraction).
-pub fn heartbeat_router() -> axum::Router<crate::shared::app_state::AppState> {
+pub fn heartbeat_router() -> axum::Router<crate::state::AppState> {
     heartbeat::handler::create_router()
 }

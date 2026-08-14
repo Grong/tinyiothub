@@ -25,7 +25,7 @@ use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use crate::verify_workspace_access;
 
 /// admin 角色判定：用户持有任一 is_administrator 角色。DB 错误 fail-closed。
@@ -56,7 +56,7 @@ macro_rules! verify_agent_admin {
 /// Workspace-scoped agent directive routes (`/workspaces/{id}/agent/*`).
 /// Registered by the composition layer (api/mod.rs) so the workspace module
 /// carries no agent dependency edge (P4.0d).
-pub fn create_workspace_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_workspace_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/{id}/agent/tasks", post(create_task))
         .route("/{id}/agent/runs", get(list_runs))

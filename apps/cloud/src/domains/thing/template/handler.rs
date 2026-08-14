@@ -1,4 +1,4 @@
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -29,7 +29,7 @@ pub struct TemplateQuery {
     pub page_size: Option<u32>,
 }
 
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/", get(list_templates))
         .route("/{id}", get(get_template))

@@ -1,4 +1,4 @@
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{Router, extract::State, response::Json, routing::get};
 use serde::Deserialize;
 use tinyiothub_web::security::Claims;
@@ -203,7 +203,7 @@ async fn get_network_outbound() -> Result<i64, Box<dyn std::error::Error>> {
     Ok(1024 * 1024 * 30) // 30MB
 }
 
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/stats", get(get_dashboard_stats))
         .route("/metrics", get(get_dashboard_metrics))

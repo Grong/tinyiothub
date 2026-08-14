@@ -2,7 +2,7 @@
 // 短信验证码认证模块
 // 支持手机验证码登录/注册
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use std::net::SocketAddr;
 
 use axum::{

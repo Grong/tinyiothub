@@ -17,11 +17,11 @@ use tokio::sync::OnceCell;
 use crate::domains::event::security::AuditLogEntry;
 use crate::shared::{
     api_response::ApiResponse,
-    app_state::AppState,
     error_handling::{AuthHelper, ErrorCategory},
     pagination::PaginationQuery,
     performance::Cache,
 };
+use crate::state::AppState;
 
 /// Cache for user permissions to improve performance
 static PERMISSIONS_CACHE: OnceCell<Arc<Cache<String, UserPermissionsResponse>>> = OnceCell::const_new();

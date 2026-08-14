@@ -18,7 +18,7 @@ async fn device_endpoint_removed() -> (axum::http::StatusCode, Json<serde_json::
     )
 }
 
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/", get(device_endpoint_removed).post(device_endpoint_removed))
         .route(

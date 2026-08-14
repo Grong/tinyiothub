@@ -5,7 +5,7 @@ pub mod health;
 mod logs;
 mod metrics;
 
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         .nest("/metrics", metrics::create_router())
         .nest("/health", health::create_router())

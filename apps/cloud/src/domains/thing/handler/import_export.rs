@@ -1,6 +1,6 @@
 // Thing template import/export handlers — DTDL and WoT Thing Description
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     Json,
     extract::{Path, State},

@@ -15,7 +15,7 @@ pub mod workspace_heartbeat;
 #[cfg(test)]
 mod tests;
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{Router, routing::get};
 use tinyiothub_web::security::Claims;
 
@@ -24,7 +24,7 @@ use crate::domains::agent::chat::handler::proxy as chat_proxy;
 pub fn create_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
-    crate::shared::app_state::AppState: axum::extract::FromRef<S>,
+    crate::state::AppState: axum::extract::FromRef<S>,
     std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new()

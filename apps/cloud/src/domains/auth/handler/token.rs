@@ -1,7 +1,7 @@
 // Token 刷新模块
 // 支持 Token 刷新、登出和 SSE token 生成
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{Router, extract::State, response::Json, routing::post};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;

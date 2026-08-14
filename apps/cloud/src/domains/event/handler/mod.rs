@@ -6,7 +6,7 @@ use axum::{
     routing::{get, post},
 };
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 
 pub mod overview;
 pub mod query;

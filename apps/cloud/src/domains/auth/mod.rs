@@ -37,7 +37,7 @@ pub mod user_store;
 ///
 /// Generic over the composition layer's state `S`; the only requirement is
 /// `AuthState: FromRef<S>`, so the domain crate never names `AppState`.
-pub fn router() -> axum::Router<crate::shared::app_state::AppState> {
+pub fn router() -> axum::Router<crate::state::AppState> {
     axum::Router::new()
         .merge(handler::session::create_router())
         .merge(handler::token::create_protected_router())

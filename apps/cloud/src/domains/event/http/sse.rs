@@ -21,7 +21,8 @@ use tracing::{info, warn};
 use crate::domains::event::sse_manager::{SseConnectionInfo, SseOverview};
 use crate::{
     api::middleware::WorkspaceScope,
-    shared::{api_response::ApiResponse, app_state::AppState},
+    shared::api_response::ApiResponse,
+    state::AppState,
 };
 
 /// SSE connection query parameters

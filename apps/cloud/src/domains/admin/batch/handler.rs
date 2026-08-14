@@ -1,6 +1,6 @@
 // Batch Command API — moved from api/batch/mod.rs
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -24,7 +24,7 @@ pub struct ListBatchesQuery {
 }
 
 /// Create router
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/", post(create_batch))
         .route("/", get(list_batches))

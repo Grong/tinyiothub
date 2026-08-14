@@ -5,9 +5,9 @@
 //!   the *event* security plane (`SecureEventService` via
 //!   `AppState::initialize_secure_event_service`), not the role domain. The crate consumes it
 //!   through the `RoleChecker` seam; the adapter (`EventSecurityRoleChecker`) lives in
-//!   `cloud/src/shared/app_state.rs`. Reclaim with Task 18 (event) or Task 24 (admin/system).
+//!   `cloud/src/state.rs`. Reclaim with Task 18 (event) or Task 24 (admin/system).
 //! - `cloud::shared::pagination` — `PaginationQuery` moved to `tinyiothub_web::pagination` (shared
 //!   with device/monitoring/event/system modules); cloud keeps a re-export shim.
 //! - Auth seam note: `crate::domains::auth::user_store::AuthUserStore` stays implemented in cloud
-//!   (`app_state.rs`) as an adapter on `crate::domains::user::UserService` — the user crate must not
+//!   (`state.rs`) as an adapter on `crate::domains::user::UserService` — the user crate must not
 //!   depend on the auth crate (wrong dependency direction).

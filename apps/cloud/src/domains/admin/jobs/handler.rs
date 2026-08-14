@@ -1,7 +1,7 @@
 // Jobs API — moved from api/jobs/mod.rs
 // Compatibility layer over new cron system
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use std::{str::FromStr, sync::Arc};
 
 use axum::{
@@ -24,7 +24,7 @@ use tinyiothub_core::error::Error;
 use tinyiothub_web::api_response::{ApiResponse, PaginatedResponse, PaginationInfo};
 
 /// Create jobs router
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/", get(list_jobs).post(create_job))
         .route("/{id}", get(get_job).put(update_job).delete(delete_job))
@@ -41,7 +41,7 @@ struct WorkspaceQuery {
     workspace_id: Option<String>,
 }
 
-// NOTE: resolve_workspace is now a method on AppState (shared/app_state.rs)
+// NOTE: resolve_workspace is now a method on AppState (state.rs)
 // Use state.resolve_workspace(&claims.tenant_id, explicit_workspace_id).await
 
 // ─── DTO mapping: legacy Job <-> CronJob ──────────────────────────────────

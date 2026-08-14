@@ -1,4 +1,4 @@
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -30,7 +30,7 @@ pub struct CommandExecution {
     pub completed_at: Option<String>,
 }
 
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new().route(
         "/{device_id}/commands/{command_id}/execute",
         post(execute_device_command),

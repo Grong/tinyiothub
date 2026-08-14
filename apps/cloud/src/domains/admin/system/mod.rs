@@ -4,7 +4,7 @@ mod configuration;
 pub mod features; // 公开features模块
 mod tasks;
 
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         .merge(configuration::create_router())
         .merge(features::create_router())

@@ -11,7 +11,7 @@ use http_body_util::BodyExt;
 use serde_json::Value;
 use tinyiothub_core::config::ApplicationSettings;
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 
 static TEST_SETTINGS: OnceLock<ApplicationSettings> = OnceLock::new();
 

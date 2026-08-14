@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use tinyiothub_core::models::user::CreateUserRequest;
 use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::shared::{api_response::ApiResponse, app_state::AppState, error::Result};
+use crate::shared::{api_response::ApiResponse, error::Result};
+use crate::state::AppState;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]

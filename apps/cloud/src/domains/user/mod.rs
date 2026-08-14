@@ -20,7 +20,7 @@ pub use service::UserService;
 pub use tinyiothub_storage::user::UserRepository;
 
 /// User domain state slice — Arc'd services only, derived from the
-/// composition layer's `AppState` via `FromRef` (cloud/src/shared/app_state.rs).
+/// composition layer's `AppState` via `FromRef` (cloud/src/state.rs).
 /// Role-check seam: the user handlers' admin checks historically call
 /// cloud's `AuthHelper::check_role`, which depends on the event security
 /// plane (not the role domain). Cloud implements this trait; the crate
@@ -31,6 +31,6 @@ pub trait RoleChecker: Send + Sync {
 }
 
 /// Users router (`/users`).
-pub fn router() -> axum::Router<crate::shared::app_state::AppState> {
+pub fn router() -> axum::Router<crate::state::AppState> {
     handler::create_router()
 }

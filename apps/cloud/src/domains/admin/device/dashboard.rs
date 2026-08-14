@@ -1,4 +1,4 @@
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     Json, Router,
     extract::{Query, State},
@@ -63,7 +63,7 @@ pub async fn get_quick_devices(
     }
 }
 
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/distribution", get(get_device_distribution))
         .route("/quick", get(get_quick_devices))

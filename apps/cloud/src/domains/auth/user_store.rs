@@ -2,7 +2,7 @@
 //! auth handlers need.
 //!
 //! The user domain lives in `tinyiothub_user` (Task 17a). Cloud implements
-//! this trait for the `UserServiceAuthAdapter` newtype in `app_state.rs`
+//! this trait for the `UserServiceAuthAdapter` newtype in `state.rs`
 //! (orphan rule: both this trait and `UserService` are foreign to cloud)
 //! and maps between `tinyiothub_user::User`/`CreateUserRequest` and the
 //! byte-identical mirror types below.

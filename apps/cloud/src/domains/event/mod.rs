@@ -142,6 +142,6 @@ pub use errors::{
 /// Handlers extract `State<EventState>`, which axum derives from `S` via
 /// `FromRef`. The security/SSE sub-routes are NOT here — see the crate-level
 /// boundary note.
-pub fn router() -> axum::Router<crate::shared::app_state::AppState> {
+pub fn router() -> axum::Router<crate::state::AppState> {
     handler::create_router()
 }

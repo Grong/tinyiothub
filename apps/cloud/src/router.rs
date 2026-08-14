@@ -5,7 +5,7 @@
 use axum::{Router, extract::DefaultBodyLimit};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 
 /// Create the main application router with all middleware.
 pub async fn create_app_router(app_state: AppState) -> Router {

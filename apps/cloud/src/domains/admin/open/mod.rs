@@ -1,7 +1,7 @@
 // Open API Module
 // Public API for AI platform integration
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     Json, Router,
     body::Body,
@@ -18,7 +18,7 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::api_response::ApiResponse;
 
 /// Create open API router (public API, requires API Key)
-pub fn create_open_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_open_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/open/health", get(open_health))
         .route("/open/things", get(list_things))

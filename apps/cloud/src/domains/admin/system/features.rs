@@ -1,4 +1,4 @@
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{Json, Router, extract::State, routing::get};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -139,7 +139,7 @@ impl Default for SystemFeatures {
     }
 }
 
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new().route("/features", get(get_system_features))
 }
 

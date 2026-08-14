@@ -30,6 +30,6 @@ pub use types::*;
 ///
 /// Generic over the composition layer's state `S`; the only requirement is
 /// `ThingState: FromRef<S>`, so the domain crate never names `AppState`.
-pub fn router() -> axum::Router<crate::shared::app_state::AppState> {
+pub fn router() -> axum::Router<crate::state::AppState> {
     handler::create_router()
 }

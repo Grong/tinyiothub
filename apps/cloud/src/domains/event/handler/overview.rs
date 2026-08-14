@@ -1,7 +1,7 @@
 // Event overview and statistics API endpoints
 // Provides event statistics, trends, and analysis functionality
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     extract::{Query, State},
     response::Json,

@@ -1,6 +1,6 @@
 // Thing CRUD handlers
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     Json,
     extract::{Path, Query, State},

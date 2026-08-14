@@ -1,7 +1,7 @@
 // Thing action handlers (invoke + confirm)
 
 use crate::domains::thing::hooks::ThingConfirmVerdict;
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     Json,
     extract::{Path, State},

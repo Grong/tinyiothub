@@ -4,7 +4,7 @@
 // live in the agent domain (`agent::host::handler::workspace_heartbeat`), nested by
 // the composition layer — see crate `legacy/mod.rs`.
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     Json, Router,
     extract::{Multipart, Path, Query, State},
@@ -46,7 +46,7 @@ macro_rules! verify_workspace_access {
 }
 
 /// Create workspaces router
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/", get(list_workspaces))
         .route("/", post(create_workspace))

@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 
 /// MCP tool execution errors
 #[derive(Debug, Clone)]

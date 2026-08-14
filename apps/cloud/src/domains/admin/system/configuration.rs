@@ -1,4 +1,4 @@
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     Json, Router,
     extract::State,
@@ -43,7 +43,7 @@ pub struct MqttConfig {
     pub clean_session: bool,
 }
 
-pub fn create_router() -> Router<crate::shared::app_state::AppState> {
+pub fn create_router() -> Router<crate::state::AppState> {
     Router::new()
         .route("/system", get(get_system_config).post(update_system_config))
         .route("/network", get(get_network_config).post(update_network_config))

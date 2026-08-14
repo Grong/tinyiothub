@@ -6,7 +6,7 @@
 // the occurrence_count, acknowledged, acknowledged_by, and acknowledged_at
 // columns. Acknowledgment operates on events.id.
 
-use crate::shared::app_state::AppState;
+use crate::state::AppState;
 use axum::{
     extract::{Path, Query, State},
     response::Json,

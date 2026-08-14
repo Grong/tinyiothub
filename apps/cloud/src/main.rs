@@ -1,5 +1,5 @@
 use tinyiothub_cloud::{
-    bootstrap, server,
+    bootstrap, router,
     shared::{config, service_manager::ServiceManager},
 };
 use tokio::net::TcpListener;
@@ -85,7 +85,7 @@ async fn main_impl() -> std::io::Result<()> {
     info!("✅ Database pool & device cache initialized");
 
     // === 3. 创建 AppState（包含所有核心组件）===
-    let mut app_state = tinyiothub_cloud::shared::app_state::AppState::new(device_cache, db_pool, &settings);
+    let mut app_state = tinyiothub_cloud::state::AppState::new(device_cache, db_pool, &settings);
     info!("✅ AppState created");
 
     // === 4. 驱动（静态编译，无需加载）+ 动态驱动重载 + 设备缓存预热 ===
@@ -141,7 +141,7 @@ async fn main_impl() -> std::io::Result<()> {
     };
 
     #[cfg(not(feature = "harmonyos"))]
-    let app = server::create_app_router(app_state).await;
+    let app = router::create_app_router(app_state).await;
 
     let bind_address = settings.server_bind_address();
     info!("🚀 Server listening on {}", bind_address);

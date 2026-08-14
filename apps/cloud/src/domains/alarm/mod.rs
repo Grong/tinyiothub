@@ -46,12 +46,12 @@ pub use tinyiothub_core::models::event::AlarmEvent;
 pub use tinyiothub_storage::alarm::{AlarmRepository, AlarmRuleRepository};
 
 /// Alarms API router (`/alarms`), generic over the composition state `S`.
-pub fn router() -> axum::Router<crate::shared::app_state::AppState> {
+pub fn router() -> axum::Router<crate::state::AppState> {
     handler::create_alarm_router()
 }
 
 /// Alarm rules API router (`/alarm-rules`), generic over the composition
 /// state `S`.
-pub fn rule_router() -> axum::Router<crate::shared::app_state::AppState> {
+pub fn rule_router() -> axum::Router<crate::state::AppState> {
     handler::create_alarm_rule_router()
 }
