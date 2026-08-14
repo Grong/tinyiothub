@@ -5,6 +5,7 @@
 //!
 //! ## 设计不变量
 //! - 只定义 LLM provider 契约与值类型；具体 provider 实现在组合层
+//! - 禁止依赖 db、web 与任何领域 crate
 
 pub mod prompt;
 pub mod provider;

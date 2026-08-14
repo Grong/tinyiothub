@@ -153,9 +153,9 @@ pub struct JsonRpcResult {
 
 /// Create the MCP router with global registry.
 ///
-/// Generic over the composition state `S` (SEP contract): the router nests
-/// into the composition layer's `Router<AppState>`; handlers extract
-/// `State<McpState>` via `FromRef`.
+/// Generic over the composition state `S` (SEP contract): nests into any
+/// composition router whose state satisfies `McpState: FromRef<S>`; handlers
+/// extract `State<McpState>` via `FromRef`.
 pub fn create_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,

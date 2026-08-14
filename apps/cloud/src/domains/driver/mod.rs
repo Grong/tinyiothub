@@ -52,8 +52,8 @@ where
     driver_health::handler::create_router()
 }
 
-/// Device/gateway heartbeat API router (`/heartbeat`). Stateless — heartbeat
-/// state lives in the module-level `OnceLock` (as before the extraction).
+/// Device/gateway heartbeat API router (`/heartbeat`). Stateless beyond
+/// `AppState` — heartbeat status/config live in `AppState` fields (G3).
 pub fn heartbeat_router() -> axum::Router<crate::state::AppState> {
     heartbeat::handler::create_router()
 }

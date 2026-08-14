@@ -1,7 +1,8 @@
 //! Agent memory crate — memory store, reflection pipeline, knowledge.
 //!
 //! ## 设计不变量
-//! - 记忆/知识存储与反思管道；不依赖 agent crate（由 agent 组合调用）
+//! - 记忆/知识存储与反思管道；由组合层（apps/cloud agent 域）调用，禁止反向依赖
+//! - 禁止依赖 apps/*、web、runtime；db（SQLite 持久化）与 llm（embedding 契约）为例外
 
 pub mod knowledge;
 pub mod metrics;

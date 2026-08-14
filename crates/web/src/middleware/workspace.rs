@@ -3,8 +3,7 @@
 //! Domain crates must not depend on the composition layer's auth
 //! implementation, so the actual token validation is injected: the cloud
 //! binary registers a tenant resolver once at startup (`set_tenant_resolver`),
-//! and the extractors below call it. This mirrors the
-//! `security::set_jwt_validator` pattern.
+//! and the extractors below call it.
 
 use std::{convert::Infallible, sync::OnceLock};
 

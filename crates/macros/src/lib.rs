@@ -1,7 +1,8 @@
 //! Internal proc macros for TinyIoTHub.
 //!
 //! ## 设计不变量
-//! - 过程宏；不依赖任何 workspace crate
+//! - 过程宏 crate；不依赖任何 workspace crate
+//! - 编译期依赖仅限 proc-macro2/quote/syn（serde_json/serde_qs 用于属性解析）
 
 use proc_macro::TokenStream;
 use quote::quote;

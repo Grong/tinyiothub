@@ -10,6 +10,8 @@ description = "Shared runtime infrastructure for TinyIoTHub (drivers, event bus,
 [lib]
 name = "tinyiothub_runtime"
 
+# 角色:driver/EventBus 框架（driver 生命周期、事件总线、cron 执行器）
+# 禁止依赖:web、apps/* 与领域 crate —— 框架不编排业务流程;规则出处:G 系列计划 Task 7 (G8)
 [dependencies]
 core = { workspace = true }
 macros = { workspace = true }

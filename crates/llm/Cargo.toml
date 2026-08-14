@@ -10,6 +10,8 @@ description = "LLM contract crate for TinyIoTHub — provider trait, prompts, se
 [lib]
 name = "tinyiothub_llm"
 
+# 角色:LLM provider 契约（trait + 值类型）
+# 禁止依赖:db、web、领域 crate —— 具体 provider 实现在组合层;规则出处:G 系列计划 Task 7 (G8)
 [dependencies]
 # Serialization
 serde = { workspace = true }

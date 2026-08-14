@@ -10,6 +10,8 @@ description = "Agent skills and tool registry — skill loading, tool trust engi
 [lib]
 name = "tinyiothub_skills"
 
+# 角色:agent 技能/工具注册表 + 信任引擎（纯逻辑，db 仅持久化）
+# 禁止依赖:web、runtime、其他领域 crate;规则出处:G 系列计划 Task 7 (G8)
 [dependencies]
 db = { workspace = true }
 serde = { workspace = true }

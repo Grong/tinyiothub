@@ -200,7 +200,7 @@ pub fn get_mcp_registry() -> Option<Arc<RwLock<HandlerRegistry>>> {
 ///
 /// `state` is injected into every tool handler that needs it. Pass `None`
 /// in tests: handlers then behave exactly as they did before state injection
-/// when the global state was unset ("McpState not initialized").
+/// when the global state was unset ("AppState not initialized").
 pub async fn register_tools(state: Option<Arc<McpState>>) {
     let registry = init_mcp_registry(state.clone());
     let mut reg = registry.write().await;

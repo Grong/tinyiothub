@@ -163,7 +163,6 @@ policy = { path = "crates/policy" }
 skills = { path = "crates/skills" }
 web = { path = "crates/web" }
 llm = { path = "crates/llm" }
-tenant = { path = "crates/tenant" }
 
 [profile.release]
 opt-level = 2

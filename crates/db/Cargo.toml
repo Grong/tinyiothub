@@ -10,6 +10,8 @@ description = "Repository traits and SQLite persistence implementations"
 [lib]
 name = "tinyiothub_storage"
 
+# 角色:持久化能力库（buzz 模式：具体 struct、按域平铺，无 trait 倒置）
+# 禁止依赖:core 以外的任何 workspace crate;规则出处:G 系列计划 Task 7 (G8)
 [dependencies]
 thiserror = { workspace = true }
 core = { workspace = true, features = ["sqlx"] }

@@ -11,6 +11,8 @@ description = "Procedural macros for TinyIoTHub"
 name = "tinyiothub_macros"
 proc-macro = true
 
+# 角色:proc macros（编译期代码生成）
+# 禁止依赖:任何 workspace crate;规则出处:G 系列计划 Task 7 (G8)
 [dependencies]
 proc-macro2 = "1.0"
 quote = "1.0"

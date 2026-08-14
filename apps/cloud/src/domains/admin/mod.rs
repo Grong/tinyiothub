@@ -1,9 +1,10 @@
-//! Admin domain crate — system, monitoring, batch, jobs, open API.
+//! Admin domain module — system, monitoring, batch, jobs, open API.
 //!
 //! ## 设计不变量
 //! - 系统/监控/批处理/开放 API；调度接 scheduler crate（admin→scheduler）
 
-// Admin domain crate (P4-Task24) — the final modules/ extraction.
+// Admin domain module (P4-Task24) — the final modules/ extraction, now a
+// domain module of cloud (G series).
 //
 // Covers the platform-administration API surface formerly under
 // `cloud/src/modules/{system,monitoring,batch,jobs,open}` plus the device
@@ -16,10 +17,9 @@
 //   jobs/       — /jobs task-management API over tinyiothub_scheduler
 //   open/       — /open third-party integration surface (X-API-Key auth)
 //
-// The crate never names cloud's `AppState`: handlers extract
-// `State<AdminState>` and every exported router is generic over the
-// composition state `S` with `AdminState: FromRef<S>` (SEP contract,
-// P4-Task15 pilot).
+// Handlers extract `State<AdminState>` and every exported router is generic
+// over the composition state `S` with `AdminState: FromRef<S>` (SEP
+// contract, P4-Task15 pilot).
 
 use std::sync::Arc;
 

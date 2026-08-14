@@ -10,6 +10,8 @@ description = "SDK for developing TinyIoTHub device plugins"
 [lib]
 name = "tinyiothub_plugin_sdk"
 
+# 角色:driver ABI 契约（Stable tier，FFI 边界的唯一事实源）
+# 禁止依赖:runtime/web/db —— core 仅 feature 门控的互操作;规则出处:G 系列计划 Task 7 (G8)
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }

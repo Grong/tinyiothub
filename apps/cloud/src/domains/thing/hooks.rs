@@ -9,8 +9,9 @@
 
 use serde_json::Value;
 
-/// A pending thing action awaiting user confirmation (value type crossing
-/// the thing→agent boundary). Mirrors the agent-side token-store entry,
+/// A pending thing action awaiting user confirmation (value type flowing
+/// agent→thing: stored by the agent-side hooks impl, returned to the thing
+/// handlers on confirm). Mirrors the agent-side token-store entry,
 /// minus the token itself and the creation timestamp, which the thing
 /// handlers never read.
 #[derive(Debug, Clone)]

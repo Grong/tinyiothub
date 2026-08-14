@@ -24,7 +24,7 @@ static TEST_SETTINGS: OnceLock<ApplicationSettings> = OnceLock::new();
 fn ensure_test_config() -> &'static ApplicationSettings {
     TEST_SETTINGS.get_or_init(|| {
         // SAFETY: set_var is called once during test initialization, before any threads read env vars.
-        // This is safe because tests run sequentially per process and config is initialized once via OnceCell.
+        // This is safe because tests run sequentially per process and config is initialized once via OnceLock.
         unsafe {
             std::env::set_var("TINYIOTHUB__SERVER__HOST", "127.0.0.1");
             std::env::set_var("TINYIOTHUB__SERVER__PORT", "19999");
