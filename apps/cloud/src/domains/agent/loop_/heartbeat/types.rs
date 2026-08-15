@@ -1,11 +1,12 @@
 //! Heartbeat types — periodic check tasks and execution results.
 
-// 持久化行类型已迁 db（E6b）；re-export 兼容。
+// 值类型住 core（Task 1）；WorkspaceHeartbeatConfig 为 DB 行序列化格式，留 db。
 pub use serde::{Deserialize, Serialize};
-pub use tinyiothub_storage::heartbeat::{
+pub use tinyiothub_core::heartbeat::{
     ExecutedAction, HeartbeatResult, HeartbeatStatus, HeartbeatTask, MIN_HEARTBEAT_INTERVAL_MINUTES, NewHeartbeatTask,
-    TrustConfig, WorkspaceHeartbeatConfig,
+    TrustConfig,
 };
+pub use tinyiothub_storage::heartbeat::WorkspaceHeartbeatConfig;
 
 /// Priority level for a heartbeat signal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

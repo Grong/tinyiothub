@@ -1,5 +1,5 @@
-// 行类型已迁 db（E6b）；re-export 兼容。
-pub use tinyiothub_storage::agent_runs::{ActionRecord, ActionResult, Outcome, RunReport};
+// 值类型住 core（Task 1）；re-export 维持本模块路径组织。
+pub use tinyiothub_core::agent_runs::{ActionRecord, ActionResult, Outcome, RunReport};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Priority {

@@ -217,7 +217,7 @@ pub async fn get_trust_config(
                 .flatten()
                 .unwrap_or_default(),
         },
-        None => tinyiothub_storage::heartbeat::TrustConfig::default(),
+        None => tinyiothub_core::heartbeat::TrustConfig::default(),
     };
 
     ApiResponseBuilder::success(serde_json::to_value(config).unwrap_or_default())
@@ -229,7 +229,7 @@ pub async fn update_trust_config(
     State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path(workspace_id): Path<String>,
-    Json(config): Json<tinyiothub_storage::heartbeat::TrustConfig>,
+    Json(config): Json<tinyiothub_core::heartbeat::TrustConfig>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     verify_workspace_access_port!(state, claims, workspace_id);
 

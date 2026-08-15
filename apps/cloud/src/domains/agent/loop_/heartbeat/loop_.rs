@@ -12,7 +12,7 @@ use crate::domains::agent::loop_::event::bus::AiEventPublisher;
 use crate::domains::agent::loop_::event::types::AiEvent;
 
 use super::types::{HeartbeatConfig, LoopSignal};
-use tinyiothub_storage::heartbeat::{HeartbeatStatus, HeartbeatTask, TrustConfig};
+use tinyiothub_core::heartbeat::{HeartbeatStatus, HeartbeatTask, TrustConfig};
 
 const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 

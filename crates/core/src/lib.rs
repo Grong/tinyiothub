@@ -5,15 +5,18 @@
 //! - 禁止 tokio/axum 依赖；sqlx 仅以 feature 门控的错误转换形式存在
 //! - 新类型必须论证为何不属于某个领域 crate
 
+pub mod agent_runs;
 pub mod config;
 pub mod constants;
 pub mod cron;
 pub mod driver;
 pub mod error;
 pub mod event;
+pub mod heartbeat;
 pub mod memory;
 pub mod models;
 pub mod notification_types;
+pub mod policy;
 pub mod types;
 pub mod version;
 

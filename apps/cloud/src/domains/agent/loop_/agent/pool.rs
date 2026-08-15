@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 
-use tinyiothub_storage::heartbeat::TrustConfig;
+use tinyiothub_core::heartbeat::TrustConfig;
 
 /// A tool call actually executed by the agent framework during a run.
 /// This is the ground truth for audit trails — never trust the LLM's

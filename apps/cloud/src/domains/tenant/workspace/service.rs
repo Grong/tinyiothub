@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use tinyiothub_storage::heartbeat::{HeartbeatTaskRepository, NewHeartbeatTask};
+use tinyiothub_core::heartbeat::NewHeartbeatTask;
+use tinyiothub_storage::heartbeat::HeartbeatTaskRepository;
 
 use crate::domains::tenant::hooks::{AgentHooks, WorkspaceEventPublisher};
 

@@ -3878,7 +3878,7 @@ version = "0.4.6"
 dependencies = [
  "anyhow",
  "async-trait",
- "db",
+ "core",
  "serde",
  "serde_json",
  "skills",
@@ -5270,7 +5270,7 @@ name = "skills"
 version = "0.4.6"
 dependencies = [
  "async-trait",
- "db",
+ "core",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

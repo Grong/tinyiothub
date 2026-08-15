@@ -37,6 +37,7 @@ pub mod types {
     pub use crate::domains::agent::loop_::event::types::AiEvent;
     pub use crate::domains::agent::loop_::heartbeat::metrics::{Metrics, MetricsSnapshot};
     pub use crate::domains::agent::loop_::heartbeat::types::{HeartbeatSignal, SignalPriority};
+    pub use tinyiothub_core::heartbeat::{TrustConfig, TrustLevel};
     pub use tinyiothub_llm::prompt::PromptRegistry;
     pub use tinyiothub_llm::prompt::types::PromptTemplate;
     pub use tinyiothub_llm::provider::{LlmCallMetadata, LlmProvider, LlmResponse};
@@ -56,7 +57,6 @@ pub mod types {
         ToolSafety, TrustDecision, classify_tool_safety, evaluate_tool_trust, evaluate_tool_trust_with_safety,
         risk_for_tool,
     };
-    pub use tinyiothub_storage::heartbeat::{TrustConfig, TrustLevel};
 }
 
 // AppState 削除（G7 FromRef 切片）：handler 萃取 `State<AgentState>`。

@@ -12,7 +12,8 @@ use tokio::sync::mpsc;
 
 use super::Trigger;
 use crate::domains::agent::loop_::thing_agent::types::{Priority, TriggerSource, WakeSignal};
-use tinyiothub_policy::autonomy::{AutonomyMode, PolicyRepository};
+use tinyiothub_policy::autonomy::AutonomyMode;
+use tinyiothub_storage::policy::PolicyRepository;
 
 /// Emits a [`WakeSignal`] with `priority: Normal`, `source: Timer` and
 /// `dedup_key: Some("timer:{workspace_id}")` every `interval`, unless the

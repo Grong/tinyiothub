@@ -25,7 +25,7 @@ use anyhow::anyhow;
 use dashmap::DashMap;
 use sqlx::SqlitePool;
 use tinyiothub_memory::workspace_memory::WorkspaceScopedMemory;
-use tinyiothub_policy::autonomy::PolicyRepository;
+use tinyiothub_storage::policy::PolicyRepository;
 use tokio::sync::RwLock;
 use zeroclaw::{
     agent::{dispatcher::NativeToolDispatcher, prompt::SystemPromptBuilder},

@@ -5,7 +5,7 @@
 //! 2. TrustConfig overrides (block specific tools, allow specific write tools)
 //! 3. Global trust_level fallback (ReadOnlyAuto / FullAuto / ApprovalRequired)
 
-use tinyiothub_storage::heartbeat::{TrustConfig, TrustLevel};
+use tinyiothub_core::heartbeat::{TrustConfig, TrustLevel};
 
 /// Intrinsic safety classification derived from tool naming conventions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

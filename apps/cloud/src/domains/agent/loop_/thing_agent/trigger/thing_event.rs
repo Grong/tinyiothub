@@ -23,7 +23,8 @@ use tokio::sync::mpsc;
 use super::Trigger;
 use crate::domains::agent::loop_::thing_agent::traits::{ThingAgentHost, ThingEventSignal};
 use crate::domains::agent::loop_::thing_agent::types::{Priority, TriggerSource, WakeSignal};
-use tinyiothub_policy::autonomy::{AutonomyMode, PolicyRepository};
+use tinyiothub_policy::autonomy::AutonomyMode;
+use tinyiothub_storage::policy::PolicyRepository;
 
 /// Wakes the thing-agent loop on noteworthy thing events from one workspace.
 pub struct ThingEventTrigger {

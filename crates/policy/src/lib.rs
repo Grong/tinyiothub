@@ -6,7 +6,7 @@
 //!
 //! ## 设计不变量
 //! - 策略裁决纯逻辑 + SQLite 持久化；不感知 HTTP/agent 细节
-//! - 禁止依赖 web/runtime；skills（信任引擎）与 db 为仅有的 workspace 依赖
+//! - 禁止依赖 web/runtime；skills（信任引擎）与 core 为仅有的 workspace 依赖
 
 pub mod adapters;
 pub mod autonomy;

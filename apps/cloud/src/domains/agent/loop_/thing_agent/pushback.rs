@@ -13,7 +13,7 @@
 use super::report::AgentRunsRepository;
 use super::traits::ThingAgentHost;
 use super::types::{Priority, TriggerSource, WakeSignal};
-use tinyiothub_storage::agent_runs::{ActionResult, Outcome, RunReport};
+use tinyiothub_core::agent_runs::{ActionResult, Outcome, RunReport};
 
 /// 连续 N 次策略拒绝才触发 X5 hint。
 const POLICY_DENIAL_STREAK: usize = 3;

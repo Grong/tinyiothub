@@ -4,8 +4,8 @@ use regex::Regex;
 use std::sync::LazyLock;
 use tracing::warn;
 
+use tinyiothub_core::heartbeat::{ExecutedAction, HeartbeatResult, HeartbeatStatus};
 use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
-use tinyiothub_storage::heartbeat::{ExecutedAction, HeartbeatResult, HeartbeatStatus};
 
 static JSON_FENCE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"```json\s*\n([\s\S]*?)\n```").expect("JSON fence regex should compile"));

@@ -36,7 +36,8 @@ use crate::domains::agent::loop_::thing_agent::scheduler::{EnqueueError, Schedul
 use crate::domains::agent::loop_::thing_agent::traits::{DirectiveSink, ThingAgentHost};
 use crate::domains::agent::loop_::thing_agent::trigger::{ThingEventTrigger, TimerTrigger, Trigger};
 use crate::domains::agent::loop_::thing_agent::types::{TriggerSource, WakeSignal};
-use tinyiothub_policy::autonomy::{AutonomyMode, PolicyRepository};
+use tinyiothub_policy::autonomy::AutonomyMode;
+use tinyiothub_storage::policy::PolicyRepository;
 
 /// Capacity of the per-workspace trigger→scheduler channel. Backpressure
 /// beyond this parks the thing-event trigger, which then lags the broadcast

@@ -1,2 +1,2 @@
-// Row types live in the db crate (E6b 集中化); re-exported for compatibility.
-pub use tinyiothub_storage::policy::{Proposal, ProposalStatus};
+// Row types live in crates/core (Task 1 归位); re-exported from their real home.
+pub use tinyiothub_core::policy::{Proposal, ProposalStatus};

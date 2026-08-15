@@ -1,57 +1,16 @@
 //! Policy 持久化：工作区自治策略 + 动作频率读取（P-集中化 E3，自 agent crate 归位）。
 //!
-//! 类型随 repo 住 db（方案 B）：AutonomyPolicy/AutonomyMode 为 DB 行类型，
-//! policy crate 保留 GateVerdict 评估纯逻辑，经 re-export 兼容。
+//! 值类型归位 core（Task 1），本模块经 glob re-export 组织 db 内部路径；
+//! PolicyRepository 与全部 SQL 留在本文件。
 //! 注意：实现读取 agent_runs 表（动作频率熔断）——db 拥有全部表。
 
 use sqlx::SqlitePool;
 
 use crate::error::Result;
 
-// ──────────────────────────────────────────────
-// 持久化类型（DB 行）— 自 policy/autonomy.rs 迁入
-// ──────────────────────────────────────────────
-
-/// Three-state autonomy mode for a workspace.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AutonomyMode {
-    Off,
-    Diagnose,
-    Act,
-}
-
-impl AutonomyMode {
-    /// Stable string stored in `workspace_autonomy_policy.mode`.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            AutonomyMode::Off => "off",
-            AutonomyMode::Diagnose => "diagnose",
-            AutonomyMode::Act => "act",
-        }
-    }
-
-    /// Inverse of `as_str`; unknown values return None (treat as fail-closed).
-    pub fn from_db(s: &str) -> Option<Self> {
-        match s {
-            "off" => Some(AutonomyMode::Off),
-            "diagnose" => Some(AutonomyMode::Diagnose),
-            "act" => Some(AutonomyMode::Act),
-            _ => None,
-        }
-    }
-}
-
-/// Workspace-level autonomy policy for the thing-agent loop.
-#[derive(Debug, Clone)]
-pub struct AutonomyPolicy {
-    pub mode: AutonomyMode,
-    /// Allowed action names; `["*"]` means all actions.
-    pub allowed_actions: Vec<String>,
-    /// Denied action names (exact match); checked before the allowlist.
-    pub denied_actions: Vec<String>,
-    pub max_actions_per_run: u32,
-    pub max_actions_per_hour: u32,
-}
+// 领域值类型住 core（tinyiothub_core::policy）；此处 re-export 仅为 db
+// 内部模块组织，非跨 crate 摆渡层。
+pub use tinyiothub_core::policy::*;
 
 // ──────────────────────────────────────────────
 // Repository
@@ -250,49 +209,5 @@ mod tests {
 
         assert_eq!(repo.count_actions_last_hour("ws_1").await.expect("count"), 5);
         assert_eq!(repo.count_actions_last_hour("ws_2").await.expect("count"), 11);
-    }
-}
-
-// ── 行动提案（自 policy/proposal.rs 迁入，E6b）──
-
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Proposal {
-    pub id: String,
-    pub workspace_id: String,
-    pub agent_id: String,
-    /// Tool or action name being proposed.
-    pub tool_name: String,
-    /// Target device or resource.
-    pub device_id: Option<String>,
-    /// Human-readable summary of what this will do.
-    pub summary: String,
-    /// Why the agent wants to take this action.
-    pub reason: String,
-    /// Risk assessment (low/medium/high).
-    pub risk: String,
-    /// Proposed parameters (tool-specific).
-    pub parameters: Option<serde_json::Value>,
-    /// ISO 8601 timestamp.
-    pub created_at: String,
-    /// Status lifecycle: Pending → Approved / Rejected.
-    pub status: ProposalStatus,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ProposalStatus {
-    Pending,
-    Approved,
-    Rejected,
-}
-
-impl std::fmt::Display for ProposalStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ProposalStatus::Pending => write!(f, "pending"),
-            ProposalStatus::Approved => write!(f, "approved"),
-            ProposalStatus::Rejected => write!(f, "rejected"),
-        }
     }
 }
