@@ -11,7 +11,7 @@ description = "Cron engine and scheduler service for TinyIoTHub"
 name = "tinyiothub_scheduler"
 
 # 角色:cron 引擎（到期轮询 + 执行器注册表）
-# 禁止依赖:领域 crate、web —— 任务经注入的执行器运行;规则出处:G 系列计划 Task 7 (G8)
+# 禁止依赖:领域 crate、web（db 属基础设施，豁免）—— 任务经注入的执行器运行;规则出处:G 系列计划 Task 7 (G8)
 [dependencies]
 db = { workspace = true }
 core = { workspace = true }

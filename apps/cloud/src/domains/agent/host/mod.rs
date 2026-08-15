@@ -46,30 +46,3 @@ pub mod types;
 pub use service::SessionService;
 pub use skill::{AgentSkill, SkillType};
 pub use types::*;
-
-use axum::Router;
-use axum::routing::{get, post};
-
-/// The composed agent host router: agent management + workspace heartbeat +
-/// memory + chat session proxy + tools catalog endpoints.
-///
-/// Mounted at the API root by the composition layer; every sub-router keeps
-/// its own generic `create_router::<S>()` for individual mounting.
-pub fn router<S>() -> Router<S>
-where
-    S: Clone + Send + Sync + 'static,
-    crate::domains::agent::AgentState: axum::extract::FromRef<S>,
-    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
-{
-    Router::new()
-        // /agents/skills before /agents so the literal wins over /{id}
-        .nest("/agents/skills", handler::skills::create_router())
-        .nest("/agents", handler::create_router())
-        .nest("/workspaces", memory::handler::create_router())
-        .nest("/workspaces", handler::agent_tasks::create_workspace_router())
-        .nest("/workspaces", handler::workspace_heartbeat::create_router())
-        .nest("/chat", crate::domains::agent::chat::handler::create_router())
-        .route("/tools/catalog", get(crate::domains::agent::chat::handler::proxy::tools_catalog))
-        .route("/tools/effective", get(crate::domains::agent::chat::handler::proxy::tools_effective))
-        .route("/tools/toggle", post(crate::domains::agent::chat::handler::proxy::tools_toggle))
-}

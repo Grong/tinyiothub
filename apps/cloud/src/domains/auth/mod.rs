@@ -1,5 +1,5 @@
-//! Auth domain crate — authentication API (login/logout/session/token/SMS/social)
-//! plus the cloud JWT service and tenant-carrying `Claims` extractor.
+//! Auth domain crate — authentication API (login/logout/session/token/SMS/social).
+//! JWT 机制服务与 `Claims` extractor 已迁至 authn/web（G4），本域不再携带。
 //!
 //! Extracted from `cloud::modules::auth` + `cloud::shared::security::jwt`
 //! (P4-Task16, SEP application #1, following the Task 15 pilot).

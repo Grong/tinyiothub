@@ -13,7 +13,7 @@ name = "tinyiothub_memory"
 # 角色:agent 记忆能力（存储/反思管道/知识）
 # 禁止依赖:apps/*、web、runtime —— 由组合层调用;规则出处:G 系列计划 Task 7 (G8)
 [dependencies]
-core = { path = "../core" }
+core = { workspace = true }
 db = { path = "../db" }
 llm = { path = "../llm" }
 serde = { workspace = true }

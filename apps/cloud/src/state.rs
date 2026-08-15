@@ -1,7 +1,8 @@
 //! 应用组合态（AppState）与各域状态切片（`<Domain>State`）的唯一派生点。
 //!
-//! G7 裁决：新增域必须走 `<Domain>State + FromRef` 切片；禁止 handler 直接
-//! 吃 `State<AppState>`。
+//! G7 裁决：新增域必须走 `<Domain>State + FromRef` 切片。已切片的域
+//! （admin/mcp/agent）禁止 handler 直接吃 `State<AppState>`；其余遗留域
+//! 尚未切片，待后续迁移。
 
 use std::sync::Arc;
 
@@ -10,7 +11,6 @@ use crate::domains::auth::redis::RedisClient;
 use crate::domains::driver::legacy::{
     DeviceMonitoringService, DevicePerformanceService, DeviceQueryService, DeviceService,
 };
-use tinyiothub_core::models::device_property::DeviceProperty;
 use tinyiothub_storage::event::{EventRepository, RealTimeEventRepository};
 use tinyiothub_storage::notify::{NotificationHistoryRepository, NotificationRuleRepository};
 
@@ -21,12 +21,11 @@ use crate::domains::thing::{
     template::{TemplateEngine, TemplateRepository, TemplateValidator},
 };
 use tinyiothub_storage::memory::MemoryStore;
-use tinyiothub_storage::{Database, DeviceRepository, cache::DeviceCache};
+use tinyiothub_storage::{Database, cache::DeviceCache};
 use tokio::sync::OnceCell;
 
 use crate::domains::event::security::{EventSecurityFactory, SecureEventService};
 use crate::domains::event::sse_manager::SseConnectionManager;
-use crate::shared::error::Error;
 use tinyiothub_runtime::event_bus::EventBus;
 
 /// 应用程序状态 - 使用 Axum 推荐的依赖注入模式
@@ -218,11 +217,6 @@ impl axum::extract::FromRef<AppState> for std::sync::Arc<tinyiothub_authn::jwt::
 }
 
 impl AppState {
-    /// 租户作用域设备仓储（原 DeviceRepositoryFactory.create_for_workspace）
-    pub fn device_repo_for(&self, workspace_id: String) -> Arc<DeviceRepository> {
-        Arc::new(DeviceRepository::new(self.database.as_ref().clone()).for_workspace(workspace_id))
-    }
-
     /// user 域角色校验适配（原 UserState.role_checker，每次萃取新建语义保持）
     pub fn role_checker(&self) -> Arc<dyn crate::domains::user::RoleChecker> {
         Arc::new(EventSecurityRoleChecker { state: self.clone() })
@@ -617,136 +611,6 @@ impl AppState {
     pub fn db_pool(&self) -> sqlx::SqlitePool {
         self.database.pool().clone()
     }
-    /// 获取租户感知的设备服务
-    ///
-    /// 使用设备仓库工厂创建针对特定工作空间的租户感知设备仓库，
-    /// 并基于该仓库创建设备服务。
-    ///
-    /// 获取租户感知的设备服务（接受字符串 workspace_id）
-    pub fn tenant_device_service_str(&self, workspace_id: &str) -> Arc<DeviceService> {
-        let repository = self.device_repo_for(workspace_id.to_string());
-        Arc::new(DeviceService::new(repository, self.database.clone()).with_tag_repository(self.tag_repository.clone()))
-    }
-
-    /// Returns a tenant-scoped device service.
-    /// When workspace_id is None, logs a security warning and uses an empty
-    /// workspace ID (returns no devices) instead of falling back to the raw
-    /// repository which would bypass all tenant isolation.
-    pub fn tenant_device_service(&self, workspace_id: &Option<String>) -> Arc<DeviceService> {
-        let ws_id = workspace_id.clone().unwrap_or_else(|| {
-            tracing::warn!(
-                "[SECURITY] tenant_device_service called with workspace_id=None — \
-                 using empty workspace (no devices will be returned). \
-                 This indicates a bug: WorkspaceScope should always resolve to a workspace_id."
-            );
-            String::new()
-        });
-        let repository = self.device_repo_for(ws_id);
-
-        // 创建设备服务（使用现有的事件总线和标签仓库）
-        Arc::new(
-            DeviceService::with_event_bus(repository, self.database.clone(), self.event_bus.clone())
-                .with_tag_repository(self.tag_repository.clone()),
-        )
-    }
-
-    /// Resolve workspace ID for a tenant.
-    /// If an explicit workspace_id is provided, returns it directly.
-    /// Otherwise queries the database for the tenant's default workspace.
-    pub async fn resolve_workspace(&self, tenant_id: &str, explicit: Option<String>) -> Result<String, (i32, String)> {
-        if let Some(ws) = explicit {
-            return Ok(ws);
-        }
-        match self.workspace_service.find_by_tenant(tenant_id, Some(1), Some(1)).await {
-            Ok(workspaces) if !workspaces.is_empty() => Ok(workspaces[0].id.clone()),
-            _ => {
-                tracing::warn!("No workspace found for tenant {}", tenant_id);
-                Err((400, "未找到工作空间".to_string()))
-            }
-        }
-    }
-
-    // === 兼容性方法 ===
-    // 这些方法提供对 DeviceCache 的直接访问，
-    // 用于渐进式迁移，避免一次性修改所有代码
-
-    /// 通过设备名称和属性名称获取属性
-    pub fn get_device_prop_by_name(&self, device_name: &str, property_name: &str) -> Option<DeviceProperty> {
-        self.device_cache.get_by_name(device_name).and_then(|d| {
-            d.properties
-                .as_ref()
-                .and_then(|props| props.iter().find(|p| p.name == property_name).cloned())
-        })
-    }
-
-    /// 更新设备属性值
-    ///
-    /// 通过发布 PropertyChange 事件解耦：
-    /// 1.  cloud 层只负责验证 + 发布事件
-    /// 2.  engine::DataServer 作为 EventHandler 接收事件并更新 DeviceCache
-    pub async fn update_device_property_value(
-        &self,
-        workspace_id: &str,
-        device_id: &str,
-        property_id: &str,
-        value: &str,
-    ) -> Result<(), Error> {
-        use tinyiothub_core::models::event::{ContentElement, EventSource, RichContent, TextFormat};
-
-        // 1. 验证设备存在且属于指定的workspace
-        let tenant_device_service = self.tenant_device_service(&Some(workspace_id.to_string()));
-        let device = match tenant_device_service.get_device_by_id(device_id).await? {
-            Some(d) => d,
-            None => return Err(Error::NotFound),
-        };
-
-        // 2. 验证属性存在且属于该设备
-        let property = match tinyiothub_storage::find_device_property_by_id(self.database(), property_id).await {
-            Ok(Some(p)) if p.device_id == device_id => p,
-            Ok(Some(_)) => {
-                return Err(Error::ValidationError("Property does not belong to device".to_string()));
-            }
-            Ok(None) => return Err(Error::NotFound),
-            Err(e) => return Err(Error::IOError(format!("DB error: {}", e))),
-        };
-
-        // 3. 构造并发布 PropertyChange 事件
-        let source = EventSource::device_property(
-            device_id.to_string(),
-            property_id.to_string(),
-            format!("{}:{}", device_id, property_id),
-        );
-
-        let device_display_name = device.display_name.as_deref().unwrap_or(&device.name);
-        let content = RichContent::new(
-            format!("Property Changed: {} - {}", device_display_name, property.name),
-            vec![ContentElement::Text {
-                content: format!("Current value: {}", value),
-                format: TextFormat::Plain,
-            }],
-        );
-
-        let event = tinyiothub_core::models::event::Event::new_property_change_event(
-            device_id.to_string(),
-            property_id.to_string(),
-            source,
-            content,
-        )
-        .map_err(|e| Error::ValidationError(e.to_string()))?;
-
-        self.event_bus
-            .publish(event)
-            .await
-            .map_err(|e| Error::IOError(e.to_string()))?;
-
-        Ok(())
-    }
-
-    /// 获取设备（从缓存读取实时状态）
-    pub fn get_device(&self, device_id: &str) -> Option<tinyiothub_core::models::device::Device> {
-        self.device_cache.get(device_id)
-    }
-
     /// 获取模板引擎
     pub fn template_engine(&self) -> &TemplateEngine {
         &self.template_engine

@@ -178,7 +178,8 @@ where
     handlers::create_router()
 }
 
-/// Global MCP tool registry (shared across requests)
+/// Global MCP tool registry — process-wide, set-once at startup.
+/// Deliberate global per the G-series plan (sanctioned, not an oversight).
 static MCP_REGISTRY: std::sync::OnceLock<Arc<RwLock<HandlerRegistry>>> = std::sync::OnceLock::new();
 
 /// Initialize the global MCP registry with the domain state slice.

@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "HTTP handlers and middleware for TinyIoTHub (placeholder)"
+description = "HTTP infrastructure for TinyIoTHub — middleware and security extractors; owns the axum glue"
 
 [lib]
 name = "tinyiothub_web"

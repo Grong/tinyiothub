@@ -8,7 +8,7 @@ use axum::{
 
 use crate::state::AppState;
 
-// agents — 已迁移至 modules/agent/handler/
+// agents — 已迁移至 domains/agent/host/handler/
 // alarms — 已迁移至 modules/alarm/handler.rs
 // alarm_rules — 已迁移至 modules/alarm/handler.rs
 // auth — 已迁移至 crates/auth（tinyiothub_auth）

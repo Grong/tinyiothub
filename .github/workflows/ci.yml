@@ -127,7 +127,9 @@ jobs:
       - name: Domain Dependency Guard (G5)
         run: |
           echo "=== Checking thing/tenant domains carry no agent dependency edge ==="
-          if grep -rn "domains::agent" apps/cloud/src/domains/thing apps/cloud/src/domains/tenant; then
+          # Pattern: whitespace-tolerant absolute path `domains :: agent`, plus
+          # `super::...agent` to catch relative paths reaching the agent domain.
+          if grep -rEn --include='*.rs' 'domains\s*::\s*agent|super::.*agent' apps/cloud/src/domains/thing apps/cloud/src/domains/tenant; then
             echo "❌ DEPENDENCY VIOLATION: domains/thing and domains/tenant must not reference domains::agent"
             echo "   ✅ Consume agent capabilities via the domain-owned hooks traits (G5a ThingActionHooks / G5b AgentHooks)"
             exit 1
@@ -137,7 +139,7 @@ jobs:
       - name: Agent Loop Purity Guard (G9)
         run: |
           echo "=== Checking agent/loop_ carries no axum (web) dependency ==="
-          if grep -rn "axum" apps/cloud/src/domains/agent/loop_/; then
+          if grep -rEn --include='*.rs' 'axum' apps/cloud/src/domains/agent/loop_/; then
             echo "❌ DEPENDENCY VIOLATION: domains/agent/loop_ is the pure runtime plane and must not reference axum"
             echo "   ✅ Web/HTTP concerns belong in domains/agent/host (loop_ ← host one-way invariant)"
             exit 1

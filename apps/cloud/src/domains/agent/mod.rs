@@ -94,14 +94,3 @@ impl AgentState {
         self.database.pool().clone()
     }
 }
-
-/// The composed agent router: host (agent/chat capability HTTP APIs) + chat
-/// (session proxy) planes, generic over the composition state `S`.
-pub fn router<S>() -> axum::Router<S>
-where
-    S: Clone + Send + Sync + 'static,
-    AgentState: axum::extract::FromRef<S>,
-    Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
-{
-    host::router()
-}
