@@ -2,6 +2,7 @@
 
 pub mod agent;
 pub mod event;
+pub mod events;
 pub mod heartbeat;
 pub mod orchestrator;
 pub mod thing_agent;
