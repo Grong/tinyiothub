@@ -134,6 +134,16 @@ jobs:
           fi
           echo "✅ Domain dependency guard passed"
 
+      - name: Agent Loop Purity Guard (G9)
+        run: |
+          echo "=== Checking agent/loop_ carries no axum (web) dependency ==="
+          if grep -rn "axum" apps/cloud/src/domains/agent/loop_/; then
+            echo "❌ DEPENDENCY VIOLATION: domains/agent/loop_ is the pure runtime plane and must not reference axum"
+            echo "   ✅ Web/HTTP concerns belong in domains/agent/host (loop_ ← host one-way invariant)"
+            exit 1
+          fi
+          echo "✅ Agent loop purity guard passed"
+
   # -----------------------------------------------------------------------------
   # 前端检查
   # -----------------------------------------------------------------------------
