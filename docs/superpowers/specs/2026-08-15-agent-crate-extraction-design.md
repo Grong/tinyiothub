@@ -36,7 +36,7 @@
 | D8 | 战略校准 | 维持 buzz 式事件方案（用户明确选择，知悉外部声音的"直接依赖 db"替代论证） |
 | D9 | 迁移顺序 | **先在 cloud 原地事件化，后搬迁**——剥离存储依赖后移动是真正的 `git mv`，CI guard 从 crate 创建第一天生效，无豁免中间态 |
 | D10 | 验收口径 | 见下方"memory 纯逻辑并入"——并入后依赖树可达真正干净，验收维持**依赖树级**（源码 grep + `cargo tree` 双重检查） |
-| D10' | memory 处置 | **memory 纯逻辑模块（knowledge/reflect/types/metrics/workspace_memory/provider/reference）本期并入 crates/agent**（用户指示）。唯一外部消费方就是 agent 域，无第三方破坏面；`service.rs` 引擎留 crates/memory，cloud 继续消费 |
+| D10' | memory 处置 | **memory 纯逻辑模块（knowledge/reflect/types/metrics/workspace_memory/provider/reference）本期并入 crates/agent**（用户指示）。唯一外部消费方就是 agent 域，无第三方破坏面；`service.rs` 引擎留 crates/memory，cloud 继续消费。**计划阶段扩展**：policy/skills→db 的边同样只是类型耦合（TrustConfig/Proposal/AutonomyPolicy 等），实现计划 Task 1 把这些领域值类型归位 `crates/core`（沿用 core::memory 先例），policy/skills 就此脱掉 db 依赖，依赖树纯度完整达成 |
 | D11 | 事件硬化包 | ①订阅先于 restore；②事件携带单调 version，upsert 带 fencing；③启动 reconcile：DB 僵尸 running 行标记 interrupted；④周期性全量对账（不仅 Lagged 触发）；⑤命令与 DB 写序：先写 DB 再发命令，命令失败告警，重启以 DB 为准；⑥单实例假设写进 spec |
 | D12 | 总线关系 | **双通道职责分离**：既有 `AiEventPublisher`（mpsc 有界 + DropNotifier，满即丢+告警）继续服务 runtime 系统事件；新 `AgentEvent`（broadcast + resync + fencing）专服务持久化投影。spec 明确分工，不合并 |
 | D13 | 心跳新鲜度 | 心跳实时字段（last_tick、指标）读 API 改走 crate 内存查询；"读路径不变"修正为"**历史/归档读 DB，实时状态读 crate**" |
