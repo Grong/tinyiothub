@@ -43,9 +43,9 @@
 - Consumes: 现有 WIP（AppState 已增 `started_at`/`pending_actions`/`driver_heartbeat_status`/`driver_heartbeat_config` 字段，标注"G3，替代 …全局静态"）
 - Produces: 心跳状态/pending actions/started_at 全部经 AppState 注入，对应全局静态删除
 
-- [ ] **Step 1: 验证 WIP 完整性** — 确认被删全局无残留引用：`grep -rn "static ref\|lazy_static\|OnceLock" apps/cloud/src/domains/driver apps/cloud/src/domains/admin/monitoring apps/cloud/src/domains/agent/host`
-- [ ] **Step 2: 门禁** — `cargo check --workspace && cargo test --workspace` 全绿
-- [ ] **Step 3: Commit** `refactor(cloud): sink heartbeat/pending-action globals into AppState (G3)`
+- [x] **Step 1: 验证 WIP 完整性** — 确认被删全局无残留引用：`grep -rn "static ref\|lazy_static\|OnceLock" apps/cloud/src/domains/driver apps/cloud/src/domains/admin/monitoring apps/cloud/src/domains/agent/host`
+- [x] **Step 2: 门禁** — `cargo check --workspace && cargo test --workspace` 全绿
+- [x] **Step 3: Commit** `refactor(cloud): sink heartbeat/pending-action globals into AppState (G3)`
 
 ---
 
@@ -59,16 +59,16 @@
 - Consumes: G2 的 `JwtService::new(JwtSettings)` 构造注入（不变）
 - Produces: authn 依赖收敛为纯机制集（jwt-simple/bcrypt/hmac/sha2/base64/dashmap/uuid/chrono/serde）；web 新增 `web → authn` 边；cloud handler 的 `Claims` extractor 来源从 authn 改为 web
 
-- [ ] **Step 1: 移动 extractor** — jwt.rs 中 `impl<S> FromRequestParts<S> for Claims`（含 `Arc<JwtService>: FromRef<S>` 约束与 Bearer 解析）git mv 到 `crates/web/src/security/jwt_extractor.rs`；web 侧 `use tinyiothub_authn::JwtService`；web/Cargo.toml 加 `authn = { workspace = true }`
-- [ ] **Step 2: authn 脱钩** — authn/Cargo.toml 删 `axum, headers, web, db, sqlx, hex, async-trait, serde_json, subtle, tokio, tracing` 及实测未用的 `core`；保留 jwt-simple/bcrypt/hmac/sha2/base64/dashmap/uuid/chrono/serde
-- [ ] **Step 3: 调用方 sed** — cloud 内 `use tinyiothub_authn::Claims` → `use tinyiothub_web::security::Claims`（按 grep 实际清单逐个改）；`cargo check --workspace` 绿
-- [ ] **Step 4: 政策注释** — authn/Cargo.toml 依赖块上方加：
+- [x] **Step 1: 移动 extractor** — jwt.rs 中 `impl<S> FromRequestParts<S> for Claims`（含 `Arc<JwtService>: FromRef<S>` 约束与 Bearer 解析）git mv 到 `crates/web/src/security/jwt_extractor.rs`；web 侧 `use tinyiothub_authn::JwtService`；web/Cargo.toml 加 `authn = { workspace = true }`
+- [x] **Step 2: authn 脱钩** — authn/Cargo.toml 删 `axum, headers, web, db, sqlx, hex, async-trait, serde_json, subtle, tokio, tracing` 及实测未用的 `core`；保留 jwt-simple/bcrypt/hmac/sha2/base64/dashmap/uuid/chrono/serde
+- [x] **Step 3: 调用方 sed** — cloud 内 `use tinyiothub_authn::Claims` → `use tinyiothub_web::security::Claims`（按 grep 实际清单逐个改）；`cargo check --workspace` 绿
+- [x] **Step 4: 政策注释** — authn/Cargo.toml 依赖块上方加：
   ```toml
   # 纯机制 crate：签发/校验/哈希。禁止 axum/sqlx/db/tokio 依赖（G4 裁决）。
   # extractor 与 HTTP 胶水乡 crates/web；业务查询住 apps/cloud。
   ```
   authn/src/lib.rs `//!` 头部同步此 invariant
-- [ ] **Step 5: 门禁 + Commit** `refactor(authn): pure mechanism crate — extractor to web, drop 11 unused deps (G4)`
+- [x] **Step 5: 门禁 + Commit** `refactor(authn): pure mechanism crate — extractor to web, drop 11 unused deps (G4)`
 
 ---
 
@@ -81,9 +81,9 @@
 **Interfaces:**
 - Produces: thing 只依赖自有 trait；agent→thing 单向边（impl 依赖 trait 定义）；AppState 不再 naming `AgentThingActionHooks`
 
-- [ ] **Step 1: 归纳 trait** — 从 actions.rs 的 5 处调用提取方法集 + 关联类型（`ThingConfirmVerdict`、`PendingThingAction` 视图），定义 `domains/thing/hooks.rs`。值类型若被 thing/agent 共用，按 core 守门条款放 `crates/core`
-- [ ] **Step 2: impl + 接线** — agent 侧 `impl ThingActionHooks for AgentThingActionHooks`；AppState 字段与构造（app_state.rs:477-484）改 `Arc<dyn>`
-- [ ] **Step 3: 门禁 + Commit** `refactor(thing): cut thing→agent edge at type level via hooks trait (G5a)`
+- [x] **Step 1: 归纳 trait** — 从 actions.rs 的 5 处调用提取方法集 + 关联类型（`ThingConfirmVerdict`、`PendingThingAction` 视图），定义 `domains/thing/hooks.rs`。值类型若被 thing/agent 共用，按 core 守门条款放 `crates/core`
+- [x] **Step 2: impl + 接线** — agent 侧 `impl ThingActionHooks for AgentThingActionHooks`；AppState 字段与构造（app_state.rs:477-484）改 `Arc<dyn>`
+- [x] **Step 3: 门禁 + Commit** `refactor(thing): cut thing→agent edge at type level via hooks trait (G5a)`
 
 ---
 
@@ -96,9 +96,9 @@
 **Interfaces:**
 - Produces: tenant 只依赖自有 trait；AppState 不再 naming `AgentHooksImpl`
 
-- [ ] **Step 1-3:** 同 G5a 三步程序（trait 归纳 → impl + 接线 → 门禁）
-- [ ] **Step 4: Commit** `refactor(tenant): cut tenant→agent edge at type level via hooks trait (G5b)`
-- [ ] **Step 5: 守卫 grep 入 CI** — `! grep -rn "domains::agent" apps/cloud/src/domains/thing apps/cloud/src/domains/tenant` 加入 CI 守卫脚本（与 P 计划既有守卫同机制）
+- [x] **Step 1-3:** 同 G5a 三步程序（trait 归纳 → impl + 接线 → 门禁）
+- [x] **Step 4: Commit** `refactor(tenant): cut tenant→agent edge at type level via hooks trait (G5b)`
+- [x] **Step 5: 守卫 grep 入 CI** — `! grep -rn "domains::agent" apps/cloud/src/domains/thing apps/cloud/src/domains/tenant` 加入 CI 守卫脚本（与 P 计划既有守卫同机制）
 
 ---
 
@@ -111,10 +111,10 @@
 - Consumes: AppState 已有的 config slices 字段
 - Produces: 配置经 AppState/构造参数注入；`CONFIG` OnceLock 仅在 `main.rs` 启动期写入一次后不再被读取（或彻底改为局部变量传递）
 
-- [ ] **Step 1: 逐文件替换** — 每文件一个小步：`config::get()` → `state.config()`（或对应 slice）。调用点在 handler 的从 `State` 取；在 service 的改构造参数
-- [ ] **Step 2: 删访问器** — 全量 grep 归零后删 `get()`；`shared/config/mod.rs:11` 的 OnceLock 若只剩启动写入，改为 `main.rs` 局部 `ApplicationSettings` 传入 `AppState::new`
-- [ ] **Step 3: 政策注释** — config/mod.rs 头部加"禁止新增进程级配置全局（G6 裁决）；配置经 AppState 注入"
-- [ ] **Step 4: 门禁 + Commit**（可按域拆 2-3 个 commit，均带 `(G6)` 后缀）
+- [x] **Step 1: 逐文件替换** — 每文件一个小步：`config::get()` → `state.config()`（或对应 slice）。调用点在 handler 的从 `State` 取；在 service 的改构造参数
+- [x] **Step 2: 删访问器** — 全量 grep 归零后删 `get()`；`shared/config/mod.rs:11` 的 OnceLock 若只剩启动写入，改为 `main.rs` 局部 `ApplicationSettings` 传入 `AppState::new`
+- [x] **Step 3: 政策注释** — config/mod.rs 头部加"禁止新增进程级配置全局（G6 裁决）；配置经 AppState 注入"
+- [x] **Step 4: 门禁 + Commit**（可按域拆 2-3 个 commit，均带 `(G6)` 后缀）
 
 ---
 
@@ -128,10 +128,10 @@
 - Consumes: driver/alarm/tenant 的 `<Domain>State + FromRef` 成例
 - Produces: 代码与 AGENTS.md repo map 一致；admin/mcp/agent 不再直接依赖 45 字段全集
 
-- [ ] **Step 1: 重命名先行** — git mv + use 路径修正，独立 commit：`refactor(cloud): rename app_state.rs→state.rs, server.rs→router.rs per AGENTS.md (G7)`。机械变更与行为变更分离
-- [ ] **Step 2: AdminState/TenantState 式切片推广** — 每域一个 commit：定义 `<Domain>State` 结构 + `FromRef<AppState>` impl + handler 泛型化。顺序：admin（16 处 app_state import，最大消费者）→ mcp（7）→ agent（7）
-- [ ] **Step 3: 政策注释** — state.rs 头部加"新增域必须走 `<Domain>State + FromRef` 切片；禁止 handler 直接吃 `State<AppState>`（G7 裁决）"
-- [ ] **Step 4: 门禁 + 各域 Commit**（`(G7)` 后缀）
+- [x] **Step 1: 重命名先行** — git mv + use 路径修正，独立 commit：`refactor(cloud): rename app_state.rs→state.rs, server.rs→router.rs per AGENTS.md (G7)`。机械变更与行为变更分离
+- [x] **Step 2: AdminState/TenantState 式切片推广** — 每域一个 commit：定义 `<Domain>State` 结构 + `FromRef<AppState>` impl + handler 泛型化。顺序：admin（16 处 app_state import，最大消费者）→ mcp（7）→ agent（7）
+- [x] **Step 3: 政策注释** — state.rs 头部加"新增域必须走 `<Domain>State + FromRef` 切片；禁止 handler 直接吃 `State<AppState>`（G7 裁决）"
+- [x] **Step 4: 门禁 + 各域 Commit**（`(G7)` 后缀）
 
 ---
 
@@ -144,15 +144,15 @@
 **Interfaces:**
 - Produces: 每条架构规则在执行点可见；buzz 同款 comment-as-policy
 
-- [ ] **Step 1: 删悬挂 tenant dep**
-- [ ] **Step 2: 逐 crate 注释**，模板（按 crate 角色填）：
+- [x] **Step 1: 删悬挂 tenant dep**
+- [x] **Step 2: 逐 crate 注释**，模板（按 crate 角色填）：
   ```toml
   # 角色:<能力库|纯机制|值类型>;禁止依赖:<清单>;规则出处:G 系列计划 Task N
   ```
   重点 crate：core（禁 I/O，已有口头规则落成文字）、db（buzz 模式：具体 struct 无 trait 倒置）、runtime（EventBus/driver 框架，不编排）、authn（G4 注释已在 Task 2 落地）
-- [ ] **Step 3: lib.rs `//!` invariant 块** — 参照 buzz-auth/buzz-pubsub 的头部风格，每 crate 3-8 行：职责、invariant、依赖规则
-- [ ] **Step 4: [可选] deny.toml** — 引入 cargo-deny 做依赖审计（独立 commit，不阻塞本 task 收尾）
-- [ ] **Step 5: Commit** `docs(crates): comment-as-policy at enforcement points + workspace hygiene (G8)`
+- [x] **Step 3: lib.rs `//!` invariant 块** — 参照 buzz-auth/buzz-pubsub 的头部风格，每 crate 3-8 行：职责、invariant、依赖规则
+- [x] **Step 4: [可选] deny.toml** — 引入 cargo-deny 做依赖审计（独立 commit，不阻塞本 task 收尾）
+- [x] **Step 5: Commit** `docs(crates): comment-as-policy at enforcement points + workspace hygiene (G8)`
 
 ---
 
@@ -163,9 +163,9 @@
 **评估对象（2026-08-14 实测）：**
 - `domains/agent/` 20,840 行（占 cloud 25%）；`loop_/orchestrator/callbacks.rs` 1,379 行、`host/tools/thing.rs` 1,250 行、`loop_/thing_agent/scheduler.rs` 1,017 行
 
-- [ ] **Step 1: 评估报告** — loop_/host/chat 三子域的实际耦合边、大文件的职责清单；判断按文件拆分（轻）还是按子域拆模块边界（重）
-- [ ] **Step 2: 用户裁决后执行** — 拆分方案经确认再实施，遵循"一文件一职责 <2k 行"的 db 平铺先例
-- [ ] **Step 3: Commit**（`(G9)` 后缀）
+- [x] **Step 1: 评估报告** — loop_/host/chat 三子域的实际耦合边、大文件的职责清单；判断按文件拆分（轻）还是按子域拆模块边界（重）
+- [x] **Step 2: 用户裁决后执行** — 拆分方案经确认再实施，遵循"一文件一职责 <2k 行"的 db 平铺先例
+- [x] **Step 3: Commit**（`(G9)` 后缀）
 
 ---
 
