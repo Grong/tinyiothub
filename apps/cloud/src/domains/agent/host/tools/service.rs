@@ -13,8 +13,9 @@ use zeroclaw::tools::{Tool, ToolResult};
 use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
 use super::{canvas::CanvasTool, thing::create_thing_tools};
+use crate::domains::agent::host::config::service as config_service;
 use crate::domains::agent::host::ports::{ExternalToolContext, ExternalToolHandler, external_tool_registry};
-use crate::domains::agent::host::shared::config::AgentRuntimeConfig;
+use crate::domains::agent::host::shared::config::{AgentError, AgentRuntimeConfig};
 use crate::domains::agent::loop_::thing_agent::DirectiveSink;
 use crate::domains::agent::loop_::types::{TrustConfig, TrustDecision};
 
@@ -352,6 +353,24 @@ pub async fn resolve_tools_for_agent(
 // ============================================================================
 // Tool catalog
 // ============================================================================
+
+/// Effective (denylist-filtered) tool names for an agent — the
+/// `/tools/effective` API payload. Moved from `impl AgentPool` (Task 7 fix
+/// round 1): db access stays on the cloud side; the caller supplies the
+/// pool's runtime context snapshot.
+pub async fn effective_tool_names(
+    db_pool: &SqlitePool,
+    runtime: &ToolRuntimeContext,
+    agent_id: &str,
+    workspace_id: &str,
+) -> Result<serde_json::Value, AgentError> {
+    config_service::verify_agent_workspace(db_pool, agent_id, workspace_id).await?;
+    let config = config_service::get_config(db_pool, agent_id).await?;
+    let all_tools = load_all_tools(workspace_id, Some(db_pool.clone()), runtime).await;
+    let effective = filter_by_denylist(all_tools, &config.tool_denylist);
+    let names: Vec<&str> = effective.iter().map(|t| t.name()).collect();
+    Ok(serde_json::json!({ "tools": names }))
+}
 
 /// Label mapping for known tools (display name in Chinese).
 fn tool_label(name: &str) -> &str {

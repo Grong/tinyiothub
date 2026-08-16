@@ -75,20 +75,19 @@ pub async fn chat_stream(
         }
     };
 
-    let mut rx = match state
-        .agent_pool
-        .chat_send(
-            &agent_id,
-            &session_key,
-            &message,
-            &run_id,
-            &full_prompt,
-            &claims.workspace_id,
-            &config,
-            state.memory_service.clone(),
-            &db_pool,
-        )
-        .await
+    let mut rx = match crate::domains::agent::host::chat::service::send_with_pool(
+        &state.agent_pool,
+        &db_pool,
+        &agent_id,
+        &session_key,
+        &message,
+        &run_id,
+        &full_prompt,
+        &claims.workspace_id,
+        &config,
+        state.memory_service.clone(),
+    )
+    .await
     {
         Ok(rx) => rx,
         Err(e) => {
@@ -120,21 +119,18 @@ pub async fn chat_history(
         return ApiResponseBuilder::error_with_code(404, "Session not found");
     }
 
-    let parsed = match SessionKey::parse(&query.session_key) {
-        Ok(k) => k,
-        Err(e) => return ApiResponseBuilder::error(format!("Invalid session key: {}", e)),
-    };
+    // Format validation first (session_history_json re-parses internally).
+    if let Err(e) = SessionKey::parse(&query.session_key) {
+        return ApiResponseBuilder::error(format!("Invalid session key: {}", e));
+    }
 
-    match state
-        .agent_pool
-        .chat_history(
-            &parsed.agent_id,
-            &query.session_key,
-            limit,
-            &claims.workspace_id,
-            &state.db_pool(),
-        )
-        .await
+    match crate::domains::agent::host::chat::history::session_history_json(
+        &state.db_pool(),
+        &query.session_key,
+        limit,
+        &claims.workspace_id,
+    )
+    .await
     {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to load chat history: {}", e)),
@@ -228,11 +224,7 @@ pub async fn delete_session(
 
 /// GET /api/v1/agents
 pub async fn list_agents(State(state): State<AgentState>, claims: Claims) -> Json<ApiResponse<serde_json::Value>> {
-    match state
-        .agent_pool
-        .list_agents(&state.db_pool(), &claims.workspace_id)
-        .await
-    {
+    match crate::domains::agent::host::config::service::list_agents(&state.db_pool(), &claims.workspace_id).await {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to list agents: {}", e)),
     }
@@ -244,10 +236,12 @@ pub async fn get_agent_config(
     Path(agent_id): Path<String>,
     claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    match state
-        .agent_pool
-        .get_agent_config(&state.db_pool(), &agent_id, &claims.workspace_id)
-        .await
+    match crate::domains::agent::host::config::service::get_agent_config_json(
+        &state.db_pool(),
+        &agent_id,
+        &claims.workspace_id,
+    )
+    .await
     {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to get agent config: {}", e)),
@@ -262,34 +256,35 @@ pub async fn set_agent_config(
     Json(req): Json<AgentConfigUpdateRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let config_str = serde_json::to_string(&req.config).unwrap_or_default();
-    let base_hash_ref = req.base_hash.as_deref();
-    match state
-        .agent_pool
-        .set_agent_config(
-            &state.db_pool(),
-            &agent_id,
-            &config_str,
-            base_hash_ref,
-            &claims.workspace_id,
-        )
-        .await
+    // Silently ignore base_hash mismatch — last write wins
+    let _ = req.base_hash.as_deref();
+    match crate::domains::agent::host::config::service::set_agent_config(
+        &state.db_pool(),
+        &agent_id,
+        &config_str,
+        &claims.workspace_id,
+    )
+    .await
     {
-        Ok(()) => ApiResponseBuilder::success(serde_json::json!({"saved": true})),
+        Ok(()) => {
+            // Config changed: drop the cached agent so it rebuilds lazily.
+            state.agent_pool.invalidate(&agent_id);
+            ApiResponseBuilder::success(serde_json::json!({"saved": true}))
+        }
         Err(e) => ApiResponseBuilder::error(format!("Failed to save config: {}", e)),
     }
 }
 
 /// GET /api/v1/tools/catalog
 pub async fn tools_catalog(
-    State(state): State<AgentState>,
+    State(_state): State<AgentState>,
     Query(params): Query<HashMap<String, String>>,
     _claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    let agent_id = params.get("agent_id").map(|s| s.as_str()).unwrap_or("");
-    match state.agent_pool.tools_catalog(agent_id).await {
-        Ok(data) => ApiResponseBuilder::success(data),
-        Err(e) => ApiResponseBuilder::error(format!("Failed to get tools catalog: {}", e)),
-    }
+    let _ = params;
+    // Catalog is a static registry snapshot — no db, no pool.
+    let data = crate::domains::agent::host::tools::service::build_catalog().await;
+    ApiResponseBuilder::success(data)
 }
 
 /// GET /api/v1/tools/effective
@@ -299,10 +294,14 @@ pub async fn tools_effective(
     claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let agent_id = params.get("agent_id").map(|s| s.as_str()).unwrap_or("");
-    match state
-        .agent_pool
-        .tools_effective(&state.db_pool(), agent_id, &claims.workspace_id)
-        .await
+    let runtime = state.agent_pool.runtime_context().await;
+    match crate::domains::agent::host::tools::service::effective_tool_names(
+        &state.db_pool(),
+        &runtime,
+        agent_id,
+        &claims.workspace_id,
+    )
+    .await
     {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to get effective tools: {}", e)),
@@ -315,18 +314,20 @@ pub async fn tools_toggle(
     claims: Claims,
     Json(req): Json<ToolToggleRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    match state
-        .agent_pool
-        .tools_toggle(
-            &state.db_pool(),
-            &req.agent_id,
-            &req.tool_name,
-            req.enabled,
-            &claims.workspace_id,
-        )
-        .await
+    match crate::domains::agent::host::config::service::toggle_tool(
+        &state.db_pool(),
+        &req.agent_id,
+        &req.tool_name,
+        req.enabled,
+        &claims.workspace_id,
+    )
+    .await
     {
-        Ok(()) => ApiResponseBuilder::success(serde_json::json!({"toggled": true})),
+        Ok(()) => {
+            // Denylist changed: drop the cached agent so it rebuilds lazily.
+            state.agent_pool.invalidate(&req.agent_id);
+            ApiResponseBuilder::success(serde_json::json!({"toggled": true}))
+        }
         Err(e) => ApiResponseBuilder::error(format!("Failed to toggle tool: {}", e)),
     }
 }

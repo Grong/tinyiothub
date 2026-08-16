@@ -274,17 +274,15 @@ async fn ensure_user_workspace(state: &AppState, user_id: &str) -> Result<()> {
     }
 
     // Create agent for workspace
-    let agent_result = state
-        .agent_pool
-        .create_agent(
-            pool,
-            &crate::domains::agent::host::shared::AgentConfig {
-                workspace_id: ws_id.clone(),
-                name: format!("{}的工作空间", ws_name),
-                ..Default::default()
-            },
-        )
-        .await;
+    let agent_result = crate::domains::agent::host::config::service::create_agent(
+        pool,
+        &crate::domains::agent::host::shared::AgentConfig {
+            workspace_id: ws_id.clone(),
+            name: format!("{}的工作空间", ws_name),
+            ..Default::default()
+        },
+    )
+    .await;
 
     match agent_result {
         Ok(agent_id) => {
@@ -336,7 +334,7 @@ async fn ensure_default_tenant(state: &AppState, user_id: &str) -> Result<()> {
 }
 
 /// 确保默认工作空间存在，若无则创建并同步创建 Agent；若存在但缺少 agent_id 则 backfill
-async fn ensure_default_workspace_and_agent(state: &AppState, pool: &sqlx::Pool<sqlx::Sqlite>) -> Result<()> {
+async fn ensure_default_workspace_and_agent(_state: &AppState, pool: &sqlx::Pool<sqlx::Sqlite>) -> Result<()> {
     // 检查默认工作空间是否存在
     let ws_exists: bool =
         sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = 'ws-default-001')")
@@ -388,17 +386,15 @@ async fn ensure_default_workspace_and_agent(state: &AppState, pool: &sqlx::Pool<
     .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
 
     if needs_agent {
-        let agent_result = state
-            .agent_pool
-            .create_agent(
-                pool,
-                &crate::domains::agent::host::shared::AgentConfig {
-                    workspace_id: "ws-default-001".to_string(),
-                    name: "默认工作空间".to_string(),
-                    ..Default::default()
-                },
-            )
-            .await;
+        let agent_result = crate::domains::agent::host::config::service::create_agent(
+            pool,
+            &crate::domains::agent::host::shared::AgentConfig {
+                workspace_id: "ws-default-001".to_string(),
+                name: "默认工作空间".to_string(),
+                ..Default::default()
+            },
+        )
+        .await;
 
         match agent_result {
             Ok(agent_id) => {

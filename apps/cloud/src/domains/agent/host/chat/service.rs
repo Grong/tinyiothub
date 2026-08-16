@@ -8,7 +8,81 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use zeroclaw::agent::TurnEvent;
 
+use crate::domains::agent::host::agent::AgentPool;
+use crate::domains::agent::host::shared::config::{AgentError, AgentRuntimeConfig};
 use crate::domains::agent::host::types::{ChatError, ChatEvent};
+
+// ============================================================================
+// Pool-facing entry points (db-backed; cloud side — Task 7 fix round 1)
+// ============================================================================
+
+/// Ensure a pooled agent exists: cache hit returns immediately; on a miss the
+/// tools are resolved from the db here (cloud side) and injected into the
+/// pool's pure `create`.
+pub async fn ensure_agent(
+    pool: &AgentPool,
+    db_pool: &sqlx::SqlitePool,
+    agent_id: &str,
+    workspace_id: &str,
+    config: &AgentRuntimeConfig,
+) -> Result<Arc<tokio::sync::Mutex<zeroclaw::agent::Agent>>, AgentError> {
+    if let Some(agent) = pool.get_cached(agent_id) {
+        return Ok(agent);
+    }
+    let trust_config = pool.trust_config(workspace_id);
+    let runtime = pool.runtime_context().await;
+    let tools = crate::domains::agent::host::tools::service::resolve_tools_for_agent(
+        config,
+        workspace_id,
+        trust_config,
+        Some(db_pool.clone()),
+        &runtime,
+    )
+    .await;
+    pool.create(agent_id, workspace_id, config, tools)
+}
+
+/// Chat send formerly on `impl AgentPool` (`host/agent/chat.rs`). The session
+/// key check runs before any agent build; config/memory_service/db are
+/// injected by the caller (proxy handler).
+#[allow(clippy::too_many_arguments)]
+pub async fn send_with_pool(
+    pool: &AgentPool,
+    db_pool: &sqlx::SqlitePool,
+    agent_id: &str,
+    session_key: &str,
+    message: &str,
+    run_id: &str,
+    system_prompt: &str,
+    authorized_workspace: &str,
+    config: &AgentRuntimeConfig,
+    memory_service: Option<Arc<tinyiothub_memory::service::MemoryService>>,
+) -> Result<mpsc::Receiver<ChatEvent>, AgentError> {
+    let parsed = crate::domains::agent::host::session::SessionKey::parse(session_key)?;
+    // Empty authorized workspace = unscoped (admin) token; nothing to check against.
+    if !authorized_workspace.is_empty() {
+        parsed.verify_workspace(authorized_workspace)?;
+    }
+    let agent = ensure_agent(pool, db_pool, agent_id, &parsed.workspace_id, config).await?;
+    let event_publisher = pool.event_publisher.read().await.clone();
+    send_message(
+        &agent,
+        message,
+        run_id,
+        session_key,
+        system_prompt,
+        &pool.chat_handles,
+        memory_service,
+        event_publisher,
+        config.enable_reflection,
+        &config.model,
+        &parsed.workspace_id,
+        agent_id,
+        db_pool,
+    )
+    .await
+    .map_err(|e| AgentError::RequestFailed(e.to_string()))
+}
 
 /// Convert zeroclaw TurnEvent → ChatEvent (no intermediate JSON serialization)
 fn turn_event_to_chat_event(evt: &TurnEvent, run_id: &str, session_key: &str) -> ChatEvent {
@@ -301,6 +375,34 @@ pub async fn send_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn send_with_pool_rejects_session_from_other_workspace() {
+        let db = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&db).await.unwrap();
+        let pool = AgentPool::new(
+            &tinyiothub_core::config::AgentSettings::default(),
+            crate::domains::agent::host::autonomous_factory::minimax_provider_factory(),
+        )
+        .expect("test AgentPool");
+        let err = send_with_pool(
+            &pool,
+            &db,
+            "agent_main",
+            "agent:ws_other:agent_main/s1",
+            "hi",
+            "r1",
+            "",
+            "ws_mine",
+            &AgentRuntimeConfig::default(),
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, AgentError::NotFound(_)));
+        // The workspace check must run before any agent is built.
+        assert_eq!(pool.pool_size(), 0);
+    }
 
     #[test]
     fn test_turn_event_chunk_to_delta() {

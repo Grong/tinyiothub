@@ -1,11 +1,11 @@
-// AgentPool — pool lifecycle: construction, lazy get_or_create, invalidation,
-// idle cleanup, and the zeroclaw agent builder.
+// AgentPool — pool lifecycle: construction, cache lookup, creation from
+// caller-injected parts, invalidation, idle cleanup, and the zeroclaw agent
+// builder.
 
 use std::{sync::Arc, time::Instant};
 
 use anyhow::anyhow;
 use dashmap::DashMap;
-use sqlx::SqlitePool;
 use tinyiothub_memory::workspace_memory::WorkspaceScopedMemory;
 use zeroclaw::{
     agent::{
@@ -18,7 +18,6 @@ use zeroclaw::{
     tools::Tool,
 };
 
-use super::super::tools::service as tool_service;
 use crate::domains::agent::host::shared::config::{AgentError, AgentRuntimeConfig};
 
 // ============================================================================
@@ -79,10 +78,11 @@ pub struct Agent {
 // AgentPool
 // ============================================================================
 
-/// Storage-free by design (Task 7): the pool holds no `SqlitePool` /
-/// `MemoryStore` / `MemoryService`. Callers inject per-request data (agent
-/// config, db handle for tool resolution, memory service) as method params,
-/// keeping the pool movable into the future `crates/agent`.
+/// Storage-free by design (Task 7): the pool holds no db/memory storage
+/// handles and no method signature mentions them. Callers (cloud) resolve
+/// per-request data — agent config, tool list, memory service — and inject
+/// the results into the pool's pure methods, keeping the pool movable into
+/// the future `crates/agent`.
 pub struct AgentPool {
     pub(crate) agents: Arc<DashMap<String, PoolEntry>>,
     pub(crate) shared_memory: Arc<dyn Memory>,
@@ -105,8 +105,8 @@ pub struct AgentPool {
 impl AgentPool {
     /// Create a new AgentPool with shared memory and observer backends.
     ///
-    /// No storage handles: agent config and the db handle needed for tool
-    /// resolution are injected per call (see [`Self::get_or_create`]).
+    /// No storage handles: agent config and tools are resolved by the cloud
+    /// caller and injected per creation (see [`Self::create`]).
     pub fn new(
         agent_settings: &tinyiothub_core::config::AgentSettings,
         provider_factory: super::super::autonomous_factory::ProviderFactory,
@@ -191,32 +191,48 @@ impl AgentPool {
         self.trust_configs.insert(workspace_id.to_string(), config);
     }
 
+    /// Trust config for a workspace (cloud resolves tools with it).
+    pub fn trust_config(&self, workspace_id: &str) -> Option<Arc<crate::domains::agent::loop_::types::TrustConfig>> {
+        self.trust_configs
+            .get(workspace_id)
+            .map(|e| Arc::new(e.value().clone()))
+    }
+
+    /// Snapshot of the late-bound runtime handles (cloud resolves tools with it).
+    pub async fn runtime_context(&self) -> super::super::tools::service::ToolRuntimeContext {
+        self.runtime.read().await.clone()
+    }
+
     // ========================================================================
     // Agent lifecycle
     // ========================================================================
 
-    /// Get or lazily create a per-agent zeroclaw Agent with NamespacedMemory isolation.
+    /// Fast-path cache lookup; refreshes `last_used`. Never holds a DashMap
+    /// entry across an await — callers resolve tools/config on a miss and
+    /// come back through [`Self::create`].
+    pub fn get_cached(&self, agent_id: &str) -> Option<Arc<tokio::sync::Mutex<zeroclaw::agent::Agent>>> {
+        self.agents.get_mut(agent_id).map(|mut entry| {
+            let agent = Arc::clone(&entry.zeroclaw_agent);
+            entry.last_used = Instant::now();
+            agent
+        })
+    }
+
+    /// Build and insert a per-agent zeroclaw Agent with NamespacedMemory
+    /// isolation, from caller-injected parts.
     ///
-    /// Pool key: `agent_id`. The runtime config is injected by the caller
-    /// (cloud reads `agent_configs` via `config::service::get_config`), as is
-    /// the db handle used for tool resolution (`None` skips db-backed tools).
-    /// Tools are filtered via the config denylist on creation.
-    pub async fn get_or_create(
+    /// Pool key: `agent_id`. The runtime config and the fully resolved tool
+    /// list come from the cloud caller (config via
+    /// `config::service::get_config`, tools via
+    /// `tools::service::resolve_tools_for_agent`); this method performs no
+    /// storage I/O itself.
+    pub fn create(
         &self,
         agent_id: &str,
         workspace_id: &str,
         config: &AgentRuntimeConfig,
-        db_pool: Option<SqlitePool>,
+        tools: Vec<Box<dyn Tool>>,
     ) -> Result<Arc<tokio::sync::Mutex<zeroclaw::agent::Agent>>, AgentError> {
-        // Fast path: clone under a brief shard lock. Never hold a DashMap
-        // entry across .await — creation below does DB and tool-resolution
-        // I/O and would stall every other agent on the same shard.
-        if let Some(mut entry) = self.agents.get_mut(agent_id) {
-            let agent = Arc::clone(&entry.zeroclaw_agent);
-            entry.last_used = Instant::now();
-            return Ok(agent);
-        }
-
         let namespaced: Arc<dyn Memory> = Arc::new(WorkspaceScopedMemory::new(
             Arc::clone(&self.shared_memory),
             workspace_id.to_string(),
@@ -226,15 +242,6 @@ impl AgentPool {
             .map_err(|e| AgentError::BuildError(format!("Failed to create provider: {}", e)))?;
 
         let ws_dir = crate::domains::agent::host::shared::paths::workspace_dir(workspace_id);
-
-        let trust_config = self
-            .trust_configs
-            .get(workspace_id)
-            .map(|e| std::sync::Arc::new(e.value().clone()));
-        let tools = {
-            let runtime = self.runtime.read().await.clone();
-            tool_service::resolve_tools_for_agent(config, workspace_id, trust_config, db_pool, &runtime).await
-        };
 
         let agent = Self::build_agent(
             &namespaced,
@@ -396,7 +403,7 @@ mod tests {
 
     #[test]
     fn test_pool_entry_creation() {
-        // PoolEntry::new is tested indirectly via AgentPool::get_or_create
+        // PoolEntry::new is tested indirectly via AgentPool::create
         // This test validates the metadata field layout
         let metadata = Agent {
             agent_id: "a1".to_string(),
@@ -429,8 +436,8 @@ mod tests {
         assert_eq!(pool.pool_size(), 0);
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn get_or_create_uses_injected_config() {
+    #[test]
+    fn create_uses_injected_config_and_caches() {
         let pool = AgentPool::new(
             &tinyiothub_core::config::AgentSettings::default(),
             scripted_provider_factory(),
@@ -440,22 +447,19 @@ mod tests {
             model: "injected-model".to_string(),
             ..Default::default()
         };
-        // None db_pool: db-backed thing tools are skipped; the agent is built
-        // purely from the injected config.
+        // Tools are caller-resolved and injected; the test passes an empty
+        // list and the agent is built purely from the injected config.
         let a1 = pool
-            .get_or_create("a1", "ws-test", &config, None)
-            .await
+            .create("a1", "ws-test", &config, vec![])
             .expect("create with injected config");
         let entry = pool.agents.get("a1").expect("cached entry");
         assert_eq!(entry.metadata.config.model, "injected-model");
         drop(entry);
 
-        // Second call hits the cache: same agent instance, no rebuild.
-        let a2 = pool
-            .get_or_create("a1", "ws-test", &AgentRuntimeConfig::default(), None)
-            .await
-            .expect("cached");
+        // get_cached hits the same instance without rebuilding.
+        let a2 = pool.get_cached("a1").expect("cached");
         assert!(Arc::ptr_eq(&a1, &a2));
         assert_eq!(pool.pool_size(), 1);
+        assert!(pool.get_cached("unknown").is_none());
     }
 }

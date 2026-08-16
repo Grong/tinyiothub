@@ -15,9 +15,9 @@ use crate::domains::agent::loop_::agent::pool::{AgentPoolLike, AgentRunOutput, T
 
 /// Wraps the host `AgentPool` to implement the loop's `AgentPoolLike` trait.
 ///
-/// Holds the db handle (cloud-side composition detail) so heartbeat agent
-/// builds can resolve db-backed tools — the pool itself is storage-free and
-/// receives it per call (Task 7).
+/// Holds the db handle (cloud-side composition detail) and provisions pooled
+/// agents via `chat::service::ensure_agent` — the pool itself is storage-free
+/// and receives fully resolved config + tools (Task 7 fix round 1).
 pub struct HostAgentPoolAdapter {
     pool: Arc<AgentPool>,
     db_pool: sqlx::SqlitePool,
@@ -37,20 +37,35 @@ impl AgentPoolLike for HostAgentPoolAdapter {
         let config = crate::domains::agent::host::config::service::get_config(&self.db_pool, workspace_id)
             .await
             .map_err(|e| anyhow::anyhow!("Agent config error: {}", e))?;
-        let _agent = self
-            .pool
-            .get_or_create(workspace_id, workspace_id, &config, Some(self.db_pool.clone()))
-            .await
-            .map_err(|e| anyhow::anyhow!("AgentPool error: {}", e))?;
+        crate::domains::agent::host::chat::service::ensure_agent(
+            &self.pool,
+            &self.db_pool,
+            workspace_id,
+            workspace_id,
+            &config,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("AgentPool error: {}", e))?;
         // Return workspace_id as the handle identifier
         Ok(workspace_id.to_string())
     }
 
     async fn send_message(&self, workspace_id: &str, prompt: &str) -> anyhow::Result<AgentRunOutput> {
-        // Delegate to AgentPool's run_streaming method and collect the response
+        // Ensure the heartbeat agent is pooled (cache hit is config-fetch-free),
+        // then delegate to AgentPool's run_streaming and collect the response.
+        let agent_id = crate::domains::agent::host::agent::heartbeat_agent_id(workspace_id);
+        crate::domains::agent::host::chat::service::ensure_agent(
+            &self.pool,
+            &self.db_pool,
+            &agent_id,
+            workspace_id,
+            &crate::domains::agent::host::shared::AgentRuntimeConfig::default(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("AgentPool error: {}", e))?;
         let result = self
             .pool
-            .run_streaming(workspace_id, prompt, Some(self.db_pool.clone()))
+            .run_streaming(workspace_id, prompt)
             .await
             .map_err(|e| anyhow::anyhow!("LLM error: {}", e))?;
         let tool_calls = result.tool_calls.into_iter().map(map_tool_call).collect();

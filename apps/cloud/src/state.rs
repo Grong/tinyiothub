@@ -883,24 +883,24 @@ pub struct AgentPoolLifecycle {
 
 impl AgentPoolLifecycle {
     pub async fn create_agent(&self, workspace_id: &str, name: &str) -> Result<String, String> {
-        self.pool
-            .create_agent(
-                &self.db_pool,
-                &crate::domains::agent::host::shared::AgentConfig {
-                    workspace_id: workspace_id.to_string(),
-                    name: name.to_string(),
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(|e| e.to_string())
+        crate::domains::agent::host::config::service::create_agent(
+            &self.db_pool,
+            &crate::domains::agent::host::shared::AgentConfig {
+                workspace_id: workspace_id.to_string(),
+                name: name.to_string(),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())
     }
 
     pub async fn delete_agent(&self, agent_id: &str) -> Result<(), String> {
-        self.pool
-            .delete_agent(&self.db_pool, agent_id)
+        crate::domains::agent::host::config::service::delete_agent(&self.db_pool, agent_id)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        self.pool.invalidate(agent_id);
+        Ok(())
     }
 }
 

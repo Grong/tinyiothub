@@ -1,9 +1,12 @@
-// AgentPool — chat session forwarding (send/history/abort, delegated to
-// ChatService) and heartbeat runs (run_single / run_streaming).
+// AgentPool — chat abort + heartbeat runs (run_single / run_streaming).
+//
+// Storage-free (Task 7 fix round 1): chat send/history need db handles and
+// live as cloud-side free functions (`host::chat::service::send_with_pool`,
+// `host::chat::history::session_history_json`); only the storage-free
+// operations stay on the pool.
 
 use super::pool::AgentPool;
-use crate::domains::agent::host::chat::service as chat_service;
-use crate::domains::agent::host::shared::config::{AgentError, AgentRuntimeConfig};
+use crate::domains::agent::host::shared::config::AgentError;
 
 // ============================================================================
 // Streaming run result types
@@ -26,78 +29,8 @@ pub struct StreamingToolCall {
 
 impl AgentPool {
     // ========================================================================
-    // Chat (delegated to ChatService)
+    // Chat abort
     // ========================================================================
-
-    /// `config`, `memory_service` and `db_pool` are injected by the cloud
-    /// caller (Task 7): the config comes from `config::service::get_config`,
-    /// the memory service from `AgentState.memory_service` (reflection path),
-    /// and the db handle backs session history persistence.
-    pub async fn chat_send(
-        &self,
-        agent_id: &str,
-        session_key: &str,
-        message: &str,
-        run_id: &str,
-        system_prompt: &str,
-        authorized_workspace: &str,
-        config: &AgentRuntimeConfig,
-        memory_service: Option<std::sync::Arc<tinyiothub_memory::service::MemoryService>>,
-        db_pool: &sqlx::SqlitePool,
-    ) -> Result<tokio::sync::mpsc::Receiver<crate::domains::agent::host::types::ChatEvent>, AgentError> {
-        let parsed = crate::domains::agent::host::session::SessionKey::parse(session_key)?;
-        // Empty authorized workspace = unscoped (admin) token; nothing to check against.
-        if !authorized_workspace.is_empty() {
-            parsed.verify_workspace(authorized_workspace)?;
-        }
-        let agent = self
-            .get_or_create(agent_id, &parsed.workspace_id, config, Some(db_pool.clone()))
-            .await?;
-        let enable_reflection = config.enable_reflection;
-        let model = config.model.clone();
-        let event_publisher = self.event_publisher.read().await.clone();
-        chat_service::send_message(
-            &agent,
-            message,
-            run_id,
-            session_key,
-            system_prompt,
-            &self.chat_handles,
-            memory_service,
-            event_publisher,
-            enable_reflection,
-            &model,
-            &parsed.workspace_id,
-            agent_id,
-            db_pool,
-        )
-        .await
-        .map_err(|e| AgentError::RequestFailed(e.to_string()))
-    }
-
-    pub async fn chat_history(
-        &self,
-        _agent_id: &str,
-        session_key: &str,
-        limit: u32,
-        authorized_workspace: &str,
-        db_pool: &sqlx::SqlitePool,
-    ) -> Result<serde_json::Value, AgentError> {
-        let parsed = crate::domains::agent::host::session::SessionKey::parse(session_key)?;
-        if !authorized_workspace.is_empty() {
-            parsed.verify_workspace(authorized_workspace)?;
-        }
-
-        // DB-backed, session-scoped history. The zeroclaw in-memory agent
-        // history is shared across all sessions of the workspace agent and
-        // cannot isolate them.
-        let messages = crate::domains::agent::host::chat::history::list_messages(db_pool, session_key, limit)
-            .await
-            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
-        Ok(crate::domains::agent::host::chat::history::messages_to_history_json(
-            messages, session_key,
-        ))
-    }
 
     pub async fn chat_abort(
         &self,
@@ -131,19 +64,15 @@ impl AgentPool {
     // Run single (for cron jobs)
     // ========================================================================
 
-    pub async fn run_single(
-        &self,
-        workspace_id: &str,
-        message: &str,
-        db_pool: Option<sqlx::SqlitePool>,
-    ) -> Result<String, AgentError> {
+    /// The heartbeat agent must already be pooled — the cloud caller ensures
+    /// it via `host::chat::service::ensure_agent` (config/tool resolution is
+    /// db-backed and stays on the cloud side).
+    pub async fn run_single(&self, workspace_id: &str, message: &str) -> Result<String, AgentError> {
         // Per-workspace agent key prevents cross-workspace tool context leak.
-        // "__heartbeat__" has no DB row, so the caller injects
-        // AgentRuntimeConfig::default() → server-level [minimax] model.
-        let agent_id = format!("__heartbeat__:{}", workspace_id);
+        let agent_id = heartbeat_agent_id(workspace_id);
         let agent = self
-            .get_or_create(&agent_id, workspace_id, &AgentRuntimeConfig::default(), db_pool)
-            .await?;
+            .get_cached(&agent_id)
+            .ok_or_else(|| AgentError::NotFound(format!("Heartbeat agent not pooled: {agent_id}")))?;
         let mut ag = agent.lock().await;
         ag.run_single(message)
             .await
@@ -156,16 +85,13 @@ impl AgentPool {
 
     /// Run the heartbeat agent with streaming TurnEvents, enabling per-tool-call
     /// interception (trust gate, action recording).
-    pub async fn run_streaming(
-        &self,
-        workspace_id: &str,
-        message: &str,
-        db_pool: Option<sqlx::SqlitePool>,
-    ) -> Result<StreamingRunResult, AgentError> {
-        let agent_id = format!("__heartbeat__:{}", workspace_id);
+    ///
+    /// Like [`Self::run_single`], the agent must be pooled by the caller.
+    pub async fn run_streaming(&self, workspace_id: &str, message: &str) -> Result<StreamingRunResult, AgentError> {
+        let agent_id = heartbeat_agent_id(workspace_id);
         let agent = self
-            .get_or_create(&agent_id, workspace_id, &AgentRuntimeConfig::default(), db_pool)
-            .await?;
+            .get_cached(&agent_id)
+            .ok_or_else(|| AgentError::NotFound(format!("Heartbeat agent not pooled: {agent_id}")))?;
 
         // Set up TurnEvent channel for real-time event interception
         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<zeroclaw::agent::TurnEvent>(64);
@@ -221,81 +147,27 @@ impl AgentPool {
     }
 }
 
+/// "__heartbeat__" has no DB row, so the cloud caller pools it with
+/// AgentRuntimeConfig::default() → server-level [minimax] model.
+pub fn heartbeat_agent_id(workspace_id: &str) -> String {
+    format!("__heartbeat__:{}", workspace_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::SqlitePool;
 
-    async fn test_db() -> SqlitePool {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
-            .await
-            .unwrap();
-        pool
-    }
-
-    async fn test_agent_pool() -> (AgentPool, SqlitePool) {
-        let db = test_db().await;
-        let pool = AgentPool::new(
+    fn test_pool() -> AgentPool {
+        AgentPool::new(
             &tinyiothub_core::config::AgentSettings::default(),
             crate::domains::agent::host::autonomous_factory::minimax_provider_factory(),
         )
-        .expect("test AgentPool");
-        (pool, db)
-    }
-
-    #[tokio::test]
-    async fn chat_send_rejects_session_from_other_workspace() {
-        let (pool, db) = test_agent_pool().await;
-        let err = pool
-            .chat_send(
-                "agent_main",
-                "agent:ws_other:agent_main/s1",
-                "hi",
-                "r1",
-                "",
-                "ws_mine",
-                &AgentRuntimeConfig::default(),
-                None,
-                &db,
-            )
-            .await
-            .unwrap_err();
-        assert!(matches!(err, AgentError::NotFound(_)));
-        // The workspace check must run before any agent is built.
-        assert_eq!(pool.pool_size(), 0);
-    }
-
-    #[tokio::test]
-    async fn chat_history_rejects_session_from_other_workspace() {
-        let (pool, db) = test_agent_pool().await;
-        let err = pool
-            .chat_history("agent_main", "agent:ws_other:agent_main/s1", 50, "ws_mine", &db)
-            .await
-            .unwrap_err();
-        assert!(matches!(err, AgentError::NotFound(_)));
-    }
-
-    #[tokio::test]
-    async fn chat_history_with_unscoped_token_reads_persisted_messages() {
-        let (pool, db) = test_agent_pool().await;
-        let key = "agent:ws1:agent_main/s1";
-        crate::domains::agent::host::chat::history::ensure_session(&db, key, "ws1", "agent_main")
-            .await
-            .unwrap();
-        crate::domains::agent::host::chat::history::append_message(&db, key, "user", "hello", "r1")
-            .await
-            .unwrap();
-
-        // Empty authorized_workspace = unscoped (admin) token: no workspace
-        // check, history served straight from the DB.
-        let out = pool.chat_history("agent_main", key, 50, "", &db).await.unwrap();
-        assert!(out.to_string().contains("hello"));
+        .expect("test AgentPool")
     }
 
     #[tokio::test]
     async fn chat_abort_rejects_session_from_other_workspace() {
-        let (pool, _db) = test_agent_pool().await;
+        let pool = test_pool();
         let err = pool
             .chat_abort("agent_main", "agent:ws_other:agent_main/s1", Some("r1"), "ws_mine")
             .await
@@ -305,7 +177,7 @@ mod tests {
 
     #[tokio::test]
     async fn chat_abort_with_unknown_run_id_errors_and_none_run_id_is_noop() {
-        let (pool, _db) = test_agent_pool().await;
+        let pool = test_pool();
         let err = pool
             .chat_abort("agent_main", "agent:ws1:agent_main/s1", Some("nonexistent-run"), "")
             .await
@@ -317,5 +189,12 @@ mod tests {
         pool.chat_abort("agent_main", "agent:ws1:agent_main/s1", None, "")
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_streaming_requires_pooled_agent() {
+        let pool = test_pool();
+        let result = pool.run_streaming("ws1", "tick").await;
+        assert!(matches!(result, Err(AgentError::NotFound(_))));
     }
 }

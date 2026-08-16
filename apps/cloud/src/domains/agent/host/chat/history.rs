@@ -88,6 +88,32 @@ pub fn messages_to_history_json(messages: Vec<(String, String)>, session_key: &s
     serde_json::json!({ "messages": msgs, "sessionKey": session_key })
 }
 
+/// Session-scoped history for the chat API (formerly
+/// `AgentPool::chat_history` — moved off the pool in Task 7 fix round 1
+/// because it is a pure db read). Empty `authorized_workspace` = unscoped
+/// (admin) token; nothing to check against.
+pub async fn session_history_json(
+    db_pool: &SqlitePool,
+    session_key: &str,
+    limit: u32,
+    authorized_workspace: &str,
+) -> Result<serde_json::Value, crate::domains::agent::host::shared::config::AgentError> {
+    use crate::domains::agent::host::shared::config::AgentError;
+
+    let parsed = crate::domains::agent::host::session::SessionKey::parse(session_key)?;
+    if !authorized_workspace.is_empty() {
+        parsed.verify_workspace(authorized_workspace)?;
+    }
+
+    // DB-backed, session-scoped history. The zeroclaw in-memory agent
+    // history is shared across all sessions of the workspace agent and
+    // cannot isolate them.
+    let messages = list_messages(db_pool, session_key, limit)
+        .await
+        .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+    Ok(messages_to_history_json(messages, session_key))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,6 +125,31 @@ mod tests {
             .await
             .unwrap();
         pool
+    }
+
+    #[tokio::test]
+    async fn session_history_rejects_session_from_other_workspace() {
+        let pool = test_pool().await;
+        let err = session_history_json(&pool, "agent:ws_other:agent_main/s1", 50, "ws_mine")
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            crate::domains::agent::host::shared::config::AgentError::NotFound(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn session_history_with_unscoped_token_reads_persisted_messages() {
+        let pool = test_pool().await;
+        let key = "agent:ws1:agent_main/s1";
+        ensure_session(&pool, key, "ws1", "agent_main").await.unwrap();
+        append_message(&pool, key, "user", "hello", "r1").await.unwrap();
+
+        // Empty authorized_workspace = unscoped (admin) token: no workspace
+        // check, history served straight from the DB.
+        let out = session_history_json(&pool, key, 50, "").await.unwrap();
+        assert!(out.to_string().contains("hello"));
     }
 
     #[tokio::test]
