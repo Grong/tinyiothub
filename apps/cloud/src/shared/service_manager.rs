@@ -201,7 +201,12 @@ impl ServiceManager {
             let thing_agent_manager = {
                 let pool = app_state.database.pool().clone();
                 let policy_repo = Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone()));
+                // runs_repo 仍服务 HeartbeatBridge 的 O11 problem_key dedup 查询；
+                // thing_agent 运行记录自 Task 4 起走内存 RunRegistry + 事件出口
+                // （持久化订阅者 Task 8 接入；接入前零订阅者 emit 为 no-op）。
                 let runs_repo = Arc::new(tinyiothub_storage::agent_runs::AgentRunsRepository::new(pool.clone()));
+                let run_registry = crate::domains::agent::loop_::thing_agent::registry::RunRegistry::new();
+                let agent_events = Arc::new(crate::domains::agent::loop_::events::AgentEventBus::new(256));
                 let manager = Arc::new(crate::domains::agent::loop_::thing_agent::ThingAgentManager::new(
                     Arc::new(crate::domains::agent::host::thing_agent_host::CloudThingAgentHost::new(
                         pool.clone(),
@@ -227,7 +232,8 @@ impl ServiceManager {
                             },
                         ),
                     ),
-                    runs_repo.clone(),
+                    run_registry,
+                    agent_events,
                     Arc::new(crate::domains::agent::loop_::thing_agent::Runner::new()),
                     crate::domains::agent::loop_::thing_agent::ThingAgentManagerConfig::default(),
                 ));

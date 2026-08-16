@@ -8,11 +8,11 @@
 //!                       TimerTrigger ────────────┼─► forward ─► SchedulerHandle ─► run_pipeline
 //!                       DirectiveSink (T14) ─────┘                    │
 //!                                                                     ▼
-//!                                              build_prompt (T10, memory/history from T12 repo)
+//!                                              build_prompt (T10, memory/history from RunRegistry)
 //!                                                                     │
 //!                                              factory.get_or_create (T11) → runner.execute (T9)
 //!                                                                     │
-//!                                              insert_run (T12) → deliver (T13)
+//!                                              registry.record + RunRecorded 事件 (Task 4) → deliver (T13)
 //! WorkspaceDeleted → stop(): abort triggers, drain (O26), drop handle
 //! ```
 //!
@@ -28,9 +28,11 @@ use dashmap::DashMap;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use crate::domains::agent::loop_::events::{AgentEventBus, AgentEventKind};
 use crate::domains::agent::loop_::thing_agent::prompt::build_prompt;
 use crate::domains::agent::loop_::thing_agent::pushback::deliver;
-use crate::domains::agent::loop_::thing_agent::report::AgentRunsRepository;
+use crate::domains::agent::loop_::thing_agent::registry::RunRegistry;
+use crate::domains::agent::loop_::thing_agent::report::format_summary;
 use crate::domains::agent::loop_::thing_agent::runner::{AgentHandle, RunContext, RunContextInner, Runner};
 use crate::domains::agent::loop_::thing_agent::scheduler::{EnqueueError, Scheduler, SchedulerHandle};
 use crate::domains::agent::loop_::thing_agent::traits::{DirectiveSink, ThingAgentHost};
@@ -87,7 +89,10 @@ impl Default for ThingAgentManagerConfig {
 struct PipelineDeps {
     host: Arc<dyn ThingAgentHost>,
     policy_repo: Arc<PolicyRepository>,
-    runs_repo: Arc<AgentRunsRepository>,
+    /// run 记录内存真相源（Task 4；原 T12 runs_repo 的运行时读路径全部由它承接）。
+    registry: RunRegistry,
+    /// 事件出口：RunRecorded 持久化投影由订阅者落库（Task 8）。
+    events: Arc<AgentEventBus>,
     agent_provider: Arc<dyn AutonomousAgentProvider>,
     runner: Arc<Runner>,
 }
@@ -114,7 +119,8 @@ impl ThingAgentManager {
         host: Arc<dyn ThingAgentHost>,
         policy_repo: Arc<PolicyRepository>,
         agent_provider: Arc<dyn AutonomousAgentProvider>,
-        runs_repo: Arc<AgentRunsRepository>,
+        registry: RunRegistry,
+        events: Arc<AgentEventBus>,
         runner: Arc<Runner>,
         config: ThingAgentManagerConfig,
     ) -> Self {
@@ -122,7 +128,8 @@ impl ThingAgentManager {
             deps: PipelineDeps {
                 host,
                 policy_repo,
-                runs_repo,
+                registry,
+                events,
                 agent_provider,
                 runner,
             },
@@ -270,21 +277,21 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
     let run_id = format!("run_{}", uuid::Uuid::new_v4().simple());
     let ctx = RunContext::new(run_id.clone(), ws.clone(), trigger_label(&signal));
 
-    // T10 injection sources (T12 repo). Reads fail soft: a memory/history
-    // outage must not kill the run — the prompt just goes without them.
-    let memory = deps.runs_repo.recent_summaries(&ws, 5).await.unwrap_or_else(|e| {
-        tracing::warn!(workspace_id = %ws, error = %e, "recent_summaries failed — prompt without memory");
-        vec![]
-    });
-    let history = match &signal.dedup_key {
+    // T10 injection sources: 内存 registry（Task 4 替代 T12 repo 读取）。
+    // 内存读无 I/O 失败路径，不再有 fail-soft 降级分支。
+    let memory: Vec<String> = deps
+        .registry
+        .recent(&ws, 5)
+        .iter()
+        .map(|r| format_summary(r.outcome.as_str(), &r.summary))
+        .collect();
+    let history: Vec<String> = match &signal.dedup_key {
         Some(key) => deps
-            .runs_repo
-            .history_by_dedup_key(&ws, key, 3)
-            .await
-            .unwrap_or_else(|e| {
-                tracing::warn!(workspace_id = %ws, error = %e, "history_by_dedup_key failed — prompt without history");
-                vec![]
-            }),
+            .registry
+            .recent_by_dedup(&ws, key, 3)
+            .iter()
+            .map(|r| format_summary(r.outcome.as_str(), &r.summary))
+            .collect(),
         None => vec![],
     };
 
@@ -312,21 +319,22 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
     let outcome = deps.runner.execute(agent, prompt, ctx).await;
     let report = outcome.report;
 
-    // T12 落库失败不阻断回推：结果已经发生，用户仍应收到报告（T13 镜像语义）。
+    // 内存记录（真相源）+ 事件出口（持久化投影）。落库失败不阻断回推语义
+    // 不变（T12）：持久化已移出调用路径，由 Task 8 的 RunRecorded 订阅者落库；
+    // record/emit 均不可失败，回推（T13）永远能读到含当前 run 的窗口。
     // X6：心跳桥投递的指令携带 problem_key（O11 dedup 判定依据）；其余触发
     // 源为 None。
     let problem_key = match &signal.source {
         TriggerSource::UserDirective { problem_key, .. } => problem_key.as_deref(),
         _ => None,
     };
-    if let Err(e) = deps
-        .runs_repo
-        .insert_run(&report, problem_key, signal.dedup_key.as_deref())
-        .await
-    {
-        tracing::error!(workspace_id = %ws, run_id = %run_id, error = %e, "run report persist failed");
-    }
-    deliver(&report, &signal, deps.runs_repo.as_ref(), deps.host.as_ref()).await;
+    deps.registry.record(report.clone());
+    deps.events.emit(AgentEventKind::RunRecorded {
+        report: Box::new(report.clone()),
+        problem_key: problem_key.map(str::to_owned),
+        dedup_key: signal.dedup_key.clone(),
+    });
+    deliver(&report, &signal, &deps.registry, deps.host.as_ref()).await;
 }
 
 #[cfg(test)]
@@ -532,46 +540,52 @@ pub(crate) mod tests {
         pub(crate) dedup_key: Option<String>,
     }
 
-    /// 只读 run 探针（E6b 去 trait 后替代 StubRunsRepo）：直查 agent_runs 表。
-    #[derive(Clone)]
+    /// Run 探针（Task 4 替代原 RunsProbe SQLite 直查，显式 wiring 不用
+    /// Default）：dedup 计数走内存 registry（真相源）；problem_key/dedup_key
+    /// 等持久化投影字段走 RunRecorded 事件流（Task 8 订阅者消费的同一出口）。
+    /// try_recv 惰性排空，无后台任务，读取确定性。
     pub(crate) struct RunsProbe {
-        pool: sqlx::SqlitePool,
+        registry: RunRegistry,
+        rx: Mutex<tokio::sync::broadcast::Receiver<crate::domains::agent::loop_::events::AgentEvent>>,
+        seen: Mutex<Vec<RecordedRun>>,
     }
 
     impl RunsProbe {
-        pub(crate) async fn runs_with_dedup(&self, key: &str) -> usize {
-            let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agent_runs WHERE dedup_key = ?")
-                .bind(key)
-                .fetch_one(&self.pool)
-                .await
-                .expect("count by dedup");
-            n as usize
+        pub(crate) fn runs_with_dedup(&self, key: &str) -> usize {
+            self.registry.count_by_dedup(key)
         }
 
-        pub(crate) async fn all(&self) -> Vec<RecordedRun> {
-            sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>)>(
-                "SELECT id, trigger_context, outcome, problem_key, dedup_key FROM agent_runs ORDER BY created_at",
-            )
-            .fetch_all(&self.pool)
-            .await
-            .expect("list runs")
-            .into_iter()
-            .map(|(id, trigger, outcome, problem_key, dedup_key)| RecordedRun {
-                run_id: id,
-                trigger,
-                outcome: Outcome::from_db(&outcome).expect("known outcome"),
-                problem_key,
-                dedup_key,
-            })
-            .collect()
+        pub(crate) fn all(&self) -> Vec<RecordedRun> {
+            self.drain_events();
+            self.seen.lock().unwrap().clone()
         }
 
-        pub(crate) async fn is_empty(&self) -> bool {
-            self.all().await.is_empty()
+        pub(crate) fn is_empty(&self) -> bool {
+            self.all().is_empty()
         }
 
-        pub(crate) async fn len(&self) -> usize {
-            self.all().await.len()
+        pub(crate) fn len(&self) -> usize {
+            self.all().len()
+        }
+
+        fn drain_events(&self) {
+            let mut rx = self.rx.lock().unwrap();
+            while let Ok(event) = rx.try_recv() {
+                if let AgentEventKind::RunRecorded {
+                    report,
+                    problem_key,
+                    dedup_key,
+                } = event.kind
+                {
+                    self.seen.lock().unwrap().push(RecordedRun {
+                        run_id: report.run_id.clone(),
+                        trigger: report.trigger.clone(),
+                        outcome: report.outcome,
+                        problem_key,
+                        dedup_key,
+                    });
+                }
+            }
         }
     }
 
@@ -584,26 +598,24 @@ pub(crate) mod tests {
 
     /// Manager with all-stub deps and a 24h timer interval (the timer's
     /// immediate first tick still parks one signal in a merge window;
-    /// assertions filter by dedup_key).
+    /// assertions filter by dedup_key). Task 4：run 记录走内存 registry +
+    /// 事件总线，探针订阅同一总线（先 subscribe 再 start，不丢事件）。
     pub(crate) async fn stub_manager() -> StubManagerParts {
         let host = Arc::new(StubHost::new());
-        let runs_pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .acquire_timeout(std::time::Duration::from_secs(86400 * 365))
-            .connect(":memory:")
-            .await
-            .expect("runs pool");
-        tinyiothub_storage::test_helpers::run_all_migrations(&runs_pool)
-            .await
-            .expect("runs migrations");
-        let runs_repo = Arc::new(AgentRunsRepository::new(runs_pool.clone()));
-        let runs = RunsProbe { pool: runs_pool };
+        let registry = RunRegistry::new();
+        let events = Arc::new(AgentEventBus::new(64));
+        let runs = RunsProbe {
+            registry: registry.clone(),
+            rx: Mutex::new(events.subscribe()),
+            seen: Mutex::new(vec![]),
+        };
         let agents = Arc::new(StubAgentProvider::new());
         let manager = Arc::new(ThingAgentManager::new(
             host.clone(),
             real_policy_repo(WS).await,
             agents.clone(),
-            runs_repo.clone(),
+            registry,
+            events,
             Arc::new(Runner::new()),
             ThingAgentManagerConfig {
                 timer_interval: Duration::from_secs(24 * 3600),
@@ -658,20 +670,6 @@ pub(crate) mod tests {
         panic!("timed out waiting for {what}");
     }
 
-    async fn wait_until_async<F, Fut>(mut cond: F, what: &str)
-    where
-        F: FnMut() -> Fut,
-        Fut: std::future::Future<Output = bool>,
-    {
-        for _ in 0..20_000 {
-            if cond().await {
-                return;
-            }
-            tokio::task::yield_now().await;
-        }
-        panic!("timed out waiting for {what}");
-    }
-
     /// Let the trigger→forward→merger chain pick up freshly sent events.
     async fn settle() {
         for _ in 0..10 {
@@ -692,13 +690,12 @@ pub(crate) mod tests {
 
         parts.host.tx.send(event(1, 5, "device")).expect("send critical event");
 
-        wait_until_async(
-            || async { parts.runs.runs_with_dedup(EVENT_KEY).await == 1 },
+        wait_until(|| parts.runs.runs_with_dedup(EVENT_KEY) == 1,
             "run persisted",
         )
         .await;
 
-        let runs = parts.runs.all().await;
+        let runs = parts.runs.all();
         let run = runs.iter().find(|r| r.dedup_key.as_deref() == Some(EVENT_KEY)).unwrap();
         assert_eq!(run.trigger, EVENT_KEY, "trigger label must be the event dedup key");
         // Scripted LLM replies plain text without tool calls → no actions.
@@ -738,8 +735,7 @@ pub(crate) mod tests {
         }
 
         tokio::time::advance(Duration::from_secs(30)).await;
-        wait_until_async(
-            || async { parts.runs.runs_with_dedup(EVENT_KEY).await == 1 },
+        wait_until(|| parts.runs.runs_with_dedup(EVENT_KEY) == 1,
             "merged run",
         )
         .await;
@@ -747,7 +743,7 @@ pub(crate) mod tests {
         tokio::time::advance(Duration::from_secs(60)).await;
         settle().await;
         assert_eq!(
-            parts.runs.runs_with_dedup(EVENT_KEY).await,
+            parts.runs.runs_with_dedup(EVENT_KEY),
             1,
             "5 events in one window must collapse into exactly 1 run"
         );
@@ -769,13 +765,12 @@ pub(crate) mod tests {
         settle().await;
         // No time advance: any wake would have run by now (critical bypasses
         // the merge window); the timer's first tick is parked unflushed.
-        assert_eq!(parts.runs.len().await, 0, "agent-actor event must not wake");
+        assert_eq!(parts.runs.len(), 0, "agent-actor event must not wake");
 
         // A device-actor event at the same level DOES wake — the block above
         // was the actor filter, not a dead loop.
         parts.host.tx.send(event(2, 5, "device")).expect("send device event");
-        wait_until_async(
-            || async { parts.runs.runs_with_dedup(EVENT_KEY).await == 1 },
+        wait_until(|| parts.runs.runs_with_dedup(EVENT_KEY) == 1,
             "device event wakes",
         )
         .await;
@@ -792,14 +787,13 @@ pub(crate) mod tests {
         wait_subscribed(&parts.host).await;
 
         parts.host.tx.send(event(1, 5, "device")).expect("send event");
-        wait_until_async(
-            || async { parts.runs.runs_with_dedup(EVENT_KEY).await == 1 },
+        wait_until(|| parts.runs.runs_with_dedup(EVENT_KEY) == 1,
             "single run",
         )
         .await;
         settle().await;
         assert_eq!(
-            parts.runs.runs_with_dedup(EVENT_KEY).await,
+            parts.runs.runs_with_dedup(EVENT_KEY),
             1,
             "duplicate start must not double runs"
         );
@@ -819,7 +813,7 @@ pub(crate) mod tests {
         // Broadcast with zero receivers errors — the loop is gone, as intended.
         let _ = parts.host.tx.send(event(1, 5, "device"));
         settle().await;
-        assert!(parts.runs.is_empty().await, "stopped loop must not run");
+        assert!(parts.runs.is_empty(), "stopped loop must not run");
 
         // Stop is idempotent.
         parts.manager.stop(WS).await;
@@ -866,7 +860,7 @@ pub(crate) mod tests {
         tokio::time::advance(Duration::from_secs(60)).await;
         settle().await;
         assert_eq!(
-            parts.runs.runs_with_dedup(EVENT_KEY).await,
+            parts.runs.runs_with_dedup(EVENT_KEY),
             0,
             "drained pending signal must not run"
         );
@@ -899,7 +893,7 @@ pub(crate) mod tests {
         assert_eq!(pushes[0].0, "agent:ws_01:a/s1");
         assert!(pushes[0].1.contains("done"), "assistant message carries the summary");
 
-        let runs = parts.runs.all().await;
+        let runs = parts.runs.all();
         let run = runs
             .iter()
             .find(|r| r.trigger == "user:u1")
@@ -946,8 +940,8 @@ pub(crate) mod tests {
         })
         .expect("heartbeat directive accepted");
 
-        wait_until_async(|| async { !parts.runs.is_empty().await }, "run persisted").await;
-        let runs = parts.runs.all().await;
+        wait_until(|| !parts.runs.is_empty(), "run persisted").await;
+        let runs = parts.runs.all();
         let run = runs
             .iter()
             .find(|r| r.problem_key.as_deref() == Some("set_hvac:dev-1"))

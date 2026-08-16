@@ -390,11 +390,41 @@ async fn build_fixture(
         },
     ));
 
+    // Task 4：run 记录走内存 RunRegistry + RunRecorded 事件出口。这里挂一个
+    // Task 8 持久化订阅者的测试替身（显式 wiring，先 subscribe 再 start），
+    // 让本文件既有 agent_runs 表断言继续覆盖持久化投影。
+    let run_registry = crate::domains::agent::loop_::thing_agent::registry::RunRegistry::new();
+    let agent_events = Arc::new(crate::domains::agent::loop_::events::AgentEventBus::new(256));
+    {
+        let repo = tinyiothub_storage::agent_runs::AgentRunsRepository::new(pool.clone());
+        let mut rx = agent_events.subscribe();
+        tokio::spawn(async move {
+            use crate::domains::agent::loop_::events::AgentEventKind;
+            while let Ok(event) = rx.recv().await {
+                let AgentEventKind::RunRecorded {
+                    report,
+                    problem_key,
+                    dedup_key,
+                } = event.kind
+                else {
+                    continue;
+                };
+                if let Err(e) = repo
+                    .insert_run(&report, problem_key.as_deref(), dedup_key.as_deref())
+                    .await
+                {
+                    tracing::warn!(error = %e, "test persistence subscriber failed");
+                }
+            }
+        });
+    }
+
     let manager = Arc::new(ThingAgentManager::new(
         Arc::new(CloudThingAgentHost::new(pool.clone(), bus.clone())),
         policy_repo.clone(),
         factory.clone(),
-        Arc::new(tinyiothub_storage::agent_runs::AgentRunsRepository::new(pool.clone())),
+        run_registry,
+        agent_events,
         runner,
         ThingAgentManagerConfig {
             // 定时巡检不干扰断言（首 tick 停在合并窗口；按 dedup_key 过滤）。
@@ -714,18 +744,18 @@ async fn user_directive_runs_and_pushes_assistant_message() {
     assert_eq!(err, Err(EnqueueError::Closed));
 }
 
-// ── 4. X5 (T17 review Minor 2): 真实 SqliteAgentRunsRepository + 真实
-//    内存库 → 连续 3 次策略拒绝 → deliver 告警携带 policy_relax_hint ──────
+// ── 4. X5 (T17 review Minor 2)：RunRegistry 窗口（Task 4 内存真源）+ 真实
+//    CloudThingAgentHost → 连续 3 次策略拒绝 → deliver 告警携带 policy_relax_hint ──────
 
 #[tokio::test]
-async fn policy_denial_streak_triggers_relax_hint_with_real_repo() {
+async fn policy_denial_streak_triggers_relax_hint_with_registry() {
     use crate::domains::agent::loop_::thing_agent::{
         ActionRecord, ActionResult, Outcome, Priority, RunReport, pushback,
     };
 
     let (pool, _dir) = test_pool("loop_relax_hint").await;
     seed_test_workspace(&pool, "tenant-1", WS).await;
-    let repo = tinyiothub_storage::agent_runs::AgentRunsRepository::new(pool.clone());
+    let registry = crate::domains::agent::loop_::thing_agent::registry::RunRegistry::new();
     let host = CloudThingAgentHost::new(pool.clone(), Arc::new(ThingEventBus::new()));
 
     let denied_report = |run_id: &str| RunReport {
@@ -747,12 +777,9 @@ async fn policy_denial_streak_triggers_relax_hint_with_real_repo() {
         tokens: 500,
     };
 
-    // 当前 run 在 alert 之前已落库 → recent_runs_by_dedup_key 第一条即当前 run。
-    for id in ["run_1", "run_2", "run_3"] {
-        repo.insert_run(&denied_report(id), None, Some(EVENT_KEY))
-            .await
-            .expect("insert run");
-    }
+    // 当前 run 在 alert 之前已 record → recent_by_dedup 窗口第一条即当前 run。
+    // （denied_report 的 trigger 即 dedup key，与 manager trigger_label 对齐。）
+    registry.prewarm(vec![denied_report("run_1"), denied_report("run_2"), denied_report("run_3")]);
 
     let signal = WakeSignal {
         workspace_id: WS.to_string(),
@@ -767,7 +794,7 @@ async fn policy_denial_streak_triggers_relax_hint_with_real_repo() {
         dedup_key: Some(EVENT_KEY.to_string()),
     };
 
-    pushback::deliver(&denied_report("run_3"), &signal, &repo, &host).await;
+    pushback::deliver(&denied_report("run_3"), &signal, &registry, &host).await;
 
     // run_rejected 告警落 events 表，payload 携带 policy_relax_hint。
     let content: String = sqlx::query_scalar(

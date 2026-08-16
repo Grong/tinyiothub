@@ -3,6 +3,7 @@
 pub mod manager;
 pub mod prompt;
 pub mod pushback;
+pub mod registry;
 pub mod report;
 pub mod runner;
 pub mod scheduler;

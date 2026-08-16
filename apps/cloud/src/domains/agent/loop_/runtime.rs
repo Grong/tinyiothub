@@ -5,11 +5,12 @@
 //! 先 `subscribe()` 再 `restore()`，保证持久化订阅者不丢事件。
 //!
 //! 过渡说明（Task 5 完成内存态切换前）：
-//! - 快照各段暂由门面持有（`HeartbeatRunner` 尚无预热注入 API，不为此改写
-//!   runner 内部），命令方法临时委托到 repo 支撑的现有路径；
-//! - `active_runs()` 在 Task 4 RunRegistry 落地前返回空 Vec。
+//! - 快照 heartbeat 段暂由门面持有（`HeartbeatRunner` 尚无预热注入 API，不为此
+//!   改写 runner 内部），命令方法临时委托到 repo 支撑的现有路径；
+//! - recent_runs 段自 Task 4 起由 `RunRegistry` 承接（restore 预热、
+//!   dump_state/active_runs 读内存真源）。
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use dashmap::DashMap;
 use tokio::sync::broadcast;
@@ -31,6 +32,7 @@ use super::orchestrator::Orchestrator;
 use super::orchestrator::callbacks::HeartbeatBridge;
 use super::snapshot::{RestoreSnapshot, WorkspaceHeartbeatState};
 use super::thing_agent::manager::{AutonomousAgentProvider, ThingAgentManager, ThingAgentManagerConfig};
+use super::thing_agent::registry::RunRegistry;
 use super::thing_agent::report::AgentRunsRepository;
 use super::thing_agent::runner::Runner;
 use super::thing_agent::traits::ThingAgentHost;
@@ -67,8 +69,9 @@ pub struct AgentRuntime {
     /// 心跳快照段（过渡：Task 5 前 runner 无预热注入 API，由门面代持；
     /// 命令方法同步更新此状态，dump_state 由此导出）。
     heartbeat_states: DashMap<String, WorkspaceHeartbeatState>,
-    /// recent_runs 快照段（过渡：Task 4 RunRegistry 落地前由门面代持）。
-    recent_runs: RwLock<Vec<RunReport>>,
+    /// run 记录内存真相源（Task 4 RunRegistry）：restore 时由快照预热，
+    /// 与 ThingAgentManager 共享同一实例；dump_state/active_runs 由此导出。
+    run_registry: RunRegistry,
 }
 
 impl AgentRuntime {
@@ -76,6 +79,8 @@ impl AgentRuntime {
     /// 只做构造，不启动任何 loop —— 启动顺序由 Task 11 编排。
     pub fn restore(snapshot: RestoreSnapshot, deps: RuntimeDeps) -> Self {
         let events = Arc::new(AgentEventBus::new(deps.agent_event_capacity));
+        let run_registry = RunRegistry::new();
+        run_registry.prewarm(snapshot.recent_runs);
         let heartbeat = Arc::new(HeartbeatRunner::new(
             deps.heartbeat_task_repo.clone(),
             deps.event_publisher,
@@ -85,7 +90,8 @@ impl AgentRuntime {
             deps.thing_agent_host,
             deps.policy_repo,
             deps.agent_provider,
-            deps.runs_repo.clone(),
+            run_registry.clone(),
+            events.clone(),
             Arc::new(Runner::new()),
             deps.thing_agent_config,
         ));
@@ -112,7 +118,7 @@ impl AgentRuntime {
             orchestrator,
             events,
             heartbeat_states,
-            recent_runs: RwLock::new(snapshot.recent_runs),
+            run_registry,
         }
     }
 
@@ -122,13 +128,16 @@ impl AgentRuntime {
     }
 
     /// 导出当前状态快照（Lagged resync + 周期对账出口）。
-    /// 过渡语义：尚未注入 runner/manager 的段返回 restore() 传入并经命令
-    /// 更新后的值（Task 5 完成注入后改为读内存态真源）。
+    /// 过渡语义：heartbeat 段尚未注入 runner，返回 restore() 传入并经命令
+    /// 更新后的值（Task 5 完成注入后改为读内存态真源）；recent_runs 段
+    /// 自 Task 4 起读 RunRegistry 内存真源。
     pub fn dump_state(&self) -> RestoreSnapshot {
         let mut heartbeat: Vec<_> = self.heartbeat_states.iter().map(|r| r.value().clone()).collect();
         // 排序保证导出确定性（DashMap 迭代序不稳定），便于对账 diff。
         heartbeat.sort_by(|a, b| a.workspace_id.cmp(&b.workspace_id));
-        let recent_runs = self.recent_runs.read().unwrap().clone();
+        let mut recent_runs = self.run_registry.active();
+        // 同理排序（RunReport 无时间戳，run_id 字典序保证确定性）。
+        recent_runs.sort_by(|a, b| a.run_id.cmp(&b.run_id));
         RestoreSnapshot { heartbeat, recent_runs }
     }
 
@@ -185,9 +194,9 @@ impl AgentRuntime {
         self.heartbeat.notify_tasks_changed(workspace_id);
     }
 
-    /// 实时读 API（D13）。过渡实现：Task 4 RunRegistry 落地前返回空 Vec。
+    /// 实时读 API（D13）：读 RunRegistry 窗口（Task 4 起为内存真源）。
     pub fn active_runs(&self) -> Vec<RunReport> {
-        Vec::new()
+        self.run_registry.active()
     }
 
     /// 工作区心跳任务（Task 5 测试断言用；过渡：读门面持有的快照段）。
@@ -406,9 +415,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn active_runs_empty_until_run_registry_lands() {
-        // 过渡语义（Task 4 RunRegistry 落地前）：实时读恒为空。
-        let rt = AgentRuntime::restore(snapshot_with_ws1(), RuntimeDeps::test_stub());
-        assert!(rt.active_runs().is_empty());
+    async fn active_runs_and_dump_read_prewarmed_registry() {
+        // Task 4：restore 用 snapshot.recent_runs 预热 RunRegistry；
+        // active_runs（D13）与 dump_state 均读内存真源。
+        let mut snap = snapshot_with_ws1();
+        snap.recent_runs = vec![tinyiothub_core::agent_runs::RunReport {
+            run_id: "run_1".into(),
+            workspace_id: "ws1".into(),
+            trigger: "timer:ws1".into(),
+            outcome: tinyiothub_core::agent_runs::Outcome::NoActionNeeded,
+            summary: "巡检正常".into(),
+            actions: vec![],
+            verified: true,
+            duration_ms: 10,
+            tool_calls: 0,
+            tokens: 0,
+        }];
+        let rt = AgentRuntime::restore(snap, RuntimeDeps::test_stub());
+
+        let active = rt.active_runs();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].run_id, "run_1");
+
+        let dumped = rt.dump_state();
+        assert_eq!(dumped.recent_runs.len(), 1);
+        assert_eq!(dumped.recent_runs[0].run_id, "run_1");
     }
 }

@@ -10,7 +10,7 @@
 //! 4. Critical 事件连续 3 次因策略被拒 → 拒绝告警 payload 附加 `policy_relax_hint` （X5
 //!    hint-only）。
 
-use super::report::AgentRunsRepository;
+use super::registry::RunRegistry;
 use super::traits::ThingAgentHost;
 use super::types::{Priority, TriggerSource, WakeSignal};
 use tinyiothub_core::agent_runs::{ActionResult, Outcome, RunReport};
@@ -18,14 +18,15 @@ use tinyiothub_core::agent_runs::{ActionResult, Outcome, RunReport};
 /// 连续 N 次策略拒绝才触发 X5 hint。
 const POLICY_DENIAL_STREAK: usize = 3;
 /// 查询最近 N 条同 dedup_key run 即够用。
-const POLICY_DENIAL_LOOKBACK: u32 = POLICY_DENIAL_STREAK as u32;
+const POLICY_DENIAL_LOOKBACK: usize = POLICY_DENIAL_STREAK;
 
 /// Run 完成后把报告投递出去。host 调用失败只记录日志，不向上传播
-/// （回推失败不应弄丢已落库的 run）。
+/// （回推失败不应弄丢已记录的 run）。`registry` 是 run 记录的内存真相源
+/// （Task 4 RunRegistry；持久化投影由 Task 8 事件订阅者负责）。
 pub async fn deliver(
     report: &RunReport,
     signal: &WakeSignal,
-    runs_repo: &AgentRunsRepository,
+    registry: &RunRegistry,
     host: &dyn ThingAgentHost,
 ) {
     let content = format_report_message(report);
@@ -63,7 +64,7 @@ pub async fn deliver(
             payload["checklist"] = serde_json::Value::String(build_handoff_checklist(report));
         }
         if report.outcome == Outcome::Rejected
-            && let Some(hint) = policy_relax_hint(report, signal, runs_repo).await
+            && let Some(hint) = policy_relax_hint(report, signal, registry)
         {
             match serde_json::to_value(&hint) {
                 Ok(v) => payload["policy_relax_hint"] = v,
@@ -108,11 +109,12 @@ struct PolicyRelaxHint<'a> {
 }
 
 /// Critical 事件、当前 run 因策略被拒、且同 dedup_key 最近连续 3 条 run
-/// 都因策略被拒时，返回 hint；否则 None。
-async fn policy_relax_hint<'a>(
+/// 都因策略被拒时，返回 hint；否则 None。内存窗口查询（registry.rs 模块
+/// 文档：3 条回看即足够），无 I/O 失败路径。
+fn policy_relax_hint<'a>(
     report: &'a RunReport,
     signal: &'a WakeSignal,
-    runs_repo: &AgentRunsRepository,
+    registry: &RunRegistry,
 ) -> Option<PolicyRelaxHint<'a>> {
     // 仅 Critical 事件触发；用户指令/定时器/普通事件无此升级。
     if signal.priority != Priority::Critical {
@@ -122,21 +124,9 @@ async fn policy_relax_hint<'a>(
     // 当前 run 自身必须是一条策略拒绝，否则不构成"连续"的一部分。
     let (action_name, _) = policy_deny_info(report)?;
 
-    let recent = match runs_repo
-        .recent_runs_by_dedup_key(&report.workspace_id, key, POLICY_DENIAL_LOOKBACK)
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                run_id = %report.run_id,
-                dedup_key = %key,
-                "recent_runs_by_dedup_key failed — skip policy_relax_hint"
-            );
-            return None;
-        }
-    };
+    // 当前 run 在 alert 之前已 record（manager 先 record 再 deliver），
+    // 窗口第一条即当前 run。
+    let recent = registry.recent_by_dedup(&report.workspace_id, key, POLICY_DENIAL_LOOKBACK);
 
     if !last_n_are_consecutive_policy_denials(&recent, POLICY_DENIAL_STREAK) {
         return None;
@@ -307,7 +297,6 @@ fn user_session_key(signal: &WakeSignal) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domains::agent::loop_::thing_agent::report::AgentRunsRepository;
     use crate::domains::agent::loop_::thing_agent::traits::ThingEventSignal;
     use crate::domains::agent::loop_::thing_agent::types::{ActionRecord, Priority};
     use std::sync::Mutex;
@@ -348,23 +337,14 @@ mod tests {
         }
     }
 
-    /// 真实 SQLite 版 runs repo（E6b 去 trait 后替代 StubRunsRepo）；
-    /// 以 trigger 串作 dedup_key 逐条落库（与原 stub 的语义对齐）。
-    async fn real_runs_with(reports: Vec<RunReport>) -> AgentRunsRepository {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
-            .await
-            .expect("in-memory sqlite");
-        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
-            .await
-            .expect("migrations");
-        let repo = AgentRunsRepository::new(pool);
-        for r in &reports {
-            let dedup = r.trigger.clone();
-            repo.insert_run(r, None, Some(&dedup)).await.expect("seed run");
-        }
-        repo
+    /// 内存 registry 夹具（Task 4 替代原 real_runs_with SQLite 夹具）。
+    /// 以 trigger 串作 dedup_key 逐条 record（rejected_run 的 trigger 即
+    /// dedup key，与原 `insert_run(r, None, Some(r.trigger))` 语义对齐）。
+    /// 显式 wiring：record 顺序 = 时间旧→新（prewarm 语义）。
+    fn registry_with(reports: Vec<RunReport>) -> RunRegistry {
+        let reg = RunRegistry::new();
+        reg.prewarm(reports);
+        reg
     }
 
     fn report(outcome: Outcome, verified: bool, actions: Vec<ActionRecord>) -> RunReport {
@@ -473,7 +453,7 @@ mod tests {
     #[tokio::test]
     async fn user_directive_with_session_pushes_assistant_message() {
         let host = StubHost::default();
-        let runs = real_runs_with(vec![]).await;
+        let runs = registry_with(vec![]);
         let r = report(Outcome::Acted, true, vec![ok_action()]);
         deliver(&r, &user_signal(Some("agent:ws_1:a/s1")), &runs, &host).await;
 
@@ -494,7 +474,7 @@ mod tests {
             admin_session: Some("agent:ws_1:a/admin".to_string()),
             ..Default::default()
         };
-        let runs = real_runs_with(vec![]).await;
+        let runs = registry_with(vec![]);
         let r = report(Outcome::Acted, true, vec![ok_action()]);
         deliver(&r, &event_signal(Priority::Normal), &runs, &host).await;
 
@@ -508,7 +488,7 @@ mod tests {
     #[tokio::test]
     async fn no_active_session_falls_back_to_alert_without_panic() {
         let host = StubHost::default(); // admin_session = None
-        let runs = real_runs_with(vec![]).await;
+        let runs = registry_with(vec![]);
         let r = report(Outcome::NoActionNeeded, true, vec![]);
         deliver(&r, &event_signal(Priority::Normal), &runs, &host).await;
 
@@ -523,7 +503,7 @@ mod tests {
     #[tokio::test]
     async fn failed_outcome_sends_additional_alert_with_checklist() {
         let host = StubHost::default();
-        let runs = real_runs_with(vec![]).await;
+        let runs = registry_with(vec![]);
         let r = report(
             Outcome::Failed,
             false,
@@ -557,7 +537,7 @@ mod tests {
             (Outcome::BudgetExceeded, "run_budget_exceeded"),
         ] {
             let host = StubHost::default();
-            let runs = real_runs_with(vec![]).await;
+            let runs = registry_with(vec![]);
             let r = report(outcome, false, vec![]);
             deliver(&r, &user_signal(Some("agent:ws_1:a/s1")), &runs, &host).await;
 
@@ -575,7 +555,7 @@ mod tests {
     #[tokio::test]
     async fn merged_signal_finds_nested_user_session() {
         let host = StubHost::default();
-        let runs = real_runs_with(vec![]).await;
+        let runs = registry_with(vec![]);
         let merged = WakeSignal {
             workspace_id: "ws_1".to_string(),
             priority: Priority::Normal,
@@ -596,13 +576,12 @@ mod tests {
     #[tokio::test]
     async fn three_consecutive_policy_denials_trigger_relax_hint() {
         let host = StubHost::default();
-        let runs = real_runs_with(vec![
+        let runs = registry_with(vec![
             rejected_run("run_3", "reboot", "action_not_allowed"),
             rejected_run("run_2", "reboot", "action_not_allowed"),
             // 当前 run（第 3 次）在 alert 之前已落库，所以查询结果第一条就是当前 run。
             rejected_run("run_1", "reboot", "action_not_allowed"),
-        ])
-        .await;
+        ]);
         let r = rejected_run("run_3", "reboot", "action_not_allowed");
         deliver(&r, &event_signal(Priority::Critical), &runs, &host).await;
 
@@ -622,11 +601,10 @@ mod tests {
     #[tokio::test]
     async fn two_consecutive_denials_do_not_trigger_relax_hint() {
         let host = StubHost::default();
-        let runs = real_runs_with(vec![
+        let runs = registry_with(vec![
             rejected_run("run_2", "reboot", "action_not_allowed"),
             rejected_run("run_1", "reboot", "action_not_allowed"),
-        ])
-        .await;
+        ]);
         let r = rejected_run("run_2", "reboot", "action_not_allowed");
         deliver(&r, &event_signal(Priority::Critical), &runs, &host).await;
 
@@ -644,12 +622,11 @@ mod tests {
     #[tokio::test]
     async fn non_critical_event_does_not_trigger_relax_hint() {
         let host = StubHost::default();
-        let runs = real_runs_with(vec![
+        let runs = registry_with(vec![
             rejected_run("run_3", "reboot", "action_not_allowed"),
             rejected_run("run_2", "reboot", "action_not_allowed"),
             rejected_run("run_1", "reboot", "action_not_allowed"),
-        ])
-        .await;
+        ]);
         let r = rejected_run("run_3", "reboot", "action_not_allowed");
         deliver(&r, &event_signal(Priority::Normal), &runs, &host).await;
 
@@ -689,7 +666,7 @@ mod tests {
             ..rejected_run(run_id, "reboot", "action_not_allowed")
         };
         let host = StubHost::default();
-        let runs = real_runs_with(vec![run("run_3"), run("run_2"), run("run_1")]).await;
+        let runs = registry_with(vec![run("run_3"), run("run_2"), run("run_1")]);
         deliver(&run("run_3"), &event_signal(Priority::Critical), &runs, &host).await;
 
         let alerts = host.alerts.lock().unwrap();
@@ -705,12 +682,11 @@ mod tests {
     #[tokio::test]
     async fn hourly_fuse_reason_does_not_trigger_relax_hint() {
         let host = StubHost::default();
-        let runs = real_runs_with(vec![
+        let runs = registry_with(vec![
             rejected_run("run_3", "reboot", "action_not_allowed"),
             rejected_run("run_2", "reboot", "action_not_allowed"),
             rejected_run("run_1", "reboot", "hourly_fuse"),
-        ])
-        .await;
+        ]);
         let r = rejected_run("run_3", "reboot", "action_not_allowed");
         deliver(&r, &event_signal(Priority::Critical), &runs, &host).await;
 
@@ -728,15 +704,14 @@ mod tests {
     #[tokio::test]
     async fn mixed_streak_breaks_relax_hint() {
         let host = StubHost::default();
-        let runs = real_runs_with(vec![
+        let runs = registry_with(vec![
             rejected_run("run_3", "reboot", "action_not_allowed"),
             rejected_run("run_2", "reboot", "action_not_allowed"),
             RunReport {
                 outcome: Outcome::Acted,
                 ..rejected_run("run_1", "reboot", "action_not_allowed")
             },
-        ])
-        .await;
+        ]);
         let r = rejected_run("run_3", "reboot", "action_not_allowed");
         deliver(&r, &event_signal(Priority::Critical), &runs, &host).await;
 
