@@ -206,10 +206,11 @@ pub async fn ack_run(
     let repo = AgentRunsRepository::new(state.database.pool().clone());
     match repo.ack_run(&run_id, &claims.user_id).await {
         Ok(first_ack) => {
-            // O11 ack 抑制内存真源同步（Task 6）：DB ack 成功后标记该 run 的
-            // problem_key，心跳桥 7d 内不再为同一问题投递 directive。
+            // O11 ack 抑制内存真源同步（Task 6，fix round 1 行级保真）：DB
+            // ack 成功后按 run_id 标记对应 run 条目，心跳桥 7d 内仅当窗口内
+            // 最新 run 已 ack 时抑制投递。
             if let (Some(pk), Some(orchestrator)) = (&problem_key, state.orchestrator.as_ref()) {
-                orchestrator.mark_problem_acked(&workspace_id, pk);
+                orchestrator.mark_problem_acked(&workspace_id, pk, &run_id);
             }
             // 幂等：重复确认仍 200，firstAck=false 表示本次未改状态
             ApiResponseBuilder::success(serde_json::json!({

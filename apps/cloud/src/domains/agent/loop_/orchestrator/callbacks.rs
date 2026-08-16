@@ -13,7 +13,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use chrono::Utc;
 use tinyiothub_core::models::event::{ContentElement, Event, EventType, RichContent};
 use tracing::{debug, info, warn};
 
@@ -64,10 +63,11 @@ impl HeartbeatBridge {
         )
     }
 
-    /// O11 ack 抑制入口（Task 6）：cloud 侧 ack 端点 DB 写成功后经
-    /// Orchestrator 转发至此，标记内存 dedup 真源。
-    pub fn mark_problem_acked(&self, workspace_id: &str, problem_key: &str) {
-        self.registry.mark_problem_acked(workspace_id, problem_key, Utc::now());
+    /// O11 ack 抑制入口（Task 6，fix round 1 行级保真）：cloud 侧 ack 端点
+    /// DB 写成功后经 Orchestrator 转发至此，按 run_id 标记内存 dedup 真源中
+    /// 对应 run 条目。
+    pub fn mark_problem_acked(&self, workspace_id: &str, problem_key: &str, run_id: &str) {
+        self.registry.mark_problem_acked(workspace_id, problem_key, run_id);
     }
 
     /// 对心跳报告中的每个 proposal 做 O11 dedup，通过则投递心跳 directive。
@@ -189,9 +189,9 @@ impl AiEventHandler {
     }
 
     /// O11 ack 抑制转发（Task 6）：无桥（None）时 no-op。
-    pub fn mark_problem_acked(&self, workspace_id: &str, problem_key: &str) {
+    pub fn mark_problem_acked(&self, workspace_id: &str, problem_key: &str, run_id: &str) {
         if let Some(bridge) = &self.heartbeat_bridge {
-            bridge.mark_problem_acked(workspace_id, problem_key);
+            bridge.mark_problem_acked(workspace_id, problem_key, run_id);
         }
     }
 
@@ -572,18 +572,20 @@ pub(crate) mod tests {
         use super::*;
         use crate::domains::agent::loop_::thing_agent::scheduler::{EnqueueError, Scheduler};
         use crate::domains::agent::loop_::thing_agent::traits::DirectiveSink;
+        use chrono::Utc;
         use std::sync::Mutex;
         use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 
         /// 内存 dedup 真源夹具（Task 6 替代 SQLite runs repo）：元组
-        /// (outcome, verified, age_hours) 逐条写入，problem_key 固定为
-        /// 桥接测试的 "set_hvac:dev-1"。
+        /// (outcome, verified, age_hours) 逐条写入（run_id 为 run_{i}），
+        /// problem_key 固定为桥接测试的 "set_hvac:dev-1"。
         fn registry_with(runs: &[(Outcome, bool, u32)]) -> RunRegistry {
             let reg = RunRegistry::new();
-            for (outcome, verified, age_hours) in runs {
+            for (i, (outcome, verified, age_hours)) in runs.iter().enumerate() {
                 reg.record_problem_run(
                     "ws_1",
                     "set_hvac:dev-1",
+                    &format!("run_{i}"),
                     *outcome,
                     *verified,
                     Utc::now() - chrono::Duration::hours(i64::from(*age_hours)),
@@ -731,9 +733,9 @@ pub(crate) mod tests {
 
         #[tokio::test]
         async fn ack_suppresses_for_7_days() {
-            // ack 抑制：6h 窗口内 acked（ack 不早于最新 run）→ 跳过。
+            // ack 抑制（行级，fix round 1）：6h 窗口内最新 run 被 ack → 跳过。
             let reg = registry_with(&[(Outcome::Acted, true, 1)]);
-            reg.mark_problem_acked("ws_1", "set_hvac:dev-1", Utc::now());
+            reg.mark_problem_acked("ws_1", "set_hvac:dev-1", "run_0");
             let (b, sink) = bridge(reg);
             b.dispatch_proposals("ws_1", &result_with(vec![proposal("set_hvac", Some("dev-1"))]))
                 .await;
@@ -741,7 +743,7 @@ pub(crate) mod tests {
 
             // 6h 窗口外、7 天内 acked（72h）→ 仍跳过（复发在 ack 抑制期内）。
             let reg = registry_with(&[(Outcome::Acted, true, 72)]);
-            reg.mark_problem_acked("ws_1", "set_hvac:dev-1", Utc::now() - chrono::Duration::hours(71));
+            reg.mark_problem_acked("ws_1", "set_hvac:dev-1", "run_0");
             let (b, sink) = bridge(reg);
             b.dispatch_proposals("ws_1", &result_with(vec![proposal("set_hvac", Some("dev-1"))]))
                 .await;
@@ -749,7 +751,7 @@ pub(crate) mod tests {
 
             // ack 超 7 天（192h）→ 抑制过期，放行。
             let reg = registry_with(&[(Outcome::Acted, true, 192)]);
-            reg.mark_problem_acked("ws_1", "set_hvac:dev-1", Utc::now() - chrono::Duration::hours(191));
+            reg.mark_problem_acked("ws_1", "set_hvac:dev-1", "run_0");
             let (b, sink) = bridge(reg);
             b.dispatch_proposals("ws_1", &result_with(vec![proposal("set_hvac", Some("dev-1"))]))
                 .await;
@@ -757,6 +759,36 @@ pub(crate) mod tests {
                 sink.signals.lock().unwrap().len(),
                 1,
                 "ack older than 7d no longer suppresses"
+            );
+        }
+
+        // 行级保真回归（fix round 1 审查反例）：旧模型把 ack 塌缩为
+        // last_acked_at，ack 旧 run 会误抑制更新的未 ack run。场景：
+        // run_0 在 7d 窗内但 6h 窗外（100h，acted+verified），run_1 在 6h
+        // 窗内（1h，acted+未 verified，窗口内仅此 1 条——计数分支放行）。
+        #[tokio::test]
+        async fn ack_of_older_run_does_not_suppress_newer_unacked_run() {
+            // ack 旧 run_0：最新 run_1 未 ack → 必须放行（DB 语义）。
+            let reg = registry_with(&[(Outcome::Acted, true, 100), (Outcome::Acted, false, 1)]);
+            reg.mark_problem_acked("ws_1", "set_hvac:dev-1", "run_0");
+            let (b, sink) = bridge(reg);
+            b.dispatch_proposals("ws_1", &result_with(vec![proposal("set_hvac", Some("dev-1"))]))
+                .await;
+            assert_eq!(
+                sink.signals.lock().unwrap().len(),
+                1,
+                "ack 旧 run 不得抑制更新的未 ack run（行级保真）"
+            );
+
+            // 对照：ack 最新 run_1 → ack 分支抑制。
+            let reg = registry_with(&[(Outcome::Acted, true, 100), (Outcome::Acted, false, 1)]);
+            reg.mark_problem_acked("ws_1", "set_hvac:dev-1", "run_1");
+            let (b, sink) = bridge(reg);
+            b.dispatch_proposals("ws_1", &result_with(vec![proposal("set_hvac", Some("dev-1"))]))
+                .await;
+            assert!(
+                sink.signals.lock().unwrap().is_empty(),
+                "最新 run 已 ack → ack 分支抑制"
             );
         }
 

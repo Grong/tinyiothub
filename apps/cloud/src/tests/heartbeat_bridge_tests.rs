@@ -39,12 +39,13 @@ impl DirectiveSink for RecordingSink {
 /// 写入一条指定年龄/结果的 problem run（显式时间戳，无 I/O）。
 fn record_run(
     registry: &RunRegistry,
+    run_id: &str,
     outcome: Outcome,
     verified: bool,
     problem_key: &str,
     age: chrono::Duration,
 ) {
-    registry.record_problem_run(WS, problem_key, outcome, verified, Utc::now() - age);
+    registry.record_problem_run(WS, problem_key, run_id, outcome, verified, Utc::now() - age);
 }
 
 fn proposal(tool_name: &str, device_id: Option<&str>) -> Proposal {
@@ -102,7 +103,7 @@ async fn outcome_matrix_against_in_memory_dedup() {
     ] {
         let registry = RunRegistry::new();
         let key = format!("{tool}:dev-1");
-        record_run(&registry, outcome, verified, &key, chrono::Duration::hours(1));
+        record_run(&registry, &format!("run_{tool}"), outcome, verified, &key, chrono::Duration::hours(1));
         assert_eq!(
             dispatched_count(registry, tool).await,
             usize::from(expect_dispatch),
@@ -117,12 +118,12 @@ async fn acted_unverified_retry_only_once_in_memory() {
     let registry = RunRegistry::new();
     let key = "set_hvac:dev-1";
 
-    record_run(&registry, Outcome::Acted, false, key, chrono::Duration::hours(1));
+    record_run(&registry, "r1", Outcome::Acted, false, key, chrono::Duration::hours(1));
     assert_eq!(dispatched_count(registry, "set_hvac").await, 1, "first retry allowed");
 
     let registry = RunRegistry::new();
-    record_run(&registry, Outcome::Acted, false, key, chrono::Duration::hours(2));
-    record_run(&registry, Outcome::Acted, false, key, chrono::Duration::minutes(30));
+    record_run(&registry, "r1", Outcome::Acted, false, key, chrono::Duration::hours(2));
+    record_run(&registry, "r2", Outcome::Acted, false, key, chrono::Duration::minutes(30));
     assert_eq!(
         dispatched_count(registry, "set_hvac").await,
         0,
@@ -134,7 +135,7 @@ async fn acted_unverified_retry_only_once_in_memory() {
 #[tokio::test]
 async fn recurrence_beyond_6h_dispatches_in_memory() {
     let registry = RunRegistry::new();
-    record_run(&registry, Outcome::Acted, true, "set_hvac:dev-1", chrono::Duration::hours(7));
+    record_run(&registry, "old", Outcome::Acted, true, "set_hvac:dev-1", chrono::Duration::hours(7));
     assert_eq!(dispatched_count(registry, "set_hvac").await, 1);
 }
 
@@ -143,18 +144,18 @@ async fn recurrence_beyond_6h_dispatches_in_memory() {
 #[tokio::test]
 async fn ack_suppression_windows_in_memory() {
     let registry = RunRegistry::new();
-    record_run(&registry, Outcome::Acted, true, "k1:dev-1", chrono::Duration::hours(1));
-    registry.mark_problem_acked(WS, "k1:dev-1", Utc::now());
+    record_run(&registry, "ack_1h", Outcome::Acted, true, "k1:dev-1", chrono::Duration::hours(1));
+    registry.mark_problem_acked(WS, "k1:dev-1", "ack_1h");
     assert_eq!(dispatched_count(registry, "k1").await, 0, "acked within 6h suppressed");
 
     let registry = RunRegistry::new();
-    record_run(&registry, Outcome::Acted, true, "k2:dev-1", chrono::Duration::days(3));
-    registry.mark_problem_acked(WS, "k2:dev-1", Utc::now() - chrono::Duration::days(2));
+    record_run(&registry, "ack_3d", Outcome::Acted, true, "k2:dev-1", chrono::Duration::days(3));
+    registry.mark_problem_acked(WS, "k2:dev-1", "ack_3d");
     assert_eq!(dispatched_count(registry, "k2").await, 0, "acked within 7d suppressed");
 
     let registry = RunRegistry::new();
-    record_run(&registry, Outcome::Acted, true, "k3:dev-1", chrono::Duration::days(8));
-    registry.mark_problem_acked(WS, "k3:dev-1", Utc::now() - chrono::Duration::days(8) + chrono::Duration::hours(1));
+    record_run(&registry, "ack_8d", Outcome::Acted, true, "k3:dev-1", chrono::Duration::days(8));
+    registry.mark_problem_acked(WS, "k3:dev-1", "ack_8d");
     assert_eq!(
         dispatched_count(registry, "k3").await,
         1,

@@ -94,10 +94,10 @@ impl Orchestrator {
         &self.event_publisher
     }
 
-    /// O11 ack 抑制入口（Task 6）：cloud 侧 ack 端点 DB 写成功后调用，
-    /// 转发到心跳桥的内存 dedup 真源；无桥时 no-op。
-    pub fn mark_problem_acked(&self, workspace_id: &str, problem_key: &str) {
-        self.handler.mark_problem_acked(workspace_id, problem_key);
+    /// O11 ack 抑制入口（Task 6，fix round 1 行级保真）：cloud 侧 ack 端点
+    /// DB 写成功后调用，按 run_id 转发到心跳桥的内存 dedup 真源；无桥时 no-op。
+    pub fn mark_problem_acked(&self, workspace_id: &str, problem_key: &str, run_id: &str) {
+        self.handler.mark_problem_acked(workspace_id, problem_key, run_id);
     }
 
     pub fn heartbeat_runner(&self) -> &Arc<HeartbeatRunner> {

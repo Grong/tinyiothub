@@ -335,6 +335,7 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
         deps.registry.record_problem_run(
             &report.workspace_id,
             pk,
+            &report.run_id,
             report.outcome,
             report.verified,
             chrono::Utc::now(),
