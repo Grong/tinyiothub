@@ -22,15 +22,56 @@
 //! 容量：`record` 在 run 完成时调用，窗口即"最近 50 条已完成"；in-flight
 //! run 的实时标记（无 begin API——RunReport 只在完成时存在）不在本 Task，
 //! [`RunRegistry::active`] 返回当前进程持有的全部窗口内容（D13 实时读）。
+//!
+//! ## O11 problem_key dedup 元数据（Task 6）
+//!
+//! 心跳桥（orchestrator/callbacks.rs HeartbeatBridge）的 O11 抑制判定按
+//! **problem_key** 键控、按**时间窗**（6h 问题窗口 / 7d ack 抑制窗）查询
+//! （原 SQL `WHERE problem_key = ? AND created_at > now - window` 的直接证据，
+//! 见 db/agent_runs.rs `last_problem_run`/`count_problem_runs`）。50 条报告
+//! 窗口无法承接：繁忙工作区 50 条可能覆盖不足 6h，且 core `RunReport` 无
+//! problem_key/时间戳/ack 字段。因此 dedup 元数据独立为一张压缩映射
+//! `(workspace_id, problem_key) → {近期 run 结果, 最近 ack 时间}`，时间界
+//! 驱逐（保留窗 = 7d ack 抑制窗）；**不扩大 50 条报告窗口**。
+//!
+//! ack 语义等价性：DB 判定"7d 窗口内最新 run 的 `acked_at IS NOT NULL`"。
+//! 内存映射不键控 run_id，近似为"存在不早于该 run 的 ack"——ack 只能附着于
+//! 同 problem_key 的既有 run 且 ack 时间必晚于 run 时间，可达状态下两者等价
+//! （ack 早于最新 run 时视为未 ack，与 DB 行级语义一致）。
+//!
+//! 写入路径：manager run 完成时 [`RunRegistry::record_problem_run`]（仅心跳桥
+//! 投递的指令携带 problem_key）；人工 ack 经 orchestrator → bridge →
+//! [`RunRegistry::mark_problem_acked`]。restore 预热不恢复本映射（core
+//! `RunReport` 无 problem_key——Task 9 快照构建器需另行携带，见 Task 6 报告）。
 
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
-use tinyiothub_core::agent_runs::RunReport;
+use tinyiothub_core::agent_runs::{Outcome, RunReport};
 
 /// 每 workspace 保留的最近已完成 run 条数（超出驱逐最老）。
 pub const COMPLETED_CAPACITY: usize = 50;
+
+/// O11 dedup 元数据保留窗：与 ack 抑制窗（7d）对齐，超窗读/写时惰性裁剪。
+const PROBLEM_META_RETENTION: Duration = Duration::from_secs(7 * 24 * 3600);
+
+/// dedup 判定所需的最小 run 元数据（不带报告全文）。
+#[derive(Clone, Copy)]
+struct ProblemRunMeta {
+    occurred_at: DateTime<Utc>,
+    outcome: Outcome,
+    verified: bool,
+}
+
+/// 每 (workspace, problem_key) 的 dedup 状态：近期 run（旧→新）+ 最近 ack。
+#[derive(Default)]
+struct ProblemDedupState {
+    runs: VecDeque<ProblemRunMeta>,
+    last_acked_at: Option<DateTime<Utc>>,
+}
 
 /// 跨 workspace 的内存 run 记录。Clone 廉价（内部 Arc），manager 依赖、
 /// 测试探针与 AgentRuntime 门面共享同一实例。
@@ -38,6 +79,8 @@ pub const COMPLETED_CAPACITY: usize = 50;
 pub struct RunRegistry {
     /// workspace_id → run 队列（旧→新，队尾为最新）。
     inner: Arc<DashMap<String, VecDeque<RunReport>>>,
+    /// O11 dedup 元数据：(workspace_id, problem_key) → 压缩状态（Task 6）。
+    problem_meta: Arc<DashMap<(String, String), ProblemDedupState>>,
 }
 
 impl RunRegistry {
@@ -106,6 +149,82 @@ impl RunRegistry {
         }
         out
     }
+
+    // ── O11 problem_key dedup 元数据（Task 6）──────────────────
+
+    /// 记录一次 problem run 结果（仅心跳桥投递的指令携带 problem_key，由
+    /// manager 在 run 完成时调用）。写入时按保留窗裁剪该 key 的旧记录。
+    pub fn record_problem_run(
+        &self,
+        workspace_id: &str,
+        problem_key: &str,
+        outcome: Outcome,
+        verified: bool,
+        occurred_at: DateTime<Utc>,
+    ) {
+        let key = (workspace_id.to_string(), problem_key.to_string());
+        let mut entry = self.problem_meta.entry(key).or_default();
+        entry.runs.push_back(ProblemRunMeta {
+            occurred_at,
+            outcome,
+            verified,
+        });
+        prune_problem_entry(&mut entry);
+    }
+
+    /// O11 ack 抑制：人工 ack 该 problem_key（ack 时间不早于被 ack 的 run）。
+    pub fn mark_problem_acked(&self, workspace_id: &str, problem_key: &str, acked_at: DateTime<Utc>) {
+        let key = (workspace_id.to_string(), problem_key.to_string());
+        let mut entry = self.problem_meta.entry(key).or_default();
+        entry.last_acked_at = Some(entry.last_acked_at.map_or(acked_at, |prev| prev.max(acked_at)));
+    }
+
+    /// 窗口内最近一次 problem run 的 `(outcome, verified, acked)`（新→旧第一条，
+    /// 严格大于 `now - window`，等价原 SQL `created_at > now - window`）。
+    /// acked 判定：存在不早于该 run 的 ack（见模块文档的等价性论证）。
+    pub fn last_problem_run(&self, workspace_id: &str, problem_key: &str, window: Duration) -> Option<(Outcome, bool, bool)> {
+        let cutoff = Utc::now() - chrono::Duration::from_std(window).ok()?;
+        let entry = self
+            .problem_meta
+            .get(&(workspace_id.to_string(), problem_key.to_string()))?;
+        entry
+            .runs
+            .iter()
+            .rev()
+            .find(|r| r.occurred_at > cutoff)
+            .map(|r| {
+                (
+                    r.outcome,
+                    r.verified,
+                    entry.last_acked_at.is_some_and(|acked| acked >= r.occurred_at),
+                )
+            })
+    }
+
+    /// 窗口内同 problem_key 的 run 计数（workspace 作用域，等价原 SQL 语义）。
+    pub fn count_problem_runs(&self, workspace_id: &str, problem_key: &str, window: Duration) -> usize {
+        let Ok(window) = chrono::Duration::from_std(window) else {
+            return 0;
+        };
+        let cutoff = Utc::now() - window;
+        self.problem_meta
+            .get(&(workspace_id.to_string(), problem_key.to_string()))
+            .map(|entry| entry.runs.iter().filter(|r| r.occurred_at > cutoff).count())
+            .unwrap_or_default()
+    }
+}
+
+/// 按保留窗裁剪 dedup 条目：相对该条目最新活动（新 run 时间），超窗旧 run
+/// 出队。裁剪基准是条目内最新 run 而非 now——窗口查询（≤7d，以 now 为界）
+/// 命中的 run 必在最新 run 的 7d 内，裁剪永不误删查询可见记录。
+fn prune_problem_entry(entry: &mut ProblemDedupState) {
+    let Some(newest) = entry.runs.back().map(|r| r.occurred_at) else {
+        return;
+    };
+    let retention = chrono::Duration::from_std(PROBLEM_META_RETENTION).expect("retention fits chrono");
+    while entry.runs.front().is_some_and(|r| newest - r.occurred_at > retention) {
+        entry.runs.pop_front();
+    }
 }
 
 /// trigger 标签是否命中 dedup key：直接相等（ThingEvent/Timer/UserDirective
@@ -145,6 +264,85 @@ mod fixtures {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{DateTime, Utc};
+    use std::time::Duration;
+    use tinyiothub_core::agent_runs::Outcome;
+
+    const H6: Duration = Duration::from_secs(6 * 3600);
+    const D7: Duration = Duration::from_secs(7 * 24 * 3600);
+
+    fn hours_ago(h: i64) -> DateTime<Utc> {
+        Utc::now() - chrono::Duration::hours(h)
+    }
+
+    // ── O11 problem_key dedup 元数据（Task 6）──────────────────
+
+    #[test]
+    fn problem_run_last_respects_window() {
+        let reg = RunRegistry::new();
+        reg.record_problem_run("ws1", "p1", Outcome::Acted, true, hours_ago(8));
+        // 6h 窗口外不可见，7d 窗口内可见。
+        assert!(reg.last_problem_run("ws1", "p1", H6).is_none());
+        let got = reg.last_problem_run("ws1", "p1", D7).expect("in 7d window");
+        assert_eq!(got, (Outcome::Acted, true, false));
+    }
+
+    #[test]
+    fn problem_run_ack_marks_runs_not_newer_than_ack() {
+        let reg = RunRegistry::new();
+        reg.record_problem_run("ws1", "p1", Outcome::Acted, true, hours_ago(50));
+        reg.mark_problem_acked("ws1", "p1", hours_ago(49));
+        let (_, _, acked) = reg.last_problem_run("ws1", "p1", D7).expect("found");
+        assert!(acked, "ack 不早于最新 run → 视为已 ack（等价 DB acked_at 语义）");
+        // ack 之后发生的新 run 未被 ack。
+        reg.record_problem_run("ws1", "p1", Outcome::Failed, false, hours_ago(1));
+        let (outcome, _, acked) = reg.last_problem_run("ws1", "p1", H6).expect("found");
+        assert_eq!(outcome, Outcome::Failed);
+        assert!(!acked, "run newer than the ack is not acked");
+    }
+
+    #[test]
+    fn problem_run_count_scoped_by_window_workspace_key() {
+        let reg = RunRegistry::new();
+        reg.record_problem_run("ws1", "p1", Outcome::Acted, false, hours_ago(1));
+        reg.record_problem_run("ws1", "p1", Outcome::Acted, false, hours_ago(5));
+        reg.record_problem_run("ws1", "p1", Outcome::Acted, false, hours_ago(7)); // 6h 窗口外
+        reg.record_problem_run("ws1", "p2", Outcome::Acted, false, hours_ago(1)); // 其他 key
+        reg.record_problem_run("ws2", "p1", Outcome::Acted, false, hours_ago(1)); // 其他工作区
+        assert_eq!(reg.count_problem_runs("ws1", "p1", H6), 2);
+        assert_eq!(reg.count_problem_runs("ws1", "p1", D7), 3);
+        assert_eq!(reg.count_problem_runs("ws1", "missing", H6), 0);
+    }
+
+    #[test]
+    fn problem_meta_survives_report_window_eviction() {
+        // 50 条报告窗口驱逐不影响 dedup 元数据（两者内存独立）。
+        let reg = RunRegistry::new();
+        reg.record_problem_run("ws1", "p1", Outcome::Acted, false, hours_ago(1));
+        for i in 0..55 {
+            reg.record(fixtures::report("ws1", &format!("r{i}")));
+        }
+        assert_eq!(reg.count_problem_runs("ws1", "p1", H6), 1);
+    }
+
+    #[test]
+    fn problem_meta_pruned_beyond_retention() {
+        // 超保留窗（7d）的旧 run 在新写入时裁剪，不参与 7d 窗口查询。
+        let reg = RunRegistry::new();
+        reg.record_problem_run("ws1", "p1", Outcome::Acted, false, hours_ago(8 * 24));
+        reg.record_problem_run("ws1", "p1", Outcome::Failed, false, hours_ago(1));
+        let (outcome, ..) = reg.last_problem_run("ws1", "p1", D7).expect("newest");
+        assert_eq!(outcome, Outcome::Failed);
+        assert_eq!(reg.count_problem_runs("ws1", "p1", D7), 1, "超窗旧 run 已裁剪");
+    }
+
+    #[test]
+    fn problem_meta_clone_shares_state() {
+        let reg = RunRegistry::new();
+        let clone = reg.clone();
+        reg.record_problem_run("ws1", "p1", Outcome::Acted, false, hours_ago(1));
+        assert_eq!(clone.count_problem_runs("ws1", "p1", H6), 1);
+    }
 
     #[test]
     fn registry_evicts_oldest_completed_beyond_50() {

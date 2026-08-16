@@ -329,6 +329,17 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
         _ => None,
     };
     deps.registry.record(report.clone());
+    // O11 dedup 元数据（Task 6）：problem run 结果写入内存 dedup 真源，供
+    // HeartbeatBridge 抑制判定（替代原 runs_repo 的 problem_key SQL 查询）。
+    if let Some(pk) = problem_key {
+        deps.registry.record_problem_run(
+            &report.workspace_id,
+            pk,
+            report.outcome,
+            report.verified,
+            chrono::Utc::now(),
+        );
+    }
     deps.events.emit(AgentEventKind::RunRecorded {
         report: Box::new(report.clone()),
         problem_key: problem_key.map(str::to_owned),

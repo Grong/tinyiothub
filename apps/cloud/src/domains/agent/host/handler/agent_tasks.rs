@@ -190,25 +190,34 @@ pub async fn ack_run(
 ) -> Json<ApiResponse<serde_json::Value>> {
     verify_agent_admin!(state, claims, workspace_id);
 
-    // 存在性 + workspace 归属：不存在与跨区统一 404（不泄露存在性）
-    let owner: Option<String> = sqlx::query_scalar("SELECT workspace_id FROM agent_runs WHERE id = ?")
-        .bind(&run_id)
-        .fetch_optional(state.database.pool())
-        .await
-        .unwrap_or(None);
-    match owner {
-        Some(ref ws) if ws == &workspace_id => {}
+    // 存在性 + workspace 归属：不存在与跨区统一 404（不泄露存在性）；
+    // 同时取出 problem_key 供 O11 ack 抑制回写（Task 6）。
+    let owner: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT workspace_id, problem_key FROM agent_runs WHERE id = ?")
+            .bind(&run_id)
+            .fetch_optional(state.database.pool())
+            .await
+            .unwrap_or(None);
+    let problem_key = match owner {
+        Some((ref ws, ref pk)) if ws == &workspace_id => pk.clone(),
         _ => return ApiResponseBuilder::error_with_code(404, "运行记录不存在"),
-    }
+    };
 
     let repo = AgentRunsRepository::new(state.database.pool().clone());
     match repo.ack_run(&run_id, &claims.user_id).await {
-        // 幂等：重复确认仍 200，firstAck=false 表示本次未改状态
-        Ok(first_ack) => ApiResponseBuilder::success(serde_json::json!({
-            "runId": run_id,
-            "acked": true,
-            "firstAck": first_ack,
-        })),
+        Ok(first_ack) => {
+            // O11 ack 抑制内存真源同步（Task 6）：DB ack 成功后标记该 run 的
+            // problem_key，心跳桥 7d 内不再为同一问题投递 directive。
+            if let (Some(pk), Some(orchestrator)) = (&problem_key, state.orchestrator.as_ref()) {
+                orchestrator.mark_problem_acked(&workspace_id, pk);
+            }
+            // 幂等：重复确认仍 200，firstAck=false 表示本次未改状态
+            ApiResponseBuilder::success(serde_json::json!({
+                "runId": run_id,
+                "acked": true,
+                "firstAck": first_ack,
+            }))
+        }
         Err(e) => {
             tracing::error!(%workspace_id, %run_id, "Failed to ack agent run: {}", e);
             ApiResponseBuilder::error("确认运行记录失败")

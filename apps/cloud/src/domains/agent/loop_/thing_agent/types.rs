@@ -24,9 +24,9 @@ pub enum TriggerSource {
         text: String,
         session_key: Option<String>,
         source: Option<String>, // source: None=chat/API, Some("heartbeat")=X6 心跳桥
-        /// X6 心跳桥投递的指令携带 problem_key（O11 dedup：run 落库后供
-        /// `last_problem_run`/`count_problem_runs` 抑制判定）；chat/API
-        /// 用户指令为 None。
+        /// X6 心跳桥投递的指令携带 problem_key（O11 dedup：run 完成时由
+        /// manager 记入 RunRegistry problem 元数据，心跳桥据此抑制判定）；
+        /// chat/API 用户指令为 None。
         problem_key: Option<String>,
     },
     /// Output of the scheduler's merge window (T8): every non-Critical signal

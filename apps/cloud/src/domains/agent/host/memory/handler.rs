@@ -117,10 +117,9 @@ async fn compile_profile(
         .map(|c| c.model)
         .unwrap_or_else(|_| default_model());
 
-    match state.orchestrator.as_ref() {
-        Some(orchestrator) => {
-            match orchestrator
-                .memory_service()
+    match state.memory_service.as_ref() {
+        Some(memory_service) => {
+            match memory_service
                 .compile_profile(&ws, &query.agent_id, &model)
                 .await
             {
@@ -145,10 +144,9 @@ async fn generate_weekly_digest(
         .map(|c| c.model)
         .unwrap_or_else(|_| default_model());
 
-    match state.orchestrator.as_ref() {
-        Some(orchestrator) => {
-            match orchestrator
-                .memory_service()
+    match state.memory_service.as_ref() {
+        Some(memory_service) => {
+            match memory_service
                 .generate_weekly_digest(&ws, &query.agent_id, &model)
                 .await
             {

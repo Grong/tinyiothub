@@ -200,10 +200,10 @@ impl ServiceManager {
             let thing_agent_manager = {
                 let pool = app_state.database.pool().clone();
                 let policy_repo = Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone()));
-                // runs_repo 仍服务 HeartbeatBridge 的 O11 problem_key dedup 查询；
-                // thing_agent 运行记录自 Task 4 起走内存 RunRegistry + 事件出口
-                // （持久化订阅者 Task 8 接入；接入前零订阅者 emit 为 no-op）。
-                let runs_repo = Arc::new(tinyiothub_storage::agent_runs::AgentRunsRepository::new(pool.clone()));
+                // Task 6 起 runs_repo 不再进桥：O11 problem_key dedup 走
+                // RunRegistry 内存元数据（与 manager 共享同一实例）；
+                // thing_agent 运行记录的持久化投影由 Task 8 的 RunRecorded
+                // 订阅者落库（接入前零订阅者 emit 为 no-op）。
                 let run_registry = crate::domains::agent::loop_::thing_agent::registry::RunRegistry::new();
                 let agent_events = Arc::new(crate::domains::agent::loop_::events::AgentEventBus::new(256));
                 let manager = Arc::new(crate::domains::agent::loop_::thing_agent::ThingAgentManager::new(
@@ -231,34 +231,35 @@ impl ServiceManager {
                             },
                         ),
                     ),
-                    run_registry,
-                    agent_events,
+                    run_registry.clone(),
+                    agent_events.clone(),
                     Arc::new(crate::domains::agent::loop_::thing_agent::Runner::new()),
                     crate::domains::agent::loop_::thing_agent::ThingAgentManagerConfig::default(),
                 ));
                 // T18 X6 心跳桥：HeartbeatCompleted 的结构化 proposals 经 O11
-                // dedup 后投递 UserDirective 进 thing-agent loop。
+                // dedup（RunRegistry 内存元数据）后投递 UserDirective 进
+                // thing-agent loop。
                 let bridge = Arc::new(
                     crate::domains::agent::loop_::orchestrator::callbacks::HeartbeatBridge::new(
-                        runs_repo,
+                        run_registry,
                         manager.clone(),
                     ),
                 );
-                (manager, bridge)
+                (manager, bridge, agent_events)
             };
-            let (thing_agent_manager, heartbeat_bridge) = thing_agent_manager;
+            let (thing_agent_manager, heartbeat_bridge, agent_events) = thing_agent_manager;
+
+            // Task 6 起 orchestrator 不再持有 repo/MemoryService：心跳结果经
+            // AgentEventBus(HeartbeatResultReady) 出口（Task 8 订阅者落库）；
+            // MemoryService 由 cloud 侧自持（AgentState.memory_service，
+            // memory profile compile/weekly digest handler 使用）。
+            app_state.memory_service = Some(memory_service);
 
             let orchestrator = Arc::new(crate::domains::agent::loop_::orchestrator::Orchestrator::new(
                 app_state.event_bus.clone(),
                 heartbeat_runner.clone(),
-                heartbeat_task_repo.clone(),
-                memory_service,
+                agent_events,
                 Some(Arc::new(crate::domains::agent::loop_::event::bus::LoggingDropNotifier)),
-                Some(Arc::new(
-                    crate::domains::agent::host::dlq_repo::SqliteDeadLetterQueue::new(
-                        app_state.database.pool().clone(),
-                    ),
-                )),
                 Some(thing_agent_manager.clone()),
                 Some(heartbeat_bridge),
             ));

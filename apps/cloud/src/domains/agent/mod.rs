@@ -76,8 +76,11 @@ pub struct AgentState {
     pub directive_sink: Option<Arc<dyn loop_::thing_agent::DirectiveSink>>,
     /// 心跳运行器 - workspace heartbeat 配置/任务/信任 API
     pub heartbeat_runner: Option<Arc<loop_::heartbeat::runner::HeartbeatRunner>>,
-    /// AI subsystem orchestrator - memory profile compile/weekly digest
+    /// AI subsystem orchestrator - agent run ack 的 O11 抑制回写（Task 6）
     pub orchestrator: Option<Arc<loop_::orchestrator::Orchestrator>>,
+    /// Agent MemoryService - memory profile compile/weekly digest（Task 6 起
+    /// cloud 侧自持，不再经 Orchestrator 中转）
+    pub memory_service: Option<Arc<tinyiothub_memory::service::MemoryService>>,
     /// Agent 记忆存储 - memory handlers + chat prompt 构造
     pub memory_store: Arc<tinyiothub_storage::memory::MemoryStore>,
     /// Agent Pool - chat proxy 的会话/配置/工具 API

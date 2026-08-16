@@ -118,6 +118,11 @@ pub struct AppState {
     /// AI subsystem heartbeat runner (set during async startup)
     pub heartbeat_runner: Option<Arc<crate::domains::agent::loop_::heartbeat::runner::HeartbeatRunner>>,
 
+    /// Agent MemoryService（set during async startup）—— Task 6 起由 cloud 侧
+    /// 自持（memory profile compile / weekly digest handler），不再经
+    /// Orchestrator 中转。
+    pub memory_service: Option<Arc<tinyiothub_memory::service::MemoryService>>,
+
     /// 标签仓库 - 用于设备服务的标签关联
     pub tag_repository: Arc<crate::domains::thing::tag::TagRepository>,
 
@@ -560,6 +565,7 @@ impl AppState {
             agent_pool,
             orchestrator: None,
             heartbeat_runner: None,
+            memory_service: None,
             user_service,
             tenant_service,
             workspace_service,
@@ -1052,6 +1058,7 @@ impl axum::extract::FromRef<AppState> for crate::domains::agent::AgentState {
             directive_sink: state.directive_sink.clone(),
             heartbeat_runner: state.heartbeat_runner.clone(),
             orchestrator: state.orchestrator.clone(),
+            memory_service: state.memory_service.clone(),
             memory_store: state.memory_store.clone(),
             agent_pool: state.agent_pool.clone(),
             session_service: state.session_service.clone(),

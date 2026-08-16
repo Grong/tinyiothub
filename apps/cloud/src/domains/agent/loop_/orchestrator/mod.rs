@@ -3,10 +3,12 @@
 //! Cross-domain communication flows through the Orchestrator:
 //! AlarmCreated       --> EventBus --> Orchestrator --> HeartbeatRunner.signal()
 //! (Chat reflection is handled directly in chat/service.rs)
-//! HeartbeatCompleted --> EventBus --> Orchestrator --> HeartbeatTaskRepository.insert_result()
+//! HeartbeatCompleted --> EventBus --> Orchestrator --> AgentEventBus
+//!                    (HeartbeatResultReady, Task 8 持久化订阅者落库） +
+//!                    HeartbeatBridge.dispatch_proposals()
 //! WorkspaceCreated    --> EventBus --> Orchestrator --> HeartbeatRunner.start() +
 //! ThingAgentManager.start() WorkspaceDeleted    --> EventBus --> Orchestrator -->
-//! HeartbeatRunner.stop() + ThingAgentManager.stop()
+//! HeartbeatRunner.remove_workspace() + ThingAgentManager.stop()
 
 pub mod callbacks;
 
@@ -17,11 +19,9 @@ use tinyiothub_runtime::EventBus;
 use tracing::{info, warn};
 
 use crate::domains::agent::loop_::event::bus::{AiEventPublisher, DropNotifier};
-use crate::domains::agent::loop_::event::dlq::DeadLetterQueue;
-use tinyiothub_storage::heartbeat::HeartbeatTaskRepository;
+use crate::domains::agent::loop_::events::AgentEventBus;
 use crate::domains::agent::loop_::heartbeat::runner::HeartbeatRunner;
 use crate::domains::agent::loop_::thing_agent::manager::ThingAgentManager;
-use tinyiothub_memory::service::MemoryService;
 
 use callbacks::AiEventHandler;
 
@@ -37,10 +37,8 @@ impl Orchestrator {
     pub fn new(
         event_bus: Arc<EventBus>,
         heartbeat_runner: Arc<HeartbeatRunner>,
-        task_repo: Arc<HeartbeatTaskRepository>,
-        memory_service: Arc<MemoryService>,
+        agent_events: Arc<AgentEventBus>,
         drop_notifier: Option<Arc<dyn DropNotifier>>,
-        dlq: Option<Arc<dyn DeadLetterQueue>>,
         thing_agent_manager: Option<Arc<ThingAgentManager>>,
         heartbeat_bridge: Option<Arc<callbacks::HeartbeatBridge>>,
     ) -> Self {
@@ -54,10 +52,7 @@ impl Orchestrator {
 
         let handler = Arc::new(AiEventHandler::new(
             heartbeat_runner,
-            task_repo,
-            memory_service,
-            event_publisher.clone(),
-            dlq,
+            agent_events,
             thing_agent_manager,
             heartbeat_bridge,
             shutting_down.clone(),
@@ -87,9 +82,6 @@ impl Orchestrator {
     pub async fn shutdown(&self) {
         info!("Orchestrator shutting down...");
         self.shutting_down.store(true, Ordering::SeqCst);
-        // Wait for in-flight persist retries to abort before tearing down the
-        // publisher — abandoning them mid-backoff leaves their fate unknown.
-        self.handler.drain_retries().await;
         self.event_publisher.shutdown().await;
         info!("Orchestrator shutdown complete");
     }
@@ -102,28 +94,25 @@ impl Orchestrator {
         &self.event_publisher
     }
 
-    pub fn memory_service(&self) -> &Arc<MemoryService> {
-        self.handler.memory_service()
+    /// O11 ack 抑制入口（Task 6）：cloud 侧 ack 端点 DB 写成功后调用，
+    /// 转发到心跳桥的内存 dedup 真源；无桥时 no-op。
+    pub fn mark_problem_acked(&self, workspace_id: &str, problem_key: &str) {
+        self.handler.mark_problem_acked(workspace_id, problem_key);
     }
 
     pub fn heartbeat_runner(&self) -> &Arc<HeartbeatRunner> {
         self.handler.heartbeat_runner()
-    }
-
-    /// Retry tasks currently alive — observability for shutdown/metrics.
-    pub fn in_flight_retries(&self) -> usize {
-        self.handler.in_flight_retries()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use crate::domains::agent::loop_::event::types::AiEvent;
+    use crate::domains::agent::loop_::events::AgentEventKind;
     use crate::domains::agent::loop_::heartbeat::types::{HeartbeatConfig, HeartbeatResult, HeartbeatStatus};
-    use crate::domains::agent::loop_::orchestrator::callbacks::tests::{make_memory_service, real_repo, result_rows};
 
     fn sample_result() -> HeartbeatResult {
         HeartbeatResult {
@@ -137,22 +126,20 @@ mod tests {
         }
     }
 
-    async fn make_orchestrator(
-        bus: Arc<EventBus>,
-        repo: Arc<tinyiothub_storage::heartbeat::HeartbeatTaskRepository>,
-    ) -> Orchestrator {
+    fn make_orchestrator(bus: Arc<EventBus>, events: Arc<AgentEventBus>) -> Orchestrator {
         let runner = Arc::new(HeartbeatRunner::new(
             Arc::new(AiEventPublisher::new(bus.clone())),
             HeartbeatConfig::default(),
         ));
-        Orchestrator::new(bus, runner, repo, make_memory_service().await, None, None, None, None)
+        Orchestrator::new(bus, runner, events, None, None, None)
     }
 
     #[tokio::test]
     async fn start_is_idempotent() {
         let bus = Arc::new(EventBus::new());
-        let (repo, pool) = real_repo().await;
-        let orch = make_orchestrator(bus, repo).await;
+        let events = Arc::new(AgentEventBus::new(16));
+        let mut rx = events.subscribe();
+        let orch = make_orchestrator(bus, events);
 
         orch.start();
         orch.start();
@@ -161,57 +148,18 @@ mod tests {
             workspace_id: "ws_1".into(),
             result: sample_result(),
         });
-        tokio::time::sleep(Duration::from_millis(150)).await;
-        orch.shutdown().await;
-
-        assert_eq!(
-            result_rows(&pool, "ws_1").await,
-            1,
+        // publisher→worker→bus→handler→emit 为异步链，轮询等待首个事件。
+        let first = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("HeartbeatResultReady emitted")
+            .expect("channel open");
+        assert!(matches!(first.kind, AgentEventKind::HeartbeatResultReady { .. }));
+        // 重复 start() 不得二次注册 handler → 不再有第二个事件。
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            rx.try_recv().is_err(),
             "duplicate start() must not double-register the handler"
         );
-    }
-
-    #[tokio::test]
-    async fn shutdown_drains_in_flight_retries() {
-        let bus = Arc::new(EventBus::new());
-        let (repo, pool) = real_repo().await;
-        // 故障注入：DROP agent_actions 表使 insert_result 必失败
-        // （等效原 MockTaskRepo::failing() 的 always-fail）
-        sqlx::query("DROP TABLE agent_actions")
-            .execute(&pool)
-            .await
-            .expect("drop table");
-        let orch = make_orchestrator(bus, repo).await;
-        orch.start();
-
-        orch.event_publisher().publish(AiEvent::HeartbeatCompleted {
-            workspace_id: "ws_1".into(),
-            result: sample_result(),
-        });
-        // Let the first persist attempt fail and the retry task spawn. Poll
-        // instead of a fixed sleep — the publisher→worker→bus→handler chain
-        // can exceed any single sleep under CI load.
-        let mut in_flight = 0;
-        for _ in 0..100 {
-            in_flight = orch.in_flight_retries();
-            if in_flight >= 1 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        assert!(in_flight >= 1, "a retry task should be in flight");
-
-        let started = Instant::now();
         orch.shutdown().await;
-
-        assert_eq!(
-            orch.in_flight_retries(),
-            0,
-            "shutdown must wait for retry tasks to finish"
-        );
-        assert!(
-            started.elapsed() < Duration::from_secs(2),
-            "shutdown must abort retry backoff sleeps, not wait them out"
-        );
     }
 }

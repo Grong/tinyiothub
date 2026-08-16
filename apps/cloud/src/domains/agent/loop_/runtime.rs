@@ -16,13 +16,10 @@ use tracing::warn;
 
 use tinyiothub_core::agent_runs::RunReport;
 use tinyiothub_core::heartbeat::{HeartbeatTask, TrustConfig};
-use tinyiothub_memory::service::MemoryService;
 use tinyiothub_runtime::EventBus;
-use tinyiothub_storage::heartbeat::HeartbeatTaskRepository;
 use tinyiothub_storage::policy::PolicyRepository;
 
 use super::event::bus::{AiEventPublisher, DropNotifier};
-use super::event::dlq::DeadLetterQueue;
 use super::events::{AgentEvent, AgentEventBus, AgentEventKind};
 use super::heartbeat::runner::HeartbeatRunner;
 use super::heartbeat::types::HeartbeatConfig;
@@ -31,29 +28,27 @@ use super::orchestrator::callbacks::HeartbeatBridge;
 use super::snapshot::RestoreSnapshot;
 use super::thing_agent::manager::{AutonomousAgentProvider, ThingAgentManager, ThingAgentManagerConfig};
 use super::thing_agent::registry::RunRegistry;
-use super::thing_agent::report::AgentRunsRepository;
 use super::thing_agent::runner::Runner;
 use super::thing_agent::traits::ThingAgentHost;
 
 /// RuntimeDeps — 聚合三大组件现有构造所需依赖（收集自 service_manager.rs
 /// 现有接线；本任务只聚已有件，不造新依赖）。
+///
+/// Task 6 起不再聚合任何 storage/memory 句柄：心跳结果落库经
+/// HeartbeatResultReady 事件（Task 8 订阅者），O11 dedup 走 RunRegistry
+/// 内存，MemoryService 由 cloud 侧自持（AgentState.memory_service）。
 pub struct RuntimeDeps {
-    // HeartbeatRunner 构造件（Task 5 起 repo 不再进 runner：仅供 Orchestrator
-    // 落库 insert_result / cloud 侧 service 读写）
-    pub heartbeat_task_repo: Arc<HeartbeatTaskRepository>,
+    // HeartbeatRunner 构造件（Task 5 起 repo 不再进 runner）
     pub event_publisher: Arc<AiEventPublisher>,
     pub heartbeat_config: HeartbeatConfig,
     // ThingAgentManager 构造件
     pub thing_agent_host: Arc<dyn ThingAgentHost>,
     pub policy_repo: Arc<PolicyRepository>,
     pub agent_provider: Arc<dyn AutonomousAgentProvider>,
-    pub runs_repo: Arc<AgentRunsRepository>,
     pub thing_agent_config: ThingAgentManagerConfig,
     // Orchestrator 构造件
     pub event_bus: Arc<EventBus>,
-    pub memory_service: Arc<MemoryService>,
     pub drop_notifier: Option<Arc<dyn DropNotifier>>,
-    pub dlq: Option<Arc<dyn DeadLetterQueue>>,
     /// AgentEventBus 广播容量（lagged 订阅者经 dump_state 对账恢复）
     pub agent_event_capacity: usize,
 }
@@ -98,14 +93,13 @@ impl AgentRuntime {
             deps.thing_agent_config,
         ));
         // T18 X6 心跳桥：HeartbeatCompleted 的结构化 proposals 投递 UserDirective。
-        let bridge = Arc::new(HeartbeatBridge::new(deps.runs_repo, thing_agents.clone()));
+        // Task 6 起 O11 dedup 走 RunRegistry 内存（与 thing_agents 共享同一实例）。
+        let bridge = Arc::new(HeartbeatBridge::new(run_registry.clone(), thing_agents.clone()));
         let orchestrator = Arc::new(Orchestrator::new(
             deps.event_bus,
             heartbeat.clone(),
-            deps.heartbeat_task_repo,
-            deps.memory_service,
+            events.clone(),
             deps.drop_notifier,
-            deps.dlq,
             Some(thing_agents.clone()),
             Some(bridge),
         ));
@@ -228,26 +222,9 @@ mod stubs {
     //! 无 I/O 测试夹具桩：所有 async 方法不被触达（restore 只构造不启动）。
 
     use super::*;
-    use tinyiothub_llm::provider::{LlmProvider, LlmResponse};
 
     use super::super::thing_agent::runner::{AgentHandle, RunContextInner};
     use super::super::thing_agent::traits::ThingEventSignal;
-
-    /// noop LLM provider：chat 永远失败（夹具中不会触达）。
-    pub struct NoopLlmProvider;
-
-    #[async_trait::async_trait]
-    impl LlmProvider for NoopLlmProvider {
-        async fn chat(
-            &self,
-            _system: Option<&str>,
-            _prompt: &str,
-            _model: &str,
-            _temperature: f32,
-        ) -> anyhow::Result<LlmResponse> {
-            anyhow::bail!("noop llm provider (test stub)")
-        }
-    }
 
     pub struct NoopThingAgentHost;
 
@@ -301,21 +278,14 @@ impl RuntimeDeps {
             .expect("lazy in-memory sqlite");
         let event_bus = Arc::new(EventBus::new());
         Self {
-            heartbeat_task_repo: Arc::new(HeartbeatTaskRepository::new(pool.clone())),
             event_publisher: Arc::new(AiEventPublisher::new(event_bus.clone())),
             heartbeat_config: HeartbeatConfig::default(),
             thing_agent_host: Arc::new(stubs::NoopThingAgentHost),
             policy_repo: Arc::new(PolicyRepository::new(pool.clone())),
             agent_provider: Arc::new(stubs::NoopAgentProvider),
-            runs_repo: Arc::new(AgentRunsRepository::new(pool.clone())),
             thing_agent_config: ThingAgentManagerConfig::default(),
             event_bus,
-            memory_service: Arc::new(MemoryService::new(
-                Arc::new(stubs::NoopLlmProvider),
-                Arc::new(tinyiothub_storage::memory::MemoryStore::new(pool)),
-            )),
             drop_notifier: None,
-            dlq: None,
             agent_event_capacity: 16,
         }
     }

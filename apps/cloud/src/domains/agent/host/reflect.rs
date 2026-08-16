@@ -1,10 +1,10 @@
 // Memory/reflection compatibility layer.
 //
-// reflect_conversation_turn has moved to crate::domains::agent::loop_::MemoryService.
-// compile_profile and generate_weekly_digest now route through
-// orchestrator.memory_service() — see memory/handler.rs.
+// reflect_conversation_turn lives in tinyiothub_memory::service::MemoryService.
+// compile_profile and generate_weekly_digest route through
+// AgentState.memory_service (cloud-held since Task 6) — see memory/handler.rs.
 //
-// Callers should use MemoryService directly via Orchestrator.
+// Callers should use MemoryService directly via AgentState.
 
 /// Re-export ChatTurnMessage from AI crate for backward compatibility.
 pub use crate::domains::agent::loop_::session::types::ChatTurnMessage;

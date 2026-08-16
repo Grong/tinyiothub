@@ -1,39 +1,28 @@
-//! X6 心跳桥 dedup 集成测试（T18）——真实 SQLite（thing_agent_loop 迁移）
-//! + 真实 `SqliteAgentRunsRepository` + mock `DirectiveSink`。
+//! X6 心跳桥 dedup 集成测试（T18 / Task 6 内存化）—— RunRegistry 内存
+//! dedup 真源 + mock `DirectiveSink`。
 //!
 //! 覆盖 O11 规则：全 outcome 矩阵、窗口内计数（acted+未 verified 仅放行
 //! 一次）、超 6h 复发放行、ack 抑制 7 天（6h 内/6h 外/超 7 天三档）、无
 //! proposals 不投递、心跳 directive 形态（Normal / source=heartbeat /
 //! 不参与合并）。
+//!
+//! Task 6 起 dedup 依据从 `AgentRunsRepository` SQL 查询迁移到
+//! `RunRegistry` 的 problem_key 元数据映射（等价性论证见 registry.rs
+//! 模块文档）；DB 落库由 Task 8 的 RunRecorded 订阅者承接。
 
 use std::sync::{Arc, Mutex};
 
 use crate::domains::agent::loop_::{
     heartbeat::types::{HeartbeatResult, HeartbeatStatus},
     orchestrator::callbacks::HeartbeatBridge,
-    thing_agent::{AgentRunsRepository, DirectiveSink, EnqueueError, Priority, TriggerSource, WakeSignal},
+    thing_agent::{DirectiveSink, EnqueueError, Priority, TriggerSource, WakeSignal},
+    thing_agent::registry::RunRegistry,
+    thing_agent::types::Outcome,
 };
-use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
+use chrono::Utc;
 use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 
 const WS: &str = "ws_bridge";
-
-async fn test_pool() -> SqlitePool {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(":memory:")
-        .await
-        .expect("create in-memory sqlite");
-    let migration = include_str!("../../../../crates/db/migrations/20260729000001_thing_agent_loop.sql");
-    for stmt in migration.split(';') {
-        let stmt = stmt.trim();
-        // Skip the events ALTER — the events table is not part of this pool.
-        if !stmt.is_empty() && !stmt.starts_with("ALTER TABLE") {
-            sqlx::query(stmt).execute(&pool).await.expect("apply migration");
-        }
-    }
-    pool
-}
 
 #[derive(Default)]
 struct RecordingSink {
@@ -47,36 +36,15 @@ impl DirectiveSink for RecordingSink {
     }
 }
 
-/// 插入一条指定年龄/结果的 run；acked=true 时同时写 acked_at/acked_by。
-async fn insert_run(
-    pool: &SqlitePool,
-    id: &str,
-    outcome: &str,
+/// 写入一条指定年龄/结果的 problem run（显式时间戳，无 I/O）。
+fn record_run(
+    registry: &RunRegistry,
+    outcome: Outcome,
     verified: bool,
-    acked: bool,
     problem_key: &str,
-    age_modifier: &str,
+    age: chrono::Duration,
 ) {
-    sqlx::query(
-        "INSERT INTO agent_runs
-             (id, workspace_id, trigger_type, outcome, summary, report, verified,
-              tokens, problem_key, created_at, acked_at, acked_by)
-         VALUES (?, ?, 'user', ?, ?, '{}', ?, 0, ?, datetime('now', ?),
-                 CASE WHEN ? THEN datetime('now') ELSE NULL END,
-                 CASE WHEN ? THEN 'u1' ELSE NULL END)",
-    )
-    .bind(id)
-    .bind(WS)
-    .bind(outcome)
-    .bind(format!("summary of {id}"))
-    .bind(verified)
-    .bind(problem_key)
-    .bind(age_modifier)
-    .bind(acked)
-    .bind(acked)
-    .execute(pool)
-    .await
-    .expect("insert agent_run");
+    registry.record_problem_run(WS, problem_key, outcome, verified, Utc::now() - age);
 }
 
 fn proposal(tool_name: &str, device_id: Option<&str>) -> Proposal {
@@ -107,66 +75,56 @@ fn result_with(proposals: Vec<Proposal>) -> HeartbeatResult {
     }
 }
 
-fn bridge(pool: &SqlitePool) -> (HeartbeatBridge, Arc<RecordingSink>) {
+fn bridge(registry: RunRegistry) -> (HeartbeatBridge, Arc<RecordingSink>) {
     let sink = Arc::new(RecordingSink::default());
-    let repo: Arc<AgentRunsRepository> =
-        Arc::new(tinyiothub_storage::agent_runs::AgentRunsRepository::new(pool.clone()));
-    (HeartbeatBridge::new(repo, sink.clone()), sink)
+    (HeartbeatBridge::new(registry, sink.clone()), sink)
 }
 
-/// problem_key 为 `tool:dev-1` 的提案经 dedup 后是否投递。
-async fn dispatched_count(pool: &SqlitePool, tool: &str) -> usize {
-    let (bridge, sink) = bridge(pool);
+/// problem_key 为 `{tool}:dev-1` 的提案经 dedup 后是否投递。
+async fn dispatched_count(registry: RunRegistry, tool: &str) -> usize {
+    let (bridge, sink) = bridge(registry);
     bridge
         .dispatch_proposals(WS, &result_with(vec![proposal(tool, Some("dev-1"))]))
         .await;
     sink.signals.lock().unwrap().len()
 }
 
-// O11 全 outcome 矩阵（真实 DB）：窗口内最近一次 run 决定抑制/放行。
+// O11 全 outcome 矩阵：窗口内最近一次 run 决定抑制/放行。
 #[tokio::test]
-async fn outcome_matrix_against_real_db() {
-    let pool = test_pool().await;
-
+async fn outcome_matrix_against_in_memory_dedup() {
     for (tool, outcome, verified, expect_dispatch) in [
-        ("t_failed", "failed", false, false),
-        ("t_rejected", "rejected", false, false),
-        ("t_budget", "budget_exceeded", false, false),
-        ("t_noaction", "no_action_needed", false, false),
-        ("t_acted_verified", "acted", true, false),
-        ("t_acted_unverified", "acted", false, true), // 窗口内仅 1 次 → 放行一次
+        ("t_failed", Outcome::Failed, false, false),
+        ("t_rejected", Outcome::Rejected, false, false),
+        ("t_budget", Outcome::BudgetExceeded, false, false),
+        ("t_noaction", Outcome::NoActionNeeded, false, false),
+        ("t_acted_verified", Outcome::Acted, true, false),
+        ("t_acted_unverified", Outcome::Acted, false, true), // 窗口内仅 1 次 → 放行一次
     ] {
+        let registry = RunRegistry::new();
         let key = format!("{tool}:dev-1");
-        insert_run(
-            &pool,
-            &format!("run_{tool}"),
-            outcome,
-            verified,
-            false,
-            &key,
-            "-1 hours",
-        )
-        .await;
+        record_run(&registry, outcome, verified, &key, chrono::Duration::hours(1));
         assert_eq!(
-            dispatched_count(&pool, tool).await,
+            dispatched_count(registry, tool).await,
             usize::from(expect_dispatch),
-            "{outcome} (verified={verified}) dispatch expectation"
+            "{outcome:?} (verified={verified}) dispatch expectation"
         );
     }
 }
 
 // acted+未 verified：窗口内仅放行一次重试，第二次起跳过（窗口内计数）。
 #[tokio::test]
-async fn acted_unverified_retry_only_once_against_real_db() {
-    let pool = test_pool().await;
+async fn acted_unverified_retry_only_once_in_memory() {
+    let registry = RunRegistry::new();
     let key = "set_hvac:dev-1";
 
-    insert_run(&pool, "r1", "acted", false, false, key, "-1 hours").await;
-    assert_eq!(dispatched_count(&pool, "set_hvac").await, 1, "first retry allowed");
+    record_run(&registry, Outcome::Acted, false, key, chrono::Duration::hours(1));
+    assert_eq!(dispatched_count(registry, "set_hvac").await, 1, "first retry allowed");
 
-    insert_run(&pool, "r2", "acted", false, false, key, "-30 minutes").await;
+    let registry = RunRegistry::new();
+    record_run(&registry, Outcome::Acted, false, key, chrono::Duration::hours(2));
+    record_run(&registry, Outcome::Acted, false, key, chrono::Duration::minutes(30));
     assert_eq!(
-        dispatched_count(&pool, "set_hvac").await,
+        dispatched_count(registry, "set_hvac").await,
         0,
         "two acted+unverified runs in window suppress the second retry"
     );
@@ -174,27 +132,31 @@ async fn acted_unverified_retry_only_once_against_real_db() {
 
 // 超 6h 旧 Run 不抑制：7h 前 acted+verified 的问题复发 → 放行。
 #[tokio::test]
-async fn recurrence_beyond_6h_dispatches_against_real_db() {
-    let pool = test_pool().await;
-    insert_run(&pool, "old", "acted", true, false, "set_hvac:dev-1", "-7 hours").await;
-    assert_eq!(dispatched_count(&pool, "set_hvac").await, 1);
+async fn recurrence_beyond_6h_dispatches_in_memory() {
+    let registry = RunRegistry::new();
+    record_run(&registry, Outcome::Acted, true, "set_hvac:dev-1", chrono::Duration::hours(7));
+    assert_eq!(dispatched_count(registry, "set_hvac").await, 1);
 }
 
-// ack 抑制 7 天（真实 DB）：6h 内 acked → 跳；6h 外 7 天内 acked → 跳；
+// ack 抑制 7 天：6h 内 acked → 跳；6h 外 7 天内 acked → 跳；
 // 超 7 天 acked → 抑制过期放行。
 #[tokio::test]
-async fn ack_suppression_windows_against_real_db() {
-    let pool = test_pool().await;
+async fn ack_suppression_windows_in_memory() {
+    let registry = RunRegistry::new();
+    record_run(&registry, Outcome::Acted, true, "k1:dev-1", chrono::Duration::hours(1));
+    registry.mark_problem_acked(WS, "k1:dev-1", Utc::now());
+    assert_eq!(dispatched_count(registry, "k1").await, 0, "acked within 6h suppressed");
 
-    insert_run(&pool, "ack_1h", "acted", true, true, "k1:dev-1", "-1 hours").await;
-    assert_eq!(dispatched_count(&pool, "k1").await, 0, "acked within 6h suppressed");
+    let registry = RunRegistry::new();
+    record_run(&registry, Outcome::Acted, true, "k2:dev-1", chrono::Duration::days(3));
+    registry.mark_problem_acked(WS, "k2:dev-1", Utc::now() - chrono::Duration::days(2));
+    assert_eq!(dispatched_count(registry, "k2").await, 0, "acked within 7d suppressed");
 
-    insert_run(&pool, "ack_3d", "acted", true, true, "k2:dev-1", "-3 days").await;
-    assert_eq!(dispatched_count(&pool, "k2").await, 0, "acked within 7d suppressed");
-
-    insert_run(&pool, "ack_8d", "acted", true, true, "k3:dev-1", "-8 days").await;
+    let registry = RunRegistry::new();
+    record_run(&registry, Outcome::Acted, true, "k3:dev-1", chrono::Duration::days(8));
+    registry.mark_problem_acked(WS, "k3:dev-1", Utc::now() - chrono::Duration::days(8) + chrono::Duration::hours(1));
     assert_eq!(
-        dispatched_count(&pool, "k3").await,
+        dispatched_count(registry, "k3").await,
         1,
         "ack older than 7d no longer suppresses"
     );
@@ -202,19 +164,17 @@ async fn ack_suppression_windows_against_real_db() {
 
 // HeartbeatCompleted 无 proposals → 不投递。
 #[tokio::test]
-async fn no_proposals_dispatches_nothing_against_real_db() {
-    let pool = test_pool().await;
-    let (bridge, sink) = bridge(&pool);
+async fn no_proposals_dispatches_nothing_in_memory() {
+    let (bridge, sink) = bridge(RunRegistry::new());
     bridge.dispatch_proposals(WS, &result_with(vec![])).await;
     assert!(sink.signals.lock().unwrap().is_empty());
 }
 
 // 心跳 directive 形态（O5/O24）：Normal、source=Some("heartbeat")、
-// problem_key 随指令落库、dedup_key=None 不参与合并。
+// problem_key 随指令携带、dedup_key=None 不参与合并。
 #[tokio::test]
-async fn heartbeat_directive_shape_against_real_db() {
-    let pool = test_pool().await;
-    let (bridge, sink) = bridge(&pool);
+async fn heartbeat_directive_shape_in_memory() {
+    let (bridge, sink) = bridge(RunRegistry::new());
     bridge
         .dispatch_proposals(WS, &result_with(vec![proposal("set_hvac", Some("dev-1"))]))
         .await;
