@@ -180,6 +180,16 @@ impl AgentRuntime {
         self.heartbeat.tasks(workspace_id)
     }
 
+    /// 工作区删除清理命令：停 loop + 清 runner 内存三表，防止已删工作区
+    /// 在内存与 dump_state 快照中残留（Task 5 fix round 1）。
+    pub fn remove_workspace(&self, workspace_id: &str) {
+        let runner = self.heartbeat.clone();
+        let ws = workspace_id.to_string();
+        spawn_delegate(async move {
+            runner.remove_workspace(&ws).await;
+        });
+    }
+
     /// 事件总线句柄 —— 测试经 bus().emit(...) 注入事件（Task 8）。
     pub fn bus(&self) -> &AgentEventBus {
         &self.events
@@ -344,6 +354,14 @@ mod tests {
         }
     }
 
+    /// 显式空快照夹具（不用 Default，字段逐个列出）。
+    fn empty_snapshot() -> RestoreSnapshot {
+        RestoreSnapshot {
+            heartbeat: vec![],
+            recent_runs: vec![],
+        }
+    }
+
     #[tokio::test]
     async fn restore_dump_roundtrip_preserves_heartbeat_state() {
         let snap = snapshot_with_ws1();
@@ -389,14 +407,14 @@ mod tests {
 
     #[tokio::test]
     async fn reload_tasks_command_updates_in_memory_tasks() {
-        let rt = AgentRuntime::restore(RestoreSnapshot::default(), RuntimeDeps::test_stub());
+        let rt = AgentRuntime::restore(empty_snapshot(), RuntimeDeps::test_stub());
         rt.reload_heartbeat_tasks("ws1", vec![task_fixture()]);
         assert_eq!(rt.heartbeat_tasks("ws1").len(), 1);
     }
 
     #[tokio::test]
     async fn update_trust_config_emits_event() {
-        let rt = AgentRuntime::restore(RestoreSnapshot::default(), RuntimeDeps::test_stub());
+        let rt = AgentRuntime::restore(empty_snapshot(), RuntimeDeps::test_stub());
         let mut rx = rt.subscribe();
         rt.update_trust_config("ws1", TrustConfig::default());
         let ev = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())

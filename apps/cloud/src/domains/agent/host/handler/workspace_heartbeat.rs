@@ -425,11 +425,16 @@ pub async fn update_tasks(
         return ApiResponseBuilder::error("保存心跳任务失败");
     }
 
-    // 回读 DB 行（含 id/version 等 server 字段）作为内存真源。
-    let stored = repo
-        .list_by_workspace(&workspace_id)
-        .await
-        .unwrap_or_default();
+    // 回读 DB 行（含 id/version 等 server 字段）作为内存真源。回读失败
+    // 必须返错：DB 已是真源，内存未更新可安全报错；吞掉会把空集注入内存
+    // 且客户端误收 success（Task 5 fix round 1）。
+    let stored = match repo.list_by_workspace(&workspace_id).await {
+        Ok(tasks) => tasks,
+        Err(e) => {
+            tracing::error!(%workspace_id, "Failed to read back heartbeat tasks: {}", e);
+            return ApiResponseBuilder::error("读取心跳任务失败");
+        }
+    };
     let has_tasks = !stored.is_empty();
     runner.set_tasks(&workspace_id, stored);
     if has_tasks && !runner.active_workspaces().contains(&workspace_id) {

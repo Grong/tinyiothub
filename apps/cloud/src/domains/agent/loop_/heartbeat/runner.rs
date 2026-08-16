@@ -161,7 +161,7 @@ impl HeartbeatRunner {
             .map(|r| r.value().clone())
             .unwrap_or_default();
         if tasks_vec.is_empty() {
-            debug!(workspace_id, "No heartbeat tasks in memory, skipping loop start");
+            info!(workspace_id, "No heartbeat tasks, skipping loop start");
             return;
         }
         let tasks = Arc::new(RwLock::new(tasks_vec));
@@ -256,8 +256,20 @@ impl HeartbeatRunner {
         }
         self.signal_senders.remove(workspace_id);
         // trust_configs/tasks/intervals 是内存真源，stop 后保留 —— start 幂等
-        // 重启（如改间隔）依赖它们在重启间存活。
+        // 重启（如改间隔）依赖它们在重启间存活。工作区删除走 remove_workspace。
         info!(workspace_id, "Heartbeat loop stopped");
+    }
+
+    /// 工作区删除清理命令：停 loop + 清三张内存表（trust/tasks/intervals）
+    /// + 出队 pending start。不清理则已删工作区在内存与 dump_state 快照中
+    /// 永久残留（Task 5 fix round 1）。
+    pub async fn remove_workspace(&self, workspace_id: &str) {
+        self.stop(workspace_id).await;
+        self.trust_configs.remove(workspace_id);
+        self.tasks.remove(workspace_id);
+        self.intervals.remove(workspace_id);
+        self.pending_starts.write().await.retain(|p| p != workspace_id);
+        info!(workspace_id, "Workspace heartbeat state removed");
     }
 
     /// Send a signal to a workspace's heartbeat loop. Non-blocking.
@@ -620,6 +632,38 @@ mod tests {
         assert_eq!(
             runner.effective_interval_minutes("ws_1"),
             MIN_HEARTBEAT_INTERVAL_MINUTES
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_workspace_clears_all_in_memory_state() {
+        // 工作区删除后三表必须清空，否则已删工作区在内存与 dump_state
+        // 快照中永久残留（stop 只停 loop，不清内存真源）。
+        let runner = make_runner();
+        runner.set_tasks("ws_1", vec![task_fixture("test")]);
+        runner.update_trust_config(
+            "ws_1",
+            tinyiothub_core::heartbeat::TrustConfig {
+                trust_level: tinyiothub_core::heartbeat::TrustLevel::FullAuto,
+                ..Default::default()
+            },
+        );
+        runner.set_interval_minutes("ws_1", 30);
+        runner.pending_starts.write().await.push("ws_1".to_string());
+
+        runner.remove_workspace("ws_1").await;
+
+        assert!(runner.tasks("ws_1").is_empty());
+        assert!(runner.get_trust_config("ws_1").is_none());
+        assert_eq!(
+            runner.effective_interval_minutes("ws_1"),
+            HeartbeatConfig::default().interval_minutes,
+            "cleared interval must fall back to the runner default"
+        );
+        assert!(runner.pending_starts.read().await.is_empty());
+        assert!(
+            runner.snapshot_states().is_empty(),
+            "removed workspace must not appear in the exported snapshot"
         );
     }
 

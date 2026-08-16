@@ -283,7 +283,9 @@ impl AiEventHandler {
                 }
             }
             AiEvent::WorkspaceDeleted { workspace_id } => {
-                self.heartbeat_runner.stop(workspace_id).await;
+                // remove_workspace = stop + 清三表内存真源，防止已删工作区
+                // 在内存与 dump_state 快照中残留（Task 5 fix round 1）。
+                self.heartbeat_runner.remove_workspace(workspace_id).await;
                 if let Some(manager) = &self.thing_agent_manager {
                     manager.stop(workspace_id).await;
                 }
