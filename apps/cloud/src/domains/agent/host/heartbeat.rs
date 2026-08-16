@@ -108,7 +108,7 @@ pub(crate) fn build_heartbeat_md(tasks: &[HeartbeatTask]) -> String {
 /// the file exists. On success the file is renamed to HEARTBEAT.md.migrated
 /// so it never re-seeds. Returns true when a migration happened.
 pub async fn migrate_file_tasks_to_db(
-    repo: &crate::domains::agent::loop_::heartbeat::repo::HeartbeatTaskRepository,
+    repo: &tinyiothub_storage::heartbeat::HeartbeatTaskRepository,
     workspace_id: &str,
     workspace_dir: &std::path::Path,
 ) -> anyhow::Result<bool> {

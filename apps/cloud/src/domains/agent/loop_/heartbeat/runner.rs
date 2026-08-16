@@ -1,7 +1,9 @@
 //! HeartbeatRunner — per-workspace heartbeat loop lifecycle manager.
 //!
 //! Owns a DashMap of cancel channels and handles. Start/stop are idempotent.
-//! TrustConfig is loaded from DB on start and cached in memory.
+//! Tasks / TrustConfig / interval live in runner memory (Task 5: decoupled
+//! from HeartbeatTaskRepository) — injected via restore/commands; DB writes
+//! are the cloud service's job BEFORE calling the command (D11-⑤ 写序).
 
 use super::types::{HeartbeatConfig, HeartbeatSignal, LoopSignal};
 use std::sync::Arc;
@@ -12,10 +14,10 @@ use tokio::sync::{RwLock, mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use super::metrics::Metrics;
-use super::repo::HeartbeatTaskRepository;
 use crate::domains::agent::loop_::agent::pool::AgentPoolLike;
 use crate::domains::agent::loop_::event::bus::AiEventPublisher;
-use tinyiothub_core::heartbeat::TrustConfig;
+use crate::domains::agent::loop_::snapshot::WorkspaceHeartbeatState;
+use tinyiothub_core::heartbeat::{HeartbeatTask, MIN_HEARTBEAT_INTERVAL_MINUTES, TrustConfig};
 
 struct LoopHandle {
     cancel_tx: oneshot::Sender<()>,
@@ -73,7 +75,11 @@ pub struct HeartbeatRunner {
     loops: Arc<DashMap<String, LoopHandle>>,
     signal_senders: Arc<DashMap<String, mpsc::Sender<LoopSignal>>>,
     trust_configs: DashMap<String, TrustConfig>,
-    task_repo: Arc<HeartbeatTaskRepository>,
+    /// 内存任务真源（Task 5）：由 restore/reload 命令注入；运行中 loop 的
+    /// ReloadTasks 信号重读此表。Arc 共享给 loop 任务。
+    tasks: Arc<DashMap<String, Vec<HeartbeatTask>>>,
+    /// 每工作区心跳间隔（分钟）；缺省走 config.interval_minutes。
+    intervals: DashMap<String, u32>,
     event_publisher: Arc<AiEventPublisher>,
     agent_pool: RwLock<Option<Arc<dyn AgentPoolLike>>>,
     config: HeartbeatConfig,
@@ -87,7 +93,6 @@ pub struct HeartbeatRunner {
 
 impl HeartbeatRunner {
     pub fn new(
-        task_repo: Arc<HeartbeatTaskRepository>,
         event_publisher: Arc<AiEventPublisher>,
         config: HeartbeatConfig,
     ) -> Self {
@@ -95,7 +100,8 @@ impl HeartbeatRunner {
             loops: Arc::new(DashMap::new()),
             signal_senders: Arc::new(DashMap::new()),
             trust_configs: DashMap::new(),
-            task_repo,
+            tasks: Arc::new(DashMap::new()),
+            intervals: DashMap::new(),
             event_publisher,
             agent_pool: RwLock::new(None),
             config,
@@ -134,7 +140,10 @@ impl HeartbeatRunner {
 
         self.stop(workspace_id).await;
 
-        let trust_config = Arc::new(RwLock::new(self.load_trust_config(workspace_id).await));
+        // TrustConfig 来自内存（restore/命令注入）；未注入时用缺省。
+        let trust_config = Arc::new(RwLock::new(
+            self.get_trust_config(workspace_id).unwrap_or_default(),
+        ));
         let trust_config_for_cache = trust_config.clone();
 
         self.trust_configs
@@ -144,20 +153,18 @@ impl HeartbeatRunner {
             pool.set_trust_config(workspace_id, trust_config_for_cache.read().await.clone());
         }
 
-        let tasks = Arc::new(RwLock::new(
-            match self.task_repo.list_by_workspace(workspace_id).await {
-                Ok(t) => t,
-                Err(e) => {
-                    error!(workspace_id, error = %e, "Failed to load heartbeat tasks");
-                    return;
-                }
-            },
-        ));
-
-        if tasks.read().await.is_empty() {
-            info!(workspace_id, "No heartbeat tasks, skipping loop start");
+        // 任务来自内存（restore/reload 命令注入；Task 9 接线启动恢复）。
+        // 未注入时跳过启动 —— 空任务集的 loop 没有意义。
+        let tasks_vec = self
+            .tasks
+            .get(workspace_id)
+            .map(|r| r.value().clone())
+            .unwrap_or_default();
+        if tasks_vec.is_empty() {
+            debug!(workspace_id, "No heartbeat tasks in memory, skipping loop start");
             return;
         }
+        let tasks = Arc::new(RwLock::new(tasks_vec));
 
         let pool = self.agent_pool.read().await.clone();
         if pool.is_none() {
@@ -173,10 +180,10 @@ impl HeartbeatRunner {
         let (cancel_tx, cancel_rx) = oneshot::channel();
 
         let ws_id = workspace_id.to_string();
-        let task_repo = self.task_repo.clone();
+        let tasks_source = self.tasks.clone();
         let event_publisher = self.event_publisher.clone();
         let mut config = self.config.clone();
-        config.interval_minutes = self.effective_interval_minutes(workspace_id).await;
+        config.interval_minutes = self.effective_interval_minutes(workspace_id);
         let metrics = self.metrics.clone();
 
         let join_handle = tokio::spawn(async move {
@@ -185,7 +192,7 @@ impl HeartbeatRunner {
                 tasks,
                 trust_config,
                 pool,
-                task_repo,
+                tasks_source,
                 event_publisher,
                 config,
                 signal_rx,
@@ -248,7 +255,8 @@ impl HeartbeatRunner {
             self.metrics.loops_completed.fetch_add(1, Ordering::Relaxed);
         }
         self.signal_senders.remove(workspace_id);
-        self.trust_configs.remove(workspace_id);
+        // trust_configs/tasks/intervals 是内存真源，stop 后保留 —— start 幂等
+        // 重启（如改间隔）依赖它们在重启间存活。
         info!(workspace_id, "Heartbeat loop stopped");
     }
 
@@ -270,8 +278,8 @@ impl HeartbeatRunner {
         }
     }
 
-    /// Notify a running loop to reload tasks from the repository.
-    pub fn notify_tasks_changed(&self, workspace_id: &str) {
+    /// Notify a running loop that its in-memory tasks were replaced.
+    fn notify_tasks_changed(&self, workspace_id: &str) {
         if let Some(sender) = self.signal_senders.get(workspace_id) {
             send_control(&sender, LoopSignal::ReloadTasks, workspace_id);
             info!(workspace_id, "Heartbeat loop notified: tasks changed");
@@ -285,31 +293,50 @@ impl HeartbeatRunner {
         }
     }
 
-    pub async fn update_trust_config(&self, workspace_id: &str, config: TrustConfig) {
-        if let Err(e) = self.task_repo.save_trust_config(workspace_id, &config).await {
-            warn!(workspace_id, error = %e, "Failed to persist TrustConfig");
+    /// 全量替换内存任务并通知运行中 loop 重读（ReloadTasks 信号语义：
+    /// 内存已被本命令更新，loop 重读内存）。DB 写由调用方先做（D11-⑤）。
+    pub fn set_tasks(&self, workspace_id: &str, tasks: Vec<HeartbeatTask>) {
+        self.tasks.insert(workspace_id.to_string(), tasks);
+        self.notify_tasks_changed(workspace_id);
+    }
+
+    /// 工作区内存任务快照（无注入时为空）。
+    pub fn tasks(&self, workspace_id: &str) -> Vec<HeartbeatTask> {
+        self.tasks
+            .get(workspace_id)
+            .map(|r| r.value().clone())
+            .unwrap_or_default()
+    }
+
+    /// 更新内存心跳间隔（分钟）。DB 写与 enabled 归并由调用方先做；
+    /// 运行中 loop 的重启由调用方触发（start 幂等）。
+    pub fn set_interval_minutes(&self, workspace_id: &str, interval_minutes: u32) {
+        self.intervals.insert(workspace_id.to_string(), interval_minutes);
+    }
+
+    /// trust config 变更命令：只更新内存 + 热更 pool + 通知 loop。
+    /// DB 写由 cloud 侧 service 先行完成（D11-⑤ 写序）；事件由门面发射。
+    pub fn update_trust_config(&self, workspace_id: &str, config: TrustConfig) {
+        self.trust_configs.insert(workspace_id.to_string(), config.clone());
+        match self.agent_pool.try_read() {
+            Ok(guard) => {
+                if let Some(pool) = guard.as_ref() {
+                    pool.set_trust_config(workspace_id, config);
+                }
+            }
+            Err(_) => warn!(workspace_id, "AgentPool locked, trust config hot-update skipped"),
         }
-        if let Some(pool) = self.agent_pool.read().await.as_ref() {
-            pool.set_trust_config(workspace_id, config.clone());
-        }
-        self.trust_configs.insert(workspace_id.to_string(), config);
         self.notify_config_changed(workspace_id);
         info!(workspace_id, "TrustConfig updated");
     }
 
-    /// The interval a workspace's loop should use: per-workspace config when
-    /// persisted (clamped to the minimum), otherwise the runner default.
-    pub async fn effective_interval_minutes(&self, workspace_id: &str) -> u32 {
-        match self.task_repo.load_heartbeat_config(workspace_id).await {
-            Ok(Some(cfg)) => cfg
-                .interval_minutes
-                .max(tinyiothub_core::heartbeat::MIN_HEARTBEAT_INTERVAL_MINUTES),
-            Ok(None) => self.config.interval_minutes,
-            Err(e) => {
-                warn!(workspace_id, error = %e, "Failed to load heartbeat config, using default interval");
-                self.config.interval_minutes
-            }
-        }
+    /// The interval a workspace's loop should use: per-workspace memory value
+    /// when injected (clamped to the minimum), otherwise the runner default.
+    pub fn effective_interval_minutes(&self, workspace_id: &str) -> u32 {
+        self.intervals
+            .get(workspace_id)
+            .map(|r| (*r.value()).max(MIN_HEARTBEAT_INTERVAL_MINUTES))
+            .unwrap_or(self.config.interval_minutes)
     }
 
     pub fn get_trust_config(&self, workspace_id: &str) -> Option<TrustConfig> {
@@ -324,9 +351,32 @@ impl HeartbeatRunner {
         self.loops.iter().map(|r| r.key().clone()).collect()
     }
 
-    /// Access the task repository (used by API handlers for task CRUD).
-    pub fn task_repo(&self) -> Arc<HeartbeatTaskRepository> {
-        self.task_repo.clone()
+    /// 导出内存心跳状态（dump_state 对账出口）：tasks/trust/intervals 三表
+    /// key 的并集，缺省字段回退 default。
+    pub fn snapshot_states(&self) -> Vec<WorkspaceHeartbeatState> {
+        let mut ws_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for r in self.tasks.iter() {
+            ws_ids.insert(r.key().clone());
+        }
+        for r in self.trust_configs.iter() {
+            ws_ids.insert(r.key().clone());
+        }
+        for r in self.intervals.iter() {
+            ws_ids.insert(r.key().clone());
+        }
+        ws_ids
+            .into_iter()
+            .map(|ws| WorkspaceHeartbeatState {
+                tasks: self.tasks(&ws),
+                trust_config: self.get_trust_config(&ws).unwrap_or_default(),
+                interval_minutes: self
+                    .intervals
+                    .get(&ws)
+                    .map(|r| *r.value())
+                    .unwrap_or(self.config.interval_minutes),
+                workspace_id: ws,
+            })
+            .collect()
     }
 
     pub async fn shutdown(&self) {
@@ -337,17 +387,6 @@ impl HeartbeatRunner {
         }
         info!(count = ws_ids.len(), "HeartbeatRunner shut down");
     }
-
-    async fn load_trust_config(&self, workspace_id: &str) -> TrustConfig {
-        match self.task_repo.load_trust_config(workspace_id).await {
-            Ok(Some(config)) => config,
-            Ok(None) => TrustConfig::default(),
-            Err(e) => {
-                warn!(workspace_id, error = %e, "Failed to load TrustConfig, using default");
-                TrustConfig::default()
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -355,84 +394,68 @@ mod tests {
     use super::*;
     use crate::domains::agent::loop_::event::bus::AiEventPublisher;
 
-    /// 真实 SQLite 版 heartbeat repo（E6b 去 trait 后替代 MockTaskRepo）。
-    async fn real_repo() -> Arc<HeartbeatTaskRepository> {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
-            .await
-            .expect("in-memory sqlite");
-        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
-            .await
-            .expect("migrations");
-        // workspaces 行是 trust/hb config UPDATE 的目标（无行则静默 no-op）
-        sqlx::query("INSERT INTO tenants (id, name, slug) VALUES ('t1', 'T', 't')")
-            .execute(&pool)
-            .await
-            .expect("seed tenant");
-        sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws_1', 'WS', 't1', '2026-01-01', '2026-01-01')")
-            .execute(&pool)
-            .await
-            .expect("seed workspace");
-        Arc::new(HeartbeatTaskRepository::new(pool))
-    }
-
-    /// 预置一条 high/test 任务（新库 rowid=1，与原 mock 的 id:1 一致）。
-    async fn real_repo_with_task() -> Arc<HeartbeatTaskRepository> {
-        let repo = real_repo().await;
-        repo.insert("ws_1", "high", "test").await.expect("seed task");
-        repo
+    /// 内存夹具（Task 5 去 repo 后替代 real_repo SQLite 夹具）：显式构造，
+    /// 任务经 `set_tasks` 注入，trust/interval 经命令方法注入。
+    fn task_fixture(text: &str) -> HeartbeatTask {
+        HeartbeatTask {
+            id: 1,
+            workspace_id: "ws_1".into(),
+            priority: "high".into(),
+            text: text.into(),
+            paused: false,
+            version: 1,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
     }
 
     fn make_publisher() -> Arc<AiEventPublisher> {
         Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())))
     }
 
+    fn make_runner() -> HeartbeatRunner {
+        HeartbeatRunner::new(make_publisher(), HeartbeatConfig::default())
+    }
+
     #[tokio::test]
     async fn test_runner_construction() {
-        let repo = real_repo().await;
-        let publisher = make_publisher();
-        let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
+        let runner = make_runner();
         assert_eq!(runner.active_loop_count(), 0);
         assert!(runner.active_workspaces().is_empty());
     }
 
     #[tokio::test]
     async fn test_start_with_no_tasks_exits_early() {
-        let repo = real_repo().await;
-        let publisher = make_publisher();
-        let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
+        let runner = make_runner();
         runner.start("ws_1").await;
         assert_eq!(runner.active_loop_count(), 0);
     }
 
     #[tokio::test]
     async fn test_stop_nonexistent_is_noop() {
-        let repo = real_repo().await;
-        let publisher = make_publisher();
-        let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
+        let runner = make_runner();
         runner.stop("nonexistent").await;
         assert_eq!(runner.active_loop_count(), 0);
     }
 
     #[tokio::test]
     async fn test_start_when_disabled() {
-        let repo = real_repo_with_task().await;
-        let publisher = make_publisher();
-        let config = HeartbeatConfig {
-            enabled: false,
-            ..Default::default()
-        };
-        let runner = HeartbeatRunner::new(repo, publisher, config);
+        let runner = HeartbeatRunner::new(
+            make_publisher(),
+            HeartbeatConfig {
+                enabled: false,
+                ..Default::default()
+            },
+        );
+        runner.set_tasks("ws_1", vec![task_fixture("test")]);
         runner.start("ws_1").await;
         assert_eq!(runner.active_loop_count(), 0);
     }
 
     #[tokio::test]
     async fn test_pending_starts_queued_when_pool_not_ready() {
-        let repo = real_repo_with_task().await;
-        let publisher = make_publisher();
-        let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
+        let runner = make_runner();
+        runner.set_tasks("ws_1", vec![task_fixture("test")]);
         runner.start("ws_1").await;
         assert_eq!(runner.active_loop_count(), 0);
     }
@@ -442,9 +465,8 @@ mod tests {
         // Repeated start() calls while the pool is down must not pile up
         // duplicate entries — each would trigger a redundant stop+start when
         // the pool arrives.
-        let repo = real_repo_with_task().await;
-        let publisher = make_publisher();
-        let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
+        let runner = make_runner();
+        runner.set_tasks("ws_1", vec![task_fixture("test")]);
         runner.start("ws_1").await;
         runner.start("ws_1").await;
         runner.start("ws_1").await;
@@ -504,9 +526,8 @@ mod tests {
     async fn panicking_loop_is_reaped_by_supervisor() {
         // A crashed loop must not linger in the maps: its entry and signal
         // sender are removed so later starts/signals behave correctly.
-        let repo = real_repo_with_task().await;
-        let publisher = make_publisher();
-        let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
+        let runner = make_runner();
+        runner.set_tasks("ws_1", vec![task_fixture("test")]);
         runner.set_agent_pool(Arc::new(PanicPool)).await;
         runner.start("ws_1").await;
 
@@ -524,19 +545,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_start_loads_trust_config_from_repo() {
-        let repo = real_repo().await;
-        repo.save_trust_config(
+    async fn test_start_uses_injected_trust_config() {
+        let runner = make_runner();
+        runner.update_trust_config(
             "ws_1",
-            &tinyiothub_core::heartbeat::TrustConfig {
+            tinyiothub_core::heartbeat::TrustConfig {
                 trust_level: tinyiothub_core::heartbeat::TrustLevel::FullAuto,
                 ..Default::default()
             },
-        )
-        .await
-        .expect("seed trust");
-        let publisher = make_publisher();
-        let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
+        );
         runner.start("ws_1").await;
 
         let loaded = runner.get_trust_config("ws_1").expect("trust config cached on start");
@@ -545,9 +562,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_falls_back_to_default_trust_config() {
-        let repo = real_repo().await;
-        let publisher = make_publisher();
-        let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
+        let runner = make_runner();
         runner.start("ws_1").await;
 
         let loaded = runner.get_trust_config("ws_1").expect("trust config cached on start");
@@ -555,38 +570,57 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_update_trust_config_persists_via_repo() {
-        let repo = real_repo().await;
-        let publisher = make_publisher();
-        let runner = HeartbeatRunner::new(repo.clone(), publisher, HeartbeatConfig::default());
+    async fn test_update_trust_config_updates_memory() {
+        // Task 5：命令只写内存（DB 写由 cloud 侧 service 先行，D11-⑤ 写序）。
+        let runner = make_runner();
 
         let cfg = tinyiothub_core::heartbeat::TrustConfig {
             trust_level: tinyiothub_core::heartbeat::TrustLevel::FullAuto,
             ..Default::default()
         };
-        runner.update_trust_config("ws_1", cfg).await;
+        runner.update_trust_config("ws_1", cfg);
 
-        let saved = repo.load_trust_config("ws_1").await.expect("load").expect("persisted");
+        let saved = runner.get_trust_config("ws_1").expect("in-memory trust config");
         assert_eq!(saved.trust_level, tinyiothub_core::heartbeat::TrustLevel::FullAuto);
     }
 
     #[tokio::test]
-    async fn test_effective_interval_uses_workspace_config() {
-        let repo = real_repo().await;
-        repo.save_heartbeat_config(
+    async fn test_trust_config_survives_stop_start_cycle() {
+        // start 幂等（先 stop 再起）；内存真源必须在重启间存活，否则改间隔
+        // 重启会丢 trust 配置。
+        let runner = make_runner();
+        runner.update_trust_config(
             "ws_1",
-            &crate::domains::agent::loop_::heartbeat::types::WorkspaceHeartbeatConfig {
-                enabled: true,
-                interval_minutes: 30,
+            tinyiothub_core::heartbeat::TrustConfig {
+                trust_level: tinyiothub_core::heartbeat::TrustLevel::FullAuto,
+                ..Default::default()
             },
-        )
-        .await
-        .expect("seed hb config");
-        let publisher = make_publisher();
-        let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
+        );
+        runner.stop("ws_1").await;
+        runner.start("ws_1").await;
 
-        assert_eq!(runner.effective_interval_minutes("ws_1").await, 30);
-        assert_eq!(runner.effective_interval_minutes("ws_other").await, 15);
+        let loaded = runner.get_trust_config("ws_1").expect("trust config survives restart");
+        assert_eq!(loaded.trust_level, tinyiothub_core::heartbeat::TrustLevel::FullAuto);
+    }
+
+    #[tokio::test]
+    async fn test_effective_interval_uses_injected_value() {
+        let runner = make_runner();
+        runner.set_interval_minutes("ws_1", 30);
+
+        assert_eq!(runner.effective_interval_minutes("ws_1"), 30);
+        assert_eq!(runner.effective_interval_minutes("ws_other"), 15);
+    }
+
+    #[tokio::test]
+    async fn test_effective_interval_clamps_to_minimum() {
+        let runner = make_runner();
+        runner.set_interval_minutes("ws_1", 1);
+
+        assert_eq!(
+            runner.effective_interval_minutes("ws_1"),
+            MIN_HEARTBEAT_INTERVAL_MINUTES
+        );
     }
 
     struct OkPool;
@@ -615,9 +649,8 @@ mod tests {
 
     #[tokio::test]
     async fn metrics_track_loop_lifecycle() {
-        let repo = real_repo_with_task().await;
-        let publisher = make_publisher();
-        let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
+        let runner = make_runner();
+        runner.set_tasks("ws_1", vec![task_fixture("test")]);
         runner.set_agent_pool(Arc::new(OkPool)).await;
 
         runner.start("ws_1").await;
@@ -644,9 +677,8 @@ mod tests {
 
     #[tokio::test]
     async fn crashed_loop_counts_as_failed_in_metrics() {
-        let repo = real_repo_with_task().await;
-        let publisher = make_publisher();
-        let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
+        let runner = make_runner();
+        runner.set_tasks("ws_1", vec![task_fixture("test")]);
         runner.set_agent_pool(Arc::new(PanicPool)).await;
         runner.start("ws_1").await;
 

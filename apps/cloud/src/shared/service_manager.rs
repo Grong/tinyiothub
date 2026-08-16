@@ -155,7 +155,6 @@ impl ServiceManager {
                     .with_drop_notifier(Arc::new(crate::domains::agent::loop_::event::bus::LoggingDropNotifier)),
             );
             let heartbeat_runner = Arc::new(crate::domains::agent::loop_::heartbeat::runner::HeartbeatRunner::new(
-                heartbeat_task_repo.clone(),
                 event_publisher.clone(),
                 heartbeat_config,
             ));
@@ -252,7 +251,7 @@ impl ServiceManager {
             let orchestrator = Arc::new(crate::domains::agent::loop_::orchestrator::Orchestrator::new(
                 app_state.event_bus.clone(),
                 heartbeat_runner.clone(),
-                heartbeat_task_repo,
+                heartbeat_task_repo.clone(),
                 memory_service,
                 Some(Arc::new(crate::domains::agent::loop_::event::bus::LoggingDropNotifier)),
                 Some(Arc::new(
@@ -275,7 +274,7 @@ impl ServiceManager {
                     for ws_id in &ws_ids {
                         let workspace_dir = crate::shared::paths::workspace_dir(ws_id);
                         if let Err(e) = crate::domains::agent::host::heartbeat::migrate_file_tasks_to_db(
-                            heartbeat_runner.task_repo().as_ref(),
+                            heartbeat_task_repo.as_ref(),
                             ws_id,
                             &workspace_dir,
                         )

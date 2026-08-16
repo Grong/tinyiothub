@@ -28,7 +28,7 @@ pub async fn heartbeat_loop(
     tasks: Arc<RwLock<Vec<HeartbeatTask>>>,
     trust_config: Arc<RwLock<TrustConfig>>,
     agent_pool: Option<Arc<dyn crate::domains::agent::loop_::agent::pool::AgentPoolLike>>,
-    task_repo: Arc<crate::domains::agent::loop_::heartbeat::repo::HeartbeatTaskRepository>,
+    tasks_source: Arc<dashmap::DashMap<String, Vec<HeartbeatTask>>>,
     event_publisher: Arc<AiEventPublisher>,
     config: HeartbeatConfig,
     mut signal_rx: mpsc::Receiver<LoopSignal>,
@@ -125,17 +125,15 @@ pub async fn heartbeat_loop(
                         }
                     }
                     Some(LoopSignal::ReloadTasks) => {
+                        // 信号语义（Task 5）：内存已被命令更新，这里重读内存。
                         info!(workspace_id, "Heartbeat loop reloading tasks");
-                        match task_repo.list_by_workspace(&workspace_id).await {
-                            Ok(new_tasks) => {
-                                let count = new_tasks.len();
-                                *tasks.write().await = new_tasks;
-                                info!(workspace_id, count, "Heartbeat tasks reloaded");
-                            }
-                            Err(e) => {
-                                warn!(workspace_id, error = %e, "Failed to reload heartbeat tasks");
-                            }
-                        }
+                        let new_tasks = tasks_source
+                            .get(&workspace_id)
+                            .map(|r| r.value().clone())
+                            .unwrap_or_default();
+                        let count = new_tasks.len();
+                        *tasks.write().await = new_tasks;
+                        info!(workspace_id, count, "Heartbeat tasks reloaded");
                     }
                     Some(LoopSignal::ReloadConfig) => {
                         // Config is read from the shared Arc<RwLock<TrustConfig>>
@@ -371,19 +369,10 @@ mod tests {
         }
     }
 
-    /// 真实 SQLite 版 heartbeat repo（E6b 去 trait 后替代 NoopRepo）：
-    /// 迁移后空库的读取行为与原 noop 等效（空任务集）。
-    async fn real_repo() -> Arc<crate::domains::agent::loop_::heartbeat::repo::HeartbeatTaskRepository> {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .acquire_timeout(std::time::Duration::from_secs(86400 * 365)) // 暂停时钟防瞬杀
-            .connect(":memory:")
-            .await
-            .expect("in-memory sqlite");
-        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
-            .await
-            .expect("migrations");
-        Arc::new(crate::domains::agent::loop_::heartbeat::repo::HeartbeatTaskRepository::new(pool))
+    /// 内存任务源夹具（Task 5 去 repo 后替代 real_repo）：loop 的 ReloadTasks
+    /// 重读此表；测试无需预置任务。
+    fn empty_tasks_source() -> Arc<dashmap::DashMap<String, Vec<HeartbeatTask>>> {
+        Arc::new(dashmap::DashMap::new())
     }
 
     #[tokio::test]
@@ -445,7 +434,7 @@ mod tests {
         let tasks = Arc::new(RwLock::new(vec![sample_task()]));
         let trust = Arc::new(RwLock::new(TrustConfig::default()));
         let pool: Arc<dyn AgentPoolLike> = Arc::new(FailPool);
-        let repo: Arc<crate::domains::agent::loop_::heartbeat::repo::HeartbeatTaskRepository> = real_repo().await;
+        let tasks_source = empty_tasks_source();
         let publisher = Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
         let config = HeartbeatConfig {
             enabled: true,
@@ -460,7 +449,7 @@ mod tests {
             tasks,
             trust,
             Some(pool),
-            repo,
+            tasks_source,
             publisher,
             config,
             signal_rx,
@@ -508,7 +497,7 @@ mod tests {
         let tasks = Arc::new(RwLock::new(vec![sample_task()]));
         let trust = Arc::new(RwLock::new(TrustConfig::default()));
         let pool: Arc<dyn AgentPoolLike> = Arc::new(FailPool);
-        let repo: Arc<crate::domains::agent::loop_::heartbeat::repo::HeartbeatTaskRepository> = real_repo().await;
+        let tasks_source = empty_tasks_source();
         let publisher = Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
         let config = HeartbeatConfig {
             enabled: true,
@@ -523,7 +512,7 @@ mod tests {
             tasks,
             trust,
             Some(pool),
-            repo,
+            tasks_source,
             publisher,
             config,
             signal_rx,

@@ -1,5 +1,4 @@
 pub mod loop_;
-pub mod repo;
 pub mod report;
 pub mod runner;
 pub mod types;

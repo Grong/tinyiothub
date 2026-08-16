@@ -18,7 +18,7 @@ use tracing::{info, warn};
 
 use crate::domains::agent::loop_::event::bus::{AiEventPublisher, DropNotifier};
 use crate::domains::agent::loop_::event::dlq::DeadLetterQueue;
-use crate::domains::agent::loop_::heartbeat::repo::HeartbeatTaskRepository;
+use tinyiothub_storage::heartbeat::HeartbeatTaskRepository;
 use crate::domains::agent::loop_::heartbeat::runner::HeartbeatRunner;
 use crate::domains::agent::loop_::thing_agent::manager::ThingAgentManager;
 use tinyiothub_memory::service::MemoryService;
@@ -142,7 +142,6 @@ mod tests {
         repo: Arc<tinyiothub_storage::heartbeat::HeartbeatTaskRepository>,
     ) -> Orchestrator {
         let runner = Arc::new(HeartbeatRunner::new(
-            repo.clone(),
             Arc::new(AiEventPublisher::new(bus.clone())),
             HeartbeatConfig::default(),
         ));

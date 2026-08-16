@@ -19,7 +19,7 @@ use tracing::{debug, error, info, warn};
 use crate::domains::agent::loop_::event::bus::AiEventPublisher;
 use crate::domains::agent::loop_::event::dlq::DeadLetterQueue;
 use crate::domains::agent::loop_::event::types::AiEvent;
-use crate::domains::agent::loop_::heartbeat::repo::HeartbeatTaskRepository;
+use tinyiothub_storage::heartbeat::HeartbeatTaskRepository;
 use crate::domains::agent::loop_::heartbeat::runner::HeartbeatRunner;
 use crate::domains::agent::loop_::heartbeat::types::{HeartbeatResult, SignalPriority};
 use crate::domains::agent::loop_::thing_agent::manager::ThingAgentManager;
@@ -517,7 +517,7 @@ pub(crate) mod tests {
     /// 真实 SQLite 版 heartbeat repo（E6b 去 trait 后替代 MockTaskRepo）；
     /// 返回 pool 供断言查询 agent_actions 行数。
     pub(crate) async fn real_repo() -> (
-        Arc<crate::domains::agent::loop_::heartbeat::repo::HeartbeatTaskRepository>,
+        Arc<tinyiothub_storage::heartbeat::HeartbeatTaskRepository>,
         sqlx::SqlitePool,
     ) {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -529,7 +529,7 @@ pub(crate) mod tests {
             .await
             .expect("migrations");
         (
-            Arc::new(crate::domains::agent::loop_::heartbeat::repo::HeartbeatTaskRepository::new(pool.clone())),
+            Arc::new(tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(pool.clone())),
             pool,
         )
     }
@@ -579,11 +579,8 @@ pub(crate) mod tests {
         Arc::new(AiEventPublisher::new(Arc::new(EventBus::new())))
     }
 
-    fn make_heartbeat_runner(
-        task_repo: Arc<crate::domains::agent::loop_::heartbeat::repo::HeartbeatTaskRepository>,
-    ) -> Arc<HeartbeatRunner> {
+    fn make_heartbeat_runner() -> Arc<HeartbeatRunner> {
         Arc::new(HeartbeatRunner::new(
-            task_repo,
             make_publisher(),
             HeartbeatConfig::default(),
         ))
@@ -605,7 +602,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_handler_construction() {
         let (repo, _pool) = real_repo().await;
-        let runner = make_heartbeat_runner(Arc::clone(&repo));
+        let runner = make_heartbeat_runner();
         let publisher = make_publisher();
         let memory = make_memory_service().await;
 
@@ -625,7 +622,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_should_handle_filters_ai_events() {
         let (repo, _pool) = real_repo().await;
-        let runner = make_heartbeat_runner(Arc::clone(&repo));
+        let runner = make_heartbeat_runner();
         let publisher = make_publisher();
         let memory = make_memory_service().await;
 
@@ -659,8 +656,8 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_heartbeat_completed_inserts_result() {
         let (repo, pool) = real_repo().await;
-        let repo: Arc<crate::domains::agent::loop_::heartbeat::repo::HeartbeatTaskRepository> = repo;
-        let runner = make_heartbeat_runner(Arc::clone(&repo));
+        let repo: Arc<tinyiothub_storage::heartbeat::HeartbeatTaskRepository> = repo;
+        let runner = make_heartbeat_runner();
         let publisher = make_publisher();
         let memory = make_memory_service().await;
 
@@ -699,7 +696,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_alarm_created_non_critical_no_signal() {
         let (repo, _pool) = real_repo().await;
-        let runner = make_heartbeat_runner(Arc::clone(&repo));
+        let runner = make_heartbeat_runner();
         let publisher = make_publisher();
         let memory = make_memory_service().await;
 
@@ -735,7 +732,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_workspace_created_and_deleted_no_panic() {
         let (repo, _pool) = real_repo().await;
-        let runner = make_heartbeat_runner(Arc::clone(&repo));
+        let runner = make_heartbeat_runner();
         let publisher = make_publisher();
         let memory = make_memory_service().await;
 
@@ -768,7 +765,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_workspace_lifecycle_drives_thing_agent_manager() {
         let (repo, _pool) = real_repo().await;
-        let runner = make_heartbeat_runner(Arc::clone(&repo));
+        let runner = make_heartbeat_runner();
         let publisher = make_publisher();
         let memory = make_memory_service().await;
         let parts = crate::domains::agent::loop_::thing_agent::manager::tests::stub_manager().await;
@@ -802,7 +799,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_self_referential_events_are_noop() {
         let (repo, _pool) = real_repo().await;
-        let runner = make_heartbeat_runner(Arc::clone(&repo));
+        let runner = make_heartbeat_runner();
         let publisher = make_publisher();
         let memory = make_memory_service().await;
 
@@ -850,8 +847,8 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_shutting_down_skips_handling() {
         let (repo, pool) = real_repo().await;
-        let repo: Arc<crate::domains::agent::loop_::heartbeat::repo::HeartbeatTaskRepository> = repo;
-        let runner = make_heartbeat_runner(Arc::clone(&repo));
+        let repo: Arc<tinyiothub_storage::heartbeat::HeartbeatTaskRepository> = repo;
+        let runner = make_heartbeat_runner();
         let publisher = make_publisher();
         let memory = make_memory_service().await;
 
@@ -1323,8 +1320,8 @@ pub(crate) mod tests {
         #[tokio::test]
         async fn heartbeat_completed_drives_bridge_after_persist() {
             let (repo, pool) = real_repo().await;
-            let repo: Arc<crate::domains::agent::loop_::heartbeat::repo::HeartbeatTaskRepository> = repo;
-            let runner = make_heartbeat_runner(Arc::clone(&repo));
+            let repo: Arc<tinyiothub_storage::heartbeat::HeartbeatTaskRepository> = repo;
+            let runner = make_heartbeat_runner();
             let publisher = make_publisher();
             let memory = make_memory_service().await;
 
@@ -1354,8 +1351,8 @@ pub(crate) mod tests {
         #[tokio::test]
         async fn heartbeat_completed_without_bridge_only_persists() {
             let (repo, pool) = real_repo().await;
-            let repo: Arc<crate::domains::agent::loop_::heartbeat::repo::HeartbeatTaskRepository> = repo;
-            let runner = make_heartbeat_runner(Arc::clone(&repo));
+            let repo: Arc<tinyiothub_storage::heartbeat::HeartbeatTaskRepository> = repo;
+            let runner = make_heartbeat_runner();
 
             let handler = AiEventHandler::new(
                 runner,

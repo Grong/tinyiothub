@@ -140,7 +140,7 @@ pub async fn get_config(
 
     let mut interval_minutes = 15;
     if let Some(ref runner) = state.heartbeat_runner {
-        interval_minutes = runner.effective_interval_minutes(&workspace_id).await;
+        interval_minutes = runner.effective_interval_minutes(&workspace_id);
     }
 
     ApiResponseBuilder::success(HeartbeatConfigResponse {
@@ -168,7 +168,7 @@ pub async fn update_config(
 
     // Merge with persisted/current values so a partial update doesn't reset
     // the other field.
-    let current_interval = runner.effective_interval_minutes(&workspace_id).await;
+    let current_interval = runner.effective_interval_minutes(&workspace_id);
     let is_active = runner.active_workspaces().contains(&workspace_id);
     let enabled = req.enabled.unwrap_or(is_active);
     let interval = req.interval_minutes.unwrap_or(current_interval);
@@ -178,10 +178,13 @@ pub async fn update_config(
             Ok(c) => c,
             Err(e) => return ApiResponseBuilder::error(&e),
         };
-    if let Err(e) = runner.task_repo().save_heartbeat_config(&workspace_id, &config).await {
+    // D11-⑤ 写序：先写 DB，成功后更新 runner 内存（Task 5 起 runner 不触库）。
+    let repo = tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(state.db_pool());
+    if let Err(e) = repo.save_heartbeat_config(&workspace_id, &config).await {
         tracing::error!(%workspace_id, "Failed to persist heartbeat config: {}", e);
         return ApiResponseBuilder::error("保存心跳配置失败");
     }
+    runner.set_interval_minutes(&workspace_id, interval);
 
     let interval_changed = interval != current_interval;
     if enabled && (!is_active || interval_changed) {
@@ -209,8 +212,7 @@ pub async fn get_trust_config(
     let config = match state.heartbeat_runner {
         Some(ref runner) => match runner.get_trust_config(&workspace_id) {
             Some(c) => c,
-            None => runner
-                .task_repo()
+            None => tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(state.db_pool())
                 .load_trust_config(&workspace_id)
                 .await
                 .ok()
@@ -237,8 +239,14 @@ pub async fn update_trust_config(
         return ApiResponseBuilder::error("心跳服务未启用");
     };
 
-    // Persists to DB and hot-updates pool + cache + running loop.
-    runner.update_trust_config(&workspace_id, config.clone()).await;
+    // D11-⑤ 写序：先写 DB，成功后更新 runner 内存（Task 5 起 runner 不触库；
+    // 内存更新热更 pool + 通知运行中 loop）。
+    let repo = tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(state.db_pool());
+    if let Err(e) = repo.save_trust_config(&workspace_id, &config).await {
+        tracing::error!(%workspace_id, "Failed to persist trust config: {}", e);
+        return ApiResponseBuilder::error("保存信任配置失败");
+    }
+    runner.update_trust_config(&workspace_id, config.clone());
 
     ApiResponseBuilder::success(serde_json::to_value(config).unwrap_or_default())
 }
@@ -409,13 +417,22 @@ pub async fn update_tasks(
         })
         .collect();
 
-    if let Err(e) = runner.task_repo().replace_all(&workspace_id, &new_tasks).await {
+    // D11-⑤ 写序：先写 DB，成功后注入 runner 内存（set_tasks 内含
+    // ReloadTasks 通知，运行中 loop 重读内存）。
+    let repo = tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(state.db_pool());
+    if let Err(e) = repo.replace_all(&workspace_id, &new_tasks).await {
         tracing::error!(%workspace_id, "Failed to save heartbeat tasks: {}", e);
         return ApiResponseBuilder::error("保存心跳任务失败");
     }
 
-    runner.notify_tasks_changed(&workspace_id);
-    if !new_tasks.is_empty() && !runner.active_workspaces().contains(&workspace_id) {
+    // 回读 DB 行（含 id/version 等 server 字段）作为内存真源。
+    let stored = repo
+        .list_by_workspace(&workspace_id)
+        .await
+        .unwrap_or_default();
+    let has_tasks = !stored.is_empty();
+    runner.set_tasks(&workspace_id, stored);
+    if has_tasks && !runner.active_workspaces().contains(&workspace_id) {
         runner.start(&workspace_id).await;
     }
 
@@ -683,14 +700,14 @@ async fn load_tasks(state: &AgentState, workspace_id: &str) -> Vec<HeartbeatTask
             paused: t.paused,
         }
     }
-    if let Some(ref runner) = state.heartbeat_runner {
+    if let Some(ref _runner) = state.heartbeat_runner {
+        // Repo 只依赖连接池，就地构造（Task 5 起 runner 不再持有 repo）。
+        let repo = tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(state.db_pool());
         let workspace_dir = paths::workspace_dir(workspace_id);
-        if let Err(e) =
-            heartbeat::migrate_file_tasks_to_db(runner.task_repo().as_ref(), workspace_id, &workspace_dir).await
-        {
+        if let Err(e) = heartbeat::migrate_file_tasks_to_db(&repo, workspace_id, &workspace_dir).await {
             tracing::warn!(%workspace_id, "Heartbeat task migration failed: {}", e);
         }
-        match runner.task_repo().list_by_workspace(workspace_id).await {
+        match repo.list_by_workspace(workspace_id).await {
             Ok(tasks) => {
                 return tasks
                     .into_iter()
