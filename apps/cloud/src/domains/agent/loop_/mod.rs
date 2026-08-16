@@ -5,6 +5,8 @@ pub mod event;
 pub mod events;
 pub mod heartbeat;
 pub mod orchestrator;
+pub mod runtime;
+pub mod snapshot;
 pub mod thing_agent;
 pub use tinyiothub_llm::{prompt, session};
 
