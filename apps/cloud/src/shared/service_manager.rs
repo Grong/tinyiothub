@@ -176,6 +176,7 @@ impl ServiceManager {
             // Wire agent pool via adapter
             let ai_adapter = Arc::new(crate::domains::agent::host::pool_adapter::HostAgentPoolAdapter::new(
                 app_state.agent_pool.clone(),
+                app_state.database.pool().clone(),
             ));
             heartbeat_runner.set_agent_pool(ai_adapter).await;
 
@@ -190,8 +191,8 @@ impl ServiceManager {
                 .with_metrics(heartbeat_runner.metrics.clone()),
             );
 
-            // Wire MemoryService into AgentPool for reflection from chat path
-            app_state.agent_pool.set_memory_service(memory_service.clone()).await;
+            // Task 7 起 AgentPool 不再持有 MemoryService：chat 反射路径由
+            // proxy handler 从 AgentState.memory_service 注入。
             app_state.agent_pool.set_event_publisher(event_publisher.clone()).await;
 
             // T15 thing-agent loop: per-workspace 自治 Loop 注册表。

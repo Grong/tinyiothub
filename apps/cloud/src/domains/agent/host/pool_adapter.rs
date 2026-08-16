@@ -14,23 +14,32 @@ use crate::domains::agent::host::agent::{AgentPool, StreamingToolCall};
 use crate::domains::agent::loop_::agent::pool::{AgentPoolLike, AgentRunOutput, ToolCallRecord};
 
 /// Wraps the host `AgentPool` to implement the loop's `AgentPoolLike` trait.
+///
+/// Holds the db handle (cloud-side composition detail) so heartbeat agent
+/// builds can resolve db-backed tools — the pool itself is storage-free and
+/// receives it per call (Task 7).
 pub struct HostAgentPoolAdapter {
     pool: Arc<AgentPool>,
+    db_pool: sqlx::SqlitePool,
 }
 
 impl HostAgentPoolAdapter {
-    pub fn new(pool: Arc<AgentPool>) -> Self {
-        Self { pool }
+    pub fn new(pool: Arc<AgentPool>, db_pool: sqlx::SqlitePool) -> Self {
+        Self { pool, db_pool }
     }
 }
 
 #[async_trait]
 impl AgentPoolLike for HostAgentPoolAdapter {
     async fn get_or_create_agent(&self, workspace_id: &str) -> anyhow::Result<String> {
-        // Host AgentPool uses agent_id = workspace_id (one agent per workspace)
+        // Host AgentPool uses agent_id = workspace_id (one agent per workspace).
+        // Config fetch stays on the cloud side (Task 7): the pool receives it.
+        let config = crate::domains::agent::host::config::service::get_config(&self.db_pool, workspace_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("Agent config error: {}", e))?;
         let _agent = self
             .pool
-            .get_or_create(workspace_id, workspace_id)
+            .get_or_create(workspace_id, workspace_id, &config, Some(self.db_pool.clone()))
             .await
             .map_err(|e| anyhow::anyhow!("AgentPool error: {}", e))?;
         // Return workspace_id as the handle identifier
@@ -41,7 +50,7 @@ impl AgentPoolLike for HostAgentPoolAdapter {
         // Delegate to AgentPool's run_streaming method and collect the response
         let result = self
             .pool
-            .run_streaming(workspace_id, prompt)
+            .run_streaming(workspace_id, prompt, Some(self.db_pool.clone()))
             .await
             .map_err(|e| anyhow::anyhow!("LLM error: {}", e))?;
         let tool_calls = result.tool_calls.into_iter().map(map_tool_call).collect();

@@ -64,6 +64,17 @@ pub async fn chat_stream(
     let run_id = uuid::Uuid::new_v4().to_string();
     let agent_id = req.agent_id.clone();
 
+    // Task 7: cloud fetches the agent config and supplies the storage handles;
+    // the pool itself is storage-free.
+    let db_pool = state.db_pool();
+    let config = match crate::domains::agent::host::config::service::get_config(&db_pool, &agent_id).await {
+        Ok(c) => c,
+        Err(e) => {
+            let err: Json<ApiResponse<()>> = ApiResponseBuilder::error(format!("Failed to load agent config: {}", e));
+            return err.into_response();
+        }
+    };
+
     let mut rx = match state
         .agent_pool
         .chat_send(
@@ -73,6 +84,9 @@ pub async fn chat_stream(
             &run_id,
             &full_prompt,
             &claims.workspace_id,
+            &config,
+            state.memory_service.clone(),
+            &db_pool,
         )
         .await
     {
@@ -113,7 +127,13 @@ pub async fn chat_history(
 
     match state
         .agent_pool
-        .chat_history(&parsed.agent_id, &query.session_key, limit, &claims.workspace_id)
+        .chat_history(
+            &parsed.agent_id,
+            &query.session_key,
+            limit,
+            &claims.workspace_id,
+            &state.db_pool(),
+        )
         .await
     {
         Ok(data) => ApiResponseBuilder::success(data),
@@ -208,7 +228,11 @@ pub async fn delete_session(
 
 /// GET /api/v1/agents
 pub async fn list_agents(State(state): State<AgentState>, claims: Claims) -> Json<ApiResponse<serde_json::Value>> {
-    match state.agent_pool.list_agents(&claims.workspace_id).await {
+    match state
+        .agent_pool
+        .list_agents(&state.db_pool(), &claims.workspace_id)
+        .await
+    {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to list agents: {}", e)),
     }
@@ -220,7 +244,11 @@ pub async fn get_agent_config(
     Path(agent_id): Path<String>,
     claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    match state.agent_pool.get_agent_config(&agent_id, &claims.workspace_id).await {
+    match state
+        .agent_pool
+        .get_agent_config(&state.db_pool(), &agent_id, &claims.workspace_id)
+        .await
+    {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to get agent config: {}", e)),
     }
@@ -237,7 +265,13 @@ pub async fn set_agent_config(
     let base_hash_ref = req.base_hash.as_deref();
     match state
         .agent_pool
-        .set_agent_config(&agent_id, &config_str, base_hash_ref, &claims.workspace_id)
+        .set_agent_config(
+            &state.db_pool(),
+            &agent_id,
+            &config_str,
+            base_hash_ref,
+            &claims.workspace_id,
+        )
         .await
     {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"saved": true})),
@@ -265,7 +299,11 @@ pub async fn tools_effective(
     claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let agent_id = params.get("agent_id").map(|s| s.as_str()).unwrap_or("");
-    match state.agent_pool.tools_effective(agent_id, &claims.workspace_id).await {
+    match state
+        .agent_pool
+        .tools_effective(&state.db_pool(), agent_id, &claims.workspace_id)
+        .await
+    {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to get effective tools: {}", e)),
     }
@@ -279,7 +317,13 @@ pub async fn tools_toggle(
 ) -> Json<ApiResponse<serde_json::Value>> {
     match state
         .agent_pool
-        .tools_toggle(&req.agent_id, &req.tool_name, req.enabled, &claims.workspace_id)
+        .tools_toggle(
+            &state.db_pool(),
+            &req.agent_id,
+            &req.tool_name,
+            req.enabled,
+            &claims.workspace_id,
+        )
         .await
     {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"toggled": true})),

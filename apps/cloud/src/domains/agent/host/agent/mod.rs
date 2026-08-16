@@ -2,7 +2,8 @@
 //
 // Composes capability services (Chat, Config, Tools) into a unified Agent API.
 // Key design decisions:
-//   - Lazy creation: agents built on first access, config read from DB
+//   - Lazy creation: agents built on first access, config injected by the
+//     cloud caller (Task 7 — the pool holds no storage handles)
 //   - Tool denylist: resolved at build time from AgentRuntimeConfig
 //   - WorkspaceScopedMemory: workspace-level isolation via namespace wrapper
 //   - Invalidation: remove from pool on config change, rebuild on next access

@@ -363,10 +363,10 @@ impl AppState {
         let memory_store: Arc<MemoryStore> =
             Arc::new(tinyiothub_storage::memory::MemoryStore::new(database.pool().clone()));
 
+        // Task 7 起 AgentPool 不再持有存储句柄（db_pool/memory_store/
+        // memory_service）；调用方按请求注入。
         let agent_pool: Arc<AgentPool> = Arc::new(
             AgentPool::new(
-                database.pool().clone(),
-                memory_store.clone(),
                 &agent_settings,
                 crate::domains::agent::host::autonomous_factory::minimax_provider_factory(),
             )
@@ -501,6 +501,7 @@ impl AppState {
 
         let agent_lifecycle: Arc<AgentPoolLifecycle> = Arc::new(AgentPoolLifecycle {
             pool: agent_pool.clone(),
+            db_pool: database.pool().clone(),
         });
         let tag_suggester: Option<Arc<dyn crate::domains::tenant::TagSuggester>> = settings
             .minimax
@@ -876,22 +877,30 @@ impl crate::domains::user::RoleChecker for EventSecurityRoleChecker {
 /// not yet extracted).
 pub struct AgentPoolLifecycle {
     pub pool: Arc<crate::domains::agent::host::agent::AgentPool>,
+    /// AgentPool 不持有存储句柄（Task 7）—— 生命周期 CRUD 的 db 由 cloud 注入。
+    pub db_pool: sqlx::SqlitePool,
 }
 
 impl AgentPoolLifecycle {
     pub async fn create_agent(&self, workspace_id: &str, name: &str) -> Result<String, String> {
         self.pool
-            .create_agent(&crate::domains::agent::host::shared::AgentConfig {
-                workspace_id: workspace_id.to_string(),
-                name: name.to_string(),
-                ..Default::default()
-            })
+            .create_agent(
+                &self.db_pool,
+                &crate::domains::agent::host::shared::AgentConfig {
+                    workspace_id: workspace_id.to_string(),
+                    name: name.to_string(),
+                    ..Default::default()
+                },
+            )
             .await
             .map_err(|e| e.to_string())
     }
 
     pub async fn delete_agent(&self, agent_id: &str) -> Result<(), String> {
-        self.pool.delete_agent(agent_id).await.map_err(|e| e.to_string())
+        self.pool
+            .delete_agent(&self.db_pool, agent_id)
+            .await
+            .map_err(|e| e.to_string())
     }
 }
 

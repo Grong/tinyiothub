@@ -18,7 +18,7 @@ use zeroclaw::{
     tools::Tool,
 };
 
-use super::super::{config::service as config_service, tools::service as tool_service};
+use super::super::tools::service as tool_service;
 use crate::domains::agent::host::shared::config::{AgentError, AgentRuntimeConfig};
 
 // ============================================================================
@@ -79,18 +79,19 @@ pub struct Agent {
 // AgentPool
 // ============================================================================
 
+/// Storage-free by design (Task 7): the pool holds no `SqlitePool` /
+/// `MemoryStore` / `MemoryService`. Callers inject per-request data (agent
+/// config, db handle for tool resolution, memory service) as method params,
+/// keeping the pool movable into the future `crates/agent`.
 pub struct AgentPool {
     pub(crate) agents: Arc<DashMap<String, PoolEntry>>,
-    pub(crate) db_pool: SqlitePool,
     pub(crate) shared_memory: Arc<dyn Memory>,
     pub(crate) observer: Arc<dyn Observer>,
     pub(crate) response_cache: Option<Arc<zeroclaw::memory::ResponseCache>>,
     #[allow(dead_code)]
     pub(crate) agent_settings: tinyiothub_core::config::AgentSettings,
     pub chat_handles: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
-    pub memory_store: Arc<tinyiothub_storage::memory::MemoryStore>,
     pub trust_configs: DashMap<String, crate::domains::agent::loop_::types::TrustConfig>,
-    pub memory_service: tokio::sync::RwLock<Option<Arc<tinyiothub_memory::service::MemoryService>>>,
     pub event_publisher: tokio::sync::RwLock<Option<Arc<crate::domains::agent::loop_::event::bus::AiEventPublisher>>>,
     /// Builds a fresh model provider per agent (injected by the composition
     /// layer — providers are per-agent in zeroclaw).
@@ -103,9 +104,10 @@ pub struct AgentPool {
 
 impl AgentPool {
     /// Create a new AgentPool with shared memory and observer backends.
+    ///
+    /// No storage handles: agent config and the db handle needed for tool
+    /// resolution are injected per call (see [`Self::get_or_create`]).
     pub fn new(
-        db_pool: SqlitePool,
-        memory_store: Arc<tinyiothub_storage::memory::MemoryStore>,
         agent_settings: &tinyiothub_core::config::AgentSettings,
         provider_factory: super::super::autonomous_factory::ProviderFactory,
     ) -> anyhow::Result<Self> {
@@ -146,16 +148,13 @@ impl AgentPool {
         let observer: Arc<dyn Observer> = Arc::from(observer);
 
         Ok(Self {
-            db_pool,
             agents: Arc::new(DashMap::new()),
             shared_memory,
             observer,
             response_cache,
             agent_settings: agent_settings.clone(),
             chat_handles: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
-            memory_store,
             trust_configs: DashMap::new(),
-            memory_service: tokio::sync::RwLock::new(None),
             event_publisher: tokio::sync::RwLock::new(None),
             provider_factory,
             runtime: tokio::sync::RwLock::new(Default::default()),
@@ -175,11 +174,6 @@ impl AgentPool {
     ) {
         let mut guard = self.event_publisher.write().await;
         *guard = Some(publisher);
-    }
-
-    pub async fn set_memory_service(&self, service: Arc<tinyiothub_memory::service::MemoryService>) {
-        let mut guard = self.memory_service.write().await;
-        *guard = Some(service);
     }
 
     /// Shared memory backend (composition layer wires it into the
@@ -203,12 +197,16 @@ impl AgentPool {
 
     /// Get or lazily create a per-agent zeroclaw Agent with NamespacedMemory isolation.
     ///
-    /// Pool key: `agent_id`. Each agent reads its runtime config from
-    /// `agent_configs` and filters tools via denylist on creation.
+    /// Pool key: `agent_id`. The runtime config is injected by the caller
+    /// (cloud reads `agent_configs` via `config::service::get_config`), as is
+    /// the db handle used for tool resolution (`None` skips db-backed tools).
+    /// Tools are filtered via the config denylist on creation.
     pub async fn get_or_create(
         &self,
         agent_id: &str,
         workspace_id: &str,
+        config: &AgentRuntimeConfig,
+        db_pool: Option<SqlitePool>,
     ) -> Result<Arc<tokio::sync::Mutex<zeroclaw::agent::Agent>>, AgentError> {
         // Fast path: clone under a brief shard lock. Never hold a DashMap
         // entry across .await — creation below does DB and tool-resolution
@@ -218,8 +216,6 @@ impl AgentPool {
             entry.last_used = Instant::now();
             return Ok(agent);
         }
-
-        let config = config_service::get_config(&self.db_pool, agent_id).await?;
 
         let namespaced: Arc<dyn Memory> = Arc::new(WorkspaceScopedMemory::new(
             Arc::clone(&self.shared_memory),
@@ -237,20 +233,13 @@ impl AgentPool {
             .map(|e| std::sync::Arc::new(e.value().clone()));
         let tools = {
             let runtime = self.runtime.read().await.clone();
-            tool_service::resolve_tools_for_agent(
-                &config,
-                workspace_id,
-                trust_config,
-                Some(self.db_pool.clone()),
-                &runtime,
-            )
-            .await
+            tool_service::resolve_tools_for_agent(config, workspace_id, trust_config, db_pool, &runtime).await
         };
 
         let agent = Self::build_agent(
             &namespaced,
             &self.observer,
-            &config,
+            config,
             self.response_cache.clone(),
             provider,
             &ws_dir,
@@ -261,7 +250,7 @@ impl AgentPool {
         let metadata = Agent {
             agent_id: agent_id.to_string(),
             workspace_id: workspace_id.to_string(),
-            config,
+            config: config.clone(),
         };
 
         // Double-checked insert: a concurrent creator may have won the race
@@ -359,6 +348,52 @@ impl AgentPool {
 mod tests {
     use super::*;
 
+    // ── scripted provider (no network, no ports registration) ────────────
+
+    struct ScriptedModelProvider;
+
+    #[async_trait::async_trait]
+    impl zeroclaw::providers::traits::ModelProvider for ScriptedModelProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: Option<f64>,
+        ) -> anyhow::Result<String> {
+            Ok("done".into())
+        }
+
+        async fn chat(
+            &self,
+            _request: zeroclaw::providers::ChatRequest<'_>,
+            _model: &str,
+            _temperature: Option<f64>,
+        ) -> anyhow::Result<zeroclaw::providers::ChatResponse> {
+            Ok(zeroclaw::providers::ChatResponse {
+                text: Some("done".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            })
+        }
+    }
+
+    impl zeroclaw_api::attribution::Attributable for ScriptedModelProvider {
+        fn role(&self) -> zeroclaw_api::attribution::Role {
+            zeroclaw_api::attribution::Role::Provider(zeroclaw_api::attribution::ProviderKind::Model(
+                zeroclaw_api::attribution::ModelProviderKind::Custom,
+            ))
+        }
+        fn alias(&self) -> &str {
+            "ScriptedModelProvider"
+        }
+    }
+
+    fn scripted_provider_factory() -> super::super::super::autonomous_factory::ProviderFactory {
+        Arc::new(|| Ok(Box::new(ScriptedModelProvider)))
+    }
+
     #[test]
     fn test_pool_entry_creation() {
         // PoolEntry::new is tested indirectly via AgentPool::get_or_create
@@ -380,5 +415,47 @@ mod tests {
         assert_eq!(config.temperature, 0.7);
         assert_eq!(config.max_tokens, 4096);
         assert!(config.tool_denylist.contains(&"delete_thing".to_string()));
+    }
+
+    #[test]
+    fn pool_constructs_without_storage_handles() {
+        // Task 7: no db_pool / memory_store / memory_service — construction
+        // takes only settings + provider factory.
+        let pool = AgentPool::new(
+            &tinyiothub_core::config::AgentSettings::default(),
+            scripted_provider_factory(),
+        )
+        .expect("pool builds without storage");
+        assert_eq!(pool.pool_size(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn get_or_create_uses_injected_config() {
+        let pool = AgentPool::new(
+            &tinyiothub_core::config::AgentSettings::default(),
+            scripted_provider_factory(),
+        )
+        .expect("pool builds without storage");
+        let config = AgentRuntimeConfig {
+            model: "injected-model".to_string(),
+            ..Default::default()
+        };
+        // None db_pool: db-backed thing tools are skipped; the agent is built
+        // purely from the injected config.
+        let a1 = pool
+            .get_or_create("a1", "ws-test", &config, None)
+            .await
+            .expect("create with injected config");
+        let entry = pool.agents.get("a1").expect("cached entry");
+        assert_eq!(entry.metadata.config.model, "injected-model");
+        drop(entry);
+
+        // Second call hits the cache: same agent instance, no rebuild.
+        let a2 = pool
+            .get_or_create("a1", "ws-test", &AgentRuntimeConfig::default(), None)
+            .await
+            .expect("cached");
+        assert!(Arc::ptr_eq(&a1, &a2));
+        assert_eq!(pool.pool_size(), 1);
     }
 }
