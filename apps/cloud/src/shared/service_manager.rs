@@ -242,13 +242,39 @@ impl ServiceManager {
                 // thing-agent loop。
                 let bridge = Arc::new(
                     crate::domains::agent::loop_::orchestrator::callbacks::HeartbeatBridge::new(
-                        run_registry,
+                        run_registry.clone(),
                         manager.clone(),
                     ),
                 );
-                (manager, bridge, agent_events)
+                (manager, bridge, agent_events, run_registry)
             };
-            let (thing_agent_manager, heartbeat_bridge, agent_events) = thing_agent_manager;
+            let (thing_agent_manager, heartbeat_bridge, agent_events, persist_run_registry) = thing_agent_manager;
+
+            // Task 8 接线点：持久化订阅者（AgentEvent → DB 投影：幂等 insert、
+            // Lagged → dump_state 全量 resync、5 分钟周期对账、心跳结果
+            // 重试→DLQ）。Task 9 定最终启动顺序（订阅先于 restore、僵尸
+            // reconcile），届时 AgentRuntime 门面就绪后切换为
+            // run_persistence_subscriber(runtime, db)。
+            {
+                let persist_rx = agent_events.subscribe();
+                let persist_runner = heartbeat_runner.clone();
+                let persist_dump = move || {
+                    // 与 AgentRuntime::dump_state 同形（排序保证导出确定性）。
+                    let mut heartbeat = persist_runner.snapshot_states();
+                    heartbeat.sort_by(|a, b| a.workspace_id.cmp(&b.workspace_id));
+                    let mut recent_runs = persist_run_registry.active();
+                    recent_runs.sort_by(|a, b| a.run_id.cmp(&b.run_id));
+                    crate::domains::agent::loop_::snapshot::RestoreSnapshot { heartbeat, recent_runs }
+                };
+                tokio::spawn(crate::domains::agent::host::persist::run_persistence_loop(
+                    persist_rx,
+                    persist_dump,
+                    app_state.database.clone(),
+                    event_publisher.clone(),
+                    std::time::Duration::from_secs(300),
+                ));
+                info!("✅ Agent persistence subscriber started");
+            }
 
             // Task 6 起 orchestrator 不再持有 repo/MemoryService：心跳结果经
             // AgentEventBus(HeartbeatResultReady) 出口（Task 8 订阅者落库）；

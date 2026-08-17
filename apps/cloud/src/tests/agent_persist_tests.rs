@@ -1,0 +1,271 @@
+//! Task 8 持久化订阅者测试：AgentEvent → DB 投影。
+//!
+//! 覆盖：RunRecorded 幂等投影、stale 回放 fencing（insert-once 幂等即
+//! fencing）、Lagged → dump_state 全量 resync、周期全量对账、
+//! HeartbeatResultReady → agent_actions 投影。
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use sqlx::SqlitePool;
+use tinyiothub_core::agent_runs::{Outcome, RunReport};
+use tinyiothub_core::heartbeat::{HeartbeatResult, HeartbeatStatus, TrustConfig};
+use tinyiothub_storage::Database;
+
+use crate::domains::agent::host::persist::{run_persistence_loop, run_persistence_subscriber};
+use crate::domains::agent::host::test_utils::seed_test_workspace;
+use crate::domains::agent::loop_::event::bus::AiEventPublisher;
+use crate::domains::agent::loop_::events::AgentEventKind;
+use crate::domains::agent::loop_::runtime::{AgentRuntime, RuntimeDeps};
+use crate::domains::agent::loop_::snapshot::{RestoreSnapshot, WorkspaceHeartbeatState};
+
+// ── fixtures ──────────────────────────────────────────────
+
+/// 全量迁移的内存库（max_connections=1：:memory: 每连接独立）。
+async fn test_db() -> (Arc<Database>, SqlitePool) {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("in-memory sqlite");
+    tinyiothub_storage::migrations::run_migrations(&pool)
+        .await
+        .expect("run migrations");
+    (Arc::new(Database::new(pool.clone())), pool)
+}
+
+fn report(run_id: &str, workspace_id: &str, summary: &str) -> RunReport {
+    RunReport {
+        run_id: run_id.into(),
+        workspace_id: workspace_id.into(),
+        trigger: "timer:ws1".into(),
+        outcome: Outcome::NoActionNeeded,
+        summary: summary.into(),
+        actions: vec![],
+        verified: true,
+        duration_ms: 10,
+        tool_calls: 0,
+        tokens: 0,
+    }
+}
+
+fn empty_snapshot() -> RestoreSnapshot {
+    RestoreSnapshot {
+        heartbeat: vec![],
+        recent_runs: vec![],
+    }
+}
+
+fn runtime_with(capacity: usize, snapshot: RestoreSnapshot) -> Arc<AgentRuntime> {
+    let mut deps = RuntimeDeps::test_stub();
+    deps.agent_event_capacity = capacity;
+    Arc::new(AgentRuntime::restore(snapshot, deps))
+}
+
+fn test_publisher() -> Arc<AiEventPublisher> {
+    Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())))
+}
+
+async fn count_runs(pool: &SqlitePool, run_id: &str) -> i64 {
+    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agent_runs WHERE id = ?")
+        .bind(run_id)
+        .fetch_one(pool)
+        .await
+        .expect("count runs");
+    n
+}
+
+async fn wait_until<F, Fut>(mut cond: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    for _ in 0..300 {
+        if cond().await {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("condition not met within 3s");
+}
+
+/// run_persistence_subscriber 在 spawned task 内 subscribe：spawn 后立刻
+/// emit 可能早于订阅（broadcast 只投递订阅之后的消息）。RunRecorded 投影
+/// 幂等，重发无害——发射直到落库为止。
+async fn emit_run_until_persisted(runtime: &AgentRuntime, pool: &SqlitePool, rep: &RunReport) {
+    for _ in 0..60 {
+        runtime.bus().emit(AgentEventKind::RunRecorded {
+            report: Box::new(rep.clone()),
+            problem_key: None,
+            dedup_key: None,
+        });
+        if count_runs(pool, &rep.run_id).await == 1 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("run {} not persisted within 3s", rep.run_id);
+}
+
+// ── tests ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn projects_run_recorded_to_agent_runs() {
+    let (db, pool) = test_db().await;
+    let runtime = runtime_with(16, empty_snapshot());
+    let h = tokio::spawn(run_persistence_subscriber(runtime.clone(), db.clone()));
+
+    emit_run_until_persisted(&runtime, &pool, &report("run1", "ws1", "巡检正常")).await;
+
+    let (summary,): (String,) = sqlx::query_as("SELECT summary FROM agent_runs WHERE id = 'run1'")
+        .fetch_one(&pool)
+        .await
+        .expect("run1 row");
+    assert_eq!(summary, "巡检正常");
+    h.abort();
+}
+
+#[tokio::test]
+async fn stale_event_does_not_overwrite_newer_row() {
+    // insert-once 幂等即 fencing：先落新事件（occurred_at=T2），再回放
+    // 同 run_id 的 stale 事件（T1<T2），行内容保持 T2 版本。
+    let (db, pool) = test_db().await;
+    let runtime = runtime_with(16, empty_snapshot());
+    let h = tokio::spawn(run_persistence_subscriber(runtime.clone(), db.clone()));
+
+    // 顺序保证：先确认新事件落库，再回放 stale（订阅者按序处理）。
+    emit_run_until_persisted(&runtime, &pool, &report("run1", "ws1", "newer")).await;
+    // stale 回放：同 run_id，内容更旧
+    runtime.bus().emit(AgentEventKind::RunRecorded {
+        report: Box::new(report("run1", "ws1", "stale")),
+        problem_key: None,
+        dedup_key: None,
+    });
+    // marker：run2 落库时 stale 回放已处理完
+    emit_run_until_persisted(&runtime, &pool, &report("run2", "ws1", "marker")).await;
+
+    assert_eq!(count_runs(&pool, "run1").await, 1, "stale 回放不得产生重复行");
+    let (summary,): (String,) = sqlx::query_as("SELECT summary FROM agent_runs WHERE id = 'run1'")
+        .fetch_one(&pool)
+        .await
+        .expect("run1 row");
+    assert_eq!(summary, "newer", "stale 事件不得覆盖更新的行");
+    h.abort();
+}
+
+#[tokio::test]
+async fn lagged_subscriber_resyncs_from_dump_state() {
+    let (db, pool) = test_db().await;
+    seed_test_workspace(&pool, "tenant1", "ws1").await;
+
+    // 预热 runtime 内存真相源：一条 recent_run + ws1 的 trust config
+    let mut trust = TrustConfig::default();
+    trust.max_auto_actions_per_tick = 7;
+    let snapshot = RestoreSnapshot {
+        heartbeat: vec![WorkspaceHeartbeatState {
+            workspace_id: "ws1".into(),
+            tasks: vec![],
+            trust_config: trust,
+            interval_minutes: 30,
+        }],
+        recent_runs: vec![report("run_lagged", "ws1", "resync me")],
+    };
+    // 容量 2 的 bus：先订阅再发 5 事件 → 首 recv 必为 Lagged
+    let runtime = runtime_with(2, snapshot);
+    let rx = runtime.subscribe();
+    for i in 0..5 {
+        runtime.bus().emit(AgentEventKind::HeartbeatTasksChanged {
+            workspace_id: format!("ws{i}"),
+        });
+    }
+
+    let dump = {
+        let runtime = runtime.clone();
+        move || runtime.dump_state()
+    };
+    // 长对账周期：只有 Lagged resync 能投影，排除周期对账干扰
+    let h = tokio::spawn(run_persistence_loop(
+        rx,
+        dump,
+        db.clone(),
+        test_publisher(),
+        Duration::from_secs(3600),
+    ));
+
+    wait_until(|| async { count_runs(&pool, "run_lagged").await == 1 }).await;
+
+    let trust_repo = tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(pool.clone());
+    let loaded = trust_repo
+        .load_trust_config("ws1")
+        .await
+        .expect("load trust config")
+        .expect("trust config resynced");
+    assert_eq!(loaded.max_auto_actions_per_tick, 7);
+    h.abort();
+}
+
+#[tokio::test]
+async fn periodic_reconcile_projects_dump_state() {
+    let (db, pool) = test_db().await;
+    let snapshot = RestoreSnapshot {
+        heartbeat: vec![],
+        recent_runs: vec![report("run_reconcile", "ws1", "reconciled")],
+    };
+    let runtime = runtime_with(16, snapshot);
+
+    let dump = {
+        let runtime = runtime.clone();
+        move || runtime.dump_state()
+    };
+    let h = tokio::spawn(run_persistence_loop(
+        runtime.subscribe(),
+        dump,
+        db.clone(),
+        test_publisher(),
+        Duration::from_millis(50),
+    ));
+
+    // 无任何事件：只有周期对账能把 dump_state 投影落库
+    wait_until(|| async { count_runs(&pool, "run_reconcile").await == 1 }).await;
+    h.abort();
+}
+
+#[tokio::test]
+async fn projects_heartbeat_result_to_agent_actions() {
+    let (db, pool) = test_db().await;
+    let runtime = runtime_with(16, empty_snapshot());
+    let h = tokio::spawn(run_persistence_subscriber(runtime.clone(), db.clone()));
+
+    let count_actions = || async {
+        let (n,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM agent_actions WHERE workspace_id = 'ws1' AND event_type = 'heartbeat'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("count agent_actions");
+        n
+    };
+    // 订阅竞态（见 emit_run_until_persisted 注释）：心跳结果非幂等，
+    // 每次只在确认未落库时重发一次。
+    let mut projected = false;
+    for _ in 0..60 {
+        runtime.bus().emit(AgentEventKind::HeartbeatResultReady {
+            result: Box::new(HeartbeatResult {
+                workspace_id: "ws1".into(),
+                status: HeartbeatStatus::Complete,
+                summary: "tick done".into(),
+                task_count: 2,
+                executed_actions: vec![],
+                proposals: vec![],
+                error: None,
+            }),
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        if count_actions().await >= 1 {
+            projected = true;
+            break;
+        }
+    }
+    assert!(projected, "heartbeat result not persisted within 3s");
+    h.abort();
+}

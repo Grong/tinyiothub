@@ -27,6 +27,7 @@ pub mod agent_hooks;
 pub mod directive_sink;
 pub mod dlq_repo;
 pub mod heartbeat;
+pub mod persist;
 pub mod policy_engine;
 pub mod pool_adapter;
 pub mod scaffold;
