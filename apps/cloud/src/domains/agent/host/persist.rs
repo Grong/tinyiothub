@@ -40,6 +40,23 @@ const RECONCILE_INTERVAL: Duration = Duration::from_secs(300);
 /// `retry_with_backoff` 语义在此重建）。
 const RETRY_MAX_ATTEMPTS: u32 = 5;
 const RETRY_BASE_DELAY: Duration = Duration::from_secs(2);
+/// resync 单项连续失败升级阈值（约 3 个对账周期）：周期对账是最后的
+/// 安全网，永久失败若只 warn 会被每 5 分钟一条日志静默掩盖，DB 与内存
+/// 真相源分叉——达阈值升级 error! + DLQ，恢复后计数清零（Task 8 fix round 1）。
+const RESYNC_FAILURE_ESCALATION_THRESHOLD: u32 = 3;
+
+/// resync 单项连续失败计数（key：run_id / workspace_id）。
+#[derive(Default)]
+pub(crate) struct ResyncFailures {
+    pub(crate) runs: std::collections::HashMap<String, u32>,
+    pub(crate) trust_configs: std::collections::HashMap<String, u32>,
+}
+
+fn record_failure(map: &mut std::collections::HashMap<String, u32>, key: &str) -> u32 {
+    let count = map.entry(key.to_string()).or_insert(0);
+    *count += 1;
+    *count
+}
 
 /// Brief 接口：service_manager 在 runtime 就绪后 spawn（Task 9 定最终
 /// 启动顺序：订阅先于 restore、僵尸 reconcile）。
@@ -69,6 +86,7 @@ pub async fn run_persistence_loop(
         tokio::time::Instant::now() + reconcile_interval,
         reconcile_interval,
     );
+    let mut resync_failures = ResyncFailures::default();
 
     loop {
         tokio::select! {
@@ -76,7 +94,7 @@ pub async fn run_persistence_loop(
                 Ok(event) => project(&event, db.pool(), &publisher).await,
                 Err(RecvError::Lagged(n)) => {
                     warn!(dropped = n, "persistence subscriber lagged, full resync");
-                    resync(dump_state(), db.pool()).await;
+                    resync(dump_state(), db.pool(), &mut resync_failures).await;
                 }
                 Err(RecvError::Closed) => {
                     debug!("agent event bus closed, persistence subscriber exiting");
@@ -84,7 +102,7 @@ pub async fn run_persistence_loop(
                 }
             },
             _ = interval.tick() => {
-                resync(dump_state(), db.pool()).await;
+                resync(dump_state(), db.pool(), &mut resync_failures).await;
             }
         }
     }
@@ -186,42 +204,114 @@ async fn run_exists(pool: &SqlitePool, run_id: &str) -> Result<bool, sqlx::Error
 }
 
 /// 全量重投影（Lagged resync / 周期对账）：recent_runs 幂等插入、
-/// trust config 幂等 upsert。单项失败 warn 后继续——下一周期自愈。
-async fn resync(snapshot: RestoreSnapshot, pool: &SqlitePool) {
+/// trust config 幂等 upsert。单项失败计入连续失败计数：达
+/// RESYNC_FAILURE_ESCALATION_THRESHOLD 升级 error! + DLQ（越阈值只升级
+/// 一次，不每周期刷 DLQ），恢复后计数清零（Task 8 fix round 1）。
+pub(crate) async fn resync(snapshot: RestoreSnapshot, pool: &SqlitePool, failures: &mut ResyncFailures) {
     let runs_repo = AgentRunsRepository::new(pool.clone());
     for report in &snapshot.recent_runs {
-        match run_exists(pool, &report.run_id).await {
-            Ok(true) => continue, // 已存在：幂等 no-op
-            Ok(false) => {}
-            Err(e) => {
-                warn!(run_id = %report.run_id, error = %e, "resync existence check failed");
-                continue;
+        let outcome: Result<(), String> = async {
+            match run_exists(pool, &report.run_id).await {
+                Ok(true) => return Ok(()), // 已存在：幂等 no-op
+                Ok(false) => {}
+                Err(e) => return Err(format!("existence check: {e}")),
+            }
+            // resync 路径没有 problem_key/dedup_key 元数据（RunRegistry 不持有）；
+            // 正常情形下该行已由事件路径落库，此处 insert 为幂等 no-op。
+            match runs_repo.insert_run(report, None, None).await {
+                Ok(_) => Ok(()),
+                Err(e) if e.to_string().contains("UNIQUE") => Ok(()), // 并发重复：幂等成功
+                Err(e) => Err(e.to_string()),
             }
         }
-        // resync 路径没有 problem_key/dedup_key 元数据（RunRegistry 不持有）；
-        // 正常情形下该行已由事件路径落库，此处 insert 为幂等 no-op。
-        if let Err(e) = runs_repo.insert_run(report, None, None).await {
-            if e.to_string().contains("UNIQUE") {
-                continue; // 并发重复：幂等成功
+        .await;
+        match outcome {
+            Ok(()) => {
+                failures.runs.remove(&report.run_id);
             }
-            warn!(run_id = %report.run_id, error = %e, "resync run projection failed");
+            Err(reason) => {
+                let count = record_failure(&mut failures.runs, &report.run_id);
+                if count == RESYNC_FAILURE_ESCALATION_THRESHOLD {
+                    error!(
+                        run_id = %report.run_id,
+                        consecutive_failures = count,
+                        error = %reason,
+                        "resync run projection failing repeatedly, enqueuing to DLQ"
+                    );
+                    let payload = serde_json::to_string(report).unwrap_or_else(|se| {
+                        format!(
+                            r#"{{"unserializable":true,"run_id":"{}","serialize_error":"{}"}}"#,
+                            report.run_id, se
+                        )
+                    });
+                    let dlq = SqliteDeadLetterQueue::new(pool.clone());
+                    if let Err(dlq_err) = dlq
+                        .enqueue(&report.workspace_id, "RunRecorded", &payload, &reason)
+                        .await
+                    {
+                        error!(run_id = %report.run_id, error = %dlq_err, "DLQ enqueue failed — resync run record lost");
+                    }
+                } else {
+                    warn!(
+                        run_id = %report.run_id,
+                        consecutive_failures = count,
+                        error = %reason,
+                        "resync run projection failed"
+                    );
+                }
+            }
         }
     }
     let task_repo = HeartbeatTaskRepository::new(pool.clone());
     for state in &snapshot.heartbeat {
-        if let Err(e) = task_repo
+        match task_repo
             .save_trust_config(&state.workspace_id, &state.trust_config)
             .await
         {
-            warn!(workspace_id = %state.workspace_id, error = %e, "resync trust config failed");
+            Ok(()) => {
+                failures.trust_configs.remove(&state.workspace_id);
+            }
+            Err(e) => {
+                let reason = e.to_string();
+                let count = record_failure(&mut failures.trust_configs, &state.workspace_id);
+                if count == RESYNC_FAILURE_ESCALATION_THRESHOLD {
+                    error!(
+                        workspace_id = %state.workspace_id,
+                        consecutive_failures = count,
+                        error = %reason,
+                        "resync trust config failing repeatedly, enqueuing to DLQ"
+                    );
+                    let dlq = SqliteDeadLetterQueue::new(pool.clone());
+                    if let Err(dlq_err) = dlq
+                        .enqueue(
+                            &state.workspace_id,
+                            "TrustConfigChanged",
+                            &state.trust_config.to_db_json(),
+                            &reason,
+                        )
+                        .await
+                    {
+                        error!(workspace_id = %state.workspace_id, error = %dlq_err, "DLQ enqueue failed — resync trust config lost");
+                    }
+                } else {
+                    warn!(
+                        workspace_id = %state.workspace_id,
+                        consecutive_failures = count,
+                        error = %reason,
+                        "resync trust config failed"
+                    );
+                }
+            }
         }
     }
 }
 
 /// 心跳结果重试任务（重建自 4d102722 `retry_with_backoff`）：独立 spawn，
 /// 2s base、2^attempt 退避，累计 5 次失败 → DLQ + HeartbeatPersistFailed。
-/// subscriber 侧采用简化形式：无 in-flight 计数，进程退出时未完成任务随
-/// runtime drop（context：订阅者任务在 shutdown 时完成当前投影即退出）。
+/// subscriber 侧采用简化形式：无 in-flight 计数。
+// TODO(Task 9): 重试任务未接 shutdown 编排——进程退出时 backoff 睡眠中的
+// 任务随 runtime drop，丢失窗口无观测性。Task 9 启动/关闭编排骨架接入
+// shutdown_notify + drain（参考 4d102722 RetryTracker）。
 fn spawn_heartbeat_retry(
     pool: SqlitePool,
     publisher: Arc<AiEventPublisher>,

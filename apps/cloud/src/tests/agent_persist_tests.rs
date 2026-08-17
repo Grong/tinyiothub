@@ -12,7 +12,7 @@ use tinyiothub_core::agent_runs::{Outcome, RunReport};
 use tinyiothub_core::heartbeat::{HeartbeatResult, HeartbeatStatus, TrustConfig};
 use tinyiothub_storage::Database;
 
-use crate::domains::agent::host::persist::{run_persistence_loop, run_persistence_subscriber};
+use crate::domains::agent::host::persist::{ResyncFailures, resync, run_persistence_loop, run_persistence_subscriber};
 use crate::domains::agent::host::test_utils::seed_test_workspace;
 use crate::domains::agent::loop_::event::bus::AiEventPublisher;
 use crate::domains::agent::loop_::events::AgentEventKind;
@@ -268,4 +268,58 @@ async fn projects_heartbeat_result_to_agent_actions() {
     }
     assert!(projected, "heartbeat result not persisted within 3s");
     h.abort();
+}
+
+/// Task 8 fix round 1：resync 单项连续失败达阈值升级 error! + DLQ，
+/// 越阈值不重复刷屏；恢复后计数清零。
+#[tokio::test]
+async fn resync_escalates_to_dlq_after_consecutive_failures_then_recovers() {
+    let (db, pool) = test_db().await;
+
+    // 制造永久失败：drop agent_runs（先存 schema 供恢复）
+    let (create_sql,): (String,) = sqlx::query_as("SELECT sql FROM sqlite_master WHERE name = 'agent_runs'")
+        .fetch_one(&pool)
+        .await
+        .expect("agent_runs schema");
+    sqlx::query("DROP TABLE agent_runs")
+        .execute(&pool)
+        .await
+        .expect("drop agent_runs");
+
+    let snap = || RestoreSnapshot {
+        heartbeat: vec![],
+        recent_runs: vec![report("run_bad", "ws1", "fails")],
+    };
+    let mut failures = ResyncFailures::default();
+
+    let dlq_count = || async {
+        let (n,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM agent_dead_letters WHERE workspace_id = 'ws1' AND event_type = 'RunRecorded'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("dlq count");
+        n
+    };
+
+    // 3 个对账周期连续失败 → 第 3 次越阈值升级 error! + DLQ
+    for _ in 0..3 {
+        resync(snap(), db.pool(), &mut failures).await;
+    }
+    assert_eq!(failures.runs.get("run_bad"), Some(&3));
+    assert_eq!(dlq_count().await, 1, "越阈值升级一次 DLQ");
+
+    // 第 4 次仍失败：已升级过，不重复刷 DLQ
+    resync(snap(), db.pool(), &mut failures).await;
+    assert_eq!(failures.runs.get("run_bad"), Some(&4));
+    assert_eq!(dlq_count().await, 1, "升级后不重复刷 DLQ");
+
+    // 恢复（重建表）→ 下一次 resync 成功且计数清零
+    sqlx::query(sqlx::AssertSqlSafe(create_sql.as_str()))
+        .execute(&pool)
+        .await
+        .expect("recreate agent_runs");
+    resync(snap(), db.pool(), &mut failures).await;
+    assert!(!failures.runs.contains_key("run_bad"), "恢复后计数清零");
+    assert_eq!(count_runs(&pool, "run_bad").await, 1);
 }
