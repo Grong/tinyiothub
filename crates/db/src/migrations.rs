@@ -60,18 +60,31 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // empty shells so the cleanup migration's UNION SELECTs are always valid.
     prepare_thing_model_copy(pool).await?;
 
-    Migrator::with_migrations(migrations)
-        .run(pool)
-        .await
-        .map_err(|e| {
-            sqlx::Error::Configuration(
-                format!(
-                    "Migration failed: {}. Restore the pre-migration backup from the backups/ directory next to the database file.",
-                    e
-                )
-                .into(),
+    // FK 加固（2026-08-18 调查）：sqlx 默认 foreign_keys=ON；SQLite 在 FK 开启时
+    // DROP TABLE 会先隐式 DELETE FROM 该表，触发子表 ON DELETE CASCADE——
+    // 20260723000001 重建 devices 时曾因此级联清空 device_properties/device_commands
+    // 的真实种子数据。迁移在专用连接上以 FK OFF 运行；pragma 是连接级设置，
+    // 归还连接池前恢复 ON，运行期连接的 FK 行为不受影响。
+    let mut mig_conn = pool.acquire().await?;
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut *mig_conn)
+        .await?;
+    let mig_result = Migrator::with_migrations(migrations)
+        .run(&mut *mig_conn)
+        .await;
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&mut *mig_conn)
+        .await?;
+    drop(mig_conn);
+    mig_result.map_err(|e| {
+        sqlx::Error::Configuration(
+            format!(
+                "Migration failed: {}. Restore the pre-migration backup from the backups/ directory next to the database file.",
+                e
             )
-        })?;
+            .into(),
+        )
+    })?;
 
     repair_thing_model_data(pool).await?;
     ensure_schema_consistency(pool).await?;

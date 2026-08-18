@@ -354,8 +354,11 @@ async fn test_upgrade_path_with_alarm_rules_no_boot_loop() {
     assert_eq!(desc.as_deref(), Some("real prop"));
     assert_eq!(min_v, Some(0.0));
 
+    // 限定 dev-1（本测试的设备）：修复迁移 20260818000001 会为演示设备
+    // device-env-01 恢复 (temperature, 温度) 真实种子行，与合成种子同 tuple——
+    // 全表断言会误伤。本断言的意图是"dev-1 上的合成种子被清理"。
     let seed_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM thing_properties WHERE (name, display_name) IN (VALUES ('temperature','温度'))",
+        "SELECT COUNT(*) FROM thing_properties WHERE device_id = 'dev-1' AND (name, display_name) IN (VALUES ('temperature','温度'))",
     )
     .fetch_one(&pool)
     .await
