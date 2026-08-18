@@ -220,7 +220,7 @@ fn build_heartbeat_prompt(workspace_id: &str, tasks: &[&HeartbeatTask], trust_co
             format!(
                 "- [{}] {}",
                 t.priority,
-                tinyiothub_memory::reflect::sanitize_input(&t.text)
+                tinyiothub_agent::memory::reflect::sanitize_input(&t.text)
             )
         })
         .collect::<Vec<_>>()

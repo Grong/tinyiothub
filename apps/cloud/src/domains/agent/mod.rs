@@ -41,11 +41,11 @@ pub mod types {
     pub use tinyiothub_llm::prompt::PromptRegistry;
     pub use tinyiothub_llm::prompt::types::PromptTemplate;
     pub use tinyiothub_llm::provider::{LlmCallMetadata, LlmProvider, LlmResponse};
-    pub use tinyiothub_memory::knowledge::{KnowledgeEntity, KnowledgeGraph, KnowledgeRelation, NoopKnowledgeGraph};
-    pub use tinyiothub_memory::reflect::{
+    pub use tinyiothub_agent::memory::knowledge::{KnowledgeEntity, KnowledgeGraph, KnowledgeRelation, NoopKnowledgeGraph};
+    pub use tinyiothub_agent::memory::reflect::{
         build_reflection_input, build_reflection_prompt, contains_injection, parse_facts, sanitize_input,
     };
-    pub use tinyiothub_memory::types::MemoryFact;
+    pub use tinyiothub_agent::memory::types::MemoryFact;
     pub use tinyiothub_policy::adapters::{ChatConfirmAdapter, ChatConfirmVerdict, HeartbeatTrustAdapter};
     pub use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
     pub use tinyiothub_policy::{

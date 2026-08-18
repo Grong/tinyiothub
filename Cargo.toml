@@ -159,6 +159,7 @@ plugin-sdk = { path = "crates/plugin-sdk" }
 runtime = { path = "crates/runtime" }
 scheduler = { path = "crates/scheduler" }
 memory = { path = "crates/memory" }
+agent = { path = "crates/agent" }
 policy = { path = "crates/policy" }
 skills = { path = "crates/skills" }
 web = { path = "crates/web" }

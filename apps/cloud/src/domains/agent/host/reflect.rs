@@ -11,7 +11,7 @@ pub use crate::domains::agent::loop_::session::types::ChatTurnMessage;
 
 #[cfg(test)]
 mod tests {
-    use tinyiothub_memory::reflect::build_reflection_prompt;
+    use tinyiothub_agent::memory::reflect::build_reflection_prompt;
 
     #[test]
     fn prompt_template_loaded() {

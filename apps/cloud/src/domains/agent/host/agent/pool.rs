@@ -6,7 +6,7 @@ use std::{sync::Arc, time::Instant};
 
 use anyhow::anyhow;
 use dashmap::DashMap;
-use tinyiothub_memory::workspace_memory::WorkspaceScopedMemory;
+use tinyiothub_agent::memory::workspace_memory::WorkspaceScopedMemory;
 use zeroclaw::{
     agent::{
         dispatcher::NativeToolDispatcher,

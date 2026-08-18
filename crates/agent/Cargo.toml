@@ -23,11 +23,14 @@ serde = { workspace = true }
 chrono = { workspace = true }
 dashmap = { workspace = true }
 thiserror = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
 
 # ZeroClaw agent runtime contract（与 apps/cloud 同源，Task 14 完成后从 cloud 移除）
 zeroclaw = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched", package = "zeroclawlabs", features = ["agent-runtime"] }
+zeroclaw-api = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

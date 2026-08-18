@@ -24,7 +24,7 @@ use crate::domains::thing::service::ThingService;
 use anyhow::anyhow;
 use dashmap::DashMap;
 use sqlx::SqlitePool;
-use tinyiothub_memory::workspace_memory::WorkspaceScopedMemory;
+use tinyiothub_agent::memory::workspace_memory::WorkspaceScopedMemory;
 use tinyiothub_storage::policy::PolicyRepository;
 use tokio::sync::RwLock;
 use zeroclaw::{

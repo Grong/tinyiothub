@@ -10,27 +10,21 @@ description = "Agent memory persistence — SqliteAgentMemoryRepository + embedd
 [lib]
 name = "tinyiothub_memory"
 
-# 角色:agent 记忆能力（存储/反思管道/知识）
+# 角色:agent 记忆持久化引擎（MemoryService）——纯逻辑已迁入 crates/agent（Task 12, D10'）
 # 禁止依赖:apps/*、web、runtime —— 由组合层调用;规则出处:G 系列计划 Task 7 (G8)
 [dependencies]
 core = { workspace = true }
+agent = { workspace = true }
 db = { path = "../db" }
 llm = { path = "../llm" }
-serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
 async-trait = { workspace = true }
 anyhow = { workspace = true }
-thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-uuid = { workspace = true }
 chrono = { workspace = true }
 dashmap = { workspace = true }
-
-# ZeroClaw memory backend contract (for WorkspaceScopedMemory)
-zeroclaw = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched", package = "zeroclawlabs", features = ["agent-runtime"] }
-zeroclaw-api = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

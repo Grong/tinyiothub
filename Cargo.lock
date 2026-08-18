@@ -77,6 +77,7 @@ dependencies = [
 name = "agent"
 version = "0.4.6"
 dependencies = [
+ "anyhow",
  "async-trait",
  "chrono",
  "core",
@@ -85,10 +86,12 @@ dependencies = [
  "policy",
  "runtime",
  "serde",
+ "serde_json",
  "skills",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "zeroclaw-api",
  "zeroclawlabs",
 ]
 
@@ -3133,6 +3136,7 @@ dependencies = [
 name = "memory"
 version = "0.4.6"
 dependencies = [
+ "agent",
  "anyhow",
  "async-trait",
  "chrono",
@@ -3140,15 +3144,10 @@ dependencies = [
  "dashmap",
  "db",
  "llm",
- "serde",
  "serde_json",
  "sqlx",
- "thiserror 1.0.69",
  "tokio",
  "tracing",
- "uuid",
- "zeroclaw-api",
- "zeroclawlabs",
 ]
 
 [[package]]
@@ -5957,6 +5956,7 @@ name = "tinyiothub-cloud"
 version = "0.4.6"
 dependencies = [
  "aes-gcm",
+ "agent",
  "anyhow",
  "async-stream",
  "async-trait",

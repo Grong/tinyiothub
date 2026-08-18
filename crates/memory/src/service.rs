@@ -12,10 +12,10 @@ use tinyiothub_core::memory::{Confidence, MemoryInput, MemorySource, MemoryZone,
 use tinyiothub_storage::memory::MemoryStore;
 use tracing::{debug, info, warn};
 
-use crate::metrics::Metrics;
-use crate::provider::LlmProvider;
-use crate::reflect::{build_reflection_prompt, parse_facts};
-use crate::types::MemoryError;
+use tinyiothub_agent::memory::metrics::Metrics;
+use tinyiothub_agent::memory::reflect::{build_reflection_prompt, parse_facts};
+use tinyiothub_agent::memory::types::MemoryError;
+use tinyiothub_llm::provider::LlmProvider;
 use tinyiothub_llm::session::types::ChatTurnMessage;
 
 /// Dedup window: skip reflection if same session was processed within this duration.
@@ -99,7 +99,9 @@ impl MemoryService {
             .map(|m| format!("- [{}] {}\n", m.zone.as_str(), m.content))
             .collect();
 
-        let turn_text = super::reflect::sanitize_input(&super::reflect::build_reflection_input(messages));
+        let turn_text = tinyiothub_agent::memory::reflect::sanitize_input(
+            &tinyiothub_agent::memory::reflect::build_reflection_input(messages),
+        );
 
         let instruction = include_str!("../templates/REFLECTION_PROMPT.md");
         let prompt = build_reflection_prompt(instruction, &active_text, &turn_text);
@@ -143,7 +145,7 @@ impl MemoryService {
             // Memory-poisoning defense: LLM output is attacker-influenced, so a
             // fact containing injection patterns never goes straight into the
             // store — it is quarantined to the review queue instead.
-            let poisoned = super::reflect::contains_injection(&c.fact);
+            let poisoned = tinyiothub_agent::memory::reflect::contains_injection(&c.fact);
             if matches!(confidence, Confidence::High) && !matches!(actual_zone, MemoryZone::Core) && !poisoned {
                 self.memory_store
                     .put(MemoryInput {
@@ -293,7 +295,7 @@ impl MemoryService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::LlmResponse;
+    use tinyiothub_llm::provider::LlmResponse;
     use async_trait::async_trait;
     use std::sync::Mutex;
 
