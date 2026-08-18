@@ -138,13 +138,27 @@ jobs:
 
       - name: Agent Loop Purity Guard (G9)
         run: |
-          echo "=== Checking agent/loop_ carries no axum (web) dependency ==="
-          if grep -rEn --include='*.rs' 'axum' apps/cloud/src/domains/agent/loop_/; then
-            echo "❌ DEPENDENCY VIOLATION: domains/agent/loop_ is the pure runtime plane and must not reference axum"
-            echo "   ✅ Web/HTTP concerns belong in domains/agent/host (loop_ ← host one-way invariant)"
+          echo "=== Checking crates/agent carries no web/storage/domains dependency ==="
+          # crates/agent 是纯运行时平面：匹配真实引用形态（use <crate> / <crate>:: 路径），
+          # 文档注释中的守卫词不触发；crate::domains 防止回流 apps/cloud 领域层。
+          if grep -rEn --include='*.rs' 'use (axum|sqlx|tinyiothub_storage)|\b(axum|sqlx|tinyiothub_storage)::|crate::domains' crates/agent/src; then
+            echo "❌ DEPENDENCY VIOLATION: crates/agent is the pure runtime plane — no axum/sqlx/storage/domains references"
+            echo "   ✅ Web/HTTP concerns belong in apps/cloud host; persistence behind port traits"
             exit 1
           fi
           echo "✅ Agent loop purity guard passed"
+
+      - name: Agent Crate Dependency Tree Guard (G9)
+        run: |
+          echo "=== Checking crates/agent direct deps carry no sqlx/storage ==="
+          # 仅检查直接依赖（--depth 1）：workspace 基础 crate（core/db）当前仍带 sqlx，
+          # 传递依赖不在本守卫范围；crates/agent 自身不得新增 sqlx/tinyiothub-storage 依赖。
+          if cargo tree -p agent --depth 1 | grep -E "sqlx|tinyiothub-storage"; then
+            echo "❌ DEPENDENCY VIOLATION: crates/agent must not directly depend on sqlx/tinyiothub-storage"
+            echo "   ✅ Persistence belongs behind port traits implemented in apps/cloud"
+            exit 1
+          fi
+          echo "✅ Agent dependency tree guard passed"
 
   # -----------------------------------------------------------------------------
   # 前端检查
