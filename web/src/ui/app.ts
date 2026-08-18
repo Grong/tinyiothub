@@ -306,17 +306,11 @@ export class TinyIoTHubApp extends LitElement {
       return;
     }
 
-    this.currentRoute = path || 'chat';
+    this.currentRoute = path || 'home';
 
     const publicRoutes = ['login', 'register', 'home', 'terms', 'privacy', ''];
     if (!publicRoutes.includes(path) && !this.isAuthenticated) {
       this.navigate('login');
-      return;
-    }
-
-    // Authenticated users landing on / get redirected to chat
-    if (!path && this.isAuthenticated) {
-      this.navigate('chat');
       return;
     }
 
