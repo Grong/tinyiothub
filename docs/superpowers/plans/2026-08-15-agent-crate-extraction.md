@@ -554,6 +554,27 @@ async fn thing_agent_run_projects_to_db_and_read_api() {
 
 # Phase 3 — memory 纯逻辑并入（D10'）
 
+## Task 11.5: 斩断 runtime→db（D15 用户裁决，新增）
+
+**背景**：`crates/runtime` 直接使用存储——`cron_executors.rs:16,47`（`tinyiothub_storage::database::Database` + `device_command::find_device_command_by_device_and_name`）、`data_server.rs:18`（`tinyiothub_storage::cache::DeviceCache`）。agent→runtime→db→sqlx 传递链使 tree 级纯度不可达。D15 裁决：本期端口化斩断，CI tree 守卫升级为全树（去掉 Task 11 的 --depth 1）。
+
+**Files:**
+- Modify: `crates/runtime/src/cron_executors.rs`、`crates/runtime/src/data_server.rs`、`crates/runtime/src/lib.rs`（端口 trait 导出）、`crates/runtime/Cargo.toml`（删 `db = { workspace = true }`）
+- Modify: `apps/cloud` 组合根（service_manager/bootstrap）——注入 db-backed 实现
+- Test: 端口注入后的等价行为测试
+
+**Interfaces:**
+- Produces（确切名字后续任务依赖）：
+  - `runtime::ports::DeviceCommandQueries`（async trait：`find_by_device_and_name(&self, device_id: &str, name: &str)` 返回类型以实现时 `crates/db/src/device_command.rs` 现有函数为准）
+  - `runtime::ports::DeviceCacheSource`（async trait：方法集以 data_server.rs 实际调用的 DeviceCache 方法为准）
+- cloud 侧适配器：`apps/cloud/src/shared/` 下新建薄 adapter（直接委托 `tinyiothub_storage` 具体类型，符合 8/3 db 层模式）
+
+- [ ] **Step 1: 盘点使用面**——`grep -rn "tinyiothub_storage" crates/runtime/src/` 列出全部调用点与用到的方法签名，写进 commit message
+- [ ] **Step 2: 定义端口 trait（先写失败测试）**——cron_executors/data_server 改为 Arc<dyn 端口> 注入；cloud 侧 adapter 委托现有 db 函数
+- [ ] **Step 3: 删 runtime 的 db 依赖**——`cargo tree -p runtime | grep sqlx` 应为空；`cargo check --workspace` 通过
+- [ ] **Step 4: CI tree 守卫升级**——ci.yml 的 agent tree 守卫去掉 `--depth 1`，全树 grep 覆盖 sqlx/tinyiothub-storage/包名 db；自证：给 agent Cargo.toml 注入 `db = { workspace = true }` 确认拦截，回滚
+- [ ] **Step 5: 全量测试绿 + Commit** → `refactor(runtime): sever runtime→db edge via ports (Task 11.5, D15)`
+
 ## Task 12: crates/memory 纯逻辑 → crates/agent/src/memory/
 
 **Files:**
