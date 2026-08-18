@@ -1,7 +1,8 @@
-//! Db-bound cron job executors.
+//! Cron job executors.
 //!
-//! These executors need concrete infrastructure types (`DataServer`,
-//! `Database`) and therefore live in the runtime crate rather than in
+//! These executors need concrete infrastructure types (`DataServer`) and
+//! persistence access (via `crate::ports` traits injected by the composition
+//! root) and therefore live in the runtime crate rather than in
 //! `tinyiothub_scheduler`, which depends only on `core` contracts. The
 //! application wires them into the scheduler's `ExecutorRegistry`.
 
@@ -13,17 +14,18 @@ use serde_json::Value;
 
 pub use tinyiothub_core::cron::{ExecutionResult, ExecutorError, JobExecutor};
 use tinyiothub_core::models::cron_job::CronJob;
-use tinyiothub_storage::database::Database;
+
+use crate::ports::{DeviceCommandQueries, EventRetentionStore};
 
 /// Executes device commands via DataServer.
 pub struct DeviceCommandExecutor {
     data_server: Arc<crate::data_server::DataServer>,
-    database: Database,
+    commands: Arc<dyn DeviceCommandQueries>,
 }
 
 impl DeviceCommandExecutor {
-    pub fn new(data_server: Arc<crate::data_server::DataServer>, database: Database) -> Self {
-        Self { data_server, database }
+    pub fn new(data_server: Arc<crate::data_server::DataServer>, commands: Arc<dyn DeviceCommandQueries>) -> Self {
+        Self { data_server, commands }
     }
 }
 
@@ -43,15 +45,13 @@ impl JobExecutor for DeviceCommandExecutor {
 
         let start = Instant::now();
 
-        // Look up the device command from DB
-        let mut command = tinyiothub_storage::device_command::find_device_command_by_device_and_name(
-            &self.database,
-            &device_id,
-            &command_name,
-        )
-        .await
-        .map_err(|e| ExecutorError::InvalidConfig(format!("DB error looking up command: {}", e)))?
-        .ok_or_else(|| {
+        // Look up the device command via the injected queries port
+        let mut command = self
+            .commands
+            .find_by_device_and_name(&device_id, &command_name)
+            .await
+            .map_err(|e| ExecutorError::InvalidConfig(format!("DB error looking up command: {}", e)))?
+            .ok_or_else(|| {
             ExecutorError::InvalidConfig(format!(
                 "command '{}' not found for device '{}'",
                 command_name, device_id
@@ -90,12 +90,12 @@ impl JobExecutor for DeviceCommandExecutor {
 /// whole point of the executor: a naive time-based purge would silently
 /// destroy the current state of quiet devices (eng-review OV-1/X1).
 pub struct EventRetentionExecutor {
-    database: Database,
+    store: Arc<dyn EventRetentionStore>,
 }
 
 impl EventRetentionExecutor {
-    pub fn new(database: Database) -> Self {
-        Self { database }
+    pub fn new(store: Arc<dyn EventRetentionStore>) -> Self {
+        Self { store }
     }
 }
 
@@ -118,11 +118,8 @@ impl JobExecutor for EventRetentionExecutor {
         let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days);
 
         let deleted = self
-            .database
-            .execute_with_params(
-                "DELETE FROM events WHERE is_status = 0 AND timestamp < ?",
-                &[&cutoff.to_rfc3339()],
-            )
+            .store
+            .delete_occurrence_events_before(&cutoff.to_rfc3339())
             .await
             .map_err(|e| ExecutorError::CommandFailed(format!("retention purge failed: {}", e)))?;
         let duration_ms = start.elapsed().as_millis() as i64;

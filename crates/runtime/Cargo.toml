@@ -12,11 +12,11 @@ name = "tinyiothub_runtime"
 
 # 角色:driver/EventBus 框架（driver 生命周期、事件总线、cron 执行器）
 # 禁止依赖:web、apps/* 与领域 crate —— 框架不编排业务流程;规则出处:G 系列计划 Task 7 (G8)
+# 持久化经 ports trait 注入（D15, Task 11.5），禁止重新引入 db/sqlx 依赖
 [dependencies]
 core = { workspace = true }
 macros = { workspace = true }
 plugin-sdk = { workspace = true, features = ["core-interop"] }
-db = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true, features = ["process", "sync"] }

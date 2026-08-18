@@ -151,12 +151,12 @@ jobs:
 
       - name: Agent Crate Dependency Tree Guard (G9)
         run: |
-          echo "=== Checking crates/agent direct deps carry no sqlx/storage/db ==="
-          # 仅检查直接依赖（--depth 1）：workspace 基础 crate（core/db）当前仍带 sqlx，
-          # 传递依赖不在本守卫范围；crates/agent 自身不得新增 sqlx/tinyiothub-storage/db 依赖。
-          # --prefix none + {p} 输出纯包名行，锚定 ^ 匹配避免误伤含 db/sqlx 子串的包。
-          if cargo tree -p agent --depth 1 --prefix none --format "{p}" | grep -E "^sqlx|^tinyiothub-storage|^db "; then
-            echo "❌ DEPENDENCY VIOLATION: crates/agent must not directly depend on sqlx/tinyiothub-storage/db"
+          echo "=== Checking crates/agent full dep tree carries no sqlx/storage/db ==="
+          # 全树检查（Task 11.5 / D15：runtime→db 边已斩断，agent 全树可达
+          # sqlx-free）。--prefix none + {p} 输出纯包名行，锚定 ^ 匹配避免误伤
+          # 含 db/sqlx 子串的包。
+          if cargo tree -p agent --prefix none --format "{p}" | grep -E "^sqlx|^tinyiothub-storage|^db "; then
+            echo "❌ DEPENDENCY VIOLATION: crates/agent dependency tree must not contain sqlx/tinyiothub-storage/db"
             echo "   ✅ Persistence belongs behind port traits implemented in apps/cloud"
             exit 1
           fi

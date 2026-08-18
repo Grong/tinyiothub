@@ -15,21 +15,21 @@ use tinyiothub_core::models::{device::Device, device_command::DeviceCommand};
 
 use crate::driver::{DeviceOverview, DriverWrapper, create_driver};
 use crate::event_bus::{EventBus, publish_event_safe};
-use tinyiothub_storage::cache::DeviceCache;
+use crate::ports::DeviceCacheSource;
 
 type DriverCache = Cache<String, Arc<RwLock<DriverWrapper>>>;
 type CommandQueue = Arc<DashMap<String, Vec<DeviceCommand>>>;
 
 /// Device data server — manages driver lifecycle and the polling loop.
 pub struct DataServer {
-    device_cache: Arc<DeviceCache>,
+    device_cache: Arc<dyn DeviceCacheSource>,
     driver_cache: DriverCache,
     command_queue: CommandQueue,
     event_bus: Arc<EventBus>,
 }
 
 impl DataServer {
-    pub fn new(device_cache: Arc<DeviceCache>, event_bus: Arc<EventBus>) -> Self {
+    pub fn new(device_cache: Arc<dyn DeviceCacheSource>, event_bus: Arc<EventBus>) -> Self {
         let driver_cache = Cache::new(10_000);
         Self::initialize_drivers(&driver_cache, &device_cache, &event_bus);
         Self {
@@ -40,7 +40,7 @@ impl DataServer {
         }
     }
 
-    fn initialize_drivers(cache: &DriverCache, device_cache: &Arc<DeviceCache>, event_bus: &Arc<EventBus>) {
+    fn initialize_drivers(cache: &DriverCache, device_cache: &Arc<dyn DeviceCacheSource>, event_bus: &Arc<EventBus>) {
         let devices = device_cache.all();
         for device in devices {
             if let Some(driver_name) = &device.driver_name {
@@ -81,7 +81,7 @@ impl DataServer {
 
     async fn process_all_drivers(
         driver_cache: DriverCache,
-        device_cache: Arc<DeviceCache>,
+        device_cache: Arc<dyn DeviceCacheSource>,
         command_queue: CommandQueue,
     ) {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));

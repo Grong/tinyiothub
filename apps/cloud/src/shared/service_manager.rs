@@ -72,9 +72,9 @@ impl ServiceManager {
         // 更新状态为启动中
         *self.status.write().await = ServiceStatus::Starting;
 
-        // 1. 创建并启动数据服务器
+        // 1. 创建并启动数据服务器（device_cache 经 D15 端口适配器注入）
         let data_server = Arc::new(DataServer::new(
-            app_state.device_cache.clone(),
+            Arc::new(crate::shared::runtime_ports::DeviceCacheAdapter(app_state.device_cache.clone())),
             app_state.event_bus.clone(),
         ));
 
@@ -119,15 +119,18 @@ impl ServiceManager {
         // 2. 启动 Cron 调度器
         #[cfg(not(feature = "harmonyos"))]
         {
-            // Wire db-bound executors into the scheduler registry
+            // Wire db-bound executors into the scheduler registry（db 访问经
+            // D15 端口适配器注入，runtime 不直接依赖 db）
             let mut registry = tinyiothub_scheduler::ExecutorRegistry::new();
             registry.register(Box::new(tinyiothub_runtime::DeviceCommandExecutor::new(
                 data_server.clone(),
-                (*app_state.database).clone(),
+                Arc::new(crate::shared::runtime_ports::DeviceCommandQueriesAdapter(
+                    (*app_state.database).clone(),
+                )),
             )));
-            registry.register(Box::new(tinyiothub_runtime::EventRetentionExecutor::new(
-                (*app_state.database).clone(),
-            )));
+            registry.register(Box::new(tinyiothub_runtime::EventRetentionExecutor::new(Arc::new(
+                crate::shared::runtime_ports::EventRetentionAdapter((*app_state.database).clone()),
+            ))));
             let cron_scheduler = tinyiothub_scheduler::CronSchedulerService::new(
                 app_state.cron_job_repo.clone(),
                 app_state.cron_run_repo.clone(),

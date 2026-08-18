@@ -4694,7 +4694,6 @@ dependencies = [
  "chrono",
  "core",
  "dashmap",
- "db",
  "futures-util",
  "libloading",
  "macros",

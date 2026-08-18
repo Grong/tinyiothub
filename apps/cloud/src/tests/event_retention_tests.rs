@@ -96,7 +96,9 @@ async fn test_retention_executor_deletes_only_old_occurrence_rows() {
     insert_event(&pool, "new-occ", 10, 0, 0).await; // recent occurrence → KEEP
     insert_event(&pool, "new-status", 10, 1, 0).await; // recent status → KEEP
 
-    let executor = EventRetentionExecutor::new(Database::new(pool.clone()));
+    let executor = EventRetentionExecutor::new(std::sync::Arc::new(
+        crate::shared::runtime_ports::EventRetentionAdapter(Database::new(pool.clone())),
+    ));
     let result = executor.execute(&retention_job(90), "run-1").await.expect("execute");
 
     assert!(result.output.unwrap().contains("deleted 1 "));
