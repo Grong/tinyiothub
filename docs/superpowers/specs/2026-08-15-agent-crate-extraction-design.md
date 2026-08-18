@@ -14,7 +14,7 @@
 2. **架构边界固化** — 用 crate 边界物理固化已有的 loop_/host 分层（mod 级约束太弱），CI 强制
 3. **对外发布/SDK** — agent 能力未来作为独立库发布，需要干净的所有权和 API 面
 
-**非目标**：HTTP handler 不搬；llm/policy/skills 不改动其内部；DB schema 不变；crates/memory 的引擎部分（`service.rs`）不动。
+**非目标**：HTTP handler 不搬；llm/policy/skills 不改动其内部；~~DB schema 不变~~（例外：D14 裁决——`agent_runs` 新增 `status` 列（`20260815000001_agent_runs_status.sql`）支撑 D11-③ 僵尸 reconcile；additive 且 DEFAULT 'completed' 语义正确；当前 insert-once 写路径下 reconcile 为 inert 防御）；crates/memory 的引擎部分（`service.rs`）不动。
 
 ## 2. 已确认的关键决策
 
