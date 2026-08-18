@@ -54,9 +54,10 @@ apps/* (cloud/edge/marketplace/cli) → crates/* (capability libs) → core
 | `web` | `tinyiothub_web` | HTTP middleware, ApiResponseBuilder, security extractors | Business logic |
 | `scheduler` | `tinyiothub_scheduler` | Cron engine + scheduler | Depending on apps |
 | `llm` | `tinyiothub_llm` | LLM provider contract, prompt, session | Provider implementations (live in apps) |
-| `memory` | `tinyiothub_memory` | Agent memory engine (reflection pipeline, sanitization — pure logic) | HTTP/SQL (persistence is in `db`) |
+| `memory` | `tinyiothub_memory` | Agent memory engine (MemoryService 持久化引擎；纯逻辑在 `agent`) | HTTP；禁止依赖 apps/*（db/llm 为例外） |
 | `policy` | `tinyiothub_policy` | Policy gate evaluation (pure logic) | HTTP/SQL |
 | `skills` | `tinyiothub_skills` | Skill/tool registries, trust engine | HTTP/SQL |
+| `agent` | `tinyiothub_agent` | Agent 共性能力运行时（loop/pool/tools-framework/session/prompt + memory 纯逻辑；事件溯源契约） | axum, sqlx, tinyiothub_storage, apps/* |
 | `plugin-sdk` | `tinyiothub_plugin_sdk` | Driver-author SDK; ABI contract single source of truth | Depending on runtime/web |
 | `macros` | `tinyiothub_macros` | Proc macros | — |
 | `apps/cloud` (bin) | — | **The relay**: all handlers, all services, all orchestration. `domains/` per business domain | Direct SQL in handlers (use `db` repos) |
@@ -77,6 +78,7 @@ apps/* (cloud/edge/marketplace/cli) → crates/* (capability libs) → core
 | `db` | Beta | SQLite implementation — schema changes require migration |
 | `runtime` | Beta | EventBus, DataServer — breaking changes permitted in MINOR |
 | `memory`, `scheduler`, `llm`, `policy`, `skills` | Beta | Capability engines |
+| `agent` | Beta | Agent 共性能力运行时（loop/pool/tools/session/prompt） |
 | `macros` | Experimental | Internal proc macros |
 | `apps/*` | Experimental | Deployable binaries (cloud/edge/marketplace/cli) |
 
@@ -113,9 +115,10 @@ crates/                      # Capability libs — isolated, never orchestrate
   web/                       # HTTP infrastructure: ApiResponseBuilder, middleware (lib tinyiothub_web)
   scheduler/                 # Cron engine + scheduler (lib tinyiothub_scheduler)
   llm/                       # LLM provider contract, prompt, session (lib tinyiothub_llm)
-  memory/                    # Agent memory engine — pure logic (lib tinyiothub_memory)
+  memory/                    # Agent memory engine — MemoryService 持久化引擎 (lib tinyiothub_memory)
   policy/                    # Policy gate evaluation — pure logic (lib tinyiothub_policy)
   skills/                    # Skill/tool registries, trust engine (lib tinyiothub_skills)
+  agent/                     # Agent 共性能力运行时 (lib tinyiothub_agent；零 axum/零 sqlx/零存储依赖)
   plugin-sdk/                # Driver-author SDK (package plugin-sdk, lib tinyiothub_plugin_sdk)
   macros/                    # Proc macros (lib tinyiothub_macros)
 drivers/                     # Dynamic driver stubs (NOT workspace members; cdylib)
@@ -179,7 +182,7 @@ domains/thing/
 
 - **Low risk**: docs only, `.kiro/specs/**`, pure chore/ci changes without behavior impact, test-only changes
 - **Medium risk**: most `apps/cloud/src/domains/*/service.rs` and `apps/cloud/src/domains/*/handler.rs` behavior changes, `web/src/ui/**` component changes, `web/src/stores/**` state changes
-- **High risk**: `apps/cloud/src/state.rs`/`router.rs`（组合根）, `crates/db/**`, `crates/db/migrations/**`, `crates/core/src/**` (contract changes ripple everywhere), `crates/web/src/**`, `.github/workflows/**`, JWT/session boundary code (`apps/cloud/src/domains/auth/**`), `apps/cloud/src/domains/agent/**` (AI agent runtime has security implications)
+- **High risk**: `apps/cloud/src/state.rs`/`router.rs`（组合根）, `crates/db/**`, `crates/db/migrations/**`, `crates/core/src/**` (contract changes ripple everywhere), `crates/web/src/**`, `.github/workflows/**`, JWT/session boundary code (`apps/cloud/src/domains/auth/**`), `crates/agent/**`（AI agent 运行时，安全敏感）与 `apps/cloud/src/domains/agent/**`（agent 域 handler/数据实现，运行时已迁入 crates/agent）
 
 When uncertain, classify as higher risk.
 

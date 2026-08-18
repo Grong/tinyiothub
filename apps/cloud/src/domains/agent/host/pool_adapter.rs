@@ -38,15 +38,9 @@ impl AgentPoolLike for HostAgentPoolAdapter {
         let config = crate::domains::agent::host::config::service::get_config(&self.db_pool, workspace_id)
             .await
             .map_err(|e| anyhow::anyhow!("Agent config error: {}", e))?;
-        crate::domains::agent::host::chat::service::ensure_agent(
-            &self.pool,
-            &self.db_pool,
-            workspace_id,
-            workspace_id,
-            &config,
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("AgentPool error: {}", e))?;
+        crate::domains::agent::host::chat::service::ensure_agent(&self.pool, workspace_id, workspace_id, &config)
+            .await
+            .map_err(|e| anyhow::anyhow!("AgentPool error: {}", e))?;
         // Return workspace_id as the handle identifier
         Ok(workspace_id.to_string())
     }
@@ -57,7 +51,6 @@ impl AgentPoolLike for HostAgentPoolAdapter {
         let agent_id = tinyiothub_agent::pool::heartbeat_agent_id(workspace_id);
         crate::domains::agent::host::chat::service::ensure_agent(
             &self.pool,
-            &self.db_pool,
             &agent_id,
             workspace_id,
             &tinyiothub_agent::config::AgentRuntimeConfig::default(),

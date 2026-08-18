@@ -19,11 +19,10 @@ use crate::domains::agent::host::types::{ChatError, ChatEvent};
 // ============================================================================
 
 /// Ensure a pooled agent exists: cache hit returns immediately; on a miss the
-/// tools are resolved from the db here (cloud side) and injected into the
-/// pool's pure `create`.
+/// tools are resolved via the pool's ToolRegistry (composition-layer
+/// providers, Task 14) and injected into the pool's pure `create`.
 pub async fn ensure_agent(
     pool: &AgentPool,
-    db_pool: &sqlx::SqlitePool,
     agent_id: &str,
     workspace_id: &str,
     config: &AgentRuntimeConfig,
@@ -31,7 +30,6 @@ pub async fn ensure_agent(
     if let Some(agent) = pool.get_cached(agent_id) {
         return Ok(agent);
     }
-    let _ = db_pool; // 工具经组合层注册的 provider 解析（Task 14）；db 句柄不再透传
     let trust_config = pool.trust_config(workspace_id);
     let runtime = pool.runtime_context().await;
     let tools = pool
@@ -62,7 +60,7 @@ pub async fn send_with_pool(
     if !authorized_workspace.is_empty() {
         parsed.verify_workspace(authorized_workspace)?;
     }
-    let agent = ensure_agent(pool, db_pool, agent_id, &parsed.workspace_id, config).await?;
+    let agent = ensure_agent(pool, agent_id, &parsed.workspace_id, config).await?;
     let event_publisher = pool.event_publisher.read().await.clone();
     send_message(
         &agent,

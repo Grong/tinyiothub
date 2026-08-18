@@ -1,4 +1,4 @@
-// 留 cloud（计划裁定：组合层工具实现；经 ToolRegistry provider 注入，Task 14）
+// 组合层工具实现，留 cloud（D2）—— 经 ToolRegistry provider 注入（Task 14）
 // GetSkillTool — on-demand skill loading for AI agents
 //
 // Instead of injecting all ~10KB of skill content into every system prompt,

@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 // Workspace Scaffold Service - Initializes agent workspace with template files
 //
 // Architecture:

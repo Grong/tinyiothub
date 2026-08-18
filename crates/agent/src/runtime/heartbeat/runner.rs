@@ -80,6 +80,8 @@ pub struct HeartbeatRunner {
     tasks: Arc<DashMap<String, Vec<HeartbeatTask>>>,
     /// 每工作区心跳间隔（分钟）；缺省走 config.interval_minutes。
     intervals: DashMap<String, u32>,
+    /// 每工作区最近一次 tick 完成时间（D13 实时读出口；loop 每 tick 后写入）。
+    last_ticks: Arc<DashMap<String, chrono::DateTime<chrono::Utc>>>,
     event_publisher: Arc<AiEventPublisher>,
     agent_pool: RwLock<Option<Arc<dyn AgentPoolLike>>>,
     config: HeartbeatConfig,
@@ -99,6 +101,7 @@ impl HeartbeatRunner {
             trust_configs: DashMap::new(),
             tasks: Arc::new(DashMap::new()),
             intervals: DashMap::new(),
+            last_ticks: Arc::new(DashMap::new()),
             event_publisher,
             agent_pool: RwLock::new(None),
             config,
@@ -176,6 +179,7 @@ impl HeartbeatRunner {
 
         let ws_id = workspace_id.to_string();
         let tasks_source = self.tasks.clone();
+        let last_ticks = self.last_ticks.clone();
         let event_publisher = self.event_publisher.clone();
         let mut config = self.config.clone();
         config.interval_minutes = self.effective_interval_minutes(workspace_id);
@@ -188,6 +192,7 @@ impl HeartbeatRunner {
                 trust_config,
                 pool,
                 tasks_source,
+                last_ticks,
                 event_publisher,
                 config,
                 signal_rx,
@@ -263,6 +268,7 @@ impl HeartbeatRunner {
         self.trust_configs.remove(workspace_id);
         self.tasks.remove(workspace_id);
         self.intervals.remove(workspace_id);
+        self.last_ticks.remove(workspace_id);
         self.pending_starts.write().await.retain(|p| p != workspace_id);
         info!(workspace_id, "Workspace heartbeat state removed");
     }
@@ -358,6 +364,11 @@ impl HeartbeatRunner {
         self.loops.iter().map(|r| r.key().clone()).collect()
     }
 
+    /// 工作区最近一次 tick 完成时间（D13 实时读：内存态，无 tick 过为 None）。
+    pub fn last_tick(&self, workspace_id: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+        self.last_ticks.get(workspace_id).map(|r| *r.value())
+    }
+
     /// 导出内存心跳状态（dump_state 对账出口）：tasks/trust/intervals 三表
     /// key 的并集，缺省字段回退 default。
     pub fn snapshot_states(&self) -> Vec<WorkspaceHeartbeatState> {
@@ -429,6 +440,10 @@ mod tests {
         let runner = make_runner();
         assert_eq!(runner.active_loop_count(), 0);
         assert!(runner.active_workspaces().is_empty());
+        assert!(
+            runner.last_tick("ws_1").is_none(),
+            "no tick recorded before any loop run"
+        );
     }
 
     #[tokio::test]

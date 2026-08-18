@@ -166,10 +166,6 @@ pub struct AppState {
     /// 由组合层（此处）注入 agent 实现；thing 域只依赖自有 trait。
     pub thing_action_hooks: Arc<dyn crate::domains::thing::hooks::ThingActionHooks>,
 
-    /// Agent hooks（G5b）—— tenant 域 workspace 服务经此使用 agent 侧的
-    /// 默认心跳任务集，斩断 tenant→agent 依赖边。由组合层（此处）注入
-    /// agent 实现；tenant 域只依赖自有 trait。
-    pub agent_hooks: Arc<dyn crate::domains::tenant::hooks::AgentHooks>,
     /// 工作空间访问校验（agent 域 seam）
     pub workspace_access: Arc<TenantWorkspaceAccess>,
     /// System prompts config（chat proxy 构造 full prompt）
@@ -498,10 +494,6 @@ impl AppState {
             ),
         );
 
-        // Agent hooks（G5b）—— agent 侧实现 tenant 域 trait，注入给 workspace 服务
-        let agent_hooks: Arc<dyn crate::domains::tenant::hooks::AgentHooks> =
-            Arc::new(crate::domains::agent::host::agent_hooks::AgentHooksImpl::new());
-
         let agent_lifecycle: Arc<AgentPoolLifecycle> = Arc::new(AgentPoolLifecycle {
             pool: agent_pool.clone(),
             db_pool: database.pool().clone(),
@@ -588,7 +580,6 @@ impl AppState {
 
             memory_store,
             thing_action_hooks,
-            agent_hooks,
         }
     }
 

@@ -29,6 +29,7 @@ pub async fn heartbeat_loop(
     trust_config: Arc<RwLock<TrustConfig>>,
     agent_pool: Option<Arc<dyn crate::runtime::agent::pool::AgentPoolLike>>,
     tasks_source: Arc<dashmap::DashMap<String, Vec<HeartbeatTask>>>,
+    last_ticks: Arc<dashmap::DashMap<String, chrono::DateTime<chrono::Utc>>>,
     event_publisher: Arc<AiEventPublisher>,
     config: HeartbeatConfig,
     mut signal_rx: mpsc::Receiver<LoopSignal>,
@@ -58,7 +59,7 @@ pub async fn heartbeat_loop(
 
             if !active_tasks.is_empty() {
                 let task_refs: Vec<&HeartbeatTask> = active_tasks.iter().collect();
-                match run_heartbeat_tick(
+                let outcome = run_heartbeat_tick(
                     &workspace_id,
                     &task_refs,
                     &trust,
@@ -66,8 +67,10 @@ pub async fn heartbeat_loop(
                     &event_publisher,
                     &metrics,
                 )
-                .await
-                {
+                .await;
+                // D13 实时读：tick 完成（成败均计）即记录内存态 last_tick。
+                last_ticks.insert(workspace_id.clone(), chrono::Utc::now());
+                match outcome {
                     Ok(_) => consecutive_failures = 0,
                     Err(e) => {
                         consecutive_failures += 1;
@@ -444,6 +447,7 @@ mod tests {
             trust,
             Some(pool),
             tasks_source,
+            Arc::new(dashmap::DashMap::new()),
             publisher,
             config,
             signal_rx,
@@ -507,6 +511,7 @@ mod tests {
             trust,
             Some(pool),
             tasks_source,
+            Arc::new(dashmap::DashMap::new()),
             publisher,
             config,
             signal_rx,
@@ -538,6 +543,61 @@ mod tests {
             0,
             "paused loop must auto-resume after the cooldown interval"
         );
+
+        let _ = cancel_tx.send(());
+        handle.await.unwrap();
+    }
+
+    /// D13 实时读：loop 每完成一个 tick（成败均计）写入共享 last_ticks 表，
+    /// runner 经 `last_tick()` 内存出口供读 API 返回。
+    #[tokio::test]
+    async fn loop_records_last_tick_in_shared_map() {
+        let metrics = Arc::new(crate::runtime::heartbeat::metrics::Metrics::new());
+        let tasks = Arc::new(RwLock::new(vec![sample_task()]));
+        let trust = Arc::new(RwLock::new(TrustConfig::default()));
+        let pool: Arc<dyn AgentPoolLike> = Arc::new(MockPool {
+            output: AgentRunOutput {
+                text: r#"{"status":"complete","summary":"done","proposals":[]}"#.into(),
+                tool_calls: vec![],
+            },
+        });
+        let tasks_source = empty_tasks_source();
+        let last_ticks = Arc::new(dashmap::DashMap::new());
+        let publisher = Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
+        let config = HeartbeatConfig {
+            enabled: true,
+            interval_minutes: 600,
+        };
+        let (signal_tx, signal_rx) = mpsc::channel::<LoopSignal>(16);
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+
+        let ticks = last_ticks.clone();
+        let handle = tokio::spawn(heartbeat_loop(
+            "ws".into(),
+            tasks,
+            trust,
+            Some(pool),
+            tasks_source,
+            last_ticks,
+            publisher,
+            config,
+            signal_rx,
+            cancel_rx,
+            metrics,
+        ));
+        drop(signal_tx);
+
+        // 首个 tick 立即执行；等待 last_tick 出现。
+        let mut observed = None;
+        for _ in 0..100 {
+            if let Some(t) = ticks.get("ws").map(|r| *r.value()) {
+                observed = Some(t);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let last = observed.expect("loop must record last_tick after the first tick");
+        assert!(last <= chrono::Utc::now());
 
         let _ = cancel_tx.send(());
         handle.await.unwrap();

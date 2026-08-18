@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 //! 可注入 [`DirectiveSink`] 桩（T14 测试用）—— 在 ThingAgentManager
 //! （T15，进程内 per-workspace 注册表）就位前，让指令端点 / chat 工具
 //! 可测：记录投递的信号，可配置注入错误（如队列满 Rejected）。

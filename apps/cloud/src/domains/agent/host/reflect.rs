@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 // Memory/reflection compatibility layer.
 //
 // reflect_conversation_turn lives in tinyiothub_memory::service::MemoryService.
