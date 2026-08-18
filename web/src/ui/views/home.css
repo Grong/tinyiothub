@@ -658,6 +658,29 @@ view-home .stats-item__label {
 }
 
 /* ================================
+   Three Steps
+   ================================ */
+
+view-home .steps-section {
+  padding-top: 0;
+}
+
+view-home .step-num {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, var(--home-accent-cyan) 0%, var(--home-accent-violet) 100%);
+  box-shadow: 0 0 20px rgba(0, 212, 255, 0.15);
+}
+
+/* ================================
    Features
    ================================ */
 

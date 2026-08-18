@@ -174,14 +174,14 @@ export class HomeView extends LitElement {
             <div class="hero-content">
               <div class="hero-badge">
                 <span class="hero-badge-dot"></span>
-                AI 原生 · 边缘智能
+                以物为本 · 本体智能 · AI 原生
               </div>
               <h1>
-                AIoT 智能运维平台<br />
-                <span class="gradient">一句话的事</span>
+                AI 时代的万物互联<br />
+                <span class="gradient">万物智能，只需三步</span>
               </h1>
               <p class="hero-desc">
-                AI 原生 AIoT 平台。融合知识图谱推理、3D 数字孪生与大模型智能运维，支持 Modbus/ONVIF/SNMP/MQTT 多协议接入，内置 L0-L3 自愈引擎。用自然语言完成物配置、故障排查与数据洞察，内嵌 MCP Server——Claude、Cursor 即连即用。
+                TinyIoTHub 是 AI 时代的万物互联底座。一切以「物」为本体——设备、空间、产线统一建模，属性、事件、操作一体定义。实现万物智能只需三步：构建物、通过驱动更新实时数据，剩下的交给 AI。
               </p>
               <div class="hero-cta">
                 <button class="btn btn--primary btn--lg" @click=${() => this.navigate('/login')}>
@@ -205,6 +205,36 @@ export class HomeView extends LitElement {
           </div>
           <div class="hero-visual">
             <point-earth></point-earth>
+          </div>
+        </section>
+
+        <!-- Three Steps -->
+        <section class="section steps-section reveal">
+          <div class="section-inner">
+            <div class="section-header">
+              <div class="section-label">万物智能 · 只需三步</div>
+              <h2 class="section-title">构建「物」，剩下的交给 AI</h2>
+              <p class="section-desc">
+                以「物」为本体的本体智能：你定义物、接入数据，AI 负责感知、决策与执行
+              </p>
+            </div>
+            <div class="feature-grid">
+              <div class="feature-card reveal reveal-delay-1">
+                <div class="step-num">1</div>
+                <h3>构建物</h3>
+                <p>设备、空间、产线统一建模为层级化「物」——属性、事件、操作与知识文档一体定义，物模板一键创建，支持 DTDL / WoT 导入</p>
+              </div>
+              <div class="feature-card reveal reveal-delay-2">
+                <div class="step-num">2</div>
+                <h3>驱动更新实时数据</h3>
+                <p>Modbus、ONVIF、SNMP、MQTT 多协议驱动持续上报属性与事件，「物」的实时状态永远在线</p>
+              </div>
+              <div class="feature-card reveal reveal-delay-3">
+                <div class="step-num">3</div>
+                <h3>剩下的交给 AI</h3>
+                <p>Thing Agent Loop 以物本体为认知基座，自主感知、诊断、决策、执行——三态策略门管控权限，全程可审计</p>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -252,7 +282,7 @@ export class HomeView extends LitElement {
               <div class="section-label">核心能力</div>
               <h2 class="section-title">六大核心能力</h2>
               <p class="section-desc">
-                从物接入到 AI 智能运维，覆盖 AIoT 全生命周期
+                以「物」本体为中心，覆盖万物智能全生命周期
               </p>
             </div>
             <div class="feature-grid">
@@ -433,7 +463,7 @@ export class HomeView extends LitElement {
         <section class="cta-section reveal">
           <div class="cta-inner">
             <h2 class="cta-title">准备好开始了吗？</h2>
-            <p class="cta-desc">几分钟接入第一台物，体验自然语言运维。开源免费，支持私有化部署。</p>
+            <p class="cta-desc">几分钟构建第一个「物」，剩下的交给 AI。开源免费，支持私有化部署。</p>
             <div class="cta-buttons">
               <button class="btn btn--primary btn--lg" @click=${() => this.navigate('/login')}>
                 免费开始使用
