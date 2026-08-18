@@ -4,6 +4,7 @@
 //! They use `tower::ServiceExt::oneshot()` to test HTTP handlers without starting a real server.
 
 mod agent_handler_tests;
+mod agent_loop_e2e_tests;
 mod agent_persist_tests;
 mod agent_startup_tests;
 mod agent_tasks_api_tests;

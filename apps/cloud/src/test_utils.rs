@@ -102,9 +102,7 @@ pub async fn setup_test_app() -> Router {
 
 /// Create test AppState and return it along with the pool (for seeding test data).
 pub async fn setup_test_app_with_pool() -> (AppState, sqlx::SqlitePool) {
-    let settings = ensure_test_config();
-
-    let app_state = create_test_app_state(settings).await;
+    let app_state = create_test_app_state().await;
     let pool = app_state.db_pool().clone();
     (app_state, pool)
 }
@@ -143,11 +141,7 @@ pub async fn seed_test_workspace(pool: &sqlx::SqlitePool, tenant_id: &str, works
 ///
 /// Runs cloud migrations, skipping test-data migrations that reference
 /// non-existent devices.
-async fn create_test_app_state(settings: &ApplicationSettings) -> AppState {
-    use std::sync::Arc;
-
-    use tinyiothub_storage::cache::DeviceCache;
-
+async fn create_test_app_state() -> AppState {
     // In-memory SQLite — no temp file, no cleanup issues
     let pool = sqlx::SqlitePool::connect("sqlite::memory:")
         .await
@@ -158,6 +152,22 @@ async fn create_test_app_state(settings: &ApplicationSettings) -> AppState {
     tinyiothub_storage::migrations::run_migrations(&pool)
         .await
         .expect("Failed to run migrations");
+
+    test_app_state_on_pool(pool).await
+}
+
+/// Create an AppState on a caller-provided (already migrated) pool.
+///
+/// Full-chain E2E tests share one multi-connection database between a
+/// background agent loop and the HTTP handlers; the in-memory pool from
+/// [`setup_test_app_with_pool`] cannot be shared into that wiring, so this
+/// variant takes the pool in. Also initializes the test JWT config OnceLock.
+pub async fn test_app_state_on_pool(pool: sqlx::SqlitePool) -> AppState {
+    use std::sync::Arc;
+
+    use tinyiothub_storage::cache::DeviceCache;
+
+    let settings = ensure_test_config();
 
     // Seed a test user so FK constraints (created_by REFERENCES users(id)) don't fail
     sqlx::query(
