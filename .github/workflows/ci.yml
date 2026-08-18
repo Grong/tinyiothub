@@ -139,9 +139,10 @@ jobs:
       - name: Agent Loop Purity Guard (G9)
         run: |
           echo "=== Checking crates/agent carries no web/storage/domains dependency ==="
-          # crates/agent 是纯运行时平面：匹配真实引用形态（use <crate> / <crate>:: 路径），
-          # 文档注释中的守卫词不触发；crate::domains 防止回流 apps/cloud 领域层。
-          if grep -rEn --include='*.rs' 'use (axum|sqlx|tinyiothub_storage)|\b(axum|sqlx|tinyiothub_storage)::|crate::domains' crates/agent/src; then
+          # crates/agent 是纯运行时平面：匹配真实引用形态（use <crate> / <crate>:: 路径，
+          # :: 周围空白容忍，与 G5 守卫风格一致），文档注释中的守卫词不触发；
+          # crate::domains 防止回流 apps/cloud 领域层。
+          if grep -rEn --include='*.rs' 'use\s+(axum|sqlx|tinyiothub_storage)|\b(axum|sqlx|tinyiothub_storage)\s*::\s*|crate\s*::\s*domains' crates/agent/src; then
             echo "❌ DEPENDENCY VIOLATION: crates/agent is the pure runtime plane — no axum/sqlx/storage/domains references"
             echo "   ✅ Web/HTTP concerns belong in apps/cloud host; persistence behind port traits"
             exit 1
@@ -150,15 +151,29 @@ jobs:
 
       - name: Agent Crate Dependency Tree Guard (G9)
         run: |
-          echo "=== Checking crates/agent direct deps carry no sqlx/storage ==="
+          echo "=== Checking crates/agent direct deps carry no sqlx/storage/db ==="
           # 仅检查直接依赖（--depth 1）：workspace 基础 crate（core/db）当前仍带 sqlx，
-          # 传递依赖不在本守卫范围；crates/agent 自身不得新增 sqlx/tinyiothub-storage 依赖。
-          if cargo tree -p agent --depth 1 | grep -E "sqlx|tinyiothub-storage"; then
-            echo "❌ DEPENDENCY VIOLATION: crates/agent must not directly depend on sqlx/tinyiothub-storage"
+          # 传递依赖不在本守卫范围；crates/agent 自身不得新增 sqlx/tinyiothub-storage/db 依赖。
+          # --prefix none + {p} 输出纯包名行，锚定 ^ 匹配避免误伤含 db/sqlx 子串的包。
+          if cargo tree -p agent --depth 1 --prefix none --format "{p}" | grep -E "^sqlx|^tinyiothub-storage|^db "; then
+            echo "❌ DEPENDENCY VIOLATION: crates/agent must not directly depend on sqlx/tinyiothub-storage/db"
             echo "   ✅ Persistence belongs behind port traits implemented in apps/cloud"
             exit 1
           fi
           echo "✅ Agent dependency tree guard passed"
+
+      - name: Agent Loop Purity Guard (G9, legacy loop_ path)
+        run: |
+          echo "=== Checking legacy agent/loop_ carries no axum (interim guard) ==="
+          # 过渡期守卫：loop_ 代码仍驻留 apps/cloud，在真正搬入 crates/agent
+          # （Task 13/14）之前，旧路径的 axum 禁令必须继续生效。
+          # TODO(Task 13/14): loop_ 内容迁入 crates/agent 后删除本 step。
+          if grep -rEn --include='*.rs' 'axum' apps/cloud/src/domains/agent/loop_/; then
+            echo "❌ DEPENDENCY VIOLATION: domains/agent/loop_ is the pure runtime plane and must not reference axum"
+            echo "   ✅ Web/HTTP concerns belong in domains/agent/host (loop_ ← host one-way invariant)"
+            exit 1
+          fi
+          echo "✅ Legacy loop purity guard passed"
 
   # -----------------------------------------------------------------------------
   # 前端检查
