@@ -22,11 +22,9 @@ pub async fn create_app_router(app_state: AppState) -> Router {
     .await;
     app_state
         .agent_pool
-        .set_runtime_context(crate::domains::agent::host::tools::service::ToolRuntimeContext {
-            device_cache: Some(app_state.device_cache.clone()),
+        .set_runtime_context(tinyiothub_agent::tools::ToolRuntimeContext {
             data_server: app_state.data_server.clone(),
             directive_sink: app_state.directive_sink.clone(),
-            pending_actions: Some(app_state.pending_actions.clone()),
         })
         .await;
     tracing::info!("MCP tools initialized");

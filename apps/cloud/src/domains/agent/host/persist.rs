@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 //! 持久化订阅者（Task 8）：AgentEvent 广播 → DB 投影。
 //!
 //! 事件 → 落库映射（context 核实版）：

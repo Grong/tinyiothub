@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 // dispatch_thing_task — chat 工具（T14）：用户指令入口之一
 //
 // chat Agent 判断用户意图为"去执行/去处理"时调用本工具，投递

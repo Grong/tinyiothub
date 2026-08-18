@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 //! Agent-side implementation of the tenant domain's `AgentHooks` seam (G5b).
 //!
 //! Adapts the agent domain's heartbeat-task knowledge (the default task set)

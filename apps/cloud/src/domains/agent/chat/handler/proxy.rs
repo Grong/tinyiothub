@@ -11,10 +11,8 @@ use tinyiothub_web::security::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::*;
-use crate::domains::agent::host::{
-    handler::types::{AgentConfigUpdateRequest, ToolToggleRequest},
-    session::SessionKey,
-};
+use crate::domains::agent::host::handler::types::{AgentConfigUpdateRequest, ToolToggleRequest};
+use tinyiothub_agent::session::SessionKey;
 use tinyiothub_web::api_response::ApiResponse;
 
 /// POST /api/v1/chat/stream — SSE streaming chat
@@ -42,11 +40,15 @@ pub async fn chat_stream(
         .map(|s| s.to_string())
         .unwrap_or_default();
     let system_prompts = &state.system_prompts;
-    let mut full_prompt = crate::domains::agent::host::shared::build_full_system_prompt(
+    let memory_source: std::sync::Arc<dyn tinyiothub_agent::prompt::PromptMemorySource> =
+        std::sync::Arc::new(
+            crate::domains::agent::host::memory::PromptMemoryStoreAdapter(state.memory_store.clone()),
+        );
+    let mut full_prompt = tinyiothub_agent::prompt::build_full_system_prompt(
         system_prompts,
         Some(&workspace_id),
         None,
-        Some(&state.memory_store),
+        Some(&memory_source),
     )
     .await;
 
@@ -277,13 +279,14 @@ pub async fn set_agent_config(
 
 /// GET /api/v1/tools/catalog
 pub async fn tools_catalog(
-    State(_state): State<AgentState>,
+    State(state): State<AgentState>,
     Query(params): Query<HashMap<String, String>>,
     _claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let _ = params;
-    // Catalog is a static registry snapshot — no db, no pool.
-    let data = crate::domains::agent::host::tools::service::build_catalog().await;
+    // Catalog snapshot from the pool's tool registry (external MCP tools
+    // resolved on demand; static fallback when none registered).
+    let data = state.agent_pool.tool_registry().build_catalog().await;
     ApiResponseBuilder::success(data)
 }
 
@@ -297,6 +300,7 @@ pub async fn tools_effective(
     let runtime = state.agent_pool.runtime_context().await;
     match crate::domains::agent::host::tools::service::effective_tool_names(
         &state.db_pool(),
+        &state.agent_pool.tool_registry(),
         &runtime,
         agent_id,
         &claims.workspace_id,

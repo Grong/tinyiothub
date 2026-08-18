@@ -276,7 +276,7 @@ async fn ensure_user_workspace(state: &AppState, user_id: &str) -> Result<()> {
     // Create agent for workspace
     let agent_result = crate::domains::agent::host::config::service::create_agent(
         pool,
-        &crate::domains::agent::host::shared::AgentConfig {
+        &tinyiothub_agent::config::AgentConfig {
             workspace_id: ws_id.clone(),
             name: format!("{}的工作空间", ws_name),
             ..Default::default()
@@ -388,7 +388,7 @@ async fn ensure_default_workspace_and_agent(_state: &AppState, pool: &sqlx::Pool
     if needs_agent {
         let agent_result = crate::domains::agent::host::config::service::create_agent(
             pool,
-            &crate::domains::agent::host::shared::AgentConfig {
+            &tinyiothub_agent::config::AgentConfig {
                 workspace_id: "ws-default-001".to_string(),
                 name: "默认工作空间".to_string(),
                 ..Default::default()

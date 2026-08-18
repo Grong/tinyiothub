@@ -15,7 +15,7 @@ mod tests {
 
     #[test]
     fn prompt_template_loaded() {
-        let instruction = include_str!("../../../../templates/agent/REFLECTION_PROMPT.md");
+        let instruction = tinyiothub_agent::prompt::templates::REFLECTION_PROMPT_MD;
         assert!(
             instruction.contains("FACT|"),
             "prompt must contain FACT| format instruction"
@@ -26,7 +26,7 @@ mod tests {
 
     #[test]
     fn instruction_after_data() {
-        let instruction = include_str!("../../../../templates/agent/REFLECTION_PROMPT.md");
+        let instruction = tinyiothub_agent::prompt::templates::REFLECTION_PROMPT_MD;
         let prompt = build_reflection_prompt(instruction, "", "user: 你好\n");
         let data_pos = prompt.find("## Conversation Turn").unwrap();
         let instr_pos = prompt.find("FACT|").unwrap();

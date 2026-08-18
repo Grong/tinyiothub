@@ -1,7 +1,7 @@
-// SessionKey — unified parse + verify_workspace + to_string
-#![allow(dead_code)]
+//! SessionKey — 统一解析 + workspace 校验 + 序列化。
+//! Task 14 自 apps/cloud `host/session.rs` 迁入（纯解析逻辑，零 I/O）。
 
-use crate::domains::agent::host::shared::config::AgentError;
+use crate::error::AgentError;
 
 #[derive(Debug)]
 pub struct SessionKey {

@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -8,7 +9,7 @@ use tinyiothub_core::memory::AgentMemory;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::ListMemoriesQuery;
-use crate::domains::agent::host::shared::config::default_model;
+use tinyiothub_agent::config::default_model;
 use crate::domains::agent::AgentState;
 use tinyiothub_web::middleware::workspace::WorkspaceScope;
 

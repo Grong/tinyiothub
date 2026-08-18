@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 // 3. get_thing_profile — full snapshot (properties + events + docs)
 
 use std::sync::Arc;

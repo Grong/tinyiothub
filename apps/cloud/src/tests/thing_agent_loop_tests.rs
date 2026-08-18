@@ -22,8 +22,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+use tinyiothub_agent::pool::ProviderFactory;
 use crate::domains::agent::host::{
-    autonomous_factory::{AutonomousAgentFactory, ProviderFactory},
+    autonomous_factory::AutonomousAgentFactory,
     thing_agent_host::CloudThingAgentHost,
     tools::DispatchThingTaskTool,
 };
@@ -382,7 +383,7 @@ async fn build_fixture(
         observer,
         provider_factory,
         "stub-model".to_string(),
-        crate::domains::agent::host::tools::service::ToolRuntimeContext {
+        crate::domains::agent::host::tools::ThingToolContext {
             pending_actions: Some(std::sync::Arc::new(dashmap::DashMap::new())),
             ..Default::default()
         },

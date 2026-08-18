@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 // Heartbeat handlers — per-workspace AI autonomous inspection endpoints
 //
 // Routes (registered under /workspaces/{id}/heartbeat):
@@ -20,7 +21,7 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::security::Claims;
 
 use crate::domains::agent::AgentState;
-use crate::domains::agent::host::shared::paths;
+use tinyiothub_agent::prompt::paths;
 
 /// Heartbeat routes (`/{id}/heartbeat/*`), nested at `/workspaces` by the
 /// composition layer next to `tinyiothub_tenant::workspace_router()` —
@@ -551,7 +552,7 @@ async fn approve_and_execute(
     pool: &sqlx::SqlitePool,
     workspace_id: &str,
     proposal_id: &str,
-    registry: &std::sync::Arc<dyn crate::domains::agent::host::ports::ExternalToolRegistry>,
+    registry: &std::sync::Arc<dyn tinyiothub_agent::tools::ExternalToolRegistry>,
 ) -> Result<serde_json::Value, String> {
     let row: Option<(String, String)> = sqlx::query_as(
         "SELECT id, content FROM agent_actions \
@@ -598,7 +599,7 @@ async fn approve_and_execute(
     // Execute under the same auth context as the heartbeat agent path — the
     // composition layer's external-tool adapter scopes handler queries by
     // this identity and fails closed without it.
-    let ctx = crate::domains::agent::host::ports::ExternalToolContext {
+    let ctx = tinyiothub_agent::tools::ExternalToolContext {
         workspace_id: workspace_id.to_string(),
         actor: format!("__heartbeat__:{workspace_id}"),
     };
@@ -764,7 +765,7 @@ mod tests {
     use sqlx::SqlitePool;
 
     use super::*;
-    use crate::domains::agent::host::ports::{
+    use tinyiothub_agent::tools::{
         ExternalToolContext, ExternalToolHandler, ExternalToolMeta, ExternalToolRegistry,
     };
 

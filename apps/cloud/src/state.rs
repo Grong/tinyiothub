@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::domains::agent::host::agent::AgentPool;
+use tinyiothub_agent::pool::AgentPool;
 use crate::domains::auth::redis::RedisClient;
 use crate::domains::driver::legacy::{
     DeviceMonitoringService, DevicePerformanceService, DeviceQueryService, DeviceService,
@@ -351,7 +351,7 @@ impl AppState {
         // Register the agent crate's config ports (minimax provider settings
         // + default model) — the agent crate no longer reads cloud's global
         // config directly (P4-Task22).
-        crate::domains::agent::host::ports::set_minimax_settings(crate::domains::agent::host::ports::MinimaxSettings {
+        tinyiothub_agent::pool::set_minimax_settings(tinyiothub_agent::pool::MinimaxSettings {
             base_url: minimax_config.base_url.clone(),
             auth_token: minimax_config.auth_token.clone(),
             model: minimax_config.model.clone(),
@@ -371,7 +371,7 @@ impl AppState {
         let agent_pool: Arc<AgentPool> = Arc::new(
             AgentPool::new(
                 &agent_settings,
-                crate::domains::agent::host::autonomous_factory::minimax_provider_factory(),
+                tinyiothub_agent::pool::minimax_provider_factory(),
             )
             .expect("failed to build AgentPool"),
         );
@@ -879,7 +879,7 @@ impl crate::domains::user::RoleChecker for EventSecurityRoleChecker {
 /// tears down the per-workspace Agent via cloud's `AgentPool` (agent plane,
 /// not yet extracted).
 pub struct AgentPoolLifecycle {
-    pub pool: Arc<crate::domains::agent::host::agent::AgentPool>,
+    pub pool: Arc<tinyiothub_agent::pool::AgentPool>,
     /// AgentPool 不持有存储句柄（Task 7）—— 生命周期 CRUD 的 db 由 cloud 注入。
     pub db_pool: sqlx::SqlitePool,
 }
@@ -888,7 +888,7 @@ impl AgentPoolLifecycle {
     pub async fn create_agent(&self, workspace_id: &str, name: &str) -> Result<String, String> {
         crate::domains::agent::host::config::service::create_agent(
             &self.db_pool,
-            &crate::domains::agent::host::shared::AgentConfig {
+            &tinyiothub_agent::config::AgentConfig {
                 workspace_id: workspace_id.to_string(),
                 name: name.to_string(),
                 ..Default::default()

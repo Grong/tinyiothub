@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 //! Per-session chat message persistence (chat_messages table).
 //!
 //! History is stored per session_key so the history API is session-scoped
@@ -97,10 +98,10 @@ pub async fn session_history_json(
     session_key: &str,
     limit: u32,
     authorized_workspace: &str,
-) -> Result<serde_json::Value, crate::domains::agent::host::shared::config::AgentError> {
-    use crate::domains::agent::host::shared::config::AgentError;
+) -> Result<serde_json::Value, tinyiothub_agent::AgentError> {
+    use tinyiothub_agent::AgentError;
 
-    let parsed = crate::domains::agent::host::session::SessionKey::parse(session_key)?;
+    let parsed = tinyiothub_agent::session::SessionKey::parse(session_key)?;
     if !authorized_workspace.is_empty() {
         parsed.verify_workspace(authorized_workspace)?;
     }
@@ -135,7 +136,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(
             err,
-            crate::domains::agent::host::shared::config::AgentError::NotFound(_)
+            tinyiothub_agent::AgentError::NotFound(_)
         ));
     }
 

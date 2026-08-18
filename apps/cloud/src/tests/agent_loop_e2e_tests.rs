@@ -33,11 +33,12 @@ use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
 use tinyiothub_storage::Database;
 
 use crate::bootstrap::{build_agent_snapshot, reconcile_zombie_runs};
+use tinyiothub_agent::pool::ProviderFactory;
 use crate::domains::agent::host::{
-    autonomous_factory::{AutonomousAgentFactory, ProviderFactory},
+    autonomous_factory::AutonomousAgentFactory,
     persist::run_persistence_subscriber,
     thing_agent_host::CloudThingAgentHost,
-    tools::service::ToolRuntimeContext,
+    tools::ThingToolContext,
 };
 use crate::domains::event::{bus::ThingEventBus, router::ThrottleState};
 use crate::test_utils::{auth_header, create_test_token, response_parts, seed_test_workspace, test_app_state_on_pool};
@@ -251,7 +252,7 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
         observer,
         provider_factory,
         "stub-model".to_string(),
-        ToolRuntimeContext {
+        ThingToolContext {
             pending_actions: Some(Arc::new(dashmap::DashMap::new())),
             ..Default::default()
         },

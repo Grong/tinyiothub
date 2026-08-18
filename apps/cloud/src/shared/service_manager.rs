@@ -194,6 +194,24 @@ impl ServiceManager {
             // 2. bus 先建并经 RuntimeDeps 注入 restore（Task 3 评审指针
             //    选项 a）；持久化 receiver 在 restore 之前取得 —— restore
             //    期间及之后的事件不丢。
+            // ── Task 14 工具注册点（composition root）──────────────────
+            // chat agent 的内建数据工具实现（thing 9 工具 / canvas /
+            // get_skill / dispatch_thing_task）留 cloud（D2），在此显式
+            // 注册进 agent crate 的 ToolRegistry；数据句柄由 provider 闭包
+            // 捕获。外部（MCP）工具工厂按需从 MCP_REGISTRY 派生（G3 —
+            // 单一事实源，无第二注册静态）。
+            let tool_registry = app_state.agent_pool.tool_registry();
+            tool_registry.register_provider(
+                crate::domains::agent::host::tools::chat_builtin_tools_provider(
+                    app_state.database.pool().clone(),
+                    Some(app_state.device_cache.clone()),
+                    app_state.pending_actions.clone(),
+                ),
+            );
+            tool_registry.set_external_tool_factory(Arc::new(|| {
+                crate::domains::agent::host::ports::external_tool_registry()
+            }));
+
             let agent_events = Arc::new(tinyiothub_agent::runtime::events::AgentEventBus::new(256));
             let persist_rx = agent_events.subscribe();
             let pool = app_state.database.pool().clone();
@@ -220,13 +238,11 @@ impl ServiceManager {
                             Arc::new(crate::domains::event::router::ThrottleState::new(60)),
                             app_state.agent_pool.shared_memory(),
                             app_state.agent_pool.observer(),
-                            crate::domains::agent::host::autonomous_factory::minimax_provider_factory(),
-                            crate::domains::agent::host::shared::config::AgentRuntimeConfig::default().model,
-                            crate::domains::agent::host::tools::service::ToolRuntimeContext {
+                            tinyiothub_agent::pool::minimax_provider_factory(),
+                            tinyiothub_agent::config::AgentRuntimeConfig::default().model,
+                            crate::domains::agent::host::tools::ThingToolContext {
                                 device_cache: Some(app_state.device_cache.clone()),
                                 data_server: app_state.data_server.clone(),
-                                // autonomous factory never registers the dispatch tool
-                                directive_sink: None,
                                 pending_actions: Some(app_state.pending_actions.clone()),
                             },
                         ),

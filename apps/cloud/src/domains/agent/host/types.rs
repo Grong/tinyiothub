@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 // Agent types — domain types and DTOs
 
 // Session 行类型/错误/仓储已迁 db（E6b）；re-export 兼容。
@@ -143,8 +144,8 @@ pub enum ChatError {
     ConfigError(String),
 }
 
-impl From<crate::domains::agent::host::shared::AgentError> for ChatError {
-    fn from(err: crate::domains::agent::host::shared::AgentError) -> Self {
+impl From<tinyiothub_agent::AgentError> for ChatError {
+    fn from(err: tinyiothub_agent::AgentError) -> Self {
         ChatError::RuntimeError(err.to_string())
     }
 }
@@ -169,7 +170,7 @@ impl ChatRequest {
     }
 }
 
-/// DEPRECATED: Use `crate::domains::agent::host::session::SessionKey` instead.
+/// DEPRECATED: Use `tinyiothub_agent::session::SessionKey` instead.
 /// Will be removed in T9.
 ///
 /// Parsed components of a session key
@@ -628,7 +629,7 @@ mod tests {
 
     #[test]
     fn test_chat_error_from_agent_error() {
-        let agent_err = crate::domains::agent::host::shared::AgentError::RequestFailed("test error".to_string());
+        let agent_err = tinyiothub_agent::AgentError::RequestFailed("test error".to_string());
         let chat_err: ChatError = agent_err.into();
         match chat_err {
             ChatError::RuntimeError(msg) => assert!(msg.contains("test error")),

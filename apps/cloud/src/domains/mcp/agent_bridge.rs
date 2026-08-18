@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-use crate::domains::agent::host::ports::{
+use tinyiothub_agent::tools::{
     ExternalToolContext, ExternalToolHandler, ExternalToolMeta, ExternalToolRegistry,
 };
 use async_trait::async_trait;

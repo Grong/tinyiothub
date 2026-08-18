@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 // Workspace Files API for Agents
 // HTTP endpoint handlers for agent workspace markdown files
 //
@@ -76,8 +77,8 @@ pub(crate) const MAX_FILE_SIZE: usize = 1024 * 1024;
 
 /// Resolve a file: returns (content, source) by checking workspace → shared base → embedded.
 async fn resolve_file(workspace_id: &str, filename: &str) -> Result<(String, String), String> {
-    let ws_dir = crate::domains::agent::host::shared::paths::workspace_dir(workspace_id);
-    let shared_dir = crate::domains::agent::host::shared::paths::shared_agent_base_dir();
+    let ws_dir = tinyiothub_agent::prompt::paths::workspace_dir(workspace_id);
+    let shared_dir = tinyiothub_agent::prompt::paths::shared_agent_base_dir();
 
     // 1. Workspace override
     let ws_path = ws_dir.join(filename);
@@ -110,14 +111,14 @@ async fn resolve_file(workspace_id: &str, filename: &str) -> Result<(String, Str
 
 fn get_embedded_template(filename: &str) -> Option<&'static str> {
     match filename {
-        "IDENTITY.md" => Some(include_str!("../../../../../templates/agent/IDENTITY.md")),
-        "SOUL.md" => Some(include_str!("../../../../../templates/agent/SOUL.md")),
-        "AGENTS.md" => Some(include_str!("../../../../../templates/agent/AGENTS.md")),
-        "USER.md" => Some(include_str!("../../../../../templates/agent/USER.md")),
-        "TOOLS.md" => Some(include_str!("../../../../../templates/agent/TOOLS.md")),
-        "MEMORY.md" => Some(include_str!("../../../../../templates/agent/MEMORY.md")),
-        "HEARTBEAT.md" => Some(include_str!("../../../../../templates/agent/HEARTBEAT.md")),
-        "BOOTSTRAP.md" => Some(include_str!("../../../../../templates/agent/BOOTSTRAP.md")),
+        "IDENTITY.md" => Some(tinyiothub_agent::prompt::templates::IDENTITY_MD),
+        "SOUL.md" => Some(tinyiothub_agent::prompt::templates::SOUL_MD),
+        "AGENTS.md" => Some(tinyiothub_agent::prompt::templates::AGENTS_MD),
+        "USER.md" => Some(tinyiothub_agent::prompt::templates::USER_MD),
+        "TOOLS.md" => Some(tinyiothub_agent::prompt::templates::TOOLS_MD),
+        "MEMORY.md" => Some(tinyiothub_agent::prompt::templates::MEMORY_MD),
+        "HEARTBEAT.md" => Some(tinyiothub_agent::prompt::templates::HEARTBEAT_MD),
+        "BOOTSTRAP.md" => Some(tinyiothub_agent::prompt::templates::BOOTSTRAP_MD),
         _ => None,
     }
 }
@@ -158,7 +159,7 @@ pub async fn list_workspace_files(
         return ApiResponseBuilder::error_with_code(code as i32, &msg);
     }
 
-    let ws_dir = crate::domains::agent::host::shared::paths::workspace_dir(workspace_id);
+    let ws_dir = tinyiothub_agent::prompt::paths::workspace_dir(workspace_id);
 
     let mut files = Vec::new();
     for name in WORKSPACE_FILES {
@@ -235,7 +236,7 @@ pub async fn put_workspace_file(
         return ApiResponseBuilder::error("File too large (max 1MB)");
     }
 
-    let ws_dir = crate::domains::agent::host::shared::paths::workspace_dir(workspace_id);
+    let ws_dir = tinyiothub_agent::prompt::paths::workspace_dir(workspace_id);
     // Ensure workspace directory exists
     if !ws_dir.exists()
         && let Err(e) = tokio::fs::create_dir_all(&ws_dir).await
@@ -282,7 +283,7 @@ pub async fn delete_workspace_file(
         return ApiResponseBuilder::error_with_code(code as i32, &msg);
     }
 
-    let ws_dir = crate::domains::agent::host::shared::paths::workspace_dir(workspace_id);
+    let ws_dir = tinyiothub_agent::prompt::paths::workspace_dir(workspace_id);
     let file_path = ws_dir.join(&filename);
 
     if file_path.exists()

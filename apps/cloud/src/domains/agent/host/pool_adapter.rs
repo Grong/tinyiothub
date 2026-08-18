@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 //! Adapter: host `AgentPool` → loop `AgentPoolLike` (P4-Task22).
 //!
 //! Formerly `cloud::shared::ai_adapter::CloudAgentPoolAdapter`; now that the
@@ -10,7 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tinyiothub_core::heartbeat::TrustConfig;
 
-use crate::domains::agent::host::agent::{AgentPool, StreamingToolCall};
+use tinyiothub_agent::pool::{AgentPool, StreamingToolCall};
 use tinyiothub_agent::runtime::agent::pool::{AgentPoolLike, AgentRunOutput, ToolCallRecord};
 
 /// Wraps the host `AgentPool` to implement the loop's `AgentPoolLike` trait.
@@ -53,13 +54,13 @@ impl AgentPoolLike for HostAgentPoolAdapter {
     async fn send_message(&self, workspace_id: &str, prompt: &str) -> anyhow::Result<AgentRunOutput> {
         // Ensure the heartbeat agent is pooled (cache hit is config-fetch-free),
         // then delegate to AgentPool's run_streaming and collect the response.
-        let agent_id = crate::domains::agent::host::agent::heartbeat_agent_id(workspace_id);
+        let agent_id = tinyiothub_agent::pool::heartbeat_agent_id(workspace_id);
         crate::domains::agent::host::chat::service::ensure_agent(
             &self.pool,
             &self.db_pool,
             &agent_id,
             workspace_id,
-            &crate::domains::agent::host::shared::AgentRuntimeConfig::default(),
+            &tinyiothub_agent::config::AgentRuntimeConfig::default(),
         )
         .await
         .map_err(|e| anyhow::anyhow!("AgentPool error: {}", e))?;

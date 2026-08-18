@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 // 8. search_knowledge — full-text search thing_resources
 
 use async_trait::async_trait;

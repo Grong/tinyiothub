@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 //! Agent-side implementation of [`crate::domains::thing::hooks::ThingActionHooks`].
 //!
 //! This is the adapter that lets the thing domain's HTTP handlers consume

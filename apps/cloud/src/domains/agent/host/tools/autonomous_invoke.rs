@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 //! Autonomous `invoke_action` variant (T11, O18 thin wrapper).
 //!
 //! Reuses [`InvokeActionTool`] (thing.rs) for validation and dispatch, but

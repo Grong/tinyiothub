@@ -1,28 +1,28 @@
-// Agent Configuration Types
-//
-// This module provides configuration types and utilities for agent functionality.
+//! Agent 配置类型 — Task 14 自 apps/cloud `host/shared/config.rs` 迁入。
+//!
+//! 纯类型 + 默认值 + 组合层注册缝（[`set_default_model`]），零 I/O。
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use thiserror::Error;
 
-/// Errors from Agent operations
-#[derive(Debug, Error)]
-pub enum AgentError {
-    #[error("Agent API request failed: {0}")]
-    RequestFailed(String),
-    #[error("Agent API returned error: {0}")]
-    ApiError(String),
-    #[error("Agent API timeout")]
-    Timeout,
-    #[error("Agent unavailable: {0}")]
-    Unavailable(String),
-    #[error("agent not found: {0}")]
-    NotFound(String),
-    #[error("agent build failed: {0}")]
-    BuildError(String),
-    #[error("agent stream error: {0}")]
-    StreamError(String),
+// ---------------------------------------------------------------------------
+// 默认模型 id 缝（组合层自 `[minimax].model` 注册；Task 14 自 host/ports.rs 迁入）
+// ---------------------------------------------------------------------------
+
+static DEFAULT_MODEL: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// 注册兜底模型 id（组合层启动时调用）。
+pub fn set_default_model(model: String) {
+    *DEFAULT_MODEL.write().expect("default model lock poisoned") = Some(model);
+}
+
+/// Agent 运行时配置的兜底模型 id。
+pub fn default_model() -> String {
+    DEFAULT_MODEL
+        .read()
+        .expect("default model lock poisoned")
+        .clone()
+        .unwrap_or_else(|| "minimax-m2".into())
 }
 
 /// Agent configuration passed when creating an agent
@@ -86,12 +86,6 @@ pub struct AgentRuntimeConfig {
 
 fn default_enable_reflection() -> bool {
     true
-}
-
-pub fn default_model() -> String {
-    // Registered by the composition layer from `[minimax].model`
-    // (P4-Task22 port — this crate no longer reads cloud's global config).
-    crate::domains::agent::host::ports::default_model()
 }
 
 fn default_temperature() -> f64 {
@@ -158,6 +152,7 @@ pub struct AgentInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::AgentError;
 
     #[test]
     fn test_agent_config_default() {
@@ -174,6 +169,9 @@ mod tests {
         assert_eq!(config.name, "test");
         assert!(config.model.is_none());
         assert!(config.temperature.is_none());
+        assert!(config.max_tokens.is_none());
+        assert!(config.top_p.is_none());
+        assert!(config.system_prompt.is_none());
     }
 
     #[test]
@@ -288,11 +286,15 @@ mod tests {
         let obj = config.as_object().expect("should be an object");
 
         assert_eq!(obj.get("model").and_then(|v| v.as_str()), Some("minimax-m2"));
-        assert_eq!(obj.get("temperature").and_then(|v| v.as_f64()), Some(0.7));
+        assert_eq!(obj.get("temperature").and_then(|v| as_f64(v)), Some(0.7));
         assert_eq!(obj.get("maxTokens").and_then(|v| v.as_u64()), Some(4096));
-        assert_eq!(obj.get("topP").and_then(|v| v.as_f64()), Some(1.0));
+        assert_eq!(obj.get("topP").and_then(|v| as_f64(v)), Some(1.0));
         assert_eq!(obj.get("systemPrompt").and_then(|v| v.as_str()), Some(""));
         assert!(obj.get("toolDenylist").and_then(|v| v.as_array()).is_some());
+    }
+
+    fn as_f64(v: &serde_json::Value) -> Option<f64> {
+        v.as_f64()
     }
 
     #[test]

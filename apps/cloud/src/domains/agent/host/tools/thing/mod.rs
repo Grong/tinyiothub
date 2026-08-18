@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 // Thing Agent Tools — 9 AI agent tools for Thing Ontology
 //
 // These tools give the AI agent read+execute access to the Thing Ontology.
@@ -81,6 +82,15 @@ pub(crate) fn clamp_limit(limit: Option<u32>, default: u32, max: u32) -> u32 {
 // Factory: create all 9 thing tools
 // ============================================================================
 
+/// thing 工具构建期需要的数据句柄（D2 —— 留 cloud；agent crate 的
+/// `ToolRuntimeContext` 只携带存储无关字段，这些由组合层捕获/拼装）。
+#[derive(Clone, Default)]
+pub struct ThingToolContext {
+    pub device_cache: Option<Arc<tinyiothub_storage::cache::DeviceCache>>,
+    pub data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
+    pub pending_actions: Option<Arc<PendingActionStore>>,
+}
+
 /// Create all 9 Thing Ontology agent tools with their safety classifications.
 ///
 /// Read-only tools (searches, gets): safety ReadOnly => auto-approved.
@@ -88,7 +98,7 @@ pub(crate) fn clamp_limit(limit: Option<u32>, default: u32, max: u32) -> u32 {
 pub fn create_thing_tools(
     pool: SqlitePool,
     workspace_id: &str,
-    runtime: &super::service::ToolRuntimeContext,
+    runtime: &ThingToolContext,
 ) -> Vec<(Box<dyn Tool>, ToolSafety)> {
     let thing_service = Arc::new(ThingService::new(pool.clone()));
     let ws = workspace_id.to_string();
@@ -144,7 +154,7 @@ pub fn create_thing_tools(
             pending_actions: runtime
                 .pending_actions
                 .clone()
-                .expect("pending_actions must be wired in ToolRuntimeContext"),
+                .expect("pending_actions must be wired in ThingToolContext"),
         })),
     ]
 }

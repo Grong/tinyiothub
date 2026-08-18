@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 // Stateless ChatService — zeroclaw Agent passed as parameter.
 // Eliminates the SSE serialization round-trip:
 //   Before: zeroclaw TurnEvent → bytes → reqwest::Response → parse bytes → ChatEvent → SSE
@@ -8,8 +9,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use zeroclaw::agent::TurnEvent;
 
-use crate::domains::agent::host::agent::AgentPool;
-use crate::domains::agent::host::shared::config::{AgentError, AgentRuntimeConfig};
+use tinyiothub_agent::pool::AgentPool;
+use tinyiothub_agent::AgentError;
+use tinyiothub_agent::config::AgentRuntimeConfig;
 use crate::domains::agent::host::types::{ChatError, ChatEvent};
 
 // ============================================================================
@@ -29,16 +31,13 @@ pub async fn ensure_agent(
     if let Some(agent) = pool.get_cached(agent_id) {
         return Ok(agent);
     }
+    let _ = db_pool; // 工具经组合层注册的 provider 解析（Task 14）；db 句柄不再透传
     let trust_config = pool.trust_config(workspace_id);
     let runtime = pool.runtime_context().await;
-    let tools = crate::domains::agent::host::tools::service::resolve_tools_for_agent(
-        config,
-        workspace_id,
-        trust_config,
-        Some(db_pool.clone()),
-        &runtime,
-    )
-    .await;
+    let tools = pool
+        .tool_registry()
+        .resolve_tools_for_agent(config, workspace_id, trust_config, &runtime)
+        .await;
     pool.create(agent_id, workspace_id, config, tools)
 }
 
@@ -58,7 +57,7 @@ pub async fn send_with_pool(
     config: &AgentRuntimeConfig,
     memory_service: Option<Arc<tinyiothub_memory::service::MemoryService>>,
 ) -> Result<mpsc::Receiver<ChatEvent>, AgentError> {
-    let parsed = crate::domains::agent::host::session::SessionKey::parse(session_key)?;
+    let parsed = tinyiothub_agent::session::SessionKey::parse(session_key)?;
     // Empty authorized workspace = unscoped (admin) token; nothing to check against.
     if !authorized_workspace.is_empty() {
         parsed.verify_workspace(authorized_workspace)?;
@@ -184,8 +183,8 @@ pub async fn send_message(
     // display/reflection. A bare trigger (e.g. auto-`/workspace`) falls back to
     // a neutral default request.
     let (turn_message, reflect_message) = {
-        let ws_dir = crate::domains::agent::host::shared::paths::workspace_dir(workspace_id);
-        let skills = crate::domains::agent::host::agent::load_workspace_skills(&ws_dir);
+        let ws_dir = tinyiothub_agent::prompt::paths::workspace_dir(workspace_id);
+        let skills = tinyiothub_agent::pool::load_workspace_skills(&ws_dir);
         match tinyiothub_skills::resolve_trigger(message, &skills) {
             Some(hit) => {
                 let user_text = if hit.cleaned_message.is_empty() {
@@ -382,7 +381,7 @@ mod tests {
         tinyiothub_storage::test_helpers::run_all_migrations(&db).await.unwrap();
         let pool = AgentPool::new(
             &tinyiothub_core::config::AgentSettings::default(),
-            crate::domains::agent::host::autonomous_factory::minimax_provider_factory(),
+            tinyiothub_agent::pool::minimax_provider_factory(),
         )
         .expect("test AgentPool");
         let err = send_with_pool(

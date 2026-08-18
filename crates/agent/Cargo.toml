@@ -31,6 +31,8 @@ regex = { workspace = true }
 parking_lot = { workspace = true }
 uuid = { workspace = true }
 tokio-util = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 
 # ZeroClaw agent runtime contract（与 apps/cloud 同源，Task 14 完成后从 cloud 移除）
 zeroclaw = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched", package = "zeroclawlabs", features = ["agent-runtime"] }

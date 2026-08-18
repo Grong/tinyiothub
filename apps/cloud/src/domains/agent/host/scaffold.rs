@@ -13,17 +13,17 @@ use anyhow::Result;
 
 /// Files shared across all workspaces (scaffolded once to _default/)
 const SHARED_TEMPLATE_FILES: &[(&str, &str)] = &[
-    ("IDENTITY.md", include_str!("../../../../templates/agent/IDENTITY.md")),
-    ("SOUL.md", include_str!("../../../../templates/agent/SOUL.md")),
-    ("AGENTS.md", include_str!("../../../../templates/agent/AGENTS.md")),
-    ("TOOLS.md", include_str!("../../../../templates/agent/TOOLS.md")),
-    ("MEMORY.md", include_str!("../../../../templates/agent/MEMORY.md")),
-    ("HEARTBEAT.md", include_str!("../../../../templates/agent/HEARTBEAT.md")),
-    ("BOOTSTRAP.md", include_str!("../../../../templates/agent/BOOTSTRAP.md")),
+    ("IDENTITY.md", tinyiothub_agent::prompt::templates::IDENTITY_MD),
+    ("SOUL.md", tinyiothub_agent::prompt::templates::SOUL_MD),
+    ("AGENTS.md", tinyiothub_agent::prompt::templates::AGENTS_MD),
+    ("TOOLS.md", tinyiothub_agent::prompt::templates::TOOLS_MD),
+    ("MEMORY.md", tinyiothub_agent::prompt::templates::MEMORY_MD),
+    ("HEARTBEAT.md", tinyiothub_agent::prompt::templates::HEARTBEAT_MD),
+    ("BOOTSTRAP.md", tinyiothub_agent::prompt::templates::BOOTSTRAP_MD),
 ];
 
 /// Files created per workspace (user-customizable overrides)
-const WORKSPACE_ONLY_FILES: &[(&str, &str)] = &[("USER.md", include_str!("../../../../templates/agent/USER.md"))];
+const WORKSPACE_ONLY_FILES: &[(&str, &str)] = &[("USER.md", tinyiothub_agent::prompt::templates::USER_MD)];
 
 /// Subdirectories to create in each workspace
 const WORKSPACE_SUBDIRS: &[&str] = &["sessions", "memory", "state", "cron", "skills"];
@@ -32,7 +32,7 @@ const WORKSPACE_SUBDIRS: &[&str] = &["sessions", "memory", "state", "cron", "ski
 /// Called during system initialization. Overwrites existing files to ensure
 /// templates stay up-to-date on deploy.
 pub async fn scaffold_shared_base() -> Result<WorkspaceScaffoldResult> {
-    let base_dir = crate::domains::agent::host::shared::paths::shared_agent_base_dir();
+    let base_dir = tinyiothub_agent::prompt::paths::shared_agent_base_dir();
     tokio::fs::create_dir_all(&base_dir).await?;
 
     let mut created = 0;

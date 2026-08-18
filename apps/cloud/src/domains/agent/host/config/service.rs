@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 // ConfigService — AgentRuntimeConfig DB read/write + agent CRUD.
 //
 // Task 7 fix round 1: these were `impl AgentPool` methods in
@@ -7,8 +8,9 @@
 
 use sqlx::SqlitePool;
 
-use crate::domains::agent::host::shared::config::{
-    AgentConfig, AgentError, AgentInfo, AgentRuntimeConfig, compute_hash, default_agent_config,
+use tinyiothub_agent::AgentError;
+use tinyiothub_agent::config::{
+    AgentConfig, AgentInfo, AgentRuntimeConfig, compute_hash, default_agent_config,
 };
 
 // ============================================================================

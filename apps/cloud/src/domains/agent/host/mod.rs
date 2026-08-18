@@ -1,24 +1,24 @@
 // Agent host module — HTTP/services plane (P4-Task22, was cloud::modules::agent)
-// agent.rs:       AgentPool + zeroclaw Agent build + skills loading
-// chat/:          Chat capability (stateless ChatService + ChatHandler)
-// tools/:         Tool capability (ToolService + CanvasTool + catalog)
+//
+// Task 14 后分层：通用机制（AgentPool / 工具框架 / SessionKey / prompt 组装 /
+// 配置类型）住 `tinyiothub_agent` crate；本模块只剩组合层关切：
+// chat/:          Chat capability (stateless ChatService + history persistence)
+// tools/:         数据工具实现（thing/ canvas 等）+ ToolService 数据面
 // config/:        Config capability (ConfigService + ConfigHandler)
-// session.rs:     SessionKey unified parse + verify_workspace
 // heartbeat.rs:   HeartbeatService (uses AgentPool directly)
 // scaffold.rs:    Workspace scaffold + files CRUD
-// shared/:        Agent config types + system prompt building + fs paths
-// state.rs:       AppState composition slice
-// ports.rs:       Composition seams (external tools / workspace access / config)
+// ports.rs:       Composition seams (workspace access / storage adapters / MCP bridge)
+// service.rs:     SessionService (session index, db-backed)
+//
+// 工具注册点：service_manager.rs 把数据工具 provider 注册进
+// `tinyiothub_agent::tools::ToolRegistry`（Task 14）。
 
-#[allow(clippy::module_inception)]
-pub mod agent;
 pub mod autonomous_factory;
 pub mod chat;
 pub mod config;
 pub mod memory;
 pub mod ports;
 pub mod reflect;
-pub mod shared;
 pub mod tools;
 
 pub mod agent_hooks;
@@ -31,7 +31,6 @@ pub mod persist;
 pub mod policy_engine;
 pub mod pool_adapter;
 pub mod scaffold;
-pub mod session;
 pub mod thing_action_hooks;
 pub mod thing_agent_host;
 

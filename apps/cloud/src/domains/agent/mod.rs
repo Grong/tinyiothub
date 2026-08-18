@@ -48,7 +48,7 @@ pub struct AgentState {
     /// Agent 记忆存储 - memory handlers + chat prompt 构造
     pub memory_store: Arc<tinyiothub_storage::memory::MemoryStore>,
     /// Agent Pool - chat proxy 的会话/配置/工具 API
-    pub agent_pool: Arc<host::agent::AgentPool>,
+    pub agent_pool: Arc<tinyiothub_agent::pool::AgentPool>,
     /// 会话服务 - chat sessions 列表/标签/删除
     pub session_service: Arc<host::SessionService>,
     /// System prompts 配置 - chat proxy 构造 full prompt

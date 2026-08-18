@@ -1,12 +1,13 @@
 // AgentPool — pool lifecycle: construction, cache lookup, creation from
 // caller-injected parts, invalidation, idle cleanup, and the zeroclaw agent
 // builder.
+//
+// Task 14 自 apps/cloud `host/agent/pool.rs` 迁入（该文件 Task 7 起即存储无关）。
 
 use std::{sync::Arc, time::Instant};
 
 use anyhow::anyhow;
 use dashmap::DashMap;
-use tinyiothub_agent::memory::workspace_memory::WorkspaceScopedMemory;
 use zeroclaw::{
     agent::{
         dispatcher::NativeToolDispatcher,
@@ -18,7 +19,12 @@ use zeroclaw::{
     tools::Tool,
 };
 
-use crate::domains::agent::host::shared::config::{AgentError, AgentRuntimeConfig};
+use crate::config::AgentRuntimeConfig;
+use crate::error::AgentError;
+use crate::memory::workspace_memory::WorkspaceScopedMemory;
+use crate::tools::{ToolRegistry, ToolRuntimeContext};
+
+use super::provider::ProviderFactory;
 
 // ============================================================================
 // Skills Section (zeroclaw SystemPromptBuilder integration)
@@ -38,7 +44,7 @@ impl PromptSection for TinyIoTHubSkillsSection {
 }
 
 /// Load skills for a workspace, workspace-specific dir overriding the global one.
-pub(crate) fn load_workspace_skills(workspace_dir: &std::path::Path) -> Vec<tinyiothub_skills::LoadedSkill> {
+pub fn load_workspace_skills(workspace_dir: &std::path::Path) -> Vec<tinyiothub_skills::LoadedSkill> {
     let dirs = vec![workspace_dir.join("skills"), std::path::PathBuf::from("data/skills")];
     tinyiothub_skills::load_skills_from_dirs(&dirs)
 }
@@ -79,10 +85,9 @@ pub struct Agent {
 // ============================================================================
 
 /// Storage-free by design (Task 7): the pool holds no db/memory storage
-/// handles and no method signature mentions them. Callers (cloud) resolve
-/// per-request data — agent config, tool list, memory service — and inject
-/// the results into the pool's pure methods, keeping the pool movable into
-/// the future `crates/agent`.
+/// handles and no method signature mentions them. Callers (the composition
+/// layer) resolve per-request data — agent config, tool list, memory
+/// service — and inject the results into the pool's pure methods.
 pub struct AgentPool {
     pub(crate) agents: Arc<DashMap<String, PoolEntry>>,
     pub(crate) shared_memory: Arc<dyn Memory>,
@@ -92,14 +97,18 @@ pub struct AgentPool {
     pub(crate) agent_settings: tinyiothub_core::config::AgentSettings,
     pub chat_handles: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
     pub trust_configs: DashMap<String, tinyiothub_core::heartbeat::TrustConfig>,
-    pub event_publisher: tokio::sync::RwLock<Option<Arc<tinyiothub_agent::runtime::event::bus::AiEventPublisher>>>,
+    pub event_publisher: tokio::sync::RwLock<Option<Arc<crate::runtime::event::bus::AiEventPublisher>>>,
     /// Builds a fresh model provider per agent (injected by the composition
     /// layer — providers are per-agent in zeroclaw).
-    provider_factory: super::super::autonomous_factory::ProviderFactory,
-    /// Late-bound runtime handles for tool construction (device cache /
-    /// data server / directive sink), set once at startup after the
-    /// composition state exists (P4-Task22; replaces the AppState backdoor).
-    pub(crate) runtime: tokio::sync::RwLock<super::super::tools::service::ToolRuntimeContext>,
+    provider_factory: ProviderFactory,
+    /// Late-bound runtime handles for tool construction (data server /
+    /// directive sink), set once at startup after the composition state
+    /// exists (P4-Task22; replaces the AppState backdoor).
+    pub(crate) runtime: tokio::sync::RwLock<ToolRuntimeContext>,
+    /// Built-in tool providers + external tool factory, registered by the
+    /// composition layer at startup (Task 14 — 数据工具实现住组合层，经此
+    /// 注册进框架；见 `tools::ToolRegistry`)。
+    tool_registry: ToolRegistry,
 }
 
 impl AgentPool {
@@ -109,9 +118,9 @@ impl AgentPool {
     /// caller and injected per creation (see [`Self::create`]).
     pub fn new(
         agent_settings: &tinyiothub_core::config::AgentSettings,
-        provider_factory: super::super::autonomous_factory::ProviderFactory,
+        provider_factory: ProviderFactory,
     ) -> anyhow::Result<Self> {
-        let workspace_dir = crate::domains::agent::host::shared::paths::default_workspace_dir();
+        let workspace_dir = crate::prompt::paths::default_workspace_dir();
         std::fs::create_dir_all(&workspace_dir).ok();
 
         let memory_config = zeroclaw::config::schema::MemoryConfig {
@@ -158,17 +167,18 @@ impl AgentPool {
             event_publisher: tokio::sync::RwLock::new(None),
             provider_factory,
             runtime: tokio::sync::RwLock::new(Default::default()),
+            tool_registry: ToolRegistry::default(),
         })
     }
 
     /// Bind runtime handles for tool construction (chat thing tools read
-    /// `device_cache` / `data_server` / `directive_sink` through them).
-    pub async fn set_runtime_context(&self, ctx: super::super::tools::service::ToolRuntimeContext) {
+    /// `data_server` / `directive_sink` through them).
+    pub async fn set_runtime_context(&self, ctx: ToolRuntimeContext) {
         let mut guard = self.runtime.write().await;
         *guard = ctx;
     }
 
-    pub async fn set_event_publisher(&self, publisher: Arc<tinyiothub_agent::runtime::event::bus::AiEventPublisher>) {
+    pub async fn set_event_publisher(&self, publisher: Arc<crate::runtime::event::bus::AiEventPublisher>) {
         let mut guard = self.event_publisher.write().await;
         *guard = Some(publisher);
     }
@@ -188,16 +198,23 @@ impl AgentPool {
         self.trust_configs.insert(workspace_id.to_string(), config);
     }
 
-    /// Trust config for a workspace (cloud resolves tools with it).
+    /// Trust config for a workspace (the composition layer resolves tools with it).
     pub fn trust_config(&self, workspace_id: &str) -> Option<Arc<tinyiothub_core::heartbeat::TrustConfig>> {
         self.trust_configs
             .get(workspace_id)
             .map(|e| Arc::new(e.value().clone()))
     }
 
-    /// Snapshot of the late-bound runtime handles (cloud resolves tools with it).
-    pub async fn runtime_context(&self) -> super::super::tools::service::ToolRuntimeContext {
+    /// Snapshot of the late-bound runtime handles (the composition layer
+    /// resolves tools with it).
+    pub async fn runtime_context(&self) -> ToolRuntimeContext {
         self.runtime.read().await.clone()
+    }
+
+    /// The pool's tool registry — 组合层在启动时注册内建工具 provider 与外部
+    /// 工具工厂；调用方经它加载/解析工具。
+    pub fn tool_registry(&self) -> ToolRegistry {
+        self.tool_registry.clone()
     }
 
     // ========================================================================
@@ -219,9 +236,7 @@ impl AgentPool {
     /// isolation, from caller-injected parts.
     ///
     /// Pool key: `agent_id`. The runtime config and the fully resolved tool
-    /// list come from the cloud caller (config via
-    /// `config::service::get_config`, tools via
-    /// `tools::service::resolve_tools_for_agent`); this method performs no
+    /// list come from the composition-layer caller; this method performs no
     /// storage I/O itself.
     pub fn create(
         &self,
@@ -238,7 +253,7 @@ impl AgentPool {
         let provider = (self.provider_factory)()
             .map_err(|e| AgentError::BuildError(format!("Failed to create provider: {}", e)))?;
 
-        let ws_dir = crate::domains::agent::host::shared::paths::workspace_dir(workspace_id);
+        let ws_dir = crate::prompt::paths::workspace_dir(workspace_id);
 
         let agent = Self::build_agent(
             &namespaced,
@@ -394,7 +409,7 @@ mod tests {
         }
     }
 
-    fn scripted_provider_factory() -> super::super::super::autonomous_factory::ProviderFactory {
+    fn scripted_provider_factory() -> ProviderFactory {
         Arc::new(|| Ok(Box::new(ScriptedModelProvider)))
     }
 

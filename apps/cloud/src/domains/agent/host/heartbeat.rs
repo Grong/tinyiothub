@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 // Heartbeat module — per-workspace HEARTBEAT.md task parsing utilities.
 //
 // The heartbeat_loop and HeartbeatManager have been replaced by

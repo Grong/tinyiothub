@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 // File-based skills CRUD — writes to data/agents/<workspace_id>/skills/<skill_name>.md
 
 use std::path::PathBuf;
@@ -16,7 +17,7 @@ use tokio::fs;
 
 use tinyiothub_web::api_response::ApiResponse;
 
-use crate::domains::agent::host::shared::paths::{self, global_skills_dir, workspace_skills_dir};
+use tinyiothub_agent::prompt::paths::{self, global_skills_dir, workspace_skills_dir};
 use crate::domains::agent::AgentState;
 
 #[derive(Debug, Deserialize)]

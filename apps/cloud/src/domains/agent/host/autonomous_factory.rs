@@ -1,3 +1,4 @@
+// 数据实现，留 cloud（D2）
 //! Autonomous agent factory (T11, O8/O20).
 //!
 //! One autonomous zeroclaw Agent per workspace (DashMap cache), built with
@@ -6,7 +7,7 @@
 //! confirmation-token one. The thing-agent runner (T9) consumes the
 //! returned [`AgentHandle`].
 //!
-//! Construction mirrors [`super::agent::AgentPool::get_or_create`]: fast-path
+//! Construction mirrors the chat `AgentPool` (now in `tinyiothub_agent::pool`): fast-path
 //! cache hit, slow-path build, double-checked insert; never hold a DashMap
 //! guard across `.await`. Differences from the chat pool, deliberately:
 //! - no response cache (an autonomous control loop must never replay a
@@ -27,30 +28,20 @@ use tinyiothub_agent::memory::workspace_memory::WorkspaceScopedMemory;
 use tinyiothub_agent::runtime::thing_agent::{AgentHandle, RunContextInner, manager::AutonomousAgentProvider};
 use tinyiothub_storage::policy::PolicyRepository;
 use tokio::sync::RwLock;
+use tinyiothub_agent::pool::ProviderFactory;
 use zeroclaw::{
     agent::{dispatcher::NativeToolDispatcher, prompt::SystemPromptBuilder},
     memory::Memory,
     observability::Observer,
-    providers::traits::ModelProvider,
     security::AutonomyLevel,
     tools::Tool,
 };
 
 use super::tools::{
-    AutonomousInvokeActionTool, RunContextSlot, create_thing_tools, new_run_context_slot, thing::InvokeActionTool,
+    AutonomousInvokeActionTool, RunContextSlot, ThingToolContext, create_thing_tools,
+    new_run_context_slot, thing::InvokeActionTool,
 };
 use crate::domains::event::{bus::ThingEventBus, router::ThrottleState};
-
-/// Builds a fresh model provider per agent (providers are per-agent in
-/// zeroclaw). Production wires [`minimax_provider_factory`]; tests inject a
-/// scripted provider.
-pub type ProviderFactory = Arc<dyn Fn() -> anyhow::Result<Box<dyn ModelProvider>> + Send + Sync>;
-
-/// Production provider factory — `[minimax]` settings registered by the
-/// composition layer (see `crate::domains::agent::host::ports::set_minimax_settings`).
-pub fn minimax_provider_factory() -> ProviderFactory {
-    Arc::new(crate::domains::agent::host::ports::create_minimax_provider)
-}
 
 pub(crate) struct AutonomousEntry {
     pub handle: AgentHandle,
@@ -66,7 +57,7 @@ pub struct AutonomousAgentFactory {
     observer: Arc<dyn Observer>,
     provider_factory: ProviderFactory,
     model: String,
-    runtime: super::tools::service::ToolRuntimeContext,
+    runtime: ThingToolContext,
     pub(crate) agents: DashMap<String, AutonomousEntry>,
 }
 
@@ -80,7 +71,7 @@ impl AutonomousAgentFactory {
         observer: Arc<dyn Observer>,
         provider_factory: ProviderFactory,
         model: String,
-        runtime: super::tools::service::ToolRuntimeContext,
+        runtime: ThingToolContext,
     ) -> Self {
         Self {
             db_pool,
@@ -148,7 +139,7 @@ impl AutonomousAgentFactory {
             .autonomy_level(AutonomyLevel::Supervised)
             .response_cache(None)
             .prompt_builder(SystemPromptBuilder::with_defaults())
-            .workspace_dir(crate::domains::agent::host::shared::paths::workspace_dir(workspace_id))
+            .workspace_dir(tinyiothub_agent::prompt::paths::workspace_dir(workspace_id))
             .build()
             .map_err(|e| anyhow!("Autonomous agent build failed: {}", e))?;
 
@@ -217,7 +208,7 @@ pub(crate) fn build_autonomous_tools(
     run_ctx: RunContextSlot,
     event_bus: Arc<ThingEventBus>,
     throttle: Arc<ThrottleState>,
-    runtime: &super::tools::service::ToolRuntimeContext,
+    runtime: &ThingToolContext,
 ) -> Vec<Box<dyn Tool>> {
     // The 9 ontology tools minus the chat invoke_action (confirmation-token
     // flow), plus the autonomous invoke_action (policy-gated).
@@ -235,7 +226,7 @@ pub(crate) fn build_autonomous_tools(
         pending_actions: runtime
             .pending_actions
             .clone()
-            .expect("pending_actions must be wired in ToolRuntimeContext"),
+            .expect("pending_actions must be wired in ThingToolContext"),
     };
     tools.push(Box::new(AutonomousInvokeActionTool::new(
         inner,
@@ -258,6 +249,7 @@ mod tests {
     use std::sync::Mutex;
 
     use async_trait::async_trait;
+    use zeroclaw::providers::traits::ModelProvider;
     use zeroclaw::providers::{ChatRequest, ChatResponse};
     use zeroclaw_api::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
 
@@ -351,7 +343,7 @@ mod tests {
             observer,
             scripted_provider_factory(),
             "minimax-m2".to_string(),
-            super::super::tools::service::ToolRuntimeContext {
+            ThingToolContext {
                 pending_actions: Some(Arc::new(dashmap::DashMap::new())),
                 ..Default::default()
             },
@@ -374,7 +366,7 @@ mod tests {
             new_run_context_slot(run_ctx()),
             Arc::new(ThingEventBus::new()),
             Arc::new(ThrottleState::new(60)),
-            &super::super::tools::service::ToolRuntimeContext {
+            &ThingToolContext {
                 pending_actions: Some(Arc::new(dashmap::DashMap::new())),
                 ..Default::default()
             },

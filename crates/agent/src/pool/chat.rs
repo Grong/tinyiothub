@@ -1,12 +1,13 @@
 // AgentPool — chat abort + heartbeat runs (run_single / run_streaming).
 //
-// Storage-free (Task 7 fix round 1): chat send/history need db handles and
-// live as cloud-side free functions (`host::chat::service::send_with_pool`,
-// `host::chat::history::session_history_json`); only the storage-free
-// operations stay on the pool.
+// Task 14 自 apps/cloud `host/agent/chat.rs` 迁入。存储相关的 chat
+// send/history 留在组合层（`host::chat::*` 自由函数）；pool 上只有存储无关
+// 的操作。
+
+use crate::error::AgentError;
+use crate::session::SessionKey;
 
 use super::pool::AgentPool;
-use crate::domains::agent::host::shared::config::AgentError;
 
 // ============================================================================
 // Streaming run result types
@@ -39,7 +40,7 @@ impl AgentPool {
         run_id: Option<&str>,
         authorized_workspace: &str,
     ) -> Result<(), AgentError> {
-        let parsed = crate::domains::agent::host::session::SessionKey::parse(session_key)?;
+        let parsed = SessionKey::parse(session_key)?;
         if !authorized_workspace.is_empty() {
             parsed.verify_workspace(authorized_workspace)?;
         }
@@ -64,9 +65,9 @@ impl AgentPool {
     // Run single (for cron jobs)
     // ========================================================================
 
-    /// The heartbeat agent must already be pooled — the cloud caller ensures
-    /// it via `host::chat::service::ensure_agent` (config/tool resolution is
-    /// db-backed and stays on the cloud side).
+    /// The heartbeat agent must already be pooled — the composition-layer
+    /// caller ensures it (config/tool resolution is db-backed and stays on
+    /// the composition side).
     pub async fn run_single(&self, workspace_id: &str, message: &str) -> Result<String, AgentError> {
         // Per-workspace agent key prevents cross-workspace tool context leak.
         let agent_id = heartbeat_agent_id(workspace_id);
@@ -125,9 +126,9 @@ impl AgentPool {
             }
         });
 
-        // No inner timeout here: the heartbeat tick in tinyiothub-ai bounds the
-        // whole run (see heartbeat::loop_ TICK_TIMEOUT). A shorter inner timeout
-        // fires first every time, making the tick-level bound unreachable.
+        // No inner timeout here: the heartbeat tick bounds the whole run (see
+        // heartbeat::loop_ TICK_TIMEOUT). A shorter inner timeout fires first
+        // every time, making the tick-level bound unreachable.
         let mut ag = agent.lock().await;
         let result = ag.turn_streamed(message, event_tx, None).await;
         drop(ag);
@@ -147,8 +148,8 @@ impl AgentPool {
     }
 }
 
-/// "__heartbeat__" has no DB row, so the cloud caller pools it with
-/// AgentRuntimeConfig::default() → server-level [minimax] model.
+/// "__heartbeat__" has no DB row, so the composition-layer caller pools it
+/// with AgentRuntimeConfig::default() → server-level [minimax] model.
 pub fn heartbeat_agent_id(workspace_id: &str) -> String {
     format!("__heartbeat__:{}", workspace_id)
 }
@@ -160,7 +161,7 @@ mod tests {
     fn test_pool() -> AgentPool {
         AgentPool::new(
             &tinyiothub_core::config::AgentSettings::default(),
-            crate::domains::agent::host::autonomous_factory::minimax_provider_factory(),
+            crate::pool::minimax_provider_factory(),
         )
         .expect("test AgentPool")
     }
