@@ -1,63 +1,27 @@
-//! Agent domain for TinyIoTHub — loop + host + chat unified (P4-Task22).
+//! Agent domain for TinyIoTHub — host + chat（Task 13 起 loop 运行时迁出）。
 //!
-//! Three internal layers, one crate:
+//! Two internal layers, plus the extracted runtime crate:
 //!
-//! - [`loop_`] — the agent runtime: thing-agent loop, orchestrator, heartbeat
-//!   runner, AI event bus, agent pool contract. Pure domain/runtime code; it
-//!   MUST NOT depend on web/axum (host → loop is one-way).
+//! - `tinyiothub_agent::runtime`（原 `loop_`）— the agent runtime:
+//!   thing-agent loop, orchestrator, heartbeat runner, AI event bus, agent
+//!   pool contract. Pure runtime code; lives in crates/agent (Task 13).
 //! - [`host`] — the HTTP/service host: AgentPool, session/chat services,
-//!   tools, handlers, repos, prompt scaffolding. Consumes `loop_`.
+//!   tools, handlers, repos, prompt scaffolding. Consumes the runtime crate.
 //! - [`chat`] — the chat session proxy plane (OpenClaw-facing handlers).
 //!
 //! ## 设计不变量
-//! - 三层隔离：loop_（纯运行时，不依赖 web/axum）← host（HTTP/工具）+ chat
+//! - 运行时/宿主隔离：crates/agent（纯运行时，不依赖 web/存储实现）← host + chat
 //! - 跨领域调用只许 agent→{event,thing,policy,memory,skills,llm,auth}
+//! - D5：本模块不再做兼容 re-export —— 共享契约类型由消费方直接从
+//!   tinyiothub_agent / tinyiothub_core / tinyiothub_llm / tinyiothub_policy /
+//!   tinyiothub_skills 的真实住所导入。
 
 pub mod chat;
 pub mod host;
-pub mod loop_;
 
 use std::sync::Arc;
 
 use tinyiothub_storage::Database;
-
-// ---------------------------------------------------------------------------
-// Compat re-export surface (formerly `tinyiothub_ai::types` + llm re-exports).
-// External consumers (mcp, tenant, cloud composition) import shared contract
-// types through here so the internal loop_/host split stays an implementation
-// detail.
-// ---------------------------------------------------------------------------
-
-pub use tinyiothub_llm::{prompt, session};
-
-/// Shared types re-exported at crate root for cross-domain use.
-pub mod types {
-    pub use crate::domains::agent::loop_::event::bus::{DropNotifier, LoggingDropNotifier};
-    pub use crate::domains::agent::loop_::event::dlq::{DeadLetterEntry, DeadLetterQueue};
-    pub use crate::domains::agent::loop_::event::types::AiEvent;
-    pub use crate::domains::agent::loop_::heartbeat::metrics::{Metrics, MetricsSnapshot};
-    pub use crate::domains::agent::loop_::heartbeat::types::{HeartbeatSignal, SignalPriority};
-    pub use tinyiothub_core::heartbeat::{TrustConfig, TrustLevel};
-    pub use tinyiothub_llm::prompt::PromptRegistry;
-    pub use tinyiothub_llm::prompt::types::PromptTemplate;
-    pub use tinyiothub_llm::provider::{LlmCallMetadata, LlmProvider, LlmResponse};
-    pub use tinyiothub_agent::memory::knowledge::{KnowledgeEntity, KnowledgeGraph, KnowledgeRelation, NoopKnowledgeGraph};
-    pub use tinyiothub_agent::memory::reflect::{
-        build_reflection_input, build_reflection_prompt, contains_injection, parse_facts, sanitize_input,
-    };
-    pub use tinyiothub_agent::memory::types::MemoryFact;
-    pub use tinyiothub_policy::adapters::{ChatConfirmAdapter, ChatConfirmVerdict, HeartbeatTrustAdapter};
-    pub use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
-    pub use tinyiothub_policy::{
-        NoopPolicyEngine, PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule, evaluate_rules,
-        sanitize_llm_input, target_matches, validate_llm_output,
-    };
-    pub use tinyiothub_skills::registry::{OutputSchema, ToolDescriptor, ToolParameter, ToolRegistry};
-    pub use tinyiothub_skills::trust::{
-        ToolSafety, TrustDecision, classify_tool_safety, evaluate_tool_trust, evaluate_tool_trust_with_safety,
-        risk_for_tool,
-    };
-}
 
 // AppState 削除（G7 FromRef 切片）：handler 萃取 `State<AgentState>`。
 
@@ -73,11 +37,11 @@ pub struct AgentState {
     /// 工作空间访问校验（tenant seam）- files/heartbeat handlers
     pub workspace_access: Arc<crate::state::TenantWorkspaceAccess>,
     /// 用户指令投递入口 - agent_tasks 指令端点（None 时 503）
-    pub directive_sink: Option<Arc<dyn loop_::thing_agent::DirectiveSink>>,
+    pub directive_sink: Option<Arc<dyn tinyiothub_agent::runtime::thing_agent::DirectiveSink>>,
     /// 心跳运行器 - workspace heartbeat 配置/任务/信任 API
-    pub heartbeat_runner: Option<Arc<loop_::heartbeat::runner::HeartbeatRunner>>,
+    pub heartbeat_runner: Option<Arc<tinyiothub_agent::runtime::heartbeat::runner::HeartbeatRunner>>,
     /// AI subsystem orchestrator - agent run ack 的 O11 抑制回写（Task 6）
-    pub orchestrator: Option<Arc<loop_::orchestrator::Orchestrator>>,
+    pub orchestrator: Option<Arc<tinyiothub_agent::runtime::orchestrator::Orchestrator>>,
     /// Agent MemoryService - memory profile compile/weekly digest（Task 6 起
     /// cloud 侧自持，不再经 Orchestrator 中转）
     pub memory_service: Option<Arc<tinyiothub_memory::service::MemoryService>>,

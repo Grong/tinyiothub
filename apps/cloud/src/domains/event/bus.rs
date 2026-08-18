@@ -8,24 +8,7 @@
 
 use tokio::sync::broadcast;
 
-/// Signal broadcast on the [`ThingEventBus`] after a thing event is persisted.
-///
-/// Carried by the event crate (not the ai crate) so the edge points
-/// agent → event: the thing-agent loop consumes this type, the event
-/// pipeline produces it.
-#[derive(Debug, Clone)]
-pub struct ThingEventSignal {
-    pub workspace_id: String,
-    pub thing_id: String,
-    pub event_name: String,
-    /// Monotonic cursor (events.rowid) — NOT the UUID `events.id`, which is
-    /// not orderable.
-    pub event_id: i64,
-    pub level: i32,
-    pub data: serde_json::Value,
-    pub is_unknown: bool,
-    pub actor: String,
-}
+pub use tinyiothub_core::models::event::ThingEventSignal;
 
 pub const THING_EVENT_BUS_CAPACITY: usize = 256;
 

@@ -171,7 +171,7 @@ pub async fn send_message(
     system_prompt: &str,
     chat_handles: &Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
     memory_service: Option<std::sync::Arc<tinyiothub_memory::service::MemoryService>>,
-    event_publisher: Option<std::sync::Arc<crate::domains::agent::loop_::event::bus::AiEventPublisher>>,
+    event_publisher: Option<std::sync::Arc<tinyiothub_agent::runtime::event::bus::AiEventPublisher>>,
     enable_reflection: bool,
     model: &str,
     workspace_id: &str,
@@ -331,12 +331,12 @@ pub async fn send_message(
             && let Some(ms) = memory_service
         {
             let turn_messages = vec![
-                crate::domains::agent::loop_::session::types::ChatTurnMessage {
+                tinyiothub_llm::session::types::ChatTurnMessage {
                     role: "user".into(),
                     content: reflect_message.clone(),
                     ..Default::default()
                 },
-                crate::domains::agent::loop_::session::types::ChatTurnMessage {
+                tinyiothub_llm::session::types::ChatTurnMessage {
                     role: "assistant".into(),
                     content: assistant_text,
                     ..Default::default()
@@ -353,7 +353,7 @@ pub async fn send_message(
                 {
                     tracing::warn!(%ws_id, %aid, "Reflection failed: {}", e);
                     if let Some(ref ep) = ep {
-                        ep.publish(crate::domains::agent::loop_::event::types::AiEvent::ReflectionFailed {
+                        ep.publish(tinyiothub_agent::runtime::event::types::AiEvent::ReflectionFailed {
                             workspace_id: ws_id.clone(),
                             agent_id: aid.clone(),
                             session_key: sk.clone(),

@@ -16,8 +16,9 @@ use super::{canvas::CanvasTool, thing::create_thing_tools};
 use crate::domains::agent::host::config::service as config_service;
 use crate::domains::agent::host::ports::{ExternalToolContext, ExternalToolHandler, external_tool_registry};
 use crate::domains::agent::host::shared::config::{AgentError, AgentRuntimeConfig};
-use crate::domains::agent::loop_::thing_agent::DirectiveSink;
-use crate::domains::agent::loop_::types::{TrustConfig, TrustDecision};
+use tinyiothub_agent::runtime::thing_agent::DirectiveSink;
+use tinyiothub_core::heartbeat::TrustConfig;
+use tinyiothub_skills::trust::TrustDecision;
 
 /// Runtime handles threaded into tool construction (P4-Task22; replaces the
 /// old `Option<Arc<AppState>>` backdoor).
@@ -52,7 +53,7 @@ pub struct IoTToolAdapter {
     input_schema: serde_json::Value,
     handler: Arc<dyn ExternalToolHandler>,
     workspace_id: String,
-    safety: crate::domains::agent::loop_::types::ToolSafety,
+    safety: tinyiothub_skills::trust::ToolSafety,
 }
 
 impl IoTToolAdapter {
@@ -75,7 +76,7 @@ impl IoTToolAdapter {
     }
 
     /// Handler-declared safety — authoritative for trust evaluation.
-    pub fn safety(&self) -> crate::domains::agent::loop_::types::ToolSafety {
+    pub fn safety(&self) -> tinyiothub_skills::trust::ToolSafety {
         self.safety
     }
 }
@@ -130,21 +131,21 @@ impl Tool for IoTToolAdapter {
 // ============================================================================
 
 /// Proxies a `Box<dyn Tool>`, delegating trust evaluation to
-/// `crate::domains::agent::loop_::evaluate_tool_trust`.
+/// `tinyiothub_agent::runtime::evaluate_tool_trust`.
 ///
 /// Trust decision comes from the AI crate — tool metadata (read/destructive)
 /// is authoritative; the TrustConfig only provides overrides.
 pub struct TrustAwareTool {
     inner: Box<dyn Tool>,
     trust_config: Arc<TrustConfig>,
-    safety: crate::domains::agent::loop_::types::ToolSafety,
+    safety: tinyiothub_skills::trust::ToolSafety,
 }
 
 impl TrustAwareTool {
     pub fn new(
         inner: Box<dyn Tool>,
         trust_config: Arc<TrustConfig>,
-        safety: crate::domains::agent::loop_::types::ToolSafety,
+        safety: tinyiothub_skills::trust::ToolSafety,
     ) -> Self {
         Self {
             inner,
@@ -185,11 +186,7 @@ impl Tool for TrustAwareTool {
         // TrustConfig input the adapter's verdict equals
         // evaluate_tool_trust_with_safety (verified by the adapter's
         // parameterized equivalence tests).
-        match crate::domains::agent::loop_::types::HeartbeatTrustAdapter::evaluate(
-            &self.trust_config,
-            tool_name,
-            self.safety,
-        ) {
+        match tinyiothub_policy::adapters::HeartbeatTrustAdapter::evaluate(&self.trust_config, tool_name, self.safety) {
             TrustDecision::Allow => self.inner.execute(args).await,
             TrustDecision::Block { reason } => Ok(ToolResult {
                 success: false,
@@ -232,8 +229,8 @@ async fn load_all_tools_with_safety(
     workspace_id: &str,
     db_pool: Option<SqlitePool>,
     runtime: &ToolRuntimeContext,
-) -> Vec<(Box<dyn Tool>, crate::domains::agent::loop_::types::ToolSafety)> {
-    use crate::domains::agent::loop_::types::{ToolSafety, classify_tool_safety};
+) -> Vec<(Box<dyn Tool>, tinyiothub_skills::trust::ToolSafety)> {
+    use tinyiothub_skills::trust::{ToolSafety, classify_tool_safety};
 
     let mut tools: Vec<(Box<dyn Tool>, ToolSafety)> = Vec::new();
     tools.push((Box::new(CanvasTool), classify_tool_safety("canvas")));
@@ -330,7 +327,7 @@ pub async fn resolve_tools_for_agent(
     runtime: &ToolRuntimeContext,
 ) -> Vec<Box<dyn Tool>> {
     let all_tools = load_all_tools_with_safety(workspace_id, db_pool, runtime).await;
-    let filtered: Vec<(Box<dyn Tool>, crate::domains::agent::loop_::types::ToolSafety)> = all_tools
+    let filtered: Vec<(Box<dyn Tool>, tinyiothub_skills::trust::ToolSafety)> = all_tools
         .into_iter()
         .filter(|(tool, _)| {
             let name = tool.name();
@@ -619,7 +616,7 @@ mod tests {
         let wrapped = TrustAwareTool::new(
             Box::new(StubTool { name: "delete_stub" }),
             Arc::new(TrustConfig::default()),
-            crate::domains::agent::loop_::types::ToolSafety::ReadOnly,
+            tinyiothub_skills::trust::ToolSafety::ReadOnly,
         );
         let result = <TrustAwareTool as Tool>::execute(&wrapped, serde_json::json!({}))
             .await
@@ -637,7 +634,7 @@ mod tests {
         let wrapped = TrustAwareTool::new(
             Box::new(StubTool { name: "get_stub" }),
             Arc::new(TrustConfig::default()),
-            crate::domains::agent::loop_::types::ToolSafety::Destructive,
+            tinyiothub_skills::trust::ToolSafety::Destructive,
         );
         let result = <TrustAwareTool as Tool>::execute(&wrapped, serde_json::json!({}))
             .await
@@ -648,7 +645,7 @@ mod tests {
 
     struct SafetyDeclaringHandler {
         tool_name: &'static str,
-        safety: Option<crate::domains::agent::loop_::types::ToolSafety>,
+        safety: Option<tinyiothub_skills::trust::ToolSafety>,
     }
 
     #[async_trait]
@@ -669,9 +666,9 @@ mod tests {
         ) -> Result<serde_json::Value, String> {
             Ok(serde_json::json!({}))
         }
-        fn safety(&self) -> crate::domains::agent::loop_::types::ToolSafety {
+        fn safety(&self) -> tinyiothub_skills::trust::ToolSafety {
             self.safety
-                .unwrap_or_else(|| crate::domains::agent::loop_::types::classify_tool_safety(self.name()))
+                .unwrap_or_else(|| tinyiothub_skills::trust::classify_tool_safety(self.name()))
         }
     }
 
@@ -679,7 +676,7 @@ mod tests {
     fn test_iot_tool_adapter_carries_handler_declared_safety() {
         let declared = SafetyDeclaringHandler {
             tool_name: "get_thing",
-            safety: Some(crate::domains::agent::loop_::types::ToolSafety::Destructive),
+            safety: Some(tinyiothub_skills::trust::ToolSafety::Destructive),
         };
         let adapter = IoTToolAdapter::new(
             declared.name().to_string(),
@@ -688,10 +685,7 @@ mod tests {
             Arc::new(declared),
             "ws".to_string(),
         );
-        assert_eq!(
-            adapter.safety(),
-            crate::domains::agent::loop_::types::ToolSafety::Destructive
-        );
+        assert_eq!(adapter.safety(), tinyiothub_skills::trust::ToolSafety::Destructive);
 
         let defaulted = SafetyDeclaringHandler {
             tool_name: "get_thing",
@@ -705,9 +699,6 @@ mod tests {
             "ws".to_string(),
         );
         // No declaration → name-pattern classification applies.
-        assert_eq!(
-            adapter.safety(),
-            crate::domains::agent::loop_::types::ToolSafety::ReadOnly
-        );
+        assert_eq!(adapter.safety(), tinyiothub_skills::trust::ToolSafety::ReadOnly);
     }
 }

@@ -31,17 +31,16 @@ mod validate;
 
 use std::sync::Arc;
 
-use crate::domains::agent::loop_::types::ToolSafety;
 use crate::domains::thing::service::ThingService;
 use sqlx::SqlitePool;
+use tinyiothub_skills::trust::ToolSafety;
 use zeroclaw::tools::{Tool, ToolResult};
 
 pub use get::GetThingTool;
 pub use invoke_action::InvokeActionTool;
 pub use list::ListThingsTool;
 pub use pending_action::{
-    PendingAction, PendingActionStore, cleanup_expired_tokens, store_pending_action,
-    take_pending_action,
+    PendingAction, PendingActionStore, cleanup_expired_tokens, store_pending_action, take_pending_action,
 };
 pub use profile::GetThingProfileTool;
 pub use query_events::QueryEventsTool;
@@ -190,7 +189,7 @@ mod tests {
     fn test_invoke_action_rejects_non_device_type_in_schema() {
         // Name-based classification: invoke_action → Write (not Destructive)
         assert_eq!(
-            crate::domains::agent::loop_::types::classify_tool_safety("invoke_action"),
+            tinyiothub_skills::trust::classify_tool_safety("invoke_action"),
             ToolSafety::Write,
             "invoke_action is Write by name pattern; factory overrides to Destructive"
         );
@@ -226,7 +225,7 @@ mod tests {
 
     #[test]
     fn test_classify_tool_safety_by_name() {
-        use crate::domains::agent::loop_::types::classify_tool_safety;
+        use tinyiothub_skills::trust::classify_tool_safety;
 
         // Read-only: starts with list_/get_/read_/search_
         assert_eq!(classify_tool_safety("list_things"), ToolSafety::ReadOnly);

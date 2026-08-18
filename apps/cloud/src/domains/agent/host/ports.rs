@@ -20,7 +20,7 @@ use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 
-use crate::domains::agent::types::{ToolSafety, classify_tool_safety};
+use tinyiothub_skills::trust::{ToolSafety, classify_tool_safety};
 
 // ---------------------------------------------------------------------------
 // External tool registry (MCP seam)
@@ -163,4 +163,31 @@ pub fn create_minimax_provider() -> anyhow::Result<Box<dyn zeroclaw::providers::
     let cfg =
         minimax_settings().ok_or_else(|| anyhow::anyhow!("[minimax] config section is required but not found"))?;
     zeroclaw::providers::create_model_provider_with_url("minimaxi", Some(&cfg.auth_token), Some(&cfg.base_url))
+}
+
+// ---------------------------------------------------------------------------
+// Autonomy policy reader (storage seam)
+// ---------------------------------------------------------------------------
+
+/// `AutonomyPolicyReader` 的 cloud 适配器（Task 13）—— 桥 db crate 的
+/// `PolicyRepository` 到 crates/agent 的读取端口：运行时 crate 不再直接
+/// 依赖存储实现，组合层在此接线。
+pub struct StorageAutonomyPolicyReader {
+    repo: Arc<tinyiothub_storage::policy::PolicyRepository>,
+}
+
+impl StorageAutonomyPolicyReader {
+    pub fn new(repo: Arc<tinyiothub_storage::policy::PolicyRepository>) -> Self {
+        Self { repo }
+    }
+}
+
+#[async_trait]
+impl tinyiothub_agent::runtime::thing_agent::traits::AutonomyPolicyReader for StorageAutonomyPolicyReader {
+    async fn load_autonomy(
+        &self,
+        workspace_id: &str,
+    ) -> anyhow::Result<Option<tinyiothub_core::policy::AutonomyPolicy>> {
+        Ok(self.repo.load_autonomy(workspace_id).await?)
+    }
 }

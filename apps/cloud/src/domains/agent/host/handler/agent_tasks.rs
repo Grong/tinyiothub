@@ -11,19 +11,18 @@
 // AuthHelper::check_role 依赖 user_roles.role_name/is_active 列，
 // 现行 schema 无此二列（查询必失败回落 "user"），不可用。
 
-use crate::domains::agent::loop_::thing_agent::{
-    AgentRunsRepository, EnqueueError, Priority, TriggerSource, WakeSignal,
-};
 use axum::{
     Json, Router,
     extract::{Extension, Path, Query, State},
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
-use tinyiothub_web::security::Claims;
+use tinyiothub_agent::runtime::thing_agent::{EnqueueError, Priority, TriggerSource, WakeSignal};
 use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
+use tinyiothub_storage::agent_runs::AgentRunsRepository;
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::security::Claims;
 
 use crate::domains::agent::AgentState;
 use crate::verify_workspace_access;

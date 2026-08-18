@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use tinyiothub_core::heartbeat::TrustConfig;
 
 use crate::domains::agent::host::agent::{AgentPool, StreamingToolCall};
-use crate::domains::agent::loop_::agent::pool::{AgentPoolLike, AgentRunOutput, ToolCallRecord};
+use tinyiothub_agent::runtime::agent::pool::{AgentPoolLike, AgentRunOutput, ToolCallRecord};
 
 /// Wraps the host `AgentPool` to implement the loop's `AgentPoolLike` trait.
 ///

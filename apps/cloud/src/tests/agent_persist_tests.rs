@@ -16,10 +16,10 @@ use tinyiothub_storage::Database;
 
 use crate::domains::agent::host::persist::{ResyncFailures, resync, run_persistence_loop, run_persistence_subscriber};
 use crate::domains::agent::host::test_utils::seed_test_workspace;
-use crate::domains::agent::loop_::event::bus::AiEventPublisher;
-use crate::domains::agent::loop_::events::{AgentEventBus, AgentEventKind};
-use crate::domains::agent::loop_::runtime::{AgentRuntime, RuntimeDeps};
-use crate::domains::agent::loop_::snapshot::{RestoreSnapshot, WorkspaceHeartbeatState};
+use tinyiothub_agent::runtime::event::bus::AiEventPublisher;
+use tinyiothub_agent::runtime::events::{AgentEventBus, AgentEventKind};
+use tinyiothub_agent::runtime::runtime::{AgentRuntime, RuntimeDeps};
+use tinyiothub_agent::runtime::snapshot::{RestoreSnapshot, WorkspaceHeartbeatState};
 
 // ── fixtures ──────────────────────────────────────────────
 

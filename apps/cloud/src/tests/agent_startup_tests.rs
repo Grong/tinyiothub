@@ -15,7 +15,7 @@ use tinyiothub_storage::heartbeat::{HeartbeatTaskRepository, WorkspaceHeartbeatC
 
 use crate::bootstrap::{build_agent_snapshot, reconcile_zombie_runs};
 use crate::domains::agent::host::test_utils::seed_test_workspace;
-use crate::domains::agent::loop_::runtime::{AgentRuntime, RuntimeDeps};
+use tinyiothub_agent::runtime::runtime::{AgentRuntime, RuntimeDeps};
 
 // ── fixtures ──────────────────────────────────────────────
 
@@ -130,7 +130,11 @@ async fn startup_keeps_completed_and_registry_owned_runs_untouched() {
 
     let _runtime = bootstrap_test_runtime(&db).await;
 
-    assert_eq!(run_status(&pool, "owned").await, "running", "registry 认领的 run 不判僵尸");
+    assert_eq!(
+        run_status(&pool, "owned").await,
+        "running",
+        "registry 认领的 run 不判僵尸"
+    );
     assert_eq!(run_status(&pool, "done").await, "completed", "completed 行不动");
     assert_eq!(run_status(&pool, "zombie").await, "interrupted");
 }
@@ -143,12 +147,21 @@ async fn build_snapshot_prewarms_heartbeat_state_and_recent_runs_oldest_first() 
     seed_test_workspace(&pool, "tenant1", "ws1").await;
 
     let task_repo = HeartbeatTaskRepository::new(pool.clone());
-    task_repo.insert("ws1", "P1", "巡检设备在线率").await.expect("insert task");
+    task_repo
+        .insert("ws1", "P1", "巡检设备在线率")
+        .await
+        .expect("insert task");
     let mut trust = TrustConfig::default();
     trust.max_auto_actions_per_tick = 7;
     task_repo.save_trust_config("ws1", &trust).await.expect("save trust");
     task_repo
-        .save_heartbeat_config("ws1", &WorkspaceHeartbeatConfig { enabled: true, interval_minutes: 45 })
+        .save_heartbeat_config(
+            "ws1",
+            &WorkspaceHeartbeatConfig {
+                enabled: true,
+                interval_minutes: 45,
+            },
+        )
         .await
         .expect("save heartbeat config");
 

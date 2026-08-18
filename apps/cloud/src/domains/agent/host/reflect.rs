@@ -7,7 +7,7 @@
 // Callers should use MemoryService directly via AgentState.
 
 /// Re-export ChatTurnMessage from AI crate for backward compatibility.
-pub use crate::domains::agent::loop_::session::types::ChatTurnMessage;
+pub use tinyiothub_llm::session::types::ChatTurnMessage;
 
 #[cfg(test)]
 mod tests {

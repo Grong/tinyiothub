@@ -91,8 +91,8 @@ pub struct AgentPool {
     #[allow(dead_code)]
     pub(crate) agent_settings: tinyiothub_core::config::AgentSettings,
     pub chat_handles: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
-    pub trust_configs: DashMap<String, crate::domains::agent::loop_::types::TrustConfig>,
-    pub event_publisher: tokio::sync::RwLock<Option<Arc<crate::domains::agent::loop_::event::bus::AiEventPublisher>>>,
+    pub trust_configs: DashMap<String, tinyiothub_core::heartbeat::TrustConfig>,
+    pub event_publisher: tokio::sync::RwLock<Option<Arc<tinyiothub_agent::runtime::event::bus::AiEventPublisher>>>,
     /// Builds a fresh model provider per agent (injected by the composition
     /// layer — providers are per-agent in zeroclaw).
     provider_factory: super::super::autonomous_factory::ProviderFactory,
@@ -168,10 +168,7 @@ impl AgentPool {
         *guard = ctx;
     }
 
-    pub async fn set_event_publisher(
-        &self,
-        publisher: Arc<crate::domains::agent::loop_::event::bus::AiEventPublisher>,
-    ) {
+    pub async fn set_event_publisher(&self, publisher: Arc<tinyiothub_agent::runtime::event::bus::AiEventPublisher>) {
         let mut guard = self.event_publisher.write().await;
         *guard = Some(publisher);
     }
@@ -187,12 +184,12 @@ impl AgentPool {
         Arc::clone(&self.observer)
     }
 
-    pub fn set_trust_config(&self, workspace_id: &str, config: crate::domains::agent::loop_::types::TrustConfig) {
+    pub fn set_trust_config(&self, workspace_id: &str, config: tinyiothub_core::heartbeat::TrustConfig) {
         self.trust_configs.insert(workspace_id.to_string(), config);
     }
 
     /// Trust config for a workspace (cloud resolves tools with it).
-    pub fn trust_config(&self, workspace_id: &str) -> Option<Arc<crate::domains::agent::loop_::types::TrustConfig>> {
+    pub fn trust_config(&self, workspace_id: &str) -> Option<Arc<tinyiothub_core::heartbeat::TrustConfig>> {
         self.trust_configs
             .get(workspace_id)
             .map(|e| Arc::new(e.value().clone()))

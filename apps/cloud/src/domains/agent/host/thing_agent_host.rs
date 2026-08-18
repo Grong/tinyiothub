@@ -13,8 +13,8 @@
 
 use std::sync::Arc;
 
-use crate::domains::agent::loop_::thing_agent::{ThingAgentHost, ThingEventSignal};
 use sqlx::Row;
+use tinyiothub_agent::runtime::thing_agent::{ThingAgentHost, ThingEventSignal};
 
 use crate::domains::event::bus::ThingEventBus;
 

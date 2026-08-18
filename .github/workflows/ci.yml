@@ -162,19 +162,6 @@ jobs:
           fi
           echo "✅ Agent dependency tree guard passed"
 
-      - name: Agent Loop Purity Guard (G9, legacy loop_ path)
-        run: |
-          echo "=== Checking legacy agent/loop_ carries no axum (interim guard) ==="
-          # 过渡期守卫：loop_ 代码仍驻留 apps/cloud，在真正搬入 crates/agent
-          # （Task 13/14）之前，旧路径的 axum 禁令必须继续生效。
-          # TODO(Task 13/14): loop_ 内容迁入 crates/agent 后删除本 step。
-          if grep -rEn --include='*.rs' 'axum' apps/cloud/src/domains/agent/loop_/; then
-            echo "❌ DEPENDENCY VIOLATION: domains/agent/loop_ is the pure runtime plane and must not reference axum"
-            echo "   ✅ Web/HTTP concerns belong in domains/agent/host (loop_ ← host one-way invariant)"
-            exit 1
-          fi
-          echo "✅ Legacy loop purity guard passed"
-
   # -----------------------------------------------------------------------------
   # 前端检查
   # -----------------------------------------------------------------------------

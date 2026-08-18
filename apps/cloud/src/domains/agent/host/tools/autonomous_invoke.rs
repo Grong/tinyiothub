@@ -33,11 +33,11 @@
 
 use std::sync::Arc;
 
-use crate::domains::agent::loop_::thing_agent::RunContextInner;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
+use tinyiothub_agent::runtime::thing_agent::RunContextInner;
 use tinyiothub_core::models::event::EventLevel;
 use tinyiothub_policy::autonomy::{GateVerdict, gate_check};
 use tinyiothub_storage::policy::PolicyRepository;
@@ -371,8 +371,8 @@ impl Tool for AutonomousInvokeActionTool {
 
 #[cfg(test)]
 mod tests {
-    use crate::domains::agent::loop_::thing_agent::RunContextInner;
     use crate::domains::thing::service::ThingService;
+    use tinyiothub_agent::runtime::thing_agent::RunContextInner;
     use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
     use zeroclaw::tools::Tool;
 

@@ -6,16 +6,14 @@
 
 use std::sync::Arc;
 
-use crate::domains::agent::{
-    host::directive_sink::StubDirectiveSink,
-    loop_::thing_agent::{EnqueueError, TriggerSource},
-};
+use crate::domains::agent::host::directive_sink::StubDirectiveSink;
 use axum::{
     Router,
     body::Body,
     http::{Request, StatusCode},
 };
 use serde_json::{Value, json};
+use tinyiothub_agent::runtime::thing_agent::{EnqueueError, TriggerSource};
 use tower::ServiceExt;
 
 use crate::test_utils::{

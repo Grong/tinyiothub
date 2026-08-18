@@ -53,7 +53,7 @@ impl ExternalToolHandler for BridgedToolHandler {
         self.inner.execute(args).await.map_err(|e| e.to_string())
     }
 
-    fn safety(&self) -> crate::domains::agent::types::ToolSafety {
+    fn safety(&self) -> tinyiothub_skills::trust::ToolSafety {
         self.inner.safety()
     }
 }

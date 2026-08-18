@@ -12,14 +12,14 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::domains::agent::loop_::{
+use chrono::Utc;
+use tinyiothub_agent::runtime::{
     heartbeat::types::{HeartbeatResult, HeartbeatStatus},
     orchestrator::callbacks::HeartbeatBridge,
-    thing_agent::{DirectiveSink, EnqueueError, Priority, TriggerSource, WakeSignal},
     thing_agent::registry::RunRegistry,
     thing_agent::types::Outcome,
+    thing_agent::{DirectiveSink, EnqueueError, Priority, TriggerSource, WakeSignal},
 };
-use chrono::Utc;
 use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 
 const WS: &str = "ws_bridge";
@@ -103,7 +103,14 @@ async fn outcome_matrix_against_in_memory_dedup() {
     ] {
         let registry = RunRegistry::new();
         let key = format!("{tool}:dev-1");
-        record_run(&registry, &format!("run_{tool}"), outcome, verified, &key, chrono::Duration::hours(1));
+        record_run(
+            &registry,
+            &format!("run_{tool}"),
+            outcome,
+            verified,
+            &key,
+            chrono::Duration::hours(1),
+        );
         assert_eq!(
             dispatched_count(registry, tool).await,
             usize::from(expect_dispatch),
@@ -123,7 +130,14 @@ async fn acted_unverified_retry_only_once_in_memory() {
 
     let registry = RunRegistry::new();
     record_run(&registry, "r1", Outcome::Acted, false, key, chrono::Duration::hours(2));
-    record_run(&registry, "r2", Outcome::Acted, false, key, chrono::Duration::minutes(30));
+    record_run(
+        &registry,
+        "r2",
+        Outcome::Acted,
+        false,
+        key,
+        chrono::Duration::minutes(30),
+    );
     assert_eq!(
         dispatched_count(registry, "set_hvac").await,
         0,
@@ -135,7 +149,14 @@ async fn acted_unverified_retry_only_once_in_memory() {
 #[tokio::test]
 async fn recurrence_beyond_6h_dispatches_in_memory() {
     let registry = RunRegistry::new();
-    record_run(&registry, "old", Outcome::Acted, true, "set_hvac:dev-1", chrono::Duration::hours(7));
+    record_run(
+        &registry,
+        "old",
+        Outcome::Acted,
+        true,
+        "set_hvac:dev-1",
+        chrono::Duration::hours(7),
+    );
     assert_eq!(dispatched_count(registry, "set_hvac").await, 1);
 }
 
@@ -144,17 +165,38 @@ async fn recurrence_beyond_6h_dispatches_in_memory() {
 #[tokio::test]
 async fn ack_suppression_windows_in_memory() {
     let registry = RunRegistry::new();
-    record_run(&registry, "ack_1h", Outcome::Acted, true, "k1:dev-1", chrono::Duration::hours(1));
+    record_run(
+        &registry,
+        "ack_1h",
+        Outcome::Acted,
+        true,
+        "k1:dev-1",
+        chrono::Duration::hours(1),
+    );
     registry.mark_problem_acked(WS, "k1:dev-1", "ack_1h");
     assert_eq!(dispatched_count(registry, "k1").await, 0, "acked within 6h suppressed");
 
     let registry = RunRegistry::new();
-    record_run(&registry, "ack_3d", Outcome::Acted, true, "k2:dev-1", chrono::Duration::days(3));
+    record_run(
+        &registry,
+        "ack_3d",
+        Outcome::Acted,
+        true,
+        "k2:dev-1",
+        chrono::Duration::days(3),
+    );
     registry.mark_problem_acked(WS, "k2:dev-1", "ack_3d");
     assert_eq!(dispatched_count(registry, "k2").await, 0, "acked within 7d suppressed");
 
     let registry = RunRegistry::new();
-    record_run(&registry, "ack_8d", Outcome::Acted, true, "k3:dev-1", chrono::Duration::days(8));
+    record_run(
+        &registry,
+        "ack_8d",
+        Outcome::Acted,
+        true,
+        "k3:dev-1",
+        chrono::Duration::days(8),
+    );
     registry.mark_problem_acked(WS, "k3:dev-1", "ack_8d");
     assert_eq!(
         dispatched_count(registry, "k3").await,

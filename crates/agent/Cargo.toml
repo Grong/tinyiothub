@@ -27,13 +27,23 @@ anyhow = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
+regex = { workspace = true }
+parking_lot = { workspace = true }
+uuid = { workspace = true }
+tokio-util = { workspace = true }
 
 # ZeroClaw agent runtime contract（与 apps/cloud 同源，Task 14 完成后从 cloud 移除）
 zeroclaw = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched", package = "zeroclawlabs", features = ["agent-runtime"] }
 zeroclaw-api = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched" }
 
+[features]
+# 测试夹具出口（stub RuntimeDeps 等）—— apps/cloud 集成测试经
+# dev-dependency 开启；正常构建不包含。
+testing = []
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

@@ -29,17 +29,17 @@ use tracing::{debug, error, warn};
 
 use tinyiothub_core::agent_runs::RunReport;
 use tinyiothub_core::heartbeat::HeartbeatResult;
+use tinyiothub_storage::Database;
 use tinyiothub_storage::agent_runs::AgentRunsRepository;
 use tinyiothub_storage::heartbeat::HeartbeatTaskRepository;
-use tinyiothub_storage::Database;
 
 use super::dlq_repo::SqliteDeadLetterQueue;
-use crate::domains::agent::loop_::event::bus::AiEventPublisher;
-use crate::domains::agent::loop_::event::dlq::DeadLetterQueue;
-use crate::domains::agent::loop_::event::types::AiEvent;
-use crate::domains::agent::loop_::events::{AgentEvent, AgentEventKind};
-use crate::domains::agent::loop_::runtime::AgentRuntime;
-use crate::domains::agent::loop_::snapshot::RestoreSnapshot;
+use tinyiothub_agent::runtime::event::bus::AiEventPublisher;
+use tinyiothub_agent::runtime::event::dlq::DeadLetterQueue;
+use tinyiothub_agent::runtime::event::types::AiEvent;
+use tinyiothub_agent::runtime::events::{AgentEvent, AgentEventKind};
+use tinyiothub_agent::runtime::runtime::AgentRuntime;
+use tinyiothub_agent::runtime::snapshot::RestoreSnapshot;
 
 /// 周期全量对账间隔（生产）。
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(300);
@@ -94,10 +94,7 @@ pub async fn run_persistence_loop(
 ) {
     // 首次 tick 推迟一个完整周期：启动对账已由 Task 9 启动编排（restore
     // 预热 + 僵尸 reconcile）覆盖，避免与 restore 竞态。
-    let mut interval = tokio::time::interval_at(
-        tokio::time::Instant::now() + reconcile_interval,
-        reconcile_interval,
-    );
+    let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + reconcile_interval, reconcile_interval);
     let mut resync_failures = ResyncFailures::default();
 
     loop {
@@ -126,7 +123,12 @@ pub async fn run_persistence_loop(
 
 /// 单事件投影。所有错误就地处理（log / 重试 / DLQ），不向上传播——
 /// subscriber 永不因单个事件失败而退出。
-async fn project(event: &AgentEvent, pool: &SqlitePool, publisher: &Arc<AiEventPublisher>, shutdown: &CancellationToken) {
+async fn project(
+    event: &AgentEvent,
+    pool: &SqlitePool,
+    publisher: &Arc<AiEventPublisher>,
+    shutdown: &CancellationToken,
+) {
     match &event.kind {
         AgentEventKind::RunRecorded {
             report,
@@ -166,7 +168,12 @@ async fn project(event: &AgentEvent, pool: &SqlitePool, publisher: &Arc<AiEventP
         AgentEventKind::DlqEntryAdded { entry } => {
             let dlq = SqliteDeadLetterQueue::new(pool.clone());
             if let Err(e) = dlq
-                .enqueue(&entry.workspace_id, &entry.event_type, &entry.payload_json, &entry.failure_reason)
+                .enqueue(
+                    &entry.workspace_id,
+                    &entry.event_type,
+                    &entry.payload_json,
+                    &entry.failure_reason,
+                )
                 .await
             {
                 error!(workspace_id = %entry.workspace_id, error = %e, "DLQ entry projection failed");

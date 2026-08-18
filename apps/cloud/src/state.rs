@@ -113,10 +113,10 @@ pub struct AppState {
     pub tag_service: Arc<crate::domains::thing::tag::TagService>,
 
     /// AI subsystem orchestrator (set during async startup)
-    pub orchestrator: Option<Arc<crate::domains::agent::loop_::orchestrator::Orchestrator>>,
+    pub orchestrator: Option<Arc<tinyiothub_agent::runtime::orchestrator::Orchestrator>>,
 
     /// AI subsystem heartbeat runner (set during async startup)
-    pub heartbeat_runner: Option<Arc<crate::domains::agent::loop_::heartbeat::runner::HeartbeatRunner>>,
+    pub heartbeat_runner: Option<Arc<tinyiothub_agent::runtime::heartbeat::runner::HeartbeatRunner>>,
 
     /// Agent MemoryService（set during async startup）—— Task 6 起由 cloud 侧
     /// 自持（memory profile compile / weekly digest handler），不再经
@@ -156,7 +156,7 @@ pub struct AppState {
     /// 用户指令投递入口（T14）—— HTTP 端点 / chat 工具经此向
     /// thing-agent loop 投递 WakeSignal。T15 用 ThingAgentManager 实现
     /// 并注入；None 时指令入口返回 503。
-    pub directive_sink: Option<Arc<dyn crate::domains::agent::loop_::thing_agent::DirectiveSink>>,
+    pub directive_sink: Option<Arc<dyn tinyiothub_agent::runtime::thing_agent::DirectiveSink>>,
 
     /// Agent 记忆存储 - 持久化 agent 记忆到 SQLite
     pub memory_store: Arc<MemoryStore>,
@@ -337,7 +337,10 @@ impl AppState {
         let secure_event_service = OnceCell::new();
 
         // Redis 客户端 - 可选服务，依赖配置
-        let redis = settings.redis.as_ref().and_then(|config| RedisClient::new(&config.url).ok());
+        let redis = settings
+            .redis
+            .as_ref()
+            .and_then(|config| RedisClient::new(&config.url).ok());
 
         // Agent Runtime - 使用 zeroclaw 内置的 OpenAiCompatibleProvider (MiniMax)
         // Validate minimax config exists (used by get_or_create_agent at provider creation time)
@@ -590,7 +593,7 @@ impl AppState {
     }
 
     /// 注入用户指令投递入口（T15 闭环接线调用）
-    pub fn set_directive_sink(&mut self, sink: Arc<dyn crate::domains::agent::loop_::thing_agent::DirectiveSink>) {
+    pub fn set_directive_sink(&mut self, sink: Arc<dyn tinyiothub_agent::runtime::thing_agent::DirectiveSink>) {
         self.directive_sink = Some(sink);
     }
 

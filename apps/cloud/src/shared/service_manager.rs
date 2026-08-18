@@ -34,13 +34,13 @@ pub struct ServiceManager {
     cron_scheduler: Arc<RwLock<Option<tinyiothub_scheduler::CronSchedulerService>>>,
 
     /// AI orchestrator (set during start_all)
-    orchestrator: Option<Arc<crate::domains::agent::loop_::orchestrator::Orchestrator>>,
+    orchestrator: Option<Arc<tinyiothub_agent::runtime::orchestrator::Orchestrator>>,
 
     /// AI heartbeat runner (set during start_all)
-    heartbeat_runner: Option<Arc<crate::domains::agent::loop_::heartbeat::runner::HeartbeatRunner>>,
+    heartbeat_runner: Option<Arc<tinyiothub_agent::runtime::heartbeat::runner::HeartbeatRunner>>,
 
     /// Shared AI event publisher (set during start_all, drained on shutdown)
-    event_publisher: Option<Arc<crate::domains::agent::loop_::event::bus::AiEventPublisher>>,
+    event_publisher: Option<Arc<tinyiothub_agent::runtime::event::bus::AiEventPublisher>>,
 
     /// Agent 持久化订阅者关停令牌（Task 9）：cancel 后主循环退出、
     /// 心跳重试任务中止；句柄在 service_handles 中随关停排空。
@@ -74,7 +74,9 @@ impl ServiceManager {
 
         // 1. 创建并启动数据服务器（device_cache 经 D15 端口适配器注入）
         let data_server = Arc::new(DataServer::new(
-            Arc::new(crate::shared::runtime_ports::DeviceCacheAdapter(app_state.device_cache.clone())),
+            Arc::new(crate::shared::runtime_ports::DeviceCacheAdapter(
+                app_state.device_cache.clone(),
+            )),
             app_state.event_bus.clone(),
         ));
 
@@ -154,13 +156,13 @@ impl ServiceManager {
                 app_state.database.pool().clone(),
             ));
 
-            let heartbeat_config = crate::domains::agent::loop_::heartbeat::types::HeartbeatConfig {
+            let heartbeat_config = tinyiothub_agent::runtime::heartbeat::types::HeartbeatConfig {
                 enabled: true,
                 interval_minutes: 15,
             };
             let event_publisher = Arc::new(
-                crate::domains::agent::loop_::event::bus::AiEventPublisher::new(app_state.event_bus.clone())
-                    .with_drop_notifier(Arc::new(crate::domains::agent::loop_::event::bus::LoggingDropNotifier)),
+                tinyiothub_agent::runtime::event::bus::AiEventPublisher::new(app_state.event_bus.clone())
+                    .with_drop_notifier(Arc::new(tinyiothub_agent::runtime::event::bus::LoggingDropNotifier)),
             );
 
             // 遗留文件任务 → DB 一次性迁移必须先于快照装配，否则迁移落库
@@ -192,13 +194,13 @@ impl ServiceManager {
             // 2. bus 先建并经 RuntimeDeps 注入 restore（Task 3 评审指针
             //    选项 a）；持久化 receiver 在 restore 之前取得 —— restore
             //    期间及之后的事件不丢。
-            let agent_events = Arc::new(crate::domains::agent::loop_::events::AgentEventBus::new(256));
+            let agent_events = Arc::new(tinyiothub_agent::runtime::events::AgentEventBus::new(256));
             let persist_rx = agent_events.subscribe();
             let pool = app_state.database.pool().clone();
             let policy_repo = Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone()));
-            let runtime = Arc::new(crate::domains::agent::loop_::runtime::AgentRuntime::restore(
+            let runtime = Arc::new(tinyiothub_agent::runtime::runtime::AgentRuntime::restore(
                 snapshot,
-                crate::domains::agent::loop_::runtime::RuntimeDeps {
+                tinyiothub_agent::runtime::runtime::RuntimeDeps {
                     event_publisher: event_publisher.clone(),
                     heartbeat_config,
                     thing_agent_host: Arc::new(
@@ -207,7 +209,9 @@ impl ServiceManager {
                             app_state.thing_event_bus.clone(),
                         ),
                     ),
-                    policy_repo: policy_repo.clone(),
+                    policy_repo: Arc::new(crate::domains::agent::host::ports::StorageAutonomyPolicyReader::new(
+                        policy_repo.clone(),
+                    )),
                     agent_provider: Arc::new(
                         crate::domains::agent::host::autonomous_factory::AutonomousAgentFactory::new(
                             pool.clone(),
@@ -227,12 +231,9 @@ impl ServiceManager {
                             },
                         ),
                     ),
-                    thing_agent_config:
-                        crate::domains::agent::loop_::thing_agent::ThingAgentManagerConfig::default(),
+                    thing_agent_config: tinyiothub_agent::runtime::thing_agent::ThingAgentManagerConfig::default(),
                     event_bus: app_state.event_bus.clone(),
-                    drop_notifier: Some(Arc::new(
-                        crate::domains::agent::loop_::event::bus::LoggingDropNotifier,
-                    )),
+                    drop_notifier: Some(Arc::new(tinyiothub_agent::runtime::event::bus::LoggingDropNotifier)),
                     agent_events,
                 },
             ));
@@ -279,8 +280,7 @@ impl ServiceManager {
             // 在发布事件前同步推入 runner 内存真源（D11-⑤：DB 已先写），
             // 随后的 heartbeat start 才能读到任务集。
             app_state.workspace_service.set_agent_hooks(Arc::new(
-                crate::domains::agent::host::agent_hooks::AgentHooksImpl::new()
-                    .with_runtime(runtime.clone()),
+                crate::domains::agent::host::agent_hooks::AgentHooksImpl::new().with_runtime(runtime.clone()),
             ));
 
             // Wire agent pool via adapter

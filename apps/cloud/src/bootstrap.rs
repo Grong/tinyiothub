@@ -178,10 +178,10 @@ use tinyiothub_storage::agent_runs::AgentRunsRepository;
 use tinyiothub_storage::heartbeat::HeartbeatTaskRepository;
 use tinyiothub_storage::workspace::WorkspaceRepository;
 
-use crate::domains::agent::loop_::heartbeat::types::HeartbeatConfig;
-use crate::domains::agent::loop_::runtime::AgentRuntime;
-use crate::domains::agent::loop_::snapshot::{ProblemMetaRow, RestoreSnapshot, WorkspaceHeartbeatState};
-use crate::domains::agent::loop_::thing_agent::registry::COMPLETED_CAPACITY;
+use tinyiothub_agent::runtime::heartbeat::types::HeartbeatConfig;
+use tinyiothub_agent::runtime::runtime::AgentRuntime;
+use tinyiothub_agent::runtime::snapshot::{ProblemMetaRow, RestoreSnapshot, WorkspaceHeartbeatState};
+use tinyiothub_agent::runtime::thing_agent::registry::COMPLETED_CAPACITY;
 
 /// 启动顺序第 1 步：从 DB 装配 AgentRuntime 恢复快照。
 ///
@@ -212,13 +212,10 @@ pub async fn build_agent_snapshot(db: &Database) -> RestoreSnapshot {
     let mut heartbeat = Vec::with_capacity(ws_ids.len());
     let mut recent_runs = Vec::new();
     for ws_id in &ws_ids {
-        let tasks = task_repo
-            .list_by_workspace(ws_id)
-            .await
-            .unwrap_or_else(|e| {
-                warn!(workspace_id = %ws_id, error = %e, "agent snapshot: load heartbeat tasks failed");
-                vec![]
-            });
+        let tasks = task_repo.list_by_workspace(ws_id).await.unwrap_or_else(|e| {
+            warn!(workspace_id = %ws_id, error = %e, "agent snapshot: load heartbeat tasks failed");
+            vec![]
+        });
         let trust_config = task_repo
             .load_trust_config(ws_id)
             .await

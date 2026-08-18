@@ -1,7 +1,7 @@
 // Heartbeat module — per-workspace HEARTBEAT.md task parsing utilities.
 //
 // The heartbeat_loop and HeartbeatManager have been replaced by
-// crate::domains::agent::loop_::heartbeat (HeartbeatRunner + heartbeat_loop).
+// tinyiothub_agent::runtime::heartbeat (HeartbeatRunner + heartbeat_loop).
 
 use serde::{Deserialize, Serialize};
 
@@ -127,9 +127,9 @@ pub async fn migrate_file_tasks_to_db(
     if tasks.is_empty() {
         return Ok(false);
     }
-    let new_tasks: Vec<crate::domains::agent::loop_::heartbeat::types::NewHeartbeatTask> = tasks
+    let new_tasks: Vec<tinyiothub_agent::runtime::heartbeat::types::NewHeartbeatTask> = tasks
         .into_iter()
-        .map(|t| crate::domains::agent::loop_::heartbeat::types::NewHeartbeatTask {
+        .map(|t| tinyiothub_agent::runtime::heartbeat::types::NewHeartbeatTask {
             priority: t.priority,
             text: t.text,
             paused: t.paused,

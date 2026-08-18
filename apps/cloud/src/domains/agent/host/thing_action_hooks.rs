@@ -8,9 +8,9 @@
 //! The adapter owns construction of the [`SqlitePolicyEngine`] — callers
 //! only hand it a connection pool.
 
-use crate::domains::agent::loop_::types::{ChatConfirmAdapter, ChatConfirmVerdict};
 use crate::domains::thing::hooks::{PendingThingAction, ThingActionHooks, ThingConfirmVerdict};
 use sqlx::SqlitePool;
+use tinyiothub_policy::adapters::{ChatConfirmAdapter, ChatConfirmVerdict};
 
 use crate::domains::agent::host::{
     policy_engine::SqlitePolicyEngine,

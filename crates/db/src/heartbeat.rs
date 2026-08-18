@@ -389,6 +389,32 @@ mod tests {
         pool
     }
 
+    #[test]
+    fn workspace_config_roundtrips_json() {
+        let cfg = WorkspaceHeartbeatConfig {
+            enabled: true,
+            interval_minutes: 30,
+        };
+        let json = cfg.to_db_json();
+        let loaded = WorkspaceHeartbeatConfig::from_db_json(Some(&json)).expect("parse");
+        assert_eq!(loaded.interval_minutes, 30);
+        assert!(loaded.enabled);
+    }
+
+    #[test]
+    fn workspace_config_empty_is_none() {
+        assert!(WorkspaceHeartbeatConfig::from_db_json(Some("")).is_none());
+        assert!(WorkspaceHeartbeatConfig::from_db_json(Some("  ")).is_none());
+        assert!(WorkspaceHeartbeatConfig::from_db_json(None).is_none());
+    }
+
+    #[test]
+    fn workspace_config_rejects_sub_minimum_interval() {
+        use tinyiothub_core::heartbeat::MIN_HEARTBEAT_INTERVAL_MINUTES;
+        assert!(WorkspaceHeartbeatConfig::validated(true, MIN_HEARTBEAT_INTERVAL_MINUTES - 1).is_err());
+        assert!(WorkspaceHeartbeatConfig::validated(true, MIN_HEARTBEAT_INTERVAL_MINUTES).is_ok());
+    }
+
     #[tokio::test]
     pub async fn replace_all_replaces_task_set() {
         let pool = test_pool().await;

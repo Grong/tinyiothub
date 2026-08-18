@@ -113,8 +113,8 @@ pub trait ToolHandler: Send + Sync {
     /// Declared safety classification — authoritative for trust evaluation.
     /// Defaults to name-pattern classification; override when the tool's
     /// actual behavior doesn't match its name.
-    fn safety(&self) -> crate::domains::agent::loop_::types::ToolSafety {
-        crate::domains::agent::loop_::types::classify_tool_safety(self.name())
+    fn safety(&self) -> tinyiothub_skills::trust::ToolSafety {
+        tinyiothub_skills::trust::classify_tool_safety(self.name())
     }
 }
 

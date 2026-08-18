@@ -8,16 +8,16 @@
 //   PUT  /tasks — replace heartbeat tasks (DB)
 
 use crate::domains::agent::host::heartbeat;
-use crate::domains::agent::loop_::heartbeat::types::NewHeartbeatTask;
 use crate::verify_workspace_access_port;
 use axum::{
     Json,
     extract::{Extension, Path, State},
 };
 use serde::{Deserialize, Serialize};
-use tinyiothub_web::security::Claims;
+use tinyiothub_agent::runtime::heartbeat::types::NewHeartbeatTask;
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::security::Claims;
 
 use crate::domains::agent::AgentState;
 use crate::domains::agent::host::shared::paths;
@@ -173,11 +173,10 @@ pub async fn update_config(
     let enabled = req.enabled.unwrap_or(is_active);
     let interval = req.interval_minutes.unwrap_or(current_interval);
 
-    let config =
-        match crate::domains::agent::loop_::heartbeat::types::WorkspaceHeartbeatConfig::validated(enabled, interval) {
-            Ok(c) => c,
-            Err(e) => return ApiResponseBuilder::error(&e),
-        };
+    let config = match tinyiothub_storage::heartbeat::WorkspaceHeartbeatConfig::validated(enabled, interval) {
+        Ok(c) => c,
+        Err(e) => return ApiResponseBuilder::error(&e),
+    };
     // D11-⑤ 写序：先写 DB，成功后更新 runner 内存（Task 5 起 runner 不触库）。
     let repo = tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(state.db_pool());
     if let Err(e) = repo.save_heartbeat_config(&workspace_id, &config).await {

@@ -109,6 +109,7 @@ libloading = "0.8"
 
 # Utilities
 uuid = { version = "1.6", features = ["v4", "serde"] }
+tokio-util = "0.7"
 async-trait = "0.1"
 anyhow = "1.0"
 thiserror = "1.0"

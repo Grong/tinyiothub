@@ -4,7 +4,7 @@
 
 use std::sync::Mutex;
 
-use crate::domains::agent::loop_::thing_agent::{DirectiveSink, EnqueueError, WakeSignal};
+use tinyiothub_agent::runtime::thing_agent::{DirectiveSink, EnqueueError, WakeSignal};
 
 #[derive(Default)]
 pub struct StubDirectiveSink {

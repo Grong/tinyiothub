@@ -10,9 +10,9 @@
 
 use std::sync::Arc;
 
-use crate::domains::agent::loop_::thing_agent::{DirectiveSink, EnqueueError, Priority, TriggerSource, WakeSignal};
 use async_trait::async_trait;
 use serde_json::{Value, json};
+use tinyiothub_agent::runtime::thing_agent::{DirectiveSink, EnqueueError, Priority, TriggerSource, WakeSignal};
 use zeroclaw::tools::{Tool, ToolResult};
 use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
@@ -117,7 +117,7 @@ impl Tool for DispatchThingTaskTool {
 
 #[cfg(test)]
 mod tests {
-    use crate::domains::agent::loop_::thing_agent::EnqueueError;
+    use tinyiothub_agent::runtime::thing_agent::EnqueueError;
 
     use super::*;
     use crate::domains::agent::host::directive_sink::StubDirectiveSink;

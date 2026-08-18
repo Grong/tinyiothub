@@ -33,24 +33,20 @@ use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
 use tinyiothub_storage::Database;
 
 use crate::bootstrap::{build_agent_snapshot, reconcile_zombie_runs};
-use crate::domains::agent::{
-    host::{
-        autonomous_factory::{AutonomousAgentFactory, ProviderFactory},
-        persist::run_persistence_subscriber,
-        thing_agent_host::CloudThingAgentHost,
-        tools::service::ToolRuntimeContext,
-    },
-    loop_::{
-        event::bus::AiEventPublisher,
-        events::{AgentEventBus, AgentEventKind},
-        heartbeat::types::HeartbeatConfig,
-        runtime::{AgentRuntime, RuntimeDeps},
-        thing_agent::{DirectiveSink, Priority, ThingAgentManagerConfig, TriggerSource, WakeSignal},
-    },
+use crate::domains::agent::host::{
+    autonomous_factory::{AutonomousAgentFactory, ProviderFactory},
+    persist::run_persistence_subscriber,
+    thing_agent_host::CloudThingAgentHost,
+    tools::service::ToolRuntimeContext,
 };
 use crate::domains::event::{bus::ThingEventBus, router::ThrottleState};
-use crate::test_utils::{
-    auth_header, create_test_token, response_parts, seed_test_workspace, test_app_state_on_pool,
+use crate::test_utils::{auth_header, create_test_token, response_parts, seed_test_workspace, test_app_state_on_pool};
+use tinyiothub_agent::runtime::{
+    event::bus::AiEventPublisher,
+    events::{AgentEventBus, AgentEventKind},
+    heartbeat::types::HeartbeatConfig,
+    runtime::{AgentRuntime, RuntimeDeps},
+    thing_agent::{DirectiveSink, Priority, ThingAgentManagerConfig, TriggerSource, WakeSignal},
 };
 
 const WS: &str = "ws-e2e";
@@ -145,11 +141,13 @@ async fn seed_scene(pool: &sqlx::SqlitePool) {
         .execute(pool)
         .await
         .expect("register action");
-    sqlx::query("INSERT INTO thing_properties (id, device_id, name, data_type) VALUES ('prop-temp', ?, 'temp', 'float')")
-        .bind(THING)
-        .execute(pool)
-        .await
-        .expect("register property");
+    sqlx::query(
+        "INSERT INTO thing_properties (id, device_id, name, data_type) VALUES ('prop-temp', ?, 'temp', 'float')",
+    )
+    .bind(THING)
+    .execute(pool)
+    .await
+    .expect("register property");
 
     sqlx::query(
         "INSERT OR IGNORE INTO roles (id, name, description, is_administrator) \
@@ -216,7 +214,10 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
     let db = Arc::new(Database::new(pool.clone()));
 
     let policy_repo = Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone()));
-    policy_repo.save_autonomy(WS, &act_policy(), "test").await.expect("save policy");
+    policy_repo
+        .save_autonomy(WS, &act_policy(), "test")
+        .await
+        .expect("save policy");
 
     // 真实启动顺序（Task 9）：快照 → bus 外建、订阅先于 restore → restore →
     // 僵尸 reconcile。persist_rx 是持久化订阅者的 receiver（生产契约：
@@ -261,7 +262,9 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
         event_publisher: Arc::new(AiEventPublisher::new(event_bus.clone())),
         heartbeat_config: HeartbeatConfig::default(),
         thing_agent_host: Arc::new(CloudThingAgentHost::new(pool.clone(), thing_bus)),
-        policy_repo,
+        policy_repo: Arc::new(crate::domains::agent::host::ports::StorageAutonomyPolicyReader::new(
+            policy_repo,
+        )),
         agent_provider: factory,
         thing_agent_config: ThingAgentManagerConfig {
             timer_interval: Duration::from_secs(24 * 3600),
@@ -346,7 +349,11 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["code"], 0, "list runs: {json}");
     let runs = json["result"]["runs"].as_array().expect("runs array");
-    assert_eq!(runs.len(), 1, "仅指令 run 一行（timer 首 tick 停在 30s 合并窗口）: {runs:?}");
+    assert_eq!(
+        runs.len(),
+        1,
+        "仅指令 run 一行（timer 首 tick 停在 30s 合并窗口）: {runs:?}"
+    );
     assert_eq!(runs[0]["id"].as_str().unwrap(), report.run_id);
     assert_eq!(runs[0]["triggerType"], "user");
     assert_eq!(runs[0]["outcome"], "no_action_needed");

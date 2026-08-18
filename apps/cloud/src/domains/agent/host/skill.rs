@@ -1,6 +1,6 @@
 // Agent Skill — DB-persisted skill wrapper.
 //
-// Core domain types and logic live in crate::domains::agent::loop_::skills:
+// Core domain types and logic live in tinyiothub_agent::runtime::skills:
 //   SkillType, SkillDefinition, parse_frontmatter, execute, glob_match
 
 use serde::{Deserialize, Serialize};
