@@ -185,6 +185,30 @@ impl AgentRunsRepository {
         .await?;
         Ok(n as u32)
     }
+
+    /// 僵尸 run reconcile（Task 9 启动顺序第 3 步）：status='running' 但
+    /// 调用方（启动时的内存 RunRegistry）不认领的行 → 'interrupted'。
+    /// 进程刚启动时无在飞 run，`known_active` 为防御性排除集（预热窗口
+    /// 已有完成报告的 run_id）。逐行条件更新（status 仍为 'running' 才
+    /// 生效），启动期执行一次，行数有界。返回标记行数。
+    pub async fn interrupt_zombie_running_runs(&self, known_active: &[String]) -> Result<u64> {
+        let rows: Vec<(String,)> = sqlx::query_as("SELECT id FROM agent_runs WHERE status = 'running'")
+            .fetch_all(&self.pool)
+            .await?;
+        let mut marked = 0u64;
+        for (id,) in rows {
+            if known_active.iter().any(|k| k == &id) {
+                continue;
+            }
+            let result =
+                sqlx::query("UPDATE agent_runs SET status = 'interrupted' WHERE id = ? AND status = 'running'")
+                    .bind(&id)
+                    .execute(&self.pool)
+                    .await?;
+            marked += result.rows_affected();
+        }
+        Ok(marked)
+    }
 }
 
 #[cfg(test)]
@@ -546,6 +570,58 @@ mod tests {
         assert_eq!(repo.count_problem_runs("ws_1", "p2", 6).await.expect("count"), 1);
         assert_eq!(repo.count_problem_runs("ws_2", "p1", 6).await.expect("count"), 1);
         assert_eq!(repo.count_problem_runs("ws_1", "missing", 6).await.expect("count"), 0);
+    }
+
+    #[tokio::test]
+    pub async fn interrupt_zombie_running_runs_marks_orphans_only() {
+        let pool = test_pool().await;
+        // test_pool 只应用 thing_agent_loop 迁移；status 列由后续迁移引入。
+        sqlx::query("ALTER TABLE agent_runs ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'")
+            .execute(&pool)
+            .await
+            .expect("add status column");
+        let repo = AgentRunsRepository::new(pool.clone());
+
+        insert_raw(&pool, "ghost", "ws_1", "acted", None, None, 0, "-1 hours").await;
+        insert_raw(&pool, "owned", "ws_1", "acted", None, None, 0, "-1 hours").await;
+        insert_raw(&pool, "done", "ws_1", "acted", None, None, 0, "-1 hours").await;
+        sqlx::query("UPDATE agent_runs SET status = 'running' WHERE id IN ('ghost', 'owned')")
+            .execute(&pool)
+            .await
+            .expect("set running");
+
+        let marked = repo
+            .interrupt_zombie_running_runs(&["owned".to_string()])
+            .await
+            .expect("reconcile");
+        assert_eq!(marked, 1);
+
+        let status_of = |id: &str| {
+            let pool = pool.clone();
+            let id = id.to_string();
+            async move {
+                let (s,): (String,) = sqlx::query_as("SELECT status FROM agent_runs WHERE id = ?")
+                    .bind(&id)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("status");
+                s
+            }
+        };
+        assert_eq!(status_of("ghost").await, "interrupted");
+        assert_eq!(status_of("owned").await, "running", "registry 认领的 run 不判僵尸");
+        assert_eq!(status_of("done").await, "completed", "completed 行不动");
+
+        // 幂等：同一认领集再次 reconcile 无行可标。
+        let marked = repo
+            .interrupt_zombie_running_runs(&["owned".to_string()])
+            .await
+            .expect("reconcile again");
+        assert_eq!(marked, 0);
+        // 认领集为空时，残留的 running 行全部判僵尸。
+        let marked = repo.interrupt_zombie_running_runs(&[]).await.expect("reconcile empty known");
+        assert_eq!(marked, 1);
+        assert_eq!(status_of("owned").await, "interrupted");
     }
 
     #[tokio::test]

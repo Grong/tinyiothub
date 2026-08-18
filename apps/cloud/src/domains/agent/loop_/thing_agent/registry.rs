@@ -44,8 +44,9 @@
 //! 写入路径：manager run 完成时 [`RunRegistry::record_problem_run`]（仅心跳桥
 //! 投递的指令携带 problem_key）；人工 ack 经 orchestrator → bridge →
 //! [`RunRegistry::mark_problem_acked`]（ack 端点回写链携带 run_id）。
-//! restore 预热不恢复本映射（core `RunReport` 无 problem_key——Task 9 快照
-//! 构建器需另行携带，见 Task 6 报告）。
+//! restore 预热经 [`RunRegistry::prewarm_problem_meta`]（Task 9）：core
+//! `RunReport` 无 problem_key/时间戳/ack 字段，快照构建器直接查询
+//! agent_runs 装配 `ProblemMetaRow` 段（行级 acked 随预热恢复）。
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -54,6 +55,8 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use tinyiothub_core::agent_runs::{Outcome, RunReport};
+
+use crate::domains::agent::loop_::snapshot::ProblemMetaRow;
 
 /// 每 workspace 保留的最近已完成 run 条数（超出驱逐最老）。
 pub const COMPLETED_CAPACITY: usize = 50;
@@ -178,15 +181,25 @@ impl RunRegistry {
             verified,
             acked: false,
         };
-        // 生产路径时间戳单调（队尾插入命中首个分支）；测试/prewarm 乱序插入
-        // 时回退到按时间戳定位，保持"队尾为最新"不变式。
-        let pos = entry
-            .runs
-            .iter()
-            .rposition(|r| r.occurred_at <= occurred_at)
-            .map_or(0, |p| p + 1);
-        entry.runs.insert(pos, meta);
-        prune_problem_entry(&mut entry);
+        insert_problem_meta(&mut entry, meta);
+    }
+
+    /// restore 预热（Task 9）：从快照 problem_meta 段恢复 O11 dedup 状态，
+    /// 行级 acked 标记随预热恢复（与 `record_problem_run` 的 acked=false
+    /// 不同——DB acked_at 即真相）。乱序安全，按保留窗裁剪。
+    pub fn prewarm_problem_meta(&self, rows: Vec<ProblemMetaRow>) {
+        for row in rows {
+            let key = (row.workspace_id, row.problem_key);
+            let mut entry = self.problem_meta.entry(key).or_default();
+            let meta = ProblemRunMeta {
+                run_id: row.run_id,
+                occurred_at: row.occurred_at,
+                outcome: row.outcome,
+                verified: row.verified,
+                acked: row.acked,
+            };
+            insert_problem_meta(&mut entry, meta);
+        }
     }
 
     /// O11 ack 抑制（行级保真）：只标记该 run_id 对应条目；未知 run_id
@@ -228,6 +241,19 @@ impl RunRegistry {
             .map(|entry| entry.runs.iter().filter(|r| r.occurred_at > cutoff).count())
             .unwrap_or_default()
     }
+}
+
+/// 按 occurred_at 有序插入 + 保留窗裁剪（record/prewarm 共用）。生产路径
+/// 时间戳单调（队尾插入命中首个分支）；测试/prewarm 乱序插入时回退到按
+/// 时间戳定位，保持"队尾为最新"不变式。
+fn insert_problem_meta(entry: &mut ProblemDedupState, meta: ProblemRunMeta) {
+    let pos = entry
+        .runs
+        .iter()
+        .rposition(|r| r.occurred_at <= meta.occurred_at)
+        .map_or(0, |p| p + 1);
+    entry.runs.insert(pos, meta);
+    prune_problem_entry(entry);
 }
 
 /// 按保留窗裁剪 dedup 条目：相对该条目最新活动（新 run 时间），超窗旧 run
@@ -292,6 +318,27 @@ mod tests {
     }
 
     // ── O11 problem_key dedup 元数据（Task 6）──────────────────
+
+    /// Task 9：prewarm_problem_meta 恢复快照段，行级 acked 随预热恢复，
+    /// 乱序输入仍保持"队尾为最新"。
+    #[test]
+    fn prewarm_problem_meta_restores_acked_and_orders_by_occurred_at() {
+        let reg = RunRegistry::new();
+        let row = |run_id: &str, acked: bool, h: i64| ProblemMetaRow {
+            workspace_id: "ws1".to_string(),
+            problem_key: "p1".to_string(),
+            run_id: run_id.to_string(),
+            outcome: Outcome::Acted,
+            verified: true,
+            acked,
+            occurred_at: hours_ago(h),
+        };
+        // 乱序输入：新（已 ack）先于旧。
+        reg.prewarm_problem_meta(vec![row("new", true, 1), row("old", false, 5)]);
+        let (_, _, acked) = reg.last_problem_run("ws1", "p1", H6).expect("found");
+        assert!(acked, "最新 run 的行级 ack 标记随预热恢复");
+        assert_eq!(reg.count_problem_runs("ws1", "p1", D7), 2);
+    }
 
     #[test]
     fn problem_run_last_respects_window() {

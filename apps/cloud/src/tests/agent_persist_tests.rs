@@ -7,6 +7,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio_util::sync::CancellationToken;
+
 use sqlx::SqlitePool;
 use tinyiothub_core::agent_runs::{Outcome, RunReport};
 use tinyiothub_core::heartbeat::{HeartbeatResult, HeartbeatStatus, TrustConfig};
@@ -15,7 +17,7 @@ use tinyiothub_storage::Database;
 use crate::domains::agent::host::persist::{ResyncFailures, resync, run_persistence_loop, run_persistence_subscriber};
 use crate::domains::agent::host::test_utils::seed_test_workspace;
 use crate::domains::agent::loop_::event::bus::AiEventPublisher;
-use crate::domains::agent::loop_::events::AgentEventKind;
+use crate::domains::agent::loop_::events::{AgentEventBus, AgentEventKind};
 use crate::domains::agent::loop_::runtime::{AgentRuntime, RuntimeDeps};
 use crate::domains::agent::loop_::snapshot::{RestoreSnapshot, WorkspaceHeartbeatState};
 
@@ -53,12 +55,13 @@ fn empty_snapshot() -> RestoreSnapshot {
     RestoreSnapshot {
         heartbeat: vec![],
         recent_runs: vec![],
+        problem_meta: vec![],
     }
 }
 
 fn runtime_with(capacity: usize, snapshot: RestoreSnapshot) -> Arc<AgentRuntime> {
     let mut deps = RuntimeDeps::test_stub();
-    deps.agent_event_capacity = capacity;
+    deps.agent_events = Arc::new(AgentEventBus::new(capacity));
     Arc::new(AgentRuntime::restore(snapshot, deps))
 }
 
@@ -89,9 +92,9 @@ where
     panic!("condition not met within 3s");
 }
 
-/// run_persistence_subscriber 在 spawned task 内 subscribe：spawn 后立刻
-/// emit 可能早于订阅（broadcast 只投递订阅之后的消息）。RunRecorded 投影
-/// 幂等，重发无害——发射直到落库为止。
+/// receiver 在 spawn 前由调用方创建（Task 9 起订阅不再发生于 spawned
+/// task 内），但事件投影是异步的——RunRecorded 投影幂等，重发无害，
+/// 发射直到落库为止。
 async fn emit_run_until_persisted(runtime: &AgentRuntime, pool: &SqlitePool, rep: &RunReport) {
     for _ in 0..60 {
         runtime.bus().emit(AgentEventKind::RunRecorded {
@@ -113,7 +116,12 @@ async fn emit_run_until_persisted(runtime: &AgentRuntime, pool: &SqlitePool, rep
 async fn projects_run_recorded_to_agent_runs() {
     let (db, pool) = test_db().await;
     let runtime = runtime_with(16, empty_snapshot());
-    let h = tokio::spawn(run_persistence_subscriber(runtime.clone(), db.clone()));
+    let h = tokio::spawn(run_persistence_subscriber(
+        runtime.clone(),
+        db.clone(),
+        runtime.subscribe(),
+        CancellationToken::new(),
+    ));
 
     emit_run_until_persisted(&runtime, &pool, &report("run1", "ws1", "巡检正常")).await;
 
@@ -131,7 +139,12 @@ async fn stale_event_does_not_overwrite_newer_row() {
     // 同 run_id 的 stale 事件（T1<T2），行内容保持 T2 版本。
     let (db, pool) = test_db().await;
     let runtime = runtime_with(16, empty_snapshot());
-    let h = tokio::spawn(run_persistence_subscriber(runtime.clone(), db.clone()));
+    let h = tokio::spawn(run_persistence_subscriber(
+        runtime.clone(),
+        db.clone(),
+        runtime.subscribe(),
+        CancellationToken::new(),
+    ));
 
     // 顺序保证：先确认新事件落库，再回放 stale（订阅者按序处理）。
     emit_run_until_persisted(&runtime, &pool, &report("run1", "ws1", "newer")).await;
@@ -169,6 +182,7 @@ async fn lagged_subscriber_resyncs_from_dump_state() {
             interval_minutes: 30,
         }],
         recent_runs: vec![report("run_lagged", "ws1", "resync me")],
+        problem_meta: vec![],
     };
     // 容量 2 的 bus：先订阅再发 5 事件 → 首 recv 必为 Lagged
     let runtime = runtime_with(2, snapshot);
@@ -190,6 +204,7 @@ async fn lagged_subscriber_resyncs_from_dump_state() {
         db.clone(),
         test_publisher(),
         Duration::from_secs(3600),
+        CancellationToken::new(),
     ));
 
     wait_until(|| async { count_runs(&pool, "run_lagged").await == 1 }).await;
@@ -210,6 +225,7 @@ async fn periodic_reconcile_projects_dump_state() {
     let snapshot = RestoreSnapshot {
         heartbeat: vec![],
         recent_runs: vec![report("run_reconcile", "ws1", "reconciled")],
+        problem_meta: vec![],
     };
     let runtime = runtime_with(16, snapshot);
 
@@ -223,6 +239,7 @@ async fn periodic_reconcile_projects_dump_state() {
         db.clone(),
         test_publisher(),
         Duration::from_millis(50),
+        CancellationToken::new(),
     ));
 
     // 无任何事件：只有周期对账能把 dump_state 投影落库
@@ -234,7 +251,12 @@ async fn periodic_reconcile_projects_dump_state() {
 async fn projects_heartbeat_result_to_agent_actions() {
     let (db, pool) = test_db().await;
     let runtime = runtime_with(16, empty_snapshot());
-    let h = tokio::spawn(run_persistence_subscriber(runtime.clone(), db.clone()));
+    let h = tokio::spawn(run_persistence_subscriber(
+        runtime.clone(),
+        db.clone(),
+        runtime.subscribe(),
+        CancellationToken::new(),
+    ));
 
     let count_actions = || async {
         let (n,): (i64,) = sqlx::query_as(
@@ -289,6 +311,7 @@ async fn resync_escalates_to_dlq_after_consecutive_failures_then_recovers() {
     let snap = || RestoreSnapshot {
         heartbeat: vec![],
         recent_runs: vec![report("run_bad", "ws1", "fails")],
+        problem_meta: vec![],
     };
     let mut failures = ResyncFailures::default();
 

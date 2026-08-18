@@ -41,6 +41,10 @@ pub struct ServiceManager {
 
     /// Shared AI event publisher (set during start_all, drained on shutdown)
     event_publisher: Option<Arc<crate::domains::agent::loop_::event::bus::AiEventPublisher>>,
+
+    /// Agent 持久化订阅者关停令牌（Task 9）：cancel 后主循环退出、
+    /// 心跳重试任务中止；句柄在 service_handles 中随关停排空。
+    persistence_shutdown: Option<tokio_util::sync::CancellationToken>,
 }
 
 impl ServiceManager {
@@ -57,6 +61,7 @@ impl ServiceManager {
             orchestrator: None,
             heartbeat_runner: None,
             event_publisher: None,
+            persistence_shutdown: None,
         }
     }
 
@@ -139,7 +144,7 @@ impl ServiceManager {
         self.start_health_monitor(data_server.clone(), app_state.database.clone())
             .await?;
 
-        // 4. Build and start AI subsystem (tinyiothub-ai Orchestrator)
+        // 4. Build and start AI subsystem (AgentRuntime 门面，Task 9 启动顺序)
         #[cfg(not(feature = "harmonyos"))]
         {
             let heartbeat_task_repo = Arc::new(tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(
@@ -154,10 +159,108 @@ impl ServiceManager {
                 crate::domains::agent::loop_::event::bus::AiEventPublisher::new(app_state.event_bus.clone())
                     .with_drop_notifier(Arc::new(crate::domains::agent::loop_::event::bus::LoggingDropNotifier)),
             );
-            let heartbeat_runner = Arc::new(crate::domains::agent::loop_::heartbeat::runner::HeartbeatRunner::new(
-                event_publisher.clone(),
-                heartbeat_config,
+
+            // 遗留文件任务 → DB 一次性迁移必须先于快照装配，否则迁移落库
+            // 的任务不在 restore 预热的内存真源中（start 会跳过）。
+            let ws_ids = match app_state.workspace_service.list_all_ids().await {
+                Ok(ids) => ids,
+                Err(e) => {
+                    warn!("⚠️ Failed to list workspaces for AI subsystem: {}", e);
+                    Vec::new()
+                }
+            };
+            for ws_id in &ws_ids {
+                let workspace_dir = crate::shared::paths::workspace_dir(ws_id);
+                if let Err(e) = crate::domains::agent::host::heartbeat::migrate_file_tasks_to_db(
+                    heartbeat_task_repo.as_ref(),
+                    ws_id,
+                    &workspace_dir,
+                )
+                .await
+                {
+                    warn!(%ws_id, "⚠️ Heartbeat task migration failed: {}", e);
+                }
+            }
+
+            // ── Task 9 启动顺序（D11-①③，错序即丢事件）──
+            // 1. 从 DB 构造 RestoreSnapshot（活跃 heartbeat 配置/任务 +
+            //    每 ws 最近 50 条 run + O11 dedup 元数据）。
+            let snapshot = crate::bootstrap::build_agent_snapshot(&app_state.database).await;
+            // 2. bus 先建并经 RuntimeDeps 注入 restore（Task 3 评审指针
+            //    选项 a）；持久化 receiver 在 restore 之前取得 —— restore
+            //    期间及之后的事件不丢。
+            let agent_events = Arc::new(crate::domains::agent::loop_::events::AgentEventBus::new(256));
+            let persist_rx = agent_events.subscribe();
+            let pool = app_state.database.pool().clone();
+            let policy_repo = Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone()));
+            let runtime = Arc::new(crate::domains::agent::loop_::runtime::AgentRuntime::restore(
+                snapshot,
+                crate::domains::agent::loop_::runtime::RuntimeDeps {
+                    event_publisher: event_publisher.clone(),
+                    heartbeat_config,
+                    thing_agent_host: Arc::new(
+                        crate::domains::agent::host::thing_agent_host::CloudThingAgentHost::new(
+                            pool.clone(),
+                            app_state.thing_event_bus.clone(),
+                        ),
+                    ),
+                    policy_repo: policy_repo.clone(),
+                    agent_provider: Arc::new(
+                        crate::domains::agent::host::autonomous_factory::AutonomousAgentFactory::new(
+                            pool.clone(),
+                            policy_repo,
+                            app_state.thing_event_bus.clone(),
+                            Arc::new(crate::domains::event::router::ThrottleState::new(60)),
+                            app_state.agent_pool.shared_memory(),
+                            app_state.agent_pool.observer(),
+                            crate::domains::agent::host::autonomous_factory::minimax_provider_factory(),
+                            crate::domains::agent::host::shared::config::AgentRuntimeConfig::default().model,
+                            crate::domains::agent::host::tools::service::ToolRuntimeContext {
+                                device_cache: Some(app_state.device_cache.clone()),
+                                data_server: app_state.data_server.clone(),
+                                // autonomous factory never registers the dispatch tool
+                                directive_sink: None,
+                                pending_actions: Some(app_state.pending_actions.clone()),
+                            },
+                        ),
+                    ),
+                    thing_agent_config:
+                        crate::domains::agent::loop_::thing_agent::ThingAgentManagerConfig::default(),
+                    event_bus: app_state.event_bus.clone(),
+                    drop_notifier: Some(Arc::new(
+                        crate::domains::agent::loop_::event::bus::LoggingDropNotifier,
+                    )),
+                    agent_events,
+                },
             ));
+            // 3. 僵尸 reconcile：DB 里 status='running' 但 registry 无主的
+            //    run → 'interrupted'。
+            crate::bootstrap::reconcile_zombie_runs(&app_state.database, &runtime).await;
+            // 4. 持久化订阅者（restore 前取得的 receiver；shutdown token
+            //    编排主循环与心跳重试任务退出）。句柄注册进 service_handles
+            //    随关停排空。
+            let persist_shutdown = tokio_util::sync::CancellationToken::new();
+            {
+                let handle = tokio::spawn({
+                    let runtime = runtime.clone();
+                    let db = app_state.database.clone();
+                    let token = persist_shutdown.clone();
+                    async move {
+                        crate::domains::agent::host::persist::run_persistence_subscriber(
+                            runtime, db, persist_rx, token,
+                        )
+                        .await;
+                        Ok(())
+                    }
+                });
+                self.service_handles.write().await.push(handle);
+                self.persistence_shutdown = Some(persist_shutdown);
+                info!("✅ Agent persistence subscriber started");
+            }
+
+            let heartbeat_runner = runtime.heartbeat_runner().clone();
+            let thing_agent_manager = runtime.thing_agents().clone();
+            let orchestrator = runtime.orchestrator().clone();
 
             // Wire event publisher to services that need cross-domain dispatching
             app_state.alarm_service.set_event_publisher(Arc::new(
@@ -169,9 +272,13 @@ impl ServiceManager {
             app_state
                 .workspace_service
                 .set_heartbeat_task_repo(heartbeat_task_repo.clone());
-            app_state
-                .workspace_service
-                .set_agent_hooks(app_state.agent_hooks.clone());
+            // Task 9：runtime 注入 agent hooks —— WorkspaceCreated 种子任务
+            // 在发布事件前同步推入 runner 内存真源（D11-⑤：DB 已先写），
+            // 随后的 heartbeat start 才能读到任务集。
+            app_state.workspace_service.set_agent_hooks(Arc::new(
+                crate::domains::agent::host::agent_hooks::AgentHooksImpl::new()
+                    .with_runtime(runtime.clone()),
+            ));
 
             // Wire agent pool via adapter
             let ai_adapter = Arc::new(crate::domains::agent::host::pool_adapter::HostAgentPoolAdapter::new(
@@ -195,130 +302,25 @@ impl ServiceManager {
             // proxy handler 从 AgentState.memory_service 注入。
             app_state.agent_pool.set_event_publisher(event_publisher.clone()).await;
 
-            // T15 thing-agent loop: per-workspace 自治 Loop 注册表。
-            // Orchestrator 的 WorkspaceCreated/Deleted 事件流驱动其启停；
-            // 三触发器（物事件/定时巡检/用户指令）汇入 per-workspace 调度器。
-            let thing_agent_manager = {
-                let pool = app_state.database.pool().clone();
-                let policy_repo = Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone()));
-                // Task 6 起 runs_repo 不再进桥：O11 problem_key dedup 走
-                // RunRegistry 内存元数据（与 manager 共享同一实例）；
-                // thing_agent 运行记录的持久化投影由 Task 8 的 RunRecorded
-                // 订阅者落库（接入前零订阅者 emit 为 no-op）。
-                let run_registry = crate::domains::agent::loop_::thing_agent::registry::RunRegistry::new();
-                let agent_events = Arc::new(crate::domains::agent::loop_::events::AgentEventBus::new(256));
-                let manager = Arc::new(crate::domains::agent::loop_::thing_agent::ThingAgentManager::new(
-                    Arc::new(crate::domains::agent::host::thing_agent_host::CloudThingAgentHost::new(
-                        pool.clone(),
-                        app_state.thing_event_bus.clone(),
-                    )),
-                    policy_repo.clone(),
-                    Arc::new(
-                        crate::domains::agent::host::autonomous_factory::AutonomousAgentFactory::new(
-                            pool.clone(),
-                            policy_repo,
-                            app_state.thing_event_bus.clone(),
-                            Arc::new(crate::domains::event::router::ThrottleState::new(60)),
-                            app_state.agent_pool.shared_memory(),
-                            app_state.agent_pool.observer(),
-                            crate::domains::agent::host::autonomous_factory::minimax_provider_factory(),
-                            crate::domains::agent::host::shared::config::AgentRuntimeConfig::default().model,
-                            crate::domains::agent::host::tools::service::ToolRuntimeContext {
-                                device_cache: Some(app_state.device_cache.clone()),
-                                data_server: app_state.data_server.clone(),
-                                // autonomous factory never registers the dispatch tool
-                                directive_sink: None,
-                                pending_actions: Some(app_state.pending_actions.clone()),
-                            },
-                        ),
-                    ),
-                    run_registry.clone(),
-                    agent_events.clone(),
-                    Arc::new(crate::domains::agent::loop_::thing_agent::Runner::new()),
-                    crate::domains::agent::loop_::thing_agent::ThingAgentManagerConfig::default(),
-                ));
-                // T18 X6 心跳桥：HeartbeatCompleted 的结构化 proposals 经 O11
-                // dedup（RunRegistry 内存元数据）后投递 UserDirective 进
-                // thing-agent loop。
-                let bridge = Arc::new(
-                    crate::domains::agent::loop_::orchestrator::callbacks::HeartbeatBridge::new(
-                        run_registry.clone(),
-                        manager.clone(),
-                    ),
-                );
-                (manager, bridge, agent_events, run_registry)
-            };
-            let (thing_agent_manager, heartbeat_bridge, agent_events, persist_run_registry) = thing_agent_manager;
-
-            // Task 8 接线点：持久化订阅者（AgentEvent → DB 投影：幂等 insert、
-            // Lagged → dump_state 全量 resync、5 分钟周期对账、心跳结果
-            // 重试→DLQ）。Task 9 定最终启动顺序（订阅先于 restore、僵尸
-            // reconcile），届时 AgentRuntime 门面就绪后切换为
-            // run_persistence_subscriber(runtime, db)。
-            {
-                let persist_rx = agent_events.subscribe();
-                let persist_runner = heartbeat_runner.clone();
-                let persist_dump = move || {
-                    // 与 AgentRuntime::dump_state 同形（排序保证导出确定性）。
-                    let mut heartbeat = persist_runner.snapshot_states();
-                    heartbeat.sort_by(|a, b| a.workspace_id.cmp(&b.workspace_id));
-                    let mut recent_runs = persist_run_registry.active();
-                    recent_runs.sort_by(|a, b| a.run_id.cmp(&b.run_id));
-                    crate::domains::agent::loop_::snapshot::RestoreSnapshot { heartbeat, recent_runs }
-                };
-                tokio::spawn(crate::domains::agent::host::persist::run_persistence_loop(
-                    persist_rx,
-                    persist_dump,
-                    app_state.database.clone(),
-                    event_publisher.clone(),
-                    std::time::Duration::from_secs(300),
-                ));
-                info!("✅ Agent persistence subscriber started");
-            }
-
             // Task 6 起 orchestrator 不再持有 repo/MemoryService：心跳结果经
-            // AgentEventBus(HeartbeatResultReady) 出口（Task 8 订阅者落库）；
+            // AgentEventBus(HeartbeatResultReady) 出口（持久化订阅者落库）；
             // MemoryService 由 cloud 侧自持（AgentState.memory_service，
             // memory profile compile/weekly digest handler 使用）。
             app_state.memory_service = Some(memory_service);
 
-            let orchestrator = Arc::new(crate::domains::agent::loop_::orchestrator::Orchestrator::new(
-                app_state.event_bus.clone(),
-                heartbeat_runner.clone(),
-                agent_events,
-                Some(Arc::new(crate::domains::agent::loop_::event::bus::LoggingDropNotifier)),
-                Some(thing_agent_manager.clone()),
-                Some(heartbeat_bridge),
-            ));
             orchestrator.start();
 
             // T14 用户指令入口：chat 工具 / HTTP 端点经 directive_sink 投递到
             // 对应工作区的 thing-agent 调度器。
             app_state.set_directive_sink(thing_agent_manager.clone());
 
-            // Start heartbeat loops for existing workspaces
-            match app_state.workspace_service.list_all_ids().await {
-                Ok(ws_ids) => {
-                    for ws_id in &ws_ids {
-                        let workspace_dir = crate::shared::paths::workspace_dir(ws_id);
-                        if let Err(e) = crate::domains::agent::host::heartbeat::migrate_file_tasks_to_db(
-                            heartbeat_task_repo.as_ref(),
-                            ws_id,
-                            &workspace_dir,
-                        )
-                        .await
-                        {
-                            warn!(%ws_id, "⚠️ Heartbeat task migration failed: {}", e);
-                        }
-                        heartbeat_runner.start(ws_id).await;
-                        thing_agent_manager.start(ws_id);
-                    }
-                    info!("✅ AI Orchestrator started ({} workspaces)", ws_ids.len());
-                }
-                Err(e) => {
-                    warn!("⚠️ Failed to list workspaces for AI subsystem: {}", e);
-                }
+            // Start heartbeat loops for existing workspaces（内存真源已由
+            // restore 预热：tasks 非空，start 不再跳过）。
+            for ws_id in &ws_ids {
+                heartbeat_runner.start(ws_id).await;
+                thing_agent_manager.start(ws_id);
             }
+            info!("✅ AI Orchestrator started ({} workspaces)", ws_ids.len());
 
             // Store in ServiceManager for shutdown
             self.orchestrator = Some(orchestrator);
@@ -461,6 +463,12 @@ impl ServiceManager {
         if let Some(ref event_publisher) = self.event_publisher {
             event_publisher.shutdown().await;
             info!("AiEventPublisher drained");
+        }
+        // 持久化订阅者退出：生产者已全部关停，cancel 后主循环退出、
+        // 在飞心跳重试任务中止（句柄在下方 service_handles 排空中等待）。
+        if let Some(ref token) = self.persistence_shutdown {
+            token.cancel();
+            info!("Agent persistence subscriber shutdown signal sent");
         }
 
         // 发送关闭信号

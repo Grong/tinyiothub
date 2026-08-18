@@ -12,12 +12,19 @@
 //!
 //! 丢事件恢复：`RecvError::Lagged` → `dump_state()` 全量重投影；另有
 //! 周期全量对账（生产 5 分钟）。subscriber 只消费事件，不反向影响 crate。
+//!
+//! 启动顺序契约（Task 9，D11-①③）：AgentEventBus 由调用方先建并经
+//! RuntimeDeps 注入 `AgentRuntime::restore`；持久化 receiver 在 restore
+//! **之前**从该 bus 取得并传入 [`run_persistence_subscriber`]，保证
+//! restore 期间及之后的事件不丢。shutdown 经 CancellationToken 编排：
+//! 主循环与心跳重试任务都响应取消（Task 8 遗留 TODO 已接）。
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use sqlx::SqlitePool;
 use tokio::sync::broadcast::error::RecvError;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
 use tinyiothub_core::agent_runs::RunReport;
@@ -58,30 +65,35 @@ fn record_failure(map: &mut std::collections::HashMap<String, u32>, key: &str) -
     *count
 }
 
-/// Brief 接口：service_manager 在 runtime 就绪后 spawn（Task 9 定最终
-/// 启动顺序：订阅先于 restore、僵尸 reconcile）。
-pub async fn run_persistence_subscriber(runtime: Arc<AgentRuntime>, db: Arc<Database>) {
+/// 持久化订阅者入口（Task 9 定稿）：`rx` 必须是 restore 之前从共享 bus
+/// 取得的 receiver（见模块文档的顺序契约）；`shutdown` 取消时主循环退出、
+/// 在飞重试任务中止。
+pub async fn run_persistence_subscriber(
+    runtime: Arc<AgentRuntime>,
+    db: Arc<Database>,
+    rx: tokio::sync::broadcast::Receiver<AgentEvent>,
+    shutdown: CancellationToken,
+) {
     let publisher = runtime.orchestrator().event_publisher().clone();
-    let rx = runtime.subscribe();
     let dump = {
         let runtime = runtime.clone();
         move || runtime.dump_state()
     };
-    run_persistence_loop(rx, dump, db, publisher, RECONCILE_INTERVAL).await
+    run_persistence_loop(rx, dump, db, publisher, RECONCILE_INTERVAL, shutdown).await
 }
 
-/// 订阅主循环。与 `run_persistence_subscriber` 分离以便 service_manager
-/// 在 AgentRuntime 门面接线完成（Task 9）前先用现有组件接线，也便于测试
-/// 注入 pre-lagged receiver / 短对账周期。
+/// 订阅主循环。与 `run_persistence_subscriber` 分离以便测试注入
+/// pre-lagged receiver / 短对账周期。
 pub async fn run_persistence_loop(
     mut rx: tokio::sync::broadcast::Receiver<AgentEvent>,
     dump_state: impl Fn() -> RestoreSnapshot + Send,
     db: Arc<Database>,
     publisher: Arc<AiEventPublisher>,
     reconcile_interval: Duration,
+    shutdown: CancellationToken,
 ) {
-    // 首次 tick 推迟一个完整周期：启动对账由 Task 9 启动编排骨架负责，
-    // 避免与 restore 竞态。
+    // 首次 tick 推迟一个完整周期：启动对账已由 Task 9 启动编排（restore
+    // 预热 + 僵尸 reconcile）覆盖，避免与 restore 竞态。
     let mut interval = tokio::time::interval_at(
         tokio::time::Instant::now() + reconcile_interval,
         reconcile_interval,
@@ -91,7 +103,7 @@ pub async fn run_persistence_loop(
     loop {
         tokio::select! {
             msg = rx.recv() => match msg {
-                Ok(event) => project(&event, db.pool(), &publisher).await,
+                Ok(event) => project(&event, db.pool(), &publisher, &shutdown).await,
                 Err(RecvError::Lagged(n)) => {
                     warn!(dropped = n, "persistence subscriber lagged, full resync");
                     resync(dump_state(), db.pool(), &mut resync_failures).await;
@@ -104,13 +116,17 @@ pub async fn run_persistence_loop(
             _ = interval.tick() => {
                 resync(dump_state(), db.pool(), &mut resync_failures).await;
             }
+            _ = shutdown.cancelled() => {
+                debug!("persistence subscriber shutdown");
+                return;
+            }
         }
     }
 }
 
 /// 单事件投影。所有错误就地处理（log / 重试 / DLQ），不向上传播——
 /// subscriber 永不因单个事件失败而退出。
-async fn project(event: &AgentEvent, pool: &SqlitePool, publisher: &Arc<AiEventPublisher>) {
+async fn project(event: &AgentEvent, pool: &SqlitePool, publisher: &Arc<AiEventPublisher>, shutdown: &CancellationToken) {
     match &event.kind {
         AgentEventKind::RunRecorded {
             report,
@@ -132,6 +148,7 @@ async fn project(event: &AgentEvent, pool: &SqlitePool, publisher: &Arc<AiEventP
                     publisher.clone(),
                     result.workspace_id.clone(),
                     (**result).clone(),
+                    shutdown.clone(),
                 );
             }
         }
@@ -308,22 +325,27 @@ pub(crate) async fn resync(snapshot: RestoreSnapshot, pool: &SqlitePool, failure
 
 /// 心跳结果重试任务（重建自 4d102722 `retry_with_backoff`）：独立 spawn，
 /// 2s base、2^attempt 退避，累计 5 次失败 → DLQ + HeartbeatPersistFailed。
-/// subscriber 侧采用简化形式：无 in-flight 计数。
-// TODO(Task 9): 重试任务未接 shutdown 编排——进程退出时 backoff 睡眠中的
-// 任务随 runtime drop，丢失窗口无观测性。Task 9 启动/关闭编排骨架接入
-// shutdown_notify + drain（参考 4d102722 RetryTracker）。
+/// subscriber 侧采用简化形式：无 in-flight 计数。shutdown（Task 9 接线）：
+/// backoff 睡眠响应 CancellationToken，进程退出时不滞留重试任务。
 fn spawn_heartbeat_retry(
     pool: SqlitePool,
     publisher: Arc<AiEventPublisher>,
     workspace_id: String,
     result: HeartbeatResult,
+    shutdown: CancellationToken,
 ) {
     tokio::spawn(async move {
         let task_repo = HeartbeatTaskRepository::new(pool.clone());
         let dlq = SqliteDeadLetterQueue::new(pool);
         let mut attempt: u32 = 0;
         loop {
-            tokio::time::sleep(RETRY_BASE_DELAY * 2u32.pow(attempt)).await;
+            tokio::select! {
+                _ = tokio::time::sleep(RETRY_BASE_DELAY * 2u32.pow(attempt)) => {}
+                _ = shutdown.cancelled() => {
+                    debug!(workspace_id = %workspace_id, attempt, "heartbeat persist retry aborted by shutdown");
+                    return;
+                }
+            }
             match task_repo.insert_result(&workspace_id, &result).await {
                 Ok(_) => {
                     debug!(workspace_id = %workspace_id, attempt, "heartbeat result persisted on retry");

@@ -1,13 +1,17 @@
 //! AgentRuntime — agent loop 子系统的门面（Task 3）。
 //!
 //! 聚合现有 `ThingAgentManager` / `HeartbeatRunner` / `Orchestrator`（不重写其
-//! 逻辑），持有 `AgentEventBus`（Task 2）与恢复快照状态。启动顺序（Task 11）：
-//! 先 `subscribe()` 再 `restore()`，保证持久化订阅者不丢事件。
+//! 逻辑），持有 `AgentEventBus`（Task 2）与恢复快照状态。启动顺序（Task 9）：
+//! bus 由调用方先建并经 [`RuntimeDeps::agent_events`] 注入 restore（Task 3
+//! 评审指针：restore 内部建 bus 则"先 subscribe 再 restore"不可能实现——
+//! 采用选项 a，bus 外建注入），调用方在 restore 前 `bus.subscribe()` 取得
+//! receiver，保证 restore 期间及之后的事件不丢。
 //!
 //! 状态真源（Task 5 起）：heartbeat 段（tasks/trust/interval）由
 //! `HeartbeatRunner` 内存持有 —— restore 预热注入，命令方法同步更新内存并
 //! 发射事件（DB 写由 cloud 侧 service 在调命令前完成，D11-⑤ 写序）；
-//! recent_runs 段自 Task 4 起由 `RunRegistry` 承接。
+//! recent_runs 段自 Task 4 起由 `RunRegistry` 承接；O11 dedup 元数据段
+//! （problem_meta）自 Task 9 起由快照预热恢复（行级 ack 保真）。
 
 use std::sync::Arc;
 
@@ -49,8 +53,10 @@ pub struct RuntimeDeps {
     // Orchestrator 构造件
     pub event_bus: Arc<EventBus>,
     pub drop_notifier: Option<Arc<dyn DropNotifier>>,
-    /// AgentEventBus 广播容量（lagged 订阅者经 dump_state 对账恢复）
-    pub agent_event_capacity: usize,
+    /// AgentEventBus（Task 9：bus 外建注入，调用方在 restore 前订阅——
+    /// "先 subscribe 再 restore"的可实现形式）。lagged 订阅者经
+    /// dump_state 对账恢复。
+    pub agent_events: Arc<AgentEventBus>,
 }
 
 /// Agent 子系统门面。命令入站（D3）；调用约定（D11-⑤）：cloud 先写 DB
@@ -70,9 +76,12 @@ impl AgentRuntime {
     /// heartbeat 段预热进 runner 内存（Task 5 内存真源）。
     /// 只做构造与预热，不启动任何 loop —— 启动顺序由 Task 11 编排。
     pub fn restore(snapshot: RestoreSnapshot, deps: RuntimeDeps) -> Self {
-        let events = Arc::new(AgentEventBus::new(deps.agent_event_capacity));
+        let events = deps.agent_events;
         let run_registry = RunRegistry::new();
+        // recent_runs 段输入契约：旧→新（见 RestoreSnapshot::recent_runs）。
         run_registry.prewarm(snapshot.recent_runs);
+        // O11 dedup 元数据段（Task 9）：行级 ack 随预热恢复。
+        run_registry.prewarm_problem_meta(snapshot.problem_meta);
         let heartbeat = Arc::new(HeartbeatRunner::new(
             deps.event_publisher,
             deps.heartbeat_config,
@@ -113,7 +122,9 @@ impl AgentRuntime {
         }
     }
 
-    /// 订阅 AgentEvent 流（Task 11 启动顺序：先 subscribe 再 restore）。
+    /// 订阅 AgentEvent 流。Task 9 启动顺序：bus 经 RuntimeDeps 注入，
+    /// 调用方在 restore 前经 `deps.agent_events.subscribe()` 取得
+    /// receiver；restore 后的 `runtime.subscribe()` 与其等价（同一 bus）。
     pub fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
         self.events.subscribe()
     }
@@ -128,7 +139,13 @@ impl AgentRuntime {
         let mut recent_runs = self.run_registry.active();
         // 同理排序（RunReport 无时间戳，run_id 字典序保证确定性）。
         recent_runs.sort_by(|a, b| a.run_id.cmp(&b.run_id));
-        RestoreSnapshot { heartbeat, recent_runs }
+        // problem_meta 段导出为空：周期对账不投影 dedup 元数据（DB 即其
+        // 真相源，重启时经快照构建器重建）。
+        RestoreSnapshot {
+            heartbeat,
+            recent_runs,
+            problem_meta: Vec::new(),
+        }
     }
 
     /// trust config 变更命令：更新 runner 内存 + 发射事件（Task 5）。
@@ -200,6 +217,12 @@ impl AgentRuntime {
 
     pub fn orchestrator(&self) -> &Arc<Orchestrator> {
         &self.orchestrator
+    }
+
+    /// RunRegistry 内存真源句柄 —— 测试/对账探针（Task 9 验证 dedup
+    /// 元数据预热；clone 与门面共享同一实例）。
+    pub fn run_registry(&self) -> &RunRegistry {
+        &self.run_registry
     }
 }
 
@@ -286,7 +309,7 @@ impl RuntimeDeps {
             thing_agent_config: ThingAgentManagerConfig::default(),
             event_bus,
             drop_notifier: None,
-            agent_event_capacity: 16,
+            agent_events: Arc::new(AgentEventBus::new(16)),
         }
     }
 }
@@ -321,6 +344,7 @@ mod tests {
                 interval_minutes: 30,
             }],
             recent_runs: vec![],
+            problem_meta: vec![],
         }
     }
 
@@ -329,6 +353,7 @@ mod tests {
         RestoreSnapshot {
             heartbeat: vec![],
             recent_runs: vec![],
+            problem_meta: vec![],
         }
     }
 

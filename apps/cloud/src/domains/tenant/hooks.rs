@@ -23,6 +23,17 @@ pub struct HeartbeatTaskDef {
 pub trait AgentHooks: Send + Sync {
     /// The default heartbeat task set seeded into every new workspace.
     fn default_heartbeat_tasks(&self) -> Vec<HeartbeatTaskDef>;
+
+    /// 种子任务已落库（DB 先写，D11-⑤）：把回读的全量行同步推入 agent
+    /// 运行时内存真源（Task 9）。必须在 `publish_workspace_created` 之前
+    /// 调用 —— 排队的 WorkspaceCreated → heartbeat start 才能读到任务集
+    /// （否则 runner 内存为空，loop 跳过启动）。tasks 为 core 值类型
+    /// （tinyiothub_core::heartbeat::HeartbeatTask，含 server 字段——
+    ///  runner 内存真源需要真实行，不违反 agent→tenant 依赖方向）。
+    /// 默认 no-op（未接线 runtime 时种子保持 DB-only，重启后恢复）。
+    fn heartbeat_tasks_seeded(&self, workspace_id: &str, tasks: Vec<tinyiothub_core::heartbeat::HeartbeatTask>) {
+        let _ = (workspace_id, tasks);
+    }
 }
 
 /// Outbound port for workspace lifecycle events on the AI event plane.
