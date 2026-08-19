@@ -104,14 +104,7 @@ mod tests {
             .connect(":memory:")
             .await
             .expect("create in-memory sqlite");
-        let migration = include_str!("../migrations/20260729000001_thing_agent_loop.sql");
-        for stmt in migration.split(';') {
-            let stmt = stmt.trim();
-            // Skip the events ALTER — the events table is not part of this pool.
-            if !stmt.is_empty() && !stmt.starts_with("ALTER TABLE") {
-                sqlx::query(stmt).execute(&pool).await.expect("apply migration");
-            }
-        }
+        crate::migrations::run_migrations(&pool).await.expect("run migrations");
         pool
     }
 

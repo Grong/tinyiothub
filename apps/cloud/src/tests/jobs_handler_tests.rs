@@ -38,7 +38,12 @@ fn test_token() -> String {
 
 #[tokio::test]
 async fn test_list_jobs() {
-    let app = setup_test_app().await;
+    // resolve_workspace 需要 token 中的默认租户/工作区存在（原由种子迁移提供，
+    // 基线为纯 DDL；Task 3 的 seed_system 到位后此种子可移除）
+    let (app_state, pool) = setup_test_app_with_pool().await;
+    seed_test_workspace(&pool, "tenant-default-001", "ws-default-001").await;
+    let api_router = crate::api::create_router(&app_state);
+    let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
     let token = test_token();
 
     let response = app
@@ -211,7 +216,10 @@ async fn test_delete_job_not_found() {
 
 #[tokio::test]
 async fn test_get_job_statistics() {
-    let app = setup_test_app().await;
+    let (app_state, pool) = setup_test_app_with_pool().await;
+    seed_test_workspace(&pool, "tenant-default-001", "ws-default-001").await;
+    let api_router = crate::api::create_router(&app_state);
+    let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
     let token = test_token();
 
     let response = app
@@ -259,7 +267,10 @@ async fn test_get_job_statistics_no_workspace() {
 
 #[tokio::test]
 async fn test_list_all_executions() {
-    let app = setup_test_app().await;
+    let (app_state, pool) = setup_test_app_with_pool().await;
+    seed_test_workspace(&pool, "tenant-default-001", "ws-default-001").await;
+    let api_router = crate::api::create_router(&app_state);
+    let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
     let token = test_token();
 
     let response = app

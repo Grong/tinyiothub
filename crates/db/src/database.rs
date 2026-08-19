@@ -1,5 +1,7 @@
 use sqlx::{AssertSqlSafe, Error as SqlxError, SqlitePool, sqlite::SqliteRow};
 
+use crate::config::DatabaseConfig;
+
 /// Db abstraction layer for SQLx
 #[derive(Debug, Clone)]
 pub struct Db {
@@ -9,6 +11,23 @@ pub struct Db {
 impl Db {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
+    }
+
+    /// One-step cloud entry: build the pool (FK pragma on), run embedded
+    /// migrations (backup + FK-OFF connection + integrity enforcement),
+    /// return the facade.
+    pub async fn connect(config: &DatabaseConfig) -> Result<Self, SqlxError> {
+        tracing::info!("Creating database connection pool with config: {:?}", config);
+
+        let pool = crate::pool::pool_options(config)
+            .connect_with(crate::pool::connect_options(config)?)
+            .await?;
+
+        tracing::info!("Running database migrations...");
+        crate::migrations::run_migrations(&pool).await?;
+        tracing::info!("Database migrations completed successfully");
+
+        Ok(Self::new(pool))
     }
 
     pub fn pool(&self) -> &SqlitePool {

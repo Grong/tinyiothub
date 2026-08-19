@@ -18,6 +18,11 @@ pub async fn create_test_pool() -> SqlitePool {
 
 /// Seed required reference data (tenant + workspace) for FK constraints.
 pub async fn seed_test_workspace(pool: &SqlitePool, tenant_id: &str, workspace_id: &str) {
+    // tenants.plan_id → subscription_plans FK（基线为纯 DDL，种子随 Task 3 的 seed_system 到位）
+    sqlx::query("INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free', 'free', 'Free')")
+        .execute(pool)
+        .await
+        .expect("seed plan");
     sqlx::query("INSERT INTO tenants (id, name, slug, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)")
         .bind(tenant_id)
         .bind(tenant_id)

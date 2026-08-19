@@ -231,14 +231,7 @@ mod tests {
             .connect(":memory:")
             .await
             .expect("in-memory sqlite");
-        for stmt in
-            include_str!("../../../../../../crates/db/migrations/20260629000001_create_heartbeat_tasks.sql").split(';')
-        {
-            let stmt = stmt.trim();
-            if !stmt.is_empty() {
-                sqlx::query(stmt).execute(&pool).await.expect("apply migration");
-            }
-        }
+        tinyiothub_storage::migrations::run_migrations(&pool).await.expect("run migrations");
         tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(pool)
     }
 

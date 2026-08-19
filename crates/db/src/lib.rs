@@ -72,10 +72,8 @@ pub mod workspace;
 pub mod test_helpers {
     /// Run all migrations in chronological order.
     ///
-    /// Delegates to the centralized migration runner which handles:
-    /// - Skipping deleted-file versions
-    /// - Cleaning up orphaned `_sqlx_migrations` records
-    /// - Post-migration schema consistency repair
+    /// Delegates to the centralized migration runner (backup before pending
+    /// migrations, FK OFF during the run, FK integrity check after).
     pub async fn run_all_migrations(pool: &sqlx::SqlitePool) -> Result<(), sqlx::Error> {
         crate::migrations::run_migrations(pool).await
     }

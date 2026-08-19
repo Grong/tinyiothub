@@ -284,6 +284,11 @@ mod tests {
             .await
             .expect("migrations");
         // workspaces.tenant_id FK：预置 tenant_1（测试租户）
+        // tenants.plan_id → subscription_plans FK（基线为纯 DDL，种子随 Task 3 的 seed_system 到位）
+        sqlx::query("INSERT INTO subscription_plans (id, name, display_name) VALUES ('plan_free', 'free', 'Free')")
+            .execute(&pool)
+            .await
+            .expect("seed plan");
         sqlx::query("INSERT INTO tenants (id, name, slug) VALUES ('tenant_1', 'T1', 't1')")
             .execute(&pool)
             .await

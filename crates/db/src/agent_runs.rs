@@ -224,14 +224,7 @@ mod tests {
             .connect(":memory:")
             .await
             .expect("create in-memory sqlite");
-        let migration = include_str!("../migrations/20260729000001_thing_agent_loop.sql");
-        for stmt in migration.split(';') {
-            let stmt = stmt.trim();
-            // Skip the events ALTER — the events table is not part of this pool.
-            if !stmt.is_empty() && !stmt.starts_with("ALTER TABLE") {
-                sqlx::query(stmt).execute(&pool).await.expect("apply migration");
-            }
-        }
+        crate::migrations::run_migrations(&pool).await.expect("run migrations");
         pool
     }
 
@@ -575,11 +568,6 @@ mod tests {
     #[tokio::test]
     pub async fn interrupt_zombie_running_runs_marks_orphans_only() {
         let pool = test_pool().await;
-        // test_pool 只应用 thing_agent_loop 迁移；status 列由后续迁移引入。
-        sqlx::query("ALTER TABLE agent_runs ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'")
-            .execute(&pool)
-            .await
-            .expect("add status column");
         let repo = AgentRunsRepository::new(pool.clone());
 
         insert_raw(&pool, "ghost", "ws_1", "acted", None, None, 0, "-1 hours").await;

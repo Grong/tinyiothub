@@ -379,6 +379,11 @@ mod tests {
             .await
             .unwrap();
         // Create a tenant and workspace for FK references
+        // tenants.plan_id → subscription_plans FK（基线为纯 DDL，种子随 Task 3 的 seed_system 到位）
+        sqlx::query("INSERT INTO subscription_plans (id, name, display_name) VALUES ('plan_free', 'free', 'Free')")
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO tenants (id, name, slug, created_at, updated_at) VALUES ('tenant1', 'test', 'tenant1', '2025-01-01', '2025-01-01')")
             .execute(&pool)
             .await

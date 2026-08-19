@@ -375,17 +375,7 @@ mod tests {
             .connect(":memory:")
             .await
             .expect("create in-memory sqlite");
-        for migration in [
-            include_str!("../migrations/20260615120000_agent_actions.sql"),
-            include_str!("../migrations/20260629000001_create_heartbeat_tasks.sql"),
-        ] {
-            for stmt in migration.split(';') {
-                let stmt = stmt.trim();
-                if !stmt.is_empty() {
-                    sqlx::query(stmt).execute(&pool).await.expect("apply migration");
-                }
-            }
-        }
+        crate::migrations::run_migrations(&pool).await.expect("run migrations");
         pool
     }
 
@@ -596,20 +586,19 @@ mod tests {
         assert_eq!(parsed["error"], "llm timeout");
     }
 
-    pub async fn create_workspaces_table(pool: &SqlitePool) {
-        for stmt in [
-            "CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, tenant_id TEXT NOT NULL, agent_id TEXT, agent_config TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
-            "ALTER TABLE workspaces ADD COLUMN heartbeat_trust_config TEXT NOT NULL DEFAULT ''",
-            "ALTER TABLE workspaces ADD COLUMN heartbeat_config TEXT NOT NULL DEFAULT ''",
-        ] {
-            sqlx::query(stmt).execute(pool).await.expect("create workspaces table");
-        }
+    /// Seed the plan + tenant rows the baseline `workspaces.tenant_id` /
+    /// `tenants.plan_id` foreign keys require.
+    pub async fn seed_tenant(pool: &SqlitePool) {
+        sqlx::query("INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free','free','Free')")
+            .execute(pool).await.expect("seed plan");
+        sqlx::query("INSERT OR IGNORE INTO tenants (id, name, slug) VALUES ('t1','t','t1')")
+            .execute(pool).await.expect("seed tenant");
     }
 
     #[tokio::test]
     pub async fn heartbeat_config_save_and_load_roundtrip() {
         let pool = test_pool().await;
-        create_workspaces_table(&pool).await;
+        seed_tenant(&pool).await;
         sqlx::query(
             "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) \
              VALUES ('ws_c', 'ws', 't1', 'now', 'now')",
@@ -638,7 +627,7 @@ mod tests {
     #[tokio::test]
     pub async fn save_trust_config_persists_to_workspace_column() {
         let pool = test_pool().await;
-        create_workspaces_table(&pool).await;
+        seed_tenant(&pool).await;
         sqlx::query(
             "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) \
              VALUES ('ws_t', 'ws', 't1', 'now', 'now')",
@@ -660,7 +649,7 @@ mod tests {
     #[tokio::test]
     pub async fn load_trust_config_reads_workspace_column() {
         let pool = test_pool().await;
-        create_workspaces_table(&pool).await;
+        seed_tenant(&pool).await;
         let repo = HeartbeatTaskRepository::new(pool.clone());
 
         let config = crate::heartbeat::TrustConfig {

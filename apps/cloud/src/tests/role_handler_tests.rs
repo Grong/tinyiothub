@@ -7,7 +7,7 @@ use axum::{
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-use crate::test_utils::{auth_header, create_test_token, response_parts, setup_test_app};
+use crate::test_utils::{auth_header, create_test_token, response_parts, setup_test_app, setup_test_app_with_pool};
 
 fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Request<Body> {
     let builder = Request::builder()
@@ -284,7 +284,19 @@ async fn test_get_role_permissions_empty_for_new_role() {
 
 #[tokio::test]
 async fn test_update_and_get_role_permissions() {
-    let app = setup_test_app().await;
+    let (app_state, pool) = setup_test_app_with_pool().await;
+    // 权限 id 原由种子迁移预置；基线为纯 DDL（Task 3 的 seed_system 到位后此种子可移除）
+    sqlx::query(
+        "INSERT OR IGNORE INTO permissions (id, name, description, resource_type, action) VALUES
+         ('perm-device-read', 'device:read', '查看设备信息', 'device', 'read'),
+         ('perm-device-write', 'device:write', '修改设备信息', 'device', 'write'),
+         ('perm-user-read', 'user:read', '查看用户信息', 'user', 'read')",
+    )
+    .execute(&pool)
+    .await
+    .expect("seed permissions");
+    let api_router = crate::api::create_router(&app_state);
+    let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
     let token = create_test_token("user-1", "tenant-1");
 
     // Create a role
