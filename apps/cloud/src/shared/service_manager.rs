@@ -96,7 +96,7 @@ impl ServiceManager {
 
         // 注册报警事件处理器 - 评估报警规则并创建报警
         let notification_dispatcher = Arc::new(crate::domains::alarm::notification::NotificationDispatcher::new(
-            app_state.database.clone(),
+            app_state.db.clone(),
         ));
         let alarm_handler = Arc::new(crate::domains::alarm::AlarmEventHandler::new(
             app_state.alarm_service.clone(),
@@ -127,11 +127,11 @@ impl ServiceManager {
             registry.register(Box::new(tinyiothub_runtime::DeviceCommandExecutor::new(
                 data_server.clone(),
                 Arc::new(crate::shared::runtime_ports::DeviceCommandQueriesAdapter(
-                    (*app_state.database).clone(),
+                    (*app_state.db).clone(),
                 )),
             )));
             registry.register(Box::new(tinyiothub_runtime::EventRetentionExecutor::new(Arc::new(
-                crate::shared::runtime_ports::EventRetentionAdapter((*app_state.database).clone()),
+                crate::shared::runtime_ports::EventRetentionAdapter((*app_state.db).clone()),
             ))));
             let cron_scheduler = tinyiothub_scheduler::CronSchedulerService::new(
                 app_state.cron_job_repo.clone(),
@@ -146,14 +146,14 @@ impl ServiceManager {
 
         // 3. 启动健康检查服务
         #[cfg(not(feature = "harmonyos"))]
-        self.start_health_monitor(data_server.clone(), app_state.database.clone())
+        self.start_health_monitor(data_server.clone(), app_state.db.clone())
             .await?;
 
         // 4. Build and start AI subsystem (AgentRuntime 门面，Task 9 启动顺序)
         #[cfg(not(feature = "harmonyos"))]
         {
             let heartbeat_task_repo = Arc::new(tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(
-                app_state.database.pool().clone(),
+                app_state.db.pool().clone(),
             ));
 
             let heartbeat_config = tinyiothub_agent::runtime::heartbeat::types::HeartbeatConfig {
@@ -190,7 +190,7 @@ impl ServiceManager {
             // ── Task 9 启动顺序（D11-①③，错序即丢事件）──
             // 1. 从 DB 构造 RestoreSnapshot（活跃 heartbeat 配置/任务 +
             //    每 ws 最近 50 条 run + O11 dedup 元数据）。
-            let snapshot = crate::bootstrap::build_agent_snapshot(&app_state.database).await;
+            let snapshot = crate::bootstrap::build_agent_snapshot(&app_state.db).await;
             // 2. bus 先建并经 RuntimeDeps 注入 restore（Task 3 评审指针
             //    选项 a）；持久化 receiver 在 restore 之前取得 —— restore
             //    期间及之后的事件不丢。
@@ -203,7 +203,7 @@ impl ServiceManager {
             let tool_registry = app_state.agent_pool.tool_registry();
             tool_registry.register_provider(
                 crate::domains::agent::host::tools::chat_builtin_tools_provider(
-                    app_state.database.pool().clone(),
+                    app_state.db.pool().clone(),
                     Some(app_state.device_cache.clone()),
                     app_state.pending_actions.clone(),
                 ),
@@ -214,7 +214,7 @@ impl ServiceManager {
 
             let agent_events = Arc::new(tinyiothub_agent::runtime::events::AgentEventBus::new(256));
             let persist_rx = agent_events.subscribe();
-            let pool = app_state.database.pool().clone();
+            let pool = app_state.db.pool().clone();
             let policy_repo = Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone()));
             let runtime = Arc::new(tinyiothub_agent::runtime::runtime::AgentRuntime::restore(
                 snapshot,
@@ -255,7 +255,7 @@ impl ServiceManager {
             ));
             // 3. 僵尸 reconcile：DB 里 status='running' 但 registry 无主的
             //    run → 'interrupted'。
-            crate::bootstrap::reconcile_zombie_runs(&app_state.database, &runtime).await;
+            crate::bootstrap::reconcile_zombie_runs(&app_state.db, &runtime).await;
             // 4. 持久化订阅者（restore 前取得的 receiver；shutdown token
             //    编排主循环与心跳重试任务退出）。句柄注册进 service_handles
             //    随关停排空。
@@ -263,7 +263,7 @@ impl ServiceManager {
             {
                 let handle = tokio::spawn({
                     let runtime = runtime.clone();
-                    let db = app_state.database.clone();
+                    let db = app_state.db.clone();
                     let token = persist_shutdown.clone();
                     async move {
                         crate::domains::agent::host::persist::run_persistence_subscriber(
@@ -302,7 +302,7 @@ impl ServiceManager {
             // Wire agent pool via adapter
             let ai_adapter = Arc::new(crate::domains::agent::host::pool_adapter::HostAgentPoolAdapter::new(
                 app_state.agent_pool.clone(),
-                app_state.database.pool().clone(),
+                app_state.db.pool().clone(),
             ));
             heartbeat_runner.set_agent_pool(ai_adapter).await;
 
@@ -366,7 +366,7 @@ impl ServiceManager {
     async fn start_health_monitor(
         &self,
         data_server: Arc<DataServer>,
-        database: Arc<tinyiothub_storage::Database>,
+        db: Arc<tinyiothub_storage::Db>,
     ) -> Result<(), Error> {
         info!("Starting Health Monitor...");
 
@@ -379,7 +379,7 @@ impl ServiceManager {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        if let Err(e) = Self::perform_health_check(&data_server, &database).await {
+                        if let Err(e) = Self::perform_health_check(&data_server, &db).await {
                             warn!("Health check failed: {}", e);
                         }
                     }
@@ -401,9 +401,9 @@ impl ServiceManager {
 
     async fn perform_health_check(
         data_server: &DataServer,
-        database: &Arc<tinyiothub_storage::Database>,
+        db: &Arc<tinyiothub_storage::Db>,
     ) -> Result<(), Error> {
-        match sqlx::query("SELECT 1").fetch_optional(database.pool()).await {
+        match sqlx::query("SELECT 1").fetch_optional(db.pool()).await {
             Ok(_) => {
                 tracing::debug!("Database health check passed");
             }

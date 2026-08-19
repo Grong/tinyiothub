@@ -242,7 +242,7 @@ async fn wechat_callback(State(state): State<AppState>, Query(params): Query<WeC
     }
 
     // 换取 access_token 和 openid
-    let config = match get_wechat_config(&state.database).await {
+    let config = match get_wechat_config(&state.db).await {
         Some(c) => c,
         None => {
             let html = r#"<!DOCTYPE html><html><body><script>window.opener.postMessage({type:'wechat_callback',error:'微信配置错误'},window.location.origin);window.close();</script></body></html>"#.to_string();
@@ -265,7 +265,7 @@ async fn wechat_callback(State(state): State<AppState>, Query(params): Query<WeC
     };
 
     // 查找或创建用户
-    let db = &state.database;
+    let db = &state.db;
     let user = match find_or_create_user_by_wechat(db, &token_resp.openid).await {
         Ok(u) => u,
         Err(e) => {
@@ -306,7 +306,7 @@ async fn wechat_callback(State(state): State<AppState>, Query(params): Query<WeC
     };
 
     // 存储社交绑定（如果不存在）
-    if let Err(e) = save_social_binding(&state.database, &user.id, "wechat", &token_resp.openid).await {
+    if let Err(e) = save_social_binding(&state.db, &user.id, "wechat", &token_resp.openid).await {
         tracing::warn!("Failed to save social binding: {:?}", e);
     }
 
@@ -335,7 +335,7 @@ async fn wechat_login(
         return ApiResponseBuilder::error("授权码不能为空".to_string());
     }
 
-    let db = &state.database;
+    let db = &state.db;
 
     // 获取微信配置
     let config = match get_wechat_config(db).await {
@@ -399,7 +399,7 @@ async fn wechat_miniprogram_login(
         return ApiResponseBuilder::error("code 不能为空".to_string());
     }
 
-    let db = &state.database;
+    let db = &state.db;
 
     // 获取微信配置
     let _config = match get_wechat_config(db).await {
@@ -457,7 +457,7 @@ async fn unbind_social_account(
 
 /// 获取社交登录配置
 async fn get_social_config(State(state): State<AppState>) -> Json<ApiResponse<Vec<SocialConfig>>> {
-    let db = &state.database;
+    let db = &state.db;
 
     let sql = "SELECT provider, app_id, app_secret, redirect_uri, is_enabled FROM social_configs";
 
@@ -489,7 +489,7 @@ async fn update_social_config(
     State(state): State<AppState>,
     Json(request): Json<UpdateSocialConfigRequest>,
 ) -> Json<ApiResponse<String>> {
-    let db = &state.database;
+    let db = &state.db;
 
     let result = sqlx::query(
         r#"UPDATE social_configs
@@ -514,7 +514,7 @@ async fn update_social_config(
 
 // ============== 辅助函数 ==============
 
-async fn get_wechat_config(db: &tinyiothub_storage::Database) -> Option<SocialConfig> {
+async fn get_wechat_config(db: &tinyiothub_storage::Db) -> Option<SocialConfig> {
     let sql = "SELECT * FROM social_configs WHERE provider = 'wechat' LIMIT 1";
 
     let rows = db
@@ -602,7 +602,7 @@ struct WechatTokenResponse {
 }
 
 /// 根据微信 openid 查找或创建用户
-async fn find_or_create_user_by_wechat(db: &tinyiothub_storage::Database, openid: &str) -> Result<User, StatusCode> {
+async fn find_or_create_user_by_wechat(db: &tinyiothub_storage::Db, openid: &str) -> Result<User, StatusCode> {
     // 查找 social_bindings
     let rows =
         sqlx::query("SELECT user_id FROM social_bindings WHERE provider = 'wechat' AND provider_user_id = ? LIMIT 1")
@@ -673,7 +673,7 @@ fn user_from_row(row: sqlx::sqlite::SqliteRow) -> User {
 
 /// 存储社交账号绑定
 async fn save_social_binding(
-    db: &tinyiothub_storage::Database,
+    db: &tinyiothub_storage::Db,
     user_id: &str,
     provider: &str,
     provider_user_id: &str,

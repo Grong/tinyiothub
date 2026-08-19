@@ -22,7 +22,7 @@ pub async fn import_dtdl(
     WorkspaceScope(ws): WorkspaceScope,
     Json(body): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse<Value>>) {
-    let pool = state.database.pool().clone();
+    let pool = state.db.pool().clone();
 
     let parsed = match import_export::parse_dtdl(&body) {
         Ok(p) => p,
@@ -53,7 +53,7 @@ pub async fn import_wot(
     WorkspaceScope(ws): WorkspaceScope,
     Json(body): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse<Value>>) {
-    let pool = state.database.pool().clone();
+    let pool = state.db.pool().clone();
 
     let parsed = match import_export::parse_wot_td(&body) {
         Ok(p) => p,
@@ -83,7 +83,7 @@ pub async fn export_dtdl(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<Value>>) {
-    let pool = state.database.pool().clone();
+    let pool = state.db.pool().clone();
 
     let template = match import_export::load_template(&pool, &id).await {
         Ok(t) => t,

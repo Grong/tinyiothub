@@ -4,7 +4,7 @@
 
 use sqlx::FromRow;
 
-use crate::Database;
+use crate::Db;
 
 #[derive(Debug, Clone, FromRow)]
 pub struct DriverInstallation {
@@ -20,11 +20,11 @@ pub struct DriverInstallation {
 }
 
 pub struct DriverInstallationRepo {
-    db: Database,
+    db: Db,
 }
 
 impl DriverInstallationRepo {
-    pub fn new(db: Database) -> Self {
+    pub fn new(db: Db) -> Self {
         Self { db }
     }
 

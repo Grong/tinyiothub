@@ -123,7 +123,7 @@ async fn list_alarms(
             };
             let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;
 
-            let pool = state.database.pool().clone();
+            let pool = state.db.pool().clone();
             let device_names = load_device_names_map(&pool, &alarms).await;
             let data: Vec<AlarmDto> = alarms
                 .into_iter()
@@ -209,7 +209,7 @@ async fn get_recent_alarms(
     Query(query): Query<RecentAlarmsQuery>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<RecentAlarm>>> {
-    let db = tinyiothub_storage::Database::new(state.database.pool().clone());
+    let db = tinyiothub_storage::Db::new(state.db.pool().clone());
     let limit = query.limit.unwrap_or(10);
 
     match get_recent_alarms_list(&db, limit, Some(&claims.0.workspace_id)).await {
@@ -254,7 +254,7 @@ async fn load_device_names_map(
 }
 
 async fn get_recent_alarms_list(
-    db: &tinyiothub_storage::Database,
+    db: &tinyiothub_storage::Db,
     limit: i32,
     workspace_id: Option<&str>,
 ) -> Result<Vec<RecentAlarm>, sqlx::Error> {
@@ -631,7 +631,7 @@ async fn batch_resolve_alarms(
 #[cfg(test)]
 mod tests {
     use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
-    use tinyiothub_storage::Database;
+    use tinyiothub_storage::Db;
 
     use super::*;
 
@@ -674,7 +674,7 @@ mod tests {
     #[sqlx::test]
     async fn test_get_recent_alarms_empty() {
         let pool = create_minimal_pool().await;
-        let db = Database::new(pool.clone());
+        let db = Db::new(pool.clone());
 
         let result = get_recent_alarms_list(&db, 10, None).await;
         assert!(result.is_ok());
@@ -684,7 +684,7 @@ mod tests {
     #[sqlx::test]
     async fn test_get_recent_alarms_returns_alarms() {
         let pool = create_minimal_pool().await;
-        let db = Database::new(pool.clone());
+        let db = Db::new(pool.clone());
 
         sqlx::query(
             r#"INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
@@ -708,7 +708,7 @@ mod tests {
     #[sqlx::test]
     async fn test_get_recent_alarms_status_resolved() {
         let pool = create_minimal_pool().await;
-        let db = Database::new(pool.clone());
+        let db = Db::new(pool.clone());
 
         sqlx::query(
             r#"INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
@@ -728,7 +728,7 @@ mod tests {
     #[sqlx::test]
     async fn test_get_recent_alarms_status_acknowledged() {
         let pool = create_minimal_pool().await;
-        let db = Database::new(pool.clone());
+        let db = Db::new(pool.clone());
 
         sqlx::query(
             r#"INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
@@ -748,7 +748,7 @@ mod tests {
     #[sqlx::test]
     async fn test_get_recent_alarms_limit() {
         let pool = create_minimal_pool().await;
-        let db = Database::new(pool.clone());
+        let db = Db::new(pool.clone());
 
         sqlx::query("INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved) VALUES ('alarm-0', 'd1', 'ws-001', 'info', 'Alarm 0', datetime('now'), 0, 0)")
             .execute(&pool).await.expect("insert alarm 0 failed");
@@ -770,7 +770,7 @@ mod tests {
     #[sqlx::test]
     async fn test_get_recent_alarms_ordering() {
         let pool = create_minimal_pool().await;
-        let db = Database::new(pool.clone());
+        let db = Db::new(pool.clone());
 
         sqlx::query("INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved) VALUES ('alarm-old', 'd1', 'ws-001', 'info', 'Old alarm', datetime('now', '-2 hours'), 0, 0)")
             .execute(&pool).await.expect("insert old alarm failed");
@@ -788,7 +788,7 @@ mod tests {
     #[sqlx::test]
     async fn test_get_recent_alarms_with_workspace_filter() {
         let pool = create_minimal_pool().await;
-        let db = Database::new(pool.clone());
+        let db = Db::new(pool.clone());
 
         sqlx::query(
             r#"INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
@@ -816,7 +816,7 @@ mod tests {
     #[sqlx::test]
     async fn test_acknowledge_already_acknowledged_returns_409() {
         let pool = create_minimal_pool().await;
-        let _db = Database::new(pool.clone());
+        let _db = Db::new(pool.clone());
 
         // Insert an already-acknowledged alarm
         sqlx::query(
@@ -837,7 +837,7 @@ mod tests {
     #[sqlx::test]
     async fn test_resolve_already_resolved_returns_409() {
         let pool = create_minimal_pool().await;
-        let _db = Database::new(pool.clone());
+        let _db = Db::new(pool.clone());
 
         sqlx::query(
             "INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)

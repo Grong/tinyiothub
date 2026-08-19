@@ -23,7 +23,7 @@ use crate::domains::thing::types::ThingTreeNode;
 use crate::domains::thing::types::ThingType;
 use crate::domains::thing::types::UpdateThingRequest;
 use tinyiothub_storage::{
-    Database, create_device_command, create_device_properties_batch, find_device_commands_by_device_id,
+    Db, create_device_command, create_device_properties_batch, find_device_commands_by_device_id,
     find_device_properties_by_device_id,
 };
 
@@ -248,7 +248,7 @@ impl ThingService {
                 is_read_only: Some(p.get("isReadOnly").and_then(|v| v.as_bool()).unwrap_or(false) as i32),
             })
             .collect();
-        let db = Database::new(self.pool.clone());
+        let db = Db::new(self.pool.clone());
         create_device_properties_batch(&db, &requests).await?;
         Ok(())
     }
@@ -261,7 +261,7 @@ impl ThingService {
         let Some((json,)) = row else {
             return Ok(());
         };
-        let db = Database::new(self.pool.clone());
+        let db = Db::new(self.pool.clone());
         for a in serde_json::from_str::<Vec<serde_json::Value>>(&json).unwrap_or_default() {
             let req = CreateDeviceCommandRequest {
                 device_id: thing_id.to_string(),
@@ -437,7 +437,7 @@ impl ThingService {
     /// thing_properties — eng-review T9). No template fallback: the blueprint
     /// model means a thing with no instances has no properties (D6).
     async fn load_properties(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
-        let db = Database::new(self.pool.clone());
+        let db = Db::new(self.pool.clone());
         let props = find_device_properties_by_device_id(&db, device_id).await.ok()?;
         if props.is_empty() {
             return None;
@@ -501,7 +501,7 @@ impl ThingService {
     /// Load actions from the storage layer (single source of SQL for
     /// thing_actions — eng-review T9).
     async fn load_actions(&self, thing_id: &str) -> Option<Vec<serde_json::Value>> {
-        let db = Database::new(self.pool.clone());
+        let db = Db::new(self.pool.clone());
         let cmds = find_device_commands_by_device_id(&db, thing_id).await.ok()?;
         if cmds.is_empty() {
             return None;

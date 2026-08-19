@@ -289,7 +289,7 @@ mod tests {
             .await
             .expect("seed tenant");
         (
-            Arc::new(WorkspaceRepository::new(tinyiothub_storage::Database::new(
+            Arc::new(WorkspaceRepository::new(tinyiothub_storage::Db::new(
                 pool.clone(),
             ))),
             pool,

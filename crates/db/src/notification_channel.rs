@@ -1,12 +1,12 @@
 use sqlx::Row;
 
-use crate::database::Database;
+use crate::database::Db;
 use tinyiothub_core::generate_id;
 use tinyiothub_core::models::notification_channel::*;
 
 /// 根据 ID 查询通知渠道
 pub async fn find_notification_channel_by_id(
-    db: &Database,
+    db: &Db,
     id: &str,
 ) -> Result<Option<NotificationChannel>, sqlx::Error> {
     let row = sqlx::query("SELECT * FROM notification_channels WHERE id = ? LIMIT 1")
@@ -33,7 +33,7 @@ pub async fn find_notification_channel_by_id(
 
 /// Count channels with filters
 pub async fn count_notification_channels(
-    db: &Database,
+    db: &Db,
     params: &NotificationChannelQueryParams,
 ) -> Result<i64, sqlx::Error> {
     let mut query_builder =
@@ -59,7 +59,7 @@ pub async fn count_notification_channels(
 
 /// 查询所有通知渠道
 pub async fn find_all_notification_channels(
-    db: &Database,
+    db: &Db,
     params: &NotificationChannelQueryParams,
 ) -> Result<Vec<NotificationChannel>, sqlx::Error> {
     let page = params.page.unwrap_or(1);
@@ -109,7 +109,7 @@ pub async fn find_all_notification_channels(
 
 /// 创建通知渠道
 pub async fn create_notification_channel(
-    db: &Database,
+    db: &Db,
     req: &CreateNotificationChannelRequest,
     workspace_id: Option<&str>,
 ) -> Result<NotificationChannel, sqlx::Error> {
@@ -140,7 +140,7 @@ pub async fn create_notification_channel(
 
 /// 更新通知渠道；workspace_id 用于 WHERE 子句确保租户隔离
 pub async fn update_notification_channel(
-    db: &Database,
+    db: &Db,
     id: &str,
     req: &UpdateNotificationChannelRequest,
     workspace_id: Option<&str>,
@@ -183,7 +183,7 @@ pub async fn update_notification_channel(
 
 /// 删除通知渠道；workspace_id 用于 WHERE 子句确保租户隔离
 pub async fn delete_notification_channel(
-    db: &Database,
+    db: &Db,
     id: &str,
     workspace_id: Option<&str>,
 ) -> Result<u64, sqlx::Error> {
@@ -202,7 +202,7 @@ pub async fn delete_notification_channel(
 
 /// 设置启用/禁用
 pub async fn set_notification_channel_enabled(
-    db: &Database,
+    db: &Db,
     id: &str,
     is_enabled: bool,
 ) -> Result<NotificationChannel, sqlx::Error> {
@@ -221,7 +221,7 @@ pub async fn set_notification_channel_enabled(
 
 /// 获取统计
 pub async fn get_notification_channel_statistics(
-    db: &Database,
+    db: &Db,
     workspace_id: Option<&str>,
 ) -> Result<ChannelStatistics, sqlx::Error> {
     let total: i64 = if let Some(ws_id) = workspace_id {

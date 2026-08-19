@@ -30,7 +30,7 @@ use tracing::{debug, error, warn};
 
 use tinyiothub_core::agent_runs::RunReport;
 use tinyiothub_core::heartbeat::HeartbeatResult;
-use tinyiothub_storage::Database;
+use tinyiothub_storage::Db;
 use tinyiothub_storage::agent_runs::AgentRunsRepository;
 use tinyiothub_storage::heartbeat::HeartbeatTaskRepository;
 
@@ -71,7 +71,7 @@ fn record_failure(map: &mut std::collections::HashMap<String, u32>, key: &str) -
 /// 在飞重试任务中止。
 pub async fn run_persistence_subscriber(
     runtime: Arc<AgentRuntime>,
-    db: Arc<Database>,
+    db: Arc<Db>,
     rx: tokio::sync::broadcast::Receiver<AgentEvent>,
     shutdown: CancellationToken,
 ) {
@@ -88,7 +88,7 @@ pub async fn run_persistence_subscriber(
 pub async fn run_persistence_loop(
     mut rx: tokio::sync::broadcast::Receiver<AgentEvent>,
     dump_state: impl Fn() -> RestoreSnapshot + Send,
-    db: Arc<Database>,
+    db: Arc<Db>,
     publisher: Arc<AiEventPublisher>,
     reconcile_interval: Duration,
     shutdown: CancellationToken,

@@ -2,24 +2,24 @@
 
 use std::sync::Arc;
 
-use tinyiothub_storage::{Database, cache::DeviceCache};
+use tinyiothub_storage::{Db, cache::DeviceCache};
 
 use tinyiothub_storage::alarm::AlarmRepository;
 
 pub struct DeviceMonitoringService {
-    database: Arc<Database>,
+    db: Arc<Db>,
     device_cache: Arc<DeviceCache>,
     alarm_repository: Arc<AlarmRepository>,
 }
 
 impl DeviceMonitoringService {
     pub fn new(
-        database: Arc<Database>,
+        db: Arc<Db>,
         device_cache: Arc<DeviceCache>,
         alarm_repository: Arc<AlarmRepository>,
     ) -> Self {
         Self {
-            database,
+            db,
             device_cache,
             alarm_repository,
         }
@@ -114,9 +114,9 @@ impl DeviceMonitoringService {
     pub async fn get_device_metrics(&self, device_id: &str) -> Option<DeviceMetrics> {
         if let Some(_device) = self.device_cache.get(device_id) {
             let device_repository: Arc<tinyiothub_storage::device::DeviceRepository> = Arc::new(
-                tinyiothub_storage::DeviceRepository::new(self.database.as_ref().clone()),
+                tinyiothub_storage::DeviceRepository::new(self.db.as_ref().clone()),
             );
-            let device_service = super::service::DeviceService::new(device_repository, self.database.clone());
+            let device_service = super::service::DeviceService::new(device_repository, self.db.clone());
 
             let properties = device_service
                 .get_device_properties(device_id)

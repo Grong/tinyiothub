@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder};
 use tinyiothub_core::error::{Error, Result};
 
-use crate::database::Database;
+use crate::database::Db;
 use crate::sql_security::escape_like_pattern;
 
 // ──────────────────────────────────────────────
@@ -333,12 +333,12 @@ impl From<ResourceSearchResultRow> for ResourceSearchResult {
 
 #[derive(Debug, Clone)]
 pub struct WorkspaceRepository {
-    database: Database,
+    db: Db,
 }
 
 impl WorkspaceRepository {
-    pub fn new(database: Database) -> Self {
-        Self { database }
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 }
 
@@ -363,7 +363,7 @@ impl WorkspaceRepository {
             "#,
         )
         .bind(id)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await?;
 
         Ok(row.map(Into::into))
@@ -402,7 +402,7 @@ impl WorkspaceRepository {
         .bind(tenant_id)
         .bind(page_size as i64)
         .bind(offset as i64)
-        .fetch_all(self.database.pool())
+        .fetch_all(self.db.pool())
         .await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
@@ -433,7 +433,7 @@ impl WorkspaceRepository {
         .bind(agent_config)
         .bind(&now)
         .bind(&now)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await?;
 
         Ok(Workspace {
@@ -509,7 +509,7 @@ impl WorkspaceRepository {
         builder.push(", updated_at = ").push_bind(&now);
         builder.push(" WHERE id = ").push_bind(id);
 
-        let result = builder.build().execute(self.database.pool()).await?;
+        let result = builder.build().execute(self.db.pool()).await?;
         if result.rows_affected() == 0 {
             return Ok(None);
         }
@@ -520,7 +520,7 @@ impl WorkspaceRepository {
     pub async fn delete(&self, id: &str) -> Result<()> {
         sqlx::query("DELETE FROM workspaces WHERE id = ?")
             .bind(id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
         Ok(())
     }
@@ -529,7 +529,7 @@ impl WorkspaceRepository {
         let device: Option<(String, Option<String>)> =
             sqlx::query_as("SELECT id, workspace_id FROM devices WHERE id = ?")
                 .bind(device_id)
-                .fetch_optional(self.database.pool())
+                .fetch_optional(self.db.pool())
                 .await
                 .map_err(|e| Error::DatabaseError(format!("database error: {}", e)))?;
 
@@ -549,7 +549,7 @@ impl WorkspaceRepository {
             .bind(workspace_id)
             .bind(chrono::Utc::now().to_rfc3339())
             .bind(device_id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await
             .map_err(|e| Error::DatabaseError(format!("failed to assign device: {}", e)))?;
 
@@ -581,7 +581,7 @@ impl WorkspaceRepository {
             .bind(rt.as_str())
             .bind(page_size as i64)
             .bind(offset as i64)
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await?
         } else {
             sqlx::query_as::<_, WorkspaceResourceRow>(
@@ -596,7 +596,7 @@ impl WorkspaceRepository {
             .bind(workspace_id)
             .bind(page_size as i64)
             .bind(offset as i64)
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await?
         };
 
@@ -617,7 +617,7 @@ impl WorkspaceRepository {
         )
         .bind(workspace_id)
         .bind(resource_id)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await?;
 
         Ok(row.map(Into::into))
@@ -653,7 +653,7 @@ impl WorkspaceRepository {
         .bind(metadata)
         .bind(&now)
         .bind(&now)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await?;
 
         Ok(WorkspaceResource {
@@ -726,7 +726,7 @@ impl WorkspaceRepository {
         builder.push(" WHERE workspace_id = ").push_bind(workspace_id);
         builder.push(" AND id = ").push_bind(resource_id);
 
-        let result = builder.build().execute(self.database.pool()).await?;
+        let result = builder.build().execute(self.db.pool()).await?;
         if result.rows_affected() == 0 {
             return Ok(None);
         }
@@ -738,7 +738,7 @@ impl WorkspaceRepository {
         sqlx::query("DELETE FROM resources WHERE workspace_id = ? AND id = ?")
             .bind(workspace_id)
             .bind(resource_id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
         Ok(())
     }
@@ -813,14 +813,14 @@ impl WorkspaceRepository {
 
         let rows = builder
             .build_query_as::<ResourceSearchResultRow>()
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
     pub async fn find_all_ids(&self) -> Result<Vec<String>> {
         let rows: Vec<(String,)> = sqlx::query_as("SELECT id FROM workspaces")
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }

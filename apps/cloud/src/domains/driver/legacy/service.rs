@@ -8,7 +8,7 @@ use tinyiothub_core::models::{
     device_property::DeviceProperty,
 };
 use tinyiothub_storage::{
-    Database, bulk_create_device_commands, create_device_command, create_device_properties_batch,
+    Db, bulk_create_device_commands, create_device_command, create_device_properties_batch,
     find_device_commands_by_device_id, find_device_properties_by_device_id,
 };
 
@@ -31,16 +31,16 @@ use tinyiothub_web::pagination::DataObjectWithPagination;
 
 pub struct DeviceService {
     repository: Arc<DeviceRepository>,
-    database: Arc<Database>,
+    db: Arc<Db>,
     event_bus: Option<Arc<EventBus>>,
     tag_repository: Option<Arc<TagRepository>>,
 }
 
 impl DeviceService {
-    pub fn new(repository: Arc<DeviceRepository>, database: Arc<Database>) -> Self {
+    pub fn new(repository: Arc<DeviceRepository>, db: Arc<Db>) -> Self {
         Self {
             repository,
-            database,
+            db,
             event_bus: None,
             tag_repository: None,
         }
@@ -48,12 +48,12 @@ impl DeviceService {
 
     pub fn with_event_bus(
         repository: Arc<DeviceRepository>,
-        database: Arc<Database>,
+        db: Arc<Db>,
         event_bus: Arc<EventBus>,
     ) -> Self {
         Self {
             repository,
-            database,
+            db,
             event_bus: Some(event_bus),
             tag_repository: None,
         }
@@ -246,7 +246,7 @@ impl DeviceService {
         {
             Ok(properties) => {
                 if !properties.is_empty() {
-                    let db = self.database.clone();
+                    let db = self.db.clone();
                     if let Err(e) = create_device_properties_batch(&db, &properties).await {
                         tracing::warn!("{}", e);
                     }
@@ -269,7 +269,7 @@ impl DeviceService {
         {
             Ok(commands) => {
                 if !commands.is_empty() {
-                    let db = self.database.clone();
+                    let db = self.db.clone();
                     if let Err(e) = bulk_create_device_commands(&db, &commands).await {
                         tracing::warn!("Failed to create device commands: {}", e);
                     }
@@ -527,7 +527,7 @@ impl DeviceService {
     }
 
     pub async fn get_device_properties(&self, device_id: &str) -> Result<Vec<DeviceProperty>, Error> {
-        let db = self.database.clone();
+        let db = self.db.clone();
         find_device_properties_by_device_id(&db, device_id)
             .await
             .map_err(|e| self.io_error(e))
@@ -557,7 +557,7 @@ impl DeviceService {
     }
 
     pub async fn get_device_commands(&self, device_id: &str) -> Result<Vec<DeviceCommand>, Error> {
-        let db = self.database.clone();
+        let db = self.db.clone();
         find_device_commands_by_device_id(&db, device_id)
             .await
             .map_err(|e| self.io_error(e))
@@ -739,7 +739,7 @@ impl DeviceService {
         let device = self.repository.find_by_id(device_id).await?.ok_or(Error::NotFound)?;
         let command_id = uuid::Uuid::new_v4().to_string();
         let create_request = self.build_device_command_request(device_id, command_name, command_type, params);
-        let db = self.database.clone();
+        let db = self.db.clone();
         let _ = create_device_command(&db, &create_request).await;
         self.publish_command_started_event(&device, command_name, command_type, &command_id)
             .await;

@@ -30,7 +30,7 @@ pub async fn list_things(
     WorkspaceScope(workspace_id): WorkspaceScope,
     Query(params): Query<ListThingsParams>,
 ) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
-    let pool = state.database.pool().clone();
+    let pool = state.db.pool().clone();
     let svc = thing_service(&pool);
 
     let ws = workspace_id.unwrap_or_default();
@@ -60,7 +60,7 @@ pub async fn create_thing(
     WorkspaceScope(ws): WorkspaceScope,
     Json(req): Json<CreateThingRequest>,
 ) -> (StatusCode, Json<ApiResponse<ThingResponse>>) {
-    let pool = state.database.pool().clone();
+    let pool = state.db.pool().clone();
     let svc = thing_service(&pool);
 
     let workspace_id = ws.unwrap_or_default();
@@ -87,7 +87,7 @@ pub async fn get_thing(
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<ThingResponse>>) {
-    let pool = state.database.pool().clone();
+    let pool = state.db.pool().clone();
     let svc = thing_service(&pool);
     let ws = workspace_id.unwrap_or_default();
 
@@ -114,7 +114,7 @@ pub async fn update_thing(
     Path(id): Path<String>,
     Json(req): Json<UpdateThingRequest>,
 ) -> (StatusCode, Json<ApiResponse<ThingResponse>>) {
-    let pool = state.database.pool().clone();
+    let pool = state.db.pool().clone();
     let svc = thing_service(&pool);
     let ws = workspace_id.unwrap_or_default();
 
@@ -140,7 +140,7 @@ pub async fn delete_thing(
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<()>>) {
-    let pool = state.database.pool().clone();
+    let pool = state.db.pool().clone();
     let svc = thing_service(&pool);
     let ws = workspace_id.unwrap_or_default();
 
@@ -179,7 +179,7 @@ pub async fn get_thing_profile(
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<ThingProfileResponse>>) {
-    let pool = state.database.pool().clone();
+    let pool = state.db.pool().clone();
     let svc = thing_service(&pool);
     let ws = workspace_id.unwrap_or_default();
 
@@ -221,7 +221,7 @@ pub async fn get_thing_tree(
     Path(id): Path<String>,
     Query(query): Query<TreeQuery>,
 ) -> (StatusCode, Json<ApiResponse<Vec<ThingTreeNode>>>) {
-    let pool = state.database.pool().clone();
+    let pool = state.db.pool().clone();
     let svc = thing_service(&pool);
 
     let ws = workspace_id.unwrap_or_default();

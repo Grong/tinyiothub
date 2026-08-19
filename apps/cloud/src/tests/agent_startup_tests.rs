@@ -10,7 +10,7 @@ use std::time::Duration;
 use sqlx::SqlitePool;
 use tinyiothub_core::agent_runs::{Outcome, RunReport};
 use tinyiothub_core::heartbeat::TrustConfig;
-use tinyiothub_storage::Database;
+use tinyiothub_storage::Db;
 use tinyiothub_storage::heartbeat::{HeartbeatTaskRepository, WorkspaceHeartbeatConfig};
 
 use crate::bootstrap::{build_agent_snapshot, reconcile_zombie_runs};
@@ -20,7 +20,7 @@ use tinyiothub_agent::runtime::runtime::{AgentRuntime, RuntimeDeps};
 // ── fixtures ──────────────────────────────────────────────
 
 /// 全量迁移的内存库（max_connections=1：:memory: 每连接独立）。
-async fn test_db() -> (Arc<Database>, SqlitePool) {
+async fn test_db() -> (Arc<Db>, SqlitePool) {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -29,12 +29,12 @@ async fn test_db() -> (Arc<Database>, SqlitePool) {
     tinyiothub_storage::migrations::run_migrations(&pool)
         .await
         .expect("run migrations");
-    (Arc::new(Database::new(pool.clone())), pool)
+    (Arc::new(Db::new(pool.clone())), pool)
 }
 
 /// 真实启动顺序的测试骨架：snapshot →（订阅先于 restore）→ restore →
 /// 僵尸 reconcile。返回 runtime 供断言内存真相源。
-async fn bootstrap_test_runtime(db: &Arc<Database>) -> Arc<AgentRuntime> {
+async fn bootstrap_test_runtime(db: &Arc<Db>) -> Arc<AgentRuntime> {
     let snapshot = build_agent_snapshot(db).await;
     let deps = RuntimeDeps::test_stub();
     // 订阅先于 restore（bus 经 RuntimeDeps 注入，restore 前创建的 receiver

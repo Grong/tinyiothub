@@ -1,6 +1,6 @@
 use sqlx::FromRow;
 
-use crate::database::Database;
+use crate::database::Db;
 use tinyiothub_core::models::device_property::*;
 use tinyiothub_core::{generate_id, now_string};
 
@@ -45,7 +45,7 @@ impl From<DevicePropertyRow> for DeviceProperty {
 }
 
 /// Find a device property by ID
-pub async fn find_device_property_by_id(db: &Database, id: &str) -> Result<Option<DeviceProperty>, sqlx::Error> {
+pub async fn find_device_property_by_id(db: &Db, id: &str) -> Result<Option<DeviceProperty>, sqlx::Error> {
     let row = sqlx::query_as::<_, DevicePropertyRow>(
         r#"
         SELECT id, device_id, name, display_name, description, data_type, unit,
@@ -67,7 +67,7 @@ pub async fn find_device_property_by_id(db: &Database, id: &str) -> Result<Optio
 
 /// Find properties by device ID
 pub async fn find_device_properties_by_device_id(
-    db: &Database,
+    db: &Db,
     device_id: &str,
 ) -> Result<Vec<DeviceProperty>, sqlx::Error> {
     let rows = sqlx::query_as::<_, DevicePropertyRow>(
@@ -92,7 +92,7 @@ pub async fn find_device_properties_by_device_id(
 
 /// Batch create device properties
 pub async fn create_device_properties_batch(
-    db: &Database,
+    db: &Db,
     requests: &[CreateDevicePropertyRequest],
 ) -> Result<Vec<DeviceProperty>, sqlx::Error> {
     let mut tx = db.pool().begin().await?;

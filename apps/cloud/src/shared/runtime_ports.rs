@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use tinyiothub_core::models::device::Device;
 use tinyiothub_core::models::device_command::DeviceCommand;
 use tinyiothub_runtime::ports::{DeviceCacheSource, DeviceCommandQueries, EventRetentionStore};
-use tinyiothub_storage::Database;
+use tinyiothub_storage::Db;
 use tinyiothub_storage::cache::DeviceCache;
 
 /// `DeviceCache` → `DeviceCacheSource`（全部方法同步直转）。
@@ -42,8 +42,8 @@ impl DeviceCacheSource for DeviceCacheAdapter {
     }
 }
 
-/// `Database` → `DeviceCommandQueries`。
-pub struct DeviceCommandQueriesAdapter(pub Database);
+/// `Db` → `DeviceCommandQueries`。
+pub struct DeviceCommandQueriesAdapter(pub Db);
 
 #[async_trait]
 impl DeviceCommandQueries for DeviceCommandQueriesAdapter {
@@ -54,8 +54,8 @@ impl DeviceCommandQueries for DeviceCommandQueriesAdapter {
     }
 }
 
-/// `Database` → `EventRetentionStore`。SQL 与原 runtime 内联语句逐字一致。
-pub struct EventRetentionAdapter(pub Database);
+/// `Db` → `EventRetentionStore`。SQL 与原 runtime 内联语句逐字一致。
+pub struct EventRetentionAdapter(pub Db);
 
 #[async_trait]
 impl EventRetentionStore for EventRetentionAdapter {

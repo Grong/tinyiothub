@@ -122,7 +122,7 @@ async fn generate_sse_token(State(state): State<AppState>, claims: Claims) -> Js
 async fn logout(State(state): State<AppState>, Json(request): Json<LogoutRequest>) -> Json<ApiResponse<String>> {
     if let Some(token) = request.token {
         // 将 token 加入黑名单
-        let db = &state.database;
+        let db = &state.db;
 
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();

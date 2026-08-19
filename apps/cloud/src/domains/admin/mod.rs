@@ -32,7 +32,7 @@ use tinyiothub_core::models::device::Device;
 use tinyiothub_core::models::device_property::DeviceProperty;
 use tinyiothub_runtime::event_bus::EventBus;
 use tinyiothub_storage::event::EventRepository;
-use tinyiothub_storage::{Database, DeviceRepository, cache::DeviceCache};
+use tinyiothub_storage::{Db, DeviceRepository, cache::DeviceCache};
 
 pub mod batch;
 pub mod device;
@@ -58,7 +58,7 @@ pub trait AdminRoleChecker: Send + Sync {
 #[derive(Clone)]
 pub struct AdminState {
     /// 数据库连接池
-    pub database: Arc<Database>,
+    pub db: Arc<Db>,
     /// 设备内存缓存
     pub device_cache: Arc<DeviceCache>,
     /// 标签仓库 - 用于设备服务的标签关联
@@ -101,13 +101,13 @@ pub struct AdminState {
 
 impl AdminState {
     /// 获取数据库实例
-    pub fn database(&self) -> &Database {
-        &self.database
+    pub fn db(&self) -> &Db {
+        &self.db
     }
 
     /// 获取数据库连接池
     pub fn db_pool(&self) -> sqlx::SqlitePool {
-        self.database.pool().clone()
+        self.db.pool().clone()
     }
 
     /// 获取数据服务器
@@ -131,7 +131,7 @@ impl AdminState {
 
     /// 租户作用域设备仓储（AppState::device_repo_for 的域内移植）
     fn device_repo_for(&self, workspace_id: String) -> Arc<DeviceRepository> {
-        Arc::new(DeviceRepository::new(self.database.as_ref().clone()).for_workspace(workspace_id))
+        Arc::new(DeviceRepository::new(self.db.as_ref().clone()).for_workspace(workspace_id))
     }
 
     /// Returns a tenant-scoped device service.
@@ -150,7 +150,7 @@ impl AdminState {
         let repository = self.device_repo_for(ws_id);
 
         Arc::new(
-            DeviceService::with_event_bus(repository, self.database.clone(), self.event_bus.clone())
+            DeviceService::with_event_bus(repository, self.db.clone(), self.event_bus.clone())
                 .with_tag_repository(self.tag_repository.clone()),
         )
     }
@@ -193,7 +193,7 @@ impl AdminState {
         };
 
         // 2. 验证属性存在且属于该设备
-        let property = match tinyiothub_storage::find_device_property_by_id(self.database(), property_id).await {
+        let property = match tinyiothub_storage::find_device_property_by_id(self.db(), property_id).await {
             Ok(Some(p)) if p.device_id == device_id => p,
             Ok(Some(_)) => {
                 return Err(Error::ValidationError("Property does not belong to device".to_string()));

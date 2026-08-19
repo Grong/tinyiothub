@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tinyiothub_core::models::device::CreateDeviceRequest;
 use tinyiothub_storage::device::DeviceRepository;
-use tinyiothub_storage::{Database, DatabaseConfig, create_pool_without_migrations};
+use tinyiothub_storage::{Db, DatabaseConfig, create_pool_without_migrations};
 
 use tinyiothub_edge::modules::device::DeviceService;
 
@@ -32,13 +32,13 @@ CREATE TABLE IF NOT EXISTS devices (
 )
 "#;
 
-async fn setup_test_repo() -> Result<(Arc<Database>, Arc<DeviceRepository>), Box<dyn std::error::Error>> {
+async fn setup_test_repo() -> Result<(Arc<Db>, Arc<DeviceRepository>), Box<dyn std::error::Error>> {
     let config = DatabaseConfig {
         url: "sqlite::memory:".to_string(),
         ..Default::default()
     };
     let pool = create_pool_without_migrations(&config).await?;
-    let db = Arc::new(Database::new(pool));
+    let db = Arc::new(Db::new(pool));
 
     // Create devices table
     db.execute(DEVICES_TABLE_DDL).await?;

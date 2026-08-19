@@ -169,7 +169,7 @@ async fn list_things(State(state): State<AdminState>, headers: HeaderMap) -> Res
         "SELECT id, name, display_name, device_type, state, created_at FROM devices WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 100",
     )
     .bind(&workspace_id)
-    .fetch_all(state.database.pool())
+    .fetch_all(state.db.pool())
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     .into_iter()
@@ -220,7 +220,7 @@ async fn get_thing(
     )
     .bind(&id)
     .bind(&workspace_id)
-    .fetch_optional(state.database.pool())
+    .fetch_optional(state.db.pool())
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -292,7 +292,7 @@ async fn get_thing_properties(
     )
     .bind(&id)
     .bind(&workspace_id)
-    .fetch_all(state.database.pool())
+    .fetch_all(state.db.pool())
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -355,7 +355,7 @@ async fn list_commands(
     )
     .bind(&id)
     .bind(&workspace_id)
-    .fetch_all(state.database.pool())
+    .fetch_all(state.db.pool())
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -424,7 +424,7 @@ async fn send_command(
         sqlx::query_as("SELECT id, thing_type FROM devices WHERE id = ? AND workspace_id = ?")
             .bind(&id)
             .bind(&workspace_id)
-            .fetch_optional(state.database.pool())
+            .fetch_optional(state.db.pool())
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let Some((_, thing_type)) = thing else {
@@ -439,7 +439,7 @@ async fn send_command(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM thing_actions WHERE device_id = ? AND name = ?")
             .bind(&id)
             .bind(command_name)
-            .fetch_one(state.database.pool())
+            .fetch_one(state.db.pool())
             .await
             .map(|c| c > 0)
             .unwrap_or(false);
@@ -509,7 +509,7 @@ async fn list_events(
     )
     .bind(&id)
     .bind(&workspace_id)
-    .fetch_all(state.database.pool())
+    .fetch_all(state.db.pool())
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -563,7 +563,7 @@ async fn list_all_events(State(state): State<AdminState>, headers: HeaderMap) ->
         "SELECT id, event_type, event_level, title, device_id, created_at FROM events WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 100",
     )
     .bind(&workspace_id)
-    .fetch_all(state.database.pool())
+    .fetch_all(state.db.pool())
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 

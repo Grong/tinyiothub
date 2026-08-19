@@ -4,15 +4,15 @@ use crate::shared::error::EdgeResult;
 use sqlx::Row;
 use std::future::Future;
 use std::sync::Arc;
-use tinyiothub_storage::Database;
+use tinyiothub_storage::Db;
 
 pub struct OfflineBuffer {
-    db: Arc<Database>,
+    db: Arc<Db>,
     config: EdgeConfig,
 }
 
 impl OfflineBuffer {
-    pub fn new(db: Arc<Database>, config: EdgeConfig) -> Arc<Self> {
+    pub fn new(db: Arc<Db>, config: EdgeConfig) -> Arc<Self> {
         Arc::new(Self { db, config })
     }
 

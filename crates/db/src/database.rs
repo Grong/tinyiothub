@@ -1,12 +1,12 @@
 use sqlx::{AssertSqlSafe, Error as SqlxError, SqlitePool, sqlite::SqliteRow};
 
-/// Database abstraction layer for SQLx
+/// Db abstraction layer for SQLx
 #[derive(Debug, Clone)]
-pub struct Database {
+pub struct Db {
     pool: SqlitePool,
 }
 
-impl Database {
+impl Db {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }

@@ -1186,7 +1186,7 @@ mod tests {
     use tinyiothub_core::models::event::{
         ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
     };
-    use tinyiothub_storage::Database;
+    use tinyiothub_storage::Db;
 
     use super::*;
     use tinyiothub_storage::alarm::AlarmRuleRepository;
@@ -1302,7 +1302,7 @@ mod tests {
     #[sqlx::test]
     async fn test_evaluate_event_triggers_alarm(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
 
         // Insert a device
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
@@ -1339,7 +1339,7 @@ mod tests {
     #[sqlx::test]
     async fn test_evaluate_event_no_trigger_below_threshold(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
 
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
@@ -1365,7 +1365,7 @@ mod tests {
     #[sqlx::test]
     async fn test_duration_zero_triggers_immediately(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1392,7 +1392,7 @@ mod tests {
     #[sqlx::test]
     async fn test_duration_sustained_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1420,7 +1420,7 @@ mod tests {
     #[sqlx::test]
     async fn test_duration_clears_on_recovery(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1466,7 +1466,7 @@ mod tests {
     #[sqlx::test]
     async fn test_range_in_range_no_trigger(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1490,7 +1490,7 @@ mod tests {
     #[sqlx::test]
     async fn test_range_out_of_range_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1514,7 +1514,7 @@ mod tests {
     #[sqlx::test]
     async fn test_range_boundary_inclusive_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1539,7 +1539,7 @@ mod tests {
     #[sqlx::test]
     async fn test_change_increase_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1563,7 +1563,7 @@ mod tests {
     #[sqlx::test]
     async fn test_change_below_threshold_no_trigger(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1585,7 +1585,7 @@ mod tests {
     #[sqlx::test]
     async fn test_change_decrease_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1609,7 +1609,7 @@ mod tests {
     #[sqlx::test]
     async fn test_composite_and_all_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1638,7 +1638,7 @@ mod tests {
     #[sqlx::test]
     async fn test_composite_and_partial_no_trigger(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1664,7 +1664,7 @@ mod tests {
     #[sqlx::test]
     async fn test_composite_or_any_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1693,7 +1693,7 @@ mod tests {
     #[sqlx::test]
     async fn test_trigger_debounce_not_immediate(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1729,7 +1729,7 @@ mod tests {
     #[sqlx::test]
     async fn test_trigger_debounce_fires_after_duration(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1757,7 +1757,7 @@ mod tests {
     #[sqlx::test]
     async fn test_trigger_debounce_resets_on_clear(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1803,7 +1803,7 @@ mod tests {
     #[sqlx::test]
     async fn test_hysteresis_recovery_threshold(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1854,7 +1854,7 @@ mod tests {
     #[sqlx::test]
     async fn test_recovery_debounce(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1891,7 +1891,7 @@ mod tests {
     #[sqlx::test]
     async fn test_throttle_suppresses_repeated(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1929,7 +1929,7 @@ mod tests {
     #[sqlx::test]
     async fn test_disabled_rule_skipped(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1953,7 +1953,7 @@ mod tests {
     #[sqlx::test]
     async fn test_threshold_less_than_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1975,7 +1975,7 @@ mod tests {
     #[sqlx::test]
     async fn test_threshold_equal_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -1999,7 +1999,7 @@ mod tests {
     #[sqlx::test]
     async fn test_non_triggered_rule_ids_populated(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
@@ -2038,7 +2038,7 @@ mod integration_tests {
         event::EventHandler,
         models::event::{ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat},
     };
-    use tinyiothub_storage::Database;
+    use tinyiothub_storage::Db;
 
     use super::*;
     use tinyiothub_storage::alarm::{AlarmRepository, AlarmRuleRepository};
@@ -2160,7 +2160,7 @@ mod integration_tests {
     #[sqlx::test]
     async fn test_full_alarm_pipeline_event_to_alarm(pool: sqlx::SqlitePool) {
         setup_full_schema(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
 
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
@@ -2214,7 +2214,7 @@ mod integration_tests {
     #[sqlx::test]
     async fn test_alarm_pipeline_no_trigger_below_threshold(pool: sqlx::SqlitePool) {
         setup_full_schema(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
 
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
@@ -2251,7 +2251,7 @@ mod integration_tests {
     #[sqlx::test]
     async fn test_auto_resolve_clears_alarm_when_rule_no_longer_triggers(pool: sqlx::SqlitePool) {
         setup_full_schema(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
 
         sqlx::query("INSERT INTO devices (id, name, workspace_id) VALUES ('dev-ar', 'AutoResolve Device', 'ws-ar')")
             .execute(&pool)
@@ -2304,7 +2304,7 @@ mod integration_tests {
     #[sqlx::test]
     async fn test_auto_resolve_sets_resolution_metadata(pool: sqlx::SqlitePool) {
         setup_full_schema(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
 
         sqlx::query("INSERT INTO devices (id, name, workspace_id) VALUES ('dev-arm', 'Meta Device', 'ws-arm')")
             .execute(&pool)
@@ -2355,7 +2355,7 @@ mod integration_tests {
     #[sqlx::test]
     async fn test_suppress_duplicate_no_duplicate_alarm(pool: sqlx::SqlitePool) {
         setup_full_schema(&pool).await;
-        let db = Arc::new(Database::new(pool.clone()));
+        let db = Arc::new(Db::new(pool.clone()));
 
         sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-sd', 'Suppress Dev')")
             .execute(&pool)

@@ -1,17 +1,17 @@
 use sqlx::{QueryBuilder, Row};
 
-use crate::database::Database;
+use crate::database::Db;
 use tinyiothub_core::error::Result;
 use tinyiothub_core::models::cron_job::{CronRun, CronRunQuery};
 use tinyiothub_core::{generate_id, now_string};
 
 pub struct CronRunRepository {
-    database: Database,
+    db: Db,
 }
 
 impl CronRunRepository {
-    pub fn new(database: Database) -> Self {
-        Self { database }
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 }
 
@@ -58,7 +58,7 @@ impl CronRunRepository {
         .bind(trigger_type)
         .bind(triggered_by)
         .bind(&now)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await?;
 
         self.find_by_id(&id, workspace_id)
@@ -95,7 +95,7 @@ impl CronRunRepository {
         .bind(&now)
         .bind(id)
         .bind(workspace_id)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await?;
 
         if result.rows_affected() == 0 {
@@ -112,7 +112,7 @@ impl CronRunRepository {
         )
         .bind(id)
         .bind(workspace_id)
-        .fetch_one(self.database.pool())
+        .fetch_one(self.db.pool())
         .await?;
 
         Ok(map_cron_run_row(&row)?)
@@ -148,7 +148,7 @@ impl CronRunRepository {
         builder.push(" LIMIT ").push_bind(page_size as i64);
         builder.push(" OFFSET ").push_bind(offset as i64);
 
-        let rows = builder.build().fetch_all(self.database.pool()).await?;
+        let rows = builder.build().fetch_all(self.db.pool()).await?;
         let mut runs = Vec::new();
         for row in rows {
             runs.push(map_cron_run_row(&row)?);
@@ -166,7 +166,7 @@ impl CronRunRepository {
         )
         .bind(id)
         .bind(workspace_id)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await?;
 
         Ok(row.map(|r| map_cron_run_row(&r)).transpose()?)
@@ -176,7 +176,7 @@ impl CronRunRepository {
         let result = sqlx::query("DELETE FROM cron_runs WHERE job_id = ? AND workspace_id = ?")
             .bind(job_id)
             .bind(workspace_id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         Ok(result.rows_affected())
@@ -186,7 +186,7 @@ impl CronRunRepository {
         let row = sqlx::query("SELECT COUNT(*) as count FROM cron_runs WHERE job_id = ? AND workspace_id = ?")
             .bind(job_id)
             .bind(workspace_id)
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await?;
 
         let count: i64 = row.get("count");
@@ -197,7 +197,7 @@ impl CronRunRepository {
         let row = sqlx::query("SELECT COUNT(*) as count FROM cron_runs WHERE workspace_id = ? AND status = ?")
             .bind(workspace_id)
             .bind(status)
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await?;
 
         let count: i64 = row.get("count");
@@ -232,7 +232,7 @@ impl CronRunRepository {
         builder.push(" LIMIT ").push_bind(page_size as i64);
         builder.push(" OFFSET ").push_bind(offset as i64);
 
-        let rows = builder.build().fetch_all(self.database.pool()).await?;
+        let rows = builder.build().fetch_all(self.db.pool()).await?;
         let mut runs = Vec::new();
         for row in rows {
             runs.push(map_cron_run_row(&row)?);
@@ -245,7 +245,7 @@ impl CronRunRepository {
             "SELECT CAST(COALESCE(AVG(duration_ms), 0) AS REAL) as avg FROM cron_runs WHERE workspace_id = ? AND duration_ms IS NOT NULL",
         )
         .bind(workspace_id)
-        .fetch_one(self.database.pool())
+        .fetch_one(self.db.pool())
         .await?;
 
         let avg: f64 = row.get("avg");
@@ -256,7 +256,7 @@ impl CronRunRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::Database;
+    use crate::database::Db;
 
     async fn setup_repo() -> CronRunRepository {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:")
@@ -285,7 +285,7 @@ mod tests {
         .await
         .expect("Failed to create cron_runs table");
 
-        let database = Database::new(pool);
+        let database = Db::new(pool);
         CronRunRepository::new(database)
     }
 

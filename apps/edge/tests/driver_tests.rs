@@ -3,14 +3,14 @@ use std::sync::Arc;
 use tinyiothub_edge::modules::driver::DriverService;
 use tinyiothub_edge::shared::error::EdgeError;
 
-async fn test_db() -> Arc<tinyiothub_storage::Database> {
+async fn test_db() -> Arc<tinyiothub_storage::Db> {
     use tinyiothub_storage::{DatabaseConfig, create_pool_without_migrations};
     let config = DatabaseConfig {
         url: "sqlite::memory:".into(),
         ..Default::default()
     };
     let pool = create_pool_without_migrations(&config).await.unwrap();
-    Arc::new(tinyiothub_storage::Database::new(pool))
+    Arc::new(tinyiothub_storage::Db::new(pool))
 }
 
 #[tokio::test]

@@ -385,7 +385,7 @@ async fn send_code(
         }
     } else {
         // 无 Redis 时降级到数据库存储
-        let db = &state.database;
+        let db = &state.db;
         let now = chrono::Utc::now();
         let expires_at = now + chrono::Duration::seconds(CODE_EXPIRE_SECONDS as i64);
 
@@ -509,7 +509,7 @@ async fn login_with_code(
     }
 
     // 查找或创建用户（复用现有逻辑）
-    let db = &state.database;
+    let db = &state.db;
     let user = match find_or_create_user_by_phone(db, phone).await {
         Ok(u) => u,
         Err(e) => {
@@ -640,7 +640,7 @@ pub struct VerifyCodeResponse {
 
 /// 从数据库获取验证码（Redis 不可用时的 fallback）
 async fn get_code_from_db(state: &AppState, phone: &str) -> Option<String> {
-    let db = &state.database;
+    let db = &state.db;
 
     let rows = match sqlx::query(
         r#"SELECT code, expires_at FROM sms_codes
@@ -701,7 +701,7 @@ fn generate_code() -> String {
 
 /// 根据手机号查找或创建用户（原子操作，防止并发重复创建）
 async fn find_or_create_user_by_phone(
-    db: &tinyiothub_storage::Database,
+    db: &tinyiothub_storage::Db,
     phone: &str,
 ) -> Result<crate::domains::auth::user_store::AuthUser, Box<dyn std::error::Error + Send + Sync>> {
     // 最多重试 3 次，处理并发创建导致的唯一约束冲突

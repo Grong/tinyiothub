@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 use sqlx::SqlitePool;
 use tinyiothub_core::agent_runs::{Outcome, RunReport};
 use tinyiothub_core::heartbeat::{HeartbeatResult, HeartbeatStatus, TrustConfig};
-use tinyiothub_storage::Database;
+use tinyiothub_storage::Db;
 
 use crate::domains::agent::host::persist::{ResyncFailures, resync, run_persistence_loop, run_persistence_subscriber};
 use crate::domains::agent::host::test_utils::seed_test_workspace;
@@ -24,7 +24,7 @@ use tinyiothub_agent::runtime::snapshot::{RestoreSnapshot, WorkspaceHeartbeatSta
 // ── fixtures ──────────────────────────────────────────────
 
 /// 全量迁移的内存库（max_connections=1：:memory: 每连接独立）。
-async fn test_db() -> (Arc<Database>, SqlitePool) {
+async fn test_db() -> (Arc<Db>, SqlitePool) {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -33,7 +33,7 @@ async fn test_db() -> (Arc<Database>, SqlitePool) {
     tinyiothub_storage::migrations::run_migrations(&pool)
         .await
         .expect("run migrations");
-    (Arc::new(Database::new(pool.clone())), pool)
+    (Arc::new(Db::new(pool.clone())), pool)
 }
 
 fn report(run_id: &str, workspace_id: &str, summary: &str) -> RunReport {

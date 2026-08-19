@@ -24,7 +24,7 @@ const MAX_PAIRING_REQUESTS_PER_IP_PER_MINUTE: usize = 3;
 const IP_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
 
 pub struct GatewayService {
-    database_for_repos: Arc<tinyiothub_storage::Database>,
+    database_for_repos: Arc<tinyiothub_storage::Db>,
     event_repository: Arc<EventRepository>,
     cache: Arc<PairingCache>,
     mqtt_tx: mpsc::Sender<MqttPublish>,
@@ -37,7 +37,7 @@ pub enum MqttPublish {
 
 impl GatewayService {
     pub fn new(
-        database_for_repos: Arc<tinyiothub_storage::Database>,
+        database_for_repos: Arc<tinyiothub_storage::Db>,
         event_repository: Arc<EventRepository>,
         cache: Arc<PairingCache>,
         mqtt_tx: mpsc::Sender<MqttPublish>,
@@ -393,7 +393,7 @@ mod tests {
     fn make_service(pool: SqlitePool) -> (GatewayService, mpsc::Receiver<MqttPublish>) {
         let (tx, rx) = mpsc::channel(100);
         let cache = Arc::new(PairingCache::new(1000));
-        let database = Arc::new(tinyiothub_storage::Database::new(pool));
+        let database = Arc::new(tinyiothub_storage::Db::new(pool));
         let factory = database.clone();
         let event_repo: Arc<EventRepository> = Arc::new(tinyiothub_storage::event::EventRepository::new(
             database.as_ref().clone(),
@@ -652,7 +652,7 @@ mod tests {
         // Create a tiny cache and fill it
         let tiny_cache = Arc::new(PairingCache::new(1));
         let (tx, _rx2) = mpsc::channel(1);
-        let database = Arc::new(tinyiothub_storage::Database::new(pool));
+        let database = Arc::new(tinyiothub_storage::Db::new(pool));
         let factory = database.clone();
         let event_repo: Arc<EventRepository> = Arc::new(tinyiothub_storage::event::EventRepository::new(
             database.as_ref().clone(),
@@ -705,7 +705,7 @@ mod tests {
         drop(rx); // Close the receiver to simulate MQTT channel failure
 
         let cache = Arc::new(PairingCache::new(1000));
-        let database = Arc::new(tinyiothub_storage::Database::new(pool.clone()));
+        let database = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
         let factory = database.clone();
         let event_repo: Arc<EventRepository> = Arc::new(tinyiothub_storage::event::EventRepository::new(
             database.as_ref().clone(),

@@ -4,16 +4,16 @@ use tokio::sync::RwLock;
 
 use crate::config::EdgeConfig;
 use crate::shared::error::EdgeResult;
-use tinyiothub_storage::Database;
+use tinyiothub_storage::Db;
 
 pub struct ConfigService {
-    db: Arc<Database>,
+    db: Arc<Db>,
     config: EdgeConfig,
     merged: RwLock<HashMap<String, serde_json::Value>>,
 }
 
 impl ConfigService {
-    pub fn new(db: Arc<Database>, config: EdgeConfig) -> Arc<Self> {
+    pub fn new(db: Arc<Db>, config: EdgeConfig) -> Arc<Self> {
         Arc::new(Self {
             db,
             config,

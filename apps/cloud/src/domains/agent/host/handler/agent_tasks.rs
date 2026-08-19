@@ -35,7 +35,7 @@ async fn is_admin(state: &AgentState, user_id: &str) -> bool {
          WHERE ur.user_id = ? AND r.is_administrator = 1",
     )
     .bind(user_id)
-    .fetch_one(state.database.pool())
+    .fetch_one(state.db.pool())
     .await
     .map(|n| n > 0)
     .unwrap_or(false)
@@ -165,7 +165,7 @@ pub async fn list_runs(
     .bind(&workspace_id)
     .bind(limit)
     .bind(offset)
-    .fetch_all(state.database.pool())
+    .fetch_all(state.db.pool())
     .await;
 
     match runs {
@@ -195,7 +195,7 @@ pub async fn ack_run(
     let owner: Option<(String, Option<String>)> =
         sqlx::query_as("SELECT workspace_id, problem_key FROM agent_runs WHERE id = ?")
             .bind(&run_id)
-            .fetch_optional(state.database.pool())
+            .fetch_optional(state.db.pool())
             .await
             .unwrap_or(None);
     let problem_key = match owner {
@@ -203,7 +203,7 @@ pub async fn ack_run(
         _ => return ApiResponseBuilder::error_with_code(404, "运行记录不存在"),
     };
 
-    let repo = AgentRunsRepository::new(state.database.pool().clone());
+    let repo = AgentRunsRepository::new(state.db.pool().clone());
     match repo.ack_run(&run_id, &claims.user_id).await {
         Ok(first_ack) => {
             // O11 ack 抑制内存真源同步（Task 6，fix round 1 行级保真）：DB
@@ -286,7 +286,7 @@ pub async fn get_policy(
 ) -> Json<ApiResponse<PolicyView>> {
     verify_agent_admin!(state, claims, workspace_id);
 
-    let repo = tinyiothub_storage::policy::PolicyRepository::new(state.database.pool().clone());
+    let repo = tinyiothub_storage::policy::PolicyRepository::new(state.db.pool().clone());
     match repo.load_autonomy(&workspace_id).await {
         Ok(Some(policy)) => ApiResponseBuilder::success(PolicyView::from(policy)),
         Ok(None) => ApiResponseBuilder::success(PolicyView::default_off()),
@@ -316,7 +316,7 @@ pub async fn update_policy(
         max_actions_per_hour: req.max_actions_per_hour,
     };
 
-    let repo = tinyiothub_storage::policy::PolicyRepository::new(state.database.pool().clone());
+    let repo = tinyiothub_storage::policy::PolicyRepository::new(state.db.pool().clone());
     if let Err(e) = repo.save_autonomy(&workspace_id, &policy, &claims.user_id).await {
         tracing::error!(%workspace_id, "Failed to save autonomy policy: {}", e);
         return ApiResponseBuilder::error("保存策略失败");

@@ -21,7 +21,7 @@ use crate::domains::thing::{
     template::{TemplateEngine, TemplateRepository, TemplateValidator},
 };
 use tinyiothub_storage::memory::MemoryStore;
-use tinyiothub_storage::{Database, cache::DeviceCache};
+use tinyiothub_storage::{Db, cache::DeviceCache};
 use tokio::sync::OnceCell;
 
 use crate::domains::event::security::{EventSecurityFactory, SecureEventService};
@@ -41,7 +41,7 @@ pub struct AppState {
     pub device_cache: Arc<DeviceCache>,
 
     /// 数据库连接池
-    pub database: Arc<Database>,
+    pub db: Arc<Db>,
 
     /// 设备仓库工厂 - 用于创建租户感知的设备仓库
 
@@ -249,7 +249,7 @@ impl AppState {
         settings: &tinyiothub_core::config::ApplicationSettings,
     ) -> Self {
         // 创建共享的数据库连接
-        let database = Arc::new(Database::new(db_pool));
+        let database = Arc::new(Db::new(db_pool));
 
         // 创建设备仓库工厂
 
@@ -541,7 +541,7 @@ impl AppState {
                 workspace_service: workspace_service.clone(),
             }),
             system_prompts: Arc::new(settings.agent.system_prompts.clone()),
-            database,
+            db: database,
             data_server: None, // DataServer 由 ServiceManager 设置
             device_service,
             device_query_service,
@@ -604,13 +604,13 @@ impl AppState {
     /// 1. 遗留代码兼容
     /// 2. 直接数据库操作（谨慎使用）
     /// 3. 事务管理
-    pub fn database(&self) -> &Database {
-        &self.database
+    pub fn db(&self) -> &Db {
+        &self.db
     }
 
     /// 获取数据库连接池（兼容性方法）
     pub fn db_pool(&self) -> sqlx::SqlitePool {
-        self.database.pool().clone()
+        self.db.pool().clone()
     }
     /// 获取模板引擎
     pub fn template_engine(&self) -> &TemplateEngine {
@@ -658,7 +658,7 @@ impl AppState {
         let config = self.event_security.clone();
 
         // Create security factory
-        let security_factory = EventSecurityFactory::new(self.database.clone(), config)?;
+        let security_factory = EventSecurityFactory::new(self.db.clone(), config)?;
 
         // Create secure event service
         let secure_service = security_factory
@@ -689,13 +689,13 @@ impl AppState {
 
     /// 创建通知管理器
     fn create_notification_manager(
-        database: Arc<Database>,
+        db: Arc<Db>,
     ) -> Result<Arc<NotificationManager>, Box<dyn std::error::Error + Send + Sync>> {
         // Create notification history store
-        let _history_store = Arc::new(NotificationHistoryRepository::new(database.clone()));
+        let _history_store = Arc::new(NotificationHistoryRepository::new(db.clone()));
 
         // Create notification rule repository
-        let rule_repo = Arc::new(NotificationRuleRepository::new(database));
+        let rule_repo = Arc::new(NotificationRuleRepository::new(db));
 
         // Create notification manager with rule repository
         let mut notification_manager = NotificationManager::new(rule_repo);
@@ -979,7 +979,7 @@ impl TenantWorkspaceAccess {
 impl axum::extract::FromRef<AppState> for crate::domains::mcp::McpState {
     fn from_ref(state: &AppState) -> Self {
         crate::domains::mcp::McpState {
-            database: state.database.clone(),
+            db: state.db.clone(),
             device_cache: state.device_cache.clone(),
             tag_repository: state.tag_repository.clone(),
             event_bus: state.event_bus.clone(),
@@ -1021,7 +1021,7 @@ impl crate::domains::admin::AdminRoleChecker for EventSecurityAdminRoleChecker {
 impl axum::extract::FromRef<AppState> for crate::domains::admin::AdminState {
     fn from_ref(state: &AppState) -> Self {
         crate::domains::admin::AdminState {
-            database: state.database.clone(),
+            db: state.db.clone(),
             device_cache: state.device_cache.clone(),
             tag_repository: state.tag_repository.clone(),
             tag_service: state.tag_service.clone(),
@@ -1055,7 +1055,7 @@ impl axum::extract::FromRef<AppState> for crate::domains::admin::AdminState {
 impl axum::extract::FromRef<AppState> for crate::domains::agent::AgentState {
     fn from_ref(state: &AppState) -> Self {
         crate::domains::agent::AgentState {
-            database: state.database.clone(),
+            db: state.db.clone(),
             workspace_service: state.workspace_service.clone(),
             workspace_access: state.workspace_access.clone(),
             directive_sink: state.directive_sink.clone(),

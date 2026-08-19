@@ -5,7 +5,7 @@ use sqlx::{FromRow, QueryBuilder, Row};
 use tinyiothub_core::error::{Error, Result};
 use tinyiothub_core::models::user::{CreateUserRequest, UpdateUserRequest};
 
-use crate::database::Database;
+use crate::database::Db;
 
 // ──────────────────────────────────────────────
 // 持久化类型（DB 行 + 仓储契约）— 自领域 crate 迁入
@@ -312,12 +312,12 @@ impl From<UserRow> for User {
 /// SQLite implementation of UserRepository
 #[derive(Debug, Clone)]
 pub struct UserRepository {
-    database: Database,
+    db: Db,
 }
 
 impl UserRepository {
-    pub fn new(database: Database) -> Self {
-        Self { database }
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 }
 
@@ -331,7 +331,7 @@ impl UserRepository {
             "#,
         )
         .bind(id)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await?;
 
         Ok(row.map(Into::into))
@@ -346,7 +346,7 @@ impl UserRepository {
             "#,
         )
         .bind(username)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await?;
 
         Ok(row.map(Into::into))
@@ -361,7 +361,7 @@ impl UserRepository {
             "#,
         )
         .bind(email)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await?;
 
         Ok(row.map(Into::into))
@@ -425,7 +425,7 @@ impl UserRepository {
 
         let rows = builder
             .build_query_as::<UserRow>()
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
@@ -464,7 +464,7 @@ impl UserRepository {
             builder.push(")");
         }
 
-        let row = builder.build().fetch_one(self.database.pool()).await?;
+        let row = builder.build().fetch_one(self.db.pool()).await?;
         let count: i64 = row.get("count");
         Ok(count)
     }
@@ -491,14 +491,14 @@ impl UserRepository {
         .bind(&request.parent_id)
         .bind(&now)
         .bind(&now)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await?;
 
         self.find_by_id(&id).await?.ok_or(Error::NotFound)
     }
 
     pub async fn update(&self, id: &str, request: &UpdateUserRequest) -> Result<User> {
-        let mut tx = self.database.pool().begin().await?;
+        let mut tx = self.db.pool().begin().await?;
 
         let mut builder = QueryBuilder::new("UPDATE users SET ");
         let mut has_updates = false;
@@ -587,7 +587,7 @@ impl UserRepository {
     pub async fn delete(&self, id: &str) -> Result<u64> {
         let result = sqlx::query("DELETE FROM users WHERE id = ?")
             .bind(id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
         Ok(result.rows_affected())
     }
@@ -613,7 +613,7 @@ impl UserRepository {
     pub async fn exists_by_username(&self, username: &str) -> Result<bool> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE username = ?")
             .bind(username)
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await?;
         Ok(count > 0)
     }
@@ -621,7 +621,7 @@ impl UserRepository {
     pub async fn exists_by_email(&self, email: &str) -> Result<bool> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE email = ?")
             .bind(email)
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await?;
         Ok(count > 0)
     }
@@ -629,7 +629,7 @@ impl UserRepository {
     pub async fn exists_by_phone(&self, phone: &str) -> Result<bool> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE phone = ?")
             .bind(phone)
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await?;
         Ok(count > 0)
     }
@@ -641,7 +641,7 @@ impl UserRepository {
             .bind(enabled)
             .bind(&now)
             .bind(id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         if result.rows_affected() == 0 {
@@ -658,7 +658,7 @@ impl UserRepository {
             .bind(hashed_password)
             .bind(&now)
             .bind(id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         if result.rows_affected() == 0 {
@@ -674,7 +674,7 @@ impl UserRepository {
         sqlx::query("UPDATE users SET last_login_at = ? WHERE id = ?")
             .bind(&now)
             .bind(id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         Ok(())
@@ -682,20 +682,20 @@ impl UserRepository {
 
     pub async fn get_user_statistics(&self) -> Result<UserStatisticsNew> {
         let total_users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await?;
 
         let enabled_users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE is_enabled = true")
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await?;
 
         let disabled_users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE is_enabled = false")
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await?;
 
         let recent_logins: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE last_login_at >= datetime('now', '-7 days')")
-                .fetch_one(self.database.pool())
+                .fetch_one(self.db.pool())
                 .await?;
 
         Ok(UserStatisticsNew {

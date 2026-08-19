@@ -578,8 +578,8 @@ async fn list_channels(
     params.workspace_id = Some(claims.0.workspace_id.clone());
 
     let (channels_result, count_result) = tokio::join!(
-        find_all_notification_channels(&state.database, &params),
-        count_notification_channels(&state.database, &params),
+        find_all_notification_channels(&state.db, &params),
+        count_notification_channels(&state.db, &params),
     );
 
     match channels_result {
@@ -614,7 +614,7 @@ async fn get_channel(
     Path(id): Path<String>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<NotificationChannel>> {
-    let db = state.database.clone();
+    let db = state.db.clone();
     match find_notification_channel_by_id(&db, &id).await {
         Ok(Some(channel)) => {
             if let Some(ref channel_ws) = channel.workspace_id
@@ -638,7 +638,7 @@ async fn create_channel(
     claims: AuthClaims,
     Json(payload): Json<CreateNotificationChannelRequest>,
 ) -> Json<ApiResponse<NotificationChannel>> {
-    let db = state.database.clone();
+    let db = state.db.clone();
 
     if !["sms", "email", "webhook"].contains(&payload.channel_type.as_str()) {
         return ApiResponseBuilder::error_with_code(400, "无效的通知渠道类型");
@@ -665,7 +665,7 @@ async fn update_channel(
     claims: AuthClaims,
     Json(payload): Json<UpdateNotificationChannelRequest>,
 ) -> Json<ApiResponse<NotificationChannel>> {
-    let db = state.database.clone();
+    let db = state.db.clone();
 
     // Verify workspace ownership
     if let Ok(Some(channel)) = find_notification_channel_by_id(&db, &id).await
@@ -703,7 +703,7 @@ async fn delete_channel(
     Path(id): Path<String>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<bool>> {
-    let db = state.database.clone();
+    let db = state.db.clone();
 
     match delete_notification_channel(&db, &id, Some(&claims.0.workspace_id)).await {
         Ok(_) => ApiResponseBuilder::success(true),
@@ -721,7 +721,7 @@ async fn test_channel(
     claims: AuthClaims,
     Json(payload): Json<SendMessageRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    let db = state.database.clone();
+    let db = state.db.clone();
 
     let channel = match find_notification_channel_by_id(&db, &id).await {
         Ok(Some(c)) => {
@@ -763,7 +763,7 @@ async fn test_channel(
 
 /// Get channel statistics
 async fn get_statistics(State(state): State<AppState>, claims: AuthClaims) -> Json<ApiResponse<ChannelStatistics>> {
-    let db = state.database.clone();
+    let db = state.db.clone();
     match get_notification_channel_statistics(&db, Some(&claims.0.workspace_id)).await {
         Ok(stats) => ApiResponseBuilder::success(stats),
         Err(e) => {

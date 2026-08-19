@@ -291,7 +291,7 @@ async fn logout(State(_state): State<AppState>, Json(_request): Json<LogoutReque
 /// 返回 (tenant_id, workspace_id)。tenant_id 缺省为 "default"；
 /// workspace_id 优先取用户自己的 ws-{user_id}，否则取租户下第一个。
 async fn resolve_user_login_context(state: &AppState, user_id: &str) -> Result<(String, Option<String>), String> {
-    let pool = state.database.pool();
+    let pool = state.db.pool();
 
     let tenant_id: Option<String> = sqlx::query_scalar("SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1")
         .bind(user_id)

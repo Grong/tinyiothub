@@ -2,17 +2,17 @@
 
 use std::sync::Arc;
 
-use tinyiothub_storage::Database;
+use tinyiothub_storage::Db;
 
 use super::dto::*;
 
 /// Sends notifications for a triggered alarm based on rule config.
 pub struct NotificationDispatcher {
-    db: Arc<Database>,
+    db: Arc<Db>,
 }
 
 impl NotificationDispatcher {
-    pub fn new(db: Arc<Database>) -> Self {
+    pub fn new(db: Arc<Db>) -> Self {
         Self { db }
     }
 
@@ -62,7 +62,7 @@ impl NotificationDispatcher {
     }
 
     async fn send_to_channel(
-        db: &Database,
+        db: &Db,
         channel_type: &tinyiothub_core::notification_types::NotificationChannelType,
         recipients: &[String],
         title: &str,

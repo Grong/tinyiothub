@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
 
-use tinyiothub_storage::Database;
+use tinyiothub_storage::Db;
 
 /// 设备模板实体 - 使用 snake_case 数据库字段
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -245,7 +245,7 @@ impl DeviceTemplate {
 
     /// 根据 ID 查找设备模板
     pub async fn find_by_id(
-        db: &Database,
+        db: &Db,
         id: &str,
         workspace_id: &str,
     ) -> Result<Option<DeviceTemplate>, sqlx::Error> {
@@ -269,7 +269,7 @@ impl DeviceTemplate {
 
     /// 根据名称查找设备模板
     pub async fn find_by_name(
-        db: &Database,
+        db: &Db,
         name: &str,
         workspace_id: &str,
     ) -> Result<Option<DeviceTemplate>, sqlx::Error> {
@@ -292,7 +292,7 @@ impl DeviceTemplate {
     }
 
     /// 创建新设备模板
-    pub async fn create(db: &Database, request: &CreateDeviceTemplateRequest) -> Result<DeviceTemplate, sqlx::Error> {
+    pub async fn create(db: &Db, request: &CreateDeviceTemplateRequest) -> Result<DeviceTemplate, sqlx::Error> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -357,7 +357,7 @@ impl DeviceTemplate {
 
     /// 更新设备模板
     pub async fn update(
-        db: &Database,
+        db: &Db,
         id: &str,
         request: &UpdateDeviceTemplateRequest,
     ) -> Result<DeviceTemplate, sqlx::Error> {
@@ -508,7 +508,7 @@ impl DeviceTemplate {
     }
 
     /// 删除设备模板（软删除）
-    pub async fn delete(db: &Database, id: &str) -> Result<u64, sqlx::Error> {
+    pub async fn delete(db: &Db, id: &str) -> Result<u64, sqlx::Error> {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         let result = sqlx::query("UPDATE thing_templates SET is_active = 0, updated_at = ? WHERE id = ?")
@@ -521,7 +521,7 @@ impl DeviceTemplate {
     }
 
     /// 标记模板为内置模板
-    pub async fn set_builtin(db: &Database, id: &str) -> Result<(), sqlx::Error> {
+    pub async fn set_builtin(db: &Db, id: &str) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE thing_templates SET is_builtin = 1 WHERE id = ?")
             .bind(id)
             .execute(db.pool())
@@ -531,7 +531,7 @@ impl DeviceTemplate {
 
     /// 查询设备模板列表（支持分页和筛选）
     pub async fn find_all(
-        db: &Database,
+        db: &Db,
         params: &TemplateQueryParams,
         workspace_id: &str,
     ) -> Result<Vec<DeviceTemplate>, sqlx::Error> {
@@ -592,7 +592,7 @@ impl DeviceTemplate {
     }
 
     /// 统计设备模板数量
-    pub async fn count(db: &Database, params: &TemplateQueryParams, workspace_id: &str) -> Result<i64, sqlx::Error> {
+    pub async fn count(db: &Db, params: &TemplateQueryParams, workspace_id: &str) -> Result<i64, sqlx::Error> {
         let mut query = QueryBuilder::new("SELECT COUNT(*) as count FROM thing_templates WHERE is_active = 1");
         query.push(" AND (workspace_id IS NULL OR workspace_id = ");
         query.push_bind(workspace_id);
@@ -633,7 +633,7 @@ impl DeviceTemplate {
 
     /// 根据分类查询设备模板
     pub async fn find_by_category(
-        db: &Database,
+        db: &Db,
         category: &str,
         workspace_id: &str,
     ) -> Result<Vec<DeviceTemplate>, sqlx::Error> {
@@ -658,7 +658,7 @@ impl DeviceTemplate {
 
     /// 搜索设备模板
     pub async fn search(
-        db: &Database,
+        db: &Db,
         keyword: &str,
         workspace_id: &str,
         limit: Option<u32>,
@@ -697,7 +697,7 @@ impl DeviceTemplate {
     }
 
     /// 加载内置模板
-    pub async fn load_builtin_templates(db: &Database) -> Result<Vec<DeviceTemplate>, sqlx::Error> {
+    pub async fn load_builtin_templates(db: &Db) -> Result<Vec<DeviceTemplate>, sqlx::Error> {
         let templates = sqlx::query_as::<_, DeviceTemplate>(
             r#"
             SELECT id, name, display_name, description, version, author, category,
@@ -715,7 +715,7 @@ impl DeviceTemplate {
     }
 
     /// 检查模板名称是否存在
-    pub async fn exists_by_name(db: &Database, name: &str) -> Result<bool, sqlx::Error> {
+    pub async fn exists_by_name(db: &Db, name: &str) -> Result<bool, sqlx::Error> {
         let row = sqlx::query("SELECT COUNT(*) as count FROM thing_templates WHERE name = ? AND is_active = 1")
             .bind(name)
             .fetch_one(db.pool())
@@ -787,7 +787,7 @@ impl DeviceTemplate {
 
 impl TemplateCategory {
     /// 获取所有模板分类
-    pub async fn get_categories(db: &Database) -> Result<Vec<TemplateCategory>, sqlx::Error> {
+    pub async fn get_categories(db: &Db) -> Result<Vec<TemplateCategory>, sqlx::Error> {
         let mut categories = sqlx::query_as::<_, TemplateCategory>(
             r#"
             SELECT name, display_name, description, sort_order, is_active, created_at

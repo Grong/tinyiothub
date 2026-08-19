@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use thiserror::Error;
 
-use crate::database::Database;
+use crate::database::Db;
 
 // ──────────────────────────────────────────────
 // 持久化类型（DB 行 + 契约错误）— 自 agent/host/types.rs 迁入
@@ -93,12 +93,12 @@ impl Session {
 /// SQLite implementation of SessionRepository (session index only)
 #[derive(Debug, Clone)]
 pub struct SessionRepository {
-    database: Database,
+    db: Db,
 }
 
 impl SessionRepository {
-    pub fn new(database: Database) -> Self {
-        Self { database }
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 
     fn parse_timestamp(s: &str) -> Option<i64> {
@@ -204,7 +204,7 @@ impl SessionRepository {
              FROM chat_sessions WHERE session_key = ?",
         )
         .bind(session_key)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await
         .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
 
@@ -231,7 +231,7 @@ impl SessionRepository {
         .bind(session.created_at)
         .bind(session.updated_at)
         .bind(&metadata_str)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await
         .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
 
@@ -253,7 +253,7 @@ impl SessionRepository {
         .bind(session.updated_at)
         .bind(&metadata_str)
         .bind(&session.session_key)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await
         .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
 
@@ -268,7 +268,7 @@ impl SessionRepository {
         // chat_messages has an FK to chat_sessions without ON DELETE CASCADE
         // in the original schema, so messages must go first.
         let mut tx = self
-            .database
+            .db
             .pool()
             .begin()
             .await
@@ -319,7 +319,7 @@ impl SessionRepository {
 
         let rows = builder
             .build()
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await
             .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
 
@@ -340,7 +340,7 @@ mod tests {
     pub async fn create_test_repo() -> SessionRepository {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         crate::test_helpers::run_all_migrations(&pool).await.unwrap();
-        SessionRepository::new(Database::new(pool))
+        SessionRepository::new(Db::new(pool))
     }
 
     #[tokio::test]
@@ -410,7 +410,7 @@ mod tests {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await.unwrap();
         crate::test_helpers::run_all_migrations(&pool).await.unwrap();
-        let repo = SessionRepository::new(Database::new(pool.clone()));
+        let repo = SessionRepository::new(Db::new(pool.clone()));
 
         let session = Session::new(
             "agent:ws:agent1/sess_msgs".to_string(),

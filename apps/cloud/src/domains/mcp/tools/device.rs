@@ -158,7 +158,7 @@ impl ToolHandler for DeviceProfileHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let mut device = find_device_by_id_with_tags(state.database(), &input.id, "")
+        let mut device = find_device_by_id_with_tags(state.db(), &input.id, "")
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.id)))?;
@@ -237,12 +237,12 @@ impl ToolHandler for DevicePropertyGetHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let _device = find_device_by_id(state.database(), &input.device_id)
+        let _device = find_device_by_id(state.db(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.device_id)))?;
 
-        let all_properties = find_device_properties_by_device_id(state.database(), &input.device_id)
+        let all_properties = find_device_properties_by_device_id(state.db(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -349,12 +349,12 @@ impl ToolHandler for WritePropertiesHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let _device = find_device_by_id(state.database(), &input.device_id)
+        let _device = find_device_by_id(state.db(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.device_id)))?;
 
-        let device_properties = find_device_properties_by_device_id(state.database(), &input.device_id)
+        let device_properties = find_device_properties_by_device_id(state.db(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -483,7 +483,7 @@ impl ToolHandler for DeviceCommandHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let device = find_device_by_id(state.database(), &input.device_id)
+        let device = find_device_by_id(state.db(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.device_id)))?;
@@ -505,7 +505,7 @@ impl ToolHandler for DeviceCommandHandler {
             .unwrap());
         }
 
-        let command = find_device_command_by_device_and_name(state.database(), &input.device_id, &input.command_name)
+        let command = find_device_command_by_device_and_name(state.db(), &input.device_id, &input.command_name)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -889,7 +889,7 @@ impl ToolHandler for SearchDevicesHandler {
             .await
             .map_err(|e| ToolError::Internal(format!("Search failed: {}", e)))?;
 
-        load_tags_for_devices(state.database(), &mut devices, "")
+        load_tags_for_devices(state.db(), &mut devices, "")
             .await
             .map_err(|e| ToolError::Internal(format!("Failed to load tags: {}", e)))?;
 

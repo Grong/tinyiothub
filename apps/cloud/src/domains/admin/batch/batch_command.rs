@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use thiserror::Error;
-use tinyiothub_storage::Database;
+use tinyiothub_storage::Db;
 use uuid::Uuid;
 
 use crate::domains::driver::legacy::DeviceService;
@@ -75,7 +75,7 @@ pub struct BatchCommandRepository;
 impl BatchCommandRepository {
     /// Find existing batch by workspace_id + idempotency_key
     pub async fn find_by_idempotency_key(
-        db: &Database,
+        db: &Db,
         workspace_id: &str,
         idempotency_key: &str,
     ) -> BatchCommandResult<Option<BatchCommand>> {
@@ -97,7 +97,7 @@ impl BatchCommandRepository {
     }
 
     /// Find batch by ID
-    pub async fn find_by_id(db: &Database, batch_id: &str) -> BatchCommandResult<Option<BatchCommand>> {
+    pub async fn find_by_id(db: &Db, batch_id: &str) -> BatchCommandResult<Option<BatchCommand>> {
         let result = sqlx::query_as::<_, BatchCommand>(
             r#"
             SELECT id, workspace_id, idempotency_key, command_name, command_type,
@@ -116,7 +116,7 @@ impl BatchCommandRepository {
 
     /// Create a new batch command with items
     pub async fn create(
-        db: &Database,
+        db: &Db,
         request: &CreateBatchCommandRequest,
     ) -> BatchCommandResult<BatchCommandWithItems> {
         let batch_id = Uuid::new_v4().to_string();
@@ -178,7 +178,7 @@ impl BatchCommandRepository {
     }
 
     /// Update batch status
-    pub async fn update_status(db: &Database, batch_id: &str, status: &str) -> BatchCommandResult<()> {
+    pub async fn update_status(db: &Db, batch_id: &str, status: &str) -> BatchCommandResult<()> {
         sqlx::query(
             r#"
             UPDATE batch_commands
@@ -195,7 +195,7 @@ impl BatchCommandRepository {
     }
 
     /// Mark batch as completed
-    pub async fn mark_completed(db: &Database, batch_id: &str, status: &str) -> BatchCommandResult<()> {
+    pub async fn mark_completed(db: &Db, batch_id: &str, status: &str) -> BatchCommandResult<()> {
         sqlx::query(
             r#"
             UPDATE batch_commands
@@ -213,7 +213,7 @@ impl BatchCommandRepository {
 
     /// Update item status
     pub async fn update_item_status(
-        db: &Database,
+        db: &Db,
         item_id: &str,
         status: &str,
         result_message: Option<&str>,
@@ -242,7 +242,7 @@ impl BatchCommandRepository {
     }
 
     /// Get items by batch ID
-    pub async fn get_items_by_batch_id(db: &Database, batch_id: &str) -> BatchCommandResult<Vec<BatchCommandItem>> {
+    pub async fn get_items_by_batch_id(db: &Db, batch_id: &str) -> BatchCommandResult<Vec<BatchCommandItem>> {
         let items = sqlx::query_as::<_, BatchCommandItem>(
             r#"
             SELECT id, batch_id, device_id, device_name, status, result_message,
@@ -261,7 +261,7 @@ impl BatchCommandRepository {
 
     /// Get batch with items
     pub async fn get_batch_with_items(
-        db: &Database,
+        db: &Db,
         batch_id: &str,
     ) -> BatchCommandResult<Option<BatchCommandWithItems>> {
         let batch = Self::find_by_id(db, batch_id).await?;
@@ -276,7 +276,7 @@ impl BatchCommandRepository {
 
     /// List batches by workspace
     pub async fn list_by_workspace(
-        db: &Database,
+        db: &Db,
         workspace_id: &str,
         limit: i32,
     ) -> BatchCommandResult<Vec<BatchCommand>> {
@@ -306,7 +306,7 @@ pub struct BatchCommandExecutor;
 impl BatchCommandExecutor {
     /// Execute a batch command - send commands to all pending devices
     pub async fn execute(
-        db: &Database,
+        db: &Db,
         device_service: Arc<DeviceService>,
         batch_id: &str,
     ) -> BatchCommandResult<BatchCommandWithItems> {

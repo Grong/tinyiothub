@@ -3,26 +3,26 @@ use tinyiothub_core::{
     now_string,
 };
 
-use tinyiothub_storage::Database;
+use tinyiothub_storage::Db;
 
 use super::trace::{DeviceTrace, DeviceTraceStatistics, SystemTraceOverview};
 
 /// 设备追踪记录仓库 - 处理所有 device_traces 表的数据库操作
 #[derive(Debug, Clone)]
 pub struct DeviceTraceRepository {
-    database: Database,
+    db: Db,
 }
 
 impl DeviceTraceRepository {
-    pub fn new(database: Database) -> Self {
-        Self { database }
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 
     /// 检查设备是否存在
     pub async fn device_exists(&self, device_id: &str) -> Result<bool> {
         match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM devices WHERE id = ?")
             .bind(device_id)
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await
         {
             Ok(Some(count)) => Ok(count > 0),
@@ -65,7 +65,7 @@ impl DeviceTraceRepository {
         .bind(source)
         .bind(user_id)
         .bind(session_id)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await
         .map_err(|e| Error::IOError(format!("Failed to record trace: {}", e)))?;
 
@@ -110,7 +110,7 @@ impl DeviceTraceRepository {
         );
 
         query_builder
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await
             .map_err(|e| Error::IOError(format!("Failed to get traces: {}", e)))
     }
@@ -137,7 +137,7 @@ impl DeviceTraceRepository {
             "SELECT created_at FROM device_traces WHERE device_id = ? ORDER BY created_at DESC LIMIT 1",
         )
         .bind(device_id)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await
         {
             Ok(Some(time)) => Some(time),
@@ -173,7 +173,7 @@ impl DeviceTraceRepository {
         match sqlx::query_scalar::<_, i64>(sql)
             .bind(device_id)
             .bind(days_str)
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await
         {
             Ok(Some(count)) => Ok(count as u32),
@@ -209,7 +209,7 @@ impl DeviceTraceRepository {
             .iter()
             .fold(sqlx::query(sqlx::AssertSqlSafe(query)), |qb, value| qb.bind(value));
 
-        match query_builder.execute(self.database.pool()).await {
+        match query_builder.execute(self.db.pool()).await {
             Ok(result) => Ok(result.rows_affected() as u32),
             Err(e) => Err(Error::IOError(format!("Failed to clear traces: {}", e))),
         }
@@ -219,7 +219,7 @@ impl DeviceTraceRepository {
     pub async fn cleanup_expired(&self, days_to_keep: u32) -> Result<u32> {
         match sqlx::query("DELETE FROM device_traces WHERE created_at < datetime('now', ?)")
             .bind(format!("-{} days", days_to_keep))
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await
         {
             Ok(result) => Ok(result.rows_affected() as u32),
@@ -292,7 +292,7 @@ impl DeviceTraceRepository {
         );
 
         query_builder
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await
             .map_err(|e| Error::IOError(format!("Failed to get traces: {}", e)))
     }
@@ -316,7 +316,7 @@ impl DeviceTraceRepository {
             "SELECT COUNT(DISTINCT device_id) FROM device_traces WHERE created_at > datetime('now', ?)",
         )
         .bind(&days_param)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await
         {
             Ok(Some(count)) => count as u32,
@@ -338,7 +338,7 @@ impl DeviceTraceRepository {
         let days_str = days_param.unwrap_or("-7 days");
         match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM device_traces WHERE created_at > datetime('now', ?)")
             .bind(days_str)
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await
         {
             Ok(Some(count)) => Ok(count as u32),
@@ -358,7 +358,7 @@ impl DeviceTraceRepository {
 
         match sqlx::query_scalar::<_, i64>(sql)
             .bind(days_str)
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await
         {
             Ok(Some(count)) => Ok(count as u32),

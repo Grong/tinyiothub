@@ -2,7 +2,7 @@ use crate::domains::admin::AdminState;
 use axum::{Router, extract::State, response::Json, routing::get};
 use serde::Deserialize;
 use tinyiothub_web::security::Claims;
-use tinyiothub_storage::Database;
+use tinyiothub_storage::Db;
 use tinyiothub_web::response::ApiResponseBuilder;
 use tracing::info;
 
@@ -26,7 +26,7 @@ pub async fn get_dashboard_stats(
 ) -> Json<ApiResponse<DashboardStats>> {
     info!("获取 Dashboard 统计信息, 用户: {}", claims.username);
 
-    let db = Database::new(state.db_pool());
+    let db = Db::new(state.db_pool());
 
     // 获取设备统计
     let total_devices = get_total_devices_count(&db, workspace_id.as_deref()).await.unwrap_or(0);
@@ -90,7 +90,7 @@ pub async fn get_dashboard_metrics(
 // 辅助函数
 
 /// 获取设备总数
-async fn get_total_devices_count(db: &Database, workspace_id: Option<&str>) -> Result<i64, sqlx::Error> {
+async fn get_total_devices_count(db: &Db, workspace_id: Option<&str>) -> Result<i64, sqlx::Error> {
     let (query_str, wid) = match workspace_id {
         Some(wid) => ("SELECT COUNT(*) FROM devices WHERE workspace_id = ?", Some(wid)),
         None => ("SELECT COUNT(*) FROM devices", None),
@@ -104,7 +104,7 @@ async fn get_total_devices_count(db: &Database, workspace_id: Option<&str>) -> R
 }
 
 /// 获取在线设备数
-async fn get_online_devices_count(db: &Database, workspace_id: Option<&str>) -> Result<i64, sqlx::Error> {
+async fn get_online_devices_count(db: &Db, workspace_id: Option<&str>) -> Result<i64, sqlx::Error> {
     let (query_str, wid) = match workspace_id {
         Some(wid) => (
             "SELECT COUNT(*) FROM devices WHERE state = 1 AND workspace_id = ?",
@@ -121,7 +121,7 @@ async fn get_online_devices_count(db: &Database, workspace_id: Option<&str>) -> 
 }
 
 /// 获取活跃告警数（通过 devices 表 JOIN 过滤 workspace）
-async fn get_active_alarms_count(db: &Database, workspace_id: Option<&str>) -> Result<i64, sqlx::Error> {
+async fn get_active_alarms_count(db: &Db, workspace_id: Option<&str>) -> Result<i64, sqlx::Error> {
     let (query_str, wid) = match workspace_id {
         Some(wid) => (
             "SELECT COUNT(*) FROM device_alarms da JOIN devices d ON da.device_id = d.id WHERE da.is_resolved = 0 AND d.workspace_id = ?",
@@ -156,14 +156,14 @@ async fn get_system_uptime() -> Result<i64, Box<dyn std::error::Error>> {
 }
 
 /// 获取今日消息数
-async fn get_today_messages_count(_db: &Database) -> Result<i64, sqlx::Error> {
+async fn get_today_messages_count(_db: &Db) -> Result<i64, sqlx::Error> {
     // 这里应该从消息日志表获取今日消息数
     // 目前返回模拟数据
     Ok(1250)
 }
 
 /// 获取月度增长数据
-async fn get_monthly_growth(_db: &Database) -> Result<MonthlyGrowth, sqlx::Error> {
+async fn get_monthly_growth(_db: &Db) -> Result<MonthlyGrowth, sqlx::Error> {
     // 这里应该计算本月相比上月的增长
     // 目前返回模拟数据
     Ok(MonthlyGrowth {

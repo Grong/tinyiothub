@@ -27,7 +27,7 @@ pub async fn list_unassigned_resources(
     State(state): State<AppState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> (StatusCode, Json<ApiResponse<Vec<ThingResource>>>) {
-    let pool = state.database.pool().clone();
+    let pool = state.db.pool().clone();
     let svc = thing_service(&pool);
     let ws = workspace_id.unwrap_or_default();
     match svc.list_unassigned_resources(&ws).await {
@@ -49,7 +49,7 @@ pub async fn attach_resource(
     Path(id): Path<String>,
     Json(req): Json<AttachResourceRequest>,
 ) -> (StatusCode, Json<ApiResponse<()>>) {
-    let pool = state.database.pool().clone();
+    let pool = state.db.pool().clone();
     let svc = thing_service(&pool);
     let ws = workspace_id.unwrap_or_default();
     match svc.attach_resource(&id, &req.resource_id, &ws).await {
@@ -74,7 +74,7 @@ pub async fn detach_resource(
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path((thing_id, resource_id)): Path<(String, String)>,
 ) -> (StatusCode, Json<ApiResponse<()>>) {
-    let pool = state.database.pool().clone();
+    let pool = state.db.pool().clone();
     let svc = thing_service(&pool);
     let ws = workspace_id.unwrap_or_default();
     match svc.detach_resource(&thing_id, &resource_id, &ws).await {

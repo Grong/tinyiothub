@@ -1,4 +1,4 @@
-//! Database error type (buzz-db pattern: one semantic enum per db crate).
+//! Db error type (buzz-db pattern: one semantic enum per db crate).
 
 /// Errors produced by database operations.
 #[derive(Debug, thiserror::Error)]

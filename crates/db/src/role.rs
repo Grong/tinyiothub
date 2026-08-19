@@ -100,12 +100,12 @@ impl From<RoleRow> for Role {
 // ── SQLite implementation ───────────────────────────────
 
 pub struct RoleRepository {
-    database: crate::database::Database,
+    db: crate::database::Db,
 }
 
 impl RoleRepository {
-    pub fn new(database: crate::database::Database) -> Self {
-        Self { database }
+    pub fn new(db: crate::database::Db) -> Self {
+        Self { db }
     }
 }
 
@@ -115,7 +115,7 @@ impl RoleRepository {
             "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE id = ?",
         )
         .bind(id)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await?;
 
         Ok(row.map(Into::into))
@@ -135,7 +135,7 @@ impl RoleRepository {
 
         let row = query
             .build_query_as::<RoleRow>()
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await?;
 
         Ok(row.map(Into::into))
@@ -156,7 +156,7 @@ impl RoleRepository {
         .bind(&request.description)
         .bind(is_admin)
         .bind(&request.workspace_id)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await?;
 
         self.find_by_id(&id)
@@ -209,7 +209,7 @@ impl RoleRepository {
 
         query.push(" WHERE id = ").push_bind(id);
 
-        let result = query.build().execute(self.database.pool()).await?;
+        let result = query.build().execute(self.db.pool()).await?;
 
         if result.rows_affected() == 0 {
             return Err(tinyiothub_core::error::Error::NotFound);
@@ -223,7 +223,7 @@ impl RoleRepository {
     pub async fn delete(&self, id: &str) -> Result<u64> {
         let result = sqlx::query("DELETE FROM roles WHERE id = ?")
             .bind(id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         Ok(result.rows_affected())
@@ -243,7 +243,7 @@ impl RoleRepository {
 
         separated.push_unseparated(")");
 
-        let result = query.build().execute(self.database.pool()).await?;
+        let result = query.build().execute(self.db.pool()).await?;
         Ok(result.rows_affected())
     }
 
@@ -282,7 +282,7 @@ impl RoleRepository {
 
         let rows = query
             .build_query_as::<RoleRow>()
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
@@ -312,7 +312,7 @@ impl RoleRepository {
                 .push(" OR workspace_id IS NULL)");
         }
 
-        let row = query.build().fetch_one(self.database.pool()).await?;
+        let row = query.build().fetch_one(self.db.pool()).await?;
         let count: i64 = row.get("count");
 
         Ok(count)
@@ -337,7 +337,7 @@ impl RoleRepository {
                 .push(" OR workspace_id IS NULL)");
         }
 
-        let row = query.build().fetch_one(self.database.pool()).await?;
+        let row = query.build().fetch_one(self.db.pool()).await?;
 
         let stats = RoleStats {
             total_roles: row.get("total_roles"),
@@ -364,7 +364,7 @@ impl RoleRepository {
 
         let rows = query
             .build_query_as::<RoleRow>()
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
@@ -386,7 +386,7 @@ impl RoleRepository {
 
         let rows = query
             .build_query_as::<RoleRow>()
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
@@ -403,7 +403,7 @@ impl RoleRepository {
                 .push(" OR workspace_id IS NULL)");
         }
 
-        let row = query.build().fetch_one(self.database.pool()).await?;
+        let row = query.build().fetch_one(self.db.pool()).await?;
         let count: i64 = row.try_get::<i64, _>(0)?;
 
         Ok(count > 0)
@@ -426,7 +426,7 @@ impl RoleRepository {
                 .push(" OR workspace_id IS NULL)");
         }
 
-        let row = query.build().fetch_one(self.database.pool()).await?;
+        let row = query.build().fetch_one(self.db.pool()).await?;
         let count: i64 = row.try_get::<i64, _>(0)?;
 
         Ok(count > 0)
@@ -448,7 +448,7 @@ impl RoleRepository {
 
         let rows = query
             .build_query_as::<RoleRow>()
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
@@ -465,7 +465,7 @@ impl RoleRepository {
             "#,
         )
         .bind(user_id)
-        .fetch_all(self.database.pool())
+        .fetch_all(self.db.pool())
         .await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
@@ -474,7 +474,7 @@ impl RoleRepository {
     pub async fn is_administrator_role(&self, id: &str) -> Result<bool> {
         let role: Option<i32> = sqlx::query_scalar("SELECT is_administrator FROM roles WHERE id = ?")
             .bind(id)
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await?;
 
         Ok(role.unwrap_or(0) == 1)
@@ -509,14 +509,14 @@ impl RoleRepository {
     pub async fn get_permissions(&self, role_id: &str) -> Result<Vec<String>> {
         let rows = sqlx::query_scalar::<_, String>("SELECT permission_id FROM role_permissions WHERE role_id = ?")
             .bind(role_id)
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await?;
 
         Ok(rows)
     }
 
     pub async fn update_permissions(&self, role_id: &str, permission_ids: &[String]) -> Result<()> {
-        let mut tx = self.database.pool().begin().await?;
+        let mut tx = self.db.pool().begin().await?;
 
         sqlx::query("DELETE FROM role_permissions WHERE role_id = ?")
             .bind(role_id)

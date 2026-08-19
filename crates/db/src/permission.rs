@@ -398,12 +398,12 @@ impl From<PermissionGroupRow> for PermissionGroup {
 // ── SQLite implementations ──────────────────────────────
 
 pub struct PermissionRepository {
-    database: crate::database::Database,
+    db: crate::database::Db,
 }
 
 impl PermissionRepository {
-    pub fn new(database: crate::database::Database) -> Self {
-        Self { database }
+    pub fn new(db: crate::database::Db) -> Self {
+        Self { db }
     }
 }
 
@@ -413,7 +413,7 @@ impl PermissionRepository {
             "SELECT id, name, code, description, resource_type, action_type, is_system, parent_id, created_at, updated_at FROM permissions WHERE id = ?"
         )
         .bind(id)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await?;
 
         Ok(row.map(Into::into))
@@ -424,7 +424,7 @@ impl PermissionRepository {
             "SELECT id, name, code, description, resource_type, action_type, is_system, parent_id, created_at, updated_at FROM permissions WHERE code = ?"
         )
         .bind(code)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await?;
 
         Ok(row.map(Into::into))
@@ -451,7 +451,7 @@ impl PermissionRepository {
         .bind(&request.parent_id)
         .bind(&now)
         .bind(&now)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await?;
 
         self.find_by_id(&id)
@@ -515,7 +515,7 @@ impl PermissionRepository {
 
         query.push(" WHERE id = ").push_bind(id);
 
-        let result = query.build().execute(self.database.pool()).await?;
+        let result = query.build().execute(self.db.pool()).await?;
 
         if result.rows_affected() == 0 {
             return Err(tinyiothub_core::error::Error::NotFound);
@@ -535,7 +535,7 @@ impl PermissionRepository {
 
         let result = sqlx::query("DELETE FROM permissions WHERE id = ?")
             .bind(id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         Ok(result.rows_affected())
@@ -553,7 +553,7 @@ impl PermissionRepository {
         }
         separated.push_unseparated(") AND is_system = 0");
 
-        let result = query.build().execute(self.database.pool()).await?;
+        let result = query.build().execute(self.db.pool()).await?;
         Ok(result.rows_affected())
     }
 
@@ -591,7 +591,7 @@ impl PermissionRepository {
 
         let rows = query
             .build_query_as::<PermissionRow>()
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
@@ -618,7 +618,7 @@ impl PermissionRepository {
             query.push(" AND parent_id = ").push_bind(parent_id);
         }
 
-        let row = query.build().fetch_one(self.database.pool()).await?;
+        let row = query.build().fetch_one(self.db.pool()).await?;
         let count: i64 = row.get("count");
         Ok(count)
     }
@@ -628,7 +628,7 @@ impl PermissionRepository {
             "SELECT id, name, code, description, resource_type, action_type, is_system, parent_id, created_at, updated_at FROM permissions WHERE resource_type = ? ORDER BY action_type, name"
         )
         .bind(resource_type)
-        .fetch_all(self.database.pool())
+        .fetch_all(self.db.pool())
         .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
@@ -638,7 +638,7 @@ impl PermissionRepository {
             "SELECT id, name, code, description, resource_type, action_type, is_system, parent_id, created_at, updated_at FROM permissions WHERE action_type = ? ORDER BY resource_type, name"
         )
         .bind(action_type)
-        .fetch_all(self.database.pool())
+        .fetch_all(self.db.pool())
         .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
@@ -647,7 +647,7 @@ impl PermissionRepository {
         let rows = sqlx::query_as::<_, PermissionRow>(
             "SELECT id, name, code, description, resource_type, action_type, is_system, parent_id, created_at, updated_at FROM permissions WHERE is_system = 1 ORDER BY resource_type, action_type"
         )
-        .fetch_all(self.database.pool())
+        .fetch_all(self.db.pool())
         .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
@@ -656,7 +656,7 @@ impl PermissionRepository {
         let rows = sqlx::query_as::<_, PermissionRow>(
             "SELECT id, name, code, description, resource_type, action_type, is_system, parent_id, created_at, updated_at FROM permissions WHERE parent_id IS NULL ORDER BY resource_type, action_type"
         )
-        .fetch_all(self.database.pool())
+        .fetch_all(self.db.pool())
         .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
@@ -666,7 +666,7 @@ impl PermissionRepository {
             "SELECT id, name, code, description, resource_type, action_type, is_system, parent_id, created_at, updated_at FROM permissions WHERE parent_id = ? ORDER BY action_type, name"
         )
         .bind(parent_id)
-        .fetch_all(self.database.pool())
+        .fetch_all(self.db.pool())
         .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
@@ -674,7 +674,7 @@ impl PermissionRepository {
     pub async fn exists_by_code(&self, code: &str) -> Result<bool> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM permissions WHERE code = ?")
             .bind(code)
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await?;
         Ok(count > 0)
     }
@@ -683,7 +683,7 @@ impl PermissionRepository {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM permissions WHERE code = ? AND id != ?")
             .bind(code)
             .bind(exclude_id)
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await?;
         Ok(count > 0)
     }
@@ -704,19 +704,19 @@ impl PermissionRepository {
 
         let rows = query
             .build_query_as::<PermissionRow>()
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
 }
 
 pub struct PermissionGroupRepository {
-    database: crate::database::Database,
+    db: crate::database::Db,
 }
 
 impl PermissionGroupRepository {
-    pub fn new(database: crate::database::Database) -> Self {
-        Self { database }
+    pub fn new(db: crate::database::Db) -> Self {
+        Self { db }
     }
 }
 
@@ -726,7 +726,7 @@ impl PermissionGroupRepository {
             "SELECT id, name, description, permissions, created_at, updated_at FROM permission_groups WHERE id = ?",
         )
         .bind(id)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await?;
         Ok(row.map(Into::into))
     }
@@ -736,7 +736,7 @@ impl PermissionGroupRepository {
             "SELECT id, name, description, permissions, created_at, updated_at FROM permission_groups WHERE name = ?",
         )
         .bind(name)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await?;
         Ok(row.map(Into::into))
     }
@@ -758,7 +758,7 @@ impl PermissionGroupRepository {
         .bind(&permissions_json)
         .bind(&now)
         .bind(&now)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await?;
 
         self.find_by_id(&id)
@@ -769,7 +769,7 @@ impl PermissionGroupRepository {
     pub async fn delete(&self, id: &str) -> Result<u64> {
         let result = sqlx::query("DELETE FROM permission_groups WHERE id = ?")
             .bind(id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
         Ok(result.rows_affected())
     }
@@ -778,7 +778,7 @@ impl PermissionGroupRepository {
         let rows = sqlx::query_as::<_, PermissionGroupRow>(
             "SELECT id, name, description, permissions, created_at, updated_at FROM permission_groups ORDER BY name",
         )
-        .fetch_all(self.database.pool())
+        .fetch_all(self.db.pool())
         .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }

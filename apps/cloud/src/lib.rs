@@ -16,4 +16,4 @@ mod tests;
 
 // Re-export commonly used types for easier access
 pub use shared::error::Error;
-pub use tinyiothub_storage::Database;
+pub use tinyiothub_storage::Db;

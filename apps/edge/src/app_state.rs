@@ -16,7 +16,7 @@ use tinyiothub_storage::device::DeviceRepository;
 pub struct AppState {
     pub config: EdgeConfig,
     pub credentials: GatewayCredentials,
-    pub db: Arc<tinyiothub_storage::Database>,
+    pub db: Arc<tinyiothub_storage::Db>,
     pub device_service: Arc<DeviceService>,
     pub driver_service: Arc<DriverService>,
     pub gateway_service: Arc<GatewayService>,

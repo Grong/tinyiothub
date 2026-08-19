@@ -65,7 +65,7 @@ pub async fn confirm_action(
     }
 
     // 3. Verify the thing exists and is a device
-    let pool = state.database.pool().clone();
+    let pool = state.db.pool().clone();
     let svc = thing_service(&pool);
 
     let thing = match svc.get_thing(&thing_id, &ws).await {
@@ -173,7 +173,7 @@ pub async fn invoke_action(
     Json(req): Json<InvokeActionRequest>,
 ) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
     let ws = workspace_id.unwrap_or_default();
-    let pool = state.database.pool().clone();
+    let pool = state.db.pool().clone();
     let svc = thing_service(&pool);
 
     // 1. Thing must exist in this workspace and be a device

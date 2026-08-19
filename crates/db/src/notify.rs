@@ -183,7 +183,7 @@ pub struct HistoryStatistics {
 use sqlx::Row;
 use std::sync::Arc;
 
-use crate::database::Database;
+use crate::database::Db;
 use tinyiothub_core::notification_types::NotificationChannelType;
 use tracing::{debug, error, info};
 
@@ -193,11 +193,11 @@ use tracing::{debug, error, info};
 
 /// SQLite implementation of notification rule repository
 pub struct NotificationRuleRepository {
-    db: Arc<Database>,
+    db: Arc<Db>,
 }
 
 impl NotificationRuleRepository {
-    pub fn new(db: Arc<Database>) -> Self {
+    pub fn new(db: Arc<Db>) -> Self {
         Self { db }
     }
 
@@ -592,11 +592,11 @@ impl NotificationRuleRepository {
 
 /// SQLite implementation of notification history store
 pub struct NotificationHistoryRepository {
-    db: Arc<Database>,
+    db: Arc<Db>,
 }
 
 impl NotificationHistoryRepository {
-    pub fn new(db: Arc<Database>) -> Self {
+    pub fn new(db: Arc<Db>) -> Self {
         Self { db }
     }
 

@@ -277,7 +277,7 @@ pub async fn get_logs(
          ORDER BY created_at DESC LIMIT 200",
     )
     .bind(&workspace_id)
-    .fetch_all(state.database.pool())
+    .fetch_all(state.db.pool())
     .await;
 
     let logs = match rows {
@@ -516,7 +516,7 @@ pub async fn get_approvals(
          ORDER BY created_at DESC LIMIT 50",
     )
     .bind(&workspace_id)
-    .fetch_all(state.database.pool())
+    .fetch_all(state.db.pool())
     .await;
 
     let proposals = match rows {
@@ -545,7 +545,7 @@ pub async fn approve_proposal(
     let Some(registry) = crate::domains::agent::host::ports::external_tool_registry() else {
         return ApiResponseBuilder::error("工具注册表未初始化");
     };
-    match approve_and_execute(state.database.pool(), &workspace_id, &proposal_id, &registry).await {
+    match approve_and_execute(state.db.pool(), &workspace_id, &proposal_id, &registry).await {
         Ok(output) => ApiResponseBuilder::success(serde_json::json!({
             "status": "approved",
             "output": output,
@@ -680,7 +680,7 @@ async fn update_proposal_status(
     )
     .bind(workspace_id)
     .bind(proposal_id)
-    .fetch_optional(state.database.pool())
+    .fetch_optional(state.db.pool())
     .await
     .map_err(|e| format!("查询失败: {}", e))?;
 
@@ -693,7 +693,7 @@ async fn update_proposal_status(
             sqlx::query("UPDATE agent_actions SET content = ? WHERE id = ?")
                 .bind(&new_content)
                 .bind(&id)
-                .execute(state.database.pool())
+                .execute(state.db.pool())
                 .await
                 .map_err(|e| format!("更新失败: {}", e))?;
             Ok(())

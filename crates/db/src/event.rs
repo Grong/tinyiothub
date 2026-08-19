@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tinyiothub_core::models::event::{Event, EventId, EventLevel, EventSource, EventType, RichContent};
 
-use crate::database::Database;
+use crate::database::Db;
 use crate::error::Result;
 
 // ──────────────────────────────────────────────
@@ -414,12 +414,12 @@ pub struct TypeStatusSummary {
 
 /// SQLite implementation of EventRepository
 pub struct EventRepository {
-    database: Database,
+    db: Db,
 }
 
 impl EventRepository {
-    pub fn new(database: Database) -> Self {
-        Self { database }
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 }
 
@@ -457,7 +457,7 @@ impl EventRepository {
             .bind(content_str)
             .bind(created_at_str)
             .bind("")
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         Ok(())
@@ -473,7 +473,7 @@ impl EventRepository {
 
         let row = sqlx::query(sql)
             .bind(id.to_string())
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await?;
 
         if let Some(row) = row {
@@ -587,7 +587,7 @@ impl EventRepository {
         }
 
         // Execute query
-        let rows = query.fetch_all(self.database.pool()).await?;
+        let rows = query.fetch_all(self.db.pool()).await?;
 
         let mut events = Vec::new();
         for row in rows {
@@ -601,7 +601,7 @@ impl EventRepository {
         let sql = "SELECT COUNT(*) as count FROM events WHERE event_level = ?";
         let level_num = level.to_numeric();
 
-        let row = sqlx::query(sql).bind(level_num).fetch_one(self.database.pool()).await?;
+        let row = sqlx::query(sql).bind(level_num).fetch_one(self.db.pool()).await?;
 
         let count: i64 = row.get("count");
         Ok(count as u64)
@@ -611,7 +611,7 @@ impl EventRepository {
         let sql = "SELECT COUNT(*) as count FROM events WHERE event_type = ?";
         let type_str = serde_json::to_string(event_type)?;
 
-        let row = sqlx::query(sql).bind(type_str).fetch_one(self.database.pool()).await?;
+        let row = sqlx::query(sql).bind(type_str).fetch_one(self.db.pool()).await?;
 
         let count: i64 = row.get("count");
         Ok(count as u64)
@@ -623,7 +623,7 @@ impl EventRepository {
         }
 
         // 使用事务批量插入
-        let mut tx = self.database.pool().begin().await?;
+        let mut tx = self.db.pool().begin().await?;
 
         let sql = r#"
             INSERT INTO events (
@@ -687,7 +687,7 @@ impl EventRepository {
         let sql = "DELETE FROM events WHERE timestamp < ?";
         let before_str = before.to_rfc3339();
 
-        let result = sqlx::query(sql).bind(before_str).execute(self.database.pool()).await?;
+        let result = sqlx::query(sql).bind(before_str).execute(self.db.pool()).await?;
 
         Ok(result.rows_affected())
     }
@@ -778,7 +778,7 @@ impl EventRepository {
 
     pub async fn get_total_count(&self) -> Result<u64> {
         let sql = "SELECT COUNT(*) as count FROM events";
-        let row = sqlx::query(sql).fetch_one(self.database.pool()).await?;
+        let row = sqlx::query(sql).fetch_one(self.db.pool()).await?;
 
         let count: i64 = row.get("count");
         Ok(count as u64)
@@ -793,12 +793,12 @@ impl EventRepository {
 /// acknowledged_at, workspace_id) and an upsert dedup index on
 /// (event_type, event_subtype, device_id) WHERE device_id IS NOT NULL.
 pub struct RealTimeEventRepository {
-    database: Database,
+    db: Db,
 }
 
 impl RealTimeEventRepository {
-    pub fn new(database: Database) -> Self {
-        Self { database }
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 }
 
@@ -842,7 +842,7 @@ impl RealTimeEventRepository {
         let workspace_id: String = match &device_id_bind {
             Some(did) => sqlx::query_scalar("SELECT COALESCE(workspace_id, '') FROM devices WHERE id = ?")
                 .bind(did)
-                .fetch_optional(self.database.pool())
+                .fetch_optional(self.db.pool())
                 .await
                 .ok()
                 .flatten()
@@ -863,7 +863,7 @@ impl RealTimeEventRepository {
             .bind(event.content().title())
             .bind(content_json)
             .bind(&workspace_id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         Ok(())
@@ -883,7 +883,7 @@ impl RealTimeEventRepository {
             .bind(event_type.type_string())
             .bind(&event_subtype_json)
             .bind(source.device_id().map(|s| s.to_string()))
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         Ok(())
@@ -910,7 +910,7 @@ impl RealTimeEventRepository {
             GROUP BY event_level
         "#;
 
-        let rows = sqlx::query(sql).fetch_all(self.database.pool()).await?;
+        let rows = sqlx::query(sql).fetch_all(self.db.pool()).await?;
 
         let mut total_active = 0u64;
         let mut critical_count = 0u64;
@@ -946,7 +946,7 @@ impl RealTimeEventRepository {
             GROUP BY device_id
         "#;
 
-        let device_rows = sqlx::query(device_sql).fetch_all(self.database.pool()).await?;
+        let device_rows = sqlx::query(device_sql).fetch_all(self.db.pool()).await?;
 
         let mut by_device = Vec::new();
         for row in device_rows {
@@ -994,7 +994,7 @@ impl RealTimeEventRepository {
             .bind(Utc::now().to_rfc3339())
             .bind(id.to_string())
             .bind(workspace_id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         if result.rows_affected() == 0 {
@@ -1012,7 +1012,7 @@ impl RealTimeEventRepository {
         // current-state of a device and must never be bulk-deleted (X1/OV-1)
         let sql = "DELETE FROM events WHERE acknowledged = 1 AND is_status = 0";
 
-        let result = sqlx::query(sql).execute(self.database.pool()).await?;
+        let result = sqlx::query(sql).execute(self.db.pool()).await?;
 
         Ok(result.rows_affected())
     }
@@ -1024,7 +1024,7 @@ impl RealTimeEventRepository {
 
         let result = sqlx::query(sql)
             .bind(before.to_rfc3339())
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         Ok(result.rows_affected())
@@ -1110,7 +1110,7 @@ impl RealTimeEventRepository {
         sql.push_str(" ORDER BY timestamp DESC");
 
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await?;
         Ok(rows)
     }

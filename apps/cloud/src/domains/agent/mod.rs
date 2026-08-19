@@ -21,7 +21,7 @@ pub mod host;
 
 use std::sync::Arc;
 
-use tinyiothub_storage::Database;
+use tinyiothub_storage::Db;
 
 // AppState 削除（G7 FromRef 切片）：handler 萃取 `State<AgentState>`。
 
@@ -31,7 +31,7 @@ use tinyiothub_storage::Database;
 #[derive(Clone)]
 pub struct AgentState {
     /// 数据库连接池 - agent runs/policy/heartbeat SQL 查询
-    pub database: Arc<Database>,
+    pub db: Arc<Db>,
     /// 工作空间服务 - agent_tasks 的 verify_workspace_access! 租户校验
     pub workspace_service: Arc<crate::domains::tenant::WorkspaceService>,
     /// 工作空间访问校验（tenant seam）- files/heartbeat handlers
@@ -58,6 +58,6 @@ pub struct AgentState {
 impl AgentState {
     /// 获取数据库连接池
     pub fn db_pool(&self) -> sqlx::SqlitePool {
-        self.database.pool().clone()
+        self.db.pool().clone()
     }
 }

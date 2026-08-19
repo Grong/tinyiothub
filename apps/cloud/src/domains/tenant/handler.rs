@@ -182,7 +182,7 @@ async fn register_tenant(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let db = state.database.clone();
+    let db = state.db.clone();
 
     let user_id = uuid::Uuid::new_v4().to_string();
     let password_hash = hash_password(&payload.password).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -252,7 +252,7 @@ async fn login(
     State(state): State<AppState>,
     Json(payload): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, StatusCode> {
-    let db = state.database.clone();
+    let db = state.db.clone();
 
     let email = payload.email.trim().to_lowercase();
 

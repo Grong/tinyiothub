@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use tinyiothub_edge::config::EdgeConfig;
 use tinyiothub_edge::modules::config_mgmt::ConfigService;
-use tinyiothub_storage::{Database, DatabaseConfig, create_pool_without_migrations};
+use tinyiothub_storage::{Db, DatabaseConfig, create_pool_without_migrations};
 
-async fn test_db() -> Arc<Database> {
+async fn test_db() -> Arc<Db> {
     let config = DatabaseConfig {
         url: "sqlite::memory:".into(),
         ..Default::default()
@@ -21,7 +21,7 @@ async fn test_db() -> Arc<Database> {
     .execute(&pool)
     .await
     .unwrap();
-    Arc::new(Database::new(pool))
+    Arc::new(Db::new(pool))
 }
 
 #[tokio::test]

@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tinyiothub_edge::config::EdgeConfig;
 use tinyiothub_edge::modules::offline::{BufferMessage, BufferPriority, OfflineBuffer};
 
-async fn test_db() -> Arc<tinyiothub_storage::Database> {
+async fn test_db() -> Arc<tinyiothub_storage::Db> {
     use tinyiothub_storage::{DatabaseConfig, create_pool_without_migrations};
     let config = DatabaseConfig {
         url: "sqlite::memory:".into(),
@@ -23,7 +23,7 @@ async fn test_db() -> Arc<tinyiothub_storage::Database> {
     .execute(&pool)
     .await
     .unwrap();
-    Arc::new(tinyiothub_storage::Database::new(pool))
+    Arc::new(tinyiothub_storage::Db::new(pool))
 }
 
 fn test_config() -> EdgeConfig {

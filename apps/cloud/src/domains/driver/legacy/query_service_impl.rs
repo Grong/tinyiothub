@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use sqlx::{QueryBuilder, Row};
 use tinyiothub_core::models::device::{Device, DeviceStats};
-use tinyiothub_storage::{Database, device_row_mapper};
+use tinyiothub_storage::{Db, device_row_mapper};
 
 use super::query::DeviceQueryService;
 use crate::domains::driver::legacy::types::DeviceStatusDistribution;
@@ -11,12 +11,12 @@ use tinyiothub_core::error::Result;
 /// SQLite implementation of DeviceQueryService
 #[derive(Debug, Clone)]
 pub struct SqliteDeviceQueryService {
-    database: Database,
+    db: Db,
 }
 
 impl SqliteDeviceQueryService {
-    pub fn new(database: Database) -> Self {
-        Self { database }
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 }
 
@@ -50,7 +50,7 @@ impl DeviceQueryService for SqliteDeviceQueryService {
             builder.push(" LIMIT ").push_bind(limit as i64);
         }
 
-        let rows = builder.build().fetch_all(self.database.pool()).await?;
+        let rows = builder.build().fetch_all(self.db.pool()).await?;
         let mut devices = Vec::new();
         for row in rows {
             devices.push(device_row_mapper::row_to_device(row)?);
@@ -69,7 +69,7 @@ impl DeviceQueryService for SqliteDeviceQueryService {
             FROM devices
             "#,
         )
-        .fetch_one(self.database.pool())
+        .fetch_one(self.db.pool())
         .await?;
 
         Ok(DeviceStats {
@@ -89,7 +89,7 @@ impl DeviceQueryService for SqliteDeviceQueryService {
             ORDER BY count DESC
             "#,
         )
-        .fetch_all(self.database.pool())
+        .fetch_all(self.db.pool())
         .await?;
 
         let mut stats = Vec::new();
@@ -110,7 +110,7 @@ impl DeviceQueryService for SqliteDeviceQueryService {
             ORDER BY count DESC
             "#,
         )
-        .fetch_all(self.database.pool())
+        .fetch_all(self.db.pool())
         .await?;
 
         let mut stats = Vec::new();
@@ -135,7 +135,7 @@ impl DeviceQueryService for SqliteDeviceQueryService {
 
         builder.push(" ORDER BY name");
 
-        let rows = builder.build().fetch_all(self.database.pool()).await?;
+        let rows = builder.build().fetch_all(self.db.pool()).await?;
         let mut devices = Vec::new();
         for row in rows {
             devices.push(device_row_mapper::row_to_device(row)?);
@@ -157,7 +157,7 @@ impl DeviceQueryService for SqliteDeviceQueryService {
             builder.push(" WHERE workspace_id = ").push_bind(wid);
         }
 
-        let row = builder.build().fetch_one(self.database.pool()).await?;
+        let row = builder.build().fetch_one(self.db.pool()).await?;
 
         Ok(DeviceStatusDistribution {
             online: row.get("online"),
@@ -188,7 +188,7 @@ impl DeviceQueryService for SqliteDeviceQueryService {
         builder.push_bind(limit);
 
         let devices: Vec<(String, String, Option<String>, i32, chrono::NaiveDateTime)> =
-            builder.build_query_as().fetch_all(self.database.pool()).await?;
+            builder.build_query_as().fetch_all(self.db.pool()).await?;
 
         let quick_devices = devices
             .into_iter()

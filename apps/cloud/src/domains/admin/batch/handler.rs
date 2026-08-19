@@ -42,7 +42,7 @@ async fn create_batch(
     State(state): State<AdminState>,
     Json(payload): Json<CreateBatchCommandRequest>,
 ) -> Json<ApiResponse<BatchCommandWithItems>> {
-    let db = state.database.clone();
+    let db = state.db.clone();
 
     // Check idempotency
     if let Some(existing) =
@@ -74,7 +74,7 @@ async fn list_batches(
     State(state): State<AdminState>,
     Query(params): Query<ListBatchesQuery>,
 ) -> Json<ApiResponse<Vec<crate::domains::admin::batch::batch_command::BatchCommand>>> {
-    let db = state.database.clone();
+    let db = state.db.clone();
     let limit = params.limit.unwrap_or(20);
 
     match BatchCommandRepository::list_by_workspace(&db, &params.workspace_id, limit).await {
@@ -91,7 +91,7 @@ async fn get_batch(
     State(state): State<AdminState>,
     Path(batch_id): Path<String>,
 ) -> Json<ApiResponse<BatchCommandWithItems>> {
-    let db = state.database.clone();
+    let db = state.db.clone();
 
     match BatchCommandRepository::get_batch_with_items(&db, &batch_id).await {
         Ok(Some(batch_with_items)) => ApiResponseBuilder::success(batch_with_items),
@@ -109,7 +109,7 @@ async fn execute_batch(
     Path(batch_id): Path<String>,
     WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<BatchCommandWithItems>> {
-    let db = state.database.clone();
+    let db = state.db.clone();
     let tenant_device_service = state.tenant_device_service(&workspace_id);
 
     match BatchCommandExecutor::execute(&db, tenant_device_service, &batch_id).await {

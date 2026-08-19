@@ -162,7 +162,7 @@ pub async fn ensure_user_has_workspace(state: &AppState, user_id: &str) -> Resul
 
 /// 确保用户关联到默认租户（不创建 workspace）
 async fn ensure_tenant_membership(state: &AppState, user_id: &str) -> Result<()> {
-    let pool = state.database().pool();
+    let pool = state.db().pool();
 
     let has_tenant: bool = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM tenant_users WHERE user_id = ?)")
         .bind(user_id)
@@ -215,7 +215,7 @@ async fn ensure_tenant_membership(state: &AppState, user_id: &str) -> Result<()>
 
 /// 为用户创建独立 workspace `ws-{user_id}`（幂等）
 async fn ensure_user_workspace(state: &AppState, user_id: &str) -> Result<()> {
-    let pool = state.database().pool();
+    let pool = state.db().pool();
     let ws_id = format!("ws-{}", user_id);
 
     let ws_exists: bool = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?)")
@@ -308,7 +308,7 @@ async fn ensure_user_workspace(state: &AppState, user_id: &str) -> Result<()> {
 
 /// 确保默认租户、默认工作空间和 Agent 存在（仅 admin 使用）
 async fn ensure_default_tenant(state: &AppState, user_id: &str) -> Result<()> {
-    let pool = state.database().pool();
+    let pool = state.db().pool();
 
     // 确保租户关联
     ensure_tenant_membership(state, user_id).await?;

@@ -30,7 +30,7 @@ use zeroclaw::providers::{ChatRequest, ChatResponse};
 use zeroclaw_api::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
 
 use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
-use tinyiothub_storage::Database;
+use tinyiothub_storage::Db;
 
 use crate::bootstrap::{build_agent_snapshot, reconcile_zombie_runs};
 use tinyiothub_agent::pool::ProviderFactory;
@@ -212,7 +212,7 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
     // AppState 先建：其构造会 seed user-1（user_roles 的 FK 目标）。
     let app_state = test_app_state_on_pool(pool.clone()).await;
     seed_scene(&pool).await;
-    let db = Arc::new(Database::new(pool.clone()));
+    let db = Arc::new(Db::new(pool.clone()));
 
     let policy_repo = Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone()));
     policy_repo

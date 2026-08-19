@@ -20,7 +20,7 @@ pub struct SecureEventService {
     encryption: Arc<dyn EventEncryption>,
     audit_log: Arc<dyn EventAuditLog>,
     config: std::sync::RwLock<EventSecurityConfig>,
-    db: Arc<tinyiothub_storage::Database>,
+    db: Arc<tinyiothub_storage::Db>,
 }
 
 impl SecureEventService {
@@ -31,7 +31,7 @@ impl SecureEventService {
         encryption: Arc<dyn EventEncryption>,
         audit_log: Arc<dyn EventAuditLog>,
         config: EventSecurityConfig,
-        db: Arc<tinyiothub_storage::Database>,
+        db: Arc<tinyiothub_storage::Db>,
     ) -> Result<Self> {
         Ok(Self {
             event_repository,

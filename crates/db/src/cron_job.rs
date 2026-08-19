@@ -3,18 +3,18 @@ use cron::Schedule;
 use sqlx::{QueryBuilder, Row};
 use std::str::FromStr;
 
-use crate::database::Database;
+use crate::database::Db;
 use tinyiothub_core::error::Result;
 use tinyiothub_core::models::cron_job::{CreateCronJobRequest, CronJob, CronJobQuery, UpdateCronJobRequest};
 use tinyiothub_core::{generate_id, now_string};
 
 pub struct CronJobRepository {
-    database: Database,
+    db: Db,
 }
 
 impl CronJobRepository {
-    pub fn new(database: Database) -> Self {
-        Self { database }
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 }
 
@@ -71,7 +71,7 @@ impl CronJobRepository {
             "#,
         )
         .bind(id)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await?;
 
         Ok(row.map(|r| map_cron_job_row(&r)).transpose()?)
@@ -117,7 +117,7 @@ impl CronJobRepository {
         builder.push(" LIMIT ").push_bind(page_size as i64);
         builder.push(" OFFSET ").push_bind(offset as i64);
 
-        let rows = builder.build().fetch_all(self.database.pool()).await?;
+        let rows = builder.build().fetch_all(self.db.pool()).await?;
         let mut jobs = Vec::new();
         for row in rows {
             jobs.push(map_cron_job_row(&row)?);
@@ -155,7 +155,7 @@ impl CronJobRepository {
         .bind(&now)
         .bind(&now)
         .bind(created_by)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await?;
 
         self.find_by_id(&id)
@@ -231,7 +231,7 @@ impl CronJobRepository {
 
         builder.push(" WHERE id = ").push_bind(id);
 
-        let result = builder.build().execute(self.database.pool()).await?;
+        let result = builder.build().execute(self.db.pool()).await?;
 
         if result.rows_affected() == 0 {
             return Err(tinyiothub_core::error::Error::NotFound);
@@ -245,7 +245,7 @@ impl CronJobRepository {
     pub async fn delete(&self, id: &str) -> Result<bool> {
         let result = sqlx::query("DELETE FROM cron_jobs WHERE id = ?")
             .bind(id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         Ok(result.rows_affected() > 0)
@@ -276,7 +276,7 @@ impl CronJobRepository {
         .bind(fail_inc)
         .bind(&now)
         .bind(id)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await?;
 
         Ok(result.rows_affected() > 0)
@@ -289,7 +289,7 @@ impl CronJobRepository {
             .bind(if running { 1 } else { 0 })
             .bind(&now)
             .bind(id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         Ok(result.rows_affected() > 0)
@@ -311,7 +311,7 @@ impl CronJobRepository {
 
         builder.push(" ORDER BY next_run_at ASC");
 
-        let rows = builder.build().fetch_all(self.database.pool()).await?;
+        let rows = builder.build().fetch_all(self.db.pool()).await?;
         let mut jobs = Vec::new();
         for row in rows {
             jobs.push(map_cron_job_row(&row)?);
@@ -324,7 +324,7 @@ impl CronJobRepository {
         let result = sqlx::query("UPDATE cron_jobs SET is_running = 1, updated_at = ? WHERE id = ? AND is_running = 0")
             .bind(&now)
             .bind(id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         Ok(result.rows_affected() > 0)
@@ -336,14 +336,14 @@ impl CronJobRepository {
         builder.push_bind(&now);
         builder.push(" WHERE is_running = 1");
 
-        let result = builder.build().execute(self.database.pool()).await?;
+        let result = builder.build().execute(self.db.pool()).await?;
         Ok(result.rows_affected())
     }
 
     pub async fn count(&self, workspace_id: &str) -> Result<i64> {
         let row = sqlx::query("SELECT COUNT(*) as count FROM cron_jobs WHERE workspace_id = ?")
             .bind(workspace_id)
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await?;
 
         let count: i64 = row.get("count");
@@ -354,7 +354,7 @@ impl CronJobRepository {
         let row = sqlx::query("SELECT COUNT(*) as count FROM cron_jobs WHERE workspace_id = ? AND is_enabled = ?")
             .bind(workspace_id)
             .bind(if is_enabled { 1 } else { 0 })
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await?;
 
         let count: i64 = row.get("count");
@@ -364,7 +364,7 @@ impl CronJobRepository {
     pub async fn count_running(&self, workspace_id: &str) -> Result<i64> {
         let row = sqlx::query("SELECT COUNT(*) as count FROM cron_jobs WHERE workspace_id = ? AND is_running = 1")
             .bind(workspace_id)
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await?;
 
         let count: i64 = row.get("count");
@@ -378,7 +378,7 @@ impl CronJobRepository {
             .bind(next_run_at)
             .bind(&now)
             .bind(id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         Ok(result.rows_affected() > 0)

@@ -1,6 +1,6 @@
 use sqlx::FromRow;
 
-use crate::database::Database;
+use crate::database::Db;
 use tinyiothub_core::models::device_command::*;
 use tinyiothub_core::{generate_id, now_string};
 
@@ -31,7 +31,7 @@ impl From<DeviceCommandRow> for DeviceCommand {
 }
 
 /// Find a device command by ID
-pub async fn find_device_command_by_id(db: &Database, id: &str) -> Result<Option<DeviceCommand>, sqlx::Error> {
+pub async fn find_device_command_by_id(db: &Db, id: &str) -> Result<Option<DeviceCommand>, sqlx::Error> {
     let row = sqlx::query_as::<_, DeviceCommandRow>(
         r#"
         SELECT id, device_id, name, display_name, description, parameters, created_at
@@ -47,7 +47,7 @@ pub async fn find_device_command_by_id(db: &Database, id: &str) -> Result<Option
 
 /// Create a new device command
 pub async fn create_device_command(
-    db: &Database,
+    db: &Db,
     request: &CreateDeviceCommandRequest,
 ) -> Result<DeviceCommand, sqlx::Error> {
     let id = generate_id();
@@ -86,7 +86,7 @@ pub async fn create_device_command(
 
 /// Find commands by device ID
 pub async fn find_device_commands_by_device_id(
-    db: &Database,
+    db: &Db,
     device_id: &str,
 ) -> Result<Vec<DeviceCommand>, sqlx::Error> {
     let rows = sqlx::query_as::<_, DeviceCommandRow>(
@@ -105,7 +105,7 @@ pub async fn find_device_commands_by_device_id(
 
 /// Find command by device ID and name
 pub async fn find_device_command_by_device_and_name(
-    db: &Database,
+    db: &Db,
     device_id: &str,
     name: &str,
 ) -> Result<Option<DeviceCommand>, sqlx::Error> {
@@ -125,7 +125,7 @@ pub async fn find_device_command_by_device_and_name(
 
 /// Bulk create device commands
 pub async fn bulk_create_device_commands(
-    db: &Database,
+    db: &Db,
     requests: &[CreateDeviceCommandRequest],
 ) -> Result<Vec<DeviceCommand>, sqlx::Error> {
     let mut tx = db.pool().begin().await?;

@@ -105,12 +105,12 @@ impl From<TagBindingRow> for TagBinding {
 // ── SQLite implementations ──────────────────────────────
 
 pub struct TagRepository {
-    database: crate::database::Database,
+    db: crate::database::Db,
 }
 
 impl TagRepository {
-    pub fn new(database: crate::database::Database) -> Self {
-        Self { database }
+    pub fn new(db: crate::database::Db) -> Self {
+        Self { db }
     }
 }
 
@@ -120,7 +120,7 @@ impl TagRepository {
             "SELECT id, type, name, tenant_id, created_by, created_at FROM tags WHERE id = ?",
         )
         .bind(id)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await?;
 
         Ok(row.map(Into::into))
@@ -132,7 +132,7 @@ impl TagRepository {
         )
         .bind(name)
         .bind(tag_type)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await?;
 
         Ok(row.map(Into::into))
@@ -154,7 +154,7 @@ impl TagRepository {
         .bind(tenant_id)
         .bind(created_by)
         .bind(&now)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await?;
 
         self.find_by_id(&id)
@@ -183,7 +183,7 @@ impl TagRepository {
 
         query.push(" WHERE id = ").push_bind(id);
 
-        let result = query.build().execute(self.database.pool()).await?;
+        let result = query.build().execute(self.db.pool()).await?;
 
         if result.rows_affected() == 0 {
             return Err(tinyiothub_core::error::Error::NotFound);
@@ -195,7 +195,7 @@ impl TagRepository {
     }
 
     pub async fn delete(&self, id: &str, tenant_id: &str) -> Result<u64> {
-        let mut tx = self.database.pool().begin().await?;
+        let mut tx = self.db.pool().begin().await?;
 
         sqlx::query("DELETE FROM tag_bindings WHERE tag_id = ? AND tenant_id = ?")
             .bind(id)
@@ -237,7 +237,7 @@ impl TagRepository {
             query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let rows = query.build_query_as::<TagRow>().fetch_all(self.database.pool()).await?;
+        let rows = query.build_query_as::<TagRow>().fetch_all(self.db.pool()).await?;
         let tags: Vec<Tag> = rows.into_iter().map(Into::into).collect();
 
         Ok(tags)
@@ -258,7 +258,7 @@ impl TagRepository {
             query.push(" AND type = ").push_bind(tag_type);
         }
 
-        let row = query.build().fetch_one(self.database.pool()).await?;
+        let row = query.build().fetch_one(self.db.pool()).await?;
         let count: i64 = row.get("count");
 
         Ok(count)
@@ -284,7 +284,7 @@ impl TagRepository {
         if !skip_tenant {
             query = query.bind(tenant_id).bind(tenant_id);
         }
-        let rows = query.fetch_all(self.database.pool()).await?;
+        let rows = query.fetch_all(self.db.pool()).await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
     }
@@ -294,7 +294,7 @@ impl TagRepository {
             .bind(name)
             .bind(tag_type)
             .bind(tenant_id)
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await?;
 
         Ok(count > 0)
@@ -313,7 +313,7 @@ impl TagRepository {
                 .bind(tag_type)
                 .bind(exclude_id)
                 .bind(tenant_id)
-                .fetch_one(self.database.pool())
+                .fetch_one(self.db.pool())
                 .await?;
 
         Ok(count > 0)
@@ -321,12 +321,12 @@ impl TagRepository {
 }
 
 pub struct TagBindingRepository {
-    database: crate::database::Database,
+    db: crate::database::Db,
 }
 
 impl TagBindingRepository {
-    pub fn new(database: crate::database::Database) -> Self {
-        Self { database }
+    pub fn new(db: crate::database::Db) -> Self {
+        Self { db }
     }
 }
 
@@ -336,7 +336,7 @@ impl TagBindingRepository {
             "SELECT id, tag_id, target_id, tenant_id, created_by, created_at FROM tag_bindings WHERE id = ?",
         )
         .bind(id)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await?;
 
         Ok(row.map(Into::into))
@@ -364,7 +364,7 @@ impl TagBindingRepository {
         .bind(tenant_id)
         .bind(created_by)
         .bind(&now)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await?;
 
         self.find_by_id(&id)
@@ -376,7 +376,7 @@ impl TagBindingRepository {
         let result = sqlx::query("DELETE FROM tag_bindings WHERE id = ? AND tenant_id = ?")
             .bind(id)
             .bind(tenant_id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         Ok(result.rows_affected())
@@ -387,7 +387,7 @@ impl TagBindingRepository {
             .bind(tag_id)
             .bind(target_id)
             .bind(tenant_id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         Ok(result.rows_affected())
@@ -399,7 +399,7 @@ impl TagBindingRepository {
         )
         .bind(tag_id)
         .bind(tenant_id)
-        .fetch_all(self.database.pool())
+        .fetch_all(self.db.pool())
         .await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
@@ -411,7 +411,7 @@ impl TagBindingRepository {
         )
         .bind(target_id)
         .bind(tenant_id)
-        .fetch_all(self.database.pool())
+        .fetch_all(self.db.pool())
         .await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
@@ -421,7 +421,7 @@ impl TagBindingRepository {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tag_bindings WHERE tag_id = ? AND tenant_id = ?")
             .bind(tag_id)
             .bind(tenant_id)
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await?;
         Ok(count)
     }
@@ -430,7 +430,7 @@ impl TagBindingRepository {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tag_bindings WHERE target_id = ? AND tenant_id = ?")
             .bind(target_id)
             .bind(tenant_id)
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await?;
         Ok(count)
     }
@@ -442,7 +442,7 @@ impl TagBindingRepository {
         .bind(tag_id)
         .bind(target_id)
         .bind(tenant_id)
-        .fetch_one(self.database.pool())
+        .fetch_one(self.db.pool())
         .await?;
 
         Ok(count > 0)
@@ -460,7 +460,7 @@ impl TagBindingRepository {
         .bind(tag_id)
         .bind(target_id)
         .bind(tenant_id)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await?;
 
         Ok(row.map(Into::into))
@@ -476,7 +476,7 @@ impl TagBindingRepository {
             return Ok(vec![]);
         }
 
-        let mut tx = self.database.pool().begin().await?;
+        let mut tx = self.db.pool().begin().await?;
         let mut created_bindings = Vec::new();
 
         for request in bindings {
@@ -528,7 +528,7 @@ impl TagBindingRepository {
         let result = sqlx::query("DELETE FROM tag_bindings WHERE target_id = ? AND tenant_id = ?")
             .bind(target_id)
             .bind(tenant_id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         Ok(result.rows_affected())
@@ -538,7 +538,7 @@ impl TagBindingRepository {
         let result = sqlx::query("DELETE FROM tag_bindings WHERE tag_id = ? AND tenant_id = ?")
             .bind(tag_id)
             .bind(tenant_id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         Ok(result.rows_affected())

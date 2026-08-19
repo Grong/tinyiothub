@@ -130,13 +130,13 @@ pub trait EventAuditLog: Send + Sync {
     async fn cleanup_old_logs(&self, retention_days: u32) -> Result<usize>;
 }
 
-/// Database-backed audit log implementation
+/// Db-backed audit log implementation
 pub struct DatabaseAuditLog {
-    db: Arc<tinyiothub_storage::Database>,
+    db: Arc<tinyiothub_storage::Db>,
 }
 
 impl DatabaseAuditLog {
-    pub fn new(db: Arc<tinyiothub_storage::Database>) -> Self {
+    pub fn new(db: Arc<tinyiothub_storage::Db>) -> Self {
         Self { db }
     }
 

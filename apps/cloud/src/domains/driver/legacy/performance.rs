@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use tinyiothub_storage::{Database, cache::DeviceCache};
+use tinyiothub_storage::{Db, cache::DeviceCache};
 
 use super::monitoring::DeviceMonitoringService;
 use tinyiothub_core::error::Error;
@@ -10,7 +10,7 @@ use tinyiothub_storage::alarm::AlarmRepository;
 
 pub struct DevicePerformanceService {
     #[allow(dead_code)]
-    database: Arc<Database>,
+    db: Arc<Db>,
     device_cache: Arc<DeviceCache>,
     monitoring_service: DeviceMonitoringService,
     alarm_repository: Arc<AlarmRepository>,
@@ -18,14 +18,14 @@ pub struct DevicePerformanceService {
 
 impl DevicePerformanceService {
     pub fn new(
-        database: Arc<Database>,
+        db: Arc<Db>,
         device_cache: Arc<DeviceCache>,
         alarm_repository: Arc<AlarmRepository>,
     ) -> Self {
         let monitoring_service =
-            DeviceMonitoringService::new(database.clone(), device_cache.clone(), alarm_repository.clone());
+            DeviceMonitoringService::new(db.clone(), device_cache.clone(), alarm_repository.clone());
         Self {
-            database,
+            db,
             device_cache,
             monitoring_service,
             alarm_repository,

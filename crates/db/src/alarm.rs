@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use tinyiothub_core::notification_types::NotificationChannelType;
 
-use crate::database::Database;
+use crate::database::Db;
 use crate::error::{DbError, Result};
 
 // ──────────────────────────────────────────────
@@ -777,12 +777,12 @@ fn parse_db_datetime(s: &str) -> std::result::Result<DateTime<Utc>, String> {
 
 /// 报警仓储实现
 pub struct AlarmRepository {
-    database: Arc<Database>,
+    db: Arc<Db>,
 }
 
 impl AlarmRepository {
-    pub fn new(database: Arc<Database>) -> Self {
-        Self { database }
+    pub fn new(db: Arc<Db>) -> Self {
+        Self { db }
     }
 
     fn row_to_alarm(&self, row: sqlx::sqlite::SqliteRow) -> Result<Alarm> {
@@ -924,7 +924,7 @@ impl AlarmRepository {
             .bind(alarm.resolution.as_ref().map(|r| r.resolution_type.as_str()))
             .bind(&alarm.workspace_id)
             .bind(alarm.created_at.to_rfc3339())
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         Ok(())
@@ -956,7 +956,7 @@ impl AlarmRepository {
             .bind(alarm.resolution.as_ref().and_then(|r| r.note.as_ref()))
             .bind(alarm.resolution.as_ref().map(|r| r.resolution_type.as_str()))
             .bind(&alarm.id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         Ok(())
@@ -972,7 +972,7 @@ impl AlarmRepository {
         if let Some(ws) = workspace_id {
             sqlx_query = sqlx_query.bind(ws);
         }
-        let row = sqlx_query.fetch_optional(self.database.pool()).await?;
+        let row = sqlx_query.fetch_optional(self.db.pool()).await?;
         if let Some(row) = row {
             Ok(Some(self.row_to_alarm(row)?))
         } else {
@@ -1056,7 +1056,7 @@ impl AlarmRepository {
         }
 
         let rows = sqlx_query
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await
             .map_err(|e| DbError::Internal(format!("Query failed: {}", e)))?;
 
@@ -1081,7 +1081,7 @@ impl AlarmRepository {
         }
 
         let rows = sqlx_query
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await
             .map_err(|e| DbError::Internal(format!("find_active query failed: {}", e)))?;
 
@@ -1106,7 +1106,7 @@ impl AlarmRepository {
         }
 
         let rows = sqlx_query
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await
             .map_err(|e| DbError::Internal(format!("find_unacknowledged query failed: {}", e)))?;
 
@@ -1182,7 +1182,7 @@ impl AlarmRepository {
         }
 
         let row = sqlx_query
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await
             .map_err(|e| DbError::Internal(format!("Count query failed: {}", e)))?;
 
@@ -1249,7 +1249,7 @@ impl AlarmRepository {
         }
 
         let result = sqlx_query
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await
             .map_err(|e| DbError::Internal(format!("batch_update_status failed: {}", e)))?;
 
@@ -1260,7 +1260,7 @@ impl AlarmRepository {
         let query = "DELETE FROM device_alarms WHERE created_at < ? AND is_resolved = true";
         let result = sqlx::query(query)
             .bind(before.to_rfc3339())
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
         Ok(result.rows_affected() as usize)
     }
@@ -1269,14 +1269,14 @@ impl AlarmRepository {
         let count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = ? AND is_resolved = 0")
                 .bind(device_id)
-                .fetch_one(self.database.pool())
+                .fetch_one(self.db.pool())
                 .await?;
         Ok(count as u32)
     }
 
     pub async fn count_all_active_alarms(&self) -> Result<u32> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE is_resolved = 0")
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await?;
         Ok(count as u32)
     }
@@ -1287,7 +1287,7 @@ impl AlarmRepository {
         )
         .bind(device_id)
         .bind(format!("-{} days", days))
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await?
         .unwrap_or(0);
         Ok(count as u32)
@@ -1300,12 +1300,12 @@ impl AlarmRepository {
 
 /// 报警规则仓储实现
 pub struct AlarmRuleRepository {
-    database: Arc<Database>,
+    db: Arc<Db>,
 }
 
 impl AlarmRuleRepository {
-    pub fn new(database: Arc<Database>) -> Self {
-        Self { database }
+    pub fn new(db: Arc<Db>) -> Self {
+        Self { db }
     }
 
     fn row_to_alarm_rule(&self, row: sqlx::sqlite::SqliteRow) -> Result<AlarmRule> {
@@ -1424,7 +1424,7 @@ impl AlarmRuleRepository {
             .bind(&rule.workspace_id)
             .bind(rule.created_at.to_rfc3339())
             .bind(rule.updated_at.to_rfc3339())
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await
             .map_err(|e| DbError::Internal(format!("创建规则失败: {}", e)))?;
 
@@ -1478,7 +1478,7 @@ impl AlarmRuleRepository {
             sqlx_query = sqlx_query.bind(ws);
         }
         sqlx_query
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await
             .map_err(|e| DbError::Internal(format!("更新规则失败: {}", e)))?;
 
@@ -1496,7 +1496,7 @@ impl AlarmRuleRepository {
             sqlx_query = sqlx_query.bind(ws);
         }
         sqlx_query
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await
             .map_err(|e| DbError::Internal(format!("删除规则失败: {}", e)))?;
         Ok(())
@@ -1506,7 +1506,7 @@ impl AlarmRuleRepository {
         let query = "SELECT * FROM device_alarm_rules WHERE id = ?";
         let row = sqlx::query(query)
             .bind(id)
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await
             .map_err(|e| DbError::Internal(format!("查询规则失败: {}", e)))?;
 
@@ -1534,7 +1534,7 @@ impl AlarmRuleRepository {
             sqlx_query = sqlx_query.bind(ws);
         }
         let rows = sqlx_query
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await
             .map_err(|e| DbError::Internal(format!("查询启用规则失败: {}", e)))?;
 
@@ -1562,7 +1562,7 @@ impl AlarmRuleRepository {
             sqlx_query = sqlx_query.bind(ws);
         }
         let rows = sqlx_query
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await
             .map_err(|e| DbError::Internal(format!("查询设备规则失败: {}", e)))?;
 
@@ -1578,7 +1578,7 @@ impl AlarmRuleRepository {
         let rows = sqlx::query(query)
             .bind(device_id)
             .bind(property_id)
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await
             .map_err(|e| DbError::Internal(format!("查询属性规则失败: {}", e)))?;
 
@@ -1592,7 +1592,7 @@ impl AlarmRuleRepository {
     pub async fn find_global_rules(&self) -> Result<Vec<AlarmRule>> {
         let query = "SELECT * FROM device_alarm_rules WHERE device_id IS NULL ORDER BY created_at DESC";
         let rows = sqlx::query(query)
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await
             .map_err(|e| DbError::Internal(format!("查询全局规则失败: {}", e)))?;
 
@@ -1614,7 +1614,7 @@ impl AlarmRuleRepository {
             sqlx_query = sqlx_query.bind(ws);
         }
         sqlx_query
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await
             .map_err(|e| DbError::Internal(format!("更新规则状态失败: {}", e)))?;
         Ok(())
@@ -1647,7 +1647,7 @@ impl AlarmRuleRepository {
         }
 
         let rows = sqlx_query
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await
             .map_err(|e| DbError::Internal(format!("查询事件规则失败: {}", e)))?;
 

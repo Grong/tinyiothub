@@ -6,13 +6,13 @@ use sha2::{Digest, Sha256};
 
 pub struct DriverService {
     #[allow(dead_code)]
-    db: Arc<tinyiothub_storage::Database>,
+    db: Arc<tinyiothub_storage::Db>,
     scanning: AtomicBool,
     scan_timeout_secs: u64,
 }
 
 impl DriverService {
-    pub fn new(db: Arc<tinyiothub_storage::Database>, scan_timeout_secs: u64) -> Arc<Self> {
+    pub fn new(db: Arc<tinyiothub_storage::Db>, scan_timeout_secs: u64) -> Arc<Self> {
         Arc::new(Self {
             db,
             scanning: AtomicBool::new(false),

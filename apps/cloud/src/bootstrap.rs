@@ -108,7 +108,7 @@ pub async fn initialize_logging(config: &ApplicationSettings) -> std::io::Result
 /// 重新加载已安装的动态驱动
 pub async fn rehydrate_drivers(app_state: &AppState) {
     use tinyiothub_storage::DriverInstallationRepo;
-    let repo = DriverInstallationRepo::new((*app_state.database).clone());
+    let repo = DriverInstallationRepo::new((*app_state.db).clone());
     match repo.find_all().await {
         Ok(installations) => {
             let registry = tinyiothub_runtime::driver_registry();
@@ -173,7 +173,7 @@ pub async fn load_device_cache(app_state: &AppState) {
 
 use sqlx::SqlitePool;
 use tinyiothub_core::agent_runs::{Outcome, RunReport};
-use tinyiothub_storage::Database;
+use tinyiothub_storage::Db;
 use tinyiothub_storage::agent_runs::AgentRunsRepository;
 use tinyiothub_storage::heartbeat::HeartbeatTaskRepository;
 use tinyiothub_storage::workspace::WorkspaceRepository;
@@ -196,7 +196,7 @@ use tinyiothub_agent::runtime::thing_agent::registry::COMPLETED_CAPACITY;
 ///   状态为空，近期已处理问题会重复派发一次。
 ///
 /// 单项失败降级为空段 + warn（启动不阻塞）；DB 不可达时返回空快照。
-pub async fn build_agent_snapshot(db: &Database) -> RestoreSnapshot {
+pub async fn build_agent_snapshot(db: &Db) -> RestoreSnapshot {
     let pool = db.pool();
     let ws_repo = WorkspaceRepository::new(db.clone());
     let ws_ids = match ws_repo.find_all_ids().await {
@@ -328,7 +328,7 @@ async fn load_problem_meta(pool: &SqlitePool) -> Vec<ProblemMetaRow> {
 /// 启动顺序第 3 步：僵尸 run reconcile。DB 中 status='running' 的行必为
 /// 上次进程崩溃遗留（restore 刚完成、尚无在飞 run）；registry 预热窗口
 /// 认领的 run_id（已有完成报告）防御性排除。失败仅告警，不阻塞启动。
-pub async fn reconcile_zombie_runs(db: &Database, runtime: &AgentRuntime) {
+pub async fn reconcile_zombie_runs(db: &Db, runtime: &AgentRuntime) {
     let known_active: Vec<String> = runtime.active_runs().iter().map(|r| r.run_id.clone()).collect();
     let repo = AgentRunsRepository::new(db.pool().clone());
     match repo.interrupt_zombie_running_runs(&known_active).await {

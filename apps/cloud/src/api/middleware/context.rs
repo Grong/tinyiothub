@@ -24,7 +24,7 @@ pub async fn context_middleware(
     let user_info = extract_user_from_jwt(
         request.headers(),
         request.uri(),
-        Some(&state.database),
+        Some(&state.db),
         &state.jwt_service,
     )
     .await
@@ -69,7 +69,7 @@ fn extract_bearer_token<'a>(headers: &'a HeaderMap, uri: &'a axum::http::Uri) ->
 async fn extract_user_from_jwt(
     headers: &HeaderMap,
     uri: &axum::http::Uri,
-    db: Option<&tinyiothub_storage::Database>,
+    db: Option<&tinyiothub_storage::Db>,
     jwt: &tinyiothub_authn::jwt::JwtService,
 ) -> Option<UserInfo> {
     let token = extract_bearer_token(headers, uri)?;
@@ -94,7 +94,7 @@ async fn extract_user_from_jwt(
 }
 
 /// 检查 token 是否在黑名单中（G4：自 authn 迁入 —— 业务查询住 apps/cloud）
-async fn is_token_blacklisted(db: &tinyiothub_storage::Database, token: &str) -> bool {
+async fn is_token_blacklisted(db: &tinyiothub_storage::Db, token: &str) -> bool {
     use sha2::Digest;
 
     let token_hash = format!("{:x}", sha2::Sha256::digest(token.as_bytes()));

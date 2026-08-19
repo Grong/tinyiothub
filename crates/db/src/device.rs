@@ -1,6 +1,6 @@
 use sqlx::{QueryBuilder, Row};
 
-use crate::database::Database;
+use crate::database::Db;
 use tinyiothub_core::error::{Error, Result};
 use tinyiothub_core::models::device::{CreateDeviceRequest, Device, DeviceStatusUpdate, UpdateDeviceRequest};
 use tinyiothub_core::{generate_id, now_string};
@@ -268,15 +268,15 @@ mod tests {
 /// SQLite implementation of DeviceRepository
 #[derive(Debug, Clone)]
 pub struct DeviceRepository {
-    database: Database,
+    db: Db,
     /// Some(workspace_id) 时按租户作用域过滤（E6a 合并原 TenantDeviceRepository 行为）。
     workspace_scope: Option<String>,
 }
 
 impl DeviceRepository {
-    pub fn new(database: Database) -> Self {
+    pub fn new(db: Db) -> Self {
         Self {
-            database,
+            db,
             workspace_scope: None,
         }
     }
@@ -295,7 +295,7 @@ impl DeviceRepository {
         let sql = format!("SELECT {} FROM devices WHERE id = ?", device_row_mapper::SELECT_COLUMNS);
         let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(id)
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await?;
 
         if let Some(row) = row {
@@ -312,7 +312,7 @@ impl DeviceRepository {
         );
         let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(name)
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await?;
 
         if let Some(row) = row {
@@ -403,7 +403,7 @@ impl DeviceRepository {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let rows = builder.build().fetch_all(self.database.pool()).await?;
+        let rows = builder.build().fetch_all(self.db.pool()).await?;
         let mut devices = Vec::new();
         for row in rows {
             devices.push(device_row_mapper::row_to_device(row)?);
@@ -469,7 +469,7 @@ impl DeviceRepository {
             builder.push(")");
         }
 
-        let row = builder.build().fetch_one(self.database.pool()).await?;
+        let row = builder.build().fetch_one(self.db.pool()).await?;
         let count: i64 = row.get("count");
         Ok(count)
     }
@@ -509,14 +509,14 @@ impl DeviceRepository {
         .bind(&request.workspace_id)
         .bind(&now)
         .bind(&now)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await?;
 
         self.find_by_id_inner(&id).await?.ok_or(Error::NotFound)
     }
 
     async fn update_inner(&self, id: &str, request: &UpdateDeviceRequest) -> Result<Device> {
-        let mut tx = self.database.pool().begin().await?;
+        let mut tx = self.db.pool().begin().await?;
 
         let mut builder = QueryBuilder::new("UPDATE devices SET ");
         let mut has_updates = false;
@@ -671,7 +671,7 @@ impl DeviceRepository {
     async fn delete_inner(&self, id: &str) -> Result<u64> {
         let result = sqlx::query("DELETE FROM devices WHERE id = ?")
             .bind(id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
         Ok(result.rows_affected())
     }
@@ -681,7 +681,7 @@ impl DeviceRepository {
             return Ok(0);
         }
 
-        let mut tx = self.database.pool().begin().await?;
+        let mut tx = self.db.pool().begin().await?;
         let mut builder = QueryBuilder::new("DELETE FROM devices WHERE id IN (");
         let mut separated = builder.separated(", ");
         for id in ids {
@@ -699,7 +699,7 @@ impl DeviceRepository {
             return Ok(vec![]);
         }
 
-        let mut tx = self.database.pool().begin().await?;
+        let mut tx = self.db.pool().begin().await?;
         let mut created_devices = Vec::new();
         let now = now_string();
 
@@ -781,7 +781,7 @@ impl DeviceRepository {
             .bind(state)
             .bind(now)
             .bind(id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await?;
 
         if result.rows_affected() == 0 {
@@ -795,7 +795,7 @@ impl DeviceRepository {
             return Ok(0);
         }
 
-        let mut tx = self.database.pool().begin().await?;
+        let mut tx = self.db.pool().begin().await?;
         let mut total_affected = 0u64;
         let now = now_string();
 
@@ -829,7 +829,7 @@ impl DeviceRepository {
         );
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(parent_id)
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await?;
 
         let mut devices = Vec::new();
@@ -846,7 +846,7 @@ impl DeviceRepository {
         );
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(template_id)
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await?;
 
         let mut devices = Vec::new();
@@ -863,7 +863,7 @@ impl DeviceRepository {
         );
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(driver_name)
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await?;
 
         let mut devices = Vec::new();
@@ -880,7 +880,7 @@ impl DeviceRepository {
         );
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(linked_gateway)
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await?;
 
         let mut devices = Vec::new();
@@ -893,7 +893,7 @@ impl DeviceRepository {
     async fn exists_by_name_inner(&self, name: &str) -> Result<bool> {
         let row = sqlx::query("SELECT COUNT(*) as count FROM devices WHERE name = ?")
             .bind(name)
-            .fetch_one(self.database.pool())
+            .fetch_one(self.db.pool())
             .await?;
         let count: i64 = row.get("count");
         Ok(count > 0)
@@ -913,7 +913,7 @@ impl DeviceRepository {
         }
         separated.push_unseparated(")");
 
-        let rows = builder.build().fetch_all(self.database.pool()).await?;
+        let rows = builder.build().fetch_all(self.db.pool()).await?;
         let mut devices = Vec::new();
         for row in rows {
             devices.push(device_row_mapper::row_to_device(row)?);
@@ -950,7 +950,7 @@ impl DeviceRepository {
             return Ok(0);
         }
 
-        let mut tx = self.database.pool().begin().await?;
+        let mut tx = self.db.pool().begin().await?;
         let mut total_affected = 0u64;
 
         for update in updates {
@@ -973,7 +973,7 @@ impl DeviceRepository {
     async fn device_belongs_to_workspace(&self, ws: &str, device_id: &str) -> Result<bool> {
         let result: Option<(String,)> = sqlx::query_as("SELECT workspace_id FROM devices WHERE id = ?")
             .bind(device_id)
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await?;
 
         match result {
@@ -1001,7 +1001,7 @@ impl DeviceRepository {
         query_builder.push(")");
 
         let query = query_builder.build();
-        let rows = query.fetch_all(self.database.pool()).await?;
+        let rows = query.fetch_all(self.db.pool()).await?;
         Ok(rows.into_iter().map(|row| row.get::<String, _>("id")).collect())
     }
 
@@ -1135,7 +1135,7 @@ impl DeviceRepository {
         .bind(&ws)
         .bind(&now)
         .bind(&now)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await?;
 
         // Fetch the created device
@@ -1190,7 +1190,7 @@ impl DeviceRepository {
             return Ok(vec![]);
         }
 
-        let mut tx = self.database.pool().begin().await?;
+        let mut tx = self.db.pool().begin().await?;
         let mut device_ids = Vec::new();
         let now = now_string();
 

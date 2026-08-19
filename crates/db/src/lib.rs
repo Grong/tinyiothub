@@ -13,13 +13,13 @@ pub mod agent_runs;
 pub mod alarm;
 /// Device cache (in-memory).
 pub mod cache;
-/// Database connection configuration.
+/// Db connection configuration.
 pub mod config;
 /// Cron job persistence.
 pub mod cron_job;
 /// Cron run persistence.
 pub mod cron_run;
-/// Database facade (connection + domain accessors).
+/// Db facade (connection + domain accessors).
 pub mod database;
 /// Device persistence.
 pub mod device;
@@ -31,7 +31,7 @@ pub mod device_property;
 pub mod device_row_mapper;
 /// Driver installation persistence.
 pub mod driver_installation;
-/// Database error type.
+/// Db error type.
 pub mod error;
 /// Event + real-time status persistence and query types.
 pub mod event;
@@ -86,7 +86,7 @@ pub use cache::DeviceCache;
 pub use config::DatabaseConfig;
 pub use cron_job::CronJobRepository;
 pub use cron_run::CronRunRepository;
-pub use database::Database;
+pub use database::Db;
 pub use device::DeviceRepository;
 pub use device_command::*;
 pub use device_property::*;

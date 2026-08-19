@@ -17,7 +17,7 @@ use sqlx::Row;
 use tinyiothub_core::models::event::{
     ContentElement, DeviceEventType, Event, EventLevel, EventSource, EventType, RichContent, TextFormat,
 };
-use tinyiothub_storage::Database;
+use tinyiothub_storage::Db;
 
 use crate::test_utils::seed_test_workspace;
 
@@ -273,7 +273,7 @@ async fn test_event_alarm_rule_fires_device_alarm() {
     .await
     .expect("insert event rule");
 
-    let db = Arc::new(Database::new(pool.clone()));
+    let db = Arc::new(Db::new(pool.clone()));
     let alarm_repo: Arc<AlarmRepository> = Arc::new(AlarmRepository::new(db.clone()));
     let rule_repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db.clone()));
     let alarm_service = Arc::new(AlarmService::new(alarm_repo, rule_repo));
@@ -330,7 +330,7 @@ async fn test_event_alarm_rule_respects_min_level() {
     .await
     .expect("insert event rule");
 
-    let db = Arc::new(Database::new(pool.clone()));
+    let db = Arc::new(Db::new(pool.clone()));
     let alarm_repo: Arc<AlarmRepository> = Arc::new(AlarmRepository::new(db.clone()));
     let rule_repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db.clone()));
     let alarm_service = Arc::new(AlarmService::new(alarm_repo, rule_repo));
@@ -482,7 +482,7 @@ fn status_event(device_id: &str, level: EventLevel) -> Event {
 async fn test_status_upsert_via_repo_merges_repeat_occurrences() {
     let pool = test_pool().await;
     insert_device(&pool, "dev-st", "ws-st").await;
-    let repo = RealTimeEventRepository::new(Database::new(pool.clone()));
+    let repo = RealTimeEventRepository::new(Db::new(pool.clone()));
 
     repo.upsert_status(&status_event("dev-st", EventLevel::Warning))
         .await
@@ -603,7 +603,7 @@ async fn test_status_upsert_merges_repeat_occurrences() {
 async fn test_status_upsert_ignores_info_level_events() {
     let pool = test_pool().await;
     insert_device(&pool, "dev-si", "ws-si").await;
-    let repo = RealTimeEventRepository::new(Database::new(pool.clone()));
+    let repo = RealTimeEventRepository::new(Db::new(pool.clone()));
 
     // Info-level device events do not satisfy should_update_real_time_status().
     repo.upsert_status(&status_event("dev-si", EventLevel::Info))

@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use sqlx::Row;
 use tinyiothub_core::error::{Error, Result};
 
-use crate::database::Database;
+use crate::database::Db;
 
 // ──────────────────────────────────────────────
 // 持久化类型（DB 行 + 仓储契约）— 自 tenant/types.rs 迁入
@@ -125,12 +125,12 @@ pub struct ApiUsageStats {
 
 #[derive(Debug, Clone)]
 pub struct TenantRepository {
-    database: Database,
+    db: Db,
 }
 
 impl TenantRepository {
-    pub fn new(database: Database) -> Self {
-        Self { database }
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 }
 
@@ -146,7 +146,7 @@ impl TenantRepository {
         let sql = "SELECT * FROM subscription_plans ORDER BY sort_order ASC";
 
         let plans = self
-            .database
+            .db
             .query(sql, |row| {
                 Ok(SubscriptionPlan {
                     id: row.try_get("id")?,
@@ -174,7 +174,7 @@ impl TenantRepository {
     pub async fn find_plan_by_id(&self, id: &str) -> Result<Option<SubscriptionPlan>> {
         let row = sqlx::query("SELECT * FROM subscription_plans WHERE id = ? LIMIT 1")
             .bind(id)
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await
             .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
@@ -228,7 +228,7 @@ impl TenantRepository {
         .bind(req.locale.as_deref().unwrap_or("zh-CN"))
         .bind(&now)
         .bind(&now)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await
         .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
@@ -241,7 +241,7 @@ impl TenantRepository {
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(&id)
         .bind(&now)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await
         .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
@@ -251,7 +251,7 @@ impl TenantRepository {
     pub async fn find_tenant_by_id(&self, id: &str) -> Result<Option<Tenant>> {
         let row = sqlx::query("SELECT * FROM tenants WHERE id = ? LIMIT 1")
             .bind(id)
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await
             .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
@@ -281,7 +281,7 @@ impl TenantRepository {
     pub async fn find_tenant_by_slug(&self, slug: &str) -> Result<Option<Tenant>> {
         let row = sqlx::query("SELECT * FROM tenants WHERE slug = ? LIMIT 1")
             .bind(slug)
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await
             .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
@@ -311,7 +311,7 @@ impl TenantRepository {
     pub async fn get_tenant_usage(&self, tenant_id: &str) -> Result<Option<TenantUsage>> {
         let row = sqlx::query("SELECT * FROM tenant_usage WHERE tenant_id = ? LIMIT 1")
             .bind(tenant_id)
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await
             .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
@@ -349,7 +349,7 @@ impl TenantRepository {
         .bind(plan_id)
         .bind(&now)
         .bind(tenant_id)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await
         .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
@@ -362,7 +362,7 @@ impl TenantRepository {
         sqlx::query("UPDATE tenants SET status = 'suspended', updated_at = ? WHERE id = ?")
             .bind(&now)
             .bind(tenant_id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await
             .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
@@ -375,7 +375,7 @@ impl TenantRepository {
         sqlx::query("UPDATE tenants SET status = 'active', updated_at = ? WHERE id = ?")
             .bind(&now)
             .bind(tenant_id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await
             .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
@@ -420,7 +420,7 @@ impl TenantRepository {
         .bind(expires_at.as_deref())
         .bind(&now)
         .bind(&now)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await
         .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
@@ -432,7 +432,7 @@ impl TenantRepository {
     pub async fn find_api_key_by_id(&self, id: &str) -> Result<Option<ApiKey>> {
         let row = sqlx::query("SELECT * FROM api_keys WHERE id = ? LIMIT 1")
             .bind(id)
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await
             .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
@@ -462,7 +462,7 @@ impl TenantRepository {
     pub async fn find_api_key_by_prefix(&self, prefix: &str) -> Result<Option<ApiKey>> {
         let row = sqlx::query("SELECT * FROM api_keys WHERE prefix = ? AND is_revoked = 0 LIMIT 1")
             .bind(prefix)
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await
             .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
@@ -492,7 +492,7 @@ impl TenantRepository {
     pub async fn find_api_key_by_hash(&self, key_hash: &str) -> Result<Option<ApiKey>> {
         let row = sqlx::query("SELECT * FROM api_keys WHERE key_hash = ? AND is_revoked = 0 LIMIT 1")
             .bind(key_hash)
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await
             .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
@@ -524,7 +524,7 @@ impl TenantRepository {
 
         let mut rows = sqlx::query(sql)
             .bind(workspace_id)
-            .fetch_all(self.database.pool())
+            .fetch_all(self.db.pool())
             .await
             .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
@@ -556,7 +556,7 @@ impl TenantRepository {
         sqlx::query("UPDATE api_keys SET is_revoked = 1, updated_at = ? WHERE id = ?")
             .bind(&now)
             .bind(id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await
             .map_err(|e| Error::DatabaseError(e.to_string()))?;
         Ok(())
@@ -568,7 +568,7 @@ impl TenantRepository {
         sqlx::query("UPDATE api_keys SET is_enabled = 1, updated_at = ? WHERE id = ?")
             .bind(&now)
             .bind(id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await
             .map_err(|e| Error::DatabaseError(e.to_string()))?;
         Ok(())
@@ -580,7 +580,7 @@ impl TenantRepository {
         sqlx::query("UPDATE api_keys SET is_enabled = 0, updated_at = ? WHERE id = ?")
             .bind(&now)
             .bind(id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await
             .map_err(|e| Error::DatabaseError(e.to_string()))?;
         Ok(())
@@ -598,7 +598,7 @@ impl TenantRepository {
     ) -> Result<()> {
         let tenant_id: Option<String> = sqlx::query_scalar("SELECT tenant_id FROM workspaces WHERE id = ? LIMIT 1")
             .bind(workspace_id)
-            .fetch_optional(self.database.pool())
+            .fetch_optional(self.db.pool())
             .await
             .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
@@ -621,7 +621,7 @@ impl TenantRepository {
         .bind(latency_ms)
         .bind(ip_address.unwrap_or(""))
         .bind(&now)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await
         .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
@@ -638,7 +638,7 @@ impl TenantRepository {
             .bind(&now)
             .bind(ip_address.unwrap_or(""))
             .bind(key_id)
-            .execute(self.database.pool())
+            .execute(self.db.pool())
             .await
             .map_err(|e| Error::DatabaseError(e.to_string()))?;
         }
@@ -661,7 +661,7 @@ impl TenantRepository {
         .bind(&now)
         .bind(error_count)
         .bind(&now)
-        .execute(self.database.pool())
+        .execute(self.db.pool())
         .await
         .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
@@ -689,7 +689,7 @@ impl TenantRepository {
         )
         .bind(tenant_id)
         .bind(&cutoff_date)
-        .fetch_optional(self.database.pool())
+        .fetch_optional(self.db.pool())
         .await
         .map_err(|e| Error::DatabaseError(e.to_string()))?;
 

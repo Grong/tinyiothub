@@ -250,7 +250,7 @@ async fn install_marketplace_template(
         }
     };
 
-    let repository = Arc::new(TemplateRepository::new(state.database.clone()));
+    let repository = Arc::new(TemplateRepository::new(state.db.clone()));
 
     let installer = TemplateInstaller::new(client, repository);
 
@@ -332,7 +332,7 @@ async fn publish_template_handler(
 
     let workspace_id_str = workspace_id.as_deref().unwrap_or("");
     let template = match crate::domains::thing::template::types::DeviceTemplate::find_by_id(
-        &state.database,
+        &state.db,
         &req.template_id,
         workspace_id_str,
     )
@@ -378,7 +378,7 @@ async fn list_thing_templates(
 ) -> Json<ApiResponse<serde_json::Value>> {
     let ws = workspace_id.as_deref().unwrap_or("");
 
-    match ThingTemplateInstaller::list(state.database.pool(), ws).await {
+    match ThingTemplateInstaller::list(state.db.pool(), ws).await {
         Ok(items) => {
             let total = items.len() as u64;
             let result = serde_json::json!({
@@ -412,7 +412,7 @@ async fn install_thing_template(
         return ApiResponseBuilder::error("需要指定工作空间");
     }
 
-    match ThingTemplateInstaller::install(state.database.pool(), &id, ws).await {
+    match ThingTemplateInstaller::install(state.db.pool(), &id, ws).await {
         Ok(installed) => {
             tracing::info!(
                 "Installed thing_template {} as '{}' (id={})",
