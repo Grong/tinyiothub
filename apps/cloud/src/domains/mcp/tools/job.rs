@@ -222,8 +222,8 @@ impl ToolHandler for ListSchedulesHandler {
         };
 
         let jobs = state
-            .cron_job_repo
-            .find_all(&query)
+            .db
+            .list_cron_jobs(&query)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to list schedules: {}", e)))?;
 
@@ -393,8 +393,8 @@ impl ToolHandler for CreateScheduleHandler {
         let req = map_create_input(&input, &claims.workspace_id);
 
         let job = state
-            .cron_job_repo
-            .create(&req, Some(&claims.api_key_name))
+            .db
+            .create_cron_job(&req, Some(&claims.api_key_name))
             .await
             .map_err(|e| ToolError::Internal(format!("failed to create schedule: {}", e)))?;
 
@@ -485,8 +485,8 @@ impl ToolHandler for UpdateScheduleHandler {
         let req = map_update_input(&input);
 
         let job = state
-            .cron_job_repo
-            .update(&input.id, &req)
+            .db
+            .update_cron_job(&input.id, &req)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to update schedule: {}", e)))?;
 
@@ -541,20 +541,20 @@ impl ToolHandler for DeleteScheduleHandler {
 
         // Verify the job exists and belongs to the workspace
         let existing = state
-            .cron_job_repo
-            .find_by_id(&input.id)
+            .db
+            .find_cron_job_by_id(&input.id)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to get schedule: {}", e)))?
             .ok_or_else(|| ToolError::NotFound("schedule not found".to_string()))?;
 
         state
-            .cron_job_repo
-            .delete(&input.id)
+            .db
+            .delete_cron_job(&input.id)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to delete schedule: {}", e)))?;
 
         let workspace_id = existing.workspace_id.as_deref().unwrap_or("");
-        let _ = state.cron_run_repo.delete_by_job_id(&input.id, workspace_id).await;
+        let _ = state.db.delete_cron_runs_by_job_id(&input.id, workspace_id).await;
 
         Ok(serde_json::json!({
             "success": true,

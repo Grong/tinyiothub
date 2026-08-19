@@ -4,7 +4,7 @@ use chrono::Utc;
 use cron::Schedule;
 use tinyiothub_core::error::{Error, Result};
 use tinyiothub_core::models::cron_job::CronJob;
-use tinyiothub_storage::{CronJobRepository, CronRunRepository};
+use tinyiothub_storage::Db;
 use tokio::{
     sync::{Semaphore, broadcast},
     task::JoinHandle,
@@ -15,8 +15,7 @@ use crate::engine::{ExecutionResult, ExecutorError, ExecutorRegistry};
 
 /// Cron job scheduler service that polls for due jobs and executes them.
 pub struct CronSchedulerService {
-    job_repo: Arc<CronJobRepository>,
-    run_repo: Arc<CronRunRepository>,
+    db: Arc<Db>,
     registry: Arc<ExecutorRegistry>,
     shutdown_tx: broadcast::Sender<()>,
     poll_interval: std::time::Duration,
@@ -24,13 +23,12 @@ pub struct CronSchedulerService {
 }
 
 impl CronSchedulerService {
-    /// Create a new scheduler service with the given repositories and executor
+    /// Create a new scheduler service with the Db facade and executor
     /// registry. Concrete (db-bound) executors are registered by the caller —
     /// see `ExecutorRegistry::register`.
-    pub fn new(job_repo: Arc<CronJobRepository>, run_repo: Arc<CronRunRepository>, registry: ExecutorRegistry) -> Self {
+    pub fn new(db: Arc<Db>, registry: ExecutorRegistry) -> Self {
         Self {
-            job_repo,
-            run_repo,
+            db,
             registry: Arc::new(registry),
             shutdown_tx: broadcast::channel(1).0,
             poll_interval: std::time::Duration::from_secs(15),
@@ -41,8 +39,7 @@ impl CronSchedulerService {
     /// Start the background polling loop.
     pub fn start(&self) -> JoinHandle<Result<()>> {
         let mut shutdown_rx = self.shutdown_tx.subscribe();
-        let job_repo = self.job_repo.clone();
-        let run_repo = self.run_repo.clone();
+        let db = self.db.clone();
         let registry = self.registry.clone();
         let poll_interval = self.poll_interval;
         let max_concurrent = self.max_concurrent;
@@ -51,7 +48,7 @@ impl CronSchedulerService {
 
         tokio::spawn(async move {
             // Crash recovery: clear any stale is_running flags from previous session.
-            if let Err(e) = job_repo.clear_all_running().await {
+            if let Err(e) = db.clear_all_running_cron_jobs().await {
                 warn!("Failed to clear stale running flags on startup: {}", e);
             }
 
@@ -61,8 +58,7 @@ impl CronSchedulerService {
                 tokio::select! {
                     _ = interval.tick() => {
                         if let Err(e) = tick_impl(
-                            job_repo.clone(),
-                            run_repo.clone(),
+                            db.clone(),
                             registry.clone(),
                             max_concurrent,
                         ).await {
@@ -91,12 +87,11 @@ impl CronSchedulerService {
 
 /// Single polling cycle: find due jobs and execute them with concurrency limit.
 async fn tick_impl(
-    job_repo: Arc<CronJobRepository>,
-    run_repo: Arc<CronRunRepository>,
+    db: Arc<Db>,
     registry: Arc<ExecutorRegistry>,
     max_concurrent: usize,
 ) -> Result<()> {
-    let jobs = job_repo.find_due_jobs().await?;
+    let jobs = db.find_due_cron_jobs().await?;
 
     if jobs.is_empty() {
         return Ok(());
@@ -113,13 +108,12 @@ async fn tick_impl(
             .acquire_owned()
             .await
             .map_err(|e| Error::Internal(e.to_string()))?;
-        let job_repo = job_repo.clone();
-        let run_repo = run_repo.clone();
+        let db = db.clone();
         let registry = registry.clone();
 
         let handle = tokio::spawn(async move {
             let _permit = permit;
-            if let Err(e) = execute_job(job, job_repo, run_repo, registry).await {
+            if let Err(e) = execute_job(job, db, registry).await {
                 error!("Job execution error: {}", e);
             }
         });
@@ -139,12 +133,11 @@ async fn tick_impl(
 /// Execute a single cron job: atomically claim, create run record, execute, update stats.
 async fn execute_job(
     job: CronJob,
-    job_repo: Arc<CronJobRepository>,
-    run_repo: Arc<CronRunRepository>,
+    db: Arc<Db>,
     registry: Arc<ExecutorRegistry>,
 ) -> Result<()> {
     // Atomically claim the job (prevents race between scheduler and manual trigger)
-    let claimed = match job_repo.claim_job(&job.id).await {
+    let claimed = match db.claim_cron_job(&job.id).await {
         Ok(true) => true,
         Ok(false) => {
             info!("Job {} already claimed by another process, skipping", job.id);
@@ -163,11 +156,11 @@ async fn execute_job(
     let workspace_id = job.workspace_id.as_deref().unwrap_or("");
 
     // Create run record
-    let run = match run_repo.create(&job.id, workspace_id, "schedule", None).await {
+    let run = match db.create_cron_run(&job.id, workspace_id, "schedule", None).await {
         Ok(r) => r,
         Err(e) => {
             error!("Failed to create run record for job {}: {}", job.id, e);
-            let _ = job_repo.set_running(&job.id, false).await;
+            let _ = db.set_cron_job_running(&job.id, false).await;
             return Err(e);
         }
     };
@@ -201,8 +194,8 @@ async fn execute_job(
     // Update run record and job stats
     match result {
         Ok(res) => {
-            if let Err(e) = run_repo
-                .complete(
+            if let Err(e) = db
+                .complete_cron_run(
                     &run_id,
                     workspace_id,
                     &res.status,
@@ -215,8 +208,8 @@ async fn execute_job(
                 error!("Failed to complete run {}: {}", run_id, e);
             }
 
-            if let Err(e) = job_repo
-                .update_run_stats(&job.id, &res.status, res.error_message.as_deref())
+            if let Err(e) = db
+                .update_cron_job_run_stats(&job.id, &res.status, res.error_message.as_deref())
                 .await
             {
                 error!("Failed to update run stats for job {}: {}", job.id, e);
@@ -231,14 +224,14 @@ async fn execute_job(
                 ExecutorError::Timeout(_) => "timeout",
                 _ => "failed",
             };
-            if let Err(e) = run_repo
-                .complete(&run_id, workspace_id, status, None, Some(&err_msg), duration_ms)
+            if let Err(e) = db
+                .complete_cron_run(&run_id, workspace_id, status, None, Some(&err_msg), duration_ms)
                 .await
             {
                 error!("Failed to complete run {}: {}", run_id, e);
             }
 
-            if let Err(e) = job_repo.update_run_stats(&job.id, status, Some(&err_msg)).await {
+            if let Err(e) = db.update_cron_job_run_stats(&job.id, status, Some(&err_msg)).await {
                 error!("Failed to update run stats for job {}: {}", job.id, e);
             }
 
@@ -249,14 +242,14 @@ async fn execute_job(
     // Compute and update next_run_at
     let next_run = compute_next_run_at(&job.cron_expression);
     if let Some(ref next) = next_run {
-        if let Err(e) = job_repo.update_next_run_at(&job.id, Some(next)).await {
+        if let Err(e) = db.update_cron_job_next_run_at(&job.id, Some(next)).await {
             warn!("Failed to update next_run_at for job {}: {}", job.id, e);
         }
         info!("Job {} next run at: {}", job.id, next);
     }
 
     // Set is_running = false
-    if let Err(e) = job_repo.set_running(&job.id, false).await {
+    if let Err(e) = db.set_cron_job_running(&job.id, false).await {
         warn!("Failed to set job {} not running: {}", job.id, e);
     }
 

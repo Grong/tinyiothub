@@ -226,7 +226,7 @@ async fn list_jobs(
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
     let query = map_cron_job_query(&params, ws_id);
-    match state.cron_job_repo.find_all(&query).await {
+    match state.db.list_cron_jobs(&query).await {
         Ok(jobs) => ApiResponseBuilder::success(jobs.into_iter().map(map_cron_job_to_job).collect()),
         Err(e) => {
             tracing::error!("Failed to list jobs: {}", e);
@@ -245,7 +245,7 @@ async fn get_job(
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
-    match state.cron_job_repo.find_by_id(&id).await {
+    match state.db.find_cron_job_by_id(&id).await {
         Ok(Some(job)) => ApiResponseBuilder::success(map_cron_job_to_job(job)),
         Ok(None) => ApiResponseBuilder::error_with_code(404, "任务不存在"),
         Err(e) => {
@@ -279,7 +279,7 @@ async fn create_job(
     };
     let req = map_create_request(&payload, &ws_id);
 
-    match state.cron_job_repo.create(&req, Some(&claims.user_id)).await {
+    match state.db.create_cron_job(&req, Some(&claims.user_id)).await {
         Ok(job) => ApiResponseBuilder::success(map_cron_job_to_job(job)),
         Err(e) => {
             tracing::error!("Failed to create job: {}", e);
@@ -315,7 +315,7 @@ async fn update_job(
     };
     let req = map_update_request(&payload);
 
-    match state.cron_job_repo.update(&id, &req).await {
+    match state.db.update_cron_job(&id, &req).await {
         Ok(job) => ApiResponseBuilder::success(map_cron_job_to_job(job)),
         Err(Error::NotFound) => ApiResponseBuilder::error_with_code(404, "任务不存在"),
         Err(e) => {
@@ -335,9 +335,9 @@ async fn delete_job(
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
-    match state.cron_job_repo.delete(&id).await {
+    match state.db.delete_cron_job(&id).await {
         Ok(true) => {
-            let _ = state.cron_run_repo.delete_by_job_id(&id, &ws_id).await;
+            let _ = state.db.delete_cron_runs_by_job_id(&id, &ws_id).await;
             ApiResponseBuilder::success(true)
         }
         Ok(false) => ApiResponseBuilder::error_with_code(404, "任务不存在"),
@@ -358,7 +358,7 @@ async fn run_job_now(
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
 
-    let job = match state.cron_job_repo.find_by_id(&id).await {
+    let job = match state.db.find_cron_job_by_id(&id).await {
         Ok(Some(j)) => j,
         Ok(None) => return ApiResponseBuilder::error_with_code(404, "任务不存在"),
         Err(e) => {
@@ -367,7 +367,7 @@ async fn run_job_now(
         }
     };
 
-    let claimed = match state.cron_job_repo.claim_job(&id).await {
+    let claimed = match state.db.claim_cron_job(&id).await {
         Ok(c) => c,
         Err(e) => {
             tracing::error!("Failed to claim job: {}", e);
@@ -381,20 +381,19 @@ async fn run_job_now(
 
     let workspace_id = job.workspace_id.clone().unwrap_or_else(|| ws_id.clone());
     let run = match state
-        .cron_run_repo
-        .create(&job.id, &workspace_id, "manual", Some(&claims.user_id))
+        .db
+        .create_cron_run(&job.id, &workspace_id, "manual", Some(&claims.user_id))
         .await
     {
         Ok(r) => r,
         Err(e) => {
             tracing::error!("Failed to create run record: {}", e);
-            let _ = state.cron_job_repo.set_running(&id, false).await;
+            let _ = state.db.set_cron_job_running(&id, false).await;
             return ApiResponseBuilder::error("创建执行记录失败");
         }
     };
 
-    let job_repo = state.cron_job_repo.clone();
-    let run_repo = state.cron_run_repo.clone();
+    let db = state.db.clone();
     let job_clone = job.clone();
     let run_id = run.id.clone();
     let registry = Arc::new(ExecutorRegistry::new());
@@ -426,8 +425,8 @@ async fn run_job_now(
 
         match result {
             Ok(res) => {
-                let _ = run_repo
-                    .complete(
+                let _ = db
+                    .complete_cron_run(
                         &run_id,
                         &workspace_id,
                         &res.status,
@@ -436,8 +435,8 @@ async fn run_job_now(
                         res.duration_ms,
                     )
                     .await;
-                let _ = job_repo
-                    .update_run_stats(&job_clone.id, &res.status, res.error_message.as_deref())
+                let _ = db
+                    .update_cron_job_run_stats(&job_clone.id, &res.status, res.error_message.as_deref())
                     .await;
             }
             Err(err) => {
@@ -446,14 +445,14 @@ async fn run_job_now(
                     _ => "failed",
                 };
                 let err_msg = err.to_string();
-                let _ = run_repo
-                    .complete(&run_id, &workspace_id, status, None, Some(&err_msg), duration_ms)
+                let _ = db
+                    .complete_cron_run(&run_id, &workspace_id, status, None, Some(&err_msg), duration_ms)
                     .await;
-                let _ = job_repo.update_run_stats(&job_clone.id, status, Some(&err_msg)).await;
+                let _ = db.update_cron_job_run_stats(&job_clone.id, status, Some(&err_msg)).await;
             }
         }
 
-        let _ = job_repo.set_running(&job_clone.id, false).await;
+        let _ = db.set_cron_job_running(&job_clone.id, false).await;
     });
 
     ApiResponseBuilder::success(map_cron_run_to_execution(run))
@@ -473,8 +472,8 @@ async fn list_job_executions(
     query.job_id = Some(id);
 
     match state
-        .cron_run_repo
-        .find_by_job_id(&params.job_id.unwrap_or_default(), &ws_id, &query)
+        .db
+        .find_cron_runs_by_job_id(&params.job_id.unwrap_or_default(), &ws_id, &query)
         .await
     {
         Ok(runs) => ApiResponseBuilder::success(runs.into_iter().map(map_cron_run_to_execution).collect()),
@@ -491,18 +490,18 @@ async fn get_statistics(State(state): State<AdminState>, claims: Claims) -> Json
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
 
-    let total = state.cron_job_repo.count(&ws_id).await.unwrap_or(0);
+    let total = state.db.count_cron_jobs(&ws_id).await.unwrap_or(0);
     let success_runs = state
-        .cron_run_repo
-        .count_by_status(&ws_id, "success")
+        .db
+        .count_cron_runs_by_status(&ws_id, "success")
         .await
         .unwrap_or(0);
-    let failed_runs = state.cron_run_repo.count_by_status(&ws_id, "failed").await.unwrap_or(0);
+    let failed_runs = state.db.count_cron_runs_by_status(&ws_id, "failed").await.unwrap_or(0);
 
-    let enabled_jobs = state.cron_job_repo.count_by_enabled(&ws_id, true).await.unwrap_or(0);
-    let disabled_jobs = state.cron_job_repo.count_by_enabled(&ws_id, false).await.unwrap_or(0);
-    let running_jobs = state.cron_job_repo.count_running(&ws_id).await.unwrap_or(0);
-    let avg_duration_ms = state.cron_run_repo.avg_duration_ms(&ws_id).await.unwrap_or(0);
+    let enabled_jobs = state.db.count_cron_jobs_by_enabled(&ws_id, true).await.unwrap_or(0);
+    let disabled_jobs = state.db.count_cron_jobs_by_enabled(&ws_id, false).await.unwrap_or(0);
+    let running_jobs = state.db.count_running_cron_jobs(&ws_id).await.unwrap_or(0);
+    let avg_duration_ms = state.db.avg_cron_run_duration_ms(&ws_id).await.unwrap_or(0);
 
     let stats = JobStatistics {
         total_jobs: total,
@@ -539,7 +538,7 @@ async fn list_all_executions(
         page_size: Some(page_size),
     };
 
-    match state.cron_run_repo.find_all(&ws_id, &query).await {
+    match state.db.list_cron_runs(&ws_id, &query).await {
         Ok(runs) => {
             let total = runs.len() as i64;
             let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;

@@ -77,8 +77,6 @@ pub mod test_helpers;
 // Re-export commonly used items
 pub use cache::DeviceCache;
 pub use config::DatabaseConfig;
-pub use cron_job::CronJobRepository;
-pub use cron_run::CronRunRepository;
 pub use database::Db;
 pub use device::DeviceRepository;
 pub use device_command::*;

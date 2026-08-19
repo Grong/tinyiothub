@@ -134,8 +134,7 @@ impl ServiceManager {
                 crate::shared::runtime_ports::EventRetentionAdapter((*app_state.db).clone()),
             ))));
             let cron_scheduler = tinyiothub_scheduler::CronSchedulerService::new(
-                app_state.cron_job_repo.clone(),
-                app_state.cron_run_repo.clone(),
+                app_state.db.clone(),
                 registry,
             );
             let cron_handle = cron_scheduler.start();

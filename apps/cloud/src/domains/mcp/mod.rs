@@ -42,10 +42,6 @@ pub struct McpState {
     pub data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
     /// 模板引擎 - create_thing 从模板创建设备
     pub template_engine: Arc<TemplateEngine>,
-    /// Cron 任务仓库 - schedule 工具
-    pub cron_job_repo: Arc<tinyiothub_storage::CronJobRepository>,
-    /// Cron 执行记录仓库 - delete_schedule 级联清理
-    pub cron_run_repo: Arc<tinyiothub_storage::CronRunRepository>,
     /// 报警服务 - alarm 工具（mcp→alarm 边）
     pub alarm_service: Arc<crate::domains::alarm::service::AlarmService>,
     /// 租户服务 - X-API-Key 校验

@@ -83,10 +83,6 @@ pub struct AdminState {
     pub workspace_service: Arc<crate::domains::tenant::WorkspaceService>,
     /// 租户服务 - open API 的 API Key 校验与配额
     pub tenant_service: Arc<crate::domains::tenant::TenantService>,
-    /// Cron 任务仓库 - jobs API
-    pub cron_job_repo: Arc<tinyiothub_storage::CronJobRepository>,
-    /// Cron 执行记录仓库 - jobs API
-    pub cron_run_repo: Arc<tinyiothub_storage::CronRunRepository>,
     /// 缓存的系统信息对象，避免每次请求重新扫描
     pub sysinfo_system: Arc<std::sync::Mutex<sysinfo::System>>,
     /// 管理员角色检查（event-security seam）

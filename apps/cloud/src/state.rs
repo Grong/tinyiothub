@@ -132,12 +132,6 @@ pub struct AppState {
     /// 权限服务 - CRUD 操作
     pub permission_service: Arc<crate::domains::user::permission::PermissionService>,
 
-    /// Cron 任务仓库
-    pub cron_job_repo: Arc<tinyiothub_storage::CronJobRepository>,
-
-    /// Cron 执行记录仓库
-    pub cron_run_repo: Arc<tinyiothub_storage::CronRunRepository>,
-
     /// 会话服务 - Agent 聊天会话管理
     pub session_service: Arc<crate::domains::agent::host::SessionService>,
 
@@ -414,12 +408,6 @@ impl AppState {
             permission_group_repository,
         ));
 
-        // Cron 仓库
-        let cron_job_repo: Arc<tinyiothub_storage::CronJobRepository> =
-            Arc::new(tinyiothub_storage::CronJobRepository::new(database.as_ref().clone()));
-        let cron_run_repo: Arc<tinyiothub_storage::CronRunRepository> =
-            Arc::new(tinyiothub_storage::CronRunRepository::new(database.as_ref().clone()));
-
         // 会话服务 - 用于 Agent 聊天会话管理
         let session_repository: Arc<tinyiothub_storage::session::SessionRepository> = Arc::new(
             tinyiothub_storage::session::SessionRepository::new(database.as_ref().clone()),
@@ -569,8 +557,6 @@ impl AppState {
             tag_repository,
             role_service,
             permission_service,
-            cron_job_repo,
-            cron_run_repo,
             session_service,
             sysinfo_system: Arc::new(std::sync::Mutex::new(sysinfo::System::new_all())),
             gateway_service,
@@ -985,8 +971,6 @@ impl axum::extract::FromRef<AppState> for crate::domains::mcp::McpState {
             event_bus: state.event_bus.clone(),
             data_server: state.data_server.clone(),
             template_engine: state.template_engine.clone(),
-            cron_job_repo: state.cron_job_repo.clone(),
-            cron_run_repo: state.cron_run_repo.clone(),
             alarm_service: state.alarm_service.clone(),
             tenant_service: state.tenant_service.clone(),
         }
@@ -1034,8 +1018,6 @@ impl axum::extract::FromRef<AppState> for crate::domains::admin::AdminState {
             trace_service: state.trace_service.clone(),
             workspace_service: state.workspace_service.clone(),
             tenant_service: state.tenant_service.clone(),
-            cron_job_repo: state.cron_job_repo.clone(),
-            cron_run_repo: state.cron_run_repo.clone(),
             sysinfo_system: state.sysinfo_system.clone(),
             role_checker: Arc::new(EventSecurityAdminRoleChecker { state: state.clone() }),
             network_defaults: state.network_defaults.clone(),
