@@ -34,8 +34,6 @@ pub struct McpState {
     pub db: Arc<Db>,
     /// 设备内存缓存 - thing 工具的实时状态合并
     pub device_cache: Arc<DeviceCache>,
-    /// 标签仓库 - 租户设备服务的标签关联
-    pub tag_repository: Arc<crate::domains::thing::tag::TagRepository>,
     /// 事件总线 - 属性变更事件发布（update_device_property_value）
     pub event_bus: Arc<EventBus>,
     /// 数据服务器 - send_command 工具
@@ -74,7 +72,7 @@ impl McpState {
     /// AppState 同名方法的域内移植。
     pub fn tenant_device_service_str(&self, workspace_id: &str) -> Arc<DeviceService> {
         let repository = self.device_repo_for(workspace_id.to_string());
-        Arc::new(DeviceService::new(repository, self.db.clone()).with_tag_repository(self.tag_repository.clone()))
+        Arc::new(DeviceService::new(repository, self.db.clone()).with_tag_repository(self.db.clone()))
     }
 
     /// Returns a tenant-scoped device service.
@@ -94,7 +92,7 @@ impl McpState {
 
         Arc::new(
             DeviceService::with_event_bus(repository, self.db.clone(), self.event_bus.clone())
-                .with_tag_repository(self.tag_repository.clone()),
+                .with_tag_repository(self.db.clone()),
         )
     }
 

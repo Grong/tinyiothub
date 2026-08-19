@@ -123,9 +123,6 @@ pub struct AppState {
     /// Orchestrator 中转。
     pub memory_service: Option<Arc<tinyiothub_memory::service::MemoryService>>,
 
-    /// 标签仓库 - 用于设备服务的标签关联
-    pub tag_repository: Arc<crate::domains::thing::tag::TagRepository>,
-
     /// 角色服务 - CRUD 操作
     pub role_service: Arc<crate::domains::user::role::RoleService>,
 
@@ -281,19 +278,12 @@ impl AppState {
         // 注册事件处理器将在异步初始化中完成
         // 这里只创建事件总线，处理器注册推迟到 register_event_handlers() 方法
 
-        // 标签仓库（提前创建，供 DeviceService 使用）
-        let tag_repository: Arc<crate::domains::thing::tag::TagRepository> =
-            Arc::new(tinyiothub_storage::tag::TagRepository::new(database.as_ref().clone()));
-        let tag_binding_repository: Arc<crate::domains::thing::tag::TagBindingRepository> = Arc::new(
-            tinyiothub_storage::tag::TagBindingRepository::new(database.as_ref().clone()),
-        );
-
         // 基础服务 - 使用事件总线
         let device_repository: Arc<tinyiothub_storage::device::DeviceRepository> =
             Arc::new(tinyiothub_storage::DeviceRepository::new(database.as_ref().clone()));
         let device_service = Arc::new(
             DeviceService::with_event_bus(device_repository, database.clone(), event_bus.clone())
-                .with_tag_repository(tag_repository.clone()),
+                .with_tag_repository(database.clone()),
         );
         let device_query_service: Arc<dyn DeviceQueryService> = Arc::new(
             crate::domains::driver::legacy::SqliteDeviceQueryService::new(database.as_ref().clone()),
@@ -386,26 +376,14 @@ impl AppState {
         let workspace_service = Arc::new(crate::domains::tenant::WorkspaceService::new(workspace_repository));
 
         // 标签服务
-        let tag_service = Arc::new(crate::domains::thing::tag::TagService::new(
-            tag_repository.clone(),
-            tag_binding_repository,
-        ));
+        let tag_service = Arc::new(crate::domains::thing::tag::TagService::new(database.clone()));
 
         // 角色服务
-        let role_repository: Arc<tinyiothub_storage::role::RoleRepository> =
-            Arc::new(tinyiothub_storage::role::RoleRepository::new(database.as_ref().clone()));
-        let role_service = Arc::new(crate::domains::user::role::RoleService::new(role_repository));
+        let role_service = Arc::new(crate::domains::user::role::RoleService::new(database.clone()));
 
         // 权限服务
-        let permission_repository: Arc<tinyiothub_storage::permission::PermissionRepository> = Arc::new(
-            tinyiothub_storage::permission::PermissionRepository::new(database.as_ref().clone()),
-        );
-        let permission_group_repository: Arc<tinyiothub_storage::permission::PermissionGroupRepository> = Arc::new(
-            tinyiothub_storage::permission::PermissionGroupRepository::new(database.as_ref().clone()),
-        );
         let permission_service = Arc::new(crate::domains::user::permission::PermissionService::new(
-            permission_repository,
-            permission_group_repository,
+            database.clone(),
         ));
 
         // 会话服务 - 用于 Agent 聊天会话管理
@@ -549,7 +527,6 @@ impl AppState {
             tenant_service,
             workspace_service,
             tag_service,
-            tag_repository,
             role_service,
             permission_service,
             session_service,
@@ -962,7 +939,6 @@ impl axum::extract::FromRef<AppState> for crate::domains::mcp::McpState {
         crate::domains::mcp::McpState {
             db: state.db.clone(),
             device_cache: state.device_cache.clone(),
-            tag_repository: state.tag_repository.clone(),
             event_bus: state.event_bus.clone(),
             data_server: state.data_server.clone(),
             template_engine: state.template_engine.clone(),
@@ -1002,7 +978,6 @@ impl axum::extract::FromRef<AppState> for crate::domains::admin::AdminState {
         crate::domains::admin::AdminState {
             db: state.db.clone(),
             device_cache: state.device_cache.clone(),
-            tag_repository: state.tag_repository.clone(),
             tag_service: state.tag_service.clone(),
             event_bus: state.event_bus.clone(),
             event_repository: state.event_repository.clone(),

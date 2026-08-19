@@ -5,4 +5,3 @@ pub mod service;
 
 pub use handler::create_router;
 pub use service::RoleService;
-pub use tinyiothub_storage::role::RoleRepository;

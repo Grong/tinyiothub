@@ -18,8 +18,6 @@ const ERROR_DEVICE_DRIVER_NOT_CONFIGURED: &str = "Device driver not configured";
 const ERROR_DEVICE_ADDRESS_NOT_CONFIGURED: &str = "Device address not configured";
 const MSG_DEVICE_TYPE_VALUE_NA: &str = "N/A";
 
-use tinyiothub_storage::tag::TagRepository;
-
 use crate::domains::event::{
     entities::Event as DomainEvent,
     value_objects::{ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat},
@@ -33,7 +31,7 @@ pub struct DeviceService {
     repository: Arc<DeviceRepository>,
     db: Arc<Db>,
     event_bus: Option<Arc<EventBus>>,
-    tag_repository: Option<Arc<TagRepository>>,
+    tag_db: Option<Arc<Db>>,
 }
 
 impl DeviceService {
@@ -42,7 +40,7 @@ impl DeviceService {
             repository,
             db,
             event_bus: None,
-            tag_repository: None,
+            tag_db: None,
         }
     }
 
@@ -55,12 +53,12 @@ impl DeviceService {
             repository,
             db,
             event_bus: Some(event_bus),
-            tag_repository: None,
+            tag_db: None,
         }
     }
 
-    pub fn with_tag_repository(mut self, tag_repository: Arc<TagRepository>) -> Self {
-        self.tag_repository = Some(tag_repository);
+    pub fn with_tag_repository(mut self, db: Arc<Db>) -> Self {
+        self.tag_db = Some(db);
         self
     }
 
@@ -460,9 +458,9 @@ impl DeviceService {
         tenant_id: &str,
     ) -> Result<Vec<Device>, Error> {
         let mut devices = self.get_devices(params).await?;
-        if let Some(tag_repo) = &self.tag_repository {
+        if let Some(tag_db) = &self.tag_db {
             for device in &mut devices {
-                match tag_repo.find_by_target_id(&device.id, tenant_id).await {
+                match tag_db.find_tags_by_target_id(&device.id, tenant_id).await {
                     Ok(tags) => {
                         let tag_values: Vec<serde_json::Value> = tags
                             .into_iter()

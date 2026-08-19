@@ -61,8 +61,6 @@ pub struct AdminState {
     pub db: Arc<Db>,
     /// 设备内存缓存
     pub device_cache: Arc<DeviceCache>,
-    /// 标签仓库 - 用于设备服务的标签关联
-    pub tag_repository: Arc<crate::domains::thing::tag::TagRepository>,
     /// 标签服务 - 设备 profile 的标签加载
     pub tag_service: Arc<crate::domains::thing::tag::TagService>,
     /// 事件总线 - 属性变更事件发布（update_device_property_value）
@@ -147,7 +145,7 @@ impl AdminState {
 
         Arc::new(
             DeviceService::with_event_bus(repository, self.db.clone(), self.event_bus.clone())
-                .with_tag_repository(self.tag_repository.clone()),
+                .with_tag_repository(self.db.clone()),
         )
     }
 

@@ -4,6 +4,4 @@ pub mod handler;
 pub mod service;
 
 pub use handler::create_router;
-// Repositories live in the db crate (E5 集中化); re-exported for compatibility.
 pub use service::TagService;
-pub use tinyiothub_storage::tag::{TagBindingRepository, TagRepository};

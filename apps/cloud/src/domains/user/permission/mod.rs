@@ -5,4 +5,3 @@ pub mod service;
 
 pub use handler::create_router;
 pub use service::PermissionService;
-pub use tinyiothub_storage::permission::{PermissionGroupRepository, PermissionRepository};
