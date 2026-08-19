@@ -81,6 +81,10 @@ async fn main_impl() -> std::io::Result<()> {
     let db_pool = tinyiothub_storage::create_pool(&db_config, is_harmonyos)
         .await
         .expect("Failed to create DB pool");
+    let db = tinyiothub_storage::Db::new(db_pool.clone());
+    tinyiothub_cloud::bootstrap::run_seeds(&db, &settings)
+        .await
+        .expect("Failed to seed database");
     let device_cache = std::sync::Arc::new(tinyiothub_storage::cache::DeviceCache::new());
     info!("✅ Database pool & device cache initialized");
 

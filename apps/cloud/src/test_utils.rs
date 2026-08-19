@@ -85,6 +85,12 @@ fn ensure_test_config() -> &'static ApplicationSettings {
     })
 }
 
+/// Clone of the initialized test settings (for tests that tweak a section,
+/// e.g. `[seed] demo_data`). Initializes the OnceLock on first call.
+pub fn test_settings() -> ApplicationSettings {
+    ensure_test_config().clone()
+}
+
 /// Create a test application router with in-memory SQLite database.
 ///
 /// Returns a `Router` ready for `oneshot()` testing. Sets up:
@@ -111,7 +117,8 @@ pub async fn setup_test_app_with_pool() -> (AppState, sqlx::SqlitePool) {
 pub async fn seed_test_workspace(pool: &sqlx::SqlitePool, tenant_id: &str, workspace_id: &str) {
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-    // tenants.plan_id → subscription_plans FK（基线为纯 DDL，种子随 Task 3 的 seed_system 到位）
+    // tenants.plan_id → subscription_plans FK。seed_system（Task 3）会预置
+    // plan_free，但本夹具只播种自己的租户/工作区、不跑 seed_system，故保留此行。
     sqlx::query("INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free', 'free', 'Free')")
         .execute(pool)
         .await
@@ -143,23 +150,23 @@ pub async fn seed_test_workspace(pool: &sqlx::SqlitePool, tenant_id: &str, works
     .expect("Failed to seed test workspace");
 }
 
-/// Create an AppState backed by in-memory SQLite with migrations applied.
+/// Create an AppState backed by in-memory SQLite with the baseline schema.
 ///
-/// Runs cloud migrations, skipping test-data migrations that reference
-/// non-existent devices.
+/// Applies the pure-DDL baseline via the migration runner; seed data lives in
+/// `tinyiothub_storage::seed` (Task 3) and is NOT applied here — handler tests
+/// seed only the rows they need.
 async fn create_test_app_state() -> AppState {
     // In-memory SQLite — no temp file, no cleanup issues
     let pool = sqlx::SqlitePool::connect("sqlite::memory:")
         .await
         .expect("Failed to create in-memory SQLite pool");
 
-    // Run migrations via centralized module (handles skip lists, orphaned
-    // records, and schema consistency automatically).
     tinyiothub_storage::migrations::run_migrations(&pool)
         .await
         .expect("Failed to run migrations");
 
-    // tenants.plan_id → subscription_plans FK（基线为纯 DDL，种子随 Task 3 的 seed_system 到位）
+    // tenants.plan_id → subscription_plans FK：多数 handler 测试需要默认租户链
+    // 可插入；本夹具不跑 seed_system（避免种子行干扰行数断言），故保留此行。
     sqlx::query("INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free', 'free', 'Free')")
         .execute(&pool)
         .await

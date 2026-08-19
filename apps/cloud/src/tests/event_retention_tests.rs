@@ -148,24 +148,12 @@ async fn test_clear_acknowledged_only_removes_occurrence_rows() {
 }
 
 #[tokio::test]
-async fn test_retention_job_seeded_by_migration() {
+async fn test_retention_job_seeded_by_seed_system() {
     let pool = test_pool().await;
-    // 保留任务原由迁移 20260727000003 播种；基线为纯 DDL，此 INSERT 复制原种子
-    // （Task 3 的 seed_system 到位后改回直接断言迁移播种结果）。
-    sqlx::query(
-        "INSERT INTO cron_jobs (
-            id, workspace_id, name, description, job_type, cron_expression, config,
-            timeout_seconds, max_retries, is_enabled, created_by, created_at, updated_at)
-         SELECT
-            'sys-event-retention', 'system', 'Events 保留清理',
-            'Delete occurrence-type events (is_status=0) older than retention_days; status rows are never time-purged.',
-            'event_retention', '0 17 3 * * *', '{\"retention_days\": 90}',
-            300, 3, 1, NULL, datetime('now'), datetime('now')
-         WHERE NOT EXISTS (SELECT 1 FROM cron_jobs WHERE id = 'sys-event-retention')",
-    )
-    .execute(&pool)
-    .await
-    .expect("seed retention job");
+    // 保留任务原由迁移 20260727000003 播种；Task 3 起由 seed_system 预置。
+    tinyiothub_storage::seed::seed_system(&Db::new(pool.clone()))
+        .await
+        .expect("seed_system");
     let (job_type, enabled): (String, i64) =
         sqlx::query_as("SELECT job_type, is_enabled FROM cron_jobs WHERE id = 'sys-event-retention'")
             .fetch_one(&pool)

@@ -45,6 +45,10 @@ cron = { workspace = true }
 rand = { workspace = true }
 sha2 = { workspace = true }
 
+[features]
+# Fixture constructors in test_helpers (fixture_pool_with_db / fixture_pool_seeded).
+testing = []
+
 [dev-dependencies]
 tokio = { workspace = true }
 

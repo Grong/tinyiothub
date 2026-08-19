@@ -285,7 +285,8 @@ async fn test_get_role_permissions_empty_for_new_role() {
 #[tokio::test]
 async fn test_update_and_get_role_permissions() {
     let (app_state, pool) = setup_test_app_with_pool().await;
-    // 权限 id 原由种子迁移预置；基线为纯 DDL（Task 3 的 seed_system 到位后此种子可移除）
+    // 权限 id 现由 seed_system（Task 3）预置；本夹具不跑 seed_system（避免其余
+    // 种子行干扰断言），故保留这三个权限的显式播种。
     sqlx::query(
         "INSERT OR IGNORE INTO permissions (id, name, description, resource_type, action) VALUES
          ('perm-device-read', 'device:read', '查看设备信息', 'device', 'read'),

@@ -130,6 +130,19 @@ pub async fn rehydrate_drivers(app_state: &AppState) {
     }
 }
 
+/// 启动种子（Task 3 两档 seed 模块）：`Db::connect` 之后调用。
+/// 系统档（租户/工作区/admin/内置模板等生产必需行）始终应用；
+/// 演示档受 `[seed] demo_data` 开关控制（默认 true）。
+pub async fn run_seeds(db: &tinyiothub_storage::Db, settings: &ApplicationSettings) -> Result<(), sqlx::Error> {
+    tinyiothub_storage::seed::seed_system(db).await?;
+    if settings.seed.demo_data {
+        tinyiothub_storage::seed::seed_demo(db).await?;
+    } else {
+        info!("Demo seed data disabled ([seed] demo_data = false)");
+    }
+    Ok(())
+}
+
 /// 从数据库加载完整设备（含属性、指令）到缓存
 pub async fn load_device_cache(app_state: &AppState) {
     use tinyiothub_core::models::device::DeviceQueryParams;

@@ -174,6 +174,25 @@ pub struct HarmonyosConfig {
     pub enabled: bool,
 }
 
+/// Seed configuration — bootstrap data seeding (Task 3 two-tier seed module).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SeedConfig {
+    /// Seed the demo scenario (8 demo devices + properties/actions/tags/alarms)
+    /// after the always-on system tier. Default true (matches the historical
+    /// fresh-install behavior).
+    #[serde(default = "default_true")]
+    pub demo_data: bool,
+}
+
+impl Default for SeedConfig {
+    fn default() -> Self {
+        Self {
+            demo_data: default_true(),
+        }
+    }
+}
+
 /// Redis configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -973,6 +992,8 @@ pub struct ApplicationSettings {
     pub agent: AgentSettings,
     #[serde(default)]
     pub minimax: Option<MinimaxConfig>,
+    #[serde(default)]
+    pub seed: SeedConfig,
 }
 
 impl ApplicationSettings {

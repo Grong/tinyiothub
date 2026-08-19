@@ -22,6 +22,10 @@ query_timeout_secs = 60
 log_queries = false
 auto_migrate = true
 
+[seed]
+# 启动种子数据（系统档始终应用；演示档受此开关控制）
+demo_data = true
+
 [mqtt]
 # MQTT主要配置
 [mqtt.primary]

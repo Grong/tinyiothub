@@ -38,8 +38,8 @@ fn test_token() -> String {
 
 #[tokio::test]
 async fn test_list_jobs() {
-    // resolve_workspace 需要 token 中的默认租户/工作区存在（原由种子迁移提供，
-    // 基线为纯 DDL；Task 3 的 seed_system 到位后此种子可移除）
+    // resolve_workspace 需要 token 中的默认租户/工作区存在。seed_system（Task 3）
+    // 会预置它们，但本夹具不跑 seed_system（避免种子行干扰断言），故保留显式播种。
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-default-001", "ws-default-001").await;
     let api_router = crate::api::create_router(&app_state);

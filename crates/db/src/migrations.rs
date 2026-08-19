@@ -161,14 +161,11 @@ mod tests {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         run_migrations(&pool).await.unwrap();
 
-        // tenants.plan_id → subscription_plans FK（基线为纯 DDL，种子随 Task 3 的 seed_system 到位）
-        sqlx::query("INSERT INTO subscription_plans (id, name, display_name) VALUES ('plan_free','free','Free')")
-            .execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO tenants (id, name, slug, created_at, updated_at) VALUES ('t1','t','t','2025-01-01','2025-01-01')")
-            .execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws1','ws','t1','2025-01-01','2025-01-01')")
-            .execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO devices (id, name, workspace_id, created_at, updated_at) VALUES ('d1','gw','ws1','2025-01-01','2025-01-01')")
+        // seed_system 提供 subscription_plans → 默认租户/工作区链（Task 3）。
+        crate::seed::seed_system(&crate::Db::new(pool.clone()))
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO devices (id, name, workspace_id, created_at, updated_at) VALUES ('d1','gw','ws-default-001','2025-01-01','2025-01-01')")
             .execute(&pool).await.unwrap();
 
         let result = sqlx::query("DELETE FROM devices WHERE id = 'd1'").execute(&pool).await;

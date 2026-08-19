@@ -6,7 +6,7 @@
 pub async fn seed_test_workspace(pool: &sqlx::SqlitePool, tenant_id: &str, workspace_id: &str) {
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-    // tenants.plan_id → subscription_plans FK（基线为纯 DDL，种子随 Task 3 的 seed_system 到位）
+    // tenants.plan_id → subscription_plans FK。seed_system（Task 3）会预置 plan_free，但此夹具不跑 seed_system，故保留此行。
     sqlx::query("INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free', 'free', 'Free')")
         .execute(pool)
         .await

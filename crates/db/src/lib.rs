@@ -5,7 +5,7 @@
 //! ## 设计不变量
 //! - 只依赖 core，禁止依赖其他任何 workspace crate
 //! - 具体 struct、按领域平铺（traits/ 残留待逐领域评估削除）
-//! - 测试使用真实 SQLite（test_helpers::run_all_migrations）
+//! - 测试使用真实 SQLite（test_helpers::test_pool 直建基线）
 
 /// Agent run reports persistence and row types.
 pub mod agent_runs;
@@ -53,6 +53,8 @@ pub mod permission;
 pub mod policy;
 /// Migrating SQLite pool creation (foreign keys on, runs embedded migrations).
 pub mod pool;
+/// Two-tier seed module (system + demo), applied at bootstrap.
+pub mod seed;
 /// Role persistence and row types.
 pub mod role;
 /// Session persistence and row types.
@@ -68,16 +70,9 @@ pub mod user;
 /// Workspace + knowledge resource persistence and row types.
 pub mod workspace;
 
-/// Test helpers for crates that need a fully-migrated in-memory pool.
-pub mod test_helpers {
-    /// Run all migrations in chronological order.
-    ///
-    /// Delegates to the centralized migration runner (backup before pending
-    /// migrations, FK OFF during the run, FK integrity check after).
-    pub async fn run_all_migrations(pool: &sqlx::SqlitePool) -> Result<(), sqlx::Error> {
-        crate::migrations::run_migrations(pool).await
-    }
-}
+/// Test helpers: baseline-built in-memory pools (+ seeded fixtures under the
+/// `testing` feature).
+pub mod test_helpers;
 
 // Re-export commonly used items
 pub use cache::DeviceCache;
