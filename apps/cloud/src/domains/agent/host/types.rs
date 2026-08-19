@@ -2,7 +2,7 @@
 // Agent types — domain types and DTOs
 
 // Session 行类型/错误/仓储已迁 db（E6b）；re-export 兼容。
-pub use tinyiothub_storage::session::{Session, SessionError, SessionRepository};
+pub use tinyiothub_storage::session::{Session, SessionError};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

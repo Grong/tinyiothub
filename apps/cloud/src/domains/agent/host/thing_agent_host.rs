@@ -81,12 +81,10 @@ impl ThingAgentHost for CloudThingAgentHost {
     /// （用户会话在打开时由 chat service ensure_session 创建）——append_message
     /// 的 FK 会拒绝未知 session_key，这里先显式检查以给出可读错误。
     async fn push_chat_message(&self, session_key: &str, content: &str, run_id: &str) -> anyhow::Result<()> {
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM chat_sessions WHERE session_key = ?)")
-            .bind(session_key)
-            .fetch_one(&self.pool)
-            .await?;
+        let db = tinyiothub_storage::Db::new(self.pool.clone());
+        let exists = db.session_exists(session_key).await?;
         anyhow::ensure!(exists, "unknown chat session: {session_key}");
-        super::chat::history::append_message(&self.pool, session_key, "assistant", content, run_id).await?;
+        db.append_session_message(session_key, "assistant", content, run_id).await?;
         Ok(())
     }
 
@@ -124,21 +122,10 @@ impl ThingAgentHost for CloudThingAgentHost {
     /// 多用户防泄漏的 admin 收窄已入 TODOS（"chat 会话 admin 维度"）。
     async fn recent_active_admin_session(&self, workspace_id: &str) -> anyhow::Result<Option<String>> {
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(30)).timestamp_millis();
-        let row = sqlx::query(
-            "SELECT cs.session_key, MAX(cm.timestamp) AS last_ts \
-             FROM chat_sessions cs \
-             JOIN chat_messages cm ON cm.session_key = cs.session_key \
-             WHERE cs.workspace_id = ? \
-             GROUP BY cs.session_key \
-             HAVING last_ts >= ? \
-             ORDER BY last_ts DESC \
-             LIMIT 1",
-        )
-        .bind(workspace_id)
-        .bind(cutoff)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row.map(|r| r.get("session_key")))
+        let session_key = tinyiothub_storage::Db::new(self.pool.clone())
+            .find_recent_active_session(workspace_id, cutoff)
+            .await?;
+        Ok(session_key)
     }
 }
 

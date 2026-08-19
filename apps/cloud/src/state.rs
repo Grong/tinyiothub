@@ -409,12 +409,7 @@ impl AppState {
         ));
 
         // 会话服务 - 用于 Agent 聊天会话管理
-        let session_repository: Arc<tinyiothub_storage::session::SessionRepository> = Arc::new(
-            tinyiothub_storage::session::SessionRepository::new(database.as_ref().clone()),
-        );
-        let session_service = Arc::new(crate::domains::agent::host::SessionService::new(Arc::clone(
-            &session_repository,
-        )));
+        let session_service = Arc::new(crate::domains::agent::host::SessionService::new(database.clone()));
 
         // === 网关配对服务 ===
         let (mqtt_tx, mqtt_rx) =

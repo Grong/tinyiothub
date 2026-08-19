@@ -5,20 +5,21 @@
 // This service only maintains the session index for listing/labeling/deleting sessions.
 
 use std::sync::Arc;
-use tinyiothub_storage::session::{Session, SessionError, SessionRepository};
+use tinyiothub_storage::Db;
+use tinyiothub_storage::session::{Session, SessionError};
 
 /// Session index service for managing session lifecycle
 pub struct SessionService {
-    repo: Arc<SessionRepository>,
+    db: Arc<Db>,
 }
 
 impl SessionService {
-    pub fn new(repo: Arc<SessionRepository>) -> Self {
-        Self { repo }
+    pub fn new(db: Arc<Db>) -> Self {
+        Self { db }
     }
 
     pub async fn get_session(&self, session_key: &str) -> Result<Option<Session>, SessionError> {
-        self.repo.get(session_key).await
+        self.db.get_session(session_key).await
     }
 
     pub async fn create_session(
@@ -28,23 +29,23 @@ impl SessionService {
         agent_id: String,
     ) -> Result<Session, SessionError> {
         let session = Session::new(session_key, workspace_id, agent_id);
-        self.repo.create(&session).await?;
+        self.db.create_session(&session).await?;
         Ok(session)
     }
 
     pub async fn update_label(&self, session_key: &str, label: impl Into<String>) -> Result<Session, SessionError> {
         let mut session = self
-            .repo
-            .get(session_key)
+            .db
+            .get_session(session_key)
             .await?
             .ok_or_else(|| SessionError::NotFound(session_key.to_string()))?;
         session.set_label(label);
-        self.repo.update(&session).await?;
+        self.db.update_session(&session).await?;
         Ok(session)
     }
 
     pub async fn delete_session(&self, session_key: &str) -> Result<(), SessionError> {
-        self.repo.delete(session_key).await
+        self.db.delete_session(session_key).await
     }
 
     pub async fn list_sessions(
@@ -54,6 +55,6 @@ impl SessionService {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<Session>, SessionError> {
-        self.repo.list(workspace_id, agent_id, limit, offset).await
+        self.db.list_sessions(workspace_id, agent_id, limit, offset).await
     }
 }

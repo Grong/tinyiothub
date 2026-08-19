@@ -6,6 +6,7 @@
 //! workspace agent and cannot isolate them).
 
 use sqlx::SqlitePool;
+use tinyiothub_storage::Db;
 
 /// Upper bound on prior messages re-seeded into the LLM context per turn.
 pub const SESSION_CONTEXT_MESSAGE_LIMIT: u32 = 50;
@@ -18,20 +19,9 @@ pub async fn ensure_session(
     workspace_id: &str,
     agent_id: &str,
 ) -> Result<(), sqlx::Error> {
-    let now = chrono::Utc::now().timestamp_millis();
-    sqlx::query(
-        "INSERT OR IGNORE INTO chat_sessions \
-         (session_key, workspace_id, agent_id, label, created_at, updated_at, metadata) \
-         VALUES (?, ?, ?, NULL, ?, ?, '{}')",
-    )
-    .bind(session_key)
-    .bind(workspace_id)
-    .bind(agent_id)
-    .bind(now)
-    .bind(now)
-    .execute(pool)
-    .await?;
-    Ok(())
+    Db::new(pool.clone())
+        .ensure_session(session_key, workspace_id, agent_id)
+        .await
 }
 
 /// Append one message to a session. Caller must ensure_session first.
@@ -42,19 +32,9 @@ pub async fn append_message(
     content: &str,
     run_id: &str,
 ) -> Result<(), sqlx::Error> {
-    let now = chrono::Utc::now().timestamp_millis();
-    sqlx::query(
-        "INSERT INTO chat_messages (session_key, role, content, timestamp, run_id) \
-         VALUES (?, ?, ?, ?, ?)",
-    )
-    .bind(session_key)
-    .bind(role)
-    .bind(content)
-    .bind(now)
-    .bind(run_id)
-    .execute(pool)
-    .await?;
-    Ok(())
+    Db::new(pool.clone())
+        .append_session_message(session_key, role, content, run_id)
+        .await
 }
 
 /// Load the most recent `limit` messages of a session, chronological order.
@@ -63,16 +43,7 @@ pub async fn list_messages(
     session_key: &str,
     limit: u32,
 ) -> Result<Vec<(String, String)>, sqlx::Error> {
-    let mut rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT role, content FROM chat_messages WHERE session_key = ? \
-         ORDER BY id DESC LIMIT ?",
-    )
-    .bind(session_key)
-    .bind(i64::from(limit))
-    .fetch_all(pool)
-    .await?;
-    rows.reverse();
-    Ok(rows)
+    Db::new(pool.clone()).list_session_messages(session_key, limit).await
 }
 
 /// Format persisted messages for the chat history API response.
