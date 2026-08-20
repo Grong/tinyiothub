@@ -166,11 +166,9 @@ pub async fn get_events(
     criteria.limit = Some(page_size);
     criteria.offset = Some((page - 1) * page_size);
 
-    // Get event repository from application state
-    let event_repo = &state.event_repository;
-
+    // Event queries go through the Db facade
     // Query events
-    match event_repo.find_by_criteria(&criteria).await {
+    match state.db.query_events(&criteria).await {
         Ok(events) => {
             // Convert domain events to response DTOs
             let event_responses: Vec<EventResponse> = events

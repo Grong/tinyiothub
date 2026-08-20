@@ -4,7 +4,6 @@ use std::sync::Arc;
 use crate::domains::event::{
     EventError, Result,
     entities::Event,
-    repositories::EventRepository,
     value_objects::{EventId, EventLevel, EventType, RichContent},
 };
 use chrono::{DateTime, Utc};
@@ -15,7 +14,6 @@ use crate::domains::event::security::{
 
 /// Secure event service that wraps the event repository with security features
 pub struct SecureEventService {
-    event_repository: Arc<EventRepository>,
     access_control: Arc<dyn EventAccessControl>,
     encryption: Arc<dyn EventEncryption>,
     audit_log: Arc<dyn EventAuditLog>,
@@ -26,7 +24,6 @@ pub struct SecureEventService {
 impl SecureEventService {
     /// Create a new secure event service
     pub fn new(
-        event_repository: Arc<EventRepository>,
         access_control: Arc<dyn EventAccessControl>,
         encryption: Arc<dyn EventEncryption>,
         audit_log: Arc<dyn EventAuditLog>,
@@ -34,7 +31,6 @@ impl SecureEventService {
         db: Arc<tinyiothub_storage::Db>,
     ) -> Result<Self> {
         Ok(Self {
-            event_repository,
             access_control,
             encryption,
             audit_log,
@@ -87,7 +83,7 @@ impl SecureEventService {
         }
 
         // Create the event
-        self.event_repository.save(&event).await?;
+        self.db.insert_event(&event).await?;
         // For now, return the event's ID (we'll need to modify the save method to return the ID)
         let event_id = event.id().clone();
 
@@ -100,7 +96,7 @@ impl SecureEventService {
     /// Get an event by ID with security checks
     pub async fn get_event(&self, user_id: &str, event_id: &EventId) -> Result<Option<Event>> {
         // Get the event first
-        let mut event = match self.event_repository.find_by_id(event_id).await? {
+        let mut event = match self.db.find_event_by_id(event_id).await? {
             Some(event) => event,
             None => return Ok(None),
         };
@@ -162,7 +158,7 @@ impl SecureEventService {
             limit: limit.map(|l| l as u32),
             ..Default::default()
         };
-        let events = self.event_repository.find_by_criteria(&criteria).await?;
+        let events = self.db.query_events(&criteria).await?;
 
         let mut filtered_events = Vec::new();
 
@@ -202,7 +198,7 @@ impl SecureEventService {
     /// Update an event with security checks
     pub async fn update_event(&self, user_id: &str, event_id: &EventId, mut updated_event: Event) -> Result<()> {
         // Get the existing event
-        let existing_event = match self.event_repository.find_by_id(event_id).await? {
+        let existing_event = match self.db.find_event_by_id(event_id).await? {
             Some(event) => event,
             None => {
                 return Err(EventError::NotFound {
@@ -261,7 +257,7 @@ impl SecureEventService {
     /// Delete an event with security checks
     pub async fn delete_event(&self, user_id: &str, event_id: &EventId) -> Result<()> {
         // Get the existing event
-        let existing_event = match self.event_repository.find_by_id(event_id).await? {
+        let existing_event = match self.db.find_event_by_id(event_id).await? {
             Some(event) => event,
             None => {
                 return Err(EventError::NotFound {

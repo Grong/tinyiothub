@@ -20,7 +20,7 @@ use crate::domains::event::{
     errors::{DomainResult, NotificationDomainError},
     value_objects::{EventId, EventLevel},
 };
-use tinyiothub_storage::notify::NotificationRuleRepository;
+use tinyiothub_storage::Db;
 
 // ──────────────────────────────────────────────
 // Specifications (from notification_specifications.rs)
@@ -404,15 +404,15 @@ async fn send_webhook(
 pub struct NotificationManager {
     channels: HashMap<NotificationChannelType, Box<dyn NotificationChannel>>,
     notification_service: NotificationService,
-    rule_repository: Arc<NotificationRuleRepository>,
+    db: Arc<Db>,
 }
 
 impl NotificationManager {
-    pub fn new(rule_repository: Arc<NotificationRuleRepository>) -> Self {
+    pub fn new(db: Arc<Db>) -> Self {
         Self {
             channels: HashMap::new(),
             notification_service: NotificationService::new(),
-            rule_repository,
+            db,
         }
     }
 
@@ -493,24 +493,24 @@ impl NotificationManager {
 
     /// Get all notification rules
     pub async fn get_rules(&self) -> std::result::Result<Vec<NotificationRule>, String> {
-        self.rule_repository.get_all_rules().await.map_err(|e| e.to_string())
+        self.db.list_notification_rules().await.map_err(|e| e.to_string())
     }
 
     /// Add a new notification rule
     pub async fn add_rule(&self, rule: NotificationRule) -> std::result::Result<(), String> {
-        self.rule_repository.create_rule(&rule).await.map_err(|e| e.to_string())
+        self.db.create_notification_rule(&rule).await.map_err(|e| e.to_string())
     }
 
     /// Update an existing notification rule
     pub async fn update_rule(&self, rule_id: &str, mut rule: NotificationRule) -> std::result::Result<(), String> {
         rule.id = rule_id.to_string();
-        self.rule_repository.update_rule(&rule).await.map_err(|e| e.to_string())
+        self.db.update_notification_rule(&rule).await.map_err(|e| e.to_string())
     }
 
     /// Remove a notification rule
     pub async fn remove_rule(&self, rule_id: &str) -> std::result::Result<(), String> {
-        self.rule_repository
-            .delete_rule(rule_id)
+        self.db
+            .delete_notification_rule(rule_id)
             .await
             .map_err(|e| e.to_string())
     }

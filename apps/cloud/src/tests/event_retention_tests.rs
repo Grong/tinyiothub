@@ -9,7 +9,6 @@ use chrono::{Duration, Utc};
 use tinyiothub_core::{cron::JobExecutor, models::cron_job::CronJob};
 use tinyiothub_runtime::cron_executors::EventRetentionExecutor;
 use tinyiothub_storage::Db;
-use tinyiothub_storage::event::RealTimeEventRepository;
 
 use crate::test_utils::seed_test_workspace;
 
@@ -117,8 +116,8 @@ async fn test_cleanup_old_events_exempts_status_rows() {
     insert_event(&pool, "old-occ", 100, 0, 0).await;
     insert_event(&pool, "old-status", 100, 1, 0).await;
 
-    let repo = RealTimeEventRepository::new(Db::new(pool.clone()));
-    let deleted = repo.cleanup_old_events(Utc::now() - Duration::days(90)).await.unwrap();
+    let repo = Db::new(pool.clone());
+    let deleted = repo.cleanup_old_realtime_events(Utc::now() - Duration::days(90)).await.unwrap();
 
     assert_eq!(deleted, 1);
     assert!(!event_exists(&pool, "old-occ").await);
@@ -135,7 +134,7 @@ async fn test_clear_acknowledged_only_removes_occurrence_rows() {
     insert_event(&pool, "ack-status", 1, 1, 1).await; // acked STATUS → KEEP (live state)
     insert_event(&pool, "unack-occ", 1, 0, 0).await; // unacked → KEEP
 
-    let repo = RealTimeEventRepository::new(Db::new(pool.clone()));
+    let repo = Db::new(pool.clone());
     let deleted = repo.clear_acknowledged_events().await.unwrap();
 
     assert_eq!(deleted, 1);

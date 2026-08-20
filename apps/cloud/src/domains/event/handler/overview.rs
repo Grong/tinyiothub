@@ -163,12 +163,11 @@ pub async fn get_event_overview(
         device_ids: device_ids.clone(),
     };
 
-    // Get repositories from application state
-    let event_repo = &state.event_repository;
-    let real_time_repo = &state.real_time_event_repository;
+    // Event persistence goes through the Db facade
+    let db = &state.db;
 
     // Get basic statistics
-    let statistics = match event_repo.get_statistics(&stats_params).await {
+    let statistics = match db.get_event_statistics(&stats_params).await {
         Ok(stats) => stats,
         Err(e) => {
             tracing::error!("Failed to get event statistics: {}", e);
@@ -186,7 +185,7 @@ pub async fn get_event_overview(
         workspace_id: Some(claims.0.workspace_id.clone()), // tenant isolation (T1)
     };
 
-    let recent_critical_events = match real_time_repo.find_active_events(&real_time_filter).await {
+    let recent_critical_events = match db.find_realtime_events(&real_time_filter).await {
         Ok(events) => events
             .into_iter()
             .take(10) // Limit to 10 most recent

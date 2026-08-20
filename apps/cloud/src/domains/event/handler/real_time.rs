@@ -153,11 +153,11 @@ pub async fn get_real_time_events(
         filter.min_level = Some(min_level);
     }
 
-    // Get real-time event repository from application state
-    let real_time_repo = &state.real_time_event_repository;
+    // Real-time event queries go through the Db facade
+    let db = &state.db;
 
     // Query real-time events
-    match real_time_repo.find_active_events(&filter).await {
+    match db.find_realtime_events(&filter).await {
         Ok(events) => {
             // Convert domain events to response DTOs
             let event_responses: Vec<RealTimeEventResponse> =
@@ -224,11 +224,11 @@ pub async fn get_status_summary(
         filter.min_level = Some(min_level);
     }
 
-    // Get real-time event repository from application state
-    let real_time_repo = &state.real_time_event_repository;
+    // Real-time event queries go through the Db facade
+    let db = &state.db;
 
     // Get status summary
-    match real_time_repo.get_status_summary(&filter).await {
+    match db.get_realtime_status_summary(&filter).await {
         Ok(summary) => {
             let response = convert_status_summary_to_response(summary);
             ApiResponseBuilder::success(response)
@@ -254,11 +254,11 @@ pub async fn acknowledge_event(
     // Parse event ID
     let event_id = EventId::from_string(id);
 
-    // Get real-time event repository from application state
-    let real_time_repo = &state.real_time_event_repository;
+    // Real-time event queries go through the Db facade
+    let db = &state.db;
 
     // Acknowledge the event
-    match real_time_repo
+    match db
         .acknowledge_event(&event_id, &claims.0.user_id, &claims.0.workspace_id)
         .await
     {

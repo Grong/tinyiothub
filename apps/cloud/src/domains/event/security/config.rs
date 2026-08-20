@@ -1,7 +1,7 @@
 // Event security configuration and factory
 use std::sync::Arc;
 
-use crate::domains::event::{EventError, Result, repositories::EventRepository};
+use crate::domains::event::{EventError, Result};
 pub use tinyiothub_core::config::EventSecurityConfig;
 
 use crate::domains::event::security::{
@@ -86,14 +86,10 @@ impl EventSecurityFactory {
     }
 
     /// Create a secure event service with all security components
-    pub async fn create_secure_event_service(
-        &self,
-        event_repository: Arc<EventRepository>,
-    ) -> Result<SecureEventService> {
+    pub async fn create_secure_event_service(&self) -> Result<SecureEventService> {
         let components = self.create_security_components().await?;
 
         SecureEventService::new(
-            event_repository,
             components.access_control,
             components.encryption,
             components.audit_log,

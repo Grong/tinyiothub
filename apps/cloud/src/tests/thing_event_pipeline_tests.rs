@@ -10,7 +10,6 @@ use std::sync::Arc;
 use crate::domains::alarm::{AlarmRepository, AlarmRuleRepository, AlarmService};
 use crate::domains::event::{
     bus::ThingEventBus,
-    repositories::RealTimeEventRepository,
     router::{ThingEventInput, ThrottleState, route_thing_event},
 };
 use sqlx::Row;
@@ -482,9 +481,9 @@ fn status_event(device_id: &str, level: EventLevel) -> Event {
 async fn test_status_upsert_via_repo_merges_repeat_occurrences() {
     let pool = test_pool().await;
     insert_device(&pool, "dev-st", "ws-st").await;
-    let repo = RealTimeEventRepository::new(Db::new(pool.clone()));
+    let repo = Db::new(pool.clone());
 
-    repo.upsert_status(&status_event("dev-st", EventLevel::Warning))
+    repo.upsert_event_status(&status_event("dev-st", EventLevel::Warning))
         .await
         .unwrap();
     // acknowledge the row, then a second (escalated) occurrence arrives
@@ -492,7 +491,7 @@ async fn test_status_upsert_via_repo_merges_repeat_occurrences() {
         .execute(&pool)
         .await
         .unwrap();
-    repo.upsert_status(&status_event("dev-st", EventLevel::Critical))
+    repo.upsert_event_status(&status_event("dev-st", EventLevel::Critical))
         .await
         .unwrap();
 
@@ -527,7 +526,7 @@ async fn test_status_upsert_merges_repeat_occurrences() {
     let pool = test_pool().await;
     insert_device(&pool, "dev-st", "ws-st").await;
 
-    // Same upsert shape as SqliteRealTimeEventRepository::upsert_status, with
+    // Same upsert shape as the events-table status upsert, with
     // the conflict-target predicate matching idx_events_status_dedup.
     let upsert = r#"
         INSERT INTO events (
@@ -603,10 +602,10 @@ async fn test_status_upsert_merges_repeat_occurrences() {
 async fn test_status_upsert_ignores_info_level_events() {
     let pool = test_pool().await;
     insert_device(&pool, "dev-si", "ws-si").await;
-    let repo = RealTimeEventRepository::new(Db::new(pool.clone()));
+    let repo = Db::new(pool.clone());
 
     // Info-level device events do not satisfy should_update_real_time_status().
-    repo.upsert_status(&status_event("dev-si", EventLevel::Info))
+    repo.upsert_event_status(&status_event("dev-si", EventLevel::Info))
         .await
         .unwrap();
 

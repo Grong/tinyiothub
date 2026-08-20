@@ -16,8 +16,8 @@
 //!   `Arc<AlarmRepository>` for read-only alarm counts on device data.
 //! - driver → thing (documented): `legacy::diagnostics` reads
 //!   `DeviceTraceStatistics` from `crate::domains::thing::legacy::trace`.
-//! - driver → event: gateway pairing persists pairing events via
-//!   `tinyiothub_storage::event::EventRepository`.
+//! - driver → event: gateway pairing persists pairing events via the
+//!   `tinyiothub_storage::Db` facade (`insert_event`).
 //!
 //! NOT consumed: agent / mcp / notification (see `legacy/mod.rs` and
 //! `plugin::registry::AppContext` docs for boundary notes).

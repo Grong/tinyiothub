@@ -2,7 +2,6 @@ use std::{sync::Arc, time::Duration};
 
 use crate::domains::event::{
     entities::Event,
-    repositories::EventRepository,
     value_objects::{DeviceEventType, EventLevel, EventType},
 };
 use tokio::sync::RwLock;
@@ -17,7 +16,7 @@ use tinyiothub_core::event::EventHandler;
 /// - 实现批量写入优化
 /// - 管理事件缓冲区
 pub struct PersistenceEventHandler {
-    repository: Arc<EventRepository>,
+    db: Arc<tinyiothub_storage::Db>,
     buffer: Arc<RwLock<EventBuffer>>,
     config: PersistenceConfig,
 }
@@ -45,7 +44,7 @@ impl Default for PersistenceConfig {
 
 impl PersistenceEventHandler {
     /// 创建新的持久化处理器
-    pub fn new(repository: Arc<EventRepository>, config: PersistenceConfig) -> Self {
+    pub fn new(db: Arc<tinyiothub_storage::Db>, config: PersistenceConfig) -> Self {
         // HarmonyOS: 强制禁用批量写入，避免后台任务
         #[cfg(feature = "harmonyos")]
         let config = PersistenceConfig {
@@ -57,11 +56,11 @@ impl PersistenceEventHandler {
 
         // 启动定时刷新任务
         if config.enable_batching {
-            Self::start_flush_task(buffer.clone(), repository.clone(), config.flush_interval);
+            Self::start_flush_task(buffer.clone(), db.clone(), config.flush_interval);
         }
 
         Self {
-            repository,
+            db,
             buffer,
             config,
         }
@@ -100,12 +99,12 @@ impl PersistenceEventHandler {
     }
 
     /// 启动定时刷新任务
-    fn start_flush_task(buffer: Arc<RwLock<EventBuffer>>, repository: Arc<EventRepository>, interval: Duration) {
+    fn start_flush_task(buffer: Arc<RwLock<EventBuffer>>, db: Arc<tinyiothub_storage::Db>, interval: Duration) {
         // HarmonyOS: 禁用后台刷新任务（current_thread runtime不支持spawn）
         #[cfg(feature = "harmonyos")]
         {
             tracing::warn!("Event buffer auto-flush disabled on HarmonyOS (current_thread runtime)");
-            drop((buffer, repository, interval));
+            drop((buffer, db, interval));
         }
 
         // 其他平台: 使用panic保护的spawn
@@ -118,7 +117,7 @@ impl PersistenceEventHandler {
                         let mut ticker = tokio::time::interval(interval);
                         loop {
                             ticker.tick().await;
-                            if let Err(e) = Self::flush_buffer(&buffer, &repository).await {
+                            if let Err(e) = Self::flush_buffer(&buffer, &db).await {
                                 error!("Failed to flush event buffer: {}", e);
                             }
                         }
@@ -134,7 +133,7 @@ impl PersistenceEventHandler {
     /// 刷新缓冲区
     async fn flush_buffer(
         buffer: &Arc<RwLock<EventBuffer>>,
-        repository: &Arc<EventRepository>,
+        db: &Arc<tinyiothub_storage::Db>,
     ) -> tinyiothub_core::error::Result<()> {
         let events = {
             let mut buf = buffer.write().await;
@@ -148,8 +147,7 @@ impl PersistenceEventHandler {
         debug!("Flushing {} events to database", events.len());
 
         // 批量保存
-        repository
-            .save_batch(&events)
+        db.insert_events_batch(&events)
             .await
             .map_err(|e| tinyiothub_core::error::Error::Internal(e.to_string()))?;
 
@@ -179,12 +177,12 @@ impl EventHandler for PersistenceEventHandler {
             // 如果缓冲区满了，立即刷新
             if buffer.is_full() {
                 drop(buffer); // 释放锁
-                Self::flush_buffer(&self.buffer, &self.repository).await?;
+                Self::flush_buffer(&self.buffer, &self.db).await?;
             }
         } else {
             // 立即模式：直接保存
-            self.repository
-                .save(event)
+            self.db
+                .insert_event(event)
                 .await
                 .map_err(|e| tinyiothub_core::error::Error::Internal(e.to_string()))?;
         }

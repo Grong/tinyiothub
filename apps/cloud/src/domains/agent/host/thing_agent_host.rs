@@ -14,7 +14,6 @@
 
 use std::sync::Arc;
 
-use sqlx::Row;
 use tinyiothub_agent::runtime::thing_agent::{ThingAgentHost, ThingEventSignal};
 
 use crate::domains::event::bus::ThingEventBus;
@@ -39,38 +38,28 @@ impl ThingAgentHost for CloudThingAgentHost {
     async fn replay_events_since(&self, cursor: i64, min_level: i32) -> anyhow::Result<Vec<ThingEventSignal>> {
         // The UUID `events.id` is not orderable — the cursor is the implicit
         // SQLite rowid, which is monotonic for appends (retention deletes
-        // never lower max(rowid)).
-        let rows = sqlx::query(
-            "SELECT rowid AS rid, workspace_id, device_id, event_subtype, event_level, content, metadata, actor \
-             FROM events \
-             WHERE rowid > ? AND event_level >= ? AND source_type = 'thing' \
-             ORDER BY rowid ASC",
-        )
-        .bind(cursor)
-        .bind(min_level)
-        .fetch_all(&self.pool)
-        .await?;
+        // never lower max(rowid)). SQL lives in db::event (Task 10).
+        let rows = tinyiothub_storage::Db::new(self.pool.clone())
+            .replay_thing_events_since(cursor, min_level)
+            .await?;
 
         let signals = rows
-            .iter()
+            .into_iter()
             .filter_map(|row| {
-                let workspace_id: Option<String> = row.get("workspace_id");
-                let thing_id: Option<String> = row.get("device_id");
-                let metadata: Option<String> = row.get("metadata");
-                let is_unknown = metadata
+                let is_unknown = row
+                    .metadata
                     .and_then(|m| serde_json::from_str::<serde_json::Value>(&m).ok())
                     .and_then(|v| v.get("unknown_event")?.as_bool())
                     .unwrap_or(false);
-                let content: String = row.get("content");
                 Some(ThingEventSignal {
-                    workspace_id: workspace_id?,
-                    thing_id: thing_id?,
-                    event_name: row.get("event_subtype"),
-                    event_id: row.get("rid"),
-                    level: row.get("event_level"),
-                    data: serde_json::from_str(&content).unwrap_or(serde_json::Value::Null),
+                    workspace_id: row.workspace_id?,
+                    thing_id: row.device_id?,
+                    event_name: row.event_subtype,
+                    event_id: row.rid,
+                    level: row.event_level,
+                    data: serde_json::from_str(&row.content).unwrap_or(serde_json::Value::Null),
                     is_unknown,
-                    actor: row.get("actor"),
+                    actor: row.actor,
                 })
             })
             .collect();
@@ -91,25 +80,16 @@ impl ThingAgentHost for CloudThingAgentHost {
     /// 挂既有通知发布点：写入 events 表（source_type/actor = 'agent'，
     /// event_subtype = 'thing_agent_alert'，Error 级），前端事件流/SSE 已消费该表。
     async fn notify_alert(&self, workspace_id: &str, payload: serde_json::Value) -> anyhow::Result<()> {
-        let now = chrono::Utc::now().to_rfc3339();
         let title = payload
             .get("summary")
             .and_then(|v| v.as_str())
             .unwrap_or("thing agent alert")
             .to_string();
         let content = serde_json::to_string(&payload)?;
-        sqlx::query(
-            "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, source_type, source_id, device_id, user_id, title, content, metadata, created_at, workspace_id, actor) \
-             VALUES (?, 'agent', 'thing_agent_alert', 4, ?, 'agent', 'thing-agent', NULL, NULL, ?, ?, '{}', ?, ?, 'agent')",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(&now)
-        .bind(&title)
-        .bind(&content)
-        .bind(&now)
-        .bind(workspace_id)
-        .execute(&self.pool)
-        .await?;
+        // SQL lives in db::event (Task 10)
+        tinyiothub_storage::Db::new(self.pool.clone())
+            .insert_agent_alert_event(workspace_id, &title, &content)
+            .await?;
         Ok(())
     }
 
@@ -132,6 +112,7 @@ impl ThingAgentHost for CloudThingAgentHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::Row;
     use crate::domains::agent::host::chat::history::{append_message, ensure_session, list_messages};
 
     async fn test_pool() -> sqlx::SqlitePool {

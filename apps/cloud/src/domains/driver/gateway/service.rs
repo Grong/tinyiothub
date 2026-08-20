@@ -10,7 +10,6 @@ use tokio::sync::{RwLock, mpsc};
 use crate::domains::event::{
     EventError,
     entities::Event,
-    repositories::EventRepository,
     value_objects::{ContentElement, DeviceEventType, EventLevel, EventSource, RichContent},
 };
 
@@ -24,7 +23,6 @@ const IP_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
 
 pub struct GatewayService {
     database_for_repos: Arc<tinyiothub_storage::Db>,
-    event_repository: Arc<EventRepository>,
     cache: Arc<PairingCache>,
     mqtt_tx: mpsc::Sender<MqttPublish>,
     ip_attempts: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
@@ -37,13 +35,11 @@ pub enum MqttPublish {
 impl GatewayService {
     pub fn new(
         database_for_repos: Arc<tinyiothub_storage::Db>,
-        event_repository: Arc<EventRepository>,
         cache: Arc<PairingCache>,
         mqtt_tx: mpsc::Sender<MqttPublish>,
     ) -> Self {
         let service = Self {
             database_for_repos,
-            event_repository,
             cache,
             mqtt_tx,
             ip_attempts: Arc::new(RwLock::new(HashMap::new())),
@@ -336,7 +332,7 @@ impl GatewayService {
             RichContent::new(format!("Gateway {} telemetry", gateway_id), content),
         )
         .map_err(|e| EventError::Validation { message: e.to_string() })?;
-        self.event_repository.save(&event).await?;
+        self.database_for_repos.insert_event(&event).await?;
         Ok(())
     }
 
@@ -357,7 +353,7 @@ impl GatewayService {
             RichContent::new(format!("Device {} telemetry", msg.device_id), content),
         )
         .map_err(|e| EventError::Validation { message: e.to_string() })?;
-        self.event_repository.save(&event).await?;
+        self.database_for_repos.insert_event(&event).await?;
         Ok(())
     }
 }
@@ -404,10 +400,7 @@ mod tests {
         let cache = Arc::new(PairingCache::new(1000));
         let database = Arc::new(tinyiothub_storage::Db::new(pool));
         let factory = database.clone();
-        let event_repo: Arc<EventRepository> = Arc::new(tinyiothub_storage::event::EventRepository::new(
-            database.as_ref().clone(),
-        ));
-        let service = GatewayService::new(factory, event_repo, cache, tx);
+        let service = GatewayService::new(factory, cache, tx);
         (service, rx)
     }
 
@@ -663,10 +656,7 @@ mod tests {
         let (tx, _rx2) = mpsc::channel(1);
         let database = Arc::new(tinyiothub_storage::Db::new(pool));
         let factory = database.clone();
-        let event_repo: Arc<EventRepository> = Arc::new(tinyiothub_storage::event::EventRepository::new(
-            database.as_ref().clone(),
-        ));
-        let svc2 = GatewayService::new(factory, event_repo, tiny_cache.clone(), tx);
+        let svc2 = GatewayService::new(factory, tiny_cache.clone(), tx);
 
         // Fill the cache
         tiny_cache.insert("111111".into(), make_announce("111111")).await;
@@ -716,10 +706,7 @@ mod tests {
         let cache = Arc::new(PairingCache::new(1000));
         let database = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
         let factory = database.clone();
-        let event_repo: Arc<EventRepository> = Arc::new(tinyiothub_storage::event::EventRepository::new(
-            database.as_ref().clone(),
-        ));
-        let svc = GatewayService::new(factory, event_repo, cache.clone(), tx);
+        let svc = GatewayService::new(factory, cache.clone(), tx);
 
         let code = "123456";
         cache.insert(code.into(), make_announce(code)).await;

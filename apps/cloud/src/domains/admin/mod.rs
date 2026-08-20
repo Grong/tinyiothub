@@ -31,7 +31,6 @@ use crate::shared::error::Error;
 use tinyiothub_core::models::device::Device;
 use tinyiothub_core::models::device_property::DeviceProperty;
 use tinyiothub_runtime::event_bus::EventBus;
-use tinyiothub_storage::event::EventRepository;
 use tinyiothub_storage::{Db, cache::DeviceCache};
 
 pub mod batch;
@@ -65,8 +64,6 @@ pub struct AdminState {
     pub tag_service: Arc<crate::domains::thing::tag::TagService>,
     /// 事件总线 - 属性变更事件发布（update_device_property_value）
     pub event_bus: Arc<EventBus>,
-    /// 事件历史仓库 - 设备 profile 的最近事件查询
-    pub event_repository: Arc<EventRepository>,
     /// 数据服务器 - 设备命令执行
     pub data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
     /// 设备查询服务 - dashboard 报表和只读查询

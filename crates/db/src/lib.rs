@@ -84,5 +84,4 @@ pub use device_row_mapper::*;
 pub use driver_installation::DriverInstallation;
 pub use error::{DbError, Result};
 pub use models::{Filter, FilterOp, Pagination, RowMetadata, SortOrder};
-pub use notification_channel::*;
 pub use pool::{create_pool, create_pool_without_migrations};

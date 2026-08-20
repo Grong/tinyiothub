@@ -11,7 +11,7 @@ use tinyiothub_core::models::notification_channel::{
     ChannelStatistics, CreateNotificationChannelRequest, NotificationChannel, NotificationChannelQueryParams,
     SendMessageRequest, UpdateNotificationChannelRequest,
 };
-use tinyiothub_storage::{
+use tinyiothub_storage::notification_channel::{
     count_notification_channels, create_notification_channel, delete_notification_channel,
     find_all_notification_channels, find_notification_channel_by_id, get_notification_channel_statistics,
     update_notification_channel,

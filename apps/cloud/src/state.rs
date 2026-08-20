@@ -11,8 +11,6 @@ use crate::domains::auth::redis::RedisClient;
 use crate::domains::driver::legacy::{
     DeviceMonitoringService, DevicePerformanceService, DeviceQueryService, DeviceService,
 };
-use tinyiothub_storage::event::{EventRepository, RealTimeEventRepository};
-use tinyiothub_storage::notify::{NotificationHistoryRepository, NotificationRuleRepository};
 
 use crate::domains::notify::channels::NotificationChannelFactory;
 use crate::domains::notify::service::NotificationManager;
@@ -86,13 +84,6 @@ pub struct AppState {
     /// === 事件系统 ===
     /// 事件总线 - 事件发布和订阅
     pub event_bus: Arc<EventBus>,
-
-    /// === 事件系统仓库 ===
-    /// 事件历史仓库 - 事件持久化存储
-    pub event_repository: Arc<EventRepository>,
-
-    /// 实时事件状态仓库 - 当前活跃事件管理
-    pub real_time_event_repository: Arc<RealTimeEventRepository>,
 
     /// 报警服务 - 报警规则和报警管理
     pub alarm_service: Arc<crate::domains::alarm::service::AlarmService>,
@@ -247,14 +238,6 @@ impl AppState {
         // === 创建领域服务 ===
         // 按照依赖关系顺序创建，避免循环依赖
 
-        // === 创建事件系统仓库 ===
-        let event_repository: Arc<EventRepository> = Arc::new(tinyiothub_storage::event::EventRepository::new(
-            database.as_ref().clone(),
-        ));
-        let real_time_event_repository: Arc<RealTimeEventRepository> = Arc::new(
-            tinyiothub_storage::event::RealTimeEventRepository::new(database.as_ref().clone()),
-        );
-
         // 通知管理器 - 可选服务，依赖数据库
         let notification_manager = Self::create_notification_manager(database.clone()).ok();
 
@@ -389,7 +372,6 @@ impl AppState {
         let pairing_cache = Arc::new(crate::domains::driver::gateway::pairing::PairingCache::new(10000));
         let gateway_service = Arc::new(crate::domains::driver::gateway::service::GatewayService::new(
             database.clone(),
-            event_repository.clone(),
             pairing_cache,
             mqtt_tx,
         ));
@@ -503,8 +485,6 @@ impl AppState {
             notification_manager,
             redis,
             event_bus,
-            event_repository,
-            real_time_event_repository,
             sse_manager,
             sse_token_manager,
             secure_event_service,
@@ -609,9 +589,7 @@ impl AppState {
         let security_factory = EventSecurityFactory::new(self.db.clone(), config)?;
 
         // Create secure event service
-        let secure_service = security_factory
-            .create_secure_event_service(self.event_repository.clone())
-            .await?;
+        let secure_service = security_factory.create_secure_event_service().await?;
 
         // Store in OnceCell
         let service_arc = Arc::new(secure_service);
@@ -639,14 +617,8 @@ impl AppState {
     fn create_notification_manager(
         db: Arc<Db>,
     ) -> Result<Arc<NotificationManager>, Box<dyn std::error::Error + Send + Sync>> {
-        // Create notification history store
-        let _history_store = Arc::new(NotificationHistoryRepository::new(db.clone()));
-
-        // Create notification rule repository
-        let rule_repo = Arc::new(NotificationRuleRepository::new(db));
-
-        // Create notification manager with rule repository
-        let mut notification_manager = NotificationManager::new(rule_repo);
+        // Create notification manager with the Db facade
+        let mut notification_manager = NotificationManager::new(db);
 
         // Register notification channels
         let channels = NotificationChannelFactory::create_all_channels();
@@ -970,7 +942,6 @@ impl axum::extract::FromRef<AppState> for crate::domains::admin::AdminState {
             device_cache: state.device_cache.clone(),
             tag_service: state.tag_service.clone(),
             event_bus: state.event_bus.clone(),
-            event_repository: state.event_repository.clone(),
             data_server: state.data_server.clone(),
             device_query_service: state.device_query_service.clone(),
             monitoring_service: state.monitoring_service.clone(),

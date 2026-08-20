@@ -55,14 +55,15 @@ impl DeviceCommandQueries for DeviceCommandQueriesAdapter {
     }
 }
 
-/// `Db` → `EventRetentionStore`。SQL 与原 runtime 内联语句逐字一致。
+/// `Db` → `EventRetentionStore`。SQL 已收编进 `db::event` 领域函数（Task 10），
+/// 与原 runtime 内联语句逐字一致。
 pub struct EventRetentionAdapter(pub Db);
 
 #[async_trait]
 impl EventRetentionStore for EventRetentionAdapter {
     async fn delete_occurrence_events_before(&self, cutoff_rfc3339: &str) -> Result<u64, String> {
         self.0
-            .execute_with_params("DELETE FROM events WHERE is_status = 0 AND timestamp < ?", &[cutoff_rfc3339])
+            .delete_occurrence_events_before(cutoff_rfc3339)
             .await
             .map_err(|e| e.to_string())
     }

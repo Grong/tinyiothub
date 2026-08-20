@@ -108,7 +108,7 @@ impl ServiceManager {
         // 注册实时状态事件处理器 - 状态类事件 upsert 到 events 当前态视图
         // (occurrence_count 累加 + 去重; eng-review T2)
         let real_time_status_handler = Arc::new(crate::domains::event::subscribers::RealTimeStatusHandler::new(
-            app_state.real_time_event_repository.clone(),
+            app_state.db.clone(),
         ));
         app_state.event_bus.register_handler(real_time_status_handler);
         info!("✅ RealTimeStatusHandler registered");

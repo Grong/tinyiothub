@@ -200,7 +200,7 @@ async fn fetch_recent_device_events(state: &AdminState, device_id: &str) -> Vec<
         .build();
 
     // 查询事件
-    match state.event_repository.find_by_criteria(&criteria).await {
+    match state.db.query_events(&criteria).await {
         Ok(events) => {
             events
                 .into_iter()
@@ -315,7 +315,7 @@ async fn calculate_device_overview(
         .build();
 
     let (recent_event_count, critical_event_count, error_event_count) =
-        match state.event_repository.find_by_criteria(&criteria).await {
+        match state.db.query_events(&criteria).await {
             Ok(events) => {
                 let total = events.len() as u32;
                 let critical = events
