@@ -276,17 +276,15 @@ async fn wechat_callback(State(state): State<AppState>, Query(params): Query<WeC
     };
 
     // 生成 JWT
-    let tenant_id: String = sqlx::query_scalar("SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1")
-        .bind(&user.id)
-        .fetch_optional(db.pool())
+    let tenant_id: String = db
+        .find_tenant_id_by_user_id(&user.id)
         .await
         .unwrap_or(None)
         .unwrap_or_else(|| "default".to_string());
 
     // 查找该租户的第一个 workspace 作为默认 workspace
-    let workspace_id: Option<String> = sqlx::query_scalar("SELECT id FROM workspaces WHERE tenant_id = ? LIMIT 1")
-        .bind(&tenant_id)
-        .fetch_optional(db.pool())
+    let workspace_id: Option<String> = db
+        .find_first_workspace_id_by_tenant(&tenant_id)
         .await
         .unwrap_or(None);
 
@@ -360,10 +358,7 @@ async fn wechat_login(
 
     // 这里返回模拟响应（开发阶段）
     // 查找默认 workspace
-    let workspace_id: Option<String> = sqlx::query_scalar("SELECT id FROM workspaces LIMIT 1")
-        .fetch_optional(db.pool())
-        .await
-        .unwrap_or(None);
+    let workspace_id: Option<String> = db.find_first_workspace_id().await.unwrap_or(None);
 
     ApiResponseBuilder::success(WeChatLoginResponse {
         access_token: "mock_token".to_string(),
@@ -413,10 +408,7 @@ async fn wechat_miniprogram_login(
     // let api_url = "https://api.weixin.qq.com/sns/jscode2session";
 
     // 查找默认 workspace
-    let workspace_id: Option<String> = sqlx::query_scalar("SELECT id FROM workspaces LIMIT 1")
-        .fetch_optional(db.pool())
-        .await
-        .unwrap_or(None);
+    let workspace_id: Option<String> = db.find_first_workspace_id().await.unwrap_or(None);
 
     ApiResponseBuilder::success(WeChatLoginResponse {
         access_token: "mock_mp_token".to_string(),
@@ -489,20 +481,16 @@ async fn update_social_config(
     State(state): State<AppState>,
     Json(request): Json<UpdateSocialConfigRequest>,
 ) -> Json<ApiResponse<String>> {
-    let db = &state.db;
-
-    let result = sqlx::query(
-        r#"UPDATE social_configs
-            SET app_id = ?, app_secret = ?, redirect_uri = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE provider = ?"#,
-    )
-    .bind(request.app_id.unwrap_or_default())
-    .bind(request.app_secret.unwrap_or_default())
-    .bind(request.redirect_uri.unwrap_or_default())
-    .bind(request.is_enabled.unwrap_or(false) as i32)
-    .bind(&request.provider)
-    .execute(db.pool())
-    .await;
+    let result = state
+        .db
+        .update_social_config(
+            &request.provider,
+            &request.app_id.unwrap_or_default(),
+            &request.app_secret.unwrap_or_default(),
+            &request.redirect_uri.unwrap_or_default(),
+            request.is_enabled.unwrap_or(false),
+        )
+        .await;
 
     if let Err(e) = result {
         tracing::error!("Failed to update social config: {}", e);
@@ -604,71 +592,30 @@ struct WechatTokenResponse {
 /// 根据微信 openid 查找或创建用户
 async fn find_or_create_user_by_wechat(db: &tinyiothub_storage::Db, openid: &str) -> Result<User, StatusCode> {
     // 查找 social_bindings
-    let rows =
-        sqlx::query("SELECT user_id FROM social_bindings WHERE provider = 'wechat' AND provider_user_id = ? LIMIT 1")
-            .bind(openid)
-            .fetch_all(db.pool())
+    if let Some(user_id) = db
+        .find_social_binding_user_id("wechat", openid)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        && let Some(user) = db
+            .find_user_by_id(&user_id)
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    if let Some(row) = rows.into_iter().next() {
-        let user_id: String = row.try_get("user_id").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-        // 获取用户信息
-        let user_rows = sqlx::query("SELECT * FROM users WHERE id = ? LIMIT 1")
-            .bind(&user_id)
-            .fetch_all(db.pool())
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-        if let Some(user_row) = user_rows.into_iter().next() {
-            return Ok(user_from_row(user_row));
-        }
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        return Ok(user.into());
     }
 
     // 创建新用户（仅用于首次微信登录）
     let user_id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-    sqlx::query(
-        r#"INSERT INTO users (id, username, is_enabled, created_at, updated_at)
-           VALUES (?, ?, 1, ?, ?)"#,
-    )
-    .bind(&user_id)
-    .bind(format!("wechat_{}", &openid[..8])) // 临时用户名
-    .bind(&now)
-    .bind(&now)
-    .execute(db.pool())
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let user_rows = sqlx::query("SELECT * FROM users WHERE id = ? LIMIT 1")
-        .bind(&user_id)
-        .fetch_all(db.pool())
+    db.insert_social_user(&user_id, &format!("wechat_{}", &openid[..8])) // 临时用户名
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    user_rows
-        .into_iter()
-        .next()
-        .map(user_from_row)
+    db.find_user_by_id(&user_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map(Into::into)
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)
-}
-
-fn user_from_row(row: sqlx::sqlite::SqliteRow) -> User {
-    User {
-        id: row.try_get("id").unwrap_or_default(),
-        username: row.try_get("username").unwrap_or_default(),
-        password_hash: row.try_get("password_hash").unwrap_or_default(),
-        email: row.try_get("email").ok(),
-        phone: row.try_get("phone").ok(),
-        display_name: row.try_get("display_name").ok(),
-        is_enabled: row.try_get::<i32, _>("is_enabled").unwrap_or(1) == 1,
-        parent_id: row.try_get("parent_id").ok(),
-        created_at: row.try_get("created_at").unwrap_or_default(),
-        updated_at: row.try_get("updated_at").unwrap_or_default(),
-        last_login_at: row.try_get("last_login_at").ok(),
-    }
 }
 
 /// 存储社交账号绑定
@@ -678,23 +625,9 @@ async fn save_social_binding(
     provider: &str,
     provider_user_id: &str,
 ) -> Result<(), StatusCode> {
-    let id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-
-    sqlx::query(
-        r#"INSERT INTO social_bindings (id, user_id, provider, provider_user_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(provider, provider_user_id) DO NOTHING"#,
-    )
-    .bind(&id)
-    .bind(user_id)
-    .bind(provider)
-    .bind(provider_user_id)
-    .bind(&now)
-    .bind(&now)
-    .execute(db.pool())
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    db.insert_social_binding(user_id, provider, provider_user_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(())
 }

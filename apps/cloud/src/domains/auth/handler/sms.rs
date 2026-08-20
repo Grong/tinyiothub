@@ -14,7 +14,6 @@ use axum::{
 };
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder};
 
 // 验证码有效期（秒）
@@ -389,18 +388,9 @@ async fn send_code(
         let now = chrono::Utc::now();
         let expires_at = now + chrono::Duration::seconds(CODE_EXPIRE_SECONDS as i64);
 
-        let id = uuid::Uuid::new_v4().to_string();
-        if let Err(e) = sqlx::query(
-            r#"INSERT INTO sms_codes (id, phone, code, purpose, expires_at)
-                VALUES (?, ?, ?, ?, ?)"#,
-        )
-        .bind(&id)
-        .bind(phone)
-        .bind(&code)
-        .bind(&purpose)
-        .bind(expires_at.to_rfc3339())
-        .execute(db.pool())
-        .await
+        if let Err(e) = db
+            .insert_sms_code(phone, &code, &purpose, &expires_at.to_rfc3339())
+            .await
         {
             tracing::error!("Failed to save SMS code: {}", e);
             return ApiResponseBuilder::error("发送失败，请稍后重试".to_string());
@@ -524,24 +514,18 @@ async fn login_with_code(
     }
 
     // 查找该用户关联的租户和默认 workspace
-    let tenant_id: String = sqlx::query_scalar("SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1")
-        .bind(&user.id)
-        .fetch_optional(db.pool())
+    let tenant_id: String = db
+        .find_tenant_id_by_user_id(&user.id)
         .await
         .unwrap_or(None)
         .unwrap_or_else(|| "default".to_string());
 
     // 优先查找用户自己的 workspace (ws-{user_id})，fallback 到 tenant 下第一个
     let user_ws_id = format!("ws-{}", user.id);
-    let workspace_id: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM workspaces WHERE id = ? UNION ALL SELECT id FROM workspaces WHERE tenant_id = ? AND id != ? LIMIT 1"
-    )
-    .bind(&user_ws_id)
-    .bind(&tenant_id)
-    .bind(&user_ws_id)
-    .fetch_optional(db.pool())
-    .await
-    .unwrap_or(None);
+    let workspace_id: Option<String> = db
+        .find_workspace_id_for_login(&user_ws_id, &tenant_id)
+        .await
+        .unwrap_or(None);
 
     let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
     let token = match state
@@ -640,41 +624,13 @@ pub struct VerifyCodeResponse {
 
 /// 从数据库获取验证码（Redis 不可用时的 fallback）
 async fn get_code_from_db(state: &AppState, phone: &str) -> Option<String> {
-    let db = &state.db;
-
-    let rows = match sqlx::query(
-        r#"SELECT code, expires_at FROM sms_codes
-            WHERE phone = ? AND purpose = 'login'
-            AND verified_at IS NULL
-            ORDER BY created_at DESC LIMIT 1"#,
-    )
-    .bind(phone)
-    .fetch_all(db.pool())
-    .await
-    {
-        Ok(r) => r,
+    let (stored_code, expires_at) = match state.db.find_latest_sms_code(phone, "login").await {
+        Ok(Some(row)) => row,
+        Ok(None) => return None,
         Err(e) => {
             tracing::error!("Database error when fetching code: {}", e);
             return None;
         }
-    };
-
-    if rows.is_empty() {
-        return None;
-    }
-
-    let row = &rows[0];
-
-    // 获取存储的验证码
-    let stored_code: String = match row.try_get("code") {
-        Ok(c) => c,
-        Err(_) => return None,
-    };
-
-    // 获取过期时间
-    let expires_at: String = match row.try_get("expires_at") {
-        Ok(e) => e,
-        Err(_) => return None,
     };
 
     // 检查验证码是否过期
@@ -707,61 +663,21 @@ async fn find_or_create_user_by_phone(
     // 最多重试 3 次，处理并发创建导致的唯一约束冲突
     for attempt in 0..3 {
         // 查找现有用户
-        let rows = sqlx::query("SELECT * FROM users WHERE phone = ? LIMIT 1")
-            .bind(phone)
-            .fetch_all(db.pool())
-            .await?;
-
-        if let Some(row) = rows.into_iter().next() {
-            return Ok(crate::domains::auth::user_store::AuthUser {
-                id: row.try_get("id")?,
-                username: row.try_get("username")?,
-                password_hash: row.try_get("password_hash")?,
-                email: row.try_get("email")?,
-                phone: row.try_get("phone")?,
-                display_name: row.try_get("display_name")?,
-                is_enabled: row.try_get::<i32, _>("is_enabled")? == 1,
-                parent_id: row.try_get("parent_id")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                last_login_at: row.try_get("last_login_at")?,
-            });
+        if let Some(user) = db.find_user_by_phone(phone).await? {
+            return Ok(user.into());
         }
 
-        // 创建新用户
+        // 创建新用户（已存在则插入 0 行，并发安全）
         let user_id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        let insert_result = sqlx::query(
-            r#"INSERT INTO users (id, username, password_hash, phone, is_enabled, created_at, updated_at)
-                SELECT ?, ?, '', ?, 1, ?, ?
-                WHERE NOT EXISTS (SELECT 1 FROM users WHERE phone = ?)"#,
-        )
-        .bind(&user_id)
-        .bind(phone)
-        .bind(phone)
-        .bind(&now)
-        .bind(&now)
-        .bind(phone)
-        .execute(db.pool())
-        .await;
-
-        match insert_result {
-            Ok(result) => {
-                if result.rows_affected() > 0 {
-                    return Ok(crate::domains::auth::user_store::AuthUser {
-                        id: user_id,
-                        username: phone.to_string(),
-                        password_hash: String::new(),
-                        email: None,
-                        phone: Some(phone.to_string()),
-                        display_name: None,
-                        is_enabled: true,
-                        parent_id: None,
-                        created_at: now.clone(),
-                        updated_at: now,
-                        last_login_at: None,
-                    });
+        match db.insert_phone_user_if_absent(&user_id, phone).await {
+            Ok(rows_affected) => {
+                if rows_affected > 0 {
+                    let user = db
+                        .find_user_by_phone(phone)
+                        .await?
+                        .ok_or("user not found after insert")?;
+                    return Ok(user.into());
                 }
                 // rows_affected == 0 说明并发请求已经创建了该用户，重试 SELECT
                 if attempt < 2 {
@@ -780,25 +696,8 @@ async fn find_or_create_user_by_phone(
     }
 
     // 最后一次重试：直接 SELECT
-    let rows = sqlx::query("SELECT * FROM users WHERE phone = ? LIMIT 1")
-        .bind(phone)
-        .fetch_all(db.pool())
-        .await?;
-
-    if let Some(row) = rows.into_iter().next() {
-        Ok(crate::domains::auth::user_store::AuthUser {
-            id: row.try_get("id")?,
-            username: row.try_get("username")?,
-            password_hash: row.try_get("password_hash")?,
-            email: row.try_get("email")?,
-            phone: row.try_get("phone")?,
-            display_name: row.try_get("display_name")?,
-            is_enabled: row.try_get::<i32, _>("is_enabled")? == 1,
-            parent_id: row.try_get("parent_id")?,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-            last_login_at: row.try_get("last_login_at")?,
-        })
+    if let Some(user) = db.find_user_by_phone(phone).await? {
+        Ok(user.into())
     } else {
         Err("Failed to create or find user after retries".into())
     }

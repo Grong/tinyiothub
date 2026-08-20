@@ -27,6 +27,24 @@ pub struct AuthUser {
     pub last_login_at: Option<String>,
 }
 
+impl From<tinyiothub_storage::user::User> for AuthUser {
+    fn from(u: tinyiothub_storage::user::User) -> Self {
+        Self {
+            id: u.id,
+            username: u.username,
+            password_hash: u.password_hash,
+            email: u.email,
+            phone: u.phone,
+            display_name: u.display_name,
+            is_enabled: u.is_enabled,
+            parent_id: u.parent_id,
+            created_at: u.created_at,
+            updated_at: u.updated_at,
+            last_login_at: u.last_login_at,
+        }
+    }
+}
+
 impl AuthUser {
     /// Get user display name
     pub fn get_display_name(&self) -> &str {

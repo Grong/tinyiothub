@@ -17,7 +17,6 @@ pub mod service;
 
 // Repositories live in the db crate (E4 集中化); re-exported for compatibility.
 pub use service::UserService;
-pub use tinyiothub_storage::user::UserRepository;
 
 /// User domain state slice — Arc'd services only, derived from the
 /// composition layer's `AppState` via `FromRef` (cloud/src/state.rs).

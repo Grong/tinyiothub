@@ -11,6 +11,8 @@
 pub mod agent_runs;
 /// Alarm + alarm rule persistence and row types.
 pub mod alarm;
+/// Auth-owned tables (token blacklist, sms codes, social bindings/configs).
+pub mod auth;
 /// Device cache (in-memory).
 pub mod cache;
 /// Db connection configuration.

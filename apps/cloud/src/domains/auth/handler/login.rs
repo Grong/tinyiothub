@@ -291,26 +291,19 @@ async fn logout(State(_state): State<AppState>, Json(_request): Json<LogoutReque
 /// 返回 (tenant_id, workspace_id)。tenant_id 缺省为 "default"；
 /// workspace_id 优先取用户自己的 ws-{user_id}，否则取租户下第一个。
 async fn resolve_user_login_context(state: &AppState, user_id: &str) -> Result<(String, Option<String>), String> {
-    let pool = state.db.pool();
-
-    let tenant_id: Option<String> = sqlx::query_scalar("SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1")
-        .bind(user_id)
-        .fetch_optional(pool)
+    let tenant_id = state
+        .db
+        .find_tenant_id_by_user_id(user_id)
         .await
-        .map_err(|e| e.to_string())?;
-
-    let tenant_id = tenant_id.unwrap_or_else(|| "default".to_string());
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| "default".to_string());
 
     let user_ws_id = format!("ws-{}", user_id);
-    let workspace_id: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM workspaces WHERE id = ? UNION ALL SELECT id FROM workspaces WHERE tenant_id = ? AND id != ? LIMIT 1"
-    )
-    .bind(&user_ws_id)
-    .bind(&tenant_id)
-    .bind(&user_ws_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+    let workspace_id = state
+        .db
+        .find_workspace_id_for_login(&user_ws_id, &tenant_id)
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok((tenant_id, workspace_id))
 }

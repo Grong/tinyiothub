@@ -11,7 +11,6 @@ use axum::{
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
-use sqlx::Row;
 use tinyiothub_web::middleware::workspace::{AuthClaims, WorkspaceScope};
 use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::{api_response::ApiResponse, validation};
@@ -182,43 +181,23 @@ async fn register_tenant(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let db = state.db.clone();
-
     let user_id = uuid::Uuid::new_v4().to_string();
     let password_hash = hash_password(&payload.password).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-    sqlx::query(
-        r#"INSERT INTO users (id, username, password_hash, email, is_enabled, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 1, ?, ?)"#,
-    )
-    .bind(&user_id)
-    .bind(&email)
-    .bind(&password_hash)
-    .bind(&email)
-    .bind(&now)
-    .bind(&now)
-    .execute(db.pool())
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to insert user during tenant registration: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    state
+        .db
+        .insert_tenant_owner_user(&user_id, &email, &password_hash)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to insert user during tenant registration: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
-    let tenant_user_id = uuid::Uuid::new_v4().to_string();
-    sqlx::query(
-        r#"INSERT INTO tenant_users (id, tenant_id, user_id, role, invitation_status, joined_at, created_at, updated_at)
-           VALUES (?, ?, ?, 'owner', 'accepted', ?, ?, ?)"#,
-    )
-    .bind(&tenant_user_id)
-    .bind(&tenant.id)
-    .bind(&user_id)
-    .bind(&now)
-    .bind(&now)
-    .bind(&now)
-    .execute(db.pool())
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    state
+        .db
+        .insert_tenant_user(&tenant.id, &user_id, "owner", "accepted")
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     state
         .workspace_service
@@ -252,29 +231,18 @@ async fn login(
     State(state): State<AppState>,
     Json(payload): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, StatusCode> {
-    let db = state.db.clone();
-
     let email = payload.email.trim().to_lowercase();
 
     if !validation::is_valid_email(&email) {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let rows = sqlx::query("SELECT id, username, password_hash FROM users WHERE email = ? AND is_enabled = 1 LIMIT 1")
-        .bind(&email)
-        .fetch_all(db.pool())
+    let (user_id, _username, stored_hash) = state
+        .db
+        .find_enabled_user_credentials_by_email(&email)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let user_row = rows.into_iter().next().ok_or(StatusCode::UNAUTHORIZED)?;
-
-    let user_id: String = user_row.try_get("id").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let _username: String = user_row
-        .try_get("username")
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let stored_hash: String = user_row
-        .try_get("password_hash")
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::UNAUTHORIZED)?;
 
     let password_valid = verify_password(&payload.password, &stored_hash).unwrap_or(false);
 
@@ -283,65 +251,12 @@ async fn login(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let tenant_rows = sqlx::query(
-        "SELECT t.* FROM tenants t
-         INNER JOIN tenant_users tu ON t.id = tu.tenant_id
-         WHERE tu.user_id = ? LIMIT 1",
-    )
-    .bind(&user_id)
-    .fetch_all(db.pool())
-    .await
-    .map_err(|_| StatusCode::NOT_FOUND)?;
-
-    let tenant_row = tenant_rows.into_iter().next().ok_or(StatusCode::NOT_FOUND)?;
-
-    let tenant = Tenant {
-        id: tenant_row
-            .try_get("id")
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        name: tenant_row
-            .try_get("name")
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        slug: tenant_row
-            .try_get("slug")
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        status: tenant_row
-            .try_get("status")
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        plan_id: tenant_row
-            .try_get("plan_id")
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        subscription_status: tenant_row
-            .try_get("subscription_status")
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        trial_expires_at: tenant_row
-            .try_get("trial_expires_at")
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        billing_email: tenant_row
-            .try_get("billing_email")
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        billing_contact: tenant_row
-            .try_get("billing_contact")
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        timezone: tenant_row
-            .try_get("timezone")
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        locale: tenant_row
-            .try_get("locale")
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        custom_logo: tenant_row
-            .try_get("custom_logo")
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        custom_theme: tenant_row
-            .try_get("custom_theme")
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        created_at: tenant_row
-            .try_get("created_at")
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-        updated_at: tenant_row
-            .try_get("updated_at")
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
-    };
+    let tenant = state
+        .db
+        .find_tenant_by_user_id(&user_id)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?
+        .ok_or(StatusCode::NOT_FOUND)?;
 
     let token = generate_token(&state.jwt_secret, &tenant.id, &user_id);
 

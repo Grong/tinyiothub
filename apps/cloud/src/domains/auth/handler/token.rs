@@ -122,10 +122,6 @@ async fn generate_sse_token(State(state): State<AppState>, claims: Claims) -> Js
 async fn logout(State(state): State<AppState>, Json(request): Json<LogoutRequest>) -> Json<ApiResponse<String>> {
     if let Some(token) = request.token {
         // 将 token 加入黑名单
-        let db = &state.db;
-
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let expires_at = chrono::Utc::now()
             .checked_add_signed(chrono::Duration::days(1))
             .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
@@ -135,14 +131,7 @@ async fn logout(State(state): State<AppState>, Json(request): Json<LogoutRequest
         use sha2::Sha256;
         let token_hash = format!("{:x}", Sha256::digest(token.as_bytes()));
 
-        let result =
-            sqlx::query("INSERT INTO token_blacklist (id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?)")
-                .bind(&id)
-                .bind(&token_hash)
-                .bind(&expires_at)
-                .bind(&now)
-                .execute(db.pool())
-                .await;
+        let result = state.db.insert_token_blacklist(&token_hash, &expires_at).await;
 
         match result {
             Ok(_) => {

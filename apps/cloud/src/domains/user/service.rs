@@ -4,7 +4,7 @@ use tinyiothub_storage::user::{User, UserQueryParams, UserStatisticsNew};
 
 use tinyiothub_core::error::{Error, Result};
 use tinyiothub_storage::user::UserCriteria;
-use tinyiothub_storage::user::UserRepository;
+use tinyiothub_storage::Db;
 use tinyiothub_storage::user::UserSortBy;
 use tinyiothub_storage::user::UserSortOrder;
 
@@ -12,12 +12,12 @@ use tinyiothub_authn::password::{hash_password, verify_password};
 
 /// User domain service
 pub struct UserService {
-    repository: Arc<UserRepository>,
+    db: Arc<Db>,
 }
 
 impl UserService {
-    pub fn new(repository: Arc<UserRepository>) -> Self {
-        Self { repository }
+    pub fn new(db: Arc<Db>) -> Self {
+        Self { db }
     }
 
     /// List users with filters and pagination
@@ -29,15 +29,15 @@ impl UserService {
         page_size: u32,
     ) -> Result<(Vec<User>, i64)> {
         let users = self
-            .repository
-            .find_with_filters(enabled, search.clone(), page, page_size)
+            .db
+            .find_users_with_filters(enabled, search.clone(), page, page_size)
             .await?;
         let criteria = UserCriteria {
             is_enabled: enabled,
             search_text: search,
             ..Default::default()
         };
-        let total = self.repository.count(&criteria).await?;
+        let total = self.db.count_users(&criteria).await?;
         Ok((users, total))
     }
 
@@ -65,43 +65,43 @@ impl UserService {
             parent_id: request.parent_id.clone(),
         };
 
-        self.repository.create(&hashed_request).await
+        self.db.create_user(&hashed_request).await
     }
 
     /// Get user by ID
     pub async fn get_user_by_id(&self, id: &str) -> Result<Option<User>> {
-        self.repository.find_by_id(id).await
+        self.db.find_user_by_id(id).await
     }
 
     /// Get user by username
     pub async fn get_user_by_username(&self, username: &str) -> Result<Option<User>> {
-        self.repository.find_by_username(username).await
+        self.db.find_user_by_username(username).await
     }
 
     /// Update user
     pub async fn update_user(&self, id: &str, request: &UpdateUserRequest) -> Result<User> {
-        self.repository.update(id, request).await
+        self.db.update_user(id, request).await
     }
 
     /// Delete user
     pub async fn delete_user(&self, id: &str) -> Result<u64> {
-        self.repository.delete(id).await
+        self.db.delete_user(id).await
     }
 
     /// Update enabled status
     pub async fn update_enabled_status(&self, id: &str, enabled: bool) -> Result<User> {
-        self.repository.update_enabled_status(id, enabled).await
+        self.db.update_user_enabled_status(id, enabled).await
     }
 
     /// Change password (requires old password verification)
     pub async fn change_password(&self, id: &str, old_password: &str, new_password: &str) -> Result<bool> {
-        let user = self.repository.find_by_id(id).await?.ok_or(Error::NotFound)?;
+        let user = self.db.find_user_by_id(id).await?.ok_or(Error::NotFound)?;
 
         match verify_password(old_password, &user.password_hash) {
             Ok(true) => {
                 let new_hash = hash_password(new_password)
                     .map_err(|e| Error::ValidationError(format!("Password hashing failed: {}", e)))?;
-                self.repository.update_password(id, &new_hash).await?;
+                self.db.update_user_password(id, &new_hash).await?;
                 Ok(true)
             }
             Ok(false) => Ok(false),
@@ -113,12 +113,12 @@ impl UserService {
     pub async fn update_password(&self, id: &str, new_password: &str) -> Result<()> {
         let new_hash = hash_password(new_password)
             .map_err(|e| Error::ValidationError(format!("Password hashing failed: {}", e)))?;
-        self.repository.update_password(id, &new_hash).await
+        self.db.update_user_password(id, &new_hash).await
     }
 
     /// Authenticate user by username and password
     pub async fn authenticate(&self, username: &str, password: &str) -> Result<Option<User>> {
-        let Some(user) = self.repository.find_by_username(username).await? else {
+        let Some(user) = self.db.find_user_by_username(username).await? else {
             return Ok(None);
         };
 
@@ -132,33 +132,33 @@ impl UserService {
 
     /// Update last login time
     pub async fn update_last_login(&self, id: &str) -> Result<()> {
-        self.repository.update_last_login(id).await
+        self.db.update_user_last_login(id).await
     }
 
     /// Get user statistics
     pub async fn get_user_statistics(&self) -> Result<UserStatisticsNew> {
-        self.repository.get_user_statistics().await
+        self.db.get_user_statistics().await
     }
 
     /// Find all users with query params
     pub async fn find_all(&self, params: &UserQueryParams) -> Result<Vec<User>> {
         let criteria = params_to_criteria(params);
-        self.repository.find_all(&criteria).await
+        self.db.find_users(&criteria).await
     }
 
     /// Check if username exists
     pub async fn exists_by_username(&self, username: &str) -> Result<bool> {
-        self.repository.exists_by_username(username).await
+        self.db.user_exists_by_username(username).await
     }
 
     /// Check if email exists
     pub async fn exists_by_email(&self, email: &str) -> Result<bool> {
-        self.repository.exists_by_email(email).await
+        self.db.user_exists_by_email(email).await
     }
 
     /// Check if phone exists
     pub async fn exists_by_phone(&self, phone: &str) -> Result<bool> {
-        self.repository.exists_by_phone(phone).await
+        self.db.user_exists_by_phone(phone).await
     }
 }
 

@@ -7,21 +7,22 @@ use crate::domains::tenant::hooks::{AgentHooks, WorkspaceEventPublisher};
 
 use tinyiothub_core::error::Result;
 use tinyiothub_core::models::workspace::ResourceType;
+use tinyiothub_storage::Db;
 use tinyiothub_storage::workspace::{
-    ResourceSearchResult, Workspace, WorkspaceRepository, WorkspaceResource, WorkspaceWithDeviceCount,
+    ResourceSearchResult, Workspace, WorkspaceResource, WorkspaceWithDeviceCount,
 };
 
 pub struct WorkspaceService {
-    repository: Arc<WorkspaceRepository>,
+    db: Arc<Db>,
     event_publisher: Mutex<Option<Arc<dyn WorkspaceEventPublisher>>>,
     heartbeat_task_repo: Mutex<Option<Arc<HeartbeatTaskRepository>>>,
     agent_hooks: Mutex<Option<Arc<dyn AgentHooks>>>,
 }
 
 impl WorkspaceService {
-    pub fn new(repository: Arc<WorkspaceRepository>) -> Self {
+    pub fn new(db: Arc<Db>) -> Self {
         Self {
-            repository,
+            db,
             event_publisher: Mutex::new(None),
             heartbeat_task_repo: Mutex::new(None),
             agent_hooks: Mutex::new(None),
@@ -41,11 +42,11 @@ impl WorkspaceService {
     }
 
     pub async fn list_all_ids(&self) -> Result<Vec<String>> {
-        self.repository.find_all_ids().await
+        self.db.find_all_workspace_ids().await
     }
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<WorkspaceWithDeviceCount>> {
-        self.repository.find_by_id(id).await
+        self.db.find_workspace_by_id(id).await
     }
 
     pub async fn find_by_tenant(
@@ -54,7 +55,7 @@ impl WorkspaceService {
         page: Option<u32>,
         page_size: Option<u32>,
     ) -> Result<Vec<WorkspaceWithDeviceCount>> {
-        self.repository.find_by_tenant(tenant_id, page, page_size).await
+        self.db.find_workspaces_by_tenant(tenant_id, page, page_size).await
     }
 
     pub async fn create(
@@ -66,8 +67,8 @@ impl WorkspaceService {
         agent_config: Option<&str>,
     ) -> Result<Workspace> {
         let workspace = self
-            .repository
-            .create(tenant_id, name, description, agent_id, agent_config)
+            .db
+            .create_workspace(tenant_id, name, description, agent_id, agent_config)
             .await?;
         let seeded = self.seed_default_heartbeat_tasks(&workspace.id).await;
         // Task 9：种子任务在发布 WorkspaceCreated 之前同步推入 agent
@@ -123,8 +124,8 @@ impl WorkspaceService {
         agent_config: Option<&str>,
         require_action_confirm: Option<bool>,
     ) -> Result<Option<WorkspaceWithDeviceCount>> {
-        self.repository
-            .update(id, name, description, agent_id, agent_config, require_action_confirm)
+        self.db
+            .update_workspace(id, name, description, agent_id, agent_config, require_action_confirm)
             .await
     }
 
@@ -132,7 +133,7 @@ impl WorkspaceService {
         // Delete first: listeners tear down heartbeat loops and agents on
         // WorkspaceDeleted, so publishing before the row is gone could kill a
         // workspace whose delete then fails.
-        self.repository.delete(id).await?;
+        self.db.delete_workspace(id).await?;
         if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
             publisher.publish_workspace_deleted(id.to_string());
         }
@@ -140,7 +141,7 @@ impl WorkspaceService {
     }
 
     pub async fn assign_device(&self, device_id: &str, workspace_id: &str) -> Result<()> {
-        self.repository.assign_device(device_id, workspace_id).await
+        self.db.assign_device_to_workspace(device_id, workspace_id).await
     }
 
     pub async fn list_resources(
@@ -150,8 +151,8 @@ impl WorkspaceService {
         page: Option<u32>,
         page_size: Option<u32>,
     ) -> Result<Vec<WorkspaceResource>> {
-        self.repository
-            .list_resources(workspace_id, resource_type, page, page_size)
+        self.db
+            .list_workspace_resources(workspace_id, resource_type, page, page_size)
             .await
     }
 
@@ -160,7 +161,7 @@ impl WorkspaceService {
         workspace_id: &str,
         resource_id: &str,
     ) -> Result<Option<WorkspaceResource>> {
-        self.repository.find_resource_by_id(workspace_id, resource_id).await
+        self.db.find_workspace_resource(workspace_id, resource_id).await
     }
 
     pub async fn create_resource(
@@ -173,8 +174,8 @@ impl WorkspaceService {
         tags: &[String],
         metadata: Option<&str>,
     ) -> Result<WorkspaceResource> {
-        self.repository
-            .create_resource(
+        self.db
+            .create_workspace_resource(
                 workspace_id,
                 resource_type,
                 name,
@@ -195,8 +196,8 @@ impl WorkspaceService {
         tags: Option<&[String]>,
         metadata: Option<&str>,
     ) -> Result<Option<WorkspaceResource>> {
-        self.repository
-            .update_resource(workspace_id, resource_id, name, description, tags, metadata)
+        self.db
+            .update_workspace_resource(workspace_id, resource_id, name, description, tags, metadata)
             .await
     }
 
@@ -207,13 +208,13 @@ impl WorkspaceService {
         resource_id: &str,
     ) -> Result<()> {
         // Delete file first, then DB record
-        if let Ok(Some(res)) = self.repository.find_resource_by_id(workspace_id, resource_id).await {
+        if let Ok(Some(res)) = self.db.find_workspace_resource(workspace_id, resource_id).await {
             let file_path = workspace_base_dir.join("resources").join(&res.file_path);
             if file_path.exists() {
                 let _ = tokio::fs::remove_file(&file_path).await;
             }
         }
-        self.repository.delete_resource(workspace_id, resource_id).await
+        self.db.delete_workspace_resource(workspace_id, resource_id).await
     }
 
     pub async fn search_resources(
@@ -223,8 +224,8 @@ impl WorkspaceService {
         resource_type: Option<ResourceType>,
         limit: i64,
     ) -> Result<Vec<ResourceSearchResult>> {
-        self.repository
-            .search_resources(workspace_id, query, resource_type, limit)
+        self.db
+            .search_workspace_resources(workspace_id, query, resource_type, limit)
             .await
     }
 }
@@ -272,9 +273,9 @@ mod tests {
         }
     }
 
-    /// 真实 SQLite 版 workspace repo（E4 去 trait 后替代 MockWorkspaceRepository）。
-    /// 返回 (repo, pool)：pool 用于 delete-failure 测试 DROP TABLE 注入故障。
-    async fn real_repo() -> (Arc<WorkspaceRepository>, sqlx::SqlitePool) {
+    /// 真实 SQLite 版 Db（E4 去 trait 后替代 MockWorkspaceRepository）。
+    /// 返回 (db, pool)：pool 用于 delete-failure 测试 DROP TABLE 注入故障。
+    async fn real_db() -> (Arc<Db>, sqlx::SqlitePool) {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
@@ -294,17 +295,15 @@ mod tests {
             .await
             .expect("seed tenant");
         (
-            Arc::new(WorkspaceRepository::new(tinyiothub_storage::Db::new(
-                pool.clone(),
-            ))),
+            Arc::new(tinyiothub_storage::Db::new(pool.clone())),
             pool,
         )
     }
 
     #[tokio::test]
     async fn create_seeds_default_heartbeat_tasks() {
-        let (ws_repo, _pool) = real_repo().await;
-        let service = WorkspaceService::new(ws_repo);
+        let (db, _pool) = real_db().await;
+        let service = WorkspaceService::new(db);
         let hb_pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
@@ -329,8 +328,8 @@ mod tests {
 
     #[tokio::test]
     async fn create_without_task_repo_still_succeeds() {
-        let (ws_repo, _pool) = real_repo().await;
-        let service = WorkspaceService::new(ws_repo);
+        let (db, _pool) = real_db().await;
+        let service = WorkspaceService::new(db);
         service
             .create("tenant_1", "ws", None, None, None)
             .await
@@ -339,13 +338,13 @@ mod tests {
 
     #[tokio::test]
     async fn delete_failure_does_not_publish_workspace_deleted() {
-        let (ws_repo, pool) = real_repo().await;
+        let (db, pool) = real_db().await;
         // 故障注入：DROP workspaces 表使 delete 必然报错（等效原 mock 的 delete_fails）
         sqlx::query("DROP TABLE workspaces")
             .execute(&pool)
             .await
             .expect("drop table");
-        let service = WorkspaceService::new(ws_repo);
+        let service = WorkspaceService::new(db);
         let publisher = Arc::new(RecordingEventPublisher::default());
         service.set_event_publisher(publisher.clone());
 
@@ -360,8 +359,8 @@ mod tests {
 
     #[tokio::test]
     async fn delete_success_publishes_workspace_deleted() {
-        let (ws_repo, _pool) = real_repo().await;
-        let service = WorkspaceService::new(ws_repo);
+        let (db, _pool) = real_db().await;
+        let service = WorkspaceService::new(db);
         let publisher = Arc::new(RecordingEventPublisher::default());
         service.set_event_publisher(publisher.clone());
 

@@ -359,21 +359,13 @@ impl AppState {
         alarm_service.set_device_cache(device_cache.clone());
 
         // 用户服务
-        let user_repository: Arc<tinyiothub_storage::user::UserRepository> =
-            Arc::new(tinyiothub_storage::user::UserRepository::new(database.as_ref().clone()));
-        let user_service = Arc::new(crate::domains::user::UserService::new(user_repository));
+        let user_service = Arc::new(crate::domains::user::UserService::new(database.clone()));
 
         // 租户服务
-        let tenant_repository: Arc<tinyiothub_storage::tenant::TenantRepository> = Arc::new(
-            tinyiothub_storage::tenant::TenantRepository::new(database.as_ref().clone()),
-        );
-        let tenant_service = Arc::new(crate::domains::tenant::TenantService::new(tenant_repository));
+        let tenant_service = Arc::new(crate::domains::tenant::TenantService::new(database.clone()));
 
         // 工作空间服务
-        let workspace_repository: Arc<tinyiothub_storage::workspace::WorkspaceRepository> = Arc::new(
-            tinyiothub_storage::workspace::WorkspaceRepository::new(database.as_ref().clone()),
-        );
-        let workspace_service = Arc::new(crate::domains::tenant::WorkspaceService::new(workspace_repository));
+        let workspace_service = Arc::new(crate::domains::tenant::WorkspaceService::new(database.clone()));
 
         // 标签服务
         let tag_service = Arc::new(crate::domains::thing::tag::TagService::new(database.clone()));

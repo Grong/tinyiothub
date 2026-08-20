@@ -189,7 +189,6 @@ use tinyiothub_core::agent_runs::{Outcome, RunReport};
 use tinyiothub_storage::Db;
 use tinyiothub_storage::agent_runs::AgentRunsRepository;
 use tinyiothub_storage::heartbeat::HeartbeatTaskRepository;
-use tinyiothub_storage::workspace::WorkspaceRepository;
 
 use tinyiothub_agent::runtime::heartbeat::types::HeartbeatConfig;
 use tinyiothub_agent::runtime::runtime::AgentRuntime;
@@ -211,8 +210,7 @@ use tinyiothub_agent::runtime::thing_agent::registry::COMPLETED_CAPACITY;
 /// 单项失败降级为空段 + warn（启动不阻塞）；DB 不可达时返回空快照。
 pub async fn build_agent_snapshot(db: &Db) -> RestoreSnapshot {
     let pool = db.pool();
-    let ws_repo = WorkspaceRepository::new(db.clone());
-    let ws_ids = match ws_repo.find_all_ids().await {
+    let ws_ids = match db.find_all_workspace_ids().await {
         Ok(ids) => ids,
         Err(e) => {
             warn!(error = %e, "agent snapshot: list workspace ids failed, restoring empty");

@@ -1392,3 +1392,20 @@ impl DeviceRepository {
         self.update_status_batch_inner(&filtered_updates).await
     }
 }
+
+// ── Task 7 收编：cloud workspace 删除守卫的设备计数（devices 表归本领域）──
+
+pub(crate) async fn count_devices_by_workspace(pool: &sqlx::SqlitePool, workspace_id: &str) -> Result<i64> {
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE workspace_id = ?")
+        .bind(workspace_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(count)
+}
+
+impl Db {
+    /// 工作空间下的设备数（workspace 删除守卫用）。
+    pub async fn count_devices_by_workspace(&self, workspace_id: &str) -> Result<i64> {
+        count_devices_by_workspace(self.pool(), workspace_id).await
+    }
+}

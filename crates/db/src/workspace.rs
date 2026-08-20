@@ -3,7 +3,7 @@
 use tinyiothub_core::models::workspace::ResourceType;
 
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, QueryBuilder};
+use sqlx::{FromRow, QueryBuilder, SqlitePool};
 use tinyiothub_core::error::{Error, Result};
 
 use crate::database::Db;
@@ -330,85 +330,560 @@ impl From<ResourceSearchResultRow> for ResourceSearchResult {
         }
     }
 }
+// ──────────────────────────────────────────────
+// 持久化函数（pub(crate) 自由函数 + Db 委托）
+// ──────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
-pub struct WorkspaceRepository {
-    db: Db,
+pub(crate) async fn find_workspace_by_id(pool: &SqlitePool, id: &str) -> Result<Option<WorkspaceWithDeviceCount>> {
+    let row = sqlx::query_as::<_, WorkspaceWithDeviceCountRow>(
+        r#"
+        SELECT
+            w.id,
+            w.name,
+            w.description,
+            w.tenant_id,
+            w.agent_id,
+            w.require_action_confirm,
+            w.created_at,
+            w.updated_at,
+            COUNT(d.id) as device_count
+        FROM workspaces w
+        LEFT JOIN devices d ON d.workspace_id = w.id
+        WHERE w.id = ?
+        GROUP BY w.id
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(Into::into))
 }
 
-impl WorkspaceRepository {
-    pub fn new(db: Db) -> Self {
-        Self { db }
+pub(crate) async fn find_workspaces_by_tenant(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    page: Option<u32>,
+    page_size: Option<u32>,
+) -> Result<Vec<WorkspaceWithDeviceCount>> {
+    let page = page.unwrap_or(1).max(1);
+    let page_size = page_size.unwrap_or(20).min(100);
+    let offset = (page - 1) * page_size;
+
+    let rows = sqlx::query_as::<_, WorkspaceWithDeviceCountRow>(
+        r#"
+        SELECT
+            w.id,
+            w.name,
+            w.description,
+            w.tenant_id,
+            w.agent_id,
+            w.require_action_confirm,
+            w.created_at,
+            w.updated_at,
+            COUNT(d.id) as device_count
+        FROM workspaces w
+        LEFT JOIN devices d ON d.workspace_id = w.id
+        WHERE w.tenant_id = ?
+        GROUP BY w.id
+        ORDER BY w.created_at DESC
+        LIMIT ? OFFSET ?
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(page_size as i64)
+    .bind(offset as i64)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
+pub(crate) async fn create_workspace(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    name: &str,
+    description: Option<&str>,
+    agent_id: Option<&str>,
+    agent_config: Option<&str>,
+) -> Result<Workspace> {
+    let id = format!("ws-{}", uuid::Uuid::new_v4());
+    let now = chrono::Utc::now().to_rfc3339();
+
+    sqlx::query(
+        r#"
+        INSERT INTO workspaces (id, name, description, tenant_id, agent_id, agent_config, require_action_confirm, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+        "#,
+    )
+    .bind(&id)
+    .bind(name)
+    .bind(description)
+    .bind(tenant_id)
+    .bind(agent_id)
+    .bind(agent_config)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await?;
+
+    Ok(Workspace {
+        id,
+        name: name.to_string(),
+        description: description.map(String::from),
+        tenant_id: tenant_id.to_string(),
+        agent_id: agent_id.map(String::from),
+        agent_config: agent_config.map(String::from),
+        require_action_confirm: true,
+        created_at: now.clone(),
+        updated_at: now,
+    })
+}
+
+pub(crate) async fn update_workspace(
+    pool: &SqlitePool,
+    id: &str,
+    name: Option<&str>,
+    description: Option<&str>,
+    agent_id: Option<&str>,
+    agent_config: Option<&str>,
+    require_action_confirm: Option<bool>,
+) -> Result<Option<WorkspaceWithDeviceCount>> {
+    let mut builder = QueryBuilder::new("UPDATE workspaces SET ");
+    let mut has_updates = false;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    if let Some(n) = name {
+        if has_updates {
+            builder.push(", ");
+        }
+        builder.push("name = ").push_bind(n);
+        has_updates = true;
     }
+
+    if let Some(d) = description {
+        if has_updates {
+            builder.push(", ");
+        }
+        builder.push("description = ").push_bind(d);
+        has_updates = true;
+    }
+
+    if let Some(aid) = agent_id {
+        if has_updates {
+            builder.push(", ");
+        }
+        builder.push("agent_id = ").push_bind(aid);
+        has_updates = true;
+    }
+
+    if let Some(c) = agent_config {
+        if has_updates {
+            builder.push(", ");
+        }
+        builder.push("agent_config = ").push_bind(c);
+        has_updates = true;
+    }
+
+    if let Some(rac) = require_action_confirm {
+        if has_updates {
+            builder.push(", ");
+        }
+        builder.push("require_action_confirm = ").push_bind(rac);
+        has_updates = true;
+    }
+
+    if !has_updates {
+        return find_workspace_by_id(pool, id).await;
+    }
+
+    builder.push(", updated_at = ").push_bind(&now);
+    builder.push(" WHERE id = ").push_bind(id);
+
+    let result = builder.build().execute(pool).await?;
+    if result.rows_affected() == 0 {
+        return Ok(None);
+    }
+
+    find_workspace_by_id(pool, id).await
 }
 
-impl WorkspaceRepository {
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<WorkspaceWithDeviceCount>> {
-        let row = sqlx::query_as::<_, WorkspaceWithDeviceCountRow>(
+pub(crate) async fn delete_workspace(pool: &SqlitePool, id: &str) -> Result<()> {
+    sqlx::query("DELETE FROM workspaces WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub(crate) async fn assign_device_to_workspace(
+    pool: &SqlitePool,
+    device_id: &str,
+    workspace_id: &str,
+) -> Result<()> {
+    let device: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT id, workspace_id FROM devices WHERE id = ?")
+            .bind(device_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| Error::DatabaseError(format!("database error: {}", e)))?;
+
+    let (_current_id, current_ws) = device.ok_or(Error::NotFound)?;
+
+    if let Some(current_workspace) = current_ws {
+        if current_workspace != workspace_id {
+            return Err(Error::InvalidArgument(format!(
+                "device already assigned to workspace {}",
+                current_workspace
+            )));
+        }
+        return Ok(());
+    }
+
+    sqlx::query("UPDATE devices SET workspace_id = ?, updated_at = ? WHERE id = ?")
+        .bind(workspace_id)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(device_id)
+        .execute(pool)
+        .await
+        .map_err(|e| Error::DatabaseError(format!("failed to assign device: {}", e)))?;
+
+    Ok(())
+}
+
+pub(crate) async fn list_workspace_resources(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    resource_type: Option<ResourceType>,
+    page: Option<u32>,
+    page_size: Option<u32>,
+) -> Result<Vec<WorkspaceResource>> {
+    let page = page.unwrap_or(1).max(1);
+    let page_size = page_size.unwrap_or(20).min(100);
+    let offset = (page - 1) * page_size;
+
+    let rows = if let Some(rt) = resource_type {
+        sqlx::query_as::<_, WorkspaceResourceRow>(
             r#"
-            SELECT
-                w.id,
-                w.name,
-                w.description,
-                w.tenant_id,
-                w.agent_id,
-                w.require_action_confirm,
-                w.created_at,
-                w.updated_at,
-                COUNT(d.id) as device_count
-            FROM workspaces w
-            LEFT JOIN devices d ON d.workspace_id = w.id
-            WHERE w.id = ?
-            GROUP BY w.id
+            SELECT id, workspace_id, resource_type, name, description, content, file_path, file_size, tags, metadata, created_at, updated_at
+            FROM resources
+            WHERE workspace_id = ? AND resource_type = ?
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
             "#,
         )
-        .bind(id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        .bind(workspace_id)
+        .bind(rt.as_str())
+        .bind(page_size as i64)
+        .bind(offset as i64)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query_as::<_, WorkspaceResourceRow>(
+            r#"
+            SELECT id, workspace_id, resource_type, name, description, content, file_path, file_size, tags, metadata, created_at, updated_at
+            FROM resources
+            WHERE workspace_id = ?
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+            "#,
+        )
+        .bind(workspace_id)
+        .bind(page_size as i64)
+        .bind(offset as i64)
+        .fetch_all(pool)
+        .await?
+    };
 
-        Ok(row.map(Into::into))
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
+pub(crate) async fn find_workspace_resource(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    resource_id: &str,
+) -> Result<Option<WorkspaceResource>> {
+    let row = sqlx::query_as::<_, WorkspaceResourceRow>(
+        r#"
+        SELECT id, workspace_id, resource_type, name, description, content, file_path, file_size, tags, metadata, created_at, updated_at
+        FROM resources
+        WHERE workspace_id = ? AND id = ?
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(resource_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(Into::into))
+}
+
+pub(crate) async fn create_workspace_resource(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    resource_type: ResourceType,
+    name: &str,
+    description: Option<&str>,
+    file_path: &str,
+    tags: &[String],
+    metadata: Option<&str>,
+) -> Result<WorkspaceResource> {
+    let id = format!("res-{}", uuid::Uuid::new_v4());
+    let now = chrono::Utc::now().to_rfc3339();
+    let tags_json = serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_string());
+
+    sqlx::query(
+        r#"
+        INSERT INTO resources (id, workspace_id, resource_type, name, description, file_path, tags, metadata, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(&id)
+    .bind(workspace_id)
+    .bind(resource_type.as_str())
+    .bind(name)
+    .bind(description)
+    .bind(file_path)
+    .bind(&tags_json)
+    .bind(metadata)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await?;
+
+    Ok(WorkspaceResource {
+        id,
+        workspace_id: workspace_id.to_string(),
+        resource_type,
+        name: name.to_string(),
+        description: description.map(String::from),
+        content: None,
+        file_path: file_path.to_string(),
+        file_size: None,
+        tags: tags.to_vec(),
+        metadata: metadata.map(String::from),
+        created_at: now.clone(),
+        updated_at: now,
+    })
+}
+
+pub(crate) async fn update_workspace_resource(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    resource_id: &str,
+    name: Option<&str>,
+    description: Option<&str>,
+    tags: Option<&[String]>,
+    metadata: Option<&str>,
+) -> Result<Option<WorkspaceResource>> {
+    let mut builder = QueryBuilder::new("UPDATE resources SET ");
+    let mut has_updates = false;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    if let Some(n) = name {
+        if has_updates {
+            builder.push(", ");
+        }
+        builder.push("name = ").push_bind(n);
+        has_updates = true;
     }
 
-    pub async fn find_by_tenant(
+    if let Some(d) = description {
+        if has_updates {
+            builder.push(", ");
+        }
+        builder.push("description = ").push_bind(d);
+        has_updates = true;
+    }
+
+    if let Some(t) = tags {
+        if has_updates {
+            builder.push(", ");
+        }
+        let tags_json = serde_json::to_string(t).unwrap_or_else(|_| "[]".to_string());
+        builder.push("tags = ").push_bind(tags_json);
+        has_updates = true;
+    }
+
+    if let Some(m) = metadata {
+        if has_updates {
+            builder.push(", ");
+        }
+        builder.push("metadata = ").push_bind(m);
+        has_updates = true;
+    }
+
+    if !has_updates {
+        return find_workspace_resource(pool, workspace_id, resource_id).await;
+    }
+
+    builder.push(", updated_at = ").push_bind(&now);
+    builder.push(" WHERE workspace_id = ").push_bind(workspace_id);
+    builder.push(" AND id = ").push_bind(resource_id);
+
+    let result = builder.build().execute(pool).await?;
+    if result.rows_affected() == 0 {
+        return Ok(None);
+    }
+
+    find_workspace_resource(pool, workspace_id, resource_id).await
+}
+
+pub(crate) async fn delete_workspace_resource(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    resource_id: &str,
+) -> Result<()> {
+    sqlx::query("DELETE FROM resources WHERE workspace_id = ? AND id = ?")
+        .bind(workspace_id)
+        .bind(resource_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub(crate) async fn search_workspace_resources(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    query: &str,
+    resource_type: Option<ResourceType>,
+    limit: i64,
+) -> Result<Vec<ResourceSearchResult>> {
+    let keywords: Vec<&str> = query.split_whitespace().collect();
+    if keywords.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Single-table search on unified resources table.
+    // Relevance: name match = 3, description match = 2, tag match = 2, content match = 1
+    let mut builder = QueryBuilder::new(
+        "SELECT id, workspace_id, resource_type, name, description, \
+             content, file_path, file_size, tags, metadata, \
+             created_at, updated_at, SUM(relevance) as relevance FROM (",
+    );
+
+    for (i, keyword) in keywords.iter().enumerate() {
+        if i > 0 {
+            builder.push(" UNION ALL ");
+        }
+
+        let like = format!("%{}%", escape_like_pattern(keyword));
+
+        builder.push("SELECT *, (");
+        // Name match
+        builder.push("CASE WHEN name LIKE ");
+        builder.push_bind(&like);
+        builder.push(" ESCAPE '\\' THEN 3 ELSE 0 END + ");
+        // Description match
+        builder.push("CASE WHEN description LIKE ");
+        builder.push_bind(&like);
+        builder.push(" ESCAPE '\\' THEN 2 ELSE 0 END + ");
+        // Tag match
+        builder.push("CASE WHEN EXISTS (SELECT 1 FROM json_each(tags) WHERE value LIKE ");
+        builder.push_bind(&like);
+        builder.push(" ESCAPE '\\') THEN 2 ELSE 0 END + ");
+        // Content match (for documents)
+        builder.push("CASE WHEN content LIKE ");
+        builder.push_bind(&like);
+        builder.push(" ESCAPE '\\' THEN 1 ELSE 0 END");
+
+        builder.push(") as relevance FROM resources WHERE workspace_id = ");
+        builder.push_bind(workspace_id);
+
+        if let Some(rt) = resource_type {
+            builder.push(" AND resource_type = ");
+            builder.push_bind(rt.as_str());
+        }
+
+        // WHERE match conditions
+        builder.push(" AND (name LIKE ");
+        builder.push_bind(&like);
+        builder.push(" ESCAPE '\\' OR description LIKE ");
+        builder.push_bind(&like);
+        builder.push(" ESCAPE '\\' OR content LIKE ");
+        builder.push_bind(&like);
+        builder.push(" ESCAPE '\\' OR EXISTS (SELECT 1 FROM json_each(tags) WHERE value LIKE ");
+        builder.push_bind(&like);
+        builder.push(" ESCAPE '\\'))");
+    }
+
+    builder.push(") GROUP BY id HAVING relevance > 0 ORDER BY relevance DESC LIMIT ");
+    builder.push_bind(limit);
+
+    let rows = builder
+        .build_query_as::<ResourceSearchResultRow>()
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
+pub(crate) async fn find_all_workspace_ids(pool: &SqlitePool) -> Result<Vec<String>> {
+    let rows: Vec<(String,)> = sqlx::query_as("SELECT id FROM workspaces")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.into_iter().map(|(id,)| id).collect())
+}
+
+/// 租户下第一个 workspace id — 自 cloud auth 社交登录段收编。
+pub(crate) async fn find_first_workspace_id_by_tenant(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> Result<Option<String>> {
+    let id: Option<String> = sqlx::query_scalar("SELECT id FROM workspaces WHERE tenant_id = ? LIMIT 1")
+        .bind(tenant_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(id)
+}
+
+/// 全库第一个 workspace id — 自 cloud auth 社交登录 mock 段收编。
+pub(crate) async fn find_first_workspace_id(pool: &SqlitePool) -> Result<Option<String>> {
+    let id: Option<String> = sqlx::query_scalar("SELECT id FROM workspaces LIMIT 1")
+        .fetch_optional(pool)
+        .await?;
+    Ok(id)
+}
+
+/// 登录上下文 workspace：优先用户自己的 `ws-{user_id}`，否则租户下第一个
+/// — 自 cloud auth login/sms 段收编（SQL 逐字迁移）。
+pub(crate) async fn find_workspace_id_for_login(
+    pool: &SqlitePool,
+    user_ws_id: &str,
+    tenant_id: &str,
+) -> Result<Option<String>> {
+    let id: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM workspaces WHERE id = ? UNION ALL SELECT id FROM workspaces WHERE tenant_id = ? AND id != ? LIMIT 1"
+    )
+    .bind(user_ws_id)
+    .bind(tenant_id)
+    .bind(user_ws_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(id)
+}
+
+// ──────────────────────────────────────────────
+// Db 委托（Workspace 领域）
+// ──────────────────────────────────────────────
+
+impl Db {
+    /// 按 ID 查询工作空间（含设备数）。
+    pub async fn find_workspace_by_id(&self, id: &str) -> Result<Option<WorkspaceWithDeviceCount>> {
+        find_workspace_by_id(self.pool(), id).await
+    }
+
+    /// 分页列出租户下工作空间（含设备数）。
+    pub async fn find_workspaces_by_tenant(
         &self,
         tenant_id: &str,
         page: Option<u32>,
         page_size: Option<u32>,
     ) -> Result<Vec<WorkspaceWithDeviceCount>> {
-        let page = page.unwrap_or(1).max(1);
-        let page_size = page_size.unwrap_or(20).min(100);
-        let offset = (page - 1) * page_size;
-
-        let rows = sqlx::query_as::<_, WorkspaceWithDeviceCountRow>(
-            r#"
-            SELECT
-                w.id,
-                w.name,
-                w.description,
-                w.tenant_id,
-                w.agent_id,
-                w.require_action_confirm,
-                w.created_at,
-                w.updated_at,
-                COUNT(d.id) as device_count
-            FROM workspaces w
-            LEFT JOIN devices d ON d.workspace_id = w.id
-            WHERE w.tenant_id = ?
-            GROUP BY w.id
-            ORDER BY w.created_at DESC
-            LIMIT ? OFFSET ?
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(page_size as i64)
-        .bind(offset as i64)
-        .fetch_all(self.db.pool())
-        .await?;
-
-        Ok(rows.into_iter().map(Into::into).collect())
+        find_workspaces_by_tenant(self.pool(), tenant_id, page, page_size).await
     }
 
-    pub async fn create(
+    /// 创建工作空间。
+    pub async fn create_workspace(
         &self,
         tenant_id: &str,
         name: &str,
@@ -416,40 +891,11 @@ impl WorkspaceRepository {
         agent_id: Option<&str>,
         agent_config: Option<&str>,
     ) -> Result<Workspace> {
-        let id = format!("ws-{}", uuid::Uuid::new_v4());
-        let now = chrono::Utc::now().to_rfc3339();
-
-        sqlx::query(
-            r#"
-            INSERT INTO workspaces (id, name, description, tenant_id, agent_id, agent_config, require_action_confirm, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
-            "#,
-        )
-        .bind(&id)
-        .bind(name)
-        .bind(description)
-        .bind(tenant_id)
-        .bind(agent_id)
-        .bind(agent_config)
-        .bind(&now)
-        .bind(&now)
-        .execute(self.db.pool())
-        .await?;
-
-        Ok(Workspace {
-            id,
-            name: name.to_string(),
-            description: description.map(String::from),
-            tenant_id: tenant_id.to_string(),
-            agent_id: agent_id.map(String::from),
-            agent_config: agent_config.map(String::from),
-            require_action_confirm: true,
-            created_at: now.clone(),
-            updated_at: now,
-        })
+        create_workspace(self.pool(), tenant_id, name, description, agent_id, agent_config).await
     }
 
-    pub async fn update(
+    /// 更新工作空间（仅更新传入字段；无字段时直接回读）。
+    pub async fn update_workspace(
         &self,
         id: &str,
         name: Option<&str>,
@@ -458,172 +904,50 @@ impl WorkspaceRepository {
         agent_config: Option<&str>,
         require_action_confirm: Option<bool>,
     ) -> Result<Option<WorkspaceWithDeviceCount>> {
-        let mut builder = QueryBuilder::new("UPDATE workspaces SET ");
-        let mut has_updates = false;
-        let now = chrono::Utc::now().to_rfc3339();
-
-        if let Some(n) = name {
-            if has_updates {
-                builder.push(", ");
-            }
-            builder.push("name = ").push_bind(n);
-            has_updates = true;
-        }
-
-        if let Some(d) = description {
-            if has_updates {
-                builder.push(", ");
-            }
-            builder.push("description = ").push_bind(d);
-            has_updates = true;
-        }
-
-        if let Some(aid) = agent_id {
-            if has_updates {
-                builder.push(", ");
-            }
-            builder.push("agent_id = ").push_bind(aid);
-            has_updates = true;
-        }
-
-        if let Some(c) = agent_config {
-            if has_updates {
-                builder.push(", ");
-            }
-            builder.push("agent_config = ").push_bind(c);
-            has_updates = true;
-        }
-
-        if let Some(rac) = require_action_confirm {
-            if has_updates {
-                builder.push(", ");
-            }
-            builder.push("require_action_confirm = ").push_bind(rac);
-            has_updates = true;
-        }
-
-        if !has_updates {
-            return self.find_by_id(id).await;
-        }
-
-        builder.push(", updated_at = ").push_bind(&now);
-        builder.push(" WHERE id = ").push_bind(id);
-
-        let result = builder.build().execute(self.db.pool()).await?;
-        if result.rows_affected() == 0 {
-            return Ok(None);
-        }
-
-        self.find_by_id(id).await
+        update_workspace(
+            self.pool(),
+            id,
+            name,
+            description,
+            agent_id,
+            agent_config,
+            require_action_confirm,
+        )
+        .await
     }
 
-    pub async fn delete(&self, id: &str) -> Result<()> {
-        sqlx::query("DELETE FROM workspaces WHERE id = ?")
-            .bind(id)
-            .execute(self.db.pool())
-            .await?;
-        Ok(())
+    /// 删除工作空间。
+    pub async fn delete_workspace(&self, id: &str) -> Result<()> {
+        delete_workspace(self.pool(), id).await
     }
 
-    pub async fn assign_device(&self, device_id: &str, workspace_id: &str) -> Result<()> {
-        let device: Option<(String, Option<String>)> =
-            sqlx::query_as("SELECT id, workspace_id FROM devices WHERE id = ?")
-                .bind(device_id)
-                .fetch_optional(self.db.pool())
-                .await
-                .map_err(|e| Error::DatabaseError(format!("database error: {}", e)))?;
-
-        let (_current_id, current_ws) = device.ok_or(Error::NotFound)?;
-
-        if let Some(current_workspace) = current_ws {
-            if current_workspace != workspace_id {
-                return Err(Error::InvalidArgument(format!(
-                    "device already assigned to workspace {}",
-                    current_workspace
-                )));
-            }
-            return Ok(());
-        }
-
-        sqlx::query("UPDATE devices SET workspace_id = ?, updated_at = ? WHERE id = ?")
-            .bind(workspace_id)
-            .bind(chrono::Utc::now().to_rfc3339())
-            .bind(device_id)
-            .execute(self.db.pool())
-            .await
-            .map_err(|e| Error::DatabaseError(format!("failed to assign device: {}", e)))?;
-
-        Ok(())
+    /// 把设备分配到工作空间（已分配给其他工作空间时报错）。
+    pub async fn assign_device_to_workspace(&self, device_id: &str, workspace_id: &str) -> Result<()> {
+        assign_device_to_workspace(self.pool(), device_id, workspace_id).await
     }
 
-    pub async fn list_resources(
+    /// 分页列出工作空间资源。
+    pub async fn list_workspace_resources(
         &self,
         workspace_id: &str,
         resource_type: Option<ResourceType>,
         page: Option<u32>,
         page_size: Option<u32>,
     ) -> Result<Vec<WorkspaceResource>> {
-        let page = page.unwrap_or(1).max(1);
-        let page_size = page_size.unwrap_or(20).min(100);
-        let offset = (page - 1) * page_size;
-
-        let rows = if let Some(rt) = resource_type {
-            sqlx::query_as::<_, WorkspaceResourceRow>(
-                r#"
-                SELECT id, workspace_id, resource_type, name, description, content, file_path, file_size, tags, metadata, created_at, updated_at
-                FROM resources
-                WHERE workspace_id = ? AND resource_type = ?
-                ORDER BY created_at DESC
-                LIMIT ? OFFSET ?
-                "#,
-            )
-            .bind(workspace_id)
-            .bind(rt.as_str())
-            .bind(page_size as i64)
-            .bind(offset as i64)
-            .fetch_all(self.db.pool())
-            .await?
-        } else {
-            sqlx::query_as::<_, WorkspaceResourceRow>(
-                r#"
-                SELECT id, workspace_id, resource_type, name, description, content, file_path, file_size, tags, metadata, created_at, updated_at
-                FROM resources
-                WHERE workspace_id = ?
-                ORDER BY created_at DESC
-                LIMIT ? OFFSET ?
-                "#,
-            )
-            .bind(workspace_id)
-            .bind(page_size as i64)
-            .bind(offset as i64)
-            .fetch_all(self.db.pool())
-            .await?
-        };
-
-        Ok(rows.into_iter().map(Into::into).collect())
+        list_workspace_resources(self.pool(), workspace_id, resource_type, page, page_size).await
     }
 
-    pub async fn find_resource_by_id(
+    /// 按 ID 查询工作空间资源。
+    pub async fn find_workspace_resource(
         &self,
         workspace_id: &str,
         resource_id: &str,
     ) -> Result<Option<WorkspaceResource>> {
-        let row = sqlx::query_as::<_, WorkspaceResourceRow>(
-            r#"
-            SELECT id, workspace_id, resource_type, name, description, content, file_path, file_size, tags, metadata, created_at, updated_at
-            FROM resources
-            WHERE workspace_id = ? AND id = ?
-            "#,
-        )
-        .bind(workspace_id)
-        .bind(resource_id)
-        .fetch_optional(self.db.pool())
-        .await?;
-
-        Ok(row.map(Into::into))
+        find_workspace_resource(self.pool(), workspace_id, resource_id).await
     }
 
-    pub async fn create_resource(
+    /// 创建工作空间资源。
+    pub async fn create_workspace_resource(
         &self,
         workspace_id: &str,
         resource_type: ResourceType,
@@ -633,46 +957,21 @@ impl WorkspaceRepository {
         tags: &[String],
         metadata: Option<&str>,
     ) -> Result<WorkspaceResource> {
-        let id = format!("res-{}", uuid::Uuid::new_v4());
-        let now = chrono::Utc::now().to_rfc3339();
-        let tags_json = serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_string());
-
-        sqlx::query(
-            r#"
-            INSERT INTO resources (id, workspace_id, resource_type, name, description, file_path, tags, metadata, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&id)
-        .bind(workspace_id)
-        .bind(resource_type.as_str())
-        .bind(name)
-        .bind(description)
-        .bind(file_path)
-        .bind(&tags_json)
-        .bind(metadata)
-        .bind(&now)
-        .bind(&now)
-        .execute(self.db.pool())
-        .await?;
-
-        Ok(WorkspaceResource {
-            id,
-            workspace_id: workspace_id.to_string(),
+        create_workspace_resource(
+            self.pool(),
+            workspace_id,
             resource_type,
-            name: name.to_string(),
-            description: description.map(String::from),
-            content: None,
-            file_path: file_path.to_string(),
-            file_size: None,
-            tags: tags.to_vec(),
-            metadata: metadata.map(String::from),
-            created_at: now.clone(),
-            updated_at: now,
-        })
+            name,
+            description,
+            file_path,
+            tags,
+            metadata,
+        )
+        .await
     }
 
-    pub async fn update_resource(
+    /// 更新工作空间资源（仅更新传入字段；无字段时直接回读）。
+    pub async fn update_workspace_resource(
         &self,
         workspace_id: &str,
         resource_id: &str,
@@ -681,150 +980,59 @@ impl WorkspaceRepository {
         tags: Option<&[String]>,
         metadata: Option<&str>,
     ) -> Result<Option<WorkspaceResource>> {
-        let mut builder = QueryBuilder::new("UPDATE resources SET ");
-        let mut has_updates = false;
-        let now = chrono::Utc::now().to_rfc3339();
-
-        if let Some(n) = name {
-            if has_updates {
-                builder.push(", ");
-            }
-            builder.push("name = ").push_bind(n);
-            has_updates = true;
-        }
-
-        if let Some(d) = description {
-            if has_updates {
-                builder.push(", ");
-            }
-            builder.push("description = ").push_bind(d);
-            has_updates = true;
-        }
-
-        if let Some(t) = tags {
-            if has_updates {
-                builder.push(", ");
-            }
-            let tags_json = serde_json::to_string(t).unwrap_or_else(|_| "[]".to_string());
-            builder.push("tags = ").push_bind(tags_json);
-            has_updates = true;
-        }
-
-        if let Some(m) = metadata {
-            if has_updates {
-                builder.push(", ");
-            }
-            builder.push("metadata = ").push_bind(m);
-            has_updates = true;
-        }
-
-        if !has_updates {
-            return self.find_resource_by_id(workspace_id, resource_id).await;
-        }
-
-        builder.push(", updated_at = ").push_bind(&now);
-        builder.push(" WHERE workspace_id = ").push_bind(workspace_id);
-        builder.push(" AND id = ").push_bind(resource_id);
-
-        let result = builder.build().execute(self.db.pool()).await?;
-        if result.rows_affected() == 0 {
-            return Ok(None);
-        }
-
-        self.find_resource_by_id(workspace_id, resource_id).await
+        update_workspace_resource(
+            self.pool(),
+            workspace_id,
+            resource_id,
+            name,
+            description,
+            tags,
+            metadata,
+        )
+        .await
     }
 
-    pub async fn delete_resource(&self, workspace_id: &str, resource_id: &str) -> Result<()> {
-        sqlx::query("DELETE FROM resources WHERE workspace_id = ? AND id = ?")
-            .bind(workspace_id)
-            .bind(resource_id)
-            .execute(self.db.pool())
-            .await?;
-        Ok(())
+    /// 删除工作空间资源。
+    pub async fn delete_workspace_resource(&self, workspace_id: &str, resource_id: &str) -> Result<()> {
+        delete_workspace_resource(self.pool(), workspace_id, resource_id).await
     }
 
-    pub async fn search_resources(
+    /// 全文检索工作空间资源（名称/描述/标签/内容加权相关度）。
+    pub async fn search_workspace_resources(
         &self,
         workspace_id: &str,
         query: &str,
         resource_type: Option<ResourceType>,
         limit: i64,
     ) -> Result<Vec<ResourceSearchResult>> {
-        let keywords: Vec<&str> = query.split_whitespace().collect();
-        if keywords.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Single-table search on unified resources table.
-        // Relevance: name match = 3, description match = 2, tag match = 2, content match = 1
-        let mut builder = QueryBuilder::new(
-            "SELECT id, workspace_id, resource_type, name, description, \
-             content, file_path, file_size, tags, metadata, \
-             created_at, updated_at, SUM(relevance) as relevance FROM (",
-        );
-
-        for (i, keyword) in keywords.iter().enumerate() {
-            if i > 0 {
-                builder.push(" UNION ALL ");
-            }
-
-            let like = format!("%{}%", escape_like_pattern(keyword));
-
-            builder.push("SELECT *, (");
-            // Name match
-            builder.push("CASE WHEN name LIKE ");
-            builder.push_bind(&like);
-            builder.push(" ESCAPE '\\' THEN 3 ELSE 0 END + ");
-            // Description match
-            builder.push("CASE WHEN description LIKE ");
-            builder.push_bind(&like);
-            builder.push(" ESCAPE '\\' THEN 2 ELSE 0 END + ");
-            // Tag match
-            builder.push("CASE WHEN EXISTS (SELECT 1 FROM json_each(tags) WHERE value LIKE ");
-            builder.push_bind(&like);
-            builder.push(" ESCAPE '\\') THEN 2 ELSE 0 END + ");
-            // Content match (for documents)
-            builder.push("CASE WHEN content LIKE ");
-            builder.push_bind(&like);
-            builder.push(" ESCAPE '\\' THEN 1 ELSE 0 END");
-
-            builder.push(") as relevance FROM resources WHERE workspace_id = ");
-            builder.push_bind(workspace_id);
-
-            if let Some(rt) = resource_type {
-                builder.push(" AND resource_type = ");
-                builder.push_bind(rt.as_str());
-            }
-
-            // WHERE match conditions
-            builder.push(" AND (name LIKE ");
-            builder.push_bind(&like);
-            builder.push(" ESCAPE '\\' OR description LIKE ");
-            builder.push_bind(&like);
-            builder.push(" ESCAPE '\\' OR content LIKE ");
-            builder.push_bind(&like);
-            builder.push(" ESCAPE '\\' OR EXISTS (SELECT 1 FROM json_each(tags) WHERE value LIKE ");
-            builder.push_bind(&like);
-            builder.push(" ESCAPE '\\'))");
-        }
-
-        builder.push(") GROUP BY id HAVING relevance > 0 ORDER BY relevance DESC LIMIT ");
-        builder.push_bind(limit);
-
-        let rows = builder
-            .build_query_as::<ResourceSearchResultRow>()
-            .fetch_all(self.db.pool())
-            .await?;
-        Ok(rows.into_iter().map(Into::into).collect())
+        search_workspace_resources(self.pool(), workspace_id, query, resource_type, limit).await
     }
 
-    pub async fn find_all_ids(&self) -> Result<Vec<String>> {
-        let rows: Vec<(String,)> = sqlx::query_as("SELECT id FROM workspaces")
-            .fetch_all(self.db.pool())
-            .await?;
-        Ok(rows.into_iter().map(|(id,)| id).collect())
+    /// 列出全部工作空间 ID。
+    pub async fn find_all_workspace_ids(&self) -> Result<Vec<String>> {
+        find_all_workspace_ids(self.pool()).await
+    }
+
+    /// 租户下第一个 workspace id。
+    pub async fn find_first_workspace_id_by_tenant(&self, tenant_id: &str) -> Result<Option<String>> {
+        find_first_workspace_id_by_tenant(self.pool(), tenant_id).await
+    }
+
+    /// 全库第一个 workspace id。
+    pub async fn find_first_workspace_id(&self) -> Result<Option<String>> {
+        find_first_workspace_id(self.pool()).await
+    }
+
+    /// 登录上下文 workspace：优先 `user_ws_id`，否则租户下第一个。
+    pub async fn find_workspace_id_for_login(
+        &self,
+        user_ws_id: &str,
+        tenant_id: &str,
+    ) -> Result<Option<String>> {
+        find_workspace_id_for_login(self.pool(), user_ws_id, tenant_id).await
     }
 }
+
 
 #[cfg(test)]
 mod extract_tests {
