@@ -1,8 +1,7 @@
 //! Alarm 持久化：报警记录（P-集中化 E2，自 alarm crate 迁入；Task 11 拆出 alarm_rule.rs）。
 //!
-//! 类型随 repo 住 db（方案 B）：Alarm 及嵌入枚举为 DB 行类型，
-//! alarm crate 保留 DTO/规则评估/通知分发，经 re-export 兼容。
-//! 规则侧类型经 `pub use crate::alarm_rule::*` 再导出，保持既有路径兼容。
+//! 类型随 repo 住 db（方案 B）：Alarm 及嵌入枚举为 DB 行类型；规则侧类型
+//! （AlarmRule/RuleType/AlarmCondition 等）见 alarm_rule.rs，消费方直接引用该模块路径。
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -10,9 +9,6 @@ use sqlx::SqlitePool;
 
 use crate::database::Db;
 use crate::error::{DbError, Result};
-
-// 规则侧类型再导出（Task 11 拆分后保持 `alarm::RuleType` 等既有路径可用）。
-pub use crate::alarm_rule::*;
 
 // ──────────────────────────────────────────────
 // 持久化类型（DB 行）— 自 alarm/types.rs 迁入

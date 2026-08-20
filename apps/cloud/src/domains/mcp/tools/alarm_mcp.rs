@@ -449,11 +449,11 @@ impl ToolHandler for AlarmRuleAddHandler {
         };
 
         let rule_type = match input.rule_type.as_str() {
-            "threshold" => tinyiothub_storage::alarm::RuleType::Threshold,
-            "range" => tinyiothub_storage::alarm::RuleType::Range,
-            "change" => tinyiothub_storage::alarm::RuleType::Change,
-            "duration" => tinyiothub_storage::alarm::RuleType::Duration,
-            "composite" => tinyiothub_storage::alarm::RuleType::Composite,
+            "threshold" => tinyiothub_storage::alarm_rule::RuleType::Threshold,
+            "range" => tinyiothub_storage::alarm_rule::RuleType::Range,
+            "change" => tinyiothub_storage::alarm_rule::RuleType::Change,
+            "duration" => tinyiothub_storage::alarm_rule::RuleType::Duration,
+            "composite" => tinyiothub_storage::alarm_rule::RuleType::Composite,
             _ => {
                 return Err(ToolError::InvalidParams(format!(
                     "Invalid rule type: {}",

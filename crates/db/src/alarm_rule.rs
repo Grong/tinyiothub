@@ -433,16 +433,14 @@ fn row_to_alarm_rule(row: sqlx::sqlite::SqliteRow) -> Result<AlarmRule> {
         message: format!("未知的告警级别: {}", alarm_level_str),
     })?;
 
-    let created_at = parse_db_datetime(&created_at_str)
-            .unwrap_or_else(|e| {
-                tracing::warn!(rule_id = %id, created_at = %created_at_str, error = %e, "Failed to parse created_at, using now");
-                Utc::now()
-            });
-    let updated_at = parse_db_datetime(&updated_at_str)
-            .unwrap_or_else(|e| {
-                tracing::warn!(rule_id = %id, updated_at = %updated_at_str, error = %e, "Failed to parse updated_at, using now");
-                Utc::now()
-            });
+    let created_at = parse_db_datetime(&created_at_str).unwrap_or_else(|e| {
+        tracing::warn!(rule_id = %id, created_at = %created_at_str, error = %e, "Failed to parse created_at, using now");
+        Utc::now()
+    });
+    let updated_at = parse_db_datetime(&updated_at_str).unwrap_or_else(|e| {
+        tracing::warn!(rule_id = %id, updated_at = %updated_at_str, error = %e, "Failed to parse updated_at, using now");
+        Utc::now()
+    });
 
     let notification_config_json: Option<String> = row.get("notification_config");
     let notification_config = notification_config_json

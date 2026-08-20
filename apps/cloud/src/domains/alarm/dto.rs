@@ -69,6 +69,7 @@ pub type AlarmResult<T> = Result<T, AlarmError>;
 
 // Persisted row types live in the db crate (E2 集中化); re-exported for compatibility.
 pub use tinyiothub_storage::alarm::*;
+pub use tinyiothub_storage::alarm_rule::*;
 
 // ============================================================================
 // Value Objects
@@ -260,7 +261,7 @@ pub struct CreateAlarmRuleRequest {
     pub description: Option<String>,
     pub device_id: Option<String>,
     pub property_id: Option<String>,
-    pub rule_type: tinyiothub_storage::alarm::RuleType,
+    pub rule_type: tinyiothub_storage::alarm_rule::RuleType,
     pub condition: serde_json::Value,
     pub alarm_level: String,
     pub notification_config: serde_json::Value,

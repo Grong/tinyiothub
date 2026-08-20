@@ -57,10 +57,10 @@ pub mod permission;
 pub mod policy;
 /// Migrating SQLite pool creation (foreign keys on, runs embedded migrations).
 pub mod pool;
-/// Role persistence and row types.
-pub mod role;
 /// Two-tier seed module (system + demo), applied at bootstrap.
 pub mod seed;
+/// Role persistence and row types.
+pub mod role;
 /// Session persistence and row types.
 pub mod session;
 /// SQL escaping helpers.
