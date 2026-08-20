@@ -1868,3 +1868,44 @@ impl Db {
         assign_orphan_devices_to_default_workspace(self.pool()).await
     }
 }
+
+/// 确保 devices 表存在（edge 网关本地库不走 migrations，Task 13 自 edge storage 收编）。
+pub(crate) async fn ensure_devices_table(pool: &SqlitePool) -> std::result::Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS devices (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            display_name TEXT,
+            device_type TEXT,
+            address TEXT,
+            description TEXT,
+            position TEXT,
+            driver_name TEXT,
+            device_model TEXT,
+            protocol_type TEXT,
+            factory_name TEXT,
+            linked_data TEXT,
+            driver_options TEXT,
+            state INTEGER NOT NULL DEFAULT 0,
+            parent_id TEXT,
+            template_id TEXT,
+            workspace_id TEXT,
+            linked_gateway TEXT,
+            fingerprint TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+impl Db {
+    /// 确保 devices 表存在（edge 本地库 bootstrap 用）。
+    pub async fn ensure_devices_table(&self) -> std::result::Result<(), sqlx::Error> {
+        ensure_devices_table(self.pool()).await
+    }
+}

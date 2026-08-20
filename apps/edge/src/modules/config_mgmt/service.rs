@@ -101,19 +101,12 @@ impl ConfigService {
     }
 
     async fn get_local_version(&self) -> Option<String> {
-        let pool = self.db.pool();
-        sqlx::query_scalar::<_, String>("SELECT local_version FROM config_meta WHERE key = 'main'")
-            .fetch_one(pool)
-            .await
-            .ok()
+        self.db.find_config_local_version().await.ok().flatten()
     }
 
     pub async fn set_local_version(&self, version: &str) {
-        let pool = self.db.pool();
-        sqlx::query("INSERT OR REPLACE INTO config_meta (key, local_version, updated_at) VALUES ('main', ?, ?)")
-            .bind(version)
-            .bind(chrono::Utc::now().timestamp_millis())
-            .execute(pool)
+        self.db
+            .upsert_config_local_version(version, chrono::Utc::now().timestamp_millis())
             .await
             .ok();
     }

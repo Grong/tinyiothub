@@ -9,34 +9,7 @@ pub async fn init_database(db_path: &str) -> EdgeResult<Arc<Db>> {
     let db = Db::new(pool);
 
     // Ensure core tables exist (edge gateway needs devices locally)
-    db.execute(
-        r#"
-        CREATE TABLE IF NOT EXISTS devices (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            display_name TEXT,
-            device_type TEXT,
-            address TEXT,
-            description TEXT,
-            position TEXT,
-            driver_name TEXT,
-            device_model TEXT,
-            protocol_type TEXT,
-            factory_name TEXT,
-            linked_data TEXT,
-            driver_options TEXT,
-            state INTEGER NOT NULL DEFAULT 0,
-            parent_id TEXT,
-            template_id TEXT,
-            workspace_id TEXT,
-            linked_gateway TEXT,
-            fingerprint TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        "#,
-    )
-    .await?;
+    db.ensure_devices_table().await?;
 
     Ok(Arc::new(db))
 }

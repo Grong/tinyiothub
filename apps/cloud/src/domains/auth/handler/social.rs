@@ -10,7 +10,6 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder};
 
 use crate::domains::auth::{redis::RedisClient, user_store::AuthUser as User};
@@ -451,20 +450,7 @@ async fn unbind_social_account(
 async fn get_social_config(State(state): State<AppState>) -> Json<ApiResponse<Vec<SocialConfig>>> {
     let db = &state.db;
 
-    let sql = "SELECT provider, app_id, app_secret, redirect_uri, is_enabled FROM social_configs";
-
-    let rows = match db
-        .query(sql, |row| {
-            Ok(SocialConfig {
-                provider: row.try_get("provider")?,
-                app_id: row.try_get("app_id")?,
-                app_secret: row.try_get("app_secret")?,
-                redirect_uri: row.try_get("redirect_uri")?,
-                is_enabled: row.try_get::<i32, _>("is_enabled")? == 1,
-            })
-        })
-        .await
-    {
+    let rows = match db.find_social_configs().await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!("Failed to get social config: {}", e);
@@ -472,7 +458,7 @@ async fn get_social_config(State(state): State<AppState>) -> Json<ApiResponse<Ve
         }
     };
 
-    let configs: Vec<SocialConfig> = rows.into_iter().collect();
+    let configs: Vec<SocialConfig> = rows.into_iter().map(SocialConfig::from).collect();
     ApiResponseBuilder::success(configs)
 }
 
@@ -503,22 +489,19 @@ async fn update_social_config(
 // ============== 辅助函数 ==============
 
 async fn get_wechat_config(db: &tinyiothub_storage::Db) -> Option<SocialConfig> {
-    let sql = "SELECT * FROM social_configs WHERE provider = 'wechat' LIMIT 1";
+    db.find_social_config("wechat").await.ok()?.map(SocialConfig::from)
+}
 
-    let rows = db
-        .query(sql, |row| {
-            Ok(SocialConfig {
-                provider: row.try_get("provider").unwrap_or_default(),
-                app_id: row.try_get("app_id").ok(),
-                app_secret: row.try_get("app_secret").ok(),
-                redirect_uri: row.try_get("redirect_uri").ok(),
-                is_enabled: row.try_get::<i32, _>("is_enabled").unwrap_or(0) == 1,
-            })
-        })
-        .await
-        .ok()?;
-
-    rows.into_iter().next()
+impl From<tinyiothub_storage::auth::SocialConfigRow> for SocialConfig {
+    fn from(row: tinyiothub_storage::auth::SocialConfigRow) -> Self {
+        Self {
+            provider: row.provider,
+            app_id: row.app_id,
+            app_secret: row.app_secret,
+            redirect_uri: row.redirect_uri,
+            is_enabled: row.is_enabled,
+        }
+    }
 }
 
 // ============== 微信 OAuth CSRF 保护 ==============

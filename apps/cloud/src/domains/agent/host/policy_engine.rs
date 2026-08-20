@@ -42,7 +42,7 @@ impl PolicyEngine for SqlitePolicyEngine {
     }
 
     async fn add_rule(&self, rule: PolicyRule) -> anyhow::Result<()> {
-        sqlx::query(
+        sqlx::query( // guard-exempt: policy trait impl（Task 12 裁决）
             "INSERT INTO policy_rules (id, workspace_id, category, action, target, priority, reason)
              VALUES (?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
@@ -66,7 +66,7 @@ impl PolicyEngine for SqlitePolicyEngine {
     }
 
     async fn remove_rule(&self, rule_id: &str) -> anyhow::Result<()> {
-        sqlx::query("DELETE FROM policy_rules WHERE id = ?")
+        sqlx::query("DELETE FROM policy_rules WHERE id = ?") // guard-exempt: policy trait impl（Task 12 裁决）
             .bind(rule_id)
             .execute(&self.pool)
             .await?;
@@ -82,7 +82,7 @@ impl SqlitePolicyEngine {
     /// Load a workspace's rules sorted by priority desc (rowid as the stable
     /// tiebreaker). Rows whose category/action strings don't parse are skipped.
     async fn load_rules(&self, workspace_id: &str) -> anyhow::Result<Vec<PolicyRule>> {
-        let rows = sqlx::query(
+        let rows = sqlx::query( // guard-exempt: policy trait impl（Task 12 裁决）
             "SELECT id, workspace_id, category, action, target, priority, reason
              FROM policy_rules WHERE workspace_id = ? ORDER BY priority DESC, rowid",
         )

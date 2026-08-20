@@ -223,3 +223,59 @@ impl Db {
         token_blacklist_contains(self.pool(), token_hash).await
     }
 }
+
+// ──────────────────────────────────────────────
+// social_configs 查询（Task 13 自 cloud social.rs 收编，
+// 收编后 Db::query 通用助手方可删除）
+// ──────────────────────────────────────────────
+
+/// social_configs 表行（第三方登录配置）。
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct SocialConfigRow {
+    pub provider: String,
+    pub app_id: Option<String>,
+    pub app_secret: Option<String>,
+    pub redirect_uri: Option<String>,
+    pub is_enabled: bool,
+}
+
+/// 列出全部第三方登录配置。
+pub(crate) async fn find_social_configs(pool: &SqlitePool) -> std::result::Result<Vec<SocialConfigRow>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, SocialConfigRow>(
+        "SELECT provider, app_id, app_secret, redirect_uri, is_enabled FROM social_configs",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
+}
+
+/// 按 provider 查单个第三方登录配置。
+pub(crate) async fn find_social_config(
+    pool: &SqlitePool,
+    provider: &str,
+) -> std::result::Result<Option<SocialConfigRow>, sqlx::Error> {
+    let row = sqlx::query_as::<_, SocialConfigRow>(
+        "SELECT provider, app_id, app_secret, redirect_uri, is_enabled FROM social_configs WHERE provider = ? LIMIT 1",
+    )
+    .bind(provider)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row)
+}
+
+impl Db {
+    /// 列出全部第三方登录配置。
+    pub async fn find_social_configs(&self) -> std::result::Result<Vec<SocialConfigRow>, sqlx::Error> {
+        find_social_configs(self.pool()).await
+    }
+
+    /// 按 provider 查单个第三方登录配置。
+    pub async fn find_social_config(
+        &self,
+        provider: &str,
+    ) -> std::result::Result<Option<SocialConfigRow>, sqlx::Error> {
+        find_social_config(self.pool(), provider).await
+    }
+}

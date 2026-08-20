@@ -43,6 +43,8 @@ pub mod device_row_mapper;
 pub mod device_trace;
 /// Driver installation persistence.
 pub mod driver_installation;
+/// Edge 网关本地持久化（offline_buffer / config_meta，edge 专有表）。
+pub mod edge;
 /// Db error type.
 pub mod error;
 /// Event + real-time status persistence and query types.
@@ -92,11 +94,11 @@ pub mod workspace;
 /// `testing` feature).
 pub mod test_helpers;
 
-// Re-export commonly used items
+// 公共面显式化（Task 13）：只re-export 跨crate 常用的入口类型；
+// 各领域行类型/函数一律经 `tinyiothub_storage::<domain>::...` 模块路径访问。
 pub use cache::DeviceCache;
 pub use config::DatabaseConfig;
 pub use database::Db;
-pub use device_row_mapper::*;
 pub use driver_installation::DriverInstallation;
 pub use error::{DbError, Result};
 pub use models::{Filter, FilterOp, Pagination, RowMetadata, SortOrder};
