@@ -7,10 +7,7 @@ use tinyiothub_core::models::{
     device_command::{CreateDeviceCommandRequest, DeviceCommand},
     device_property::DeviceProperty,
 };
-use tinyiothub_storage::{
-    Db, bulk_create_device_commands, create_device_command, create_device_properties_batch,
-    find_device_commands_by_device_id, find_device_properties_by_device_id,
-};
+use tinyiothub_storage::Db;
 
 const ERROR_DEVICE_NAME_EXISTS: &str = "Device name already exists";
 const ERROR_TEMPLATE_APPLICATION_FAILED: &str = "Template application failed";
@@ -24,37 +21,44 @@ use crate::domains::event::{
 };
 use tinyiothub_core::error::Error;
 use tinyiothub_runtime::event_bus::EventBus;
-use tinyiothub_storage::device::{DeviceCriteria, DeviceRepository};
+use tinyiothub_storage::device::DeviceCriteria;
 use tinyiothub_web::pagination::DataObjectWithPagination;
 
 pub struct DeviceService {
-    repository: Arc<DeviceRepository>,
     db: Arc<Db>,
+    /// Some(workspace_id) 时按租户作用域过滤（E6a 合并原 TenantDeviceRepository 行为）。
+    workspace_scope: Option<String>,
     event_bus: Option<Arc<EventBus>>,
     tag_db: Option<Arc<Db>>,
 }
 
 impl DeviceService {
-    pub fn new(repository: Arc<DeviceRepository>, db: Arc<Db>) -> Self {
+    pub fn new(db: Arc<Db>) -> Self {
         Self {
-            repository,
             db,
+            workspace_scope: None,
             event_bus: None,
             tag_db: None,
         }
     }
 
-    pub fn with_event_bus(
-        repository: Arc<DeviceRepository>,
-        db: Arc<Db>,
-        event_bus: Arc<EventBus>,
-    ) -> Self {
+    pub fn with_event_bus(db: Arc<Db>, event_bus: Arc<EventBus>) -> Self {
         Self {
-            repository,
             db,
+            workspace_scope: None,
             event_bus: Some(event_bus),
             tag_db: None,
         }
+    }
+
+    /// 返回带租户作用域的副本：所有设备查询/写操作限定到该 workspace。
+    pub fn for_workspace(mut self, workspace_id: String) -> Self {
+        self.workspace_scope = Some(workspace_id);
+        self
+    }
+
+    fn ws(&self) -> Option<&str> {
+        self.workspace_scope.as_deref()
     }
 
     pub fn with_tag_repository(mut self, db: Arc<Db>) -> Self {
@@ -64,10 +68,10 @@ impl DeviceService {
 
     pub async fn create_device(&self, request: &CreateDeviceRequest) -> Result<Device, Error> {
         tracing::info!("Creating device: {}", request.name);
-        if self.repository.exists_by_name(&request.name).await.unwrap_or(false) {
+        if self.db.device_exists_by_name(self.ws(), &request.name).await.unwrap_or(false) {
             return Err(Error::ValidationError(ERROR_DEVICE_NAME_EXISTS.to_string()));
         }
-        let created_device = self.repository.create(request).await?;
+        let created_device = self.db.create_device(self.ws(), request).await?;
         // 加载完整设备信息（含属性、指令）再发布事件
         let complete_device = self
             .load_complete_device(&created_device.id)
@@ -217,8 +221,8 @@ impl DeviceService {
         device_input: &crate::domains::thing::template::types::DeviceCreationInput,
     ) -> Result<Device, Error> {
         if self
-            .repository
-            .exists_by_name(&device_input.name)
+            .db
+            .device_exists_by_name(self.ws(), &device_input.name)
             .await
             .unwrap_or(false)
         {
@@ -228,7 +232,7 @@ impl DeviceService {
             .apply_template(template_id, device_input)
             .await
             .map_err(|e| Error::ValidationError(format!("{}: {}", ERROR_TEMPLATE_APPLICATION_FAILED, e)))?;
-        self.repository.create(&device_request).await
+        self.db.create_device(self.ws(), &device_request).await
     }
 
     async fn generate_and_create_properties(
@@ -244,8 +248,7 @@ impl DeviceService {
         {
             Ok(properties) => {
                 if !properties.is_empty() {
-                    let db = self.db.clone();
-                    if let Err(e) = create_device_properties_batch(&db, &properties).await {
+                    if let Err(e) = self.db.create_device_properties_batch(&properties).await {
                         tracing::warn!("{}", e);
                     }
                 }
@@ -267,8 +270,7 @@ impl DeviceService {
         {
             Ok(commands) => {
                 if !commands.is_empty() {
-                    let db = self.db.clone();
-                    if let Err(e) = bulk_create_device_commands(&db, &commands).await {
+                    if let Err(e) = self.db.bulk_create_device_commands(&commands).await {
                         tracing::warn!("Failed to create device commands: {}", e);
                     }
                 }
@@ -279,8 +281,8 @@ impl DeviceService {
 
     pub async fn update_device(&self, device_id: &str, request: &UpdateDeviceRequest) -> Result<Device, Error> {
         tracing::info!("Updating device: {}", device_id);
-        let old_device = self.repository.find_by_id(device_id).await?.ok_or(Error::NotFound)?;
-        let updated_device = self.repository.update(device_id, request).await?;
+        let old_device = self.db.find_device_by_id(self.ws(), device_id).await?.ok_or(Error::NotFound)?;
+        let updated_device = self.db.update_device(self.ws(), device_id, request).await?;
         self.publish_device_updated_event(&old_device, request, &updated_device)
             .await;
         tracing::info!("Device {} updated successfully", device_id);
@@ -337,10 +339,10 @@ impl DeviceService {
 
     pub async fn delete_device(&self, device_id: &str) -> Result<bool, Error> {
         tracing::info!("Deleting device: {}", device_id);
-        let device = self.repository.find_by_id(device_id).await?.ok_or(Error::NotFound)?;
+        let device = self.db.find_device_by_id(self.ws(), device_id).await?.ok_or(Error::NotFound)?;
 
         // Cascade: delete all sub-devices linked to this gateway
-        if let Ok(sub_devices) = self.repository.find_by_linked_gateway(device_id).await {
+        if let Ok(sub_devices) = self.db.find_devices_by_linked_gateway(self.ws(), device_id).await {
             let sub_ids: Vec<String> = sub_devices.iter().map(|d| d.id.clone()).collect();
             if !sub_ids.is_empty() {
                 tracing::info!(
@@ -348,11 +350,11 @@ impl DeviceService {
                     sub_device_count = sub_ids.len(),
                     "Cascade deleting sub-devices"
                 );
-                self.repository.delete_by_ids(&sub_ids).await?;
+                self.db.delete_devices_by_ids(self.ws(), &sub_ids).await?;
             }
         }
 
-        let deleted_count = self.repository.delete(device_id).await?;
+        let deleted_count = self.db.delete_device(self.ws(), device_id).await?;
         let success = deleted_count > 0;
         if success {
             self.publish_device_deleted_event(&device).await;
@@ -398,11 +400,11 @@ impl DeviceService {
     }
 
     pub async fn update_device_state(&self, device_id: &str, new_state: i32) -> Result<(), Error> {
-        let device = self.repository.find_by_id(device_id).await?.ok_or(Error::NotFound)?;
+        let device = self.db.find_device_by_id(self.ws(), device_id).await?.ok_or(Error::NotFound)?;
         let old_state: i32 = device.status.into();
         if old_state != new_state {
-            self.repository.update_state(device_id, new_state).await?;
-            if let Ok(Some(updated_device)) = self.repository.find_by_id(device_id).await {
+            self.db.update_device_state(self.ws(), device_id, new_state).await?;
+            if let Ok(Some(updated_device)) = self.db.find_device_by_id(self.ws(), device_id).await {
                 self.publish_device_state_updated_event(&updated_device, old_state, new_state)
                     .await;
             }
@@ -430,26 +432,26 @@ impl DeviceService {
     }
 
     pub async fn get_device_by_id(&self, device_id: &str) -> Result<Option<Device>, Error> {
-        self.repository
-            .find_by_id(device_id)
+        self.db
+            .find_device_by_id(self.ws(), device_id)
             .await
             .map_err(|e| self.io_error(e))
     }
 
     pub async fn get_device_by_id_with_tags(&self, device_id: &str) -> Result<Option<Device>, Error> {
-        self.repository
-            .find_by_id(device_id)
+        self.db
+            .find_device_by_id(self.ws(), device_id)
             .await
             .map_err(|e| self.io_error(e))
     }
 
     pub async fn get_device_by_name(&self, name: &str) -> Result<Option<Device>, Error> {
-        self.repository.find_by_name(name).await.map_err(|e| self.io_error(e))
+        self.db.find_device_by_name(self.ws(), name).await.map_err(|e| self.io_error(e))
     }
 
     pub async fn get_devices(&self, params: &DeviceQueryParams) -> Result<Vec<Device>, Error> {
         let criteria = params_to_criteria(params);
-        self.repository.find_all(&criteria).await.map_err(|e| self.io_error(e))
+        self.db.find_devices(self.ws(), &criteria).await.map_err(|e| self.io_error(e))
     }
 
     pub async fn get_devices_with_tags(
@@ -480,12 +482,12 @@ impl DeviceService {
 
     pub async fn count_devices(&self, params: &DeviceQueryParams) -> Result<i64, Error> {
         let criteria = params_to_criteria(params);
-        self.repository.count(&criteria).await.map_err(|e| self.io_error(e))
+        self.db.count_devices(self.ws(), &criteria).await.map_err(|e| self.io_error(e))
     }
 
     pub async fn update_device_enabled_status(&self, device_id: &str, enabled: bool) -> Result<bool, Error> {
-        self.repository
-            .update_enabled_status(device_id, enabled)
+        self.db
+            .update_device_enabled_status(self.ws(), device_id, enabled)
             .await
             .map_err(|e| self.io_error(e))
     }
@@ -504,29 +506,29 @@ impl DeviceService {
     }
 
     pub async fn get_child_devices(&self, parent_id: &str) -> Result<Vec<Device>, Error> {
-        self.repository
-            .find_children(parent_id)
+        self.db
+            .find_device_children(self.ws(), parent_id)
             .await
             .map_err(|e| self.io_error(e))
     }
 
     pub async fn get_devices_by_template(&self, template_id: &str) -> Result<Vec<Device>, Error> {
-        self.repository
-            .find_by_template_id(template_id)
+        self.db
+            .find_devices_by_template_id(self.ws(), template_id)
             .await
             .map_err(|e| self.io_error(e))
     }
 
     pub async fn get_devices_by_driver(&self, driver_name: &str) -> Result<Vec<Device>, Error> {
-        self.repository
-            .find_by_driver_name(driver_name)
+        self.db
+            .find_devices_by_driver_name(self.ws(), driver_name)
             .await
             .map_err(|e| self.io_error(e))
     }
 
     pub async fn get_device_properties(&self, device_id: &str) -> Result<Vec<DeviceProperty>, Error> {
-        let db = self.db.clone();
-        find_device_properties_by_device_id(&db, device_id)
+        self.db
+            .find_device_properties_by_device_id(device_id)
             .await
             .map_err(|e| self.io_error(e))
     }
@@ -555,8 +557,8 @@ impl DeviceService {
     }
 
     pub async fn get_device_commands(&self, device_id: &str) -> Result<Vec<DeviceCommand>, Error> {
-        let db = self.db.clone();
-        find_device_commands_by_device_id(&db, device_id)
+        self.db
+            .find_device_commands_by_device_id(device_id)
             .await
             .map_err(|e| self.io_error(e))
     }
@@ -572,14 +574,14 @@ impl DeviceService {
 
     pub async fn create_devices_batch(&self, requests: &[CreateDeviceRequest]) -> Result<Vec<Device>, Error> {
         for request in requests {
-            if self.repository.exists_by_name(&request.name).await.unwrap_or(false) {
+            if self.db.device_exists_by_name(self.ws(), &request.name).await.unwrap_or(false) {
                 return Err(Error::ValidationError(format!(
                     "{}: '{}'",
                     ERROR_DEVICE_NAME_EXISTS, request.name
                 )));
             }
         }
-        let created_devices = self.repository.create_batch(requests).await?;
+        let created_devices = self.db.create_devices_batch(self.ws(), requests).await?;
         for device in &created_devices {
             self.publish_batch_device_created_event(device).await;
         }
@@ -615,8 +617,8 @@ impl DeviceService {
     }
 
     pub async fn delete_devices_batch(&self, device_ids: &[String]) -> Result<u64, Error> {
-        let devices = self.repository.find_by_ids(device_ids).await?;
-        let deleted_count = self.repository.delete_by_ids(device_ids).await?;
+        let devices = self.db.find_devices_by_ids(self.ws(), device_ids).await?;
+        let deleted_count = self.db.delete_devices_by_ids(self.ws(), device_ids).await?;
         for device in &devices {
             self.publish_batch_device_deleted_event(device).await;
         }
@@ -624,7 +626,7 @@ impl DeviceService {
     }
 
     pub async fn update_device_states_batch(&self, updates: &[(String, i32)]) -> Result<u64, Error> {
-        self.repository.update_states_batch(updates).await
+        self.db.update_device_states_batch(self.ws(), updates).await
     }
 
     pub async fn device_exists(&self, device_id: &str) -> Result<bool, Error> {
@@ -635,7 +637,7 @@ impl DeviceService {
     }
 
     pub async fn device_name_exists(&self, name: &str) -> Result<bool, Error> {
-        self.repository.exists_by_name(name).await.map_err(|e| self.io_error(e))
+        self.db.device_exists_by_name(self.ws(), name).await.map_err(|e| self.io_error(e))
     }
 
     fn validate_driver_configuration(&self, device: &Device) -> Option<String> {
@@ -690,7 +692,7 @@ impl DeviceService {
     }
 
     pub async fn load_complete_device(&self, device_id: &str) -> Result<Option<Device>, Error> {
-        let mut device = match self.repository.find_by_id(device_id).await? {
+        let mut device = match self.db.find_device_by_id(self.ws(), device_id).await? {
             Some(device) => device,
             None => return Ok(None),
         };
@@ -734,11 +736,10 @@ impl DeviceService {
         command_type: &str,
         params: Option<String>,
     ) -> Result<String, Error> {
-        let device = self.repository.find_by_id(device_id).await?.ok_or(Error::NotFound)?;
+        let device = self.db.find_device_by_id(self.ws(), device_id).await?.ok_or(Error::NotFound)?;
         let command_id = uuid::Uuid::new_v4().to_string();
         let create_request = self.build_device_command_request(device_id, command_name, command_type, params);
-        let db = self.db.clone();
-        let _ = create_device_command(&db, &create_request).await;
+        let _ = self.db.create_device_command(&create_request).await;
         self.publish_command_started_event(&device, command_name, command_type, &command_id)
             .await;
         Ok(command_id)

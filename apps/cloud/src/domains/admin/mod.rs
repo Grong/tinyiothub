@@ -32,7 +32,7 @@ use tinyiothub_core::models::device::Device;
 use tinyiothub_core::models::device_property::DeviceProperty;
 use tinyiothub_runtime::event_bus::EventBus;
 use tinyiothub_storage::event::EventRepository;
-use tinyiothub_storage::{Db, DeviceRepository, cache::DeviceCache};
+use tinyiothub_storage::{Db, cache::DeviceCache};
 
 pub mod batch;
 pub mod device;
@@ -123,11 +123,6 @@ impl AdminState {
         })
     }
 
-    /// 租户作用域设备仓储（AppState::device_repo_for 的域内移植）
-    fn device_repo_for(&self, workspace_id: String) -> Arc<DeviceRepository> {
-        Arc::new(DeviceRepository::new(self.db.as_ref().clone()).for_workspace(workspace_id))
-    }
-
     /// Returns a tenant-scoped device service.
     ///
     /// AppState 同名方法的域内移植：workspace_id 为 None 时记录安全警告并
@@ -141,10 +136,10 @@ impl AdminState {
             );
             String::new()
         });
-        let repository = self.device_repo_for(ws_id);
 
         Arc::new(
-            DeviceService::with_event_bus(repository, self.db.clone(), self.event_bus.clone())
+            DeviceService::with_event_bus(self.db.clone(), self.event_bus.clone())
+                .for_workspace(ws_id)
                 .with_tag_repository(self.db.clone()),
         )
     }
@@ -187,7 +182,7 @@ impl AdminState {
         };
 
         // 2. 验证属性存在且属于该设备
-        let property = match tinyiothub_storage::find_device_property_by_id(self.db(), property_id).await {
+        let property = match self.db().find_device_property_by_id(property_id).await {
             Ok(Some(p)) if p.device_id == device_id => p,
             Ok(Some(_)) => {
                 return Err(Error::ValidationError("Property does not belong to device".to_string()));

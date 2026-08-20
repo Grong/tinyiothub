@@ -59,67 +59,15 @@ impl DeviceQueryService for SqliteDeviceQueryService {
     }
 
     async fn get_stats(&self) -> Result<DeviceStats> {
-        let row = sqlx::query(
-            r#"
-            SELECT
-                COUNT(*) as total_devices,
-                COUNT(CASE WHEN state = 1 THEN 1 END) as online_devices,
-                COUNT(CASE WHEN state = 0 OR state = 3 THEN 1 END) as offline_devices,
-                COUNT(CASE WHEN state = 2 THEN 1 END) as alarm_devices
-            FROM devices
-            "#,
-        )
-        .fetch_one(self.db.pool())
-        .await?;
-
-        Ok(DeviceStats {
-            total_devices: row.get("total_devices"),
-            online_devices: row.get("online_devices"),
-            offline_devices: row.get("offline_devices"),
-            alarm_devices: row.get("alarm_devices"),
-        })
+        self.db.device_stats_overview().await
     }
 
     async fn get_stats_by_type(&self) -> Result<Vec<(String, i64)>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT COALESCE(device_type, 'Unknown') as device_type, COUNT(*) as count
-            FROM devices
-            GROUP BY device_type
-            ORDER BY count DESC
-            "#,
-        )
-        .fetch_all(self.db.pool())
-        .await?;
-
-        let mut stats = Vec::new();
-        for row in rows {
-            let device_type: String = row.get("device_type");
-            let count: i64 = row.get("count");
-            stats.push((device_type, count));
-        }
-        Ok(stats)
+        self.db.count_devices_by_type().await
     }
 
     async fn get_stats_by_driver(&self) -> Result<Vec<(String, i64)>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT COALESCE(driver_name, 'Unknown') as driver_name, COUNT(*) as count
-            FROM devices
-            GROUP BY driver_name
-            ORDER BY count DESC
-            "#,
-        )
-        .fetch_all(self.db.pool())
-        .await?;
-
-        let mut stats = Vec::new();
-        for row in rows {
-            let driver_name: String = row.get("driver_name");
-            let count: i64 = row.get("count");
-            stats.push((driver_name, count));
-        }
-        Ok(stats)
+        self.db.count_devices_by_driver().await
     }
 
     async fn get_device_tree(&self, root_id: Option<&str>) -> Result<Vec<Device>> {

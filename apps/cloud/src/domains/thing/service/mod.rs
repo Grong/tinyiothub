@@ -22,10 +22,7 @@ use crate::domains::thing::types::ThingRow;
 use crate::domains::thing::types::ThingTreeNode;
 use crate::domains::thing::types::ThingType;
 use crate::domains::thing::types::UpdateThingRequest;
-use tinyiothub_storage::{
-    Db, create_device_command, create_device_properties_batch, find_device_commands_by_device_id,
-    find_device_properties_by_device_id,
-};
+use tinyiothub_storage::Db;
 
 pub struct ThingService {
     repo: ThingRepo,
@@ -249,7 +246,7 @@ impl ThingService {
             })
             .collect();
         let db = Db::new(self.pool.clone());
-        create_device_properties_batch(&db, &requests).await?;
+        db.create_device_properties_batch(&requests).await?;
         Ok(())
     }
 
@@ -270,7 +267,7 @@ impl ThingService {
                 description: None,
                 parameters: a.get("parameters").map(|v| v.to_string()),
             };
-            create_device_command(&db, &req).await?;
+            db.create_device_command(&req).await?;
         }
         Ok(())
     }
@@ -438,7 +435,7 @@ impl ThingService {
     /// model means a thing with no instances has no properties (D6).
     async fn load_properties(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
         let db = Db::new(self.pool.clone());
-        let props = find_device_properties_by_device_id(&db, device_id).await.ok()?;
+        let props = db.find_device_properties_by_device_id(device_id).await.ok()?;
         if props.is_empty() {
             return None;
         }
@@ -502,7 +499,7 @@ impl ThingService {
     /// thing_actions — eng-review T9).
     async fn load_actions(&self, thing_id: &str) -> Option<Vec<serde_json::Value>> {
         let db = Db::new(self.pool.clone());
-        let cmds = find_device_commands_by_device_id(&db, thing_id).await.ok()?;
+        let cmds = db.find_device_commands_by_device_id(thing_id).await.ok()?;
         if cmds.is_empty() {
             return None;
         }

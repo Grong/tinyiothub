@@ -2,20 +2,21 @@ use std::sync::Arc;
 
 use crate::shared::error::{EdgeError, EdgeResult};
 use tinyiothub_core::models::device::{CreateDeviceRequest, Device};
-use tinyiothub_storage::device::{DeviceCriteria, DeviceRepository};
+use tinyiothub_storage::Db;
+use tinyiothub_storage::device::DeviceCriteria;
 
 pub struct DeviceService {
-    repo: Arc<DeviceRepository>,
+    db: Arc<Db>,
 }
 
 impl DeviceService {
-    pub fn new(repo: Arc<DeviceRepository>) -> Arc<Self> {
-        Arc::new(Self { repo })
+    pub fn new(db: Arc<Db>) -> Arc<Self> {
+        Arc::new(Self { db })
     }
 
     pub async fn get_device(&self, id: &str) -> EdgeResult<Device> {
-        self.repo
-            .find_by_id(id)
+        self.db
+            .find_device_by_id(None, id)
             .await?
             .ok_or_else(|| EdgeError::Internal(format!("device not found: {}", id)))
     }
@@ -29,14 +30,14 @@ impl DeviceService {
         } else {
             DeviceCriteria::default()
         };
-        Ok(self.repo.find_all(&criteria).await?)
+        Ok(self.db.find_devices(None, &criteria).await?)
     }
 
     pub async fn sync_from_cloud(&self, cloud_devices: &[CreateDeviceRequest]) -> EdgeResult<Vec<Device>> {
         if cloud_devices.is_empty() {
             return Ok(Vec::new());
         }
-        Ok(self.repo.create_batch(cloud_devices).await?)
+        Ok(self.db.create_devices_batch(None, cloud_devices).await?)
     }
 
     pub async fn get_driver_for_device(&self, device_id: &str) -> EdgeResult<String> {

@@ -8,10 +8,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tinyiothub_core::models::device::CreateDeviceRequest;
-use tinyiothub_storage::{
-    device::{DeviceCriteria, DeviceSortBy, DeviceSortOrder},
-    find_device_command_by_device_and_name, find_device_properties_by_device_id,
-};
+use tinyiothub_storage::device::{DeviceCriteria, DeviceSortBy, DeviceSortOrder};
 
 use crate::domains::thing::legacy::device_query::{
     find_device_by_id, find_device_by_id_with_tags, load_tags_for_devices,
@@ -242,7 +239,7 @@ impl ToolHandler for DevicePropertyGetHandler {
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.device_id)))?;
 
-        let all_properties = find_device_properties_by_device_id(state.db(), &input.device_id)
+        let all_properties = state.db().find_device_properties_by_device_id(&input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -354,7 +351,7 @@ impl ToolHandler for WritePropertiesHandler {
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.device_id)))?;
 
-        let device_properties = find_device_properties_by_device_id(state.db(), &input.device_id)
+        let device_properties = state.db().find_device_properties_by_device_id(&input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -505,7 +502,7 @@ impl ToolHandler for DeviceCommandHandler {
             .unwrap());
         }
 
-        let command = find_device_command_by_device_and_name(state.db(), &input.device_id, &input.command_name)
+        let command = state.db().find_device_command_by_device_and_name(&input.device_id, &input.command_name)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -872,8 +869,6 @@ impl ToolHandler for SearchDevicesHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let repository = state.device_repo_for(workspace_id.clone());
-
         let criteria = DeviceCriteria {
             workspace_id: Some(workspace_id),
             search_text: Some(input.keyword.clone()),
@@ -884,8 +879,9 @@ impl ToolHandler for SearchDevicesHandler {
             ..Default::default()
         };
 
-        let mut devices = repository
-            .find_all(&criteria)
+        let mut devices = state
+            .db()
+            .find_devices(None, &criteria)
             .await
             .map_err(|e| ToolError::Internal(format!("Search failed: {}", e)))?;
 

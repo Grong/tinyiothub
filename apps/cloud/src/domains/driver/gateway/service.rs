@@ -5,7 +5,6 @@ use std::{
 };
 
 use tinyiothub_core::models::device::CreateDeviceRequest;
-use tinyiothub_storage::DeviceRepository;
 use tokio::sync::{RwLock, mpsc};
 
 use crate::domains::event::{
@@ -89,9 +88,6 @@ impl GatewayService {
         let workspace_id = req.workspace_id.clone().unwrap_or_default();
         let password = generate_device_password();
 
-        let repo = Arc::new(
-            DeviceRepository::new(self.database_for_repos.as_ref().clone()).for_workspace(workspace_id.clone()),
-        );
         let create_req = CreateDeviceRequest {
             name: device_name.clone(),
             device_type: Some("gateway".into()),
@@ -100,14 +96,21 @@ impl GatewayService {
             workspace_id: Some(workspace_id.clone()),
             ..Default::default()
         };
-        let device = repo.create(&create_req).await.map_err(|e| {
-            tracing::error!(?e, "Failed to create device during pairing");
-            PairingError::Internal
-        })?;
+        let device = self
+            .database_for_repos
+            .create_device(Some(&workspace_id), &create_req)
+            .await
+            .map_err(|e| {
+                tracing::error!(?e, "Failed to create device during pairing");
+                PairingError::Internal
+            })?;
         let device_id = device.id.clone();
 
         // Set gateway as online
-        let _ = repo.update_state(&device_id, 1i32).await;
+        let _ = self
+            .database_for_repos
+            .update_device_state(Some(&workspace_id), &device_id, 1i32)
+            .await;
 
         // Remove code BEFORE MQTT publish to prevent simultaneous pairing of same code
         self.cache.remove(&code).await;
@@ -143,7 +146,7 @@ impl GatewayService {
             .await
             .is_err()
         {
-            let _ = repo.delete(&device_id).await;
+            let _ = self.database_for_repos.delete_device(Some(&workspace_id), &device_id).await;
             // Restore the code to cache so the gateway can still be paired
             self.cache
                 .insert(
@@ -245,9 +248,6 @@ impl GatewayService {
             return Ok(());
         }
 
-        let repo = Arc::new(
-            DeviceRepository::new(self.database_for_repos.as_ref().clone()).for_workspace(workspace_id.to_string()),
-        );
         let requests: Vec<CreateDeviceRequest> = msg
             .devices
             .iter()
@@ -265,7 +265,10 @@ impl GatewayService {
             })
             .collect();
 
-        repo.create_batch(&requests).await.map(|_| ())
+        self.database_for_repos
+            .create_devices_batch(Some(workspace_id), &requests)
+            .await
+            .map(|_| ())
     }
 
     pub async fn handle_gateway_data(&self, data: GatewayDataMessage) {
@@ -275,10 +278,11 @@ impl GatewayService {
                 workspace_id,
                 ..
             } => {
-                let repo = Arc::new(
-                    DeviceRepository::new(self.database_for_repos.as_ref().clone()).for_workspace(workspace_id.clone()),
-                );
-                if let Err(e) = repo.update_state(gateway_id, 1i32).await {
+                if let Err(e) = self
+                    .database_for_repos
+                    .update_device_state(Some(workspace_id), gateway_id, 1i32)
+                    .await
+                {
                     tracing::warn!(?e, gateway_id = %gateway_id, "Failed to update gateway last_seen");
                 }
                 tracing::debug!(gateway_id = %gateway_id, "Gateway status received, last_seen updated");

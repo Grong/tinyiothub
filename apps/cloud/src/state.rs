@@ -279,10 +279,8 @@ impl AppState {
         // 这里只创建事件总线，处理器注册推迟到 register_event_handlers() 方法
 
         // 基础服务 - 使用事件总线
-        let device_repository: Arc<tinyiothub_storage::device::DeviceRepository> =
-            Arc::new(tinyiothub_storage::DeviceRepository::new(database.as_ref().clone()));
         let device_service = Arc::new(
-            DeviceService::with_event_bus(device_repository, database.clone(), event_bus.clone())
+            DeviceService::with_event_bus(database.clone(), event_bus.clone())
                 .with_tag_repository(database.clone()),
         );
         let device_query_service: Arc<dyn DeviceQueryService> = Arc::new(

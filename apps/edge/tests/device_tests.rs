@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use tinyiothub_core::models::device::CreateDeviceRequest;
-use tinyiothub_storage::device::DeviceRepository;
 use tinyiothub_storage::{Db, DatabaseConfig, create_pool_without_migrations};
 
 use tinyiothub_edge::modules::device::DeviceService;
@@ -32,7 +31,7 @@ CREATE TABLE IF NOT EXISTS devices (
 )
 "#;
 
-async fn setup_test_repo() -> Result<(Arc<Db>, Arc<DeviceRepository>), Box<dyn std::error::Error>> {
+async fn setup_test_repo() -> Result<Arc<Db>, Box<dyn std::error::Error>> {
     let config = DatabaseConfig {
         url: "sqlite::memory:".to_string(),
         ..Default::default()
@@ -43,9 +42,7 @@ async fn setup_test_repo() -> Result<(Arc<Db>, Arc<DeviceRepository>), Box<dyn s
     // Create devices table
     db.execute(DEVICES_TABLE_DDL).await?;
 
-    let repo = Arc::new(DeviceRepository::new(db.as_ref().clone()));
-
-    Ok((db, repo))
+    Ok(db)
 }
 
 fn make_create_request(name: &str, driver_name: &str) -> CreateDeviceRequest {
@@ -61,8 +58,8 @@ fn make_create_request(name: &str, driver_name: &str) -> CreateDeviceRequest {
 
 #[tokio::test]
 async fn test_list_devices_empty() {
-    let (_db, repo) = setup_test_repo().await.unwrap();
-    let svc = DeviceService::new(repo as Arc<tinyiothub_storage::device::DeviceRepository>);
+    let db = setup_test_repo().await.unwrap();
+    let svc = DeviceService::new(db);
 
     let devices = svc.list_devices(None).await.unwrap();
     assert!(devices.is_empty());
@@ -70,14 +67,14 @@ async fn test_list_devices_empty() {
 
 #[tokio::test]
 async fn test_list_devices_with_driver_filter() {
-    let (_db, repo) = setup_test_repo().await.unwrap();
+    let db = setup_test_repo().await.unwrap();
 
-    // Insert devices via the repo directly
-    repo.create(&make_create_request("dev-a", "modbus")).await.unwrap();
-    repo.create(&make_create_request("dev-b", "onvif")).await.unwrap();
-    repo.create(&make_create_request("dev-c", "modbus")).await.unwrap();
+    // Insert devices via the db directly
+    db.create_device(None, &make_create_request("dev-a", "modbus")).await.unwrap();
+    db.create_device(None, &make_create_request("dev-b", "onvif")).await.unwrap();
+    db.create_device(None, &make_create_request("dev-c", "modbus")).await.unwrap();
 
-    let svc = DeviceService::new(repo as Arc<tinyiothub_storage::device::DeviceRepository>);
+    let svc = DeviceService::new(db);
 
     let all = svc.list_devices(None).await.unwrap();
     assert_eq!(all.len(), 3, "expected 3 devices total");
@@ -96,10 +93,10 @@ async fn test_list_devices_with_driver_filter() {
 
 #[tokio::test]
 async fn test_get_device_found() {
-    let (_db, repo) = setup_test_repo().await.unwrap();
-    let created = repo.create(&make_create_request("my-device", "modbus")).await.unwrap();
+    let db = setup_test_repo().await.unwrap();
+    let created = db.create_device(None, &make_create_request("my-device", "modbus")).await.unwrap();
 
-    let svc = DeviceService::new(repo as Arc<tinyiothub_storage::device::DeviceRepository>);
+    let svc = DeviceService::new(db);
 
     let fetched = svc.get_device(&created.id).await.unwrap();
     assert_eq!(fetched.id, created.id);
@@ -109,8 +106,8 @@ async fn test_get_device_found() {
 
 #[tokio::test]
 async fn test_get_device_not_found() {
-    let (_db, repo) = setup_test_repo().await.unwrap();
-    let svc = DeviceService::new(repo as Arc<tinyiothub_storage::device::DeviceRepository>);
+    let db = setup_test_repo().await.unwrap();
+    let svc = DeviceService::new(db);
 
     let result = svc.get_device("nonexistent-id").await;
     assert!(result.is_err(), "expected error for nonexistent device");
@@ -126,13 +123,13 @@ async fn test_get_device_not_found() {
 
 #[tokio::test]
 async fn test_get_driver_for_device_has_driver() {
-    let (_db, repo) = setup_test_repo().await.unwrap();
-    let created = repo
-        .create(&make_create_request("dev-with-driver", "snmp"))
+    let db = setup_test_repo().await.unwrap();
+    let created = db
+        .create_device(None, &make_create_request("dev-with-driver", "snmp"))
         .await
         .unwrap();
 
-    let svc = DeviceService::new(repo as Arc<tinyiothub_storage::device::DeviceRepository>);
+    let svc = DeviceService::new(db);
 
     let driver = svc.get_driver_for_device(&created.id).await.unwrap();
     assert_eq!(driver, "snmp");
@@ -140,9 +137,9 @@ async fn test_get_driver_for_device_has_driver() {
 
 #[tokio::test]
 async fn test_get_driver_for_device_no_driver() {
-    let (_db, repo) = setup_test_repo().await.unwrap();
-    let created = repo
-        .create(&CreateDeviceRequest {
+    let db = setup_test_repo().await.unwrap();
+    let created = db
+        .create_device(None, &CreateDeviceRequest {
             name: "no-driver-device".to_string(),
             driver_name: None,
             ..Default::default()
@@ -150,7 +147,7 @@ async fn test_get_driver_for_device_no_driver() {
         .await
         .unwrap();
 
-    let svc = DeviceService::new(repo as Arc<tinyiothub_storage::device::DeviceRepository>);
+    let svc = DeviceService::new(db);
 
     let result = svc.get_driver_for_device(&created.id).await;
     assert!(result.is_err(), "expected error for device with no driver");
@@ -164,8 +161,8 @@ async fn test_get_driver_for_device_no_driver() {
 
 #[tokio::test]
 async fn test_get_driver_for_device_not_found() {
-    let (_db, repo) = setup_test_repo().await.unwrap();
-    let svc = DeviceService::new(repo as Arc<tinyiothub_storage::device::DeviceRepository>);
+    let db = setup_test_repo().await.unwrap();
+    let svc = DeviceService::new(db);
 
     let result = svc.get_driver_for_device("nonexistent-id").await;
     assert!(result.is_err(), "expected error for nonexistent device");
@@ -175,8 +172,8 @@ async fn test_get_driver_for_device_not_found() {
 
 #[tokio::test]
 async fn test_sync_from_cloud_creates_devices() {
-    let (_db, repo) = setup_test_repo().await.unwrap();
-    let svc = DeviceService::new(repo.clone() as Arc<tinyiothub_storage::device::DeviceRepository>);
+    let db = setup_test_repo().await.unwrap();
+    let svc = DeviceService::new(db.clone());
 
     let requests = vec![
         make_create_request("cloud-dev-1", "modbus"),
@@ -195,8 +192,8 @@ async fn test_sync_from_cloud_creates_devices() {
 
 #[tokio::test]
 async fn test_sync_from_cloud_empty_list() {
-    let (_db, repo) = setup_test_repo().await.unwrap();
-    let svc = DeviceService::new(repo as Arc<tinyiothub_storage::device::DeviceRepository>);
+    let db = setup_test_repo().await.unwrap();
+    let svc = DeviceService::new(db);
 
     let created = svc.sync_from_cloud(&[]).await.unwrap();
     assert!(created.is_empty());

@@ -1,4 +1,4 @@
-use sqlx::FromRow;
+use sqlx::{FromRow, SqlitePool};
 
 use crate::database::Db;
 use tinyiothub_core::models::device_command::*;
@@ -31,7 +31,10 @@ impl From<DeviceCommandRow> for DeviceCommand {
 }
 
 /// Find a device command by ID
-pub async fn find_device_command_by_id(db: &Db, id: &str) -> Result<Option<DeviceCommand>, sqlx::Error> {
+pub(crate) async fn find_device_command_by_id(
+    pool: &SqlitePool,
+    id: &str,
+) -> Result<Option<DeviceCommand>, sqlx::Error> {
     let row = sqlx::query_as::<_, DeviceCommandRow>(
         r#"
         SELECT id, device_id, name, display_name, description, parameters, created_at
@@ -39,21 +42,21 @@ pub async fn find_device_command_by_id(db: &Db, id: &str) -> Result<Option<Devic
         "#,
     )
     .bind(id)
-    .fetch_optional(db.pool())
+    .fetch_optional(pool)
     .await?;
 
     Ok(row.map(Into::into))
 }
 
 /// Create a new device command
-pub async fn create_device_command(
-    db: &Db,
+pub(crate) async fn create_device_command(
+    pool: &SqlitePool,
     request: &CreateDeviceCommandRequest,
 ) -> Result<DeviceCommand, sqlx::Error> {
     let id = generate_id();
     let created_at = now_string();
 
-    let mut tx = db.pool().begin().await?;
+    let mut tx = pool.begin().await?;
 
     sqlx::query(
         r#"
@@ -85,8 +88,8 @@ pub async fn create_device_command(
 }
 
 /// Find commands by device ID
-pub async fn find_device_commands_by_device_id(
-    db: &Db,
+pub(crate) async fn find_device_commands_by_device_id(
+    pool: &SqlitePool,
     device_id: &str,
 ) -> Result<Vec<DeviceCommand>, sqlx::Error> {
     let rows = sqlx::query_as::<_, DeviceCommandRow>(
@@ -97,15 +100,15 @@ pub async fn find_device_commands_by_device_id(
         "#,
     )
     .bind(device_id)
-    .fetch_all(db.pool())
+    .fetch_all(pool)
     .await?;
 
     Ok(rows.into_iter().map(Into::into).collect())
 }
 
 /// Find command by device ID and name
-pub async fn find_device_command_by_device_and_name(
-    db: &Db,
+pub(crate) async fn find_device_command_by_device_and_name(
+    pool: &SqlitePool,
     device_id: &str,
     name: &str,
 ) -> Result<Option<DeviceCommand>, sqlx::Error> {
@@ -117,18 +120,18 @@ pub async fn find_device_command_by_device_and_name(
     )
     .bind(device_id)
     .bind(name)
-    .fetch_optional(db.pool())
+    .fetch_optional(pool)
     .await?;
 
     Ok(row.map(Into::into))
 }
 
 /// Bulk create device commands
-pub async fn bulk_create_device_commands(
-    db: &Db,
+pub(crate) async fn bulk_create_device_commands(
+    pool: &SqlitePool,
     requests: &[CreateDeviceCommandRequest],
 ) -> Result<Vec<DeviceCommand>, sqlx::Error> {
-    let mut tx = db.pool().begin().await?;
+    let mut tx = pool.begin().await?;
     let mut created_commands = Vec::new();
 
     for request in requests {
@@ -164,4 +167,44 @@ pub async fn bulk_create_device_commands(
 
     tx.commit().await?;
     Ok(created_commands)
+}
+
+impl Db {
+    /// 按 ID 查设备指令。
+    pub async fn find_device_command_by_id(&self, id: &str) -> Result<Option<DeviceCommand>, sqlx::Error> {
+        find_device_command_by_id(self.pool(), id).await
+    }
+
+    /// 创建一条设备指令（内部事务）。
+    pub async fn create_device_command(
+        &self,
+        request: &CreateDeviceCommandRequest,
+    ) -> Result<DeviceCommand, sqlx::Error> {
+        create_device_command(self.pool(), request).await
+    }
+
+    /// 按设备 ID 列出指令（按名称升序）。
+    pub async fn find_device_commands_by_device_id(
+        &self,
+        device_id: &str,
+    ) -> Result<Vec<DeviceCommand>, sqlx::Error> {
+        find_device_commands_by_device_id(self.pool(), device_id).await
+    }
+
+    /// 按设备 ID + 指令名查指令。
+    pub async fn find_device_command_by_device_and_name(
+        &self,
+        device_id: &str,
+        name: &str,
+    ) -> Result<Option<DeviceCommand>, sqlx::Error> {
+        find_device_command_by_device_and_name(self.pool(), device_id, name).await
+    }
+
+    /// 批量创建设备指令（内部事务）。
+    pub async fn bulk_create_device_commands(
+        &self,
+        requests: &[CreateDeviceCommandRequest],
+    ) -> Result<Vec<DeviceCommand>, sqlx::Error> {
+        bulk_create_device_commands(self.pool(), requests).await
+    }
 }

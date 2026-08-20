@@ -1,4 +1,4 @@
-use sqlx::FromRow;
+use sqlx::{FromRow, SqlitePool};
 
 use crate::database::Db;
 use tinyiothub_core::models::device_property::*;
@@ -45,7 +45,10 @@ impl From<DevicePropertyRow> for DeviceProperty {
 }
 
 /// Find a device property by ID
-pub async fn find_device_property_by_id(db: &Db, id: &str) -> Result<Option<DeviceProperty>, sqlx::Error> {
+pub(crate) async fn find_device_property_by_id(
+    pool: &SqlitePool,
+    id: &str,
+) -> Result<Option<DeviceProperty>, sqlx::Error> {
     let row = sqlx::query_as::<_, DevicePropertyRow>(
         r#"
         SELECT id, device_id, name, display_name, description, data_type, unit,
@@ -54,7 +57,7 @@ pub async fn find_device_property_by_id(db: &Db, id: &str) -> Result<Option<Devi
         "#,
     )
     .bind(id)
-    .fetch_optional(db.pool())
+    .fetch_optional(pool)
     .await?;
 
     let mut property: Option<DeviceProperty> = row.map(Into::into);
@@ -66,8 +69,8 @@ pub async fn find_device_property_by_id(db: &Db, id: &str) -> Result<Option<Devi
 }
 
 /// Find properties by device ID
-pub async fn find_device_properties_by_device_id(
-    db: &Db,
+pub(crate) async fn find_device_properties_by_device_id(
+    pool: &SqlitePool,
     device_id: &str,
 ) -> Result<Vec<DeviceProperty>, sqlx::Error> {
     let rows = sqlx::query_as::<_, DevicePropertyRow>(
@@ -79,7 +82,7 @@ pub async fn find_device_properties_by_device_id(
         "#,
     )
     .bind(device_id)
-    .fetch_all(db.pool())
+    .fetch_all(pool)
     .await?;
 
     let mut properties: Vec<DeviceProperty> = rows.into_iter().map(Into::into).collect();
@@ -91,11 +94,11 @@ pub async fn find_device_properties_by_device_id(
 }
 
 /// Batch create device properties
-pub async fn create_device_properties_batch(
-    db: &Db,
+pub(crate) async fn create_device_properties_batch(
+    pool: &SqlitePool,
     requests: &[CreateDevicePropertyRequest],
 ) -> Result<Vec<DeviceProperty>, sqlx::Error> {
-    let mut tx = db.pool().begin().await?;
+    let mut tx = pool.begin().await?;
     let mut created_ids = Vec::new();
 
     for request in requests {
@@ -134,10 +137,33 @@ pub async fn create_device_properties_batch(
 
     let mut results = Vec::new();
     for id in created_ids {
-        if let Some(property) = find_device_property_by_id(db, &id).await? {
+        if let Some(property) = find_device_property_by_id(pool, &id).await? {
             results.push(property);
         }
     }
 
     Ok(results)
+}
+
+impl Db {
+    /// 按 ID 查设备属性（清除运行时字段）。
+    pub async fn find_device_property_by_id(&self, id: &str) -> Result<Option<DeviceProperty>, sqlx::Error> {
+        find_device_property_by_id(self.pool(), id).await
+    }
+
+    /// 按设备 ID 列出属性（按名称排序，清除运行时字段）。
+    pub async fn find_device_properties_by_device_id(
+        &self,
+        device_id: &str,
+    ) -> Result<Vec<DeviceProperty>, sqlx::Error> {
+        find_device_properties_by_device_id(self.pool(), device_id).await
+    }
+
+    /// 批量创建设备属性（内部事务，逐条回读）。
+    pub async fn create_device_properties_batch(
+        &self,
+        requests: &[CreateDevicePropertyRequest],
+    ) -> Result<Vec<DeviceProperty>, sqlx::Error> {
+        create_device_properties_batch(self.pool(), requests).await
+    }
 }

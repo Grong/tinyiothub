@@ -107,9 +107,7 @@ pub async fn initialize_logging(config: &ApplicationSettings) -> std::io::Result
 
 /// 重新加载已安装的动态驱动
 pub async fn rehydrate_drivers(app_state: &AppState) {
-    use tinyiothub_storage::DriverInstallationRepo;
-    let repo = DriverInstallationRepo::new((*app_state.db).clone());
-    match repo.find_all().await {
+    match app_state.db.find_all_driver_installations().await {
         Ok(installations) => {
             let registry = tinyiothub_runtime::driver_registry();
             for inst in installations {

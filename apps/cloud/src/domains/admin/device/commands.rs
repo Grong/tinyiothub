@@ -6,7 +6,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tinyiothub_web::security::Claims;
-use tinyiothub_storage::find_device_command_by_id;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use tinyiothub_web::api_response::ApiResponse;
@@ -60,7 +59,7 @@ async fn execute_device_command(
     // which automatically filters devices by workspace_id
 
     // 验证指令是否存在
-    let command = match find_device_command_by_id(state.db(), &command_id).await {
+    let command = match state.db().find_device_command_by_id(&command_id).await {
         Ok(Some(c)) => c,
         Ok(None) => return ApiResponseBuilder::error("指令不存在"),
         Err(e) => {

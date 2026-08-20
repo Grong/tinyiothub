@@ -11,7 +11,6 @@ use crate::modules::telemetry::TelemetryService;
 use crate::shared::error::EdgeResult;
 use crate::shared::storage::init_database;
 use std::sync::Arc;
-use tinyiothub_storage::device::DeviceRepository;
 
 pub struct AppState {
     pub config: EdgeConfig,
@@ -35,8 +34,7 @@ impl AppState {
         let offline_buffer = OfflineBuffer::new(db.clone(), config.clone());
 
         // Layer 2: Depends on Layer 1
-        let device_repo = Arc::new(DeviceRepository::new(db.as_ref().clone()));
-        let device_service = DeviceService::new(device_repo);
+        let device_service = DeviceService::new(db.clone());
         let gateway_service = GatewayService::new(&credentials, &config);
         let driver_service = DriverService::new(db.clone(), config.scan_timeout_secs);
 
