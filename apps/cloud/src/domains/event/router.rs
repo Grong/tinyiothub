@@ -223,30 +223,28 @@ pub async fn route_thing_event(
 
     let created_at = Utc::now().to_rfc3339();
 
-    let result = sqlx::query(
-        "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, source_type, source_id, device_id, user_id, title, content, metadata, created_at, workspace_id, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    )
-    .bind(&event_id_str)
-    .bind("device")
-    .bind(&event_subtype)
-    .bind(level_num)
-    .bind(&timestamp)
-    .bind(source.source_type())
-    .bind(source.source_id())
-    .bind(source.device_id())
-    .bind(source.user_id())
-    .bind(&input.event_name)
-    .bind(&content)
-    .bind(&metadata)
-    .bind(&created_at)
-    .bind(&input.workspace_id)
-    .bind(actor)
-    .execute(pool)
-    .await;
+    let result = tinyiothub_storage::Db::new(pool.clone())
+        .insert_thing_event(&tinyiothub_storage::event::ThingEventInsert {
+            event_id: &event_id_str,
+            event_subtype: &event_subtype,
+            level_num,
+            timestamp: &timestamp,
+            source_type: source.source_type(),
+            source_id: source.source_id(),
+            device_id: source.device_id(),
+            user_id: source.user_id(),
+            title: &input.event_name,
+            content: &content,
+            metadata: &metadata,
+            created_at: &created_at,
+            workspace_id: &input.workspace_id,
+            actor,
+        })
+        .await;
 
     match result {
         Ok(res) => {
-            let rowid = res.last_insert_rowid();
+            let rowid = res;
             tracing::info!(
                 event_id = %event_id_str,
                 thing_id = %input.thing_id,
@@ -328,16 +326,10 @@ async fn is_known_event_name(
 ) -> bool {
     let events_json = match template_events {
         Some(json) => Some(json.to_string()),
-        None => {
-            let row: Option<(Option<String>,)> = sqlx::query_as(
-                "SELECT t.events FROM devices d JOIN thing_templates t ON t.id = d.template_id WHERE d.id = ?",
-            )
-            .bind(thing_id)
-            .fetch_optional(pool)
+        None => tinyiothub_storage::Db::new(pool.clone())
+            .find_thing_template_events_by_thing(thing_id)
             .await
-            .unwrap_or(None);
-            row.and_then(|(ev,)| ev)
-        }
+            .unwrap_or(None)
     };
 
     let Some(events_json) = events_json else {

@@ -141,10 +141,7 @@ impl EventSecurityFactory {
 
     /// Load security configuration from database, falling back to current config
     pub async fn load_config_from_db(&self) -> Result<EventSecurityConfig> {
-        match sqlx::query_scalar::<_, String>("SELECT value FROM system_settings WHERE key = 'event_security_config'")
-            .fetch_optional(self.db.pool())
-            .await
-        {
+        match self.db.get_event_security_config_json().await {
             Ok(Some(json)) => {
                 let config: EventSecurityConfig = serde_json::from_str(&json)
                     .map_err(|e| EventError::Configuration(format!("Failed to parse config: {}", e)))?;
@@ -164,14 +161,10 @@ impl EventSecurityFactory {
         let json = serde_json::to_string(&self.config)
             .map_err(|e| EventError::Configuration(format!("Failed to serialize config: {}", e)))?;
 
-        sqlx::query(
-            "INSERT INTO system_settings (key, value, updated_at) VALUES ('event_security_config', ?, datetime('now'))
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-        )
-        .bind(json)
-        .execute(self.db.pool())
-        .await
-        .map_err(|e| EventError::Configuration(format!("Failed to save config: {}", e)))?;
+        self.db
+            .save_event_security_config_json(&json)
+            .await
+            .map_err(|e| EventError::Configuration(format!("Failed to save config: {}", e)))?;
 
         tracing::info!("Event security configuration saved to database");
         Ok(())

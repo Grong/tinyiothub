@@ -7,6 +7,7 @@
 // invalidate the pooled agent themselves (`AgentPool::invalidate`).
 
 use sqlx::SqlitePool;
+use tinyiothub_storage::Db;
 
 use tinyiothub_agent::AgentError;
 use tinyiothub_agent::config::{
@@ -19,48 +20,32 @@ use tinyiothub_agent::config::{
 
 /// Insert an agent row; returns the new agent_id.
 pub async fn create_agent(db_pool: &SqlitePool, config: &AgentConfig) -> Result<String, AgentError> {
-    let agent_id = uuid::Uuid::new_v4().to_string();
-    sqlx::query(
-        "INSERT INTO agents (agent_id, workspace_id, name, status, created_at, updated_at)
-         VALUES (?, ?, ?, 'active', datetime('now'), datetime('now'))",
-    )
-    .bind(&agent_id)
-    .bind(&config.workspace_id)
-    .bind(&config.name)
-    .execute(db_pool)
-    .await
-    .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
-    Ok(agent_id)
+    Db::new(db_pool.clone())
+        .insert_agent(&config.workspace_id, &config.name)
+        .await
+        .map_err(|e| AgentError::RequestFailed(e.to_string()))
 }
 
 /// Delete an agent and its config/tool rows. Caller invalidates the pool.
 pub async fn delete_agent(db_pool: &SqlitePool, agent_id: &str) -> Result<(), AgentError> {
-    let result = sqlx::query("DELETE FROM agents WHERE agent_id = ?")
-        .bind(agent_id)
-        .execute(db_pool)
+    let db = Db::new(db_pool.clone());
+    let affected = db
+        .delete_agent_row(agent_id)
         .await
         .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
-    if result.rows_affected() == 0 {
+    if affected == 0 {
         return Err(AgentError::NotFound(agent_id.to_string()));
     }
-    let _ = sqlx::query("DELETE FROM agent_configs WHERE agent_id = ?")
-        .bind(agent_id)
-        .execute(db_pool)
-        .await;
-    let _ = sqlx::query("DELETE FROM agent_tools WHERE agent_id = ?")
-        .bind(agent_id)
-        .execute(db_pool)
-        .await;
+    let _ = db.delete_agent_config_rows(agent_id).await;
+    let _ = db.delete_agent_tool_rows(agent_id).await;
     Ok(())
 }
 
 pub async fn get_agent(db_pool: &SqlitePool, agent_id: &str) -> Result<AgentInfo, AgentError> {
-    let row: Option<(String, String, String, String)> =
-        sqlx::query_as("SELECT agent_id, workspace_id, name, status FROM agents WHERE agent_id = ?")
-            .bind(agent_id)
-            .fetch_optional(db_pool)
-            .await
-            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+    let row = Db::new(db_pool.clone())
+        .find_agent_row(agent_id)
+        .await
+        .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
 
     match row {
         Some((id, _workspace, name, status)) => Ok(AgentInfo {
@@ -74,13 +59,10 @@ pub async fn get_agent(db_pool: &SqlitePool, agent_id: &str) -> Result<AgentInfo
 }
 
 pub async fn list_agents(db_pool: &SqlitePool, workspace_id: &str) -> Result<serde_json::Value, AgentError> {
-    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
-        "SELECT agent_id, workspace_id, name, status FROM agents WHERE workspace_id = ? ORDER BY created_at DESC",
-    )
-    .bind(workspace_id)
-    .fetch_all(db_pool)
-    .await
-    .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+    let rows = Db::new(db_pool.clone())
+        .list_agent_rows(workspace_id)
+        .await
+        .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
 
     let items: Vec<serde_json::Value> = rows
         .into_iter()
@@ -138,12 +120,11 @@ pub async fn toggle_tool(
 
 /// Read agent runtime config from DB. Falls back to default if not found.
 pub async fn get_config(db_pool: &SqlitePool, agent_id: &str) -> Result<AgentRuntimeConfig, AgentError> {
-    let row: Option<(String,)> = sqlx::query_as("SELECT config FROM agent_configs WHERE agent_id = ?")
-        .bind(agent_id)
-        .fetch_optional(db_pool)
+    let row = Db::new(db_pool.clone())
+        .find_agent_config(agent_id)
         .await
         .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
-    if let Some((config_str,)) = row
+    if let Some(config_str) = row
         && let Ok(config) = serde_json::from_str::<AgentRuntimeConfig>(&config_str)
     {
         return Ok(config);
@@ -153,12 +134,10 @@ pub async fn get_config(db_pool: &SqlitePool, agent_id: &str) -> Result<AgentRun
 
 /// Read agent config as JSON (for API responses).
 pub async fn get_config_json(db_pool: &SqlitePool, agent_id: &str) -> Result<serde_json::Value, AgentError> {
-    let row: Option<(String, String)> =
-        sqlx::query_as("SELECT config, config_hash FROM agent_configs WHERE agent_id = ?")
-            .bind(agent_id)
-            .fetch_optional(db_pool)
-            .await
-            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+    let row = Db::new(db_pool.clone())
+        .find_agent_config_with_hash(agent_id)
+        .await
+        .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
     if let Some((config_str, config_hash)) = row {
         let config: serde_json::Value = serde_json::from_str(&config_str).unwrap_or_else(|_| default_agent_config());
         return Ok(serde_json::json!({"config": config, "baseHash": config_hash}));
@@ -171,17 +150,10 @@ pub async fn set_config(db_pool: &SqlitePool, agent_id: &str, config: &str) -> R
     let _: serde_json::Value =
         serde_json::from_str(config).map_err(|e| AgentError::RequestFailed(format!("Invalid config: {}", e)))?;
     let config_hash = compute_hash(config);
-    sqlx::query(
-        "INSERT INTO agent_configs (agent_id, config, config_hash, updated_at)
-         VALUES (?, ?, ?, datetime('now'))
-         ON CONFLICT(agent_id) DO UPDATE SET config = excluded.config, config_hash = excluded.config_hash, updated_at = datetime('now')",
-    )
-    .bind(agent_id)
-    .bind(config)
-    .bind(&config_hash)
-    .execute(db_pool)
-    .await
-    .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+    Db::new(db_pool.clone())
+        .upsert_agent_config(agent_id, config, &config_hash)
+        .await
+        .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
     Ok(())
 }
 
@@ -191,13 +163,12 @@ pub async fn verify_agent_workspace(
     agent_id: &str,
     workspace_id: &str,
 ) -> Result<(), AgentError> {
-    let row: Option<(String,)> = sqlx::query_as("SELECT workspace_id FROM agents WHERE agent_id = ?")
-        .bind(agent_id)
-        .fetch_optional(db_pool)
+    let row = Db::new(db_pool.clone())
+        .find_agent_workspace(agent_id)
         .await
         .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
     match row {
-        Some((ws,)) if ws == workspace_id => Ok(()),
+        Some(ws) if ws == workspace_id => Ok(()),
         Some(_) | None => Err(AgentError::NotFound(agent_id.to_string())),
     }
 }

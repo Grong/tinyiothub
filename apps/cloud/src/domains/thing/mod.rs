@@ -17,7 +17,6 @@ pub mod errors;
 pub mod handler;
 pub mod hooks;
 pub mod legacy;
-pub mod repo;
 pub mod service;
 pub mod summary;
 pub mod tag;

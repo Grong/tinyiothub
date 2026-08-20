@@ -6,9 +6,9 @@ use tinyiothub_core::models::{
     device_property::CreateDevicePropertyRequest,
     template_error::{TemplateError, ValidationError, ValidationResult},
 };
+use tinyiothub_storage::Db;
 use tracing::{debug, info, warn};
 
-use super::repo::TemplateRepository;
 use crate::domains::thing::template::types::CreateDeviceTemplateRequest;
 use crate::domains::thing::template::types::DeviceCreationInput;
 use crate::domains::thing::template::types::DevicePreview;
@@ -18,17 +18,14 @@ use crate::domains::thing::template::types::DevicePreview;
 /// 模板引擎 - 负责解析和应用设备模板的核心组件
 #[derive(Debug)]
 pub struct TemplateEngine {
-    template_repository: Arc<TemplateRepository>,
+    db: Arc<Db>,
     validator: Arc<TemplateValidator>,
 }
 
 impl TemplateEngine {
     /// 创建新的模板引擎实例
-    pub fn new(template_repository: Arc<TemplateRepository>, validator: Arc<TemplateValidator>) -> Self {
-        Self {
-            template_repository,
-            validator,
-        }
+    pub fn new(db: Arc<Db>, validator: Arc<TemplateValidator>) -> Self {
+        Self { db, validator }
     }
 
     /// 应用模板创建设备 (需求 3.6)
@@ -44,8 +41,8 @@ impl TemplateEngine {
 
         // 获取模板
         let template =
-            self.template_repository
-                .find_by_id(template_id)
+            self.db
+                .find_thing_template_by_id(template_id, "")
                 .await?
                 .ok_or_else(|| TemplateError::TemplateNotFound {
                     id: template_id.to_string(),
@@ -116,8 +113,8 @@ impl TemplateEngine {
 
         // 获取模板
         let template =
-            self.template_repository
-                .find_by_id(template_id)
+            self.db
+                .find_thing_template_by_id(template_id, "")
                 .await?
                 .ok_or_else(|| TemplateError::TemplateNotFound {
                     id: template_id.to_string(),
@@ -177,8 +174,8 @@ impl TemplateEngine {
 
         // 获取模板
         let template =
-            self.template_repository
-                .find_by_id(template_id)
+            self.db
+                .find_thing_template_by_id(template_id, "")
                 .await?
                 .ok_or_else(|| TemplateError::TemplateNotFound {
                     id: template_id.to_string(),
@@ -320,15 +317,6 @@ impl TemplateEngine {
             .cloned()
     }
 
-    /// 获取模板仓库引用
-    pub fn get_repository(&self) -> &TemplateRepository {
-        &self.template_repository
-    }
-
-    pub fn get_repository_arc(&self) -> Arc<TemplateRepository> {
-        self.template_repository.clone()
-    }
-
     /// 获取验证器引用
     pub fn get_validator(&self) -> &TemplateValidator {
         &self.validator
@@ -340,8 +328,8 @@ impl TemplateEngine {
 
         // 获取模板
         let template =
-            self.template_repository
-                .find_by_id(template_id)
+            self.db
+                .find_thing_template_by_id(template_id, "")
                 .await?
                 .ok_or_else(|| TemplateError::TemplateNotFound {
                     id: template_id.to_string(),
@@ -414,8 +402,8 @@ impl TemplateEngine {
 
         // 获取模板
         let template =
-            self.template_repository
-                .find_by_id(template_id)
+            self.db
+                .find_thing_template_by_id(template_id, "")
                 .await?
                 .ok_or_else(|| TemplateError::TemplateNotFound {
                     id: template_id.to_string(),
@@ -967,31 +955,5 @@ impl TemplateValidator {
 impl Default for TemplateValidator {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// ─── TemplateService ──────────────────────────────────────────
-
-/// 模板服务 - 提供高级模板操作功能
-#[derive(Debug)]
-pub struct TemplateService {
-    repository: Arc<TemplateRepository>,
-}
-
-impl TemplateService {
-    /// 创建新的模板服务实例
-    pub fn new(repository: Arc<TemplateRepository>) -> Self {
-        Self { repository }
-    }
-
-    /// 初始化模板系统
-    pub async fn initialize(&self) -> Result<(), TemplateError> {
-        info!("模板系统初始化完成（内置模板已通过 migration seed 写入 DB）");
-        Ok(())
-    }
-
-    /// 获取仓库引用
-    pub fn get_repository(&self) -> &TemplateRepository {
-        &self.repository
     }
 }

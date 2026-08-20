@@ -279,15 +279,11 @@ impl PlatformMqttClient {
         // Resolve tenant scope AND the template event definitions in ONE
         // round trip (perf review: was two separate queries per event on the
         // ingest hot path).
-        let thing_row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT d.workspace_id, t.events FROM devices d \
-             LEFT JOIN thing_templates t ON t.id = d.template_id WHERE d.id = ?",
-        )
-        .bind(&thing_id)
-        .fetch_optional(db_pool)
-        .await
-        .ok()
-        .flatten();
+        let thing_row: Option<(Option<String>, Option<String>)> = tinyiothub_storage::Db::new(db_pool.clone())
+            .find_thing_workspace_and_template_events(&thing_id)
+            .await
+            .ok()
+            .flatten();
         let workspace_id: String = thing_row.as_ref().and_then(|(ws, _)| ws.clone()).unwrap_or_default();
         let template_events = thing_row.and_then(|(_, ev)| ev);
         if workspace_id.is_empty() {

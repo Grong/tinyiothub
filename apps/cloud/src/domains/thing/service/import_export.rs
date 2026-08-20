@@ -7,7 +7,10 @@
 //   - Backwards compat: accept "commands" key and map to "actions"
 
 use serde_json::{Value, json};
-use sqlx::{FromRow, SqlitePool};
+use sqlx::SqlitePool;
+use tinyiothub_storage::Db;
+
+pub use tinyiothub_storage::thing_template::{ParsedTemplate, ThingTemplateRow};
 
 // ──────────────────────────────────────────────
 // Error
@@ -43,23 +46,6 @@ impl From<serde_json::Error> for ImportError {
 // ──────────────────────────────────────────────
 // DB row (subset of thing_templates)
 // ──────────────────────────────────────────────
-
-#[derive(Debug, FromRow)]
-pub struct ThingTemplateRow {
-    pub id: String,
-    pub name: String,
-    pub display_name: String,
-    pub description: Option<String>,
-    pub version: String,
-    pub category: String,
-    pub device_type: String,
-    pub thing_type: String,
-    pub properties: String, // JSON array
-    pub actions: String,    // JSON array
-    pub events: String,     // JSON array
-    pub default_knowledge: Option<String>,
-    pub workspace_id: Option<String>,
-}
 
 // ──────────────────────────────────────────────
 // Internal schema types
@@ -467,18 +453,6 @@ fn dtdl_primitive_schema(schema: &Value) -> Value {
 // ParsedTemplate (internal representation)
 // ──────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
-pub struct ParsedTemplate {
-    pub name: String,
-    pub display_name: String,
-    pub description: Option<String>,
-    pub thing_type: String,
-    pub device_type: String,
-    pub properties: String, // JSON array
-    pub actions: String,    // JSON array
-    pub events: String,     // JSON array
-}
-
 // ──────────────────────────────────────────────
 // Database operations
 // ──────────────────────────────────────────────
@@ -491,14 +465,8 @@ pub async fn save_template(
 ) -> Result<String, ImportError> {
     // Check name conflict
     let ws_key = workspace_id.unwrap_or("");
-    let existing: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM thing_templates \
-         WHERE COALESCE(workspace_id, '') = ? AND name = ?",
-    )
-    .bind(ws_key)
-    .bind(&template.name)
-    .fetch_one(pool)
-    .await?;
+    let db = Db::new(pool.clone());
+    let existing = db.count_thing_template_name_conflicts(ws_key, &template.name).await?;
 
     if existing > 0 {
         return Err(ImportError::NameConflict(format!(
@@ -507,64 +475,15 @@ pub async fn save_template(
         )));
     }
 
-    let id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    let default_knowledge: Option<String> = None;
-
-    let display_name = template.display_name.clone();
-    let description = template.description.clone().unwrap_or_default();
-    let version = "1.0.0".to_string();
-    let category = "imported".to_string();
-    let tags = "[]".to_string();
-    let device_info = "{}".to_string();
-
-    sqlx::query(
-        "INSERT INTO thing_templates \
-         (id, name, display_name, description, version, author, category, \
-          manufacturer, device_type, thing_type, protocol_type, driver_name, \
-          tags, device_info, properties, actions, events, default_knowledge, \
-          is_builtin, is_active, workspace_id, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(&template.name)
-    .bind(&display_name)
-    .bind(&description)
-    .bind(&version)
-    .bind::<Option<String>>(None) // author
-    .bind(&category)
-    .bind::<Option<String>>(None) // manufacturer
-    .bind(&template.device_type)
-    .bind(&template.thing_type)
-    .bind::<Option<String>>(None) // protocol_type
-    .bind::<Option<String>>(None) // driver_name
-    .bind(&tags)
-    .bind(&device_info)
-    .bind(&template.properties)
-    .bind(&template.actions)
-    .bind(&template.events)
-    .bind(&default_knowledge)
-    .bind(workspace_id)
-    .bind(&now)
-    .bind(&now)
-    .execute(pool)
-    .await?;
-
-    Ok(id)
+    db.insert_parsed_thing_template(template, workspace_id).await.map_err(ImportError::from)
 }
 
 /// Load a template from thing_templates by ID.
 pub async fn load_template(pool: &SqlitePool, id: &str) -> Result<ThingTemplateRow, ImportError> {
-    sqlx::query_as::<_, ThingTemplateRow>(
-        "SELECT id, name, display_name, description, version, category, \
-         device_type, thing_type, properties, actions, events, \
-         default_knowledge, workspace_id \
-         FROM thing_templates WHERE id = ? AND is_active = 1",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| ImportError::NotFound(id.to_string()))
+    Db::new(pool.clone())
+        .find_thing_template_row(id)
+        .await?
+        .ok_or_else(|| ImportError::NotFound(id.to_string()))
 }
 
 // ──────────────────────────────────────────────

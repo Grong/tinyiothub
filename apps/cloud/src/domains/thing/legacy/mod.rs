@@ -7,5 +7,4 @@
 
 pub mod device_query;
 pub mod trace;
-pub mod trace_repository;
 pub mod types;

@@ -631,3 +631,89 @@ impl Db {
         update_role_permissions(self.pool(), role_id, permission_ids).await
     }
 }
+
+// ──────────────────────────────────────────────
+// Legacy RBAC 查询（自 cloud event/security/access_control.rs 迁入，Task 12）
+// 注意：legacy schema 按 role_name/permission 列查询（列语义保持不变）。
+// ──────────────────────────────────────────────
+
+/// Legacy：用户的角色名列表（user_roles.role_name）。
+pub(crate) async fn list_legacy_user_role_names(
+    pool: &SqlitePool,
+    user_id: &str,
+) -> std::result::Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar::<_, String>("SELECT role_name FROM user_roles WHERE user_id = ? AND is_active = 1")
+        .bind(user_id)
+        .fetch_all(pool)
+        .await
+}
+
+/// Legacy：用户级权限列表（user_permissions.permission）。
+pub(crate) async fn list_legacy_user_permissions(
+    pool: &SqlitePool,
+    user_id: &str,
+    resource_type: &str,
+) -> std::result::Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT permission FROM user_permissions WHERE user_id = ? AND resource_type = ? AND is_active = 1",
+    )
+    .bind(user_id)
+    .bind(resource_type)
+    .fetch_all(pool)
+    .await
+}
+
+/// Legacy：角色级权限列表（role_permissions.permission）。
+pub(crate) async fn list_legacy_role_permissions(
+    pool: &SqlitePool,
+    role_name: &str,
+    resource_type: &str,
+) -> std::result::Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT permission FROM role_permissions WHERE role_name = ? AND resource_type = ? AND is_active = 1",
+    )
+    .bind(role_name)
+    .bind(resource_type)
+    .fetch_all(pool)
+    .await
+}
+
+/// 用户持有的 is_administrator 角色数（agent_tasks admin 判定；自 cloud 迁入）。
+pub(crate) async fn count_user_admin_roles(pool: &SqlitePool, user_id: &str) -> std::result::Result<i64, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM user_roles ur JOIN roles r ON ur.role_id = r.id          WHERE ur.user_id = ? AND r.is_administrator = 1",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+}
+
+impl Db {
+    /// 用户持有的 is_administrator 角色数。
+    pub async fn count_user_admin_roles(&self, user_id: &str) -> std::result::Result<i64, sqlx::Error> {
+        count_user_admin_roles(self.pool(), user_id).await
+    }
+
+    /// Legacy：用户的角色名列表（user_roles.role_name）。
+    pub async fn list_legacy_user_role_names(&self, user_id: &str) -> std::result::Result<Vec<String>, sqlx::Error> {
+        list_legacy_user_role_names(self.pool(), user_id).await
+    }
+
+    /// Legacy：用户级权限列表（user_permissions.permission）。
+    pub async fn list_legacy_user_permissions(
+        &self,
+        user_id: &str,
+        resource_type: &str,
+    ) -> std::result::Result<Vec<String>, sqlx::Error> {
+        list_legacy_user_permissions(self.pool(), user_id, resource_type).await
+    }
+
+    /// Legacy：角色级权限列表（role_permissions.permission）。
+    pub async fn list_legacy_role_permissions(
+        &self,
+        role_name: &str,
+        resource_type: &str,
+    ) -> std::result::Result<Vec<String>, sqlx::Error> {
+        list_legacy_role_permissions(self.pool(), role_name, resource_type).await
+    }
+}

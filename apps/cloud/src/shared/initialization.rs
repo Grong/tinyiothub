@@ -164,49 +164,32 @@ pub async fn ensure_user_has_workspace(state: &AppState, user_id: &str) -> Resul
 async fn ensure_tenant_membership(state: &AppState, user_id: &str) -> Result<()> {
     let pool = state.db().pool();
 
-    let has_tenant: bool = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM tenant_users WHERE user_id = ?)")
-        .bind(user_id)
-        .fetch_one(pool)
+    let db = tinyiothub_storage::Db::new(pool.clone());
+
+    let has_tenant: bool = db
+        .tenant_user_exists(user_id)
         .await
         .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
 
     if !has_tenant {
         tracing::info!("[init] User {} has no tenant, bootstrapping default tenant...", user_id);
 
-        let tenant_exists: bool =
-            sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM tenants WHERE id = 'tenant-default-001')")
-                .fetch_one(pool)
-                .await
-                .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
-
-        if !tenant_exists {
-            sqlx::query(
-                r#"INSERT INTO tenants
-                   (id, name, slug, status, plan_id, subscription_status,
-                    billing_email, timezone, locale, created_at, updated_at)
-                   VALUES
-                   ('tenant-default-001', 'Default Organization', 'default', 'active',
-                    'plan_free', 'active', 'admin@tinyiothub.local', 'UTC', 'zh-CN',
-                    datetime('now'), datetime('now'))"#,
-            )
-            .execute(pool)
+        let tenant_exists: bool = db
+            .default_tenant_exists()
             .await
             .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+
+        if !tenant_exists {
+            db.insert_default_tenant()
+                .await
+                .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
             tracing::info!("[init] Created default tenant");
         }
 
         let tenant_user_id = format!("tu-{}", user_id);
-        sqlx::query(
-            r#"INSERT OR IGNORE INTO tenant_users
-               (id, tenant_id, user_id, role, invitation_status, joined_at, created_at, updated_at)
-               VALUES (?, 'tenant-default-001', ?, 'owner', 'accepted',
-                       datetime('now'), datetime('now'), datetime('now'))"#,
-        )
-        .bind(&tenant_user_id)
-        .bind(user_id)
-        .execute(pool)
-        .await
-        .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+        db.insert_default_tenant_user(&tenant_user_id, user_id)
+            .await
+            .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
         tracing::info!("[init] Linked user {} to default tenant", user_id);
     }
 
@@ -218,9 +201,10 @@ async fn ensure_user_workspace(state: &AppState, user_id: &str) -> Result<()> {
     let pool = state.db().pool();
     let ws_id = format!("ws-{}", user_id);
 
-    let ws_exists: bool = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?)")
-        .bind(&ws_id)
-        .fetch_one(pool)
+    let db = tinyiothub_storage::Db::new(pool.clone());
+
+    let ws_exists: bool = db
+        .workspace_exists_by_id(&ws_id)
         .await
         .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
 
@@ -231,25 +215,16 @@ async fn ensure_user_workspace(state: &AppState, user_id: &str) -> Result<()> {
     tracing::info!("[init] Creating per-user workspace {} for user {}", ws_id, user_id);
 
     // 获取用户信息用于 workspace 名称
-    let user_name: Option<String> = sqlx::query_scalar("SELECT display_name FROM users WHERE id = ?")
-        .bind(user_id)
-        .fetch_optional(pool)
+    let user_name: Option<String> = db
+        .find_user_display_name(user_id)
         .await
-        .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?
-        .flatten();
+        .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
 
     let ws_name = user_name.unwrap_or_else(|| user_id.to_string());
 
-    sqlx::query(
-        r#"INSERT INTO workspaces
-           (id, name, description, tenant_id, created_at, updated_at)
-           VALUES (?, ?, '用户个人工作空间', 'tenant-default-001', datetime('now'), datetime('now'))"#,
-    )
-    .bind(&ws_id)
-    .bind(format!("{}的工作空间", ws_name))
-    .execute(pool)
-    .await
-    .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+    db.insert_user_workspace(&ws_id, format!("{}的工作空间", ws_name))
+        .await
+        .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
     tracing::info!("[init] Created workspace {} for user {}", ws_id, user_id);
 
     // Scaffold shared base directory (once for all workspaces)
@@ -286,10 +261,7 @@ async fn ensure_user_workspace(state: &AppState, user_id: &str) -> Result<()> {
 
     match agent_result {
         Ok(agent_id) => {
-            sqlx::query("UPDATE workspaces SET agent_id = ? WHERE id = ?")
-                .bind(&agent_id)
-                .bind(&ws_id)
-                .execute(pool)
+            db.set_workspace_agent_id(&agent_id, &ws_id)
                 .await
                 .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
             tracing::info!("[init] Created agent {} for workspace {}", agent_id, ws_id);
@@ -317,17 +289,14 @@ async fn ensure_default_tenant(state: &AppState, user_id: &str) -> Result<()> {
     ensure_default_workspace_and_agent(state, pool).await?;
 
     // 将未分配的设备归属到默认租户和工作空间
-    sqlx::query("UPDATE devices SET tenant_id = 'tenant-default-001' WHERE tenant_id IS NULL")
-        .execute(pool)
+    let db = tinyiothub_storage::Db::new(pool.clone());
+    db.assign_orphan_devices_to_default_tenant()
         .await
         .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
 
-    sqlx::query(
-        "UPDATE devices SET workspace_id = 'ws-default-001' WHERE workspace_id IS NULL AND tenant_id = 'tenant-default-001'"
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+    db.assign_orphan_devices_to_default_workspace()
+        .await
+        .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
     tracing::info!("[init] Assigned orphan devices to default tenant/workspace");
 
     Ok(())
@@ -336,23 +305,16 @@ async fn ensure_default_tenant(state: &AppState, user_id: &str) -> Result<()> {
 /// 确保默认工作空间存在，若无则创建并同步创建 Agent；若存在但缺少 agent_id 则 backfill
 async fn ensure_default_workspace_and_agent(_state: &AppState, pool: &sqlx::Pool<sqlx::Sqlite>) -> Result<()> {
     // 检查默认工作空间是否存在
-    let ws_exists: bool =
-        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = 'ws-default-001')")
-            .fetch_one(pool)
-            .await
-            .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
-
-    if !ws_exists {
-        sqlx::query(
-            r#"INSERT INTO workspaces
-               (id, name, description, tenant_id, created_at, updated_at)
-               VALUES
-               ('ws-default-001', '默认工作空间', '系统自动创建的默认工作空间',
-                'tenant-default-001', datetime('now'), datetime('now'))"#,
-        )
-        .execute(pool)
+    let db = tinyiothub_storage::Db::new(pool.clone());
+    let ws_exists: bool = db
+        .default_workspace_exists()
         .await
         .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+
+    if !ws_exists {
+        db.insert_default_workspace()
+            .await
+            .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
         tracing::info!("[init] Created default workspace");
 
         // Scaffold shared base directory (once for all workspaces)
@@ -378,12 +340,10 @@ async fn ensure_default_workspace_and_agent(_state: &AppState, pool: &sqlx::Pool
     }
 
     // 检查 workspace 是否缺少 agent_id
-    let needs_agent: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT (agent_id IS NULL OR agent_id = '') FROM workspaces WHERE id = 'ws-default-001'",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+    let needs_agent: bool = db
+        .default_workspace_needs_agent()
+        .await
+        .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
 
     if needs_agent {
         let agent_result = crate::domains::agent::host::config::service::create_agent(
@@ -398,9 +358,7 @@ async fn ensure_default_workspace_and_agent(_state: &AppState, pool: &sqlx::Pool
 
         match agent_result {
             Ok(agent_id) => {
-                sqlx::query("UPDATE workspaces SET agent_id = ? WHERE id = 'ws-default-001'")
-                    .bind(&agent_id)
-                    .execute(pool)
+                db.set_default_workspace_agent_id(&agent_id)
                     .await
                     .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
                 tracing::info!("[init] Created agent {} for default workspace", agent_id);

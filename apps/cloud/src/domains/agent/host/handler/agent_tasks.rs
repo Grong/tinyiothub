@@ -29,15 +29,12 @@ use crate::verify_workspace_access;
 
 /// admin 角色判定：用户持有任一 is_administrator 角色。DB 错误 fail-closed。
 async fn is_admin(state: &AgentState, user_id: &str) -> bool {
-    sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM user_roles ur JOIN roles r ON ur.role_id = r.id \
-         WHERE ur.user_id = ? AND r.is_administrator = 1",
-    )
-    .bind(user_id)
-    .fetch_one(state.db.pool())
-    .await
-    .map(|n| n > 0)
-    .unwrap_or(false)
+    state
+        .db
+        .count_user_admin_roles(user_id)
+        .await
+        .map(|n| n > 0)
+        .unwrap_or(false)
 }
 
 /// workspace 隔离 + admin 角色组合守卫（V5 先例：越权 403 / 不存在 404）。
@@ -126,22 +123,7 @@ pub struct ListRunsParams {
     pub offset: Option<u32>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentRunRow {
-    id: String,
-    trigger_type: String,
-    trigger_context: Option<String>,
-    outcome: String,
-    summary: String,
-    verified: bool,
-    tool_calls: i64,
-    tokens: i64,
-    duration_ms: i64,
-    acked_at: Option<String>,
-    acked_by: Option<String>,
-    created_at: String,
-}
+pub use tinyiothub_storage::agent_runs::AgentRunRow;
 
 pub async fn list_runs(
     State(state): State<AgentState>,
@@ -155,17 +137,7 @@ pub async fn list_runs(
     let limit = i64::from(params.limit.unwrap_or(50).clamp(1, 200));
     let offset = i64::from(params.offset.unwrap_or(0));
 
-    let runs = sqlx::query_as::<_, AgentRunRow>(
-        "SELECT id, trigger_type, trigger_context, outcome, summary, verified, \
-                tool_calls, tokens, duration_ms, acked_at, acked_by, created_at \
-         FROM agent_runs WHERE workspace_id = ? \
-         ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
-    )
-    .bind(&workspace_id)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(state.db.pool())
-    .await;
+    let runs = state.db.list_agent_run_rows(&workspace_id, limit, offset).await;
 
     match runs {
         Ok(runs) => ApiResponseBuilder::success(serde_json::json!({
@@ -191,12 +163,7 @@ pub async fn ack_run(
 
     // 存在性 + workspace 归属：不存在与跨区统一 404（不泄露存在性）；
     // 同时取出 problem_key 供 O11 ack 抑制回写（Task 6）。
-    let owner: Option<(String, Option<String>)> =
-        sqlx::query_as("SELECT workspace_id, problem_key FROM agent_runs WHERE id = ?")
-            .bind(&run_id)
-            .fetch_optional(state.db.pool())
-            .await
-            .unwrap_or(None);
+    let owner: Option<(String, Option<String>)> = state.db.find_agent_run_owner(&run_id).await.unwrap_or(None);
     let problem_key = match owner {
         Some((ref ws, ref pk)) if ws == &workspace_id => pk.clone(),
         _ => return ApiResponseBuilder::error_with_code(404, "运行记录不存在"),

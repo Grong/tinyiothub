@@ -92,9 +92,8 @@ impl Tool for InvokeActionTool {
         }
 
         // 2. Check require_action_confirm from workspace
-        let require_confirm: bool = sqlx::query_scalar("SELECT require_action_confirm FROM workspaces WHERE id = ?")
-                .bind(&self.workspace_id)
-                .fetch_optional(&self.pool)
+        let require_confirm: bool = tinyiothub_storage::Db::new(self.pool.clone())
+                .get_workspace_require_action_confirm(&self.workspace_id)
                 .await
                 .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
                 // Fail CLOSED (eng-review T7): a missing workspace row means
@@ -103,14 +102,11 @@ impl Tool for InvokeActionTool {
             != 0;
 
         // 3. Check if action exists in device_commands table
-        let command_exists: bool =
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM thing_actions WHERE device_id = ? AND name = ?")
-                .bind(&input.thing_id)
-                .bind(&input.action_name)
-                .fetch_one(&self.pool)
-                .await
-                .map(|c| c > 0)
-                .unwrap_or(false);
+        let command_exists: bool = tinyiothub_storage::Db::new(self.pool.clone())
+            .count_thing_action_by_name(&input.thing_id, &input.action_name)
+            .await
+            .map(|c| c > 0)
+            .unwrap_or(false);
 
         if !command_exists {
             return tool_err(format!(
@@ -121,14 +117,10 @@ impl Tool for InvokeActionTool {
 
         // 3b. Validate params against the action's parameter schema (design 三;
         // eng-review T7)
-        let params_schema: Option<String> =
-            sqlx::query_scalar("SELECT parameters FROM thing_actions WHERE device_id = ? AND name = ?")
-                .bind(&input.thing_id)
-                .bind(&input.action_name)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
-                .flatten();
+        let params_schema: Option<String> = tinyiothub_storage::Db::new(self.pool.clone())
+            .find_thing_action_parameters(&input.thing_id, &input.action_name)
+            .await
+            .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?;
         if let Some(ref schema_json) = params_schema
             && let Err(msg) = validate_action_params(schema_json, input.params.as_ref())
         {

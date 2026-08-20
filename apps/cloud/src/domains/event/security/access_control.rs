@@ -168,13 +168,7 @@ impl EventAccessControl for RoleBasedAccessControl {
 
     async fn get_user_roles(&self, user_id: &str) -> Result<Vec<String>> {
         // Query user roles from database
-        let query = "SELECT role_name FROM user_roles WHERE user_id = ? AND is_active = 1";
-
-        match sqlx::query_scalar::<_, String>(query)
-            .bind(user_id)
-            .fetch_all(self.db.pool())
-            .await
-        {
+        match self.db.list_legacy_user_role_names(user_id).await {
             Ok(roles) => {
                 if roles.is_empty() {
                     // Default role for authenticated users
@@ -201,15 +195,7 @@ impl EventAccessControl for RoleBasedAccessControl {
         let mut permissions = Vec::new();
 
         // Query user-specific permissions from database
-        let user_permissions_query =
-            "SELECT permission FROM user_permissions WHERE user_id = ? AND resource_type = ? AND is_active = 1";
-
-        match sqlx::query_scalar::<_, String>(user_permissions_query)
-            .bind(user_id)
-            .bind(resource_type)
-            .fetch_all(self.db.pool())
-            .await
-        {
+        match self.db.list_legacy_user_permissions(user_id, resource_type).await {
             Ok(user_permissions) => {
                 permissions.extend(user_permissions);
             }
@@ -229,15 +215,7 @@ impl EventAccessControl for RoleBasedAccessControl {
 
         // Add role-based permissions from the role_permissions table
         for role in roles {
-            let role_permissions_query =
-                "SELECT permission FROM role_permissions WHERE role_name = ? AND resource_type = ? AND is_active = 1";
-
-            match sqlx::query_scalar::<_, String>(role_permissions_query)
-                .bind(&role)
-                .bind(resource_type)
-                .fetch_all(self.db.pool())
-                .await
-            {
+            match self.db.list_legacy_role_permissions(&role, resource_type).await {
                 Ok(role_permissions) => {
                     permissions.extend(role_permissions);
                 }

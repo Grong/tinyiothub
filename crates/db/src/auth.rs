@@ -17,7 +17,7 @@ pub(crate) async fn insert_token_blacklist(
     pool: &SqlitePool,
     token_hash: &str,
     expires_at: &str,
-) -> Result<(), sqlx::Error> {
+) -> std::result::Result<(), sqlx::Error> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -39,7 +39,7 @@ pub(crate) async fn insert_sms_code(
     code: &str,
     purpose: &str,
     expires_at: &str,
-) -> Result<(), sqlx::Error> {
+) -> std::result::Result<(), sqlx::Error> {
     let id = uuid::Uuid::new_v4().to_string();
 
     sqlx::query(
@@ -82,7 +82,7 @@ pub(crate) async fn find_social_binding_user_id(
     pool: &SqlitePool,
     provider: &str,
     provider_user_id: &str,
-) -> Result<Option<String>, sqlx::Error> {
+) -> std::result::Result<Option<String>, sqlx::Error> {
     let user_id: Option<String> = sqlx::query_scalar(
         "SELECT user_id FROM social_bindings WHERE provider = ? AND provider_user_id = ? LIMIT 1",
     )
@@ -100,7 +100,7 @@ pub(crate) async fn insert_social_binding(
     user_id: &str,
     provider: &str,
     provider_user_id: &str,
-) -> Result<(), sqlx::Error> {
+) -> std::result::Result<(), sqlx::Error> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -129,7 +129,7 @@ pub(crate) async fn update_social_config(
     app_secret: &str,
     redirect_uri: &str,
     is_enabled: bool,
-) -> Result<(), sqlx::Error> {
+) -> std::result::Result<(), sqlx::Error> {
     sqlx::query(
         r#"UPDATE social_configs
             SET app_id = ?, app_secret = ?, redirect_uri = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP
@@ -152,7 +152,7 @@ pub(crate) async fn update_social_config(
 
 impl Db {
     /// 登出时把 token 哈希写入黑名单。
-    pub async fn insert_token_blacklist(&self, token_hash: &str, expires_at: &str) -> Result<(), sqlx::Error> {
+    pub async fn insert_token_blacklist(&self, token_hash: &str, expires_at: &str) -> std::result::Result<(), sqlx::Error> {
         insert_token_blacklist(self.pool(), token_hash, expires_at).await
     }
 
@@ -163,7 +163,7 @@ impl Db {
         code: &str,
         purpose: &str,
         expires_at: &str,
-    ) -> Result<(), sqlx::Error> {
+    ) -> std::result::Result<(), sqlx::Error> {
         insert_sms_code(self.pool(), phone, code, purpose, expires_at).await
     }
 
@@ -181,7 +181,7 @@ impl Db {
         &self,
         provider: &str,
         provider_user_id: &str,
-    ) -> Result<Option<String>, sqlx::Error> {
+    ) -> std::result::Result<Option<String>, sqlx::Error> {
         find_social_binding_user_id(self.pool(), provider, provider_user_id).await
     }
 
@@ -191,7 +191,7 @@ impl Db {
         user_id: &str,
         provider: &str,
         provider_user_id: &str,
-    ) -> Result<(), sqlx::Error> {
+    ) -> std::result::Result<(), sqlx::Error> {
         insert_social_binding(self.pool(), user_id, provider, provider_user_id).await
     }
 
@@ -203,7 +203,23 @@ impl Db {
         app_secret: &str,
         redirect_uri: &str,
         is_enabled: bool,
-    ) -> Result<(), sqlx::Error> {
+    ) -> std::result::Result<(), sqlx::Error> {
         update_social_config(self.pool(), provider, app_id, app_secret, redirect_uri, is_enabled).await
+    }
+}
+
+/// 检查 token_hash 是否在黑名单中（自 cloud api/middleware/context.rs 迁入）。
+pub(crate) async fn token_blacklist_contains(pool: &SqlitePool, token_hash: &str) -> std::result::Result<bool, sqlx::Error> {
+    let row = sqlx::query("SELECT 1 FROM token_blacklist WHERE token_hash = ? LIMIT 1")
+        .bind(token_hash)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.is_some())
+}
+
+impl Db {
+    /// 检查 token_hash 是否在黑名单中。
+    pub async fn token_blacklist_contains(&self, token_hash: &str) -> std::result::Result<bool, sqlx::Error> {
+        token_blacklist_contains(self.pool(), token_hash).await
     }
 }

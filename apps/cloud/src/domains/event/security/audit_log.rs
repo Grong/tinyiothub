@@ -7,77 +7,9 @@ use crate::domains::event::{
     value_objects::{EventId, EventLevel, EventType},
 };
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
-/// Audit log entry
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuditLogEntry {
-    pub id: String,
-    pub action: String,
-    pub user_id: Option<String>,
-    pub event_id: Option<String>,
-    pub event_type: Option<String>,
-    pub event_level: Option<String>,
-    pub result: Option<String>,
-    pub details: Option<String>,
-    pub ip_address: Option<String>,
-    pub user_agent: Option<String>,
-    pub created_at: String,
-}
-
-impl AuditLogEntry {
-    pub fn new(action: String, user_id: Option<String>) -> Self {
-        Self {
-            id: uuid::Uuid::new_v4().to_string(),
-            action,
-            user_id,
-            event_id: None,
-            event_type: None,
-            event_level: None,
-            result: Some("success".to_string()),
-            details: None,
-            ip_address: None,
-            user_agent: None,
-            created_at: Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-        }
-    }
-
-    pub fn with_event_id(mut self, event_id: String) -> Self {
-        self.event_id = Some(event_id);
-        self
-    }
-
-    pub fn with_event_type(mut self, event_type: String) -> Self {
-        self.event_type = Some(event_type);
-        self
-    }
-
-    pub fn with_event_level(mut self, event_level: String) -> Self {
-        self.event_level = Some(event_level);
-        self
-    }
-
-    pub fn with_result(mut self, result: String) -> Self {
-        self.result = Some(result);
-        self
-    }
-
-    pub fn with_details(mut self, details: String) -> Self {
-        self.details = Some(details);
-        self
-    }
-
-    pub fn with_ip_address(mut self, ip_address: String) -> Self {
-        self.ip_address = Some(ip_address);
-        self
-    }
-
-    pub fn with_user_agent(mut self, user_agent: String) -> Self {
-        self.user_agent = Some(user_agent);
-        self
-    }
-}
+pub use tinyiothub_storage::audit_log::AuditLogEntry;
 
 /// Event audit log trait
 #[async_trait::async_trait]
@@ -141,43 +73,7 @@ impl DatabaseAuditLog {
     }
 
     pub async fn initialize(&self) -> Result<()> {
-        // Create audit log table if it doesn't exist
-        let create_table_sql = r#"
-            CREATE TABLE IF NOT EXISTS audit_logs (
-                id TEXT PRIMARY KEY,
-                action TEXT NOT NULL,
-                user_id TEXT,
-                event_id TEXT,
-                event_type TEXT,
-                event_level TEXT,
-                result TEXT,
-                details TEXT,
-                ip_address TEXT,
-                user_agent TEXT,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE SET NULL
-            )
-        "#;
-
-        sqlx::query(create_table_sql)
-            .execute(self.db.pool())
-            .await
-            .map_err(EventError::Database)?;
-
-        // Create indexes for better query performance
-        let create_indexes_sql = vec![
-            "CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_audit_logs_event_id ON audit_logs(event_id)",
-            "CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at)",
-            "CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action)",
-        ];
-
-        for sql in create_indexes_sql {
-            sqlx::query(sql)
-                .execute(self.db.pool())
-                .await
-                .map_err(EventError::Database)?;
-        }
+        self.db.init_audit_log_storage().await.map_err(EventError::Database)?;
 
         info!("Audit log database initialized successfully");
         Ok(())
@@ -187,31 +83,10 @@ impl DatabaseAuditLog {
 #[async_trait::async_trait]
 impl EventAuditLog for DatabaseAuditLog {
     async fn log(&self, entry: AuditLogEntry) -> Result<()> {
-        let sql = r#"
-            INSERT INTO audit_logs (
-                id, action, user_id, event_id, event_type, event_level,
-                result, details, ip_address, user_agent, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#;
-
-        sqlx::query(sql)
-            .bind(&entry.id)
-            .bind(&entry.action)
-            .bind(&entry.user_id)
-            .bind(&entry.event_id)
-            .bind(&entry.event_type)
-            .bind(&entry.event_level)
-            .bind(&entry.result)
-            .bind(&entry.details)
-            .bind(&entry.ip_address)
-            .bind(&entry.user_agent)
-            .bind(&entry.created_at)
-            .execute(self.db.pool())
-            .await
-            .map_err(|e| {
-                error!("Failed to log audit entry: {}", e);
-                EventError::Database(e)
-            })?;
+        self.db.insert_audit_log(&entry).await.map_err(|e| {
+            error!("Failed to log audit entry: {}", e);
+            EventError::Database(e)
+        })?;
 
         Ok(())
     }
@@ -296,69 +171,11 @@ impl EventAuditLog for DatabaseAuditLog {
     async fn get_user_audit_logs(&self, user_id: &str, limit: Option<usize>) -> Result<Vec<AuditLogEntry>> {
         let limit = limit.unwrap_or(100).min(1000);
 
-        let sql = r#"
-            SELECT id, action, user_id, event_id, event_type, event_level,
-                   result, details, ip_address, user_agent, created_at
-            FROM audit_logs
-            WHERE user_id = ?
-            ORDER BY created_at DESC
-            LIMIT ?
-        "#;
-
-        let rows = sqlx::query_as::<
-            _,
-            (
-                String,
-                String,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                String,
-            ),
-        >(sql)
-        .bind(user_id)
-        .bind(limit as i64)
-        .fetch_all(self.db.pool())
-        .await
-        .map_err(EventError::Database)?;
-
-        let entries = rows
-            .into_iter()
-            .map(
-                |(
-                    id,
-                    action,
-                    user_id,
-                    event_id,
-                    event_type,
-                    event_level,
-                    result,
-                    details,
-                    ip_address,
-                    user_agent,
-                    created_at,
-                )| {
-                    AuditLogEntry {
-                        id,
-                        action,
-                        user_id,
-                        event_id,
-                        event_type,
-                        event_level,
-                        result,
-                        details,
-                        ip_address,
-                        user_agent,
-                        created_at,
-                    }
-                },
-            )
-            .collect();
+        let entries = self
+            .db
+            .list_audit_logs_by_user(user_id, limit as i64)
+            .await
+            .map_err(EventError::Database)?;
 
         Ok(entries)
     }
@@ -366,69 +183,11 @@ impl EventAuditLog for DatabaseAuditLog {
     async fn get_event_audit_logs(&self, event_id: &EventId, limit: Option<usize>) -> Result<Vec<AuditLogEntry>> {
         let limit = limit.unwrap_or(100).min(1000);
 
-        let sql = r#"
-            SELECT id, action, user_id, event_id, event_type, event_level,
-                   result, details, ip_address, user_agent, created_at
-            FROM audit_logs
-            WHERE event_id = ?
-            ORDER BY created_at DESC
-            LIMIT ?
-        "#;
-
-        let rows = sqlx::query_as::<
-            _,
-            (
-                String,
-                String,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                String,
-            ),
-        >(sql)
-        .bind(event_id.to_string())
-        .bind(limit as i64)
-        .fetch_all(self.db.pool())
-        .await
-        .map_err(EventError::Database)?;
-
-        let entries = rows
-            .into_iter()
-            .map(
-                |(
-                    id,
-                    action,
-                    user_id,
-                    event_id,
-                    event_type,
-                    event_level,
-                    result,
-                    details,
-                    ip_address,
-                    user_agent,
-                    created_at,
-                )| {
-                    AuditLogEntry {
-                        id,
-                        action,
-                        user_id,
-                        event_id,
-                        event_type,
-                        event_level,
-                        result,
-                        details,
-                        ip_address,
-                        user_agent,
-                        created_at,
-                    }
-                },
-            )
-            .collect();
+        let entries = self
+            .db
+            .list_audit_logs_by_event(&event_id.to_string(), limit as i64)
+            .await
+            .map_err(EventError::Database)?;
 
         Ok(entries)
     }
@@ -437,68 +196,11 @@ impl EventAuditLog for DatabaseAuditLog {
         let limit = limit.unwrap_or(100).min(1000);
         let offset = offset.unwrap_or(0);
 
-        let sql = r#"
-            SELECT id, action, user_id, event_id, event_type, event_level,
-                   result, details, ip_address, user_agent, created_at
-            FROM audit_logs
-            ORDER BY created_at DESC
-            LIMIT ? OFFSET ?
-        "#;
-
-        let rows = sqlx::query_as::<
-            _,
-            (
-                String,
-                String,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                String,
-            ),
-        >(sql)
-        .bind(limit as i64)
-        .bind(offset as i64)
-        .fetch_all(self.db.pool())
-        .await
-        .map_err(EventError::Database)?;
-
-        let entries = rows
-            .into_iter()
-            .map(
-                |(
-                    id,
-                    action,
-                    user_id,
-                    event_id,
-                    event_type,
-                    event_level,
-                    result,
-                    details,
-                    ip_address,
-                    user_agent,
-                    created_at,
-                )| {
-                    AuditLogEntry {
-                        id,
-                        action,
-                        user_id,
-                        event_id,
-                        event_type,
-                        event_level,
-                        result,
-                        details,
-                        ip_address,
-                        user_agent,
-                        created_at,
-                    }
-                },
-            )
-            .collect();
+        let entries = self
+            .db
+            .list_all_audit_logs(limit as i64, offset as i64)
+            .await
+            .map_err(EventError::Database)?;
 
         Ok(entries)
     }
@@ -507,15 +209,11 @@ impl EventAuditLog for DatabaseAuditLog {
         let cutoff_date = Utc::now() - chrono::Duration::days(retention_days as i64);
         let cutoff_str = cutoff_date.format("%Y-%m-%d %H:%M:%S").to_string();
 
-        let sql = "DELETE FROM audit_logs WHERE created_at < ?";
-
-        let result = sqlx::query(sql)
-            .bind(cutoff_str)
-            .execute(self.db.pool())
+        let deleted_count = self
+            .db
+            .delete_old_audit_logs(&cutoff_str)
             .await
-            .map_err(EventError::Database)?;
-
-        let deleted_count = result.rows_affected() as usize;
+            .map_err(EventError::Database)? as usize;
         info!("Cleaned up {} old audit log entries", deleted_count);
 
         Ok(deleted_count)

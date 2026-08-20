@@ -203,12 +203,11 @@ impl DeviceService {
 
     async fn get_template(
         &self,
-        template_engine: &crate::domains::thing::template::TemplateEngine,
+        _template_engine: &crate::domains::thing::template::TemplateEngine,
         template_id: &str,
     ) -> Result<crate::domains::thing::template::types::DeviceTemplate, Error> {
-        template_engine
-            .get_repository()
-            .find_by_id(template_id)
+        self.db
+            .find_thing_template_by_id(template_id, "")
             .await
             .map_err(|e| Error::IOError(format!("Failed to get template: {}", e)))?
             .ok_or(Error::NotFound)

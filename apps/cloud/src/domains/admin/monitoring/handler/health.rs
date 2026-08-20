@@ -48,7 +48,7 @@ where
 
 /// 基础健康检查
 async fn get_health(State(state): State<AdminState>) -> Json<ApiResponse<HealthStatus>> {
-    let db_status = sqlx::query("SELECT 1").fetch_optional(state.db().pool()).await;
+    let db_status = state.db().ping().await;
 
     let status = match db_status {
         Ok(_) => "healthy",
@@ -66,7 +66,7 @@ async fn get_health(State(state): State<AdminState>) -> Json<ApiResponse<HealthS
 
 /// 详细健康状态
 async fn get_detailed_health(State(state): State<AdminState>, claims: Claims) -> Json<ApiResponse<DetailedHealthStatus>> {
-    let db_status = sqlx::query("SELECT 1").fetch_optional(state.db().pool()).await;
+    let db_status = state.db().ping().await;
 
     let (overall_status, database_status) = match db_status {
         Ok(_) => ("healthy", "connected"),

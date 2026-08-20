@@ -1,7 +1,15 @@
 // Thing module types — DTOs, request/response types, and DB row
+//
+// DB 行类型（ThingRow/ThingResource/TagInfo/BreadcrumbNode/ThingTreeNode/
+// EventRow/DocRow/ListThingsParams/UpdateThingRequest/UpdateGuardedOutcome）
+// 已迁入 tinyiothub_storage::thing（Task 12），此处 re-export 保持既有路径。
 
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
+
+pub use tinyiothub_storage::thing::{
+    BreadcrumbNode, DocRow, EventRow, ListThingsParams, TagInfo, ThingResource, ThingRow, ThingTreeNode,
+    UpdateGuardedOutcome, UpdateThingRequest,
+};
 
 // ──────────────────────────────────────────────
 // Enums
@@ -91,88 +99,8 @@ impl std::fmt::Display for SummaryStatus {
 }
 
 // ──────────────────────────────────────────────
-// DB Row
-// ──────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TagInfo {
-    pub id: String,
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub color: Option<String>,
-}
-
-/// Maps to the `devices` table after the Thing Ontology migration.
-#[derive(Debug, Clone, FromRow)]
-pub struct ThingRow {
-    pub id: String,
-    pub name: String,
-    pub display_name: Option<String>,
-    pub thing_type: String,
-    pub device_type: Option<String>,
-    pub address: Option<String>,
-    pub description: Option<String>,
-    pub position: Option<String>,
-    pub driver_name: Option<String>,
-    pub device_model: Option<String>,
-    pub protocol_type: Option<String>,
-    pub factory_name: Option<String>,
-    pub linked_data: Option<String>,
-    pub driver_options: Option<String>,
-    pub state: i32,
-    pub parent_id: Option<String>,
-    pub organization_id: Option<String>,
-    pub tenant_id: Option<String>,
-    pub workspace_id: Option<String>,
-    pub linked_gateway: Option<String>,
-    pub fingerprint: Option<String>,
-    pub template_id: Option<String>,
-    pub ontology_summary: Option<String>,
-    pub summary_status: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-// ──────────────────────────────────────────────
-// Query params
-// ──────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ListThingsParams {
-    pub thing_type: Option<String>,
-    pub parent_id: Option<String>,
-    pub tags: Option<String>,
-    pub q: Option<String>,
-    pub limit: Option<u32>,
-    pub offset: Option<u32>,
-}
-
-impl ListThingsParams {
-    /// Clamp `limit` to 1..=200, default 50.
-    pub fn limit(&self) -> u32 {
-        let raw = self.limit.unwrap_or(50);
-        raw.clamp(1, 200)
-    }
-
-    /// Default offset to 0.
-    pub fn offset(&self) -> u32 {
-        self.offset.unwrap_or(0)
-    }
-}
-
-// ──────────────────────────────────────────────
 // Response types
 // ──────────────────────────────────────────────
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BreadcrumbNode {
-    pub id: String,
-    pub name: String,
-    pub thing_type: String,
-}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -239,15 +167,6 @@ pub struct ThingProfileResponse {
     pub knowledge_docs: Option<Vec<serde_json::Value>>,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ThingTreeNode {
-    pub id: String,
-    pub name: String,
-    pub thing_type: String,
-    pub children: Vec<ThingTreeNode>,
-}
-
 // ──────────────────────────────────────────────
 // Request types
 // ──────────────────────────────────────────────
@@ -267,75 +186,4 @@ pub struct CreateThingRequest {
     /// Tags: comma-separated or JSON array string.
     pub tags: Option<String>,
     pub workspace_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateThingRequest {
-    pub name: Option<String>,
-    pub thing_type: Option<String>,
-    pub device_type: Option<String>,
-    pub description: Option<String>,
-    pub parent_id: Option<String>,
-    pub template_id: Option<String>,
-    pub protocol_type: Option<String>,
-    pub driver_name: Option<String>,
-    pub tags: Option<String>,
-}
-
-// ──────────────────────────────────────────────
-// Resource types
-// ──────────────────────────────────────────────
-
-/// Maps to the `resources` table (formerly `thing_resources`).
-#[derive(Debug, Clone, FromRow, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ThingResource {
-    pub id: String,
-    pub workspace_id: String,
-    pub device_id: Option<String>,
-    #[sqlx(rename = "type")]
-    pub resource_type: String,
-    pub name: String,
-    pub file_path: String,
-    pub content: Option<String>,
-    pub tags: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-/// Recent event row for the thing profile (real events-table columns).
-#[derive(Debug, serde::Serialize, sqlx::FromRow)]
-pub struct EventRow {
-    pub id: String,
-    pub event_type: String,
-    pub event_subtype: Option<String>,
-    pub event_level: i64,
-    pub source_type: String,
-    pub source_id: Option<String>,
-    pub title: Option<String>,
-    pub content: Option<String>,
-    pub metadata: Option<String>,
-    pub created_at: String,
-}
-
-/// Knowledge document row attached to a thing.
-#[derive(Debug, serde::Serialize, sqlx::FromRow)]
-#[serde(rename_all = "camelCase")]
-pub struct DocRow {
-    pub id: String,
-    pub name: String,
-    pub resource_type: String,
-    pub description: Option<String>,
-    pub file_path: String,
-    pub content: Option<String>,
-    pub tags: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-/// Outcome of a transaction-guarded update (cycle check + write in one tx).
-pub enum UpdateGuardedOutcome {
-    Cycle,
-    Updated(Option<Box<ThingRow>>),
 }

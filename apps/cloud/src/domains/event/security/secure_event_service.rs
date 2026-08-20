@@ -381,14 +381,10 @@ impl SecureEventService {
                 .map_err(|e| EventError::Configuration(format!("Failed to serialize config: {}", e)))?
         };
 
-        sqlx::query(
-            "INSERT INTO system_settings (key, value, updated_at) VALUES ('event_security_config', ?, datetime('now'))
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-        )
-        .bind(json)
-        .execute(self.db.pool())
-        .await
-        .map_err(|e| EventError::Configuration(format!("Failed to save config: {}", e)))?;
+        self.db
+            .save_event_security_config_json(&json)
+            .await
+            .map_err(|e| EventError::Configuration(format!("Failed to save config: {}", e)))?;
 
         tracing::info!("Event security configuration saved to database");
         Ok(())

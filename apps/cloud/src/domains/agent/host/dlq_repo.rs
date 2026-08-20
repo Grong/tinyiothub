@@ -4,7 +4,6 @@
 use async_trait::async_trait;
 use sqlx::SqlitePool;
 use tinyiothub_agent::runtime::event::dlq::{DeadLetterEntry, DeadLetterQueue};
-use uuid::Uuid;
 
 pub struct SqliteDeadLetterQueue {
     pool: SqlitePool,
@@ -25,43 +24,19 @@ impl DeadLetterQueue for SqliteDeadLetterQueue {
         payload_json: &str,
         failure_reason: &str,
     ) -> Result<(), String> {
-        let id = Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query(
-            "INSERT INTO agent_dead_letters (id, workspace_id, event_type, payload_json, failure_reason, enqueued_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&id)
-        .bind(workspace_id)
-        .bind(event_type)
-        .bind(payload_json)
-        .bind(failure_reason)
-        .bind(&now)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+        let id = tinyiothub_storage::Db::new(self.pool.clone())
+            .enqueue_agent_dead_letter(workspace_id, event_type, payload_json, failure_reason)
+            .await
+            .map_err(|e| e.to_string())?;
         tracing::info!(%id, workspace_id, event_type, "Dead-letter entry enqueued");
         Ok(())
     }
 
     async fn list(&self, workspace_id: &str) -> Result<Vec<DeadLetterEntry>, String> {
-        #[derive(Debug, sqlx::FromRow)]
-        struct DlqRow {
-            id: String,
-            workspace_id: String,
-            event_type: String,
-            payload_json: String,
-            failure_reason: String,
-            enqueued_at: String,
-        }
-        let rows = sqlx::query_as::<_, DlqRow>(
-            "SELECT id, workspace_id, event_type, payload_json, failure_reason, enqueued_at
-             FROM agent_dead_letters WHERE workspace_id = ? ORDER BY enqueued_at DESC",
-        )
-        .bind(workspace_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+        let rows = tinyiothub_storage::Db::new(self.pool.clone())
+            .list_agent_dead_letters(workspace_id)
+            .await
+            .map_err(|e| e.to_string())?;
 
         Ok(rows
             .into_iter()
@@ -77,12 +52,11 @@ impl DeadLetterQueue for SqliteDeadLetterQueue {
     }
 
     async fn discard(&self, entry_id: &str) -> Result<(), String> {
-        let result = sqlx::query("DELETE FROM agent_dead_letters WHERE id = ?")
-            .bind(entry_id)
-            .execute(&self.pool)
+        let affected = tinyiothub_storage::Db::new(self.pool.clone())
+            .delete_agent_dead_letter(entry_id)
             .await
             .map_err(|e| e.to_string())?;
-        if result.rows_affected() == 0 {
+        if affected == 0 {
             return Err(format!("Dead-letter entry not found: {}", entry_id));
         }
         Ok(())

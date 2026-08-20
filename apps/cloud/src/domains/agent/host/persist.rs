@@ -219,11 +219,7 @@ async fn project_run(pool: &SqlitePool, report: &RunReport, problem_key: Option<
 }
 
 async fn run_exists(pool: &SqlitePool, run_id: &str) -> Result<bool, sqlx::Error> {
-    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agent_runs WHERE id = ?")
-        .bind(run_id)
-        .fetch_one(pool)
-        .await?;
-    Ok(n > 0)
+    Db::new(pool.clone()).agent_run_exists(run_id).await
 }
 
 /// 全量重投影（Lagged resync / 周期对账）：recent_runs 幂等插入、

@@ -258,18 +258,9 @@ pub async fn build_agent_snapshot(db: &Db) -> RestoreSnapshot {
 /// 每工作区最近 [`COMPLETED_CAPACITY`] 条 run，**旧→新**（prewarm 输入
 /// 契约）：内层取最新 N 条，外层翻转。report JSON 解析失败的行跳过。
 async fn load_recent_runs(pool: &SqlitePool, workspace_id: &str) -> Vec<RunReport> {
-    let rows: Vec<(String,)> = match sqlx::query_as(
-        "SELECT report FROM (
-             SELECT report, created_at, rowid AS rid FROM agent_runs
-             WHERE workspace_id = ?
-             ORDER BY created_at DESC, rid DESC
-             LIMIT ?
-         ) ORDER BY created_at ASC, rid ASC",
-    )
-    .bind(workspace_id)
-    .bind(COMPLETED_CAPACITY as i64)
-    .fetch_all(pool)
-    .await
+    let rows: Vec<String> = match Db::new(pool.clone())
+        .list_recent_agent_run_reports(workspace_id, COMPLETED_CAPACITY as i64)
+        .await
     {
         Ok(rows) => rows,
         Err(e) => {
@@ -278,7 +269,7 @@ async fn load_recent_runs(pool: &SqlitePool, workspace_id: &str) -> Vec<RunRepor
         }
     };
     rows.into_iter()
-        .filter_map(|(json,)| match serde_json::from_str::<RunReport>(&json) {
+        .filter_map(|json| match serde_json::from_str::<RunReport>(&json) {
             Ok(report) => Some(report),
             Err(e) => {
                 warn!(workspace_id = %workspace_id, error = %e, "agent snapshot: skip unparseable run report");
@@ -292,15 +283,7 @@ async fn load_recent_runs(pool: &SqlitePool, workspace_id: &str) -> Vec<RunRepor
 /// 对齐）内的 problem_key 行。created_at 为 sqlite datetime 串；解析失败
 /// 的行跳过。未知 outcome fail-closed 到 Failed（与 repo 查询同策略）。
 async fn load_problem_meta(pool: &SqlitePool) -> Vec<ProblemMetaRow> {
-    let rows: Vec<(String, String, String, String, bool, Option<String>, String)> = match sqlx::query_as(
-        "SELECT workspace_id, problem_key, id, outcome, verified, acked_at, created_at
-         FROM agent_runs
-         WHERE problem_key IS NOT NULL AND created_at > datetime('now', '-7 days')
-         ORDER BY created_at ASC, rowid ASC",
-    )
-    .fetch_all(pool)
-    .await
-    {
+    let rows = match Db::new(pool.clone()).list_agent_problem_meta_rows().await {
         Ok(rows) => rows,
         Err(e) => {
             warn!(error = %e, "agent snapshot: load problem meta failed");

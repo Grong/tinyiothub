@@ -400,7 +400,7 @@ impl ServiceManager {
         data_server: &DataServer,
         db: &Arc<tinyiothub_storage::Db>,
     ) -> Result<(), Error> {
-        match sqlx::query("SELECT 1").fetch_optional(db.pool()).await {
+        match db.ping().await {
             Ok(_) => {
                 tracing::debug!("Database health check passed");
             }

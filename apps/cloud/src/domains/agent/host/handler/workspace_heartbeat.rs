@@ -270,14 +270,7 @@ pub async fn get_logs(
     verify_workspace_access_port!(state, claims, workspace_id);
 
     // Fetch all heartbeat rows (summary + error + auto_executed + proposal)
-    let rows: Result<Vec<(String, String, String)>, _> = sqlx::query_as(
-        "SELECT action_type, content, created_at FROM agent_actions \
-         WHERE workspace_id = ? AND event_type = 'heartbeat' \
-         ORDER BY created_at DESC LIMIT 200",
-    )
-    .bind(&workspace_id)
-    .fetch_all(state.db.pool())
-    .await;
+    let rows = state.db.list_agent_heartbeat_actions(&workspace_id).await;
 
     let logs = match rows {
         Ok(rows) => {
@@ -508,14 +501,7 @@ pub async fn get_approvals(
 ) -> Json<ApiResponse<ApprovalsResponse>> {
     verify_workspace_access_port!(state, claims, workspace_id);
 
-    let rows: Result<Vec<(String, String, String)>, _> = sqlx::query_as(
-        "SELECT action_type, content, created_at FROM agent_actions \
-         WHERE workspace_id = ? AND action_type = 'proposal' \
-         ORDER BY created_at DESC LIMIT 50",
-    )
-    .bind(&workspace_id)
-    .fetch_all(state.db.pool())
-    .await;
+    let rows = state.db.list_agent_proposal_actions(&workspace_id).await;
 
     let proposals = match rows {
         Ok(rows) => rows
@@ -562,17 +548,11 @@ async fn approve_and_execute(
     proposal_id: &str,
     registry: &std::sync::Arc<dyn tinyiothub_agent::tools::ExternalToolRegistry>,
 ) -> Result<serde_json::Value, String> {
-    let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT id, content FROM agent_actions \
-         WHERE workspace_id = ? AND action_type = 'proposal' \
-         AND json_extract(content, '$.proposalId') = ? \
-         ORDER BY created_at DESC LIMIT 1",
-    )
-    .bind(workspace_id)
-    .bind(proposal_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| format!("查询失败: {}", e))?;
+    let db = tinyiothub_storage::Db::new(pool.clone());
+    let row: Option<(String, String)> = db
+        .find_agent_proposal(workspace_id, proposal_id)
+        .await
+        .map_err(|e| format!("查询失败: {}", e))?;
 
     let Some((id, content)) = row else {
         return Err("提案不存在".to_string());
@@ -592,15 +572,11 @@ async fn approve_and_execute(
 
     // Atomic flip: only a row still pending transitions, so a second approve
     // affects 0 rows and never re-executes.
-    let flipped = sqlx::query(
-        "UPDATE agent_actions SET content = json_set(content, '$.status', 'approved') \
-         WHERE id = ? AND json_extract(content, '$.status') = 'pending'",
-    )
-    .bind(&id)
-    .execute(pool)
-    .await
-    .map_err(|e| format!("更新失败: {}", e))?;
-    if flipped.rows_affected() == 0 {
+    let flipped = db
+        .flip_agent_proposal_approved(&id)
+        .await
+        .map_err(|e| format!("更新失败: {}", e))?;
+    if flipped == 0 {
         return Err("提案已处理".to_string());
     }
 
@@ -629,17 +605,9 @@ async fn approve_and_execute(
         "source": "approved_proposal",
         "proposalId": proposal_id,
     });
-    if let Err(e) = sqlx::query(
-        "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at) \
-         VALUES (?, ?, ?, 'heartbeat', 'auto_executed', ?, ?)",
-    )
-    .bind(uuid::Uuid::new_v4().to_string())
-    .bind(workspace_id)
-    .bind(format!("__heartbeat__:{workspace_id}"))
-    .bind(outcome_content.to_string())
-    .bind(&now)
-    .execute(pool)
-    .await
+    if let Err(e) = db
+        .insert_agent_heartbeat_outcome(workspace_id, outcome_content.to_string(), &now)
+        .await
     {
         tracing::error!(%workspace_id, %proposal_id, "Failed to record proposal execution: {}", e);
     }
@@ -670,17 +638,11 @@ async fn update_proposal_status(
 ) -> Result<(), String> {
     // Push proposal_id filtering to SQL via json_extract instead of
     // fetching up to 100 rows and scanning in Rust.
-    let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT id, content FROM agent_actions \
-         WHERE workspace_id = ? AND action_type = 'proposal' \
-         AND json_extract(content, '$.proposalId') = ? \
-         ORDER BY created_at DESC LIMIT 1",
-    )
-    .bind(workspace_id)
-    .bind(proposal_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|e| format!("查询失败: {}", e))?;
+    let row: Option<(String, String)> = state
+        .db
+        .find_agent_proposal(workspace_id, proposal_id)
+        .await
+        .map_err(|e| format!("查询失败: {}", e))?;
 
     match row {
         Some((id, content)) => {
@@ -688,10 +650,9 @@ async fn update_proposal_status(
                 serde_json::from_str(&content).map_err(|e| format!("解析失败: {}", e))?;
             parsed["status"] = serde_json::Value::String(new_status.to_string());
             let new_content = parsed.to_string();
-            sqlx::query("UPDATE agent_actions SET content = ? WHERE id = ?")
-                .bind(&new_content)
-                .bind(&id)
-                .execute(state.db.pool())
+            state
+                .db
+                .update_agent_action_content(&id, &new_content)
                 .await
                 .map_err(|e| format!("更新失败: {}", e))?;
             Ok(())

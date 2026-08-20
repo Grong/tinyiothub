@@ -766,3 +766,145 @@ mod tests {
         assert_eq!(serde_json::to_string(&Outcome::Acted).expect("serialize"), "\"acted\"");
     }
 }
+
+// ──────────────────────────────────────────────
+// agent_tasks handler / persist 侧查询（自 cloud agent/host 迁入，Task 12）
+// ──────────────────────────────────────────────
+
+/// agent_runs 列表行（agent_tasks API）。
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunRow {
+    pub id: String,
+    pub trigger_type: String,
+    pub trigger_context: Option<String>,
+    pub outcome: String,
+    pub summary: String,
+    pub verified: bool,
+    pub tool_calls: i64,
+    pub tokens: i64,
+    pub duration_ms: i64,
+    pub acked_at: Option<String>,
+    pub acked_by: Option<String>,
+    pub created_at: String,
+}
+
+/// 检查 agent_run 是否存在。
+pub(crate) async fn agent_run_exists(pool: &SqlitePool, run_id: &str) -> std::result::Result<bool, sqlx::Error> {
+    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agent_runs WHERE id = ?")
+        .bind(run_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(n > 0)
+}
+
+/// 分页列出 workspace 的 agent_runs。
+pub(crate) async fn list_agent_run_rows(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    limit: i64,
+    offset: i64,
+) -> std::result::Result<Vec<AgentRunRow>, sqlx::Error> {
+    sqlx::query_as::<_, AgentRunRow>(
+        "SELECT id, trigger_type, trigger_context, outcome, summary, verified,                 tool_calls, tokens, duration_ms, acked_at, acked_by, created_at          FROM agent_runs WHERE workspace_id = ?          ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
+    )
+    .bind(workspace_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+}
+
+/// 查 agent_run 的 (workspace_id, problem_key)。
+pub(crate) async fn find_agent_run_owner(
+    pool: &SqlitePool,
+    run_id: &str,
+) -> std::result::Result<Option<(String, Option<String>)>, sqlx::Error> {
+    sqlx::query_as("SELECT workspace_id, problem_key FROM agent_runs WHERE id = ?")
+        .bind(run_id)
+        .fetch_optional(pool)
+        .await
+}
+
+impl Db {
+    /// 检查 agent_run 是否存在。
+    pub async fn agent_run_exists(&self, run_id: &str) -> std::result::Result<bool, sqlx::Error> {
+        agent_run_exists(self.pool(), run_id).await
+    }
+
+    /// 分页列出 workspace 的 agent_runs。
+    pub async fn list_agent_run_rows(
+        &self,
+        workspace_id: &str,
+        limit: i64,
+        offset: i64,
+    ) -> std::result::Result<Vec<AgentRunRow>, sqlx::Error> {
+        list_agent_run_rows(self.pool(), workspace_id, limit, offset).await
+    }
+
+    /// 查 agent_run 的 (workspace_id, problem_key)。
+    pub async fn find_agent_run_owner(
+        &self,
+        run_id: &str,
+    ) -> std::result::Result<Option<(String, Option<String>)>, sqlx::Error> {
+        find_agent_run_owner(self.pool(), run_id).await
+    }
+}
+
+// ──────────────────────────────────────────────
+// 启动快照查询（自 cloud bootstrap.rs 迁入，Task 12）
+// ──────────────────────────────────────────────
+
+/// 每工作区最近 N 条 run 的 report JSON，**旧→新**（prewarm 输入契约）。
+pub(crate) async fn list_recent_agent_run_reports(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    limit: i64,
+) -> std::result::Result<Vec<String>, sqlx::Error> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT report FROM (
+             SELECT report, created_at, rowid AS rid FROM agent_runs
+             WHERE workspace_id = ?
+             ORDER BY created_at DESC, rid DESC
+             LIMIT ?
+         ) ORDER BY created_at ASC, rid ASC",
+    )
+    .bind(workspace_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|(json,)| json).collect())
+}
+
+/// O11 dedup 元数据行类型（7d 保留窗内 problem_key 行）。
+pub type AgentProblemMetaTuple = (String, String, String, String, bool, Option<String>, String);
+
+/// 7d 保留窗内的 problem_key 行（旧→新）。
+pub(crate) async fn list_agent_problem_meta_rows(
+    pool: &SqlitePool,
+) -> std::result::Result<Vec<AgentProblemMetaTuple>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT workspace_id, problem_key, id, outcome, verified, acked_at, created_at
+         FROM agent_runs
+         WHERE problem_key IS NOT NULL AND created_at > datetime('now', '-7 days')
+         ORDER BY created_at ASC, rowid ASC",
+    )
+    .fetch_all(pool)
+    .await
+}
+
+impl Db {
+    /// 每工作区最近 N 条 run 的 report JSON，**旧→新**。
+    pub async fn list_recent_agent_run_reports(
+        &self,
+        workspace_id: &str,
+        limit: i64,
+    ) -> std::result::Result<Vec<String>, sqlx::Error> {
+        list_recent_agent_run_reports(self.pool(), workspace_id, limit).await
+    }
+
+    /// 7d 保留窗内的 problem_key 行（旧→新）。
+    pub async fn list_agent_problem_meta_rows(&self) -> std::result::Result<Vec<AgentProblemMetaTuple>, sqlx::Error> {
+        list_agent_problem_meta_rows(self.pool()).await
+    }
+}

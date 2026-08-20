@@ -74,30 +74,11 @@ impl Tool for ReadPropertyTool {
             .map_err(|e| anyhow::anyhow!("物不存在: {}", e))?;
 
         // Query property definition from DB
-        #[derive(Debug, sqlx::FromRow)]
-        struct PropRow {
-            name: String,
-            display_name: Option<String>,
-            description: Option<String>,
-            data_type: Option<String>,
-            unit: Option<String>,
-            min_value: Option<f64>,
-            max_value: Option<f64>,
-            default_value: Option<String>,
-            is_read_only: bool,
-        }
-
-        let prop: PropRow = sqlx::query_as::<_, PropRow>(
-            "SELECT name, display_name, description, data_type, unit, \
-             min_value, max_value, default_value, is_read_only \
-             FROM thing_properties WHERE device_id = ? AND name = ?",
-        )
-        .bind(&input.thing_id)
-        .bind(&input.property_name)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
-        .ok_or_else(|| anyhow::anyhow!("属性 '{}' 在物 {} 上未找到", input.property_name, input.thing_id))?;
+        let prop = tinyiothub_storage::Db::new(self.pool.clone())
+            .find_thing_property(&input.thing_id, &input.property_name)
+            .await
+            .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
+            .ok_or_else(|| anyhow::anyhow!("属性 '{}' 在物 {} 上未找到", input.property_name, input.thing_id))?;
 
         // Try device_cache for live value; design 六: no cache → null + hint
         let cached = self

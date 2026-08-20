@@ -857,3 +857,79 @@ impl Db {
         get_api_usage_stats(self.pool(), tenant_id, days).await
     }
 }
+
+// ──────────────────────────────────────────────
+// 初始化引导查询（自 cloud shared/initialization.rs 迁入，Task 12）
+// ──────────────────────────────────────────────
+
+/// 用户是否已关联任一租户。
+pub(crate) async fn tenant_user_exists(pool: &SqlitePool, user_id: &str) -> std::result::Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM tenant_users WHERE user_id = ?)")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+}
+
+/// 默认租户是否存在。
+pub(crate) async fn default_tenant_exists(pool: &SqlitePool) -> std::result::Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM tenants WHERE id = 'tenant-default-001')")
+        .fetch_one(pool)
+        .await
+}
+
+/// 创建默认租户（字面量行，幂等由调用方保证）。
+pub(crate) async fn insert_default_tenant(pool: &SqlitePool) -> std::result::Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO tenants
+                   (id, name, slug, status, plan_id, subscription_status,
+                    billing_email, timezone, locale, created_at, updated_at)
+                   VALUES
+                   ('tenant-default-001', 'Default Organization', 'default', 'active',
+                    'plan_free', 'active', 'admin@tinyiothub.local', 'UTC', 'zh-CN',
+                    datetime('now'), datetime('now'))"#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// 关联用户到默认租户（INSERT OR IGNORE）。
+pub(crate) async fn insert_default_tenant_user(
+    pool: &SqlitePool,
+    tenant_user_id: &str,
+    user_id: &str,
+) -> std::result::Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT OR IGNORE INTO tenant_users
+               (id, tenant_id, user_id, role, invitation_status, joined_at, created_at, updated_at)
+               VALUES (?, 'tenant-default-001', ?, 'owner', 'accepted',
+                       datetime('now'), datetime('now'), datetime('now'))"#,
+    )
+    .bind(tenant_user_id)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+impl Db {
+    /// 用户是否已关联任一租户。
+    pub async fn tenant_user_exists(&self, user_id: &str) -> std::result::Result<bool, sqlx::Error> {
+        tenant_user_exists(self.pool(), user_id).await
+    }
+
+    /// 默认租户是否存在。
+    pub async fn default_tenant_exists(&self) -> std::result::Result<bool, sqlx::Error> {
+        default_tenant_exists(self.pool()).await
+    }
+
+    /// 创建默认租户（字面量行）。
+    pub async fn insert_default_tenant(&self) -> std::result::Result<(), sqlx::Error> {
+        insert_default_tenant(self.pool()).await
+    }
+
+    /// 关联用户到默认租户（INSERT OR IGNORE）。
+    pub async fn insert_default_tenant_user(&self, tenant_user_id: &str, user_id: &str) -> std::result::Result<(), sqlx::Error> {
+        insert_default_tenant_user(self.pool(), tenant_user_id, user_id).await
+    }
+}

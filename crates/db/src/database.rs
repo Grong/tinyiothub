@@ -86,4 +86,10 @@ impl Db {
     pub async fn begin_transaction(&self) -> Result<sqlx::Transaction<'_, sqlx::Sqlite>, SqlxError> {
         self.pool.begin().await
     }
+
+    /// 健康检查探活（SELECT 1；自 cloud health/service_manager 收编）。
+    pub async fn ping(&self) -> Result<(), SqlxError> {
+        sqlx::query("SELECT 1").fetch_optional(&self.pool).await?;
+        Ok(())
+    }
 }

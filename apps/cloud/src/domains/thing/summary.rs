@@ -4,7 +4,8 @@
 use std::{sync::Arc, time::Duration};
 
 use dashmap::DashMap;
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
+use tinyiothub_storage::Db;
 use tokio::sync::Notify;
 
 // ──────────────────────────────────────────────
@@ -13,28 +14,13 @@ use tokio::sync::Notify;
 
 /// Called when a thing's resources change (attach/detach/update).
 pub async fn mark_dirty_for_resource_change(pool: &SqlitePool, thing_id: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE devices SET summary_status = 'dirty' WHERE id = ?")
-        .bind(thing_id)
-        .execute(pool)
-        .await?;
-    Ok(())
+    Db::new(pool.clone()).mark_thing_summary_dirty(thing_id).await
 }
 
 /// Called when thing name/parent changes — dirty thing + entire subtree.
 pub async fn mark_dirty_for_name_or_parent_change(pool: &SqlitePool, thing_id: &str) -> Result<u64, sqlx::Error> {
     // Use recursive CTE to find subtree
-    let result = sqlx::query(
-        "WITH RECURSIVE subtree AS (
-            SELECT id FROM devices WHERE id = ?
-            UNION ALL
-            SELECT d.id FROM devices d JOIN subtree s ON d.parent_id = s.id
-        )
-        UPDATE devices SET summary_status = 'dirty' WHERE id IN (SELECT id FROM subtree)",
-    )
-    .bind(thing_id)
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected())
+    Db::new(pool.clone()).mark_thing_subtree_dirty(thing_id).await
 }
 
 // ──────────────────────────────────────────────
@@ -117,13 +103,11 @@ impl SummaryComputer {
         llm: &dyn LlmClient,
     ) -> Result<Option<String>, SummaryError> {
         // 1. Read current status
-        let row = sqlx::query("SELECT ontology_summary, summary_status FROM devices WHERE id = ?")
-            .bind(thing_id)
-            .fetch_optional(pool)
-            .await?;
+        let db = Db::new(pool.clone());
+        let row = db.get_thing_summary_state(thing_id).await?;
 
         let (cached_summary, status): (Option<String>, Option<String>) = match row {
-            Some(r) => (r.get(0), r.get(1)),
+            Some((summary, status)) => (summary, status),
             None => return Ok(None),
         };
 
@@ -150,11 +134,7 @@ impl SummaryComputer {
                     drop(o);
                     let _ = tokio::time::timeout(Duration::from_secs(30), wait).await;
                     // Re-read from DB after notification
-                    let row = sqlx::query("SELECT ontology_summary FROM devices WHERE id = ?")
-                        .bind(thing_id)
-                        .fetch_optional(pool)
-                        .await?;
-                    return Ok(row.and_then(|r| r.get(0)));
+                    return Ok(db.get_thing_summary(thing_id).await?);
                 }
                 Entry::Vacant(v) => {
                     let n = Arc::new(Notify::new());
@@ -184,14 +164,7 @@ impl SummaryComputer {
         match result {
             Ok(Ok(text)) => {
                 // Success: persist summary and mark status 'ok'
-                sqlx::query(
-                    "UPDATE devices SET ontology_summary = ?, summary_status = 'ok', \
-                     updated_at = datetime('now') WHERE id = ?",
-                )
-                .bind(&text)
-                .bind(thing_id)
-                .execute(pool)
-                .await?;
+                db.save_thing_summary(thing_id, &text).await?;
                 tracing::info!(
                     thing_id = %thing_id,
                     duration_ms = llm_start.elapsed().as_millis() as i64,
@@ -203,25 +176,13 @@ impl SummaryComputer {
             Ok(Err(e)) => {
                 tracing::warn!(?e, thing_id = %thing_id, metric = "summary_failed", "LLM call failed");
                 // Mark status as 'failed', keep whatever was cached
-                sqlx::query(
-                    "UPDATE devices SET summary_status = 'failed', \
-                     updated_at = datetime('now') WHERE id = ?",
-                )
-                .bind(thing_id)
-                .execute(pool)
-                .await?;
+                db.mark_thing_summary_failed(thing_id).await?;
                 Ok(cached_summary)
             }
             Err(_elapsed) => {
                 tracing::warn!(thing_id = %thing_id, metric = "summary_failed", reason = "timeout", "LLM call timed out");
                 // Mark status as 'failed', keep whatever was cached
-                sqlx::query(
-                    "UPDATE devices SET summary_status = 'failed', \
-                     updated_at = datetime('now') WHERE id = ?",
-                )
-                .bind(thing_id)
-                .execute(pool)
-                .await?;
+                db.mark_thing_summary_failed(thing_id).await?;
                 Ok(cached_summary)
             }
         }
@@ -266,13 +227,10 @@ pub fn build_prompt(
 /// Fetch thing metadata and assemble a prompt from DB.
 async fn build_prompt_for_thing(thing_id: &str, pool: &SqlitePool) -> Result<String, SummaryError> {
     // Fetch thing basic info
-    let thing_row = sqlx::query("SELECT name, thing_type FROM devices WHERE id = ?")
-        .bind(thing_id)
-        .fetch_optional(pool)
-        .await?;
+    let thing_row = Db::new(pool.clone()).find_thing_name_and_type(thing_id).await?;
 
     let (name, thing_type): (String, String) = match thing_row {
-        Some(r) => (r.get(0), r.get(1)),
+        Some((name, thing_type)) => (name, thing_type),
         None => return Ok("未找到该物。".to_string()),
     };
 
@@ -291,45 +249,23 @@ async fn build_prompt_for_thing(thing_id: &str, pool: &SqlitePool) -> Result<Str
 }
 
 async fn build_breadcrumb_string(thing_id: &str, pool: &SqlitePool) -> Result<String, SummaryError> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "WITH RECURSIVE ancestors AS (
-            SELECT id, name, parent_id, 0 AS depth FROM devices WHERE id = ?
-            UNION ALL
-            SELECT d.id, d.name, d.parent_id, a.depth + 1
-            FROM devices d JOIN ancestors a ON d.id = a.parent_id
-            WHERE a.depth < 10
-        ) SELECT name FROM ancestors ORDER BY depth DESC",
-    )
-    .bind(thing_id)
-    .fetch_all(pool)
-    .await?;
-
-    let path: Vec<String> = rows.into_iter().map(|(name,)| name).collect();
+    let path = Db::new(pool.clone()).get_thing_breadcrumb_names(thing_id).await?;
     Ok(path.join(" / "))
 }
 
 /// Build the model definition string from the thing's OWN property/action
 /// instances (blueprint model — templates are creation-time blueprints only).
 async fn fetch_thing_model_definition(thing_id: &str, pool: &SqlitePool) -> String {
-    let props: Vec<(String,)> = sqlx::query_as("SELECT name FROM thing_properties WHERE device_id = ? ORDER BY name")
-        .bind(thing_id)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
-    let acts: Vec<(String,)> = sqlx::query_as("SELECT name FROM thing_actions WHERE device_id = ? ORDER BY name")
-        .bind(thing_id)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
+    let db = Db::new(pool.clone());
+    let props = db.list_thing_property_names(thing_id).await.unwrap_or_default();
+    let acts = db.list_thing_action_names(thing_id).await.unwrap_or_default();
 
     let mut def = String::new();
     if !props.is_empty() {
-        let names: Vec<&str> = props.iter().map(|(n,)| n.as_str()).collect();
-        def.push_str(&format!("属性: {}\n", names.join(", ")));
+        def.push_str(&format!("属性: {}\n", props.join(", ")));
     }
     if !acts.is_empty() {
-        let names: Vec<&str> = acts.iter().map(|(n,)| n.as_str()).collect();
-        def.push_str(&format!("动作: {}\n", names.join(", ")));
+        def.push_str(&format!("动作: {}\n", acts.join(", ")));
     }
     if def.is_empty() {
         def.push_str("无物模型定义。");
@@ -338,12 +274,10 @@ async fn fetch_thing_model_definition(thing_id: &str, pool: &SqlitePool) -> Stri
 }
 
 async fn fetch_knowledge_docs(thing_id: &str, pool: &SqlitePool) -> Vec<(String, String)> {
-    let rows: Vec<(String, Option<String>)> =
-        sqlx::query_as("SELECT name, content FROM resources WHERE device_id = ? ORDER BY created_at DESC LIMIT 5")
-            .bind(thing_id)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
+    let rows = Db::new(pool.clone())
+        .list_thing_knowledge_doc_snippets(thing_id)
+        .await
+        .unwrap_or_default();
 
     rows.into_iter()
         .map(|(name, content)| (name, content.unwrap_or_default()))

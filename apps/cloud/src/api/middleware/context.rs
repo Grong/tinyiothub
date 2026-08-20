@@ -99,12 +99,7 @@ async fn is_token_blacklisted(db: &tinyiothub_storage::Db, token: &str) -> bool 
 
     let token_hash = format!("{:x}", sha2::Sha256::digest(token.as_bytes()));
 
-    sqlx::query("SELECT 1 FROM token_blacklist WHERE token_hash = ? LIMIT 1")
-        .bind(&token_hash)
-        .fetch_optional(db.pool())
-        .await
-        .map(|r| r.is_some())
-        .unwrap_or(false)
+    db.token_blacklist_contains(&token_hash).await.unwrap_or(false)
 }
 
 /// JWT authentication middleware - requires valid JWT token

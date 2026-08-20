@@ -15,8 +15,8 @@ use crate::domains::driver::legacy::{
 use crate::domains::notify::channels::NotificationChannelFactory;
 use crate::domains::notify::service::NotificationManager;
 use crate::domains::thing::{
-    legacy::{trace::DeviceTraceService, trace_repository::DeviceTraceRepository},
-    template::{TemplateEngine, TemplateRepository, TemplateValidator},
+    legacy::trace::DeviceTraceService,
+    template::{TemplateEngine, TemplateValidator},
 };
 use tinyiothub_storage::memory::MemoryStore;
 use tinyiothub_storage::{Db, cache::DeviceCache};
@@ -271,14 +271,12 @@ impl AppState {
         // 性能服务 - 依赖数据库、缓存和告警查询（Db 门面）
         let performance_service = Arc::new(DevicePerformanceService::new(database.clone(), device_cache.clone()));
 
-        // 追踪服务 - 依赖追踪仓库
-        let trace_repository = Arc::new(DeviceTraceRepository::new((*database).clone()));
-        let trace_service = Arc::new(DeviceTraceService::new(trace_repository));
+        // 追踪服务 - 依赖 Db 门面
+        let trace_service = Arc::new(DeviceTraceService::new((*database).clone()));
 
         // 模板引擎 - 内置模板通过 migration seed 写入 DB
-        let template_repository = Arc::new(TemplateRepository::new(database.clone()));
         let template_validator = Arc::new(TemplateValidator::new());
-        let template_engine = Arc::new(TemplateEngine::new(template_repository, template_validator));
+        let template_engine = Arc::new(TemplateEngine::new(database.clone(), template_validator));
 
         // 创建安全事件服务 - 可选服务，依赖配置
         // Note: Secure event service requires async initialization, so we'll create it lazily

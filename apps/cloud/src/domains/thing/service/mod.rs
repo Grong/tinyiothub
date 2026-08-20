@@ -9,7 +9,6 @@ use tinyiothub_core::models::{
 
 use super::{
     errors::ThingError,
-    repo::ThingRepo,
     summary::{self, StubLlmClient, SummaryComputer},
 };
 use crate::domains::thing::types::CreateThingRequest;
@@ -25,7 +24,7 @@ use crate::domains::thing::types::UpdateThingRequest;
 use tinyiothub_storage::Db;
 
 pub struct ThingService {
-    repo: ThingRepo,
+    db: Db,
     pool: SqlitePool,
     summary_computer: SummaryComputer,
 }
@@ -33,7 +32,7 @@ pub struct ThingService {
 impl ThingService {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
-            repo: ThingRepo::new(pool.clone()),
+            db: Db::new(pool.clone()),
             pool,
             summary_computer: SummaryComputer::new(),
         }
@@ -48,7 +47,7 @@ impl ThingService {
         workspace_id: &str,
         params: &ListThingsParams,
     ) -> Result<ListThingsResult, ThingError> {
-        let (rows, total) = self.repo.list(workspace_id, params).await?;
+        let (rows, total) = self.db.list_things(workspace_id, params).await?;
         let limit = params.limit();
         let offset = params.offset();
 
@@ -56,9 +55,9 @@ impl ThingService {
         // one recursive CTE per row); DB errors surface instead of being
         // swallowed into empty breadcrumbs/tags.
         let thing_ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
-        let tags_map = self.repo.load_tags_batch(&thing_ids).await?;
+        let tags_map = self.db.load_thing_tags_batch(&thing_ids).await?;
         let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
-        let mut breadcrumbs = self.repo.get_breadcrumbs(&ids, 10).await?;
+        let mut breadcrumbs = self.db.get_thing_breadcrumbs(&ids, 10).await?;
 
         let mut items: Vec<ThingResponse> = Vec::with_capacity(rows.len());
         for row in &rows {
@@ -68,7 +67,7 @@ impl ThingService {
             items.push(resp);
         }
 
-        let unassigned = self.repo.list_unassigned_resources(workspace_id).await?.len() as u64;
+        let unassigned = self.db.list_unassigned_thing_resources(workspace_id).await?.len() as u64;
 
         Ok(ListThingsResult {
             items,
@@ -85,8 +84,8 @@ impl ThingService {
 
     pub async fn get_thing(&self, id: &str, workspace_id: &str) -> Result<ThingResponse, ThingError> {
         let mut row = self
-            .repo
-            .get_by_id_scoped(id, workspace_id)
+            .db
+            .find_thing_by_id_scoped(id, workspace_id)
             .await?
             .ok_or_else(|| ThingError::NotFound(id.to_string()))?;
 
@@ -105,10 +104,10 @@ impl ThingService {
             }
         }
 
-        let breadcrumb = self.repo.get_breadcrumb(id, 10).await.unwrap_or_default();
+        let breadcrumb = self.db.get_thing_breadcrumb(id, 10).await.unwrap_or_default();
 
         // Load tags for the single thing
-        let tags_map = self.repo.load_tags_batch(&[id]).await?;
+        let tags_map = self.db.load_thing_tags_batch(&[id]).await?;
         let mut resp = Self::row_to_response(&row, breadcrumb);
         resp.tags = tags_map.get(id).cloned().unwrap_or_default();
 
@@ -144,7 +143,7 @@ impl ThingService {
         depth: Option<u32>,
     ) -> Result<Vec<ThingTreeNode>, ThingError> {
         let max_depth = depth.unwrap_or(10);
-        Ok(self.repo.get_tree(root_id, workspace_id, max_depth).await?)
+        Ok(self.db.get_thing_tree(root_id, workspace_id, max_depth).await?)
     }
 
     // ──────────────────────────────────────────
@@ -171,7 +170,7 @@ impl ThingService {
 
         // Name conflict check within workspace (only if workspace provided)
         if let Some(ws) = workspace_id
-            && let Some(_existing) = self.repo.find_by_name(ws, &req.name).await?
+            && let Some(_existing) = self.db.find_thing_by_name(ws, &req.name).await?
         {
             return Err(ThingError::NameConflict(req.name.clone()));
         }
@@ -206,7 +205,7 @@ impl ThingService {
             updated_at: now,
         };
 
-        let created = self.repo.create(&row).await?;
+        let created = self.db.create_thing(&row).await?;
         if let Some(ref tid) = req.template_id {
             let _ = self.copy_template_props(&created.id, tid).await;
             let _ = self.copy_template_acts(&created.id, tid).await;
@@ -215,11 +214,7 @@ impl ThingService {
     }
 
     async fn copy_template_props(&self, thing_id: &str, tid: &str) -> Result<(), sqlx::Error> {
-        let row: Option<(String,)> = sqlx::query_as("SELECT properties FROM thing_templates WHERE id=?")
-            .bind(tid)
-            .fetch_optional(&self.pool)
-            .await?;
-        let Some((json,)) = row else {
+        let Some(json) = self.db.find_thing_template_properties(tid).await? else {
             return Ok(());
         };
         // Inserts go through the storage layer (single source of SQL for
@@ -251,11 +246,7 @@ impl ThingService {
     }
 
     async fn copy_template_acts(&self, thing_id: &str, tid: &str) -> Result<(), sqlx::Error> {
-        let row: Option<(String,)> = sqlx::query_as("SELECT actions FROM thing_templates WHERE id=?")
-            .bind(tid)
-            .fetch_optional(&self.pool)
-            .await?;
-        let Some((json,)) = row else {
+        let Some(json) = self.db.find_thing_template_actions(tid).await? else {
             return Ok(());
         };
         let db = Db::new(self.pool.clone());
@@ -284,8 +275,8 @@ impl ThingService {
     ) -> Result<ThingResponse, ThingError> {
         // Verify exists in this workspace
         let existing = self
-            .repo
-            .get_by_id_scoped(id, workspace_id)
+            .db
+            .find_thing_by_id_scoped(id, workspace_id)
             .await?
             .ok_or_else(|| ThingError::NotFound(id.to_string()))?;
 
@@ -293,13 +284,13 @@ impl ThingService {
         if let Some(ref new_name) = req.name
             && new_name != &existing.name
             && let Some(ref ws) = existing.workspace_id
-            && let Some(_conflict) = self.repo.find_by_name(ws, new_name).await?
+            && let Some(_conflict) = self.db.find_thing_by_name(ws, new_name).await?
         {
             return Err(ThingError::NameConflict(new_name.clone()));
         }
 
         // Cycle check + update in ONE transaction (TOCTOU-safe — T11)
-        let updated = match self.repo.update_guarded(id, req, workspace_id).await? {
+        let updated = match self.db.update_thing_guarded(id, req, workspace_id).await? {
             super::types::UpdateGuardedOutcome::Cycle => {
                 return Err(ThingError::CycleDetected {
                     thing_id: id.to_string(),
@@ -322,7 +313,7 @@ impl ThingService {
             tracing::warn!(?e, thing_id = %id, "Failed to mark summary dirty after rename/reparent");
         }
 
-        let breadcrumb = self.repo.get_breadcrumb(id, 10).await.unwrap_or_default();
+        let breadcrumb = self.db.get_thing_breadcrumb(id, 10).await.unwrap_or_default();
 
         Ok(Self::row_to_response(&updated, breadcrumb))
     }
@@ -333,12 +324,12 @@ impl ThingService {
 
     pub async fn delete_thing(&self, id: &str, workspace_id: &str) -> Result<(), ThingError> {
         // Check children first
-        let children = self.repo.count_children(id).await?;
+        let children = self.db.count_thing_children(id).await?;
         if children > 0 {
             return Err(ThingError::HasChildren(children as usize));
         }
 
-        let affected = self.repo.delete_scoped(id, workspace_id).await?;
+        let affected = self.db.delete_thing_scoped(id, workspace_id).await?;
         if affected == 0 {
             return Err(ThingError::NotFound(id.to_string()));
         }
@@ -356,7 +347,7 @@ impl ThingService {
         resource_id: &str,
         workspace_id: &str,
     ) -> Result<(), ThingError> {
-        let affected = self.repo.detach_resource(thing_id, resource_id, workspace_id).await?;
+        let affected = self.db.detach_thing_resource(thing_id, resource_id, workspace_id).await?;
         if affected == 0 {
             return Err(ThingError::NotFound(format!(
                 "resource {} not found on thing {}",
@@ -381,12 +372,12 @@ impl ThingService {
     ) -> Result<(), ThingError> {
         // Verify thing exists in this workspace; the repo update also
         // requires the resource to belong to the same workspace (T1).
-        self.repo
-            .get_by_id_scoped(thing_id, workspace_id)
+        self.db
+            .find_thing_by_id_scoped(thing_id, workspace_id)
             .await?
             .ok_or_else(|| ThingError::NotFound(thing_id.to_string()))?;
 
-        let affected = self.repo.attach_resource(thing_id, resource_id, workspace_id).await?;
+        let affected = self.db.attach_thing_resource(thing_id, resource_id, workspace_id).await?;
         if affected == 0 {
             return Err(ThingError::NotFound(format!("resource {} not found", resource_id)));
         }
@@ -400,7 +391,7 @@ impl ThingService {
     }
 
     pub async fn list_unassigned_resources(&self, workspace_id: &str) -> Result<Vec<ThingResource>, ThingError> {
-        Ok(self.repo.list_unassigned_resources(workspace_id).await?)
+        Ok(self.db.list_unassigned_thing_resources(workspace_id).await?)
     }
 
     // ──────────────────────────────────────────
@@ -467,7 +458,7 @@ impl ThingService {
     /// Load recent events (repo query — T9), mapped to the frontend's
     /// ThingEvent shape. Level int → name per the 4-level enum.
     async fn load_recent_events(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
-        let rows = self.repo.list_recent_events(device_id, 20).await.ok()?;
+        let rows = self.db.list_thing_recent_events(device_id, 20).await.ok()?;
         if rows.is_empty() {
             return None;
         }
@@ -521,7 +512,7 @@ impl ThingService {
     }
 
     async fn load_knowledge_docs(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
-        let rows = self.repo.list_knowledge_docs(device_id, 10).await.ok()?;
+        let rows = self.db.list_thing_knowledge_docs(device_id, 10).await.ok()?;
         if rows.is_empty() {
             return None;
         }

@@ -862,11 +862,32 @@ pub(crate) async fn find_workspace_id_for_login(
     Ok(id)
 }
 
+/// 查询 workspace 的 require_action_confirm 开关（原始 i32 语义；
+/// 自 cloud thing/actions 与 agent invoke_action 迁入，错误保持 sqlx::Error
+/// 以沿用调用方既有错误文案）。
+pub(crate) async fn get_workspace_require_action_confirm(
+    pool: &SqlitePool,
+    workspace_id: &str,
+) -> std::result::Result<Option<i32>, sqlx::Error> {
+    sqlx::query_scalar("SELECT require_action_confirm FROM workspaces WHERE id = ?")
+        .bind(workspace_id)
+        .fetch_optional(pool)
+        .await
+}
+
 // ──────────────────────────────────────────────
 // Db 委托（Workspace 领域）
 // ──────────────────────────────────────────────
 
 impl Db {
+    /// 查询 workspace 的 require_action_confirm 开关（原始 i32 语义）。
+    pub async fn get_workspace_require_action_confirm(
+        &self,
+        workspace_id: &str,
+    ) -> std::result::Result<Option<i32>, sqlx::Error> {
+        get_workspace_require_action_confirm(self.pool(), workspace_id).await
+    }
+
     /// 按 ID 查询工作空间（含设备数）。
     pub async fn find_workspace_by_id(&self, id: &str) -> Result<Option<WorkspaceWithDeviceCount>> {
         find_workspace_by_id(self.pool(), id).await
@@ -1075,5 +1096,129 @@ mod extract_tests {
     fn test_extract_priority_code_block_over_image() {
         let content = "```3d\n/uploads/model.glb\n```\n![img](/uploads/image.png)";
         assert_eq!(extract_file_path_from_content(content), "/uploads/model.glb");
+    }
+}
+
+// ──────────────────────────────────────────────
+// 初始化引导查询（自 cloud shared/initialization.rs 迁入，Task 12；
+// 错误保持 sqlx::Error 以沿用调用方既有错误文案）
+// ──────────────────────────────────────────────
+
+/// workspace 是否存在（按 id）。
+pub(crate) async fn workspace_exists_by_id(pool: &SqlitePool, ws_id: &str) -> std::result::Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?)")
+        .bind(ws_id)
+        .fetch_one(pool)
+        .await
+}
+
+/// 创建用户个人 workspace（默认租户）。
+pub(crate) async fn insert_user_workspace(
+    pool: &SqlitePool,
+    ws_id: &str,
+    name: String,
+) -> std::result::Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO workspaces
+           (id, name, description, tenant_id, created_at, updated_at)
+           VALUES (?, ?, '用户个人工作空间', 'tenant-default-001', datetime('now'), datetime('now'))"#,
+    )
+    .bind(ws_id)
+    .bind(name)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// 回填 workspace 的 agent_id。
+pub(crate) async fn set_workspace_agent_id(
+    pool: &SqlitePool,
+    agent_id: &str,
+    ws_id: &str,
+) -> std::result::Result<(), sqlx::Error> {
+    sqlx::query("UPDATE workspaces SET agent_id = ? WHERE id = ?")
+        .bind(agent_id)
+        .bind(ws_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// 默认 workspace 是否存在。
+pub(crate) async fn default_workspace_exists(pool: &SqlitePool) -> std::result::Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = 'ws-default-001')")
+        .fetch_one(pool)
+        .await
+}
+
+/// 创建默认 workspace（字面量行）。
+pub(crate) async fn insert_default_workspace(pool: &SqlitePool) -> std::result::Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO workspaces
+               (id, name, description, tenant_id, created_at, updated_at)
+               VALUES
+               ('ws-default-001', '默认工作空间', '系统自动创建的默认工作空间',
+                'tenant-default-001', datetime('now'), datetime('now'))"#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// 默认 workspace 是否缺少 agent_id。
+pub(crate) async fn default_workspace_needs_agent(pool: &SqlitePool) -> std::result::Result<bool, sqlx::Error> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT (agent_id IS NULL OR agent_id = '') FROM workspaces WHERE id = 'ws-default-001'",
+    )
+    .fetch_one(pool)
+    .await
+}
+
+/// 回填默认 workspace 的 agent_id。
+pub(crate) async fn set_default_workspace_agent_id(
+    pool: &SqlitePool,
+    agent_id: &str,
+) -> std::result::Result<(), sqlx::Error> {
+    sqlx::query("UPDATE workspaces SET agent_id = ? WHERE id = 'ws-default-001'")
+        .bind(agent_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+impl Db {
+    /// workspace 是否存在（按 id）。
+    pub async fn workspace_exists_by_id(&self, ws_id: &str) -> std::result::Result<bool, sqlx::Error> {
+        workspace_exists_by_id(self.pool(), ws_id).await
+    }
+
+    /// 创建用户个人 workspace（默认租户）。
+    pub async fn insert_user_workspace(&self, ws_id: &str, name: String) -> std::result::Result<(), sqlx::Error> {
+        insert_user_workspace(self.pool(), ws_id, name).await
+    }
+
+    /// 回填 workspace 的 agent_id。
+    pub async fn set_workspace_agent_id(&self, agent_id: &str, ws_id: &str) -> std::result::Result<(), sqlx::Error> {
+        set_workspace_agent_id(self.pool(), agent_id, ws_id).await
+    }
+
+    /// 默认 workspace 是否存在。
+    pub async fn default_workspace_exists(&self) -> std::result::Result<bool, sqlx::Error> {
+        default_workspace_exists(self.pool()).await
+    }
+
+    /// 创建默认 workspace（字面量行）。
+    pub async fn insert_default_workspace(&self) -> std::result::Result<(), sqlx::Error> {
+        insert_default_workspace(self.pool()).await
+    }
+
+    /// 默认 workspace 是否缺少 agent_id。
+    pub async fn default_workspace_needs_agent(&self) -> std::result::Result<bool, sqlx::Error> {
+        default_workspace_needs_agent(self.pool()).await
+    }
+
+    /// 回填默认 workspace 的 agent_id。
+    pub async fn set_default_workspace_agent_id(&self, agent_id: &str) -> std::result::Result<(), sqlx::Error> {
+        set_default_workspace_agent_id(self.pool(), agent_id).await
     }
 }

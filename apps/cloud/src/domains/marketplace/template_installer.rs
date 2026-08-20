@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::domains::thing::template::TemplateRepository;
+use tinyiothub_storage::Db;
 
 use super::{
     client::MarketplaceClient,
@@ -9,12 +9,12 @@ use super::{
 
 pub struct TemplateInstaller {
     client: Arc<MarketplaceClient>,
-    repository: Arc<TemplateRepository>,
+    db: Arc<Db>,
 }
 
 impl TemplateInstaller {
-    pub fn new(client: Arc<MarketplaceClient>, repository: Arc<TemplateRepository>) -> Self {
-        Self { client, repository }
+    pub fn new(client: Arc<MarketplaceClient>, db: Arc<Db>) -> Self {
+        Self { client, db }
     }
 
     /// Install template from marketplace.
@@ -44,8 +44,8 @@ impl TemplateInstaller {
             serde_json::from_value(template_data)
                 .map_err(|e| MarketplaceError::Template(format!("Invalid template format: {}", e)))?;
 
-        self.repository
-            .create(&request)
+        self.db
+            .create_thing_template(&request)
             .await
             .map_err(|e| MarketplaceError::Template(e.to_string()))?;
 
@@ -73,7 +73,7 @@ impl TemplateInstaller {
 
     /// Check if template is installed.
     pub async fn is_installed(&self, template_id: &str) -> Result<bool> {
-        match self.repository.find_by_id(template_id).await {
+        match self.db.find_thing_template_by_id(template_id, "").await {
             Ok(Some(_)) => Ok(true),
             Ok(None) => Ok(false),
             Err(e) => Err(MarketplaceError::Template(e.to_string())),
@@ -82,7 +82,7 @@ impl TemplateInstaller {
 
     /// Get installed template version.
     pub async fn get_installed_version(&self, template_id: &str) -> Result<Option<String>> {
-        match self.repository.find_by_id(template_id).await {
+        match self.db.find_thing_template_by_id(template_id, "").await {
             Ok(Some(template)) => Ok(Some(template.version)),
             Ok(None) => Ok(None),
             Err(e) => Err(MarketplaceError::Template(e.to_string())),

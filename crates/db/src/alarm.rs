@@ -1095,3 +1095,31 @@ impl Db {
         load_alarm_device_names(self.pool(), alarms).await
     }
 }
+
+// ──────────────────────────────────────────────
+// Dashboard 统计（自 cloud admin/monitoring 迁入，Task 12）
+// ──────────────────────────────────────────────
+
+/// Dashboard：活跃告警数（Some(ws) 时经 devices JOIN 过滤 workspace）。
+pub(crate) async fn count_active_alarms_scoped(pool: &SqlitePool, workspace_id: Option<&str>) -> Result<i64> {
+    let (query_str, wid) = match workspace_id {
+        Some(wid) => (
+            "SELECT COUNT(*) FROM device_alarms da JOIN devices d ON da.device_id = d.id WHERE da.is_resolved = 0 AND d.workspace_id = ?",
+            Some(wid),
+        ),
+        None => ("SELECT COUNT(*) FROM device_alarms WHERE is_resolved = 0", None),
+    };
+    let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(query_str));
+    if let Some(w) = wid {
+        q = q.bind(w);
+    }
+    let count: i64 = q.fetch_one(pool).await?;
+    Ok(count)
+}
+
+impl Db {
+    /// Dashboard：活跃告警数（Some(ws) 时经 devices JOIN 过滤 workspace）。
+    pub async fn count_active_alarms_scoped(&self, workspace_id: Option<&str>) -> Result<i64> {
+        count_active_alarms_scoped(self.pool(), workspace_id).await
+    }
+}

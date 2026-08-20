@@ -1345,6 +1345,22 @@ pub(crate) async fn find_devices_by_linked_gateway(
         .collect())
 }
 
+/// 按 id 检查设备是否存在（device_traces 等领域的外键前置检查；自 cloud trace_repository 迁入）。
+pub(crate) async fn device_exists_by_id(pool: &SqlitePool, id: &str) -> Result<bool> {
+    match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM devices WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+    {
+        Ok(Some(count)) => Ok(count > 0),
+        Ok(None) => Ok(false),
+        Err(e) => {
+            tracing::debug!("Failed to check device existence for {}: {}", id, e);
+            Err(Error::IOError(format!("DB error: {}", e)))
+        }
+    }
+}
+
 pub(crate) async fn device_exists_by_name(pool: &SqlitePool, ws: Option<&str>, name: &str) -> Result<bool> {
     let Some(_ws) = ws else {
         return device_exists_by_name_inner(pool, name).await;
@@ -1602,6 +1618,11 @@ impl Db {
         find_devices_by_linked_gateway(self.pool(), workspace_scope, linked_gateway).await
     }
 
+    /// 按 id 检查设备是否存在。
+    pub async fn device_exists_by_id(&self, id: &str) -> Result<bool> {
+        device_exists_by_id(self.pool(), id).await
+    }
+
     /// 设备名是否已存在；Some(scope) 时限定 workspace 内判断。
     pub async fn device_exists_by_name(&self, workspace_scope: Option<&str>, name: &str) -> Result<bool> {
         device_exists_by_name(self.pool(), workspace_scope, name).await
@@ -1651,5 +1672,199 @@ impl Db {
     /// 按驱动名分组计数（cloud dashboard 用）。
     pub async fn count_devices_by_driver(&self) -> Result<Vec<(String, i64)>> {
         count_devices_by_driver(self.pool()).await
+    }
+}
+
+// ──────────────────────────────────────────────
+// Open API 投影查询（自 cloud admin/open 迁入，Task 12）
+// ──────────────────────────────────────────────
+
+/// Open API thing 列表行。
+#[derive(Debug)]
+pub struct OpenThingRow {
+    pub id: String,
+    pub name: String,
+    pub display_name: Option<String>,
+    pub device_type: Option<String>,
+    pub state: i32,
+    pub created_at: String,
+}
+
+/// Open API thing 详情行。
+#[derive(Debug)]
+pub struct OpenThingDetailRow {
+    pub id: String,
+    pub name: String,
+    pub display_name: Option<String>,
+    pub device_type: Option<String>,
+    pub address: Option<String>,
+    pub state: i32,
+    pub protocol_type: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Open API：列出 workspace 内 things（最新 100 条）。
+pub(crate) async fn list_open_things(pool: &SqlitePool, workspace_id: &str) -> Result<Vec<OpenThingRow>> {
+    let rows = sqlx::query(
+        "SELECT id, name, display_name, device_type, state, created_at FROM devices WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 100",
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|row| OpenThingRow {
+            id: row.try_get::<String, _>("id").unwrap_or_default(),
+            name: row.try_get::<String, _>("name").unwrap_or_default(),
+            display_name: row.try_get::<Option<String>, _>("display_name").unwrap_or_default(),
+            device_type: row.try_get::<Option<String>, _>("device_type").unwrap_or_default(),
+            state: row.try_get::<i32, _>("state").unwrap_or_default(),
+            created_at: row.try_get::<String, _>("created_at").unwrap_or_default(),
+        })
+        .collect())
+}
+
+/// Open API：按 id + workspace 查 thing 详情。
+pub(crate) async fn find_open_thing(
+    pool: &SqlitePool,
+    id: &str,
+    workspace_id: &str,
+) -> Result<Option<OpenThingDetailRow>> {
+    let row = sqlx::query(
+        "SELECT id, name, display_name, device_type, address, state, protocol_type, created_at, updated_at FROM devices WHERE id = ? AND workspace_id = ? LIMIT 1"
+    )
+    .bind(id)
+    .bind(workspace_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|row| OpenThingDetailRow {
+        id: row.try_get::<String, _>("id").unwrap_or_default(),
+        name: row.try_get::<String, _>("name").unwrap_or_default(),
+        display_name: row.try_get::<Option<String>, _>("display_name").unwrap_or_default(),
+        device_type: row.try_get::<Option<String>, _>("device_type").unwrap_or_default(),
+        address: row.try_get::<Option<String>, _>("address").unwrap_or_default(),
+        state: row.try_get::<i32, _>("state").unwrap_or_default(),
+        protocol_type: row.try_get::<Option<String>, _>("protocol_type").unwrap_or_default(),
+        created_at: row.try_get::<String, _>("created_at").unwrap_or_default(),
+        updated_at: row.try_get::<String, _>("updated_at").unwrap_or_default(),
+    }))
+}
+
+/// Open API：查 (id, thing_type)（workspace 作用域）。
+pub(crate) async fn find_open_thing_type(
+    pool: &SqlitePool,
+    id: &str,
+    workspace_id: &str,
+) -> Result<Option<(String, String)>> {
+    let row: Option<(String, String)> =
+        sqlx::query_as("SELECT id, thing_type FROM devices WHERE id = ? AND workspace_id = ?")
+            .bind(id)
+            .bind(workspace_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row)
+}
+
+impl Db {
+    /// Open API：列出 workspace 内 things（最新 100 条）。
+    pub async fn list_open_things(&self, workspace_id: &str) -> Result<Vec<OpenThingRow>> {
+        list_open_things(self.pool(), workspace_id).await
+    }
+
+    /// Open API：按 id + workspace 查 thing 详情。
+    pub async fn find_open_thing(&self, id: &str, workspace_id: &str) -> Result<Option<OpenThingDetailRow>> {
+        find_open_thing(self.pool(), id, workspace_id).await
+    }
+
+    /// Open API：查 (id, thing_type)（workspace 作用域）。
+    pub async fn find_open_thing_type(&self, id: &str, workspace_id: &str) -> Result<Option<(String, String)>> {
+        find_open_thing_type(self.pool(), id, workspace_id).await
+    }
+}
+
+// ──────────────────────────────────────────────
+// Dashboard 统计（自 cloud admin/monitoring 迁入，Task 12）
+// ──────────────────────────────────────────────
+
+/// Dashboard：设备总数（可选 workspace 过滤）。
+pub(crate) async fn count_devices_total(pool: &SqlitePool, workspace_id: Option<&str>) -> Result<i64> {
+    let (query_str, wid) = match workspace_id {
+        Some(wid) => ("SELECT COUNT(*) FROM devices WHERE workspace_id = ?", Some(wid)),
+        None => ("SELECT COUNT(*) FROM devices", None),
+    };
+    let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(query_str));
+    if let Some(w) = wid {
+        q = q.bind(w);
+    }
+    let count: i64 = q.fetch_one(pool).await?;
+    Ok(count)
+}
+
+/// Dashboard：在线设备数（可选 workspace 过滤）。
+pub(crate) async fn count_online_devices(pool: &SqlitePool, workspace_id: Option<&str>) -> Result<i64> {
+    let (query_str, wid) = match workspace_id {
+        Some(wid) => (
+            "SELECT COUNT(*) FROM devices WHERE state = 1 AND workspace_id = ?",
+            Some(wid),
+        ),
+        None => ("SELECT COUNT(*) FROM devices WHERE state = 1", None),
+    };
+    let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(query_str));
+    if let Some(w) = wid {
+        q = q.bind(w);
+    }
+    let count: i64 = q.fetch_one(pool).await?;
+    Ok(count)
+}
+
+impl Db {
+    /// Dashboard：设备总数（可选 workspace 过滤）。
+    pub async fn count_devices_total(&self, workspace_id: Option<&str>) -> Result<i64> {
+        count_devices_total(self.pool(), workspace_id).await
+    }
+
+    /// Dashboard：在线设备数（可选 workspace 过滤）。
+    pub async fn count_online_devices(&self, workspace_id: Option<&str>) -> Result<i64> {
+        count_online_devices(self.pool(), workspace_id).await
+    }
+}
+
+// ──────────────────────────────────────────────
+// 初始化引导：孤儿设备归属（自 cloud shared/initialization.rs 迁入，Task 12；
+// 错误保持 sqlx::Error 以沿用调用方既有错误文案）
+// ──────────────────────────────────────────────
+
+/// 将未分配设备归属到默认租户。
+pub(crate) async fn assign_orphan_devices_to_default_tenant(
+    pool: &SqlitePool,
+) -> std::result::Result<(), sqlx::Error> {
+    sqlx::query("UPDATE devices SET tenant_id = 'tenant-default-001' WHERE tenant_id IS NULL")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// 将默认租户下未分配设备归属到默认工作空间。
+pub(crate) async fn assign_orphan_devices_to_default_workspace(
+    pool: &SqlitePool,
+) -> std::result::Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE devices SET workspace_id = 'ws-default-001' WHERE workspace_id IS NULL AND tenant_id = 'tenant-default-001'"
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+impl Db {
+    /// 将未分配设备归属到默认租户。
+    pub async fn assign_orphan_devices_to_default_tenant(&self) -> std::result::Result<(), sqlx::Error> {
+        assign_orphan_devices_to_default_tenant(self.pool()).await
+    }
+
+    /// 将默认租户下未分配设备归属到默认工作空间。
+    pub async fn assign_orphan_devices_to_default_workspace(&self) -> std::result::Result<(), sqlx::Error> {
+        assign_orphan_devices_to_default_workspace(self.pool()).await
     }
 }

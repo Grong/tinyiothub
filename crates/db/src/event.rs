@@ -1412,3 +1412,140 @@ mod tests {
         assert!(summary.has_critical_issues());
     }
 }
+
+// ──────────────────────────────────────────────
+// Open API 投影查询（自 cloud admin/open 迁入，Task 12）
+// ──────────────────────────────────────────────
+
+/// Open API thing 事件行。
+#[derive(Debug)]
+pub struct OpenEventRow {
+    pub id: String,
+    pub event_type: String,
+    pub event_level: i64,
+    pub title: Option<String>,
+    pub created_at: String,
+}
+
+/// Open API 全量事件行（含 device_id）。
+#[derive(Debug)]
+pub struct OpenEventWithDeviceRow {
+    pub id: String,
+    pub event_type: String,
+    pub event_level: i64,
+    pub title: Option<String>,
+    pub device_id: Option<String>,
+    pub created_at: String,
+}
+
+/// Open API：列出 thing 的事件（最新 100 条，workspace 作用域）。
+pub(crate) async fn list_open_thing_events(
+    pool: &SqlitePool,
+    device_id: &str,
+    workspace_id: &str,
+) -> Result<Vec<OpenEventRow>> {
+    let rows = sqlx::query(
+        "SELECT id, event_type, event_level, title, created_at FROM events WHERE device_id = ? AND workspace_id = ? ORDER BY created_at DESC LIMIT 100"
+    )
+    .bind(device_id)
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|row| OpenEventRow {
+            id: row.try_get::<String, _>("id").unwrap_or_default(),
+            event_type: row.try_get::<String, _>("event_type").unwrap_or_default(),
+            event_level: row.try_get::<i64, _>("event_level").unwrap_or(0),
+            title: row.try_get::<Option<String>, _>("title").unwrap_or_default(),
+            created_at: row.try_get::<String, _>("created_at").unwrap_or_default(),
+        })
+        .collect())
+}
+
+/// Open API：列出 workspace 全部事件（最新 100 条）。
+pub(crate) async fn list_open_events(pool: &SqlitePool, workspace_id: &str) -> Result<Vec<OpenEventWithDeviceRow>> {
+    let rows = sqlx::query(
+        "SELECT id, event_type, event_level, title, device_id, created_at FROM events WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 100",
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|row| OpenEventWithDeviceRow {
+            id: row.try_get::<String, _>("id").unwrap_or_default(),
+            event_type: row.try_get::<String, _>("event_type").unwrap_or_default(),
+            event_level: row.try_get::<i64, _>("event_level").unwrap_or(0),
+            title: row.try_get::<Option<String>, _>("title").unwrap_or_default(),
+            device_id: row.try_get::<Option<String>, _>("device_id").unwrap_or_default(),
+            created_at: row.try_get::<String, _>("created_at").unwrap_or_default(),
+        })
+        .collect())
+}
+
+impl Db {
+    /// Open API：列出 thing 的事件（最新 100 条，workspace 作用域）。
+    pub async fn list_open_thing_events(&self, device_id: &str, workspace_id: &str) -> Result<Vec<OpenEventRow>> {
+        list_open_thing_events(self.pool(), device_id, workspace_id).await
+    }
+
+    /// Open API：列出 workspace 全部事件（最新 100 条）。
+    pub async fn list_open_events(&self, workspace_id: &str) -> Result<Vec<OpenEventWithDeviceRow>> {
+        list_open_events(self.pool(), workspace_id).await
+    }
+}
+
+// ──────────────────────────────────────────────
+// Thing 事件入库（自 cloud event/router.rs 迁入，Task 12）
+// ──────────────────────────────────────────────
+
+/// Thing 事件入库参数。
+pub struct ThingEventInsert<'a> {
+    pub event_id: &'a str,
+    pub event_subtype: &'a str,
+    pub level_num: i32,
+    pub timestamp: &'a str,
+    pub source_type: &'a str,
+    pub source_id: &'a str,
+    pub device_id: Option<&'a str>,
+    pub user_id: Option<&'a str>,
+    pub title: &'a str,
+    pub content: &'a str,
+    pub metadata: &'a str,
+    pub created_at: &'a str,
+    pub workspace_id: &'a str,
+    pub actor: &'a str,
+}
+
+/// 持久化 thing 事件，返回 last_insert_rowid。
+pub(crate) async fn insert_thing_event(pool: &SqlitePool, input: &ThingEventInsert<'_>) -> Result<i64> {
+    let res = sqlx::query(
+        "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, source_type, source_id, device_id, user_id, title, content, metadata, created_at, workspace_id, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .bind(input.event_id)
+    .bind("device")
+    .bind(input.event_subtype)
+    .bind(input.level_num)
+    .bind(input.timestamp)
+    .bind(input.source_type)
+    .bind(input.source_id)
+    .bind(input.device_id)
+    .bind(input.user_id)
+    .bind(input.title)
+    .bind(input.content)
+    .bind(input.metadata)
+    .bind(input.created_at)
+    .bind(input.workspace_id)
+    .bind(input.actor)
+    .execute(pool)
+    .await?;
+    Ok(res.last_insert_rowid())
+}
+
+impl Db {
+    /// 持久化 thing 事件，返回 last_insert_rowid。
+    pub async fn insert_thing_event(&self, input: &ThingEventInsert<'_>) -> Result<i64> {
+        insert_thing_event(self.pool(), input).await
+    }
+}

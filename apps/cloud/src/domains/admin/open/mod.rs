@@ -11,7 +11,6 @@ use axum::{
     routing::{get, post},
 };
 use sha2::Digest;
-use sqlx::Row;
 use subtle::ConstantTimeEq;
 use tinyiothub_web::response::ApiResponseBuilder;
 
@@ -165,25 +164,23 @@ async fn list_things(State(state): State<AdminState>, headers: HeaderMap) -> Res
     let api_key = extract_api_key_header(&headers);
     let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
-    let things: Vec<serde_json::Value> = sqlx::query(
-        "SELECT id, name, display_name, device_type, state, created_at FROM devices WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 100",
-    )
-    .bind(&workspace_id)
-    .fetch_all(state.db.pool())
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .into_iter()
-    .map(|row| {
-        serde_json::json!({
-            "id": row.try_get::<String, _>("id").unwrap_or_default(),
-            "name": row.try_get::<String, _>("name").unwrap_or_default(),
-            "display_name": row.try_get::<Option<String>, _>("display_name").unwrap_or_default(),
-            "device_type": row.try_get::<Option<String>, _>("device_type").unwrap_or_default(),
-            "state": row.try_get::<i32, _>("state").unwrap_or_default(),
-            "created_at": row.try_get::<String, _>("created_at").unwrap_or_default(),
+    let things: Vec<serde_json::Value> = state
+        .db
+        .list_open_things(&workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .into_iter()
+        .map(|row| {
+            serde_json::json!({
+                "id": row.id,
+                "name": row.name,
+                "display_name": row.display_name,
+                "device_type": row.device_type,
+                "state": row.state,
+                "created_at": row.created_at,
+            })
         })
-    })
-    .collect();
+        .collect();
 
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
@@ -215,42 +212,24 @@ async fn get_thing(
     let api_key = extract_api_key_header(&headers);
     let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
-    let row = sqlx::query(
-        "SELECT id, name, display_name, device_type, address, state, protocol_type, created_at, updated_at FROM devices WHERE id = ? AND workspace_id = ? LIMIT 1"
-    )
-    .bind(&id)
-    .bind(&workspace_id)
-    .fetch_optional(state.db.pool())
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let row = state
+        .db
+        .find_open_thing(&id, &workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row = row.ok_or(StatusCode::NOT_FOUND)?;
-    let thing = {
-        use sqlx::Row;
-        let get = |col: &str| -> Result<String, StatusCode> {
-            row.try_get::<String, _>(col)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-        };
-        let get_opt = |col: &str| -> Result<Option<String>, StatusCode> {
-            row.try_get::<Option<String>, _>(col)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-        };
-        let get_i32 = |col: &str| -> Result<i32, StatusCode> {
-            row.try_get::<i32, _>(col)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-        };
-        serde_json::json!({
-            "id": get("id")?,
-            "name": get("name")?,
-            "display_name": get_opt("display_name")?,
-            "device_type": get_opt("device_type")?,
-            "address": get_opt("address")?,
-            "state": get_i32("state")?,
-            "protocol_type": get_opt("protocol_type")?,
-            "created_at": get("created_at")?,
-            "updated_at": get("updated_at")?,
-        })
-    };
+    let thing = serde_json::json!({
+        "id": row.id,
+        "name": row.name,
+        "display_name": row.display_name,
+        "device_type": row.device_type,
+        "address": row.address,
+        "state": row.state,
+        "protocol_type": row.protocol_type,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    });
 
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
@@ -285,39 +264,23 @@ async fn get_thing_properties(
     // Workspace-scoped like every sibling endpoint (pre-landing security
     // review: this was the one open-API endpoint missing the tenant guard —
     // any API key could read any workspace's live property values)
-    let rows = sqlx::query(
-        "SELECT name, display_name, data_type, value, unit, updated_at FROM thing_properties \
-         WHERE device_id = ? AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?) \
-         ORDER BY created_at DESC",
-    )
-    .bind(&id)
-    .bind(&workspace_id)
-    .fetch_all(state.db.pool())
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let properties: Vec<_> = rows
+    let properties: Vec<_> = state
+        .db
+        .list_open_thing_properties(&id, &workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .into_iter()
         .map(|row| {
-            use sqlx::Row;
-            let get = |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<String, StatusCode> {
-                r.try_get::<String, _>(col)
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-            };
-            let get_opt = |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<Option<String>, StatusCode> {
-                r.try_get::<Option<String>, _>(col)
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-            };
-            Ok(serde_json::json!({
-                "name": get(&row, "name")?,
-                "display_name": get_opt(&row, "display_name")?,
-                "data_type": get(&row, "data_type")?,
-                "value": get_opt(&row, "value")?,
-                "unit": get_opt(&row, "unit")?,
-                "updated_at": get(&row, "updated_at")?,
-            }))
+            serde_json::json!({
+                "name": row.name,
+                "display_name": row.display_name,
+                "data_type": row.data_type,
+                "value": row.value,
+                "unit": row.unit,
+                "updated_at": row.updated_at,
+            })
         })
-        .collect::<Result<Vec<_>, StatusCode>>()?;
+        .collect::<Vec<_>>();
 
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
@@ -349,37 +312,22 @@ async fn list_commands(
     let api_key = extract_api_key_header(&headers);
     let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
-    let rows = sqlx::query(
-        "SELECT id, name, display_name, description, parameters FROM thing_actions \
-         WHERE device_id = ? AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?) ORDER BY name",
-    )
-    .bind(&id)
-    .bind(&workspace_id)
-    .fetch_all(state.db.pool())
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let commands: Vec<_> = rows
+    let commands: Vec<_> = state
+        .db
+        .list_open_thing_commands(&id, &workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .into_iter()
         .map(|row| {
-            use sqlx::Row;
-            let get = |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<String, StatusCode> {
-                r.try_get::<String, _>(col)
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-            };
-            let get_opt = |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<Option<String>, StatusCode> {
-                r.try_get::<Option<String>, _>(col)
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-            };
-            Ok(serde_json::json!({
-                "id": get(&row, "id")?,
-                "name": get(&row, "name")?,
-                "display_name": get_opt(&row, "display_name")?,
-                "description": get_opt(&row, "description")?,
-                "parameters": get_opt(&row, "parameters")?,
-            }))
+            serde_json::json!({
+                "id": row.id,
+                "name": row.name,
+                "display_name": row.display_name,
+                "description": row.description,
+                "parameters": row.parameters,
+            })
         })
-        .collect::<Result<Vec<_>, StatusCode>>()?;
+        .collect::<Vec<_>>();
 
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
@@ -420,13 +368,11 @@ async fn send_command(
     let command_params = payload.get("params").cloned();
 
     // Verify the thing exists IN THIS WORKSPACE and is a device (T1)
-    let thing: Option<(String, String)> =
-        sqlx::query_as("SELECT id, thing_type FROM devices WHERE id = ? AND workspace_id = ?")
-            .bind(&id)
-            .bind(&workspace_id)
-            .fetch_optional(state.db.pool())
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let thing: Option<(String, String)> = state
+        .db
+        .find_open_thing_type(&id, &workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let Some((_, thing_type)) = thing else {
         return Err(StatusCode::NOT_FOUND);
     };
@@ -435,14 +381,12 @@ async fn send_command(
     }
 
     // Verify the action is registered on the thing
-    let registered: bool =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM thing_actions WHERE device_id = ? AND name = ?")
-            .bind(&id)
-            .bind(command_name)
-            .fetch_one(state.db.pool())
-            .await
-            .map(|c| c > 0)
-            .unwrap_or(false);
+    let registered: bool = state
+        .db
+        .count_thing_action_by_name(&id, command_name)
+        .await
+        .map(|c| c > 0)
+        .unwrap_or(false);
     if !registered {
         return Err(StatusCode::NOT_FOUND);
     }
@@ -504,34 +448,22 @@ async fn list_events(
     let api_key = extract_api_key_header(&headers);
     let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
-    let rows = sqlx::query(
-        "SELECT id, event_type, event_level, title, created_at FROM events WHERE device_id = ? AND workspace_id = ? ORDER BY created_at DESC LIMIT 100"
-    )
-    .bind(&id)
-    .bind(&workspace_id)
-    .fetch_all(state.db.pool())
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let events: Vec<_> = rows
+    let events: Vec<_> = state
+        .db
+        .list_open_thing_events(&id, &workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .into_iter()
         .map(|row| {
-            use sqlx::Row;
-            let get = |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<String, StatusCode> {
-                r.try_get::<String, _>(col)
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-            };
-            let level = row.try_get::<i64, _>("event_level").unwrap_or(0);
-            let title = row.try_get::<Option<String>, _>("title").unwrap_or_default();
-            Ok(serde_json::json!({
-                "id": get(&row, "id")?,
-                "event_type": get(&row, "event_type")?,
-                "event_level": level,
-                "message": title.unwrap_or_default(),
-                "created_at": get(&row, "created_at")?,
-            }))
+            serde_json::json!({
+                "id": row.id,
+                "event_type": row.event_type,
+                "event_level": row.event_level,
+                "message": row.title.unwrap_or_default(),
+                "created_at": row.created_at,
+            })
         })
-        .collect::<Result<Vec<_>, StatusCode>>()?;
+        .collect::<Vec<_>>();
 
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
@@ -559,30 +491,23 @@ async fn list_all_events(State(state): State<AdminState>, headers: HeaderMap) ->
     let api_key = extract_api_key_header(&headers);
     let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
-    let rows = sqlx::query(
-        "SELECT id, event_type, event_level, title, device_id, created_at FROM events WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 100",
-    )
-    .bind(&workspace_id)
-    .fetch_all(state.db.pool())
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let rows: Vec<serde_json::Value> = rows
+    let events: Vec<_> = state
+        .db
+        .list_open_events(&workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .into_iter()
         .map(|row| {
-            use sqlx::Row;
             serde_json::json!({
-                "id": row.try_get::<String, _>("id").unwrap_or_default(),
-                "event_type": row.try_get::<String, _>("event_type").unwrap_or_default(),
-                "event_level": row.try_get::<i64, _>("event_level").unwrap_or(0),
-                "message": row.try_get::<Option<String>, _>("title").unwrap_or_default().unwrap_or_default(),
-                "device_id": row.try_get::<Option<String>, _>("device_id").unwrap_or_default(),
-                "created_at": row.try_get::<String, _>("created_at").unwrap_or_default(),
+                "id": row.id,
+                "event_type": row.event_type,
+                "event_level": row.event_level,
+                "message": row.title.unwrap_or_default(),
+                "device_id": row.device_id,
+                "created_at": row.created_at,
             })
         })
-        .collect();
-
-    let events: Vec<_> = rows;
+        .collect::<Vec<_>>();
 
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(

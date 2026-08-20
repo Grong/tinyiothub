@@ -93,14 +93,12 @@ pub async fn confirm_action(
     }
 
     // 4. Verify the command exists
-    let command_exists: bool =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM thing_actions WHERE device_id = ? AND name = ?")
-            .bind(&thing_id)
-            .bind(&action_name)
-            .fetch_one(&pool)
-            .await
-            .map(|c| c > 0)
-            .unwrap_or(false);
+    let command_exists: bool = state
+        .db
+        .count_thing_action_by_name(&thing_id, &action_name)
+        .await
+        .map(|c| c > 0)
+        .unwrap_or(false);
 
     if !command_exists {
         return (
@@ -201,14 +199,12 @@ pub async fn invoke_action(
     }
 
     // 2. Action must be registered on the thing
-    let registered: bool =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM thing_actions WHERE device_id = ? AND name = ?")
-            .bind(&thing_id)
-            .bind(&action_name)
-            .fetch_one(&pool)
-            .await
-            .map(|c| c > 0)
-            .unwrap_or(false);
+    let registered: bool = state
+        .db
+        .count_thing_action_by_name(&thing_id, &action_name)
+        .await
+        .map(|c| c > 0)
+        .unwrap_or(false);
     if !registered {
         return (
             StatusCode::NOT_FOUND,
@@ -219,15 +215,12 @@ pub async fn invoke_action(
     // 2b. If the action HAS a parameter schema, params must match it (same
     // validation as the agent-side InvokeActionTool — the two invoke paths
     // share one contract). NULL parameters = no schema = skip validation.
-    let action_schema: Option<String> =
-        sqlx::query_scalar("SELECT parameters FROM thing_actions WHERE device_id = ? AND name = ?")
-            .bind(&thing_id)
-            .bind(&action_name)
-            .fetch_optional(&pool)
-            .await
-            .ok()
-            .flatten()
-            .flatten();
+    let action_schema: Option<String> = state
+        .db
+        .find_thing_action_parameters(&thing_id, &action_name)
+        .await
+        .ok()
+        .flatten();
     if let Some(ref schema) = action_schema
         && let Err(msg) = state.thing_action_hooks.validate_params(schema, req.params.as_ref())
     {
@@ -240,9 +233,9 @@ pub async fn invoke_action(
     // 3. Unified policy gate (X3/T16): a Block rule denies before any confirm
     // decision; a RequireApproval rule mints a confirmation token; otherwise
     // the legacy require_action_confirm toggle decides (fail closed — T7).
-    let require_confirm: bool = sqlx::query_scalar("SELECT require_action_confirm FROM workspaces WHERE id = ?")
-        .bind(&ws)
-        .fetch_optional(&pool)
+    let require_confirm: bool = state
+        .db
+        .get_workspace_require_action_confirm(&ws)
         .await
         .ok()
         .flatten()

@@ -7,14 +7,20 @@
 //! - 具体 struct、按领域平铺（traits/ 残留待逐领域评估削除）
 //! - 测试使用真实 SQLite（test_helpers::test_pool 直建基线）
 
+/// Agent config/action/dead-letter persistence (agents, agent_configs, agent_tools, agent_actions, agent_dead_letters).
+pub mod agent;
 /// Agent run reports persistence and row types.
 pub mod agent_runs;
 /// Alarm + alarm rule persistence and row types.
 pub mod alarm;
 /// Alarm rule persistence and row types (Task 11 split from alarm.rs).
 pub mod alarm_rule;
+/// Event audit log persistence (audit_logs, lazily created table).
+pub mod audit_log;
 /// Auth-owned tables (token blacklist, sms codes, social bindings/configs).
 pub mod auth;
+/// Batch command persistence (batch_commands / batch_command_items) and row types.
+pub mod batch_command;
 /// Device cache (in-memory).
 pub mod cache;
 /// Db connection configuration.
@@ -33,6 +39,8 @@ pub mod device_command;
 pub mod device_property;
 /// Device row mapping helpers.
 pub mod device_row_mapper;
+/// Device trace persistence (device_traces) and row types.
+pub mod device_trace;
 /// Driver installation persistence.
 pub mod driver_installation;
 /// Db error type.
@@ -63,12 +71,18 @@ pub mod seed;
 pub mod role;
 /// Session persistence and row types.
 pub mod session;
+/// system_settings key-value storage (event security config).
+pub mod settings;
 /// SQL escaping helpers.
 pub mod sql_security;
 /// Tag + tag binding persistence and row types.
 pub mod tag;
 /// Tenant + API key persistence and row types.
 pub mod tenant;
+/// Thing persistence (devices 表的 Thing 视图 + resources/tags/events 侧查询).
+pub mod thing;
+/// Thing template persistence (thing_templates / template_categories).
+pub mod thing_template;
 /// User persistence and row types.
 pub mod user;
 /// Workspace + knowledge resource persistence and row types.

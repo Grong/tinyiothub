@@ -57,30 +57,11 @@ impl Tool for ReadDocumentTool {
 
         let input: Input = serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
-        #[derive(Debug, serde::Serialize, sqlx::FromRow)]
-        struct DocFull {
-            id: String,
-            name: String,
-            #[sqlx(rename = "type")]
-            doc_type: String,
-            file_path: String,
-            content: Option<String>,
-            tags: String,
-            device_id: Option<String>,
-            created_at: String,
-            updated_at: String,
-        }
-
-        let doc: DocFull = sqlx::query_as::<_, DocFull>(
-            "SELECT id, name, resource_type AS type, file_path, content, tags, device_id, \
-             created_at, updated_at FROM resources WHERE id = ? AND workspace_id = ?",
-        )
-        .bind(&input.resource_id)
-        .bind(&self.workspace_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
-        .ok_or_else(|| anyhow::anyhow!("文档 {} 未找到", input.resource_id))?;
+        let doc = tinyiothub_storage::Db::new(self.pool.clone())
+            .find_thing_document(&input.resource_id, &self.workspace_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
+            .ok_or_else(|| anyhow::anyhow!("文档 {} 未找到", input.resource_id))?;
 
         tool_ok(doc)
     }

@@ -13,7 +13,7 @@ use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::middleware::workspace::WorkspaceScope;
 
 use crate::domains::admin::batch::batch_command::{
-    BatchCommandExecutor, BatchCommandRepository, BatchCommandWithItems, CreateBatchCommandRequest,
+    BatchCommandExecutor, BatchCommandWithItems, CreateBatchCommandRequest,
 };
 
 /// Query params for listing batches
@@ -46,12 +46,12 @@ async fn create_batch(
 
     // Check idempotency
     if let Some(existing) =
-        BatchCommandRepository::find_by_idempotency_key(&db, &payload.workspace_id, &payload.idempotency_key)
+        db.find_batch_command_by_idempotency_key(&payload.workspace_id, &payload.idempotency_key)
             .await
             .unwrap_or(None)
     {
         // Return existing batch (idempotent)
-        let batch_with_items = BatchCommandRepository::get_batch_with_items(&db, &existing.id)
+        let batch_with_items = db.get_batch_command_with_items(&existing.id)
             .await
             .unwrap_or(None);
         if let Some(bwi) = batch_with_items {
@@ -60,7 +60,7 @@ async fn create_batch(
     }
 
     // Create new batch
-    match BatchCommandRepository::create(&db, &payload).await {
+    match db.create_batch_command(&payload).await {
         Ok(batch_with_items) => ApiResponseBuilder::success(batch_with_items),
         Err(e) => {
             tracing::error!("Failed to create batch command: {}", e);
@@ -77,7 +77,7 @@ async fn list_batches(
     let db = state.db.clone();
     let limit = params.limit.unwrap_or(20);
 
-    match BatchCommandRepository::list_by_workspace(&db, &params.workspace_id, limit).await {
+    match db.list_batch_commands_by_workspace(&params.workspace_id, limit).await {
         Ok(batches) => ApiResponseBuilder::success(batches),
         Err(e) => {
             tracing::error!("Failed to list batches: {}", e);
@@ -93,7 +93,7 @@ async fn get_batch(
 ) -> Json<ApiResponse<BatchCommandWithItems>> {
     let db = state.db.clone();
 
-    match BatchCommandRepository::get_batch_with_items(&db, &batch_id).await {
+    match db.get_batch_command_with_items(&batch_id).await {
         Ok(Some(batch_with_items)) => ApiResponseBuilder::success(batch_with_items),
         Ok(None) => ApiResponseBuilder::error_with_code(404, "批量命令不存在"),
         Err(e) => {

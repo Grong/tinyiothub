@@ -8,7 +8,7 @@ use serde::Deserialize;
 use tinyiothub_web::middleware::workspace::AuthClaims;
 use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo};
 
-use super::service::{TemplateService, TemplateValidator};
+use super::service::TemplateValidator;
 use crate::domains::thing::template::types::CreateDeviceTemplateRequest;
 use crate::domains::thing::template::types::DeviceCreationInput;
 use crate::domains::thing::template::types::DevicePreview;
@@ -48,9 +48,7 @@ async fn list_templates(
     _claims: AuthClaims,
 ) -> Json<ApiResponse<PaginatedResponse<DeviceTemplate>>> {
     // 初始化模板服务
-    let template_service = get_template_service(&state);
-
-    let params = TemplateQueryParams {
+        let params = TemplateQueryParams {
         category: query.category,
         manufacturer: query.manufacturer,
         device_type: query.device_type,
@@ -64,8 +62,8 @@ async fn list_templates(
     let page_size = params.page_size.unwrap_or(20);
 
     let (templates_result, total_result) = tokio::join!(
-        template_service.get_repository().find_all(&params),
-        template_service.get_repository().count(&params),
+        state.db.find_thing_templates(&params, ""),
+        state.db.count_thing_templates(&params, ""),
     );
 
     match templates_result {
@@ -101,9 +99,7 @@ async fn get_template(
     Path(id): Path<String>,
     _claims: AuthClaims,
 ) -> Json<ApiResponse<Option<DeviceTemplate>>> {
-    let template_service = get_template_service(&state);
-
-    match template_service.get_repository().find_by_id(&id).await {
+        match state.db.find_thing_template_by_id(&id, "").await {
         Ok(template) => ApiResponseBuilder::success(template),
         Err(e) => {
             tracing::error!("Failed to get template {}: {}", id, e);
@@ -117,9 +113,7 @@ async fn get_template_categories(
     State(state): State<AppState>,
     _claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<TemplateCategory>>> {
-    let template_service = get_template_service(&state);
-
-    match template_service.get_repository().get_categories().await {
+        match state.db.list_thing_template_categories().await {
         Ok(categories) => ApiResponseBuilder::success(categories),
         Err(e) => {
             tracing::error!("Failed to get template categories: {}", e);
@@ -134,10 +128,8 @@ async fn create_template(
     _claims: AuthClaims,
     Json(req): Json<CreateDeviceTemplateRequest>,
 ) -> Json<ApiResponse<DeviceTemplate>> {
-    let template_service = get_template_service(&state);
-
-    // 验证模板名称唯一性
-    match template_service.get_repository().exists_by_name(&req.name).await {
+        // 验证模板名称唯一性
+    match state.db.thing_template_exists_by_name(&req.name).await {
         Ok(true) => {
             return ApiResponseBuilder::error("模板名称已存在".to_string());
         }
@@ -150,7 +142,7 @@ async fn create_template(
         }
     }
 
-    match template_service.get_repository().create(&req).await {
+    match state.db.create_thing_template(&req).await {
         Ok(created_template) => ApiResponseBuilder::success(created_template),
         Err(e) => {
             tracing::error!("Failed to create template: {}", e);
@@ -166,11 +158,9 @@ async fn update_template(
     _claims: AuthClaims,
     Json(req): Json<UpdateDeviceTemplateRequest>,
 ) -> Json<ApiResponse<DeviceTemplate>> {
-    let template_service = get_template_service(&state);
-
-    // 检查模板是否存在
-    match template_service.get_repository().find_by_id(&id).await {
-        Ok(Some(_template)) => match template_service.get_repository().update(&id, &req).await {
+        // 检查模板是否存在
+    match state.db.find_thing_template_by_id(&id, "").await {
+        Ok(Some(_template)) => match state.db.update_thing_template(&id, &req).await {
             Ok(updated_template) => ApiResponseBuilder::success(updated_template),
             Err(e) => {
                 tracing::error!("Failed to update template {}: {}", id, e);
@@ -191,9 +181,7 @@ async fn delete_template(
     Path(id): Path<String>,
     _claims: AuthClaims,
 ) -> Json<ApiResponse<bool>> {
-    let template_service = get_template_service(&state);
-
-    match template_service.get_repository().delete(&id).await {
+        match state.db.delete_thing_template(&id).await {
         Ok(deleted) => {
             if deleted {
                 tracing::info!("Template {} deleted successfully", id);
@@ -216,10 +204,8 @@ async fn validate_template_input(
     _claims: AuthClaims,
     Json(input): Json<DeviceCreationInput>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    let template_service = get_template_service(&state);
-
-    // 获取模板
-    let template = match template_service.get_repository().find_by_id(&id).await {
+        // 获取模板
+    let template = match state.db.find_thing_template_by_id(&id, "").await {
         Ok(Some(template)) => template,
         Ok(None) => {
             return ApiResponseBuilder::error("模板不存在".to_string());
@@ -251,10 +237,8 @@ async fn preview_device_from_template(
     _claims: AuthClaims,
     Json(input): Json<DeviceCreationInput>,
 ) -> Json<ApiResponse<DevicePreview>> {
-    let template_service = get_template_service(&state);
-
-    // 获取模板
-    let _template = match template_service.get_repository().find_by_id(&id).await {
+        // 获取模板
+    let _template = match state.db.find_thing_template_by_id(&id, "").await {
         Ok(Some(template)) => template,
         Ok(None) => {
             return ApiResponseBuilder::error("模板不存在".to_string());
@@ -275,9 +259,4 @@ async fn preview_device_from_template(
             ApiResponseBuilder::error("预览设备创建失败".to_string())
         }
     }
-}
-
-/// 初始化模板服务
-fn get_template_service(state: &AppState) -> TemplateService {
-    TemplateService::new(state.template_engine.get_repository_arc())
 }

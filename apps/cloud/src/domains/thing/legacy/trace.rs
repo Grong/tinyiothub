@@ -1,18 +1,17 @@
 // Device trace service — migrated from domain/device/trace_service.rs
 
-use std::sync::Arc;
-
 use tinyiothub_core::{error::Error, generate_id};
+use tinyiothub_storage::Db;
 
-use super::trace_repository::DeviceTraceRepository;
+pub use tinyiothub_storage::device_trace::{DeviceTrace, DeviceTraceStatistics, SystemTraceOverview};
 
 pub struct DeviceTraceService {
-    repository: Arc<DeviceTraceRepository>,
+    db: Db,
 }
 
 impl DeviceTraceService {
-    pub fn new(repository: Arc<DeviceTraceRepository>) -> Self {
-        Self { repository }
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -29,14 +28,14 @@ impl DeviceTraceService {
         user_id: Option<&str>,
         session_id: Option<&str>,
     ) -> Result<String, Error> {
-        if !self.repository.device_exists(device_id).await? {
+        if !self.db.device_exists_by_id(device_id).await? {
             return Err(Error::IOError("Device not found".to_string()));
         }
         let trace_id = generate_id();
         let details_json = details.map(|d| d.to_string());
         let source = source.unwrap_or("system");
-        self.repository
-            .insert_trace(
+        self.db
+            .insert_device_trace(
                 &trace_id,
                 device_id,
                 trace_type,
@@ -77,13 +76,13 @@ impl DeviceTraceService {
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<DeviceTrace>, Error> {
-        if !self.repository.device_exists(device_id).await? {
+        if !self.db.device_exists_by_id(device_id).await? {
             return Err(Error::NotFound);
         }
         let limit = limit.unwrap_or(50);
         let offset = offset.unwrap_or(0);
-        self.repository
-            .find_traces(device_id, trace_types, levels, limit, offset)
+        self.db
+            .find_device_traces(device_id, trace_types, levels, limit, offset)
             .await
     }
 
@@ -92,10 +91,10 @@ impl DeviceTraceService {
         device_id: &str,
         days: Option<u32>,
     ) -> Result<DeviceTraceStatistics, Error> {
-        if !self.repository.device_exists(device_id).await? {
+        if !self.db.device_exists_by_id(device_id).await? {
             return Err(Error::NotFound);
         }
-        self.repository.get_trace_statistics(device_id, days.unwrap_or(7)).await
+        self.db.get_device_trace_statistics(device_id, days.unwrap_or(7)).await
     }
 
     pub async fn clear_device_traces(
@@ -104,18 +103,18 @@ impl DeviceTraceService {
         before_date: Option<&str>,
         trace_types: Option<&[String]>,
     ) -> Result<u32, Error> {
-        if !self.repository.device_exists(device_id).await? {
+        if !self.db.device_exists_by_id(device_id).await? {
             return Err(Error::IOError("Device not found".to_string()));
         }
-        self.repository.delete_traces(device_id, before_date, trace_types).await
+        self.db.delete_device_traces(device_id, before_date, trace_types).await
     }
 
     pub async fn cleanup_expired_traces(&self, days_to_keep: u32) -> Result<u32, Error> {
-        self.repository.cleanup_expired(days_to_keep).await
+        self.db.cleanup_expired_device_traces(days_to_keep).await
     }
 
     pub async fn get_system_trace_overview(&self, days: Option<u32>) -> SystemTraceOverview {
-        self.repository.get_system_overview(days.unwrap_or(7)).await
+        self.db.get_device_trace_system_overview(days.unwrap_or(7)).await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -130,8 +129,8 @@ impl DeviceTraceService {
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<DeviceTrace>, Error> {
-        self.repository
-            .find_all_traces(
+        self.db
+            .find_all_device_traces(
                 levels,
                 sources,
                 device_id,
@@ -145,41 +144,5 @@ impl DeviceTraceService {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
-pub struct DeviceTrace {
-    pub id: String,
-    pub device_id: String,
-    pub trace_type: String,
-    pub level: String,
-    pub category: String,
-    pub title: String,
-    pub message: String,
-    pub details: Option<String>,
-    pub source: Option<String>,
-    pub user_id: Option<String>,
-    pub session_id: Option<String>,
-    pub created_at: String,
-}
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct DeviceTraceStatistics {
-    pub device_id: String,
-    pub total_traces: u32,
-    pub error_traces: u32,
-    pub warning_traces: u32,
-    pub info_traces: u32,
-    pub days_range: u32,
-    pub last_trace_time: Option<String>,
-    pub last_updated: String,
-}
 
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct SystemTraceOverview {
-    pub total_traces: u32,
-    pub error_traces: u32,
-    pub warning_traces: u32,
-    pub info_traces: u32,
-    pub active_devices: u32,
-    pub days_range: u32,
-    pub last_updated: String,
-}
