@@ -6,29 +6,20 @@ use tinyiothub_storage::{Db, cache::DeviceCache};
 
 use super::monitoring::DeviceMonitoringService;
 use tinyiothub_core::error::Error;
-use tinyiothub_storage::alarm::AlarmRepository;
 
 pub struct DevicePerformanceService {
-    #[allow(dead_code)]
     db: Arc<Db>,
     device_cache: Arc<DeviceCache>,
     monitoring_service: DeviceMonitoringService,
-    alarm_repository: Arc<AlarmRepository>,
 }
 
 impl DevicePerformanceService {
-    pub fn new(
-        db: Arc<Db>,
-        device_cache: Arc<DeviceCache>,
-        alarm_repository: Arc<AlarmRepository>,
-    ) -> Self {
-        let monitoring_service =
-            DeviceMonitoringService::new(db.clone(), device_cache.clone(), alarm_repository.clone());
+    pub fn new(db: Arc<Db>, device_cache: Arc<DeviceCache>) -> Self {
+        let monitoring_service = DeviceMonitoringService::new(db.clone(), device_cache.clone());
         Self {
             db,
             device_cache,
             monitoring_service,
-            alarm_repository,
         }
     }
 
@@ -112,10 +103,7 @@ impl DevicePerformanceService {
     }
 
     async fn calculate_device_offline_hours(&self, device_id: &str) -> f64 {
-        self.alarm_repository
-            .count_offline_alarms(device_id, 30)
-            .await
-            .unwrap_or(0) as f64
+        self.db.count_offline_alarms(device_id, 30).await.unwrap_or(0) as f64
     }
 
     async fn estimate_device_resource_usage(&self, device_id: &str) -> (Option<f64>, Option<f64>) {

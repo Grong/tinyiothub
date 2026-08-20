@@ -123,8 +123,7 @@ async fn list_alarms(
             };
             let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;
 
-            let pool = state.db.pool().clone();
-            let device_names = load_device_names_map(&pool, &alarms).await;
+            let device_names = state.db.load_alarm_device_names(&alarms).await;
             let data: Vec<AlarmDto> = alarms
                 .into_iter()
                 .map(|a| {
@@ -209,11 +208,10 @@ async fn get_recent_alarms(
     Query(query): Query<RecentAlarmsQuery>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<RecentAlarm>>> {
-    let db = tinyiothub_storage::Db::new(state.db.pool().clone());
     let limit = query.limit.unwrap_or(10);
 
-    match get_recent_alarms_list(&db, limit, Some(&claims.0.workspace_id)).await {
-        Ok(alarms) => ApiResponseBuilder::success(alarms),
+    match state.db.list_recent_alarms(limit, Some(&claims.0.workspace_id)).await {
+        Ok(rows) => ApiResponseBuilder::success(map_recent_alarms(rows)),
         Err(e) => {
             tracing::error!("获取最新告警列表失败: {}", e);
             ApiResponseBuilder::error("获取最新告警列表失败".to_string())
@@ -221,98 +219,9 @@ async fn get_recent_alarms(
     }
 }
 
-/// Batch load device names for a list of alarms.
-async fn load_device_names_map(
-    pool: &sqlx::Pool<sqlx::Sqlite>,
-    alarms: &[tinyiothub_storage::alarm::Alarm],
-) -> std::collections::HashMap<String, String> {
-    let mut map = std::collections::HashMap::new();
-    if alarms.is_empty() {
-        return map;
-    }
-    let placeholders = vec!["?"; alarms.len()].join(",");
-    let query = format!(
-        "SELECT id, display_name, name FROM devices WHERE id IN ({})",
-        placeholders
-    );
-    let mut q = sqlx::query(sqlx::AssertSqlSafe(query));
-    for a in alarms {
-        q = q.bind(&a.device_id);
-    }
-    let rows = q.fetch_all(pool).await.unwrap_or_else(|e| {
-        tracing::error!("Failed to load device names for alarm list: {}", e);
-        Vec::new()
-    });
-    for row in rows {
-        use sqlx::Row;
-        let id: String = row.get("id");
-        let display: Option<String> = row.get("display_name");
-        let name: String = row.get("name");
-        map.insert(id, display.unwrap_or(name));
-    }
-    map
-}
-
-async fn get_recent_alarms_list(
-    db: &tinyiothub_storage::Db,
-    limit: i32,
-    workspace_id: Option<&str>,
-) -> Result<Vec<RecentAlarm>, sqlx::Error> {
-    let alarms: Vec<(
-        String,
-        String,
-        Option<String>,
-        String,
-        String,
-        chrono::NaiveDateTime,
-        bool,
-        bool,
-    )> = if let Some(wid) = workspace_id {
-        sqlx::query_as(
-            r#"
-            SELECT
-                da.id,
-                da.device_id,
-                d.name,
-                da.alarm_level,
-                da.alarm_message,
-                da.alarm_time,
-                da.is_acknowledged,
-                da.is_resolved
-            FROM device_alarms da
-            LEFT JOIN devices d ON da.device_id = d.id
-            WHERE da.workspace_id = ?
-            ORDER BY da.alarm_time DESC
-            LIMIT ?"#,
-        )
-        .bind(wid)
-        .bind(limit)
-        .fetch_all(db.pool())
-        .await?
-    } else {
-        sqlx::query_as(
-            r#"
-            SELECT
-                da.id,
-                da.device_id,
-                d.name,
-                da.alarm_level,
-                da.alarm_message,
-                da.alarm_time,
-                da.is_acknowledged,
-                da.is_resolved
-            FROM device_alarms da
-            LEFT JOIN devices d ON da.device_id = d.id
-            ORDER BY da.alarm_time DESC
-            LIMIT ?"#,
-        )
-        .bind(limit)
-        .fetch_all(db.pool())
-        .await?
-    };
-
-    let recent_alarms = alarms
-        .into_iter()
+/// Map recent-alarm rows (from `Db::list_recent_alarms`) to `RecentAlarm`.
+fn map_recent_alarms(rows: Vec<tinyiothub_storage::alarm::RecentAlarmRow>) -> Vec<RecentAlarm> {
+    rows.into_iter()
         .map(
             |(id, device_id, device_name, level, message, alarm_time, is_acknowledged, is_resolved)| {
                 let status = if is_resolved {
@@ -333,9 +242,7 @@ async fn get_recent_alarms_list(
                 }
             },
         )
-        .collect();
-
-    Ok(recent_alarms)
+        .collect()
 }
 
 // ============================================================================
@@ -676,7 +583,7 @@ mod tests {
         let pool = create_minimal_pool().await;
         let db = Db::new(pool.clone());
 
-        let result = get_recent_alarms_list(&db, 10, None).await;
+        let result = db.list_recent_alarms(10, None).await.map(map_recent_alarms);
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());
     }
@@ -694,7 +601,7 @@ mod tests {
         .await
         .expect("insert alarm failed");
 
-        let result = get_recent_alarms_list(&db, 10, None).await;
+        let result = db.list_recent_alarms(10, None).await.map(map_recent_alarms);
         assert!(result.is_ok());
         let alarms = result.unwrap();
         assert_eq!(alarms.len(), 1);
@@ -718,7 +625,7 @@ mod tests {
         .await
         .expect("insert alarm failed");
 
-        let result = get_recent_alarms_list(&db, 10, None).await;
+        let result = db.list_recent_alarms(10, None).await.map(map_recent_alarms);
         assert!(result.is_ok());
         let alarms = result.unwrap();
         assert_eq!(alarms.len(), 1);
@@ -738,7 +645,7 @@ mod tests {
         .await
         .expect("insert alarm failed");
 
-        let result = get_recent_alarms_list(&db, 10, None).await;
+        let result = db.list_recent_alarms(10, None).await.map(map_recent_alarms);
         assert!(result.is_ok());
         let alarms = result.unwrap();
         assert_eq!(alarms.len(), 1);
@@ -761,7 +668,7 @@ mod tests {
         sqlx::query("INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved) VALUES ('alarm-4', 'd1', 'ws-001', 'info', 'Alarm 4', datetime('now', '-4 hours'), 0, 0)")
             .execute(&pool).await.expect("insert alarm 4 failed");
 
-        let result = get_recent_alarms_list(&db, 3, None).await;
+        let result = db.list_recent_alarms(3, None).await.map(map_recent_alarms);
         assert!(result.is_ok());
         let alarms = result.unwrap();
         assert_eq!(alarms.len(), 3);
@@ -777,7 +684,7 @@ mod tests {
         sqlx::query("INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved) VALUES ('alarm-new', 'd1', 'ws-001', 'info', 'New alarm', datetime('now'), 0, 0)")
             .execute(&pool).await.expect("insert new alarm failed");
 
-        let result = get_recent_alarms_list(&db, 10, None).await;
+        let result = db.list_recent_alarms(10, None).await.map(map_recent_alarms);
         assert!(result.is_ok());
         let alarms = result.unwrap();
         assert_eq!(alarms.len(), 2);
@@ -806,7 +713,7 @@ mod tests {
         .await
         .expect("insert ws2 alarm failed");
 
-        let result = get_recent_alarms_list(&db, 10, Some("ws-001")).await;
+        let result = db.list_recent_alarms(10, Some("ws-001")).await.map(map_recent_alarms);
         assert!(result.is_ok());
         let alarms = result.unwrap();
         assert_eq!(alarms.len(), 1);

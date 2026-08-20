@@ -12,8 +12,8 @@
 //! - driver → runtime: the driver framework (`tinyiothub_runtime::driver`,
 //!   driver registry, plugin loader) lives in the runtime crate; this crate
 //!   is the management API over it.
-//! - driver → alarm (documented): `legacy::{monitoring, performance}` hold
-//!   `Arc<AlarmRepository>` for read-only alarm counts on device data.
+//! - driver → alarm (documented): `legacy::{monitoring, performance}` query
+//!   read-only alarm counts on device data via the `Db` facade.
 //! - driver → thing (documented): `legacy::diagnostics` reads
 //!   `DeviceTraceStatistics` from `crate::domains::thing::legacy::trace`.
 //! - driver → event: gateway pairing persists pairing events via the

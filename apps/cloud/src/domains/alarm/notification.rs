@@ -76,12 +76,11 @@ impl NotificationDispatcher {
             tinyiothub_core::notification_types::NotificationChannelType::Webhook => "webhook",
         };
 
-        let rows = sqlx::query(
-            "SELECT id, name, config FROM notification_channels WHERE channel_type = ? AND is_enabled = 1 AND workspace_id = ?",
+        let rows = tinyiothub_storage::notification_channel::find_enabled_notification_channels_by_type(
+            db,
+            channel_type_str,
+            workspace_id,
         )
-        .bind(channel_type_str)
-        .bind(workspace_id)
-        .fetch_all(db.pool())
         .await;
 
         let rows = match rows {
@@ -97,12 +96,7 @@ impl NotificationDispatcher {
             return;
         }
 
-        for row in rows {
-            use sqlx::Row;
-            let channel_id: String = row.get("id");
-            let channel_name: String = row.get("name");
-            let config_str: String = row.get("config");
-
+        for (channel_id, channel_name, config_str) in rows {
             let result = match channel_type {
                 tinyiothub_core::notification_types::NotificationChannelType::Email => {
                     Self::send_email(&config_str, recipients, title, body).await

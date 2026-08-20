@@ -4,25 +4,14 @@ use std::sync::Arc;
 
 use tinyiothub_storage::{Db, cache::DeviceCache};
 
-use tinyiothub_storage::alarm::AlarmRepository;
-
 pub struct DeviceMonitoringService {
     db: Arc<Db>,
     device_cache: Arc<DeviceCache>,
-    alarm_repository: Arc<AlarmRepository>,
 }
 
 impl DeviceMonitoringService {
-    pub fn new(
-        db: Arc<Db>,
-        device_cache: Arc<DeviceCache>,
-        alarm_repository: Arc<AlarmRepository>,
-    ) -> Self {
-        Self {
-            db,
-            device_cache,
-            alarm_repository,
-        }
+    pub fn new(db: Arc<Db>, device_cache: Arc<DeviceCache>) -> Self {
+        Self { db, device_cache }
     }
 
     pub fn is_device_online(&self, device_id: &str) -> bool {
@@ -157,11 +146,7 @@ impl DeviceMonitoringService {
 
     async fn get_device_events_and_alarms(&self, device_id: &str) -> (u32, u32) {
         let total_events = 0u32;
-        let active_alarms = self
-            .alarm_repository
-            .count_active_alarms_by_device(device_id)
-            .await
-            .unwrap_or(0);
+        let active_alarms = self.db.count_active_alarms_by_device(device_id).await.unwrap_or(0);
         (total_events, active_alarms)
     }
 
@@ -185,7 +170,7 @@ impl DeviceMonitoringService {
                 total_commands += commands.len() as u32;
             }
         }
-        let total_alarms = self.alarm_repository.count_all_active_alarms().await.unwrap_or(0);
+        let total_alarms = self.db.count_all_active_alarms().await.unwrap_or(0);
         SystemOverview {
             total_devices,
             online_devices,

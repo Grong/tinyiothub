@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use crate::domains::alarm::{AlarmRepository, AlarmRuleRepository, AlarmService};
+use crate::domains::alarm::AlarmService;
 use crate::domains::event::{
     bus::ThingEventBus,
     router::{ThingEventInput, ThrottleState, route_thing_event},
@@ -273,9 +273,7 @@ async fn test_event_alarm_rule_fires_device_alarm() {
     .expect("insert event rule");
 
     let db = Arc::new(Db::new(pool.clone()));
-    let alarm_repo: Arc<AlarmRepository> = Arc::new(AlarmRepository::new(db.clone()));
-    let rule_repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db.clone()));
-    let alarm_service = Arc::new(AlarmService::new(alarm_repo, rule_repo));
+    let alarm_service = Arc::new(AlarmService::new(db.clone()));
 
     let throttle = ThrottleState::new(60);
     let bus = ThingEventBus::new();
@@ -330,9 +328,7 @@ async fn test_event_alarm_rule_respects_min_level() {
     .expect("insert event rule");
 
     let db = Arc::new(Db::new(pool.clone()));
-    let alarm_repo: Arc<AlarmRepository> = Arc::new(AlarmRepository::new(db.clone()));
-    let rule_repo: Arc<AlarmRuleRepository> = Arc::new(AlarmRuleRepository::new(db.clone()));
-    let alarm_service = Arc::new(AlarmService::new(alarm_repo, rule_repo));
+    let alarm_service = Arc::new(AlarmService::new(db.clone()));
 
     // Warning < min_level error → no alarm.
     let throttle = ThrottleState::new(60);

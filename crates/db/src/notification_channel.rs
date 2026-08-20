@@ -4,11 +4,28 @@ use crate::database::Db;
 use tinyiothub_core::generate_id;
 use tinyiothub_core::models::notification_channel::*;
 
-/// 根据 ID 查询通知渠道
-pub async fn find_notification_channel_by_id(
+/// 按类型查询启用的通知渠道（id, name, config；自 cloud alarm NotificationDispatcher 吸收，Task 11，SQL 逐字）
+pub async fn find_enabled_notification_channels_by_type(
     db: &Db,
-    id: &str,
-) -> Result<Option<NotificationChannel>, sqlx::Error> {
+    channel_type: &str,
+    workspace_id: &str,
+) -> Result<Vec<(String, String, String)>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT id, name, config FROM notification_channels WHERE channel_type = ? AND is_enabled = 1 AND workspace_id = ?",
+    )
+    .bind(channel_type)
+    .bind(workspace_id)
+    .fetch_all(db.pool())
+    .await?;
+
+    Ok(rows
+        .iter()
+        .map(|row| (row.get("id"), row.get("name"), row.get("config")))
+        .collect())
+}
+
+/// 根据 ID 查询通知渠道
+pub async fn find_notification_channel_by_id(db: &Db, id: &str) -> Result<Option<NotificationChannel>, sqlx::Error> {
     let row = sqlx::query("SELECT * FROM notification_channels WHERE id = ? LIMIT 1")
         .bind(id)
         .fetch_optional(db.pool())
@@ -32,10 +49,7 @@ pub async fn find_notification_channel_by_id(
 }
 
 /// Count channels with filters
-pub async fn count_notification_channels(
-    db: &Db,
-    params: &NotificationChannelQueryParams,
-) -> Result<i64, sqlx::Error> {
+pub async fn count_notification_channels(db: &Db, params: &NotificationChannelQueryParams) -> Result<i64, sqlx::Error> {
     let mut query_builder =
         sqlx::query_builder::QueryBuilder::new("SELECT COUNT(*) FROM notification_channels WHERE 1=1");
 
@@ -182,11 +196,7 @@ pub async fn update_notification_channel(
 }
 
 /// 删除通知渠道；workspace_id 用于 WHERE 子句确保租户隔离
-pub async fn delete_notification_channel(
-    db: &Db,
-    id: &str,
-    workspace_id: Option<&str>,
-) -> Result<u64, sqlx::Error> {
+pub async fn delete_notification_channel(db: &Db, id: &str, workspace_id: Option<&str>) -> Result<u64, sqlx::Error> {
     let query = if workspace_id.is_some() {
         "DELETE FROM notification_channels WHERE id = ? AND workspace_id = ?"
     } else {

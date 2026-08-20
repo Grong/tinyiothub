@@ -3,8 +3,8 @@
 //! (P4-Task20).
 //!
 //! Boundary notes:
-//! - `monitoring`/`performance` hold `Arc<crate::domains::alarm::AlarmRepository>`（E2 后 AlarmRepository 为具体 struct）
-//!   for read-only alarm counts (`count_active_alarms_by_device` etc.) —
+//! - `monitoring`/`performance` query read-only alarm counts
+//!   (`count_active_alarms_by_device` etc.) via the `Db` facade (Task 11) —
 //!   driver → alarm is a deliberate one-way edge (real-time alarm context on
 //!   device data); the alarm crate never names driver types.
 //! - `diagnostics` was dead code in cloud (zero callers) and took

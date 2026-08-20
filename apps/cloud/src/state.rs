@@ -245,12 +245,7 @@ impl AppState {
         let event_bus = Arc::new(EventBus::new());
 
         // 创建报警服务
-        let alarm_repository = Arc::new(crate::domains::alarm::AlarmRepository::new(database.clone()));
-        let alarm_rule_repository = Arc::new(crate::domains::alarm::AlarmRuleRepository::new(database.clone()));
-        let alarm_service = Arc::new(crate::domains::alarm::service::AlarmService::new(
-            alarm_repository.clone(),
-            alarm_rule_repository,
-        ));
+        let alarm_service = Arc::new(crate::domains::alarm::service::AlarmService::new(database.clone()));
 
         // 创建SSE管理器（带 DeviceCache 用于设备 workspace 查找）
         let sse_manager = Arc::new(SseConnectionManager::new());
@@ -270,19 +265,11 @@ impl AppState {
             crate::domains::driver::legacy::SqliteDeviceQueryService::new(database.as_ref().clone()),
         );
 
-        // 监控服务 - 依赖数据库、缓存和告警仓库
-        let monitoring_service = Arc::new(DeviceMonitoringService::new(
-            database.clone(),
-            device_cache.clone(),
-            alarm_repository.clone(),
-        ));
+        // 监控服务 - 依赖数据库、缓存和告警查询（Db 门面）
+        let monitoring_service = Arc::new(DeviceMonitoringService::new(database.clone(), device_cache.clone()));
 
-        // 性能服务 - 依赖数据库、缓存和告警仓库
-        let performance_service = Arc::new(DevicePerformanceService::new(
-            database.clone(),
-            device_cache.clone(),
-            alarm_repository.clone(),
-        ));
+        // 性能服务 - 依赖数据库、缓存和告警查询（Db 门面）
+        let performance_service = Arc::new(DevicePerformanceService::new(database.clone(), device_cache.clone()));
 
         // 追踪服务 - 依赖追踪仓库
         let trace_repository = Arc::new(DeviceTraceRepository::new((*database).clone()));

@@ -11,6 +11,8 @@
 pub mod agent_runs;
 /// Alarm + alarm rule persistence and row types.
 pub mod alarm;
+/// Alarm rule persistence and row types (Task 11 split from alarm.rs).
+pub mod alarm_rule;
 /// Auth-owned tables (token blacklist, sms codes, social bindings/configs).
 pub mod auth;
 /// Device cache (in-memory).
@@ -55,10 +57,10 @@ pub mod permission;
 pub mod policy;
 /// Migrating SQLite pool creation (foreign keys on, runs embedded migrations).
 pub mod pool;
-/// Two-tier seed module (system + demo), applied at bootstrap.
-pub mod seed;
 /// Role persistence and row types.
 pub mod role;
+/// Two-tier seed module (system + demo), applied at bootstrap.
+pub mod seed;
 /// Session persistence and row types.
 pub mod session;
 /// SQL escaping helpers.
