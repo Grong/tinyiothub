@@ -1395,7 +1395,6 @@ pub(crate) async fn find_devices_with_filters(
     let Some(_ws) = ws else {
         return find_devices_with_filters_inner(pool, enabled, search, page, page_size).await;
     };
-    use crate::device::DeviceCriteria;
 
     let mut criteria = DeviceCriteria::builder()
         .limit(page_size)

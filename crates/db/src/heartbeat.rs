@@ -88,7 +88,7 @@ impl From<HeartbeatTaskRow> for HeartbeatTask {
     }
 }
 
-async fn list_by_workspace(pool: &SqlitePool, workspace_id: &str) -> Result<Vec<HeartbeatTask>, RepoError> {
+pub(crate) async fn list_by_workspace(pool: &SqlitePool, workspace_id: &str) -> Result<Vec<HeartbeatTask>, RepoError> {
     let rows = sqlx::query_as::<_, HeartbeatTaskRow>(
         "SELECT id, workspace_id, priority, text, paused, version,
                     created_at, updated_at
@@ -102,7 +102,7 @@ async fn list_by_workspace(pool: &SqlitePool, workspace_id: &str) -> Result<Vec<
     Ok(rows.into_iter().map(HeartbeatTask::from).collect())
 }
 
-async fn upsert(
+pub(crate) async fn upsert(
     pool: &SqlitePool,
     workspace_id: &str,
     task: &HeartbeatTask,
@@ -127,7 +127,7 @@ async fn upsert(
     Ok(result.rows_affected() > 0)
 }
 
-async fn insert(pool: &SqlitePool, workspace_id: &str, priority: &str, text: &str) -> Result<HeartbeatTask, RepoError> {
+pub(crate) async fn insert(pool: &SqlitePool, workspace_id: &str, priority: &str, text: &str) -> Result<HeartbeatTask, RepoError> {
     let row = sqlx::query_as::<_, HeartbeatTaskRow>(
         "INSERT INTO heartbeat_tasks (workspace_id, priority, text)
              VALUES (?, ?, ?)
@@ -144,7 +144,7 @@ async fn insert(pool: &SqlitePool, workspace_id: &str, priority: &str, text: &st
     Ok(HeartbeatTask::from(row))
 }
 
-async fn set_paused(pool: &SqlitePool, workspace_id: &str, task_id: i64, paused: bool) -> Result<(), RepoError> {
+pub(crate) async fn set_paused(pool: &SqlitePool, workspace_id: &str, task_id: i64, paused: bool) -> Result<(), RepoError> {
     sqlx::query(
         "UPDATE heartbeat_tasks SET paused = ?, updated_at = CURRENT_TIMESTAMP
              WHERE workspace_id = ? AND id = ?",
@@ -158,7 +158,7 @@ async fn set_paused(pool: &SqlitePool, workspace_id: &str, task_id: i64, paused:
     Ok(())
 }
 
-async fn delete(pool: &SqlitePool, workspace_id: &str, task_id: i64) -> Result<(), RepoError> {
+pub(crate) async fn delete(pool: &SqlitePool, workspace_id: &str, task_id: i64) -> Result<(), RepoError> {
     sqlx::query("DELETE FROM heartbeat_tasks WHERE workspace_id = ? AND id = ?")
         .bind(workspace_id)
         .bind(task_id)
@@ -168,7 +168,7 @@ async fn delete(pool: &SqlitePool, workspace_id: &str, task_id: i64) -> Result<(
     Ok(())
 }
 
-async fn replace_all(pool: &SqlitePool, workspace_id: &str, tasks: &[NewHeartbeatTask]) -> Result<(), RepoError> {
+pub(crate) async fn replace_all(pool: &SqlitePool, workspace_id: &str, tasks: &[NewHeartbeatTask]) -> Result<(), RepoError> {
     let mut tx = pool
         .begin()
         .await
@@ -192,7 +192,7 @@ async fn replace_all(pool: &SqlitePool, workspace_id: &str, tasks: &[NewHeartbea
     Ok(())
 }
 
-async fn load_trust_config(
+pub(crate) async fn load_trust_config(
     pool: &SqlitePool,
     workspace_id: &str,
 ) -> Result<Option<crate::heartbeat::TrustConfig>, RepoError> {
@@ -210,7 +210,7 @@ async fn load_trust_config(
     }))
 }
 
-async fn save_trust_config(
+pub(crate) async fn save_trust_config(
     pool: &SqlitePool,
     workspace_id: &str,
     config: &crate::heartbeat::TrustConfig,
@@ -224,7 +224,7 @@ async fn save_trust_config(
     Ok(())
 }
 
-async fn load_heartbeat_config(
+pub(crate) async fn load_heartbeat_config(
     pool: &SqlitePool,
     workspace_id: &str,
 ) -> Result<Option<crate::heartbeat::WorkspaceHeartbeatConfig>, RepoError> {
@@ -236,7 +236,7 @@ async fn load_heartbeat_config(
     Ok(row.and_then(|(json,)| crate::heartbeat::WorkspaceHeartbeatConfig::from_db_json(Some(&json))))
 }
 
-async fn save_heartbeat_config(
+pub(crate) async fn save_heartbeat_config(
     pool: &SqlitePool,
     workspace_id: &str,
     config: &crate::heartbeat::WorkspaceHeartbeatConfig,
@@ -250,7 +250,7 @@ async fn save_heartbeat_config(
     Ok(())
 }
 
-async fn insert_result(pool: &SqlitePool, workspace_id: &str, result: &HeartbeatResult) -> Result<(), RepoError> {
+pub(crate) async fn insert_result(pool: &SqlitePool, workspace_id: &str, result: &HeartbeatResult) -> Result<(), RepoError> {
     // Row format must match the readers in workspace/handler/heartbeat.rs:
     // one summary|error row per tick, one auto_executed row per action,
     // one proposal row per proposal, all sharing one created_at so the
@@ -416,7 +416,7 @@ impl Db {
     }
 }
 
-async fn insert_action_row(
+pub(crate) async fn insert_action_row(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     workspace_id: &str,
     agent_id: &str,

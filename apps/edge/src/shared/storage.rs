@@ -1,3 +1,6 @@
+// TODO(D6): edge 自建本地表（ensure_devices_table 等）是暂留形态——后期 edge
+// 直接只复用 crates/db 的 baseline（删库重建，另立项），届时本文件的可表创建逻辑
+// 随 Db::connect 统一迁移而删除。
 use super::error::EdgeResult;
 use std::sync::Arc;
 use tinyiothub_storage::{Db, DatabaseConfig, create_pool_without_migrations};

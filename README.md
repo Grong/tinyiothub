@@ -50,7 +50,7 @@ tinyiothub/
 │   └── cli/                 # 命令行工具
 ├── crates/                  # 能力库 Crate（relay 范式：只提供能力，不做编排）
 │   ├── core/                # 纯值类型（零 I/O、零 API 语义）
-│   ├── db/                  # 全部 SQL：行类型+查询契约+具体 repo（buzz 平铺）+ migrations/
+│   ├── db/                  # 全部 SQL：Db 门面 + 领域平铺文件（行类型+查询函数+impl Db 委托）+ migrations/（baseline + DDL-only）
 │   ├── runtime/             # EventBus, DataServer, 驱动框架, plugin loader
 │   ├── web/                 # HTTP 基础设施（中间件、ApiResponseBuilder）
 │   ├── scheduler/           # Cron 引擎

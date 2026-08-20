@@ -17,7 +17,7 @@ pub use tinyiothub_core::policy::*;
 // 持久化函数（pool 参数）+ Db 门面委托
 // ──────────────────────────────────────────────
 
-async fn load_autonomy(pool: &SqlitePool, workspace_id: &str) -> Result<Option<AutonomyPolicy>> {
+pub(crate) async fn load_autonomy(pool: &SqlitePool, workspace_id: &str) -> Result<Option<AutonomyPolicy>> {
     let row: Option<(String, String, String, i64, i64)> = sqlx::query_as(
         "SELECT mode, allowed_actions, denied_actions,
                     max_actions_per_run, max_actions_per_hour
@@ -42,7 +42,7 @@ async fn load_autonomy(pool: &SqlitePool, workspace_id: &str) -> Result<Option<A
     }))
 }
 
-async fn save_autonomy(
+pub(crate) async fn save_autonomy(
     pool: &SqlitePool,
     workspace_id: &str,
     policy: &AutonomyPolicy,
@@ -74,7 +74,7 @@ async fn save_autonomy(
     Ok(())
 }
 
-async fn count_actions_last_hour(pool: &SqlitePool, workspace_id: &str) -> Result<u32> {
+pub(crate) async fn count_actions_last_hour(pool: &SqlitePool, workspace_id: &str) -> Result<u32> {
     let (count,): (i64,) = sqlx::query_as(
         "SELECT COALESCE(SUM(json_extract(report, '$.action_count')), 0)
              FROM agent_runs

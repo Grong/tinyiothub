@@ -49,7 +49,7 @@ apps/* (cloud/edge/marketplace/cli) → crates/* (capability libs) → core
 | Crate (dir = package) | Lib name | Role | Forbidden |
 |-------|------|------|-----------|
 | `core` | `tinyiothub_core` | Value types only (models/config/error/共享写入契约). **Guardrail: no logic functions, no I/O, no API semantics. Every new type must justify why it is shared across layers.** | Logic functions, I/O, DB access |
-| `db` | `tinyiothub_storage` | ALL SQL: row types + query contracts + concrete repo structs (buzz-style flat per-domain files) + `migrations/` | Depending on any crate except `core`; trait inversion |
+| `db` | `tinyiothub_storage` | ALL SQL: `Db` facade + flat per-domain files (row types + `pub(crate)` query functions + `impl Db` delegates) + `migrations/` (baseline + DDL-only) | Depending on any crate except `core`; trait inversion |
 | `runtime` | `tinyiothub_runtime` | EventBus, DataServer, driver framework, executors, `runtime::plugin` (loader/registry/sandbox, FFI glue) | Depending on web or apps |
 | `web` | `tinyiothub_web` | HTTP middleware, ApiResponseBuilder, security extractors | Business logic |
 | `scheduler` | `tinyiothub_scheduler` | Cron engine + scheduler | Depending on apps |
@@ -60,11 +60,11 @@ apps/* (cloud/edge/marketplace/cli) → crates/* (capability libs) → core
 | `agent` | `tinyiothub_agent` | Agent 共性能力运行时（loop/pool/tools-framework/session/prompt + memory 纯逻辑；事件溯源契约） | axum, sqlx, tinyiothub_storage, apps/* |
 | `plugin-sdk` | `tinyiothub_plugin_sdk` | Driver-author SDK; ABI contract single source of truth | Depending on runtime/web |
 | `macros` | `tinyiothub_macros` | Proc macros | — |
-| `apps/cloud` (bin) | — | **The relay**: all handlers, all services, all orchestration. `domains/` per business domain | Direct SQL in handlers (use `db` repos) |
+| `apps/cloud` (bin) | — | **The relay**: all handlers, all services, all orchestration. `domains/` per business domain | Direct SQL in handlers (use the `db` facade) |
 | `apps/edge` (bin) | — | Edge gateway application (same paradigm) | — |
 | `apps/marketplace` / `apps/cli` | — | Marketplace service / CLI | — |
 
-**Type ownership uniqueness**: every type has exactly ONE home — DB rows and query contracts live in `db`; shared write contracts (handler↔repo shared inputs) live in `core::models`; API-only shapes (Response DTOs, view models) live in `apps/cloud/src/domains/<domain>/dto.rs`. **Re-export shims are forbidden** — import from the type's real home.
+**Type ownership uniqueness**: every type has exactly ONE home — DB rows and query functions live in `db`; shared write contracts (handler↔db shared inputs) live in `core::models`; API-only shapes (Response DTOs, view models) live in `apps/cloud/src/domains/<domain>/dto.rs`. **Re-export shims are forbidden** — import from the type's real home.
 
 **Naming rule**: crate directories and package names use short names (`core`, `db`, …); `[lib] name` is pinned to `tinyiothub_*` so `use tinyiothub_core::…` imports stay stable across directory moves.
 
@@ -109,8 +109,8 @@ apps/
   cli/                       # CLI binary
 crates/                      # Capability libs — isolated, never orchestrate
   core/                      # Value types only (lib tinyiothub_core; zero I/O, zero API semantics)
-  db/                        # ALL SQL: row types + query contracts + concrete repos (lib tinyiothub_storage)
-    migrations/              # SQL migration files
+  db/                        # ALL SQL: Db facade + flat per-domain files (lib tinyiothub_storage)
+    migrations/              # SQL migrations — baseline + incremental, DDL-only (no seed data)
   runtime/                   # EventBus, DataServer, driver framework, plugin loader (lib tinyiothub_runtime)
   web/                       # HTTP infrastructure: ApiResponseBuilder, middleware (lib tinyiothub_web)
   scheduler/                 # Cron engine + scheduler (lib tinyiothub_scheduler)
@@ -143,8 +143,8 @@ domains/<domain>/
 ```
 
 Hard rules:
-- Handlers never write SQL — data access goes through `tinyiothub_storage::<domain>` concrete repos.
-- DB rows and query contracts live in `crates/db/src/<domain>.rs`; domains never redefine them.
+- Handlers never write SQL — data access goes through the `Db` facade (`state.db.<method>(...)`).
+- DB rows and query functions live in `crates/db/src/<domain>.rs`; domains never redefine them.
 - Cross-domain calls are plain module calls (`crate::domains::alarm::...`) — no hooks, no ports, no edges.
 
 ### Thing Ontology Module
@@ -155,8 +155,8 @@ The `thing` domain module (`apps/cloud/src/domains/thing/`) manages the thing (�
 domains/thing/
   types.rs                       # ThingType, SummaryStatus, DTOs (ThingResponse, ThingTreeNode, etc.)
   errors.rs                      # ThingError → HTTP status codes
-  repo.rs                        # ThingRepo: CRUD, tree, breadcrumb, cycle detection
   summary.rs                     # SummaryComputer: dirty markers, single-flight, LLM fencing
+  # (持久化已收编 crates/db：thing.rs / thing_template.rs，经 Db 门面调用)
   service/
     mod.rs                       # ThingService: list/get/profile/tree CRUD + resource attach
     import_export.rs             # DTDL/WoT Thing Description import/export
@@ -212,7 +212,7 @@ Branch/commit/PR rules:
 - Do not create `application/` subdirectories in domain crates (use `service.rs`).
 - Do not create scatter-shot `utils/` or `helpers/` in `apps/cloud/src/` or any crate.
 - Do not call `fetch()` directly in front-end components (must use `web/src/api/` layer).
-- Do not write SQL in API handlers (must use Repository pattern).
+- Do not write SQL outside `crates/db` (production `sqlx::query` in `apps/*/src` fails the CI SQL-residence guard; use the `Db` facade).
 - Do not bypass `ApiResponseBuilder` — all responses must use the standard `{ code, msg, result }` format.
 
 ### Code quality
@@ -266,9 +266,9 @@ Branch/commit/PR rules:
 ## Async & Data Access (Rust)
 
 - All I/O must be `async/await` (`tokio::fs`, `tokio::net`); no blocking code in async fn
-- Database access must go through the concrete repositories in `crates/db/src/` (buzz pattern, no SQL in handlers)
+- Database access must go through the `Db` facade in `crates/db/src/` (buzz pattern, no SQL outside `crates/db`)
 - Shared state uses `Arc<RwLock<T>>` or `DashMap`; never `Rc<RefCell<T>>`
-- Migration files in `crates/db/migrations/`, named `YYYYMMDDHHMMSS_description.sql`, must be idempotent
+- Migration files in `crates/db/migrations/`, named `YYYYMMDDHHMMSS_description.sql`, are DDL-only — no `INSERT INTO` (CI-enforced); seed data belongs in `crates/db/src/seed.rs`
 
 ## Design Docs
 
@@ -284,8 +284,22 @@ docs/guide/               # User guide
 ## Database
 
 - **SQLite** primary database
-- **SQLx** for compile-time query verification
-- **migrations/** for SQL migration files
+- **SQLx** (runtime-checked queries) for data access
+- **migrations/** baseline + incremental, DDL-only
+
+### Db 门面规则（crates/db，2026-08 整改后）
+
+1. **Db 是唯一存储实例**：state 及各域 state 切片只持 `Arc<Db>`（`crates/db/src/database.rs`）。禁止在组合点另建 Repository struct / 第二套存储入口。业务层唯一调用形态：`state.db.<method>(...)`。
+2. **领域文件三段式**（`crates/db/src/<domain>.rs`，平铺 + 领域前缀命名如 `find_device_properties` / `insert_agent_run`）：
+   - ① Row 类型（`pub`，`FromRow`）
+   - ② SQL 自由函数（`pub(crate)` —— crate 内唯一写 SQL 的地方）
+   - ③ `impl Db` 委托方法（`pub`，分散在各领域文件；跨领域组合逻辑也写在这里）
+3. **SQL 唯一住所是 crates/db**：cloud/edge 生产代码出现 `sqlx::query` 即 CI 失败（SQL-residence guard；测试与 `guard-exempt` 注释项豁免）。`Db::pool()` 保持 `pub` 仅供基础设施接线共享连接池，不是 SQL 出口。
+4. **事务形态**：单语句函数接 `&SqlitePool`；多语句事务函数接 `&mut Transaction<'static, Sqlite>` 参数（buzz 先例），由 `Db::begin_transaction()` 开启。**不给门面方法开 `&mut Transaction` 后门**——事务内组合的整体迁入 db 领域函数。
+5. **迁移 DDL-only**：`migrations/` = `20260819000001_baseline.sql`（全量 DDL 快照）+ 正常递增迁移；非 baseline 迁移出现 `INSERT INTO` 即 CI 失败（DDL-only guard）。
+6. **种子两档**（`crates/db/src/seed.rs`，幂等）：`seed_system()` 生产必需行（admin/RBAC/内置模板/默认租户等），bootstrap 无条件调用；`seed_demo()` 演示设备/属性/命令，由配置 `[seed] demo_data` 开关（默认开）。种子一律走 seed.rs，不进迁移。
+7. **testing feature**：`db` crate 的 `testing` feature 暴露测试夹具（`fixture_pool_with_db` / `fixture_pool_seeded`），cloud `dev-dependencies` 启用；`test_helpers::test_pool()` 直建基线（不跑迁移链）。
+8. **edge 暂留 TODO（D6）**：edge 的自建本地表（`apps/edge/src/shared/storage.rs` 的 `ensure_devices_table` 等）是过渡形态——后期 edge 直接只复用 db baseline（删库重建，另立项）。
 
 ## Docker
 
@@ -297,7 +311,7 @@ docs/guide/               # User guide
 - [ ] Dependency direction correct? (no reverse dependency)
 - [ ] Follows `types → service → handler` three-layer architecture?
 - [ ] Uses `ApiResponseBuilder` for responses?
-- [ ] Database access through Repository?
+- [ ] Database access through the `Db` facade (`state.db.*`)?
 - [ ] No blocking code in async fn?
 - [ ] Corresponding tests exist?
 - [ ] Searched existing domain crates / `crates/web/` to confirm no duplicate implementation?

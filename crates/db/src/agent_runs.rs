@@ -18,11 +18,11 @@ pub use tinyiothub_core::agent_runs::*;
 
 /// trigger 串前缀作为 trigger_type（"thing:t1:event:x" → "thing"）；无 ':'
 /// 时用整串。
-fn trigger_type_of(trigger: &str) -> &str {
+pub(crate) fn trigger_type_of(trigger: &str) -> &str {
     trigger.split(':').next().unwrap_or(trigger)
 }
 
-async fn insert_run(
+pub(crate) async fn insert_run(
     pool: &SqlitePool,
     report: &RunReport,
     problem_key: Option<&str>,
@@ -74,7 +74,7 @@ async fn insert_run(
     Ok(())
 }
 
-async fn recent_summaries(pool: &SqlitePool, workspace_id: &str, limit: u32) -> Result<Vec<String>> {
+pub(crate) async fn recent_summaries(pool: &SqlitePool, workspace_id: &str, limit: u32) -> Result<Vec<String>> {
     // rowid 决胜：created_at 秒级精度，同秒批量插入仍保持插入序。
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT outcome, summary FROM agent_runs
@@ -89,7 +89,7 @@ async fn recent_summaries(pool: &SqlitePool, workspace_id: &str, limit: u32) -> 
     Ok(rows.into_iter().map(|(o, s)| format_summary(&o, &s)).collect())
 }
 
-async fn history_by_dedup_key(pool: &SqlitePool, workspace_id: &str, key: &str, limit: u32) -> Result<Vec<String>> {
+pub(crate) async fn history_by_dedup_key(pool: &SqlitePool, workspace_id: &str, key: &str, limit: u32) -> Result<Vec<String>> {
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT outcome, summary FROM agent_runs
              WHERE workspace_id = ? AND dedup_key = ?
@@ -104,7 +104,7 @@ async fn history_by_dedup_key(pool: &SqlitePool, workspace_id: &str, key: &str, 
     Ok(rows.into_iter().map(|(o, s)| format_summary(&o, &s)).collect())
 }
 
-async fn recent_runs_by_dedup_key(
+pub(crate) async fn recent_runs_by_dedup_key(
     pool: &SqlitePool,
     workspace_id: &str,
     key: &str,
@@ -126,7 +126,7 @@ async fn recent_runs_by_dedup_key(
         .collect()
 }
 
-async fn ack_run(pool: &SqlitePool, run_id: &str, actor: &str) -> Result<bool> {
+pub(crate) async fn ack_run(pool: &SqlitePool, run_id: &str, actor: &str) -> Result<bool> {
     // 幂等：仅首认生效（acked_at IS NULL），重复确认/不存在 rows_affected = 0。
     let result = sqlx::query(
         "UPDATE agent_runs SET acked_at = datetime('now'), acked_by = ?
@@ -139,7 +139,7 @@ async fn ack_run(pool: &SqlitePool, run_id: &str, actor: &str) -> Result<bool> {
     Ok(result.rows_affected() > 0)
 }
 
-async fn last_problem_run(
+pub(crate) async fn last_problem_run(
     pool: &SqlitePool,
     workspace_id: &str,
     problem_key: &str,
@@ -167,7 +167,7 @@ async fn last_problem_run(
     }))
 }
 
-async fn count_problem_runs(pool: &SqlitePool, workspace_id: &str, problem_key: &str, since_hours: u32) -> Result<u32> {
+pub(crate) async fn count_problem_runs(pool: &SqlitePool, workspace_id: &str, problem_key: &str, since_hours: u32) -> Result<u32> {
     let (n,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM agent_runs
              WHERE workspace_id = ? AND problem_key = ?
@@ -186,7 +186,7 @@ async fn count_problem_runs(pool: &SqlitePool, workspace_id: &str, problem_key: 
 /// 进程刚启动时无在飞 run，`known_active` 为防御性排除集（预热窗口
 /// 已有完成报告的 run_id）。逐行条件更新（status 仍为 'running' 才
 /// 生效），启动期执行一次，行数有界。返回标记行数。
-async fn interrupt_zombie_running_runs(pool: &SqlitePool, known_active: &[String]) -> Result<u64> {
+pub(crate) async fn interrupt_zombie_running_runs(pool: &SqlitePool, known_active: &[String]) -> Result<u64> {
     let rows: Vec<(String,)> = sqlx::query_as("SELECT id FROM agent_runs WHERE status = 'running'")
         .fetch_all(pool)
         .await?;
