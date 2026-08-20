@@ -35,7 +35,7 @@ use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 /// 摘要——LLM 措辞变化会击穿去重（O21）。
 ///
 /// O11 dedup 依据 [`RunRegistry`] 的 problem_key 元数据内存映射（Task 6；
-/// 原 `AgentRunsRepository.last_problem_run`/`count_problem_runs` SQL 查询
+/// 原 db agent_runs 的 last_problem_run/count_problem_runs SQL 查询
 /// 的等价承接，等价性论证见 registry.rs 模块文档）。
 pub struct HeartbeatBridge {
     registry: RunRegistry,

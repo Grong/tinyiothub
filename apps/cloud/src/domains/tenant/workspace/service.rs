@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 
 use tinyiothub_core::heartbeat::NewHeartbeatTask;
-use tinyiothub_storage::heartbeat::HeartbeatTaskRepository;
 
 use crate::domains::tenant::hooks::{AgentHooks, WorkspaceEventPublisher};
 
@@ -15,7 +14,7 @@ use tinyiothub_storage::workspace::{
 pub struct WorkspaceService {
     db: Arc<Db>,
     event_publisher: Mutex<Option<Arc<dyn WorkspaceEventPublisher>>>,
-    heartbeat_task_repo: Mutex<Option<Arc<HeartbeatTaskRepository>>>,
+    heartbeat_task_db: Mutex<Option<Arc<Db>>>,
     agent_hooks: Mutex<Option<Arc<dyn AgentHooks>>>,
 }
 
@@ -24,7 +23,7 @@ impl WorkspaceService {
         Self {
             db,
             event_publisher: Mutex::new(None),
-            heartbeat_task_repo: Mutex::new(None),
+            heartbeat_task_db: Mutex::new(None),
             agent_hooks: Mutex::new(None),
         }
     }
@@ -33,8 +32,8 @@ impl WorkspaceService {
         *self.event_publisher.lock().unwrap() = Some(publisher);
     }
 
-    pub fn set_heartbeat_task_repo(&self, repo: Arc<HeartbeatTaskRepository>) {
-        *self.heartbeat_task_repo.lock().unwrap() = Some(repo);
+    pub fn set_heartbeat_task_db(&self, db: Arc<Db>) {
+        *self.heartbeat_task_db.lock().unwrap() = Some(db);
     }
 
     pub fn set_agent_hooks(&self, hooks: Arc<dyn AgentHooks>) {
@@ -89,8 +88,8 @@ impl WorkspaceService {
     /// seed must not fail workspace creation — tasks can be added later.
     /// 成功时返回 DB 回读的全量任务行（供调用方注入 agent 内存真源）。
     async fn seed_default_heartbeat_tasks(&self, workspace_id: &str) -> Option<Vec<tinyiothub_core::heartbeat::HeartbeatTask>> {
-        let repo = self.heartbeat_task_repo.lock().unwrap().clone();
-        let Some(repo) = repo else { return None };
+        let db = self.heartbeat_task_db.lock().unwrap().clone();
+        let Some(db) = db else { return None };
         let hooks = self.agent_hooks.lock().unwrap().clone();
         let Some(hooks) = hooks else { return None };
         let defaults: Vec<NewHeartbeatTask> = hooks
@@ -102,11 +101,11 @@ impl WorkspaceService {
                 paused: t.paused,
             })
             .collect();
-        if let Err(e) = repo.replace_all(workspace_id, &defaults).await {
+        if let Err(e) = db.replace_heartbeat_tasks(workspace_id, &defaults).await {
             tracing::warn!(%workspace_id, "Failed to seed default heartbeat tasks: {}", e);
             return None;
         }
-        match repo.list_by_workspace(workspace_id).await {
+        match db.list_heartbeat_tasks(workspace_id).await {
             Ok(tasks) => Some(tasks),
             Err(e) => {
                 tracing::warn!(%workspace_id, "Failed to read back seeded heartbeat tasks: {}", e);
@@ -312,8 +311,8 @@ mod tests {
         tinyiothub_storage::test_helpers::run_all_migrations(&hb_pool)
             .await
             .expect("migrations");
-        let repo = Arc::new(tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(hb_pool));
-        service.set_heartbeat_task_repo(repo.clone());
+        let db = Arc::new(tinyiothub_storage::Db::new(hb_pool));
+        service.set_heartbeat_task_db(db.clone());
         service.set_agent_hooks(Arc::new(StubAgentHooks));
 
         let ws = service
@@ -321,7 +320,7 @@ mod tests {
             .await
             .expect("create");
 
-        let tasks = repo.list_by_workspace(&ws.id).await.expect("list tasks");
+        let tasks = db.list_heartbeat_tasks(&ws.id).await.expect("list tasks");
         assert_eq!(tasks.len(), 4, "new workspace gets the default heartbeat task set");
         assert!(tasks.iter().any(|t| t.priority == "high" && !t.paused));
     }

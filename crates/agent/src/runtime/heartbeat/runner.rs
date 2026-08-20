@@ -2,7 +2,7 @@
 //!
 //! Owns a DashMap of cancel channels and handles. Start/stop are idempotent.
 //! Tasks / TrustConfig / interval live in runner memory (Task 5: decoupled
-//! from HeartbeatTaskRepository) — injected via restore/commands; DB writes
+//! from the db facade) — injected via restore/commands; DB writes
 //! are the cloud service's job BEFORE calling the command (D11-⑤ 写序).
 
 use super::types::{HeartbeatConfig, HeartbeatSignal, LoopSignal};

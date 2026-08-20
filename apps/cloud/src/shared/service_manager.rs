@@ -151,9 +151,7 @@ impl ServiceManager {
         // 4. Build and start AI subsystem (AgentRuntime 门面，Task 9 启动顺序)
         #[cfg(not(feature = "harmonyos"))]
         {
-            let heartbeat_task_repo = Arc::new(tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(
-                app_state.db.pool().clone(),
-            ));
+            let heartbeat_task_db = app_state.db.clone();
 
             let heartbeat_config = tinyiothub_agent::runtime::heartbeat::types::HeartbeatConfig {
                 enabled: true,
@@ -176,7 +174,7 @@ impl ServiceManager {
             for ws_id in &ws_ids {
                 let workspace_dir = crate::shared::paths::workspace_dir(ws_id);
                 if let Err(e) = crate::domains::agent::host::heartbeat::migrate_file_tasks_to_db(
-                    heartbeat_task_repo.as_ref(),
+                    heartbeat_task_db.as_ref(),
                     ws_id,
                     &workspace_dir,
                 )
@@ -214,7 +212,7 @@ impl ServiceManager {
             let agent_events = Arc::new(tinyiothub_agent::runtime::events::AgentEventBus::new(256));
             let persist_rx = agent_events.subscribe();
             let pool = app_state.db.pool().clone();
-            let policy_repo = Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone()));
+            let policy_repo = app_state.db.clone();
             let runtime = Arc::new(tinyiothub_agent::runtime::runtime::AgentRuntime::restore(
                 snapshot,
                 tinyiothub_agent::runtime::runtime::RuntimeDeps {
@@ -290,7 +288,7 @@ impl ServiceManager {
             ));
             app_state
                 .workspace_service
-                .set_heartbeat_task_repo(heartbeat_task_repo.clone());
+                .set_heartbeat_task_db(heartbeat_task_db.clone());
             // Task 9：runtime 注入 agent hooks —— WorkspaceCreated 种子任务
             // 在发布事件前同步推入 runner 内存真源（D11-⑤：DB 已先写），
             // 随后的 heartbeat start 才能读到任务集。

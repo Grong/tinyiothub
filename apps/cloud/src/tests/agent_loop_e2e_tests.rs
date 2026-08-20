@@ -214,9 +214,9 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
     seed_scene(&pool).await;
     let db = Arc::new(Db::new(pool.clone()));
 
-    let policy_repo = Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone()));
+    let policy_repo = db.clone();
     policy_repo
-        .save_autonomy(WS, &act_policy(), "test")
+        .save_autonomy_policy(WS, &act_policy(), "test")
         .await
         .expect("save policy");
 
@@ -229,7 +229,7 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
     let persist_rx = agent_events.subscribe();
     let mut watch_rx = agent_events.subscribe();
 
-    // 真实 manager 组件：CloudThingAgentHost + PolicyRepository +
+    // 真实 manager 组件：CloudThingAgentHost + Db 门面（autonomy 委托）+
     // AutonomousAgentFactory（scripted provider，无网络）。
     let thing_bus = Arc::new(ThingEventBus::new());
     let provider = E2eScriptedProvider::default();

@@ -14,8 +14,8 @@
 //!   by HTTP handlers. Implemented in cloud over
 //!   `crate::domains::tenant::WorkspaceService` (tenant → agent edge stays one-way;
 //!   agent must not depend on the tenant crate).
-//! - [`StorageAutonomyPolicyReader`] — 桥 `db` crate 的 `PolicyRepository`
-//!   到 crates/agent 的自治策略读取端口（Task 13）。
+//! - [`StorageAutonomyPolicyReader`] — 桥 `db` crate 的 `Db` 门面自治策略
+//!   委托到 crates/agent 的读取端口（Task 13）。
 
 use std::sync::Arc;
 
@@ -77,15 +77,15 @@ macro_rules! verify_workspace_access_port {
 // ---------------------------------------------------------------------------
 
 /// `AutonomyPolicyReader` 的 cloud 适配器（Task 13）—— 桥 db crate 的
-/// `PolicyRepository` 到 crates/agent 的读取端口：运行时 crate 不再直接
-/// 依赖存储实现，组合层在此接线。
+/// `Db` 门面（autonomy 委托）到 crates/agent 的读取端口：运行时 crate 不再
+/// 直接依赖存储实现，组合层在此接线。
 pub struct StorageAutonomyPolicyReader {
-    repo: Arc<tinyiothub_storage::policy::PolicyRepository>,
+    db: Arc<tinyiothub_storage::Db>,
 }
 
 impl StorageAutonomyPolicyReader {
-    pub fn new(repo: Arc<tinyiothub_storage::policy::PolicyRepository>) -> Self {
-        Self { repo }
+    pub fn new(db: Arc<tinyiothub_storage::Db>) -> Self {
+        Self { db }
     }
 }
 
@@ -95,6 +95,6 @@ impl tinyiothub_agent::runtime::thing_agent::traits::AutonomyPolicyReader for St
         &self,
         workspace_id: &str,
     ) -> anyhow::Result<Option<tinyiothub_core::policy::AutonomyPolicy>> {
-        Ok(self.repo.load_autonomy(workspace_id).await?)
+        Ok(self.db.load_autonomy_policy(workspace_id).await?)
     }
 }

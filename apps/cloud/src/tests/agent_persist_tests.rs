@@ -209,9 +209,9 @@ async fn lagged_subscriber_resyncs_from_dump_state() {
 
     wait_until(|| async { count_runs(&pool, "run_lagged").await == 1 }).await;
 
-    let trust_repo = tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(pool.clone());
-    let loaded = trust_repo
-        .load_trust_config("ws1")
+    let db = tinyiothub_storage::Db::new(pool.clone());
+    let loaded = db
+        .load_heartbeat_trust_config("ws1")
         .await
         .expect("load trust config")
         .expect("trust config resynced");

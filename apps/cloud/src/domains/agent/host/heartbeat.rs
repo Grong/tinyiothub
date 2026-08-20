@@ -109,12 +109,12 @@ pub(crate) fn build_heartbeat_md(tasks: &[HeartbeatTask]) -> String {
 /// the file exists. On success the file is renamed to HEARTBEAT.md.migrated
 /// so it never re-seeds. Returns true when a migration happened.
 pub async fn migrate_file_tasks_to_db(
-    repo: &tinyiothub_storage::heartbeat::HeartbeatTaskRepository,
+    db: &tinyiothub_storage::Db,
     workspace_id: &str,
     workspace_dir: &std::path::Path,
 ) -> anyhow::Result<bool> {
-    let existing = repo
-        .list_by_workspace(workspace_id)
+    let existing = db
+        .list_heartbeat_tasks(workspace_id)
         .await
         .map_err(|e| anyhow::anyhow!("list tasks: {e}"))?;
     if !existing.is_empty() {
@@ -136,7 +136,7 @@ pub async fn migrate_file_tasks_to_db(
             paused: t.paused,
         })
         .collect();
-    repo.replace_all(workspace_id, &new_tasks)
+    db.replace_heartbeat_tasks(workspace_id, &new_tasks)
         .await
         .map_err(|e| anyhow::anyhow!("replace tasks: {e}"))?;
     tokio::fs::rename(&path, workspace_dir.join("HEARTBEAT.md.migrated")).await?;
@@ -225,14 +225,14 @@ mod tests {
         assert!(parsed[1].paused);
     }
 
-    async fn migration_test_repo() -> tinyiothub_storage::heartbeat::HeartbeatTaskRepository {
+    async fn migration_test_db() -> tinyiothub_storage::Db {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
             .await
             .expect("in-memory sqlite");
         tinyiothub_storage::migrations::run_migrations(&pool).await.expect("run migrations");
-        tinyiothub_storage::heartbeat::HeartbeatTaskRepository::new(pool)
+        tinyiothub_storage::Db::new(pool)
     }
 
     #[tokio::test]
@@ -243,12 +243,12 @@ mod tests {
             "- [high] 检查设备\n- [low|paused] 日报",
         )
         .unwrap();
-        let repo = migration_test_repo().await;
+        let db = migration_test_db().await;
 
-        let migrated = migrate_file_tasks_to_db(&repo, "ws_1", dir.path()).await.unwrap();
+        let migrated = migrate_file_tasks_to_db(&db, "ws_1", dir.path()).await.unwrap();
         assert!(migrated);
 
-        let tasks = repo.list_by_workspace("ws_1").await.unwrap();
+        let tasks = db.list_heartbeat_tasks("ws_1").await.unwrap();
         assert_eq!(tasks.len(), 2);
         assert!(
             tasks
@@ -260,16 +260,16 @@ mod tests {
         assert!(dir.path().join("HEARTBEAT.md.migrated").exists());
 
         // Second run: file gone + table non-empty → no-op, no duplicates
-        let again = migrate_file_tasks_to_db(&repo, "ws_1", dir.path()).await.unwrap();
+        let again = migrate_file_tasks_to_db(&db, "ws_1", dir.path()).await.unwrap();
         assert!(!again);
-        assert_eq!(repo.list_by_workspace("ws_1").await.unwrap().len(), 2);
+        assert_eq!(db.list_heartbeat_tasks("ws_1").await.unwrap().len(), 2);
     }
 
     #[tokio::test]
     async fn test_migrate_without_file_is_noop() {
         let dir = tempfile::tempdir().unwrap();
-        let repo = migration_test_repo().await;
-        let migrated = migrate_file_tasks_to_db(&repo, "ws_1", dir.path()).await.unwrap();
+        let db = migration_test_db().await;
+        let migrated = migrate_file_tasks_to_db(&db, "ws_1", dir.path()).await.unwrap();
         assert!(!migrated);
     }
 }

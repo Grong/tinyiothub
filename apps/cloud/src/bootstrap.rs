@@ -185,8 +185,6 @@ pub async fn load_device_cache(app_state: &AppState) {
 use sqlx::SqlitePool;
 use tinyiothub_core::agent_runs::{Outcome, RunReport};
 use tinyiothub_storage::Db;
-use tinyiothub_storage::agent_runs::AgentRunsRepository;
-use tinyiothub_storage::heartbeat::HeartbeatTaskRepository;
 
 use tinyiothub_agent::runtime::heartbeat::types::HeartbeatConfig;
 use tinyiothub_agent::runtime::runtime::AgentRuntime;
@@ -216,24 +214,23 @@ pub async fn build_agent_snapshot(db: &Db) -> RestoreSnapshot {
         }
     };
 
-    let task_repo = HeartbeatTaskRepository::new(pool.clone());
     let default_interval = HeartbeatConfig::default().interval_minutes;
     let mut heartbeat = Vec::with_capacity(ws_ids.len());
     let mut recent_runs = Vec::new();
     for ws_id in &ws_ids {
-        let tasks = task_repo.list_by_workspace(ws_id).await.unwrap_or_else(|e| {
+        let tasks = db.list_heartbeat_tasks(ws_id).await.unwrap_or_else(|e| {
             warn!(workspace_id = %ws_id, error = %e, "agent snapshot: load heartbeat tasks failed");
             vec![]
         });
-        let trust_config = task_repo
-            .load_trust_config(ws_id)
+        let trust_config = db
+            .load_heartbeat_trust_config(ws_id)
             .await
             .unwrap_or_else(|e| {
                 warn!(workspace_id = %ws_id, error = %e, "agent snapshot: load trust config failed");
                 None
             })
             .unwrap_or_default();
-        let interval_minutes = task_repo
+        let interval_minutes = db
             .load_heartbeat_config(ws_id)
             .await
             .unwrap_or_else(|e| {
@@ -339,8 +336,7 @@ async fn load_problem_meta(pool: &SqlitePool) -> Vec<ProblemMetaRow> {
 /// 认领的 run_id（已有完成报告）防御性排除。失败仅告警，不阻塞启动。
 pub async fn reconcile_zombie_runs(db: &Db, runtime: &AgentRuntime) {
     let known_active: Vec<String> = runtime.active_runs().iter().map(|r| r.run_id.clone()).collect();
-    let repo = AgentRunsRepository::new(db.pool().clone());
-    match repo.interrupt_zombie_running_runs(&known_active).await {
+    match db.interrupt_zombie_running_agent_runs(&known_active).await {
         Ok(0) => {}
         Ok(n) => info!(marked = n, "startup zombie reconcile: running runs marked interrupted"),
         Err(e) => warn!(error = %e, "startup zombie reconcile failed"),

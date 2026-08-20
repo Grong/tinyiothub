@@ -1,7 +1,7 @@
 //! Agent runs 领域值类型：自治 run 报告（自 db/agent_runs.rs 归位，Task 1）。
 //!
 //! RunReport/Outcome/ActionRecord 为 report JSON 列的序列化格式（共享写入契约）；
-//! AgentRunsRepository 与全部 SQL 留在 db。
+//! 全部 SQL 留在 db，经 Db 门面委托暴露。
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]

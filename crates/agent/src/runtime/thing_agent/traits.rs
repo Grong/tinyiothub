@@ -1,5 +1,5 @@
 //! Host capabilities the thing-agent loop needs from the cloud process
-//! (HeartbeatTaskRepository 先例 —— cloud 注入能力的抽象).
+//! (db 心跳任务存储先例 —— cloud 注入能力的抽象).
 
 /// In-process signal emitted for every persisted thing event.
 ///

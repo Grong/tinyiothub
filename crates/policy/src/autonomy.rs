@@ -5,8 +5,8 @@
 //! is fail-closed: any doubt (no policy, unknown mode, DB error mapped by the
 //! caller) results in Deny.
 
-// Value types live in crates/core (Task 1 归位); PolicyRepository lives in db —
-// consumers import it directly from `tinyiothub_storage::policy::PolicyRepository`.
+// Value types live in crates/core (Task 1 归位); 持久化经 db 的 Db 门面
+// autonomy 委托（`tinyiothub_storage::Db`）暴露。
 pub use tinyiothub_core::policy::{AutonomyMode, AutonomyPolicy};
 
 /// Verdict of the autonomy policy gate.

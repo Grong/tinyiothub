@@ -26,7 +26,7 @@ use dashmap::DashMap;
 use sqlx::SqlitePool;
 use tinyiothub_agent::memory::workspace_memory::WorkspaceScopedMemory;
 use tinyiothub_agent::runtime::thing_agent::{AgentHandle, RunContextInner, manager::AutonomousAgentProvider};
-use tinyiothub_storage::policy::PolicyRepository;
+use tinyiothub_storage::Db;
 use tokio::sync::RwLock;
 use tinyiothub_agent::pool::ProviderFactory;
 use zeroclaw::{
@@ -50,7 +50,7 @@ pub(crate) struct AutonomousEntry {
 
 pub struct AutonomousAgentFactory {
     db_pool: SqlitePool,
-    policy_repo: Arc<PolicyRepository>,
+    policy_repo: Arc<Db>,
     event_bus: Arc<ThingEventBus>,
     throttle: Arc<ThrottleState>,
     memory: Arc<dyn Memory>,
@@ -64,7 +64,7 @@ pub struct AutonomousAgentFactory {
 impl AutonomousAgentFactory {
     pub fn new(
         db_pool: SqlitePool,
-        policy_repo: Arc<PolicyRepository>,
+        policy_repo: Arc<Db>,
         event_bus: Arc<ThingEventBus>,
         throttle: Arc<ThrottleState>,
         memory: Arc<dyn Memory>,
@@ -204,7 +204,7 @@ impl AutonomousAgentProvider for AutonomousAgentFactory {
 pub(crate) fn build_autonomous_tools(
     pool: &SqlitePool,
     workspace_id: &str,
-    policy_repo: Arc<PolicyRepository>,
+    policy_repo: Arc<Db>,
     run_ctx: RunContextSlot,
     event_bus: Arc<ThingEventBus>,
     throttle: Arc<ThrottleState>,
@@ -336,7 +336,7 @@ mod tests {
         ));
         AutonomousAgentFactory::new(
             pool.clone(),
-            Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool)),
+            Arc::new(tinyiothub_storage::Db::new(pool)),
             Arc::new(ThingEventBus::new()),
             Arc::new(ThrottleState::new(60)),
             Arc::new(zeroclaw::memory::NoneMemory::new("test")),
@@ -362,7 +362,7 @@ mod tests {
         let tools = build_autonomous_tools(
             &pool,
             "ws-1",
-            Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone())),
+            Arc::new(tinyiothub_storage::Db::new(pool.clone())),
             new_run_context_slot(run_ctx()),
             Arc::new(ThingEventBus::new()),
             Arc::new(ThrottleState::new(60)),

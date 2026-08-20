@@ -31,8 +31,6 @@ use tracing::{debug, error, warn};
 use tinyiothub_core::agent_runs::RunReport;
 use tinyiothub_core::heartbeat::HeartbeatResult;
 use tinyiothub_storage::Db;
-use tinyiothub_storage::agent_runs::AgentRunsRepository;
-use tinyiothub_storage::heartbeat::HeartbeatTaskRepository;
 
 use super::dlq_repo::SqliteDeadLetterQueue;
 use tinyiothub_agent::runtime::event::bus::AiEventPublisher;
@@ -139,8 +137,8 @@ async fn project(
             project_run(pool, report, problem_key.as_deref(), dedup_key.as_deref()).await;
         }
         AgentEventKind::HeartbeatResultReady { result } => {
-            let task_repo = HeartbeatTaskRepository::new(pool.clone());
-            if let Err(e) = task_repo.insert_result(&result.workspace_id, result).await {
+            let db = Db::new(pool.clone());
+            if let Err(e) = db.insert_heartbeat_result(&result.workspace_id, result).await {
                 warn!(
                     workspace_id = %result.workspace_id,
                     error = %e,
@@ -157,8 +155,8 @@ async fn project(
         }
         AgentEventKind::TrustConfigChanged { workspace_id, config } => {
             // 幂等 upsert：与 handler 先写路径双写同值无害（D11-⑤）。
-            let task_repo = HeartbeatTaskRepository::new(pool.clone());
-            if let Err(e) = task_repo.save_trust_config(workspace_id, config).await {
+            let db = Db::new(pool.clone());
+            if let Err(e) = db.save_heartbeat_trust_config(workspace_id, config).await {
                 error!(workspace_id = %workspace_id, error = %e, "trust config projection failed");
             }
         }
@@ -197,8 +195,8 @@ async fn project_run(pool: &SqlitePool, report: &RunReport, problem_key: Option<
             return;
         }
     }
-    let runs_repo = AgentRunsRepository::new(pool.clone());
-    if let Err(e) = runs_repo.insert_run(report, problem_key, dedup_key).await {
+    let db = Db::new(pool.clone());
+    if let Err(e) = db.insert_agent_run(report, problem_key, dedup_key).await {
         if e.to_string().contains("UNIQUE") {
             debug!(run_id = %report.run_id, "run insert hit unique constraint (concurrent duplicate), treating as success");
             return;
@@ -233,7 +231,7 @@ async fn run_exists(pool: &SqlitePool, run_id: &str) -> Result<bool, sqlx::Error
 /// RESYNC_FAILURE_ESCALATION_THRESHOLD 升级 error! + DLQ（越阈值只升级
 /// 一次，不每周期刷 DLQ），恢复后计数清零（Task 8 fix round 1）。
 pub(crate) async fn resync(snapshot: RestoreSnapshot, pool: &SqlitePool, failures: &mut ResyncFailures) {
-    let runs_repo = AgentRunsRepository::new(pool.clone());
+    let db = Db::new(pool.clone());
     for report in &snapshot.recent_runs {
         let outcome: Result<(), String> = async {
             match run_exists(pool, &report.run_id).await {
@@ -243,7 +241,7 @@ pub(crate) async fn resync(snapshot: RestoreSnapshot, pool: &SqlitePool, failure
             }
             // resync 路径没有 problem_key/dedup_key 元数据（RunRegistry 不持有）；
             // 正常情形下该行已由事件路径落库，此处 insert 为幂等 no-op。
-            match runs_repo.insert_run(report, None, None).await {
+            match db.insert_agent_run(report, None, None).await {
                 Ok(_) => Ok(()),
                 Err(e) if e.to_string().contains("UNIQUE") => Ok(()), // 并发重复：幂等成功
                 Err(e) => Err(e.to_string()),
@@ -287,10 +285,10 @@ pub(crate) async fn resync(snapshot: RestoreSnapshot, pool: &SqlitePool, failure
             }
         }
     }
-    let task_repo = HeartbeatTaskRepository::new(pool.clone());
+    let db = Db::new(pool.clone());
     for state in &snapshot.heartbeat {
-        match task_repo
-            .save_trust_config(&state.workspace_id, &state.trust_config)
+        match db
+            .save_heartbeat_trust_config(&state.workspace_id, &state.trust_config)
             .await
         {
             Ok(()) => {
@@ -343,7 +341,7 @@ fn spawn_heartbeat_retry(
     shutdown: CancellationToken,
 ) {
     tokio::spawn(async move {
-        let task_repo = HeartbeatTaskRepository::new(pool.clone());
+        let db = Db::new(pool.clone());
         let dlq = SqliteDeadLetterQueue::new(pool);
         let mut attempt: u32 = 0;
         loop {
@@ -354,7 +352,7 @@ fn spawn_heartbeat_retry(
                     return;
                 }
             }
-            match task_repo.insert_result(&workspace_id, &result).await {
+            match db.insert_heartbeat_result(&workspace_id, &result).await {
                 Ok(_) => {
                     debug!(workspace_id = %workspace_id, attempt, "heartbeat result persisted on retry");
                     return;

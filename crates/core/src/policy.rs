@@ -1,7 +1,7 @@
 //! Policy 领域值类型：工作区自治策略 + 行动提案（自 db/policy.rs 归位，Task 1）。
 //!
 //! AutonomyPolicy/AutonomyMode/Proposal/ProposalStatus 为共享值类型；
-//! PolicyRepository 与全部 SQL（含 agent_runs 动作频率读取）留在 db。
+//! 全部 SQL（含 agent_runs 动作频率读取）留在 db，经 Db 门面委托暴露。
 
 use serde::{Deserialize, Serialize};
 

@@ -6,7 +6,7 @@
 //! proposals 不投递、心跳 directive 形态（Normal / source=heartbeat /
 //! 不参与合并）。
 //!
-//! Task 6 起 dedup 依据从 `AgentRunsRepository` SQL 查询迁移到
+//! Task 6 起 dedup 依据从 db agent_runs SQL 查询迁移到
 //! `RunRegistry` 的 problem_key 元数据映射（等价性论证见 registry.rs
 //! 模块文档）；DB 落库由 Task 8 的 RunRecorded 订阅者承接。
 

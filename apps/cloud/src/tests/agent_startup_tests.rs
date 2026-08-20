@@ -11,7 +11,7 @@ use sqlx::SqlitePool;
 use tinyiothub_core::agent_runs::{Outcome, RunReport};
 use tinyiothub_core::heartbeat::TrustConfig;
 use tinyiothub_storage::Db;
-use tinyiothub_storage::heartbeat::{HeartbeatTaskRepository, WorkspaceHeartbeatConfig};
+use tinyiothub_storage::heartbeat::WorkspaceHeartbeatConfig;
 
 use crate::bootstrap::{build_agent_snapshot, reconcile_zombie_runs};
 use crate::domains::agent::host::test_utils::seed_test_workspace;
@@ -146,16 +146,13 @@ async fn build_snapshot_prewarms_heartbeat_state_and_recent_runs_oldest_first() 
     let (db, pool) = test_db().await;
     seed_test_workspace(&pool, "tenant1", "ws1").await;
 
-    let task_repo = HeartbeatTaskRepository::new(pool.clone());
-    task_repo
-        .insert("ws1", "P1", "巡检设备在线率")
+    db.insert_heartbeat_task("ws1", "P1", "巡检设备在线率")
         .await
         .expect("insert task");
     let mut trust = TrustConfig::default();
     trust.max_auto_actions_per_tick = 7;
-    task_repo.save_trust_config("ws1", &trust).await.expect("save trust");
-    task_repo
-        .save_heartbeat_config(
+    db.save_heartbeat_trust_config("ws1", &trust).await.expect("save trust");
+    db.save_heartbeat_config(
             "ws1",
             &WorkspaceHeartbeatConfig {
                 enabled: true,

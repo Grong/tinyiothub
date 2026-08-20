@@ -342,7 +342,7 @@ struct FixtureParts {
     bus: Arc<ThingEventBus>,
     manager: Arc<ThingAgentManager>,
     factory: Arc<AutonomousAgentFactory>,
-    policy_repo: Arc<tinyiothub_storage::policy::PolicyRepository>,
+    policy_repo: Arc<tinyiothub_storage::Db>,
     _dir: tempfile::TempDir,
 }
 
@@ -361,9 +361,9 @@ async fn build_fixture(
     let (pool, dir) = test_pool(name).await;
     seed_device(&pool).await;
 
-    let policy_repo = Arc::new(tinyiothub_storage::policy::PolicyRepository::new(pool.clone()));
+    let policy_repo = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
     policy_repo
-        .save_autonomy(WS, &policy, "test")
+        .save_autonomy_policy(WS, &policy, "test")
         .await
         .expect("save policy");
 
@@ -395,7 +395,7 @@ async fn build_fixture(
     let run_registry = tinyiothub_agent::runtime::thing_agent::registry::RunRegistry::new();
     let agent_events = Arc::new(tinyiothub_agent::runtime::events::AgentEventBus::new(256));
     {
-        let repo = tinyiothub_storage::agent_runs::AgentRunsRepository::new(pool.clone());
+        let db = tinyiothub_storage::Db::new(pool.clone());
         let mut rx = agent_events.subscribe();
         tokio::spawn(async move {
             use tinyiothub_agent::runtime::events::AgentEventKind;
@@ -408,8 +408,8 @@ async fn build_fixture(
                 else {
                     continue;
                 };
-                if let Err(e) = repo
-                    .insert_run(&report, problem_key.as_deref(), dedup_key.as_deref())
+                if let Err(e) = db
+                    .insert_agent_run(&report, problem_key.as_deref(), dedup_key.as_deref())
                     .await
                 {
                     tracing::warn!(error = %e, "test persistence subscriber failed");
@@ -1055,7 +1055,7 @@ async fn mode_off_suppresses_event_and_timer_wakes_end_to_end() {
     // 门控不是死锁：翻回 Act 后 timer 恢复唤醒（证明上面不是 loop 坏了）。
     parts
         .policy_repo
-        .save_autonomy(WS, &act_policy(), "test")
+        .save_autonomy_policy(WS, &act_policy(), "test")
         .await
         .expect("flip to act");
     wait_for("timer wake after mode flip", || {

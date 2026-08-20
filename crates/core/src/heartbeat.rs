@@ -1,7 +1,7 @@
 //! Heartbeat 领域值类型：巡检任务/结果/信任配置（自 db/heartbeat.rs 归位，Task 1）。
 //!
 //! 纯值类型住 core，供 policy/skills/agent 等 crate 直接依赖；
-//! HeartbeatTaskRepository 与全部 SQL 留在 db（WorkspaceHeartbeatConfig 为
+//! 全部 SQL 留在 db，经 Db 门面委托暴露（WorkspaceHeartbeatConfig 为
 //! DB 行序列化格式，同样留在 db）。
 
 use chrono::{DateTime, Utc};
