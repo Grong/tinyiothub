@@ -230,31 +230,35 @@ mod tests {
     #[test]
     fn test_criteria_builder() {
         let criteria = DeviceCriteria::builder()
-            .name("test".to_string())
+            .name("sensor-01".to_string())
+            .device_type("temperature".to_string())
+            .driver_name("modbus".to_string())
             .state(1)
             .sort_by(DeviceSortBy::Name)
             .sort_order(DeviceSortOrder::Ascending)
-            .limit(10)
+            .limit(100)
             .offset(0)
             .build();
 
-        assert_eq!(criteria.name, Some("test".to_string()));
+        assert_eq!(criteria.name, Some("sensor-01".to_string()));
+        assert_eq!(criteria.device_type, Some("temperature".to_string()));
+        assert_eq!(criteria.driver_name, Some("modbus".to_string()));
         assert_eq!(criteria.state, Some(1));
         assert!(matches!(criteria.sort_by, DeviceSortBy::Name));
         assert!(matches!(criteria.sort_order, DeviceSortOrder::Ascending));
-        assert_eq!(criteria.limit, Some(10));
+        assert_eq!(criteria.limit, Some(100));
         assert_eq!(criteria.offset, Some(0));
     }
 
     #[test]
     fn test_criteria_fluent_interface() {
         let criteria = DeviceCriteria::default()
-            .with_name("sensor".to_string())
+            .with_name("sensor-02".to_string())
             .with_state(0)
             .with_sort(DeviceSortBy::State, DeviceSortOrder::Descending)
             .with_pagination(50, 10);
 
-        assert_eq!(criteria.name, Some("sensor".to_string()));
+        assert_eq!(criteria.name, Some("sensor-02".to_string()));
         assert_eq!(criteria.state, Some(0));
         assert!(matches!(criteria.sort_by, DeviceSortBy::State));
         assert!(matches!(criteria.sort_order, DeviceSortOrder::Descending));
