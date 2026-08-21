@@ -591,15 +591,25 @@ async fn warning_event_runs_full_loop_and_persists_verified_report() {
     assert_eq!(run_count(&fx.pool, EVENT_KEY).await, 1, "agent 动作事件不得再唤醒");
 
     // T13 回推：无用户会话、无 admin 活跃会话 → 告警回退（events 表，按
-    // run_id 定位，排除定时巡检 run 的同类告警）。
-    let alerts: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM events WHERE event_subtype = 'thing_agent_alert' AND content LIKE '%' || ? || '%'",
-    )
-    .bind(&run_id)
-    .fetch_one(&fx.pool)
-    .await
-    .expect("count alerts");
-    assert_eq!(alerts, 1, "无会话时 run 报告应回退为告警");
+    // run_id 定位，排除定时巡检 run 的同类告警）。告警落库是异步路径，
+    // 并行负载下存在写-读竞态（flaky 修复：一发查询改为轮询等待）。
+    let pool_for_alerts = fx.pool.clone();
+    let run_id_for_alerts = run_id.clone();
+    wait_for("alert fallback persisted", move || {
+        let pool = pool_for_alerts.clone();
+        let rid = run_id_for_alerts.clone();
+        Box::pin(async move {
+            let alerts: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM events WHERE event_subtype = 'thing_agent_alert' AND content LIKE '%' || ? || '%'",
+            )
+            .bind(&rid)
+            .fetch_one(&pool)
+            .await
+            .expect("count alerts");
+            alerts == 1
+        })
+    })
+    .await;
 
     // 显式共振防护：actor='agent' 的 warning 事件（即便同名同级别）不唤醒。
     // 等待时长 > 合并窗口 + run 耗时，足以暴露一次错误唤醒。
