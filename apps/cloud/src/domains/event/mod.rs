@@ -108,7 +108,6 @@ impl From<tinyiothub_core::error::Error> for EventError {
 #[allow(ambiguous_glob_reexports)]
 pub use handler::*;
 #[allow(ambiguous_glob_reexports)]
-#[allow(ambiguous_glob_reexports)]
 pub use service::*;
 pub use tinyiothub_core::models::event::{
     ConnectionStatus, ContentElement, DeviceEventType, Event, EventId, EventLevel, EventSource, EventType, LinkTarget,

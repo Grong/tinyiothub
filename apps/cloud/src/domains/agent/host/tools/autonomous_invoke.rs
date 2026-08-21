@@ -365,6 +365,11 @@ impl Tool for AutonomousInvokeActionTool {
     }
 }
 
+#[cfg(test)]
+fn self_pending_actions() -> Arc<super::thing::PendingActionStore> {
+    Arc::new(super::thing::PendingActionStore::new())
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -873,9 +878,4 @@ mod tests {
         let result = tool.execute(args("dev-1", "reboot")).await.expect("execute");
         assert!(result.success);
     }
-}
-
-#[cfg(test)]
-fn self_pending_actions() -> Arc<super::thing::PendingActionStore> {
-    Arc::new(super::thing::PendingActionStore::new())
 }

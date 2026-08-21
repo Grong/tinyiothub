@@ -975,7 +975,7 @@ async fn filter_device_ids_by_workspace(pool: &SqlitePool, ws: &str, ids: &[Stri
     // Use QueryBuilder to avoid lifetime issues with dynamic SQL
     let mut query_builder: sqlx::QueryBuilder<sqlx::Sqlite> =
         sqlx::QueryBuilder::new("SELECT id FROM devices WHERE workspace_id = ");
-    query_builder.push_bind(&ws);
+    query_builder.push_bind(ws);
     query_builder.push(" AND id IN (");
 
     let mut separated = query_builder.separated(", ");

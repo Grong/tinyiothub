@@ -172,8 +172,7 @@ async fn lagged_subscriber_resyncs_from_dump_state() {
     seed_test_workspace(&pool, "tenant1", "ws1").await;
 
     // 预热 runtime 内存真相源：一条 recent_run + ws1 的 trust config
-    let mut trust = TrustConfig::default();
-    trust.max_auto_actions_per_tick = 7;
+    let trust = TrustConfig { max_auto_actions_per_tick: 7, ..Default::default() };
     let snapshot = RestoreSnapshot {
         heartbeat: vec![WorkspaceHeartbeatState {
             workspace_id: "ws1".into(),

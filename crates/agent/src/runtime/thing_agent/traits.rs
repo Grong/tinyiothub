@@ -74,6 +74,7 @@ pub(crate) mod test_stubs {
     use tinyiothub_core::policy::{AutonomyMode, AutonomyPolicy};
 
     /// 与 db 播种夹具等价的策略值（allowed_actions=["*"]，宽松配额）。
+    #[allow(dead_code)] // 测试夹具：仅测试路径使用
     pub(crate) fn policy(mode: AutonomyMode) -> AutonomyPolicy {
         AutonomyPolicy {
             mode,
@@ -91,6 +92,7 @@ pub(crate) mod test_stubs {
         fail: Mutex<bool>,
     }
 
+    #[allow(dead_code)] // 测试夹具：仅测试路径使用
     impl StubAutonomyPolicyReader {
         pub(crate) fn new() -> Self {
             Self {

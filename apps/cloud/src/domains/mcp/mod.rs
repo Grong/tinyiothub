@@ -23,7 +23,6 @@ use crate::domains::thing::template::TemplateEngine;
 use crate::shared::error::Error;
 use tinyiothub_runtime::event_bus::EventBus;
 use tinyiothub_storage::{Db, cache::DeviceCache};
-use tool_registry::HandlerRegistry;
 
 /// Mcp domain state slice (G7) — the fields of cloud's `AppState` the mcp
 /// handlers and tool handlers actually consume. The composition layer (cloud)

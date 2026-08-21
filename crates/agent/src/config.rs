@@ -286,9 +286,9 @@ mod tests {
         let obj = config.as_object().expect("should be an object");
 
         assert_eq!(obj.get("model").and_then(|v| v.as_str()), Some("minimax-m2"));
-        assert_eq!(obj.get("temperature").and_then(|v| as_f64(v)), Some(0.7));
+        assert_eq!(obj.get("temperature").and_then(as_f64), Some(0.7));
         assert_eq!(obj.get("maxTokens").and_then(|v| v.as_u64()), Some(4096));
-        assert_eq!(obj.get("topP").and_then(|v| as_f64(v)), Some(1.0));
+        assert_eq!(obj.get("topP").and_then(as_f64), Some(1.0));
         assert_eq!(obj.get("systemPrompt").and_then(|v| v.as_str()), Some(""));
         assert!(obj.get("toolDenylist").and_then(|v| v.as_array()).is_some());
     }

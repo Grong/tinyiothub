@@ -260,8 +260,8 @@ impl HeartbeatRunner {
         info!(workspace_id, "Heartbeat loop stopped");
     }
 
-    /// 工作区删除清理命令：停 loop + 清三张内存表（trust/tasks/intervals）
-    /// + 出队 pending start。不清理则已删工作区在内存与 dump_state 快照中
+    /// 工作区删除清理命令：停 loop，清三张内存表（trust/tasks/intervals），
+    /// 并出队 pending start。不清理则已删工作区在内存与 dump_state 快照中
     /// 永久残留（Task 5 fix round 1）。
     pub async fn remove_workspace(&self, workspace_id: &str) {
         self.stop(workspace_id).await;

@@ -1,3 +1,4 @@
+#![allow(clippy::double_must_use)] // async_trait 展开的 BoxFuture 自带 must_use，属已知误报类
 //! LLM contract crate — provider trait, prompt templates, and session types.
 //!
 //! Pure contracts only: no dependencies on cloud, db, or domain crates.

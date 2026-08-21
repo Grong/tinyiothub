@@ -246,11 +246,10 @@ impl DeviceService {
             .await
         {
             Ok(properties) => {
-                if !properties.is_empty() {
-                    if let Err(e) = self.db.create_device_properties_batch(&properties).await {
+                if !properties.is_empty()
+                    && let Err(e) = self.db.create_device_properties_batch(&properties).await {
                         tracing::warn!("{}", e);
                     }
-                }
             }
             Err(e) => tracing::warn!("Failed to generate device properties: {}", e),
         }
@@ -268,11 +267,10 @@ impl DeviceService {
             .await
         {
             Ok(commands) => {
-                if !commands.is_empty() {
-                    if let Err(e) = self.db.bulk_create_device_commands(&commands).await {
+                if !commands.is_empty()
+                    && let Err(e) = self.db.bulk_create_device_commands(&commands).await {
                         tracing::warn!("Failed to create device commands: {}", e);
                     }
-                }
             }
             Err(e) => tracing::warn!("Failed to generate device commands: {}", e),
         }

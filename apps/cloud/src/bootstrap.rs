@@ -295,9 +295,8 @@ async fn load_problem_meta(pool: &SqlitePool) -> Vec<ProblemMetaRow> {
             |(workspace_id, problem_key, run_id, outcome, verified, acked_at, created_at)| {
                 let occurred_at = chrono::NaiveDateTime::parse_from_str(&created_at, "%Y-%m-%d %H:%M:%S")
                     .map(|naive| chrono::DateTime::from_naive_utc_and_offset(naive, chrono::Utc))
-                    .map_err(|e| {
+                    .inspect_err(|&e| {
                         warn!(run_id = %run_id, error = %e, "agent snapshot: skip problem run with bad created_at");
-                        e
                     })
                     .ok()?;
                 Some(ProblemMetaRow {

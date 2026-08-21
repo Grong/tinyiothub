@@ -362,8 +362,10 @@ mod tests {
     async fn commands_update_facade_state() {
         let rt = AgentRuntime::restore(snapshot_with_ws1(), RuntimeDeps::test_stub());
 
-        let mut config = TrustConfig::default();
-        config.max_auto_actions_per_tick = 3;
+        let config = TrustConfig {
+            max_auto_actions_per_tick: 3,
+            ..Default::default()
+        };
         rt.update_trust_config("ws1", config);
         assert_eq!(rt.dump_state().heartbeat[0].trust_config.max_auto_actions_per_tick, 3);
 

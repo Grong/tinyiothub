@@ -61,6 +61,7 @@ pub struct AutonomousAgentFactory {
 }
 
 impl AutonomousAgentFactory {
+    #[allow(clippy::too_many_arguments)] // 组合根工厂：参数即依赖清单，收敛于此一处
     pub fn new(
         db_pool: SqlitePool,
         policy_repo: Arc<Db>,

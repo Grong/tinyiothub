@@ -1,3 +1,4 @@
+#![allow(clippy::double_must_use)] // async_trait 展开的 BoxFuture 自带 must_use，属已知误报类
 //! Agent skills & tools — skill loading, tool registry, and the trust engine.
 //!
 //! The agent crate provides DB/HTTP integrations in host::skill / host::tools (P4-Task22).

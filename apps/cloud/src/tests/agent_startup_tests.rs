@@ -149,8 +149,7 @@ async fn build_snapshot_prewarms_heartbeat_state_and_recent_runs_oldest_first() 
     db.insert_heartbeat_task("ws1", "P1", "巡检设备在线率")
         .await
         .expect("insert task");
-    let mut trust = TrustConfig::default();
-    trust.max_auto_actions_per_tick = 7;
+    let trust = TrustConfig { max_auto_actions_per_tick: 7, ..Default::default() };
     db.save_heartbeat_trust_config("ws1", &trust).await.expect("save trust");
     db.save_heartbeat_config(
             "ws1",

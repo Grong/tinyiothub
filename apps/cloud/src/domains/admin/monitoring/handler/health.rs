@@ -8,7 +8,6 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::api_response::ApiResponse;
 
 /// Global start time for uptime calculation (shared with metrics)
-
 fn get_uptime_seconds(state: &AdminState) -> u64 {
     state.started_at.elapsed().unwrap_or_default().as_secs()
 }

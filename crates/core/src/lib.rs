@@ -1,3 +1,4 @@
+#![allow(clippy::double_must_use)] // async_trait 展开的 BoxFuture 自带 must_use，属已知误报类
 //! TinyIoTHub contract crate — traits + value types (DTO/error/config).
 //!
 //! ## 设计不变量

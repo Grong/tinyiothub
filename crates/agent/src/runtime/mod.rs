@@ -9,6 +9,7 @@ pub mod event;
 pub mod events;
 pub mod heartbeat;
 pub mod orchestrator;
+#[allow(clippy::module_inception)]
 pub mod runtime;
 pub mod snapshot;
 pub mod thing_agent;

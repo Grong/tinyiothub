@@ -910,6 +910,26 @@ impl Db {
     }
 }
 
+// ──────────────────────────────────────────────
+// 初始化引导查询（自 cloud shared/initialization.rs 迁入，Task 12）
+// ──────────────────────────────────────────────
+
+/// 查询用户 display_name。
+pub(crate) async fn find_user_display_name(pool: &SqlitePool, user_id: &str) -> std::result::Result<Option<String>, sqlx::Error> {
+    let row: Option<(Option<String>,)> = sqlx::query_as("SELECT display_name FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.and_then(|(name,)| name))
+}
+
+impl Db {
+    /// 查询用户 display_name。
+    pub async fn find_user_display_name(&self, user_id: &str) -> std::result::Result<Option<String>, sqlx::Error> {
+        find_user_display_name(self.pool(), user_id).await
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -950,25 +970,5 @@ mod tests {
         assert!(matches!(criteria.sort_order, UserSortOrder::Descending));
         assert_eq!(criteria.limit, Some(50));
         assert_eq!(criteria.offset, Some(10));
-    }
-}
-
-// ──────────────────────────────────────────────
-// 初始化引导查询（自 cloud shared/initialization.rs 迁入，Task 12）
-// ──────────────────────────────────────────────
-
-/// 查询用户 display_name。
-pub(crate) async fn find_user_display_name(pool: &SqlitePool, user_id: &str) -> std::result::Result<Option<String>, sqlx::Error> {
-    let row: Option<(Option<String>,)> = sqlx::query_as("SELECT display_name FROM users WHERE id = ?")
-        .bind(user_id)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row.and_then(|(name,)| name))
-}
-
-impl Db {
-    /// 查询用户 display_name。
-    pub async fn find_user_display_name(&self, user_id: &str) -> std::result::Result<Option<String>, sqlx::Error> {
-        find_user_display_name(self.pool(), user_id).await
     }
 }

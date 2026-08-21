@@ -73,11 +73,10 @@ impl WorkspaceService {
         // Task 9：种子任务在发布 WorkspaceCreated 之前同步推入 agent
         // 运行时内存真源 —— 事件经队列异步派发，其 heartbeat start 回调
         // 读 runner 内存；不先注入则任务集为空、loop 跳过启动。
-        if let Some(tasks) = seeded {
-            if let Some(ref hooks) = *self.agent_hooks.lock().unwrap() {
+        if let Some(tasks) = seeded
+            && let Some(ref hooks) = *self.agent_hooks.lock().unwrap() {
                 hooks.heartbeat_tasks_seeded(&workspace.id, tasks);
             }
-        }
         if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
             publisher.publish_workspace_created(workspace.id.clone());
         }
@@ -89,9 +88,9 @@ impl WorkspaceService {
     /// 成功时返回 DB 回读的全量任务行（供调用方注入 agent 内存真源）。
     async fn seed_default_heartbeat_tasks(&self, workspace_id: &str) -> Option<Vec<tinyiothub_core::heartbeat::HeartbeatTask>> {
         let db = self.heartbeat_task_db.lock().unwrap().clone();
-        let Some(db) = db else { return None };
+        let db = db?;
         let hooks = self.agent_hooks.lock().unwrap().clone();
-        let Some(hooks) = hooks else { return None };
+        let hooks = hooks?;
         let defaults: Vec<NewHeartbeatTask> = hooks
             .default_heartbeat_tasks()
             .into_iter()

@@ -15,6 +15,7 @@
 //!   provider.rs — ProviderFactory 与 minimax provider 缝（组合层注册设置）
 
 mod chat;
+#[allow(clippy::module_inception)]
 mod pool;
 pub mod provider;
 

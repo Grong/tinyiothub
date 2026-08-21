@@ -1,3 +1,4 @@
+#![allow(clippy::double_must_use)] // async_trait 展开的 BoxFuture 自带 must_use，属已知误报类
 #![allow(clippy::duplicated_attributes)]
 //! TinyIoTHub shared runtime infrastructure
 //!

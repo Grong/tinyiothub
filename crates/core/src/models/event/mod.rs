@@ -1,5 +1,6 @@
 #[allow(clippy::module_inception)]
 pub mod alarm_event;
+#[allow(clippy::module_inception)]
 pub mod event;
 pub mod event_id;
 pub mod event_level;

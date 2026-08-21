@@ -303,8 +303,8 @@ impl Alarm {
             return Err(DbError::Validation {
                 message: format!(
                     "无效的报警状态转换: 从 {} 到 {}",
-                    self.status.as_str().to_string(),
-                    "acknowledged".to_string()
+                    self.status.as_str(),
+                    "acknowledged"
                 ),
             });
         }
@@ -318,8 +318,8 @@ impl Alarm {
             return Err(DbError::Validation {
                 message: format!(
                     "无效的报警状态转换: 从 {} 到 {}",
-                    self.status.as_str().to_string(),
-                    "resolved".to_string()
+                    self.status.as_str(),
+                    "resolved"
                 ),
             });
         }
@@ -333,8 +333,8 @@ impl Alarm {
             return Err(DbError::Validation {
                 message: format!(
                     "无效的报警状态转换: 从 {} 到 {}",
-                    self.status.as_str().to_string(),
-                    "suppressed".to_string()
+                    self.status.as_str(),
+                    "suppressed"
                 ),
             });
         }

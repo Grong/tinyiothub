@@ -44,7 +44,7 @@ fn generate_token(secret: &str, tenant_id: &str, user_id: &str) -> String {
     });
 
     let payload_str = payload.to_string();
-    let signature = sign_payload(&payload_str, &secret);
+    let signature = sign_payload(&payload_str, secret);
 
     let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, payload_str);
 

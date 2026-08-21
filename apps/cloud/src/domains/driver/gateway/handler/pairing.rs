@@ -28,6 +28,7 @@ fn extract_client_ip(headers: &HeaderMap) -> Option<String> {
     None
 }
 
+#[allow(clippy::result_large_err)] // axum 错误元组携带完整响应体，API 语义优先
 pub async fn pair_device(
     State(state): State<AppState>,
     claims: AuthClaims,

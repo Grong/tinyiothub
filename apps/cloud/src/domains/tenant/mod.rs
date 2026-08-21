@@ -22,7 +22,7 @@ pub use workspace::WorkspaceService;
 /// Tenant domain state slice — Arc'd services + config slices, derived from
 /// the composition layer's `AppState` via `FromRef`
 /// (cloud/src/state.rs).
-
+///
 /// AI tag-suggestion seam for workspace resources. Cloud implements this
 /// over the minimax model provider (`shared::config::create_minimax_provider`
 /// — a zeroclaw type the tenant crate must not depend on). Error strings
