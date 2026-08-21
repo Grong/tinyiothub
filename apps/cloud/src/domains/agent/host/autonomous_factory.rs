@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 //! Autonomous agent factory (T11, O8/O20).
 //!
 //! One autonomous zeroclaw Agent per workspace (DashMap cache), built with

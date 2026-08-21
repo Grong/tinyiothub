@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 //! Cloud-side `ThingAgentHost` implementation.
 //!
 //! Event-plane capabilities (T6):

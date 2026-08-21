@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 // Agent Skill — DB-persisted skill wrapper.
 //
 // Core domain types and logic live in tinyiothub_agent::runtime::skills:

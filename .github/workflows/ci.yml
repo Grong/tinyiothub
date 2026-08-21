@@ -165,17 +165,19 @@ jobs:
       - name: DB SQL Residence Guard (Task 13)
         run: |
           echo "=== Checking raw SQL lives only in crates/db ==="
-          # sqlx::query 只允许出现在 crates/db。豁免规则：
+          # sqlx::(query|QueryBuilder|raw_sql) 只允许出现在 crates/db。豁免规则：
           # - 文件名含 test_utils / _test，或路径在 tests/ 下；
           # - 内联 #[cfg(test)] 测试模块（sed 截断该标记之后的内容再检查）；
           # - 行内 `guard-exempt` 注释（有据排除项，如 policy_engine.rs 的
           #   policy trait impl —— Task 12 裁决 db 不能依赖 policy crate）。
+          # 词表终审扩展（F1）：QueryBuilder/raw_sql 与 sqlx::query 同等守门，
+          # 堵住动态 SQL 盲区。
           FAIL=0
-          for f in $(grep -rEl --include='*.rs' 'sqlx::query' apps/cloud/src apps/edge/src); do
+          for f in $(grep -rEl --include='*.rs' -E 'sqlx::(query|QueryBuilder|raw_sql)' apps/cloud/src apps/edge/src); do
             case "$f" in
               *test_utils*|*_test*|*tests/*) continue ;;
             esac
-            if sed '/#\[cfg(test)\]/,$d' "$f" | grep -n 'sqlx::query' | grep -v 'guard-exempt'; then
+            if sed '/#\[cfg(test)\]/,$d' "$f" | grep -nE 'sqlx::(query|QueryBuilder|raw_sql)' | grep -v 'guard-exempt'; then
               echo "❌ raw SQL outside crates/db: $f"
               echo "   ✅ Move the query into a crates/db domain file and expose a Db delegate"
               FAIL=1

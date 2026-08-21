@@ -3,8 +3,7 @@
 use async_trait::async_trait;
 use tinyiothub_core::models::device::{Device, DeviceStats};
 
-use crate::domains::driver::legacy::types::DeviceStatusDistribution;
-use crate::domains::driver::legacy::types::QuickDevice;
+use tinyiothub_storage::device::{DeviceStatusDistribution, QuickDevice};
 use tinyiothub_core::error::Result;
 
 #[async_trait]

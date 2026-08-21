@@ -1,10 +1,13 @@
 //! TinyIoTHub storage layer
 //!
-//! Repository traits, SQLite implementations, caches, and the unified Storage facade.
+//! `Db` facade (connection pool + per-domain delegate methods) over per-domain
+//! modules. All SQL lives in this crate — cloud/edge call `Db` delegates, and
+//! CI's SQL residence guard (`sqlx::(query|QueryBuilder|raw_sql)` wordlist)
+//! rejects raw SQL elsewhere.
 //!
 //! ## 设计不变量
 //! - 只依赖 core，禁止依赖其他任何 workspace crate
-//! - 具体 struct、按领域平铺（traits/ 残留待逐领域评估削除）
+//! - 具体 struct、按领域平铺；各领域文件内 free fn（pub(crate)）+ `impl Db` 委托
 //! - 测试使用真实 SQLite（test_helpers::test_pool 直建基线）
 
 /// Agent config/action/dead-letter persistence (agents, agent_configs, agent_tools, agent_actions, agent_dead_letters).

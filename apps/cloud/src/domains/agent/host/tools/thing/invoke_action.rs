@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 // 6. invoke_action — execute a device action (type='device' guard)
 
 use std::sync::Arc;

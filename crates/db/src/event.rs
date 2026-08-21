@@ -1211,6 +1211,62 @@ pub(crate) async fn insert_agent_alert_event(
     Ok(())
 }
 
+/// thing 事件查询行（agent query_events 工具用，自 cloud agent tools/thing 迁入）。
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct ThingEventQueryRow {
+    pub id: String,
+    pub event_type: String,
+    pub event_subtype: Option<String>,
+    pub event_level: i32,
+    pub timestamp: Option<String>,
+    pub source_type: String,
+    pub source_id: String,
+    pub title: Option<String>,
+    pub content: String,
+    pub created_at: String,
+}
+
+/// thing 事件过滤查询（device + workspace 作用域，可选 event_type/level/since）。
+/// SQL 与原 query_events 工具内联 QueryBuilder 逐字一致。
+pub(crate) async fn search_thing_events(
+    pool: &SqlitePool,
+    device_id: &str,
+    workspace_id: &str,
+    event_name: Option<&str>,
+    level: Option<i32>,
+    since: Option<&str>,
+    limit: i64,
+) -> Result<Vec<ThingEventQueryRow>> {
+    // Build dynamic query with QueryBuilder
+    let mut builder = sqlx::QueryBuilder::new(
+        "SELECT id, event_type, event_subtype, event_level, timestamp, \
+         source_type, source_id, title, content, created_at \
+         FROM events WHERE device_id = ",
+    );
+    builder.push_bind(device_id);
+    builder.push(" AND workspace_id = ");
+    builder.push_bind(workspace_id);
+
+    if let Some(event_name) = event_name {
+        builder.push(" AND event_type = ");
+        builder.push_bind(event_name);
+    }
+    if let Some(level) = level {
+        builder.push(" AND event_level = ");
+        builder.push_bind(level);
+    }
+    if let Some(since) = since {
+        builder.push(" AND created_at >= ");
+        builder.push_bind(since);
+    }
+
+    builder.push(" ORDER BY created_at DESC LIMIT ");
+    builder.push_bind(limit);
+
+    let rows = builder.build_query_as::<ThingEventQueryRow>().fetch_all(pool).await?;
+    Ok(rows)
+}
+
 // ──────────────────────────────────────────────
 // Db 委托（event 前缀 vs realtime 前缀，对应两个原 repo）
 // ──────────────────────────────────────────────
@@ -1314,6 +1370,19 @@ impl Db {
     /// 写入 agent 告警事件行（收编自 thing_agent_host）。
     pub async fn insert_agent_alert_event(&self, workspace_id: &str, title: &str, content: &str) -> Result<()> {
         insert_agent_alert_event(self.pool(), workspace_id, title, content).await
+    }
+
+    /// thing 事件过滤查询（query_events 工具用，收编自 cloud agent tools/thing）。
+    pub async fn search_thing_events(
+        &self,
+        device_id: &str,
+        workspace_id: &str,
+        event_name: Option<&str>,
+        level: Option<i32>,
+        since: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<ThingEventQueryRow>> {
+        search_thing_events(self.pool(), device_id, workspace_id, event_name, level, since, limit).await
     }
 }
 

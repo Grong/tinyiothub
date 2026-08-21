@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 // Stateless ChatService — zeroclaw Agent passed as parameter.
 // Eliminates the SSE serialization round-trip:
 //   Before: zeroclaw TurnEvent → bytes → reqwest::Response → parse bytes → ChatEvent → SSE

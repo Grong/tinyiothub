@@ -1,4 +1,4 @@
-// 数据实现，留 cloud（D2）
+// Agent memory plane — HTTP handler + PromptMemorySource 接线（组合层）。
 pub mod handler;
 pub mod types;
 

@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 // File-based skills CRUD — writes to data/agents/<workspace_id>/skills/<skill_name>.md
 
 use std::path::PathBuf;

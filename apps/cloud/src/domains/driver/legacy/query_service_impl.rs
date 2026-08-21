@@ -1,11 +1,9 @@
 use async_trait::async_trait;
-use sqlx::{QueryBuilder, Row};
 use tinyiothub_core::models::device::{Device, DeviceStats};
-use tinyiothub_storage::{Db, device_row_mapper};
+use tinyiothub_storage::Db;
+use tinyiothub_storage::device::{DeviceStatusDistribution, QuickDevice};
 
 use super::query::DeviceQueryService;
-use crate::domains::driver::legacy::types::DeviceStatusDistribution;
-use crate::domains::driver::legacy::types::QuickDevice;
 use tinyiothub_core::error::Result;
 
 /// SQLite implementation of DeviceQueryService
@@ -23,39 +21,7 @@ impl SqliteDeviceQueryService {
 #[async_trait]
 impl DeviceQueryService for SqliteDeviceQueryService {
     async fn search(&self, keyword: &str, limit: Option<u32>) -> Result<Vec<Device>> {
-        let search_pattern = format!("%{}%", keyword);
-        let exact_pattern = format!("{}%", keyword);
-
-        let mut builder = QueryBuilder::new("SELECT ");
-        builder.push(device_row_mapper::SELECT_COLUMNS);
-        builder.push(
-            " FROM devices WHERE name LIKE ? OR display_name LIKE ? OR address LIKE ? OR description LIKE ?
-             ORDER BY CASE
-                WHEN name LIKE ? THEN 1
-                WHEN display_name LIKE ? THEN 2
-                WHEN address LIKE ? THEN 3
-                ELSE 4
-             END, name",
-        );
-
-        builder.push_bind(&search_pattern);
-        builder.push_bind(&search_pattern);
-        builder.push_bind(&search_pattern);
-        builder.push_bind(&search_pattern);
-        builder.push_bind(&exact_pattern);
-        builder.push_bind(&exact_pattern);
-        builder.push_bind(&exact_pattern);
-
-        if let Some(limit) = limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
-
-        let rows = builder.build().fetch_all(self.db.pool()).await?;
-        let mut devices = Vec::new();
-        for row in rows {
-            devices.push(device_row_mapper::row_to_device(row)?);
-        }
-        Ok(devices)
+        self.db.search_devices(keyword, limit).await
     }
 
     async fn get_stats(&self) -> Result<DeviceStats> {
@@ -71,93 +37,14 @@ impl DeviceQueryService for SqliteDeviceQueryService {
     }
 
     async fn get_device_tree(&self, root_id: Option<&str>) -> Result<Vec<Device>> {
-        let mut builder = QueryBuilder::new("SELECT ");
-        builder.push(device_row_mapper::SELECT_COLUMNS);
-        builder.push(" FROM devices WHERE ");
-
-        if let Some(root_id) = root_id {
-            builder.push("parent_id = ").push_bind(root_id);
-        } else {
-            builder.push("parent_id IS NULL");
-        }
-
-        builder.push(" ORDER BY name");
-
-        let rows = builder.build().fetch_all(self.db.pool()).await?;
-        let mut devices = Vec::new();
-        for row in rows {
-            devices.push(device_row_mapper::row_to_device(row)?);
-        }
-        Ok(devices)
+        self.db.device_tree(root_id).await
     }
 
     async fn get_device_status_distribution(&self, workspace_id: Option<&str>) -> Result<DeviceStatusDistribution> {
-        let mut builder = QueryBuilder::new(
-            "SELECT
-                SUM(CASE WHEN state = 1 THEN 1 ELSE 0 END) as online,
-                SUM(CASE WHEN state = 0 THEN 1 ELSE 0 END) as offline,
-                SUM(CASE WHEN state < 0 THEN 1 ELSE 0 END) as error_count,
-                SUM(CASE WHEN state = 2 THEN 1 ELSE 0 END) as maintenance
-            FROM devices",
-        );
-
-        if let Some(wid) = workspace_id {
-            builder.push(" WHERE workspace_id = ").push_bind(wid);
-        }
-
-        let row = builder.build().fetch_one(self.db.pool()).await?;
-
-        Ok(DeviceStatusDistribution {
-            online: row.get("online"),
-            offline: row.get("offline"),
-            error: row.get("error_count"),
-            maintenance: row.get("maintenance"),
-        })
+        self.db.device_status_distribution(workspace_id).await
     }
 
     async fn get_quick_devices_list(&self, limit: i32, workspace_id: Option<&str>) -> Result<Vec<QuickDevice>> {
-        let mut builder = QueryBuilder::new("SELECT id, name, device_type, state, updated_at FROM devices");
-
-        if let Some(wid) = workspace_id {
-            builder.push(" WHERE workspace_id = ").push_bind(wid);
-        }
-
-        builder.push(
-            " ORDER BY
-                CASE
-                    WHEN state = 1 THEN 0
-                    WHEN state = 0 THEN 1
-                    WHEN state < 0 THEN 2
-                    ELSE 3
-                END,
-                updated_at DESC
-            LIMIT ",
-        );
-        builder.push_bind(limit);
-
-        let devices: Vec<(String, String, Option<String>, i32, chrono::NaiveDateTime)> =
-            builder.build_query_as().fetch_all(self.db.pool()).await?;
-
-        let quick_devices = devices
-            .into_iter()
-            .map(|(id, name, device_type, state, updated_at)| {
-                let status = match state {
-                    1 => "online",
-                    0 => "offline",
-                    2 => "maintenance",
-                    _ => "error",
-                };
-
-                QuickDevice {
-                    id,
-                    name,
-                    status: status.to_string(),
-                    last_seen: updated_at.and_utc(),
-                    device_type: device_type.unwrap_or_else(|| "unknown".to_string()),
-                }
-            })
-            .collect();
-
-        Ok(quick_devices)
+        self.db.quick_devices(limit, workspace_id).await
     }
 }

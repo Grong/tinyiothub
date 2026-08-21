@@ -1,4 +1,4 @@
-// 组合层工具实现，留 cloud（D2）—— 经 ToolRegistry provider 注入（Task 14）
+// 组合层工具实现 —— 经 ToolRegistry provider 注入（Task 14）
 // CanvasTool — A2UI Tool (zeroclaw Tool, NOT MCP ToolHandler)
 //
 // This tool echoes back A2UI pushes to the frontend. It is intentionally simple:

@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 // Session Index Service — lightweight session lifecycle management
 //
 // With zeroclaw v0.7.5, chat history is managed by Agent::history() (in-memory).

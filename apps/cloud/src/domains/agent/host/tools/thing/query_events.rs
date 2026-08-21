@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 // 7. query_events — query events for a thing
 
 use async_trait::async_trait;
@@ -79,49 +78,16 @@ impl Tool for QueryEventsTool {
 
         let limit = clamp_limit(input.limit, 50, 200) as i64;
 
-        // Build dynamic query with QueryBuilder
-        let mut builder = sqlx::QueryBuilder::new(
-            "SELECT id, event_type, event_subtype, event_level, timestamp, \
-             source_type, source_id, title, content, created_at \
-             FROM events WHERE device_id = ",
-        );
-        builder.push_bind(&input.thing_id);
-        builder.push(" AND workspace_id = ");
-        builder.push_bind(&self.workspace_id);
-
-        if let Some(ref event_name) = input.event_name {
-            builder.push(" AND event_type = ");
-            builder.push_bind(event_name);
-        }
-        if let Some(level) = input.level {
-            builder.push(" AND event_level = ");
-            builder.push_bind(level);
-        }
-        if let Some(ref since) = input.since {
-            builder.push(" AND created_at >= ");
-            builder.push_bind(since);
-        }
-
-        builder.push(" ORDER BY created_at DESC LIMIT ");
-        builder.push_bind(limit);
-
-        #[derive(Debug, serde::Serialize, sqlx::FromRow)]
-        struct EventResult {
-            id: String,
-            event_type: String,
-            event_subtype: Option<String>,
-            event_level: i32,
-            timestamp: Option<String>,
-            source_type: String,
-            source_id: String,
-            title: Option<String>,
-            content: String,
-            created_at: String,
-        }
-
-        let rows = builder
-            .build_query_as::<EventResult>()
-            .fetch_all(&self.pool)
+        let db = tinyiothub_storage::Db::new(self.pool.clone());
+        let rows = db
+            .search_thing_events(
+                &input.thing_id,
+                &self.workspace_id,
+                input.event_name.as_deref(),
+                input.level,
+                input.since.as_deref(),
+                limit,
+            )
             .await
             .map_err(|e| anyhow::anyhow!("事件查询失败: {}", e))?;
 

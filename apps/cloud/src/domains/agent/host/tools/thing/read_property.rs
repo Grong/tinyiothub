@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 // 5. read_property — current property value from device_cache
 
 use std::sync::Arc;

@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 //! Composition ports — the seams where the composition layer (cloud) plugs
 //! capabilities into the agent host without the agent crate depending on
 //! not-yet-extracted or downstream domains.

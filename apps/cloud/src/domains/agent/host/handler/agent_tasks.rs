@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 // Thing Agent 用户指令端点（T14）
 //
 // Routes (nested under /workspaces by the composition layer — api/mod.rs):

@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 //! SQLite implementation of the unified PolicyEngine trait (X3/T16).
 //!
 //! Loads rules from the `policy_rules` table and arbitrates them through

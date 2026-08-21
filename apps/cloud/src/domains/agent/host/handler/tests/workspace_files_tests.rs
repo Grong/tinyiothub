@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 // Workspace Files Handler Tests
 // Tests for workspace files API handlers
 

@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 // Workspace Files API for Agents
 // HTTP endpoint handlers for agent workspace markdown files
 //

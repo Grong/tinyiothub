@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 // 2. get_thing — lightweight thing view
 
 use std::sync::Arc;

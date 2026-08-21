@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 // 8. search_knowledge — full-text search thing_resources
 
 use async_trait::async_trait;
@@ -75,51 +74,16 @@ impl Tool for SearchKnowledgeTool {
         let input: Input = serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
         let limit = clamp_limit(input.limit, 50, 200) as i64;
-        let like_pattern = format!("%{}%", input.q);
 
-        // Build dynamic query with QueryBuilder
-        let mut builder = sqlx::QueryBuilder::new(
-            "SELECT id, name, resource_type AS type, file_path, tags, created_at, updated_at \
-             FROM resources WHERE workspace_id = ",
-        );
-        builder.push_bind(&self.workspace_id);
-
-        if let Some(ref tid) = input.thing_id {
-            builder.push(" AND device_id = ");
-            builder.push_bind(tid);
-        }
-
-        // LIKE search on name and tags (FTS5 deferred per TODOS)
-        builder.push(" AND (name LIKE ");
-        builder.push_bind(&like_pattern);
-        builder.push(" OR tags LIKE ");
-        builder.push_bind(&like_pattern);
-        builder.push(")");
-
-        if let Some(ref t) = input.tags {
-            let tag_pattern = format!("%{}%", t);
-            builder.push(" AND tags LIKE ");
-            builder.push_bind(tag_pattern);
-        }
-
-        builder.push(" ORDER BY created_at DESC LIMIT ");
-        builder.push_bind(limit);
-
-        #[derive(Debug, serde::Serialize, sqlx::FromRow)]
-        struct DocResult {
-            id: String,
-            name: String,
-            #[sqlx(rename = "type")]
-            doc_type: String,
-            file_path: String,
-            tags: String,
-            created_at: String,
-            updated_at: String,
-        }
-
-        let rows = builder
-            .build_query_as::<DocResult>()
-            .fetch_all(&self.pool)
+        let db = tinyiothub_storage::Db::new(self.pool.clone());
+        let rows = db
+            .search_thing_knowledge_docs(
+                &self.workspace_id,
+                input.thing_id.as_deref(),
+                &input.q,
+                input.tags.as_deref(),
+                limit,
+            )
             .await
             .map_err(|e| anyhow::anyhow!("知识搜索失败: {}", e))?;
 

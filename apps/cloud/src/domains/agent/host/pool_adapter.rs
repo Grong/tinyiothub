@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 //! Adapter: host `AgentPool` → loop `AgentPoolLike` (P4-Task22).
 //!
 //! Formerly `cloud::shared::ai_adapter::CloudAgentPoolAdapter`; now that the

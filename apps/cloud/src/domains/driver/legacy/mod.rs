@@ -14,9 +14,10 @@
 //!   (composition-layer HAL) and was dropped — the stub returns an empty
 //!   list on all platforms. Reclaim candidate if the HarmonyOS build ever
 //!   needs serial scanning: move `shared::hardware` to a crate.
-//! - `DeviceStatusDistribution` / `QuickDevice` (`types`) moved from
-//!   `cloud::modules::monitoring::types`; the remaining monitoring module
-//!   (system dashboard) stays in cloud for Task 24.
+//! - `DeviceStatusDistribution` / `QuickDevice` live in
+//!   `tinyiothub_storage::device` (final-review F1: migrated with their
+//!   queries); the remaining monitoring module (system dashboard) stays in
+//!   cloud for Task 24.
 //! - `service` (`DeviceService`) moved here because `monitoring` constructs
 //!   it internally; it is the device data access service and belongs to this
 //!   plane. Its cloud consumers (`AppState`, `modules::batch`,
@@ -28,7 +29,6 @@ pub mod performance;
 pub mod query;
 pub mod query_service_impl;
 pub mod service;
-pub mod types;
 
 pub use monitoring as monitoring_service;
 pub use monitoring::{DeviceMetrics, DeviceMonitoringService, SystemOverview};
@@ -40,4 +40,3 @@ pub use query as query_service;
 pub use query::DeviceQueryService;
 pub use query_service_impl::SqliteDeviceQueryService;
 pub use service::DeviceService;
-pub use types::{DeviceStatusDistribution, QuickDevice};

@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 // ConfigService — AgentRuntimeConfig DB read/write + agent CRUD.
 //
 // Task 7 fix round 1: these were `impl AgentPool` methods in

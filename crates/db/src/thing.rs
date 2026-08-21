@@ -954,6 +954,62 @@ pub(crate) async fn find_thing_document(
     .await
 }
 
+/// Thing 知识文档搜索行（search_knowledge 工具用，自 cloud agent tools/thing 迁入）。
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct ThingKnowledgeDocRow {
+    pub id: String,
+    pub name: String,
+    #[sqlx(rename = "type")]
+    pub doc_type: String,
+    pub file_path: String,
+    pub tags: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// 知识文档搜索（workspace 作用域；name/tags LIKE，可选 thing/tags 过滤）。
+/// SQL 与原 search_knowledge 工具内联 QueryBuilder 逐字一致。
+pub(crate) async fn search_thing_knowledge_docs(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    thing_id: Option<&str>,
+    q: &str,
+    tags: Option<&str>,
+    limit: i64,
+) -> Result<Vec<ThingKnowledgeDocRow>, sqlx::Error> {
+    let like_pattern = format!("%{}%", q);
+
+    // Build dynamic query with QueryBuilder
+    let mut builder = sqlx::QueryBuilder::new(
+        "SELECT id, name, resource_type AS type, file_path, tags, created_at, updated_at \
+         FROM resources WHERE workspace_id = ",
+    );
+    builder.push_bind(workspace_id);
+
+    if let Some(tid) = thing_id {
+        builder.push(" AND device_id = ");
+        builder.push_bind(tid);
+    }
+
+    // LIKE search on name and tags (FTS5 deferred per TODOS)
+    builder.push(" AND (name LIKE ");
+    builder.push_bind(&like_pattern);
+    builder.push(" OR tags LIKE ");
+    builder.push_bind(&like_pattern);
+    builder.push(")");
+
+    if let Some(t) = tags {
+        let tag_pattern = format!("%{}%", t);
+        builder.push(" AND tags LIKE ");
+        builder.push_bind(tag_pattern);
+    }
+
+    builder.push(" ORDER BY created_at DESC LIMIT ");
+    builder.push_bind(limit);
+
+    builder.build_query_as::<ThingKnowledgeDocRow>().fetch_all(pool).await
+}
+
 // ──────────────────────────────────────────────
 // Db 委托
 // ──────────────────────────────────────────────
@@ -1216,6 +1272,18 @@ impl Db {
         workspace_id: &str,
     ) -> Result<Option<ThingDocumentRow>, sqlx::Error> {
         find_thing_document(self.pool(), resource_id, workspace_id).await
+    }
+
+    /// 知识文档搜索（search_knowledge 工具用，workspace 作用域）。
+    pub async fn search_thing_knowledge_docs(
+        &self,
+        workspace_id: &str,
+        thing_id: Option<&str>,
+        q: &str,
+        tags: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<ThingKnowledgeDocRow>, sqlx::Error> {
+        search_thing_knowledge_docs(self.pool(), workspace_id, thing_id, q, tags, limit).await
     }
 }
 

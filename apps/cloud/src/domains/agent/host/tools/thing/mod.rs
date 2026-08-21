@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 // Thing Agent Tools — 9 AI agent tools for Thing Ontology
 //
 // These tools give the AI agent read+execute access to the Thing Ontology.
@@ -82,7 +81,7 @@ pub(crate) fn clamp_limit(limit: Option<u32>, default: u32, max: u32) -> u32 {
 // Factory: create all 9 thing tools
 // ============================================================================
 
-/// thing 工具构建期需要的数据句柄（D2 —— 留 cloud；agent crate 的
+/// thing 工具构建期需要的数据句柄（组合层持有；agent crate 的
 /// `ToolRuntimeContext` 只携带存储无关字段，这些由组合层捕获/拼装）。
 #[derive(Clone, Default)]
 pub struct ThingToolContext {

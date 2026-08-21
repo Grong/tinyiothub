@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 //! Per-session chat message persistence (chat_messages table).
 //!
 //! History is stored per session_key so the history API is session-scoped

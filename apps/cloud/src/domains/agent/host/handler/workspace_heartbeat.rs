@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 // Heartbeat handlers — per-workspace AI autonomous inspection endpoints
 //
 // Routes (registered under /workspaces/{id}/heartbeat):

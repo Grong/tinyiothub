@@ -1506,6 +1506,176 @@ pub(crate) async fn count_devices_by_driver(pool: &SqlitePool) -> Result<Vec<(St
     Ok(stats)
 }
 
+// ── 终审修复（F1）：cloud driver/legacy query_service_impl 的 4 处
+// QueryBuilder 动态 SQL 迁入本领域（SQL 逐字迁移；返回 DTO 随迁，
+// serde 属性保持不变）──
+
+/// 设备状态分布（cloud device dashboard 用，自 cloud driver/legacy/types 迁入）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceStatusDistribution {
+    /// 在线设备数
+    pub online: i64,
+    /// 离线设备数
+    pub offline: i64,
+    /// 故障设备数
+    pub error: i64,
+    /// 维护中设备数
+    pub maintenance: i64,
+}
+
+/// 关键设备信息（cloud device dashboard 用，自 cloud driver/legacy/types 迁入）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuickDevice {
+    /// 设备ID
+    pub id: String,
+    /// 设备名称
+    pub name: String,
+    /// 设备状态
+    pub status: String,
+    /// 最后在线时间
+    pub last_seen: chrono::DateTime<chrono::Utc>,
+    /// 设备类型
+    pub device_type: String,
+}
+
+pub(crate) async fn search_devices(
+    pool: &SqlitePool,
+    keyword: &str,
+    limit: Option<u32>,
+) -> Result<Vec<Device>> {
+    let search_pattern = format!("%{}%", keyword);
+    let exact_pattern = format!("{}%", keyword);
+
+    let mut builder = QueryBuilder::new("SELECT ");
+    builder.push(device_row_mapper::SELECT_COLUMNS);
+    builder.push(
+        " FROM devices WHERE name LIKE ? OR display_name LIKE ? OR address LIKE ? OR description LIKE ?
+             ORDER BY CASE
+                WHEN name LIKE ? THEN 1
+                WHEN display_name LIKE ? THEN 2
+                WHEN address LIKE ? THEN 3
+                ELSE 4
+             END, name",
+    );
+
+    builder.push_bind(&search_pattern);
+    builder.push_bind(&search_pattern);
+    builder.push_bind(&search_pattern);
+    builder.push_bind(&search_pattern);
+    builder.push_bind(&exact_pattern);
+    builder.push_bind(&exact_pattern);
+    builder.push_bind(&exact_pattern);
+
+    if let Some(limit) = limit {
+        builder.push(" LIMIT ").push_bind(limit as i64);
+    }
+
+    let rows = builder.build().fetch_all(pool).await?;
+    let mut devices = Vec::new();
+    for row in rows {
+        devices.push(device_row_mapper::row_to_device(row)?);
+    }
+    Ok(devices)
+}
+
+pub(crate) async fn device_tree(pool: &SqlitePool, root_id: Option<&str>) -> Result<Vec<Device>> {
+    let mut builder = QueryBuilder::new("SELECT ");
+    builder.push(device_row_mapper::SELECT_COLUMNS);
+    builder.push(" FROM devices WHERE ");
+
+    if let Some(root_id) = root_id {
+        builder.push("parent_id = ").push_bind(root_id);
+    } else {
+        builder.push("parent_id IS NULL");
+    }
+
+    builder.push(" ORDER BY name");
+
+    let rows = builder.build().fetch_all(pool).await?;
+    let mut devices = Vec::new();
+    for row in rows {
+        devices.push(device_row_mapper::row_to_device(row)?);
+    }
+    Ok(devices)
+}
+
+pub(crate) async fn device_status_distribution(
+    pool: &SqlitePool,
+    workspace_id: Option<&str>,
+) -> Result<DeviceStatusDistribution> {
+    let mut builder = QueryBuilder::new(
+        "SELECT
+                SUM(CASE WHEN state = 1 THEN 1 ELSE 0 END) as online,
+                SUM(CASE WHEN state = 0 THEN 1 ELSE 0 END) as offline,
+                SUM(CASE WHEN state < 0 THEN 1 ELSE 0 END) as error_count,
+                SUM(CASE WHEN state = 2 THEN 1 ELSE 0 END) as maintenance
+            FROM devices",
+    );
+
+    if let Some(wid) = workspace_id {
+        builder.push(" WHERE workspace_id = ").push_bind(wid);
+    }
+
+    let row = builder.build().fetch_one(pool).await?;
+
+    Ok(DeviceStatusDistribution {
+        online: row.get("online"),
+        offline: row.get("offline"),
+        error: row.get("error_count"),
+        maintenance: row.get("maintenance"),
+    })
+}
+
+pub(crate) async fn quick_devices(
+    pool: &SqlitePool,
+    limit: i32,
+    workspace_id: Option<&str>,
+) -> Result<Vec<QuickDevice>> {
+    let mut builder = QueryBuilder::new("SELECT id, name, device_type, state, updated_at FROM devices");
+
+    if let Some(wid) = workspace_id {
+        builder.push(" WHERE workspace_id = ").push_bind(wid);
+    }
+
+    builder.push(
+        " ORDER BY
+                CASE
+                    WHEN state = 1 THEN 0
+                    WHEN state = 0 THEN 1
+                    WHEN state < 0 THEN 2
+                    ELSE 3
+                END,
+                updated_at DESC
+            LIMIT ",
+    );
+    builder.push_bind(limit);
+
+    let devices: Vec<(String, String, Option<String>, i32, chrono::NaiveDateTime)> =
+        builder.build_query_as().fetch_all(pool).await?;
+
+    let quick_devices = devices
+        .into_iter()
+        .map(|(id, name, device_type, state, updated_at)| {
+            let status = match state {
+                1 => "online",
+                0 => "offline",
+                2 => "maintenance",
+                _ => "error",
+            };
+
+            QuickDevice {
+                id,
+                name,
+                status: status.to_string(),
+                last_seen: updated_at.and_utc(),
+                device_type: device_type.unwrap_or_else(|| "unknown".to_string()),
+            }
+        })
+        .collect();
+
+    Ok(quick_devices)
+}
+
 impl Db {
     /// 按 ID 查设备；`workspace_scope` 为 Some 时先校验归属（不属于返回 None）。
     pub async fn find_device_by_id(&self, workspace_scope: Option<&str>, id: &str) -> Result<Option<Device>> {
@@ -1671,6 +1841,29 @@ impl Db {
     /// 按驱动名分组计数（cloud dashboard 用）。
     pub async fn count_devices_by_driver(&self) -> Result<Vec<(String, i64)>> {
         count_devices_by_driver(self.pool()).await
+    }
+
+    /// 关键字搜索设备（cloud device dashboard 用）。
+    pub async fn search_devices(&self, keyword: &str, limit: Option<u32>) -> Result<Vec<Device>> {
+        search_devices(self.pool(), keyword, limit).await
+    }
+
+    /// 设备树（按 parent_id 取一层；cloud device dashboard 用）。
+    pub async fn device_tree(&self, root_id: Option<&str>) -> Result<Vec<Device>> {
+        device_tree(self.pool(), root_id).await
+    }
+
+    /// 设备状态分布（cloud device dashboard 用）。
+    pub async fn device_status_distribution(
+        &self,
+        workspace_id: Option<&str>,
+    ) -> Result<DeviceStatusDistribution> {
+        device_status_distribution(self.pool(), workspace_id).await
+    }
+
+    /// 关键设备列表（cloud device dashboard 用）。
+    pub async fn quick_devices(&self, limit: i32, workspace_id: Option<&str>) -> Result<Vec<QuickDevice>> {
+        quick_devices(self.pool(), limit, workspace_id).await
     }
 }
 

@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 //! SQLite implementation of DeadLetterQueue trait.
 
 use async_trait::async_trait;

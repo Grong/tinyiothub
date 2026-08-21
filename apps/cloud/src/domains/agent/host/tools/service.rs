@@ -1,4 +1,3 @@
-// 数据实现，留 cloud（D2）
 // ToolService 数据面 — chat 内建工具 provider（thing 工具等数据实现的注册
 // 闭包）+ effective_tool_names（db 校验）。
 //
