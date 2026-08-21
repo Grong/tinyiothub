@@ -509,7 +509,9 @@ pub(crate) async fn insert_thing_template(
     tx.commit().await?;
 
     // 返回创建的模板
-    find_thing_template_by_id(pool, &id, "").await?.ok_or(sqlx::Error::RowNotFound)
+    find_thing_template_by_id(pool, &id, "")
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
 }
 
 /// 更新设备模板（裸 UPDATE，不含校验）
@@ -648,7 +650,9 @@ pub(crate) async fn update_thing_template_row(
     }
 
     if !has_updates {
-        return find_thing_template_by_id(pool, id, "").await?.ok_or(sqlx::Error::RowNotFound);
+        return find_thing_template_by_id(pool, id, "")
+            .await?
+            .ok_or(sqlx::Error::RowNotFound);
     }
 
     // 总是更新 updated_at
@@ -661,7 +665,9 @@ pub(crate) async fn update_thing_template_row(
         return Err(sqlx::Error::RowNotFound);
     }
 
-    find_thing_template_by_id(pool, id, "").await?.ok_or(sqlx::Error::RowNotFound)
+    find_thing_template_by_id(pool, id, "")
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
 }
 
 /// 删除设备模板（软删除）
@@ -1350,10 +1356,7 @@ pub(crate) async fn delete_thing_template(pool: &SqlitePool, id: &str) -> Result
 // ─── thing service 侧模板 JSON 查询（自 thing/service/mod.rs 迁入）───
 
 /// 模板 properties JSON（用于复制到 thing_properties）。
-pub(crate) async fn find_thing_template_properties(
-    pool: &SqlitePool,
-    id: &str,
-) -> Result<Option<String>, sqlx::Error> {
+pub(crate) async fn find_thing_template_properties(pool: &SqlitePool, id: &str) -> Result<Option<String>, sqlx::Error> {
     let row: Option<(String,)> = sqlx::query_as("SELECT properties FROM thing_templates WHERE id=?")
         .bind(id)
         .fetch_optional(pool)
@@ -1650,7 +1653,10 @@ impl Db {
     }
 
     /// 多条件组合筛选模板。
-    pub async fn filter_thing_templates(&self, filters: &TemplateFilters) -> Result<Vec<DeviceTemplate>, TemplateError> {
+    pub async fn filter_thing_templates(
+        &self,
+        filters: &TemplateFilters,
+    ) -> Result<Vec<DeviceTemplate>, TemplateError> {
         filter_thing_templates(self.pool(), filters).await
     }
 
@@ -1669,7 +1675,10 @@ impl Db {
     }
 
     /// 统计模板搜索结果数量。
-    pub async fn count_thing_template_search_results(&self, params: &TemplateQueryParams) -> Result<i64, TemplateError> {
+    pub async fn count_thing_template_search_results(
+        &self,
+        params: &TemplateQueryParams,
+    ) -> Result<i64, TemplateError> {
         count_thing_template_search_results(self.pool(), params).await
     }
 
@@ -1767,12 +1776,11 @@ pub(crate) async fn find_thing_template_events_by_thing(
     pool: &SqlitePool,
     thing_id: &str,
 ) -> Result<Option<String>, sqlx::Error> {
-    let row: Option<(Option<String>,)> = sqlx::query_as(
-        "SELECT t.events FROM devices d JOIN thing_templates t ON t.id = d.template_id WHERE d.id = ?",
-    )
-    .bind(thing_id)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT t.events FROM devices d JOIN thing_templates t ON t.id = d.template_id WHERE d.id = ?")
+            .bind(thing_id)
+            .fetch_optional(pool)
+            .await?;
     Ok(row.and_then(|(ev,)| ev))
 }
 

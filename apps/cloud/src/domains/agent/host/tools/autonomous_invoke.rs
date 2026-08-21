@@ -282,7 +282,11 @@ impl Tool for AutonomousInvokeActionTool {
                 return denied("policy_read_failed");
             }
         };
-        let hourly = match self.policy_repo.count_autonomy_actions_last_hour(&self.workspace_id).await {
+        let hourly = match self
+            .policy_repo
+            .count_autonomy_actions_last_hour(&self.workspace_id)
+            .await
+        {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!(
@@ -506,7 +510,10 @@ mod tests {
         register_action(&fx.pool, "dev-1", "reboot").await;
         let mut policy = act_policy();
         policy.mode = AutonomyMode::Off;
-        fx.policy_repo.save_autonomy_policy("ws-off", &policy, "test").await.unwrap();
+        fx.policy_repo
+            .save_autonomy_policy("ws-off", &policy, "test")
+            .await
+            .unwrap();
 
         let result = dispatch(&fx, "dev-1", "reboot").await;
         assert!(
@@ -559,7 +566,10 @@ mod tests {
         register_action(&fx.pool, "dev-1", "reboot").await;
         let mut policy = act_policy();
         policy.allowed_actions = vec!["set_fan".to_string()];
-        fx.policy_repo.save_autonomy_policy("ws-al", &policy, "test").await.unwrap();
+        fx.policy_repo
+            .save_autonomy_policy("ws-al", &policy, "test")
+            .await
+            .unwrap();
 
         let result = dispatch(&fx, "dev-1", "reboot").await;
         let out = output_json(&result);
@@ -602,7 +612,10 @@ mod tests {
         register_action(&fx.pool, "dev-1", "reboot").await;
         let mut policy = act_policy();
         policy.max_actions_per_hour = 2;
-        fx.policy_repo.save_autonomy_policy("ws-fuse", &policy, "test").await.unwrap();
+        fx.policy_repo
+            .save_autonomy_policy("ws-fuse", &policy, "test")
+            .await
+            .unwrap();
         // Two earlier runs already spent the hourly budget.
         for i in 0..2 {
             sqlx::query(

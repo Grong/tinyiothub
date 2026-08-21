@@ -117,7 +117,10 @@ async fn test_cleanup_old_events_exempts_status_rows() {
     insert_event(&pool, "old-status", 100, 1, 0).await;
 
     let repo = Db::new(pool.clone());
-    let deleted = repo.cleanup_old_realtime_events(Utc::now() - Duration::days(90)).await.unwrap();
+    let deleted = repo
+        .cleanup_old_realtime_events(Utc::now() - Duration::days(90))
+        .await
+        .unwrap();
 
     assert_eq!(deleted, 1);
     assert!(!event_exists(&pool, "old-occ").await);

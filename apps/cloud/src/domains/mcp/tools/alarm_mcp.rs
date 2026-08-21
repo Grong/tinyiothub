@@ -12,9 +12,9 @@ use crate::domains::alarm::{
     AlarmCondition, AlarmLevel, AlarmQueryCriteria, AlarmRule, AlarmStatus, NotificationConfig, SortOrder, TimeRange,
 };
 
+use crate::domains::mcp::McpState;
 use crate::domains::mcp::handlers::get_mcp_context;
 use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::domains::mcp::McpState;
 
 /// Tool input: List alarms
 #[derive(Debug, Deserialize)]

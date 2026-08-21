@@ -212,11 +212,7 @@ pub(crate) async fn find_thing_by_id_scoped(
 
 /// Workspace-scoped delete (eng-review T1): refuses to delete another
 /// workspace's thing.
-pub(crate) async fn delete_thing_scoped(
-    pool: &SqlitePool,
-    id: &str,
-    workspace_id: &str,
-) -> Result<u64, sqlx::Error> {
+pub(crate) async fn delete_thing_scoped(pool: &SqlitePool, id: &str, workspace_id: &str) -> Result<u64, sqlx::Error> {
     let result = sqlx::query("DELETE FROM devices WHERE id = ? AND workspace_id = ?")
         .bind(id)
         .bind(workspace_id)
@@ -809,10 +805,7 @@ pub(crate) async fn find_thing_name_and_type(
 }
 
 /// Breadcrumb names from root to this thing (recursive CTE, depth cap 10).
-pub(crate) async fn get_thing_breadcrumb_names(
-    pool: &SqlitePool,
-    thing_id: &str,
-) -> Result<Vec<String>, sqlx::Error> {
+pub(crate) async fn get_thing_breadcrumb_names(pool: &SqlitePool, thing_id: &str) -> Result<Vec<String>, sqlx::Error> {
     let rows: Vec<(String,)> = sqlx::query_as(
         "WITH RECURSIVE ancestors AS (
             SELECT id, name, parent_id, 0 AS depth FROM devices WHERE id = ?
@@ -831,11 +824,10 @@ pub(crate) async fn get_thing_breadcrumb_names(
 
 /// Property names of a thing (model definition input).
 pub(crate) async fn list_thing_property_names(pool: &SqlitePool, thing_id: &str) -> Result<Vec<String>, sqlx::Error> {
-    let rows: Vec<(String,)> =
-        sqlx::query_as("SELECT name FROM thing_properties WHERE device_id = ? ORDER BY name")
-            .bind(thing_id)
-            .fetch_all(pool)
-            .await?;
+    let rows: Vec<(String,)> = sqlx::query_as("SELECT name FROM thing_properties WHERE device_id = ? ORDER BY name")
+        .bind(thing_id)
+        .fetch_all(pool)
+        .await?;
     Ok(rows.into_iter().map(|(n,)| n).collect())
 }
 
@@ -1016,11 +1008,7 @@ pub(crate) async fn search_thing_knowledge_docs(
 
 impl Db {
     /// Workspace-scoped thing 查询（严格 workspace 匹配）。
-    pub async fn find_thing_by_id_scoped(
-        &self,
-        id: &str,
-        workspace_id: &str,
-    ) -> Result<Option<ThingRow>, sqlx::Error> {
+    pub async fn find_thing_by_id_scoped(&self, id: &str, workspace_id: &str) -> Result<Option<ThingRow>, sqlx::Error> {
         find_thing_by_id_scoped(self.pool(), id, workspace_id).await
     }
 
@@ -1030,11 +1018,7 @@ impl Db {
     }
 
     /// Workspace-scoped 按名查询。
-    pub async fn find_thing_by_name(
-        &self,
-        workspace_id: &str,
-        name: &str,
-    ) -> Result<Option<ThingRow>, sqlx::Error> {
+    pub async fn find_thing_by_name(&self, workspace_id: &str, name: &str) -> Result<Option<ThingRow>, sqlx::Error> {
         find_thing_by_name(self.pool(), workspace_id, name).await
     }
 
@@ -1058,11 +1042,7 @@ impl Db {
     }
 
     /// 更新 thing 并返回更新后的行。
-    pub async fn update_thing(
-        &self,
-        id: &str,
-        input: &UpdateThingRequest,
-    ) -> Result<Option<ThingRow>, sqlx::Error> {
+    pub async fn update_thing(&self, id: &str, input: &UpdateThingRequest) -> Result<Option<ThingRow>, sqlx::Error> {
         update_thing(self.pool(), id, input).await
     }
 
@@ -1150,10 +1130,7 @@ impl Db {
     }
 
     /// 列出未挂载的 resources。
-    pub async fn list_unassigned_thing_resources(
-        &self,
-        workspace_id: &str,
-    ) -> Result<Vec<ThingResource>, sqlx::Error> {
+    pub async fn list_unassigned_thing_resources(&self, workspace_id: &str) -> Result<Vec<ThingResource>, sqlx::Error> {
         list_unassigned_thing_resources(self.pool(), workspace_id).await
     }
 
@@ -1166,20 +1143,12 @@ impl Db {
     }
 
     /// Thing 挂载的知识文档（新的在前）。
-    pub async fn list_thing_knowledge_docs(
-        &self,
-        device_id: &str,
-        limit: i64,
-    ) -> Result<Vec<DocRow>, sqlx::Error> {
+    pub async fn list_thing_knowledge_docs(&self, device_id: &str, limit: i64) -> Result<Vec<DocRow>, sqlx::Error> {
         list_thing_knowledge_docs(self.pool(), device_id, limit).await
     }
 
     /// Thing 的最近事件（新的在前）。
-    pub async fn list_thing_recent_events(
-        &self,
-        device_id: &str,
-        limit: i64,
-    ) -> Result<Vec<EventRow>, sqlx::Error> {
+    pub async fn list_thing_recent_events(&self, device_id: &str, limit: i64) -> Result<Vec<EventRow>, sqlx::Error> {
         list_thing_recent_events(self.pool(), device_id, limit).await
     }
 
@@ -1212,10 +1181,7 @@ impl Db {
     }
 
     /// 读取 thing 的 (name, thing_type)。
-    pub async fn find_thing_name_and_type(
-        &self,
-        thing_id: &str,
-    ) -> Result<Option<(String, String)>, sqlx::Error> {
+    pub async fn find_thing_name_and_type(&self, thing_id: &str) -> Result<Option<(String, String)>, sqlx::Error> {
         find_thing_name_and_type(self.pool(), thing_id).await
     }
 

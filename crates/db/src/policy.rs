@@ -135,7 +135,9 @@ mod tests {
         let pool = test_pool().await;
         let db = Db::new(pool);
 
-        db.save_autonomy_policy("ws_1", &act_policy(), "user_1").await.expect("save");
+        db.save_autonomy_policy("ws_1", &act_policy(), "user_1")
+            .await
+            .expect("save");
         let loaded = db.load_autonomy_policy("ws_1").await.expect("load").expect("persisted");
 
         assert_eq!(loaded.mode, AutonomyMode::Act);
@@ -157,11 +159,15 @@ mod tests {
         let pool = test_pool().await;
         let db = Db::new(pool);
 
-        db.save_autonomy_policy("ws_1", &act_policy(), "user_1").await.expect("save");
+        db.save_autonomy_policy("ws_1", &act_policy(), "user_1")
+            .await
+            .expect("save");
         let mut updated = act_policy();
         updated.mode = AutonomyMode::Diagnose;
         updated.max_actions_per_hour = 5;
-        db.save_autonomy_policy("ws_1", &updated, "user_2").await.expect("update");
+        db.save_autonomy_policy("ws_1", &updated, "user_2")
+            .await
+            .expect("update");
 
         let loaded = db.load_autonomy_policy("ws_1").await.expect("load").expect("persisted");
         assert_eq!(loaded.mode, AutonomyMode::Diagnose);

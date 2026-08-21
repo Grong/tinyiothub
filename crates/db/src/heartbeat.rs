@@ -127,7 +127,12 @@ pub(crate) async fn upsert(
     Ok(result.rows_affected() > 0)
 }
 
-pub(crate) async fn insert(pool: &SqlitePool, workspace_id: &str, priority: &str, text: &str) -> Result<HeartbeatTask, RepoError> {
+pub(crate) async fn insert(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    priority: &str,
+    text: &str,
+) -> Result<HeartbeatTask, RepoError> {
     let row = sqlx::query_as::<_, HeartbeatTaskRow>(
         "INSERT INTO heartbeat_tasks (workspace_id, priority, text)
              VALUES (?, ?, ?)
@@ -144,7 +149,12 @@ pub(crate) async fn insert(pool: &SqlitePool, workspace_id: &str, priority: &str
     Ok(HeartbeatTask::from(row))
 }
 
-pub(crate) async fn set_paused(pool: &SqlitePool, workspace_id: &str, task_id: i64, paused: bool) -> Result<(), RepoError> {
+pub(crate) async fn set_paused(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    task_id: i64,
+    paused: bool,
+) -> Result<(), RepoError> {
     sqlx::query(
         "UPDATE heartbeat_tasks SET paused = ?, updated_at = CURRENT_TIMESTAMP
              WHERE workspace_id = ? AND id = ?",
@@ -168,11 +178,12 @@ pub(crate) async fn delete(pool: &SqlitePool, workspace_id: &str, task_id: i64) 
     Ok(())
 }
 
-pub(crate) async fn replace_all(pool: &SqlitePool, workspace_id: &str, tasks: &[NewHeartbeatTask]) -> Result<(), RepoError> {
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| RepoError::Database(e.to_string()))?;
+pub(crate) async fn replace_all(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    tasks: &[NewHeartbeatTask],
+) -> Result<(), RepoError> {
+    let mut tx = pool.begin().await.map_err(|e| RepoError::Database(e.to_string()))?;
     sqlx::query("DELETE FROM heartbeat_tasks WHERE workspace_id = ?")
         .bind(workspace_id)
         .execute(&mut *tx)
@@ -250,17 +261,18 @@ pub(crate) async fn save_heartbeat_config(
     Ok(())
 }
 
-pub(crate) async fn insert_result(pool: &SqlitePool, workspace_id: &str, result: &HeartbeatResult) -> Result<(), RepoError> {
+pub(crate) async fn insert_result(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    result: &HeartbeatResult,
+) -> Result<(), RepoError> {
     // Row format must match the readers in workspace/handler/heartbeat.rs:
     // one summary|error row per tick, one auto_executed row per action,
     // one proposal row per proposal, all sharing one created_at so the
     // log query can group details under their tick.
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let agent_id = format!("__heartbeat__:{workspace_id}");
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| RepoError::Database(e.to_string()))?;
+    let mut tx = pool.begin().await.map_err(|e| RepoError::Database(e.to_string()))?;
 
     let (action_type, content) = if result.status == HeartbeatStatus::Error {
         let message = result.error.as_deref().unwrap_or(&result.summary);
@@ -371,7 +383,11 @@ impl Db {
     }
 
     /// 事务化整体替换工作区的巡检任务集。
-    pub async fn replace_heartbeat_tasks(&self, workspace_id: &str, tasks: &[NewHeartbeatTask]) -> Result<(), RepoError> {
+    pub async fn replace_heartbeat_tasks(
+        &self,
+        workspace_id: &str,
+        tasks: &[NewHeartbeatTask],
+    ) -> Result<(), RepoError> {
         replace_all(self.pool(), workspace_id, tasks).await
     }
 
@@ -620,7 +636,9 @@ mod tests {
 
         let mut result = sample_result();
         result.proposals[0].parameters = Some(serde_json::json!({"device_id": "dev_2", "version": "1.2.3"}));
-        db.insert_heartbeat_result("ws_1", &result).await.expect("insert_result");
+        db.insert_heartbeat_result("ws_1", &result)
+            .await
+            .expect("insert_result");
 
         let (content,): (String,) = sqlx::query_as(
             "SELECT content FROM agent_actions WHERE workspace_id = 'ws_1' AND action_type = 'proposal'",
@@ -646,7 +664,9 @@ mod tests {
             proposals: vec![],
             error: Some("llm timeout".to_string()),
         };
-        db.insert_heartbeat_result("ws_1", &result).await.expect("insert error result");
+        db.insert_heartbeat_result("ws_1", &result)
+            .await
+            .expect("insert error result");
 
         let (action_type, content): (String, String) =
             sqlx::query_as("SELECT action_type, content FROM agent_actions WHERE workspace_id = 'ws_1'")
@@ -661,10 +681,16 @@ mod tests {
     /// Seed the plan + tenant rows the baseline `workspaces.tenant_id` /
     /// `tenants.plan_id` foreign keys require.
     pub async fn seed_tenant(pool: &SqlitePool) {
-        sqlx::query("INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free','free','Free')")
-            .execute(pool).await.expect("seed plan");
+        sqlx::query(
+            "INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free','free','Free')",
+        )
+        .execute(pool)
+        .await
+        .expect("seed plan");
         sqlx::query("INSERT OR IGNORE INTO tenants (id, name, slug) VALUES ('t1','t','t1')")
-            .execute(pool).await.expect("seed tenant");
+            .execute(pool)
+            .await
+            .expect("seed tenant");
     }
 
     #[tokio::test]
@@ -714,7 +740,11 @@ mod tests {
             ..Default::default()
         };
         db.save_heartbeat_trust_config("ws_t", &cfg).await.expect("save");
-        let loaded = db.load_heartbeat_trust_config("ws_t").await.expect("load").expect("persisted");
+        let loaded = db
+            .load_heartbeat_trust_config("ws_t")
+            .await
+            .expect("load")
+            .expect("persisted");
         assert_eq!(loaded.trust_level, crate::heartbeat::TrustLevel::FullAuto);
     }
 
@@ -751,7 +781,17 @@ mod tests {
         );
 
         // Empty column and unknown workspace both mean "no persisted config".
-        assert!(db.load_heartbeat_trust_config("ws_empty").await.expect("load").is_none());
-        assert!(db.load_heartbeat_trust_config("ws_missing").await.expect("load").is_none());
+        assert!(
+            db.load_heartbeat_trust_config("ws_empty")
+                .await
+                .expect("load")
+                .is_none()
+        );
+        assert!(
+            db.load_heartbeat_trust_config("ws_missing")
+                .await
+                .expect("load")
+                .is_none()
+        );
     }
 }

@@ -329,7 +329,7 @@ async fn is_known_event_name(
         None => tinyiothub_storage::Db::new(pool.clone())
             .find_thing_template_events_by_thing(thing_id)
             .await
-            .unwrap_or(None)
+            .unwrap_or(None),
     };
 
     let Some(events_json) = events_json else {

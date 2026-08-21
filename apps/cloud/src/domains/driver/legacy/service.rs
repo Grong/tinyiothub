@@ -68,7 +68,12 @@ impl DeviceService {
 
     pub async fn create_device(&self, request: &CreateDeviceRequest) -> Result<Device, Error> {
         tracing::info!("Creating device: {}", request.name);
-        if self.db.device_exists_by_name(self.ws(), &request.name).await.unwrap_or(false) {
+        if self
+            .db
+            .device_exists_by_name(self.ws(), &request.name)
+            .await
+            .unwrap_or(false)
+        {
             return Err(Error::ValidationError(ERROR_DEVICE_NAME_EXISTS.to_string()));
         }
         let created_device = self.db.create_device(self.ws(), request).await?;
@@ -247,9 +252,10 @@ impl DeviceService {
         {
             Ok(properties) => {
                 if !properties.is_empty()
-                    && let Err(e) = self.db.create_device_properties_batch(&properties).await {
-                        tracing::warn!("{}", e);
-                    }
+                    && let Err(e) = self.db.create_device_properties_batch(&properties).await
+                {
+                    tracing::warn!("{}", e);
+                }
             }
             Err(e) => tracing::warn!("Failed to generate device properties: {}", e),
         }
@@ -268,9 +274,10 @@ impl DeviceService {
         {
             Ok(commands) => {
                 if !commands.is_empty()
-                    && let Err(e) = self.db.bulk_create_device_commands(&commands).await {
-                        tracing::warn!("Failed to create device commands: {}", e);
-                    }
+                    && let Err(e) = self.db.bulk_create_device_commands(&commands).await
+                {
+                    tracing::warn!("Failed to create device commands: {}", e);
+                }
             }
             Err(e) => tracing::warn!("Failed to generate device commands: {}", e),
         }
@@ -278,7 +285,11 @@ impl DeviceService {
 
     pub async fn update_device(&self, device_id: &str, request: &UpdateDeviceRequest) -> Result<Device, Error> {
         tracing::info!("Updating device: {}", device_id);
-        let old_device = self.db.find_device_by_id(self.ws(), device_id).await?.ok_or(Error::NotFound)?;
+        let old_device = self
+            .db
+            .find_device_by_id(self.ws(), device_id)
+            .await?
+            .ok_or(Error::NotFound)?;
         let updated_device = self.db.update_device(self.ws(), device_id, request).await?;
         self.publish_device_updated_event(&old_device, request, &updated_device)
             .await;
@@ -336,7 +347,11 @@ impl DeviceService {
 
     pub async fn delete_device(&self, device_id: &str) -> Result<bool, Error> {
         tracing::info!("Deleting device: {}", device_id);
-        let device = self.db.find_device_by_id(self.ws(), device_id).await?.ok_or(Error::NotFound)?;
+        let device = self
+            .db
+            .find_device_by_id(self.ws(), device_id)
+            .await?
+            .ok_or(Error::NotFound)?;
 
         // Cascade: delete all sub-devices linked to this gateway
         if let Ok(sub_devices) = self.db.find_devices_by_linked_gateway(self.ws(), device_id).await {
@@ -397,7 +412,11 @@ impl DeviceService {
     }
 
     pub async fn update_device_state(&self, device_id: &str, new_state: i32) -> Result<(), Error> {
-        let device = self.db.find_device_by_id(self.ws(), device_id).await?.ok_or(Error::NotFound)?;
+        let device = self
+            .db
+            .find_device_by_id(self.ws(), device_id)
+            .await?
+            .ok_or(Error::NotFound)?;
         let old_state: i32 = device.status.into();
         if old_state != new_state {
             self.db.update_device_state(self.ws(), device_id, new_state).await?;
@@ -443,12 +462,18 @@ impl DeviceService {
     }
 
     pub async fn get_device_by_name(&self, name: &str) -> Result<Option<Device>, Error> {
-        self.db.find_device_by_name(self.ws(), name).await.map_err(|e| self.io_error(e))
+        self.db
+            .find_device_by_name(self.ws(), name)
+            .await
+            .map_err(|e| self.io_error(e))
     }
 
     pub async fn get_devices(&self, params: &DeviceQueryParams) -> Result<Vec<Device>, Error> {
         let criteria = params_to_criteria(params);
-        self.db.find_devices(self.ws(), &criteria).await.map_err(|e| self.io_error(e))
+        self.db
+            .find_devices(self.ws(), &criteria)
+            .await
+            .map_err(|e| self.io_error(e))
     }
 
     pub async fn get_devices_with_tags(
@@ -479,7 +504,10 @@ impl DeviceService {
 
     pub async fn count_devices(&self, params: &DeviceQueryParams) -> Result<i64, Error> {
         let criteria = params_to_criteria(params);
-        self.db.count_devices(self.ws(), &criteria).await.map_err(|e| self.io_error(e))
+        self.db
+            .count_devices(self.ws(), &criteria)
+            .await
+            .map_err(|e| self.io_error(e))
     }
 
     pub async fn update_device_enabled_status(&self, device_id: &str, enabled: bool) -> Result<bool, Error> {
@@ -571,7 +599,12 @@ impl DeviceService {
 
     pub async fn create_devices_batch(&self, requests: &[CreateDeviceRequest]) -> Result<Vec<Device>, Error> {
         for request in requests {
-            if self.db.device_exists_by_name(self.ws(), &request.name).await.unwrap_or(false) {
+            if self
+                .db
+                .device_exists_by_name(self.ws(), &request.name)
+                .await
+                .unwrap_or(false)
+            {
                 return Err(Error::ValidationError(format!(
                     "{}: '{}'",
                     ERROR_DEVICE_NAME_EXISTS, request.name
@@ -634,7 +667,10 @@ impl DeviceService {
     }
 
     pub async fn device_name_exists(&self, name: &str) -> Result<bool, Error> {
-        self.db.device_exists_by_name(self.ws(), name).await.map_err(|e| self.io_error(e))
+        self.db
+            .device_exists_by_name(self.ws(), name)
+            .await
+            .map_err(|e| self.io_error(e))
     }
 
     fn validate_driver_configuration(&self, device: &Device) -> Option<String> {
@@ -733,7 +769,11 @@ impl DeviceService {
         command_type: &str,
         params: Option<String>,
     ) -> Result<String, Error> {
-        let device = self.db.find_device_by_id(self.ws(), device_id).await?.ok_or(Error::NotFound)?;
+        let device = self
+            .db
+            .find_device_by_id(self.ws(), device_id)
+            .await?
+            .ok_or(Error::NotFound)?;
         let command_id = uuid::Uuid::new_v4().to_string();
         let create_request = self.build_device_command_request(device_id, command_name, command_type, params);
         let _ = self.db.create_device_command(&create_request).await;

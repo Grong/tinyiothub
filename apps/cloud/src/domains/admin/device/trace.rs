@@ -5,8 +5,8 @@ use axum::{
     routing::{get, post},
 };
 use serde::Deserialize;
-use tinyiothub_web::security::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::security::Claims;
 
 use crate::domains::thing::legacy::trace::{DeviceTrace, DeviceTraceStatistics, SystemTraceOverview};
 use tinyiothub_web::api_response::ApiResponse;

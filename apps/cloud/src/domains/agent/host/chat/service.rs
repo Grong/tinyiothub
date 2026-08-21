@@ -8,10 +8,10 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use zeroclaw::agent::TurnEvent;
 
-use tinyiothub_agent::pool::AgentPool;
+use crate::domains::agent::host::types::{ChatError, ChatEvent};
 use tinyiothub_agent::AgentError;
 use tinyiothub_agent::config::AgentRuntimeConfig;
-use crate::domains::agent::host::types::{ChatError, ChatEvent};
+use tinyiothub_agent::pool::AgentPool;
 
 // ============================================================================
 // Pool-facing entry points (db-backed; cloud side — Task 7 fix round 1)

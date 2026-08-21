@@ -45,15 +45,13 @@ async fn create_batch(
     let db = state.db.clone();
 
     // Check idempotency
-    if let Some(existing) =
-        db.find_batch_command_by_idempotency_key(&payload.workspace_id, &payload.idempotency_key)
-            .await
-            .unwrap_or(None)
+    if let Some(existing) = db
+        .find_batch_command_by_idempotency_key(&payload.workspace_id, &payload.idempotency_key)
+        .await
+        .unwrap_or(None)
     {
         // Return existing batch (idempotent)
-        let batch_with_items = db.get_batch_command_with_items(&existing.id)
-            .await
-            .unwrap_or(None);
+        let batch_with_items = db.get_batch_command_with_items(&existing.id).await.unwrap_or(None);
         if let Some(bwi) = batch_with_items {
             return ApiResponseBuilder::success(bwi);
         }

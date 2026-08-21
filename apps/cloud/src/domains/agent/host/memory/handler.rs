@@ -9,8 +9,8 @@ use tinyiothub_core::memory::AgentMemory;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::ListMemoriesQuery;
-use tinyiothub_agent::config::default_model;
 use crate::domains::agent::AgentState;
+use tinyiothub_agent::config::default_model;
 use tinyiothub_web::middleware::workspace::WorkspaceScope;
 
 pub fn create_router<S>() -> axum::Router<S>
@@ -119,15 +119,10 @@ async fn compile_profile(
         .unwrap_or_else(|_| default_model());
 
     match state.memory_service.as_ref() {
-        Some(memory_service) => {
-            match memory_service
-                .compile_profile(&ws, &query.agent_id, &model)
-                .await
-            {
-                Ok(profile) => ApiResponseBuilder::success(serde_json::json!({"profile": profile})),
-                Err(e) => ApiResponseBuilder::error(format!("Failed to compile profile: {}", e)),
-            }
-        }
+        Some(memory_service) => match memory_service.compile_profile(&ws, &query.agent_id, &model).await {
+            Ok(profile) => ApiResponseBuilder::success(serde_json::json!({"profile": profile})),
+            Err(e) => ApiResponseBuilder::error(format!("Failed to compile profile: {}", e)),
+        },
         None => ApiResponseBuilder::error("AI subsystem not initialized"),
     }
 }

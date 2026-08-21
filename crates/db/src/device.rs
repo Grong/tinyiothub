@@ -1065,7 +1065,11 @@ pub(crate) async fn find_device_by_name(pool: &SqlitePool, ws: Option<&str>, nam
     Ok(devices.into_iter().next())
 }
 
-pub(crate) async fn find_devices(pool: &SqlitePool, ws: Option<&str>, criteria: &DeviceCriteria) -> Result<Vec<Device>> {
+pub(crate) async fn find_devices(
+    pool: &SqlitePool,
+    ws: Option<&str>,
+    criteria: &DeviceCriteria,
+) -> Result<Vec<Device>> {
     let Some(ws) = ws else {
         return find_devices_inner(pool, criteria).await;
     };
@@ -1083,7 +1087,11 @@ pub(crate) async fn count_devices(pool: &SqlitePool, ws: Option<&str>, criteria:
     count_devices_inner(pool, &criteria).await
 }
 
-pub(crate) async fn create_device(pool: &SqlitePool, ws: Option<&str>, request: &CreateDeviceRequest) -> Result<Device> {
+pub(crate) async fn create_device(
+    pool: &SqlitePool,
+    ws: Option<&str>,
+    request: &CreateDeviceRequest,
+) -> Result<Device> {
     let Some(ws) = ws else {
         return create_device_inner(pool, request).await;
     };
@@ -1538,11 +1546,7 @@ pub struct QuickDevice {
     pub device_type: String,
 }
 
-pub(crate) async fn search_devices(
-    pool: &SqlitePool,
-    keyword: &str,
-    limit: Option<u32>,
-) -> Result<Vec<Device>> {
+pub(crate) async fn search_devices(pool: &SqlitePool, keyword: &str, limit: Option<u32>) -> Result<Vec<Device>> {
     let search_pattern = format!("%{}%", keyword);
     let exact_pattern = format!("{}%", keyword);
 
@@ -1854,10 +1858,7 @@ impl Db {
     }
 
     /// 设备状态分布（cloud device dashboard 用）。
-    pub async fn device_status_distribution(
-        &self,
-        workspace_id: Option<&str>,
-    ) -> Result<DeviceStatusDistribution> {
+    pub async fn device_status_distribution(&self, workspace_id: Option<&str>) -> Result<DeviceStatusDistribution> {
         device_status_distribution(self.pool(), workspace_id).await
     }
 
@@ -2028,9 +2029,7 @@ impl Db {
 // ──────────────────────────────────────────────
 
 /// 将未分配设备归属到默认租户。
-pub(crate) async fn assign_orphan_devices_to_default_tenant(
-    pool: &SqlitePool,
-) -> std::result::Result<(), sqlx::Error> {
+pub(crate) async fn assign_orphan_devices_to_default_tenant(pool: &SqlitePool) -> std::result::Result<(), sqlx::Error> {
     sqlx::query("UPDATE devices SET tenant_id = 'tenant-default-001' WHERE tenant_id IS NULL")
         .execute(pool)
         .await?;

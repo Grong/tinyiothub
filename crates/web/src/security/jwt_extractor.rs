@@ -25,7 +25,10 @@ where
         // Try Authorization header first
         if let Some(auth_header) = parts.headers.typed_get::<Authorization<Bearer>>() {
             let token = auth_header.token();
-            return service.validate_jwt(token).map(Claims::from).map_err(AuthError::InvalidToken);
+            return service
+                .validate_jwt(token)
+                .map(Claims::from)
+                .map_err(AuthError::InvalidToken);
         }
 
         // Fallback: query string ?token=xxx (needed for EventSource which can't set headers)
@@ -35,7 +38,10 @@ where
                 if kv.next() == Some("token")
                     && let Some(token) = kv.next()
                 {
-                    return service.validate_jwt(token).map(Claims::from).map_err(AuthError::InvalidToken);
+                    return service
+                        .validate_jwt(token)
+                        .map(Claims::from)
+                        .map_err(AuthError::InvalidToken);
                 }
             }
         }

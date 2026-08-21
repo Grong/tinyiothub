@@ -148,7 +148,9 @@ pub(crate) async fn get_device_trace_statistics(
 ) -> Result<DeviceTraceStatistics> {
     let days_param = format!("-{} days", days);
 
-    let total_traces = count_device_traces(pool, device_id, Some(&days_param), None).await.unwrap_or(0);
+    let total_traces = count_device_traces(pool, device_id, Some(&days_param), None)
+        .await
+        .unwrap_or(0);
 
     let error_traces = count_device_traces(pool, device_id, Some(&days_param), Some("error_critical"))
         .await
@@ -451,11 +453,7 @@ impl Db {
     }
 
     /// 查询追踪记录统计。
-    pub async fn get_device_trace_statistics(
-        &self,
-        device_id: &str,
-        days: u32,
-    ) -> Result<DeviceTraceStatistics> {
+    pub async fn get_device_trace_statistics(&self, device_id: &str, days: u32) -> Result<DeviceTraceStatistics> {
         get_device_trace_statistics(self.pool(), device_id, days).await
     }
 

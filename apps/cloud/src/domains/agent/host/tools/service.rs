@@ -49,10 +49,7 @@ pub fn chat_builtin_tools_provider(
         // 用户指令派发工具（T14）—— chat Agent 专用；自治 thing-agent 工厂
         // （autonomous_factory.rs）不注册它，避免 loop 自我派发。
         tools.push((
-            Box::new(DispatchThingTaskTool::new(
-                workspace_id,
-                runtime.directive_sink.clone(),
-            )),
+            Box::new(DispatchThingTaskTool::new(workspace_id, runtime.directive_sink.clone())),
             classify_tool_safety("dispatch_thing_task"),
         ));
 

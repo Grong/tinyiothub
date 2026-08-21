@@ -83,13 +83,12 @@ pub(crate) async fn find_social_binding_user_id(
     provider: &str,
     provider_user_id: &str,
 ) -> std::result::Result<Option<String>, sqlx::Error> {
-    let user_id: Option<String> = sqlx::query_scalar(
-        "SELECT user_id FROM social_bindings WHERE provider = ? AND provider_user_id = ? LIMIT 1",
-    )
-    .bind(provider)
-    .bind(provider_user_id)
-    .fetch_optional(pool)
-    .await?;
+    let user_id: Option<String> =
+        sqlx::query_scalar("SELECT user_id FROM social_bindings WHERE provider = ? AND provider_user_id = ? LIMIT 1")
+            .bind(provider)
+            .bind(provider_user_id)
+            .fetch_optional(pool)
+            .await?;
 
     Ok(user_id)
 }
@@ -152,7 +151,11 @@ pub(crate) async fn update_social_config(
 
 impl Db {
     /// 登出时把 token 哈希写入黑名单。
-    pub async fn insert_token_blacklist(&self, token_hash: &str, expires_at: &str) -> std::result::Result<(), sqlx::Error> {
+    pub async fn insert_token_blacklist(
+        &self,
+        token_hash: &str,
+        expires_at: &str,
+    ) -> std::result::Result<(), sqlx::Error> {
         insert_token_blacklist(self.pool(), token_hash, expires_at).await
     }
 
@@ -209,7 +212,10 @@ impl Db {
 }
 
 /// 检查 token_hash 是否在黑名单中（自 cloud api/middleware/context.rs 迁入）。
-pub(crate) async fn token_blacklist_contains(pool: &SqlitePool, token_hash: &str) -> std::result::Result<bool, sqlx::Error> {
+pub(crate) async fn token_blacklist_contains(
+    pool: &SqlitePool,
+    token_hash: &str,
+) -> std::result::Result<bool, sqlx::Error> {
     let row = sqlx::query("SELECT 1 FROM token_blacklist WHERE token_hash = ? LIMIT 1")
         .bind(token_hash)
         .fetch_optional(pool)

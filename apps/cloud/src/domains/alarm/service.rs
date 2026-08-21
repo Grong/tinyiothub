@@ -2165,7 +2165,10 @@ mod integration_tests {
         assert!(!is_res, "new alarm should not be resolved");
 
         // Round-trip test: read back via repo (exercises row_to_alarm datetime parsing)
-        let alarm_opt = db.find_alarm_by_id(row.get::<String, _>("id").as_str(), None).await.unwrap();
+        let alarm_opt = db
+            .find_alarm_by_id(row.get::<String, _>("id").as_str(), None)
+            .await
+            .unwrap();
         assert!(alarm_opt.is_some(), "Should be able to read alarm back via repo");
         let alarm = alarm_opt.unwrap();
         assert_eq!(alarm.device_id, "dev-1");

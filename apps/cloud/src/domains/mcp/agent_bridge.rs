@@ -16,10 +16,8 @@
 
 use std::sync::Arc;
 
-use tinyiothub_agent::tools::{
-    ExternalToolContext, ExternalToolHandler, ExternalToolMeta, ExternalToolRegistry,
-};
 use async_trait::async_trait;
+use tinyiothub_agent::tools::{ExternalToolContext, ExternalToolHandler, ExternalToolMeta, ExternalToolRegistry};
 use tokio::sync::RwLock;
 
 use super::handlers::{McpAuthContext, McpContextGuard};

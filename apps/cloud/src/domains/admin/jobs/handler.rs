@@ -10,7 +10,6 @@ use axum::{
     routing::{get, post},
 };
 use serde::Deserialize;
-use tinyiothub_web::security::Claims;
 use tinyiothub_core::models::{
     cron_job::{CreateCronJobRequest, CronJob, CronJobQuery, CronRun, CronRunQuery, UpdateCronJobRequest},
     job::{
@@ -19,6 +18,7 @@ use tinyiothub_core::models::{
 };
 use tinyiothub_scheduler::ExecutorRegistry;
 use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::security::Claims;
 
 use tinyiothub_core::error::Error;
 use tinyiothub_web::api_response::{ApiResponse, PaginatedResponse, PaginationInfo};
@@ -448,7 +448,9 @@ async fn run_job_now(
                 let _ = db
                     .complete_cron_run(&run_id, &workspace_id, status, None, Some(&err_msg), duration_ms)
                     .await;
-                let _ = db.update_cron_job_run_stats(&job_clone.id, status, Some(&err_msg)).await;
+                let _ = db
+                    .update_cron_job_run_stats(&job_clone.id, status, Some(&err_msg))
+                    .await;
             }
         }
 
@@ -491,11 +493,7 @@ async fn get_statistics(State(state): State<AdminState>, claims: Claims) -> Json
     };
 
     let total = state.db.count_cron_jobs(&ws_id).await.unwrap_or(0);
-    let success_runs = state
-        .db
-        .count_cron_runs_by_status(&ws_id, "success")
-        .await
-        .unwrap_or(0);
+    let success_runs = state.db.count_cron_runs_by_status(&ws_id, "success").await.unwrap_or(0);
     let failed_runs = state.db.count_cron_runs_by_status(&ws_id, "failed").await.unwrap_or(0);
 
     let enabled_jobs = state.db.count_cron_jobs_by_enabled(&ws_id, true).await.unwrap_or(0);

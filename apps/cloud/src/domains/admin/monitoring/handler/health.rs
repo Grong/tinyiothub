@@ -2,8 +2,8 @@ use crate::domains::admin::AdminState;
 
 use axum::{Json, Router, extract::State, routing::get};
 use serde::{Deserialize, Serialize};
-use tinyiothub_web::security::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::security::Claims;
 
 use tinyiothub_web::api_response::ApiResponse;
 
@@ -64,7 +64,10 @@ async fn get_health(State(state): State<AdminState>) -> Json<ApiResponse<HealthS
 }
 
 /// 详细健康状态
-async fn get_detailed_health(State(state): State<AdminState>, claims: Claims) -> Json<ApiResponse<DetailedHealthStatus>> {
+async fn get_detailed_health(
+    State(state): State<AdminState>,
+    claims: Claims,
+) -> Json<ApiResponse<DetailedHealthStatus>> {
     let db_status = state.db().ping().await;
 
     let (overall_status, database_status) = match db_status {

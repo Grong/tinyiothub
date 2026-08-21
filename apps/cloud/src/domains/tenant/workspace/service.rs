@@ -7,9 +7,7 @@ use crate::domains::tenant::hooks::{AgentHooks, WorkspaceEventPublisher};
 use tinyiothub_core::error::Result;
 use tinyiothub_core::models::workspace::ResourceType;
 use tinyiothub_storage::Db;
-use tinyiothub_storage::workspace::{
-    ResourceSearchResult, Workspace, WorkspaceResource, WorkspaceWithDeviceCount,
-};
+use tinyiothub_storage::workspace::{ResourceSearchResult, Workspace, WorkspaceResource, WorkspaceWithDeviceCount};
 
 pub struct WorkspaceService {
     db: Arc<Db>,
@@ -74,9 +72,10 @@ impl WorkspaceService {
         // 运行时内存真源 —— 事件经队列异步派发，其 heartbeat start 回调
         // 读 runner 内存；不先注入则任务集为空、loop 跳过启动。
         if let Some(tasks) = seeded
-            && let Some(ref hooks) = *self.agent_hooks.lock().unwrap() {
-                hooks.heartbeat_tasks_seeded(&workspace.id, tasks);
-            }
+            && let Some(ref hooks) = *self.agent_hooks.lock().unwrap()
+        {
+            hooks.heartbeat_tasks_seeded(&workspace.id, tasks);
+        }
         if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
             publisher.publish_workspace_created(workspace.id.clone());
         }
@@ -86,7 +85,10 @@ impl WorkspaceService {
     /// New workspaces start with the default heartbeat task set. Failure to
     /// seed must not fail workspace creation — tasks can be added later.
     /// 成功时返回 DB 回读的全量任务行（供调用方注入 agent 内存真源）。
-    async fn seed_default_heartbeat_tasks(&self, workspace_id: &str) -> Option<Vec<tinyiothub_core::heartbeat::HeartbeatTask>> {
+    async fn seed_default_heartbeat_tasks(
+        &self,
+        workspace_id: &str,
+    ) -> Option<Vec<tinyiothub_core::heartbeat::HeartbeatTask>> {
         let db = self.heartbeat_task_db.lock().unwrap().clone();
         let db = db?;
         let hooks = self.agent_hooks.lock().unwrap().clone();
@@ -241,10 +243,26 @@ mod tests {
     impl AgentHooks for StubAgentHooks {
         fn default_heartbeat_tasks(&self) -> Vec<HeartbeatTaskDef> {
             vec![
-                HeartbeatTaskDef { priority: "high".into(), text: "t1".into(), paused: false },
-                HeartbeatTaskDef { priority: "medium".into(), text: "t2".into(), paused: false },
-                HeartbeatTaskDef { priority: "low".into(), text: "t3".into(), paused: true },
-                HeartbeatTaskDef { priority: "low".into(), text: "t4".into(), paused: true },
+                HeartbeatTaskDef {
+                    priority: "high".into(),
+                    text: "t1".into(),
+                    paused: false,
+                },
+                HeartbeatTaskDef {
+                    priority: "medium".into(),
+                    text: "t2".into(),
+                    paused: false,
+                },
+                HeartbeatTaskDef {
+                    priority: "low".into(),
+                    text: "t3".into(),
+                    paused: true,
+                },
+                HeartbeatTaskDef {
+                    priority: "low".into(),
+                    text: "t4".into(),
+                    paused: true,
+                },
             ]
         }
     }
@@ -292,10 +310,7 @@ mod tests {
             .execute(&pool)
             .await
             .expect("seed tenant");
-        (
-            Arc::new(tinyiothub_storage::Db::new(pool.clone())),
-            pool,
-        )
+        (Arc::new(tinyiothub_storage::Db::new(pool.clone())), pool)
     }
 
     #[tokio::test]

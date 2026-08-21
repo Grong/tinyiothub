@@ -1,9 +1,9 @@
 //! Seed module tests: both tiers are idempotent and produce the expected
 //! system/demo rows on a baseline-built pool.
 
+use tinyiothub_storage::Db;
 use tinyiothub_storage::seed;
 use tinyiothub_storage::test_helpers;
-use tinyiothub_storage::Db;
 
 #[tokio::test]
 async fn seed_system_is_idempotent_and_creates_default_workspace() {
@@ -31,18 +31,16 @@ async fn seed_system_creates_subscription_plans_and_builtin_templates() {
         .unwrap();
     assert_eq!(plans, 4);
 
-    let templates: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM thing_templates WHERE is_builtin = 1")
-            .fetch_one(db.pool())
-            .await
-            .unwrap();
+    let templates: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_templates WHERE is_builtin = 1")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
     assert_eq!(templates, 13);
 
-    let admin: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE username = 'admin')")
-            .fetch_one(db.pool())
-            .await
-            .unwrap();
+    let admin: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE username = 'admin')")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
     assert!(admin);
 }
 
@@ -52,12 +50,10 @@ async fn seed_demo_creates_env01_with_properties() {
     let db = Db::new(pool);
     seed::seed_system(&db).await.unwrap();
     seed::seed_demo(&db).await.unwrap();
-    let n: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM thing_properties WHERE device_id = 'device-env-01'",
-    )
-    .fetch_one(db.pool())
-    .await
-    .unwrap();
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_properties WHERE device_id = 'device-env-01'")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
     assert_eq!(n, 5);
 }
 

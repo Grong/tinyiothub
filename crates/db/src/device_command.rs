@@ -184,10 +184,7 @@ impl Db {
     }
 
     /// 按设备 ID 列出指令（按名称升序）。
-    pub async fn find_device_commands_by_device_id(
-        &self,
-        device_id: &str,
-    ) -> Result<Vec<DeviceCommand>, sqlx::Error> {
+    pub async fn find_device_commands_by_device_id(&self, device_id: &str) -> Result<Vec<DeviceCommand>, sqlx::Error> {
         find_device_commands_by_device_id(self.pool(), device_id).await
     }
 

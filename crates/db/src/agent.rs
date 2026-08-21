@@ -13,11 +13,7 @@ use crate::database::Db;
 // ──────────────────────────────────────────────
 
 /// 插入 agent 行；返回新 agent_id。
-pub(crate) async fn insert_agent(
-    pool: &SqlitePool,
-    workspace_id: &str,
-    name: &str,
-) -> Result<String, sqlx::Error> {
+pub(crate) async fn insert_agent(pool: &SqlitePool, workspace_id: &str, name: &str) -> Result<String, sqlx::Error> {
     let agent_id = uuid::Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO agents (agent_id, workspace_id, name, status, created_at, updated_at)
@@ -217,11 +213,7 @@ pub(crate) async fn insert_agent_heartbeat_outcome(
 }
 
 /// 更新 agent_actions.content。
-pub(crate) async fn update_agent_action_content(
-    pool: &SqlitePool,
-    id: &str,
-    content: &str,
-) -> Result<(), sqlx::Error> {
+pub(crate) async fn update_agent_action_content(pool: &SqlitePool, id: &str, content: &str) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE agent_actions SET content = ? WHERE id = ?")
         .bind(content)
         .bind(id)
@@ -340,10 +332,7 @@ impl Db {
     }
 
     /// 读取 agent_configs.(config, config_hash)。
-    pub async fn find_agent_config_with_hash(
-        &self,
-        agent_id: &str,
-    ) -> Result<Option<(String, String)>, sqlx::Error> {
+    pub async fn find_agent_config_with_hash(&self, agent_id: &str) -> Result<Option<(String, String)>, sqlx::Error> {
         find_agent_config_with_hash(self.pool(), agent_id).await
     }
 
@@ -419,10 +408,7 @@ impl Db {
     }
 
     /// 按 workspace 列出死信（新的在前）。
-    pub async fn list_agent_dead_letters(
-        &self,
-        workspace_id: &str,
-    ) -> Result<Vec<AgentDeadLetterRow>, sqlx::Error> {
+    pub async fn list_agent_dead_letters(&self, workspace_id: &str) -> Result<Vec<AgentDeadLetterRow>, sqlx::Error> {
         list_agent_dead_letters(self.pool(), workspace_id).await
     }
 

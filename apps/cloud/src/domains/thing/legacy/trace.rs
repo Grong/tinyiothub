@@ -143,6 +143,3 @@ impl DeviceTraceService {
             .await
     }
 }
-
-
-

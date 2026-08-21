@@ -89,7 +89,12 @@ pub(crate) async fn recent_summaries(pool: &SqlitePool, workspace_id: &str, limi
     Ok(rows.into_iter().map(|(o, s)| format_summary(&o, &s)).collect())
 }
 
-pub(crate) async fn history_by_dedup_key(pool: &SqlitePool, workspace_id: &str, key: &str, limit: u32) -> Result<Vec<String>> {
+pub(crate) async fn history_by_dedup_key(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    key: &str,
+    limit: u32,
+) -> Result<Vec<String>> {
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT outcome, summary FROM agent_runs
              WHERE workspace_id = ? AND dedup_key = ?
@@ -167,7 +172,12 @@ pub(crate) async fn last_problem_run(
     }))
 }
 
-pub(crate) async fn count_problem_runs(pool: &SqlitePool, workspace_id: &str, problem_key: &str, since_hours: u32) -> Result<u32> {
+pub(crate) async fn count_problem_runs(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    problem_key: &str,
+    since_hours: u32,
+) -> Result<u32> {
     let (n,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM agent_runs
              WHERE workspace_id = ? AND problem_key = ?
@@ -453,7 +463,10 @@ mod tests {
             .await
             .expect("insert");
 
-        let history = db.agent_run_history_by_dedup_key("ws_1", "key1", 3).await.expect("history");
+        let history = db
+            .agent_run_history_by_dedup_key("ws_1", "key1", 3)
+            .await
+            .expect("history");
         assert_eq!(history.len(), 3);
         assert_eq!(history[0], "[acted] 同类4");
         assert_eq!(history[2], "[acted] 同类2");
@@ -494,7 +507,10 @@ mod tests {
             .await
             .expect("insert other ws");
 
-        let runs = db.recent_agent_runs_by_dedup_key("ws_1", "key1", 3).await.expect("recent");
+        let runs = db
+            .recent_agent_runs_by_dedup_key("ws_1", "key1", 3)
+            .await
+            .expect("recent");
         assert_eq!(runs.len(), 2, "只返回 key1 且只返回 ws_1");
         assert_eq!(runs[0].run_id, "denied");
         assert_eq!(runs[0].outcome, Outcome::Rejected);
@@ -538,7 +554,12 @@ mod tests {
 
         // 窗口外（-7h）：不得命中
         insert_raw(&pool, "old", "ws_1", "failed", Some("p1"), None, 0, "-7 hours").await;
-        assert!(db.last_problem_agent_run("ws_1", "p1", 6).await.expect("query").is_none());
+        assert!(
+            db.last_problem_agent_run("ws_1", "p1", 6)
+                .await
+                .expect("query")
+                .is_none()
+        );
 
         // 窗口内两条：返回最新（-1h）的 (outcome, verified, acked)
         insert_raw(
@@ -590,7 +611,12 @@ mod tests {
         assert_eq!(outcome, Outcome::Failed);
 
         // 其他 problem_key / 工作区互不影响
-        assert!(db.last_problem_agent_run("ws_2", "p1", 6).await.expect("query").is_none());
+        assert!(
+            db.last_problem_agent_run("ws_2", "p1", 6)
+                .await
+                .expect("query")
+                .is_none()
+        );
 
         // 未知 outcome 字符串 fail-closed 到 Failed（T18 dedup 保守方向）
         insert_raw(&pool, "legacy", "ws_1", "success", Some("p3"), None, 0, "-1 hours").await;
@@ -621,7 +647,10 @@ mod tests {
         assert_eq!(db.count_problem_agent_runs("ws_1", "p1", 8).await.expect("count"), 5);
         assert_eq!(db.count_problem_agent_runs("ws_1", "p2", 6).await.expect("count"), 1);
         assert_eq!(db.count_problem_agent_runs("ws_2", "p1", 6).await.expect("count"), 1);
-        assert_eq!(db.count_problem_agent_runs("ws_1", "missing", 6).await.expect("count"), 0);
+        assert_eq!(
+            db.count_problem_agent_runs("ws_1", "missing", 6).await.expect("count"),
+            0
+        );
     }
 
     #[tokio::test]
@@ -666,7 +695,10 @@ mod tests {
             .expect("reconcile again");
         assert_eq!(marked, 0);
         // 认领集为空时，残留的 running 行全部判僵尸。
-        let marked = db.interrupt_zombie_running_agent_runs(&[]).await.expect("reconcile empty known");
+        let marked = db
+            .interrupt_zombie_running_agent_runs(&[])
+            .await
+            .expect("reconcile empty known");
         assert_eq!(marked, 1);
         assert_eq!(status_of("owned").await, "interrupted");
     }

@@ -929,7 +929,11 @@ impl Db {
     }
 
     /// 关联用户到默认租户（INSERT OR IGNORE）。
-    pub async fn insert_default_tenant_user(&self, tenant_user_id: &str, user_id: &str) -> std::result::Result<(), sqlx::Error> {
+    pub async fn insert_default_tenant_user(
+        &self,
+        tenant_user_id: &str,
+        user_id: &str,
+    ) -> std::result::Result<(), sqlx::Error> {
         insert_default_tenant_user(self.pool(), tenant_user_id, user_id).await
     }
 }

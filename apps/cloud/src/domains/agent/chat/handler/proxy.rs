@@ -7,8 +7,8 @@ use axum::{
     extract::{Path, Query, State},
     response::{IntoResponse, Response, Sse, sse::Event as SseEvent},
 };
-use tinyiothub_web::security::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::security::Claims;
 
 use super::types::*;
 use crate::domains::agent::host::handler::types::{AgentConfigUpdateRequest, ToolToggleRequest};
@@ -40,10 +40,9 @@ pub async fn chat_stream(
         .map(|s| s.to_string())
         .unwrap_or_default();
     let system_prompts = &state.system_prompts;
-    let memory_source: std::sync::Arc<dyn tinyiothub_agent::prompt::PromptMemorySource> =
-        std::sync::Arc::new(
-            crate::domains::agent::host::memory::PromptMemoryStoreAdapter(state.memory_store.clone()),
-        );
+    let memory_source: std::sync::Arc<dyn tinyiothub_agent::prompt::PromptMemorySource> = std::sync::Arc::new(
+        crate::domains::agent::host::memory::PromptMemoryStoreAdapter(state.memory_store.clone()),
+    );
     let mut full_prompt = tinyiothub_agent::prompt::build_full_system_prompt(
         system_prompts,
         Some(&workspace_id),

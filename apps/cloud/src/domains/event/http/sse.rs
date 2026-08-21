@@ -14,16 +14,12 @@ use axum::{
     response::{IntoResponse, Json as JsonResponse, Response},
 };
 use serde::Deserialize;
-use tinyiothub_web::security::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::security::Claims;
 use tracing::{info, warn};
 
 use crate::domains::event::sse_manager::{SseConnectionInfo, SseOverview};
-use crate::{
-    api::middleware::WorkspaceScope,
-    shared::api_response::ApiResponse,
-    state::AppState,
-};
+use crate::{api::middleware::WorkspaceScope, shared::api_response::ApiResponse, state::AppState};
 
 /// SSE connection query parameters
 #[derive(Debug, Deserialize)]

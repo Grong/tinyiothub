@@ -5,8 +5,8 @@ use axum::{
     routing::get,
 };
 use serde::{Deserialize, Serialize};
-use tinyiothub_web::security::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::security::Claims;
 
 use crate::domains::driver::legacy::{
     DeviceMetrics, DevicePerformanceMetrics, PerformanceAlert, SystemOverview, SystemPerformanceOverview,

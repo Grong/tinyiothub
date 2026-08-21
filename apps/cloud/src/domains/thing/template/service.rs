@@ -40,13 +40,13 @@ impl TemplateEngine {
         );
 
         // 获取模板
-        let template =
-            self.db
-                .find_thing_template_by_id(template_id, "")
-                .await?
-                .ok_or_else(|| TemplateError::TemplateNotFound {
-                    id: template_id.to_string(),
-                })?;
+        let template = self
+            .db
+            .find_thing_template_by_id(template_id, "")
+            .await?
+            .ok_or_else(|| TemplateError::TemplateNotFound {
+                id: template_id.to_string(),
+            })?;
 
         // 验证用户输入 (需求 3.7)
         let validation_result = self.validator.validate_user_input(&template, user_input);
@@ -112,13 +112,13 @@ impl TemplateEngine {
         );
 
         // 获取模板
-        let template =
-            self.db
-                .find_thing_template_by_id(template_id, "")
-                .await?
-                .ok_or_else(|| TemplateError::TemplateNotFound {
-                    id: template_id.to_string(),
-                })?;
+        let template = self
+            .db
+            .find_thing_template_by_id(template_id, "")
+            .await?
+            .ok_or_else(|| TemplateError::TemplateNotFound {
+                id: template_id.to_string(),
+            })?;
 
         // 验证用户输入
         let validation_result = self.validator.validate_user_input(&template, user_input);
@@ -173,13 +173,13 @@ impl TemplateEngine {
         info!("验证用户输入: template_id={}", template_id);
 
         // 获取模板
-        let template =
-            self.db
-                .find_thing_template_by_id(template_id, "")
-                .await?
-                .ok_or_else(|| TemplateError::TemplateNotFound {
-                    id: template_id.to_string(),
-                })?;
+        let template = self
+            .db
+            .find_thing_template_by_id(template_id, "")
+            .await?
+            .ok_or_else(|| TemplateError::TemplateNotFound {
+                id: template_id.to_string(),
+            })?;
 
         // 使用验证器验证输入
         let result = self.validator.validate_user_input(&template, user_input);
@@ -327,13 +327,13 @@ impl TemplateEngine {
         info!("获取模板必需字段信息: template_id={}", template_id);
 
         // 获取模板
-        let template =
-            self.db
-                .find_thing_template_by_id(template_id, "")
-                .await?
-                .ok_or_else(|| TemplateError::TemplateNotFound {
-                    id: template_id.to_string(),
-                })?;
+        let template = self
+            .db
+            .find_thing_template_by_id(template_id, "")
+            .await?
+            .ok_or_else(|| TemplateError::TemplateNotFound {
+                id: template_id.to_string(),
+            })?;
 
         // 解析设备信息
         let device_info = template.get_device_info().map_err(|e| TemplateError::JsonFormatError {
@@ -401,13 +401,13 @@ impl TemplateEngine {
         );
 
         // 获取模板
-        let template =
-            self.db
-                .find_thing_template_by_id(template_id, "")
-                .await?
-                .ok_or_else(|| TemplateError::TemplateNotFound {
-                    id: template_id.to_string(),
-                })?;
+        let template = self
+            .db
+            .find_thing_template_by_id(template_id, "")
+            .await?
+            .ok_or_else(|| TemplateError::TemplateNotFound {
+                id: template_id.to_string(),
+            })?;
 
         // 使用验证器验证单个字段
         let result = self.validator.validate_field(&template, field_name, field_value);

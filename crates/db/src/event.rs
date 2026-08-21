@@ -459,10 +459,7 @@ pub(crate) async fn find_event_by_id(pool: &SqlitePool, id: &EventId) -> Result<
         WHERE id = ?
     "#;
 
-    let row = sqlx::query(sql)
-        .bind(id.to_string())
-        .fetch_optional(pool)
-        .await?;
+    let row = sqlx::query(sql).bind(id.to_string()).fetch_optional(pool).await?;
 
     if let Some(row) = row {
         let event = row_to_event(row)?;
@@ -680,7 +677,11 @@ pub(crate) async fn cleanup_old_events(pool: &SqlitePool, before: DateTime<Utc>)
     Ok(result.rows_affected())
 }
 
-pub(crate) async fn export_events(pool: &SqlitePool, criteria: &EventCriteria, format: ExportFormat) -> Result<Vec<u8>> {
+pub(crate) async fn export_events(
+    pool: &SqlitePool,
+    criteria: &EventCriteria,
+    format: ExportFormat,
+) -> Result<Vec<u8>> {
     let events = query_events(pool, criteria).await?;
 
     match format {
@@ -948,7 +949,12 @@ pub(crate) async fn get_realtime_status_summary(pool: &SqlitePool, _filter: &Rea
     })
 }
 
-pub(crate) async fn acknowledge_event(pool: &SqlitePool, id: &EventId, user_id: &str, workspace_id: &str) -> Result<()> {
+pub(crate) async fn acknowledge_event(
+    pool: &SqlitePool,
+    id: &EventId,
+    user_id: &str,
+    workspace_id: &str,
+) -> Result<()> {
     // Tenant isolation (eng-review T1): only ack events in the caller's workspace
     let sql = r#"
         UPDATE events
@@ -989,10 +995,7 @@ pub(crate) async fn cleanup_old_realtime_events(pool: &SqlitePool, before: DateT
     // not log history, and are exempt from time-based purge (X1/OV-1)
     let sql = "DELETE FROM events WHERE timestamp < ? AND is_status = 0";
 
-    let result = sqlx::query(sql)
-        .bind(before.to_rfc3339())
-        .execute(pool)
-        .await?;
+    let result = sqlx::query(sql).bind(before.to_rfc3339()).execute(pool).await?;
 
     Ok(result.rows_affected())
 }
@@ -1074,9 +1077,7 @@ async fn query_realtime_event_rows(pool: &SqlitePool, filter: &RealTimeFilter) -
 
     sql.push_str(" ORDER BY timestamp DESC");
 
-    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .fetch_all(pool)
-        .await?;
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_all(pool).await?;
     Ok(rows)
 }
 
@@ -1096,8 +1097,8 @@ fn row_to_real_time_event(row: &sqlx::sqlite::SqliteRow) -> Result<RealTimeEvent
     let acknowledged_at_str: Option<String> = row.get("acknowledged_at");
 
     let id = EventId::from_string(id_str);
-    let event_type: EventType = serde_json::from_str(&event_subtype_str)
-        .map_err(|e| crate::DbError::Validation { message: e.to_string() })?;
+    let event_type: EventType =
+        serde_json::from_str(&event_subtype_str).map_err(|e| crate::DbError::Validation { message: e.to_string() })?;
     let level = EventLevel::from_numeric(event_level_int).unwrap_or(EventLevel::Info);
     let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
         .map(|dt| dt.with_timezone(&Utc))

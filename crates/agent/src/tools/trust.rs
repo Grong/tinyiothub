@@ -61,8 +61,7 @@ impl Tool for TrustAwareTool {
         // TrustConfig input the adapter's verdict equals
         // evaluate_tool_trust_with_safety (verified by the adapter's
         // parameterized equivalence tests).
-        match tinyiothub_policy::adapters::HeartbeatTrustAdapter::evaluate(&self.trust_config, tool_name, self.safety)
-        {
+        match tinyiothub_policy::adapters::HeartbeatTrustAdapter::evaluate(&self.trust_config, tool_name, self.safety) {
             TrustDecision::Allow => self.inner.execute(args).await,
             TrustDecision::Block { reason } => Ok(ToolResult {
                 success: false,

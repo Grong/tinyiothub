@@ -22,7 +22,9 @@ struct FakeCache {
 
 impl FakeCache {
     fn with_device(device: Device) -> Self {
-        Self { devices: Mutex::new(vec![device]) }
+        Self {
+            devices: Mutex::new(vec![device]),
+        }
     }
 }
 
@@ -90,7 +92,10 @@ fn device_command_job(device_id: &str, command_name: &str) -> CronJob {
         description: None,
         job_type: "device_command".to_string(),
         cron_expression: "0 0 * * * *".to_string(),
-        config: format!(r#"{{"device_id": "{}", "command_name": "{}"}}"#, device_id, command_name),
+        config: format!(
+            r#"{{"device_id": "{}", "command_name": "{}"}}"#,
+            device_id, command_name
+        ),
         timeout_seconds: 300,
         max_retries: 3,
         is_enabled: true,
@@ -180,5 +185,9 @@ async fn event_retention_executor_delegates_cutoff_to_port() {
     // 30-day retention ⇒ cutoff is roughly now minus 30 days (RFC3339).
     let cutoff_dt = chrono::DateTime::parse_from_rfc3339(&cutoff).expect("rfc3339 cutoff");
     let age = chrono::Utc::now() - cutoff_dt.with_timezone(&chrono::Utc);
-    assert!(age.num_days() >= 29 && age.num_days() <= 31, "cutoff age {}d", age.num_days());
+    assert!(
+        age.num_days() >= 29 && age.num_days() <= 31,
+        "cutoff age {}d",
+        age.num_days()
+    );
 }

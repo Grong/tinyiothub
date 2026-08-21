@@ -5,9 +5,9 @@ use axum::{
     routing::get,
 };
 use serde::Serialize;
-use tinyiothub_web::security::Claims;
 use tinyiothub_core::models::{device::Device, device_property::DeviceProperty};
 use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::security::Claims;
 
 use crate::domains::thing::legacy::types::DeviceCommandResponse;
 use tinyiothub_web::api_response::ApiResponse;
@@ -314,25 +314,24 @@ async fn calculate_device_overview(
         .start_time(twenty_four_hours_ago)
         .build();
 
-    let (recent_event_count, critical_event_count, error_event_count) =
-        match state.db.query_events(&criteria).await {
-            Ok(events) => {
-                let total = events.len() as u32;
-                let critical = events
-                    .iter()
-                    .filter(|e| matches!(e.level(), tinyiothub_core::models::event::EventLevel::Critical))
-                    .count() as u32;
-                let error = events
-                    .iter()
-                    .filter(|e| matches!(e.level(), tinyiothub_core::models::event::EventLevel::Error))
-                    .count() as u32;
-                (total, critical, error)
-            }
-            Err(e) => {
-                tracing::warn!("Failed to fetch event statistics for device {}: {}", device_id, e);
-                (0, 0, 0)
-            }
-        };
+    let (recent_event_count, critical_event_count, error_event_count) = match state.db.query_events(&criteria).await {
+        Ok(events) => {
+            let total = events.len() as u32;
+            let critical = events
+                .iter()
+                .filter(|e| matches!(e.level(), tinyiothub_core::models::event::EventLevel::Critical))
+                .count() as u32;
+            let error = events
+                .iter()
+                .filter(|e| matches!(e.level(), tinyiothub_core::models::event::EventLevel::Error))
+                .count() as u32;
+            (total, critical, error)
+        }
+        Err(e) => {
+            tracing::warn!("Failed to fetch event statistics for device {}: {}", device_id, e);
+            (0, 0, 0)
+        }
+    };
 
     // 获取最后事件时间
     let last_event_time = recent_events.first().map(|e| e.timestamp.clone());

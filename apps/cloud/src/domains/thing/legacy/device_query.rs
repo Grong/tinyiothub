@@ -6,7 +6,9 @@ use tinyiothub_storage::{
 
 /// Find a device by ID (convenience wrapper for MCP tools compatibility)
 pub async fn find_device_by_id(db: &Db, id: &str) -> Result<Option<Device>, sqlx::Error> {
-    db.find_device_by_id(None, id).await.map_err(|_| sqlx::Error::RowNotFound)
+    db.find_device_by_id(None, id)
+        .await
+        .map_err(|_| sqlx::Error::RowNotFound)
 }
 
 /// Load tags for a single device
@@ -41,11 +43,7 @@ pub async fn load_tags_for_devices(db: &Db, devices: &mut [Device], tenant_id: &
 }
 
 /// Find a device by ID including its tags
-pub async fn find_device_by_id_with_tags(
-    db: &Db,
-    id: &str,
-    tenant_id: &str,
-) -> Result<Option<Device>, sqlx::Error> {
+pub async fn find_device_by_id_with_tags(db: &Db, id: &str, tenant_id: &str) -> Result<Option<Device>, sqlx::Error> {
     if let Some(mut device) = find_device_by_id(db, id).await? {
         load_device_tags(&mut device, db, tenant_id).await?;
         Ok(Some(device))
@@ -78,7 +76,10 @@ pub async fn find_all_devices_with_tags(
         limit: params.page_size,
         offset: params.page.map(|p| p.saturating_sub(1) * params.page_size.unwrap_or(0)),
     };
-    let mut devices = db.find_devices(None, &criteria).await.map_err(|_| sqlx::Error::RowNotFound)?;
+    let mut devices = db
+        .find_devices(None, &criteria)
+        .await
+        .map_err(|_| sqlx::Error::RowNotFound)?;
     let tenant_id_for_tags = tenant_id.as_deref().unwrap_or("");
     load_tags_for_devices(db, &mut devices, tenant_id_for_tags).await?;
     Ok(devices)

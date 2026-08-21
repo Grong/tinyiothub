@@ -516,17 +516,12 @@ pub(crate) async fn delete_workspace(pool: &SqlitePool, id: &str) -> Result<()> 
     Ok(())
 }
 
-pub(crate) async fn assign_device_to_workspace(
-    pool: &SqlitePool,
-    device_id: &str,
-    workspace_id: &str,
-) -> Result<()> {
-    let device: Option<(String, Option<String>)> =
-        sqlx::query_as("SELECT id, workspace_id FROM devices WHERE id = ?")
-            .bind(device_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| Error::DatabaseError(format!("database error: {}", e)))?;
+pub(crate) async fn assign_device_to_workspace(pool: &SqlitePool, device_id: &str, workspace_id: &str) -> Result<()> {
+    let device: Option<(String, Option<String>)> = sqlx::query_as("SELECT id, workspace_id FROM devices WHERE id = ?")
+        .bind(device_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| Error::DatabaseError(format!("database error: {}", e)))?;
 
     let (_current_id, current_ws) = device.ok_or(Error::NotFound)?;
 
@@ -729,11 +724,7 @@ pub(crate) async fn update_workspace_resource(
     find_workspace_resource(pool, workspace_id, resource_id).await
 }
 
-pub(crate) async fn delete_workspace_resource(
-    pool: &SqlitePool,
-    workspace_id: &str,
-    resource_id: &str,
-) -> Result<()> {
+pub(crate) async fn delete_workspace_resource(pool: &SqlitePool, workspace_id: &str, resource_id: &str) -> Result<()> {
     sqlx::query("DELETE FROM resources WHERE workspace_id = ? AND id = ?")
         .bind(workspace_id)
         .bind(resource_id)
@@ -818,17 +809,12 @@ pub(crate) async fn search_workspace_resources(
 }
 
 pub(crate) async fn find_all_workspace_ids(pool: &SqlitePool) -> Result<Vec<String>> {
-    let rows: Vec<(String,)> = sqlx::query_as("SELECT id FROM workspaces")
-        .fetch_all(pool)
-        .await?;
+    let rows: Vec<(String,)> = sqlx::query_as("SELECT id FROM workspaces").fetch_all(pool).await?;
     Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 
 /// 租户下第一个 workspace id — 自 cloud auth 社交登录段收编。
-pub(crate) async fn find_first_workspace_id_by_tenant(
-    pool: &SqlitePool,
-    tenant_id: &str,
-) -> Result<Option<String>> {
+pub(crate) async fn find_first_workspace_id_by_tenant(pool: &SqlitePool, tenant_id: &str) -> Result<Option<String>> {
     let id: Option<String> = sqlx::query_scalar("SELECT id FROM workspaces WHERE tenant_id = ? LIMIT 1")
         .bind(tenant_id)
         .fetch_optional(pool)
@@ -1045,15 +1031,10 @@ impl Db {
     }
 
     /// 登录上下文 workspace：优先 `user_ws_id`，否则租户下第一个。
-    pub async fn find_workspace_id_for_login(
-        &self,
-        user_ws_id: &str,
-        tenant_id: &str,
-    ) -> Result<Option<String>> {
+    pub async fn find_workspace_id_for_login(&self, user_ws_id: &str, tenant_id: &str) -> Result<Option<String>> {
         find_workspace_id_for_login(self.pool(), user_ws_id, tenant_id).await
     }
 }
-
 
 #[cfg(test)]
 mod extract_tests {

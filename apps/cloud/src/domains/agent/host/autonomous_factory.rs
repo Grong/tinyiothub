@@ -24,10 +24,10 @@ use anyhow::anyhow;
 use dashmap::DashMap;
 use sqlx::SqlitePool;
 use tinyiothub_agent::memory::workspace_memory::WorkspaceScopedMemory;
+use tinyiothub_agent::pool::ProviderFactory;
 use tinyiothub_agent::runtime::thing_agent::{AgentHandle, RunContextInner, manager::AutonomousAgentProvider};
 use tinyiothub_storage::Db;
 use tokio::sync::RwLock;
-use tinyiothub_agent::pool::ProviderFactory;
 use zeroclaw::{
     agent::{dispatcher::NativeToolDispatcher, prompt::SystemPromptBuilder},
     memory::Memory,
@@ -37,8 +37,8 @@ use zeroclaw::{
 };
 
 use super::tools::{
-    AutonomousInvokeActionTool, RunContextSlot, ThingToolContext, create_thing_tools,
-    new_run_context_slot, thing::InvokeActionTool,
+    AutonomousInvokeActionTool, RunContextSlot, ThingToolContext, create_thing_tools, new_run_context_slot,
+    thing::InvokeActionTool,
 };
 use crate::domains::event::{bus::ThingEventBus, router::ThrottleState};
 

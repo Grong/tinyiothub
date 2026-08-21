@@ -181,7 +181,9 @@ pub(crate) async fn create_batch_command(
         });
     }
 
-    let batch = find_batch_command_by_id(pool, &batch_id).await?.expect("Batch just created");
+    let batch = find_batch_command_by_id(pool, &batch_id)
+        .await?
+        .expect("Batch just created");
 
     Ok(BatchCommandWithItems { batch, items })
 }

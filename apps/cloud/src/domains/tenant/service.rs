@@ -57,21 +57,13 @@ impl TenantService {
 
     /// Check if tenant has quota for a resource
     pub async fn check_quota(&self, tenant_id: &str, resource: &str) -> Result<bool> {
-        let tenant = self
-            .db
-            .find_tenant_by_id(tenant_id)
-            .await?
-            .ok_or(Error::NotFound)?;
+        let tenant = self.db.find_tenant_by_id(tenant_id).await?.ok_or(Error::NotFound)?;
         let plan = self
             .db
             .find_subscription_plan_by_id(&tenant.plan_id)
             .await?
             .ok_or(Error::NotFound)?;
-        let usage = self
-            .db
-            .get_tenant_usage(tenant_id)
-            .await?
-            .ok_or(Error::NotFound)?;
+        let usage = self.db.get_tenant_usage(tenant_id).await?.ok_or(Error::NotFound)?;
 
         match resource {
             RESOURCE_TYPE_DEVICE => Ok(self.check_resource_quota(plan.device_limit, usage.device_count)),

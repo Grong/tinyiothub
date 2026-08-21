@@ -133,10 +133,7 @@ impl ServiceManager {
             registry.register(Box::new(tinyiothub_runtime::EventRetentionExecutor::new(Arc::new(
                 crate::shared::runtime_ports::EventRetentionAdapter((*app_state.db).clone()),
             ))));
-            let cron_scheduler = tinyiothub_scheduler::CronSchedulerService::new(
-                app_state.db.clone(),
-                registry,
-            );
+            let cron_scheduler = tinyiothub_scheduler::CronSchedulerService::new(app_state.db.clone(), registry);
             let cron_handle = cron_scheduler.start();
             self.service_handles.write().await.push(cron_handle);
             *self.cron_scheduler.write().await = Some(cron_scheduler);
@@ -198,13 +195,11 @@ impl ServiceManager {
             // 捕获。外部（MCP）工具工厂按需从 MCP_REGISTRY 派生（G3 —
             // 单一事实源，无第二注册静态）。
             let tool_registry = app_state.agent_pool.tool_registry();
-            tool_registry.register_provider(
-                crate::domains::agent::host::tools::chat_builtin_tools_provider(
-                    app_state.db.pool().clone(),
-                    Some(app_state.device_cache.clone()),
-                    app_state.pending_actions.clone(),
-                ),
-            );
+            tool_registry.register_provider(crate::domains::agent::host::tools::chat_builtin_tools_provider(
+                app_state.db.pool().clone(),
+                Some(app_state.device_cache.clone()),
+                app_state.pending_actions.clone(),
+            ));
             tool_registry.set_external_tool_factory(Arc::new(|| {
                 crate::domains::agent::host::ports::external_tool_registry()
             }));
@@ -396,10 +391,7 @@ impl ServiceManager {
         Ok(())
     }
 
-    async fn perform_health_check(
-        data_server: &DataServer,
-        db: &Arc<tinyiothub_storage::Db>,
-    ) -> Result<(), Error> {
+    async fn perform_health_check(data_server: &DataServer, db: &Arc<tinyiothub_storage::Db>) -> Result<(), Error> {
         match db.ping().await {
             Ok(_) => {
                 tracing::debug!("Database health check passed");

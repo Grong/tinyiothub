@@ -20,8 +20,7 @@ use super::trust::TrustAwareTool;
 /// 内建工具 provider：给定 workspace 与运行时句柄，产出工具及其安全分级。
 /// 组合层注册（闭包捕获 db pool / device cache / pending-action store 等
 /// 数据句柄 —— D2：这些类型不进本 crate）。
-pub type ToolProvider =
-    Arc<dyn Fn(&str, &ToolRuntimeContext) -> Vec<(Box<dyn Tool>, ToolSafety)> + Send + Sync>;
+pub type ToolProvider = Arc<dyn Fn(&str, &ToolRuntimeContext) -> Vec<(Box<dyn Tool>, ToolSafety)> + Send + Sync>;
 
 /// 外部工具 registry 工厂：按需派生（G3 —— 单一事实源在组合层，本 crate
 /// 不持有第二个注册静态）。
@@ -60,7 +59,11 @@ impl ToolRegistry {
     }
 
     fn providers(&self) -> Vec<ToolProvider> {
-        self.inner.read().expect("tool registry lock poisoned").providers.clone()
+        self.inner
+            .read()
+            .expect("tool registry lock poisoned")
+            .providers
+            .clone()
     }
 
     pub(crate) fn external_registry(&self) -> Option<Arc<dyn ExternalToolRegistry>> {
@@ -117,7 +120,8 @@ impl ToolRegistry {
                 let description = meta.description.clone();
                 let input_schema = meta.input_schema.clone();
                 if let Some(handler) = registry.get_handler(&name).await {
-                    let adapter = IoTToolAdapter::new(name, description, input_schema, handler, workspace_id.to_string());
+                    let adapter =
+                        IoTToolAdapter::new(name, description, input_schema, handler, workspace_id.to_string());
                     let safety = adapter.safety();
                     tools.push((Box::new(adapter), safety));
                 }
@@ -280,10 +284,7 @@ mod tests {
                     },
                 ]
             }
-            async fn get_handler(
-                &self,
-                _name: &str,
-            ) -> Option<Arc<dyn super::super::external::ExternalToolHandler>> {
+            async fn get_handler(&self, _name: &str) -> Option<Arc<dyn super::super::external::ExternalToolHandler>> {
                 Some(Arc::new(StubExternalHandler))
             }
         }

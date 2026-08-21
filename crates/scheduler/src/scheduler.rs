@@ -86,11 +86,7 @@ impl CronSchedulerService {
 }
 
 /// Single polling cycle: find due jobs and execute them with concurrency limit.
-async fn tick_impl(
-    db: Arc<Db>,
-    registry: Arc<ExecutorRegistry>,
-    max_concurrent: usize,
-) -> Result<()> {
+async fn tick_impl(db: Arc<Db>, registry: Arc<ExecutorRegistry>, max_concurrent: usize) -> Result<()> {
     let jobs = db.find_due_cron_jobs().await?;
 
     if jobs.is_empty() {
@@ -131,11 +127,7 @@ async fn tick_impl(
 }
 
 /// Execute a single cron job: atomically claim, create run record, execute, update stats.
-async fn execute_job(
-    job: CronJob,
-    db: Arc<Db>,
-    registry: Arc<ExecutorRegistry>,
-) -> Result<()> {
+async fn execute_job(job: CronJob, db: Arc<Db>, registry: Arc<ExecutorRegistry>) -> Result<()> {
     // Atomically claim the job (prevents race between scheduler and manual trigger)
     let claimed = match db.claim_cron_job(&job.id).await {
         Ok(true) => true,

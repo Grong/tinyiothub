@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tinyiothub_edge::config::EdgeConfig;
 use tinyiothub_edge::modules::config_mgmt::ConfigService;
-use tinyiothub_storage::{Db, DatabaseConfig, create_pool_without_migrations};
+use tinyiothub_storage::{DatabaseConfig, Db, create_pool_without_migrations};
 
 async fn test_db() -> Arc<Db> {
     let config = DatabaseConfig {

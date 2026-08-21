@@ -26,7 +26,8 @@ impl BatchCommandExecutor {
         batch_id: &str,
     ) -> BatchCommandResult<BatchCommandWithItems> {
         // Get batch with items
-        let batch_with_items = db.get_batch_command_with_items(batch_id)
+        let batch_with_items = db
+            .get_batch_command_with_items(batch_id)
             .await?
             .ok_or_else(|| BatchCommandError::NotFound(batch_id.to_string()))?;
 
@@ -43,9 +44,9 @@ impl BatchCommandExecutor {
             }
 
             // Update item to sent
-            if let Err(e) =
-                db.update_batch_command_item_status(&item.id, "sent", Some("Command sent to device"), None)
-                    .await
+            if let Err(e) = db
+                .update_batch_command_item_status(&item.id, "sent", Some("Command sent to device"), None)
+                .await
             {
                 tracing::error!("Failed to update item {} status: {}", item.id, e);
             }
@@ -62,29 +63,32 @@ impl BatchCommandExecutor {
             {
                 Ok(command_id) => {
                     // Update item as success
-                    let _ = db.update_batch_command_item_status(
-                        &item.id,
-                        "success",
-                        Some(&format!("Command sent successfully: {}", command_id)),
-                        Some(&command_id),
-                    )
-                    .await;
+                    let _ = db
+                        .update_batch_command_item_status(
+                            &item.id,
+                            "success",
+                            Some(&format!("Command sent successfully: {}", command_id)),
+                            Some(&command_id),
+                        )
+                        .await;
                 }
                 Err(e) => {
                     // Update item as failure
-                    let _ = db.update_batch_command_item_status(
-                        &item.id,
-                        "failure",
-                        Some(&format!("Failed to send command: {}", e)),
-                        None,
-                    )
-                    .await;
+                    let _ = db
+                        .update_batch_command_item_status(
+                            &item.id,
+                            "failure",
+                            Some(&format!("Failed to send command: {}", e)),
+                            None,
+                        )
+                        .await;
                 }
             }
         }
 
         // Refresh batch with updated items
-        let updated = db.get_batch_command_with_items(batch_id)
+        let updated = db
+            .get_batch_command_with_items(batch_id)
             .await?
             .expect("Batch must exist");
 

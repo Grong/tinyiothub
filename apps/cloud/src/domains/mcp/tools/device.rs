@@ -14,8 +14,8 @@ use crate::domains::thing::legacy::device_query::{
     find_device_by_id, find_device_by_id_with_tags, load_tags_for_devices,
 };
 
-use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
 use crate::domains::mcp::McpState;
+use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
 
 /// Tool input: Get single device
 #[derive(Debug, Deserialize)]
@@ -239,7 +239,9 @@ impl ToolHandler for DevicePropertyGetHandler {
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.device_id)))?;
 
-        let all_properties = state.db().find_device_properties_by_device_id(&input.device_id)
+        let all_properties = state
+            .db()
+            .find_device_properties_by_device_id(&input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -351,7 +353,9 @@ impl ToolHandler for WritePropertiesHandler {
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.device_id)))?;
 
-        let device_properties = state.db().find_device_properties_by_device_id(&input.device_id)
+        let device_properties = state
+            .db()
+            .find_device_properties_by_device_id(&input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -502,7 +506,9 @@ impl ToolHandler for DeviceCommandHandler {
             .unwrap());
         }
 
-        let command = state.db().find_device_command_by_device_and_name(&input.device_id, &input.command_name)
+        let command = state
+            .db()
+            .find_device_command_by_device_and_name(&input.device_id, &input.command_name)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 

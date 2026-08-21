@@ -142,7 +142,10 @@ impl GatewayService {
             .await
             .is_err()
         {
-            let _ = self.database_for_repos.delete_device(Some(&workspace_id), &device_id).await;
+            let _ = self
+                .database_for_repos
+                .delete_device(Some(&workspace_id), &device_id)
+                .await;
             // Restore the code to cache so the gateway can still be paired
             self.cache
                 .insert(

@@ -6,11 +6,11 @@
 
 use std::sync::Arc;
 
-use tinyiothub_agent::pool::AgentPool;
 use crate::domains::auth::redis::RedisClient;
 use crate::domains::driver::legacy::{
     DeviceMonitoringService, DevicePerformanceService, DeviceQueryService, DeviceService,
 };
+use tinyiothub_agent::pool::AgentPool;
 
 use crate::domains::notify::channels::NotificationChannelFactory;
 use crate::domains::notify::service::NotificationManager;
@@ -258,8 +258,7 @@ impl AppState {
 
         // 基础服务 - 使用事件总线
         let device_service = Arc::new(
-            DeviceService::with_event_bus(database.clone(), event_bus.clone())
-                .with_tag_repository(database.clone()),
+            DeviceService::with_event_bus(database.clone(), event_bus.clone()).with_tag_repository(database.clone()),
         );
         let device_query_service: Arc<dyn DeviceQueryService> = Arc::new(
             crate::domains::driver::legacy::SqliteDeviceQueryService::new(database.as_ref().clone()),
@@ -315,11 +314,8 @@ impl AppState {
         // Task 7 起 AgentPool 不再持有存储句柄（db_pool/memory_store/
         // memory_service）；调用方按请求注入。
         let agent_pool: Arc<AgentPool> = Arc::new(
-            AgentPool::new(
-                &agent_settings,
-                tinyiothub_agent::pool::minimax_provider_factory(),
-            )
-            .expect("failed to build AgentPool"),
+            AgentPool::new(&agent_settings, tinyiothub_agent::pool::minimax_provider_factory())
+                .expect("failed to build AgentPool"),
         );
 
         alarm_service.set_device_cache(device_cache.clone());

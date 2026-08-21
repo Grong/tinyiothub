@@ -41,7 +41,8 @@ impl PolicyEngine for SqlitePolicyEngine {
     }
 
     async fn add_rule(&self, rule: PolicyRule) -> anyhow::Result<()> {
-        sqlx::query( // guard-exempt: policy trait impl（Task 12 裁决）
+        sqlx::query(
+            // guard-exempt: policy trait impl（Task 12 裁决）
             "INSERT INTO policy_rules (id, workspace_id, category, action, target, priority, reason)
              VALUES (?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
@@ -81,7 +82,8 @@ impl SqlitePolicyEngine {
     /// Load a workspace's rules sorted by priority desc (rowid as the stable
     /// tiebreaker). Rows whose category/action strings don't parse are skipped.
     async fn load_rules(&self, workspace_id: &str) -> anyhow::Result<Vec<PolicyRule>> {
-        let rows = sqlx::query( // guard-exempt: policy trait impl（Task 12 裁决）
+        let rows = sqlx::query(
+            // guard-exempt: policy trait impl（Task 12 裁决）
             "SELECT id, workspace_id, category, action, target, priority, reason
              FROM policy_rules WHERE workspace_id = ? ORDER BY priority DESC, rowid",
         )
@@ -124,7 +126,9 @@ mod tests {
             .connect(":memory:")
             .await
             .expect("create in-memory sqlite");
-        tinyiothub_storage::migrations::run_migrations(&pool).await.expect("run migrations");
+        tinyiothub_storage::migrations::run_migrations(&pool)
+            .await
+            .expect("run migrations");
         pool
     }
 

@@ -3,7 +3,7 @@
 // 随 Db::connect 统一迁移而删除。
 use super::error::EdgeResult;
 use std::sync::Arc;
-use tinyiothub_storage::{Db, DatabaseConfig, create_pool_without_migrations};
+use tinyiothub_storage::{DatabaseConfig, Db, create_pool_without_migrations};
 
 /// Initialize the SQLite database and return an Arc<Db>.
 pub async fn init_database(db_path: &str) -> EdgeResult<Arc<Db>> {

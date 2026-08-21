@@ -230,7 +230,9 @@ mod tests {
             .connect(":memory:")
             .await
             .expect("in-memory sqlite");
-        tinyiothub_storage::migrations::run_migrations(&pool).await.expect("run migrations");
+        tinyiothub_storage::migrations::run_migrations(&pool)
+            .await
+            .expect("run migrations");
         tinyiothub_storage::Db::new(pool)
     }
 

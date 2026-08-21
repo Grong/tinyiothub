@@ -700,9 +700,7 @@ pub(crate) async fn update_user_last_login(pool: &SqlitePool, id: &str) -> Resul
 }
 
 pub(crate) async fn get_user_statistics(pool: &SqlitePool) -> Result<UserStatisticsNew> {
-    let total_users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
-        .fetch_one(pool)
-        .await?;
+    let total_users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users").fetch_one(pool).await?;
 
     let enabled_users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE is_enabled = true")
         .fetch_one(pool)
@@ -915,7 +913,10 @@ impl Db {
 // ──────────────────────────────────────────────
 
 /// 查询用户 display_name。
-pub(crate) async fn find_user_display_name(pool: &SqlitePool, user_id: &str) -> std::result::Result<Option<String>, sqlx::Error> {
+pub(crate) async fn find_user_display_name(
+    pool: &SqlitePool,
+    user_id: &str,
+) -> std::result::Result<Option<String>, sqlx::Error> {
     let row: Option<(Option<String>,)> = sqlx::query_as("SELECT display_name FROM users WHERE id = ?")
         .bind(user_id)
         .fetch_optional(pool)
@@ -929,7 +930,6 @@ impl Db {
         find_user_display_name(self.pool(), user_id).await
     }
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -376,14 +376,19 @@ mod tests {
     #[tokio::test]
     async fn test_complete_run_not_found() {
         let db = setup_db().await;
-        let result = db.complete_cron_run("nonexistent", "ws-1", "success", None, None, 100).await;
+        let result = db
+            .complete_cron_run("nonexistent", "ws-1", "success", None, None, 100)
+            .await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_find_by_id() {
         let db = setup_db().await;
-        let run = db.create_cron_run("job-1", "ws-1", "manual", Some("user-1")).await.unwrap();
+        let run = db
+            .create_cron_run("job-1", "ws-1", "manual", Some("user-1"))
+            .await
+            .unwrap();
 
         let found = db.find_cron_run_by_id(&run.id, "ws-1").await.unwrap();
         assert!(found.is_some());

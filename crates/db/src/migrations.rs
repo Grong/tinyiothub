@@ -25,13 +25,9 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // 迁移在专用连接上以 FK OFF 运行；pragma 是连接级设置，
     // 归还连接池前恢复 ON，运行期连接的 FK 行为不受影响。
     let mut mig_conn = pool.acquire().await?;
-    sqlx::query("PRAGMA foreign_keys = OFF")
-        .execute(&mut *mig_conn)
-        .await?;
+    sqlx::query("PRAGMA foreign_keys = OFF").execute(&mut *mig_conn).await?;
     let mig_result = migrator.run(&mut *mig_conn).await;
-    sqlx::query("PRAGMA foreign_keys = ON")
-        .execute(&mut *mig_conn)
-        .await?;
+    sqlx::query("PRAGMA foreign_keys = ON").execute(&mut *mig_conn).await?;
     drop(mig_conn);
     mig_result.map_err(|e| {
         sqlx::Error::Configuration(
@@ -162,9 +158,7 @@ mod tests {
         run_migrations(&pool).await.unwrap();
 
         // seed_system 提供 subscription_plans → 默认租户/工作区链（Task 3）。
-        crate::seed::seed_system(&crate::Db::new(pool.clone()))
-            .await
-            .unwrap();
+        crate::seed::seed_system(&crate::Db::new(pool.clone())).await.unwrap();
         sqlx::query("INSERT INTO devices (id, name, workspace_id, created_at, updated_at) VALUES ('d1','gw','ws-default-001','2025-01-01','2025-01-01')")
             .execute(&pool).await.unwrap();
 

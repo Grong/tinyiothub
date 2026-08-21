@@ -347,7 +347,10 @@ impl ThingService {
         resource_id: &str,
         workspace_id: &str,
     ) -> Result<(), ThingError> {
-        let affected = self.db.detach_thing_resource(thing_id, resource_id, workspace_id).await?;
+        let affected = self
+            .db
+            .detach_thing_resource(thing_id, resource_id, workspace_id)
+            .await?;
         if affected == 0 {
             return Err(ThingError::NotFound(format!(
                 "resource {} not found on thing {}",
@@ -377,7 +380,10 @@ impl ThingService {
             .await?
             .ok_or_else(|| ThingError::NotFound(thing_id.to_string()))?;
 
-        let affected = self.db.attach_thing_resource(thing_id, resource_id, workspace_id).await?;
+        let affected = self
+            .db
+            .attach_thing_resource(thing_id, resource_id, workspace_id)
+            .await?;
         if affected == 0 {
             return Err(ThingError::NotFound(format!("resource {} not found", resource_id)));
         }

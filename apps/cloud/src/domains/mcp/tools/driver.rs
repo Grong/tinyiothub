@@ -9,9 +9,9 @@ use serde_json::Value;
 
 use tinyiothub_runtime::driver;
 
+use crate::domains::mcp::McpState;
 use crate::domains::mcp::handlers::get_mcp_context;
 use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::domains::mcp::McpState;
 
 /// Driver list response
 #[derive(Debug, Serialize)]

@@ -732,9 +732,7 @@ mod tests {
     use sqlx::SqlitePool;
 
     use super::*;
-    use tinyiothub_agent::tools::{
-        ExternalToolContext, ExternalToolHandler, ExternalToolMeta, ExternalToolRegistry,
-    };
+    use tinyiothub_agent::tools::{ExternalToolContext, ExternalToolHandler, ExternalToolMeta, ExternalToolRegistry};
 
     #[derive(Clone)]
     struct RecordingHandler {

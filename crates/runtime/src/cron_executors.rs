@@ -52,11 +52,11 @@ impl JobExecutor for DeviceCommandExecutor {
             .await
             .map_err(|e| ExecutorError::InvalidConfig(format!("DB error looking up command: {}", e)))?
             .ok_or_else(|| {
-            ExecutorError::InvalidConfig(format!(
-                "command '{}' not found for device '{}'",
-                command_name, device_id
-            ))
-        })?;
+                ExecutorError::InvalidConfig(format!(
+                    "command '{}' not found for device '{}'",
+                    command_name, device_id
+                ))
+            })?;
 
         // Apply params from job config if provided
         if let Some(params) = job.target_command_params() {

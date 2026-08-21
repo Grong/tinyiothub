@@ -14,8 +14,7 @@ use serde_json::Value;
 use tower::ServiceExt;
 
 use crate::test_utils::{
-    auth_header, create_test_token_with_workspace, response_parts, test_app_state_on_pool,
-    test_settings,
+    auth_header, create_test_token_with_workspace, response_parts, test_app_state_on_pool, test_settings,
 };
 
 /// Boot the real path: Db::connect (pool + migrations + FK enforcement) on a
@@ -24,11 +23,7 @@ async fn boot_app(demo_data: bool) -> (axum::Router, sqlx::SqlitePool, std::path
     let mut settings = test_settings();
     settings.seed.demo_data = demo_data;
 
-    let path = std::env::temp_dir().join(format!(
-        "tih-seed-e2e-{}-{}.db",
-        std::process::id(),
-        demo_data
-    ));
+    let path = std::env::temp_dir().join(format!("tih-seed-e2e-{}-{}.db", std::process::id(), demo_data));
     let _ = std::fs::remove_file(&path);
 
     let db_config = tinyiothub_storage::DatabaseConfig {
@@ -38,12 +33,8 @@ async fn boot_app(demo_data: bool) -> (axum::Router, sqlx::SqlitePool, std::path
         acquire_timeout_secs: 30,
         idle_timeout_secs: 600,
     };
-    let db = tinyiothub_storage::Db::connect(&db_config)
-        .await
-        .expect("Db::connect");
-    crate::bootstrap::run_seeds(&db, &settings)
-        .await
-        .expect("run_seeds");
+    let db = tinyiothub_storage::Db::connect(&db_config).await.expect("Db::connect");
+    crate::bootstrap::run_seeds(&db, &settings).await.expect("run_seeds");
 
     let pool = db.pool().clone();
     let app_state = test_app_state_on_pool(pool.clone()).await;

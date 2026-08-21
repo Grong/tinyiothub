@@ -21,14 +21,9 @@ pub async fn context_middleware(
     let path = request.uri().path().to_string();
 
     // Try to extract and validate JWT token
-    let user_info = extract_user_from_jwt(
-        request.headers(),
-        request.uri(),
-        Some(&state.db),
-        &state.jwt_service,
-    )
-    .await
-    .unwrap_or_default();
+    let user_info = extract_user_from_jwt(request.headers(), request.uri(), Some(&state.db), &state.jwt_service)
+        .await
+        .unwrap_or_default();
 
     // Create context with user information
     let ctx = ReqCtx {
@@ -134,7 +129,9 @@ pub async fn jwt_auth_middleware(
         Ok(claims) => {
             tracing::debug!("JWT validation successful for user: {} at: {}", claims.username, uri);
             // Add claims to request extensions for handlers to use
-            request.extensions_mut().insert(tinyiothub_web::security::Claims::from(claims));
+            request
+                .extensions_mut()
+                .insert(tinyiothub_web::security::Claims::from(claims));
             next.run(request).await
         }
         Err(e) => {

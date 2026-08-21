@@ -59,11 +59,7 @@ impl PersistenceEventHandler {
             Self::start_flush_task(buffer.clone(), db.clone(), config.flush_interval);
         }
 
-        Self {
-            db,
-            buffer,
-            config,
-        }
+        Self { db, buffer, config }
     }
 
     /// 判断是否应该持久化

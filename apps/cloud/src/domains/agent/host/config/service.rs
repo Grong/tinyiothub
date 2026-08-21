@@ -9,9 +9,7 @@ use sqlx::SqlitePool;
 use tinyiothub_storage::Db;
 
 use tinyiothub_agent::AgentError;
-use tinyiothub_agent::config::{
-    AgentConfig, AgentInfo, AgentRuntimeConfig, compute_hash, default_agent_config,
-};
+use tinyiothub_agent::config::{AgentConfig, AgentInfo, AgentRuntimeConfig, compute_hash, default_agent_config};
 
 // ============================================================================
 // Agent CRUD (moved from host/agent/config.rs)

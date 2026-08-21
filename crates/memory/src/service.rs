@@ -295,9 +295,9 @@ impl MemoryService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tinyiothub_llm::provider::LlmResponse;
     use async_trait::async_trait;
     use std::sync::Mutex;
+    use tinyiothub_llm::provider::LlmResponse;
 
     struct MockLlmProvider {
         responses: Mutex<Vec<String>>,

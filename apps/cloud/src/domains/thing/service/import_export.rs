@@ -475,7 +475,9 @@ pub async fn save_template(
         )));
     }
 
-    db.insert_parsed_thing_template(template, workspace_id).await.map_err(ImportError::from)
+    db.insert_parsed_thing_template(template, workspace_id)
+        .await
+        .map_err(ImportError::from)
 }
 
 /// Load a template from thing_templates by ID.

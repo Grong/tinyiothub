@@ -119,10 +119,12 @@ pub async fn seed_test_workspace(pool: &sqlx::SqlitePool, tenant_id: &str, works
 
     // tenants.plan_id → subscription_plans FK。seed_system（Task 3）会预置
     // plan_free，但本夹具只播种自己的租户/工作区、不跑 seed_system，故保留此行。
-    sqlx::query("INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free', 'free', 'Free')")
-        .execute(pool)
-        .await
-        .expect("Failed to seed subscription plan");
+    sqlx::query(
+        "INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free', 'free', 'Free')",
+    )
+    .execute(pool)
+    .await
+    .expect("Failed to seed subscription plan");
 
     sqlx::query(
         "INSERT OR IGNORE INTO tenants (id, name, slug, status, plan_id, subscription_status, timezone, locale, created_at, updated_at) VALUES (?, ?, ?, 'active', 'plan_free', 'active', 'UTC', 'zh-CN', ?, ?)",
@@ -167,10 +169,12 @@ async fn create_test_app_state() -> AppState {
 
     // tenants.plan_id → subscription_plans FK：多数 handler 测试需要默认租户链
     // 可插入；本夹具不跑 seed_system（避免种子行干扰行数断言），故保留此行。
-    sqlx::query("INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free', 'free', 'Free')")
-        .execute(&pool)
-        .await
-        .expect("Failed to seed subscription plan");
+    sqlx::query(
+        "INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free', 'free', 'Free')",
+    )
+    .execute(&pool)
+    .await
+    .expect("Failed to seed subscription plan");
 
     test_app_state_on_pool(pool).await
 }

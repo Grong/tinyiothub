@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use tinyiothub_core::models::device::CreateDeviceRequest;
-use tinyiothub_storage::{Db, DatabaseConfig, create_pool_without_migrations};
+use tinyiothub_storage::{DatabaseConfig, Db, create_pool_without_migrations};
 
 use tinyiothub_edge::modules::device::DeviceService;
 
@@ -44,9 +44,15 @@ async fn test_list_devices_with_driver_filter() {
     let db = setup_test_repo().await.unwrap();
 
     // Insert devices via the db directly
-    db.create_device(None, &make_create_request("dev-a", "modbus")).await.unwrap();
-    db.create_device(None, &make_create_request("dev-b", "onvif")).await.unwrap();
-    db.create_device(None, &make_create_request("dev-c", "modbus")).await.unwrap();
+    db.create_device(None, &make_create_request("dev-a", "modbus"))
+        .await
+        .unwrap();
+    db.create_device(None, &make_create_request("dev-b", "onvif"))
+        .await
+        .unwrap();
+    db.create_device(None, &make_create_request("dev-c", "modbus"))
+        .await
+        .unwrap();
 
     let svc = DeviceService::new(db);
 
@@ -68,7 +74,10 @@ async fn test_list_devices_with_driver_filter() {
 #[tokio::test]
 async fn test_get_device_found() {
     let db = setup_test_repo().await.unwrap();
-    let created = db.create_device(None, &make_create_request("my-device", "modbus")).await.unwrap();
+    let created = db
+        .create_device(None, &make_create_request("my-device", "modbus"))
+        .await
+        .unwrap();
 
     let svc = DeviceService::new(db);
 
@@ -113,11 +122,14 @@ async fn test_get_driver_for_device_has_driver() {
 async fn test_get_driver_for_device_no_driver() {
     let db = setup_test_repo().await.unwrap();
     let created = db
-        .create_device(None, &CreateDeviceRequest {
-            name: "no-driver-device".to_string(),
-            driver_name: None,
-            ..Default::default()
-        })
+        .create_device(
+            None,
+            &CreateDeviceRequest {
+                name: "no-driver-device".to_string(),
+                driver_name: None,
+                ..Default::default()
+            },
+        )
         .await
         .unwrap();
 

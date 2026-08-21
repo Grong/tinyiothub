@@ -5,8 +5,8 @@ use axum::{
     routing::get,
 };
 use serde::Deserialize;
-use tinyiothub_web::security::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::security::Claims;
 use tracing::{error, info};
 
 use tinyiothub_storage::device::{DeviceStatusDistribution, QuickDevice};

@@ -72,9 +72,7 @@ pub(crate) async fn find_driver_installations_by_workspace(
     .await
 }
 
-pub(crate) async fn find_all_driver_installations(
-    pool: &SqlitePool,
-) -> Result<Vec<DriverInstallation>, sqlx::Error> {
+pub(crate) async fn find_all_driver_installations(pool: &SqlitePool) -> Result<Vec<DriverInstallation>, sqlx::Error> {
     sqlx::query_as::<_, DriverInstallation>("SELECT * FROM driver_installations ORDER BY workspace_id, driver_name")
         .fetch_all(pool)
         .await
@@ -121,10 +119,7 @@ impl Db {
     }
 
     /// 按行 ID 查驱动安装记录。
-    pub async fn find_driver_installation_by_id(
-        &self,
-        id: i64,
-    ) -> Result<Option<DriverInstallation>, sqlx::Error> {
+    pub async fn find_driver_installation_by_id(&self, id: i64) -> Result<Option<DriverInstallation>, sqlx::Error> {
         find_driver_installation_by_id(self.pool(), id).await
     }
 

@@ -282,10 +282,7 @@ async fn wechat_callback(State(state): State<AppState>, Query(params): Query<WeC
         .unwrap_or_else(|| "default".to_string());
 
     // 查找该租户的第一个 workspace 作为默认 workspace
-    let workspace_id: Option<String> = db
-        .find_first_workspace_id_by_tenant(&tenant_id)
-        .await
-        .unwrap_or(None);
+    let workspace_id: Option<String> = db.find_first_workspace_id_by_tenant(&tenant_id).await.unwrap_or(None);
 
     let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
     let jwt_token = match state.jwt_service.generate_token(

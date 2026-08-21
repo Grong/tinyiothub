@@ -149,17 +149,20 @@ async fn build_snapshot_prewarms_heartbeat_state_and_recent_runs_oldest_first() 
     db.insert_heartbeat_task("ws1", "P1", "巡检设备在线率")
         .await
         .expect("insert task");
-    let trust = TrustConfig { max_auto_actions_per_tick: 7, ..Default::default() };
+    let trust = TrustConfig {
+        max_auto_actions_per_tick: 7,
+        ..Default::default()
+    };
     db.save_heartbeat_trust_config("ws1", &trust).await.expect("save trust");
     db.save_heartbeat_config(
-            "ws1",
-            &WorkspaceHeartbeatConfig {
-                enabled: true,
-                interval_minutes: 45,
-            },
-        )
-        .await
-        .expect("save heartbeat config");
+        "ws1",
+        &WorkspaceHeartbeatConfig {
+            enabled: true,
+            interval_minutes: 45,
+        },
+    )
+    .await
+    .expect("save heartbeat config");
 
     // 两条 run：显式 created_at 控制时序（旧→新插入，乱序写库）。
     for (id, age) in [("run_new", "-1 hours"), ("run_old", "-2 hours")] {

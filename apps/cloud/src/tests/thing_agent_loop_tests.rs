@@ -22,11 +22,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tinyiothub_agent::pool::ProviderFactory;
 use crate::domains::agent::host::{
-    autonomous_factory::AutonomousAgentFactory,
-    thing_agent_host::CloudThingAgentHost,
-    tools::DispatchThingTaskTool,
+    autonomous_factory::AutonomousAgentFactory, thing_agent_host::CloudThingAgentHost, tools::DispatchThingTaskTool,
 };
 use crate::domains::event::{
     bus::ThingEventBus,
@@ -34,6 +31,7 @@ use crate::domains::event::{
 };
 use serde_json::json;
 use sqlx::Row;
+use tinyiothub_agent::pool::ProviderFactory;
 use tinyiothub_agent::runtime::thing_agent::{
     DirectiveSink, EnqueueError, Runner, ThingAgentManager, ThingAgentManagerConfig, TriggerSource, WakeSignal,
 };

@@ -48,7 +48,7 @@ async fn list_templates(
     _claims: AuthClaims,
 ) -> Json<ApiResponse<PaginatedResponse<DeviceTemplate>>> {
     // 初始化模板服务
-        let params = TemplateQueryParams {
+    let params = TemplateQueryParams {
         category: query.category,
         manufacturer: query.manufacturer,
         device_type: query.device_type,
@@ -99,7 +99,7 @@ async fn get_template(
     Path(id): Path<String>,
     _claims: AuthClaims,
 ) -> Json<ApiResponse<Option<DeviceTemplate>>> {
-        match state.db.find_thing_template_by_id(&id, "").await {
+    match state.db.find_thing_template_by_id(&id, "").await {
         Ok(template) => ApiResponseBuilder::success(template),
         Err(e) => {
             tracing::error!("Failed to get template {}: {}", id, e);
@@ -113,7 +113,7 @@ async fn get_template_categories(
     State(state): State<AppState>,
     _claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<TemplateCategory>>> {
-        match state.db.list_thing_template_categories().await {
+    match state.db.list_thing_template_categories().await {
         Ok(categories) => ApiResponseBuilder::success(categories),
         Err(e) => {
             tracing::error!("Failed to get template categories: {}", e);
@@ -128,7 +128,7 @@ async fn create_template(
     _claims: AuthClaims,
     Json(req): Json<CreateDeviceTemplateRequest>,
 ) -> Json<ApiResponse<DeviceTemplate>> {
-        // 验证模板名称唯一性
+    // 验证模板名称唯一性
     match state.db.thing_template_exists_by_name(&req.name).await {
         Ok(true) => {
             return ApiResponseBuilder::error("模板名称已存在".to_string());
@@ -158,7 +158,7 @@ async fn update_template(
     _claims: AuthClaims,
     Json(req): Json<UpdateDeviceTemplateRequest>,
 ) -> Json<ApiResponse<DeviceTemplate>> {
-        // 检查模板是否存在
+    // 检查模板是否存在
     match state.db.find_thing_template_by_id(&id, "").await {
         Ok(Some(_template)) => match state.db.update_thing_template(&id, &req).await {
             Ok(updated_template) => ApiResponseBuilder::success(updated_template),
@@ -181,7 +181,7 @@ async fn delete_template(
     Path(id): Path<String>,
     _claims: AuthClaims,
 ) -> Json<ApiResponse<bool>> {
-        match state.db.delete_thing_template(&id).await {
+    match state.db.delete_thing_template(&id).await {
         Ok(deleted) => {
             if deleted {
                 tracing::info!("Template {} deleted successfully", id);
@@ -204,7 +204,7 @@ async fn validate_template_input(
     _claims: AuthClaims,
     Json(input): Json<DeviceCreationInput>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-        // 获取模板
+    // 获取模板
     let template = match state.db.find_thing_template_by_id(&id, "").await {
         Ok(Some(template)) => template,
         Ok(None) => {
@@ -237,7 +237,7 @@ async fn preview_device_from_template(
     _claims: AuthClaims,
     Json(input): Json<DeviceCreationInput>,
 ) -> Json<ApiResponse<DevicePreview>> {
-        // 获取模板
+    // 获取模板
     let _template = match state.db.find_thing_template_by_id(&id, "").await {
         Ok(Some(template)) => template,
         Ok(None) => {

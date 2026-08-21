@@ -72,7 +72,8 @@ impl ThingAgentHost for CloudThingAgentHost {
         let db = tinyiothub_storage::Db::new(self.pool.clone());
         let exists = db.session_exists(session_key).await?;
         anyhow::ensure!(exists, "unknown chat session: {session_key}");
-        db.append_session_message(session_key, "assistant", content, run_id).await?;
+        db.append_session_message(session_key, "assistant", content, run_id)
+            .await?;
         Ok(())
     }
 
@@ -111,8 +112,8 @@ impl ThingAgentHost for CloudThingAgentHost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::Row;
     use crate::domains::agent::host::chat::history::{append_message, ensure_session, list_messages};
+    use sqlx::Row;
 
     async fn test_pool() -> sqlx::SqlitePool {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()

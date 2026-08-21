@@ -301,11 +301,7 @@ impl Alarm {
     pub fn acknowledge(&mut self, user_id: String, note: Option<String>) -> Result<()> {
         if self.status != AlarmStatus::Active {
             return Err(DbError::Validation {
-                message: format!(
-                    "无效的报警状态转换: 从 {} 到 {}",
-                    self.status.as_str(),
-                    "acknowledged"
-                ),
+                message: format!("无效的报警状态转换: 从 {} 到 {}", self.status.as_str(), "acknowledged"),
             });
         }
         self.acknowledgement = Some(Acknowledgement::new(user_id, note));
@@ -316,11 +312,7 @@ impl Alarm {
     pub fn resolve(&mut self, user_id: String, resolution_type: ResolutionType, note: Option<String>) -> Result<()> {
         if !matches!(self.status, AlarmStatus::Active | AlarmStatus::Acknowledged) {
             return Err(DbError::Validation {
-                message: format!(
-                    "无效的报警状态转换: 从 {} 到 {}",
-                    self.status.as_str(),
-                    "resolved"
-                ),
+                message: format!("无效的报警状态转换: 从 {} 到 {}", self.status.as_str(), "resolved"),
             });
         }
         self.resolution = Some(Resolution::new(user_id, resolution_type, note));
@@ -331,11 +323,7 @@ impl Alarm {
     pub fn suppress(&mut self) -> Result<()> {
         if self.status != AlarmStatus::Active {
             return Err(DbError::Validation {
-                message: format!(
-                    "无效的报警状态转换: 从 {} 到 {}",
-                    self.status.as_str(),
-                    "suppressed"
-                ),
+                message: format!("无效的报警状态转换: 从 {} 到 {}", self.status.as_str(), "suppressed"),
             });
         }
         self.status = AlarmStatus::Suppressed;

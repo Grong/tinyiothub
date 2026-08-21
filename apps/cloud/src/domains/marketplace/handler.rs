@@ -9,8 +9,8 @@ use axum::{
 };
 use reqwest::Client;
 use serde::Deserialize;
-use tinyiothub_web::security::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::security::Claims;
 
 use crate::{
     api::middleware::WorkspaceScope,
@@ -330,7 +330,11 @@ async fn publish_template_handler(
     }
 
     let workspace_id_str = workspace_id.as_deref().unwrap_or("");
-    let template = match state.db.find_thing_template_by_id(&req.template_id, workspace_id_str).await {
+    let template = match state
+        .db
+        .find_thing_template_by_id(&req.template_id, workspace_id_str)
+        .await
+    {
         Ok(Some(t)) => {
             if t.is_builtin != 0 {
                 return ApiResponseBuilder::error("内置模板不能发布到市场");

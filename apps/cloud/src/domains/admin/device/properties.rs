@@ -5,9 +5,9 @@ use axum::{
     routing::{get, put},
 };
 use serde::Deserialize;
-use tinyiothub_web::security::Claims;
 use tinyiothub_core::models::device_property::DeviceProperty;
 use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::security::Claims;
 
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::middleware::workspace::WorkspaceScope;

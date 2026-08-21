@@ -1,9 +1,9 @@
 use crate::domains::admin::AdminState;
 use axum::{Router, extract::State, response::Json, routing::get};
 use serde::Deserialize;
-use tinyiothub_web::security::Claims;
 use tinyiothub_storage::Db;
 use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::security::Claims;
 use tracing::info;
 
 use tinyiothub_web::api_response::ApiResponse;
@@ -33,7 +33,10 @@ pub async fn get_dashboard_stats(
     let online_devices = db.count_online_devices(workspace_id.as_deref()).await.unwrap_or(0);
 
     // 获取告警统计
-    let active_alarms = db.count_active_alarms_scoped(workspace_id.as_deref()).await.unwrap_or(0);
+    let active_alarms = db
+        .count_active_alarms_scoped(workspace_id.as_deref())
+        .await
+        .unwrap_or(0);
 
     // 获取系统状态
     let system_status = determine_system_status(online_devices, total_devices, active_alarms);
@@ -86,9 +89,6 @@ pub async fn get_dashboard_metrics(
 }
 
 // 辅助函数
-
-
-
 
 /// 确定系统状态
 fn determine_system_status(online_devices: i64, total_devices: i64, active_alarms: i64) -> String {

@@ -279,7 +279,11 @@ pub async fn update_policy(
         max_actions_per_hour: req.max_actions_per_hour,
     };
 
-    if let Err(e) = state.db.save_autonomy_policy(&workspace_id, &policy, &claims.user_id).await {
+    if let Err(e) = state
+        .db
+        .save_autonomy_policy(&workspace_id, &policy, &claims.user_id)
+        .await
+    {
         tracing::error!(%workspace_id, "Failed to save autonomy policy: {}", e);
         return ApiResponseBuilder::error("保存策略失败");
     }

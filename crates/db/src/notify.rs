@@ -263,7 +263,10 @@ fn escape_like(s: &str) -> String {
 }
 
 /// Get rules by notification method
-pub(crate) async fn get_rules_by_method(pool: &SqlitePool, method: NotificationChannelType) -> Result<Vec<NotificationRule>> {
+pub(crate) async fn get_rules_by_method(
+    pool: &SqlitePool,
+    method: NotificationChannelType,
+) -> Result<Vec<NotificationRule>> {
     let method_str = method.as_str();
     let escaped_method = escape_like(method_str);
     let rows = sqlx::query(
@@ -568,10 +571,9 @@ pub(crate) async fn get_rules_by_event_type(
 
 fn row_to_notification_record(row: &sqlx::sqlite::SqliteRow) -> Result<NotificationRecord> {
     let method_str: String = row.try_get("notification_method")?;
-    let notification_method =
-        NotificationChannelType::parse_str(&method_str).ok_or_else(|| DbError::Validation {
-            message: format!("Invalid notification method: {}", method_str),
-        })?;
+    let notification_method = NotificationChannelType::parse_str(&method_str).ok_or_else(|| DbError::Validation {
+        message: format!("Invalid notification method: {}", method_str),
+    })?;
 
     let status_str: String = row.try_get("status")?;
     let status = NotificationStatus::parse_str(&status_str).ok_or_else(|| DbError::Validation {
@@ -641,7 +643,10 @@ pub(crate) async fn get_records_by_rule(pool: &SqlitePool, rule_id: &str) -> Res
 }
 
 /// Get notification records by status
-pub(crate) async fn get_records_by_status(pool: &SqlitePool, status: NotificationStatus) -> Result<Vec<NotificationRecord>> {
+pub(crate) async fn get_records_by_status(
+    pool: &SqlitePool,
+    status: NotificationStatus,
+) -> Result<Vec<NotificationRecord>> {
     let rows = sqlx::query(
         r#"
         SELECT id, event_id, rule_id, notification_method, recipient,
@@ -733,8 +738,11 @@ pub(crate) async fn cleanup_old_records(pool: &SqlitePool, days: i32) -> Result<
 }
 
 /// Get notification records with pagination
-pub(crate) async fn get_records_paginated(pool: &SqlitePool, offset: u32, limit: u32) -> Result<(Vec<NotificationRecord>, u64)> {
-
+pub(crate) async fn get_records_paginated(
+    pool: &SqlitePool,
+    offset: u32,
+    limit: u32,
+) -> Result<(Vec<NotificationRecord>, u64)> {
     let count_row = sqlx::query("SELECT COUNT(*) as total FROM notification_history")
         .fetch_one(pool)
         .await?;
@@ -867,7 +875,10 @@ pub(crate) async fn update_record_status(
 
 impl Db {
     /// 按渠道方式查询启用规则。
-    pub async fn get_notification_rules_by_method(&self, method: NotificationChannelType) -> Result<Vec<NotificationRule>> {
+    pub async fn get_notification_rules_by_method(
+        &self,
+        method: NotificationChannelType,
+    ) -> Result<Vec<NotificationRule>> {
         get_rules_by_method(self.pool(), method).await
     }
 
@@ -926,7 +937,10 @@ impl Db {
     }
 
     /// 按状态查询投递记录。
-    pub async fn get_notification_records_by_status(&self, status: NotificationStatus) -> Result<Vec<NotificationRecord>> {
+    pub async fn get_notification_records_by_status(
+        &self,
+        status: NotificationStatus,
+    ) -> Result<Vec<NotificationRecord>> {
         get_records_by_status(self.pool(), status).await
     }
 

@@ -3,8 +3,8 @@ use tinyiothub_core::models::user::{CreateUserRequest, UpdateUserRequest};
 use tinyiothub_storage::user::{User, UserQueryParams, UserStatisticsNew};
 
 use tinyiothub_core::error::{Error, Result};
-use tinyiothub_storage::user::UserCriteria;
 use tinyiothub_storage::Db;
+use tinyiothub_storage::user::UserCriteria;
 use tinyiothub_storage::user::UserSortBy;
 use tinyiothub_storage::user::UserSortOrder;
 

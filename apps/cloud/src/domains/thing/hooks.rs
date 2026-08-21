@@ -53,10 +53,6 @@ pub trait ThingActionHooks: Send + Sync {
     fn take_pending(&self, token: &str) -> Option<PendingThingAction>;
 
     /// Run the unified policy confirm gate for one invoke.
-    async fn decide_confirm(
-        &self,
-        workspace_id: &str,
-        action_name: &str,
-        require_confirm: bool,
-    ) -> ThingConfirmVerdict;
+    async fn decide_confirm(&self, workspace_id: &str, action_name: &str, require_confirm: bool)
+    -> ThingConfirmVerdict;
 }

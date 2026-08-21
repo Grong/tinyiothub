@@ -104,10 +104,7 @@ mod tests {
         let err = session_history_json(&pool, "agent:ws_other:agent_main/s1", 50, "ws_mine")
             .await
             .unwrap_err();
-        assert!(matches!(
-            err,
-            tinyiothub_agent::AgentError::NotFound(_)
-        ));
+        assert!(matches!(err, tinyiothub_agent::AgentError::NotFound(_)));
     }
 
     #[tokio::test]
