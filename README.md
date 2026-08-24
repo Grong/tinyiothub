@@ -58,6 +58,8 @@ tinyiothub/
 │   ├── memory/              # Agent 记忆引擎（纯逻辑）
 │   ├── policy/              # 策略门评估（纯逻辑）
 │   ├── skills/              # 技能/信任引擎
+│   ├── agent/               # Agent 共性能力运行时（loop/pool/tools/session/prompt，零 axum/零 sqlx）
+│   ├── authn/               # 认证机制（JWT/SSE token/密码哈希，纯机制）
 │   ├── plugin-sdk/          # 驱动开发 SDK（ABI 契约）
 │   └── macros/              # 过程宏
 ├── drivers/                 # 动态驱动 stub（cdylib，不在 workspace 内）
@@ -355,6 +357,8 @@ web/
 └── vite.config.ts
 ```
 
+设计系统与样式规范见 [web/DESIGN_SYSTEM.md](web/DESIGN_SYSTEM.md)，前端分层规范见 [FRONTEND_LAYERING_GUIDE.md](FRONTEND_LAYERING_GUIDE.md)。
+
 ## API 接口
 
 ### 认证接口
@@ -484,6 +488,8 @@ web/
 - `POST /mcp/sse` - MCP SSE 流式端点
 
 ## 开发指南
+
+贡献流程、分支策略与提交规范见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ### 后端开发
 

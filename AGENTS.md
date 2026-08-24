@@ -58,6 +58,7 @@ apps/* (cloud/edge/marketplace/cli) → crates/* (capability libs) → core
 | `policy` | `tinyiothub_policy` | Policy gate evaluation (pure logic) | HTTP/SQL |
 | `skills` | `tinyiothub_skills` | Skill/tool registries, trust engine | HTTP/SQL |
 | `agent` | `tinyiothub_agent` | Agent 共性能力运行时（loop/pool/tools-framework/session/prompt + memory 纯逻辑；事件溯源契约） | axum, sqlx, tinyiothub_storage, apps/* |
+| `authn` | `tinyiothub_authn` | 认证机制（JWT/SSE token/密码哈希；纯机制，构造注入零全局态） | axum, sqlx, db, tokio 依赖 |
 | `plugin-sdk` | `tinyiothub_plugin_sdk` | Driver-author SDK; ABI contract single source of truth | Depending on runtime/web |
 | `macros` | `tinyiothub_macros` | Proc macros | — |
 | `apps/cloud` (bin) | — | **The relay**: all handlers, all services, all orchestration. `domains/` per business domain | Direct SQL in handlers (use the `db` facade) |
@@ -77,7 +78,7 @@ apps/* (cloud/edge/marketplace/cli) → crates/* (capability libs) → core
 | `web` | Beta | HTTP infrastructure — breaking changes permitted in MINOR with changelog |
 | `db` | Beta | SQLite implementation — schema changes require migration |
 | `runtime` | Beta | EventBus, DataServer — breaking changes permitted in MINOR |
-| `memory`, `scheduler`, `llm`, `policy`, `skills` | Beta | Capability engines |
+| `memory`, `scheduler`, `llm`, `policy`, `skills`, `authn` | Beta | Capability engines |
 | `agent` | Beta | Agent 共性能力运行时（loop/pool/tools/session/prompt） |
 | `macros` | Experimental | Internal proc macros |
 | `apps/*` | Experimental | Deployable binaries (cloud/edge/marketplace/cli) |
@@ -119,6 +120,7 @@ crates/                      # Capability libs — isolated, never orchestrate
   policy/                    # Policy gate evaluation — pure logic (lib tinyiothub_policy)
   skills/                    # Skill/tool registries, trust engine (lib tinyiothub_skills)
   agent/                     # Agent 共性能力运行时 (lib tinyiothub_agent；零 axum/零 sqlx/零存储依赖)
+  authn/                     # 认证机制 — JWT/SSE token/密码哈希 (lib tinyiothub_authn；纯机制零 HTTP)
   plugin-sdk/                # Driver-author SDK (package plugin-sdk, lib tinyiothub_plugin_sdk)
   macros/                    # Proc macros (lib tinyiothub_macros)
 drivers/                     # Dynamic driver stubs (NOT workspace members; cdylib)
@@ -205,7 +207,7 @@ Branch/commit/PR rules:
 
 ## Anti-Patterns
 
-### Structural (enforced by CI architecture checks)
+### Structural (enforced by CI architecture checks — guard scripts live in `scripts/guards/` with deliberate-violation selftests)
 
 - Do not create modules without searching existing domain crates and `crates/web/` for reusable components first.
 - Do not use `dto.rs` naming (use `types.rs`; `modules/marketplace/dto.rs` is a grandfathered external-API contract exception).
