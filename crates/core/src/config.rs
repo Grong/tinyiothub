@@ -1056,3 +1056,13 @@ impl ApplicationSettings {
         self.environment.name == "production"
     }
 }
+
+#[cfg(test)]
+mod seed_config_tests {
+    /// F15 回归钉：demo_data 默认值必须是 false（默认配置的生产部署不
+    /// 附带演示设备）。故意的行为翻转——静默回退到 true 必须变红。
+    #[test]
+    fn demo_data_defaults_to_false() {
+        assert!(!super::SeedConfig::default().demo_data);
+    }
+}

@@ -1055,3 +1055,39 @@ mod tick_id_tests {
         assert_eq!(actions, 1, "action rows must not duplicate on retry");
     }
 }
+
+#[cfg(test)]
+mod corrupt_row_tests {
+    use super::*;
+    use crate::test_helpers::test_pool;
+    use super::tests::seed_tenant;
+
+    /// F10/T11：损坏的信任配置行 → error! + None（响亮回退默认），
+    /// 不得静默解析成功；有效行不受影响。
+    #[tokio::test]
+    async fn corrupt_trust_config_row_yields_none_loudly() {
+        let pool = test_pool().await;
+        seed_tenant(&pool).await;
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at, heartbeat_trust_config)
+             VALUES ('ws_corrupt', 'ws', 't1', 'now', 'now', '{not valid json!!')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert corrupt workspace");
+        let db = Db::new(pool.clone());
+
+        assert!(
+            db.load_heartbeat_trust_config("ws_corrupt")
+                .await
+                .expect("load must not error — loud fallback")
+                .is_none(),
+            "corrupt row must fall back to None (default applied by caller)"
+        );
+
+        // 有效行不受影响。
+        let cfg = crate::heartbeat::TrustConfig::default();
+        db.save_heartbeat_trust_config("ws_corrupt", &cfg).await.expect("save valid");
+        assert!(db.load_heartbeat_trust_config("ws_corrupt").await.expect("load").is_some());
+    }
+}

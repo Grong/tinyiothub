@@ -780,6 +780,34 @@ mod tests {
         );
     }
 
+    /// T22 覆盖补钉：record_result 窗口 cap 20 驱逐最老。
+    #[tokio::test]
+    async fn record_result_window_evicts_oldest_beyond_cap() {
+        let runner = make_runner();
+        for i in 0..25 {
+            runner.record_result(
+                "ws_1",
+                tinyiothub_core::heartbeat::HeartbeatResult {
+                    id: format!("tick-{i:02}"),
+                    workspace_id: "ws_1".into(),
+                    status: tinyiothub_core::heartbeat::HeartbeatStatus::Complete,
+                    summary: "ok".into(),
+                    task_count: 1,
+                    executed_actions: vec![],
+                    proposals: vec![],
+                    error: None,
+                },
+            );
+        }
+        let recent = runner.recent_results();
+        assert_eq!(recent.len(), 20, "window must cap at 20");
+        assert!(
+            recent.iter().all(|r| r.id != "tick-00"),
+            "oldest result must be evicted"
+        );
+        assert!(recent.iter().any(|r| r.id == "tick-24"));
+    }
+
     struct OkPool;
 
     #[async_trait::async_trait]

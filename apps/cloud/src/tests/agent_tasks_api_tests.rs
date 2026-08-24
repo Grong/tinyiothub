@@ -496,3 +496,34 @@ async fn policy_mode_to_off_drains_pending_queue() {
         "mode→off must drain the workspace queue"
     );
 }
+
+/// F9 覆盖补钉：find_agent_run_owner 数据库故障 → 500 + 错误日志，
+/// 不得塌缩为 404（事故响应时"运行记录不存在"会主动误导）。
+#[tokio::test]
+async fn ack_run_db_error_returns_500_not_fake_404() {
+    let (app, pool) = app_with_sink(Arc::new(StubDirectiveSink::default())).await;
+    // user-1 已由 app_with_sink 夹具授予 admin。
+    let token = create_test_token("user-1", "tenant-1");
+
+    // 故障注入：删掉 agent_runs 表，所有 owner 查询必失败。
+    sqlx::query("ALTER TABLE agent_runs RENAME TO agent_runs_hidden")
+        .execute(&pool)
+        .await
+        .expect("hide agent_runs");
+
+    let response = app
+        .oneshot(auth_request(
+            "POST",
+            &format!("/api/v1/workspaces/{WS}/agent/runs/run-whatever/ack"),
+            &token,
+            None,
+        ))
+        .await
+        .expect("ack response");
+    let (status, json) = response_parts(response).await;
+    assert!(status.is_success(), "envelope returns HTTP 200: {json}");
+    assert_eq!(
+        json["code"], 500,
+        "DB failure must surface as code 500, not a misleading 404: {json}"
+    );
+}

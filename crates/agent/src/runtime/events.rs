@@ -115,3 +115,29 @@ mod tests {
         assert!(matches!(rx.recv().await, Err(broadcast::error::RecvError::Lagged(_))));
     }
 }
+
+#[cfg(test)]
+mod emitted_count_tests {
+    use super::*;
+
+    /// F12：emitted_count 只统计成功投递到至少一个 receiver 的事件——
+    /// emitted vs persisted 对账的第一数字。
+    #[tokio::test]
+    async fn emitted_count_tracks_delivered_events_only() {
+        let bus = AgentEventBus::new(8);
+        // 无订阅者：不计数。
+        bus.emit(AgentEventKind::HeartbeatTasksChanged {
+            workspace_id: "ws1".into(),
+        });
+        assert_eq!(bus.emitted_count(), 0);
+
+        let _rx = bus.subscribe();
+        bus.emit(AgentEventKind::HeartbeatTasksChanged {
+            workspace_id: "ws1".into(),
+        });
+        bus.emit(AgentEventKind::HeartbeatTasksChanged {
+            workspace_id: "ws1".into(),
+        });
+        assert_eq!(bus.emitted_count(), 2);
+    }
+}
