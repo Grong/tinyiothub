@@ -5,7 +5,8 @@
 //! 本 crate 只面向 `Box<dyn Tool>`。外部（MCP）工具经
 //! [`ToolRegistry::set_external_tool_factory`] 按需派生，保持动态注册可见。
 
-use std::sync::{Arc, RwLock};
+use parking_lot::RwLock;
+use std::sync::Arc;
 
 use tinyiothub_core::heartbeat::TrustConfig;
 use tinyiothub_skills::trust::ToolSafety;
@@ -43,36 +44,21 @@ impl ToolRegistry {
     /// 注册内建工具 provider（组合层启动时调用；重复注册会重复产出工具，
     /// 调用方保证只注册一次）。
     pub fn register_provider(&self, provider: ToolProvider) {
-        self.inner
-            .write()
-            .expect("tool registry lock poisoned")
-            .providers
-            .push(provider);
+        // T14：parking_lot 锁无中毒，expect 根除。
+        self.inner.write().providers.push(provider);
     }
 
     /// 注册外部工具 registry 工厂（组合层启动时调用）。
     pub fn set_external_tool_factory(&self, factory: ExternalToolFactory) {
-        self.inner
-            .write()
-            .expect("tool registry lock poisoned")
-            .external_factory = Some(factory);
+        self.inner.write().external_factory = Some(factory);
     }
 
     fn providers(&self) -> Vec<ToolProvider> {
-        self.inner
-            .read()
-            .expect("tool registry lock poisoned")
-            .providers
-            .clone()
+        self.inner.read().providers.clone()
     }
 
     pub(crate) fn external_registry(&self) -> Option<Arc<dyn ExternalToolRegistry>> {
-        let factory = self
-            .inner
-            .read()
-            .expect("tool registry lock poisoned")
-            .external_factory
-            .clone()?;
+        let factory = self.inner.read().external_factory.clone()?;
         factory()
     }
 

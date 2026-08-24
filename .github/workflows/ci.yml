@@ -137,97 +137,17 @@ jobs:
           fi
           echo "✅ Domain dependency guard passed"
 
-      - name: Agent Loop Purity Guard (G9)
-        run: |
-          echo "=== Checking crates/agent carries no web/storage/domains dependency ==="
-          # crates/agent 是纯运行时平面：匹配真实引用形态（use <crate> / <crate>:: 路径，
-          # :: 周围空白容忍，与 G5 守卫风格一致），文档注释中的守卫词不触发；
-          # crate::domains 防止回流 apps/cloud 领域层。
-          if grep -rEn --include='*.rs' 'use\s+(axum|sqlx|tinyiothub_storage)|\b(axum|sqlx|tinyiothub_storage)\s*::\s*|crate\s*::\s*domains' crates/agent/src; then
-            echo "❌ DEPENDENCY VIOLATION: crates/agent is the pure runtime plane — no axum/sqlx/storage/domains references"
-            echo "   ✅ Web/HTTP concerns belong in apps/cloud host; persistence behind port traits"
-            exit 1
-          fi
-          echo "✅ Agent loop purity guard passed"
-
-      - name: Agent Crate Dependency Tree Guard (G9)
-        run: |
-          echo "=== Checking crates/agent full dep tree carries no sqlx/storage/db ==="
-          # 全树检查（Task 11.5 / D15：runtime→db 边已斩断，agent 全树可达
-          # sqlx-free）。--prefix none + {p} 输出纯包名行，锚定 ^ 匹配避免误伤
-          # 含 db/sqlx 子串的包。
-          # 词表终审修正（CEO review F6）：删除死模式 ^tinyiothub-storage
-          # （包名是 db，{p} 永不输出 lib 名）。
-          # axum 不进树词表：zeroclaw（git 依赖）经 zeroclaw-gateway/channels
-          # 传递引入 axum，树级 axum-free 在 zeroclaw 治理（spec §13 推迟项）
-          # 完成前不可达——axum 纯度由上方源码 grep + 下方 Cargo.toml 扫描承担。
-          if cargo tree -p agent --prefix none --format "{p}" | grep -E "^sqlx|^db "; then
-            echo "❌ DEPENDENCY VIOLATION: crates/agent dependency tree must not contain sqlx/db (incl. renamed deps)"
-            echo "   ✅ Persistence belongs behind port traits implemented in apps/cloud"
-            exit 1
-          fi
-          # 改名偷渡守门（CEO review F6 + security review + 对抗性 F2）：
-          # `web = { package = "axum" }` 可绕源码 grep（use web:: 不含 axum
-          # 字样）且树词表无法查 axum——直接扫描清单的依赖声明形态。覆盖
-          # TOML 双引号/单引号字面量与子表形态 `[dependencies.axum]`。
-          # 成员清单：直名/改名/子表均违规；根清单：仅改名违规
-          # （[workspace.dependencies] 的直名定义是 apps 的合法依赖，
-          # 但改名可被成员经 workspace = true 继承）。
-          if sed 's/#.*$//' crates/agent/Cargo.toml | grep -nE "^\s*(axum|sqlx|tinyiothub-storage|tinyiothub_storage|db)\s*=|package\s*=\s*[\"'](axum|sqlx|tinyiothub-storage|db)[\"']|^\s*\[[a-zA-Z0-9_.-]*\.(axum|sqlx|tinyiothub-storage|tinyiothub_storage|db)\s*\]"; then
-            echo "❌ DEPENDENCY VIOLATION: crates/agent/Cargo.toml must not declare axum/sqlx/storage/db (incl. renamed/sub-table)"
-            exit 1
-          fi
-          if sed 's/#.*$//' Cargo.toml | grep -nE "^\s*[a-zA-Z0-9_-]+\s*=\s*\{[^}]*package\s*=\s*[\"'](axum|sqlx|tinyiothub-storage|db)[\"']"; then
-            echo "❌ DEPENDENCY VIOLATION: workspace root must not rename axum/sqlx/storage/db (inheritable by crates/agent)"
-            exit 1
-          fi
-          echo "✅ Agent dependency tree guard passed"
+      - name: Agent Purity Guard (G9: source + tree + manifests)
+        run: bash scripts/guards/agent-purity.sh
 
       - name: DB SQL Residence Guard (Task 13)
-        run: |
-          echo "=== Checking raw SQL lives only in crates/db ==="
-          # sqlx::(query|QueryBuilder|raw_sql) 只允许出现在 crates/db。豁免规则：
-          # - 文件名含 test_utils / _test，或路径在 tests/ 下；
-          # - 内联 #[cfg(test)] 测试模块（sed 截断该标记之后的内容再检查）；
-          # - 行内 `guard-exempt` 注释（有据排除项，如 policy_engine.rs 的
-          #   policy trait impl —— Task 12 裁决 db 不能依赖 policy crate）。
-          # 词表终审扩展（F1）：QueryBuilder/raw_sql 与 sqlx::query 同等守门，
-          # 堵住动态 SQL 盲区。
-          FAIL=0
-          for f in $(grep -rEl --include='*.rs' -E 'sqlx::(query|QueryBuilder|raw_sql)' apps/cloud/src apps/edge/src); do
-            case "$f" in
-              *test_utils*|*_test*|*tests/*) continue ;;
-            esac
-            if sed '/#\[cfg(test)\]/,$d' "$f" | grep -nE 'sqlx::(query|QueryBuilder|raw_sql)' | grep -v 'guard-exempt'; then
-              echo "❌ raw SQL outside crates/db: $f"
-              echo "   ✅ Move the query into a crates/db domain file and expose a Db delegate"
-              FAIL=1
-            fi
-          done
-          if [ "$FAIL" -ne 0 ]; then exit 1; fi
-          echo "✅ DB SQL residence guard passed"
+        run: bash scripts/guards/sql-residence.sh
 
       - name: Migration DDL-only Guard (Task 13)
-        run: |
-          echo "=== Checking migrations are DDL-only ==="
-          # baseline 豁免（历史快照）；其余迁移不得携带种子数据，种子归 seed.rs。
-          # 正则终审修正（CEO review F5 + 对抗性 F3）：旧守卫 grep "INSERT INTO"
-          # 大小写敏感且子串匹配——INSERT OR IGNORE INTO（本项目种子惯例）、
-          # 小写、多行 INSERT\nINTO、UPDATE/DELETE/REPLACE 全部绕过；行内
-          # `--` 注释剥离则会被字符串字面量里的 '--' 反利用（剥离点之后的
-          # 同行 DML 被一并抹掉）。现改为：只剥"整行注释"（行首 --），
-          # 代码行一律全量扫描 DML 关键词（大小写不敏感、词边界）。
-          # 代价：代码行尾注释提及 DML 词会误报——保守方向，响亮失败可人工豁免。
-          NON_BASELINE=$(ls crates/db/migrations/*.sql | grep -v baseline || true)
-          if [ -n "$NON_BASELINE" ]; then
-            OFFENDERS=$(echo "$NON_BASELINE" | xargs -I{} sh -c 'grep -vE "^\s*--" "{}" | grep -qiE "\b(INSERT|REPLACE|UPDATE|DELETE)\b" && echo "{}"' || true)
-            if [ -n "$OFFENDERS" ]; then
-              echo "$OFFENDERS"
-              echo "❌ migrations must be DDL-only (seeds go to seed.rs; INSERT/UPDATE/DELETE/REPLACE incl. INSERT OR IGNORE are forbidden)"
-              exit 1
-            fi
-          fi
-          echo "✅ Migration DDL-only guard passed"
+        run: bash scripts/guards/ddl-only.sh
+
+      - name: Guard Self-Test (deliberate violations must fire)
+        run: bash scripts/guards/selftest.sh
 
   # -----------------------------------------------------------------------------
   # 前端检查

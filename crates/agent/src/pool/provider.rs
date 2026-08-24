@@ -22,18 +22,18 @@ pub struct MinimaxSettings {
     pub model: String,
 }
 
-static MINIMAX_SETTINGS: std::sync::RwLock<Option<MinimaxSettings>> = std::sync::RwLock::new(None);
+static MINIMAX_SETTINGS: parking_lot::RwLock<Option<MinimaxSettings>> = parking_lot::RwLock::new(None);
 
 /// Register the minimax provider settings (composition layer at startup).
 /// Also seeds [`crate::config::set_default_model`] from the same section.
 pub fn set_minimax_settings(settings: MinimaxSettings) {
     crate::config::set_default_model(settings.model.clone());
-    *MINIMAX_SETTINGS.write().expect("minimax settings lock poisoned") = Some(settings);
+    *MINIMAX_SETTINGS.write() = Some(settings);
 }
 
 /// The registered minimax provider settings, if any.
 pub fn minimax_settings() -> Option<MinimaxSettings> {
-    MINIMAX_SETTINGS.read().expect("minimax settings lock poisoned").clone()
+    MINIMAX_SETTINGS.read().clone()
 }
 
 /// Create a MiniMax model provider from the registered settings.

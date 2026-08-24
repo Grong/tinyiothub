@@ -9,20 +9,25 @@ use sha2::{Digest, Sha256};
 // 默认模型 id 缝（组合层自 `[minimax].model` 注册；Task 14 自 host/ports.rs 迁入）
 // ---------------------------------------------------------------------------
 
-static DEFAULT_MODEL: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+// CEO review T14：parking_lot::RwLock 取代 std::sync::RwLock——锁中毒
+// 不存在，6 处 expect("lock poisoned") 根除（与同 PR G2 authn 同一手法：
+// 构造注入优先；本静态是组合层注册缝，serde default-fn 约束下全注入
+// 推迟，先用无中毒锁 + 响亮兜底消除两类风险）。
+static DEFAULT_MODEL: parking_lot::RwLock<Option<String>> = parking_lot::RwLock::new(None);
 
 /// 注册兜底模型 id（组合层启动时调用）。
 pub fn set_default_model(model: String) {
-    *DEFAULT_MODEL.write().expect("default model lock poisoned") = Some(model);
+    *DEFAULT_MODEL.write() = Some(model);
 }
 
 /// Agent 运行时配置的兜底模型 id。
 pub fn default_model() -> String {
-    DEFAULT_MODEL
-        .read()
-        .expect("default model lock poisoned")
-        .clone()
-        .unwrap_or_else(|| "minimax-m2".into())
+    DEFAULT_MODEL.read().clone().unwrap_or_else(|| {
+        // T14：未注册时兜底 vendor 默认必须响亮——静默跑错模型比跑不起
+        // 更难排查。组合层应在启动时经 set_minimax_settings 注册。
+        tracing::warn!("default_model() called before composition layer registered a model — falling back to 'minimax-m2'");
+        "minimax-m2".into()
+    })
 }
 
 /// Agent configuration passed when creating an agent

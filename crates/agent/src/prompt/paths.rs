@@ -7,24 +7,20 @@
 //! (or the `TINYIOTHUB__PROJECT_ROOT` env var, as before).
 
 use std::path::PathBuf;
-use std::sync::RwLock;
 
-static PROJECT_ROOT_OVERRIDE: RwLock<Option<PathBuf>> = RwLock::new(None);
+// T14：parking_lot 锁无中毒。
+static PROJECT_ROOT_OVERRIDE: parking_lot::RwLock<Option<PathBuf>> = parking_lot::RwLock::new(None);
 
 /// Override the project root (composition layer at startup, tests with a
 /// tempdir). Takes precedence over the env var and manifest-derived default.
 pub fn set_project_root(root: PathBuf) {
-    *PROJECT_ROOT_OVERRIDE.write().expect("project root lock poisoned") = Some(root);
+    *PROJECT_ROOT_OVERRIDE.write() = Some(root);
 }
 
 /// Project root: the tinyiothub/ directory.
 /// 可通过环境变量 TINYIOTHUB__PROJECT_ROOT 覆盖（Docker 等场景）
 pub fn project_root() -> PathBuf {
-    if let Some(root) = PROJECT_ROOT_OVERRIDE
-        .read()
-        .expect("project root lock poisoned")
-        .as_ref()
-    {
+    if let Some(root) = PROJECT_ROOT_OVERRIDE.read().as_ref() {
         return root.clone();
     }
     if let Ok(root) = std::env::var("TINYIOTHUB__PROJECT_ROOT") {

@@ -4,6 +4,13 @@
 //! the terminal state of the old 68-migration chain (reference DB path/URL
 //! passed via `TIH_OLDCHAIN_DB`). This is a one-shot export-time verification
 //! gate, not a permanent CI resident: without the env var the test skips.
+//!
+//! 为什么不是 CI 常驻（T19 裁决记录）：旧 68 迁移链已随 baseline 化删除，
+//! CI 无法重放旧链生成参考库；重新验证时对 pre-squash 检出手动跑一次即可
+//! （`TIH_OLDCHAIN_DB=<旧链库路径> cargo test -p db --test baseline_schema_tests`）。
+//! 防未来漂移由组合拳承担：DDL-only 守卫（迁移无 DML）、guard 自证
+//! （scripts/guards/selftest.sh）、test_pool 直建+递增迁移、
+//! migration_replay_test（FK 级联回归）。
 
 /// Extract a normalized schema set from a database: (type, name, normalized sql).
 async fn schema_set(db_url: &str) -> std::collections::BTreeSet<(String, String, String)> {
