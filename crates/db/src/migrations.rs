@@ -126,6 +126,22 @@ async fn reject_legacy_chain_db(pool: &SqlitePool, migrator: &Migrator) -> Resul
         ));
     }
 
+    // 对抗性 F4：新旧未知版本混杂（部分比基线老、部分比基线新）时来源
+    // 无法判定——重建指引可能毁掉更新二进制写入的数据。拒绝给出任何
+    // 破坏性指引，交由人工处置。
+    let has_newer = legacy.iter().any(|v| *v > max_known);
+    if has_newer {
+        return Err(sqlx::Error::Configuration(
+            format!(
+                "This database has migration versions this build cannot place ({} unknown version(s), some older and some NEWER than this build's migration set). \
+                 Provenance is ambiguous — do NOT delete the database. \
+                 Restore from the pre-migration backup or run the binary that last wrote this database.",
+                legacy.len()
+            )
+            .into(),
+        ));
+    }
+
     Err(sqlx::Error::Configuration(
         format!(
             "This database was created by the legacy migration chain ({} applied version(s) unknown to this build, oldest: {}). \

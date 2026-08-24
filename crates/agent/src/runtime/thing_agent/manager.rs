@@ -327,11 +327,10 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
         TriggerSource::UserDirective { problem_key, .. } => problem_key.as_deref(),
         _ => None,
     };
-    deps.registry.record(report.clone());
-    // CEO review T3：发射期 dedup 键入旁路映射——Lagged/对账补插缺失行时
-    // resync 据此恢复 problem_key/dedup_key，杜绝补插行永久丢元数据。
-    deps.registry.set_run_keys(
-        &report.run_id,
+    // CEO review T3 + 对抗性 F7：record 与发射期 dedup 键一步写入——
+    // 键与窗口条目同生，无两步形态的 TOCTOU 孤儿键窗口。
+    deps.registry.record_with_keys(
+        report.clone(),
         crate::runtime::snapshot::RunDedupKeys {
             problem_key: problem_key.map(str::to_owned),
             dedup_key: signal.dedup_key.clone(),

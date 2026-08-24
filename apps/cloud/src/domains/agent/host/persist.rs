@@ -148,6 +148,9 @@ pub(crate) async fn supervise_impl<F, Fut>(
 {
     let mut rx = Some(first_rx);
     let mut restart_count: u32 = 0;
+    // 对抗性 F8：连续失败计数跨重启存活——每次重启重建会把
+    // RESYNC_FAILURE_ESCALATION_THRESHOLD 的升级语义重置成永远 warn。
+    let mut resync_failures = ResyncFailures::default();
     loop {
         let child = shutdown.child_token();
         let task_rx = rx.take().unwrap_or_else(|| bus.subscribe());
@@ -169,8 +172,23 @@ pub(crate) async fn supervise_impl<F, Fut>(
         // 死亡窗口闭合：新 receiver 从队尾开始，死窗内的事件靠立即全量
         // resync 补齐（等价一次 Lagged）。顺序敏感：先订阅后 resync。
         rx = Some(bus.subscribe());
-        let mut failures = ResyncFailures::default();
-        resync(dump(), db.pool(), &mut failures).await;
+        // 对抗性 F1：resync 内联在监管循环里——它 panic 会杀死监管本身
+        // （持久化静默死亡点上移一层）。spawn 包裹并把计数器带回来，
+        // panic 降级为 error! 后继续重启流程。
+        let resync_snapshot = dump();
+        let resync_pool = db.pool().clone();
+        let resync_result = tokio::spawn(async move {
+            resync(resync_snapshot, &resync_pool, &mut resync_failures).await;
+            resync_failures
+        })
+        .await;
+        match resync_result {
+            Ok(failures) => resync_failures = failures,
+            Err(e) => {
+                error!(error = %e, "resync during supervisor restart PANICKED — continuing restart loop");
+                resync_failures = ResyncFailures::default();
+            }
+        }
         tokio::select! {
             _ = tokio::time::sleep(backoff(restart_count)) => {}
             _ = shutdown.cancelled() => return,
@@ -419,6 +437,10 @@ pub(crate) async fn resync(snapshot: RestoreSnapshot, pool: &SqlitePool, failure
         }
     }
     let db = Db::new(pool.clone());
+    // 对账信任写无条件盖时间戳（对抗性 F5 评估为良性）：D11-⑤ 写序保证
+    // handler 的 DB 写先于命令与事件，事件 occurred_at 必晚于该写自身的
+    // 时间戳——对账的戳前移只会拦掉"值本就相同"的旧事件，不会误拦因果上
+    // 更新的事件。内存不追踪 last-change 时刻，无更精确的时间源可用。
     for state in &snapshot.heartbeat {
         match db
             .save_heartbeat_trust_config(&state.workspace_id, &state.trust_config)

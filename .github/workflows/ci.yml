@@ -166,14 +166,15 @@ jobs:
             echo "   ✅ Persistence belongs behind port traits implemented in apps/cloud"
             exit 1
           fi
-          # 改名偷渡守门（CEO review F6 + security review）：`web = { package = "axum" }`
-          # 可绕源码 grep（use web:: 不含 axum 字样）且树词表无法查 axum——
-          # 直接扫描清单的依赖声明形态。覆盖 TOML 双引号与单引号字面量。
-          # 成员清单：直名（行首依赖键）与改名（package= 值）均违规；
-          # 根清单：仅改名违规（[workspace.dependencies] 的直名定义是
-          # apps 的合法依赖，但改名可被成员经 workspace = true 继承）。
-          if sed 's/#.*$//' crates/agent/Cargo.toml | grep -nE "^\s*(axum|sqlx|tinyiothub-storage|tinyiothub_storage|db)\s*=|package\s*=\s*[\"'](axum|sqlx|tinyiothub-storage|db)[\"']"; then
-            echo "❌ DEPENDENCY VIOLATION: crates/agent/Cargo.toml must not declare axum/sqlx/storage/db (incl. renamed)"
+          # 改名偷渡守门（CEO review F6 + security review + 对抗性 F2）：
+          # `web = { package = "axum" }` 可绕源码 grep（use web:: 不含 axum
+          # 字样）且树词表无法查 axum——直接扫描清单的依赖声明形态。覆盖
+          # TOML 双引号/单引号字面量与子表形态 `[dependencies.axum]`。
+          # 成员清单：直名/改名/子表均违规；根清单：仅改名违规
+          # （[workspace.dependencies] 的直名定义是 apps 的合法依赖，
+          # 但改名可被成员经 workspace = true 继承）。
+          if sed 's/#.*$//' crates/agent/Cargo.toml | grep -nE "^\s*(axum|sqlx|tinyiothub-storage|tinyiothub_storage|db)\s*=|package\s*=\s*[\"'](axum|sqlx|tinyiothub-storage|db)[\"']|^\s*\[[a-zA-Z0-9_.-]*\.(axum|sqlx|tinyiothub-storage|tinyiothub_storage|db)\s*\]"; then
+            echo "❌ DEPENDENCY VIOLATION: crates/agent/Cargo.toml must not declare axum/sqlx/storage/db (incl. renamed/sub-table)"
             exit 1
           fi
           if sed 's/#.*$//' Cargo.toml | grep -nE "^\s*[a-zA-Z0-9_-]+\s*=\s*\{[^}]*package\s*=\s*[\"'](axum|sqlx|tinyiothub-storage|db)[\"']"; then
@@ -210,13 +211,16 @@ jobs:
         run: |
           echo "=== Checking migrations are DDL-only ==="
           # baseline 豁免（历史快照）；其余迁移不得携带种子数据，种子归 seed.rs。
-          # 正则终审修正（CEO review F5）：旧守卫 grep "INSERT INTO" 大小写敏感且
-          # 子串匹配——INSERT OR IGNORE INTO（本项目种子惯例）、小写、多行
-          # INSERT\nINTO、UPDATE/DELETE/REPLACE 全部绕过。现改为：先剥 -- 行注释，
-          # 再对 DML 关键词做大小写不敏感的词边界匹配。
+          # 正则终审修正（CEO review F5 + 对抗性 F3）：旧守卫 grep "INSERT INTO"
+          # 大小写敏感且子串匹配——INSERT OR IGNORE INTO（本项目种子惯例）、
+          # 小写、多行 INSERT\nINTO、UPDATE/DELETE/REPLACE 全部绕过；行内
+          # `--` 注释剥离则会被字符串字面量里的 '--' 反利用（剥离点之后的
+          # 同行 DML 被一并抹掉）。现改为：只剥"整行注释"（行首 --），
+          # 代码行一律全量扫描 DML 关键词（大小写不敏感、词边界）。
+          # 代价：代码行尾注释提及 DML 词会误报——保守方向，响亮失败可人工豁免。
           NON_BASELINE=$(ls crates/db/migrations/*.sql | grep -v baseline || true)
           if [ -n "$NON_BASELINE" ]; then
-            OFFENDERS=$(echo "$NON_BASELINE" | xargs -I{} sh -c 'sed "s/--.*$//" "{}" | grep -qiE "\b(INSERT|REPLACE|UPDATE|DELETE)\b" && echo "{}"' || true)
+            OFFENDERS=$(echo "$NON_BASELINE" | xargs -I{} sh -c 'grep -vE "^\s*--" "{}" | grep -qiE "\b(INSERT|REPLACE|UPDATE|DELETE)\b" && echo "{}"' || true)
             if [ -n "$OFFENDERS" ]; then
               echo "$OFFENDERS"
               echo "❌ migrations must be DDL-only (seeds go to seed.rs; INSERT/UPDATE/DELETE/REPLACE incl. INSERT OR IGNORE are forbidden)"

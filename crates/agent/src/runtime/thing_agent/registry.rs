@@ -102,6 +102,14 @@ impl RunRegistry {
 
     /// 记录一条已完成 run；该 workspace 超出容量时驱逐最老（旁路键同步删除）。
     pub fn record(&self, report: RunReport) {
+        self.record_with_keys(report, RunDedupKeys::default());
+    }
+
+    /// record + 发射期 dedup 键一步写入（对抗性 F7）：键与窗口条目同生——
+    /// 先 record 后 set_run_keys 的两步形态存在"检查窗口成员→插入"之间的
+    /// TOCTOU 孤儿键窗口，且每调用一次全窗口扫描。热路径（manager）用本方法。
+    pub fn record_with_keys(&self, report: RunReport, keys: RunDedupKeys) {
+        let run_id = report.run_id.clone();
         let evicted_ids: Vec<String> = {
             let mut entry = self.inner.entry(report.workspace_id.clone()).or_default();
             entry.push_back(report);
@@ -115,6 +123,9 @@ impl RunRegistry {
         };
         for id in evicted_ids {
             self.run_keys.remove(&id);
+        }
+        if keys.problem_key.is_some() || keys.dedup_key.is_some() {
+            self.run_keys.insert(run_id, keys);
         }
     }
 
