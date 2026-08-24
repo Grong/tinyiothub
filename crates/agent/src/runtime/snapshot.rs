@@ -34,6 +34,16 @@ pub struct ProblemMetaRow {
     pub occurred_at: DateTime<Utc>,
 }
 
+/// resync 补插用的 run 级 dedup 键（CEO review T3）。
+/// core [`RunReport`] 不含这两字段；事件路径在发射时携带、落库齐全，
+/// 但 Lagged/对账补插缺失行时需要内存旁路提供，否则补插行永久丢失
+/// problem_key，重启后 O11 dedup 失效、问题重复派发。
+#[derive(Debug, Clone, Default)]
+pub struct RunDedupKeys {
+    pub problem_key: Option<String>,
+    pub dedup_key: Option<String>,
+}
+
 /// AgentRuntime 全量状态快照。
 #[derive(Debug, Clone, Default)]
 pub struct RestoreSnapshot {
@@ -47,6 +57,10 @@ pub struct RestoreSnapshot {
     /// problem_key 行；顺序无关（`RunRegistry::prewarm_problem_meta`
     /// 按 occurred_at 有序插入）。
     pub problem_meta: Vec<ProblemMetaRow>,
+    /// run_id → dedup 键旁路（CEO review T3）：仅 `dump_state` 导出时填充
+    /// （RunRegistry 窗口内 run 的发射期元数据）；启动构建器置空——预热行
+    /// 在 DB 已有完整记录，resync 对它们只会幂等 no-op。
+    pub recent_run_meta: std::collections::HashMap<String, RunDedupKeys>,
 }
 
 #[cfg(test)]

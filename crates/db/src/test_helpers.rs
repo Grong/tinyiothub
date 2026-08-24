@@ -8,9 +8,13 @@ pub async fn run_all_migrations(pool: &sqlx::SqlitePool) -> Result<(), sqlx::Err
     crate::migrations::run_migrations(pool).await
 }
 
+/// baseline 的版本号——test_pool 直建后跳过它、只应用更新的递增迁移。
+const BASELINE_VERSION: i64 = 20260819000001;
+
 /// In-memory pool with the baseline schema applied directly (no migration
 /// runner, no `_sqlx_migrations` bookkeeping) — the fast path for tests that
-/// only need the schema.
+/// only need the schema. Post-baseline incremental migrations are applied
+/// too (CEO review T2：直建缺列会让引用新列的领域函数在测试池假败）。
 pub async fn test_pool() -> sqlx::SqlitePool {
     let pool = sqlx::SqlitePool::connect("sqlite::memory:")
         .await
@@ -19,6 +23,14 @@ pub async fn test_pool() -> sqlx::SqlitePool {
         .execute(&pool)
         .await
         .expect("baseline schema applies cleanly");
+    // 借 Migrator 的编译期内嵌枚举递增迁移——migrations/ 里的新文件自动覆盖。
+    let migrator = sqlx::migrate!("./migrations");
+    for migration in migrator.iter().filter(|m| m.version > BASELINE_VERSION) {
+        sqlx::raw_sql(migration.sql.clone())
+            .execute(&pool)
+            .await
+            .expect("post-baseline migration applies cleanly");
+    }
     pool
 }
 

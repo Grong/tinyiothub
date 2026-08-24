@@ -35,7 +35,7 @@ async fn test_db() -> (Arc<Db>, SqlitePool) {
 /// 真实启动顺序的测试骨架：snapshot →（订阅先于 restore）→ restore →
 /// 僵尸 reconcile。返回 runtime 供断言内存真相源。
 async fn bootstrap_test_runtime(db: &Arc<Db>) -> Arc<AgentRuntime> {
-    let snapshot = build_agent_snapshot(db).await;
+    let snapshot = build_agent_snapshot(db).await.expect("snapshot build");
     let deps = RuntimeDeps::test_stub();
     // 订阅先于 restore（bus 经 RuntimeDeps 注入，restore 前创建的 receiver
     // 捕获 restore 期间及之后的一切事件）。
@@ -178,7 +178,7 @@ async fn build_snapshot_prewarms_heartbeat_state_and_recent_runs_oldest_first() 
         .expect("insert run");
     }
 
-    let snapshot = build_agent_snapshot(&db).await;
+    let snapshot = build_agent_snapshot(&db).await.expect("snapshot build");
 
     // 全量迁移的库自带种子工作空间（20260407000001 迁移 ws-default-001）——
     // heartbeat 段含 2 条，按 id 定位 ws1。
@@ -238,7 +238,7 @@ async fn build_snapshot_restores_problem_dedup_metadata() {
     .await
     .expect("insert ancient");
 
-    let snapshot = build_agent_snapshot(&db).await;
+    let snapshot = build_agent_snapshot(&db).await.expect("snapshot build");
     assert_eq!(snapshot.problem_meta.len(), 2, "8 天前的行超出 7d 保留窗");
 
     let deps = RuntimeDeps::test_stub();
@@ -253,4 +253,23 @@ async fn build_snapshot_restores_problem_dedup_metadata() {
     assert_eq!(outcome, Outcome::Acted);
     assert!(verified);
     assert!(acked, "最新 run 的行级 ack 标记必须随预热恢复");
+}
+
+/// CEO review T21：启动快照 fail-closed——DB 读失败必须 Err（中止启动），
+/// 不得降级为空快照/宽松默认（TrustConfig::default() 含 write 类别，
+/// fail-open 会被内存→DB 对账固化，重启不可愈）。
+#[tokio::test]
+async fn snapshot_build_fails_closed_when_workspace_query_fails() {
+    // 空库（无 schema）：find_all_workspace_ids 必失败。
+    let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+        .await
+        .expect("in-memory sqlite");
+    let db = tinyiothub_storage::Db::new(pool);
+    let err = build_agent_snapshot(&db)
+        .await
+        .expect_err("snapshot build must fail closed on DB read error");
+    assert!(
+        err.contains("list workspace ids"),
+        "error must name the failed step: {err}"
+    );
 }

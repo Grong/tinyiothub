@@ -226,13 +226,40 @@ pub(crate) async fn save_trust_config(
     workspace_id: &str,
     config: &crate::heartbeat::TrustConfig,
 ) -> Result<(), RepoError> {
-    sqlx::query("UPDATE workspaces SET heartbeat_trust_config = ? WHERE id = ?")
+    // CEO review T2：同步维护 fencing 时间戳——handler 先写路径（D11-⑤）是
+    // 权威写，事件路径以 occurred_at 与该列比较，旧事件无法覆盖本写。
+    // 格式固定 RFC3339 毫秒 + Z（与 fenced 路径同一时钟同一格式，字典序可比）。
+    sqlx::query("UPDATE workspaces SET heartbeat_trust_config = ?, heartbeat_trust_config_updated_at = ? WHERE id = ?")
         .bind(config.to_db_json())
+        .bind(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
         .bind(workspace_id)
         .execute(pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
     Ok(())
+}
+
+/// fencing upsert（CEO review T2）：仅当事件的 occurred_at 不早于已应用
+/// 时间戳时写入；乱序/回放的旧事件无法覆盖新配置。返回是否实际写入
+/// （false = 被 fencing 拦截或工作区不存在）。
+pub(crate) async fn save_trust_config_fenced(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    config: &crate::heartbeat::TrustConfig,
+    occurred_at: &str,
+) -> Result<bool, RepoError> {
+    let result = sqlx::query(
+        "UPDATE workspaces SET heartbeat_trust_config = ?, heartbeat_trust_config_updated_at = ?
+         WHERE id = ? AND (heartbeat_trust_config_updated_at IS NULL OR heartbeat_trust_config_updated_at <= ?)",
+    )
+    .bind(config.to_db_json())
+    .bind(occurred_at)
+    .bind(workspace_id)
+    .bind(occurred_at)
+    .execute(pool)
+    .await
+    .map_err(|e| RepoError::Database(e.to_string()))?;
+    Ok(result.rows_affected() > 0)
 }
 
 pub(crate) async fn load_heartbeat_config(
@@ -406,6 +433,17 @@ impl Db {
         config: &crate::heartbeat::TrustConfig,
     ) -> Result<(), RepoError> {
         save_trust_config(self.pool(), workspace_id, config).await
+    }
+
+    /// fencing 写入（CEO review T2）：旧事件（occurred_at 早于已应用
+    /// 时间戳）不覆盖新配置；返回是否实际写入。
+    pub async fn save_heartbeat_trust_config_fenced(
+        &self,
+        workspace_id: &str,
+        config: &crate::heartbeat::TrustConfig,
+        occurred_at: &str,
+    ) -> Result<bool, RepoError> {
+        save_trust_config_fenced(self.pool(), workspace_id, config, occurred_at).await
     }
 
     /// 读取工作区心跳开关/间隔配置（空串/缺行视为 None）。
@@ -793,5 +831,66 @@ mod tests {
                 .expect("load")
                 .is_none()
         );
+    }
+
+    /// CEO review T2：fencing upsert——occurred_at 早于已应用时间戳的旧事件
+    /// 不得覆盖新配置；不早于的才写入。handler 先写路径（save_trust_config）
+    /// 同时维护 fencing 时间戳。
+    #[tokio::test]
+    pub async fn fenced_save_rejects_stale_occurred_at() {
+        let pool = test_pool().await;
+        seed_tenant(&pool).await;
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at)
+             VALUES ('ws_f', 'ws', 't1', 'now', 'now')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert workspace");
+        let db = Db::new(pool.clone());
+
+        let hardened = crate::heartbeat::TrustConfig {
+            max_auto_actions_per_tick: 1,
+            ..Default::default()
+        };
+        let relaxed = crate::heartbeat::TrustConfig {
+            max_auto_actions_per_tick: 99,
+            ..Default::default()
+        };
+
+        // 权威写（handler 路径）：写入加固配置并打上当前时间戳。
+        db.save_heartbeat_trust_config("ws_f", &hardened)
+            .await
+            .expect("authoritative save");
+
+        // 旧事件回放（occurred_at 早 1 小时）：必须被 fencing 拦截。
+        let stale_ts =
+            (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let applied = db
+            .save_heartbeat_trust_config_fenced("ws_f", &relaxed, &stale_ts)
+            .await
+            .expect("fenced save");
+        assert!(!applied, "stale event must be fenced");
+        let current = db
+            .load_heartbeat_trust_config("ws_f")
+            .await
+            .expect("load")
+            .expect("config present");
+        assert_eq!(current.max_auto_actions_per_tick, 1, "stale event must not overwrite");
+
+        // 新事件（occurred_at 晚 1 小时）：允许写入。
+        let fresh_ts =
+            (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let applied = db
+            .save_heartbeat_trust_config_fenced("ws_f", &relaxed, &fresh_ts)
+            .await
+            .expect("fenced save");
+        assert!(applied, "newer event must apply");
+        let current = db
+            .load_heartbeat_trust_config("ws_f")
+            .await
+            .expect("load")
+            .expect("config present");
+        assert_eq!(current.max_auto_actions_per_tick, 99);
     }
 }

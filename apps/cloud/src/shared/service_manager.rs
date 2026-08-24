@@ -183,8 +183,12 @@ impl ServiceManager {
 
             // ── Task 9 启动顺序（D11-①③，错序即丢事件）──
             // 1. 从 DB 构造 RestoreSnapshot（活跃 heartbeat 配置/任务 +
-            //    每 ws 最近 50 条 run + O11 dedup 元数据）。
-            let snapshot = crate::bootstrap::build_agent_snapshot(&app_state.db).await;
+            //    每 ws 最近 50 条 run + O11 dedup 元数据）。CEO review T21：
+            //    fail-closed——启动期 DB 读失败中止启动，不再降级为空快照
+            //    （宽松默认 trust config 会被对账固化 / 零心跳永久静默）。
+            let snapshot = crate::bootstrap::build_agent_snapshot(&app_state.db)
+                .await
+                .map_err(Error::IOError)?;
             // 2. bus 先建并经 RuntimeDeps 注入 restore（Task 3 评审指针
             //    选项 a）；持久化 receiver 在 restore 之前取得 —— restore
             //    期间及之后的事件不丢。
@@ -206,6 +210,8 @@ impl ServiceManager {
 
             let agent_events = Arc::new(tinyiothub_agent::runtime::events::AgentEventBus::new(256));
             let persist_rx = agent_events.subscribe();
+            // CEO review T1：监管循环重启订阅时需要 bus 句柄（deps 收走所有权前克隆）。
+            let agent_events_supervisor = agent_events.clone();
             let pool = app_state.db.pool().clone();
             let policy_repo = app_state.db.clone();
             let runtime = Arc::new(tinyiothub_agent::runtime::runtime::AgentRuntime::restore(
@@ -249,7 +255,9 @@ impl ServiceManager {
             //    run → 'interrupted'。
             crate::bootstrap::reconcile_zombie_runs(&app_state.db, &runtime).await;
             // 4. 持久化订阅者（restore 前取得的 receiver；shutdown token
-            //    编排主循环与心跳重试任务退出）。句柄注册进 service_handles
+            //    编排主循环与心跳重试任务退出）。CEO review T1：改经监管
+            //    循环启动——任务 panic/异常退出不再静默，error! + 新 receiver
+            //    + 立即全量 resync + 退避重启；句柄注册进 service_handles
             //    随关停排空。
             let persist_shutdown = tokio_util::sync::CancellationToken::new();
             {
@@ -258,8 +266,12 @@ impl ServiceManager {
                     let db = app_state.db.clone();
                     let token = persist_shutdown.clone();
                     async move {
-                        crate::domains::agent::host::persist::run_persistence_subscriber(
-                            runtime, db, persist_rx, token,
+                        crate::domains::agent::host::persist::supervise_persistence_subscriber(
+                            runtime,
+                            db,
+                            agent_events_supervisor,
+                            persist_rx,
+                            token,
                         )
                         .await;
                         Ok(())
@@ -267,7 +279,7 @@ impl ServiceManager {
                 });
                 self.service_handles.write().await.push(handle);
                 self.persistence_shutdown = Some(persist_shutdown);
-                info!("✅ Agent persistence subscriber started");
+                info!("✅ Agent persistence subscriber started (supervised)");
             }
 
             let heartbeat_runner = runtime.heartbeat_runner().clone();

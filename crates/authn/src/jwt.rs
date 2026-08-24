@@ -116,6 +116,11 @@ impl JwtService {
 
     // 简单的字符串解码
     fn decode_simple(s: &str) -> Result<String, String> {
+        // CEO review T7：奇数长度输入下 `&s[i..i+2]` 越界 panic——
+        // 畸形 token 绝不能在认证路径上炸掉请求任务。
+        if s.len() % 2 != 0 {
+            return Err("Invalid encoding".to_string());
+        }
         let bytes: Result<Vec<u8>, _> = (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16))
@@ -291,5 +296,177 @@ impl JwtService {
 
         let auth_body = self.create_jwt(payload)?;
         Ok(auth_body.token)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! CEO review T7：jwt.rs 此前零测试——decode_simple 手写 hex 切分、
+    //! HarmonyOS 自定义 token 格式均为安全敏感路径，必须有 round-trip/篡改/过期覆盖。
+
+    use super::*;
+
+    const SECRET: &str = "test-secret-key-at-least-32-chars-long";
+
+    fn service(harmonyos: bool) -> JwtService {
+        JwtService::new(JwtSettings {
+            secret: SECRET.to_string(),
+            harmonyos_enabled: harmonyos,
+        })
+    }
+
+    fn payload() -> AuthPayload {
+        AuthPayload {
+            id: "user-1".to_string(),
+            name: "alice".to_string(),
+            tenant_id: "tenant-1".to_string(),
+            workspace_id: "ws-1".to_string(),
+        }
+    }
+
+    // ---- decode_simple / encode_simple ----
+
+    #[test]
+    fn simple_codec_round_trip_including_multibyte() {
+        for s in ["", "hello", "用户:工作区:1", "a:b:c:123:456"] {
+            let encoded = JwtService::encode_simple(s);
+            let decoded = JwtService::decode_simple(&encoded).expect("round trip");
+            assert_eq!(decoded, s);
+        }
+    }
+
+    #[test]
+    fn decode_simple_rejects_odd_length_without_panic() {
+        // 奇数长度曾是越界 panic（认证路径拒绝服务面）。
+        assert!(JwtService::decode_simple("abc").is_err());
+        assert!(JwtService::decode_simple("0").is_err());
+    }
+
+    #[test]
+    fn decode_simple_rejects_non_hex_and_invalid_utf8() {
+        assert!(JwtService::decode_simple("zz").is_err());
+        // 0xFF 不是合法 UTF-8 起始字节。
+        assert!(JwtService::decode_simple("ff").is_err());
+    }
+
+    // ---- 标准 JWT（jwt-simple）----
+
+    #[test]
+    fn standard_jwt_round_trip() {
+        let svc = service(false);
+        let body = svc.create_jwt(payload()).expect("create");
+        let claims = svc.validate_jwt(&body.token).expect("validate");
+        assert_eq!(claims.user_id, "user-1");
+        assert_eq!(claims.username, "alice");
+        assert_eq!(claims.tenant_id, "tenant-1");
+        assert_eq!(claims.workspace_id, "ws-1");
+        assert!(claims.exp.is_some());
+    }
+
+    #[test]
+    fn standard_jwt_rejects_tampered_token() {
+        let svc = service(false);
+        let mut token = svc
+            .generate_token("user-1", "alice", "tenant-1", "ws-1")
+            .expect("create");
+        // 翻转签名区一个字符。
+        let pos = token.len() - 3;
+        let replacement = if token.as_bytes()[pos] == b'a' { 'b' } else { 'a' };
+        token.replace_range(pos..pos + 1, &replacement.to_string());
+        assert!(svc.validate_jwt(&token).is_err());
+    }
+
+    #[test]
+    fn standard_jwt_rejects_wrong_secret() {
+        let svc = service(false);
+        let token = svc
+            .generate_token("user-1", "alice", "tenant-1", "ws-1")
+            .expect("create");
+        let other = JwtService::new(JwtSettings {
+            secret: "another-secret-key-at-least-32-chars".to_string(),
+            harmonyos_enabled: false,
+        });
+        assert!(other.validate_jwt(&token).is_err());
+    }
+
+    #[test]
+    fn short_secret_is_rejected() {
+        let svc = JwtService::new(JwtSettings {
+            secret: "too-short".to_string(),
+            harmonyos_enabled: false,
+        });
+        assert!(svc.create_jwt(payload()).is_err());
+    }
+
+    // ---- HarmonyOS token ----
+
+    #[test]
+    fn harmonyos_token_round_trip() {
+        let svc = service(true);
+        let token = svc
+            .generate_token("user-1", "alice", "tenant-1", "ws-1")
+            .expect("create");
+        let claims = svc.validate_jwt(&token).expect("validate");
+        assert_eq!(claims.user_id, "user-1");
+        assert_eq!(claims.username, "alice");
+        assert_eq!(claims.tenant_id, "tenant-1");
+        assert_eq!(claims.workspace_id, "ws-1");
+    }
+
+    #[test]
+    fn harmonyos_token_rejects_tampering() {
+        let svc = service(true);
+        let token = svc
+            .generate_token("user-1", "alice", "tenant-1", "ws-1")
+            .expect("create");
+        // 篡改数据区前几个 hex 字符（user_id 字段）。
+        let tampered = format!("{}{}", "00", &token[2..]);
+        assert!(svc.validate_jwt(&tampered).is_err());
+    }
+
+    #[test]
+    fn harmonyos_token_rejects_wrong_secret() {
+        let svc = service(true);
+        let token = svc
+            .generate_token("user-1", "alice", "tenant-1", "ws-1")
+            .expect("create");
+        let other = JwtService::new(JwtSettings {
+            secret: "another-secret-key-at-least-32-chars".to_string(),
+            harmonyos_enabled: true,
+        });
+        assert!(other.validate_jwt(&token).is_err());
+    }
+
+    #[test]
+    fn harmonyos_token_rejects_expired() {
+        let svc = service(true);
+        // 手工构造一个 25 小时前的 token（新 7 段格式）。
+        let old_ts = Local::now().timestamp() - 90_000;
+        let data = format!("user-1:alice:tenant-1:ws-1:{}:12345", old_ts);
+        let signature = JwtService::hmac_sha256(&data, SECRET);
+        let token = JwtService::encode_simple(&format!("{}:{}", data, signature));
+        let err = svc.validate_jwt(&token).expect_err("expired token must fail");
+        assert!(err.contains("expired"), "expected expiry error, got: {err}");
+    }
+
+    #[test]
+    fn harmonyos_token_accepts_legacy_6_part_format() {
+        let svc = service(true);
+        // 旧格式（无 workspace_id）：user:tenant:timestamp:random:signature。
+        let ts = Local::now().timestamp();
+        let data = format!("user-1:alice:tenant-1:{}:12345", ts);
+        let signature = JwtService::hmac_sha256(&data, SECRET);
+        let token = JwtService::encode_simple(&format!("{}:{}", data, signature));
+        let claims = svc.validate_jwt(&token).expect("legacy format must still validate");
+        assert_eq!(claims.user_id, "user-1");
+        assert_eq!(claims.workspace_id, "");
+    }
+
+    #[test]
+    fn harmonyos_token_rejects_malformed_without_panic() {
+        let svc = service(true);
+        assert!(svc.validate_jwt("not-a-token").is_err());
+        assert!(svc.validate_jwt("abc").is_err()); // 奇数长度 hex
+        assert!(svc.validate_jwt("").is_err());
     }
 }

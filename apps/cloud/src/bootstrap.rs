@@ -30,7 +30,9 @@ pub fn install_panic_hook() {
         };
 
         eprintln!("🚨 PANIC CAUGHT: {} at {}", message, location);
-        eprintln!("Application will continue running...");
+        // CEO review T4：不要承诺"继续运行"——启动路径/主任务上的 panic 是致命的，
+        // 进程随即退出，旧文案会误导运维去等一个永远不会来的恢复。
+        eprintln!("If this panic occurred during startup or on the main task, the process will now exit.");
 
         // Log to tracing if available
         tracing::error!("PANIC: {} at {}", message, location);
@@ -203,40 +205,38 @@ use tinyiothub_agent::runtime::thing_agent::registry::COMPLETED_CAPACITY;
 ///   created_at 列齐全；core RunReport 无这些字段），否则重启后 dedup
 ///   状态为空，近期已处理问题会重复派发一次。
 ///
-/// 单项失败降级为空段 + warn（启动不阻塞）；DB 不可达时返回空快照。
-pub async fn build_agent_snapshot(db: &Db) -> RestoreSnapshot {
+/// **fail-closed（CEO review T21/OV1）**：启动期 DB 读失败一律 Err 中止
+/// 启动，不降级为空段/默认值。此前的 fail-open 有两个静默放大器：
+/// `TrustConfig::default()` 是宽松默认（`allowed_tool_categories` 含
+/// write、空 blocked）——瞬时读抖动会把加固配置在内存里替换为宽松默认，
+/// 且内存→DB 周期对账会把它固化（重启不可愈）；工作区列表读失败则零
+/// 心跳永久静默。启动期读（迁移刚在同一池上成功）失败即严重故障，
+/// 中止是响亮且可行动的结果。行级数据损坏（report JSON 解析失败、
+/// created_at 解析失败）仍降级跳过 + warn——数据问题，非 I/O 故障。
+pub async fn build_agent_snapshot(db: &Db) -> Result<RestoreSnapshot, String> {
     let pool = db.pool();
-    let ws_ids = match db.find_all_workspace_ids().await {
-        Ok(ids) => ids,
-        Err(e) => {
-            warn!(error = %e, "agent snapshot: list workspace ids failed, restoring empty");
-            return RestoreSnapshot::default();
-        }
-    };
+    let ws_ids = db
+        .find_all_workspace_ids()
+        .await
+        .map_err(|e| format!("agent snapshot: list workspace ids failed: {e}"))?;
 
     let default_interval = HeartbeatConfig::default().interval_minutes;
     let mut heartbeat = Vec::with_capacity(ws_ids.len());
     let mut recent_runs = Vec::new();
     for ws_id in &ws_ids {
-        let tasks = db.list_heartbeat_tasks(ws_id).await.unwrap_or_else(|e| {
-            warn!(workspace_id = %ws_id, error = %e, "agent snapshot: load heartbeat tasks failed");
-            vec![]
-        });
+        let tasks = db
+            .list_heartbeat_tasks(ws_id)
+            .await
+            .map_err(|e| format!("agent snapshot: load heartbeat tasks for {ws_id} failed: {e}"))?;
         let trust_config = db
             .load_heartbeat_trust_config(ws_id)
             .await
-            .unwrap_or_else(|e| {
-                warn!(workspace_id = %ws_id, error = %e, "agent snapshot: load trust config failed");
-                None
-            })
+            .map_err(|e| format!("agent snapshot: load trust config for {ws_id} failed: {e}"))?
             .unwrap_or_default();
         let interval_minutes = db
             .load_heartbeat_config(ws_id)
             .await
-            .unwrap_or_else(|e| {
-                warn!(workspace_id = %ws_id, error = %e, "agent snapshot: load heartbeat config failed");
-                None
-            })
+            .map_err(|e| format!("agent snapshot: load heartbeat config for {ws_id} failed: {e}"))?
             .map(|c| c.interval_minutes)
             .unwrap_or(default_interval);
         heartbeat.push(WorkspaceHeartbeatState {
@@ -245,30 +245,27 @@ pub async fn build_agent_snapshot(db: &Db) -> RestoreSnapshot {
             trust_config,
             interval_minutes,
         });
-        recent_runs.extend(load_recent_runs(pool, ws_id).await);
+        recent_runs.extend(load_recent_runs(pool, ws_id).await?);
     }
-    let problem_meta = load_problem_meta(pool).await;
-    RestoreSnapshot {
+    let problem_meta = load_problem_meta(pool).await?;
+    Ok(RestoreSnapshot {
         heartbeat,
         recent_runs,
         problem_meta,
-    }
+        recent_run_meta: std::collections::HashMap::new(),
+    })
 }
 
 /// 每工作区最近 [`COMPLETED_CAPACITY`] 条 run，**旧→新**（prewarm 输入
-/// 契约）：内层取最新 N 条，外层翻转。report JSON 解析失败的行跳过。
-async fn load_recent_runs(pool: &SqlitePool, workspace_id: &str) -> Vec<RunReport> {
-    let rows: Vec<String> = match Db::new(pool.clone())
+/// 契约）：内层取最新 N 条，外层翻转。查询失败 Err（fail-closed，T21）；
+/// report JSON 解析失败的行跳过 + warn（行级数据问题，非 I/O 故障）。
+async fn load_recent_runs(pool: &SqlitePool, workspace_id: &str) -> Result<Vec<RunReport>, String> {
+    let rows: Vec<String> = Db::new(pool.clone())
         .list_recent_agent_run_reports(workspace_id, COMPLETED_CAPACITY as i64)
         .await
-    {
-        Ok(rows) => rows,
-        Err(e) => {
-            warn!(workspace_id = %workspace_id, error = %e, "agent snapshot: load recent runs failed");
-            return vec![];
-        }
-    };
-    rows.into_iter()
+        .map_err(|e| format!("agent snapshot: load recent runs for {workspace_id} failed: {e}"))?;
+    Ok(rows
+        .into_iter()
         .filter_map(|json| match serde_json::from_str::<RunReport>(&json) {
             Ok(report) => Some(report),
             Err(e) => {
@@ -276,21 +273,20 @@ async fn load_recent_runs(pool: &SqlitePool, workspace_id: &str) -> Vec<RunRepor
                 None
             }
         })
-        .collect()
+        .collect())
 }
 
 /// O11 dedup 元数据段：7d 保留窗（与 RunRegistry PROBLEM_META_RETENTION
-/// 对齐）内的 problem_key 行。created_at 为 sqlite datetime 串；解析失败
-/// 的行跳过。未知 outcome fail-closed 到 Failed（与 repo 查询同策略）。
-async fn load_problem_meta(pool: &SqlitePool) -> Vec<ProblemMetaRow> {
-    let rows = match Db::new(pool.clone()).list_agent_problem_meta_rows().await {
-        Ok(rows) => rows,
-        Err(e) => {
-            warn!(error = %e, "agent snapshot: load problem meta failed");
-            return vec![];
-        }
-    };
-    rows.into_iter()
+/// 对齐）内的 problem_key 行。查询失败 Err（fail-closed，T21）；
+/// created_at 为 sqlite datetime 串，解析失败的行跳过 + warn。未知
+/// outcome fail-closed 到 Failed（与 repo 查询同策略）。
+async fn load_problem_meta(pool: &SqlitePool) -> Result<Vec<ProblemMetaRow>, String> {
+    let rows = Db::new(pool.clone())
+        .list_agent_problem_meta_rows()
+        .await
+        .map_err(|e| format!("agent snapshot: load problem meta failed: {e}"))?;
+    Ok(rows
+        .into_iter()
         .filter_map(
             |(workspace_id, problem_key, run_id, outcome, verified, acked_at, created_at)| {
                 let occurred_at = chrono::NaiveDateTime::parse_from_str(&created_at, "%Y-%m-%d %H:%M:%S")
@@ -310,7 +306,7 @@ async fn load_problem_meta(pool: &SqlitePool) -> Vec<ProblemMetaRow> {
                 })
             },
         )
-        .collect()
+        .collect())
 }
 
 /// 启动顺序第 3 步：僵尸 run reconcile。DB 中 status='running' 的行必为

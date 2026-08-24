@@ -222,7 +222,7 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
     // 僵尸 reconcile。persist_rx 是持久化订阅者的 receiver（生产契约：
     // restore 前取得，restore 期间及之后的事件不丢）；watch_rx 是本测试的
     // 事件断言出口。
-    let snapshot = build_agent_snapshot(&db).await;
+    let snapshot = build_agent_snapshot(&db).await.expect("snapshot build");
     let agent_events = Arc::new(AgentEventBus::new(256));
     let persist_rx = agent_events.subscribe();
     let mut watch_rx = agent_events.subscribe();

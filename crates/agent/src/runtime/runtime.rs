@@ -137,10 +137,13 @@ impl AgentRuntime {
         recent_runs.sort_by(|a, b| a.run_id.cmp(&b.run_id));
         // problem_meta 段导出为空：周期对账不投影 dedup 元数据（DB 即其
         // 真相源，重启时经快照构建器重建）。
+        // recent_run_meta 段（CEO review T3）：窗口内 run 的发射期 dedup 键
+        // 旁路，resync 补插缺失行时恢复 problem_key/dedup_key。
         RestoreSnapshot {
             heartbeat,
             recent_runs,
             problem_meta: Vec::new(),
+            recent_run_meta: self.run_registry.all_run_keys(),
         }
     }
 
@@ -335,6 +338,7 @@ mod tests {
             }],
             recent_runs: vec![],
             problem_meta: vec![],
+            recent_run_meta: Default::default(),
         }
     }
 
@@ -344,6 +348,7 @@ mod tests {
             heartbeat: vec![],
             recent_runs: vec![],
             problem_meta: vec![],
+            recent_run_meta: Default::default(),
         }
     }
 

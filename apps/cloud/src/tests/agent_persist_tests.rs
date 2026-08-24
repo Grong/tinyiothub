@@ -56,6 +56,7 @@ fn empty_snapshot() -> RestoreSnapshot {
         heartbeat: vec![],
         recent_runs: vec![],
         problem_meta: vec![],
+        recent_run_meta: Default::default(),
     }
 }
 
@@ -185,6 +186,7 @@ async fn lagged_subscriber_resyncs_from_dump_state() {
         }],
         recent_runs: vec![report("run_lagged", "ws1", "resync me")],
         problem_meta: vec![],
+        recent_run_meta: Default::default(),
     };
     // 容量 2 的 bus：先订阅再发 5 事件 → 首 recv 必为 Lagged
     let runtime = runtime_with(2, snapshot);
@@ -228,6 +230,7 @@ async fn periodic_reconcile_projects_dump_state() {
         heartbeat: vec![],
         recent_runs: vec![report("run_reconcile", "ws1", "reconciled")],
         problem_meta: vec![],
+        recent_run_meta: Default::default(),
     };
     let runtime = runtime_with(16, snapshot);
 
@@ -314,6 +317,7 @@ async fn resync_escalates_to_dlq_after_consecutive_failures_then_recovers() {
         heartbeat: vec![],
         recent_runs: vec![report("run_bad", "ws1", "fails")],
         problem_meta: vec![],
+        recent_run_meta: Default::default(),
     };
     let mut failures = ResyncFailures::default();
 
@@ -347,4 +351,124 @@ async fn resync_escalates_to_dlq_after_consecutive_failures_then_recovers() {
     resync(snap(), db.pool(), &mut failures).await;
     assert!(!failures.runs.contains_key("run_bad"), "恢复后计数清零");
     assert_eq!(count_runs(&pool, "run_bad").await, 1);
+}
+
+// ── CEO review P1 测试波（T1/T3）─────────────────────────────
+
+/// T1：subscriber 任务 panic 不再是静默终点——监管循环捕获、重启，
+/// 并在 shutdown 取消时干净退出。
+#[tokio::test]
+async fn supervisor_restarts_panicked_subscriber_and_exits_on_shutdown() {
+    use crate::domains::agent::host::persist::supervise_impl;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    let (db, _pool) = test_db().await;
+    let bus = Arc::new(AgentEventBus::new(16));
+    let shutdown = CancellationToken::new();
+    let calls = Arc::new(AtomicU32::new(0));
+
+    let dump: Arc<dyn Fn() -> RestoreSnapshot + Send + Sync> = Arc::new(|| RestoreSnapshot {
+        heartbeat: vec![],
+        recent_runs: vec![],
+        problem_meta: vec![],
+        recent_run_meta: Default::default(),
+    });
+
+    let calls_clone = calls.clone();
+    let sup = tokio::spawn(supervise_impl(
+        dump,
+        db,
+        bus.clone(),
+        bus.subscribe(),
+        shutdown.clone(),
+        move |_rx, _db, child| {
+            let calls = calls_clone.clone();
+            async move {
+                let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
+                if n == 1 {
+                    panic!("boom — simulated subscriber death");
+                }
+                // 第二次起正常运行：等到 shutdown。
+                child.cancelled().await;
+            }
+        },
+    ));
+
+    // 监管应重启（第一次 panic 后 backoff 2s，4s 内应见到第二次调用）。
+    for _ in 0..400 {
+        if calls.load(Ordering::SeqCst) >= 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        calls.load(Ordering::SeqCst) >= 2,
+        "supervisor must restart the dead subscriber (calls={})",
+        calls.load(Ordering::SeqCst)
+    );
+
+    shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(5), sup)
+        .await
+        .expect("supervisor must exit promptly on shutdown")
+        .expect("supervisor task must not panic");
+}
+
+/// T3：resync 补插缺失行时恢复 problem_key/dedup_key——Lagged 丢事件
+/// 不再导致 dedup 元数据永久丢失（重启后问题重复派发）。
+#[tokio::test]
+async fn resync_restores_dedup_metadata_on_missing_rows() {
+    use tinyiothub_agent::runtime::snapshot::RunDedupKeys;
+
+    let (_db, pool) = test_db().await;
+    seed_test_workspace(&pool, "t1", "ws1").await;
+
+    let mut meta = std::collections::HashMap::new();
+    meta.insert(
+        "run-meta".to_string(),
+        RunDedupKeys {
+            problem_key: Some("漏水告警".into()),
+            dedup_key: Some("trigger:42".into()),
+        },
+    );
+    let snap = RestoreSnapshot {
+        heartbeat: vec![],
+        recent_runs: vec![report("run-meta", "ws1", "处理漏水")],
+        problem_meta: vec![],
+        recent_run_meta: meta,
+    };
+    let mut failures = ResyncFailures::default();
+    resync(snap, &pool, &mut failures).await;
+
+    let (pk, dk): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT problem_key, dedup_key FROM agent_runs WHERE id = 'run-meta'")
+            .fetch_one(&pool)
+            .await
+            .expect("run-meta row");
+    assert_eq!(pk.as_deref(), Some("漏水告警"));
+    assert_eq!(dk.as_deref(), Some("trigger:42"));
+}
+
+/// T3 对照：旁路映射查不到（启动预热行）时回退 None，行为与旧实现一致。
+#[tokio::test]
+async fn resync_without_sidecar_meta_falls_back_to_null_keys() {
+    let (_db, pool) = test_db().await;
+    seed_test_workspace(&pool, "t1", "ws1").await;
+
+    let snap = RestoreSnapshot {
+        heartbeat: vec![],
+        recent_runs: vec![report("run-plain", "ws1", "常规巡检")],
+        problem_meta: vec![],
+        recent_run_meta: Default::default(),
+    };
+    let mut failures = ResyncFailures::default();
+    resync(snap, &pool, &mut failures).await;
+
+    let (pk, dk): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT problem_key, dedup_key FROM agent_runs WHERE id = 'run-plain'")
+            .fetch_one(&pool)
+            .await
+            .expect("run-plain row");
+    assert_eq!(pk, None);
+    assert_eq!(dk, None);
 }

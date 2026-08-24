@@ -156,9 +156,22 @@ jobs:
           # 全树检查（Task 11.5 / D15：runtime→db 边已斩断，agent 全树可达
           # sqlx-free）。--prefix none + {p} 输出纯包名行，锚定 ^ 匹配避免误伤
           # 含 db/sqlx 子串的包。
-          if cargo tree -p agent --prefix none --format "{p}" | grep -E "^sqlx|^tinyiothub-storage|^db "; then
-            echo "❌ DEPENDENCY VIOLATION: crates/agent dependency tree must not contain sqlx/tinyiothub-storage/db"
+          # 词表终审修正（CEO review F6）：删除死模式 ^tinyiothub-storage
+          # （包名是 db，{p} 永不输出 lib 名）。
+          # axum 不进树词表：zeroclaw（git 依赖）经 zeroclaw-gateway/channels
+          # 传递引入 axum，树级 axum-free 在 zeroclaw 治理（spec §13 推迟项）
+          # 完成前不可达——axum 纯度由上方源码 grep + 下方 Cargo.toml 扫描承担。
+          if cargo tree -p agent --prefix none --format "{p}" | grep -E "^sqlx|^db "; then
+            echo "❌ DEPENDENCY VIOLATION: crates/agent dependency tree must not contain sqlx/db (incl. renamed deps)"
             echo "   ✅ Persistence belongs behind port traits implemented in apps/cloud"
+            exit 1
+          fi
+          # 改名偷渡守门（CEO review F6）：`web = { package = "axum" }` 可绕
+          # 源码 grep（use web:: 不含 axum 字样）且树词表无法查 axum——直接
+          # 扫描清单的依赖声明形态（剥注释；行首依赖键或 package= 值），
+          # description 文案中的"零 axum"字样不会误伤。
+          if sed 's/#.*$//' crates/agent/Cargo.toml | grep -nE '^\s*(axum|sqlx|tinyiothub-storage|tinyiothub_storage|db)\s*=|package\s*=\s*"(axum|sqlx|tinyiothub-storage|db)"'; then
+            echo "❌ DEPENDENCY VIOLATION: crates/agent/Cargo.toml must not declare axum/sqlx/storage/db (incl. renamed)"
             exit 1
           fi
           echo "✅ Agent dependency tree guard passed"
@@ -191,10 +204,18 @@ jobs:
         run: |
           echo "=== Checking migrations are DDL-only ==="
           # baseline 豁免（历史快照）；其余迁移不得携带种子数据，种子归 seed.rs。
+          # 正则终审修正（CEO review F5）：旧守卫 grep "INSERT INTO" 大小写敏感且
+          # 子串匹配——INSERT OR IGNORE INTO（本项目种子惯例）、小写、多行
+          # INSERT\nINTO、UPDATE/DELETE/REPLACE 全部绕过。现改为：先剥 -- 行注释，
+          # 再对 DML 关键词做大小写不敏感的词边界匹配。
           NON_BASELINE=$(ls crates/db/migrations/*.sql | grep -v baseline || true)
-          if [ -n "$NON_BASELINE" ] && echo "$NON_BASELINE" | xargs grep -l "INSERT INTO" 2>/dev/null; then
-            echo "❌ migrations must be DDL-only (seeds go to seed.rs)"
-            exit 1
+          if [ -n "$NON_BASELINE" ]; then
+            OFFENDERS=$(echo "$NON_BASELINE" | xargs -I{} sh -c 'sed "s/--.*$//" "{}" | grep -qiE "\b(INSERT|REPLACE|UPDATE|DELETE)\b" && echo "{}"' || true)
+            if [ -n "$OFFENDERS" ]; then
+              echo "$OFFENDERS"
+              echo "❌ migrations must be DDL-only (seeds go to seed.rs; INSERT/UPDATE/DELETE/REPLACE incl. INSERT OR IGNORE are forbidden)"
+              exit 1
+            fi
           fi
           echo "✅ Migration DDL-only guard passed"
 

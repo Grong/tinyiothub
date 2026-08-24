@@ -328,6 +328,15 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
         _ => None,
     };
     deps.registry.record(report.clone());
+    // CEO review T3：发射期 dedup 键入旁路映射——Lagged/对账补插缺失行时
+    // resync 据此恢复 problem_key/dedup_key，杜绝补插行永久丢元数据。
+    deps.registry.set_run_keys(
+        &report.run_id,
+        crate::runtime::snapshot::RunDedupKeys {
+            problem_key: problem_key.map(str::to_owned),
+            dedup_key: signal.dedup_key.clone(),
+        },
+    );
     // O11 dedup 元数据（Task 6）：problem run 结果写入内存 dedup 真源，供
     // HeartbeatBridge 抑制判定（替代原 runs_repo 的 problem_key SQL 查询）。
     if let Some(pk) = problem_key {

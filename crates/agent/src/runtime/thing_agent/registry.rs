@@ -56,7 +56,7 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use tinyiothub_core::agent_runs::{Outcome, RunReport};
 
-use crate::runtime::snapshot::ProblemMetaRow;
+use crate::runtime::snapshot::{ProblemMetaRow, RunDedupKeys};
 
 /// 每 workspace 保留的最近已完成 run 条数（超出驱逐最老）。
 pub const COMPLETED_CAPACITY: usize = 50;
@@ -89,6 +89,10 @@ pub struct RunRegistry {
     inner: Arc<DashMap<String, VecDeque<RunReport>>>,
     /// O11 dedup 元数据：(workspace_id, problem_key) → 压缩状态（Task 6）。
     problem_meta: Arc<DashMap<(String, String), ProblemDedupState>>,
+    /// run_id → 发射期 dedup 键旁路（CEO review T3）：core RunReport 不含
+    /// problem_key/dedup_key，dump_state 导出供 resync 补插缺失行时恢复
+    /// 元数据。与报告窗口同生命周期——`record` 驱逐窗口最老 run 时同步删除。
+    run_keys: Arc<DashMap<String, RunDedupKeys>>,
 }
 
 impl RunRegistry {
@@ -96,13 +100,39 @@ impl RunRegistry {
         Self::default()
     }
 
-    /// 记录一条已完成 run；该 workspace 超出容量时驱逐最老。
+    /// 记录一条已完成 run；该 workspace 超出容量时驱逐最老（旁路键同步删除）。
     pub fn record(&self, report: RunReport) {
-        let mut entry = self.inner.entry(report.workspace_id.clone()).or_default();
-        entry.push_back(report);
-        while entry.len() > COMPLETED_CAPACITY {
-            entry.pop_front();
+        let evicted_ids: Vec<String> = {
+            let mut entry = self.inner.entry(report.workspace_id.clone()).or_default();
+            entry.push_back(report);
+            let mut evicted = Vec::new();
+            while entry.len() > COMPLETED_CAPACITY {
+                if let Some(r) = entry.pop_front() {
+                    evicted.push(r.run_id);
+                }
+            }
+            evicted
+        };
+        for id in evicted_ids {
+            self.run_keys.remove(&id);
         }
+    }
+
+    /// 记录 run 的发射期 dedup 键（CEO review T3）：仅当至少一键存在时
+    /// 存储；manager 在 `record` 之后、事件发射之前调用。
+    pub fn set_run_keys(&self, run_id: &str, keys: RunDedupKeys) {
+        if keys.problem_key.is_none() && keys.dedup_key.is_none() {
+            return;
+        }
+        self.run_keys.insert(run_id.to_string(), keys);
+    }
+
+    /// 窗口内全部 run 的 dedup 键旁路（dump_state 导出用）。
+    pub fn all_run_keys(&self) -> std::collections::HashMap<String, RunDedupKeys> {
+        self.run_keys
+            .iter()
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect()
     }
 
     /// 最近 run（新→旧），最多 `limit` 条。等价原 `recent_summaries` 的
@@ -543,5 +573,35 @@ mod tests {
         let clone = reg.clone();
         reg.record(fixtures::report("ws1", "a"));
         assert_eq!(clone.recent("ws1", 1).len(), 1);
+    }
+
+    /// CEO review T3：set_run_keys 存取 + 双 None 不存 + 窗口驱逐同步删除。
+    #[test]
+    fn run_keys_stored_exported_and_evicted_with_window() {
+        let reg = RunRegistry::new();
+        reg.record(fixtures::report("ws1", "k1"));
+        reg.set_run_keys(
+            "k1",
+            crate::runtime::snapshot::RunDedupKeys {
+                problem_key: Some("漏水".into()),
+                dedup_key: Some("t:1".into()),
+            },
+        );
+        // 双 None 不存储（不占映射）。
+        reg.record(fixtures::report("ws1", "k2"));
+        reg.set_run_keys("k2", crate::runtime::snapshot::RunDedupKeys::default());
+
+        let keys = reg.all_run_keys();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys["k1"].problem_key.as_deref(), Some("漏水"));
+        assert_eq!(keys["k1"].dedup_key.as_deref(), Some("t:1"));
+
+        // 窗口塞满 COMPLETED_CAPACITY：k1 被驱逐，旁路键同步删除。
+        for i in 0..COMPLETED_CAPACITY {
+            let r = fixtures::report("ws1", &format!("f{i}"));
+            reg.record(r);
+        }
+        let keys = reg.all_run_keys();
+        assert!(!keys.contains_key("k1"), "evicted run's keys must be removed");
     }
 }

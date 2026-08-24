@@ -5,8 +5,9 @@
 //!   预 SELECT 把"已存在"视为幂等成功（幂等即 fencing，stale 回放不覆盖）
 //! - `HeartbeatResultReady` → `agent_actions`（首次失败 spawn 独立重试任务：
 //!   2s base、2^attempt 退避、5 次 → DLQ + `AiEvent::HeartbeatPersistFailed`）
-//! - `TrustConfigChanged` → `workspaces.heartbeat_trust_config` 幂等 upsert
-//!   （与 handler 先写路径双写同值无害，D11-⑤）
+//! - `TrustConfigChanged` → `workspaces.heartbeat_trust_config` fencing upsert
+//!   （CEO review T2：occurred_at 不早于已应用时间戳才写入；与 handler 先写
+//!   路径双写同值无害，D11-⑤）
 //! - `HeartbeatTasksChanged` → 无投影（tasks 由 handler 先写 DB）
 //! - `DlqEntryAdded` → `agent_dead_letters`
 //!
@@ -35,7 +36,7 @@ use super::dlq_repo::SqliteDeadLetterQueue;
 use tinyiothub_agent::runtime::event::bus::AiEventPublisher;
 use tinyiothub_agent::runtime::event::dlq::DeadLetterQueue;
 use tinyiothub_agent::runtime::event::types::AiEvent;
-use tinyiothub_agent::runtime::events::{AgentEvent, AgentEventKind};
+use tinyiothub_agent::runtime::events::{AgentEvent, AgentEventBus, AgentEventKind};
 use tinyiothub_agent::runtime::runtime::AgentRuntime;
 use tinyiothub_agent::runtime::snapshot::RestoreSnapshot;
 
@@ -78,6 +79,92 @@ pub async fn run_persistence_subscriber(
         move || runtime.dump_state()
     };
     run_persistence_loop(rx, dump, db, publisher, RECONCILE_INTERVAL, shutdown).await
+}
+
+/// subscriber 监管循环（CEO review T1）。
+///
+/// 持久化是内存真相源的唯一落库通道：订阅任务 panic 或异常退出曾是无告警、
+/// 无重启的静默终点（JoinHandle 只在关停时被排空，bus 继续覆盖旧事件，
+/// runs/心跳结果/DLQ 全部停止落库而系统看起来健康）。监管循环把任务死亡
+/// 变成响亮、可恢复的事件：
+/// 1. 内层任务以 spawn 包裹，panic 被捕获分类（Exited/Panicked）；
+/// 2. error! 记录死亡（生产默认级别可见）；
+/// 3. **先取新 receiver 再立即全量 resync**——闭合死亡窗口（D11-① 同款
+///    顺序：订阅先于状态导出，resync 期间的事件不丢）；
+/// 4. 指数退避后重启（防 panic 风暴榨干 CPU）；
+/// 5. 仅当 shutdown 取消时退出。
+pub async fn supervise_persistence_subscriber(
+    runtime: Arc<AgentRuntime>,
+    db: Arc<Db>,
+    bus: Arc<AgentEventBus>,
+    first_rx: tokio::sync::broadcast::Receiver<AgentEvent>,
+    shutdown: CancellationToken,
+) {
+    let publisher = runtime.orchestrator().event_publisher().clone();
+    let dump: Arc<dyn Fn() -> RestoreSnapshot + Send + Sync> = {
+        let runtime = runtime.clone();
+        Arc::new(move || runtime.dump_state())
+    };
+    let dump_for_loop = dump.clone();
+    supervise_impl(dump, db, bus, first_rx, shutdown, move |rx, task_db, child| {
+        let publisher = publisher.clone();
+        let dump = dump_for_loop.clone();
+        async move {
+            run_persistence_loop(rx, move || dump(), task_db, publisher, RECONCILE_INTERVAL, child).await;
+        }
+    })
+    .await
+}
+
+/// 可测监管核心（T1）：与生产循环解耦——测试注入会 panic 的 `run_once`
+/// 验证"死亡 → error! → 新 receiver → resync → 退避 → 重启"全链路。
+pub(crate) async fn supervise_impl<F, Fut>(
+    dump: Arc<dyn Fn() -> RestoreSnapshot + Send + Sync>,
+    db: Arc<Db>,
+    bus: Arc<AgentEventBus>,
+    first_rx: tokio::sync::broadcast::Receiver<AgentEvent>,
+    shutdown: CancellationToken,
+    run_once: F,
+) where
+    F: Fn(tokio::sync::broadcast::Receiver<AgentEvent>, Arc<Db>, CancellationToken) -> Fut + Send,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    let mut rx = Some(first_rx);
+    let mut restart_count: u32 = 0;
+    loop {
+        let child = shutdown.child_token();
+        let task_rx = rx.take().unwrap_or_else(|| bus.subscribe());
+        let handle = tokio::spawn(run_once(task_rx, db.clone(), child));
+        match handle.await {
+            Ok(()) if shutdown.is_cancelled() => return,
+            Ok(()) => {
+                error!("persistence subscriber exited unexpectedly — restarting (persistence was DOWN)");
+            }
+            Err(e) if shutdown.is_cancelled() => {
+                error!(error = %e, "persistence subscriber panicked during shutdown");
+                return;
+            }
+            Err(e) => {
+                error!(error = %e, "persistence subscriber task PANICKED — restarting (persistence was DOWN)");
+            }
+        }
+        restart_count += 1;
+        // 死亡窗口闭合：新 receiver 从队尾开始，死窗内的事件靠立即全量
+        // resync 补齐（等价一次 Lagged）。顺序敏感：先订阅后 resync。
+        rx = Some(bus.subscribe());
+        let mut failures = ResyncFailures::default();
+        resync(dump(), db.pool(), &mut failures).await;
+        tokio::select! {
+            _ = tokio::time::sleep(restart_backoff(restart_count)) => {}
+            _ = shutdown.cancelled() => return,
+        }
+    }
+}
+
+/// 监管重启退避：2s base、2^n 指数、60s 封顶。
+fn restart_backoff(restart_count: u32) -> Duration {
+    let shift = restart_count.saturating_sub(1).min(5);
+    (Duration::from_secs(2) * 2u32.pow(shift)).min(Duration::from_secs(60))
 }
 
 /// 订阅主循环。与 `run_persistence_subscriber` 分离以便测试注入
@@ -153,10 +240,25 @@ async fn project(
             }
         }
         AgentEventKind::TrustConfigChanged { workspace_id, config } => {
-            // 幂等 upsert：与 handler 先写路径双写同值无害（D11-⑤）。
+            // fencing upsert（CEO review T2）：以事件的 occurred_at 与已应用
+            // 时间戳比较，乱序/回放的旧事件不覆盖新配置；与 handler 先写路径
+            // 双写同值无害（D11-⑤）。
             let db = Db::new(pool.clone());
-            if let Err(e) = db.save_heartbeat_trust_config(workspace_id, config).await {
-                error!(workspace_id = %workspace_id, error = %e, "trust config projection failed");
+            let occurred_at = event.occurred_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            match db
+                .save_heartbeat_trust_config_fenced(workspace_id, config, &occurred_at)
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    debug!(
+                        workspace_id = %workspace_id,
+                        "trust config projection fenced (event older than applied state)"
+                    );
+                }
+                Err(e) => {
+                    error!(workspace_id = %workspace_id, error = %e, "trust config projection failed");
+                }
             }
         }
         AgentEventKind::HeartbeatTasksChanged { workspace_id } => {
@@ -234,9 +336,16 @@ pub(crate) async fn resync(snapshot: RestoreSnapshot, pool: &SqlitePool, failure
                 Ok(false) => {}
                 Err(e) => return Err(format!("existence check: {e}")),
             }
-            // resync 路径没有 problem_key/dedup_key 元数据（RunRegistry 不持有）；
-            // 正常情形下该行已由事件路径落库，此处 insert 为幂等 no-op。
-            match db.insert_agent_run(report, None, None).await {
+            // resync 补插恢复 O11 dedup 元数据（CEO review T3）：keys 来自
+            // dump_state 导出的 RunRegistry 旁路映射；查不到（启动预热行，
+            // 正常已由事件路径落库）才回退 None——此前无条件 None 会使
+            // Lagged 补插的行永久丢失 problem_key，重启后问题重复派发。
+            let (problem_key, dedup_key) = snapshot
+                .recent_run_meta
+                .get(&report.run_id)
+                .map(|k| (k.problem_key.as_deref(), k.dedup_key.as_deref()))
+                .unwrap_or((None, None));
+            match db.insert_agent_run(report, problem_key, dedup_key).await {
                 Ok(_) => Ok(()),
                 Err(e) if e.to_string().contains("UNIQUE") => Ok(()), // 并发重复：幂等成功
                 Err(e) => Err(e.to_string()),

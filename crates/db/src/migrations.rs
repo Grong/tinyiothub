@@ -20,6 +20,11 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         backup_before_migrate(pool).await?;
     }
 
+    // CEO review T4：老链库（68 迁移时代的 _sqlx_migrations 行）会在 sqlx 校验期
+    // 以 VersionMissing 失败——响亮但文案误导（"恢复备份"会让运维陷入恢复→再崩
+    // 死循环）。备份已先行，这里显式检测并给出 Q2 的可行动指引。
+    reject_legacy_chain_db(pool, &migrator).await?;
+
     // FK 加固（2026-08-18 调查）：sqlx 默认 foreign_keys=ON；SQLite 在 FK 开启时
     // DROP TABLE 会先隐式 DELETE FROM 该表，触发子表 ON DELETE CASCADE。
     // 迁移在专用连接上以 FK OFF 运行；pragma 是连接级设置，
@@ -69,6 +74,55 @@ async fn pending_migrations_exist(pool: &SqlitePool, migrator: &Migrator) -> Res
         }
     }
     Ok(false)
+}
+
+/// Abort with an actionable message when the database was created by the legacy
+/// 68-migration chain (CEO review T4).
+///
+/// sqlx's own `VersionMissing` validation error fires later and only says the
+/// applied version "is missing in the resolved migrations" — paired with the
+/// generic "restore the backup" remediation it sends operators into a
+/// restore-and-crash loop. The settled decision (db-overhaul Q2) is that legacy
+/// deployments rebuild: no data-migration path exists. The pre-migration backup
+/// has already been written by the time this runs.
+async fn reject_legacy_chain_db(pool: &SqlitePool, migrator: &Migrator) -> Result<(), sqlx::Error> {
+    let table_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = '_sqlx_migrations'
+        )",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if !table_exists {
+        return Ok(());
+    }
+
+    let applied: Vec<i64> = sqlx::query_scalar("SELECT version FROM _sqlx_migrations")
+        .fetch_all(pool)
+        .await?;
+    let known: std::collections::HashSet<i64> = migrator.iter().map(|m| m.version).collect();
+    let mut legacy: Vec<i64> = applied.into_iter().filter(|v| !known.contains(v)).collect();
+    legacy.sort_unstable();
+
+    if legacy.is_empty() {
+        return Ok(());
+    }
+
+    Err(sqlx::Error::Configuration(
+        format!(
+            "This database was created by the legacy migration chain ({} applied version(s) unknown to this build, oldest: {}). \
+             There is deliberately no data-migration path (db-overhaul decision Q2). \
+             A pre-migration backup has been written to the backups/ directory next to the database file. \
+             To run this version: stop the app, move the database file away (keep it as your archive), and start again — \
+             a fresh baseline database with system seed data is built automatically. \
+             如需保留旧数据：先用旧版本二进制导出，再启动新版本。",
+            legacy.len(),
+            legacy[0]
+        )
+        .into(),
+    ))
 }
 
 /// Snapshot the database file to `<db-dir>/backups/<name>-<utc-ts>.db`.
@@ -147,6 +201,44 @@ async fn enforce_foreign_key_integrity(pool: &SqlitePool) -> Result<(), sqlx::Er
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// CEO review T4: a database created by the legacy 68-migration chain must
+    /// abort with an actionable message (rebuild per Q2), not sqlx's generic
+    /// VersionMissing + "restore the backup" boot-loop text.
+    #[tokio::test]
+    async fn legacy_chain_db_aborts_with_rebuild_guidance() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE _sqlx_migrations (
+                version BIGINT PRIMARY KEY,
+                description TEXT NOT NULL,
+                installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                success BOOLEAN NOT NULL,
+                checksum BLOB NOT NULL,
+                execution_time BIGINT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // 老链版本号（不在当前迁移集内）。
+        sqlx::query("INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) VALUES (20260106000002, 'legacy', 1, X'00', 1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let err = run_migrations(&pool).await.expect_err("legacy chain DB must abort");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("legacy migration chain"),
+            "message should name the cause: {msg}"
+        );
+        assert!(msg.contains("no data-migration path"), "message should state Q2: {msg}");
+        assert!(
+            msg.contains("move the database file away"),
+            "message should be actionable: {msg}"
+        );
+    }
 
     /// Regression: after run_migrations, a plain DELETE FROM devices must
     /// still work — the gateway pairing rollback depends on it (FK cascade
