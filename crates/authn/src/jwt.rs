@@ -114,19 +114,28 @@ impl JwtService {
         s.bytes().map(|b| format!("{:02x}", b)).collect::<String>()
     }
 
-    // 简单的字符串解码
-    fn decode_simple(s: &str) -> Result<String, String> {
-        // CEO review T7：奇数长度输入下 `&s[i..i+2]` 越界 panic——
-        // 畸形 token 绝不能在认证路径上炸掉请求任务。
-        if s.len() % 2 != 0 {
+    // hex → 原始字节（签名/MAC 等任意字节序列；字符边界安全）
+    fn decode_hex(s: &str) -> Result<Vec<u8>, String> {
+        // CEO review T7 + security review：两处 panic 面——奇数长度越界，
+        // 以及多字节 UTF-8 的非字符边界切片（"0é0" 字节长为偶数但 é 跨
+        // 字节对）。一律按字节块解析：畸形输入只返回 Err。
+        if !s.len().is_multiple_of(2) {
             return Err("Invalid encoding".to_string());
         }
-        let bytes: Result<Vec<u8>, _> = (0..s.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&s[i..i + 2], 16))
-            .collect();
+        s.as_bytes()
+            .chunks(2)
+            .map(|pair| {
+                std::str::from_utf8(pair)
+                    .ok()
+                    .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+                    .ok_or_else(|| "Invalid encoding".to_string())
+            })
+            .collect()
+    }
 
-        let bytes = bytes.map_err(|_| "Invalid encoding".to_string())?;
+    // 简单的字符串解码
+    fn decode_simple(s: &str) -> Result<String, String> {
+        let bytes = Self::decode_hex(s)?;
         String::from_utf8(bytes).map_err(|_| "Invalid UTF-8".to_string())
     }
 
@@ -177,7 +186,9 @@ impl JwtService {
 
         let timestamp: i64 = timestamp_str.parse().map_err(|_| "Invalid timestamp".to_string())?;
 
-        // 验证 HMAC-SHA256 签名
+        // 验证 HMAC-SHA256 签名：常量时间比较（security review——`str !=`
+        // 首字节不同即早退，泄漏 MAC 前缀匹配的时序侧信道）。签名是 MAC
+        // 字节的 hex 编码，解码后经 hmac crate 的 verify_slice 比较。
         let data = if workspace_id.is_empty() {
             format!("{}:{}:{}:{}:{}", user_id, username, tenant_id, timestamp, random_suffix)
         } else {
@@ -186,11 +197,11 @@ impl JwtService {
                 user_id, username, tenant_id, workspace_id, timestamp, random_suffix
             )
         };
-        let expected_signature = Self::hmac_sha256(&data, &secret);
-
-        if signature != expected_signature {
-            return Err("Invalid token signature".to_string());
-        }
+        let signature_bytes = Self::decode_hex(signature).map_err(|_| "Invalid token signature".to_string())?;
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
+        mac.update(data.as_bytes());
+        mac.verify_slice(&signature_bytes)
+            .map_err(|_| "Invalid token signature".to_string())?;
 
         // 检查过期（24小时）
         let now = Local::now().timestamp();
@@ -468,5 +479,51 @@ mod tests {
         assert!(svc.validate_jwt("not-a-token").is_err());
         assert!(svc.validate_jwt("abc").is_err()); // 奇数长度 hex
         assert!(svc.validate_jwt("").is_err());
+    }
+
+    /// Security review：多字节 UTF-8 跨字节对的输入（偶数字节长）曾在
+    /// `&s[i..i+2]` 非字符边界切片处 panic——奇数长度守卫不覆盖此形态。
+    #[test]
+    fn decode_simple_rejects_multibyte_char_boundaries_without_panic() {
+        assert!(JwtService::decode_simple("0é0").is_err()); // é 跨字节对
+        assert!(JwtService::decode_simple("00用0").is_err()); // 3 字节字符
+        assert!(JwtService::decode_simple("0e794a8").is_err()); // 奇数 + 多字节
+    }
+
+    /// Security review 补测：HarmonyOS token 拿到非 HarmonyOS 服务上必须
+    /// 失败（跨模式拒绝），反之标准 JWT 在 HarmonyOS 模式同样失败。
+    #[test]
+    fn cross_mode_tokens_are_rejected() {
+        let hs_token = service(true)
+            .generate_token("user-1", "alice", "tenant-1", "ws-1")
+            .expect("create harmonyos");
+        assert!(service(false).validate_jwt(&hs_token).is_err());
+
+        let std_token = service(false)
+            .generate_token("user-1", "alice", "tenant-1", "ws-1")
+            .expect("create standard");
+        assert!(service(true).validate_jwt(&std_token).is_err());
+    }
+
+    /// 标准 JWT 过期路径：有效期已被拨到过去的 token 必须校验失败。
+    #[test]
+    fn standard_jwt_rejects_expired() {
+        let svc = service(false);
+        let key = HS256Key::from_bytes(SECRET.as_bytes());
+        let mut claims = jwt_simple::claims::Claims::with_custom_claims(
+            Claims {
+                user_id: "user-1".to_string(),
+                token_id: "t".to_string(),
+                username: "alice".to_string(),
+                tenant_id: "tenant-1".to_string(),
+                workspace_id: "ws-1".to_string(),
+                exp: None,
+            },
+            Duration::from_secs(3600),
+        );
+        // 拨到 1 小时前（超出 jwt-simple 默认时间容差）。
+        claims.expires_at = claims.expires_at.map(|exp| exp - Duration::from_secs(7200));
+        let token = key.authenticate(claims).expect("create expired token");
+        assert!(svc.validate_jwt(&token).is_err());
     }
 }

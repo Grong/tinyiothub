@@ -381,6 +381,8 @@ async fn supervisor_restarts_panicked_subscriber_and_exits_on_shutdown() {
         bus.clone(),
         bus.subscribe(),
         shutdown.clone(),
+        // testing specialist T7：注入毫秒级退避，不为测试付 2s 墙钟。
+        |_| Duration::from_millis(10),
         move |_rx, _db, child| {
             let calls = calls_clone.clone();
             async move {
@@ -394,8 +396,8 @@ async fn supervisor_restarts_panicked_subscriber_and_exits_on_shutdown() {
         },
     ));
 
-    // 监管应重启（第一次 panic 后 backoff 2s，4s 内应见到第二次调用）。
-    for _ in 0..400 {
+    // 监管应重启（毫秒级注入退避，3s 内必见第二次调用）。
+    for _ in 0..300 {
         if calls.load(Ordering::SeqCst) >= 2 {
             break;
         }
@@ -471,4 +473,200 @@ async fn resync_without_sidecar_meta_falls_back_to_null_keys() {
             .expect("run-plain row");
     assert_eq!(pk, None);
     assert_eq!(dk, None);
+}
+
+/// testing specialist T2：干净但意外的退出（Ok(()) 且无 shutdown）——
+/// 监管同样必须重启（持久化同样处于 DOWN 状态）。
+#[tokio::test]
+async fn supervisor_restarts_after_unexpected_clean_exit() {
+    use crate::domains::agent::host::persist::supervise_impl;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    let (db, _pool) = test_db().await;
+    let bus = Arc::new(AgentEventBus::new(16));
+    let shutdown = CancellationToken::new();
+    let calls = Arc::new(AtomicU32::new(0));
+    let dump: Arc<dyn Fn() -> RestoreSnapshot + Send + Sync> = Arc::new(RestoreSnapshot::default);
+
+    let calls_clone = calls.clone();
+    let sup = tokio::spawn(supervise_impl(
+        dump,
+        db,
+        bus.clone(),
+        bus.subscribe(),
+        shutdown.clone(),
+        |_| Duration::from_millis(10),
+        move |_rx, _db, child| {
+            let calls = calls_clone.clone();
+            async move {
+                let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
+                if n > 1 {
+                    child.cancelled().await;
+                }
+                // 第一次：立即干净返回（意外退出）。
+            }
+        },
+    ));
+
+    wait_until(|| {
+        let calls = calls.clone();
+        async move { calls.load(Ordering::SeqCst) >= 2 }
+    })
+    .await;
+    shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(5), sup)
+        .await
+        .expect("supervisor must exit on shutdown")
+        .expect("supervisor task must not panic");
+}
+
+/// testing specialist T2：shutdown 取消后发生的 panic 不触发重启——
+/// 监管识别关停语境并直接返回。
+#[tokio::test]
+async fn supervisor_does_not_restart_when_panic_happens_during_shutdown() {
+    use crate::domains::agent::host::persist::supervise_impl;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    let (db, _pool) = test_db().await;
+    let bus = Arc::new(AgentEventBus::new(16));
+    let shutdown = CancellationToken::new();
+    let calls = Arc::new(AtomicU32::new(0));
+    let dump: Arc<dyn Fn() -> RestoreSnapshot + Send + Sync> = Arc::new(RestoreSnapshot::default);
+
+    let calls_clone = calls.clone();
+    let sup = tokio::spawn(supervise_impl(
+        dump,
+        db,
+        bus.clone(),
+        bus.subscribe(),
+        shutdown.clone(),
+        |_| Duration::from_millis(10),
+        move |_rx, _db, child| {
+            let calls = calls_clone.clone();
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                child.cancelled().await;
+                panic!("late panic after shutdown");
+            }
+        },
+    ));
+
+    // 等 run_once 开始等待，再取消 shutdown——child token 随父取消，
+    // run_once 在关停语境下 panic，监管应识别并直接返回（不重启）。
+    wait_until(|| {
+        let calls = calls.clone();
+        async move { calls.load(Ordering::SeqCst) >= 1 }
+    })
+    .await;
+    shutdown.cancel();
+
+    tokio::time::timeout(Duration::from_secs(5), sup)
+        .await
+        .expect("supervisor must return after shutdown-context panic")
+        .expect("supervisor task itself must not panic");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "no restart after shutdown-context panic"
+    );
+}
+
+/// testing specialist T1：TrustConfigChanged 的事件级 fencing——occurred_at
+/// 格式化接线、fenced 分支（不写）、远未来偏移守卫，全部经 project() 验证。
+#[tokio::test]
+async fn trust_config_event_fencing_at_projection_level() {
+    use crate::domains::agent::host::persist::project;
+
+    let (db, pool) = test_db().await;
+    seed_test_workspace(&pool, "t1", "ws1").await;
+
+    let hardened = TrustConfig {
+        max_auto_actions_per_tick: 1,
+        ..Default::default()
+    };
+    // 权威写（handler 先写路径）打上当前时间戳。
+    db.save_heartbeat_trust_config("ws1", &hardened)
+        .await
+        .expect("authoritative save");
+
+    let publisher = test_publisher();
+    let token = CancellationToken::new();
+
+    // 旧事件（occurred_at 早 1 小时）→ fenced，行不变。
+    project(
+        &tinyiothub_agent::runtime::events::AgentEvent {
+            seq: 1,
+            occurred_at: chrono::Utc::now() - chrono::Duration::hours(1),
+            kind: AgentEventKind::TrustConfigChanged {
+                workspace_id: "ws1".into(),
+                config: Box::new(TrustConfig {
+                    max_auto_actions_per_tick: 99,
+                    ..Default::default()
+                }),
+            },
+        },
+        &pool,
+        &publisher,
+        &token,
+    )
+    .await;
+    let current = db
+        .load_heartbeat_trust_config("ws1")
+        .await
+        .expect("load")
+        .expect("present");
+    assert_eq!(current.max_auto_actions_per_tick, 1, "stale event must be fenced");
+
+    // 新事件（occurred_at 晚 1 分钟，在允许偏移内）→ 写入。
+    project(
+        &tinyiothub_agent::runtime::events::AgentEvent {
+            seq: 2,
+            occurred_at: chrono::Utc::now() + chrono::Duration::minutes(1),
+            kind: AgentEventKind::TrustConfigChanged {
+                workspace_id: "ws1".into(),
+                config: Box::new(TrustConfig {
+                    max_auto_actions_per_tick: 99,
+                    ..Default::default()
+                }),
+            },
+        },
+        &pool,
+        &publisher,
+        &token,
+    )
+    .await;
+    let current = db
+        .load_heartbeat_trust_config("ws1")
+        .await
+        .expect("load")
+        .expect("present");
+    assert_eq!(current.max_auto_actions_per_tick, 99, "newer event must apply");
+
+    // 远未来事件（+30 天）→ 偏移守卫丢弃，fencing 列不受污染。
+    project(
+        &tinyiothub_agent::runtime::events::AgentEvent {
+            seq: 3,
+            occurred_at: chrono::Utc::now() + chrono::Duration::days(30),
+            kind: AgentEventKind::TrustConfigChanged {
+                workspace_id: "ws1".into(),
+                config: Box::new(TrustConfig {
+                    max_auto_actions_per_tick: 50,
+                    ..Default::default()
+                }),
+            },
+        },
+        &pool,
+        &publisher,
+        &token,
+    )
+    .await;
+    let current = db
+        .load_heartbeat_trust_config("ws1")
+        .await
+        .expect("load")
+        .expect("present");
+    assert_eq!(
+        current.max_auto_actions_per_tick, 99,
+        "far-future event must be dropped"
+    );
 }

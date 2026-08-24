@@ -16,9 +16,10 @@
 //!
 //! 启动顺序契约（Task 9，D11-①③）：AgentEventBus 由调用方先建并经
 //! RuntimeDeps 注入 `AgentRuntime::restore`；持久化 receiver 在 restore
-//! **之前**从该 bus 取得并传入 [`run_persistence_subscriber`]，保证
-//! restore 期间及之后的事件不丢。shutdown 经 CancellationToken 编排：
-//! 主循环与心跳重试任务都响应取消（Task 8 遗留 TODO 已接）。
+//! **之前**从该 bus 取得。生产入口是 [`supervise_persistence_subscriber`]
+//! （CEO review T1：监管重启循环）；[`run_persistence_subscriber`] 保留为
+//! 无监管测试接缝（agent_persist_tests / agent_loop_e2e_tests 直接使用）。
+//! shutdown 经 CancellationToken 编排：主循环与心跳重试任务都响应取消。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -50,6 +51,12 @@ const RETRY_BASE_DELAY: Duration = Duration::from_secs(2);
 /// 安全网，永久失败若只 warn 会被每 5 分钟一条日志静默掩盖，DB 与内存
 /// 真相源分叉——达阈值升级 error! + DLQ，恢复后计数清零（Task 8 fix round 1）。
 const RESYNC_FAILURE_ESCALATION_THRESHOLD: u32 = 3;
+/// 监管重启退避（review M4：命名常量取代裸字面量）。
+const RESTART_BACKOFF_BASE: Duration = Duration::from_secs(2);
+const RESTART_BACKOFF_MAX: Duration = Duration::from_secs(60);
+/// fencing occurred_at 允许的未来偏移（security review：远未来时间戳会
+/// 固化 fencing 列，永久拦截后续全部事件投影）。
+const FENCING_MAX_FUTURE_SKEW: chrono::Duration = chrono::Duration::minutes(5);
 
 /// resync 单项连续失败计数（key：run_id / workspace_id）。
 #[derive(Default)]
@@ -106,24 +113,34 @@ pub async fn supervise_persistence_subscriber(
         Arc::new(move || runtime.dump_state())
     };
     let dump_for_loop = dump.clone();
-    supervise_impl(dump, db, bus, first_rx, shutdown, move |rx, task_db, child| {
-        let publisher = publisher.clone();
-        let dump = dump_for_loop.clone();
-        async move {
-            run_persistence_loop(rx, move || dump(), task_db, publisher, RECONCILE_INTERVAL, child).await;
-        }
-    })
+    supervise_impl(
+        dump,
+        db,
+        bus,
+        first_rx,
+        shutdown,
+        restart_backoff,
+        move |rx, task_db, child| {
+            let publisher = publisher.clone();
+            let dump = dump_for_loop.clone();
+            async move {
+                run_persistence_loop(rx, move || dump(), task_db, publisher, RECONCILE_INTERVAL, child).await;
+            }
+        },
+    )
     .await
 }
 
 /// 可测监管核心（T1）：与生产循环解耦——测试注入会 panic 的 `run_once`
-/// 验证"死亡 → error! → 新 receiver → resync → 退避 → 重启"全链路。
+/// 与毫秒级 `backoff`，验证"死亡 → error! → 新 receiver → resync →
+/// 退避 → 重启"全链路而不付 2s 墙钟成本（testing specialist T7）。
 pub(crate) async fn supervise_impl<F, Fut>(
     dump: Arc<dyn Fn() -> RestoreSnapshot + Send + Sync>,
     db: Arc<Db>,
     bus: Arc<AgentEventBus>,
     first_rx: tokio::sync::broadcast::Receiver<AgentEvent>,
     shutdown: CancellationToken,
+    backoff: fn(u32) -> Duration,
     run_once: F,
 ) where
     F: Fn(tokio::sync::broadcast::Receiver<AgentEvent>, Arc<Db>, CancellationToken) -> Fut + Send,
@@ -155,16 +172,16 @@ pub(crate) async fn supervise_impl<F, Fut>(
         let mut failures = ResyncFailures::default();
         resync(dump(), db.pool(), &mut failures).await;
         tokio::select! {
-            _ = tokio::time::sleep(restart_backoff(restart_count)) => {}
+            _ = tokio::time::sleep(backoff(restart_count)) => {}
             _ = shutdown.cancelled() => return,
         }
     }
 }
 
-/// 监管重启退避：2s base、2^n 指数、60s 封顶。
+/// 监管重启退避：RESTART_BACKOFF_BASE 起步、2^n 指数、RESTART_BACKOFF_MAX 封顶。
 fn restart_backoff(restart_count: u32) -> Duration {
     let shift = restart_count.saturating_sub(1).min(5);
-    (Duration::from_secs(2) * 2u32.pow(shift)).min(Duration::from_secs(60))
+    (RESTART_BACKOFF_BASE * 2u32.pow(shift)).min(RESTART_BACKOFF_MAX)
 }
 
 /// 订阅主循环。与 `run_persistence_subscriber` 分离以便测试注入
@@ -207,8 +224,9 @@ pub async fn run_persistence_loop(
 }
 
 /// 单事件投影。所有错误就地处理（log / 重试 / DLQ），不向上传播——
-/// subscriber 永不因单个事件失败而退出。
-async fn project(
+/// subscriber 永不因单个事件失败而退出。pub(crate)：事件级 fencing
+/// 测试直接驱动（testing specialist T1）。
+pub(crate) async fn project(
     event: &AgentEvent,
     pool: &SqlitePool,
     publisher: &Arc<AiEventPublisher>,
@@ -243,8 +261,19 @@ async fn project(
             // fencing upsert（CEO review T2）：以事件的 occurred_at 与已应用
             // 时间戳比较，乱序/回放的旧事件不覆盖新配置；与 handler 先写路径
             // 双写同值无害（D11-⑤）。
+            // security review：远未来 occurred_at 会固化 fencing 列（后续全部
+            // 事件投影被永久拦截）——超出允许偏移即丢弃 + warn。
+            let skew = event.occurred_at.signed_duration_since(chrono::Utc::now());
+            if skew > FENCING_MAX_FUTURE_SKEW {
+                warn!(
+                    workspace_id = %workspace_id,
+                    occurred_at = %event.occurred_at,
+                    "trust config event occurred_at too far in the future — dropping (fencing column protection)"
+                );
+                return;
+            }
             let db = Db::new(pool.clone());
-            let occurred_at = event.occurred_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            let occurred_at = tinyiothub_storage::heartbeat::fencing_timestamp(event.occurred_at);
             match db
                 .save_heartbeat_trust_config_fenced(workspace_id, config, &occurred_at)
                 .await

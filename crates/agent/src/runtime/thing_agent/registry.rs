@@ -120,8 +120,18 @@ impl RunRegistry {
 
     /// 记录 run 的发射期 dedup 键（CEO review T3）：仅当至少一键存在时
     /// 存储；manager 在 `record` 之后、事件发射之前调用。
+    /// 窗口成员守卫（review M3）：run 不在任何窗口内时跳过——键的生命周期
+    /// 不得超过窗口条目，否则制造永不驱逐的孤儿键（驱逐由 record 驱动）。
     pub fn set_run_keys(&self, run_id: &str, keys: RunDedupKeys) {
         if keys.problem_key.is_none() && keys.dedup_key.is_none() {
+            return;
+        }
+        let in_window = self
+            .inner
+            .iter()
+            .any(|entry| entry.value().iter().any(|r| r.run_id == run_id));
+        if !in_window {
+            tracing::debug!(run_id = %run_id, "set_run_keys skipped: run not in any workspace window");
             return;
         }
         self.run_keys.insert(run_id.to_string(), keys);

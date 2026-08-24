@@ -445,4 +445,39 @@ mod tests {
         assert_eq!(dumped.recent_runs.len(), 1);
         assert_eq!(dumped.recent_runs[0].run_id, "run_1");
     }
+
+    /// testing specialist T5：dump_state → recent_run_meta 接线端到端——
+    /// record + set_run_keys 后导出必须携带键；回归掉 runtime.rs:146 的
+    /// 导出会在全部测试绿的情况下静默复活 T3 的 NULL 元数据 bug。
+    #[tokio::test]
+    async fn dump_state_exports_recent_run_meta_from_registry() {
+        let rt = AgentRuntime::restore(empty_snapshot(), RuntimeDeps::test_stub());
+        rt.run_registry().record(tinyiothub_core::agent_runs::RunReport {
+            run_id: "run_keys".into(),
+            workspace_id: "ws1".into(),
+            trigger: "timer:ws1".into(),
+            outcome: tinyiothub_core::agent_runs::Outcome::NoActionNeeded,
+            summary: "巡检".into(),
+            actions: vec![],
+            verified: true,
+            duration_ms: 10,
+            tool_calls: 0,
+            tokens: 0,
+        });
+        rt.run_registry().set_run_keys(
+            "run_keys",
+            crate::runtime::snapshot::RunDedupKeys {
+                problem_key: Some("漏水".into()),
+                dedup_key: Some("t:1".into()),
+            },
+        );
+
+        let dumped = rt.dump_state();
+        let keys = dumped
+            .recent_run_meta
+            .get("run_keys")
+            .expect("dump_state must export run keys");
+        assert_eq!(keys.problem_key.as_deref(), Some("漏水"));
+        assert_eq!(keys.dedup_key.as_deref(), Some("t:1"));
+    }
 }

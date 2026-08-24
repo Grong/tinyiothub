@@ -166,12 +166,18 @@ jobs:
             echo "   ✅ Persistence belongs behind port traits implemented in apps/cloud"
             exit 1
           fi
-          # 改名偷渡守门（CEO review F6）：`web = { package = "axum" }` 可绕
-          # 源码 grep（use web:: 不含 axum 字样）且树词表无法查 axum——直接
-          # 扫描清单的依赖声明形态（剥注释；行首依赖键或 package= 值），
-          # description 文案中的"零 axum"字样不会误伤。
-          if sed 's/#.*$//' crates/agent/Cargo.toml | grep -nE '^\s*(axum|sqlx|tinyiothub-storage|tinyiothub_storage|db)\s*=|package\s*=\s*"(axum|sqlx|tinyiothub-storage|db)"'; then
+          # 改名偷渡守门（CEO review F6 + security review）：`web = { package = "axum" }`
+          # 可绕源码 grep（use web:: 不含 axum 字样）且树词表无法查 axum——
+          # 直接扫描清单的依赖声明形态。覆盖 TOML 双引号与单引号字面量。
+          # 成员清单：直名（行首依赖键）与改名（package= 值）均违规；
+          # 根清单：仅改名违规（[workspace.dependencies] 的直名定义是
+          # apps 的合法依赖，但改名可被成员经 workspace = true 继承）。
+          if sed 's/#.*$//' crates/agent/Cargo.toml | grep -nE "^\s*(axum|sqlx|tinyiothub-storage|tinyiothub_storage|db)\s*=|package\s*=\s*[\"'](axum|sqlx|tinyiothub-storage|db)[\"']"; then
             echo "❌ DEPENDENCY VIOLATION: crates/agent/Cargo.toml must not declare axum/sqlx/storage/db (incl. renamed)"
+            exit 1
+          fi
+          if sed 's/#.*$//' Cargo.toml | grep -nE "^\s*[a-zA-Z0-9_-]+\s*=\s*\{[^}]*package\s*=\s*[\"'](axum|sqlx|tinyiothub-storage|db)[\"']"; then
+            echo "❌ DEPENDENCY VIOLATION: workspace root must not rename axum/sqlx/storage/db (inheritable by crates/agent)"
             exit 1
           fi
           echo "✅ Agent dependency tree guard passed"

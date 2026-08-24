@@ -221,6 +221,13 @@ pub(crate) async fn load_trust_config(
     }))
 }
 
+/// fencing 时间戳的统一格式化（review M1）：fencing 契约依赖所有写入方
+/// 产出字节一致、字典序可比的 RFC3339-millis-Z 串——格式只能有一个家，
+/// 任何调用点漂移都会静默打破 fencing。
+pub fn fencing_timestamp(ts: chrono::DateTime<chrono::Utc>) -> String {
+    ts.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
 pub(crate) async fn save_trust_config(
     pool: &SqlitePool,
     workspace_id: &str,
@@ -228,10 +235,10 @@ pub(crate) async fn save_trust_config(
 ) -> Result<(), RepoError> {
     // CEO review T2：同步维护 fencing 时间戳——handler 先写路径（D11-⑤）是
     // 权威写，事件路径以 occurred_at 与该列比较，旧事件无法覆盖本写。
-    // 格式固定 RFC3339 毫秒 + Z（与 fenced 路径同一时钟同一格式，字典序可比）。
+    // 格式统一走 fencing_timestamp（M1：单一事实源）。
     sqlx::query("UPDATE workspaces SET heartbeat_trust_config = ?, heartbeat_trust_config_updated_at = ? WHERE id = ?")
         .bind(config.to_db_json())
-        .bind(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+        .bind(fencing_timestamp(chrono::Utc::now()))
         .bind(workspace_id)
         .execute(pool)
         .await
@@ -892,5 +899,38 @@ mod tests {
             .expect("load")
             .expect("config present");
         assert_eq!(current.max_auto_actions_per_tick, 99);
+    }
+
+    /// fencing 边界（testing specialist T4）：从未写过的行（updated_at IS
+    /// NULL）首次 fenced 写入必须成功；不存在的工作区返回 Ok(false)。
+    #[tokio::test]
+    pub async fn fenced_save_first_write_and_missing_workspace() {
+        let pool = test_pool().await;
+        seed_tenant(&pool).await;
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at)
+             VALUES ('ws_n', 'ws', 't1', 'now', 'now')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert workspace");
+        let db = Db::new(pool.clone());
+        let cfg = crate::heartbeat::TrustConfig::default();
+        let ts = fencing_timestamp(chrono::Utc::now());
+
+        // IS NULL 分支：首次 fenced 写入成功。
+        let applied = db
+            .save_heartbeat_trust_config_fenced("ws_n", &cfg, &ts)
+            .await
+            .expect("first fenced write");
+        assert!(applied, "first fenced write on NULL column must apply");
+        assert!(db.load_heartbeat_trust_config("ws_n").await.expect("load").is_some());
+
+        // 不存在的工作区：UPDATE 命中 0 行 → Ok(false)，不得报错。
+        let applied = db
+            .save_heartbeat_trust_config_fenced("ws_nonexistent", &cfg, &ts)
+            .await
+            .expect("fenced save on missing workspace");
+        assert!(!applied);
     }
 }

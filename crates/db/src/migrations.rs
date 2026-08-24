@@ -110,6 +110,22 @@ async fn reject_legacy_chain_db(pool: &SqlitePool, migrator: &Migrator) -> Resul
         return Ok(());
     }
 
+    // data-migration review：未知版本全部比本构建的迁移更新时，这是
+    // "降级"（库由更新二进制创建）而非老链——正确动作是升级二进制，
+    // 删库重建的指引在此场景是错的。
+    let max_known = known.iter().max().copied().unwrap_or(0);
+    if legacy.iter().all(|v| *v > max_known) {
+        return Err(sqlx::Error::Configuration(
+            format!(
+                "This database was migrated by a NEWER version of this application ({} applied version(s) newer than any migration this build knows, newest: {}). \
+                 Do NOT delete the database — run the newer binary instead.",
+                legacy.len(),
+                legacy[legacy.len() - 1]
+            )
+            .into(),
+        ));
+    }
+
     Err(sqlx::Error::Configuration(
         format!(
             "This database was created by the legacy migration chain ({} applied version(s) unknown to this build, oldest: {}). \
@@ -237,6 +253,45 @@ mod tests {
         assert!(
             msg.contains("move the database file away"),
             "message should be actionable: {msg}"
+        );
+    }
+
+    /// data-migration review：库由更新二进制创建（降级场景）时，报错应
+    /// 指引升级二进制，而非删库重建。
+    #[tokio::test]
+    async fn newer_binary_db_aborts_with_upgrade_guidance() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE _sqlx_migrations (
+                version BIGINT PRIMARY KEY,
+                description TEXT NOT NULL,
+                installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                success BOOLEAN NOT NULL,
+                checksum BLOB NOT NULL,
+                execution_time BIGINT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) VALUES (99999999999999, 'future', 1, X'00', 1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let err = run_migrations(&pool).await.expect_err("newer-binary DB must abort");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("NEWER version"),
+            "should identify downgrade scenario: {msg}"
+        );
+        assert!(
+            msg.contains("run the newer binary"),
+            "should guide upgrade, not rebuild: {msg}"
+        );
+        assert!(
+            !msg.contains("no data-migration path"),
+            "must not give rebuild guidance: {msg}"
         );
     }
 
