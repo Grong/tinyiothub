@@ -390,3 +390,18 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 
 ### P3 — Cache regex in extract_json
 - **Completed:** v0.5.0.0 (2026-08-24) — crates/agent/src/runtime/heartbeat/report.rs 已用 `static JSON_FENCE_RE: LazyLock<Regex>`。
+
+## Documentation Debt (from /ship document-release 2026-08-24)
+
+### P3 — scripts/guards/ 使用与扩展 how-to
+- **What:** 为 sql-residence / ddl-only / agent-purity / selftest 写本地运行与新增守卫的指南。
+- **Why:** 目前只有 AGENTS.md/CI 的引用级覆盖；新贡献者不知道如何本地跑守卫或添加新守卫。
+- **Context:** 守卫脚本在 scripts/guards/，selftest.sh 是自证范例；落点建议 docs/ 或 AGENTS.md 增补一节。
+
+### P3 — crates/authn 消费方文档
+- **What:** 为 crates/authn 写 README/how-to（构造注入用法、JwtService、HarmonyOS 变体）。
+- **Why:** 目前只有 AGENTS.md/CHANGELOG 的引用级覆盖，消费方无入口文档。
+
+### P3 — [seed] demo_data 进 configuration 参考
+- **What:** 把 `[seed] demo_data` 配置键写进 docs/getting-started/configuration.md（或等效参考文档）。
+- **Why:** 目前只在 CHANGELOG 与 app_settings.example.toml 有记录；0.5.0.0 起默认 false，用户需要权威参考。
