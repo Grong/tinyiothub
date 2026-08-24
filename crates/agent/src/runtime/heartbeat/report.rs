@@ -16,6 +16,7 @@ pub fn parse_healing_report(raw: &str, workspace_id: &str) -> HeartbeatResult {
 
     match serde_json::from_str::<serde_json::Value>(&json_str) {
         Ok(value) => HeartbeatResult {
+            id: uuid::Uuid::new_v4().to_string(),
             workspace_id: workspace_id.to_string(),
             status: parse_status(&value),
             summary: value["summary"].as_str().unwrap_or("").to_string(),
@@ -27,6 +28,7 @@ pub fn parse_healing_report(raw: &str, workspace_id: &str) -> HeartbeatResult {
         Err(e) => {
             warn!(workspace_id, error = %e, "Failed to parse heartbeat report JSON");
             HeartbeatResult {
+                id: uuid::Uuid::new_v4().to_string(),
                 workspace_id: workspace_id.to_string(),
                 status: HeartbeatStatus::Error,
                 summary: String::new(),

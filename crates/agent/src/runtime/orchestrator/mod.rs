@@ -116,6 +116,7 @@ mod tests {
 
     fn sample_result() -> HeartbeatResult {
         HeartbeatResult {
+            id: "test-tick".to_string(),
             workspace_id: "ws_1".into(),
             status: HeartbeatStatus::Complete,
             summary: "done".into(),

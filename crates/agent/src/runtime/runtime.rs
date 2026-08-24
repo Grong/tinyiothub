@@ -144,6 +144,7 @@ impl AgentRuntime {
             recent_runs,
             problem_meta: Vec::new(),
             recent_run_meta: self.run_registry.all_run_keys(),
+            heartbeat_results: self.heartbeat.recent_results(),
         }
     }
 
@@ -339,6 +340,7 @@ mod tests {
             recent_runs: vec![],
             problem_meta: vec![],
             recent_run_meta: Default::default(),
+            heartbeat_results: vec![],
         }
     }
 
@@ -349,6 +351,7 @@ mod tests {
             recent_runs: vec![],
             problem_meta: vec![],
             recent_run_meta: Default::default(),
+            heartbeat_results: vec![],
         }
     }
 

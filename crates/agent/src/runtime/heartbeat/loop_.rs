@@ -85,6 +85,7 @@ pub async fn heartbeat_loop(
                             event_publisher.publish(AiEvent::HeartbeatCompleted {
                                 workspace_id: workspace_id.clone(),
                                 result: crate::runtime::heartbeat::types::HeartbeatResult {
+                                    id: uuid::Uuid::new_v4().to_string(),
                                     workspace_id: workspace_id.clone(),
                                     status: HeartbeatStatus::Error,
                                     summary: format!(

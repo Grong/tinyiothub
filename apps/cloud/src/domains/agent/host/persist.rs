@@ -503,6 +503,19 @@ pub(crate) async fn resync(snapshot: RestoreSnapshot, pool: &SqlitePool, failure
             }
         }
     }
+    // CEO review T22：心跳结果对账——tick_id 锚行幂等（重复投影静默
+    // no-op），丢失的 agent_actions 行由此补回。失败仅 warn：事件路径的
+    // 5 次重试 + DLQ 是升级通道，对账每 5 分钟还有下一次机会。
+    for result in &snapshot.heartbeat_results {
+        if let Err(e) = db.insert_heartbeat_result(&result.workspace_id, result).await {
+            warn!(
+                workspace_id = %result.workspace_id,
+                tick_id = %result.id,
+                error = %e,
+                "resync heartbeat result failed"
+            );
+        }
+    }
 }
 
 /// 心跳结果重试任务（重建自 4d102722 `retry_with_backoff`）：独立 spawn，
@@ -524,7 +537,25 @@ fn spawn_heartbeat_retry(
             tokio::select! {
                 _ = tokio::time::sleep(RETRY_BASE_DELAY * 2u32.pow(attempt)) => {}
                 _ = shutdown.cancelled() => {
-                    debug!(workspace_id = %workspace_id, attempt, "heartbeat persist retry aborted by shutdown");
+                    // CEO review T9：关停中止重试不得静默丢结果——入 DLQ
+                    // （此前仅 debug 返回，该 tick 永久消失且无记录）。
+                    let payload = serde_json::to_string(&result).unwrap_or_else(|se| {
+                        format!(
+                            r#"{{"unserializable":true,"workspace_id":"{}","serialize_error":"{}"}}"#,
+                            result.workspace_id, se
+                        )
+                    });
+                    match dlq
+                        .enqueue(&workspace_id, "HeartbeatCompleted", &payload, "persist retry aborted by shutdown")
+                        .await
+                    {
+                        Ok(()) => {
+                            warn!(workspace_id = %workspace_id, attempt, "heartbeat persist retry aborted by shutdown — result sent to DLQ");
+                        }
+                        Err(dlq_err) => {
+                            error!(workspace_id = %workspace_id, error = %dlq_err, "shutdown abort AND DLQ enqueue failed — heartbeat result lost");
+                        }
+                    }
                     return;
                 }
             }

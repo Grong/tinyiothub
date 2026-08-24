@@ -61,6 +61,11 @@ pub struct RestoreSnapshot {
     /// （RunRegistry 窗口内 run 的发射期元数据）；启动构建器置空——预热行
     /// 在 DB 已有完整记录，resync 对它们只会幂等 no-op。
     pub recent_run_meta: std::collections::HashMap<String, RunDedupKeys>,
+    /// 近期心跳结果（CEO review T22）：仅 `dump_state` 导出时填充
+    /// （HeartbeatRunner 窗口，每工作区 cap 20）——Lagged resync/周期对账
+    /// 补回丢失的 agent_actions 行（tick_id 幂等）。启动构建器置空：
+    /// DB 即其真相源，预热只会让窗口与库双倍陈旧。
+    pub heartbeat_results: Vec<tinyiothub_core::heartbeat::HeartbeatResult>,
 }
 
 #[cfg(test)]

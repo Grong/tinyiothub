@@ -57,6 +57,7 @@ fn empty_snapshot() -> RestoreSnapshot {
         recent_runs: vec![],
         problem_meta: vec![],
         recent_run_meta: Default::default(),
+        heartbeat_results: vec![],
     }
 }
 
@@ -187,6 +188,7 @@ async fn lagged_subscriber_resyncs_from_dump_state() {
         recent_runs: vec![report("run_lagged", "ws1", "resync me")],
         problem_meta: vec![],
         recent_run_meta: Default::default(),
+        heartbeat_results: vec![],
     };
     // 容量 2 的 bus：先订阅再发 5 事件 → 首 recv 必为 Lagged
     let runtime = runtime_with(2, snapshot);
@@ -231,6 +233,7 @@ async fn periodic_reconcile_projects_dump_state() {
         recent_runs: vec![report("run_reconcile", "ws1", "reconciled")],
         problem_meta: vec![],
         recent_run_meta: Default::default(),
+        heartbeat_results: vec![],
     };
     let runtime = runtime_with(16, snapshot);
 
@@ -278,6 +281,7 @@ async fn projects_heartbeat_result_to_agent_actions() {
     for _ in 0..60 {
         runtime.bus().emit(AgentEventKind::HeartbeatResultReady {
             result: Box::new(HeartbeatResult {
+                id: "test-tick".to_string(),
                 workspace_id: "ws1".into(),
                 status: HeartbeatStatus::Complete,
                 summary: "tick done".into(),
@@ -318,6 +322,7 @@ async fn resync_escalates_to_dlq_after_consecutive_failures_then_recovers() {
         recent_runs: vec![report("run_bad", "ws1", "fails")],
         problem_meta: vec![],
         recent_run_meta: Default::default(),
+        heartbeat_results: vec![],
     };
     let mut failures = ResyncFailures::default();
 
@@ -372,6 +377,7 @@ async fn supervisor_restarts_panicked_subscriber_and_exits_on_shutdown() {
         recent_runs: vec![],
         problem_meta: vec![],
         recent_run_meta: Default::default(),
+        heartbeat_results: vec![],
     });
 
     let calls_clone = calls.clone();
@@ -438,6 +444,7 @@ async fn resync_restores_dedup_metadata_on_missing_rows() {
         recent_runs: vec![report("run-meta", "ws1", "处理漏水")],
         problem_meta: vec![],
         recent_run_meta: meta,
+        heartbeat_results: vec![],
     };
     let mut failures = ResyncFailures::default();
     resync(snap, &pool, &mut failures).await;
@@ -462,6 +469,7 @@ async fn resync_without_sidecar_meta_falls_back_to_null_keys() {
         recent_runs: vec![report("run-plain", "ws1", "常规巡检")],
         problem_meta: vec![],
         recent_run_meta: Default::default(),
+        heartbeat_results: vec![],
     };
     let mut failures = ResyncFailures::default();
     resync(snap, &pool, &mut failures).await;
@@ -754,4 +762,92 @@ async fn projects_dlq_entry_added_to_agent_dead_letters() {
     .expect("dlq row projected");
     assert_eq!(event_type, "RunRecorded");
     assert_eq!(reason, "db write failed x5");
+}
+
+/// CEO review T22：resync 补回丢失的心跳结果——tick_id 幂等（重复投影
+/// 不产生重复行组）。
+#[tokio::test]
+async fn resync_recovers_heartbeat_results_idempotently() {
+    let (_db, pool) = test_db().await;
+    seed_test_workspace(&pool, "t1", "ws1").await;
+
+    let result = HeartbeatResult {
+        id: "tick-42".into(),
+        workspace_id: "ws1".into(),
+        status: HeartbeatStatus::Complete,
+        summary: "巡检完成".into(),
+        task_count: 2,
+        executed_actions: vec![],
+        proposals: vec![],
+        error: None,
+    };
+    let snap = RestoreSnapshot {
+        heartbeat_results: vec![result],
+        ..Default::default()
+    };
+    let mut failures = ResyncFailures::default();
+    resync(snap.clone(), &pool, &mut failures).await;
+    // 第二次 resync（重复投影）必须幂等。
+    resync(snap, &pool, &mut failures).await;
+
+    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agent_actions WHERE tick_id = 'tick-42'")
+        .fetch_one(&pool)
+        .await
+        .expect("count tick rows");
+    assert_eq!(n, 1, "tick-42 must be persisted exactly once across two resyncs");
+}
+
+/// CEO review T9：关停中止心跳重试 → 结果入 DLQ（此前仅 debug 返回，
+/// 该 tick 永久消失且无记录）。
+#[tokio::test]
+async fn heartbeat_retry_aborted_by_shutdown_goes_to_dlq() {
+    use crate::domains::agent::host::persist::project;
+
+    let (_db, pool) = test_db().await;
+    // 让首次 insert 失败以触发重试路径（DLQ 表保留可用）。
+    sqlx::query("DROP TABLE agent_actions")
+        .execute(&pool)
+        .await
+        .expect("drop agent_actions");
+
+    let shutdown = CancellationToken::new();
+    project(
+        &tinyiothub_agent::runtime::events::AgentEvent {
+            seq: 1,
+            occurred_at: chrono::Utc::now(),
+            kind: AgentEventKind::HeartbeatResultReady {
+                result: Box::new(HeartbeatResult {
+                    id: "tick-dlq".into(),
+                    workspace_id: "ws1".into(),
+                    status: HeartbeatStatus::Complete,
+                    summary: "将被关停中止".into(),
+                    task_count: 1,
+                    executed_actions: vec![],
+                    proposals: vec![],
+                    error: None,
+                }),
+            },
+        },
+        &pool,
+        &test_publisher(),
+        &shutdown,
+    )
+    .await;
+    // 重试任务已 spawn（2s 退避窗口内）；立即关停 → DLQ 分支。
+    shutdown.cancel();
+
+    wait_until(|| async {
+        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agent_dead_letters WHERE workspace_id = 'ws1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap_or((0,));
+        n == 1
+    })
+    .await;
+    let (reason,): (String,) =
+        sqlx::query_as("SELECT failure_reason FROM agent_dead_letters WHERE workspace_id = 'ws1'")
+            .fetch_one(&pool)
+            .await
+            .expect("dlq row");
+    assert!(reason.contains("shutdown"), "reason must name shutdown abort: {reason}");
 }

@@ -66,6 +66,7 @@ fn proposal(tool_name: &str, device_id: Option<&str>) -> Proposal {
 
 fn result_with(proposals: Vec<Proposal>) -> HeartbeatResult {
     HeartbeatResult {
+        id: "test-tick".to_string(),
         workspace_id: WS.into(),
         status: HeartbeatStatus::Complete,
         summary: "tick done".into(),

@@ -334,15 +334,32 @@ pub(crate) async fn insert_result(
             serde_json::json!({"taskCount": result.task_count, "result": result.summary}),
         )
     };
-    insert_action_row(
+    // CEO review T22：锚行带 tick_id 幂等写入；已落库（事件重放/重试/
+    // resync 重复）则跳过整组——否则 auto_executed/proposal 行会重复。
+    let tick_id = if result.id.is_empty() {
+        None
+    } else {
+        Some(result.id.as_str())
+    };
+    let anchor_inserted = insert_tick_anchor_row(
         &mut tx,
         workspace_id,
         &agent_id,
         action_type,
         &content.to_string(),
         &now,
+        tick_id,
     )
     .await?;
+    if !anchor_inserted {
+        tracing::debug!(
+            workspace_id,
+            tick_id,
+            "heartbeat tick already persisted (idempotent skip)"
+        );
+        tx.commit().await.map_err(|e| RepoError::Database(e.to_string()))?;
+        return Ok(());
+    }
 
     for action in &result.executed_actions {
         let content = serde_json::json!({
@@ -515,6 +532,51 @@ pub(crate) async fn insert_action_row(
     Ok(())
 }
 
+/// tick 锚行写入（CEO review T22）：tick_id 携带时 INSERT OR IGNORE——
+/// 事件重放/重试/resync 的重复投影静默跳过。返回是否实际写入
+/// （false = 该 tick 已落库，调用方应跳过整组行）。
+pub(crate) async fn insert_tick_anchor_row(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    workspace_id: &str,
+    agent_id: &str,
+    action_type: &str,
+    content: &str,
+    created_at: &str,
+    tick_id: Option<&str>,
+) -> Result<bool, RepoError> {
+    let result = if let Some(tick_id) = tick_id {
+        sqlx::query(
+            "INSERT OR IGNORE INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at, tick_id)
+             VALUES (?, ?, ?, 'heartbeat', ?, ?, ?, ?)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(workspace_id)
+        .bind(agent_id)
+        .bind(action_type)
+        .bind(content)
+        .bind(created_at)
+        .bind(tick_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?
+    } else {
+        sqlx::query(
+            "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at)
+             VALUES (?, ?, ?, 'heartbeat', ?, ?, ?)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(workspace_id)
+        .bind(agent_id)
+        .bind(action_type)
+        .bind(content)
+        .bind(created_at)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?
+    };
+    Ok(result.rows_affected() > 0)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::heartbeat::{ExecutedAction, HeartbeatStatus, NewHeartbeatTask};
@@ -595,6 +657,7 @@ mod tests {
 
     fn sample_result() -> HeartbeatResult {
         HeartbeatResult {
+            id: "test-tick".to_string(),
             workspace_id: "ws_1".to_string(),
             status: HeartbeatStatus::Partial,
             summary: "checked 2 devices".to_string(),
@@ -715,6 +778,7 @@ mod tests {
         let db = Db::new(pool.clone());
 
         let result = HeartbeatResult {
+            id: "test-tick".to_string(),
             workspace_id: "ws_1".to_string(),
             status: HeartbeatStatus::Error,
             summary: String::new(),
@@ -946,5 +1010,48 @@ mod tests {
             .await
             .expect("fenced save on missing workspace");
         assert!(!applied);
+    }
+}
+
+#[cfg(test)]
+mod tick_id_tests {
+    use super::*;
+    use crate::test_helpers::test_pool;
+
+    /// CEO review T22：同 tick_id 重复 insert_result 幂等——锚行 OR IGNORE
+    /// 命中后整组跳过，auto_executed/proposal 行不重复。
+    #[tokio::test]
+    async fn insert_result_with_tick_id_is_idempotent() {
+        let pool = test_pool().await;
+        let db = Db::new(pool.clone());
+        let result = crate::heartbeat::HeartbeatResult {
+            id: "tick-1".into(),
+            workspace_id: "ws_1".into(),
+            status: crate::heartbeat::HeartbeatStatus::Complete,
+            summary: "ok".into(),
+            task_count: 1,
+            executed_actions: vec![crate::heartbeat::ExecutedAction {
+                tool_name: "read_property".into(),
+                device_id: Some("d1".into()),
+                success: true,
+                details: "read ok".into(),
+            }],
+            proposals: vec![],
+            error: None,
+        };
+        db.insert_heartbeat_result("ws_1", &result).await.expect("first insert");
+        db.insert_heartbeat_result("ws_1", &result)
+            .await
+            .expect("second insert (idempotent)");
+
+        let (anchors, actions): (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM agent_actions WHERE tick_id = 'tick-1'), \
+             (SELECT COUNT(*) FROM agent_actions WHERE action_type = 'auto_executed')",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("counts");
+        assert_eq!(anchors, 1, "anchor row must not duplicate");
+        assert_eq!(actions, 1, "action rows must not duplicate on retry");
     }
 }

@@ -249,6 +249,9 @@ impl AiEventHandler {
                 // 落库出口（Task 6）：HeartbeatResultReady 由 Task 8 持久化
                 // 订阅者落库；零订阅者时 emit 为 no-op（Task 4 RunRecorded
                 // 同先例）。
+                // CEO review T22：同源写入 runner 近期结果窗口——dump_state
+                // 导出与"已发射"一致，Lagged resync/周期对账可补回丢失行。
+                self.heartbeat_runner.record_result(workspace_id, result.clone());
                 self.agent_events.emit(AgentEventKind::HeartbeatResultReady {
                     result: Box::new(result.clone()),
                 });
@@ -379,6 +382,7 @@ pub(crate) mod tests {
 
     fn ok_result(workspace_id: &str) -> HeartbeatResult {
         HeartbeatResult {
+            id: "test-tick".to_string(),
             workspace_id: workspace_id.to_string(),
             status: HeartbeatStatus::Complete,
             summary: "All good".to_string(),
@@ -623,6 +627,7 @@ pub(crate) mod tests {
 
         fn result_with(proposals: Vec<Proposal>) -> HeartbeatResult {
             HeartbeatResult {
+                id: "test-tick".to_string(),
                 workspace_id: "ws_1".into(),
                 status: HeartbeatStatus::Complete,
                 summary: "tick done".into(),

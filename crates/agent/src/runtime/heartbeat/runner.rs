@@ -82,6 +82,10 @@ pub struct HeartbeatRunner {
     intervals: DashMap<String, u32>,
     /// 每工作区最近一次 tick 完成时间（D13 实时读出口；loop 每 tick 后写入）。
     last_ticks: Arc<DashMap<String, chrono::DateTime<chrono::Utc>>>,
+    /// 每工作区最近心跳结果窗口（CEO review T22，cap 20）：dump_state
+    /// 导出供 Lagged resync/周期对账补回丢失的 agent_actions 行——此前
+    /// 心跳结果不在 dump_state 内，丢事件即永久丢失。
+    recent_results: Arc<DashMap<String, std::collections::VecDeque<tinyiothub_core::heartbeat::HeartbeatResult>>>,
     event_publisher: Arc<AiEventPublisher>,
     agent_pool: RwLock<Option<Arc<dyn AgentPoolLike>>>,
     config: HeartbeatConfig,
@@ -102,6 +106,7 @@ impl HeartbeatRunner {
             tasks: Arc::new(DashMap::new()),
             intervals: DashMap::new(),
             last_ticks: Arc::new(DashMap::new()),
+            recent_results: Arc::new(DashMap::new()),
             event_publisher,
             agent_pool: RwLock::new(None),
             config,
@@ -269,8 +274,32 @@ impl HeartbeatRunner {
         self.tasks.remove(workspace_id);
         self.intervals.remove(workspace_id);
         self.last_ticks.remove(workspace_id);
+        self.recent_results.remove(workspace_id);
         self.pending_starts.write().await.retain(|p| p != workspace_id);
         info!(workspace_id, "Workspace heartbeat state removed");
+    }
+
+    /// 记录一条心跳结果进窗口（cap 20/工作区，CEO review T22）：
+    /// 由 orchestrator 在发射 HeartbeatResultReady 的同一位置调用——
+    /// 内存窗口与事件出口同源，dump_state 导出才与"已发射"一致。
+    pub fn record_result(&self, workspace_id: &str, result: tinyiothub_core::heartbeat::HeartbeatResult) {
+        const RECENT_RESULTS_CAP: usize = 20;
+        let mut entry = self.recent_results.entry(workspace_id.to_string()).or_default();
+        entry.push_back(result);
+        while entry.len() > RECENT_RESULTS_CAP {
+            entry.pop_front();
+        }
+    }
+
+    /// 全部工作区的近期心跳结果（dump_state 导出用；按 id 排序保证确定性）。
+    pub fn recent_results(&self) -> Vec<tinyiothub_core::heartbeat::HeartbeatResult> {
+        let mut out: Vec<_> = self
+            .recent_results
+            .iter()
+            .flat_map(|entry| entry.value().iter().cloned().collect::<Vec<_>>())
+            .collect();
+        out.sort_by(|a, b| a.id.cmp(&b.id));
+        out
     }
 
     /// Send a signal to a workspace's heartbeat loop. Non-blocking.

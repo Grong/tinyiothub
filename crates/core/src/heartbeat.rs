@@ -75,6 +75,12 @@ pub struct ExecutedAction {
 /// Result of a heartbeat tick.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeartbeatResult {
+    /// 稳定的 tick 身份（CEO review T22）：创建点生成 uuid，事件/重试/
+    /// resync 三条落库路径共用——agent_actions.tick_id 唯一索引让重复
+    /// 投影幂等（INSERT OR IGNORE）。旧行/旧构造点为空串，落库回退
+    /// 每行 uuid（历史行为）。
+    #[serde(default)]
+    pub id: String,
     pub workspace_id: String,
     pub status: HeartbeatStatus,
     pub summary: String,

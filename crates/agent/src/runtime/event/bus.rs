@@ -311,6 +311,7 @@ mod tests {
         let hc = AiEvent::HeartbeatCompleted {
             workspace_id: "ws".into(),
             result: crate::runtime::heartbeat::types::HeartbeatResult {
+                id: "test-tick".to_string(),
                 workspace_id: "ws".into(),
                 status: crate::runtime::heartbeat::types::HeartbeatStatus::Complete,
                 summary: "ok".into(),
