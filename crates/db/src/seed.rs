@@ -77,12 +77,12 @@ pub async fn seed_system(db: &Db) -> Result<(), sqlx::Error> {
 /// to have run first (demo rows reference the default tenant/workspace/admin).
 pub async fn seed_demo(db: &Db) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(DEMO_SQL).execute(db.pool()).await?;
-    let (devices, properties, commands): (i64, i64, i64) = sqlx::query_as(
-        "SELECT (SELECT COUNT(*) FROM devices), (SELECT COUNT(*) FROM device_properties), \
-         (SELECT COUNT(*) FROM device_commands)",
+    let (devices, properties, actions): (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM devices), (SELECT COUNT(*) FROM thing_properties), \
+         (SELECT COUNT(*) FROM thing_actions)",
     )
     .fetch_one(db.pool())
     .await?;
-    tracing::info!(devices, properties, commands, "seed_demo applied");
+    tracing::info!(devices, properties, actions, "seed_demo applied");
     Ok(())
 }
