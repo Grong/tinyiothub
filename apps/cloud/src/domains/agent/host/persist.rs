@@ -234,7 +234,26 @@ pub async fn run_persistence_loop(
                 resync(dump_state(), db.pool(), &mut resync_failures).await;
             }
             _ = shutdown.cancelled() => {
-                debug!("persistence subscriber shutdown");
+                // CEO review OV3：关停前排空缓冲——select! 随机选分支，缓冲
+                // 中的事件可能一条未处理就退出（每次部署静默丢最多 capacity
+                // 条）。尽力 try_recv 排空；Lagged 则补一次全量 resync。
+                let mut lagged: Option<u64> = None;
+                loop {
+                    match rx.try_recv() {
+                        Ok(event) => project(&event, db.pool(), &publisher, &shutdown).await,
+                        Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+                        Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
+                            lagged = Some(n);
+                            break;
+                        }
+                        Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
+                    }
+                }
+                if let Some(n) = lagged {
+                    warn!(dropped = n, "shutdown drain lagged, full resync");
+                    resync(dump_state(), db.pool(), &mut resync_failures).await;
+                }
+                debug!("persistence subscriber shutdown (buffer drained)");
                 return;
             }
         }
@@ -298,7 +317,9 @@ pub(crate) async fn project(
             {
                 Ok(true) => {}
                 Ok(false) => {
-                    debug!(
+                    // F12：fencing 拦截升 info——生产可见的"事件被拒"信号，
+                    // 区别于 run 幂等跳过（正常路径噪声，保持 debug）。
+                    tracing::info!(
                         workspace_id = %workspace_id,
                         "trust config projection fenced (event older than applied state)"
                     );

@@ -61,7 +61,15 @@ const DEMO_SQL: &str = include_str!("seed/demo.sql");
 /// Apply the production-required seed tier. Idempotent.
 pub async fn seed_system(db: &Db) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(SYSTEM_SQL).execute(db.pool()).await?;
-    tracing::info!("seed_system applied");
+    // CEO review F12：seed 行数进日志——"系统种子是否就位"启动即见，
+    // 不靠缺日志推断。
+    let (tenants, workspaces, plans, templates): (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM tenants), (SELECT COUNT(*) FROM workspaces), \
+         (SELECT COUNT(*) FROM subscription_plans), (SELECT COUNT(*) FROM thing_templates)",
+    )
+    .fetch_one(db.pool())
+    .await?;
+    tracing::info!(tenants, workspaces, plans, templates, "seed_system applied");
     Ok(())
 }
 
@@ -69,6 +77,12 @@ pub async fn seed_system(db: &Db) -> Result<(), sqlx::Error> {
 /// to have run first (demo rows reference the default tenant/workspace/admin).
 pub async fn seed_demo(db: &Db) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(DEMO_SQL).execute(db.pool()).await?;
-    tracing::info!("seed_demo applied");
+    let (devices, properties, commands): (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM devices), (SELECT COUNT(*) FROM device_properties), \
+         (SELECT COUNT(*) FROM device_commands)",
+    )
+    .fetch_one(db.pool())
+    .await?;
+    tracing::info!(devices, properties, commands, "seed_demo applied");
     Ok(())
 }

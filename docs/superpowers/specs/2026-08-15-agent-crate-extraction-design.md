@@ -4,6 +4,12 @@
 - 状态：已评审（设计 + 工程评审双批准）
 - 分支：`refactor/crates-reorg`
 
+> **修订（2026-08-24，CEO review T17 spec 对齐）**：实现与本文两处漂移，以代码为准修订——
+> ① 事件契约：实现为单终态 `RunRecorded`（含完整 RunReport）而非本文 §6 的
+> RunStarted/RunFinished/Failed 三事件；心跳为每 tick `HeartbeatResultReady`。
+> ② §7"tick 不发事件"随之失效：频率控制由"subscriber 幂等投影 + 容量
+> 4096 bus"承担（每 tick 事件即每 tick 落库，实测写放大可接受）。
+
 ## 1. 背景与动机
 
 `apps/cloud/src/domains/agent/` 当前约 21k 行，内部分三层：`loop_/`（纯运行时，已有 zero-axum CI 约束）、`host/`（AgentPool、tools、session、prompt 等通用机制 + axum handler）、`chat/`（OpenClaw 代理 handler）。
@@ -155,7 +161,7 @@ impl AgentRuntime {
 3. **读路径（D13）**：历史/归档 → DB；实时状态（活跃 run、心跳 last_tick/指标）→ crate 内存 API
 4. **配置变更（D3/D11-⑤）**：handler 校验 → 写 DB → 调 crate 命令 API → 失败则告警（重启后 DB 为准）
 
-**频率控制**：heartbeat tick 等高频路径不发事件，只有状态跃迁才发，避免 subscriber 写放大（D13：实时性由内存 API 承担，不靠 tick 落库）。
+**频率控制**（2026-08-24 修订）：实现为每 tick `HeartbeatResultReady` 事件（本文原设计"tick 不发事件"未采用）；写放大由 subscriber 幂等投影 + 4096 容量 bus + fencing 承担。实时性仍由内存 API 承担（D13 不变）。
 
 **可靠性（D4/D11）**：
 - broadcast 容量 4096；subscriber `Lagged` → `dump_state()` 全量 resync

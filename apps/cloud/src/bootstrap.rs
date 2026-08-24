@@ -248,6 +248,14 @@ pub async fn build_agent_snapshot(db: &Db) -> Result<RestoreSnapshot, String> {
         recent_runs.extend(load_recent_runs(pool, ws_id).await?);
     }
     let problem_meta = load_problem_meta(pool).await?;
+    // CEO review F12：恢复汇总一行——空恢复（DB 抖动）与全新安装不再
+    // 只能靠"缺一条 warn"区分。
+    info!(
+        workspaces = heartbeat.len(),
+        recent_runs = recent_runs.len(),
+        problem_meta = problem_meta.len(),
+        "agent snapshot restored"
+    );
     Ok(RestoreSnapshot {
         heartbeat,
         recent_runs,

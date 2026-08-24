@@ -670,3 +670,88 @@ async fn trust_config_event_fencing_at_projection_level() {
         "far-future event must be dropped"
     );
 }
+
+/// CEO review OV3：关停时缓冲中的事件必须排空落库，不得随退出丢弃。
+#[tokio::test]
+async fn shutdown_drains_buffered_events() {
+    let (db, pool) = test_db().await;
+    seed_test_workspace(&pool, "t1", "ws1").await;
+
+    let runtime = runtime_with(16, empty_snapshot());
+    let shutdown = CancellationToken::new();
+    let dump = {
+        let runtime = runtime.clone();
+        move || runtime.dump_state()
+    };
+    let h = tokio::spawn(run_persistence_loop(
+        runtime.subscribe(),
+        dump,
+        db.clone(),
+        test_publisher(),
+        Duration::from_secs(3600),
+        shutdown.clone(),
+    ));
+
+    // 连续发射 5 条（同步入缓冲，不给循环处理窗口）后立即取消。
+    for i in 0..5 {
+        runtime.bus().emit(AgentEventKind::RunRecorded {
+            report: Box::new(report(&format!("drain-{i}"), "ws1", "关停前排空")),
+            problem_key: None,
+            dedup_key: None,
+        });
+    }
+    shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(5), h)
+        .await
+        .expect("loop must exit after drain")
+        .expect("loop must not panic");
+
+    for i in 0..5 {
+        assert_eq!(
+            count_runs(&pool, &format!("drain-{i}")).await,
+            1,
+            "drain-{i} must be persisted during shutdown drain"
+        );
+    }
+}
+
+/// testing 终审 T17：DlqEntryAdded 直接投影测试——此前 DLQ 只经 resync
+/// 升级路径间接覆盖。
+#[tokio::test]
+async fn projects_dlq_entry_added_to_agent_dead_letters() {
+    use crate::domains::agent::host::persist::project;
+    use tinyiothub_agent::runtime::event::dlq::DeadLetterEntry;
+
+    let (_db, pool) = test_db().await;
+    seed_test_workspace(&pool, "t1", "ws1").await;
+
+    let entry = DeadLetterEntry {
+        id: "dlq-1".into(),
+        workspace_id: "ws1".into(),
+        event_type: "RunRecorded".into(),
+        payload_json: r#"{"run_id":"run-x"}"#.into(),
+        failure_reason: "db write failed x5".into(),
+        enqueued_at: "2026-08-24 10:00:00".into(),
+    };
+    project(
+        &tinyiothub_agent::runtime::events::AgentEvent {
+            seq: 1,
+            occurred_at: chrono::Utc::now(),
+            kind: AgentEventKind::DlqEntryAdded { entry: Box::new(entry) },
+        },
+        &pool,
+        &test_publisher(),
+        &CancellationToken::new(),
+    )
+    .await;
+
+    // enqueue 自行生成 id（entry.id 不用于落库）——按工作区+类型回查。
+    let (event_type, reason): (String, String) = sqlx::query_as(
+        "SELECT event_type, failure_reason FROM agent_dead_letters WHERE workspace_id = 'ws1' AND event_type = 'RunRecorded'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("dlq row projected");
+    assert_eq!(event_type, "RunRecorded");
+    assert_eq!(reason, "db write failed x5");
+}

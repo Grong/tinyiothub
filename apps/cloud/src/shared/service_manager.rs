@@ -208,7 +208,9 @@ impl ServiceManager {
                 crate::domains::agent::host::ports::external_tool_registry()
             }));
 
-            let agent_events = Arc::new(tinyiothub_agent::runtime::events::AgentEventBus::new(256));
+            // CEO review F11：容量对齐 spec D4 的 4096——256 在中等负载
+            // （多 agent 同时 tick + DB 抖动）即可逼入 Lagged→全量重投影循环。
+            let agent_events = Arc::new(tinyiothub_agent::runtime::events::AgentEventBus::new(4096));
             let persist_rx = agent_events.subscribe();
             // CEO review T1：监管循环重启订阅时需要 bus 句柄（deps 收走所有权前克隆）。
             let agent_events_supervisor = agent_events.clone();

@@ -162,7 +162,15 @@ pub async fn ack_run(
 
     // 存在性 + workspace 归属：不存在与跨区统一 404（不泄露存在性）；
     // 同时取出 problem_key 供 O11 ack 抑制回写（Task 6）。
-    let owner: Option<(String, Option<String>)> = state.db.find_agent_run_owner(&run_id).await.unwrap_or(None);
+    // CEO review F9：DB 错误不得塌缩为 404——事故响应时"运行记录不存在"
+    // 会主动误导排查方向，真实故障是 500。
+    let owner: Option<(String, Option<String>)> = match state.db.find_agent_run_owner(&run_id).await {
+        Ok(owner) => owner,
+        Err(e) => {
+            tracing::error!(run_id = %run_id, error = %e, "find_agent_run_owner failed");
+            return ApiResponseBuilder::error_with_code(500, "数据库查询失败");
+        }
+    };
     let problem_key = match owner {
         Some((ref ws, ref pk)) if ws == &workspace_id => pk.clone(),
         _ => return ApiResponseBuilder::error_with_code(404, "运行记录不存在"),

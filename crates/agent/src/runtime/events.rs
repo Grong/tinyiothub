@@ -46,6 +46,9 @@ pub enum AgentEventKind {
 pub struct AgentEventBus {
     tx: broadcast::Sender<AgentEvent>,
     seq: AtomicU64,
+    /// CEO review F12：发射计数（emitted vs persisted 可对账——"事件发了
+    /// 但库里没有"的排查第一数字）。
+    emitted: AtomicU64,
 }
 
 impl AgentEventBus {
@@ -54,6 +57,7 @@ impl AgentEventBus {
         Self {
             tx,
             seq: AtomicU64::new(0),
+            emitted: AtomicU64::new(0),
         }
     }
 
@@ -64,7 +68,14 @@ impl AgentEventBus {
             kind,
         };
         // 无订阅者时 send 返回 Err——持久化出口允许零订阅（测试/早期启动），忽略
-        let _ = self.tx.send(event);
+        if self.tx.send(event).is_ok() {
+            self.emitted.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// 已成功投递到至少一个 receiver 的事件总数（F12 可观测性）。
+    pub fn emitted_count(&self) -> u64 {
+        self.emitted.load(Ordering::SeqCst)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {

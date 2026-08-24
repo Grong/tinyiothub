@@ -179,16 +179,17 @@ pub struct HarmonyosConfig {
 #[serde(rename_all = "snake_case")]
 pub struct SeedConfig {
     /// Seed the demo scenario (8 demo devices + properties/actions/tags/alarms)
-    /// after the always-on system tier. Default true (matches the historical
-    /// fresh-install behavior).
-    #[serde(default = "default_true")]
+    /// after the always-on system tier.
+    /// CEO review F15：默认 **false**——默认配置的生产部署不应附带演示设备
+    /// 与演示数据；开发流程经 app_settings.example.toml 显式置 true。
+    #[serde(default = "default_false")]
     pub demo_data: bool,
 }
 
 impl Default for SeedConfig {
     fn default() -> Self {
         Self {
-            demo_data: default_true(),
+            demo_data: default_false(),
         }
     }
 }

@@ -216,7 +216,21 @@ pub(crate) async fn load_trust_config(
         if json.trim().is_empty() {
             None
         } else {
-            Some(crate::heartbeat::TrustConfig::from_db_json(Some(&json)))
+            // CEO review F10/T11：行损坏记 error!——此前经 from_db_json 静默
+            // 重置为宽松默认（含 write 类别），日志无法区分"无行"与"行
+            // 损坏"。无行/空串语义仍是"未配置"（None → 调用方回退默认）；
+            // 解析失败是告警事件（同样回退默认保可用性，但全程响亮）。
+            match serde_json::from_str::<crate::heartbeat::TrustConfig>(&json) {
+                Ok(cfg) => Some(cfg),
+                Err(e) => {
+                    tracing::error!(
+                        workspace_id = %workspace_id,
+                        error = %e,
+                        "corrupt heartbeat_trust_config row — falling back to default (row not written by save path)"
+                    );
+                    None
+                }
+            }
         }
     }))
 }
