@@ -184,7 +184,7 @@ Source: `/plan-ceo-review` on `feat/device-ecosystem-v0.2` (2026-05-08)
 
 ### P1 — HIGH
 
-- **[#41] TemplateExporter (`crates/thing/src/template/exporter.rs`) secret stripping is shallow**
+- **[#41] TemplateExporter (`apps/cloud/src/domains/thing/template/exporter.rs`) secret stripping is shallow**
   - Only strips top-level keys; nested JSON like `{"auth": {"password": "secret"}}` leaks
   - Missing variants: `passwd`, `key`, `credential`, `cert`
   - **Action:** Recursive JSON traversal + expanded sensitive key list
@@ -193,7 +193,7 @@ Source: `/plan-ceo-review` on `feat/device-ecosystem-v0.2` (2026-05-08)
 ### P2 — MEDIUM
 
 - **[#42] Exported templates lose device properties and commands**
-  - `crates/thing/src/template/exporter.rs` created empty `properties` and `commands` vectors
+  - `apps/cloud/src/domains/thing/template/exporter.rs` created empty `properties` and `commands` vectors
   - Users export a configured device and get a hollow template
   - **Action:** Map `device.properties` → `PropertyTemplate`, `device.commands` → `CommandTemplate`
   - **Owner:** TBD
@@ -379,3 +379,14 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 ## Thing Ontology Architecture Follow-up (from /plan-ceo-review 2026-07-25)
 
 ### ~~P2 — Move thing service SQL to storage layer~~ ✅ Completed 2026-07-27 (eng-review T9, commit "refactor(thing): move service-layer SQL to storage/repo")
+
+## Completed
+
+### P2 — Add dynamic task/config refresh to heartbeat loop (Outside Voice)
+- **Completed:** v0.5.0.0 (2026-08-24) — 共享信任句柄写穿（crates/agent/src/runtime/heartbeat/runner.rs trust_handles），运行中 loop 即时生效；live-chain 测试 test_update_trust_config_reaches_running_loop。
+
+### P1 — Wire DropNotifier + DeadLetterQueue
+- **Completed:** v0.5.0.0 (2026-08-24) — 2026-08-03 已核实接线（service_manager.rs LoggingDropNotifier + SqliteDeadLetterQueue），本条归档。
+
+### P3 — Cache regex in extract_json
+- **Completed:** v0.5.0.0 (2026-08-24) — crates/agent/src/runtime/heartbeat/report.rs 已用 `static JSON_FENCE_RE: LazyLock<Regex>`。
