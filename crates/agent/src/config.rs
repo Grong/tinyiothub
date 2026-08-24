@@ -25,7 +25,9 @@ pub fn default_model() -> String {
     DEFAULT_MODEL.read().clone().unwrap_or_else(|| {
         // T14：未注册时兜底 vendor 默认必须响亮——静默跑错模型比跑不起
         // 更难排查。组合层应在启动时经 set_minimax_settings 注册。
-        tracing::warn!("default_model() called before composition layer registered a model — falling back to 'minimax-m2'");
+        tracing::warn!(
+            "default_model() called before composition layer registered a model — falling back to 'minimax-m2'"
+        );
         "minimax-m2".into()
     })
 }

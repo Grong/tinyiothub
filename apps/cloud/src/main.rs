@@ -73,8 +73,8 @@ async fn main_impl() -> std::io::Result<()> {
     // CEO review T24：单实例强制先于一切 DB 操作——双进程在本架构下是
     // 双份内存真相源（重复 tick/告警、投影互覆），第二进程必须在此
     // 响亮失败而不是带着数据损伤启动。句柄持有至 main 结束。
-    let _instance_lock = tinyiothub_cloud::bootstrap::acquire_instance_lock(&db_url)
-        .expect("Failed to acquire single-instance lock");
+    let _instance_lock =
+        tinyiothub_cloud::bootstrap::acquire_instance_lock(&db_url).expect("Failed to acquire single-instance lock");
     let db_config = DatabaseConfig {
         url: db_url,
         max_connections: settings.database.max_connections,
