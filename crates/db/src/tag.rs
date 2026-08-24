@@ -330,7 +330,7 @@ pub(crate) async fn find_binding_by_id(pool: &SqlitePool, id: &str) -> Result<Op
     Ok(row.map(Into::into))
 }
 
-pub(crate) async fn create_binding(
+pub(crate) async fn create_tag_binding(
     pool: &SqlitePool,
     request: &CreateTagBindingRequest,
     created_by: &str,
@@ -360,7 +360,7 @@ pub(crate) async fn create_binding(
         .ok_or(tinyiothub_core::error::Error::NotFound)
 }
 
-pub(crate) async fn delete_binding(pool: &SqlitePool, id: &str, tenant_id: &str) -> Result<u64> {
+pub(crate) async fn delete_tag_binding(pool: &SqlitePool, id: &str, tenant_id: &str) -> Result<u64> {
     let result = sqlx::query("DELETE FROM tag_bindings WHERE id = ? AND tenant_id = ?")
         .bind(id)
         .bind(tenant_id)
@@ -370,7 +370,7 @@ pub(crate) async fn delete_binding(pool: &SqlitePool, id: &str, tenant_id: &str)
     Ok(result.rows_affected())
 }
 
-pub(crate) async fn delete_binding_by_tag_and_target(
+pub(crate) async fn delete_tag_binding_by_tag_and_target(
     pool: &SqlitePool,
     tag_id: &str,
     target_id: &str,
@@ -436,7 +436,12 @@ pub(crate) async fn count_bindings_by_target_id(pool: &SqlitePool, target_id: &s
     Ok(count)
 }
 
-pub(crate) async fn binding_exists(pool: &SqlitePool, tag_id: &str, target_id: &str, tenant_id: &str) -> Result<bool> {
+pub(crate) async fn tag_binding_exists(
+    pool: &SqlitePool,
+    tag_id: &str,
+    target_id: &str,
+    tenant_id: &str,
+) -> Result<bool> {
     let count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM tag_bindings WHERE tag_id = ? AND target_id = ? AND tenant_id = ?")
             .bind(tag_id)
@@ -466,7 +471,7 @@ pub(crate) async fn find_binding_by_tag_and_target(
     Ok(row.map(Into::into))
 }
 
-pub(crate) async fn create_bindings_batch(
+pub(crate) async fn create_tag_bindings_batch(
     pool: &SqlitePool,
     bindings: &[CreateTagBindingRequest],
     created_by: &str,
@@ -524,7 +529,7 @@ pub(crate) async fn create_bindings_batch(
     Ok(created_bindings)
 }
 
-pub(crate) async fn delete_all_bindings_by_target_id(
+pub(crate) async fn delete_all_tag_bindings_by_target_id(
     pool: &SqlitePool,
     target_id: &str,
     tenant_id: &str,
@@ -538,7 +543,7 @@ pub(crate) async fn delete_all_bindings_by_target_id(
     Ok(result.rows_affected())
 }
 
-pub(crate) async fn delete_all_bindings_by_tag_id(pool: &SqlitePool, tag_id: &str, tenant_id: &str) -> Result<u64> {
+pub(crate) async fn delete_all_tag_bindings_by_tag_id(pool: &SqlitePool, tag_id: &str, tenant_id: &str) -> Result<u64> {
     let result = sqlx::query("DELETE FROM tag_bindings WHERE tag_id = ? AND tenant_id = ?")
         .bind(tag_id)
         .bind(tenant_id)
@@ -611,28 +616,28 @@ impl Db {
     }
 
     /// 创建标签绑定。
-    pub async fn create_binding(
+    pub async fn create_tag_binding(
         &self,
         request: &CreateTagBindingRequest,
         created_by: &str,
         tenant_id: &str,
     ) -> Result<TagBinding> {
-        create_binding(self.pool(), request, created_by, tenant_id).await
+        create_tag_binding(self.pool(), request, created_by, tenant_id).await
     }
 
     /// 删除标签绑定。
-    pub async fn delete_binding(&self, id: &str, tenant_id: &str) -> Result<u64> {
-        delete_binding(self.pool(), id, tenant_id).await
+    pub async fn delete_tag_binding(&self, id: &str, tenant_id: &str) -> Result<u64> {
+        delete_tag_binding(self.pool(), id, tenant_id).await
     }
 
     /// 按标签与目标删除绑定。
-    pub async fn delete_binding_by_tag_and_target(
+    pub async fn delete_tag_binding_by_tag_and_target(
         &self,
         tag_id: &str,
         target_id: &str,
         tenant_id: &str,
     ) -> Result<u64> {
-        delete_binding_by_tag_and_target(self.pool(), tag_id, target_id, tenant_id).await
+        delete_tag_binding_by_tag_and_target(self.pool(), tag_id, target_id, tenant_id).await
     }
 
     /// 查询标签下的所有绑定。
@@ -656,8 +661,8 @@ impl Db {
     }
 
     /// 检查绑定是否存在。
-    pub async fn binding_exists(&self, tag_id: &str, target_id: &str, tenant_id: &str) -> Result<bool> {
-        binding_exists(self.pool(), tag_id, target_id, tenant_id).await
+    pub async fn tag_binding_exists(&self, tag_id: &str, target_id: &str, tenant_id: &str) -> Result<bool> {
+        tag_binding_exists(self.pool(), tag_id, target_id, tenant_id).await
     }
 
     /// 按标签与目标查询绑定。
@@ -671,22 +676,22 @@ impl Db {
     }
 
     /// 批量创建标签绑定（跳过已存在的）。
-    pub async fn create_bindings_batch(
+    pub async fn create_tag_bindings_batch(
         &self,
         bindings: &[CreateTagBindingRequest],
         created_by: &str,
         tenant_id: &str,
     ) -> Result<Vec<TagBinding>> {
-        create_bindings_batch(self.pool(), bindings, created_by, tenant_id).await
+        create_tag_bindings_batch(self.pool(), bindings, created_by, tenant_id).await
     }
 
     /// 删除目标下的所有绑定。
-    pub async fn delete_all_bindings_by_target_id(&self, target_id: &str, tenant_id: &str) -> Result<u64> {
-        delete_all_bindings_by_target_id(self.pool(), target_id, tenant_id).await
+    pub async fn delete_all_tag_bindings_by_target_id(&self, target_id: &str, tenant_id: &str) -> Result<u64> {
+        delete_all_tag_bindings_by_target_id(self.pool(), target_id, tenant_id).await
     }
 
     /// 删除标签下的所有绑定。
-    pub async fn delete_all_bindings_by_tag_id(&self, tag_id: &str, tenant_id: &str) -> Result<u64> {
-        delete_all_bindings_by_tag_id(self.pool(), tag_id, tenant_id).await
+    pub async fn delete_all_tag_bindings_by_tag_id(&self, tag_id: &str, tenant_id: &str) -> Result<u64> {
+        delete_all_tag_bindings_by_tag_id(self.pool(), tag_id, tenant_id).await
     }
 }

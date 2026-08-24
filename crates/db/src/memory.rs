@@ -75,7 +75,7 @@ impl MemoryStore {
         })
     }
 
-    pub async fn get(&self, id: &str) -> Result<Option<AgentMemory>> {
+    pub async fn get_memory_entry(&self, id: &str) -> Result<Option<AgentMemory>> {
         let row = sqlx::query_as::<_, MemoryRow>("SELECT * FROM agent_memories WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
@@ -84,7 +84,7 @@ impl MemoryStore {
         Ok(row.map(|r| r.into()))
     }
 
-    pub async fn get_all(&self, workspace_id: &str, agent_id: &str) -> Result<Vec<AgentMemory>> {
+    pub async fn list_memory_entries(&self, workspace_id: &str, agent_id: &str) -> Result<Vec<AgentMemory>> {
         let rows = sqlx::query_as::<_, MemoryRow>(
             "SELECT * FROM agent_memories WHERE workspace_id = ? AND agent_id = ? ORDER BY created_at DESC",
         )
@@ -96,7 +96,7 @@ impl MemoryStore {
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 
-    pub async fn list_active(&self, workspace_id: &str, agent_id: &str) -> Result<Vec<AgentMemory>> {
+    pub async fn list_active_memory_entries(&self, workspace_id: &str, agent_id: &str) -> Result<Vec<AgentMemory>> {
         // Push superseded filtering to SQL — avoids O(n²) in-memory transitive closure.
         // Memories whose id appears in any supersedes column are considered replaced.
         let rows = sqlx::query_as::<_, MemoryRow>(
@@ -116,7 +116,12 @@ impl MemoryStore {
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 
-    pub async fn get_since(&self, workspace_id: &str, agent_id: &str, since: &str) -> Result<Vec<AgentMemory>> {
+    pub async fn list_memory_entries_since(
+        &self,
+        workspace_id: &str,
+        agent_id: &str,
+        since: &str,
+    ) -> Result<Vec<AgentMemory>> {
         let rows = sqlx::query_as::<_, MemoryRow>(
             "SELECT * FROM agent_memories WHERE workspace_id = ? AND agent_id = ? AND created_at > ? ORDER BY created_at DESC",
         )
@@ -218,7 +223,12 @@ impl MemoryStore {
         Ok(id)
     }
 
-    pub async fn count_by_source(&self, workspace_id: &str, agent_id: &str, source: MemorySource) -> Result<u64> {
+    pub async fn count_memory_entries_by_source(
+        &self,
+        workspace_id: &str,
+        agent_id: &str,
+        source: MemorySource,
+    ) -> Result<u64> {
         let source_str = match source {
             MemorySource::User => "user",
             MemorySource::Reflection => "reflection",

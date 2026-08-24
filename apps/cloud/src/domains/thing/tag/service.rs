@@ -81,11 +81,11 @@ impl TagService {
         created_by: &str,
         tenant_id: &str,
     ) -> Result<TagBinding> {
-        self.db.create_binding(request, created_by, tenant_id).await
+        self.db.create_tag_binding(request, created_by, tenant_id).await
     }
 
     pub async fn delete_binding(&self, id: &str, tenant_id: &str) -> Result<u64> {
-        self.db.delete_binding(id, tenant_id).await
+        self.db.delete_tag_binding(id, tenant_id).await
     }
 
     pub async fn delete_binding_by_tag_and_target(
@@ -95,7 +95,7 @@ impl TagService {
         tenant_id: &str,
     ) -> Result<u64> {
         self.db
-            .delete_binding_by_tag_and_target(tag_id, target_id, tenant_id)
+            .delete_tag_binding_by_tag_and_target(tag_id, target_id, tenant_id)
             .await
     }
 
@@ -116,7 +116,7 @@ impl TagService {
     }
 
     pub async fn binding_exists(&self, tag_id: &str, target_id: &str, tenant_id: &str) -> Result<bool> {
-        self.db.binding_exists(tag_id, target_id, tenant_id).await
+        self.db.tag_binding_exists(tag_id, target_id, tenant_id).await
     }
 
     pub async fn find_binding_by_tag_and_target(
@@ -136,14 +136,14 @@ impl TagService {
         created_by: &str,
         tenant_id: &str,
     ) -> Result<Vec<TagBinding>> {
-        self.db.create_bindings_batch(bindings, created_by, tenant_id).await
+        self.db.create_tag_bindings_batch(bindings, created_by, tenant_id).await
     }
 
     pub async fn delete_all_bindings_by_target_id(&self, target_id: &str, tenant_id: &str) -> Result<u64> {
-        self.db.delete_all_bindings_by_target_id(target_id, tenant_id).await
+        self.db.delete_all_tag_bindings_by_target_id(target_id, tenant_id).await
     }
 
     pub async fn delete_all_bindings_by_tag_id(&self, tag_id: &str, tenant_id: &str) -> Result<u64> {
-        self.db.delete_all_bindings_by_tag_id(tag_id, tenant_id).await
+        self.db.delete_all_tag_bindings_by_tag_id(tag_id, tenant_id).await
     }
 }

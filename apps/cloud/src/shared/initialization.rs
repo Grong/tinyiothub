@@ -86,13 +86,6 @@ async fn initialize_system(
     }
 }
 
-/// 检查系统是否需要初始化
-#[allow(dead_code)]
-pub async fn check_system_initialization(state: &AppState) -> Result<bool> {
-    let users = state.user_service.find_all(&Default::default()).await?;
-    Ok(users.is_empty())
-}
-
 /// 自动创建默认管理员用户（如果不存在），并确保默认租户和工作空间
 pub async fn ensure_default_admin_user(state: &AppState) -> Result<()> {
     // 先查找 admin 用户是否已存在

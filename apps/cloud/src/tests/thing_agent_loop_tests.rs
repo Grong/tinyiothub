@@ -510,6 +510,51 @@ async fn wait_subscribed(bus: &ThingEventBus) {
     panic!("thing-event trigger did not subscribe");
 }
 
+/// 屏障式路由（T18 去抖）：独立事件名 → 独立 dedup_key，其落库即
+/// "管道已排空到该点"的屏障（bus FIFO，先于它路由的事件必已被评估）。
+async fn route_event_named(
+    pool: &sqlx::SqlitePool,
+    bus: &Arc<ThingEventBus>,
+    actor: &str,
+    level: EventLevel,
+    event_name: &str,
+    data: serde_json::Value,
+) {
+    let throttle = ThrottleState::new(60);
+    let input = ThingEventInput {
+        thing_id: THING.to_string(),
+        workspace_id: WS.to_string(),
+        event_name: event_name.to_string(),
+        level,
+        data,
+        ts: None,
+        template_events: None,
+    };
+    let result = route_thing_event(pool, &throttle, None, bus, actor, input).await;
+    assert!(
+        !result.malformed && !result.throttled && !result.unknown_event,
+        "route failed: {result:?}"
+    );
+}
+
+/// 阴性断言的 fail-fast 轮询（T18 去抖）：预算期内失败条件一旦出现立即
+/// panic（慢 CI 上错误行为更快暴露），预算耗尽未出现才通过。仅用于无法
+/// 获得排空屏障的纯时间语义断言（合并窗口/tick 调度本身是墙钟语义）。
+async fn assert_never(
+    what: &str,
+    budget: Duration,
+    mut bad: impl FnMut() -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>>,
+) {
+    let deadline = tokio::time::Instant::now() + budget;
+    loop {
+        assert!(!bad().await, "{what}: forbidden condition observed within budget");
+        if tokio::time::Instant::now() >= deadline {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
 /// 真实时间轮询（20ms × 500 = 10s 上限），等异步链路收敛。
 async fn wait_for(
     what: &str,
@@ -612,9 +657,24 @@ async fn warning_event_runs_full_loop_and_persists_verified_report() {
     .await;
 
     // 显式共振防护：actor='agent' 的 warning 事件（即便同名同级别）不唤醒。
-    // 等待时长 > 合并窗口 + run 耗时，足以暴露一次错误唤醒。
+    // 屏障式等待（T18 去抖）：agent 事件之后路由独立 dedup_key 的屏障事件
+    // 并等其落库——bus FIFO，屏障落库即证明 agent 事件已被评估，阴性断言
+    // 不再依赖固定墙钟。
     route(&fx, "agent").await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    route_event_named(
+        &fx.pool,
+        &fx.bus,
+        "device",
+        EventLevel::Warning,
+        "zz_barrier",
+        json!({"value": 1.0}),
+    )
+    .await;
+    wait_for("barrier run persisted (pipeline drained past agent event)", || {
+        let pool = fx.pool.clone();
+        Box::pin(async move { run_count(&pool, "thing:dev-1:event:zz_barrier").await == 1 })
+    })
+    .await;
     assert_eq!(
         run_count(&fx.pool, EVENT_KEY).await,
         1,
@@ -624,10 +684,12 @@ async fn warning_event_runs_full_loop_and_persists_verified_report() {
     // 总数断言（排除已知的定时巡检 run）：agent 动作/事件若误唤醒，run 会
     // 落在别的 dedup_key 上，只有总数断言才能封死共振防护。
     let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM agent_runs WHERE workspace_id = ? AND (dedup_key IS NULL OR dedup_key != ?)",
+        "SELECT COUNT(*) FROM agent_runs WHERE workspace_id = ? AND (dedup_key IS NULL OR (dedup_key != ? AND dedup_key != ?))",
     )
     .bind(WS)
     .bind(format!("timer:{WS}"))
+    // T18：排空屏障事件的 run 是测试夹具产物，不计入"误唤醒"判定。
+    .bind("thing:dev-1:event:zz_barrier")
     .fetch_one(&fx.pool)
     .await
     .expect("count all non-timer runs");
@@ -650,9 +712,13 @@ async fn five_events_in_30s_merge_into_one_wake() {
 
     wait_for("merged run", || run_count_is(&fx.pool, EVENT_KEY, 1)).await;
 
-    // 窗口已关闭：等待远超一个窗口周期，没有重复唤醒。
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    assert_eq!(run_count(&fx.pool, EVENT_KEY).await, 1, "30s 内 5 事件仅 1 次唤醒");
+    // 窗口已关闭：预算期内无重复唤醒（fail-fast 轮询，T18 去抖；
+    // 合并窗口本身是墙钟语义，预算即窗口周期余量）。
+    assert_never("duplicate wake after merge window", Duration::from_millis(500), || {
+        let pool = fx.pool.clone();
+        Box::pin(async move { run_count(&pool, EVENT_KEY).await > 1 })
+    })
+    .await;
 }
 
 // ── 2b. stop() 失效工厂缓存的 per-workspace agent（WorkspaceDeleted 不泄漏）─
@@ -899,8 +965,8 @@ async fn duplicate_directive_via_dispatch_tool_yields_single_run() {
     })
     .await;
 
-    // 第二条被去重拦截：等待远超一次 run 的耗时，仍只有 1 条用户 Run。
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // 第二条被去重拦截（T18 去抖：拒绝是 dispatch 入口的同步决策——
+    // dup.success=false 已断言——不存在异步残留，无需墙钟等待）。
     assert_eq!(user_run_count(&fx.pool).await, 1, "60s 内同文本指令仅产生 1 个 Run");
 }
 
@@ -1050,15 +1116,28 @@ async fn mode_off_suppresses_event_and_timer_wakes_end_to_end() {
     )
     .await;
 
-    // 观察窗 ≥ 5 个 timer tick + 合并窗口：任何漏网信号都会落成 Run。
-    tokio::time::sleep(Duration::from_millis(600)).await;
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_runs WHERE workspace_id = ?")
-        .bind(WS)
-        .fetch_one(&parts.pool)
-        .await
-        .expect("count all runs");
-    assert_eq!(total, 0, "mode=off：事件与 timer 均不得落 Run");
-    assert_eq!(provider.call_count(), 0, "mode=off：零 LLM 调用");
+    // 观察窗 ≥ 5 个 timer tick + 合并窗口（fail-fast 轮询，T18 去抖；
+    // tick 调度本身是墙钟语义，预算即 5 tick + 窗口余量）：任何漏网信号
+    // 都会落成 Run 或 LLM 调用。
+    let pool_for_never = parts.pool.clone();
+    let provider_for_never = provider.clone();
+    assert_never(
+        "mode=off must produce zero runs and zero LLM calls",
+        Duration::from_millis(600),
+        || {
+            let pool = pool_for_never.clone();
+            let provider = provider_for_never.clone();
+            Box::pin(async move {
+                let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_runs WHERE workspace_id = ?")
+                    .bind(WS)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("count all runs");
+                total > 0 || provider.call_count() > 0
+            })
+        },
+    )
+    .await;
 
     // 门控不是死锁：翻回 Act 后 timer 恢复唤醒（证明上面不是 loop 坏了）。
     parts

@@ -37,7 +37,11 @@ async fn list_active_memories(
     Query(query): Query<ListMemoriesQuery>,
 ) -> Json<tinyiothub_web::response::ApiResponse<Vec<AgentMemory>>> {
     let ws = workspace_id.unwrap_or_default();
-    match state.memory_store.list_active(&ws, &query.agent_id).await {
+    match state
+        .memory_store
+        .list_active_memory_entries(&ws, &query.agent_id)
+        .await
+    {
         Ok(memories) => ApiResponseBuilder::success(memories),
         Err(e) => ApiResponseBuilder::error(format!("Failed to list memories: {}", e)),
     }

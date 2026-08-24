@@ -86,6 +86,10 @@ pub struct HeartbeatRunner {
     /// 导出供 Lagged resync/周期对账补回丢失的 agent_actions 行——此前
     /// 心跳结果不在 dump_state 内，丢事件即永久丢失。
     recent_results: Arc<DashMap<String, std::collections::VecDeque<tinyiothub_core::heartbeat::HeartbeatResult>>>,
+    /// 运行中 loop 的共享信任配置句柄（T18 修复）：start() 注册、
+    /// stop()/remove_workspace 移除；update_trust_config 写穿——此前
+    /// loop 持有的是启动快照 Arc，运行中更新永不生效（直到重启）。
+    trust_handles: DashMap<String, Arc<RwLock<TrustConfig>>>,
     event_publisher: Arc<AiEventPublisher>,
     agent_pool: RwLock<Option<Arc<dyn AgentPoolLike>>>,
     config: HeartbeatConfig,
@@ -107,6 +111,7 @@ impl HeartbeatRunner {
             intervals: DashMap::new(),
             last_ticks: Arc::new(DashMap::new()),
             recent_results: Arc::new(DashMap::new()),
+            trust_handles: DashMap::new(),
             event_publisher,
             agent_pool: RwLock::new(None),
             config,
@@ -147,6 +152,10 @@ impl HeartbeatRunner {
 
         // TrustConfig 来自内存（restore/命令注入）；未注入时用缺省。
         let trust_config = Arc::new(RwLock::new(self.get_trust_config(workspace_id).unwrap_or_default()));
+        // T18：句柄注册——update_trust_config 写穿此 Arc，运行中 loop
+        // 每 tick 读到的即最新值。
+        self.trust_handles
+            .insert(workspace_id.to_string(), trust_config.clone());
         let trust_config_for_cache = trust_config.clone();
 
         self.trust_configs
@@ -247,6 +256,7 @@ impl HeartbeatRunner {
 
     /// Stop a heartbeat loop for a workspace. No-op if not running.
     pub async fn stop(&self, workspace_id: &str) {
+        self.trust_handles.remove(workspace_id);
         if let Some((_, handle)) = self.loops.remove(workspace_id) {
             let _ = handle.cancel_tx.send(());
             if tokio::time::timeout(std::time::Duration::from_secs(5), handle.exit_rx)
@@ -275,6 +285,7 @@ impl HeartbeatRunner {
         self.intervals.remove(workspace_id);
         self.last_ticks.remove(workspace_id);
         self.recent_results.remove(workspace_id);
+        self.trust_handles.remove(workspace_id);
         self.pending_starts.write().await.retain(|p| p != workspace_id);
         info!(workspace_id, "Workspace heartbeat state removed");
     }
@@ -360,6 +371,24 @@ impl HeartbeatRunner {
     /// DB 写由 cloud 侧 service 先行完成（D11-⑤ 写序）；事件由门面发射。
     pub fn update_trust_config(&self, workspace_id: &str, config: TrustConfig) {
         self.trust_configs.insert(workspace_id.to_string(), config.clone());
+        // T18：写穿运行中 loop 的共享 Arc——此前 loop 持启动快照，
+        // PUT trust 后运行中 loop 永不生效（直到重启）。
+        if let Some(handle) = self.trust_handles.get(workspace_id) {
+            match handle.value().try_write() {
+                Ok(mut guard) => *guard = config.clone(),
+                Err(_) => {
+                    // tick 读锁在飞（毫秒级）：spawn 等待写入，与
+                    // send_control 的"必达"语义一致。
+                    let handle = handle.value().clone();
+                    let ws = workspace_id.to_string();
+                    let config = config.clone();
+                    tokio::spawn(async move {
+                        *handle.write().await = config;
+                        debug!(workspace_id = ws, "trust config hot-update applied after contention");
+                    });
+                }
+            }
+        }
         match self.agent_pool.try_read() {
             Ok(guard) => {
                 if let Some(pool) = guard.as_ref() {
@@ -703,6 +732,51 @@ mod tests {
         assert!(
             runner.snapshot_states().is_empty(),
             "removed workspace must not appear in the exported snapshot"
+        );
+    }
+
+    /// T18：运行中 loop 的信任配置热更新链路（HTTP handler 先写 DB →
+    /// update_trust_config → loop 共享 Arc 即时可见）。修复前：loop 持
+    /// 启动快照 Arc，运行中更新永不生效（直到 stop/start）。
+    #[tokio::test]
+    async fn test_update_trust_config_reaches_running_loop() {
+        let runner = make_runner();
+        runner.set_tasks("ws_1", vec![task_fixture("test")]);
+        runner.set_agent_pool(Arc::new(OkPool)).await;
+        runner.start("ws_1").await;
+        assert_eq!(runner.active_loop_count(), 1);
+
+        // loop 每 tick 的读路径就是这个共享 Arc（经 runner 句柄取出）。
+        let handle = runner
+            .trust_handles
+            .get("ws_1")
+            .expect("trust handle registered on start")
+            .value()
+            .clone();
+        assert_eq!(
+            handle.read().await.trust_level,
+            tinyiothub_core::heartbeat::TrustLevel::ReadOnlyAuto
+        );
+
+        // 命令更新（cloud handler 已先写 DB，D11-⑤ 写序）。
+        runner.update_trust_config(
+            "ws_1",
+            tinyiothub_core::heartbeat::TrustConfig {
+                trust_level: tinyiothub_core::heartbeat::TrustLevel::FullAuto,
+                ..Default::default()
+            },
+        );
+
+        // 同一 Arc 立即读到新值——运行中 loop 的下一 tick 即生效。
+        assert_eq!(
+            handle.read().await.trust_level,
+            tinyiothub_core::heartbeat::TrustLevel::FullAuto,
+            "running loop's shared trust config must reflect hot updates"
+        );
+        runner.stop("ws_1").await;
+        assert!(
+            runner.trust_handles.get("ws_1").is_none(),
+            "stop must remove the trust handle"
         );
     }
 

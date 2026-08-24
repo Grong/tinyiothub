@@ -5980,6 +5980,7 @@ dependencies = [
  "dashmap",
  "db",
  "elsa",
+ "fs2",
  "futures",
  "futures-util",
  "headers",

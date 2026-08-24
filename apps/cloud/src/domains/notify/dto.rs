@@ -310,10 +310,6 @@ pub struct NotificationStatistics {
 }
 
 // ──────────────────────────────────────────────
-// Repository types (from *_repository_impl.rs)
-// ──────────────────────────────────────────────
-
-// ──────────────────────────────────────────────
 // API DTOs (from api/notifications/management.rs)
 // ──────────────────────────────────────────────
 

@@ -261,6 +261,7 @@ pub async fn build_agent_snapshot(db: &Db) -> Result<RestoreSnapshot, String> {
         recent_runs,
         problem_meta,
         recent_run_meta: std::collections::HashMap::new(),
+        heartbeat_results: vec![],
     })
 }
 
@@ -326,5 +327,80 @@ pub async fn reconcile_zombie_runs(db: &Db, runtime: &AgentRuntime) {
         Ok(0) => {}
         Ok(n) => info!(marked = n, "startup zombie reconcile: running runs marked interrupted"),
         Err(e) => warn!(error = %e, "startup zombie reconcile failed"),
+    }
+}
+
+/// 单实例强制（CEO review T24/OV4）：内存真相源架构（agent runtime 内存 +
+/// 事件投影）下双进程 = 双份自治 loop 互相覆盖投影、重复 tick、重复告警。
+/// 启动即对 DB 旁路锁文件取排他 flock——第二进程响亮失败并指明原因；
+/// flock 随进程死亡自动释放，无陈旧锁问题。返回的 File 句柄必须由调用方
+/// 持有至进程结束（drop 即释放）。
+pub fn acquire_instance_lock(db_url: &str) -> std::io::Result<Option<std::fs::File>> {
+    use fs2::FileExt;
+
+    let db_path = db_url
+        .trim_start_matches("sqlite:")
+        .trim_start_matches("//")
+        .split('?')
+        .next()
+        .unwrap_or_default();
+    // 内存库（测试）无文件实体，跳过加锁。
+    if db_path.is_empty() || db_path == ":memory:" {
+        return Ok(None);
+    }
+    let lock_path = format!("{db_path}.lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)?;
+    match file.try_lock_exclusive() {
+        Ok(()) => {
+            info!(path = %lock_path, "single-instance lock acquired");
+            Ok(Some(file))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Err(std::io::Error::new(
+            e.kind(),
+            format!(
+                "another tinyiothub instance holds the instance lock ({lock_path}). \
+                 The in-memory agent runtime is single-instance by design (spec §5.4): \
+                 a second process would run duplicate autonomous loops and overwrite projections. \
+                 Stop the other process first; if none is running, delete the stale lock file."
+            ),
+        )),
+        Err(e) => Err(e),
+    }
+}
+
+#[cfg(test)]
+mod instance_lock_tests {
+    /// T24：同一路径的第二次取锁必须失败且报文指明单实例语义；
+    /// 首个句柄释放后可再取。
+    #[test]
+    fn second_lock_fails_loudly_until_first_handle_drops() {
+        let dir = std::env::temp_dir().join(format!("tih-lock-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_url = format!("sqlite:{}", dir.join("app.db").display());
+        // 先建 DB 文件实体（锁文件在其旁路）。
+        std::fs::File::create(dir.join("app.db")).unwrap();
+
+        let first = super::acquire_instance_lock(&db_url).expect("first lock");
+        let err = super::acquire_instance_lock(&db_url).expect_err("second lock must fail");
+        assert!(
+            err.to_string().contains("single-instance"),
+            "error must name the single-instance contract: {err}"
+        );
+        drop(first);
+        let _third = super::acquire_instance_lock(&db_url).expect("lock re-acquirable after drop");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn memory_db_skips_lock() {
+        assert!(
+            super::acquire_instance_lock("sqlite::memory:")
+                .expect("memory db")
+                .is_none()
+        );
     }
 }

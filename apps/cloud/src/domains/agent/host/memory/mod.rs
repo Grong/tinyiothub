@@ -14,7 +14,7 @@ impl tinyiothub_agent::prompt::PromptMemorySource for PromptMemoryStoreAdapter {
         workspace_id: &str,
         agent_id: &str,
     ) -> anyhow::Result<Vec<tinyiothub_core::memory::AgentMemory>> {
-        Ok(self.0.list_active(workspace_id, agent_id).await?)
+        Ok(self.0.list_active_memory_entries(workspace_id, agent_id).await?)
     }
 
     async fn record_load(&self, id: &str) -> anyhow::Result<()> {

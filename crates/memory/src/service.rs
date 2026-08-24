@@ -90,7 +90,7 @@ impl MemoryService {
     ) -> Result<(), MemoryError> {
         let active_memories = self
             .memory_store
-            .list_active(workspace_id, agent_id)
+            .list_active_memory_entries(workspace_id, agent_id)
             .await
             .map_err(|e| MemoryError::Reflection(e.to_string()))?;
 
@@ -211,7 +211,7 @@ impl MemoryService {
     ) -> Result<String, MemoryError> {
         let memories = self
             .memory_store
-            .list_active(workspace_id, agent_id)
+            .list_active_memory_entries(workspace_id, agent_id)
             .await
             .map_err(|e| MemoryError::Reflection(e.to_string()))?;
 
@@ -242,7 +242,7 @@ impl MemoryService {
             .to_string();
         let new_memories = self
             .memory_store
-            .get_since(workspace_id, agent_id, &since)
+            .list_memory_entries_since(workspace_id, agent_id, &since)
             .await
             .map_err(|e| MemoryError::Reflection(e.to_string()))?;
 
