@@ -6,13 +6,22 @@ cd "$(git rev-parse --show-toplevel)"
 
 SELFTEST_FAIL=0
 CLEANUP=()
+# 对抗性评审 F1：恢复必须基于事前备份——git checkout 会摧毁用户的
+# 未提交改动（根清单本脚本从不修改；成员清单即使提前退出也会被
+# checkout）。只在真正备份过时才恢复。
+AGENT_TOML_BAK=""
 cleanup() {
   for path in "${CLEANUP[@]}"; do
     if [ -e "$path" ]; then rm -f "$path"; fi
   done
-  git checkout -- crates/agent/Cargo.toml Cargo.toml 2>/dev/null || true
+  if [ -n "$AGENT_TOML_BAK" ] && [ -f "$AGENT_TOML_BAK" ]; then
+    cp "$AGENT_TOML_BAK" crates/agent/Cargo.toml
+    rm -f "$AGENT_TOML_BAK"
+  fi
 }
 trap cleanup EXIT
+AGENT_TOML_BAK=$(mktemp)
+cp crates/agent/Cargo.toml "$AGENT_TOML_BAK"
 
 expect_fails() {
   local name="$1"; shift
@@ -77,10 +86,10 @@ expect_fails "agent-purity (source use axum)" bash scripts/guards/agent-purity.s
 rm -f "$EVIL_AGENT"
 printf '\nweb = { package = "axum" }\n' >> crates/agent/Cargo.toml
 expect_fails "agent-purity (renamed dep)" bash scripts/guards/agent-purity.sh
-git checkout -- crates/agent/Cargo.toml
+cp "$AGENT_TOML_BAK" crates/agent/Cargo.toml
 printf '\n[dependencies.axum]\nversion = "0.8"\n' >> crates/agent/Cargo.toml
 expect_fails "agent-purity (sub-table dep)" bash scripts/guards/agent-purity.sh
-git checkout -- crates/agent/Cargo.toml
+cp "$AGENT_TOML_BAK" crates/agent/Cargo.toml
 # 注入到 [dependencies] 段内（>> 会落在文件末尾的 [lints] 段下）。
 sed -i.bak 's/^\[dependencies\]$/[dependencies]\nsqlx = { workspace = true }/' crates/agent/Cargo.toml && rm -f crates/agent/Cargo.toml.bak
 expect_fails "agent-purity (sqlx workspace dep)" bash scripts/guards/agent-purity.sh
@@ -90,7 +99,7 @@ else
   echo "❌ SELF-TEST: tree guard missed injected sqlx"
   SELFTEST_FAIL=1
 fi
-git checkout -- crates/agent/Cargo.toml
+cp "$AGENT_TOML_BAK" crates/agent/Cargo.toml
 expect_passes "agent-purity" bash scripts/guards/agent-purity.sh
 
 if [ "$SELFTEST_FAIL" -ne 0 ]; then

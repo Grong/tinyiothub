@@ -14,7 +14,16 @@ if grep -rEn --include='*.rs' 'use\s+(axum|sqlx|tinyiothub_storage)|\b(axum|sqlx
   echo "   ✅ Web/HTTP concerns belong in apps/cloud host; persistence behind port traits"
   FAIL=1
 fi
-if cargo tree -p agent --prefix none --format "{p}" 2>/dev/null | grep -E "^sqlx|^db "; then
+# 对抗性评审 F2：cargo tree 失败（离线/lock 漂移/网络）产生空输出——
+# 管道到 grep 会静默通过。工具失败即守卫失败（fail-closed）。
+TREE_OUT=$(cargo tree -p agent --prefix none --format "{p}" 2>&1)
+TREE_RC=$?
+if [ "$TREE_RC" -ne 0 ]; then
+  echo "❌ DEPENDENCY GUARD ERROR: cargo tree failed (rc=$TREE_RC) — refusing to pass on tool failure"
+  echo "$TREE_OUT" | head -5
+  exit 1
+fi
+if echo "$TREE_OUT" | grep -E "^sqlx|^db "; then
   echo "❌ DEPENDENCY VIOLATION: crates/agent dependency tree must not contain sqlx/db (incl. renamed deps)"
   FAIL=1
 fi

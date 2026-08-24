@@ -89,7 +89,7 @@ pub struct HeartbeatRunner {
     /// 运行中 loop 的共享信任配置句柄（T18 修复）：start() 注册、
     /// stop()/remove_workspace 移除；update_trust_config 写穿——此前
     /// loop 持有的是启动快照 Arc，运行中更新永不生效（直到重启）。
-    trust_handles: DashMap<String, Arc<RwLock<TrustConfig>>>,
+    trust_handles: DashMap<String, Arc<parking_lot::RwLock<TrustConfig>>>,
     event_publisher: Arc<AiEventPublisher>,
     agent_pool: RwLock<Option<Arc<dyn AgentPoolLike>>>,
     config: HeartbeatConfig,
@@ -151,18 +151,22 @@ impl HeartbeatRunner {
         self.stop(workspace_id).await;
 
         // TrustConfig 来自内存（restore/命令注入）；未注入时用缺省。
-        let trust_config = Arc::new(RwLock::new(self.get_trust_config(workspace_id).unwrap_or_default()));
+        let trust_config = Arc::new(parking_lot::RwLock::new(
+            self.get_trust_config(workspace_id).unwrap_or_default(),
+        ));
         // T18：句柄注册——update_trust_config 写穿此 Arc，运行中 loop
-        // 每 tick 读到的即最新值。
+        // 每 tick 读到的即最新值。注册后立刻与内存真源对账一次（对抗性
+        // 评审 F4b：注册窗口内到达的更新已写 map 未写 Arc，对账闭窗）。
         self.trust_handles
             .insert(workspace_id.to_string(), trust_config.clone());
+        *trust_config.write() = self.get_trust_config(workspace_id).unwrap_or_default();
         let trust_config_for_cache = trust_config.clone();
 
         self.trust_configs
-            .insert(workspace_id.to_string(), trust_config_for_cache.read().await.clone());
+            .insert(workspace_id.to_string(), trust_config_for_cache.read().clone());
 
         if let Some(pool) = self.agent_pool.read().await.as_ref() {
-            pool.set_trust_config(workspace_id, trust_config_for_cache.read().await.clone());
+            pool.set_trust_config(workspace_id, trust_config_for_cache.read().clone());
         }
 
         // 任务来自内存（restore/reload 命令注入；Task 9 接线启动恢复）。
@@ -374,20 +378,11 @@ impl HeartbeatRunner {
         // T18：写穿运行中 loop 的共享 Arc——此前 loop 持启动快照，
         // PUT trust 后运行中 loop 永不生效（直到重启）。
         if let Some(handle) = self.trust_handles.get(workspace_id) {
-            match handle.value().try_write() {
-                Ok(mut guard) => *guard = config.clone(),
-                Err(_) => {
-                    // tick 读锁在飞（毫秒级）：spawn 等待写入，与
-                    // send_control 的"必达"语义一致。
-                    let handle = handle.value().clone();
-                    let ws = workspace_id.to_string();
-                    let config = config.clone();
-                    tokio::spawn(async move {
-                        *handle.write().await = config;
-                        debug!(workspace_id = ws, "trust config hot-update applied after contention");
-                    });
-                }
-            }
+            // 对抗性评审 F4：parking_lot 同步写——写者在锁队列中有序，
+            // 不存在 try_write+spawn 两个乱序写任务的窗口（连续两次
+            // 热更新旧值盖新值的竞态根除）。tick 读锁只持微秒级，
+            // 这里的阻塞可忽略。
+            *handle.value().write() = config.clone();
         }
         match self.agent_pool.try_read() {
             Ok(guard) => {
@@ -754,7 +749,7 @@ mod tests {
             .value()
             .clone();
         assert_eq!(
-            handle.read().await.trust_level,
+            handle.read().trust_level,
             tinyiothub_core::heartbeat::TrustLevel::ReadOnlyAuto
         );
 
@@ -769,7 +764,7 @@ mod tests {
 
         // 同一 Arc 立即读到新值——运行中 loop 的下一 tick 即生效。
         assert_eq!(
-            handle.read().await.trust_level,
+            handle.read().trust_level,
             tinyiothub_core::heartbeat::TrustLevel::FullAuto,
             "running loop's shared trust config must reflect hot updates"
         );

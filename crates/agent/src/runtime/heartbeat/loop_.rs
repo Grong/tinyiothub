@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use parking_lot::RwLock as PlRwLock;
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
@@ -26,7 +27,7 @@ const TICK_TIMEOUT: Duration = Duration::from_secs(180);
 pub async fn heartbeat_loop(
     workspace_id: String,
     tasks: Arc<RwLock<Vec<HeartbeatTask>>>,
-    trust_config: Arc<RwLock<TrustConfig>>,
+    trust_config: Arc<PlRwLock<TrustConfig>>,
     agent_pool: Option<Arc<dyn crate::runtime::agent::pool::AgentPoolLike>>,
     tasks_source: Arc<dashmap::DashMap<String, Vec<HeartbeatTask>>>,
     last_ticks: Arc<dashmap::DashMap<String, chrono::DateTime<chrono::Utc>>>,
@@ -55,7 +56,9 @@ pub async fn heartbeat_loop(
     loop {
         if !paused {
             let active_tasks: Vec<HeartbeatTask> = tasks.read().await.iter().filter(|t| !t.paused).cloned().collect();
-            let trust = trust_config.read().await.clone();
+            // parking_lot 同步读（T18/F4：update_trust_config 写穿也是同步锁，
+            // 无 try_write+spawn 的乱序窗口）。
+            let trust = trust_config.read().clone();
 
             if !active_tasks.is_empty() {
                 let task_refs: Vec<&HeartbeatTask> = active_tasks.iter().collect();
@@ -430,7 +433,7 @@ mod tests {
 
         let metrics = Arc::new(crate::runtime::heartbeat::metrics::Metrics::new());
         let tasks = Arc::new(RwLock::new(vec![sample_task()]));
-        let trust = Arc::new(RwLock::new(TrustConfig::default()));
+        let trust = Arc::new(PlRwLock::new(TrustConfig::default()));
         let pool: Arc<dyn AgentPoolLike> = Arc::new(FailPool);
         let tasks_source = empty_tasks_source();
         let publisher = Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
@@ -494,7 +497,7 @@ mod tests {
         // forever when no signal comes — it must retry after a cooldown.
         let metrics = Arc::new(crate::runtime::heartbeat::metrics::Metrics::new());
         let tasks = Arc::new(RwLock::new(vec![sample_task()]));
-        let trust = Arc::new(RwLock::new(TrustConfig::default()));
+        let trust = Arc::new(PlRwLock::new(TrustConfig::default()));
         let pool: Arc<dyn AgentPoolLike> = Arc::new(FailPool);
         let tasks_source = empty_tasks_source();
         let publisher = Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
@@ -555,7 +558,7 @@ mod tests {
     async fn loop_records_last_tick_in_shared_map() {
         let metrics = Arc::new(crate::runtime::heartbeat::metrics::Metrics::new());
         let tasks = Arc::new(RwLock::new(vec![sample_task()]));
-        let trust = Arc::new(RwLock::new(TrustConfig::default()));
+        let trust = Arc::new(PlRwLock::new(TrustConfig::default()));
         let pool: Arc<dyn AgentPoolLike> = Arc::new(MockPool {
             output: AgentRunOutput {
                 text: r#"{"status":"complete","summary":"done","proposals":[]}"#.into(),

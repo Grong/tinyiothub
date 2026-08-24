@@ -365,7 +365,8 @@ pub fn acquire_instance_lock(db_url: &str) -> std::io::Result<Option<std::fs::Fi
                 "another tinyiothub instance holds the instance lock ({lock_path}). \
                  The in-memory agent runtime is single-instance by design (spec §5.4): \
                  a second process would run duplicate autonomous loops and overwrite projections. \
-                 Stop the other process first; if none is running, delete the stale lock file."
+                 Stop the other process first. (flock is released automatically on process death —
+                 there is no stale-lock state; a WouldBlock means a live process holds it.)"
             ),
         )),
         Err(e) => Err(e),

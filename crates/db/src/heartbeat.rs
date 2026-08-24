@@ -545,7 +545,7 @@ pub(crate) async fn insert_tick_anchor_row(
     tick_id: Option<&str>,
 ) -> Result<bool, RepoError> {
     let result = if let Some(tick_id) = tick_id {
-        sqlx::query(
+        let r = sqlx::query(
             "INSERT OR IGNORE INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at, tick_id)
              VALUES (?, ?, ?, 'heartbeat', ?, ?, ?, ?)",
         )
@@ -558,7 +558,23 @@ pub(crate) async fn insert_tick_anchor_row(
         .bind(tick_id)
         .execute(&mut **tx)
         .await
-        .map_err(|e| RepoError::Database(e.to_string()))?
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+        // 对抗性评审 F6：OR IGNORE 会吞掉任何约束冲突（不只是 tick_id 撞
+        // 唯一）——rows_affected=0 时核验 tick_id 确实存在，否则是别的
+        // 约束违规被误读为"重复 tick"，必须报错而非静默丢整组。
+        if r.rows_affected() == 0 {
+            let tick_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM agent_actions WHERE tick_id = ?)")
+                .bind(tick_id)
+                .fetch_one(&mut **tx)
+                .await
+                .map_err(|e| RepoError::Database(e.to_string()))?;
+            if !tick_exists {
+                return Err(RepoError::Database(format!(
+                    "anchor INSERT OR IGNORE matched zero rows but tick_id '{tick_id}' is absent —                      a non-tick_id constraint violation was swallowed"
+                )));
+            }
+        }
+        r
     } else {
         sqlx::query(
             "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at)
@@ -1058,9 +1074,9 @@ mod tick_id_tests {
 
 #[cfg(test)]
 mod corrupt_row_tests {
+    use super::tests::seed_tenant;
     use super::*;
     use crate::test_helpers::test_pool;
-    use super::tests::seed_tenant;
 
     /// F10/T11：损坏的信任配置行 → error! + None（响亮回退默认），
     /// 不得静默解析成功；有效行不受影响。
@@ -1087,7 +1103,14 @@ mod corrupt_row_tests {
 
         // 有效行不受影响。
         let cfg = crate::heartbeat::TrustConfig::default();
-        db.save_heartbeat_trust_config("ws_corrupt", &cfg).await.expect("save valid");
-        assert!(db.load_heartbeat_trust_config("ws_corrupt").await.expect("load").is_some());
+        db.save_heartbeat_trust_config("ws_corrupt", &cfg)
+            .await
+            .expect("save valid");
+        assert!(
+            db.load_heartbeat_trust_config("ws_corrupt")
+                .await
+                .expect("load")
+                .is_some()
+        );
     }
 }
