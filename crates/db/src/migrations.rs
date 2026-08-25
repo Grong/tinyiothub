@@ -311,7 +311,7 @@ mod tests {
         );
     }
 
-    /// Regression: after run_migrations, a plain DELETE FROM devices must
+    /// Regression: after run_migrations, a plain DELETE FROM things must
     /// still work — the gateway pairing rollback depends on it (FK cascade
     /// wiped child rows in the historical chain; FK OFF during migration is
     /// the fix).
@@ -322,10 +322,10 @@ mod tests {
 
         // seed_system 提供 subscription_plans → 默认租户/工作区链（Task 3）。
         crate::seed::seed_system(&crate::Db::new(pool.clone())).await.unwrap();
-        sqlx::query("INSERT INTO devices (id, name, workspace_id, created_at, updated_at) VALUES ('d1','gw','ws-default-001','2025-01-01','2025-01-01')")
+        sqlx::query("INSERT INTO things (id, name, workspace_id, created_at, updated_at) VALUES ('d1','gw','ws-default-001','2025-01-01','2025-01-01')")
             .execute(&pool).await.unwrap();
 
-        let result = sqlx::query("DELETE FROM devices WHERE id = 'd1'").execute(&pool).await;
-        assert!(result.is_ok(), "DELETE FROM devices failed: {:?}", result.err());
+        let result = sqlx::query("DELETE FROM things WHERE id = 'd1'").execute(&pool).await;
+        assert!(result.is_ok(), "DELETE FROM things failed: {:?}", result.err());
     }
 }

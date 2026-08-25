@@ -1,4 +1,4 @@
-//! Thing 持久化：devices 表的 Thing 视图 + resources/tag_bindings/events 侧查询
+//! Thing 持久化：things 表的 Thing 视图 + resources/tag_bindings/events 侧查询
 //!（自 cloud domains/thing/repo.rs 迁入，Task 12）。
 //!
 //! 类型随 repo 住 db：ThingRow/ThingResource/TagInfo 等行类型，
@@ -22,14 +22,14 @@ pub struct TagInfo {
     pub color: Option<String>,
 }
 
-/// Maps to the `devices` table after the Thing Ontology migration.
+/// Maps to the `things` table after the Thing Ontology migration.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ThingRow {
     pub id: String,
     pub name: String,
     pub display_name: Option<String>,
     pub thing_type: String,
-    pub device_type: Option<String>,
+    pub category: Option<String>,
     pub address: Option<String>,
     pub description: Option<String>,
     pub position: Option<String>,
@@ -99,7 +99,7 @@ pub struct ThingTreeNode {
 pub struct UpdateThingRequest {
     pub name: Option<String>,
     pub thing_type: Option<String>,
-    pub device_type: Option<String>,
+    pub category: Option<String>,
     pub description: Option<String>,
     pub parent_id: Option<String>,
     pub template_id: Option<String>,
@@ -114,7 +114,7 @@ pub struct UpdateThingRequest {
 pub struct ThingResource {
     pub id: String,
     pub workspace_id: String,
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     #[sqlx(rename = "type")]
     pub resource_type: String,
     pub name: String,
@@ -186,9 +186,9 @@ struct BreadcrumbRow {
 /// thing itself is on that chain, reparenting creates a cycle. Depth cap 10
 /// matches the read-side breadcrumb/tree caps.
 const CHECK_CYCLE_SQL: &str = "WITH RECURSIVE up AS ( \
-    SELECT id, parent_id, 0 AS depth FROM devices WHERE id = ? \
+    SELECT id, parent_id, 0 AS depth FROM things WHERE id = ? \
     UNION ALL \
-    SELECT d.id, d.parent_id, up.depth + 1 FROM devices d JOIN up ON d.id = up.parent_id \
+    SELECT d.id, d.parent_id, up.depth + 1 FROM things d JOIN up ON d.id = up.parent_id \
     WHERE up.depth < 10 \
 ) SELECT EXISTS(SELECT 1 FROM up WHERE id = ?)";
 
@@ -203,7 +203,7 @@ pub(crate) async fn find_thing_by_id_scoped(
     id: &str,
     workspace_id: &str,
 ) -> Result<Option<ThingRow>, sqlx::Error> {
-    sqlx::query_as::<_, ThingRow>("SELECT * FROM devices WHERE id = ? AND workspace_id = ?")
+    sqlx::query_as::<_, ThingRow>("SELECT * FROM things WHERE id = ? AND workspace_id = ?")
         .bind(id)
         .bind(workspace_id)
         .fetch_optional(pool)
@@ -213,7 +213,7 @@ pub(crate) async fn find_thing_by_id_scoped(
 /// Workspace-scoped delete (eng-review T1): refuses to delete another
 /// workspace's thing.
 pub(crate) async fn delete_thing_scoped(pool: &SqlitePool, id: &str, workspace_id: &str) -> Result<u64, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM devices WHERE id = ? AND workspace_id = ?")
+    let result = sqlx::query("DELETE FROM things WHERE id = ? AND workspace_id = ?")
         .bind(id)
         .bind(workspace_id)
         .execute(pool)
@@ -227,7 +227,7 @@ pub(crate) async fn find_thing_by_name(
     workspace_id: &str,
     name: &str,
 ) -> Result<Option<ThingRow>, sqlx::Error> {
-    sqlx::query_as::<_, ThingRow>("SELECT * FROM devices WHERE workspace_id = ? AND name = ?")
+    sqlx::query_as::<_, ThingRow>("SELECT * FROM things WHERE workspace_id = ? AND name = ?")
         .bind(workspace_id)
         .bind(name)
         .fetch_optional(pool)
@@ -244,14 +244,14 @@ pub(crate) async fn list_things(
     let offset = params.offset() as i64;
 
     // Build COUNT query
-    let mut count_builder = QueryBuilder::new("SELECT COUNT(*) FROM devices WHERE workspace_id = ");
+    let mut count_builder = QueryBuilder::new("SELECT COUNT(*) FROM things WHERE workspace_id = ");
     count_builder.push_bind(workspace_id);
     push_where_clauses(&mut count_builder, params);
 
     let total: i64 = count_builder.build_query_scalar().fetch_one(pool).await?;
 
     // Build SELECT query
-    let mut select_builder = QueryBuilder::new("SELECT * FROM devices WHERE workspace_id = ");
+    let mut select_builder = QueryBuilder::new("SELECT * FROM things WHERE workspace_id = ");
     select_builder.push_bind(workspace_id);
     push_where_clauses(&mut select_builder, params);
     select_builder.push(" ORDER BY created_at DESC LIMIT ");
@@ -285,7 +285,7 @@ fn push_where_clauses(builder: &mut QueryBuilder<sqlx::Sqlite>, params: &ListThi
 
 /// Single thing by id.
 pub(crate) async fn find_thing_by_id(pool: &SqlitePool, id: &str) -> Result<Option<ThingRow>, sqlx::Error> {
-    sqlx::query_as::<_, ThingRow>("SELECT * FROM devices WHERE id = ?")
+    sqlx::query_as::<_, ThingRow>("SELECT * FROM things WHERE id = ?")
         .bind(id)
         .fetch_optional(pool)
         .await
@@ -294,7 +294,7 @@ pub(crate) async fn find_thing_by_id(pool: &SqlitePool, id: &str) -> Result<Opti
 /// INSERT — returns the newly created row.
 pub(crate) async fn create_thing(pool: &SqlitePool, row: &ThingRow) -> Result<ThingRow, sqlx::Error> {
     sqlx::query(
-        "INSERT INTO devices (id, name, display_name, thing_type, device_type, \
+        "INSERT INTO things (id, name, display_name, thing_type, category, \
              description, parent_id, template_id, protocol_type, driver_name, \
              workspace_id, created_at, updated_at) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -303,7 +303,7 @@ pub(crate) async fn create_thing(pool: &SqlitePool, row: &ThingRow) -> Result<Th
     .bind(&row.name)
     .bind(&row.display_name)
     .bind(&row.thing_type)
-    .bind(&row.device_type)
+    .bind(&row.category)
     .bind(&row.description)
     .bind(&row.parent_id)
     .bind(&row.template_id)
@@ -326,7 +326,7 @@ pub(crate) async fn update_thing(
     id: &str,
     input: &UpdateThingRequest,
 ) -> Result<Option<ThingRow>, sqlx::Error> {
-    let mut builder = QueryBuilder::new("UPDATE devices SET ");
+    let mut builder = QueryBuilder::new("UPDATE things SET ");
     let mut separated = builder.separated(", ");
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -338,8 +338,8 @@ pub(crate) async fn update_thing(
     if let Some(ref tt) = input.thing_type {
         separated.push("thing_type = ").push_bind_unseparated(tt);
     }
-    if let Some(ref dt) = input.device_type {
-        separated.push("device_type = ").push_bind_unseparated(dt);
+    if let Some(ref dt) = input.category {
+        separated.push("category = ").push_bind_unseparated(dt);
     }
     if let Some(ref desc) = input.description {
         separated.push("description = ").push_bind_unseparated(desc);
@@ -368,7 +368,7 @@ pub(crate) async fn update_thing(
 /// DELETE — checks children count first.
 /// Returns rows_affected on success.
 pub(crate) async fn delete_thing(pool: &SqlitePool, id: &str) -> Result<u64, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM devices WHERE id = ?")
+    let result = sqlx::query("DELETE FROM things WHERE id = ?")
         .bind(id)
         .execute(pool)
         .await?;
@@ -378,7 +378,7 @@ pub(crate) async fn delete_thing(pool: &SqlitePool, id: &str) -> Result<u64, sql
 
 /// Count children of a thing.
 pub(crate) async fn count_thing_children(pool: &SqlitePool, id: &str) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE parent_id = ?")
+    sqlx::query_scalar("SELECT COUNT(*) FROM things WHERE parent_id = ?")
         .bind(id)
         .fetch_one(pool)
         .await
@@ -394,11 +394,11 @@ pub(crate) async fn get_thing_tree(
     let depth_val = max_depth.min(20) as i32;
 
     let root_prefix = "WITH RECURSIVE subtree AS ( \
-            SELECT id, name, thing_type, parent_id, 0 AS depth FROM devices WHERE ";
+            SELECT id, name, thing_type, parent_id, 0 AS depth FROM things WHERE ";
 
     let union_part = " UNION ALL \
             SELECT d.id, d.name, d.thing_type, d.parent_id, s.depth + 1 \
-            FROM devices d JOIN subtree s ON d.parent_id = s.id \
+            FROM things d JOIN subtree s ON d.parent_id = s.id \
             WHERE s.depth < ";
 
     let select_part = ") SELECT id, name, thing_type, parent_id, depth FROM subtree";
@@ -478,13 +478,13 @@ pub(crate) async fn get_thing_breadcrumb(
 
     let mut builder = QueryBuilder::new(
         "WITH RECURSIVE ancestors AS ( \
-             SELECT id, name, thing_type, parent_id, 0 AS depth FROM devices WHERE id = ",
+             SELECT id, name, thing_type, parent_id, 0 AS depth FROM things WHERE id = ",
     );
     builder.push_bind(id);
     builder.push(
         " UNION ALL \
              SELECT d.id, d.name, d.thing_type, d.parent_id, a.depth + 1 \
-             FROM devices d JOIN ancestors a ON d.id = a.parent_id \
+             FROM things d JOIN ancestors a ON d.id = a.parent_id \
              WHERE a.depth < ",
     );
     builder.push(depth_val);
@@ -538,7 +538,7 @@ pub(crate) async fn update_thing_guarded_tx(
         }
     }
 
-    let mut builder = QueryBuilder::new("UPDATE devices SET ");
+    let mut builder = QueryBuilder::new("UPDATE things SET ");
     let mut separated = builder.separated(", ");
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -549,8 +549,8 @@ pub(crate) async fn update_thing_guarded_tx(
     if let Some(ref tt) = input.thing_type {
         separated.push("thing_type = ").push_bind_unseparated(tt);
     }
-    if let Some(ref dt) = input.device_type {
-        separated.push("device_type = ").push_bind_unseparated(dt);
+    if let Some(ref dt) = input.category {
+        separated.push("category = ").push_bind_unseparated(dt);
     }
     if let Some(ref desc) = input.description {
         separated.push("description = ").push_bind_unseparated(desc);
@@ -588,14 +588,14 @@ pub(crate) async fn get_thing_breadcrumbs(
         return Ok(Default::default());
     }
     let mut qb = QueryBuilder::new(
-        "WITH RECURSIVE ancestors AS (              SELECT id, name, thing_type, parent_id, id AS root, 0 AS depth FROM devices WHERE id IN (",
+        "WITH RECURSIVE ancestors AS (              SELECT id, name, thing_type, parent_id, id AS root, 0 AS depth FROM things WHERE id IN (",
     );
     let mut sep = qb.separated(",");
     for id in ids {
         sep.push_bind(id);
     }
     sep.push_unseparated(
-        ") UNION ALL              SELECT d.id, d.name, d.thing_type, d.parent_id, a.root, a.depth + 1              FROM devices d JOIN ancestors a ON d.id = a.parent_id              WHERE a.depth < ",
+        ") UNION ALL              SELECT d.id, d.name, d.thing_type, d.parent_id, a.root, a.depth + 1              FROM things d JOIN ancestors a ON d.id = a.parent_id              WHERE a.depth < ",
     );
     qb.push_bind(max_depth.min(10) as i32);
     qb.push(") SELECT root, id, name, thing_type FROM ancestors ORDER BY root, depth DESC");
@@ -617,11 +617,11 @@ pub(crate) async fn get_thing_breadcrumbs(
 pub(crate) async fn mark_thing_subtree_dirty(pool: &SqlitePool, root_id: &str) -> Result<u64, sqlx::Error> {
     let result = sqlx::query(
         "WITH RECURSIVE subtree AS ( \
-             SELECT id FROM devices WHERE id = ? \
+             SELECT id FROM things WHERE id = ? \
              UNION ALL \
-             SELECT d.id FROM devices d JOIN subtree s ON d.parent_id = s.id \
+             SELECT d.id FROM things d JOIN subtree s ON d.parent_id = s.id \
              ) \
-             UPDATE devices SET summary_status = 'dirty' WHERE id IN (SELECT id FROM subtree)",
+             UPDATE things SET summary_status = 'dirty' WHERE id IN (SELECT id FROM subtree)",
     )
     .bind(root_id)
     .execute(pool)
@@ -629,7 +629,7 @@ pub(crate) async fn mark_thing_subtree_dirty(pool: &SqlitePool, root_id: &str) -
     Ok(result.rows_affected())
 }
 
-/// Detach resource from thing (set device_id = NULL).
+/// Detach resource from thing (set thing_id = NULL).
 pub(crate) async fn detach_thing_resource(
     pool: &SqlitePool,
     thing_id: &str,
@@ -637,7 +637,7 @@ pub(crate) async fn detach_thing_resource(
     workspace_id: &str,
 ) -> Result<u64, sqlx::Error> {
     let result =
-        sqlx::query("UPDATE resources SET device_id = NULL WHERE id = ? AND device_id = ? AND workspace_id = ?")
+        sqlx::query("UPDATE resources SET thing_id = NULL WHERE id = ? AND thing_id = ? AND workspace_id = ?")
             .bind(resource_id)
             .bind(thing_id)
             .bind(workspace_id)
@@ -653,7 +653,7 @@ pub(crate) async fn attach_thing_resource(
     resource_id: &str,
     workspace_id: &str,
 ) -> Result<u64, sqlx::Error> {
-    let result = sqlx::query("UPDATE resources SET device_id = ? WHERE id = ? AND workspace_id = ?")
+    let result = sqlx::query("UPDATE resources SET thing_id = ? WHERE id = ? AND workspace_id = ?")
         .bind(thing_id)
         .bind(resource_id)
         .bind(workspace_id)
@@ -667,7 +667,7 @@ pub(crate) async fn list_unassigned_thing_resources(
     pool: &SqlitePool,
     workspace_id: &str,
 ) -> Result<Vec<ThingResource>, sqlx::Error> {
-    sqlx::query_as::<_, ThingResource>("SELECT * FROM resources WHERE workspace_id = ? AND device_id IS NULL")
+    sqlx::query_as::<_, ThingResource>("SELECT * FROM resources WHERE workspace_id = ? AND thing_id IS NULL")
         .bind(workspace_id)
         .fetch_all(pool)
         .await
@@ -705,14 +705,14 @@ pub(crate) async fn load_thing_tags_batch(
 /// Knowledge docs attached to a thing, newest first.
 pub(crate) async fn list_thing_knowledge_docs(
     pool: &SqlitePool,
-    device_id: &str,
+    thing_id: &str,
     limit: i64,
 ) -> Result<Vec<DocRow>, sqlx::Error> {
     sqlx::query_as::<_, DocRow>(
         "SELECT id, name, resource_type, description, file_path, content, tags, created_at, updated_at \
-                 FROM resources WHERE device_id = ? ORDER BY created_at DESC LIMIT ?",
+                 FROM resources WHERE thing_id = ? ORDER BY created_at DESC LIMIT ?",
     )
-    .bind(device_id)
+    .bind(thing_id)
     .bind(limit)
     .fetch_all(pool)
     .await
@@ -721,15 +721,15 @@ pub(crate) async fn list_thing_knowledge_docs(
 /// Recent events for a thing, newest first.
 pub(crate) async fn list_thing_recent_events(
     pool: &SqlitePool,
-    device_id: &str,
+    thing_id: &str,
     limit: i64,
 ) -> Result<Vec<EventRow>, sqlx::Error> {
     sqlx::query_as::<_, EventRow>(
         "SELECT id, event_type, event_subtype, event_level, source_type, source_id, \
                  title, content, metadata, created_at \
-                 FROM events WHERE device_id = ? ORDER BY created_at DESC LIMIT ?",
+                 FROM events WHERE thing_id = ? ORDER BY created_at DESC LIMIT ?",
     )
-    .bind(device_id)
+    .bind(thing_id)
     .bind(limit)
     .fetch_all(pool)
     .await
@@ -741,7 +741,7 @@ pub(crate) async fn list_thing_recent_events(
 
 /// Mark a thing's summary dirty (resource attach/detach/update trigger).
 pub(crate) async fn mark_thing_summary_dirty(pool: &SqlitePool, thing_id: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE devices SET summary_status = 'dirty' WHERE id = ?")
+    sqlx::query("UPDATE things SET summary_status = 'dirty' WHERE id = ?")
         .bind(thing_id)
         .execute(pool)
         .await?;
@@ -753,7 +753,7 @@ pub(crate) async fn get_thing_summary_state(
     pool: &SqlitePool,
     thing_id: &str,
 ) -> Result<Option<(Option<String>, Option<String>)>, sqlx::Error> {
-    sqlx::query_as("SELECT ontology_summary, summary_status FROM devices WHERE id = ?")
+    sqlx::query_as("SELECT ontology_summary, summary_status FROM things WHERE id = ?")
         .bind(thing_id)
         .fetch_optional(pool)
         .await
@@ -761,7 +761,7 @@ pub(crate) async fn get_thing_summary_state(
 
 /// Read the cached ontology summary for a thing.
 pub(crate) async fn get_thing_summary(pool: &SqlitePool, thing_id: &str) -> Result<Option<String>, sqlx::Error> {
-    let row: Option<(Option<String>,)> = sqlx::query_as("SELECT ontology_summary FROM devices WHERE id = ?")
+    let row: Option<(Option<String>,)> = sqlx::query_as("SELECT ontology_summary FROM things WHERE id = ?")
         .bind(thing_id)
         .fetch_optional(pool)
         .await?;
@@ -771,7 +771,7 @@ pub(crate) async fn get_thing_summary(pool: &SqlitePool, thing_id: &str) -> Resu
 /// Persist a computed summary and mark status 'ok'.
 pub(crate) async fn save_thing_summary(pool: &SqlitePool, thing_id: &str, text: &str) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "UPDATE devices SET ontology_summary = ?, summary_status = 'ok', \
+        "UPDATE things SET ontology_summary = ?, summary_status = 'ok', \
                      updated_at = datetime('now') WHERE id = ?",
     )
     .bind(text)
@@ -784,7 +784,7 @@ pub(crate) async fn save_thing_summary(pool: &SqlitePool, thing_id: &str, text: 
 /// Mark summary status 'failed' (keep cached summary).
 pub(crate) async fn mark_thing_summary_failed(pool: &SqlitePool, thing_id: &str) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "UPDATE devices SET summary_status = 'failed', \
+        "UPDATE things SET summary_status = 'failed', \
                      updated_at = datetime('now') WHERE id = ?",
     )
     .bind(thing_id)
@@ -798,7 +798,7 @@ pub(crate) async fn find_thing_name_and_type(
     pool: &SqlitePool,
     thing_id: &str,
 ) -> Result<Option<(String, String)>, sqlx::Error> {
-    sqlx::query_as("SELECT name, thing_type FROM devices WHERE id = ?")
+    sqlx::query_as("SELECT name, thing_type FROM things WHERE id = ?")
         .bind(thing_id)
         .fetch_optional(pool)
         .await
@@ -808,10 +808,10 @@ pub(crate) async fn find_thing_name_and_type(
 pub(crate) async fn get_thing_breadcrumb_names(pool: &SqlitePool, thing_id: &str) -> Result<Vec<String>, sqlx::Error> {
     let rows: Vec<(String,)> = sqlx::query_as(
         "WITH RECURSIVE ancestors AS (
-            SELECT id, name, parent_id, 0 AS depth FROM devices WHERE id = ?
+            SELECT id, name, parent_id, 0 AS depth FROM things WHERE id = ?
             UNION ALL
             SELECT d.id, d.name, d.parent_id, a.depth + 1
-            FROM devices d JOIN ancestors a ON d.id = a.parent_id
+            FROM things d JOIN ancestors a ON d.id = a.parent_id
             WHERE a.depth < 10
         ) SELECT name FROM ancestors ORDER BY depth DESC",
     )
@@ -824,7 +824,7 @@ pub(crate) async fn get_thing_breadcrumb_names(pool: &SqlitePool, thing_id: &str
 
 /// Property names of a thing (model definition input).
 pub(crate) async fn list_thing_property_names(pool: &SqlitePool, thing_id: &str) -> Result<Vec<String>, sqlx::Error> {
-    let rows: Vec<(String,)> = sqlx::query_as("SELECT name FROM thing_properties WHERE device_id = ? ORDER BY name")
+    let rows: Vec<(String,)> = sqlx::query_as("SELECT name FROM thing_properties WHERE thing_id = ? ORDER BY name")
         .bind(thing_id)
         .fetch_all(pool)
         .await?;
@@ -833,7 +833,7 @@ pub(crate) async fn list_thing_property_names(pool: &SqlitePool, thing_id: &str)
 
 /// Action names of a thing (model definition input).
 pub(crate) async fn list_thing_action_names(pool: &SqlitePool, thing_id: &str) -> Result<Vec<String>, sqlx::Error> {
-    let rows: Vec<(String,)> = sqlx::query_as("SELECT name FROM thing_actions WHERE device_id = ? ORDER BY name")
+    let rows: Vec<(String,)> = sqlx::query_as("SELECT name FROM thing_actions WHERE thing_id = ? ORDER BY name")
         .bind(thing_id)
         .fetch_all(pool)
         .await?;
@@ -845,7 +845,7 @@ pub(crate) async fn list_thing_knowledge_doc_snippets(
     pool: &SqlitePool,
     thing_id: &str,
 ) -> Result<Vec<(String, Option<String>)>, sqlx::Error> {
-    sqlx::query_as("SELECT name, content FROM resources WHERE device_id = ? ORDER BY created_at DESC LIMIT 5")
+    sqlx::query_as("SELECT name, content FROM resources WHERE thing_id = ? ORDER BY created_at DESC LIMIT 5")
         .bind(thing_id)
         .fetch_all(pool)
         .await
@@ -880,7 +880,7 @@ pub struct ThingDocumentRow {
     pub file_path: String,
     pub content: Option<String>,
     pub tags: String,
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -888,11 +888,11 @@ pub struct ThingDocumentRow {
 /// Count thing_actions matching device + name.
 pub(crate) async fn count_thing_action_by_name(
     pool: &SqlitePool,
-    device_id: &str,
+    thing_id: &str,
     name: &str,
 ) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM thing_actions WHERE device_id = ? AND name = ?")
-        .bind(device_id)
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM thing_actions WHERE thing_id = ? AND name = ?")
+        .bind(thing_id)
         .bind(name)
         .fetch_one(pool)
         .await
@@ -901,12 +901,12 @@ pub(crate) async fn count_thing_action_by_name(
 /// Action 参数 schema（无行或 NULL 均为 None）。
 pub(crate) async fn find_thing_action_parameters(
     pool: &SqlitePool,
-    device_id: &str,
+    thing_id: &str,
     name: &str,
 ) -> Result<Option<String>, sqlx::Error> {
     let row: Option<Option<String>> =
-        sqlx::query_scalar("SELECT parameters FROM thing_actions WHERE device_id = ? AND name = ?")
-            .bind(device_id)
+        sqlx::query_scalar("SELECT parameters FROM thing_actions WHERE thing_id = ? AND name = ?")
+            .bind(thing_id)
             .bind(name)
             .fetch_optional(pool)
             .await?;
@@ -916,15 +916,15 @@ pub(crate) async fn find_thing_action_parameters(
 /// 查询属性定义行。
 pub(crate) async fn find_thing_property(
     pool: &SqlitePool,
-    device_id: &str,
+    thing_id: &str,
     name: &str,
 ) -> Result<Option<ThingPropertyRow>, sqlx::Error> {
     sqlx::query_as::<_, ThingPropertyRow>(
         "SELECT name, display_name, description, data_type, unit, \
              min_value, max_value, default_value, is_read_only \
-             FROM thing_properties WHERE device_id = ? AND name = ?",
+             FROM thing_properties WHERE thing_id = ? AND name = ?",
     )
-    .bind(device_id)
+    .bind(thing_id)
     .bind(name)
     .fetch_optional(pool)
     .await
@@ -937,7 +937,7 @@ pub(crate) async fn find_thing_document(
     workspace_id: &str,
 ) -> Result<Option<ThingDocumentRow>, sqlx::Error> {
     sqlx::query_as::<_, ThingDocumentRow>(
-        "SELECT id, name, resource_type AS type, file_path, content, tags, device_id, \
+        "SELECT id, name, resource_type AS type, file_path, content, tags, thing_id, \
              created_at, updated_at FROM resources WHERE id = ? AND workspace_id = ?",
     )
     .bind(resource_id)
@@ -979,7 +979,7 @@ pub(crate) async fn search_thing_knowledge_docs(
     builder.push_bind(workspace_id);
 
     if let Some(tid) = thing_id {
-        builder.push(" AND device_id = ");
+        builder.push(" AND thing_id = ");
         builder.push_bind(tid);
     }
 
@@ -1109,7 +1109,7 @@ impl Db {
         mark_thing_subtree_dirty(self.pool(), root_id).await
     }
 
-    /// 解除 resource 与 thing 的挂载（device_id = NULL）。
+    /// 解除 resource 与 thing 的挂载（thing_id = NULL）。
     pub async fn detach_thing_resource(
         &self,
         thing_id: &str,
@@ -1143,13 +1143,13 @@ impl Db {
     }
 
     /// Thing 挂载的知识文档（新的在前）。
-    pub async fn list_thing_knowledge_docs(&self, device_id: &str, limit: i64) -> Result<Vec<DocRow>, sqlx::Error> {
-        list_thing_knowledge_docs(self.pool(), device_id, limit).await
+    pub async fn list_thing_knowledge_docs(&self, thing_id: &str, limit: i64) -> Result<Vec<DocRow>, sqlx::Error> {
+        list_thing_knowledge_docs(self.pool(), thing_id, limit).await
     }
 
     /// Thing 的最近事件（新的在前）。
-    pub async fn list_thing_recent_events(&self, device_id: &str, limit: i64) -> Result<Vec<EventRow>, sqlx::Error> {
-        list_thing_recent_events(self.pool(), device_id, limit).await
+    pub async fn list_thing_recent_events(&self, thing_id: &str, limit: i64) -> Result<Vec<EventRow>, sqlx::Error> {
+        list_thing_recent_events(self.pool(), thing_id, limit).await
     }
 
     /// 标记 thing 摘要 dirty（resource 变更触发）。
@@ -1209,26 +1209,26 @@ impl Db {
     }
 
     /// 统计 thing_actions 中 device + name 匹配数。
-    pub async fn count_thing_action_by_name(&self, device_id: &str, name: &str) -> Result<i64, sqlx::Error> {
-        count_thing_action_by_name(self.pool(), device_id, name).await
+    pub async fn count_thing_action_by_name(&self, thing_id: &str, name: &str) -> Result<i64, sqlx::Error> {
+        count_thing_action_by_name(self.pool(), thing_id, name).await
     }
 
     /// Action 参数 schema（无行或 NULL 均为 None）。
     pub async fn find_thing_action_parameters(
         &self,
-        device_id: &str,
+        thing_id: &str,
         name: &str,
     ) -> Result<Option<String>, sqlx::Error> {
-        find_thing_action_parameters(self.pool(), device_id, name).await
+        find_thing_action_parameters(self.pool(), thing_id, name).await
     }
 
     /// 查询 thing 属性定义行。
     pub async fn find_thing_property(
         &self,
-        device_id: &str,
+        thing_id: &str,
         name: &str,
     ) -> Result<Option<ThingPropertyRow>, sqlx::Error> {
-        find_thing_property(self.pool(), device_id, name).await
+        find_thing_property(self.pool(), thing_id, name).await
     }
 
     /// 查询 thing 文档完整行（workspace 作用域）。
@@ -1281,13 +1281,13 @@ pub struct OpenThingCommandRow {
 /// Open API：列出 thing 属性（workspace 作用域子查询）。
 pub(crate) async fn list_open_thing_properties(
     pool: &SqlitePool,
-    device_id: &str,
+    thing_id: &str,
     workspace_id: &str,
 ) -> Result<Vec<OpenThingPropertyRow>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT name, display_name, data_type, value, unit, updated_at FROM thing_properties          WHERE device_id = ? AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?)          ORDER BY created_at DESC",
+        "SELECT name, display_name, data_type, value, unit, updated_at FROM thing_properties          WHERE thing_id = ? AND thing_id IN (SELECT id FROM things WHERE workspace_id = ?)          ORDER BY created_at DESC",
     )
-    .bind(device_id)
+    .bind(thing_id)
     .bind(workspace_id)
     .fetch_all(pool)
     .await?;
@@ -1307,13 +1307,13 @@ pub(crate) async fn list_open_thing_properties(
 /// Open API：列出 thing 命令（workspace 作用域子查询）。
 pub(crate) async fn list_open_thing_commands(
     pool: &SqlitePool,
-    device_id: &str,
+    thing_id: &str,
     workspace_id: &str,
 ) -> Result<Vec<OpenThingCommandRow>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT id, name, display_name, description, parameters FROM thing_actions          WHERE device_id = ? AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?) ORDER BY name",
+        "SELECT id, name, display_name, description, parameters FROM thing_actions          WHERE thing_id = ? AND thing_id IN (SELECT id FROM things WHERE workspace_id = ?) ORDER BY name",
     )
-    .bind(device_id)
+    .bind(thing_id)
     .bind(workspace_id)
     .fetch_all(pool)
     .await?;
@@ -1333,18 +1333,18 @@ impl Db {
     /// Open API：列出 thing 属性（workspace 作用域子查询）。
     pub async fn list_open_thing_properties(
         &self,
-        device_id: &str,
+        thing_id: &str,
         workspace_id: &str,
     ) -> Result<Vec<OpenThingPropertyRow>, sqlx::Error> {
-        list_open_thing_properties(self.pool(), device_id, workspace_id).await
+        list_open_thing_properties(self.pool(), thing_id, workspace_id).await
     }
 
     /// Open API：列出 thing 命令（workspace 作用域子查询）。
     pub async fn list_open_thing_commands(
         &self,
-        device_id: &str,
+        thing_id: &str,
         workspace_id: &str,
     ) -> Result<Vec<OpenThingCommandRow>, sqlx::Error> {
-        list_open_thing_commands(self.pool(), device_id, workspace_id).await
+        list_open_thing_commands(self.pool(), thing_id, workspace_id).await
     }
 }

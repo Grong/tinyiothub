@@ -276,7 +276,7 @@ mod tests {
 // ──────────────────────────────────────────────
 
 async fn find_device_by_id_inner(pool: &SqlitePool, id: &str) -> Result<Option<Device>> {
-    let sql = format!("SELECT {} FROM devices WHERE id = ?", device_row_mapper::SELECT_COLUMNS);
+    let sql = format!("SELECT {} FROM things WHERE id = ?", device_row_mapper::SELECT_COLUMNS);
     let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(id)
         .fetch_optional(pool)
@@ -291,7 +291,7 @@ async fn find_device_by_id_inner(pool: &SqlitePool, id: &str) -> Result<Option<D
 
 async fn find_device_by_name_inner(pool: &SqlitePool, name: &str) -> Result<Option<Device>> {
     let sql = format!(
-        "SELECT {} FROM devices WHERE name = ?",
+        "SELECT {} FROM things WHERE name = ?",
         device_row_mapper::SELECT_COLUMNS
     );
     let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
@@ -309,7 +309,7 @@ async fn find_device_by_name_inner(pool: &SqlitePool, name: &str) -> Result<Opti
 async fn find_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Result<Vec<Device>> {
     let mut builder = QueryBuilder::new("SELECT ");
     builder.push(device_row_mapper::SELECT_COLUMNS);
-    builder.push(" FROM devices WHERE 1=1");
+    builder.push(" FROM things WHERE 1=1");
     if let Some(workspace_id) = &criteria.workspace_id {
         builder.push(" AND workspace_id = ").push_bind(workspace_id);
     }
@@ -322,7 +322,7 @@ async fn find_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Res
             .push_bind(format!("%{}%", display_name));
     }
     if let Some(device_type) = &criteria.device_type {
-        builder.push(" AND device_type = ").push_bind(device_type);
+        builder.push(" AND category = ").push_bind(device_type);
     }
     if let Some(address) = &criteria.address {
         builder.push(" AND address LIKE ").push_bind(format!("%{}%", address));
@@ -352,7 +352,7 @@ async fn find_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Res
                 builder.push(" OR display_name LIKE ").push_bind(&pattern);
                 builder.push(" OR address LIKE ").push_bind(&pattern);
                 builder.push(" OR description LIKE ").push_bind(&pattern);
-                builder.push(" OR EXISTS (SELECT 1 FROM tag_bindings tb JOIN tags t ON tb.tag_id = t.id WHERE tb.target_id = devices.id AND tb.target_type = 'device' AND t.name LIKE ");
+                builder.push(" OR EXISTS (SELECT 1 FROM tag_bindings tb JOIN tags t ON tb.tag_id = t.id WHERE tb.target_id = things.id AND tb.target_type = 'device' AND t.name LIKE ");
                 builder.push_bind(&pattern);
                 builder.push("))");
             }
@@ -361,7 +361,7 @@ async fn find_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Res
     }
     if let Some(tag_name) = &criteria.tag_name {
         let pattern = format!("%{}%", tag_name);
-        builder.push(" AND EXISTS (SELECT 1 FROM tag_bindings tb JOIN tags t ON tb.tag_id = t.id WHERE tb.target_id = devices.id AND tb.target_type = 'device' AND t.name LIKE ");
+        builder.push(" AND EXISTS (SELECT 1 FROM tag_bindings tb JOIN tags t ON tb.tag_id = t.id WHERE tb.target_id = things.id AND tb.target_type = 'device' AND t.name LIKE ");
         builder.push_bind(&pattern);
         builder.push(")");
     }
@@ -370,7 +370,7 @@ async fn find_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Res
         DeviceSortBy::Name => builder.push(" ORDER BY name"),
         DeviceSortBy::CreatedAt => builder.push(" ORDER BY created_at"),
         DeviceSortBy::UpdatedAt => builder.push(" ORDER BY updated_at"),
-        DeviceSortBy::DeviceType => builder.push(" ORDER BY device_type"),
+        DeviceSortBy::DeviceType => builder.push(" ORDER BY category"),
         DeviceSortBy::DriverName => builder.push(" ORDER BY driver_name"),
         DeviceSortBy::State => builder.push(" ORDER BY state"),
     };
@@ -396,7 +396,7 @@ async fn find_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Res
 }
 
 async fn count_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Result<i64> {
-    let mut builder = QueryBuilder::new("SELECT COUNT(*) as count FROM devices WHERE 1=1");
+    let mut builder = QueryBuilder::new("SELECT COUNT(*) as count FROM things WHERE 1=1");
     if let Some(workspace_id) = &criteria.workspace_id {
         builder.push(" AND workspace_id = ").push_bind(workspace_id);
     }
@@ -409,7 +409,7 @@ async fn count_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Re
             .push_bind(format!("%{}%", display_name));
     }
     if let Some(device_type) = &criteria.device_type {
-        builder.push(" AND device_type = ").push_bind(device_type);
+        builder.push(" AND category = ").push_bind(device_type);
     }
     if let Some(address) = &criteria.address {
         builder.push(" AND address LIKE ").push_bind(format!("%{}%", address));
@@ -439,7 +439,7 @@ async fn count_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Re
                 builder.push(" OR display_name LIKE ").push_bind(&pattern);
                 builder.push(" OR address LIKE ").push_bind(&pattern);
                 builder.push(" OR description LIKE ").push_bind(&pattern);
-                builder.push(" OR EXISTS (SELECT 1 FROM tag_bindings tb JOIN tags t ON tb.tag_id = t.id WHERE tb.target_id = devices.id AND tb.target_type = 'device' AND t.name LIKE ");
+                builder.push(" OR EXISTS (SELECT 1 FROM tag_bindings tb JOIN tags t ON tb.tag_id = t.id WHERE tb.target_id = things.id AND tb.target_type = 'device' AND t.name LIKE ");
                 builder.push_bind(&pattern);
                 builder.push("))");
             }
@@ -448,7 +448,7 @@ async fn count_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Re
     }
     if let Some(tag_name) = &criteria.tag_name {
         let pattern = format!("%{}%", tag_name);
-        builder.push(" AND EXISTS (SELECT 1 FROM tag_bindings tb JOIN tags t ON tb.tag_id = t.id WHERE tb.target_id = devices.id AND tb.target_type = 'device' AND t.name LIKE ");
+        builder.push(" AND EXISTS (SELECT 1 FROM tag_bindings tb JOIN tags t ON tb.tag_id = t.id WHERE tb.target_id = things.id AND tb.target_type = 'device' AND t.name LIKE ");
         builder.push_bind(&pattern);
         builder.push(")");
     }
@@ -464,8 +464,8 @@ async fn create_device_inner(pool: &SqlitePool, request: &CreateDeviceRequest) -
 
     sqlx::query(
         r#"
-        INSERT INTO devices (
-            id, name, display_name, device_type, address, description, position,
+        INSERT INTO things (
+            id, name, display_name, category, address, description, position,
             driver_name, device_model, protocol_type, factory_name, linked_data,
             driver_options, state, parent_id, template_id,
             linked_gateway, fingerprint, workspace_id, created_at, updated_at
@@ -502,7 +502,7 @@ async fn create_device_inner(pool: &SqlitePool, request: &CreateDeviceRequest) -
 async fn update_device_inner(pool: &SqlitePool, id: &str, request: &UpdateDeviceRequest) -> Result<Device> {
     let mut tx = pool.begin().await?;
 
-    let mut builder = QueryBuilder::new("UPDATE devices SET ");
+    let mut builder = QueryBuilder::new("UPDATE things SET ");
     let mut has_updates = false;
     let now = now_string();
 
@@ -524,7 +524,7 @@ async fn update_device_inner(pool: &SqlitePool, id: &str, request: &UpdateDevice
         if has_updates {
             builder.push(", ");
         }
-        builder.push("device_type = ").push_bind(device_type);
+        builder.push("category = ").push_bind(device_type);
         has_updates = true;
     }
     if let Some(address) = &request.address {
@@ -638,7 +638,7 @@ async fn update_device_inner(pool: &SqlitePool, id: &str, request: &UpdateDevice
         return Err(Error::NotFound);
     }
 
-    let sql = format!("SELECT {} FROM devices WHERE id = ?", device_row_mapper::SELECT_COLUMNS);
+    let sql = format!("SELECT {} FROM things WHERE id = ?", device_row_mapper::SELECT_COLUMNS);
     let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(id)
         .fetch_one(&mut *tx)
@@ -653,7 +653,7 @@ async fn update_device_inner(pool: &SqlitePool, id: &str, request: &UpdateDevice
 }
 
 async fn delete_device_inner(pool: &SqlitePool, id: &str) -> Result<u64> {
-    let result = sqlx::query("DELETE FROM devices WHERE id = ?")
+    let result = sqlx::query("DELETE FROM things WHERE id = ?")
         .bind(id)
         .execute(pool)
         .await?;
@@ -666,7 +666,7 @@ async fn delete_devices_by_ids_inner(pool: &SqlitePool, ids: &[String]) -> Resul
     }
 
     let mut tx = pool.begin().await?;
-    let mut builder = QueryBuilder::new("DELETE FROM devices WHERE id IN (");
+    let mut builder = QueryBuilder::new("DELETE FROM things WHERE id IN (");
     let mut separated = builder.separated(", ");
     for id in ids {
         separated.push_bind(id);
@@ -692,8 +692,8 @@ async fn create_devices_batch_inner(pool: &SqlitePool, requests: &[CreateDeviceR
 
         sqlx::query(
             r#"
-            INSERT INTO devices (
-                id, name, display_name, device_type, address, description, position,
+            INSERT INTO things (
+                id, name, display_name, category, address, description, position,
                 driver_name, device_model, protocol_type, factory_name, linked_data,
                 driver_options, state, parent_id, template_id,
                 linked_gateway, fingerprint, workspace_id, created_at, updated_at
@@ -761,7 +761,7 @@ async fn create_devices_batch_inner(pool: &SqlitePool, requests: &[CreateDeviceR
 
 async fn update_device_state_inner(pool: &SqlitePool, id: &str, state: i32) -> Result<()> {
     let now = now_string();
-    let result = sqlx::query("UPDATE devices SET state = ?, updated_at = ? WHERE id = ?")
+    let result = sqlx::query("UPDATE things SET state = ?, updated_at = ? WHERE id = ?")
         .bind(state)
         .bind(now)
         .bind(id)
@@ -784,7 +784,7 @@ async fn update_device_states_batch_inner(pool: &SqlitePool, updates: &[(String,
     let now = now_string();
 
     for (id, state) in updates {
-        let result = sqlx::query("UPDATE devices SET state = ?, updated_at = ? WHERE id = ?")
+        let result = sqlx::query("UPDATE things SET state = ?, updated_at = ? WHERE id = ?")
             .bind(state)
             .bind(&now)
             .bind(id)
@@ -808,7 +808,7 @@ async fn update_device_enabled_status_inner(pool: &SqlitePool, id: &str, enabled
 
 async fn find_device_children_inner(pool: &SqlitePool, parent_id: &str) -> Result<Vec<Device>> {
     let sql = format!(
-        "SELECT {} FROM devices WHERE parent_id = ? ORDER BY name",
+        "SELECT {} FROM things WHERE parent_id = ? ORDER BY name",
         device_row_mapper::SELECT_COLUMNS
     );
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
@@ -825,7 +825,7 @@ async fn find_device_children_inner(pool: &SqlitePool, parent_id: &str) -> Resul
 
 async fn find_devices_by_template_id_inner(pool: &SqlitePool, template_id: &str) -> Result<Vec<Device>> {
     let sql = format!(
-        "SELECT {} FROM devices WHERE template_id = ? ORDER BY name",
+        "SELECT {} FROM things WHERE template_id = ? ORDER BY name",
         device_row_mapper::SELECT_COLUMNS
     );
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
@@ -842,7 +842,7 @@ async fn find_devices_by_template_id_inner(pool: &SqlitePool, template_id: &str)
 
 async fn find_devices_by_driver_name_inner(pool: &SqlitePool, driver_name: &str) -> Result<Vec<Device>> {
     let sql = format!(
-        "SELECT {} FROM devices WHERE driver_name = ? ORDER BY name",
+        "SELECT {} FROM things WHERE driver_name = ? ORDER BY name",
         device_row_mapper::SELECT_COLUMNS
     );
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
@@ -859,7 +859,7 @@ async fn find_devices_by_driver_name_inner(pool: &SqlitePool, driver_name: &str)
 
 async fn find_devices_by_linked_gateway_inner(pool: &SqlitePool, linked_gateway: &str) -> Result<Vec<Device>> {
     let sql = format!(
-        "SELECT {} FROM devices WHERE linked_gateway = ? ORDER BY created_at DESC",
+        "SELECT {} FROM things WHERE linked_gateway = ? ORDER BY created_at DESC",
         device_row_mapper::SELECT_COLUMNS
     );
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
@@ -875,7 +875,7 @@ async fn find_devices_by_linked_gateway_inner(pool: &SqlitePool, linked_gateway:
 }
 
 async fn device_exists_by_name_inner(pool: &SqlitePool, name: &str) -> Result<bool> {
-    let row = sqlx::query("SELECT COUNT(*) as count FROM devices WHERE name = ?")
+    let row = sqlx::query("SELECT COUNT(*) as count FROM things WHERE name = ?")
         .bind(name)
         .fetch_one(pool)
         .await?;
@@ -890,7 +890,7 @@ async fn find_devices_by_ids_inner(pool: &SqlitePool, ids: &[String]) -> Result<
 
     let mut builder = QueryBuilder::new("SELECT ");
     builder.push(device_row_mapper::SELECT_COLUMNS);
-    builder.push(" FROM devices WHERE id IN (");
+    builder.push(" FROM things WHERE id IN (");
     let mut separated = builder.separated(", ");
     for id in ids {
         separated.push_bind(id);
@@ -938,7 +938,7 @@ async fn update_device_status_batch_inner(pool: &SqlitePool, updates: &[DeviceSt
     let mut total_affected = 0u64;
 
     for update in updates {
-        let result = sqlx::query("UPDATE devices SET state = ?, updated_at = ? WHERE id = ?")
+        let result = sqlx::query("UPDATE things SET state = ?, updated_at = ? WHERE id = ?")
             .bind(update.state)
             .bind(&update.updated_at)
             .bind(&update.device_id)
@@ -955,7 +955,7 @@ async fn update_device_status_batch_inner(pool: &SqlitePool, updates: &[DeviceSt
 
 /// Check if a device belongs to this workspace
 async fn device_belongs_to_workspace(pool: &SqlitePool, ws: &str, device_id: &str) -> Result<bool> {
-    let result: Option<(String,)> = sqlx::query_as("SELECT workspace_id FROM devices WHERE id = ?")
+    let result: Option<(String,)> = sqlx::query_as("SELECT workspace_id FROM things WHERE id = ?")
         .bind(device_id)
         .fetch_optional(pool)
         .await?;
@@ -974,7 +974,7 @@ async fn filter_device_ids_by_workspace(pool: &SqlitePool, ws: &str, ids: &[Stri
 
     // Use QueryBuilder to avoid lifetime issues with dynamic SQL
     let mut query_builder: sqlx::QueryBuilder<sqlx::Sqlite> =
-        sqlx::QueryBuilder::new("SELECT id FROM devices WHERE workspace_id = ");
+        sqlx::QueryBuilder::new("SELECT id FROM things WHERE workspace_id = ");
     query_builder.push_bind(ws);
     query_builder.push(" AND id IN (");
 
@@ -1101,8 +1101,8 @@ pub(crate) async fn create_device(
     // Insert device with workspace_id
     sqlx::query(
         r#"
-        INSERT INTO devices (
-            id, name, display_name, device_type, address, description, position,
+        INSERT INTO things (
+            id, name, display_name, category, address, description, position,
             driver_name, device_model, protocol_type, factory_name, linked_data,
             driver_options, state, parent_id, template_id, linked_gateway, fingerprint,
             workspace_id, created_at, updated_at
@@ -1204,8 +1204,8 @@ pub(crate) async fn create_devices_batch(
 
         sqlx::query(
             r#"
-            INSERT INTO devices (
-                id, name, display_name, device_type, address, description, position,
+            INSERT INTO things (
+                id, name, display_name, category, address, description, position,
                 driver_name, device_model, protocol_type, factory_name, linked_data,
                 driver_options, state, parent_id, template_id, linked_gateway, fingerprint,
                 workspace_id, created_at, updated_at
@@ -1355,7 +1355,7 @@ pub(crate) async fn find_devices_by_linked_gateway(
 
 /// 按 id 检查设备是否存在（device_traces 等领域的外键前置检查；自 cloud trace_repository 迁入）。
 pub(crate) async fn device_exists_by_id(pool: &SqlitePool, id: &str) -> Result<bool> {
-    match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM devices WHERE id = ?")
+    match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM things WHERE id = ?")
         .bind(id)
         .fetch_optional(pool)
         .await
@@ -1440,7 +1440,7 @@ pub(crate) async fn update_device_status_batch(
 // ── Task 7 收编：cloud workspace 删除守卫的设备计数（devices 表归本领域）──
 
 pub(crate) async fn count_devices_by_workspace(pool: &SqlitePool, workspace_id: &str) -> Result<i64> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE workspace_id = ?")
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM things WHERE workspace_id = ?")
         .bind(workspace_id)
         .fetch_one(pool)
         .await?;
@@ -1458,7 +1458,7 @@ pub(crate) async fn device_stats_overview(pool: &SqlitePool) -> Result<DeviceSta
             COUNT(CASE WHEN state = 1 THEN 1 END) as online_devices,
             COUNT(CASE WHEN state = 0 OR state = 3 THEN 1 END) as offline_devices,
             COUNT(CASE WHEN state = 2 THEN 1 END) as alarm_devices
-        FROM devices
+        FROM things
         "#,
     )
     .fetch_one(pool)
@@ -1475,9 +1475,9 @@ pub(crate) async fn device_stats_overview(pool: &SqlitePool) -> Result<DeviceSta
 pub(crate) async fn count_devices_by_type(pool: &SqlitePool) -> Result<Vec<(String, i64)>> {
     let rows = sqlx::query(
         r#"
-        SELECT COALESCE(device_type, 'Unknown') as device_type, COUNT(*) as count
-        FROM devices
-        GROUP BY device_type
+        SELECT COALESCE(category, 'Unknown') as category, COUNT(*) as count
+        FROM things
+        GROUP BY category
         ORDER BY count DESC
         "#,
     )
@@ -1486,7 +1486,7 @@ pub(crate) async fn count_devices_by_type(pool: &SqlitePool) -> Result<Vec<(Stri
 
     let mut stats = Vec::new();
     for row in rows {
-        let device_type: String = row.get("device_type");
+        let device_type: String = row.get("category");
         let count: i64 = row.get("count");
         stats.push((device_type, count));
     }
@@ -1497,7 +1497,7 @@ pub(crate) async fn count_devices_by_driver(pool: &SqlitePool) -> Result<Vec<(St
     let rows = sqlx::query(
         r#"
         SELECT COALESCE(driver_name, 'Unknown') as driver_name, COUNT(*) as count
-        FROM devices
+        FROM things
         GROUP BY driver_name
         ORDER BY count DESC
         "#,
@@ -1553,7 +1553,7 @@ pub(crate) async fn search_devices(pool: &SqlitePool, keyword: &str, limit: Opti
     let mut builder = QueryBuilder::new("SELECT ");
     builder.push(device_row_mapper::SELECT_COLUMNS);
     builder.push(
-        " FROM devices WHERE name LIKE ? OR display_name LIKE ? OR address LIKE ? OR description LIKE ?
+        " FROM things WHERE name LIKE ? OR display_name LIKE ? OR address LIKE ? OR description LIKE ?
              ORDER BY CASE
                 WHEN name LIKE ? THEN 1
                 WHEN display_name LIKE ? THEN 2
@@ -1585,7 +1585,7 @@ pub(crate) async fn search_devices(pool: &SqlitePool, keyword: &str, limit: Opti
 pub(crate) async fn device_tree(pool: &SqlitePool, root_id: Option<&str>) -> Result<Vec<Device>> {
     let mut builder = QueryBuilder::new("SELECT ");
     builder.push(device_row_mapper::SELECT_COLUMNS);
-    builder.push(" FROM devices WHERE ");
+    builder.push(" FROM things WHERE ");
 
     if let Some(root_id) = root_id {
         builder.push("parent_id = ").push_bind(root_id);
@@ -1613,7 +1613,7 @@ pub(crate) async fn device_status_distribution(
                 SUM(CASE WHEN state = 0 THEN 1 ELSE 0 END) as offline,
                 SUM(CASE WHEN state < 0 THEN 1 ELSE 0 END) as error_count,
                 SUM(CASE WHEN state = 2 THEN 1 ELSE 0 END) as maintenance
-            FROM devices",
+            FROM things",
     );
 
     if let Some(wid) = workspace_id {
@@ -1635,7 +1635,7 @@ pub(crate) async fn quick_devices(
     limit: i32,
     workspace_id: Option<&str>,
 ) -> Result<Vec<QuickDevice>> {
-    let mut builder = QueryBuilder::new("SELECT id, name, device_type, state, updated_at FROM devices");
+    let mut builder = QueryBuilder::new("SELECT id, name, category, state, updated_at FROM things");
 
     if let Some(wid) = workspace_id {
         builder.push(" WHERE workspace_id = ").push_bind(wid);
@@ -1900,7 +1900,7 @@ pub struct OpenThingDetailRow {
 /// Open API：列出 workspace 内 things（最新 100 条）。
 pub(crate) async fn list_open_things(pool: &SqlitePool, workspace_id: &str) -> Result<Vec<OpenThingRow>> {
     let rows = sqlx::query(
-        "SELECT id, name, display_name, device_type, state, created_at FROM devices WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 100",
+        "SELECT id, name, display_name, category, state, created_at FROM things WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 100",
     )
     .bind(workspace_id)
     .fetch_all(pool)
@@ -1911,7 +1911,7 @@ pub(crate) async fn list_open_things(pool: &SqlitePool, workspace_id: &str) -> R
             id: row.try_get::<String, _>("id").unwrap_or_default(),
             name: row.try_get::<String, _>("name").unwrap_or_default(),
             display_name: row.try_get::<Option<String>, _>("display_name").unwrap_or_default(),
-            device_type: row.try_get::<Option<String>, _>("device_type").unwrap_or_default(),
+            device_type: row.try_get::<Option<String>, _>("category").unwrap_or_default(),
             state: row.try_get::<i32, _>("state").unwrap_or_default(),
             created_at: row.try_get::<String, _>("created_at").unwrap_or_default(),
         })
@@ -1925,7 +1925,7 @@ pub(crate) async fn find_open_thing(
     workspace_id: &str,
 ) -> Result<Option<OpenThingDetailRow>> {
     let row = sqlx::query(
-        "SELECT id, name, display_name, device_type, address, state, protocol_type, created_at, updated_at FROM devices WHERE id = ? AND workspace_id = ? LIMIT 1"
+        "SELECT id, name, display_name, category, address, state, protocol_type, created_at, updated_at FROM things WHERE id = ? AND workspace_id = ? LIMIT 1"
     )
     .bind(id)
     .bind(workspace_id)
@@ -1935,7 +1935,7 @@ pub(crate) async fn find_open_thing(
         id: row.try_get::<String, _>("id").unwrap_or_default(),
         name: row.try_get::<String, _>("name").unwrap_or_default(),
         display_name: row.try_get::<Option<String>, _>("display_name").unwrap_or_default(),
-        device_type: row.try_get::<Option<String>, _>("device_type").unwrap_or_default(),
+        device_type: row.try_get::<Option<String>, _>("category").unwrap_or_default(),
         address: row.try_get::<Option<String>, _>("address").unwrap_or_default(),
         state: row.try_get::<i32, _>("state").unwrap_or_default(),
         protocol_type: row.try_get::<Option<String>, _>("protocol_type").unwrap_or_default(),
@@ -1951,7 +1951,7 @@ pub(crate) async fn find_open_thing_type(
     workspace_id: &str,
 ) -> Result<Option<(String, String)>> {
     let row: Option<(String, String)> =
-        sqlx::query_as("SELECT id, thing_type FROM devices WHERE id = ? AND workspace_id = ?")
+        sqlx::query_as("SELECT id, thing_type FROM things WHERE id = ? AND workspace_id = ?")
             .bind(id)
             .bind(workspace_id)
             .fetch_optional(pool)
@@ -1983,8 +1983,8 @@ impl Db {
 /// Dashboard：设备总数（可选 workspace 过滤）。
 pub(crate) async fn count_devices_total(pool: &SqlitePool, workspace_id: Option<&str>) -> Result<i64> {
     let (query_str, wid) = match workspace_id {
-        Some(wid) => ("SELECT COUNT(*) FROM devices WHERE workspace_id = ?", Some(wid)),
-        None => ("SELECT COUNT(*) FROM devices", None),
+        Some(wid) => ("SELECT COUNT(*) FROM things WHERE workspace_id = ?", Some(wid)),
+        None => ("SELECT COUNT(*) FROM things", None),
     };
     let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(query_str));
     if let Some(w) = wid {
@@ -1998,10 +1998,10 @@ pub(crate) async fn count_devices_total(pool: &SqlitePool, workspace_id: Option<
 pub(crate) async fn count_online_devices(pool: &SqlitePool, workspace_id: Option<&str>) -> Result<i64> {
     let (query_str, wid) = match workspace_id {
         Some(wid) => (
-            "SELECT COUNT(*) FROM devices WHERE state = 1 AND workspace_id = ?",
+            "SELECT COUNT(*) FROM things WHERE state = 1 AND workspace_id = ?",
             Some(wid),
         ),
-        None => ("SELECT COUNT(*) FROM devices WHERE state = 1", None),
+        None => ("SELECT COUNT(*) FROM things WHERE state = 1", None),
     };
     let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(query_str));
     if let Some(w) = wid {
@@ -2030,7 +2030,7 @@ impl Db {
 
 /// 将未分配设备归属到默认租户。
 pub(crate) async fn assign_orphan_devices_to_default_tenant(pool: &SqlitePool) -> std::result::Result<(), sqlx::Error> {
-    sqlx::query("UPDATE devices SET tenant_id = 'tenant-default-001' WHERE tenant_id IS NULL")
+    sqlx::query("UPDATE things SET tenant_id = 'tenant-default-001' WHERE tenant_id IS NULL")
         .execute(pool)
         .await?;
     Ok(())
@@ -2041,7 +2041,7 @@ pub(crate) async fn assign_orphan_devices_to_default_workspace(
     pool: &SqlitePool,
 ) -> std::result::Result<(), sqlx::Error> {
     sqlx::query(
-        "UPDATE devices SET workspace_id = 'ws-default-001' WHERE workspace_id IS NULL AND tenant_id = 'tenant-default-001'"
+        "UPDATE things SET workspace_id = 'ws-default-001' WHERE workspace_id IS NULL AND tenant_id = 'tenant-default-001'"
     )
     .execute(pool)
     .await?;
@@ -2064,11 +2064,11 @@ impl Db {
 pub(crate) async fn ensure_devices_table(pool: &SqlitePool) -> std::result::Result<(), sqlx::Error> {
     sqlx::query(
         r#"
-        CREATE TABLE IF NOT EXISTS devices (
+        CREATE TABLE IF NOT EXISTS things (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             display_name TEXT,
-            device_type TEXT,
+            category TEXT,
             address TEXT,
             description TEXT,
             position TEXT,

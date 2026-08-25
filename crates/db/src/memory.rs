@@ -23,7 +23,7 @@ impl MemoryStore {
         let tags_json = serde_json::to_string(&input.tags).unwrap_or_default();
 
         sqlx::query(
-            "INSERT INTO agent_memories (id, workspace_id, agent_id, zone, content, source, confidence, tags, supersedes, device_id, snapshot_data, snapshot_time, created_at, updated_at)
+            "INSERT INTO agent_memories (id, workspace_id, agent_id, zone, content, source, confidence, tags, supersedes, thing_id, snapshot_data, snapshot_time, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
         )
         .bind(&id)
@@ -265,7 +265,7 @@ struct MemoryRow {
     tags: String,
     pinned: i32,
     supersedes: Option<String>,
-    device_id: Option<String>,
+    thing_id: Option<String>,
     snapshot_data: Option<String>,
     snapshot_time: Option<i64>,
     effectiveness: f64,
@@ -304,7 +304,7 @@ impl From<MemoryRow> for AgentMemory {
             tags: serde_json::from_str(&r.tags).unwrap_or_default(),
             pinned: r.pinned != 0,
             supersedes: r.supersedes,
-            device_id: r.device_id,
+            device_id: r.thing_id,
             snapshot_data: r.snapshot_data,
             snapshot_time: r.snapshot_time,
             effectiveness: r.effectiveness,

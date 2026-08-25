@@ -48,7 +48,7 @@ pub struct BatchCommand {
 pub struct BatchCommandItem {
     pub id: String,
     pub batch_id: String,
-    pub device_id: String,
+    pub thing_id: String,
     pub device_name: Option<String>,
     pub status: String,
     pub result_message: Option<String>,
@@ -153,24 +153,24 @@ pub(crate) async fn create_batch_command(
 
     // Insert batch items
     let mut items = Vec::new();
-    for device_id in &request.device_ids {
+    for thing_id in &request.device_ids {
         let item_id = Uuid::new_v4().to_string();
         sqlx::query(
             r#"
-                INSERT INTO batch_command_items (id, batch_id, device_id, status)
+                INSERT INTO batch_command_items (id, batch_id, thing_id, status)
                 VALUES (?, ?, ?, 'pending')
                 "#,
         )
         .bind(&item_id)
         .bind(&batch_id)
-        .bind(device_id)
+        .bind(thing_id)
         .execute(pool)
         .await?;
 
         items.push(BatchCommandItem {
             id: item_id,
             batch_id: batch_id.clone(),
-            device_id: device_id.clone(),
+            thing_id: thing_id.clone(),
             device_name: None,
             status: "pending".to_string(),
             result_message: None,
@@ -267,7 +267,7 @@ pub(crate) async fn get_batch_command_items(
 ) -> BatchCommandResult<Vec<BatchCommandItem>> {
     let items = sqlx::query_as::<_, BatchCommandItem>(
         r#"
-            SELECT id, batch_id, device_id, device_name, status, result_message,
+            SELECT id, batch_id, thing_id, device_name, status, result_message,
                    command_id, executed_at, completed_at, created_at
             FROM batch_command_items
             WHERE batch_id = ?

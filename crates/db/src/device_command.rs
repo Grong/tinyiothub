@@ -8,6 +8,7 @@ use tinyiothub_core::{generate_id, now_string};
 #[derive(Debug, Clone, FromRow)]
 struct DeviceCommandRow {
     id: String,
+    #[sqlx(rename = "thing_id")]
     device_id: String,
     name: String,
     display_name: Option<String>,
@@ -37,7 +38,7 @@ pub(crate) async fn find_device_command_by_id(
 ) -> Result<Option<DeviceCommand>, sqlx::Error> {
     let row = sqlx::query_as::<_, DeviceCommandRow>(
         r#"
-        SELECT id, device_id, name, display_name, description, parameters, created_at
+        SELECT id, thing_id, name, display_name, description, parameters, created_at
         FROM thing_actions WHERE id = ?
         "#,
     )
@@ -60,7 +61,7 @@ pub(crate) async fn create_device_command(
 
     sqlx::query(
         r#"
-        INSERT INTO thing_actions (id, device_id, name, display_name, description, parameters, created_at)
+        INSERT INTO thing_actions (id, thing_id, name, display_name, description, parameters, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         "#,
     )
@@ -94,8 +95,8 @@ pub(crate) async fn find_device_commands_by_device_id(
 ) -> Result<Vec<DeviceCommand>, sqlx::Error> {
     let rows = sqlx::query_as::<_, DeviceCommandRow>(
         r#"
-        SELECT id, device_id, name, display_name, description, parameters, created_at
-        FROM thing_actions WHERE device_id = ?
+        SELECT id, thing_id, name, display_name, description, parameters, created_at
+        FROM thing_actions WHERE thing_id = ?
         ORDER BY name ASC
         "#,
     )
@@ -114,8 +115,8 @@ pub(crate) async fn find_device_command_by_device_and_name(
 ) -> Result<Option<DeviceCommand>, sqlx::Error> {
     let row = sqlx::query_as::<_, DeviceCommandRow>(
         r#"
-        SELECT id, device_id, name, display_name, description, parameters, created_at
-        FROM thing_actions WHERE device_id = ? AND name = ?
+        SELECT id, thing_id, name, display_name, description, parameters, created_at
+        FROM thing_actions WHERE thing_id = ? AND name = ?
         "#,
     )
     .bind(device_id)
@@ -140,7 +141,7 @@ pub(crate) async fn bulk_create_device_commands(
 
         sqlx::query(
             r#"
-            INSERT INTO thing_actions (id, device_id, name, display_name, description, parameters, created_at)
+            INSERT INTO thing_actions (id, thing_id, name, display_name, description, parameters, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             "#,
         )

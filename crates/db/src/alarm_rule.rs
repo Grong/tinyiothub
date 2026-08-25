@@ -188,7 +188,7 @@ pub struct AlarmRule {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub property_id: Option<String>,
     pub rule_type: RuleType,
     pub condition: AlarmCondition,
@@ -205,7 +205,7 @@ impl AlarmRule {
     pub fn new(
         name: String,
         description: Option<String>,
-        device_id: Option<String>,
+        thing_id: Option<String>,
         property_id: Option<String>,
         rule_type: RuleType,
         condition: AlarmCondition,
@@ -220,7 +220,7 @@ impl AlarmRule {
             id: uuid::Uuid::new_v4().to_string(),
             name,
             description,
-            device_id,
+            thing_id,
             property_id,
             rule_type,
             condition,
@@ -390,7 +390,7 @@ fn row_to_alarm_rule(row: sqlx::sqlite::SqliteRow) -> Result<AlarmRule> {
     let id: String = row.get("id");
     let name: String = row.get("rule_name");
     let description: Option<String> = row.get("description");
-    let device_id: Option<String> = row.get("device_id");
+    let thing_id: Option<String> = row.get("thing_id");
     let property_id: Option<String> = row.get("property_id");
     let rule_type_str: String = row.get("rule_type");
     let condition_json: String = row.get("condition_config");
@@ -452,7 +452,7 @@ fn row_to_alarm_rule(row: sqlx::sqlite::SqliteRow) -> Result<AlarmRule> {
         id,
         name,
         description,
-        device_id,
+        thing_id,
         property_id,
         rule_type,
         condition,
@@ -469,14 +469,14 @@ pub(crate) async fn create_alarm_rule(pool: &SqlitePool, rule: &AlarmRule) -> Re
     let condition_json =
         serde_json::to_string(&rule.condition).map_err(|e| DbError::Internal(format!("序列化条件配置失败: {}", e)))?;
 
-    let device_id = rule.device_id.as_ref().filter(|s| !s.is_empty());
+    let thing_id = rule.thing_id.as_ref().filter(|s| !s.is_empty());
     let property_id = rule.property_id.as_ref().filter(|s| !s.is_empty());
 
     let notification_config_json = serde_json::to_string(&rule.notification_config).ok();
 
     let query = r#"
-            INSERT INTO device_alarm_rules (
-                id, device_id, property_id, rule_name, rule_type,
+            INSERT INTO thing_alarm_rules (
+                id, thing_id, property_id, rule_name, rule_type,
                 condition_config, alarm_level, is_enabled, description,
                 notification_config, workspace_id, created_by, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
@@ -484,7 +484,7 @@ pub(crate) async fn create_alarm_rule(pool: &SqlitePool, rule: &AlarmRule) -> Re
 
     sqlx::query(query)
         .bind(&rule.id)
-        .bind(device_id)
+        .bind(thing_id)
         .bind(property_id)
         .bind(&rule.name)
         .bind(rule.rule_type.as_str())
@@ -510,7 +510,7 @@ pub(crate) async fn update_alarm_rule(pool: &SqlitePool, rule: &AlarmRule, works
 
     let query = if workspace_id.is_some() {
         r#"
-            UPDATE device_alarm_rules SET
+            UPDATE thing_alarm_rules SET
                 rule_name = ?,
                 rule_type = ?,
                 condition_config = ?,
@@ -523,7 +523,7 @@ pub(crate) async fn update_alarm_rule(pool: &SqlitePool, rule: &AlarmRule, works
             "#
     } else {
         r#"
-            UPDATE device_alarm_rules SET
+            UPDATE thing_alarm_rules SET
                 rule_name = ?,
                 rule_type = ?,
                 condition_config = ?,
@@ -559,9 +559,9 @@ pub(crate) async fn update_alarm_rule(pool: &SqlitePool, rule: &AlarmRule, works
 
 pub(crate) async fn delete_alarm_rule(pool: &SqlitePool, id: &str, workspace_id: Option<&str>) -> Result<()> {
     let query = if workspace_id.is_some() {
-        "DELETE FROM device_alarm_rules WHERE id = ? AND workspace_id = ?"
+        "DELETE FROM thing_alarm_rules WHERE id = ? AND workspace_id = ?"
     } else {
-        "DELETE FROM device_alarm_rules WHERE id = ?"
+        "DELETE FROM thing_alarm_rules WHERE id = ?"
     };
     let mut sqlx_query = sqlx::query(query).bind(id);
     if let Some(ws) = workspace_id {
@@ -575,7 +575,7 @@ pub(crate) async fn delete_alarm_rule(pool: &SqlitePool, id: &str, workspace_id:
 }
 
 pub(crate) async fn find_alarm_rule_by_id(pool: &SqlitePool, id: &str) -> Result<Option<AlarmRule>> {
-    let query = "SELECT * FROM device_alarm_rules WHERE id = ?";
+    let query = "SELECT * FROM thing_alarm_rules WHERE id = ?";
     let row = sqlx::query(query)
         .bind(id)
         .fetch_optional(pool)
@@ -592,12 +592,12 @@ pub(crate) async fn find_alarm_rule_by_id(pool: &SqlitePool, id: &str) -> Result
 pub(crate) async fn find_enabled_alarm_rules(pool: &SqlitePool, workspace_id: Option<&str>) -> Result<Vec<AlarmRule>> {
     let (query, bind_val) = if let Some(ws) = workspace_id {
         (
-            "SELECT * FROM device_alarm_rules WHERE is_enabled = true AND workspace_id = ? ORDER BY created_at DESC",
+            "SELECT * FROM thing_alarm_rules WHERE is_enabled = true AND workspace_id = ? ORDER BY created_at DESC",
             Some(ws),
         )
     } else {
         (
-            "SELECT * FROM device_alarm_rules WHERE is_enabled = true ORDER BY created_at DESC",
+            "SELECT * FROM thing_alarm_rules WHERE is_enabled = true ORDER BY created_at DESC",
             None,
         )
     };
@@ -619,21 +619,21 @@ pub(crate) async fn find_enabled_alarm_rules(pool: &SqlitePool, workspace_id: Op
 
 pub(crate) async fn find_alarm_rules_by_device(
     pool: &SqlitePool,
-    device_id: &str,
+    thing_id: &str,
     workspace_id: Option<&str>,
 ) -> Result<Vec<AlarmRule>> {
     let (query, bind_ws) = if let Some(ws) = workspace_id {
         (
-            "SELECT * FROM device_alarm_rules WHERE device_id = ? AND workspace_id = ? ORDER BY created_at DESC",
+            "SELECT * FROM thing_alarm_rules WHERE thing_id = ? AND workspace_id = ? ORDER BY created_at DESC",
             Some(ws),
         )
     } else {
         (
-            "SELECT * FROM device_alarm_rules WHERE device_id = ? ORDER BY created_at DESC",
+            "SELECT * FROM thing_alarm_rules WHERE thing_id = ? ORDER BY created_at DESC",
             None,
         )
     };
-    let mut sqlx_query = sqlx::query(query).bind(device_id);
+    let mut sqlx_query = sqlx::query(query).bind(thing_id);
     if let Some(ws) = bind_ws {
         sqlx_query = sqlx_query.bind(ws);
     }
@@ -651,12 +651,12 @@ pub(crate) async fn find_alarm_rules_by_device(
 
 pub(crate) async fn find_alarm_rules_by_property(
     pool: &SqlitePool,
-    device_id: &str,
+    thing_id: &str,
     property_id: &str,
 ) -> Result<Vec<AlarmRule>> {
-    let query = "SELECT * FROM device_alarm_rules WHERE device_id = ? AND property_id = ? ORDER BY created_at DESC";
+    let query = "SELECT * FROM thing_alarm_rules WHERE thing_id = ? AND property_id = ? ORDER BY created_at DESC";
     let rows = sqlx::query(query)
-        .bind(device_id)
+        .bind(thing_id)
         .bind(property_id)
         .fetch_all(pool)
         .await
@@ -670,7 +670,7 @@ pub(crate) async fn find_alarm_rules_by_property(
 }
 
 pub(crate) async fn find_global_alarm_rules(pool: &SqlitePool) -> Result<Vec<AlarmRule>> {
-    let query = "SELECT * FROM device_alarm_rules WHERE device_id IS NULL ORDER BY created_at DESC";
+    let query = "SELECT * FROM thing_alarm_rules WHERE thing_id IS NULL ORDER BY created_at DESC";
     let rows = sqlx::query(query)
         .fetch_all(pool)
         .await
@@ -690,9 +690,9 @@ pub(crate) async fn set_alarm_rule_enabled(
     workspace_id: Option<&str>,
 ) -> Result<()> {
     let query = if workspace_id.is_some() {
-        "UPDATE device_alarm_rules SET is_enabled = ?, updated_at = ? WHERE id = ? AND workspace_id = ?"
+        "UPDATE thing_alarm_rules SET is_enabled = ?, updated_at = ? WHERE id = ? AND workspace_id = ?"
     } else {
-        "UPDATE device_alarm_rules SET is_enabled = ?, updated_at = ? WHERE id = ?"
+        "UPDATE thing_alarm_rules SET is_enabled = ?, updated_at = ? WHERE id = ?"
     };
     let mut sqlx_query = sqlx::query(query).bind(enabled).bind(Utc::now().to_rfc3339()).bind(id);
     if let Some(ws) = workspace_id {
@@ -708,30 +708,30 @@ pub(crate) async fn set_alarm_rule_enabled(
 pub(crate) async fn find_event_alarm_rules(
     pool: &SqlitePool,
     workspace_id: &str,
-    device_id: Option<&str>,
+    thing_id: Option<&str>,
 ) -> Result<Vec<EventRuleRow>> {
     use sqlx::Row;
 
-    let query = if device_id.is_some() {
+    let query = if thing_id.is_some() {
         "SELECT id, rule_name, condition_config, alarm_level, workspace_id, notification_config
-             FROM device_alarm_rules
+             FROM thing_alarm_rules
              WHERE rule_type = 'event'
                AND is_enabled = 1
                AND workspace_id = ?
-               AND (device_id = ? OR device_id IS NULL)
+               AND (thing_id = ? OR thing_id IS NULL)
              ORDER BY created_at DESC"
     } else {
         "SELECT id, rule_name, condition_config, alarm_level, workspace_id, notification_config
-             FROM device_alarm_rules
+             FROM thing_alarm_rules
              WHERE rule_type = 'event'
                AND is_enabled = 1
                AND workspace_id = ?
-               AND device_id IS NULL
+               AND thing_id IS NULL
              ORDER BY created_at DESC"
     };
 
     let mut sqlx_query = sqlx::query(query).bind(workspace_id);
-    if let Some(did) = device_id {
+    if let Some(did) = thing_id {
         sqlx_query = sqlx_query.bind(did);
     }
 
@@ -787,18 +787,18 @@ impl Db {
     /// 查询设备的报警规则（可选 workspace 过滤）。
     pub async fn find_alarm_rules_by_device(
         &self,
-        device_id: &str,
+        thing_id: &str,
         workspace_id: Option<&str>,
     ) -> Result<Vec<AlarmRule>> {
-        find_alarm_rules_by_device(self.pool(), device_id, workspace_id).await
+        find_alarm_rules_by_device(self.pool(), thing_id, workspace_id).await
     }
 
     /// 查询设备属性的报警规则。
-    pub async fn find_alarm_rules_by_property(&self, device_id: &str, property_id: &str) -> Result<Vec<AlarmRule>> {
-        find_alarm_rules_by_property(self.pool(), device_id, property_id).await
+    pub async fn find_alarm_rules_by_property(&self, thing_id: &str, property_id: &str) -> Result<Vec<AlarmRule>> {
+        find_alarm_rules_by_property(self.pool(), thing_id, property_id).await
     }
 
-    /// 查询全局报警规则（device_id IS NULL）。
+    /// 查询全局报警规则（thing_id IS NULL）。
     pub async fn find_global_alarm_rules(&self) -> Result<Vec<AlarmRule>> {
         find_global_alarm_rules(self.pool()).await
     }
@@ -812,8 +812,8 @@ impl Db {
     pub async fn find_event_alarm_rules(
         &self,
         workspace_id: &str,
-        device_id: Option<&str>,
+        thing_id: Option<&str>,
     ) -> Result<Vec<EventRuleRow>> {
-        find_event_alarm_rules(self.pool(), workspace_id, device_id).await
+        find_event_alarm_rules(self.pool(), workspace_id, thing_id).await
     }
 }

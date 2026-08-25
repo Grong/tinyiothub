@@ -8,6 +8,7 @@ use tinyiothub_core::{generate_id, now_string};
 #[derive(Debug, Clone, FromRow)]
 struct DevicePropertyRow {
     id: String,
+    #[sqlx(rename = "thing_id")]
     device_id: String,
     name: String,
     display_name: Option<String>,
@@ -51,7 +52,7 @@ pub(crate) async fn find_device_property_by_id(
 ) -> Result<Option<DeviceProperty>, sqlx::Error> {
     let row = sqlx::query_as::<_, DevicePropertyRow>(
         r#"
-        SELECT id, device_id, name, display_name, description, data_type, unit,
+        SELECT id, thing_id, name, display_name, description, data_type, unit,
                min_value, max_value, default_value, is_read_only, created_at, updated_at
         FROM thing_properties WHERE id = ?
         "#,
@@ -75,9 +76,9 @@ pub(crate) async fn find_device_properties_by_device_id(
 ) -> Result<Vec<DeviceProperty>, sqlx::Error> {
     let rows = sqlx::query_as::<_, DevicePropertyRow>(
         r#"
-        SELECT id, device_id, name, display_name, description, data_type, unit,
+        SELECT id, thing_id, name, display_name, description, data_type, unit,
                min_value, max_value, default_value, is_read_only, created_at, updated_at
-        FROM thing_properties WHERE device_id = ?
+        FROM thing_properties WHERE thing_id = ?
         ORDER BY name
         "#,
     )
@@ -109,7 +110,7 @@ pub(crate) async fn create_device_properties_batch(
         sqlx::query(
             r#"
             INSERT INTO thing_properties (
-                id, device_id, name, display_name, description, data_type, unit,
+                id, thing_id, name, display_name, description, data_type, unit,
                 min_value, max_value, default_value, is_read_only, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,

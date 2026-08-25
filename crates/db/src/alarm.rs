@@ -249,7 +249,7 @@ impl std::str::FromStr for ResolutionType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Alarm {
     pub id: String,
-    pub device_id: String,
+    pub thing_id: String,
     pub property_id: Option<String>,
     pub rule_id: Option<String>,
     pub alarm_type: AlarmType,
@@ -268,7 +268,7 @@ pub struct Alarm {
 impl Alarm {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        device_id: String,
+        thing_id: String,
         property_id: Option<String>,
         rule_id: Option<String>,
         alarm_type: AlarmType,
@@ -281,7 +281,7 @@ impl Alarm {
         let now = Utc::now();
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            device_id,
+            thing_id,
             property_id,
             rule_id,
             alarm_type,
@@ -402,7 +402,7 @@ fn row_to_alarm(row: sqlx::sqlite::SqliteRow) -> Result<Alarm> {
     use sqlx::Row;
 
     let id: String = row.get("id");
-    let device_id: String = row.get("device_id");
+    let thing_id: String = row.get("thing_id");
     let property_id: Option<String> = row.get("property_id");
     let rule_id: Option<String> = row.get("rule_id");
     let alarm_level_str: String = row.get("alarm_level");
@@ -484,7 +484,7 @@ fn row_to_alarm(row: sqlx::sqlite::SqliteRow) -> Result<Alarm> {
 
     Ok(Alarm {
         id,
-        device_id,
+        thing_id,
         property_id,
         rule_id,
         alarm_type,
@@ -503,8 +503,8 @@ fn row_to_alarm(row: sqlx::sqlite::SqliteRow) -> Result<Alarm> {
 
 pub(crate) async fn insert_alarm(pool: &SqlitePool, alarm: &Alarm) -> Result<()> {
     let query = r#"
-            INSERT INTO device_alarms (
-                id, device_id, property_id, rule_id, alarm_level,
+            INSERT INTO thing_alarms (
+                id, thing_id, property_id, rule_id, alarm_level,
                 alarm_message, alarm_value, threshold_value, alarm_time,
                 is_acknowledged, acknowledged_by, acknowledged_at, acknowledged_note,
                 is_resolved, resolved_by, resolved_at, resolved_note, resolution_type,
@@ -514,7 +514,7 @@ pub(crate) async fn insert_alarm(pool: &SqlitePool, alarm: &Alarm) -> Result<()>
 
     sqlx::query(query)
         .bind(&alarm.id)
-        .bind(&alarm.device_id)
+        .bind(&alarm.thing_id)
         .bind(&alarm.property_id)
         .bind(&alarm.rule_id)
         .bind(alarm.alarm_level.as_str())
@@ -541,7 +541,7 @@ pub(crate) async fn insert_alarm(pool: &SqlitePool, alarm: &Alarm) -> Result<()>
 
 pub(crate) async fn update_alarm(pool: &SqlitePool, alarm: &Alarm) -> Result<()> {
     let query = r#"
-            UPDATE device_alarms SET
+            UPDATE thing_alarms SET
                 is_acknowledged = ?,
                 acknowledged_by = ?,
                 acknowledged_at = ?,
@@ -573,9 +573,9 @@ pub(crate) async fn update_alarm(pool: &SqlitePool, alarm: &Alarm) -> Result<()>
 
 pub(crate) async fn find_alarm_by_id(pool: &SqlitePool, id: &str, workspace_id: Option<&str>) -> Result<Option<Alarm>> {
     let query = if workspace_id.is_some() {
-        "SELECT * FROM device_alarms WHERE id = ? AND workspace_id = ?"
+        "SELECT * FROM thing_alarms WHERE id = ? AND workspace_id = ?"
     } else {
-        "SELECT * FROM device_alarms WHERE id = ?"
+        "SELECT * FROM thing_alarms WHERE id = ?"
     };
     let mut sqlx_query = sqlx::query(query).bind(id);
     if let Some(ws) = workspace_id {
@@ -590,11 +590,11 @@ pub(crate) async fn find_alarm_by_id(pool: &SqlitePool, id: &str, workspace_id: 
 }
 
 pub(crate) async fn find_alarms_by_criteria(pool: &SqlitePool, criteria: &AlarmQueryCriteria) -> Result<Vec<Alarm>> {
-    let mut query = String::from("SELECT * FROM device_alarms WHERE 1=1");
+    let mut query = String::from("SELECT * FROM thing_alarms WHERE 1=1");
     let mut bindings: Vec<String> = Vec::new();
 
     if let Some(ref workspace_id) = criteria.workspace_id {
-        query.push_str(" AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?)");
+        query.push_str(" AND thing_id IN (SELECT id FROM things WHERE workspace_id = ?)");
         bindings.push(workspace_id.clone());
     }
 
@@ -602,7 +602,7 @@ pub(crate) async fn find_alarms_by_criteria(pool: &SqlitePool, criteria: &AlarmQ
         && !device_ids.is_empty()
     {
         let placeholders = vec!["?"; device_ids.len()].join(",");
-        query.push_str(&format!(" AND device_id IN ({})", placeholders));
+        query.push_str(&format!(" AND thing_id IN ({})", placeholders));
         for id in device_ids {
             bindings.push(id.clone());
         }
@@ -677,15 +677,15 @@ pub(crate) async fn find_alarms_by_criteria(pool: &SqlitePool, criteria: &AlarmQ
     Ok(alarms)
 }
 
-pub(crate) async fn list_active_alarms(pool: &SqlitePool, device_id: Option<&str>) -> Result<Vec<Alarm>> {
-    let query = if device_id.is_some() {
-        "SELECT * FROM device_alarms WHERE is_resolved = false AND device_id = ? ORDER BY alarm_time DESC"
+pub(crate) async fn list_active_alarms(pool: &SqlitePool, thing_id: Option<&str>) -> Result<Vec<Alarm>> {
+    let query = if thing_id.is_some() {
+        "SELECT * FROM thing_alarms WHERE is_resolved = false AND thing_id = ? ORDER BY alarm_time DESC"
     } else {
-        "SELECT * FROM device_alarms WHERE is_resolved = false ORDER BY alarm_time DESC"
+        "SELECT * FROM thing_alarms WHERE is_resolved = false ORDER BY alarm_time DESC"
     };
 
     let mut sqlx_query = sqlx::query(query);
-    if let Some(id) = device_id {
+    if let Some(id) = thing_id {
         sqlx_query = sqlx_query.bind(id);
     }
 
@@ -702,15 +702,15 @@ pub(crate) async fn list_active_alarms(pool: &SqlitePool, device_id: Option<&str
     Ok(alarms)
 }
 
-pub(crate) async fn list_unacknowledged_alarms(pool: &SqlitePool, device_id: Option<&str>) -> Result<Vec<Alarm>> {
-    let query = if device_id.is_some() {
-        "SELECT * FROM device_alarms WHERE is_acknowledged = false AND is_resolved = false AND device_id = ? ORDER BY alarm_time DESC"
+pub(crate) async fn list_unacknowledged_alarms(pool: &SqlitePool, thing_id: Option<&str>) -> Result<Vec<Alarm>> {
+    let query = if thing_id.is_some() {
+        "SELECT * FROM thing_alarms WHERE is_acknowledged = false AND is_resolved = false AND thing_id = ? ORDER BY alarm_time DESC"
     } else {
-        "SELECT * FROM device_alarms WHERE is_acknowledged = false AND is_resolved = false ORDER BY alarm_time DESC"
+        "SELECT * FROM thing_alarms WHERE is_acknowledged = false AND is_resolved = false ORDER BY alarm_time DESC"
     };
 
     let mut sqlx_query = sqlx::query(query);
-    if let Some(id) = device_id {
+    if let Some(id) = thing_id {
         sqlx_query = sqlx_query.bind(id);
     }
 
@@ -728,11 +728,11 @@ pub(crate) async fn list_unacknowledged_alarms(pool: &SqlitePool, device_id: Opt
 }
 
 pub(crate) async fn count_alarms_by_criteria(pool: &SqlitePool, criteria: &AlarmQueryCriteria) -> Result<u64> {
-    let mut query = String::from("SELECT COUNT(*) as count FROM device_alarms WHERE 1=1");
+    let mut query = String::from("SELECT COUNT(*) as count FROM thing_alarms WHERE 1=1");
     let mut bindings: Vec<String> = Vec::new();
 
     if let Some(ref workspace_id) = criteria.workspace_id {
-        query.push_str(" AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?)");
+        query.push_str(" AND thing_id IN (SELECT id FROM things WHERE workspace_id = ?)");
         bindings.push(workspace_id.clone());
     }
 
@@ -740,7 +740,7 @@ pub(crate) async fn count_alarms_by_criteria(pool: &SqlitePool, criteria: &Alarm
         && !device_ids.is_empty()
     {
         let placeholders = vec!["?"; device_ids.len()].join(",");
-        query.push_str(&format!(" AND device_id IN ({})", placeholders));
+        query.push_str(&format!(" AND thing_id IN ({})", placeholders));
         for id in device_ids {
             bindings.push(id.clone());
         }
@@ -834,12 +834,12 @@ pub(crate) async fn batch_update_alarm_status(
     // Filter by is_resolved = 0 to avoid re-resolving already-resolved alarms
     let query = if workspace_id.is_empty() {
         format!(
-            "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ?, resolved_by = ?, resolved_at = ?, resolution_type = ? WHERE is_resolved = 0 AND id IN ({})",
+            "UPDATE thing_alarms SET is_resolved = ?, is_acknowledged = ?, resolved_by = ?, resolved_at = ?, resolution_type = ? WHERE is_resolved = 0 AND id IN ({})",
             placeholders
         )
     } else {
         format!(
-            "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ?, resolved_by = ?, resolved_at = ?, resolution_type = ? WHERE is_resolved = 0 AND id IN ({}) AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?)",
+            "UPDATE thing_alarms SET is_resolved = ?, is_acknowledged = ?, resolved_by = ?, resolved_at = ?, resolution_type = ? WHERE is_resolved = 0 AND id IN ({}) AND thing_id IN (SELECT id FROM things WHERE workspace_id = ?)",
             placeholders
         )
     };
@@ -866,31 +866,31 @@ pub(crate) async fn batch_update_alarm_status(
 }
 
 pub(crate) async fn delete_old_alarms(pool: &SqlitePool, before: DateTime<Utc>) -> Result<usize> {
-    let query = "DELETE FROM device_alarms WHERE created_at < ? AND is_resolved = true";
+    let query = "DELETE FROM thing_alarms WHERE created_at < ? AND is_resolved = true";
     let result = sqlx::query(query).bind(before.to_rfc3339()).execute(pool).await?;
     Ok(result.rows_affected() as usize)
 }
 
-pub(crate) async fn count_active_alarms_by_device(pool: &SqlitePool, device_id: &str) -> Result<u32> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = ? AND is_resolved = 0")
-        .bind(device_id)
+pub(crate) async fn count_active_alarms_by_device(pool: &SqlitePool, thing_id: &str) -> Result<u32> {
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarms WHERE thing_id = ? AND is_resolved = 0")
+        .bind(thing_id)
         .fetch_one(pool)
         .await?;
     Ok(count as u32)
 }
 
 pub(crate) async fn count_all_active_alarms(pool: &SqlitePool) -> Result<u32> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE is_resolved = 0")
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarms WHERE is_resolved = 0")
         .fetch_one(pool)
         .await?;
     Ok(count as u32)
 }
 
-pub(crate) async fn count_offline_alarms(pool: &SqlitePool, device_id: &str, days: u32) -> Result<u32> {
+pub(crate) async fn count_offline_alarms(pool: &SqlitePool, thing_id: &str, days: u32) -> Result<u32> {
     let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM device_alarms WHERE device_id = ? AND alarm_message LIKE '%离线%' AND alarm_time > datetime('now', ?)",
+            "SELECT COUNT(*) FROM thing_alarms WHERE thing_id = ? AND alarm_message LIKE '%离线%' AND alarm_time > datetime('now', ?)",
         )
-        .bind(device_id)
+        .bind(thing_id)
         .bind(format!("-{} days", days))
         .fetch_optional(pool)
         .await?
@@ -902,7 +902,7 @@ pub(crate) async fn count_offline_alarms(pool: &SqlitePool, device_id: &str, day
 // cloud handler SQL 吸收（Task 11）
 // ──────────────────────────────────────────────
 
-/// `/alarms/recent` 查询行：(id, device_id, device_name, alarm_level,
+/// `/alarms/recent` 查询行：(id, thing_id, device_name, alarm_level,
 /// alarm_message, alarm_time, is_acknowledged, is_resolved)。
 pub type RecentAlarmRow = (
     String,
@@ -915,7 +915,7 @@ pub type RecentAlarmRow = (
     bool,
 );
 
-/// 最近告警列表（LEFT JOIN devices 取设备名；自 cloud alarm handler 吸收，SQL 逐字）。
+/// 最近告警列表（LEFT JOIN things 取设备名；自 cloud alarm handler 吸收，SQL 逐字）。
 pub(crate) async fn list_recent_alarms(
     pool: &SqlitePool,
     limit: i32,
@@ -926,15 +926,15 @@ pub(crate) async fn list_recent_alarms(
             r#"
             SELECT
                 da.id,
-                da.device_id,
+                da.thing_id,
                 d.name,
                 da.alarm_level,
                 da.alarm_message,
                 da.alarm_time,
                 da.is_acknowledged,
                 da.is_resolved
-            FROM device_alarms da
-            LEFT JOIN devices d ON da.device_id = d.id
+            FROM thing_alarms da
+            LEFT JOIN things d ON da.thing_id = d.id
             WHERE da.workspace_id = ?
             ORDER BY da.alarm_time DESC
             LIMIT ?"#,
@@ -948,15 +948,15 @@ pub(crate) async fn list_recent_alarms(
             r#"
             SELECT
                 da.id,
-                da.device_id,
+                da.thing_id,
                 d.name,
                 da.alarm_level,
                 da.alarm_message,
                 da.alarm_time,
                 da.is_acknowledged,
                 da.is_resolved
-            FROM device_alarms da
-            LEFT JOIN devices d ON da.device_id = d.id
+            FROM thing_alarms da
+            LEFT JOIN things d ON da.thing_id = d.id
             ORDER BY da.alarm_time DESC
             LIMIT ?"#,
         )
@@ -978,12 +978,12 @@ pub(crate) async fn load_alarm_device_names(
     }
     let placeholders = vec!["?"; alarms.len()].join(",");
     let query = format!(
-        "SELECT id, display_name, name FROM devices WHERE id IN ({})",
+        "SELECT id, display_name, name FROM things WHERE id IN ({})",
         placeholders
     );
     let mut q = sqlx::query(sqlx::AssertSqlSafe(query));
     for a in alarms {
-        q = q.bind(&a.device_id);
+        q = q.bind(&a.thing_id);
     }
     let rows = q.fetch_all(pool).await.unwrap_or_else(|e| {
         tracing::error!("Failed to load device names for alarm list: {}", e);
@@ -1025,13 +1025,13 @@ impl Db {
     }
 
     /// 查询未解决告警（可选按设备过滤）。
-    pub async fn list_active_alarms(&self, device_id: Option<&str>) -> Result<Vec<Alarm>> {
-        list_active_alarms(self.pool(), device_id).await
+    pub async fn list_active_alarms(&self, thing_id: Option<&str>) -> Result<Vec<Alarm>> {
+        list_active_alarms(self.pool(), thing_id).await
     }
 
     /// 查询未确认且未解决告警（可选按设备过滤）。
-    pub async fn list_unacknowledged_alarms(&self, device_id: Option<&str>) -> Result<Vec<Alarm>> {
-        list_unacknowledged_alarms(self.pool(), device_id).await
+    pub async fn list_unacknowledged_alarms(&self, thing_id: Option<&str>) -> Result<Vec<Alarm>> {
+        list_unacknowledged_alarms(self.pool(), thing_id).await
     }
 
     /// 按条件统计告警数。
@@ -1055,8 +1055,8 @@ impl Db {
     }
 
     /// 统计设备未解决告警数。
-    pub async fn count_active_alarms_by_device(&self, device_id: &str) -> Result<u32> {
-        count_active_alarms_by_device(self.pool(), device_id).await
+    pub async fn count_active_alarms_by_device(&self, thing_id: &str) -> Result<u32> {
+        count_active_alarms_by_device(self.pool(), thing_id).await
     }
 
     /// 统计全部未解决告警数。
@@ -1065,8 +1065,8 @@ impl Db {
     }
 
     /// 统计设备近 `days` 天离线告警数。
-    pub async fn count_offline_alarms(&self, device_id: &str, days: u32) -> Result<u32> {
-        count_offline_alarms(self.pool(), device_id, days).await
+    pub async fn count_offline_alarms(&self, thing_id: &str, days: u32) -> Result<u32> {
+        count_offline_alarms(self.pool(), thing_id, days).await
     }
 
     /// 最近告警列表（含设备名）。
@@ -1088,14 +1088,14 @@ impl Db {
 // Dashboard 统计（自 cloud admin/monitoring 迁入，Task 12）
 // ──────────────────────────────────────────────
 
-/// Dashboard：活跃告警数（Some(ws) 时经 devices JOIN 过滤 workspace）。
+/// Dashboard：活跃告警数（Some(ws) 时经 things JOIN 过滤 workspace）。
 pub(crate) async fn count_active_alarms_scoped(pool: &SqlitePool, workspace_id: Option<&str>) -> Result<i64> {
     let (query_str, wid) = match workspace_id {
         Some(wid) => (
-            "SELECT COUNT(*) FROM device_alarms da JOIN devices d ON da.device_id = d.id WHERE da.is_resolved = 0 AND d.workspace_id = ?",
+            "SELECT COUNT(*) FROM thing_alarms da JOIN things d ON da.thing_id = d.id WHERE da.is_resolved = 0 AND d.workspace_id = ?",
             Some(wid),
         ),
-        None => ("SELECT COUNT(*) FROM device_alarms WHERE is_resolved = 0", None),
+        None => ("SELECT COUNT(*) FROM thing_alarms WHERE is_resolved = 0", None),
     };
     let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(query_str));
     if let Some(w) = wid {
@@ -1106,7 +1106,7 @@ pub(crate) async fn count_active_alarms_scoped(pool: &SqlitePool, workspace_id: 
 }
 
 impl Db {
-    /// Dashboard：活跃告警数（Some(ws) 时经 devices JOIN 过滤 workspace）。
+    /// Dashboard：活跃告警数（Some(ws) 时经 things JOIN 过滤 workspace）。
     pub async fn count_active_alarms_scoped(&self, workspace_id: Option<&str>) -> Result<i64> {
         count_active_alarms_scoped(self.pool(), workspace_id).await
     }

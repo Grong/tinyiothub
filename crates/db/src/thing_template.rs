@@ -30,7 +30,6 @@ pub struct DeviceTemplate {
     pub author: Option<String>,
     pub category: String,
     pub manufacturer: Option<String>,
-    pub device_type: String,
     pub protocol_type: Option<String>,
     pub driver_name: Option<String>,
     pub tags: String,        // JSON数组格式
@@ -180,7 +179,6 @@ pub struct ThingTemplateRow {
     pub description: Option<String>,
     pub version: String,
     pub category: String,
-    pub device_type: String,
     pub thing_type: String,
     pub properties: String, // JSON array
     pub actions: String,    // JSON array
@@ -227,7 +225,6 @@ pub struct ThingTemplateFullRow {
     pub author: Option<String>,
     pub category: String,
     pub manufacturer: Option<String>,
-    pub device_type: String,
     pub thing_type: String,
     pub protocol_type: Option<String>,
     pub driver_name: Option<String>,
@@ -259,7 +256,6 @@ impl DeviceTemplate {
             author: request.author.clone(),
             category: request.category.clone(),
             manufacturer: request.manufacturer.clone(),
-            device_type: request.device_type.clone(),
             protocol_type: request.protocol_type.clone(),
             driver_name: request.driver_name.clone(),
             tags: serde_json::to_string(&request.tags).unwrap_or_default(),
@@ -346,7 +342,6 @@ impl Default for DeviceTemplate {
             author: None,
             category: String::new(),
             manufacturer: None,
-            device_type: String::new(),
             protocol_type: None,
             driver_name: None,
             tags: "[]".to_string(),
@@ -406,7 +401,7 @@ pub(crate) async fn find_thing_template_by_id(
     let template = sqlx::query_as::<_, DeviceTemplate>(
         r#"
             SELECT id, name, display_name, description, version, author, category,
-                   manufacturer, device_type, protocol_type, driver_name, tags,
+                   manufacturer, protocol_type, driver_name, tags,
                    device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at, workspace_id
             FROM thing_templates WHERE id = ? AND is_active = 1
@@ -430,7 +425,7 @@ pub(crate) async fn find_thing_template_by_name(
     let template = sqlx::query_as::<_, DeviceTemplate>(
         r#"
             SELECT id, name, display_name, description, version, author, category,
-                   manufacturer, device_type, protocol_type, driver_name, tags,
+                   manufacturer, protocol_type, driver_name, tags,
                    device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at, workspace_id
             FROM thing_templates WHERE name = ? AND is_active = 1
@@ -477,10 +472,10 @@ pub(crate) async fn insert_thing_template(
         r#"
             INSERT INTO thing_templates (
                 id, name, display_name, description, version, author, category,
-                manufacturer, device_type, protocol_type, driver_name, tags,
+                manufacturer, protocol_type, driver_name, tags,
                 device_info, properties, actions, is_builtin, is_active,
                 created_at, updated_at, workspace_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
     )
     .bind(&id)
@@ -491,7 +486,6 @@ pub(crate) async fn insert_thing_template(
     .bind(&request.author)
     .bind(&request.category)
     .bind(&request.manufacturer)
-    .bind(&request.device_type)
     .bind(&request.protocol_type)
     .bind(&request.driver_name)
     .bind(&tags_json)
@@ -582,14 +576,6 @@ pub(crate) async fn update_thing_template_row(
             query.push(", ");
         }
         query.push("manufacturer = ").push_bind(manufacturer);
-        has_updates = true;
-    }
-
-    if let Some(device_type) = &request.device_type {
-        if has_updates {
-            query.push(", ");
-        }
-        query.push("device_type = ").push_bind(device_type);
         has_updates = true;
     }
 
@@ -701,7 +687,7 @@ pub(crate) async fn find_thing_templates(
     let mut query = QueryBuilder::new(
         r#"
             SELECT id, name, display_name, description, version, author, category,
-                   manufacturer, device_type, protocol_type, driver_name, tags,
+                   manufacturer, protocol_type, driver_name, tags,
                    device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at, workspace_id
             FROM thing_templates WHERE is_active = 1
@@ -718,10 +704,6 @@ pub(crate) async fn find_thing_templates(
 
     if let Some(manufacturer) = &params.manufacturer {
         query.push(" AND manufacturer = ").push_bind(manufacturer);
-    }
-
-    if let Some(device_type) = &params.device_type {
-        query.push(" AND device_type = ").push_bind(device_type);
     }
 
     if let Some(protocol_type) = &params.protocol_type {
@@ -773,10 +755,6 @@ pub(crate) async fn count_thing_templates(
         query.push(" AND manufacturer = ").push_bind(manufacturer);
     }
 
-    if let Some(device_type) = &params.device_type {
-        query.push(" AND device_type = ").push_bind(device_type);
-    }
-
     if let Some(protocol_type) = &params.protocol_type {
         query.push(" AND protocol_type = ").push_bind(protocol_type);
     }
@@ -807,7 +785,7 @@ pub(crate) async fn find_thing_templates_by_category(
     let templates = sqlx::query_as::<_, DeviceTemplate>(
         r#"
             SELECT id, name, display_name, description, version, author, category,
-                   manufacturer, device_type, protocol_type, driver_name, tags,
+                   manufacturer, protocol_type, driver_name, tags,
                    device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at, workspace_id
             FROM thing_templates WHERE category = ? AND is_active = 1
@@ -835,7 +813,7 @@ pub(crate) async fn search_thing_templates(
     let mut query_str = String::from(
         r#"
             SELECT id, name, display_name, description, version, author, category,
-                   manufacturer, device_type, protocol_type, driver_name, tags,
+                   manufacturer, protocol_type, driver_name, tags,
                    device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at, workspace_id
             FROM thing_templates WHERE is_active = 1 AND (
@@ -868,7 +846,7 @@ pub(crate) async fn load_builtin_thing_templates(pool: &SqlitePool) -> Result<Ve
     let templates = sqlx::query_as::<_, DeviceTemplate>(
         r#"
             SELECT id, name, display_name, description, version, author, category,
-                   manufacturer, device_type, protocol_type, driver_name, tags,
+                   manufacturer, protocol_type, driver_name, tags,
                    device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at
             FROM thing_templates WHERE is_builtin = 1 AND is_active = 1
@@ -932,11 +910,6 @@ fn push_template_search_conditions(query: &mut QueryBuilder<sqlx::Sqlite>, param
         query.push(" AND manufacturer = ").push_bind(manufacturer);
     }
 
-    // 设备类型筛选
-    if let Some(device_type) = &params.device_type {
-        query.push(" AND device_type = ").push_bind(device_type);
-    }
-
     // 协议类型筛选
     if let Some(protocol_type) = &params.protocol_type {
         query.push(" AND protocol_type = ").push_bind(protocol_type);
@@ -968,7 +941,7 @@ pub(crate) async fn advanced_search_thing_templates(
     let mut query = QueryBuilder::new(
         r#"
             SELECT id, name, display_name, description, version, author, category,
-                   manufacturer, device_type, protocol_type, driver_name, tags,
+                   manufacturer, protocol_type, driver_name, tags,
                    device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at
             FROM thing_templates WHERE is_active = 1
@@ -1007,7 +980,7 @@ pub(crate) async fn search_thing_templates_by_category(
     let mut query = QueryBuilder::new(
         r#"
             SELECT id, name, display_name, description, version, author, category,
-                   manufacturer, device_type, protocol_type, driver_name, tags,
+                   manufacturer, protocol_type, driver_name, tags,
                    device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at
             FROM thing_templates
@@ -1038,7 +1011,7 @@ pub(crate) async fn search_thing_templates_by_manufacturer(
     let mut query = QueryBuilder::new(
         r#"
             SELECT id, name, display_name, description, version, author, category,
-                   manufacturer, device_type, protocol_type, driver_name, tags,
+                   manufacturer, protocol_type, driver_name, tags,
                    device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at
             FROM thing_templates
@@ -1069,7 +1042,7 @@ pub(crate) async fn search_thing_templates_by_protocol(
     let mut query = QueryBuilder::new(
         r#"
             SELECT id, name, display_name, description, version, author, category,
-                   manufacturer, device_type, protocol_type, driver_name, tags,
+                   manufacturer, protocol_type, driver_name, tags,
                    device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at
             FROM thing_templates
@@ -1099,7 +1072,7 @@ pub(crate) async fn filter_thing_templates(
     let mut query = QueryBuilder::new(
         r#"
             SELECT id, name, display_name, description, version, author, category,
-                   manufacturer, device_type, protocol_type, driver_name, tags,
+                   manufacturer, protocol_type, driver_name, tags,
                    device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at
             FROM thing_templates WHERE is_active = 1
@@ -1132,16 +1105,6 @@ pub(crate) async fn filter_thing_templates(
         let mut separated = query.separated(", ");
         for protocol_type in &filters.protocol_types {
             separated.push_bind(protocol_type);
-        }
-        separated.push_unseparated(")");
-    }
-
-    // 设备类型筛选
-    if !filters.device_types.is_empty() {
-        query.push(" AND device_type IN (");
-        let mut separated = query.separated(", ");
-        for device_type in &filters.device_types {
-            separated.push_bind(device_type);
         }
         separated.push_unseparated(")");
     }
@@ -1401,7 +1364,7 @@ pub(crate) async fn find_thing_template_full(
 ) -> Result<Option<ThingTemplateFullRow>, sqlx::Error> {
     sqlx::query_as::<_, ThingTemplateFullRow>(
         "SELECT name, display_name, description, version, author, category, \
-             manufacturer, device_type, thing_type, protocol_type, driver_name, \
+             manufacturer, thing_type, protocol_type, driver_name, \
              tags, device_info, properties, actions, events, default_knowledge \
              FROM thing_templates WHERE id = ? AND is_active = 1",
     )
@@ -1422,10 +1385,10 @@ pub(crate) async fn insert_thing_template_copy(
     sqlx::query(
         "INSERT INTO thing_templates \
              (id, name, display_name, description, version, author, category, \
-              manufacturer, device_type, thing_type, protocol_type, driver_name, \
+              manufacturer, thing_type, protocol_type, driver_name, \
               tags, device_info, properties, actions, events, default_knowledge, \
               is_builtin, is_active, workspace_id, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?)",
     )
     .bind(new_id)
     .bind(final_name)
@@ -1435,7 +1398,6 @@ pub(crate) async fn insert_thing_template_copy(
     .bind(&source.author)
     .bind(&source.category)
     .bind(&source.manufacturer)
-    .bind(&source.device_type)
     .bind(&source.thing_type)
     .bind(&source.protocol_type)
     .bind(&source.driver_name)
@@ -1489,10 +1451,10 @@ pub(crate) async fn insert_parsed_thing_template(
     sqlx::query(
         "INSERT INTO thing_templates \
          (id, name, display_name, description, version, author, category, \
-          manufacturer, device_type, thing_type, protocol_type, driver_name, \
+          manufacturer, thing_type, protocol_type, driver_name, \
           tags, device_info, properties, actions, events, default_knowledge, \
           is_builtin, is_active, workspace_id, created_at, updated_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&template.name)
@@ -1502,7 +1464,6 @@ pub(crate) async fn insert_parsed_thing_template(
     .bind::<Option<String>>(None) // author
     .bind(&category)
     .bind::<Option<String>>(None) // manufacturer
-    .bind(&template.device_type)
     .bind(&template.thing_type)
     .bind::<Option<String>>(None) // protocol_type
     .bind::<Option<String>>(None) // driver_name
@@ -1528,7 +1489,7 @@ pub(crate) async fn find_thing_template_row(
 ) -> Result<Option<ThingTemplateRow>, sqlx::Error> {
     sqlx::query_as::<_, ThingTemplateRow>(
         "SELECT id, name, display_name, description, version, category, \
-         device_type, thing_type, properties, actions, events, \
+         thing_type, properties, actions, events, \
          default_knowledge, workspace_id \
          FROM thing_templates WHERE id = ? AND is_active = 1",
     )
@@ -1767,7 +1728,7 @@ impl Db {
 }
 
 // ──────────────────────────────────────────────
-// devices × thing_templates JOIN 查询（自 cloud event/router.rs、
+// things × thing_templates JOIN 查询（自 cloud event/router.rs、
 // shared/mqtt_client.rs 迁入，Task 12）
 // ──────────────────────────────────────────────
 
@@ -1777,7 +1738,7 @@ pub(crate) async fn find_thing_template_events_by_thing(
     thing_id: &str,
 ) -> Result<Option<String>, sqlx::Error> {
     let row: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT t.events FROM devices d JOIN thing_templates t ON t.id = d.template_id WHERE d.id = ?")
+        sqlx::query_as("SELECT t.events FROM things d JOIN thing_templates t ON t.id = d.template_id WHERE d.id = ?")
             .bind(thing_id)
             .fetch_optional(pool)
             .await?;
@@ -1790,7 +1751,7 @@ pub(crate) async fn find_thing_workspace_and_template_events(
     thing_id: &str,
 ) -> Result<Option<(Option<String>, Option<String>)>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT d.workspace_id, t.events FROM devices d              LEFT JOIN thing_templates t ON t.id = d.template_id WHERE d.id = ?",
+        "SELECT d.workspace_id, t.events FROM things d              LEFT JOIN thing_templates t ON t.id = d.template_id WHERE d.id = ?",
     )
     .bind(thing_id)
     .fetch_optional(pool)

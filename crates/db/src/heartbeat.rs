@@ -676,7 +676,7 @@ mod tests {
             id: "test-tick".to_string(),
             workspace_id: "ws_1".to_string(),
             status: HeartbeatStatus::Partial,
-            summary: "checked 2 devices".to_string(),
+            summary: "checked 2 things".to_string(),
             task_count: 3,
             executed_actions: vec![ExecutedAction {
                 tool_name: "device_control".to_string(),
@@ -731,7 +731,7 @@ mod tests {
                 "summary" => {
                     summary_rows += 1;
                     assert_eq!(parsed["taskCount"], 3);
-                    assert_eq!(parsed["result"], "checked 2 devices");
+                    assert_eq!(parsed["result"], "checked 2 things");
                 }
                 "auto_executed" => {
                     auto_rows += 1;
@@ -773,7 +773,7 @@ mod tests {
         let db = Db::new(pool.clone());
 
         let mut result = sample_result();
-        result.proposals[0].parameters = Some(serde_json::json!({"device_id": "dev_2", "version": "1.2.3"}));
+        result.proposals[0].parameters = Some(serde_json::json!({"thing_id": "dev_2", "version": "1.2.3"}));
         db.insert_heartbeat_result("ws_1", &result)
             .await
             .expect("insert_result");

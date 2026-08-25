@@ -42,7 +42,7 @@ pub mod device_command;
 pub mod device_property;
 /// Device row mapping helpers.
 pub mod device_row_mapper;
-/// Device trace persistence (device_traces) and row types.
+/// Device trace persistence (thing_traces) and row types.
 pub mod device_trace;
 /// Driver installation persistence.
 pub mod driver_installation;
@@ -84,7 +84,7 @@ pub mod sql_security;
 pub mod tag;
 /// Tenant + API key persistence and row types.
 pub mod tenant;
-/// Thing persistence (devices 表的 Thing 视图 + resources/tags/events 侧查询).
+/// Thing persistence (things 表的 Thing 视图 + resources/tags/events 侧查询).
 pub mod thing;
 /// Thing template persistence (thing_templates / template_categories).
 pub mod thing_template;

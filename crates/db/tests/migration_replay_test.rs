@@ -2,7 +2,7 @@
 //! thing-model tables after `run_migrations`.
 //!
 //! Bug history (2026-08-18 investigation): the historical chain rebuilt
-//! `devices` under FK ON, whose implicit DELETE cascaded into
+//! `things` under FK ON, whose implicit DELETE cascaded into
 //! device_properties/device_commands and wiped seed rows. Fix: FK OFF during
 //! the migration run (migrations.rs).
 //!
@@ -28,7 +28,7 @@ async fn fresh_db_migrates_with_thing_model_tables() {
         .await
         .expect("run_migrations");
 
-    // thing_properties exists with UNIQUE(device_id, name) — enforced by an
+    // thing_properties exists with UNIQUE(thing_id, name) — enforced by an
     // explicit unique index in the baseline schema.
     let unique_idx: bool = sqlx::query_scalar(
         "SELECT EXISTS(
@@ -36,13 +36,13 @@ async fn fresh_db_migrates_with_thing_model_tables() {
             JOIN pragma_index_info(il.name) ii
             WHERE il.[unique] = 1
             GROUP BY il.name
-            HAVING group_concat(ii.name, ',' ORDER BY ii.seqno) = 'device_id,name'
+            HAVING group_concat(ii.name, ',' ORDER BY ii.seqno) = 'thing_id,name'
         )",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert!(unique_idx, "thing_properties must have UNIQUE(device_id, name)");
+    assert!(unique_idx, "thing_properties must have UNIQUE(thing_id, name)");
 
     // thing_actions exists.
     let actions_table: bool =
@@ -57,7 +57,7 @@ async fn fresh_db_migrates_with_thing_model_tables() {
     tinyiothub_storage::seed::seed_system(&db).await.expect("seed_system");
     tinyiothub_storage::seed::seed_demo(&db).await.expect("seed_demo");
     let env01_props: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM thing_properties WHERE device_id = 'device-env-01'")
+        sqlx::query_scalar("SELECT COUNT(*) FROM thing_properties WHERE thing_id = 'device-env-01'")
             .fetch_one(&pool)
             .await
             .unwrap();
