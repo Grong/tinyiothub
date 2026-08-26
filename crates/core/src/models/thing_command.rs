@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct DeviceCommand {
+pub struct ThingCommand {
     pub id: String,
     pub thing_id: String,
     pub name: String,
@@ -14,7 +14,7 @@ pub struct DeviceCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct CreateDeviceCommandRequest {
+pub struct CreateThingCommandRequest {
     pub thing_id: String,
     pub name: String,
     pub display_name: Option<String>,
@@ -24,7 +24,7 @@ pub struct CreateDeviceCommandRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct UpdateDeviceCommandRequest {
+pub struct UpdateThingCommandRequest {
     pub name: Option<String>,
     pub display_name: Option<String>,
     pub description: Option<String>,
@@ -33,7 +33,7 @@ pub struct UpdateDeviceCommandRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub struct DeviceCommandQueryParams {
+pub struct ThingCommandQueryParams {
     pub thing_id: Option<String>,
     pub name: Option<String>,
     pub page: Option<u32>,
@@ -53,7 +53,7 @@ pub struct CommandQueryParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct DeviceCommandStatistics {
+pub struct ThingCommandStatistics {
     pub total_commands: i64,
     pub devices_with_commands: i64,
 }

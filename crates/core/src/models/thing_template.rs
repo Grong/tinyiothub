@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 /// 设备模板实体 - 使用 snake_case 数据库字段
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct DeviceTemplate {
+pub struct ThingTemplate {
     pub id: String,
     pub name: String,
     pub display_name: String,        // JSON格式的多语言显示名称
@@ -17,7 +17,7 @@ pub struct DeviceTemplate {
     pub protocol_type: Option<String>,
     pub driver_name: Option<String>,
     pub tags: String,        // JSON数组格式
-    pub device_info: String, // JSON格式的DeviceInfo
+    pub device_info: String, // JSON格式的ThingInfo
     pub properties: String,  // JSON数组格式的PropertyTemplate
     pub commands: String,    // JSON数组格式的CommandTemplate
     pub is_builtin: i32,     // 是否为内置模板
@@ -29,7 +29,7 @@ pub struct DeviceTemplate {
 /// 设备信息模板
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct DeviceInfo {
+pub struct ThingInfo {
     pub default_name_pattern: String, // 例如: "{manufacturer}_{category}_{index}"
     pub default_display_name_pattern: Option<String>,
     pub default_description: Option<HashMap<String, String>>,
@@ -96,7 +96,7 @@ pub struct TemplateCategory {
 /// 创建设备模板请求
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct CreateDeviceTemplateRequest {
+pub struct CreateThingTemplateRequest {
     pub name: String,
     pub display_name: HashMap<String, String>,
     pub description: Option<HashMap<String, String>>,
@@ -107,7 +107,7 @@ pub struct CreateDeviceTemplateRequest {
     pub protocol_type: Option<String>,
     pub driver_name: Option<String>,
     pub tags: Vec<String>,
-    pub device_info: DeviceInfo,
+    pub device_info: ThingInfo,
     pub properties: Vec<PropertyTemplate>,
     pub commands: Vec<CommandTemplate>,
 }
@@ -115,7 +115,7 @@ pub struct CreateDeviceTemplateRequest {
 /// 更新设备模板请求
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct UpdateDeviceTemplateRequest {
+pub struct UpdateThingTemplateRequest {
     pub name: Option<String>,
     pub display_name: Option<HashMap<String, String>>,
     pub description: Option<HashMap<String, String>>,
@@ -126,7 +126,7 @@ pub struct UpdateDeviceTemplateRequest {
     pub protocol_type: Option<String>,
     pub driver_name: Option<String>,
     pub tags: Option<Vec<String>>,
-    pub device_info: Option<DeviceInfo>,
+    pub device_info: Option<ThingInfo>,
     pub properties: Option<Vec<PropertyTemplate>>,
     pub commands: Option<Vec<CommandTemplate>>,
 }
@@ -134,7 +134,7 @@ pub struct UpdateDeviceTemplateRequest {
 /// 设备创建输入
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct DeviceCreationInput {
+pub struct ThingCreationInput {
     pub name: String,
     pub display_name: Option<String>,
     pub description: Option<String>,
@@ -151,22 +151,22 @@ pub struct DeviceCreationInput {
 /// 设备预览
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct DevicePreview {
-    pub device_info: crate::models::device::CreateDeviceRequest,
-    pub properties: Vec<crate::models::device_property::CreateDevicePropertyRequest>,
-    pub commands: Vec<crate::models::device_command::CreateDeviceCommandRequest>,
+pub struct ThingPreview {
+    pub device_info: crate::models::thing::CreateThingRequest,
+    pub properties: Vec<crate::models::thing_property::CreateThingPropertyRequest>,
+    pub commands: Vec<crate::models::thing_command::CreateThingCommandRequest>,
     pub warnings: Vec<String>,
 }
 
 /// 基于模板创建设备请求
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct CreateDeviceFromTemplateRequest {
+pub struct CreateThingFromTemplateRequest {
     pub template_id: String,
-    pub device_input: DeviceCreationInput,
+    pub device_input: ThingCreationInput,
 }
 
-impl Default for DeviceTemplate {
+impl Default for ThingTemplate {
     fn default() -> Self {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         Self {

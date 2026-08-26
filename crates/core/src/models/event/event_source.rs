@@ -114,7 +114,7 @@ impl EventSource {
         match self.source_type.as_str() {
             "device" | "device_property" => {
                 if self.thing_id.is_none() {
-                    return Err("Device events must have a thing_id".to_string());
+                    return Err("Thing events must have a thing_id".to_string());
                 }
             }
             "user" => {

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 /// 设备属性实体
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct DeviceProperty {
+pub struct ThingProperty {
     pub id: String,
     pub thing_id: String,
     pub name: String,
@@ -26,7 +26,7 @@ pub struct DeviceProperty {
 /// 设备属性查询参数
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub struct DevicePropertyQueryParams {
+pub struct ThingPropertyQueryParams {
     pub thing_id: Option<String>,
     pub name: Option<String>,
     pub display_name: Option<String>,
@@ -39,7 +39,7 @@ pub struct DevicePropertyQueryParams {
 /// 创建设备属性请求
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct CreateDevicePropertyRequest {
+pub struct CreateThingPropertyRequest {
     pub thing_id: String,
     pub name: String,
     pub display_name: Option<String>,
@@ -55,7 +55,7 @@ pub struct CreateDevicePropertyRequest {
 /// 更新设备属性请求
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct UpdateDevicePropertyRequest {
+pub struct UpdateThingPropertyRequest {
     pub name: Option<String>,
     pub display_name: Option<String>,
     pub description: Option<String>,
@@ -78,7 +78,7 @@ pub struct UpdatePropertyValueRequest {
 /// 设备属性统计信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct DevicePropertyStats {
+pub struct ThingPropertyStats {
     pub total_properties: i64,
     pub read_only_properties: i64,
     pub writable_properties: i64,
@@ -99,7 +99,7 @@ impl ValueLabel {
     }
 }
 
-impl DeviceProperty {
+impl ThingProperty {
     /// 设置属性当前值（运行时数据，不持久化）
     pub fn set_current_value(&mut self, value: String) {
         self.current_value = Some(value);
@@ -179,7 +179,7 @@ impl DeviceProperty {
     }
 }
 
-impl Default for DeviceProperty {
+impl Default for ThingProperty {
     fn default() -> Self {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         Self {

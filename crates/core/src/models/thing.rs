@@ -6,14 +6,14 @@ use serde::{Deserialize, Serialize};
 /// 数据库存储为整数：Online=1, Offline=0, Error=2。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
-pub enum DeviceStatus {
+pub enum ThingStatus {
     #[default]
     Offline,
     Online,
     Error,
 }
 
-impl DeviceStatus {
+impl ThingStatus {
     /// 检查是否在线
     pub fn is_online(&self) -> bool {
         *self == Self::Online
@@ -49,7 +49,7 @@ impl DeviceStatus {
     }
 }
 
-impl From<i32> for DeviceStatus {
+impl From<i32> for ThingStatus {
     fn from(value: i32) -> Self {
         match value {
             1 => Self::Online,
@@ -59,17 +59,17 @@ impl From<i32> for DeviceStatus {
     }
 }
 
-impl From<DeviceStatus> for i32 {
-    fn from(status: DeviceStatus) -> Self {
+impl From<ThingStatus> for i32 {
+    fn from(status: ThingStatus) -> Self {
         match status {
-            DeviceStatus::Online => 1,
-            DeviceStatus::Offline => 0,
-            DeviceStatus::Error => 2,
+            ThingStatus::Online => 1,
+            ThingStatus::Offline => 0,
+            ThingStatus::Error => 2,
         }
     }
 }
 
-impl std::fmt::Display for DeviceStatus {
+impl std::fmt::Display for ThingStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Online => write!(f, "online"),
@@ -82,7 +82,7 @@ impl std::fmt::Display for DeviceStatus {
 /// 设备实体 - 使用 snake_case 数据库字段
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct Device {
+pub struct Thing {
     pub id: String,
     pub name: String,
     pub display_name: Option<String>,
@@ -96,7 +96,7 @@ pub struct Device {
     pub factory_name: Option<String>,
     pub linked_data: Option<String>,
     pub driver_options: Option<String>,
-    pub status: DeviceStatus,
+    pub status: ThingStatus,
     pub parent_id: Option<String>,
     pub linked_gateway: Option<String>,
     pub fingerprint: Option<String>,
@@ -109,10 +109,10 @@ pub struct Device {
     pub tags: Option<Vec<serde_json::Value>>,
     /// 设备实时属性数据 (不存储在数据库中，由DataServer更新)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub properties: Option<Vec<super::device_property::DeviceProperty>>,
+    pub properties: Option<Vec<super::thing_property::ThingProperty>>,
     /// 设备指令列表 (不存储在数据库中，由DataServer加载)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub commands: Option<Vec<super::device_command::DeviceCommand>>,
+    pub commands: Option<Vec<super::thing_command::ThingCommand>>,
     /// 最后心跳时间 (不存储在数据库中，由DataServer更新)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_heartbeat: Option<String>,
@@ -121,7 +121,7 @@ pub struct Device {
 /// 设备查询参数
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub struct DeviceQueryParams {
+pub struct ThingQueryParams {
     pub name: Option<String>,
     pub display_name: Option<String>,
     pub category: Option<String>,
@@ -137,7 +137,7 @@ pub struct DeviceQueryParams {
 /// 创建设备请求
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub struct CreateDeviceRequest {
+pub struct CreateThingRequest {
     pub name: String,
     pub display_name: Option<String>,
     pub category: Option<String>,
@@ -161,7 +161,7 @@ pub struct CreateDeviceRequest {
 /// 更新设备请求
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct UpdateDeviceRequest {
+pub struct UpdateThingRequest {
     pub name: Option<String>,
     pub display_name: Option<String>,
     pub category: Option<String>,
@@ -184,7 +184,7 @@ pub struct UpdateDeviceRequest {
 /// 设备统计信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct DeviceStats {
+pub struct ThingStats {
     pub total_devices: i64,
     pub online_devices: i64,
     pub offline_devices: i64,
@@ -194,20 +194,20 @@ pub struct DeviceStats {
 /// 设备状态更新记录
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct DeviceStatusUpdate {
+pub struct ThingStatusUpdate {
     pub thing_id: String,
     pub state: i32,
     pub last_heartbeat: Option<String>,
     pub updated_at: String,
 }
 
-impl DeviceStatusUpdate {
+impl ThingStatusUpdate {
     pub fn is_online(&self) -> bool {
         self.state == 1
     }
 }
 
-impl Device {
+impl Thing {
     /// 检查设备是否在线
     pub fn is_online(&self) -> bool {
         self.status.is_online()
@@ -216,9 +216,9 @@ impl Device {
     /// 获取设备状态描述
     pub fn get_state_description(&self) -> &'static str {
         match self.status {
-            DeviceStatus::Online => "在线",
-            DeviceStatus::Offline => "离线",
-            DeviceStatus::Error => "故障",
+            ThingStatus::Online => "在线",
+            ThingStatus::Offline => "离线",
+            ThingStatus::Error => "故障",
         }
     }
 
@@ -263,7 +263,7 @@ impl Device {
     }
 }
 
-impl Default for Device {
+impl Default for Thing {
     fn default() -> Self {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         Self {
@@ -280,7 +280,7 @@ impl Default for Device {
             factory_name: None,
             linked_data: None,
             driver_options: None,
-            status: DeviceStatus::Offline,
+            status: ThingStatus::Offline,
             parent_id: None,
             linked_gateway: None,
             fingerprint: None,
@@ -296,7 +296,7 @@ impl Default for Device {
     }
 }
 
-impl Device {
+impl Thing {
     /// 获取设备创建时间 - 新API兼容方法
     pub fn created_at(&self) -> chrono::DateTime<chrono::Utc> {
         self.created_at
@@ -338,59 +338,59 @@ mod tests {
 
     #[test]
     fn test_device_status_string_conversion() {
-        assert_eq!(DeviceStatus::Online.as_str(), "online");
-        assert_eq!(DeviceStatus::Offline.as_str(), "offline");
-        assert_eq!(DeviceStatus::Error.as_str(), "error");
+        assert_eq!(ThingStatus::Online.as_str(), "online");
+        assert_eq!(ThingStatus::Offline.as_str(), "offline");
+        assert_eq!(ThingStatus::Error.as_str(), "error");
 
-        assert_eq!(DeviceStatus::parse_str("online"), Some(DeviceStatus::Online));
-        assert_eq!(DeviceStatus::parse_str("OFFLINE"), Some(DeviceStatus::Offline));
-        assert_eq!(DeviceStatus::parse_str("invalid"), None);
+        assert_eq!(ThingStatus::parse_str("online"), Some(ThingStatus::Online));
+        assert_eq!(ThingStatus::parse_str("OFFLINE"), Some(ThingStatus::Offline));
+        assert_eq!(ThingStatus::parse_str("invalid"), None);
     }
 
     #[test]
     fn test_device_status_properties() {
-        assert!(DeviceStatus::Online.is_available());
-        assert!(!DeviceStatus::Offline.is_available());
-        assert!(!DeviceStatus::Error.is_available());
+        assert!(ThingStatus::Online.is_available());
+        assert!(!ThingStatus::Offline.is_available());
+        assert!(!ThingStatus::Error.is_available());
 
-        assert!(!DeviceStatus::Online.is_error());
-        assert!(!DeviceStatus::Offline.is_error());
-        assert!(DeviceStatus::Error.is_error());
+        assert!(!ThingStatus::Online.is_error());
+        assert!(!ThingStatus::Offline.is_error());
+        assert!(ThingStatus::Error.is_error());
 
-        assert!(DeviceStatus::Online.is_online());
-        assert!(!DeviceStatus::Offline.is_online());
-        assert!(!DeviceStatus::Error.is_online());
+        assert!(ThingStatus::Online.is_online());
+        assert!(!ThingStatus::Offline.is_online());
+        assert!(!ThingStatus::Error.is_online());
     }
 
     #[test]
     fn test_device_status_display() {
-        assert_eq!(format!("{}", DeviceStatus::Online), "online");
-        assert_eq!(format!("{}", DeviceStatus::Error), "error");
+        assert_eq!(format!("{}", ThingStatus::Online), "online");
+        assert_eq!(format!("{}", ThingStatus::Error), "error");
     }
 
     #[test]
     fn test_device_status_default() {
-        assert_eq!(DeviceStatus::default(), DeviceStatus::Offline);
+        assert_eq!(ThingStatus::default(), ThingStatus::Offline);
     }
 
     #[test]
     fn test_device_status_i32_conversion() {
-        assert_eq!(i32::from(DeviceStatus::Online), 1);
-        assert_eq!(i32::from(DeviceStatus::Offline), 0);
-        assert_eq!(i32::from(DeviceStatus::Error), 2);
+        assert_eq!(i32::from(ThingStatus::Online), 1);
+        assert_eq!(i32::from(ThingStatus::Offline), 0);
+        assert_eq!(i32::from(ThingStatus::Error), 2);
 
-        assert_eq!(DeviceStatus::from(1), DeviceStatus::Online);
-        assert_eq!(DeviceStatus::from(0), DeviceStatus::Offline);
-        assert_eq!(DeviceStatus::from(2), DeviceStatus::Error);
-        assert_eq!(DeviceStatus::from(3), DeviceStatus::Error);
+        assert_eq!(ThingStatus::from(1), ThingStatus::Online);
+        assert_eq!(ThingStatus::from(0), ThingStatus::Offline);
+        assert_eq!(ThingStatus::from(2), ThingStatus::Error);
+        assert_eq!(ThingStatus::from(3), ThingStatus::Error);
     }
 
     #[test]
     fn test_device_default() {
-        let device = Device::default();
+        let device = Thing::default();
         assert!(!device.id.is_empty());
         assert_eq!(device.name, "");
-        assert_eq!(device.status, DeviceStatus::Offline);
+        assert_eq!(device.status, ThingStatus::Offline);
         assert!(device.created_at.is_some());
         assert!(device.updated_at.is_some());
         assert!(device.tags.is_none());
@@ -401,21 +401,21 @@ mod tests {
 
     #[test]
     fn test_device_is_online() {
-        let mut device = Device {
-            status: DeviceStatus::Online,
+        let mut device = Thing {
+            status: ThingStatus::Online,
             ..Default::default()
         };
         assert!(device.is_online());
         assert!(device.enabled());
 
-        device.status = DeviceStatus::Offline;
+        device.status = ThingStatus::Offline;
         assert!(!device.is_online());
         assert!(!device.enabled());
     }
 
     #[test]
     fn test_device_get_display_name() {
-        let mut device = Device {
+        let mut device = Thing {
             name: "sensor-01".to_string(),
             ..Default::default()
         };
@@ -427,7 +427,7 @@ mod tests {
 
     #[test]
     fn test_device_has_parent() {
-        let mut device = Device::default();
+        let mut device = Thing::default();
         assert!(!device.has_parent());
 
         device.parent_id = Some("parent-001".to_string());
@@ -436,7 +436,7 @@ mod tests {
 
     #[test]
     fn test_device_has_template() {
-        let mut device = Device::default();
+        let mut device = Thing::default();
         assert!(!device.has_template());
 
         device.template_id = Some("tmpl-001".to_string());
@@ -445,7 +445,7 @@ mod tests {
 
     #[test]
     fn test_device_validate_success() {
-        let device = Device {
+        let device = Thing {
             name: "valid-device".to_string(),
             ..Default::default()
         };
@@ -454,13 +454,13 @@ mod tests {
 
     #[test]
     fn test_device_validate_empty_name() {
-        let device = Device::default();
+        let device = Thing::default();
         assert!(device.validate().is_err());
     }
 
     #[test]
     fn test_device_validate_whitespace_name() {
-        let device = Device {
+        let device = Thing {
             name: "   ".to_string(),
             ..Default::default()
         };
@@ -469,7 +469,7 @@ mod tests {
 
     #[test]
     fn test_device_validate_long_name() {
-        let device = Device {
+        let device = Thing {
             name: "a".repeat(101),
             ..Default::default()
         };
@@ -478,7 +478,7 @@ mod tests {
 
     #[test]
     fn test_device_validate_long_display_name() {
-        let device = Device {
+        let device = Thing {
             name: "valid".to_string(),
             display_name: Some("b".repeat(201)),
             ..Default::default()
@@ -488,7 +488,7 @@ mod tests {
 
     #[test]
     fn test_device_validate_long_address() {
-        let device = Device {
+        let device = Thing {
             name: "valid".to_string(),
             address: Some("c".repeat(501)),
             ..Default::default()
@@ -498,22 +498,22 @@ mod tests {
 
     #[test]
     fn test_device_get_state_description() {
-        let mut device = Device {
-            status: DeviceStatus::Online,
+        let mut device = Thing {
+            status: ThingStatus::Online,
             ..Default::default()
         };
         assert_eq!(device.get_state_description(), "在线");
 
-        device.status = DeviceStatus::Offline;
+        device.status = ThingStatus::Offline;
         assert_eq!(device.get_state_description(), "离线");
 
-        device.status = DeviceStatus::Error;
+        device.status = ThingStatus::Error;
         assert_eq!(device.get_state_description(), "故障");
     }
 
     #[test]
     fn test_device_status_update_is_online() {
-        let update = DeviceStatusUpdate {
+        let update = ThingStatusUpdate {
             thing_id: "d1".to_string(),
             state: 1,
             last_heartbeat: None,
@@ -521,7 +521,7 @@ mod tests {
         };
         assert!(update.is_online());
 
-        let update_offline = DeviceStatusUpdate {
+        let update_offline = ThingStatusUpdate {
             thing_id: "d1".to_string(),
             state: 0,
             last_heartbeat: None,
@@ -532,18 +532,18 @@ mod tests {
 
     #[test]
     fn test_device_serialization_roundtrip() {
-        let device = Device {
+        let device = Thing {
             name: "test-device".to_string(),
-            display_name: Some("Test Device".to_string()),
-            status: DeviceStatus::Online,
-            ..Device::default()
+            display_name: Some("Test Thing".to_string()),
+            status: ThingStatus::Online,
+            ..Thing::default()
         };
 
         let json = serde_json::to_string(&device).unwrap();
-        let deserialized: Device = serde_json::from_str(&json).unwrap();
+        let deserialized: Thing = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.name, "test-device");
-        assert_eq!(deserialized.display_name, Some("Test Device".to_string()));
-        assert_eq!(deserialized.status, DeviceStatus::Online);
+        assert_eq!(deserialized.display_name, Some("Test Thing".to_string()));
+        assert_eq!(deserialized.status, ThingStatus::Online);
     }
 }
