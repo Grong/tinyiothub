@@ -86,7 +86,7 @@ impl GatewayService {
 
         let create_req = CreateDeviceRequest {
             name: device_name.clone(),
-            device_type: Some("gateway".into()),
+            category: Some("gateway".into()),
             protocol_type: Some("mqtt".into()),
             fingerprint: Some(announce.fingerprint.clone()),
             workspace_id: Some(workspace_id.clone()),
@@ -252,7 +252,7 @@ impl GatewayService {
             .iter()
             .map(|d| CreateDeviceRequest {
                 name: d.name.clone(),
-                device_type: Some(d.device_type.clone().unwrap_or_else(|| "sensor".into())),
+                category: Some(d.device_type.clone().unwrap_or_else(|| "sensor".into())),
                 protocol_type: d.protocol_type.clone(),
                 address: d.address.clone(),
                 driver_name: d.driver_name.clone(),
@@ -529,7 +529,7 @@ mod tests {
         assert_eq!(response.ip, "192.168.1.100");
 
         // Verify device was inserted into DB
-        let row = sqlx::query("SELECT id, name, fingerprint, workspace_id FROM devices WHERE id = ?1")
+        let row = sqlx::query("SELECT id, name, fingerprint, workspace_id FROM things WHERE id = ?1")
             .bind(&response.device_id)
             .fetch_one(&pool)
             .await
@@ -561,7 +561,7 @@ mod tests {
         // First create a gateway device
         let gw_id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
-            "INSERT INTO devices (id, name, device_type, protocol_type, state, workspace_id, created_at, updated_at)
+            "INSERT INTO things (id, name, category, protocol_type, state, workspace_id, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         )
         .bind(&gw_id)
@@ -602,7 +602,7 @@ mod tests {
 
         // Verify sub-devices created
         let rows: Vec<(String, String, String)> =
-            sqlx::query_as("SELECT name, linked_gateway, parent_id FROM devices WHERE linked_gateway = ?1")
+            sqlx::query_as("SELECT name, linked_gateway, parent_id FROM things WHERE linked_gateway = ?1")
                 .bind(&gw_id)
                 .fetch_all(&pool)
                 .await
@@ -725,7 +725,7 @@ mod tests {
         assert!(cache.get(code).await.is_some());
 
         // Verify no device was created (rollback)
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE name = 'gw-01'")
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM things WHERE name = 'gw-01'")
             .fetch_one(&pool)
             .await
             .unwrap();

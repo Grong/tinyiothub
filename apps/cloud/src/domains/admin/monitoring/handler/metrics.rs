@@ -20,7 +20,7 @@ pub struct SystemMetrics {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
 pub struct DeviceMetrics {
-    pub device_id: String,
+    pub thing_id: String,
     pub device_name: String,
     pub status: String,
     pub last_seen: chrono::DateTime<chrono::Utc>,
@@ -48,7 +48,7 @@ where
 {
     Router::new()
         .route("/system", get(get_system_metrics))
-        .route("/devices", get(get_device_metrics))
+        .route("/things", get(get_device_metrics))
         .route("/gateway", get(get_gateway_metrics))
 }
 
@@ -121,8 +121,8 @@ async fn get_device_metrics(State(state): State<AdminState>, claims: Claims) -> 
         .get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default())
         .await
     {
-        Ok(devices) => {
-            for device in devices {
+        Ok(things) => {
+            for device in things {
                 let status = device.status.to_string();
                 let last_seen = device
                     .last_heartbeat
@@ -132,7 +132,7 @@ async fn get_device_metrics(State(state): State<AdminState>, claims: Claims) -> 
                     .unwrap_or_else(chrono::Utc::now);
 
                 metrics.push(DeviceMetrics {
-                    device_id: device.id.clone(),
+                    thing_id: device.id.clone(),
                     device_name: device.name.clone(),
                     status,
                     last_seen,
@@ -166,9 +166,9 @@ async fn get_gateway_metrics(State(state): State<AdminState>, claims: Claims) ->
         .get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default())
         .await
     {
-        Ok(devices) => {
-            total_devices = devices.len() as u32;
-            online_devices = devices.iter().filter(|d| d.status.is_online()).count() as u32;
+        Ok(things) => {
+            total_devices = things.len() as u32;
+            online_devices = things.iter().filter(|d| d.status.is_online()).count() as u32;
             offline_devices = total_devices - online_devices;
         }
         Err(e) => {

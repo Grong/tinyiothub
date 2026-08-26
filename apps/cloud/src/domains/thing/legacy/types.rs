@@ -8,7 +8,7 @@ use tinyiothub_core::models::device_command::DeviceCommand as DeviceCommandEntit
 #[serde(rename_all = "camelCase")]
 pub struct DeviceCommandResponse {
     pub id: String,
-    pub device_id: String,
+    pub thing_id: String,
     pub name: String,
     pub display_name: Option<String>,
     pub description: Option<String>,
@@ -33,7 +33,7 @@ impl From<DeviceCommandEntity> for DeviceCommandResponse {
 
         Self {
             id: entity.id,
-            device_id: entity.device_id,
+            thing_id: entity.thing_id,
             name: entity.name,
             display_name: entity.display_name,
             description: entity.description,
@@ -57,7 +57,7 @@ mod tests {
     fn test_entity_with_params(params: Option<String>) -> DeviceCommandEntity {
         DeviceCommandEntity {
             id: "cmd-1".to_string(),
-            device_id: "dev-1".to_string(),
+            thing_id: "dev-1".to_string(),
             name: "toggle".to_string(),
             display_name: Some("Toggle Switch".to_string()),
             description: Some("Toggle the device".to_string()),
@@ -72,7 +72,7 @@ mod tests {
         let response = DeviceCommandResponse::from(entity);
 
         assert_eq!(response.id, "cmd-1");
-        assert_eq!(response.device_id, "dev-1");
+        assert_eq!(response.thing_id, "dev-1");
         assert_eq!(response.name, "toggle");
         assert_eq!(response.display_name, Some("Toggle Switch".to_string()));
         assert_eq!(response.parameters.len(), 2);

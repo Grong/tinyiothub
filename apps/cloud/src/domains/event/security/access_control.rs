@@ -85,7 +85,7 @@ impl EventAccessControl for RoleBasedAccessControl {
 
         // Check if user has read permission for this event type
         let event_type_str = match event.event_type() {
-            tinyiothub_core::models::event::EventType::Device(device_type) => match device_type {
+            tinyiothub_core::models::event::EventType::Device(category) => match category {
                 tinyiothub_core::models::event::DeviceEventType::Connection => "device_connection",
                 tinyiothub_core::models::event::DeviceEventType::PropertyChange
                 | tinyiothub_core::models::event::DeviceEventType::PropertyAlarm
@@ -119,7 +119,7 @@ impl EventAccessControl for RoleBasedAccessControl {
 
         // Check specific permissions based on event type
         let event_type_str = match event_type {
-            tinyiothub_core::models::event::EventType::Device(device_type) => match device_type {
+            tinyiothub_core::models::event::EventType::Device(category) => match category {
                 tinyiothub_core::models::event::DeviceEventType::Connection => "device_connection",
                 tinyiothub_core::models::event::DeviceEventType::PropertyChange
                 | tinyiothub_core::models::event::DeviceEventType::PropertyAlarm

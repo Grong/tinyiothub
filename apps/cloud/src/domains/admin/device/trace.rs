@@ -61,10 +61,10 @@ where
     std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new()
-        .route("/{device_id}/traces", post(record_device_trace))
-        .route("/{device_id}/traces", get(get_device_traces))
-        .route("/{device_id}/traces/statistics", get(get_device_trace_summary))
-        .route("/{device_id}/traces/clear", post(clear_device_traces))
+        .route("/{thing_id}/traces", post(record_device_trace))
+        .route("/{thing_id}/traces", get(get_device_traces))
+        .route("/{thing_id}/traces/statistics", get(get_device_trace_summary))
+        .route("/{thing_id}/traces/clear", post(clear_device_traces))
         .route("/system/traces/overview", get(get_system_trace_overview))
         .route("/system/traces/cleanup", post(cleanup_expired_traces))
 }
@@ -72,16 +72,16 @@ where
 /// 记录设备追踪信息
 async fn record_device_trace(
     State(state): State<AdminState>,
-    Path(device_id): Path<String>,
+    Path(thing_id): Path<String>,
     _claims: Claims,
     Json(req): Json<RecordTraceRequest>,
 ) -> Json<ApiResponse<String>> {
     // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
-    // which automatically filters devices by workspace_id
+    // which automatically filters things by workspace_id
     match state
         .trace_service
         .record_device_trace(
-            &device_id,
+            &thing_id,
             &req.trace_type,
             &req.level,
             &req.category,
@@ -108,18 +108,18 @@ async fn record_device_trace(
 /// 获取设备追踪记录
 async fn get_device_traces(
     State(state): State<AdminState>,
-    Path(device_id): Path<String>,
+    Path(thing_id): Path<String>,
     Query(params): Query<TraceQuery>,
     _claims: Claims,
 ) -> Json<ApiResponse<Vec<DeviceTrace>>> {
     // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
-    // which automatically filters devices by workspace_id
+    // which automatically filters things by workspace_id
     let trace_types = params.trace_types.as_deref();
     let levels = params.levels.as_deref();
 
     match state
         .trace_service
-        .get_device_traces(&device_id, trace_types, levels, params.limit, params.offset)
+        .get_device_traces(&thing_id, trace_types, levels, params.limit, params.offset)
         .await
     {
         Ok(traces) => ApiResponseBuilder::success(traces),
@@ -136,15 +136,15 @@ async fn get_device_traces(
 /// 获取设备追踪记录摘要
 async fn get_device_trace_summary(
     State(state): State<AdminState>,
-    Path(device_id): Path<String>,
+    Path(thing_id): Path<String>,
     Query(params): Query<TraceStatisticsQuery>,
     _claims: Claims,
 ) -> Json<ApiResponse<DeviceTraceStatistics>> {
     // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
-    // which automatically filters devices by workspace_id
+    // which automatically filters things by workspace_id
     match state
         .trace_service
-        .get_device_trace_statistics(&device_id, params.days)
+        .get_device_trace_statistics(&thing_id, params.days)
         .await
     {
         Ok(stats) => ApiResponseBuilder::success(stats),
@@ -161,17 +161,17 @@ async fn get_device_trace_summary(
 /// 清理设备追踪记录
 async fn clear_device_traces(
     State(state): State<AdminState>,
-    Path(device_id): Path<String>,
+    Path(thing_id): Path<String>,
     _claims: Claims,
     Json(req): Json<ClearTracesRequest>,
 ) -> Json<ApiResponse<u32>> {
     // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
-    // which automatically filters devices by workspace_id
+    // which automatically filters things by workspace_id
     let trace_types = req.trace_types.as_deref();
 
     match state
         .trace_service
-        .clear_device_traces(&device_id, req.before_date.as_deref(), trace_types)
+        .clear_device_traces(&thing_id, req.before_date.as_deref(), trace_types)
         .await
     {
         Ok(cleared_count) => ApiResponseBuilder::success(cleared_count),

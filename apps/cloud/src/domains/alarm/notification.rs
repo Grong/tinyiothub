@@ -32,7 +32,7 @@ impl NotificationDispatcher {
         let title = format!("[{}] {}", alarm.alarm_level, alarm.message);
         let body = format!(
             "设备: {}\n属性: {}\n当前值: {}\n阈值: {}\n时间: {}",
-            alarm.device_id,
+            alarm.thing_id,
             alarm.property_id.as_deref().unwrap_or("-"),
             alarm.alarm_value.as_deref().unwrap_or("-"),
             alarm.threshold_value.as_deref().unwrap_or("-"),

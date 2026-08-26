@@ -101,7 +101,7 @@ async fn get_batch(
     }
 }
 
-/// Execute a batch command (send commands to all devices)
+/// Execute a batch command (send commands to all things)
 async fn execute_batch(
     State(state): State<AdminState>,
     Path(batch_id): Path<String>,

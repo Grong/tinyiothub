@@ -231,7 +231,7 @@ pub async fn route_thing_event(
             timestamp: &timestamp,
             source_type: source.source_type(),
             source_id: source.source_id(),
-            device_id: source.device_id(),
+            thing_id: source.thing_id(),
             user_id: source.user_id(),
             title: &input.event_name,
             content: &content,

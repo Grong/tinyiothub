@@ -112,7 +112,7 @@ pub async fn confirm_action(
         Some(data_server) => {
             let cmd = tinyiothub_core::models::device_command::DeviceCommand {
                 id: uuid::Uuid::new_v4().to_string(),
-                device_id: thing_id.clone(),
+                thing_id: thing_id.clone(),
                 name: action_name.clone(),
                 display_name: None,
                 description: None,
@@ -276,7 +276,7 @@ pub async fn invoke_action(
         Some(data_server) => {
             let cmd = tinyiothub_core::models::device_command::DeviceCommand {
                 id: uuid::Uuid::new_v4().to_string(),
-                device_id: thing_id.clone(),
+                thing_id: thing_id.clone(),
                 name: action_name.clone(),
                 display_name: None,
                 description: None,

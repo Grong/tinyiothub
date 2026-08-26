@@ -41,7 +41,7 @@ async fn test_get_device_metrics() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/monitoring/metrics/devices", &token))
+        .oneshot(auth_request("GET", "/api/v1/monitoring/metrics/things", &token))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);

@@ -53,7 +53,7 @@ pub fn create_router() -> Router<crate::state::AppState> {
         .route("/{id}", get(get_workspace))
         .route("/{id}", put(update_workspace))
         .route("/{id}", delete(delete_workspace))
-        .route("/{id}/devices", post(assign_device))
+        .route("/{id}/things", post(assign_device))
         .route("/{id}/resources", get(list_resources))
         .route("/{id}/resources", post(create_resource))
         .route("/{id}/resources/suggest-tags", post(suggest_tags))
@@ -307,7 +307,7 @@ async fn assign_device(
 
     match state
         .workspace_service
-        .assign_device(&payload.device_id, &workspace_id)
+        .assign_device(&payload.thing_id, &workspace_id)
         .await
     {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"success": true})),

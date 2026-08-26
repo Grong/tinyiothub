@@ -290,7 +290,7 @@ async fn ensure_default_tenant(state: &AppState, user_id: &str) -> Result<()> {
     db.assign_orphan_devices_to_default_workspace()
         .await
         .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
-    tracing::info!("[init] Assigned orphan devices to default tenant/workspace");
+    tracing::info!("[init] Assigned orphan things to default tenant/workspace");
 
     Ok(())
 }

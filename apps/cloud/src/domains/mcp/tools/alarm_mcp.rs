@@ -47,7 +47,7 @@ struct CreateAlarmRuleInput {
     workspace_id: String,
     name: String,
     description: Option<String>,
-    device_id: Option<String>,
+    thing_id: Option<String>,
     property_id: Option<String>,
     rule_type: String,
     condition: Value,
@@ -284,7 +284,7 @@ impl ToolHandler for AlarmAcknowledgeHandler {
         // Using tenant_device_service ensures the device belongs to the authenticated workspace
         let tenant_device_service = state.tenant_device_service_str(&claims.workspace_id);
         let _device = tenant_device_service
-            .get_device_by_id(&alarm.device_id)
+            .get_device_by_id(&alarm.thing_id)
             .await
             .map_err(|e| ToolError::Internal(format!("Failed to fetch device: {}", e)))?
             .ok_or_else(|| {
@@ -466,7 +466,7 @@ impl ToolHandler for AlarmRuleAddHandler {
         let rule = AlarmRule::new(
             input.name,
             input.description,
-            input.device_id,
+            input.thing_id,
             input.property_id,
             rule_type,
             condition,

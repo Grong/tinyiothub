@@ -56,7 +56,7 @@ pub struct EventResponse {
     pub level_name: String,
     pub source_type: String,
     pub source_id: Option<String>,
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub user_id: Option<String>,
     pub title: String,
     pub content_preview: String,
@@ -185,7 +185,7 @@ pub async fn get_events(
                     level_name: format!("{:?}", event.level()).to_lowercase(),
                     source_type: event.source().source_type().to_string(),
                     source_id: Some(event.source().source_id().to_string()),
-                    device_id: event.source().device_id().map(|s| s.to_string()),
+                    thing_id: event.source().thing_id().map(|s| s.to_string()),
                     user_id: event.source().user_id().map(|s| s.to_string()),
                     title: event.content().title().to_string(),
                     content_preview: generate_content_preview(event.content()),
@@ -345,7 +345,7 @@ pub async fn create_event(
             .map(|s| s.source_type.clone())
             .unwrap_or("system".to_string()),
         source_id: request.source.as_ref().map(|s| s.source_id.clone()),
-        device_id: request.source.as_ref().and_then(|s| s.device_id.clone()),
+        thing_id: request.source.as_ref().and_then(|s| s.thing_id.clone()),
         user_id: Some(claims.0.user_id),
         title: request.content.title,
         content_preview: request.content.description.chars().take(100).collect(),
@@ -371,7 +371,7 @@ pub struct CreateEventRequest {
 pub struct CreateEventSourceRequest {
     pub source_type: String,
     pub source_id: String,
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub user_id: Option<String>,
 }
 

@@ -29,7 +29,7 @@ struct GetDeviceInput {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WritePropertiesInput {
-    device_id: String,
+    thing_id: String,
     properties: HashMap<String, String>, // property_name -> value
 }
 
@@ -37,7 +37,7 @@ struct WritePropertiesInput {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SendCommandInput {
-    device_id: String,
+    thing_id: String,
     command_name: String,
     parameters: Option<HashMap<String, String>>,
 }
@@ -49,7 +49,7 @@ struct CreateDeviceInput {
     template_id: Option<String>,
     name: String,
     display_name: Option<String>,
-    device_type: Option<String>,
+    category: Option<String>,
     address: Option<String>,
     description: Option<String>,
     position: Option<String>,
@@ -75,7 +75,7 @@ struct DeleteDeviceInput {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PropertyWriteResponse {
-    device_id: String,
+    thing_id: String,
     updated_count: usize,
     properties: Vec<PropertyUpdateResult>,
 }
@@ -93,7 +93,7 @@ struct PropertyUpdateResult {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CommandResponse {
-    device_id: String,
+    thing_id: String,
     command_name: String,
     success: bool,
     message: Option<String>,
@@ -219,7 +219,7 @@ impl ToolHandler for DevicePropertyGetHandler {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Input {
-            device_id: String,
+            thing_id: String,
             property_name: String,
         }
 
@@ -234,14 +234,14 @@ impl ToolHandler for DevicePropertyGetHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let _device = find_device_by_id(state.db(), &input.device_id)
+        let _device = find_device_by_id(state.db(), &input.thing_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
-            .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.device_id)))?;
+            .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.thing_id)))?;
 
         let all_properties = state
             .db()
-            .find_device_properties_by_device_id(&input.device_id)
+            .find_device_properties_by_device_id(&input.thing_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -251,13 +251,13 @@ impl ToolHandler for DevicePropertyGetHandler {
             .ok_or_else(|| {
                 ToolError::NotFound(format!(
                     "Property '{}' not found on thing {}",
-                    input.property_name, input.device_id
+                    input.property_name, input.thing_id
                 ))
             })?;
 
         let current_value = state
             .device_cache
-            .get(&input.device_id)
+            .get(&input.thing_id)
             .and_then(|d| d.properties)
             .and_then(|props| props.into_iter().find(|p| p.name == input.property_name))
             .and_then(|p| p.current_value);
@@ -265,7 +265,7 @@ impl ToolHandler for DevicePropertyGetHandler {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct PropertyDetailResponse {
-            device_id: String,
+            thing_id: String,
             property_name: String,
             display_name: Option<String>,
             description: Option<String>,
@@ -279,7 +279,7 @@ impl ToolHandler for DevicePropertyGetHandler {
         }
 
         Ok(serde_json::to_value(PropertyDetailResponse {
-            device_id: input.device_id,
+            thing_id: input.thing_id,
             property_name: prop.name.clone(),
             display_name: prop.display_name.clone(),
             description: prop.description.clone(),
@@ -348,14 +348,14 @@ impl ToolHandler for WritePropertiesHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let _device = find_device_by_id(state.db(), &input.device_id)
+        let _device = find_device_by_id(state.db(), &input.thing_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
-            .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.device_id)))?;
+            .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.thing_id)))?;
 
         let device_properties = state
             .db()
-            .find_device_properties_by_device_id(&input.device_id)
+            .find_device_properties_by_device_id(&input.thing_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -384,7 +384,7 @@ impl ToolHandler for WritePropertiesHandler {
                     }
 
                     match state
-                        .update_device_property_value(&workspace_id, &input.device_id, &def.id, value)
+                        .update_device_property_value(&workspace_id, &input.thing_id, &def.id, value)
                         .await
                     {
                         Ok(_) => {
@@ -415,7 +415,7 @@ impl ToolHandler for WritePropertiesHandler {
         }
 
         let response = PropertyWriteResponse {
-            device_id: input.device_id,
+            thing_id: input.thing_id,
             updated_count,
             properties: results,
         };
@@ -484,20 +484,20 @@ impl ToolHandler for DeviceCommandHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let device = find_device_by_id(state.db(), &input.device_id)
+        let device = find_device_by_id(state.db(), &input.thing_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
-            .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.device_id)))?;
+            .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.thing_id)))?;
 
         let is_online = state
             .device_cache
-            .get(&input.device_id)
+            .get(&input.thing_id)
             .map(|d| d.is_online())
             .unwrap_or(device.is_online());
 
         if !is_online {
             return Ok(serde_json::to_value(CommandResponse {
-                device_id: input.device_id,
+                thing_id: input.thing_id,
                 command_name: input.command_name,
                 success: false,
                 message: Some("Thing is offline".to_string()),
@@ -508,7 +508,7 @@ impl ToolHandler for DeviceCommandHandler {
 
         let command = state
             .db()
-            .find_device_command_by_device_and_name(&input.device_id, &input.command_name)
+            .find_device_command_by_device_and_name(&input.thing_id, &input.command_name)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -516,7 +516,7 @@ impl ToolHandler for DeviceCommandHandler {
             Some(c) => c,
             None => {
                 return Ok(serde_json::to_value(CommandResponse {
-                    device_id: input.device_id.clone(),
+                    thing_id: input.thing_id.clone(),
                     command_name: input.command_name.clone(),
                     success: false,
                     message: Some(format!("Command '{}' not found on thing", input.command_name)),
@@ -546,7 +546,7 @@ impl ToolHandler for DeviceCommandHandler {
 
         match result {
             Ok(_) => Ok(serde_json::to_value(CommandResponse {
-                device_id: input.device_id,
+                thing_id: input.thing_id,
                 command_name: input.command_name,
                 success: true,
                 message: None,
@@ -554,7 +554,7 @@ impl ToolHandler for DeviceCommandHandler {
             })
             .unwrap()),
             Err(e) => Ok(serde_json::to_value(CommandResponse {
-                device_id: input.device_id,
+                thing_id: input.thing_id,
                 command_name: input.command_name,
                 success: false,
                 message: Some(e.to_string()),
@@ -696,7 +696,7 @@ impl ToolHandler for CreateDeviceHandler {
             let request = CreateDeviceRequest {
                 name: input.name,
                 display_name: input.display_name,
-                device_type: input.device_type,
+                category: input.category,
                 address: input.address,
                 description: input.description,
                 position: input.position,
@@ -795,7 +795,7 @@ struct SearchDeviceResult {
     id: String,
     name: String,
     display_name: Option<String>,
-    device_type: Option<String>,
+    category: Option<String>,
     status: String,
     driver_name: Option<String>,
     address: Option<String>,
@@ -809,7 +809,7 @@ struct SearchDeviceResult {
 struct SearchDevicesResponse {
     keyword: String,
     total: usize,
-    devices: Vec<SearchDeviceResult>,
+    things: Vec<SearchDeviceResult>,
 }
 
 pub struct SearchDevicesHandler {
@@ -885,18 +885,18 @@ impl ToolHandler for SearchDevicesHandler {
             ..Default::default()
         };
 
-        let mut devices = state
+        let mut things = state
             .db()
             .find_devices(None, &criteria)
             .await
             .map_err(|e| ToolError::Internal(format!("Search failed: {}", e)))?;
 
-        load_tags_for_devices(state.db(), &mut devices, "")
+        load_tags_for_devices(state.db(), &mut things, "")
             .await
             .map_err(|e| ToolError::Internal(format!("Failed to load tags: {}", e)))?;
 
-        let mut results = Vec::with_capacity(devices.len());
-        for device in &mut devices {
+        let mut results = Vec::with_capacity(things.len());
+        for device in &mut things {
             if let Some(cached) = state.device_cache.get(&device.id) {
                 device.status = cached.status.clone();
                 device.last_heartbeat = cached.last_heartbeat.clone();
@@ -910,7 +910,7 @@ impl ToolHandler for SearchDevicesHandler {
                 id: device.id.clone(),
                 name: device.name.clone(),
                 display_name: device.display_name.clone(),
-                device_type: device.device_type.clone(),
+                category: device.category.clone(),
                 status: device.status.to_string(),
                 driver_name: device.driver_name.clone(),
                 address: device.address.clone(),
@@ -923,7 +923,7 @@ impl ToolHandler for SearchDevicesHandler {
         let response = SearchDevicesResponse {
             keyword: input.keyword,
             total: results.len(),
-            devices: results,
+            things: results,
         };
 
         Ok(serde_json::to_value(response).unwrap())

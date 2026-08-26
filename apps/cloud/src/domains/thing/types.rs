@@ -112,7 +112,7 @@ pub struct ThingResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub device_type: Option<String>,
+    pub category: Option<String>,
     pub thing_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
@@ -177,7 +177,7 @@ pub struct CreateThingRequest {
     pub name: String,
     #[serde(default)]
     pub thing_type: Option<String>,
-    pub device_type: Option<String>,
+    pub category: Option<String>,
     pub description: Option<String>,
     pub parent_id: Option<String>,
     pub template_id: Option<String>,

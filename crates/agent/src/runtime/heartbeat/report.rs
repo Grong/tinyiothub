@@ -69,7 +69,7 @@ fn parse_executed_actions(value: &serde_json::Value) -> Vec<ExecutedAction> {
             arr.iter()
                 .map(|a| ExecutedAction {
                     tool_name: a["tool_name"].as_str().unwrap_or("").to_string(),
-                    device_id: a["device_id"].as_str().map(|s| s.to_string()),
+                    thing_id: a["device_id"].as_str().map(|s| s.to_string()),
                     success: a["success"].as_bool().unwrap_or(true),
                     details: a["details"].as_str().unwrap_or("").to_string(),
                 })
@@ -92,7 +92,7 @@ fn parse_proposals(value: &serde_json::Value, workspace_id: &str) -> Vec<Proposa
                         agent_id: String::new(),
                         risk: tinyiothub_skills::trust::risk_for_tool(&tool_name).to_string(),
                         tool_name,
-                        device_id: p["device_id"].as_str().map(|s| s.to_string()),
+                        thing_id: p["device_id"].as_str().map(|s| s.to_string()),
                         summary: p["summary"].as_str().unwrap_or("").to_string(),
                         reason: p["reason"].as_str().unwrap_or("").to_string(),
                         parameters: p.get("parameters").cloned(),

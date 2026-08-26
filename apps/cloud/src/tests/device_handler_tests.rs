@@ -44,12 +44,12 @@ async fn test_create_device() {
     let body = json!({
         "name": "test-device-001",
         "display_name": "Test Device",
-        "device_type": "sensor",
+        "category": "sensor",
         "protocol_type": "modbus"
     });
 
     let response = app
-        .oneshot(auth_request("POST", "/api/v1/devices", &token, Some(body)))
+        .oneshot(auth_request("POST", "/api/v1/things", &token, Some(body)))
         .await
         .unwrap();
 
@@ -209,7 +209,7 @@ async fn test_create_thing_missing_name() {
 /// Verify that a user in workspace A cannot see, read, update, or delete
 /// things created in workspace B.
 /// This is the regression test for the security bug where omitting X-Workspace-Id
-/// header returned the raw (unfiltered) repository, exposing all devices.
+/// header returned the raw (unfiltered) repository, exposing all things.
 #[tokio::test]
 async fn test_cross_workspace_isolation() {
     let (app_state, pool) = setup_test_app_with_pool().await;

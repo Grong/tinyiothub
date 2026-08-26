@@ -45,7 +45,7 @@ impl MemoryStore {
         })
         .bind(&tags_json)
         .bind(&input.supersedes)
-        .bind(&input.device_id)
+        .bind(&input.thing_id)
         .bind(&input.snapshot_data)
         .bind(input.snapshot_time)
         .execute(&self.pool)
@@ -64,7 +64,7 @@ impl MemoryStore {
             tags: input.tags,
             pinned: false,
             supersedes: input.supersedes,
-            device_id: input.device_id,
+            thing_id: input.thing_id,
             snapshot_data: input.snapshot_data,
             snapshot_time: input.snapshot_time,
             effectiveness: 1.0,
@@ -304,7 +304,7 @@ impl From<MemoryRow> for AgentMemory {
             tags: serde_json::from_str(&r.tags).unwrap_or_default(),
             pinned: r.pinned != 0,
             supersedes: r.supersedes,
-            device_id: r.thing_id,
+            thing_id: r.thing_id,
             snapshot_data: r.snapshot_data,
             snapshot_time: r.snapshot_time,
             effectiveness: r.effectiveness,

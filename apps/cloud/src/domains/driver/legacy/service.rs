@@ -125,7 +125,7 @@ impl DeviceService {
             self.create_text_element(format!("Device ID: {}", device.id)),
             self.create_text_element(format!(
                 "Device Type: {}",
-                device.device_type.as_deref().unwrap_or(MSG_DEVICE_TYPE_VALUE_NA)
+                device.category.as_deref().unwrap_or(MSG_DEVICE_TYPE_VALUE_NA)
             )),
         ]
     }
@@ -309,12 +309,12 @@ impl DeviceService {
         {
             changes.push(format!("Name: {} → {}", old_device.name, new_name));
         }
-        if let Some(ref new_type) = request.device_type
-            && Some(new_type) != old_device.device_type.as_ref()
+        if let Some(ref new_type) = request.category
+            && Some(new_type) != old_device.category.as_ref()
         {
             changes.push(format!(
                 "Type: {} → {}",
-                old_device.device_type.as_deref().unwrap_or("N/A"),
+                old_device.category.as_deref().unwrap_or("N/A"),
                 new_type
             ));
         }
@@ -754,7 +754,7 @@ impl DeviceService {
         params: Option<String>,
     ) -> CreateDeviceCommandRequest {
         CreateDeviceCommandRequest {
-            device_id: device_id.to_string(),
+            thing_id: device_id.to_string(),
             name: command_name.to_string(),
             display_name: Some(format!("{} ({})", command_name, command_type)),
             description: Some(format!("Automation command: {} via {}", command_name, command_type)),
@@ -787,7 +787,7 @@ fn params_to_criteria(params: &DeviceQueryParams) -> DeviceCriteria {
     DeviceCriteria {
         name: params.name.clone(),
         display_name: params.display_name.clone(),
-        device_type: params.device_type.clone(),
+        device_type: params.category.clone(),
         address: params.address.clone(),
         driver_name: params.driver_name.clone(),
         state: params.state,

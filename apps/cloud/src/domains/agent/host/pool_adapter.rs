@@ -83,7 +83,7 @@ impl AgentPoolLike for HostAgentPoolAdapter {
     }
 }
 
-/// Map a streaming tool call to the heartbeat audit record. `device_id`
+/// Map a streaming tool call to the heartbeat audit record. `thing_id`
 /// (snake_case) wins over the legacy `deviceId` (camelCase) arg key; a missing
 /// result string becomes empty details rather than a lossy "null".
 fn map_tool_call(c: StreamingToolCall) -> ToolCallRecord {
@@ -91,7 +91,7 @@ fn map_tool_call(c: StreamingToolCall) -> ToolCallRecord {
         tool_name: c.name,
         device_id: c
             .args
-            .get("device_id")
+            .get("thing_id")
             .or_else(|| c.args.get("deviceId"))
             .and_then(|v| v.as_str())
             .map(String::from),
@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn snake_case_device_id_wins_over_camel_case() {
         let rec = map_tool_call(call(
-            serde_json::json!({"device_id": "d_snake", "deviceId": "d_camel"}),
+            serde_json::json!({"thing_id": "d_snake", "deviceId": "d_camel"}),
             Some("ok".into()),
         ));
         assert_eq!(rec.device_id.as_deref(), Some("d_snake"));
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn non_string_device_id_maps_to_none() {
-        let rec = map_tool_call(call(serde_json::json!({"device_id": 42}), None));
+        let rec = map_tool_call(call(serde_json::json!({"thing_id": 42}), None));
         assert_eq!(rec.device_id, None);
     }
 }

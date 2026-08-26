@@ -52,8 +52,8 @@ impl AlarmService {
         };
         let ai_alarm = AlarmEvent {
             id: alarm.id.clone(),
-            workspace_id: alarm.workspace_id.clone().unwrap_or_else(|| alarm.device_id.clone()),
-            device_id: alarm.device_id.clone(),
+            workspace_id: alarm.workspace_id.clone().unwrap_or_else(|| alarm.thing_id.clone()),
+            thing_id: alarm.thing_id.clone(),
             alarm_type: format!("{}", alarm.alarm_type),
             severity: severity.to_string(),
             message: alarm.message.clone(),
@@ -167,8 +167,8 @@ impl AlarmService {
         Ok(count)
     }
 
-    pub async fn get_active_alarms(&self, device_id: Option<&str>) -> AlarmResult<Vec<Alarm>> {
-        self.db.list_active_alarms(device_id).await.map_err(AlarmError::from)
+    pub async fn get_active_alarms(&self, thing_id: Option<&str>) -> AlarmResult<Vec<Alarm>> {
+        self.db.list_active_alarms(thing_id).await.map_err(AlarmError::from)
     }
 
     pub async fn get_alarm_history(&self, criteria: AlarmQueryCriteria) -> AlarmResult<Vec<Alarm>> {
@@ -255,9 +255,9 @@ impl AlarmService {
             .map_err(AlarmError::from)
     }
 
-    pub async fn get_rules_by_device(&self, device_id: &str, workspace_id: &str) -> AlarmResult<Vec<AlarmRule>> {
+    pub async fn get_rules_by_device(&self, thing_id: &str, workspace_id: &str) -> AlarmResult<Vec<AlarmRule>> {
         self.db
-            .find_alarm_rules_by_device(device_id, Some(workspace_id))
+            .find_alarm_rules_by_device(thing_id, Some(workspace_id))
             .await
             .map_err(AlarmError::from)
     }
@@ -303,8 +303,8 @@ impl AlarmService {
     ) -> AlarmResult<Vec<String>> {
         use super::event_matcher::EventAlarmCondition;
 
-        // 1. Query device_alarm_rules WHERE workspace_id=? AND rule_type='event'
-        //    AND (device_id=? OR device_id IS NULL)
+        // 1. Query thing_alarm_rules WHERE workspace_id=? AND rule_type='event'
+        //    AND (thing_id=? OR thing_id IS NULL)
         let rules = self.db.find_event_alarm_rules(workspace_id, Some(thing_id)).await?;
 
         if rules.is_empty() {
@@ -399,13 +399,13 @@ pub struct RuleEngine {
     db: Arc<Db>,
     throttle: DashMap<(String, String), Instant>,
     /// Tracks the first time a Duration condition started being true.
-    /// Key: (device_id, rule_id), Value: first_seen_instant.
+    /// Key: (thing_id, rule_id), Value: first_seen_instant.
     duration_first_seen: DashMap<(String, String), Instant>,
     /// Tracks the first time a rule's trigger condition became true (for trigger debounce).
-    /// Key: (device_id, rule_id), Value: first_seen_instant.
+    /// Key: (thing_id, rule_id), Value: first_seen_instant.
     trigger_debounce_start: DashMap<(String, String), Instant>,
     /// Tracks the first time a rule's recovery condition became true (for recovery debounce).
-    /// Key: (device_id, rule_id), Value: first_seen_instant.
+    /// Key: (thing_id, rule_id), Value: first_seen_instant.
     recovery_debounce_start: DashMap<(String, String), Instant>,
 }
 
@@ -431,10 +431,10 @@ impl RuleEngine {
         self.trigger_debounce_start.retain(|_, v| v.elapsed() < day);
         self.recovery_debounce_start.retain(|_, v| v.elapsed() < day);
 
-        let device_id = event.source().device_id().unwrap_or_else(|| event.source().source_id());
+        let thing_id = event.source().thing_id().unwrap_or_else(|| event.source().source_id());
         let property_id = event.content().metadata().get("property_id").and_then(|v| v.as_str());
 
-        let rules = self.load_relevant_rules(device_id, property_id).await?;
+        let rules = self.load_relevant_rules(thing_id, property_id).await?;
 
         let mut triggers = Vec::new();
         let mut non_triggered_rule_ids = Vec::new();
@@ -455,11 +455,11 @@ impl RuleEngine {
                 continue;
             }
 
-            let debounce_key = (device_id.to_string(), rule.id.clone());
+            let debounce_key = (thing_id.to_string(), rule.id.clone());
             let context = EvaluationContext::from_event(event);
 
             // Evaluate whether the alarm condition is currently met
-            let condition_met = self.check_condition(&rule.condition, &context, device_id, &rule.id)?;
+            let condition_met = self.check_condition(&rule.condition, &context, thing_id, &rule.id)?;
 
             // --- Trigger debounce ---
             let trigger_duration = rule.notification_config.trigger_duration_secs;
@@ -590,9 +590,9 @@ impl RuleEngine {
 
     pub async fn evaluate_rule(&self, rule: &AlarmRule, event: &Event) -> AlarmResult<Option<AlarmTrigger>> {
         let context = EvaluationContext::from_event(event);
-        let device_id = event.source().device_id().unwrap_or_else(|| event.source().source_id());
+        let thing_id = event.source().thing_id().unwrap_or_else(|| event.source().source_id());
 
-        let triggered = self.check_condition(&rule.condition, &context, device_id, &rule.id)?;
+        let triggered = self.check_condition(&rule.condition, &context, thing_id, &rule.id)?;
 
         if triggered {
             let trigger = AlarmTrigger {
@@ -616,7 +616,7 @@ impl RuleEngine {
         &self,
         condition: &AlarmCondition,
         context: &EvaluationContext,
-        device_id: &str,
+        thing_id: &str,
         rule_id: &str,
     ) -> AlarmResult<bool> {
         match condition {
@@ -628,10 +628,10 @@ impl RuleEngine {
                 time_window,
             } => self.check_change(change_type, *threshold, *time_window, context),
             AlarmCondition::Duration { condition, duration } => {
-                self.check_duration(condition, *duration, context, device_id, rule_id)
+                self.check_duration(condition, *duration, context, thing_id, rule_id)
             }
             AlarmCondition::Composite { operator, conditions } => {
-                self.check_composite(operator, conditions, context, device_id, rule_id)
+                self.check_composite(operator, conditions, context, thing_id, rule_id)
             }
         }
     }
@@ -716,13 +716,13 @@ impl RuleEngine {
         condition: &AlarmCondition,
         duration: std::time::Duration,
         context: &EvaluationContext,
-        device_id: &str,
+        thing_id: &str,
         rule_id: &str,
     ) -> AlarmResult<bool> {
         // The inner condition must be true now.
-        if !self.check_condition(condition, context, device_id, rule_id)? {
+        if !self.check_condition(condition, context, thing_id, rule_id)? {
             // Condition is no longer true — reset the tracker
-            let key = (device_id.to_string(), rule_id.to_string());
+            let key = (thing_id.to_string(), rule_id.to_string());
             self.duration_first_seen.remove(&key);
             return Ok(false);
         }
@@ -732,7 +732,7 @@ impl RuleEngine {
             return Ok(true);
         }
 
-        let key = (device_id.to_string(), rule_id.to_string());
+        let key = (thing_id.to_string(), rule_id.to_string());
         let now = Instant::now();
 
         // Check if condition has been sustained long enough.
@@ -764,13 +764,13 @@ impl RuleEngine {
         operator: &LogicalOperator,
         conditions: &[AlarmCondition],
         context: &EvaluationContext,
-        device_id: &str,
+        thing_id: &str,
         rule_id: &str,
     ) -> AlarmResult<bool> {
         match operator {
             LogicalOperator::And => {
                 for condition in conditions {
-                    if !self.check_condition(condition, context, device_id, rule_id)? {
+                    if !self.check_condition(condition, context, thing_id, rule_id)? {
                         return Ok(false);
                     }
                 }
@@ -778,7 +778,7 @@ impl RuleEngine {
             }
             LogicalOperator::Or => {
                 for condition in conditions {
-                    if self.check_condition(condition, context, device_id, rule_id)? {
+                    if self.check_condition(condition, context, thing_id, rule_id)? {
                         return Ok(true);
                     }
                 }
@@ -788,7 +788,7 @@ impl RuleEngine {
                 if conditions.len() != 1 {
                     return Err(AlarmError::InvalidCondition("NOT 运算符只能有一个条件".to_string()));
                 }
-                Ok(!self.check_condition(&conditions[0], context, device_id, rule_id)?)
+                Ok(!self.check_condition(&conditions[0], context, thing_id, rule_id)?)
             }
         }
     }
@@ -877,12 +877,12 @@ impl RuleEngine {
         }
     }
 
-    async fn load_relevant_rules(&self, device_id: &str, property_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>> {
+    async fn load_relevant_rules(&self, thing_id: &str, property_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>> {
         let mut rules = Vec::new();
         rules.extend(self.db.find_global_alarm_rules().await?);
-        rules.extend(self.db.find_alarm_rules_by_device(device_id, None).await?);
+        rules.extend(self.db.find_alarm_rules_by_device(thing_id, None).await?);
         if let Some(prop_id) = property_id {
-            rules.extend(self.db.find_alarm_rules_by_property(device_id, prop_id).await?);
+            rules.extend(self.db.find_alarm_rules_by_property(thing_id, prop_id).await?);
         }
         Ok(rules)
     }
@@ -1052,10 +1052,10 @@ impl AlarmEventHandler {
     #[allow(clippy::collapsible_if)]
     /// Auto-resolve active alarms when property values return to normal.
     async fn auto_resolve_recovered_alarms(&self, event: &Event, non_triggered_rule_ids: &[String]) {
-        let device_id = event.source().device_id().unwrap_or_else(|| event.source().source_id());
+        let thing_id = event.source().thing_id().unwrap_or_else(|| event.source().source_id());
         let event_property_id = event.content().metadata().get("property_id").and_then(|v| v.as_str());
 
-        let active_alarms = match self.alarm_service.get_active_alarms(Some(device_id)).await {
+        let active_alarms = match self.alarm_service.get_active_alarms(Some(thing_id)).await {
             Ok(alarms) => alarms,
             Err(e) => {
                 tracing::error!("Failed to get active alarms for auto-resolve: {}", e);
@@ -1110,17 +1110,17 @@ impl tinyiothub_core::event::EventHandler for AlarmEventHandler {
         }
 
         for trigger in result.triggers {
-            let device_id = event.source().device_id().unwrap_or_else(|| event.source().source_id());
+            let thing_id = event.source().thing_id().unwrap_or_else(|| event.source().source_id());
 
             // Suppress duplicate: don't create alarm if one is already active for this device+rule
-            if let Ok(active) = self.alarm_service.get_active_alarms(Some(device_id)).await {
+            if let Ok(active) = self.alarm_service.get_active_alarms(Some(thing_id)).await {
                 if active.iter().any(|a| a.rule_id.as_deref() == Some(&trigger.rule_id)) {
                     continue; // already triggered, skip
                 }
             }
 
             let alarm = Alarm::new(
-                device_id.to_string(),
+                thing_id.to_string(),
                 event
                     .content()
                     .metadata()
@@ -1143,7 +1143,7 @@ impl tinyiothub_core::event::EventHandler for AlarmEventHandler {
 
             tracing::info!(
                 alarm_id = %alarm.id,
-                device_id = %alarm.device_id,
+                thing_id = %alarm.thing_id,
                 level = %alarm.alarm_level,
                 message = %alarm.message,
                 "alarm_created"
@@ -1185,13 +1185,13 @@ mod tests {
 
     async fn setup_test_db(pool: &sqlx::SqlitePool) {
         sqlx::query("PRAGMA foreign_keys = OFF").execute(pool).await.unwrap();
-        sqlx::query("DROP TABLE IF EXISTS device_alarm_rules")
+        sqlx::query("DROP TABLE IF EXISTS thing_alarm_rules")
             .execute(pool)
             .await
             .unwrap();
-        sqlx::query("DROP TABLE IF EXISTS devices").execute(pool).await.unwrap();
+        sqlx::query("DROP TABLE IF EXISTS things").execute(pool).await.unwrap();
         sqlx::query(
-            "CREATE TABLE IF NOT EXISTS devices (
+            "CREATE TABLE IF NOT EXISTS things (
                 id TEXT PRIMARY KEY, name TEXT, workspace_id TEXT
             )",
         )
@@ -1200,8 +1200,8 @@ mod tests {
         .unwrap();
 
         sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS device_alarm_rules (
-                id TEXT PRIMARY KEY, device_id TEXT, property_id TEXT,
+            r#"CREATE TABLE IF NOT EXISTS thing_alarm_rules (
+                id TEXT PRIMARY KEY, thing_id TEXT, property_id TEXT,
                 rule_name TEXT NOT NULL, rule_type TEXT NOT NULL,
                 condition_config TEXT NOT NULL,
                 alarm_level TEXT NOT NULL,
@@ -1217,7 +1217,7 @@ mod tests {
         .unwrap();
     }
 
-    fn make_property_change_event(device_id: &str, property_name: &str, value: f64) -> Event {
+    fn make_property_change_event(thing_id: &str, property_name: &str, value: f64) -> Event {
         let metadata: std::collections::HashMap<String, serde_json::Value> = [
             (
                 "property_id".to_string(),
@@ -1246,13 +1246,13 @@ mod tests {
         Event::new_device_event(
             DeviceEventType::PropertyChange,
             EventLevel::Info,
-            EventSource::device_property(device_id.to_string(), property_name.to_string(), "test".to_string()),
+            EventSource::device_property(thing_id.to_string(), property_name.to_string(), "test".to_string()),
             content,
         )
         .expect("failed to create test event")
     }
 
-    fn make_property_change_event_with_old(device_id: &str, property_name: &str, value: f64, old_value: f64) -> Event {
+    fn make_property_change_event_with_old(thing_id: &str, property_name: &str, value: f64, old_value: f64) -> Event {
         let metadata: std::collections::HashMap<String, serde_json::Value> = [
             (
                 "property_id".to_string(),
@@ -1285,7 +1285,7 @@ mod tests {
         Event::new_device_event(
             DeviceEventType::PropertyChange,
             EventLevel::Info,
-            EventSource::device_property(device_id.to_string(), property_name.to_string(), "test".to_string()),
+            EventSource::device_property(thing_id.to_string(), property_name.to_string(), "test".to_string()),
             content,
         )
         .expect("failed to create test event")
@@ -1297,14 +1297,14 @@ mod tests {
         let db = Arc::new(Db::new(pool.clone()));
 
         // Insert a device
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
 
         // Insert an alarm rule: temperature > 80 → Warning
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-1', 'dev-1', NULL, 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool)
@@ -1332,12 +1332,12 @@ mod tests {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
 
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-1', 'dev-1', NULL, 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1356,13 +1356,13 @@ mod tests {
     async fn test_duration_zero_triggers_immediately(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         // Duration with 0s = fires immediately when inner condition is true
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-d0', 'dev-1', NULL, 'Duration Zero', 'duration', '{\"type\":\"duration\",\"condition\":{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},\"duration\":0}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1382,13 +1382,13 @@ mod tests {
     async fn test_duration_sustained_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         // Duration with 0s so we can test trigger immediately (real sustained test would require time travel)
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-d1', 'dev-1', NULL, 'Duration Sustained', 'duration', '{\"type\":\"duration\",\"condition\":{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},\"duration\":3600}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1409,12 +1409,12 @@ mod tests {
     async fn test_duration_clears_on_recovery(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-d2', 'dev-1', NULL, 'Duration Clear', 'duration', '{\"type\":\"duration\",\"condition\":{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},\"duration\":3600}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1454,13 +1454,13 @@ mod tests {
     async fn test_range_in_range_no_trigger(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         // Range 20-80, alarm if OUTSIDE range
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-r1', 'dev-1', NULL, 'Temp Range', 'range', '{\"type\":\"range\",\"min\":20.0,\"max\":80.0,\"inclusive\":true}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1477,12 +1477,12 @@ mod tests {
     async fn test_range_out_of_range_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-r2', 'dev-1', NULL, 'Temp Range', 'range', '{\"type\":\"range\",\"min\":20.0,\"max\":80.0,\"inclusive\":true}', 'critical', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1500,12 +1500,12 @@ mod tests {
     async fn test_range_boundary_inclusive_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-r3', 'dev-1', NULL, 'Temp Range', 'range', '{\"type\":\"range\",\"min\":20.0,\"max\":80.0,\"inclusive\":true}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1524,13 +1524,13 @@ mod tests {
     async fn test_change_increase_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         // Increase by > 10.0 triggers
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-c1', 'dev-1', NULL, 'Rapid Increase', 'change', '{\"type\":\"change\",\"change_type\":\"increase\",\"threshold\":10.0,\"time_window\":0}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1547,12 +1547,12 @@ mod tests {
     async fn test_change_below_threshold_no_trigger(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-c2', 'dev-1', NULL, 'Rapid Increase', 'change', '{\"type\":\"change\",\"change_type\":\"increase\",\"threshold\":10.0,\"time_window\":0}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1568,12 +1568,12 @@ mod tests {
     async fn test_change_decrease_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-c3', 'dev-1', NULL, 'Rapid Drop', 'change', '{\"type\":\"change\",\"change_type\":\"decrease\",\"threshold\":10.0,\"time_window\":0}', 'critical', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1591,13 +1591,13 @@ mod tests {
     async fn test_composite_and_all_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         // AND: (temp > 80) AND (humidity > 60) → both must be true
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-and1', 'dev-1', NULL, 'High T&H', 'composite', '{\"type\":\"composite\",\"operator\":\"and\",\"conditions\":[{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":60.0}]}', 'critical', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1619,12 +1619,12 @@ mod tests {
     async fn test_composite_and_partial_no_trigger(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-and2', 'dev-1', NULL, 'High T&H', 'composite', '{\"type\":\"composite\",\"operator\":\"and\",\"conditions\":[{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":90.0}]}', 'critical', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1644,13 +1644,13 @@ mod tests {
     async fn test_composite_or_any_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         // OR: (temp > 80) OR (temp > 90) — first condition true → triggers
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-or1', 'dev-1', NULL, 'High T OR', 'composite', '{\"type\":\"composite\",\"operator\":\"or\",\"conditions\":[{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":90.0}]}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1672,13 +1672,13 @@ mod tests {
     async fn test_trigger_debounce_not_immediate(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         // trigger_duration_secs=3600: condition must be sustained for 1 hour before triggering
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
              VALUES ('rule-tdb1', 'dev-1', NULL, 'High Temp Debounce', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"trigger_duration_secs\":3600}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1707,13 +1707,13 @@ mod tests {
     async fn test_trigger_debounce_fires_after_duration(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         // trigger_duration_secs=0: immediate trigger (same as backward compat)
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
              VALUES ('rule-tdb0', 'dev-1', NULL, 'High Temp No Debounce', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"trigger_duration_secs\":0}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1734,12 +1734,12 @@ mod tests {
     async fn test_trigger_debounce_resets_on_clear(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
              VALUES ('rule-tdb2', 'dev-1', NULL, 'High Temp Debounce Reset', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"trigger_duration_secs\":3600,\"recovery_duration_secs\":0}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1779,13 +1779,13 @@ mod tests {
     async fn test_hysteresis_recovery_threshold(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         // Trigger > 80, recover < 75
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
              VALUES ('rule-hys', 'dev-1', NULL, 'High Temp Hysteresis', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0,\"recovery_threshold\":75.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1829,12 +1829,12 @@ mod tests {
     async fn test_recovery_debounce(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
              VALUES ('rule-rdb', 'dev-1', NULL, 'High Temp Recovery Debounce', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1865,13 +1865,13 @@ mod tests {
     async fn test_throttle_suppresses_repeated(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         // suppress_duration 300s (5 minutes)
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
              VALUES ('rule-t1', 'dev-1', NULL, 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"suppress_duration\":300}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1902,12 +1902,12 @@ mod tests {
     async fn test_disabled_rule_skipped(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-dis', 'dev-1', NULL, 'Disabled Rule', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 0, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1925,12 +1925,12 @@ mod tests {
     async fn test_threshold_less_than_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-lt', 'dev-1', NULL, 'Low Battery', 'threshold', '{\"type\":\"threshold\",\"operator\":\"less_than\",\"value\":20.0}', 'critical', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1946,12 +1946,12 @@ mod tests {
     async fn test_threshold_equal_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-eq', 'dev-1', NULL, 'Exact Value', 'threshold', '{\"type\":\"threshold\",\"operator\":\"equal\",\"value\":42.0}', 'info', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -1969,18 +1969,18 @@ mod tests {
     async fn test_non_triggered_rule_ids_populated(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
         // One rule that triggers (value > 80) and one that doesn't (value > 90)
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
              VALUES ('rule-nt1', 'dev-1', NULL, 'Triggers', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
              VALUES ('rule-nt2', 'dev-1', NULL, 'No Trigger', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":90.0}', 'critical', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
@@ -2012,11 +2012,11 @@ mod integration_tests {
 
     async fn setup_full_schema(pool: &sqlx::SqlitePool) {
         sqlx::query("PRAGMA foreign_keys = OFF").execute(pool).await.unwrap();
-        sqlx::query("DROP TABLE IF EXISTS device_alarms")
+        sqlx::query("DROP TABLE IF EXISTS thing_alarms")
             .execute(pool)
             .await
             .unwrap();
-        sqlx::query("DROP TABLE IF EXISTS device_alarm_rules")
+        sqlx::query("DROP TABLE IF EXISTS thing_alarm_rules")
             .execute(pool)
             .await
             .unwrap();
@@ -2024,13 +2024,13 @@ mod integration_tests {
             .execute(pool)
             .await
             .unwrap();
-        sqlx::query("DROP TABLE IF EXISTS devices").execute(pool).await.unwrap();
+        sqlx::query("DROP TABLE IF EXISTS things").execute(pool).await.unwrap();
 
         // Match production schema with FK constraints
         sqlx::query(
-            "CREATE TABLE devices (
+            "CREATE TABLE things (
             id TEXT PRIMARY KEY, name TEXT, display_name TEXT, workspace_id TEXT,
-            driver_name TEXT, device_type TEXT, protocol_type TEXT, status TEXT DEFAULT 'online',
+            driver_name TEXT, category TEXT, protocol_type TEXT, status TEXT DEFAULT 'online',
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )",
@@ -2040,24 +2040,24 @@ mod integration_tests {
         .unwrap();
         sqlx::query(
             "CREATE TABLE thing_properties (
-            id TEXT PRIMARY KEY, device_id TEXT NOT NULL, name TEXT NOT NULL,
+            id TEXT PRIMARY KEY, thing_id TEXT NOT NULL, name TEXT NOT NULL,
             data_type TEXT NOT NULL DEFAULT 'float',
-            FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+            FOREIGN KEY (thing_id) REFERENCES things(id) ON DELETE CASCADE
         )",
         )
         .execute(pool)
         .await
         .unwrap();
         sqlx::query(
-            "CREATE TABLE device_alarm_rules (
-            id TEXT PRIMARY KEY, device_id TEXT, property_id TEXT,
+            "CREATE TABLE thing_alarm_rules (
+            id TEXT PRIMARY KEY, thing_id TEXT, property_id TEXT,
             rule_name TEXT NOT NULL, rule_type TEXT NOT NULL,
             condition_config TEXT NOT NULL, alarm_level TEXT NOT NULL,
             is_enabled BOOLEAN NOT NULL DEFAULT true, description TEXT,
             notification_config TEXT, workspace_id TEXT, created_by TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-            FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE,
+            FOREIGN KEY (thing_id) REFERENCES things(id) ON DELETE CASCADE,
             FOREIGN KEY (property_id) REFERENCES thing_properties(id) ON DELETE CASCADE
         )",
         )
@@ -2065,8 +2065,8 @@ mod integration_tests {
         .await
         .unwrap();
         sqlx::query(
-            "CREATE TABLE device_alarms (
-            id TEXT PRIMARY KEY, device_id TEXT NOT NULL, property_id TEXT, rule_id TEXT,
+            "CREATE TABLE thing_alarms (
+            id TEXT PRIMARY KEY, thing_id TEXT NOT NULL, property_id TEXT, rule_id TEXT,
             alarm_level TEXT NOT NULL, alarm_message TEXT NOT NULL,
             alarm_value TEXT, threshold_value TEXT, alarm_time TEXT NOT NULL,
             is_acknowledged BOOLEAN NOT NULL DEFAULT false,
@@ -2075,9 +2075,9 @@ mod integration_tests {
             resolved_by TEXT, resolved_at TEXT, resolved_note TEXT,
             resolution_type TEXT, workspace_id TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE,
+            FOREIGN KEY (thing_id) REFERENCES things(id) ON DELETE CASCADE,
             FOREIGN KEY (property_id) REFERENCES thing_properties(id) ON DELETE SET NULL,
-            FOREIGN KEY (rule_id) REFERENCES device_alarm_rules(id) ON DELETE SET NULL
+            FOREIGN KEY (rule_id) REFERENCES thing_alarm_rules(id) ON DELETE SET NULL
         )",
         )
         .execute(pool)
@@ -2088,7 +2088,7 @@ mod integration_tests {
     }
 
     fn make_test_event(
-        device_id: &str,
+        thing_id: &str,
         property_id: &str,
         property_name: &str,
         value: f64,
@@ -2118,7 +2118,7 @@ mod integration_tests {
         Event::new_device_event(
             DeviceEventType::PropertyChange,
             EventLevel::Info,
-            EventSource::device_property(device_id.to_string(), property_id.to_string(), "test".to_string()),
+            EventSource::device_property(thing_id.to_string(), property_id.to_string(), "test".to_string()),
             content,
         )
         .expect("failed to create test event")
@@ -2129,16 +2129,16 @@ mod integration_tests {
         setup_full_schema(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
 
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('prop-1', 'dev-1', 'temperature')")
+        sqlx::query("INSERT INTO thing_properties (id, thing_id, name) VALUES ('prop-1', 'dev-1', 'temperature')")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-1', 'dev-1', 'prop-1', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
@@ -2150,11 +2150,11 @@ mod integration_tests {
         let event = make_test_event("dev-1", "prop-1", "temperature", 85.0, Some(70.0));
         handler.handle(&event).await.unwrap();
 
-        let row = sqlx::query("SELECT * FROM device_alarms WHERE device_id = 'dev-1'")
+        let row = sqlx::query("SELECT * FROM thing_alarms WHERE thing_id = 'dev-1'")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(row.get::<String, _>("device_id"), "dev-1");
+        assert_eq!(row.get::<String, _>("thing_id"), "dev-1");
         assert_eq!(row.get::<Option<String>, _>("property_id").as_deref(), Some("prop-1"));
         assert_eq!(row.get::<Option<String>, _>("rule_id").as_deref(), Some("rule-1"));
         assert_eq!(row.get::<String, _>("alarm_level"), "warning");
@@ -2171,7 +2171,7 @@ mod integration_tests {
             .unwrap();
         assert!(alarm_opt.is_some(), "Should be able to read alarm back via repo");
         let alarm = alarm_opt.unwrap();
-        assert_eq!(alarm.device_id, "dev-1");
+        assert_eq!(alarm.thing_id, "dev-1");
         assert_eq!(alarm.alarm_level, AlarmLevel::Warning);
         assert_eq!(alarm.alarm_value.as_deref(), Some("85"));
     }
@@ -2181,16 +2181,16 @@ mod integration_tests {
         setup_full_schema(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
 
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('prop-1', 'dev-1', 'temperature')")
+        sqlx::query("INSERT INTO thing_properties (id, thing_id, name) VALUES ('prop-1', 'dev-1', 'temperature')")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-1', 'dev-1', 'prop-1', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
@@ -2202,7 +2202,7 @@ mod integration_tests {
         let event = make_test_event("dev-1", "prop-1", "temperature", 25.0, None);
         handler.handle(&event).await.unwrap();
 
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-1'")
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarms WHERE thing_id = 'dev-1'")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -2216,16 +2216,16 @@ mod integration_tests {
         setup_full_schema(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
 
-        sqlx::query("INSERT INTO devices (id, name, workspace_id) VALUES ('dev-ar', 'AutoResolve Device', 'ws-ar')")
+        sqlx::query("INSERT INTO things (id, name, workspace_id) VALUES ('dev-ar', 'AutoResolve Device', 'ws-ar')")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('prop-ar', 'dev-ar', 'temperature')")
+        sqlx::query("INSERT INTO thing_properties (id, thing_id, name) VALUES ('prop-ar', 'dev-ar', 'temperature')")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, workspace_id, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, workspace_id, created_at, updated_at)
              VALUES ('rule-ar1', 'dev-ar', 'prop-ar', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', 'ws-ar', datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
@@ -2239,7 +2239,7 @@ mod integration_tests {
             .await
             .unwrap();
         let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-ar' AND is_resolved = 0")
+            sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarms WHERE thing_id = 'dev-ar' AND is_resolved = 0")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
@@ -2252,7 +2252,7 @@ mod integration_tests {
             .unwrap();
 
         let active_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-ar' AND is_resolved = 0")
+            sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarms WHERE thing_id = 'dev-ar' AND is_resolved = 0")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
@@ -2267,16 +2267,16 @@ mod integration_tests {
         setup_full_schema(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
 
-        sqlx::query("INSERT INTO devices (id, name, workspace_id) VALUES ('dev-arm', 'Meta Device', 'ws-arm')")
+        sqlx::query("INSERT INTO things (id, name, workspace_id) VALUES ('dev-arm', 'Meta Device', 'ws-arm')")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('prop-arm', 'dev-arm', 'humidity')")
+        sqlx::query("INSERT INTO thing_properties (id, thing_id, name) VALUES ('prop-arm', 'dev-arm', 'humidity')")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, workspace_id, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, workspace_id, created_at, updated_at)
              VALUES ('rule-arm', 'dev-arm', 'prop-arm', 'High Humidity', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":70.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', 'ws-arm', datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
@@ -2295,7 +2295,7 @@ mod integration_tests {
             .await
             .unwrap();
 
-        let row = sqlx::query("SELECT resolved_by, resolved_at, resolution_type FROM device_alarms WHERE device_id = 'dev-arm' AND is_resolved = 1")
+        let row = sqlx::query("SELECT resolved_by, resolved_at, resolution_type FROM thing_alarms WHERE thing_id = 'dev-arm' AND is_resolved = 1")
             .fetch_one(&pool).await.unwrap();
         let resolved_by: Option<String> = row.get("resolved_by");
         let resolution_type: String = row.get("resolution_type");
@@ -2316,16 +2316,16 @@ mod integration_tests {
         setup_full_schema(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
 
-        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-sd', 'Suppress Dev')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-sd', 'Suppress Dev')")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('prop-sd', 'dev-sd', 'temperature')")
+        sqlx::query("INSERT INTO thing_properties (id, thing_id, name) VALUES ('prop-sd', 'dev-sd', 'temperature')")
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
              VALUES ('rule-sd', 'dev-sd', 'prop-sd', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
@@ -2344,7 +2344,7 @@ mod integration_tests {
             .await
             .unwrap();
 
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-sd'")
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarms WHERE thing_id = 'dev-sd'")
             .fetch_one(&pool)
             .await
             .unwrap();

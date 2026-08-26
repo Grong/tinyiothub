@@ -17,7 +17,7 @@ pub fn row_to_device(row: sqlx::sqlite::SqliteRow) -> Result<Device> {
         id: row.get("id"),
         name: row.get("name"),
         display_name: row.get("display_name"),
-        device_type: row.get("category"),
+        category: row.get("category"),
         address: row.get("address"),
         description: row.get("description"),
         position: row.get("position"),

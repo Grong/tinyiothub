@@ -439,7 +439,7 @@ pub(crate) async fn insert_event(pool: &SqlitePool, event: &Event) -> Result<()>
         .bind(timestamp_str)
         .bind(event.source().source_type())
         .bind(event.source().source_id())
-        .bind(event.source().device_id())
+        .bind(event.source().thing_id())
         .bind(event.source().user_id())
         .bind(event.content().title())
         .bind(content_str)
@@ -637,7 +637,7 @@ pub(crate) async fn insert_events_batch(pool: &SqlitePool, events: &[Event]) -> 
             .bind(timestamp_str)
             .bind(event.source().source_type())
             .bind(event.source().source_id())
-            .bind(event.source().device_id())
+            .bind(event.source().thing_id())
             .bind(event.source().user_id())
             .bind(event.content().title())
             .bind(content_str)
@@ -803,7 +803,7 @@ pub(crate) async fn upsert_event_status(pool: &SqlitePool, event: &Event) -> Res
 
     let content_json = serde_json::to_string(event.content())?;
     let event_subtype_json = serde_json::to_string(event.event_type())?;
-    let device_id_bind: Option<String> = event.source().device_id().map(|s| s.to_string());
+    let device_id_bind: Option<String> = event.source().thing_id().map(|s| s.to_string());
     let user_id_bind: Option<String> = event.source().user_id().map(|s| s.to_string());
 
     // Resolve tenant scope from the owning device (was hardcoded '')
@@ -850,7 +850,7 @@ pub(crate) async fn remove_event_status(pool: &SqlitePool, source: &EventSource,
     sqlx::query(sql)
         .bind(event_type.type_string())
         .bind(&event_subtype_json)
-        .bind(source.device_id().map(|s| s.to_string()))
+        .bind(source.thing_id().map(|s| s.to_string()))
         .execute(pool)
         .await?;
 

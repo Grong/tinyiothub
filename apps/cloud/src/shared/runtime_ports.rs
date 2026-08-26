@@ -47,9 +47,9 @@ pub struct DeviceCommandQueriesAdapter(pub Db);
 
 #[async_trait]
 impl DeviceCommandQueries for DeviceCommandQueriesAdapter {
-    async fn find_by_device_and_name(&self, device_id: &str, name: &str) -> Result<Option<DeviceCommand>, String> {
+    async fn find_by_device_and_name(&self, thing_id: &str, name: &str) -> Result<Option<DeviceCommand>, String> {
         self.0
-            .find_device_command_by_device_and_name(device_id, name)
+            .find_device_command_by_device_and_name(thing_id, name)
             .await
             .map_err(|e| e.to_string())
     }

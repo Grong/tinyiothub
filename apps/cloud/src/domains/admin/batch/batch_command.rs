@@ -19,7 +19,7 @@ use crate::domains::driver::legacy::DeviceService;
 pub struct BatchCommandExecutor;
 
 impl BatchCommandExecutor {
-    /// Execute a batch command - send commands to all pending devices
+    /// Execute a batch command - send commands to all pending things
     pub async fn execute(
         db: &Db,
         device_service: Arc<DeviceService>,
@@ -54,7 +54,7 @@ impl BatchCommandExecutor {
             // Send command to device
             match device_service
                 .send_command(
-                    &item.device_id,
+                    &item.thing_id,
                     &batch_with_items.batch.command_name,
                     &command_type,
                     parameters.clone(),

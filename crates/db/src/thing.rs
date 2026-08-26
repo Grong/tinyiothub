@@ -1829,7 +1829,7 @@ async fn create_device_inner(pool: &SqlitePool, request: &CreateDeviceRequest) -
     .bind(&id)
     .bind(&request.name)
     .bind(&request.display_name)
-    .bind(&request.device_type)
+    .bind(&request.category)
     .bind(&request.address)
     .bind(&request.description)
     .bind(&request.position)
@@ -1874,7 +1874,7 @@ async fn update_device_inner(pool: &SqlitePool, id: &str, request: &UpdateDevice
         builder.push("display_name = ").push_bind(display_name);
         has_updates = true;
     }
-    if let Some(device_type) = &request.device_type {
+    if let Some(device_type) = &request.category {
         if has_updates {
             builder.push(", ");
         }
@@ -2057,7 +2057,7 @@ async fn create_devices_batch_inner(pool: &SqlitePool, requests: &[CreateDeviceR
         .bind(&id)
         .bind(&request.name)
         .bind(&request.display_name)
-        .bind(&request.device_type)
+        .bind(&request.category)
         .bind(&request.address)
         .bind(&request.description)
         .bind(&request.position)
@@ -2082,7 +2082,7 @@ async fn create_devices_batch_inner(pool: &SqlitePool, requests: &[CreateDeviceR
             id: id.clone(),
             name: request.name.clone(),
             display_name: request.display_name.clone(),
-            device_type: request.device_type.clone(),
+            category: request.category.clone(),
             address: request.address.clone(),
             description: request.description.clone(),
             position: request.position.clone(),
@@ -2295,7 +2295,7 @@ async fn update_device_status_batch_inner(pool: &SqlitePool, updates: &[DeviceSt
         let result = sqlx::query("UPDATE things SET state = ?, updated_at = ? WHERE id = ?")
             .bind(update.state)
             .bind(&update.updated_at)
-            .bind(&update.device_id)
+            .bind(&update.thing_id)
             .execute(&mut *tx)
             .await?;
         total_affected += result.rows_affected();
@@ -2378,7 +2378,7 @@ async fn filter_device_status_updates_by_workspace(
         return Ok(Vec::new());
     }
 
-    let ids: Vec<String> = updates.iter().map(|update| update.device_id.clone()).collect();
+    let ids: Vec<String> = updates.iter().map(|update| update.thing_id.clone()).collect();
     let filtered_ids = filter_device_ids_by_workspace(pool, ws, &ids).await?;
 
     // Create a set for fast lookup
@@ -2386,7 +2386,7 @@ async fn filter_device_status_updates_by_workspace(
 
     let filtered_updates: Vec<DeviceStatusUpdate> = updates
         .iter()
-        .filter(|update| filtered_set.contains(&update.device_id))
+        .filter(|update| filtered_set.contains(&update.thing_id))
         .cloned()
         .collect();
 
@@ -2466,7 +2466,7 @@ pub(crate) async fn create_device(
     .bind(&id)
     .bind(&request.name)
     .bind(&request.display_name)
-    .bind(&request.device_type)
+    .bind(&request.category)
     .bind(&request.address)
     .bind(&request.description)
     .bind(&request.position)
@@ -2569,7 +2569,7 @@ pub(crate) async fn create_devices_batch(
         .bind(&id)
         .bind(&request.name)
         .bind(&request.display_name)
-        .bind(&request.device_type)
+        .bind(&request.category)
         .bind(&request.address)
         .bind(&request.description)
         .bind(&request.position)
@@ -3232,7 +3232,7 @@ pub struct OpenThingRow {
     pub id: String,
     pub name: String,
     pub display_name: Option<String>,
-    pub device_type: Option<String>,
+    pub category: Option<String>,
     pub state: i32,
     pub created_at: String,
 }
@@ -3243,7 +3243,7 @@ pub struct OpenThingDetailRow {
     pub id: String,
     pub name: String,
     pub display_name: Option<String>,
-    pub device_type: Option<String>,
+    pub category: Option<String>,
     pub address: Option<String>,
     pub state: i32,
     pub protocol_type: Option<String>,
@@ -3265,7 +3265,7 @@ pub(crate) async fn list_open_things(pool: &SqlitePool, workspace_id: &str) -> R
             id: row.try_get::<String, _>("id").unwrap_or_default(),
             name: row.try_get::<String, _>("name").unwrap_or_default(),
             display_name: row.try_get::<Option<String>, _>("display_name").unwrap_or_default(),
-            device_type: row.try_get::<Option<String>, _>("category").unwrap_or_default(),
+            category: row.try_get::<Option<String>, _>("category").unwrap_or_default(),
             state: row.try_get::<i32, _>("state").unwrap_or_default(),
             created_at: row.try_get::<String, _>("created_at").unwrap_or_default(),
         })
@@ -3289,7 +3289,7 @@ pub(crate) async fn find_open_thing(
         id: row.try_get::<String, _>("id").unwrap_or_default(),
         name: row.try_get::<String, _>("name").unwrap_or_default(),
         display_name: row.try_get::<Option<String>, _>("display_name").unwrap_or_default(),
-        device_type: row.try_get::<Option<String>, _>("category").unwrap_or_default(),
+        category: row.try_get::<Option<String>, _>("category").unwrap_or_default(),
         address: row.try_get::<Option<String>, _>("address").unwrap_or_default(),
         state: row.try_get::<i32, _>("state").unwrap_or_default(),
         protocol_type: row.try_get::<Option<String>, _>("protocol_type").unwrap_or_default(),

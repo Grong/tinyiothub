@@ -49,7 +49,7 @@ pub async fn get_dashboard_stats(
 
     // 获取月度增长数据
     let monthly_growth = get_monthly_growth(&db).await.unwrap_or(MonthlyGrowth {
-        devices: 0,
+        things: 0,
         messages: 0,
     });
 
@@ -120,7 +120,7 @@ async fn get_monthly_growth(_db: &Db) -> Result<MonthlyGrowth, sqlx::Error> {
     // 这里应该计算本月相比上月的增长
     // 目前返回模拟数据
     Ok(MonthlyGrowth {
-        devices: 12,
+        things: 12,
         messages: 350,
     })
 }

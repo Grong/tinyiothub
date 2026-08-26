@@ -21,7 +21,7 @@ impl From<DeviceCommandRow> for DeviceCommand {
     fn from(row: DeviceCommandRow) -> Self {
         Self {
             id: row.id,
-            device_id: row.device_id,
+            thing_id: row.device_id,
             name: row.name,
             display_name: row.display_name,
             description: row.description,
@@ -66,7 +66,7 @@ pub(crate) async fn create_device_command(
         "#,
     )
     .bind(&id)
-    .bind(&request.device_id)
+    .bind(&request.thing_id)
     .bind(&request.name)
     .bind(&request.display_name)
     .bind(&request.description)
@@ -79,7 +79,7 @@ pub(crate) async fn create_device_command(
 
     Ok(DeviceCommand {
         id,
-        device_id: request.device_id.clone(),
+        thing_id: request.thing_id.clone(),
         name: request.name.clone(),
         display_name: request.display_name.clone(),
         description: request.description.clone(),
@@ -146,7 +146,7 @@ pub(crate) async fn bulk_create_device_commands(
             "#,
         )
         .bind(&id)
-        .bind(&request.device_id)
+        .bind(&request.thing_id)
         .bind(&request.name)
         .bind(&request.display_name)
         .bind(&request.description)
@@ -157,7 +157,7 @@ pub(crate) async fn bulk_create_device_commands(
 
         created_commands.push(DeviceCommand {
             id,
-            device_id: request.device_id.clone(),
+            thing_id: request.thing_id.clone(),
             name: request.name.clone(),
             display_name: request.display_name.clone(),
             description: request.description.clone(),

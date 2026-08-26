@@ -140,8 +140,8 @@ impl WorkspaceService {
         Ok(())
     }
 
-    pub async fn assign_device(&self, device_id: &str, workspace_id: &str) -> Result<()> {
-        self.db.assign_device_to_workspace(device_id, workspace_id).await
+    pub async fn assign_device(&self, thing_id: &str, workspace_id: &str) -> Result<()> {
+        self.db.assign_device_to_workspace(thing_id, workspace_id).await
     }
 
     pub async fn list_resources(

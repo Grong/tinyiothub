@@ -364,7 +364,7 @@ pub(crate) async fn insert_result(
     for action in &result.executed_actions {
         let content = serde_json::json!({
             "tool": action.tool_name,
-            "deviceId": action.device_id,
+            "deviceId": action.thing_id,
             "summary": action.details,
         });
         insert_action_row(
@@ -388,7 +388,7 @@ pub(crate) async fn insert_result(
             "proposalId": proposal_id,
             "status": proposal.status.to_string(),
             "toolName": proposal.tool_name,
-            "deviceId": proposal.device_id,
+            "deviceId": proposal.thing_id,
             "deviceName": "",
             "summary": proposal.summary,
             "reason": proposal.reason,
@@ -680,7 +680,7 @@ mod tests {
             task_count: 3,
             executed_actions: vec![ExecutedAction {
                 tool_name: "device_control".to_string(),
-                device_id: Some("dev_1".to_string()),
+                thing_id: Some("dev_1".to_string()),
                 success: true,
                 details: "restarted".to_string(),
             }],
@@ -689,7 +689,7 @@ mod tests {
                 workspace_id: "ws_1".to_string(),
                 agent_id: String::new(),
                 tool_name: "firmware_update".to_string(),
-                device_id: Some("dev_2".to_string()),
+                thing_id: Some("dev_2".to_string()),
                 summary: "update firmware".to_string(),
                 reason: "security patch".to_string(),
                 risk: "high".to_string(),
@@ -1048,7 +1048,7 @@ mod tick_id_tests {
             task_count: 1,
             executed_actions: vec![crate::heartbeat::ExecutedAction {
                 tool_name: "read_property".into(),
-                device_id: Some("d1".into()),
+                thing_id: Some("d1".into()),
                 success: true,
                 details: "read ok".into(),
             }],

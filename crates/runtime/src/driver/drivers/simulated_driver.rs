@@ -318,7 +318,7 @@ mod tests {
             protocol_type: Some("simulation".to_string()),
             properties: Some(vec![DeviceProperty {
                 id: "prop-temp".to_string(),
-                device_id: "test-device-temp".to_string(),
+                thing_id: "test-device-temp".to_string(),
                 name: "temperature".to_string(),
                 display_name: None,
                 description: None,
@@ -354,7 +354,7 @@ mod tests {
             properties: Some(vec![
                 DeviceProperty {
                     id: "prop-temp".to_string(),
-                    device_id: "test-device-multi".to_string(),
+                    thing_id: "test-device-multi".to_string(),
                     name: "temperature".to_string(),
                     display_name: None,
                     description: None,
@@ -371,7 +371,7 @@ mod tests {
                 },
                 DeviceProperty {
                     id: "prop-current".to_string(),
-                    device_id: "test-device-multi".to_string(),
+                    thing_id: "test-device-multi".to_string(),
                     name: "current".to_string(),
                     display_name: None,
                     description: None,
@@ -388,7 +388,7 @@ mod tests {
                 },
                 DeviceProperty {
                     id: "prop-power".to_string(),
-                    device_id: "test-device-multi".to_string(),
+                    thing_id: "test-device-multi".to_string(),
                     name: "power_status".to_string(),
                     display_name: None,
                     description: None,

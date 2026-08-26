@@ -74,7 +74,7 @@ fn dispatch_command(
         Some(data_server) => {
             let cmd = tinyiothub_core::models::device_command::DeviceCommand {
                 id: uuid::Uuid::new_v4().to_string(),
-                device_id: thing_id.to_string(),
+                thing_id: thing_id.to_string(),
                 name: action_name.to_string(),
                 display_name: None,
                 description: None,
@@ -405,7 +405,7 @@ mod tests {
 
     async fn seed_device(pool: &SqlitePool, workspace_id: &str, thing_id: &str, thing_type: &str) {
         seed_test_workspace(pool, "tenant-1", workspace_id).await;
-        sqlx::query("INSERT INTO devices (id, name, workspace_id, thing_type) VALUES (?, ?, ?, ?)")
+        sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES (?, ?, ?, ?)")
             .bind(thing_id)
             .bind(format!("Device {thing_id}"))
             .bind(workspace_id)
@@ -416,7 +416,7 @@ mod tests {
     }
 
     async fn register_action(pool: &SqlitePool, thing_id: &str, action_name: &str) {
-        sqlx::query("INSERT INTO thing_actions (id, device_id, name) VALUES (?, ?, ?)")
+        sqlx::query("INSERT INTO thing_actions (id, thing_id, name) VALUES (?, ?, ?)")
             .bind(format!("act-{action_name}-{thing_id}"))
             .bind(thing_id)
             .bind(action_name)
@@ -494,7 +494,7 @@ mod tests {
     }
 
     async fn agent_event_count(pool: &SqlitePool, thing_id: &str) -> i64 {
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM events WHERE device_id = ? AND actor = 'agent'")
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM events WHERE thing_id = ? AND actor = 'agent'")
             .bind(thing_id)
             .fetch_one(pool)
             .await
@@ -704,7 +704,7 @@ mod tests {
         // T6 hard handoff: the action's event is marked actor="agent".
         assert_eq!(agent_event_count(&fx.pool, "dev-1").await, 1);
         let (actor, subtype): (String, String) =
-            sqlx::query_as("SELECT actor, event_subtype FROM events WHERE device_id = 'dev-1' AND actor = 'agent'")
+            sqlx::query_as("SELECT actor, event_subtype FROM events WHERE thing_id = 'dev-1' AND actor = 'agent'")
                 .fetch_one(&fx.pool)
                 .await
                 .expect("agent event row");

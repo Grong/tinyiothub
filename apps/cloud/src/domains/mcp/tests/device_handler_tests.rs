@@ -87,7 +87,7 @@ async fn test_search_things_with_params() {
         }
     }
 
-    // Empty keyword is now allowed — returns all devices (same behavior as non-empty)
+    // Empty keyword is now allowed — returns all things (same behavior as non-empty)
     let result = handler.execute(json!({"keyword": ""})).await;
     match result {
         Ok(_) => {}

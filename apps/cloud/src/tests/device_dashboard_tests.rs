@@ -58,7 +58,7 @@ async fn test_get_quick_devices() {
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["code"], 0, "Expected success code");
-    assert!(json["result"].is_array(), "Expected array of quick devices");
+    assert!(json["result"].is_array(), "Expected array of quick things");
 }
 
 #[tokio::test]

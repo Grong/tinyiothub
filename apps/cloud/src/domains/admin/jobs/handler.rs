@@ -52,12 +52,12 @@ struct WorkspaceQuery {
 // ─── DTO mapping: legacy Job <-> CronJob ──────────────────────────────────
 
 fn map_cron_job_to_job(cj: CronJob) -> Job {
-    let mut target_device_id = None;
+    let mut target_thing_id = None;
     let mut target_command_name = None;
     let mut target_command_params = None;
 
     if cj.job_type == "device_command" {
-        target_device_id = cj.target_device_id();
+        target_thing_id = cj.target_thing_id();
         target_command_name = cj.target_command_name();
         target_command_params = cj.target_command_params();
     }
@@ -77,7 +77,7 @@ fn map_cron_job_to_job(cj: CronJob) -> Job {
         retry_count: cj.max_retries,
         retry_delay_seconds: 0,
         concurrency: 1,
-        target_device_id,
+        target_thing_id,
         target_command_name,
         target_command_params,
         is_enabled: cj.is_enabled,
@@ -106,8 +106,8 @@ fn map_create_request(req: &CreateJobRequest, workspace_id: &str) -> CreateCronJ
 
     let config = if job_type == "device_command" {
         let mut cfg = serde_json::Map::new();
-        if let Some(ref did) = req.target_device_id {
-            cfg.insert("device_id".to_string(), serde_json::Value::String(did.clone()));
+        if let Some(ref did) = req.target_thing_id {
+            cfg.insert("thing_id".to_string(), serde_json::Value::String(did.clone()));
         }
         if let Some(ref cn) = req.target_command_name {
             cfg.insert("command_name".to_string(), serde_json::Value::String(cn.clone()));
@@ -141,8 +141,8 @@ fn map_update_request(req: &UpdateJobRequest) -> UpdateCronJobRequest {
     let config = req.config.clone().or_else(|| {
         if job_type.as_deref() == Some("device_command") {
             let mut cfg = serde_json::Map::new();
-            if let Some(ref did) = req.target_device_id {
-                cfg.insert("device_id".to_string(), serde_json::Value::String(did.clone()));
+            if let Some(ref did) = req.target_thing_id {
+                cfg.insert("thing_id".to_string(), serde_json::Value::String(did.clone()));
             }
             if let Some(ref cn) = req.target_command_name {
                 cfg.insert("command_name".to_string(), serde_json::Value::String(cn.clone()));

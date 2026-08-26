@@ -415,7 +415,7 @@ impl ServiceManager {
             }
         }
 
-        tracing::debug!("Cache stats: {} devices cached", data_server.get_devices().len());
+        tracing::debug!("Cache stats: {} things cached", data_server.get_devices().len());
 
         Ok(())
     }

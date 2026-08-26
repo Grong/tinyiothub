@@ -35,10 +35,10 @@ impl CronJob {
         serde_json::from_str(&self.config).ok()
     }
 
-    /// Parse config JSON and return device_id if job_type == "device_command"
-    pub fn target_device_id(&self) -> Option<String> {
+    /// Parse config JSON and return thing_id if job_type == "device_command"
+    pub fn target_thing_id(&self) -> Option<String> {
         self.parsed_config()
-            .and_then(|v| v.get("device_id").and_then(|d| d.as_str()).map(String::from))
+            .and_then(|v| v.get("thing_id").and_then(|d| d.as_str()).map(String::from))
     }
 
     /// Return command_name from config if job_type == "device_command"
@@ -153,7 +153,7 @@ mod tests {
             description: None,
             job_type: "device_command".to_string(),
             cron_expression: "*/5 * * * *".to_string(),
-            config: r#"{"device_id":"dev-123","command_name":"restart","params":"{\"delay\":5}"}"#.to_string(),
+            config: r#"{"thing_id":"dev-123","command_name":"restart","params":"{\"delay\":5}"}"#.to_string(),
             timeout_seconds: 300,
             max_retries: 3,
             is_enabled: true,
@@ -171,7 +171,7 @@ mod tests {
             workspace_id: None,
         };
 
-        assert_eq!(job.target_device_id(), Some("dev-123".to_string()));
+        assert_eq!(job.target_thing_id(), Some("dev-123".to_string()));
         assert_eq!(job.target_command_name(), Some("restart".to_string()));
         assert_eq!(job.target_command_params(), Some(r#"{"delay":5}"#.to_string()));
     }
@@ -184,7 +184,7 @@ mod tests {
             description: None,
             job_type: "device_command".to_string(),
             cron_expression: "*/5 * * * *".to_string(),
-            config: r#"{"device_id":"dev-456","command_name":"set_config","params":{"delay":5,"mode":"fast"}}"#
+            config: r#"{"thing_id":"dev-456","command_name":"set_config","params":{"delay":5,"mode":"fast"}}"#
                 .to_string(),
             timeout_seconds: 300,
             max_retries: 3,
@@ -203,7 +203,7 @@ mod tests {
             workspace_id: None,
         };
 
-        assert_eq!(job.target_device_id(), Some("dev-456".to_string()));
+        assert_eq!(job.target_thing_id(), Some("dev-456".to_string()));
         assert_eq!(job.target_command_name(), Some("set_config".to_string()));
         assert_eq!(
             job.target_command_params(),
@@ -237,7 +237,7 @@ mod tests {
             workspace_id: None,
         };
 
-        assert_eq!(job.target_device_id(), None);
+        assert_eq!(job.target_thing_id(), None);
         assert_eq!(job.target_command_name(), None);
         assert_eq!(job.target_command_params(), None);
     }
@@ -268,7 +268,7 @@ mod tests {
             workspace_id: None,
         };
 
-        assert_eq!(job.target_device_id(), None);
+        assert_eq!(job.target_thing_id(), None);
         assert_eq!(job.target_command_name(), None);
         assert_eq!(job.target_command_params(), None);
     }

@@ -47,7 +47,7 @@ pub async fn get_quick_devices(
     _claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<Vec<QuickDevice>>> {
-    info!("Getting quick devices list with limit: {:?}", query.limit);
+    info!("Getting quick things list with limit: {:?}", query.limit);
 
     let limit = query.limit.unwrap_or(8);
     match state
@@ -55,9 +55,9 @@ pub async fn get_quick_devices(
         .get_quick_devices_list(limit, workspace_id.as_deref())
         .await
     {
-        Ok(devices) => ApiResponseBuilder::success(devices),
+        Ok(things) => ApiResponseBuilder::success(things),
         Err(e) => {
-            error!("Failed to get quick devices list: {}", e);
+            error!("Failed to get quick things list: {}", e);
             ApiResponseBuilder::error("获取关键设备列表失败")
         }
     }

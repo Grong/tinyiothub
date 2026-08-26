@@ -7,7 +7,7 @@ pub mod properties;
 pub mod trace;
 
 // Note: Tenant verification is now handled by TenantDeviceRepository adapter
-// which automatically filters devices by workspace_id. The adapter ensures
+// which automatically filters things by workspace_id. The adapter ensures
 // that all device queries are scoped to the current workspace, eliminating
 // the need for explicit tenant verification in API handlers.
 use axum::Router;

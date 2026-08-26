@@ -149,7 +149,7 @@ impl DataServer {
                         }
                     }
 
-                    for cmd in all_commands.iter().filter(|c| c.device_id == device_id) {
+                    for cmd in all_commands.iter().filter(|c| c.thing_id == device_id) {
                         let cmd_result = driver.execute_command(cmd);
                         let execution_time_ms = cmd_result.elapsed.as_millis() as u64;
                         if let Some(event) = Self::build_command_event(
@@ -319,7 +319,7 @@ impl DataServer {
     }
 
     pub fn execute_command(&self, cmd: DeviceCommand) -> Result<(), Error> {
-        if let Some(device) = self.device_cache.get(&cmd.device_id) {
+        if let Some(device) = self.device_cache.get(&cmd.thing_id) {
             let protocol = device.driver_name.unwrap_or_else(|| "unknown".to_string());
             self.command_queue.entry(protocol).or_default().push(cmd);
             Ok(())
@@ -417,7 +417,7 @@ impl EventHandler for DataServer {
     async fn handle(&self, event: &tinyiothub_core::models::event::Event) -> Result<(), Error> {
         use tinyiothub_core::models::event::{DeviceEventType, EventType};
 
-        let device_id = match event.source().device_id() {
+        let device_id = match event.source().thing_id() {
             Some(id) => id,
             None => return Ok(()),
         };

@@ -27,7 +27,7 @@ impl From<DevicePropertyRow> for DeviceProperty {
     fn from(row: DevicePropertyRow) -> Self {
         Self {
             id: row.id,
-            device_id: row.device_id,
+            thing_id: row.device_id,
             name: row.name,
             display_name: row.display_name,
             description: row.description,
@@ -116,7 +116,7 @@ pub(crate) async fn create_device_properties_batch(
             "#,
         )
         .bind(&id)
-        .bind(&request.device_id)
+        .bind(&request.thing_id)
         .bind(&request.name)
         .bind(&request.display_name)
         .bind(&request.description)

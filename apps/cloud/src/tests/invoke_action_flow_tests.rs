@@ -49,7 +49,7 @@ async fn create_thing(app: &axum::Router, token: &str, workspace_id: &str, name:
 }
 
 async fn register_action(pool: &sqlx::SqlitePool, thing_id: &str, action_name: &str) {
-    sqlx::query("INSERT INTO thing_actions (id, device_id, name, display_name) VALUES (?, ?, ?, ?)")
+    sqlx::query("INSERT INTO thing_actions (id, thing_id, name, display_name) VALUES (?, ?, ?, ?)")
         .bind(format!("act-{action_name}"))
         .bind(thing_id)
         .bind(action_name)

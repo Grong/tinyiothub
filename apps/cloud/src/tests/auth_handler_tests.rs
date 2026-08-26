@@ -64,7 +64,7 @@ async fn test_unauthorized_access_no_token() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/api/v1/devices")
+                .uri("/api/v1/things")
                 .header("Content-Type", "application/json")
                 .body(Body::empty())
                 .unwrap(),
@@ -92,7 +92,7 @@ async fn test_invalid_token() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/api/v1/devices")
+                .uri("/api/v1/things")
                 .header("Authorization", "Bearer invalid.jwt.token")
                 .header("Content-Type", "application/json")
                 .body(Body::empty())

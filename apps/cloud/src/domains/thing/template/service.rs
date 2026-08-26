@@ -68,7 +68,7 @@ impl TemplateEngine {
                 .display_name
                 .clone()
                 .or_else(|| self.apply_name_pattern(&device_info.default_display_name_pattern, user_input)),
-            device_type: Some(template.device_type.clone()),
+            category: Some(template.category.clone()),
             address: user_input.address.clone(),
             description: user_input.description.clone().or_else(|| {
                 device_info
@@ -197,7 +197,7 @@ impl TemplateEngine {
         &self,
         template: &DeviceTemplate,
         user_input: &DeviceCreationInput,
-        device_id: &str,
+        thing_id: &str,
     ) -> Result<Vec<CreateDevicePropertyRequest>, TemplateError> {
         let properties = template.get_properties().map_err(|e| TemplateError::JsonFormatError {
             message: format!("属性模板解析失败: {}", e),
@@ -214,7 +214,7 @@ impl TemplateEngine {
                 .or_else(|| property.default_value.clone());
 
             let device_property = CreateDevicePropertyRequest {
-                device_id: device_id.to_string(),
+                thing_id: thing_id.to_string(),
                 name: property.name.clone(),
                 display_name: Some(self.get_localized_display_name(&property.display_name, "zh")),
                 description: property
@@ -241,7 +241,7 @@ impl TemplateEngine {
         &self,
         template: &DeviceTemplate,
         user_input: &DeviceCreationInput,
-        device_id: &str,
+        thing_id: &str,
     ) -> Result<Vec<CreateDeviceCommandRequest>, TemplateError> {
         let commands = template.get_commands().map_err(|e| TemplateError::JsonFormatError {
             message: format!("命令模板解析失败: {}", e),
@@ -257,7 +257,7 @@ impl TemplateEngine {
 
             if is_enabled {
                 let device_command = CreateDeviceCommandRequest {
-                    device_id: device_id.to_string(),
+                    thing_id: thing_id.to_string(),
                     name: command.name.clone(),
                     display_name: Some(self.get_localized_display_name(&command.display_name, "zh")),
                     description: command
@@ -712,8 +712,8 @@ impl TemplateValidator {
             result.add_error("category", "模板分类不能为空", "REQUIRED_FIELD");
         }
 
-        if template.device_type.trim().is_empty() {
-            result.add_error("device_type", "设备类型不能为空", "REQUIRED_FIELD");
+        if template.category.trim().is_empty() {
+            result.add_error("category", "设备类型不能为空", "REQUIRED_FIELD");
         }
 
         if template.version.trim().is_empty() {

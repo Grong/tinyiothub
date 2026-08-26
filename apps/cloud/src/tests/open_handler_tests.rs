@@ -75,13 +75,13 @@ async fn setup_open_app_with_key(
     .await
     .unwrap();
 
-    sqlx::query("INSERT INTO devices (id, name, thing_type, workspace_id) VALUES ('dev-open', 'OpenDev', ?, ?)")
+    sqlx::query("INSERT INTO things (id, name, thing_type, workspace_id) VALUES ('dev-open', 'OpenDev', ?, ?)")
         .bind(thing_type)
         .bind(thing_workspace)
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO thing_actions (id, device_id, name, display_name) VALUES ('act-open', 'dev-open', 'reboot', '重启')")
+    sqlx::query("INSERT INTO thing_actions (id, thing_id, name, display_name) VALUES ('act-open', 'dev-open', 'reboot', '重启')")
         .execute(&pool)
         .await
         .unwrap();

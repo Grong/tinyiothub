@@ -67,7 +67,7 @@ pub enum HeartbeatStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutedAction {
     pub tool_name: String,
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub success: bool,
     pub details: String,
 }

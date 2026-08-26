@@ -14,7 +14,7 @@ use crate::state::AppState;
 // auth — 已迁移至 crates/auth（tinyiothub_auth）
 // batch — 已迁移至 modules/batch/handler.rs
 // chat — 已迁移至 modules/chat/handler/
-// devices — 已迁移至 modules/device/handler/
+// things — 已迁移至 modules/device/handler/
 // drivers — 已迁移至 modules/drivers/handler.rs
 // events — 已迁移至 modules/event/handler/
 // heartbeat — 已迁移至 modules/heartbeat/handler.rs

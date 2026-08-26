@@ -49,7 +49,7 @@ async fn test_get_device_online_status() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["code"], 0, "Expected success code");
     assert!(json["result"]["is_online"].is_boolean(), "Expected is_online boolean");
-    assert_eq!(json["result"]["device_id"], "some-device");
+    assert_eq!(json["result"]["thing_id"], "some-device");
 }
 
 // ============================================================================

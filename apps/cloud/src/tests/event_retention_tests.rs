@@ -2,7 +2,7 @@
 //!
 //! The events table mixes immutable occurrence rows (is_status=0 — log
 //! history, safe to time-purge) with mutable status rows (is_status=1 — the
-//! LIVE current-state of devices, never time-purged). Every test here exists
+//! LIVE current-state of things, never time-purged). Every test here exists
 //! to prove the purge paths respect that split.
 
 use chrono::{Duration, Utc};
@@ -31,7 +31,7 @@ async fn insert_event(pool: &sqlx::SqlitePool, id: &str, age_days: i64, is_statu
     let ts = (Utc::now() - Duration::days(age_days)).to_rfc3339();
     sqlx::query(
         "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, \
-         source_type, source_id, device_id, title, content, created_at, workspace_id, \
+         source_type, source_id, thing_id, title, content, created_at, workspace_id, \
          occurrence_count, acknowledged, is_status) \
          VALUES (?, 'device', ?, 3, ?, 'thing', 'thing/dev-1', 'dev-1', 't', '{}', ?, 'ws-1', 1, ?, ?)",
     )
@@ -85,7 +85,7 @@ fn retention_job(retention_days: i64) -> CronJob {
 async fn test_retention_executor_deletes_only_old_occurrence_rows() {
     let pool = test_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-1").await;
-    sqlx::query("INSERT INTO devices (id, name, workspace_id) VALUES ('dev-1', 'D1', 'ws-1')")
+    sqlx::query("INSERT INTO things (id, name, workspace_id) VALUES ('dev-1', 'D1', 'ws-1')")
         .execute(&pool)
         .await
         .unwrap();

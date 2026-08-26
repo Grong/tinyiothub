@@ -75,7 +75,7 @@ pub struct AgentMemory {
     pub tags: Vec<String>,
     pub pinned: bool,
     pub supersedes: Option<String>,
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub snapshot_data: Option<String>,
     pub snapshot_time: Option<i64>,
     pub effectiveness: f64,
@@ -96,7 +96,7 @@ pub struct MemoryInput {
     pub confidence: Confidence,
     pub tags: Vec<String>,
     pub supersedes: Option<String>,
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub snapshot_data: Option<String>,
     pub snapshot_time: Option<i64>,
 }
@@ -112,7 +112,7 @@ impl Default for MemoryInput {
             confidence: Confidence::Medium,
             tags: vec![],
             supersedes: None,
-            device_id: None,
+            thing_id: None,
             snapshot_data: None,
             snapshot_time: None,
         }
