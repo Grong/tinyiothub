@@ -92,10 +92,7 @@ fn device_command_job(device_id: &str, command_name: &str) -> CronJob {
         description: None,
         job_type: "device_command".to_string(),
         cron_expression: "0 0 * * * *".to_string(),
-        config: format!(
-            r#"{{"thing_id": "{}", "command_name": "{}"}}"#,
-            device_id, command_name
-        ),
+        config: format!(r#"{{"thing_id": "{}", "command_name": "{}"}}"#, device_id, command_name),
         timeout_seconds: 300,
         max_retries: 3,
         is_enabled: true,

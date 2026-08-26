@@ -797,11 +797,13 @@ async fn user_directive_runs_and_pushes_assistant_message() {
     // run 行与消息推送不是同一事务，满载并行调度下可能滞后——同样的 yield 轮询。
     let mut run_row = None;
     for _ in 0..20_000 {
-        let row: Option<(String, String)> = sqlx::query_as("SELECT trigger_type, outcome FROM agent_runs WHERE workspace_id = ? AND trigger_type = 'user'")
-            .bind(WS)
-            .fetch_optional(&fx.pool)
-            .await
-            .expect("query user run row");
+        let row: Option<(String, String)> = sqlx::query_as(
+            "SELECT trigger_type, outcome FROM agent_runs WHERE workspace_id = ? AND trigger_type = 'user'",
+        )
+        .bind(WS)
+        .fetch_optional(&fx.pool)
+        .await
+        .expect("query user run row");
         if row.is_some() {
             run_row = row;
             break;

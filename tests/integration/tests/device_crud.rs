@@ -29,12 +29,11 @@ async fn device_create_read_update_delete() {
     .unwrap();
 
     // READ
-    let row =
-        sqlx::query("SELECT id, name, category, protocol_type, state, workspace_id FROM things WHERE id = ?1")
-            .bind(&device_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let row = sqlx::query("SELECT id, name, category, protocol_type, state, workspace_id FROM things WHERE id = ?1")
+        .bind(&device_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
 
     assert_eq!(row.get::<String, _>("name"), "Test Sensor");
     assert_eq!(row.get::<String, _>("category"), "sensor");

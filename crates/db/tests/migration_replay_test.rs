@@ -56,11 +56,10 @@ async fn fresh_db_migrates_with_thing_model_tables() {
     let db = tinyiothub_storage::Db::new(pool.clone());
     tinyiothub_storage::seed::seed_system(&db).await.expect("seed_system");
     tinyiothub_storage::seed::seed_demo(&db).await.expect("seed_demo");
-    let env01_props: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM thing_properties WHERE thing_id = 'device-env-01'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let env01_props: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_properties WHERE thing_id = 'device-env-01'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(env01_props, 5, "env01 must have its 5 seed properties");
 
     // Idempotency: re-running migrations on the migrated DB is a no-op.

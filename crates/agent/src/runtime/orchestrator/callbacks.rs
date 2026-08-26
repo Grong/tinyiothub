@@ -56,11 +56,7 @@ impl HeartbeatBridge {
     /// problem_key：结构化字段 `{tool_name}:{device_id}`；无目标设备的提案
     /// 用 "-" 占位（稳定，不随措辞变化）。
     pub fn problem_key_of(proposal: &Proposal) -> String {
-        format!(
-            "{}:{}",
-            proposal.tool_name,
-            proposal.thing_id.as_deref().unwrap_or("-")
-        )
+        format!("{}:{}", proposal.tool_name, proposal.thing_id.as_deref().unwrap_or("-"))
     }
 
     /// O11 ack 抑制入口（Task 6，fix round 1 行级保真）：cloud 侧 ack 端点

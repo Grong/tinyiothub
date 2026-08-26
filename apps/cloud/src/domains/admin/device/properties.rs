@@ -26,10 +26,7 @@ where
 {
     Router::new()
         .route("/{thing_id}/properties", get(get_device_properties))
-        .route(
-            "/{thing_id}/properties/{property_id}/value",
-            put(update_property_value),
-        )
+        .route("/{thing_id}/properties/{property_id}/value", put(update_property_value))
         .route(
             "/by-name/{device_name}/properties/{property_name}",
             get(get_device_property_by_name),

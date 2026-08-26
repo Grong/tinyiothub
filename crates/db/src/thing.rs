@@ -221,7 +221,11 @@ pub(crate) async fn find_thing_by_id_scoped(
 
 /// Workspace-scoped delete (eng-review T1): refuses to delete another
 /// workspace's thing.
-pub(crate) async fn delete_thing_scoped(pool: &SqlitePool, id: &str, workspace_id: &str) -> std::result::Result<u64, sqlx::Error> {
+pub(crate) async fn delete_thing_scoped(
+    pool: &SqlitePool,
+    id: &str,
+    workspace_id: &str,
+) -> std::result::Result<u64, sqlx::Error> {
     let result = sqlx::query("DELETE FROM things WHERE id = ? AND workspace_id = ?")
         .bind(id)
         .bind(workspace_id)
@@ -293,7 +297,10 @@ fn push_where_clauses(builder: &mut QueryBuilder<sqlx::Sqlite>, params: &ListThi
 }
 
 /// Single thing by id.
-pub(crate) async fn find_thing_by_id(pool: &SqlitePool, id: &str) -> std::result::Result<Option<ThingRow>, sqlx::Error> {
+pub(crate) async fn find_thing_by_id(
+    pool: &SqlitePool,
+    id: &str,
+) -> std::result::Result<Option<ThingRow>, sqlx::Error> {
     sqlx::query_as::<_, ThingRow>("SELECT * FROM things WHERE id = ?")
         .bind(id)
         .fetch_optional(pool)
@@ -623,7 +630,10 @@ pub(crate) async fn get_thing_breadcrumbs(
 }
 
 /// Mark subtree summary_status='dirty' for all descendants of root_id.
-pub(crate) async fn mark_thing_subtree_dirty(pool: &SqlitePool, root_id: &str) -> std::result::Result<u64, sqlx::Error> {
+pub(crate) async fn mark_thing_subtree_dirty(
+    pool: &SqlitePool,
+    root_id: &str,
+) -> std::result::Result<u64, sqlx::Error> {
     let result = sqlx::query(
         "WITH RECURSIVE subtree AS ( \
              SELECT id FROM things WHERE id = ? \
@@ -645,13 +655,12 @@ pub(crate) async fn detach_thing_resource(
     resource_id: &str,
     workspace_id: &str,
 ) -> std::result::Result<u64, sqlx::Error> {
-    let result =
-        sqlx::query("UPDATE resources SET thing_id = NULL WHERE id = ? AND thing_id = ? AND workspace_id = ?")
-            .bind(resource_id)
-            .bind(thing_id)
-            .bind(workspace_id)
-            .execute(pool)
-            .await?;
+    let result = sqlx::query("UPDATE resources SET thing_id = NULL WHERE id = ? AND thing_id = ? AND workspace_id = ?")
+        .bind(resource_id)
+        .bind(thing_id)
+        .bind(workspace_id)
+        .execute(pool)
+        .await?;
     Ok(result.rows_affected())
 }
 
@@ -749,7 +758,10 @@ pub(crate) async fn list_thing_recent_events(
 // ──────────────────────────────────────────────
 
 /// Mark a thing's summary dirty (resource attach/detach/update trigger).
-pub(crate) async fn mark_thing_summary_dirty(pool: &SqlitePool, thing_id: &str) -> std::result::Result<(), sqlx::Error> {
+pub(crate) async fn mark_thing_summary_dirty(
+    pool: &SqlitePool,
+    thing_id: &str,
+) -> std::result::Result<(), sqlx::Error> {
     sqlx::query("UPDATE things SET summary_status = 'dirty' WHERE id = ?")
         .bind(thing_id)
         .execute(pool)
@@ -769,7 +781,10 @@ pub(crate) async fn get_thing_summary_state(
 }
 
 /// Read the cached ontology summary for a thing.
-pub(crate) async fn get_thing_summary(pool: &SqlitePool, thing_id: &str) -> std::result::Result<Option<String>, sqlx::Error> {
+pub(crate) async fn get_thing_summary(
+    pool: &SqlitePool,
+    thing_id: &str,
+) -> std::result::Result<Option<String>, sqlx::Error> {
     let row: Option<(Option<String>,)> = sqlx::query_as("SELECT ontology_summary FROM things WHERE id = ?")
         .bind(thing_id)
         .fetch_optional(pool)
@@ -778,7 +793,11 @@ pub(crate) async fn get_thing_summary(pool: &SqlitePool, thing_id: &str) -> std:
 }
 
 /// Persist a computed summary and mark status 'ok'.
-pub(crate) async fn save_thing_summary(pool: &SqlitePool, thing_id: &str, text: &str) -> std::result::Result<(), sqlx::Error> {
+pub(crate) async fn save_thing_summary(
+    pool: &SqlitePool,
+    thing_id: &str,
+    text: &str,
+) -> std::result::Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE things SET ontology_summary = ?, summary_status = 'ok', \
                      updated_at = datetime('now') WHERE id = ?",
@@ -791,7 +810,10 @@ pub(crate) async fn save_thing_summary(pool: &SqlitePool, thing_id: &str, text: 
 }
 
 /// Mark summary status 'failed' (keep cached summary).
-pub(crate) async fn mark_thing_summary_failed(pool: &SqlitePool, thing_id: &str) -> std::result::Result<(), sqlx::Error> {
+pub(crate) async fn mark_thing_summary_failed(
+    pool: &SqlitePool,
+    thing_id: &str,
+) -> std::result::Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE things SET summary_status = 'failed', \
                      updated_at = datetime('now') WHERE id = ?",
@@ -814,7 +836,10 @@ pub(crate) async fn find_thing_name_and_type(
 }
 
 /// Breadcrumb names from root to this thing (recursive CTE, depth cap 10).
-pub(crate) async fn get_thing_breadcrumb_names(pool: &SqlitePool, thing_id: &str) -> std::result::Result<Vec<String>, sqlx::Error> {
+pub(crate) async fn get_thing_breadcrumb_names(
+    pool: &SqlitePool,
+    thing_id: &str,
+) -> std::result::Result<Vec<String>, sqlx::Error> {
     let rows: Vec<(String,)> = sqlx::query_as(
         "WITH RECURSIVE ancestors AS (
             SELECT id, name, parent_id, 0 AS depth FROM things WHERE id = ?
@@ -832,7 +857,10 @@ pub(crate) async fn get_thing_breadcrumb_names(pool: &SqlitePool, thing_id: &str
 }
 
 /// Property names of a thing (model definition input).
-pub(crate) async fn list_thing_property_names(pool: &SqlitePool, thing_id: &str) -> std::result::Result<Vec<String>, sqlx::Error> {
+pub(crate) async fn list_thing_property_names(
+    pool: &SqlitePool,
+    thing_id: &str,
+) -> std::result::Result<Vec<String>, sqlx::Error> {
     let rows: Vec<(String,)> = sqlx::query_as("SELECT name FROM thing_properties WHERE thing_id = ? ORDER BY name")
         .bind(thing_id)
         .fetch_all(pool)
@@ -841,7 +869,10 @@ pub(crate) async fn list_thing_property_names(pool: &SqlitePool, thing_id: &str)
 }
 
 /// Action names of a thing (model definition input).
-pub(crate) async fn list_thing_action_names(pool: &SqlitePool, thing_id: &str) -> std::result::Result<Vec<String>, sqlx::Error> {
+pub(crate) async fn list_thing_action_names(
+    pool: &SqlitePool,
+    thing_id: &str,
+) -> std::result::Result<Vec<String>, sqlx::Error> {
     let rows: Vec<(String,)> = sqlx::query_as("SELECT name FROM thing_actions WHERE thing_id = ? ORDER BY name")
         .bind(thing_id)
         .fetch_all(pool)
@@ -1017,7 +1048,11 @@ pub(crate) async fn search_thing_knowledge_docs(
 
 impl Db {
     /// Workspace-scoped thing 查询（严格 workspace 匹配）。
-    pub async fn find_thing_by_id_scoped(&self, id: &str, workspace_id: &str) -> std::result::Result<Option<ThingRow>, sqlx::Error> {
+    pub async fn find_thing_by_id_scoped(
+        &self,
+        id: &str,
+        workspace_id: &str,
+    ) -> std::result::Result<Option<ThingRow>, sqlx::Error> {
         find_thing_by_id_scoped(self.pool(), id, workspace_id).await
     }
 
@@ -1027,7 +1062,11 @@ impl Db {
     }
 
     /// Workspace-scoped 按名查询。
-    pub async fn find_thing_by_name(&self, workspace_id: &str, name: &str) -> std::result::Result<Option<ThingRow>, sqlx::Error> {
+    pub async fn find_thing_by_name(
+        &self,
+        workspace_id: &str,
+        name: &str,
+    ) -> std::result::Result<Option<ThingRow>, sqlx::Error> {
         find_thing_by_name(self.pool(), workspace_id, name).await
     }
 
@@ -1051,7 +1090,11 @@ impl Db {
     }
 
     /// 更新 thing 并返回更新后的行。
-    pub async fn update_thing(&self, id: &str, input: &UpdateThingRequest) -> std::result::Result<Option<ThingRow>, sqlx::Error> {
+    pub async fn update_thing(
+        &self,
+        id: &str,
+        input: &UpdateThingRequest,
+    ) -> std::result::Result<Option<ThingRow>, sqlx::Error> {
         update_thing(self.pool(), id, input).await
     }
 
@@ -1076,12 +1119,20 @@ impl Db {
     }
 
     /// 查询 thing 的面包屑（向上父链，最大深度 10）。
-    pub async fn get_thing_breadcrumb(&self, id: &str, max_depth: u32) -> std::result::Result<Vec<BreadcrumbNode>, sqlx::Error> {
+    pub async fn get_thing_breadcrumb(
+        &self,
+        id: &str,
+        max_depth: u32,
+    ) -> std::result::Result<Vec<BreadcrumbNode>, sqlx::Error> {
         get_thing_breadcrumb(self.pool(), id, max_depth).await
     }
 
     /// 环检测：candidate_parent 的祖先链上是否含 thing。
-    pub async fn check_thing_cycle(&self, thing_id: &str, candidate_parent_id: &str) -> std::result::Result<bool, sqlx::Error> {
+    pub async fn check_thing_cycle(
+        &self,
+        thing_id: &str,
+        candidate_parent_id: &str,
+    ) -> std::result::Result<bool, sqlx::Error> {
         check_thing_cycle(self.pool(), thing_id, candidate_parent_id).await
     }
 
@@ -1139,7 +1190,10 @@ impl Db {
     }
 
     /// 列出未挂载的 resources。
-    pub async fn list_unassigned_thing_resources(&self, workspace_id: &str) -> std::result::Result<Vec<ThingResource>, sqlx::Error> {
+    pub async fn list_unassigned_thing_resources(
+        &self,
+        workspace_id: &str,
+    ) -> std::result::Result<Vec<ThingResource>, sqlx::Error> {
         list_unassigned_thing_resources(self.pool(), workspace_id).await
     }
 
@@ -1152,12 +1206,20 @@ impl Db {
     }
 
     /// Thing 挂载的知识文档（新的在前）。
-    pub async fn list_thing_knowledge_docs(&self, thing_id: &str, limit: i64) -> std::result::Result<Vec<DocRow>, sqlx::Error> {
+    pub async fn list_thing_knowledge_docs(
+        &self,
+        thing_id: &str,
+        limit: i64,
+    ) -> std::result::Result<Vec<DocRow>, sqlx::Error> {
         list_thing_knowledge_docs(self.pool(), thing_id, limit).await
     }
 
     /// Thing 的最近事件（新的在前）。
-    pub async fn list_thing_recent_events(&self, thing_id: &str, limit: i64) -> std::result::Result<Vec<EventRow>, sqlx::Error> {
+    pub async fn list_thing_recent_events(
+        &self,
+        thing_id: &str,
+        limit: i64,
+    ) -> std::result::Result<Vec<EventRow>, sqlx::Error> {
         list_thing_recent_events(self.pool(), thing_id, limit).await
     }
 
@@ -1190,7 +1252,10 @@ impl Db {
     }
 
     /// 读取 thing 的 (name, thing_type)。
-    pub async fn find_thing_name_and_type(&self, thing_id: &str) -> std::result::Result<Option<(String, String)>, sqlx::Error> {
+    pub async fn find_thing_name_and_type(
+        &self,
+        thing_id: &str,
+    ) -> std::result::Result<Option<(String, String)>, sqlx::Error> {
         find_thing_name_and_type(self.pool(), thing_id).await
     }
 
@@ -1218,7 +1283,11 @@ impl Db {
     }
 
     /// 统计 thing_actions 中 device + name 匹配数。
-    pub async fn count_thing_action_by_name(&self, thing_id: &str, name: &str) -> std::result::Result<i64, sqlx::Error> {
+    pub async fn count_thing_action_by_name(
+        &self,
+        thing_id: &str,
+        name: &str,
+    ) -> std::result::Result<i64, sqlx::Error> {
         count_thing_action_by_name(self.pool(), thing_id, name).await
     }
 
