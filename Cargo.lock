@@ -74,6 +74,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent"
+version = "0.4.6"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "core",
+ "dashmap",
+ "hex",
+ "llm",
+ "parking_lot 0.12.5",
+ "policy",
+ "regex",
+ "runtime",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "skills",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "zeroclaw-api",
+ "zeroclawlabs",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -288,6 +317,20 @@ name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
+
+[[package]]
+name = "authn"
+version = "0.4.6"
+dependencies = [
+ "bcrypt",
+ "chrono",
+ "dashmap",
+ "hmac 0.12.1",
+ "jwt-simple",
+ "serde",
+ "sha2 0.10.9",
+ "uuid",
+]
 
 [[package]]
 name = "autocfg"
@@ -832,6 +875,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "core"
+version = "0.4.6"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1147,6 +1204,27 @@ name = "data-encoding"
 version = "2.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
+
+[[package]]
+name = "db"
+version = "0.4.6"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "chrono",
+ "core",
+ "cron 0.12.1",
+ "dashmap",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
 
 [[package]]
 name = "deltae"
@@ -2633,8 +2711,9 @@ dependencies = [
 
 [[package]]
 name = "integration-tests"
-version = "0.4.3"
+version = "0.4.6"
 dependencies = [
+ "db",
  "sqlx",
  "tinyiothub-cloud",
  "tokio",
@@ -2916,6 +2995,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 
 [[package]]
+name = "llm"
+version = "0.4.6"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "serde",
+]
+
+[[package]]
 name = "local-ip-address"
 version = "0.6.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2973,6 +3061,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d640282b302c0bb0a2a8e0233ead9035e3bed871f0b7e81fe4a1ec829765db44"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "macros"
+version = "0.4.6"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_json",
+ "serde_qs",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -3038,6 +3137,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "memory"
+version = "0.4.6"
+dependencies = [
+ "agent",
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "core",
+ "dashmap",
+ "db",
+ "llm",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3756,6 +3873,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
+name = "plugin-sdk"
+version = "0.4.6"
+dependencies = [
+ "chrono",
+ "core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3766,6 +3895,19 @@ dependencies = [
  "fdeflate",
  "flate2",
  "miniz_oxide",
+]
+
+[[package]]
+name = "policy"
+version = "0.4.6"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "core",
+ "serde",
+ "serde_json",
+ "skills",
+ "tokio",
 ]
 
 [[package]]
@@ -4550,6 +4692,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "runtime"
+version = "0.4.6"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "chrono",
+ "core",
+ "dashmap",
+ "futures-util",
+ "libloading",
+ "macros",
+ "moka",
+ "parking_lot 0.12.5",
+ "plugin-sdk",
+ "rand 0.8.6",
+ "regex",
+ "serde",
+ "serde_json",
+ "serialport",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "rusqlite"
 version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4732,6 +4899,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91c1b7e4904c873ef0710c1f407dde2e6287de2bebc1bbbf7d430bb7cbffd939"
 dependencies = [
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "scheduler"
+version = "0.4.6"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "core",
+ "cron 0.12.1",
+ "db",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-cron-scheduler",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -5104,6 +5288,18 @@ name = "siphasher"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2aa850e253778c88a04c3d7323b043aeda9d3e30d5971937c1855769763678e"
+
+[[package]]
+name = "skills"
+version = "0.4.6"
+dependencies = [
+ "async-trait",
+ "core",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "uuid",
+]
 
 [[package]]
 name = "slab"
@@ -5755,46 +5951,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "tinyiothub-ai"
-version = "0.4.3"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "dashmap",
- "mockall",
- "parking_lot 0.12.5",
- "regex",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 1.0.69",
- "tinyiothub-core",
- "tinyiothub-runtime",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
- "zeroclaw-api",
- "zeroclawlabs",
-]
-
-[[package]]
 name = "tinyiothub-cli"
-version = "0.4.3"
+version = "0.4.6"
 dependencies = [
- "tinyiothub-core",
- "tinyiothub-runtime",
+ "core",
+ "runtime",
 ]
 
 [[package]]
 name = "tinyiothub-cloud"
-version = "0.4.3"
+version = "0.4.6"
 dependencies = [
  "aes-gcm",
+ "agent",
  "anyhow",
  "async-stream",
  "async-trait",
+ "authn",
  "axum",
  "backoff",
  "base64 0.21.7",
@@ -5802,9 +5975,12 @@ dependencies = [
  "bytes",
  "chrono",
  "config",
+ "core",
  "cron 0.12.1",
  "dashmap",
+ "db",
  "elsa",
+ "fs2",
  "futures",
  "futures-util",
  "headers",
@@ -5815,37 +5991,35 @@ dependencies = [
  "influxdb2",
  "jwt-simple",
  "libloading",
+ "llm",
+ "macros",
+ "memory",
  "mockall",
  "moka",
  "num_cpus",
  "parking_lot 0.12.5",
+ "plugin-sdk",
+ "policy",
  "proptest",
  "rand 0.8.6",
  "redis",
  "regex",
  "reqwest 0.12.28",
  "rumqttc 0.24.0",
+ "runtime",
+ "scheduler",
  "serde",
  "serde_json",
  "serialport",
  "sha1",
  "sha2 0.10.9",
+ "skills",
  "smallvec",
  "sqlx",
  "subtle",
  "sysinfo",
  "tempfile",
  "thiserror 1.0.69",
- "tinyiothub-ai",
- "tinyiothub-config",
- "tinyiothub-core",
- "tinyiothub-macros",
- "tinyiothub-marketplace",
- "tinyiothub-memory",
- "tinyiothub-plugin-sdk",
- "tinyiothub-runtime",
- "tinyiothub-storage",
- "tinyiothub-web",
  "tokio",
  "tokio-cron-scheduler",
  "tokio-postgres",
@@ -5861,94 +6035,26 @@ dependencies = [
  "urlencoding",
  "uuid",
  "validator",
+ "web",
  "zeroclaw-api",
  "zeroclawlabs",
 ]
 
 [[package]]
-name = "tinyiothub-config"
-version = "0.4.3"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "tinyiothub-core"
-version = "0.4.3"
-dependencies = [
- "async-trait",
- "chrono",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tinyiothub-error",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "tinyiothub-driver-bacnet"
-version = "0.4.3"
-dependencies = [
- "tinyiothub-plugin",
-]
-
-[[package]]
-name = "tinyiothub-driver-modbus"
-version = "0.4.3"
-dependencies = [
- "tinyiothub-plugin",
-]
-
-[[package]]
-name = "tinyiothub-driver-mqtt"
-version = "0.4.3"
-dependencies = [
- "tinyiothub-plugin",
-]
-
-[[package]]
-name = "tinyiothub-driver-mqtt-bridge"
-version = "0.4.3"
-dependencies = [
- "tinyiothub-plugin",
-]
-
-[[package]]
-name = "tinyiothub-driver-onvif"
-version = "0.4.3"
-dependencies = [
- "tinyiothub-plugin",
-]
-
-[[package]]
-name = "tinyiothub-driver-opcua"
-version = "0.4.3"
-dependencies = [
- "tinyiothub-plugin",
-]
-
-[[package]]
-name = "tinyiothub-driver-snmp"
-version = "0.4.3"
-dependencies = [
- "tinyiothub-plugin",
-]
-
-[[package]]
 name = "tinyiothub-edge"
-version = "0.4.3"
+version = "0.4.6"
 dependencies = [
  "axum",
  "chrono",
+ "core",
+ "db",
  "hostname",
  "libloading",
  "local-ip-address",
  "mac_address",
  "rand 0.8.6",
  "rumqttc 0.24.0",
+ "runtime",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -5956,43 +6062,17 @@ dependencies = [
  "sqlx",
  "tempfile",
  "thiserror 1.0.69",
- "tinyiothub-core",
- "tinyiothub-error",
- "tinyiothub-plugin",
- "tinyiothub-runtime",
- "tinyiothub-storage",
- "tinyiothub-web",
  "tokio",
  "tower",
  "tracing",
  "tracing-subscriber",
  "uuid",
-]
-
-[[package]]
-name = "tinyiothub-error"
-version = "0.4.3"
-dependencies = [
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "tinyiothub-macros"
-version = "0.4.3"
-dependencies = [
- "proc-macro2",
- "quote",
- "serde_json",
- "serde_qs",
- "syn 1.0.109",
+ "web",
 ]
 
 [[package]]
 name = "tinyiothub-marketplace"
-version = "0.4.3"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "axum",
@@ -6005,115 +6085,13 @@ dependencies = [
  "sled",
  "tempfile",
  "thiserror 1.0.69",
- "tinyiothub-web",
  "tokio",
  "tower",
  "tower-http",
  "tracing",
  "tracing-subscriber",
  "uuid",
-]
-
-[[package]]
-name = "tinyiothub-memory"
-version = "0.4.3"
-dependencies = [
- "async-trait",
- "chrono",
- "serde",
- "serde_json",
- "sqlx",
- "tinyiothub-core",
- "tinyiothub-storage",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "tinyiothub-plugin"
-version = "0.4.3"
-dependencies = [
- "libloading",
- "tinyiothub-core",
-]
-
-[[package]]
-name = "tinyiothub-plugin-sdk"
-version = "0.4.3"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "tinyiothub-core",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "tinyiothub-runtime"
-version = "0.4.3"
-dependencies = [
- "arc-swap",
- "async-trait",
- "chrono",
- "dashmap",
- "futures-util",
- "libloading",
- "moka",
- "parking_lot 0.12.5",
- "rand 0.8.6",
- "regex",
- "serde",
- "serde_json",
- "serialport",
- "thiserror 1.0.69",
- "tinyiothub-core",
- "tinyiothub-macros",
- "tinyiothub-plugin-sdk",
- "tinyiothub-storage",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "tinyiothub-storage"
-version = "0.4.3"
-dependencies = [
- "arc-swap",
- "async-trait",
- "chrono",
- "cron 0.12.1",
- "dashmap",
- "rand 0.8.6",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "sqlx",
- "tinyiothub-core",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "tinyiothub-web"
-version = "0.4.3"
-dependencies = [
- "async-trait",
- "axum",
- "chrono",
- "headers",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tinyiothub-core",
- "tinyiothub-runtime",
- "tinyiothub-storage",
- "tokio",
- "tower",
- "tower-http",
- "tracing",
+ "web",
 ]
 
 [[package]]
@@ -6318,6 +6296,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]
@@ -7020,6 +6999,25 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap",
  "semver",
+]
+
+[[package]]
+name = "web"
+version = "0.4.6"
+dependencies = [
+ "async-trait",
+ "authn",
+ "axum",
+ "chrono",
+ "headers",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tracing",
 ]
 
 [[package]]

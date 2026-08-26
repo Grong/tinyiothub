@@ -25,12 +25,12 @@ pnpm dev
 
 ## Architecture
 
-Read `CLAUDE.md` before writing code. Key rules:
+Read `AGENTS.md` before writing code. Key rules:
 
-- **Dependency direction**: `cloud/edge → runtime → core ← storage` (one-way, irreversible)
+- **Dependency direction**: `apps/* → crates/* → core` (one-way, irreversible)
 - **Module structure**: `types.rs → service.rs → handler/` (no `dto.rs`, no `application/`)
-- **API responses**: Always use `ApiResponseBuilder` from `tinyiothub-web`
-- **Database access**: Through Repository pattern in `cloud/src/shared/persistence/`
+- **API responses**: Always use `ApiResponseBuilder` from `tinyiothub_web`
+- **Database access**: Through the `Db` facade in `crates/db/` (`state.db.*` — all SQL lives in `crates/db`, CI-enforced)
 - **No direct SQL** in handlers
 
 ## Branch Strategy
@@ -73,7 +73,7 @@ pnpm build
 ## Testing
 
 - **Unit tests**: Add `#[cfg(test)] mod tests` in the same file
-- **Integration tests**: Add to `cloud/src/tests/`
+- **Integration tests**: Add to `apps/cloud/src/tests/`
 - **Handler tests**: Use `tower::ServiceExt::oneshot()` with `setup_test_app()`
 
 ## Security

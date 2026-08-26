@@ -1,0 +1,56 @@
+[package]
+name = "db"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Repository traits and SQLite persistence implementations"
+
+[lib]
+name = "tinyiothub_storage"
+
+# 角色:持久化能力库（buzz 模式：具体 struct、按域平铺，无 trait 倒置）
+# 禁止依赖:core 以外的任何 workspace crate;规则出处:G 系列计划 Task 7 (G8)
+[dependencies]
+thiserror = { workspace = true }
+core = { workspace = true, features = ["sqlx"] }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Database
+sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "chrono", "uuid", "migrate"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Collections
+ dashmap = { workspace = true }
+arc-swap = "1.9"
+
+# Utilities
+uuid = { workspace = true }
+async-trait = { workspace = true }
+
+# Scheduling
+cron = { workspace = true }
+
+# Crypto (for API key hashing in tenant repo)
+rand = { workspace = true }
+sha2 = { workspace = true }
+
+[features]
+# Fixture constructors in test_helpers (fixture_pool_with_db / fixture_pool_seeded).
+testing = []
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[lints]
+workspace = true

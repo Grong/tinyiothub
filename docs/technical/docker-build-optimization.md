@@ -10,28 +10,25 @@ Rust 项目的 Docker 构建通常很慢，主要原因：
 
 ### 1. 多阶段构建缓存
 
-Dockerfile 已优化为两步构建：
+Dockerfile 采用 cargo-chef 实现依赖层缓存：
 
-**第一步：构建依赖（可缓存）**
+**第一步：生成依赖清单（planner）**
 ```dockerfile
-# 只复制 Cargo.toml 和 Cargo.lock
-COPY Cargo.toml Cargo.lock ./
-
-# 创建虚拟 main.rs
-RUN mkdir -p ./cloud/src && echo "fn main() {}" > ./cloud/src/main.rs
-
-# 构建依赖（这一层会被 Docker 缓存）
-RUN cargo build --release
+FROM rust:1.83-alpine AS planner
+RUN cargo install cargo-chef
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
 ```
 
-**第二步：构建项目代码**
+**第二步：构建依赖（可缓存）+ 构建项目代码**
 ```dockerfile
-# 复制实际源码
-COPY cloud/src ./cloud/src
-
-# 只重新编译项目代码（依赖已缓存）
-RUN rm -f ./target/release/deps/tinyiothub* && \
-    cargo build --release --bin tinyiothub
+FROM rust:1.83-alpine AS backend-builder
+COPY --from=planner /build/recipe.json recipe.json
+# 构建依赖（这一层会被 Docker 缓存）
+RUN cargo chef cook --release --recipe-path recipe.json
+# 复制实际源码，只重新编译项目代码
+COPY . .
+RUN cargo build --release --bin tinyiothub-cloud
 ```
 
 ### 2. 构建时间对比
@@ -84,9 +81,9 @@ ENV SCCACHE_DIR=/build/.sccache
 RUN cargo build --release
 ```
 
-### 使用 cargo-chef（可选）
+### 使用 cargo-chef
 
-对于更复杂的项目，可以使用 cargo-chef：
+项目根 Dockerfile 已采用 cargo-chef（见上文）。其核心原理：
 
 ```dockerfile
 FROM rust:1.83-alpine AS planner

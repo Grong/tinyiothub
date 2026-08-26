@@ -1,0 +1,44 @@
+pub mod spawn;
+pub mod trace_util;
+
+// Re-export commonly used utilities
+pub use spawn::{execute_or_spawn, spawn_safe, spawn_with_error_handling};
+
+/// Sanitize a user-provided identifier for use as a filename.
+/// Replaces path separator characters with underscores to prevent directory traversal.
+pub fn sanitize_filename(name: &str) -> String {
+    name.replace(['/', '\\', '\0'], "_")
+}
+
+// Note: trace_device macro is exported at crate root due to #[macro_export]
+
+/// Publish event with platform-specific handling
+///
+/// On HarmonyOS: publishes inline (blocking)
+/// On other platforms: spawns background task
+#[cfg(feature = "harmonyos")]
+pub async fn publish_event_safe(
+    event_bus: std::sync::Arc<tinyiothub_runtime::event_bus::EventBus>,
+    event: tinyiothub_core::models::event::Event,
+) {
+    // On HarmonyOS, publish inline
+    if let Err(e) = event_bus.publish(event).await {
+        tracing::error!("Failed to publish event: {}", e);
+    }
+}
+
+/// Publish event with platform-specific handling
+///
+/// On HarmonyOS: publishes inline (blocking)
+/// On other platforms: spawns background task
+#[cfg(not(feature = "harmonyos"))]
+pub async fn publish_event_safe(
+    event_bus: std::sync::Arc<tinyiothub_runtime::event_bus::EventBus>,
+    event: tinyiothub_core::models::event::Event,
+) {
+    tokio::spawn(async move {
+        if let Err(e) = event_bus.publish(event).await {
+            tracing::error!("Failed to publish event: {}", e);
+        }
+    });
+}

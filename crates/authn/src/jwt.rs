@@ -1,0 +1,529 @@
+//! JWT 机制：HS256 签发/校验 + HarmonyOS HMAC 变体。
+//! 构造注入（JwtService::new），零全局态（G2，替代原 OnceLock 设计）。
+//! G4：axum extractor 与黑名单查询迁出 —— extractor 住 crates/web，业务查询住 apps/cloud。
+
+use chrono::{Duration as ChronoDuration, Local};
+use hmac::{Hmac, Mac};
+use jwt_simple::prelude::*;
+use serde::{Deserialize, Serialize};
+use sha2::Sha256;
+
+type HmacSha256 = Hmac<Sha256>;
+
+/// 认证响应体（G4：自 crates/web 迁入，机制产物归属机制 crate）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AuthBody {
+    pub token: String,
+    pub token_type: String,
+    pub exp: i64,
+    pub expired: i64,
+}
+
+impl AuthBody {
+    pub fn new(access_token: String, exp: i64, exp_in: i64) -> Self {
+        Self {
+            token: access_token,
+            token_type: "Bearer".to_string(),
+            exp,
+            expired: exp_in,
+        }
+    }
+}
+
+/// JWT settings — constructor-injected, no globals (G2).
+#[derive(Debug, Clone)]
+pub struct JwtSettings {
+    pub secret: String,
+    pub harmonyos_enabled: bool,
+}
+
+/// JWT 机制服务：签发/校验。构造注入，零全局态。
+#[derive(Debug, Clone)]
+pub struct JwtService {
+    settings: JwtSettings,
+}
+
+impl JwtService {
+    /// Create from startup settings.
+    pub fn new(settings: JwtSettings) -> Self {
+        Self { settings }
+    }
+
+    fn jwt_settings(&self) -> &JwtSettings {
+        &self.settings
+    }
+}
+
+/// Cloud-specific JWT claims with tenant and workspace isolation
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Claims {
+    pub user_id: String,
+    pub token_id: String,
+    pub username: String,
+    pub tenant_id: String,
+    pub workspace_id: String,
+    /// Expiration timestamp (seconds since epoch), extracted from JWT validation
+    #[serde(skip_serializing)]
+    pub exp: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct AuthPayload {
+    pub id: String,
+    pub name: String,
+    pub tenant_id: String,
+    pub workspace_id: String,
+}
+
+impl JwtService {
+    // 获取 JWT 密钥的辅助函数 - 从启动时注册的 JWT 设置读取
+    fn get_jwt_key(&self) -> Result<HS256Key, String> {
+        let secret = self.jwt_settings().secret.clone();
+
+        // 验证密钥长度
+        if secret.len() < 32 {
+            return Err(format!(
+                "JWT secret is too short! Minimum 32 characters required, got {}",
+                secret.len()
+            ));
+        }
+
+        Ok(HS256Key::from_bytes(secret.as_bytes()))
+    }
+
+    // 检查是否在 HarmonyOS 环境
+    fn is_harmonyos(&self) -> bool {
+        self.jwt_settings().harmonyos_enabled
+    }
+
+    // ============================================================================
+    // HarmonyOS 专用：使用 HMAC-SHA256 的安全 token 实现
+    // ============================================================================
+
+    // 使用 HMAC-SHA256 计算消息认证码
+    fn hmac_sha256(message: &str, key: &str) -> String {
+        let mut mac = HmacSha256::new_from_slice(key.as_bytes()).expect("HMAC can take key of any size");
+        mac.update(message.as_bytes());
+        let result = mac.finalize();
+        // 返回十六进制编码的 HMAC
+        result.into_bytes().iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    // 简单的字符串编码（不使用 base64 库）
+    fn encode_simple(s: &str) -> String {
+        s.bytes().map(|b| format!("{:02x}", b)).collect::<String>()
+    }
+
+    // hex → 原始字节（签名/MAC 等任意字节序列；字符边界安全）
+    fn decode_hex(s: &str) -> Result<Vec<u8>, String> {
+        // CEO review T7 + security review：两处 panic 面——奇数长度越界，
+        // 以及多字节 UTF-8 的非字符边界切片（"0é0" 字节长为偶数但 é 跨
+        // 字节对）。一律按字节块解析：畸形输入只返回 Err。
+        if !s.len().is_multiple_of(2) {
+            return Err("Invalid encoding".to_string());
+        }
+        s.as_bytes()
+            .chunks(2)
+            .map(|pair| {
+                std::str::from_utf8(pair)
+                    .ok()
+                    .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+                    .ok_or_else(|| "Invalid encoding".to_string())
+            })
+            .collect()
+    }
+
+    // 简单的字符串解码
+    fn decode_simple(s: &str) -> Result<String, String> {
+        let bytes = Self::decode_hex(s)?;
+        String::from_utf8(bytes).map_err(|_| "Invalid UTF-8".to_string())
+    }
+
+    // HarmonyOS 专用：创建安全 token（使用 HMAC-SHA256）
+    fn create_harmonyos_token(
+        &self,
+        user_id: &str,
+        username: &str,
+        tenant_id: &str,
+        workspace_id: &str,
+    ) -> Result<String, String> {
+        let secret = self.jwt_settings().secret.clone();
+        let timestamp = Local::now().timestamp();
+        let random_suffix = timestamp % 1000000; // 使用时间戳作为随机数
+
+        // 构建数据部分：user_id:username:tenant_id:workspace_id:timestamp:random
+        let data = format!(
+            "{}:{}:{}:{}:{}:{}",
+            user_id, username, tenant_id, workspace_id, timestamp, random_suffix
+        );
+
+        // 计算 HMAC-SHA256 签名
+        let signature = Self::hmac_sha256(&data, &secret);
+
+        // 组合 token：data:signature (hex encoded)
+        let token_data = format!("{}:{}", data, signature);
+        let token = Self::encode_simple(&token_data);
+
+        Ok(token)
+    }
+
+    // HarmonyOS 专用：验证安全 token（使用 HMAC-SHA256）
+    fn verify_harmonyos_token(&self, token: &str) -> Result<Claims, String> {
+        let secret = self.jwt_settings().secret.clone();
+
+        // 解码
+        let token_data = Self::decode_simple(token)?;
+
+        // 分割数据：
+        //   新格式(7部分): user_id:username:tenant_id:workspace_id:timestamp:random:signature
+        //   旧格式(6部分): user_id:username:tenant_id:timestamp:random:signature
+        let parts: Vec<&str> = token_data.split(':').collect();
+        let (user_id, username, tenant_id, workspace_id, timestamp_str, random_suffix, signature) = match parts.len() {
+            7 => (parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]),
+            6 => (parts[0], parts[1], parts[2], "", parts[3], parts[4], parts[5]),
+            _ => return Err("Invalid token format".to_string()),
+        };
+
+        let timestamp: i64 = timestamp_str.parse().map_err(|_| "Invalid timestamp".to_string())?;
+
+        // 验证 HMAC-SHA256 签名：常量时间比较（security review——`str !=`
+        // 首字节不同即早退，泄漏 MAC 前缀匹配的时序侧信道）。签名是 MAC
+        // 字节的 hex 编码，解码后经 hmac crate 的 verify_slice 比较。
+        let data = if workspace_id.is_empty() {
+            format!("{}:{}:{}:{}:{}", user_id, username, tenant_id, timestamp, random_suffix)
+        } else {
+            format!(
+                "{}:{}:{}:{}:{}:{}",
+                user_id, username, tenant_id, workspace_id, timestamp, random_suffix
+            )
+        };
+        let signature_bytes = Self::decode_hex(signature).map_err(|_| "Invalid token signature".to_string())?;
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
+        mac.update(data.as_bytes());
+        mac.verify_slice(&signature_bytes)
+            .map_err(|_| "Invalid token signature".to_string())?;
+
+        // 检查过期（24小时）
+        let now = Local::now().timestamp();
+        if now - timestamp > 86400 {
+            return Err("Token expired".to_string());
+        }
+
+        Ok(Claims {
+            user_id: user_id.to_string(),
+            token_id: timestamp.to_string(),
+            username: username.to_string(),
+            tenant_id: tenant_id.to_string(),
+            workspace_id: workspace_id.to_string(),
+            exp: Some(timestamp + 86400),
+        })
+    }
+
+    // 使用 jwt-simple 创建 JWT
+    pub fn create_jwt(&self, payload: AuthPayload) -> Result<AuthBody, String> {
+        let iat = Local::now();
+
+        // HarmonyOS: 使用不依赖加密库的安全 token
+        if self.is_harmonyos() {
+            let token =
+                self.create_harmonyos_token(&payload.id, &payload.name, &payload.tenant_id, &payload.workspace_id)?;
+            let jwt_exp_seconds = 86400; // 24小时
+            let exp = iat + ChronoDuration::seconds(jwt_exp_seconds);
+
+            return Ok(AuthBody::new(token, exp.timestamp(), jwt_exp_seconds));
+        }
+
+        // 标准 JWT 实现（非 HarmonyOS）
+        let token_id = uuid::Uuid::new_v4().to_string();
+
+        let jwt_exp_seconds = 60 * 60 * 24;
+        let exp = iat + ChronoDuration::seconds(jwt_exp_seconds);
+
+        let custom_claims = Claims {
+            user_id: payload.id.to_owned(),
+            token_id: token_id.clone(),
+            username: payload.name.clone(),
+            tenant_id: payload.tenant_id.clone(),
+            workspace_id: payload.workspace_id.clone(),
+            exp: None, // 不设置，让 jwt-simple 自动管理
+        };
+
+        // 获取 JWT 密钥
+        let key = self.get_jwt_key()?;
+
+        // 使用 jwt-simple 创建 token（exp 由 jwt-simple 自动添加）
+        let jwt_claims =
+            jwt_simple::claims::Claims::with_custom_claims(custom_claims, Duration::from_secs(jwt_exp_seconds as u64));
+
+        let token = key
+            .authenticate(jwt_claims)
+            .map_err(|e| format!("Token creation error: {}", e))?;
+
+        Ok(AuthBody::new(token, exp.timestamp(), jwt_exp_seconds))
+    }
+
+    // 使用 jwt-simple 验证 JWT
+    pub fn validate_jwt(&self, token: &str) -> Result<Claims, String> {
+        // HarmonyOS: 验证 HMAC-SHA256 token
+        if self.is_harmonyos() {
+            return self.verify_harmonyos_token(token);
+        }
+
+        // 标准 JWT 验证（非 HarmonyOS）
+        // 获取 JWT 密钥
+        let key = self.get_jwt_key()?;
+
+        let jwt_claims = key
+            .verify_token::<Claims>(token, None)
+            .map_err(|e| format!("JWT verification error: {}", e))?;
+
+        // 从 jwt-simple 的 JWTClaims 中提取过期时间
+        let exp = jwt_claims.expires_at.map(|d| d.as_secs() as i64);
+
+        Ok(Claims {
+            user_id: jwt_claims.custom.user_id,
+            token_id: jwt_claims.custom.token_id,
+            username: jwt_claims.custom.username,
+            tenant_id: jwt_claims.custom.tenant_id,
+            workspace_id: jwt_claims.custom.workspace_id,
+            exp,
+        })
+    }
+
+    // 生成 JWT token 的便捷函数
+    pub fn generate_token(
+        &self,
+        user_id: &str,
+        username: &str,
+        tenant_id: &str,
+        workspace_id: &str,
+    ) -> Result<String, String> {
+        let payload = AuthPayload {
+            id: user_id.to_string(),
+            name: username.to_string(),
+            tenant_id: tenant_id.to_string(),
+            workspace_id: workspace_id.to_string(),
+        };
+
+        let auth_body = self.create_jwt(payload)?;
+        Ok(auth_body.token)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! CEO review T7：jwt.rs 此前零测试——decode_simple 手写 hex 切分、
+    //! HarmonyOS 自定义 token 格式均为安全敏感路径，必须有 round-trip/篡改/过期覆盖。
+
+    use super::*;
+
+    const SECRET: &str = "test-secret-key-at-least-32-chars-long";
+
+    fn service(harmonyos: bool) -> JwtService {
+        JwtService::new(JwtSettings {
+            secret: SECRET.to_string(),
+            harmonyos_enabled: harmonyos,
+        })
+    }
+
+    fn payload() -> AuthPayload {
+        AuthPayload {
+            id: "user-1".to_string(),
+            name: "alice".to_string(),
+            tenant_id: "tenant-1".to_string(),
+            workspace_id: "ws-1".to_string(),
+        }
+    }
+
+    // ---- decode_simple / encode_simple ----
+
+    #[test]
+    fn simple_codec_round_trip_including_multibyte() {
+        for s in ["", "hello", "用户:工作区:1", "a:b:c:123:456"] {
+            let encoded = JwtService::encode_simple(s);
+            let decoded = JwtService::decode_simple(&encoded).expect("round trip");
+            assert_eq!(decoded, s);
+        }
+    }
+
+    #[test]
+    fn decode_simple_rejects_odd_length_without_panic() {
+        // 奇数长度曾是越界 panic（认证路径拒绝服务面）。
+        assert!(JwtService::decode_simple("abc").is_err());
+        assert!(JwtService::decode_simple("0").is_err());
+    }
+
+    #[test]
+    fn decode_simple_rejects_non_hex_and_invalid_utf8() {
+        assert!(JwtService::decode_simple("zz").is_err());
+        // 0xFF 不是合法 UTF-8 起始字节。
+        assert!(JwtService::decode_simple("ff").is_err());
+    }
+
+    // ---- 标准 JWT（jwt-simple）----
+
+    #[test]
+    fn standard_jwt_round_trip() {
+        let svc = service(false);
+        let body = svc.create_jwt(payload()).expect("create");
+        let claims = svc.validate_jwt(&body.token).expect("validate");
+        assert_eq!(claims.user_id, "user-1");
+        assert_eq!(claims.username, "alice");
+        assert_eq!(claims.tenant_id, "tenant-1");
+        assert_eq!(claims.workspace_id, "ws-1");
+        assert!(claims.exp.is_some());
+    }
+
+    #[test]
+    fn standard_jwt_rejects_tampered_token() {
+        let svc = service(false);
+        let mut token = svc
+            .generate_token("user-1", "alice", "tenant-1", "ws-1")
+            .expect("create");
+        // 翻转签名区一个字符。
+        let pos = token.len() - 3;
+        let replacement = if token.as_bytes()[pos] == b'a' { 'b' } else { 'a' };
+        token.replace_range(pos..pos + 1, &replacement.to_string());
+        assert!(svc.validate_jwt(&token).is_err());
+    }
+
+    #[test]
+    fn standard_jwt_rejects_wrong_secret() {
+        let svc = service(false);
+        let token = svc
+            .generate_token("user-1", "alice", "tenant-1", "ws-1")
+            .expect("create");
+        let other = JwtService::new(JwtSettings {
+            secret: "another-secret-key-at-least-32-chars".to_string(),
+            harmonyos_enabled: false,
+        });
+        assert!(other.validate_jwt(&token).is_err());
+    }
+
+    #[test]
+    fn short_secret_is_rejected() {
+        let svc = JwtService::new(JwtSettings {
+            secret: "too-short".to_string(),
+            harmonyos_enabled: false,
+        });
+        assert!(svc.create_jwt(payload()).is_err());
+    }
+
+    // ---- HarmonyOS token ----
+
+    #[test]
+    fn harmonyos_token_round_trip() {
+        let svc = service(true);
+        let token = svc
+            .generate_token("user-1", "alice", "tenant-1", "ws-1")
+            .expect("create");
+        let claims = svc.validate_jwt(&token).expect("validate");
+        assert_eq!(claims.user_id, "user-1");
+        assert_eq!(claims.username, "alice");
+        assert_eq!(claims.tenant_id, "tenant-1");
+        assert_eq!(claims.workspace_id, "ws-1");
+    }
+
+    #[test]
+    fn harmonyos_token_rejects_tampering() {
+        let svc = service(true);
+        let token = svc
+            .generate_token("user-1", "alice", "tenant-1", "ws-1")
+            .expect("create");
+        // 篡改数据区前几个 hex 字符（user_id 字段）。
+        let tampered = format!("{}{}", "00", &token[2..]);
+        assert!(svc.validate_jwt(&tampered).is_err());
+    }
+
+    #[test]
+    fn harmonyos_token_rejects_wrong_secret() {
+        let svc = service(true);
+        let token = svc
+            .generate_token("user-1", "alice", "tenant-1", "ws-1")
+            .expect("create");
+        let other = JwtService::new(JwtSettings {
+            secret: "another-secret-key-at-least-32-chars".to_string(),
+            harmonyos_enabled: true,
+        });
+        assert!(other.validate_jwt(&token).is_err());
+    }
+
+    #[test]
+    fn harmonyos_token_rejects_expired() {
+        let svc = service(true);
+        // 手工构造一个 25 小时前的 token（新 7 段格式）。
+        let old_ts = Local::now().timestamp() - 90_000;
+        let data = format!("user-1:alice:tenant-1:ws-1:{}:12345", old_ts);
+        let signature = JwtService::hmac_sha256(&data, SECRET);
+        let token = JwtService::encode_simple(&format!("{}:{}", data, signature));
+        let err = svc.validate_jwt(&token).expect_err("expired token must fail");
+        assert!(err.contains("expired"), "expected expiry error, got: {err}");
+    }
+
+    #[test]
+    fn harmonyos_token_accepts_legacy_6_part_format() {
+        let svc = service(true);
+        // 旧格式（无 workspace_id）：user:tenant:timestamp:random:signature。
+        let ts = Local::now().timestamp();
+        let data = format!("user-1:alice:tenant-1:{}:12345", ts);
+        let signature = JwtService::hmac_sha256(&data, SECRET);
+        let token = JwtService::encode_simple(&format!("{}:{}", data, signature));
+        let claims = svc.validate_jwt(&token).expect("legacy format must still validate");
+        assert_eq!(claims.user_id, "user-1");
+        assert_eq!(claims.workspace_id, "");
+    }
+
+    #[test]
+    fn harmonyos_token_rejects_malformed_without_panic() {
+        let svc = service(true);
+        assert!(svc.validate_jwt("not-a-token").is_err());
+        assert!(svc.validate_jwt("abc").is_err()); // 奇数长度 hex
+        assert!(svc.validate_jwt("").is_err());
+    }
+
+    /// Security review：多字节 UTF-8 跨字节对的输入（偶数字节长）曾在
+    /// `&s[i..i+2]` 非字符边界切片处 panic——奇数长度守卫不覆盖此形态。
+    #[test]
+    fn decode_simple_rejects_multibyte_char_boundaries_without_panic() {
+        assert!(JwtService::decode_simple("0é0").is_err()); // é 跨字节对
+        assert!(JwtService::decode_simple("00用0").is_err()); // 3 字节字符
+        assert!(JwtService::decode_simple("0e794a8").is_err()); // 奇数 + 多字节
+    }
+
+    /// Security review 补测：HarmonyOS token 拿到非 HarmonyOS 服务上必须
+    /// 失败（跨模式拒绝），反之标准 JWT 在 HarmonyOS 模式同样失败。
+    #[test]
+    fn cross_mode_tokens_are_rejected() {
+        let hs_token = service(true)
+            .generate_token("user-1", "alice", "tenant-1", "ws-1")
+            .expect("create harmonyos");
+        assert!(service(false).validate_jwt(&hs_token).is_err());
+
+        let std_token = service(false)
+            .generate_token("user-1", "alice", "tenant-1", "ws-1")
+            .expect("create standard");
+        assert!(service(true).validate_jwt(&std_token).is_err());
+    }
+
+    /// 标准 JWT 过期路径：有效期已被拨到过去的 token 必须校验失败。
+    #[test]
+    fn standard_jwt_rejects_expired() {
+        let svc = service(false);
+        let key = HS256Key::from_bytes(SECRET.as_bytes());
+        let mut claims = jwt_simple::claims::Claims::with_custom_claims(
+            Claims {
+                user_id: "user-1".to_string(),
+                token_id: "t".to_string(),
+                username: "alice".to_string(),
+                tenant_id: "tenant-1".to_string(),
+                workspace_id: "ws-1".to_string(),
+                exp: None,
+            },
+            Duration::from_secs(3600),
+        );
+        // 拨到 1 小时前（超出 jwt-simple 默认时间容差）。
+        claims.expires_at = claims.expires_at.map(|exp| exp - Duration::from_secs(7200));
+        let token = key.authenticate(claims).expect("create expired token");
+        assert!(svc.validate_jwt(&token).is_err());
+    }
+}

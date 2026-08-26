@@ -366,6 +366,7 @@ src/styles/
     models.css      # Model marketplace, filter bars
     monitoring.css  # Metrics, health lists, stats grids
     devices.css     # Device cards, detail views, command lists
+    things.css      # Thing list/detail views (thing ontology UI)
     settings.css    # Settings tabs, API keys, skills panel
     alarms.css      # Alarm cards, alarm tables, summary widgets
     events.css      # Event list items

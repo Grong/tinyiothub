@@ -25,9 +25,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.95.0
           components: rustfmt, clippy
 
       - name: Cache cargo
@@ -96,14 +97,14 @@ jobs:
             echo "Checking: $file"
 
             # 1. 检查是否在 cloud/src/ 下创建了散弹式 utils/helpers
-            if echo "$file" | grep -qE "^cloud/src/utils.*\.rs$|^cloud/src/helpers.*\.rs$|^cloud/src/common.*\.rs$"; then
+            if echo "$file" | grep -qE "^apps/cloud/src/utils.*\.rs$|^apps/cloud/src/helpers.*\.rs$|^apps/cloud/src/common.*\.rs$"; then
               echo "❌ ARCHITECTURE VIOLATION: Cannot create scatter-shot utils/helpers: $file"
               echo "   ✅ Use shared/ or specific domain modules"
               exit 1
             fi
 
             # 2. 检查新 domain 文件是否有测试
-            if echo "$file" | grep -qE "^cloud/src/modules/.*\.rs$"; then
+            if echo "$file" | grep -qE "^(apps/cloud/src/domains|crates)/.*\.rs$"; then
               if ! grep -qE "#\[cfg\(test\)\]|#\[test\]" "$file" 2>/dev/null; then
                 echo "⚠️  WARNING: New module file has no tests: $file"
               fi
@@ -115,7 +116,7 @@ jobs:
         run: |
           echo "=== Checking ALL modified files for critical violations ==="
 
-          MODIFIED_HANDLERS=$(git diff --name-only origin/${{ github.base_ref || 'main' }}...HEAD | grep -E "^cloud/src/modules/.*/handler.*\.rs$" || true)
+          MODIFIED_HANDLERS=$(git diff --name-only origin/${{ github.base_ref || 'main' }}...HEAD | grep -E "^(apps/cloud/src/domains|crates)/.*/handler.*\.rs$" || true)
           if [ -n "$MODIFIED_HANDLERS" ]; then
             for file in $MODIFIED_HANDLERS; do
               if grep -qE "\.unwrap\(\)|\.expect\(\)" "$file" 2>/dev/null; then
@@ -123,6 +124,30 @@ jobs:
               fi
             done
           fi
+
+      - name: Domain Dependency Guard (G5)
+        run: |
+          echo "=== Checking thing/tenant domains carry no agent dependency edge ==="
+          # Pattern: whitespace-tolerant absolute path `domains :: agent`, plus
+          # `super::...agent` to catch relative paths reaching the agent domain.
+          if grep -rEn --include='*.rs' 'domains\s*::\s*agent|super::.*agent' apps/cloud/src/domains/thing apps/cloud/src/domains/tenant; then
+            echo "❌ DEPENDENCY VIOLATION: domains/thing and domains/tenant must not reference domains::agent"
+            echo "   ✅ Consume agent capabilities via the domain-owned hooks traits (G5a ThingActionHooks / G5b AgentHooks)"
+            exit 1
+          fi
+          echo "✅ Domain dependency guard passed"
+
+      - name: Agent Purity Guard (G9: source + tree + manifests)
+        run: bash scripts/guards/agent-purity.sh
+
+      - name: DB SQL Residence Guard (Task 13)
+        run: bash scripts/guards/sql-residence.sh
+
+      - name: Migration DDL-only Guard (Task 13)
+        run: bash scripts/guards/ddl-only.sh
+
+      - name: Guard Self-Test (deliberate violations must fire)
+        run: bash scripts/guards/selftest.sh
 
   # -----------------------------------------------------------------------------
   # 前端检查

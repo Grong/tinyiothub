@@ -1,0 +1,32 @@
+[package]
+name = "scheduler"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Cron engine and scheduler service for TinyIoTHub"
+
+[lib]
+name = "tinyiothub_scheduler"
+
+# 角色:cron 引擎（到期轮询 + 执行器注册表）
+# 禁止依赖:领域 crate、web（db 属基础设施，豁免）—— 任务经注入的执行器运行;规则出处:G 系列计划 Task 7 (G8)
+[dependencies]
+db = { workspace = true }
+core = { workspace = true }
+tokio = { workspace = true, features = ["process", "sync"] }
+tokio-cron-scheduler = { workspace = true }
+cron = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

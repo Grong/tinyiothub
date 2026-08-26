@@ -3,6 +3,23 @@
 > **最新完整 TODO 清单已迁移至:** `docs/superpowers/plans/2026-04-14-todo-audit-and-cleanup-plan.md`
 > 本文档保留 Edge Intelligence Agent 历史记录，新项目 TODO 请查阅上方计划。
 
+## Crates Reorg Review (from /plan-eng-review 2026-08-03)
+
+### P2 — unwrap/expect 治理（edge 与驱动加载路径优先）
+- **What:** 非测试代码 1078 处 `.unwrap()`/`.expect()` 分批治理，优先 `edge/` 与驱动加载路径（registry.rs/loader.rs）。
+- **Why:** 边缘设备上 panic = 现场宕机；开源后此密度会被安全审计派点名。错误类型（tinyiothub-error）已存在但形同虚设。
+- **Context:** 2026-08-03 统计（grep 非测试代码）。edge 场景优先，cloud handler 层可缓。与 crates 重组解耦，可随时进行。
+- **Effort:** L (human: ~1w / CC: ~1d 分批) | **Depends on:** —
+
+### P2 — 跟踪 sqlx 0.9 正式版，迁出 alpha 依赖
+- **What:** `Cargo.toml` workspace 依赖 `sqlx = "0.9.0-alpha.1"` → 0.9 正式版发布后迁移；或评估回退 0.8 stable。
+- **Why:** 生产+开源项目用 alpha 依赖，下游打包者（distro/Nix）直接放弃；alpha API 漂移风险随每次更新。
+- **Context:** 当前使用 features: runtime-tokio/sqlite/chrono/uuid/migrate。迁移前跑全量 db 测试。
+- **Effort:** M (human: ~1d / CC: ~1h) | **Depends on:** sqlx 0.9 GA
+
+### TODOS 维护注记（2026-08-03 核实）
+- "AI Subsystem → P1 — Wire DropNotifier + DeadLetterQueue" **已实际完成**：`apps/cloud/src/shared/service_manager.rs:151,235-236` 接线 LoggingDropNotifier + SqliteDeadLetterQueue（crates/agent/src/host/dlq_repo.rs）。条目过期，应归档。
+
 ## Thing Agent Loop — Deferred (from /plan-ceo-review 2026-07-29, spec v2 O1-O16)
 
 ### P3 — agent_runs 保留策略
@@ -45,7 +62,7 @@
 - **What:** HeartbeatRunner 的定时巡检改为 TimerTrigger 的一种配置，统一巡检语义。
 - **Why:** 消除心跳与 Thing Agent Loop 两套巡检并存（spec R4）；X6 已架桥，迁徙是自然后续。
 - **Context:** 心跳 runner 本期不动（O2 裁决仅加投递出口）；迁徙时保留 TrustEngine 适配路径。
-- **Effort:** M (human: ~2d / CC: ~2h) | **Depends on:** Thing Agent Loop 稳定运行一个迭代
+- **Effort:** M (human: ~2d / CC: ~2h) | **Depends on:** Thing Agent Loop 稳定运行一个迭代；重组 P4（2026-08-05 已完成：heartbeat 已归 crates/agent 与 crates/driver）
 
 ### P3 — POST /agent/tasks 前端面板
 - **What:** 管理 API `POST /api/workspaces/{id}/agent/tasks` 的前端入口（自治任务提交面板）。
@@ -65,22 +82,22 @@
 ### P1 — Wire DropNotifier + DeadLetterQueue
 - **What:** 实现 DropNotifier（至少 logging 级别）和 DeadLetterQueue（SQLite 存储），在 ServiceManager 中注入。
 - **Why:** 当前 AiEventPublisher 发布失败时事件静默丢失。retry_with_backoff 中的 DLQ 逻辑是死代码（dlq 始终为 None）。
-- **Files:** `cloud/src/shared/service_manager.rs:169-170`, `crates/tinyiothub-ai/src/event/bus.rs`, `crates/tinyiothub-ai/src/event/dlq.rs`
+- **Files:** `apps/cloud/src/shared/service_manager.rs:169-170`, `crates/agent/src/loop_/event/bus.rs`, `crates/agent/src/loop_/event/dlq.rs`
 - **Effort:** S (human: ~4h / CC: ~30min)
 
 ### P2 — ~~Wire TrustConfig DB loading~~（已失效，2026-07-29 核实删除）
-- **核实结果：** `crates/tinyiothub-ai/src/heartbeat/runner.rs:341-350` 经 `task_repo.load_trust_config` 从 `workspaces.heartbeat_trust_config` 列加载（heartbeat_repo.rs:167-180，含测试 :593-603）。DB 加载已接线，本条作废。
+- **核实结果：** `crates/agent/src/loop_/heartbeat/runner.rs:341-350` 经 `task_repo.load_trust_config` 从 `workspaces.heartbeat_trust_config` 列加载（heartbeat_repo.rs:167-180，含测试 :593-603）。DB 加载已接线，本条作废。
 
 ### P2 — Add dynamic task/config refresh to heartbeat loop (Outside Voice)
 - **What:** 运行中的心跳循环无法获取最新的任务列表或 TrustConfig。任务增删需完整 stop/restart。TrustConfig 更新对运行中的循环不生效。
 - **Why:** Outside Voice 发现的设计限制。当前 stop/restart 模式可工作但不够优雅。
-- **Files:** `crates/tinyiothub-ai/src/heartbeat/loop_.rs`, `runner.rs`
+- **Files:** `crates/agent/src/loop_/heartbeat/loop_.rs`, `runner.rs`
 - **Effort:** M (human: ~1d / CC: ~1h)
 
 ### P3 — Cache regex in extract_json
 - **What:** `report.rs:37` 的 `Regex::new` 每次调用重新编译，改为 `std::sync::LazyLock` 缓存。
 - **Why:** 微优化，心跳每 15min tick 一次，对性能无明显影响。纯粹代码质量改进。
-- **Files:** `crates/tinyiothub-ai/src/heartbeat/report.rs:37`
+- **Files:** `crates/agent/src/loop_/heartbeat/report.rs:37`
 - **Effort:** S (human: ~5min / CC: ~1min)
 
 ## AI Deep Review — Deferred (from /ship pre-landing review 2026-07-21)
@@ -89,34 +106,34 @@
 
 ### A3 — chat_history 不应向普通会话暴露 toolCalls
 - **What:** `chat_history` 返回的消息 JSON 携带 `toolCalls` 明细；评审建议对非管理端裁剪。
-- **Files:** `cloud/src/modules/agent/chat/history.rs`
+- **Files:** `crates/agent/src/host/chat/history.rs`
 
 ### S4 — trust config 端点缺角色校验
 - **What:** heartbeat trust 配置读写端点仅校验 workspace 归属，未区分 admin/member 角色。
-- **Files:** `cloud/src/modules/workspace/handler/heartbeat.rs`
+- **Files:** `crates/agent/src/host/handler/workspace_heartbeat.rs`
 
 ### P1 — json_extract 查询无表达式索引
 - **What:** `json_extract(content, '$.proposalId')` 查询走全表扫描；可加表达式索引或独立列。
-- **Files:** `cloud/src/modules/workspace/handler/heartbeat.rs`（approve/reject 查询）
+- **Files:** `crates/agent/src/host/handler/workspace_heartbeat.rs`（approve/reject 查询）
 
 ### P2 — get_or_create 缺 single-flight
 - **What:** AgentPool::get_or_create 并发下可能重复构建 agent（double-checked DashMap 已缓解但未完全消除）。
-- **Files:** `cloud/src/modules/agent/agent.rs`
+- **Files:** `crates/agent/src/host/agent.rs`
 
 ### A2 — abort 首事件前窗口
 - **What:** run_id 由首个 SSE 事件带回客户端；此前客户端无法 abort 该 run。
-- **Files:** `cloud/src/modules/chat/handler/proxy.rs`
+- **Files:** `crates/agent/src/chat/handler/proxy.rs`
 
 ### A5 — 部署历史重置说明
 - **What:** agent deploy 后历史上下文重置的行为需在 API 文档/前端明示。
 
 ### M2–M6 — 重复代码与魔法常量
 - **What:** 三个 PendingProposal 前端接口重复（DRY）；审批状态/优先级等字符串常量散落多处；部分 handler 错误消息重复拼接模式。
-- **Files:** `web/src/ui/views/{heartbeat,agents-heartbeat-tab,ai-ops}.ts`, `cloud/src/modules/workspace/handler/heartbeat.rs`
+- **Files:** `web/src/ui/views/{heartbeat,agents-heartbeat-tab,ai-ops}.ts`, `crates/agent/src/host/handler/workspace_heartbeat.rs`
 
 ### T3–T6 — 补充测试
 - **What:** chat/service.rs reseed+persist 降级路径、get_or_create 并发竞态（需真实 provider/LLM，单测成本高）。
-- **Files:** `cloud/src/modules/agent/chat/service.rs`, `cloud/src/modules/agent/agent.rs`
+- **Files:** `crates/agent/src/host/chat/service.rs`, `crates/agent/src/host/agent.rs`
 
 ---
 
@@ -160,14 +177,14 @@ Source: `/plan-ceo-review` on `feat/device-ecosystem-v0.2` (2026-05-08)
 ### P0 — CRITICAL
 
 - **[#40] Driver loading needs sandbox or admin-only gate**
-  - `registry.rs:48-50` loads arbitrary `.so` and calls `init()` with full process privileges
-  - `validator.rs:20-22` dry-load triggers `__attribute__((constructor))` before any validation
+  - `crates/runtime/src/driver/registry.rs:50-65` loads arbitrary `.so` and calls `init()` with full process privileges
+  - `crates/runtime/src/driver/validator.rs:19-24` dry-load triggers `__attribute__((constructor))` before any validation
   - **Action:** Implement admin-only gate for driver installation (quick fix), plan subprocess sandbox for v0.2.x
   - **Owner:** TBD
 
 ### P1 — HIGH
 
-- **[#41] TemplateExporter secret stripping is shallow**
+- **[#41] TemplateExporter (`apps/cloud/src/domains/thing/template/exporter.rs`) secret stripping is shallow**
   - Only strips top-level keys; nested JSON like `{"auth": {"password": "secret"}}` leaks
   - Missing variants: `passwd`, `key`, `credential`, `cert`
   - **Action:** Recursive JSON traversal + expanded sensitive key list
@@ -176,12 +193,12 @@ Source: `/plan-ceo-review` on `feat/device-ecosystem-v0.2` (2026-05-08)
 ### P2 — MEDIUM
 
 - **[#42] Exported templates lose device properties and commands**
-  - `exporter.rs:31-32` creates empty `properties` and `commands` vectors
+  - `apps/cloud/src/domains/thing/template/exporter.rs` created empty `properties` and `commands` vectors
   - Users export a configured device and get a hollow template
   - **Action:** Map `device.properties` → `PropertyTemplate`, `device.commands` → `CommandTemplate`
   - **Owner:** TBD
 
-- **[#44] Add unit tests for DriverRegistry failure paths**
+- **[#44] Add unit tests for DriverRegistry (`crates/runtime/src/driver/registry.rs`, `runtime::driver`) failure paths**
   - Zero coverage for: ABI mismatch, null vtable, null init, missing symbols, duplicate driver, ref_count blocking unload
   - Single integration test only checks "empty registry returns empty list"
   - **Action:** Craft mock/minimal `.so` files or use `libloading` mocking to test each failure path
@@ -352,7 +369,7 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 ### P3 — search_knowledge 升级 FTS5 trigram
 - **What:** thing_resources 全文检索从 `LIKE '%q%'` 扫描升级为 SQLite FTS5 trigram 虚拟表（含同步触发器）。
 - **Why:** 工程评审 D14 裁决本期维持 LIKE（预发布文档量级几十篇无感）；但 search_knowledge 是 Agent 高频调用路径，文档上千篇后全表扫描劣化。FTS5 默认 unicode61 分词对中文无效，需 trigram tokenizer（SQLite ≥3.34）。
-- **Context:** 现有 LIKE 实现见 `cloud/src/modules/workspace/repo/knowledge.rs:265`（图谱拆除后平移至 thing_resources repo）。升级点：建 fts 虚拟表 + INSERT/UPDATE/DELETE 同步触发器 + repo 查询改 MATCH。
+- **Context:** 现有 LIKE 实现见 `crates/tenant/src/workspace/repo.rs:636`（图谱拆除后平移至 thing_resources repo）。升级点：建 fts 虚拟表 + INSERT/UPDATE/DELETE 同步触发器 + repo 查询改 MATCH。
 - **Depends on:** Thing Ontology mega-branch 落地（thing_resources 表存在后）。
 - **Effort:** M (human: ~1d / CC: ~1h)
 
@@ -362,3 +379,29 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 ## Thing Ontology Architecture Follow-up (from /plan-ceo-review 2026-07-25)
 
 ### ~~P2 — Move thing service SQL to storage layer~~ ✅ Completed 2026-07-27 (eng-review T9, commit "refactor(thing): move service-layer SQL to storage/repo")
+
+## Completed
+
+### P2 — Add dynamic task/config refresh to heartbeat loop (Outside Voice)
+- **Completed:** v0.5.0.0 (2026-08-24) — 共享信任句柄写穿（crates/agent/src/runtime/heartbeat/runner.rs trust_handles），运行中 loop 即时生效；live-chain 测试 test_update_trust_config_reaches_running_loop。
+
+### P1 — Wire DropNotifier + DeadLetterQueue
+- **Completed:** v0.5.0.0 (2026-08-24) — 2026-08-03 已核实接线（service_manager.rs LoggingDropNotifier + SqliteDeadLetterQueue），本条归档。
+
+### P3 — Cache regex in extract_json
+- **Completed:** v0.5.0.0 (2026-08-24) — crates/agent/src/runtime/heartbeat/report.rs 已用 `static JSON_FENCE_RE: LazyLock<Regex>`。
+
+## Documentation Debt (from /ship document-release 2026-08-24)
+
+### P3 — scripts/guards/ 使用与扩展 how-to
+- **What:** 为 sql-residence / ddl-only / agent-purity / selftest 写本地运行与新增守卫的指南。
+- **Why:** 目前只有 AGENTS.md/CI 的引用级覆盖；新贡献者不知道如何本地跑守卫或添加新守卫。
+- **Context:** 守卫脚本在 scripts/guards/，selftest.sh 是自证范例；落点建议 docs/ 或 AGENTS.md 增补一节。
+
+### P3 — crates/authn 消费方文档
+- **What:** 为 crates/authn 写 README/how-to（构造注入用法、JwtService、HarmonyOS 变体）。
+- **Why:** 目前只有 AGENTS.md/CHANGELOG 的引用级覆盖，消费方无入口文档。
+
+### P3 — [seed] demo_data 进 configuration 参考
+- **What:** 把 `[seed] demo_data` 配置键写进 docs/getting-started/configuration.md（或等效参考文档）。
+- **Why:** 目前只在 CHANGELOG 与 app_settings.example.toml 有记录；0.5.0.0 起默认 false，用户需要权威参考。

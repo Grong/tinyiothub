@@ -1,46 +1,43 @@
 # 驱动开发
 
-TinyIoTHub 支持自定义设备驱动，可以扩展支持更多协议。
+TinyIoTHub 支持自定义设备驱动，可以扩展支持更多协议。驱动 SDK 位于 `crates/plugin-sdk`（包名 `plugin-sdk`）。
 
 ## 驱动架构
 
 ### 核心 trait
 
 ```rust
-use async_trait::async_trait;
+use plugin_sdk::{Device, DeviceCommand, DeviceDriver, Result, ResultValue};
 
-#[async_trait]
-pub trait DeviceDriver {
-    /// 连接设备
-    async fn connect(&mut self) -> DriverResult<()>;
+/// 所有驱动必须实现此 trait
+pub trait DeviceDriver: Send + Sync {
+    /// 获取设备引用
+    fn device(&self) -> &Device;
 
-    /// 断开连接
-    async fn disconnect(&mut self) -> DriverResult<()>;
+    /// 获取设备可变引用
+    fn device_mut(&mut self) -> &mut Device;
 
-    /// 读取数据
-    async fn read_data(&mut self) -> DriverResult<Vec<u8>>;
+    /// 读取设备数据，返回当前数据点列表
+    fn read_data(&mut self) -> Result<Vec<ResultValue>>;
 
-    /// 写入数据
-    async fn write_data(&mut self, data: &[u8]) -> DriverResult<()>;
-
-    /// 获取设备状态
-    async fn get_status(&mut self) -> DriverResult<DeviceStatus>;
+    /// 执行设备命令
+    fn execute_command(&mut self, cmd: &DeviceCommand) -> Result<bool>;
 }
 ```
 
 ## 创建自定义驱动
 
-### 1. 创建驱动文件
+### 1. 创建驱动 crate
 
-在 `crates/tinyiothub-runtime/src/driver/drivers/` 目录下创建新驱动：
+内置驱动位于 `plugins/` 目录（modbus、onvif、snmp、opcua 等），可参考 `plugins/modbus` 或 `examples/example-plugin/` 创建新驱动：
 
 ```rust
-// my_driver.rs
+// src/lib.rs
 
-use tinyiothub_core::driver::{DeviceDriver, DriverResult};
-use async_trait::async_trait;
+use plugin_sdk::{Device, DeviceCommand, DeviceDriver, Result, ResultValue};
 
 pub struct MyDriver {
+    device: Device,
     config: MyDriverConfig,
 }
 
@@ -51,32 +48,35 @@ pub struct MyDriverConfig {
     // 其他配置...
 }
 
-#[async_trait]
 impl DeviceDriver for MyDriver {
-    async fn connect(&mut self) -> DriverResult<()> {
-        // 连接逻辑
-        Ok(())
+    fn device(&self) -> &Device {
+        &self.device
     }
 
-    async fn read_data(&mut self) -> DriverResult<Vec<u8>> {
+    fn device_mut(&mut self) -> &mut Device {
+        &mut self.device
+    }
+
+    fn read_data(&mut self) -> Result<Vec<ResultValue>> {
         // 读取数据
         Ok(vec![])
+    }
+
+    fn execute_command(&mut self, cmd: &DeviceCommand) -> Result<bool> {
+        // 执行命令
+        Ok(true)
     }
 }
 ```
 
 ### 2. 注册驱动
 
-在 `crates/tinyiothub-runtime/src/driver/mod.rs` 中注册：
+驱动在编译期静态注册，在 `crates/runtime/src/driver/mod.rs` 的 `register_drivers!` 宏中加入新驱动：
 
 ```rust
-pub mod my_driver;
-
-pub fn get_driver(name: &str, config: Value) -> Option<Box<dyn DeviceDriver>> {
-    match name {
-        "my_driver" => Some(Box::new(my_driver::MyDriver::new(config)?)),
-        _ => None,
-    }
+tinyiothub_macros::register_drivers! {
+    // 已有驱动...
+    MyDriver,
 }
 ```
 
@@ -106,23 +106,18 @@ pub fn get_driver(name: &str, config: Value) -> Option<Box<dyn DeviceDriver>> {
 
 ```rust
 pub enum DriverError {
-    ConnectionFailed(String),
-    Timeout,
-    InvalidData(String),
-    NotSupported,
+    NetworkError(String),
+    IOError(String),
+    ConfigError(String),
+    ValidationError(String),
+    Unsupported(String),
+    Internal(String),
 }
 ```
 
 ### 重试机制
 
-驱动内置自动重试机制：
-
-```toml
-[drivers.retry]
-max_attempts = 3
-interval_ms = 1000
-backoff_multiplier = 2.0
-```
+连接失败的重试由运行时统一管理，驱动只需如实返回错误。
 
 ## 示例驱动
 
@@ -131,6 +126,6 @@ backoff_multiplier = 2.0
 ## 测试驱动
 
 ```bash
-# 运行驱动测试
-cargo test --package driver-sdk
+# 运行驱动 SDK 测试
+cargo test --package plugin-sdk
 ```

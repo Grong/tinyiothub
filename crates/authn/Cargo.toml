@@ -1,0 +1,26 @@
+[package]
+name = "authn"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Authentication mechanisms — JWT, SSE tokens, password hashing (no HTTP, no business flow)"
+
+[lib]
+name = "tinyiothub_authn"
+
+# 纯机制 crate：签发/校验/哈希。禁止 axum/sqlx/db/tokio 依赖（G4 裁决）。
+# extractor 与 HTTP 胶水乡 crates/web；业务查询住 apps/cloud。
+[dependencies]
+chrono = { workspace = true }
+serde = { workspace = true }
+uuid = { workspace = true }
+jwt-simple = { workspace = true }
+bcrypt = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+dashmap = { workspace = true }
+
+[lints]
+workspace = true

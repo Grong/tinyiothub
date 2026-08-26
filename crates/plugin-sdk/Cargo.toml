@@ -1,0 +1,32 @@
+[package]
+name = "plugin-sdk"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SDK for developing TinyIoTHub device plugins"
+
+[lib]
+name = "tinyiothub_plugin_sdk"
+
+# 角色:driver ABI 契约（Stable tier，FFI 边界的唯一事实源）
+# 禁止依赖:runtime/web/db —— core 仅 feature 门控的互操作;规则出处:G 系列计划 Task 7 (G8)
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+core = { workspace = true, optional = true }
+
+[features]
+default = []
+core-interop = ["core"]
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+# FFI/动态加载例外：unsafe 仅限 driver/plugin 加载路径；
+# 其余规则继承 workspace（此处需完整列出，无法部分继承）
+[lints.rust]
+unsafe_code = "allow"

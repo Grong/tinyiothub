@@ -23,6 +23,7 @@ cloud/logs/
 
 # 运行时数据目录
 /data/
+apps/data/
 
 # 临时文件
 /temp
@@ -55,6 +56,7 @@ scheduled_tasks.lock
 # 其他
 /web-dify
 license
+!LICENSE
 
 /dist
 /.gstack
@@ -66,3 +68,6 @@ license
 deploy/docker/data/
 .gstack/
 .omx/
+
+# Personal AI tooling (per-developer, not project assets)
+.claude/

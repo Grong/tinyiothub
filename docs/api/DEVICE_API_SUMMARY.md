@@ -4,12 +4,14 @@
 
 本文档总结了为前端设备详情页面完善的后端接口，包括设备属性、指令、事件、追踪和配置文件等功能。所有接口都基于真实的数据库查询和DataContext，提供完整的设备管理功能。
 
+> **概念说明**：管理面的"设备"已更名为"物"（Thing），管理端点位于 `/api/v1/things`；本文档中的 `/api/v1/devices/{id}/...` 为运行时数据面端点（属性、状态、追踪等），保留 device 命名。
+
 ## 完成的接口
 
 ### 1. 设备基础接口
 
 #### 设备详情
-- `GET /api/v1/devices/{id}` - 获取设备基本信息和统计数据
+- `GET /api/v1/devices/{id}` - ~~获取设备基本信息~~ **已删除（410 Gone）**，管理面请改用 `GET /api/v1/things/{id}`
 
 #### 设备配置文件 ⭐ 新增
 - `GET /api/v1/devices/{id}/profile` - 获取设备完整配置文件
@@ -17,31 +19,31 @@
   - 基于真实数据库查询，不使用模拟数据
   - 智能计算在线状态和属性统计
 
-### 2. 设备属性接口
+### 2. 设备属性接口（存储于 thing_properties 表）
 
 - `GET /api/v1/devices/{id}/properties` - 获取设备属性列表
-- `GET /api/v1/devices/{id}/properties/{property_id}` - 获取单个属性详情
-- `PUT /api/v1/devices/{id}/properties/{property_id}` - 更新属性值
-- `GET /api/v1/devices/{id}/properties/{property_id}/history` - 获取属性历史数据
+- `GET /api/v1/devices/by-name/{device_name}/properties/{property_name}` - 按名称获取单个属性
+- `PUT /api/v1/devices/{id}/properties/{property_id}/value` - 更新属性值
 
 ### 3. 设备指令接口
 
-- `GET /api/v1/devices/{id}/commands` - 获取设备指令列表
-- `POST /api/v1/devices/{id}/commands/{command_id}/execute` - 执行设备指令
-- `GET /api/v1/devices/{id}/command-executions` - 获取指令执行历史
+- `POST /api/v1/devices/{id}/commands/{command_id}/execute` - 执行设备指令（传输层 command）
+
+> 管理面的 commands 已更名为 actions（thing_actions 表），通过 `POST /api/v1/things/{id}/actions/{action_name}/invoke` 调用。
 
 ### 4. 设备事件接口
 
-- `GET /api/v1/devices/{id}/events` - 获取设备事件列表（支持筛选）
-- `GET /api/v1/devices/{id}/events/statistics` - 获取事件统计信息
+设备相关事件已统一收敛到 `events` 表，通过统一事件接口查询：
+
+- `GET /api/v1/events` - 获取事件列表（支持按物/设备筛选）
+- `GET /api/v1/events/sse` - SSE 事件流订阅
 
 ### 5. 设备追踪接口 ⭐ 新增
 
 - `GET /api/v1/devices/{id}/traces` - 获取设备追踪记录
 - `POST /api/v1/devices/{id}/traces` - 创建设备追踪记录
 - `GET /api/v1/devices/{id}/traces/statistics` - 获取追踪统计信息
-- `GET /api/v1/devices/{id}/traces/performance` - 获取设备性能指标
-- `GET /api/v1/devices/{id}/traces/export` - 导出追踪记录
+- `GET /api/v1/devices/{id}/performance` - 获取设备性能指标
 - `POST /api/v1/devices/{id}/traces/clear` - 清理追踪记录
 
 ## 技术实现特点

@@ -50,7 +50,7 @@ services:
   tinyiothub-marketplace:
     build:
       context: ../../
-      dockerfile: marketplace/Dockerfile
+      dockerfile: apps/marketplace/Dockerfile
     container_name: tinyiothub-marketplace
     restart: unless-stopped
 

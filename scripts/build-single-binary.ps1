@@ -5,6 +5,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# ⚠️ DEPRECATED (2026-08): 本脚本基于旧的 api/ 子目录布局（api/wwwroot 等），
+# 这些路径在当前仓库已不存在。
+# 当前构建流程：cd web; pnpm build; cd ..; cargo build --release -p tinyiothub-cloud
+# （或 just build；容器化见根目录 Dockerfile）。
+
 Write-Host "=== Build Single Binary ===" -ForegroundColor Cyan
 
 Write-Host "`n[1/3] Building frontend..." -ForegroundColor Yellow

@@ -1,0 +1,268 @@
+// Event access control implementations
+use std::sync::Arc;
+
+use crate::domains::event::{Result, entities::Event, value_objects::EventType};
+
+/// Access control result
+#[derive(Debug, Clone, PartialEq)]
+pub enum AccessResult {
+    Allow,
+    Deny(String),
+    Allowed, // For audit log compatibility
+    Denied,  // For audit log compatibility
+    Error,   // For audit log compatibility
+}
+
+/// Access type enumeration
+#[derive(Debug, Clone, PartialEq)]
+pub enum AccessType {
+    Read,
+    Create,
+    Update,
+    Delete,
+    Query,     // For audit log compatibility
+    Export,    // For audit log compatibility
+    Subscribe, // For audit log compatibility
+}
+
+/// Event access control trait
+#[async_trait::async_trait]
+pub trait EventAccessControl: Send + Sync {
+    /// Check if user can read an event
+    async fn can_read_event(&self, user_id: &str, event: &Event) -> Result<bool>;
+
+    /// Check if user can create an event of given type
+    async fn can_create_event(&self, user_id: &str, event_type: &EventType) -> Result<bool>;
+
+    /// Check if user can update an event
+    async fn can_update_event(&self, user_id: &str, event: &Event) -> Result<bool>;
+
+    /// Check if user can delete an event
+    async fn can_delete_event(&self, user_id: &str, event: &Event) -> Result<bool>;
+
+    /// Get user roles
+    async fn get_user_roles(&self, user_id: &str) -> Result<Vec<String>>;
+
+    /// Get user permissions for a resource type
+    async fn get_user_permissions(&self, user_id: &str, resource_type: &str) -> Result<Vec<String>>;
+}
+
+/// Role-based access control implementation
+pub struct RoleBasedAccessControl {
+    db: Arc<tinyiothub_storage::Db>,
+}
+
+impl RoleBasedAccessControl {
+    pub fn new(db: Arc<tinyiothub_storage::Db>) -> Self {
+        Self { db }
+    }
+
+    /// Check if user has required role
+    async fn has_role(&self, user_id: &str, required_role: &str) -> Result<bool> {
+        let roles = self.get_user_roles(user_id).await?;
+        Ok(roles.contains(&required_role.to_string()))
+    }
+
+    /// Check if user has required permission
+    async fn has_permission(&self, user_id: &str, resource_type: &str, permission: &str) -> Result<bool> {
+        let permissions = self.get_user_permissions(user_id, resource_type).await?;
+        Ok(permissions.contains(&permission.to_string()))
+    }
+}
+
+#[async_trait::async_trait]
+impl EventAccessControl for RoleBasedAccessControl {
+    async fn can_read_event(&self, user_id: &str, event: &Event) -> Result<bool> {
+        // Admin can read all events
+        if self.has_role(user_id, "admin").await? {
+            return Ok(true);
+        }
+
+        // Users can read their own events
+        if event.source().user_id() == Some(user_id) {
+            return Ok(true);
+        }
+
+        // Check if user has read permission for this event type
+        let event_type_str = match event.event_type() {
+            tinyiothub_core::models::event::EventType::Device(device_type) => match device_type {
+                tinyiothub_core::models::event::DeviceEventType::Connection => "device_connection",
+                tinyiothub_core::models::event::DeviceEventType::PropertyChange
+                | tinyiothub_core::models::event::DeviceEventType::PropertyAlarm
+                | tinyiothub_core::models::event::DeviceEventType::PropertyNormal => "device_property",
+                tinyiothub_core::models::event::DeviceEventType::CommandStarted
+                | tinyiothub_core::models::event::DeviceEventType::CommandCompleted
+                | tinyiothub_core::models::event::DeviceEventType::CommandFailed => "device_command",
+                tinyiothub_core::models::event::DeviceEventType::DeviceAlarm
+                | tinyiothub_core::models::event::DeviceEventType::DeviceNormal => "device_alarm",
+                tinyiothub_core::models::event::DeviceEventType::DeviceCreated
+                | tinyiothub_core::models::event::DeviceEventType::DeviceUpdated
+                | tinyiothub_core::models::event::DeviceEventType::DeviceDeleted => "device_lifecycle",
+            },
+            tinyiothub_core::models::event::EventType::System(system_type) => match system_type {
+                tinyiothub_core::models::event::SystemEventType::UserAuth => "user_auth",
+                tinyiothub_core::models::event::SystemEventType::UserOperation => "user_operation",
+                tinyiothub_core::models::event::SystemEventType::SystemConfig => "system_config",
+                tinyiothub_core::models::event::SystemEventType::SystemError => "system_error",
+            },
+            tinyiothub_core::models::event::EventType::Ai(_) => "ai_event",
+        };
+
+        self.has_permission(user_id, event_type_str, "read").await
+    }
+
+    async fn can_create_event(&self, user_id: &str, event_type: &EventType) -> Result<bool> {
+        // Admin can create all events
+        if self.has_role(user_id, "admin").await? {
+            return Ok(true);
+        }
+
+        // Check specific permissions based on event type
+        let event_type_str = match event_type {
+            tinyiothub_core::models::event::EventType::Device(device_type) => match device_type {
+                tinyiothub_core::models::event::DeviceEventType::Connection => "device_connection",
+                tinyiothub_core::models::event::DeviceEventType::PropertyChange
+                | tinyiothub_core::models::event::DeviceEventType::PropertyAlarm
+                | tinyiothub_core::models::event::DeviceEventType::PropertyNormal => "device_property",
+                tinyiothub_core::models::event::DeviceEventType::CommandStarted
+                | tinyiothub_core::models::event::DeviceEventType::CommandCompleted
+                | tinyiothub_core::models::event::DeviceEventType::CommandFailed => "device_command",
+                tinyiothub_core::models::event::DeviceEventType::DeviceAlarm
+                | tinyiothub_core::models::event::DeviceEventType::DeviceNormal => "device_alarm",
+                tinyiothub_core::models::event::DeviceEventType::DeviceCreated
+                | tinyiothub_core::models::event::DeviceEventType::DeviceUpdated
+                | tinyiothub_core::models::event::DeviceEventType::DeviceDeleted => "device_lifecycle",
+            },
+            tinyiothub_core::models::event::EventType::System(system_type) => match system_type {
+                tinyiothub_core::models::event::SystemEventType::UserAuth => "user_auth",
+                tinyiothub_core::models::event::SystemEventType::UserOperation => "user_operation",
+                tinyiothub_core::models::event::SystemEventType::SystemConfig => "system_config",
+                tinyiothub_core::models::event::SystemEventType::SystemError => "system_error",
+            },
+            tinyiothub_core::models::event::EventType::Ai(_) => "ai_event",
+        };
+
+        self.has_permission(user_id, event_type_str, "create").await
+    }
+
+    async fn can_update_event(&self, user_id: &str, _event: &Event) -> Result<bool> {
+        // Admin can update all events
+        if self.has_role(user_id, "admin").await? {
+            return Ok(true);
+        }
+
+        // Generally, events should not be updated after creation
+        // Only allow in special cases with proper permissions
+        Ok(false)
+    }
+
+    async fn can_delete_event(&self, user_id: &str, _event: &Event) -> Result<bool> {
+        // Only admin can delete events, and only in special cases
+        if self.has_role(user_id, "admin").await? {
+            // Additional checks could be added here
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    async fn get_user_roles(&self, user_id: &str) -> Result<Vec<String>> {
+        // Query user roles from database
+        match self.db.list_legacy_user_role_names(user_id).await {
+            Ok(roles) => {
+                if roles.is_empty() {
+                    // Default role for authenticated users
+                    Ok(vec!["user".to_string()])
+                } else {
+                    Ok(roles)
+                }
+            }
+            Err(sqlx::Error::RowNotFound) => {
+                // User not found, return default role
+                Ok(vec!["user".to_string()])
+            }
+            Err(e) => {
+                tracing::error!("Failed to get user roles for {}: {}", user_id, e);
+                // Fallback to default role on database error
+                Ok(vec!["user".to_string()])
+            }
+        }
+    }
+
+    async fn get_user_permissions(&self, user_id: &str, resource_type: &str) -> Result<Vec<String>> {
+        let roles = self.get_user_roles(user_id).await?;
+
+        let mut permissions = Vec::new();
+
+        // Query user-specific permissions from database
+        match self.db.list_legacy_user_permissions(user_id, resource_type).await {
+            Ok(user_permissions) => {
+                permissions.extend(user_permissions);
+            }
+            Err(sqlx::Error::RowNotFound) => {
+                // No user-specific permissions, continue with role-based permissions
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to get user permissions for {} on {}: {}",
+                    user_id,
+                    resource_type,
+                    e
+                );
+                // Continue with role-based permissions as fallback
+            }
+        }
+
+        // Add role-based permissions from the role_permissions table
+        for role in roles {
+            match self.db.list_legacy_role_permissions(&role, resource_type).await {
+                Ok(role_permissions) => {
+                    permissions.extend(role_permissions);
+                }
+                Err(sqlx::Error::RowNotFound) => {
+                    // No permissions for this role and resource type
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to get role permissions for role {} on {}: {}",
+                        role,
+                        resource_type,
+                        e
+                    );
+                }
+            }
+        }
+
+        // Remove duplicates and sort
+        permissions.sort();
+        permissions.dedup();
+
+        Ok(permissions)
+    }
+}
+
+impl AccessType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AccessType::Read => "read",
+            AccessType::Create => "create",
+            AccessType::Update => "update",
+            AccessType::Delete => "delete",
+            AccessType::Query => "query",
+            AccessType::Export => "export",
+            AccessType::Subscribe => "subscribe",
+        }
+    }
+}
+
+impl AccessResult {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AccessResult::Allow => "allowed",
+            AccessResult::Deny(_) => "denied",
+            AccessResult::Allowed => "allowed",
+            AccessResult::Denied => "denied",
+            AccessResult::Error => "error",
+        }
+    }
+}

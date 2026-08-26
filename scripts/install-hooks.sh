@@ -42,11 +42,11 @@ if [ -n "$STAGED_RS" ]; then
 fi
 
 # =============================================================================
-# Check 2: No scatter-shot utils/helpers in cloud/src/
+# Check 2: No scatter-shot utils/helpers in apps/cloud/src/
 # =============================================================================
 for file in $CHANGED_FILES; do
   case "$file" in
-    cloud/src/utils*.rs|cloud/src/helpers*.rs|cloud/src/common*.rs)
+    apps/cloud/src/utils*.rs|apps/cloud/src/helpers*.rs|apps/cloud/src/common*.rs)
       echo "Cannot create scatter-shot utils/helpers: $file"
       echo "   Use shared/ or specific domain modules"
       exit 1
@@ -74,7 +74,7 @@ done
 # =============================================================================
 for file in $CHANGED_FILES; do
   case "$file" in
-    cloud/src/modules/*/handler*.rs)
+    apps/cloud/src/modules/*/handler*.rs)
       if grep -qE "sqlx::query|pool\.(query|execute)" "$file" 2>/dev/null; then
         echo "Direct SQL in handler: $file"
         echo "   Use repository pattern"
@@ -89,7 +89,7 @@ done
 # =============================================================================
 for file in $CHANGED_FILES; do
   case "$file" in
-    cloud/src/modules/*/handler*.rs)
+    apps/cloud/src/modules/*/handler*.rs)
       if grep -qE "Json\s*\(\s*serde_json::to_value" "$file" 2>/dev/null; then
         echo "Manual JSON response in handler: $file"
         echo "   Use ApiResponseBuilder::success(data)"
@@ -104,7 +104,7 @@ done
 # =============================================================================
 for file in $NEW_FILES; do
   case "$file" in
-    cloud/src/modules/**/*.rs)
+    apps/cloud/src/modules/**/*.rs)
       if ! grep -qE "#\[cfg\(test\)\]|#\[test\]" "$file" 2>/dev/null; then
         echo "  Warning: New module file has no tests: $file"
       fi

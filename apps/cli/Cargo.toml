@@ -1,0 +1,17 @@
+[package]
+name = "tinyiothub-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tinyiothub-cli"
+path = "src/main.rs"
+
+[dependencies]
+core = { workspace = true }
+runtime = { workspace = true }
+
+[lints]
+workspace = true

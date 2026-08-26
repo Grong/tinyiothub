@@ -1,0 +1,27 @@
+[package]
+name = "policy"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Policy engine — workspace guardrails, autonomy gates, and HITL proposals"
+
+[lib]
+name = "tinyiothub_policy"
+
+# 角色:策略裁决（纯逻辑裁决；不感知 HTTP/agent 细节）
+# 禁止依赖:web、runtime、skills/core 以外的 workspace crate;规则出处:G 系列计划 Task 7 (G8)
+[dependencies]
+core = { workspace = true }
+skills = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

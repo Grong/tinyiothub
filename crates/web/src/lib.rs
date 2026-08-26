@@ -1,0 +1,24 @@
+//! TinyIoTHub web layer — HTTP handlers and middleware
+//!
+//! Provides shared HTTP infrastructure: response types, auth claims,
+//! rate limiting, and workspace scoping. No cloud-specific dependencies.
+//!
+//! ## 设计不变量
+//! - 无业务逻辑、无 SQL；只做 HTTP 基础设施（middleware/响应构建/安全萃取）
+//! - 禁止依赖 db 与领域 crate；authn 机制经 crates/authn 引入（G4 裁决）
+
+pub mod api_response;
+pub mod error_handling;
+pub mod middleware;
+pub mod pagination;
+pub mod response;
+pub mod security;
+pub mod validation;
+
+pub use api_response::ApiResponseBuilder;
+pub use error_handling::{ErrorCategory, ErrorCode, ErrorContext, ErrorHandler};
+
+/// Re-export common dependencies for handlers.
+pub use axum;
+pub use tower;
+pub use tower_http;

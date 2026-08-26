@@ -1,0 +1,51 @@
+[package]
+name = "agent"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Agent 共性能力运行时 — loop/pool/tools/session/prompt，零 axum/零 sqlx/零存储依赖"
+
+[lib]
+name = "tinyiothub_agent"
+
+# 角色:agent 共性能力运行时（从 apps/cloud/src/domains/agent 抽取）
+# 禁止依赖:axum、sqlx、tinyiothub_storage、apps/* —— 纯运行时平面;规则出处:G 系列计划 Task 11
+[dependencies]
+core = { workspace = true }
+llm = { workspace = true }
+policy = { workspace = true }
+skills = { workspace = true }
+runtime = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+chrono = { workspace = true }
+dashmap = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+regex = { workspace = true }
+parking_lot = { workspace = true }
+uuid = { workspace = true }
+tokio-util = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+# ZeroClaw agent runtime contract（与 apps/cloud 同源；cloud 组合层工具同依赖，两侧均保留）
+zeroclaw = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched", package = "zeroclawlabs", features = ["agent-runtime"] }
+zeroclaw-api = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched" }
+
+[features]
+# 测试夹具出口（stub RuntimeDeps 等）—— apps/cloud 集成测试经
+# dev-dependency 开启；正常构建不包含。
+testing = []
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,49 @@
+[package]
+name = "web"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "HTTP infrastructure for TinyIoTHub — middleware and security extractors; owns the axum glue"
+
+[lib]
+name = "tinyiothub_web"
+
+# 角色:HTTP 基础设施（extractor/middleware/响应构建）
+# 禁止依赖:db、领域 crate、业务流程 —— 业务流程住 apps/cloud;规则出处:G 系列计划 Task 7 (G8)
+[dependencies]
+
+# Authn mechanisms (JWT sign/verify) — extractor glue lives here (G4)
+authn = { workspace = true }
+
+# Web framework
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Async
+async-trait = { workspace = true }
+tokio = { workspace = true }
+
+# Date/time
+chrono = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# HTTP headers (for Bearer token extraction)
+headers = { workspace = true }
+
+# Input validation (email/phone/username/slug patterns)
+regex = { workspace = true }
+
+[lints]
+workspace = true

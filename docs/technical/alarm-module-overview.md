@@ -19,6 +19,7 @@
 - 变化规则：温度 1 小时内上升 > 10°C
 - 持续时间规则：温度持续 5 分钟 > 80°C
 - 组合规则：温度 > 80°C AND 湿度 > 90%
+- 事件规则：物事件（`thing/{id}/event/{name}`）触发告警（`rule_type = 'event'`）
 
 ### 3. 规则引擎 (RuleEngine)
 评估事件是否满足报警条件的核心组件
@@ -36,29 +37,35 @@
 ## 模块结构
 
 ```
-src/domain/alarm/
-├── entities/          # 实体（Alarm, AlarmRule）
-├── value_objects/     # 值对象（AlarmLevel, AlarmType, AlarmCondition）
-├── aggregates/        # 聚合根（AlarmAggregate）
-├── services/          # 领域服务（AlarmService, RuleEngine）
-├── repositories/      # 仓储接口
-├── specifications/    # 规约
-└── handlers/          # 事件处理器
+cloud/src/modules/alarm/
+├── types.rs           # 实体与值对象（Alarm, AlarmRule, AlarmLevel, RuleType, AlarmCondition）
+├── service.rs         # 领域服务（AlarmService, RuleEngine, AlarmEventHandler）
+├── repo.rs            # 仓储实现
+├── event_matcher.rs   # 事件规则匹配（rule_type = 'event'）
+├── notification.rs    # 告警通知分发
+├── handler.rs         # HTTP API 路由
+└── alarm.rs           # 模块装配
 ```
+
+事件总线与 `EventHandler` trait 位于 `crates/core`（`tinyiothub_core::event`），
+事件实体位于 `tinyiothub_core::models::event`。
 
 ## API 端点
 
 ### 报警管理
 - `GET /api/v1/alarms` - 查询报警列表
 - `GET /api/v1/alarms/:id` - 获取报警详情
-- `POST /api/v1/alarms/:id/acknowledge` - 确认报警
-- `POST /api/v1/alarms/:id/resolve` - 解决报警
-- `POST /api/v1/alarms/batch-acknowledge` - 批量确认
+- `GET /api/v1/alarms/recent` - 最近报警
+- `PUT /api/v1/alarms/:id/acknowledge` - 确认报警
+- `PUT /api/v1/alarms/:id/resolve` - 解决报警
+- `POST /api/v1/alarms/batch/acknowledge` - 批量确认
+- `POST /api/v1/alarms/batch/resolve` - 批量解决
 - `GET /api/v1/alarms/statistics` - 报警统计
 
 ### 规则管理
 - `GET /api/v1/alarm-rules` - 查询规则列表
 - `POST /api/v1/alarm-rules` - 创建规则
+- `GET /api/v1/alarm-rules/:id` - 获取规则详情
 - `PUT /api/v1/alarm-rules/:id` - 更新规则
 - `DELETE /api/v1/alarm-rules/:id` - 删除规则
 - `POST /api/v1/alarm-rules/:id/toggle` - 启用/禁用规则
@@ -109,11 +116,9 @@ src/domain/alarm/
 
 - **后端**: Rust + Axum + SQLx + Tokio
 - **数据库**: SQLite
-- **前端**: TypeScript + Lit 3 + Vite + nanostore
+- **前端**: TypeScript + Lit 3 + Vite + @lit-labs/signals
 - **架构**: DDD + Event-Driven + Clean Architecture
 
 ## 参考文档
 
-- 详细设计：`docs/alarm-module-design.md`
-- 事件架构：`docs/event-handler-architecture.md`
-- API 规范：`.kiro/steering/api-standards.md`
+- 事件架构：`docs/technical/event-handler-architecture.md`

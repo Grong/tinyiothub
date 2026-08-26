@@ -1,6 +1,9 @@
 # TinyIoTHub
 
-轻量级工业边缘 IoT 平台。多协议设备接入、L0-L3 自愈引擎、自然语言运维 — 让边缘网络管理像聊天一样简单。
+AI 时代的万物互联底座。以「物」为本体的轻量级 AIoT 平台 — 实现万物智能只需三步：**① 构建物 ② 通过驱动更新实时数据 ③ 剩下的交给 AI**。
+
+> **项目状态**：早期开发阶段（v0.x）。核心平台（物模型、告警、事件、AI Agent、MCP）可用；
+> 部分协议驱动仍在开发中，API 在 1.0 前可能有破坏性变更。欢迎试用与反馈。
 
 **官方网站**: https://tinyiothub.com  
 **仓库地址**: https://github.com/Grong/tinyiothub  
@@ -10,14 +13,15 @@
 
 **设备接入**
 - 物本体模型：设备、空间、产线统一为层级化「物」，属性/事件/操作 + 知识文档
-- 多协议支持：Modbus RTU/TCP、ONVIF、SNMP、MQTT，开箱即用
-- AI 驱动匹配：描述设备类型，自动匹配或生成驱动代码
+- 协议支持：MQTT 可用；Modbus RTU/TCP、ONVIF、SNMP 驱动开发中（驱动框架与 SDK 已就绪）
+- AI 驱动匹配（实验性）：描述设备类型，辅助匹配或生成驱动代码
 - 物模板：JSON 模板一键创建，支持 DTDL / WoT 模型导入与 DTDL 导出
 
 **智能运维**
 - L0-L3 分级自愈引擎：system/device/task 三级探针，自动故障检测与恢复
+- 自治运维（Thing Agent Loop）：AI 被设备事件/定时巡检/用户指令唤醒，查本体、做决策、经三态策略门（off/diagnose/act）自主操作设备，行动后回读验证并留全量审计
 - 规则引擎：阈值、范围、变化、持续时间、组合五种条件类型
-- 心跳探针：定期自检网关与子设备，提前发现隐患
+- 心跳探针：定期自检网关与子设备，提前发现隐患；诊断结论自动转交自治 Loop 处置
 - Cron 定时任务：Workspace 隔离，执行记录与统计
 
 **AI 原生**
@@ -36,21 +40,29 @@
 
 ```
 tinyiothub/
-├── cloud/                   # SaaS 应用编排层（主二进制）
-│   ├── src/                 # SaaS 领域逻辑（tenant, user, workspace, marketplace）
-│   ├── migrations/          # 数据库迁移
-│   ├── drivers/             # 驱动实现
-│   ├── templates/           # 设备模板
-│   ├── vendor/              # 第三方依赖（本地 fork）
-│   ├── Cargo.toml           # Rust 项目配置
-│   └── tinyiothub.db        # SQLite 数据库
-├── crates/                  # 内部库 Crate
-│   ├── tinyiothub-core/     # 契约层：traits + 领域模型 + repository 接口
-│   ├── tinyiothub-runtime/  # 基础设施：EventBus, DataServer, drivers
-│   ├── tinyiothub-storage/  # 数据层：SQLite 实现（re-export core traits）
-│   ├── tinyiothub-web/      # HTTP 基础设施层（中间件、ApiResponseBuilder）
-│   ├── tinyiothub-error/    # 错误类型（带 `thiserror` 派生）
-│   └── ...（其他支持库）
+├── apps/                    # 可部署二进制
+│   ├── cloud/               # relay：全部行为（domains/ 按域分模块）+ 组合根
+│   │   ├── src/
+│   │   │   └── domains/     # thing/auth/user/tenant/event/alarm/driver/notify/agent/mcp/admin
+│   │   └── templates/       # 技能模板
+│   ├── edge/                # 边缘网关
+│   ├── marketplace/         # 市场服务（驱动/物模板市场）
+│   └── cli/                 # 命令行工具
+├── crates/                  # 能力库 Crate（relay 范式：只提供能力，不做编排）
+│   ├── core/                # 纯值类型（零 I/O、零 API 语义）
+│   ├── db/                  # 全部 SQL：Db 门面 + 领域平铺文件（行类型+查询函数+impl Db 委托）+ migrations/（baseline + DDL-only）
+│   ├── runtime/             # EventBus, DataServer, 驱动框架, plugin loader
+│   ├── web/                 # HTTP 基础设施（中间件、ApiResponseBuilder）
+│   ├── scheduler/           # Cron 引擎
+│   ├── llm/                 # LLM provider 契约
+│   ├── memory/              # Agent 记忆引擎（纯逻辑）
+│   ├── policy/              # 策略门评估（纯逻辑）
+│   ├── skills/              # 技能/信任引擎
+│   ├── agent/               # Agent 共性能力运行时（loop/pool/tools/session/prompt，零 axum/零 sqlx）
+│   ├── authn/               # 认证机制（JWT/SSE token/密码哈希，纯机制）
+│   ├── plugin-sdk/          # 驱动开发 SDK（ABI 契约）
+│   └── macros/              # 过程宏
+├── drivers/                 # 动态驱动 stub（cdylib，不在 workspace 内）
 ├── web/                     # Lit 3 前端应用 (Web Components)
 │   ├── src/                 # 源代码
 │   │   ├── ui/             # Lit 组件、页面、聊天/A2UI
@@ -60,21 +72,17 @@ tinyiothub/
 │   │   └── stores/         # nanostore 状态管理
 │   ├── package.json         # Node.js 项目配置
 │   └── vite.config.ts      # Vite 构建配置
-├── sdks/                    # SDK 开发包
-│   └── driver-sdk/         # 驱动开发 SDK
 ├── examples/                # 示例项目
 │   ├── example-plugin/     # 插件示例
 │   └── bacnet-driver/      # BACnet 驱动示例
-├── marketplace/            # 市场资源
-│   ├── drivers/            # 驱动市场
-│   └── templates/          # 模板市场
+├── vendor/                  # 第三方依赖（本地 fork，如 onvif-rs）
 ├── scripts/                # 工具脚本
+├── deploy/                 # Docker 部署（docker-compose、边缘镜像）
 ├── docs/                   # 项目文档
-├── .kiro/                  # 开发规范
 └── skills/                 # AI prompts / skills
 ```
 
-**注意：本项目采用多 Crate 架构，依赖方向为单向不可逆：`cloud/edge → runtime → core ← storage`。详细架构见 [CLAUDE.md](CLAUDE.md)。**
+**注意：本项目采用 relay 范式（buzz-relay 模型）：apps/cloud 拥有全部行为，crates/ 为互不惊扰的能力库，依赖方向 `apps/* → crates/* → core` 单向不可逆。详细架构见 [AGENTS.md](AGENTS.md)。**
 
 ## 快速开始
 
@@ -82,7 +90,7 @@ tinyiothub/
 
 **后端**:
 - **Rust**: 1.85+ (2024 Edition)
-- **操作系统**: Linux, Windows, HarmonyOS
+- **操作系统**: Linux, Windows（HarmonyOS 支持实验性）
 - **数据库**: SQLite (内置)
 - **网络**: MQTT Broker (可选)
 
@@ -97,7 +105,7 @@ tinyiothub/
 
 **后端**:
 ```bash
-cd cloud
+cd apps/cloud
 cargo run
 ```
 
@@ -108,22 +116,21 @@ pnpm install
 pnpm dev
 ```
 
-访问: http://localhost:3001
+访问: http://localhost:5173
 
 #### 生产模式（单进程部署）
 
 **构建**:
 ```bash
-# Windows
-.\scripts\build-single-binary.ps1 -Release
-
-# Linux/macOS
-./scripts/build-single-binary.sh --release
+# 前端静态资源 + 后端发布构建（仓库根目录）
+cd web && pnpm build && cd ..
+cargo build --release -p tinyiothub-cloud
+# 或：just build（后端 release）；容器构建见 Dockerfile
 ```
 
 **运行**:
 ```bash
-cd cloud
+cd apps/cloud
 .\target\release\tinyiothub.exe  # Windows
 ./target/release/tinyiothub      # Linux/macOS
 ```
@@ -136,7 +143,7 @@ cd cloud
 - ✅ 启动快速（<2s vs ~5s）
 - ✅ 支持动态路由
 
-详见: [单进程部署方案](docs/deployment/single-process-deployment.md)
+Docker 部署见 [deploy/docker/README.md](deploy/docker/README.md)。
 
 #### 前端独立运行（开发调试）
 
@@ -182,7 +189,7 @@ expiration_secs = 10800  # 3 hours
 
 ```typescript
 server: {
-  port: 3001,
+  port: 5173,
   proxy: {
     '/api': 'http://localhost:3002'
   }
@@ -193,9 +200,9 @@ server: {
 
 启动后访问以下地址：
 
-- **Web 管理界面**: http://localhost:3001/ (前端开发服务器)
+- **Web 管理界面**: http://localhost:5173/ (前端开发服务器)
 - **后端 API**: http://localhost:3002/api/v1/
-- **健康检查**: http://localhost:3002/api/v1/system/health
+- **健康检查**: http://localhost:3002/health（返回纯文本 OK）
 
 ## API 开发规范
 
@@ -271,7 +278,7 @@ export const loadUsers = task(async (params?: { page?: number; pageSize?: number
 })
 ```
 
-详细的API开发规范请参考：[API开发规范](.kiro/steering/api-standards.md)
+详细的API开发规范请参考：[AGENTS.md](AGENTS.md)
 
 ## 项目架构
 
@@ -280,7 +287,7 @@ export const loadUsers = task(async (params?: { page?: number; pageSize?: number
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   Lit 3 UI      │    │   REST API      │    │   MQTT Client   │
-│   (web/)        │    │   (cloud/)      │    │   (rumqttc)     │
+│   (web/)        │    │ (apps/cloud/)   │    │   (rumqttc)     │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
          └───────────────────────┼───────────────────────┘
@@ -309,32 +316,27 @@ export const loadUsers = task(async (params?: { page?: number; pageSize?: number
          └─────────────────────────────────────────────────────┘
 ```
 
-### 后端目录结构 (cloud/)
+### 后端目录结构 (apps/cloud/)
 
 ```
-cloud/
+apps/cloud/
 ├── src/
+│   ├── main.rs               # 薄入口（<200 行）：读配置 → 建 AppState → 组装 router → serve
+│   ├── bootstrap.rs          # 启动逻辑（日志、驱动重载、设备缓存预热）
 │   ├── api/                  # 路由挂载 + HTTP 中间件（WorkspaceScope, auth）
-│   ├── modules/              # 业务模块（types → service → handler 三层结构）
-│   │   ├── thing/            # 物本体管理（CRUD、层级树、本体、资源、LLM 摘要）
-│   │   ├── device/           # 设备连接运行时（驱动、遥测、心跳）
-│   │   ├── event/            # 事件管道（router、throttle、real-time、SSE、保留任务）
-│   │   ├── alarm/            # 告警规则 + 通知（rule_type='device' | 'event'）
-│   │   ├── agent/            # AI Agent（chat、config、tools、session、memory）
-│   │   ├── template/         # 物模板（创建时蓝图）
-│   │   ├── marketplace/      # 应用市场（驱动 / 物模板）
-│   │   ├── workspace/        # 工作空间（含知识资源）
-│   │   ├── mcp/              # 内嵌 MCP Server
-│   │   └── ...               # auth, chat, cron, jobs, open, system 等
-│   ├── shared/               # 跨模块组件（persistence, security, error_handling, utils）
+│   ├── modules/marketplace/  # 市场客户端（仅 HTTP DTO 契约，无编译期依赖）
+│   ├── shared/               # 组合层胶水（app_state, config, service_manager）
 │   ├── tests/                # 集成测试
 │   ├── lib.rs                # 库入口
-│   └── main.rs               # 程序入口
-├── migrations/               # 数据库迁移文件
-├── templates/                # 物模板
+│   └── server.rs             # Axum 服务器启动
+├── templates/                # 技能模板
 ├── Cargo.toml                # Rust 项目配置
 └── README.md                 # 后端说明
 ```
+
+业务行为代码位于 `apps/cloud/src/domains/<domain>/`（thing, auth, user, tenant, event,
+alarm, driver, notify, agent, mcp, admin），每域含 handler/service/dto；路由在
+`apps/cloud/src/api/mod.rs` 集中挂载；全部 SQL 与迁移位于 `crates/db/`。
 
 ### 前端目录结构 (web/)
 
@@ -354,6 +356,8 @@ web/
 ├── package.json
 └── vite.config.ts
 ```
+
+设计系统与样式规范见 [web/DESIGN_SYSTEM.md](web/DESIGN_SYSTEM.md)，前端分层规范见 [FRONTEND_LAYERING_GUIDE.md](FRONTEND_LAYERING_GUIDE.md)。
 
 ## API 接口
 
@@ -485,6 +489,8 @@ web/
 
 ## 开发指南
 
+贡献流程、分支策略与提交规范见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
 ### 后端开发
 
 #### 添加新API端点
@@ -509,7 +515,7 @@ async fn list_items(
 
 #### 添加新设备驱动
 
-1. 在 `crates/tinyiothub-runtime/src/driver/drivers/` 创建驱动文件
+1. 在 `crates/runtime/src/driver/drivers/` 创建驱动文件
 2. 实现 `DeviceDriver` trait
 3. 在 `mod.rs` 中注册驱动
 
@@ -594,8 +600,7 @@ export class ItemList extends LitElement {
 #### 代码格式化和检查
 
 ```bash
-# 后端
-cd cloud
+# 后端（仓库根目录对整个 workspace 生效）
 cargo fmt          # 格式化代码
 cargo check        # 检查代码
 cargo clippy       # 代码检查
@@ -608,36 +613,16 @@ pnpm test          # 运行测试
 pnpm preview       # 预览生产构建
 ```
 
-#### API测试
+#### 测试与检查
 
 ```bash
-# 验证驱动API
-./scripts/verify-driver-api.sh
-
-# API格式检查
-python3 scripts/test-api-format.py
+cargo test           # 运行后端测试
+just ci              # 完整 CI 检查（fmt + clippy + test）
 ```
 
-## 鸿蒙系统部署
+## 鸿蒙系统部署（实验性）
 
-### 构建和部署
-
-详细部署指南请参考：
-- [鸿蒙部署指南](HARMONYOS_DEPLOYMENT_GUIDE.md)
-- [快速开始](QUICK_START_HARMONYOS.md)
-- [构建说明](build-harmonyos.md)
-
-使用部署脚本：
-```bash
-# Linux/macOS
-./deploy-to-harmonyos.sh
-
-# Windows
-.\build-harmonyos.bat
-
-# 或使用构建脚本
-./build-harmonyos.sh
-```
+HarmonyOS 支持处于实验阶段，部署脚本：`scripts/deploy-to-ohos.ps1`（Windows）。
 
 ## MQTT 主题
 
@@ -664,4 +649,4 @@ thing/{thing_id}/event/{event_name}   # 物事件上报（节流 60/分钟，err
 
 ## 许可证
 
-MIT License - 详见 [license](license) 文件
+MIT License - 详见 [LICENSE](LICENSE) 文件

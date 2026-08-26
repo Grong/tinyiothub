@@ -37,3 +37,8 @@ app_settings.toml
 # Misc
 .DS_Store
 Thumbs.db
+
+# Runtime data
+data
+apps/data
+logs
