@@ -29,6 +29,7 @@ struct GetDeviceInput {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WritePropertiesInput {
+    #[serde(rename = "deviceId", alias = "thingId")]
     thing_id: String,
     properties: HashMap<String, String>, // property_name -> value
 }
@@ -37,6 +38,7 @@ struct WritePropertiesInput {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SendCommandInput {
+    #[serde(rename = "deviceId", alias = "thingId")]
     thing_id: String,
     command_name: String,
     parameters: Option<HashMap<String, String>>,
@@ -219,6 +221,7 @@ impl ToolHandler for DevicePropertyGetHandler {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Input {
+            #[serde(rename = "deviceId", alias = "thingId")]
             thing_id: String,
             property_name: String,
         }

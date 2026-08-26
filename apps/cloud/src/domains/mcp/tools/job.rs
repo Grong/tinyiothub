@@ -30,6 +30,7 @@ struct CreateScheduleInput {
     description: Option<String>,
     job_type: String,
     cron_expression: String,
+    #[serde(rename = "targetDeviceId", alias = "targetThingId")]
     target_thing_id: Option<String>,
     target_command_name: Option<String>,
     target_command_params: Option<String>,
@@ -56,6 +57,7 @@ struct UpdateScheduleInput {
     description: Option<String>,
     job_type: Option<String>,
     cron_expression: Option<String>,
+    #[serde(rename = "targetDeviceId", alias = "targetThingId")]
     target_thing_id: Option<String>,
     target_command_name: Option<String>,
     target_command_params: Option<String>,

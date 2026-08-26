@@ -47,6 +47,7 @@ struct CreateAlarmRuleInput {
     workspace_id: String,
     name: String,
     description: Option<String>,
+    #[serde(rename = "deviceId", alias = "thingId")]
     thing_id: Option<String>,
     property_id: Option<String>,
     rule_type: String,
