@@ -28,13 +28,13 @@ pub trait IoTToolMetadata: Send + Sync {
     fn input_schema(&self) -> Value;
 
     /// 是否并发安全（可并行执行）
-    /// 例如：list_devices 读操作可以并发，control_device 写操作不行
+    /// 例如：list_things 读操作可以并发，control_thing 写操作不行
     fn is_concurrency_safe(&self, _input: &Value) -> bool {
         false
     }
 
     /// 是否只读操作
-    /// 例如：list_devices 是只读，control_device 不是
+    /// 例如：list_things 是只读，control_thing 不是
     fn is_read_only(&self, _input: &Value) -> bool {
         false
     }
@@ -113,30 +113,30 @@ mod tests {
 
     #[test]
     fn test_concurrency_safe_inference() {
-        assert!(name_infers_concurrency_safe("list_devices"));
+        assert!(name_infers_concurrency_safe("list_things"));
         assert!(name_infers_concurrency_safe("get_device_status"));
         assert!(name_infers_concurrency_safe("read_properties"));
-        assert!(!name_infers_concurrency_safe("control_device"));
+        assert!(!name_infers_concurrency_safe("control_thing"));
         assert!(!name_infers_concurrency_safe("write_properties"));
     }
 
     #[test]
     fn test_read_only_inference() {
-        assert!(name_infers_read_only("list_devices"));
+        assert!(name_infers_read_only("list_things"));
         assert!(name_infers_read_only("get_device_metrics"));
         assert!(name_infers_read_only("read_properties"));
         assert!(name_infers_read_only("get_device_history"));
-        assert!(!name_infers_read_only("create_device"));
-        assert!(!name_infers_read_only("update_device"));
+        assert!(!name_infers_read_only("create_thing"));
+        assert!(!name_infers_read_only("update_thing"));
     }
 
     #[test]
     fn test_destructive_inference() {
-        assert!(name_infers_destructive("delete_device"));
+        assert!(name_infers_destructive("delete_thing"));
         assert!(name_infers_destructive("remove_workspace"));
         assert!(name_infers_destructive("unload_driver"));
         assert!(name_infers_destructive("firmware_update"));
-        assert!(name_infers_destructive("reset_device"));
-        assert!(!name_infers_destructive("create_device"));
+        assert!(name_infers_destructive("reset_thing"));
+        assert!(!name_infers_destructive("create_thing"));
     }
 }

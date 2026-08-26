@@ -1,4 +1,4 @@
-// Device Handler Tests
+// Thing Handler Tests
 // Tests for device MCP tool handlers
 
 use serde_json::json;

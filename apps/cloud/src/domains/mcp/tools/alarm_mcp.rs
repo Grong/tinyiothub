@@ -184,7 +184,7 @@ impl ToolHandler for AlarmListHandler {
 
         let criteria = AlarmQueryCriteria {
             workspace_id: Some(claims.workspace_id.clone()),
-            device_ids: input.device_ids,
+            thing_ids: input.device_ids,
             property_ids: None,
             alarm_levels,
             alarm_types: None,
@@ -289,9 +289,7 @@ impl ToolHandler for AlarmAcknowledgeHandler {
             .await
             .map_err(|e| ToolError::Internal(format!("Failed to fetch device: {}", e)))?
             .ok_or_else(|| {
-                ToolError::NotFound(
-                    "Device associated with alarm not found or does not belong to workspace".to_string(),
-                )
+                ToolError::NotFound("Thing associated with alarm not found or does not belong to workspace".to_string())
             })?;
 
         // 3. Workspace isolation is now verified by tenant_device_service

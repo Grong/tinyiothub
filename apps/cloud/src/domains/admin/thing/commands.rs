@@ -59,7 +59,7 @@ async fn execute_device_command(
     // which automatically filters things by workspace_id
 
     // 验证指令是否存在
-    let command = match state.db().find_device_command_by_id(&command_id).await {
+    let command = match state.db().find_thing_command_by_id(&command_id).await {
         Ok(Some(c)) => c,
         Ok(None) => return ApiResponseBuilder::error("指令不存在"),
         Err(e) => {

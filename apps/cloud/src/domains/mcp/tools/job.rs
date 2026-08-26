@@ -294,7 +294,7 @@ impl ToolHandler for CreateScheduleHandler {
             PropertySchema {
                 prop_type: "string".to_string(),
                 description: Some(
-                    "Device ID for device_command jobs (e.g., 'device-env-01'). Must belong to your workspace."
+                    "Thing ID for device_command jobs (e.g., 'device-env-01'). Must belong to your workspace."
                         .to_string(),
                 ),
             },
@@ -360,7 +360,7 @@ impl ToolHandler for CreateScheduleHandler {
                 .await
             {
                 Ok(Some(_)) => {
-                    // Device belongs to workspace, verification passed
+                    // Thing belongs to workspace, verification passed
                 }
                 Ok(None) => {
                     tracing::warn!(

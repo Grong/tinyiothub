@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use tinyiothub_core::models::{device::Device, device_command::DeviceCommand};
+use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 
 #[cfg(feature = "serialport")]
 use serialport::SerialPort;
@@ -66,12 +66,12 @@ use tinyiothub_core::error::Error;
     required = false
 )]
 pub struct ModbusDriver {
-    pub device: Device,
+    pub device: Thing,
     pub retry_count: i32,
 }
 
 impl ModbusDriver {
-    pub fn new(device: Device) -> Self {
+    pub fn new(device: Thing) -> Self {
         Self { device, retry_count: 0 }
     }
 
@@ -91,11 +91,11 @@ impl ModbusDriver {
 }
 
 impl DeviceDriver for ModbusDriver {
-    fn device(&self) -> &Device {
+    fn device(&self) -> &Thing {
         &self.device
     }
 
-    fn device_mut(&mut self) -> &mut Device {
+    fn device_mut(&mut self) -> &mut Thing {
         &mut self.device
     }
 
@@ -144,7 +144,7 @@ impl DeviceDriver for ModbusDriver {
         Ok(results)
     }
 
-    fn execute_command(&mut self, cmd: &DeviceCommand) -> Result<bool, Error> {
+    fn execute_command(&mut self, cmd: &ThingCommand) -> Result<bool, Error> {
         tracing::info!("Executing Modbus command: {} on device {}", cmd.name, self.device.name);
         match cmd.name.as_str() {
             "set_temperature" | "reset_device" | "start_measurement" => Ok(true),

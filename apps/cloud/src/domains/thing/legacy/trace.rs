@@ -1,15 +1,15 @@
-// Device trace service — migrated from domain/device/trace_service.rs
+// Thing trace service — migrated from domain/device/trace_service.rs
 
 use tinyiothub_core::{error::Error, generate_id};
 use tinyiothub_storage::Db;
 
-pub use tinyiothub_storage::thing_trace::{DeviceTrace, DeviceTraceStatistics, SystemTraceOverview};
+pub use tinyiothub_storage::thing_trace::{SystemTraceOverview, ThingTrace, ThingTraceStatistics};
 
-pub struct DeviceTraceService {
+pub struct ThingTraceService {
     db: Db,
 }
 
-impl DeviceTraceService {
+impl ThingTraceService {
     pub fn new(db: Db) -> Self {
         Self { db }
     }
@@ -28,14 +28,14 @@ impl DeviceTraceService {
         user_id: Option<&str>,
         session_id: Option<&str>,
     ) -> Result<String, Error> {
-        if !self.db.device_exists_by_id(thing_id).await? {
-            return Err(Error::IOError("Device not found".to_string()));
+        if !self.db.thing_exists_by_id(thing_id).await? {
+            return Err(Error::IOError("Thing not found".to_string()));
         }
         let trace_id = generate_id();
         let details_json = details.map(|d| d.to_string());
         let source = source.unwrap_or("system");
         self.db
-            .insert_device_trace(
+            .insert_thing_trace(
                 &trace_id,
                 thing_id,
                 trace_type,
@@ -50,7 +50,7 @@ impl DeviceTraceService {
             )
             .await?;
         tracing::info!(
-            "Device trace recorded: device={}, type={}, level={}, title={}, trace_id={}",
+            "Thing trace recorded: device={}, type={}, level={}, title={}, trace_id={}",
             thing_id,
             trace_type,
             level,
@@ -75,26 +75,26 @@ impl DeviceTraceService {
         levels: Option<&[String]>,
         limit: Option<u32>,
         offset: Option<u32>,
-    ) -> Result<Vec<DeviceTrace>, Error> {
-        if !self.db.device_exists_by_id(thing_id).await? {
+    ) -> Result<Vec<ThingTrace>, Error> {
+        if !self.db.thing_exists_by_id(thing_id).await? {
             return Err(Error::NotFound);
         }
         let limit = limit.unwrap_or(50);
         let offset = offset.unwrap_or(0);
         self.db
-            .find_device_traces(thing_id, trace_types, levels, limit, offset)
+            .find_thing_traces(thing_id, trace_types, levels, limit, offset)
             .await
     }
 
-    pub async fn get_device_trace_statistics(
+    pub async fn get_thing_trace_statistics(
         &self,
         thing_id: &str,
         days: Option<u32>,
-    ) -> Result<DeviceTraceStatistics, Error> {
-        if !self.db.device_exists_by_id(thing_id).await? {
+    ) -> Result<ThingTraceStatistics, Error> {
+        if !self.db.thing_exists_by_id(thing_id).await? {
             return Err(Error::NotFound);
         }
-        self.db.get_device_trace_statistics(thing_id, days.unwrap_or(7)).await
+        self.db.get_thing_trace_statistics(thing_id, days.unwrap_or(7)).await
     }
 
     pub async fn clear_device_traces(
@@ -103,18 +103,18 @@ impl DeviceTraceService {
         before_date: Option<&str>,
         trace_types: Option<&[String]>,
     ) -> Result<u32, Error> {
-        if !self.db.device_exists_by_id(thing_id).await? {
-            return Err(Error::IOError("Device not found".to_string()));
+        if !self.db.thing_exists_by_id(thing_id).await? {
+            return Err(Error::IOError("Thing not found".to_string()));
         }
-        self.db.delete_device_traces(thing_id, before_date, trace_types).await
+        self.db.delete_thing_traces(thing_id, before_date, trace_types).await
     }
 
     pub async fn cleanup_expired_traces(&self, days_to_keep: u32) -> Result<u32, Error> {
-        self.db.cleanup_expired_device_traces(days_to_keep).await
+        self.db.cleanup_expired_thing_traces(days_to_keep).await
     }
 
     pub async fn get_system_trace_overview(&self, days: Option<u32>) -> SystemTraceOverview {
-        self.db.get_device_trace_system_overview(days.unwrap_or(7)).await
+        self.db.get_thing_trace_system_overview(days.unwrap_or(7)).await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -128,9 +128,9 @@ impl DeviceTraceService {
         end_time: Option<&str>,
         limit: Option<u32>,
         offset: Option<u32>,
-    ) -> Result<Vec<DeviceTrace>, Error> {
+    ) -> Result<Vec<ThingTrace>, Error> {
         self.db
-            .find_all_device_traces(
+            .find_all_thing_traces(
                 levels,
                 sources,
                 thing_id,

@@ -5,7 +5,7 @@ use axum::{
     routing::{get, put},
 };
 use serde::Deserialize;
-use tinyiothub_core::models::device_property::DeviceProperty;
+use tinyiothub_core::models::thing_property::ThingProperty;
 use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::security::Claims;
 
@@ -39,7 +39,7 @@ async fn get_device_properties(
     Path(thing_id): Path<String>,
     _claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
-) -> Json<ApiResponse<Vec<DeviceProperty>>> {
+) -> Json<ApiResponse<Vec<ThingProperty>>> {
     // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
     // which automatically filters things by workspace_id
 
@@ -59,7 +59,7 @@ async fn get_device_property_by_name(
     Path((device_name, property_name)): Path<(String, String)>,
     _claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
-) -> Json<ApiResponse<Option<DeviceProperty>>> {
+) -> Json<ApiResponse<Option<ThingProperty>>> {
     // 先通过名称查找设备，再验证租户
     let tenant_device_service = state.tenant_device_service(&workspace_id);
     let _device = match tenant_device_service.get_device_by_name(&device_name).await {

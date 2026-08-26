@@ -4,7 +4,7 @@ use std::{any::Any, collections::HashMap, time::Duration};
 
 use async_trait::async_trait;
 use reqwest::Client;
-use tinyiothub_core::models::device::Device;
+use tinyiothub_core::models::thing::Thing;
 use tracing::debug;
 
 use super::{super::config::HttpPollConfig, ProtocolHandler};
@@ -47,7 +47,7 @@ impl HttpPollHandler {
 
 #[async_trait]
 impl ProtocolHandler for HttpPollHandler {
-    async fn read_data(&self, _device: &Device) -> Result<Vec<ResultValue>, Error> {
+    async fn read_data(&self, _device: &Thing) -> Result<Vec<ResultValue>, Error> {
         let url = self.build_url();
         debug!("HTTP poll: {} {}", self.config.method, url);
 

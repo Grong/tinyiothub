@@ -7,8 +7,8 @@ use libloading::Library;
 use tinyiothub_core::driver::dynamic::DriverVTable;
 use tinyiothub_core::driver::{DeviceDriver, ResultValue};
 use tinyiothub_core::error::Error;
-use tinyiothub_core::models::device::Device;
-use tinyiothub_core::models::device_command::DeviceCommand;
+use tinyiothub_core::models::thing::Thing;
+use tinyiothub_core::models::thing_command::ThingCommand;
 
 /// Information about a loaded dynamic driver entry.
 pub struct DynamicEntry {
@@ -26,13 +26,13 @@ pub struct DynamicDeviceDriver {
     ctx: *mut c_void,
     vtable: &'static DriverVTable,
     _library: Arc<Library>,
-    device: Device,
+    device: Thing,
 }
 
 impl DynamicDeviceDriver {
     /// Create a new dynamic driver from a registry entry and device config.
     /// SAFETY: `entry.vtable` must be valid for the lifetime of the library.
-    pub fn new(entry: &DynamicEntry, device: Device) -> Result<Self, Error> {
+    pub fn new(entry: &DynamicEntry, device: Thing) -> Result<Self, Error> {
         let vtable_ref: &'static DriverVTable = entry.vtable;
 
         Ok(Self {
@@ -69,11 +69,11 @@ unsafe impl Send for DynamicDeviceDriver {}
 unsafe impl Sync for DynamicDeviceDriver {}
 
 impl DeviceDriver for DynamicDeviceDriver {
-    fn device(&self) -> &Device {
+    fn device(&self) -> &Thing {
         &self.device
     }
 
-    fn device_mut(&mut self) -> &mut Device {
+    fn device_mut(&mut self) -> &mut Thing {
         &mut self.device
     }
 
@@ -92,7 +92,7 @@ impl DeviceDriver for DynamicDeviceDriver {
         serde_json::from_str(&result_json).map_err(|e| Error::DriverError(format!("read_data JSON parse error: {}", e)))
     }
 
-    fn execute_command(&mut self, cmd: &DeviceCommand) -> Result<bool, Error> {
+    fn execute_command(&mut self, cmd: &ThingCommand) -> Result<bool, Error> {
         let config = self.device.driver_options.as_deref().unwrap_or("{}");
         let config_c =
             std::ffi::CString::new(config).map_err(|e| Error::DriverError(format!("invalid config JSON: {}", e)))?;

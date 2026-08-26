@@ -15,7 +15,7 @@
 //! - driver → alarm (documented): `legacy::{monitoring, performance}` query
 //!   read-only alarm counts on device data via the `Db` facade.
 //! - driver → thing (documented): `legacy::diagnostics` reads
-//!   `DeviceTraceStatistics` from `crate::domains::thing::legacy::trace`.
+//!   `ThingTraceStatistics` from `crate::domains::thing::legacy::trace`.
 //! - driver → event: gateway pairing persists pairing events via the
 //!   `tinyiothub_storage::Db` facade (`insert_event`).
 //!
@@ -52,7 +52,7 @@ where
     driver_health::handler::create_router()
 }
 
-/// Device/gateway heartbeat API router (`/heartbeat`). Stateless beyond
+/// Thing/gateway heartbeat API router (`/heartbeat`). Stateless beyond
 /// `AppState` — heartbeat status/config live in `AppState` fields (G3).
 pub fn heartbeat_router() -> axum::Router<crate::state::AppState> {
     heartbeat::handler::create_router()

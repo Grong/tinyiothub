@@ -16,7 +16,7 @@ pub struct ReadPropertyTool {
     pub(super) thing_service: Arc<ThingService>,
     pub(super) pool: SqlitePool,
     pub(super) workspace_id: String,
-    pub(super) device_cache: Option<Arc<tinyiothub_storage::cache::DeviceCache>>,
+    pub(super) device_cache: Option<Arc<tinyiothub_storage::cache::ThingCache>>,
 }
 
 impl Attributable for ReadPropertyTool {

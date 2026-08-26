@@ -10,7 +10,7 @@ use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
 use tinyiothub_core::models::event::AlarmEvent;
 use tinyiothub_storage::Db;
-use tinyiothub_storage::cache::DeviceCache;
+use tinyiothub_storage::cache::ThingCache;
 
 use crate::domains::alarm::{dto::*, notification::NotificationDispatcher};
 use crate::domains::event::{aggregates::NotificationChannelType, entities::Event, value_objects::EventType};
@@ -20,7 +20,7 @@ pub struct AlarmService {
     db: Arc<Db>,
     rule_engine: Arc<RuleEngine>,
     event_publisher: Mutex<Option<Arc<crate::shared::ai_adapter::AlarmAiPublisherAdapter>>>,
-    device_cache: std::sync::OnceLock<Arc<DeviceCache>>,
+    device_cache: std::sync::OnceLock<Arc<ThingCache>>,
 }
 
 impl AlarmService {
@@ -38,7 +38,7 @@ impl AlarmService {
         *self.event_publisher.lock().unwrap() = Some(publisher);
     }
 
-    pub fn set_device_cache(&self, dc: Arc<DeviceCache>) {
+    pub fn set_device_cache(&self, dc: Arc<ThingCache>) {
         let _ = self.device_cache.set(dc);
     }
 
@@ -255,9 +255,9 @@ impl AlarmService {
             .map_err(AlarmError::from)
     }
 
-    pub async fn get_rules_by_device(&self, thing_id: &str, workspace_id: &str) -> AlarmResult<Vec<AlarmRule>> {
+    pub async fn get_rules_by_thing(&self, thing_id: &str, workspace_id: &str) -> AlarmResult<Vec<AlarmRule>> {
         self.db
-            .find_alarm_rules_by_device(thing_id, Some(workspace_id))
+            .find_alarm_rules_by_thing(thing_id, Some(workspace_id))
             .await
             .map_err(AlarmError::from)
     }
@@ -880,7 +880,7 @@ impl RuleEngine {
     async fn load_relevant_rules(&self, thing_id: &str, property_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>> {
         let mut rules = Vec::new();
         rules.extend(self.db.find_global_alarm_rules().await?);
-        rules.extend(self.db.find_alarm_rules_by_device(thing_id, None).await?);
+        rules.extend(self.db.find_alarm_rules_by_thing(thing_id, None).await?);
         if let Some(prop_id) = property_id {
             rules.extend(self.db.find_alarm_rules_by_property(thing_id, prop_id).await?);
         }
@@ -1177,7 +1177,7 @@ mod tests {
     use std::sync::Arc;
 
     use tinyiothub_core::models::event::{
-        ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
+        ContentElement, EventLevel, EventSource, RichContent, TextFormat, ThingEventType,
     };
     use tinyiothub_storage::Db;
 
@@ -1244,7 +1244,7 @@ mod tests {
         }
 
         Event::new_device_event(
-            DeviceEventType::PropertyChange,
+            ThingEventType::PropertyChange,
             EventLevel::Info,
             EventSource::device_property(thing_id.to_string(), property_name.to_string(), "test".to_string()),
             content,
@@ -1283,7 +1283,7 @@ mod tests {
         }
 
         Event::new_device_event(
-            DeviceEventType::PropertyChange,
+            ThingEventType::PropertyChange,
             EventLevel::Info,
             EventSource::device_property(thing_id.to_string(), property_name.to_string(), "test".to_string()),
             content,
@@ -1297,7 +1297,7 @@ mod tests {
         let db = Arc::new(Db::new(pool.clone()));
 
         // Insert a device
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1332,7 +1332,7 @@ mod tests {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
 
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1356,7 +1356,7 @@ mod tests {
     async fn test_duration_zero_triggers_immediately(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1382,7 +1382,7 @@ mod tests {
     async fn test_duration_sustained_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1409,7 +1409,7 @@ mod tests {
     async fn test_duration_clears_on_recovery(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1454,7 +1454,7 @@ mod tests {
     async fn test_range_in_range_no_trigger(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1477,7 +1477,7 @@ mod tests {
     async fn test_range_out_of_range_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1500,7 +1500,7 @@ mod tests {
     async fn test_range_boundary_inclusive_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1524,7 +1524,7 @@ mod tests {
     async fn test_change_increase_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1547,7 +1547,7 @@ mod tests {
     async fn test_change_below_threshold_no_trigger(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1568,7 +1568,7 @@ mod tests {
     async fn test_change_decrease_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1591,7 +1591,7 @@ mod tests {
     async fn test_composite_and_all_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1619,7 +1619,7 @@ mod tests {
     async fn test_composite_and_partial_no_trigger(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1644,7 +1644,7 @@ mod tests {
     async fn test_composite_or_any_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1672,7 +1672,7 @@ mod tests {
     async fn test_trigger_debounce_not_immediate(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1707,7 +1707,7 @@ mod tests {
     async fn test_trigger_debounce_fires_after_duration(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1734,7 +1734,7 @@ mod tests {
     async fn test_trigger_debounce_resets_on_clear(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1779,7 +1779,7 @@ mod tests {
     async fn test_hysteresis_recovery_threshold(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1829,7 +1829,7 @@ mod tests {
     async fn test_recovery_debounce(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1865,7 +1865,7 @@ mod tests {
     async fn test_throttle_suppresses_repeated(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1902,7 +1902,7 @@ mod tests {
     async fn test_disabled_rule_skipped(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1925,7 +1925,7 @@ mod tests {
     async fn test_threshold_less_than_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1946,7 +1946,7 @@ mod tests {
     async fn test_threshold_equal_triggers(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1969,7 +1969,7 @@ mod tests {
     async fn test_non_triggered_rule_ids_populated(pool: sqlx::SqlitePool) {
         setup_test_db(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -2004,7 +2004,7 @@ mod integration_tests {
     use sqlx::Row;
     use tinyiothub_core::{
         event::EventHandler,
-        models::event::{ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat},
+        models::event::{ContentElement, EventLevel, EventSource, RichContent, TextFormat, ThingEventType},
     };
     use tinyiothub_storage::Db;
 
@@ -2116,7 +2116,7 @@ mod integration_tests {
         }
 
         Event::new_device_event(
-            DeviceEventType::PropertyChange,
+            ThingEventType::PropertyChange,
             EventLevel::Info,
             EventSource::device_property(thing_id.to_string(), property_id.to_string(), "test".to_string()),
             content,
@@ -2129,7 +2129,7 @@ mod integration_tests {
         setup_full_schema(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
 
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -2181,7 +2181,7 @@ mod integration_tests {
         setup_full_schema(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
 
-        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Device')")
+        sqlx::query("INSERT INTO things (id, name) VALUES ('dev-1', 'Test Thing')")
             .execute(&pool)
             .await
             .unwrap();
@@ -2216,7 +2216,7 @@ mod integration_tests {
         setup_full_schema(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
 
-        sqlx::query("INSERT INTO things (id, name, workspace_id) VALUES ('dev-ar', 'AutoResolve Device', 'ws-ar')")
+        sqlx::query("INSERT INTO things (id, name, workspace_id) VALUES ('dev-ar', 'AutoResolve Thing', 'ws-ar')")
             .execute(&pool)
             .await
             .unwrap();
@@ -2267,7 +2267,7 @@ mod integration_tests {
         setup_full_schema(&pool).await;
         let db = Arc::new(Db::new(pool.clone()));
 
-        sqlx::query("INSERT INTO things (id, name, workspace_id) VALUES ('dev-arm', 'Meta Device', 'ws-arm')")
+        sqlx::query("INSERT INTO things (id, name, workspace_id) VALUES ('dev-arm', 'Meta Thing', 'ws-arm')")
             .execute(&pool)
             .await
             .unwrap();

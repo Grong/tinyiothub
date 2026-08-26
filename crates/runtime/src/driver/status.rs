@@ -6,13 +6,13 @@ use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
-use tinyiothub_core::models::device::Device;
-use tinyiothub_core::models::device::DeviceStatus;
+use tinyiothub_core::models::thing::Thing;
+use tinyiothub_core::models::thing::ThingStatus;
 
 /// 设备健康状态
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthStatus {
-    pub connection: DeviceStatus,
+    pub connection: ThingStatus,
     pub last_success_time: Option<SystemTime>,
     pub last_failure_time: Option<SystemTime>,
     pub consecutive_failures: u32,
@@ -27,7 +27,7 @@ pub struct HealthStatus {
 impl Default for HealthStatus {
     fn default() -> Self {
         Self {
-            connection: DeviceStatus::default(),
+            connection: ThingStatus::default(),
             last_success_time: None,
             last_failure_time: None,
             consecutive_failures: 0,
@@ -43,7 +43,7 @@ impl Default for HealthStatus {
 
 impl HealthStatus {
     pub fn record_success(&mut self, response_time: Duration) {
-        self.connection = DeviceStatus::Online;
+        self.connection = ThingStatus::Online;
         self.last_success_time = Some(SystemTime::now());
         self.consecutive_successes += 1;
         self.consecutive_failures = 0;
@@ -61,7 +61,7 @@ impl HealthStatus {
     }
 
     pub fn record_failure(&mut self) {
-        self.connection = DeviceStatus::Offline;
+        self.connection = ThingStatus::Offline;
         self.last_failure_time = Some(SystemTime::now());
         self.consecutive_failures += 1;
         self.consecutive_successes = 0;
@@ -98,7 +98,7 @@ pub struct DeviceOverview {
 }
 
 impl DeviceOverview {
-    pub fn new(device: &Device) -> Self {
+    pub fn new(device: &Thing) -> Self {
         let now = SystemTime::now();
         Self {
             device_id: device.id.clone(),
@@ -134,17 +134,17 @@ pub struct DeviceStatusManager {
 }
 
 impl DeviceStatusManager {
-    pub fn new(device: &Device) -> Self {
+    pub fn new(device: &Thing) -> Self {
         Self {
             overview: DeviceOverview::new(device),
         }
     }
 
-    pub fn get_connection_status(&self) -> DeviceStatus {
+    pub fn get_connection_status(&self) -> ThingStatus {
         self.overview.health.connection.clone()
     }
 
-    pub fn set_connection_status(&mut self, status: DeviceStatus) {
+    pub fn set_connection_status(&mut self, status: ThingStatus) {
         self.overview.health.connection = status;
         self.overview.update();
     }
@@ -176,7 +176,7 @@ impl DeviceStatusManager {
     }
 
     pub fn soft_reset(&mut self) {
-        self.overview.health.connection = DeviceStatus::Offline;
+        self.overview.health.connection = ThingStatus::Offline;
         self.overview.health.consecutive_failures = 0;
         self.overview.health.consecutive_successes = 0;
         self.overview.health.last_failure_time = None;
@@ -186,7 +186,7 @@ impl DeviceStatusManager {
     }
 
     pub fn set_offline(&mut self) {
-        self.overview.health.connection = DeviceStatus::Offline;
+        self.overview.health.connection = ThingStatus::Offline;
         self.overview.health.last_failure_time = Some(SystemTime::now());
         self.overview.update();
     }

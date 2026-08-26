@@ -1,6 +1,6 @@
 // cloud/src/modules/marketplace/publisher.rs
 
-use crate::domains::thing::template::types::DeviceTemplate;
+use crate::domains::thing::template::types::ThingTemplate;
 use reqwest::Client;
 use tinyiothub_core::config::MarketplaceConfig;
 
@@ -39,7 +39,7 @@ impl MarketplacePublisher {
     }
 
     /// Publish a device template to the Marketplace.
-    pub async fn publish_template(&self, template: &DeviceTemplate) -> Result<serde_json::Value> {
+    pub async fn publish_template(&self, template: &ThingTemplate) -> Result<serde_json::Value> {
         let url = format!("{}/templates", self.base_url.trim_end_matches('/'));
 
         let tags: Vec<String> = template.get_tags();

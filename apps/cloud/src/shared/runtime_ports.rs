@@ -7,33 +7,33 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tinyiothub_core::models::device::Device;
-use tinyiothub_core::models::device_command::DeviceCommand;
+use tinyiothub_core::models::thing::Thing;
+use tinyiothub_core::models::thing_command::ThingCommand;
 use tinyiothub_runtime::ports::{DeviceCacheSource, DeviceCommandQueries, EventRetentionStore};
 use tinyiothub_storage::Db;
-use tinyiothub_storage::cache::DeviceCache;
+use tinyiothub_storage::cache::ThingCache;
 
-/// `DeviceCache` → `DeviceCacheSource`（全部方法同步直转）。
-pub struct DeviceCacheAdapter(pub Arc<DeviceCache>);
+/// `ThingCache` → `DeviceCacheSource`（全部方法同步直转）。
+pub struct DeviceCacheAdapter(pub Arc<ThingCache>);
 
 impl DeviceCacheSource for DeviceCacheAdapter {
-    fn all(&self) -> Vec<Device> {
+    fn all(&self) -> Vec<Thing> {
         self.0.all()
     }
 
-    fn get(&self, id: &str) -> Option<Device> {
+    fn get(&self, id: &str) -> Option<Thing> {
         self.0.get(id)
     }
 
-    fn get_by_name(&self, name: &str) -> Option<Device> {
+    fn get_by_name(&self, name: &str) -> Option<Thing> {
         self.0.get_by_name(name)
     }
 
-    fn insert(&self, device: Device) {
+    fn insert(&self, device: Thing) {
         self.0.insert(device);
     }
 
-    fn update(&self, device: Device) {
+    fn update(&self, device: Thing) {
         self.0.update(device);
     }
 
@@ -47,9 +47,9 @@ pub struct DeviceCommandQueriesAdapter(pub Db);
 
 #[async_trait]
 impl DeviceCommandQueries for DeviceCommandQueriesAdapter {
-    async fn find_by_device_and_name(&self, thing_id: &str, name: &str) -> Result<Option<DeviceCommand>, String> {
+    async fn find_by_device_and_name(&self, thing_id: &str, name: &str) -> Result<Option<ThingCommand>, String> {
         self.0
-            .find_device_command_by_device_and_name(thing_id, name)
+            .find_thing_command_by_thing_and_name(thing_id, name)
             .await
             .map_err(|e| e.to_string())
     }

@@ -9,13 +9,13 @@ use tinyiothub_web::middleware::workspace::AuthClaims;
 use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo};
 
 use super::service::TemplateValidator;
-use crate::domains::thing::template::types::CreateDeviceTemplateRequest;
+use crate::domains::thing::template::types::CreateThingTemplateRequest;
 use crate::domains::thing::template::types::DeviceCreationInput;
 use crate::domains::thing::template::types::DevicePreview;
-use crate::domains::thing::template::types::DeviceTemplate;
 use crate::domains::thing::template::types::TemplateCategory;
 use crate::domains::thing::template::types::TemplateQueryParams;
-use crate::domains::thing::template::types::UpdateDeviceTemplateRequest;
+use crate::domains::thing::template::types::ThingTemplate;
+use crate::domains::thing::template::types::UpdateThingTemplateRequest;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -46,7 +46,7 @@ async fn list_templates(
     State(state): State<AppState>,
     Query(query): Query<TemplateQuery>,
     _claims: AuthClaims,
-) -> Json<ApiResponse<PaginatedResponse<DeviceTemplate>>> {
+) -> Json<ApiResponse<PaginatedResponse<ThingTemplate>>> {
     // 初始化模板服务
     let params = TemplateQueryParams {
         category: query.category,
@@ -98,7 +98,7 @@ async fn get_template(
     State(state): State<AppState>,
     Path(id): Path<String>,
     _claims: AuthClaims,
-) -> Json<ApiResponse<Option<DeviceTemplate>>> {
+) -> Json<ApiResponse<Option<ThingTemplate>>> {
     match state.db.find_thing_template_by_id(&id, "").await {
         Ok(template) => ApiResponseBuilder::success(template),
         Err(e) => {
@@ -126,8 +126,8 @@ async fn get_template_categories(
 async fn create_template(
     State(state): State<AppState>,
     _claims: AuthClaims,
-    Json(req): Json<CreateDeviceTemplateRequest>,
-) -> Json<ApiResponse<DeviceTemplate>> {
+    Json(req): Json<CreateThingTemplateRequest>,
+) -> Json<ApiResponse<ThingTemplate>> {
     // 验证模板名称唯一性
     match state.db.thing_template_exists_by_name(&req.name).await {
         Ok(true) => {
@@ -156,8 +156,8 @@ async fn update_template(
     State(state): State<AppState>,
     Path(id): Path<String>,
     _claims: AuthClaims,
-    Json(req): Json<UpdateDeviceTemplateRequest>,
-) -> Json<ApiResponse<DeviceTemplate>> {
+    Json(req): Json<UpdateThingTemplateRequest>,
+) -> Json<ApiResponse<ThingTemplate>> {
     // 检查模板是否存在
     match state.db.find_thing_template_by_id(&id, "").await {
         Ok(Some(_template)) => match state.db.update_thing_template(&id, &req).await {

@@ -4,13 +4,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tinyiothub_core::models::device::CreateDeviceRequest;
+use tinyiothub_core::models::thing::CreateThingRequest;
 use tokio::sync::{RwLock, mpsc};
 
 use crate::domains::event::{
     EventError,
     entities::Event,
-    value_objects::{ContentElement, DeviceEventType, EventLevel, EventSource, RichContent},
+    value_objects::{ContentElement, EventLevel, EventSource, RichContent, ThingEventType},
 };
 
 use crate::domains::driver::gateway::{
@@ -48,7 +48,7 @@ impl GatewayService {
         service
     }
 
-    pub async fn pair_device(
+    pub async fn pair_thing(
         &self,
         user_id: &str,
         client_ip: Option<&str>,
@@ -84,7 +84,7 @@ impl GatewayService {
         let workspace_id = req.workspace_id.clone().unwrap_or_default();
         let password = generate_device_password();
 
-        let create_req = CreateDeviceRequest {
+        let create_req = CreateThingRequest {
             name: device_name.clone(),
             category: Some("gateway".into()),
             protocol_type: Some("mqtt".into()),
@@ -94,7 +94,7 @@ impl GatewayService {
         };
         let device = self
             .database_for_repos
-            .create_device(Some(&workspace_id), &create_req)
+            .create_thing(Some(&workspace_id), &create_req)
             .await
             .map_err(|e| {
                 tracing::error!(?e, "Failed to create device during pairing");
@@ -105,7 +105,7 @@ impl GatewayService {
         // Set gateway as online
         let _ = self
             .database_for_repos
-            .update_device_state(Some(&workspace_id), &device_id, 1i32)
+            .update_thing_state(Some(&workspace_id), &device_id, 1i32)
             .await;
 
         // Remove code BEFORE MQTT publish to prevent simultaneous pairing of same code
@@ -144,7 +144,7 @@ impl GatewayService {
         {
             let _ = self
                 .database_for_repos
-                .delete_device(Some(&workspace_id), &device_id)
+                .delete_thing(Some(&workspace_id), &device_id)
                 .await;
             // Restore the code to cache so the gateway can still be paired
             self.cache
@@ -247,10 +247,10 @@ impl GatewayService {
             return Ok(());
         }
 
-        let requests: Vec<CreateDeviceRequest> = msg
+        let requests: Vec<CreateThingRequest> = msg
             .devices
             .iter()
-            .map(|d| CreateDeviceRequest {
+            .map(|d| CreateThingRequest {
                 name: d.name.clone(),
                 category: Some(d.device_type.clone().unwrap_or_else(|| "sensor".into())),
                 protocol_type: d.protocol_type.clone(),
@@ -265,7 +265,7 @@ impl GatewayService {
             .collect();
 
         self.database_for_repos
-            .create_devices_batch(Some(workspace_id), &requests)
+            .create_things_batch(Some(workspace_id), &requests)
             .await
             .map(|_| ())
     }
@@ -279,7 +279,7 @@ impl GatewayService {
             } => {
                 if let Err(e) = self
                     .database_for_repos
-                    .update_device_state(Some(workspace_id), gateway_id, 1i32)
+                    .update_thing_state(Some(workspace_id), gateway_id, 1i32)
                     .await
                 {
                     tracing::warn!(?e, gateway_id = %gateway_id, "Failed to update gateway last_seen");
@@ -313,7 +313,7 @@ impl GatewayService {
                 if let Err(e) = self.store_device_telemetry_event(gateway_id, workspace_id, msg).await {
                     tracing::warn!(?e, gateway_id = %gateway_id, device_id = %msg.device_id, "Failed to store device telemetry");
                 }
-                tracing::debug!(gateway_id = %gateway_id, device_id = %msg.device_id, "Device telemetry stored");
+                tracing::debug!(gateway_id = %gateway_id, device_id = %msg.device_id, "Thing telemetry stored");
             }
         }
     }
@@ -329,7 +329,7 @@ impl GatewayService {
             ContentElement::code(msg.data.to_string(), Some("json".to_string())),
         ];
         let event = Event::new_device_event(
-            DeviceEventType::PropertyChange,
+            ThingEventType::PropertyChange,
             EventLevel::Debug,
             EventSource::device(gateway_id.to_string(), Some(workspace_id.to_string())),
             RichContent::new(format!("Gateway {} telemetry", gateway_id), content),
@@ -350,10 +350,10 @@ impl GatewayService {
             ContentElement::code(msg.data.to_string(), Some("json".to_string())),
         ];
         let event = Event::new_device_event(
-            DeviceEventType::PropertyChange,
+            ThingEventType::PropertyChange,
             EventLevel::Debug,
             EventSource::device(msg.device_id.clone(), Some(workspace_id.to_string())),
-            RichContent::new(format!("Device {} telemetry", msg.device_id), content),
+            RichContent::new(format!("Thing {} telemetry", msg.device_id), content),
         )
         .map_err(|e| EventError::Validation { message: e.to_string() })?;
         self.database_for_repos.insert_event(&event).await?;
@@ -419,7 +419,7 @@ mod tests {
         }
     }
 
-    // ── pair_device ──
+    // ── pair_thing ──
 
     #[tokio::test]
     async fn pair_device_invalid_code_short() {
@@ -429,7 +429,7 @@ mod tests {
             code: "12345".into(),
             workspace_id: None,
         };
-        let result = svc.pair_device("user1", None, req).await;
+        let result = svc.pair_thing("user1", None, req).await;
         assert!(matches!(result, Err(PairingError::InvalidCode)));
     }
 
@@ -441,7 +441,7 @@ mod tests {
             code: "12a456".into(),
             workspace_id: None,
         };
-        let result = svc.pair_device("user1", None, req).await;
+        let result = svc.pair_thing("user1", None, req).await;
         assert!(matches!(result, Err(PairingError::InvalidCode)));
     }
 
@@ -453,7 +453,7 @@ mod tests {
             code: "123456".into(),
             workspace_id: None,
         };
-        let result = svc.pair_device("user1", None, req).await;
+        let result = svc.pair_thing("user1", None, req).await;
         assert!(matches!(result, Err(PairingError::CodeNotFound)));
     }
 
@@ -469,7 +469,7 @@ mod tests {
                 code: code.into(),
                 workspace_id: None,
             };
-            let _result = svc.pair_device("user1", None, req).await;
+            let _result = svc.pair_thing("user1", None, req).await;
             // First 5 attempts may succeed or fail based on attempt counting
             // but the 6th should fail with TooManyAttempts
         }
@@ -477,7 +477,7 @@ mod tests {
             code: code.into(),
             workspace_id: None,
         };
-        let result = svc.pair_device("user1", None, req).await;
+        let result = svc.pair_thing("user1", None, req).await;
         assert!(matches!(result, Err(PairingError::TooManyAttempts)));
     }
 
@@ -497,14 +497,14 @@ mod tests {
                 workspace_id: None,
             };
             // Don't check result, just burn attempts from this IP
-            let _ = svc.pair_device("user1", Some("10.0.0.1"), req).await;
+            let _ = svc.pair_thing("user1", Some("10.0.0.1"), req).await;
         }
         // 4th request from same IP should be rate-limited
         let req = PairingRequest {
             code: code.into(),
             workspace_id: None,
         };
-        let result = svc.pair_device("user1", Some("10.0.0.1"), req).await;
+        let result = svc.pair_thing("user1", Some("10.0.0.1"), req).await;
         assert!(matches!(result, Err(PairingError::TooManyAttemptsIp)));
     }
 
@@ -519,8 +519,8 @@ mod tests {
             code: code.into(),
             workspace_id: Some("ws1".into()),
         };
-        let result = svc.pair_device("user1", None, req).await;
-        assert!(result.is_ok(), "pair_device failed: {:?}", result.err());
+        let result = svc.pair_thing("user1", None, req).await;
+        assert!(result.is_ok(), "pair_thing failed: {:?}", result.err());
         let response = result.unwrap();
 
         assert!(!response.device_id.is_empty());
@@ -694,7 +694,7 @@ mod tests {
             code: "123456".into(),
             workspace_id: None,
         };
-        let result = svc.pair_device("user1", None, req).await;
+        let result = svc.pair_thing("user1", None, req).await;
         assert!(matches!(result, Err(PairingError::ServiceBusy)));
     }
 
@@ -718,7 +718,7 @@ mod tests {
             code: code.into(),
             workspace_id: Some("ws1".into()),
         };
-        let result = svc.pair_device("user1", None, req).await;
+        let result = svc.pair_thing("user1", None, req).await;
         assert!(matches!(result, Err(PairingError::MqttPublishFailed)));
 
         // Verify the code was restored to cache (race condition fix)
@@ -747,7 +747,7 @@ mod tests {
                 code: code.into(),
                 workspace_id: None,
             };
-            let _ = svc.pair_device("user1", Some("10.0.0.1"), req).await;
+            let _ = svc.pair_thing("user1", Some("10.0.0.1"), req).await;
         }
         // 4th attempt from 10.0.0.1 should be rate-limited
         svc.cache.insert(code.into(), make_announce(code)).await;
@@ -755,7 +755,7 @@ mod tests {
             code: code.into(),
             workspace_id: None,
         };
-        let result = svc.pair_device("user1", Some("10.0.0.1"), req).await;
+        let result = svc.pair_thing("user1", Some("10.0.0.1"), req).await;
         assert!(matches!(result, Err(PairingError::TooManyAttemptsIp)));
 
         // Same code from DIFFERENT IP should NOT be rate-limited
@@ -764,7 +764,7 @@ mod tests {
             code: code.into(),
             workspace_id: None,
         };
-        let result = svc.pair_device("user1", Some("10.0.0.2"), req).await;
+        let result = svc.pair_thing("user1", Some("10.0.0.2"), req).await;
         // Should NOT be TooManyAttemptsIp (may succeed or fail for other reasons)
         assert!(!matches!(result, Err(PairingError::TooManyAttemptsIp)));
     }
@@ -785,7 +785,7 @@ mod tests {
             code: code.into(),
             workspace_id: None,
         };
-        let result = svc.pair_device("user1", None, req).await;
+        let result = svc.pair_thing("user1", None, req).await;
         assert!(matches!(result, Err(PairingError::CodeExpired)));
     }
 }

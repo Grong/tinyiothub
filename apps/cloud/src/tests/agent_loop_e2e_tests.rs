@@ -130,7 +130,7 @@ async fn seed_scene(pool: &sqlx::SqlitePool) {
     seed_test_workspace(pool, "tenant-1", WS).await;
     sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES (?, ?, ?, 'device')")
         .bind(THING)
-        .bind("E2E Device")
+        .bind("E2E Thing")
         .bind(WS)
         .execute(pool)
         .await

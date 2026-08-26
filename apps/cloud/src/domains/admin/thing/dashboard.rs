@@ -9,13 +9,13 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::security::Claims;
 use tracing::{error, info};
 
-use tinyiothub_storage::thing::{DeviceStatusDistribution, QuickDevice};
+use tinyiothub_storage::thing::{QuickThing, ThingStatusDistribution};
 
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::middleware::workspace::WorkspaceScope;
 
 #[derive(Debug, Deserialize)]
-pub struct QuickDevicesQuery {
+pub struct QuickThingsQuery {
     limit: Option<i32>,
 }
 
@@ -24,7 +24,7 @@ pub async fn get_device_distribution(
     State(state): State<AdminState>,
     _claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
-) -> Json<ApiResponse<DeviceStatusDistribution>> {
+) -> Json<ApiResponse<ThingStatusDistribution>> {
     info!("Getting device status distribution");
 
     match state
@@ -41,12 +41,12 @@ pub async fn get_device_distribution(
 }
 
 /// 获取关键设备列表
-pub async fn get_quick_devices(
+pub async fn get_quick_things(
     State(state): State<AdminState>,
-    Query(query): Query<QuickDevicesQuery>,
+    Query(query): Query<QuickThingsQuery>,
     _claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
-) -> Json<ApiResponse<Vec<QuickDevice>>> {
+) -> Json<ApiResponse<Vec<QuickThing>>> {
     info!("Getting quick things list with limit: {:?}", query.limit);
 
     let limit = query.limit.unwrap_or(8);
@@ -71,5 +71,5 @@ where
 {
     Router::new()
         .route("/distribution", get(get_device_distribution))
-        .route("/quick", get(get_quick_devices))
+        .route("/quick", get(get_quick_things))
 }

@@ -1,4 +1,4 @@
-//! Device monitoring handler integration tests
+//! Thing monitoring handler integration tests
 
 use axum::{
     body::Body,
@@ -32,7 +32,7 @@ fn auth_request_with_body(method: &str, uri: &str, token: &str, body: Value) -> 
 }
 
 // ============================================================================
-// Device Online Status
+// Thing Online Status
 // ============================================================================
 
 #[tokio::test]
@@ -41,7 +41,7 @@ async fn test_get_device_online_status() {
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/some-device/status", &token))
+        .oneshot(auth_request("GET", "/api/v1/things/admin/some-device/status", &token))
         .await
         .unwrap();
 
@@ -53,7 +53,7 @@ async fn test_get_device_online_status() {
 }
 
 // ============================================================================
-// Device Metrics
+// Thing Metrics
 // ============================================================================
 
 #[tokio::test]
@@ -62,7 +62,7 @@ async fn test_get_device_metrics() {
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/some-device/metrics", &token))
+        .oneshot(auth_request("GET", "/api/v1/things/admin/some-device/metrics", &token))
         .await
         .unwrap();
 
@@ -82,7 +82,7 @@ async fn test_get_system_overview() {
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/overview", &token))
+        .oneshot(auth_request("GET", "/api/v1/things/admin/overview", &token))
         .await
         .unwrap();
 
@@ -93,7 +93,7 @@ async fn test_get_system_overview() {
 }
 
 // ============================================================================
-// Device Performance Metrics
+// Thing Performance Metrics
 // ============================================================================
 
 #[tokio::test]
@@ -102,7 +102,7 @@ async fn test_get_device_performance_metrics() {
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/some-device/performance", &token))
+        .oneshot(auth_request("GET", "/api/v1/things/admin/some-device/performance", &token))
         .await
         .unwrap();
 
@@ -112,7 +112,7 @@ async fn test_get_device_performance_metrics() {
 }
 
 // ============================================================================
-// Device Performance History
+// Thing Performance History
 // ============================================================================
 
 #[tokio::test]
@@ -121,7 +121,7 @@ async fn test_get_device_performance_history() {
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/some-device/performance/history?hours=24", &token))
+        .oneshot(auth_request("GET", "/api/v1/things/admin/some-device/performance/history?hours=24", &token))
         .await
         .unwrap();
 
@@ -141,7 +141,7 @@ async fn test_get_system_performance_overview() {
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/performance/overview", &token))
+        .oneshot(auth_request("GET", "/api/v1/things/admin/performance/overview", &token))
         .await
         .unwrap();
 
@@ -152,7 +152,7 @@ async fn test_get_system_performance_overview() {
 }
 
 // ============================================================================
-// Device Performance Alerts
+// Thing Performance Alerts
 // ============================================================================
 
 #[tokio::test]
@@ -161,7 +161,7 @@ async fn test_get_device_performance_alerts() {
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/some-device/performance/alerts", &token))
+        .oneshot(auth_request("GET", "/api/v1/things/admin/some-device/performance/alerts", &token))
         .await
         .unwrap();
 
@@ -181,7 +181,7 @@ async fn test_get_all_performance_alerts() {
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/performance/alerts", &token))
+        .oneshot(auth_request("GET", "/api/v1/things/admin/performance/alerts", &token))
         .await
         .unwrap();
 

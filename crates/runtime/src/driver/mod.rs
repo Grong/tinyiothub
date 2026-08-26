@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 
 use parking_lot::RwLock;
 use tinyiothub_core::error::Error;
-use tinyiothub_core::models::device::Device;
+use tinyiothub_core::models::thing::Thing;
 
 pub mod drivers;
 pub mod dynamic_adapter;
@@ -36,7 +36,7 @@ fn global_registry() -> &'static RwLock<registry::DriverRegistry> {
 
 /// Create a driver instance by name.
 /// Checks built-in drivers first, then the workspace-specific dynamic registry.
-pub fn create_driver(driver_name: &str, device: &Device) -> Result<DriverWrapper, Error> {
+pub fn create_driver(driver_name: &str, device: &Thing) -> Result<DriverWrapper, Error> {
     // 1. Built-in drivers (global, always available)
     if is_driver_supported(driver_name) {
         let base_driver = create_driver_by_name(driver_name, device)?;

@@ -3,11 +3,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::domains::thing::legacy::trace::DeviceTraceStatistics;
-use tinyiothub_core::models::device::Device;
-use tinyiothub_storage::cache::DeviceCache;
+use crate::domains::thing::legacy::trace::ThingTraceStatistics;
+use tinyiothub_core::models::thing::Thing;
+use tinyiothub_storage::cache::ThingCache;
 
-/// Device fault diagnosis result
+/// Thing fault diagnosis result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceDiagnosis {
     pub device_id: String,
@@ -15,7 +15,7 @@ pub struct DeviceDiagnosis {
     pub is_healthy: bool,
     pub fault_score: u32, // 0-100, higher = more faulty
     pub issues: Vec<DeviceIssue>,
-    pub trace_stats: Option<DeviceTraceStatistics>,
+    pub trace_stats: Option<ThingTraceStatistics>,
     pub recommendations: Vec<String>,
 }
 
@@ -68,23 +68,23 @@ pub struct DiagnosticsService;
 impl DiagnosticsService {
     /// Diagnose a device for common fault patterns.
     ///
-    /// Pure analysis: the caller resolves the `Device` and its trace
+    /// Pure analysis: the caller resolves the `Thing` and its trace
     /// statistics (last 7 days) beforehand — this service was dead code in
     /// cloud and previously took `&Arc<AppState>` directly (P4-Task20).
     pub fn diagnose_device(
-        device: &Device,
-        trace_stats: Option<DeviceTraceStatistics>,
+        device: &Thing,
+        trace_stats: Option<ThingTraceStatistics>,
     ) -> Result<DeviceDiagnosis, String> {
         let mut issues = Vec::new();
         let mut fault_score: u32 = 0;
         let mut recommendations = Vec::new();
 
         // Check offline state
-        if device.status == tinyiothub_core::models::device::DeviceStatus::Offline {
+        if device.status == tinyiothub_core::models::thing::ThingStatus::Offline {
             issues.push(DeviceIssue {
                 severity: "critical".to_string(),
                 code: "OFFLINE".to_string(),
-                message: "Device is currently offline".to_string(),
+                message: "Thing is currently offline".to_string(),
                 timestamp: None,
             });
             fault_score += 50;
@@ -156,7 +156,7 @@ impl DiagnosticsService {
         let is_healthy = fault_score < 30;
 
         if is_healthy && recommendations.is_empty() {
-            recommendations.push("Device is operating normally".to_string());
+            recommendations.push("Thing is operating normally".to_string());
         }
 
         Ok(DeviceDiagnosis {
@@ -172,11 +172,11 @@ impl DiagnosticsService {
 
     /// Compare a property across multiple devices.
     ///
-    /// The caller resolves the `Device`s; real-time property values are read
-    /// from the shared `DeviceCache` (may miss — value falls back to None).
+    /// The caller resolves the `Thing`s; real-time property values are read
+    /// from the shared `ThingCache` (may miss — value falls back to None).
     pub fn compare_properties(
-        devices: &[Device],
-        device_cache: &DeviceCache,
+        devices: &[Thing],
+        device_cache: &ThingCache,
         property_name: &str,
     ) -> Result<PropertyComparison, String> {
         let mut values = Vec::new();

@@ -252,7 +252,7 @@ pub fn register_drivers(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         /// 驱动工厂函数类型
-        type DriverFactory = Box<dyn Fn(Device) -> Box<dyn DeviceDriver> + Send + Sync>;
+        type DriverFactory = Box<dyn Fn(tinyiothub_core::models::thing::Thing) -> Box<dyn DeviceDriver> + Send + Sync>;
 
         /// 驱动注册表
         static DRIVER_REGISTRY: std::sync::LazyLock<std::collections::HashMap<String, DriverFactory>> = std::sync::LazyLock::new(|| {
@@ -271,7 +271,7 @@ pub fn register_drivers(input: TokenStream) -> TokenStream {
         /// 根据驱动名称创建驱动实例
         pub fn create_driver_by_name(
             driver_name: &str,
-            device: &Device,
+            device: &tinyiothub_core::models::thing::Thing,
         ) -> Result<Box<dyn DeviceDriver>, tinyiothub_core::error::Error> {
             tracing::debug!("Creating driver with name: {}", driver_name);
 

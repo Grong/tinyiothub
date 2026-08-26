@@ -15,11 +15,11 @@ use tinyiothub_agent::pool::AgentPool;
 use crate::domains::notify::channels::NotificationChannelFactory;
 use crate::domains::notify::service::NotificationManager;
 use crate::domains::thing::{
-    legacy::trace::DeviceTraceService,
+    legacy::trace::ThingTraceService,
     template::{TemplateEngine, TemplateValidator},
 };
 use tinyiothub_storage::memory::MemoryStore;
-use tinyiothub_storage::{Db, cache::DeviceCache};
+use tinyiothub_storage::{Db, cache::ThingCache};
 use tokio::sync::OnceCell;
 
 use crate::domains::event::security::{EventSecurityFactory, SecureEventService};
@@ -36,7 +36,7 @@ use tinyiothub_runtime::event_bus::EventBus;
 #[derive(Clone)]
 pub struct AppState {
     /// 设备内存缓存
-    pub device_cache: Arc<DeviceCache>,
+    pub device_cache: Arc<ThingCache>,
 
     /// 数据库连接池
     pub db: Arc<Db>,
@@ -58,7 +58,7 @@ pub struct AppState {
     pub performance_service: Arc<DevicePerformanceService>,
 
     /// 设备追踪服务 - 操作日志和审计
-    pub trace_service: Arc<DeviceTraceService>,
+    pub trace_service: Arc<ThingTraceService>,
 
     /// 设备查询服务 - 报表和只读查询
     pub device_query_service: Arc<dyn DeviceQueryService>,
@@ -226,7 +226,7 @@ impl AppState {
     /// 3. 测试友好 - 便于单元测试和集成测试
     /// 4. 类型安全 - 编译时检查所有依赖
     pub fn new(
-        device_cache: Arc<DeviceCache>,
+        device_cache: Arc<ThingCache>,
         db_pool: sqlx::SqlitePool,
         settings: &tinyiothub_core::config::ApplicationSettings,
     ) -> Self {
@@ -247,7 +247,7 @@ impl AppState {
         // 创建报警服务
         let alarm_service = Arc::new(crate::domains::alarm::service::AlarmService::new(database.clone()));
 
-        // 创建SSE管理器（带 DeviceCache 用于设备 workspace 查找）
+        // 创建SSE管理器（带 ThingCache 用于设备 workspace 查找）
         let sse_manager = Arc::new(SseConnectionManager::new());
 
         // SSE Token 管理器 — 生成短期令牌用于 SSE 连接认证（替代 URL 中的 JWT）
@@ -271,7 +271,7 @@ impl AppState {
         let performance_service = Arc::new(DevicePerformanceService::new(database.clone(), device_cache.clone()));
 
         // 追踪服务 - 依赖 Db 门面
-        let trace_service = Arc::new(DeviceTraceService::new((*database).clone()));
+        let trace_service = Arc::new(ThingTraceService::new((*database).clone()));
 
         // 模板引擎 - 内置模板通过 migration seed 写入 DB
         let template_validator = Arc::new(TemplateValidator::new());
@@ -624,7 +624,7 @@ impl AppState {
             .await
             .unwrap();
 
-        let device_cache = Arc::new(DeviceCache::new());
+        let device_cache = Arc::new(ThingCache::new());
 
         Self::new(device_cache, pool, settings)
     }

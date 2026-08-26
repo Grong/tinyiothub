@@ -63,11 +63,11 @@ pub struct StatusSummaryResponse {
     pub warning_count: u64,
     pub unacknowledged_count: u64,
     pub health_status: String,
-    pub by_device: Vec<DeviceStatusResponse>,
+    pub by_thing: Vec<DeviceStatusResponse>,
     pub by_type: Vec<TypeStatusResponse>,
 }
 
-/// Device status summary response DTO
+/// Thing status summary response DTO
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct DeviceStatusResponse {
@@ -110,7 +110,7 @@ pub async fn get_real_time_events(
         ..Default::default()
     };
 
-    // Device IDs
+    // Thing IDs
     if let Some(device_ids_str) = params.device_ids {
         let device_ids: Vec<String> = device_ids_str
             .split(',')
@@ -322,8 +322,8 @@ fn convert_status_summary_to_response(summary: StatusSummary) -> StatusSummaryRe
         warning_count: summary.warning_count,
         unacknowledged_count: summary.unacknowledged_count,
         health_status: format!("{:?}", summary.health_status()).to_lowercase(),
-        by_device: summary
-            .by_device
+        by_thing: summary
+            .by_thing
             .into_iter()
             .map(|device_summary| DeviceStatusResponse {
                 thing_id: device_summary.thing_id,

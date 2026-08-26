@@ -395,7 +395,7 @@ async fn send_command(
     // invoke_action confirm flow), not a definitions-table INSERT.
     let cmd_id = uuid::Uuid::new_v4().to_string();
     let dispatched = state.data_server().cloned().map(|data_server| {
-        let cmd = tinyiothub_core::models::device_command::DeviceCommand {
+        let cmd = tinyiothub_core::models::thing_command::ThingCommand {
             id: cmd_id.clone(),
             thing_id: id.clone(),
             name: command_name.to_string(),

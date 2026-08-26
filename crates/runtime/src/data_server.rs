@@ -7,20 +7,20 @@ use parking_lot::RwLock;
 use tinyiothub_core::driver::ResultValue;
 use tinyiothub_core::error::Error;
 use tinyiothub_core::event::EventHandler;
-use tinyiothub_core::models::device_property::DeviceProperty;
 use tinyiothub_core::models::event::{
-    ContentElement, DeviceEventType, Event as DomainEvent, EventLevel, EventSource, RichContent, TextFormat,
+    ContentElement, Event as DomainEvent, EventLevel, EventSource, RichContent, TextFormat, ThingEventType,
 };
-use tinyiothub_core::models::{device::Device, device_command::DeviceCommand};
+use tinyiothub_core::models::thing_property::ThingProperty;
+use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 
 use crate::driver::{DeviceOverview, DriverWrapper, create_driver};
 use crate::event_bus::{EventBus, publish_event_safe};
 use crate::ports::DeviceCacheSource;
 
 type DriverCache = Cache<String, Arc<RwLock<DriverWrapper>>>;
-type CommandQueue = Arc<DashMap<String, Vec<DeviceCommand>>>;
+type CommandQueue = Arc<DashMap<String, Vec<ThingCommand>>>;
 
-/// Device data server — manages driver lifecycle and the polling loop.
+/// Thing data server — manages driver lifecycle and the polling loop.
 pub struct DataServer {
     device_cache: Arc<dyn DeviceCacheSource>,
     driver_cache: DriverCache,
@@ -115,7 +115,7 @@ impl DataServer {
 
                 let mut pending_events: Vec<DomainEvent> = Vec::new();
                 let mut event_bus_ref: Option<std::sync::Arc<EventBus>> = None;
-                let mut updated_device: Option<Device> = None;
+                let mut updated_device: Option<Thing> = None;
 
                 if let Some(mut driver) = driver_arc.try_write() {
                     let device_id = driver.device().id.clone();
@@ -131,7 +131,7 @@ impl DataServer {
                             if !was_online && let Some(event) = driver.on_connected(device_address) {
                                 pending_events.push(event);
                             }
-                            device.status = tinyiothub_core::models::device::DeviceStatus::Online;
+                            device.status = tinyiothub_core::models::thing::ThingStatus::Online;
                             device.last_heartbeat = Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string());
                             let events = Self::collect_property_change_events(&mut device, &values);
                             pending_events.extend(events);
@@ -145,7 +145,7 @@ impl DataServer {
                             if was_online && let Some(event) = driver.on_disconnected(Some(e.to_string())) {
                                 pending_events.push(event);
                             }
-                            device.status = tinyiothub_core::models::device::DeviceStatus::Offline;
+                            device.status = tinyiothub_core::models::thing::ThingStatus::Offline;
                         }
                     }
 
@@ -179,7 +179,7 @@ impl DataServer {
         }
     }
 
-    fn collect_property_change_events(device: &mut Device, values: &[ResultValue]) -> Vec<DomainEvent> {
+    fn collect_property_change_events(device: &mut Thing, values: &[ResultValue]) -> Vec<DomainEvent> {
         let mut pending_events = Vec::new();
         let device_id = device.id.clone();
         let device_name = device.name.clone();
@@ -214,7 +214,7 @@ impl DataServer {
     fn build_property_change_event_static(
         device_id: &str,
         device_name: &str,
-        property: &DeviceProperty,
+        property: &ThingProperty,
         old_value: Option<String>,
         new_value: &str,
     ) -> Option<DomainEvent> {
@@ -253,7 +253,7 @@ impl DataServer {
         }
 
         DomainEvent::new_device_event(
-            DeviceEventType::PropertyChange,
+            ThingEventType::PropertyChange,
             EventLevel::Info,
             EventSource::device_property(device_id.to_string(), property.id.clone(), "data_collector".to_string()),
             content,
@@ -262,16 +262,16 @@ impl DataServer {
     }
 
     fn build_command_event(
-        device: &Device,
-        cmd: &DeviceCommand,
+        device: &Thing,
+        cmd: &ThingCommand,
         success: bool,
         execution_time_ms: u64,
         error_message: Option<String>,
     ) -> Option<DomainEvent> {
         let (event_type, level, status) = if success {
-            (DeviceEventType::CommandCompleted, EventLevel::Info, "success")
+            (ThingEventType::CommandCompleted, EventLevel::Info, "success")
         } else {
-            (DeviceEventType::CommandFailed, EventLevel::Error, "failed")
+            (ThingEventType::CommandFailed, EventLevel::Error, "failed")
         };
 
         let mut elements = vec![
@@ -306,19 +306,19 @@ impl DataServer {
 
     // === Public API ===
 
-    pub fn get_devices(&self) -> Vec<Device> {
+    pub fn get_things(&self) -> Vec<Thing> {
         self.device_cache.all()
     }
 
-    pub fn get_device(&self, id: &str) -> Option<Device> {
+    pub fn get_device(&self, id: &str) -> Option<Thing> {
         self.device_cache.get(id)
     }
 
-    pub fn get_device_by_name(&self, name: &str) -> Option<Device> {
+    pub fn get_device_by_name(&self, name: &str) -> Option<Thing> {
         self.device_cache.get_by_name(name)
     }
 
-    pub fn execute_command(&self, cmd: DeviceCommand) -> Result<(), Error> {
+    pub fn execute_command(&self, cmd: ThingCommand) -> Result<(), Error> {
         if let Some(device) = self.device_cache.get(&cmd.thing_id) {
             let protocol = device.driver_name.unwrap_or_else(|| "unknown".to_string());
             self.command_queue.entry(protocol).or_default().push(cmd);
@@ -328,7 +328,7 @@ impl DataServer {
         }
     }
 
-    pub fn execute_commands(&self, cmds: Vec<DeviceCommand>) -> Result<(), Error> {
+    pub fn execute_commands(&self, cmds: Vec<ThingCommand>) -> Result<(), Error> {
         for cmd in cmds {
             self.execute_command(cmd)?;
         }
@@ -415,7 +415,7 @@ impl DataServer {
 #[async_trait::async_trait]
 impl EventHandler for DataServer {
     async fn handle(&self, event: &tinyiothub_core::models::event::Event) -> Result<(), Error> {
-        use tinyiothub_core::models::event::{DeviceEventType, EventType};
+        use tinyiothub_core::models::event::{EventType, ThingEventType};
 
         let device_id = match event.source().thing_id() {
             Some(id) => id,
@@ -424,14 +424,14 @@ impl EventHandler for DataServer {
 
         if let EventType::Device(device_event_type) = event.event_type() {
             match device_event_type {
-                DeviceEventType::DeviceCreated | DeviceEventType::DeviceUpdated => {
+                ThingEventType::DeviceCreated | ThingEventType::DeviceUpdated => {
                     tracing::info!("Handling {:?} event for device: {}", device_event_type, device_id);
                     // 从事件 metadata 中提取完整设备信息
                     let device = event
                         .content()
                         .metadata()
                         .get("device")
-                        .and_then(|v| serde_json::from_value::<Device>(v.clone()).ok())
+                        .and_then(|v| serde_json::from_value::<Thing>(v.clone()).ok())
                         .or_else(|| self.device_cache.get(device_id));
 
                     if let Some(device) = device {
@@ -457,10 +457,10 @@ impl EventHandler for DataServer {
                             }
                         }
                     } else {
-                        tracing::warn!("Device not found in event metadata or cache: {}", device_id);
+                        tracing::warn!("Thing not found in event metadata or cache: {}", device_id);
                     }
                 }
-                DeviceEventType::DeviceDeleted => {
+                ThingEventType::DeviceDeleted => {
                     self.remove_device(device_id);
                 }
                 _ => {}

@@ -36,7 +36,7 @@ pub struct SystemFeatures {
     pub public_api_prefix: Option<String>,
 
     // 系统限制
-    pub max_devices: Option<u32>,
+    pub max_things: Option<u32>,
     pub max_users: Option<u32>,
     pub max_alarm_rules: Option<u32>,
 
@@ -90,7 +90,7 @@ impl Default for SystemFeatures {
             public_api_prefix: Some("/api/public".to_string()),
 
             // 系统限制 (社区版)
-            max_devices: Some(100),
+            max_things: Some(100),
             max_users: Some(10),
             max_alarm_rules: Some(50),
 
@@ -177,7 +177,7 @@ mod tests {
         assert_eq!(features.license_type, Some("community".to_string()));
         assert_eq!(features.enable_device_management, Some(true));
         assert_eq!(features.enable_advanced_analytics, Some(false));
-        assert_eq!(features.max_devices, Some(100));
+        assert_eq!(features.max_things, Some(100));
     }
 
     #[test]

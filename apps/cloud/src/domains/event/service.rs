@@ -11,7 +11,7 @@ use crate::domains::event::{
     EventError, Result,
     entities::Event,
     errors::{DomainResult, EventDomainError, EventServiceDomainError},
-    value_objects::{DeviceEventType, EventId, EventLevel, EventSource, EventType, RichContent, SystemEventType},
+    value_objects::{EventId, EventLevel, EventSource, EventType, RichContent, SystemEventType, ThingEventType},
 };
 
 // ════════════════════════════════════════════════
@@ -203,7 +203,7 @@ impl EventSpecification for DeviceEventValidSourceSpec {
         }
     }
     fn error_message(&self) -> String {
-        "Device events must have device source".to_string()
+        "Thing events must have device source".to_string()
     }
 }
 
@@ -218,17 +218,17 @@ impl EventSpecification for EventLevelMatchesTypeSpec {
                 | (EventType::System(SystemEventType::SystemConfig), EventLevel::Warning)
                 | (EventType::System(SystemEventType::SystemError), EventLevel::Error)
                 | (EventType::System(SystemEventType::SystemError), EventLevel::Critical)
-                | (EventType::Device(DeviceEventType::Connection), EventLevel::Error)
-                | (EventType::Device(DeviceEventType::Connection), EventLevel::Critical)
-                | (EventType::Device(DeviceEventType::Connection), EventLevel::Info)
-                | (EventType::Device(DeviceEventType::PropertyChange), EventLevel::Debug)
-                | (EventType::Device(DeviceEventType::PropertyChange), EventLevel::Info)
-                | (EventType::Device(DeviceEventType::PropertyAlarm), EventLevel::Warning)
-                | (EventType::Device(DeviceEventType::PropertyAlarm), EventLevel::Error)
-                | (EventType::Device(DeviceEventType::PropertyNormal), EventLevel::Info)
-                | (EventType::Device(DeviceEventType::CommandStarted), EventLevel::Info)
-                | (EventType::Device(DeviceEventType::CommandCompleted), EventLevel::Info)
-                | (EventType::Device(DeviceEventType::CommandFailed), EventLevel::Error)
+                | (EventType::Device(ThingEventType::Connection), EventLevel::Error)
+                | (EventType::Device(ThingEventType::Connection), EventLevel::Critical)
+                | (EventType::Device(ThingEventType::Connection), EventLevel::Info)
+                | (EventType::Device(ThingEventType::PropertyChange), EventLevel::Debug)
+                | (EventType::Device(ThingEventType::PropertyChange), EventLevel::Info)
+                | (EventType::Device(ThingEventType::PropertyAlarm), EventLevel::Warning)
+                | (EventType::Device(ThingEventType::PropertyAlarm), EventLevel::Error)
+                | (EventType::Device(ThingEventType::PropertyNormal), EventLevel::Info)
+                | (EventType::Device(ThingEventType::CommandStarted), EventLevel::Info)
+                | (EventType::Device(ThingEventType::CommandCompleted), EventLevel::Info)
+                | (EventType::Device(ThingEventType::CommandFailed), EventLevel::Error)
                 | (EventType::Ai(_), EventLevel::Debug)
                 | (EventType::Ai(_), EventLevel::Info)
                 | (EventType::Ai(_), EventLevel::Warning)
@@ -570,10 +570,10 @@ mod tests {
     #[test]
     fn test_critical_event_detection() {
         let aggregate = EventAggregate::new(
-            EventType::Device(DeviceEventType::Connection),
+            EventType::Device(ThingEventType::Connection),
             EventLevel::Critical,
-            EventSource::device("device-1".to_string(), Some("Device 1".to_string())),
-            RichContent::new_text("Critical".to_string(), "Device connection lost".to_string()),
+            EventSource::device("device-1".to_string(), Some("Thing 1".to_string())),
+            RichContent::new_text("Critical".to_string(), "Thing connection lost".to_string()),
         )
         .unwrap();
         assert!(aggregate.is_critical());
@@ -600,10 +600,10 @@ mod tests {
     fn test_critical_event_device_source_spec() {
         let spec = CriticalEventDeviceSourceSpec;
         let device_event = Event::new(
-            EventType::Device(DeviceEventType::Connection),
+            EventType::Device(ThingEventType::Connection),
             EventLevel::Error,
-            EventSource::device("device-1".to_string(), Some("Device 1".to_string())),
-            RichContent::new_text("Connection Lost".to_string(), "Device connection lost".to_string()),
+            EventSource::device("device-1".to_string(), Some("Thing 1".to_string())),
+            RichContent::new_text("Connection Lost".to_string(), "Thing connection lost".to_string()),
         )
         .unwrap();
         assert!(spec.is_satisfied_by(&device_event));
@@ -621,9 +621,9 @@ mod tests {
     #[test]
     fn test_event_priority_spec() {
         let critical_event = Event::new(
-            EventType::Device(DeviceEventType::DeviceCreated),
+            EventType::Device(ThingEventType::DeviceCreated),
             EventLevel::Critical,
-            EventSource::device("device-1".to_string(), Some("Device 1".to_string())),
+            EventSource::device("device-1".to_string(), Some("Thing 1".to_string())),
             RichContent::new_text("Critical Error".to_string(), "Critical error occurred".to_string()),
         )
         .unwrap();
@@ -687,9 +687,9 @@ mod tests {
         let service = EventService::new();
         let system_event = create_test_event(EventLevel::Info);
         let device_event = Event::new(
-            EventType::Device(DeviceEventType::Connection),
+            EventType::Device(ThingEventType::Connection),
             EventLevel::Error,
-            EventSource::device("device-1".to_string(), Some("Device 1".to_string())),
+            EventSource::device("device-1".to_string(), Some("Thing 1".to_string())),
             RichContent::new_text("Error".to_string(), "Connection lost".to_string()),
         )
         .unwrap();
@@ -722,11 +722,11 @@ mod tests {
     #[test]
     fn test_detect_event_patterns() {
         let service = EventService::new();
-        let source = EventSource::device("device-1".to_string(), Some("Device 1".to_string()));
+        let source = EventSource::device("device-1".to_string(), Some("Thing 1".to_string()));
         let events: Vec<_> = (0..4)
             .map(|_| {
                 Event::new(
-                    EventType::Device(DeviceEventType::DeviceNormal),
+                    EventType::Device(ThingEventType::DeviceNormal),
                     EventLevel::Error,
                     source.clone(),
                     RichContent::new_text("Error".to_string(), "Test error".to_string()),

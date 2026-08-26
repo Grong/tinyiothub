@@ -22,7 +22,7 @@ use crate::domains::driver::legacy::DeviceService;
 use crate::domains::thing::template::TemplateEngine;
 use crate::shared::error::Error;
 use tinyiothub_runtime::event_bus::EventBus;
-use tinyiothub_storage::{Db, cache::DeviceCache};
+use tinyiothub_storage::{Db, cache::ThingCache};
 
 /// Mcp domain state slice (G7) — the fields of cloud's `AppState` the mcp
 /// handlers and tool handlers actually consume. The composition layer (cloud)
@@ -32,7 +32,7 @@ pub struct McpState {
     /// 数据库连接池 - thing 工具的属性/命令查询
     pub db: Arc<Db>,
     /// 设备内存缓存 - thing 工具的实时状态合并
-    pub device_cache: Arc<DeviceCache>,
+    pub device_cache: Arc<ThingCache>,
     /// 事件总线 - 属性变更事件发布（update_device_property_value）
     pub event_bus: Arc<EventBus>,
     /// 数据服务器 - send_command 工具
@@ -96,7 +96,7 @@ impl McpState {
     /// 更新设备属性值
     ///
     /// AppState 同名方法的域内移植：验证 + 发布 PropertyChange 事件解耦，
-    /// DataServer 作为 EventHandler 接收事件并更新 DeviceCache。
+    /// DataServer 作为 EventHandler 接收事件并更新 ThingCache。
     pub async fn update_device_property_value(
         &self,
         workspace_id: &str,
@@ -114,7 +114,7 @@ impl McpState {
         };
 
         // 2. 验证属性存在且属于该设备
-        let property = match self.db().find_device_property_by_id(property_id).await {
+        let property = match self.db().find_thing_property_by_id(property_id).await {
             Ok(Some(p)) if p.thing_id == thing_id => p,
             Ok(Some(_)) => {
                 return Err(Error::ValidationError("Property does not belong to device".to_string()));
@@ -198,25 +198,25 @@ pub async fn register_tools(state: Option<Arc<McpState>>) {
     let mut reg = registry.write().await;
 
     // Thing tools (7)
-    reg.register(crate::domains::mcp::tools::device::DeviceProfileHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::DeviceProfileHandler::new(
         state.clone(),
     ));
-    reg.register(crate::domains::mcp::tools::device::SearchDevicesHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::SearchDevicesHandler::new(
         state.clone(),
     ));
-    reg.register(crate::domains::mcp::tools::device::DevicePropertyGetHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::DevicePropertyGetHandler::new(
         state.clone(),
     ));
-    reg.register(crate::domains::mcp::tools::device::WritePropertiesHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::WritePropertiesHandler::new(
         state.clone(),
     ));
-    reg.register(crate::domains::mcp::tools::device::DeviceCommandHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::DeviceCommandHandler::new(
         state.clone(),
     ));
-    reg.register(crate::domains::mcp::tools::device::CreateDeviceHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::CreateDeviceHandler::new(
         state.clone(),
     ));
-    reg.register(crate::domains::mcp::tools::device::DeleteDeviceHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::DeleteDeviceHandler::new(
         state.clone(),
     ));
 

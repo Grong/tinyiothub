@@ -100,7 +100,7 @@ async fn list_alarms(
 
     let criteria = AlarmQueryCriteria {
         workspace_id: Some(claims.0.workspace_id.clone()),
-        device_ids: get_csv("device_ids"),
+        thing_ids: get_csv("device_ids"),
         property_ids: None,
         alarm_levels,
         alarm_types: None,
@@ -123,7 +123,7 @@ async fn list_alarms(
             };
             let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;
 
-            let device_names = state.db.load_alarm_device_names(&alarms).await;
+            let device_names = state.db.load_alarm_thing_names(&alarms).await;
             let data: Vec<AlarmDto> = alarms
                 .into_iter()
                 .map(|a| {
@@ -262,7 +262,7 @@ async fn list_alarm_rules(
     let rules = if let Some(thing_id) = params.thing_id {
         state
             .alarm_service
-            .get_rules_by_device(&thing_id, &claims.0.workspace_id)
+            .get_rules_by_thing(&thing_id, &claims.0.workspace_id)
             .await
     } else {
         state.alarm_service.get_all_rules(&claims.0.workspace_id).await

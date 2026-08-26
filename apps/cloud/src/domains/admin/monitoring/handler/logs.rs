@@ -67,7 +67,7 @@ async fn get_logs(
     let device_service = state.tenant_device_service(&workspace_id);
 
     let allowed_device_ids: Vec<String> = match device_service
-        .get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default())
+        .get_things(&tinyiothub_core::models::thing::ThingQueryParams::default())
         .await
     {
         Ok(things) => things.into_iter().map(|d| d.id).collect(),

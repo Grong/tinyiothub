@@ -173,10 +173,10 @@ async fn get_all_performance_alerts(
     _claims: Claims,
 ) -> Json<ApiResponse<Vec<PerformanceAlert>>> {
     // 获取所有设备的告警
-    let all_devices = state.device_cache.all();
+    let all_things = state.device_cache.all();
     let mut all_alerts = Vec::new();
 
-    for device in all_devices {
+    for device in all_things {
         let alerts = state
             .performance_service
             .check_device_performance_alerts(&device.id)

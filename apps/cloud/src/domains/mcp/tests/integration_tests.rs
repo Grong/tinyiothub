@@ -95,7 +95,7 @@ async fn test_all_device_tools_registered() {
     for tool_name in device_tools {
         assert!(
             tool_names.contains(&tool_name.to_string()),
-            "Device tool '{}' should be registered",
+            "Thing tool '{}' should be registered",
             tool_name
         );
     }

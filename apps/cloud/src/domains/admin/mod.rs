@@ -7,10 +7,11 @@
 // domain module of cloud (G series).
 //
 // Covers the platform-administration API surface formerly under
-// `cloud/src/modules/{system,monitoring,batch,jobs,open}` plus the device
+// `cloud/src/modules/{system,monitoring,batch,jobs,open}` plus the thing
 // management-plane handlers (`modules::device::handler`):
-//   device/     — /things management-plane handlers (profile, properties,
-//                 commands, traces, monitoring, dashboard, 410 stubs)
+//   thing/      — /things/admin management-plane handlers (properties,
+//                 commands, traces, monitoring, dashboard) plus the
+//                 /devices 410 tombstone (`thing::management`)
 //   system/     — /system configuration + features + time tasks
 //   monitoring/ — /monitoring dashboard stats, health, logs, metrics
 //   batch/      — /batch batch command operations
@@ -26,20 +27,20 @@ use std::sync::Arc;
 use crate::domains::driver::legacy::{
     DeviceMonitoringService, DevicePerformanceService, DeviceQueryService, DeviceService,
 };
-use crate::domains::thing::legacy::trace::DeviceTraceService;
+use crate::domains::thing::legacy::trace::ThingTraceService;
 use crate::shared::error::Error;
-use tinyiothub_core::models::device::Device;
-use tinyiothub_core::models::device_property::DeviceProperty;
+use tinyiothub_core::models::thing::Thing;
+use tinyiothub_core::models::thing_property::ThingProperty;
 use tinyiothub_runtime::event_bus::EventBus;
-use tinyiothub_storage::{Db, cache::DeviceCache};
+use tinyiothub_storage::{Db, cache::ThingCache};
 
 pub mod batch;
-pub mod device;
 pub mod jobs;
 pub mod legacy;
 pub mod monitoring;
 pub mod open;
 pub mod system;
+pub mod thing;
 
 /// Admin role-check port — the admin handlers' privileged-operation guard
 /// routes through cloud's event-security plane (`AuthHelper` →
@@ -59,7 +60,7 @@ pub struct AdminState {
     /// 数据库连接池
     pub db: Arc<Db>,
     /// 设备内存缓存
-    pub device_cache: Arc<DeviceCache>,
+    pub device_cache: Arc<ThingCache>,
     /// 标签服务 - 设备 profile 的标签加载
     pub tag_service: Arc<crate::domains::thing::tag::TagService>,
     /// 事件总线 - 属性变更事件发布（update_device_property_value）
@@ -73,7 +74,7 @@ pub struct AdminState {
     /// 设备性能服务 - 性能分析和告警
     pub performance_service: Arc<DevicePerformanceService>,
     /// 设备追踪服务 - 操作日志和审计
-    pub trace_service: Arc<DeviceTraceService>,
+    pub trace_service: Arc<ThingTraceService>,
     /// 工作空间服务 - workspace 解析（resolve_workspace）与 open API
     pub workspace_service: Arc<crate::domains::tenant::WorkspaceService>,
     /// 租户服务 - open API 的 API Key 校验与配额
@@ -107,12 +108,12 @@ impl AdminState {
     }
 
     /// 获取设备（从缓存读取实时状态）
-    pub fn get_device(&self, thing_id: &str) -> Option<Device> {
+    pub fn get_thing(&self, thing_id: &str) -> Option<Thing> {
         self.device_cache.get(thing_id)
     }
 
     /// 通过设备名称和属性名称获取属性
-    pub fn get_device_prop_by_name(&self, device_name: &str, property_name: &str) -> Option<DeviceProperty> {
+    pub fn get_device_prop_by_name(&self, device_name: &str, property_name: &str) -> Option<ThingProperty> {
         self.device_cache.get_by_name(device_name).and_then(|d| {
             d.properties
                 .as_ref()
@@ -161,7 +162,7 @@ impl AdminState {
     /// 更新设备属性值
     ///
     /// AppState 同名方法的域内移植：验证 + 发布 PropertyChange 事件解耦，
-    /// DataServer 作为 EventHandler 接收事件并更新 DeviceCache。
+    /// DataServer 作为 EventHandler 接收事件并更新 ThingCache。
     pub async fn update_device_property_value(
         &self,
         workspace_id: &str,
@@ -179,7 +180,7 @@ impl AdminState {
         };
 
         // 2. 验证属性存在且属于该设备
-        let property = match self.db().find_device_property_by_id(property_id).await {
+        let property = match self.db().find_thing_property_by_id(property_id).await {
             Ok(Some(p)) if p.thing_id == thing_id => p,
             Ok(Some(_)) => {
                 return Err(Error::ValidationError("Property does not belong to device".to_string()));

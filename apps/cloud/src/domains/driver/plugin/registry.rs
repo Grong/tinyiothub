@@ -78,7 +78,7 @@ pub trait PluginHandler: Any + Send + Sync {
 /// Moved here from `cloud::modules::agent::types` (P4-Task20): the plugin
 /// registry was its only consumer — no agent-plane code references it.
 pub struct AppContext {
-    pub device_cache: Arc<tinyiothub_storage::cache::DeviceCache>,
+    pub device_cache: Arc<tinyiothub_storage::cache::ThingCache>,
 }
 
 /// 统一插件注册表

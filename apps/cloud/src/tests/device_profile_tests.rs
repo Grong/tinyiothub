@@ -1,4 +1,4 @@
-//! Device profile handler integration tests
+//! Thing profile handler integration tests
 
 use axum::{
     body::Body,
@@ -22,33 +22,33 @@ fn auth_request(method: &str, uri: &str, token: &str) -> Request<Body> {
 }
 
 // ============================================================================
-// Get Device Profile
+// Get Thing Profile
 // ============================================================================
 
 #[tokio::test]
-async fn test_get_device_profile_nonexistent_device() {
+async fn test_get_device_profile_nonexistent_thing() {
     let app = setup_test_app().await;
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/nonexistent-id/profile", &token))
+        .oneshot(auth_request("GET", "/api/v1/things/nonexistent-id/profile", &token))
         .await
         .unwrap();
 
     let (status, json) = response_parts(response).await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::NOT_FOUND);
     assert_ne!(json["code"], 0, "Expected error for nonexistent device");
 }
 
 #[tokio::test]
-async fn test_get_device_profile_existing_device() {
+async fn test_get_device_profile_existing_thing() {
     let app = setup_test_app().await;
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
 
     // First create a device
     let create_body = json!({
         "name": "profile-test-device",
-        "display_name": "Profile Test Device",
+        "display_name": "Profile Test Thing",
         "category": "sensor",
         "protocol_type": "modbus"
     });
@@ -69,20 +69,19 @@ async fn test_get_device_profile_existing_device() {
     let (_status, create_json) = response_parts(response).await;
     let thing_id = create_json["result"]["id"].as_str().unwrap().to_string();
 
-    // Now get the profile
+    // Now get the profile (main thing router; the admin duplicate was removed)
     let response = app
-        .oneshot(auth_request("GET", &format!("/api/v1/devices/{}/profile", thing_id), &token))
+        .oneshot(auth_request("GET", &format!("/api/v1/things/{}/profile", thing_id), &token))
         .await
         .unwrap();
 
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["code"], 0, "Expected success code");
-    // DeviceProfile structure
-    assert!(json["result"]["device"].is_object(), "Expected device object");
-    assert!(json["result"]["is_online"].is_boolean(), "Expected is_online boolean");
+    // ThingProfileResponse structure (thing fields flattened at top level)
+    assert_eq!(json["result"]["id"].as_str(), Some(thing_id.as_str()));
+    assert!(json["result"]["name"].is_string(), "Expected thing name");
     assert!(json["result"]["properties"].is_array(), "Expected properties array");
-    assert!(json["result"]["commands"].is_array(), "Expected commands array");
-    assert!(json["result"]["overview"].is_object(), "Expected overview object");
-    assert!(json["result"]["generated_at"].is_string(), "Expected generated_at timestamp");
+    assert!(json["result"]["actions"].is_array(), "Expected actions array");
+    assert!(json["result"]["recent_events"].is_array(), "Expected recent_events array");
 }

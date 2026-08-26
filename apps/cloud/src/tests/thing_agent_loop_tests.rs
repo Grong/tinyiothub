@@ -293,11 +293,11 @@ async fn test_pool(name: &str) -> (sqlx::SqlitePool, tempfile::TempDir) {
     (pool, dir)
 }
 
-async fn seed_device(pool: &sqlx::SqlitePool) {
+async fn seed_thing(pool: &sqlx::SqlitePool) {
     seed_test_workspace(pool, "tenant-1", WS).await;
     sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES (?, ?, ?, 'device')")
         .bind(THING)
-        .bind("Loop Device")
+        .bind("Loop Thing")
         .bind(WS)
         .execute(pool)
         .await
@@ -357,7 +357,7 @@ async fn build_fixture(
 ) -> FixtureParts {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (pool, dir) = test_pool(name).await;
-    seed_device(&pool).await;
+    seed_thing(&pool).await;
 
     let policy_repo = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
     policy_repo

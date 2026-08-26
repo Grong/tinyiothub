@@ -303,7 +303,7 @@ pub enum MemoryError {
     #[error("Serialization error: {0}")]
     SerializationError(String),
 
-    #[error("Device not found: {0}")]
+    #[error("Thing not found: {0}")]
     DeviceNotFound(String),
 
     #[error("Context build failed: {0}")]
@@ -325,7 +325,7 @@ impl DeviceSnapshot {
     /// Format the snapshot for inclusion in a prompt
     pub fn to_prompt_fragment(&self) -> String {
         format!(
-            "[{}] Device {}: {}",
+            "[{}] Thing {}: {}",
             self.timestamp_formatted,
             self.thing_id,
             serde_json::to_string(&self.snapshot_data).unwrap_or_default()
@@ -461,7 +461,7 @@ impl MemoryContext {
         let mut fragments = vec!["\n\n## Context from Memory\n".to_string()];
 
         if !self.device_snapshots.is_empty() {
-            fragments.push("### Device States\n".to_string());
+            fragments.push("### Thing States\n".to_string());
             for snapshot in &self.device_snapshots {
                 fragments.push(snapshot.to_prompt_fragment());
                 fragments.push("\n".to_string());

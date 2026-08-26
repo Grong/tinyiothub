@@ -188,7 +188,7 @@ async fn create_test_app_state() -> AppState {
 pub async fn test_app_state_on_pool(pool: sqlx::SqlitePool) -> AppState {
     use std::sync::Arc;
 
-    use tinyiothub_storage::cache::DeviceCache;
+    use tinyiothub_storage::cache::ThingCache;
 
     let settings = ensure_test_config();
 
@@ -206,7 +206,7 @@ pub async fn test_app_state_on_pool(pool: sqlx::SqlitePool) -> AppState {
     .await
     .expect("Failed to seed test user");
 
-    let device_cache = Arc::new(DeviceCache::new());
+    let device_cache = Arc::new(ThingCache::new());
 
     AppState::new(device_cache, pool, settings)
 }

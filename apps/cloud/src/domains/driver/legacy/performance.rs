@@ -1,20 +1,20 @@
-// Device performance service — migrated from domain/device/performance_service.rs
+// Thing performance service — migrated from domain/device/performance_service.rs
 
 use std::sync::Arc;
 
-use tinyiothub_storage::{Db, cache::DeviceCache};
+use tinyiothub_storage::{Db, cache::ThingCache};
 
 use super::monitoring::DeviceMonitoringService;
 use tinyiothub_core::error::Error;
 
 pub struct DevicePerformanceService {
     db: Arc<Db>,
-    device_cache: Arc<DeviceCache>,
+    device_cache: Arc<ThingCache>,
     monitoring_service: DeviceMonitoringService,
 }
 
 impl DevicePerformanceService {
-    pub fn new(db: Arc<Db>, device_cache: Arc<DeviceCache>) -> Self {
+    pub fn new(db: Arc<Db>, device_cache: Arc<ThingCache>) -> Self {
         let monitoring_service = DeviceMonitoringService::new(db.clone(), device_cache.clone());
         Self {
             db,

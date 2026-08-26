@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::time::Instant;
-use tinyiothub_core::models::{device::Device, device_command::DeviceCommand};
+use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use tinyiothub_core::driver::{BackoffStrategy, DeviceDriver, ResultValue, RetryConfig};
@@ -15,7 +15,7 @@ use super::simulated::signal::SignalComposer;
 #[driver(
     name = "simulator",
     version = "2.0.0",
-    description = "Simulated Device Driver for Testing"
+    description = "Simulated Thing Driver for Testing"
 )]
 #[driver_option(
     label = "Refresh Interval (ms)",
@@ -102,7 +102,7 @@ use super::simulated::signal::SignalComposer;
     required = false
 )]
 pub struct SimulatedDriver {
-    pub device: Device,
+    pub device: Thing,
     pub retry_count: i32,
     tick_counter: u64,
     rng: StdRng,
@@ -117,7 +117,7 @@ pub struct SimulatedDriver {
 }
 
 impl SimulatedDriver {
-    pub fn new(device: Device) -> Self {
+    pub fn new(device: Thing) -> Self {
         let mut rng = StdRng::from_entropy();
         let phase_offset = rng.gen_range(0.0..1.0);
 
@@ -159,11 +159,11 @@ impl SimulatedDriver {
 }
 
 impl DeviceDriver for SimulatedDriver {
-    fn device(&self) -> &Device {
+    fn device(&self) -> &Thing {
         &self.device
     }
 
-    fn device_mut(&mut self) -> &mut Device {
+    fn device_mut(&mut self) -> &mut Thing {
         &mut self.device
     }
 
@@ -277,7 +277,7 @@ impl DeviceDriver for SimulatedDriver {
         Ok(results)
     }
 
-    fn execute_command(&mut self, cmd: &DeviceCommand) -> Result<bool, Error> {
+    fn execute_command(&mut self, cmd: &ThingCommand) -> Result<bool, Error> {
         tracing::info!(
             "Executing Simulated command: {} on device {}",
             cmd.name,
@@ -291,8 +291,8 @@ impl DeviceDriver for SimulatedDriver {
 mod tests {
     use super::*;
 
-    fn create_test_device() -> Device {
-        Device {
+    fn create_test_device() -> Thing {
+        Thing {
             id: "test-device-1".to_string(),
             name: "测试设备".to_string(),
             display_name: Some("测试设备显示名".to_string()),
@@ -307,16 +307,16 @@ mod tests {
         }
     }
 
-    fn create_device_with_temp_property() -> Device {
-        use tinyiothub_core::models::device_property::DeviceProperty;
-        Device {
+    fn create_device_with_temp_property() -> Thing {
+        use tinyiothub_core::models::thing_property::ThingProperty;
+        Thing {
             id: "test-device-temp".to_string(),
-            name: "Temp Device".to_string(),
+            name: "Temp Thing".to_string(),
             display_name: None,
             driver_name: Some("SimulatedDriver".to_string()),
             driver_options: None,
             protocol_type: Some("simulation".to_string()),
-            properties: Some(vec![DeviceProperty {
+            properties: Some(vec![ThingProperty {
                 id: "prop-temp".to_string(),
                 thing_id: "test-device-temp".to_string(),
                 name: "temperature".to_string(),
@@ -340,11 +340,11 @@ mod tests {
         }
     }
 
-    fn create_device_with_multiple_properties() -> Device {
-        use tinyiothub_core::models::device_property::DeviceProperty;
-        Device {
+    fn create_device_with_multiple_properties() -> Thing {
+        use tinyiothub_core::models::thing_property::ThingProperty;
+        Thing {
             id: "test-device-multi".to_string(),
-            name: "Multi Prop Device".to_string(),
+            name: "Multi Prop Thing".to_string(),
             display_name: None,
             driver_name: Some("SimulatedDriver".to_string()),
             driver_options: Some(
@@ -352,7 +352,7 @@ mod tests {
             ),
             protocol_type: Some("simulation".to_string()),
             properties: Some(vec![
-                DeviceProperty {
+                ThingProperty {
                     id: "prop-temp".to_string(),
                     thing_id: "test-device-multi".to_string(),
                     name: "temperature".to_string(),
@@ -369,7 +369,7 @@ mod tests {
                     current_value: None,
                     alarm_status: None,
                 },
-                DeviceProperty {
+                ThingProperty {
                     id: "prop-current".to_string(),
                     thing_id: "test-device-multi".to_string(),
                     name: "current".to_string(),
@@ -386,7 +386,7 @@ mod tests {
                     current_value: None,
                     alarm_status: None,
                 },
-                DeviceProperty {
+                ThingProperty {
                     id: "prop-power".to_string(),
                     thing_id: "test-device-multi".to_string(),
                     name: "power_status".to_string(),

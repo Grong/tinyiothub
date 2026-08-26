@@ -3,16 +3,14 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use crate::domains::thing::template::types::{CreateDeviceFromTemplateRequest, DeviceCreationInput};
+use crate::domains::thing::template::types::{CreateThingFromTemplateRequest, DeviceCreationInput};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tinyiothub_core::models::device::CreateDeviceRequest;
-use tinyiothub_storage::thing::{DeviceCriteria, DeviceSortBy, DeviceSortOrder};
+use tinyiothub_core::models::thing::CreateThingRequest;
+use tinyiothub_storage::thing::{ThingCriteria, ThingSortBy, ThingSortOrder};
 
-use crate::domains::thing::legacy::device_query::{
-    find_device_by_id, find_device_by_id_with_tags, load_tags_for_devices,
-};
+use crate::domains::thing::legacy::thing_query::{find_device_by_id_with_tags, find_thing_by_id, load_tags_for_things};
 
 use crate::domains::mcp::McpState;
 use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
@@ -102,7 +100,7 @@ struct CommandResponse {
     execution_time: Option<String>,
 }
 
-// === Get Device Profile Handler ===
+// === Get Thing Profile Handler ===
 pub struct DeviceProfileHandler {
     state: Option<Arc<McpState>>,
 }
@@ -177,7 +175,7 @@ impl ToolHandler for DeviceProfileHandler {
     }
 }
 
-// === Device Property Get Handler ===
+// === Thing Property Get Handler ===
 pub struct DevicePropertyGetHandler {
     state: Option<Arc<McpState>>,
 }
@@ -237,14 +235,14 @@ impl ToolHandler for DevicePropertyGetHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let _device = find_device_by_id(state.db(), &input.thing_id)
+        let _device = find_thing_by_id(state.db(), &input.thing_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.thing_id)))?;
 
         let all_properties = state
             .db()
-            .find_device_properties_by_device_id(&input.thing_id)
+            .find_thing_properties_by_thing_id(&input.thing_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -351,14 +349,14 @@ impl ToolHandler for WritePropertiesHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let _device = find_device_by_id(state.db(), &input.thing_id)
+        let _device = find_thing_by_id(state.db(), &input.thing_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.thing_id)))?;
 
         let device_properties = state
             .db()
-            .find_device_properties_by_device_id(&input.thing_id)
+            .find_thing_properties_by_thing_id(&input.thing_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -427,7 +425,7 @@ impl ToolHandler for WritePropertiesHandler {
     }
 }
 
-// === Device Command Handler ===
+// === Thing Command Handler ===
 pub struct DeviceCommandHandler {
     state: Option<Arc<McpState>>,
 }
@@ -487,7 +485,7 @@ impl ToolHandler for DeviceCommandHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let device = find_device_by_id(state.db(), &input.thing_id)
+        let device = find_thing_by_id(state.db(), &input.thing_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.thing_id)))?;
@@ -511,7 +509,7 @@ impl ToolHandler for DeviceCommandHandler {
 
         let command = state
             .db()
-            .find_device_command_by_device_and_name(&input.thing_id, &input.command_name)
+            .find_thing_command_by_thing_and_name(&input.thing_id, &input.command_name)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -568,7 +566,7 @@ impl ToolHandler for DeviceCommandHandler {
     }
 }
 
-// === Create Device Handler ===
+// === Create Thing Handler ===
 pub struct CreateDeviceHandler {
     state: Option<Arc<McpState>>,
 }
@@ -595,7 +593,7 @@ impl ToolHandler for CreateDeviceHandler {
             "templateId".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Device template ID (required for template-based creation)".to_string()),
+                description: Some("Thing template ID (required for template-based creation)".to_string()),
             },
         );
         props.insert(
@@ -623,14 +621,14 @@ impl ToolHandler for CreateDeviceHandler {
             "description".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Device description".to_string()),
+                description: Some("Thing description".to_string()),
             },
         );
         props.insert(
             "position".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Device position/location".to_string()),
+                description: Some("Thing position/location".to_string()),
             },
         );
         props.insert(
@@ -681,7 +679,7 @@ impl ToolHandler for CreateDeviceHandler {
                 tenant_id: None,
                 workspace_id: None,
             };
-            let request = CreateDeviceFromTemplateRequest {
+            let request = CreateThingFromTemplateRequest {
                 template_id: template_id.clone(),
                 device_input,
             };
@@ -696,7 +694,7 @@ impl ToolHandler for CreateDeviceHandler {
                 ))),
             }
         } else {
-            let request = CreateDeviceRequest {
+            let request = CreateThingRequest {
                 name: input.name,
                 display_name: input.display_name,
                 category: input.category,
@@ -715,7 +713,7 @@ impl ToolHandler for CreateDeviceHandler {
                 fingerprint: None,
                 workspace_id: None,
             };
-            match tenant_device_service.create_device(&request).await {
+            match tenant_device_service.create_thing(&request).await {
                 Ok(device) => Ok(serde_json::to_value(device).unwrap()),
                 Err(e) => Err(ToolError::Internal(format!("Failed to create thing: {}", e))),
             }
@@ -723,7 +721,7 @@ impl ToolHandler for CreateDeviceHandler {
     }
 }
 
-// === Delete Device Handler ===
+// === Delete Thing Handler ===
 pub struct DeleteDeviceHandler {
     state: Option<Arc<McpState>>,
 }
@@ -771,7 +769,7 @@ impl ToolHandler for DeleteDeviceHandler {
 
         let tenant_device_service = state.tenant_device_service_str(&workspace_id);
 
-        match tenant_device_service.delete_device(&input.id).await {
+        match tenant_device_service.delete_thing(&input.id).await {
             Ok(true) => Ok(serde_json::json!({"success": true, "thing_id": input.id})),
             Ok(false) => Err(ToolError::NotFound(format!(
                 "Thing {} not found or does not belong to workspace",
@@ -878,23 +876,23 @@ impl ToolHandler for SearchDevicesHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let criteria = DeviceCriteria {
+        let criteria = ThingCriteria {
             workspace_id: Some(workspace_id),
             search_text: Some(input.keyword.clone()),
             tag_name: input.tag,
             limit: Some(limit),
-            sort_by: DeviceSortBy::Name,
-            sort_order: DeviceSortOrder::Ascending,
+            sort_by: ThingSortBy::Name,
+            sort_order: ThingSortOrder::Ascending,
             ..Default::default()
         };
 
         let mut things = state
             .db()
-            .find_devices(None, &criteria)
+            .find_things(None, &criteria)
             .await
             .map_err(|e| ToolError::Internal(format!("Search failed: {}", e)))?;
 
-        load_tags_for_devices(state.db(), &mut things, "")
+        load_tags_for_things(state.db(), &mut things, "")
             .await
             .map_err(|e| ToolError::Internal(format!("Failed to load tags: {}", e)))?;
 

@@ -3,9 +3,7 @@
 pub mod import_export;
 
 use sqlx::SqlitePool;
-use tinyiothub_core::models::{
-    device_command::CreateDeviceCommandRequest, device_property::CreateDevicePropertyRequest,
-};
+use tinyiothub_core::models::{thing_command::CreateThingCommandRequest, thing_property::CreateThingPropertyRequest};
 
 use super::{
     errors::ThingError,
@@ -170,7 +168,7 @@ impl ThingService {
 
         // Name conflict check within workspace (only if workspace provided)
         if let Some(ws) = workspace_id
-            && let Some(_existing) = self.db.find_thing_by_name(ws, &req.name).await?
+            && let Some(_existing) = self.db.find_thing_row_by_name(ws, &req.name).await?
         {
             return Err(ThingError::NameConflict(req.name.clone()));
         }
@@ -205,7 +203,7 @@ impl ThingService {
             updated_at: now,
         };
 
-        let created = self.db.create_thing(&row).await?;
+        let created = self.db.create_thing_row(&row).await?;
         if let Some(ref tid) = req.template_id {
             let _ = self.copy_template_props(&created.id, tid).await;
             let _ = self.copy_template_acts(&created.id, tid).await;
@@ -219,10 +217,10 @@ impl ThingService {
         };
         // Inserts go through the storage layer (single source of SQL for
         // thing_properties — eng-review T9)
-        let requests: Vec<CreateDevicePropertyRequest> = serde_json::from_str::<Vec<serde_json::Value>>(&json)
+        let requests: Vec<CreateThingPropertyRequest> = serde_json::from_str::<Vec<serde_json::Value>>(&json)
             .unwrap_or_default()
             .into_iter()
-            .map(|p| CreateDevicePropertyRequest {
+            .map(|p| CreateThingPropertyRequest {
                 thing_id: thing_id.to_string(),
                 name: p["name"].as_str().unwrap_or("").to_string(),
                 display_name: p.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string()),
@@ -241,7 +239,7 @@ impl ThingService {
             })
             .collect();
         let db = Db::new(self.pool.clone());
-        db.create_device_properties_batch(&requests).await?;
+        db.create_thing_properties_batch(&requests).await?;
         Ok(())
     }
 
@@ -251,14 +249,14 @@ impl ThingService {
         };
         let db = Db::new(self.pool.clone());
         for a in serde_json::from_str::<Vec<serde_json::Value>>(&json).unwrap_or_default() {
-            let req = CreateDeviceCommandRequest {
+            let req = CreateThingCommandRequest {
                 thing_id: thing_id.to_string(),
                 name: a["name"].as_str().unwrap_or("").to_string(),
                 display_name: a.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 description: None,
                 parameters: a.get("parameters").map(|v| v.to_string()),
             };
-            db.create_device_command(&req).await?;
+            db.create_thing_command(&req).await?;
         }
         Ok(())
     }
@@ -284,7 +282,7 @@ impl ThingService {
         if let Some(ref new_name) = req.name
             && new_name != &existing.name
             && let Some(ref ws) = existing.workspace_id
-            && let Some(_conflict) = self.db.find_thing_by_name(ws, new_name).await?
+            && let Some(_conflict) = self.db.find_thing_row_by_name(ws, new_name).await?
         {
             return Err(ThingError::NameConflict(new_name.clone()));
         }
@@ -432,7 +430,7 @@ impl ThingService {
     /// model means a thing with no instances has no properties (D6).
     async fn load_properties(&self, thing_id: &str) -> Option<Vec<serde_json::Value>> {
         let db = Db::new(self.pool.clone());
-        let props = db.find_device_properties_by_device_id(thing_id).await.ok()?;
+        let props = db.find_thing_properties_by_thing_id(thing_id).await.ok()?;
         if props.is_empty() {
             return None;
         }
@@ -496,7 +494,7 @@ impl ThingService {
     /// thing_actions — eng-review T9).
     async fn load_actions(&self, thing_id: &str) -> Option<Vec<serde_json::Value>> {
         let db = Db::new(self.pool.clone());
-        let cmds = db.find_device_commands_by_device_id(thing_id).await.ok()?;
+        let cmds = db.find_thing_commands_by_thing_id(thing_id).await.ok()?;
         if cmds.is_empty() {
             return None;
         }

@@ -11,7 +11,7 @@ use sqlx::SqlitePool;
 use tinyiothub_agent::AgentError;
 use tinyiothub_agent::tools::{ToolProvider, ToolRegistry, ToolRuntimeContext, filter_by_denylist};
 use tinyiothub_skills::trust::{ToolSafety, classify_tool_safety};
-use tinyiothub_storage::cache::DeviceCache;
+use tinyiothub_storage::cache::ThingCache;
 use zeroclaw::tools::Tool;
 
 use super::thing::{PendingActionStore, ThingToolContext, create_thing_tools};
@@ -27,7 +27,7 @@ use crate::domains::agent::host::config::service as config_service;
 /// `AgentPool::set_runtime_context` 注入）。
 pub fn chat_builtin_tools_provider(
     db_pool: SqlitePool,
-    device_cache: Option<Arc<DeviceCache>>,
+    device_cache: Option<Arc<ThingCache>>,
     pending_actions: Arc<PendingActionStore>,
 ) -> ToolProvider {
     Arc::new(move |workspace_id: &str, runtime: &ToolRuntimeContext| {

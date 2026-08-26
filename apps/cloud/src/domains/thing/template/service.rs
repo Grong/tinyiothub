@@ -1,15 +1,15 @@
 use std::{collections::HashMap, sync::Arc};
 
 use tinyiothub_core::models::{
-    device::CreateDeviceRequest,
-    device_command::CreateDeviceCommandRequest,
-    device_property::CreateDevicePropertyRequest,
     template_error::{TemplateError, ValidationError, ValidationResult},
+    thing::CreateThingRequest,
+    thing_command::CreateThingCommandRequest,
+    thing_property::CreateThingPropertyRequest,
 };
 use tinyiothub_storage::Db;
 use tracing::{debug, info, warn};
 
-use crate::domains::thing::template::types::CreateDeviceTemplateRequest;
+use crate::domains::thing::template::types::CreateThingTemplateRequest;
 use crate::domains::thing::template::types::DeviceCreationInput;
 use crate::domains::thing::template::types::DevicePreview;
 
@@ -33,7 +33,7 @@ impl TemplateEngine {
         &self,
         template_id: &str,
         user_input: &DeviceCreationInput,
-    ) -> Result<CreateDeviceRequest, TemplateError> {
+    ) -> Result<CreateThingRequest, TemplateError> {
         info!(
             "应用模板创建设备: template_id={}, device_name={}",
             template_id, user_input.name
@@ -57,12 +57,12 @@ impl TemplateEngine {
         }
 
         // 解析模板信息
-        let device_info = template.get_device_info().map_err(|e| TemplateError::JsonFormatError {
+        let device_info = template.get_thing_info().map_err(|e| TemplateError::JsonFormatError {
             message: format!("设备信息解析失败: {}", e),
         })?;
 
         // 应用模板创建设备请求 (需求 3.5)
-        let device_request = CreateDeviceRequest {
+        let device_request = CreateThingRequest {
             name: user_input.name.clone(),
             display_name: user_input
                 .display_name
@@ -195,10 +195,10 @@ impl TemplateEngine {
     /// 根据模板生成设备属性
     pub async fn generate_device_properties(
         &self,
-        template: &DeviceTemplate,
+        template: &ThingTemplate,
         user_input: &DeviceCreationInput,
         thing_id: &str,
-    ) -> Result<Vec<CreateDevicePropertyRequest>, TemplateError> {
+    ) -> Result<Vec<CreateThingPropertyRequest>, TemplateError> {
         let properties = template.get_properties().map_err(|e| TemplateError::JsonFormatError {
             message: format!("属性模板解析失败: {}", e),
         })?;
@@ -213,7 +213,7 @@ impl TemplateEngine {
                 .cloned()
                 .or_else(|| property.default_value.clone());
 
-            let device_property = CreateDevicePropertyRequest {
+            let device_property = CreateThingPropertyRequest {
                 thing_id: thing_id.to_string(),
                 name: property.name.clone(),
                 display_name: Some(self.get_localized_display_name(&property.display_name, "zh")),
@@ -239,10 +239,10 @@ impl TemplateEngine {
     /// 根据模板生成设备命令
     pub async fn generate_device_commands(
         &self,
-        template: &DeviceTemplate,
+        template: &ThingTemplate,
         user_input: &DeviceCreationInput,
         thing_id: &str,
-    ) -> Result<Vec<CreateDeviceCommandRequest>, TemplateError> {
+    ) -> Result<Vec<CreateThingCommandRequest>, TemplateError> {
         let commands = template.get_commands().map_err(|e| TemplateError::JsonFormatError {
             message: format!("命令模板解析失败: {}", e),
         })?;
@@ -256,7 +256,7 @@ impl TemplateEngine {
                 || command.is_required;
 
             if is_enabled {
-                let device_command = CreateDeviceCommandRequest {
+                let device_command = CreateThingCommandRequest {
                     thing_id: thing_id.to_string(),
                     name: command.name.clone(),
                     display_name: Some(self.get_localized_display_name(&command.display_name, "zh")),
@@ -336,7 +336,7 @@ impl TemplateEngine {
             })?;
 
         // 解析设备信息
-        let device_info = template.get_device_info().map_err(|e| TemplateError::JsonFormatError {
+        let device_info = template.get_thing_info().map_err(|e| TemplateError::JsonFormatError {
             message: format!("设备信息解析失败: {}", e),
         })?;
 
@@ -426,10 +426,10 @@ impl TemplateEngine {
 
 use crate::domains::thing::template::types::CommandInfo;
 use crate::domains::thing::template::types::CommandTemplate;
-use crate::domains::thing::template::types::DeviceTemplate;
 use crate::domains::thing::template::types::PropertyInfo;
 use crate::domains::thing::template::types::PropertyTemplate;
 use crate::domains::thing::template::types::TemplateRequirements;
+use crate::domains::thing::template::types::ThingTemplate;
 use std::collections::HashSet;
 
 /// 模板验证器 - 负责验证模板格式和内容的正确性
@@ -443,7 +443,7 @@ impl TemplateValidator {
     }
 
     /// 验证设备模板 (需求 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7)
-    pub fn validate_template(&self, template: &DeviceTemplate) -> ValidationResult {
+    pub fn validate_template(&self, template: &ThingTemplate) -> ValidationResult {
         info!("验证设备模板: {}", template.name);
 
         let mut result = ValidationResult::success();
@@ -481,7 +481,7 @@ impl TemplateValidator {
     }
 
     /// 验证JSON格式 (需求 6.1)
-    pub fn validate_json_format(&self, json: &str) -> Result<CreateDeviceTemplateRequest, ValidationError> {
+    pub fn validate_json_format(&self, json: &str) -> Result<CreateThingTemplateRequest, ValidationError> {
         serde_json::from_str(json)
             .map_err(|e| ValidationError::new("json", &format!("JSON格式错误: {}", e), "INVALID_JSON"))
     }
@@ -605,7 +605,7 @@ impl TemplateValidator {
     }
 
     /// 验证用户输入
-    pub fn validate_user_input(&self, template: &DeviceTemplate, input: &DeviceCreationInput) -> ValidationResult {
+    pub fn validate_user_input(&self, template: &ThingTemplate, input: &DeviceCreationInput) -> ValidationResult {
         info!("验证用户输入，模板: {}", template.name);
 
         let mut result = ValidationResult::success();
@@ -621,7 +621,7 @@ impl TemplateValidator {
         }
 
         // 验证模板要求的必填字段
-        if let Ok(device_info) = template.get_device_info() {
+        if let Ok(device_info) = template.get_thing_info() {
             for required_field in &device_info.required_fields {
                 match required_field.as_str() {
                     "driver_options" if input.driver_options.as_ref().is_none_or(|opt| opt.trim().is_empty()) => {
@@ -703,7 +703,7 @@ impl TemplateValidator {
     }
 
     /// 验证必需字段 (需求 6.2)
-    fn validate_required_fields(&self, template: &DeviceTemplate, result: &mut ValidationResult) {
+    fn validate_required_fields(&self, template: &ThingTemplate, result: &mut ValidationResult) {
         if template.name.trim().is_empty() {
             result.add_error("name", "模板名称不能为空", "REQUIRED_FIELD");
         }
@@ -740,7 +740,7 @@ impl TemplateValidator {
     }
 
     /// 验证JSON字段 (需求 6.1)
-    fn validate_json_fields(&self, template: &DeviceTemplate, result: &mut ValidationResult) {
+    fn validate_json_fields(&self, template: &ThingTemplate, result: &mut ValidationResult) {
         // 验证显示名称JSON
         if let Err(e) = serde_json::from_str::<HashMap<String, String>>(&template.display_name) {
             result.add_error("display_name", &format!("显示名称JSON格式错误: {}", e), "INVALID_JSON");
@@ -759,7 +759,7 @@ impl TemplateValidator {
         }
 
         // 验证设备信息JSON
-        if let Err(e) = template.get_device_info() {
+        if let Err(e) = template.get_thing_info() {
             result.add_error("device_info", &format!("设备信息JSON格式错误: {}", e), "INVALID_JSON");
         }
 
@@ -775,7 +775,7 @@ impl TemplateValidator {
     }
 
     /// 验证属性模板 (需求 6.3)
-    fn validate_property_templates_internal(&self, template: &DeviceTemplate, result: &mut ValidationResult) {
+    fn validate_property_templates_internal(&self, template: &ThingTemplate, result: &mut ValidationResult) {
         if let Ok(properties) = template.get_properties() {
             let property_result = self.validate_property_templates(&properties);
             result.merge(property_result);
@@ -783,7 +783,7 @@ impl TemplateValidator {
     }
 
     /// 验证命令模板 (需求 6.4)
-    fn validate_command_templates_internal(&self, template: &DeviceTemplate, result: &mut ValidationResult) {
+    fn validate_command_templates_internal(&self, template: &ThingTemplate, result: &mut ValidationResult) {
         if let Ok(commands) = template.get_commands() {
             let command_result = self.validate_command_templates(&commands);
             result.merge(command_result);
@@ -791,7 +791,7 @@ impl TemplateValidator {
     }
 
     /// 验证重复名称 (需求 6.6)
-    fn validate_unique_names(&self, template: &DeviceTemplate, result: &mut ValidationResult) {
+    fn validate_unique_names(&self, template: &ThingTemplate, result: &mut ValidationResult) {
         // 验证属性名称唯一性
         if let Ok(properties) = template.get_properties() {
             let mut property_names = HashSet::new();
@@ -822,7 +822,7 @@ impl TemplateValidator {
     }
 
     /// 验证驱动引用 (需求 6.5)
-    fn validate_driver_reference(&self, template: &DeviceTemplate, result: &mut ValidationResult) {
+    fn validate_driver_reference(&self, template: &ThingTemplate, result: &mut ValidationResult) {
         if let Some(driver_name) = &template.driver_name
             && !driver_name.trim().is_empty()
         {
@@ -886,7 +886,7 @@ impl TemplateValidator {
     }
 
     /// 验证单个字段 (用于向导的实时验证)
-    pub fn validate_field(&self, template: &DeviceTemplate, field_name: &str, field_value: &str) -> ValidationResult {
+    pub fn validate_field(&self, template: &ThingTemplate, field_name: &str, field_value: &str) -> ValidationResult {
         debug!(
             "验证单个字段: 模板={}, 字段={}, 值={}",
             template.name, field_name, field_value
@@ -934,7 +934,7 @@ impl TemplateValidator {
         }
 
         // 检查是否为必需字段
-        if let Ok(device_info) = template.get_device_info()
+        if let Ok(device_info) = template.get_thing_info()
             && device_info.required_fields.contains(&field_name.to_string())
             && field_value.trim().is_empty()
         {

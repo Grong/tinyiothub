@@ -1,22 +1,22 @@
-// Device monitoring service — migrated from domain/device/monitoring_service.rs
+// Thing monitoring service — migrated from domain/device/monitoring_service.rs
 
 use std::sync::Arc;
 
-use tinyiothub_storage::{Db, cache::DeviceCache};
+use tinyiothub_storage::{Db, cache::ThingCache};
 
 pub struct DeviceMonitoringService {
     db: Arc<Db>,
-    device_cache: Arc<DeviceCache>,
+    device_cache: Arc<ThingCache>,
 }
 
 impl DeviceMonitoringService {
-    pub fn new(db: Arc<Db>, device_cache: Arc<DeviceCache>) -> Self {
+    pub fn new(db: Arc<Db>, device_cache: Arc<ThingCache>) -> Self {
         Self { db, device_cache }
     }
 
     pub fn is_device_online(&self, device_id: &str) -> bool {
         if let Some(device) = self.device_cache.get(device_id) {
-            if device.status == tinyiothub_core::models::device::DeviceStatus::Offline {
+            if device.status == tinyiothub_core::models::thing::ThingStatus::Offline {
                 return false;
             }
             if !device.is_online() {
@@ -146,7 +146,7 @@ impl DeviceMonitoringService {
 
     async fn get_device_events_and_alarms(&self, device_id: &str) -> (u32, u32) {
         let total_events = 0u32;
-        let active_alarms = self.db.count_active_alarms_by_device(device_id).await.unwrap_or(0);
+        let active_alarms = self.db.count_active_alarms_by_thing(device_id).await.unwrap_or(0);
         (total_events, active_alarms)
     }
 
