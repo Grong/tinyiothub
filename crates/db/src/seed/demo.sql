@@ -115,25 +115,25 @@ INSERT OR IGNORE INTO tags (id, type, name, description, color, tenant_id, creat
 ('tag-app-003', 'app', '开发环境', '开发环境应用', '#722ED1', 'tenant-default-001', 'admin-user-001');
 
 INSERT OR IGNORE INTO tag_bindings (id, tag_id, target_id, target_type, tenant_id, created_by) VALUES
-('binding-001', 'tag-device-001', 'device-env-01', 'device', 'tenant-default-001', 'admin-user-001'),
-('binding-002', 'tag-device-005', 'device-env-01', 'device', 'tenant-default-001', 'admin-user-001'),
-('binding-003', 'tag-device-007', 'device-env-01', 'device', 'tenant-default-001', 'admin-user-001'),
-('binding-004', 'tag-device-002', 'device-env-02', 'device', 'tenant-default-001', 'admin-user-001'),
-('binding-005', 'tag-device-005', 'device-env-02', 'device', 'tenant-default-001', 'admin-user-001'),
-('binding-006', 'tag-device-007', 'device-env-02', 'device', 'tenant-default-001', 'admin-user-001'),
-('binding-007', 'tag-device-003', 'device-cam-01', 'device', 'tenant-default-001', 'admin-user-001'),
-('binding-008', 'tag-device-005', 'device-cam-01', 'device', 'tenant-default-001', 'admin-user-001'),
-('binding-009', 'tag-device-008', 'device-cam-01', 'device', 'tenant-default-001', 'admin-user-001'),
-('binding-010', 'tag-device-003', 'device-cam-02', 'device', 'tenant-default-001', 'admin-user-001'),
-('binding-011', 'tag-device-006', 'device-cam-02', 'device', 'tenant-default-001', 'admin-user-001'),
-('binding-012', 'tag-device-008', 'device-cam-02', 'device', 'tenant-default-001', 'admin-user-001'),
-('binding-013', 'tag-device-004', 'device-robot-01', 'device', 'tenant-default-001', 'admin-user-001'),
-('binding-014', 'tag-device-005', 'device-robot-01', 'device', 'tenant-default-001', 'admin-user-001'),
-('binding-015', 'tag-device-007', 'device-robot-01', 'device', 'tenant-default-001', 'admin-user-001'),
-('binding-016', 'tag-device-005', 'device-gw-01', 'device', 'tenant-default-001', 'admin-user-001'),
-('binding-017', 'tag-device-007', 'device-gw-01', 'device', 'tenant-default-001', 'admin-user-001'),
-('binding-018', 'tag-device-005', 'device-power-01', 'device', 'tenant-default-001', 'admin-user-001'),
-('binding-019', 'tag-device-008', 'device-power-01', 'device', 'tenant-default-001', 'admin-user-001');
+('binding-001', 'tag-device-001', 'device-env-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('binding-002', 'tag-device-005', 'device-env-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('binding-003', 'tag-device-007', 'device-env-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('binding-004', 'tag-device-002', 'device-env-02', 'thing', 'tenant-default-001', 'admin-user-001'),
+('binding-005', 'tag-device-005', 'device-env-02', 'thing', 'tenant-default-001', 'admin-user-001'),
+('binding-006', 'tag-device-007', 'device-env-02', 'thing', 'tenant-default-001', 'admin-user-001'),
+('binding-007', 'tag-device-003', 'device-cam-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('binding-008', 'tag-device-005', 'device-cam-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('binding-009', 'tag-device-008', 'device-cam-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('binding-010', 'tag-device-003', 'device-cam-02', 'thing', 'tenant-default-001', 'admin-user-001'),
+('binding-011', 'tag-device-006', 'device-cam-02', 'thing', 'tenant-default-001', 'admin-user-001'),
+('binding-012', 'tag-device-008', 'device-cam-02', 'thing', 'tenant-default-001', 'admin-user-001'),
+('binding-013', 'tag-device-004', 'device-robot-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('binding-014', 'tag-device-005', 'device-robot-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('binding-015', 'tag-device-007', 'device-robot-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('binding-016', 'tag-device-005', 'device-gw-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('binding-017', 'tag-device-007', 'device-gw-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('binding-018', 'tag-device-005', 'device-power-01', 'thing', 'tenant-default-001', 'admin-user-001'),
+('binding-019', 'tag-device-008', 'device-power-01', 'thing', 'tenant-default-001', 'admin-user-001');
 
 -- ── demo alarm rules + sample alarms (20260106000002) ───────────────────────
 INSERT OR IGNORE INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, created_by) VALUES

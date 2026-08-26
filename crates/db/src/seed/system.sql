@@ -36,10 +36,10 @@ INSERT OR IGNORE INTO user_roles (id, user_id, role_id) VALUES
 ('user-role-001', 'admin-user-001', 'role-admin');
 
 INSERT OR IGNORE INTO permissions (id, name, description, resource_type, action) VALUES
-('perm-device-read', 'device:read', '查看设备信息', 'device', 'read'),
-('perm-device-write', 'device:write', '修改设备信息', 'device', 'write'),
-('perm-device-delete', 'device:delete', '删除设备', 'device', 'delete'),
-('perm-device-admin', 'device:admin', '设备管理权限', 'device', 'admin'),
+('perm-thing-read', 'thing:read', '查看设备信息', 'thing', 'read'),
+('perm-thing-write', 'thing:write', '修改设备信息', 'thing', 'write'),
+('perm-thing-delete', 'thing:delete', '删除设备', 'thing', 'delete'),
+('perm-thing-admin', 'thing:admin', '设备管理权限', 'thing', 'admin'),
 ('perm-user-read', 'user:read', '查看用户信息', 'user', 'read'),
 ('perm-user-write', 'user:write', '修改用户信息', 'user', 'write'),
 ('perm-user-delete', 'user:delete', '删除用户', 'user', 'delete'),
@@ -53,12 +53,12 @@ INSERT OR IGNORE INTO permissions (id, name, description, resource_type, action)
 ('perm-event-audit', 'event:audit', '查看事件审计日志', 'event', 'audit');
 
 INSERT OR IGNORE INTO role_permissions (id, role_id, permission_id) VALUES
-('role-perm-001', 'role-admin', 'perm-device-admin'),
+('role-perm-001', 'role-admin', 'perm-thing-admin'),
 ('role-perm-002', 'role-admin', 'perm-user-admin'),
 ('role-perm-003', 'role-admin', 'perm-system-admin'),
-('role-perm-004', 'role-operator', 'perm-device-read'),
-('role-perm-005', 'role-operator', 'perm-device-write'),
-('role-perm-006', 'role-viewer', 'perm-device-read'),
+('role-perm-004', 'role-operator', 'perm-thing-read'),
+('role-perm-005', 'role-operator', 'perm-thing-write'),
+('role-perm-006', 'role-viewer', 'perm-thing-read'),
 ('role-perm-007', 'role-viewer', 'perm-user-read'),
 ('role-perm-event-001', 'role-admin', 'perm-event-admin'),
 ('role-perm-event-002', 'role-admin', 'perm-event-audit'),

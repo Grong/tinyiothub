@@ -702,7 +702,7 @@ pub(crate) async fn load_thing_tags_batch(
     let mut qb = sqlx::QueryBuilder::new(
         "SELECT tb.target_id, t.id, t.name, t.color FROM tag_bindings tb \
              JOIN tags t ON t.id = tb.tag_id \
-             WHERE tb.target_type IN ('device','thing') AND tb.target_id IN (",
+             WHERE tb.target_type = 'thing' AND tb.target_id IN (",
     );
     let mut separated = qb.separated(",");
     for id in thing_ids {
@@ -1775,7 +1775,7 @@ async fn find_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Res
                 builder.push(" OR display_name LIKE ").push_bind(&pattern);
                 builder.push(" OR address LIKE ").push_bind(&pattern);
                 builder.push(" OR description LIKE ").push_bind(&pattern);
-                builder.push(" OR EXISTS (SELECT 1 FROM tag_bindings tb JOIN tags t ON tb.tag_id = t.id WHERE tb.target_id = things.id AND tb.target_type = 'device' AND t.name LIKE ");
+                builder.push(" OR EXISTS (SELECT 1 FROM tag_bindings tb JOIN tags t ON tb.tag_id = t.id WHERE tb.target_id = things.id AND tb.target_type = 'thing' AND t.name LIKE ");
                 builder.push_bind(&pattern);
                 builder.push("))");
             }
@@ -1784,7 +1784,7 @@ async fn find_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Res
     }
     if let Some(tag_name) = &criteria.tag_name {
         let pattern = format!("%{}%", tag_name);
-        builder.push(" AND EXISTS (SELECT 1 FROM tag_bindings tb JOIN tags t ON tb.tag_id = t.id WHERE tb.target_id = things.id AND tb.target_type = 'device' AND t.name LIKE ");
+        builder.push(" AND EXISTS (SELECT 1 FROM tag_bindings tb JOIN tags t ON tb.tag_id = t.id WHERE tb.target_id = things.id AND tb.target_type = 'thing' AND t.name LIKE ");
         builder.push_bind(&pattern);
         builder.push(")");
     }
@@ -1862,7 +1862,7 @@ async fn count_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Re
                 builder.push(" OR display_name LIKE ").push_bind(&pattern);
                 builder.push(" OR address LIKE ").push_bind(&pattern);
                 builder.push(" OR description LIKE ").push_bind(&pattern);
-                builder.push(" OR EXISTS (SELECT 1 FROM tag_bindings tb JOIN tags t ON tb.tag_id = t.id WHERE tb.target_id = things.id AND tb.target_type = 'device' AND t.name LIKE ");
+                builder.push(" OR EXISTS (SELECT 1 FROM tag_bindings tb JOIN tags t ON tb.tag_id = t.id WHERE tb.target_id = things.id AND tb.target_type = 'thing' AND t.name LIKE ");
                 builder.push_bind(&pattern);
                 builder.push("))");
             }
@@ -1871,7 +1871,7 @@ async fn count_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Re
     }
     if let Some(tag_name) = &criteria.tag_name {
         let pattern = format!("%{}%", tag_name);
-        builder.push(" AND EXISTS (SELECT 1 FROM tag_bindings tb JOIN tags t ON tb.tag_id = t.id WHERE tb.target_id = things.id AND tb.target_type = 'device' AND t.name LIKE ");
+        builder.push(" AND EXISTS (SELECT 1 FROM tag_bindings tb JOIN tags t ON tb.tag_id = t.id WHERE tb.target_id = things.id AND tb.target_type = 'thing' AND t.name LIKE ");
         builder.push_bind(&pattern);
         builder.push(")");
     }

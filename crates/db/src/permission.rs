@@ -162,10 +162,10 @@ mod tests {
 
     fn test_create_request() -> CreatePermissionRequest {
         CreatePermissionRequest {
-            name: "Read Devices".to_string(),
-            code: "device:read".to_string(),
-            description: Some("Can read device data".to_string()),
-            resource_type: "device".to_string(),
+            name: "Read Things".to_string(),
+            code: "thing:read".to_string(),
+            description: Some("Can read thing data".to_string()),
+            resource_type: "thing".to_string(),
             action_type: "read".to_string(),
             is_system: Some(true),
             parent_id: Some("parent-1".to_string()),
@@ -175,9 +175,9 @@ mod tests {
     #[test]
     fn test_permission_new() {
         let perm = Permission::new(test_create_request());
-        assert_eq!(perm.name, "Read Devices");
-        assert_eq!(perm.code, "device:read");
-        assert_eq!(perm.resource_type, "device");
+        assert_eq!(perm.name, "Read Things");
+        assert_eq!(perm.code, "thing:read");
+        assert_eq!(perm.resource_type, "thing");
         assert_eq!(perm.action_type, "read");
         assert!(perm.is_system);
         assert_eq!(perm.parent_id, Some("parent-1".to_string()));
@@ -213,15 +213,15 @@ mod tests {
     #[test]
     fn test_get_full_code() {
         let perm = Permission::new(test_create_request());
-        assert_eq!(perm.get_full_code(), "device:read");
+        assert_eq!(perm.get_full_code(), "thing:read");
     }
 
     #[test]
     fn test_allows_action() {
         let perm = Permission::new(test_create_request());
-        assert!(perm.allows_action("device", "read"));
+        assert!(perm.allows_action("thing", "read"));
         assert!(!perm.allows_action("alarm", "read"));
-        assert!(!perm.allows_action("device", "write"));
+        assert!(!perm.allows_action("thing", "write"));
     }
 
     #[test]
@@ -231,7 +231,7 @@ mod tests {
             ..test_create_request()
         };
         let perm = Permission::new(req);
-        assert!(perm.allows_action("device", "read"));
+        assert!(perm.allows_action("thing", "read"));
         assert!(perm.allows_action("alarm", "read"));
     }
 
@@ -242,8 +242,8 @@ mod tests {
             ..test_create_request()
         };
         let perm = Permission::new(req);
-        assert!(perm.allows_action("device", "read"));
-        assert!(perm.allows_action("device", "write"));
+        assert!(perm.allows_action("thing", "read"));
+        assert!(perm.allows_action("thing", "write"));
     }
 
     #[test]
@@ -253,7 +253,7 @@ mod tests {
             ..test_create_request()
         };
         let perm = Permission::new(req);
-        assert!(perm.allows_action("device", "delete"));
+        assert!(perm.allows_action("thing", "delete"));
     }
 
     #[test]
