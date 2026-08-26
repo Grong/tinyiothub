@@ -9,7 +9,7 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::security::Claims;
 use tracing::{error, info};
 
-use tinyiothub_storage::device::{DeviceStatusDistribution, QuickDevice};
+use tinyiothub_storage::thing::{DeviceStatusDistribution, QuickDevice};
 
 use tinyiothub_web::api_response::ApiResponse;
 use tinyiothub_web::middleware::workspace::WorkspaceScope;

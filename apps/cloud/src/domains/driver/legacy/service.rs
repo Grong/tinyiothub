@@ -21,7 +21,7 @@ use crate::domains::event::{
 };
 use tinyiothub_core::error::Error;
 use tinyiothub_runtime::event_bus::EventBus;
-use tinyiothub_storage::device::DeviceCriteria;
+use tinyiothub_storage::thing::DeviceCriteria;
 use tinyiothub_web::pagination::DataObjectWithPagination;
 
 pub struct DeviceService {
@@ -796,8 +796,8 @@ fn params_to_criteria(params: &DeviceQueryParams) -> DeviceCriteria {
         workspace_id: None,
         search_text: None,
         tag_name: None,
-        sort_by: tinyiothub_storage::device::DeviceSortBy::CreatedAt,
-        sort_order: tinyiothub_storage::device::DeviceSortOrder::Descending,
+        sort_by: tinyiothub_storage::thing::DeviceSortBy::CreatedAt,
+        sort_order: tinyiothub_storage::thing::DeviceSortOrder::Descending,
         limit: params.page_size,
         offset: params.page.map(|p| p.saturating_sub(1) * params.page_size.unwrap_or(0)),
     }

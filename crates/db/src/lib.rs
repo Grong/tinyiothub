@@ -34,16 +34,12 @@ pub mod cron_job;
 pub mod cron_run;
 /// Db facade (connection + domain accessors).
 pub mod database;
-/// Device persistence.
-pub mod device;
 /// Device command persistence.
 pub mod device_command;
 /// Device property persistence.
 pub mod device_property;
 /// Device row mapping helpers.
 pub mod device_row_mapper;
-/// Device trace persistence (thing_traces) and row types.
-pub mod device_trace;
 /// Driver installation persistence.
 pub mod driver_installation;
 /// Edge 网关本地持久化（offline_buffer / config_meta，edge 专有表）。
@@ -84,10 +80,12 @@ pub mod sql_security;
 pub mod tag;
 /// Tenant + API key persistence and row types.
 pub mod tenant;
-/// Thing persistence (things 表的 Thing 视图 + resources/tags/events 侧查询).
+/// Thing persistence (things 表唯一入口：Thing 视图 + 原 device.rs 全部内容).
 pub mod thing;
 /// Thing template persistence (thing_templates / template_categories).
 pub mod thing_template;
+/// Thing trace persistence (thing_traces) and row types.
+pub mod thing_trace;
 /// User persistence and row types.
 pub mod user;
 /// Workspace + knowledge resource persistence and row types.

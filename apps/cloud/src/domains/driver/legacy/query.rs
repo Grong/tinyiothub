@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use tinyiothub_core::models::device::{Device, DeviceStats};
 
 use tinyiothub_core::error::Result;
-use tinyiothub_storage::device::{DeviceStatusDistribution, QuickDevice};
+use tinyiothub_storage::thing::{DeviceStatusDistribution, QuickDevice};
 
 #[async_trait]
 pub trait DeviceQueryService: Send + Sync {

@@ -1,7 +1,7 @@
 use tinyiothub_core::models::device::{Device, DeviceQueryParams};
 use tinyiothub_storage::{
     Db,
-    device::{DeviceCriteria, DeviceSortBy, DeviceSortOrder},
+    thing::{DeviceCriteria, DeviceSortBy, DeviceSortOrder},
 };
 
 /// Find a device by ID (convenience wrapper for MCP tools compatibility)

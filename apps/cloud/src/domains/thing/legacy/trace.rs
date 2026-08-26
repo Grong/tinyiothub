@@ -3,7 +3,7 @@
 use tinyiothub_core::{error::Error, generate_id};
 use tinyiothub_storage::Db;
 
-pub use tinyiothub_storage::device_trace::{DeviceTrace, DeviceTraceStatistics, SystemTraceOverview};
+pub use tinyiothub_storage::thing_trace::{DeviceTrace, DeviceTraceStatistics, SystemTraceOverview};
 
 pub struct DeviceTraceService {
     db: Db,

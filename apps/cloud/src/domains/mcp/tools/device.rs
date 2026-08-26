@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tinyiothub_core::models::device::CreateDeviceRequest;
-use tinyiothub_storage::device::{DeviceCriteria, DeviceSortBy, DeviceSortOrder};
+use tinyiothub_storage::thing::{DeviceCriteria, DeviceSortBy, DeviceSortOrder};
 
 use crate::domains::thing::legacy::device_query::{
     find_device_by_id, find_device_by_id_with_tags, load_tags_for_devices,
