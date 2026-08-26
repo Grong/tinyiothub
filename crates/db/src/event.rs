@@ -21,7 +21,7 @@ pub struct EventCriteria {
     pub event_types: Option<Vec<EventType>>,
     pub levels: Option<Vec<EventLevel>>,
     pub source_types: Option<Vec<String>>,
-    pub device_ids: Option<Vec<String>>,
+    pub thing_ids: Option<Vec<String>>,
     pub user_ids: Option<Vec<String>>,
     pub search_text: Option<String>,
     pub sort_by: SortBy,
@@ -98,7 +98,7 @@ impl Default for EventCriteria {
             event_types: None,
             levels: None,
             source_types: None,
-            device_ids: None,
+            thing_ids: None,
             user_ids: None,
             search_text: None,
             sort_by: SortBy::Timestamp,
@@ -130,8 +130,8 @@ impl EventCriteria {
         self
     }
 
-    pub fn with_device_ids(mut self, device_ids: Vec<String>) -> Self {
-        self.device_ids = Some(device_ids);
+    pub fn with_thing_ids(mut self, thing_ids: Vec<String>) -> Self {
+        self.thing_ids = Some(thing_ids);
         self
     }
 
@@ -180,8 +180,8 @@ impl EventCriteriaBuilder {
         self
     }
 
-    pub fn device_ids(mut self, device_ids: Vec<String>) -> Self {
-        self.criteria.device_ids = Some(device_ids);
+    pub fn thing_ids(mut self, thing_ids: Vec<String>) -> Self {
+        self.criteria.thing_ids = Some(thing_ids);
         self
     }
 
@@ -360,7 +360,7 @@ pub struct StatusSummary {
     pub error_count: u64,
     pub warning_count: u64,
     pub unacknowledged_count: u64,
-    pub by_device: Vec<DeviceStatusSummary>,
+    pub by_thing: Vec<ThingStatusSummary>,
     pub by_type: Vec<TypeStatusSummary>,
 }
 
@@ -395,9 +395,9 @@ pub enum HealthStatus {
     Critical,
 }
 
-/// Device-specific status summary
+/// Thing-specific status summary
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeviceStatusSummary {
+pub struct ThingStatusSummary {
     pub thing_id: String,
     pub active_count: u64,
     pub highest_level: EventLevel,
@@ -493,10 +493,10 @@ pub(crate) async fn query_events(pool: &SqlitePool, criteria: &EventCriteria) ->
     }
 
     // Add device ID filters
-    if let Some(device_ids) = &criteria.device_ids
-        && !device_ids.is_empty()
+    if let Some(thing_ids) = &criteria.thing_ids
+        && !thing_ids.is_empty()
     {
-        let placeholders = vec!["?"; device_ids.len()].join(",");
+        let placeholders = vec!["?"; thing_ids.len()].join(",");
         sql.push_str(&format!(" AND thing_id IN ({})", placeholders));
     }
 
@@ -549,8 +549,8 @@ pub(crate) async fn query_events(pool: &SqlitePool, criteria: &EventCriteria) ->
     }
 
     // Bind device ID filters
-    if let Some(device_ids) = &criteria.device_ids {
-        for thing_id in device_ids {
+    if let Some(thing_ids) = &criteria.thing_ids {
+        for thing_id in thing_ids {
             query = query.bind(thing_id.clone());
         }
     }
@@ -916,7 +916,7 @@ pub(crate) async fn get_realtime_status_summary(pool: &SqlitePool, _filter: &Rea
 
     let device_rows = sqlx::query(device_sql).fetch_all(pool).await?;
 
-    let mut by_device = Vec::new();
+    let mut by_thing = Vec::new();
     for row in device_rows {
         let thing_id: String = row.get("thing_id");
         let active_count: i64 = row.get("active_count");
@@ -928,7 +928,7 @@ pub(crate) async fn get_realtime_status_summary(pool: &SqlitePool, _filter: &Rea
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now());
 
-        by_device.push(DeviceStatusSummary {
+        by_thing.push(ThingStatusSummary {
             thing_id,
             active_count: active_count as u64,
             highest_level,
@@ -944,7 +944,7 @@ pub(crate) async fn get_realtime_status_summary(pool: &SqlitePool, _filter: &Rea
         error_count,
         warning_count,
         unacknowledged_count,
-        by_device,
+        by_thing,
         by_type,
     })
 }
@@ -1403,7 +1403,7 @@ mod tests {
             .start_time(now)
             .event_types(vec![EventType::System(SystemEventType::UserAuth)])
             .levels(vec![EventLevel::Error, EventLevel::Critical])
-            .device_ids(vec!["device1".to_string(), "device2".to_string()])
+            .thing_ids(vec!["device1".to_string(), "device2".to_string()])
             .sort_by(SortBy::Level)
             .sort_order(SortOrder::Ascending)
             .limit(100)
@@ -1413,7 +1413,7 @@ mod tests {
         assert_eq!(criteria.start_time, Some(now));
         assert_eq!(criteria.event_types.as_ref().unwrap().len(), 1);
         assert_eq!(criteria.levels.as_ref().unwrap().len(), 2);
-        assert_eq!(criteria.device_ids.as_ref().unwrap().len(), 2);
+        assert_eq!(criteria.thing_ids.as_ref().unwrap().len(), 2);
         assert!(matches!(criteria.sort_by, SortBy::Level));
         assert!(matches!(criteria.sort_order, SortOrder::Ascending));
         assert_eq!(criteria.limit, Some(100));
@@ -1469,7 +1469,7 @@ mod tests {
             error_count: 0,
             warning_count: 5,
             unacknowledged_count: 3,
-            by_device: vec![],
+            by_thing: vec![],
             by_type: vec![],
         };
 
@@ -1499,7 +1499,7 @@ pub struct OpenEventRow {
 
 /// Open API 全量事件行（含 thing_id）。
 #[derive(Debug)]
-pub struct OpenEventWithDeviceRow {
+pub struct OpenEventWithThingRow {
     pub id: String,
     pub event_type: String,
     pub event_level: i64,
@@ -1534,7 +1534,7 @@ pub(crate) async fn list_open_thing_events(
 }
 
 /// Open API：列出 workspace 全部事件（最新 100 条）。
-pub(crate) async fn list_open_events(pool: &SqlitePool, workspace_id: &str) -> Result<Vec<OpenEventWithDeviceRow>> {
+pub(crate) async fn list_open_events(pool: &SqlitePool, workspace_id: &str) -> Result<Vec<OpenEventWithThingRow>> {
     let rows = sqlx::query(
         "SELECT id, event_type, event_level, title, thing_id, created_at FROM events WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 100",
     )
@@ -1543,7 +1543,7 @@ pub(crate) async fn list_open_events(pool: &SqlitePool, workspace_id: &str) -> R
     .await?;
     Ok(rows
         .iter()
-        .map(|row| OpenEventWithDeviceRow {
+        .map(|row| OpenEventWithThingRow {
             id: row.try_get::<String, _>("id").unwrap_or_default(),
             event_type: row.try_get::<String, _>("event_type").unwrap_or_default(),
             event_level: row.try_get::<i64, _>("event_level").unwrap_or(0),
@@ -1561,7 +1561,7 @@ impl Db {
     }
 
     /// Open API：列出 workspace 全部事件（最新 100 条）。
-    pub async fn list_open_events(&self, workspace_id: &str) -> Result<Vec<OpenEventWithDeviceRow>> {
+    pub async fn list_open_events(&self, workspace_id: &str) -> Result<Vec<OpenEventWithThingRow>> {
         list_open_events(self.pool(), workspace_id).await
     }
 }

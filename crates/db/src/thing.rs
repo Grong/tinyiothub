@@ -2,19 +2,19 @@
 //!
 //! 两段来源：
 //! - Thing 视图 + resources/tag_bindings/events 侧查询（自 cloud domains/thing/repo.rs 迁入，Task 12）；
-//! - 原 device.rs 全部内容（Device/DeviceCriteria 等类型名保持不变，PR-2 再改类型名）。
+//! - 原 device.rs 全部内容（Thing/ThingCriteria 等类型名保持不变，PR-2 再改类型名）。
 //!
-//! 类型随 repo 住 db：ThingRow/ThingResource/TagInfo/DeviceCriteria 等行类型，
+//! 类型随 repo 住 db：ThingRow/ThingResource/TagInfo/ThingCriteria 等行类型，
 //! cloud 侧 types 模块直接引用本模块路径。
 
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
 
 use crate::database::Db;
-use crate::device_row_mapper;
+use crate::thing_row_mapper;
 use tinyiothub_core::error::{Error, Result};
-use tinyiothub_core::models::device::{
-    CreateDeviceRequest, Device, DeviceStats, DeviceStatusUpdate, UpdateDeviceRequest,
+use tinyiothub_core::models::thing::{
+    CreateThingRequest, Thing, ThingStats, ThingStatusUpdate, UpdateThingRequest,
 };
 use tinyiothub_core::{generate_id, now_string};
 
@@ -105,7 +105,7 @@ pub struct ThingTreeNode {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UpdateThingRequest {
+pub struct UpdateThingRowRequest {
     pub name: Option<String>,
     pub thing_type: Option<String>,
     pub category: Option<String>,
@@ -235,7 +235,7 @@ pub(crate) async fn delete_thing_scoped(
 }
 
 /// Workspace-scoped name lookup.
-pub(crate) async fn find_thing_by_name(
+pub(crate) async fn find_thing_row_by_name(
     pool: &SqlitePool,
     workspace_id: &str,
     name: &str,
@@ -297,7 +297,7 @@ fn push_where_clauses(builder: &mut QueryBuilder<sqlx::Sqlite>, params: &ListThi
 }
 
 /// Single thing by id.
-pub(crate) async fn find_thing_by_id(
+pub(crate) async fn find_thing_row_by_id(
     pool: &SqlitePool,
     id: &str,
 ) -> std::result::Result<Option<ThingRow>, sqlx::Error> {
@@ -308,7 +308,7 @@ pub(crate) async fn find_thing_by_id(
 }
 
 /// INSERT — returns the newly created row.
-pub(crate) async fn create_thing(pool: &SqlitePool, row: &ThingRow) -> std::result::Result<ThingRow, sqlx::Error> {
+pub(crate) async fn create_thing_row(pool: &SqlitePool, row: &ThingRow) -> std::result::Result<ThingRow, sqlx::Error> {
     sqlx::query(
         "INSERT INTO things (id, name, display_name, thing_type, category, \
              description, parent_id, template_id, protocol_type, driver_name, \
@@ -331,16 +331,16 @@ pub(crate) async fn create_thing(pool: &SqlitePool, row: &ThingRow) -> std::resu
     .execute(pool)
     .await?;
 
-    find_thing_by_id(pool, &row.id)
+    find_thing_row_by_id(pool, &row.id)
         .await?
         .ok_or_else(|| sqlx::Error::Protocol("readback after insert failed".into()))
 }
 
 /// UPDATE — returns the updated row.
-pub(crate) async fn update_thing(
+pub(crate) async fn update_thing_row(
     pool: &SqlitePool,
     id: &str,
-    input: &UpdateThingRequest,
+    input: &UpdateThingRowRequest,
 ) -> std::result::Result<Option<ThingRow>, sqlx::Error> {
     let mut builder = QueryBuilder::new("UPDATE things SET ");
     let mut separated = builder.separated(", ");
@@ -378,12 +378,12 @@ pub(crate) async fn update_thing(
 
     builder.build().execute(pool).await?;
 
-    find_thing_by_id(pool, id).await
+    find_thing_row_by_id(pool, id).await
 }
 
 /// DELETE — checks children count first.
 /// Returns rows_affected on success.
-pub(crate) async fn delete_thing(pool: &SqlitePool, id: &str) -> std::result::Result<u64, sqlx::Error> {
+pub(crate) async fn delete_thing_row(pool: &SqlitePool, id: &str) -> std::result::Result<u64, sqlx::Error> {
     let result = sqlx::query("DELETE FROM things WHERE id = ?")
         .bind(id)
         .execute(pool)
@@ -540,7 +540,7 @@ pub(crate) async fn check_thing_cycle(
 pub(crate) async fn update_thing_guarded_tx(
     tx: &mut Transaction<'static, Sqlite>,
     id: &str,
-    input: &UpdateThingRequest,
+    input: &UpdateThingRowRequest,
     workspace_id: &str,
 ) -> std::result::Result<bool, sqlx::Error> {
     if let Some(ref new_parent_id) = input.parent_id {
@@ -1062,12 +1062,12 @@ impl Db {
     }
 
     /// Workspace-scoped 按名查询。
-    pub async fn find_thing_by_name(
+    pub async fn find_thing_row_by_name(
         &self,
         workspace_id: &str,
         name: &str,
     ) -> std::result::Result<Option<ThingRow>, sqlx::Error> {
-        find_thing_by_name(self.pool(), workspace_id, name).await
+        find_thing_row_by_name(self.pool(), workspace_id, name).await
     }
 
     /// 分页列出 things（动态 WHERE）。
@@ -1080,27 +1080,27 @@ impl Db {
     }
 
     /// 按 id 查单个 thing。
-    pub async fn find_thing_by_id(&self, id: &str) -> std::result::Result<Option<ThingRow>, sqlx::Error> {
-        find_thing_by_id(self.pool(), id).await
+    pub async fn find_thing_row_by_id(&self, id: &str) -> std::result::Result<Option<ThingRow>, sqlx::Error> {
+        find_thing_row_by_id(self.pool(), id).await
     }
 
     /// 插入 thing 并返回新行。
-    pub async fn create_thing(&self, row: &ThingRow) -> std::result::Result<ThingRow, sqlx::Error> {
-        create_thing(self.pool(), row).await
+    pub async fn create_thing_row(&self, row: &ThingRow) -> std::result::Result<ThingRow, sqlx::Error> {
+        create_thing_row(self.pool(), row).await
     }
 
     /// 更新 thing 并返回更新后的行。
-    pub async fn update_thing(
+    pub async fn update_thing_row(
         &self,
         id: &str,
-        input: &UpdateThingRequest,
+        input: &UpdateThingRowRequest,
     ) -> std::result::Result<Option<ThingRow>, sqlx::Error> {
-        update_thing(self.pool(), id, input).await
+        update_thing_row(self.pool(), id, input).await
     }
 
     /// 删除 thing，返回受影响行数。
-    pub async fn delete_thing(&self, id: &str) -> std::result::Result<u64, sqlx::Error> {
-        delete_thing(self.pool(), id).await
+    pub async fn delete_thing_row(&self, id: &str) -> std::result::Result<u64, sqlx::Error> {
+        delete_thing_row(self.pool(), id).await
     }
 
     /// 统计 thing 的子节点数。
@@ -1141,7 +1141,7 @@ impl Db {
     pub async fn update_thing_guarded(
         &self,
         id: &str,
-        input: &UpdateThingRequest,
+        input: &UpdateThingRowRequest,
         workspace_id: &str,
     ) -> std::result::Result<UpdateGuardedOutcome, sqlx::Error> {
         let mut tx = self.pool().begin().await?;
@@ -1151,7 +1151,7 @@ impl Db {
         }
         tx.commit().await?;
         Ok(UpdateGuardedOutcome::Updated(
-            find_thing_by_id(self.pool(), id).await?.map(Box::new),
+            find_thing_row_by_id(self.pool(), id).await?.map(Box::new),
         ))
     }
 
@@ -1429,7 +1429,7 @@ impl Db {
 
 // ══════════════════════════════════════════════
 // 以下自 device.rs 并入（Task 5 模块收敛）：
-// Device/DeviceCriteria 等 Rust 类型名保持不变（PR-2 再改类型名），
+// Thing/ThingCriteria 等 Rust 类型名保持不变（PR-2 再改类型名），
 // SQL 已查询 things 表（Task 4 完成）。
 // ══════════════════════════════════════════════
 
@@ -1437,7 +1437,7 @@ impl Db {
 
 /// Criteria for querying devices
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct DeviceCriteria {
+pub struct ThingCriteria {
     pub name: Option<String>,
     pub display_name: Option<String>,
     pub device_type: Option<String>,
@@ -1449,35 +1449,35 @@ pub struct DeviceCriteria {
     pub workspace_id: Option<String>,
     pub search_text: Option<String>,
     pub tag_name: Option<String>,
-    pub sort_by: DeviceSortBy,
-    pub sort_order: DeviceSortOrder,
+    pub sort_by: ThingSortBy,
+    pub sort_order: ThingSortOrder,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
 }
 
 /// Sorting options for devices
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
-pub enum DeviceSortBy {
+pub enum ThingSortBy {
     Name,
     #[default]
     CreatedAt,
     UpdatedAt,
-    DeviceType,
+    Category,
     DriverName,
     State,
 }
 
 /// Sort order for devices
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
-pub enum DeviceSortOrder {
+pub enum ThingSortOrder {
     Ascending,
     #[default]
     Descending,
 }
 
-impl DeviceCriteria {
-    pub fn builder() -> DeviceCriteriaBuilder {
-        DeviceCriteriaBuilder::new()
+impl ThingCriteria {
+    pub fn builder() -> ThingCriteriaBuilder {
+        ThingCriteriaBuilder::new()
     }
 
     pub fn with_name(mut self, name: String) -> Self {
@@ -1535,7 +1535,7 @@ impl DeviceCriteria {
         self
     }
 
-    pub fn with_sort(mut self, sort_by: DeviceSortBy, sort_order: DeviceSortOrder) -> Self {
+    pub fn with_sort(mut self, sort_by: ThingSortBy, sort_order: ThingSortOrder) -> Self {
         self.sort_by = sort_by;
         self.sort_order = sort_order;
         self
@@ -1548,15 +1548,15 @@ impl DeviceCriteria {
     }
 }
 
-/// Builder for DeviceCriteria
-pub struct DeviceCriteriaBuilder {
-    criteria: DeviceCriteria,
+/// Builder for ThingCriteria
+pub struct ThingCriteriaBuilder {
+    criteria: ThingCriteria,
 }
 
-impl DeviceCriteriaBuilder {
+impl ThingCriteriaBuilder {
     pub fn new() -> Self {
         Self {
-            criteria: DeviceCriteria::default(),
+            criteria: ThingCriteria::default(),
         }
     }
 
@@ -1615,12 +1615,12 @@ impl DeviceCriteriaBuilder {
         self
     }
 
-    pub fn sort_by(mut self, sort_by: DeviceSortBy) -> Self {
+    pub fn sort_by(mut self, sort_by: ThingSortBy) -> Self {
         self.criteria.sort_by = sort_by;
         self
     }
 
-    pub fn sort_order(mut self, sort_order: DeviceSortOrder) -> Self {
+    pub fn sort_order(mut self, sort_order: ThingSortOrder) -> Self {
         self.criteria.sort_order = sort_order;
         self
     }
@@ -1635,12 +1635,12 @@ impl DeviceCriteriaBuilder {
         self
     }
 
-    pub fn build(self) -> DeviceCriteria {
+    pub fn build(self) -> ThingCriteria {
         self.criteria
     }
 }
 
-impl Default for DeviceCriteriaBuilder {
+impl Default for ThingCriteriaBuilder {
     fn default() -> Self {
         Self::new()
     }
@@ -1652,13 +1652,13 @@ mod tests {
 
     #[test]
     fn test_criteria_builder() {
-        let criteria = DeviceCriteria::builder()
+        let criteria = ThingCriteria::builder()
             .name("sensor-01".to_string())
             .device_type("temperature".to_string())
             .driver_name("modbus".to_string())
             .state(1)
-            .sort_by(DeviceSortBy::Name)
-            .sort_order(DeviceSortOrder::Ascending)
+            .sort_by(ThingSortBy::Name)
+            .sort_order(ThingSortOrder::Ascending)
             .limit(100)
             .offset(0)
             .build();
@@ -1667,24 +1667,24 @@ mod tests {
         assert_eq!(criteria.device_type, Some("temperature".to_string()));
         assert_eq!(criteria.driver_name, Some("modbus".to_string()));
         assert_eq!(criteria.state, Some(1));
-        assert!(matches!(criteria.sort_by, DeviceSortBy::Name));
-        assert!(matches!(criteria.sort_order, DeviceSortOrder::Ascending));
+        assert!(matches!(criteria.sort_by, ThingSortBy::Name));
+        assert!(matches!(criteria.sort_order, ThingSortOrder::Ascending));
         assert_eq!(criteria.limit, Some(100));
         assert_eq!(criteria.offset, Some(0));
     }
 
     #[test]
     fn test_criteria_fluent_interface() {
-        let criteria = DeviceCriteria::default()
+        let criteria = ThingCriteria::default()
             .with_name("sensor-02".to_string())
             .with_state(0)
-            .with_sort(DeviceSortBy::State, DeviceSortOrder::Descending)
+            .with_sort(ThingSortBy::State, ThingSortOrder::Descending)
             .with_pagination(50, 10);
 
         assert_eq!(criteria.name, Some("sensor-02".to_string()));
         assert_eq!(criteria.state, Some(0));
-        assert!(matches!(criteria.sort_by, DeviceSortBy::State));
-        assert!(matches!(criteria.sort_order, DeviceSortOrder::Descending));
+        assert!(matches!(criteria.sort_by, ThingSortBy::State));
+        assert!(matches!(criteria.sort_order, ThingSortOrder::Descending));
         assert_eq!(criteria.limit, Some(50));
         assert_eq!(criteria.offset, Some(10));
     }
@@ -1693,29 +1693,29 @@ mod tests {
 // ──────────────────────────────────────────────
 // 设备持久化自由函数（pub(crate)，pool 首参）
 // workspace_scope: Some(ws) 时按租户作用域过滤（E6a 合并原
-// TenantDeviceRepository 行为）；三处内部事务（update/delete_by_ids/
+// TenantThingRepository 行为）；三处内部事务（update/delete_by_ids/
 // create_batch/update_states_batch/update_status_batch/scoped create_batch）
 // 保持函数内自包含。SQL 与原仓储实现逐字一致。
 // ──────────────────────────────────────────────
 
-async fn find_device_by_id_inner(pool: &SqlitePool, id: &str) -> Result<Option<Device>> {
-    let sql = format!("SELECT {} FROM things WHERE id = ?", device_row_mapper::SELECT_COLUMNS);
+async fn find_thing_by_id_inner(pool: &SqlitePool, id: &str) -> Result<Option<Thing>> {
+    let sql = format!("SELECT {} FROM things WHERE id = ?", thing_row_mapper::SELECT_COLUMNS);
     let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(id)
         .fetch_optional(pool)
         .await?;
 
     if let Some(row) = row {
-        Ok(Some(device_row_mapper::row_to_device(row)?))
+        Ok(Some(thing_row_mapper::row_to_thing(row)?))
     } else {
         Ok(None)
     }
 }
 
-async fn find_device_by_name_inner(pool: &SqlitePool, name: &str) -> Result<Option<Device>> {
+async fn find_thing_by_name_inner(pool: &SqlitePool, name: &str) -> Result<Option<Thing>> {
     let sql = format!(
         "SELECT {} FROM things WHERE name = ?",
-        device_row_mapper::SELECT_COLUMNS
+        thing_row_mapper::SELECT_COLUMNS
     );
     let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(name)
@@ -1723,15 +1723,15 @@ async fn find_device_by_name_inner(pool: &SqlitePool, name: &str) -> Result<Opti
         .await?;
 
     if let Some(row) = row {
-        Ok(Some(device_row_mapper::row_to_device(row)?))
+        Ok(Some(thing_row_mapper::row_to_thing(row)?))
     } else {
         Ok(None)
     }
 }
 
-async fn find_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Result<Vec<Device>> {
+async fn find_things_inner(pool: &SqlitePool, criteria: &ThingCriteria) -> Result<Vec<Thing>> {
     let mut builder = QueryBuilder::new("SELECT ");
-    builder.push(device_row_mapper::SELECT_COLUMNS);
+    builder.push(thing_row_mapper::SELECT_COLUMNS);
     builder.push(" FROM things WHERE 1=1");
     if let Some(workspace_id) = &criteria.workspace_id {
         builder.push(" AND workspace_id = ").push_bind(workspace_id);
@@ -1790,17 +1790,17 @@ async fn find_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Res
     }
 
     match criteria.sort_by {
-        DeviceSortBy::Name => builder.push(" ORDER BY name"),
-        DeviceSortBy::CreatedAt => builder.push(" ORDER BY created_at"),
-        DeviceSortBy::UpdatedAt => builder.push(" ORDER BY updated_at"),
-        DeviceSortBy::DeviceType => builder.push(" ORDER BY category"),
-        DeviceSortBy::DriverName => builder.push(" ORDER BY driver_name"),
-        DeviceSortBy::State => builder.push(" ORDER BY state"),
+        ThingSortBy::Name => builder.push(" ORDER BY name"),
+        ThingSortBy::CreatedAt => builder.push(" ORDER BY created_at"),
+        ThingSortBy::UpdatedAt => builder.push(" ORDER BY updated_at"),
+        ThingSortBy::Category => builder.push(" ORDER BY category"),
+        ThingSortBy::DriverName => builder.push(" ORDER BY driver_name"),
+        ThingSortBy::State => builder.push(" ORDER BY state"),
     };
 
     match criteria.sort_order {
-        DeviceSortOrder::Ascending => builder.push(" ASC"),
-        DeviceSortOrder::Descending => builder.push(" DESC"),
+        ThingSortOrder::Ascending => builder.push(" ASC"),
+        ThingSortOrder::Descending => builder.push(" DESC"),
     };
 
     if let Some(limit) = criteria.limit {
@@ -1813,12 +1813,12 @@ async fn find_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Res
     let rows = builder.build().fetch_all(pool).await?;
     let mut devices = Vec::new();
     for row in rows {
-        devices.push(device_row_mapper::row_to_device(row)?);
+        devices.push(thing_row_mapper::row_to_thing(row)?);
     }
     Ok(devices)
 }
 
-async fn count_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Result<i64> {
+async fn count_things_inner(pool: &SqlitePool, criteria: &ThingCriteria) -> Result<i64> {
     let mut builder = QueryBuilder::new("SELECT COUNT(*) as count FROM things WHERE 1=1");
     if let Some(workspace_id) = &criteria.workspace_id {
         builder.push(" AND workspace_id = ").push_bind(workspace_id);
@@ -1881,7 +1881,7 @@ async fn count_devices_inner(pool: &SqlitePool, criteria: &DeviceCriteria) -> Re
     Ok(count)
 }
 
-async fn create_device_inner(pool: &SqlitePool, request: &CreateDeviceRequest) -> Result<Device> {
+async fn create_thing_inner(pool: &SqlitePool, request: &CreateThingRequest) -> Result<Thing> {
     let id = generate_id();
     let now = now_string();
 
@@ -1919,10 +1919,10 @@ async fn create_device_inner(pool: &SqlitePool, request: &CreateDeviceRequest) -
     .execute(pool)
     .await?;
 
-    find_device_by_id_inner(pool, &id).await?.ok_or(Error::NotFound)
+    find_thing_by_id_inner(pool, &id).await?.ok_or(Error::NotFound)
 }
 
-async fn update_device_inner(pool: &SqlitePool, id: &str, request: &UpdateDeviceRequest) -> Result<Device> {
+async fn update_thing_inner(pool: &SqlitePool, id: &str, request: &UpdateThingRequest) -> Result<Thing> {
     let mut tx = pool.begin().await?;
 
     let mut builder = QueryBuilder::new("UPDATE things SET ");
@@ -2050,7 +2050,7 @@ async fn update_device_inner(pool: &SqlitePool, id: &str, request: &UpdateDevice
     }
 
     if !has_updates {
-        return find_device_by_id_inner(pool, id).await?.ok_or(Error::NotFound);
+        return find_thing_by_id_inner(pool, id).await?.ok_or(Error::NotFound);
     }
 
     builder.push(", updated_at = ").push_bind(&now);
@@ -2061,7 +2061,7 @@ async fn update_device_inner(pool: &SqlitePool, id: &str, request: &UpdateDevice
         return Err(Error::NotFound);
     }
 
-    let sql = format!("SELECT {} FROM things WHERE id = ?", device_row_mapper::SELECT_COLUMNS);
+    let sql = format!("SELECT {} FROM things WHERE id = ?", thing_row_mapper::SELECT_COLUMNS);
     let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(id)
         .fetch_one(&mut *tx)
@@ -2070,12 +2070,12 @@ async fn update_device_inner(pool: &SqlitePool, id: &str, request: &UpdateDevice
     tx.commit().await?;
 
     match row {
-        Ok(row) => device_row_mapper::row_to_device(row),
+        Ok(row) => thing_row_mapper::row_to_thing(row),
         Err(_) => Err(Error::NotFound),
     }
 }
 
-async fn delete_device_inner(pool: &SqlitePool, id: &str) -> Result<u64> {
+async fn delete_thing_inner(pool: &SqlitePool, id: &str) -> Result<u64> {
     let result = sqlx::query("DELETE FROM things WHERE id = ?")
         .bind(id)
         .execute(pool)
@@ -2083,7 +2083,7 @@ async fn delete_device_inner(pool: &SqlitePool, id: &str) -> Result<u64> {
     Ok(result.rows_affected())
 }
 
-async fn delete_devices_by_ids_inner(pool: &SqlitePool, ids: &[String]) -> Result<u64> {
+async fn delete_things_by_ids_inner(pool: &SqlitePool, ids: &[String]) -> Result<u64> {
     if ids.is_empty() {
         return Ok(0);
     }
@@ -2101,13 +2101,13 @@ async fn delete_devices_by_ids_inner(pool: &SqlitePool, ids: &[String]) -> Resul
     Ok(result.rows_affected())
 }
 
-async fn create_devices_batch_inner(pool: &SqlitePool, requests: &[CreateDeviceRequest]) -> Result<Vec<Device>> {
+async fn create_things_batch_inner(pool: &SqlitePool, requests: &[CreateThingRequest]) -> Result<Vec<Thing>> {
     if requests.is_empty() {
         return Ok(vec![]);
     }
 
     let mut tx = pool.begin().await?;
-    let mut created_devices = Vec::new();
+    let mut created_things = Vec::new();
     let now = now_string();
 
     for request in requests {
@@ -2147,7 +2147,7 @@ async fn create_devices_batch_inner(pool: &SqlitePool, requests: &[CreateDeviceR
         .execute(&mut *tx)
         .await?;
 
-        let device = Device {
+        let device = Thing {
             id: id.clone(),
             name: request.name.clone(),
             display_name: request.display_name.clone(),
@@ -2161,7 +2161,7 @@ async fn create_devices_batch_inner(pool: &SqlitePool, requests: &[CreateDeviceR
             factory_name: request.factory_name.clone(),
             linked_data: request.linked_data.clone(),
             driver_options: request.driver_options.clone(),
-            status: tinyiothub_core::models::device::DeviceStatus::Offline,
+            status: tinyiothub_core::models::thing::ThingStatus::Offline,
             parent_id: request.parent_id.clone(),
             template_id: request.template_id.clone(),
             linked_gateway: request.linked_gateway.clone(),
@@ -2175,14 +2175,14 @@ async fn create_devices_batch_inner(pool: &SqlitePool, requests: &[CreateDeviceR
             last_heartbeat: None,
         };
 
-        created_devices.push(device);
+        created_things.push(device);
     }
 
     tx.commit().await?;
-    Ok(created_devices)
+    Ok(created_things)
 }
 
-async fn update_device_state_inner(pool: &SqlitePool, id: &str, state: i32) -> Result<()> {
+async fn update_thing_state_inner(pool: &SqlitePool, id: &str, state: i32) -> Result<()> {
     let now = now_string();
     let result = sqlx::query("UPDATE things SET state = ?, updated_at = ? WHERE id = ?")
         .bind(state)
@@ -2197,7 +2197,7 @@ async fn update_device_state_inner(pool: &SqlitePool, id: &str, state: i32) -> R
     Ok(())
 }
 
-async fn update_device_states_batch_inner(pool: &SqlitePool, updates: &[(String, i32)]) -> Result<u64> {
+async fn update_thing_states_batch_inner(pool: &SqlitePool, updates: &[(String, i32)]) -> Result<u64> {
     if updates.is_empty() {
         return Ok(0);
     }
@@ -2220,19 +2220,19 @@ async fn update_device_states_batch_inner(pool: &SqlitePool, updates: &[(String,
     Ok(total_affected)
 }
 
-async fn update_device_enabled_status_inner(pool: &SqlitePool, id: &str, enabled: bool) -> Result<bool> {
+async fn update_thing_enabled_status_inner(pool: &SqlitePool, id: &str, enabled: bool) -> Result<bool> {
     let state = if enabled { 1 } else { 0 };
-    match update_device_state_inner(pool, id, state).await {
+    match update_thing_state_inner(pool, id, state).await {
         Ok(()) => Ok(true),
         Err(Error::NotFound) => Ok(false),
         Err(e) => Err(e),
     }
 }
 
-async fn find_device_children_inner(pool: &SqlitePool, parent_id: &str) -> Result<Vec<Device>> {
+async fn find_thing_children_inner(pool: &SqlitePool, parent_id: &str) -> Result<Vec<Thing>> {
     let sql = format!(
         "SELECT {} FROM things WHERE parent_id = ? ORDER BY name",
-        device_row_mapper::SELECT_COLUMNS
+        thing_row_mapper::SELECT_COLUMNS
     );
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(parent_id)
@@ -2241,15 +2241,15 @@ async fn find_device_children_inner(pool: &SqlitePool, parent_id: &str) -> Resul
 
     let mut devices = Vec::new();
     for row in rows {
-        devices.push(device_row_mapper::row_to_device(row)?);
+        devices.push(thing_row_mapper::row_to_thing(row)?);
     }
     Ok(devices)
 }
 
-async fn find_devices_by_template_id_inner(pool: &SqlitePool, template_id: &str) -> Result<Vec<Device>> {
+async fn find_things_by_template_id_inner(pool: &SqlitePool, template_id: &str) -> Result<Vec<Thing>> {
     let sql = format!(
         "SELECT {} FROM things WHERE template_id = ? ORDER BY name",
-        device_row_mapper::SELECT_COLUMNS
+        thing_row_mapper::SELECT_COLUMNS
     );
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(template_id)
@@ -2258,15 +2258,15 @@ async fn find_devices_by_template_id_inner(pool: &SqlitePool, template_id: &str)
 
     let mut devices = Vec::new();
     for row in rows {
-        devices.push(device_row_mapper::row_to_device(row)?);
+        devices.push(thing_row_mapper::row_to_thing(row)?);
     }
     Ok(devices)
 }
 
-async fn find_devices_by_driver_name_inner(pool: &SqlitePool, driver_name: &str) -> Result<Vec<Device>> {
+async fn find_things_by_driver_name_inner(pool: &SqlitePool, driver_name: &str) -> Result<Vec<Thing>> {
     let sql = format!(
         "SELECT {} FROM things WHERE driver_name = ? ORDER BY name",
-        device_row_mapper::SELECT_COLUMNS
+        thing_row_mapper::SELECT_COLUMNS
     );
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(driver_name)
@@ -2275,15 +2275,15 @@ async fn find_devices_by_driver_name_inner(pool: &SqlitePool, driver_name: &str)
 
     let mut devices = Vec::new();
     for row in rows {
-        devices.push(device_row_mapper::row_to_device(row)?);
+        devices.push(thing_row_mapper::row_to_thing(row)?);
     }
     Ok(devices)
 }
 
-async fn find_devices_by_linked_gateway_inner(pool: &SqlitePool, linked_gateway: &str) -> Result<Vec<Device>> {
+async fn find_things_by_linked_gateway_inner(pool: &SqlitePool, linked_gateway: &str) -> Result<Vec<Thing>> {
     let sql = format!(
         "SELECT {} FROM things WHERE linked_gateway = ? ORDER BY created_at DESC",
-        device_row_mapper::SELECT_COLUMNS
+        thing_row_mapper::SELECT_COLUMNS
     );
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(linked_gateway)
@@ -2292,12 +2292,12 @@ async fn find_devices_by_linked_gateway_inner(pool: &SqlitePool, linked_gateway:
 
     let mut devices = Vec::new();
     for row in rows {
-        devices.push(device_row_mapper::row_to_device(row)?);
+        devices.push(thing_row_mapper::row_to_thing(row)?);
     }
     Ok(devices)
 }
 
-async fn device_exists_by_name_inner(pool: &SqlitePool, name: &str) -> Result<bool> {
+async fn thing_exists_by_name_inner(pool: &SqlitePool, name: &str) -> Result<bool> {
     let row = sqlx::query("SELECT COUNT(*) as count FROM things WHERE name = ?")
         .bind(name)
         .fetch_one(pool)
@@ -2306,13 +2306,13 @@ async fn device_exists_by_name_inner(pool: &SqlitePool, name: &str) -> Result<bo
     Ok(count > 0)
 }
 
-async fn find_devices_by_ids_inner(pool: &SqlitePool, ids: &[String]) -> Result<Vec<Device>> {
+async fn find_things_by_ids_inner(pool: &SqlitePool, ids: &[String]) -> Result<Vec<Thing>> {
     if ids.is_empty() {
         return Ok(vec![]);
     }
 
     let mut builder = QueryBuilder::new("SELECT ");
-    builder.push(device_row_mapper::SELECT_COLUMNS);
+    builder.push(thing_row_mapper::SELECT_COLUMNS);
     builder.push(" FROM things WHERE id IN (");
     let mut separated = builder.separated(", ");
     for id in ids {
@@ -2323,19 +2323,19 @@ async fn find_devices_by_ids_inner(pool: &SqlitePool, ids: &[String]) -> Result<
     let rows = builder.build().fetch_all(pool).await?;
     let mut devices = Vec::new();
     for row in rows {
-        devices.push(device_row_mapper::row_to_device(row)?);
+        devices.push(thing_row_mapper::row_to_thing(row)?);
     }
     Ok(devices)
 }
 
-async fn find_devices_with_filters_inner(
+async fn find_things_with_filters_inner(
     pool: &SqlitePool,
     enabled: Option<bool>,
     search: Option<&str>,
     page: u32,
     page_size: u32,
-) -> Result<Vec<Device>> {
-    let mut criteria = DeviceCriteria {
+) -> Result<Vec<Thing>> {
+    let mut criteria = ThingCriteria {
         limit: Some(page_size),
         offset: Some((page.saturating_sub(1)) * page_size),
         ..Default::default()
@@ -2349,10 +2349,10 @@ async fn find_devices_with_filters_inner(
         criteria.search_text = Some(search.to_string());
     }
 
-    find_devices_inner(pool, &criteria).await
+    find_things_inner(pool, &criteria).await
 }
 
-async fn update_device_status_batch_inner(pool: &SqlitePool, updates: &[DeviceStatusUpdate]) -> Result<u64> {
+async fn update_thing_status_batch_inner(pool: &SqlitePool, updates: &[ThingStatusUpdate]) -> Result<u64> {
     if updates.is_empty() {
         return Ok(0);
     }
@@ -2374,10 +2374,10 @@ async fn update_device_status_batch_inner(pool: &SqlitePool, updates: &[DeviceSt
     Ok(total_affected)
 }
 
-// ── 租户作用域辅助（E6a 合并自 TenantDeviceRepository）──
+// ── 租户作用域辅助（E6a 合并自 TenantThingRepository）──
 
 /// Check if a device belongs to this workspace
-async fn device_belongs_to_workspace(pool: &SqlitePool, ws: &str, device_id: &str) -> Result<bool> {
+async fn thing_belongs_to_workspace(pool: &SqlitePool, ws: &str, device_id: &str) -> Result<bool> {
     let result: Option<(String,)> = sqlx::query_as("SELECT workspace_id FROM things WHERE id = ?")
         .bind(device_id)
         .fetch_optional(pool)
@@ -2385,12 +2385,12 @@ async fn device_belongs_to_workspace(pool: &SqlitePool, ws: &str, device_id: &st
 
     match result {
         Some((workspace_id,)) => Ok(workspace_id == ws),
-        None => Ok(false), // Device doesn't exist
+        None => Ok(false), // Thing doesn't exist
     }
 }
 
 /// Filter device IDs to only those belonging to this workspace
-async fn filter_device_ids_by_workspace(pool: &SqlitePool, ws: &str, ids: &[String]) -> Result<Vec<String>> {
+async fn filter_thing_ids_by_workspace(pool: &SqlitePool, ws: &str, ids: &[String]) -> Result<Vec<String>> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -2413,7 +2413,7 @@ async fn filter_device_ids_by_workspace(pool: &SqlitePool, ws: &str, ids: &[Stri
 }
 
 /// Filter device state updates to only those belonging to this workspace
-async fn filter_device_state_updates_by_workspace(
+async fn filter_thing_state_updates_by_workspace(
     pool: &SqlitePool,
     ws: &str,
     updates: &[(String, i32)],
@@ -2423,7 +2423,7 @@ async fn filter_device_state_updates_by_workspace(
     }
 
     let ids: Vec<String> = updates.iter().map(|(id, _)| id.clone()).collect();
-    let filtered_ids = filter_device_ids_by_workspace(pool, ws, &ids).await?;
+    let filtered_ids = filter_thing_ids_by_workspace(pool, ws, &ids).await?;
 
     // Create a set for fast lookup
     let filtered_set: std::collections::HashSet<String> = filtered_ids.into_iter().collect();
@@ -2438,22 +2438,22 @@ async fn filter_device_state_updates_by_workspace(
 }
 
 /// Filter device status updates to only those belonging to this workspace
-async fn filter_device_status_updates_by_workspace(
+async fn filter_thing_status_updates_by_workspace(
     pool: &SqlitePool,
     ws: &str,
-    updates: &[DeviceStatusUpdate],
-) -> Result<Vec<DeviceStatusUpdate>> {
+    updates: &[ThingStatusUpdate],
+) -> Result<Vec<ThingStatusUpdate>> {
     if updates.is_empty() {
         return Ok(Vec::new());
     }
 
     let ids: Vec<String> = updates.iter().map(|update| update.thing_id.clone()).collect();
-    let filtered_ids = filter_device_ids_by_workspace(pool, ws, &ids).await?;
+    let filtered_ids = filter_thing_ids_by_workspace(pool, ws, &ids).await?;
 
     // Create a set for fast lookup
     let filtered_set: std::collections::HashSet<String> = filtered_ids.into_iter().collect();
 
-    let filtered_updates: Vec<DeviceStatusUpdate> = updates
+    let filtered_updates: Vec<ThingStatusUpdate> = updates
         .iter()
         .filter(|update| filtered_set.contains(&update.thing_id))
         .cloned()
@@ -2465,58 +2465,58 @@ async fn filter_device_status_updates_by_workspace(
 // ── 作用域分发层（workspace_scope = Some 时的行为与原
 // for_workspace 作用域仓储的公开方法逐字一致）──
 
-pub(crate) async fn find_device_by_id(pool: &SqlitePool, ws: Option<&str>, id: &str) -> Result<Option<Device>> {
+pub(crate) async fn find_thing_by_id(pool: &SqlitePool, ws: Option<&str>, id: &str) -> Result<Option<Thing>> {
     let Some(ws) = ws else {
-        return find_device_by_id_inner(pool, id).await;
+        return find_thing_by_id_inner(pool, id).await;
     };
     // Verify device belongs to this workspace
-    if !device_belongs_to_workspace(pool, ws, id).await? {
+    if !thing_belongs_to_workspace(pool, ws, id).await? {
         return Ok(None);
     }
 
-    find_device_by_id_inner(pool, id).await
+    find_thing_by_id_inner(pool, id).await
 }
 
-pub(crate) async fn find_device_by_name(pool: &SqlitePool, ws: Option<&str>, name: &str) -> Result<Option<Device>> {
+pub(crate) async fn find_thing_by_name(pool: &SqlitePool, ws: Option<&str>, name: &str) -> Result<Option<Thing>> {
     let Some(ws) = ws else {
-        return find_device_by_name_inner(pool, name).await;
+        return find_thing_by_name_inner(pool, name).await;
     };
-    let criteria = DeviceCriteria::default()
+    let criteria = ThingCriteria::default()
         .with_name(name.to_string())
         .with_workspace_id(ws.to_string());
-    let devices = find_devices_inner(pool, &criteria).await?;
+    let devices = find_things_inner(pool, &criteria).await?;
     Ok(devices.into_iter().next())
 }
 
-pub(crate) async fn find_devices(
+pub(crate) async fn find_things(
     pool: &SqlitePool,
     ws: Option<&str>,
-    criteria: &DeviceCriteria,
-) -> Result<Vec<Device>> {
+    criteria: &ThingCriteria,
+) -> Result<Vec<Thing>> {
     let Some(ws) = ws else {
-        return find_devices_inner(pool, criteria).await;
+        return find_things_inner(pool, criteria).await;
     };
     let mut criteria = criteria.clone();
     criteria.workspace_id = Some(ws.to_string());
-    find_devices_inner(pool, &criteria).await
+    find_things_inner(pool, &criteria).await
 }
 
-pub(crate) async fn count_devices(pool: &SqlitePool, ws: Option<&str>, criteria: &DeviceCriteria) -> Result<i64> {
+pub(crate) async fn count_things(pool: &SqlitePool, ws: Option<&str>, criteria: &ThingCriteria) -> Result<i64> {
     let Some(ws) = ws else {
-        return count_devices_inner(pool, criteria).await;
+        return count_things_inner(pool, criteria).await;
     };
     let mut criteria = criteria.clone();
     criteria.workspace_id = Some(ws.to_string());
-    count_devices_inner(pool, &criteria).await
+    count_things_inner(pool, &criteria).await
 }
 
-pub(crate) async fn create_device(
+pub(crate) async fn create_thing(
     pool: &SqlitePool,
     ws: Option<&str>,
-    request: &CreateDeviceRequest,
-) -> Result<Device> {
+    request: &CreateThingRequest,
+) -> Result<Thing> {
     let Some(ws) = ws else {
-        return create_device_inner(pool, request).await;
+        return create_thing_inner(pool, request).await;
     };
     let id = generate_id();
     let now = now_string();
@@ -2557,61 +2557,61 @@ pub(crate) async fn create_device(
     .await?;
 
     // Fetch the created device
-    find_device_by_id(pool, Some(ws), &id).await?.ok_or_else(|| {
+    find_thing_by_id(pool, Some(ws), &id).await?.ok_or_else(|| {
         tinyiothub_core::error::Error::InvalidArgument(format!("Failed to find created device with id {}", id))
     })
 }
 
-pub(crate) async fn update_device(
+pub(crate) async fn update_thing(
     pool: &SqlitePool,
     ws: Option<&str>,
     id: &str,
-    request: &UpdateDeviceRequest,
-) -> Result<Device> {
+    request: &UpdateThingRequest,
+) -> Result<Thing> {
     let Some(_ws) = ws else {
-        return update_device_inner(pool, id, request).await;
+        return update_thing_inner(pool, id, request).await;
     };
     // Verify device belongs to this workspace before updating
-    let device = find_device_by_id(pool, ws, id).await?;
+    let device = find_thing_by_id(pool, ws, id).await?;
     if device.is_none() {
         return Err(tinyiothub_core::error::Error::NotFound);
     }
 
-    update_device_inner(pool, id, request).await
+    update_thing_inner(pool, id, request).await
 }
 
-pub(crate) async fn delete_device(pool: &SqlitePool, ws: Option<&str>, id: &str) -> Result<u64> {
+pub(crate) async fn delete_thing(pool: &SqlitePool, ws: Option<&str>, id: &str) -> Result<u64> {
     let Some(_ws) = ws else {
-        return delete_device_inner(pool, id).await;
+        return delete_thing_inner(pool, id).await;
     };
     // Verify device belongs to this workspace before deleting
-    let device = find_device_by_id(pool, ws, id).await?;
+    let device = find_thing_by_id(pool, ws, id).await?;
     if device.is_none() {
         return Ok(0); // Already doesn't exist in this workspace
     }
 
-    delete_device_inner(pool, id).await
+    delete_thing_inner(pool, id).await
 }
 
-pub(crate) async fn delete_devices_by_ids(pool: &SqlitePool, ws: Option<&str>, ids: &[String]) -> Result<u64> {
+pub(crate) async fn delete_things_by_ids(pool: &SqlitePool, ws: Option<&str>, ids: &[String]) -> Result<u64> {
     let Some(ws) = ws else {
-        return delete_devices_by_ids_inner(pool, ids).await;
+        return delete_things_by_ids_inner(pool, ids).await;
     };
     // Filter IDs to only those belonging to this workspace
-    let filtered_ids = filter_device_ids_by_workspace(pool, ws, ids).await?;
+    let filtered_ids = filter_thing_ids_by_workspace(pool, ws, ids).await?;
     if filtered_ids.is_empty() {
         return Ok(0);
     }
-    delete_devices_by_ids_inner(pool, &filtered_ids).await
+    delete_things_by_ids_inner(pool, &filtered_ids).await
 }
 
-pub(crate) async fn create_devices_batch(
+pub(crate) async fn create_things_batch(
     pool: &SqlitePool,
     ws: Option<&str>,
-    requests: &[CreateDeviceRequest],
-) -> Result<Vec<Device>> {
+    requests: &[CreateThingRequest],
+) -> Result<Vec<Thing>> {
     let Some(ws) = ws else {
-        return create_devices_batch_inner(pool, requests).await;
+        return create_things_batch_inner(pool, requests).await;
     };
     if requests.is_empty() {
         return Ok(vec![]);
@@ -2663,113 +2663,113 @@ pub(crate) async fn create_devices_batch(
     tx.commit().await?;
 
     // Fetch created devices
-    find_devices_by_ids(pool, Some(ws), &device_ids).await
+    find_things_by_ids(pool, Some(ws), &device_ids).await
 }
 
-pub(crate) async fn update_device_state(pool: &SqlitePool, ws: Option<&str>, id: &str, state: i32) -> Result<()> {
+pub(crate) async fn update_thing_state(pool: &SqlitePool, ws: Option<&str>, id: &str, state: i32) -> Result<()> {
     let Some(ws) = ws else {
-        return update_device_state_inner(pool, id, state).await;
+        return update_thing_state_inner(pool, id, state).await;
     };
-    let device = find_device_by_id(pool, Some(ws), id).await?;
+    let device = find_thing_by_id(pool, Some(ws), id).await?;
     if device.is_none() {
         return Err(tinyiothub_core::error::Error::InvalidArgument(format!(
-            "Device with id {} not found in workspace {}",
+            "Thing with id {} not found in workspace {}",
             id, ws
         )));
     }
 
-    update_device_state_inner(pool, id, state).await
+    update_thing_state_inner(pool, id, state).await
 }
 
-pub(crate) async fn update_device_states_batch(
+pub(crate) async fn update_thing_states_batch(
     pool: &SqlitePool,
     ws: Option<&str>,
     updates: &[(String, i32)],
 ) -> Result<u64> {
     let Some(ws) = ws else {
-        return update_device_states_batch_inner(pool, updates).await;
+        return update_thing_states_batch_inner(pool, updates).await;
     };
     // Filter updates to only devices in this workspace
-    let filtered_updates = filter_device_state_updates_by_workspace(pool, ws, updates).await?;
+    let filtered_updates = filter_thing_state_updates_by_workspace(pool, ws, updates).await?;
     if filtered_updates.is_empty() {
         return Ok(0);
     }
-    update_device_states_batch_inner(pool, &filtered_updates).await
+    update_thing_states_batch_inner(pool, &filtered_updates).await
 }
 
-pub(crate) async fn update_device_enabled_status(
+pub(crate) async fn update_thing_enabled_status(
     pool: &SqlitePool,
     ws: Option<&str>,
     id: &str,
     enabled: bool,
 ) -> Result<bool> {
     let Some(ws) = ws else {
-        return update_device_enabled_status_inner(pool, id, enabled).await;
+        return update_thing_enabled_status_inner(pool, id, enabled).await;
     };
-    let device = find_device_by_id(pool, Some(ws), id).await?;
+    let device = find_thing_by_id(pool, Some(ws), id).await?;
     if device.is_none() {
         return Err(tinyiothub_core::error::Error::InvalidArgument(format!(
-            "Device with id {} not found in workspace {}",
+            "Thing with id {} not found in workspace {}",
             id, ws
         )));
     }
 
-    update_device_enabled_status_inner(pool, id, enabled).await
+    update_thing_enabled_status_inner(pool, id, enabled).await
 }
 
-pub(crate) async fn find_device_children(pool: &SqlitePool, ws: Option<&str>, parent_id: &str) -> Result<Vec<Device>> {
+pub(crate) async fn find_thing_children(pool: &SqlitePool, ws: Option<&str>, parent_id: &str) -> Result<Vec<Thing>> {
     let Some(ws) = ws else {
-        return find_device_children_inner(pool, parent_id).await;
+        return find_thing_children_inner(pool, parent_id).await;
     };
     // Verify parent belongs to this workspace
-    if !device_belongs_to_workspace(pool, ws, parent_id).await? {
+    if !thing_belongs_to_workspace(pool, ws, parent_id).await? {
         return Ok(vec![]);
     }
 
-    let criteria = DeviceCriteria::default()
+    let criteria = ThingCriteria::default()
         .with_parent_id(parent_id.to_string())
         .with_workspace_id(ws.to_string());
-    find_devices_inner(pool, &criteria).await
+    find_things_inner(pool, &criteria).await
 }
 
-pub(crate) async fn find_devices_by_template_id(
+pub(crate) async fn find_things_by_template_id(
     pool: &SqlitePool,
     ws: Option<&str>,
     template_id: &str,
-) -> Result<Vec<Device>> {
+) -> Result<Vec<Thing>> {
     let Some(ws) = ws else {
-        return find_devices_by_template_id_inner(pool, template_id).await;
+        return find_things_by_template_id_inner(pool, template_id).await;
     };
-    let criteria = DeviceCriteria::default()
+    let criteria = ThingCriteria::default()
         .with_template_id(template_id.to_string())
         .with_workspace_id(ws.to_string());
-    find_devices_inner(pool, &criteria).await
+    find_things_inner(pool, &criteria).await
 }
 
-pub(crate) async fn find_devices_by_driver_name(
+pub(crate) async fn find_things_by_driver_name(
     pool: &SqlitePool,
     ws: Option<&str>,
     driver_name: &str,
-) -> Result<Vec<Device>> {
+) -> Result<Vec<Thing>> {
     let Some(ws) = ws else {
-        return find_devices_by_driver_name_inner(pool, driver_name).await;
+        return find_things_by_driver_name_inner(pool, driver_name).await;
     };
-    let criteria = DeviceCriteria::default()
+    let criteria = ThingCriteria::default()
         .with_driver_name(driver_name.to_string())
         .with_workspace_id(ws.to_string());
-    find_devices_inner(pool, &criteria).await
+    find_things_inner(pool, &criteria).await
 }
 
-pub(crate) async fn find_devices_by_linked_gateway(
+pub(crate) async fn find_things_by_linked_gateway(
     pool: &SqlitePool,
     ws: Option<&str>,
     linked_gateway: &str,
-) -> Result<Vec<Device>> {
+) -> Result<Vec<Thing>> {
     let Some(ws) = ws else {
-        return find_devices_by_linked_gateway_inner(pool, linked_gateway).await;
+        return find_things_by_linked_gateway_inner(pool, linked_gateway).await;
     };
-    let criteria = DeviceCriteria::default().with_workspace_id(ws.to_string());
-    let all = find_devices_inner(pool, &criteria).await?;
+    let criteria = ThingCriteria::default().with_workspace_id(ws.to_string());
+    let all = find_things_inner(pool, &criteria).await?;
     Ok(all
         .into_iter()
         .filter(|d| d.linked_gateway.as_deref() == Some(linked_gateway))
@@ -2777,7 +2777,7 @@ pub(crate) async fn find_devices_by_linked_gateway(
 }
 
 /// 按 id 检查设备是否存在（device_traces 等领域的外键前置检查；自 cloud trace_repository 迁入）。
-pub(crate) async fn device_exists_by_id(pool: &SqlitePool, id: &str) -> Result<bool> {
+pub(crate) async fn thing_exists_by_id(pool: &SqlitePool, id: &str) -> Result<bool> {
     match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM things WHERE id = ?")
         .bind(id)
         .fetch_optional(pool)
@@ -2792,42 +2792,42 @@ pub(crate) async fn device_exists_by_id(pool: &SqlitePool, id: &str) -> Result<b
     }
 }
 
-pub(crate) async fn device_exists_by_name(pool: &SqlitePool, ws: Option<&str>, name: &str) -> Result<bool> {
+pub(crate) async fn thing_exists_by_name(pool: &SqlitePool, ws: Option<&str>, name: &str) -> Result<bool> {
     let Some(_ws) = ws else {
-        return device_exists_by_name_inner(pool, name).await;
+        return thing_exists_by_name_inner(pool, name).await;
     };
     // Check within this workspace
-    let criteria = DeviceCriteria::builder().name(name.to_string()).build();
+    let criteria = ThingCriteria::builder().name(name.to_string()).build();
 
-    let count = count_devices(pool, ws, &criteria).await?;
+    let count = count_things(pool, ws, &criteria).await?;
     Ok(count > 0)
 }
 
-pub(crate) async fn find_devices_by_ids(pool: &SqlitePool, ws: Option<&str>, ids: &[String]) -> Result<Vec<Device>> {
+pub(crate) async fn find_things_by_ids(pool: &SqlitePool, ws: Option<&str>, ids: &[String]) -> Result<Vec<Thing>> {
     let Some(ws) = ws else {
-        return find_devices_by_ids_inner(pool, ids).await;
+        return find_things_by_ids_inner(pool, ids).await;
     };
     // Filter IDs to only those belonging to this workspace
-    let filtered_ids = filter_device_ids_by_workspace(pool, ws, ids).await?;
+    let filtered_ids = filter_thing_ids_by_workspace(pool, ws, ids).await?;
     if filtered_ids.is_empty() {
         return Ok(vec![]);
     }
-    find_devices_by_ids_inner(pool, &filtered_ids).await
+    find_things_by_ids_inner(pool, &filtered_ids).await
 }
 
-pub(crate) async fn find_devices_with_filters(
+pub(crate) async fn find_things_with_filters(
     pool: &SqlitePool,
     ws: Option<&str>,
     enabled: Option<bool>,
     search: Option<&str>,
     page: u32,
     page_size: u32,
-) -> Result<Vec<Device>> {
+) -> Result<Vec<Thing>> {
     let Some(_ws) = ws else {
-        return find_devices_with_filters_inner(pool, enabled, search, page, page_size).await;
+        return find_things_with_filters_inner(pool, enabled, search, page, page_size).await;
     };
 
-    let mut criteria = DeviceCriteria::builder()
+    let mut criteria = ThingCriteria::builder()
         .limit(page_size)
         .offset((page.saturating_sub(1)) * page_size)
         .build();
@@ -2841,28 +2841,28 @@ pub(crate) async fn find_devices_with_filters(
         criteria.search_text = Some(search.to_string());
     }
 
-    find_devices(pool, ws, &criteria).await
+    find_things(pool, ws, &criteria).await
 }
 
-pub(crate) async fn update_device_status_batch(
+pub(crate) async fn update_thing_status_batch(
     pool: &SqlitePool,
     ws: Option<&str>,
-    updates: &[DeviceStatusUpdate],
+    updates: &[ThingStatusUpdate],
 ) -> Result<u64> {
     let Some(ws) = ws else {
-        return update_device_status_batch_inner(pool, updates).await;
+        return update_thing_status_batch_inner(pool, updates).await;
     };
     // Filter updates to only devices in this workspace
-    let filtered_updates = filter_device_status_updates_by_workspace(pool, ws, updates).await?;
+    let filtered_updates = filter_thing_status_updates_by_workspace(pool, ws, updates).await?;
     if filtered_updates.is_empty() {
         return Ok(0);
     }
-    update_device_status_batch_inner(pool, &filtered_updates).await
+    update_thing_status_batch_inner(pool, &filtered_updates).await
 }
 
 // ── Task 7 收编：cloud workspace 删除守卫的设备计数（devices 表归本领域）──
 
-pub(crate) async fn count_devices_by_workspace(pool: &SqlitePool, workspace_id: &str) -> Result<i64> {
+pub(crate) async fn count_things_by_workspace(pool: &SqlitePool, workspace_id: &str) -> Result<i64> {
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM things WHERE workspace_id = ?")
         .bind(workspace_id)
         .fetch_one(pool)
@@ -2873,7 +2873,7 @@ pub(crate) async fn count_devices_by_workspace(pool: &SqlitePool, workspace_id: 
 // ── Task 8 收编：cloud driver/legacy query_service_impl 的设备统计查询
 // （devices 表归本领域；SQL 逐字迁移）──
 
-pub(crate) async fn device_stats_overview(pool: &SqlitePool) -> Result<DeviceStats> {
+pub(crate) async fn thing_stats_overview(pool: &SqlitePool) -> Result<ThingStats> {
     let row = sqlx::query(
         r#"
         SELECT
@@ -2887,7 +2887,7 @@ pub(crate) async fn device_stats_overview(pool: &SqlitePool) -> Result<DeviceSta
     .fetch_one(pool)
     .await?;
 
-    Ok(DeviceStats {
+    Ok(ThingStats {
         total_devices: row.get("total_devices"),
         online_devices: row.get("online_devices"),
         offline_devices: row.get("offline_devices"),
@@ -2895,7 +2895,7 @@ pub(crate) async fn device_stats_overview(pool: &SqlitePool) -> Result<DeviceSta
     })
 }
 
-pub(crate) async fn count_devices_by_type(pool: &SqlitePool) -> Result<Vec<(String, i64)>> {
+pub(crate) async fn count_things_by_type(pool: &SqlitePool) -> Result<Vec<(String, i64)>> {
     let rows = sqlx::query(
         r#"
         SELECT COALESCE(category, 'Unknown') as category, COUNT(*) as count
@@ -2916,7 +2916,7 @@ pub(crate) async fn count_devices_by_type(pool: &SqlitePool) -> Result<Vec<(Stri
     Ok(stats)
 }
 
-pub(crate) async fn count_devices_by_driver(pool: &SqlitePool) -> Result<Vec<(String, i64)>> {
+pub(crate) async fn count_things_by_driver(pool: &SqlitePool) -> Result<Vec<(String, i64)>> {
     let rows = sqlx::query(
         r#"
         SELECT COALESCE(driver_name, 'Unknown') as driver_name, COUNT(*) as count
@@ -2943,7 +2943,7 @@ pub(crate) async fn count_devices_by_driver(pool: &SqlitePool) -> Result<Vec<(St
 
 /// 设备状态分布（cloud device dashboard 用，自 cloud driver/legacy/types 迁入）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeviceStatusDistribution {
+pub struct ThingStatusDistribution {
     /// 在线设备数
     pub online: i64,
     /// 离线设备数
@@ -2956,7 +2956,7 @@ pub struct DeviceStatusDistribution {
 
 /// 关键设备信息（cloud device dashboard 用，自 cloud driver/legacy/types 迁入）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuickDevice {
+pub struct QuickThing {
     /// 设备ID
     pub id: String,
     /// 设备名称
@@ -2969,12 +2969,12 @@ pub struct QuickDevice {
     pub device_type: String,
 }
 
-pub(crate) async fn search_devices(pool: &SqlitePool, keyword: &str, limit: Option<u32>) -> Result<Vec<Device>> {
+pub(crate) async fn search_things(pool: &SqlitePool, keyword: &str, limit: Option<u32>) -> Result<Vec<Thing>> {
     let search_pattern = format!("%{}%", keyword);
     let exact_pattern = format!("{}%", keyword);
 
     let mut builder = QueryBuilder::new("SELECT ");
-    builder.push(device_row_mapper::SELECT_COLUMNS);
+    builder.push(thing_row_mapper::SELECT_COLUMNS);
     builder.push(
         " FROM things WHERE name LIKE ? OR display_name LIKE ? OR address LIKE ? OR description LIKE ?
              ORDER BY CASE
@@ -3000,14 +3000,14 @@ pub(crate) async fn search_devices(pool: &SqlitePool, keyword: &str, limit: Opti
     let rows = builder.build().fetch_all(pool).await?;
     let mut devices = Vec::new();
     for row in rows {
-        devices.push(device_row_mapper::row_to_device(row)?);
+        devices.push(thing_row_mapper::row_to_thing(row)?);
     }
     Ok(devices)
 }
 
-pub(crate) async fn device_tree(pool: &SqlitePool, root_id: Option<&str>) -> Result<Vec<Device>> {
+pub(crate) async fn thing_tree(pool: &SqlitePool, root_id: Option<&str>) -> Result<Vec<Thing>> {
     let mut builder = QueryBuilder::new("SELECT ");
-    builder.push(device_row_mapper::SELECT_COLUMNS);
+    builder.push(thing_row_mapper::SELECT_COLUMNS);
     builder.push(" FROM things WHERE ");
 
     if let Some(root_id) = root_id {
@@ -3021,15 +3021,15 @@ pub(crate) async fn device_tree(pool: &SqlitePool, root_id: Option<&str>) -> Res
     let rows = builder.build().fetch_all(pool).await?;
     let mut devices = Vec::new();
     for row in rows {
-        devices.push(device_row_mapper::row_to_device(row)?);
+        devices.push(thing_row_mapper::row_to_thing(row)?);
     }
     Ok(devices)
 }
 
-pub(crate) async fn device_status_distribution(
+pub(crate) async fn thing_status_distribution(
     pool: &SqlitePool,
     workspace_id: Option<&str>,
-) -> Result<DeviceStatusDistribution> {
+) -> Result<ThingStatusDistribution> {
     let mut builder = QueryBuilder::new(
         "SELECT
                 SUM(CASE WHEN state = 1 THEN 1 ELSE 0 END) as online,
@@ -3045,7 +3045,7 @@ pub(crate) async fn device_status_distribution(
 
     let row = builder.build().fetch_one(pool).await?;
 
-    Ok(DeviceStatusDistribution {
+    Ok(ThingStatusDistribution {
         online: row.get("online"),
         offline: row.get("offline"),
         error: row.get("error_count"),
@@ -3053,11 +3053,11 @@ pub(crate) async fn device_status_distribution(
     })
 }
 
-pub(crate) async fn quick_devices(
+pub(crate) async fn quick_things(
     pool: &SqlitePool,
     limit: i32,
     workspace_id: Option<&str>,
-) -> Result<Vec<QuickDevice>> {
+) -> Result<Vec<QuickThing>> {
     let mut builder = QueryBuilder::new("SELECT id, name, category, state, updated_at FROM things");
 
     if let Some(wid) = workspace_id {
@@ -3080,7 +3080,7 @@ pub(crate) async fn quick_devices(
     let devices: Vec<(String, String, Option<String>, i32, chrono::NaiveDateTime)> =
         builder.build_query_as().fetch_all(pool).await?;
 
-    let quick_devices = devices
+    let quick_things = devices
         .into_iter()
         .map(|(id, name, device_type, state, updated_at)| {
             let status = match state {
@@ -3090,7 +3090,7 @@ pub(crate) async fn quick_devices(
                 _ => "error",
             };
 
-            QuickDevice {
+            QuickThing {
                 id,
                 name,
                 status: status.to_string(),
@@ -3100,194 +3100,194 @@ pub(crate) async fn quick_devices(
         })
         .collect();
 
-    Ok(quick_devices)
+    Ok(quick_things)
 }
 
 impl Db {
     /// 按 ID 查设备；`workspace_scope` 为 Some 时先校验归属（不属于返回 None）。
-    pub async fn find_device_by_id(&self, workspace_scope: Option<&str>, id: &str) -> Result<Option<Device>> {
-        find_device_by_id(self.pool(), workspace_scope, id).await
+    pub async fn find_thing_by_id(&self, workspace_scope: Option<&str>, id: &str) -> Result<Option<Thing>> {
+        find_thing_by_id(self.pool(), workspace_scope, id).await
     }
 
     /// 按名称查设备；Some(scope) 时限定该 workspace。
-    pub async fn find_device_by_name(&self, workspace_scope: Option<&str>, name: &str) -> Result<Option<Device>> {
-        find_device_by_name(self.pool(), workspace_scope, name).await
+    pub async fn find_thing_by_name(&self, workspace_scope: Option<&str>, name: &str) -> Result<Option<Thing>> {
+        find_thing_by_name(self.pool(), workspace_scope, name).await
     }
 
     /// 按条件列出设备；Some(scope) 时强制 workspace_id = scope。
-    pub async fn find_devices(&self, workspace_scope: Option<&str>, criteria: &DeviceCriteria) -> Result<Vec<Device>> {
-        find_devices(self.pool(), workspace_scope, criteria).await
+    pub async fn find_things(&self, workspace_scope: Option<&str>, criteria: &ThingCriteria) -> Result<Vec<Thing>> {
+        find_things(self.pool(), workspace_scope, criteria).await
     }
 
     /// 按条件统计设备数；Some(scope) 时强制 workspace_id = scope。
-    pub async fn count_devices(&self, workspace_scope: Option<&str>, criteria: &DeviceCriteria) -> Result<i64> {
-        count_devices(self.pool(), workspace_scope, criteria).await
+    pub async fn count_things(&self, workspace_scope: Option<&str>, criteria: &ThingCriteria) -> Result<i64> {
+        count_things(self.pool(), workspace_scope, criteria).await
     }
 
     /// 创建设备并回读；Some(scope) 时 workspace_id 取 scope（忽略请求值）。
-    pub async fn create_device(&self, workspace_scope: Option<&str>, request: &CreateDeviceRequest) -> Result<Device> {
-        create_device(self.pool(), workspace_scope, request).await
+    pub async fn create_thing(&self, workspace_scope: Option<&str>, request: &CreateThingRequest) -> Result<Thing> {
+        create_thing(self.pool(), workspace_scope, request).await
     }
 
     /// 更新设备并回读（内部事务）；Some(scope) 时先校验归属，不存在返回 NotFound。
-    pub async fn update_device(
+    pub async fn update_thing(
         &self,
         workspace_scope: Option<&str>,
         id: &str,
-        request: &UpdateDeviceRequest,
-    ) -> Result<Device> {
-        update_device(self.pool(), workspace_scope, id, request).await
+        request: &UpdateThingRequest,
+    ) -> Result<Thing> {
+        update_thing(self.pool(), workspace_scope, id, request).await
     }
 
     /// 删除设备，返回影响行数；Some(scope) 时不属于该 workspace 返回 0。
-    pub async fn delete_device(&self, workspace_scope: Option<&str>, id: &str) -> Result<u64> {
-        delete_device(self.pool(), workspace_scope, id).await
+    pub async fn delete_thing(&self, workspace_scope: Option<&str>, id: &str) -> Result<u64> {
+        delete_thing(self.pool(), workspace_scope, id).await
     }
 
     /// 批量删除（内部事务）；Some(scope) 时先按 workspace 过滤 ID。
-    pub async fn delete_devices_by_ids(&self, workspace_scope: Option<&str>, ids: &[String]) -> Result<u64> {
-        delete_devices_by_ids(self.pool(), workspace_scope, ids).await
+    pub async fn delete_things_by_ids(&self, workspace_scope: Option<&str>, ids: &[String]) -> Result<u64> {
+        delete_things_by_ids(self.pool(), workspace_scope, ids).await
     }
 
     /// 批量创建（内部事务）；Some(scope) 时 workspace_id 取 scope 并回读。
-    pub async fn create_devices_batch(
+    pub async fn create_things_batch(
         &self,
         workspace_scope: Option<&str>,
-        requests: &[CreateDeviceRequest],
-    ) -> Result<Vec<Device>> {
-        create_devices_batch(self.pool(), workspace_scope, requests).await
+        requests: &[CreateThingRequest],
+    ) -> Result<Vec<Thing>> {
+        create_things_batch(self.pool(), workspace_scope, requests).await
     }
 
     /// 更新单设备状态；Some(scope) 时设备不存在返回 InvalidArgument。
-    pub async fn update_device_state(&self, workspace_scope: Option<&str>, id: &str, state: i32) -> Result<()> {
-        update_device_state(self.pool(), workspace_scope, id, state).await
+    pub async fn update_thing_state(&self, workspace_scope: Option<&str>, id: &str, state: i32) -> Result<()> {
+        update_thing_state(self.pool(), workspace_scope, id, state).await
     }
 
     /// 批量更新状态（内部事务）；Some(scope) 时先按 workspace 过滤。
-    pub async fn update_device_states_batch(
+    pub async fn update_thing_states_batch(
         &self,
         workspace_scope: Option<&str>,
         updates: &[(String, i32)],
     ) -> Result<u64> {
-        update_device_states_batch(self.pool(), workspace_scope, updates).await
+        update_thing_states_batch(self.pool(), workspace_scope, updates).await
     }
 
     /// 启用/禁用设备（state 1/0）；Some(scope) 时设备不存在返回 InvalidArgument。
-    pub async fn update_device_enabled_status(
+    pub async fn update_thing_enabled_status(
         &self,
         workspace_scope: Option<&str>,
         id: &str,
         enabled: bool,
     ) -> Result<bool> {
-        update_device_enabled_status(self.pool(), workspace_scope, id, enabled).await
+        update_thing_enabled_status(self.pool(), workspace_scope, id, enabled).await
     }
 
     /// 列出子设备；Some(scope) 时父设备不属于该 workspace 返回空。
-    pub async fn find_device_children(&self, workspace_scope: Option<&str>, parent_id: &str) -> Result<Vec<Device>> {
-        find_device_children(self.pool(), workspace_scope, parent_id).await
+    pub async fn find_thing_children(&self, workspace_scope: Option<&str>, parent_id: &str) -> Result<Vec<Thing>> {
+        find_thing_children(self.pool(), workspace_scope, parent_id).await
     }
 
     /// 按模板 ID 列出设备；Some(scope) 时限定 workspace。
-    pub async fn find_devices_by_template_id(
+    pub async fn find_things_by_template_id(
         &self,
         workspace_scope: Option<&str>,
         template_id: &str,
-    ) -> Result<Vec<Device>> {
-        find_devices_by_template_id(self.pool(), workspace_scope, template_id).await
+    ) -> Result<Vec<Thing>> {
+        find_things_by_template_id(self.pool(), workspace_scope, template_id).await
     }
 
     /// 按驱动名列出设备；Some(scope) 时限定 workspace。
-    pub async fn find_devices_by_driver_name(
+    pub async fn find_things_by_driver_name(
         &self,
         workspace_scope: Option<&str>,
         driver_name: &str,
-    ) -> Result<Vec<Device>> {
-        find_devices_by_driver_name(self.pool(), workspace_scope, driver_name).await
+    ) -> Result<Vec<Thing>> {
+        find_things_by_driver_name(self.pool(), workspace_scope, driver_name).await
     }
 
     /// 按关联网关列出设备；Some(scope) 时限定 workspace。
-    pub async fn find_devices_by_linked_gateway(
+    pub async fn find_things_by_linked_gateway(
         &self,
         workspace_scope: Option<&str>,
         linked_gateway: &str,
-    ) -> Result<Vec<Device>> {
-        find_devices_by_linked_gateway(self.pool(), workspace_scope, linked_gateway).await
+    ) -> Result<Vec<Thing>> {
+        find_things_by_linked_gateway(self.pool(), workspace_scope, linked_gateway).await
     }
 
     /// 按 id 检查设备是否存在。
-    pub async fn device_exists_by_id(&self, id: &str) -> Result<bool> {
-        device_exists_by_id(self.pool(), id).await
+    pub async fn thing_exists_by_id(&self, id: &str) -> Result<bool> {
+        thing_exists_by_id(self.pool(), id).await
     }
 
     /// 设备名是否已存在；Some(scope) 时限定 workspace 内判断。
-    pub async fn device_exists_by_name(&self, workspace_scope: Option<&str>, name: &str) -> Result<bool> {
-        device_exists_by_name(self.pool(), workspace_scope, name).await
+    pub async fn thing_exists_by_name(&self, workspace_scope: Option<&str>, name: &str) -> Result<bool> {
+        thing_exists_by_name(self.pool(), workspace_scope, name).await
     }
 
     /// 按 ID 列表查设备；Some(scope) 时先按 workspace 过滤 ID。
-    pub async fn find_devices_by_ids(&self, workspace_scope: Option<&str>, ids: &[String]) -> Result<Vec<Device>> {
-        find_devices_by_ids(self.pool(), workspace_scope, ids).await
+    pub async fn find_things_by_ids(&self, workspace_scope: Option<&str>, ids: &[String]) -> Result<Vec<Thing>> {
+        find_things_by_ids(self.pool(), workspace_scope, ids).await
     }
 
     /// 启用状态 + 搜索文本的分页查询；Some(scope) 时限定 workspace。
-    pub async fn find_devices_with_filters(
+    pub async fn find_things_with_filters(
         &self,
         workspace_scope: Option<&str>,
         enabled: Option<bool>,
         search: Option<&str>,
         page: u32,
         page_size: u32,
-    ) -> Result<Vec<Device>> {
-        find_devices_with_filters(self.pool(), workspace_scope, enabled, search, page, page_size).await
+    ) -> Result<Vec<Thing>> {
+        find_things_with_filters(self.pool(), workspace_scope, enabled, search, page, page_size).await
     }
 
     /// 批量更新设备状态（含 updated_at，内部事务）；Some(scope) 时先按 workspace 过滤。
-    pub async fn update_device_status_batch(
+    pub async fn update_thing_status_batch(
         &self,
         workspace_scope: Option<&str>,
-        updates: &[DeviceStatusUpdate],
+        updates: &[ThingStatusUpdate],
     ) -> Result<u64> {
-        update_device_status_batch(self.pool(), workspace_scope, updates).await
+        update_thing_status_batch(self.pool(), workspace_scope, updates).await
     }
 
     /// 工作空间下的设备数（workspace 删除守卫用）。
-    pub async fn count_devices_by_workspace(&self, workspace_id: &str) -> Result<i64> {
-        count_devices_by_workspace(self.pool(), workspace_id).await
+    pub async fn count_things_by_workspace(&self, workspace_id: &str) -> Result<i64> {
+        count_things_by_workspace(self.pool(), workspace_id).await
     }
 
     /// 设备总数/在线/离线/告警统计（cloud dashboard 用）。
-    pub async fn device_stats_overview(&self) -> Result<DeviceStats> {
-        device_stats_overview(self.pool()).await
+    pub async fn thing_stats_overview(&self) -> Result<ThingStats> {
+        thing_stats_overview(self.pool()).await
     }
 
     /// 按设备类型分组计数（cloud dashboard 用）。
-    pub async fn count_devices_by_type(&self) -> Result<Vec<(String, i64)>> {
-        count_devices_by_type(self.pool()).await
+    pub async fn count_things_by_type(&self) -> Result<Vec<(String, i64)>> {
+        count_things_by_type(self.pool()).await
     }
 
     /// 按驱动名分组计数（cloud dashboard 用）。
-    pub async fn count_devices_by_driver(&self) -> Result<Vec<(String, i64)>> {
-        count_devices_by_driver(self.pool()).await
+    pub async fn count_things_by_driver(&self) -> Result<Vec<(String, i64)>> {
+        count_things_by_driver(self.pool()).await
     }
 
     /// 关键字搜索设备（cloud device dashboard 用）。
-    pub async fn search_devices(&self, keyword: &str, limit: Option<u32>) -> Result<Vec<Device>> {
-        search_devices(self.pool(), keyword, limit).await
+    pub async fn search_things(&self, keyword: &str, limit: Option<u32>) -> Result<Vec<Thing>> {
+        search_things(self.pool(), keyword, limit).await
     }
 
     /// 设备树（按 parent_id 取一层；cloud device dashboard 用）。
-    pub async fn device_tree(&self, root_id: Option<&str>) -> Result<Vec<Device>> {
-        device_tree(self.pool(), root_id).await
+    pub async fn thing_tree(&self, root_id: Option<&str>) -> Result<Vec<Thing>> {
+        thing_tree(self.pool(), root_id).await
     }
 
     /// 设备状态分布（cloud device dashboard 用）。
-    pub async fn device_status_distribution(&self, workspace_id: Option<&str>) -> Result<DeviceStatusDistribution> {
-        device_status_distribution(self.pool(), workspace_id).await
+    pub async fn thing_status_distribution(&self, workspace_id: Option<&str>) -> Result<ThingStatusDistribution> {
+        thing_status_distribution(self.pool(), workspace_id).await
     }
 
     /// 关键设备列表（cloud device dashboard 用）。
-    pub async fn quick_devices(&self, limit: i32, workspace_id: Option<&str>) -> Result<Vec<QuickDevice>> {
-        quick_devices(self.pool(), limit, workspace_id).await
+    pub async fn quick_things(&self, limit: i32, workspace_id: Option<&str>) -> Result<Vec<QuickThing>> {
+        quick_things(self.pool(), limit, workspace_id).await
     }
 }
 
@@ -3404,7 +3404,7 @@ impl Db {
 // ──────────────────────────────────────────────
 
 /// Dashboard：设备总数（可选 workspace 过滤）。
-pub(crate) async fn count_devices_total(pool: &SqlitePool, workspace_id: Option<&str>) -> Result<i64> {
+pub(crate) async fn count_things_total(pool: &SqlitePool, workspace_id: Option<&str>) -> Result<i64> {
     let (query_str, wid) = match workspace_id {
         Some(wid) => ("SELECT COUNT(*) FROM things WHERE workspace_id = ?", Some(wid)),
         None => ("SELECT COUNT(*) FROM things", None),
@@ -3418,7 +3418,7 @@ pub(crate) async fn count_devices_total(pool: &SqlitePool, workspace_id: Option<
 }
 
 /// Dashboard：在线设备数（可选 workspace 过滤）。
-pub(crate) async fn count_online_devices(pool: &SqlitePool, workspace_id: Option<&str>) -> Result<i64> {
+pub(crate) async fn count_online_things(pool: &SqlitePool, workspace_id: Option<&str>) -> Result<i64> {
     let (query_str, wid) = match workspace_id {
         Some(wid) => (
             "SELECT COUNT(*) FROM things WHERE state = 1 AND workspace_id = ?",
@@ -3436,13 +3436,13 @@ pub(crate) async fn count_online_devices(pool: &SqlitePool, workspace_id: Option
 
 impl Db {
     /// Dashboard：设备总数（可选 workspace 过滤）。
-    pub async fn count_devices_total(&self, workspace_id: Option<&str>) -> Result<i64> {
-        count_devices_total(self.pool(), workspace_id).await
+    pub async fn count_things_total(&self, workspace_id: Option<&str>) -> Result<i64> {
+        count_things_total(self.pool(), workspace_id).await
     }
 
     /// Dashboard：在线设备数（可选 workspace 过滤）。
-    pub async fn count_online_devices(&self, workspace_id: Option<&str>) -> Result<i64> {
-        count_online_devices(self.pool(), workspace_id).await
+    pub async fn count_online_things(&self, workspace_id: Option<&str>) -> Result<i64> {
+        count_online_things(self.pool(), workspace_id).await
     }
 }
 
@@ -3452,7 +3452,7 @@ impl Db {
 // ──────────────────────────────────────────────
 
 /// 将未分配设备归属到默认租户。
-pub(crate) async fn assign_orphan_devices_to_default_tenant(pool: &SqlitePool) -> std::result::Result<(), sqlx::Error> {
+pub(crate) async fn assign_orphan_things_to_default_tenant(pool: &SqlitePool) -> std::result::Result<(), sqlx::Error> {
     sqlx::query("UPDATE things SET tenant_id = 'tenant-default-001' WHERE tenant_id IS NULL")
         .execute(pool)
         .await?;
@@ -3460,7 +3460,7 @@ pub(crate) async fn assign_orphan_devices_to_default_tenant(pool: &SqlitePool) -
 }
 
 /// 将默认租户下未分配设备归属到默认工作空间。
-pub(crate) async fn assign_orphan_devices_to_default_workspace(
+pub(crate) async fn assign_orphan_things_to_default_workspace(
     pool: &SqlitePool,
 ) -> std::result::Result<(), sqlx::Error> {
     sqlx::query(
@@ -3473,18 +3473,18 @@ pub(crate) async fn assign_orphan_devices_to_default_workspace(
 
 impl Db {
     /// 将未分配设备归属到默认租户。
-    pub async fn assign_orphan_devices_to_default_tenant(&self) -> std::result::Result<(), sqlx::Error> {
-        assign_orphan_devices_to_default_tenant(self.pool()).await
+    pub async fn assign_orphan_things_to_default_tenant(&self) -> std::result::Result<(), sqlx::Error> {
+        assign_orphan_things_to_default_tenant(self.pool()).await
     }
 
     /// 将默认租户下未分配设备归属到默认工作空间。
-    pub async fn assign_orphan_devices_to_default_workspace(&self) -> std::result::Result<(), sqlx::Error> {
-        assign_orphan_devices_to_default_workspace(self.pool()).await
+    pub async fn assign_orphan_things_to_default_workspace(&self) -> std::result::Result<(), sqlx::Error> {
+        assign_orphan_things_to_default_workspace(self.pool()).await
     }
 }
 
 /// 确保 devices 表存在（edge 网关本地库不走 migrations，Task 13 自 edge storage 收编）。
-pub(crate) async fn ensure_devices_table(pool: &SqlitePool) -> std::result::Result<(), sqlx::Error> {
+pub(crate) async fn ensure_things_table(pool: &SqlitePool) -> std::result::Result<(), sqlx::Error> {
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS things (
@@ -3519,7 +3519,7 @@ pub(crate) async fn ensure_devices_table(pool: &SqlitePool) -> std::result::Resu
 
 impl Db {
     /// 确保 devices 表存在（edge 本地库 bootstrap 用）。
-    pub async fn ensure_devices_table(&self) -> std::result::Result<(), sqlx::Error> {
-        ensure_devices_table(self.pool()).await
+    pub async fn ensure_things_table(&self) -> std::result::Result<(), sqlx::Error> {
+        ensure_things_table(self.pool()).await
     }
 }

@@ -1,6 +1,6 @@
 use sqlx::Row;
 use tinyiothub_core::error::Result;
-use tinyiothub_core::models::device::Device;
+use tinyiothub_core::models::thing::Thing;
 
 /// Centralized SELECT column list for the `things` table.
 pub const SELECT_COLUMNS: &str = r#"
@@ -10,10 +10,10 @@ pub const SELECT_COLUMNS: &str = r#"
     linked_gateway, fingerprint, created_at, updated_at
 "#;
 
-/// Map a `SqliteRow` to a `Device`.
-pub fn row_to_device(row: sqlx::sqlite::SqliteRow) -> Result<Device> {
+/// Map a `SqliteRow` to a `Thing`.
+pub fn row_to_thing(row: sqlx::sqlite::SqliteRow) -> Result<Thing> {
     let state_i32: i32 = row.get("state");
-    Ok(Device {
+    Ok(Thing {
         id: row.get("id"),
         name: row.get("name"),
         display_name: row.get("display_name"),

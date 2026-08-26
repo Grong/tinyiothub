@@ -351,7 +351,7 @@ impl Alarm {
 #[derive(Debug, Clone, Default)]
 pub struct AlarmQueryCriteria {
     pub workspace_id: Option<String>,
-    pub device_ids: Option<Vec<String>>,
+    pub thing_ids: Option<Vec<String>>,
     pub property_ids: Option<Vec<String>>,
     pub alarm_levels: Option<Vec<AlarmLevel>>,
     pub alarm_types: Option<Vec<AlarmType>>,
@@ -598,12 +598,12 @@ pub(crate) async fn find_alarms_by_criteria(pool: &SqlitePool, criteria: &AlarmQ
         bindings.push(workspace_id.clone());
     }
 
-    if let Some(device_ids) = &criteria.device_ids
-        && !device_ids.is_empty()
+    if let Some(thing_ids) = &criteria.thing_ids
+        && !thing_ids.is_empty()
     {
-        let placeholders = vec!["?"; device_ids.len()].join(",");
+        let placeholders = vec!["?"; thing_ids.len()].join(",");
         query.push_str(&format!(" AND thing_id IN ({})", placeholders));
-        for id in device_ids {
+        for id in thing_ids {
             bindings.push(id.clone());
         }
     }
@@ -736,12 +736,12 @@ pub(crate) async fn count_alarms_by_criteria(pool: &SqlitePool, criteria: &Alarm
         bindings.push(workspace_id.clone());
     }
 
-    if let Some(device_ids) = &criteria.device_ids
-        && !device_ids.is_empty()
+    if let Some(thing_ids) = &criteria.thing_ids
+        && !thing_ids.is_empty()
     {
-        let placeholders = vec!["?"; device_ids.len()].join(",");
+        let placeholders = vec!["?"; thing_ids.len()].join(",");
         query.push_str(&format!(" AND thing_id IN ({})", placeholders));
-        for id in device_ids {
+        for id in thing_ids {
             bindings.push(id.clone());
         }
     }
@@ -871,7 +871,7 @@ pub(crate) async fn delete_old_alarms(pool: &SqlitePool, before: DateTime<Utc>) 
     Ok(result.rows_affected() as usize)
 }
 
-pub(crate) async fn count_active_alarms_by_device(pool: &SqlitePool, thing_id: &str) -> Result<u32> {
+pub(crate) async fn count_active_alarms_by_thing(pool: &SqlitePool, thing_id: &str) -> Result<u32> {
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarms WHERE thing_id = ? AND is_resolved = 0")
         .bind(thing_id)
         .fetch_one(pool)
@@ -968,7 +968,7 @@ pub(crate) async fn list_recent_alarms(
 }
 
 /// 批量加载告警设备名（display_name 优先；自 cloud alarm handler 吸收，SQL 逐字）。
-pub(crate) async fn load_alarm_device_names(
+pub(crate) async fn load_alarm_thing_names(
     pool: &SqlitePool,
     alarms: &[Alarm],
 ) -> std::collections::HashMap<String, String> {
@@ -1055,8 +1055,8 @@ impl Db {
     }
 
     /// 统计设备未解决告警数。
-    pub async fn count_active_alarms_by_device(&self, thing_id: &str) -> Result<u32> {
-        count_active_alarms_by_device(self.pool(), thing_id).await
+    pub async fn count_active_alarms_by_thing(&self, thing_id: &str) -> Result<u32> {
+        count_active_alarms_by_thing(self.pool(), thing_id).await
     }
 
     /// 统计全部未解决告警数。
@@ -1079,8 +1079,8 @@ impl Db {
     }
 
     /// 批量加载告警设备名（display_name 优先）。
-    pub async fn load_alarm_device_names(&self, alarms: &[Alarm]) -> std::collections::HashMap<String, String> {
-        load_alarm_device_names(self.pool(), alarms).await
+    pub async fn load_alarm_thing_names(&self, alarms: &[Alarm]) -> std::collections::HashMap<String, String> {
+        load_alarm_thing_names(self.pool(), alarms).await
     }
 }
 

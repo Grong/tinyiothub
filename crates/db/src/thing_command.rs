@@ -1,7 +1,7 @@
 use sqlx::{FromRow, SqlitePool};
 
 use crate::database::Db;
-use tinyiothub_core::models::device_command::*;
+use tinyiothub_core::models::thing_command::*;
 use tinyiothub_core::{generate_id, now_string};
 
 /// Internal row type for sqlx mapping
@@ -17,7 +17,7 @@ struct DeviceCommandRow {
     created_at: String,
 }
 
-impl From<DeviceCommandRow> for DeviceCommand {
+impl From<DeviceCommandRow> for ThingCommand {
     fn from(row: DeviceCommandRow) -> Self {
         Self {
             id: row.id,
@@ -32,10 +32,10 @@ impl From<DeviceCommandRow> for DeviceCommand {
 }
 
 /// Find a device command by ID
-pub(crate) async fn find_device_command_by_id(
+pub(crate) async fn find_thing_command_by_id(
     pool: &SqlitePool,
     id: &str,
-) -> Result<Option<DeviceCommand>, sqlx::Error> {
+) -> Result<Option<ThingCommand>, sqlx::Error> {
     let row = sqlx::query_as::<_, DeviceCommandRow>(
         r#"
         SELECT id, thing_id, name, display_name, description, parameters, created_at
@@ -50,10 +50,10 @@ pub(crate) async fn find_device_command_by_id(
 }
 
 /// Create a new device command
-pub(crate) async fn create_device_command(
+pub(crate) async fn create_thing_command(
     pool: &SqlitePool,
-    request: &CreateDeviceCommandRequest,
-) -> Result<DeviceCommand, sqlx::Error> {
+    request: &CreateThingCommandRequest,
+) -> Result<ThingCommand, sqlx::Error> {
     let id = generate_id();
     let created_at = now_string();
 
@@ -77,7 +77,7 @@ pub(crate) async fn create_device_command(
 
     tx.commit().await?;
 
-    Ok(DeviceCommand {
+    Ok(ThingCommand {
         id,
         thing_id: request.thing_id.clone(),
         name: request.name.clone(),
@@ -89,10 +89,10 @@ pub(crate) async fn create_device_command(
 }
 
 /// Find commands by device ID
-pub(crate) async fn find_device_commands_by_device_id(
+pub(crate) async fn find_thing_commands_by_thing_id(
     pool: &SqlitePool,
     device_id: &str,
-) -> Result<Vec<DeviceCommand>, sqlx::Error> {
+) -> Result<Vec<ThingCommand>, sqlx::Error> {
     let rows = sqlx::query_as::<_, DeviceCommandRow>(
         r#"
         SELECT id, thing_id, name, display_name, description, parameters, created_at
@@ -108,11 +108,11 @@ pub(crate) async fn find_device_commands_by_device_id(
 }
 
 /// Find command by device ID and name
-pub(crate) async fn find_device_command_by_device_and_name(
+pub(crate) async fn find_thing_command_by_thing_and_name(
     pool: &SqlitePool,
     device_id: &str,
     name: &str,
-) -> Result<Option<DeviceCommand>, sqlx::Error> {
+) -> Result<Option<ThingCommand>, sqlx::Error> {
     let row = sqlx::query_as::<_, DeviceCommandRow>(
         r#"
         SELECT id, thing_id, name, display_name, description, parameters, created_at
@@ -128,10 +128,10 @@ pub(crate) async fn find_device_command_by_device_and_name(
 }
 
 /// Bulk create device commands
-pub(crate) async fn bulk_create_device_commands(
+pub(crate) async fn bulk_create_thing_commands(
     pool: &SqlitePool,
-    requests: &[CreateDeviceCommandRequest],
-) -> Result<Vec<DeviceCommand>, sqlx::Error> {
+    requests: &[CreateThingCommandRequest],
+) -> Result<Vec<ThingCommand>, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let mut created_commands = Vec::new();
 
@@ -155,7 +155,7 @@ pub(crate) async fn bulk_create_device_commands(
         .execute(&mut *tx)
         .await?;
 
-        created_commands.push(DeviceCommand {
+        created_commands.push(ThingCommand {
             id,
             thing_id: request.thing_id.clone(),
             name: request.name.clone(),
@@ -172,37 +172,37 @@ pub(crate) async fn bulk_create_device_commands(
 
 impl Db {
     /// 按 ID 查设备指令。
-    pub async fn find_device_command_by_id(&self, id: &str) -> Result<Option<DeviceCommand>, sqlx::Error> {
-        find_device_command_by_id(self.pool(), id).await
+    pub async fn find_thing_command_by_id(&self, id: &str) -> Result<Option<ThingCommand>, sqlx::Error> {
+        find_thing_command_by_id(self.pool(), id).await
     }
 
     /// 创建一条设备指令（内部事务）。
-    pub async fn create_device_command(
+    pub async fn create_thing_command(
         &self,
-        request: &CreateDeviceCommandRequest,
-    ) -> Result<DeviceCommand, sqlx::Error> {
-        create_device_command(self.pool(), request).await
+        request: &CreateThingCommandRequest,
+    ) -> Result<ThingCommand, sqlx::Error> {
+        create_thing_command(self.pool(), request).await
     }
 
     /// 按设备 ID 列出指令（按名称升序）。
-    pub async fn find_device_commands_by_device_id(&self, device_id: &str) -> Result<Vec<DeviceCommand>, sqlx::Error> {
-        find_device_commands_by_device_id(self.pool(), device_id).await
+    pub async fn find_thing_commands_by_thing_id(&self, device_id: &str) -> Result<Vec<ThingCommand>, sqlx::Error> {
+        find_thing_commands_by_thing_id(self.pool(), device_id).await
     }
 
     /// 按设备 ID + 指令名查指令。
-    pub async fn find_device_command_by_device_and_name(
+    pub async fn find_thing_command_by_thing_and_name(
         &self,
         device_id: &str,
         name: &str,
-    ) -> Result<Option<DeviceCommand>, sqlx::Error> {
-        find_device_command_by_device_and_name(self.pool(), device_id, name).await
+    ) -> Result<Option<ThingCommand>, sqlx::Error> {
+        find_thing_command_by_thing_and_name(self.pool(), device_id, name).await
     }
 
     /// 批量创建设备指令（内部事务）。
-    pub async fn bulk_create_device_commands(
+    pub async fn bulk_create_thing_commands(
         &self,
-        requests: &[CreateDeviceCommandRequest],
-    ) -> Result<Vec<DeviceCommand>, sqlx::Error> {
-        bulk_create_device_commands(self.pool(), requests).await
+        requests: &[CreateThingCommandRequest],
+    ) -> Result<Vec<ThingCommand>, sqlx::Error> {
+        bulk_create_thing_commands(self.pool(), requests).await
     }
 }

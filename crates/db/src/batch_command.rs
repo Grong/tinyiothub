@@ -18,8 +18,8 @@ use crate::database::Db;
 pub enum BatchCommandError {
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
-    #[error("Device service error: {0}")]
-    DeviceService(String),
+    #[error("Thing service error: {0}")]
+    ThingService(String),
     #[error("Batch not found: {0}")]
     NotFound(String),
     #[error("Idempotency conflict: batch {0} already exists")]
