@@ -1614,10 +1614,7 @@ impl Db {
     }
 
     /// 多条件组合筛选模板。
-    pub async fn filter_thing_templates(
-        &self,
-        filters: &TemplateFilters,
-    ) -> Result<Vec<ThingTemplate>, TemplateError> {
+    pub async fn filter_thing_templates(&self, filters: &TemplateFilters) -> Result<Vec<ThingTemplate>, TemplateError> {
         filter_thing_templates(self.pool(), filters).await
     }
 

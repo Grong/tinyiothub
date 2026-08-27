@@ -32,10 +32,7 @@ impl From<DeviceCommandRow> for ThingCommand {
 }
 
 /// Find a device command by ID
-pub(crate) async fn find_thing_command_by_id(
-    pool: &SqlitePool,
-    id: &str,
-) -> Result<Option<ThingCommand>, sqlx::Error> {
+pub(crate) async fn find_thing_command_by_id(pool: &SqlitePool, id: &str) -> Result<Option<ThingCommand>, sqlx::Error> {
     let row = sqlx::query_as::<_, DeviceCommandRow>(
         r#"
         SELECT id, thing_id, name, display_name, description, parameters, created_at
@@ -177,10 +174,7 @@ impl Db {
     }
 
     /// 创建一条设备指令（内部事务）。
-    pub async fn create_thing_command(
-        &self,
-        request: &CreateThingCommandRequest,
-    ) -> Result<ThingCommand, sqlx::Error> {
+    pub async fn create_thing_command(&self, request: &CreateThingCommandRequest) -> Result<ThingCommand, sqlx::Error> {
         create_thing_command(self.pool(), request).await
     }
 

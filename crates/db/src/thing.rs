@@ -13,9 +13,7 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
 use crate::database::Db;
 use crate::thing_row_mapper;
 use tinyiothub_core::error::{Error, Result};
-use tinyiothub_core::models::thing::{
-    CreateThingRequest, Thing, ThingStats, ThingStatusUpdate, UpdateThingRequest,
-};
+use tinyiothub_core::models::thing::{CreateThingRequest, Thing, ThingStats, ThingStatusUpdate, UpdateThingRequest};
 use tinyiothub_core::{generate_id, now_string};
 
 // ──────────────────────────────────────────────
@@ -1713,10 +1711,7 @@ async fn find_thing_by_id_inner(pool: &SqlitePool, id: &str) -> Result<Option<Th
 }
 
 async fn find_thing_by_name_inner(pool: &SqlitePool, name: &str) -> Result<Option<Thing>> {
-    let sql = format!(
-        "SELECT {} FROM things WHERE name = ?",
-        thing_row_mapper::SELECT_COLUMNS
-    );
+    let sql = format!("SELECT {} FROM things WHERE name = ?", thing_row_mapper::SELECT_COLUMNS);
     let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(name)
         .fetch_optional(pool)
@@ -2488,11 +2483,7 @@ pub(crate) async fn find_thing_by_name(pool: &SqlitePool, ws: Option<&str>, name
     Ok(devices.into_iter().next())
 }
 
-pub(crate) async fn find_things(
-    pool: &SqlitePool,
-    ws: Option<&str>,
-    criteria: &ThingCriteria,
-) -> Result<Vec<Thing>> {
+pub(crate) async fn find_things(pool: &SqlitePool, ws: Option<&str>, criteria: &ThingCriteria) -> Result<Vec<Thing>> {
     let Some(ws) = ws else {
         return find_things_inner(pool, criteria).await;
     };
@@ -2510,11 +2501,7 @@ pub(crate) async fn count_things(pool: &SqlitePool, ws: Option<&str>, criteria: 
     count_things_inner(pool, &criteria).await
 }
 
-pub(crate) async fn create_thing(
-    pool: &SqlitePool,
-    ws: Option<&str>,
-    request: &CreateThingRequest,
-) -> Result<Thing> {
+pub(crate) async fn create_thing(pool: &SqlitePool, ws: Option<&str>, request: &CreateThingRequest) -> Result<Thing> {
     let Some(ws) = ws else {
         return create_thing_inner(pool, request).await;
     };
@@ -3053,11 +3040,7 @@ pub(crate) async fn thing_status_distribution(
     })
 }
 
-pub(crate) async fn quick_things(
-    pool: &SqlitePool,
-    limit: i32,
-    workspace_id: Option<&str>,
-) -> Result<Vec<QuickThing>> {
+pub(crate) async fn quick_things(pool: &SqlitePool, limit: i32, workspace_id: Option<&str>) -> Result<Vec<QuickThing>> {
     let mut builder = QueryBuilder::new("SELECT id, name, category, state, updated_at FROM things");
 
     if let Some(wid) = workspace_id {

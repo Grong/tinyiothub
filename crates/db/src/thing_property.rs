@@ -153,10 +153,7 @@ impl Db {
     }
 
     /// 按设备 ID 列出属性（按名称排序，清除运行时字段）。
-    pub async fn find_thing_properties_by_thing_id(
-        &self,
-        device_id: &str,
-    ) -> Result<Vec<ThingProperty>, sqlx::Error> {
+    pub async fn find_thing_properties_by_thing_id(&self, device_id: &str) -> Result<Vec<ThingProperty>, sqlx::Error> {
         find_thing_properties_by_thing_id(self.pool(), device_id).await
     }
 
