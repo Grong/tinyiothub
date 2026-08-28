@@ -1,6 +1,6 @@
 pub mod command;
 pub mod config_mgmt;
-pub mod device;
+pub mod thing;
 pub mod driver;
 pub mod gateway;
 pub mod health;

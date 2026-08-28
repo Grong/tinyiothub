@@ -25,7 +25,7 @@
 use std::sync::Arc;
 
 use crate::domains::driver::legacy::{
-    DeviceMonitoringService, DevicePerformanceService, DeviceQueryService, DeviceService,
+    ThingMonitoringService, ThingPerformanceService, ThingQueryService, ThingService,
 };
 use crate::domains::thing::legacy::trace::ThingTraceService;
 use crate::shared::error::Error;
@@ -68,11 +68,11 @@ pub struct AdminState {
     /// 数据服务器 - 设备命令执行
     pub data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
     /// 设备查询服务 - dashboard 报表和只读查询
-    pub device_query_service: Arc<dyn DeviceQueryService>,
+    pub device_query_service: Arc<dyn ThingQueryService>,
     /// 设备监控服务 - 状态监控和指标
-    pub monitoring_service: Arc<DeviceMonitoringService>,
+    pub monitoring_service: Arc<ThingMonitoringService>,
     /// 设备性能服务 - 性能分析和告警
-    pub performance_service: Arc<DevicePerformanceService>,
+    pub performance_service: Arc<ThingPerformanceService>,
     /// 设备追踪服务 - 操作日志和审计
     pub trace_service: Arc<ThingTraceService>,
     /// 工作空间服务 - workspace 解析（resolve_workspace）与 open API
@@ -125,7 +125,7 @@ impl AdminState {
     ///
     /// AppState 同名方法的域内移植：workspace_id 为 None 时记录安全警告并
     /// 使用空 workspace（查不到任何设备），绝不回退到未隔离的原始仓库。
-    pub fn tenant_device_service(&self, workspace_id: &Option<String>) -> Arc<DeviceService> {
+    pub fn tenant_device_service(&self, workspace_id: &Option<String>) -> Arc<ThingService> {
         let ws_id = workspace_id.clone().unwrap_or_else(|| {
             tracing::warn!(
                 "[SECURITY] tenant_device_service called with workspace_id=None — \
@@ -136,7 +136,7 @@ impl AdminState {
         });
 
         Arc::new(
-            DeviceService::with_event_bus(self.db.clone(), self.event_bus.clone())
+            ThingService::with_event_bus(self.db.clone(), self.event_bus.clone())
                 .for_workspace(ws_id)
                 .with_tag_repository(self.db.clone()),
         )
@@ -174,7 +174,7 @@ impl AdminState {
 
         // 1. 验证设备存在且属于指定的workspace
         let tenant_device_service = self.tenant_device_service(&Some(workspace_id.to_string()));
-        let device = match tenant_device_service.get_device_by_id(thing_id).await? {
+        let device = match tenant_device_service.get_thing_by_id(thing_id).await? {
             Some(d) => d,
             None => return Err(Error::NotFound),
         };

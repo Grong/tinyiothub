@@ -14,7 +14,7 @@ use crate::domains::driver::plugin::{AppContext, PluginHandler};
 use tinyiothub_core::error::Error;
 
 pub struct StorageData {
-    pub device_id: String,
+    pub thing_id: String,
     pub timestamp: i64,
     pub values: std::collections::HashMap<String, serde_json::Value>,
 }

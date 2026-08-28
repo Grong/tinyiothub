@@ -7,7 +7,7 @@ use tinyiothub_core::error::Result;
 use tinyiothub_storage::thing::{QuickThing, ThingStatusDistribution};
 
 #[async_trait]
-pub trait DeviceQueryService: Send + Sync {
+pub trait ThingQueryService: Send + Sync {
     async fn search(&self, keyword: &str, limit: Option<u32>) -> Result<Vec<Thing>>;
     async fn get_stats(&self) -> Result<ThingStats>;
     async fn get_stats_by_type(&self) -> Result<Vec<(String, i64)>>;

@@ -39,13 +39,13 @@ impl StorageHandler for InfluxdbHandler {
         debug!(
             "Writing {} values to InfluxDB for device {}",
             data.values.len(),
-            data.device_id
+            data.thing_id
         );
 
         let measurement = self.config.measurement.as_deref().unwrap_or("device_data");
 
         let mut point = DataPoint::builder(measurement)
-            .tag("device_id", &data.device_id)
+            .tag("thing_id", &data.thing_id)
             .field("timestamp", data.timestamp as f64);
 
         for (key, value) in &data.values {

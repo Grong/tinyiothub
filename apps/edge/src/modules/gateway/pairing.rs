@@ -113,7 +113,7 @@ impl PairingClient {
                         event_handle.abort();
 
                         let creds = GatewayCredentials {
-                            device_id: ack["device_id"].as_str().unwrap_or_default().to_string(),
+                            thing_id: ack["thing_id"].as_str().unwrap_or_default().to_string(),
                             client_id: ack["credentials"]["client_id"].as_str().unwrap_or_default().to_string(),
                             username: ack["credentials"]["username"].as_str().unwrap_or_default().to_string(),
                             password: ack["credentials"]["password"].as_str().unwrap_or_default().to_string(),

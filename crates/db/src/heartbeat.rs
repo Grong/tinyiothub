@@ -364,7 +364,7 @@ pub(crate) async fn insert_result(
     for action in &result.executed_actions {
         let content = serde_json::json!({
             "tool": action.tool_name,
-            "deviceId": action.thing_id,
+            "thingId": action.thing_id,
             "summary": action.details,
         });
         insert_action_row(
@@ -388,7 +388,7 @@ pub(crate) async fn insert_result(
             "proposalId": proposal_id,
             "status": proposal.status.to_string(),
             "toolName": proposal.tool_name,
-            "deviceId": proposal.thing_id,
+            "thingId": proposal.thing_id,
             "deviceName": "",
             "summary": proposal.summary,
             "reason": proposal.reason,
@@ -736,7 +736,7 @@ mod tests {
                 "auto_executed" => {
                     auto_rows += 1;
                     assert_eq!(parsed["tool"], "device_control");
-                    assert_eq!(parsed["deviceId"], "dev_1");
+                    assert_eq!(parsed["thingId"], "dev_1");
                     assert_eq!(parsed["summary"], "restarted");
                 }
                 "proposal" => {

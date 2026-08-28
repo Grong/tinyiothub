@@ -367,7 +367,7 @@ async fn test_get_device_profile_not_found() {
 // ============================================================================
 
 #[tokio::test]
-async fn test_get_device_properties_not_found() {
+async fn test_get_thing_properties_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
@@ -476,7 +476,7 @@ async fn test_get_device_status_not_found() {
 // ============================================================================
 
 #[tokio::test]
-async fn test_get_device_metrics_not_found() {
+async fn test_get_thing_metrics_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app

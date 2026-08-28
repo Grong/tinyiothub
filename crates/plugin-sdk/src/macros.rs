@@ -10,11 +10,11 @@
 /// use tinyiothub_plugin_sdk::*;
 ///
 /// pub struct MyDriver {
-///     device: Device,
+///     device: Thing,
 /// }
 ///
 /// impl MyDriver {
-///     pub fn new(device: Device) -> Self {
+///     pub fn new(device: Thing) -> Self {
 ///         Self { device }
 ///     }
 ///     
@@ -23,7 +23,7 @@
 ///             name: "MyDriver".to_string(),
 ///             version: "1.0.0".to_string(),
 ///             class_name: "MyDriver".to_string(),
-///             device_num: 0,
+///             thing_num: 0,
 ///             description: Some("My custom driver".to_string()),
 ///             options_descriptors: vec![],
 ///             location: None,
@@ -31,12 +31,12 @@
 ///     }
 /// }
 ///
-/// impl DeviceDriver for MyDriver {
+/// impl ThingDriver for MyDriver {
 ///     // 实现trait方法...
-/// #   fn device(&self) -> &Device { &self.device }
-/// #   fn device_mut(&mut self) -> &mut Device { &mut self.device }
+/// #   fn thing(&self) -> &Thing { &self.device }
+/// #   fn thing_mut(&mut self) -> &mut Thing { &mut self.device }
 /// #   fn read_data(&mut self) -> Result<Vec<ResultValue>> { Ok(vec![]) }
-/// #   fn execute_command(&mut self, _cmd: &DeviceCommand) -> Result<bool> { Ok(true) }
+/// #   fn execute_command(&mut self, _cmd: &ThingCommand) -> Result<bool> { Ok(true) }
 /// }
 ///
 /// // 导出驱动
@@ -64,7 +64,7 @@ macro_rules! export_driver {
         ) -> *mut c_void {
             unsafe {
                 let device_str = $crate::ffi::from_c_string(device_json);
-                let device: $crate::Device = serde_json::from_str(&device_str).unwrap();
+                let device: $crate::Thing = serde_json::from_str(&device_str).unwrap();
 
                 let driver = Box::new(<$driver_type>::new(device));
                 Box::into_raw(driver) as *mut c_void

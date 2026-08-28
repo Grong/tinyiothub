@@ -18,7 +18,7 @@ use tokio::sync::RwLock;
 pub use handlers::{ToolCallParams, create_router};
 pub use tool_registry::*;
 
-use crate::domains::driver::legacy::DeviceService;
+use crate::domains::driver::legacy::ThingService;
 use crate::domains::thing::template::TemplateEngine;
 use crate::shared::error::Error;
 use tinyiothub_runtime::event_bus::EventBus;
@@ -64,9 +64,9 @@ impl McpState {
     /// 获取租户感知的设备服务（接受字符串 workspace_id）
     ///
     /// AppState 同名方法的域内移植。
-    pub fn tenant_device_service_str(&self, workspace_id: &str) -> Arc<DeviceService> {
+    pub fn tenant_device_service_str(&self, workspace_id: &str) -> Arc<ThingService> {
         Arc::new(
-            DeviceService::new(self.db.clone())
+            ThingService::new(self.db.clone())
                 .for_workspace(workspace_id.to_string())
                 .with_tag_repository(self.db.clone()),
         )
@@ -76,7 +76,7 @@ impl McpState {
     ///
     /// AppState 同名方法的域内移植：workspace_id 为 None 时记录安全警告并
     /// 使用空 workspace（查不到任何设备），绝不回退到未隔离的原始仓库。
-    pub fn tenant_device_service(&self, workspace_id: &Option<String>) -> Arc<DeviceService> {
+    pub fn tenant_device_service(&self, workspace_id: &Option<String>) -> Arc<ThingService> {
         let ws_id = workspace_id.clone().unwrap_or_else(|| {
             tracing::warn!(
                 "[SECURITY] tenant_device_service called with workspace_id=None — \
@@ -87,7 +87,7 @@ impl McpState {
         });
 
         Arc::new(
-            DeviceService::with_event_bus(self.db.clone(), self.event_bus.clone())
+            ThingService::with_event_bus(self.db.clone(), self.event_bus.clone())
                 .for_workspace(ws_id)
                 .with_tag_repository(self.db.clone()),
         )
@@ -108,7 +108,7 @@ impl McpState {
 
         // 1. 验证设备存在且属于指定的workspace
         let tenant_device_service = self.tenant_device_service(&Some(workspace_id.to_string()));
-        let device = match tenant_device_service.get_device_by_id(thing_id).await? {
+        let device = match tenant_device_service.get_thing_by_id(thing_id).await? {
             Some(d) => d,
             None => return Err(Error::NotFound),
         };
@@ -198,25 +198,25 @@ pub async fn register_tools(state: Option<Arc<McpState>>) {
     let mut reg = registry.write().await;
 
     // Thing tools (7)
-    reg.register(crate::domains::mcp::tools::thing::DeviceProfileHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::ThingProfileHandler::new(
         state.clone(),
     ));
-    reg.register(crate::domains::mcp::tools::thing::SearchDevicesHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::SearchThingsHandler::new(
         state.clone(),
     ));
-    reg.register(crate::domains::mcp::tools::thing::DevicePropertyGetHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::ThingPropertyGetHandler::new(
         state.clone(),
     ));
     reg.register(crate::domains::mcp::tools::thing::WritePropertiesHandler::new(
         state.clone(),
     ));
-    reg.register(crate::domains::mcp::tools::thing::DeviceCommandHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::ThingCommandHandler::new(
         state.clone(),
     ));
-    reg.register(crate::domains::mcp::tools::thing::CreateDeviceHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::CreateThingHandler::new(
         state.clone(),
     ));
-    reg.register(crate::domains::mcp::tools::thing::DeleteDeviceHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::DeleteThingHandler::new(
         state.clone(),
     ));
 

@@ -6,10 +6,9 @@ use tinyiothub_core::{generate_id, now_string};
 
 /// Internal row type for sqlx mapping
 #[derive(Debug, Clone, FromRow)]
-struct DevicePropertyRow {
+struct ThingPropertyRow {
     id: String,
-    #[sqlx(rename = "thing_id")]
-    device_id: String,
+    thing_id: String,
     name: String,
     display_name: Option<String>,
     description: Option<String>,
@@ -23,11 +22,11 @@ struct DevicePropertyRow {
     updated_at: Option<String>,
 }
 
-impl From<DevicePropertyRow> for ThingProperty {
-    fn from(row: DevicePropertyRow) -> Self {
+impl From<ThingPropertyRow> for ThingProperty {
+    fn from(row: ThingPropertyRow) -> Self {
         Self {
             id: row.id,
-            thing_id: row.device_id,
+            thing_id: row.thing_id,
             name: row.name,
             display_name: row.display_name,
             description: row.description,
@@ -50,7 +49,7 @@ pub(crate) async fn find_thing_property_by_id(
     pool: &SqlitePool,
     id: &str,
 ) -> Result<Option<ThingProperty>, sqlx::Error> {
-    let row = sqlx::query_as::<_, DevicePropertyRow>(
+    let row = sqlx::query_as::<_, ThingPropertyRow>(
         r#"
         SELECT id, thing_id, name, display_name, description, data_type, unit,
                min_value, max_value, default_value, is_read_only, created_at, updated_at
@@ -72,9 +71,9 @@ pub(crate) async fn find_thing_property_by_id(
 /// Find properties by device ID
 pub(crate) async fn find_thing_properties_by_thing_id(
     pool: &SqlitePool,
-    device_id: &str,
+    thing_id: &str,
 ) -> Result<Vec<ThingProperty>, sqlx::Error> {
-    let rows = sqlx::query_as::<_, DevicePropertyRow>(
+    let rows = sqlx::query_as::<_, ThingPropertyRow>(
         r#"
         SELECT id, thing_id, name, display_name, description, data_type, unit,
                min_value, max_value, default_value, is_read_only, created_at, updated_at
@@ -82,7 +81,7 @@ pub(crate) async fn find_thing_properties_by_thing_id(
         ORDER BY name
         "#,
     )
-    .bind(device_id)
+    .bind(thing_id)
     .fetch_all(pool)
     .await?;
 
@@ -153,8 +152,8 @@ impl Db {
     }
 
     /// 按设备 ID 列出属性（按名称排序，清除运行时字段）。
-    pub async fn find_thing_properties_by_thing_id(&self, device_id: &str) -> Result<Vec<ThingProperty>, sqlx::Error> {
-        find_thing_properties_by_thing_id(self.pool(), device_id).await
+    pub async fn find_thing_properties_by_thing_id(&self, thing_id: &str) -> Result<Vec<ThingProperty>, sqlx::Error> {
+        find_thing_properties_by_thing_id(self.pool(), thing_id).await
     }
 
     /// 批量创建设备属性（内部事务，逐条回读）。

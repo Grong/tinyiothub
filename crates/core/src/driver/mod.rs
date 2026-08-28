@@ -103,7 +103,7 @@ pub struct DriverConfig {
 
 impl DriverConfig {
     /// 从设备信息创建配置管理器
-    pub fn from_device(device: &Thing) -> Self {
+    pub fn from_thing(device: &Thing) -> Self {
         let mut config = HashMap::new();
         if let Some(ref driver_options) = device.driver_options
             && let Ok(parsed_config) = serde_json::from_str::<HashMap<String, serde_json::Value>>(driver_options)
@@ -125,7 +125,7 @@ impl DriverConfig {
     }
 
     /// 合并默认配置和设备配置
-    pub fn from_device_with_defaults(device: &Thing, defaults: HashMap<String, String>) -> Self {
+    pub fn from_thing_with_defaults(device: &Thing, defaults: HashMap<String, String>) -> Self {
         let mut config = defaults;
         if let Some(ref driver_options) = device.driver_options
             && let Ok(parsed_config) = serde_json::from_str::<HashMap<String, serde_json::Value>>(driver_options)
@@ -246,26 +246,26 @@ impl ResultValue {
     }
 }
 
-// ─── DeviceDriver trait ─────────────────────────────────────────────
+// ─── ThingDriver trait ─────────────────────────────────────────────
 
 /// 设备驱动特征
 ///
 /// 定义了设备驱动的核心接口，包括数据读取、命令执行等功能
-pub trait DeviceDriver: Send + Sync {
+pub trait ThingDriver: Send + Sync {
     // === 基础信息获取 ===
 
-    fn device(&self) -> &Thing;
-    fn device_mut(&mut self) -> &mut Thing;
+    fn thing(&self) -> &Thing;
+    fn thing_mut(&mut self) -> &mut Thing;
 
     fn display_name(&self) -> String {
-        self.device()
+        self.thing()
             .display_name
             .clone()
-            .unwrap_or_else(|| self.device().name.clone())
+            .unwrap_or_else(|| self.thing().name.clone())
     }
 
     fn protocol_type(&self) -> String {
-        self.device().protocol_type.clone().unwrap_or_default()
+        self.thing().protocol_type.clone().unwrap_or_default()
     }
 
     // === 配置管理 ===
@@ -277,9 +277,9 @@ pub trait DeviceDriver: Send + Sync {
     fn init_config(&self) -> DriverConfig {
         let defaults = self.default_config();
         if defaults.is_empty() {
-            DriverConfig::from_device(self.device())
+            DriverConfig::from_thing(self.thing())
         } else {
-            DriverConfig::from_device_with_defaults(self.device(), defaults)
+            DriverConfig::from_thing_with_defaults(self.thing(), defaults)
         }
     }
 

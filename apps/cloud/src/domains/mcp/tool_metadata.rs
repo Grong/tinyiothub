@@ -123,7 +123,7 @@ mod tests {
     #[test]
     fn test_read_only_inference() {
         assert!(name_infers_read_only("list_things"));
-        assert!(name_infers_read_only("get_device_metrics"));
+        assert!(name_infers_read_only("get_thing_metrics"));
         assert!(name_infers_read_only("read_properties"));
         assert!(name_infers_read_only("get_device_history"));
         assert!(!name_infers_read_only("create_thing"));

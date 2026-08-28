@@ -16,7 +16,7 @@ async fn test_offline_recovery_buffer_and_flush() {
     let mqtt = MqttTestClient::new().await;
 
     let credentials = serde_json::json!({
-        "device_id": "test-gw-2",
+        "thing_id": "test-gw-2",
         "client_id": "test-gw-2-client",
         "username": "test-user",
         "password": "test-pass",

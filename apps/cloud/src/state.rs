@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::domains::auth::redis::RedisClient;
 use crate::domains::driver::legacy::{
-    DeviceMonitoringService, DevicePerformanceService, DeviceQueryService, DeviceService,
+    ThingMonitoringService, ThingPerformanceService, ThingQueryService, ThingService,
 };
 use tinyiothub_agent::pool::AgentPool;
 
@@ -49,19 +49,19 @@ pub struct AppState {
 
     /// === 领域服务层 ===
     /// 设备基础服务 - CRUD 操作
-    pub device_service: Arc<DeviceService>,
+    pub device_service: Arc<ThingService>,
 
     /// 设备监控服务 - 状态监控和指标
-    pub monitoring_service: Arc<DeviceMonitoringService>,
+    pub monitoring_service: Arc<ThingMonitoringService>,
 
     /// 设备性能服务 - 性能分析和告警
-    pub performance_service: Arc<DevicePerformanceService>,
+    pub performance_service: Arc<ThingPerformanceService>,
 
     /// 设备追踪服务 - 操作日志和审计
     pub trace_service: Arc<ThingTraceService>,
 
     /// 设备查询服务 - 报表和只读查询
-    pub device_query_service: Arc<dyn DeviceQueryService>,
+    pub device_query_service: Arc<dyn ThingQueryService>,
 
     /// 模板引擎 - 设备模板管理
     pub template_engine: Arc<TemplateEngine>,
@@ -258,17 +258,17 @@ impl AppState {
 
         // 基础服务 - 使用事件总线
         let device_service = Arc::new(
-            DeviceService::with_event_bus(database.clone(), event_bus.clone()).with_tag_repository(database.clone()),
+            ThingService::with_event_bus(database.clone(), event_bus.clone()).with_tag_repository(database.clone()),
         );
-        let device_query_service: Arc<dyn DeviceQueryService> = Arc::new(
-            crate::domains::driver::legacy::SqliteDeviceQueryService::new(database.as_ref().clone()),
+        let device_query_service: Arc<dyn ThingQueryService> = Arc::new(
+            crate::domains::driver::legacy::SqliteThingQueryService::new(database.as_ref().clone()),
         );
 
         // 监控服务 - 依赖数据库、缓存和告警查询（Db 门面）
-        let monitoring_service = Arc::new(DeviceMonitoringService::new(database.clone(), device_cache.clone()));
+        let monitoring_service = Arc::new(ThingMonitoringService::new(database.clone(), device_cache.clone()));
 
         // 性能服务 - 依赖数据库、缓存和告警查询（Db 门面）
-        let performance_service = Arc::new(DevicePerformanceService::new(database.clone(), device_cache.clone()));
+        let performance_service = Arc::new(ThingPerformanceService::new(database.clone(), device_cache.clone()));
 
         // 追踪服务 - 依赖 Db 门面
         let trace_service = Arc::new(ThingTraceService::new((*database).clone()));

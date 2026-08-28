@@ -1,17 +1,17 @@
 //! 设备驱动trait定义
 
-use crate::{Device, DeviceCommand, Result, ResultValue};
+use crate::{Thing, ThingCommand, Result, ResultValue};
 use std::collections::HashMap;
 
 /// 设备驱动trait（核心接口）
 ///
 /// 所有驱动必须实现此trait
-pub trait DeviceDriver: Send + Sync {
+pub trait ThingDriver: Send + Sync {
     /// 获取设备引用
-    fn device(&self) -> &Device;
+    fn thing(&self) -> &Thing;
 
     /// 获取设备可变引用
-    fn device_mut(&mut self) -> &mut Device;
+    fn thing_mut(&mut self) -> &mut Thing;
 
     /// 读取设备数据
     ///
@@ -29,11 +29,11 @@ pub trait DeviceDriver: Send + Sync {
     /// # 返回
     ///
     /// 返回命令是否执行成功
-    fn execute_command(&mut self, cmd: &DeviceCommand) -> Result<bool>;
+    fn execute_command(&mut self, cmd: &ThingCommand) -> Result<bool>;
 
     /// 获取驱动默认配置（可选实现）
     ///
-    /// 使用 `#[derive(DeviceDriver)]` 宏的驱动会自动实现此方法
+    /// 使用 `#[derive(ThingDriver)]` 宏的驱动会自动实现此方法
     fn default_config(&self) -> HashMap<String, String> {
         HashMap::new()
     }

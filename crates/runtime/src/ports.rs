@@ -15,9 +15,9 @@ use tinyiothub_core::models::thing_command::ThingCommand;
 
 /// Read-side queries for device commands (cron `device_command` executor).
 #[async_trait]
-pub trait DeviceCommandQueries: Send + Sync {
+pub trait ThingCommandQueries: Send + Sync {
     /// Find a command by device ID and command name.
-    async fn find_by_device_and_name(&self, device_id: &str, name: &str) -> Result<Option<ThingCommand>, String>;
+    async fn find_by_thing_and_name(&self, thing_id: &str, name: &str) -> Result<Option<ThingCommand>, String>;
 }
 
 /// Event-retention writes (cron `event_retention` executor).
@@ -32,7 +32,7 @@ pub trait EventRetentionStore: Send + Sync {
 /// Thing cache used by `DataServer`. Sync because every call site is sync
 /// (the backing implementation is an in-memory cache); making this async
 /// would add `.await` noise with no benefit.
-pub trait DeviceCacheSource: Send + Sync {
+pub trait ThingCacheSource: Send + Sync {
     fn all(&self) -> Vec<Thing>;
     fn get(&self, id: &str) -> Option<Thing>;
     fn get_by_name(&self, name: &str) -> Option<Thing>;

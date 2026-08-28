@@ -5,5 +5,5 @@ pub struct DriverInfo {
     pub name: String,
     pub version: String,
     pub status: String, // "loaded", "unhealthy", "not_loaded"
-    pub device_count: u32,
+    pub thing_count: u32,
 }

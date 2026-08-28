@@ -4,18 +4,18 @@ use std::sync::Arc;
 
 use tinyiothub_storage::{Db, cache::ThingCache};
 
-pub struct DeviceMonitoringService {
+pub struct ThingMonitoringService {
     db: Arc<Db>,
     device_cache: Arc<ThingCache>,
 }
 
-impl DeviceMonitoringService {
+impl ThingMonitoringService {
     pub fn new(db: Arc<Db>, device_cache: Arc<ThingCache>) -> Self {
         Self { db, device_cache }
     }
 
-    pub fn is_device_online(&self, device_id: &str) -> bool {
-        if let Some(device) = self.device_cache.get(device_id) {
+    pub fn is_thing_online(&self, thing_id: &str) -> bool {
+        if let Some(device) = self.device_cache.get(thing_id) {
             if device.status == tinyiothub_core::models::thing::ThingStatus::Offline {
                 return false;
             }
@@ -48,8 +48,8 @@ impl DeviceMonitoringService {
         }
     }
 
-    pub fn get_device_connection_quality(&self, device_id: &str) -> Option<u8> {
-        if let Some(device) = self.device_cache.get(device_id) {
+    pub fn get_thing_connection_quality(&self, thing_id: &str) -> Option<u8> {
+        if let Some(device) = self.device_cache.get(thing_id) {
             let mut score = 100u8;
             if let Some(last_heartbeat) = &device.last_heartbeat {
                 if let Ok(heartbeat_time) =
@@ -100,15 +100,15 @@ impl DeviceMonitoringService {
         }
     }
 
-    pub async fn get_device_metrics(&self, device_id: &str) -> Option<DeviceMetrics> {
-        if let Some(_device) = self.device_cache.get(device_id) {
-            let device_service = super::service::DeviceService::new(self.db.clone());
+    pub async fn get_thing_metrics(&self, thing_id: &str) -> Option<ThingMetrics> {
+        if let Some(_device) = self.device_cache.get(thing_id) {
+            let device_service = super::service::ThingService::new(self.db.clone());
 
             let properties = device_service
-                .get_device_properties(device_id)
+                .get_thing_properties(thing_id)
                 .await
                 .unwrap_or_default();
-            let commands = device_service.get_device_commands(device_id).await.unwrap_or_default();
+            let commands = device_service.get_thing_commands(thing_id).await.unwrap_or_default();
 
             let total_properties = properties.len() as u32;
             let total_commands = commands.len() as u32;
@@ -129,9 +129,9 @@ impl DeviceMonitoringService {
                 .count() as u32;
 
             let offline_properties = total_properties - online_properties;
-            let (total_events, active_alarms) = self.get_device_events_and_alarms(device_id).await;
+            let (total_events, active_alarms) = self.get_thing_events_and_alarms(thing_id).await;
 
-            Some(DeviceMetrics {
+            Some(ThingMetrics {
                 total_properties,
                 online_properties,
                 offline_properties,
@@ -144,9 +144,9 @@ impl DeviceMonitoringService {
         }
     }
 
-    async fn get_device_events_and_alarms(&self, device_id: &str) -> (u32, u32) {
+    async fn get_thing_events_and_alarms(&self, thing_id: &str) -> (u32, u32) {
         let total_events = 0u32;
-        let active_alarms = self.db.count_active_alarms_by_thing(device_id).await.unwrap_or(0);
+        let active_alarms = self.db.count_active_alarms_by_thing(thing_id).await.unwrap_or(0);
         (total_events, active_alarms)
     }
 
@@ -158,7 +158,7 @@ impl DeviceMonitoringService {
         let mut total_properties = 0u32;
         let mut total_commands = 0u32;
         for device in &all_devices {
-            if self.is_device_online(&device.id) {
+            if self.is_thing_online(&device.id) {
                 online_devices += 1;
             } else {
                 offline_devices += 1;
@@ -183,7 +183,7 @@ impl DeviceMonitoringService {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct DeviceMetrics {
+pub struct ThingMetrics {
     pub total_properties: u32,
     pub online_properties: u32,
     pub offline_properties: u32,

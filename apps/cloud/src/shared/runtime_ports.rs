@@ -9,14 +9,14 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
-use tinyiothub_runtime::ports::{DeviceCacheSource, DeviceCommandQueries, EventRetentionStore};
+use tinyiothub_runtime::ports::{ThingCacheSource, ThingCommandQueries, EventRetentionStore};
 use tinyiothub_storage::Db;
 use tinyiothub_storage::cache::ThingCache;
 
-/// `ThingCache` → `DeviceCacheSource`（全部方法同步直转）。
+/// `ThingCache` → `ThingCacheSource`（全部方法同步直转）。
 pub struct DeviceCacheAdapter(pub Arc<ThingCache>);
 
-impl DeviceCacheSource for DeviceCacheAdapter {
+impl ThingCacheSource for DeviceCacheAdapter {
     fn all(&self) -> Vec<Thing> {
         self.0.all()
     }
@@ -42,12 +42,12 @@ impl DeviceCacheSource for DeviceCacheAdapter {
     }
 }
 
-/// `Db` → `DeviceCommandQueries`。
-pub struct DeviceCommandQueriesAdapter(pub Db);
+/// `Db` → `ThingCommandQueries`。
+pub struct ThingCommandQueriesAdapter(pub Db);
 
 #[async_trait]
-impl DeviceCommandQueries for DeviceCommandQueriesAdapter {
-    async fn find_by_device_and_name(&self, thing_id: &str, name: &str) -> Result<Option<ThingCommand>, String> {
+impl ThingCommandQueries for ThingCommandQueriesAdapter {
+    async fn find_by_thing_and_name(&self, thing_id: &str, name: &str) -> Result<Option<ThingCommand>, String> {
         self.0
             .find_thing_command_by_thing_and_name(thing_id, name)
             .await

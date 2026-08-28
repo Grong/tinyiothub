@@ -3,7 +3,7 @@ use std::time::Instant;
 use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use tinyiothub_core::driver::{BackoffStrategy, DeviceDriver, ResultValue, RetryConfig};
+use tinyiothub_core::driver::{BackoffStrategy, ThingDriver, ResultValue, RetryConfig};
 use tinyiothub_core::error::Error;
 
 use super::simulated::anomaly::AnomalyEngine;
@@ -11,7 +11,7 @@ use super::simulated::correlation::{self, CorrelationManager, EnvironmentContext
 use super::simulated::patterns::match_property;
 use super::simulated::signal::SignalComposer;
 
-#[derive(Debug, Clone, tinyiothub_macros::DeviceDriver)]
+#[derive(Debug, Clone, tinyiothub_macros::ThingDriver)]
 #[driver(
     name = "simulator",
     version = "2.0.0",
@@ -158,12 +158,12 @@ impl SimulatedDriver {
     }
 }
 
-impl DeviceDriver for SimulatedDriver {
-    fn device(&self) -> &Thing {
+impl ThingDriver for SimulatedDriver {
+    fn thing(&self) -> &Thing {
         &self.device
     }
 
-    fn device_mut(&mut self) -> &mut Thing {
+    fn thing_mut(&mut self) -> &mut Thing {
         &mut self.device
     }
 

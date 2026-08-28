@@ -57,7 +57,7 @@ async fn test_get_device_online_status() {
 // ============================================================================
 
 #[tokio::test]
-async fn test_get_device_metrics() {
+async fn test_get_thing_metrics() {
     let app = setup_test_app().await;
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
 

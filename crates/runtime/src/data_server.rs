@@ -13,23 +13,23 @@ use tinyiothub_core::models::event::{
 use tinyiothub_core::models::thing_property::ThingProperty;
 use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 
-use crate::driver::{DeviceOverview, DriverWrapper, create_driver};
+use crate::driver::{ThingOverview, DriverWrapper, create_driver};
 use crate::event_bus::{EventBus, publish_event_safe};
-use crate::ports::DeviceCacheSource;
+use crate::ports::ThingCacheSource;
 
 type DriverCache = Cache<String, Arc<RwLock<DriverWrapper>>>;
 type CommandQueue = Arc<DashMap<String, Vec<ThingCommand>>>;
 
 /// Thing data server — manages driver lifecycle and the polling loop.
 pub struct DataServer {
-    device_cache: Arc<dyn DeviceCacheSource>,
+    device_cache: Arc<dyn ThingCacheSource>,
     driver_cache: DriverCache,
     command_queue: CommandQueue,
     event_bus: Arc<EventBus>,
 }
 
 impl DataServer {
-    pub fn new(device_cache: Arc<dyn DeviceCacheSource>, event_bus: Arc<EventBus>) -> Self {
+    pub fn new(device_cache: Arc<dyn ThingCacheSource>, event_bus: Arc<EventBus>) -> Self {
         let driver_cache = Cache::new(10_000);
         Self::initialize_drivers(&driver_cache, &device_cache, &event_bus);
         Self {
@@ -40,7 +40,7 @@ impl DataServer {
         }
     }
 
-    fn initialize_drivers(cache: &DriverCache, device_cache: &Arc<dyn DeviceCacheSource>, event_bus: &Arc<EventBus>) {
+    fn initialize_drivers(cache: &DriverCache, device_cache: &Arc<dyn ThingCacheSource>, event_bus: &Arc<EventBus>) {
         let devices = device_cache.all();
         for device in devices {
             if let Some(driver_name) = &device.driver_name {
@@ -81,7 +81,7 @@ impl DataServer {
 
     async fn process_all_drivers(
         driver_cache: DriverCache,
-        device_cache: Arc<dyn DeviceCacheSource>,
+        device_cache: Arc<dyn ThingCacheSource>,
         command_queue: CommandQueue,
     ) {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
@@ -118,9 +118,9 @@ impl DataServer {
                 let mut updated_device: Option<Thing> = None;
 
                 if let Some(mut driver) = driver_arc.try_write() {
-                    let device_id = driver.device().id.clone();
+                    let thing_id = driver.thing().id.clone();
                     let read_result = driver.read_data_once();
-                    let mut device = driver.device().clone();
+                    let mut device = driver.thing().clone();
                     let was_online = device.is_online();
                     let device_address = device.address.clone();
 
@@ -149,7 +149,7 @@ impl DataServer {
                         }
                     }
 
-                    for cmd in all_commands.iter().filter(|c| c.thing_id == device_id) {
+                    for cmd in all_commands.iter().filter(|c| c.thing_id == thing_id) {
                         let cmd_result = driver.execute_command(cmd);
                         let execution_time_ms = cmd_result.elapsed.as_millis() as u64;
                         if let Some(event) = Self::build_command_event(
@@ -163,7 +163,7 @@ impl DataServer {
                         }
                     }
 
-                    *driver.device_mut() = device.clone();
+                    *driver.thing_mut() = device.clone();
                     updated_device = Some(device);
                 }
 
@@ -181,8 +181,8 @@ impl DataServer {
 
     fn collect_property_change_events(device: &mut Thing, values: &[ResultValue]) -> Vec<DomainEvent> {
         let mut pending_events = Vec::new();
-        let device_id = device.id.clone();
-        let device_name = device.name.clone();
+        let thing_id = device.id.clone();
+        let thing_name = device.name.clone();
         if let Some(ref mut properties) = device.properties {
             for property in properties.iter_mut() {
                 if let Some(result_value) = values.iter().find(|v| v.name == property.name)
@@ -196,8 +196,8 @@ impl DataServer {
                     property.set_current_value(value_str.clone());
                     if value_changed
                         && let Some(event) = Self::build_property_change_event_static(
-                            &device_id,
-                            &device_name,
+                            &thing_id,
+                            &thing_name,
                             property,
                             old_value,
                             value_str,
@@ -212,14 +212,14 @@ impl DataServer {
     }
 
     fn build_property_change_event_static(
-        device_id: &str,
-        device_name: &str,
+        thing_id: &str,
+        thing_name: &str,
         property: &ThingProperty,
         old_value: Option<String>,
         new_value: &str,
     ) -> Option<DomainEvent> {
         let mut elements = vec![ContentElement::Text {
-            content: format!("Property '{}' value changed on device '{}'", property.name, device_name),
+            content: format!("Property '{}' value changed on device '{}'", property.name, thing_name),
             format: TextFormat::Plain,
         }];
 
@@ -236,7 +236,7 @@ impl DataServer {
         });
 
         let mut content = RichContent::new(
-            format!("Property Changed: {} - {}", device_name, property.name),
+            format!("Property Changed: {} - {}", thing_name, property.name),
             elements,
         )
         .with_metadata(
@@ -255,7 +255,7 @@ impl DataServer {
         DomainEvent::new_device_event(
             ThingEventType::PropertyChange,
             EventLevel::Info,
-            EventSource::device_property(device_id.to_string(), property.id.clone(), "data_collector".to_string()),
+            EventSource::device_property(thing_id.to_string(), property.id.clone(), "data_collector".to_string()),
             content,
         )
         .ok()
@@ -335,24 +335,24 @@ impl DataServer {
         Ok(())
     }
 
-    pub fn remove_device(&self, device_id: &str) {
-        self.device_cache.remove(device_id);
-        self.driver_cache.invalidate(device_id);
+    pub fn remove_device(&self, thing_id: &str) {
+        self.device_cache.remove(thing_id);
+        self.driver_cache.invalidate(thing_id);
     }
 
-    pub fn remove_devices(&self, device_ids: &[String]) {
-        for device_id in device_ids {
-            self.remove_device(device_id);
+    pub fn remove_things(&self, thing_ids: &[String]) {
+        for thing_id in thing_ids {
+            self.remove_device(thing_id);
         }
     }
 
-    pub fn get_device_overview(&self, device_id: &str) -> Option<DeviceOverview> {
+    pub fn get_device_overview(&self, thing_id: &str) -> Option<ThingOverview> {
         self.driver_cache
-            .get(device_id)
+            .get(thing_id)
             .and_then(|driver_arc| driver_arc.try_read().map(|driver| driver.overview()))
     }
 
-    pub fn get_all_device_overview(&self) -> Vec<DeviceOverview> {
+    pub fn get_all_device_overview(&self) -> Vec<ThingOverview> {
         self.driver_cache
             .iter()
             .filter_map(|(_, driver_arc)| driver_arc.try_read().map(|driver| driver.overview()))
@@ -375,8 +375,8 @@ impl DataServer {
             .count()
     }
 
-    pub fn reset_device_driver(&self, device_id: &str) -> bool {
-        if let Some(driver_arc) = self.driver_cache.get(device_id)
+    pub fn reset_device_driver(&self, thing_id: &str) -> bool {
+        if let Some(driver_arc) = self.driver_cache.get(thing_id)
             && let Some(mut driver) = driver_arc.try_write()
         {
             driver.reset();
@@ -385,8 +385,8 @@ impl DataServer {
         false
     }
 
-    pub fn set_device_offline(&self, device_id: &str) -> bool {
-        if let Some(driver_arc) = self.driver_cache.get(device_id)
+    pub fn set_device_offline(&self, thing_id: &str) -> bool {
+        if let Some(driver_arc) = self.driver_cache.get(thing_id)
             && let Some(mut driver) = driver_arc.try_write()
         {
             driver.set_offline();
@@ -401,13 +401,13 @@ impl DataServer {
 
     pub fn cleanup_driver_cache(&self) {
         let mut to_remove = Vec::new();
-        for (device_id, _) in self.driver_cache.iter() {
-            if self.device_cache.get(&device_id).is_none() {
-                to_remove.push(device_id.to_string());
+        for (thing_id, _) in self.driver_cache.iter() {
+            if self.device_cache.get(&thing_id).is_none() {
+                to_remove.push(thing_id.to_string());
             }
         }
-        for device_id in to_remove {
-            self.driver_cache.invalidate(&device_id);
+        for thing_id in to_remove {
+            self.driver_cache.invalidate(&thing_id);
         }
     }
 }
@@ -417,7 +417,7 @@ impl EventHandler for DataServer {
     async fn handle(&self, event: &tinyiothub_core::models::event::Event) -> Result<(), Error> {
         use tinyiothub_core::models::event::{EventType, ThingEventType};
 
-        let device_id = match event.source().thing_id() {
+        let thing_id = match event.source().thing_id() {
             Some(id) => id,
             None => return Ok(()),
         };
@@ -425,27 +425,27 @@ impl EventHandler for DataServer {
         if let EventType::Device(device_event_type) = event.event_type() {
             match device_event_type {
                 ThingEventType::DeviceCreated | ThingEventType::DeviceUpdated => {
-                    tracing::info!("Handling {:?} event for device: {}", device_event_type, device_id);
+                    tracing::info!("Handling {:?} event for device: {}", device_event_type, thing_id);
                     // 从事件 metadata 中提取完整设备信息
                     let device = event
                         .content()
                         .metadata()
                         .get("device")
                         .and_then(|v| serde_json::from_value::<Thing>(v.clone()).ok())
-                        .or_else(|| self.device_cache.get(device_id));
+                        .or_else(|| self.device_cache.get(thing_id));
 
                     if let Some(device) = device {
                         // 插入/更新缓存（单一写入者）
                         self.device_cache.insert(device.clone());
                         // 创建驱动并加入采集循环
                         if let Some(driver_name) = &device.driver_name
-                            && !self.driver_cache.contains_key(device_id)
+                            && !self.driver_cache.contains_key(thing_id)
                         {
                             match create_driver(driver_name, &device) {
                                 Ok(mut driver) => {
                                     driver.set_event_bus(self.event_bus.clone());
                                     self.driver_cache
-                                        .insert(device_id.to_string(), Arc::new(RwLock::new(driver)));
+                                        .insert(thing_id.to_string(), Arc::new(RwLock::new(driver)));
                                     tracing::info!(
                                         "Created driver for device '{}' and started data collection",
                                         device.name
@@ -457,11 +457,11 @@ impl EventHandler for DataServer {
                             }
                         }
                     } else {
-                        tracing::warn!("Thing not found in event metadata or cache: {}", device_id);
+                        tracing::warn!("Thing not found in event metadata or cache: {}", thing_id);
                     }
                 }
                 ThingEventType::DeviceDeleted => {
-                    self.remove_device(device_id);
+                    self.remove_device(thing_id);
                 }
                 _ => {}
             }

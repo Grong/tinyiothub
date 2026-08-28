@@ -15,28 +15,28 @@ use serde_json::Value;
 pub use tinyiothub_core::cron::{ExecutionResult, ExecutorError, JobExecutor};
 use tinyiothub_core::models::cron_job::CronJob;
 
-use crate::ports::{DeviceCommandQueries, EventRetentionStore};
+use crate::ports::{ThingCommandQueries, EventRetentionStore};
 
 /// Executes device commands via DataServer.
-pub struct DeviceCommandExecutor {
+pub struct ThingCommandExecutor {
     data_server: Arc<crate::data_server::DataServer>,
-    commands: Arc<dyn DeviceCommandQueries>,
+    commands: Arc<dyn ThingCommandQueries>,
 }
 
-impl DeviceCommandExecutor {
-    pub fn new(data_server: Arc<crate::data_server::DataServer>, commands: Arc<dyn DeviceCommandQueries>) -> Self {
+impl ThingCommandExecutor {
+    pub fn new(data_server: Arc<crate::data_server::DataServer>, commands: Arc<dyn ThingCommandQueries>) -> Self {
         Self { data_server, commands }
     }
 }
 
 #[async_trait]
-impl JobExecutor for DeviceCommandExecutor {
+impl JobExecutor for ThingCommandExecutor {
     fn can_handle(&self, job_type: &str) -> bool {
         job_type == "device_command"
     }
 
     async fn execute(&self, job: &CronJob, _run_id: &str) -> std::result::Result<ExecutionResult, ExecutorError> {
-        let device_id = job
+        let thing_id = job
             .target_thing_id()
             .ok_or_else(|| ExecutorError::InvalidConfig("missing thing_id in job config".to_string()))?;
         let command_name = job
@@ -48,13 +48,13 @@ impl JobExecutor for DeviceCommandExecutor {
         // Look up the device command via the injected queries port
         let mut command = self
             .commands
-            .find_by_device_and_name(&device_id, &command_name)
+            .find_by_thing_and_name(&thing_id, &command_name)
             .await
             .map_err(|e| ExecutorError::InvalidConfig(format!("DB error looking up command: {}", e)))?
             .ok_or_else(|| {
                 ExecutorError::InvalidConfig(format!(
                     "command '{}' not found for device '{}'",
-                    command_name, device_id
+                    command_name, thing_id
                 ))
             })?;
 
@@ -67,7 +67,7 @@ impl JobExecutor for DeviceCommandExecutor {
         self.data_server.execute_command(command).map_err(|e| {
             ExecutorError::CommandFailed(format!(
                 "failed to queue command '{}/{}': {}",
-                device_id, command_name, e
+                thing_id, command_name, e
             ))
         })?;
 
@@ -75,7 +75,7 @@ impl JobExecutor for DeviceCommandExecutor {
 
         Ok(ExecutionResult {
             status: "success".to_string(),
-            output: Some(format!("command '{}/{}' queued for execution", device_id, command_name)),
+            output: Some(format!("command '{}/{}' queued for execution", thing_id, command_name)),
             error_message: None,
             duration_ms,
         })

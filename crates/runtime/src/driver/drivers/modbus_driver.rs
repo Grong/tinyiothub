@@ -4,10 +4,10 @@ use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 #[cfg(feature = "serialport")]
 use serialport::SerialPort;
 
-use tinyiothub_core::driver::{DeviceDriver, ResultValue};
+use tinyiothub_core::driver::{ThingDriver, ResultValue};
 use tinyiothub_core::error::Error;
 
-#[derive(Debug, Clone, tinyiothub_macros::DeviceDriver)]
+#[derive(Debug, Clone, tinyiothub_macros::ThingDriver)]
 #[driver(name = "modbus_rtu", version = "1.0.0", description = "Modbus RTU/TCP Driver")]
 #[driver_option(
     label = "Refresh Interval (ms)",
@@ -90,12 +90,12 @@ impl ModbusDriver {
     }
 }
 
-impl DeviceDriver for ModbusDriver {
-    fn device(&self) -> &Thing {
+impl ThingDriver for ModbusDriver {
+    fn thing(&self) -> &Thing {
         &self.device
     }
 
-    fn device_mut(&mut self) -> &mut Thing {
+    fn thing_mut(&mut self) -> &mut Thing {
         &mut self.device
     }
 

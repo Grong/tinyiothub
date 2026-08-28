@@ -1438,7 +1438,7 @@ impl Db {
 pub struct ThingCriteria {
     pub name: Option<String>,
     pub display_name: Option<String>,
-    pub device_type: Option<String>,
+    pub category: Option<String>,
     pub address: Option<String>,
     pub driver_name: Option<String>,
     pub state: Option<i32>,
@@ -1488,8 +1488,8 @@ impl ThingCriteria {
         self
     }
 
-    pub fn with_device_type(mut self, device_type: String) -> Self {
-        self.device_type = Some(device_type);
+    pub fn with_category(mut self, category: String) -> Self {
+        self.category = Some(category);
         self
     }
 
@@ -1568,8 +1568,8 @@ impl ThingCriteriaBuilder {
         self
     }
 
-    pub fn device_type(mut self, device_type: String) -> Self {
-        self.criteria.device_type = Some(device_type);
+    pub fn category(mut self, category: String) -> Self {
+        self.criteria.category = Some(category);
         self
     }
 
@@ -1652,7 +1652,7 @@ mod tests {
     fn test_criteria_builder() {
         let criteria = ThingCriteria::builder()
             .name("sensor-01".to_string())
-            .device_type("temperature".to_string())
+            .category("temperature".to_string())
             .driver_name("modbus".to_string())
             .state(1)
             .sort_by(ThingSortBy::Name)
@@ -1662,7 +1662,7 @@ mod tests {
             .build();
 
         assert_eq!(criteria.name, Some("sensor-01".to_string()));
-        assert_eq!(criteria.device_type, Some("temperature".to_string()));
+        assert_eq!(criteria.category, Some("temperature".to_string()));
         assert_eq!(criteria.driver_name, Some("modbus".to_string()));
         assert_eq!(criteria.state, Some(1));
         assert!(matches!(criteria.sort_by, ThingSortBy::Name));
@@ -1739,8 +1739,8 @@ async fn find_things_inner(pool: &SqlitePool, criteria: &ThingCriteria) -> Resul
             .push(" AND display_name LIKE ")
             .push_bind(format!("%{}%", display_name));
     }
-    if let Some(device_type) = &criteria.device_type {
-        builder.push(" AND category = ").push_bind(device_type);
+    if let Some(category) = &criteria.category {
+        builder.push(" AND category = ").push_bind(category);
     }
     if let Some(address) = &criteria.address {
         builder.push(" AND address LIKE ").push_bind(format!("%{}%", address));
@@ -1826,8 +1826,8 @@ async fn count_things_inner(pool: &SqlitePool, criteria: &ThingCriteria) -> Resu
             .push(" AND display_name LIKE ")
             .push_bind(format!("%{}%", display_name));
     }
-    if let Some(device_type) = &criteria.device_type {
-        builder.push(" AND category = ").push_bind(device_type);
+    if let Some(category) = &criteria.category {
+        builder.push(" AND category = ").push_bind(category);
     }
     if let Some(address) = &criteria.address {
         builder.push(" AND address LIKE ").push_bind(format!("%{}%", address));
@@ -1938,11 +1938,11 @@ async fn update_thing_inner(pool: &SqlitePool, id: &str, request: &UpdateThingRe
         builder.push("display_name = ").push_bind(display_name);
         has_updates = true;
     }
-    if let Some(device_type) = &request.category {
+    if let Some(category) = &request.category {
         if has_updates {
             builder.push(", ");
         }
-        builder.push("category = ").push_bind(device_type);
+        builder.push("category = ").push_bind(category);
         has_updates = true;
     }
     if let Some(address) = &request.address {
@@ -2896,9 +2896,9 @@ pub(crate) async fn count_things_by_type(pool: &SqlitePool) -> Result<Vec<(Strin
 
     let mut stats = Vec::new();
     for row in rows {
-        let device_type: String = row.get("category");
+        let category: String = row.get("category");
         let count: i64 = row.get("count");
-        stats.push((device_type, count));
+        stats.push((category, count));
     }
     Ok(stats)
 }
@@ -2953,7 +2953,7 @@ pub struct QuickThing {
     /// 最后在线时间
     pub last_seen: chrono::DateTime<chrono::Utc>,
     /// 设备类型
-    pub device_type: String,
+    pub category: String,
 }
 
 pub(crate) async fn search_things(pool: &SqlitePool, keyword: &str, limit: Option<u32>) -> Result<Vec<Thing>> {
@@ -3065,7 +3065,7 @@ pub(crate) async fn quick_things(pool: &SqlitePool, limit: i32, workspace_id: Op
 
     let quick_things = devices
         .into_iter()
-        .map(|(id, name, device_type, state, updated_at)| {
+        .map(|(id, name, category, state, updated_at)| {
             let status = match state {
                 1 => "online",
                 0 => "offline",
@@ -3078,7 +3078,7 @@ pub(crate) async fn quick_things(pool: &SqlitePool, limit: i32, workspace_id: Op
                 name,
                 status: status.to_string(),
                 last_seen: updated_at.and_utc(),
-                device_type: device_type.unwrap_or_else(|| "unknown".to_string()),
+                category: category.unwrap_or_else(|| "unknown".to_string()),
             }
         })
         .collect();

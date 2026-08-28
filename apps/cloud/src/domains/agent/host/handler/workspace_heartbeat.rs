@@ -313,7 +313,7 @@ pub async fn get_logs(
                                     auto_executed.push(ActionDetail {
                                         tool: parsed.get("tool").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                         thing_id: parsed
-                                            .get("deviceId")
+                                            .get("thingId")
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("")
                                             .to_string(),
@@ -335,7 +335,7 @@ pub async fn get_logs(
                                             .unwrap_or("")
                                             .to_string(),
                                         thing_id: parsed
-                                            .get("deviceId")
+                                            .get("thingId")
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("")
                                             .to_string(),
@@ -477,7 +477,7 @@ fn proposal_from_row(content: &str, created_at: String) -> Option<ProposalRespon
         status: status.to_string(),
         level: str_field("level"),
         tool_name: str_field("toolName"),
-        thing_id: str_field("deviceId"),
+        thing_id: str_field("thingId"),
         device_name: str_field("deviceName"),
         summary: str_field("summary"),
         reason: str_field("reason"),
@@ -561,7 +561,7 @@ async fn approve_and_execute(
         return Err("提案已处理".to_string());
     }
     let tool_name = parsed["toolName"].as_str().unwrap_or("").to_string();
-    let thing_id = parsed["deviceId"].as_str().map(str::to_string);
+    let thing_id = parsed["thingId"].as_str().map(str::to_string);
     let params = parsed.get("parameters").cloned().unwrap_or(serde_json::json!({}));
 
     let handler = registry
@@ -598,7 +598,7 @@ async fn approve_and_execute(
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let outcome_content = serde_json::json!({
         "tool": tool_name,
-        "deviceId": thing_id,
+        "thingId": thing_id,
         "summary": summary,
         "success": success,
         "source": "approved_proposal",
@@ -801,7 +801,7 @@ mod tests {
             "proposalId": proposal_id,
             "status": status,
             "toolName": "write_properties",
-            "deviceId": "dev_1",
+            "thingId": "dev_1",
             "summary": "set temp",
             "reason": "tune",
             "risk": "medium",
@@ -864,7 +864,7 @@ mod tests {
                 .expect("outcome row");
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["tool"], "write_properties");
-        assert_eq!(parsed["deviceId"], "dev_1");
+        assert_eq!(parsed["thingId"], "dev_1");
         assert_eq!(parsed["success"], true);
     }
 
@@ -930,7 +930,7 @@ mod tests {
             "status": "pending",
             "level": "high",
             "toolName": "write_properties",
-            "deviceId": "dev_1",
+            "thingId": "dev_1",
             "deviceName": "Thermostat",
             "summary": "set temp",
             "reason": "tune",

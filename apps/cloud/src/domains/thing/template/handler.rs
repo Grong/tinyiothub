@@ -10,8 +10,8 @@ use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder, PaginatedRespons
 
 use super::service::TemplateValidator;
 use crate::domains::thing::template::types::CreateThingTemplateRequest;
-use crate::domains::thing::template::types::DeviceCreationInput;
-use crate::domains::thing::template::types::DevicePreview;
+use crate::domains::thing::template::types::ThingCreationInput;
+use crate::domains::thing::template::types::ThingPreview;
 use crate::domains::thing::template::types::TemplateCategory;
 use crate::domains::thing::template::types::TemplateQueryParams;
 use crate::domains::thing::template::types::ThingTemplate;
@@ -202,7 +202,7 @@ async fn validate_template_input(
     State(state): State<AppState>,
     Path(id): Path<String>,
     _claims: AuthClaims,
-    Json(input): Json<DeviceCreationInput>,
+    Json(input): Json<ThingCreationInput>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     // 获取模板
     let template = match state.db.find_thing_template_by_id(&id, "").await {
@@ -235,8 +235,8 @@ async fn preview_device_from_template(
     State(state): State<AppState>,
     Path(id): Path<String>,
     _claims: AuthClaims,
-    Json(input): Json<DeviceCreationInput>,
-) -> Json<ApiResponse<DevicePreview>> {
+    Json(input): Json<ThingCreationInput>,
+) -> Json<ApiResponse<ThingPreview>> {
     // 获取模板
     let _template = match state.db.find_thing_template_by_id(&id, "").await {
         Ok(Some(template)) => template,

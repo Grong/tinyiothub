@@ -91,7 +91,7 @@ impl AgentPoolLike for HostAgentPoolAdapter {
 fn map_tool_call(c: StreamingToolCall) -> ToolCallRecord {
     ToolCallRecord {
         tool_name: c.name,
-        device_id: c
+        thing_id: c
             .args
             .get("thing_id")
             .or_else(|| c.args.get("thingId"))
@@ -123,7 +123,7 @@ mod tests {
             serde_json::json!({"thing_id": "d_snake", "deviceId": "d_camel"}),
             Some("ok".into()),
         ));
-        assert_eq!(rec.device_id.as_deref(), Some("d_snake"));
+        assert_eq!(rec.thing_id.as_deref(), Some("d_snake"));
         assert_eq!(rec.tool_name, "set_temperature");
         assert!(rec.success);
         assert_eq!(rec.details, "ok");
@@ -132,33 +132,33 @@ mod tests {
     #[test]
     fn camel_case_device_id_is_accepted_as_fallback() {
         let rec = map_tool_call(call(serde_json::json!({"deviceId": "d_camel"}), None));
-        assert_eq!(rec.device_id.as_deref(), Some("d_camel"));
+        assert_eq!(rec.thing_id.as_deref(), Some("d_camel"));
         assert_eq!(rec.details, "");
     }
 
     #[test]
     fn missing_device_id_maps_to_none() {
         let rec = map_tool_call(call(serde_json::json!({"value": 42}), None));
-        assert_eq!(rec.device_id, None);
+        assert_eq!(rec.thing_id, None);
     }
 
     #[test]
     fn non_string_device_id_maps_to_none() {
         let rec = map_tool_call(call(serde_json::json!({"thing_id": 42}), None));
-        assert_eq!(rec.device_id, None);
+        assert_eq!(rec.thing_id, None);
     }
 
     #[test]
     fn advertised_camel_thing_id_is_accepted() {
         // InvokeActionTool / AutonomousInvokeTool advertise camelCase `thingId`.
         let rec = map_tool_call(call(serde_json::json!({"thingId": "d_thing"}), None));
-        assert_eq!(rec.device_id.as_deref(), Some("d_thing"));
+        assert_eq!(rec.thing_id.as_deref(), Some("d_thing"));
     }
 
     #[test]
     fn legacy_snake_device_id_is_accepted_as_last_fallback() {
         let rec = map_tool_call(call(serde_json::json!({"device_id": "d_legacy"}), None));
-        assert_eq!(rec.device_id.as_deref(), Some("d_legacy"));
+        assert_eq!(rec.thing_id.as_deref(), Some("d_legacy"));
     }
 
     #[test]
@@ -167,6 +167,6 @@ mod tests {
             serde_json::json!({"thingId": "d_thing", "deviceId": "d_camel", "device_id": "d_legacy"}),
             None,
         ));
-        assert_eq!(rec.device_id.as_deref(), Some("d_thing"));
+        assert_eq!(rec.thing_id.as_deref(), Some("d_thing"));
     }
 }

@@ -3,10 +3,10 @@ use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 
 use super::{
     retry::{RetryManager, RetryResult},
-    status::{DeviceOverview, DeviceStatusManager},
+    status::{ThingOverview, ThingStatusManager},
 };
 use crate::event_bus::{EventBus, publish_event_safe};
-use tinyiothub_core::driver::{DeviceDriver, DriverConfig, ResultValue};
+use tinyiothub_core::driver::{ThingDriver, DriverConfig, ResultValue};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::models::event::{
     ContentElement, Event as DomainEvent, EventLevel, EventSource, RichContent, TextFormat, ThingEventType,
@@ -42,22 +42,22 @@ impl RetryInfo {
 ///
 /// 为设备驱动提供标准实现，包含重试逻辑和状态管理
 pub struct DriverWrapper {
-    inner_driver: Box<dyn DeviceDriver>,
+    inner_driver: Box<dyn ThingDriver>,
     retry_manager: RetryManager,
-    status_manager: DeviceStatusManager,
+    status_manager: ThingStatusManager,
     event_bus: Option<std::sync::Arc<EventBus>>,
     cached_config: DriverConfig,
 }
 
 impl DriverWrapper {
-    pub fn new(inner_driver: Box<dyn DeviceDriver>) -> Self {
-        let device = inner_driver.device().clone();
+    pub fn new(inner_driver: Box<dyn ThingDriver>) -> Self {
+        let device = inner_driver.thing().clone();
         let config = inner_driver.retry_config();
         let cached_config = inner_driver.init_config();
 
         Self {
             retry_manager: RetryManager::new(config),
-            status_manager: DeviceStatusManager::new(&device),
+            status_manager: ThingStatusManager::new(&device),
             inner_driver,
             event_bus: None,
             cached_config,
@@ -72,19 +72,19 @@ impl DriverWrapper {
         self.event_bus.as_ref()
     }
 
-    pub fn device(&self) -> &Thing {
-        self.inner_driver.device()
+    pub fn thing(&self) -> &Thing {
+        self.inner_driver.thing()
     }
 
-    pub fn device_mut(&mut self) -> &mut Thing {
-        self.inner_driver.device_mut()
+    pub fn thing_mut(&mut self) -> &mut Thing {
+        self.inner_driver.thing_mut()
     }
 
-    pub fn inner_driver(&self) -> &dyn DeviceDriver {
+    pub fn inner_driver(&self) -> &dyn ThingDriver {
         &*self.inner_driver
     }
 
-    pub fn inner_driver_mut(&mut self) -> &mut dyn DeviceDriver {
+    pub fn inner_driver_mut(&mut self) -> &mut dyn ThingDriver {
         &mut *self.inner_driver
     }
 
@@ -166,7 +166,7 @@ impl DriverWrapper {
         }
     }
 
-    pub fn overview(&self) -> DeviceOverview {
+    pub fn overview(&self) -> ThingOverview {
         self.status_manager.get_statistics().clone()
     }
 
@@ -197,7 +197,7 @@ impl DriverWrapper {
 
         tracing::info!("Thing '{}' connected successfully", self.display_name());
 
-        let device = self.device();
+        let device = self.thing();
         DomainEvent::new_device_event(
             ThingEventType::Connection,
             EventLevel::Info,
@@ -232,7 +232,7 @@ impl DriverWrapper {
             tracing::warn!("Thing '{}' disconnected", self.display_name());
         }
 
-        let device = self.device();
+        let device = self.thing();
         let mut elements = vec![ContentElement::Text {
             content: format!("Thing '{}' is now offline", device.name),
             format: TextFormat::Plain,
@@ -258,7 +258,7 @@ impl DriverWrapper {
         self.status_manager.record_failure();
 
         if let Some(ref event_bus) = self.event_bus {
-            let device = self.device();
+            let device = self.thing();
             let event = DomainEvent::new_device_event(
                 ThingEventType::Connection,
                 EventLevel::Error,
@@ -298,9 +298,9 @@ impl DriverWrapper {
     }
 
     fn display_name(&self) -> String {
-        self.device()
+        self.thing()
             .display_name
             .clone()
-            .unwrap_or_else(|| self.device().name.clone())
+            .unwrap_or_else(|| self.thing().name.clone())
     }
 }

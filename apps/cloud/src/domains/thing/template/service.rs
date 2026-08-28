@@ -10,8 +10,8 @@ use tinyiothub_storage::Db;
 use tracing::{debug, info, warn};
 
 use crate::domains::thing::template::types::CreateThingTemplateRequest;
-use crate::domains::thing::template::types::DeviceCreationInput;
-use crate::domains::thing::template::types::DevicePreview;
+use crate::domains::thing::template::types::ThingCreationInput;
+use crate::domains::thing::template::types::ThingPreview;
 
 // ─── TemplateEngine ───────────────────────────────────────────
 
@@ -32,7 +32,7 @@ impl TemplateEngine {
     pub async fn apply_template(
         &self,
         template_id: &str,
-        user_input: &DeviceCreationInput,
+        user_input: &ThingCreationInput,
     ) -> Result<CreateThingRequest, TemplateError> {
         info!(
             "应用模板创建设备: template_id={}, device_name={}",
@@ -104,8 +104,8 @@ impl TemplateEngine {
     pub async fn preview_template(
         &self,
         template_id: &str,
-        user_input: &DeviceCreationInput,
-    ) -> Result<DevicePreview, TemplateError> {
+        user_input: &ThingCreationInput,
+    ) -> Result<ThingPreview, TemplateError> {
         info!(
             "预览模板设备创建: template_id={}, device_name={}",
             template_id, user_input.name
@@ -128,12 +128,12 @@ impl TemplateEngine {
 
         // 生成属性列表
         let properties = self
-            .generate_device_properties(&template, user_input, "temp_device_id")
+            .generate_thing_properties(&template, user_input, "temp_device_id")
             .await?;
 
         // 生成命令列表
         let commands = self
-            .generate_device_commands(&template, user_input, "temp_device_id")
+            .generate_thing_commands(&template, user_input, "temp_device_id")
             .await?;
 
         // 收集警告信息
@@ -147,8 +147,8 @@ impl TemplateEngine {
             warnings.push("模板未指定驱动程序，可能需要手动配置".to_string());
         }
 
-        let preview = DevicePreview {
-            device_info,
+        let preview = ThingPreview {
+            thing_info: device_info,
             properties,
             commands,
             warnings,
@@ -168,7 +168,7 @@ impl TemplateEngine {
     pub async fn validate_user_input(
         &self,
         template_id: &str,
-        user_input: &DeviceCreationInput,
+        user_input: &ThingCreationInput,
     ) -> Result<ValidationResult, TemplateError> {
         info!("验证用户输入: template_id={}", template_id);
 
@@ -193,10 +193,10 @@ impl TemplateEngine {
     }
 
     /// 根据模板生成设备属性
-    pub async fn generate_device_properties(
+    pub async fn generate_thing_properties(
         &self,
         template: &ThingTemplate,
-        user_input: &DeviceCreationInput,
+        user_input: &ThingCreationInput,
         thing_id: &str,
     ) -> Result<Vec<CreateThingPropertyRequest>, TemplateError> {
         let properties = template.get_properties().map_err(|e| TemplateError::JsonFormatError {
@@ -237,10 +237,10 @@ impl TemplateEngine {
     }
 
     /// 根据模板生成设备命令
-    pub async fn generate_device_commands(
+    pub async fn generate_thing_commands(
         &self,
         template: &ThingTemplate,
-        user_input: &DeviceCreationInput,
+        user_input: &ThingCreationInput,
         thing_id: &str,
     ) -> Result<Vec<CreateThingCommandRequest>, TemplateError> {
         let commands = template.get_commands().map_err(|e| TemplateError::JsonFormatError {
@@ -279,7 +279,7 @@ impl TemplateEngine {
     fn apply_name_pattern(
         &self,
         pattern: &Option<HashMap<String, String>>,
-        user_input: &DeviceCreationInput,
+        user_input: &ThingCreationInput,
     ) -> Option<String> {
         pattern.as_ref().map(|patterns| {
             let template = patterns
@@ -605,7 +605,7 @@ impl TemplateValidator {
     }
 
     /// 验证用户输入
-    pub fn validate_user_input(&self, template: &ThingTemplate, input: &DeviceCreationInput) -> ValidationResult {
+    pub fn validate_user_input(&self, template: &ThingTemplate, input: &ThingCreationInput) -> ValidationResult {
         info!("验证用户输入，模板: {}", template.name);
 
         let mut result = ValidationResult::success();

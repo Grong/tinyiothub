@@ -12,7 +12,7 @@ pub enum AiEvent {
     AlarmCreated(AlarmEvent),
     AlarmResolved {
         alarm_id: String,
-        device_id: String,
+        thing_id: String,
         rule_id: Option<String>,
     },
     HeartbeatCompleted {

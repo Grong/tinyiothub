@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// 设备信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Device {
+pub struct Thing {
     pub id: String,
     pub name: String,
     pub display_name: Option<String>,
@@ -16,7 +16,7 @@ pub struct Device {
 
 /// 设备命令
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeviceCommand {
+pub struct ThingCommand {
     pub id: String,
     pub name: String,
     pub command_type: String,
@@ -99,7 +99,7 @@ pub struct CreateComponentRequest {
     pub name: String,
     pub version: String,
     pub class_name: String,
-    pub device_num: Option<u32>,
+    pub thing_num: Option<u32>,
     pub description: Option<String>,
     pub options_descriptors: Vec<ComponentOption>,
     pub location: Option<String>,
@@ -111,7 +111,7 @@ pub struct ComponentInfo {
     pub name: String,
     pub version: String,
     pub class_name: String,
-    pub device_num: u32,
+    pub thing_num: u32,
     pub description: Option<String>,
     pub options_descriptors: Vec<ComponentOption>,
     pub location: Option<String>,
@@ -124,7 +124,7 @@ impl ComponentInfo {
             name: request.name,
             version: request.version,
             class_name: request.class_name,
-            device_num: request.device_num.unwrap_or(0),
+            thing_num: request.thing_num.unwrap_or(0),
             description: request.description,
             options_descriptors: request.options_descriptors,
             location: request.location,
@@ -138,10 +138,10 @@ impl ComponentInfo {
 mod core_interop {
     use super::*;
 
-    impl From<tinyiothub_core::models::thing::Thing> for Device {
+    impl From<tinyiothub_core::models::thing::Thing> for Thing {
         fn from(core: tinyiothub_core::models::thing::Thing) -> Self {
             let enabled = core.is_online();
-            Device {
+            Thing {
                 id: core.id,
                 name: core.name,
                 display_name: core.display_name,
@@ -153,8 +153,8 @@ mod core_interop {
         }
     }
 
-    impl From<Device> for tinyiothub_core::models::thing::Thing {
-        fn from(sdk: Device) -> Self {
+    impl From<Thing> for tinyiothub_core::models::thing::Thing {
+        fn from(sdk: Thing) -> Self {
             tinyiothub_core::models::thing::Thing {
                 id: sdk.id,
                 name: sdk.name,
@@ -189,9 +189,9 @@ mod core_interop {
         }
     }
 
-    impl From<tinyiothub_core::models::thing_command::ThingCommand> for DeviceCommand {
+    impl From<tinyiothub_core::models::thing_command::ThingCommand> for ThingCommand {
         fn from(core: tinyiothub_core::models::thing_command::ThingCommand) -> Self {
-            DeviceCommand {
+            ThingCommand {
                 id: core.id,
                 name: core.name,
                 command_type: String::new(),
@@ -200,8 +200,8 @@ mod core_interop {
         }
     }
 
-    impl From<DeviceCommand> for tinyiothub_core::models::thing_command::ThingCommand {
-        fn from(sdk: DeviceCommand) -> Self {
+    impl From<ThingCommand> for tinyiothub_core::models::thing_command::ThingCommand {
+        fn from(sdk: ThingCommand) -> Self {
             tinyiothub_core::models::thing_command::ThingCommand {
                 id: sdk.id,
                 thing_id: String::new(),

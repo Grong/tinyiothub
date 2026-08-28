@@ -31,7 +31,7 @@ use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 /// `UserDirective{ source: Some("heartbeat"), priority: Normal }` 给
 /// thing-agent loop 处置。
 ///
-/// problem_key 从结构化字段派生（`{tool_name}:{device_id}`），不用自由文本
+/// problem_key 从结构化字段派生（`{tool_name}:{thing_id}`），不用自由文本
 /// 摘要——LLM 措辞变化会击穿去重（O21）。
 ///
 /// O11 dedup 依据 [`RunRegistry`] 的 problem_key 元数据内存映射（Task 6；
@@ -53,7 +53,7 @@ impl HeartbeatBridge {
         Self { registry, sink }
     }
 
-    /// problem_key：结构化字段 `{tool_name}:{device_id}`；无目标设备的提案
+    /// problem_key：结构化字段 `{tool_name}:{thing_id}`；无目标设备的提案
     /// 用 "-" 占位（稳定，不随措辞变化）。
     pub fn problem_key_of(proposal: &Proposal) -> String {
         format!("{}:{}", proposal.tool_name, proposal.thing_id.as_deref().unwrap_or("-"))
@@ -229,13 +229,13 @@ impl AiEventHandler {
                         .signal(crate::runtime::heartbeat::types::HeartbeatSignal {
                             workspace_id: alarm.workspace_id.clone(),
                             reason: format!("Alarm: {}", alarm.message),
-                            context: format!("device_id={}, alarm_type={}", alarm.thing_id, alarm.alarm_type),
+                            context: format!("thing_id={}, alarm_type={}", alarm.thing_id, alarm.alarm_type),
                             priority: if severity == "critical" {
                                 SignalPriority::Critical
                             } else {
                                 SignalPriority::High
                             },
-                            device_id: Some(alarm.thing_id.clone()),
+                            thing_id: Some(alarm.thing_id.clone()),
                             alarm_type: Some(alarm.alarm_type.clone()),
                             rule_id: alarm.rule_id.clone(),
                         });
@@ -508,7 +508,7 @@ pub(crate) mod tests {
         for event_variant in [
             AiEvent::AlarmResolved {
                 alarm_id: "a1".into(),
-                device_id: "d1".into(),
+                thing_id: "d1".into(),
                 rule_id: None,
             },
             AiEvent::HeartbeatPersistFailed {
@@ -605,13 +605,13 @@ pub(crate) mod tests {
             }
         }
 
-        fn proposal(tool_name: &str, device_id: Option<&str>) -> Proposal {
+        fn proposal(tool_name: &str, thing_id: Option<&str>) -> Proposal {
             Proposal {
                 id: "p1".into(),
                 workspace_id: "ws_1".into(),
                 agent_id: "hb".into(),
                 tool_name: tool_name.into(),
-                thing_id: device_id.map(str::to_string),
+                thing_id: thing_id.map(str::to_string),
                 summary: "车间温度超过阈值 30°C".into(),
                 reason: "连续 3 次采样超限".into(),
                 risk: "medium".into(),

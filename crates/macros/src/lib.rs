@@ -127,12 +127,12 @@ fn parse_driver_attributes(
     Ok((name, version, description, options))
 }
 
-/// DeviceDriver derive 宏
+/// ThingDriver derive 宏
 ///
 /// 使用方式：
 /// ```ignore
-/// #[derive(DeviceDriver)]
-/// #[driver(name = "SimulatedDriver", version = "1.0.0", description = "Simulated Device Driver")]
+/// #[derive(ThingDriver)]
+/// #[driver(name = "SimulatedDriver", version = "1.0.0", description = "Simulated Thing Driver")]
 /// #[driver_option(label = "Refresh Interval", name = "interval", default = "1000", option_type = "number", required = true)]
 /// pub struct SimulatedDriver { ... }
 /// ```
@@ -141,7 +141,7 @@ fn parse_driver_attributes(
 /// 1. get_driver_info() 方法 - 返回驱动信息
 /// 2. get_default_config() 方法 - 返回默认配置
 /// 3. default_config() 的 trait 实现 - 自动调用 get_default_config()
-#[proc_macro_derive(DeviceDriver, attributes(driver, driver_option))]
+#[proc_macro_derive(ThingDriver, attributes(driver, driver_option))]
 pub fn derive_device_driver(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
@@ -200,7 +200,7 @@ pub fn derive_device_driver(input: TokenStream) -> TokenStream {
                         name: #driver_name.to_string(),
                         version: #version.to_string(),
                         class_name: #class_name.to_string(),
-                        device_num: Some(0),
+                        thing_num: Some(0),
                         description: #description_code,
                         options_descriptors: opts,
                         location: None,
@@ -240,7 +240,7 @@ pub fn register_drivers(input: TokenStream) -> TokenStream {
                 let info = #driver::get_driver_info();
                 registry.insert(
                     info.name.clone(),
-                    Box::new(|device| Box::new(#driver::new(device)) as Box<dyn DeviceDriver>)
+                    Box::new(|device| Box::new(#driver::new(device)) as Box<dyn ThingDriver>)
                 );
             }
         }
@@ -252,7 +252,7 @@ pub fn register_drivers(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         /// 驱动工厂函数类型
-        type DriverFactory = Box<dyn Fn(tinyiothub_core::models::thing::Thing) -> Box<dyn DeviceDriver> + Send + Sync>;
+        type DriverFactory = Box<dyn Fn(tinyiothub_core::models::thing::Thing) -> Box<dyn ThingDriver> + Send + Sync>;
 
         /// 驱动注册表
         static DRIVER_REGISTRY: std::sync::LazyLock<std::collections::HashMap<String, DriverFactory>> = std::sync::LazyLock::new(|| {
@@ -272,7 +272,7 @@ pub fn register_drivers(input: TokenStream) -> TokenStream {
         pub fn create_driver_by_name(
             driver_name: &str,
             device: &tinyiothub_core::models::thing::Thing,
-        ) -> Result<Box<dyn DeviceDriver>, tinyiothub_core::error::Error> {
+        ) -> Result<Box<dyn ThingDriver>, tinyiothub_core::error::Error> {
             tracing::debug!("Creating driver with name: {}", driver_name);
 
             if let Some(factory) = DRIVER_REGISTRY.get(driver_name) {

@@ -88,21 +88,21 @@ impl HealthStatus {
 
 /// 设备统计信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeviceOverview {
-    pub device_id: String,
-    pub device_name: String,
+pub struct ThingOverview {
+    pub thing_id: String,
+    pub thing_name: String,
     pub health: HealthStatus,
     pub start_time: SystemTime,
     pub uptime: Duration,
     pub last_update: SystemTime,
 }
 
-impl DeviceOverview {
+impl ThingOverview {
     pub fn new(device: &Thing) -> Self {
         let now = SystemTime::now();
         Self {
-            device_id: device.id.clone(),
-            device_name: device.display_name.clone().unwrap_or_else(|| device.name.clone()),
+            thing_id: device.id.clone(),
+            thing_name: device.display_name.clone().unwrap_or_else(|| device.name.clone()),
             health: HealthStatus::default(),
             start_time: now,
             uptime: Duration::from_secs(0),
@@ -129,14 +129,14 @@ impl DeviceOverview {
 
 /// 设备状态管理器
 #[derive(Debug)]
-pub struct DeviceStatusManager {
-    overview: DeviceOverview,
+pub struct ThingStatusManager {
+    overview: ThingOverview,
 }
 
-impl DeviceStatusManager {
+impl ThingStatusManager {
     pub fn new(device: &Thing) -> Self {
         Self {
-            overview: DeviceOverview::new(device),
+            overview: ThingOverview::new(device),
         }
     }
 
@@ -157,7 +157,7 @@ impl DeviceStatusManager {
         self.overview.record_failure();
     }
 
-    pub fn get_statistics(&self) -> &DeviceOverview {
+    pub fn get_statistics(&self) -> &ThingOverview {
         &self.overview
     }
 

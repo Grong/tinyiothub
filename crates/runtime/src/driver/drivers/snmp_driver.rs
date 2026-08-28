@@ -1,8 +1,8 @@
-use tinyiothub_core::driver::{DeviceDriver, ResultValue};
+use tinyiothub_core::driver::{ThingDriver, ResultValue};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 
-#[derive(Debug, Clone, tinyiothub_macros::DeviceDriver)]
+#[derive(Debug, Clone, tinyiothub_macros::ThingDriver)]
 #[driver(
     name = "snmp",
     version = "1.0.0",
@@ -53,12 +53,12 @@ impl SnmpDriver {
     }
 }
 
-impl DeviceDriver for SnmpDriver {
-    fn device(&self) -> &Thing {
+impl ThingDriver for SnmpDriver {
+    fn thing(&self) -> &Thing {
         &self.device
     }
 
-    fn device_mut(&mut self) -> &mut Thing {
+    fn thing_mut(&mut self) -> &mut Thing {
         &mut self.device
     }
 

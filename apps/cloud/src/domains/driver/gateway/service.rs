@@ -80,12 +80,12 @@ impl GatewayService {
             return Err(PairingError::TooManyAttempts);
         }
 
-        let device_name = announce.hostname.clone();
+        let thing_name = announce.hostname.clone();
         let workspace_id = req.workspace_id.clone().unwrap_or_default();
-        let password = generate_device_password();
+        let password = generate_thing_password();
 
         let create_req = CreateThingRequest {
-            name: device_name.clone(),
+            name: thing_name.clone(),
             category: Some("gateway".into()),
             protocol_type: Some("mqtt".into()),
             fingerprint: Some(announce.fingerprint.clone()),
@@ -100,12 +100,12 @@ impl GatewayService {
                 tracing::error!(?e, "Failed to create device during pairing");
                 PairingError::Internal
             })?;
-        let device_id = device.id.clone();
+        let thing_id = device.id.clone();
 
         // Set gateway as online
         let _ = self
             .database_for_repos
-            .update_thing_state(Some(&workspace_id), &device_id, 1i32)
+            .update_thing_state(Some(&workspace_id), &thing_id, 1i32)
             .await;
 
         // Remove code BEFORE MQTT publish to prevent simultaneous pairing of same code
@@ -114,21 +114,21 @@ impl GatewayService {
         let ack = PairingAck {
             msg_type: "pairing_ack".into(),
             success: true,
-            device_id: device_id.clone(),
+            thing_id: thing_id.clone(),
             workspace_id: workspace_id.clone(),
             credentials: MqttCredentials {
-                client_id: device_id.clone(),
-                username: device_id.clone(),
+                client_id: thing_id.clone(),
+                username: thing_id.clone(),
                 password: password.clone(),
             },
             topics: GatewayTopics {
-                status: format!("tinyiothub/{}/gateway/{}/status", workspace_id, device_id),
-                telemetry: format!("tinyiothub/{}/gateway/{}/telemetry", workspace_id, device_id),
-                event: format!("tinyiothub/{}/gateway/{}/event", workspace_id, device_id),
-                command: format!("tinyiothub/{}/gateway/{}/command", workspace_id, device_id),
-                config: format!("tinyiothub/{}/gateway/{}/config", workspace_id, device_id),
-                device_discover: format!("tinyiothub/{}/gateway/{}/device/discover", workspace_id, device_id),
-                device_telemetry: format!("tinyiothub/{}/gateway/{}/device/+/telemetry", workspace_id, device_id),
+                status: format!("tinyiothub/{}/gateway/{}/status", workspace_id, thing_id),
+                telemetry: format!("tinyiothub/{}/gateway/{}/telemetry", workspace_id, thing_id),
+                event: format!("tinyiothub/{}/gateway/{}/event", workspace_id, thing_id),
+                command: format!("tinyiothub/{}/gateway/{}/command", workspace_id, thing_id),
+                config: format!("tinyiothub/{}/gateway/{}/config", workspace_id, thing_id),
+                thing_discover: format!("tinyiothub/{}/gateway/{}/thing/discover", workspace_id, thing_id),
+                thing_telemetry: format!("tinyiothub/{}/gateway/{}/thing/+/telemetry", workspace_id, thing_id),
             },
             keepalive: 60,
         };
@@ -144,7 +144,7 @@ impl GatewayService {
         {
             let _ = self
                 .database_for_repos
-                .delete_thing(Some(&workspace_id), &device_id)
+                .delete_thing(Some(&workspace_id), &thing_id)
                 .await;
             // Restore the code to cache so the gateway can still be paired
             self.cache
@@ -167,14 +167,14 @@ impl GatewayService {
 
         tracing::info!(
             code = %code,
-            device_id = %device_id,
+            thing_id = %thing_id,
             fingerprint = %announce.fingerprint,
             "Pairing successful"
         );
 
         Ok(PairingResponse {
-            device_id,
-            device_name,
+            thing_id,
+            thing_name,
             hostname: announce.hostname,
             ip: announce.ip,
         })
@@ -237,22 +237,22 @@ impl GatewayService {
         Ok(())
     }
 
-    pub async fn handle_device_discover(
+    pub async fn handle_thing_discover(
         &self,
         gateway_id: &str,
         workspace_id: &str,
-        msg: DeviceDiscoverMessage,
+        msg: ThingDiscoverMessage,
     ) -> Result<(), tinyiothub_core::error::Error> {
-        if msg.devices.is_empty() {
+        if msg.things.is_empty() {
             return Ok(());
         }
 
         let requests: Vec<CreateThingRequest> = msg
-            .devices
+            .things
             .iter()
             .map(|d| CreateThingRequest {
                 name: d.name.clone(),
-                category: Some(d.device_type.clone().unwrap_or_else(|| "sensor".into())),
+                category: Some(d.category.clone().unwrap_or_else(|| "sensor".into())),
                 protocol_type: d.protocol_type.clone(),
                 address: d.address.clone(),
                 driver_name: d.driver_name.clone(),
@@ -286,12 +286,12 @@ impl GatewayService {
                 }
                 tracing::debug!(gateway_id = %gateway_id, "Gateway status received, last_seen updated");
             }
-            GatewayDataMessage::DeviceDiscover {
+            GatewayDataMessage::ThingDiscover {
                 gateway_id,
                 workspace_id,
                 msg,
             } => {
-                if let Err(e) = self.handle_device_discover(gateway_id, workspace_id, msg.clone()).await {
+                if let Err(e) = self.handle_thing_discover(gateway_id, workspace_id, msg.clone()).await {
                     tracing::error!(?e, gateway_id = %gateway_id, "Failed to handle device discover");
                 }
             }
@@ -305,15 +305,15 @@ impl GatewayService {
                 }
                 tracing::debug!(gateway_id = %gateway_id, "Gateway telemetry stored");
             }
-            GatewayDataMessage::DeviceTelemetry {
+            GatewayDataMessage::ThingTelemetry {
                 gateway_id,
                 workspace_id,
                 msg,
             } => {
-                if let Err(e) = self.store_device_telemetry_event(gateway_id, workspace_id, msg).await {
-                    tracing::warn!(?e, gateway_id = %gateway_id, device_id = %msg.device_id, "Failed to store device telemetry");
+                if let Err(e) = self.store_thing_telemetry_event(gateway_id, workspace_id, msg).await {
+                    tracing::warn!(?e, gateway_id = %gateway_id, thing_id = %msg.thing_id, "Failed to store device telemetry");
                 }
-                tracing::debug!(gateway_id = %gateway_id, device_id = %msg.device_id, "Thing telemetry stored");
+                tracing::debug!(gateway_id = %gateway_id, thing_id = %msg.thing_id, "Thing telemetry stored");
             }
         }
     }
@@ -339,11 +339,11 @@ impl GatewayService {
         Ok(())
     }
 
-    async fn store_device_telemetry_event(
+    async fn store_thing_telemetry_event(
         &self,
         _gateway_id: &str,
         workspace_id: &str,
-        msg: &DeviceTelemetryMessage,
+        msg: &ThingTelemetryMessage,
     ) -> Result<(), EventError> {
         let content = vec![
             ContentElement::plain_text(format!("timestamp: {}", msg.timestamp)),
@@ -352,8 +352,8 @@ impl GatewayService {
         let event = Event::new_device_event(
             ThingEventType::PropertyChange,
             EventLevel::Debug,
-            EventSource::device(msg.device_id.clone(), Some(workspace_id.to_string())),
-            RichContent::new(format!("Thing {} telemetry", msg.device_id), content),
+            EventSource::device(msg.thing_id.clone(), Some(workspace_id.to_string())),
+            RichContent::new(format!("Thing {} telemetry", msg.thing_id), content),
         )
         .map_err(|e| EventError::Validation { message: e.to_string() })?;
         self.database_for_repos.insert_event(&event).await?;
@@ -361,7 +361,7 @@ impl GatewayService {
     }
 }
 
-fn generate_device_password() -> String {
+fn generate_thing_password() -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();
     (0..32)
@@ -523,14 +523,14 @@ mod tests {
         assert!(result.is_ok(), "pair_thing failed: {:?}", result.err());
         let response = result.unwrap();
 
-        assert!(!response.device_id.is_empty());
-        assert_eq!(response.device_name, "gw-01");
+        assert!(!response.thing_id.is_empty());
+        assert_eq!(response.thing_name, "gw-01");
         assert_eq!(response.hostname, "gw-01");
         assert_eq!(response.ip, "192.168.1.100");
 
         // Verify device was inserted into DB
         let row = sqlx::query("SELECT id, name, fingerprint, workspace_id FROM things WHERE id = ?1")
-            .bind(&response.device_id)
+            .bind(&response.thing_id)
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -543,7 +543,7 @@ mod tests {
             MqttPublish::PairingAck { code: c, ack } => {
                 assert_eq!(c, "123456");
                 assert!(ack.success);
-                assert_eq!(ack.device_id, response.device_id);
+                assert_eq!(ack.thing_id, response.thing_id);
             }
         }
 
@@ -551,7 +551,7 @@ mod tests {
         assert!(svc.cache.get(code).await.is_none());
     }
 
-    // ── handle_device_discover ──
+    // ── handle_thing_discover ──
 
     #[tokio::test]
     async fn device_discover_inserts_sub_devices() {
@@ -576,20 +576,20 @@ mod tests {
         .await
         .unwrap();
 
-        let msg = DeviceDiscoverMessage {
-            msg_type: "device_discover".into(),
-            devices: vec![
-                DiscoveredDevice {
+        let msg = ThingDiscoverMessage {
+            msg_type: "thing_discover".into(),
+            things: vec![
+                DiscoveredThing {
                     name: "temp-sensor".into(),
-                    device_type: Some("sensor".into()),
+                    category: Some("sensor".into()),
                     protocol_type: Some("modbus".into()),
                     address: Some("/dev/ttyUSB0:1".into()),
                     driver_name: Some("modbus-rtu".into()),
                     driver_options: Some(r#"{"baud":9600}"#.into()),
                 },
-                DiscoveredDevice {
+                DiscoveredThing {
                     name: "relay".into(),
-                    device_type: Some("actuator".into()),
+                    category: Some("actuator".into()),
                     protocol_type: None,
                     address: None,
                     driver_name: None,
@@ -598,7 +598,7 @@ mod tests {
             ],
         };
 
-        svc.handle_device_discover(&gw_id, "ws1", msg).await.unwrap();
+        svc.handle_thing_discover(&gw_id, "ws1", msg).await.unwrap();
 
         // Verify sub-devices created
         let rows: Vec<(String, String, String)> =
@@ -618,12 +618,12 @@ mod tests {
         let pool = make_pool().await;
         let (svc, _rx) = make_service(pool);
 
-        let msg = DeviceDiscoverMessage {
-            msg_type: "device_discover".into(),
-            devices: vec![],
+        let msg = ThingDiscoverMessage {
+            msg_type: "thing_discover".into(),
+            things: vec![],
         };
 
-        svc.handle_device_discover("gw-xyz", "ws1", msg).await.unwrap();
+        svc.handle_thing_discover("gw-xyz", "ws1", msg).await.unwrap();
     }
 
     // ── handle_announce ──

@@ -18,7 +18,7 @@ pub use tinyiothub_storage::thing_template::{
 /// 设备创建输入
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct DeviceCreationInput {
+pub struct ThingCreationInput {
     pub name: String,
     pub display_name: Option<String>,
     pub description: Option<String>,
@@ -37,8 +37,8 @@ pub struct DeviceCreationInput {
 /// 设备预览
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct DevicePreview {
-    pub device_info: tinyiothub_core::models::thing::CreateThingRequest,
+pub struct ThingPreview {
+    pub thing_info: tinyiothub_core::models::thing::CreateThingRequest,
     pub properties: Vec<tinyiothub_core::models::thing_property::CreateThingPropertyRequest>,
     pub commands: Vec<tinyiothub_core::models::thing_command::CreateThingCommandRequest>,
     pub warnings: Vec<String>,
@@ -49,7 +49,7 @@ pub struct DevicePreview {
 #[serde(rename_all = "snake_case")]
 pub struct CreateThingFromTemplateRequest {
     pub template_id: String,
-    pub device_input: DeviceCreationInput,
+    pub thing_input: ThingCreationInput,
 }
 
 /// 模板需求信息 (用于设备创建向导)

@@ -48,7 +48,7 @@ async fn create_test_thing(app: &mut axum::Router, token: &str) -> String {
 // ============================================================================
 
 #[tokio::test]
-async fn test_get_device_properties() {
+async fn test_get_thing_properties() {
     let mut app = setup_test_app().await;
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
     let thing_id = create_test_thing(&mut app, &token).await;
@@ -70,7 +70,7 @@ async fn test_get_device_properties() {
 }
 
 #[tokio::test]
-async fn test_get_device_properties_nonexistent_thing() {
+async fn test_get_thing_properties_nonexistent_thing() {
     let app = setup_test_app().await;
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
 

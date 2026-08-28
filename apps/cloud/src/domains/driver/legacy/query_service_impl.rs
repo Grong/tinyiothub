@@ -3,23 +3,23 @@ use tinyiothub_core::models::thing::{Thing, ThingStats};
 use tinyiothub_storage::Db;
 use tinyiothub_storage::thing::{QuickThing, ThingStatusDistribution};
 
-use super::query::DeviceQueryService;
+use super::query::ThingQueryService;
 use tinyiothub_core::error::Result;
 
-/// SQLite implementation of DeviceQueryService
+/// SQLite implementation of ThingQueryService
 #[derive(Debug, Clone)]
-pub struct SqliteDeviceQueryService {
+pub struct SqliteThingQueryService {
     db: Db,
 }
 
-impl SqliteDeviceQueryService {
+impl SqliteThingQueryService {
     pub fn new(db: Db) -> Self {
         Self { db }
     }
 }
 
 #[async_trait]
-impl DeviceQueryService for SqliteDeviceQueryService {
+impl ThingQueryService for SqliteThingQueryService {
     async fn search(&self, keyword: &str, limit: Option<u32>) -> Result<Vec<Thing>> {
         self.db.search_things(keyword, limit).await
     }

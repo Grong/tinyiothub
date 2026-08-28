@@ -2,15 +2,15 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub enum GatewayMessage {
-    ConfigDevice(ConfigDevicePayload),
+    ConfigThing(ConfigThingPayload),
     Config(serde_json::Value),
     Command(serde_json::Value),
     DriverInstall(DriverInstallPayload),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConfigDevicePayload {
-    pub device_id: String,
+pub struct ConfigThingPayload {
+    pub thing_id: String,
     pub action: String,
     #[serde(default)]
     pub property: Option<String>,
@@ -29,14 +29,14 @@ pub struct DriverInstallPayload {
 
 impl GatewayMessage {
     /// Parse topic+payload with longest-prefix matching.
-    /// Longer suffixes (/config/device, /driver/install) are checked before
+    /// Longer suffixes (/config/thing, /driver/install) are checked before
     /// shorter ones (/config, /command) to avoid false matches.
     pub fn from_topic_payload(topic: &str, payload: &[u8]) -> Result<Self, String> {
-        // Check longest prefix first: /config/device before /config
-        if topic.ends_with("/config/device") {
-            let inner: ConfigDevicePayload =
-                serde_json::from_slice(payload).map_err(|e| format!("ConfigDevice parse error: {}", e))?;
-            return Ok(GatewayMessage::ConfigDevice(inner));
+        // Check longest prefix first: /config/thing before /config
+        if topic.ends_with("/config/thing") {
+            let inner: ConfigThingPayload =
+                serde_json::from_slice(payload).map_err(|e| format!("ConfigThing parse error: {}", e))?;
+            return Ok(GatewayMessage::ConfigThing(inner));
         }
         if topic.ends_with("/driver/install") {
             let inner: DriverInstallPayload =

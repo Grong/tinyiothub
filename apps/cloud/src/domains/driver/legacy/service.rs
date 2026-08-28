@@ -24,7 +24,7 @@ use tinyiothub_runtime::event_bus::EventBus;
 use tinyiothub_storage::thing::ThingCriteria;
 use tinyiothub_web::pagination::DataObjectWithPagination;
 
-pub struct DeviceService {
+pub struct ThingService {
     db: Arc<Db>,
     /// Some(workspace_id) 时按租户作用域过滤（E6a 合并原 TenantDeviceRepository 行为）。
     workspace_scope: Option<String>,
@@ -32,7 +32,7 @@ pub struct DeviceService {
     tag_db: Option<Arc<Db>>,
 }
 
-impl DeviceService {
+impl ThingService {
     pub fn new(db: Arc<Db>) -> Self {
         Self {
             db,
@@ -87,24 +87,24 @@ impl DeviceService {
         Ok(created_device)
     }
 
-    pub async fn create_device_from_template(
+    pub async fn create_thing_from_template(
         &self,
         template_engine: &crate::domains::thing::template::TemplateEngine,
         template_id: &str,
-        device_input: &crate::domains::thing::template::types::DeviceCreationInput,
+        thing_input: &crate::domains::thing::template::types::ThingCreationInput,
     ) -> Result<Thing, Error> {
         tracing::info!(
             "Creating device from template: template_id={}, device_name={}",
             template_id,
-            device_input.name
+            thing_input.name
         );
         let created_device = self
-            .apply_template_and_create_device(template_engine, template_id, device_input)
+            .apply_template_and_create_thing(template_engine, template_id, thing_input)
             .await?;
         let template = self.get_template(template_engine, template_id).await?;
-        self.generate_and_create_properties(template_engine, &template, device_input, &created_device.id)
+        self.generate_and_create_properties(template_engine, &template, thing_input, &created_device.id)
             .await;
-        self.generate_and_create_commands(template_engine, &template, device_input, &created_device.id)
+        self.generate_and_create_commands(template_engine, &template, thing_input, &created_device.id)
             .await;
         // 加载完整设备信息（含属性、指令）再发布事件
         let complete_device = self
@@ -113,7 +113,7 @@ impl DeviceService {
             .unwrap_or(created_device.clone());
         self.publish_device_created_event(&complete_device).await;
         tracing::info!(
-            "Thing created successfully from template: device_id={}",
+            "Thing created successfully from template: thing_id={}",
             created_device.id
         );
         Ok(created_device)
@@ -216,22 +216,22 @@ impl DeviceService {
             .ok_or(Error::NotFound)
     }
 
-    async fn apply_template_and_create_device(
+    async fn apply_template_and_create_thing(
         &self,
         template_engine: &crate::domains::thing::template::TemplateEngine,
         template_id: &str,
-        device_input: &crate::domains::thing::template::types::DeviceCreationInput,
+        thing_input: &crate::domains::thing::template::types::ThingCreationInput,
     ) -> Result<Thing, Error> {
         if self
             .db
-            .thing_exists_by_name(self.ws(), &device_input.name)
+            .thing_exists_by_name(self.ws(), &thing_input.name)
             .await
             .unwrap_or(false)
         {
             return Err(Error::ValidationError(ERROR_DEVICE_NAME_EXISTS.to_string()));
         }
         let device_request = template_engine
-            .apply_template(template_id, device_input)
+            .apply_template(template_id, thing_input)
             .await
             .map_err(|e| Error::ValidationError(format!("{}: {}", ERROR_TEMPLATE_APPLICATION_FAILED, e)))?;
         self.db.create_thing(self.ws(), &device_request).await
@@ -241,11 +241,11 @@ impl DeviceService {
         &self,
         template_engine: &crate::domains::thing::template::TemplateEngine,
         template: &crate::domains::thing::template::types::ThingTemplate,
-        device_input: &crate::domains::thing::template::types::DeviceCreationInput,
-        device_id: &str,
+        thing_input: &crate::domains::thing::template::types::ThingCreationInput,
+        thing_id: &str,
     ) {
         match template_engine
-            .generate_device_properties(template, device_input, device_id)
+            .generate_thing_properties(template, thing_input, thing_id)
             .await
         {
             Ok(properties) => {
@@ -263,11 +263,11 @@ impl DeviceService {
         &self,
         template_engine: &crate::domains::thing::template::TemplateEngine,
         template: &crate::domains::thing::template::types::ThingTemplate,
-        device_input: &crate::domains::thing::template::types::DeviceCreationInput,
-        device_id: &str,
+        thing_input: &crate::domains::thing::template::types::ThingCreationInput,
+        thing_id: &str,
     ) {
         match template_engine
-            .generate_device_commands(template, device_input, device_id)
+            .generate_thing_commands(template, thing_input, thing_id)
             .await
         {
             Ok(commands) => {
@@ -281,17 +281,17 @@ impl DeviceService {
         }
     }
 
-    pub async fn update_thing(&self, device_id: &str, request: &UpdateThingRequest) -> Result<Thing, Error> {
-        tracing::info!("Updating device: {}", device_id);
+    pub async fn update_thing(&self, thing_id: &str, request: &UpdateThingRequest) -> Result<Thing, Error> {
+        tracing::info!("Updating device: {}", thing_id);
         let old_device = self
             .db
-            .find_thing_by_id(self.ws(), device_id)
+            .find_thing_by_id(self.ws(), thing_id)
             .await?
             .ok_or(Error::NotFound)?;
-        let updated_device = self.db.update_thing(self.ws(), device_id, request).await?;
+        let updated_device = self.db.update_thing(self.ws(), thing_id, request).await?;
         self.publish_device_updated_event(&old_device, request, &updated_device)
             .await;
-        tracing::info!("Thing {} updated successfully", device_id);
+        tracing::info!("Thing {} updated successfully", thing_id);
         Ok(updated_device)
     }
 
@@ -343,20 +343,20 @@ impl DeviceService {
         }
     }
 
-    pub async fn delete_thing(&self, device_id: &str) -> Result<bool, Error> {
-        tracing::info!("Deleting device: {}", device_id);
+    pub async fn delete_thing(&self, thing_id: &str) -> Result<bool, Error> {
+        tracing::info!("Deleting device: {}", thing_id);
         let device = self
             .db
-            .find_thing_by_id(self.ws(), device_id)
+            .find_thing_by_id(self.ws(), thing_id)
             .await?
             .ok_or(Error::NotFound)?;
 
         // Cascade: delete all sub-devices linked to this gateway
-        if let Ok(sub_devices) = self.db.find_things_by_linked_gateway(self.ws(), device_id).await {
+        if let Ok(sub_devices) = self.db.find_things_by_linked_gateway(self.ws(), thing_id).await {
             let sub_ids: Vec<String> = sub_devices.iter().map(|d| d.id.clone()).collect();
             if !sub_ids.is_empty() {
                 tracing::info!(
-                    gateway_id = %device_id,
+                    gateway_id = %thing_id,
                     sub_device_count = sub_ids.len(),
                     "Cascade deleting sub-devices"
                 );
@@ -364,11 +364,11 @@ impl DeviceService {
             }
         }
 
-        let deleted_count = self.db.delete_thing(self.ws(), device_id).await?;
+        let deleted_count = self.db.delete_thing(self.ws(), thing_id).await?;
         let success = deleted_count > 0;
         if success {
             self.publish_device_deleted_event(&device).await;
-            tracing::info!("Thing {} deleted successfully", device_id);
+            tracing::info!("Thing {} deleted successfully", thing_id);
         }
         Ok(success)
     }
@@ -409,16 +409,16 @@ impl DeviceService {
             .await;
     }
 
-    pub async fn update_thing_state(&self, device_id: &str, new_state: i32) -> Result<(), Error> {
+    pub async fn update_thing_state(&self, thing_id: &str, new_state: i32) -> Result<(), Error> {
         let device = self
             .db
-            .find_thing_by_id(self.ws(), device_id)
+            .find_thing_by_id(self.ws(), thing_id)
             .await?
             .ok_or(Error::NotFound)?;
         let old_state: i32 = device.status.into();
         if old_state != new_state {
-            self.db.update_thing_state(self.ws(), device_id, new_state).await?;
-            if let Ok(Some(updated_device)) = self.db.find_thing_by_id(self.ws(), device_id).await {
+            self.db.update_thing_state(self.ws(), thing_id, new_state).await?;
+            if let Ok(Some(updated_device)) = self.db.find_thing_by_id(self.ws(), thing_id).await {
                 self.publish_device_state_updated_event(&updated_device, old_state, new_state)
                     .await;
             }
@@ -445,16 +445,16 @@ impl DeviceService {
             .await;
     }
 
-    pub async fn get_device_by_id(&self, device_id: &str) -> Result<Option<Thing>, Error> {
+    pub async fn get_thing_by_id(&self, thing_id: &str) -> Result<Option<Thing>, Error> {
         self.db
-            .find_thing_by_id(self.ws(), device_id)
+            .find_thing_by_id(self.ws(), thing_id)
             .await
             .map_err(|e| self.io_error(e))
     }
 
-    pub async fn get_device_by_id_with_tags(&self, device_id: &str) -> Result<Option<Thing>, Error> {
+    pub async fn get_thing_by_id_with_tags(&self, thing_id: &str) -> Result<Option<Thing>, Error> {
         self.db
-            .find_thing_by_id(self.ws(), device_id)
+            .find_thing_by_id(self.ws(), thing_id)
             .await
             .map_err(|e| self.io_error(e))
     }
@@ -504,9 +504,9 @@ impl DeviceService {
             .map_err(|e| self.io_error(e))
     }
 
-    pub async fn update_thing_enabled_status(&self, device_id: &str, enabled: bool) -> Result<bool, Error> {
+    pub async fn update_thing_enabled_status(&self, thing_id: &str, enabled: bool) -> Result<bool, Error> {
         self.db
-            .update_thing_enabled_status(self.ws(), device_id, enabled)
+            .update_thing_enabled_status(self.ws(), thing_id, enabled)
             .await
             .map_err(|e| self.io_error(e))
     }
@@ -545,49 +545,49 @@ impl DeviceService {
             .map_err(|e| self.io_error(e))
     }
 
-    pub async fn get_device_properties(&self, device_id: &str) -> Result<Vec<ThingProperty>, Error> {
+    pub async fn get_thing_properties(&self, thing_id: &str) -> Result<Vec<ThingProperty>, Error> {
         self.db
-            .find_thing_properties_by_thing_id(device_id)
+            .find_thing_properties_by_thing_id(thing_id)
             .await
             .map_err(|e| self.io_error(e))
     }
 
     pub async fn get_device_property_by_name(
         &self,
-        device_id: &str,
+        thing_id: &str,
         property_name: &str,
     ) -> Result<Option<ThingProperty>, Error> {
-        let properties = self.get_device_properties(device_id).await?;
+        let properties = self.get_thing_properties(thing_id).await?;
         Ok(properties.into_iter().find(|p| p.name == property_name))
     }
 
-    pub async fn get_device_properties_page(
+    pub async fn get_thing_properties_page(
         &self,
-        device_id: &str,
+        thing_id: &str,
         property_name: Option<String>,
         page_no: u32,
         page_size: u32,
     ) -> Result<DataObjectWithPagination<ThingProperty>, Error> {
-        let mut properties = self.get_device_properties(device_id).await?;
+        let mut properties = self.get_thing_properties(thing_id).await?;
         if let Some(name) = property_name {
             properties.retain(|p| p.name.contains(&name));
         }
         Ok(DataObjectWithPagination::new(&properties, page_no, page_size))
     }
 
-    pub async fn get_device_commands(&self, device_id: &str) -> Result<Vec<ThingCommand>, Error> {
+    pub async fn get_thing_commands(&self, thing_id: &str) -> Result<Vec<ThingCommand>, Error> {
         self.db
-            .find_thing_commands_by_thing_id(device_id)
+            .find_thing_commands_by_thing_id(thing_id)
             .await
             .map_err(|e| self.io_error(e))
     }
 
-    pub async fn get_device_command_by_name(
+    pub async fn get_thing_command_by_name(
         &self,
-        device_id: &str,
+        thing_id: &str,
         command_name: &str,
     ) -> Result<Option<ThingCommand>, Error> {
-        let commands = self.get_device_commands(device_id).await?;
+        let commands = self.get_thing_commands(thing_id).await?;
         Ok(commands.into_iter().find(|c| c.name == command_name))
     }
 
@@ -640,7 +640,7 @@ impl DeviceService {
             .await;
     }
 
-    pub async fn delete_devices_batch(&self, device_ids: &[String]) -> Result<u64, Error> {
+    pub async fn delete_things_batch(&self, device_ids: &[String]) -> Result<u64, Error> {
         let devices = self.db.find_things_by_ids(self.ws(), device_ids).await?;
         let deleted_count = self.db.delete_things_by_ids(self.ws(), device_ids).await?;
         for device in &devices {
@@ -653,8 +653,8 @@ impl DeviceService {
         self.db.update_thing_states_batch(self.ws(), updates).await
     }
 
-    pub async fn device_exists(&self, device_id: &str) -> Result<bool, Error> {
-        match self.get_device_by_id(device_id).await? {
+    pub async fn thing_exists(&self, thing_id: &str) -> Result<bool, Error> {
+        match self.get_thing_by_id(thing_id).await? {
             Some(_) => Ok(true),
             None => Ok(false),
         }
@@ -683,8 +683,8 @@ impl DeviceService {
         }
     }
 
-    pub async fn validate_device(&self, device_id: &str) -> Result<Vec<String>, Error> {
-        let device = self.get_device_by_id(device_id).await?.ok_or(Error::NotFound)?;
+    pub async fn validate_thing(&self, thing_id: &str) -> Result<Vec<String>, Error> {
+        let device = self.get_thing_by_id(thing_id).await?.ok_or(Error::NotFound)?;
         let mut errors = Vec::new();
         if let Err(e) = device.validate() {
             errors.push(e);
@@ -698,33 +698,33 @@ impl DeviceService {
         Ok(errors)
     }
 
-    async fn load_properties_with_fallback(&self, device_id: &str) -> Option<Vec<ThingProperty>> {
-        match self.get_device_properties(device_id).await {
+    async fn load_properties_with_fallback(&self, thing_id: &str) -> Option<Vec<ThingProperty>> {
+        match self.get_thing_properties(thing_id).await {
             Ok(properties) => Some(properties),
             Err(e) => {
-                tracing::warn!("Failed to load properties for device {}: {}", device_id, e);
+                tracing::warn!("Failed to load properties for device {}: {}", thing_id, e);
                 Some(Vec::new())
             }
         }
     }
 
-    async fn load_commands_with_fallback(&self, device_id: &str) -> Option<Vec<ThingCommand>> {
-        match self.get_device_commands(device_id).await {
+    async fn load_commands_with_fallback(&self, thing_id: &str) -> Option<Vec<ThingCommand>> {
+        match self.get_thing_commands(thing_id).await {
             Ok(commands) => Some(commands),
             Err(e) => {
-                tracing::warn!("Failed to load commands for device {}: {}", device_id, e);
+                tracing::warn!("Failed to load commands for device {}: {}", thing_id, e);
                 Some(Vec::new())
             }
         }
     }
 
-    pub async fn load_complete_device(&self, device_id: &str) -> Result<Option<Thing>, Error> {
-        let mut device = match self.db.find_thing_by_id(self.ws(), device_id).await? {
+    pub async fn load_complete_device(&self, thing_id: &str) -> Result<Option<Thing>, Error> {
+        let mut device = match self.db.find_thing_by_id(self.ws(), thing_id).await? {
             Some(device) => device,
             None => return Ok(None),
         };
-        device.properties = self.load_properties_with_fallback(device_id).await;
-        device.commands = self.load_commands_with_fallback(device_id).await;
+        device.properties = self.load_properties_with_fallback(thing_id).await;
+        device.commands = self.load_commands_with_fallback(thing_id).await;
         device.status = tinyiothub_core::models::thing::ThingStatus::Offline;
         device.last_heartbeat = None;
         Ok(Some(device))
@@ -732,23 +732,23 @@ impl DeviceService {
 
     pub async fn load_complete_things(&self, device_ids: &[String]) -> Result<Vec<Thing>, Error> {
         let mut devices = Vec::new();
-        for device_id in device_ids {
-            if let Some(device) = self.load_complete_device(device_id).await? {
+        for thing_id in device_ids {
+            if let Some(device) = self.load_complete_device(thing_id).await? {
                 devices.push(device);
             }
         }
         Ok(devices)
     }
 
-    fn build_device_command_request(
+    fn build_thing_command_request(
         &self,
-        device_id: &str,
+        thing_id: &str,
         command_name: &str,
         command_type: &str,
         params: Option<String>,
     ) -> CreateThingCommandRequest {
         CreateThingCommandRequest {
-            thing_id: device_id.to_string(),
+            thing_id: thing_id.to_string(),
             name: command_name.to_string(),
             display_name: Some(format!("{} ({})", command_name, command_type)),
             description: Some(format!("Automation command: {} via {}", command_name, command_type)),
@@ -758,18 +758,18 @@ impl DeviceService {
 
     pub async fn send_command(
         &self,
-        device_id: &str,
+        thing_id: &str,
         command_name: &str,
         command_type: &str,
         params: Option<String>,
     ) -> Result<String, Error> {
         let device = self
             .db
-            .find_thing_by_id(self.ws(), device_id)
+            .find_thing_by_id(self.ws(), thing_id)
             .await?
             .ok_or(Error::NotFound)?;
         let command_id = uuid::Uuid::new_v4().to_string();
-        let create_request = self.build_device_command_request(device_id, command_name, command_type, params);
+        let create_request = self.build_thing_command_request(thing_id, command_name, command_type, params);
         let _ = self.db.create_thing_command(&create_request).await;
         self.publish_command_started_event(&device, command_name, command_type, &command_id)
             .await;
@@ -781,7 +781,7 @@ fn params_to_criteria(params: &ThingQueryParams) -> ThingCriteria {
     ThingCriteria {
         name: params.name.clone(),
         display_name: params.display_name.clone(),
-        device_type: params.category.clone(),
+        category: params.category.clone(),
         address: params.address.clone(),
         driver_name: params.driver_name.clone(),
         state: params.state,

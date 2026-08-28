@@ -16,7 +16,7 @@ fn test_config() -> EdgeConfig {
 async fn test_app_state_init_success() {
     let config = test_config();
     let creds = tinyiothub_edge::config::GatewayCredentials {
-        device_id: "test-dev".into(),
+        thing_id: "test-dev".into(),
         client_id: "test-client".into(),
         username: "user".into(),
         password: "pass".into(),
@@ -34,7 +34,7 @@ async fn test_app_state_init_success() {
 async fn test_app_state_is_cloneable() {
     let config = test_config();
     let creds = tinyiothub_edge::config::GatewayCredentials {
-        device_id: "test-dev".into(),
+        thing_id: "test-dev".into(),
         client_id: "test-client".into(),
         username: "user".into(),
         password: "pass".into(),
@@ -43,5 +43,5 @@ async fn test_app_state_is_cloneable() {
     let state = AppState::new(config, creds).await.unwrap();
     let _state2 = state.clone();
     // Verify services are accessible after clone
-    assert!(_state2.device_service.list_devices(None).await.is_ok());
+    assert!(_state2.thing_service.list_things(None).await.is_ok());
 }

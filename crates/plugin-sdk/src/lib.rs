@@ -8,20 +8,20 @@
 //! use tinyiothub_plugin_sdk::*;
 //!
 //! pub struct MyDriver {
-//!     device: Device,
+//!     thing: Thing,
 //! }
 //!
 //! impl MyDriver {
-//!     pub fn new(device: Device) -> Self {
-//!         Self { device }
+//!     pub fn new(thing: Thing) -> Self {
+//!         Self { thing }
 //!     }
 //! }
 //!
-//! impl DeviceDriver for MyDriver {
-//!     fn device(&self) -> &Device { &self.device }
-//!     fn device_mut(&mut self) -> &mut Device { &mut self.device }
+//! impl ThingDriver for MyDriver {
+//!     fn thing(&self) -> &Thing { &self.thing }
+//!     fn thing_mut(&mut self) -> &mut Thing { &mut self.thing }
 //!     fn read_data(&mut self) -> Result<Vec<ResultValue>> { Ok(vec![]) }
-//!     fn execute_command(&mut self, _cmd: &DeviceCommand) -> Result<bool> { Ok(true) }
+//!     fn execute_command(&mut self, _cmd: &ThingCommand) -> Result<bool> { Ok(true) }
 //! }
 //!
 //! export_driver!(MyDriver);
@@ -40,6 +40,6 @@ pub mod types;
 
 // 重新导出核心类型
 pub use config::*;
-pub use driver::DeviceDriver;
+pub use driver::ThingDriver;
 pub use error::*;
 pub use types::*;

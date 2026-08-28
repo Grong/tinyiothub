@@ -22,7 +22,8 @@ use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError,
 #[serde(rename_all = "camelCase")]
 struct ListAlarmsInput {
     workspace_id: Option<String>,
-    device_ids: Option<Vec<String>>,
+    #[serde(alias = "deviceIds")]
+    thing_ids: Option<Vec<String>>,
     levels: Option<Vec<String>>,
     statuses: Option<Vec<String>>,
     start_time: Option<String>,
@@ -47,7 +48,7 @@ struct CreateAlarmRuleInput {
     workspace_id: String,
     name: String,
     description: Option<String>,
-    #[serde(rename = "deviceId", alias = "thingId")]
+    #[serde(rename = "thingId", alias = "deviceId")]
     thing_id: Option<String>,
     property_id: Option<String>,
     rule_type: String,
@@ -88,10 +89,10 @@ impl ToolHandler for AlarmListHandler {
             },
         );
         props.insert(
-            "deviceIds".to_string(),
+            "thingIds".to_string(),
             PropertySchema {
                 prop_type: "array".to_string(),
-                description: Some("Filter by device IDs".to_string()),
+                description: Some("Filter by thing IDs".to_string()),
             },
         );
         props.insert(
@@ -184,7 +185,7 @@ impl ToolHandler for AlarmListHandler {
 
         let criteria = AlarmQueryCriteria {
             workspace_id: Some(claims.workspace_id.clone()),
-            thing_ids: input.device_ids,
+            thing_ids: input.thing_ids,
             property_ids: None,
             alarm_levels,
             alarm_types: None,
@@ -285,7 +286,7 @@ impl ToolHandler for AlarmAcknowledgeHandler {
         // Using tenant_device_service ensures the device belongs to the authenticated workspace
         let tenant_device_service = state.tenant_device_service_str(&claims.workspace_id);
         let _device = tenant_device_service
-            .get_device_by_id(&alarm.thing_id)
+            .get_thing_by_id(&alarm.thing_id)
             .await
             .map_err(|e| ToolError::Internal(format!("Failed to fetch device: {}", e)))?
             .ok_or_else(|| {
@@ -360,10 +361,10 @@ impl ToolHandler for AlarmRuleAddHandler {
             },
         );
         props.insert(
-            "deviceId".to_string(),
+            "thingId".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Target device ID (optional)".to_string()),
+                description: Some("Target thing ID (optional)".to_string()),
             },
         );
         props.insert(

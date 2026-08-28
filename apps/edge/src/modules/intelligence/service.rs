@@ -1,4 +1,4 @@
-use crate::modules::device::DeviceService;
+use crate::modules::thing::ThingService;
 use crate::modules::driver::DriverService;
 use crate::modules::gateway::GatewayService;
 use crate::shared::error::{EdgeError, EdgeResult};
@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 pub struct IntelligenceService {
     #[allow(dead_code)]
-    device_service: Arc<DeviceService>,
+    thing_service: Arc<ThingService>,
     #[allow(dead_code)]
     driver_service: Arc<DriverService>,
     #[allow(dead_code)]
@@ -15,12 +15,12 @@ pub struct IntelligenceService {
 
 impl IntelligenceService {
     pub fn new(
-        device_service: Arc<DeviceService>,
+        thing_service: Arc<ThingService>,
         driver_service: Arc<DriverService>,
         gateway_service: Arc<GatewayService>,
     ) -> Arc<Self> {
         Arc::new(Self {
-            device_service,
+            thing_service,
             driver_service,
             gateway_service,
         })

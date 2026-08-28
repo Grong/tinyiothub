@@ -441,7 +441,7 @@ impl ThingService {
                 .map(|p| {
                     serde_json::json!({
                         "id": p.id,
-                        "deviceId": p.thing_id,
+                        "thingId": p.thing_id,
                         "name": p.name,
                         "displayName": p.display_name,
                         "description": p.description,
@@ -503,7 +503,7 @@ impl ThingService {
                 .map(|c| {
                     serde_json::json!({
                         "id": c.id,
-                        "deviceId": c.thing_id,
+                        "thingId": c.thing_id,
                         "name": c.name,
                         "displayName": c.display_name,
                         "description": c.description,

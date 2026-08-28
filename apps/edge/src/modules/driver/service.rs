@@ -39,7 +39,7 @@ impl DriverService {
 
         for driver_name in drivers {
             match self.scan_single(&driver_name).await {
-                Ok(devices) => discovered.extend(devices),
+                Ok(things) => discovered.extend(things),
                 Err(e) => {
                     tracing::warn!(
                         driver = %driver_name,

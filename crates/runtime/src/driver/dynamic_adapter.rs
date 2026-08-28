@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use libloading::Library;
 use tinyiothub_core::driver::dynamic::DriverVTable;
-use tinyiothub_core::driver::{DeviceDriver, ResultValue};
+use tinyiothub_core::driver::{ThingDriver, ResultValue};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
@@ -21,15 +21,15 @@ pub struct DynamicEntry {
     pub loaded_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// Wraps an external dynamic library driver, implementing the `DeviceDriver` trait.
-pub struct DynamicDeviceDriver {
+/// Wraps an external dynamic library driver, implementing the `ThingDriver` trait.
+pub struct DynamicThingDriver {
     ctx: *mut c_void,
     vtable: &'static DriverVTable,
     _library: Arc<Library>,
     device: Thing,
 }
 
-impl DynamicDeviceDriver {
+impl DynamicThingDriver {
     /// Create a new dynamic driver from a registry entry and device config.
     /// SAFETY: `entry.vtable` must be valid for the lifetime of the library.
     pub fn new(entry: &DynamicEntry, device: Thing) -> Result<Self, Error> {
@@ -65,15 +65,15 @@ impl DynamicDeviceDriver {
 
 // SAFETY: The raw pointer `ctx` is only accessed through the vtable functions,
 // and the vtable itself is static. The library is kept alive via Arc.
-unsafe impl Send for DynamicDeviceDriver {}
-unsafe impl Sync for DynamicDeviceDriver {}
+unsafe impl Send for DynamicThingDriver {}
+unsafe impl Sync for DynamicThingDriver {}
 
-impl DeviceDriver for DynamicDeviceDriver {
-    fn device(&self) -> &Thing {
+impl ThingDriver for DynamicThingDriver {
+    fn thing(&self) -> &Thing {
         &self.device
     }
 
-    fn device_mut(&mut self) -> &mut Thing {
+    fn thing_mut(&mut self) -> &mut Thing {
         &mut self.device
     }
 

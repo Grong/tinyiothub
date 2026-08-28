@@ -37,7 +37,7 @@ async fn test_get_system_metrics() {
 }
 
 #[tokio::test]
-async fn test_get_device_metrics() {
+async fn test_get_thing_metrics() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
