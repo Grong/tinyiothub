@@ -7,6 +7,7 @@
 - **BREAKING (DB/API)**: device schema 全面更名为 thing——表 `devices`→`things` 等 5 张，列 `device_id`→`thing_id`（13 张表）、`device_type`→`category`、`device_limit`→`thing_limit`；JSON 字段 `deviceId`→`thingId`、`deviceType`→`category`。老库经迁移 `20260825000001` 自动升级（启动前自动备份）。前端适配在后续 PR。
 - **BREAKING (REST JSON)**: REST 响应/请求 JSON 键 `deviceId`→`thingId`、`deviceType`→`category` 对前端为破坏性变更（前端适配在 PR-2）。
 - **BREAKING (cron 配置)**: `device_command` 类型定时任务的配置键 `device_id`→`thing_id`——已存量的 `device_command` 任务配置需手工更新，不提供数据迁移。
+- **BREAKING (持久化策略)**: 策略动作名 `reboot_device`/`wipe_device`→`reboot_thing`/`wipe_thing`——存量 `workspace_autonomy_policy` 行（`allowed_actions`/`denied_actions` JSON 数组）中的旧动作名由迁移 `20260828000001` 自动改写（启动前自动备份）；不改写则 gate_check 对旧动作名静默失配（如 deny `wipe_device` 不再拦截 `wipe_thing`）。
 - **BREAKING (wire/驱动协议, PR-2)**: 驱动/MQTT/心跳/LLM 契约字段直接更名为 thing（无兼容层）——MQTT payload 键 `device_id`→`thing_id`、`device_type`→`category`；topic 段 `device/discover`→`thing/discover`、`/config/device`→`/config/thing`；心跳 JSON `deviceId`→`thingId`；LLM 心跳契约 `device_id`→`thing_id`（含 pending_proposals）；策略动作名 `reboot_device`/`wipe_device`→`reboot_thing`/`wipe_thing`；配对应答 `device_id`→`thing_id`。**边缘网关必须与云端同步升级**（edge 本地 REST 同步迁至 `/api/v1/things`，本地凭据文件键 `device_id`→`thing_id`）。
 - **BREAKING (MCP schema, PR-2)**: MCP 工具 input_schema 主键翻转为 `thingId`/`targetThingId`；旧键 `deviceId`/`targetDeviceId` 经 serde alias 继续接受（老客户端不受损）。
 - **BREAKING (plugin sinks, PR-2)**: 存储 sink 默认列/tag 更名——postgres sink 默认列 `device_id`→`thing_id`，influxdb sink tag 同步；使用默认 schema 的外部表需相应调整。
