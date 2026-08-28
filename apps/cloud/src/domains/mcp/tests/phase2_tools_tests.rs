@@ -276,10 +276,7 @@ async fn test_create_schedule_accepts_advertised_target_thing_id_key() {
         }))
         .await;
     if let Err(crate::domains::mcp::ToolError::InvalidParams(e)) = result {
-        panic!(
-            "legacy targetDeviceId alias must deserialize, got InvalidParams: {}",
-            e
-        );
+        panic!("legacy targetDeviceId alias must deserialize, got InvalidParams: {}", e);
     }
 }
 
@@ -311,9 +308,6 @@ async fn test_update_schedule_accepts_advertised_target_thing_id_key() {
         }))
         .await;
     if let Err(crate::domains::mcp::ToolError::InvalidParams(e)) = result {
-        panic!(
-            "legacy targetDeviceId alias must deserialize, got InvalidParams: {}",
-            e
-        );
+        panic!("legacy targetDeviceId alias must deserialize, got InvalidParams: {}", e);
     }
 }

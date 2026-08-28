@@ -6,7 +6,7 @@ use super::{
     status::{ThingOverview, ThingStatusManager},
 };
 use crate::event_bus::{EventBus, publish_event_safe};
-use tinyiothub_core::driver::{ThingDriver, DriverConfig, ResultValue};
+use tinyiothub_core::driver::{DriverConfig, ResultValue, ThingDriver};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::models::event::{
     ContentElement, Event as DomainEvent, EventLevel, EventSource, RichContent, TextFormat, ThingEventType,

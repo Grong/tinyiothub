@@ -1,6 +1,6 @@
 //! 设备驱动trait定义
 
-use crate::{Thing, ThingCommand, Result, ResultValue};
+use crate::{Result, ResultValue, Thing, ThingCommand};
 use std::collections::HashMap;
 
 /// 设备驱动trait（核心接口）

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use libloading::Library;
 use tinyiothub_core::driver::dynamic::DriverVTable;
-use tinyiothub_core::driver::{ThingDriver, ResultValue};
+use tinyiothub_core::driver::{ResultValue, ThingDriver};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;

@@ -9,7 +9,7 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::security::Claims;
 
 use crate::domains::driver::legacy::{
-    ThingMetrics, ThingPerformanceMetrics, PerformanceAlert, SystemOverview, SystemPerformanceOverview,
+    PerformanceAlert, SystemOverview, SystemPerformanceOverview, ThingMetrics, ThingPerformanceMetrics,
 };
 use tinyiothub_web::api_response::ApiResponse;
 

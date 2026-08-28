@@ -1,4 +1,4 @@
-use tinyiothub_core::driver::{ThingDriver, ResultValue};
+use tinyiothub_core::driver::{ResultValue, ThingDriver};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 

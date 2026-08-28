@@ -178,12 +178,11 @@ async fn policy_action_names_migrated() {
     assert_eq!(allowed, "[\"*\"]", "默认行不得受影响");
     assert_eq!(denied, "[]", "默认行不得受影响");
 
-    let allowed: String = sqlx::query_scalar(
-        "SELECT allowed_actions FROM workspace_autonomy_policy WHERE workspace_id='ws_prefix'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let allowed: String =
+        sqlx::query_scalar("SELECT allowed_actions FROM workspace_autonomy_policy WHERE workspace_id='ws_prefix'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(allowed, "[\"wipe_device_extra\"]", "前缀相似值不得被误改写");
 
     // 迁移后 JSON 仍合法(可被 serde 解析为 Vec<String>)。
@@ -235,7 +234,11 @@ async fn policy_action_names_migrated() {
 
     let cfg_prefix = cfg_of("ws_trust_prefix").await;
     let parsed: tinyiothub_core::heartbeat::TrustConfig = serde_json::from_str(&cfg_prefix).unwrap();
-    assert_eq!(parsed.blocked_tools, vec!["wipe_device_extra"], "前缀相似值不得被误改写");
+    assert_eq!(
+        parsed.blocked_tools,
+        vec!["wipe_device_extra"],
+        "前缀相似值不得被误改写"
+    );
 
     assert_eq!(cfg_of("ws_trust_default").await, "", "默认空串不得受影响");
 

@@ -31,11 +31,9 @@ pub mod query_service_impl;
 pub mod service;
 
 pub use monitoring as monitoring_service;
-pub use monitoring::{ThingMetrics, ThingMonitoringService, SystemOverview};
+pub use monitoring::{SystemOverview, ThingMetrics, ThingMonitoringService};
 pub use performance as performance_service;
-pub use performance::{
-    ThingPerformanceMetrics, ThingPerformanceService, PerformanceAlert, SystemPerformanceOverview,
-};
+pub use performance::{PerformanceAlert, SystemPerformanceOverview, ThingPerformanceMetrics, ThingPerformanceService};
 pub use query as query_service;
 pub use query::ThingQueryService;
 pub use query_service_impl::SqliteThingQueryService;

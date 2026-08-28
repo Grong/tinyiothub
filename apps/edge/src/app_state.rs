@@ -1,13 +1,13 @@
 use crate::config::{EdgeConfig, GatewayCredentials};
 use crate::modules::command::CommandService;
 use crate::modules::config_mgmt::ConfigService;
-use crate::modules::thing::ThingService;
 use crate::modules::driver::DriverService;
 use crate::modules::gateway::GatewayService;
 use crate::modules::health::HealthService;
 use crate::modules::intelligence::IntelligenceService;
 use crate::modules::offline::OfflineBuffer;
 use crate::modules::telemetry::TelemetryService;
+use crate::modules::thing::ThingService;
 use crate::shared::error::EdgeResult;
 use crate::shared::storage::init_database;
 use std::sync::Arc;

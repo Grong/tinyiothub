@@ -104,10 +104,7 @@ impl ThingMonitoringService {
         if let Some(_device) = self.device_cache.get(thing_id) {
             let device_service = super::service::ThingService::new(self.db.clone());
 
-            let properties = device_service
-                .get_thing_properties(thing_id)
-                .await
-                .unwrap_or_default();
+            let properties = device_service.get_thing_properties(thing_id).await.unwrap_or_default();
             let commands = device_service.get_thing_commands(thing_id).await.unwrap_or_default();
 
             let total_properties = properties.len() as u32;

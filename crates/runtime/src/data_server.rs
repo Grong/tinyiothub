@@ -13,7 +13,7 @@ use tinyiothub_core::models::event::{
 use tinyiothub_core::models::thing_property::ThingProperty;
 use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 
-use crate::driver::{ThingOverview, DriverWrapper, create_driver};
+use crate::driver::{DriverWrapper, ThingOverview, create_driver};
 use crate::event_bus::{EventBus, publish_event_safe};
 use crate::ports::ThingCacheSource;
 

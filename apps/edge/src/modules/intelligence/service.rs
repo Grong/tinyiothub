@@ -1,6 +1,6 @@
-use crate::modules::thing::ThingService;
 use crate::modules::driver::DriverService;
 use crate::modules::gateway::GatewayService;
+use crate::modules::thing::ThingService;
 use crate::shared::error::{EdgeError, EdgeResult};
 use std::sync::Arc;
 

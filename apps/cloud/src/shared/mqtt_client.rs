@@ -6,8 +6,8 @@ use std::{
 use crate::domains::driver::gateway::{
     service::MqttPublish,
     types::{
-        ThingDiscoverMessage, ThingTelemetryMessage, GatewayDataMessage, PairingAnnounce, StatusMessage,
-        TelemetryMessage,
+        GatewayDataMessage, PairingAnnounce, StatusMessage, TelemetryMessage, ThingDiscoverMessage,
+        ThingTelemetryMessage,
     },
 };
 use crate::domains::event::{
@@ -197,13 +197,13 @@ impl PlatformMqttClient {
                 None
             }
             Some("thing") if parts.len() >= 7 && parts[5] == "discover" => {
-                serde_json::from_slice::<ThingDiscoverMessage>(payload)
-                    .ok()
-                    .map(|msg| GatewayDataMessage::ThingDiscover {
+                serde_json::from_slice::<ThingDiscoverMessage>(payload).ok().map(|msg| {
+                    GatewayDataMessage::ThingDiscover {
                         gateway_id,
                         workspace_id,
                         msg,
-                    })
+                    }
+                })
             }
             Some("thing") if parts.len() >= 7 && parts[5] != "discover" => {
                 let sub_id = parts[5].to_string();

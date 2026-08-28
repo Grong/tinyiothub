@@ -1,6 +1,6 @@
 pub use drivers::{ModbusDriver, SimulatedDriver, snmp_driver::SnmpDriver};
 pub use status::ThingOverview;
-pub use tinyiothub_core::driver::{ThingDriver, DriverConfig, ResultValue};
+pub use tinyiothub_core::driver::{DriverConfig, ResultValue, ThingDriver};
 pub use tinyiothub_plugin_sdk::{ComponentInfo, ComponentOption, CreateComponentRequest};
 pub use wrapper::DriverWrapper;
 

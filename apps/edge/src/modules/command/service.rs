@@ -1,5 +1,5 @@
-use crate::modules::thing::ThingService;
 use crate::modules::gateway::GatewayService;
+use crate::modules::thing::ThingService;
 use crate::shared::error::EdgeResult;
 use std::sync::Arc;
 

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
-use tinyiothub_runtime::ports::{ThingCacheSource, ThingCommandQueries, EventRetentionStore};
+use tinyiothub_runtime::ports::{EventRetentionStore, ThingCacheSource, ThingCommandQueries};
 use tinyiothub_storage::Db;
 use tinyiothub_storage::cache::ThingCache;
 

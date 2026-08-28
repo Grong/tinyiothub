@@ -10,7 +10,7 @@ use serde_json::Value;
 use tinyiothub_core::models::thing::CreateThingRequest;
 use tinyiothub_storage::thing::{ThingCriteria, ThingSortBy, ThingSortOrder};
 
-use crate::domains::thing::legacy::thing_query::{find_thing_by_id_with_tags, find_thing_by_id, load_tags_for_things};
+use crate::domains::thing::legacy::thing_query::{find_thing_by_id, find_thing_by_id_with_tags, load_tags_for_things};
 
 use crate::domains::mcp::McpState;
 use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
@@ -141,8 +141,7 @@ impl ToolHandler for ThingProfileHandler {
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: GetThingInput =
-            serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+        let input: GetThingInput = serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
         let state = self
             .state

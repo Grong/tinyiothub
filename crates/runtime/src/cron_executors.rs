@@ -15,7 +15,7 @@ use serde_json::Value;
 pub use tinyiothub_core::cron::{ExecutionResult, ExecutorError, JobExecutor};
 use tinyiothub_core::models::cron_job::CronJob;
 
-use crate::ports::{ThingCommandQueries, EventRetentionStore};
+use crate::ports::{EventRetentionStore, ThingCommandQueries};
 
 /// Executes device commands via DataServer.
 pub struct ThingCommandExecutor {

@@ -3,7 +3,7 @@ use std::time::Instant;
 use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use tinyiothub_core::driver::{BackoffStrategy, ThingDriver, ResultValue, RetryConfig};
+use tinyiothub_core::driver::{BackoffStrategy, ResultValue, RetryConfig, ThingDriver};
 use tinyiothub_core::error::Error;
 
 use super::simulated::anomaly::AnomalyEngine;

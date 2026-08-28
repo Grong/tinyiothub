@@ -10,10 +10,10 @@ use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder, PaginatedRespons
 
 use super::service::TemplateValidator;
 use crate::domains::thing::template::types::CreateThingTemplateRequest;
-use crate::domains::thing::template::types::ThingCreationInput;
-use crate::domains::thing::template::types::ThingPreview;
 use crate::domains::thing::template::types::TemplateCategory;
 use crate::domains::thing::template::types::TemplateQueryParams;
+use crate::domains::thing::template::types::ThingCreationInput;
+use crate::domains::thing::template::types::ThingPreview;
 use crate::domains::thing::template::types::ThingTemplate;
 use crate::domains::thing::template::types::UpdateThingTemplateRequest;
 
