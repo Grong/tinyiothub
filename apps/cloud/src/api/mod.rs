@@ -38,6 +38,11 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
     // 创建需要认证的路由
     let protected_routes = Router::new()
         .nest("/devices", crate::domains::admin::thing::management::create_router())
+        // nest() does not forward the bare trailing-slash path; tombstone it explicitly.
+        .route(
+            "/devices/",
+            axum::routing::any(crate::domains::admin::thing::management::device_endpoint_removed),
+        )
         .nest("/drivers", crate::domains::driver::router())
         .nest("/alarms", crate::domains::alarm::router())
         .nest("/alarm-rules", crate::domains::alarm::rule_router())

@@ -284,3 +284,35 @@ async fn test_get_thing() {
     assert_eq!(j_get["result"]["thingType"], "line");
     assert!(j_get["result"]["breadcrumb"].is_array(), "Breadcrumb should be array");
 }
+
+// ──────────────────────────────────────────────
+// Removed /devices endpoints (410 tombstone)
+// ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_removed_device_endpoints_return_410() {
+    let app = setup_with_workspace("tenant-1", "ws-tombstone").await;
+    let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-tombstone");
+
+    for (method, uri) in [
+        ("GET", "/api/v1/devices/"),
+        ("POST", "/api/v1/devices"),
+        ("GET", "/api/v1/devices/some-removed-id"),
+        ("DELETE", "/api/v1/devices/some-removed-id"),
+        ("POST", "/api/v1/devices/some-removed-id/enable"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(auth_request(method, uri, &token, None))
+            .await
+            .unwrap();
+        let (status, json) = response_parts(response).await;
+        assert_eq!(status, StatusCode::GONE, "{method} {uri} must return 410 Gone");
+        assert_eq!(json["code"], 410, "{method} {uri} must carry code 410");
+        assert!(
+            json["msg"].as_str().unwrap_or_default().contains("/api/things"),
+            "{method} {uri} tombstone message must point to /api/things, got: {}",
+            json["msg"]
+        );
+    }
+}

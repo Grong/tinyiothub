@@ -3020,7 +3020,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
         <div class="template-overview__title-wrap">
           <div class="template-overview__title">${displayName}</div>
           <div class="template-overview__meta">
-            ${t.manufacturer ? html`${t.manufacturer} · ` : nothing}${t.category || t.category}${t.version ? html` · v${t.version}` : nothing}
+            ${t.manufacturer ? html`${t.manufacturer} · ` : nothing}${t.category}${t.version ? html` · v${t.version}` : nothing}
           </div>
         </div>
         ${t.isBuiltin ? html`<span class="template-overview__badge">内置</span>` : nothing}

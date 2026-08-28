@@ -44,7 +44,7 @@ impl From<ThingPropertyRow> for ThingProperty {
     }
 }
 
-/// Find a device property by ID
+/// Find a thing property by ID
 pub(crate) async fn find_thing_property_by_id(
     pool: &SqlitePool,
     id: &str,
@@ -68,7 +68,7 @@ pub(crate) async fn find_thing_property_by_id(
     Ok(property)
 }
 
-/// Find properties by device ID
+/// Find properties by thing ID
 pub(crate) async fn find_thing_properties_by_thing_id(
     pool: &SqlitePool,
     thing_id: &str,
@@ -93,7 +93,7 @@ pub(crate) async fn find_thing_properties_by_thing_id(
     Ok(properties)
 }
 
-/// Batch create device properties
+/// Batch create thing properties
 pub(crate) async fn create_thing_properties_batch(
     pool: &SqlitePool,
     requests: &[CreateThingPropertyRequest],
@@ -146,17 +146,17 @@ pub(crate) async fn create_thing_properties_batch(
 }
 
 impl Db {
-    /// 按 ID 查设备属性（清除运行时字段）。
+    /// 按 ID 查物属性（清除运行时字段）。
     pub async fn find_thing_property_by_id(&self, id: &str) -> Result<Option<ThingProperty>, sqlx::Error> {
         find_thing_property_by_id(self.pool(), id).await
     }
 
-    /// 按设备 ID 列出属性（按名称排序，清除运行时字段）。
+    /// 按物 ID 列出属性（按名称排序，清除运行时字段）。
     pub async fn find_thing_properties_by_thing_id(&self, thing_id: &str) -> Result<Vec<ThingProperty>, sqlx::Error> {
         find_thing_properties_by_thing_id(self.pool(), thing_id).await
     }
 
-    /// 批量创建设备属性（内部事务，逐条回读）。
+    /// 批量创建物属性（内部事务，逐条回读）。
     pub async fn create_thing_properties_batch(
         &self,
         requests: &[CreateThingPropertyRequest],

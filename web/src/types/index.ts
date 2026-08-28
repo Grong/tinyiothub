@@ -394,7 +394,7 @@ export interface DashboardStats {
   systemUptime: number;
   todayMessages: number;
   monthlyGrowth: {
-    devices: number;
+    things: number;
     messages: number;
   };
 }
