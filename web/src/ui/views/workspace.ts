@@ -98,15 +98,15 @@ export class WorkspaceView extends LitElement {
   }
 
   private _handleA2uiAction(functionId: string, data: Record<string, unknown>): void {
-    const deviceId = data.deviceId as string | undefined;
+    const thingId = (data.thingId ?? data.deviceId) as string | undefined;
 
-    if (functionId === "viewDevice" && deviceId) {
-      window.history.pushState({}, "", `/devices/${deviceId}`);
+    if (functionId === "viewDevice" && thingId) {
+      window.history.pushState({}, "", `/things/${thingId}`);
       window.dispatchEvent(new PopStateEvent("popstate"));
       return;
     }
-    if (functionId === "controlDevice" && deviceId) {
-      window.history.pushState({}, "", `/devices/${deviceId}`);
+    if (functionId === "controlDevice" && thingId) {
+      window.history.pushState({}, "", `/things/${thingId}`);
       window.dispatchEvent(new PopStateEvent("popstate"));
       return;
     }
@@ -204,7 +204,7 @@ export class WorkspaceView extends LitElement {
   }
 
   private _renderInsightSurfaces(dataIds: string[]) {
-    const BLOCK_KINDS = ["Table", "DeviceTable", "AlarmTable", "List", "Tabs", "Chart", "DataChart", "Modal", "Column", "Scene3D"];
+    const BLOCK_KINDS = ["Table", "ThingTable", "AlarmTable", "List", "Tabs", "Chart", "DataChart", "Modal", "Column", "Scene3D"];
     const groups: { type: "stat-row" | "single"; ids: string[] }[] = [];
 
     for (const id of dataIds) {

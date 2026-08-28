@@ -1,9 +1,9 @@
 // Extracted from things.ts (eng-review T14 god-file split).
 // Render helpers take the host view instance; behavior unchanged.
 import { html, nothing } from "lit";
-import { deviceCache } from "../../stores/device-cache.js";
+import { thingCache } from "../../stores/thing-cache.js";
 import { icons } from "../icons.js";
-import type { DeviceProperty, DeviceEvent, Tag } from "../../types/index.js";
+import type { ThingProperty, ThingEvent, Tag } from "../../types/index.js";
 import type { DevicesView } from "./things.js";
 
 export function renderHistoryDialog(host: DevicesView) {
@@ -159,7 +159,7 @@ export function drawHistoryChart(host: DevicesView) {
 export function renderDeviceDetail(host: DevicesView) {
     const profile = host.selectedDevice;
     if (!profile) return nothing;
-    const d = profile.device;
+    const d = profile.thing;
     const ov = profile.overview;
     const deviceTags: Tag[] = (d as any).tags || [];
 
@@ -176,8 +176,8 @@ export function renderDeviceDetail(host: DevicesView) {
               <span class="status-dot status-dot--sm" style="background: ${host.statusColor(d.status)};"></span>
               <span class="status-badge__label">${host.statusLabel(d.status)}</span>
             </span>
-            ${d.deviceType ? html`
-              <span class="type-tag">${d.deviceType}</span>
+            ${d.category ? html`
+              <span class="type-tag">${d.category}</span>
             ` : nothing}
           </div>
           <button class="btn btn--ghost btn--sm" @click=${() => host.openEdit(d)}>编辑</button>
@@ -238,8 +238,8 @@ export function renderDetailProperties(host: DevicesView) {
     if (!profile) return html`<div class="card empty-center">暂无属性数据</div>`;
 
     // 从缓存读取（SSE 推送的实时数据），用 profile.properties 的元数据补充缺失字段
-    const cached = deviceCache.$devicesMap.get().get(profile.device.id);
-    let properties: DeviceProperty[] = [];
+    const cached = thingCache.$devicesMap.get().get(profile.thing.id);
+    let properties: ThingProperty[] = [];
 
     if (cached?.properties?.length) {
       // 有缓存：用 API 属性元数据 + 缓存实时值
@@ -274,7 +274,7 @@ export function renderDetailProperties(host: DevicesView) {
             </tr>
           </thead>
           <tbody>
-            ${properties.map((p: DeviceProperty) => html`
+            ${properties.map((p: ThingProperty) => html`
               <tr>
                 <td>${p.name}</td>
                 <td>${p.displayName || p.name}</td>
@@ -311,7 +311,7 @@ export function renderDetailProperties(host: DevicesView) {
 export function renderDetailCommands(host: DevicesView) {
     const profile = host.selectedDevice;
     if (!profile) return nothing;
-    const d = profile.device;
+    const d = profile.thing;
 
     if (profile.commands.length === 0) {
       return html`<div class="card empty-center">暂无命令</div>`;
@@ -372,7 +372,7 @@ export function renderDetailEvents(host: DevicesView) {
 
     return html`
       <div class="card events-list-wrap">
-        ${events.map((ev: DeviceEvent) => html`
+        ${events.map((ev: ThingEvent) => html`
           <div class="event-item">
             <span class="event-badge ${levelClass(ev.level)}">${levelLabel(ev.level)}</span>
             <div class="event-item__body">
@@ -499,7 +499,7 @@ export function renderDetailAlarms(host: DevicesView) {
       </div>
 
       <!-- Rule editor modal -->
-      ${host.showRuleModal ? host.renderRuleModal(profile.device.id, properties) : nothing}
+      ${host.showRuleModal ? host.renderRuleModal(profile.thing.id, properties) : nothing}
     `;
   }
 

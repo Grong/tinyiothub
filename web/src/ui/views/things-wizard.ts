@@ -108,14 +108,14 @@ export function renderWizardDeviceInfo(host: DevicesView) {
               <div class="template-chip__title">${displayName}</div>
               <div class="template-chip__meta">
                 ${t.manufacturer ? html`<span>${t.manufacturer} · </span>` : nothing}
-                <span>${t.deviceType || t.category}</span>
+                <span>${t.category}</span>
                 ${t.version ? html` · v${t.version}` : nothing}
               </div>
             </div>
             ${t.isBuiltin ? html`<span class="template-chip__badge">内置</span>` : nothing}
           </div>
 
-          <!-- Device name -->
+          <!-- Thing name -->
           <div class="field ${hasError('deviceName') ? 'field--error' : ''}">
             <span>物名称 <span class="form-label-required">*</span></span>
             <input
@@ -127,7 +127,7 @@ export function renderWizardDeviceInfo(host: DevicesView) {
             ${hasError("deviceName") ? html`<div class="form-error">${getError("deviceName")}</div>` : nothing}
           </div>
 
-          <!-- Device description -->
+          <!-- Thing description -->
           <div class="field">
             <span>物描述 <span class="inline-muted">(可选)</span></span>
             <textarea
@@ -138,7 +138,7 @@ export function renderWizardDeviceInfo(host: DevicesView) {
             ></textarea>
           </div>
 
-          <!-- Device address -->
+          <!-- Thing address -->
           <div class="field ${hasError('deviceAddress') ? 'field--error' : ''}">
             <span>物地址 ${isFieldRequired(t.deviceInfo, "address")
               ? html`<span class="form-label-required">*</span>`
@@ -152,7 +152,7 @@ export function renderWizardDeviceInfo(host: DevicesView) {
             ${hasError("deviceAddress") ? html`<div class="form-error">${getError("deviceAddress")}</div>` : nothing}
           </div>
 
-          <!-- Device position -->
+          <!-- Thing position -->
           <div class="field">
             <span>安装位置 <span class="inline-muted">(可选)</span></span>
             <input

@@ -520,7 +520,7 @@ export class ShowcaseViz extends LitElement {
       const dy = (Math.random() - 0.5) * 0.6;
       const dz = Math.sin(angle) * r;
 
-      // Device shape (cube-ish)
+      // Thing shape (cube-ish)
       for (let p = 0; p < 60 && idx < count; p++) {
         const shape = p % 3;
         let px = dx, py = dy, pz = dz;

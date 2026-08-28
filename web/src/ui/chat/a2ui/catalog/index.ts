@@ -15,8 +15,8 @@ import { renderA2uiCheckBox } from "./check-box.js";
 import { renderA2uiChoicePicker } from "./choice-picker.js";
 import { renderA2uiSlider } from "./slider.js";
 import { renderA2uiDateTimeInput } from "./date-time-input.js";
-import { renderDeviceCard } from "./device-card.js";
-import { renderDeviceTable } from "./device-table.js";
+import { renderThingCard } from "./thing-card.js";
+import { renderThingTable } from "./thing-table.js";
 import { renderDataChart } from "./data-chart.js";
 import { renderControlPanel } from "./control-panel.js";
 import { renderProgressIndicator } from "./progress-indicator.js";
@@ -48,8 +48,8 @@ export const a2uiCatalog: Record<string, A2uiRenderer> = {
   Slider: renderA2uiSlider,
   DateTimeInput: renderA2uiDateTimeInput,
   // IoT Components
-  DeviceCard: renderDeviceCard,
-  DeviceTable: renderDeviceTable,
+  ThingCard: renderThingCard,
+  ThingTable: renderThingTable,
   DataChart: renderDataChart,
   ControlPanel: renderControlPanel,
   ProgressIndicator: renderProgressIndicator,

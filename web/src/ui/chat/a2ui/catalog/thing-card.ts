@@ -10,8 +10,8 @@ const STATUS_CONFIG: Record<string, { color: string; glow: string; label: string
   error:   { color: "#ef4444", glow: "rgba(239, 68, 68, 0.4)",  label: "故障",   pulse: true  },
 };
 
-// ── Device type → icon mapping ──
-const DEVICE_ICON_MAP: Record<string, string> = {
+// ── Thing type → icon mapping ──
+const THING_ICON_MAP: Record<string, string> = {
   temperature: "thermometer",
   humidity: "thermometer",
   sensor: "thermometer",
@@ -69,8 +69,8 @@ type PropItem = { key: string; value: string; unit?: string };
 function normalizeProperties(data: Record<string, unknown>): PropItem[] {
   const arr = data.properties;
   if (!Array.isArray(arr)) {
-    const reserved = new Set(["deviceId", "id", "name", "displayName", "deviceName", "title",
-      "status", "state", "deviceType", "icon", "primaryMetric", "telemetry", "sparkline",
+    const reserved = new Set(["thingId", "deviceId", "id", "name", "displayName", "deviceName", "thingName", "title",
+      "status", "state", "category", "deviceType", "icon", "primaryMetric", "telemetry", "sparkline",
       "actions", "componentKind", "dataModel", "lastSeen", "updatedAt", "signalStrength", "tags"]);
     return Object.entries(data)
       .filter(([k, v]) => !reserved.has(k) && v != null)
@@ -139,11 +139,11 @@ function normalizeStatus(data: Record<string, unknown>): string {
 
 function resolveIcon(data: Record<string, unknown>): string {
   if (typeof data.icon === "string" && data.icon) return data.icon;
-  const deviceType = String(data.deviceType || data.type || "").toLowerCase();
-  if (deviceType && DEVICE_ICON_MAP[deviceType]) return DEVICE_ICON_MAP[deviceType];
+  const category = String(data.category || data.deviceType || data.type || "").toLowerCase();
+  if (category && THING_ICON_MAP[category]) return THING_ICON_MAP[category];
   // Fuzzy match
-  for (const [key, icon] of Object.entries(DEVICE_ICON_MAP)) {
-    if (deviceType.includes(key)) return icon;
+  for (const [key, icon] of Object.entries(THING_ICON_MAP)) {
+    if (category.includes(key)) return icon;
   }
   return "thermometer"; // default IoT icon
 }
@@ -152,12 +152,12 @@ function resolveIcon(data: Record<string, unknown>): string {
 const PROP_COLLAPSE_THRESHOLD = 4;
 
 // ── Main render ──
-export function renderDeviceCard(
+export function renderThingCard(
   data: Record<string, unknown>,
   onAction?: (fn: string, args: Record<string, unknown>) => void,
 ): TemplateResult {
-  const deviceId = String(data.deviceId || data.id || "");
-  const deviceName = String(data.displayName || data.name || data.deviceName || data.title || deviceId);
+  const thingId = String(data.thingId || data.deviceId || data.id || "");
+  const deviceName = String(data.displayName || data.name || data.deviceName || data.title || thingId);
   const status = normalizeStatus(data);
   const properties = normalizeProperties(data);
   const telemetry = normalizeTelemetry(data);
@@ -177,7 +177,7 @@ export function renderDeviceCard(
       ];
   const tags = (data.tags as string[])?.length
     ? (data.tags as string[])
-    : (data.deviceType ? [String(data.deviceType)] : []);
+    : (data.category || data.deviceType ? [String(data.category || data.deviceType)] : []);
 
   // Filter primaryMetric out of properties to avoid duplication
   const displayProperties = properties.filter(p =>
@@ -228,7 +228,7 @@ export function renderDeviceCard(
       <!-- ══ Properties (collapsible) ══ -->
       ${displayProperties.length ? html`
         <div class="a2ui-device-card__props ${showCollapse ? "a2ui-device-card__props--collapsed" : ""}"
-             id="props-${deviceId}">
+             id="props-${thingId}">
           ${displayProperties.map((p) => html`
             <div class="a2ui-device-card__prop">
               <span class="a2ui-device-card__prop-key">${p.key}</span>
@@ -283,17 +283,17 @@ export function renderDeviceCard(
             ${lastSeen}
           </span>` : nothing}
           <span class="a2ui-device-card__id" title="点击复制物 ID"
-                @click=${() => { navigator.clipboard.writeText(deviceId).then(() => {
+                @click=${() => { navigator.clipboard.writeText(thingId).then(() => {
                   // brief visual feedback handled by CSS :active
                 }); }}>
-            ${deviceId}
+            ${thingId}
           </span>
         </div>
         ${actions.length ? html`
           <div class="a2ui-device-card__actions">
             ${actions.slice(0, 3).map((a) => html`
               <button class="a2ui-device-card__action"
-                      @click=${(e: Event) => { e.stopPropagation(); if (onAction) onAction(a.functionId, { deviceId }); }}>
+                      @click=${(e: Event) => { e.stopPropagation(); if (onAction) onAction(a.functionId, { thingId }); }}>
                 ${a.label}
               </button>
             `)}

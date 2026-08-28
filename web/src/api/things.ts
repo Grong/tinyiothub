@@ -9,7 +9,7 @@ export interface Thing {
   name: string;
   displayName?: string;
   thingType: string;
-  deviceType: string;
+  category: string;
   parentId: string | null;
   templateId: string | null;
   state: string;
@@ -72,7 +72,7 @@ export interface ThingProfileResponse {
   id: string;
   name: string;
   thingType: string;
-  deviceType: string;
+  category: string;
   parentId: string | null;
   templateId: string | null;
   state: string;
@@ -98,7 +98,7 @@ export interface ThingTreeNode {
 export interface ThingResource {
   id: string;
   workspaceId: string;
-  deviceId: string | null;
+  thingId: string | null;
   resourceType: string;
   name: string;
   filePath: string;
@@ -189,17 +189,21 @@ export const thingApi = {
     // 3. Attach to thing
     return apiPost<any>(`/things/${thingId}/resources`, { resource_id: createRes.result.id });
   },
-  // Backward-compat aliases (devices.ts still uses old method names)
-  getDevices: (params?: Record<string, string>) => apiGet<any>('/things', params),
-  getDevice: (id: string) => apiGet<any>('/things/' + id),
-  getDeviceProfile: (id: string) => apiGet<any>('/things/' + id + '/profile'),
-  createDevice: (data: any) => apiPost<any>('/things', data),
-  updateDevice: (id: string, data: Record<string, unknown>) => apiPut<any>('/things/' + id, data),
-  deleteDevice: (id: string) => apiDelete<any>('/things/' + id),
-  getDeviceCommands: (id: string) => apiGet<any[]>('/things/' + id + '/commands'),
-  updateDeviceProperty: (deviceId: string, propertyName: string, value: any) => apiPut<void>('/things/' + deviceId + '/properties/' + propertyName, { value }),
-  exportDeviceAsTemplate: (id: string) => apiGet<any>('/things/templates/' + id + '/export/dtdl'),
-  cloneDevice: async (id: string) => { const r = await apiGet<any>('/things/' + id); return apiPost<any>('/things', { ...r.result, name: (r.result?.name || 'clone') + ' (副本)' }); },
-  createFromTemplate: (data: any) => apiPost<any>('/things', { ...data.deviceInput, templateId: data.templateId }),
+  async updateProperty(thingId: string, propertyId: string, value: any) {
+    return apiPut<void>(`/things/admin/${thingId}/properties/${propertyId}/value`, { value });
+  },
+
+  async exportAsTemplate(id: string) {
+    return apiGet<any>(`/things/templates/${id}/export/dtdl`);
+  },
+
+  async clone(id: string) {
+    const r = await apiGet<any>(`/things/${id}`);
+    return apiPost<any>('/things', { ...r.result, name: (r.result?.name || 'clone') + ' (副本)' });
+  },
+
+  async createFromTemplate(data: { templateId: string; input: Record<string, unknown> }) {
+    return apiPost<any>('/things', { ...data.input, templateId: data.templateId });
+  },
 };
 

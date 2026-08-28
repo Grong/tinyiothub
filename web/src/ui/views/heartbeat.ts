@@ -45,7 +45,7 @@ interface PendingProposal {
   status: string;
   level: string;
   toolName: string;
-  deviceId: string;
+  thingId: string;
   deviceName: string;
   summary: string;
   reason: string;
@@ -455,7 +455,7 @@ export class ViewHeartbeat extends LitElement {
                                   <div class="hb-approval__head">
                                     <span class="hb-approval__level hb-approval__level--${p.level.toLowerCase()}">${p.level}</span>
                                     <code class="hb-approval__tool">${p.toolName}</code>
-                                    <span class="hb-approval__device">${p.deviceName || p.deviceId}</span>
+                                    <span class="hb-approval__device">${p.deviceName || p.thingId}</span>
                                   </div>
                                   <p class="hb-approval__summary">${p.summary}</p>
                                   <div class="hb-approval__meta">

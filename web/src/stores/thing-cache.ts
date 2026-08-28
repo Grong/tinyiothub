@@ -1,5 +1,5 @@
 /**
- * DeviceCache — 浏览器侧物数据缓存层
+ * ThingCache — 浏览器侧物数据缓存层
  *
  * 单例模式，持有唯一 SSE 连接，所有组件从信号读数据。
  * 缓存从空开始，通过 SSE 推送和物详情加载逐步填充。
@@ -15,13 +15,13 @@ import { signal, computed } from '@lit-labs/signals';
 import { thingApi } from '../api/things.js';
 import { API_BASE } from '../api/config.js';
 import { getAuthToken, apiPost } from '../api/client.js';
-import type { Device, DeviceProperty } from '../types/index.js';
+import type { Thing, ThingProperty } from '../types/index.js';
 
 type SseStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
-class DeviceCache {
+class ThingCache {
   // === Signals ===
-  $devicesMap = signal(new Map<string, Device>());
+  $devicesMap = signal(new Map<string, Thing>());
   $sseStatus = signal<SseStatus>('disconnected');
 
   // Computed: 从 Map 派生有序数组
@@ -37,7 +37,7 @@ class DeviceCache {
    * 获取当前缓存的物列表。
    * 同时确保 SSE 连接已建立（静默，不 fetch）。
    */
-  async getDevices(): Promise<Device[]> {
+  async getDevices(): Promise<Thing[]> {
     this.ensureConnected();
     return this.$devicesList.get();
   }
@@ -55,12 +55,12 @@ class DeviceCache {
    * API 失败时 rollback。
    */
   async updateProperty(
-    deviceId: string,
+    thingId: string,
     propertyName: string,
     value: any,
   ): Promise<void> {
     const map = this.$devicesMap.get();
-    const device = map.get(deviceId);
+    const device = map.get(thingId);
     if (!device || !device.properties) return;
 
     const oldProperties = device.properties;
@@ -69,18 +69,18 @@ class DeviceCache {
       p.name === propertyName ? { ...p, currentValue: value, updatedAt: new Date().toISOString() } : p,
     );
     const updatedMap = new Map(map);
-    updatedMap.set(deviceId, { ...device, properties: updatedProperties });
+    updatedMap.set(thingId, { ...device, properties: updatedProperties });
     this.$devicesMap.set(updatedMap);
 
     try {
-      await thingApi.updateDeviceProperty(deviceId, propertyName, value);
+      await thingApi.updateProperty(thingId, propertyName, value);
     } catch (err) {
       // Rollback
       const rollbackMap = this.$devicesMap.get();
-      const current = rollbackMap.get(deviceId);
+      const current = rollbackMap.get(thingId);
       if (current) {
         const rbMap = new Map(rollbackMap);
-        rbMap.set(deviceId, { ...current, properties: oldProperties });
+        rbMap.set(thingId, { ...current, properties: oldProperties });
         this.$devicesMap.set(rbMap);
       }
       throw err;
@@ -91,12 +91,12 @@ class DeviceCache {
    * 批量更新物的完整属性（含元数据），用于详情页加载时初始化。
    * 不触发 SSE 事件。
    */
-  setDeviceProperties(deviceId: string, properties: DeviceProperty[]): void {
+  setDeviceProperties(thingId: string, properties: ThingProperty[]): void {
     const map = this.$devicesMap.get();
-    const device = map.get(deviceId);
+    const device = map.get(thingId);
     const updated = new Map(map);
-    updated.set(deviceId, {
-      ...(device ?? { id: deviceId, name: deviceId, status: 'online' }),
+    updated.set(thingId, {
+      ...(device ?? { id: thingId, name: thingId, status: 'online' }),
       properties,
     });
     this.$devicesMap.set(updated);
@@ -105,7 +105,7 @@ class DeviceCache {
   /**
    * 添加或更新单个物到缓存。
    */
-  setDevice(device: Device): void {
+  setDevice(device: Thing): void {
     const map = new Map(this.$devicesMap.get());
     map.set(device.id, device);
     this.$devicesMap.set(map);
@@ -114,9 +114,9 @@ class DeviceCache {
   /**
    * 从缓存移除物。
    */
-  removeDevice(deviceId: string): void {
+  removeDevice(thingId: string): void {
     const map = new Map(this.$devicesMap.get());
-    map.delete(deviceId);
+    map.delete(thingId);
     this.$devicesMap.set(map);
   }
 
@@ -263,16 +263,16 @@ class DeviceCache {
   }
 
   private async handleSseEvent(data: any): Promise<void> {
-    const deviceId: string | undefined = data.device_id;
+    const thingId: string | undefined = data.thing_id;
     const eventType: string = data.event_type ?? '';
     const map = this.$devicesMap.get();
 
     const updated = this.applySseEventToMap(map, data);
     if (updated) {
       this.$devicesMap.set(updated);
-      if (deviceId) {
-        window.dispatchEvent(new CustomEvent('device-updated', {
-          detail: { deviceId, eventType, data },
+      if (thingId) {
+        window.dispatchEvent(new CustomEvent('thing-updated', {
+          detail: { thingId, eventType, data },
         }));
       }
     }
@@ -282,25 +282,25 @@ class DeviceCache {
    * 将 SSE 事件应用到 Map 上，返回新 Map（若有变更）或 null。
    */
   private applySseEventToMap(
-    map: Map<string, Device>,
+    map: Map<string, Thing>,
     data: any,
-  ): Map<string, Device> | null {
+  ): Map<string, Thing> | null {
     const eventType: string = data.event_type ?? '';
-    const deviceId: string | undefined = data.device_id;
-    if (!deviceId) return null;
+    const thingId: string | undefined = data.thing_id;
+    if (!thingId) return null;
 
-    let device = map.get(deviceId);
+    let device = map.get(thingId);
 
     // 物不在缓存中，从事件数据构造最小物
     if (!device) {
-      const newDevice: Device = {
-        id: deviceId,
-        name: data.content?.title?.replace('Property Changed: ', '').split(' - ')[0] ?? deviceId,
+      const newDevice: Thing = {
+        id: thingId,
+        name: data.content?.title?.replace('Property Changed: ', '').split(' - ')[0] ?? thingId,
         status: 'online',
         properties: [],
       };
       const updated = new Map(map);
-      updated.set(deviceId, newDevice);
+      updated.set(thingId, newDevice);
       map = updated;
       device = newDevice;
     }
@@ -310,7 +310,7 @@ class DeviceCache {
       const newStatus = data.status ?? data.content?.status;
       if (newStatus && newStatus !== device.status) {
         const updated = new Map(map);
-        updated.set(deviceId, { ...device, status: newStatus });
+        updated.set(thingId, { ...device, status: newStatus });
         return updated;
       }
       return null;
@@ -336,8 +336,8 @@ class DeviceCache {
         updatedProps = [
           ...props,
           {
-            id: data.property_id ?? `${deviceId}:${propertyName}`,
-            deviceId,
+            id: data.property_id ?? `${thingId}:${propertyName}`,
+            thingId,
             name: propertyName,
             value: newValue,
             currentValue: newValue,
@@ -348,7 +348,7 @@ class DeviceCache {
       }
 
       const updated = new Map(map);
-      updated.set(deviceId, { ...device, properties: updatedProps });
+      updated.set(thingId, { ...device, properties: updatedProps });
       return updated;
     }
 
@@ -356,4 +356,4 @@ class DeviceCache {
   }
 }
 
-export const deviceCache = new DeviceCache();
+export const thingCache = new ThingCache();

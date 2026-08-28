@@ -8,13 +8,13 @@ const STATUS_COLORS: Record<string, string> = {
   error: "#e74c3c",
 };
 
-export function renderDeviceTable(
+export function renderThingTable(
   data: Record<string, unknown>,
   onAction?: (fn: string, args: Record<string, unknown>) => void,
 ): TemplateResult {
   const title = safeStr(data.title, "");
   const columns = normalizeColumns(data.columns, ["物名称", "状态", "最新数据", "操作"]);
-  const rawDevices = data.devices as Array<Record<string, unknown>> | undefined;
+  const rawDevices = (data.things || data.devices) as Array<Record<string, unknown>> | undefined;
   const rawRows = data.rows as Array<unknown> | undefined;
   const devices: Array<Record<string, unknown>> = rawDevices
     ? rawDevices
@@ -23,7 +23,7 @@ export function renderDeviceTable(
           const arr = Array.isArray(r) ? r : [];
           return {
             name: arr[0],
-            deviceType: arr[1],
+            category: arr[1],
             status: arr[2],
             address: arr[3],
             id: arr[4],
@@ -57,7 +57,7 @@ export function renderDeviceTable(
                   <div class="a2ui-device-table__actions">
                     ${actions.map((a) => html`
                       <button class="a2ui-btn a2ui-btn--secondary a2ui-btn--sm"
-                              @click=${() => { if (onAction) onAction(a.functionId, { deviceId: d.id }); }}>
+                              @click=${() => { if (onAction) onAction(a.functionId, { thingId: d.id }); }}>
                         ${a.label}
                       </button>
                     `)}

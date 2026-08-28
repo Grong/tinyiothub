@@ -14,8 +14,8 @@ export const monitoringApi = {
     return apiGet<HealthStatus>('/monitoring/health');
   },
 
-  async getDeviceMetrics(deviceId: string) {
-    return apiGet<any>(`/monitoring/devices/${deviceId}`);
+  async getThingMetrics(thingId: string) {
+    return apiGet<any>(`/things/admin/${thingId}/metrics`);
   },
 
   async getPerformanceData(params?: { startTime?: string; endTime?: string }) {

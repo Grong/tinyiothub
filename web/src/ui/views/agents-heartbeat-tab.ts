@@ -46,7 +46,7 @@ export interface PendingProposal {
   status: string;
   level: string;
   toolName: string;
-  deviceId: string;
+  thingId: string;
   deviceName: string;
   summary: string;
   reason: string;
@@ -272,7 +272,7 @@ export function renderHeartbeatTab(
                       <div class="approval-header">
                         <span class="approval-level level-${p.level.toLowerCase()}">${p.level}</span>
                         <span class="approval-tool">${p.toolName}</span>
-                        <span class="approval-device">${p.deviceName || p.deviceId}</span>
+                        <span class="approval-device">${p.deviceName || p.thingId}</span>
                       </div>
                       <div class="approval-body">
                         <p class="approval-summary">${p.summary}</p>

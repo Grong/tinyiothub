@@ -186,7 +186,7 @@ export class AlarmsView extends LitElement {
                     <span class="status-badge__label">${this.levelLabel(a.alarmLevel)}</span>
                   </span>
                 </td>
-                <td class="data-table__cell-sm">${a.deviceName || a.deviceId?.slice(0, 12) || "—"}</td>
+                <td class="data-table__cell-sm">${a.deviceName || a.thingId?.slice(0, 12) || "—"}</td>
                 <td class="cell-truncate data-table__cell-sm">${a.message}</td>
                 <td>
                   <span class="status-badge">

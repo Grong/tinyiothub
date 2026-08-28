@@ -194,7 +194,7 @@ export async function loadHeartbeatConfig(state: AgentsState, workspaceId: strin
   try {
     const res = await apiGet<HeartbeatConfig>(`/workspaces/${workspaceId}/heartbeat/config`);
     if (res.result) {
-      // Parse tasks if it's a JSON string (same as templates/devices pattern)
+      // Parse tasks if it's a JSON string (same as templates/things pattern)
       if (typeof res.result.tasks === "string") {
         res.result.tasks = JSON.parse(res.result.tasks);
       }
