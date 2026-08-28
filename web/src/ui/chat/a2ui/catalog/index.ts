@@ -50,6 +50,10 @@ export const a2uiCatalog: Record<string, A2uiRenderer> = {
   // IoT Components
   ThingCard: renderThingCard,
   ThingTable: renderThingTable,
+  // Transitional aliases for in-flight/old sessions whose LLM still emits
+  // Device* component kinds (canvas tool description renamed in PR-2).
+  DeviceCard: renderThingCard,
+  DeviceTable: renderThingTable,
   DataChart: renderDataChart,
   ControlPanel: renderControlPanel,
   ProgressIndicator: renderProgressIndicator,
