@@ -60,6 +60,60 @@ async fn baseline_pool_with_samples() -> (SqlitePool, std::path::PathBuf) {
     .await
     .unwrap();
 
+    // 4. policy_rules.target 样本:pr_wipe/pr_reboot 为旧名精确值(应翻转),
+    //    pr_glob 为 glob 模式、pr_other 为无关值(均不受影响)。
+    for (id, target) in [
+        ("pr_wipe", "wipe_device"),
+        ("pr_reboot", "reboot_device"),
+        ("pr_glob", "wipe_*"),
+        ("pr_other", "set_property"),
+    ] {
+        sqlx::query(
+            "INSERT INTO policy_rules (id, workspace_id, category, action, target)
+             VALUES (?, 'ws_old', 'agent_action', 'block', ?)",
+        )
+        .bind(id)
+        .bind(target)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // 5. workspaces.heartbeat_trust_config 样本:ws_trust 的 blocked_tools /
+    //    allowed_destructive_tools 含旧工具名(应翻转);ws_trust_prefix 含前缀
+    //    相似值(不动);ws_trust_default 用默认 '' 空串(不动)。
+    sqlx::query("INSERT INTO subscription_plans (id, name, display_name) VALUES ('plan_free', 'free', 'Free')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO tenants (id, name, slug) VALUES ('t1', 'tenant1', 'tenant1')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at, heartbeat_trust_config)
+         VALUES ('ws_trust', 'ws', 't1', datetime('now'), datetime('now'),
+                 '{\"trust_level\":\"FullAuto\",\"max_auto_actions_per_tick\":10,\"allowed_tool_categories\":[\"read\"],\"blocked_tools\":[\"wipe_device\",\"reboot_device\"],\"allowed_destructive_tools\":[\"wipe_device\"]}')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at, heartbeat_trust_config)
+         VALUES ('ws_trust_prefix', 'ws', 't1', datetime('now'), datetime('now'),
+                 '{\"trust_level\":\"ReadOnlyAuto\",\"max_auto_actions_per_tick\":10,\"allowed_tool_categories\":[\"read\"],\"blocked_tools\":[\"wipe_device_extra\"]}')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at)
+         VALUES ('ws_trust_default', 'ws', 't1', datetime('now'), datetime('now'))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
     (pool, path)
 }
 
@@ -143,6 +197,47 @@ async fn policy_action_names_migrated() {
     )
     .unwrap();
     assert_eq!(parsed, vec!["reboot_thing", "set_property"]);
+
+    // policy_rules.target:旧名精确值翻转,glob 与无关值不动。
+    let target_of = |id: &str| {
+        let pool = pool.clone();
+        let id = id.to_string();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT target FROM policy_rules WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(target_of("pr_wipe").await, "wipe_thing");
+    assert_eq!(target_of("pr_reboot").await, "reboot_thing");
+    assert_eq!(target_of("pr_glob").await, "wipe_*", "glob 模式不得受影响");
+    assert_eq!(target_of("pr_other").await, "set_property");
+
+    // workspaces.heartbeat_trust_config:旧工具名翻转(含 allowed_destructive_tools),
+    // 前缀相似值与默认 '' 空串不动;迁移后 JSON 仍可解析为 TrustConfig。
+    let cfg_of = |id: &str| {
+        let pool = pool.clone();
+        let id = id.to_string();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT heartbeat_trust_config FROM workspaces WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    let cfg = cfg_of("ws_trust").await;
+    let parsed: tinyiothub_core::heartbeat::TrustConfig = serde_json::from_str(&cfg).unwrap();
+    assert_eq!(parsed.blocked_tools, vec!["wipe_thing", "reboot_thing"]);
+    assert_eq!(parsed.allowed_destructive_tools, vec!["wipe_thing"]);
+
+    let cfg_prefix = cfg_of("ws_trust_prefix").await;
+    let parsed: tinyiothub_core::heartbeat::TrustConfig = serde_json::from_str(&cfg_prefix).unwrap();
+    assert_eq!(parsed.blocked_tools, vec!["wipe_device_extra"], "前缀相似值不得被误改写");
+
+    assert_eq!(cfg_of("ws_trust_default").await, "", "默认空串不得受影响");
 
     drop(pool);
     let _ = std::fs::remove_file(path);
