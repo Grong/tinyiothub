@@ -95,7 +95,7 @@ pub struct HeartbeatLogEntry {
 #[serde(rename_all = "camelCase")]
 pub struct ActionDetail {
     tool: String,
-    device_id: String,
+    thing_id: String,
     summary: String,
 }
 
@@ -104,7 +104,7 @@ pub struct ActionDetail {
 pub struct ProposalDetail {
     level: String,
     tool_name: String,
-    device_id: String,
+    thing_id: String,
     device_name: String,
     summary: String,
     reason: String,
@@ -312,7 +312,7 @@ pub async fn get_logs(
                                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&a_content) {
                                     auto_executed.push(ActionDetail {
                                         tool: parsed.get("tool").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                        device_id: parsed
+                                        thing_id: parsed
                                             .get("deviceId")
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("")
@@ -334,7 +334,7 @@ pub async fn get_logs(
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("")
                                             .to_string(),
-                                        device_id: parsed
+                                        thing_id: parsed
                                             .get("deviceId")
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("")
@@ -453,7 +453,7 @@ pub struct ProposalResponse {
     status: String,
     level: String,
     tool_name: String,
-    device_id: String,
+    thing_id: String,
     device_name: String,
     summary: String,
     reason: String,
@@ -477,7 +477,7 @@ fn proposal_from_row(content: &str, created_at: String) -> Option<ProposalRespon
         status: status.to_string(),
         level: str_field("level"),
         tool_name: str_field("toolName"),
-        device_id: str_field("deviceId"),
+        thing_id: str_field("deviceId"),
         device_name: str_field("deviceName"),
         summary: str_field("summary"),
         reason: str_field("reason"),
@@ -561,7 +561,7 @@ async fn approve_and_execute(
         return Err("提案已处理".to_string());
     }
     let tool_name = parsed["toolName"].as_str().unwrap_or("").to_string();
-    let device_id = parsed["deviceId"].as_str().map(str::to_string);
+    let thing_id = parsed["deviceId"].as_str().map(str::to_string);
     let params = parsed.get("parameters").cloned().unwrap_or(serde_json::json!({}));
 
     let handler = registry
@@ -598,7 +598,7 @@ async fn approve_and_execute(
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let outcome_content = serde_json::json!({
         "tool": tool_name,
-        "deviceId": device_id,
+        "deviceId": thing_id,
         "summary": summary,
         "success": success,
         "source": "approved_proposal",
@@ -805,7 +805,7 @@ mod tests {
             "summary": "set temp",
             "reason": "tune",
             "risk": "medium",
-            "parameters": {"device_id": "dev_1", "properties": {"target_temp": 22}},
+            "parameters": {"thing_id": "dev_1", "properties": {"target_temp": 22}},
         });
         sqlx::query(
             "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at) \
@@ -935,7 +935,7 @@ mod tests {
             "summary": "set temp",
             "reason": "tune",
             "risk": "medium",
-            "parameters": {"device_id": "dev_1", "properties": {"target_temp": 22}},
+            "parameters": {"thing_id": "dev_1", "properties": {"target_temp": 22}},
         })
         .to_string();
 

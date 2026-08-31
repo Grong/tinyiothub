@@ -14,7 +14,6 @@ pub struct DeviceTemplate {
     pub author: Option<String>,
     pub category: String,
     pub manufacturer: Option<String>,
-    pub device_type: String,
     pub protocol_type: Option<String>,
     pub driver_name: Option<String>,
     pub tags: String,        // JSON数组格式
@@ -31,7 +30,7 @@ pub struct DeviceTemplate {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct DeviceInfo {
-    pub default_name_pattern: String, // 例如: "{manufacturer}_{device_type}_{index}"
+    pub default_name_pattern: String, // 例如: "{manufacturer}_{category}_{index}"
     pub default_display_name_pattern: Option<String>,
     pub default_description: Option<HashMap<String, String>>,
     pub default_position: Option<String>,
@@ -74,7 +73,6 @@ pub struct CommandTemplate {
 pub struct TemplateQueryParams {
     pub category: Option<String>,
     pub manufacturer: Option<String>,
-    pub device_type: Option<String>,
     pub protocol_type: Option<String>,
     pub keyword: Option<String>,
     pub page: Option<u32>,
@@ -106,7 +104,6 @@ pub struct CreateDeviceTemplateRequest {
     pub author: Option<String>,
     pub category: String,
     pub manufacturer: Option<String>,
-    pub device_type: String,
     pub protocol_type: Option<String>,
     pub driver_name: Option<String>,
     pub tags: Vec<String>,
@@ -126,7 +123,6 @@ pub struct UpdateDeviceTemplateRequest {
     pub author: Option<String>,
     pub category: Option<String>,
     pub manufacturer: Option<String>,
-    pub device_type: Option<String>,
     pub protocol_type: Option<String>,
     pub driver_name: Option<String>,
     pub tags: Option<Vec<String>>,
@@ -182,7 +178,6 @@ impl Default for DeviceTemplate {
             author: None,
             category: String::new(),
             manufacturer: None,
-            device_type: String::new(),
             protocol_type: None,
             driver_name: None,
             tags: "[]".to_string(),

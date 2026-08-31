@@ -1,7 +1,7 @@
 use tinyiothub_core::models::device::{Device, DeviceQueryParams};
 use tinyiothub_storage::{
     Db,
-    device::{DeviceCriteria, DeviceSortBy, DeviceSortOrder},
+    thing::{DeviceCriteria, DeviceSortBy, DeviceSortOrder},
 };
 
 /// Find a device by ID (convenience wrapper for MCP tools compatibility)
@@ -25,9 +25,9 @@ pub async fn load_device_tags(device: &mut Device, db: &Db, tenant_id: &str) -> 
     Ok(())
 }
 
-/// Load tags for multiple devices
-pub async fn load_tags_for_devices(db: &Db, devices: &mut [Device], tenant_id: &str) -> Result<(), sqlx::Error> {
-    for device in devices {
+/// Load tags for multiple things
+pub async fn load_tags_for_devices(db: &Db, things: &mut [Device], tenant_id: &str) -> Result<(), sqlx::Error> {
+    for device in things {
         let tags = db
             .find_tags_by_target_id(&device.id, tenant_id)
             .await
@@ -52,7 +52,7 @@ pub async fn find_device_by_id_with_tags(db: &Db, id: &str, tenant_id: &str) -> 
     }
 }
 
-/// Find all devices matching query params, including tags
+/// Find all things matching query params, including tags
 pub async fn find_all_devices_with_tags(
     db: &Db,
     params: &DeviceQueryParams,
@@ -62,7 +62,7 @@ pub async fn find_all_devices_with_tags(
     let criteria = DeviceCriteria {
         name: params.name.clone(),
         display_name: params.display_name.clone(),
-        device_type: params.device_type.clone(),
+        device_type: params.category.clone(),
         address: params.address.clone(),
         driver_name: params.driver_name.clone(),
         state: params.state,
@@ -76,11 +76,11 @@ pub async fn find_all_devices_with_tags(
         limit: params.page_size,
         offset: params.page.map(|p| p.saturating_sub(1) * params.page_size.unwrap_or(0)),
     };
-    let mut devices = db
+    let mut things = db
         .find_devices(None, &criteria)
         .await
         .map_err(|_| sqlx::Error::RowNotFound)?;
     let tenant_id_for_tags = tenant_id.as_deref().unwrap_or("");
-    load_tags_for_devices(db, &mut devices, tenant_id_for_tags).await?;
-    Ok(devices)
+    load_tags_for_devices(db, &mut things, tenant_id_for_tags).await?;
+    Ok(things)
 }

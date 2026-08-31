@@ -95,35 +95,35 @@ where
 /// 获取设备完整配置文件
 async fn get_device_profile(
     State(state): State<AdminState>,
-    Path(device_id): Path<String>,
+    Path(thing_id): Path<String>,
     claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<DeviceProfile>> {
     // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
-    // which automatically filters devices by workspace_id
+    // which automatically filters things by workspace_id
 
-    tracing::debug!("Getting complete profile for device: {}", device_id);
+    tracing::debug!("Getting complete profile for device: {}", thing_id);
     let tenant_device_service = state.tenant_device_service(&workspace_id);
 
     // 优先从缓存获取实时数据（含属性、指令、运行时状态），缓存未命中则从数据库加载
-    let mut device = match state.get_device(&device_id) {
+    let mut device = match state.get_device(&thing_id) {
         Some(device) => device,
         None => {
-            match tenant_device_service.get_device_by_id(&device_id).await {
+            match tenant_device_service.get_device_by_id(&thing_id).await {
                 Ok(Some(mut device)) => {
                     // 加载设备属性和指令
-                    match tenant_device_service.get_device_properties(&device_id).await {
+                    match tenant_device_service.get_device_properties(&thing_id).await {
                         Ok(properties) => device.properties = Some(properties),
                         Err(e) => {
-                            tracing::warn!("Failed to load properties for device {}: {}", device_id, e);
+                            tracing::warn!("Failed to load properties for device {}: {}", thing_id, e);
                             device.properties = Some(Vec::new());
                         }
                     }
 
-                    match tenant_device_service.get_device_commands(&device_id).await {
+                    match tenant_device_service.get_device_commands(&thing_id).await {
                         Ok(commands) => device.commands = Some(commands),
                         Err(e) => {
-                            tracing::warn!("Failed to load commands for device {}: {}", device_id, e);
+                            tracing::warn!("Failed to load commands for device {}: {}", thing_id, e);
                             device.commands = Some(Vec::new());
                         }
                     }
@@ -138,7 +138,7 @@ async fn get_device_profile(
                     return ApiResponseBuilder::error("设备不存在");
                 }
                 Err(e) => {
-                    tracing::error!("Failed to find device {}: {}", device_id, e);
+                    tracing::error!("Failed to find device {}: {}", thing_id, e);
                     return ApiResponseBuilder::error("查询设备失败");
                 }
             }
@@ -148,7 +148,7 @@ async fn get_device_profile(
     // 加载设备标签
     match state
         .tag_service
-        .find_tags_by_target_id(&device_id, &claims.tenant_id)
+        .find_tags_by_target_id(&thing_id, &claims.tenant_id)
         .await
     {
         Ok(tags) => {
@@ -158,7 +158,7 @@ async fn get_device_profile(
                 .collect();
             device.tags = Some(tag_values);
         }
-        Err(e) => tracing::warn!("Failed to load tags for device {}: {}", device_id, e),
+        Err(e) => tracing::warn!("Failed to load tags for device {}: {}", thing_id, e),
     }
 
     // 从缓存的设备对象中获取属性和指令（已包含实时数据）
@@ -167,10 +167,10 @@ async fn get_device_profile(
     let commands_response = DeviceCommandResponse::from_entities(commands);
 
     // 查询设备最近的 10 条事件
-    let recent_events = fetch_recent_device_events(&state, &device_id).await;
+    let recent_events = fetch_recent_device_events(&state, &thing_id).await;
 
     // 计算概述信息（包含事件统计）
-    let overview = calculate_device_overview(&state, &device_id, &properties, &commands_response, &recent_events).await;
+    let overview = calculate_device_overview(&state, &thing_id, &properties, &commands_response, &recent_events).await;
 
     // 设备在线状态直接从缓存获取
     let is_online = device.is_online();
@@ -190,10 +190,10 @@ async fn get_device_profile(
 }
 
 /// 获取设备最近的事件
-async fn fetch_recent_device_events(state: &AdminState, device_id: &str) -> Vec<DeviceEventSummary> {
+async fn fetch_recent_device_events(state: &AdminState, thing_id: &str) -> Vec<DeviceEventSummary> {
     // 构建查询条件：查询该设备最近 10 条事件
     let criteria = EventCriteria::builder()
-        .device_ids(vec![device_id.to_string()])
+        .device_ids(vec![thing_id.to_string()])
         .sort_by(SortBy::Timestamp)
         .sort_order(SortOrder::Descending)
         .limit(10)
@@ -207,7 +207,7 @@ async fn fetch_recent_device_events(state: &AdminState, device_id: &str) -> Vec<
                 .map(|event| {
                     // 提取事件类型字符串
                     let event_type_str = match event.event_type() {
-                        EventType::Device(device_type) => device_type.display_name(),
+                        EventType::Device(category) => category.display_name(),
                         EventType::System(_) => "System",
                         EventType::Ai(ai_type) => ai_type.display_name(),
                     };
@@ -258,7 +258,7 @@ async fn fetch_recent_device_events(state: &AdminState, device_id: &str) -> Vec<
                 .collect()
         }
         Err(e) => {
-            tracing::warn!("Failed to fetch events for device {}: {}", device_id, e);
+            tracing::warn!("Failed to fetch events for device {}: {}", thing_id, e);
             Vec::new()
         }
     }
@@ -267,7 +267,7 @@ async fn fetch_recent_device_events(state: &AdminState, device_id: &str) -> Vec<
 /// 计算设备概述信息
 async fn calculate_device_overview(
     state: &AdminState,
-    device_id: &str,
+    thing_id: &str,
     properties: &[DeviceProperty],
     commands: &[DeviceCommandResponse],
     recent_events: &[DeviceEventSummary],
@@ -310,7 +310,7 @@ async fn calculate_device_overview(
     // 查询最近 24 小时的事件统计
     let twenty_four_hours_ago = now - chrono::Duration::hours(24);
     let criteria = EventCriteria::builder()
-        .device_ids(vec![device_id.to_string()])
+        .device_ids(vec![thing_id.to_string()])
         .start_time(twenty_four_hours_ago)
         .build();
 
@@ -328,7 +328,7 @@ async fn calculate_device_overview(
             (total, critical, error)
         }
         Err(e) => {
-            tracing::warn!("Failed to fetch event statistics for device {}: {}", device_id, e);
+            tracing::warn!("Failed to fetch event statistics for device {}: {}", thing_id, e);
             (0, 0, 0)
         }
     };

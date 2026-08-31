@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub struct DeviceProperty {
     pub id: String,
-    pub device_id: String,
+    pub thing_id: String,
     pub name: String,
     pub display_name: Option<String>,
     pub description: Option<String>,
@@ -27,7 +27,7 @@ pub struct DeviceProperty {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct DevicePropertyQueryParams {
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub name: Option<String>,
     pub display_name: Option<String>,
     pub data_type: Option<String>,
@@ -40,7 +40,7 @@ pub struct DevicePropertyQueryParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CreateDevicePropertyRequest {
-    pub device_id: String,
+    pub thing_id: String,
     pub name: String,
     pub display_name: Option<String>,
     pub description: Option<String>,
@@ -184,7 +184,7 @@ impl Default for DeviceProperty {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            device_id: String::new(),
+            thing_id: String::new(),
             name: String::new(),
             display_name: None,
             description: None,

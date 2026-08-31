@@ -52,7 +52,7 @@ impl ThingAgentHost for CloudThingAgentHost {
                     .unwrap_or(false);
                 Some(ThingEventSignal {
                     workspace_id: row.workspace_id?,
-                    thing_id: row.device_id?,
+                    thing_id: row.thing_id?,
                     event_name: row.event_subtype,
                     event_id: row.rid,
                     level: row.event_level,

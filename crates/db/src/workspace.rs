@@ -348,7 +348,7 @@ pub(crate) async fn find_workspace_by_id(pool: &SqlitePool, id: &str) -> Result<
             w.updated_at,
             COUNT(d.id) as device_count
         FROM workspaces w
-        LEFT JOIN devices d ON d.workspace_id = w.id
+        LEFT JOIN things d ON d.workspace_id = w.id
         WHERE w.id = ?
         GROUP BY w.id
         "#,
@@ -383,7 +383,7 @@ pub(crate) async fn find_workspaces_by_tenant(
             w.updated_at,
             COUNT(d.id) as device_count
         FROM workspaces w
-        LEFT JOIN devices d ON d.workspace_id = w.id
+        LEFT JOIN things d ON d.workspace_id = w.id
         WHERE w.tenant_id = ?
         GROUP BY w.id
         ORDER BY w.created_at DESC
@@ -516,9 +516,9 @@ pub(crate) async fn delete_workspace(pool: &SqlitePool, id: &str) -> Result<()> 
     Ok(())
 }
 
-pub(crate) async fn assign_device_to_workspace(pool: &SqlitePool, device_id: &str, workspace_id: &str) -> Result<()> {
-    let device: Option<(String, Option<String>)> = sqlx::query_as("SELECT id, workspace_id FROM devices WHERE id = ?")
-        .bind(device_id)
+pub(crate) async fn assign_device_to_workspace(pool: &SqlitePool, thing_id: &str, workspace_id: &str) -> Result<()> {
+    let device: Option<(String, Option<String>)> = sqlx::query_as("SELECT id, workspace_id FROM things WHERE id = ?")
+        .bind(thing_id)
         .fetch_optional(pool)
         .await
         .map_err(|e| Error::DatabaseError(format!("database error: {}", e)))?;
@@ -535,10 +535,10 @@ pub(crate) async fn assign_device_to_workspace(pool: &SqlitePool, device_id: &st
         return Ok(());
     }
 
-    sqlx::query("UPDATE devices SET workspace_id = ?, updated_at = ? WHERE id = ?")
+    sqlx::query("UPDATE things SET workspace_id = ?, updated_at = ? WHERE id = ?")
         .bind(workspace_id)
         .bind(chrono::Utc::now().to_rfc3339())
-        .bind(device_id)
+        .bind(thing_id)
         .execute(pool)
         .await
         .map_err(|e| Error::DatabaseError(format!("failed to assign device: {}", e)))?;
@@ -929,8 +929,8 @@ impl Db {
     }
 
     /// 把设备分配到工作空间（已分配给其他工作空间时报错）。
-    pub async fn assign_device_to_workspace(&self, device_id: &str, workspace_id: &str) -> Result<()> {
-        assign_device_to_workspace(self.pool(), device_id, workspace_id).await
+    pub async fn assign_device_to_workspace(&self, thing_id: &str, workspace_id: &str) -> Result<()> {
+        assign_device_to_workspace(self.pool(), thing_id, workspace_id).await
     }
 
     /// 分页列出工作空间资源。

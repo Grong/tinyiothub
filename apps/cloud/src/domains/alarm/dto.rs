@@ -80,7 +80,7 @@ pub use tinyiothub_storage::alarm_rule::*;
 #[serde(rename_all = "camelCase")]
 pub struct AlarmDto {
     pub id: String,
-    pub device_id: String,
+    pub thing_id: String,
     pub device_name: Option<String>,
     pub property_id: Option<String>,
     pub property_name: Option<String>,
@@ -108,7 +108,7 @@ impl From<crate::domains::alarm::Alarm> for AlarmDto {
     fn from(alarm: crate::domains::alarm::Alarm) -> Self {
         Self {
             id: alarm.id,
-            device_id: alarm.device_id,
+            thing_id: alarm.thing_id,
             device_name: None,
             property_id: alarm.property_id,
             property_name: None,
@@ -141,7 +141,7 @@ pub struct AlarmRuleDto {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub device_name: Option<String>,
     pub property_id: Option<String>,
     pub property_name: Option<String>,
@@ -160,7 +160,7 @@ impl From<crate::domains::alarm::AlarmRule> for AlarmRuleDto {
             id: rule.id,
             name: rule.name,
             description: rule.description,
-            device_id: rule.device_id,
+            thing_id: rule.thing_id,
             device_name: None,
             property_id: rule.property_id,
             property_name: None,
@@ -259,7 +259,7 @@ pub struct AlarmQueryParams {
 pub struct CreateAlarmRuleRequest {
     pub name: String,
     pub description: Option<String>,
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub property_id: Option<String>,
     pub rule_type: tinyiothub_storage::alarm_rule::RuleType,
     pub condition: serde_json::Value,
@@ -461,7 +461,7 @@ mod tests {
             None,
         );
         assert!(!alarm.id.is_empty());
-        assert_eq!(alarm.device_id, "device-1");
+        assert_eq!(alarm.thing_id, "device-1");
         assert_eq!(alarm.status, AlarmStatus::Active);
         assert!(alarm.acknowledgement.is_none());
         assert!(alarm.resolution.is_none());
@@ -852,7 +852,7 @@ mod tests {
             None,
         );
         let dto = AlarmDto::from(alarm.clone());
-        assert_eq!(dto.device_id, "device-1");
+        assert_eq!(dto.thing_id, "device-1");
         assert_eq!(dto.alarm_type, "device_offline");
         assert_eq!(dto.alarm_level, "warning");
         assert_eq!(dto.status, "active");
@@ -942,7 +942,7 @@ pub struct RecentAlarm {
     /// 告警ID
     pub id: String,
     /// 设备ID
-    pub device_id: String,
+    pub thing_id: String,
     /// 设备名称
     pub device_name: String,
     /// 告警级别

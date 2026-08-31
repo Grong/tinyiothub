@@ -159,7 +159,7 @@ mod core_interop {
                 id: sdk.id,
                 name: sdk.name,
                 display_name: sdk.display_name,
-                device_type: None,
+                category: None,
                 address: sdk.address,
                 description: None,
                 position: None,
@@ -204,7 +204,7 @@ mod core_interop {
         fn from(sdk: DeviceCommand) -> Self {
             tinyiothub_core::models::device_command::DeviceCommand {
                 id: sdk.id,
-                device_id: String::new(),
+                thing_id: String::new(),
                 name: sdk.name,
                 display_name: None,
                 description: None,

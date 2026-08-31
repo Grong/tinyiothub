@@ -172,7 +172,7 @@ async fn test_validate_template_not_found() {
             "POST",
             "/api/v1/device-templates/nonexistent-tpl-12345/validate",
             &token,
-            Some(json!({"name": "test-device", "device_type": "sensor"})),
+            Some(json!({"name": "test-device", "category": "sensor"})),
         ))
         .await
         .unwrap();
@@ -204,7 +204,7 @@ async fn test_preview_template_not_found() {
             "POST",
             "/api/v1/device-templates/nonexistent-tpl-12345/preview",
             &token,
-            Some(json!({"name": "test-device", "device_type": "sensor"})),
+            Some(json!({"name": "test-device", "category": "sensor"})),
         ))
         .await
         .unwrap();

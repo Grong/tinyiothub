@@ -86,7 +86,7 @@ pub struct Device {
     pub id: String,
     pub name: String,
     pub display_name: Option<String>,
-    pub device_type: Option<String>,
+    pub category: Option<String>,
     pub address: Option<String>,
     pub description: Option<String>,
     pub position: Option<String>,
@@ -124,7 +124,7 @@ pub struct Device {
 pub struct DeviceQueryParams {
     pub name: Option<String>,
     pub display_name: Option<String>,
-    pub device_type: Option<String>,
+    pub category: Option<String>,
     pub address: Option<String>,
     pub driver_name: Option<String>,
     pub state: Option<i32>,
@@ -140,7 +140,7 @@ pub struct DeviceQueryParams {
 pub struct CreateDeviceRequest {
     pub name: String,
     pub display_name: Option<String>,
-    pub device_type: Option<String>,
+    pub category: Option<String>,
     pub address: Option<String>,
     pub description: Option<String>,
     pub position: Option<String>,
@@ -164,7 +164,7 @@ pub struct CreateDeviceRequest {
 pub struct UpdateDeviceRequest {
     pub name: Option<String>,
     pub display_name: Option<String>,
-    pub device_type: Option<String>,
+    pub category: Option<String>,
     pub address: Option<String>,
     pub description: Option<String>,
     pub position: Option<String>,
@@ -195,7 +195,7 @@ pub struct DeviceStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct DeviceStatusUpdate {
-    pub device_id: String,
+    pub thing_id: String,
     pub state: i32,
     pub last_heartbeat: Option<String>,
     pub updated_at: String,
@@ -270,7 +270,7 @@ impl Default for Device {
             id: uuid::Uuid::new_v4().to_string(),
             name: String::new(),
             display_name: None,
-            device_type: None,
+            category: None,
             address: None,
             description: None,
             position: None,
@@ -514,7 +514,7 @@ mod tests {
     #[test]
     fn test_device_status_update_is_online() {
         let update = DeviceStatusUpdate {
-            device_id: "d1".to_string(),
+            thing_id: "d1".to_string(),
             state: 1,
             last_heartbeat: None,
             updated_at: "2024-01-01 00:00:00".to_string(),
@@ -522,7 +522,7 @@ mod tests {
         assert!(update.is_online());
 
         let update_offline = DeviceStatusUpdate {
-            device_id: "d1".to_string(),
+            thing_id: "d1".to_string(),
             state: 0,
             last_heartbeat: None,
             updated_at: "2024-01-01 00:00:00".to_string(),

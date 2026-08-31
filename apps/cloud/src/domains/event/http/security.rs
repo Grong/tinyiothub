@@ -102,7 +102,7 @@ pub struct AuditLogResponse {
 /// Get current user's event permissions
 ///
 /// Returns the permissions that the current user has for event operations.
-/// This includes roles and specific permissions for events, devices, and system.
+/// This includes roles and specific permissions for events, things, and system.
 #[axum::debug_handler]
 pub async fn get_user_permissions(
     State(state): State<AppState>,

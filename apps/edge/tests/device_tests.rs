@@ -23,7 +23,7 @@ fn make_create_request(name: &str, driver_name: &str) -> CreateDeviceRequest {
     CreateDeviceRequest {
         name: name.to_string(),
         driver_name: Some(driver_name.to_string()),
-        device_type: Some("sensor".to_string()),
+        category: Some("sensor".to_string()),
         ..Default::default()
     }
 }

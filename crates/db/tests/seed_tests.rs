@@ -50,7 +50,7 @@ async fn seed_demo_creates_env01_with_properties() {
     let db = Db::new(pool);
     seed::seed_system(&db).await.unwrap();
     seed::seed_demo(&db).await.unwrap();
-    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_properties WHERE device_id = 'device-env-01'")
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_properties WHERE thing_id = 'device-env-01'")
         .fetch_one(db.pool())
         .await
         .unwrap();
@@ -65,11 +65,11 @@ async fn seed_demo_is_idempotent() {
     seed::seed_demo(&db).await.unwrap();
     seed::seed_demo(&db).await.unwrap();
 
-    let devices: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices")
+    let things: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM things")
         .fetch_one(db.pool())
         .await
         .unwrap();
-    assert_eq!(devices, 8);
+    assert_eq!(things, 8);
 
     let props: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_properties")
         .fetch_one(db.pool())

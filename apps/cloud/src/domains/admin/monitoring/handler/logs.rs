@@ -18,7 +18,7 @@ pub struct LogEntry {
     pub level: String,
     pub message: String,
     pub source: String,
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -34,7 +34,7 @@ pub struct LogLevel {
 pub struct LogQuery {
     pub level: Option<String>,
     pub source: Option<String>,
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub start_time: Option<String>,
     pub end_time: Option<String>,
     #[serde(flatten)]
@@ -70,21 +70,21 @@ async fn get_logs(
         .get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default())
         .await
     {
-        Ok(devices) => devices.into_iter().map(|d| d.id).collect(),
+        Ok(things) => things.into_iter().map(|d| d.id).collect(),
         Err(e) => {
-            tracing::warn!("Failed to get devices for log workspace isolation: {}", e);
+            tracing::warn!("Failed to get things for log workspace isolation: {}", e);
             return ApiResponseBuilder::error("获取日志失败".to_string());
         }
     };
 
-    // If user specified a device_id, verify it belongs to their workspace
-    if let Some(ref requested_device_id) = query.device_id
+    // If user specified a thing_id, verify it belongs to their workspace
+    if let Some(ref requested_device_id) = query.thing_id
         && !allowed_device_ids.contains(requested_device_id)
     {
         return ApiResponseBuilder::success(vec![]);
     }
 
-    let device_ids_filter = if query.device_id.is_none() && !allowed_device_ids.is_empty() {
+    let device_ids_filter = if query.thing_id.is_none() && !allowed_device_ids.is_empty() {
         Some(allowed_device_ids)
     } else {
         None
@@ -100,7 +100,7 @@ async fn get_logs(
         .find_all_traces(
             levels.as_deref(),
             sources.as_deref(),
-            query.device_id.as_deref(),
+            query.thing_id.as_deref(),
             device_ids_filter.as_deref(),
             query.start_time.as_deref(),
             query.end_time.as_deref(),
@@ -120,7 +120,7 @@ async fn get_logs(
                     level: t.level.to_uppercase(),
                     message: format!("{}: {}", t.title, t.message),
                     source: t.source.unwrap_or(t.category),
-                    device_id: Some(t.device_id),
+                    thing_id: Some(t.thing_id),
                 })
                 .collect();
             ApiResponseBuilder::success(logs)

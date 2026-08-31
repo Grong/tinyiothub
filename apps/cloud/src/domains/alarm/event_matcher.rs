@@ -4,7 +4,7 @@ use tinyiothub_core::models::event::EventLevel;
 
 /// Condition config for rule_type='event' alarm rules.
 ///
-/// Stored as JSON in the `condition_config` column of `device_alarm_rules`.
+/// Stored as JSON in the `condition_config` column of `thing_alarm_rules`.
 /// Example: `{"eventName": "temp_high", "minLevel": "warning"}`
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

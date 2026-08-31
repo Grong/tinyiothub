@@ -97,8 +97,8 @@ async fn get_detailed_health(
         .get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default())
         .await
     {
-        Ok(devices) => {
-            active_device_count = devices.iter().filter(|d| d.status.is_online()).count() as u32;
+        Ok(things) => {
+            active_device_count = things.iter().filter(|d| d.status.is_online()).count() as u32;
         }
         Err(e) => {
             tracing::warn!("Failed to get device list for health check: {}", e);

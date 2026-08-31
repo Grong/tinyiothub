@@ -128,7 +128,7 @@ async fn list_alarms(
                 .into_iter()
                 .map(|a| {
                     let mut dto = AlarmDto::from(a);
-                    dto.device_name = device_names.get(&dto.device_id).cloned();
+                    dto.device_name = device_names.get(&dto.thing_id).cloned();
                     dto
                 })
                 .collect();
@@ -223,7 +223,7 @@ async fn get_recent_alarms(
 fn map_recent_alarms(rows: Vec<tinyiothub_storage::alarm::RecentAlarmRow>) -> Vec<RecentAlarm> {
     rows.into_iter()
         .map(
-            |(id, device_id, device_name, level, message, alarm_time, is_acknowledged, is_resolved)| {
+            |(id, thing_id, device_name, level, message, alarm_time, is_acknowledged, is_resolved)| {
                 let status = if is_resolved {
                     "resolved".to_string()
                 } else if is_acknowledged {
@@ -233,7 +233,7 @@ fn map_recent_alarms(rows: Vec<tinyiothub_storage::alarm::RecentAlarmRow>) -> Ve
                 };
                 RecentAlarm {
                     id,
-                    device_id,
+                    thing_id,
                     device_name: device_name.unwrap_or_else(|| "未知设备".to_string()),
                     level,
                     message,
@@ -251,7 +251,7 @@ fn map_recent_alarms(rows: Vec<tinyiothub_storage::alarm::RecentAlarmRow>) -> Ve
 
 #[derive(Deserialize)]
 pub struct RuleQueryParams {
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
 }
 
 async fn list_alarm_rules(
@@ -259,10 +259,10 @@ async fn list_alarm_rules(
     State(state): State<AppState>,
     claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<AlarmRuleDto>>> {
-    let rules = if let Some(device_id) = params.device_id {
+    let rules = if let Some(thing_id) = params.thing_id {
         state
             .alarm_service
-            .get_rules_by_device(&device_id, &claims.0.workspace_id)
+            .get_rules_by_device(&thing_id, &claims.0.workspace_id)
             .await
     } else {
         state.alarm_service.get_all_rules(&claims.0.workspace_id).await
@@ -319,7 +319,7 @@ async fn create_alarm_rule(
     let rule = match AlarmRule::new(
         req.name,
         req.description,
-        req.device_id,
+        req.thing_id,
         req.property_id,
         req.rule_type,
         condition,
@@ -550,19 +550,19 @@ mod tests {
             .expect("failed to create in-memory SQLite pool");
 
         sqlx::query(
-            "CREATE TABLE IF NOT EXISTS devices (
+            "CREATE TABLE IF NOT EXISTS things (
                 id TEXT PRIMARY KEY,
                 name TEXT
             )",
         )
         .execute(&pool)
         .await
-        .expect("failed to create devices table");
+        .expect("failed to create things table");
 
         sqlx::query(
-            "CREATE TABLE IF NOT EXISTS device_alarms (
+            "CREATE TABLE IF NOT EXISTS thing_alarms (
                 id TEXT PRIMARY KEY,
-                device_id TEXT,
+                thing_id TEXT,
                 workspace_id TEXT,
                 alarm_level TEXT NOT NULL,
                 alarm_message TEXT NOT NULL,
@@ -573,7 +573,7 @@ mod tests {
         )
         .execute(&pool)
         .await
-        .expect("failed to create device_alarms table");
+        .expect("failed to create thing_alarms table");
 
         pool
     }
@@ -594,7 +594,7 @@ mod tests {
         let db = Db::new(pool.clone());
 
         sqlx::query(
-            r#"INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
+            r#"INSERT INTO thing_alarms (id, thing_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
                VALUES ('alarm-001', 'dev-001', 'ws-001', 'warning', 'High temperature', datetime('now'), 0, 0)"#
         )
         .execute(&pool)
@@ -618,7 +618,7 @@ mod tests {
         let db = Db::new(pool.clone());
 
         sqlx::query(
-            r#"INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
+            r#"INSERT INTO thing_alarms (id, thing_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
                VALUES ('alarm-resolved', 'd1', 'ws-001', 'info', 'Resolved', datetime('now'), 1, 1)"#
         )
         .execute(&pool)
@@ -638,7 +638,7 @@ mod tests {
         let db = Db::new(pool.clone());
 
         sqlx::query(
-            r#"INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
+            r#"INSERT INTO thing_alarms (id, thing_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
                VALUES ('alarm-ack', 'd1', 'ws-001', 'warning', 'Acknowledged', datetime('now'), 1, 0)"#
         )
         .execute(&pool)
@@ -657,15 +657,15 @@ mod tests {
         let pool = create_minimal_pool().await;
         let db = Db::new(pool.clone());
 
-        sqlx::query("INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved) VALUES ('alarm-0', 'd1', 'ws-001', 'info', 'Alarm 0', datetime('now'), 0, 0)")
+        sqlx::query("INSERT INTO thing_alarms (id, thing_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved) VALUES ('alarm-0', 'd1', 'ws-001', 'info', 'Alarm 0', datetime('now'), 0, 0)")
             .execute(&pool).await.expect("insert alarm 0 failed");
-        sqlx::query("INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved) VALUES ('alarm-1', 'd1', 'ws-001', 'info', 'Alarm 1', datetime('now', '-1 hours'), 0, 0)")
+        sqlx::query("INSERT INTO thing_alarms (id, thing_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved) VALUES ('alarm-1', 'd1', 'ws-001', 'info', 'Alarm 1', datetime('now', '-1 hours'), 0, 0)")
             .execute(&pool).await.expect("insert alarm 1 failed");
-        sqlx::query("INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved) VALUES ('alarm-2', 'd1', 'ws-001', 'info', 'Alarm 2', datetime('now', '-2 hours'), 0, 0)")
+        sqlx::query("INSERT INTO thing_alarms (id, thing_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved) VALUES ('alarm-2', 'd1', 'ws-001', 'info', 'Alarm 2', datetime('now', '-2 hours'), 0, 0)")
             .execute(&pool).await.expect("insert alarm 2 failed");
-        sqlx::query("INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved) VALUES ('alarm-3', 'd1', 'ws-001', 'info', 'Alarm 3', datetime('now', '-3 hours'), 0, 0)")
+        sqlx::query("INSERT INTO thing_alarms (id, thing_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved) VALUES ('alarm-3', 'd1', 'ws-001', 'info', 'Alarm 3', datetime('now', '-3 hours'), 0, 0)")
             .execute(&pool).await.expect("insert alarm 3 failed");
-        sqlx::query("INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved) VALUES ('alarm-4', 'd1', 'ws-001', 'info', 'Alarm 4', datetime('now', '-4 hours'), 0, 0)")
+        sqlx::query("INSERT INTO thing_alarms (id, thing_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved) VALUES ('alarm-4', 'd1', 'ws-001', 'info', 'Alarm 4', datetime('now', '-4 hours'), 0, 0)")
             .execute(&pool).await.expect("insert alarm 4 failed");
 
         let result = db.list_recent_alarms(3, None).await.map(map_recent_alarms);
@@ -679,9 +679,9 @@ mod tests {
         let pool = create_minimal_pool().await;
         let db = Db::new(pool.clone());
 
-        sqlx::query("INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved) VALUES ('alarm-old', 'd1', 'ws-001', 'info', 'Old alarm', datetime('now', '-2 hours'), 0, 0)")
+        sqlx::query("INSERT INTO thing_alarms (id, thing_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved) VALUES ('alarm-old', 'd1', 'ws-001', 'info', 'Old alarm', datetime('now', '-2 hours'), 0, 0)")
             .execute(&pool).await.expect("insert old alarm failed");
-        sqlx::query("INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved) VALUES ('alarm-new', 'd1', 'ws-001', 'info', 'New alarm', datetime('now'), 0, 0)")
+        sqlx::query("INSERT INTO thing_alarms (id, thing_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved) VALUES ('alarm-new', 'd1', 'ws-001', 'info', 'New alarm', datetime('now'), 0, 0)")
             .execute(&pool).await.expect("insert new alarm failed");
 
         let result = db.list_recent_alarms(10, None).await.map(map_recent_alarms);
@@ -698,7 +698,7 @@ mod tests {
         let db = Db::new(pool.clone());
 
         sqlx::query(
-            r#"INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
+            r#"INSERT INTO thing_alarms (id, thing_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
                VALUES ('alarm-ws1', 'd1', 'ws-001', 'warning', 'WS1 alarm', datetime('now'), 0, 0)"#
         )
         .execute(&pool)
@@ -706,7 +706,7 @@ mod tests {
         .expect("insert ws1 alarm failed");
 
         sqlx::query(
-            r#"INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
+            r#"INSERT INTO thing_alarms (id, thing_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
                VALUES ('alarm-ws2', 'd2', 'ws-002', 'error', 'WS2 alarm', datetime('now'), 0, 0)"#
         )
         .execute(&pool)
@@ -727,13 +727,13 @@ mod tests {
 
         // Insert an already-acknowledged alarm
         sqlx::query(
-            "INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
+            "INSERT INTO thing_alarms (id, thing_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
              VALUES ('alarm-done', 'dev-1', 'ws-001', 'warning', 'Done', datetime('now'), 1, 0)"
         ).execute(&pool).await.unwrap();
 
         // Verify it IS acknowledged
         use sqlx::Row;
-        let row = sqlx::query("SELECT is_acknowledged FROM device_alarms WHERE id = 'alarm-done'")
+        let row = sqlx::query("SELECT is_acknowledged FROM thing_alarms WHERE id = 'alarm-done'")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -747,12 +747,12 @@ mod tests {
         let _db = Db::new(pool.clone());
 
         sqlx::query(
-            "INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
+            "INSERT INTO thing_alarms (id, thing_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
              VALUES ('alarm-resolved-done', 'dev-1', 'ws-001', 'warning', 'Done', datetime('now'), 1, 1)"
         ).execute(&pool).await.unwrap();
 
         use sqlx::Row;
-        let row = sqlx::query("SELECT is_resolved FROM device_alarms WHERE id = 'alarm-resolved-done'")
+        let row = sqlx::query("SELECT is_resolved FROM thing_alarms WHERE id = 'alarm-resolved-done'")
             .fetch_one(&pool)
             .await
             .unwrap();

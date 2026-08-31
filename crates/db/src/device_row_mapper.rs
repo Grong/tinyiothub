@@ -2,9 +2,9 @@ use sqlx::Row;
 use tinyiothub_core::error::Result;
 use tinyiothub_core::models::device::Device;
 
-/// Centralized SELECT column list for the `devices` table.
+/// Centralized SELECT column list for the `things` table.
 pub const SELECT_COLUMNS: &str = r#"
-    id, name, display_name, device_type, address, description, position,
+    id, name, display_name, category, address, description, position,
     driver_name, device_model, protocol_type, factory_name, linked_data,
     driver_options, state, parent_id, template_id, workspace_id,
     linked_gateway, fingerprint, created_at, updated_at
@@ -17,7 +17,7 @@ pub fn row_to_device(row: sqlx::sqlite::SqliteRow) -> Result<Device> {
         id: row.get("id"),
         name: row.get("name"),
         display_name: row.get("display_name"),
-        device_type: row.get("device_type"),
+        category: row.get("category"),
         address: row.get("address"),
         description: row.get("description"),
         position: row.get("position"),

@@ -56,11 +56,7 @@ impl HeartbeatBridge {
     /// problem_key：结构化字段 `{tool_name}:{device_id}`；无目标设备的提案
     /// 用 "-" 占位（稳定，不随措辞变化）。
     pub fn problem_key_of(proposal: &Proposal) -> String {
-        format!(
-            "{}:{}",
-            proposal.tool_name,
-            proposal.device_id.as_deref().unwrap_or("-")
-        )
+        format!("{}:{}", proposal.tool_name, proposal.thing_id.as_deref().unwrap_or("-"))
     }
 
     /// O11 ack 抑制入口（Task 6，fix round 1 行级保真）：cloud 侧 ack 端点
@@ -233,13 +229,13 @@ impl AiEventHandler {
                         .signal(crate::runtime::heartbeat::types::HeartbeatSignal {
                             workspace_id: alarm.workspace_id.clone(),
                             reason: format!("Alarm: {}", alarm.message),
-                            context: format!("device_id={}, alarm_type={}", alarm.device_id, alarm.alarm_type),
+                            context: format!("device_id={}, alarm_type={}", alarm.thing_id, alarm.alarm_type),
                             priority: if severity == "critical" {
                                 SignalPriority::Critical
                             } else {
                                 SignalPriority::High
                             },
-                            device_id: Some(alarm.device_id.clone()),
+                            device_id: Some(alarm.thing_id.clone()),
                             alarm_type: Some(alarm.alarm_type.clone()),
                             rule_id: alarm.rule_id.clone(),
                         });
@@ -450,7 +446,7 @@ pub(crate) mod tests {
         let alarm = AiEvent::AlarmCreated(tinyiothub_core::models::event::AlarmEvent {
             id: "a1".into(),
             workspace_id: "ws_1".into(),
-            device_id: "d1".into(),
+            thing_id: "d1".into(),
             alarm_type: "high_temp".into(),
             severity: "warning".into(),
             message: "Temperature is high".into(),
@@ -615,7 +611,7 @@ pub(crate) mod tests {
                 workspace_id: "ws_1".into(),
                 agent_id: "hb".into(),
                 tool_name: tool_name.into(),
-                device_id: device_id.map(str::to_string),
+                thing_id: device_id.map(str::to_string),
                 summary: "车间温度超过阈值 30°C".into(),
                 reason: "连续 3 次采样超限".into(),
                 risk: "medium".into(),

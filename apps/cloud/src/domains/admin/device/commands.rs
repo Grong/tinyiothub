@@ -18,7 +18,7 @@ pub struct ExecuteCommandRequest {
 #[derive(Debug, Serialize)]
 pub struct CommandExecution {
     pub id: String,
-    pub device_id: String,
+    pub thing_id: String,
     pub command_id: String,
     pub command_name: String,
     pub parameters: Option<serde_json::Value>,
@@ -36,7 +36,7 @@ where
     std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new().route(
-        "/{device_id}/commands/{command_id}/execute",
+        "/{thing_id}/commands/{command_id}/execute",
         post(execute_device_command),
     )
 }
@@ -44,19 +44,19 @@ where
 /// 执行设备指令
 async fn execute_device_command(
     State(state): State<AdminState>,
-    Path((device_id, command_id)): Path<(String, String)>,
+    Path((thing_id, command_id)): Path<(String, String)>,
     _claims: Claims,
     Json(req): Json<ExecuteCommandRequest>,
 ) -> Json<ApiResponse<CommandExecution>> {
     tracing::info!(
         "Executing command {} for device {} with parameters: {:?}",
         command_id,
-        device_id,
+        thing_id,
         req.parameters
     );
 
     // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
-    // which automatically filters devices by workspace_id
+    // which automatically filters things by workspace_id
 
     // 验证指令是否存在
     let command = match state.db().find_device_command_by_id(&command_id).await {
@@ -69,7 +69,7 @@ async fn execute_device_command(
     };
 
     // 验证指令是否属于该设备
-    if command.device_id != device_id {
+    if command.thing_id != thing_id {
         return ApiResponseBuilder::error("指令不属于该设备");
     }
 
@@ -92,7 +92,7 @@ async fn execute_device_command(
             Ok(_) => {
                 tracing::info!(
                     "Command queued for execution: device={}, command={}",
-                    device_id,
+                    thing_id,
                     command_id
                 );
                 "pending" // 命令已加入队列，等待执行
@@ -100,7 +100,7 @@ async fn execute_device_command(
             Err(e) => {
                 tracing::error!(
                     "Failed to queue command: device={}, command={}, error={}",
-                    device_id,
+                    thing_id,
                     command_id,
                     e
                 );
@@ -115,7 +115,7 @@ async fn execute_device_command(
     // 命令提交成功，返回执行记录
     let execution = CommandExecution {
         id: execution_id.clone(),
-        device_id: device_id.clone(),
+        thing_id: thing_id.clone(),
         command_id: command_id.clone(),
         command_name: command.name.clone(),
         parameters: params_for_execution.clone(),
@@ -132,7 +132,7 @@ async fn execute_device_command(
 
     tracing::info!(
         "Command submitted: device={}, command={}, execution_id={}",
-        device_id,
+        thing_id,
         command_id,
         execution.id
     );

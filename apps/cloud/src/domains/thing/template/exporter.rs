@@ -44,7 +44,6 @@ impl TemplateExporter {
             author: None,
             category: "exported".to_string(),
             manufacturer: device.factory_name.clone(),
-            device_type: device.device_type.clone().unwrap_or_default(),
             protocol_type: device.protocol_type.clone(),
             driver_name: device.driver_name.clone(),
             tags: "[]".to_string(),
@@ -206,7 +205,7 @@ mod tests {
     fn test_map_properties() {
         let props = vec![tinyiothub_core::models::device_property::DeviceProperty {
             id: "p1".to_string(),
-            device_id: "d1".to_string(),
+            thing_id: "d1".to_string(),
             name: "temperature".to_string(),
             display_name: Some("温度".to_string()),
             description: Some("当前温度".to_string()),
@@ -239,7 +238,7 @@ mod tests {
     fn test_map_commands() {
         let cmds = vec![tinyiothub_core::models::device_command::DeviceCommand {
             id: "c1".to_string(),
-            device_id: "d1".to_string(),
+            thing_id: "d1".to_string(),
             name: "reboot".to_string(),
             display_name: Some("重启".to_string()),
             description: Some("重启设备".to_string()),

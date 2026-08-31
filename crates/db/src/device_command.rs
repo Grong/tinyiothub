@@ -8,6 +8,7 @@ use tinyiothub_core::{generate_id, now_string};
 #[derive(Debug, Clone, FromRow)]
 struct DeviceCommandRow {
     id: String,
+    #[sqlx(rename = "thing_id")]
     device_id: String,
     name: String,
     display_name: Option<String>,
@@ -20,7 +21,7 @@ impl From<DeviceCommandRow> for DeviceCommand {
     fn from(row: DeviceCommandRow) -> Self {
         Self {
             id: row.id,
-            device_id: row.device_id,
+            thing_id: row.device_id,
             name: row.name,
             display_name: row.display_name,
             description: row.description,
@@ -37,7 +38,7 @@ pub(crate) async fn find_device_command_by_id(
 ) -> Result<Option<DeviceCommand>, sqlx::Error> {
     let row = sqlx::query_as::<_, DeviceCommandRow>(
         r#"
-        SELECT id, device_id, name, display_name, description, parameters, created_at
+        SELECT id, thing_id, name, display_name, description, parameters, created_at
         FROM thing_actions WHERE id = ?
         "#,
     )
@@ -60,12 +61,12 @@ pub(crate) async fn create_device_command(
 
     sqlx::query(
         r#"
-        INSERT INTO thing_actions (id, device_id, name, display_name, description, parameters, created_at)
+        INSERT INTO thing_actions (id, thing_id, name, display_name, description, parameters, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&id)
-    .bind(&request.device_id)
+    .bind(&request.thing_id)
     .bind(&request.name)
     .bind(&request.display_name)
     .bind(&request.description)
@@ -78,7 +79,7 @@ pub(crate) async fn create_device_command(
 
     Ok(DeviceCommand {
         id,
-        device_id: request.device_id.clone(),
+        thing_id: request.thing_id.clone(),
         name: request.name.clone(),
         display_name: request.display_name.clone(),
         description: request.description.clone(),
@@ -94,8 +95,8 @@ pub(crate) async fn find_device_commands_by_device_id(
 ) -> Result<Vec<DeviceCommand>, sqlx::Error> {
     let rows = sqlx::query_as::<_, DeviceCommandRow>(
         r#"
-        SELECT id, device_id, name, display_name, description, parameters, created_at
-        FROM thing_actions WHERE device_id = ?
+        SELECT id, thing_id, name, display_name, description, parameters, created_at
+        FROM thing_actions WHERE thing_id = ?
         ORDER BY name ASC
         "#,
     )
@@ -114,8 +115,8 @@ pub(crate) async fn find_device_command_by_device_and_name(
 ) -> Result<Option<DeviceCommand>, sqlx::Error> {
     let row = sqlx::query_as::<_, DeviceCommandRow>(
         r#"
-        SELECT id, device_id, name, display_name, description, parameters, created_at
-        FROM thing_actions WHERE device_id = ? AND name = ?
+        SELECT id, thing_id, name, display_name, description, parameters, created_at
+        FROM thing_actions WHERE thing_id = ? AND name = ?
         "#,
     )
     .bind(device_id)
@@ -140,12 +141,12 @@ pub(crate) async fn bulk_create_device_commands(
 
         sqlx::query(
             r#"
-            INSERT INTO thing_actions (id, device_id, name, display_name, description, parameters, created_at)
+            INSERT INTO thing_actions (id, thing_id, name, display_name, description, parameters, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&id)
-        .bind(&request.device_id)
+        .bind(&request.thing_id)
         .bind(&request.name)
         .bind(&request.display_name)
         .bind(&request.description)
@@ -156,7 +157,7 @@ pub(crate) async fn bulk_create_device_commands(
 
         created_commands.push(DeviceCommand {
             id,
-            device_id: request.device_id.clone(),
+            thing_id: request.thing_id.clone(),
             name: request.name.clone(),
             display_name: request.display_name.clone(),
             description: request.description.clone(),

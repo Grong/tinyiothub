@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **BREAKING (DB/API)**: device schema 全面更名为 thing——表 `devices`→`things` 等 5 张，列 `device_id`→`thing_id`（13 张表）、`device_type`→`category`、`device_limit`→`thing_limit`；JSON 字段 `deviceId`→`thingId`、`deviceType`→`category`。老库经迁移 `20260825000001` 自动升级（启动前自动备份）。驱动 MQTT/插件协议字段暂不变化。前端适配在后续 PR。
+- **BREAKING (REST JSON)**: REST 响应/请求 JSON 键 `deviceId`→`thingId`、`deviceType`→`category` 对前端为破坏性变更（前端适配在 PR-2）。
+- **BREAKING (cron 配置)**: `device_command` 类型定时任务的配置键 `device_id`→`thing_id`——已存量的 `device_command` 任务配置需手工更新，不提供数据迁移。
+
+### Notes
+
+- **MCP 工具输入 schema 不变**: 对外公布的 `deviceId`/`targetDeviceId` 参数名保持可用；同时接受 `thingId`/`targetThingId` 作为别名。MQTT/插件驱动协议字段不变。
+- **Known follow-ups**（本 PR 不处理，PR-2 收尾）: ① `tag_bindings.target_type` 存量 `'device'` 值的数据迁移；② 权限字符串 `'device:*'` 更名；③ 演示种子 `job-001` 引用了尚未存在的 `/api/things/sync-status` 路由。
+
 ## [0.5.0.0] - 2026-08-24
 
 > **⚠️ 升级注意（破坏性变更）**：本次升级不提供存量数据迁移路径——68 个历史迁移已压缩为单一基线，旧数据库启动时会响亮中止并指引重建（启动前自动备份到 `backups/`）。需要保留数据请先用旧版本导出再升级。演示种子数据 `[seed] demo_data` 默认关闭，开发环境请在配置中显式开启。

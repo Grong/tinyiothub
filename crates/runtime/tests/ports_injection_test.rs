@@ -67,7 +67,7 @@ impl DeviceCommandQueries for FakeCommands {
         Ok(self
             .command
             .as_ref()
-            .filter(|c| c.device_id == device_id && c.name == name)
+            .filter(|c| c.thing_id == device_id && c.name == name)
             .cloned())
     }
 }
@@ -92,10 +92,7 @@ fn device_command_job(device_id: &str, command_name: &str) -> CronJob {
         description: None,
         job_type: "device_command".to_string(),
         cron_expression: "0 0 * * * *".to_string(),
-        config: format!(
-            r#"{{"device_id": "{}", "command_name": "{}"}}"#,
-            device_id, command_name
-        ),
+        config: format!(r#"{{"thing_id": "{}", "command_name": "{}"}}"#, device_id, command_name),
         timeout_seconds: 300,
         max_retries: 3,
         is_enabled: true,
@@ -138,7 +135,7 @@ async fn device_command_executor_queues_command_via_port() {
         Arc::new(FakeCommands {
             command: Some(DeviceCommand {
                 id: "cmd-1".to_string(),
-                device_id: "dev-1".to_string(),
+                thing_id: "dev-1".to_string(),
                 name: "reboot".to_string(),
                 display_name: None,
                 description: None,

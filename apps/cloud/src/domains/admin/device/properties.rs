@@ -25,11 +25,8 @@ where
     std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new()
-        .route("/{device_id}/properties", get(get_device_properties))
-        .route(
-            "/{device_id}/properties/{property_id}/value",
-            put(update_property_value),
-        )
+        .route("/{thing_id}/properties", get(get_device_properties))
+        .route("/{thing_id}/properties/{property_id}/value", put(update_property_value))
         .route(
             "/by-name/{device_name}/properties/{property_name}",
             get(get_device_property_by_name),
@@ -39,18 +36,18 @@ where
 /// 获取设备属性列表
 async fn get_device_properties(
     State(state): State<AdminState>,
-    Path(device_id): Path<String>,
+    Path(thing_id): Path<String>,
     _claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<Vec<DeviceProperty>>> {
     // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
-    // which automatically filters devices by workspace_id
+    // which automatically filters things by workspace_id
 
     let tenant_device_service = state.tenant_device_service(&workspace_id);
-    match tenant_device_service.get_device_properties(&device_id).await {
+    match tenant_device_service.get_device_properties(&thing_id).await {
         Ok(properties) => ApiResponseBuilder::success(properties),
         Err(e) => {
-            tracing::error!("Failed to get device properties for {}: {}", device_id, e);
+            tracing::error!("Failed to get device properties for {}: {}", thing_id, e);
             ApiResponseBuilder::error("获取设备属性失败")
         }
     }
@@ -74,7 +71,7 @@ async fn get_device_property_by_name(
         }
     };
     // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
-    // which automatically filters devices by workspace_id
+    // which automatically filters things by workspace_id
     let property = state.get_device_prop_by_name(&device_name, &property_name);
     ApiResponseBuilder::success(property)
 }
@@ -82,20 +79,20 @@ async fn get_device_property_by_name(
 /// 更新设备属性值
 async fn update_property_value(
     State(state): State<AdminState>,
-    Path((device_id, property_id)): Path<(String, String)>,
+    Path((thing_id, property_id)): Path<(String, String)>,
     claims: Claims,
     Json(req): Json<UpdatePropertyValueRequest>,
 ) -> Json<ApiResponse<bool>> {
     // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
-    // which automatically filters devices by workspace_id
+    // which automatically filters things by workspace_id
     match state
-        .update_device_property_value(&claims.workspace_id, &device_id, &property_id, &req.value)
+        .update_device_property_value(&claims.workspace_id, &thing_id, &property_id, &req.value)
         .await
     {
         Ok(()) => {
             tracing::info!(
                 "Property value updated: device={}, property={}, value={}",
-                device_id,
+                thing_id,
                 property_id,
                 req.value
             );

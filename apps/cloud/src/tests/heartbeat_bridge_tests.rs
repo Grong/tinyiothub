@@ -48,13 +48,13 @@ fn record_run(
     registry.record_problem_run(WS, problem_key, run_id, outcome, verified, Utc::now() - age);
 }
 
-fn proposal(tool_name: &str, device_id: Option<&str>) -> Proposal {
+fn proposal(tool_name: &str, thing_id: Option<&str>) -> Proposal {
     Proposal {
         id: "p1".into(),
         workspace_id: WS.into(),
         agent_id: "hb".into(),
         tool_name: tool_name.into(),
-        device_id: device_id.map(str::to_string),
+        thing_id: thing_id.map(str::to_string),
         summary: "车间温度超过阈值".into(),
         reason: "连续采样超限".into(),
         risk: "medium".into(),

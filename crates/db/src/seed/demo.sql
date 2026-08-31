@@ -1,14 +1,14 @@
 -- seed_demo: demo-scenario seed rows (extracted from the pre-baseline
 -- migration chain; see crates/db/src/seed.rs for the provenance table).
--- Requires seed_system to have run first (devices reference the default
+-- Requires seed_system to have run first (things reference the default
 -- tenant/workspace; tags/alarm rules reference the admin user).
 -- Every statement is idempotent (INSERT OR IGNORE / WHERE EXISTS guards).
 
--- ── demo devices (20260106000002) ───────────────────────────────────────────
--- Baseline devices table: product_id dropped by the 20260723000001 thing
+-- ── demo things (20260106000002) ───────────────────────────────────────────
+-- Baseline things table: product_id dropped by the 20260723000001 thing
 -- rebuild; tenant_id/workspace_id point at the seed_system defaults (the old
 -- chain backfilled those via UPDATE in 20260407000001).
-INSERT OR IGNORE INTO devices (id, name, display_name, device_type, address, description, driver_name, protocol_type, state, tenant_id, workspace_id, driver_options) VALUES
+INSERT OR IGNORE INTO things (id, name, display_name, category, address, description, driver_name, protocol_type, state, tenant_id, workspace_id, driver_options) VALUES
 ('device-env-01',    'env_sensor_workshop',   '车间环境传感器',     '环境传感器', '192.168.1.100:502',  'A栋生产车间温湿度监测',     'simulator', 'Modbus RTU', 1, 'tenant-default-001', 'ws-default-001', '{"interval":"2000","mode":"sine"}'),
 ('device-env-02',    'env_sensor_warehouse',  '仓库环境传感器',     '环境传感器', '192.168.1.101:502',  'B栋原料仓库环境监测',       'simulator', 'Modbus RTU', 1, 'tenant-default-001', 'ws-default-001', '{"interval":"3000","mode":"random"}'),
 ('device-cold-01',   'cold_chain_fridge',     '冷链冰箱温度仪',     '温度记录仪', '192.168.1.110:502',  '药品冷链存储温度监控',       'simulator', 'Modbus RTU', 1, 'tenant-default-001', 'ws-default-001', '{"interval":"5000","mode":"sine"}'),
@@ -21,9 +21,9 @@ INSERT OR IGNORE INTO devices (id, name, display_name, device_type, address, des
 -- ── per-thing properties + actions (20260818000001, verbatim) ───────────────
 -- The restore migration re-inserted the January per-device seed rows into
 -- thing_properties/thing_actions after the thing-ontology rebuild; the
--- WHERE EXISTS(devices) guard keeps the rows FK-clean.
+-- WHERE EXISTS(things) guard keeps the rows FK-clean.
 INSERT OR IGNORE INTO thing_properties
-    (id, device_id, name, display_name, description, data_type, unit, min_value, max_value)
+    (id, thing_id, name, display_name, description, data_type, unit, min_value, max_value)
 SELECT column1, column2, column3, column4, column5, column6, column7, column8, column9
 FROM (VALUES
 -- 车间环境传感器
@@ -70,10 +70,10 @@ FROM (VALUES
 ('prop-pow-pf',         'device-power-01', 'power_factor',  '功率因数',     '当前功率因数',           'number', '',     0,   1),
 ('prop-pow-frequency',  'device-power-01', 'frequency',     '频率',         '电网频率',               'number', 'Hz',   45,  65)
 )
-WHERE EXISTS (SELECT 1 FROM devices d WHERE d.id = column2);
+WHERE EXISTS (SELECT 1 FROM things d WHERE d.id = column2);
 
 INSERT OR IGNORE INTO thing_actions
-    (id, device_id, name, display_name, description, parameters)
+    (id, thing_id, name, display_name, description, parameters)
 SELECT column1, column2, column3, column4, column5, column6
 FROM (VALUES
 -- 环境传感器
@@ -98,18 +98,18 @@ FROM (VALUES
 ('cmd-power-reset',      'device-power-01','reset_energy',   '电能清零',     '重置累计电能计数器',                '{}'),
 ('cmd-power-report',     'device-power-01','force_report',   '强制上报',     '立即上报当前电力参数',              '{}')
 )
-WHERE EXISTS (SELECT 1 FROM devices d WHERE d.id = column2);
+WHERE EXISTS (SELECT 1 FROM things d WHERE d.id = column2);
 
 -- ── demo tags + bindings (20260106000002) ───────────────────────────────────
 INSERT OR IGNORE INTO tags (id, type, name, description, color, tenant_id, created_by) VALUES
-('tag-device-001', 'device', '温度传感器', '温度监测设备', '#FF6B6B', 'tenant-default-001', 'admin-user-001'),
-('tag-device-002', 'device', '湿度传感器', '湿度监测设备', '#4ECDC4', 'tenant-default-001', 'admin-user-001'),
-('tag-device-003', 'device', '摄像头', '视频监控设备', '#45B7D1', 'tenant-default-001', 'admin-user-001'),
-('tag-device-004', 'device', '机器人', '自动化设备', '#96CEB4', 'tenant-default-001', 'admin-user-001'),
-('tag-device-005', 'device', '在线设备', '当前在线的设备', '#FFEAA7', 'tenant-default-001', 'admin-user-001'),
-('tag-device-006', 'device', '离线设备', '当前离线的设备', '#DDA0DD', 'tenant-default-001', 'admin-user-001'),
-('tag-device-007', 'device', '生产设备', '生产相关设备', '#98D8C8', 'tenant-default-001', 'admin-user-001'),
-('tag-device-008', 'device', '监控设备', '监控相关设备', '#F7DC6F', 'tenant-default-001', 'admin-user-001'),
+('tag-device-001', 'thing', '温度传感器', '温度监测设备', '#FF6B6B', 'tenant-default-001', 'admin-user-001'),
+('tag-device-002', 'thing', '湿度传感器', '湿度监测设备', '#4ECDC4', 'tenant-default-001', 'admin-user-001'),
+('tag-device-003', 'thing', '摄像头', '视频监控设备', '#45B7D1', 'tenant-default-001', 'admin-user-001'),
+('tag-device-004', 'thing', '机器人', '自动化设备', '#96CEB4', 'tenant-default-001', 'admin-user-001'),
+('tag-device-005', 'thing', '在线设备', '当前在线的设备', '#FFEAA7', 'tenant-default-001', 'admin-user-001'),
+('tag-device-006', 'thing', '离线设备', '当前离线的设备', '#DDA0DD', 'tenant-default-001', 'admin-user-001'),
+('tag-device-007', 'thing', '生产设备', '生产相关设备', '#98D8C8', 'tenant-default-001', 'admin-user-001'),
+('tag-device-008', 'thing', '监控设备', '监控相关设备', '#F7DC6F', 'tenant-default-001', 'admin-user-001'),
 ('tag-app-001', 'app', '生产环境', '生产环境应用', '#52C41A', 'tenant-default-001', 'admin-user-001'),
 ('tag-app-002', 'app', '测试环境', '测试环境应用', '#1890FF', 'tenant-default-001', 'admin-user-001'),
 ('tag-app-003', 'app', '开发环境', '开发环境应用', '#722ED1', 'tenant-default-001', 'admin-user-001');
@@ -136,7 +136,7 @@ INSERT OR IGNORE INTO tag_bindings (id, tag_id, target_id, target_type, tenant_i
 ('binding-019', 'tag-device-008', 'device-power-01', 'device', 'tenant-default-001', 'admin-user-001');
 
 -- ── demo alarm rules + sample alarms (20260106000002) ───────────────────────
-INSERT OR IGNORE INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, created_by) VALUES
+INSERT OR IGNORE INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, created_by) VALUES
 ('alarm-rule-001', 'device-env-01', 'prop-env01-temp', '车间高温告警',   'threshold', '{"operator": "gt", "value": 45}',  'warning',  'admin-user-001'),
 ('alarm-rule-002', 'device-env-01', 'prop-env01-temp', '车间超高温告警', 'threshold', '{"operator": "gt", "value": 55}',  'critical', 'admin-user-001'),
 ('alarm-rule-003', 'device-env-02', 'prop-env02-humid','仓库高湿度告警', 'threshold', '{"operator": "gt", "value": 85}',  'warning',  'admin-user-001'),
@@ -145,7 +145,7 @@ INSERT OR IGNORE INTO device_alarm_rules (id, device_id, property_id, rule_name,
 ('alarm-rule-006', 'device-power-01','prop-pow-voltage','电压过高告警',  'threshold', '{"operator": "gt", "value": 420}',  'warning',  'admin-user-001'),
 ('alarm-rule-007', 'device-power-01','prop-pow-pf',    '功率因数过低',   'threshold', '{"operator": "lt", "value": 0.85}', 'warning',  'admin-user-001');
 
-INSERT OR IGNORE INTO device_alarms (id, device_id, property_id, rule_id, alarm_level, alarm_message, alarm_value, threshold_value, alarm_time) VALUES
+INSERT OR IGNORE INTO thing_alarms (id, thing_id, property_id, rule_id, alarm_level, alarm_message, alarm_value, threshold_value, alarm_time) VALUES
 ('alarm-001', 'device-env-01',  'prop-env01-temp',  'alarm-rule-001', 'warning',  '车间温度超过警告阈值',     '47.2',  '45',  datetime('now', '-2 hours')),
 ('alarm-002', 'device-env-02',  'prop-env02-humid', 'alarm-rule-003', 'warning',  '仓库湿度超过警告阈值',     '88.5',  '85',  datetime('now', '-1 hour')),
 ('alarm-003', 'device-cold-01', 'prop-cold-temp',   'alarm-rule-004', 'critical', '冷链冰箱温度异常偏高',     '10.3',  '8',   datetime('now', '-30 minutes')),
@@ -154,7 +154,7 @@ INSERT OR IGNORE INTO device_alarms (id, device_id, property_id, rule_id, alarm_
 -- ── sample jobs (20260312000001) ────────────────────────────────────────────
 INSERT OR IGNORE INTO jobs (id, name, description, job_type, cron_expression, config, is_enabled, tags) VALUES
     ('job-001', '设备状态同步', '每5分钟同步一次设备在线状态', 'http', '*/5 * * * *',
-     '{"url": "/api/devices/sync-status", "method": "POST", "headers": {}}',
+     '{"url": "/api/things/sync-status", "method": "POST", "headers": {}}',
      true, '["系统", "设备"]'),
     ('job-002', '数据清理', '每天凌晨3点清理过期数据', 'script', '0 3 * * *',
      '{"script": "cleanup.sh", "working_dir": "/app/scripts"}',

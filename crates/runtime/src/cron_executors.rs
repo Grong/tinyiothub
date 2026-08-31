@@ -37,8 +37,8 @@ impl JobExecutor for DeviceCommandExecutor {
 
     async fn execute(&self, job: &CronJob, _run_id: &str) -> std::result::Result<ExecutionResult, ExecutorError> {
         let device_id = job
-            .target_device_id()
-            .ok_or_else(|| ExecutorError::InvalidConfig("missing device_id in job config".to_string()))?;
+            .target_thing_id()
+            .ok_or_else(|| ExecutorError::InvalidConfig("missing thing_id in job config".to_string()))?;
         let command_name = job
             .target_command_name()
             .ok_or_else(|| ExecutorError::InvalidConfig("missing command_name in job config".to_string()))?;

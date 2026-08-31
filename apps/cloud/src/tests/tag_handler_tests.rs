@@ -40,7 +40,7 @@ async fn test_create_tag() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
-    let body = json!({"name": "test-tag-001", "type": "device"});
+    let body = json!({"name": "test-tag-001", "type": "thing"});
     let response = app
         .oneshot(auth_request("POST", "/api/v1/tags", &token, Some(body)))
         .await
@@ -60,8 +60,8 @@ async fn test_list_tags_with_data() {
 
     // Setup: create tags first
     let app = app;
-    create_tag(&app, &token, "tag-alpha", "device").await;
-    create_tag(&app, &token, "tag-beta", "device").await;
+    create_tag(&app, &token, "tag-alpha", "thing").await;
+    create_tag(&app, &token, "tag-beta", "thing").await;
 
     // Test: list should return the created tags
     let response = app
@@ -108,7 +108,7 @@ async fn test_get_tag_by_id_with_data() {
 
     // Setup: create a tag
     let app = app;
-    let create_json = create_tag(&app, &token, "get-test-tag", "device").await;
+    let create_json = create_tag(&app, &token, "get-test-tag", "thing").await;
     let tag_id = create_json["result"]["id"].as_str().unwrap_or("");
 
     // Test: get by ID should return the tag (exercises FromRow)
@@ -164,7 +164,7 @@ async fn test_search_tags_with_data() {
 
     // Setup: create a tag with known name
     let app = app;
-    create_tag(&app, &token, "searchable-unique-tag", "device").await;
+    create_tag(&app, &token, "searchable-unique-tag", "thing").await;
 
     // Test: search should find it (exercises FromRow)
     let response = app
@@ -189,7 +189,7 @@ async fn test_get_tag_stats_with_data() {
 
     // Setup: create tags
     let app = app;
-    create_tag(&app, &token, "stats-tag-1", "device").await;
+    create_tag(&app, &token, "stats-tag-1", "thing").await;
     create_tag(&app, &token, "stats-tag-2", "app").await;
 
     // Test: stats should reflect created tags
@@ -303,7 +303,7 @@ async fn test_tag_lifecycle() {
     let token = create_test_token("user-1", "tenant-1");
 
     // 1. Create
-    let body = json!({"name": "lifecycle-tag", "type": "device"});
+    let body = json!({"name": "lifecycle-tag", "type": "thing"});
     let response = app
         .clone()
         .oneshot(auth_request("POST", "/api/v1/tags", &token, Some(body)))

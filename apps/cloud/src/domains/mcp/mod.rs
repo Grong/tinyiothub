@@ -80,7 +80,7 @@ impl McpState {
         let ws_id = workspace_id.clone().unwrap_or_else(|| {
             tracing::warn!(
                 "[SECURITY] tenant_device_service called with workspace_id=None — \
-                 using empty workspace (no devices will be returned). \
+                 using empty workspace (no things will be returned). \
                  This indicates a bug: WorkspaceScope should always resolve to a workspace_id."
             );
             String::new()
@@ -100,7 +100,7 @@ impl McpState {
     pub async fn update_device_property_value(
         &self,
         workspace_id: &str,
-        device_id: &str,
+        thing_id: &str,
         property_id: &str,
         value: &str,
     ) -> Result<(), Error> {
@@ -108,14 +108,14 @@ impl McpState {
 
         // 1. 验证设备存在且属于指定的workspace
         let tenant_device_service = self.tenant_device_service(&Some(workspace_id.to_string()));
-        let device = match tenant_device_service.get_device_by_id(device_id).await? {
+        let device = match tenant_device_service.get_device_by_id(thing_id).await? {
             Some(d) => d,
             None => return Err(Error::NotFound),
         };
 
         // 2. 验证属性存在且属于该设备
         let property = match self.db().find_device_property_by_id(property_id).await {
-            Ok(Some(p)) if p.device_id == device_id => p,
+            Ok(Some(p)) if p.thing_id == thing_id => p,
             Ok(Some(_)) => {
                 return Err(Error::ValidationError("Property does not belong to device".to_string()));
             }
@@ -125,9 +125,9 @@ impl McpState {
 
         // 3. 构造并发布 PropertyChange 事件
         let source = EventSource::device_property(
-            device_id.to_string(),
+            thing_id.to_string(),
             property_id.to_string(),
-            format!("{}:{}", device_id, property_id),
+            format!("{}:{}", thing_id, property_id),
         );
 
         let device_display_name = device.display_name.as_deref().unwrap_or(&device.name);
@@ -140,7 +140,7 @@ impl McpState {
         );
 
         let event = tinyiothub_core::models::event::Event::new_property_change_event(
-            device_id.to_string(),
+            thing_id.to_string(),
             property_id.to_string(),
             source,
             content,

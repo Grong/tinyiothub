@@ -3,7 +3,7 @@
 use tinyiothub_core::{error::Error, generate_id};
 use tinyiothub_storage::Db;
 
-pub use tinyiothub_storage::device_trace::{DeviceTrace, DeviceTraceStatistics, SystemTraceOverview};
+pub use tinyiothub_storage::thing_trace::{DeviceTrace, DeviceTraceStatistics, SystemTraceOverview};
 
 pub struct DeviceTraceService {
     db: Db,
@@ -17,7 +17,7 @@ impl DeviceTraceService {
     #[allow(clippy::too_many_arguments)]
     pub async fn record_device_trace(
         &self,
-        device_id: &str,
+        thing_id: &str,
         trace_type: &str,
         level: &str,
         category: &str,
@@ -28,7 +28,7 @@ impl DeviceTraceService {
         user_id: Option<&str>,
         session_id: Option<&str>,
     ) -> Result<String, Error> {
-        if !self.db.device_exists_by_id(device_id).await? {
+        if !self.db.device_exists_by_id(thing_id).await? {
             return Err(Error::IOError("Device not found".to_string()));
         }
         let trace_id = generate_id();
@@ -37,7 +37,7 @@ impl DeviceTraceService {
         self.db
             .insert_device_trace(
                 &trace_id,
-                device_id,
+                thing_id,
                 trace_type,
                 level,
                 category,
@@ -51,7 +51,7 @@ impl DeviceTraceService {
             .await?;
         tracing::info!(
             "Device trace recorded: device={}, type={}, level={}, title={}, trace_id={}",
-            device_id,
+            thing_id,
             trace_type,
             level,
             title,
@@ -60,7 +60,7 @@ impl DeviceTraceService {
         if level == "error" || level == "critical" {
             tracing::warn!(
                 "Critical trace recorded for device {}: {} - {}",
-                device_id,
+                thing_id,
                 title,
                 message
             );
@@ -70,43 +70,43 @@ impl DeviceTraceService {
 
     pub async fn get_device_traces(
         &self,
-        device_id: &str,
+        thing_id: &str,
         trace_types: Option<&[String]>,
         levels: Option<&[String]>,
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<DeviceTrace>, Error> {
-        if !self.db.device_exists_by_id(device_id).await? {
+        if !self.db.device_exists_by_id(thing_id).await? {
             return Err(Error::NotFound);
         }
         let limit = limit.unwrap_or(50);
         let offset = offset.unwrap_or(0);
         self.db
-            .find_device_traces(device_id, trace_types, levels, limit, offset)
+            .find_device_traces(thing_id, trace_types, levels, limit, offset)
             .await
     }
 
     pub async fn get_device_trace_statistics(
         &self,
-        device_id: &str,
+        thing_id: &str,
         days: Option<u32>,
     ) -> Result<DeviceTraceStatistics, Error> {
-        if !self.db.device_exists_by_id(device_id).await? {
+        if !self.db.device_exists_by_id(thing_id).await? {
             return Err(Error::NotFound);
         }
-        self.db.get_device_trace_statistics(device_id, days.unwrap_or(7)).await
+        self.db.get_device_trace_statistics(thing_id, days.unwrap_or(7)).await
     }
 
     pub async fn clear_device_traces(
         &self,
-        device_id: &str,
+        thing_id: &str,
         before_date: Option<&str>,
         trace_types: Option<&[String]>,
     ) -> Result<u32, Error> {
-        if !self.db.device_exists_by_id(device_id).await? {
+        if !self.db.device_exists_by_id(thing_id).await? {
             return Err(Error::IOError("Device not found".to_string()));
         }
-        self.db.delete_device_traces(device_id, before_date, trace_types).await
+        self.db.delete_device_traces(thing_id, before_date, trace_types).await
     }
 
     pub async fn cleanup_expired_traces(&self, days_to_keep: u32) -> Result<u32, Error> {
@@ -122,7 +122,7 @@ impl DeviceTraceService {
         &self,
         levels: Option<&[String]>,
         sources: Option<&[String]>,
-        device_id: Option<&str>,
+        thing_id: Option<&str>,
         device_ids: Option<&[String]>,
         start_time: Option<&str>,
         end_time: Option<&str>,
@@ -133,7 +133,7 @@ impl DeviceTraceService {
             .find_all_device_traces(
                 levels,
                 sources,
-                device_id,
+                thing_id,
                 device_ids,
                 start_time,
                 end_time,

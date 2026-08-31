@@ -49,7 +49,7 @@ async fn test_get_device_profile_existing_device() {
     let create_body = json!({
         "name": "profile-test-device",
         "display_name": "Profile Test Device",
-        "device_type": "sensor",
+        "category": "sensor",
         "protocol_type": "modbus"
     });
 
@@ -58,7 +58,7 @@ async fn test_get_device_profile_existing_device() {
         .oneshot({
             let mut builder = Request::builder()
                 .method("POST")
-                .uri("/api/v1/devices")
+                .uri("/api/v1/things")
                 .header("Authorization", auth_header(&token))
                 .header("Content-Type", "application/json");
             builder.body(Body::from(create_body.to_string())).unwrap()
@@ -67,11 +67,11 @@ async fn test_get_device_profile_existing_device() {
         .unwrap();
 
     let (_status, create_json) = response_parts(response).await;
-    let device_id = create_json["result"]["id"].as_str().unwrap().to_string();
+    let thing_id = create_json["result"]["id"].as_str().unwrap().to_string();
 
     // Now get the profile
     let response = app
-        .oneshot(auth_request("GET", &format!("/api/v1/devices/{}/profile", device_id), &token))
+        .oneshot(auth_request("GET", &format!("/api/v1/devices/{}/profile", thing_id), &token))
         .await
         .unwrap();
 

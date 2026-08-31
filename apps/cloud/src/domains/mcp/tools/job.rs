@@ -30,7 +30,8 @@ struct CreateScheduleInput {
     description: Option<String>,
     job_type: String,
     cron_expression: String,
-    target_device_id: Option<String>,
+    #[serde(rename = "targetDeviceId", alias = "targetThingId")]
+    target_thing_id: Option<String>,
     target_command_name: Option<String>,
     target_command_params: Option<String>,
     config: Option<String>,
@@ -56,7 +57,8 @@ struct UpdateScheduleInput {
     description: Option<String>,
     job_type: Option<String>,
     cron_expression: Option<String>,
-    target_device_id: Option<String>,
+    #[serde(rename = "targetDeviceId", alias = "targetThingId")]
+    target_thing_id: Option<String>,
     target_command_name: Option<String>,
     target_command_params: Option<String>,
     config: Option<String>,
@@ -70,8 +72,8 @@ struct UpdateScheduleInput {
 fn build_config_from_input(input: &CreateScheduleInput) -> String {
     if input.job_type == "device_command" {
         let mut cfg = serde_json::Map::new();
-        if let Some(ref did) = input.target_device_id {
-            cfg.insert("device_id".to_string(), serde_json::Value::String(did.clone()));
+        if let Some(ref did) = input.target_thing_id {
+            cfg.insert("thing_id".to_string(), serde_json::Value::String(did.clone()));
         }
         if let Some(ref cn) = input.target_command_name {
             cfg.insert("command_name".to_string(), serde_json::Value::String(cn.clone()));
@@ -113,8 +115,8 @@ fn map_update_input(input: &UpdateScheduleInput) -> UpdateCronJobRequest {
     let config = input.config.clone().or_else(|| {
         if job_type.as_deref() == Some("device_command") {
             let mut cfg = serde_json::Map::new();
-            if let Some(ref did) = input.target_device_id {
-                cfg.insert("device_id".to_string(), serde_json::Value::String(did.clone()));
+            if let Some(ref did) = input.target_thing_id {
+                cfg.insert("thing_id".to_string(), serde_json::Value::String(did.clone()));
             }
             if let Some(ref cn) = input.target_command_name {
                 cfg.insert("command_name".to_string(), serde_json::Value::String(cn.clone()));
@@ -350,11 +352,11 @@ impl ToolHandler for CreateScheduleHandler {
             .as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        // SECURITY: Verify target_device_id belongs to authenticated workspace if provided
-        if let Some(ref device_id) = input.target_device_id {
+        // SECURITY: Verify target_thing_id belongs to authenticated workspace if provided
+        if let Some(ref thing_id) = input.target_thing_id {
             match state
                 .tenant_device_service_str(&claims.workspace_id)
-                .get_device_by_id(device_id)
+                .get_device_by_id(thing_id)
                 .await
             {
                 Ok(Some(_)) => {
@@ -363,7 +365,7 @@ impl ToolHandler for CreateScheduleHandler {
                 Ok(None) => {
                     tracing::warn!(
                         "MCP create_schedule: access denied to device {} for workspace {}",
-                        device_id,
+                        thing_id,
                         claims.workspace_id
                     );
                     return Err(ToolError::Forbidden(

@@ -181,7 +181,7 @@ impl ThingService {
             name: req.name.clone(),
             display_name: None,
             thing_type: thing_type.to_string(),
-            device_type: req.device_type.clone(),
+            category: req.category.clone(),
             address: None,
             description: req.description.clone(),
             position: None,
@@ -223,7 +223,7 @@ impl ThingService {
             .unwrap_or_default()
             .into_iter()
             .map(|p| CreateDevicePropertyRequest {
-                device_id: thing_id.to_string(),
+                thing_id: thing_id.to_string(),
                 name: p["name"].as_str().unwrap_or("").to_string(),
                 display_name: p.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 description: None,
@@ -252,7 +252,7 @@ impl ThingService {
         let db = Db::new(self.pool.clone());
         for a in serde_json::from_str::<Vec<serde_json::Value>>(&json).unwrap_or_default() {
             let req = CreateDeviceCommandRequest {
-                device_id: thing_id.to_string(),
+                thing_id: thing_id.to_string(),
                 name: a["name"].as_str().unwrap_or("").to_string(),
                 display_name: a.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 description: None,
@@ -340,7 +340,7 @@ impl ThingService {
     // Resources
     // ──────────────────────────────────────────
 
-    /// Detach a resource from a thing (set device_id = NULL).
+    /// Detach a resource from a thing (set thing_id = NULL).
     pub async fn detach_resource(
         &self,
         thing_id: &str,
@@ -410,7 +410,7 @@ impl ThingService {
             workspace_id: row.workspace_id.clone(),
             name: row.name.clone(),
             display_name: row.display_name.clone(),
-            device_type: row.device_type.clone(),
+            category: row.category.clone(),
             thing_type: row.thing_type.clone(),
             parent_id: row.parent_id.clone(),
             template_id: row.template_id.clone(),
@@ -430,9 +430,9 @@ impl ThingService {
     /// Load properties from the storage layer (single source of SQL for
     /// thing_properties — eng-review T9). No template fallback: the blueprint
     /// model means a thing with no instances has no properties (D6).
-    async fn load_properties(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
+    async fn load_properties(&self, thing_id: &str) -> Option<Vec<serde_json::Value>> {
         let db = Db::new(self.pool.clone());
-        let props = db.find_device_properties_by_device_id(device_id).await.ok()?;
+        let props = db.find_device_properties_by_device_id(thing_id).await.ok()?;
         if props.is_empty() {
             return None;
         }
@@ -443,7 +443,7 @@ impl ThingService {
                 .map(|p| {
                     serde_json::json!({
                         "id": p.id,
-                        "deviceId": p.device_id,
+                        "deviceId": p.thing_id,
                         "name": p.name,
                         "displayName": p.display_name,
                         "description": p.description,
@@ -463,8 +463,8 @@ impl ThingService {
 
     /// Load recent events (repo query — T9), mapped to the frontend's
     /// ThingEvent shape. Level int → name per the 4-level enum.
-    async fn load_recent_events(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
-        let rows = self.db.list_thing_recent_events(device_id, 20).await.ok()?;
+    async fn load_recent_events(&self, thing_id: &str) -> Option<Vec<serde_json::Value>> {
+        let rows = self.db.list_thing_recent_events(thing_id, 20).await.ok()?;
         if rows.is_empty() {
             return None;
         }
@@ -505,7 +505,7 @@ impl ThingService {
                 .map(|c| {
                     serde_json::json!({
                         "id": c.id,
-                        "deviceId": c.device_id,
+                        "deviceId": c.thing_id,
                         "name": c.name,
                         "displayName": c.display_name,
                         "description": c.description,
@@ -517,8 +517,8 @@ impl ThingService {
         )
     }
 
-    async fn load_knowledge_docs(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
-        let rows = self.db.list_thing_knowledge_docs(device_id, 10).await.ok()?;
+    async fn load_knowledge_docs(&self, thing_id: &str) -> Option<Vec<serde_json::Value>> {
+        let rows = self.db.list_thing_knowledge_docs(thing_id, 10).await.ok()?;
         if rows.is_empty() {
             return None;
         }

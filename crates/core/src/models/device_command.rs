@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub struct DeviceCommand {
     pub id: String,
-    pub device_id: String,
+    pub thing_id: String,
     pub name: String,
     pub display_name: Option<String>,
     pub description: Option<String>,
@@ -15,7 +15,7 @@ pub struct DeviceCommand {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CreateDeviceCommandRequest {
-    pub device_id: String,
+    pub thing_id: String,
     pub name: String,
     pub display_name: Option<String>,
     pub description: Option<String>,
@@ -34,7 +34,7 @@ pub struct UpdateDeviceCommandRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct DeviceCommandQueryParams {
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub name: Option<String>,
     pub page: Option<u32>,
     pub page_size: Option<u32>,
@@ -43,7 +43,7 @@ pub struct DeviceCommandQueryParams {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct CommandQueryParams {
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub name: Option<String>,
     pub sort_by: Option<String>,
     pub sort_order: Option<String>,

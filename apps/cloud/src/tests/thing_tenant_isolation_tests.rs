@@ -219,11 +219,11 @@ async fn test_cross_workspace_attach_detach_resource_error() {
     );
 
     // Resource untouched.
-    let device_id: Option<String> = sqlx::query_scalar("SELECT device_id FROM resources WHERE id = 'res-b'")
+    let thing_id: Option<String> = sqlx::query_scalar("SELECT thing_id FROM resources WHERE id = 'res-b'")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(device_id, None, "cross-workspace attach must not modify the resource");
+    assert_eq!(thing_id, None, "cross-workspace attach must not modify the resource");
 }
 
 // ──────────────────────────────────────────────

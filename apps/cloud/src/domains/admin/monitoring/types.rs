@@ -23,7 +23,7 @@ pub struct DashboardStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonthlyGrowth {
     /// 设备增长数
-    pub devices: i64,
+    pub things: i64,
     /// 消息增长数
     pub messages: i64,
 }

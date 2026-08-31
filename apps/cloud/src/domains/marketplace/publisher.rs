@@ -57,7 +57,7 @@ impl MarketplacePublisher {
                 "version": template.version,
                 "category": template.category,
                 "manufacturer": template.manufacturer,
-                "device_type": template.device_type,
+                "category": template.category,
                 "protocol_type": template.protocol_type,
                 "driver_name": template.driver_name,
                 "tags": template.tags,

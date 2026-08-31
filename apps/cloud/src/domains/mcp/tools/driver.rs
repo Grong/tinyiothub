@@ -178,7 +178,7 @@ impl ToolHandler for TestDriverHandler {
                 id: uuid::Uuid::new_v4().to_string(),
                 name: "test_device".to_string(),
                 display_name: Some("Test Device".to_string()),
-                device_type: Some("test".to_string()),
+                category: Some("test".to_string()),
                 address: input.address.or(Some("test".to_string())),
                 description: Some("Test device for driver smoke test".to_string()),
                 position: None,

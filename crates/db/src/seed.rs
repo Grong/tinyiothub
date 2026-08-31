@@ -12,7 +12,7 @@
 //!   event performance thresholds, social provider row, event-retention
 //!   cron job.
 //! - [`seed_demo`] — demo scenario, gated by `[seed] demo_data` (default
-//!   true): 8 demo devices + per-thing properties/actions, tags + bindings,
+//!   true): 8 demo things + per-thing properties/actions, tags + bindings,
 //!   alarm rules + sample alarms, sample jobs, example notification channels.
 //!
 //! Both tiers are idempotent (`INSERT OR IGNORE` / `WHERE NOT EXISTS` guards)
@@ -20,7 +20,7 @@
 //!
 //! Provenance (pre-baseline migration → tier):
 //! - 20260106000002 rebuild seeds: admin/roles/permissions → system;
-//!   devices/tags/bindings/alarm rules/alarms → demo (products rows dropped —
+//!   things/tags/bindings/alarm rules/alarms → demo (products rows dropped —
 //!   the `products` table no longer exists in the baseline schema);
 //!   device_properties/device_commands → superseded by 20260818000001's
 //!   thing_properties/thing_actions rows (demo).
@@ -36,7 +36,7 @@
 //! - 20260329000001 admin-hash fix → folded into the system admin row
 //!   (FIX_ME_admin_hash marker).
 //! - 20260407000001 default tenant/membership/workspace → system (the
-//!   devices-UPDATE steps are folded into the demo devices INSERT).
+//!   things-UPDATE steps are folded into the demo things INSERT).
 //! - 20260516044444 8 builtin templates → system.
 //! - 20260725000003 generic per-device property seeding → dropped (the
 //!   20260727000001 cleanup intentionally deleted those synthetic rows).
@@ -77,12 +77,12 @@ pub async fn seed_system(db: &Db) -> Result<(), sqlx::Error> {
 /// to have run first (demo rows reference the default tenant/workspace/admin).
 pub async fn seed_demo(db: &Db) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(DEMO_SQL).execute(db.pool()).await?;
-    let (devices, properties, actions): (i64, i64, i64) = sqlx::query_as(
-        "SELECT (SELECT COUNT(*) FROM devices), (SELECT COUNT(*) FROM thing_properties), \
+    let (things, properties, actions): (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM things), (SELECT COUNT(*) FROM thing_properties), \
          (SELECT COUNT(*) FROM thing_actions)",
     )
     .fetch_one(db.pool())
     .await?;
-    tracing::info!(devices, properties, actions, "seed_demo applied");
+    tracing::info!(things, properties, actions, "seed_demo applied");
     Ok(())
 }

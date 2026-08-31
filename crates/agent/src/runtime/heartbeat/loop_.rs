@@ -206,7 +206,7 @@ async fn run_heartbeat_tick(
         .into_iter()
         .map(|c| crate::runtime::heartbeat::types::ExecutedAction {
             tool_name: c.tool_name,
-            device_id: c.device_id,
+            thing_id: c.device_id,
             success: c.success,
             details: c.details,
         })

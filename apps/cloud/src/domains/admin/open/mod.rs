@@ -175,7 +175,7 @@ async fn list_things(State(state): State<AdminState>, headers: HeaderMap) -> Res
                 "id": row.id,
                 "name": row.name,
                 "display_name": row.display_name,
-                "device_type": row.device_type,
+                "category": row.category,
                 "state": row.state,
                 "created_at": row.created_at,
             })
@@ -223,7 +223,7 @@ async fn get_thing(
         "id": row.id,
         "name": row.name,
         "display_name": row.display_name,
-        "device_type": row.device_type,
+        "category": row.category,
         "address": row.address,
         "state": row.state,
         "protocol_type": row.protocol_type,
@@ -397,7 +397,7 @@ async fn send_command(
     let dispatched = state.data_server().cloned().map(|data_server| {
         let cmd = tinyiothub_core::models::device_command::DeviceCommand {
             id: cmd_id.clone(),
-            device_id: id.clone(),
+            thing_id: id.clone(),
             name: command_name.to_string(),
             display_name: None,
             description: None,
@@ -503,7 +503,7 @@ async fn list_all_events(State(state): State<AdminState>, headers: HeaderMap) ->
                 "event_type": row.event_type,
                 "event_level": row.event_level,
                 "message": row.title.unwrap_or_default(),
-                "device_id": row.device_id,
+                "thing_id": row.thing_id,
                 "created_at": row.created_at,
             })
         })

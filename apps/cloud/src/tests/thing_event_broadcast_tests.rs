@@ -34,7 +34,7 @@ async fn test_pool() -> sqlx::SqlitePool {
 
 async fn insert_device(pool: &sqlx::SqlitePool, id: &str, workspace_id: &str) {
     seed_test_workspace(pool, "tenant-1", workspace_id).await;
-    sqlx::query("INSERT INTO devices (id, name, workspace_id) VALUES (?, ?, ?)")
+    sqlx::query("INSERT INTO things (id, name, workspace_id) VALUES (?, ?, ?)")
         .bind(id)
         .bind(format!("Device {id}"))
         .bind(workspace_id)
@@ -108,13 +108,13 @@ async fn test_unknown_event_signal_carries_flag_and_degraded_level() {
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO thing_templates (id, name, display_name, version, category, device_type, events, created_at, updated_at)
+        "INSERT INTO thing_templates (id, name, display_name, version, category, category, events, created_at, updated_at)
          VALUES ('tpl-u', 'tpl-u', 'T', '1.0', 'test-cat', 'sensor', '[{\"name\":\"known_event\"}]', datetime('now'), datetime('now'))",
     )
     .execute(&pool)
     .await
     .unwrap();
-    sqlx::query("INSERT INTO devices (id, name, workspace_id, template_id) VALUES ('dev-u', 'D', 'ws-u', 'tpl-u')")
+    sqlx::query("INSERT INTO things (id, name, workspace_id, template_id) VALUES ('dev-u', 'D', 'ws-u', 'tpl-u')")
         .execute(&pool)
         .await
         .unwrap();
@@ -288,7 +288,7 @@ async fn test_replay_skips_non_thing_events() {
 
     // A non-thing event row (e.g. status upsert from the legacy pipeline).
     sqlx::query(
-        "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, source_type, source_id, device_id, title, content, metadata, created_at, workspace_id, actor)
+        "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, source_type, source_id, thing_id, title, content, metadata, created_at, workspace_id, actor)
          VALUES ('evt-legacy', 'device', 'prop_change', 4, datetime('now'), 'device_property', 'dev-x:temperature', 'dev-x', 't', '{}', '{}', datetime('now'), 'ws-x', 'device')",
     )
     .execute(&pool)

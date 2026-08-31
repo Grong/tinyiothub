@@ -29,13 +29,13 @@ async fn create_test_device(app: &mut axum::Router, token: &str) -> String {
     let body = json!({
         "name": "prop-test-device",
         "display_name": "Properties Test Device",
-        "device_type": "sensor",
+        "category": "sensor",
         "protocol_type": "modbus"
     });
 
     let response = app
         .clone()
-        .oneshot(auth_request("POST", "/api/v1/devices", token, Some(body)))
+        .oneshot(auth_request("POST", "/api/v1/things", token, Some(body)))
         .await
         .unwrap();
 
@@ -51,12 +51,12 @@ async fn create_test_device(app: &mut axum::Router, token: &str) -> String {
 async fn test_get_device_properties() {
     let mut app = setup_test_app().await;
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
-    let device_id = create_test_device(&mut app, &token).await;
+    let thing_id = create_test_device(&mut app, &token).await;
 
     let response = app
         .oneshot(auth_request(
             "GET",
-            &format!("/api/v1/devices/{}/properties", device_id),
+            &format!("/api/v1/devices/{}/properties", thing_id),
             &token,
             None,
         ))

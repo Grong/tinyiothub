@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use tinyiothub_core::models::device::{Device, DeviceStats};
 use tinyiothub_storage::Db;
-use tinyiothub_storage::device::{DeviceStatusDistribution, QuickDevice};
+use tinyiothub_storage::thing::{DeviceStatusDistribution, QuickDevice};
 
 use super::query::DeviceQueryService;
 use tinyiothub_core::error::Result;

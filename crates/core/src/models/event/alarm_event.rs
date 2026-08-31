@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 pub struct AlarmEvent {
     pub id: String,
     pub workspace_id: String,
-    pub device_id: String,
+    pub thing_id: String,
     pub alarm_type: String,
     pub severity: String,
     pub message: String,

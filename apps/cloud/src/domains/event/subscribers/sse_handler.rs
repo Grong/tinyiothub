@@ -24,10 +24,10 @@ impl SseEventHandler {
 impl EventHandler for SseEventHandler {
     async fn handle(&self, event: &Event) -> tinyiothub_core::error::Result<()> {
         tracing::debug!(
-            "SseEventHandler received event: type={:?}, level={:?}, device_id={:?}",
+            "SseEventHandler received event: type={:?}, level={:?}, thing_id={:?}",
             event.event_type(),
             event.level(),
-            event.source().device_id()
+            event.source().thing_id()
         );
         self.sse_manager.broadcast_event(event).await;
         Ok(())

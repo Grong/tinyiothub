@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::shared::error::{EdgeError, EdgeResult};
 use tinyiothub_core::models::device::{CreateDeviceRequest, Device};
 use tinyiothub_storage::Db;
-use tinyiothub_storage::device::DeviceCriteria;
+use tinyiothub_storage::thing::DeviceCriteria;
 
 pub struct DeviceService {
     db: Arc<Db>,

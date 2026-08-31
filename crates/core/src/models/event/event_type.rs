@@ -163,7 +163,7 @@ impl EventType {
     /// Check if this is a property-related event
     pub fn is_property_event(&self) -> bool {
         match self {
-            EventType::Device(device_type) => device_type.is_property_event(),
+            EventType::Device(event_type) => event_type.is_property_event(),
             _ => false,
         }
     }
@@ -171,7 +171,7 @@ impl EventType {
     /// Check if this is a command-related event
     pub fn is_command_event(&self) -> bool {
         match self {
-            EventType::Device(device_type) => device_type.is_command_event(),
+            EventType::Device(event_type) => event_type.is_command_event(),
             _ => false,
         }
     }
@@ -179,7 +179,7 @@ impl EventType {
     /// Check if this is an alarm-related event
     pub fn is_alarm(&self) -> bool {
         match self {
-            EventType::Device(device_type) => device_type.is_alarm(),
+            EventType::Device(event_type) => event_type.is_alarm(),
             _ => false,
         }
     }
@@ -187,7 +187,7 @@ impl EventType {
     /// Check if this is a normal/recovery event
     pub fn is_normal(&self) -> bool {
         match self {
-            EventType::Device(device_type) => device_type.is_normal(),
+            EventType::Device(event_type) => event_type.is_normal(),
             _ => false,
         }
     }
@@ -344,9 +344,9 @@ mod tests {
         assert_eq!(event_type.type_string(), "system");
         assert_eq!(event_type.subtype_string(), "user_auth");
 
-        let device_type = EventType::Device(DeviceEventType::Connection);
-        assert_eq!(device_type.type_string(), "device");
-        assert_eq!(device_type.subtype_string(), "connection");
+        let event_type = EventType::Device(DeviceEventType::Connection);
+        assert_eq!(event_type.type_string(), "device");
+        assert_eq!(event_type.subtype_string(), "connection");
 
         let alarm_type = EventType::Device(DeviceEventType::PropertyAlarm);
         assert_eq!(alarm_type.subtype_string(), "property_alarm");
