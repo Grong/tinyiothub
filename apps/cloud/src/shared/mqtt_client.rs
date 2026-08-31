@@ -338,13 +338,13 @@ impl PlatformMqttClient {
         let telemetry = format!("tinyiothub/{}/gateway/{}/telemetry", workspace_id, thing_id);
         let event = format!("tinyiothub/{}/gateway/{}/event", workspace_id, thing_id);
         let discover = format!("tinyiothub/{}/gateway/{}/thing/discover", workspace_id, thing_id);
-        let device_telemetry = format!("tinyiothub/{}/gateway/{}/thing/+/telemetry", workspace_id, thing_id);
+        let thing_telemetry = format!("tinyiothub/{}/gateway/{}/thing/+/telemetry", workspace_id, thing_id);
 
         self.client.subscribe(&status, QoS::AtMostOnce).await.ok();
         self.client.subscribe(&telemetry, QoS::AtMostOnce).await.ok();
         self.client.subscribe(&event, QoS::AtLeastOnce).await.ok();
         self.client.subscribe(&discover, QoS::AtLeastOnce).await.ok();
-        self.client.subscribe(&device_telemetry, QoS::AtMostOnce).await.ok();
+        self.client.subscribe(&thing_telemetry, QoS::AtMostOnce).await.ok();
     }
 }
 

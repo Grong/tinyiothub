@@ -309,10 +309,10 @@ async fn test_removed_device_endpoints_return_410() {
         let (status, json) = response_parts(response).await;
         assert_eq!(status, StatusCode::GONE, "{method} {uri} must return 410 Gone");
         assert_eq!(json["code"], 410, "{method} {uri} must carry code 410");
-        assert!(
-            json["msg"].as_str().unwrap_or_default().contains("/api/things"),
-            "{method} {uri} tombstone message must point to /api/things, got: {}",
-            json["msg"]
+        assert_eq!(
+            json["msg"].as_str().unwrap_or_default(),
+            "/api/v1/devices has been removed. Use /api/v1/things instead.",
+            "{method} {uri} tombstone message must carry full versioned migration path"
         );
     }
 }

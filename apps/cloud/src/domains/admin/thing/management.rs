@@ -11,7 +11,7 @@ pub async fn device_endpoint_removed() -> (axum::http::StatusCode, Json<serde_js
         axum::http::StatusCode::GONE,
         Json(serde_json::json!({
             "code": 410,
-            "msg": "/api/devices has been removed. Use /api/things instead.",
+            "msg": "/api/v1/devices has been removed. Use /api/v1/things instead.",
             "result": null
         })),
     )
