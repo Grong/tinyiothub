@@ -689,6 +689,37 @@ pub(crate) async fn list_unassigned_thing_resources(
         .await
 }
 
+/// 在调用方事务内向 resources 表插入一条 thing 关联资源（场景实例化器专用）。
+/// 真实列名为 resource_type（struct 上的 `type` 仅为 serde 别名）；content/tags
+/// 用空值占位，由后续流程补充。调用方负责 commit/rollback。
+// TODO(Task 5): SceneInstantiator 接入后移除 allow(dead_code)
+#[allow(dead_code)]
+pub(crate) async fn insert_thing_resource_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    workspace_id: &str,
+    thing_id: &str,
+    resource_type: &str,
+    name: &str,
+    file_path: &str,
+) -> std::result::Result<(), sqlx::Error> {
+    let now = now_string();
+    sqlx::query(
+        "INSERT INTO resources (id, workspace_id, thing_id, resource_type, name, file_path, content, tags, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, '[]', ?, ?)",
+    )
+    .bind(generate_id())
+    .bind(workspace_id)
+    .bind(thing_id)
+    .bind(resource_type)
+    .bind(name)
+    .bind(file_path)
+    .bind(&now)
+    .bind(&now)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 /// Batch-load tags for multiple thing IDs from tag_bindings.
 pub(crate) async fn load_thing_tags_batch(
     pool: &SqlitePool,
@@ -1686,6 +1717,218 @@ mod tests {
         assert_eq!(criteria.limit, Some(50));
         assert_eq!(criteria.offset, Some(10));
     }
+
+    // ── Task 4：事务版写入函数 ──────────────────────────────
+
+    fn space_thing_req(name: &str) -> CreateThingRequest {
+        CreateThingRequest {
+            name: name.to_string(),
+            display_name: None,
+            category: None,
+            address: None,
+            description: None,
+            position: None,
+            driver_name: None,
+            device_model: None,
+            protocol_type: None,
+            factory_name: None,
+            linked_data: None,
+            driver_options: None,
+            parent_id: None,
+            linked_gateway: None,
+            fingerprint: None,
+            template_id: None,
+            workspace_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn create_thing_row_with_type_sets_type_and_returns_id() {
+        let pool = crate::test_helpers::test_pool().await;
+        let mut tx = pool.begin().await.expect("begin");
+        let id = create_thing_row_with_type(&mut tx, &space_thing_req("主楼"), "space")
+            .await
+            .expect("insert thing row");
+        tx.commit().await.expect("commit");
+
+        let (thing_type,): (String,) = sqlx::query_as("SELECT thing_type FROM things WHERE id = ?")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .expect("read back");
+        assert_eq!(thing_type, "space");
+    }
+
+    #[tokio::test]
+    async fn resolve_name_strips_suffix_and_probes() {
+        let pool = crate::test_helpers::test_pool().await;
+        let mut tx = pool.begin().await.expect("begin");
+        for name in ["主楼", "主楼-2"] {
+            create_thing_row_with_type(&mut tx, &space_thing_req(name), "space")
+                .await
+                .expect("pre-occupy name");
+        }
+
+        // 占用 base 与 base-2 → 探测到 base-3
+        let resolved = resolve_thing_name_tx(&mut tx, "", "主楼").await.expect("resolve base");
+        assert_eq!(resolved, "主楼-3");
+        // 传入带后缀名 → 剥离后缀后按 base 探测
+        let resolved = resolve_thing_name_tx(&mut tx, "", "主楼-2")
+            .await
+            .expect("resolve suffixed");
+        assert_eq!(resolved, "主楼-3");
+        // 未占用名 → 原样返回
+        let resolved = resolve_thing_name_tx(&mut tx, "", "辅楼").await.expect("resolve free");
+        assert_eq!(resolved, "辅楼");
+        tx.rollback().await.expect("rollback");
+    }
+
+    #[tokio::test]
+    async fn batch_tx_functions_write_in_caller_transaction() {
+        use tinyiothub_core::models::thing_command::CreateThingCommandRequest;
+        use tinyiothub_core::models::thing_property::CreateThingPropertyRequest;
+
+        let pool = crate::test_helpers::test_pool().await;
+        let mut tx = pool.begin().await.expect("begin");
+        let thing_id = create_thing_row_with_type(&mut tx, &space_thing_req("tx-target"), "space")
+            .await
+            .expect("insert thing");
+
+        crate::thing_property::create_thing_properties_batch_tx(
+            &mut tx,
+            &[CreateThingPropertyRequest {
+                thing_id: thing_id.clone(),
+                name: "temperature".to_string(),
+                display_name: None,
+                description: None,
+                data_type: Some("float".to_string()),
+                unit: None,
+                min_value: None,
+                max_value: None,
+                default_value: None,
+                is_read_only: Some(1),
+            }],
+        )
+        .await
+        .expect("insert properties in caller tx");
+
+        crate::thing_command::bulk_create_thing_commands_tx(
+            &mut tx,
+            &[CreateThingCommandRequest {
+                thing_id: thing_id.clone(),
+                name: "reboot".to_string(),
+                display_name: None,
+                description: None,
+                parameters: None,
+            }],
+        )
+        .await
+        .expect("insert commands in caller tx");
+
+        // 回滚 → 全部不落库（证明 _tx 没有自作主张提交）
+        tx.rollback().await.expect("rollback");
+
+        let (things,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM things WHERE id = ?")
+            .bind(&thing_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count things");
+        let (props,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM thing_properties WHERE thing_id = ?")
+            .bind(&thing_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count properties");
+        let (cmds,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM thing_actions WHERE thing_id = ?")
+            .bind(&thing_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count commands");
+        assert_eq!((things, props, cmds), (0, 0, 0));
+
+        // commit 路径：同一批写入在提交后可见
+        let mut tx = pool.begin().await.expect("begin");
+        let thing_id = create_thing_row_with_type(&mut tx, &space_thing_req("tx-commit"), "space")
+            .await
+            .expect("insert thing");
+        crate::thing_property::create_thing_properties_batch_tx(
+            &mut tx,
+            &[CreateThingPropertyRequest {
+                thing_id: thing_id.clone(),
+                name: "humidity".to_string(),
+                display_name: None,
+                description: None,
+                data_type: Some("float".to_string()),
+                unit: None,
+                min_value: None,
+                max_value: None,
+                default_value: None,
+                is_read_only: None,
+            }],
+        )
+        .await
+        .expect("insert property");
+        tx.commit().await.expect("commit");
+        let (props,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM thing_properties WHERE thing_id = ?")
+            .bind(&thing_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count committed properties");
+        assert_eq!(props, 1);
+    }
+
+    #[tokio::test]
+    async fn insert_thing_resource_tx_writes_row_in_caller_tx() {
+        let pool = crate::test_helpers::test_pool().await;
+        let db = crate::Db::new(pool.clone());
+        crate::seed::seed_system(&db).await.expect("seed_system");
+
+        let mut tx = pool.begin().await.expect("begin");
+        let mut req = space_thing_req("res-target");
+        req.workspace_id = Some("ws-default-001".to_string());
+        let thing_id = create_thing_row_with_type(&mut tx, &req, "space")
+            .await
+            .expect("insert thing");
+        insert_thing_resource_tx(
+            &mut tx,
+            "ws-default-001",
+            &thing_id,
+            "document",
+            "平面图",
+            "/files/plan.md",
+        )
+        .await
+        .expect("insert resource");
+        tx.rollback().await.expect("rollback");
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM resources WHERE thing_id = ?")
+            .bind(&thing_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count after rollback");
+        assert_eq!(count, 0);
+
+        let mut tx = pool.begin().await.expect("begin");
+        // thing 行已随上一事务回滚，提交路径需重新插入以满足 FK
+        let thing_id = create_thing_row_with_type(&mut tx, &req, "space")
+            .await
+            .expect("re-insert thing");
+        insert_thing_resource_tx(
+            &mut tx,
+            "ws-default-001",
+            &thing_id,
+            "document",
+            "平面图",
+            "/files/plan.md",
+        )
+        .await
+        .expect("insert resource");
+        tx.commit().await.expect("commit");
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM resources WHERE thing_id = ?")
+            .bind(&thing_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count after commit");
+        assert_eq!(count, 1);
+    }
 }
 
 // ──────────────────────────────────────────────
@@ -1915,6 +2158,102 @@ async fn create_thing_inner(pool: &SqlitePool, request: &CreateThingRequest) -> 
     .await?;
 
     find_thing_by_id_inner(pool, &id).await?.ok_or(Error::NotFound)
+}
+
+/// 在调用方事务内创建 Thing 行（场景实例化器专用），显式写 thing_type。
+/// 与 create_thing_inner 的差异：tx 传入 + thing_type 参数 + 不回读直接返回 id。
+/// 列清单与 create_thing_inner 一致（21 列）+ thing_type。
+// TODO(Task 5): SceneInstantiator 接入后移除 allow(dead_code)
+#[allow(dead_code)]
+pub(crate) async fn create_thing_row_with_type(
+    tx: &mut Transaction<'_, Sqlite>,
+    request: &CreateThingRequest,
+    thing_type: &str,
+) -> std::result::Result<String, sqlx::Error> {
+    let id = generate_id();
+    let now = now_string();
+
+    sqlx::query(
+        r#"
+        INSERT INTO things (
+            id, name, display_name, category, address, description, position,
+            driver_name, device_model, protocol_type, factory_name, linked_data,
+            driver_options, state, parent_id, template_id, thing_type,
+            linked_gateway, fingerprint, workspace_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(&id)
+    .bind(&request.name)
+    .bind(&request.display_name)
+    .bind(&request.category)
+    .bind(&request.address)
+    .bind(&request.description)
+    .bind(&request.position)
+    .bind(&request.driver_name)
+    .bind(&request.device_model)
+    .bind(&request.protocol_type)
+    .bind(&request.factory_name)
+    .bind(&request.linked_data)
+    .bind(&request.driver_options)
+    .bind(0i32)
+    .bind(&request.parent_id)
+    .bind(&request.template_id)
+    .bind(thing_type)
+    .bind(&request.linked_gateway)
+    .bind(&request.fingerprint)
+    .bind(&request.workspace_id)
+    .bind(&now)
+    .bind(&now)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(id)
+}
+
+/// 名称冲突解决（场景实例化器专用，快路径）：剥离末尾 -N 后缀得 base，
+/// 在 workspace 内探测 base / base-2 / ... / base-11 取第一个空位。
+/// 匹配 idx_things_name_workspace 的 (COALESCE(workspace_id,''), name) 语义。
+/// 注意 TOCTOU：调用方仍需捕获唯一约束错误并重试。
+// TODO(Task 5): SceneInstantiator 接入后移除 allow(dead_code)
+#[allow(dead_code)]
+pub(crate) async fn resolve_thing_name_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    workspace_id: &str,
+    base: &str,
+) -> std::result::Result<String, sqlx::Error> {
+    let stripped = strip_numeric_suffix(base);
+    for n in 0..=10 {
+        let candidate = if n == 0 {
+            stripped.clone()
+        } else {
+            format!("{}-{}", stripped, n + 1)
+        };
+        let exists: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM things WHERE COALESCE(workspace_id, '') = COALESCE(?, '') AND name = ?")
+                .bind(workspace_id)
+                .bind(&candidate)
+                .fetch_optional(&mut **tx)
+                .await?;
+        if exists.is_none() {
+            return Ok(candidate);
+        }
+    }
+    Err(sqlx::Error::Protocol(format!(
+        "同名冲突过多（{}），请手动指定名称",
+        stripped
+    )))
+}
+
+/// 剥离末尾 "-数字" 后缀（"主楼-2" → "主楼"）；无后缀或非数字后缀原样返回。
+#[allow(dead_code)]
+fn strip_numeric_suffix(name: &str) -> String {
+    match name.rfind('-') {
+        Some(pos) if !name[pos + 1..].is_empty() && name[pos + 1..].chars().all(|c| c.is_ascii_digit()) => {
+            name[..pos].to_string()
+        }
+        _ => name.to_string(),
+    }
 }
 
 async fn update_thing_inner(pool: &SqlitePool, id: &str, request: &UpdateThingRequest) -> Result<Thing> {

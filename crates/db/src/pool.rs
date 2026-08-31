@@ -7,11 +7,13 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use crate::config::DatabaseConfig;
 
 /// Connect options for the cloud one-step entry (`Db::connect`):
-/// create-if-missing + FK pragma on.
+/// create-if-missing + FK pragma on + 5s busy timeout（并发写/实例化器
+/// 单事务多表写入下避免瞬时 SQLITE_BUSY 直接失败，留给锁等待窗口）。
 pub(crate) fn connect_options(config: &DatabaseConfig) -> Result<SqliteConnectOptions, sqlx::Error> {
     Ok(SqliteConnectOptions::from_str(&config.url)?
         .create_if_missing(true)
-        .foreign_keys(true))
+        .foreign_keys(true)
+        .busy_timeout(Duration::from_millis(5000)))
 }
 
 /// Pool sizing/timeouts from the config.
@@ -38,6 +40,7 @@ pub async fn create_pool(config: &DatabaseConfig, is_harmonyos: bool) -> Result<
                 .pragma("cache_size", "-8000") // Smaller cache
                 .pragma("temp_store", "MEMORY")
                 .pragma("foreign_keys", "ON")
+                .busy_timeout(Duration::from_millis(5000))
                 .shared_cache(false); // Disable shared cache
 
             let pool = SqlitePoolOptions::new()
@@ -72,4 +75,29 @@ pub async fn create_pool_without_migrations(config: &DatabaseConfig) -> Result<S
     let pool = pool_options(config).connect_with(connect_options).await?;
 
     Ok(pool)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::Row;
+
+    #[tokio::test]
+    async fn connect_options_apply_busy_timeout() {
+        let config = DatabaseConfig {
+            url: "sqlite::memory:".to_string(),
+            ..Default::default()
+        };
+        let options = connect_options(&config).expect("connect options build");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .expect("connect");
+        let row = sqlx::query("PRAGMA busy_timeout")
+            .fetch_one(&pool)
+            .await
+            .expect("pragma query");
+        assert_eq!(row.get::<i64, _>(0), 5000);
+    }
 }

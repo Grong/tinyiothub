@@ -93,12 +93,12 @@ pub(crate) async fn find_thing_properties_by_thing_id(
     Ok(properties)
 }
 
-/// Batch create thing properties
-pub(crate) async fn create_thing_properties_batch(
-    pool: &SqlitePool,
+/// 在调用方事务内批量插入物属性（场景实例化器专用），返回新建 id 列表。
+/// 不自行 commit/rollback；公开入口 create_thing_properties_batch 是薄包装。
+pub(crate) async fn create_thing_properties_batch_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     requests: &[CreateThingPropertyRequest],
-) -> Result<Vec<ThingProperty>, sqlx::Error> {
-    let mut tx = pool.begin().await?;
+) -> Result<Vec<String>, sqlx::Error> {
     let mut created_ids = Vec::new();
 
     for request in requests {
@@ -127,12 +127,22 @@ pub(crate) async fn create_thing_properties_batch(
         .bind(is_read_only)
         .bind(&now)
         .bind(&now)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
         created_ids.push(id);
     }
 
+    Ok(created_ids)
+}
+
+/// Batch create thing properties
+pub(crate) async fn create_thing_properties_batch(
+    pool: &SqlitePool,
+    requests: &[CreateThingPropertyRequest],
+) -> Result<Vec<ThingProperty>, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let created_ids = create_thing_properties_batch_tx(&mut tx, requests).await?;
     tx.commit().await?;
 
     let mut results = Vec::new();
