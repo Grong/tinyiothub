@@ -45,6 +45,9 @@ pub enum TemplateError {
 
     #[error("模板正在被设备使用，无法删除: {template_id}")]
     TemplateInUse { template_id: String },
+
+    #[error("模板类型不适用: {message}")]
+    InvalidTemplateType { message: String },
 }
 
 #[cfg(feature = "sqlx")]
@@ -279,6 +282,9 @@ impl From<TemplateError> for ApiError {
             TemplateError::TemplateInUse { .. } => ApiError::Conflict {
                 message: err.to_string(),
             },
+            TemplateError::InvalidTemplateType { .. } => ApiError::BadRequest {
+                message: err.to_string(),
+            },
             _ => ApiError::InternalServerError {
                 message: err.to_string(),
             },
@@ -303,6 +309,7 @@ impl ApiError {
                 TemplateError::TemplateNameExists { .. } => 409,
                 TemplateError::CategoryNotFound { .. } => 400,
                 TemplateError::TemplateInUse { .. } => 409,
+                TemplateError::InvalidTemplateType { .. } => 400,
                 _ => 500,
             },
         }

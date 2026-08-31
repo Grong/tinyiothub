@@ -36,6 +36,7 @@ pub struct ThingTemplate {
     pub device_info: String, // JSON格式的ThingInfo
     pub properties: String,  // JSON数组格式的PropertyTemplate
     pub actions: String,     // JSON数组格式的CommandTemplate
+    pub events: String,      // JSON数组格式的EventTemplate
     pub is_builtin: i32,     // 是否为内置模板
     pub is_active: i32,      // 是否激活
     pub created_at: String,
@@ -241,10 +242,9 @@ pub struct ThingTemplateFullRow {
 // ──────────────────────────────────────────────
 
 impl ThingTemplate {
-    /// events 列原文（供展开器内联）。若结构体无 events 字段，返回 "[]"。
+    /// events 列原文（供展开器内联）。
     pub fn events_json_for_inline(&self) -> String {
-        // Task 3 补齐 events 字段后改为 self.events.clone()
-        "[]".to_string()
+        self.events.clone()
     }
 
     /// 从文件加载的请求直接转换为 ThingTemplate（不经过数据库）
@@ -268,6 +268,7 @@ impl ThingTemplate {
             device_info: serde_json::to_string(&request.device_info).unwrap_or_default(),
             properties: serde_json::to_string(&request.properties).unwrap_or_default(),
             actions: serde_json::to_string(&request.commands).unwrap_or_default(),
+            events: "[]".to_string(),
             is_builtin: 1,
             is_active: 1,
             created_at: now.clone(),
@@ -364,6 +365,7 @@ impl Default for ThingTemplate {
             device_info: "{}".to_string(),
             properties: "[]".to_string(),
             actions: "[]".to_string(),
+            events: "[]".to_string(),
             is_builtin: 0,
             is_active: 1,
             created_at: now.clone(),
@@ -418,7 +420,7 @@ pub(crate) async fn find_thing_template_by_id(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at, workspace_id
             FROM thing_templates WHERE id = ? AND is_active = 1
               AND (workspace_id IS NULL OR workspace_id = ?)
@@ -442,10 +444,12 @@ pub(crate) async fn find_thing_template_by_name(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at, workspace_id
             FROM thing_templates WHERE name = ? AND is_active = 1
               AND (workspace_id IS NULL OR workspace_id = ?)
+            ORDER BY workspace_id IS NULL
+            LIMIT 1
             "#,
     )
     .bind(name)
@@ -704,7 +708,7 @@ pub(crate) async fn find_thing_templates(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at, workspace_id
             FROM thing_templates WHERE is_active = 1
             "#,
@@ -802,7 +806,7 @@ pub(crate) async fn find_thing_templates_by_category(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at, workspace_id
             FROM thing_templates WHERE category = ? AND is_active = 1
               AND (workspace_id IS NULL OR workspace_id = ?)
@@ -830,7 +834,7 @@ pub(crate) async fn search_thing_templates(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at, workspace_id
             FROM thing_templates WHERE is_active = 1 AND (
                 name LIKE ? OR
@@ -863,7 +867,7 @@ pub(crate) async fn load_builtin_thing_templates(pool: &SqlitePool) -> Result<Ve
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at
             FROM thing_templates WHERE is_builtin = 1 AND is_active = 1
             ORDER BY category, name
@@ -958,7 +962,7 @@ pub(crate) async fn advanced_search_thing_templates(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at
             FROM thing_templates WHERE is_active = 1
             "#,
@@ -997,7 +1001,7 @@ pub(crate) async fn search_thing_templates_by_category(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at
             FROM thing_templates
             WHERE is_active = 1 AND category =
@@ -1028,7 +1032,7 @@ pub(crate) async fn search_thing_templates_by_manufacturer(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at
             FROM thing_templates
             WHERE is_active = 1 AND manufacturer =
@@ -1059,7 +1063,7 @@ pub(crate) async fn search_thing_templates_by_protocol(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at
             FROM thing_templates
             WHERE is_active = 1 AND protocol_type =
@@ -1089,7 +1093,7 @@ pub(crate) async fn filter_thing_templates(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at
             FROM thing_templates WHERE is_active = 1
             "#,
@@ -1789,6 +1793,67 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 建库模式与 crates/db/tests/seed_tests.rs 一致（baseline + 递增迁移 + system seed）。
+    async fn seeded_db() -> Db {
+        let pool = crate::test_helpers::test_pool().await;
+        let db = Db::new(pool);
+        crate::seed::seed_system(&db).await.unwrap();
+        db
+    }
+
+    /// 直插一条模板行（category='sensors' 由 seed_system 提供 FK 目标）。
+    async fn insert_raw_template(db: &Db, id: &str, name: &str, workspace_id: Option<&str>, device_info: &str) {
+        sqlx::query(
+            "INSERT INTO thing_templates \
+             (id, name, display_name, version, category, device_info, \
+              workspace_id, created_at, updated_at) \
+             VALUES (?, ?, '{}', '1.0.0', 'sensors', ?, ?, '2026-01-01 00:00:00', '2026-01-01 00:00:00')",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(device_info)
+        .bind(workspace_id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn find_by_name_prefers_workspace_over_builtin() {
+        let db = seeded_db().await;
+        // 先插 builtin（workspace_id NULL）再插 workspace 同名行
+        insert_raw_template(&db, "tpl_builtin_dup", "dup_name", None, "{}").await;
+        insert_raw_template(&db, "tpl_ws_dup", "dup_name", Some("ws1"), "{}").await;
+        let found = db
+            .find_thing_template_by_name("dup_name", "ws1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.workspace_id.as_deref(), Some("ws1"));
+    }
+
+    #[tokio::test]
+    async fn install_copy_preserves_device_info() {
+        let db = seeded_db().await;
+        let composition_json = r#"{"name":"pack","children":[{"key":"b","category":"building"}]}"#;
+        insert_raw_template(&db, "tpl_pack_src", "pack_src", None, composition_json).await;
+
+        // full row 读出必须带 device_info（场景包 install 依赖 children）
+        let full = db.find_thing_template_full("tpl_pack_src").await.unwrap().unwrap();
+        assert!(full.device_info.contains("children"));
+
+        // install 复制到目标 workspace 后 device_info 不丢
+        db.insert_thing_template_copy(&full, "tpl_pack_ws9", "pack_src", "ws9", "2026-01-02 00:00:00")
+            .await
+            .unwrap();
+        let copied = db
+            .find_thing_template_by_id("tpl_pack_ws9", "ws9")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(copied.device_info.contains("children"));
+    }
 
     #[test]
     fn is_composition_detects_children() {

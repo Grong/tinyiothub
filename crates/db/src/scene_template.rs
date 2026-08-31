@@ -754,4 +754,35 @@ mod tests {
         assert_eq!(render_name_pattern("{scene_name}", &vars), "张江科技园");
         assert_eq!(render_name_pattern("无变量", &vars), "无变量");
     }
+
+    #[test]
+    fn expand_template_ref_inlines_properties_commands_events() {
+        let t = SceneTemplateFile::from_json(
+            r#"{
+            "name": "s", "display_name": {"zh":"s"}, "category": "scenes",
+            "device_info": {"default_name_pattern": "{scene_name}"},
+            "children": [{"template_ref": "th_sensor", "device_info": {"default_name_pattern": "传感器{index}"}}]
+        }"#,
+        )
+        .unwrap();
+        let mut tpl = crate::thing_template::ThingTemplate::default();
+        tpl.category = "sensors".to_string();
+        tpl.properties = r#"[{"name":"temp","display_name":{"zh":"温度"},"data_type":"float","is_read_only":true,"is_required":false}]"#.to_string();
+        tpl.actions = r#"[{"name":"reboot","display_name":{"zh":"重启"},"is_required":false}]"#.to_string();
+        tpl.events = r#"[{"name":"overheat","level":"warning"}]"#.to_string();
+        let device_templates = HashMap::from([("th_sensor".to_string(), tpl)]);
+        let r = expand(&t, "站点", &HashMap::new(), &device_templates, &HashMap::new()).unwrap();
+        // 根 + 1 内联节点
+        assert_eq!(r.node_count, 2);
+        let inlined = &r.nodes[1];
+        assert_eq!(inlined.name, "传感器1");
+        assert_eq!(inlined.category, "sensors");
+        assert_eq!(inlined.properties.len(), 1);
+        assert_eq!(inlined.properties[0].name, "temp");
+        assert_eq!(inlined.commands.len(), 1);
+        assert_eq!(inlined.commands[0].name, "reboot");
+        // events_json_for_inline 桩改真后防回归：events 必须来自模板 events 列
+        assert_eq!(inlined.event_defs.len(), 1);
+        assert_eq!(inlined.event_defs[0]["name"], "overheat");
+    }
 }
