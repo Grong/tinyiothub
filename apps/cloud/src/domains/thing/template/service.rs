@@ -288,13 +288,13 @@ impl TemplateEngine {
                 .cloned()
                 .unwrap_or_default();
 
-            let mut result = template;
-            result = result.replace("{name}", &user_input.name);
+            let mut vars = HashMap::new();
+            vars.insert("name", user_input.name.clone());
             if let Some(display_name) = &user_input.display_name {
-                result = result.replace("{display_name}", display_name);
+                vars.insert("display_name", display_name.clone());
             }
-            result = result.replace("{index}", "1");
-            result
+            vars.insert("index", "1".to_string()); // 预览示例固定 index=1
+            tinyiothub_storage::scene_template::render_name_pattern(&template, &vars)
         })
     }
 

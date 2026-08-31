@@ -309,6 +309,16 @@ impl ThingTemplate {
         serde_json::from_str(&self.device_info)
     }
 
+    /// 是否组合模板（场景包）：device_info 列存完整模板 JSON，根级含非空 children。
+    /// entity 模板该列存 ThingInfo JSON（无 children 键）。
+    pub fn is_composition(&self) -> bool {
+        serde_json::from_str::<serde_json::Value>(&self.device_info)
+            .ok()
+            .and_then(|v| v.get("children").cloned())
+            .and_then(|c| c.as_array().map(|a| !a.is_empty()))
+            .unwrap_or(false)
+    }
+
     /// 解析属性模板
     pub fn get_properties(&self) -> Result<Vec<PropertyTemplate>, serde_json::Error> {
         serde_json::from_str(&self.properties)
@@ -1767,5 +1777,24 @@ impl Db {
         thing_id: &str,
     ) -> Result<Option<(Option<String>, Option<String>)>, sqlx::Error> {
         find_thing_workspace_and_template_events(self.pool(), thing_id).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_composition_detects_children() {
+        let mut t = ThingTemplate::default();
+        assert!(!t.is_composition()); // device_info = "{}"
+        t.device_info = r#"{"default_name_pattern":"x"}"#.to_string();
+        assert!(!t.is_composition()); // entity ThingInfo
+        t.device_info = r#"{"name":"s","children":[]}"#.to_string();
+        assert!(!t.is_composition()); // 空 children 不算
+        t.device_info = r#"{"name":"s","children":[{"key":"b"}]}"#.to_string();
+        assert!(t.is_composition());
+        t.device_info = "not json".to_string();
+        assert!(!t.is_composition()); // 解析失败安全降级
     }
 }
