@@ -15,6 +15,15 @@
 - **BREAKING (data, PR-2)**: 迁移 `20260826000001` 将 `tag_bindings.target_type` 的 `'device'` 归并为 `'thing'`、permissions `device:*` 更名为 `thing:*`（id `perm-device-*`→`perm-thing-*`，`role_permissions`/`user_permissions` 引用同步）；API 写入 `target_type='device'` 会被归一化为 `'thing'`。
 - **BREAKING (frontend/a2ui, PR-2)**: 前端类型 `Device*`→`Thing*`、SPA 路由 `/things/:id`；a2ui catalog 组件 `device-card`/`device-table`→`thing-card`/`thing-table`（`DeviceCard`/`DeviceTable` 保留过渡兼容别名，旧会话 LLM 输出不破图）。
 - 保留不变：`events.source_type='device'`、`actor='device'`、`jobs.job_type='device_command'`、alarm 查询参数 `device_ids` 等枚举/wire 值（后续单独评估）。
+- **apps/cloud 残留 Device\* 类型名改 Thing\*（PR-3，纯类型名）**：`DeviceFilterRequest`→`ThingFilterRequest`、`DeviceOnlineStatus`→`ThingOnlineStatus`、`DeviceSnapshot`→`ThingSnapshot`、`DeviceNotFound`→`ThingNotFound`、`DeviceCacheAdapter`→`ThingCacheAdapter`、marketplace 侧 `DeviceInfo`→`ThingInfo`；serde/wire JSON 键不变。
+
+### Fixed
+
+- **MQTT gateway discovery 端到端修复（PR-3）**：cloud 路由守卫 off-by-one——6 段 `thing/discover` topic 被 `parts.len() >= 7` 守卫静默丢弃（pre-existing 死链）；edge 发布 topic `{prefix}/discovery`→`{prefix}/thing/discover`、payload 对齐 `ThingDiscoverMessage`；edge `publish_discovery` 已接线，cloud `handle_thing_discover → create_things_batch` 真实落库。
+- **edge telemetry payload 对齐 cloud 契约（PR-3）**：edge 上行 telemetry 包装为 `TelemetryMessage` 形状（`type`/`data`/`timestamp`），与 cloud `route_data_message` 解析端一致；**edge 须与 cloud 同步升级**。
+- **agent tools catalog 工具 id 对齐 MCP 注册名（PR-3）**：静态兜底 catalog 的 `search_devices`/`get_device`/`create_device`/`delete_device` 更名为 `search_things`/`get_thing`/`create_thing`/`delete_thing`（对齐 `mcp/tools/thing.rs` 注册名）；存量 `agent_configs.config` `tool_denylist` 中的旧名经迁移 `20260831000001` 自动翻转（带引号 token 精确替换，不误伤前缀/子串）。
+- **tag stats by_type 恒 0 死桶修复（PR-3）**：统计键 `device`→`thing`（原桶恒 0，前端无消费）；410 tombstone 文案补全 `/api/v1` 前缀。
+- **edge pairing ack 缺 `thing_id` 显式报错（PR-3）**：原静默写入空凭据导致后续全部请求失败，现在 fail fast 并附契约测试钉住。
 
 ### Notes
 
