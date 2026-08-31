@@ -341,7 +341,7 @@ pub struct UpdateNotificationRuleRequest {
     pub enabled: Option<bool>,
 }
 
-/// Device filter request
+/// Thing filter request
 #[derive(Debug, Deserialize)]
 pub struct DeviceFilterRequest {
     pub device_ids: Option<Vec<String>>,
@@ -366,7 +366,7 @@ pub struct NotificationRuleResponse {
     pub updated_at: DateTime<Utc>,
 }
 
-/// Device filter response
+/// Thing filter response
 #[derive(Debug, Serialize)]
 pub struct DeviceFilterResponse {
     pub device_ids: Option<Vec<String>>,

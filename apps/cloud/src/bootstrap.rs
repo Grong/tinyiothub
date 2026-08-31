@@ -145,32 +145,28 @@ pub async fn run_seeds(db: &tinyiothub_storage::Db, settings: &ApplicationSettin
 
 /// 从数据库加载完整设备（含属性、指令）到缓存
 pub async fn load_device_cache(app_state: &AppState) {
-    use tinyiothub_core::models::device::DeviceQueryParams;
-    match app_state
-        .device_service
-        .get_devices(&DeviceQueryParams::default())
-        .await
-    {
-        Ok(devices) => {
-            let device_ids: Vec<String> = devices.iter().map(|d| d.id.clone()).collect();
+    use tinyiothub_core::models::thing::ThingQueryParams;
+    match app_state.device_service.get_things(&ThingQueryParams::default()).await {
+        Ok(things) => {
+            let device_ids: Vec<String> = things.iter().map(|d| d.id.clone()).collect();
             let count = device_ids.len();
-            match app_state.device_service.load_complete_devices(&device_ids).await {
-                Ok(complete_devices) => {
-                    for device in complete_devices {
+            match app_state.device_service.load_complete_things(&device_ids).await {
+                Ok(complete_things) => {
+                    for device in complete_things {
                         app_state.device_cache.insert(device);
                     }
-                    info!("✅ Loaded {} complete devices (with properties) into cache", count);
+                    info!("✅ Loaded {} complete things (with properties) into cache", count);
                 }
                 Err(e) => {
-                    warn!("⚠️ Failed to load complete devices, falling back to basic: {}", e);
-                    for device in devices {
+                    warn!("⚠️ Failed to load complete things, falling back to basic: {}", e);
+                    for device in things {
                         app_state.device_cache.insert(device);
                     }
                 }
             }
         }
         Err(e) => {
-            warn!("⚠️ Failed to load devices into cache: {}", e);
+            warn!("⚠️ Failed to load things into cache: {}", e);
         }
     }
 }

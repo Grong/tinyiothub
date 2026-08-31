@@ -37,7 +37,7 @@ pub struct EventOverviewResponse {
     pub level_summary: LevelSummary,
     pub type_summary: TypeSummary,
     pub trend_data: Vec<TrendDataPoint>,
-    pub top_devices: Vec<DeviceEventCount>,
+    pub top_things: Vec<DeviceEventCount>,
     pub recent_critical: Vec<RecentCriticalEvent>,
 }
 
@@ -98,11 +98,11 @@ pub struct TrendDataPoint {
     pub warning_count: u64,
 }
 
-/// Device event count for top devices
+/// Thing event count for top things
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct DeviceEventCount {
-    pub device_id: String,
+    pub thing_id: String,
     pub event_count: u64,
     pub critical_count: u64,
     pub error_count: u64,
@@ -115,7 +115,7 @@ pub struct DeviceEventCount {
 pub struct RecentCriticalEvent {
     pub id: String,
     pub title: String,
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub timestamp: DateTime<Utc>,
     pub acknowledged: bool,
 }
@@ -192,7 +192,7 @@ pub async fn get_event_overview(
             .map(|event| RecentCriticalEvent {
                 id: event.id.to_string(),
                 title: event.title,
-                device_id: event.source.device_id().map(|s| s.to_string()),
+                thing_id: event.source.thing_id().map(|s| s.to_string()),
                 timestamp: event.timestamp,
                 acknowledged: event.acknowledged,
             })
@@ -250,9 +250,9 @@ fn build_overview_response(
     // In a full implementation, this would require additional queries
     let trend_data = Vec::new();
 
-    // Build top devices (for now, just create empty list)
+    // Build top things (for now, just create empty list)
     // In a full implementation, this would require additional queries
-    let top_devices = Vec::new();
+    let top_things = Vec::new();
 
     EventOverviewResponse {
         total_count,
@@ -260,7 +260,7 @@ fn build_overview_response(
         level_summary,
         type_summary,
         trend_data,
-        top_devices,
+        top_things,
         recent_critical,
     }
 }
@@ -343,7 +343,7 @@ fn build_type_summary(groups: &[StatisticsGroup], total_count: u64) -> TypeSumma
                 count: group.count,
                 percentage: group.percentage,
             });
-        } else if group.key.starts_with("Device") {
+        } else if group.key.starts_with("Thing") {
             device_events += group.count;
             by_subtype.push(SubtypeSummary {
                 event_type: "device".to_string(),

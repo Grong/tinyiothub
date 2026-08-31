@@ -158,12 +158,12 @@ mod tests {
     fn test_execute() {
         let skill = SkillDefinition {
             skill_name: "device_status".into(),
-            skill_content: "设备 ${device_id} 的状态: ${status}".into(),
+            skill_content: "设备 ${thing_id} 的状态: ${status}".into(),
             skill_type: SkillType::File,
             paths: None,
             is_hidden: false,
         };
-        let params = serde_json::json!({ "device_id": "sensor_001", "status": "在线" });
+        let params = serde_json::json!({ "thing_id": "sensor_001", "status": "在线" });
         assert_eq!(skill.execute(&params), "设备 sensor_001 的状态: 在线");
     }
 

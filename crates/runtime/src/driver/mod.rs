@@ -1,6 +1,6 @@
 pub use drivers::{ModbusDriver, SimulatedDriver, snmp_driver::SnmpDriver};
-pub use status::DeviceOverview;
-pub use tinyiothub_core::driver::{DeviceDriver, DriverConfig, ResultValue};
+pub use status::ThingOverview;
+pub use tinyiothub_core::driver::{DriverConfig, ResultValue, ThingDriver};
 pub use tinyiothub_plugin_sdk::{ComponentInfo, ComponentOption, CreateComponentRequest};
 pub use wrapper::DriverWrapper;
 
@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 
 use parking_lot::RwLock;
 use tinyiothub_core::error::Error;
-use tinyiothub_core::models::device::Device;
+use tinyiothub_core::models::thing::Thing;
 
 pub mod drivers;
 pub mod dynamic_adapter;
@@ -36,7 +36,7 @@ fn global_registry() -> &'static RwLock<registry::DriverRegistry> {
 
 /// Create a driver instance by name.
 /// Checks built-in drivers first, then the workspace-specific dynamic registry.
-pub fn create_driver(driver_name: &str, device: &Device) -> Result<DriverWrapper, Error> {
+pub fn create_driver(driver_name: &str, device: &Thing) -> Result<DriverWrapper, Error> {
     // 1. Built-in drivers (global, always available)
     if is_driver_supported(driver_name) {
         let base_driver = create_driver_by_name(driver_name, device)?;
@@ -47,7 +47,7 @@ pub fn create_driver(driver_name: &str, device: &Device) -> Result<DriverWrapper
     if let Some(ref workspace_id) = device.workspace_id {
         let reg = global_registry().read();
         if let Some(entry) = reg.find(workspace_id, driver_name) {
-            let driver = dynamic_adapter::DynamicDeviceDriver::new(&entry, device.clone())?;
+            let driver = dynamic_adapter::DynamicThingDriver::new(&entry, device.clone())?;
             reg.acquire(workspace_id, driver_name)?;
             return Ok(DriverWrapper::new(Box::new(driver)));
         }

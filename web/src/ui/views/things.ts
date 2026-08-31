@@ -1,7 +1,6 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { SignalWatcher } from "@lit-labs/signals";
-import { deviceApi } from "../../api/devices.js";
 import { thingApi } from "../../api/things.js";
 import "./confirm-modal.js";
 import {
@@ -25,9 +24,9 @@ import { templateApi } from "../../api/templates.js";
 import { tagApi } from "../../api/tags.js";
 import { eventApi } from "../../api/events.js";
 import { alarmApi } from "../../api/alarms.js";
-import { deviceCache } from "../../stores/device-cache.js";
+import { thingCache } from "../../stores/thing-cache.js";
 import { i18n, t } from "../../i18n/index.js";
-import type { Device, DeviceProfile, CreateDeviceRequest, DriverConfigOption, Tag } from "../../types/index.js";
+import type { Thing, ThingProfile, DriverConfigOption, Tag } from "../../types/index.js";
 import type { AlarmRule, AlarmLevel, RuleType, AlarmCondition, ComparisonOperator, ChangeType, LogicalOperator, NotificationChannelType, CreateAlarmRuleRequest, UpdateAlarmRuleRequest } from "../../types/index.js";
 import { success, error as toastError } from "../components/toast.js";
 import { icons } from "../icons.js";
@@ -42,7 +41,6 @@ interface ProcessedTemplate {
   category: string;
   version: string;
   manufacturer?: string;
-  deviceType: string;
   protocolType?: string;
   driverName?: string;
   tags: string[];
@@ -80,7 +78,6 @@ function transformTemplate(raw: any): ProcessedTemplate {
     category: raw.category || "others",
     version: raw.version || "",
     manufacturer: raw.manufacturer,
-    deviceType: raw.deviceType || "",
     protocolType: raw.protocolType,
     driverName: raw.driverName,
     tags: parseJsonField(raw.tags, []),
@@ -164,7 +161,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   @state() error = "";
 
-  @state() devices: Device[] = [];
+  @state() devices: Thing[] = [];
 
   @state() total = 0;
 
@@ -176,7 +173,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   @state() searchName = "";
 
-  @state() selectedDevice: DeviceProfile | null = null;
+  @state() selectedDevice: ThingProfile | null = null;
 
   @state() detailLoading = false;
 
@@ -199,7 +196,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   @state() showModal = false;
 
-  @state() editingDevice: Device | null = null;
+  @state() editingDevice: Thing | null = null;
 
   @state() showPairingDialog = false;
 
@@ -252,7 +249,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   @state() ruleSaving = false;
 
-  // Device alarm list
+  // Thing alarm list
 
   @state() deviceAlarms: import("../../types/index.js").Alarm[] = [];
 
@@ -472,7 +469,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
         this.loadDevices();
       }
     };
-    document.addEventListener("device-updated", this._boundHandleDeviceUpdated);
+    document.addEventListener("thing-updated", this._boundHandleDeviceUpdated);
     const path = window.location.pathname;
     if (path.startsWith("/things/")) {
       const id = path.split("/")[2];
@@ -493,7 +490,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this._unsubI18n?.();
     // 不断开 SSE — 缓存层管理连接生命周期
     document.removeEventListener("click", this._boundCloseTagEditor);
-    document.removeEventListener("device-updated", this._boundHandleDeviceUpdated);
+    document.removeEventListener("thing-updated", this._boundHandleDeviceUpdated);
   }
 
 
@@ -512,8 +509,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
       if (this.filterStatus) params.status = this.filterStatus;
       if (this.filterProtocol) params.protocolType = this.filterProtocol;
 
-      const res = await deviceApi.getDevices(params);
-      const data = res.result;
+      const res = await thingApi.list(params);
+      const data: any = res.result;
       if (data) {
         // /api/v1/things returns { items, total, limit, offset } (ThingListResponse)
         this.devices = data.items || data.data || [];
@@ -532,27 +529,27 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.detailLoading = true;
     this.error = "";
     try {
-      // 触发 deviceCache 初始化（建立 SSE 连接），同时获取详情
+      // 触发 thingCache 初始化（建立 SSE 连接），同时获取详情
       const [profile] = await Promise.all([
-        deviceApi.getDeviceProfile(id),
-        deviceCache.getDevices(),
+        thingApi.getProfile(id),
+        thingCache.getDevices(),
       ]);
-      const result = profile.result || null;
+      const result: any = profile.result || null;
 
       // 将属性存入缓存，SSE 推送时只更新 currentValue
       if (result?.properties?.length) {
-        deviceCache.setDeviceProperties(id, result.properties);
+        thingCache.setDeviceProperties(id, result.properties);
       }
 
-      // thing API returns flat profile; wrap into DeviceProfile format
-      // that the view expects (profile.device, profile.overview, etc.)
-      if (result && !result.device) {
+      // thing API returns flat profile; wrap into ThingProfile format
+      // that the view expects (profile.thing, profile.overview, etc.)
+      if (result && !result.thing) {
         const props = result.properties || [];
         const acts = result.actions || result.commands || [];
         // Map state (i32) → status string for the view
         const statusStr = result.state === 1 ? 'online' : result.state === 2 ? 'error' : 'offline';
         this.selectedDevice = {
-          device: { ...result, status: statusStr },
+          thing: { ...result, status: statusStr },
           overview: {
             totalProperties: props.length,
             onlineProperties: props.filter((p: any) => p.currentValue != null || p.value != null).length,
@@ -631,13 +628,13 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
 
-  toggleTagEditor(deviceId: string) {
-    this.editingTagsDeviceId = this.editingTagsDeviceId === deviceId ? null : deviceId;
+  toggleTagEditor(thingId: string) {
+    this.editingTagsDeviceId = this.editingTagsDeviceId === thingId ? null : thingId;
     this.tagSearchKeyword = "";
   }
 
 
-  async toggleTag(device: Device, tag: Tag) {
+  async toggleTag(device: Thing, tag: Tag) {
     if (this.tagSaving) return;
     this.tagSaving = true;
     try {
@@ -646,7 +643,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       if (existing) {
         await tagApi.removeBinding(existing.id);
       } else {
-        await tagApi.createBinding({ tagId: tag.id, targetId: device.id, targetType: 'device' });
+        await tagApi.createBinding({ tagId: tag.id, targetId: device.id, targetType: 'thing' });
       }
       await this.loadDevices();
     } catch (err: any) {
@@ -657,7 +654,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
 
-  async createAndBindTag(device: Device, name: string) {
+  async createAndBindTag(device: Thing, name: string) {
     if (this.tagCreating || !name.trim()) return;
     this.tagCreating = true;
     try {
@@ -669,7 +666,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       const newTag = res.result as Tag;
       if (newTag?.id) {
         // Bind to device
-        await tagApi.createBinding({ tagId: newTag.id, targetId: device.id, targetType: 'device' });
+        await tagApi.createBinding({ tagId: newTag.id, targetId: device.id, targetType: 'thing' });
         // Refresh tag list and devices
         await Promise.all([this.loadAllTags(), this.loadDevices()]);
         this.tagSearchKeyword = '';
@@ -712,14 +709,14 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
 
   async loadDeviceAlarms() {
-    const deviceId = this.selectedDevice?.device?.id;
-    if (!deviceId) return;
+    const thingId = this.selectedDevice?.thing?.id;
+    if (!thingId) return;
     this.alarmsLoading = true;
     try {
       const res = await alarmApi.getAlarms({ statuses: ["active"], page: 1, pageSize: 50 });
       const alarmData = res.result as any;
       const allAlarms = alarmData?.data || [];
-      this.deviceAlarms = allAlarms.filter((a: any) => a.deviceId === deviceId);
+      this.deviceAlarms = allAlarms.filter((a: any) => a.thingId === thingId);
     } catch {
       this.deviceAlarms = [];
     } finally {
@@ -732,11 +729,11 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
 
   async loadAlarmRules() {
-    const deviceId = this.selectedDevice?.device?.id;
-    if (!deviceId) return;
+    const thingId = this.selectedDevice?.thing?.id;
+    if (!thingId) return;
     this.rulesLoading = true;
     try {
-      const res = await alarmApi.getRules({ deviceId });
+      const res = await alarmApi.getRules({ thingId });
       const data = res.result;
       this.alarmRules = Array.isArray(data) ? data as AlarmRule[] : [];
     } catch {
@@ -832,8 +829,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
       toastError("请输入规则名称");
       return;
     }
-    const deviceId = this.selectedDevice?.device?.id;
-    if (!deviceId) return;
+    const thingId = this.selectedDevice?.thing?.id;
+    if (!thingId) return;
 
     this.ruleSaving = true;
     try {
@@ -859,7 +856,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
         const createReq: CreateAlarmRuleRequest = {
           name: this.ruleFormName,
           description: this.ruleFormDesc || undefined,
-          deviceId,
+          thingId,
           propertyId: this.ruleFormPropertyId || undefined,
           ruleType: this.ruleFormType,
           condition,
@@ -938,14 +935,14 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
 
   async openPropertyHistory(name: string, unit: string) {
-    const deviceId = this.selectedDevice?.device?.id;
-    if (!deviceId) return;
+    const thingId = this.selectedDevice?.thing?.id;
+    if (!thingId) return;
 
     this.historyLastFocus = document.activeElement ?? undefined;
     this.showHistoryDialog = true;
     this.historyPropertyName = name;
     this.historyPropertyUnit = unit;
-    this.historyDeviceId = deviceId;
+    this.historyDeviceId = thingId;
     this.historyRange = "1h";
     this.historyCustomStart = "";
     this.historyCustomEnd = "";
@@ -978,7 +975,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
     try {
       const res = await eventApi.getEvents({
-        deviceId: this.historyDeviceId,
+        thingId: this.historyDeviceId,
         eventType: "device.property_change",
         startTime,
         endTime,
@@ -1124,11 +1121,11 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
 
-  async openEdit(d: Device) {
+  async openEdit(d: Thing) {
     this.modalLastFocus = document.activeElement ?? undefined;
     this.editingDevice = d;
     this.formName = d.name;
-    this.formType = d.deviceType || "";
+    this.formType = d.category || "";
     this.formAddress = d.address || "";
     this.formDescription = d.description || "";
     this.formManufacturer = d.factoryName || "";
@@ -1150,8 +1147,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
     // Load full profile data (properties + commands) if available
     this.formProfileLoading = true;
     try {
-      const profileRes = await deviceApi.getDeviceProfile(d.id);
-      const profile = profileRes.result;
+      const profileRes = await thingApi.getProfile(d.id);
+      const profile: any = profileRes.result;
       if (profile?.properties?.length) {
         this.formProperties = profile.properties.map((p: any) => ({
           name: p.name, displayName: p.displayName, value: p.currentValue ?? p.value ?? '', dataType: p.dataType,
@@ -1249,10 +1246,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
           : undefined,
       };
       if (this.editingDevice) {
-        await deviceApi.updateDevice(this.editingDevice.id, payload);
+        await thingApi.update(this.editingDevice.id, payload);
         success("物已更新");
       } else {
-        await deviceApi.createDevice(payload as CreateDeviceRequest);
+        await thingApi.create(payload);
         success("物已创建");
       }
       this.closeModal();
@@ -1265,10 +1262,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
 
-  async deleteDevice(d: Device) {
+  async deleteDevice(d: Thing) {
     if (!confirm(`确定要删除物 "${d.displayName || d.name}" 吗？`)) return;
     try {
-      await deviceApi.deleteDevice(d.id);
+      await thingApi.delete(d.id);
       success("物已删除");
       await this.loadDevices();
     } catch (err: any) {
@@ -1277,10 +1274,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
 
-  async exportDeviceTemplate(d: Device) {
+  async exportDeviceTemplate(d: Thing) {
     if (!confirm(`将物 "${d.name}" 导出为模板？`)) return;
     try {
-      const res = await deviceApi.exportDeviceAsTemplate(d.id);
+      const res = await thingApi.exportAsTemplate(d.id);
       success(`导出成功：模板 ID ${res.result?.templateId ?? ""}`);
     } catch (e: any) {
       toastError(e.message || "导出失败");
@@ -1288,10 +1285,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
 
-  async cloneDevice(d: Device) {
+  async cloneDevice(d: Thing) {
     if (!confirm(`克隆物 "${d.name}"？`)) return;
     try {
-      await deviceApi.cloneDevice(d.id);
+      await thingApi.clone(d.id);
       success("物克隆成功");
       this.loadDevices();
     } catch (e: any) {
@@ -1300,25 +1297,25 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
 
-  async executeCommand(deviceId: string, commandName: string) {
+  async executeCommand(thingId: string, commandName: string) {
     if (this.executingCommand) return;
     this.executingCommand = commandName;
     try {
-      const res = await deviceApi.executeCommand(deviceId, commandName);
+      const res = await thingApi.executeCommand(thingId, commandName);
       const body = res?.result ?? res;
       if (body?.status === "confirmation_required") {
-        const d = this.selectedDevice?.device;
+        const d = this.selectedDevice?.thing;
         this.pendingAction = {
           token: body.token,
-          thingId: deviceId,
-          thingName: d?.displayName || d?.name || deviceId,
+          thingId: thingId,
+          thingName: d?.displayName || d?.name || thingId,
           actionName: commandName,
           params: (body.params ?? {}) as Record<string, string>,
         };
         this.confirmModalOpen = true;
       } else {
         success(`命令 "${commandName}" 执行成功`);
-        await this.loadDeviceDetail(deviceId);
+        await this.loadDeviceDetail(thingId);
       }
     } catch (err: any) {
       toastError(err.message || "命令执行失败");
@@ -1586,7 +1583,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
         }
       }
 
-      const deviceInput = {
+      const thingInput = {
         name: this.wizName.trim(),
         displayName: this.wizName.trim(),
         description: this.wizDescription.trim() || undefined,
@@ -1598,9 +1595,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
         enabledCommands: this.wizSelectedTemplate.commands?.map((c: any) => c.name) || [],
       };
 
-      const res = await deviceApi.createFromTemplate({
+      const res = await thingApi.createFromTemplate({
         templateId: this.wizSelectedTemplate.id,
-        deviceInput,
+        input: thingInput,
       });
 
       const newThing = res.result;
@@ -1642,7 +1639,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       return html`
         <div class="page-error">
           <div class="page-error__message">${this.error}</div>
-          <button class="btn btn--primary" @click=${() => this.selectedDevice ? this.loadDeviceDetail(this.selectedDevice.device.id) : this.loadDevices()}>重试</button>
+          <button class="btn btn--primary" @click=${() => this.selectedDevice ? this.loadDeviceDetail(this.selectedDevice.thing.id) : this.loadDevices()}>重试</button>
         </div>
       `;
     }
@@ -1787,7 +1784,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
                     <div class="data-table__primary">${d.displayName || d.name}</div>
                     <div class="data-table__secondary">${d.name}</div>
                   </td>
-                  <td class="data-table__cell-sm">${d.deviceType || "-"}</td>
+                  <td class="data-table__cell-sm">${d.category || "-"}</td>
                   <td class="data-table__cell-sm">${d.protocolType || d.driverName || "-"}</td>
                   <td>
                     <span class="status-badge">
@@ -1829,7 +1826,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
 
-  renderTableCellTags(d: Device) {
+  renderTableCellTags(d: Thing) {
     const deviceTags = d.tags || [];
     const isEditingTags = this.editingTagsDeviceId === d.id;
     return html`
@@ -1850,7 +1847,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
 
-  renderTagPopover(d: Device, deviceTags: Tag[]) {
+  renderTagPopover(d: Thing, deviceTags: Tag[]) {
     const keyword = this.tagSearchKeyword.trim();
     const filtered = this.allTags.filter(t => !keyword || t.name.toLowerCase().includes(keyword.toLowerCase()));
     const exactMatch = keyword && this.allTags.some(t => t.name.toLowerCase() === keyword.toLowerCase());
@@ -1908,7 +1905,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
 
-  renderDeviceCard(d: Device) {
+  renderDeviceCard(d: Thing) {
     const deviceTags = d.tags || [];
     const visibleTags = deviceTags.slice(0, 3);
     const hiddenTagCount = deviceTags.length - 3;
@@ -1916,7 +1913,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
     // Middle content for tooltip
     const infoLines = [
-      d.deviceType || null,
+      d.category || null,
       d.protocolType || d.driverName || null,
       d.address || null,
     ].filter(Boolean);
@@ -1957,10 +1954,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
             @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); this.navigateToDevice(d.id); } }}
           >
             <div class="device-card__info">
-              ${d.deviceType ? html`
+              ${d.category ? html`
                 <div class="device-card__info-row">
                   <span class="device-card__info-label">类型</span>
-                  <span class="device-card__info-value">${d.deviceType}</span>
+                  <span class="device-card__info-value">${d.category}</span>
                 </div>
               ` : nothing}
               ${d.protocolType || d.driverName ? html`
@@ -2009,7 +2006,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   async removeKnowledgeDoc(doc: any) {
     if (!confirm(`确定移除「${doc.name || doc.filePath || '文档'}」？`)) return;
-    const thingId = this.selectedDevice?.device?.id;
+    const thingId = this.selectedDevice?.thing?.id;
     if (!thingId || !doc.id) return;
     try {
       await thingApi.detachResource(thingId, doc.id);
@@ -2021,7 +2018,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   async saveDocDesc(doc: any) {
     if (this._editDescValue === (doc.description || '')) { this.editingDescId = null; return; }
-    const wsId = (this.selectedDevice?.device as any)?.workspaceId || 'default';
+    const wsId = (this.selectedDevice?.thing as any)?.workspaceId || 'default';
     try {
       await fetch(`/api/v1/workspaces/${wsId}/resources/${doc.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('auth-token') || ''}` },
@@ -2082,7 +2079,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     clearTimeout(this._docTagSaveTimer);
     this._docTagSaveTimer = setTimeout(async () => {
       const docId = this.editingDocId;
-      const wsId = (this.selectedDevice?.device as any)?.workspaceId || 'default';
+      const wsId = (this.selectedDevice?.thing as any)?.workspaceId || 'default';
       const res = await fetch(`/api/v1/workspaces/${wsId}/resources/${docId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('auth-token') || ''}` },
         body: JSON.stringify({ tags: this.editingDocTags }),
@@ -2180,8 +2177,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   async submitTextDoc() {
     if (!this.textDocTitle.trim()) return;
-    const thingId = this.selectedDevice?.device?.id;
-    const wsId = (this.selectedDevice?.device as any)?.workspaceId || 'default';
+    const thingId = this.selectedDevice?.thing?.id;
+    const wsId = (this.selectedDevice?.thing as any)?.workspaceId || 'default';
     if (!thingId) return;
     this.uploadSaving = true;
     try {
@@ -2206,8 +2203,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
   async submitUploadFromModal() {
     const file = this.uploadFile;
     if (!file) return;
-    const thingId = this.selectedDevice?.device?.id;
-    const wsId = (this.selectedDevice?.device as any)?.workspaceId || 'default';
+    const thingId = this.selectedDevice?.thing?.id;
+    const wsId = (this.selectedDevice?.thing as any)?.workspaceId || 'default';
     if (!thingId) return;
     this.uploadSaving = true;
     try {
@@ -2221,7 +2218,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
 
   async attachExistingResource(resourceId: string) {
-    const thingId = this.selectedDevice?.device?.id;
+    const thingId = this.selectedDevice?.thing?.id;
     if (!thingId) return;
     try {
       await thingApi.attachResource(thingId, resourceId);
@@ -2335,7 +2332,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
 
-  renderRuleModal(_deviceId: string, properties: any[]) {
+  renderRuleModal(_thingId: string, properties: any[]) {
     const isEdit = !!this.editingRule;
     const ruleTypeOptions: { value: RuleType; label: string }[] = [
       { value: "threshold", label: "阈值比较" },
@@ -2376,7 +2373,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
               </span>
               <div>
                 <h2 class="device-edit-header__title">${isEdit ? '编辑告警规则' : '添加告警规则'}</h2>
-                <span class="device-edit-header__sub">物: ${this.selectedDevice?.device?.displayName || this.selectedDevice?.device?.name}</span>
+                <span class="device-edit-header__sub">物: ${this.selectedDevice?.thing?.displayName || this.selectedDevice?.thing?.name}</span>
               </div>
             </div>
             <button class="device-edit-close" @click=${this.closeRuleModal} aria-label="关闭">&times;</button>
@@ -2993,7 +2990,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
           ${t.isBuiltin ? html`<span class="template-card__badge">内置</span>` : nothing}
         </div>
         <div class="template-card__meta">
-          ${t.deviceType ? html`<span>${t.deviceType}</span>` : nothing}
+          ${t.category ? html`<span>${t.category}</span>` : nothing}
           ${t.protocolType ? html`<span>${t.protocolType}</span>` : nothing}
           ${t.version ? html`<span>v${t.version}</span>` : nothing}
         </div>
@@ -3023,7 +3020,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
         <div class="template-overview__title-wrap">
           <div class="template-overview__title">${displayName}</div>
           <div class="template-overview__meta">
-            ${t.manufacturer ? html`${t.manufacturer} · ` : nothing}${t.deviceType || t.category}${t.version ? html` · v${t.version}` : nothing}
+            ${t.manufacturer ? html`${t.manufacturer} · ` : nothing}${t.category}${t.version ? html` · v${t.version}` : nothing}
           </div>
         </div>
         ${t.isBuiltin ? html`<span class="template-overview__badge">内置</span>` : nothing}

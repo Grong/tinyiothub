@@ -23,7 +23,7 @@ pub mod plugin;
 pub mod ports;
 
 // Re-exports for convenience
-pub use cron_executors::{DeviceCommandExecutor, EventRetentionExecutor};
+pub use cron_executors::{EventRetentionExecutor, ThingCommandExecutor};
 pub use data_server::DataServer;
 pub use driver::{
     DriverWrapper, create_driver, driver_registry, get_all_driver_names, has_driver, registry::DriverRegistry,

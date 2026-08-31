@@ -10,7 +10,7 @@ pub fn sanitize_filename(name: &str) -> String {
     name.replace(['/', '\\', '\0'], "_")
 }
 
-// Note: trace_device macro is exported at crate root due to #[macro_export]
+// Note: trace_thing macro is exported at crate root due to #[macro_export]
 
 /// Publish event with platform-specific handling
 ///

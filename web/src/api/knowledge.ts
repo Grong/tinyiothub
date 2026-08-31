@@ -30,7 +30,7 @@ export interface KnowledgeEntity {
   properties: Record<string, unknown>;
   tags: string[];
   fileIds: string[];
-  deviceId: string | null;
+  thingId: string | null;
   confidence: number;
   createdAt: string;
   updatedAt: string;

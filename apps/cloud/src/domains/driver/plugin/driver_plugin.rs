@@ -4,7 +4,7 @@
 
 use std::{any::Any, sync::Arc};
 
-use tinyiothub_core::models::device::Device;
+use tinyiothub_core::models::thing::Thing;
 
 use tinyiothub_core::error::Error;
 use tinyiothub_runtime::driver::{DriverWrapper, create_driver};
@@ -21,7 +21,7 @@ pub struct DriverPluginHandler {
 
 impl DriverPluginHandler {
     /// 从设备创建设动插件处理器
-    pub fn new(driver_name: String, version: String, device: Device, _context: Arc<AppContext>) -> Result<Self, Error> {
+    pub fn new(driver_name: String, version: String, device: Thing, _context: Arc<AppContext>) -> Result<Self, Error> {
         let manifest = PluginManifest {
             name: driver_name.clone(),
             version: Some(version),
@@ -82,7 +82,7 @@ pub fn register_builtin_drivers(registry: &crate::domains::driver::plugin::Plugi
         let factory = Box::new(move |_app_context: Arc<AppContext>| {
             // 创建设备的最小实例用于获取配置
             // 注意：实际设备会通过 MQTT 或其他方式传入，这里只注册类型
-            let device = Device {
+            let device = Thing {
                 id: format!("plugin_{}", driver_name),
                 name: driver_name.clone(),
                 display_name: desc_clone.clone(),

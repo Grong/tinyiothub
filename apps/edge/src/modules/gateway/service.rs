@@ -54,7 +54,7 @@ impl GatewayService {
 
         let sub_client = self.client.read().await.clone();
         let ws_id = self.credentials.workspace_id.clone();
-        let dev_id = self.credentials.device_id.clone();
+        let thing_id = self.credentials.thing_id.clone();
         let last_heard = self.last_heard.clone();
 
         let handle = tokio::spawn(async move {
@@ -63,10 +63,10 @@ impl GatewayService {
                     Ok(rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(_))) => {
                         last_heard.store(chrono::Utc::now().timestamp(), Ordering::Release);
                         tracing::info!("MQTT connected (authenticated)");
-                        let prefix = format!("tinyiothub/{}/gateway/{}", ws_id, dev_id);
+                        let prefix = format!("tinyiothub/{}/gateway/{}", ws_id, thing_id);
                         // Subscribe longer prefixes before shorter ones
                         sub_client
-                            .subscribe(&format!("{}/config/device", prefix), rumqttc::QoS::AtLeastOnce)
+                            .subscribe(&format!("{}/config/thing", prefix), rumqttc::QoS::AtLeastOnce)
                             .await
                             .ok();
                         sub_client
@@ -108,7 +108,7 @@ impl GatewayService {
     pub fn topic_prefix(&self) -> String {
         format!(
             "tinyiothub/{}/gateway/{}",
-            self.credentials.workspace_id, self.credentials.device_id
+            self.credentials.workspace_id, self.credentials.thing_id
         )
     }
 

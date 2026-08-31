@@ -47,11 +47,11 @@ impl StorageHandler for PostgresHandler {
         debug!(
             "Writing {} values to Postgres for device {}",
             data.values.len(),
-            data.device_id
+            data.thing_id
         );
 
         let query = format!(
-            "INSERT INTO {} (device_id, timestamp, data) VALUES ($1, $2, $3)",
+            "INSERT INTO {} (thing_id, timestamp, data) VALUES ($1, $2, $3)",
             self.config.table_name
         );
 
@@ -59,7 +59,7 @@ impl StorageHandler for PostgresHandler {
             .map_err(|e| Error::SerializationError(format!("Failed to serialize data: {}", e)))?;
 
         self.client
-            .execute(&query, &[&data.device_id, &data.timestamp, &data_json])
+            .execute(&query, &[&data.thing_id, &data.timestamp, &data_json])
             .await
             .map_err(|e| Error::DatabaseError(format!("Failed to write to Postgres: {}", e)))?;
 

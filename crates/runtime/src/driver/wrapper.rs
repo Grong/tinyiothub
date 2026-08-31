@@ -1,15 +1,15 @@
 use std::time::{Duration, Instant};
-use tinyiothub_core::models::{device::Device, device_command::DeviceCommand};
+use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 
 use super::{
     retry::{RetryManager, RetryResult},
-    status::{DeviceOverview, DeviceStatusManager},
+    status::{ThingOverview, ThingStatusManager},
 };
 use crate::event_bus::{EventBus, publish_event_safe};
-use tinyiothub_core::driver::{DeviceDriver, DriverConfig, ResultValue};
+use tinyiothub_core::driver::{DriverConfig, ResultValue, ThingDriver};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::models::event::{
-    ContentElement, DeviceEventType, Event as DomainEvent, EventLevel, EventSource, RichContent, TextFormat,
+    ContentElement, Event as DomainEvent, EventLevel, EventSource, RichContent, TextFormat, ThingEventType,
 };
 
 /// 设备驱动执行结果
@@ -42,22 +42,22 @@ impl RetryInfo {
 ///
 /// 为设备驱动提供标准实现，包含重试逻辑和状态管理
 pub struct DriverWrapper {
-    inner_driver: Box<dyn DeviceDriver>,
+    inner_driver: Box<dyn ThingDriver>,
     retry_manager: RetryManager,
-    status_manager: DeviceStatusManager,
+    status_manager: ThingStatusManager,
     event_bus: Option<std::sync::Arc<EventBus>>,
     cached_config: DriverConfig,
 }
 
 impl DriverWrapper {
-    pub fn new(inner_driver: Box<dyn DeviceDriver>) -> Self {
-        let device = inner_driver.device().clone();
+    pub fn new(inner_driver: Box<dyn ThingDriver>) -> Self {
+        let device = inner_driver.thing().clone();
         let config = inner_driver.retry_config();
         let cached_config = inner_driver.init_config();
 
         Self {
             retry_manager: RetryManager::new(config),
-            status_manager: DeviceStatusManager::new(&device),
+            status_manager: ThingStatusManager::new(&device),
             inner_driver,
             event_bus: None,
             cached_config,
@@ -72,19 +72,19 @@ impl DriverWrapper {
         self.event_bus.as_ref()
     }
 
-    pub fn device(&self) -> &Device {
-        self.inner_driver.device()
+    pub fn thing(&self) -> &Thing {
+        self.inner_driver.thing()
     }
 
-    pub fn device_mut(&mut self) -> &mut Device {
-        self.inner_driver.device_mut()
+    pub fn thing_mut(&mut self) -> &mut Thing {
+        self.inner_driver.thing_mut()
     }
 
-    pub fn inner_driver(&self) -> &dyn DeviceDriver {
+    pub fn inner_driver(&self) -> &dyn ThingDriver {
         &*self.inner_driver
     }
 
-    pub fn inner_driver_mut(&mut self) -> &mut dyn DeviceDriver {
+    pub fn inner_driver_mut(&mut self) -> &mut dyn ThingDriver {
         &mut *self.inner_driver
     }
 
@@ -100,7 +100,7 @@ impl DriverWrapper {
         self.retry_manager.can_retry_now()
     }
 
-    pub fn execute_command(&mut self, cmd: &DeviceCommand) -> DriverExecutionResult<bool> {
+    pub fn execute_command(&mut self, cmd: &ThingCommand) -> DriverExecutionResult<bool> {
         let start_time = Instant::now();
         let result = self
             .retry_manager
@@ -166,7 +166,7 @@ impl DriverWrapper {
         }
     }
 
-    pub fn overview(&self) -> DeviceOverview {
+    pub fn overview(&self) -> ThingOverview {
         self.status_manager.get_statistics().clone()
     }
 
@@ -195,18 +195,18 @@ impl DriverWrapper {
         self.status_manager.record_success(Duration::from_millis(0));
         self.retry_manager.reset();
 
-        tracing::info!("Device '{}' connected successfully", self.display_name());
+        tracing::info!("Thing '{}' connected successfully", self.display_name());
 
-        let device = self.device();
+        let device = self.thing();
         DomainEvent::new_device_event(
-            DeviceEventType::Connection,
+            ThingEventType::Connection,
             EventLevel::Info,
             EventSource::device(device.id.clone(), Some("driver".to_string())),
             RichContent::new(
-                format!("Device Online: {}", device.name),
+                format!("Thing Online: {}", device.name),
                 vec![
                     ContentElement::Text {
-                        content: format!("Device '{}' is now online", device.name),
+                        content: format!("Thing '{}' is now online", device.name),
                         format: TextFormat::Plain,
                     },
                     ContentElement::Text {
@@ -227,14 +227,14 @@ impl DriverWrapper {
         self.status_manager.set_offline();
 
         if let Some(ref reason_text) = reason {
-            tracing::warn!("Device '{}' disconnected: {}", self.display_name(), reason_text);
+            tracing::warn!("Thing '{}' disconnected: {}", self.display_name(), reason_text);
         } else {
-            tracing::warn!("Device '{}' disconnected", self.display_name());
+            tracing::warn!("Thing '{}' disconnected", self.display_name());
         }
 
-        let device = self.device();
+        let device = self.thing();
         let mut elements = vec![ContentElement::Text {
-            content: format!("Device '{}' is now offline", device.name),
+            content: format!("Thing '{}' is now offline", device.name),
             format: TextFormat::Plain,
         }];
 
@@ -246,10 +246,10 @@ impl DriverWrapper {
         }
 
         DomainEvent::new_device_event(
-            DeviceEventType::Connection,
+            ThingEventType::Connection,
             EventLevel::Warning,
             EventSource::device(device.id.clone(), Some("driver".to_string())),
-            RichContent::new(format!("Device Offline: {}", device.name), elements),
+            RichContent::new(format!("Thing Offline: {}", device.name), elements),
         )
         .ok()
     }
@@ -258,9 +258,9 @@ impl DriverWrapper {
         self.status_manager.record_failure();
 
         if let Some(ref event_bus) = self.event_bus {
-            let device = self.device();
+            let device = self.thing();
             let event = DomainEvent::new_device_event(
-                DeviceEventType::Connection,
+                ThingEventType::Connection,
                 EventLevel::Error,
                 EventSource::device(device.id.clone(), Some("driver".to_string())),
                 RichContent::new(
@@ -286,21 +286,21 @@ impl DriverWrapper {
             }
         }
 
-        tracing::error!("Device '{}' connection failed: {}", self.display_name(), error_message);
+        tracing::error!("Thing '{}' connection failed: {}", self.display_name(), error_message);
     }
 
     pub fn direct_read_data(&mut self) -> Result<Vec<ResultValue>, Error> {
         self.inner_driver.read_data()
     }
 
-    pub fn direct_execute_command(&mut self, cmd: &DeviceCommand) -> Result<bool, Error> {
+    pub fn direct_execute_command(&mut self, cmd: &ThingCommand) -> Result<bool, Error> {
         self.inner_driver.execute_command(cmd)
     }
 
     fn display_name(&self) -> String {
-        self.device()
+        self.thing()
             .display_name
             .clone()
-            .unwrap_or_else(|| self.device().name.clone())
+            .unwrap_or_else(|| self.thing().name.clone())
     }
 }

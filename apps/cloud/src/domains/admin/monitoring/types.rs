@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardStats {
     /// 设备总数
-    pub total_devices: i64,
+    pub total_things: i64,
     /// 在线设备数
-    pub online_devices: i64,
+    pub online_things: i64,
     /// 活跃告警数
     pub active_alarms: i64,
     /// 系统状态 (healthy, warning, error)
@@ -23,7 +23,7 @@ pub struct DashboardStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonthlyGrowth {
     /// 设备增长数
-    pub devices: i64,
+    pub things: i64,
     /// 消息增长数
     pub messages: i64,
 }
@@ -50,6 +50,6 @@ pub struct NetworkMetrics {
     pub outbound: i64,
 }
 
-// `DeviceStatusDistribution` / `QuickDevice` moved to
+// `ThingStatusDistribution` / `QuickThing` moved to
 // `tinyiothub_storage::device` (final-review F1) — the device plane
 // (query service + dashboard handler) was their only consumer.

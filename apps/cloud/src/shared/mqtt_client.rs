@@ -6,8 +6,8 @@ use std::{
 use crate::domains::driver::gateway::{
     service::MqttPublish,
     types::{
-        DeviceDiscoverMessage, DeviceTelemetryMessage, GatewayDataMessage, PairingAnnounce, StatusMessage,
-        TelemetryMessage,
+        GatewayDataMessage, PairingAnnounce, StatusMessage, TelemetryMessage, ThingDiscoverMessage,
+        ThingTelemetryMessage,
     },
 };
 use crate::domains::event::{
@@ -80,11 +80,11 @@ impl PlatformMqttClient {
                                     .await
                                     .ok();
                                 subscribe_client
-                                    .subscribe("tinyiothub/+/gateway/+/device/discover", QoS::AtLeastOnce)
+                                    .subscribe("tinyiothub/+/gateway/+/thing/discover", QoS::AtLeastOnce)
                                     .await
                                     .ok();
                                 subscribe_client
-                                    .subscribe("tinyiothub/+/gateway/+/device/+/telemetry", QoS::AtMostOnce)
+                                    .subscribe("tinyiothub/+/gateway/+/thing/+/telemetry", QoS::AtMostOnce)
                                     .await
                                     .ok();
                                 // Thing event topic
@@ -162,7 +162,7 @@ impl PlatformMqttClient {
 
     /// Parse topic and route to appropriate GatewayDataMessage variant.
     /// Topic format: tinyiothub/{ws_id}/gateway/{gw_id}/{category}
-    ///           or: tinyiothub/{ws_id}/gateway/{gw_id}/device/{sub_id}/telemetry
+    ///           or: tinyiothub/{ws_id}/gateway/{gw_id}/thing/{sub_id}/telemetry
     async fn route_data_message(topic: &str, payload: &[u8], data_tx: &mpsc::Sender<GatewayDataMessage>) {
         let parts: Vec<&str> = topic.split('/').collect();
         if parts.len() < 5 {
@@ -196,20 +196,20 @@ impl PlatformMqttClient {
                 tracing::debug!(gateway_id = %gateway_id, "Gateway event received (not yet handled)");
                 None
             }
-            Some("device") if parts.len() >= 7 && parts[5] == "discover" => {
-                serde_json::from_slice::<DeviceDiscoverMessage>(payload)
-                    .ok()
-                    .map(|msg| GatewayDataMessage::DeviceDiscover {
+            Some("thing") if parts.len() >= 7 && parts[5] == "discover" => {
+                serde_json::from_slice::<ThingDiscoverMessage>(payload).ok().map(|msg| {
+                    GatewayDataMessage::ThingDiscover {
                         gateway_id,
                         workspace_id,
                         msg,
-                    })
+                    }
+                })
             }
-            Some("device") if parts.len() >= 7 && parts[5] != "discover" => {
+            Some("thing") if parts.len() >= 7 && parts[5] != "discover" => {
                 let sub_id = parts[5].to_string();
-                serde_json::from_slice::<DeviceTelemetryMessage>(payload)
+                serde_json::from_slice::<ThingTelemetryMessage>(payload)
                     .ok()
-                    .map(|msg| GatewayDataMessage::DeviceTelemetry {
+                    .map(|msg| GatewayDataMessage::ThingTelemetry {
                         gateway_id: sub_id,
                         workspace_id,
                         msg,
@@ -333,12 +333,12 @@ impl PlatformMqttClient {
         }
     }
 
-    pub async fn subscribe_gateway(&self, workspace_id: &str, device_id: &str) {
-        let status = format!("tinyiothub/{}/gateway/{}/status", workspace_id, device_id);
-        let telemetry = format!("tinyiothub/{}/gateway/{}/telemetry", workspace_id, device_id);
-        let event = format!("tinyiothub/{}/gateway/{}/event", workspace_id, device_id);
-        let discover = format!("tinyiothub/{}/gateway/{}/device/discover", workspace_id, device_id);
-        let device_telemetry = format!("tinyiothub/{}/gateway/{}/device/+/telemetry", workspace_id, device_id);
+    pub async fn subscribe_gateway(&self, workspace_id: &str, thing_id: &str) {
+        let status = format!("tinyiothub/{}/gateway/{}/status", workspace_id, thing_id);
+        let telemetry = format!("tinyiothub/{}/gateway/{}/telemetry", workspace_id, thing_id);
+        let event = format!("tinyiothub/{}/gateway/{}/event", workspace_id, thing_id);
+        let discover = format!("tinyiothub/{}/gateway/{}/thing/discover", workspace_id, thing_id);
+        let device_telemetry = format!("tinyiothub/{}/gateway/{}/thing/+/telemetry", workspace_id, thing_id);
 
         self.client.subscribe(&status, QoS::AtMostOnce).await.ok();
         self.client.subscribe(&telemetry, QoS::AtMostOnce).await.ok();

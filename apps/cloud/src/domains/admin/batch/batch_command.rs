@@ -13,16 +13,16 @@ pub use tinyiothub_storage::batch_command::{
     CreateBatchCommandRequest,
 };
 
-use crate::domains::driver::legacy::DeviceService;
+use crate::domains::driver::legacy::ThingService;
 
 /// Execute batch commands
 pub struct BatchCommandExecutor;
 
 impl BatchCommandExecutor {
-    /// Execute a batch command - send commands to all pending devices
+    /// Execute a batch command - send commands to all pending things
     pub async fn execute(
         db: &Db,
-        device_service: Arc<DeviceService>,
+        device_service: Arc<ThingService>,
         batch_id: &str,
     ) -> BatchCommandResult<BatchCommandWithItems> {
         // Get batch with items
@@ -54,7 +54,7 @@ impl BatchCommandExecutor {
             // Send command to device
             match device_service
                 .send_command(
-                    &item.device_id,
+                    &item.thing_id,
                     &batch_with_items.batch.command_name,
                     &command_type,
                     parameters.clone(),

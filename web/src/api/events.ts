@@ -3,23 +3,23 @@
  */
 
 import { apiGet } from './client.js';
-import type { DeviceEvent } from '../types/index.js';
+import type { ThingEvent } from '../types/index.js';
 import type { PaginatedResponse } from './client.js';
 
 export const eventApi = {
   async getEvents(params?: {
     page?: number;
     pageSize?: number;
-    deviceId?: string;
+    thingId?: string;
     eventType?: string;
     level?: string;
     startTime?: string;
     endTime?: string;
   }) {
-    return apiGet<PaginatedResponse<DeviceEvent>>('/events', params as Record<string, any>);
+    return apiGet<PaginatedResponse<ThingEvent>>('/events', params as Record<string, any>);
   },
 
   async getEvent(id: string) {
-    return apiGet<DeviceEvent>(`/events/${id}`);
+    return apiGet<ThingEvent>(`/events/${id}`);
   },
 };

@@ -14,7 +14,7 @@ use crate::domains::event::{
 };
 use sqlx::Row;
 use tinyiothub_core::models::event::{
-    ContentElement, DeviceEventType, Event, EventLevel, EventSource, EventType, RichContent, TextFormat,
+    ContentElement, Event, EventLevel, EventSource, EventType, RichContent, TextFormat, ThingEventType,
 };
 use tinyiothub_storage::Db;
 
@@ -34,12 +34,12 @@ async fn test_pool() -> sqlx::SqlitePool {
     pool
 }
 
-async fn insert_device(pool: &sqlx::SqlitePool, id: &str, workspace_id: &str) {
-    // devices.workspace_id has a FK to workspaces — seed it (idempotent).
+async fn insert_thing(pool: &sqlx::SqlitePool, id: &str, workspace_id: &str) {
+    // things.workspace_id has a FK to workspaces — seed it (idempotent).
     seed_test_workspace(pool, "tenant-1", workspace_id).await;
-    sqlx::query("INSERT INTO devices (id, name, workspace_id) VALUES (?, ?, ?)")
+    sqlx::query("INSERT INTO things (id, name, workspace_id) VALUES (?, ?, ?)")
         .bind(id)
-        .bind(format!("Device {id}"))
+        .bind(format!("Thing {id}"))
         .bind(workspace_id)
         .execute(pool)
         .await
@@ -50,7 +50,7 @@ async fn insert_device(pool: &sqlx::SqlitePool, id: &str, workspace_id: &str) {
 /// device created from it.
 async fn insert_device_with_template(
     pool: &sqlx::SqlitePool,
-    device_id: &str,
+    thing_id: &str,
     workspace_id: &str,
     template_id: &str,
     events_json: &str,
@@ -64,7 +64,7 @@ async fn insert_device_with_template(
     .expect("insert template category");
 
     sqlx::query(
-        "INSERT INTO thing_templates (id, name, display_name, version, category, device_type, events, created_at, updated_at)
+        "INSERT INTO thing_templates (id, name, display_name, version, category, category, events, created_at, updated_at)
          VALUES (?, ?, ?, '1.0', 'test-cat', 'sensor', ?, datetime('now'), datetime('now'))",
     )
     .bind(template_id)
@@ -75,9 +75,9 @@ async fn insert_device_with_template(
     .await
     .expect("insert template");
 
-    sqlx::query("INSERT INTO devices (id, name, workspace_id, template_id) VALUES (?, ?, ?, ?)")
-        .bind(device_id)
-        .bind(format!("Device {device_id}"))
+    sqlx::query("INSERT INTO things (id, name, workspace_id, template_id) VALUES (?, ?, ?, ?)")
+        .bind(thing_id)
+        .bind(format!("Thing {thing_id}"))
         .bind(workspace_id)
         .bind(template_id)
         .execute(pool)
@@ -104,7 +104,7 @@ fn input(thing_id: &str, workspace_id: &str, event_name: &str, level: EventLevel
 #[tokio::test]
 async fn test_route_event_persists_row_with_expected_shape() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-1", "ws-1").await;
+    insert_thing(&pool, "dev-1", "ws-1").await;
     let throttle = ThrottleState::new(60);
     let bus = ThingEventBus::new();
 
@@ -229,7 +229,7 @@ async fn test_known_template_event_not_flagged() {
 #[tokio::test]
 async fn test_device_without_template_not_flagged() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-nt", "ws-1").await;
+    insert_thing(&pool, "dev-nt", "ws-1").await;
     let throttle = ThrottleState::new(60);
     let bus = ThingEventBus::new();
 
@@ -262,10 +262,10 @@ async fn test_device_without_template_not_flagged() {
 #[tokio::test]
 async fn test_event_alarm_rule_fires_device_alarm() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-al", "ws-al").await;
+    insert_thing(&pool, "dev-al", "ws-al").await;
 
     sqlx::query(
-        "INSERT INTO device_alarm_rules (id, device_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, workspace_id)
+        "INSERT INTO thing_alarm_rules (id, thing_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, workspace_id)
          VALUES ('rule-ev', 'dev-al', 'Temp High', 'event', '{\"eventName\":\"temp_high\",\"minLevel\":\"warning\"}', 'warning', 1, 'ws-al')",
     )
     .execute(&pool)
@@ -289,11 +289,11 @@ async fn test_event_alarm_rule_fires_device_alarm() {
     assert!(!result.malformed);
 
     let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-al' AND rule_id = 'rule-ev'")
+        sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarms WHERE thing_id = 'dev-al' AND rule_id = 'rule-ev'")
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(count, 1, "matching event rule must create a device_alarms row");
+    assert_eq!(count, 1, "matching event rule must create a thing_alarms row");
 
     // A different event name must NOT fire the rule.
     let throttle2 = ThrottleState::new(60);
@@ -307,7 +307,7 @@ async fn test_event_alarm_rule_fires_device_alarm() {
     )
     .await;
     let count_after: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-al' AND rule_id = 'rule-ev'")
+        sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarms WHERE thing_id = 'dev-al' AND rule_id = 'rule-ev'")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -317,10 +317,10 @@ async fn test_event_alarm_rule_fires_device_alarm() {
 #[tokio::test]
 async fn test_event_alarm_rule_respects_min_level() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-ml", "ws-ml").await;
+    insert_thing(&pool, "dev-ml", "ws-ml").await;
 
     sqlx::query(
-        "INSERT INTO device_alarm_rules (id, device_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, workspace_id)
+        "INSERT INTO thing_alarm_rules (id, thing_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, workspace_id)
          VALUES ('rule-ml', 'dev-ml', 'Temp High', 'event', '{\"eventName\":\"temp_high\",\"minLevel\":\"error\"}', 'error', 1, 'ws-ml')",
     )
     .execute(&pool)
@@ -343,7 +343,7 @@ async fn test_event_alarm_rule_respects_min_level() {
     )
     .await;
 
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-ml'")
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarms WHERE thing_id = 'dev-ml'")
         .fetch_one(&pool)
         .await
         .unwrap();
@@ -357,7 +357,7 @@ async fn test_event_alarm_rule_respects_min_level() {
 #[tokio::test]
 async fn test_throttle_admits_60_rejects_61st_but_spares_critical() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-th", "ws-1").await;
+    insert_thing(&pool, "dev-th", "ws-1").await;
     let throttle = ThrottleState::new(60);
     let bus = ThingEventBus::new();
 
@@ -386,7 +386,7 @@ async fn test_throttle_admits_60_rejects_61st_but_spares_critical() {
     .await;
     assert!(r61.throttled, "61st info event within the window must be throttled");
 
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE device_id = 'dev-th'")
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE thing_id = 'dev-th'")
         .fetch_one(&pool)
         .await
         .unwrap();
@@ -404,7 +404,7 @@ async fn test_throttle_admits_60_rejects_61st_but_spares_critical() {
     assert!(!rc.throttled, "critical events are exempt from throttling");
     assert!(!rc.malformed);
 
-    let count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE device_id = 'dev-th'")
+    let count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE thing_id = 'dev-th'")
         .fetch_one(&pool)
         .await
         .unwrap();
@@ -418,7 +418,7 @@ async fn test_throttle_admits_60_rejects_61st_but_spares_critical() {
 #[tokio::test]
 async fn test_append_events_same_subtype_both_insert() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-dd", "ws-1").await;
+    insert_thing(&pool, "dev-dd", "ws-1").await;
     let throttle = ThrottleState::new(60);
     let bus = ThingEventBus::new();
 
@@ -437,7 +437,7 @@ async fn test_append_events_same_subtype_both_insert() {
     }
 
     let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE device_id = 'dev-dd' AND event_subtype = 'door_open'")
+        sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE thing_id = 'dev-dd' AND event_subtype = 'door_open'")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -451,20 +451,20 @@ async fn test_append_events_same_subtype_both_insert() {
 // Real-time status upsert
 // ──────────────────────────────────────────────
 
-/// Build a status-type event (Device + Warning/Error/Critical satisfies
+/// Build a status-type event (Thing + Warning/Error/Critical satisfies
 /// `should_update_real_time_status()`).
-fn status_event(device_id: &str, level: EventLevel) -> Event {
+fn status_event(thing_id: &str, level: EventLevel) -> Event {
     let content = RichContent::new(
-        format!("status from {device_id}"),
+        format!("status from {thing_id}"),
         vec![ContentElement::Text {
             content: "status".to_string(),
             format: TextFormat::Plain,
         }],
     );
     Event::new(
-        EventType::Device(DeviceEventType::PropertyChange),
+        EventType::Device(ThingEventType::PropertyChange),
         level,
-        EventSource::device_property(device_id.to_string(), "temperature".to_string(), "test".to_string()),
+        EventSource::device_property(thing_id.to_string(), "temperature".to_string(), "test".to_string()),
         content,
     )
     .expect("valid status event")
@@ -476,14 +476,14 @@ fn status_event(device_id: &str, level: EventLevel) -> Event {
 #[tokio::test]
 async fn test_status_upsert_via_repo_merges_repeat_occurrences() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-st", "ws-st").await;
+    insert_thing(&pool, "dev-st", "ws-st").await;
     let repo = Db::new(pool.clone());
 
     repo.upsert_event_status(&status_event("dev-st", EventLevel::Warning))
         .await
         .unwrap();
     // acknowledge the row, then a second (escalated) occurrence arrives
-    sqlx::query("UPDATE events SET acknowledged = 1, acknowledged_by = 'u1', acknowledged_at = '2026-01-01' WHERE device_id = 'dev-st'")
+    sqlx::query("UPDATE events SET acknowledged = 1, acknowledged_by = 'u1', acknowledged_at = '2026-01-01' WHERE thing_id = 'dev-st'")
         .execute(&pool)
         .await
         .unwrap();
@@ -491,14 +491,14 @@ async fn test_status_upsert_via_repo_merges_repeat_occurrences() {
         .await
         .unwrap();
 
-    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM events WHERE device_id = 'dev-st'")
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM events WHERE thing_id = 'dev-st'")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(count, 1, "repeat status occurrence must merge into one row");
 
     let (occ, level, ack): (i64, i64, i64) =
-        sqlx::query_as("SELECT occurrence_count, event_level, acknowledged FROM events WHERE device_id = 'dev-st'")
+        sqlx::query_as("SELECT occurrence_count, event_level, acknowledged FROM events WHERE thing_id = 'dev-st'")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -512,25 +512,25 @@ async fn test_status_upsert_via_repo_merges_repeat_occurrences() {
 }
 
 /// The mandated upsert semantics (design 八·1): one row per
-/// (event_type, event_subtype, device_id) status key, occurrence_count
+/// (event_type, event_subtype, thing_id) status key, occurrence_count
 /// accumulates, acknowledgment resets, level refreshes. Verified against the
 /// migrated schema using the conflict target the index actually supports
-/// (`is_status = 1 AND device_id IS NOT NULL`) — proving the bug is confined
+/// (`is_status = 1 AND thing_id IS NOT NULL`) — proving the bug is confined
 /// to the repository's ON CONFLICT predicate, not the schema.
 #[tokio::test]
 async fn test_status_upsert_merges_repeat_occurrences() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-st", "ws-st").await;
+    insert_thing(&pool, "dev-st", "ws-st").await;
 
     // Same upsert shape as the events-table status upsert, with
     // the conflict-target predicate matching idx_events_status_dedup.
     let upsert = r#"
         INSERT INTO events (
             id, event_type, event_subtype, event_level, timestamp,
-            source_type, source_id, device_id, title, content,
+            source_type, source_id, thing_id, title, content,
             occurrence_count, acknowledged, workspace_id, is_status
         ) VALUES (?, 'device', ?, ?, ?, 'device_property', ?, 'dev-st', 't', '{}', 1, 0, 'ws-st', 1)
-        ON CONFLICT(event_type, event_subtype, device_id) WHERE is_status = 1 AND device_id IS NOT NULL
+        ON CONFLICT(event_type, event_subtype, thing_id) WHERE is_status = 1 AND thing_id IS NOT NULL
         DO UPDATE SET
             occurrence_count = occurrence_count + 1,
             event_level = excluded.event_level,
@@ -539,7 +539,7 @@ async fn test_status_upsert_merges_repeat_occurrences() {
             acknowledged_by = NULL,
             acknowledged_at = NULL
     "#;
-    let subtype = serde_json::to_string(&EventType::Device(DeviceEventType::PropertyChange)).unwrap();
+    let subtype = serde_json::to_string(&EventType::Device(ThingEventType::PropertyChange)).unwrap();
     let now = chrono::Utc::now().to_rfc3339();
 
     sqlx::query(upsert)
@@ -554,7 +554,7 @@ async fn test_status_upsert_merges_repeat_occurrences() {
 
     // Simulate a human acknowledging the status row, then a repeat occurrence
     // at a higher level arrives.
-    sqlx::query("UPDATE events SET acknowledged = 1, acknowledged_by = 'user-1' WHERE device_id = 'dev-st'")
+    sqlx::query("UPDATE events SET acknowledged = 1, acknowledged_by = 'user-1' WHERE thing_id = 'dev-st'")
         .execute(&pool)
         .await
         .unwrap();
@@ -571,7 +571,7 @@ async fn test_status_upsert_merges_repeat_occurrences() {
 
     let rows = sqlx::query(
         "SELECT occurrence_count, acknowledged, acknowledged_by, event_level, is_status, workspace_id
-         FROM events WHERE device_id = 'dev-st'",
+         FROM events WHERE thing_id = 'dev-st'",
     )
     .fetch_all(&pool)
     .await
@@ -597,7 +597,7 @@ async fn test_status_upsert_merges_repeat_occurrences() {
 #[tokio::test]
 async fn test_status_upsert_ignores_info_level_events() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-si", "ws-si").await;
+    insert_thing(&pool, "dev-si", "ws-si").await;
     let repo = Db::new(pool.clone());
 
     // Info-level device events do not satisfy should_update_real_time_status().
@@ -605,7 +605,7 @@ async fn test_status_upsert_ignores_info_level_events() {
         .await
         .unwrap();
 
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE device_id = 'dev-si'")
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE thing_id = 'dev-si'")
         .fetch_one(&pool)
         .await
         .unwrap();

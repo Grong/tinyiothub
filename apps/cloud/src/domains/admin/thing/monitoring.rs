@@ -1,0 +1,197 @@
+use crate::domains::admin::AdminState;
+use axum::{
+    Json, Router,
+    extract::{Path, Query, State},
+    routing::get,
+};
+use serde::{Deserialize, Serialize};
+use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::security::Claims;
+
+use crate::domains::driver::legacy::{
+    PerformanceAlert, SystemOverview, SystemPerformanceOverview, ThingMetrics, ThingPerformanceMetrics,
+};
+use tinyiothub_web::api_response::ApiResponse;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PerformanceHistoryQuery {
+    pub hours: Option<u32>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DeviceOnlineStatus {
+    pub thing_id: String,
+    pub is_online: bool,
+    pub connection_quality: Option<u8>,
+    pub last_check: String,
+}
+
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    AdminState: axum::extract::FromRef<S>,
+    std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
+{
+    Router::new()
+        // 设备状态相关
+        .route("/{thing_id}/status", get(get_device_online_status))
+        .route("/{thing_id}/metrics", get(get_thing_metrics))
+        // 性能监控相关
+        .route("/{thing_id}/performance", get(get_device_performance_metrics))
+        .route("/{thing_id}/performance/history", get(get_device_performance_history))
+        .route("/{thing_id}/performance/alerts", get(get_device_performance_alerts))
+        // 系统级监控
+        .route("/overview", get(get_system_overview))
+        .route("/performance/overview", get(get_system_performance_overview))
+        .route("/performance/alerts", get(get_all_performance_alerts))
+}
+
+/// 获取设备在线状态
+async fn get_device_online_status(
+    State(state): State<AdminState>,
+    Path(thing_id): Path<String>,
+    _claims: Claims,
+) -> Json<ApiResponse<DeviceOnlineStatus>> {
+    // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
+    // which automatically filters things by workspace_id. The adapter ensures
+    // that all device queries are scoped to the current workspace, eliminating
+    // the need for explicit tenant verification in API handlers.
+    let is_online = state.monitoring_service.is_thing_online(&thing_id);
+    let connection_quality = state.monitoring_service.get_thing_connection_quality(&thing_id);
+
+    let status = DeviceOnlineStatus {
+        thing_id: thing_id.clone(),
+        is_online,
+        connection_quality,
+        last_check: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+    };
+
+    ApiResponseBuilder::success(status)
+}
+
+/// 获取设备指标信息
+async fn get_thing_metrics(
+    State(state): State<AdminState>,
+    Path(thing_id): Path<String>,
+    _claims: Claims,
+) -> Json<ApiResponse<Option<ThingMetrics>>> {
+    // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
+    // which automatically filters things by workspace_id. The adapter ensures
+    // that all device queries are scoped to the current workspace, eliminating
+    // the need for explicit tenant verification in API handlers.
+    match state.monitoring_service.get_thing_metrics(&thing_id).await {
+        Some(stats) => ApiResponseBuilder::success(Some(stats)),
+        None => ApiResponseBuilder::success(None),
+    }
+}
+
+/// 获取系统概览
+async fn get_system_overview(State(state): State<AdminState>, _claims: Claims) -> Json<ApiResponse<SystemOverview>> {
+    let overview = state.monitoring_service.get_system_overview().await;
+    ApiResponseBuilder::success(overview)
+}
+
+/// 获取设备性能指标
+async fn get_device_performance_metrics(
+    State(state): State<AdminState>,
+    Path(thing_id): Path<String>,
+    _claims: Claims,
+) -> Json<ApiResponse<Option<ThingPerformanceMetrics>>> {
+    // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
+    // which automatically filters things by workspace_id. The adapter ensures
+    // that all device queries are scoped to the current workspace, eliminating
+    // the need for explicit tenant verification in API handlers.
+    match state
+        .performance_service
+        .get_device_performance_metrics(&thing_id)
+        .await
+    {
+        Some(metrics) => ApiResponseBuilder::success(Some(metrics)),
+        None => ApiResponseBuilder::success(None),
+    }
+}
+
+/// 获取设备性能历史数据
+async fn get_device_performance_history(
+    State(state): State<AdminState>,
+    Path(thing_id): Path<String>,
+    Query(params): Query<PerformanceHistoryQuery>,
+    _claims: Claims,
+) -> Json<ApiResponse<Vec<ThingPerformanceMetrics>>> {
+    // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
+    // which automatically filters things by workspace_id. The adapter ensures
+    // that all device queries are scoped to the current workspace, eliminating
+    // the need for explicit tenant verification in API handlers.
+    let hours = params.hours.unwrap_or(24); // 默认24小时
+    match state
+        .performance_service
+        .get_device_performance_history(&thing_id, hours)
+        .await
+    {
+        Ok(history) => ApiResponseBuilder::success(history),
+        Err(e) => {
+            tracing::error!("Failed to get performance history for {}: {}", thing_id, e);
+            match e {
+                tinyiothub_core::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
+                _ => ApiResponseBuilder::error("获取性能历史数据失败"),
+            }
+        }
+    }
+}
+
+/// 获取系统性能概览
+async fn get_system_performance_overview(
+    State(state): State<AdminState>,
+    _claims: Claims,
+) -> Json<ApiResponse<SystemPerformanceOverview>> {
+    let overview = state.performance_service.get_system_performance_overview().await;
+    ApiResponseBuilder::success(overview)
+}
+
+/// 获取设备性能告警
+async fn get_device_performance_alerts(
+    State(state): State<AdminState>,
+    Path(thing_id): Path<String>,
+    _claims: Claims,
+) -> Json<ApiResponse<Vec<PerformanceAlert>>> {
+    // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
+    // which automatically filters things by workspace_id. The adapter ensures
+    // that all device queries are scoped to the current workspace, eliminating
+    // the need for explicit tenant verification in API handlers.
+    let alerts = state
+        .performance_service
+        .check_device_performance_alerts(&thing_id)
+        .await;
+    ApiResponseBuilder::success(alerts)
+}
+
+/// 获取所有设备性能告警
+async fn get_all_performance_alerts(
+    State(state): State<AdminState>,
+    _claims: Claims,
+) -> Json<ApiResponse<Vec<PerformanceAlert>>> {
+    // 获取所有设备的告警
+    let all_things = state.device_cache.all();
+    let mut all_alerts = Vec::new();
+
+    for device in all_things {
+        let alerts = state
+            .performance_service
+            .check_device_performance_alerts(&device.id)
+            .await;
+        all_alerts.extend(alerts);
+    }
+
+    // 按严重程度排序（critical 在前）
+    all_alerts.sort_by(|a, b| {
+        match (a.severity.as_str(), b.severity.as_str()) {
+            ("critical", "warning") => std::cmp::Ordering::Less,
+            ("warning", "critical") => std::cmp::Ordering::Greater,
+            _ => a.timestamp.cmp(&b.timestamp).reverse(), // 最新的在前
+        }
+    });
+
+    ApiResponseBuilder::success(all_alerts)
+}

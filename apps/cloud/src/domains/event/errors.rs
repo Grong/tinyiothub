@@ -264,9 +264,9 @@ mod tests {
         let error = EventDomainError::not_found("event-123");
         assert!(error.to_string().contains("event-123"));
 
-        let error = EventDomainError::type_mismatch("System", "Device");
+        let error = EventDomainError::type_mismatch("System", "Thing");
         assert!(error.to_string().contains("System"));
-        assert!(error.to_string().contains("Device"));
+        assert!(error.to_string().contains("Thing"));
     }
 
     #[test]

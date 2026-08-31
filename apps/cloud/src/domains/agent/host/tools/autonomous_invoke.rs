@@ -72,9 +72,9 @@ fn dispatch_command(
 ) -> ToolResult {
     match data_server.cloned() {
         Some(data_server) => {
-            let cmd = tinyiothub_core::models::device_command::DeviceCommand {
+            let cmd = tinyiothub_core::models::thing_command::ThingCommand {
                 id: uuid::Uuid::new_v4().to_string(),
-                device_id: thing_id.to_string(),
+                thing_id: thing_id.to_string(),
                 name: action_name.to_string(),
                 display_name: None,
                 description: None,
@@ -403,11 +403,11 @@ mod tests {
         pool
     }
 
-    async fn seed_device(pool: &SqlitePool, workspace_id: &str, thing_id: &str, thing_type: &str) {
+    async fn seed_thing(pool: &SqlitePool, workspace_id: &str, thing_id: &str, thing_type: &str) {
         seed_test_workspace(pool, "tenant-1", workspace_id).await;
-        sqlx::query("INSERT INTO devices (id, name, workspace_id, thing_type) VALUES (?, ?, ?, ?)")
+        sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES (?, ?, ?, ?)")
             .bind(thing_id)
-            .bind(format!("Device {thing_id}"))
+            .bind(format!("Thing {thing_id}"))
             .bind(workspace_id)
             .bind(thing_type)
             .execute(pool)
@@ -416,7 +416,7 @@ mod tests {
     }
 
     async fn register_action(pool: &SqlitePool, thing_id: &str, action_name: &str) {
-        sqlx::query("INSERT INTO thing_actions (id, device_id, name) VALUES (?, ?, ?)")
+        sqlx::query("INSERT INTO thing_actions (id, thing_id, name) VALUES (?, ?, ?)")
             .bind(format!("act-{action_name}-{thing_id}"))
             .bind(thing_id)
             .bind(action_name)
@@ -429,7 +429,7 @@ mod tests {
         AutonomyPolicy {
             mode: AutonomyMode::Act,
             allowed_actions: vec!["*".to_string()],
-            denied_actions: vec!["wipe_device".to_string()],
+            denied_actions: vec!["wipe_thing".to_string()],
             max_actions_per_run: 3,
             max_actions_per_hour: 30,
         }
@@ -494,7 +494,7 @@ mod tests {
     }
 
     async fn agent_event_count(pool: &SqlitePool, thing_id: &str) -> i64 {
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM events WHERE device_id = ? AND actor = 'agent'")
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM events WHERE thing_id = ? AND actor = 'agent'")
             .bind(thing_id)
             .fetch_one(pool)
             .await
@@ -506,7 +506,7 @@ mod tests {
     #[tokio::test]
     async fn deny_when_mode_off_returns_structured_denied() {
         let fx = fixture("ws-off").await;
-        seed_device(&fx.pool, "ws-off", "dev-1", "device").await;
+        seed_thing(&fx.pool, "ws-off", "dev-1", "device").await;
         register_action(&fx.pool, "dev-1", "reboot").await;
         let mut policy = act_policy();
         policy.mode = AutonomyMode::Off;
@@ -533,7 +533,7 @@ mod tests {
     #[tokio::test]
     async fn deny_when_no_policy_row_fails_closed() {
         let fx = fixture("ws-none").await;
-        seed_device(&fx.pool, "ws-none", "dev-1", "device").await;
+        seed_thing(&fx.pool, "ws-none", "dev-1", "device").await;
         register_action(&fx.pool, "dev-1", "reboot").await;
 
         let result = dispatch(&fx, "dev-1", "reboot").await;
@@ -545,14 +545,14 @@ mod tests {
     #[tokio::test]
     async fn deny_when_action_blacklisted() {
         let fx = fixture("ws-bl").await;
-        seed_device(&fx.pool, "ws-bl", "dev-1", "device").await;
-        register_action(&fx.pool, "dev-1", "wipe_device").await;
+        seed_thing(&fx.pool, "ws-bl", "dev-1", "device").await;
+        register_action(&fx.pool, "dev-1", "wipe_thing").await;
         fx.policy_repo
             .save_autonomy_policy("ws-bl", &act_policy(), "test")
             .await
             .unwrap();
 
-        let result = dispatch(&fx, "dev-1", "wipe_device").await;
+        let result = dispatch(&fx, "dev-1", "wipe_thing").await;
         let out = output_json(&result);
         assert_eq!(out["denied"], true);
         assert_eq!(out["reason"], "action_denied");
@@ -562,7 +562,7 @@ mod tests {
     #[tokio::test]
     async fn deny_when_action_not_in_allowlist() {
         let fx = fixture("ws-al").await;
-        seed_device(&fx.pool, "ws-al", "dev-1", "device").await;
+        seed_thing(&fx.pool, "ws-al", "dev-1", "device").await;
         register_action(&fx.pool, "dev-1", "reboot").await;
         let mut policy = act_policy();
         policy.allowed_actions = vec!["set_fan".to_string()];
@@ -580,7 +580,7 @@ mod tests {
     #[tokio::test]
     async fn deny_when_run_cap_reached_after_exactly_max_dispatches() {
         let fx = fixture("ws-cap").await;
-        seed_device(&fx.pool, "ws-cap", "dev-1", "device").await;
+        seed_thing(&fx.pool, "ws-cap", "dev-1", "device").await;
         register_action(&fx.pool, "dev-1", "reboot").await;
         fx.policy_repo
             .save_autonomy_policy("ws-cap", &act_policy(), "test")
@@ -608,7 +608,7 @@ mod tests {
     #[tokio::test]
     async fn deny_when_hourly_fuse_reached() {
         let fx = fixture("ws-fuse").await;
-        seed_device(&fx.pool, "ws-fuse", "dev-1", "device").await;
+        seed_thing(&fx.pool, "ws-fuse", "dev-1", "device").await;
         register_action(&fx.pool, "dev-1", "reboot").await;
         let mut policy = act_policy();
         policy.max_actions_per_hour = 2;
@@ -649,7 +649,7 @@ mod tests {
         );
 
         let pool = test_pool().await;
-        seed_device(&pool, "ws-err", "dev-1", "device").await;
+        seed_thing(&pool, "ws-err", "dev-1", "device").await;
         register_action(&pool, "dev-1", "reboot").await;
         let ctx = Arc::new(RwLock::new(RunContextInner::default()));
         let inner = InvokeActionTool {
@@ -682,7 +682,7 @@ mod tests {
     #[tokio::test]
     async fn allow_dispatches_and_records_agent_actor_event() {
         let fx = fixture("ws-ok").await;
-        seed_device(&fx.pool, "ws-ok", "dev-1", "device").await;
+        seed_thing(&fx.pool, "ws-ok", "dev-1", "device").await;
         register_action(&fx.pool, "dev-1", "reboot").await;
         fx.policy_repo
             .save_autonomy_policy("ws-ok", &act_policy(), "test")
@@ -704,7 +704,7 @@ mod tests {
         // T6 hard handoff: the action's event is marked actor="agent".
         assert_eq!(agent_event_count(&fx.pool, "dev-1").await, 1);
         let (actor, subtype): (String, String) =
-            sqlx::query_as("SELECT actor, event_subtype FROM events WHERE device_id = 'dev-1' AND actor = 'agent'")
+            sqlx::query_as("SELECT actor, event_subtype FROM events WHERE thing_id = 'dev-1' AND actor = 'agent'")
                 .fetch_one(&fx.pool)
                 .await
                 .expect("agent event row");
@@ -723,7 +723,7 @@ mod tests {
         // The autonomous variant replaces the human confirmation branch with
         // the policy gate: an allowed action must dispatch, not mint a token.
         let fx = fixture("ws-conf").await;
-        seed_device(&fx.pool, "ws-conf", "dev-1", "device").await;
+        seed_thing(&fx.pool, "ws-conf", "dev-1", "device").await;
         register_action(&fx.pool, "dev-1", "reboot").await;
         fx.policy_repo
             .save_autonomy_policy("ws-conf", &act_policy(), "test")
@@ -787,7 +787,7 @@ mod tests {
         // The inner tool mints a token bound to ws-inner-mm; the outer tool's
         // workspace is ws-outer-mm — the pending action must NOT be confirmed.
         let (pool, tool, ctx) = cross_workspace_fixture("ws-outer-mm", "ws-inner-mm").await;
-        seed_device(&pool, "ws-inner-mm", "dev-1", "device").await;
+        seed_thing(&pool, "ws-inner-mm", "dev-1", "device").await;
         register_action(&pool, "dev-1", "reboot").await;
         *ctx.write().await.action_counts.entry("dev-1".to_string()).or_insert(0) += 1;
 
@@ -805,7 +805,7 @@ mod tests {
         // On auto-confirm mismatch the tool must return a tool_err, never the
         // inner confirmation_required payload (which carries a live token).
         let (pool, tool, ctx) = cross_workspace_fixture("ws-outer-lk", "ws-inner-lk").await;
-        seed_device(&pool, "ws-inner-lk", "dev-1", "device").await;
+        seed_thing(&pool, "ws-inner-lk", "dev-1", "device").await;
         register_action(&pool, "dev-1", "reboot").await;
         *ctx.write().await.action_counts.entry("dev-1".to_string()).or_insert(0) += 1;
 
@@ -833,7 +833,7 @@ mod tests {
     #[tokio::test]
     async fn non_device_thing_returns_inner_error_without_event() {
         let fx = fixture("ws-space").await;
-        seed_device(&fx.pool, "ws-space", "space-1", "space").await;
+        seed_thing(&fx.pool, "ws-space", "space-1", "space").await;
         fx.policy_repo
             .save_autonomy_policy("ws-space", &act_policy(), "test")
             .await
@@ -848,7 +848,7 @@ mod tests {
     #[tokio::test]
     async fn unregistered_action_returns_inner_error_without_event() {
         let fx = fixture("ws-unreg").await;
-        seed_device(&fx.pool, "ws-unreg", "dev-1", "device").await;
+        seed_thing(&fx.pool, "ws-unreg", "dev-1", "device").await;
         fx.policy_repo
             .save_autonomy_policy("ws-unreg", &act_policy(), "test")
             .await
@@ -865,7 +865,7 @@ mod tests {
         // Defensive: the factory always binds a context, but an unbound slot
         // must not panic — gate decides on policy + hourly fuse alone.
         let pool = test_pool().await;
-        seed_device(&pool, "ws-norun", "dev-1", "device").await;
+        seed_thing(&pool, "ws-norun", "dev-1", "device").await;
         register_action(&pool, "dev-1", "reboot").await;
         let policy_repo = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
         policy_repo

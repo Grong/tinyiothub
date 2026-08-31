@@ -29,8 +29,8 @@ pub async fn get_dashboard_stats(
     let db = Db::new(state.db_pool());
 
     // 获取设备统计
-    let total_devices = db.count_devices_total(workspace_id.as_deref()).await.unwrap_or(0);
-    let online_devices = db.count_online_devices(workspace_id.as_deref()).await.unwrap_or(0);
+    let total_things = db.count_things_total(workspace_id.as_deref()).await.unwrap_or(0);
+    let online_things = db.count_online_things(workspace_id.as_deref()).await.unwrap_or(0);
 
     // 获取告警统计
     let active_alarms = db
@@ -39,7 +39,7 @@ pub async fn get_dashboard_stats(
         .unwrap_or(0);
 
     // 获取系统状态
-    let system_status = determine_system_status(online_devices, total_devices, active_alarms);
+    let system_status = determine_system_status(online_things, total_things, active_alarms);
 
     // 获取系统运行时间（模拟数据）
     let system_uptime = get_system_uptime().await.unwrap_or(0);
@@ -48,14 +48,13 @@ pub async fn get_dashboard_stats(
     let today_messages = get_today_messages_count(&db).await.unwrap_or(0);
 
     // 获取月度增长数据
-    let monthly_growth = get_monthly_growth(&db).await.unwrap_or(MonthlyGrowth {
-        devices: 0,
-        messages: 0,
-    });
+    let monthly_growth = get_monthly_growth(&db)
+        .await
+        .unwrap_or(MonthlyGrowth { things: 0, messages: 0 });
 
     let stats = DashboardStats {
-        total_devices,
-        online_devices,
+        total_things,
+        online_things,
         active_alarms,
         system_status,
         system_uptime,
@@ -91,10 +90,10 @@ pub async fn get_dashboard_metrics(
 // 辅助函数
 
 /// 确定系统状态
-fn determine_system_status(online_devices: i64, total_devices: i64, active_alarms: i64) -> String {
+fn determine_system_status(online_things: i64, total_things: i64, active_alarms: i64) -> String {
     if active_alarms > 10 {
         "error".to_string()
-    } else if active_alarms > 0 || (total_devices > 0 && (online_devices as f64 / total_devices as f64) < 0.8) {
+    } else if active_alarms > 0 || (total_things > 0 && (online_things as f64 / total_things as f64) < 0.8) {
         "warning".to_string()
     } else {
         "healthy".to_string()
@@ -120,7 +119,7 @@ async fn get_monthly_growth(_db: &Db) -> Result<MonthlyGrowth, sqlx::Error> {
     // 这里应该计算本月相比上月的增长
     // 目前返回模拟数据
     Ok(MonthlyGrowth {
-        devices: 12,
+        things: 12,
         messages: 350,
     })
 }

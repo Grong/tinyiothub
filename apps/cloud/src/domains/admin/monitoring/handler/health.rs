@@ -86,7 +86,7 @@ async fn get_detailed_health(
     let mut active_device_count = 0u32;
 
     match device_service
-        .count_devices(&tinyiothub_core::models::device::DeviceQueryParams::default())
+        .count_things(&tinyiothub_core::models::thing::ThingQueryParams::default())
         .await
     {
         Ok(count) => device_count = count as u32,
@@ -94,11 +94,11 @@ async fn get_detailed_health(
     }
 
     match device_service
-        .get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default())
+        .get_things(&tinyiothub_core::models::thing::ThingQueryParams::default())
         .await
     {
-        Ok(devices) => {
-            active_device_count = devices.iter().filter(|d| d.status.is_online()).count() as u32;
+        Ok(things) => {
+            active_device_count = things.iter().filter(|d| d.status.is_online()).count() as u32;
         }
         Err(e) => {
             tracing::warn!("Failed to get device list for health check: {}", e);

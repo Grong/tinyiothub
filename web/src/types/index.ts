@@ -111,12 +111,12 @@ export interface WechatLoginResponse {
   workspaceId?: string;
 }
 
-// ==================== Device ====================
-export interface Device {
+// ==================== Thing ====================
+export interface Thing {
   id: string;
   name: string;
   displayName?: string;
-  deviceType?: string;
+  category?: string;
   address?: string;
   description?: string;
   position?: string;
@@ -135,13 +135,13 @@ export interface Device {
   status?: 'online' | 'offline' | 'error' | 'maintenance';
   linked_gateway?: string;
   tags?: Tag[];
-  properties?: DeviceProperty[];
+  properties?: ThingProperty[];
   productName?: string;
 }
 
-export interface DeviceProperty {
+export interface ThingProperty {
   id: string;
-  deviceId: string;
+  thingId: string;
   name: string;
   displayName?: string;
   value: any;
@@ -157,18 +157,18 @@ export interface DeviceProperty {
   maxValue?: number;
 }
 
-export interface DeviceCommand {
+export interface ThingCommand {
   id: string;
-  deviceId: string;
+  thingId: string;
   name: string;
   description?: string;
   parameters: Record<string, any>;
   createdAt: string;
 }
 
-export interface DeviceAlarm {
+export interface ThingAlarm {
   id: string;
-  deviceId: string;
+  thingId: string;
   deviceName: string;
   level: 'info' | 'warning' | 'error' | 'critical';
   message: string;
@@ -178,12 +178,12 @@ export interface DeviceAlarm {
   resolvedAt?: string;
 }
 
-export interface DeviceListParams {
+export interface ThingListParams {
   page?: number;
   pageSize?: number;
   name?: string;
   state?: string;
-  deviceType?: string;
+  category?: string;
   driverName?: string;
   productId?: string;
   enabled?: boolean;
@@ -192,7 +192,7 @@ export interface DeviceListParams {
   protocolType?: string;
 }
 
-export interface CreateDeviceRequest {
+export interface CreateThingRequest {
   name: string;
   type?: string;
   ipAddress?: string;
@@ -204,7 +204,7 @@ export interface CreateDeviceRequest {
   protocol?: string;
 }
 
-export interface UpdateDeviceRequest extends Partial<CreateDeviceRequest> {
+export interface UpdateThingRequest extends Partial<CreateThingRequest> {
   id: string;
 }
 
@@ -223,9 +223,9 @@ export interface DriverConfigResponse {
   defaultConfig: Record<string, string>;
 }
 
-export interface DeviceEvent {
+export interface ThingEvent {
   id: string;
-  deviceId: string;
+  thingId: string;
   eventType: 'alarm' | 'warning' | 'info' | 'error' | 'status_change' | 'command_executed';
   level: 'info' | 'warning' | 'error' | 'critical';
   title: string;
@@ -238,12 +238,12 @@ export interface DeviceEvent {
   status: 'active' | 'acknowledged' | 'resolved';
 }
 
-export interface DeviceProfile {
-  device: Device;
+export interface ThingProfile {
+  thing: Thing;
   isOnline: boolean;
-  properties: DeviceProperty[];
-  commands: DeviceCommand[];
-  recentEvents?: DeviceEvent[];
+  properties: ThingProperty[];
+  commands: ThingCommand[];
+  recentEvents?: ThingEvent[];
   overview: {
     totalProperties: number;
     onlineProperties: number;
@@ -286,7 +286,7 @@ export interface NotificationConfig {
 
 export interface Alarm {
   id: string;
-  deviceId: string;
+  thingId: string;
   deviceName?: string;
   propertyId?: string;
   propertyName?: string;
@@ -314,7 +314,7 @@ export interface AlarmRule {
   id: string;
   name: string;
   description?: string;
-  deviceId?: string;
+  thingId?: string;
   propertyId?: string;
   ruleType: string;
   condition: AlarmCondition;
@@ -345,7 +345,7 @@ export interface AlarmQueryParams {
 export interface CreateAlarmRuleRequest {
   name: string;
   description?: string;
-  deviceId?: string;
+  thingId?: string;
   propertyId?: string;
   ruleType: RuleType;
   condition: AlarmCondition;
@@ -387,19 +387,19 @@ export interface BatchOperationResult {
 
 // ==================== Dashboard ====================
 export interface DashboardStats {
-  totalDevices: number;
-  onlineDevices: number;
+  totalThings: number;
+  onlineThings: number;
   activeAlarms: number;
   systemStatus: 'healthy' | 'warning' | 'error';
   systemUptime: number;
   todayMessages: number;
   monthlyGrowth: {
-    devices: number;
+    things: number;
     messages: number;
   };
 }
 
-export interface DeviceStatusDistribution {
+export interface ThingStatusDistribution {
   online: number;
   offline: number;
   error: number;
@@ -420,7 +420,7 @@ export interface ProtocolUsage {
 
 export interface RecentAlarm {
   id: string;
-  deviceId: string;
+  thingId: string;
   deviceName: string;
   level: 'info' | 'warning' | 'error' | 'critical';
   message: string;
@@ -438,22 +438,22 @@ export interface DashboardMetrics {
   };
 }
 
-export interface QuickDevice {
+export interface QuickThing {
   id: string;
   name: string;
   status: 'online' | 'offline' | 'error' | 'maintenance';
   lastSeen: string;
-  type: string;
+  category: string;
 }
 
 export interface DashboardData {
   stats: DashboardStats;
-  deviceDistribution: DeviceStatusDistribution;
+  thingDistribution: ThingStatusDistribution;
   dataTrends: DataTrend[];
   protocolUsage: ProtocolUsage[];
   recentAlarms: RecentAlarm[];
   systemMetrics: DashboardMetrics;
-  quickDevices: QuickDevice[];
+  quickThings: QuickThing[];
 }
 
 // ==================== Tag ====================
@@ -491,7 +491,7 @@ export interface UpdateTagRequest {
 export interface CreateTagBindingRequest {
   tagId: string;
   targetId: string;
-  targetType: 'device';
+  targetType: 'thing';
 }
 
 export interface BatchTagBindingRequest {
@@ -514,7 +514,6 @@ export interface Template {
   version: string;
   author?: string;
   manufacturer?: string;
-  deviceType?: string;
   protocolType?: string;
   driverName?: string;
   isBuiltin?: boolean;
@@ -565,7 +564,6 @@ export interface TemplateListParams {
   category?: string;
   manufacturer?: string;
   protocolType?: string;
-  deviceType?: string;
 }
 
 export interface CreateTemplateRequest {
@@ -576,7 +574,6 @@ export interface CreateTemplateRequest {
   version: string;
   author?: string;
   manufacturer?: string;
-  deviceType?: string;
   protocolType?: string;
   driverName?: string;
   configuration?: Record<string, any>;
@@ -668,7 +665,7 @@ export interface Job {
   retryCount: number;
   retryDelaySeconds: number;
   concurrency: number;
-  targetDeviceId?: string;
+  targetThingId?: string;
   targetCommandName?: string;
   targetCommandParams?: string;
   isEnabled: boolean;
@@ -734,7 +731,7 @@ export interface CreateJobRequest {
   retryCount?: number;
   retryDelaySeconds?: number;
   concurrency?: number;
-  targetDeviceId?: string;
+  targetThingId?: string;
   targetCommandName?: string;
   targetCommandParams?: string;
   tags?: string;
@@ -751,7 +748,7 @@ export interface UpdateJobRequest {
   retryCount?: number;
   retryDelaySeconds?: number;
   concurrency?: number;
-  targetDeviceId?: string;
+  targetThingId?: string;
   targetCommandName?: string;
   targetCommandParams?: string;
   isEnabled?: boolean;

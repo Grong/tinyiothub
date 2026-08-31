@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **BREAKING (DB/API)**: device schema 全面更名为 thing——表 `devices`→`things` 等 5 张，列 `device_id`→`thing_id`（13 张表）、`device_type`→`category`、`device_limit`→`thing_limit`；JSON 字段 `deviceId`→`thingId`、`deviceType`→`category`。老库经迁移 `20260825000001` 自动升级（启动前自动备份）。前端适配在后续 PR。
+- **BREAKING (REST JSON)**: REST 响应/请求 JSON 键 `deviceId`→`thingId`、`deviceType`→`category` 对前端为破坏性变更（前端适配在 PR-2）。
+- **BREAKING (cron 配置)**: `device_command` 类型定时任务的配置键 `device_id`→`thing_id`——已存量的 `device_command` 任务配置需手工更新，不提供数据迁移。
+- **BREAKING (持久化策略)**: 策略动作名 `reboot_device`/`wipe_device`→`reboot_thing`/`wipe_thing`——存量数据中的旧动作名由迁移 `20260828000001` 自动改写（启动前自动备份），覆盖三处：`workspace_autonomy_policy.allowed_actions/denied_actions`（JSON 数组）、`policy_rules.target`（精确值，glob 模式不受影响）、`workspaces.heartbeat_trust_config`（TrustConfig JSON 的 `blocked_tools`/`allowed_destructive_tools` 数组）；不改写则旧名规则静默失配（如 deny `wipe_device` 不再拦截 `wipe_thing`）。
+- **BREAKING (wire/驱动协议, PR-2)**: 驱动/MQTT/心跳/LLM 契约字段直接更名为 thing（无兼容层）——MQTT payload 键 `device_id`→`thing_id`、`device_type`→`category`；topic 段 `device/discover`→`thing/discover`、`/config/device`→`/config/thing`；心跳 JSON `deviceId`→`thingId`；LLM 心跳契约 `device_id`→`thing_id`（含 pending_proposals）；策略动作名 `reboot_device`/`wipe_device`→`reboot_thing`/`wipe_thing`；配对应答 `device_id`→`thing_id`。**边缘网关必须与云端同步升级**（edge 本地 REST 同步迁至 `/api/v1/things`；本地凭据文件键 `device_id`→`thing_id`——旧凭据文件（`device_id` 键）升级后失效，edge 需重新配对）。
+- **BREAKING (MCP schema, PR-2)**: MCP 工具 input_schema 主键翻转为 `thingId`/`targetThingId`；旧键 `deviceId`/`targetDeviceId` 经 serde alias 继续接受（老客户端不受损）。
+- **BREAKING (plugin sinks, PR-2)**: 存储 sink 默认列/tag 更名——postgres sink 默认列 `device_id`→`thing_id`，influxdb sink tag 同步；使用默认 schema 的外部表需相应调整。
+- **BREAKING (types, PR-2)**: core/db/cloud 的 Device* 类型与模块全面更名 Thing*（如 `core::models::thing::Thing`、`ThingCriteria`、`find_thing_by_id`）；admin 监控/管理路由迁至 `/api/v1/things/admin/**`；旧 `/api/v1/devices/**` 路由移除，原地返回 410 Gone 并指引迁移。
+- **BREAKING (data, PR-2)**: 迁移 `20260826000001` 将 `tag_bindings.target_type` 的 `'device'` 归并为 `'thing'`、permissions `device:*` 更名为 `thing:*`（id `perm-device-*`→`perm-thing-*`，`role_permissions`/`user_permissions` 引用同步）；API 写入 `target_type='device'` 会被归一化为 `'thing'`。
+- **BREAKING (frontend/a2ui, PR-2)**: 前端类型 `Device*`→`Thing*`、SPA 路由 `/things/:id`；a2ui catalog 组件 `device-card`/`device-table`→`thing-card`/`thing-table`（`DeviceCard`/`DeviceTable` 保留过渡兼容别名，旧会话 LLM 输出不破图）。
+- 保留不变：`events.source_type='device'`、`actor='device'`、`jobs.job_type='device_command'`、alarm 查询参数 `device_ids` 等枚举/wire 值（后续单独评估）。
+
+### Notes
+
+- **MCP 工具输入 schema（PR-2 更新）**: 对外公布的主键已翻转为 `thingId`/`targetThingId`；`deviceId`/`targetDeviceId` 作为别名继续接受。
+- **Known follow-ups**（PR-2 收尾后仍遗留）: ③ 演示种子 `job-001` 引用了尚未存在的 `/api/things/sync-status` 路由；⑤ `examples/bacnet-driver`、`examples/example-plugin` 的 manifest 仍指向已不存在的 `sdks/driver-sdk`（crates 重组遗留，非本次更名引入）；⑥ `drivers/*` 未列入 workspace members，无法独立构建（e9e70b3c 遗留）。原 ① `tag_bindings.target_type` 数据迁移、② 权限字符串 `device:*` 更名、④ A2UI catalog 组件更名已在 PR-2 完成（见上方 BREAKING 条目）。
+
 ## [0.5.0.0] - 2026-08-24
 
 > **⚠️ 升级注意（破坏性变更）**：本次升级不提供存量数据迁移路径——68 个历史迁移已压缩为单一基线，旧数据库启动时会响亮中止并指引重建（启动前自动备份到 `backups/`）。需要保留数据请先用旧版本导出再升级。演示种子数据 `[seed] demo_data` 默认关闭，开发环境请在配置中显式开启。

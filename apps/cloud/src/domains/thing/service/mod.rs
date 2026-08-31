@@ -3,9 +3,7 @@
 pub mod import_export;
 
 use sqlx::SqlitePool;
-use tinyiothub_core::models::{
-    device_command::CreateDeviceCommandRequest, device_property::CreateDevicePropertyRequest,
-};
+use tinyiothub_core::models::{thing_command::CreateThingCommandRequest, thing_property::CreateThingPropertyRequest};
 
 use super::{
     errors::ThingError,
@@ -170,7 +168,7 @@ impl ThingService {
 
         // Name conflict check within workspace (only if workspace provided)
         if let Some(ws) = workspace_id
-            && let Some(_existing) = self.db.find_thing_by_name(ws, &req.name).await?
+            && let Some(_existing) = self.db.find_thing_row_by_name(ws, &req.name).await?
         {
             return Err(ThingError::NameConflict(req.name.clone()));
         }
@@ -181,7 +179,7 @@ impl ThingService {
             name: req.name.clone(),
             display_name: None,
             thing_type: thing_type.to_string(),
-            device_type: req.device_type.clone(),
+            category: req.category.clone(),
             address: None,
             description: req.description.clone(),
             position: None,
@@ -205,7 +203,7 @@ impl ThingService {
             updated_at: now,
         };
 
-        let created = self.db.create_thing(&row).await?;
+        let created = self.db.create_thing_row(&row).await?;
         if let Some(ref tid) = req.template_id {
             let _ = self.copy_template_props(&created.id, tid).await;
             let _ = self.copy_template_acts(&created.id, tid).await;
@@ -219,11 +217,11 @@ impl ThingService {
         };
         // Inserts go through the storage layer (single source of SQL for
         // thing_properties — eng-review T9)
-        let requests: Vec<CreateDevicePropertyRequest> = serde_json::from_str::<Vec<serde_json::Value>>(&json)
+        let requests: Vec<CreateThingPropertyRequest> = serde_json::from_str::<Vec<serde_json::Value>>(&json)
             .unwrap_or_default()
             .into_iter()
-            .map(|p| CreateDevicePropertyRequest {
-                device_id: thing_id.to_string(),
+            .map(|p| CreateThingPropertyRequest {
+                thing_id: thing_id.to_string(),
                 name: p["name"].as_str().unwrap_or("").to_string(),
                 display_name: p.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 description: None,
@@ -241,7 +239,7 @@ impl ThingService {
             })
             .collect();
         let db = Db::new(self.pool.clone());
-        db.create_device_properties_batch(&requests).await?;
+        db.create_thing_properties_batch(&requests).await?;
         Ok(())
     }
 
@@ -251,14 +249,14 @@ impl ThingService {
         };
         let db = Db::new(self.pool.clone());
         for a in serde_json::from_str::<Vec<serde_json::Value>>(&json).unwrap_or_default() {
-            let req = CreateDeviceCommandRequest {
-                device_id: thing_id.to_string(),
+            let req = CreateThingCommandRequest {
+                thing_id: thing_id.to_string(),
                 name: a["name"].as_str().unwrap_or("").to_string(),
                 display_name: a.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 description: None,
                 parameters: a.get("parameters").map(|v| v.to_string()),
             };
-            db.create_device_command(&req).await?;
+            db.create_thing_command(&req).await?;
         }
         Ok(())
     }
@@ -284,7 +282,7 @@ impl ThingService {
         if let Some(ref new_name) = req.name
             && new_name != &existing.name
             && let Some(ref ws) = existing.workspace_id
-            && let Some(_conflict) = self.db.find_thing_by_name(ws, new_name).await?
+            && let Some(_conflict) = self.db.find_thing_row_by_name(ws, new_name).await?
         {
             return Err(ThingError::NameConflict(new_name.clone()));
         }
@@ -340,7 +338,7 @@ impl ThingService {
     // Resources
     // ──────────────────────────────────────────
 
-    /// Detach a resource from a thing (set device_id = NULL).
+    /// Detach a resource from a thing (set thing_id = NULL).
     pub async fn detach_resource(
         &self,
         thing_id: &str,
@@ -410,7 +408,7 @@ impl ThingService {
             workspace_id: row.workspace_id.clone(),
             name: row.name.clone(),
             display_name: row.display_name.clone(),
-            device_type: row.device_type.clone(),
+            category: row.category.clone(),
             thing_type: row.thing_type.clone(),
             parent_id: row.parent_id.clone(),
             template_id: row.template_id.clone(),
@@ -430,9 +428,9 @@ impl ThingService {
     /// Load properties from the storage layer (single source of SQL for
     /// thing_properties — eng-review T9). No template fallback: the blueprint
     /// model means a thing with no instances has no properties (D6).
-    async fn load_properties(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
+    async fn load_properties(&self, thing_id: &str) -> Option<Vec<serde_json::Value>> {
         let db = Db::new(self.pool.clone());
-        let props = db.find_device_properties_by_device_id(device_id).await.ok()?;
+        let props = db.find_thing_properties_by_thing_id(thing_id).await.ok()?;
         if props.is_empty() {
             return None;
         }
@@ -443,7 +441,7 @@ impl ThingService {
                 .map(|p| {
                     serde_json::json!({
                         "id": p.id,
-                        "deviceId": p.device_id,
+                        "thingId": p.thing_id,
                         "name": p.name,
                         "displayName": p.display_name,
                         "description": p.description,
@@ -463,8 +461,8 @@ impl ThingService {
 
     /// Load recent events (repo query — T9), mapped to the frontend's
     /// ThingEvent shape. Level int → name per the 4-level enum.
-    async fn load_recent_events(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
-        let rows = self.db.list_thing_recent_events(device_id, 20).await.ok()?;
+    async fn load_recent_events(&self, thing_id: &str) -> Option<Vec<serde_json::Value>> {
+        let rows = self.db.list_thing_recent_events(thing_id, 20).await.ok()?;
         if rows.is_empty() {
             return None;
         }
@@ -496,7 +494,7 @@ impl ThingService {
     /// thing_actions — eng-review T9).
     async fn load_actions(&self, thing_id: &str) -> Option<Vec<serde_json::Value>> {
         let db = Db::new(self.pool.clone());
-        let cmds = db.find_device_commands_by_device_id(thing_id).await.ok()?;
+        let cmds = db.find_thing_commands_by_thing_id(thing_id).await.ok()?;
         if cmds.is_empty() {
             return None;
         }
@@ -505,7 +503,7 @@ impl ThingService {
                 .map(|c| {
                     serde_json::json!({
                         "id": c.id,
-                        "deviceId": c.device_id,
+                        "thingId": c.thing_id,
                         "name": c.name,
                         "displayName": c.display_name,
                         "description": c.description,
@@ -517,8 +515,8 @@ impl ThingService {
         )
     }
 
-    async fn load_knowledge_docs(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
-        let rows = self.db.list_thing_knowledge_docs(device_id, 10).await.ok()?;
+    async fn load_knowledge_docs(&self, thing_id: &str) -> Option<Vec<serde_json::Value>> {
+        let rows = self.db.list_thing_knowledge_docs(thing_id, 10).await.ok()?;
         if rows.is_empty() {
             return None;
         }

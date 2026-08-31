@@ -39,7 +39,7 @@ impl EventHandler for RealTimeStatusHandler {
     }
 
     fn should_handle(&self, event: &Event) -> bool {
-        // 委托给 Event 实体的业务规则：仅 Device (Warning+) 和 System (Critical/Error)
+        // 委托给 Event 实体的业务规则：仅 Thing (Warning+) 和 System (Critical/Error)
         event.should_update_real_time_status()
     }
 

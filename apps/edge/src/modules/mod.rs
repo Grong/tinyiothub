@@ -1,6 +1,5 @@
 pub mod command;
 pub mod config_mgmt;
-pub mod device;
 pub mod driver;
 pub mod gateway;
 pub mod health;
@@ -8,3 +7,4 @@ pub mod http;
 pub mod intelligence;
 pub mod offline;
 pub mod telemetry;
+pub mod thing;

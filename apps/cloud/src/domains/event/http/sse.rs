@@ -46,7 +46,7 @@ pub struct SseConnectionQuery {
 /// 旧的 SSE 端点（受 JWT middleware 保护）— 保留向后兼容
 ///
 /// 这个端点在受保护的路由组中，由 JWT middleware 认证。
-/// 前端的 DeviceCache 使用它。
+/// 前端的 ThingCache 使用它。
 #[axum::debug_handler]
 pub async fn handle_sse_connection(
     Query(query): Query<SseConnectionQuery>,

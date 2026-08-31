@@ -136,7 +136,7 @@ impl ToolHandler for TestDriverHandler {
             "address".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Device address for connection test (optional)".to_string()),
+                description: Some("Thing address for connection test (optional)".to_string()),
             },
         );
         props.insert(
@@ -174,11 +174,11 @@ impl ToolHandler for TestDriverHandler {
                 .as_ref()
                 .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-            let test_device = tinyiothub_core::models::device::Device {
+            let test_thing = tinyiothub_core::models::thing::Thing {
                 id: uuid::Uuid::new_v4().to_string(),
-                name: "test_device".to_string(),
-                display_name: Some("Test Device".to_string()),
-                device_type: Some("test".to_string()),
+                name: "test_thing".to_string(),
+                display_name: Some("Test Thing".to_string()),
+                category: Some("test".to_string()),
                 address: input.address.or(Some("test".to_string())),
                 description: Some("Test device for driver smoke test".to_string()),
                 position: None,
@@ -188,7 +188,7 @@ impl ToolHandler for TestDriverHandler {
                 factory_name: Some("Test".to_string()),
                 linked_data: None,
                 driver_options: input.connection_config,
-                status: tinyiothub_core::models::device::DeviceStatus::Offline,
+                status: tinyiothub_core::models::thing::ThingStatus::Offline,
                 last_heartbeat: None,
                 properties: None,
                 commands: None,
@@ -202,7 +202,7 @@ impl ToolHandler for TestDriverHandler {
                 updated_at: Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
             };
 
-            match driver::create_driver(&input.driver_name, &test_device) {
+            match driver::create_driver(&input.driver_name, &test_thing) {
                 Ok(mut driver_wrapper) => {
                     let result = driver_wrapper.read_data_once();
                     let execution_time_ms = start.elapsed().as_millis() as u64;

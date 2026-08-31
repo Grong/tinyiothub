@@ -4,11 +4,11 @@ use iot_edge_driver_sdk::*;
 
 /// 示例驱动结构
 pub struct ExampleDriver {
-    device: Device,
+    device: Thing,
 }
 
 impl ExampleDriver {
-    pub fn new(device: Device) -> Self {
+    pub fn new(device: Thing) -> Self {
         Self { device }
     }
 
@@ -17,7 +17,7 @@ impl ExampleDriver {
             name: "ExampleDriver".to_string(),
             version: "1.0.0".to_string(),
             class_name: "ExampleDriver".to_string(),
-            device_num: 0,
+            thing_num: 0,
             description: Some("Example dynamic driver plugin".to_string()),
             options_descriptors: vec![],
             location: None,
@@ -25,12 +25,12 @@ impl ExampleDriver {
     }
 }
 
-impl DeviceDriver for ExampleDriver {
-    fn device(&self) -> &Device {
+impl ThingDriver for ExampleDriver {
+    fn thing(&self) -> &Thing {
         &self.device
     }
 
-    fn device_mut(&mut self) -> &mut Device {
+    fn thing_mut(&mut self) -> &mut Thing {
         &mut self.device
     }
 
@@ -43,7 +43,7 @@ impl DeviceDriver for ExampleDriver {
         ])
     }
 
-    fn execute_command(&mut self, command: &DeviceCommand) -> Result<bool> {
+    fn execute_command(&mut self, command: &ThingCommand) -> Result<bool> {
         // 简单的命令处理
         println!("Executing command: {} on device: {}", command.name, self.device.name);
         Ok(true)

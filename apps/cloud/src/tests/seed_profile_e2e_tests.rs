@@ -3,7 +3,7 @@
 //!
 //! Case 1: seed switch on (default) — `GET /api/v1/things/device-env-01/profile`
 //! returns ≥5 properties and ≥2 actions.
-//! Case 2: seed switch off — no demo devices are seeded; a user-created device
+//! Case 2: seed switch off — no demo things are seeded; a user-created device
 //! with no properties yields empty arrays from the same endpoint.
 
 use axum::{
@@ -90,7 +90,7 @@ async fn demo_seed_off_yields_empty_profile_arrays() {
 
     // 开关关闭时不播种演示设备；模拟用户自建的无属性设备。
     sqlx::query(
-        "INSERT INTO devices (id, name, display_name, workspace_id, tenant_id)
+        "INSERT INTO things (id, name, display_name, workspace_id, tenant_id)
          VALUES ('device-env-01', 'user_created_env', '用户自建设备', 'ws-default-001', 'tenant-default-001')",
     )
     .execute(&pool)

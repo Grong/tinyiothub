@@ -21,7 +21,7 @@ pub struct EventCriteria {
     pub event_types: Option<Vec<EventType>>,
     pub levels: Option<Vec<EventLevel>>,
     pub source_types: Option<Vec<String>>,
-    pub device_ids: Option<Vec<String>>,
+    pub thing_ids: Option<Vec<String>>,
     pub user_ids: Option<Vec<String>>,
     pub search_text: Option<String>,
     pub sort_by: SortBy,
@@ -98,7 +98,7 @@ impl Default for EventCriteria {
             event_types: None,
             levels: None,
             source_types: None,
-            device_ids: None,
+            thing_ids: None,
             user_ids: None,
             search_text: None,
             sort_by: SortBy::Timestamp,
@@ -130,8 +130,8 @@ impl EventCriteria {
         self
     }
 
-    pub fn with_device_ids(mut self, device_ids: Vec<String>) -> Self {
-        self.device_ids = Some(device_ids);
+    pub fn with_thing_ids(mut self, thing_ids: Vec<String>) -> Self {
+        self.thing_ids = Some(thing_ids);
         self
     }
 
@@ -180,8 +180,8 @@ impl EventCriteriaBuilder {
         self
     }
 
-    pub fn device_ids(mut self, device_ids: Vec<String>) -> Self {
-        self.criteria.device_ids = Some(device_ids);
+    pub fn thing_ids(mut self, thing_ids: Vec<String>) -> Self {
+        self.criteria.thing_ids = Some(thing_ids);
         self
     }
 
@@ -360,7 +360,7 @@ pub struct StatusSummary {
     pub error_count: u64,
     pub warning_count: u64,
     pub unacknowledged_count: u64,
-    pub by_device: Vec<DeviceStatusSummary>,
+    pub by_thing: Vec<ThingStatusSummary>,
     pub by_type: Vec<TypeStatusSummary>,
 }
 
@@ -395,10 +395,10 @@ pub enum HealthStatus {
     Critical,
 }
 
-/// Device-specific status summary
+/// Thing-specific status summary
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeviceStatusSummary {
-    pub device_id: String,
+pub struct ThingStatusSummary {
+    pub thing_id: String,
     pub active_count: u64,
     pub highest_level: EventLevel,
     pub latest_timestamp: DateTime<Utc>,
@@ -416,7 +416,7 @@ pub(crate) async fn insert_event(pool: &SqlitePool, event: &Event) -> Result<()>
     let sql = r#"
         INSERT INTO events (
             id, event_type, event_subtype, event_level, timestamp, source_type, source_id,
-            device_id, user_id, title, content, created_at, workspace_id
+            thing_id, user_id, title, content, created_at, workspace_id
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     "#;
 
@@ -439,7 +439,7 @@ pub(crate) async fn insert_event(pool: &SqlitePool, event: &Event) -> Result<()>
         .bind(timestamp_str)
         .bind(event.source().source_type())
         .bind(event.source().source_id())
-        .bind(event.source().device_id())
+        .bind(event.source().thing_id())
         .bind(event.source().user_id())
         .bind(event.content().title())
         .bind(content_str)
@@ -454,7 +454,7 @@ pub(crate) async fn insert_event(pool: &SqlitePool, event: &Event) -> Result<()>
 pub(crate) async fn find_event_by_id(pool: &SqlitePool, id: &EventId) -> Result<Option<Event>> {
     let sql = r#"
         SELECT id, event_type, event_subtype, event_level, timestamp, source_type, source_id, 
-               device_id, user_id, title, content
+               thing_id, user_id, title, content
         FROM events 
         WHERE id = ?
     "#;
@@ -472,7 +472,7 @@ pub(crate) async fn find_event_by_id(pool: &SqlitePool, id: &EventId) -> Result<
 pub(crate) async fn query_events(pool: &SqlitePool, criteria: &EventCriteria) -> Result<Vec<Event>> {
     // Build base SQL
     let mut sql = String::from(
-        "SELECT id, event_type, event_subtype, event_level, timestamp, source_type, source_id, device_id, user_id, title, content FROM events WHERE 1=1",
+        "SELECT id, event_type, event_subtype, event_level, timestamp, source_type, source_id, thing_id, user_id, title, content FROM events WHERE 1=1",
     );
 
     // Add time range filters
@@ -493,11 +493,11 @@ pub(crate) async fn query_events(pool: &SqlitePool, criteria: &EventCriteria) ->
     }
 
     // Add device ID filters
-    if let Some(device_ids) = &criteria.device_ids
-        && !device_ids.is_empty()
+    if let Some(thing_ids) = &criteria.thing_ids
+        && !thing_ids.is_empty()
     {
-        let placeholders = vec!["?"; device_ids.len()].join(",");
-        sql.push_str(&format!(" AND device_id IN ({})", placeholders));
+        let placeholders = vec!["?"; thing_ids.len()].join(",");
+        sql.push_str(&format!(" AND thing_id IN ({})", placeholders));
     }
 
     // Add search text filter
@@ -549,9 +549,9 @@ pub(crate) async fn query_events(pool: &SqlitePool, criteria: &EventCriteria) ->
     }
 
     // Bind device ID filters
-    if let Some(device_ids) = &criteria.device_ids {
-        for device_id in device_ids {
-            query = query.bind(device_id.clone());
+    if let Some(thing_ids) = &criteria.thing_ids {
+        for thing_id in thing_ids {
+            query = query.bind(thing_id.clone());
         }
     }
 
@@ -613,7 +613,7 @@ pub(crate) async fn insert_events_batch(pool: &SqlitePool, events: &[Event]) -> 
     let sql = r#"
         INSERT INTO events (
             id, event_type, event_subtype, event_level, timestamp, source_type, source_id,
-            device_id, user_id, title, content, created_at, workspace_id
+            thing_id, user_id, title, content, created_at, workspace_id
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     "#;
 
@@ -637,7 +637,7 @@ pub(crate) async fn insert_events_batch(pool: &SqlitePool, events: &[Event]) -> 
             .bind(timestamp_str)
             .bind(event.source().source_type())
             .bind(event.source().source_id())
-            .bind(event.source().device_id())
+            .bind(event.source().thing_id())
             .bind(event.source().user_id())
             .bind(event.content().title())
             .bind(content_str)
@@ -739,10 +739,10 @@ fn row_to_event(row: sqlx::sqlite::SqliteRow) -> Result<Event> {
 
     let source_type: String = row.get("source_type");
     let source_id: String = row.get("source_id");
-    let device_id: Option<String> = row.get("device_id");
+    let thing_id: Option<String> = row.get("thing_id");
     let user_id: Option<String> = row.get("user_id");
 
-    let source = EventSource::new(source_type, source_id, device_id, user_id);
+    let source = EventSource::new(source_type, source_id, thing_id, user_id);
 
     // 解析内容
     let content: RichContent = if content_str.trim().is_empty() {
@@ -784,11 +784,11 @@ pub(crate) async fn upsert_event_status(pool: &SqlitePool, event: &Event) -> Res
     let sql = r#"
         INSERT INTO events (
             id, event_type, event_subtype, event_level, timestamp,
-            source_type, source_id, device_id, user_id,
+            source_type, source_id, thing_id, user_id,
             title, content, occurrence_count, acknowledged,
             acknowledged_by, acknowledged_at, workspace_id, is_status
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, NULL, NULL, ?, 1)
-        ON CONFLICT(event_type, event_subtype, device_id) WHERE is_status = 1 AND device_id IS NOT NULL
+        ON CONFLICT(event_type, event_subtype, thing_id) WHERE is_status = 1 AND thing_id IS NOT NULL
         DO UPDATE SET
             occurrence_count = occurrence_count + 1,
             event_level = excluded.event_level,
@@ -803,12 +803,12 @@ pub(crate) async fn upsert_event_status(pool: &SqlitePool, event: &Event) -> Res
 
     let content_json = serde_json::to_string(event.content())?;
     let event_subtype_json = serde_json::to_string(event.event_type())?;
-    let device_id_bind: Option<String> = event.source().device_id().map(|s| s.to_string());
+    let device_id_bind: Option<String> = event.source().thing_id().map(|s| s.to_string());
     let user_id_bind: Option<String> = event.source().user_id().map(|s| s.to_string());
 
     // Resolve tenant scope from the owning device (was hardcoded '')
     let workspace_id: String = match &device_id_bind {
-        Some(did) => sqlx::query_scalar("SELECT COALESCE(workspace_id, '') FROM devices WHERE id = ?")
+        Some(did) => sqlx::query_scalar("SELECT COALESCE(workspace_id, '') FROM things WHERE id = ?")
             .bind(did)
             .fetch_optional(pool)
             .await
@@ -840,17 +840,17 @@ pub(crate) async fn upsert_event_status(pool: &SqlitePool, event: &Event) -> Res
 pub(crate) async fn remove_event_status(pool: &SqlitePool, source: &EventSource, event_type: &EventType) -> Result<()> {
     let event_subtype_json = serde_json::to_string(event_type)?;
 
-    // Align with dedup index columns: (event_type, event_subtype, device_id)
+    // Align with dedup index columns: (event_type, event_subtype, thing_id)
     let sql = r#"
         DELETE FROM events
         WHERE event_type = ? AND event_subtype = ?
-          AND device_id = ?
+          AND thing_id = ?
     "#;
 
     sqlx::query(sql)
         .bind(event_type.type_string())
         .bind(&event_subtype_json)
-        .bind(source.device_id().map(|s| s.to_string()))
+        .bind(source.thing_id().map(|s| s.to_string()))
         .execute(pool)
         .await?;
 
@@ -905,20 +905,20 @@ pub(crate) async fn get_realtime_status_summary(pool: &SqlitePool, _filter: &Rea
     // Get device summaries
     let device_sql = r#"
         SELECT
-            device_id,
+            thing_id,
             COUNT(*) as active_count,
             MAX(event_level) as highest_level,
             MAX(timestamp) as latest_timestamp
         FROM events
-        WHERE device_id IS NOT NULL AND occurrence_count >= 1 AND event_level >= 3
-        GROUP BY device_id
+        WHERE thing_id IS NOT NULL AND occurrence_count >= 1 AND event_level >= 3
+        GROUP BY thing_id
     "#;
 
     let device_rows = sqlx::query(device_sql).fetch_all(pool).await?;
 
-    let mut by_device = Vec::new();
+    let mut by_thing = Vec::new();
     for row in device_rows {
-        let device_id: String = row.get("device_id");
+        let thing_id: String = row.get("thing_id");
         let active_count: i64 = row.get("active_count");
         let highest_level_int: i32 = row.get("highest_level");
         let latest_timestamp_str: String = row.get("latest_timestamp");
@@ -928,8 +928,8 @@ pub(crate) async fn get_realtime_status_summary(pool: &SqlitePool, _filter: &Rea
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now());
 
-        by_device.push(DeviceStatusSummary {
-            device_id,
+        by_thing.push(ThingStatusSummary {
+            thing_id,
             active_count: active_count as u64,
             highest_level,
             latest_timestamp,
@@ -944,7 +944,7 @@ pub(crate) async fn get_realtime_status_summary(pool: &SqlitePool, _filter: &Rea
         error_count,
         warning_count,
         unacknowledged_count,
-        by_device,
+        by_thing,
         by_type,
     })
 }
@@ -1015,7 +1015,7 @@ async fn query_realtime_event_rows(pool: &SqlitePool, filter: &RealTimeFilter) -
             .iter()
             .map(|id| format!("'{}'", id.replace('\'', "''")))
             .collect();
-        conditions.push(format!("device_id IN ({})", quoted.join(",")));
+        conditions.push(format!("thing_id IN ({})", quoted.join(",")));
     }
 
     // -- workspace filter (eng-review T1: tenant isolation) --
@@ -1064,7 +1064,7 @@ async fn query_realtime_event_rows(pool: &SqlitePool, filter: &RealTimeFilter) -
 
     let mut sql = String::from(
         r#"SELECT id, event_type, event_subtype, event_level, timestamp,
-                  source_type, source_id, device_id, user_id,
+                  source_type, source_id, thing_id, user_id,
                   title, content, occurrence_count,
                   acknowledged, acknowledged_by, acknowledged_at
            FROM events"#,
@@ -1090,7 +1090,7 @@ fn row_to_real_time_event(row: &sqlx::sqlite::SqliteRow) -> Result<RealTimeEvent
     let title: String = row.get("title");
     let source_type: String = row.get("source_type");
     let source_id: String = row.get("source_id");
-    let device_id: Option<String> = row.get("device_id");
+    let thing_id: Option<String> = row.get("thing_id");
     let user_id: Option<String> = row.get("user_id");
     let acknowledged: bool = row.get("acknowledged");
     let acknowledged_by: Option<String> = row.get("acknowledged_by");
@@ -1104,7 +1104,7 @@ fn row_to_real_time_event(row: &sqlx::sqlite::SqliteRow) -> Result<RealTimeEvent
         .map(|dt| dt.with_timezone(&Utc))
         .unwrap_or_else(|_| Utc::now());
 
-    let source = EventSource::new(source_type, source_id, device_id, user_id);
+    let source = EventSource::new(source_type, source_id, thing_id, user_id);
 
     // Use the content field as a preview — truncate to 100 chars
     let content_raw: Option<String> = row.get("content");
@@ -1137,7 +1137,7 @@ fn row_to_real_time_event(row: &sqlx::sqlite::SqliteRow) -> Result<RealTimeEvent
 pub struct ThingEventReplayRow {
     pub rid: i64,
     pub workspace_id: Option<String>,
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub event_subtype: String,
     pub event_level: i32,
     pub content: String,
@@ -1163,7 +1163,7 @@ pub(crate) async fn fetch_thing_events_since(
     min_level: i32,
 ) -> Result<Vec<ThingEventReplayRow>> {
     let rows = sqlx::query(
-        "SELECT rowid AS rid, workspace_id, device_id, event_subtype, event_level, content, metadata, actor \
+        "SELECT rowid AS rid, workspace_id, thing_id, event_subtype, event_level, content, metadata, actor \
          FROM events \
          WHERE rowid > ? AND event_level >= ? AND source_type = 'thing' \
          ORDER BY rowid ASC",
@@ -1178,7 +1178,7 @@ pub(crate) async fn fetch_thing_events_since(
         .map(|row| ThingEventReplayRow {
             rid: row.get("rid"),
             workspace_id: row.get("workspace_id"),
-            device_id: row.get("device_id"),
+            thing_id: row.get("thing_id"),
             event_subtype: row.get("event_subtype"),
             event_level: row.get("event_level"),
             content: row.get("content"),
@@ -1198,7 +1198,7 @@ pub(crate) async fn insert_agent_alert_event(
 ) -> Result<()> {
     let now = Utc::now().to_rfc3339();
     sqlx::query(
-        "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, source_type, source_id, device_id, user_id, title, content, metadata, created_at, workspace_id, actor) \
+        "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, source_type, source_id, thing_id, user_id, title, content, metadata, created_at, workspace_id, actor) \
          VALUES (?, 'agent', 'thing_agent_alert', 4, ?, 'agent', 'thing-agent', NULL, NULL, ?, ?, '{}', ?, ?, 'agent')",
     )
     .bind(uuid::Uuid::new_v4().to_string())
@@ -1231,7 +1231,7 @@ pub struct ThingEventQueryRow {
 /// SQL 与原 query_events 工具内联 QueryBuilder 逐字一致。
 pub(crate) async fn search_thing_events(
     pool: &SqlitePool,
-    device_id: &str,
+    thing_id: &str,
     workspace_id: &str,
     event_name: Option<&str>,
     level: Option<i32>,
@@ -1242,9 +1242,9 @@ pub(crate) async fn search_thing_events(
     let mut builder = sqlx::QueryBuilder::new(
         "SELECT id, event_type, event_subtype, event_level, timestamp, \
          source_type, source_id, title, content, created_at \
-         FROM events WHERE device_id = ",
+         FROM events WHERE thing_id = ",
     );
-    builder.push_bind(device_id);
+    builder.push_bind(thing_id);
     builder.push(" AND workspace_id = ");
     builder.push_bind(workspace_id);
 
@@ -1376,14 +1376,14 @@ impl Db {
     /// thing 事件过滤查询（query_events 工具用，收编自 cloud agent tools/thing）。
     pub async fn search_thing_events(
         &self,
-        device_id: &str,
+        thing_id: &str,
         workspace_id: &str,
         event_name: Option<&str>,
         level: Option<i32>,
         since: Option<&str>,
         limit: i64,
     ) -> Result<Vec<ThingEventQueryRow>> {
-        search_thing_events(self.pool(), device_id, workspace_id, event_name, level, since, limit).await
+        search_thing_events(self.pool(), thing_id, workspace_id, event_name, level, since, limit).await
     }
 }
 
@@ -1403,7 +1403,7 @@ mod tests {
             .start_time(now)
             .event_types(vec![EventType::System(SystemEventType::UserAuth)])
             .levels(vec![EventLevel::Error, EventLevel::Critical])
-            .device_ids(vec!["device1".to_string(), "device2".to_string()])
+            .thing_ids(vec!["device1".to_string(), "device2".to_string()])
             .sort_by(SortBy::Level)
             .sort_order(SortOrder::Ascending)
             .limit(100)
@@ -1413,7 +1413,7 @@ mod tests {
         assert_eq!(criteria.start_time, Some(now));
         assert_eq!(criteria.event_types.as_ref().unwrap().len(), 1);
         assert_eq!(criteria.levels.as_ref().unwrap().len(), 2);
-        assert_eq!(criteria.device_ids.as_ref().unwrap().len(), 2);
+        assert_eq!(criteria.thing_ids.as_ref().unwrap().len(), 2);
         assert!(matches!(criteria.sort_by, SortBy::Level));
         assert!(matches!(criteria.sort_order, SortOrder::Ascending));
         assert_eq!(criteria.limit, Some(100));
@@ -1469,7 +1469,7 @@ mod tests {
             error_count: 0,
             warning_count: 5,
             unacknowledged_count: 3,
-            by_device: vec![],
+            by_thing: vec![],
             by_type: vec![],
         };
 
@@ -1497,27 +1497,27 @@ pub struct OpenEventRow {
     pub created_at: String,
 }
 
-/// Open API 全量事件行（含 device_id）。
+/// Open API 全量事件行（含 thing_id）。
 #[derive(Debug)]
-pub struct OpenEventWithDeviceRow {
+pub struct OpenEventWithThingRow {
     pub id: String,
     pub event_type: String,
     pub event_level: i64,
     pub title: Option<String>,
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub created_at: String,
 }
 
 /// Open API：列出 thing 的事件（最新 100 条，workspace 作用域）。
 pub(crate) async fn list_open_thing_events(
     pool: &SqlitePool,
-    device_id: &str,
+    thing_id: &str,
     workspace_id: &str,
 ) -> Result<Vec<OpenEventRow>> {
     let rows = sqlx::query(
-        "SELECT id, event_type, event_level, title, created_at FROM events WHERE device_id = ? AND workspace_id = ? ORDER BY created_at DESC LIMIT 100"
+        "SELECT id, event_type, event_level, title, created_at FROM events WHERE thing_id = ? AND workspace_id = ? ORDER BY created_at DESC LIMIT 100"
     )
-    .bind(device_id)
+    .bind(thing_id)
     .bind(workspace_id)
     .fetch_all(pool)
     .await?;
@@ -1534,21 +1534,21 @@ pub(crate) async fn list_open_thing_events(
 }
 
 /// Open API：列出 workspace 全部事件（最新 100 条）。
-pub(crate) async fn list_open_events(pool: &SqlitePool, workspace_id: &str) -> Result<Vec<OpenEventWithDeviceRow>> {
+pub(crate) async fn list_open_events(pool: &SqlitePool, workspace_id: &str) -> Result<Vec<OpenEventWithThingRow>> {
     let rows = sqlx::query(
-        "SELECT id, event_type, event_level, title, device_id, created_at FROM events WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 100",
+        "SELECT id, event_type, event_level, title, thing_id, created_at FROM events WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 100",
     )
     .bind(workspace_id)
     .fetch_all(pool)
     .await?;
     Ok(rows
         .iter()
-        .map(|row| OpenEventWithDeviceRow {
+        .map(|row| OpenEventWithThingRow {
             id: row.try_get::<String, _>("id").unwrap_or_default(),
             event_type: row.try_get::<String, _>("event_type").unwrap_or_default(),
             event_level: row.try_get::<i64, _>("event_level").unwrap_or(0),
             title: row.try_get::<Option<String>, _>("title").unwrap_or_default(),
-            device_id: row.try_get::<Option<String>, _>("device_id").unwrap_or_default(),
+            thing_id: row.try_get::<Option<String>, _>("thing_id").unwrap_or_default(),
             created_at: row.try_get::<String, _>("created_at").unwrap_or_default(),
         })
         .collect())
@@ -1556,12 +1556,12 @@ pub(crate) async fn list_open_events(pool: &SqlitePool, workspace_id: &str) -> R
 
 impl Db {
     /// Open API：列出 thing 的事件（最新 100 条，workspace 作用域）。
-    pub async fn list_open_thing_events(&self, device_id: &str, workspace_id: &str) -> Result<Vec<OpenEventRow>> {
-        list_open_thing_events(self.pool(), device_id, workspace_id).await
+    pub async fn list_open_thing_events(&self, thing_id: &str, workspace_id: &str) -> Result<Vec<OpenEventRow>> {
+        list_open_thing_events(self.pool(), thing_id, workspace_id).await
     }
 
     /// Open API：列出 workspace 全部事件（最新 100 条）。
-    pub async fn list_open_events(&self, workspace_id: &str) -> Result<Vec<OpenEventWithDeviceRow>> {
+    pub async fn list_open_events(&self, workspace_id: &str) -> Result<Vec<OpenEventWithThingRow>> {
         list_open_events(self.pool(), workspace_id).await
     }
 }
@@ -1578,7 +1578,7 @@ pub struct ThingEventInsert<'a> {
     pub timestamp: &'a str,
     pub source_type: &'a str,
     pub source_id: &'a str,
-    pub device_id: Option<&'a str>,
+    pub thing_id: Option<&'a str>,
     pub user_id: Option<&'a str>,
     pub title: &'a str,
     pub content: &'a str,
@@ -1591,7 +1591,7 @@ pub struct ThingEventInsert<'a> {
 /// 持久化 thing 事件，返回 last_insert_rowid。
 pub(crate) async fn insert_thing_event(pool: &SqlitePool, input: &ThingEventInsert<'_>) -> Result<i64> {
     let res = sqlx::query(
-        "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, source_type, source_id, device_id, user_id, title, content, metadata, created_at, workspace_id, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, source_type, source_id, thing_id, user_id, title, content, metadata, created_at, workspace_id, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .bind(input.event_id)
     .bind("device")
@@ -1600,7 +1600,7 @@ pub(crate) async fn insert_thing_event(pool: &SqlitePool, input: &ThingEventInse
     .bind(input.timestamp)
     .bind(input.source_type)
     .bind(input.source_id)
-    .bind(input.device_id)
+    .bind(input.thing_id)
     .bind(input.user_id)
     .bind(input.title)
     .bind(input.content)

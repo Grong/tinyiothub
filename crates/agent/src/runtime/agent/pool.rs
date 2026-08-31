@@ -13,7 +13,7 @@ use tinyiothub_core::heartbeat::TrustConfig;
 #[derive(Debug, Clone)]
 pub struct ToolCallRecord {
     pub tool_name: String,
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub success: bool,
     pub details: String,
 }

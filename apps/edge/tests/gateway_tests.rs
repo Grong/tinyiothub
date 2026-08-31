@@ -1,12 +1,12 @@
 use tinyiothub_edge::modules::gateway::GatewayMessage;
 
 #[test]
-fn test_route_config_device_topic() {
-    // Longest-prefix match: /config/device before /config
-    let topic = "tinyiothub/ws-1/gateway/gw-1/config/device";
-    let payload = r#"{"device_id":"d1","action":"enable"}"#;
+fn test_route_config_thing_topic() {
+    // Longest-prefix match: /config/thing before /config
+    let topic = "tinyiothub/ws-1/gateway/gw-1/config/thing";
+    let payload = r#"{"thing_id":"d1","action":"enable"}"#;
     let msg = GatewayMessage::from_topic_payload(topic, payload.as_bytes()).unwrap();
-    assert!(matches!(msg, GatewayMessage::ConfigDevice(_)));
+    assert!(matches!(msg, GatewayMessage::ConfigThing(_)));
 }
 
 #[test]
@@ -20,7 +20,7 @@ fn test_route_config_topic() {
 #[test]
 fn test_route_command_topic() {
     let topic = "tinyiothub/ws-1/gateway/gw-1/command";
-    let payload = r#"{"device_id":"d1","command":"restart"}"#;
+    let payload = r#"{"thing_id":"d1","command":"restart"}"#;
     let msg = GatewayMessage::from_topic_payload(topic, payload.as_bytes()).unwrap();
     assert!(matches!(msg, GatewayMessage::Command(_)));
 }

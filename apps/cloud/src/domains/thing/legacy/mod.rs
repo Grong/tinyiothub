@@ -5,6 +5,6 @@
 //! (diagnostics, monitoring, performance, query services still live in
 //! cloud).
 
-pub mod device_query;
+pub mod thing_query;
 pub mod trace;
 pub mod types;

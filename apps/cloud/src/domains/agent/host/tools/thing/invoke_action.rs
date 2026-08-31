@@ -151,9 +151,9 @@ impl Tool for InvokeActionTool {
         // change it here, keep the mirror in sync.
         match self.data_server.clone() {
             Some(data_server) => {
-                let cmd = tinyiothub_core::models::device_command::DeviceCommand {
+                let cmd = tinyiothub_core::models::thing_command::ThingCommand {
                     id: uuid::Uuid::new_v4().to_string(),
-                    device_id: input.thing_id.clone(),
+                    thing_id: input.thing_id.clone(),
                     name: input.action_name.clone(),
                     display_name: None,
                     description: None,

@@ -26,7 +26,7 @@ pub struct UpdateWorkspaceRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct AssignDeviceRequest {
-    pub device_id: String,
+    pub thing_id: String,
 }
 
 /// Create resource request

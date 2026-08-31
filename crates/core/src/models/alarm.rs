@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlarmDto {
     pub id: String,
-    pub device_id: String,
+    pub thing_id: String,
     pub device_name: Option<String>,
     pub property_id: Option<String>,
     pub property_name: Option<String>,
@@ -34,7 +34,7 @@ pub struct AlarmRuleDto {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub device_name: Option<String>,
     pub property_id: Option<String>,
     pub property_name: Option<String>,

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum EventType {
     System(SystemEventType),
-    Device(DeviceEventType),
+    Device(ThingEventType),
     Ai(AiEventType),
 }
 
@@ -21,21 +21,21 @@ pub enum SystemEventType {
     SystemError,
 }
 
-/// Device event subtypes
+/// Thing event subtypes
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum DeviceEventType {
+pub enum ThingEventType {
     // === Connection related events ===
-    /// Device connection status changes (online/offline)
+    /// Thing connection status changes (online/offline)
     Connection,
 
-    // === Device status events ===
-    /// Device alarm triggered
+    // === Thing status events ===
+    /// Thing alarm triggered
     DeviceAlarm,
-    /// Device alarm cleared/recovered
+    /// Thing alarm cleared/recovered
     DeviceNormal,
 
     // === Property related events ===
-    /// Device property value changed
+    /// Thing property value changed
     PropertyChange,
     /// Property alarm triggered
     PropertyAlarm,
@@ -50,12 +50,12 @@ pub enum DeviceEventType {
     /// Command execution failed
     CommandFailed,
 
-    // === Device lifecycle events ===
-    /// Device created
+    // === Thing lifecycle events ===
+    /// Thing created
     DeviceCreated,
-    /// Device updated
+    /// Thing updated
     DeviceUpdated,
-    /// Device deleted
+    /// Thing deleted
     DeviceDeleted,
 }
 
@@ -143,18 +143,18 @@ impl EventType {
                 SystemEventType::SystemError => "system_error".to_string(),
             },
             EventType::Device(subtype) => match subtype {
-                DeviceEventType::Connection => "connection".to_string(),
-                DeviceEventType::DeviceAlarm => "device_alarm".to_string(),
-                DeviceEventType::DeviceNormal => "device_normal".to_string(),
-                DeviceEventType::PropertyChange => "property_change".to_string(),
-                DeviceEventType::PropertyAlarm => "property_alarm".to_string(),
-                DeviceEventType::PropertyNormal => "property_normal".to_string(),
-                DeviceEventType::CommandStarted => "command_started".to_string(),
-                DeviceEventType::CommandCompleted => "command_completed".to_string(),
-                DeviceEventType::CommandFailed => "command_failed".to_string(),
-                DeviceEventType::DeviceCreated => "device_created".to_string(),
-                DeviceEventType::DeviceUpdated => "device_updated".to_string(),
-                DeviceEventType::DeviceDeleted => "device_deleted".to_string(),
+                ThingEventType::Connection => "connection".to_string(),
+                ThingEventType::DeviceAlarm => "device_alarm".to_string(),
+                ThingEventType::DeviceNormal => "device_normal".to_string(),
+                ThingEventType::PropertyChange => "property_change".to_string(),
+                ThingEventType::PropertyAlarm => "property_alarm".to_string(),
+                ThingEventType::PropertyNormal => "property_normal".to_string(),
+                ThingEventType::CommandStarted => "command_started".to_string(),
+                ThingEventType::CommandCompleted => "command_completed".to_string(),
+                ThingEventType::CommandFailed => "command_failed".to_string(),
+                ThingEventType::DeviceCreated => "device_created".to_string(),
+                ThingEventType::DeviceUpdated => "device_updated".to_string(),
+                ThingEventType::DeviceDeleted => "device_deleted".to_string(),
             },
             EventType::Ai(subtype) => subtype.subtype_string().to_string(),
         }
@@ -163,7 +163,7 @@ impl EventType {
     /// Check if this is a property-related event
     pub fn is_property_event(&self) -> bool {
         match self {
-            EventType::Device(device_type) => device_type.is_property_event(),
+            EventType::Device(event_type) => event_type.is_property_event(),
             _ => false,
         }
     }
@@ -171,7 +171,7 @@ impl EventType {
     /// Check if this is a command-related event
     pub fn is_command_event(&self) -> bool {
         match self {
-            EventType::Device(device_type) => device_type.is_command_event(),
+            EventType::Device(event_type) => event_type.is_command_event(),
             _ => false,
         }
     }
@@ -179,7 +179,7 @@ impl EventType {
     /// Check if this is an alarm-related event
     pub fn is_alarm(&self) -> bool {
         match self {
-            EventType::Device(device_type) => device_type.is_alarm(),
+            EventType::Device(event_type) => event_type.is_alarm(),
             _ => false,
         }
     }
@@ -187,7 +187,7 @@ impl EventType {
     /// Check if this is a normal/recovery event
     pub fn is_normal(&self) -> bool {
         match self {
-            EventType::Device(device_type) => device_type.is_normal(),
+            EventType::Device(event_type) => event_type.is_normal(),
             _ => false,
         }
     }
@@ -203,21 +203,21 @@ impl EventType {
                 _ => Err(format!("Unknown system event subtype: {}", subtype_str)),
             },
             "device" => match subtype_str {
-                "connection" => Ok(EventType::Device(DeviceEventType::Connection)),
-                "device_alarm" => Ok(EventType::Device(DeviceEventType::DeviceAlarm)),
-                "device_normal" => Ok(EventType::Device(DeviceEventType::DeviceNormal)),
-                "property_change" => Ok(EventType::Device(DeviceEventType::PropertyChange)),
-                "property_alarm" => Ok(EventType::Device(DeviceEventType::PropertyAlarm)),
-                "property_normal" => Ok(EventType::Device(DeviceEventType::PropertyNormal)),
-                "command_started" => Ok(EventType::Device(DeviceEventType::CommandStarted)),
-                "command_completed" => Ok(EventType::Device(DeviceEventType::CommandCompleted)),
-                "command_failed" => Ok(EventType::Device(DeviceEventType::CommandFailed)),
-                "device_created" => Ok(EventType::Device(DeviceEventType::DeviceCreated)),
-                "device_updated" => Ok(EventType::Device(DeviceEventType::DeviceUpdated)),
-                "device_deleted" => Ok(EventType::Device(DeviceEventType::DeviceDeleted)),
+                "connection" => Ok(EventType::Device(ThingEventType::Connection)),
+                "device_alarm" => Ok(EventType::Device(ThingEventType::DeviceAlarm)),
+                "device_normal" => Ok(EventType::Device(ThingEventType::DeviceNormal)),
+                "property_change" => Ok(EventType::Device(ThingEventType::PropertyChange)),
+                "property_alarm" => Ok(EventType::Device(ThingEventType::PropertyAlarm)),
+                "property_normal" => Ok(EventType::Device(ThingEventType::PropertyNormal)),
+                "command_started" => Ok(EventType::Device(ThingEventType::CommandStarted)),
+                "command_completed" => Ok(EventType::Device(ThingEventType::CommandCompleted)),
+                "command_failed" => Ok(EventType::Device(ThingEventType::CommandFailed)),
+                "device_created" => Ok(EventType::Device(ThingEventType::DeviceCreated)),
+                "device_updated" => Ok(EventType::Device(ThingEventType::DeviceUpdated)),
+                "device_deleted" => Ok(EventType::Device(ThingEventType::DeviceDeleted)),
                 // Backward compatibility
-                "property" => Ok(EventType::Device(DeviceEventType::PropertyChange)),
-                "command" => Ok(EventType::Device(DeviceEventType::CommandStarted)),
+                "property" => Ok(EventType::Device(ThingEventType::PropertyChange)),
+                "command" => Ok(EventType::Device(ThingEventType::CommandStarted)),
                 _ => Err(format!("Unknown device event subtype: {}", subtype_str)),
             },
             "ai" => match subtype_str {
@@ -270,22 +270,22 @@ impl std::fmt::Display for EventType {
     }
 }
 
-impl DeviceEventType {
+impl ThingEventType {
     /// Check if this is an alarm-related event
     pub fn is_alarm(&self) -> bool {
-        matches!(self, DeviceEventType::DeviceAlarm | DeviceEventType::PropertyAlarm)
+        matches!(self, ThingEventType::DeviceAlarm | ThingEventType::PropertyAlarm)
     }
 
     /// Check if this is a normal/recovery event
     pub fn is_normal(&self) -> bool {
-        matches!(self, DeviceEventType::DeviceNormal | DeviceEventType::PropertyNormal)
+        matches!(self, ThingEventType::DeviceNormal | ThingEventType::PropertyNormal)
     }
 
     /// Check if this is a property-related event
     pub fn is_property_event(&self) -> bool {
         matches!(
             self,
-            DeviceEventType::PropertyChange | DeviceEventType::PropertyAlarm | DeviceEventType::PropertyNormal
+            ThingEventType::PropertyChange | ThingEventType::PropertyAlarm | ThingEventType::PropertyNormal
         )
     }
 
@@ -293,25 +293,25 @@ impl DeviceEventType {
     pub fn is_command_event(&self) -> bool {
         matches!(
             self,
-            DeviceEventType::CommandStarted | DeviceEventType::CommandCompleted | DeviceEventType::CommandFailed
+            ThingEventType::CommandStarted | ThingEventType::CommandCompleted | ThingEventType::CommandFailed
         )
     }
 
     /// Get a human-readable display name
     pub fn display_name(&self) -> &'static str {
         match self {
-            DeviceEventType::Connection => "Connection",
-            DeviceEventType::DeviceAlarm => "Device Alarm",
-            DeviceEventType::DeviceNormal => "Device Normal",
-            DeviceEventType::PropertyChange => "Property Change",
-            DeviceEventType::PropertyAlarm => "Property Alarm",
-            DeviceEventType::PropertyNormal => "Property Normal",
-            DeviceEventType::CommandStarted => "Command Started",
-            DeviceEventType::CommandCompleted => "Command Completed",
-            DeviceEventType::CommandFailed => "Command Failed",
-            DeviceEventType::DeviceCreated => "Device Created",
-            DeviceEventType::DeviceUpdated => "Device Updated",
-            DeviceEventType::DeviceDeleted => "Device Deleted",
+            ThingEventType::Connection => "Connection",
+            ThingEventType::DeviceAlarm => "Thing Alarm",
+            ThingEventType::DeviceNormal => "Thing Normal",
+            ThingEventType::PropertyChange => "Property Change",
+            ThingEventType::PropertyAlarm => "Property Alarm",
+            ThingEventType::PropertyNormal => "Property Normal",
+            ThingEventType::CommandStarted => "Command Started",
+            ThingEventType::CommandCompleted => "Command Completed",
+            ThingEventType::CommandFailed => "Command Failed",
+            ThingEventType::DeviceCreated => "Thing Created",
+            ThingEventType::DeviceUpdated => "Thing Updated",
+            ThingEventType::DeviceDeleted => "Thing Deleted",
         }
     }
 
@@ -320,16 +320,16 @@ impl DeviceEventType {
         use crate::models::event::EventLevel;
 
         match self {
-            DeviceEventType::DeviceAlarm | DeviceEventType::PropertyAlarm => EventLevel::Warning,
-            DeviceEventType::DeviceNormal | DeviceEventType::PropertyNormal => EventLevel::Info,
-            DeviceEventType::CommandFailed => EventLevel::Error,
-            DeviceEventType::CommandCompleted => EventLevel::Info,
-            DeviceEventType::CommandStarted => EventLevel::Debug,
-            DeviceEventType::PropertyChange => EventLevel::Debug,
-            DeviceEventType::Connection => EventLevel::Info,
-            DeviceEventType::DeviceCreated => EventLevel::Info,
-            DeviceEventType::DeviceUpdated => EventLevel::Info,
-            DeviceEventType::DeviceDeleted => EventLevel::Warning,
+            ThingEventType::DeviceAlarm | ThingEventType::PropertyAlarm => EventLevel::Warning,
+            ThingEventType::DeviceNormal | ThingEventType::PropertyNormal => EventLevel::Info,
+            ThingEventType::CommandFailed => EventLevel::Error,
+            ThingEventType::CommandCompleted => EventLevel::Info,
+            ThingEventType::CommandStarted => EventLevel::Debug,
+            ThingEventType::PropertyChange => EventLevel::Debug,
+            ThingEventType::Connection => EventLevel::Info,
+            ThingEventType::DeviceCreated => EventLevel::Info,
+            ThingEventType::DeviceUpdated => EventLevel::Info,
+            ThingEventType::DeviceDeleted => EventLevel::Warning,
         }
     }
 }
@@ -344,11 +344,11 @@ mod tests {
         assert_eq!(event_type.type_string(), "system");
         assert_eq!(event_type.subtype_string(), "user_auth");
 
-        let device_type = EventType::Device(DeviceEventType::Connection);
-        assert_eq!(device_type.type_string(), "device");
-        assert_eq!(device_type.subtype_string(), "connection");
+        let event_type = EventType::Device(ThingEventType::Connection);
+        assert_eq!(event_type.type_string(), "device");
+        assert_eq!(event_type.subtype_string(), "connection");
 
-        let alarm_type = EventType::Device(DeviceEventType::PropertyAlarm);
+        let alarm_type = EventType::Device(ThingEventType::PropertyAlarm);
         assert_eq!(alarm_type.subtype_string(), "property_alarm");
     }
 
@@ -358,10 +358,10 @@ mod tests {
         assert_eq!(parsed, EventType::System(SystemEventType::UserAuth));
 
         let device_alarm = EventType::from_strings("device", "device_alarm").unwrap();
-        assert_eq!(device_alarm, EventType::Device(DeviceEventType::DeviceAlarm));
+        assert_eq!(device_alarm, EventType::Device(ThingEventType::DeviceAlarm));
 
         let property_alarm = EventType::from_strings("device", "property_alarm").unwrap();
-        assert_eq!(property_alarm, EventType::Device(DeviceEventType::PropertyAlarm));
+        assert_eq!(property_alarm, EventType::Device(ThingEventType::PropertyAlarm));
 
         let invalid = EventType::from_strings("invalid", "type");
         assert!(invalid.is_err());
@@ -372,55 +372,55 @@ mod tests {
         let event_type = EventType::System(SystemEventType::UserAuth);
         assert_eq!(format!("{}", event_type), "system:user_auth");
 
-        let alarm_type = EventType::Device(DeviceEventType::PropertyAlarm);
+        let alarm_type = EventType::Device(ThingEventType::PropertyAlarm);
         assert_eq!(format!("{}", alarm_type), "device:property_alarm");
     }
 
     #[test]
     fn test_device_event_type_helpers() {
         // Test alarm detection
-        assert!(DeviceEventType::DeviceAlarm.is_alarm());
-        assert!(DeviceEventType::PropertyAlarm.is_alarm());
-        assert!(!DeviceEventType::PropertyChange.is_alarm());
+        assert!(ThingEventType::DeviceAlarm.is_alarm());
+        assert!(ThingEventType::PropertyAlarm.is_alarm());
+        assert!(!ThingEventType::PropertyChange.is_alarm());
 
         // Test normal detection
-        assert!(DeviceEventType::DeviceNormal.is_normal());
-        assert!(DeviceEventType::PropertyNormal.is_normal());
-        assert!(!DeviceEventType::PropertyAlarm.is_normal());
+        assert!(ThingEventType::DeviceNormal.is_normal());
+        assert!(ThingEventType::PropertyNormal.is_normal());
+        assert!(!ThingEventType::PropertyAlarm.is_normal());
 
         // Test property event detection
-        assert!(DeviceEventType::PropertyChange.is_property_event());
-        assert!(DeviceEventType::PropertyAlarm.is_property_event());
-        assert!(DeviceEventType::PropertyNormal.is_property_event());
-        assert!(!DeviceEventType::Connection.is_property_event());
+        assert!(ThingEventType::PropertyChange.is_property_event());
+        assert!(ThingEventType::PropertyAlarm.is_property_event());
+        assert!(ThingEventType::PropertyNormal.is_property_event());
+        assert!(!ThingEventType::Connection.is_property_event());
 
         // Test command event detection
-        assert!(DeviceEventType::CommandStarted.is_command_event());
-        assert!(DeviceEventType::CommandCompleted.is_command_event());
-        assert!(DeviceEventType::CommandFailed.is_command_event());
-        assert!(!DeviceEventType::PropertyChange.is_command_event());
+        assert!(ThingEventType::CommandStarted.is_command_event());
+        assert!(ThingEventType::CommandCompleted.is_command_event());
+        assert!(ThingEventType::CommandFailed.is_command_event());
+        assert!(!ThingEventType::PropertyChange.is_command_event());
     }
 
     #[test]
     fn test_default_severity() {
         use crate::models::event::EventLevel;
 
-        assert_eq!(DeviceEventType::DeviceAlarm.default_severity(), EventLevel::Warning);
-        assert_eq!(DeviceEventType::PropertyAlarm.default_severity(), EventLevel::Warning);
-        assert_eq!(DeviceEventType::CommandFailed.default_severity(), EventLevel::Error);
-        assert_eq!(DeviceEventType::CommandCompleted.default_severity(), EventLevel::Info);
-        assert_eq!(DeviceEventType::PropertyChange.default_severity(), EventLevel::Debug);
+        assert_eq!(ThingEventType::DeviceAlarm.default_severity(), EventLevel::Warning);
+        assert_eq!(ThingEventType::PropertyAlarm.default_severity(), EventLevel::Warning);
+        assert_eq!(ThingEventType::CommandFailed.default_severity(), EventLevel::Error);
+        assert_eq!(ThingEventType::CommandCompleted.default_severity(), EventLevel::Info);
+        assert_eq!(ThingEventType::PropertyChange.default_severity(), EventLevel::Debug);
     }
 
     #[test]
     fn test_backward_compatibility() {
         // Old "property" should map to PropertyChange
         let parsed = EventType::from_strings("device", "property").unwrap();
-        assert_eq!(parsed, EventType::Device(DeviceEventType::PropertyChange));
+        assert_eq!(parsed, EventType::Device(ThingEventType::PropertyChange));
 
         // Old "command" should map to CommandStarted
         let parsed = EventType::from_strings("device", "command").unwrap();
-        assert_eq!(parsed, EventType::Device(DeviceEventType::CommandStarted));
+        assert_eq!(parsed, EventType::Device(ThingEventType::CommandStarted));
     }
 
     #[test]

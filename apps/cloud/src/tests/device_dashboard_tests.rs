@@ -1,4 +1,4 @@
-//! Device dashboard handler integration tests
+//! Thing dashboard handler integration tests
 
 use axum::{
     body::Body,
@@ -21,7 +21,7 @@ fn auth_request(method: &str, uri: &str, token: &str) -> Request<Body> {
 }
 
 // ============================================================================
-// Device Status Distribution
+// Thing Status Distribution
 // ============================================================================
 
 #[tokio::test]
@@ -30,14 +30,14 @@ async fn test_get_device_distribution() {
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/distribution", &token))
+        .oneshot(auth_request("GET", "/api/v1/things/admin/distribution", &token))
         .await
         .unwrap();
 
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["code"], 0, "Expected success code");
-    // DeviceStatusDistribution has fields like online, offline, etc.
+    // ThingStatusDistribution has fields like online, offline, etc.
     assert!(json["result"].is_object(), "Expected device status distribution object");
 }
 
@@ -46,19 +46,19 @@ async fn test_get_device_distribution() {
 // ============================================================================
 
 #[tokio::test]
-async fn test_get_quick_devices() {
+async fn test_get_quick_things() {
     let app = setup_test_app().await;
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/quick?limit=5", &token))
+        .oneshot(auth_request("GET", "/api/v1/things/admin/quick?limit=5", &token))
         .await
         .unwrap();
 
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["code"], 0, "Expected success code");
-    assert!(json["result"].is_array(), "Expected array of quick devices");
+    assert!(json["result"].is_array(), "Expected array of quick things");
 }
 
 #[tokio::test]
@@ -67,7 +67,7 @@ async fn test_get_quick_devices_default_limit() {
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/quick", &token))
+        .oneshot(auth_request("GET", "/api/v1/things/admin/quick", &token))
         .await
         .unwrap();
 

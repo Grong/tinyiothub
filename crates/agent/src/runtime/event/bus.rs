@@ -298,7 +298,7 @@ mod tests {
         let alarm = AiEvent::AlarmCreated(tinyiothub_core::models::event::AlarmEvent {
             id: "a1".into(),
             workspace_id: "ws".into(),
-            device_id: "d1".into(),
+            thing_id: "d1".into(),
             alarm_type: "high_temp".into(),
             severity: "critical".into(),
             message: "test".into(),
@@ -347,7 +347,7 @@ mod tests {
 
         let alarm_resolved = AiEvent::AlarmResolved {
             alarm_id: "a1".into(),
-            device_id: "d1".into(),
+            thing_id: "d1".into(),
             rule_id: None,
         };
         assert_eq!(alarm_resolved.workspace_id(), None);

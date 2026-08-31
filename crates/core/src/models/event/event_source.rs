@@ -5,17 +5,17 @@ use serde::{Deserialize, Serialize};
 pub struct EventSource {
     source_type: String,
     source_id: String,
-    device_id: Option<String>,
+    thing_id: Option<String>,
     user_id: Option<String>,
 }
 
 impl EventSource {
     /// Create a new event source
-    pub fn new(source_type: String, source_id: String, device_id: Option<String>, user_id: Option<String>) -> Self {
+    pub fn new(source_type: String, source_id: String, thing_id: Option<String>, user_id: Option<String>) -> Self {
         Self {
             source_type,
             source_id,
-            device_id,
+            thing_id,
             user_id,
         }
     }
@@ -25,27 +25,27 @@ impl EventSource {
         Self {
             source_type: "system".to_string(),
             source_id,
-            device_id: None,
+            thing_id: None,
             user_id,
         }
     }
 
     /// Create a device event source
-    pub fn device(device_id: String, source_id: Option<String>) -> Self {
+    pub fn device(thing_id: String, source_id: Option<String>) -> Self {
         Self {
             source_type: "device".to_string(),
-            source_id: source_id.unwrap_or_else(|| device_id.clone()),
-            device_id: Some(device_id),
+            source_id: source_id.unwrap_or_else(|| thing_id.clone()),
+            thing_id: Some(thing_id),
             user_id: None,
         }
     }
 
     /// Create a device property event source
-    pub fn device_property(device_id: String, property_id: String, _source_id: String) -> Self {
+    pub fn device_property(thing_id: String, property_id: String, _source_id: String) -> Self {
         Self {
             source_type: "device_property".to_string(),
-            source_id: format!("{}:{}", device_id, property_id),
-            device_id: Some(device_id),
+            source_id: format!("{}:{}", thing_id, property_id),
+            thing_id: Some(thing_id),
             user_id: None,
         }
     }
@@ -55,7 +55,7 @@ impl EventSource {
         Self {
             source_type: "user".to_string(),
             source_id,
-            device_id: None,
+            thing_id: None,
             user_id: Some(user_id),
         }
     }
@@ -71,8 +71,8 @@ impl EventSource {
     }
 
     /// Get device ID if this is a device event
-    pub fn device_id(&self) -> Option<&str> {
-        self.device_id.as_deref()
+    pub fn thing_id(&self) -> Option<&str> {
+        self.thing_id.as_deref()
     }
 
     /// Get user ID if this is a user-related event
@@ -113,8 +113,8 @@ impl EventSource {
         // Validate consistency between source type and IDs
         match self.source_type.as_str() {
             "device" | "device_property" => {
-                if self.device_id.is_none() {
-                    return Err("Device events must have a device_id".to_string());
+                if self.thing_id.is_none() {
+                    return Err("Thing events must have a thing_id".to_string());
                 }
             }
             "user" => {
@@ -138,8 +138,8 @@ impl std::fmt::Display for EventSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}", self.source_type, self.source_id)?;
 
-        if let Some(device_id) = &self.device_id {
-            write!(f, " (device:{})", device_id)?;
+        if let Some(thing_id) = &self.thing_id {
+            write!(f, " (device:{})", thing_id)?;
         }
 
         if let Some(user_id) = &self.user_id {
@@ -161,7 +161,7 @@ mod tests {
         assert_eq!(source.source_type(), "system");
         assert_eq!(source.source_id(), "auth_service");
         assert_eq!(source.user_id(), Some("user123"));
-        assert_eq!(source.device_id(), None);
+        assert_eq!(source.thing_id(), None);
         assert!(source.is_system());
         assert!(!source.is_device());
         assert!(!source.is_user());
@@ -173,7 +173,7 @@ mod tests {
 
         assert_eq!(source.source_type(), "device");
         assert_eq!(source.source_id(), "modbus_driver");
-        assert_eq!(source.device_id(), Some("device123"));
+        assert_eq!(source.thing_id(), Some("device123"));
         assert_eq!(source.user_id(), None);
         assert!(!source.is_system());
         assert!(source.is_device());
@@ -187,7 +187,7 @@ mod tests {
         assert_eq!(source.source_type(), "user");
         assert_eq!(source.source_id(), "web_ui");
         assert_eq!(source.user_id(), Some("user123"));
-        assert_eq!(source.device_id(), None);
+        assert_eq!(source.thing_id(), None);
         assert!(!source.is_system());
         assert!(!source.is_device());
         assert!(source.is_user());
@@ -212,7 +212,7 @@ mod tests {
         let invalid_device = EventSource::new(
             "device".to_string(),
             "driver".to_string(),
-            None, // Missing device_id
+            None, // Missing thing_id
             None,
         );
         assert!(invalid_device.validate().is_err());

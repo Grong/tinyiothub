@@ -303,7 +303,7 @@ pub enum MemoryError {
     #[error("Serialization error: {0}")]
     SerializationError(String),
 
-    #[error("Device not found: {0}")]
+    #[error("Thing not found: {0}")]
     DeviceNotFound(String),
 
     #[error("Context build failed: {0}")]
@@ -313,7 +313,7 @@ pub enum MemoryError {
 /// A snapshot of device state at a point in time
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceSnapshot {
-    pub device_id: String,
+    pub thing_id: String,
     pub workspace_id: String,
     pub agent_id: String,
     pub snapshot_data: serde_json::Value,
@@ -325,9 +325,9 @@ impl DeviceSnapshot {
     /// Format the snapshot for inclusion in a prompt
     pub fn to_prompt_fragment(&self) -> String {
         format!(
-            "[{}] Device {}: {}",
+            "[{}] Thing {}: {}",
             self.timestamp_formatted,
-            self.device_id,
+            self.thing_id,
             serde_json::to_string(&self.snapshot_data).unwrap_or_default()
         )
     }
@@ -356,7 +356,7 @@ impl AgentMemoryItem {
     pub fn device_snapshot(snapshot: &DeviceSnapshot) -> Self {
         Self {
             item_type: "device_snapshot".to_string(),
-            key: snapshot.device_id.clone(),
+            key: snapshot.thing_id.clone(),
             value: serde_json::json!({
                 "workspace_id": snapshot.workspace_id,
                 "agent_id": snapshot.agent_id,
@@ -415,7 +415,7 @@ impl MemoryContext {
             "device_snapshot" => {
                 let snapshot_data = item.value.get("snapshot").cloned().unwrap_or(item.value.clone());
                 self.device_snapshots.push(DeviceSnapshot {
-                    device_id: item.key.clone(),
+                    thing_id: item.key.clone(),
                     workspace_id: item
                         .value
                         .get("workspace_id")
@@ -461,7 +461,7 @@ impl MemoryContext {
         let mut fragments = vec!["\n\n## Context from Memory\n".to_string()];
 
         if !self.device_snapshots.is_empty() {
-            fragments.push("### Device States\n".to_string());
+            fragments.push("### Thing States\n".to_string());
             for snapshot in &self.device_snapshots {
                 fragments.push(snapshot.to_prompt_fragment());
                 fragments.push("\n".to_string());
@@ -487,17 +487,17 @@ impl MemoryContext {
         fragments.concat()
     }
 
-    pub fn get_device_snapshots(&self, device_id: &str) -> Vec<&DeviceSnapshot> {
+    pub fn get_device_snapshots(&self, thing_id: &str) -> Vec<&DeviceSnapshot> {
         self.device_snapshots
             .iter()
-            .filter(|s| s.device_id == device_id)
+            .filter(|s| s.thing_id == thing_id)
             .collect()
     }
 
-    pub fn get_latest_device_snapshot(&self, device_id: &str) -> Option<&DeviceSnapshot> {
+    pub fn get_latest_device_snapshot(&self, thing_id: &str) -> Option<&DeviceSnapshot> {
         self.device_snapshots
             .iter()
-            .filter(|s| s.device_id == device_id)
+            .filter(|s| s.thing_id == thing_id)
             .max_by_key(|s| s.snapshot_time)
     }
 }
@@ -639,7 +639,7 @@ mod tests {
     #[test]
     fn test_device_snapshot_to_prompt_fragment() {
         let snapshot = DeviceSnapshot {
-            device_id: "dev-1".to_string(),
+            thing_id: "dev-1".to_string(),
             workspace_id: "ws".to_string(),
             agent_id: "agent".to_string(),
             snapshot_data: serde_json::json!({"temp": 25}),
@@ -662,7 +662,7 @@ mod tests {
     fn test_memory_context_add_snapshot() {
         let mut context = MemoryContext::new();
         context.add_device_snapshot(DeviceSnapshot {
-            device_id: "dev-1".to_string(),
+            thing_id: "dev-1".to_string(),
             workspace_id: "ws".to_string(),
             agent_id: "agent".to_string(),
             snapshot_data: serde_json::json!({"temp": 25}),
@@ -677,7 +677,7 @@ mod tests {
     fn test_memory_context_get_device_snapshots() {
         let mut context = MemoryContext::new();
         context.add_device_snapshot(DeviceSnapshot {
-            device_id: "dev-1".to_string(),
+            thing_id: "dev-1".to_string(),
             workspace_id: "ws".to_string(),
             agent_id: "agent".to_string(),
             snapshot_data: serde_json::json!({"temp": 25}),
@@ -685,7 +685,7 @@ mod tests {
             timestamp_formatted: "time-1".to_string(),
         });
         context.add_device_snapshot(DeviceSnapshot {
-            device_id: "dev-2".to_string(),
+            thing_id: "dev-2".to_string(),
             workspace_id: "ws".to_string(),
             agent_id: "agent".to_string(),
             snapshot_data: serde_json::json!({"temp": 30}),
@@ -694,13 +694,13 @@ mod tests {
         });
         let dev1_snapshots = context.get_device_snapshots("dev-1");
         assert_eq!(dev1_snapshots.len(), 1);
-        assert_eq!(dev1_snapshots[0].device_id, "dev-1");
+        assert_eq!(dev1_snapshots[0].thing_id, "dev-1");
     }
 
     #[test]
     fn test_agent_memory_item_helpers() {
         let snapshot_item = AgentMemoryItem::device_snapshot(&DeviceSnapshot {
-            device_id: "dev-1".to_string(),
+            thing_id: "dev-1".to_string(),
             workspace_id: "ws".to_string(),
             agent_id: "agent".to_string(),
             snapshot_data: serde_json::json!({"temp": 25}),
@@ -713,7 +713,7 @@ mod tests {
         let pref_item = AgentMemoryItem::user_preference("theme", serde_json::json!("dark"));
         assert_eq!(pref_item.item_type, "user_preference");
 
-        let summary_item = AgentMemoryItem::conversation_summary("Talked about devices", vec!["devices".to_string()]);
+        let summary_item = AgentMemoryItem::conversation_summary("Talked about things", vec!["things".to_string()]);
         assert_eq!(summary_item.item_type, "conversation_summary");
     }
 

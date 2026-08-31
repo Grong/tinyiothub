@@ -16,7 +16,7 @@ async fn test_green_path_pairing_to_telemetry() {
     let mqtt = MqttTestClient::new().await;
 
     let credentials = serde_json::json!({
-        "device_id": "test-gw-1",
+        "thing_id": "test-gw-1",
         "client_id": "test-gw-1-client",
         "username": "test-user",
         "password": "test-pass",

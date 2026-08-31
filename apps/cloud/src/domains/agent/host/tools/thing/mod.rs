@@ -85,7 +85,7 @@ pub(crate) fn clamp_limit(limit: Option<u32>, default: u32, max: u32) -> u32 {
 /// `ToolRuntimeContext` 只携带存储无关字段，这些由组合层捕获/拼装）。
 #[derive(Clone, Default)]
 pub struct ThingToolContext {
-    pub device_cache: Option<Arc<tinyiothub_storage::cache::DeviceCache>>,
+    pub device_cache: Option<Arc<tinyiothub_storage::cache::ThingCache>>,
     pub data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
     pub pending_actions: Option<Arc<PendingActionStore>>,
 }

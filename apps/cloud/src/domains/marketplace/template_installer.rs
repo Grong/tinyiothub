@@ -40,7 +40,7 @@ impl TemplateInstaller {
         }
 
         // 4. Import to database directly
-        let request: crate::domains::thing::template::types::CreateDeviceTemplateRequest =
+        let request: crate::domains::thing::template::types::CreateThingTemplateRequest =
             serde_json::from_value(template_data)
                 .map_err(|e| MarketplaceError::Template(format!("Invalid template format: {}", e)))?;
 

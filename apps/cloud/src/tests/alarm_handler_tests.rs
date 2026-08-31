@@ -283,15 +283,15 @@ async fn test_list_alarms_filter_by_status() {
 
     // Seed an active alarm directly in the DB — the device management
     // endpoints previously used for setup were removed (Thing Ontology).
-    // The list handler scopes alarms via device_id → devices.workspace_id,
+    // The list handler scopes alarms via thing_id → things.workspace_id,
     // so both rows are required.
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
     sqlx::query(
-        "INSERT INTO devices (id, name, workspace_id, created_at, updated_at) \
+        "INSERT INTO things (id, name, workspace_id, created_at, updated_at) \
          VALUES (?, ?, ?, ?, ?)",
     )
     .bind("alarm-test-device-1")
-    .bind("Alarm Test Device")
+    .bind("Alarm Test Thing")
     .bind("ws-default-001")
     .bind(&now)
     .bind(&now)
@@ -300,8 +300,8 @@ async fn test_list_alarms_filter_by_status() {
     .expect("Failed to seed test device");
 
     sqlx::query(
-        "INSERT INTO device_alarms \
-         (id, device_id, alarm_level, alarm_message, alarm_time, \
+        "INSERT INTO thing_alarms \
+         (id, thing_id, alarm_level, alarm_message, alarm_time, \
           is_acknowledged, is_resolved, workspace_id, created_at) \
          VALUES (?, ?, 'warning', 'High temperature', ?, false, false, ?, ?)",
     )
@@ -412,18 +412,18 @@ async fn test_get_alarm_not_found() {
 }
 
 // ============================================================================
-// List Alarm Rules — by device_id
+// List Alarm Rules — by thing_id
 // ============================================================================
 
 #[tokio::test]
-async fn test_list_alarm_rules_by_device() {
+async fn test_list_alarm_rules_by_thing() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
         .oneshot(auth_request(
             "GET",
-            "/api/v1/alarm-rules?device_id=nonexistent-device-12345",
+            "/api/v1/alarm-rules?thing_id=nonexistent-device-12345",
             &token,
             None,
         ))

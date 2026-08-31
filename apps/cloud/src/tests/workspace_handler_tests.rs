@@ -175,7 +175,7 @@ async fn test_workspace_cross_tenant_isolation() {
 }
 
 // ============================================================================
-// Assign Device to Workspace
+// Assign Thing to Workspace
 // ============================================================================
 
 #[tokio::test]
@@ -183,11 +183,11 @@ async fn test_assign_device_to_workspace_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
-    let body = json!({"device_id": "nonexistent-device"});
+    let body = json!({"thing_id": "nonexistent-device"});
     let response = app
         .oneshot(auth_request(
             "POST",
-            "/api/v1/workspaces/nonexistent-ws-12345/devices",
+            "/api/v1/workspaces/nonexistent-ws-12345/things",
             &token,
             Some(body),
         ))

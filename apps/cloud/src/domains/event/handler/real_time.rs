@@ -44,7 +44,7 @@ pub struct RealTimeEventResponse {
     pub level_name: String,
     pub source_type: String,
     pub source_id: Option<String>,
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     pub title: String,
     pub content_preview: String,
     pub timestamp: DateTime<Utc>,
@@ -63,15 +63,15 @@ pub struct StatusSummaryResponse {
     pub warning_count: u64,
     pub unacknowledged_count: u64,
     pub health_status: String,
-    pub by_device: Vec<DeviceStatusResponse>,
+    pub by_thing: Vec<DeviceStatusResponse>,
     pub by_type: Vec<TypeStatusResponse>,
 }
 
-/// Device status summary response DTO
+/// Thing status summary response DTO
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct DeviceStatusResponse {
-    pub device_id: String,
+    pub thing_id: String,
     pub active_count: u64,
     pub highest_level: i32,
     pub highest_level_name: String,
@@ -110,7 +110,7 @@ pub async fn get_real_time_events(
         ..Default::default()
     };
 
-    // Device IDs
+    // Thing IDs
     if let Some(device_ids_str) = params.device_ids {
         let device_ids: Vec<String> = device_ids_str
             .split(',')
@@ -303,7 +303,7 @@ fn convert_real_time_event_to_response(event: RealTimeEvent) -> RealTimeEventRes
         level_name: format!("{:?}", event.level).to_lowercase(),
         source_type: event.source.source_type().to_string(),
         source_id: Some(event.source.source_id().to_string()),
-        device_id: event.source.device_id().map(|s| s.to_string()),
+        thing_id: event.source.thing_id().map(|s| s.to_string()),
         title: event.title,
         content_preview: event.content_preview,
         timestamp: event.timestamp,
@@ -322,11 +322,11 @@ fn convert_status_summary_to_response(summary: StatusSummary) -> StatusSummaryRe
         warning_count: summary.warning_count,
         unacknowledged_count: summary.unacknowledged_count,
         health_status: format!("{:?}", summary.health_status()).to_lowercase(),
-        by_device: summary
-            .by_device
+        by_thing: summary
+            .by_thing
             .into_iter()
             .map(|device_summary| DeviceStatusResponse {
-                device_id: device_summary.device_id,
+                thing_id: device_summary.thing_id,
                 active_count: device_summary.active_count,
                 highest_level: device_summary.highest_level as i32,
                 highest_level_name: format!("{:?}", device_summary.highest_level).to_lowercase(),

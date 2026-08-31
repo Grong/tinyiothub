@@ -15,7 +15,7 @@ use tracing::{debug, error, info};
 /// SSE Connection Manager
 ///
 /// Manages SSE connections and event distribution in the infrastructure layer.
-/// Filters events by workspace so users only see their current workspace's devices.
+/// Filters events by workspace so users only see their current workspace's things.
 pub struct SseConnectionManager {
     /// SSE notification channel for managing connections
     sse_channel: Arc<SseNotificationChannel>,
@@ -94,8 +94,8 @@ impl SseConnectionManager {
             event.event_type().subtype_string()
         );
 
-        // Extract device_id from source if present
-        let device_id = event.source().device_id().map(|s| s.to_string());
+        // Extract thing_id from source if present
+        let thing_id = event.source().thing_id().map(|s| s.to_string());
 
         // Note: Event doesn't contain workspace_id (zero-tenant pollution principle).
         // Workspace filtering should be handled at higher level (cloud crate).
@@ -104,7 +104,7 @@ impl SseConnectionManager {
         // Build base data payload
         let mut data = serde_json::json!({
             "event_type": event_type_str,
-            "device_id": device_id,
+            "thing_id": thing_id,
             "workspace_id": workspace_id,
             "level": format!("{}", event.level()),
             "timestamp": event.timestamp().to_rfc3339(),
@@ -114,7 +114,7 @@ impl SseConnectionManager {
 
         // Enrich property_change events with structured fields
         if event_type_str == "device.property_change" {
-            // Extract property_id from source.source_id (format: "device_id:property_id")
+            // Extract property_id from source.source_id (format: "thing_id:property_id")
             let source_id = event.source().source_id();
             if let Some(colon_pos) = source_id.find(':') {
                 let property_id = &source_id[colon_pos + 1..];

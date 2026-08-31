@@ -9,43 +9,43 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use tinyiothub_core::cron::{ExecutorError, JobExecutor};
 use tinyiothub_core::models::cron_job::CronJob;
-use tinyiothub_core::models::device::Device;
-use tinyiothub_core::models::device_command::DeviceCommand;
-use tinyiothub_runtime::cron_executors::{DeviceCommandExecutor, EventRetentionExecutor};
+use tinyiothub_core::models::thing::Thing;
+use tinyiothub_core::models::thing_command::ThingCommand;
+use tinyiothub_runtime::cron_executors::{EventRetentionExecutor, ThingCommandExecutor};
 use tinyiothub_runtime::data_server::DataServer;
 use tinyiothub_runtime::event_bus::EventBus;
-use tinyiothub_runtime::ports::{DeviceCacheSource, DeviceCommandQueries, EventRetentionStore};
+use tinyiothub_runtime::ports::{EventRetentionStore, ThingCacheSource, ThingCommandQueries};
 
 struct FakeCache {
-    devices: Mutex<Vec<Device>>,
+    devices: Mutex<Vec<Thing>>,
 }
 
 impl FakeCache {
-    fn with_device(device: Device) -> Self {
+    fn with_device(device: Thing) -> Self {
         Self {
             devices: Mutex::new(vec![device]),
         }
     }
 }
 
-impl DeviceCacheSource for FakeCache {
-    fn all(&self) -> Vec<Device> {
+impl ThingCacheSource for FakeCache {
+    fn all(&self) -> Vec<Thing> {
         self.devices.lock().unwrap().clone()
     }
 
-    fn get(&self, id: &str) -> Option<Device> {
+    fn get(&self, id: &str) -> Option<Thing> {
         self.devices.lock().unwrap().iter().find(|d| d.id == id).cloned()
     }
 
-    fn get_by_name(&self, name: &str) -> Option<Device> {
+    fn get_by_name(&self, name: &str) -> Option<Thing> {
         self.devices.lock().unwrap().iter().find(|d| d.name == name).cloned()
     }
 
-    fn insert(&self, device: Device) {
+    fn insert(&self, device: Thing) {
         self.devices.lock().unwrap().push(device);
     }
 
-    fn update(&self, device: Device) {
+    fn update(&self, device: Thing) {
         let mut devices = self.devices.lock().unwrap();
         if let Some(existing) = devices.iter_mut().find(|d| d.id == device.id) {
             *existing = device;
@@ -58,16 +58,16 @@ impl DeviceCacheSource for FakeCache {
 }
 
 struct FakeCommands {
-    command: Option<DeviceCommand>,
+    command: Option<ThingCommand>,
 }
 
 #[async_trait]
-impl DeviceCommandQueries for FakeCommands {
-    async fn find_by_device_and_name(&self, device_id: &str, name: &str) -> Result<Option<DeviceCommand>, String> {
+impl ThingCommandQueries for FakeCommands {
+    async fn find_by_thing_and_name(&self, thing_id: &str, name: &str) -> Result<Option<ThingCommand>, String> {
         Ok(self
             .command
             .as_ref()
-            .filter(|c| c.device_id == device_id && c.name == name)
+            .filter(|c| c.thing_id == thing_id && c.name == name)
             .cloned())
     }
 }
@@ -85,17 +85,14 @@ impl EventRetentionStore for FakeRetention {
     }
 }
 
-fn device_command_job(device_id: &str, command_name: &str) -> CronJob {
+fn device_command_job(thing_id: &str, command_name: &str) -> CronJob {
     CronJob {
         id: "test-cmd".to_string(),
         name: "test".to_string(),
         description: None,
         job_type: "device_command".to_string(),
         cron_expression: "0 0 * * * *".to_string(),
-        config: format!(
-            r#"{{"device_id": "{}", "command_name": "{}"}}"#,
-            device_id, command_name
-        ),
+        config: format!(r#"{{"thing_id": "{}", "command_name": "{}"}}"#, thing_id, command_name),
         timeout_seconds: 300,
         max_retries: 3,
         is_enabled: true,
@@ -123,7 +120,7 @@ fn retention_job(retention_days: i64) -> CronJob {
 }
 
 fn test_data_server() -> Arc<DataServer> {
-    let cache = Arc::new(FakeCache::with_device(Device {
+    let cache = Arc::new(FakeCache::with_device(Thing {
         id: "dev-1".to_string(),
         name: "device-one".to_string(),
         ..Default::default()
@@ -133,12 +130,12 @@ fn test_data_server() -> Arc<DataServer> {
 
 #[tokio::test]
 async fn device_command_executor_queues_command_via_port() {
-    let executor = DeviceCommandExecutor::new(
+    let executor = ThingCommandExecutor::new(
         test_data_server(),
         Arc::new(FakeCommands {
-            command: Some(DeviceCommand {
+            command: Some(ThingCommand {
                 id: "cmd-1".to_string(),
-                device_id: "dev-1".to_string(),
+                thing_id: "dev-1".to_string(),
                 name: "reboot".to_string(),
                 display_name: None,
                 description: None,
@@ -158,7 +155,7 @@ async fn device_command_executor_queues_command_via_port() {
 
 #[tokio::test]
 async fn device_command_executor_errors_when_command_not_found() {
-    let executor = DeviceCommandExecutor::new(test_data_server(), Arc::new(FakeCommands { command: None }));
+    let executor = ThingCommandExecutor::new(test_data_server(), Arc::new(FakeCommands { command: None }));
 
     let err = executor
         .execute(&device_command_job("dev-1", "reboot"), "run-1")

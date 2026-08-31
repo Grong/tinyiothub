@@ -1,5 +1,5 @@
 //! In-memory caches for hot data.
 
-pub mod device_cache;
+pub mod thing_cache;
 
-pub use device_cache::DeviceCache;
+pub use thing_cache::ThingCache;

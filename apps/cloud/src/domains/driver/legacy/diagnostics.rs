@@ -3,25 +3,25 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::domains::thing::legacy::trace::DeviceTraceStatistics;
-use tinyiothub_core::models::device::Device;
-use tinyiothub_storage::cache::DeviceCache;
+use crate::domains::thing::legacy::trace::ThingTraceStatistics;
+use tinyiothub_core::models::thing::Thing;
+use tinyiothub_storage::cache::ThingCache;
 
-/// Device fault diagnosis result
+/// Thing fault diagnosis result
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeviceDiagnosis {
-    pub device_id: String,
+pub struct ThingDiagnosis {
+    pub thing_id: String,
     pub device_name: String,
     pub is_healthy: bool,
     pub fault_score: u32, // 0-100, higher = more faulty
-    pub issues: Vec<DeviceIssue>,
-    pub trace_stats: Option<DeviceTraceStatistics>,
+    pub issues: Vec<ThingIssue>,
+    pub trace_stats: Option<ThingTraceStatistics>,
     pub recommendations: Vec<String>,
 }
 
 /// Individual device issue
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeviceIssue {
+pub struct ThingIssue {
     pub severity: String, // "critical", "warning", "info"
     pub code: String,     // e.g., "OFFLINE", "HIGH_ERROR_RATE"
     pub message: String,
@@ -46,7 +46,7 @@ pub struct PropertyComparison {
 /// A single device's property value
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PropertyValueEntry {
-    pub device_id: String,
+    pub thing_id: String,
     pub device_name: String,
     pub value: Option<String>,
     pub unit: Option<String>,
@@ -68,23 +68,23 @@ pub struct DiagnosticsService;
 impl DiagnosticsService {
     /// Diagnose a device for common fault patterns.
     ///
-    /// Pure analysis: the caller resolves the `Device` and its trace
+    /// Pure analysis: the caller resolves the `Thing` and its trace
     /// statistics (last 7 days) beforehand — this service was dead code in
     /// cloud and previously took `&Arc<AppState>` directly (P4-Task20).
     pub fn diagnose_device(
-        device: &Device,
-        trace_stats: Option<DeviceTraceStatistics>,
-    ) -> Result<DeviceDiagnosis, String> {
+        device: &Thing,
+        trace_stats: Option<ThingTraceStatistics>,
+    ) -> Result<ThingDiagnosis, String> {
         let mut issues = Vec::new();
         let mut fault_score: u32 = 0;
         let mut recommendations = Vec::new();
 
         // Check offline state
-        if device.status == tinyiothub_core::models::device::DeviceStatus::Offline {
-            issues.push(DeviceIssue {
+        if device.status == tinyiothub_core::models::thing::ThingStatus::Offline {
+            issues.push(ThingIssue {
                 severity: "critical".to_string(),
                 code: "OFFLINE".to_string(),
-                message: "Device is currently offline".to_string(),
+                message: "Thing is currently offline".to_string(),
                 timestamp: None,
             });
             fault_score += 50;
@@ -97,7 +97,7 @@ impl DiagnosticsService {
             if stats.total_traces > 0 {
                 let error_rate = (stats.error_traces as f64 / stats.total_traces as f64) * 100.0;
                 if error_rate > 20.0 {
-                    issues.push(DeviceIssue {
+                    issues.push(ThingIssue {
                         severity: "critical".to_string(),
                         code: "HIGH_ERROR_RATE".to_string(),
                         message: format!(
@@ -109,7 +109,7 @@ impl DiagnosticsService {
                     fault_score += 30;
                     recommendations.push("Review error traces to identify root cause".to_string());
                 } else if error_rate > 5.0 {
-                    issues.push(DeviceIssue {
+                    issues.push(ThingIssue {
                         severity: "warning".to_string(),
                         code: "ELEVATED_ERROR_RATE".to_string(),
                         message: format!("Error rate is {:.1}%, slightly elevated", error_rate),
@@ -121,7 +121,7 @@ impl DiagnosticsService {
 
             // Check for frequent reconnections (many traces in short time)
             if stats.warning_traces > 10 {
-                issues.push(DeviceIssue {
+                issues.push(ThingIssue {
                     severity: "warning".to_string(),
                     code: "UNSTABLE".to_string(),
                     message: format!(
@@ -136,7 +136,7 @@ impl DiagnosticsService {
 
             // No recent traces
             if stats.total_traces == 0 {
-                issues.push(DeviceIssue {
+                issues.push(ThingIssue {
                     severity: "info".to_string(),
                     code: "NO_ACTIVITY".to_string(),
                     message: "No trace data in the past 7 days".to_string(),
@@ -145,7 +145,7 @@ impl DiagnosticsService {
             }
         } else {
             // No trace stats available
-            issues.push(DeviceIssue {
+            issues.push(ThingIssue {
                 severity: "info".to_string(),
                 code: "NO_TRACE_DATA".to_string(),
                 message: "No trace statistics available for this device".to_string(),
@@ -156,11 +156,11 @@ impl DiagnosticsService {
         let is_healthy = fault_score < 30;
 
         if is_healthy && recommendations.is_empty() {
-            recommendations.push("Device is operating normally".to_string());
+            recommendations.push("Thing is operating normally".to_string());
         }
 
-        Ok(DeviceDiagnosis {
-            device_id: device.id.clone(),
+        Ok(ThingDiagnosis {
+            thing_id: device.id.clone(),
             device_name: device.name.clone(),
             is_healthy,
             fault_score,
@@ -172,11 +172,11 @@ impl DiagnosticsService {
 
     /// Compare a property across multiple devices.
     ///
-    /// The caller resolves the `Device`s; real-time property values are read
-    /// from the shared `DeviceCache` (may miss — value falls back to None).
+    /// The caller resolves the `Thing`s; real-time property values are read
+    /// from the shared `ThingCache` (may miss — value falls back to None).
     pub fn compare_properties(
-        devices: &[Device],
-        device_cache: &DeviceCache,
+        devices: &[Thing],
+        device_cache: &ThingCache,
         property_name: &str,
     ) -> Result<PropertyComparison, String> {
         let mut values = Vec::new();
@@ -197,7 +197,7 @@ impl DiagnosticsService {
             let (value, unit, timestamp) = property_value.unwrap_or((None, None, None));
 
             values.push(PropertyValueEntry {
-                device_id: device.id.clone(),
+                thing_id: device.id.clone(),
                 device_name: device.name.clone(),
                 value,
                 unit,

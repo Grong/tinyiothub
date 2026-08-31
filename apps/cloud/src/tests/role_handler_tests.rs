@@ -289,8 +289,8 @@ async fn test_update_and_get_role_permissions() {
     // 种子行干扰断言），故保留这三个权限的显式播种。
     sqlx::query(
         "INSERT OR IGNORE INTO permissions (id, name, description, resource_type, action) VALUES
-         ('perm-device-read', 'device:read', '查看设备信息', 'device', 'read'),
-         ('perm-device-write', 'device:write', '修改设备信息', 'device', 'write'),
+         ('perm-thing-read', 'thing:read', '查看设备信息', 'thing', 'read'),
+         ('perm-thing-write', 'thing:write', '修改设备信息', 'thing', 'write'),
          ('perm-user-read', 'user:read', '查看用户信息', 'user', 'read')",
     )
     .execute(&pool)
@@ -312,7 +312,7 @@ async fn test_update_and_get_role_permissions() {
     let role_id = json["result"]["id"].as_str().expect("Role should have an ID");
 
     // Update permissions (use real permission IDs from migrations)
-    let perm_ids = json!({"permission_ids": ["perm-device-read", "perm-device-write", "perm-user-read"]});
+    let perm_ids = json!({"permission_ids": ["perm-thing-read", "perm-thing-write", "perm-user-read"]});
     let response = app
         .clone()
         .oneshot(auth_request(
@@ -344,7 +344,7 @@ async fn test_update_and_get_role_permissions() {
     let perms = json["result"].as_array().expect("Permissions should be an array");
     assert_eq!(perms.len(), 3, "Should have 3 permissions");
     let perm_strings: Vec<String> = perms.iter().filter_map(|p| p.as_str().map(String::from)).collect();
-    assert!(perm_strings.contains(&"perm-device-read".to_string()));
-    assert!(perm_strings.contains(&"perm-device-write".to_string()));
+    assert!(perm_strings.contains(&"perm-thing-read".to_string()));
+    assert!(perm_strings.contains(&"perm-thing-write".to_string()));
     assert!(perm_strings.contains(&"perm-user-read".to_string()));
 }

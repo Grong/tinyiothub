@@ -283,14 +283,14 @@ async fn ensure_default_tenant(state: &AppState, user_id: &str) -> Result<()> {
 
     // 将未分配的设备归属到默认租户和工作空间
     let db = tinyiothub_storage::Db::new(pool.clone());
-    db.assign_orphan_devices_to_default_tenant()
+    db.assign_orphan_things_to_default_tenant()
         .await
         .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
 
-    db.assign_orphan_devices_to_default_workspace()
+    db.assign_orphan_things_to_default_workspace()
         .await
         .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
-    tracing::info!("[init] Assigned orphan devices to default tenant/workspace");
+    tracing::info!("[init] Assigned orphan things to default tenant/workspace");
 
     Ok(())
 }

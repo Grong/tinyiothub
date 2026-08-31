@@ -108,7 +108,7 @@ pub fn parse_dtdl(json: &Value) -> Result<ParsedTemplate, ImportError> {
 
     let description = json["description"].as_str().map(|s| s.to_string());
 
-    let thing_type = "device".to_string(); // DTDL interfaces are devices
+    let thing_type = "device".to_string(); // DTDL interfaces are things
 
     let mut properties: Vec<Value> = Vec::new();
     let mut actions: Vec<Value> = Vec::new();
@@ -745,7 +745,6 @@ mod tests {
             description: Some("A test template".to_string()),
             version: "1.0.0".to_string(),
             category: "test".to_string(),
-            device_type: "sensor".to_string(),
             thing_type: "device".to_string(),
             properties: properties_json.to_string(),
             actions: actions_json.to_string(),
@@ -838,7 +837,6 @@ mod tests {
             description: parsed.description.clone(),
             version: "1.0.0".to_string(),
             category: "test".to_string(),
-            device_type: parsed.device_type.clone(),
             thing_type: parsed.thing_type.clone(),
             properties: parsed.properties.clone(),
             actions: parsed.actions.clone(),

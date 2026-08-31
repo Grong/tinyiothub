@@ -1,4 +1,4 @@
-// Device Handler Tests
+// Thing Handler Tests
 // Tests for device MCP tool handlers
 
 use serde_json::json;
@@ -87,7 +87,7 @@ async fn test_search_things_with_params() {
         }
     }
 
-    // Empty keyword is now allowed — returns all devices (same behavior as non-empty)
+    // Empty keyword is now allowed — returns all things (same behavior as non-empty)
     let result = handler.execute(json!({"keyword": ""})).await;
     match result {
         Ok(_) => {}
@@ -194,4 +194,77 @@ async fn test_delete_thing_handler_metadata() {
 
     assert_eq!(handler.name(), "delete_thing");
     assert!(!handler.description().is_empty());
+}
+
+// ── C1 regression pins: advertised `thingId` primary key + legacy `deviceId` alias ──
+// Without initialized AppState the tools fail *after* parsing, so any error
+// other than InvalidParams proves the advertised key was accepted.
+
+#[tokio::test]
+async fn test_read_properties_accepts_advertised_thing_id_key() {
+    crate::domains::mcp::register_tools(None).await;
+    let registry = crate::domains::mcp::get_mcp_registry().unwrap();
+    let guard = registry.read().await;
+    let handler = guard.get("read_properties").unwrap();
+
+    let result = handler
+        .execute(json!({"thingId": "dev-1", "propertyName": "temperature"}))
+        .await;
+    if let Err(crate::domains::mcp::ToolError::InvalidParams(e)) = result {
+        panic!("advertised thingId key must deserialize, got InvalidParams: {}", e);
+    }
+
+    // Legacy alias: deviceId must still deserialize.
+    let result = handler
+        .execute(json!({"deviceId": "dev-1", "propertyName": "temperature"}))
+        .await;
+    if let Err(crate::domains::mcp::ToolError::InvalidParams(e)) = result {
+        panic!("legacy deviceId alias must deserialize, got InvalidParams: {}", e);
+    }
+}
+
+#[tokio::test]
+async fn test_write_properties_accepts_advertised_thing_id_key() {
+    crate::domains::mcp::register_tools(None).await;
+    let registry = crate::domains::mcp::get_mcp_registry().unwrap();
+    let guard = registry.read().await;
+    let handler = guard.get("write_properties").unwrap();
+
+    let result = handler
+        .execute(json!({"thingId": "dev-1", "properties": {"target_temp": "22"}}))
+        .await;
+    if let Err(crate::domains::mcp::ToolError::InvalidParams(e)) = result {
+        panic!("advertised thingId key must deserialize, got InvalidParams: {}", e);
+    }
+
+    // Legacy alias: deviceId must still deserialize.
+    let result = handler
+        .execute(json!({"deviceId": "dev-1", "properties": {"target_temp": "22"}}))
+        .await;
+    if let Err(crate::domains::mcp::ToolError::InvalidParams(e)) = result {
+        panic!("legacy deviceId alias must deserialize, got InvalidParams: {}", e);
+    }
+}
+
+#[tokio::test]
+async fn test_send_command_accepts_advertised_thing_id_key() {
+    crate::domains::mcp::register_tools(None).await;
+    let registry = crate::domains::mcp::get_mcp_registry().unwrap();
+    let guard = registry.read().await;
+    let handler = guard.get("send_command").unwrap();
+
+    let result = handler
+        .execute(json!({"thingId": "dev-1", "commandName": "reboot"}))
+        .await;
+    if let Err(crate::domains::mcp::ToolError::InvalidParams(e)) = result {
+        panic!("advertised thingId key must deserialize, got InvalidParams: {}", e);
+    }
+
+    // Legacy alias: deviceId must still deserialize.
+    let result = handler
+        .execute(json!({"deviceId": "dev-1", "commandName": "reboot"}))
+        .await;
+    if let Err(crate::domains::mcp::ToolError::InvalidParams(e)) = result {
+        panic!("legacy deviceId alias must deserialize, got InvalidParams: {}", e);
+    }
 }

@@ -3,10 +3,10 @@ import { customElement, state } from "lit/decorators.js";
 import { ApiClient } from "../../api/client.js";
 import type {
   DashboardStats,
-  DeviceStatusDistribution,
+  ThingStatusDistribution,
   RecentAlarm,
   DashboardMetrics,
-  QuickDevice,
+  QuickThing,
 } from "../../types/index.js";
 
 @customElement("view-dashboard")
@@ -14,10 +14,10 @@ export class DashboardView extends LitElement {
   @state() loading = true;
   @state() error = "";
   @state() stats?: DashboardStats;
-  @state() distribution?: DeviceStatusDistribution;
+  @state() distribution?: ThingStatusDistribution;
   @state() recentAlarms: RecentAlarm[] = [];
   @state() metrics?: DashboardMetrics;
-  @state() quickDevices: QuickDevice[] = [];
+  @state() quickDevices: QuickThing[] = [];
 
   createRenderRoot() {
     return this;
@@ -34,9 +34,9 @@ export class DashboardView extends LitElement {
     try {
       const [statsRes, distRes, alarmsRes, devicesRes, metricsRes] = await Promise.all([
         ApiClient.get<any>("/monitoring/stats"),
-        ApiClient.get<any>("/devices/distribution"),
+        ApiClient.get<any>("/things/admin/distribution"),
         ApiClient.get<any>("/alarms/recent", { limit: 10 }),
-        ApiClient.get<any>("/devices/quick", { limit: 8 }),
+        ApiClient.get<any>("/things/admin/quick", { limit: 8 }),
         ApiClient.get<any>("/monitoring/metrics"),
       ]);
 
@@ -44,7 +44,7 @@ export class DashboardView extends LitElement {
       this.distribution = distRes.result || undefined;
       this.recentAlarms = (alarmsRes.result || []).map((a: any) => ({
         id: a.id,
-        deviceId: a.deviceId,
+        thingId: a.thingId,
         deviceName: a.deviceName,
         level: a.level,
         message: a.message,
@@ -56,7 +56,7 @@ export class DashboardView extends LitElement {
         name: d.name,
         status: d.status,
         lastSeen: d.lastSeen,
-        type: d.type || d.deviceType || "unknown",
+        category: d.category || d.type || "unknown",
       }));
       this.metrics = metricsRes.result || undefined;
     } catch (err: any) {
@@ -129,8 +129,8 @@ export class DashboardView extends LitElement {
       <div class="stats-grid">
         <div class="card stat-card">
           <div class="stat-card__label">物总数</div>
-          <div class="stat-card__value">${this.formatNumber(s?.totalDevices)}</div>
-          <div class="stat-card__meta" style="color: var(--success);">${this.formatNumber(s?.onlineDevices)} 在线</div>
+          <div class="stat-card__value">${this.formatNumber(s?.totalThings)}</div>
+          <div class="stat-card__meta" style="color: var(--success);">${this.formatNumber(s?.onlineThings)} 在线</div>
         </div>
         <div class="card stat-card">
           <div class="stat-card__label">活跃告警</div>
@@ -284,7 +284,7 @@ export class DashboardView extends LitElement {
                   <span class="${this.dotClassForStatus(d.status)}" style="flex-shrink: 0;"></span>
                   <div style="flex: 1;">
                     <div style="font-size: 13px;">${d.name}</div>
-                    <div style="font-size: 12px; color: var(--muted);">${d.type}</div>
+                    <div style="font-size: 12px; color: var(--muted);">${d.category}</div>
                   </div>
                   <span style="font-size: 12px; color: var(--muted);">${d.status === 'online' ? '在线' : d.status === 'offline' ? '离线' : d.status === 'error' ? '故障' : '维护'}</span>
                 </a>

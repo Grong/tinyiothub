@@ -66,7 +66,7 @@ impl TenantService {
         let usage = self.db.get_tenant_usage(tenant_id).await?.ok_or(Error::NotFound)?;
 
         match resource {
-            RESOURCE_TYPE_DEVICE => Ok(self.check_resource_quota(plan.device_limit, usage.device_count)),
+            RESOURCE_TYPE_DEVICE => Ok(self.check_resource_quota(plan.thing_limit, usage.device_count)),
             RESOURCE_TYPE_API_CALL => Ok(self.check_resource_quota(plan.api_call_limit, usage.api_call_count)),
             RESOURCE_TYPE_USER => Ok(self.check_resource_quota(plan.user_limit, usage.user_count)),
             _ => Ok(false),

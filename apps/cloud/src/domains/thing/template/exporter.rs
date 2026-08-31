@@ -3,16 +3,16 @@
 use std::collections::HashMap;
 
 use crate::domains::thing::template::types::CommandTemplate;
-use crate::domains::thing::template::types::DeviceInfo;
-use crate::domains::thing::template::types::DeviceTemplate;
 use crate::domains::thing::template::types::PropertyTemplate;
-use tinyiothub_core::models::device::Device;
+use crate::domains::thing::template::types::ThingInfo;
+use crate::domains::thing::template::types::ThingTemplate;
+use tinyiothub_core::models::thing::Thing;
 
 pub struct TemplateExporter;
 
 impl TemplateExporter {
     /// Export a configured device as a template.
-    pub fn export_from_device(device: &Device) -> Result<DeviceTemplate, String> {
+    pub fn export_from_thing(device: &Thing) -> Result<ThingTemplate, String> {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         let name = format!("{}_template", device.name);
@@ -23,7 +23,7 @@ impl TemplateExporter {
 
         let driver_options = Self::sanitize_driver_options(device.driver_options.as_deref());
 
-        let device_info = DeviceInfo {
+        let device_info = ThingInfo {
             default_name_pattern: format!("{}_{{index}}", device.name),
             default_display_name_pattern: None,
             default_description: None,
@@ -35,7 +35,7 @@ impl TemplateExporter {
         let properties = Self::map_properties(device.properties.as_ref());
         let commands = Self::map_commands(device.commands.as_ref());
 
-        Ok(DeviceTemplate {
+        Ok(ThingTemplate {
             id: format!("tpl_{}", uuid::Uuid::new_v4()),
             name,
             display_name: display_name.to_string(),
@@ -44,7 +44,6 @@ impl TemplateExporter {
             author: None,
             category: "exported".to_string(),
             manufacturer: device.factory_name.clone(),
-            device_type: device.device_type.clone().unwrap_or_default(),
             protocol_type: device.protocol_type.clone(),
             driver_name: device.driver_name.clone(),
             tags: "[]".to_string(),
@@ -101,7 +100,7 @@ impl TemplateExporter {
     }
 
     fn map_properties(
-        props: Option<&Vec<tinyiothub_core::models::device_property::DeviceProperty>>,
+        props: Option<&Vec<tinyiothub_core::models::thing_property::ThingProperty>>,
     ) -> Vec<PropertyTemplate> {
         let Some(props) = props else { return Vec::new() };
         props
@@ -122,9 +121,7 @@ impl TemplateExporter {
             .collect()
     }
 
-    fn map_commands(
-        cmds: Option<&Vec<tinyiothub_core::models::device_command::DeviceCommand>>,
-    ) -> Vec<CommandTemplate> {
+    fn map_commands(cmds: Option<&Vec<tinyiothub_core::models::thing_command::ThingCommand>>) -> Vec<CommandTemplate> {
         let Some(cmds) = cmds else { return Vec::new() };
         cmds.iter()
             .map(|c| CommandTemplate {
@@ -204,9 +201,9 @@ mod tests {
 
     #[test]
     fn test_map_properties() {
-        let props = vec![tinyiothub_core::models::device_property::DeviceProperty {
+        let props = vec![tinyiothub_core::models::thing_property::ThingProperty {
             id: "p1".to_string(),
-            device_id: "d1".to_string(),
+            thing_id: "d1".to_string(),
             name: "temperature".to_string(),
             display_name: Some("温度".to_string()),
             description: Some("当前温度".to_string()),
@@ -237,9 +234,9 @@ mod tests {
 
     #[test]
     fn test_map_commands() {
-        let cmds = vec![tinyiothub_core::models::device_command::DeviceCommand {
+        let cmds = vec![tinyiothub_core::models::thing_command::ThingCommand {
             id: "c1".to_string(),
-            device_id: "d1".to_string(),
+            thing_id: "d1".to_string(),
             name: "reboot".to_string(),
             display_name: Some("重启".to_string()),
             description: Some("重启设备".to_string()),

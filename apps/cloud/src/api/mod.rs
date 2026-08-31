@@ -14,7 +14,7 @@ use crate::state::AppState;
 // auth — 已迁移至 crates/auth（tinyiothub_auth）
 // batch — 已迁移至 modules/batch/handler.rs
 // chat — 已迁移至 modules/chat/handler/
-// devices — 已迁移至 modules/device/handler/
+// things — 已迁移至 modules/device/handler/
 // drivers — 已迁移至 modules/drivers/handler.rs
 // events — 已迁移至 modules/event/handler/
 // heartbeat — 已迁移至 modules/heartbeat/handler.rs
@@ -37,7 +37,12 @@ pub mod middleware;
 pub fn create_router(app_state: &AppState) -> Router<AppState> {
     // 创建需要认证的路由
     let protected_routes = Router::new()
-        .nest("/devices", crate::domains::admin::device::create_router())
+        .nest("/devices", crate::domains::admin::thing::management::create_router())
+        // nest() does not forward the bare trailing-slash path; tombstone it explicitly.
+        .route(
+            "/devices/",
+            axum::routing::any(crate::domains::admin::thing::management::device_endpoint_removed),
+        )
         .nest("/drivers", crate::domains::driver::router())
         .nest("/alarms", crate::domains::alarm::router())
         .nest("/alarm-rules", crate::domains::alarm::rule_router())
@@ -90,6 +95,7 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
         .nest("/agents", crate::domains::agent::host::handler::create_router())
         .nest("/driver-health", crate::domains::driver::driver_health_router())
         .nest("/things", crate::domains::thing::router())
+        .nest("/things/admin", crate::domains::admin::thing::create_router())
         .route(
             "/tools/catalog",
             get(crate::domains::agent::chat::handler::proxy::tools_catalog),
@@ -118,7 +124,7 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
         .nest("/tenants", crate::domains::tenant::auth_router())
         .nest("/system", crate::domains::admin::system::create_router())
         .nest("/system", crate::shared::initialization::create_router())
-        .route("/gateway/pair", post(crate::domains::driver::gateway::handler::pairing::pair_device))
+        .route("/gateway/pair", post(crate::domains::driver::gateway::handler::pairing::pair_thing))
         // 公开的SSE端点（不需要JWT header, 通过?token=鉴权）
         .route(
             "/events/sse/public",

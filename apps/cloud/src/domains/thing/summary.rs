@@ -313,7 +313,7 @@ mod tests {
         // is present. Disable FK enforcement while replacing it with the
         // simplified test schema: with FK on, DROP TABLE runs an implicit
         // delete + schema revalidation that deadlocks against the
-        // device_alarm_rules → thing_properties → devices reference chain.
+        // thing_alarm_rules → thing_properties → things reference chain.
         // The PRAGMA is per-connection, so the drops must run on the SAME
         // acquired connection — a fresh pool connection would have FK on.
         let mut conn = pool.acquire().await.unwrap();
@@ -322,11 +322,11 @@ mod tests {
             .await
             .unwrap();
         for table in [
-            "device_alarm_rules",
+            "thing_alarm_rules",
             "resources",
             "thing_properties",
             "thing_actions",
-            "devices",
+            "things",
         ] {
             sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE IF EXISTS {}", table)))
                 .execute(&mut *conn)
@@ -336,7 +336,7 @@ mod tests {
         drop(conn);
 
         sqlx::query(
-            "CREATE TABLE IF NOT EXISTS devices (
+            "CREATE TABLE IF NOT EXISTS things (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 thing_type TEXT NOT NULL DEFAULT 'device',
@@ -355,7 +355,7 @@ mod tests {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS thing_properties (
                 id TEXT PRIMARY KEY,
-                device_id TEXT NOT NULL,
+                thing_id TEXT NOT NULL,
                 name TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -368,7 +368,7 @@ mod tests {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS thing_actions (
                 id TEXT PRIMARY KEY,
-                device_id TEXT NOT NULL,
+                thing_id TEXT NOT NULL,
                 name TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -381,7 +381,7 @@ mod tests {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS resources (
                 id TEXT PRIMARY KEY,
-                device_id TEXT,
+                thing_id TEXT,
                 name TEXT NOT NULL,
                 content TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -399,14 +399,14 @@ mod tests {
     async fn test_summary_dirty_on_resource_attach(pool: SqlitePool) {
         setup_test_db(&pool).await;
 
-        sqlx::query("INSERT INTO devices (id, name, summary_status) VALUES ('d1', 'Test', NULL)")
+        sqlx::query("INSERT INTO things (id, name, summary_status) VALUES ('d1', 'Test', NULL)")
             .execute(&pool)
             .await
             .unwrap();
 
         mark_dirty_for_resource_change(&pool, "d1").await.unwrap();
 
-        let status: String = sqlx::query_scalar("SELECT summary_status FROM devices WHERE id = 'd1'")
+        let status: String = sqlx::query_scalar("SELECT summary_status FROM things WHERE id = 'd1'")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -418,28 +418,28 @@ mod tests {
         setup_test_db(&pool).await;
 
         sqlx::query(
-            "INSERT INTO devices (id, name, summary_status, parent_id) \
+            "INSERT INTO things (id, name, summary_status, parent_id) \
              VALUES ('root', 'Root', NULL, NULL)",
         )
         .execute(&pool)
         .await
         .unwrap();
         sqlx::query(
-            "INSERT INTO devices (id, name, summary_status, parent_id) \
+            "INSERT INTO things (id, name, summary_status, parent_id) \
              VALUES ('c1', 'Child1', NULL, 'root')",
         )
         .execute(&pool)
         .await
         .unwrap();
         sqlx::query(
-            "INSERT INTO devices (id, name, summary_status, parent_id) \
+            "INSERT INTO things (id, name, summary_status, parent_id) \
              VALUES ('c2', 'Child2', NULL, 'c1')",
         )
         .execute(&pool)
         .await
         .unwrap();
         sqlx::query(
-            "INSERT INTO devices (id, name, summary_status, parent_id) \
+            "INSERT INTO things (id, name, summary_status, parent_id) \
              VALUES ('other', 'Other', NULL, NULL)",
         )
         .execute(&pool)
@@ -450,7 +450,7 @@ mod tests {
         assert_eq!(affected, 3); // root + c1 + c2
 
         // 'other' should NOT be dirtied
-        let other_status: Option<String> = sqlx::query_scalar("SELECT summary_status FROM devices WHERE id = 'other'")
+        let other_status: Option<String> = sqlx::query_scalar("SELECT summary_status FROM things WHERE id = 'other'")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -499,7 +499,7 @@ mod tests {
         // the summary-persist UPDATE failing) used to leave the entry
         // occupied forever — every later request for the thing hung.
         setup_test_db(&pool).await;
-        sqlx::query("INSERT INTO devices (id, name, summary_status) VALUES ('d1', 'Test', 'dirty')")
+        sqlx::query("INSERT INTO things (id, name, summary_status) VALUES ('d1', 'Test', 'dirty')")
             .execute(&pool)
             .await
             .unwrap();
@@ -531,7 +531,7 @@ mod tests {
         setup_test_db(&pool).await;
 
         sqlx::query(
-            "INSERT INTO devices (id, name, ontology_summary, summary_status) \
+            "INSERT INTO things (id, name, ontology_summary, summary_status) \
              VALUES ('d1', 'Test', '已有摘要', 'ok')",
         )
         .execute(&pool)
@@ -549,7 +549,7 @@ mod tests {
     async fn test_summary_get_or_compute_computes(pool: SqlitePool) {
         setup_test_db(&pool).await;
 
-        sqlx::query("INSERT INTO devices (id, name, summary_status) VALUES ('d1', 'Test', 'dirty')")
+        sqlx::query("INSERT INTO things (id, name, summary_status) VALUES ('d1', 'Test', 'dirty')")
             .execute(&pool)
             .await
             .unwrap();
@@ -562,7 +562,7 @@ mod tests {
         assert!(!result.as_ref().unwrap().is_empty());
 
         // Verify status updated to 'ok'
-        let status: String = sqlx::query_scalar("SELECT summary_status FROM devices WHERE id = 'd1'")
+        let status: String = sqlx::query_scalar("SELECT summary_status FROM things WHERE id = 'd1'")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -584,7 +584,7 @@ mod tests {
     async fn test_summary_single_flight(pool: SqlitePool) {
         setup_test_db(&pool).await;
 
-        sqlx::query("INSERT INTO devices (id, name, summary_status) VALUES ('d1', 'Test', 'dirty')")
+        sqlx::query("INSERT INTO things (id, name, summary_status) VALUES ('d1', 'Test', 'dirty')")
             .execute(&pool)
             .await
             .unwrap();
@@ -643,7 +643,7 @@ mod tests {
         // degradation), summary_status='failed', no error to the caller.
         setup_test_db(&pool).await;
         sqlx::query(
-            "INSERT INTO devices (id, name, ontology_summary, summary_status)              VALUES ('d1', 'Test', '旧摘要', 'dirty')",
+            "INSERT INTO things (id, name, ontology_summary, summary_status)              VALUES ('d1', 'Test', '旧摘要', 'dirty')",
         )
         .execute(&pool)
         .await
@@ -662,7 +662,7 @@ mod tests {
 
         // Stale summary returned, status marked failed
         assert_eq!(result, Some("旧摘要".to_string()));
-        let status: String = sqlx::query_scalar("SELECT summary_status FROM devices WHERE id = 'd1'")
+        let status: String = sqlx::query_scalar("SELECT summary_status FROM things WHERE id = 'd1'")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -678,24 +678,24 @@ mod tests {
 
         // Thing with its own property/action instances (blueprint model)
         sqlx::query(
-            "INSERT INTO devices (id, name, thing_type, summary_status) \
+            "INSERT INTO things (id, name, thing_type, summary_status) \
              VALUES ('d1', '传感器A', 'device', 'dirty')",
         )
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('p1', 'd1', 'temperature')")
+        sqlx::query("INSERT INTO thing_properties (id, thing_id, name) VALUES ('p1', 'd1', 'temperature')")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO thing_actions (id, device_id, name) VALUES ('a1', 'd1', 'reboot')")
+        sqlx::query("INSERT INTO thing_actions (id, thing_id, name) VALUES ('a1', 'd1', 'reboot')")
             .execute(&pool)
             .await
             .unwrap();
 
         // Insert a knowledge doc
         sqlx::query(
-            "INSERT INTO resources (id, device_id, name, content) \
+            "INSERT INTO resources (id, thing_id, name, content) \
              VALUES ('r1', 'd1', '安装手册', '安装步骤说明...')",
         )
         .execute(&pool)
@@ -708,7 +708,7 @@ mod tests {
 
         assert!(result.is_some());
 
-        let status: String = sqlx::query_scalar("SELECT summary_status FROM devices WHERE id = 'd1'")
+        let status: String = sqlx::query_scalar("SELECT summary_status FROM things WHERE id = 'd1'")
             .fetch_one(&pool)
             .await
             .unwrap();

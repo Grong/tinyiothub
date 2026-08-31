@@ -100,7 +100,7 @@ async fn main() {
     tracing::info!(?config, "Starting TinyIoTHub Edge Gateway v0.2");
 
     if let Some(creds) = GatewayCredentials::load(&config.credentials_file) {
-        tracing::info!(device_id = %creds.device_id, "Found saved credentials");
+        tracing::info!(thing_id = %creds.thing_id, "Found saved credentials");
         run_authenticated(config, creds).await;
     } else {
         tracing::info!("No saved credentials, starting pairing mode");
@@ -124,9 +124,9 @@ async fn run_authenticated(config: EdgeConfig, creds: GatewayCredentials) {
         state.config_service.load_defaults().await;
     }
 
-    // Initial device scan (best-effort, don't block startup on failure)
+    // Initial thing scan (best-effort, don't block startup on failure)
     if let Err(e) = state.driver_service.scan_all().await {
-        tracing::warn!(?e, "Initial device scan failed, will retry on next telemetry tick");
+        tracing::warn!(?e, "Initial thing scan failed, will retry on next telemetry tick");
     }
 
     // Flush any leftover offline buffer from previous run
@@ -207,11 +207,11 @@ async fn run_authenticated(config: EdgeConfig, creds: GatewayCredentials) {
 
             Some(msg) = msg_rx.recv() => {
                 match msg {
-                    GatewayMessage::ConfigDevice(payload) => {
+                    GatewayMessage::ConfigThing(payload) => {
                         tracing::info!(
-                            device_id = %payload.device_id,
+                            thing_id = %payload.thing_id,
                             action = %payload.action,
-                            "Config device"
+                            "Config thing"
                         );
                     }
                     GatewayMessage::Config(config) => {
@@ -219,10 +219,10 @@ async fn run_authenticated(config: EdgeConfig, creds: GatewayCredentials) {
                         state.config_service.apply_cloud_config(&config).await.ok();
                     }
                     GatewayMessage::Command(cmd) => {
-                        let device_id = cmd.get("device_id")
+                        let thing_id = cmd.get("thing_id")
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
-                        state.command_service.execute(device_id, &cmd).await.ok();
+                        state.command_service.execute(thing_id, &cmd).await.ok();
                     }
                     GatewayMessage::DriverInstall(payload) => {
                         tracing::info!(
@@ -243,7 +243,7 @@ async fn run_pairing(config: EdgeConfig) {
     tracing::info!("Starting pairing mode...");
     match PairingClient::run_pairing(&config).await {
         Ok(creds) => {
-            tracing::info!(device_id = %creds.device_id, "Pairing successful, saving credentials");
+            tracing::info!(thing_id = %creds.thing_id, "Pairing successful, saving credentials");
             if let Err(e) = creds.save(&config.credentials_file) {
                 tracing::error!(?e, "Failed to save credentials");
                 std::process::exit(1);

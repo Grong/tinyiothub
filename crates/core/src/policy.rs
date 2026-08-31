@@ -56,7 +56,7 @@ pub struct Proposal {
     /// Tool or action name being proposed.
     pub tool_name: String,
     /// Target device or resource.
-    pub device_id: Option<String>,
+    pub thing_id: Option<String>,
     /// Human-readable summary of what this will do.
     pub summary: String,
     /// Why the agent wants to take this action.

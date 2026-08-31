@@ -1,8 +1,8 @@
 // Template types — DTOs and request/response types.
 //
-// DB 行类型与模板请求类型（DeviceTemplate/DeviceInfo/PropertyTemplate/
+// DB 行类型与模板请求类型（ThingTemplate/ThingInfo/PropertyTemplate/
 // CommandTemplate/TemplateQueryParams/TemplateCategory/
-// CreateDeviceTemplateRequest/UpdateDeviceTemplateRequest/TemplateFilters）
+// CreateThingTemplateRequest/UpdateThingTemplateRequest/TemplateFilters）
 // 已迁入 tinyiothub_storage::thing_template（Task 12），此处 re-export
 // 保持既有路径。
 
@@ -11,14 +11,14 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 pub use tinyiothub_storage::thing_template::{
-    CommandTemplate, CreateDeviceTemplateRequest, DeviceInfo, DeviceTemplate, PropertyTemplate, TemplateCategory,
-    TemplateFilters, TemplateQueryParams, UpdateDeviceTemplateRequest,
+    CommandTemplate, CreateThingTemplateRequest, PropertyTemplate, TemplateCategory, TemplateFilters,
+    TemplateQueryParams, ThingInfo, ThingTemplate, UpdateThingTemplateRequest,
 };
 
 /// 设备创建输入
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct DeviceCreationInput {
+pub struct ThingCreationInput {
     pub name: String,
     pub display_name: Option<String>,
     pub description: Option<String>,
@@ -37,19 +37,19 @@ pub struct DeviceCreationInput {
 /// 设备预览
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct DevicePreview {
-    pub device_info: tinyiothub_core::models::device::CreateDeviceRequest,
-    pub properties: Vec<tinyiothub_core::models::device_property::CreateDevicePropertyRequest>,
-    pub commands: Vec<tinyiothub_core::models::device_command::CreateDeviceCommandRequest>,
+pub struct ThingPreview {
+    pub thing_info: tinyiothub_core::models::thing::CreateThingRequest,
+    pub properties: Vec<tinyiothub_core::models::thing_property::CreateThingPropertyRequest>,
+    pub commands: Vec<tinyiothub_core::models::thing_command::CreateThingCommandRequest>,
     pub warnings: Vec<String>,
 }
 
 /// 基于模板创建设备请求
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct CreateDeviceFromTemplateRequest {
+pub struct CreateThingFromTemplateRequest {
     pub template_id: String,
-    pub device_input: DeviceCreationInput,
+    pub thing_input: ThingCreationInput,
 }
 
 /// 模板需求信息 (用于设备创建向导)

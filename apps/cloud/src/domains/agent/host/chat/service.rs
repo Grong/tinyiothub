@@ -472,7 +472,7 @@ mod tests {
     fn test_turn_event_approval_request() {
         let evt = TurnEvent::ApprovalRequest {
             request_id: "req1".to_string(),
-            tool_name: "delete_device".to_string(),
+            tool_name: "delete_thing".to_string(),
             arguments_summary: "Delete device X".to_string(),
             timeout_secs: 30,
         };
@@ -481,7 +481,7 @@ mod tests {
             ChatEvent::ToolCallStart {
                 tool_name, tool_args, ..
             } => {
-                assert_eq!(tool_name, "delete_device");
+                assert_eq!(tool_name, "delete_thing");
                 assert_eq!(tool_args, "Delete device X");
             }
             _ => panic!("Expected ToolCallStart"),

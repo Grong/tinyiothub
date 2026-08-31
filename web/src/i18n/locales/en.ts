@@ -830,7 +830,7 @@ export const en: TranslationMap = {
     },
   },
   gatewayPairing: {
-    title: "Add Gateway Device",
+    title: "Add Gateway Thing",
     description: "Enter the 6-digit code shown on your gateway screen.",
     codePlaceholder: "000000",
     codeLabel: "6-digit pairing code",

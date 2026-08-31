@@ -1,13 +1,13 @@
 import { LitElement, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { eventApi } from "../../api/events.js";
-import type { DeviceEvent } from "../../types/index.js";
+import type { ThingEvent } from "../../types/index.js";
 
 @customElement("view-events")
 export class EventsView extends LitElement {
   @state() loading = true;
   @state() error = "";
-  @state() events: DeviceEvent[] = [];
+  @state() events: ThingEvent[] = [];
   @state() page = 1;
   @state() pageSize = 20;
   @state() totalPages = 0;

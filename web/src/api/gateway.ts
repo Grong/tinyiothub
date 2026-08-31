@@ -10,8 +10,8 @@ export interface PairingRequest {
 }
 
 export interface PairingResponse {
-  deviceId: string;
-  deviceName: string;
+  thingId: string;
+  thingName: string;
   hostname: string;
   ip: string;
 }

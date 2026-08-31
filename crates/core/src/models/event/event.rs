@@ -141,14 +141,12 @@ impl Event {
                     ));
                 }
             }
-            EventType::Device(device_type) => {
-                match device_type {
-                    DeviceEventType::Connection => {
+            EventType::Device(event_type) => {
+                match event_type {
+                    ThingEventType::Connection => {
                         // Connection events are usually Info level
                     }
-                    DeviceEventType::PropertyChange
-                    | DeviceEventType::PropertyAlarm
-                    | DeviceEventType::PropertyNormal => {
+                    ThingEventType::PropertyChange | ThingEventType::PropertyAlarm | ThingEventType::PropertyNormal => {
                         // Property events can be any level depending on alarm rules
                     }
                     _ => {}
@@ -162,9 +160,9 @@ impl Event {
         // Validate source consistency
         match &self.event_type {
             EventType::Device(_) => {
-                if self.source.device_id().is_none() {
+                if self.source.thing_id().is_none() {
                     return Err(Error::ValidationError(
-                        "Device events must have a device_id in source".to_string(),
+                        "Thing events must have a thing_id in source".to_string(),
                     ));
                 }
             }
@@ -172,7 +170,7 @@ impl Event {
                 // System events may or may not have user_id
             }
             EventType::Ai(_) => {
-                // AI events may or may not have device_id/user_id
+                // AI events may or may not have thing_id/user_id
             }
         }
 
@@ -194,12 +192,12 @@ impl Event {
 
     /// Create a device event
     pub fn new_device_event(
-        device_type: super::DeviceEventType,
+        event_type: super::ThingEventType,
         level: EventLevel,
         source: EventSource,
         content: RichContent,
     ) -> Result<Self> {
-        Self::new(EventType::Device(device_type), level, source, content)
+        Self::new(EventType::Device(event_type), level, source, content)
     }
 
     /// Create a device connection event
@@ -216,22 +214,17 @@ impl Event {
             super::ConnectionStatus::Error => EventLevel::Error,
         };
 
-        Self::new_device_event(super::DeviceEventType::Connection, level, source, content)
+        Self::new_device_event(super::ThingEventType::Connection, level, source, content)
     }
 
     /// Create a device alarm event
     pub fn new_device_alarm_event(_device_id: String, source: EventSource, content: RichContent) -> Result<Self> {
-        Self::new_device_event(
-            super::DeviceEventType::DeviceAlarm,
-            EventLevel::Warning,
-            source,
-            content,
-        )
+        Self::new_device_event(super::ThingEventType::DeviceAlarm, EventLevel::Warning, source, content)
     }
 
     /// Create a device normal event
     pub fn new_device_normal_event(_device_id: String, source: EventSource, content: RichContent) -> Result<Self> {
-        Self::new_device_event(super::DeviceEventType::DeviceNormal, EventLevel::Info, source, content)
+        Self::new_device_event(super::ThingEventType::DeviceNormal, EventLevel::Info, source, content)
     }
 
     /// Create a property change event
@@ -242,7 +235,7 @@ impl Event {
         content: RichContent,
     ) -> Result<Self> {
         Self::new_device_event(
-            super::DeviceEventType::PropertyChange,
+            super::ThingEventType::PropertyChange,
             EventLevel::Debug,
             source,
             content,
@@ -257,7 +250,7 @@ impl Event {
         content: RichContent,
         level: EventLevel,
     ) -> Result<Self> {
-        Self::new_device_event(super::DeviceEventType::PropertyAlarm, level, source, content)
+        Self::new_device_event(super::ThingEventType::PropertyAlarm, level, source, content)
     }
 
     /// Create a property normal event
@@ -267,12 +260,7 @@ impl Event {
         source: EventSource,
         content: RichContent,
     ) -> Result<Self> {
-        Self::new_device_event(
-            super::DeviceEventType::PropertyNormal,
-            EventLevel::Info,
-            source,
-            content,
-        )
+        Self::new_device_event(super::ThingEventType::PropertyNormal, EventLevel::Info, source, content)
     }
 
     /// Create a command started event
@@ -283,7 +271,7 @@ impl Event {
         content: RichContent,
     ) -> Result<Self> {
         Self::new_device_event(
-            super::DeviceEventType::CommandStarted,
+            super::ThingEventType::CommandStarted,
             EventLevel::Debug,
             source,
             content,
@@ -298,7 +286,7 @@ impl Event {
         content: RichContent,
     ) -> Result<Self> {
         Self::new_device_event(
-            super::DeviceEventType::CommandCompleted,
+            super::ThingEventType::CommandCompleted,
             EventLevel::Info,
             source,
             content,
@@ -312,13 +300,8 @@ impl Event {
         source: EventSource,
         content: RichContent,
     ) -> Result<Self> {
-        Self::new_device_event(
-            super::DeviceEventType::CommandFailed,
-            EventLevel::Error,
-            source,
-            content,
-        )
+        Self::new_device_event(super::ThingEventType::CommandFailed, EventLevel::Error, source, content)
     }
 }
 
-use super::DeviceEventType;
+use super::ThingEventType;

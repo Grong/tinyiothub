@@ -33,15 +33,15 @@ pub struct HeartbeatSignal {
     pub reason: String,
     pub context: String,
     pub priority: SignalPriority,
-    /// Dedup key: signals with same (device_id, alarm_type) are merged.
-    pub device_id: Option<String>,
+    /// Dedup key: signals with same (thing_id, alarm_type) are merged.
+    pub thing_id: Option<String>,
     pub alarm_type: Option<String>,
     pub rule_id: Option<String>,
 }
 
 impl HeartbeatSignal {
     pub fn dedup_key(&self) -> Option<(String, String)> {
-        match (&self.device_id, &self.alarm_type) {
+        match (&self.thing_id, &self.alarm_type) {
             (Some(did), Some(at)) => Some((did.clone(), at.clone())),
             _ => None,
         }

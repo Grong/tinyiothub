@@ -16,7 +16,7 @@ fn test_config() -> EdgeConfig {
 
 fn test_credentials() -> GatewayCredentials {
     GatewayCredentials {
-        device_id: "test-dev".into(),
+        thing_id: "test-dev".into(),
         client_id: "test-client".into(),
         username: "user".into(),
         password: "pass".into(),
@@ -39,22 +39,22 @@ async fn test_get_health_handler() {
     assert!(response.0.result.is_some());
 }
 
-// ── Devices ──────────────────────────────────────────────────────
+// ── Things ──────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_get_devices_handler_empty() {
-    use tinyiothub_edge::modules::http::handlers::get_devices;
+async fn test_get_things_handler_empty() {
+    use tinyiothub_edge::modules::http::handlers::get_things;
     let state = test_state().await;
-    let response = get_devices(axum::extract::State(state)).await;
+    let response = get_things(axum::extract::State(state)).await;
     assert_eq!(response.0.code, 0);
     assert!(response.0.result.is_some());
 }
 
 #[tokio::test]
 async fn test_get_device_handler_not_found() {
-    use tinyiothub_edge::modules::http::handlers::get_device;
+    use tinyiothub_edge::modules::http::handlers::get_thing;
     let state = test_state().await;
-    let response = get_device(
+    let response = get_thing(
         axum::extract::State(state),
         axum::extract::Path("nonexistent".to_string()),
     )
@@ -66,9 +66,9 @@ async fn test_get_device_handler_not_found() {
 
 #[tokio::test]
 async fn test_get_device_properties_handler_not_found() {
-    use tinyiothub_edge::modules::http::handlers::get_device_properties;
+    use tinyiothub_edge::modules::http::handlers::get_thing_properties;
     let state = test_state().await;
-    let response = get_device_properties(
+    let response = get_thing_properties(
         axum::extract::State(state),
         axum::extract::Path("nonexistent".to_string()),
     )
@@ -78,9 +78,9 @@ async fn test_get_device_properties_handler_not_found() {
 
 #[tokio::test]
 async fn test_post_device_properties_handler_not_found() {
-    use tinyiothub_edge::modules::http::handlers::post_device_properties;
+    use tinyiothub_edge::modules::http::handlers::post_thing_properties;
     let state = test_state().await;
-    let response = post_device_properties(
+    let response = post_thing_properties(
         axum::extract::State(state),
         axum::extract::Path("nonexistent".to_string()),
         axum::Json(serde_json::json!({"key": "value"})),
@@ -91,9 +91,9 @@ async fn test_post_device_properties_handler_not_found() {
 
 #[tokio::test]
 async fn test_post_device_command_handler_not_found() {
-    use tinyiothub_edge::modules::http::handlers::post_device_command;
+    use tinyiothub_edge::modules::http::handlers::post_thing_command;
     let state = test_state().await;
-    let response = post_device_command(
+    let response = post_thing_command(
         axum::extract::State(state),
         axum::extract::Path("nonexistent".to_string()),
         axum::Json(serde_json::json!({"action": "reboot"})),

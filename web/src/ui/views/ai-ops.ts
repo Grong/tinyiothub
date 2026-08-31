@@ -27,14 +27,14 @@ interface HeartbeatTask {
 
 interface ActionDetail {
   tool: string;
-  deviceId: string;
+  thingId: string;
   summary: string;
 }
 
 interface ProposalDetail {
   level: string;
   toolName: string;
-  deviceId: string;
+  thingId: string;
   deviceName: string;
   summary: string;
   reason: string;
@@ -57,7 +57,7 @@ interface PendingProposal {
   status: string;
   level: string;
   toolName: string;
-  deviceId: string;
+  thingId: string;
   deviceName: string;
   summary: string;
   reason: string;
@@ -281,7 +281,7 @@ export class ViewAiOps extends LitElement {
             <div class="ao-proposal__head">
               <span class="ao-badge ao-badge--${this.levelClass(p.level)}">${this.levelClass(p.level).toUpperCase()}</span>
               <span class="ao-proposal__tool">${p.toolName}</span>
-              <span class="ao-proposal__device">${p.deviceName || p.deviceId}</span>
+              <span class="ao-proposal__device">${p.deviceName || p.thingId}</span>
             </div>
             <p class="ao-proposal__summary">${p.summary}</p>
             <div class="ao-proposal__meta">
@@ -358,7 +358,7 @@ export class ViewAiOps extends LitElement {
                       ${log.autoExecuted.map(a => html`
                         <div class="ao-action-item">
                           <span class="ao-action-item__tool">${a.tool}</span>
-                          ${a.deviceId ? html`<span class="ao-action-item__device">${a.deviceId}</span>` : nothing}
+                          ${a.thingId ? html`<span class="ao-action-item__device">${a.thingId}</span>` : nothing}
                           <span class="ao-action-item__summary">${a.summary}</span>
                         </div>
                       `)}
@@ -371,7 +371,7 @@ export class ViewAiOps extends LitElement {
                         <div class="ao-action-item ao-action-item--proposal">
                           <span class="ao-badge ao-badge--${this.levelClass(p.level)}">${this.levelClass(p.level).toUpperCase()}</span>
                           <span class="ao-action-item__tool">${p.toolName}</span>
-                          ${p.deviceName || p.deviceId ? html`<span class="ao-action-item__device">${p.deviceName || p.deviceId}</span>` : nothing}
+                          ${p.deviceName || p.thingId ? html`<span class="ao-action-item__device">${p.deviceName || p.thingId}</span>` : nothing}
                           <span class="ao-action-item__summary">${p.summary}</span>
                         </div>
                       `)}

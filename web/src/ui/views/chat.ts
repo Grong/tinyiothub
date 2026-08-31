@@ -92,16 +92,16 @@ export class ChatView extends LitElement {
   }
 
   private _handleA2uiAction(functionId: string, data: Record<string, unknown>): void {
-    const deviceId = data.deviceId as string | undefined;
+    const thingId = (data.thingId ?? data.deviceId) as string | undefined;
 
     // Navigation actions — go directly to the page, don't send a chat message
-    if (functionId === "viewDevice" && deviceId) {
-      window.history.pushState({}, "", `/devices/${deviceId}`);
+    if (functionId === "viewDevice" && thingId) {
+      window.history.pushState({}, "", `/things/${thingId}`);
       window.dispatchEvent(new PopStateEvent("popstate"));
       return;
     }
-    if (functionId === "controlDevice" && deviceId) {
-      window.history.pushState({}, "", `/devices/${deviceId}`);
+    if (functionId === "controlDevice" && thingId) {
+      window.history.pushState({}, "", `/things/${thingId}`);
       window.dispatchEvent(new PopStateEvent("popstate"));
       return;
     }

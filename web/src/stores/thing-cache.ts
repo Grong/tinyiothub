@@ -1,0 +1,359 @@
+/**
+ * ThingCache — 浏览器侧物数据缓存层
+ *
+ * 单例模式，持有唯一 SSE 连接，所有组件从信号读数据。
+ * 缓存从空开始，通过 SSE 推送和物详情加载逐步填充。
+ * 不做全量 fetch，适合大量物场景。
+ *
+ * 认证方式（推荐）：
+ * 1. 先通过 POST /api/v1/auth/sse-token（JWT header）获取短期 SSE token
+ * 2. 使用 ?sse_token=xxx 连接 SSE（token 仅存活 5 分钟）
+ * 3. 回退：?token=xxx（JWT 在 URL 中，向后兼容）
+ */
+
+import { signal, computed } from '@lit-labs/signals';
+import { thingApi } from '../api/things.js';
+import { API_BASE } from '../api/config.js';
+import { getAuthToken, apiPost } from '../api/client.js';
+import type { Thing, ThingProperty } from '../types/index.js';
+
+type SseStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+
+class ThingCache {
+  // === Signals ===
+  $devicesMap = signal(new Map<string, Thing>());
+  $sseStatus = signal<SseStatus>('disconnected');
+
+  // Computed: 从 Map 派生有序数组
+  $devicesList = computed(() => Array.from(this.$devicesMap.get().values()));
+
+  // === Private ===
+  private eventSource: EventSource | null = null;
+  private reconnectTimer: number | null = null;
+  private reconnectAttempt = 0;
+  private pendingSseEvents: any[] = [];
+  private sseConnecting = false;
+  /**
+   * 获取当前缓存的物列表。
+   * 同时确保 SSE 连接已建立（静默，不 fetch）。
+   */
+  async getDevices(): Promise<Thing[]> {
+    this.ensureConnected();
+    return this.$devicesList.get();
+  }
+
+  /**
+   * 强制刷新：重新建立 SSE 连接（不全量 fetch）。
+   */
+  async refreshDevices(): Promise<void> {
+    this.disconnect();
+    this.ensureConnected();
+  }
+
+  /**
+   * 乐观更新属性值，同时异步调用 API。
+   * API 失败时 rollback。
+   */
+  async updateProperty(
+    thingId: string,
+    propertyName: string,
+    value: any,
+  ): Promise<void> {
+    const map = this.$devicesMap.get();
+    const device = map.get(thingId);
+    if (!device || !device.properties) return;
+
+    const oldProperties = device.properties;
+
+    const updatedProperties = device.properties.map((p) =>
+      p.name === propertyName ? { ...p, currentValue: value, updatedAt: new Date().toISOString() } : p,
+    );
+    const updatedMap = new Map(map);
+    updatedMap.set(thingId, { ...device, properties: updatedProperties });
+    this.$devicesMap.set(updatedMap);
+
+    try {
+      await thingApi.updateProperty(thingId, propertyName, value);
+    } catch (err) {
+      // Rollback
+      const rollbackMap = this.$devicesMap.get();
+      const current = rollbackMap.get(thingId);
+      if (current) {
+        const rbMap = new Map(rollbackMap);
+        rbMap.set(thingId, { ...current, properties: oldProperties });
+        this.$devicesMap.set(rbMap);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * 批量更新物的完整属性（含元数据），用于详情页加载时初始化。
+   * 不触发 SSE 事件。
+   */
+  setDeviceProperties(thingId: string, properties: ThingProperty[]): void {
+    const map = this.$devicesMap.get();
+    const device = map.get(thingId);
+    const updated = new Map(map);
+    updated.set(thingId, {
+      ...(device ?? { id: thingId, name: thingId, status: 'online' }),
+      properties,
+    });
+    this.$devicesMap.set(updated);
+  }
+
+  /**
+   * 添加或更新单个物到缓存。
+   */
+  setDevice(device: Thing): void {
+    const map = new Map(this.$devicesMap.get());
+    map.set(device.id, device);
+    this.$devicesMap.set(map);
+  }
+
+  /**
+   * 从缓存移除物。
+   */
+  removeDevice(thingId: string): void {
+    const map = new Map(this.$devicesMap.get());
+    map.delete(thingId);
+    this.$devicesMap.set(map);
+  }
+
+  /**
+   * 强制触发所有 $devicesMap 的订阅者 re-render。
+   */
+  touchForRerender(): void {
+    const map = this.$devicesMap.get();
+    this.$devicesMap.set(map);
+  }
+
+  /**
+   * 清空缓存，关闭 SSE 连接。登出时调用。
+   */
+  clearCache(): void {
+    this.disconnect();
+    this.$devicesMap.set(new Map());
+    localStorage.removeItem("workspace-id");
+    sessionStorage.removeItem("workspace-id");
+    this.pendingSseEvents = [];
+  }
+
+  // === Private methods ===
+
+  private disconnect(): void {
+    this.eventSource?.close();
+    this.eventSource = null;
+    if (this.reconnectTimer != null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.$sseStatus.set('disconnected');
+    this.reconnectAttempt = 0;
+    this.sseConnecting = false;
+  }
+
+  /** 获取短期 SSE token */
+  private async fetchSseToken(): Promise<string | null> {
+    try {
+      const res = await apiPost<{ token: string; expiresInSeconds: number }>('/auth/sse-token');
+      return res.result?.token ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async ensureConnected(): Promise<void> {
+    if (this.eventSource != null || this.sseConnecting) return;
+    this.sseConnecting = true;
+
+    this.$sseStatus.set('connecting');
+
+    const workspaceId = localStorage.getItem("workspace-id")
+      ?? sessionStorage.getItem("workspace-id")
+      ?? "default";
+
+    // 方式 1: 使用短期 SSE token（不暴露 JWT 到 URL）
+    if (getAuthToken()) {
+      const sseToken = await this.fetchSseToken();
+      if (sseToken) {
+        this.connectWithSseToken(sseToken, workspaceId);
+        return;
+      }
+    }
+
+    // 方式 2: 回退到 JWT header（由 EventSource 无法设置的 header 弥补，使用 ?token= 回退）
+    this.connectWithJwtFallback(workspaceId);
+  }
+
+  private connectWithSseToken(sseToken: string, workspaceId: string): void {
+    const url = `${API_BASE}/events/sse/token?sse_token=${encodeURIComponent(sseToken)}&workspace_id=${encodeURIComponent(workspaceId)}&event_types=device.status_change,device.connection,device.property_change,thing.status_change,thing.property_change`;
+
+    this.doConnect(url);
+  }
+
+  private connectWithJwtFallback(workspaceId: string): void {
+    const token = getAuthToken();
+    if (!token) {
+      this.$sseStatus.set('disconnected');
+      this.sseConnecting = false;
+      return;
+    }
+
+    // 向后兼容：JWT 在 URL 中（?token=xxx）
+    const url = `${API_BASE}/events/sse?token=${encodeURIComponent(token)}&workspace_id=${encodeURIComponent(workspaceId)}&event_types=device.status_change,device.connection,device.property_change,thing.status_change,thing.property_change`;
+
+    this.doConnect(url);
+  }
+
+  private doConnect(url: string): void {
+    try {
+      this.eventSource = new EventSource(url);
+    } catch {
+      this.$sseStatus.set('error');
+      this.sseConnecting = false;
+      this.scheduleReconnect();
+      return;
+    }
+
+    this.eventSource.onopen = () => {
+      this.$sseStatus.set('connected');
+      this.reconnectAttempt = 0;
+      this.sseConnecting = false;
+
+      // 应用连接期间积压的事件
+      const map = this.$devicesMap.get();
+      let currentMap = map;
+      for (const evt of this.pendingSseEvents) {
+        const updated = this.applySseEventToMap(currentMap, evt);
+        if (updated) currentMap = updated;
+      }
+      this.pendingSseEvents = [];
+      if (currentMap !== map) {
+        this.$devicesMap.set(currentMap);
+      }
+    };
+
+    this.eventSource.onmessage = async (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        await this.handleSseEvent(data);
+      } catch {
+        // ignore malformed events
+      }
+    };
+
+    this.eventSource.onerror = () => {
+      this.$sseStatus.set('error');
+      this.eventSource?.close();
+      this.eventSource = null;
+      this.sseConnecting = false;
+      this.scheduleReconnect();
+    };
+  }
+
+  private scheduleReconnect(): void {
+    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempt), 30000);
+    this.reconnectAttempt++;
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      this.sseConnecting = false;
+      this.ensureConnected();
+    }, delay);
+  }
+
+  private async handleSseEvent(data: any): Promise<void> {
+    const thingId: string | undefined = data.thing_id;
+    const eventType: string = data.event_type ?? '';
+    const map = this.$devicesMap.get();
+
+    const updated = this.applySseEventToMap(map, data);
+    if (updated) {
+      this.$devicesMap.set(updated);
+      if (thingId) {
+        window.dispatchEvent(new CustomEvent('thing-updated', {
+          detail: { thingId, eventType, data },
+        }));
+      }
+    }
+  }
+
+  /**
+   * 将 SSE 事件应用到 Map 上，返回新 Map（若有变更）或 null。
+   */
+  private applySseEventToMap(
+    map: Map<string, Thing>,
+    data: any,
+  ): Map<string, Thing> | null {
+    const eventType: string = data.event_type ?? '';
+    const thingId: string | undefined = data.thing_id;
+    if (!thingId) return null;
+
+    let device = map.get(thingId);
+
+    // 物不在缓存中，从事件数据构造最小物
+    if (!device) {
+      const newDevice: Thing = {
+        id: thingId,
+        name: data.content?.title?.replace('Property Changed: ', '').split(' - ')[0] ?? thingId,
+        status: 'online',
+        properties: [],
+      };
+      const updated = new Map(map);
+      updated.set(thingId, newDevice);
+      map = updated;
+      device = newDevice;
+    }
+
+    // device.connection / device.status_change
+    if (eventType === 'device.connection' || eventType === 'device.status_change') {
+      const newStatus = data.status ?? data.content?.status;
+      if (newStatus && newStatus !== device.status) {
+        const updated = new Map(map);
+        updated.set(thingId, { ...device, status: newStatus });
+        return updated;
+      }
+      return null;
+    }
+
+    // device.property_change
+    if (eventType === 'device.property_change') {
+      const propertyName: string | undefined = data.property_name;
+      const newValue: string | undefined = data.new_value;
+      if (!propertyName) return null;
+
+      const props = device.properties ?? [];
+      const propIndex = props.findIndex((p) => p.name === propertyName);
+
+      let updatedProps: typeof props;
+      if (propIndex >= 0) {
+        updatedProps = props.map((p, i) =>
+          i === propIndex
+            ? { ...p, currentValue: newValue, updatedAt: data.timestamp ?? new Date().toISOString() }
+            : p,
+        );
+      } else {
+        updatedProps = [
+          ...props,
+          {
+            id: data.property_id ?? `${thingId}:${propertyName}`,
+            thingId,
+            name: propertyName,
+            value: newValue,
+            currentValue: newValue,
+            dataType: 'unknown',
+            updatedAt: data.timestamp ?? new Date().toISOString(),
+          },
+        ];
+      }
+
+      const updated = new Map(map);
+      updated.set(thingId, { ...device, properties: updatedProps });
+      return updated;
+    }
+
+    return null;
+  }
+}
+
+export const thingCache = new ThingCache();

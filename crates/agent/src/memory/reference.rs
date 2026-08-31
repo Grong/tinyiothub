@@ -53,7 +53,7 @@ mod tests {
             tags: vec![],
             pinned: false,
             supersedes: None,
-            device_id: None,
+            thing_id: None,
             snapshot_data: None,
             snapshot_time: None,
             effectiveness: 1.0,

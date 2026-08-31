@@ -32,11 +32,11 @@ async fn test_pool() -> sqlx::SqlitePool {
     pool
 }
 
-async fn insert_device(pool: &sqlx::SqlitePool, id: &str, workspace_id: &str) {
+async fn insert_thing(pool: &sqlx::SqlitePool, id: &str, workspace_id: &str) {
     seed_test_workspace(pool, "tenant-1", workspace_id).await;
-    sqlx::query("INSERT INTO devices (id, name, workspace_id) VALUES (?, ?, ?)")
+    sqlx::query("INSERT INTO things (id, name, workspace_id) VALUES (?, ?, ?)")
         .bind(id)
-        .bind(format!("Device {id}"))
+        .bind(format!("Thing {id}"))
         .bind(workspace_id)
         .execute(pool)
         .await
@@ -58,7 +58,7 @@ fn input(thing_id: &str, workspace_id: &str, event_name: &str, level: EventLevel
 #[tokio::test]
 async fn test_routed_event_broadcasts_signal_with_all_fields() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-b", "ws-b").await;
+    insert_thing(&pool, "dev-b", "ws-b").await;
     let throttle = ThrottleState::new(60);
     let bus = ThingEventBus::new();
     let mut rx = bus.subscribe();
@@ -108,13 +108,13 @@ async fn test_unknown_event_signal_carries_flag_and_degraded_level() {
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO thing_templates (id, name, display_name, version, category, device_type, events, created_at, updated_at)
+        "INSERT INTO thing_templates (id, name, display_name, version, category, category, events, created_at, updated_at)
          VALUES ('tpl-u', 'tpl-u', 'T', '1.0', 'test-cat', 'sensor', '[{\"name\":\"known_event\"}]', datetime('now'), datetime('now'))",
     )
     .execute(&pool)
     .await
     .unwrap();
-    sqlx::query("INSERT INTO devices (id, name, workspace_id, template_id) VALUES ('dev-u', 'D', 'ws-u', 'tpl-u')")
+    sqlx::query("INSERT INTO things (id, name, workspace_id, template_id) VALUES ('dev-u', 'D', 'ws-u', 'tpl-u')")
         .execute(&pool)
         .await
         .unwrap();
@@ -144,7 +144,7 @@ async fn test_unknown_event_signal_carries_flag_and_degraded_level() {
 #[tokio::test]
 async fn test_actor_agent_persisted_and_signaled() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-a", "ws-a").await;
+    insert_thing(&pool, "dev-a", "ws-a").await;
     let throttle = ThrottleState::new(60);
     let bus = ThingEventBus::new();
     let mut rx = bus.subscribe();
@@ -177,7 +177,7 @@ async fn test_actor_agent_persisted_and_signaled() {
 #[tokio::test]
 async fn test_actor_defaults_to_device_for_device_events() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-d", "ws-d").await;
+    insert_thing(&pool, "dev-d", "ws-d").await;
     let throttle = ThrottleState::new(60);
     let bus = ThingEventBus::new();
 
@@ -202,7 +202,7 @@ async fn test_actor_defaults_to_device_for_device_events() {
 #[tokio::test]
 async fn test_no_subscriber_still_persists() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-n", "ws-n").await;
+    insert_thing(&pool, "dev-n", "ws-n").await;
     let throttle = ThrottleState::new(60);
     let bus = ThingEventBus::new(); // no subscribers
 
@@ -225,7 +225,7 @@ async fn test_no_subscriber_still_persists() {
 #[tokio::test]
 async fn test_replay_events_since_filters_cursor_and_min_level() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-r", "ws-r").await;
+    insert_thing(&pool, "dev-r", "ws-r").await;
     let bus = Arc::new(ThingEventBus::new());
     let host = CloudThingAgentHost::new(pool.clone(), bus.clone());
 
@@ -282,13 +282,13 @@ async fn test_replay_events_since_filters_cursor_and_min_level() {
 #[tokio::test]
 async fn test_replay_skips_non_thing_events() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-x", "ws-x").await;
+    insert_thing(&pool, "dev-x", "ws-x").await;
     let bus = Arc::new(ThingEventBus::new());
     let host = CloudThingAgentHost::new(pool.clone(), bus.clone());
 
     // A non-thing event row (e.g. status upsert from the legacy pipeline).
     sqlx::query(
-        "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, source_type, source_id, device_id, title, content, metadata, created_at, workspace_id, actor)
+        "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, source_type, source_id, thing_id, title, content, metadata, created_at, workspace_id, actor)
          VALUES ('evt-legacy', 'device', 'prop_change', 4, datetime('now'), 'device_property', 'dev-x:temperature', 'dev-x', 't', '{}', '{}', datetime('now'), 'ws-x', 'device')",
     )
     .execute(&pool)
@@ -314,7 +314,7 @@ async fn test_replay_skips_non_thing_events() {
 #[tokio::test]
 async fn test_host_subscribe_events_receives_broadcast() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-h", "ws-h").await;
+    insert_thing(&pool, "dev-h", "ws-h").await;
     let bus = Arc::new(ThingEventBus::new());
     let host = CloudThingAgentHost::new(pool.clone(), bus.clone());
     let mut rx = host.subscribe_events();
@@ -337,7 +337,7 @@ async fn test_host_subscribe_events_receives_broadcast() {
 #[tokio::test]
 async fn test_replay_actor_round_trip() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-aa", "ws-aa").await;
+    insert_thing(&pool, "dev-aa", "ws-aa").await;
     let bus = Arc::new(ThingEventBus::new());
     let host = CloudThingAgentHost::new(pool.clone(), bus.clone());
 

@@ -42,8 +42,8 @@ pub mod entities {
 
 pub mod value_objects {
     pub use tinyiothub_core::models::event::{
-        ConnectionStatus, ContentElement, DeviceEventType, EventId, EventLevel, EventSource, EventType, LinkTarget,
-        RichContent, SystemEventType, TextFormat,
+        ConnectionStatus, ContentElement, EventId, EventLevel, EventSource, EventType, LinkTarget, RichContent,
+        SystemEventType, TextFormat, ThingEventType,
     };
 }
 
@@ -110,8 +110,8 @@ pub use handler::*;
 #[allow(ambiguous_glob_reexports)]
 pub use service::*;
 pub use tinyiothub_core::models::event::{
-    ConnectionStatus, ContentElement, DeviceEventType, Event, EventId, EventLevel, EventSource, EventType, LinkTarget,
-    RichContent, SystemEventType, TextFormat,
+    ConnectionStatus, ContentElement, Event, EventId, EventLevel, EventSource, EventType, LinkTarget, RichContent,
+    SystemEventType, TextFormat, ThingEventType,
 };
 pub use types::*;
 

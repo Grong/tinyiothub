@@ -31,7 +31,7 @@ pub struct Workspace {
 /// Workspace with device count (for list responses)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct WorkspaceWithDeviceCount {
+pub struct WorkspaceWithThingCount {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
@@ -41,7 +41,7 @@ pub struct WorkspaceWithDeviceCount {
     pub created_at: String,
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub device_count: Option<i64>,
+    pub thing_count: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
 }
@@ -216,7 +216,7 @@ mod tests {
 
 /// Internal row type for sqlx mapping
 #[derive(Debug, Clone, FromRow)]
-struct WorkspaceWithDeviceCountRow {
+struct WorkspaceWithThingCountRow {
     id: String,
     name: String,
     description: Option<String>,
@@ -225,13 +225,13 @@ struct WorkspaceWithDeviceCountRow {
     require_action_confirm: Option<bool>,
     created_at: String,
     updated_at: String,
-    device_count: Option<i64>,
+    thing_count: Option<i64>,
     #[sqlx(default)]
     warning: Option<String>,
 }
 
-impl From<WorkspaceWithDeviceCountRow> for WorkspaceWithDeviceCount {
-    fn from(row: WorkspaceWithDeviceCountRow) -> Self {
+impl From<WorkspaceWithThingCountRow> for WorkspaceWithThingCount {
+    fn from(row: WorkspaceWithThingCountRow) -> Self {
         Self {
             id: row.id,
             name: row.name,
@@ -241,7 +241,7 @@ impl From<WorkspaceWithDeviceCountRow> for WorkspaceWithDeviceCount {
             require_action_confirm: row.require_action_confirm,
             created_at: row.created_at,
             updated_at: row.updated_at,
-            device_count: row.device_count,
+            thing_count: row.thing_count,
             warning: row.warning,
         }
     }
@@ -334,8 +334,8 @@ impl From<ResourceSearchResultRow> for ResourceSearchResult {
 // 持久化函数（pub(crate) 自由函数 + Db 委托）
 // ──────────────────────────────────────────────
 
-pub(crate) async fn find_workspace_by_id(pool: &SqlitePool, id: &str) -> Result<Option<WorkspaceWithDeviceCount>> {
-    let row = sqlx::query_as::<_, WorkspaceWithDeviceCountRow>(
+pub(crate) async fn find_workspace_by_id(pool: &SqlitePool, id: &str) -> Result<Option<WorkspaceWithThingCount>> {
+    let row = sqlx::query_as::<_, WorkspaceWithThingCountRow>(
         r#"
         SELECT
             w.id,
@@ -346,9 +346,9 @@ pub(crate) async fn find_workspace_by_id(pool: &SqlitePool, id: &str) -> Result<
             w.require_action_confirm,
             w.created_at,
             w.updated_at,
-            COUNT(d.id) as device_count
+            COUNT(d.id) as thing_count
         FROM workspaces w
-        LEFT JOIN devices d ON d.workspace_id = w.id
+        LEFT JOIN things d ON d.workspace_id = w.id
         WHERE w.id = ?
         GROUP BY w.id
         "#,
@@ -365,12 +365,12 @@ pub(crate) async fn find_workspaces_by_tenant(
     tenant_id: &str,
     page: Option<u32>,
     page_size: Option<u32>,
-) -> Result<Vec<WorkspaceWithDeviceCount>> {
+) -> Result<Vec<WorkspaceWithThingCount>> {
     let page = page.unwrap_or(1).max(1);
     let page_size = page_size.unwrap_or(20).min(100);
     let offset = (page - 1) * page_size;
 
-    let rows = sqlx::query_as::<_, WorkspaceWithDeviceCountRow>(
+    let rows = sqlx::query_as::<_, WorkspaceWithThingCountRow>(
         r#"
         SELECT
             w.id,
@@ -381,9 +381,9 @@ pub(crate) async fn find_workspaces_by_tenant(
             w.require_action_confirm,
             w.created_at,
             w.updated_at,
-            COUNT(d.id) as device_count
+            COUNT(d.id) as thing_count
         FROM workspaces w
-        LEFT JOIN devices d ON d.workspace_id = w.id
+        LEFT JOIN things d ON d.workspace_id = w.id
         WHERE w.tenant_id = ?
         GROUP BY w.id
         ORDER BY w.created_at DESC
@@ -448,7 +448,7 @@ pub(crate) async fn update_workspace(
     agent_id: Option<&str>,
     agent_config: Option<&str>,
     require_action_confirm: Option<bool>,
-) -> Result<Option<WorkspaceWithDeviceCount>> {
+) -> Result<Option<WorkspaceWithThingCount>> {
     let mut builder = QueryBuilder::new("UPDATE workspaces SET ");
     let mut has_updates = false;
     let now = chrono::Utc::now().to_rfc3339();
@@ -516,9 +516,9 @@ pub(crate) async fn delete_workspace(pool: &SqlitePool, id: &str) -> Result<()> 
     Ok(())
 }
 
-pub(crate) async fn assign_device_to_workspace(pool: &SqlitePool, device_id: &str, workspace_id: &str) -> Result<()> {
-    let device: Option<(String, Option<String>)> = sqlx::query_as("SELECT id, workspace_id FROM devices WHERE id = ?")
-        .bind(device_id)
+pub(crate) async fn assign_thing_to_workspace(pool: &SqlitePool, thing_id: &str, workspace_id: &str) -> Result<()> {
+    let device: Option<(String, Option<String>)> = sqlx::query_as("SELECT id, workspace_id FROM things WHERE id = ?")
+        .bind(thing_id)
         .fetch_optional(pool)
         .await
         .map_err(|e| Error::DatabaseError(format!("database error: {}", e)))?;
@@ -535,10 +535,10 @@ pub(crate) async fn assign_device_to_workspace(pool: &SqlitePool, device_id: &st
         return Ok(());
     }
 
-    sqlx::query("UPDATE devices SET workspace_id = ?, updated_at = ? WHERE id = ?")
+    sqlx::query("UPDATE things SET workspace_id = ?, updated_at = ? WHERE id = ?")
         .bind(workspace_id)
         .bind(chrono::Utc::now().to_rfc3339())
-        .bind(device_id)
+        .bind(thing_id)
         .execute(pool)
         .await
         .map_err(|e| Error::DatabaseError(format!("failed to assign device: {}", e)))?;
@@ -875,7 +875,7 @@ impl Db {
     }
 
     /// 按 ID 查询工作空间（含设备数）。
-    pub async fn find_workspace_by_id(&self, id: &str) -> Result<Option<WorkspaceWithDeviceCount>> {
+    pub async fn find_workspace_by_id(&self, id: &str) -> Result<Option<WorkspaceWithThingCount>> {
         find_workspace_by_id(self.pool(), id).await
     }
 
@@ -885,7 +885,7 @@ impl Db {
         tenant_id: &str,
         page: Option<u32>,
         page_size: Option<u32>,
-    ) -> Result<Vec<WorkspaceWithDeviceCount>> {
+    ) -> Result<Vec<WorkspaceWithThingCount>> {
         find_workspaces_by_tenant(self.pool(), tenant_id, page, page_size).await
     }
 
@@ -910,7 +910,7 @@ impl Db {
         agent_id: Option<&str>,
         agent_config: Option<&str>,
         require_action_confirm: Option<bool>,
-    ) -> Result<Option<WorkspaceWithDeviceCount>> {
+    ) -> Result<Option<WorkspaceWithThingCount>> {
         update_workspace(
             self.pool(),
             id,
@@ -929,8 +929,8 @@ impl Db {
     }
 
     /// 把设备分配到工作空间（已分配给其他工作空间时报错）。
-    pub async fn assign_device_to_workspace(&self, device_id: &str, workspace_id: &str) -> Result<()> {
-        assign_device_to_workspace(self.pool(), device_id, workspace_id).await
+    pub async fn assign_thing_to_workspace(&self, thing_id: &str, workspace_id: &str) -> Result<()> {
+        assign_thing_to_workspace(self.pool(), thing_id, workspace_id).await
     }
 
     /// 分页列出工作空间资源。

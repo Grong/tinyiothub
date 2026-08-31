@@ -9,14 +9,14 @@ pub mod event_type;
 pub mod rich_content;
 pub mod thing_event_signal;
 
-// Backward compatibility: ConnectionStatus unified into DeviceStatus
-pub use crate::models::device::DeviceStatus as ConnectionStatus;
+// Backward compatibility: ConnectionStatus unified into ThingStatus
+pub use crate::models::thing::ThingStatus as ConnectionStatus;
 
 pub use alarm_event::AlarmEvent;
 pub use event::Event;
 pub use event_id::EventId;
 pub use event_level::EventLevel;
 pub use event_source::EventSource;
-pub use event_type::{AiEventType, DeviceEventType, EventType, SystemEventType};
+pub use event_type::{AiEventType, EventType, SystemEventType, ThingEventType};
 pub use rich_content::{ContentElement, LinkTarget, RichContent, TextFormat};
 pub use thing_event_signal::ThingEventSignal;

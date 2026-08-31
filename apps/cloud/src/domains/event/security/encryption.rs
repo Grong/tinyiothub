@@ -366,7 +366,7 @@ mod tests {
 
         // Test non-sensitive content
         let normal_content = RichContent::new_text(
-            "Device status updated".to_string(),
+            "Thing status updated".to_string(),
             "Status changed to online".to_string(),
         );
         assert!(!encryption.should_encrypt(&normal_content));

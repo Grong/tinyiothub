@@ -69,7 +69,7 @@ fn parse_executed_actions(value: &serde_json::Value) -> Vec<ExecutedAction> {
             arr.iter()
                 .map(|a| ExecutedAction {
                     tool_name: a["tool_name"].as_str().unwrap_or("").to_string(),
-                    device_id: a["device_id"].as_str().map(|s| s.to_string()),
+                    thing_id: a["thing_id"].as_str().map(|s| s.to_string()),
                     success: a["success"].as_bool().unwrap_or(true),
                     details: a["details"].as_str().unwrap_or("").to_string(),
                 })
@@ -92,7 +92,7 @@ fn parse_proposals(value: &serde_json::Value, workspace_id: &str) -> Vec<Proposa
                         agent_id: String::new(),
                         risk: tinyiothub_skills::trust::risk_for_tool(&tool_name).to_string(),
                         tool_name,
-                        device_id: p["device_id"].as_str().map(|s| s.to_string()),
+                        thing_id: p["thing_id"].as_str().map(|s| s.to_string()),
                         summary: p["summary"].as_str().unwrap_or("").to_string(),
                         reason: p["reason"].as_str().unwrap_or("").to_string(),
                         parameters: p.get("parameters").cloned(),
@@ -116,7 +116,7 @@ mod tests {
   "status": "complete",
   "summary": "All devices healthy",
   "executed_actions": [
-    {"tool_name": "check_temp", "device_id": "d1", "success": true, "details": "OK"}
+    {"tool_name": "check_temp", "thing_id": "d1", "success": true, "details": "OK"}
   ],
   "proposals": []
 }
@@ -166,7 +166,7 @@ mod tests {
         // mint a fresh uuid and ignore any id the LLM provides.
         let raw = r#"{"status": "complete", "summary": "s", "executed_actions": [],
           "proposals": [
-            {"id": "prop-1", "tool_name": "reboot_device", "device_id": "d1", "summary": "reboot", "reason": "stuck"}
+            {"id": "prop-1", "tool_name": "reboot_thing", "thing_id": "d1", "summary": "reboot", "reason": "stuck"}
           ]}"#;
         let result = parse_healing_report(raw, "ws1");
         assert_eq!(result.proposals.len(), 1);
@@ -185,8 +185,8 @@ mod tests {
         // approval flow is a dead end.
         let raw = r#"{"status": "complete", "summary": "s", "executed_actions": [],
           "proposals": [
-            {"tool_name": "write_properties", "device_id": "d1", "summary": "set", "reason": "tune",
-             "parameters": {"device_id": "d1", "properties": {"target_temp": 22}}}
+            {"tool_name": "write_properties", "thing_id": "d1", "summary": "set", "reason": "tune",
+             "parameters": {"thing_id": "d1", "properties": {"target_temp": 22}}}
           ]}"#;
         let result = parse_healing_report(raw, "ws1");
         assert_eq!(result.proposals.len(), 1);
@@ -203,8 +203,8 @@ mod tests {
         // override with the locally computed risk from tool safety.
         let raw = r#"{"status": "partial", "summary": "s", "executed_actions": [],
           "proposals": [
-            {"tool_name": "firmware_update", "device_id": "d1", "summary": "update", "reason": "patch", "risk": "low"},
-            {"tool_name": "write_properties", "device_id": "d2", "summary": "set", "reason": "tune", "risk": "high"}
+            {"tool_name": "firmware_update", "thing_id": "d1", "summary": "update", "reason": "patch", "risk": "low"},
+            {"tool_name": "write_properties", "thing_id": "d2", "summary": "set", "reason": "tune", "risk": "high"}
           ]}"#;
         let result = parse_healing_report(raw, "ws1");
         assert_eq!(result.proposals.len(), 2);

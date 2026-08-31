@@ -293,22 +293,22 @@ async fn test_pool(name: &str) -> (sqlx::SqlitePool, tempfile::TempDir) {
     (pool, dir)
 }
 
-async fn seed_device(pool: &sqlx::SqlitePool) {
+async fn seed_thing(pool: &sqlx::SqlitePool) {
     seed_test_workspace(pool, "tenant-1", WS).await;
-    sqlx::query("INSERT INTO devices (id, name, workspace_id, thing_type) VALUES (?, ?, ?, 'device')")
+    sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES (?, ?, ?, 'device')")
         .bind(THING)
-        .bind("Loop Device")
+        .bind("Loop Thing")
         .bind(WS)
         .execute(pool)
         .await
         .expect("insert device");
-    sqlx::query("INSERT INTO thing_actions (id, device_id, name) VALUES ('act-set_fan', ?, 'set_fan')")
+    sqlx::query("INSERT INTO thing_actions (id, thing_id, name) VALUES ('act-set_fan', ?, 'set_fan')")
         .bind(THING)
         .execute(pool)
         .await
         .expect("register action");
     sqlx::query(
-        "INSERT INTO thing_properties (id, device_id, name, data_type) VALUES ('prop-temp', ?, 'temp', 'float')",
+        "INSERT INTO thing_properties (id, thing_id, name, data_type) VALUES ('prop-temp', ?, 'temp', 'float')",
     )
     .bind(THING)
     .execute(pool)
@@ -357,7 +357,7 @@ async fn build_fixture(
 ) -> FixtureParts {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (pool, dir) = test_pool(name).await;
-    seed_device(&pool).await;
+    seed_thing(&pool).await;
 
     let policy_repo = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
     policy_repo
@@ -624,7 +624,7 @@ async fn warning_event_runs_full_loop_and_persists_verified_report() {
 
     // T6 硬交接：agent 动作以 actor='agent' 落 events 表。
     let (actor, subtype): (String, String) =
-        sqlx::query_as("SELECT actor, event_subtype FROM events WHERE device_id = ? AND actor = 'agent'")
+        sqlx::query_as("SELECT actor, event_subtype FROM events WHERE thing_id = ? AND actor = 'agent'")
             .bind(THING)
             .fetch_one(&fx.pool)
             .await
@@ -794,12 +794,23 @@ async fn user_directive_runs_and_pushes_assistant_message() {
         assistant.1
     );
 
-    let (trigger_type, outcome): (String, String) =
-        sqlx::query_as("SELECT trigger_type, outcome FROM agent_runs WHERE workspace_id = ? AND trigger_type = 'user'")
-            .bind(WS)
-            .fetch_one(&fx.pool)
-            .await
-            .expect("user run row");
+    // run 行与消息推送不是同一事务，满载并行调度下可能滞后——同样的 yield 轮询。
+    let mut run_row = None;
+    for _ in 0..20_000 {
+        let row: Option<(String, String)> = sqlx::query_as(
+            "SELECT trigger_type, outcome FROM agent_runs WHERE workspace_id = ? AND trigger_type = 'user'",
+        )
+        .bind(WS)
+        .fetch_optional(&fx.pool)
+        .await
+        .expect("query user run row");
+        if row.is_some() {
+            run_row = row;
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let (trigger_type, outcome) = run_row.expect("user run row");
     assert_eq!(trigger_type, "user");
     assert_eq!(outcome, "no_action_needed");
 
@@ -1227,7 +1238,7 @@ async fn injected_event_payload_cannot_bypass_denylist() {
     )
     .await;
     // 被注入点名的动作真实存在于物模型上——拦截必须来自策略门而非"动作不存在"。
-    sqlx::query("INSERT INTO thing_actions (id, device_id, name) VALUES ('act-factory_reset', ?, 'factory_reset')")
+    sqlx::query("INSERT INTO thing_actions (id, thing_id, name) VALUES ('act-factory_reset', ?, 'factory_reset')")
         .bind(THING)
         .execute(&parts.pool)
         .await
@@ -1267,7 +1278,7 @@ async fn injected_event_payload_cannot_bypass_denylist() {
 
     // 未真实下发：events 表无 actor='agent' 的 factory_reset 动作记录。
     let dispatched: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM events WHERE device_id = ? AND actor = 'agent' AND event_subtype = 'factory_reset'",
+        "SELECT COUNT(*) FROM events WHERE thing_id = ? AND actor = 'agent' AND event_subtype = 'factory_reset'",
     )
     .bind(THING)
     .fetch_one(&parts.pool)

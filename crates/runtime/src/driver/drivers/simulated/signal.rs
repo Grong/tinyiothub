@@ -7,7 +7,7 @@ use super::patterns::PropertyBehavior;
 /// Composes a sensor value from multiple signal components:
 /// baseline + periodic (daily cycle) + trend (slow drift) + noise (Gaussian).
 pub struct SignalComposer {
-    /// Device refresh interval in milliseconds, used to calculate tick-to-time mapping.
+    /// Thing refresh interval in milliseconds, used to calculate tick-to-time mapping.
     pub interval_ms: u64,
     /// Scale factor applied to the daily amplitude from PropertyBehavior.
     pub daily_amplitude_scale: f64,

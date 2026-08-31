@@ -128,20 +128,20 @@ async fn e2e_pool() -> (sqlx::SqlitePool, tempfile::TempDir) {
 /// + user-1 admin 角色（agent 读 API 的守卫要求，见 agent_tasks.rs）。
 async fn seed_scene(pool: &sqlx::SqlitePool) {
     seed_test_workspace(pool, "tenant-1", WS).await;
-    sqlx::query("INSERT INTO devices (id, name, workspace_id, thing_type) VALUES (?, ?, ?, 'device')")
+    sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES (?, ?, ?, 'device')")
         .bind(THING)
-        .bind("E2E Device")
+        .bind("E2E Thing")
         .bind(WS)
         .execute(pool)
         .await
         .expect("insert device");
-    sqlx::query("INSERT INTO thing_actions (id, device_id, name) VALUES ('act-set_fan', ?, 'set_fan')")
+    sqlx::query("INSERT INTO thing_actions (id, thing_id, name) VALUES ('act-set_fan', ?, 'set_fan')")
         .bind(THING)
         .execute(pool)
         .await
         .expect("register action");
     sqlx::query(
-        "INSERT INTO thing_properties (id, device_id, name, data_type) VALUES ('prop-temp', ?, 'temp', 'float')",
+        "INSERT INTO thing_properties (id, thing_id, name, data_type) VALUES ('prop-temp', ?, 'temp', 'float')",
     )
     .bind(THING)
     .execute(pool)

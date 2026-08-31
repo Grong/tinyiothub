@@ -13,11 +13,11 @@
   │
   ├─ 1. 收集信息
   │   alarm_list     → 有没有相关告警？
-  │   get_device     → 设备基本信息、属性列表
+  │   get_thing     → 设备基本信息、属性列表
   │   read_properties → 当前属性值，确认异常
   │
   ├─ 2. 上下文分析
-  │   search_devices → 同类型的其他设备是否正常？
+  │   search_things → 同类型的其他设备是否正常？
   │   search_knowledge → 设备手册、历史维护记录怎么说？
   │
   ├─ 3. 根因推断
@@ -35,9 +35,9 @@
 ```
 用户："设备 A 离线了，帮我看看"
 
-1. get_device(设备A)        → 确认设备存在，了解设备信息
+1. get_thing(设备A)        → 确认设备存在，了解设备信息
 2. alarm_list(设备A)        → 查看相关告警
-3. search_devices(同类型)    → 同类型的其他设备在线吗？
+3. search_things(同类型)    → 同类型的其他设备在线吗？
 4. read_properties(设备A)   → 尝试读取（确认是否真的离线）
 5. 结论："设备 A 最后在线时间为 XX:XX，同类型设备均正常。
    可能原因：设备断电、网络故障、配置变更。
