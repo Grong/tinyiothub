@@ -154,16 +154,15 @@ impl GatewayService {
             .map_err(|e| e.to_string().into())
     }
 
+    fn discovery_topic(&self) -> String {
+        format!("{}/thing/discover", self.topic_prefix())
+    }
+
     pub async fn publish_discovery(&self, payload: &[u8]) -> EdgeResult<()> {
         self.client
             .read()
             .await
-            .publish(
-                &format!("{}/discovery", self.topic_prefix()),
-                rumqttc::QoS::AtLeastOnce,
-                false,
-                payload,
-            )
+            .publish(&self.discovery_topic(), rumqttc::QoS::AtLeastOnce, false, payload)
             .await
             .map_err(|e| e.to_string().into())
     }
@@ -207,5 +206,24 @@ impl GatewayService {
 
     pub async fn disconnect(&self) {
         self.client.read().await.disconnect().await.ok();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discovery_topic_uses_thing_discover_suffix() {
+        let creds = GatewayCredentials {
+            thing_id: "gw1".into(),
+            client_id: "gw1".into(),
+            username: "gw1".into(),
+            password: "pw".into(),
+            workspace_id: "ws1".into(),
+        };
+        let config = EdgeConfig::default();
+        let svc = GatewayService::new(&creds, &config);
+        assert_eq!(svc.discovery_topic(), "tinyiothub/ws1/gateway/gw1/thing/discover");
     }
 }

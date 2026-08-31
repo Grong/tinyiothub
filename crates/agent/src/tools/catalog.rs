@@ -157,17 +157,17 @@ pub fn build_tools_catalog_json() -> serde_json::Value {
     serde_json::json!({
         "groups": [
             {
-                "id": "device",
+                "id": "thing",
                 "label": "设备管理",
                 "source": "core",
                 "tools": [
-                    { "id": "search_devices",   "name": "search_devices",   "label": "搜索设备",         "description": "分页搜索设备列表，支持按名称、类型、状态等过滤",           "danger": false, "enabled": true  },
-                    { "id": "get_device",       "name": "get_device",       "label": "获取设备 Profile", "description": "获取设备完整信息，包含属性定义和当前值",                   "danger": false, "enabled": true  },
+                    { "id": "search_things",    "name": "search_things",    "label": "搜索设备",         "description": "分页搜索设备列表，支持按名称、类型、状态等过滤",           "danger": false, "enabled": true  },
+                    { "id": "get_thing",        "name": "get_thing",        "label": "获取设备 Profile", "description": "获取设备完整信息，包含属性定义和当前值",                   "danger": false, "enabled": true  },
                     { "id": "read_properties",  "name": "read_properties",  "label": "读取属性",         "description": "读取设备指定属性的当前值",                                   "danger": false, "enabled": true  },
                     { "id": "write_properties", "name": "write_properties", "label": "写入属性",         "description": "写入设备指定属性的值",                                       "danger": false, "enabled": true  },
                     { "id": "send_command",     "name": "send_command",     "label": "执行设备命令",     "description": "向设备下发控制命令并获取执行结果",                          "danger": false, "enabled": true  },
-                    { "id": "create_device",    "name": "create_device",    "label": "创建设备",         "description": "根据模板创建新设备",                                        "danger": false, "enabled": true  },
-                    { "id": "delete_device",    "name": "delete_device",    "label": "删除设备",         "description": "删除指定设备",                                              "danger": true,  "enabled": false },
+                    { "id": "create_thing",     "name": "create_thing",     "label": "创建设备",         "description": "根据模板创建新设备",                                        "danger": false, "enabled": true  },
+                    { "id": "delete_thing",     "name": "delete_thing",     "label": "删除设备",         "description": "删除指定设备",                                              "danger": true,  "enabled": false },
                 ]
             },
             {
@@ -245,8 +245,33 @@ mod tests {
         let groups = catalog["groups"].as_array().unwrap();
         assert!(!groups.is_empty(), "Static catalog should have groups");
         let group_ids: Vec<&str> = groups.iter().filter_map(|g| g["id"].as_str()).collect();
-        assert!(group_ids.contains(&"device"));
+        assert!(group_ids.contains(&"thing"));
         assert!(group_ids.contains(&"alarm"));
+    }
+
+    #[test]
+    fn catalog_tool_ids_match_mcp_registry_names() {
+        let catalog = build_tools_catalog_json();
+        let ids: Vec<&str> = catalog["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|g| g["tools"].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()))
+            .collect();
+        for expected in [
+            "search_things",
+            "get_thing",
+            "create_thing",
+            "delete_thing",
+            "read_properties",
+            "write_properties",
+            "send_command",
+        ] {
+            assert!(ids.contains(&expected), "catalog missing MCP name {expected}");
+        }
+        for stale in ["search_devices", "get_device", "create_device", "delete_device"] {
+            assert!(!ids.contains(&stale), "stale name {stale} leaked");
+        }
     }
 
     #[test]
@@ -266,7 +291,7 @@ mod tests {
             .filter_map(|g| g.get("id").and_then(|v| v.as_str()))
             .collect();
 
-        assert!(group_ids.contains(&"device"), "catalog should have a 'device' group");
+        assert!(group_ids.contains(&"thing"), "catalog should have a 'thing' group");
         assert!(group_ids.contains(&"alarm"), "catalog should have an 'alarm' group");
         assert!(group_ids.contains(&"driver"), "catalog should have a 'driver' group");
         assert!(group_ids.contains(&"job"), "catalog should have a 'job' group");

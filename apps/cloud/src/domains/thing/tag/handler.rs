@@ -291,11 +291,11 @@ pub async fn get_tag_stats(
 
     match state.tag_service.find_all_tags(&tag_query).await {
         Ok(tags) => {
-            let mut device_count = 0i64;
+            let mut thing_count = 0i64;
             let mut app_count = 0i64;
             for tag in &tags {
                 match tag.tag_type.as_str() {
-                    "device" => device_count += 1,
+                    "thing" => thing_count += 1,
                     "app" => app_count += 1,
                     _ => {}
                 }
@@ -303,7 +303,7 @@ pub async fn get_tag_stats(
             let stats = serde_json::json!({
                 "total": tags.len() as i64,
                 "by_type": {
-                    "device": device_count,
+                    "thing": thing_count,
                     "app": app_count
                 }
             });

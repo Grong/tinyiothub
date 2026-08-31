@@ -125,8 +125,37 @@ async fn run_authenticated(config: EdgeConfig, creds: GatewayCredentials) {
     }
 
     // Initial thing scan (best-effort, don't block startup on failure)
-    if let Err(e) = state.driver_service.scan_all().await {
-        tracing::warn!(?e, "Initial thing scan failed, will retry on next telemetry tick");
+    match state.driver_service.scan_all().await {
+        Ok(discovered) => {
+            if !discovered.is_empty() {
+                // One-shot discovery announce: edge → cloud thing registration
+                let msg = tinyiothub_edge::modules::gateway::ThingDiscoverMessage {
+                    msg_type: "thing_discover".into(),
+                    things: discovered
+                        .iter()
+                        .map(|id| tinyiothub_edge::modules::gateway::DiscoveredThing {
+                            name: id.clone(),
+                            category: None,
+                            protocol_type: None,
+                            address: None,
+                            driver_name: None,
+                            driver_options: None,
+                        })
+                        .collect(),
+                };
+                match serde_json::to_vec(&msg) {
+                    Ok(payload) => {
+                        if let Err(e) = state.gateway_service.publish_discovery(&payload).await {
+                            tracing::warn!(?e, "Failed to publish thing discovery");
+                        }
+                    }
+                    Err(e) => tracing::warn!(?e, "Failed to serialize thing discovery message"),
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(?e, "Initial thing scan failed, will retry on next telemetry tick");
+        }
     }
 
     // Flush any leftover offline buffer from previous run

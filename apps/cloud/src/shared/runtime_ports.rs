@@ -14,9 +14,9 @@ use tinyiothub_storage::Db;
 use tinyiothub_storage::cache::ThingCache;
 
 /// `ThingCache` → `ThingCacheSource`（全部方法同步直转）。
-pub struct DeviceCacheAdapter(pub Arc<ThingCache>);
+pub struct ThingCacheAdapter(pub Arc<ThingCache>);
 
-impl ThingCacheSource for DeviceCacheAdapter {
+impl ThingCacheSource for ThingCacheAdapter {
     fn all(&self) -> Vec<Thing> {
         self.0.all()
     }

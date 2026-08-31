@@ -112,13 +112,7 @@ impl PairingClient {
                         announce_handle.abort();
                         event_handle.abort();
 
-                        let creds = GatewayCredentials {
-                            thing_id: ack["thing_id"].as_str().unwrap_or_default().to_string(),
-                            client_id: ack["credentials"]["client_id"].as_str().unwrap_or_default().to_string(),
-                            username: ack["credentials"]["username"].as_str().unwrap_or_default().to_string(),
-                            password: ack["credentials"]["password"].as_str().unwrap_or_default().to_string(),
-                            workspace_id: ack["workspace_id"].as_str().unwrap_or_default().to_string(),
-                        };
+                        let creds = parse_pairing_ack(&ack)?;
                         creds.validate()?;
                         return Ok(creds);
                     }
@@ -135,6 +129,24 @@ impl PairingClient {
 
 enum PairingEvent {
     Ack(serde_json::Value),
+}
+
+/// Parse a successful pairing ack into gateway credentials.
+///
+/// `thing_id` is required: a missing key must fail loudly rather than
+/// silently yield empty credentials (co-upgrade contract with cloud's
+/// `PairingAck`).
+fn parse_pairing_ack(ack: &serde_json::Value) -> Result<GatewayCredentials, String> {
+    let thing_id = ack["thing_id"]
+        .as_str()
+        .ok_or_else(|| "pairing ack missing required field: thing_id".to_string())?;
+    Ok(GatewayCredentials {
+        thing_id: thing_id.to_string(),
+        client_id: ack["credentials"]["client_id"].as_str().unwrap_or_default().to_string(),
+        username: ack["credentials"]["username"].as_str().unwrap_or_default().to_string(),
+        password: ack["credentials"]["password"].as_str().unwrap_or_default().to_string(),
+        workspace_id: ack["workspace_id"].as_str().unwrap_or_default().to_string(),
+    })
 }
 
 fn generate_code() -> String {
@@ -167,4 +179,51 @@ fn local_ip() -> String {
     local_ip_address::local_ip()
         .map(|ip| ip.to_string())
         .unwrap_or_else(|_| "0.0.0.0".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn full_ack() -> serde_json::Value {
+        serde_json::json!({
+            "type": "pairing_ack",
+            "success": true,
+            "thing_id": "gw-1",
+            "workspace_id": "ws-1",
+            "credentials": {
+                "client_id": "gw-1-client",
+                "username": "u",
+                "password": "p"
+            },
+            "topics": {
+                "status": "t/status",
+                "telemetry": "t/telemetry",
+                "event": "t/event",
+                "command": "t/command",
+                "config": "t/config",
+                "thing_discover": "t/discover",
+                "thing_telemetry": "t/thing-telemetry"
+            },
+            "keepalive": 60
+        })
+    }
+
+    #[test]
+    fn pairing_ack_parses_thing_id() {
+        let parsed = parse_pairing_ack(&full_ack()).unwrap();
+        assert_eq!(parsed.thing_id, "gw-1");
+        assert_eq!(parsed.workspace_id, "ws-1");
+        assert_eq!(parsed.client_id, "gw-1-client");
+        assert_eq!(parsed.username, "u");
+        assert_eq!(parsed.password, "p");
+    }
+
+    #[test]
+    fn pairing_ack_requires_thing_id() {
+        let mut ack = full_ack();
+        ack.as_object_mut().unwrap().remove("thing_id");
+        let err = parse_pairing_ack(&ack).unwrap_err();
+        assert!(err.contains("thing_id"), "error should name thing_id: {err}");
+    }
 }

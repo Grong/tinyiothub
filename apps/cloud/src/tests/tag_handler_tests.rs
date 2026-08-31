@@ -187,10 +187,11 @@ async fn test_get_tag_stats_with_data() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
-    // Setup: create tags
+    // Setup: create tags (thing x2, app x1)
     let app = app;
     create_tag(&app, &token, "stats-tag-1", "thing").await;
-    create_tag(&app, &token, "stats-tag-2", "app").await;
+    create_tag(&app, &token, "stats-tag-2", "thing").await;
+    create_tag(&app, &token, "stats-tag-3", "app").await;
 
     // Test: stats should reflect created tags
     let response = app
@@ -201,6 +202,17 @@ async fn test_get_tag_stats_with_data() {
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert_eq!(json["code"], 0, "Expected success");
+    assert_eq!(json["result"]["total"], 3, "total must count all tags");
+    assert_eq!(
+        json["result"]["by_type"]["thing"], 2,
+        "by_type.thing must count thing tags"
+    );
+    assert_eq!(json["result"]["by_type"]["app"], 1, "by_type.app must count app tags");
+    assert!(
+        json["result"]["by_type"].get("device").is_none(),
+        "by_type must not contain the dead 'device' bucket, got: {}",
+        json["result"]["by_type"]
+    );
 }
 
 // ── Bindings ──

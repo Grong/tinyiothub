@@ -118,7 +118,7 @@ mod tests {
     }
 
     #[test]
-    fn snake_case_device_id_wins_over_camel_case() {
+    fn snake_case_thing_id_wins_over_camel_case() {
         let rec = map_tool_call(call(
             serde_json::json!({"thing_id": "d_snake", "deviceId": "d_camel"}),
             Some("ok".into()),
@@ -130,20 +130,20 @@ mod tests {
     }
 
     #[test]
-    fn camel_case_device_id_is_accepted_as_fallback() {
+    fn legacy_camel_case_device_id_is_accepted_as_fallback() {
         let rec = map_tool_call(call(serde_json::json!({"deviceId": "d_camel"}), None));
         assert_eq!(rec.thing_id.as_deref(), Some("d_camel"));
         assert_eq!(rec.details, "");
     }
 
     #[test]
-    fn missing_device_id_maps_to_none() {
+    fn missing_thing_id_maps_to_none() {
         let rec = map_tool_call(call(serde_json::json!({"value": 42}), None));
         assert_eq!(rec.thing_id, None);
     }
 
     #[test]
-    fn non_string_device_id_maps_to_none() {
+    fn non_string_thing_id_maps_to_none() {
         let rec = map_tool_call(call(serde_json::json!({"thing_id": 42}), None));
         assert_eq!(rec.thing_id, None);
     }
@@ -156,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_snake_device_id_is_accepted_as_last_fallback() {
+    fn legacy_snake_device_id_key_is_accepted_as_last_fallback() {
         let rec = map_tool_call(call(serde_json::json!({"device_id": "d_legacy"}), None));
         assert_eq!(rec.thing_id.as_deref(), Some("d_legacy"));
     }

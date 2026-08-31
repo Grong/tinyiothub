@@ -3,6 +3,50 @@
 > **最新完整 TODO 清单已迁移至:** `docs/superpowers/plans/2026-04-14-todo-audit-and-cleanup-plan.md`
 > 本文档保留 Edge Intelligence Agent 历史记录，新项目 TODO 请查阅上方计划。
 
+## Thing Rename Follow-ups — Deferred (PR-3, from /superpowers plan 2026-08-31)
+
+### P2 — examples/* 与 drivers/* 不在 workspace members，未受编译门禁保护
+- **What:** `examples/bacnet-driver`、`examples/example-plugin`、`drivers/*` 均未列入 workspace members，`cargo test/clippy --workspace` 不覆盖；评估纳入 workspace 或 CI 单独构建。
+- **Why:** PR-2 遗留；更名类重构无法触达这些 crate，漂移静默累积。
+- **Context:** examples manifest 仍指向已不存在的 `sdks/driver-sdk`（crates 重组遗留）。
+- **Effort:** M | **Depends on:** —
+
+### P2 — data/ 真实 dev 库为 legacy 68 迁移链，启动被拒
+- **What:** 本地 `data/` 下 dev 数据库是基线化前的 68 迁移链，0.5.0.0 起启动响亮拒绝；如需保留数据：旧版本导出 → 新版本重建。
+- **Why:** 只记录不修；防止后来者误以为启动失败是 bug。
+- **Effort:** S（需保留数据时） | **Depends on:** —
+
+### P2 — discovery 落库幂等性 + DiscoveredThing 信息密度 + e2e 验证
+- **What:** ① `handle_thing_discover → create_things_batch` 当前为纯 INSERT，驱动运行时（do_scan 真实数据）落地前需改幂等 upsert，否则重复 discover 报主键冲突或产生重复物；② `DiscoveredThing` 信息贫瘠——edge `do_scan` 目前只返回 thing ID 字符串列表（stub 返回空），无属性/能力元数据；③ 真实 broker 的 discovery e2e 验证仍缺。
+- **Why:** PR-3 接通了链路（edge publish → cloud 落库），但 `do_scan` 仍是 stub，无真实数据流过；语义待驱动运行时定稿。
+- **Context:** `apps/edge/src/modules/driver/service.rs:74` do_scan stub；`apps/cloud/src/domains/driver/gateway/service.rs:240` handle_thing_discover。
+- **Effort:** M | **Depends on:** 驱动运行时落地
+
+### P3 — telemetry data 元素语义待定
+- **What:** edge 上行 telemetry 的 `data` 数组元素当前是 thing ID 字符串（承 scan_all 语义），非属性读数；下游 cloud 消费语义待驱动运行时定义。
+- **Why:** 契约形状（TelemetryMessage）已对齐，但 data 内容语义是占位。
+- **Effort:** M | **Depends on:** 驱动运行时落地
+
+### P3 — agent tools catalog 动态分组命名不一致（交 health 任务）
+- **What:** `ToolRegistry::tool_group`（crates/agent/src/tools/catalog.rs:59）把部分工具归到 `("device","设备管理")` 组，而静态兜底 catalog 组 id 为 `"thing"`——动态/静态两条路径分组不一致。
+- **Why:** PR-3 只对齐了工具 id，未动分组；UI 分组显示可能抖动。
+- **Effort:** S | **Depends on:** —
+
+### P3 — dead code 记录（按 CLAUDE.md 只记录不删除）
+- **What:** ① `crates/db/src/permission.rs` 死列查询函数（agent_tools.tool_overrides 死列配套，仅级联删除无读写）；② web `thing-cache.updateProperty`（不可达，且 name/id 语义有 gap）；③ `crates/runtime/src/query_service.rs` 孤儿文件（不参与编译）。
+- **Why:** CLAUDE.md 铁律：不删除已有 dead code，登记防误用。
+- **Effort:** — | **Depends on:** —
+
+### P3 — agent tools catalog 与 MCP 注册表的单一事实来源
+- **What:** 工具 id/name 目前两处手工对齐（静态兜底 catalog ↔ `mcp/tools/thing.rs` 注册名）；考虑派生宏或生成测试长期防漂移。
+- **Why:** 本次漂移（PR-1 旧名残留到 PR-3 才发现）证明手工对齐不可靠。
+- **Effort:** M | **Depends on:** —
+
+### P3 — ThingEventType::DeviceAlarm 等混合命名取舍登记
+- **What:** `ThingEventType::DeviceAlarm`、`events.source_type/actor='device'` 等 serde wire 值刻意保留 device 字样（wire 兼容）；命名规范文档记一笔，防止后来者"顺手统一"破坏 wire 兼容。
+- **Why:** 刻意的取舍需要显式记录，否则会被当作遗漏。
+- **Effort:** S | **Depends on:** —
+
 ## Crates Reorg Review (from /plan-eng-review 2026-08-03)
 
 ### P2 — unwrap/expect 治理（edge 与驱动加载路径优先）

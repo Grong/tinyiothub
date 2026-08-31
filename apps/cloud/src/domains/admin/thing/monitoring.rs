@@ -21,7 +21,7 @@ pub struct PerformanceHistoryQuery {
 
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
-pub struct DeviceOnlineStatus {
+pub struct ThingOnlineStatus {
     pub thing_id: String,
     pub is_online: bool,
     pub connection_quality: Option<u8>,
@@ -53,7 +53,7 @@ async fn get_device_online_status(
     State(state): State<AdminState>,
     Path(thing_id): Path<String>,
     _claims: Claims,
-) -> Json<ApiResponse<DeviceOnlineStatus>> {
+) -> Json<ApiResponse<ThingOnlineStatus>> {
     // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
     // which automatically filters things by workspace_id. The adapter ensures
     // that all device queries are scoped to the current workspace, eliminating
@@ -61,7 +61,7 @@ async fn get_device_online_status(
     let is_online = state.monitoring_service.is_thing_online(&thing_id);
     let connection_quality = state.monitoring_service.get_thing_connection_quality(&thing_id);
 
-    let status = DeviceOnlineStatus {
+    let status = ThingOnlineStatus {
         thing_id: thing_id.clone(),
         is_online,
         connection_quality,

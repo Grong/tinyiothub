@@ -304,7 +304,7 @@ pub enum MemoryError {
     SerializationError(String),
 
     #[error("Thing not found: {0}")]
-    DeviceNotFound(String),
+    ThingNotFound(String),
 
     #[error("Context build failed: {0}")]
     ContextBuildFailed(String),
@@ -312,7 +312,7 @@ pub enum MemoryError {
 
 /// A snapshot of device state at a point in time
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeviceSnapshot {
+pub struct ThingSnapshot {
     pub thing_id: String,
     pub workspace_id: String,
     pub agent_id: String,
@@ -321,7 +321,7 @@ pub struct DeviceSnapshot {
     pub timestamp_formatted: String,
 }
 
-impl DeviceSnapshot {
+impl ThingSnapshot {
     /// Format the snapshot for inclusion in a prompt
     pub fn to_prompt_fragment(&self) -> String {
         format!(
@@ -353,7 +353,7 @@ pub struct AgentMemoryItem {
 }
 
 impl AgentMemoryItem {
-    pub fn device_snapshot(snapshot: &DeviceSnapshot) -> Self {
+    pub fn device_snapshot(snapshot: &ThingSnapshot) -> Self {
         Self {
             item_type: "device_snapshot".to_string(),
             key: snapshot.thing_id.clone(),
@@ -395,7 +395,7 @@ impl AgentMemoryItem {
 /// Complete memory context for an agent session
 #[derive(Debug, Clone, Default)]
 pub struct MemoryContext {
-    pub device_snapshots: Vec<DeviceSnapshot>,
+    pub device_snapshots: Vec<ThingSnapshot>,
     pub user_preferences: Vec<AgentMemoryItem>,
     pub conversation_summaries: Vec<AgentMemoryItem>,
     pub other_items: Vec<AgentMemoryItem>,
@@ -406,7 +406,7 @@ impl MemoryContext {
         Self::default()
     }
 
-    pub fn add_device_snapshot(&mut self, snapshot: DeviceSnapshot) {
+    pub fn add_device_snapshot(&mut self, snapshot: ThingSnapshot) {
         self.device_snapshots.push(snapshot);
     }
 
@@ -414,7 +414,7 @@ impl MemoryContext {
         match item.item_type.as_str() {
             "device_snapshot" => {
                 let snapshot_data = item.value.get("snapshot").cloned().unwrap_or(item.value.clone());
-                self.device_snapshots.push(DeviceSnapshot {
+                self.device_snapshots.push(ThingSnapshot {
                     thing_id: item.key.clone(),
                     workspace_id: item
                         .value
@@ -487,14 +487,14 @@ impl MemoryContext {
         fragments.concat()
     }
 
-    pub fn get_device_snapshots(&self, thing_id: &str) -> Vec<&DeviceSnapshot> {
+    pub fn get_device_snapshots(&self, thing_id: &str) -> Vec<&ThingSnapshot> {
         self.device_snapshots
             .iter()
             .filter(|s| s.thing_id == thing_id)
             .collect()
     }
 
-    pub fn get_latest_device_snapshot(&self, thing_id: &str) -> Option<&DeviceSnapshot> {
+    pub fn get_latest_device_snapshot(&self, thing_id: &str) -> Option<&ThingSnapshot> {
         self.device_snapshots
             .iter()
             .filter(|s| s.thing_id == thing_id)
@@ -638,7 +638,7 @@ mod tests {
 
     #[test]
     fn test_device_snapshot_to_prompt_fragment() {
-        let snapshot = DeviceSnapshot {
+        let snapshot = ThingSnapshot {
             thing_id: "dev-1".to_string(),
             workspace_id: "ws".to_string(),
             agent_id: "agent".to_string(),
@@ -661,7 +661,7 @@ mod tests {
     #[test]
     fn test_memory_context_add_snapshot() {
         let mut context = MemoryContext::new();
-        context.add_device_snapshot(DeviceSnapshot {
+        context.add_device_snapshot(ThingSnapshot {
             thing_id: "dev-1".to_string(),
             workspace_id: "ws".to_string(),
             agent_id: "agent".to_string(),
@@ -676,7 +676,7 @@ mod tests {
     #[test]
     fn test_memory_context_get_device_snapshots() {
         let mut context = MemoryContext::new();
-        context.add_device_snapshot(DeviceSnapshot {
+        context.add_device_snapshot(ThingSnapshot {
             thing_id: "dev-1".to_string(),
             workspace_id: "ws".to_string(),
             agent_id: "agent".to_string(),
@@ -684,7 +684,7 @@ mod tests {
             snapshot_time: 1000,
             timestamp_formatted: "time-1".to_string(),
         });
-        context.add_device_snapshot(DeviceSnapshot {
+        context.add_device_snapshot(ThingSnapshot {
             thing_id: "dev-2".to_string(),
             workspace_id: "ws".to_string(),
             agent_id: "agent".to_string(),
@@ -699,7 +699,7 @@ mod tests {
 
     #[test]
     fn test_agent_memory_item_helpers() {
-        let snapshot_item = AgentMemoryItem::device_snapshot(&DeviceSnapshot {
+        let snapshot_item = AgentMemoryItem::device_snapshot(&ThingSnapshot {
             thing_id: "dev-1".to_string(),
             workspace_id: "ws".to_string(),
             agent_id: "agent".to_string(),
@@ -719,7 +719,7 @@ mod tests {
 
     #[test]
     fn test_memory_error_display() {
-        let err = MemoryError::DeviceNotFound("dev-123".to_string());
+        let err = MemoryError::ThingNotFound("dev-123".to_string());
         assert!(err.to_string().contains("dev-123"));
     }
 }

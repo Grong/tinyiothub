@@ -27,6 +27,26 @@ pub struct DriverInstallPayload {
     pub data: String,
 }
 
+/// 子设备发现消息（MQTT，网关→平台）— 与 cloud `ThingDiscoverMessage` 同形
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ThingDiscoverMessage {
+    #[serde(rename = "type")]
+    pub msg_type: String,
+    pub things: Vec<DiscoveredThing>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DiscoveredThing {
+    pub name: String,
+    pub category: Option<String>,
+    pub protocol_type: Option<String>,
+    pub address: Option<String>,
+    pub driver_name: Option<String>,
+    pub driver_options: Option<String>,
+}
+
 impl GatewayMessage {
     /// Parse topic+payload with longest-prefix matching.
     /// Longer suffixes (/config/thing, /driver/install) are checked before
