@@ -98,7 +98,9 @@
 
 - **不占用 `thing_type` 列做模板分类**：`thing_type` 按本体设计（2026-07-22-thing-ontology-design）的既定语义填**根节点产出的本体类型**（如 `space`），存量语义不变。
 - **组合模板判定**：`thing_templates.device_info` 列对组合模板存**完整模板 JSON 全文**（根级含 `parameters`/`children`）；对常规设备模板仍存 `ThingInfo` JSON。判定规则：解析该列，JSON 根级含**非空** `children` 数组即组合模板；`children: []` 视为单本体模板。
-- **解析类型分离**：现有 `ThingInfo` 是强类型结构（`default_name_pattern` 必填、无 parameters/children），**不扩展它**。新类型 `SceneTemplateFile` / `ThingNodeDef` 定义在 `crates/db/src/scene_template.rs`（与 `thing_template.rs` 同层，遵循"类型随 repo 住 db"约定），实例化器直接引用。entity 模板仍按现有 `ThingInfo` 解析。marketplace 列表在应用层解析 `device_info` 原文得出 `is_composition` 与 `parameter_count`。**调用点防护（外部视角 T1 裁定）**：`get_thing_info()` 等所有把 `device_info` 强解析为 `ThingInfo` 的调用点必须枚举并加 `is_composition` 门（组合模板走 `SceneTemplateFile` 解析），实现时以编译器/全局搜索穷尽调用点，漏改一处会在运行时解析崩溃。
+- **解析类型分离**：现有 `ThingInfo` 是强类型结构（`default_name_pattern` 必填、无 parameters/children），**不扩展它**。新类型 `SceneTemplateFile` / `ThingNodeDef` 定义在 `crates/db/src/scene_template.rs`（与 `thing_template.rs` 同层，遵循"类型随 repo 住 db"约定），实例化器直接引用。entity 模板仍按现有 `ThingInfo` 解析。marketplace 列表在应用层解析 `device_info` 原文得出 `is_composition` 与 `parameter_count`。**调用点防护（外部视角 T1 裁定）**：`ThingTemplate` 上新增 `is_composition()` 方法（解析 `device_info` 原文判定）；`get_thing_info()` 全部 6 个调用点（`template/service.rs:60/127/339/625/762/937`）统一用该 helper 加早返门（组合模板走 `SceneTemplateFile` 解析），实现时以编译器/全局搜索穷尽调用点，漏改一处会在运行时解析崩溃。
+
+- **install 路径修复（eng 外部视角 V1 裁定）**：`ThingTemplateFullRow`（thing_template.rs:220）的 SELECT 当前**不含 `device_info` 列**，场景包经 marketplace install 复制到 workspace 会丢失 children/parameters。修复：full row 补 `device_info` 字段并在 `insert_thing_template_copy` 绑定。
 - `parameters` / `children` 随 `device_info` JSON 列存储。**不新建表、不新增列**。
 - **seed**：`template_categories` 是 `thing_templates.category` 的外键，需在 seed SQL（`crates/db/src/seed/system.sql`）中新增 `scenes` 类别一行。
 - **文件字段名映射**：模板文件沿用现有内置文件的 `commands` 键；DB 列名为 `actions`，加载/写入时做 `commands ↔ actions` 映射（与现有 loader 一致）。
@@ -117,7 +119,7 @@
 | alarm_rules | 现有 alarm rules 表，`property_ref` 映射为真实 `property_id`，`thing_id`/`workspace_id` 由实例化上下文填充 |
 | dashboard | v1 写入 `linked_data` JSON，前端读取渲染。**渲染契约**：v1 仅一种结构 `{"dashboard": {"cards": [{"property": "<属性名>"}]}}`，前端只按此渲染，不扩展 |
 
-**配额校验**：展开完成后、落库前校验 workspace 配额——当前 thing 数 + `node_count` ≤ 租户 `thing_limit`（`crates/db/src/tenant.rs`），超出 → 400 并提示当前用量与上限。dry_run 同样执行该校验并在超限时报错（预览即暴露问题）。
+**配额校验**：展开完成后、落库前校验 workspace 配额——用 `count_things_by_workspace(workspace_id)`（thing.rs:2852，真实行数）+ `node_count` ≤ 租户 `thing_limit`（`crates/db/src/tenant.rs`），**不用** `tenant_usage.device_count` 缓存计数（可能陈旧，导致 dry-run 与落库口径不一致）。超出 → 400 并提示当前用量与上限。dry_run 同样执行该校验并在超限时报错（预览即暴露问题）。
 
 **`linked_data` 合并策略**：`linked_data` 是**每个 Thing 行自己的列**——每个节点写入各自本体的 linked_data，节点之间无覆盖问题。单节点内按顶层键合并；`knowledge` / `event_defs` / `dashboard` 为实例化保留命名空间，冲突时实例化数据覆盖；其他已有键不动。
 
@@ -158,7 +160,7 @@
       温湿度传感器 1 (sensors)
 ```
 
-约束：同一参数输入下 dry-run 的展开结果与实际落库**必须一致**（同一展开器、同一纯函数）。`tree_preview` 仅供展示，前端不解析；生成时剔除 display_name 中的换行与首尾空格，括号替换为全角。
+约束：同一参数输入下 dry-run 的展开结果与实际落库**必须一致**（同一展开器、同一纯函数）。`tree_preview` 仅供展示，前端不解析；生成时剔除 display_name 中的换行与首尾空格，括号替换为全角。**并发豁免（eng 外部视角 V3 裁定）**：dry-run 不持锁，并发下预览的名称后缀可能与实际落库不同——以落库响应返回的最终 `tree_preview` 为准，前端把预览名称标注为 tentative（"预览，最终名称以创建结果为准"）。
 
 ### 3.2 后端流程
 
@@ -166,7 +168,7 @@
 
 1. **加载与校验**：取模板（`device_info` 原文按 `SceneTemplateFile` 解析）→ 校验参数值（类型、min/max）→ 校验所有 `template_ref`/`scene_ref` 引用存在（workspace→builtin 顺序）→ 检测 scene_ref 环与深度。
 2. **展开（纯函数，无 IO）**：递归遍历根节点，按 `count_param`/`count`/`scene_ref` 展开 children，输出 `ExpansionResult { nodes: Vec<ExpandedNode>, total_count, tree_preview, warnings }`。`ExpandedNode` 含 name/display_name/category/thing_type/properties/commands/event_defs/knowledge/resources/dashboard/alarm_rules 及**临时父子链接**（展开序号）。`{index}`、`{scene_name}` 在此替换。
-3. **落库（单事务）**：显式开启一个 sqlx `Transaction`，贯穿全部写入；各表（things/properties/commands/resources/alarm_rules）新增接受 `&mut Transaction` 的内部插入函数（现有单条插入接口不直接复用，避免隐式各自提交）。按拓扑序（父先于子）创建 Thing，临时链接映射为真实 `parent_id`，同时写入 `thing_type`；随后创建属性/命令/资源/alarm_rules，最后写 `linked_data`（knowledge/event_defs/dashboard）。
+3. **落库（单事务）**：显式开启一个 sqlx `Transaction`，贯穿全部写入；各表（things/properties/commands/resources/alarm_rules）新增接受 `&mut Transaction` 的内部插入函数（现有单条插入接口不直接复用，避免隐式各自提交）。按拓扑序（父先于子）创建 Thing，临时链接映射为真实 `parent_id`，同时写入 `thing_type`；随后创建属性/命令/资源/alarm_rules，最后写 `linked_data`（knowledge/event_defs/dashboard）。**批量插入用 `QueryBuilder::push_values` 多行 INSERT，每语句 ≤100 行分批**（SQLite 绑定变量上限保护）。
 4. **名称冲突处理**：`things.name` 有 `(workspace, name)` 唯一索引。算法：先剥离原名末尾的 `-N` 后缀得到 base，再**在事务内 SELECT 探测** `base`、`base-2`、`base-3`…，取第一个空闲名插入，记入 warnings；探测超过 10 个仍冲突返回 400「同名冲突过多，请手动指定名称」。SELECT 探测是快路径，**保留唯一约束捕获作兜底**：并发下两个事务可能探到同一名（TOCTOU），插入撞唯一约束时重新探测重试（同上限 10 次）。
 5. **返回结果**。
 
@@ -175,6 +177,7 @@
 - **先全量展开、再单事务落库**：任何失败整体回滚，不留半棵树；展开器是纯函数，可直接单元测试，dry-run 与真实落库共用同一展开路径与同一 `ExpansionResult`。
 - **规模护栏**：`total_count > 500` 直接拒绝（400），防止参数组合爆炸。scene_ref 展开计入。
 - **warnings 非阻断**：次级问题（如引用模板已停用）跳过该节点并记入 warnings，主流程继续。
+- **SQLite 写锁保护（eng 评审 D4）**：`crates/db/src/pool.rs` 连接配置加 `busy_timeout` pragma（5000ms）——实例化长事务持有写锁期间，无关写请求等待而非直接 SQLITE_BUSY 500。全局受益的一行配置。
 
 ### 3.5 可观测性
 
@@ -253,6 +256,8 @@ dashboard 块 v1 只放 `{"cards": [...]}` 属性卡片配置，不接 3D 场景
 4. **反向导出 round-trip 测试**：实例化 → 导出 → 重新实例化，断言结构等价（节点数、层级、属性集）；命名泛化启发式的正/反例。
 5. **集成测试**：调 instantiate API → 断言库中树结构正确（数量、层级、`thing_type` 映射、属性、alarm_rules、resources 表记录、linked_data）；事务回滚用例（注入中途失败）；名称冲突自动追加序号用例。**测试环境必须跑完整迁移链**（baseline 中子表 FK 指向 `devices`，经 `20260825000001` 重命名为 `things`，仅跑 baseline 会 FK 不一致）。
 6. **前端手测**：参数表单渲染、dry-run 实时预览、warnings 展示、跳转、另存为场景包下载。
+7. **并发竞态测试（eng 评审补）**：两个并行实例化同名场景，断言一个得到 `-2` 后缀、无 500（覆盖 TOCTOU 兜底路径）。
+8. **回归测试（eng 评审补，REGRESSION RULE）**：entity 模板走现有创建/预览路径行为不变；组合模板误入 entity 路径（`get_thing_info()` 门）优雅报错而非 panic/500。
 
 ## 8. 非目标（v1 明确不做）
 
