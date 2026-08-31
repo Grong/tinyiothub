@@ -164,7 +164,7 @@
 1. **加载与校验**：取模板（`device_info` 原文按 `SceneTemplateFile` 解析）→ 校验参数值（类型、min/max）→ 校验所有 `template_ref`/`scene_ref` 引用存在（workspace→builtin 顺序）→ 检测 scene_ref 环与深度。
 2. **展开（纯函数，无 IO）**：递归遍历根节点，按 `count_param`/`count`/`scene_ref` 展开 children，输出 `ExpansionResult { nodes: Vec<ExpandedNode>, total_count, tree_preview, warnings }`。`ExpandedNode` 含 name/display_name/category/thing_type/properties/commands/event_defs/knowledge/resources/dashboard/alarm_rules 及**临时父子链接**（展开序号）。`{index}`、`{scene_name}` 在此替换。
 3. **落库（单事务）**：显式开启一个 sqlx `Transaction`，贯穿全部写入；各表（things/properties/commands/resources/alarm_rules）新增接受 `&mut Transaction` 的内部插入函数（现有单条插入接口不直接复用，避免隐式各自提交）。按拓扑序（父先于子）创建 Thing，临时链接映射为真实 `parent_id`，同时写入 `thing_type`；随后创建属性/命令/资源/alarm_rules，最后写 `linked_data`（knowledge/event_defs/dashboard）。
-4. **名称冲突处理**：`things.name` 有 `(workspace, name)` 唯一索引。算法：先剥离原名末尾的 `-N` 后缀得到 base，再**在事务内 SELECT 探测** `base`、`base-2`、`base-3`…，取第一个空闲名插入，记入 warnings；探测超过 10 个仍冲突返回 400「同名冲突过多，请手动指定名称」。不依赖捕获唯一约束异常重试。
+4. **名称冲突处理**：`things.name` 有 `(workspace, name)` 唯一索引。算法：先剥离原名末尾的 `-N` 后缀得到 base，再**在事务内 SELECT 探测** `base`、`base-2`、`base-3`…，取第一个空闲名插入，记入 warnings；探测超过 10 个仍冲突返回 400「同名冲突过多，请手动指定名称」。SELECT 探测是快路径，**保留唯一约束捕获作兜底**：并发下两个事务可能探到同一名（TOCTOU），插入撞唯一约束时重新探测重试（同上限 10 次）。
 5. **返回结果**。
 
 ### 3.3 关键决策
@@ -173,9 +173,15 @@
 - **规模护栏**：`total_count > 500` 直接拒绝（400），防止参数组合爆炸。scene_ref 展开计入。
 - **warnings 非阻断**：次级问题（如引用模板已停用）跳过该节点并记入 warnings，主流程继续。
 
+### 3.5 可观测性
+
+- **结构化日志（tracing）**：展开与落库的入口/出口各一条——模板 id、参数值、node_count、耗时、warnings 数；失败时带错误类别与引用链路径。
+- **指标**：`scene_instantiations_total{template, result}` 计数器（result = success/validation_error/too_large/tx_failed）。
+- 目标：上线 3 周后仅凭日志可复盘任何一次失败实例化。
+
 ### 3.4 反向导出（E5：另存为场景包）
 
-`POST /api/things/{id}/export-as-template`：把指定本体及其整棵子树导出为场景包模板 JSON（§2.1 文件格式）。
+`POST /api/things/{id}/export-as-template`：把指定本体及其整棵子树导出为场景包模板 JSON（§2.1 文件格式）。**校验：该 thing 必须属于调用者 workspace，否则 404**（防 IDOR）。
 
 - **收集**：遍历子树，每个本体收集 properties/commands/linked_data（knowledge/event_defs/dashboard 还原）/resources/alarm_rules，转为节点定义。
 - **category / thing_type 还原**：节点 `category` 直接取 `things.category`；`thing_type` 仅当实际值与附录 A 缺省映射**不一致**时才显式写入节点（保持一致则省略，由缺省映射还原）。
@@ -211,8 +217,8 @@ dashboard 块 v1 只放 `{"cards": [...]}` 属性卡片配置，不接 3D 场景
 ### 5.2 前端（`web/src/ui/views/marketplace.ts`、`web/src/api/marketplace.ts`）
 
 - 商店页分 Tab：「设备模板」/「场景包」（按 `is_composition` 过滤；场景包卡片显示结构摘要）。
-- 场景包「使用模板」→ 参数对话框：按 `parameters` 动态生成表单（整数输入 + min/max 校验 + 多语言 display_name）+ 根节点名称输入 + 可选父本体选择；参数变化时调 `dry_run=true` 实时显示"将创建 N 个本体"与 `tree_preview` 文本树。
-- 提交调 instantiate API；成功跳转新根本体详情页（展示 `tree_preview`）；有 warnings 先展示警告列表再跳转。
+- 场景包「使用模板」→ 参数对话框：按 `parameters` 动态生成表单（整数输入 + min/max 校验 + 多语言 display_name）+ 根节点名称输入 + 可选父本体选择；参数变化时调 `dry_run=true` 实时显示"将创建 N 个本体"与 `tree_preview` 文本树（**300ms 防抖，dry-run 进行中禁用提交按钮**）。
+- 提交调 instantiate API（**提交后禁用按钮防双击**，服务端 v1 不做幂等）；成功跳转新根本体详情页（展示 `tree_preview`）；有 warnings 先展示警告列表再跳转。
 - 本体详情页加「另存为场景包」入口，调 export-as-template 下载模板 JSON。
 
 **不做**：商店卡片可视化树预览（用文本摘要）、用户自制场景包上传 UI。
