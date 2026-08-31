@@ -196,7 +196,7 @@ impl PlatformMqttClient {
                 tracing::debug!(gateway_id = %gateway_id, "Gateway event received (not yet handled)");
                 None
             }
-            Some("thing") if parts.len() >= 7 && parts[5] == "discover" => {
+            Some("thing") if parts.len() >= 6 && parts[5] == "discover" => {
                 serde_json::from_slice::<ThingDiscoverMessage>(payload).ok().map(|msg| {
                     GatewayDataMessage::ThingDiscover {
                         gateway_id,
@@ -345,5 +345,47 @@ impl PlatformMqttClient {
         self.client.subscribe(&event, QoS::AtLeastOnce).await.ok();
         self.client.subscribe(&discover, QoS::AtLeastOnce).await.ok();
         self.client.subscribe(&device_telemetry, QoS::AtMostOnce).await.ok();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn discover_topic_six_segments_routes() {
+        // tinyiothub/{ws}/gateway/{gw}/thing/discover — 6 段
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "type": "thing_discover",
+            "things": []
+        }))
+        .unwrap();
+        let (tx, mut rx) = mpsc::channel(1);
+        PlatformMqttClient::route_data_message("tinyiothub/ws1/gateway/gw1/thing/discover", &payload, &tx).await;
+        let msg = rx
+            .try_recv()
+            .expect("6-segment discover topic must route to a GatewayDataMessage");
+        assert!(
+            matches!(msg, GatewayDataMessage::ThingDiscover { .. }),
+            "expected ThingDiscover variant"
+        );
+    }
+
+    #[tokio::test]
+    async fn thing_telemetry_seven_segments_still_routes() {
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "type": "thing_telemetry", "thing_id": "t1", "data": {}, "timestamp": 0
+        }))
+        .unwrap();
+        let (tx, mut rx) = mpsc::channel(1);
+        PlatformMqttClient::route_data_message("tinyiothub/ws1/gateway/gw1/thing/t1/telemetry", &payload, &tx).await;
+        let msg = rx
+            .try_recv()
+            .expect("7-segment thing telemetry topic must route to a GatewayDataMessage");
+        assert!(
+            matches!(msg, GatewayDataMessage::ThingTelemetry { .. }),
+            "expected ThingTelemetry variant"
+        );
     }
 }
