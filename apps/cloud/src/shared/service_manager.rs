@@ -74,7 +74,7 @@ impl ServiceManager {
 
         // 1. 创建并启动数据服务器（device_cache 经 D15 端口适配器注入）
         let data_server = Arc::new(DataServer::new(
-            Arc::new(crate::shared::runtime_ports::DeviceCacheAdapter(
+            Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(
                 app_state.device_cache.clone(),
             )),
             app_state.event_bus.clone(),

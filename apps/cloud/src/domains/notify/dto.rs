@@ -321,7 +321,7 @@ pub struct CreateNotificationRuleRequest {
     pub event_type: Option<String>,
     pub event_subtype: Option<String>,
     pub event_level: Option<i32>,
-    pub device_filter: Option<DeviceFilterRequest>,
+    pub device_filter: Option<ThingFilterRequest>,
     pub notification_methods: Vec<String>,
     pub recipients: Vec<String>,
     pub enabled: Option<bool>,
@@ -335,7 +335,7 @@ pub struct UpdateNotificationRuleRequest {
     pub event_type: Option<String>,
     pub event_subtype: Option<String>,
     pub event_level: Option<i32>,
-    pub device_filter: Option<DeviceFilterRequest>,
+    pub device_filter: Option<ThingFilterRequest>,
     pub notification_methods: Option<Vec<String>>,
     pub recipients: Option<Vec<String>>,
     pub enabled: Option<bool>,
@@ -343,7 +343,7 @@ pub struct UpdateNotificationRuleRequest {
 
 /// Thing filter request
 #[derive(Debug, Deserialize)]
-pub struct DeviceFilterRequest {
+pub struct ThingFilterRequest {
     pub device_ids: Option<Vec<String>>,
     pub device_types: Option<Vec<String>>,
     pub tags: Option<Vec<String>>,
@@ -437,8 +437,8 @@ pub fn convert_device_filter(filter: &serde_json::Value) -> DeviceFilterResponse
     }
 }
 
-/// Helper: convert DeviceFilterRequest to JsonValue
-pub fn device_filter_to_json(filter: &DeviceFilterRequest) -> serde_json::Value {
+/// Helper: convert ThingFilterRequest to JsonValue
+pub fn device_filter_to_json(filter: &ThingFilterRequest) -> serde_json::Value {
     serde_json::json!({
         "device_ids": filter.device_ids,
         "device_types": filter.device_types,
