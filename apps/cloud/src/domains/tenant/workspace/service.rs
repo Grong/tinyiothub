@@ -7,7 +7,7 @@ use crate::domains::tenant::hooks::{AgentHooks, WorkspaceEventPublisher};
 use tinyiothub_core::error::Result;
 use tinyiothub_core::models::workspace::ResourceType;
 use tinyiothub_storage::Db;
-use tinyiothub_storage::workspace::{ResourceSearchResult, Workspace, WorkspaceResource, WorkspaceWithDeviceCount};
+use tinyiothub_storage::workspace::{ResourceSearchResult, Workspace, WorkspaceResource, WorkspaceWithThingCount};
 
 pub struct WorkspaceService {
     db: Arc<Db>,
@@ -42,7 +42,7 @@ impl WorkspaceService {
         self.db.find_all_workspace_ids().await
     }
 
-    pub async fn find_by_id(&self, id: &str) -> Result<Option<WorkspaceWithDeviceCount>> {
+    pub async fn find_by_id(&self, id: &str) -> Result<Option<WorkspaceWithThingCount>> {
         self.db.find_workspace_by_id(id).await
     }
 
@@ -51,7 +51,7 @@ impl WorkspaceService {
         tenant_id: &str,
         page: Option<u32>,
         page_size: Option<u32>,
-    ) -> Result<Vec<WorkspaceWithDeviceCount>> {
+    ) -> Result<Vec<WorkspaceWithThingCount>> {
         self.db.find_workspaces_by_tenant(tenant_id, page, page_size).await
     }
 
@@ -123,7 +123,7 @@ impl WorkspaceService {
         agent_id: Option<&str>,
         agent_config: Option<&str>,
         require_action_confirm: Option<bool>,
-    ) -> Result<Option<WorkspaceWithDeviceCount>> {
+    ) -> Result<Option<WorkspaceWithThingCount>> {
         self.db
             .update_workspace(id, name, description, agent_id, agent_config, require_action_confirm)
             .await
@@ -140,8 +140,8 @@ impl WorkspaceService {
         Ok(())
     }
 
-    pub async fn assign_device(&self, thing_id: &str, workspace_id: &str) -> Result<()> {
-        self.db.assign_device_to_workspace(thing_id, workspace_id).await
+    pub async fn assign_thing(&self, thing_id: &str, workspace_id: &str) -> Result<()> {
+        self.db.assign_thing_to_workspace(thing_id, workspace_id).await
     }
 
     pub async fn list_resources(

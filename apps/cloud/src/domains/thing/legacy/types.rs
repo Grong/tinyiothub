@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use tinyiothub_core::models::device_command::DeviceCommand as DeviceCommandEntity;
+use tinyiothub_core::models::thing_command::ThingCommand as DeviceCommandEntity;
 
 /// 设备指令响应DTO - 用于API返回
 #[derive(Debug, Clone, Serialize, Deserialize)]

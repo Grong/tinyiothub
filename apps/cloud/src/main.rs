@@ -90,7 +90,7 @@ async fn main_impl() -> std::io::Result<()> {
     tinyiothub_cloud::bootstrap::run_seeds(&db, &settings)
         .await
         .expect("Failed to seed database");
-    let device_cache = std::sync::Arc::new(tinyiothub_storage::cache::DeviceCache::new());
+    let device_cache = std::sync::Arc::new(tinyiothub_storage::cache::ThingCache::new());
     info!("✅ Database pool & device cache initialized");
 
     // === 3. 创建 AppState（包含所有核心组件）===

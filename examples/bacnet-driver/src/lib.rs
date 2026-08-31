@@ -45,13 +45,13 @@ impl Default for BacnetConfig {
 
 /// BACnet 驱动结构
 pub struct BacnetDriver {
-    device: Device,
+    device: Thing,
     config: BacnetConfig,
     cached_values: HashMap<String, ResultValue>,
 }
 
 impl BacnetDriver {
-    pub fn new(device: Device) -> Self {
+    pub fn new(device: Thing) -> Self {
         // 从设备配置中解析 BACnet 配置
         let config = if let Some(config_str) = &device.driver_options {
             serde_json::from_str::<BacnetConfig>(config_str)
@@ -72,11 +72,11 @@ impl BacnetDriver {
             name: "BacnetDriver".to_string(),
             version: "1.0.0".to_string(),
             class_name: "BacnetDriver".to_string(),
-            device_num: 0,
+            thing_num: 0,
             description: Some("BACnet/IP protocol driver for building automation devices".to_string()),
             options_descriptors: vec![
                 ComponentOption::new(
-                    "Device Instance".to_string(),
+                    "Thing Instance".to_string(),
                     "device_instance".to_string(),
                     "1".to_string(),
                     "integer".to_string(),
@@ -171,12 +171,12 @@ impl BacnetDriver {
     }
 }
 
-impl DeviceDriver for BacnetDriver {
-    fn device(&self) -> &Device {
+impl ThingDriver for BacnetDriver {
+    fn thing(&self) -> &Thing {
         &self.device
     }
 
-    fn device_mut(&mut self) -> &mut Device {
+    fn thing_mut(&mut self) -> &mut Thing {
         &mut self.device
     }
 
@@ -215,7 +215,7 @@ impl DeviceDriver for BacnetDriver {
         Ok(results)
     }
 
-    fn execute_command(&mut self, command: &DeviceCommand) -> error::Result<bool> {
+    fn execute_command(&mut self, command: &ThingCommand) -> error::Result<bool> {
         tracing::info!(
             "Executing command: {} on BACnet device: {}",
             command.name,

@@ -48,7 +48,7 @@ export const alarmApi = {
   },
 
   // Alarm Rules
-  async getRules(params?: { page?: number; pageSize?: number; deviceId?: string }) {
+  async getRules(params?: { page?: number; pageSize?: number; thingId?: string }) {
     return apiGet<PaginatedResponse<AlarmRule>>('/alarm-rules', params as Record<string, any>);
   },
 

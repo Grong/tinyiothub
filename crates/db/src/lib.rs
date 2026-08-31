@@ -24,7 +24,7 @@ pub mod audit_log;
 pub mod auth;
 /// Batch command persistence (batch_commands / batch_command_items) and row types.
 pub mod batch_command;
-/// Device cache (in-memory).
+/// Thing cache (in-memory).
 pub mod cache;
 /// Db connection configuration.
 pub mod config;
@@ -34,12 +34,6 @@ pub mod cron_job;
 pub mod cron_run;
 /// Db facade (connection + domain accessors).
 pub mod database;
-/// Device command persistence.
-pub mod device_command;
-/// Device property persistence.
-pub mod device_property;
-/// Device row mapping helpers.
-pub mod device_row_mapper;
 /// Driver installation persistence.
 pub mod driver_installation;
 /// Edge 网关本地持久化（offline_buffer / config_meta，edge 专有表）。
@@ -82,6 +76,12 @@ pub mod tag;
 pub mod tenant;
 /// Thing persistence (things 表唯一入口：Thing 视图 + 原 device.rs 全部内容).
 pub mod thing;
+/// Thing command persistence.
+pub mod thing_command;
+/// Thing property persistence.
+pub mod thing_property;
+/// Thing row mapping helpers.
+pub mod thing_row_mapper;
 /// Thing template persistence (thing_templates / template_categories).
 pub mod thing_template;
 /// Thing trace persistence (thing_traces) and row types.
@@ -97,7 +97,7 @@ pub mod test_helpers;
 
 // 公共面显式化（Task 13）：只re-export 跨crate 常用的入口类型；
 // 各领域行类型/函数一律经 `tinyiothub_storage::<domain>::...` 模块路径访问。
-pub use cache::DeviceCache;
+pub use cache::ThingCache;
 pub use config::DatabaseConfig;
 pub use database::Db;
 pub use driver_installation::DriverInstallation;

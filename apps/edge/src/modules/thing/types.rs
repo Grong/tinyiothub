@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-/// Lightweight device info for listing (avoids sending full Device internals)
+/// Lightweight thing info for listing (avoids sending full Thing internals)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeviceInfo {
+pub struct ThingInfo {
     pub id: String,
     pub name: String,
-    pub device_type: Option<String>,
+    pub category: Option<String>,
     pub status: String,
     pub driver_name: Option<String>,
 }

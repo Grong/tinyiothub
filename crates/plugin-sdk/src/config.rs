@@ -1,6 +1,6 @@
 //! 驱动配置管理
 
-use crate::Device;
+use crate::Thing;
 use std::collections::HashMap;
 
 /// 驱动配置管理器
@@ -11,7 +11,7 @@ pub struct DriverConfig {
 
 impl DriverConfig {
     /// 从设备信息创建配置管理器
-    pub fn from_device(device: &Device) -> Self {
+    pub fn from_thing(device: &Thing) -> Self {
         let mut config = HashMap::new();
 
         if let Some(ref driver_options) = device.driver_options

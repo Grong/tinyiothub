@@ -502,10 +502,10 @@ fn default_dns_secondary() -> String {
     "8.8.4.4".to_string()
 }
 
-/// Device configuration
+/// Thing configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct DeviceConfig {
+pub struct ThingConfig {
     #[serde(default)]
     pub serial_number: String,
     #[serde(default = "default_device_name")]
@@ -520,7 +520,7 @@ pub struct DeviceConfig {
     pub hardware: HardwareConfig,
 }
 
-impl Default for DeviceConfig {
+impl Default for ThingConfig {
     fn default() -> Self {
         Self {
             serial_number: String::new(),
@@ -970,7 +970,7 @@ pub struct ApplicationSettings {
     #[serde(default)]
     pub network: NetworkConfig,
     #[serde(default)]
-    pub device: DeviceConfig,
+    pub device: ThingConfig,
     #[serde(default)]
     pub monitoring: MonitoringConfig,
     #[serde(default)]

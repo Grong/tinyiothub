@@ -1,4 +1,4 @@
-//! Device properties handler integration tests
+//! Thing properties handler integration tests
 
 use axum::{
     body::Body,
@@ -25,10 +25,10 @@ fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Re
 }
 
 /// Helper: create a device and return its ID.
-async fn create_test_device(app: &mut axum::Router, token: &str) -> String {
+async fn create_test_thing(app: &mut axum::Router, token: &str) -> String {
     let body = json!({
         "name": "prop-test-device",
-        "display_name": "Properties Test Device",
+        "display_name": "Properties Test Thing",
         "category": "sensor",
         "protocol_type": "modbus"
     });
@@ -44,19 +44,19 @@ async fn create_test_device(app: &mut axum::Router, token: &str) -> String {
 }
 
 // ============================================================================
-// Get Device Properties
+// Get Thing Properties
 // ============================================================================
 
 #[tokio::test]
-async fn test_get_device_properties() {
+async fn test_get_thing_properties() {
     let mut app = setup_test_app().await;
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
-    let thing_id = create_test_device(&mut app, &token).await;
+    let thing_id = create_test_thing(&mut app, &token).await;
 
     let response = app
         .oneshot(auth_request(
             "GET",
-            &format!("/api/v1/devices/{}/properties", thing_id),
+            &format!("/api/v1/things/admin/{}/properties", thing_id),
             &token,
             None,
         ))
@@ -70,14 +70,14 @@ async fn test_get_device_properties() {
 }
 
 #[tokio::test]
-async fn test_get_device_properties_nonexistent_device() {
+async fn test_get_thing_properties_nonexistent_thing() {
     let app = setup_test_app().await;
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
 
     let response = app
         .oneshot(auth_request(
             "GET",
-            "/api/v1/devices/nonexistent-id/properties",
+            "/api/v1/things/admin/nonexistent-id/properties",
             &token,
             None,
         ))
@@ -91,7 +91,7 @@ async fn test_get_device_properties_nonexistent_device() {
 }
 
 // ============================================================================
-// Get Device Property By Name
+// Get Thing Property By Name
 // ============================================================================
 
 #[tokio::test]
@@ -102,7 +102,7 @@ async fn test_get_device_property_by_name_not_found() {
     let response = app
         .oneshot(auth_request(
             "GET",
-            "/api/v1/devices/by-name/no-such-device/properties/some-prop",
+            "/api/v1/things/admin/by-name/no-such-device/properties/some-prop",
             &token,
             None,
         ))
@@ -119,7 +119,7 @@ async fn test_get_device_property_by_name_not_found() {
 // ============================================================================
 
 #[tokio::test]
-async fn test_update_property_value_nonexistent_device() {
+async fn test_update_property_value_nonexistent_thing() {
     let app = setup_test_app().await;
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-default-001");
 
@@ -128,7 +128,7 @@ async fn test_update_property_value_nonexistent_device() {
     let response = app
         .oneshot(auth_request(
             "PUT",
-            "/api/v1/devices/nonexistent-id/properties/some-prop/value",
+            "/api/v1/things/admin/nonexistent-id/properties/some-prop/value",
             &token,
             Some(body),
         ))

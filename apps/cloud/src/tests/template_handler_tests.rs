@@ -1,4 +1,4 @@
-//! Device template handler integration tests
+//! Thing template handler integration tests
 //!
 //! Tests template CRUD and validation endpoints.
 

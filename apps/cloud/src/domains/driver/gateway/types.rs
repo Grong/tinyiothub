@@ -11,8 +11,8 @@ pub struct PairingRequest {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PairingResponse {
-    pub device_id: String,
-    pub device_name: String,
+    pub thing_id: String,
+    pub thing_name: String,
     pub hostname: String,
     pub ip: String,
 }
@@ -38,7 +38,7 @@ pub struct PairingAck {
     #[serde(rename = "type")]
     pub msg_type: String,
     pub success: bool,
-    pub device_id: String,
+    pub thing_id: String,
     pub workspace_id: String,
     pub credentials: MqttCredentials,
     pub topics: GatewayTopics,
@@ -61,24 +61,24 @@ pub struct GatewayTopics {
     pub event: String,
     pub command: String,
     pub config: String,
-    pub device_discover: String,
-    pub device_telemetry: String,
+    pub thing_discover: String,
+    pub thing_telemetry: String,
 }
 
 /// 子设备发现消息（MQTT，网关→平台）
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]
-pub struct DeviceDiscoverMessage {
+pub struct ThingDiscoverMessage {
     #[serde(rename = "type")]
     pub msg_type: String,
-    pub devices: Vec<DiscoveredDevice>,
+    pub things: Vec<DiscoveredThing>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]
-pub struct DiscoveredDevice {
+pub struct DiscoveredThing {
     pub name: String,
-    pub device_type: Option<String>,
+    pub category: Option<String>,
     pub protocol_type: Option<String>,
     pub address: Option<String>,
     pub driver_name: Option<String>,
@@ -98,10 +98,10 @@ pub struct TelemetryMessage {
 /// 子设备遥测消息
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct DeviceTelemetryMessage {
+pub struct ThingTelemetryMessage {
     #[serde(rename = "type")]
     pub msg_type: String,
-    pub device_id: String,
+    pub thing_id: String,
     pub data: serde_json::Value,
     pub timestamp: i64,
 }
@@ -121,7 +121,7 @@ pub struct StatusMessage {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandRequest {
-    pub device_id: String,
+    pub thing_id: String,
     pub action: String,
     pub params: serde_json::Value,
 }
@@ -133,7 +133,7 @@ pub struct CommandMessage {
     #[serde(rename = "type")]
     pub msg_type: String,
     pub command_id: String,
-    pub device_id: String,
+    pub thing_id: String,
     pub action: String,
     pub params: serde_json::Value,
     pub timestamp: i64,
@@ -162,14 +162,14 @@ pub enum GatewayDataMessage {
         workspace_id: String,
         msg: TelemetryMessage,
     },
-    DeviceDiscover {
+    ThingDiscover {
         gateway_id: String,
         workspace_id: String,
-        msg: DeviceDiscoverMessage,
+        msg: ThingDiscoverMessage,
     },
-    DeviceTelemetry {
+    ThingTelemetry {
         gateway_id: String,
         workspace_id: String,
-        msg: DeviceTelemetryMessage,
+        msg: ThingTelemetryMessage,
     },
 }

@@ -14,7 +14,7 @@ use crate::domains::event::{
 };
 use sqlx::Row;
 use tinyiothub_core::models::event::{
-    ContentElement, DeviceEventType, Event, EventLevel, EventSource, EventType, RichContent, TextFormat,
+    ContentElement, Event, EventLevel, EventSource, EventType, RichContent, TextFormat, ThingEventType,
 };
 use tinyiothub_storage::Db;
 
@@ -34,12 +34,12 @@ async fn test_pool() -> sqlx::SqlitePool {
     pool
 }
 
-async fn insert_device(pool: &sqlx::SqlitePool, id: &str, workspace_id: &str) {
+async fn insert_thing(pool: &sqlx::SqlitePool, id: &str, workspace_id: &str) {
     // things.workspace_id has a FK to workspaces — seed it (idempotent).
     seed_test_workspace(pool, "tenant-1", workspace_id).await;
     sqlx::query("INSERT INTO things (id, name, workspace_id) VALUES (?, ?, ?)")
         .bind(id)
-        .bind(format!("Device {id}"))
+        .bind(format!("Thing {id}"))
         .bind(workspace_id)
         .execute(pool)
         .await
@@ -77,7 +77,7 @@ async fn insert_device_with_template(
 
     sqlx::query("INSERT INTO things (id, name, workspace_id, template_id) VALUES (?, ?, ?, ?)")
         .bind(thing_id)
-        .bind(format!("Device {thing_id}"))
+        .bind(format!("Thing {thing_id}"))
         .bind(workspace_id)
         .bind(template_id)
         .execute(pool)
@@ -104,7 +104,7 @@ fn input(thing_id: &str, workspace_id: &str, event_name: &str, level: EventLevel
 #[tokio::test]
 async fn test_route_event_persists_row_with_expected_shape() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-1", "ws-1").await;
+    insert_thing(&pool, "dev-1", "ws-1").await;
     let throttle = ThrottleState::new(60);
     let bus = ThingEventBus::new();
 
@@ -229,7 +229,7 @@ async fn test_known_template_event_not_flagged() {
 #[tokio::test]
 async fn test_device_without_template_not_flagged() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-nt", "ws-1").await;
+    insert_thing(&pool, "dev-nt", "ws-1").await;
     let throttle = ThrottleState::new(60);
     let bus = ThingEventBus::new();
 
@@ -262,7 +262,7 @@ async fn test_device_without_template_not_flagged() {
 #[tokio::test]
 async fn test_event_alarm_rule_fires_device_alarm() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-al", "ws-al").await;
+    insert_thing(&pool, "dev-al", "ws-al").await;
 
     sqlx::query(
         "INSERT INTO thing_alarm_rules (id, thing_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, workspace_id)
@@ -317,7 +317,7 @@ async fn test_event_alarm_rule_fires_device_alarm() {
 #[tokio::test]
 async fn test_event_alarm_rule_respects_min_level() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-ml", "ws-ml").await;
+    insert_thing(&pool, "dev-ml", "ws-ml").await;
 
     sqlx::query(
         "INSERT INTO thing_alarm_rules (id, thing_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, workspace_id)
@@ -357,7 +357,7 @@ async fn test_event_alarm_rule_respects_min_level() {
 #[tokio::test]
 async fn test_throttle_admits_60_rejects_61st_but_spares_critical() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-th", "ws-1").await;
+    insert_thing(&pool, "dev-th", "ws-1").await;
     let throttle = ThrottleState::new(60);
     let bus = ThingEventBus::new();
 
@@ -418,7 +418,7 @@ async fn test_throttle_admits_60_rejects_61st_but_spares_critical() {
 #[tokio::test]
 async fn test_append_events_same_subtype_both_insert() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-dd", "ws-1").await;
+    insert_thing(&pool, "dev-dd", "ws-1").await;
     let throttle = ThrottleState::new(60);
     let bus = ThingEventBus::new();
 
@@ -451,7 +451,7 @@ async fn test_append_events_same_subtype_both_insert() {
 // Real-time status upsert
 // ──────────────────────────────────────────────
 
-/// Build a status-type event (Device + Warning/Error/Critical satisfies
+/// Build a status-type event (Thing + Warning/Error/Critical satisfies
 /// `should_update_real_time_status()`).
 fn status_event(thing_id: &str, level: EventLevel) -> Event {
     let content = RichContent::new(
@@ -462,7 +462,7 @@ fn status_event(thing_id: &str, level: EventLevel) -> Event {
         }],
     );
     Event::new(
-        EventType::Device(DeviceEventType::PropertyChange),
+        EventType::Device(ThingEventType::PropertyChange),
         level,
         EventSource::device_property(thing_id.to_string(), "temperature".to_string(), "test".to_string()),
         content,
@@ -476,7 +476,7 @@ fn status_event(thing_id: &str, level: EventLevel) -> Event {
 #[tokio::test]
 async fn test_status_upsert_via_repo_merges_repeat_occurrences() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-st", "ws-st").await;
+    insert_thing(&pool, "dev-st", "ws-st").await;
     let repo = Db::new(pool.clone());
 
     repo.upsert_event_status(&status_event("dev-st", EventLevel::Warning))
@@ -520,7 +520,7 @@ async fn test_status_upsert_via_repo_merges_repeat_occurrences() {
 #[tokio::test]
 async fn test_status_upsert_merges_repeat_occurrences() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-st", "ws-st").await;
+    insert_thing(&pool, "dev-st", "ws-st").await;
 
     // Same upsert shape as the events-table status upsert, with
     // the conflict-target predicate matching idx_events_status_dedup.
@@ -539,7 +539,7 @@ async fn test_status_upsert_merges_repeat_occurrences() {
             acknowledged_by = NULL,
             acknowledged_at = NULL
     "#;
-    let subtype = serde_json::to_string(&EventType::Device(DeviceEventType::PropertyChange)).unwrap();
+    let subtype = serde_json::to_string(&EventType::Device(ThingEventType::PropertyChange)).unwrap();
     let now = chrono::Utc::now().to_rfc3339();
 
     sqlx::query(upsert)
@@ -597,7 +597,7 @@ async fn test_status_upsert_merges_repeat_occurrences() {
 #[tokio::test]
 async fn test_status_upsert_ignores_info_level_events() {
     let pool = test_pool().await;
-    insert_device(&pool, "dev-si", "ws-si").await;
+    insert_thing(&pool, "dev-si", "ws-si").await;
     let repo = Db::new(pool.clone());
 
     // Info-level device events do not satisfy should_update_real_time_status().

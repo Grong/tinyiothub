@@ -455,7 +455,7 @@ mod tests {
             Some("rule-1".to_string()),
             AlarmType::DeviceOffline,
             AlarmLevel::Warning,
-            "Device went offline".to_string(),
+            "Thing went offline".to_string(),
             None,
             None,
             None,

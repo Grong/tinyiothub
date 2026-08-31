@@ -200,7 +200,7 @@ impl HeartbeatTrustAdapter {
                         PRIO_WRITE_LEVEL,
                         format!(
                             "Tool '{}' requires human approval under current trust level ({:?}). \
-                             Propose this action in pending_proposals with tool_name, device_id, \
+                             Propose this action in pending_proposals with tool_name, thing_id, \
                              summary, reason, and risk.",
                             tool_name, config.trust_level
                         ),

@@ -53,7 +53,7 @@ fn test_load_from_file_not_found_returns_default() {
 fn test_credentials_save_and_load() {
     use tinyiothub_edge::config::GatewayCredentials;
     let creds = GatewayCredentials {
-        device_id: "d1".into(),
+        thing_id: "d1".into(),
         client_id: "c1".into(),
         username: "u1".into(),
         password: "p1".into(),
@@ -62,7 +62,7 @@ fn test_credentials_save_and_load() {
     let tmp = std::env::temp_dir().join("test_creds.json");
     creds.save(&tmp).unwrap();
     let loaded = GatewayCredentials::load(&tmp).unwrap();
-    assert_eq!(loaded.device_id, "d1");
+    assert_eq!(loaded.thing_id, "d1");
     assert_eq!(loaded.workspace_id, "ws1");
     std::fs::remove_file(&tmp).ok();
 }
@@ -71,7 +71,7 @@ fn test_credentials_save_and_load() {
 fn test_credentials_validate_rejects_empty() {
     use tinyiothub_edge::config::GatewayCredentials;
     let creds = GatewayCredentials {
-        device_id: "".into(),
+        thing_id: "".into(),
         client_id: "c1".into(),
         username: "u1".into(),
         password: "p1".into(),

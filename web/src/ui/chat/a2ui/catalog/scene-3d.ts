@@ -21,10 +21,10 @@ function getStatusColors(): Record<string, string> {
   };
 }
 
-// ── Device instance from scene metadata ──
+// ── Thing instance from scene metadata ──
 type DeviceInstance = {
   instanceId: string;
-  deviceId: string;
+  thingId: string;
   position: [number, number, number];
   floorId?: string;
 };
@@ -248,7 +248,7 @@ export class A2uiScene3D extends LitElement {
   private modelGroup?: THREE.Group;
   private rafId?: number;
   private resizeObserver?: ResizeObserver;
-  private markers: Array<{ element: HTMLElement; worldPos: THREE.Vector3; floorId?: string; deviceId: string }> = [];
+  private markers: Array<{ element: HTMLElement; worldPos: THREE.Vector3; floorId?: string; thingId: string }> = [];
   private overlayEl?: HTMLElement;
   private floors: FloorInfo[] = [];
   private deviceInstances: DeviceInstance[] = [];
@@ -495,13 +495,13 @@ export class A2uiScene3D extends LitElement {
     const deviceData = (this.dataModel.devices || []) as Array<Record<string, unknown>>;
     const deviceStatusMap = new Map<string, string>();
     for (const d of deviceData) {
-      deviceStatusMap.set(String(d.deviceId || d.id), String(d.status || "offline"));
+      deviceStatusMap.set(String(d.thingId || d.deviceId || d.id), String(d.status || "offline"));
     }
 
     for (const inst of this.deviceInstances) {
       const el = document.createElement("div");
       el.className = "scene3d-marker";
-      const status = deviceStatusMap.get(inst.deviceId) || "offline";
+      const status = deviceStatusMap.get(inst.thingId) || "offline";
       const statusColors = getStatusColors();
       const color = statusColors[status] || statusColors.offline;
 
@@ -511,13 +511,13 @@ export class A2uiScene3D extends LitElement {
       dot.style.color = color;
       const label = document.createElement("div");
       label.className = "scene3d-marker__label";
-      label.textContent = inst.deviceId;
+      label.textContent = inst.thingId;
       el.appendChild(dot);
       el.appendChild(label);
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         if (this.onAction) {
-          this.onAction("selectDevice", { deviceId: inst.deviceId });
+          this.onAction("selectDevice", { thingId: inst.thingId });
         }
       });
 
@@ -526,7 +526,7 @@ export class A2uiScene3D extends LitElement {
         element: el,
         worldPos: new THREE.Vector3(...inst.position),
         floorId: inst.floorId,
-        deviceId: inst.deviceId,
+        thingId: inst.thingId,
       });
     }
   }

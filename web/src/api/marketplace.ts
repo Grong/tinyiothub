@@ -47,7 +47,6 @@ export interface MarketplaceTemplate {
   category?: string;
   author?: string;
   tags?: string[];
-  deviceType?: string;
   protocolType?: string;
   driverName?: string;
   rating?: number;

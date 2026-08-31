@@ -3,16 +3,14 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use crate::domains::thing::template::types::{CreateDeviceFromTemplateRequest, DeviceCreationInput};
+use crate::domains::thing::template::types::{CreateThingFromTemplateRequest, ThingCreationInput};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tinyiothub_core::models::device::CreateDeviceRequest;
-use tinyiothub_storage::thing::{DeviceCriteria, DeviceSortBy, DeviceSortOrder};
+use tinyiothub_core::models::thing::CreateThingRequest;
+use tinyiothub_storage::thing::{ThingCriteria, ThingSortBy, ThingSortOrder};
 
-use crate::domains::thing::legacy::device_query::{
-    find_device_by_id, find_device_by_id_with_tags, load_tags_for_devices,
-};
+use crate::domains::thing::legacy::thing_query::{find_thing_by_id, find_thing_by_id_with_tags, load_tags_for_things};
 
 use crate::domains::mcp::McpState;
 use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
@@ -20,7 +18,7 @@ use crate::domains::mcp::tool_registry::{InputSchema, PropertySchema, ToolError,
 /// Tool input: Get single device
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct GetDeviceInput {
+struct GetThingInput {
     id: String,
     include_properties: Option<bool>,
 }
@@ -29,7 +27,7 @@ struct GetDeviceInput {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WritePropertiesInput {
-    #[serde(rename = "deviceId", alias = "thingId")]
+    #[serde(rename = "thingId", alias = "deviceId")]
     thing_id: String,
     properties: HashMap<String, String>, // property_name -> value
 }
@@ -38,7 +36,7 @@ struct WritePropertiesInput {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SendCommandInput {
-    #[serde(rename = "deviceId", alias = "thingId")]
+    #[serde(rename = "thingId", alias = "deviceId")]
     thing_id: String,
     command_name: String,
     parameters: Option<HashMap<String, String>>,
@@ -47,7 +45,7 @@ struct SendCommandInput {
 /// Tool input: Create device from template
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CreateDeviceInput {
+struct CreateThingInput {
     template_id: Option<String>,
     name: String,
     display_name: Option<String>,
@@ -69,7 +67,7 @@ struct CreateDeviceInput {
 /// Tool input: Delete device
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DeleteDeviceInput {
+struct DeleteThingInput {
     id: String,
 }
 
@@ -102,19 +100,19 @@ struct CommandResponse {
     execution_time: Option<String>,
 }
 
-// === Get Device Profile Handler ===
-pub struct DeviceProfileHandler {
+// === Get Thing Profile Handler ===
+pub struct ThingProfileHandler {
     state: Option<Arc<McpState>>,
 }
 
-impl DeviceProfileHandler {
+impl ThingProfileHandler {
     pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }
 
 #[async_trait]
-impl ToolHandler for DeviceProfileHandler {
+impl ToolHandler for ThingProfileHandler {
     fn name(&self) -> &str {
         "get_thing"
     }
@@ -143,8 +141,7 @@ impl ToolHandler for DeviceProfileHandler {
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: GetDeviceInput =
-            serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+        let input: GetThingInput = serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
         let state = self
             .state
@@ -157,7 +154,7 @@ impl ToolHandler for DeviceProfileHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let mut device = find_device_by_id_with_tags(state.db(), &input.id, "")
+        let mut device = find_thing_by_id_with_tags(state.db(), &input.id, "")
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.id)))?;
@@ -177,19 +174,19 @@ impl ToolHandler for DeviceProfileHandler {
     }
 }
 
-// === Device Property Get Handler ===
-pub struct DevicePropertyGetHandler {
+// === Thing Property Get Handler ===
+pub struct ThingPropertyGetHandler {
     state: Option<Arc<McpState>>,
 }
 
-impl DevicePropertyGetHandler {
+impl ThingPropertyGetHandler {
     pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }
 
 #[async_trait]
-impl ToolHandler for DevicePropertyGetHandler {
+impl ToolHandler for ThingPropertyGetHandler {
     fn name(&self) -> &str {
         "read_properties"
     }
@@ -201,7 +198,7 @@ impl ToolHandler for DevicePropertyGetHandler {
     fn input_schema(&self) -> InputSchema {
         let mut props = HashMap::new();
         props.insert(
-            "deviceId".to_string(),
+            "thingId".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
                 description: Some("Thing ID (required)".to_string()),
@@ -214,14 +211,14 @@ impl ToolHandler for DevicePropertyGetHandler {
                 description: Some("Property name (required)".to_string()),
             },
         );
-        InputSchema::object(vec!["deviceId".to_string(), "propertyName".to_string()], props)
+        InputSchema::object(vec!["thingId".to_string(), "propertyName".to_string()], props)
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Input {
-            #[serde(rename = "deviceId", alias = "thingId")]
+            #[serde(rename = "thingId", alias = "deviceId")]
             thing_id: String,
             property_name: String,
         }
@@ -237,14 +234,14 @@ impl ToolHandler for DevicePropertyGetHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let _device = find_device_by_id(state.db(), &input.thing_id)
+        let _device = find_thing_by_id(state.db(), &input.thing_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.thing_id)))?;
 
         let all_properties = state
             .db()
-            .find_device_properties_by_device_id(&input.thing_id)
+            .find_thing_properties_by_thing_id(&input.thing_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -322,7 +319,7 @@ impl ToolHandler for WritePropertiesHandler {
     fn input_schema(&self) -> InputSchema {
         let mut props = HashMap::new();
         props.insert(
-            "deviceId".to_string(),
+            "thingId".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
                 description: Some("Thing ID (required)".to_string()),
@@ -335,7 +332,7 @@ impl ToolHandler for WritePropertiesHandler {
                 description: Some("Object mapping property names to values (required)".to_string()),
             },
         );
-        InputSchema::object(vec!["deviceId".to_string(), "properties".to_string()], props)
+        InputSchema::object(vec!["thingId".to_string(), "properties".to_string()], props)
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
@@ -351,14 +348,14 @@ impl ToolHandler for WritePropertiesHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let _device = find_device_by_id(state.db(), &input.thing_id)
+        let _device = find_thing_by_id(state.db(), &input.thing_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.thing_id)))?;
 
         let device_properties = state
             .db()
-            .find_device_properties_by_device_id(&input.thing_id)
+            .find_thing_properties_by_thing_id(&input.thing_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -427,19 +424,19 @@ impl ToolHandler for WritePropertiesHandler {
     }
 }
 
-// === Device Command Handler ===
-pub struct DeviceCommandHandler {
+// === Thing Command Handler ===
+pub struct ThingCommandHandler {
     state: Option<Arc<McpState>>,
 }
 
-impl DeviceCommandHandler {
+impl ThingCommandHandler {
     pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }
 
 #[async_trait]
-impl ToolHandler for DeviceCommandHandler {
+impl ToolHandler for ThingCommandHandler {
     fn name(&self) -> &str {
         "send_command"
     }
@@ -451,7 +448,7 @@ impl ToolHandler for DeviceCommandHandler {
     fn input_schema(&self) -> InputSchema {
         let mut props = HashMap::new();
         props.insert(
-            "deviceId".to_string(),
+            "thingId".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
                 description: Some("Thing ID (required)".to_string()),
@@ -471,7 +468,7 @@ impl ToolHandler for DeviceCommandHandler {
                 description: Some("Command parameters as key-value pairs".to_string()),
             },
         );
-        InputSchema::object(vec!["deviceId".to_string(), "commandName".to_string()], props)
+        InputSchema::object(vec!["thingId".to_string(), "commandName".to_string()], props)
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
@@ -487,7 +484,7 @@ impl ToolHandler for DeviceCommandHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let device = find_device_by_id(state.db(), &input.thing_id)
+        let device = find_thing_by_id(state.db(), &input.thing_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.thing_id)))?;
@@ -511,7 +508,7 @@ impl ToolHandler for DeviceCommandHandler {
 
         let command = state
             .db()
-            .find_device_command_by_device_and_name(&input.thing_id, &input.command_name)
+            .find_thing_command_by_thing_and_name(&input.thing_id, &input.command_name)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -568,19 +565,19 @@ impl ToolHandler for DeviceCommandHandler {
     }
 }
 
-// === Create Device Handler ===
-pub struct CreateDeviceHandler {
+// === Create Thing Handler ===
+pub struct CreateThingHandler {
     state: Option<Arc<McpState>>,
 }
 
-impl CreateDeviceHandler {
+impl CreateThingHandler {
     pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }
 
 #[async_trait]
-impl ToolHandler for CreateDeviceHandler {
+impl ToolHandler for CreateThingHandler {
     fn name(&self) -> &str {
         "create_thing"
     }
@@ -595,7 +592,7 @@ impl ToolHandler for CreateDeviceHandler {
             "templateId".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Device template ID (required for template-based creation)".to_string()),
+                description: Some("Thing template ID (required for template-based creation)".to_string()),
             },
         );
         props.insert(
@@ -623,14 +620,14 @@ impl ToolHandler for CreateDeviceHandler {
             "description".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Device description".to_string()),
+                description: Some("Thing description".to_string()),
             },
         );
         props.insert(
             "position".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Device position/location".to_string()),
+                description: Some("Thing position/location".to_string()),
             },
         );
         props.insert(
@@ -651,7 +648,7 @@ impl ToolHandler for CreateDeviceHandler {
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: CreateDeviceInput =
+        let input: CreateThingInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
         let state = self
@@ -666,7 +663,7 @@ impl ToolHandler for CreateDeviceHandler {
         let tenant_device_service = state.tenant_device_service_str(&workspace_id);
 
         if let Some(template_id) = input.template_id.clone() {
-            let device_input = DeviceCreationInput {
+            let thing_input = ThingCreationInput {
                 name: input.name,
                 display_name: input.display_name,
                 description: input.description,
@@ -681,12 +678,12 @@ impl ToolHandler for CreateDeviceHandler {
                 tenant_id: None,
                 workspace_id: None,
             };
-            let request = CreateDeviceFromTemplateRequest {
+            let request = CreateThingFromTemplateRequest {
                 template_id: template_id.clone(),
-                device_input,
+                thing_input,
             };
             match tenant_device_service
-                .create_device_from_template(state.template_engine(), &request.template_id, &request.device_input)
+                .create_thing_from_template(state.template_engine(), &request.template_id, &request.thing_input)
                 .await
             {
                 Ok(device) => Ok(serde_json::to_value(device).unwrap()),
@@ -696,7 +693,7 @@ impl ToolHandler for CreateDeviceHandler {
                 ))),
             }
         } else {
-            let request = CreateDeviceRequest {
+            let request = CreateThingRequest {
                 name: input.name,
                 display_name: input.display_name,
                 category: input.category,
@@ -715,7 +712,7 @@ impl ToolHandler for CreateDeviceHandler {
                 fingerprint: None,
                 workspace_id: None,
             };
-            match tenant_device_service.create_device(&request).await {
+            match tenant_device_service.create_thing(&request).await {
                 Ok(device) => Ok(serde_json::to_value(device).unwrap()),
                 Err(e) => Err(ToolError::Internal(format!("Failed to create thing: {}", e))),
             }
@@ -723,19 +720,19 @@ impl ToolHandler for CreateDeviceHandler {
     }
 }
 
-// === Delete Device Handler ===
-pub struct DeleteDeviceHandler {
+// === Delete Thing Handler ===
+pub struct DeleteThingHandler {
     state: Option<Arc<McpState>>,
 }
 
-impl DeleteDeviceHandler {
+impl DeleteThingHandler {
     pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }
 
 #[async_trait]
-impl ToolHandler for DeleteDeviceHandler {
+impl ToolHandler for DeleteThingHandler {
     fn name(&self) -> &str {
         "delete_thing"
     }
@@ -757,7 +754,7 @@ impl ToolHandler for DeleteDeviceHandler {
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: DeleteDeviceInput =
+        let input: DeleteThingInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
         let state = self
@@ -771,7 +768,7 @@ impl ToolHandler for DeleteDeviceHandler {
 
         let tenant_device_service = state.tenant_device_service_str(&workspace_id);
 
-        match tenant_device_service.delete_device(&input.id).await {
+        match tenant_device_service.delete_thing(&input.id).await {
             Ok(true) => Ok(serde_json::json!({"success": true, "thing_id": input.id})),
             Ok(false) => Err(ToolError::NotFound(format!(
                 "Thing {} not found or does not belong to workspace",
@@ -786,7 +783,7 @@ impl ToolHandler for DeleteDeviceHandler {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SearchDevicesInput {
+struct SearchThingsInput {
     keyword: String,
     tag: Option<String>,
     limit: Option<u32>,
@@ -794,7 +791,7 @@ struct SearchDevicesInput {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SearchDeviceResult {
+struct SearchThingResult {
     id: String,
     name: String,
     display_name: Option<String>,
@@ -809,24 +806,24 @@ struct SearchDeviceResult {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SearchDevicesResponse {
+struct SearchThingsResponse {
     keyword: String,
     total: usize,
-    things: Vec<SearchDeviceResult>,
+    things: Vec<SearchThingResult>,
 }
 
-pub struct SearchDevicesHandler {
+pub struct SearchThingsHandler {
     state: Option<Arc<McpState>>,
 }
 
-impl SearchDevicesHandler {
+impl SearchThingsHandler {
     pub fn new(state: Option<Arc<McpState>>) -> Self {
         Self { state }
     }
 }
 
 #[async_trait]
-impl ToolHandler for SearchDevicesHandler {
+impl ToolHandler for SearchThingsHandler {
     fn name(&self) -> &str {
         "search_things"
     }
@@ -864,7 +861,7 @@ impl ToolHandler for SearchDevicesHandler {
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: SearchDevicesInput =
+        let input: SearchThingsInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
         let limit = input.limit.unwrap_or(20).min(50);
@@ -878,23 +875,23 @@ impl ToolHandler for SearchDevicesHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        let criteria = DeviceCriteria {
+        let criteria = ThingCriteria {
             workspace_id: Some(workspace_id),
             search_text: Some(input.keyword.clone()),
             tag_name: input.tag,
             limit: Some(limit),
-            sort_by: DeviceSortBy::Name,
-            sort_order: DeviceSortOrder::Ascending,
+            sort_by: ThingSortBy::Name,
+            sort_order: ThingSortOrder::Ascending,
             ..Default::default()
         };
 
         let mut things = state
             .db()
-            .find_devices(None, &criteria)
+            .find_things(None, &criteria)
             .await
             .map_err(|e| ToolError::Internal(format!("Search failed: {}", e)))?;
 
-        load_tags_for_devices(state.db(), &mut things, "")
+        load_tags_for_things(state.db(), &mut things, "")
             .await
             .map_err(|e| ToolError::Internal(format!("Failed to load tags: {}", e)))?;
 
@@ -909,7 +906,7 @@ impl ToolHandler for SearchDevicesHandler {
                     .filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
                     .collect()
             });
-            results.push(SearchDeviceResult {
+            results.push(SearchThingResult {
                 id: device.id.clone(),
                 name: device.name.clone(),
                 display_name: device.display_name.clone(),
@@ -923,7 +920,7 @@ impl ToolHandler for SearchDevicesHandler {
             });
         }
 
-        let response = SearchDevicesResponse {
+        let response = SearchThingsResponse {
             keyword: input.keyword,
             total: results.len(),
             things: results,

@@ -1,4 +1,4 @@
-//! Device handler integration tests
+//! Thing handler integration tests
 //!
 //! Tests device CRUD endpoints using `tower::ServiceExt::oneshot()`.
 
@@ -33,17 +33,17 @@ fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Re
 }
 
 // ============================================================================
-// Create Device
+// Create Thing
 // ============================================================================
 
 #[tokio::test]
-async fn test_create_device() {
+async fn test_create_thing() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
     let body = json!({
         "name": "test-device-001",
-        "display_name": "Test Device",
+        "display_name": "Test Thing",
         "category": "sensor",
         "protocol_type": "modbus"
     });
@@ -337,7 +337,7 @@ async fn test_cross_workspace_isolation() {
 }
 
 // ============================================================================
-// Device Profile
+// Thing Profile
 // ============================================================================
 
 #[tokio::test]
@@ -348,7 +348,7 @@ async fn test_get_device_profile_not_found() {
     let response = app
         .oneshot(auth_request(
             "GET",
-            "/api/v1/devices/nonexistent-id-12345/profile",
+            "/api/v1/things/nonexistent-id-12345/profile",
             &token,
             None,
         ))
@@ -357,23 +357,24 @@ async fn test_get_device_profile_not_found() {
 
     let (status, json) = response_parts(response).await;
 
-    assert_eq!(status, StatusCode::OK);
+    // Main thing router returns real HTTP status codes (admin duplicate removed).
+    assert_eq!(status, StatusCode::NOT_FOUND);
     assert_ne!(json["code"], 0, "Expected error for nonexistent device profile");
 }
 
 // ============================================================================
-// Device Properties — not found
+// Thing Properties — not found
 // ============================================================================
 
 #[tokio::test]
-async fn test_get_device_properties_not_found() {
+async fn test_get_thing_properties_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
         .oneshot(auth_request(
             "GET",
-            "/api/v1/devices/nonexistent-id-12345/properties",
+            "/api/v1/things/admin/nonexistent-id-12345/properties",
             &token,
             None,
         ))
@@ -446,7 +447,7 @@ async fn test_get_thing_profile_success() {
 }
 
 // ============================================================================
-// Device Status — not found
+// Thing Status — not found
 // ============================================================================
 
 #[tokio::test]
@@ -457,7 +458,7 @@ async fn test_get_device_status_not_found() {
     let response = app
         .oneshot(auth_request(
             "GET",
-            "/api/v1/devices/nonexistent-id-12345/status",
+            "/api/v1/things/admin/nonexistent-id-12345/status",
             &token,
             None,
         ))
@@ -471,17 +472,17 @@ async fn test_get_device_status_not_found() {
 }
 
 // ============================================================================
-// Device Monitoring — not found paths
+// Thing Monitoring — not found paths
 // ============================================================================
 
 #[tokio::test]
-async fn test_get_device_metrics_not_found() {
+async fn test_get_thing_metrics_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
         .oneshot(auth_request(
             "GET",
-            "/api/v1/devices/nonexistent-id-12345/metrics",
+            "/api/v1/things/admin/nonexistent-id-12345/metrics",
             &token,
             None,
         ))
@@ -499,7 +500,7 @@ async fn test_get_device_performance_not_found() {
     let response = app
         .oneshot(auth_request(
             "GET",
-            "/api/v1/devices/nonexistent-id-12345/performance",
+            "/api/v1/things/admin/nonexistent-id-12345/performance",
             &token,
             None,
         ))
@@ -517,7 +518,7 @@ async fn test_get_device_performance_history_not_found() {
     let response = app
         .oneshot(auth_request(
             "GET",
-            "/api/v1/devices/nonexistent-id-12345/performance/history",
+            "/api/v1/things/admin/nonexistent-id-12345/performance/history",
             &token,
             None,
         ))
@@ -535,7 +536,7 @@ async fn test_get_device_performance_alerts_not_found() {
     let response = app
         .oneshot(auth_request(
             "GET",
-            "/api/v1/devices/nonexistent-id-12345/performance/alerts",
+            "/api/v1/things/admin/nonexistent-id-12345/performance/alerts",
             &token,
             None,
         ))
@@ -553,7 +554,7 @@ async fn test_get_system_overview() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/overview", &token, None))
+        .oneshot(auth_request("GET", "/api/v1/things/admin/overview", &token, None))
         .await
         .unwrap();
     let (status, json) = response_parts(response).await;
@@ -568,7 +569,7 @@ async fn test_get_system_performance_overview() {
     let response = app
         .oneshot(auth_request(
             "GET",
-            "/api/v1/devices/performance/overview",
+            "/api/v1/things/admin/performance/overview",
             &token,
             None,
         ))
@@ -584,7 +585,12 @@ async fn test_get_all_performance_alerts() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/performance/alerts", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/things/admin/performance/alerts",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     let (status, json) = response_parts(response).await;
@@ -593,7 +599,7 @@ async fn test_get_all_performance_alerts() {
 }
 
 // ============================================================================
-// Device Trace — not found paths
+// Thing Trace — not found paths
 // ============================================================================
 
 #[tokio::test]
@@ -603,7 +609,7 @@ async fn test_get_device_traces_not_found() {
     let response = app
         .oneshot(auth_request(
             "GET",
-            "/api/v1/devices/nonexistent-id-12345/traces",
+            "/api/v1/things/admin/nonexistent-id-12345/traces",
             &token,
             None,
         ))
@@ -623,7 +629,7 @@ async fn test_get_device_trace_statistics_not_found() {
     let response = app
         .oneshot(auth_request(
             "GET",
-            "/api/v1/devices/nonexistent-id-12345/traces/statistics",
+            "/api/v1/things/admin/nonexistent-id-12345/traces/statistics",
             &token,
             None,
         ))
@@ -643,7 +649,7 @@ async fn test_get_system_trace_overview() {
     let response = app
         .oneshot(auth_request(
             "GET",
-            "/api/v1/devices/system/traces/overview",
+            "/api/v1/things/admin/system/traces/overview",
             &token,
             None,
         ))
@@ -663,7 +669,7 @@ async fn test_execute_device_command_not_found() {
     let response = app
         .oneshot(auth_request(
             "POST",
-            "/api/v1/devices/nonexistent-id-12345/commands/nonexistent-cmd/execute",
+            "/api/v1/things/admin/nonexistent-id-12345/commands/nonexistent-cmd/execute",
             &token,
             Some(json!({"params": {}})),
         ))
@@ -677,7 +683,7 @@ async fn test_execute_device_command_not_found() {
 }
 
 // ============================================================================
-// Device Properties — write endpoints
+// Thing Properties — write endpoints
 // ============================================================================
 
 #[tokio::test]
@@ -690,7 +696,7 @@ async fn test_update_device_property_value_not_found() {
     let response = app
         .oneshot(auth_request(
             "PUT",
-            "/api/v1/devices/nonexistent-id-12345/properties/nonexistent-prop/value",
+            "/api/v1/things/admin/nonexistent-id-12345/properties/nonexistent-prop/value",
             &token,
             Some(body),
         ))
@@ -710,7 +716,7 @@ async fn test_get_device_property_by_name_not_found() {
     let response = app
         .oneshot(auth_request(
             "GET",
-            "/api/v1/devices/by-name/nonexistent-device/properties/some-property",
+            "/api/v1/things/admin/by-name/nonexistent-device/properties/some-property",
             &token,
             None,
         ))
@@ -723,7 +729,7 @@ async fn test_get_device_property_by_name_not_found() {
 }
 
 // ============================================================================
-// Device Trace — write endpoints
+// Thing Trace — write endpoints
 // ============================================================================
 
 #[tokio::test]
@@ -742,7 +748,7 @@ async fn test_record_device_trace_not_found() {
     let response = app
         .oneshot(auth_request(
             "POST",
-            "/api/v1/devices/nonexistent-id-12345/traces",
+            "/api/v1/things/admin/nonexistent-id-12345/traces",
             &token,
             Some(body),
         ))
@@ -764,7 +770,7 @@ async fn test_clear_device_traces_not_found() {
     let response = app
         .oneshot(auth_request(
             "POST",
-            "/api/v1/devices/nonexistent-id-12345/traces/clear",
+            "/api/v1/things/admin/nonexistent-id-12345/traces/clear",
             &token,
             Some(body),
         ))
@@ -786,7 +792,7 @@ async fn test_cleanup_expired_traces() {
     let response = app
         .oneshot(auth_request(
             "POST",
-            "/api/v1/devices/system/traces/cleanup",
+            "/api/v1/things/admin/system/traces/cleanup",
             &token,
             Some(body),
         ))

@@ -359,7 +359,7 @@ export class CronView extends LitElement {
     this.formRetryDelay = String(job.retryDelaySeconds ?? 60);
     this.formConcurrency = String(job.concurrency ?? 1);
     this.formEnabled = job.isEnabled;
-    this.formTargetDevice = job.targetDeviceId || "";
+    this.formTargetDevice = job.targetThingId || "";
     this.formTargetCommand = job.targetCommandName || "";
     this.formConfigError = "";
     this.formCronError = "";
@@ -480,7 +480,7 @@ export class CronView extends LitElement {
         retryCount: parseInt(this.formRetryCount, 10) || 0,
         retryDelaySeconds: parseInt(this.formRetryDelay, 10) || 60,
         concurrency: parseInt(this.formConcurrency, 10) || 1,
-        targetDeviceId: this.formTargetDevice || undefined,
+        targetThingId: this.formTargetDevice || undefined,
         targetCommandName: this.formTargetCommand || undefined,
       };
       if (this.editingJob) {

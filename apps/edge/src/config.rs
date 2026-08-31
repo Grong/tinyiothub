@@ -95,7 +95,7 @@ impl EdgeConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GatewayCredentials {
-    pub device_id: String,
+    pub thing_id: String,
     pub client_id: String,
     pub username: String,
     pub password: String,
@@ -116,8 +116,8 @@ impl GatewayCredentials {
     }
 
     pub fn validate(&self) -> Result<(), &'static str> {
-        if self.device_id.is_empty() {
-            return Err("device_id is empty");
+        if self.thing_id.is_empty() {
+            return Err("thing_id is empty");
         }
         if self.client_id.is_empty() {
             return Err("client_id is empty");

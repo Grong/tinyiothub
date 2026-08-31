@@ -316,12 +316,26 @@ pub async fn get_tag_stats(
     }
 }
 
+/// 过渡期归一化:存储与查询只认 'thing';写入侧仍接受旧契约值 'device'。
+/// 单条与批量创建入口共用。
+fn normalize_target_type(target_type: &str) -> String {
+    if target_type == "device" {
+        "thing".to_string()
+    } else {
+        target_type.to_string()
+    }
+}
+
 /// Create tag binding (idempotent: returns existing if already exists)
 pub async fn create_tag_binding(
     claims: AuthClaims,
     State(state): State<AppState>,
     Json(request): Json<CreateTagBindingRequest>,
 ) -> Result<Json<ApiResponse<TagBinding>>, StatusCode> {
+    let request = CreateTagBindingRequest {
+        target_type: normalize_target_type(&request.target_type),
+        ..request
+    };
     match state
         .tag_service
         .find_binding_by_tag_and_target(&request.tag_id, &request.target_id, &claims.0.tenant_id)
@@ -390,13 +404,14 @@ pub async fn batch_create_bindings(
     State(state): State<AppState>,
     Json(request): Json<BatchTagBindingRequest>,
 ) -> Result<Json<ApiResponse<Vec<TagBinding>>>, StatusCode> {
+    let target_type = normalize_target_type(&request.target_type);
     let bindings: Vec<CreateTagBindingRequest> = request
         .tag_ids
         .into_iter()
         .map(|tag_id| CreateTagBindingRequest {
             tag_id,
             target_id: request.target_id.clone(),
-            target_type: request.target_type.clone(),
+            target_type: target_type.clone(),
         })
         .collect();
 

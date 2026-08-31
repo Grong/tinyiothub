@@ -157,7 +157,7 @@ pub fn evaluate_tool_trust_with_safety(config: &TrustConfig, tool_name: &str, sa
         TrustLevel::ReadOnlyAuto | TrustLevel::ApprovalRequired => TrustDecision::Propose {
             reason: format!(
                 "Tool '{}' requires human approval under current trust level ({:?}). \
-                 Propose this action in pending_proposals with tool_name, device_id, \
+                 Propose this action in pending_proposals with tool_name, thing_id, \
                  summary, reason, and risk.",
                 tool_name, config.trust_level,
             ),
@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn test_new_destructive_patterns_caught() {
         assert_eq!(classify_tool_safety("purge_data"), ToolSafety::Destructive);
-        assert_eq!(classify_tool_safety("wipe_device"), ToolSafety::Destructive);
+        assert_eq!(classify_tool_safety("wipe_thing"), ToolSafety::Destructive);
         assert_eq!(classify_tool_safety("clear_all_caches"), ToolSafety::Destructive);
         assert_eq!(classify_tool_safety("destroy_workspace"), ToolSafety::Destructive);
         assert_eq!(classify_tool_safety("format_disk"), ToolSafety::Destructive);

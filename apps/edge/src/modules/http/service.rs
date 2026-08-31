@@ -12,13 +12,13 @@ use super::{auth, handlers};
 pub fn create_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/v1/health", get(handlers::get_health))
-        .route("/api/v1/devices", get(handlers::get_devices))
-        .route("/api/v1/devices/{id}", get(handlers::get_device))
+        .route("/api/v1/things", get(handlers::get_things))
+        .route("/api/v1/things/{id}", get(handlers::get_thing))
         .route(
-            "/api/v1/devices/{id}/properties",
-            get(handlers::get_device_properties).post(handlers::post_device_properties),
+            "/api/v1/things/{id}/properties",
+            get(handlers::get_thing_properties).post(handlers::post_thing_properties),
         )
-        .route("/api/v1/devices/{id}/command", post(handlers::post_device_command))
+        .route("/api/v1/things/{id}/command", post(handlers::post_thing_command))
         .route("/api/v1/drivers", get(handlers::get_drivers))
         .route("/api/v1/drivers/scan", post(handlers::post_driver_scan))
         .route("/api/v1/alarms", get(handlers::get_alarms))

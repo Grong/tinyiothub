@@ -32,7 +32,7 @@ impl Tool for CanvasTool {
         jsonl is TWO lines (always create surface THEN push components):\n\
         Line1: {\"createSurface\":{\"id\":\"<id>\",\"surfaceKind\":\"stage\"}}\n\
         Line2: {\"updateComponents\":{\"surfaceId\":\"<same id>\",\"components\":[...]}}\n\
-        Key components: Scene3D(modelUrl), Image(src), StatCard(label,value,unit?), StatRow(items[{label,value,unit?}]), DeviceCard(deviceId,name,status,properties?[]), DeviceTable(columns[],rows[][]), AlarmCard(alarmId,severity,title,message,deviceName,timestamp), AlarmTable(alarms[]), DataChart(type,data[],labels?), Text(content)\n\
+        Key components: Scene3D(modelUrl), Image(src), StatCard(label,value,unit?), StatRow(items[{label,value,unit?}]), ThingCard(thingId,name,status,properties?[]), ThingTable(columns[],rows[][]), AlarmCard(alarmId,severity,title,message,deviceName,timestamp), AlarmTable(alarms[]), DataChart(type,data[],labels?), Text(content)\n\
         Example: {\"createSurface\":{\"id\":\"scene\",\"surfaceKind\":\"stage\"}}\n\
         {\"updateComponents\":{\"surfaceId\":\"scene\",\"components\":[{\"id\":\"m1\",\"componentKind\":\"Scene3D\",\"dataModel\":{\"modelUrl\":\"/uploads/model.glb\"}}]}}"
     }

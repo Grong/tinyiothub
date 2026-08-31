@@ -83,7 +83,6 @@ export class MarketplaceView extends LitElement {
       description: resolveLocalized(raw.description),
       category: resolveLocalized(raw.category),
       author: resolveLocalized(raw.author),
-      deviceType: resolveLocalized(raw.deviceType),
       protocolType: resolveLocalized(raw.protocolType),
       driverName: resolveLocalized(raw.driverName),
     };
@@ -326,8 +325,6 @@ export class MarketplaceView extends LitElement {
               </div>
               <div class="mp-meta">
                 <span class="mp-meta-item">${safeString(t.category, "其他")}</span>
-                <span class="mp-meta-sep">·</span>
-                <span class="mp-meta-item">${safeString(t.deviceType, "通用物")}</span>
               </div>
               <div class="mp-desc">${safeString(t.description, "暂无描述")}</div>
               <div class="mp-actions">
@@ -601,7 +598,6 @@ export class MarketplaceView extends LitElement {
     const metaItems = [
       { label: "版本", value: safeString(t.version) },
       { label: "分类", value: safeString(t.category, "") },
-      { label: "物类型", value: safeString(t.deviceType, "") },
       { label: "协议", value: safeString(t.protocolType, "") },
       { label: "驱动", value: safeString(t.driverName, "") },
       { label: "制造商", value: safeString(t.manufacturer, "") },

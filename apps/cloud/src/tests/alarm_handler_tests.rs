@@ -291,7 +291,7 @@ async fn test_list_alarms_filter_by_status() {
          VALUES (?, ?, ?, ?, ?)",
     )
     .bind("alarm-test-device-1")
-    .bind("Alarm Test Device")
+    .bind("Alarm Test Thing")
     .bind("ws-default-001")
     .bind(&now)
     .bind(&now)
@@ -416,7 +416,7 @@ async fn test_get_alarm_not_found() {
 // ============================================================================
 
 #[tokio::test]
-async fn test_list_alarm_rules_by_device() {
+async fn test_list_alarm_rules_by_thing() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 

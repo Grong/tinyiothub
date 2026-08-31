@@ -8,7 +8,7 @@ use serde::Deserialize;
 use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::security::Claims;
 
-use crate::domains::thing::legacy::trace::{DeviceTrace, DeviceTraceStatistics, SystemTraceOverview};
+use crate::domains::thing::legacy::trace::{SystemTraceOverview, ThingTrace, ThingTraceStatistics};
 use tinyiothub_web::api_response::ApiResponse;
 
 #[derive(Deserialize)]
@@ -111,7 +111,7 @@ async fn get_device_traces(
     Path(thing_id): Path<String>,
     Query(params): Query<TraceQuery>,
     _claims: Claims,
-) -> Json<ApiResponse<Vec<DeviceTrace>>> {
+) -> Json<ApiResponse<Vec<ThingTrace>>> {
     // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
     // which automatically filters things by workspace_id
     let trace_types = params.trace_types.as_deref();
@@ -139,12 +139,12 @@ async fn get_device_trace_summary(
     Path(thing_id): Path<String>,
     Query(params): Query<TraceStatisticsQuery>,
     _claims: Claims,
-) -> Json<ApiResponse<DeviceTraceStatistics>> {
+) -> Json<ApiResponse<ThingTraceStatistics>> {
     // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
     // which automatically filters things by workspace_id
     match state
         .trace_service
-        .get_device_trace_statistics(&thing_id, params.days)
+        .get_thing_trace_statistics(&thing_id, params.days)
         .await
     {
         Ok(stats) => ApiResponseBuilder::success(stats),

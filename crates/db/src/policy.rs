@@ -123,8 +123,8 @@ mod tests {
     fn act_policy() -> AutonomyPolicy {
         AutonomyPolicy {
             mode: AutonomyMode::Act,
-            allowed_actions: vec!["reboot_device".to_string(), "set_property".to_string()],
-            denied_actions: vec!["wipe_device".to_string()],
+            allowed_actions: vec!["reboot_thing".to_string(), "set_property".to_string()],
+            denied_actions: vec!["wipe_thing".to_string()],
             max_actions_per_run: 3,
             max_actions_per_hour: 30,
         }
@@ -141,8 +141,8 @@ mod tests {
         let loaded = db.load_autonomy_policy("ws_1").await.expect("load").expect("persisted");
 
         assert_eq!(loaded.mode, AutonomyMode::Act);
-        assert_eq!(loaded.allowed_actions, vec!["reboot_device", "set_property"]);
-        assert_eq!(loaded.denied_actions, vec!["wipe_device"]);
+        assert_eq!(loaded.allowed_actions, vec!["reboot_thing", "set_property"]);
+        assert_eq!(loaded.denied_actions, vec!["wipe_thing"]);
         assert_eq!(loaded.max_actions_per_run, 3);
         assert_eq!(loaded.max_actions_per_hour, 30);
     }

@@ -66,8 +66,8 @@ mod tests {
     fn act_policy() -> AutonomyPolicy {
         AutonomyPolicy {
             mode: AutonomyMode::Act,
-            allowed_actions: vec!["reboot_device".to_string()],
-            denied_actions: vec!["wipe_device".to_string()],
+            allowed_actions: vec!["reboot_thing".to_string()],
+            denied_actions: vec!["wipe_thing".to_string()],
             max_actions_per_run: 3,
             max_actions_per_hour: 30,
         }
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn none_policy_denies_fail_closed() {
-        let v = gate_check(None, "reboot_device", 0, 0);
+        let v = gate_check(None, "reboot_thing", 0, 0);
         assert_eq!(deny_reason(&v), "autonomy_not_act");
     }
 
@@ -90,7 +90,7 @@ mod tests {
     fn mode_off_denies() {
         let mut p = act_policy();
         p.mode = AutonomyMode::Off;
-        let v = gate_check(Some(&p), "reboot_device", 0, 0);
+        let v = gate_check(Some(&p), "reboot_thing", 0, 0);
         assert_eq!(deny_reason(&v), "autonomy_not_act");
     }
 
@@ -98,7 +98,7 @@ mod tests {
     fn mode_diagnose_denies() {
         let mut p = act_policy();
         p.mode = AutonomyMode::Diagnose;
-        let v = gate_check(Some(&p), "reboot_device", 0, 0);
+        let v = gate_check(Some(&p), "reboot_thing", 0, 0);
         assert_eq!(deny_reason(&v), "autonomy_not_act");
     }
 
@@ -106,7 +106,7 @@ mod tests {
     fn denylist_hit_denies_even_with_star_allowlist() {
         let mut p = act_policy();
         p.allowed_actions = vec!["*".to_string()];
-        let v = gate_check(Some(&p), "wipe_device", 0, 0);
+        let v = gate_check(Some(&p), "wipe_thing", 0, 0);
         assert_eq!(deny_reason(&v), "action_denied");
     }
 
@@ -127,33 +127,33 @@ mod tests {
     #[test]
     fn exact_allowlist_allows() {
         let p = act_policy();
-        assert_eq!(gate_check(Some(&p), "reboot_device", 0, 0), GateVerdict::Allow);
+        assert_eq!(gate_check(Some(&p), "reboot_thing", 0, 0), GateVerdict::Allow);
     }
 
     #[test]
     fn run_cap_reached_denies() {
         let p = act_policy();
-        let v = gate_check(Some(&p), "reboot_device", 3, 0);
+        let v = gate_check(Some(&p), "reboot_thing", 3, 0);
         assert_eq!(deny_reason(&v), "run_action_cap");
     }
 
     #[test]
     fn run_cap_boundary_allows() {
         let p = act_policy();
-        assert_eq!(gate_check(Some(&p), "reboot_device", 2, 0), GateVerdict::Allow);
+        assert_eq!(gate_check(Some(&p), "reboot_thing", 2, 0), GateVerdict::Allow);
     }
 
     #[test]
     fn hourly_fuse_reached_denies() {
         let p = act_policy();
-        let v = gate_check(Some(&p), "reboot_device", 0, 30);
+        let v = gate_check(Some(&p), "reboot_thing", 0, 30);
         assert_eq!(deny_reason(&v), "hourly_fuse");
     }
 
     #[test]
     fn hourly_fuse_boundary_allows() {
         let p = act_policy();
-        assert_eq!(gate_check(Some(&p), "reboot_device", 0, 29), GateVerdict::Allow);
+        assert_eq!(gate_check(Some(&p), "reboot_thing", 0, 29), GateVerdict::Allow);
     }
 
     #[test]
@@ -161,7 +161,7 @@ mod tests {
         // mode != Act short-circuits before list checks
         let mut p = act_policy();
         p.mode = AutonomyMode::Diagnose;
-        let v = gate_check(Some(&p), "wipe_device", 0, 0);
+        let v = gate_check(Some(&p), "wipe_thing", 0, 0);
         assert_eq!(deny_reason(&v), "autonomy_not_act");
     }
 
@@ -169,7 +169,7 @@ mod tests {
     fn verdict_order_lists_before_caps() {
         // denylist fires even when both caps are already exhausted
         let p = act_policy();
-        let v = gate_check(Some(&p), "wipe_device", 3, 30);
+        let v = gate_check(Some(&p), "wipe_thing", 3, 30);
         assert_eq!(deny_reason(&v), "action_denied");
     }
 

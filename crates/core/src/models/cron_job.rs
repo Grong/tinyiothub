@@ -149,7 +149,7 @@ mod tests {
     fn test_cron_job_config_extraction() {
         let job = CronJob {
             id: "job-001".to_string(),
-            name: "Test Device Command".to_string(),
+            name: "Test Thing Command".to_string(),
             description: None,
             job_type: "device_command".to_string(),
             cron_expression: "*/5 * * * *".to_string(),

@@ -1,16 +1,16 @@
 //! 协议处理器
 
 use async_trait::async_trait;
-use tinyiothub_core::models::device::Device;
+use tinyiothub_core::models::thing::Thing;
 
 use tinyiothub_core::error::Error;
 use tinyiothub_runtime::driver::ResultValue;
 
 #[async_trait]
 pub trait ProtocolHandler: Send + Sync {
-    async fn read_data(&self, device: &Device) -> Result<Vec<ResultValue>, Error>;
+    async fn read_data(&self, device: &Thing) -> Result<Vec<ResultValue>, Error>;
 
-    async fn execute_command(&self, device: &Device, command: &str, args: &[String]) -> Result<bool, Error> {
+    async fn execute_command(&self, device: &Thing, command: &str, args: &[String]) -> Result<bool, Error> {
         let _ = (device, command, args);
         Err(Error::Unsupported("Command not supported".to_string()))
     }

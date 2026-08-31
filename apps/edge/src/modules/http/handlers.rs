@@ -17,60 +17,60 @@ pub async fn get_health(State(state): State<Arc<AppState>>) -> JsonResponse {
     ApiResponseBuilder::success(serde_json::to_value(report).unwrap_or_default())
 }
 
-// ── 2. GET /api/v1/devices ──────────────────────────────────────
+// ── 2. GET /api/v1/things ──────────────────────────────────────
 
-pub async fn get_devices(State(state): State<Arc<AppState>>) -> JsonResponse {
-    match state.device_service.list_devices(None).await {
-        Ok(devices) => ApiResponseBuilder::success(serde_json::to_value(devices).unwrap_or_default()),
+pub async fn get_things(State(state): State<Arc<AppState>>) -> JsonResponse {
+    match state.thing_service.list_things(None).await {
+        Ok(things) => ApiResponseBuilder::success(serde_json::to_value(things).unwrap_or_default()),
         Err(e) => ApiResponseBuilder::error(e.to_string()),
     }
 }
 
-// ── 3. GET /api/v1/devices/{id} ─────────────────────────────────
+// ── 3. GET /api/v1/things/{id} ─────────────────────────────────
 
-pub async fn get_device(State(state): State<Arc<AppState>>, Path(device_id): Path<String>) -> JsonResponse {
-    match state.device_service.get_device(&device_id).await {
-        Ok(device) => ApiResponseBuilder::success(serde_json::to_value(device).unwrap_or_default()),
+pub async fn get_thing(State(state): State<Arc<AppState>>, Path(thing_id): Path<String>) -> JsonResponse {
+    match state.thing_service.get_thing(&thing_id).await {
+        Ok(thing) => ApiResponseBuilder::success(serde_json::to_value(thing).unwrap_or_default()),
         Err(e) => ApiResponseBuilder::error(e.to_string()),
     }
 }
 
-// ── 4. GET /api/v1/devices/{id}/properties ──────────────────────
+// ── 4. GET /api/v1/things/{id}/properties ──────────────────────
 
-pub async fn get_device_properties(State(state): State<Arc<AppState>>, Path(device_id): Path<String>) -> JsonResponse {
-    match state.device_service.get_device(&device_id).await {
-        Ok(_device) => {
-            let properties = serde_json::json!({"device_id": device_id, "status": "online"});
+pub async fn get_thing_properties(State(state): State<Arc<AppState>>, Path(thing_id): Path<String>) -> JsonResponse {
+    match state.thing_service.get_thing(&thing_id).await {
+        Ok(_thing) => {
+            let properties = serde_json::json!({"thing_id": thing_id, "status": "online"});
             ApiResponseBuilder::success(properties)
         }
         Err(e) => ApiResponseBuilder::error(e.to_string()),
     }
 }
 
-// ── 5. POST /api/v1/devices/{id}/properties ─────────────────────
+// ── 5. POST /api/v1/things/{id}/properties ─────────────────────
 
-pub async fn post_device_properties(
+pub async fn post_thing_properties(
     State(state): State<Arc<AppState>>,
-    Path(device_id): Path<String>,
+    Path(thing_id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> JsonResponse {
-    match state.device_service.get_device(&device_id).await {
+    match state.thing_service.get_thing(&thing_id).await {
         Ok(_) => {
-            tracing::info!(device_id = %device_id, ?body, "Property write requested");
+            tracing::info!(thing_id = %thing_id, ?body, "Property write requested");
             ApiResponseBuilder::success(serde_json::json!({"updated": true}))
         }
         Err(e) => ApiResponseBuilder::error(e.to_string()),
     }
 }
 
-// ── 6. POST /api/v1/devices/{id}/command ────────────────────────
+// ── 6. POST /api/v1/things/{id}/command ────────────────────────
 
-pub async fn post_device_command(
+pub async fn post_thing_command(
     State(state): State<Arc<AppState>>,
-    Path(device_id): Path<String>,
+    Path(thing_id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> JsonResponse {
-    match state.command_service.execute(&device_id, &body).await {
+    match state.command_service.execute(&thing_id, &body).await {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"executed": true})),
         Err(e) => ApiResponseBuilder::error(e.to_string()),
     }
@@ -89,10 +89,10 @@ pub async fn get_drivers(State(state): State<Arc<AppState>>) -> JsonResponse {
 
 pub async fn post_driver_scan(State(state): State<Arc<AppState>>) -> JsonResponse {
     match state.driver_service.scan_all().await {
-        Ok(devices) => ApiResponseBuilder::success(serde_json::json!({
+        Ok(things) => ApiResponseBuilder::success(serde_json::json!({
             "scanned": true,
-            "devices_found": devices.len(),
-            "devices": devices,
+            "things_found": things.len(),
+            "things": things,
         })),
         Err(e) => {
             if matches!(e, EdgeError::ScanBusy) {

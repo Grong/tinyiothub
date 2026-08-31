@@ -25,7 +25,7 @@ pub struct SystemFeatures {
     pub build_time: Option<String>,
 
     // 功能开关
-    pub enable_device_management: Option<bool>,
+    pub enable_thing_management: Option<bool>,
     pub enable_alarm_system: Option<bool>,
     pub enable_monitoring: Option<bool>,
     pub enable_user_management: Option<bool>,
@@ -36,7 +36,7 @@ pub struct SystemFeatures {
     pub public_api_prefix: Option<String>,
 
     // 系统限制
-    pub max_devices: Option<u32>,
+    pub max_things: Option<u32>,
     pub max_users: Option<u32>,
     pub max_alarm_rules: Option<u32>,
 
@@ -79,7 +79,7 @@ impl Default for SystemFeatures {
             build_time: Some(Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string()),
 
             // 基础功能默认开启
-            enable_device_management: Some(true),
+            enable_thing_management: Some(true),
             enable_alarm_system: Some(true),
             enable_monitoring: Some(true),
             enable_user_management: Some(true),
@@ -90,7 +90,7 @@ impl Default for SystemFeatures {
             public_api_prefix: Some("/api/public".to_string()),
 
             // 系统限制 (社区版)
-            max_devices: Some(100),
+            max_things: Some(100),
             max_users: Some(10),
             max_alarm_rules: Some(50),
 
@@ -129,7 +129,7 @@ impl Default for SystemFeatures {
             license_type: Some("community".to_string()),
             license_expiry: None,
             licensed_features: Some(vec![
-                "device-management".to_string(),
+                "thing-management".to_string(),
                 "alarm-system".to_string(),
                 "monitoring".to_string(),
                 "user-management".to_string(),
@@ -175,9 +175,9 @@ mod tests {
         assert_eq!(features.version, Some("1.0.0".to_string()));
         assert_eq!(features.edition, Some("Community".to_string()));
         assert_eq!(features.license_type, Some("community".to_string()));
-        assert_eq!(features.enable_device_management, Some(true));
+        assert_eq!(features.enable_thing_management, Some(true));
         assert_eq!(features.enable_advanced_analytics, Some(false));
-        assert_eq!(features.max_devices, Some(100));
+        assert_eq!(features.max_things, Some(100));
     }
 
     #[test]

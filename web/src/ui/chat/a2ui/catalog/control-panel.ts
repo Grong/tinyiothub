@@ -5,7 +5,7 @@ export function renderControlPanel(
   data: Record<string, unknown>,
   onAction?: (fn: string, args: Record<string, unknown>) => void,
 ): TemplateResult {
-  const deviceName = safeStr(data.deviceName || data.deviceId, "");
+  const deviceName = safeStr(data.thingName || data.deviceName || data.thingId || data.deviceId, "");
   const controls = (data.controls as Array<Record<string, unknown>>) || [];
 
   return html`

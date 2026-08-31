@@ -617,7 +617,7 @@ pub(crate) async fn find_enabled_alarm_rules(pool: &SqlitePool, workspace_id: Op
     Ok(rules)
 }
 
-pub(crate) async fn find_alarm_rules_by_device(
+pub(crate) async fn find_alarm_rules_by_thing(
     pool: &SqlitePool,
     thing_id: &str,
     workspace_id: Option<&str>,
@@ -785,12 +785,12 @@ impl Db {
     }
 
     /// 查询设备的报警规则（可选 workspace 过滤）。
-    pub async fn find_alarm_rules_by_device(
+    pub async fn find_alarm_rules_by_thing(
         &self,
         thing_id: &str,
         workspace_id: Option<&str>,
     ) -> Result<Vec<AlarmRule>> {
-        find_alarm_rules_by_device(self.pool(), thing_id, workspace_id).await
+        find_alarm_rules_by_thing(self.pool(), thing_id, workspace_id).await
     }
 
     /// 查询设备属性的报警规则。

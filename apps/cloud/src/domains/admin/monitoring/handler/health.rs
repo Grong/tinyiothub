@@ -86,7 +86,7 @@ async fn get_detailed_health(
     let mut active_device_count = 0u32;
 
     match device_service
-        .count_devices(&tinyiothub_core::models::device::DeviceQueryParams::default())
+        .count_things(&tinyiothub_core::models::thing::ThingQueryParams::default())
         .await
     {
         Ok(count) => device_count = count as u32,
@@ -94,7 +94,7 @@ async fn get_detailed_health(
     }
 
     match device_service
-        .get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default())
+        .get_things(&tinyiothub_core::models::thing::ThingQueryParams::default())
         .await
     {
         Ok(things) => {

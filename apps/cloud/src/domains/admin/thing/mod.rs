@@ -2,7 +2,6 @@ pub mod commands;
 pub mod dashboard;
 pub mod management;
 pub mod monitoring;
-pub mod profile;
 pub mod properties;
 pub mod trace;
 
@@ -14,6 +13,11 @@ use axum::Router;
 
 use crate::domains::admin::AdminState;
 
+/// Admin monitoring/management routes, mounted at `/things/admin`.
+///
+/// `management` (410 tombstone) is mounted separately at `/devices`.
+/// The admin `/{id}/profile` endpoint was removed as a duplicate of the
+/// main thing router's `GET /things/{id}/profile`.
 pub fn create_router<S>() -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
@@ -21,11 +25,9 @@ where
     std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new()
-        .merge(management::create_router())
         .merge(properties::create_router())
         .merge(commands::create_router())
         .merge(dashboard::create_router())
-        .merge(profile::create_router())
         .merge(trace::create_router())
         .merge(monitoring::create_router())
 }

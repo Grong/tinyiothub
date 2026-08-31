@@ -5,7 +5,7 @@ use axum::{
     routing::{get, put},
 };
 use serde::Deserialize;
-use tinyiothub_core::models::device_property::DeviceProperty;
+use tinyiothub_core::models::thing_property::ThingProperty;
 use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::security::Claims;
 
@@ -25,7 +25,7 @@ where
     std::sync::Arc<tinyiothub_authn::jwt::JwtService>: axum::extract::FromRef<S>,
 {
     Router::new()
-        .route("/{thing_id}/properties", get(get_device_properties))
+        .route("/{thing_id}/properties", get(get_thing_properties))
         .route("/{thing_id}/properties/{property_id}/value", put(update_property_value))
         .route(
             "/by-name/{device_name}/properties/{property_name}",
@@ -34,17 +34,17 @@ where
 }
 
 /// 获取设备属性列表
-async fn get_device_properties(
+async fn get_thing_properties(
     State(state): State<AdminState>,
     Path(thing_id): Path<String>,
     _claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
-) -> Json<ApiResponse<Vec<DeviceProperty>>> {
+) -> Json<ApiResponse<Vec<ThingProperty>>> {
     // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
     // which automatically filters things by workspace_id
 
     let tenant_device_service = state.tenant_device_service(&workspace_id);
-    match tenant_device_service.get_device_properties(&thing_id).await {
+    match tenant_device_service.get_thing_properties(&thing_id).await {
         Ok(properties) => ApiResponseBuilder::success(properties),
         Err(e) => {
             tracing::error!("Failed to get device properties for {}: {}", thing_id, e);
@@ -59,7 +59,7 @@ async fn get_device_property_by_name(
     Path((device_name, property_name)): Path<(String, String)>,
     _claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
-) -> Json<ApiResponse<Option<DeviceProperty>>> {
+) -> Json<ApiResponse<Option<ThingProperty>>> {
     // 先通过名称查找设备，再验证租户
     let tenant_device_service = state.tenant_device_service(&workspace_id);
     let _device = match tenant_device_service.get_device_by_name(&device_name).await {

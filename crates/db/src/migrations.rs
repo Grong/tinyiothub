@@ -316,7 +316,7 @@ mod tests {
     /// wiped child rows in the historical chain; FK OFF during migration is
     /// the fix).
     #[tokio::test]
-    async fn delete_from_devices_works_after_migrations() {
+    async fn delete_from_things_works_after_migrations() {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         run_migrations(&pool).await.unwrap();
 

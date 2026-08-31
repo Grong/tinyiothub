@@ -110,7 +110,7 @@ pub async fn confirm_action(
     // 5. Execute via DataServer if available
     match state.data_server.clone() {
         Some(data_server) => {
-            let cmd = tinyiothub_core::models::device_command::DeviceCommand {
+            let cmd = tinyiothub_core::models::thing_command::ThingCommand {
                 id: uuid::Uuid::new_v4().to_string(),
                 thing_id: thing_id.clone(),
                 name: action_name.clone(),
@@ -274,7 +274,7 @@ pub async fn invoke_action(
     // 4. Dispatch immediately via the command channel
     match state.data_server.clone() {
         Some(data_server) => {
-            let cmd = tinyiothub_core::models::device_command::DeviceCommand {
+            let cmd = tinyiothub_core::models::thing_command::ThingCommand {
                 id: uuid::Uuid::new_v4().to_string(),
                 thing_id: thing_id.clone(),
                 name: action_name.clone(),

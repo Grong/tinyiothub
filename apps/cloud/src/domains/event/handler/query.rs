@@ -115,7 +115,7 @@ pub async fn get_events(
         criteria.levels = Some(levels);
     }
 
-    // Device IDs
+    // Thing IDs
     if let Some(device_ids_str) = params.device_ids {
         let device_ids: Vec<String> = device_ids_str
             .split(',')
@@ -123,7 +123,7 @@ pub async fn get_events(
             .filter(|s| !s.is_empty())
             .collect();
         if !device_ids.is_empty() {
-            criteria.device_ids = Some(device_ids);
+            criteria.thing_ids = Some(device_ids);
         }
     }
 

@@ -1,21 +1,21 @@
-// Device performance service — migrated from domain/device/performance_service.rs
+// Thing performance service — migrated from domain/device/performance_service.rs
 
 use std::sync::Arc;
 
-use tinyiothub_storage::{Db, cache::DeviceCache};
+use tinyiothub_storage::{Db, cache::ThingCache};
 
-use super::monitoring::DeviceMonitoringService;
+use super::monitoring::ThingMonitoringService;
 use tinyiothub_core::error::Error;
 
-pub struct DevicePerformanceService {
+pub struct ThingPerformanceService {
     db: Arc<Db>,
-    device_cache: Arc<DeviceCache>,
-    monitoring_service: DeviceMonitoringService,
+    device_cache: Arc<ThingCache>,
+    monitoring_service: ThingMonitoringService,
 }
 
-impl DevicePerformanceService {
-    pub fn new(db: Arc<Db>, device_cache: Arc<DeviceCache>) -> Self {
-        let monitoring_service = DeviceMonitoringService::new(db.clone(), device_cache.clone());
+impl ThingPerformanceService {
+    pub fn new(db: Arc<Db>, device_cache: Arc<ThingCache>) -> Self {
+        let monitoring_service = ThingMonitoringService::new(db.clone(), device_cache.clone());
         Self {
             db,
             device_cache,
@@ -23,10 +23,10 @@ impl DevicePerformanceService {
         }
     }
 
-    pub async fn get_device_performance_metrics(&self, device_id: &str) -> Option<DevicePerformanceMetrics> {
-        if let Some(device) = self.device_cache.get(device_id) {
-            let mut metrics = DevicePerformanceMetrics {
-                device_id: device_id.to_string(),
+    pub async fn get_device_performance_metrics(&self, thing_id: &str) -> Option<ThingPerformanceMetrics> {
+        if let Some(device) = self.device_cache.get(thing_id) {
+            let mut metrics = ThingPerformanceMetrics {
+                thing_id: thing_id.to_string(),
                 cpu_usage: None,
                 memory_usage: None,
                 network_latency_ms: None,
@@ -46,7 +46,7 @@ impl DevicePerformanceService {
                     metrics.response_time_ms = Some(response_time);
                 }
             }
-            if let Some(connection_quality) = self.monitoring_service.get_device_connection_quality(device_id) {
+            if let Some(connection_quality) = self.monitoring_service.get_thing_connection_quality(thing_id) {
                 let estimated_latency = match connection_quality {
                     90..=100 => 10.0 + (100 - connection_quality) as f64 * 0.5,
                     80..=89 => 15.0 + (90 - connection_quality) as f64 * 1.0,
@@ -56,8 +56,8 @@ impl DevicePerformanceService {
                 };
                 metrics.network_latency_ms = Some(estimated_latency);
             }
-            metrics.uptime_percentage = self.calculate_device_uptime_percentage(device_id).await;
-            if let Some(stats) = self.monitoring_service.get_device_metrics(device_id).await {
+            metrics.uptime_percentage = self.calculate_device_uptime_percentage(thing_id).await;
+            if let Some(stats) = self.monitoring_service.get_thing_metrics(thing_id).await {
                 if stats.total_properties > 0 {
                     let error_rate = (stats.active_alarms as f64 / stats.total_properties as f64) * 0.1;
                     metrics.error_rate = Some(error_rate.min(1.0));
@@ -66,13 +66,13 @@ impl DevicePerformanceService {
                     let base_throughput = stats.online_properties as f64 * 0.5;
                     let quality_factor = self
                         .monitoring_service
-                        .get_device_connection_quality(device_id)
+                        .get_thing_connection_quality(thing_id)
                         .map(|q| q as f64 / 100.0)
                         .unwrap_or(0.5);
                     metrics.throughput_ops_per_sec = Some(base_throughput * quality_factor);
                 }
             }
-            let (cpu_usage, memory_usage) = self.estimate_device_resource_usage(device_id).await;
+            let (cpu_usage, memory_usage) = self.estimate_device_resource_usage(thing_id).await;
             metrics.cpu_usage = cpu_usage;
             metrics.memory_usage = memory_usage;
             Some(metrics)
@@ -81,8 +81,8 @@ impl DevicePerformanceService {
         }
     }
 
-    async fn calculate_device_uptime_percentage(&self, device_id: &str) -> Option<f64> {
-        if let Some(device) = self.device_cache.get(device_id)
+    async fn calculate_device_uptime_percentage(&self, thing_id: &str) -> Option<f64> {
+        if let Some(device) = self.device_cache.get(thing_id)
             && let Some(created_at) = &device.created_at
             && let Ok(created_time) =
                 chrono::DateTime::parse_from_str(&format!("{} +00:00", created_at), "%Y-%m-%d %H:%M:%S %z")
@@ -90,36 +90,36 @@ impl DevicePerformanceService {
             let now = chrono::Utc::now();
             let total_time = (now - created_time.with_timezone(&chrono::Utc)).num_hours() as f64;
             if total_time > 0.0 {
-                let offline_hours = self.calculate_device_offline_hours(device_id).await;
+                let offline_hours = self.calculate_device_offline_hours(thing_id).await;
                 let uptime_percentage = ((total_time - offline_hours) / total_time * 100.0).clamp(0.0, 100.0);
                 return Some(uptime_percentage);
             }
         }
-        if self.monitoring_service.is_device_online(device_id) {
+        if self.monitoring_service.is_thing_online(thing_id) {
             Some(95.0)
         } else {
             Some(85.0)
         }
     }
 
-    async fn calculate_device_offline_hours(&self, device_id: &str) -> f64 {
-        self.db.count_offline_alarms(device_id, 30).await.unwrap_or(0) as f64
+    async fn calculate_device_offline_hours(&self, thing_id: &str) -> f64 {
+        self.db.count_offline_alarms(thing_id, 30).await.unwrap_or(0) as f64
     }
 
-    async fn estimate_device_resource_usage(&self, device_id: &str) -> (Option<f64>, Option<f64>) {
-        if let Some(device) = self.device_cache.get(device_id) {
+    async fn estimate_device_resource_usage(&self, thing_id: &str) -> (Option<f64>, Option<f64>) {
+        if let Some(device) = self.device_cache.get(thing_id) {
             let property_count = device.properties.as_ref().map(|p| p.len()).unwrap_or(0) as f64;
             let command_count = device.commands.as_ref().map(|c| c.len()).unwrap_or(0) as f64;
             let base_cpu = 5.0;
             let base_memory = 10.0;
-            let online_factor = if self.monitoring_service.is_device_online(device_id) {
+            let online_factor = if self.monitoring_service.is_thing_online(thing_id) {
                 1.2
             } else {
                 0.3
             };
             let quality_factor = self
                 .monitoring_service
-                .get_device_connection_quality(device_id)
+                .get_thing_connection_quality(thing_id)
                 .map(|q| 0.5 + (q as f64 / 100.0) * 0.5)
                 .unwrap_or(0.7);
             let cpu = ((base_cpu + property_count * 0.5 + command_count * 0.3) * online_factor * quality_factor)
@@ -134,17 +134,17 @@ impl DevicePerformanceService {
 
     pub async fn get_device_performance_history(
         &self,
-        device_id: &str,
+        thing_id: &str,
         hours: u32,
-    ) -> Result<Vec<DevicePerformanceMetrics>, Error> {
-        if self.device_cache.get(device_id).is_none() {
+    ) -> Result<Vec<ThingPerformanceMetrics>, Error> {
+        if self.device_cache.get(thing_id).is_none() {
             return Err(Error::NotFound);
         }
         let mut history = Vec::new();
         let now = chrono::Utc::now();
         for i in 0..hours {
             let timestamp = now - chrono::Duration::hours(i as i64);
-            if let Some(mut metrics) = self.get_device_performance_metrics(device_id).await {
+            if let Some(mut metrics) = self.get_device_performance_metrics(thing_id).await {
                 let variation_factor = 0.9 + (i as f64 * 0.02);
                 if let Some(cpu) = metrics.cpu_usage {
                     metrics.cpu_usage = Some((cpu * variation_factor).clamp(0.0, 100.0));
@@ -163,13 +163,13 @@ impl DevicePerformanceService {
         Ok(history)
     }
 
-    pub async fn check_device_performance_alerts(&self, device_id: &str) -> Vec<PerformanceAlert> {
+    pub async fn check_device_performance_alerts(&self, thing_id: &str) -> Vec<PerformanceAlert> {
         let mut alerts = Vec::new();
-        if let Some(metrics) = self.get_device_performance_metrics(device_id).await {
+        if let Some(metrics) = self.get_device_performance_metrics(thing_id).await {
             if let Some(cpu) = metrics.cpu_usage {
                 if cpu > 90.0 {
                     alerts.push(PerformanceAlert::new(
-                        device_id,
+                        thing_id,
                         "high_cpu",
                         "critical",
                         &format!("CPU usage critical: {:.1}%", cpu),
@@ -178,7 +178,7 @@ impl DevicePerformanceService {
                     ));
                 } else if cpu > 80.0 {
                     alerts.push(PerformanceAlert::new(
-                        device_id,
+                        thing_id,
                         "high_cpu",
                         "warning",
                         &format!("CPU usage high: {:.1}%", cpu),
@@ -190,7 +190,7 @@ impl DevicePerformanceService {
             if let Some(mem) = metrics.memory_usage {
                 if mem > 95.0 {
                     alerts.push(PerformanceAlert::new(
-                        device_id,
+                        thing_id,
                         "high_memory",
                         "critical",
                         &format!("Memory usage critical: {:.1}%", mem),
@@ -199,7 +199,7 @@ impl DevicePerformanceService {
                     ));
                 } else if mem > 85.0 {
                     alerts.push(PerformanceAlert::new(
-                        device_id,
+                        thing_id,
                         "high_memory",
                         "warning",
                         &format!("Memory usage high: {:.1}%", mem),
@@ -211,7 +211,7 @@ impl DevicePerformanceService {
             if let Some(latency) = metrics.network_latency_ms {
                 if latency > 200.0 {
                     alerts.push(PerformanceAlert::new(
-                        device_id,
+                        thing_id,
                         "high_latency",
                         "critical",
                         &format!("Latency critical: {:.1}ms", latency),
@@ -220,7 +220,7 @@ impl DevicePerformanceService {
                     ));
                 } else if latency > 100.0 {
                     alerts.push(PerformanceAlert::new(
-                        device_id,
+                        thing_id,
                         "high_latency",
                         "warning",
                         &format!("Latency high: {:.1}ms", latency),
@@ -232,7 +232,7 @@ impl DevicePerformanceService {
             if let Some(rt) = metrics.response_time_ms {
                 if rt > 5000.0 {
                     alerts.push(PerformanceAlert::new(
-                        device_id,
+                        thing_id,
                         "slow_response",
                         "critical",
                         &format!("Response time critical: {:.1}ms", rt),
@@ -241,7 +241,7 @@ impl DevicePerformanceService {
                     ));
                 } else if rt > 3000.0 {
                     alerts.push(PerformanceAlert::new(
-                        device_id,
+                        thing_id,
                         "slow_response",
                         "warning",
                         &format!("Response time high: {:.1}ms", rt),
@@ -253,7 +253,7 @@ impl DevicePerformanceService {
             if let Some(er) = metrics.error_rate {
                 if er > 0.1 {
                     alerts.push(PerformanceAlert::new(
-                        device_id,
+                        thing_id,
                         "high_error_rate",
                         "critical",
                         &format!("Error rate critical: {:.1}%", er * 100.0),
@@ -262,7 +262,7 @@ impl DevicePerformanceService {
                     ));
                 } else if er > 0.05 {
                     alerts.push(PerformanceAlert::new(
-                        device_id,
+                        thing_id,
                         "high_error_rate",
                         "warning",
                         &format!("Error rate high: {:.1}%", er * 100.0),
@@ -274,7 +274,7 @@ impl DevicePerformanceService {
             if let Some(up) = metrics.uptime_percentage {
                 if up < 90.0 {
                     alerts.push(PerformanceAlert::new(
-                        device_id,
+                        thing_id,
                         "low_uptime",
                         "critical",
                         &format!("Uptime critical: {:.1}%", up),
@@ -283,7 +283,7 @@ impl DevicePerformanceService {
                     ));
                 } else if up < 95.0 {
                     alerts.push(PerformanceAlert::new(
-                        device_id,
+                        thing_id,
                         "low_uptime",
                         "warning",
                         &format!("Uptime low: {:.1}%", up),
@@ -350,8 +350,8 @@ impl DevicePerformanceService {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct DevicePerformanceMetrics {
-    pub device_id: String,
+pub struct ThingPerformanceMetrics {
+    pub thing_id: String,
     pub cpu_usage: Option<f64>,
     pub memory_usage: Option<f64>,
     pub network_latency_ms: Option<f64>,
@@ -378,7 +378,7 @@ pub struct SystemPerformanceOverview {
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PerformanceAlert {
-    pub device_id: String,
+    pub thing_id: String,
     pub alert_type: String,
     pub severity: String,
     pub message: String,
@@ -389,7 +389,7 @@ pub struct PerformanceAlert {
 
 impl PerformanceAlert {
     pub fn new(
-        device_id: &str,
+        thing_id: &str,
         alert_type: &str,
         severity: &str,
         message: &str,
@@ -397,7 +397,7 @@ impl PerformanceAlert {
         threshold: f64,
     ) -> Self {
         Self {
-            device_id: device_id.to_string(),
+            thing_id: thing_id.to_string(),
             alert_type: alert_type.to_string(),
             severity: severity.to_string(),
             message: message.to_string(),

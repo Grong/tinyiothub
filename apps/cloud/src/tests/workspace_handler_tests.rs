@@ -175,7 +175,7 @@ async fn test_workspace_cross_tenant_isolation() {
 }
 
 // ============================================================================
-// Assign Device to Workspace
+// Assign Thing to Workspace
 // ============================================================================
 
 #[tokio::test]

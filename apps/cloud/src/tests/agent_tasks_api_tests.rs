@@ -403,7 +403,7 @@ async fn policy_round_trip_with_updated_by() {
                 Some(json!({
                     "mode": "act",
                     "allowedActions": ["*"],
-                    "deniedActions": ["wipe_device"],
+                    "deniedActions": ["wipe_thing"],
                     "maxActionsPerRun": 5,
                     "maxActionsPerHour": 10
                 })),
@@ -428,7 +428,7 @@ async fn policy_round_trip_with_updated_by() {
     )
     .await;
     assert_eq!(json["result"]["mode"], "act");
-    assert_eq!(json["result"]["deniedActions"], json!(["wipe_device"]));
+    assert_eq!(json["result"]["deniedActions"], json!(["wipe_thing"]));
     assert_eq!(json["result"]["maxActionsPerRun"], 5);
     assert_eq!(json["result"]["maxActionsPerHour"], 10);
 

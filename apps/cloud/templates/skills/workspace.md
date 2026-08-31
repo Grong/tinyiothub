@@ -29,15 +29,15 @@ multiple results, pick the one with the highest relevance or the first `.glb`/`.
 
 NEVER use fake numbers. For 综合情况/overview you MUST query ALL of:
 
-1. `search_devices` → device count, status breakdown
+1. `search_things` → device count, status breakdown
 2. `alarm_list` → alarm count, recent alarms
 3. `list_schedules` → schedule count
 
 | User is asking about | Required queries |
 |---------------------|------------------|
-| 综合情况 / 概览 | `search_devices` + `alarm_list` + `list_schedules` |
-| 查看 XX 楼层 / 区域 | `search_devices` (filter by area) |
-| 查看 XX 设备 | `get_device` |
+| 综合情况 / 概览 | `search_things` + `alarm_list` + `list_schedules` |
+| 查看 XX 楼层 / 区域 | `search_things` (filter by area) |
+| 查看 XX 设备 | `get_thing` |
 | 告警 | `alarm_list` |
 | 任务 / 调度 | `list_schedules` |
 | 驱动 | `list_drivers` |
@@ -55,13 +55,13 @@ Push StatRow first (key metrics), then lists/tables.
 
 #### Scenario 1: Overview / 综合情况
 
-Query `search_devices` + `alarm_list` + `list_schedules` first, then push:
+Query `search_things` + `alarm_list` + `list_schedules` first, then push:
 
 ```jsonl
 {"createSurface":{"id":"scene","surfaceKind":"stage"}}
 {"updateComponents":{"surfaceId":"scene","components":[{"id":"s1","componentKind":"Scene3D","dataModel":{"modelUrl":"<FILE_PATH>"}}]}}
 {"createSurface":{"id":"data","surfaceKind":"insight"}}
-{"updateComponents":{"surfaceId":"data","components":[{"id":"d1","componentKind":"StatRow","dataModel":{"items":[{"label":"设备总数","value":"<N>","unit":"台"},{"label":"在线设备","value":"<N>","unit":"台"},{"label":"活跃告警","value":"<N>","unit":"条"},{"label":"调度任务","value":"<N>","unit":"个"}]}},{"id":"d2","componentKind":"AlarmTable","dataModel":{"alarms":[{"alarmId":"<id>","severity":"<critical|warning|info>","title":"<title>","deviceName":"<name>","timestamp":"<time>"}]}},{"id":"d3","componentKind":"DeviceTable","dataModel":{"columns":["设备名称","状态","类型","最后上线"],"rows":[["<name>","<online|offline>","<type>","<time>"]]}}]}}
+{"updateComponents":{"surfaceId":"data","components":[{"id":"d1","componentKind":"StatRow","dataModel":{"items":[{"label":"设备总数","value":"<N>","unit":"台"},{"label":"在线设备","value":"<N>","unit":"台"},{"label":"活跃告警","value":"<N>","unit":"条"},{"label":"调度任务","value":"<N>","unit":"个"}]}},{"id":"d2","componentKind":"AlarmTable","dataModel":{"alarms":[{"alarmId":"<id>","severity":"<critical|warning|info>","title":"<title>","deviceName":"<name>","timestamp":"<time>"}]}},{"id":"d3","componentKind":"ThingTable","dataModel":{"columns":["设备名称","状态","类型","最后上线"],"rows":[["<name>","<online|offline>","<type>","<time>"]]}}]}}
 ```
 
 #### Scenario 2: View specific floor / area / 查看 XX 楼层/区域
@@ -70,18 +70,18 @@ Query `search_devices` + `alarm_list` + `list_schedules` first, then push:
 {"createSurface":{"id":"scene","surfaceKind":"stage"}}
 {"updateComponents":{"surfaceId":"scene","components":[{"id":"s1","componentKind":"Scene3D","dataModel":{"modelUrl":"<FILE_PATH>"}}]}}
 {"createSurface":{"id":"data","surfaceKind":"insight"}}
-{"updateComponents":{"surfaceId":"data","components":[{"id":"d1","componentKind":"StatRow","dataModel":{"items":[{"label":"区域设备","value":"<N>","unit":"台"},{"label":"在线","value":"<N>","unit":"台"},{"label":"离线","value":"<N>","unit":"台"}]}},{"id":"d2","componentKind":"DeviceTable","dataModel":{"columns":["名称","状态","类型"],"rows":[["<device_name>","<status>","<type>"]]}}]}}
+{"updateComponents":{"surfaceId":"data","components":[{"id":"d1","componentKind":"StatRow","dataModel":{"items":[{"label":"区域设备","value":"<N>","unit":"台"},{"label":"在线","value":"<N>","unit":"台"},{"label":"离线","value":"<N>","unit":"台"}]}},{"id":"d2","componentKind":"ThingTable","dataModel":{"columns":["名称","状态","类型"],"rows":[["<device_name>","<status>","<type>"]]}}]}}
 ```
 
 #### Scenario 3: View specific device / 查看 XX 设备
 
-Query `get_device` for device details + `read_properties` for live properties.
+Query `get_thing` for device details + `read_properties` for live properties.
 
 ```jsonl
 {"createSurface":{"id":"scene","surfaceKind":"stage"}}
 {"updateComponents":{"surfaceId":"scene","components":[{"id":"s1","componentKind":"Scene3D","dataModel":{"modelUrl":"<FILE_PATH>"}}]}}
 {"createSurface":{"id":"data","surfaceKind":"insight"}}
-{"updateComponents":{"surfaceId":"data","components":[{"id":"d1","componentKind":"DeviceCard","dataModel":{"deviceId":"<device_id>","name":"<name>","status":"<status>","properties":[{"key":"温度","value":"25","unit":"°C"},{"key":"湿度","value":"60","unit":"%"}]}},{"id":"d2","componentKind":"DataChart","dataModel":{"type":"line","labels":["10:00","11:00","12:00"],"data":[25,26,24]}}]}}
+{"updateComponents":{"surfaceId":"data","components":[{"id":"d1","componentKind":"ThingCard","dataModel":{"thingId":"<thing_id>","name":"<name>","status":"<status>","properties":[{"key":"温度","value":"25","unit":"°C"},{"key":"湿度","value":"60","unit":"%"}]}},{"id":"d2","componentKind":"DataChart","dataModel":{"type":"line","labels":["10:00","11:00","12:00"],"data":[25,26,24]}}]}}
 ```
 
 #### Scenario 4: Alarms / 告警
@@ -101,7 +101,7 @@ Query `alarm_list`, then push stats + list:
 {"createSurface":{"id":"scene","surfaceKind":"stage"}}
 {"updateComponents":{"surfaceId":"scene","components":[{"id":"s1","componentKind":"Text","dataModel":{"content":"## 场景预览\n\n未找到 3D 模型文件，请上传 .glb/.gltf 资源到知识库。"}}]}}
 {"createSurface":{"id":"data","surfaceKind":"insight"}}
-{"updateComponents":{"surfaceId":"data","components":[{"id":"d1","componentKind":"StatRow","dataModel":{"items":[{"label":"设备总数","value":"<N>","unit":"台"},{"label":"在线设备","value":"<N>","unit":"台"},{"label":"活跃告警","value":"<N>","unit":"条"},{"label":"调度任务","value":"<N>","unit":"个"}]}},{"id":"d2","componentKind":"AlarmTable","dataModel":{"alarms":[...]}},{"id":"d3","componentKind":"DeviceTable","dataModel":{"columns":["设备名称","状态","类型"],"rows":[...]}}]}}
+{"updateComponents":{"surfaceId":"data","components":[{"id":"d1","componentKind":"StatRow","dataModel":{"items":[{"label":"设备总数","value":"<N>","unit":"台"},{"label":"在线设备","value":"<N>","unit":"台"},{"label":"活跃告警","value":"<N>","unit":"条"},{"label":"调度任务","value":"<N>","unit":"个"}]}},{"id":"d2","componentKind":"AlarmTable","dataModel":{"alarms":[...]}},{"id":"d3","componentKind":"ThingTable","dataModel":{"columns":["设备名称","状态","类型"],"rows":[...]}}]}}
 ```
 
 ## CRITICAL RULES
@@ -128,8 +128,8 @@ Query `alarm_list`, then push stats + list:
 |-----------|----------|
 | `StatRow` | `{items: [{label, value, unit?}]}` — horizontal stat cards |
 | `StatCard` | `{label, value, unit?, icon?}` — single stat |
-| `DeviceCard` | `{deviceId, name, status, properties?: [{key, value, unit?}]}` |
-| `DeviceTable` | `{columns: [string], rows: [[string]]}` |
+| `ThingCard` | `{thingId, name, status, properties?: [{key, value, unit?}]}` |
+| `ThingTable` | `{columns: [string], rows: [[string]]}` |
 | `AlarmCard` | `{alarmId, severity, title, message, deviceName, timestamp}` |
 | `AlarmTable` | `{alarms: [{alarmId, severity, title, deviceName, timestamp}]}` |
 | `DataChart` | `{type: "bar"|"line"|"pie", data: [number], labels?: [string]}` |
@@ -139,9 +139,9 @@ Query `alarm_list`, then push stats + list:
 
 | User request | Stage | Insight |
 |-------------|-------|---------|
-| 综合情况 / 概览 | 默认 3D 模型 | StatRow → AlarmTable → DeviceTable |
-| 查看 XX 楼层 / 区域 | 该区域模型 | StatRow（区域统计）→ DeviceTable |
-| 查看 XX 设备 | 设备所在场景 | DeviceCard → DataChart |
+| 综合情况 / 概览 | 默认 3D 模型 | StatRow → AlarmTable → ThingTable |
+| 查看 XX 楼层 / 区域 | 该区域模型 | StatRow（区域统计）→ ThingTable |
+| 查看 XX 设备 | 设备所在场景 | ThingCard → DataChart |
 | 今天告警 / 最近告警 | 默认模型 | StatRow（告警统计）→ AlarmTable |
 | 任务 / 调度 / 驱动状态 | 默认模型 | StatRow → 对应列表 |
 | 无 3D 模型 | Text 占位 | 完整数据面板（同综合情况） |

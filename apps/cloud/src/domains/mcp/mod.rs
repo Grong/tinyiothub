@@ -18,11 +18,11 @@ use tokio::sync::RwLock;
 pub use handlers::{ToolCallParams, create_router};
 pub use tool_registry::*;
 
-use crate::domains::driver::legacy::DeviceService;
+use crate::domains::driver::legacy::ThingService;
 use crate::domains::thing::template::TemplateEngine;
 use crate::shared::error::Error;
 use tinyiothub_runtime::event_bus::EventBus;
-use tinyiothub_storage::{Db, cache::DeviceCache};
+use tinyiothub_storage::{Db, cache::ThingCache};
 
 /// Mcp domain state slice (G7) — the fields of cloud's `AppState` the mcp
 /// handlers and tool handlers actually consume. The composition layer (cloud)
@@ -32,7 +32,7 @@ pub struct McpState {
     /// 数据库连接池 - thing 工具的属性/命令查询
     pub db: Arc<Db>,
     /// 设备内存缓存 - thing 工具的实时状态合并
-    pub device_cache: Arc<DeviceCache>,
+    pub device_cache: Arc<ThingCache>,
     /// 事件总线 - 属性变更事件发布（update_device_property_value）
     pub event_bus: Arc<EventBus>,
     /// 数据服务器 - send_command 工具
@@ -64,9 +64,9 @@ impl McpState {
     /// 获取租户感知的设备服务（接受字符串 workspace_id）
     ///
     /// AppState 同名方法的域内移植。
-    pub fn tenant_device_service_str(&self, workspace_id: &str) -> Arc<DeviceService> {
+    pub fn tenant_device_service_str(&self, workspace_id: &str) -> Arc<ThingService> {
         Arc::new(
-            DeviceService::new(self.db.clone())
+            ThingService::new(self.db.clone())
                 .for_workspace(workspace_id.to_string())
                 .with_tag_repository(self.db.clone()),
         )
@@ -76,7 +76,7 @@ impl McpState {
     ///
     /// AppState 同名方法的域内移植：workspace_id 为 None 时记录安全警告并
     /// 使用空 workspace（查不到任何设备），绝不回退到未隔离的原始仓库。
-    pub fn tenant_device_service(&self, workspace_id: &Option<String>) -> Arc<DeviceService> {
+    pub fn tenant_device_service(&self, workspace_id: &Option<String>) -> Arc<ThingService> {
         let ws_id = workspace_id.clone().unwrap_or_else(|| {
             tracing::warn!(
                 "[SECURITY] tenant_device_service called with workspace_id=None — \
@@ -87,7 +87,7 @@ impl McpState {
         });
 
         Arc::new(
-            DeviceService::with_event_bus(self.db.clone(), self.event_bus.clone())
+            ThingService::with_event_bus(self.db.clone(), self.event_bus.clone())
                 .for_workspace(ws_id)
                 .with_tag_repository(self.db.clone()),
         )
@@ -96,7 +96,7 @@ impl McpState {
     /// 更新设备属性值
     ///
     /// AppState 同名方法的域内移植：验证 + 发布 PropertyChange 事件解耦，
-    /// DataServer 作为 EventHandler 接收事件并更新 DeviceCache。
+    /// DataServer 作为 EventHandler 接收事件并更新 ThingCache。
     pub async fn update_device_property_value(
         &self,
         workspace_id: &str,
@@ -108,13 +108,13 @@ impl McpState {
 
         // 1. 验证设备存在且属于指定的workspace
         let tenant_device_service = self.tenant_device_service(&Some(workspace_id.to_string()));
-        let device = match tenant_device_service.get_device_by_id(thing_id).await? {
+        let device = match tenant_device_service.get_thing_by_id(thing_id).await? {
             Some(d) => d,
             None => return Err(Error::NotFound),
         };
 
         // 2. 验证属性存在且属于该设备
-        let property = match self.db().find_device_property_by_id(property_id).await {
+        let property = match self.db().find_thing_property_by_id(property_id).await {
             Ok(Some(p)) if p.thing_id == thing_id => p,
             Ok(Some(_)) => {
                 return Err(Error::ValidationError("Property does not belong to device".to_string()));
@@ -198,25 +198,25 @@ pub async fn register_tools(state: Option<Arc<McpState>>) {
     let mut reg = registry.write().await;
 
     // Thing tools (7)
-    reg.register(crate::domains::mcp::tools::device::DeviceProfileHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::ThingProfileHandler::new(
         state.clone(),
     ));
-    reg.register(crate::domains::mcp::tools::device::SearchDevicesHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::SearchThingsHandler::new(
         state.clone(),
     ));
-    reg.register(crate::domains::mcp::tools::device::DevicePropertyGetHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::ThingPropertyGetHandler::new(
         state.clone(),
     ));
-    reg.register(crate::domains::mcp::tools::device::WritePropertiesHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::WritePropertiesHandler::new(
         state.clone(),
     ));
-    reg.register(crate::domains::mcp::tools::device::DeviceCommandHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::ThingCommandHandler::new(
         state.clone(),
     ));
-    reg.register(crate::domains::mcp::tools::device::CreateDeviceHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::CreateThingHandler::new(
         state.clone(),
     ));
-    reg.register(crate::domains::mcp::tools::device::DeleteDeviceHandler::new(
+    reg.register(crate::domains::mcp::tools::thing::DeleteThingHandler::new(
         state.clone(),
     ));
 

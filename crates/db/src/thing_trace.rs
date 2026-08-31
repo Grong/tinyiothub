@@ -1,7 +1,7 @@
-//! Device trace 持久化：thing_traces 表
+//! Thing trace 持久化：thing_traces 表
 //!（自 cloud domains/thing/legacy/trace_repository.rs 迁入，Task 12）。
 //!
-//! 类型随 repo 住 db：DeviceTrace/DeviceTraceStatistics/SystemTraceOverview，
+//! 类型随 repo 住 db：ThingTrace/ThingTraceStatistics/SystemTraceOverview，
 //! cloud 侧 legacy::trace 模块直接引用本模块路径。
 
 use sqlx::SqlitePool;
@@ -17,7 +17,7 @@ use crate::database::Db;
 // ──────────────────────────────────────────────
 
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
-pub struct DeviceTrace {
+pub struct ThingTrace {
     pub id: String,
     pub thing_id: String,
     pub trace_type: String,
@@ -33,7 +33,7 @@ pub struct DeviceTrace {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct DeviceTraceStatistics {
+pub struct ThingTraceStatistics {
     pub thing_id: String,
     pub total_traces: u32,
     pub error_traces: u32,
@@ -50,7 +50,7 @@ pub struct SystemTraceOverview {
     pub error_traces: u32,
     pub warning_traces: u32,
     pub info_traces: u32,
-    pub active_devices: u32,
+    pub active_things: u32,
     pub days_range: u32,
     pub last_updated: String,
 }
@@ -61,7 +61,7 @@ pub struct SystemTraceOverview {
 
 /// 插入追踪记录
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn insert_device_trace(
+pub(crate) async fn insert_thing_trace(
     pool: &SqlitePool,
     trace_id: &str,
     thing_id: &str,
@@ -98,14 +98,14 @@ pub(crate) async fn insert_device_trace(
 }
 
 /// 查询设备追踪记录（支持过滤和分页）
-pub(crate) async fn find_device_traces(
+pub(crate) async fn find_thing_traces(
     pool: &SqlitePool,
     thing_id: &str,
     trace_types: Option<&[String]>,
     levels: Option<&[String]>,
     limit: u32,
     offset: u32,
-) -> Result<Vec<DeviceTrace>> {
+) -> Result<Vec<ThingTrace>> {
     let mut query = "SELECT id, thing_id, trace_type, level, category, title, message, details, source, user_id, session_id, created_at FROM thing_traces WHERE thing_id = ?".to_string();
     let mut bind_values: Vec<String> = vec![thing_id.to_string()];
 
@@ -130,7 +130,7 @@ pub(crate) async fn find_device_traces(
     bind_values.push(offset.to_string());
 
     let query_builder = bind_values.iter().fold(
-        sqlx::query_as::<_, DeviceTrace>(sqlx::AssertSqlSafe(query)),
+        sqlx::query_as::<_, ThingTrace>(sqlx::AssertSqlSafe(query)),
         |qb, value| qb.bind(value),
     );
 
@@ -141,22 +141,22 @@ pub(crate) async fn find_device_traces(
 }
 
 /// 查询追踪记录统计
-pub(crate) async fn get_device_trace_statistics(
+pub(crate) async fn get_thing_trace_statistics(
     pool: &SqlitePool,
     thing_id: &str,
     days: u32,
-) -> Result<DeviceTraceStatistics> {
+) -> Result<ThingTraceStatistics> {
     let days_param = format!("-{} days", days);
 
-    let total_traces = count_device_traces(pool, thing_id, Some(&days_param), None)
+    let total_traces = count_thing_traces(pool, thing_id, Some(&days_param), None)
         .await
         .unwrap_or(0);
 
-    let error_traces = count_device_traces(pool, thing_id, Some(&days_param), Some("error_critical"))
+    let error_traces = count_thing_traces(pool, thing_id, Some(&days_param), Some("error_critical"))
         .await
         .unwrap_or(0);
 
-    let warning_traces = count_device_traces(pool, thing_id, Some(&days_param), Some("warn"))
+    let warning_traces = count_thing_traces(pool, thing_id, Some(&days_param), Some("warn"))
         .await
         .unwrap_or(0);
 
@@ -173,7 +173,7 @@ pub(crate) async fn get_device_trace_statistics(
         _ => None,
     };
 
-    Ok(DeviceTraceStatistics {
+    Ok(ThingTraceStatistics {
         thing_id: thing_id.to_string(),
         total_traces,
         error_traces,
@@ -186,7 +186,7 @@ pub(crate) async fn get_device_trace_statistics(
 }
 
 /// 统计追踪记录数量
-async fn count_device_traces(
+async fn count_thing_traces(
     pool: &SqlitePool,
     thing_id: &str,
     days_param: Option<&str>,
@@ -217,7 +217,7 @@ async fn count_device_traces(
 }
 
 /// 删除追踪记录
-pub(crate) async fn delete_device_traces(
+pub(crate) async fn delete_thing_traces(
     pool: &SqlitePool,
     thing_id: &str,
     before_date: Option<&str>,
@@ -250,7 +250,7 @@ pub(crate) async fn delete_device_traces(
 }
 
 /// 清理过期追踪记录
-pub(crate) async fn cleanup_expired_device_traces(pool: &SqlitePool, days_to_keep: u32) -> Result<u32> {
+pub(crate) async fn cleanup_expired_thing_traces(pool: &SqlitePool, days_to_keep: u32) -> Result<u32> {
     match sqlx::query("DELETE FROM thing_traces WHERE created_at < datetime('now', ?)")
         .bind(format!("-{} days", days_to_keep))
         .execute(pool)
@@ -263,17 +263,17 @@ pub(crate) async fn cleanup_expired_device_traces(pool: &SqlitePool, days_to_kee
 
 /// 查询所有追踪记录（支持系统级日志查询）
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn find_all_device_traces(
+pub(crate) async fn find_all_thing_traces(
     pool: &SqlitePool,
     levels: Option<&[String]>,
     sources: Option<&[String]>,
     thing_id: Option<&str>,
-    device_ids: Option<&[String]>,
+    thing_ids: Option<&[String]>,
     start_time: Option<&str>,
     end_time: Option<&str>,
     limit: u32,
     offset: u32,
-) -> Result<Vec<DeviceTrace>> {
+) -> Result<Vec<ThingTrace>> {
     let mut query = "SELECT id, thing_id, trace_type, level, category, title, message, details, source, user_id, session_id, created_at FROM thing_traces WHERE 1=1".to_string();
     let mut bind_values: Vec<String> = Vec::new();
 
@@ -282,7 +282,7 @@ pub(crate) async fn find_all_device_traces(
         bind_values.push(did.to_string());
     }
 
-    if let Some(dids) = device_ids
+    if let Some(dids) = thing_ids
         && !dids.is_empty()
     {
         let placeholders = dids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
@@ -321,7 +321,7 @@ pub(crate) async fn find_all_device_traces(
     bind_values.push(offset.to_string());
 
     let query_builder = bind_values.iter().fold(
-        sqlx::query_as::<_, DeviceTrace>(sqlx::AssertSqlSafe(query)),
+        sqlx::query_as::<_, ThingTrace>(sqlx::AssertSqlSafe(query)),
         |qb, value| qb.bind(value),
     );
 
@@ -332,19 +332,19 @@ pub(crate) async fn find_all_device_traces(
 }
 
 /// 获取系统追踪概览
-pub(crate) async fn get_device_trace_system_overview(pool: &SqlitePool, days: u32) -> SystemTraceOverview {
+pub(crate) async fn get_thing_trace_system_overview(pool: &SqlitePool, days: u32) -> SystemTraceOverview {
     let days_param = format!("-{} days", days);
 
-    let total_traces = count_all_device_traces(pool, Some(&days_param)).await.unwrap_or(0);
-    let error_traces = count_all_device_traces_with_level(pool, Some(&days_param), "error_critical")
+    let total_traces = count_all_thing_traces(pool, Some(&days_param)).await.unwrap_or(0);
+    let error_traces = count_all_thing_traces_with_level(pool, Some(&days_param), "error_critical")
         .await
         .unwrap_or(0);
-    let warning_traces = count_all_device_traces_with_level(pool, Some(&days_param), "warn")
+    let warning_traces = count_all_thing_traces_with_level(pool, Some(&days_param), "warn")
         .await
         .unwrap_or(0);
     let info_traces = total_traces - error_traces - warning_traces;
 
-    let active_devices = match sqlx::query_scalar::<_, i64>(
+    let active_things = match sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(DISTINCT thing_id) FROM thing_traces WHERE created_at > datetime('now', ?)",
     )
     .bind(&days_param)
@@ -360,13 +360,13 @@ pub(crate) async fn get_device_trace_system_overview(pool: &SqlitePool, days: u3
         error_traces,
         warning_traces,
         info_traces,
-        active_devices,
+        active_things,
         days_range: days,
         last_updated: now_string(),
     }
 }
 
-async fn count_all_device_traces(pool: &SqlitePool, days_param: Option<&str>) -> Result<u32> {
+async fn count_all_thing_traces(pool: &SqlitePool, days_param: Option<&str>) -> Result<u32> {
     let days_str = days_param.unwrap_or("-7 days");
     match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM thing_traces WHERE created_at > datetime('now', ?)")
         .bind(days_str)
@@ -378,7 +378,7 @@ async fn count_all_device_traces(pool: &SqlitePool, days_param: Option<&str>) ->
     }
 }
 
-async fn count_all_device_traces_with_level(
+async fn count_all_thing_traces_with_level(
     pool: &SqlitePool,
     days_param: Option<&str>,
     level_filter: &str,
@@ -409,7 +409,7 @@ async fn count_all_device_traces_with_level(
 impl Db {
     /// 插入追踪记录。
     #[allow(clippy::too_many_arguments)]
-    pub async fn insert_device_trace(
+    pub async fn insert_thing_trace(
         &self,
         trace_id: &str,
         thing_id: &str,
@@ -423,7 +423,7 @@ impl Db {
         user_id: Option<&str>,
         session_id: Option<&str>,
     ) -> Result<()> {
-        insert_device_trace(
+        insert_thing_trace(
             self.pool(),
             trace_id,
             thing_id,
@@ -441,56 +441,56 @@ impl Db {
     }
 
     /// 查询设备追踪记录（过滤 + 分页）。
-    pub async fn find_device_traces(
+    pub async fn find_thing_traces(
         &self,
         thing_id: &str,
         trace_types: Option<&[String]>,
         levels: Option<&[String]>,
         limit: u32,
         offset: u32,
-    ) -> Result<Vec<DeviceTrace>> {
-        find_device_traces(self.pool(), thing_id, trace_types, levels, limit, offset).await
+    ) -> Result<Vec<ThingTrace>> {
+        find_thing_traces(self.pool(), thing_id, trace_types, levels, limit, offset).await
     }
 
     /// 查询追踪记录统计。
-    pub async fn get_device_trace_statistics(&self, thing_id: &str, days: u32) -> Result<DeviceTraceStatistics> {
-        get_device_trace_statistics(self.pool(), thing_id, days).await
+    pub async fn get_thing_trace_statistics(&self, thing_id: &str, days: u32) -> Result<ThingTraceStatistics> {
+        get_thing_trace_statistics(self.pool(), thing_id, days).await
     }
 
     /// 删除追踪记录。
-    pub async fn delete_device_traces(
+    pub async fn delete_thing_traces(
         &self,
         thing_id: &str,
         before_date: Option<&str>,
         trace_types: Option<&[String]>,
     ) -> Result<u32> {
-        delete_device_traces(self.pool(), thing_id, before_date, trace_types).await
+        delete_thing_traces(self.pool(), thing_id, before_date, trace_types).await
     }
 
     /// 清理过期追踪记录。
-    pub async fn cleanup_expired_device_traces(&self, days_to_keep: u32) -> Result<u32> {
-        cleanup_expired_device_traces(self.pool(), days_to_keep).await
+    pub async fn cleanup_expired_thing_traces(&self, days_to_keep: u32) -> Result<u32> {
+        cleanup_expired_thing_traces(self.pool(), days_to_keep).await
     }
 
     /// 系统级追踪查询。
     #[allow(clippy::too_many_arguments)]
-    pub async fn find_all_device_traces(
+    pub async fn find_all_thing_traces(
         &self,
         levels: Option<&[String]>,
         sources: Option<&[String]>,
         thing_id: Option<&str>,
-        device_ids: Option<&[String]>,
+        thing_ids: Option<&[String]>,
         start_time: Option<&str>,
         end_time: Option<&str>,
         limit: u32,
         offset: u32,
-    ) -> Result<Vec<DeviceTrace>> {
-        find_all_device_traces(
+    ) -> Result<Vec<ThingTrace>> {
+        find_all_thing_traces(
             self.pool(),
             levels,
             sources,
             thing_id,
-            device_ids,
+            thing_ids,
             start_time,
             end_time,
             limit,
@@ -500,7 +500,7 @@ impl Db {
     }
 
     /// 系统追踪概览。
-    pub async fn get_device_trace_system_overview(&self, days: u32) -> SystemTraceOverview {
-        get_device_trace_system_overview(self.pool(), days).await
+    pub async fn get_thing_trace_system_overview(&self, days: u32) -> SystemTraceOverview {
+        get_thing_trace_system_overview(self.pool(), days).await
     }
 }

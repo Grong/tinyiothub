@@ -206,7 +206,7 @@ async fn run_heartbeat_tick(
         .into_iter()
         .map(|c| crate::runtime::heartbeat::types::ExecutedAction {
             tool_name: c.tool_name,
-            thing_id: c.device_id,
+            thing_id: c.thing_id,
             success: c.success,
             details: c.details,
         })
@@ -236,8 +236,8 @@ fn build_heartbeat_prompt(workspace_id: &str, tasks: &[&HeartbeatTask], trust_co
          ```json\n\
          {{\n  \"status\": \"complete|partial|error\",\n  \
          \"summary\": \"...\",\n  \
-         \"executed_actions\": [{{\"tool_name\": \"...\", \"device_id\": \"...\", \"success\": true, \"details\": \"...\"}}],\n  \
-         \"proposals\": [{{\"tool_name\": \"...\", \"device_id\": \"...\", \"summary\": \"...\", \"reason\": \"...\", \"risk\": \"low|medium|high\", \"parameters\": {{...}}}}],\n  \
+         \"executed_actions\": [{{\"tool_name\": \"...\", \"thing_id\": \"...\", \"success\": true, \"details\": \"...\"}}],\n  \
+         \"proposals\": [{{\"tool_name\": \"...\", \"thing_id\": \"...\", \"summary\": \"...\", \"reason\": \"...\", \"risk\": \"low|medium|high\", \"parameters\": {{...}}}}],\n  \
          \"error\": null\n}}\n```",
         ws_id = workspace_id,
         trust = trust_config.trust_level,
@@ -327,10 +327,10 @@ mod tests {
         // The LLM claims it ran "fake_tool"; the framework only recorded "real_tool".
         let pool: Arc<dyn AgentPoolLike> = Arc::new(MockPool {
             output: AgentRunOutput {
-                text: r#"{"status":"complete","summary":"done","executed_actions":[{"tool_name":"fake_tool","device_id":"d_fake","success":true,"details":"LLM self-report"}],"proposals":[]}"#.into(),
+                text: r#"{"status":"complete","summary":"done","executed_actions":[{"tool_name":"fake_tool","thing_id":"d_fake","success":true,"details":"LLM self-report"}],"proposals":[]}"#.into(),
                 tool_calls: vec![ToolCallRecord {
                     tool_name: "real_tool".into(),
-                    device_id: Some("d_real".into()),
+                    thing_id: Some("d_real".into()),
                     success: true,
                     details: "actually executed".into(),
                 }],
@@ -421,7 +421,7 @@ mod tests {
             reason: "test".into(),
             context: String::new(),
             priority: crate::runtime::heartbeat::types::SignalPriority::High,
-            device_id: None,
+            thing_id: None,
             alarm_type: None,
             rule_id: None,
         }

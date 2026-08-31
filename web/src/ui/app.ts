@@ -7,7 +7,7 @@ import { resolveTheme, type ThemeMode, type ResolvedTheme } from './theme.js';
 import './components/theme-toggle.js';
 import './components/toast.js';
 import { error as toastError } from './components/toast.js';
-import { deviceCache } from '../stores/device-cache.js';
+import { thingCache } from '../stores/thing-cache.js';
 
 // Public / first-screen views — eagerly loaded
 import './views/login.js';
@@ -268,7 +268,7 @@ export class TinyIoTHubApp extends LitElement {
   logout() {
     sessionStorage.removeItem('auth-token');
     localStorage.removeItem('auth-token');
-    deviceCache.clearCache();
+    thingCache.clearCache();
     this.isAuthenticated = false;
     toastError('登录已过期，请重新登录');
     this.navigate('login');

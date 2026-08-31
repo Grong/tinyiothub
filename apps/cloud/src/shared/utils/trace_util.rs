@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use crate::domains::thing::legacy::trace::DeviceTraceService;
+use crate::domains::thing::legacy::trace::ThingTraceService;
 
 /// 设备追踪工具类
 pub struct DeviceTracer {
-    trace_service: Arc<DeviceTraceService>,
+    trace_service: Arc<ThingTraceService>,
 }
 
 impl DeviceTracer {
-    pub fn new(trace_service: Arc<DeviceTraceService>) -> Self {
+    pub fn new(trace_service: Arc<ThingTraceService>) -> Self {
         Self { trace_service }
     }
 
@@ -138,7 +138,7 @@ impl DeviceTracer {
 
 /// 便捷宏，用于快速记录设备追踪
 #[macro_export]
-macro_rules! trace_device {
+macro_rules! trace_thing {
     // 操作追踪
     (operation, $tracer:expr, $thing_id:expr, $title:expr, $message:expr) => {
         $tracer
@@ -210,7 +210,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_device_tracer_usage() {
-        // 这里只是展示用法，实际测试需要真实的DeviceTraceService
+        // 这里只是展示用法，实际测试需要真实的ThingTraceService
 
         // 假设有一个tracer实例
         // let tracer = DeviceTracer::new(trace_service);
@@ -218,14 +218,14 @@ mod tests {
         // 使用宏记录不同类型的追踪
 
         // 操作追踪
-        // trace_device!(operation, tracer, "device_001", "配置更新", "更新采样频率");
+        // trace_thing!(operation, tracer, "device_001", "配置更新", "更新采样频率");
 
         // 错误追踪
         // let error_details = json!({
         //     "error_code": "TIMEOUT",
         //     "timeout_ms": 5000
         // });
-        // trace_device!(error, tracer, "device_001", "连接超时", "设备连接超时", error_details);
+        // trace_thing!(error, tracer, "device_001", "连接超时", "设备连接超时", error_details);
 
         // 通信追踪
         // let comm_details = json!({
@@ -233,20 +233,20 @@ mod tests {
         //     "register": 40001,
         //     "value": 123
         // });
-        // trace_device!(comm, tracer, "device_001", "读取寄存器", "成功读取保持寄存器", comm_details, 45);
+        // trace_thing!(comm, tracer, "device_001", "读取寄存器", "成功读取保持寄存器", comm_details, 45);
 
         // 性能追踪
         // let perf_metrics = json!({
         //     "cpu_usage": 45.2,
         //     "memory_usage": 68.7
         // });
-        // trace_device!(perf, tracer, "device_001", "性能监控", "设备性能指标采集", perf_metrics);
+        // trace_thing!(perf, tracer, "device_001", "性能监控", "设备性能指标采集", perf_metrics);
 
         // 调试追踪
         // let debug_info = json!({
         //     "step": "initialization",
         //     "status": "success"
         // });
-        // trace_device!(debug, tracer, "device_001", "初始化完成", "设备初始化成功", debug_info);
+        // trace_thing!(debug, tracer, "device_001", "初始化完成", "设备初始化成功", debug_info);
     }
 }

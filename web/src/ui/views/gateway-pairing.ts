@@ -275,7 +275,7 @@ export class GatewayPairingDialog extends LitElement {
             ${this.pairedDevice
               ? html`
                 <div class="success-box">
-                  <span class="device-name">${this.pairedDevice.deviceName}</span>
+                  <span class="device-name">${this.pairedDevice.thingName}</span>
                   <span class="device-meta">
                     ${this.pairedDevice.hostname} &middot; ${this.pairedDevice.ip}
                   </span>

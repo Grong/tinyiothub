@@ -29,7 +29,7 @@ fn extract_client_ip(headers: &HeaderMap) -> Option<String> {
 }
 
 #[allow(clippy::result_large_err)] // axum 错误元组携带完整响应体，API 语义优先
-pub async fn pair_device(
+pub async fn pair_thing(
     State(state): State<AppState>,
     claims: AuthClaims,
     headers: HeaderMap,
@@ -39,7 +39,7 @@ pub async fn pair_device(
 
     match state
         .gateway_service
-        .pair_device(&claims.0.user_id, client_ip.as_deref(), req)
+        .pair_thing(&claims.0.user_id, client_ip.as_deref(), req)
         .await
     {
         Ok(response) => Ok(ApiResponseBuilder::success(response)),

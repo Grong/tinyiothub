@@ -3,7 +3,7 @@
 use std::{any::Any, collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use tinyiothub_core::models::device::Device;
+use tinyiothub_core::models::thing::Thing;
 use tokio::sync::RwLock;
 use tracing::debug;
 
@@ -38,7 +38,7 @@ impl MqttSubscribeHandler {
 
 #[async_trait]
 impl ProtocolHandler for MqttSubscribeHandler {
-    async fn read_data(&self, _device: &Device) -> Result<Vec<ResultValue>, Error> {
+    async fn read_data(&self, _device: &Thing) -> Result<Vec<ResultValue>, Error> {
         debug!("MQTT subscribe handler called");
 
         let last = self.last_message.read().await;

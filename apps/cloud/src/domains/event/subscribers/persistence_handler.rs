@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use crate::domains::event::{
     entities::Event,
-    value_objects::{DeviceEventType, EventLevel, EventType},
+    value_objects::{EventLevel, EventType, ThingEventType},
 };
 use tokio::sync::RwLock;
 use tracing::{debug, error, trace};
@@ -81,7 +81,7 @@ impl PersistenceEventHandler {
                     // PropertyAlarm 和 PropertyNormal 总是持久化
                     matches!(
                         event.event_type(),
-                        EventType::Device(DeviceEventType::PropertyAlarm | DeviceEventType::PropertyNormal)
+                        EventType::Device(ThingEventType::PropertyAlarm | ThingEventType::PropertyNormal)
                     ) || event.content().metadata().contains_key("alarm_triggered")
                 } else {
                     true

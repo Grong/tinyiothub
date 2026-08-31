@@ -19,7 +19,7 @@ pub struct SystemMetrics {
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
-pub struct DeviceMetrics {
+pub struct ThingMetrics {
     pub thing_id: String,
     pub device_name: String,
     pub status: String,
@@ -31,9 +31,9 @@ pub struct DeviceMetrics {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
 pub struct GatewayMetrics {
-    pub total_devices: u32,
-    pub online_devices: u32,
-    pub offline_devices: u32,
+    pub total_things: u32,
+    pub online_things: u32,
+    pub offline_things: u32,
     pub total_messages: u64,
     pub messages_per_minute: f64,
     pub error_rate_percent: f64,
@@ -48,7 +48,7 @@ where
 {
     Router::new()
         .route("/system", get(get_system_metrics))
-        .route("/things", get(get_device_metrics))
+        .route("/things", get(get_thing_metrics))
         .route("/gateway", get(get_gateway_metrics))
 }
 
@@ -107,7 +107,7 @@ async fn get_system_metrics(State(state): State<AdminState>, claims: Claims) -> 
 }
 
 /// 获取设备指标
-async fn get_device_metrics(State(state): State<AdminState>, claims: Claims) -> Json<ApiResponse<Vec<DeviceMetrics>>> {
+async fn get_thing_metrics(State(state): State<AdminState>, claims: Claims) -> Json<ApiResponse<Vec<ThingMetrics>>> {
     let workspace_id = match state.resolve_workspace(&claims.tenant_id, None).await {
         Ok(ws) => Some(ws),
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
@@ -118,7 +118,7 @@ async fn get_device_metrics(State(state): State<AdminState>, claims: Claims) -> 
     let mut metrics = Vec::new();
 
     match device_service
-        .get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default())
+        .get_things(&tinyiothub_core::models::thing::ThingQueryParams::default())
         .await
     {
         Ok(things) => {
@@ -131,7 +131,7 @@ async fn get_device_metrics(State(state): State<AdminState>, claims: Claims) -> 
                     .map(|dt| dt.with_timezone(&chrono::Utc))
                     .unwrap_or_else(chrono::Utc::now);
 
-                metrics.push(DeviceMetrics {
+                metrics.push(ThingMetrics {
                     thing_id: device.id.clone(),
                     device_name: device.name.clone(),
                     status,
@@ -158,18 +158,18 @@ async fn get_gateway_metrics(State(state): State<AdminState>, claims: Claims) ->
 
     let device_service = state.tenant_device_service(&workspace_id);
 
-    let mut total_devices = 0u32;
-    let mut online_devices = 0u32;
-    let mut offline_devices = 0u32;
+    let mut total_things = 0u32;
+    let mut online_things = 0u32;
+    let mut offline_things = 0u32;
 
     match device_service
-        .get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default())
+        .get_things(&tinyiothub_core::models::thing::ThingQueryParams::default())
         .await
     {
         Ok(things) => {
-            total_devices = things.len() as u32;
-            online_devices = things.iter().filter(|d| d.status.is_online()).count() as u32;
-            offline_devices = total_devices - online_devices;
+            total_things = things.len() as u32;
+            online_things = things.iter().filter(|d| d.status.is_online()).count() as u32;
+            offline_things = total_things - online_things;
         }
         Err(e) => {
             tracing::warn!("Failed to get device counts for gateway metrics: {}", e);
@@ -180,9 +180,9 @@ async fn get_gateway_metrics(State(state): State<AdminState>, claims: Claims) ->
     let uptime_seconds = state.started_at.elapsed().map(|d| d.as_secs()).unwrap_or(0);
 
     let metrics = GatewayMetrics {
-        total_devices,
-        online_devices,
-        offline_devices,
+        total_things,
+        online_things,
+        offline_things,
         // TODO: implement real message counting when message pipeline metrics are available
         total_messages: 0,
         messages_per_minute: 0.0,

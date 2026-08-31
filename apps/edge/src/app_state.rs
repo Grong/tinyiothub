@@ -1,13 +1,13 @@
 use crate::config::{EdgeConfig, GatewayCredentials};
 use crate::modules::command::CommandService;
 use crate::modules::config_mgmt::ConfigService;
-use crate::modules::device::DeviceService;
 use crate::modules::driver::DriverService;
 use crate::modules::gateway::GatewayService;
 use crate::modules::health::HealthService;
 use crate::modules::intelligence::IntelligenceService;
 use crate::modules::offline::OfflineBuffer;
 use crate::modules::telemetry::TelemetryService;
+use crate::modules::thing::ThingService;
 use crate::shared::error::EdgeResult;
 use crate::shared::storage::init_database;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ pub struct AppState {
     pub config: EdgeConfig,
     pub credentials: GatewayCredentials,
     pub db: Arc<tinyiothub_storage::Db>,
-    pub device_service: Arc<DeviceService>,
+    pub thing_service: Arc<ThingService>,
     pub driver_service: Arc<DriverService>,
     pub gateway_service: Arc<GatewayService>,
     pub telemetry_service: Arc<TelemetryService>,
@@ -34,25 +34,25 @@ impl AppState {
         let offline_buffer = OfflineBuffer::new(db.clone(), config.clone());
 
         // Layer 2: Depends on Layer 1
-        let device_service = DeviceService::new(db.clone());
+        let thing_service = ThingService::new(db.clone());
         let gateway_service = GatewayService::new(&credentials, &config);
         let driver_service = DriverService::new(db.clone(), config.scan_timeout_secs);
 
         // Layer 3: Depends on Layer 2
         let telemetry_service =
             TelemetryService::new(driver_service.clone(), gateway_service.clone(), offline_buffer.clone());
-        let command_service = CommandService::new(device_service.clone(), gateway_service.clone());
+        let command_service = CommandService::new(thing_service.clone(), gateway_service.clone());
         let config_service = ConfigService::new(db.clone(), config.clone());
         let health_service =
             HealthService::new(gateway_service.clone(), offline_buffer.clone(), driver_service.clone());
         let intelligence_service =
-            IntelligenceService::new(device_service.clone(), driver_service.clone(), gateway_service.clone());
+            IntelligenceService::new(thing_service.clone(), driver_service.clone(), gateway_service.clone());
 
         Ok(Self {
             config,
             credentials,
             db,
-            device_service,
+            thing_service,
             driver_service,
             gateway_service,
             telemetry_service,
@@ -71,7 +71,7 @@ impl Clone for AppState {
             config: self.config.clone(),
             credentials: self.credentials.clone(),
             db: self.db.clone(),
-            device_service: self.device_service.clone(),
+            thing_service: self.thing_service.clone(),
             driver_service: self.driver_service.clone(),
             gateway_service: self.gateway_service.clone(),
             telemetry_service: self.telemetry_service.clone(),

@@ -30,7 +30,7 @@ struct CreateScheduleInput {
     description: Option<String>,
     job_type: String,
     cron_expression: String,
-    #[serde(rename = "targetDeviceId", alias = "targetThingId")]
+    #[serde(rename = "targetThingId", alias = "targetDeviceId")]
     target_thing_id: Option<String>,
     target_command_name: Option<String>,
     target_command_params: Option<String>,
@@ -57,7 +57,7 @@ struct UpdateScheduleInput {
     description: Option<String>,
     job_type: Option<String>,
     cron_expression: Option<String>,
-    #[serde(rename = "targetDeviceId", alias = "targetThingId")]
+    #[serde(rename = "targetThingId", alias = "targetDeviceId")]
     target_thing_id: Option<String>,
     target_command_name: Option<String>,
     target_command_params: Option<String>,
@@ -253,7 +253,7 @@ impl ToolHandler for CreateScheduleHandler {
     fn description(&self) -> &str {
         "Create a new scheduled job. Supports 3 job types:\n\
          - shell: execute shell commands (config: {\"script\": \"...\", \"interpreter\": \"sh\"})\n\
-         - device_command: execute IoT device commands (requires targetDeviceId + targetCommandName)\n\
+         - device_command: execute IoT device commands (requires targetThingId + targetCommandName)\n\
          - agent: trigger AI agent tasks (config: {\"task\": \"...\"})"
     }
 
@@ -290,11 +290,11 @@ impl ToolHandler for CreateScheduleHandler {
             },
         );
         props.insert(
-            "targetDeviceId".to_string(),
+            "targetThingId".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
                 description: Some(
-                    "Device ID for device_command jobs (e.g., 'device-env-01'). Must belong to your workspace."
+                    "Thing ID for device_command jobs (e.g., 'device-env-01'). Must belong to your workspace."
                         .to_string(),
                 ),
             },
@@ -317,7 +317,7 @@ impl ToolHandler for CreateScheduleHandler {
             "config".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Config JSON. For shell: '{\"script\":\"echo hello\"}'. For device_command: auto-built from targetDeviceId/targetCommandName.".to_string()),
+                description: Some("Config JSON. For shell: '{\"script\":\"echo hello\"}'. For device_command: auto-built from targetThingId/targetCommandName.".to_string()),
             },
         );
         props.insert(
@@ -356,11 +356,11 @@ impl ToolHandler for CreateScheduleHandler {
         if let Some(ref thing_id) = input.target_thing_id {
             match state
                 .tenant_device_service_str(&claims.workspace_id)
-                .get_device_by_id(thing_id)
+                .get_thing_by_id(thing_id)
                 .await
             {
                 Ok(Some(_)) => {
-                    // Device belongs to workspace, verification passed
+                    // Thing belongs to workspace, verification passed
                 }
                 Ok(None) => {
                     tracing::warn!(

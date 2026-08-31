@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 pub use tinyiothub_storage::thing::{
     BreadcrumbNode, DocRow, EventRow, ListThingsParams, TagInfo, ThingResource, ThingRow, ThingTreeNode,
-    UpdateGuardedOutcome, UpdateThingRequest,
+    UpdateGuardedOutcome, UpdateThingRowRequest as UpdateThingRequest,
 };
 
 // ──────────────────────────────────────────────
@@ -19,7 +19,7 @@ pub use tinyiothub_storage::thing::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ThingType {
-    Device,
+    Thing,
     Space,
     Line,
     Building,
@@ -30,7 +30,7 @@ pub enum ThingType {
 impl ThingType {
     pub fn as_str(&self) -> &str {
         match self {
-            ThingType::Device => "device",
+            ThingType::Thing => "device",
             ThingType::Space => "space",
             ThingType::Line => "line",
             ThingType::Building => "building",
@@ -44,7 +44,7 @@ impl std::str::FromStr for ThingType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "device" => Ok(ThingType::Device),
+            "device" => Ok(ThingType::Thing),
             "space" => Ok(ThingType::Space),
             "line" => Ok(ThingType::Line),
             "building" => Ok(ThingType::Building),

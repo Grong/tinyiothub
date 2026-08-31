@@ -1,4 +1,4 @@
-//! Device commands handler integration tests
+//! Thing commands handler integration tests
 
 use axum::{
     body::Body,
@@ -25,7 +25,7 @@ fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Re
 }
 
 // ============================================================================
-// Execute Device Command
+// Execute Thing Command
 // ============================================================================
 
 #[tokio::test]
@@ -38,7 +38,7 @@ async fn test_execute_command_nonexistent_command() {
     let response = app
         .oneshot(auth_request(
             "POST",
-            "/api/v1/devices/some-device/commands/nonexistent-cmd/execute",
+            "/api/v1/things/admin/some-device/commands/nonexistent-cmd/execute",
             &token,
             Some(body),
         ))
@@ -61,7 +61,7 @@ async fn test_execute_command_without_parameters() {
     let response = app
         .oneshot(auth_request(
             "POST",
-            "/api/v1/devices/some-device/commands/nonexistent-cmd/execute",
+            "/api/v1/things/admin/some-device/commands/nonexistent-cmd/execute",
             &token,
             Some(body),
         ))

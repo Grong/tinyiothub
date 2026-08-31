@@ -1,4 +1,4 @@
-// TODO(D6): edge 自建本地表（ensure_devices_table 等）是暂留形态——后期 edge
+// TODO(D6): edge 自建本地表（ensure_things_table 等）是暂留形态——后期 edge
 // 直接只复用 crates/db 的 baseline（删库重建，另立项），届时本文件的可表创建逻辑
 // 随 Db::connect 统一迁移而删除。
 use super::error::EdgeResult;
@@ -11,8 +11,8 @@ pub async fn init_database(db_path: &str) -> EdgeResult<Arc<Db>> {
     let pool = create_pool_without_migrations(&config).await?;
     let db = Db::new(pool);
 
-    // Ensure core tables exist (edge gateway needs devices locally)
-    db.ensure_devices_table().await?;
+    // Ensure core tables exist (edge gateway needs things locally)
+    db.ensure_things_table().await?;
 
     Ok(Arc::new(db))
 }

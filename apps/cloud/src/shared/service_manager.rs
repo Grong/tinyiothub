@@ -124,9 +124,9 @@ impl ServiceManager {
             // Wire db-bound executors into the scheduler registry（db 访问经
             // D15 端口适配器注入，runtime 不直接依赖 db）
             let mut registry = tinyiothub_scheduler::ExecutorRegistry::new();
-            registry.register(Box::new(tinyiothub_runtime::DeviceCommandExecutor::new(
+            registry.register(Box::new(tinyiothub_runtime::ThingCommandExecutor::new(
                 data_server.clone(),
-                Arc::new(crate::shared::runtime_ports::DeviceCommandQueriesAdapter(
+                Arc::new(crate::shared::runtime_ports::ThingCommandQueriesAdapter(
                     (*app_state.db).clone(),
                 )),
             )));
@@ -415,7 +415,7 @@ impl ServiceManager {
             }
         }
 
-        tracing::debug!("Cache stats: {} things cached", data_server.get_devices().len());
+        tracing::debug!("Cache stats: {} things cached", data_server.get_things().len());
 
         Ok(())
     }

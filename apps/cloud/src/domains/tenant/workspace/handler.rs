@@ -18,7 +18,7 @@ use tinyiothub_core::models::workspace::{
     UpdateResourceRequest, UpdateWorkspaceRequest,
 };
 use tinyiothub_storage::workspace::{
-    ResourceQueryParams, ResourceSearchResult, WorkspaceQueryParams, WorkspaceResource, WorkspaceWithDeviceCount,
+    ResourceQueryParams, ResourceSearchResult, WorkspaceQueryParams, WorkspaceResource, WorkspaceWithThingCount,
 };
 use tinyiothub_web::api_response::ApiResponse;
 
@@ -53,7 +53,7 @@ pub fn create_router() -> Router<crate::state::AppState> {
         .route("/{id}", get(get_workspace))
         .route("/{id}", put(update_workspace))
         .route("/{id}", delete(delete_workspace))
-        .route("/{id}/things", post(assign_device))
+        .route("/{id}/things", post(assign_thing))
         .route("/{id}/resources", get(list_resources))
         .route("/{id}/resources", post(create_resource))
         .route("/{id}/resources/suggest-tags", post(suggest_tags))
@@ -72,7 +72,7 @@ async fn list_workspaces(
     State(state): State<AppState>,
     AuthClaims(claims): AuthClaims,
     Query(params): Query<WorkspaceQueryParams>,
-) -> Json<ApiResponse<Vec<WorkspaceWithDeviceCount>>> {
+) -> Json<ApiResponse<Vec<WorkspaceWithThingCount>>> {
     match state
         .workspace_service
         .find_by_tenant(&claims.tenant_id, params.page, params.page_size)
@@ -91,7 +91,7 @@ async fn get_workspace(
     State(state): State<AppState>,
     AuthClaims(claims): AuthClaims,
     Path(id): Path<String>,
-) -> Json<ApiResponse<WorkspaceWithDeviceCount>> {
+) -> Json<ApiResponse<WorkspaceWithThingCount>> {
     match state.workspace_service.find_by_id(&id).await {
         Ok(Some(workspace)) => {
             if workspace.tenant_id != claims.tenant_id {
@@ -112,7 +112,7 @@ async fn create_workspace(
     State(state): State<AppState>,
     AuthClaims(claims): AuthClaims,
     Json(payload): Json<CreateWorkspaceRequest>,
-) -> Json<ApiResponse<WorkspaceWithDeviceCount>> {
+) -> Json<ApiResponse<WorkspaceWithThingCount>> {
     let workspace = match state
         .workspace_service
         .create(
@@ -142,7 +142,7 @@ async fn create_workspace(
             {
                 (updated, None)
             } else {
-                let wc = WorkspaceWithDeviceCount {
+                let wc = WorkspaceWithThingCount {
                     id: workspace.id,
                     name: workspace.name,
                     description: workspace.description,
@@ -151,7 +151,7 @@ async fn create_workspace(
                     require_action_confirm: Some(workspace.require_action_confirm),
                     created_at: workspace.created_at,
                     updated_at: workspace.updated_at,
-                    device_count: Some(0),
+                    thing_count: Some(0),
                     warning: None,
                 };
                 (wc, None)
@@ -163,7 +163,7 @@ async fn create_workspace(
                 workspace.id,
                 e
             );
-            let wc = WorkspaceWithDeviceCount {
+            let wc = WorkspaceWithThingCount {
                 id: workspace.id,
                 name: workspace.name,
                 description: workspace.description,
@@ -172,14 +172,14 @@ async fn create_workspace(
                 require_action_confirm: Some(workspace.require_action_confirm),
                 created_at: workspace.created_at,
                 updated_at: workspace.updated_at,
-                device_count: Some(0),
+                thing_count: Some(0),
                 warning: None,
             };
             (wc, Some(format!("Agent unavailable: {}. Agent pending.", e)))
         }
     };
 
-    let result = WorkspaceWithDeviceCount {
+    let result = WorkspaceWithThingCount {
         id: final_workspace.id,
         name: final_workspace.name,
         description: final_workspace.description,
@@ -188,7 +188,7 @@ async fn create_workspace(
         require_action_confirm: Some(workspace.require_action_confirm),
         created_at: final_workspace.created_at,
         updated_at: final_workspace.updated_at,
-        device_count: Some(0),
+        thing_count: Some(0),
         warning,
     };
 
@@ -201,7 +201,7 @@ async fn update_workspace(
     AuthClaims(claims): AuthClaims,
     Path(id): Path<String>,
     Json(payload): Json<UpdateWorkspaceRequest>,
-) -> Json<ApiResponse<WorkspaceWithDeviceCount>> {
+) -> Json<ApiResponse<WorkspaceWithThingCount>> {
     match state.workspace_service.find_by_id(&id).await {
         Ok(Some(workspace)) => {
             if workspace.tenant_id != claims.tenant_id {
@@ -258,7 +258,7 @@ async fn delete_workspace(
 
     // Guard: refuse to delete a workspace that still has things (design:
     // 应用层拒绝，不再依赖 SET NULL 产生孤儿物)
-    let thing_count: i64 = state.db.count_devices_by_workspace(&id).await.unwrap_or(0);
+    let thing_count: i64 = state.db.count_things_by_workspace(&id).await.unwrap_or(0);
     if thing_count > 0 {
         return ApiResponseBuilder::error_with_code(
             409,
@@ -286,7 +286,7 @@ async fn delete_workspace(
 }
 
 /// Assign device to workspace
-async fn assign_device(
+async fn assign_thing(
     State(state): State<AppState>,
     AuthClaims(claims): AuthClaims,
     Path(workspace_id): Path<String>,
@@ -307,7 +307,7 @@ async fn assign_device(
 
     match state
         .workspace_service
-        .assign_device(&payload.thing_id, &workspace_id)
+        .assign_thing(&payload.thing_id, &workspace_id)
         .await
     {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"success": true})),

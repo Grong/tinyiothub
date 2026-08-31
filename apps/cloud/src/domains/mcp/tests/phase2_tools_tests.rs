@@ -192,7 +192,7 @@ async fn test_alarm_rule_add_validates_rule_type() {
         .execute(json!({
             "name": "Test Rule",
             "ruleType": "invalid_type",
-            "deviceId": "device-1",
+            "thingId": "device-1",
             "property": "temperature",
             "level": "error"
         }))
@@ -206,7 +206,7 @@ async fn test_alarm_rule_add_validates_rule_type() {
 // any error other than InvalidParams proves the advertised key was accepted.
 
 #[tokio::test]
-async fn test_alarm_rule_add_accepts_advertised_device_id_key() {
+async fn test_alarm_rule_add_accepts_advertised_thing_id_key() {
     crate::domains::mcp::register_tools(None).await;
     let registry = crate::domains::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
@@ -219,16 +219,31 @@ async fn test_alarm_rule_add_accepts_advertised_device_id_key() {
             "ruleType": "threshold",
             "condition": {"operator": ">", "value": 30},
             "alarmLevel": "error",
+            "thingId": "device-1"
+        }))
+        .await;
+    if let Err(crate::domains::mcp::ToolError::InvalidParams(e)) = result {
+        panic!("advertised thingId key must deserialize, got InvalidParams: {}", e);
+    }
+
+    // Legacy alias: deviceId must still deserialize.
+    let result = handler
+        .execute(json!({
+            "workspaceId": "ws-1",
+            "name": "Test Rule",
+            "ruleType": "threshold",
+            "condition": {"operator": ">", "value": 30},
+            "alarmLevel": "error",
             "deviceId": "device-1"
         }))
         .await;
     if let Err(crate::domains::mcp::ToolError::InvalidParams(e)) = result {
-        panic!("advertised deviceId key must deserialize, got InvalidParams: {}", e);
+        panic!("legacy deviceId alias must deserialize, got InvalidParams: {}", e);
     }
 }
 
 #[tokio::test]
-async fn test_create_schedule_accepts_advertised_target_device_id_key() {
+async fn test_create_schedule_accepts_advertised_target_thing_id_key() {
     crate::domains::mcp::register_tools(None).await;
     let registry = crate::domains::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
@@ -239,20 +254,34 @@ async fn test_create_schedule_accepts_advertised_target_device_id_key() {
             "name": "nightly-restart",
             "jobType": "device_command",
             "cronExpression": "0 8 * * *",
-            "targetDeviceId": "device-env-01",
+            "targetThingId": "device-env-01",
             "targetCommandName": "restart"
         }))
         .await;
     if let Err(crate::domains::mcp::ToolError::InvalidParams(e)) = result {
         panic!(
-            "advertised targetDeviceId key must deserialize, got InvalidParams: {}",
+            "advertised targetThingId key must deserialize, got InvalidParams: {}",
             e
         );
+    }
+
+    // Legacy alias: targetDeviceId must still deserialize.
+    let result = handler
+        .execute(json!({
+            "name": "nightly-restart",
+            "jobType": "device_command",
+            "cronExpression": "0 8 * * *",
+            "targetDeviceId": "device-env-01",
+            "targetCommandName": "restart"
+        }))
+        .await;
+    if let Err(crate::domains::mcp::ToolError::InvalidParams(e)) = result {
+        panic!("legacy targetDeviceId alias must deserialize, got InvalidParams: {}", e);
     }
 }
 
 #[tokio::test]
-async fn test_update_schedule_accepts_advertised_target_device_id_key() {
+async fn test_update_schedule_accepts_advertised_target_thing_id_key() {
     crate::domains::mcp::register_tools(None).await;
     let registry = crate::domains::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
@@ -261,13 +290,24 @@ async fn test_update_schedule_accepts_advertised_target_device_id_key() {
     let result = handler
         .execute(json!({
             "id": "job-1",
-            "targetDeviceId": "device-env-01"
+            "targetThingId": "device-env-01"
         }))
         .await;
     if let Err(crate::domains::mcp::ToolError::InvalidParams(e)) = result {
         panic!(
-            "advertised targetDeviceId key must deserialize, got InvalidParams: {}",
+            "advertised targetThingId key must deserialize, got InvalidParams: {}",
             e
         );
+    }
+
+    // Legacy alias: targetDeviceId must still deserialize.
+    let result = handler
+        .execute(json!({
+            "id": "job-1",
+            "targetDeviceId": "device-env-01"
+        }))
+        .await;
+    if let Err(crate::domains::mcp::ToolError::InvalidParams(e)) = result {
+        panic!("legacy targetDeviceId alias must deserialize, got InvalidParams: {}", e);
     }
 }
