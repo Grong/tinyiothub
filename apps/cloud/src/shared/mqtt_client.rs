@@ -373,6 +373,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gateway_telemetry_edge_payload_routes() {
+        // Regression: edge publishes {"type":"telemetry","data":[thing_ids],"timestamp":<unix>}
+        // on tinyiothub/{ws}/gateway/{gw}/telemetry (TelemetryMessage contract).
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "type": "telemetry",
+            "data": ["t1", "t2"],
+            "timestamp": 1_756_608_000_i64
+        }))
+        .unwrap();
+        let (tx, mut rx) = mpsc::channel(1);
+        PlatformMqttClient::route_data_message("tinyiothub/ws1/gateway/gw1/telemetry", &payload, &tx).await;
+        let msg = rx
+            .try_recv()
+            .expect("edge telemetry payload must route to a GatewayDataMessage");
+        match msg {
+            GatewayDataMessage::Telemetry { gateway_id, workspace_id, msg } => {
+                assert_eq!(gateway_id, "gw1");
+                assert_eq!(workspace_id, "ws1");
+                assert_eq!(msg.msg_type, "telemetry");
+                assert!(msg.data.is_array());
+            }
+            _ => panic!("expected Telemetry variant"),
+        }
+    }
+
+    #[tokio::test]
     async fn thing_telemetry_seven_segments_still_routes() {
         let payload = serde_json::to_vec(&serde_json::json!({
             "type": "thing_telemetry", "thing_id": "t1", "data": {}, "timestamp": 0
