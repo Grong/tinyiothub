@@ -52,8 +52,8 @@ Agent 可以通过 `canvas` 工具推送以下 UI 组件到前端：
 ### IoT 组件
 | 组件 | 说明 | 参数 |
 |------|------|------|
-| DeviceCard | 设备卡片 | deviceId, name, status, properties[] |
-| DeviceTable | 设备表格 | devices[], columns? |
+| ThingCard | 设备卡片 | thingId, name, status, properties[] |
+| ThingTable | 设备表格 | devices[], columns? |
 | AlarmCard | 告警卡片 | alarmId, severity, title, message, deviceName, timestamp |
 | AlarmTable | 告警表格 | alarms[] |
 | DataChart | 数据图表 | type, data[], labels? |
@@ -73,7 +73,7 @@ Agent 可以通过 `canvas` 工具推送以下 UI 组件到前端：
 
 ### 何时使用 canvas
 
-- **设备列表/搜索结果** → 用 `DeviceCard` 或 `DeviceTable` 渲染每个设备
+- **设备列表/搜索结果** → 用 `ThingCard` 或 `ThingTable` 渲染每个设备
 - **告警列表/查询结果** → 用 `AlarmCard` 或 `AlarmTable` 渲染告警
 - **传感器数值/状态** → 用 `StatCard` 展示关键指标
 - **设备当前读数** → 用 `ProgressIndicator` 展示温度、湿度等百分比指标
@@ -87,20 +87,20 @@ Agent 可以通过 `canvas` 工具推送以下 UI 组件到前端：
 
 ```jsonl
 {"createSurface":{"surfaceId":"device-view","surfaceKind":"inline","title":"设备列表"}}
-{"updateComponents":{"surfaceId":"device-view","components":[{"id":"card-1","componentKind":"DeviceCard","dataModel":{"deviceId":"dev_temp_001","name":"温湿度传感器-01","status":"online","deviceType":"temp_humidity","primaryMetric":{"key":"温度","value":"25.6","unit":"°C"},"properties":[{"name":"温度","value":"25.6","unit":"°C"},{"name":"湿度","value":"68","unit":"%"}],"signalStrength":85,"lastSeen":"2026-05-24T10:30:00Z","actions":[{"label":"查看详情","functionId":"viewDevice"},{"label":"控制","functionId":"controlDevice"}]}}]}}
+{"updateComponents":{"surfaceId":"device-view","components":[{"id":"card-1","componentKind":"ThingCard","dataModel":{"thingId":"dev_temp_001","name":"温湿度传感器-01","status":"online","category":"temp_humidity","primaryMetric":{"key":"温度","value":"25.6","unit":"°C"},"properties":[{"name":"温度","value":"25.6","unit":"°C"},{"name":"湿度","value":"68","unit":"%"}],"signalStrength":85,"lastSeen":"2026-05-24T10:30:00Z","actions":[{"label":"查看详情","functionId":"viewDevice"},{"label":"控制","functionId":"controlDevice"}]}}]}}
 ```
 
 ### 组件速查
 
 | 组件 | 用途 | 关键字段 |
 |------|------|---------|
-| DeviceCard | 单设备详情卡片 | deviceId, name, status, icon?, deviceType?, primaryMetric?{key,value,unit}, properties?[{name,value,unit}], telemetry?[{name,value,unit}], signalStrength?, lastSeen?, sparkline?, tags?[], actions?[{label,functionId}] |
-| DeviceTable | 设备列表表格 | columns[], rows[][] |
+| ThingCard | 单设备详情卡片 | thingId, name, status, icon?, category?, primaryMetric?{key,value,unit}, properties?[{name,value,unit}], telemetry?[{name,value,unit}], signalStrength?, lastSeen?, sparkline?, tags?[], actions?[{label,functionId}] |
+| ThingTable | 设备列表表格 | columns[], rows[][] |
 | AlarmCard | 告警卡片 | alarmId, severity, title, message, deviceName, timestamp |
 | AlarmTable | 告警列表表格 | alarms[] |
 | StatCard | 统计数值卡片 | label, value, unit?, description?, icon?, color?, trend? |
 | StatRow | 横向统计条 | items[]（label, value, unit?, description?）, columns? |
 | ProgressIndicator | 进度/百分比 | label, value, max, variant(linear/circular), color |
 | ConfirmationDialog | 确认对话框 | title, message, confirmLabel, cancelLabel |
-| ControlPanel | 设备控制面板 | deviceId, controls[] |
+| ControlPanel | 设备控制面板 | thingId, controls[] |
 | DataChart | 历史数据图表 | chartType, labels[], datasets[] |
