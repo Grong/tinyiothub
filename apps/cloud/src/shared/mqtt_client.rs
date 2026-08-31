@@ -388,7 +388,11 @@ mod tests {
             .try_recv()
             .expect("edge telemetry payload must route to a GatewayDataMessage");
         match msg {
-            GatewayDataMessage::Telemetry { gateway_id, workspace_id, msg } => {
+            GatewayDataMessage::Telemetry {
+                gateway_id,
+                workspace_id,
+                msg,
+            } => {
                 assert_eq!(gateway_id, "gw1");
                 assert_eq!(workspace_id, "ws1");
                 assert_eq!(msg.msg_type, "telemetry");

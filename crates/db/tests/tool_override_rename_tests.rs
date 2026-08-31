@@ -50,25 +50,24 @@ async fn baseline_pool_with_samples() -> (SqlitePool, std::path::PathBuf) {
             "agent_old",
             r#"{"model":"m","tool_denylist":["delete_device","delete_schedule","search_devices","get_device","create_device"]}"#,
         ),
-        ("agent_prefix", r#"{"model":"m","tool_denylist":["delete_device_extra"]}"#),
+        (
+            "agent_prefix",
+            r#"{"model":"m","tool_denylist":["delete_device_extra"]}"#,
+        ),
         ("agent_clean", r#"{"model":"m","tool_denylist":["delete_thing"]}"#),
     ] {
-        sqlx::query(
-            "INSERT INTO agents (agent_id, workspace_id, name) VALUES (?, 'ws1', ?)",
-        )
-        .bind(agent_id)
-        .bind(agent_id)
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO agent_configs (agent_id, config, config_hash) VALUES (?, ?, 'h')",
-        )
-        .bind(agent_id)
-        .bind(config)
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO agents (agent_id, workspace_id, name) VALUES (?, 'ws1', ?)")
+            .bind(agent_id)
+            .bind(agent_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agent_configs (agent_id, config, config_hash) VALUES (?, ?, 'h')")
+            .bind(agent_id)
+            .bind(config)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     (pool, path)
@@ -139,8 +138,7 @@ async fn tool_override_names_migrated() {
     // 旧名全部翻转;未涉及 token(如 delete_schedule)保持原样。
     let config = config_of("agent_old").await;
     let parsed: serde_json::Value = serde_json::from_str(&config).unwrap();
-    let denylist: Vec<String> =
-        serde_json::from_value(parsed["tool_denylist"].clone()).unwrap();
+    let denylist: Vec<String> = serde_json::from_value(parsed["tool_denylist"].clone()).unwrap();
     assert_eq!(
         denylist,
         vec![

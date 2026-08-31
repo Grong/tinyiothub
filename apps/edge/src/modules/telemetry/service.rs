@@ -28,9 +28,7 @@ impl TelemetryService {
     /// On publish failure, buffer locally for later flush.
     pub async fn collect_and_forward(&self) -> EdgeResult<()> {
         let things = self.driver_service.scan_all().await?;
-        let payload = build_telemetry_payload(
-            things.into_iter().map(serde_json::Value::from).collect(),
-        );
+        let payload = build_telemetry_payload(things.into_iter().map(serde_json::Value::from).collect());
 
         let topic = format!("{}/telemetry", self.gateway_service.topic_prefix());
 

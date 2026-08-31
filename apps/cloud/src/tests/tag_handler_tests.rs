@@ -207,10 +207,7 @@ async fn test_get_tag_stats_with_data() {
         json["result"]["by_type"]["thing"], 2,
         "by_type.thing must count thing tags"
     );
-    assert_eq!(
-        json["result"]["by_type"]["app"], 1,
-        "by_type.app must count app tags"
-    );
+    assert_eq!(json["result"]["by_type"]["app"], 1, "by_type.app must count app tags");
     assert!(
         json["result"]["by_type"].get("device").is_none(),
         "by_type must not contain the dead 'device' bucket, got: {}",
