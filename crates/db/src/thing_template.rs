@@ -241,6 +241,12 @@ pub struct ThingTemplateFullRow {
 // ──────────────────────────────────────────────
 
 impl ThingTemplate {
+    /// events 列原文（供展开器内联）。若结构体无 events 字段，返回 "[]"。
+    pub fn events_json_for_inline(&self) -> String {
+        // Task 3 补齐 events 字段后改为 self.events.clone()
+        "[]".to_string()
+    }
+
     /// 从文件加载的请求直接转换为 ThingTemplate（不经过数据库）
     pub fn from_request(request: &CreateThingTemplateRequest) -> Self {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
