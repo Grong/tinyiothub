@@ -208,6 +208,7 @@ pub struct ThingTemplateListRow {
     pub name: String,
     pub thing_type: String,
     pub description: Option<String>,
+    pub device_info: String,
     pub properties: String,
     pub actions: String,
     pub events: String,
@@ -1366,7 +1367,7 @@ pub(crate) async fn list_marketplace_thing_templates(
     workspace_id: &str,
 ) -> Result<Vec<ThingTemplateListRow>, sqlx::Error> {
     sqlx::query_as::<_, ThingTemplateListRow>(
-        "SELECT id, name, thing_type, description, properties, actions, events, \
+        "SELECT id, name, thing_type, description, device_info, properties, actions, events, \
              is_builtin, category, created_at \
              FROM thing_templates WHERE is_active = 1 \
              AND (workspace_id IS NULL OR workspace_id = ?) \

@@ -5,12 +5,20 @@
 
 use std::collections::HashMap;
 
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+};
+use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tinyiothub_storage::Db;
+use tower::ServiceExt;
 
 use crate::domains::marketplace::error::MarketplaceError;
 use crate::domains::marketplace::scene_instantiator::{InstantiateParams, SceneInstantiator};
-use crate::test_utils::{seed_test_workspace, setup_test_app_with_pool};
+use crate::test_utils::{
+    auth_header, create_test_token_with_workspace, response_parts, seed_test_workspace, setup_test_app_with_pool,
+};
 
 const TENANT: &str = "tenant-scene";
 const WS: &str = "ws-scene";
@@ -435,4 +443,199 @@ async fn instantiate_concurrent_same_name_gets_suffix_not_500() {
     assert_eq!(names.len(), 2, "expected two distinct root names, got: {names:?}");
     assert!(names.contains("测试园区"));
     assert!(names.contains("测试园区-2"));
+}
+
+// ──────────────────────────────────────────────────────────────
+// Marketplace API（列表 is_composition / 详情 / instantiate 端点）
+// ──────────────────────────────────────────────────────────────
+
+async fn setup_app() -> (axum::Router, SqlitePool) {
+    let (app_state, pool) = setup_test_app_with_pool().await;
+    seed_test_workspace(&pool, TENANT, WS).await;
+    let api_router = crate::api::create_router(&app_state);
+    let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
+    (app, pool)
+}
+
+fn api_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Request<Body> {
+    let builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("Authorization", auth_header(token))
+        .header("Content-Type", "application/json");
+    let body_str = body.map(|v| v.to_string()).unwrap_or_default();
+    builder.body(Body::from(body_str)).unwrap()
+}
+
+#[tokio::test]
+async fn api_instantiate_happy_path() {
+    let (app, pool) = setup_app().await;
+    let scene_id = seed_standard_templates(&pool).await;
+    let token = create_test_token_with_workspace("user-1", TENANT, WS);
+
+    let response = app
+        .oneshot(api_request(
+            "POST",
+            &format!("/api/v1/marketplace/thing-templates/{scene_id}/instantiate"),
+            &token,
+            Some(json!({
+                "sceneName": "测试园区",
+                "parameterValues": {"building_count": 2, "floor_count": 2}
+            })),
+        ))
+        .await
+        .unwrap();
+
+    let (status, body) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "expected 200, got: {body}");
+    assert_eq!(body["code"], 0);
+    let result = &body["result"];
+    assert_eq!(result["nodeCount"], 11);
+    assert!(result["rootThingId"].is_string(), "rootThingId missing: {result}");
+    let preview = result["treePreview"].as_str().unwrap_or_default();
+    assert!(preview.contains("测试园区 (campus)"), "treePreview: {preview}");
+    assert_eq!(thing_count(&pool).await, 11);
+}
+
+#[tokio::test]
+async fn api_instantiate_dry_run() {
+    let (app, pool) = setup_app().await;
+    let scene_id = seed_standard_templates(&pool).await;
+    let token = create_test_token_with_workspace("user-1", TENANT, WS);
+
+    let response = app
+        .oneshot(api_request(
+            "POST",
+            &format!("/api/v1/marketplace/thing-templates/{scene_id}/instantiate"),
+            &token,
+            Some(json!({
+                "sceneName": "测试园区",
+                "parameterValues": {"building_count": 2, "floor_count": 2},
+                "dryRun": true
+            })),
+        ))
+        .await
+        .unwrap();
+
+    let (status, body) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "expected 200, got: {body}");
+    let result = &body["result"];
+    assert_eq!(result["nodeCount"], 11);
+    assert!(
+        result["rootThingId"].is_null(),
+        "dry-run must not return rootThingId: {result}"
+    );
+    assert_eq!(thing_count(&pool).await, 0, "dry-run must not write");
+}
+
+#[tokio::test]
+async fn api_list_marks_composition() {
+    let (app, pool) = setup_app().await;
+    let scene_id = seed_standard_templates(&pool).await;
+    let token = create_test_token_with_workspace("user-1", TENANT, WS);
+
+    // 全量列表：场景包项 isComposition=true, parameterCount=2；设备模板为 false
+    let response = app
+        .clone()
+        .oneshot(api_request("GET", "/api/v1/marketplace/thing-templates", &token, None))
+        .await
+        .unwrap();
+    let (status, body) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "expected 200, got: {body}");
+    let items = body["result"]["data"].as_array().expect("data array");
+    let scene = items.iter().find(|i| i["id"] == scene_id).expect("scene pack in list");
+    assert_eq!(scene["isComposition"], true);
+    assert_eq!(scene["parameterCount"], 2);
+    let sensor = items
+        .iter()
+        .find(|i| i["id"] == "tpl-temperature_humidity_sensor")
+        .expect("sensor template in list");
+    assert_eq!(sensor["isComposition"], false);
+    assert_eq!(sensor["parameterCount"], 0);
+
+    // ?composition=true 只返回场景包
+    let response = app
+        .oneshot(api_request(
+            "GET",
+            "/api/v1/marketplace/thing-templates?composition=true",
+            &token,
+            None,
+        ))
+        .await
+        .unwrap();
+    let (status, body) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "expected 200, got: {body}");
+    let items = body["result"]["data"].as_array().expect("data array");
+    assert!(!items.is_empty(), "composition filter must return scene pack");
+    assert!(
+        items.iter().all(|i| i["isComposition"] == true),
+        "composition=true must only return scene packs: {items:?}"
+    );
+    assert!(items.iter().any(|i| i["id"] == scene_id));
+}
+
+#[tokio::test]
+async fn api_detail_returns_parameters() {
+    let (app, pool) = setup_app().await;
+    let scene_id = seed_standard_templates(&pool).await;
+    let token = create_test_token_with_workspace("user-1", TENANT, WS);
+
+    let response = app
+        .oneshot(api_request(
+            "GET",
+            &format!("/api/v1/marketplace/thing-templates/{scene_id}"),
+            &token,
+            None,
+        ))
+        .await
+        .unwrap();
+
+    let (status, body) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "expected 200, got: {body}");
+    let result = &body["result"];
+    assert_eq!(result["isComposition"], true);
+    let params = result["parameters"].as_array().expect("parameters array");
+    let building = params
+        .iter()
+        .find(|p| p["name"] == "building_count")
+        .expect("building_count parameter");
+    assert_eq!(building["min"], 1);
+    assert_eq!(building["max"], 10);
+    assert_eq!(building["default"], 2);
+    assert_eq!(result["structureSummary"]["parameterCount"], 2);
+    // 园区 → 楼 → 层 → 传感器 = 4 层
+    assert_eq!(result["structureSummary"]["maxDepth"], 4);
+}
+
+#[tokio::test]
+async fn api_instantiate_entity_template_400() {
+    let (app, pool) = setup_app().await;
+    let entity_id = seed_template(
+        &pool,
+        "plain_sensor_api",
+        "sensors",
+        r#"{"default_name_pattern": "s_{index}", "required_fields": []}"#,
+        SENSOR_PROPERTIES,
+        "[]",
+    )
+    .await;
+    let token = create_test_token_with_workspace("user-1", TENANT, WS);
+
+    let response = app
+        .oneshot(api_request(
+            "POST",
+            &format!("/api/v1/marketplace/thing-templates/{entity_id}/instantiate"),
+            &token,
+            Some(json!({"sceneName": "x"})),
+        ))
+        .await
+        .unwrap();
+
+    let (status, body) = response_parts(response).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "entity template instantiate must be 400, got: {body}"
+    );
+    assert_eq!(thing_count(&pool).await, 0);
 }

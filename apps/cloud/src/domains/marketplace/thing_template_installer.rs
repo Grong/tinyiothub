@@ -28,6 +28,10 @@ pub struct ThingTemplateItem {
     pub is_builtin: bool,
     pub category: String,
     pub created_at: String,
+    /// 是否组合模板（场景包）：device_info 根级含非空 children。
+    pub is_composition: bool,
+    /// 场景包参数个数（entity 模板恒为 0）。
+    pub parameter_count: usize,
 }
 
 /// Installed template result.
@@ -60,6 +64,21 @@ impl ThingTemplateInstaller {
                 let property_count = json_array_len(&r.properties);
                 let action_count = json_array_len(&r.actions);
                 let event_count = json_array_len(&r.events);
+                let device_info = serde_json::from_str::<serde_json::Value>(&r.device_info).ok();
+                let is_composition = device_info
+                    .as_ref()
+                    .and_then(|v| v.get("children"))
+                    .and_then(|c| c.as_array().map(|a| !a.is_empty()))
+                    .unwrap_or(false);
+                let parameter_count = if is_composition {
+                    device_info
+                        .as_ref()
+                        .and_then(|v| v.get("parameters"))
+                        .and_then(|p| p.as_array().map(|a| a.len()))
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
                 ThingTemplateItem {
                     id: r.id,
                     name: r.name,
@@ -71,6 +90,8 @@ impl ThingTemplateInstaller {
                     is_builtin: r.is_builtin != 0,
                     category: r.category,
                     created_at: r.created_at,
+                    is_composition,
+                    parameter_count,
                 }
             })
             .collect())
