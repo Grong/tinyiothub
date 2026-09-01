@@ -217,6 +217,18 @@ pub(crate) async fn find_thing_by_id_scoped(
         .await
 }
 
+/// 按 parent_id 列出子 thing 行（含 thing_type / linked_data），按 name 排序。
+/// 反向导出 export-as-template 的子树遍历用；调用方负责根节点 workspace 校验。
+pub(crate) async fn find_thing_child_rows(
+    pool: &SqlitePool,
+    parent_id: &str,
+) -> std::result::Result<Vec<ThingRow>, sqlx::Error> {
+    sqlx::query_as::<_, ThingRow>("SELECT * FROM things WHERE parent_id = ? ORDER BY name")
+        .bind(parent_id)
+        .fetch_all(pool)
+        .await
+}
+
 /// Workspace-scoped delete (eng-review T1): refuses to delete another
 /// workspace's thing.
 pub(crate) async fn delete_thing_scoped(
@@ -1081,6 +1093,11 @@ impl Db {
         workspace_id: &str,
     ) -> std::result::Result<Option<ThingRow>, sqlx::Error> {
         find_thing_by_id_scoped(self.pool(), id, workspace_id).await
+    }
+
+    /// 反向导出：按 parent_id 列出子 thing 行（含 thing_type / linked_data），按 name 排序。
+    pub async fn find_thing_child_rows(&self, parent_id: &str) -> std::result::Result<Vec<ThingRow>, sqlx::Error> {
+        find_thing_child_rows(self.pool(), parent_id).await
     }
 
     /// Workspace-scoped thing 删除。
