@@ -692,8 +692,6 @@ pub(crate) async fn list_unassigned_thing_resources(
 /// 在调用方事务内向 resources 表插入一条 thing 关联资源（场景实例化器专用）。
 /// 真实列名为 resource_type（struct 上的 `type` 仅为 serde 别名）；content/tags
 /// 用空值占位，由后续流程补充。调用方负责 commit/rollback。
-// TODO(Task 5): SceneInstantiator 接入后移除 allow(dead_code)
-#[allow(dead_code)]
 pub(crate) async fn insert_thing_resource_tx(
     tx: &mut Transaction<'_, Sqlite>,
     workspace_id: &str,
@@ -1116,6 +1114,40 @@ impl Db {
     /// 插入 thing 并返回新行。
     pub async fn create_thing_row(&self, row: &ThingRow) -> std::result::Result<ThingRow, sqlx::Error> {
         create_thing_row(self.pool(), row).await
+    }
+
+    /// 场景实例化器：在调用方事务内创建 Thing 行（显式 thing_type），返回新 id。
+    pub async fn create_thing_row_with_type_tx(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        request: &CreateThingRequest,
+        thing_type: &str,
+    ) -> std::result::Result<String, sqlx::Error> {
+        create_thing_row_with_type(tx, request, thing_type).await
+    }
+
+    /// 场景实例化器：事务内名称冲突探测（快路径；调用方仍需捕获唯一约束重试）。
+    pub async fn resolve_thing_name_tx(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        workspace_id: &str,
+        base: &str,
+    ) -> std::result::Result<String, sqlx::Error> {
+        resolve_thing_name_tx(tx, workspace_id, base).await
+    }
+
+    /// 场景实例化器：事务内向 resources 表插入一条 thing 关联资源。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn insert_thing_resource_tx(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        workspace_id: &str,
+        thing_id: &str,
+        resource_type: &str,
+        name: &str,
+        file_path: &str,
+    ) -> std::result::Result<(), sqlx::Error> {
+        insert_thing_resource_tx(tx, workspace_id, thing_id, resource_type, name, file_path).await
     }
 
     /// 更新 thing 并返回更新后的行。
@@ -2163,8 +2195,6 @@ async fn create_thing_inner(pool: &SqlitePool, request: &CreateThingRequest) -> 
 /// 在调用方事务内创建 Thing 行（场景实例化器专用），显式写 thing_type。
 /// 与 create_thing_inner 的差异：tx 传入 + thing_type 参数 + 不回读直接返回 id。
 /// 列清单与 create_thing_inner 一致（21 列）+ thing_type。
-// TODO(Task 5): SceneInstantiator 接入后移除 allow(dead_code)
-#[allow(dead_code)]
 pub(crate) async fn create_thing_row_with_type(
     tx: &mut Transaction<'_, Sqlite>,
     request: &CreateThingRequest,
@@ -2215,8 +2245,6 @@ pub(crate) async fn create_thing_row_with_type(
 /// 在 workspace 内探测 base / base-2 / ... / base-11 取第一个空位。
 /// 匹配 idx_things_name_workspace 的 (COALESCE(workspace_id,''), name) 语义。
 /// 注意 TOCTOU：调用方仍需捕获唯一约束错误并重试。
-// TODO(Task 5): SceneInstantiator 接入后移除 allow(dead_code)
-#[allow(dead_code)]
 pub(crate) async fn resolve_thing_name_tx(
     tx: &mut Transaction<'_, Sqlite>,
     workspace_id: &str,
@@ -2246,7 +2274,6 @@ pub(crate) async fn resolve_thing_name_tx(
 }
 
 /// 剥离末尾 "-数字" 后缀（"主楼-2" → "主楼"）；无后缀或非数字后缀原样返回。
-#[allow(dead_code)]
 fn strip_numeric_suffix(name: &str) -> String {
     match name.rfind('-') {
         Some(pos) if !name[pos + 1..].is_empty() && name[pos + 1..].chars().all(|c| c.is_ascii_digit()) => {

@@ -182,6 +182,15 @@ impl Db {
         find_thing_command_by_id(self.pool(), id).await
     }
 
+    /// 场景实例化器：在调用方事务内批量插入设备指令。
+    pub async fn bulk_create_thing_commands_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        requests: &[CreateThingCommandRequest],
+    ) -> Result<Vec<ThingCommand>, sqlx::Error> {
+        bulk_create_thing_commands_tx(tx, requests).await
+    }
+
     /// 创建一条设备指令（内部事务）。
     pub async fn create_thing_command(&self, request: &CreateThingCommandRequest) -> Result<ThingCommand, sqlx::Error> {
         create_thing_command(self.pool(), request).await

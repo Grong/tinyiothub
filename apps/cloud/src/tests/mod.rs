@@ -28,6 +28,7 @@ mod notification_handler_tests;
 mod open_handler_tests;
 mod permission_handler_tests;
 mod role_handler_tests;
+mod scene_instantiate_test;
 mod seed_profile_e2e_tests;
 mod system_handler_tests;
 mod tag_handler_tests;

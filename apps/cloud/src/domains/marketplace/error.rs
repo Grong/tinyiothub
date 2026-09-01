@@ -32,6 +32,9 @@ pub enum MarketplaceError {
     #[error("Template error: {0}")]
     Template(String),
 
+    #[error("参数校验失败: {0}")]
+    Validation(String),
+
     #[error("Driver error: {0}")]
     Driver(String),
 

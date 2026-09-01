@@ -173,4 +173,27 @@ impl Db {
     ) -> Result<Vec<ThingProperty>, sqlx::Error> {
         create_thing_properties_batch(self.pool(), requests).await
     }
+
+    /// 场景实例化器：在调用方事务内批量插入物属性，返回新建 id 列表。
+    pub async fn create_thing_properties_batch_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        requests: &[CreateThingPropertyRequest],
+    ) -> Result<Vec<String>, sqlx::Error> {
+        create_thing_properties_batch_tx(tx, requests).await
+    }
+
+    /// 场景实例化器：事务内按 (thing_id, name) 查属性 id（告警规则 property_ref 解析用）。
+    pub async fn find_thing_property_id_by_name_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        thing_id: &str,
+        name: &str,
+    ) -> Result<Option<String>, sqlx::Error> {
+        sqlx::query_scalar("SELECT id FROM thing_properties WHERE thing_id = ? AND name = ?")
+            .bind(thing_id)
+            .bind(name)
+            .fetch_optional(&mut **tx)
+            .await
+    }
 }

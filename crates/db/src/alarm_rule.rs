@@ -773,6 +773,15 @@ impl Db {
         create_alarm_rule(self.pool(), rule).await
     }
 
+    /// 场景实例化器：在调用方事务内插入报警规则。
+    pub async fn create_alarm_rule_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        rule: &AlarmRule,
+    ) -> Result<()> {
+        create_alarm_rule_tx(tx, rule).await
+    }
+
     /// 更新报警规则（可选 workspace 限定）。
     pub async fn update_alarm_rule(&self, rule: &AlarmRule, workspace_id: Option<&str>) -> Result<()> {
         update_alarm_rule(self.pool(), rule, workspace_id).await

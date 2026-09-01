@@ -773,6 +773,25 @@ impl Db {
         get_tenant_usage(self.pool(), tenant_id).await
     }
 
+    /// 租户本体配额（场景实例化配额校验用）：workspace → tenant → 订阅计划 thing_limit。
+    /// 查不到订阅链或 thing_limit = 0（schema 约定 0=无限制）时返回 i64::MAX 不设限。
+    pub async fn tenant_thing_limit(&self, workspace_id: &str) -> Result<i64> {
+        let limit: Option<i64> = sqlx::query_scalar(
+            "SELECT sp.thing_limit FROM workspaces w \
+             JOIN tenants t ON t.id = w.tenant_id \
+             JOIN subscription_plans sp ON sp.id = t.plan_id \
+             WHERE w.id = ?",
+        )
+        .bind(workspace_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(|e| Error::DatabaseError(e.to_string()))?;
+        Ok(match limit {
+            Some(0) | None => i64::MAX,
+            Some(n) => n,
+        })
+    }
+
     /// 变更租户订阅计划（subscription_status 置 active、清 trial）。
     pub async fn change_tenant_plan(&self, tenant_id: &str, plan_id: &str) -> Result<Tenant> {
         change_tenant_plan(self.pool(), tenant_id, plan_id).await
