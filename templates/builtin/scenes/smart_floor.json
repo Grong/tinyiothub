@@ -1,0 +1,26 @@
+{
+  "name": "smart_floor",
+  "display_name": {"zh": "智慧楼层", "en": "Smart Floor"},
+  "description": {"zh": "一层楼的空间结构：楼层 + N 个房间", "en": "Floor structure with N rooms"},
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "scenes",
+  "thing_category": "floor",
+  "tags": ["floor", "space"],
+  "parameters": [
+    {"name": "room_count", "type": "int", "default": 8, "min": 1, "max": 50,
+     "display_name": {"zh": "房间数量", "en": "Room Count"}}
+  ],
+  "device_info": {
+    "default_name_pattern": "{scene_name}",
+    "default_display_name_pattern": {"zh": "{scene_name}", "en": "{scene_name}"}
+  },
+  "properties": [
+    {"name": "area", "display_name": {"zh": "面积", "en": "Area"}, "data_type": "number", "unit": "m²", "is_read_only": false, "is_required": false}
+  ],
+  "children": [
+    {"key": "room", "category": "room", "count_param": "room_count",
+     "device_info": {"default_name_pattern": "{index}室",
+       "default_display_name_pattern": {"zh": "{index}室", "en": "Room {index}"}}}
+  ]
+}

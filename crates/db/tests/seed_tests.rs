@@ -35,7 +35,7 @@ async fn seed_system_creates_subscription_plans_and_builtin_templates() {
         .fetch_one(db.pool())
         .await
         .unwrap();
-    assert_eq!(templates, 13);
+    assert_eq!(templates, 16);
 
     let admin: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE username = 'admin')")
         .fetch_one(db.pool())

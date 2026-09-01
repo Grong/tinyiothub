@@ -1,0 +1,47 @@
+{
+  "name": "smart_campus",
+  "display_name": {"zh": "智慧园区", "en": "Smart Campus"},
+  "description": {"zh": "园区：N 栋楼、每栋 M 层、每层 2 个温湿度传感器", "en": "Campus with N buildings, M floors each, 2 sensors per floor"},
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "scenes",
+  "thing_category": "campus",
+  "tags": ["campus", "building"],
+  "parameters": [
+    {"name": "building_count", "type": "int", "default": 2, "min": 1, "max": 10,
+     "display_name": {"zh": "楼栋数量", "en": "Building Count"}},
+    {"name": "floor_count", "type": "int", "default": 5, "min": 1, "max": 15,
+     "display_name": {"zh": "每栋楼层数（最终节点数受 500 上限约束）", "en": "Floors per Building"}}
+  ],
+  "device_info": {"default_name_pattern": "{scene_name}"},
+  "properties": [
+    {"name": "area", "display_name": {"zh": "占地面积", "en": "Site Area"}, "data_type": "number", "unit": "m²", "is_read_only": false, "is_required": false},
+    {"name": "plot_ratio", "display_name": {"zh": "容积率", "en": "Plot Ratio"}, "data_type": "number", "is_read_only": false, "is_required": false}
+  ],
+  "default_knowledge": "你是园区管家，统览各楼栋运行状态与告警。",
+  "dashboard": {"cards": [{"property": "area"}, {"property": "plot_ratio"}]},
+  "alarm_rules": [
+    {"name": "能耗异常", "rule_type": "change",
+     "condition": {"type": "change", "field": "energy", "threshold_percent": 50.0},
+     "alarm_level": "warning", "notification_config": {}}
+  ],
+  "children": [
+    {"key": "building", "category": "building", "count_param": "building_count",
+     "device_info": {"default_name_pattern": "{index}号楼",
+       "default_display_name_pattern": {"zh": "{index}号楼", "en": "Building {index}"}},
+     "default_knowledge": "你是楼栋管家，关注本楼各层环境。",
+     "alarm_rules": [
+       {"name": "高温告警", "rule_type": "threshold",
+        "condition": {"type": "threshold", "operator": "greater_than", "value": 35.0},
+        "alarm_level": "warning", "notification_config": {}, "property_ref": "temperature"}
+     ],
+     "children": [
+       {"key": "floor", "category": "floor", "count_param": "floor_count",
+        "device_info": {"default_name_pattern": "{index}F"},
+        "children": [
+          {"key": "th_sensor", "template_ref": "temperature_humidity_sensor", "count": 2,
+           "device_info": {"default_name_pattern": "th_sensor_{index}"}}
+        ]}
+     ]}
+  ]
+}
