@@ -573,7 +573,7 @@ async fn instantiate_thing_template(
     };
     match SceneInstantiator::instantiate(state.db.as_ref(), ws, &id, &params).await {
         Ok(outcome) => {
-            let result = serde_json::to_value(&outcome).unwrap_or_else(|_| serde_json::json!(null));
+            let result = serde_json::to_value(&outcome).unwrap_or(serde_json::Value::Null);
             (StatusCode::OK, ApiResponseBuilder::success(result))
         }
         Err(e) => {

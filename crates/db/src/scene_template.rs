@@ -468,7 +468,7 @@ impl<'a> Expander<'a> {
         node.device_info
             .default_display_name_pattern
             .as_ref()
-            .and_then(|m| localized(m))
+            .and_then(localized)
             .map(|pattern| {
                 let mut vars = HashMap::new();
                 vars.insert("scene_name", self.scene_name.clone());
@@ -767,11 +767,13 @@ mod tests {
         }"#,
         )
         .unwrap();
-        let mut tpl = crate::thing_template::ThingTemplate::default();
-        tpl.category = "sensors".to_string();
-        tpl.properties = r#"[{"name":"temp","display_name":{"zh":"温度"},"data_type":"float","is_read_only":true,"is_required":false}]"#.to_string();
-        tpl.actions = r#"[{"name":"reboot","display_name":{"zh":"重启"},"is_required":false}]"#.to_string();
-        tpl.events = r#"[{"name":"overheat","level":"warning"}]"#.to_string();
+        let tpl = crate::thing_template::ThingTemplate {
+            category: "sensors".to_string(),
+            properties: r#"[{"name":"temp","display_name":{"zh":"温度"},"data_type":"float","is_read_only":true,"is_required":false}]"#.to_string(),
+            actions: r#"[{"name":"reboot","display_name":{"zh":"重启"},"is_required":false}]"#.to_string(),
+            events: r#"[{"name":"overheat","level":"warning"}]"#.to_string(),
+            ..Default::default()
+        };
         let device_templates = HashMap::from([("th_sensor".to_string(), tpl)]);
         let r = expand(&t, "站点", &HashMap::new(), &device_templates, &HashMap::new()).unwrap();
         // 根 + 1 内联节点
