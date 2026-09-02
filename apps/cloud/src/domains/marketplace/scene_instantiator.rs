@@ -123,7 +123,10 @@ impl SceneInstantiator {
             .count_things_by_workspace(workspace_id)
             .await
             .map_err(|e| MarketplaceError::Template(e.to_string()))?;
-        let limit = db.tenant_thing_limit(workspace_id).await.unwrap_or(i64::MAX);
+        let limit = db
+            .tenant_thing_limit(workspace_id)
+            .await
+            .map_err(|e| MarketplaceError::Template(format!("配额查询失败: {}", e)))?;
         if current + result.node_count as i64 > limit {
             return Err(MarketplaceError::Validation(format!(
                 "超出配额：当前 {} 个本体 + 将创建 {} 个 > 上限 {}",

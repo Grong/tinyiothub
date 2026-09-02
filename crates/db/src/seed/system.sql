@@ -685,11 +685,6 @@ SELECT
   ],
   "device_info": {"default_name_pattern": "{scene_name}"},
   "default_knowledge": "你是这栋楼的楼宇管家，关注各层环境与设备状态。",
-  "alarm_rules": [
-    {"name": "高温告警", "rule_type": "threshold",
-     "condition": {"type": "threshold", "operator": "greater_than", "value": 35.0},
-     "alarm_level": "warning", "notification_config": {}, "property_ref": "temperature"}
-  ],
   "children": [
     {"key": "floor", "category": "floor", "count_param": "floor_count",
      "device_info": {"default_name_pattern": "{index}F",
@@ -700,7 +695,12 @@ SELECT
      "children": [
        {"key": "th_sensor", "template_ref": "temperature_humidity_sensor", "count": 2,
         "device_info": {"default_name_pattern": "th_sensor_{index}",
-          "default_display_name_pattern": {"zh": "温湿度传感器 {index}", "en": "Temp & Humidity Sensor {index}"}}}
+          "default_display_name_pattern": {"zh": "温湿度传感器 {index}", "en": "Temp & Humidity Sensor {index}"}},
+        "alarm_rules": [
+          {"name": "高温告警", "rule_type": "threshold",
+           "condition": {"type": "threshold", "operator": "greater_than", "value": 35.0},
+           "alarm_level": "warning", "notification_config": {}, "property_ref": "temperature"}
+        ]}
      ]}
   ]
 }',
@@ -748,17 +748,17 @@ SELECT
      "device_info": {"default_name_pattern": "{index}号楼",
        "default_display_name_pattern": {"zh": "{index}号楼", "en": "Building {index}"}},
      "default_knowledge": "你是楼栋管家，关注本楼各层环境。",
-     "alarm_rules": [
-       {"name": "高温告警", "rule_type": "threshold",
-        "condition": {"type": "threshold", "operator": "greater_than", "value": 35.0},
-        "alarm_level": "warning", "notification_config": {}, "property_ref": "temperature"}
-     ],
      "children": [
        {"key": "floor", "category": "floor", "count_param": "floor_count",
         "device_info": {"default_name_pattern": "{index}F"},
         "children": [
           {"key": "th_sensor", "template_ref": "temperature_humidity_sensor", "count": 2,
-           "device_info": {"default_name_pattern": "th_sensor_{index}"}}
+           "device_info": {"default_name_pattern": "th_sensor_{index}"},
+           "alarm_rules": [
+             {"name": "高温告警", "rule_type": "threshold",
+              "condition": {"type": "threshold", "operator": "greater_than", "value": 35.0},
+              "alarm_level": "warning", "notification_config": {}, "property_ref": "temperature"}
+           ]}
         ]}
      ]}
   ]

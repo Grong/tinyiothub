@@ -374,11 +374,12 @@ impl<'a> Expander<'a> {
                 inlined.properties = props.clone();
                 inlined.commands = cmds.clone();
                 inlined.events = events.clone();
+                let display = self.node_display_name(&inlined, i, &name);
                 let id = self.push_node(
                     parent_temp_id,
                     depth,
-                    name.clone(),
-                    Some(name),
+                    name,
+                    display,
                     category.clone(),
                     "device".to_string(),
                     &inlined,
@@ -761,7 +762,8 @@ mod tests {
             r#"{
             "name": "s", "display_name": {"zh":"s"}, "category": "scenes",
             "device_info": {"default_name_pattern": "{scene_name}"},
-            "children": [{"template_ref": "th_sensor", "device_info": {"default_name_pattern": "传感器{index}"}}]
+            "children": [{"template_ref": "th_sensor", "device_info": {"default_name_pattern": "传感器{index}",
+                "default_display_name_pattern": {"zh": "温湿度传感器 {index}", "en": "TH Sensor {index}"}}}]
         }"#,
         )
         .unwrap();
@@ -776,6 +778,8 @@ mod tests {
         assert_eq!(r.node_count, 2);
         let inlined = &r.nodes[1];
         assert_eq!(inlined.name, "传感器1");
+        // template_ref 分支必须应用 default_display_name_pattern，而非回退机器名
+        assert_eq!(inlined.display_name.as_deref(), Some("温湿度传感器 1"));
         assert_eq!(inlined.category, "sensors");
         assert_eq!(inlined.properties.len(), 1);
         assert_eq!(inlined.properties[0].name, "temp");
