@@ -20,6 +20,7 @@ mod event_handler_tests;
 pub mod event_retention_tests;
 mod export_template_test;
 mod heartbeat_bridge_tests;
+mod import_scene_test;
 mod invoke_action_flow_tests;
 mod jobs_handler_tests;
 mod marketplace_handler_tests;

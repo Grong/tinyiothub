@@ -9,6 +9,8 @@
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tinyiothub_storage::Db;
+use tinyiothub_storage::scene_template::SceneTemplateFile;
+use tinyiothub_storage::thing_template::SceneTemplateInsert;
 
 pub use tinyiothub_storage::thing_template::{ParsedTemplate, ThingTemplateRow};
 
@@ -81,6 +83,110 @@ pub struct EventSchema {
     #[allow(dead_code)]
     pub description: Option<String>,
     pub data_type: Option<String>,
+}
+
+// ──────────────────────────────────────────────
+// Scene pack import（场景包注册闭环）
+// ──────────────────────────────────────────────
+
+/// 判定 import JSON 是否场景包：根级含非空 children 数组。
+/// entity 模板（DTDL/WoT）无此键，走现有 ParsedTemplate 路径不变。
+pub fn is_scene_template_json(json: &Value) -> bool {
+    json.get("children")
+        .and_then(Value::as_array)
+        .map(|a| !a.is_empty())
+        .unwrap_or(false)
+}
+
+/// 场景包 import 结果。
+#[derive(Debug)]
+pub struct SceneImportOutcome {
+    pub id: String,
+    /// 冲突重命名后的最终模板名
+    pub name: String,
+    pub thing_type: String,
+}
+
+/// 场景包旁路：`SceneTemplateFile` 校验 → device_info 存原文 → 注册为 workspace 组合模板。
+/// 名称冲突沿用现有模板重命名策略（marketplace install 同款：后缀探测取第一个空闲名）。
+pub async fn import_scene_template(
+    pool: &SqlitePool,
+    body: &Value,
+    workspace_id: Option<&str>,
+) -> Result<SceneImportOutcome, ImportError> {
+    let raw = serde_json::to_string(body)?;
+    let scene = SceneTemplateFile::from_json(&raw)?;
+
+    if scene.name.trim().is_empty() {
+        return Err(ImportError::MissingField("name".to_string()));
+    }
+    if scene.children.is_empty() {
+        return Err(ImportError::MissingField("children".to_string()));
+    }
+
+    let db = Db::new(pool.clone());
+    let ws_key = workspace_id.unwrap_or("");
+    let final_name = resolve_import_name(&db, ws_key, &scene.name).await?;
+
+    // 附录 A 缺省映射：building→building，其余空间→space
+    let thing_type = if scene.thing_category.as_deref() == Some("building") {
+        "building"
+    } else {
+        "space"
+    };
+    let category = if scene.category.is_empty() {
+        "scenes".to_string()
+    } else {
+        scene.category.clone()
+    };
+
+    let insert = SceneTemplateInsert {
+        name: final_name.clone(),
+        display_name: serde_json::to_string(&scene.display_name)?,
+        description: scene.description.as_ref().map(serde_json::to_string).transpose()?,
+        version: scene.version.clone(),
+        category,
+        thing_type: thing_type.to_string(),
+        device_info: raw,
+        workspace_id: workspace_id.map(|s| s.to_string()),
+    };
+    let id = db.insert_scene_thing_template(&insert).await?;
+
+    Ok(SceneImportOutcome {
+        id,
+        name: final_name,
+        thing_type: thing_type.to_string(),
+    })
+}
+
+/// 名称冲突重命名：原名 → "{name} (import)" → "{name} (import {N})"（N=2..100）。
+async fn resolve_import_name(db: &Db, workspace_key: &str, name: &str) -> Result<String, ImportError> {
+    if name_is_free(db, workspace_key, name).await {
+        return Ok(name.to_string());
+    }
+
+    let suffixed = format!("{name} (import)");
+    if name_is_free(db, workspace_key, &suffixed).await {
+        return Ok(suffixed);
+    }
+
+    for i in 2..100 {
+        let numbered = format!("{name} (import {i})");
+        if name_is_free(db, workspace_key, &numbered).await {
+            return Ok(numbered);
+        }
+    }
+
+    Err(ImportError::NameConflict(format!(
+        "Unable to resolve name conflict for '{name}' in workspace"
+    )))
+}
+
+async fn name_is_free(db: &Db, workspace_key: &str, name: &str) -> bool {
+    match db.count_thing_template_name_conflicts(workspace_key, name).await {
+        Ok(count) => count == 0,
+        Err(_) => false, // 查询失败时按不可用处理（安全侧）
+    }
 }
 
 // ──────────────────────────────────────────────
@@ -475,7 +581,7 @@ pub async fn save_template(
         )));
     }
 
-    db.insert_parsed_thing_template(template, workspace_id)
+    db.insert_parsed_thing_template(template, workspace_id, "{}")
         .await
         .map_err(ImportError::from)
 }
@@ -495,6 +601,21 @@ pub async fn load_template(pool: &SqlitePool, id: &str) -> Result<ThingTemplateR
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Scene pack detection ──
+
+    #[test]
+    fn test_is_scene_template_json() {
+        assert!(is_scene_template_json(
+            &json!({"name": "x", "children": [{"key": "room"}]})
+        ));
+        // 空 children 不算组合模板
+        assert!(!is_scene_template_json(&json!({"name": "x", "children": []})));
+        // 无 children 键 → entity 路径
+        assert!(!is_scene_template_json(&json!({"name": "x"})));
+        // children 非数组 → entity 路径
+        assert!(!is_scene_template_json(&json!({"children": "not-array"})));
+    }
 
     // ── DTDL import helpers ──
 

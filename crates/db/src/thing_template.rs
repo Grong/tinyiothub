@@ -1453,10 +1453,12 @@ pub(crate) async fn count_thing_template_name_conflicts(
 }
 
 /// 插入解析后的模板（import；生成 id 与时间戳）。
+/// `device_info` 透传：entity 路径传 `"{}"`，scene 旁路传场景包 JSON 原文。
 pub(crate) async fn insert_parsed_thing_template(
     pool: &SqlitePool,
     template: &ParsedTemplate,
     workspace_id: Option<&str>,
+    device_info: &str,
 ) -> Result<String, sqlx::Error> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -1467,7 +1469,6 @@ pub(crate) async fn insert_parsed_thing_template(
     let version = "1.0.0".to_string();
     let category = "imported".to_string();
     let tags = "[]".to_string();
-    let device_info = "{}".to_string();
 
     sqlx::query(
         "INSERT INTO thing_templates \
@@ -1489,12 +1490,63 @@ pub(crate) async fn insert_parsed_thing_template(
     .bind::<Option<String>>(None) // protocol_type
     .bind::<Option<String>>(None) // driver_name
     .bind(&tags)
-    .bind(&device_info)
+    .bind(device_info)
     .bind(&template.properties)
     .bind(&template.actions)
     .bind(&template.events)
     .bind(&default_knowledge)
     .bind(workspace_id)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await?;
+
+    Ok(id)
+}
+
+/// 场景包模板插入参数（import scene 旁路）。
+#[derive(Debug, Clone)]
+pub struct SceneTemplateInsert {
+    /// 已解决冲突后的最终模板名
+    pub name: String,
+    /// 多语言 display_name JSON map 原文
+    pub display_name: String,
+    /// 多语言 description JSON map 原文
+    pub description: Option<String>,
+    pub version: String,
+    pub category: String,
+    pub thing_type: String,
+    /// 场景包 JSON 原文（含 parameters/children/dashboard/alarm_rules/resources）
+    pub device_info: String,
+    pub workspace_id: Option<String>,
+}
+
+/// 插入场景包组合模板（import scene 旁路；device_info 存原文，is_builtin=0）。
+/// properties/actions/events 列与 builtin seed 一致置空——实例化只读 device_info。
+pub(crate) async fn insert_scene_thing_template(
+    pool: &SqlitePool,
+    scene: &SceneTemplateInsert,
+) -> Result<String, sqlx::Error> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+    sqlx::query(
+        "INSERT INTO thing_templates \
+         (id, name, display_name, description, version, author, category, \
+          manufacturer, thing_type, protocol_type, driver_name, \
+          tags, device_info, properties, actions, events, default_knowledge, \
+          is_builtin, is_active, workspace_id, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, ?, NULL, NULL, '[]', ?, '[]', '[]', '[]', NULL, 0, 1, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(&scene.name)
+    .bind(&scene.display_name)
+    .bind(&scene.description)
+    .bind(&scene.version)
+    .bind(&scene.category)
+    .bind(&scene.thing_type)
+    .bind(&scene.device_info)
+    .bind(&scene.workspace_id)
     .bind(&now)
     .bind(&now)
     .execute(pool)
@@ -1730,13 +1782,19 @@ impl Db {
         count_thing_template_name_conflicts(self.pool(), workspace_key, name).await
     }
 
-    /// 插入解析后的模板（import；返回新 id）。
+    /// 插入解析后的模板（import；返回新 id）。`device_info` 透传（entity 传 `"{}"`）。
     pub async fn insert_parsed_thing_template(
         &self,
         template: &ParsedTemplate,
         workspace_id: Option<&str>,
+        device_info: &str,
     ) -> Result<String, sqlx::Error> {
-        insert_parsed_thing_template(self.pool(), template, workspace_id).await
+        insert_parsed_thing_template(self.pool(), template, workspace_id, device_info).await
+    }
+
+    /// 插入场景包组合模板（import scene 旁路；device_info 存原文；返回新 id）。
+    pub async fn insert_scene_thing_template(&self, scene: &SceneTemplateInsert) -> Result<String, sqlx::Error> {
+        insert_scene_thing_template(self.pool(), scene).await
     }
 
     /// 按 ID 加载模板行（export 用）。
