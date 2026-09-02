@@ -690,6 +690,21 @@ pub(crate) async fn attach_thing_resource(
     Ok(result.rows_affected())
 }
 
+/// List resources attached to a thing（场景模板导出用；created_at+id 稳定序）。
+/// 真实列名为 resource_type（struct 上的 `type` 仅为别名），故显式列清单 + AS type。
+pub(crate) async fn list_thing_resources(
+    pool: &SqlitePool,
+    thing_id: &str,
+) -> std::result::Result<Vec<ThingResource>, sqlx::Error> {
+    sqlx::query_as::<_, ThingResource>(
+        "SELECT id, workspace_id, thing_id, resource_type AS type, name, file_path, content, tags, \
+         created_at, updated_at FROM resources WHERE thing_id = ? ORDER BY created_at, id",
+    )
+    .bind(thing_id)
+    .fetch_all(pool)
+    .await
+}
+
 /// List resources not yet attached to any thing.
 pub(crate) async fn list_unassigned_thing_resources(
     pool: &SqlitePool,
@@ -1245,6 +1260,11 @@ impl Db {
     /// 将子树全部标记 summary_status='dirty'。
     pub async fn mark_thing_subtree_dirty(&self, root_id: &str) -> std::result::Result<u64, sqlx::Error> {
         mark_thing_subtree_dirty(self.pool(), root_id).await
+    }
+
+    /// 列出 thing 挂载的 resources（场景模板导出用）。
+    pub async fn list_thing_resources(&self, thing_id: &str) -> std::result::Result<Vec<ThingResource>, sqlx::Error> {
+        list_thing_resources(self.pool(), thing_id).await
     }
 
     /// 解除 resource 与 thing 的挂载（thing_id = NULL）。

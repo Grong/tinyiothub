@@ -86,7 +86,7 @@ pub async fn export_as_template(
             let status = match &e {
                 ExportError::NotFound(_) => StatusCode::NOT_FOUND,
                 ExportError::TooLarge(_) => StatusCode::BAD_REQUEST,
-                ExportError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                ExportError::Database(_) | ExportError::Storage(_) => StatusCode::INTERNAL_SERVER_ERROR,
             };
             tracing::error!(?e, thing_id = %id, "export-as-template failed");
             (

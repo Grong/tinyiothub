@@ -10,10 +10,13 @@ use std::collections::{HashMap, VecDeque};
 
 use tinyiothub_core::models::thing_command::ThingCommand;
 use tinyiothub_core::models::thing_property::ThingProperty;
-use tinyiothub_storage::Db;
-use tinyiothub_storage::scene_template::{MAX_NODES, SceneNodeInfo, SceneTemplateFile, ThingNodeDef};
-use tinyiothub_storage::thing::ThingRow;
+use tinyiothub_storage::alarm_rule::AlarmRule;
+use tinyiothub_storage::scene_template::{
+    MAX_NODES, SceneAlarmRule, SceneNodeInfo, SceneResource, SceneTemplateFile, ThingNodeDef,
+};
+use tinyiothub_storage::thing::{ThingResource, ThingRow};
 use tinyiothub_storage::thing_template::{CommandTemplate, PropertyTemplate};
+use tinyiothub_storage::{Db, DbError};
 
 #[derive(Debug)]
 pub struct ExportOutcome {
@@ -29,6 +32,8 @@ pub enum ExportError {
     TooLarge(usize),
     #[error("数据库错误: {0}")]
     Database(#[from] sqlx::Error),
+    #[error("存储错误: {0}")]
+    Storage(#[from] DbError),
 }
 
 /// 导出指定本体及其整棵子树为场景包模板。
@@ -56,13 +61,41 @@ pub async fn export_subtree_as_template(
     }
 
     // 每节点属性/命令定义（设备节点不逆向 template_ref，仅导出原文）
+    // 同时收集 resources / alarm_rules（spec §3.4）；prop_names 供 property_id 反查属性名
     let mut properties: HashMap<String, Vec<PropertyTemplate>> = HashMap::new();
     let mut commands: HashMap<String, Vec<CommandTemplate>> = HashMap::new();
+    let mut prop_names: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let mut resources: HashMap<String, Vec<SceneResource>> = HashMap::new();
+    let mut alarm_rules: HashMap<String, Vec<SceneAlarmRule>> = HashMap::new();
+    let mut warnings = Vec::new();
     for r in &rows {
         let props = db.find_thing_properties_by_thing_id(&r.id).await?;
+        prop_names.insert(
+            r.id.clone(),
+            props.iter().map(|p| (p.id.clone(), p.name.clone())).collect(),
+        );
         properties.insert(r.id.clone(), props.iter().map(property_template).collect());
         let cmds = db.find_thing_commands_by_thing_id(&r.id).await?;
         commands.insert(r.id.clone(), cmds.iter().map(command_template).collect());
+
+        // 排序保证导出确定性（兄弟节点结构等价比较对顺序敏感）
+        let mut res: Vec<SceneResource> = db
+            .list_thing_resources(&r.id)
+            .await?
+            .iter()
+            .map(resource_template)
+            .collect();
+        res.sort_by(|a, b| a.name.cmp(&b.name));
+        resources.insert(r.id.clone(), res);
+
+        let rules = db.find_alarm_rules_by_thing(&r.id, Some(workspace_id)).await?;
+        let names = &prop_names[&r.id];
+        let mut ar: Vec<SceneAlarmRule> = rules
+            .iter()
+            .map(|rule| alarm_rule_template(rule, names, &r.name, &mut warnings))
+            .collect();
+        ar.sort_by(|a, b| a.name.cmp(&b.name));
+        alarm_rules.insert(r.id.clone(), ar);
     }
 
     let mut by_parent: HashMap<String, Vec<&ThingRow>> = HashMap::new();
@@ -75,9 +108,10 @@ pub async fn export_subtree_as_template(
         by_parent,
         properties,
         commands,
+        resources,
+        alarm_rules,
     };
 
-    let mut warnings = Vec::new();
     // SceneTemplateFile 无根 thing_type 字段，偏离缺省映射时导出后会按缺省还原
     let root_default = default_mapped_type(root.category.as_deref());
     if root.thing_type != root_default {
@@ -105,9 +139,9 @@ pub async fn export_subtree_as_template(
         commands: ctx.commands.get(&root.id).cloned().unwrap_or_default(),
         events: linked_array(&linked, "event_defs"),
         default_knowledge: linked_str(&linked, "knowledge"),
-        resources: vec![],
+        resources: ctx.resources.get(&root.id).cloned().unwrap_or_default(),
         dashboard: linked.get("dashboard").cloned(),
-        alarm_rules: vec![],
+        alarm_rules: ctx.alarm_rules.get(&root.id).cloned().unwrap_or_default(),
         children: build_children(&root, &ctx, &mut warnings),
     };
     Ok(ExportOutcome { file, warnings })
@@ -117,6 +151,8 @@ struct SubtreeContext<'a> {
     by_parent: HashMap<String, Vec<&'a ThingRow>>,
     properties: HashMap<String, Vec<PropertyTemplate>>,
     commands: HashMap<String, Vec<CommandTemplate>>,
+    resources: HashMap<String, Vec<SceneResource>>,
+    alarm_rules: HashMap<String, Vec<SceneAlarmRule>>,
 }
 
 /// 递归构建子节点定义；同父兄弟可泛化时合并为单节点（count + name pattern）。
@@ -172,14 +208,16 @@ fn build_node(row: &ThingRow, ctx: &SubtreeContext, warnings: &mut Vec<String>) 
         commands: ctx.commands.get(&row.id).cloned().unwrap_or_default(),
         events: linked_array(&linked, "event_defs"),
         default_knowledge: linked_str(&linked, "knowledge"),
-        resources: vec![],
+        resources: ctx.resources.get(&row.id).cloned().unwrap_or_default(),
         dashboard: linked.get("dashboard").cloned(),
-        alarm_rules: vec![],
+        alarm_rules: ctx.alarm_rules.get(&row.id).cloned().unwrap_or_default(),
         children: build_children(row, ctx, warnings),
     }
 }
 
 /// 结构等价比较：剔除命名模式后按 JSON 值比较。
+/// resources/alarm_rules 随 ThingNodeDef 整体序列化自动纳入比较——
+/// 资源或告警规则不同的同名兄弟不会被泛化合并（否则会丢数据）。
 fn normalized(def: &ThingNodeDef) -> serde_json::Value {
     let mut d = def.clone();
     d.device_info.default_name_pattern = None;
@@ -269,6 +307,54 @@ fn command_template(c: &ThingCommand) -> CommandTemplate {
         parameters: c.parameters.clone(),
         parameter_schema: None,
         is_required: false,
+    }
+}
+
+/// resources 行 → 模板 SceneResource（name/resource_type→type/file_path→uri）。
+fn resource_template(r: &ThingResource) -> SceneResource {
+    SceneResource {
+        name: r.name.clone(),
+        resource_type: r.resource_type.clone(),
+        uri: r.file_path.clone(),
+    }
+}
+
+/// AlarmRule → 模板简写 SceneAlarmRule；property_id 反查属性名写入 property_ref。
+fn alarm_rule_template(
+    rule: &AlarmRule,
+    prop_names: &HashMap<String, String>,
+    thing_name: &str,
+    warnings: &mut Vec<String>,
+) -> SceneAlarmRule {
+    let rule_type = rule.rule_type.as_str().to_string();
+    // 展开器仅允许 threshold/range/change/event；duration/composite 导出后无法重实例化
+    if !["threshold", "range", "change", "event"].contains(&rule_type.as_str()) {
+        warnings.push(format!(
+            "节点「{}」的告警规则「{}」类型 {} 不在模板允许范围（threshold/range/change/event），重新实例化将被拒绝",
+            thing_name, rule.name, rule_type
+        ));
+    }
+    let property_ref = match &rule.property_id {
+        Some(pid) => match prop_names.get(pid) {
+            Some(name) => Some(name.clone()),
+            None => {
+                warnings.push(format!(
+                    "节点「{}」的告警规则「{}」引用的属性 {pid} 已不存在，property_ref 已省略",
+                    thing_name, rule.name
+                ));
+                None
+            }
+        },
+        None => None,
+    };
+    SceneAlarmRule {
+        name: rule.name.clone(),
+        description: rule.description.clone(),
+        rule_type,
+        condition: serde_json::to_value(&rule.condition).unwrap_or_default(),
+        alarm_level: rule.alarm_level.as_str().to_string(),
+        notification_config: serde_json::to_value(&rule.notification_config).unwrap_or_default(),
+        property_ref,
     }
 }
 
