@@ -447,9 +447,7 @@ async fn create_resource(
         }
     }
 
-    if payload.resource_type != ResourceType::File {
-        return ApiResponseBuilder::error_with_code(400, "无效的资源类型，仅支持 'file'");
-    }
+    // resource_type 已由 serde 反序列化校验（未知类型反序列化即失败），无需额外校验。
 
     let sanitized_name = payload
         .name

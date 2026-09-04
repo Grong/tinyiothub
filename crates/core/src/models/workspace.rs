@@ -62,12 +62,15 @@ pub struct SuggestTagsRequest {
     pub description: Option<String>,
 }
 
-/// Resource type: File (uploaded binaries) or Document (markdown knowledge).
+/// Resource type: File (uploaded binaries), Document (markdown knowledge),
+/// Image (scene pack images), Model3d (scene pack 3D models).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceType {
     File,
     Document,
+    Image,
+    Model3d,
 }
 
 impl ResourceType {
@@ -75,6 +78,8 @@ impl ResourceType {
         match self {
             Self::File => "file",
             Self::Document => "document",
+            Self::Image => "image",
+            Self::Model3d => "model3d",
         }
     }
 
@@ -82,6 +87,8 @@ impl ResourceType {
         match self {
             Self::File => "文件",
             Self::Document => "文档",
+            Self::Image => "图片",
+            Self::Model3d => "3D 模型",
         }
     }
 
@@ -89,17 +96,32 @@ impl ResourceType {
         match s {
             "file" => Some(Self::File),
             "document" => Some(Self::Document),
+            "image" => Some(Self::Image),
+            "model3d" => Some(Self::Model3d),
             _ => None,
         }
     }
 
-    pub fn all() -> [Self; 2] {
-        [Self::File, Self::Document]
+    pub fn all() -> [Self; 4] {
+        [Self::File, Self::Document, Self::Image, Self::Model3d]
     }
 }
 
 impl fmt::Display for ResourceType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resource_type_serializes_new_variants() {
+        assert_eq!(ResourceType::Image.as_str(), "image");
+        assert_eq!(ResourceType::Model3d.as_str(), "model3d");
+        let parsed: ResourceType = serde_json::from_str("\"image\"").unwrap();
+        assert_eq!(parsed, ResourceType::Image);
     }
 }

@@ -217,6 +217,18 @@ pub(crate) async fn find_thing_by_id_scoped(
         .await
 }
 
+/// 按 parent_id 列出子 thing 行（含 thing_type / linked_data），按 name 排序。
+/// 反向导出 export-as-template 的子树遍历用；调用方负责根节点 workspace 校验。
+pub(crate) async fn find_thing_child_rows(
+    pool: &SqlitePool,
+    parent_id: &str,
+) -> std::result::Result<Vec<ThingRow>, sqlx::Error> {
+    sqlx::query_as::<_, ThingRow>("SELECT * FROM things WHERE parent_id = ? ORDER BY name")
+        .bind(parent_id)
+        .fetch_all(pool)
+        .await
+}
+
 /// Workspace-scoped delete (eng-review T1): refuses to delete another
 /// workspace's thing.
 pub(crate) async fn delete_thing_scoped(
@@ -678,6 +690,21 @@ pub(crate) async fn attach_thing_resource(
     Ok(result.rows_affected())
 }
 
+/// List resources attached to a thing（场景模板导出用；created_at+id 稳定序）。
+/// 真实列名为 resource_type（struct 上的 `type` 仅为别名），故显式列清单 + AS type。
+pub(crate) async fn list_thing_resources(
+    pool: &SqlitePool,
+    thing_id: &str,
+) -> std::result::Result<Vec<ThingResource>, sqlx::Error> {
+    sqlx::query_as::<_, ThingResource>(
+        "SELECT id, workspace_id, thing_id, resource_type AS type, name, file_path, content, tags, \
+         created_at, updated_at FROM resources WHERE thing_id = ? ORDER BY created_at, id",
+    )
+    .bind(thing_id)
+    .fetch_all(pool)
+    .await
+}
+
 /// List resources not yet attached to any thing.
 pub(crate) async fn list_unassigned_thing_resources(
     pool: &SqlitePool,
@@ -687,6 +714,35 @@ pub(crate) async fn list_unassigned_thing_resources(
         .bind(workspace_id)
         .fetch_all(pool)
         .await
+}
+
+/// 在调用方事务内向 resources 表插入一条 thing 关联资源（场景实例化器专用）。
+/// 真实列名为 resource_type（struct 上的 `type` 仅为 serde 别名）；content/tags
+/// 用空值占位，由后续流程补充。调用方负责 commit/rollback。
+pub(crate) async fn insert_thing_resource_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    workspace_id: &str,
+    thing_id: &str,
+    resource_type: &str,
+    name: &str,
+    file_path: &str,
+) -> std::result::Result<(), sqlx::Error> {
+    let now = now_string();
+    sqlx::query(
+        "INSERT INTO resources (id, workspace_id, thing_id, resource_type, name, file_path, content, tags, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, '[]', ?, ?)",
+    )
+    .bind(generate_id())
+    .bind(workspace_id)
+    .bind(thing_id)
+    .bind(resource_type)
+    .bind(name)
+    .bind(file_path)
+    .bind(&now)
+    .bind(&now)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 /// Batch-load tags for multiple thing IDs from tag_bindings.
@@ -1054,6 +1110,11 @@ impl Db {
         find_thing_by_id_scoped(self.pool(), id, workspace_id).await
     }
 
+    /// 反向导出：按 parent_id 列出子 thing 行（含 thing_type / linked_data），按 name 排序。
+    pub async fn find_thing_child_rows(&self, parent_id: &str) -> std::result::Result<Vec<ThingRow>, sqlx::Error> {
+        find_thing_child_rows(self.pool(), parent_id).await
+    }
+
     /// Workspace-scoped thing 删除。
     pub async fn delete_thing_scoped(&self, id: &str, workspace_id: &str) -> std::result::Result<u64, sqlx::Error> {
         delete_thing_scoped(self.pool(), id, workspace_id).await
@@ -1085,6 +1146,55 @@ impl Db {
     /// 插入 thing 并返回新行。
     pub async fn create_thing_row(&self, row: &ThingRow) -> std::result::Result<ThingRow, sqlx::Error> {
         create_thing_row(self.pool(), row).await
+    }
+
+    /// 场景实例化器：在调用方事务内创建 Thing 行（显式 thing_type），返回新 id。
+    pub async fn create_thing_row_with_type_tx(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        request: &CreateThingRequest,
+        thing_type: &str,
+    ) -> std::result::Result<String, sqlx::Error> {
+        create_thing_row_with_type(tx, request, thing_type).await
+    }
+
+    /// 场景实例化器：事务内名称冲突探测（快路径；调用方仍需捕获唯一约束重试）。
+    pub async fn resolve_thing_name_tx(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        workspace_id: &str,
+        base: &str,
+    ) -> std::result::Result<String, sqlx::Error> {
+        resolve_thing_name_tx(tx, workspace_id, base).await
+    }
+
+    /// 场景实例化器 dry-run：只读名称占用探测（pool 直连，与落库同口径）。
+    pub async fn thing_name_exists(&self, workspace_id: &str, name: &str) -> std::result::Result<bool, sqlx::Error> {
+        thing_name_exists(self.pool(), workspace_id, name).await
+    }
+
+    /// 场景实例化器：事务内名称占用探测（可见本事务已写入的兄弟节点）。
+    pub async fn thing_name_exists_tx(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        workspace_id: &str,
+        name: &str,
+    ) -> std::result::Result<bool, sqlx::Error> {
+        thing_name_exists_tx(tx, workspace_id, name).await
+    }
+
+    /// 场景实例化器：事务内向 resources 表插入一条 thing 关联资源。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn insert_thing_resource_tx(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        workspace_id: &str,
+        thing_id: &str,
+        resource_type: &str,
+        name: &str,
+        file_path: &str,
+    ) -> std::result::Result<(), sqlx::Error> {
+        insert_thing_resource_tx(tx, workspace_id, thing_id, resource_type, name, file_path).await
     }
 
     /// 更新 thing 并返回更新后的行。
@@ -1165,6 +1275,11 @@ impl Db {
     /// 将子树全部标记 summary_status='dirty'。
     pub async fn mark_thing_subtree_dirty(&self, root_id: &str) -> std::result::Result<u64, sqlx::Error> {
         mark_thing_subtree_dirty(self.pool(), root_id).await
+    }
+
+    /// 列出 thing 挂载的 resources（场景模板导出用）。
+    pub async fn list_thing_resources(&self, thing_id: &str) -> std::result::Result<Vec<ThingResource>, sqlx::Error> {
+        list_thing_resources(self.pool(), thing_id).await
     }
 
     /// 解除 resource 与 thing 的挂载（thing_id = NULL）。
@@ -1686,6 +1801,218 @@ mod tests {
         assert_eq!(criteria.limit, Some(50));
         assert_eq!(criteria.offset, Some(10));
     }
+
+    // ── Task 4：事务版写入函数 ──────────────────────────────
+
+    fn space_thing_req(name: &str) -> CreateThingRequest {
+        CreateThingRequest {
+            name: name.to_string(),
+            display_name: None,
+            category: None,
+            address: None,
+            description: None,
+            position: None,
+            driver_name: None,
+            device_model: None,
+            protocol_type: None,
+            factory_name: None,
+            linked_data: None,
+            driver_options: None,
+            parent_id: None,
+            linked_gateway: None,
+            fingerprint: None,
+            template_id: None,
+            workspace_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn create_thing_row_with_type_sets_type_and_returns_id() {
+        let pool = crate::test_helpers::test_pool().await;
+        let mut tx = pool.begin().await.expect("begin");
+        let id = create_thing_row_with_type(&mut tx, &space_thing_req("主楼"), "space")
+            .await
+            .expect("insert thing row");
+        tx.commit().await.expect("commit");
+
+        let (thing_type,): (String,) = sqlx::query_as("SELECT thing_type FROM things WHERE id = ?")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .expect("read back");
+        assert_eq!(thing_type, "space");
+    }
+
+    #[tokio::test]
+    async fn resolve_name_strips_suffix_and_probes() {
+        let pool = crate::test_helpers::test_pool().await;
+        let mut tx = pool.begin().await.expect("begin");
+        for name in ["主楼", "主楼-2"] {
+            create_thing_row_with_type(&mut tx, &space_thing_req(name), "space")
+                .await
+                .expect("pre-occupy name");
+        }
+
+        // 占用 base 与 base-2 → 探测到 base-3
+        let resolved = resolve_thing_name_tx(&mut tx, "", "主楼").await.expect("resolve base");
+        assert_eq!(resolved, "主楼-3");
+        // 传入带后缀名 → 剥离后缀后按 base 探测
+        let resolved = resolve_thing_name_tx(&mut tx, "", "主楼-2")
+            .await
+            .expect("resolve suffixed");
+        assert_eq!(resolved, "主楼-3");
+        // 未占用名 → 原样返回
+        let resolved = resolve_thing_name_tx(&mut tx, "", "辅楼").await.expect("resolve free");
+        assert_eq!(resolved, "辅楼");
+        tx.rollback().await.expect("rollback");
+    }
+
+    #[tokio::test]
+    async fn batch_tx_functions_write_in_caller_transaction() {
+        use tinyiothub_core::models::thing_command::CreateThingCommandRequest;
+        use tinyiothub_core::models::thing_property::CreateThingPropertyRequest;
+
+        let pool = crate::test_helpers::test_pool().await;
+        let mut tx = pool.begin().await.expect("begin");
+        let thing_id = create_thing_row_with_type(&mut tx, &space_thing_req("tx-target"), "space")
+            .await
+            .expect("insert thing");
+
+        crate::thing_property::create_thing_properties_batch_tx(
+            &mut tx,
+            &[CreateThingPropertyRequest {
+                thing_id: thing_id.clone(),
+                name: "temperature".to_string(),
+                display_name: None,
+                description: None,
+                data_type: Some("float".to_string()),
+                unit: None,
+                min_value: None,
+                max_value: None,
+                default_value: None,
+                is_read_only: Some(1),
+            }],
+        )
+        .await
+        .expect("insert properties in caller tx");
+
+        crate::thing_command::bulk_create_thing_commands_tx(
+            &mut tx,
+            &[CreateThingCommandRequest {
+                thing_id: thing_id.clone(),
+                name: "reboot".to_string(),
+                display_name: None,
+                description: None,
+                parameters: None,
+            }],
+        )
+        .await
+        .expect("insert commands in caller tx");
+
+        // 回滚 → 全部不落库（证明 _tx 没有自作主张提交）
+        tx.rollback().await.expect("rollback");
+
+        let (things,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM things WHERE id = ?")
+            .bind(&thing_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count things");
+        let (props,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM thing_properties WHERE thing_id = ?")
+            .bind(&thing_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count properties");
+        let (cmds,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM thing_actions WHERE thing_id = ?")
+            .bind(&thing_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count commands");
+        assert_eq!((things, props, cmds), (0, 0, 0));
+
+        // commit 路径：同一批写入在提交后可见
+        let mut tx = pool.begin().await.expect("begin");
+        let thing_id = create_thing_row_with_type(&mut tx, &space_thing_req("tx-commit"), "space")
+            .await
+            .expect("insert thing");
+        crate::thing_property::create_thing_properties_batch_tx(
+            &mut tx,
+            &[CreateThingPropertyRequest {
+                thing_id: thing_id.clone(),
+                name: "humidity".to_string(),
+                display_name: None,
+                description: None,
+                data_type: Some("float".to_string()),
+                unit: None,
+                min_value: None,
+                max_value: None,
+                default_value: None,
+                is_read_only: None,
+            }],
+        )
+        .await
+        .expect("insert property");
+        tx.commit().await.expect("commit");
+        let (props,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM thing_properties WHERE thing_id = ?")
+            .bind(&thing_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count committed properties");
+        assert_eq!(props, 1);
+    }
+
+    #[tokio::test]
+    async fn insert_thing_resource_tx_writes_row_in_caller_tx() {
+        let pool = crate::test_helpers::test_pool().await;
+        let db = crate::Db::new(pool.clone());
+        crate::seed::seed_system(&db).await.expect("seed_system");
+
+        let mut tx = pool.begin().await.expect("begin");
+        let mut req = space_thing_req("res-target");
+        req.workspace_id = Some("ws-default-001".to_string());
+        let thing_id = create_thing_row_with_type(&mut tx, &req, "space")
+            .await
+            .expect("insert thing");
+        insert_thing_resource_tx(
+            &mut tx,
+            "ws-default-001",
+            &thing_id,
+            "document",
+            "平面图",
+            "/files/plan.md",
+        )
+        .await
+        .expect("insert resource");
+        tx.rollback().await.expect("rollback");
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM resources WHERE thing_id = ?")
+            .bind(&thing_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count after rollback");
+        assert_eq!(count, 0);
+
+        let mut tx = pool.begin().await.expect("begin");
+        // thing 行已随上一事务回滚，提交路径需重新插入以满足 FK
+        let thing_id = create_thing_row_with_type(&mut tx, &req, "space")
+            .await
+            .expect("re-insert thing");
+        insert_thing_resource_tx(
+            &mut tx,
+            "ws-default-001",
+            &thing_id,
+            "document",
+            "平面图",
+            "/files/plan.md",
+        )
+        .await
+        .expect("insert resource");
+        tx.commit().await.expect("commit");
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM resources WHERE thing_id = ?")
+            .bind(&thing_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count after commit");
+        assert_eq!(count, 1);
+    }
 }
 
 // ──────────────────────────────────────────────
@@ -1915,6 +2242,130 @@ async fn create_thing_inner(pool: &SqlitePool, request: &CreateThingRequest) -> 
     .await?;
 
     find_thing_by_id_inner(pool, &id).await?.ok_or(Error::NotFound)
+}
+
+/// 在调用方事务内创建 Thing 行（场景实例化器专用），显式写 thing_type。
+/// 与 create_thing_inner 的差异：tx 传入 + thing_type 参数 + 不回读直接返回 id。
+/// 列清单与 create_thing_inner 一致（21 列）+ thing_type。
+pub(crate) async fn create_thing_row_with_type(
+    tx: &mut Transaction<'_, Sqlite>,
+    request: &CreateThingRequest,
+    thing_type: &str,
+) -> std::result::Result<String, sqlx::Error> {
+    let id = generate_id();
+    let now = now_string();
+
+    sqlx::query(
+        r#"
+        INSERT INTO things (
+            id, name, display_name, category, address, description, position,
+            driver_name, device_model, protocol_type, factory_name, linked_data,
+            driver_options, state, parent_id, template_id, thing_type,
+            linked_gateway, fingerprint, workspace_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(&id)
+    .bind(&request.name)
+    .bind(&request.display_name)
+    .bind(&request.category)
+    .bind(&request.address)
+    .bind(&request.description)
+    .bind(&request.position)
+    .bind(&request.driver_name)
+    .bind(&request.device_model)
+    .bind(&request.protocol_type)
+    .bind(&request.factory_name)
+    .bind(&request.linked_data)
+    .bind(&request.driver_options)
+    .bind(0i32)
+    .bind(&request.parent_id)
+    .bind(&request.template_id)
+    .bind(thing_type)
+    .bind(&request.linked_gateway)
+    .bind(&request.fingerprint)
+    .bind(&request.workspace_id)
+    .bind(&now)
+    .bind(&now)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(id)
+}
+
+/// 名称冲突解决（场景实例化器专用，快路径）：按 thing_name_candidates 序列
+/// 取第一个空位。注意 TOCTOU：调用方仍需捕获唯一约束错误并重试。
+pub(crate) async fn resolve_thing_name_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    workspace_id: &str,
+    base: &str,
+) -> std::result::Result<String, sqlx::Error> {
+    for candidate in thing_name_candidates(base) {
+        if !thing_name_exists_tx(tx, workspace_id, &candidate).await? {
+            return Ok(candidate);
+        }
+    }
+    Err(sqlx::Error::Protocol(format!(
+        "同名冲突过多（{}），请手动指定名称",
+        strip_numeric_suffix(base)
+    )))
+}
+
+/// 名称候选序列：剥离末尾 -N 后缀得 base，产出 base / base-2 / ... / base-10（上限 10 个候选）。
+/// dry-run 只读探测与落库解析共用此算法，保证两侧 -N 后缀一致。
+pub fn thing_name_candidates(base: &str) -> Vec<String> {
+    let stripped = strip_numeric_suffix(base);
+    (0..10)
+        .map(|n| {
+            if n == 0 {
+                stripped.clone()
+            } else {
+                format!("{}-{}", stripped, n + 1)
+            }
+        })
+        .collect()
+}
+
+const THING_NAME_EXISTS_SQL: &str =
+    "SELECT id FROM things WHERE COALESCE(workspace_id, '') = COALESCE(?, '') AND name = ?";
+
+/// 名称占用探测（pool 直连，只读；dry-run 路径用）。
+/// 匹配 idx_things_name_workspace 的 (COALESCE(workspace_id,''), name) 语义。
+pub async fn thing_name_exists(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    name: &str,
+) -> std::result::Result<bool, sqlx::Error> {
+    let row: Option<(String,)> = sqlx::query_as(THING_NAME_EXISTS_SQL)
+        .bind(workspace_id)
+        .bind(name)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.is_some())
+}
+
+/// 名称占用探测（事务内；落库路径用，可见本事务已写入的兄弟节点）。
+pub(crate) async fn thing_name_exists_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    workspace_id: &str,
+    name: &str,
+) -> std::result::Result<bool, sqlx::Error> {
+    let row: Option<(String,)> = sqlx::query_as(THING_NAME_EXISTS_SQL)
+        .bind(workspace_id)
+        .bind(name)
+        .fetch_optional(&mut **tx)
+        .await?;
+    Ok(row.is_some())
+}
+
+/// 剥离末尾 "-数字" 后缀（"主楼-2" → "主楼"）；无后缀或非数字后缀原样返回。
+fn strip_numeric_suffix(name: &str) -> String {
+    match name.rfind('-') {
+        Some(pos) if !name[pos + 1..].is_empty() && name[pos + 1..].chars().all(|c| c.is_ascii_digit()) => {
+            name[..pos].to_string()
+        }
+        _ => name.to_string(),
+    }
 }
 
 async fn update_thing_inner(pool: &SqlitePool, id: &str, request: &UpdateThingRequest) -> Result<Thing> {

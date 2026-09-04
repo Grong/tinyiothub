@@ -9,6 +9,8 @@
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tinyiothub_storage::Db;
+use tinyiothub_storage::scene_template::SceneTemplateFile;
+use tinyiothub_storage::thing_template::SceneTemplateInsert;
 
 pub use tinyiothub_storage::thing_template::{ParsedTemplate, ThingTemplateRow};
 
@@ -81,6 +83,124 @@ pub struct EventSchema {
     #[allow(dead_code)]
     pub description: Option<String>,
     pub data_type: Option<String>,
+}
+
+// ──────────────────────────────────────────────
+// Scene pack import（场景包注册闭环）
+// ──────────────────────────────────────────────
+
+/// 判定 import JSON 是否场景包：根级含非空 children 数组。
+/// entity 模板（DTDL/WoT）无此键，走现有 ParsedTemplate 路径不变。
+pub fn is_scene_template_json(json: &Value) -> bool {
+    json.get("children")
+        .and_then(Value::as_array)
+        .map(|a| !a.is_empty())
+        .unwrap_or(false)
+}
+
+/// 场景包 import 结果。
+#[derive(Debug)]
+pub struct SceneImportOutcome {
+    pub id: String,
+    /// 冲突重命名后的最终模板名
+    pub name: String,
+    pub thing_type: String,
+}
+
+/// 场景包旁路：`SceneTemplateFile` 校验 → device_info 存原文 → 注册为 workspace 组合模板。
+/// 名称冲突沿用现有模板重命名策略（marketplace install 同款：后缀探测取第一个空闲名）。
+pub async fn import_scene_template(
+    pool: &SqlitePool,
+    body: &Value,
+    workspace_id: Option<&str>,
+) -> Result<SceneImportOutcome, ImportError> {
+    let raw = serde_json::to_string(body)?;
+    let scene = SceneTemplateFile::from_json(&raw)?;
+
+    if scene.name.trim().is_empty() {
+        return Err(ImportError::MissingField("name".to_string()));
+    }
+    if scene.children.is_empty() {
+        return Err(ImportError::MissingField("children".to_string()));
+    }
+
+    let db = Db::new(pool.clone());
+    let ws_key = workspace_id.unwrap_or("");
+
+    // 附录 A 缺省映射：building→building，其余空间→space
+    let thing_type = if scene.thing_category.as_deref() == Some("building") {
+        "building"
+    } else {
+        "space"
+    };
+    let category = if scene.category.is_empty() {
+        "scenes".to_string()
+    } else {
+        scene.category.clone()
+    };
+
+    // 名称候选 + 竞态兜底：探测（SELECT）与 INSERT 之间被并发抢占时
+    // （idx_thing_templates_name_workspace 唯一冲突）继续尝试下一个后缀，
+    // 而不是 500；探测查询本身出错则错误透传（不当作"名称被占"）
+    for candidate in import_name_candidates(&scene.name) {
+        if !name_is_free(&db, ws_key, &candidate).await? {
+            continue;
+        }
+        let insert = SceneTemplateInsert {
+            name: candidate.clone(),
+            display_name: serde_json::to_string(&scene.display_name)?,
+            description: scene.description.as_ref().map(serde_json::to_string).transpose()?,
+            version: scene.version.clone(),
+            category: category.clone(),
+            thing_type: thing_type.to_string(),
+            device_info: raw.clone(),
+            workspace_id: workspace_id.map(|s| s.to_string()),
+        };
+        match db.insert_scene_thing_template(&insert).await {
+            Ok(id) => {
+                return Ok(SceneImportOutcome {
+                    id,
+                    name: candidate,
+                    thing_type: thing_type.to_string(),
+                });
+            }
+            Err(e) if is_template_name_unique_violation(&e) => continue, // 竞态被抢占，试下一个后缀
+            Err(e) => return Err(ImportError::Database(e)),
+        }
+    }
+    Err(ImportError::NameConflict(format!(
+        "Unable to resolve name conflict for '{}' in workspace",
+        scene.name
+    )))
+}
+
+/// thing_templates 名称索引唯一冲突判定（竞态重试信号）。
+fn is_template_name_unique_violation(e: &sqlx::Error) -> bool {
+    match e {
+        sqlx::Error::Database(dbe) if dbe.is_unique_violation() => {
+            let msg = dbe.message();
+            msg.contains("idx_thing_templates_name_workspace") || msg.contains("thing_templates.name")
+        }
+        _ => false,
+    }
+}
+
+/// 名称候选序列：原名 → "{name} (import)" → "{name} (import {N})"（N=2..100）。
+fn import_name_candidates(name: &str) -> Vec<String> {
+    let mut out = Vec::with_capacity(100);
+    out.push(name.to_string());
+    out.push(format!("{name} (import)"));
+    for i in 2..100 {
+        out.push(format!("{name} (import {i})"));
+    }
+    out
+}
+
+async fn name_is_free(db: &Db, workspace_key: &str, name: &str) -> Result<bool, ImportError> {
+    // 探测查询出错透传（不当作"名称被占"安全侧处理——那会掩盖 DB 故障并把
+    // 用户导向无意义的后缀重命名）
+    let count = db.count_thing_template_name_conflicts(workspace_key, name).await?;
+    Ok(count == 0)
 }
 
 // ──────────────────────────────────────────────
@@ -475,7 +595,7 @@ pub async fn save_template(
         )));
     }
 
-    db.insert_parsed_thing_template(template, workspace_id)
+    db.insert_parsed_thing_template(template, workspace_id, "{}")
         .await
         .map_err(ImportError::from)
 }
@@ -495,6 +615,21 @@ pub async fn load_template(pool: &SqlitePool, id: &str) -> Result<ThingTemplateR
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Scene pack detection ──
+
+    #[test]
+    fn test_is_scene_template_json() {
+        assert!(is_scene_template_json(
+            &json!({"name": "x", "children": [{"key": "room"}]})
+        ));
+        // 空 children 不算组合模板
+        assert!(!is_scene_template_json(&json!({"name": "x", "children": []})));
+        // 无 children 键 → entity 路径
+        assert!(!is_scene_template_json(&json!({"name": "x"})));
+        // children 非数组 → entity 路径
+        assert!(!is_scene_template_json(&json!({"children": "not-array"})));
+    }
 
     // ── DTDL import helpers ──
 

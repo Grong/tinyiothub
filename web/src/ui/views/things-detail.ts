@@ -180,7 +180,12 @@ export function renderDeviceDetail(host: DevicesView) {
               <span class="type-tag">${d.category}</span>
             ` : nothing}
           </div>
-          <button class="btn btn--ghost btn--sm" @click=${() => host.openEdit(d)}>编辑</button>
+          <div style="display: flex; gap: var(--space-2);">
+            <button class="btn btn--ghost btn--sm" ?disabled=${host.exportingTemplate} @click=${() => host.exportAsTemplate()}>
+              ${host.exportingTemplate ? "导出中..." : "另存为场景包"}
+            </button>
+            <button class="btn btn--ghost btn--sm" @click=${() => host.openEdit(d)}>编辑</button>
+          </div>
         </div>
         ${deviceTags.length > 0 ? html`
           <div class="detail-header__tags">

@@ -465,7 +465,9 @@ fn row_to_alarm_rule(row: sqlx::sqlite::SqliteRow) -> Result<AlarmRule> {
     })
 }
 
-pub(crate) async fn create_alarm_rule(pool: &SqlitePool, rule: &AlarmRule) -> Result<()> {
+/// 在调用方事务内插入报警规则（场景实例化器专用）。
+/// 不自行 commit/rollback；公开入口 create_alarm_rule 是薄包装。
+pub(crate) async fn create_alarm_rule_tx(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, rule: &AlarmRule) -> Result<()> {
     let condition_json =
         serde_json::to_string(&rule.condition).map_err(|e| DbError::Internal(format!("序列化条件配置失败: {}", e)))?;
 
@@ -496,10 +498,17 @@ pub(crate) async fn create_alarm_rule(pool: &SqlitePool, rule: &AlarmRule) -> Re
         .bind(&rule.workspace_id)
         .bind(rule.created_at.to_rfc3339())
         .bind(rule.updated_at.to_rfc3339())
-        .execute(pool)
+        .execute(&mut **tx)
         .await
         .map_err(|e| DbError::Internal(format!("创建规则失败: {}", e)))?;
 
+    Ok(())
+}
+
+pub(crate) async fn create_alarm_rule(pool: &SqlitePool, rule: &AlarmRule) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    create_alarm_rule_tx(&mut tx, rule).await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -762,6 +771,15 @@ impl Db {
     /// 创建报警规则。
     pub async fn create_alarm_rule(&self, rule: &AlarmRule) -> Result<()> {
         create_alarm_rule(self.pool(), rule).await
+    }
+
+    /// 场景实例化器：在调用方事务内插入报警规则。
+    pub async fn create_alarm_rule_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        rule: &AlarmRule,
+    ) -> Result<()> {
+        create_alarm_rule_tx(tx, rule).await
     }
 
     /// 更新报警规则（可选 workspace 限定）。

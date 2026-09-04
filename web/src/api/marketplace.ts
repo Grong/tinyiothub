@@ -2,7 +2,7 @@
  * Marketplace API — proxy to external marketplace + local publish
  */
 
-import { apiGet, apiPost } from './client.js';
+import { ApiError, apiGet, apiPost, buildUrl, getAuthToken, getWorkspaceId, type ApiResponse } from './client.js';
 
 export interface LocalizedString {
   zh?: string;
@@ -94,5 +94,132 @@ export const marketplaceApi = {
 
   async publishTemplate(templateId: string) {
     return apiPost<Record<string, unknown>>('/marketplace/publish/template', { templateId });
+  },
+};
+
+// ──────────────────────────────────────────────
+// Scene pack (composition thing_template) APIs
+// ──────────────────────────────────────────────
+
+export interface SceneParameter {
+  name: string;
+  type: "int";
+  default: number;
+  min: number;
+  max: number;
+  /** apiGet 会把 display_name camelize 成 displayName；两者都容忍 */
+  displayName?: LocalizedString;
+  display_name?: LocalizedString;
+}
+
+export interface ThingTemplateItem {
+  id: string;
+  name: string;
+  displayName?: string;
+  description?: string;
+  category: string;
+  isBuiltin: boolean;
+  isComposition: boolean;
+  parameterCount: number;
+}
+
+export interface ThingTemplateListResult {
+  data: ThingTemplateItem[];
+  pagination: { page: number; pageSize: number; totalPages: number; totalCount: number };
+}
+
+export interface SceneTemplateDetail extends ThingTemplateItem {
+  parameters: SceneParameter[];
+  structureSummary: { parameterCount: number; maxDepth: number };
+}
+
+export interface InstantiateQuota {
+  current: number;
+  /** 配额上限；无限制（thing_limit=0 或无订阅链）为 null */
+  limit: number | null;
+  after: number;
+}
+
+export interface InstantiateResult {
+  nodeCount: number;
+  rootThingId: string | null;
+  treePreview: string;
+  warnings: string[];
+  quota?: InstantiateQuota;
+}
+
+export interface InstantiateBody {
+  sceneName: string;
+  parentId?: string;
+  parameterValues?: Record<string, number>;
+  dryRun?: boolean;
+}
+
+// instantiate 后端 serde 是 camelCase（rename_all = "camelCase"），
+// 不能走 apiPost（会把 body 转 snake_case 导致 422）——原样发送 + 手动解包统一响应。
+async function fetchRaw(endpoint: string, options: { method: string; body?: unknown }): Promise<Response> {
+  const headers: Record<string, string> = {};
+  const token = getAuthToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const wsId = getWorkspaceId();
+  if (wsId) headers['X-Workspace-Id'] = wsId;
+  if (options.body !== undefined) headers['Content-Type'] = 'application/json';
+
+  return fetch(buildUrl(endpoint), {
+    method: options.method,
+    credentials: 'include',
+    headers,
+    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+  });
+}
+
+async function postEnvelopeRaw<T>(endpoint: string, body: unknown): Promise<T> {
+  const response = await fetchRaw(endpoint, { method: 'POST', body });
+  const data = (await response.json().catch(() => ({}))) as ApiResponse<T>;
+  if (!response.ok || data.code !== 0) {
+    throw new ApiError(data.code ?? response.status, data.msg || `HTTP ${response.status}`, data);
+  }
+  return data.result as T;
+}
+
+export const sceneApi = {
+  async listThingTemplates(composition?: boolean) {
+    const res = await apiGet<ThingTemplateListResult>(
+      '/marketplace/thing-templates',
+      composition === undefined ? undefined : { composition },
+    );
+    return res.result;
+  },
+
+  async getThingTemplate(id: string) {
+    const res = await apiGet<SceneTemplateDetail>(`/marketplace/thing-templates/${encodeURIComponent(id)}`);
+    return res.result;
+  },
+
+  instantiate(id: string, body: InstantiateBody) {
+    return postEnvelopeRaw<InstantiateResult>(
+      `/marketplace/thing-templates/${encodeURIComponent(id)}/instantiate`,
+      body,
+    );
+  },
+
+  // 后端返回 raw JSON attachment（非统一响应包装），直接取 blob + 文件名。
+  async exportSceneTemplate(thingId: string): Promise<{ blob: Blob; filename: string }> {
+    const response = await fetchRaw(`/things/${encodeURIComponent(thingId)}/export-as-template`, { method: 'POST' });
+    if (!response.ok) {
+      let msg = `HTTP ${response.status}`;
+      try {
+        const data = await response.json();
+        msg = data?.msg || data?.message || msg;
+      } catch {
+        // ignore
+      }
+      throw new ApiError(response.status, msg);
+    }
+    const disposition = response.headers.get('Content-Disposition') ?? '';
+    const match = /filename="?([^";]+)"?/.exec(disposition);
+    const filename = match?.[1] ?? `scene-template-${thingId}.json`;
+    const blob = await response.blob();
+    return { blob, filename };
   },
 };

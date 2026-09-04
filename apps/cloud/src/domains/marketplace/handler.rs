@@ -5,17 +5,23 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    http::StatusCode,
     routing::{get, post},
 };
 use reqwest::Client;
 use serde::Deserialize;
+use tinyiothub_storage::scene_template::{SceneTemplateFile, ThingNodeDef};
 use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::security::Claims;
 
 use crate::{
     api::middleware::WorkspaceScope,
     domains::marketplace::{
-        client::MarketplaceClient, driver_installer::DriverInstaller, template_installer::TemplateInstaller,
+        client::MarketplaceClient,
+        driver_installer::DriverInstaller,
+        error::MarketplaceError,
+        scene_instantiator::{InstantiateParams, SceneInstantiator},
+        template_installer::TemplateInstaller,
         thing_template_installer::ThingTemplateInstaller,
     },
     shared::{api_response::ApiResponse, error_handling::AuthHelper},
@@ -32,7 +38,9 @@ pub fn create_router() -> Router<AppState> {
         .route("/drivers/{id}/install", post(install_marketplace_driver))
         .route("/publish/template", post(publish_template_handler))
         .route("/thing-templates", get(list_thing_templates))
+        .route("/thing-templates/{id}", get(get_thing_template_detail))
         .route("/thing-templates/{id}/install", post(install_thing_template))
+        .route("/thing-templates/{id}/instantiate", post(instantiate_thing_template))
 }
 
 fn marketplace_api_url(state: &AppState) -> String {
@@ -366,17 +374,27 @@ async fn publish_template_handler(
 // Thing Template Marketplace (local DB, not proxy)
 // ──────────────────────────────────────────────────────────────────
 
+#[derive(Debug, Deserialize)]
+pub struct ListThingTemplatesQuery {
+    /// true 只返回场景包（组合模板），false 只返回 entity 模板；缺省返回全部。
+    pub composition: Option<bool>,
+}
+
 /// List thing_templates as local marketplace items.
 /// Shows especially built-in templates (workspace_id IS NULL).
 async fn list_thing_templates(
     State(state): State<AppState>,
-    Query(_params): Query<std::collections::HashMap<String, String>>,
+    Query(query): Query<ListThingTemplatesQuery>,
     WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let ws = workspace_id.as_deref().unwrap_or("");
 
     match ThingTemplateInstaller::list(state.db.as_ref(), ws).await {
-        Ok(items) => {
+        Ok(mut items) => {
+            // v1 模板数量少，应用层过滤后分页
+            if let Some(want) = query.composition {
+                items.retain(|i| i.is_composition == want);
+            }
             let total = items.len() as u64;
             let result = serde_json::json!({
                 "data": items,
@@ -425,6 +443,150 @@ async fn install_thing_template(
         Err(e) => {
             tracing::error!("Failed to install thing_template {}: {}", id, e);
             ApiResponseBuilder::error(format!("安装物模板失败: {}", e))
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Scene pack (composition template) detail + instantiate
+// ──────────────────────────────────────────────────────────────────
+
+/// MarketplaceError → HTTP 状态码 + ApiResponse。
+/// Validation/Expand/InvalidConfig → 400，NotFound → 404，其余 → 500。
+fn marketplace_error_response(e: &MarketplaceError) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
+    let status = match e {
+        MarketplaceError::Validation(_) | MarketplaceError::Expand(_) | MarketplaceError::InvalidConfig(_) => {
+            StatusCode::BAD_REQUEST
+        }
+        MarketplaceError::NotFound(_) => StatusCode::NOT_FOUND,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (
+        status,
+        ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()),
+    )
+}
+
+/// 组合模板静态深度：根=1，children 递归最深；template_ref/scene_ref 计 1 层不深入。
+fn scene_max_depth(nodes: &[ThingNodeDef], depth: usize) -> usize {
+    nodes
+        .iter()
+        .map(|n| scene_max_depth(&n.children, depth + 1))
+        .max()
+        .unwrap_or(depth)
+}
+
+fn json_array_len(s: &str) -> usize {
+    serde_json::from_str::<Vec<serde_json::Value>>(s)
+        .map(|v| v.len())
+        .unwrap_or(0)
+}
+
+/// 物模板详情：组合模板附带 parameters 与 structureSummary。
+async fn get_thing_template_detail(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
+) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
+    let ws = workspace_id.as_deref().unwrap_or("");
+
+    let template = match state.db.find_thing_template_by_id(&id, ws).await {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            return marketplace_error_response(&MarketplaceError::NotFound(format!("模板不存在: {id}")));
+        }
+        Err(e) => {
+            tracing::error!("Failed to load thing_template {}: {}", id, e);
+            return marketplace_error_response(&MarketplaceError::Template(e.to_string()));
+        }
+    };
+
+    let is_composition = template.is_composition();
+    let (parameters, structure_summary) = if is_composition {
+        match SceneTemplateFile::from_json(&template.device_info) {
+            Ok(scene) => {
+                let max_depth = scene_max_depth(&scene.children, 1);
+                (
+                    serde_json::to_value(&scene.parameters).unwrap_or_else(|_| serde_json::json!([])),
+                    serde_json::json!({
+                        "parameterCount": scene.parameters.len(),
+                        "maxDepth": max_depth,
+                    }),
+                )
+            }
+            Err(e) => {
+                tracing::error!("Failed to parse scene template {}: {}", id, e);
+                return marketplace_error_response(&MarketplaceError::Template(format!("场景包解析失败: {e}")));
+            }
+        }
+    } else {
+        (
+            serde_json::json!([]),
+            serde_json::json!({"parameterCount": 0, "maxDepth": 1}),
+        )
+    };
+
+    let result = serde_json::json!({
+        "id": template.id,
+        "name": template.name,
+        "description": template.description,
+        "category": template.category,
+        "isBuiltin": template.is_builtin != 0,
+        "isComposition": is_composition,
+        "propertyCount": json_array_len(&template.properties),
+        "actionCount": json_array_len(&template.actions),
+        "eventCount": json_array_len(&template.events),
+        "createdAt": template.created_at,
+        "parameters": parameters,
+        "structureSummary": structure_summary,
+    });
+    (StatusCode::OK, ApiResponseBuilder::success(result))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstantiateRequestBody {
+    pub scene_name: String,
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub parameter_values: std::collections::HashMap<String, i64>,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+/// 实例化场景包：展开 → 配额校验 → 单事务落库；dry_run 只读预览。
+async fn instantiate_thing_template(
+    State(state): State<AppState>,
+    _claims: Claims,
+    WorkspaceScope(workspace_id): WorkspaceScope,
+    Path(id): Path<String>,
+    Json(body): Json<InstantiateRequestBody>,
+) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
+    let ws = workspace_id.as_deref().unwrap_or("");
+    if ws.is_empty() {
+        return marketplace_error_response(&MarketplaceError::Validation("需要指定工作空间".to_string()));
+    }
+
+    let params = InstantiateParams {
+        scene_name: body.scene_name,
+        parent_id: body.parent_id,
+        parameter_values: body.parameter_values,
+        dry_run: body.dry_run,
+    };
+    match SceneInstantiator::instantiate(state.db.as_ref(), ws, &id, &params).await {
+        Ok(outcome) => {
+            let result = serde_json::to_value(&outcome).unwrap_or(serde_json::Value::Null);
+            (StatusCode::OK, ApiResponseBuilder::success(result))
+        }
+        Err(e) => {
+            let (status, response) = marketplace_error_response(&e);
+            // 4xx 为客户端错误记 warn，5xx 记 error（带 template_id 便于聚合）
+            if status.is_server_error() {
+                tracing::error!(template_id = %id, error = %e, "实例化场景包失败");
+            } else {
+                tracing::warn!(template_id = %id, status = status.as_u16(), error = %e, "实例化场景包请求被拒绝");
+            }
+            (status, response)
         }
     }
 }

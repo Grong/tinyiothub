@@ -20,6 +20,7 @@ import {
   renderWizardConfigField as renderWizardConfigFieldFn,
 } from "./things-wizard.js";
 import { driverApi } from "../../api/drivers.js";
+import { sceneApi } from "../../api/marketplace.js";
 import { templateApi } from "../../api/templates.js";
 import { tagApi } from "../../api/tags.js";
 import { eventApi } from "../../api/events.js";
@@ -28,7 +29,7 @@ import { thingCache } from "../../stores/thing-cache.js";
 import { i18n, t } from "../../i18n/index.js";
 import type { Thing, ThingProfile, DriverConfigOption, Tag } from "../../types/index.js";
 import type { AlarmRule, AlarmLevel, RuleType, AlarmCondition, ComparisonOperator, ChangeType, LogicalOperator, NotificationChannelType, CreateAlarmRuleRequest, UpdateAlarmRuleRequest } from "../../types/index.js";
-import { success, error as toastError } from "../components/toast.js";
+import { success, error as toastError, warn } from "../components/toast.js";
 import { icons } from "../icons.js";
 import "./gateway-pairing.js";
 
@@ -174,6 +175,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() searchName = "";
 
   @state() selectedDevice: ThingProfile | null = null;
+  @state() exportingTemplate = false;
 
   @state() detailLoading = false;
 
@@ -696,6 +698,41 @@ export class DevicesView extends SignalWatcher(LitElement) {
     window.history.pushState({}, "", "/things");
     window.dispatchEvent(new PopStateEvent("popstate"));
     this.loadDevices();
+  }
+
+
+  async exportAsTemplate() {
+    const d = this.selectedDevice?.thing;
+    if (!d || this.exportingTemplate) return;
+    this.exportingTemplate = true;
+    try {
+      const { blob, filename } = await sceneApi.exportSceneTemplate(d.id);
+      // 后端把 warnings 嵌在导出的 JSON 里，先解析再下载，有警告需告知用户
+      let warnings: string[] = [];
+      try {
+        const parsed = JSON.parse(await blob.text());
+        if (Array.isArray(parsed?.warnings)) warnings = parsed.warnings;
+      } catch {
+        // 非 JSON 或解析失败则不提示
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      if (warnings.length > 0) {
+        warn(`场景包模板已导出，但有 ${warnings.length} 条警告：${warnings.join("；")}`);
+      } else {
+        success("场景包模板已导出");
+      }
+    } catch (e: any) {
+      toastError(e.message || "导出场景包失败");
+    } finally {
+      this.exportingTemplate = false;
+    }
   }
 
 

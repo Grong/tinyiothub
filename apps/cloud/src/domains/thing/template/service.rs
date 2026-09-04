@@ -56,6 +56,13 @@ impl TemplateEngine {
             });
         }
 
+        // 组合模板（场景包）不能走单本体创建路径
+        if template.is_composition() {
+            return Err(TemplateError::InvalidTemplateType {
+                message: "场景包模板请使用 instantiate 接口".to_string(),
+            });
+        }
+
         // 解析模板信息
         let device_info = template.get_thing_info().map_err(|e| TemplateError::JsonFormatError {
             message: format!("设备信息解析失败: {}", e),
@@ -119,6 +126,13 @@ impl TemplateEngine {
             .ok_or_else(|| TemplateError::TemplateNotFound {
                 id: template_id.to_string(),
             })?;
+
+        // 组合模板（场景包）不能走单本体创建路径
+        if template.is_composition() {
+            return Err(TemplateError::InvalidTemplateType {
+                message: "场景包模板请使用 instantiate 接口".to_string(),
+            });
+        }
 
         // 验证用户输入
         let validation_result = self.validator.validate_user_input(&template, user_input);
@@ -288,13 +302,13 @@ impl TemplateEngine {
                 .cloned()
                 .unwrap_or_default();
 
-            let mut result = template;
-            result = result.replace("{name}", &user_input.name);
+            let mut vars = HashMap::new();
+            vars.insert("name", user_input.name.clone());
             if let Some(display_name) = &user_input.display_name {
-                result = result.replace("{display_name}", display_name);
+                vars.insert("display_name", display_name.clone());
             }
-            result = result.replace("{index}", "1");
-            result
+            vars.insert("index", "1".to_string()); // 预览示例固定 index=1
+            tinyiothub_storage::scene_template::render_name_pattern(&template, &vars)
         })
     }
 
@@ -334,6 +348,13 @@ impl TemplateEngine {
             .ok_or_else(|| TemplateError::TemplateNotFound {
                 id: template_id.to_string(),
             })?;
+
+        // 组合模板（场景包）不能走单本体创建路径
+        if template.is_composition() {
+            return Err(TemplateError::InvalidTemplateType {
+                message: "场景包模板请使用 instantiate 接口".to_string(),
+            });
+        }
 
         // 解析设备信息
         let device_info = template.get_thing_info().map_err(|e| TemplateError::JsonFormatError {
@@ -620,8 +641,10 @@ impl TemplateValidator {
             result.add_error("name", "设备名称长度不能超过100个字符", "FIELD_TOO_LONG");
         }
 
-        // 验证模板要求的必填字段
-        if let Ok(device_info) = template.get_thing_info() {
+        // 验证模板要求的必填字段（组合模板无 entity ThingInfo，跳过）
+        if !template.is_composition()
+            && let Ok(device_info) = template.get_thing_info()
+        {
             for required_field in &device_info.required_fields {
                 match required_field.as_str() {
                     "driver_options" if input.driver_options.as_ref().is_none_or(|opt| opt.trim().is_empty()) => {
@@ -758,8 +781,10 @@ impl TemplateValidator {
             result.add_error("tags", &format!("标签JSON格式错误: {}", e), "INVALID_JSON");
         }
 
-        // 验证设备信息JSON
-        if let Err(e) = template.get_thing_info() {
+        // 验证设备信息JSON（组合模板的 device_info 列存场景包 JSON，非 ThingInfo，跳过）
+        if !template.is_composition()
+            && let Err(e) = template.get_thing_info()
+        {
             result.add_error("device_info", &format!("设备信息JSON格式错误: {}", e), "INVALID_JSON");
         }
 
@@ -933,8 +958,9 @@ impl TemplateValidator {
             }
         }
 
-        // 检查是否为必需字段
-        if let Ok(device_info) = template.get_thing_info()
+        // 检查是否为必需字段（组合模板无 entity ThingInfo，跳过）
+        if !template.is_composition()
+            && let Ok(device_info) = template.get_thing_info()
             && device_info.required_fields.contains(&field_name.to_string())
             && field_value.trim().is_empty()
         {
@@ -955,5 +981,104 @@ impl TemplateValidator {
 impl Default for TemplateValidator {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 建库模式与 crates/db/tests/seed_tests.rs 一致。
+    async fn seeded_engine() -> TemplateEngine {
+        let pool = tinyiothub_storage::test_helpers::test_pool().await;
+        let db = Db::new(pool);
+        tinyiothub_storage::seed::seed_system(&db).await.unwrap();
+        TemplateEngine::new(Arc::new(db), Arc::new(TemplateValidator::new()))
+    }
+
+    async fn insert_raw_template(engine: &TemplateEngine, id: &str, name: &str, device_info: &str) {
+        sqlx::query(
+            "INSERT INTO thing_templates \
+             (id, name, display_name, version, category, device_info, created_at, updated_at) \
+             VALUES (?, ?, '{}', '1.0.0', 'sensors', ?, '2026-01-01 00:00:00', '2026-01-01 00:00:00')",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(device_info)
+        .execute(engine.db.pool())
+        .await
+        .unwrap();
+    }
+
+    fn minimal_input(name: &str) -> ThingCreationInput {
+        ThingCreationInput {
+            name: name.to_string(),
+            display_name: None,
+            description: None,
+            position: None,
+            address: None,
+            driver_name: None,
+            driver_options: None,
+            parent_id: None,
+            template_id: None,
+            property_values: HashMap::new(),
+            enabled_commands: Vec::new(),
+            tenant_id: None,
+            workspace_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_template_rejects_composition_template() {
+        let engine = seeded_engine().await;
+        insert_raw_template(
+            &engine,
+            "tpl_pack",
+            "pack",
+            r#"{"name":"pack","children":[{"key":"b","category":"building"}]}"#,
+        )
+        .await;
+        let err = engine
+            .apply_template("tpl_pack", &minimal_input("x"))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, TemplateError::InvalidTemplateType { .. }),
+            "组合模板走 entity 路径应得到 InvalidTemplateType, got: {:?}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn get_template_requirements_rejects_composition_template() {
+        let engine = seeded_engine().await;
+        insert_raw_template(
+            &engine,
+            "tpl_pack2",
+            "pack2",
+            r#"{"name":"pack2","children":[{"key":"b"}]}"#,
+        )
+        .await;
+        let err = engine.get_template_requirements("tpl_pack2").await.unwrap_err();
+        assert!(matches!(err, TemplateError::InvalidTemplateType { .. }));
+    }
+
+    #[tokio::test]
+    async fn apply_template_still_works_for_entity_template() {
+        // 回归红线：entity 模板创建路径行为不变
+        let engine = seeded_engine().await;
+        insert_raw_template(
+            &engine,
+            "tpl_entity",
+            "entity",
+            r#"{"default_name_pattern":"th_{index}","required_fields":[]}"#,
+        )
+        .await;
+        let req = engine
+            .apply_template("tpl_entity", &minimal_input("my_thing"))
+            .await
+            .unwrap();
+        assert_eq!(req.name, "my_thing");
+        assert_eq!(req.category.as_deref(), Some("sensors"));
     }
 }

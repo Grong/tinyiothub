@@ -1,5 +1,6 @@
 // Thing service — business logic layer
 
+pub mod export_template;
 pub mod import_export;
 
 use sqlx::SqlitePool;

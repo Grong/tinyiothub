@@ -47,6 +47,45 @@
 - **Why:** 刻意的取舍需要显式记录，否则会被当作遗漏。
 - **Effort:** S | **Depends on:** —
 
+## Scene Pack Templates — Deferred (PR #88 follow-ups, from /plan-ceo-review 2026-09-03)
+
+### P2 — 实例化参数对话框父本体 picker
+- **What:** 实例化参数对话框的父本体输入是裸 ID 文本框（`web/src/ui/views/marketplace.ts` renderSceneForm）；换 search-select（name→id）。
+- **Why:** spec §5.2 承诺 picker；裸 ID 对非技术用户不可用。
+- **Context:** 本期仅做了错误可见化（dry-run 400 经 previewError 展示），picker 未做。
+- **Effort:** M | **Depends on:** —
+
+### P3 — 批量 INSERT 改 QueryBuilder::push_values
+- **What:** spec §3.2 step 3 要求 push_values ≤100 行分批；实现为逐行 INSERT（`crates/db/src/thing_property.rs`、`thing_command.rs`、scene_instantiator 的 resources/alarm_rules 循环）。
+- **Why:** SQLite 规模下可接受；500 节点树拉长写锁持有时间。
+- **Context:** 若迁 Postgres 或实测瓶颈再做；spec §3.2 已登记此偏差。
+- **Effort:** M | **Depends on:** —
+
+### P3 — quota 事务内复检
+- **What:** 配额检查在事务外（`scene_instantiator.rs`），并发下 thing_limit 是软限制；tx 内 commit 前复检一次 COUNT 即可变硬，或文档化接受。
+- **Why:** 并发实例化可双双通过 tx 外检查导致超限。
+- **Effort:** S | **Depends on:** —
+
+### P3 — 实例化对话框 a11y
+- **What:** role="dialog"/aria-modal/Esc 关闭（需尊重提交中禁关）/初始 focus/focus trap/× 的 aria-label。预存 detail modal 同债。
+- **Why:** 键盘/读屏用户当前无法可靠操作对话框。
+- **Effort:** M | **Depends on:** —
+
+### P2 — X3 用户自制场景包上传 UI
+- **What:** 商店页上传入口：导出→编辑→import 注册闭环已在代码（import_export 两个端点均识别场景包 JSON）；只差上传入口。
+- **Why:** 模板生态供给侧起点；无入口则闭环对用户不可达。
+- **Effort:** M | **Depends on:** —
+
+### P3 — X4 商店卡片封面图
+- **What:** 场景包卡片挂封面图（ResourceType::image 已加，PR #88）；当前卡片纯文字。
+- **Why:** 挂封面图让商店像"店"。
+- **Effort:** S | **Depends on:** —
+
+### P2 — X5 instantiate 幂等键
+- **What:** 网络重试会产生重复树（spec 明示 v1 不做）；加 Idempotency-Key 头或请求体键，重复请求返回首个结果。
+- **Why:** 前端提交禁用只能挡双击，挡不住网络层重试/刷新重发。
+- **Effort:** M | **Depends on:** —
+
 ## Crates Reorg Review (from /plan-eng-review 2026-08-03)
 
 ### P2 — unwrap/expect 治理（edge 与驱动加载路径优先）

@@ -50,6 +50,7 @@ impl TemplateExporter {
             device_info: serde_json::to_string(&device_info).unwrap_or_default(),
             properties: serde_json::to_string(&properties).unwrap_or_default(),
             actions: serde_json::to_string(&commands).unwrap_or_default(),
+            events: "[]".to_string(),
             is_builtin: 0,
             is_active: 1,
             created_at: now.clone(),

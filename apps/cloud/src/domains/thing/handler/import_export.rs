@@ -23,13 +23,28 @@ pub async fn import_dtdl(
     Json(body): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse<Value>>) {
     let pool = state.db.pool().clone();
+    let workspace_id = ws.unwrap_or_default();
+
+    // 场景包旁路：根级含非空 children → SceneTemplateFile 校验 → device_info 存原文注册
+    if import_export::is_scene_template_json(&body) {
+        return match import_export::import_scene_template(&pool, &body, Some(workspace_id.as_str())).await {
+            Ok(outcome) => (
+                StatusCode::CREATED,
+                ApiResponseBuilder::success(serde_json::json!({
+                    "id": outcome.id,
+                    "name": outcome.name,
+                    "thingType": outcome.thing_type,
+                    "scene": true,
+                })),
+            ),
+            Err(e) => import_error_response(e),
+        };
+    }
 
     let parsed = match import_export::parse_dtdl(&body) {
         Ok(p) => p,
         Err(e) => return import_error_response(e),
     };
-
-    let workspace_id = ws.unwrap_or_default();
 
     match import_export::save_template(&pool, &parsed, Some(workspace_id.as_str())).await {
         Ok(template_id) => (
@@ -54,13 +69,28 @@ pub async fn import_wot(
     Json(body): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse<Value>>) {
     let pool = state.db.pool().clone();
+    let workspace_id = ws.unwrap_or_default();
+
+    // 场景包旁路（与 /import/dtdl 一致）：根级含非空 children → SceneTemplateFile 注册
+    if import_export::is_scene_template_json(&body) {
+        return match import_export::import_scene_template(&pool, &body, Some(workspace_id.as_str())).await {
+            Ok(outcome) => (
+                StatusCode::CREATED,
+                ApiResponseBuilder::success(serde_json::json!({
+                    "id": outcome.id,
+                    "name": outcome.name,
+                    "thingType": outcome.thing_type,
+                    "scene": true,
+                })),
+            ),
+            Err(e) => import_error_response(e),
+        };
+    }
 
     let parsed = match import_export::parse_wot_td(&body) {
         Ok(p) => p,
         Err(e) => return import_error_response(e),
     };
-
-    let workspace_id = ws.unwrap_or_default();
 
     match import_export::save_template(&pool, &parsed, Some(workspace_id.as_str())).await {
         Ok(template_id) => (

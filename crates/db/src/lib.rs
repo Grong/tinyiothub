@@ -62,6 +62,8 @@ pub mod policy;
 pub mod pool;
 /// Role persistence and row types.
 pub mod role;
+/// Scene package template types (recursive thing node definitions, name-pattern renderer).
+pub mod scene_template;
 /// Two-tier seed module (system + demo), applied at bootstrap.
 pub mod seed;
 /// Session persistence and row types.

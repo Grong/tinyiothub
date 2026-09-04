@@ -36,6 +36,7 @@ pub struct ThingTemplate {
     pub device_info: String, // JSON格式的ThingInfo
     pub properties: String,  // JSON数组格式的PropertyTemplate
     pub actions: String,     // JSON数组格式的CommandTemplate
+    pub events: String,      // JSON数组格式的EventTemplate
     pub is_builtin: i32,     // 是否为内置模板
     pub is_active: i32,      // 是否激活
     pub created_at: String,
@@ -207,6 +208,7 @@ pub struct ThingTemplateListRow {
     pub name: String,
     pub thing_type: String,
     pub description: Option<String>,
+    pub device_info: String,
     pub properties: String,
     pub actions: String,
     pub events: String,
@@ -241,6 +243,11 @@ pub struct ThingTemplateFullRow {
 // ──────────────────────────────────────────────
 
 impl ThingTemplate {
+    /// events 列原文（供展开器内联）。
+    pub fn events_json_for_inline(&self) -> String {
+        self.events.clone()
+    }
+
     /// 从文件加载的请求直接转换为 ThingTemplate（不经过数据库）
     pub fn from_request(request: &CreateThingTemplateRequest) -> Self {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -262,6 +269,7 @@ impl ThingTemplate {
             device_info: serde_json::to_string(&request.device_info).unwrap_or_default(),
             properties: serde_json::to_string(&request.properties).unwrap_or_default(),
             actions: serde_json::to_string(&request.commands).unwrap_or_default(),
+            events: "[]".to_string(),
             is_builtin: 1,
             is_active: 1,
             created_at: now.clone(),
@@ -309,6 +317,16 @@ impl ThingTemplate {
         serde_json::from_str(&self.device_info)
     }
 
+    /// 是否组合模板（场景包）：device_info 列存完整模板 JSON，根级含非空 children。
+    /// entity 模板该列存 ThingInfo JSON（无 children 键）。
+    pub fn is_composition(&self) -> bool {
+        serde_json::from_str::<serde_json::Value>(&self.device_info)
+            .ok()
+            .and_then(|v| v.get("children").cloned())
+            .and_then(|c| c.as_array().map(|a| !a.is_empty()))
+            .unwrap_or(false)
+    }
+
     /// 解析属性模板
     pub fn get_properties(&self) -> Result<Vec<PropertyTemplate>, serde_json::Error> {
         serde_json::from_str(&self.properties)
@@ -348,6 +366,7 @@ impl Default for ThingTemplate {
             device_info: "{}".to_string(),
             properties: "[]".to_string(),
             actions: "[]".to_string(),
+            events: "[]".to_string(),
             is_builtin: 0,
             is_active: 1,
             created_at: now.clone(),
@@ -402,7 +421,7 @@ pub(crate) async fn find_thing_template_by_id(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at, workspace_id
             FROM thing_templates WHERE id = ? AND is_active = 1
               AND (workspace_id IS NULL OR workspace_id = ?)
@@ -426,10 +445,12 @@ pub(crate) async fn find_thing_template_by_name(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at, workspace_id
             FROM thing_templates WHERE name = ? AND is_active = 1
               AND (workspace_id IS NULL OR workspace_id = ?)
+            ORDER BY workspace_id IS NULL
+            LIMIT 1
             "#,
     )
     .bind(name)
@@ -688,7 +709,7 @@ pub(crate) async fn find_thing_templates(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at, workspace_id
             FROM thing_templates WHERE is_active = 1
             "#,
@@ -786,7 +807,7 @@ pub(crate) async fn find_thing_templates_by_category(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at, workspace_id
             FROM thing_templates WHERE category = ? AND is_active = 1
               AND (workspace_id IS NULL OR workspace_id = ?)
@@ -814,7 +835,7 @@ pub(crate) async fn search_thing_templates(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at, workspace_id
             FROM thing_templates WHERE is_active = 1 AND (
                 name LIKE ? OR
@@ -847,7 +868,7 @@ pub(crate) async fn load_builtin_thing_templates(pool: &SqlitePool) -> Result<Ve
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at
             FROM thing_templates WHERE is_builtin = 1 AND is_active = 1
             ORDER BY category, name
@@ -942,7 +963,7 @@ pub(crate) async fn advanced_search_thing_templates(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at
             FROM thing_templates WHERE is_active = 1
             "#,
@@ -981,7 +1002,7 @@ pub(crate) async fn search_thing_templates_by_category(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at
             FROM thing_templates
             WHERE is_active = 1 AND category =
@@ -1012,7 +1033,7 @@ pub(crate) async fn search_thing_templates_by_manufacturer(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at
             FROM thing_templates
             WHERE is_active = 1 AND manufacturer =
@@ -1043,7 +1064,7 @@ pub(crate) async fn search_thing_templates_by_protocol(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at
             FROM thing_templates
             WHERE is_active = 1 AND protocol_type =
@@ -1073,7 +1094,7 @@ pub(crate) async fn filter_thing_templates(
         r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, protocol_type, driver_name, tags,
-                   device_info, properties, actions, is_builtin, is_active,
+                   device_info, properties, actions, events, is_builtin, is_active,
                    created_at, updated_at
             FROM thing_templates WHERE is_active = 1
             "#,
@@ -1346,7 +1367,7 @@ pub(crate) async fn list_marketplace_thing_templates(
     workspace_id: &str,
 ) -> Result<Vec<ThingTemplateListRow>, sqlx::Error> {
     sqlx::query_as::<_, ThingTemplateListRow>(
-        "SELECT id, name, thing_type, description, properties, actions, events, \
+        "SELECT id, name, thing_type, description, device_info, properties, actions, events, \
              is_builtin, category, created_at \
              FROM thing_templates WHERE is_active = 1 \
              AND (workspace_id IS NULL OR workspace_id = ?) \
@@ -1432,10 +1453,12 @@ pub(crate) async fn count_thing_template_name_conflicts(
 }
 
 /// 插入解析后的模板（import；生成 id 与时间戳）。
+/// `device_info` 透传：entity 路径传 `"{}"`，scene 旁路传场景包 JSON 原文。
 pub(crate) async fn insert_parsed_thing_template(
     pool: &SqlitePool,
     template: &ParsedTemplate,
     workspace_id: Option<&str>,
+    device_info: &str,
 ) -> Result<String, sqlx::Error> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -1446,7 +1469,6 @@ pub(crate) async fn insert_parsed_thing_template(
     let version = "1.0.0".to_string();
     let category = "imported".to_string();
     let tags = "[]".to_string();
-    let device_info = "{}".to_string();
 
     sqlx::query(
         "INSERT INTO thing_templates \
@@ -1468,12 +1490,63 @@ pub(crate) async fn insert_parsed_thing_template(
     .bind::<Option<String>>(None) // protocol_type
     .bind::<Option<String>>(None) // driver_name
     .bind(&tags)
-    .bind(&device_info)
+    .bind(device_info)
     .bind(&template.properties)
     .bind(&template.actions)
     .bind(&template.events)
     .bind(&default_knowledge)
     .bind(workspace_id)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await?;
+
+    Ok(id)
+}
+
+/// 场景包模板插入参数（import scene 旁路）。
+#[derive(Debug, Clone)]
+pub struct SceneTemplateInsert {
+    /// 已解决冲突后的最终模板名
+    pub name: String,
+    /// 多语言 display_name JSON map 原文
+    pub display_name: String,
+    /// 多语言 description JSON map 原文
+    pub description: Option<String>,
+    pub version: String,
+    pub category: String,
+    pub thing_type: String,
+    /// 场景包 JSON 原文（含 parameters/children/dashboard/alarm_rules/resources）
+    pub device_info: String,
+    pub workspace_id: Option<String>,
+}
+
+/// 插入场景包组合模板（import scene 旁路；device_info 存原文，is_builtin=0）。
+/// properties/actions/events 列与 builtin seed 一致置空——实例化只读 device_info。
+pub(crate) async fn insert_scene_thing_template(
+    pool: &SqlitePool,
+    scene: &SceneTemplateInsert,
+) -> Result<String, sqlx::Error> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+    sqlx::query(
+        "INSERT INTO thing_templates \
+         (id, name, display_name, description, version, author, category, \
+          manufacturer, thing_type, protocol_type, driver_name, \
+          tags, device_info, properties, actions, events, default_knowledge, \
+          is_builtin, is_active, workspace_id, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, ?, NULL, NULL, '[]', ?, '[]', '[]', '[]', NULL, 0, 1, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(&scene.name)
+    .bind(&scene.display_name)
+    .bind(&scene.description)
+    .bind(&scene.version)
+    .bind(&scene.category)
+    .bind(&scene.thing_type)
+    .bind(&scene.device_info)
+    .bind(&scene.workspace_id)
     .bind(&now)
     .bind(&now)
     .execute(pool)
@@ -1709,13 +1782,19 @@ impl Db {
         count_thing_template_name_conflicts(self.pool(), workspace_key, name).await
     }
 
-    /// 插入解析后的模板（import；返回新 id）。
+    /// 插入解析后的模板（import；返回新 id）。`device_info` 透传（entity 传 `"{}"`）。
     pub async fn insert_parsed_thing_template(
         &self,
         template: &ParsedTemplate,
         workspace_id: Option<&str>,
+        device_info: &str,
     ) -> Result<String, sqlx::Error> {
-        insert_parsed_thing_template(self.pool(), template, workspace_id).await
+        insert_parsed_thing_template(self.pool(), template, workspace_id, device_info).await
+    }
+
+    /// 插入场景包组合模板（import scene 旁路；device_info 存原文；返回新 id）。
+    pub async fn insert_scene_thing_template(&self, scene: &SceneTemplateInsert) -> Result<String, sqlx::Error> {
+        insert_scene_thing_template(self.pool(), scene).await
     }
 
     /// 按 ID 加载模板行（export 用）。
@@ -1767,5 +1846,85 @@ impl Db {
         thing_id: &str,
     ) -> Result<Option<(Option<String>, Option<String>)>, sqlx::Error> {
         find_thing_workspace_and_template_events(self.pool(), thing_id).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 建库模式与 crates/db/tests/seed_tests.rs 一致（baseline + 递增迁移 + system seed）。
+    async fn seeded_db() -> Db {
+        let pool = crate::test_helpers::test_pool().await;
+        let db = Db::new(pool);
+        crate::seed::seed_system(&db).await.unwrap();
+        db
+    }
+
+    /// 直插一条模板行（category='sensors' 由 seed_system 提供 FK 目标）。
+    async fn insert_raw_template(db: &Db, id: &str, name: &str, workspace_id: Option<&str>, device_info: &str) {
+        sqlx::query(
+            "INSERT INTO thing_templates \
+             (id, name, display_name, version, category, device_info, \
+              workspace_id, created_at, updated_at) \
+             VALUES (?, ?, '{}', '1.0.0', 'sensors', ?, ?, '2026-01-01 00:00:00', '2026-01-01 00:00:00')",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(device_info)
+        .bind(workspace_id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn find_by_name_prefers_workspace_over_builtin() {
+        let db = seeded_db().await;
+        // 先插 builtin（workspace_id NULL）再插 workspace 同名行
+        insert_raw_template(&db, "tpl_builtin_dup", "dup_name", None, "{}").await;
+        insert_raw_template(&db, "tpl_ws_dup", "dup_name", Some("ws1"), "{}").await;
+        let found = db
+            .find_thing_template_by_name("dup_name", "ws1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.workspace_id.as_deref(), Some("ws1"));
+    }
+
+    #[tokio::test]
+    async fn install_copy_preserves_device_info() {
+        let db = seeded_db().await;
+        let composition_json = r#"{"name":"pack","children":[{"key":"b","category":"building"}]}"#;
+        insert_raw_template(&db, "tpl_pack_src", "pack_src", None, composition_json).await;
+
+        // full row 读出必须带 device_info（场景包 install 依赖 children）
+        let full = db.find_thing_template_full("tpl_pack_src").await.unwrap().unwrap();
+        assert!(full.device_info.contains("children"));
+
+        // install 复制到目标 workspace 后 device_info 不丢
+        db.insert_thing_template_copy(&full, "tpl_pack_ws9", "pack_src", "ws9", "2026-01-02 00:00:00")
+            .await
+            .unwrap();
+        let copied = db
+            .find_thing_template_by_id("tpl_pack_ws9", "ws9")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(copied.device_info.contains("children"));
+    }
+
+    #[test]
+    fn is_composition_detects_children() {
+        let mut t = ThingTemplate::default();
+        assert!(!t.is_composition()); // device_info = "{}"
+        t.device_info = r#"{"default_name_pattern":"x"}"#.to_string();
+        assert!(!t.is_composition()); // entity ThingInfo
+        t.device_info = r#"{"name":"s","children":[]}"#.to_string();
+        assert!(!t.is_composition()); // 空 children 不算
+        t.device_info = r#"{"name":"s","children":[{"key":"b"}]}"#.to_string();
+        assert!(t.is_composition());
+        t.device_info = "not json".to_string();
+        assert!(!t.is_composition()); // 解析失败安全降级
     }
 }

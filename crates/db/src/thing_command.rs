@@ -123,12 +123,12 @@ pub(crate) async fn find_thing_command_by_thing_and_name(
     Ok(row.map(Into::into))
 }
 
-/// Bulk create device commands
-pub(crate) async fn bulk_create_thing_commands(
-    pool: &SqlitePool,
+/// 在调用方事务内批量插入设备指令（场景实例化器专用），返回新建指令列表。
+/// 不自行 commit/rollback；公开入口 bulk_create_thing_commands 是薄包装。
+pub(crate) async fn bulk_create_thing_commands_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     requests: &[CreateThingCommandRequest],
 ) -> Result<Vec<ThingCommand>, sqlx::Error> {
-    let mut tx = pool.begin().await?;
     let mut created_commands = Vec::new();
 
     for request in requests {
@@ -148,7 +148,7 @@ pub(crate) async fn bulk_create_thing_commands(
         .bind(&request.description)
         .bind(&request.parameters)
         .bind(&created_at)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
         created_commands.push(ThingCommand {
@@ -162,6 +162,16 @@ pub(crate) async fn bulk_create_thing_commands(
         });
     }
 
+    Ok(created_commands)
+}
+
+/// Bulk create device commands
+pub(crate) async fn bulk_create_thing_commands(
+    pool: &SqlitePool,
+    requests: &[CreateThingCommandRequest],
+) -> Result<Vec<ThingCommand>, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let created_commands = bulk_create_thing_commands_tx(&mut tx, requests).await?;
     tx.commit().await?;
     Ok(created_commands)
 }
@@ -170,6 +180,15 @@ impl Db {
     /// 按 ID 查设备指令。
     pub async fn find_thing_command_by_id(&self, id: &str) -> Result<Option<ThingCommand>, sqlx::Error> {
         find_thing_command_by_id(self.pool(), id).await
+    }
+
+    /// 场景实例化器：在调用方事务内批量插入设备指令。
+    pub async fn bulk_create_thing_commands_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        requests: &[CreateThingCommandRequest],
+    ) -> Result<Vec<ThingCommand>, sqlx::Error> {
+        bulk_create_thing_commands_tx(tx, requests).await
     }
 
     /// 创建一条设备指令（内部事务）。

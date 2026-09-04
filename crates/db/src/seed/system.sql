@@ -18,7 +18,8 @@ INSERT OR IGNORE INTO template_categories (name, display_name, description, sort
 ('controllers', '{"zh": "控制器", "en": "Controllers"}', '{"zh": "各类控制器设备模板", "en": "Various controller device templates"}', 3, 1, datetime('now')),
 ('robots', '{"zh": "机器人", "en": "Robots"}', '{"zh": "工业机器人设备模板", "en": "Industrial robot device templates"}', 4, 1, datetime('now')),
 ('gateways', '{"zh": "网关", "en": "Gateways"}', '{"zh": "通信网关设备模板", "en": "Communication gateway device templates"}', 5, 1, datetime('now')),
-('meters', '{"zh": "仪表", "en": "Meters"}', '{"zh": "各类仪表设备模板", "en": "Various meter device templates"}', 6, 1, datetime('now'));
+('meters', '{"zh": "仪表", "en": "Meters"}', '{"zh": "各类仪表设备模板", "en": "Various meter device templates"}', 6, 1, datetime('now')),
+('scenes', '{"zh": "场景包", "en": "Scene Packs"}', '{"zh": "空间组合模板：园区/楼宇/楼层", "en": "Spatial composition templates"}', 7, 1, datetime('now'));
 
 -- ── admin user (20260106000002 + 20260329000001) ────────────────────────────
 -- Password hash carries the FIX_ME marker; ensure_default_admin_user (cloud
@@ -619,3 +620,143 @@ INSERT OR IGNORE INTO thing_templates (
 ('builtin_agv_robot', 'agv_robot', '{"zh":"AGV搬运机器人","en":"AGV Robot"}', '{"zh":"自动导引搬运车，支持任务调度、状态监控、电量管理","en":"Automated Guided Vehicle, supports task dispatch, status monitoring, battery management"}', '1.0.0', 'TinyIoT', 'robots', 'Generic', 'device', 'mqtt', 'mqtt', '["agv","robot","logistics","transport"]', '{"default_name_pattern":"agv_{index}","default_display_name_pattern":{"zh":"AGV机器人 {index}","en":"AGV Robot {index}"},"required_fields":["name","address"]}', '[{"name":"status","display_name":{"zh":"运行状态","en":"Status"},"description":{"zh":"当前运行状态","en":"Current running status"},"data_type":"string","unit":"","default_value":"idle","is_read_only":true,"is_required":true},{"name":"battery_level","display_name":{"zh":"电量","en":"Battery Level"},"description":{"zh":"电池电量百分比","en":"Battery level percentage"},"data_type":"number","unit":"%","min_value":0.0,"max_value":100.0,"default_value":"80.0","is_read_only":true,"is_required":true},{"name":"position_x","display_name":{"zh":"X坐标","en":"X Position"},"description":{"zh":"当前X坐标","en":"Current X position"},"data_type":"number","unit":"m","min_value":-100.0,"max_value":100.0,"default_value":"0.0","is_read_only":true,"is_required":true},{"name":"position_y","display_name":{"zh":"Y坐标","en":"Y Position"},"description":{"zh":"当前Y坐标","en":"Current Y position"},"data_type":"number","unit":"m","min_value":-100.0,"max_value":100.0,"default_value":"0.0","is_read_only":true,"is_required":true},{"name":"speed","display_name":{"zh":"速度","en":"Speed"},"description":{"zh":"当前移动速度","en":"Current movement speed"},"data_type":"number","unit":"m/s","min_value":0.0,"max_value":5.0,"default_value":"0.0","is_read_only":true,"is_required":false},{"name":"current_task","display_name":{"zh":"当前任务","en":"Current Task"},"description":{"zh":"当前执行的任务ID","en":"Current task ID"},"data_type":"string","unit":"","default_value":"","is_read_only":true,"is_required":false}]', '[{"name":"move_to","display_name":{"zh":"移动到","en":"Move To"},"description":{"zh":"移动到指定坐标","en":"Move to specified position"},"parameters":"{\"x\": 10.0, \"y\": 5.0}","parameter_schema":"{\"type\": \"object\", \"properties\": {\"x\": {\"type\": \"number\"}, \"y\": {\"type\": \"number\"}}, \"required\": [\"x\", \"y\"]}","is_required":true},{"name":"stop","display_name":{"zh":"停止","en":"Stop"},"description":{"zh":"立即停止移动","en":"Stop movement immediately"},"parameters":"{}","is_required":true},{"name":"charge","display_name":{"zh":"回充电桩","en":"Return to Charge"},"description":{"zh":"返回充电桩充电","en":"Return to charging station"},"parameters":"{}","is_required":false}]', '[]', NULL, 1, 1, NULL, '2024-01-01 00:00:00', '2024-01-01 00:00:00'),
 ('builtin_plc_controller', 'plc_controller', '{"zh":"PLC控制器","en":"PLC Controller"}', '{"zh":"Modbus协议PLC控制器，适用于工业自动化、产线控制","en":"Modbus PLC controller, suitable for industrial automation and production line control"}', '1.0.0', 'TinyIoT', 'controllers', 'Generic', 'device', 'modbus', 'modbus_rtu', '["plc","controller","industrial","automation"]', '{"default_name_pattern":"plc_{index}","default_display_name_pattern":{"zh":"PLC控制器 {index}","en":"PLC Controller {index}"},"required_fields":["name","address"]}', '[{"name":"run_status","display_name":{"zh":"运行状态","en":"Run Status"},"description":{"zh":"PLC运行状态","en":"PLC running status"},"data_type":"string","unit":"","default_value":"running","is_read_only":true,"is_required":true},{"name":"error_code","display_name":{"zh":"错误码","en":"Error Code"},"description":{"zh":"当前错误码","en":"Current error code"},"data_type":"integer","unit":"","min_value":0,"max_value":9999,"default_value":"0","is_read_only":true,"is_required":true},{"name":"cycle_time","display_name":{"zh":"扫描周期","en":"Cycle Time"},"description":{"zh":"程序扫描周期","en":"Program scan cycle time"},"data_type":"number","unit":"ms","min_value":0.0,"max_value":10000.0,"default_value":"10.0","is_read_only":true,"is_required":false},{"name":"input_1","display_name":{"zh":"输入点1","en":"Input 1"},"description":{"zh":"数字输入点1","en":"Digital input 1"},"data_type":"boolean","unit":"","default_value":"false","is_read_only":true,"is_required":false},{"name":"output_1","display_name":{"zh":"输出点1","en":"Output 1"},"description":{"zh":"数字输出点1","en":"Digital output 1"},"data_type":"boolean","unit":"","default_value":"false","is_read_only":false,"is_required":false}]', '[{"name":"read_status","display_name":{"zh":"读取状态","en":"Read Status"},"description":{"zh":"读取PLC运行状态","en":"Read PLC running status"},"parameters":"{}","is_required":true},{"name":"start","display_name":{"zh":"启动","en":"Start"},"description":{"zh":"启动PLC程序","en":"Start PLC program"},"parameters":"{}","is_required":false},{"name":"stop","display_name":{"zh":"停止","en":"Stop"},"description":{"zh":"停止PLC程序","en":"Stop PLC program"},"parameters":"{}","is_required":false},{"name":"reset","display_name":{"zh":"复位","en":"Reset"},"description":{"zh":"复位PLC错误","en":"Reset PLC error"},"parameters":"{}","is_required":false}]', '[]', NULL, 1, 1, NULL, '2024-01-01 00:00:00', '2024-01-01 00:00:00'),
 ('builtin_smart_relay', 'smart_relay', '{"zh":"智能继电器","en":"Smart Relay"}', '{"zh":"多路智能继电器模块，支持远程开关控制，适用于照明、门禁、设备启停","en":"Multi-channel smart relay module, supports remote on/off control, for lighting, access control, device switching"}', '1.0.0', 'TinyIoT', 'controllers', 'TinyIoT', 'device', 'modbus', 'modbus_rtu', '["relay","switch","control","lighting"]', '{"default_name_pattern":"relay_{index}","default_display_name_pattern":{"zh":"智能继电器 {index}","en":"Smart Relay {index}"},"required_fields":["name","address"]}', '[{"name":"channel_1","display_name":{"zh":"通道1","en":"Channel 1"},"description":{"zh":"继电器通道1状态","en":"Relay channel 1 status"},"data_type":"boolean","unit":"","default_value":"false","is_read_only":false,"is_required":true},{"name":"channel_2","display_name":{"zh":"通道2","en":"Channel 2"},"description":{"zh":"继电器通道2状态","en":"Relay channel 2 status"},"data_type":"boolean","unit":"","default_value":"false","is_read_only":false,"is_required":true},{"name":"channel_3","display_name":{"zh":"通道3","en":"Channel 3"},"description":{"zh":"继电器通道3状态","en":"Relay channel 3 status"},"data_type":"boolean","unit":"","default_value":"false","is_read_only":false,"is_required":false},{"name":"channel_4","display_name":{"zh":"通道4","en":"Channel 4"},"description":{"zh":"继电器通道4状态","en":"Relay channel 4 status"},"data_type":"boolean","unit":"","default_value":"false","is_read_only":false,"is_required":false}]', '[{"name":"set_channel","display_name":{"zh":"设置通道","en":"Set Channel"},"description":{"zh":"设置指定通道开关状态","en":"Set specified channel on/off"},"parameters":"{\"channel\": 1, \"value\": true}","parameter_schema":"{\"type\": \"object\", \"properties\": {\"channel\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 4}, \"value\": {\"type\": \"boolean\"}}, \"required\": [\"channel\", \"value\"]}","is_required":true},{"name":"all_off","display_name":{"zh":"全部关闭","en":"All Off"},"description":{"zh":"关闭所有通道","en":"Turn off all channels"},"parameters":"{}","is_required":false}]', '[]', NULL, 1, 1, NULL, '2024-01-01 00:00:00', '2024-01-01 00:00:00');
+
+-- ── 场景包模板（source: templates/builtin/scenes/*.json）────────────────────
+-- device_info 列存完整模板 JSON 原文；根级非空 children 即组合模板。
+INSERT OR IGNORE INTO thing_templates (
+    id, name, display_name, description, version, author, category, manufacturer,
+    thing_type, protocol_type, driver_name, tags, device_info, properties, actions,
+    events, default_knowledge, is_builtin, is_active, workspace_id, created_at, updated_at
+)
+SELECT
+  'builtin_smart_floor', 'smart_floor', '{"zh": "智慧楼层", "en": "Smart Floor"}',
+  '{"zh": "一层楼的空间结构：楼层 + N 个房间", "en": "Floor structure with N rooms"}', '1.0.0', 'TinyIoT', 'scenes', 'TinyIoT', 'space', NULL, NULL,
+  '["floor", "space"]',
+  '{
+  "name": "smart_floor",
+  "display_name": {"zh": "智慧楼层", "en": "Smart Floor"},
+  "description": {"zh": "一层楼的空间结构：楼层 + N 个房间", "en": "Floor structure with N rooms"},
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "scenes",
+  "thing_category": "floor",
+  "tags": ["floor", "space"],
+  "parameters": [
+    {"name": "room_count", "type": "int", "default": 8, "min": 1, "max": 50,
+     "display_name": {"zh": "房间数量", "en": "Room Count"}}
+  ],
+  "device_info": {
+    "default_name_pattern": "{scene_name}",
+    "default_display_name_pattern": {"zh": "{scene_name}", "en": "{scene_name}"}
+  },
+  "default_knowledge": "你是这层楼的楼层管家，关注各房间环境与设备状态。",
+  "properties": [
+    {"name": "area", "display_name": {"zh": "面积", "en": "Area"}, "data_type": "number", "unit": "m²", "is_read_only": false, "is_required": false}
+  ],
+  "children": [
+    {"key": "room", "category": "room", "count_param": "room_count",
+     "device_info": {"default_name_pattern": "{index}室",
+       "default_display_name_pattern": {"zh": "{index}室", "en": "Room {index}"}}}
+  ]
+}',
+  '[]', '[]', '[]', '你是这层楼的楼层管家，关注各房间环境与设备状态。', 1, 1, NULL, datetime('now'), datetime('now')
+WHERE NOT EXISTS (SELECT 1 FROM thing_templates WHERE id = 'builtin_smart_floor');
+
+INSERT OR IGNORE INTO thing_templates (
+    id, name, display_name, description, version, author, category, manufacturer,
+    thing_type, protocol_type, driver_name, tags, device_info, properties, actions,
+    events, default_knowledge, is_builtin, is_active, workspace_id, created_at, updated_at
+)
+SELECT
+  'builtin_smart_building', 'smart_building', '{"zh": "智慧楼宇", "en": "Smart Building"}',
+  '{"zh": "单体建筑：楼栋 + N 层 + 每层 2 个温湿度传感器", "en": "Building with N floors, 2 temp/humidity sensors per floor"}', '1.0.0', 'TinyIoT', 'scenes', 'TinyIoT', 'building', NULL, NULL,
+  '["building", "space"]',
+  '{
+  "name": "smart_building",
+  "display_name": {"zh": "智慧楼宇", "en": "Smart Building"},
+  "description": {"zh": "单体建筑：楼栋 + N 层 + 每层 2 个温湿度传感器", "en": "Building with N floors, 2 temp/humidity sensors per floor"},
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "scenes",
+  "thing_category": "building",
+  "tags": ["building", "space"],
+  "parameters": [
+    {"name": "floor_count", "type": "int", "default": 10, "min": 1, "max": 15,
+     "display_name": {"zh": "楼层数", "en": "Floor Count"}}
+  ],
+  "device_info": {"default_name_pattern": "{scene_name}"},
+  "default_knowledge": "你是这栋楼的楼宇管家，关注各层环境与设备状态。",
+  "children": [
+    {"key": "floor", "category": "floor", "count_param": "floor_count",
+     "device_info": {"default_name_pattern": "{index}F",
+       "default_display_name_pattern": {"zh": "{index}F", "en": "{index}F"}},
+     "resources": [
+       {"name": "floor_plan", "type": "image", "uri": "builtin://scenes/smart_building/floor_plan.png"}
+     ],
+     "children": [
+       {"key": "th_sensor", "template_ref": "temperature_humidity_sensor", "count": 2,
+        "device_info": {"default_name_pattern": "th_sensor_{index}",
+          "default_display_name_pattern": {"zh": "温湿度传感器 {index}", "en": "Temp & Humidity Sensor {index}"}},
+        "alarm_rules": [
+          {"name": "高温告警", "rule_type": "threshold",
+           "condition": {"type": "threshold", "operator": "greater_than", "value": 35.0},
+           "alarm_level": "warning", "notification_config": {}, "property_ref": "temperature"}
+        ]}
+     ]}
+  ]
+}',
+  '[]', '[]', '[]', '你是这栋楼的楼宇管家，关注各层环境与设备状态。', 1, 1, NULL, datetime('now'), datetime('now')
+WHERE NOT EXISTS (SELECT 1 FROM thing_templates WHERE id = 'builtin_smart_building');
+
+INSERT OR IGNORE INTO thing_templates (
+    id, name, display_name, description, version, author, category, manufacturer,
+    thing_type, protocol_type, driver_name, tags, device_info, properties, actions,
+    events, default_knowledge, is_builtin, is_active, workspace_id, created_at, updated_at
+)
+SELECT
+  'builtin_smart_campus', 'smart_campus', '{"zh": "智慧园区", "en": "Smart Campus"}',
+  '{"zh": "园区：N 栋楼、每栋 M 层、每层 2 个温湿度传感器", "en": "Campus with N buildings, M floors each, 2 sensors per floor"}', '1.0.0', 'TinyIoT', 'scenes', 'TinyIoT', 'space', NULL, NULL,
+  '["campus", "building"]',
+  '{
+  "name": "smart_campus",
+  "display_name": {"zh": "智慧园区", "en": "Smart Campus"},
+  "description": {"zh": "园区：N 栋楼、每栋 M 层、每层 2 个温湿度传感器", "en": "Campus with N buildings, M floors each, 2 sensors per floor"},
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "scenes",
+  "thing_category": "campus",
+  "tags": ["campus", "building"],
+  "parameters": [
+    {"name": "building_count", "type": "int", "default": 2, "min": 1, "max": 10,
+     "display_name": {"zh": "楼栋数量", "en": "Building Count"}},
+    {"name": "floor_count", "type": "int", "default": 5, "min": 1, "max": 15,
+     "display_name": {"zh": "每栋楼层数（最终节点数受 500 上限约束）", "en": "Floors per Building"}}
+  ],
+  "device_info": {"default_name_pattern": "{scene_name}"},
+  "properties": [
+    {"name": "area", "display_name": {"zh": "占地面积", "en": "Site Area"}, "data_type": "number", "unit": "m²", "is_read_only": false, "is_required": false},
+    {"name": "plot_ratio", "display_name": {"zh": "容积率", "en": "Plot Ratio"}, "data_type": "number", "is_read_only": false, "is_required": false}
+  ],
+  "default_knowledge": "你是园区管家，统览各楼栋运行状态与告警。",
+  "dashboard": {"cards": [{"property": "area"}, {"property": "plot_ratio"}]},
+  "alarm_rules": [
+    {"name": "能耗异常", "rule_type": "change",
+     "condition": {"type": "change", "change_type": "any", "threshold": 50.0, "time_window": 300},
+     "alarm_level": "warning", "notification_config": {}}
+  ],
+  "children": [
+    {"key": "building", "category": "building", "scene_ref": "smart_building",
+     "count_param": "building_count",
+     "param_mapping": {"floor_count": "floor_count"},
+     "device_info": {"default_name_pattern": "{index}号楼",
+       "default_display_name_pattern": {"zh": "{index}号楼", "en": "Building {index}"}},
+     "default_knowledge": "你是楼栋管家，关注本楼各层环境。",
+     "alarm_rules": [
+       {"name": "楼栋温度超阈值", "rule_type": "threshold",
+        "condition": {"type": "threshold", "operator": "greater_than", "value": 35.0},
+        "alarm_level": "warning", "notification_config": {}}
+     ]}
+  ]
+}',
+  '[]', '[]', '[]', '你是园区管家，统览各楼栋运行状态与告警。', 1, 1, NULL, datetime('now'), datetime('now')
+WHERE NOT EXISTS (SELECT 1 FROM thing_templates WHERE id = 'builtin_smart_campus');
