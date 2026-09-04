@@ -121,6 +121,15 @@ pub async fn export_subtree_as_template(
         ));
     }
 
+    // 根节点 category 缺失：thing_category 导出为 null，重新实例化时根 category
+    // 回退为模板 category（"scenes"）——明示该缺省回退行为
+    if root.category.is_none() {
+        warnings.push(
+            "根节点 category 为空，导出的 thing_category 为 null；重新实例化时根节点 category 将回退为模板 category"
+                .to_string(),
+        );
+    }
+
     let linked = parse_linked(&root);
     let file = SceneTemplateFile {
         name: root.name.clone(),

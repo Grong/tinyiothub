@@ -15,7 +15,7 @@
 - **BREAKING (data, PR-2)**: 迁移 `20260826000001` 将 `tag_bindings.target_type` 的 `'device'` 归并为 `'thing'`、permissions `device:*` 更名为 `thing:*`（id `perm-device-*`→`perm-thing-*`，`role_permissions`/`user_permissions` 引用同步）；API 写入 `target_type='device'` 会被归一化为 `'thing'`。
 - **BREAKING (frontend/a2ui, PR-2)**: 前端类型 `Device*`→`Thing*`、SPA 路由 `/things/:id`；a2ui catalog 组件 `device-card`/`device-table`→`thing-card`/`thing-table`（`DeviceCard`/`DeviceTable` 保留过渡兼容别名，旧会话 LLM 输出不破图）。
 - 保留不变：`events.source_type='device'`、`actor='device'`、`jobs.job_type='device_command'`、alarm 查询参数 `device_ids` 等枚举/wire 值（后续单独评估）。
-- **apps/cloud 残留 Device\* 类型名改 Thing\*（PR-3，纯类型名）**：`DeviceFilterRequest`→`ThingFilterRequest`、`DeviceOnlineStatus`→`ThingOnlineStatus`、`DeviceSnapshot`→`ThingSnapshot`、`DeviceNotFound`→`ThingNotFound`、`DeviceCacheAdapter`→`ThingCacheAdapter`、marketplace 侧 `DeviceInfo`→`ThingInfo`；serde/wire JSON 键不变。
+- **apps/cloud 残留 Device\* 类型名改 Thing\*（PR-3，纯类型名）**：`DeviceFilterRequest`→`ThingFilterRequest`、`DeviceOnlineStatus`→`ThingOnlineStatus`、`DeviceSnapshot`→`ThingSnapshot`、`DeviceNotFound`→`ThingNotFound`、`DeviceCacheAdapter`→`ThingCacheAdapter`；serde/wire JSON 键不变。（marketplace 侧 `DeviceInfo`→`ThingInfo` 已于 PR-2 改名，不属本批。）
 
 ### Fixed
 

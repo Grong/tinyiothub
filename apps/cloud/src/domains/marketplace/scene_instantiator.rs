@@ -195,12 +195,12 @@ impl SceneInstantiator {
                 .pool()
                 .begin()
                 .await
-                .map_err(|e| MarketplaceError::Template(e.to_string()))?;
+                .map_err(|e| db_err("开启事务", e))?;
             match persist_tree(db, &mut tx, workspace_id, template_id, params, &result).await {
                 Ok((root_id, final_names, mut persist_warnings)) => {
                     tx.commit()
                         .await
-                        .map_err(|e| MarketplaceError::Template(format!("提交事务失败: {}", e)))?;
+                        .map_err(|e| db_err("提交事务", e))?;
                     persist_warnings.extend(result.warnings.clone());
                     break (root_id, final_names, persist_warnings);
                 }
@@ -260,6 +260,7 @@ fn error_category(e: &MarketplaceError) -> &'static str {
         MarketplaceError::Validation(msg) if msg.starts_with("超出配额") => "quota",
         MarketplaceError::Validation(_) | MarketplaceError::InvalidConfig(_) => "validation",
         MarketplaceError::NotFound(_) => "not_found",
+        MarketplaceError::LockContention(_) => "lock_contention",
         _ => "internal",
     }
 }
@@ -297,7 +298,7 @@ async fn resolve_node_names(
                 Some(t) => db.thing_name_exists_tx(t, workspace_id, &candidate).await,
                 None => db.thing_name_exists(workspace_id, &candidate).await,
             }
-            .map_err(|e| MarketplaceError::Template(e.to_string()))?;
+            .map_err(|e| db_err("名称探测", e))?;
             if !exists {
                 picked = Some(candidate);
                 break;
@@ -462,15 +463,26 @@ async fn persist_tree(
             let req = build_thing_request(node, candidate.clone(), real_parent.clone(), template_id, workspace_id);
             match insert_thing_node_tx(db, tx, &req, &node.thing_type).await {
                 Ok(id) => break (candidate, id),
-                Err(e) if is_unique_violation(&e) && tries < MAX_NAME_RETRIES => {
+                Err(e) if is_name_unique_violation(&e) => {
+                    if tries >= MAX_NAME_RETRIES {
+                        // 重试耗尽：归位 400（用户可手动指定名称重试），非内部错误
+                        return Err(MarketplaceError::Validation(format!(
+                            "同名冲突过多（{}），请手动指定名称",
+                            node.name
+                        )));
+                    }
                     tries += 1;
                     candidate = db
                         .resolve_thing_name_tx(tx, workspace_id, &candidate)
                         .await
-                        .map_err(|e| MarketplaceError::Validation(e.to_string()))?;
+                        .map_err(|e| match e {
+                            // 只有"同名冲突过多"（Protocol 哨兵）映射 400；其余 DB 错误保持 500
+                            sqlx::Error::Protocol(msg) => MarketplaceError::Validation(msg),
+                            other => db_err("名称重探测", other),
+                        })?;
                     continue;
                 }
-                Err(e) => return Err(MarketplaceError::Template(format!("创建本体失败: {}", e))),
+                Err(e) => return Err(db_err("创建本体失败", e)),
             }
         };
         if resolved != planned[i] {
@@ -502,14 +514,52 @@ async fn insert_thing_node_tx(
     db.create_thing_row_with_type_tx(tx, req, thing_type).await
 }
 
-fn is_unique_violation(e: &sqlx::Error) -> bool {
-    matches!(e, sqlx::Error::Database(dbe) if dbe.is_unique_violation())
+/// things 名称索引唯一冲突判定：只对 idx_things_name_workspace 的冲突进重试。
+/// 其他唯一索引（如 thing_properties UNIQUE(thing_id,name)）的冲突不属名称竞态，
+/// 直接冒泡为 500，不进重探测循环。
+fn is_name_unique_violation(e: &sqlx::Error) -> bool {
+    match e {
+        sqlx::Error::Database(dbe) if dbe.is_unique_violation() => {
+            let msg = dbe.message();
+            msg.contains("idx_things_name_workspace") || msg.contains("things.name")
+        }
+        _ => false,
+    }
 }
 
-/// SQLite 锁竞争（database/table locked、busy）判定：整事务回滚重试的信号。
+/// SQLite 锁竞争（BUSY/LOCKED）判定：匹配扩展错误码主码（SQLITE_BUSY=5 /
+/// SQLITE_LOCKED=6，含 BUSY_SNAPSHOT=517、LOCKED_SHAREDCACHE=262 等扩展码），
+/// 不做错误文本子串匹配。
+fn is_sqlite_lock_contention(e: &sqlx::Error) -> bool {
+    match e {
+        sqlx::Error::Database(dbe) => dbe
+            .code()
+            .and_then(|c| c.parse::<i64>().ok())
+            .is_some_and(|code| matches!(code & 0xFF, 5 | 6)),
+        _ => false,
+    }
+}
+
+/// sqlx 错误归位：锁竞争 → LockContention（整事务重试信号）；其余 → Template(500)。
+fn db_err(context: &str, e: sqlx::Error) -> MarketplaceError {
+    if is_sqlite_lock_contention(&e) {
+        MarketplaceError::LockContention(format!("{context}: {e}"))
+    } else {
+        MarketplaceError::Template(format!("{context}: {e}"))
+    }
+}
+
+/// DbError 归位：解包 Sqlx 后按 db_err 同口径分类。
+fn storage_err(context: &str, e: tinyiothub_storage::DbError) -> MarketplaceError {
+    match e {
+        tinyiothub_storage::DbError::Sqlx(e) => db_err(context, e),
+        other => MarketplaceError::Template(format!("{context}: {other}")),
+    }
+}
+
+/// 整事务回滚重试的信号：仅 LockContention 变体（构造点已按扩展错误码判定）。
 fn is_lock_contention(e: &MarketplaceError) -> bool {
-    let msg = e.to_string().to_lowercase();
-    msg.contains("locked") || msg.contains("busy")
+    matches!(e, MarketplaceError::LockContention(_))
 }
 
 fn build_thing_request(
@@ -569,14 +619,14 @@ async fn persist_children_tables(
     node: &ExpandedNode,
     warnings: &mut Vec<String>,
 ) -> Result<()> {
-    // 属性
+    // 属性（display_name 多语言回退 zh → en → name，spec §2.4）
     let props: Vec<CreateThingPropertyRequest> = node
         .properties
         .iter()
         .map(|p| CreateThingPropertyRequest {
             thing_id: thing_id.to_string(),
             name: p.name.clone(),
-            display_name: localized(&p.display_name),
+            display_name: localized(&p.display_name).or_else(|| Some(p.name.clone())),
             description: p.description.as_ref().and_then(localized),
             data_type: Some(p.data_type.clone()),
             unit: p.unit.clone(),
@@ -588,29 +638,29 @@ async fn persist_children_tables(
         .collect();
     db.create_thing_properties_batch_tx(tx, &props)
         .await
-        .map_err(|e| MarketplaceError::Template(format!("创建属性失败: {}", e)))?;
+        .map_err(|e| db_err("创建属性失败", e))?;
 
-    // 命令
+    // 命令（display_name 回退同属性）
     let cmds: Vec<CreateThingCommandRequest> = node
         .commands
         .iter()
         .map(|c| CreateThingCommandRequest {
             thing_id: thing_id.to_string(),
             name: c.name.clone(),
-            display_name: localized(&c.display_name),
+            display_name: localized(&c.display_name).or_else(|| Some(c.name.clone())),
             description: c.description.as_ref().and_then(localized),
             parameters: c.parameters.clone(),
         })
         .collect();
     db.bulk_create_thing_commands_tx(tx, &cmds)
         .await
-        .map_err(|e| MarketplaceError::Template(format!("创建命令失败: {}", e)))?;
+        .map_err(|e| db_err("创建命令失败", e))?;
 
     // 资源（file_path = uri 原样记录，v1 无真实托管）
     for r in &node.resources {
         db.insert_thing_resource_tx(tx, workspace_id, thing_id, &r.resource_type, &r.name, &r.uri)
             .await
-            .map_err(|e| MarketplaceError::Template(format!("创建资源失败: {}", e)))?;
+            .map_err(|e| db_err("创建资源失败", e))?;
     }
 
     // 告警规则：property_ref → 本节点真实 property_id
@@ -620,7 +670,7 @@ async fn persist_children_tables(
                 let found = db
                     .find_thing_property_id_by_name_tx(tx, thing_id, ref_name)
                     .await
-                    .map_err(|e| MarketplaceError::Template(e.to_string()))?;
+                    .map_err(|e| db_err("查询属性失败", e))?;
                 match found {
                     Some(id) => Some(id),
                     None => {
@@ -631,6 +681,33 @@ async fn persist_children_tables(
             }
             None => None,
         };
+        let alarm_level = match parse_alarm_level(&rule.alarm_level) {
+            Some(level) => level,
+            None => {
+                // 未知 level 不静默降级：记 warning 后按 warning 处理（warnings 非阻断策略）
+                warnings.push(format!(
+                    "告警规则 {} 的 alarm_level「{}」未知，已按 warning 处理",
+                    rule.name, rule.alarm_level
+                ));
+                AlarmLevel::Warning
+            }
+        };
+        // notification_config：缺失（null）/空对象 {} 按 spec 缺省（Default）；
+        // 非空对象解析失败记 warning 后按缺省（不静默吞掉配置错误）
+        let notification_config = match &rule.notification_config {
+            serde_json::Value::Null => NotificationConfig::default(),
+            v if v.as_object().is_some_and(|o| o.is_empty()) => NotificationConfig::default(),
+            v => match serde_json::from_value::<NotificationConfig>(v.clone()) {
+                Ok(c) => c,
+                Err(e) => {
+                    warnings.push(format!(
+                        "告警规则 {} 的 notification_config 解析失败（{}），已按缺省处理",
+                        rule.name, e
+                    ));
+                    NotificationConfig::default()
+                }
+            },
+        };
         let alarm = AlarmRule::new(
             rule.name.clone(),
             rule.description.clone(),
@@ -639,14 +716,14 @@ async fn persist_children_tables(
             parse_rule_type(&rule.rule_type)?,
             serde_json::from_value::<AlarmCondition>(rule.condition.clone())
                 .map_err(|e| MarketplaceError::Validation(format!("告警条件格式错误: {}", e)))?,
-            parse_alarm_level(&rule.alarm_level),
-            serde_json::from_value::<NotificationConfig>(rule.notification_config.clone()).unwrap_or_default(),
+            alarm_level,
+            notification_config,
             workspace_id.to_string(),
         )
         .map_err(|e| MarketplaceError::Validation(e.to_string()))?;
         db.create_alarm_rule_tx(tx, &alarm)
             .await
-            .map_err(|e| MarketplaceError::Template(format!("创建告警规则失败: {}", e)))?;
+            .map_err(|e| storage_err("创建告警规则失败", e))?;
     }
     Ok(())
 }
@@ -662,13 +739,14 @@ fn parse_rule_type(s: &str) -> Result<RuleType> {
     }
 }
 
-/// alarm_level 字符串 → AlarmLevel；未知值降级为 warning。
-fn parse_alarm_level(s: &str) -> AlarmLevel {
+/// alarm_level 字符串 → AlarmLevel；未知值返回 None，由调用方记 warning 后降级。
+fn parse_alarm_level(s: &str) -> Option<AlarmLevel> {
     match s {
-        "info" => AlarmLevel::Info,
-        "error" => AlarmLevel::Error,
-        "critical" => AlarmLevel::Critical,
-        _ => AlarmLevel::Warning,
+        "info" => Some(AlarmLevel::Info),
+        "warning" => Some(AlarmLevel::Warning),
+        "error" => Some(AlarmLevel::Error),
+        "critical" => Some(AlarmLevel::Critical),
+        _ => None,
     }
 }
 

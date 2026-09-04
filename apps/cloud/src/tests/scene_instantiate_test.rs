@@ -36,6 +36,8 @@ const SCENE_PACK_JSON: &str = r#"{
     ],
     "device_info": {"default_name_pattern": "{scene_name}"},
     "default_knowledge": "园区知识库内容",
+    "events": [{"name": "campus_event", "level": "warning"}],
+    "dashboard": {"cards": [{"property": "area"}]},
     "resources": [{"name": "园区平面图", "type": "image", "uri": "file://campus-map.png"}],
     "children": [
         {"key": "building", "category": "building", "count_param": "building_count",
@@ -194,10 +196,13 @@ async fn instantiate_creates_full_tree_in_one_tx() {
             .unwrap();
     assert_eq!(root_name, "测试园区");
     assert_eq!(root_type, "space");
-    // linked_data 顶层键合并：knowledge 必须落库
+    // linked_data 顶层键合并：knowledge / event_defs / dashboard 必须全部落库
     let linked = root_linked.expect("root linked_data");
     assert!(linked.contains("knowledge"), "linked_data missing knowledge: {linked}");
     assert!(linked.contains("园区知识库内容"));
+    assert!(linked.contains("event_defs"), "linked_data missing event_defs: {linked}");
+    assert!(linked.contains("campus_event"), "event_defs 内容缺失: {linked}");
+    assert!(linked.contains("dashboard"), "linked_data missing dashboard: {linked}");
 
     // thing_type 映射：2 楼 building、4 层 space、4 传感器 device
     let buildings: i64 =
@@ -401,6 +406,105 @@ async fn instantiate_rejects_over_quota() {
     assert_eq!(thing_count(&pool).await, 0);
 }
 
+/// 配额校验在 dry-run 分支之前：dry_run=true 超配额同样 400 且零写入。
+#[tokio::test]
+async fn instantiate_rejects_over_quota_dry_run() {
+    let (pool, db) = setup_db().await;
+    let scene_id = seed_standard_templates(&pool).await;
+    sqlx::query("UPDATE subscription_plans SET thing_limit = 5 WHERE id = 'plan_free'")
+        .execute(&pool)
+        .await
+        .expect("set thing limit");
+
+    let err = SceneInstantiator::instantiate(&db, WS, &scene_id, &params(2, 2, true))
+        .await
+        .expect_err("over quota must fail in dry-run too");
+    assert!(
+        matches!(err, MarketplaceError::Validation(_)),
+        "expected Validation error, got: {err:?}"
+    );
+    assert_eq!(thing_count(&pool).await, 0);
+}
+
+/// 告警规则 property_ref 指向不存在的属性：warn-and-skip（规则不创建），
+/// 实例化整体成功。
+#[tokio::test]
+async fn instantiate_alarm_with_missing_property_ref_warns_and_skips() {
+    let (pool, db) = setup_db().await;
+    let scene = r#"{
+        "name": "warn_campus",
+        "display_name": {"zh": "告警园区"},
+        "category": "scenes",
+        "thing_category": "campus",
+        "device_info": {"default_name_pattern": "{scene_name}"},
+        "children": [
+            {"key": "building", "category": "building",
+             "device_info": {"default_name_pattern": "{index}号楼"},
+             "alarm_rules": [
+                 {"name": "幽灵属性告警", "rule_type": "threshold",
+                  "condition": {"type": "threshold", "operator": "greater_than", "value": 35.0},
+                  "alarm_level": "warning", "property_ref": "ghost_prop"}
+             ]}
+        ]
+    }"#;
+    let scene_id = seed_template(&pool, "warn_campus", "scenes", scene, "[]", "[]").await;
+
+    let outcome = SceneInstantiator::instantiate(&db, WS, &scene_id, &no_params(false))
+        .await
+        .expect("missing property_ref must not fail instantiation");
+
+    assert!(
+        outcome
+            .warnings
+            .iter()
+            .any(|w| w.contains("幽灵属性告警") && w.contains("ghost_prop") && w.contains("跳过")),
+        "expected warn-and-skip warning, got: {:?}",
+        outcome.warnings
+    );
+    // 规则被跳过：无 alarm rule 落库，但树正常创建（根 + 1 楼）
+    assert_eq!(thing_count(&pool).await, 2);
+    let rules: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarm_rules WHERE workspace_id = ?")
+        .bind(WS)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rules, 0);
+}
+
+/// 名称候选（base + -2..-10，共 10 个）全部被占 → 400「同名冲突过多」，
+/// 不产 500、零写入。
+#[tokio::test]
+async fn instantiate_over_10_name_conflicts_returns_400() {
+    let (pool, db) = setup_db().await;
+    let scene_id = seed_standard_templates(&pool).await;
+    // 预占根节点（"测试园区"）全部 10 个候选名（多占一个 -11 防候选序列回退）
+    let mut names = vec!["测试园区".to_string()];
+    for n in 2..=11 {
+        names.push(format!("测试园区-{n}"));
+    }
+    for (i, name) in names.iter().enumerate() {
+        sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES (?, ?, ?, 'space')")
+            .bind(format!("pre-cap-{i}"))
+            .bind(name)
+            .bind(WS)
+            .execute(&pool)
+            .await
+            .expect("pre-occupy candidate name");
+    }
+
+    let err = SceneInstantiator::instantiate(&db, WS, &scene_id, &params(1, 1, false))
+        .await
+        .expect_err("all candidates occupied must fail");
+    match err {
+        MarketplaceError::Validation(msg) => {
+            assert!(msg.contains("同名冲突过多"), "错误须为同名冲突过多: {msg}");
+        }
+        other => panic!("expected Validation (400), got: {other:?}"),
+    }
+    // 零写入：只有预占的 11 行
+    assert_eq!(thing_count(&pool).await, 11);
+}
+
 #[tokio::test]
 async fn instantiate_rejects_non_composition_template() {
     let (pool, db) = setup_db().await;
@@ -522,7 +626,7 @@ async fn instantiate_builtin_smart_campus_from_real_seed() {
     assert!(outcome.root_thing_id.is_some());
     assert_eq!(thing_count(&pool).await, 5);
 
-    // 根节点「能耗异常」+ 2 个传感器「高温告警」= 3 条规则全部落库
+    // 根节点「能耗异常」+ 楼栋「楼栋温度超阈值」+ 2 个传感器「高温告警」= 4 条规则全部落库
     let rules: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM thing_alarm_rules r JOIN things t ON r.thing_id = t.id WHERE t.workspace_id = ?",
     )
@@ -530,7 +634,7 @@ async fn instantiate_builtin_smart_campus_from_real_seed() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(rules, 3);
+    assert_eq!(rules, 4);
     // 根节点的 change 规则（能耗异常，无 property_ref）
     let root_rules: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM thing_alarm_rules WHERE thing_id = ? AND rule_type = 'change'",

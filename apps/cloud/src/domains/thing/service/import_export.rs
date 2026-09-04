@@ -126,7 +126,6 @@ pub async fn import_scene_template(
 
     let db = Db::new(pool.clone());
     let ws_key = workspace_id.unwrap_or("");
-    let final_name = resolve_import_name(&db, ws_key, &scene.name).await?;
 
     // 附录 A 缺省映射：building→building，其余空间→space
     let thing_type = if scene.thing_category.as_deref() == Some("building") {
@@ -140,53 +139,68 @@ pub async fn import_scene_template(
         scene.category.clone()
     };
 
-    let insert = SceneTemplateInsert {
-        name: final_name.clone(),
-        display_name: serde_json::to_string(&scene.display_name)?,
-        description: scene.description.as_ref().map(serde_json::to_string).transpose()?,
-        version: scene.version.clone(),
-        category,
-        thing_type: thing_type.to_string(),
-        device_info: raw,
-        workspace_id: workspace_id.map(|s| s.to_string()),
-    };
-    let id = db.insert_scene_thing_template(&insert).await?;
-
-    Ok(SceneImportOutcome {
-        id,
-        name: final_name,
-        thing_type: thing_type.to_string(),
-    })
-}
-
-/// 名称冲突重命名：原名 → "{name} (import)" → "{name} (import {N})"（N=2..100）。
-async fn resolve_import_name(db: &Db, workspace_key: &str, name: &str) -> Result<String, ImportError> {
-    if name_is_free(db, workspace_key, name).await {
-        return Ok(name.to_string());
-    }
-
-    let suffixed = format!("{name} (import)");
-    if name_is_free(db, workspace_key, &suffixed).await {
-        return Ok(suffixed);
-    }
-
-    for i in 2..100 {
-        let numbered = format!("{name} (import {i})");
-        if name_is_free(db, workspace_key, &numbered).await {
-            return Ok(numbered);
+    // 名称候选 + 竞态兜底：探测（SELECT）与 INSERT 之间被并发抢占时
+    // （idx_thing_templates_name_workspace 唯一冲突）继续尝试下一个后缀，
+    // 而不是 500；探测查询本身出错则错误透传（不当作"名称被占"）
+    for candidate in import_name_candidates(&scene.name) {
+        if !name_is_free(&db, ws_key, &candidate).await? {
+            continue;
+        }
+        let insert = SceneTemplateInsert {
+            name: candidate.clone(),
+            display_name: serde_json::to_string(&scene.display_name)?,
+            description: scene.description.as_ref().map(serde_json::to_string).transpose()?,
+            version: scene.version.clone(),
+            category: category.clone(),
+            thing_type: thing_type.to_string(),
+            device_info: raw.clone(),
+            workspace_id: workspace_id.map(|s| s.to_string()),
+        };
+        match db.insert_scene_thing_template(&insert).await {
+            Ok(id) => {
+                return Ok(SceneImportOutcome {
+                    id,
+                    name: candidate,
+                    thing_type: thing_type.to_string(),
+                })
+            }
+            Err(e) if is_template_name_unique_violation(&e) => continue, // 竞态被抢占，试下一个后缀
+            Err(e) => return Err(ImportError::Database(e)),
         }
     }
-
     Err(ImportError::NameConflict(format!(
-        "Unable to resolve name conflict for '{name}' in workspace"
+        "Unable to resolve name conflict for '{}' in workspace",
+        scene.name
     )))
 }
 
-async fn name_is_free(db: &Db, workspace_key: &str, name: &str) -> bool {
-    match db.count_thing_template_name_conflicts(workspace_key, name).await {
-        Ok(count) => count == 0,
-        Err(_) => false, // 查询失败时按不可用处理（安全侧）
+/// thing_templates 名称索引唯一冲突判定（竞态重试信号）。
+fn is_template_name_unique_violation(e: &sqlx::Error) -> bool {
+    match e {
+        sqlx::Error::Database(dbe) if dbe.is_unique_violation() => {
+            let msg = dbe.message();
+            msg.contains("idx_thing_templates_name_workspace") || msg.contains("thing_templates.name")
+        }
+        _ => false,
     }
+}
+
+/// 名称候选序列：原名 → "{name} (import)" → "{name} (import {N})"（N=2..100）。
+fn import_name_candidates(name: &str) -> Vec<String> {
+    let mut out = Vec::with_capacity(100);
+    out.push(name.to_string());
+    out.push(format!("{name} (import)"));
+    for i in 2..100 {
+        out.push(format!("{name} (import {i})"));
+    }
+    out
+}
+
+async fn name_is_free(db: &Db, workspace_key: &str, name: &str) -> Result<bool, ImportError> {
+    // 探测查询出错透传（不当作"名称被占"安全侧处理——那会掩盖 DB 故障并把
+    // 用户导向无意义的后缀重命名）
+    let count = db.count_thing_template_name_conflicts(workspace_key, name).await?;
+    Ok(count == 0)
 }
 
 // ──────────────────────────────────────────────
