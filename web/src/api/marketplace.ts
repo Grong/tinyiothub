@@ -149,19 +149,24 @@ export interface InstantiateBody {
 
 // instantiate 后端 serde 是 camelCase（rename_all = "camelCase"），
 // 不能走 apiPost（会把 body 转 snake_case 导致 422）——原样发送 + 手动解包统一响应。
-async function postEnvelopeRaw<T>(endpoint: string, body: unknown): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+async function fetchRaw(endpoint: string, options: { method: string; body?: unknown }): Promise<Response> {
+  const headers: Record<string, string> = {};
   const token = getAuthToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const wsId = getWorkspaceId();
   if (wsId) headers['X-Workspace-Id'] = wsId;
+  if (options.body !== undefined) headers['Content-Type'] = 'application/json';
 
-  const response = await fetch(buildUrl(endpoint), {
-    method: 'POST',
+  return fetch(buildUrl(endpoint), {
+    method: options.method,
     credentials: 'include',
     headers,
-    body: JSON.stringify(body),
+    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
   });
+}
+
+async function postEnvelopeRaw<T>(endpoint: string, body: unknown): Promise<T> {
+  const response = await fetchRaw(endpoint, { method: 'POST', body });
   const data = (await response.json().catch(() => ({}))) as ApiResponse<T>;
   if (!response.ok || data.code !== 0) {
     throw new ApiError(data.code ?? response.status, data.msg || `HTTP ${response.status}`, data);
@@ -191,18 +196,8 @@ export const sceneApi = {
   },
 
   // 后端返回 raw JSON attachment（非统一响应包装），直接取 blob + 文件名。
-  async exportAsTemplate(thingId: string): Promise<{ blob: Blob; filename: string }> {
-    const headers: Record<string, string> = {};
-    const token = getAuthToken();
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    const wsId = getWorkspaceId();
-    if (wsId) headers['X-Workspace-Id'] = wsId;
-
-    const response = await fetch(buildUrl(`/things/${encodeURIComponent(thingId)}/export-as-template`), {
-      method: 'POST',
-      credentials: 'include',
-      headers,
-    });
+  async exportSceneTemplate(thingId: string): Promise<{ blob: Blob; filename: string }> {
+    const response = await fetchRaw(`/things/${encodeURIComponent(thingId)}/export-as-template`, { method: 'POST' });
     if (!response.ok) {
       let msg = `HTTP ${response.status}`;
       try {

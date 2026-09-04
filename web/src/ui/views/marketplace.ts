@@ -80,6 +80,7 @@ export class MarketplaceView extends LitElement {
   @state() sceneParams: Record<string, number> = {};
   @state() preview: InstantiateResult | null = null;
   @state() previewLoading = false;
+  @state() previewError: string | null = null;
   @state() submitting = false;
   @state() resultWarnings: string[] | null = null;
   @state() resultRootId: string | null = null;
@@ -182,8 +183,7 @@ export class MarketplaceView extends LitElement {
         category: resolveLocalized(t.category) || t.category,
       }));
       this.scenes = items;
-      this.totalPages = result?.pagination?.totalPages ?? 1;
-      this.totalCount = result?.pagination?.totalCount ?? items.length;
+      this.loading = false; // 先渲染卡片，详情（maxDepth）后台补齐
       // 列表项不含 maxDepth，逐个取详情补齐（场景包数量少）
       const entries = await Promise.all(
         items.map(async (t: ThingTemplateItem) => {
@@ -214,6 +214,7 @@ export class MarketplaceView extends LitElement {
     this.sceneParams = {};
     this.preview = null;
     this.previewLoading = false;
+    this.previewError = null;
     this.resultWarnings = null;
     this.resultRootId = null;
     try {
@@ -224,12 +225,15 @@ export class MarketplaceView extends LitElement {
       this.sceneParams = params;
     } catch (e: any) {
       toastError(e.message || "加载场景包详情失败");
+      this.closeSceneDialog(); // 详情加载失败不留可提交的空表单
+      return;
     } finally {
       this.sceneDetailLoading = false;
     }
   }
 
   closeSceneDialog = () => {
+    if (this.submitting) return; // 提交中禁止关闭，避免 await 返回后写入已关闭对话框
     window.clearTimeout(this.previewTimer);
     this.previewSeq++; // 作废在途的 dry-run 响应
     this.sceneDialogVisible = false;
@@ -239,6 +243,7 @@ export class MarketplaceView extends LitElement {
       this.sceneDetailLoading = false;
       this.preview = null;
       this.previewLoading = false;
+      this.previewError = null;
       this.submitting = false;
       this.resultWarnings = null;
       this.resultRootId = null;
@@ -247,6 +252,10 @@ export class MarketplaceView extends LitElement {
 
   private schedulePreview() {
     window.clearTimeout(this.previewTimer);
+    this.previewSeq++; // 作废在途的 dry-run 响应，避免旧响应覆盖已失效的预览
+    this.preview = null; // 输入已变化，旧预览立即失效
+    this.previewError = null;
+    this.previewLoading = false; // 在途响应已被 seq 作废，其 previewLoading=true 是死状态，在此统一清理
     this.previewTimer = window.setTimeout(() => this.runPreview(), 300);
   }
 
@@ -255,6 +264,13 @@ export class MarketplaceView extends LitElement {
     const sceneName = this.sceneName.trim();
     if (!id || !sceneName) {
       this.preview = null;
+      this.previewError = null;
+      return;
+    }
+    // 参数未通过本地校验（含 NaN/越界）时不发 dry-run，避免无意义的后端 400 噪声
+    if (Object.keys(this.sceneParamErrors).length > 0) {
+      this.preview = null;
+      this.previewError = null;
       return;
     }
     const seq = ++this.previewSeq;
@@ -268,15 +284,20 @@ export class MarketplaceView extends LitElement {
       });
       if (seq !== this.previewSeq) return; // 已有更新的请求在途，丢弃旧响应
       this.preview = result;
-    } catch {
-      if (seq === this.previewSeq) this.preview = null;
+      this.previewError = null;
+    } catch (e: any) {
+      if (seq === this.previewSeq) {
+        this.preview = null;
+        this.previewError = e?.message || "预览生成失败";
+      }
     }
     if (seq === this.previewSeq) this.previewLoading = false;
   }
 
   private onSceneParamInput(p: SceneParameter, e: InputEvent) {
     const raw = (e.target as HTMLInputElement).value;
-    const v = Number(raw);
+    // 清空输入框时 Number("") === 0 会静默绕过必填校验，用 NaN 让校验正常触发
+    const v = raw.trim() === "" ? NaN : Number(raw);
     this.sceneParams = { ...this.sceneParams, [p.name]: Number.isNaN(v) ? NaN : Math.trunc(v) };
     this.schedulePreview();
   }
@@ -420,7 +441,6 @@ export class MarketplaceView extends LitElement {
     if (p < 1 || p > this.totalPages) return;
     this.page = p;
     if (this.activeTab === "templates") this.loadTemplates();
-    else if (this.activeTab === "scenes") this.loadScenes();
     else this.loadDrivers();
   }
 
@@ -641,6 +661,7 @@ export class MarketplaceView extends LitElement {
     const errors = this.sceneParamErrors;
     const canSubmit =
       !this.sceneDetailLoading &&
+      !!this.sceneDetail &&
       !!this.sceneName.trim() &&
       !this.previewLoading &&
       !this.submitting &&
@@ -649,6 +670,7 @@ export class MarketplaceView extends LitElement {
     return html`
       <div
         class="mp-modal-overlay ${this.sceneDialogVisible ? "visible" : ""}"
+        style=${this.submitting ? "cursor: not-allowed;" : ""}
         @click=${this.closeSceneDialog}
       >
         <div class="mp-modal-box" @click=${(e: Event) => e.stopPropagation()}>
@@ -659,7 +681,12 @@ export class MarketplaceView extends LitElement {
                 ? html`<p class="mp-modal-subtitle">${this.sceneDetail.structureSummary.parameterCount} 参数 · 模板结构 ${this.sceneDetail.structureSummary.maxDepth} 层</p>`
                 : nothing}
             </div>
-            <button class="mp-modal-close" @click=${this.closeSceneDialog}>×</button>
+            <button
+              class="mp-modal-close"
+              ?disabled=${this.submitting}
+              style=${this.submitting ? "opacity: 0.4; cursor: not-allowed;" : ""}
+              @click=${this.closeSceneDialog}
+            >×</button>
           </div>
           <div class="mp-modal-body">
             ${this.sceneDetailLoading
@@ -677,7 +704,7 @@ export class MarketplaceView extends LitElement {
                   : nothing}
               `
               : html`
-                <button class="btn" @click=${this.closeSceneDialog}>取消</button>
+                <button class="btn" ?disabled=${this.submitting} @click=${this.closeSceneDialog}>取消</button>
                 <button
                   class="btn primary"
                   ?disabled=${!canSubmit}
@@ -722,6 +749,9 @@ export class MarketplaceView extends LitElement {
                 this.schedulePreview();
               }}
             />
+            <div style="font-size: 11px; color: var(--muted); margin-top: 2px;">
+              可留空；填本体 ID，无效 ID 会在预览中报错
+            </div>
           </div>
         </div>
         ${params.map((p) => html`
@@ -748,6 +778,11 @@ export class MarketplaceView extends LitElement {
       ${this.previewLoading
         ? html`<div style="color: var(--muted); margin-top: var(--space-4);">预览生成中...</div>`
         : nothing}
+      ${this.previewError
+        ? html`<div style="margin-top: var(--space-4); padding: var(--space-3); border: 1px solid var(--danger, #dc2626); border-radius: var(--radius-sm, 6px); color: var(--danger, #dc2626); font-size: 13px;">
+            预览失败：${this.previewError}
+          </div>`
+        : nothing}
       ${this.preview
         ? html`
           <div style="margin-top: var(--space-4);">
@@ -755,6 +790,11 @@ export class MarketplaceView extends LitElement {
               将创建 ${this.preview.nodeCount} 个本体（预览，最终名称以创建结果为准）
             </div>
             <pre style="margin: 0; padding: var(--space-3); background: var(--bg-secondary, rgba(0,0,0,0.04)); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto;">${this.preview.treePreview}</pre>
+            ${this.preview.warnings && this.preview.warnings.length > 0
+              ? html`<ul style="margin: var(--space-2) 0 0; padding-left: var(--space-6); color: var(--muted); font-size: 12px;">
+                  ${this.preview.warnings.map((w) => html`<li style="margin-bottom: var(--space-1);">${w}</li>`)}
+                </ul>`
+              : nothing}
           </div>
         `
         : nothing}
