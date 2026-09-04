@@ -1,6 +1,6 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { marketplaceApi, sceneApi, type MarketplaceTemplate, type MarketplaceDriver, type ThingTemplateItem, type SceneTemplateDetail, type SceneParameter, type InstantiateResult } from "../../api/marketplace.js";
+import { marketplaceApi, sceneApi, type MarketplaceTemplate, type MarketplaceDriver, type ThingTemplateItem, type SceneTemplateDetail, type SceneParameter, type InstantiateResult, type InstantiateQuota } from "../../api/marketplace.js";
 import { templateApi } from "../../api/templates.js";
 import { driverApi } from "../../api/drivers.js";
 import { success, error as toastError } from "../components/toast.js";
@@ -787,7 +787,7 @@ export class MarketplaceView extends LitElement {
         ? html`
           <div style="margin-top: var(--space-4);">
             <div style="font-weight: 600; margin-bottom: var(--space-2);">
-              将创建 ${this.preview.nodeCount} 个本体（预览，最终名称以创建结果为准）
+              将创建 ${this.preview.nodeCount} 个本体${this.quotaText(this.preview.quota)}（预览，最终名称以创建结果为准）
             </div>
             <pre style="margin: 0; padding: var(--space-3); background: var(--bg-secondary, rgba(0,0,0,0.04)); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto;">${this.preview.treePreview}</pre>
             ${this.preview.warnings && this.preview.warnings.length > 0
@@ -799,6 +799,12 @@ export class MarketplaceView extends LitElement {
         `
         : nothing}
     `;
+  }
+
+  private quotaText(quota: InstantiateQuota | undefined) {
+    if (!quota) return nothing;
+    // 无限制（limit=null）只提示当前用量，不显示上限
+    return quota.limit === null ? `（当前 ${quota.current}，无限制）` : `（当前 ${quota.current}/${quota.limit}）`;
   }
 
   private renderSceneWarnings() {

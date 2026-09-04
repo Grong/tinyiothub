@@ -65,6 +65,19 @@ pub struct InstantiateOutcome {
     pub root_thing_id: Option<String>,
     pub tree_preview: String,
     pub warnings: Vec<String>,
+    pub quota: QuotaInfo,
+}
+
+/// 配额用量（配额校验步骤已算出，透传给 dry-run 预览展示）。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuotaInfo {
+    /// 当前 workspace 已有本体数
+    pub current: i64,
+    /// 配额上限；无限制（thing_limit=0 或无订阅链）为 null
+    pub limit: Option<i64>,
+    /// 实例化后的预计总数（current + node_count）
+    pub after: i64,
 }
 
 pub struct SceneInstantiator;
@@ -159,6 +172,12 @@ impl SceneInstantiator {
                 current, result.node_count, limit
             )));
         }
+        // 透传配额用量（dry-run 预览展示；i64::MAX 为无限制哨兵，对外返回 null）
+        let quota = QuotaInfo {
+            current,
+            limit: if limit == i64::MAX { None } else { Some(limit) },
+            after: current + result.node_count as i64,
+        };
 
         // 5. parent_id 校验（存在且属于本 workspace）；dry-run 与 commit 一致执行（SELECT 只读）
         if let Some(parent_id) = &params.parent_id {
@@ -185,6 +204,7 @@ impl SceneInstantiator {
                 root_thing_id: None,
                 tree_preview,
                 warnings,
+                quota,
             });
         }
 
@@ -223,6 +243,7 @@ impl SceneInstantiator {
             root_thing_id: Some(root_id),
             tree_preview: rebuild_tree_preview(&result.nodes, &final_names),
             warnings,
+            quota,
         })
     }
 }

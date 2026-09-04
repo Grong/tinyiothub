@@ -46,12 +46,21 @@ fn builtin_scene_templates_parse_and_validate() {
         }
 
         // 展开冒烟：默认参数能展开且不超限
+        // smart_campus 经 scene_ref 组合 smart_building（E6 狗粮）：展开时传入被引用场景包
+        let scene_templates: std::collections::HashMap<String, SceneTemplateFile> = if file == "smart_campus" {
+            let building_content = std::fs::read_to_string("../../templates/builtin/scenes/smart_building.json")
+                .expect("smart_building.json 读取失败");
+            let building = SceneTemplateFile::from_json(&building_content).expect("smart_building 解析失败");
+            std::collections::HashMap::from([("smart_building".to_string(), building)])
+        } else {
+            Default::default()
+        };
         let r = tinyiothub_storage::scene_template::expand(
             &t,
             "测试",
             &Default::default(),
             &Default::default(),
-            &Default::default(),
+            &scene_templates,
         );
         if file == "smart_floor" {
             // 无 template_ref，必须完整展开成功
@@ -68,8 +77,32 @@ fn builtin_scene_templates_parse_and_validate() {
             );
         }
 
+        // smart_campus 的楼栋层必须是 smart_building 的 scene_ref 组合（引用 N 份）
+        if file == "smart_campus" {
+            let building = t
+                .children
+                .iter()
+                .find(|n| n.key.as_deref() == Some("building"))
+                .expect("smart_campus 缺少 building 节点");
+            assert_eq!(
+                building.scene_ref.as_deref(),
+                Some("smart_building"),
+                "smart_campus 的楼栋层必须经 scene_ref 组合 smart_building"
+            );
+            assert_eq!(
+                building.count_param.as_deref(),
+                Some("building_count"),
+                "scene_ref 节点必须按 building_count 引用 N 份"
+            );
+            assert!(
+                building.children.is_empty(),
+                "scene_ref 节点不得再内联 children（楼层子树来自 smart_building）"
+            );
+        }
+
         // 高温告警必须挂在 th_sensor（template_ref 叶节点）上——实例化器只解析本节点属性
-        if file != "smart_floor" {
+        // （smart_campus 的 th_sensor 在 smart_building 子树内，由 smart_building 的校验覆盖）
+        if file == "smart_building" {
             fn find_node<'a>(nodes: &'a [ThingNodeDef], key: &str) -> Option<&'a ThingNodeDef> {
                 nodes.iter().find_map(|n| {
                     if n.key.as_deref() == Some(key) {

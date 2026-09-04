@@ -477,6 +477,19 @@ impl<'a> Expander<'a> {
             })?
             .clone();
 
+        // 引用 N 份：份数在【本模板】参数空间求值（count_param 指向本模板参数），
+        // 必须先于下方的目标参数覆盖求值；BothCountFields 已在 expand_node 入口拒绝
+        let copies = match (node.count, &node.count_param) {
+            (Some(n), None) => n as usize,
+            (None, Some(param)) => *self
+                .params
+                .get(param)
+                .ok_or_else(|| ExpandError::InvalidParameter { name: param.clone() })?
+                as usize,
+            (None, None) => 1,
+            _ => unreachable!(),
+        };
+
         // 参数映射：目标参数名 ← 本模板参数值（按目标模板定义校验 min/max）
         let saved_params = self.params.clone();
         if let Some(mapping) = &node.param_mapping {
@@ -504,8 +517,43 @@ impl<'a> Expander<'a> {
         }
         self.ref_stack.push(scene_ref.to_string());
 
-        // 被引用模板的根节点内联到当前位置
-        let root = target.as_root_node();
+        // 被引用模板的根节点内联到当前位置，按引用节点声明的份数展开 N 份。
+        // 引用节点显式声明的块覆盖目标根对应块（命名模式/知识/告警等），
+        // 未声明的块沿用目标根；children 恒取目标根（自有 children 已被拒绝）。
+        let mut root = target.as_root_node();
+        root.key = node.key.clone();
+        root.count = Some(copies as u32);
+        if node.category.is_some() {
+            root.category = node.category.clone();
+        }
+        if node.device_info.default_name_pattern.is_some() {
+            root.device_info.default_name_pattern = node.device_info.default_name_pattern.clone();
+        }
+        if node.device_info.default_display_name_pattern.is_some() {
+            root.device_info.default_display_name_pattern =
+                node.device_info.default_display_name_pattern.clone();
+        }
+        if node.default_knowledge.is_some() {
+            root.default_knowledge = node.default_knowledge.clone();
+        }
+        if !node.properties.is_empty() {
+            root.properties = node.properties.clone();
+        }
+        if !node.commands.is_empty() {
+            root.commands = node.commands.clone();
+        }
+        if !node.events.is_empty() {
+            root.events = node.events.clone();
+        }
+        if !node.resources.is_empty() {
+            root.resources = node.resources.clone();
+        }
+        if node.dashboard.is_some() {
+            root.dashboard = node.dashboard.clone();
+        }
+        if !node.alarm_rules.is_empty() {
+            root.alarm_rules = node.alarm_rules.clone();
+        }
         let result = self.expand_node(&root, parent_temp_id, depth);
 
         self.ref_stack.pop();
@@ -969,7 +1017,59 @@ mod tests {
         .unwrap();
         let scenes = HashMap::from([("sub".to_string(), sub)]);
         let r = expand(&t, "x", &HashMap::new(), &HashMap::new(), &scenes).unwrap();
-        assert!(r.node_count > 1);
+        // 引用 N 份：1 根 + 2 份 ×（sub 根 + 1 室）= 5
+        assert_eq!(r.node_count, 5);
+    }
+
+    #[test]
+    fn expand_scene_ref_count_param_stamps_n_copies_with_node_overrides() {
+        // 引用 N 份语义：份数按本模板参数求值；引用节点显式声明的命名模式/告警
+        // 覆盖被引用模板根，未声明的块（children/命名回退）沿用被引用模板
+        let sub = SceneTemplateFile::from_json(
+            r#"{
+            "name": "smart_sub", "display_name": {"zh":"子"}, "category": "scenes",
+            "thing_category": "building",
+            "device_info": {"default_name_pattern": "{scene_name}子"},
+            "default_knowledge": "子模板知识",
+            "children": [{"category":"room","device_info":{"default_name_pattern":"{index}室"}}]
+        }"#,
+        )
+        .unwrap();
+        let t = SceneTemplateFile::from_json(
+            r#"{
+            "name": "s", "display_name": {"zh":"s"}, "category": "scenes",
+            "parameters": [{"name":"n","type":"int","default":2,"min":1,"max":9,"display_name":{}}],
+            "device_info": {"default_name_pattern": "{scene_name}"},
+            "children": [{"key":"building","scene_ref":"smart_sub","count_param":"n",
+                          "device_info":{"default_name_pattern":"{index}号楼"},
+                          "default_knowledge":"覆盖知识",
+                          "alarm_rules":[{"name":"楼栋告警","rule_type":"threshold",
+                                          "condition":{"type":"threshold","operator":"greater_than","value":35.0}}]}]
+        }"#,
+        )
+        .unwrap();
+        let scenes = HashMap::from([("smart_sub".to_string(), sub)]);
+        let r = expand(&t, "园区", &HashMap::new(), &HashMap::new(), &scenes).unwrap();
+        // 1 根 + 2 份 ×（楼 + 1 室）= 5
+        assert_eq!(r.node_count, 5);
+        let buildings: Vec<&ExpandedNode> = r.nodes.iter().filter(|n| n.category == "building").collect();
+        assert_eq!(buildings.len(), 2);
+        // 命名模式覆盖：1号楼/2号楼（而非被引用模板的 "{scene_name}子"）
+        assert_eq!(buildings[0].name, "1号楼");
+        assert_eq!(buildings[1].name, "2号楼");
+        // 知识/告警覆盖生效
+        assert_eq!(buildings[0].knowledge.as_deref(), Some("覆盖知识"));
+        assert_eq!(buildings[0].alarm_rules.len(), 1);
+        assert_eq!(buildings[0].alarm_rules[0].name, "楼栋告警");
+        // children 沿用被引用模板：每栋楼下 1 室
+        for b in buildings {
+            let rooms = r
+                .nodes
+                .iter()
+                .filter(|n| n.parent_temp_id == Some(b.temp_id) && n.category == "room")
+                .count();
+            assert_eq!(rooms, 1);
+        }
     }
 
     #[test]

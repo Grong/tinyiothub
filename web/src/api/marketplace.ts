@@ -133,11 +133,19 @@ export interface SceneTemplateDetail extends ThingTemplateItem {
   structureSummary: { parameterCount: number; maxDepth: number };
 }
 
+export interface InstantiateQuota {
+  current: number;
+  /** 配额上限；无限制（thing_limit=0 或无订阅链）为 null */
+  limit: number | null;
+  after: number;
+}
+
 export interface InstantiateResult {
   nodeCount: number;
   rootThingId: string | null;
   treePreview: string;
   warnings: string[];
+  quota?: InstantiateQuota;
 }
 
 export interface InstantiateBody {

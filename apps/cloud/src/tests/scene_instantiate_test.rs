@@ -426,6 +426,34 @@ async fn instantiate_rejects_over_quota_dry_run() {
     assert_eq!(thing_count(&pool).await, 0);
 }
 
+/// X2：dry-run 响应透传配额用量（current/limit/after）；无限制时 limit 为 None。
+#[tokio::test]
+async fn instantiate_dry_run_returns_quota_usage() {
+    let (pool, db) = setup_db().await;
+    let scene_id = seed_standard_templates(&pool).await;
+
+    // 夹具 plan_free thing_limit=0 → 无限制：limit=null，after=current+node_count
+    let outcome = SceneInstantiator::instantiate(&db, WS, &scene_id, &params(2, 2, true))
+        .await
+        .expect("dry-run should succeed");
+    assert_eq!(outcome.quota.current, 0);
+    assert_eq!(outcome.quota.limit, None, "thing_limit=0 须映射为无限制 null");
+    assert_eq!(outcome.quota.after, 11);
+    assert_eq!(thing_count(&pool).await, 0, "dry-run 不写库");
+
+    // 有限配额：limit=100 时透传具体上限；current 不因 dry-run 变化
+    sqlx::query("UPDATE subscription_plans SET thing_limit = 100 WHERE id = 'plan_free'")
+        .execute(&pool)
+        .await
+        .expect("set thing limit");
+    let outcome = SceneInstantiator::instantiate(&db, WS, &scene_id, &params(2, 2, true))
+        .await
+        .expect("dry-run should succeed");
+    assert_eq!(outcome.quota.current, 0);
+    assert_eq!(outcome.quota.limit, Some(100));
+    assert_eq!(outcome.quota.after, 11);
+}
+
 /// 告警规则 property_ref 指向不存在的属性：warn-and-skip（规则不创建），
 /// 实例化整体成功。
 #[tokio::test]
@@ -644,6 +672,83 @@ async fn instantiate_builtin_smart_campus_from_real_seed() {
     .await
     .unwrap();
     assert_eq!(root_rules, 1);
+}
+
+/// X1 狗粮：smart_campus 的楼栋层经 scene_ref 组合 smart_building（引用 N 份）。
+/// building=2, floor=3：楼栋数量=building_count、每栋 floor_count 层、每层 2 传感器，
+/// 且楼层/传感器子树来自 smart_building 的内联展开（传感器 display_name 为被引用模板的
+/// 「温湿度传感器 N」），楼栋命名/告警覆盖仍生效。
+#[tokio::test]
+async fn instantiate_builtin_smart_campus_building_layer_via_scene_ref() {
+    let (_state, pool) = setup_test_app_with_pool().await;
+    let db = Db::new(pool.clone());
+    tinyiothub_storage::seed::seed_system(&db).await.expect("seed system");
+    seed_test_workspace(&pool, TENANT, WS).await;
+    // seed 的 plan_free thing_limit=10，放宽以容纳 21 节点
+    sqlx::query("UPDATE subscription_plans SET thing_limit = 0 WHERE id = 'plan_free'")
+        .execute(&pool)
+        .await
+        .expect("lift thing limit");
+
+    // 1 园区 + 2 楼 + 2×3 层 + 2×3×2 传感器 = 21
+    let outcome = SceneInstantiator::instantiate(&db, WS, "builtin_smart_campus", &params(2, 3, false))
+        .await
+        .expect("builtin smart_campus (scene_ref) must instantiate");
+    assert_eq!(outcome.node_count, 21);
+    assert_eq!(thing_count(&pool).await, 21);
+
+    // 楼栋层：2 栋，命名沿用 campus 引用节点的覆盖（{index}号楼）
+    let buildings: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, name FROM things WHERE workspace_id = ? AND category = 'building' ORDER BY name")
+            .bind(WS)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(buildings.len(), 2);
+    assert_eq!(buildings[0].1, "1号楼");
+    assert_eq!(buildings[1].1, "2号楼");
+
+    // 每栋 3 层（floor_count 经 param_mapping 传入 smart_building）
+    for (building_id, _) in &buildings {
+        let floors: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM things WHERE workspace_id = ? AND parent_id = ? AND category = 'floor'",
+        )
+        .bind(WS)
+        .bind(building_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(floors, 3, "每栋楼必须 3 层");
+    }
+    // 每层 2 个传感器（子树来自 smart_building 内联展开）
+    let floors_without_2_sensors: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM things f WHERE f.workspace_id = ? AND f.category = 'floor' \
+         AND (SELECT COUNT(*) FROM things s WHERE s.parent_id = f.id AND s.thing_type = 'device') != 2",
+    )
+    .bind(WS)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(floors_without_2_sensors, 0, "每层必须恰好 2 个传感器");
+    // 传感器 display_name 来自 smart_building（「温湿度传感器 N」）——证明子树按被引用模板展开
+    let building_style_sensors: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM things WHERE workspace_id = ? AND thing_type = 'device' \
+         AND display_name LIKE '温湿度传感器 %'",
+    )
+    .bind(WS)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(building_style_sensors, 12);
+    // 楼栋告警覆盖生效：根 1 + 楼栋 2 + 传感器 12 = 15 条规则
+    let rules: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM thing_alarm_rules r JOIN things t ON r.thing_id = t.id WHERE t.workspace_id = ?",
+    )
+    .bind(WS)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rules, 15);
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1134,6 +1239,10 @@ async fn api_instantiate_dry_run() {
         result["rootThingId"].is_null(),
         "dry-run must not return rootThingId: {result}"
     );
+    // X2：dry-run 响应带配额用量（夹具 plan_free thing_limit=0 → 无限制 null）
+    assert_eq!(result["quota"]["current"], 0, "quota.current: {result}");
+    assert_eq!(result["quota"]["after"], 11, "quota.after: {result}");
+    assert!(result["quota"]["limit"].is_null(), "quota.limit 无限制须为 null: {result}");
     assert_eq!(thing_count(&pool).await, 0, "dry-run must not write");
 }
 
