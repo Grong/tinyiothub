@@ -20,7 +20,7 @@
 //!（`#[instrument]` + info!/warn! 带 template/node_count/result 字段，
 //! 字段口径按 scene_instantiations_total{template, result} 可聚合设计）。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use sqlx::{Sqlite, Transaction};
 use tinyiothub_core::models::thing::CreateThingRequest;
@@ -30,7 +30,8 @@ use tinyiothub_storage::Db;
 use tinyiothub_storage::alarm::AlarmLevel;
 use tinyiothub_storage::alarm_rule::{AlarmCondition, AlarmRule, NotificationConfig, RuleType};
 use tinyiothub_storage::scene_template::{
-    ExpandedNode, ExpansionResult, SceneTemplateFile, ThingNodeDef, expand, localized,
+    ExpandError, ExpandedNode, ExpansionResult, MAX_SCENE_REF_DEPTH, SceneTemplateFile, ThingNodeDef, expand,
+    localized,
 };
 use tinyiothub_storage::thing_template::ThingTemplate;
 use tracing::{info, instrument, warn};
@@ -83,30 +84,8 @@ impl SceneInstantiator {
         let scene = SceneTemplateFile::from_json(&template.device_info)
             .map_err(|e| MarketplaceError::Template(format!("场景包解析失败: {}", e)))?;
 
-        // 2. 收集并加载引用（workspace → builtin）
-        let (device_refs, scene_refs) = collect_refs(&scene);
-        let mut device_templates: HashMap<String, ThingTemplate> = HashMap::new();
-        for name in &device_refs {
-            let t = db
-                .find_thing_template_by_name(name, workspace_id)
-                .await
-                .map_err(|e| MarketplaceError::Template(e.to_string()))?
-                .ok_or_else(|| MarketplaceError::Template(format!("引用模板不存在或已停用: {}", name)))?;
-            device_templates.insert(name.clone(), t);
-        }
-        let mut scene_templates: HashMap<String, SceneTemplateFile> = HashMap::new();
-        for name in &scene_refs {
-            let t = db
-                .find_thing_template_by_name(name, workspace_id)
-                .await
-                .map_err(|e| MarketplaceError::Template(e.to_string()))?
-                .ok_or_else(|| MarketplaceError::Template(format!("引用场景包不存在或已停用: {}", name)))?;
-            scene_templates.insert(
-                name.clone(),
-                SceneTemplateFile::from_json(&t.device_info)
-                    .map_err(|e| MarketplaceError::Template(format!("场景包 {} 解析失败: {}", name, e)))?,
-            );
-        }
+        // 2. 传递闭包收集并加载引用（workspace → builtin）
+        let (device_templates, scene_templates) = preload_refs(db, workspace_id, &scene).await?;
 
         // 3. 展开（纯函数）
         let result = expand(
@@ -203,6 +182,71 @@ impl SceneInstantiator {
             warnings,
         })
     }
+}
+
+/// 传递加载引用：从根模板 BFS，scene_ref 子树内的 template_ref/scene_ref 一并收集。
+/// visited 防环导致的无限加载（环本身由展开器检测报 400，含引用链路径）。
+/// 引用不存在 → Validation（400，spec §6）；深度上限与展开器一致（MAX_SCENE_REF_DEPTH）。
+async fn preload_refs(
+    db: &Db,
+    workspace_id: &str,
+    root: &SceneTemplateFile,
+) -> Result<(HashMap<String, ThingTemplate>, HashMap<String, SceneTemplateFile>)> {
+    async fn load_device(
+        db: &Db,
+        workspace_id: &str,
+        name: &str,
+        device_templates: &mut HashMap<String, ThingTemplate>,
+    ) -> Result<()> {
+        if device_templates.contains_key(name) {
+            return Ok(());
+        }
+        let t = db
+            .find_thing_template_by_name(name, workspace_id)
+            .await
+            .map_err(|e| MarketplaceError::Template(e.to_string()))?
+            .ok_or_else(|| MarketplaceError::Validation(format!("引用模板不存在或已停用: {}", name)))?;
+        device_templates.insert(name.to_string(), t);
+        Ok(())
+    }
+
+    let mut device_templates: HashMap<String, ThingTemplate> = HashMap::new();
+    let mut scene_templates: HashMap<String, SceneTemplateFile> = HashMap::new();
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut queue: VecDeque<(String, usize)> = VecDeque::new();
+
+    let (device_refs, scene_refs) = collect_refs(root);
+    for name in device_refs {
+        load_device(db, workspace_id, &name, &mut device_templates).await?;
+    }
+    for name in scene_refs {
+        queue.push_back((name, 1));
+    }
+
+    while let Some((name, depth)) = queue.pop_front() {
+        if depth >= MAX_SCENE_REF_DEPTH {
+            return Err(MarketplaceError::Validation(ExpandError::TooDeep.to_string()));
+        }
+        if !visited.insert(name.clone()) {
+            continue;
+        }
+        let t = db
+            .find_thing_template_by_name(&name, workspace_id)
+            .await
+            .map_err(|e| MarketplaceError::Template(e.to_string()))?
+            .ok_or_else(|| MarketplaceError::Validation(format!("引用场景包不存在或已停用: {}", name)))?;
+        let sub = SceneTemplateFile::from_json(&t.device_info)
+            .map_err(|e| MarketplaceError::Template(format!("场景包 {} 解析失败: {}", name, e)))?;
+        let (sub_devices, sub_scenes) = collect_refs(&sub);
+        for d in sub_devices {
+            load_device(db, workspace_id, &d, &mut device_templates).await?;
+        }
+        for s in sub_scenes {
+            queue.push_back((s, depth + 1));
+        }
+        scene_templates.insert(name, sub);
+    }
+    Ok((device_templates, scene_templates))
 }
 
 /// 递归收集 template_ref / scene_ref 引用名（去重排序，加载顺序确定性）。
@@ -424,7 +468,7 @@ async fn persist_children_tables(
     Ok(())
 }
 
-/// rule_type 字符串 → RuleType。展开器已校验 4 个允许值，此处再校验一次兜底。
+/// rule_type 字符串 → RuleType。展开器已校验 3 个允许值（event 不支持），此处再校验一次兜底。
 fn parse_rule_type(s: &str) -> Result<RuleType> {
     match s {
         "threshold" => Ok(RuleType::Threshold),

@@ -485,6 +485,268 @@ async fn instantiate_builtin_smart_campus_from_real_seed() {
 }
 
 // ──────────────────────────────────────────────────────────────
+// scene_ref 组合：传递加载 / 环检测 / 默认值合并 / min/max 校验 / 错误码
+// ──────────────────────────────────────────────────────────────
+
+/// 播种一个场景包模板（category=scenes），返回模板 id。
+async fn seed_scene(pool: &SqlitePool, name: &str, device_info: &str) -> String {
+    seed_template(pool, name, "scenes", device_info, "[]", "[]").await
+}
+
+/// scene_ref 链 A→B→C：B/C 内部的引用必须被传递加载，端到端展开成功。
+#[tokio::test]
+async fn instantiate_scene_ref_chain_loads_transitively() {
+    let (pool, db) = setup_db().await;
+    seed_scene(
+        &pool,
+        "chain_c",
+        r#"{
+        "name": "chain_c", "display_name": {"zh": "链条C"}, "category": "scenes",
+        "thing_category": "floor",
+        "device_info": {"default_name_pattern": "{scene_name}C"},
+        "children": [{"key": "room", "category": "room", "device_info": {"default_name_pattern": "{index}室"}}]
+    }"#,
+    )
+    .await;
+    seed_scene(
+        &pool,
+        "chain_b",
+        r#"{
+        "name": "chain_b", "display_name": {"zh": "链条B"}, "category": "scenes",
+        "thing_category": "building",
+        "device_info": {"default_name_pattern": "{scene_name}B"},
+        "children": [{"scene_ref": "chain_c"}]
+    }"#,
+    )
+    .await;
+    let a_id = seed_scene(
+        &pool,
+        "chain_a",
+        r#"{
+        "name": "chain_a", "display_name": {"zh": "链条A"}, "category": "scenes",
+        "thing_category": "campus",
+        "device_info": {"default_name_pattern": "{scene_name}"},
+        "children": [{"scene_ref": "chain_b"}]
+    }"#,
+    )
+    .await;
+
+    let outcome = SceneInstantiator::instantiate(&db, WS, &a_id, &params(1, 1, false))
+        .await
+        .expect("A→B→C chain must instantiate via transitive preload");
+
+    // A 根 + B 根 + C 根 + 1 室 = 4
+    assert_eq!(outcome.node_count, 4);
+    assert_eq!(thing_count(&pool).await, 4);
+    assert!(outcome.tree_preview.contains("1室"), "tree_preview: {}", outcome.tree_preview);
+}
+
+/// scene_ref 环 A→B→A：经 instantiate 路径可达环检测，400 且错误含引用链路径。
+#[tokio::test]
+async fn instantiate_scene_ref_cycle_returns_validation_with_chain() {
+    let (pool, db) = setup_db().await;
+    seed_scene(
+        &pool,
+        "cyc_b",
+        r#"{
+        "name": "cyc_b", "display_name": {"zh": "环B"}, "category": "scenes",
+        "device_info": {"default_name_pattern": "{scene_name}B"},
+        "children": [{"scene_ref": "cyc_a"}]
+    }"#,
+    )
+    .await;
+    let a_id = seed_scene(
+        &pool,
+        "cyc_a",
+        r#"{
+        "name": "cyc_a", "display_name": {"zh": "环A"}, "category": "scenes",
+        "device_info": {"default_name_pattern": "{scene_name}"},
+        "children": [{"scene_ref": "cyc_b"}]
+    }"#,
+    )
+    .await;
+
+    let err = SceneInstantiator::instantiate(&db, WS, &a_id, &params(1, 1, false))
+        .await
+        .expect_err("scene_ref cycle must fail");
+    match err {
+        MarketplaceError::Validation(msg) => {
+            assert!(msg.contains("cyc_a → cyc_b → cyc_a"), "错误须含引用链路径: {msg}");
+        }
+        other => panic!("expected Validation (400), got: {other:?}"),
+    }
+    assert_eq!(thing_count(&pool).await, 0);
+}
+
+/// 映射值超目标 max：源 floor_count(max 15) → 目标 floors(max 8)，必须 400
+/// 且错误信息含目标模板名 + 参数名（目标作者护栏不可被源模板绕过）。
+#[tokio::test]
+async fn instantiate_mapped_value_over_target_max_returns_validation() {
+    let (pool, db) = setup_db().await;
+    seed_scene(
+        &pool,
+        "ovr_building",
+        r#"{
+        "name": "ovr_building", "display_name": {"zh": "楼"}, "category": "scenes",
+        "thing_category": "building",
+        "parameters": [{"name": "floors", "type": "int", "default": 3, "min": 1, "max": 8, "display_name": {}}],
+        "device_info": {"default_name_pattern": "{scene_name}楼"},
+        "children": [{"category": "floor", "count_param": "floors", "device_info": {"default_name_pattern": "{index}F"}}]
+    }"#,
+    )
+    .await;
+    let campus_id = seed_scene(
+        &pool,
+        "ovr_campus",
+        r#"{
+        "name": "ovr_campus", "display_name": {"zh": "园"}, "category": "scenes",
+        "thing_category": "campus",
+        "parameters": [{"name": "floor_count", "type": "int", "default": 5, "min": 1, "max": 15, "display_name": {}}],
+        "device_info": {"default_name_pattern": "{scene_name}"},
+        "children": [{"scene_ref": "ovr_building", "param_mapping": {"floors": "floor_count"}}]
+    }"#,
+    )
+    .await;
+
+    let mut p = params(1, 1, false);
+    p.parameter_values = HashMap::from([("floor_count".to_string(), 15i64)]);
+    let err = SceneInstantiator::instantiate(&db, WS, &campus_id, &p)
+        .await
+        .expect_err("mapped value over target max must fail");
+    match err {
+        MarketplaceError::Validation(msg) => {
+            assert!(msg.contains("ovr_building"), "错误须含目标模板名: {msg}");
+            assert!(msg.contains("floors"), "错误须含目标参数名: {msg}");
+        }
+        other => panic!("expected Validation (400), got: {other:?}"),
+    }
+    assert_eq!(thing_count(&pool).await, 0);
+}
+
+/// scene_ref 子树内的 template_ref 必须被传递加载并内联其 properties/commands。
+#[tokio::test]
+async fn instantiate_loads_template_ref_inside_scene_ref_subtree() {
+    let (pool, db) = setup_db().await;
+    seed_template(
+        &pool,
+        "temperature_humidity_sensor",
+        "sensors",
+        r#"{"default_name_pattern": "th_{index}", "required_fields": []}"#,
+        SENSOR_PROPERTIES,
+        SENSOR_ACTIONS,
+    )
+    .await;
+    seed_scene(
+        &pool,
+        "sub_b",
+        r#"{
+        "name": "sub_b", "display_name": {"zh": "子B"}, "category": "scenes",
+        "thing_category": "floor",
+        "device_info": {"default_name_pattern": "{scene_name}B"},
+        "children": [{"template_ref": "temperature_humidity_sensor",
+                      "device_info": {"default_name_pattern": "传感器{index}"}}]
+    }"#,
+    )
+    .await;
+    let a_id = seed_scene(
+        &pool,
+        "sub_a",
+        r#"{
+        "name": "sub_a", "display_name": {"zh": "子A"}, "category": "scenes",
+        "thing_category": "campus",
+        "device_info": {"default_name_pattern": "{scene_name}"},
+        "children": [{"scene_ref": "sub_b"}]
+    }"#,
+    )
+    .await;
+
+    let outcome = SceneInstantiator::instantiate(&db, WS, &a_id, &params(1, 1, false))
+        .await
+        .expect("template_ref inside scene_ref subtree must be preloaded");
+
+    // A 根 + B 根 + 1 传感器 = 3
+    assert_eq!(outcome.node_count, 3);
+    assert_eq!(thing_count(&pool).await, 3);
+    // 设备模板内联：2 属性 + 1 命令落库
+    let props: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM thing_properties p JOIN things t ON p.thing_id = t.id WHERE t.workspace_id = ?",
+    )
+    .bind(WS)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(props, 2);
+    let devices: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM things WHERE workspace_id = ? AND thing_type = 'device'")
+            .bind(WS)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(devices, 1);
+}
+
+/// event rule_type 在校验期即 400（AlarmCondition 无 Event 变体，实例化必失败）。
+#[tokio::test]
+async fn instantiate_event_rule_type_rejected_at_validation() {
+    let (pool, db) = setup_db().await;
+    let scene_id = seed_scene(
+        &pool,
+        "evt_scene",
+        r#"{
+        "name": "evt_scene", "display_name": {"zh": "事件场景"}, "category": "scenes",
+        "device_info": {"default_name_pattern": "{scene_name}"},
+        "alarm_rules": [{"name": "事件规则", "rule_type": "event",
+                         "condition": {"type": "event", "event_name": "x"}}],
+        "children": [{"category": "room", "device_info": {"default_name_pattern": "{index}室"}}]
+    }"#,
+    )
+    .await;
+
+    let err = SceneInstantiator::instantiate(&db, WS, &scene_id, &params(1, 1, false))
+        .await
+        .expect_err("event rule_type must be rejected at validation");
+    match err {
+        MarketplaceError::Validation(msg) => {
+            assert!(msg.contains("event"), "错误须指出该类型: {msg}");
+        }
+        other => panic!("expected Validation (400), got: {other:?}"),
+    }
+    assert_eq!(thing_count(&pool).await, 0);
+}
+
+/// 引用不存在 → 400（非 500），错误信息指出引用名。
+#[tokio::test]
+async fn instantiate_missing_ref_returns_validation_not_500() {
+    let (pool, db) = setup_db().await;
+    let scene_id = seed_scene(
+        &pool,
+        "miss_scene",
+        r#"{
+        "name": "miss_scene", "display_name": {"zh": "缺引用"}, "category": "scenes",
+        "device_info": {"default_name_pattern": "{scene_name}"},
+        "children": [{"scene_ref": "ghost_scene"},
+                     {"template_ref": "ghost_device",
+                      "device_info": {"default_name_pattern": "x{index}"}}]
+    }"#,
+    )
+    .await;
+
+    let err = SceneInstantiator::instantiate(&db, WS, &scene_id, &params(1, 1, false))
+        .await
+        .expect_err("missing ref must fail");
+    match err {
+        MarketplaceError::Validation(msg) => {
+            assert!(
+                msg.contains("ghost_scene") || msg.contains("ghost_device"),
+                "错误须指出引用名: {msg}"
+            );
+        }
+        other => panic!("expected Validation (400), got: {other:?}"),
+    }
+    assert_eq!(thing_count(&pool).await, 0);
+}
+
+// ──────────────────────────────────────────────────────────────
 // Marketplace API（列表 is_composition / 详情 / instantiate 端点）
 // ──────────────────────────────────────────────────────────────
 

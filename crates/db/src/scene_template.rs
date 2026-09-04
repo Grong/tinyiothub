@@ -202,7 +202,9 @@ use crate::thing_template::ThingTemplate;
 pub const MAX_NODES: usize = 500;
 pub const MAX_SCENE_REF_DEPTH: usize = 5;
 /// 允许的告警规则类型（展开器校验 + 测试断言共用同一来源）。
-pub const ALLOWED_RULE_TYPES: [&str; 4] = ["threshold", "range", "change", "event"];
+/// event 规则存 EventAlarmCondition JSON（AlarmCondition 无 Event 变体），
+/// 实例化时必失败，故不支持，校验期即拒绝。
+pub const ALLOWED_RULE_TYPES: [&str; 3] = ["threshold", "range", "change"];
 
 #[derive(Debug, Error)]
 pub enum ExpandError {
@@ -225,7 +227,7 @@ pub enum ExpandError {
     TooLarge { count: usize },
     #[error("节点 {key} 同时声明 count 与 count_param")]
     BothCountFields { key: String },
-    #[error("不支持的告警规则类型: {rule_type}（允许: threshold/range/change/event）")]
+    #[error("不支持的告警规则类型: {rule_type}（允许: threshold/range/change；event 暂不支持）")]
     RuleTypeNotAllowed { rule_type: String },
 }
 
@@ -433,18 +435,30 @@ impl<'a> Expander<'a> {
             })?
             .clone();
 
-        // 参数映射：目标参数名 ← 本模板参数值
+        // 参数映射：目标参数名 ← 本模板参数值（按目标模板定义校验 min/max）
         let saved_params = self.params.clone();
         if let Some(mapping) = &node.param_mapping {
             for (target_param, source_param) in mapping {
-                let value = self
+                let value = *self
                     .params
                     .get(source_param)
                     .ok_or_else(|| ExpandError::InvalidParameter {
                         name: source_param.clone(),
                     })?;
-                self.params.insert(target_param.clone(), *value);
+                if let Some(def) = target.parameters.iter().find(|p| &p.name == target_param) {
+                    check_param_range(scene_ref, def, value)?;
+                }
+                self.params.insert(target_param.clone(), value);
             }
+        }
+        // 未被映射覆盖的参数：用被引用模板默认值补齐（同样校验 min/max）
+        for p in &target.parameters {
+            let overridden = node.param_mapping.as_ref().is_some_and(|m| m.contains_key(&p.name));
+            if overridden {
+                continue;
+            }
+            check_param_range(scene_ref, p, p.default)?;
+            self.params.insert(p.name.clone(), p.default);
         }
         self.ref_stack.push(scene_ref.to_string());
 
@@ -478,6 +492,19 @@ impl<'a> Expander<'a> {
             })
             .or_else(|| Some(fallback.to_string()))
     }
+}
+
+/// scene_ref 参数值按被引用模板定义校验 min/max；错误名带目标模板名前缀。
+fn check_param_range(scene_ref: &str, def: &SceneParameter, value: i64) -> Result<(), ExpandError> {
+    if value < def.min || value > def.max {
+        return Err(ExpandError::ParamOutOfRange {
+            name: format!("{}.{}", scene_ref, def.name),
+            value,
+            min: def.min,
+            max: def.max,
+        });
+    }
+    Ok(())
 }
 
 /// tree_preview 标签清洗：剔除换行/首尾空格，括号转全角。
@@ -745,6 +772,88 @@ mod tests {
         .unwrap();
         let e = expand(&t, "x", &HashMap::new(), &HashMap::new(), &HashMap::new()).unwrap_err();
         assert!(matches!(e, ExpandError::RuleTypeNotAllowed { .. }));
+    }
+
+    #[test]
+    fn expand_scene_ref_fills_unmapped_defaults() {
+        let floor_pack = SceneTemplateFile::from_json(
+            r#"{
+            "name": "smart_floor", "display_name": {"zh":"楼层"}, "category": "scenes",
+            "thing_category": "floor",
+            "parameters": [{"name":"rooms","type":"int","default":3,"min":1,"max":50,"display_name":{}}],
+            "device_info": {"default_name_pattern": "{scene_name}楼层"},
+            "children": [{"category":"room","count_param":"rooms","device_info":{"default_name_pattern":"{index}室"}}]
+        }"#,
+        )
+        .unwrap();
+        // 无 param_mapping：被引用模板的 rooms 必须用其默认值 3
+        let campus = SceneTemplateFile::from_json(
+            r#"{
+            "name": "c", "display_name": {"zh":"园"}, "category": "scenes",
+            "device_info": {"default_name_pattern": "{scene_name}"},
+            "children": [{"scene_ref":"smart_floor"}]
+        }"#,
+        )
+        .unwrap();
+        let scenes = HashMap::from([("smart_floor".to_string(), floor_pack)]);
+        let r = expand(&campus, "园区", &HashMap::new(), &HashMap::new(), &scenes).unwrap();
+        // 1 园 + 1 楼层 + 3 室 = 5
+        assert_eq!(r.node_count, 5);
+        assert!(r.nodes.iter().any(|n| n.name == "3室"));
+    }
+
+    #[test]
+    fn expand_scene_ref_rejects_mapped_value_over_target_max() {
+        // 目标 floors max 8；源 floor_count max 15 映射 15 → 目标护栏必须拦截
+        let building_pack = SceneTemplateFile::from_json(
+            r#"{
+            "name": "smart_building", "display_name": {"zh":"楼"}, "category": "scenes",
+            "thing_category": "building",
+            "parameters": [{"name":"floors","type":"int","default":3,"min":1,"max":8,"display_name":{}}],
+            "device_info": {"default_name_pattern": "{scene_name}楼"},
+            "children": [{"category":"floor","count_param":"floors","device_info":{"default_name_pattern":"{index}F"}}]
+        }"#,
+        )
+        .unwrap();
+        let campus = SceneTemplateFile::from_json(
+            r#"{
+            "name": "c", "display_name": {"zh":"园"}, "category": "scenes",
+            "parameters": [{"name":"floor_count","type":"int","default":5,"min":1,"max":15,"display_name":{}}],
+            "device_info": {"default_name_pattern": "{scene_name}"},
+            "children": [{"scene_ref":"smart_building","param_mapping":{"floors":"floor_count"}}]
+        }"#,
+        )
+        .unwrap();
+        let scenes = HashMap::from([("smart_building".to_string(), building_pack)]);
+        let params = HashMap::from([("floor_count".to_string(), 15i64)]);
+        let e = expand(&campus, "园区", &params, &HashMap::new(), &scenes).unwrap_err();
+        match e {
+            ExpandError::ParamOutOfRange { name, value, max, .. } => {
+                assert!(name.contains("smart_building"), "错误须含目标模板名: {name}");
+                assert!(name.contains("floors"), "错误须含目标参数名: {name}");
+                assert_eq!(value, 15);
+                assert_eq!(max, 8);
+            }
+            other => panic!("expected ParamOutOfRange, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn expand_rejects_event_rule_type() {
+        let t = SceneTemplateFile::from_json(
+            r#"{
+            "name": "s", "display_name": {"zh":"s"}, "category": "scenes",
+            "device_info": {"default_name_pattern": "{scene_name}"},
+            "alarm_rules": [{"name":"r","rule_type":"event","condition":{"type":"event","event_name":"x"}}],
+            "children": []
+        }"#,
+        )
+        .unwrap();
+        let e = expand(&t, "x", &HashMap::new(), &HashMap::new(), &HashMap::new()).unwrap_err();
+        match e {
+            ExpandError::RuleTypeNotAllowed { rule_type } => assert_eq!(rule_type, "event"),
+            other => panic!("expected RuleTypeNotAllowed, got: {other:?}"),
+        }
     }
 
     #[test]
