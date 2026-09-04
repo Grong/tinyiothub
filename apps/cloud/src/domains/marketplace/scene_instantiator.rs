@@ -1,4 +1,4 @@
-//! SceneInstantiator — 场景包实例化：展开（纯函数）→ 配额校验 → 单事务落库。
+//! SceneInstantiator — 场景包实例化：展开（纯函数）→ 配额/父校验 → 名称解析 → 单事务落库。
 //!
 //! 数据流：
 //!   template row ──▶ SceneTemplateFile::from_json(device_info)
@@ -8,13 +8,18 @@
 //!        │
 //!        ▼
 //!   配额校验 (count_things_by_workspace + node_count ≤ thing_limit)
-//!        │ dry_run=true → 直接返回（只读）
+//!   parent_id 校验（dry-run 与 commit 一致执行，SELECT 只读）
+//!        │
 //!        ▼
-//!   单事务：create_thing_row_with_type → properties/commands/resources/alarm_rules → linked_data
-//!        │ 名称冲突: resolve_thing_name_tx（快路径）+ 唯一约束捕获重探测（兜底，≤10）
+//!   名称解析（两模式共用 resolve_node_names + thing_name_candidates 同算法同上限）：
+//!        │ dry_run=true → pool 只读探测，解析后名称重建 tree_preview 返回（零写入）
+//!        ▼
+//!   单事务：事务内解析名称 → create_thing_row_with_type → properties/commands/resources/alarm_rules → linked_data
+//!        │ 名称冲突: 树内互避 + SELECT 探测（快路径）+ 唯一约束捕获重探测（兜底，≤10）
 //!        │ 锁竞争（SQLite 单写者）: 整事务回滚重试（≤5）
 //!        ▼
 //!   commit / rollback（任何失败整体回滚，不留半棵树）
+//!   响应 tree_preview 用落库最终名称重建（预览/响应/DB 三者一致）
 //!
 //! 可观测性：项目当前无 metrics 注册表，v1 用 tracing 结构化日志承载
 //!（`#[instrument]` + info!/warn! 带 template/node_count/result 字段，
@@ -31,8 +36,9 @@ use tinyiothub_storage::alarm::AlarmLevel;
 use tinyiothub_storage::alarm_rule::{AlarmCondition, AlarmRule, NotificationConfig, RuleType};
 use tinyiothub_storage::scene_template::{
     ExpandError, ExpandedNode, ExpansionResult, MAX_SCENE_REF_DEPTH, SceneTemplateFile, ThingNodeDef, expand,
-    localized,
+    localized, sanitize_label,
 };
+use tinyiothub_storage::thing::thing_name_candidates;
 use tinyiothub_storage::thing_template::ThingTemplate;
 use tracing::{info, instrument, warn};
 
@@ -113,18 +119,7 @@ impl SceneInstantiator {
             )));
         }
 
-        // 5. dry-run：只读返回
-        if params.dry_run {
-            info!(node_count = result.node_count, template = %template.name, result = "dry_run", "场景包 dry-run 预览完成");
-            return Ok(InstantiateOutcome {
-                node_count: result.node_count,
-                root_thing_id: None,
-                tree_preview: result.tree_preview,
-                warnings: result.warnings,
-            });
-        }
-
-        // 6. parent_id 校验（存在且属于本 workspace）
+        // 5. parent_id 校验（存在且属于本 workspace）；dry-run 与 commit 一致执行（SELECT 只读）
         if let Some(parent_id) = &params.parent_id {
             let parent = db
                 .find_thing_by_id(Some(workspace_id), parent_id)
@@ -138,21 +133,36 @@ impl SceneInstantiator {
             }
         }
 
+        // 6. dry-run：只读名称解析（与落库同算法同上限）→ 解析后名称重建预览，零写入
+        if params.dry_run {
+            let resolved = resolve_node_names(db, None, workspace_id, &result.nodes).await?;
+            let mut warnings = name_warnings(&result.nodes, &resolved);
+            warnings.extend(result.warnings.clone());
+            let tree_preview = rebuild_tree_preview(&result.nodes, &resolved);
+            info!(node_count = result.node_count, template = %template.name, result = "dry_run", "场景包 dry-run 预览完成");
+            return Ok(InstantiateOutcome {
+                node_count: result.node_count,
+                root_thing_id: None,
+                tree_preview,
+                warnings,
+            });
+        }
+
         // 7. 单事务落库；SQLite 单写者锁竞争时整体回滚重试
         let mut attempt = 0usize;
-        let (root_id, warnings) = loop {
+        let (root_id, final_names, warnings) = loop {
             let mut tx = db
                 .pool()
                 .begin()
                 .await
                 .map_err(|e| MarketplaceError::Template(e.to_string()))?;
             match persist_tree(db, &mut tx, workspace_id, template_id, params, &result).await {
-                Ok((root_id, mut persist_warnings)) => {
+                Ok((root_id, final_names, mut persist_warnings)) => {
                     tx.commit()
                         .await
                         .map_err(|e| MarketplaceError::Template(format!("提交事务失败: {}", e)))?;
                     persist_warnings.extend(result.warnings.clone());
-                    break (root_id, persist_warnings);
+                    break (root_id, final_names, persist_warnings);
                 }
                 Err(e) if is_lock_contention(&e) && attempt < MAX_TX_RETRIES => {
                     attempt += 1;
@@ -178,10 +188,78 @@ impl SceneInstantiator {
         Ok(InstantiateOutcome {
             node_count: result.node_count,
             root_thing_id: Some(root_id),
-            tree_preview: result.tree_preview,
+            tree_preview: rebuild_tree_preview(&result.nodes, &final_names),
             warnings,
         })
     }
+}
+
+/// 名称解析（dry-run 与 commit 共用步骤）：按拓扑序遍历展开节点，
+/// 用 thing_name_candidates 同算法同上限（≤10）探测每个节点名称；
+/// 树内先解析节点占用的名称计入避让（兄弟/跨分支同名均互避）。
+/// `tx` 为 None 时走 pool 只读探测（dry-run），Some 时走事务内探测（commit）。
+async fn resolve_node_names(
+    db: &Db,
+    mut tx: Option<&mut Transaction<'_, Sqlite>>,
+    workspace_id: &str,
+    nodes: &[ExpandedNode],
+) -> Result<Vec<String>> {
+    let mut taken: HashSet<String> = HashSet::new();
+    let mut resolved = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let mut picked = None;
+        for candidate in thing_name_candidates(&node.name) {
+            if taken.contains(&candidate) {
+                continue;
+            }
+            let exists = match tx.as_deref_mut() {
+                Some(t) => db.thing_name_exists_tx(t, workspace_id, &candidate).await,
+                None => db.thing_name_exists(workspace_id, &candidate).await,
+            }
+            .map_err(|e| MarketplaceError::Template(e.to_string()))?;
+            if !exists {
+                picked = Some(candidate);
+                break;
+            }
+        }
+        let name = picked.ok_or_else(|| {
+            MarketplaceError::Validation(format!("同名冲突过多（{}），请手动指定名称", node.name))
+        })?;
+        taken.insert(name.clone());
+        resolved.push(name);
+    }
+    Ok(resolved)
+}
+
+/// 名称变更 warnings：解析后名称 ≠ 展开名称时记录（两模式同一行为）。
+fn name_warnings(nodes: &[ExpandedNode], resolved: &[String]) -> Vec<String> {
+    nodes
+        .iter()
+        .zip(resolved)
+        .filter(|(n, r)| **r != n.name)
+        .map(|(n, r)| format!("名称冲突：{} → {}", n.name, r))
+        .collect()
+}
+
+/// 用解析后名称重建 tree_preview（格式与展开器一致：`<display_name> (<category>)`、
+/// 2 空格缩进、sanitize_label 规则不变）。display_name 等于未解析名称时（默认命名
+/// 模式产物）跟随解析后名称，保证用户在树上看到的名字与 DB 一致。
+fn rebuild_tree_preview(nodes: &[ExpandedNode], resolved_names: &[String]) -> String {
+    let mut depths = vec![0usize; nodes.len()];
+    let mut lines = Vec::with_capacity(nodes.len());
+    for (i, node) in nodes.iter().enumerate() {
+        let depth = match node.parent_temp_id {
+            Some(pid) => depths[pid] + 1,
+            None => 0,
+        };
+        depths[i] = depth;
+        let label = match &node.display_name {
+            Some(d) if d != &node.name => sanitize_label(d),
+            _ => sanitize_label(&resolved_names[i]),
+        };
+        lines.push(format!("{}{} ({})", "  ".repeat(depth), label, node.category));
+    }
+    lines.join("\n")
 }
 
 /// 传递加载引用：从根模板 BFS，scene_ref 子树内的 template_ref/scene_ref 一并收集。
@@ -272,8 +350,8 @@ fn collect_refs(scene: &SceneTemplateFile) -> (Vec<String>, Vec<String>) {
     (device, scenes)
 }
 
-/// 事务内落库：拓扑序创建本体 → 子表。返回 (root_thing_id, warnings)。
-/// 任何一步失败即返回 Err，由调用方回滚整个事务。
+/// 事务内落库：名称解析（与 dry-run 共用步骤）→ 拓扑序创建本体 → 子表。
+/// 返回 (root_thing_id, 最终名称列表, warnings)。任何一步失败即返回 Err，由调用方回滚整个事务。
 async fn persist_tree(
     db: &Db,
     tx: &mut Transaction<'_, Sqlite>,
@@ -281,38 +359,44 @@ async fn persist_tree(
     template_id: &str,
     params: &InstantiateParams,
     result: &ExpansionResult,
-) -> Result<(String, Vec<String>)> {
-    let mut warnings = Vec::new();
+) -> Result<(String, Vec<String>, Vec<String>)> {
+    // 事务内名称解析（与 dry-run 同算法）：事务可见自身写入，计划名即落库名（无并发干预下）
+    let planned = resolve_node_names(db, Some(tx), workspace_id, &result.nodes).await?;
+    let mut warnings = name_warnings(&result.nodes, &planned);
+    let mut final_names: Vec<String> = Vec::with_capacity(result.nodes.len());
     let mut real_ids: HashMap<usize, String> = HashMap::new();
     let mut root_id = String::new();
 
-    for node in &result.nodes {
+    for (i, node) in result.nodes.iter().enumerate() {
         let real_parent = match node.parent_temp_id {
             Some(pid) => real_ids.get(&pid).cloned(),
             None => params.parent_id.clone(),
         };
 
-        // 名称冲突：SELECT 探测（快路径）+ 唯一约束捕获重探测（TOCTOU 兜底，≤10）
+        // 计划名先试；唯一约束冲突（TOCTOU：探测与 INSERT 之间被并发抢占）时
+        // 用 resolve_thing_name_tx 重探测兜底（≤10），与改造前行为一致
         let mut tries = 0usize;
+        let mut candidate = planned[i].clone();
         let (resolved, id) = loop {
-            let resolved = db
-                .resolve_thing_name_tx(tx, workspace_id, &node.name)
-                .await
-                .map_err(|e| MarketplaceError::Validation(e.to_string()))?;
-            let req = build_thing_request(node, resolved.clone(), real_parent.clone(), template_id, workspace_id);
+            let req = build_thing_request(node, candidate.clone(), real_parent.clone(), template_id, workspace_id);
             match db.create_thing_row_with_type_tx(tx, &req, &node.thing_type).await {
-                Ok(id) => break (resolved, id),
+                Ok(id) => break (candidate, id),
                 Err(e) if is_unique_violation(&e) && tries < MAX_NAME_RETRIES => {
                     tries += 1;
+                    candidate = db
+                        .resolve_thing_name_tx(tx, workspace_id, &candidate)
+                        .await
+                        .map_err(|e| MarketplaceError::Validation(e.to_string()))?;
                     continue;
                 }
                 Err(e) => return Err(MarketplaceError::Template(format!("创建本体失败: {}", e))),
             }
         };
-        if resolved != node.name {
-            warnings.push(format!("名称冲突：{} → {}", node.name, resolved));
+        if resolved != planned[i] {
+            warnings.push(format!("名称冲突：{} → {}", planned[i], resolved));
         }
 
+        final_names.push(resolved);
         real_ids.insert(node.temp_id, id.clone());
         if node.temp_id == 0 {
             root_id = id.clone();
@@ -320,7 +404,7 @@ async fn persist_tree(
 
         persist_children_tables(db, tx, workspace_id, &id, node, &mut warnings).await?;
     }
-    Ok((root_id, warnings))
+    Ok((root_id, final_names, warnings))
 }
 
 fn is_unique_violation(e: &sqlx::Error) -> bool {
@@ -358,8 +442,12 @@ fn build_thing_request(
     };
 
     CreateThingRequest {
-        name: resolved_name,
-        display_name: node.display_name.clone(),
+        name: resolved_name.clone(),
+        // display_name 等于未解析名称时（默认命名模式产物）同步为解析后名称，与树上显示一致
+        display_name: match &node.display_name {
+            Some(d) if d == &node.name => Some(resolved_name),
+            other => other.clone(),
+        },
         category: Some(node.category.clone()),
         address: None,
         description: None,

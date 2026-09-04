@@ -1168,6 +1168,25 @@ impl Db {
         resolve_thing_name_tx(tx, workspace_id, base).await
     }
 
+    /// 场景实例化器 dry-run：只读名称占用探测（pool 直连，与落库同口径）。
+    pub async fn thing_name_exists(
+        &self,
+        workspace_id: &str,
+        name: &str,
+    ) -> std::result::Result<bool, sqlx::Error> {
+        thing_name_exists(self.pool(), workspace_id, name).await
+    }
+
+    /// 场景实例化器：事务内名称占用探测（可见本事务已写入的兄弟节点）。
+    pub async fn thing_name_exists_tx(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        workspace_id: &str,
+        name: &str,
+    ) -> std::result::Result<bool, sqlx::Error> {
+        thing_name_exists_tx(tx, workspace_id, name).await
+    }
+
     /// 场景实例化器：事务内向 resources 表插入一条 thing 关联资源。
     #[allow(clippy::too_many_arguments)]
     pub async fn insert_thing_resource_tx(
@@ -2278,36 +2297,69 @@ pub(crate) async fn create_thing_row_with_type(
     Ok(id)
 }
 
-/// 名称冲突解决（场景实例化器专用，快路径）：剥离末尾 -N 后缀得 base，
-/// 在 workspace 内探测 base / base-2 / ... / base-11 取第一个空位。
-/// 匹配 idx_things_name_workspace 的 (COALESCE(workspace_id,''), name) 语义。
-/// 注意 TOCTOU：调用方仍需捕获唯一约束错误并重试。
+/// 名称冲突解决（场景实例化器专用，快路径）：按 thing_name_candidates 序列
+/// 取第一个空位。注意 TOCTOU：调用方仍需捕获唯一约束错误并重试。
 pub(crate) async fn resolve_thing_name_tx(
     tx: &mut Transaction<'_, Sqlite>,
     workspace_id: &str,
     base: &str,
 ) -> std::result::Result<String, sqlx::Error> {
-    let stripped = strip_numeric_suffix(base);
-    for n in 0..=10 {
-        let candidate = if n == 0 {
-            stripped.clone()
-        } else {
-            format!("{}-{}", stripped, n + 1)
-        };
-        let exists: Option<(String,)> =
-            sqlx::query_as("SELECT id FROM things WHERE COALESCE(workspace_id, '') = COALESCE(?, '') AND name = ?")
-                .bind(workspace_id)
-                .bind(&candidate)
-                .fetch_optional(&mut **tx)
-                .await?;
-        if exists.is_none() {
+    for candidate in thing_name_candidates(base) {
+        if !thing_name_exists_tx(tx, workspace_id, &candidate).await? {
             return Ok(candidate);
         }
     }
     Err(sqlx::Error::Protocol(format!(
         "同名冲突过多（{}），请手动指定名称",
-        stripped
+        strip_numeric_suffix(base)
     )))
+}
+
+/// 名称候选序列：剥离末尾 -N 后缀得 base，产出 base / base-2 / ... / base-11（上限 10 次冲突）。
+/// dry-run 只读探测与落库解析共用此算法，保证两侧 -N 后缀一致。
+pub fn thing_name_candidates(base: &str) -> Vec<String> {
+    let stripped = strip_numeric_suffix(base);
+    (0..=10)
+        .map(|n| {
+            if n == 0 {
+                stripped.clone()
+            } else {
+                format!("{}-{}", stripped, n + 1)
+            }
+        })
+        .collect()
+}
+
+const THING_NAME_EXISTS_SQL: &str =
+    "SELECT id FROM things WHERE COALESCE(workspace_id, '') = COALESCE(?, '') AND name = ?";
+
+/// 名称占用探测（pool 直连，只读；dry-run 路径用）。
+/// 匹配 idx_things_name_workspace 的 (COALESCE(workspace_id,''), name) 语义。
+pub async fn thing_name_exists(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    name: &str,
+) -> std::result::Result<bool, sqlx::Error> {
+    let row: Option<(String,)> = sqlx::query_as(THING_NAME_EXISTS_SQL)
+        .bind(workspace_id)
+        .bind(name)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.is_some())
+}
+
+/// 名称占用探测（事务内；落库路径用，可见本事务已写入的兄弟节点）。
+pub(crate) async fn thing_name_exists_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    workspace_id: &str,
+    name: &str,
+) -> std::result::Result<bool, sqlx::Error> {
+    let row: Option<(String,)> = sqlx::query_as(THING_NAME_EXISTS_SQL)
+        .bind(workspace_id)
+        .bind(name)
+        .fetch_optional(&mut **tx)
+        .await?;
+    Ok(row.is_some())
 }
 
 /// 剥离末尾 "-数字" 后缀（"主楼-2" → "主楼"）；无后缀或非数字后缀原样返回。

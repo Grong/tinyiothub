@@ -747,6 +747,150 @@ async fn instantiate_missing_ref_returns_validation_not_500() {
 }
 
 // ──────────────────────────────────────────────────────────────
+// I1：dry-run 预览 / 提交响应 tree_preview / DB 落库名称三者一致
+// ──────────────────────────────────────────────────────────────
+
+/// 名称 parity：预占 "1号楼" 后，dry-run 与 commit 的 tree_preview 一致
+/// 且都显示 1号楼-2，DB 实际行名也是 1号楼-2。
+#[tokio::test]
+async fn instantiate_dry_run_and_commit_previews_match_with_preoccupied_name() {
+    let (pool, db) = setup_db().await;
+    let scene_id = seed_standard_templates(&pool).await;
+    sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES ('pre-1', '1号楼', ?, 'building')")
+        .bind(WS)
+        .execute(&pool)
+        .await
+        .expect("pre-occupy name");
+
+    let dry = SceneInstantiator::instantiate(&db, WS, &scene_id, &params(1, 1, true))
+        .await
+        .expect("dry-run should succeed");
+    assert!(dry.tree_preview.contains("1号楼-2"), "dry-run preview: {}", dry.tree_preview);
+    // dry-run 不写库：只有预占的那一行
+    assert_eq!(thing_count(&pool).await, 1, "dry-run 不写库");
+
+    let committed = SceneInstantiator::instantiate(&db, WS, &scene_id, &params(1, 1, false))
+        .await
+        .expect("commit should succeed");
+    assert_eq!(
+        dry.tree_preview, committed.tree_preview,
+        "dry-run 与落库 tree_preview 须一致"
+    );
+    assert!(committed.tree_preview.contains("1号楼-2"), "commit preview: {}", committed.tree_preview);
+
+    let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM things WHERE workspace_id = ? AND name = '1号楼-2'")
+        .bind(WS)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(exists.is_some(), "DB 实际行名须为 1号楼-2");
+}
+
+/// dry-run 也校验 parent_id：不存在 → 400；其他 workspace 的 parent → 400。
+#[tokio::test]
+async fn instantiate_dry_run_validates_parent_id() {
+    let (pool, db) = setup_db().await;
+    let scene_id = seed_standard_templates(&pool).await;
+
+    let mut p = params(1, 1, true);
+    p.parent_id = Some("ghost-parent".to_string());
+    let err = SceneInstantiator::instantiate(&db, WS, &scene_id, &p)
+        .await
+        .expect_err("missing parent must fail in dry-run too");
+    assert!(
+        matches!(err, MarketplaceError::Validation(_)),
+        "expected Validation (400), got: {err:?}"
+    );
+
+    seed_test_workspace(&pool, TENANT, "ws-other").await;
+    sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES ('other-ws-thing', '外部楼', 'ws-other', 'building')")
+        .execute(&pool)
+        .await
+        .expect("seed other-workspace thing");
+    let mut p = params(1, 1, true);
+    p.parent_id = Some("other-ws-thing".to_string());
+    let err = SceneInstantiator::instantiate(&db, WS, &scene_id, &p)
+        .await
+        .expect_err("cross-workspace parent must fail in dry-run too");
+    assert!(
+        matches!(err, MarketplaceError::Validation(_)),
+        "expected Validation (400), got: {err:?}"
+    );
+    assert_eq!(thing_count(&pool).await, 0);
+}
+
+/// 提交响应名称一致：同一场景实例化两次，第二次响应 tree_preview 含 -2 后缀名。
+#[tokio::test]
+async fn instantiate_commit_response_preview_uses_resolved_names() {
+    let (pool, db) = setup_db().await;
+    let scene_id = seed_standard_templates(&pool).await;
+
+    let first = SceneInstantiator::instantiate(&db, WS, &scene_id, &params(1, 1, false))
+        .await
+        .expect("first instantiate");
+    assert!(first.tree_preview.contains("测试园区 (campus)"), "first preview: {}", first.tree_preview);
+    assert!(!first.tree_preview.contains("-2"), "first preview must have no suffix: {}", first.tree_preview);
+
+    let second = SceneInstantiator::instantiate(&db, WS, &scene_id, &params(1, 1, false))
+        .await
+        .expect("second instantiate");
+    assert!(
+        second.tree_preview.contains("测试园区-2 (campus)"),
+        "second preview must show suffixed root: {}",
+        second.tree_preview
+    );
+    assert!(
+        second.tree_preview.contains("1号楼-2"),
+        "second preview must show suffixed building: {}",
+        second.tree_preview
+    );
+
+    // 响应与 DB 一致：-2 后缀行真实存在
+    for name in ["测试园区-2", "1号楼-2"] {
+        let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM things WHERE workspace_id = ? AND name = ?")
+            .bind(WS)
+            .bind(name)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!(exists.is_some(), "DB 缺少响应中显示的名称 {name}");
+    }
+}
+
+/// 回归：无冲突时 dry-run 与 commit 的 tree_preview 一致，且与展开器原生输出相同（不变名）。
+/// 用 1×1 参数（4 节点名称天然互不相同；2×2 下跨分支重名节点本就会加后缀，属既有行为）。
+#[tokio::test]
+async fn instantiate_no_conflict_preview_matches_expander_output() {
+    let (pool, db) = setup_db().await;
+    let scene_id = seed_standard_templates(&pool).await;
+
+    let dry = SceneInstantiator::instantiate(&db, WS, &scene_id, &params(1, 1, true))
+        .await
+        .expect("dry-run");
+    let committed = SceneInstantiator::instantiate(&db, WS, &scene_id, &params(1, 1, false))
+        .await
+        .expect("commit");
+
+    assert_eq!(dry.tree_preview, committed.tree_preview);
+    // 展开器原生格式（与 scene_template 展开测试同口径）
+    assert!(committed.tree_preview.contains("测试园区 (campus)"));
+    assert!(committed.tree_preview.contains("\n  1号楼 (building)"));
+    assert!(committed.tree_preview.contains("\n    1F (floor)"));
+    assert!(
+        !committed.warnings.iter().any(|w| w.contains("名称冲突")),
+        "无冲突不应有名称变更 warning: {:?}",
+        committed.warnings
+    );
+    // DB 名与预览一致（未改名的根）
+    let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM things WHERE workspace_id = ? AND name = '测试园区'")
+        .bind(WS)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(exists.is_some());
+}
+
+// ──────────────────────────────────────────────────────────────
 // Marketplace API（列表 is_composition / 详情 / instantiate 端点）
 // ──────────────────────────────────────────────────────────────
 

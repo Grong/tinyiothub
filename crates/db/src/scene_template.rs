@@ -508,7 +508,8 @@ fn check_param_range(scene_ref: &str, def: &SceneParameter, value: i64) -> Resul
 }
 
 /// tree_preview 标签清洗：剔除换行/首尾空格，括号转全角。
-fn sanitize_label(s: &str) -> String {
+/// pub：场景实例化器在名称解析后重建 tree_preview 时复用同一规则。
+pub fn sanitize_label(s: &str) -> String {
     s.replace(['\n', '\r'], "")
         .trim()
         .replace('(', "（")
