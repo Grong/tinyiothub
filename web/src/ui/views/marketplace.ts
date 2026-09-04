@@ -334,6 +334,8 @@ export class MarketplaceView extends LitElement {
         this.resultRootId = result.rootThingId;
       } else {
         success("场景包创建成功");
+        // closeSceneDialog 在 submitting 时会直接 return，先复位再关闭
+        this.submitting = false;
         this.closeSceneDialog();
         if (result.rootThingId) this.navigateTo(`things/${result.rootThingId}`);
       }
