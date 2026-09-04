@@ -15,7 +15,7 @@ use tinyiothub_storage::Db;
 use tower::ServiceExt;
 
 use crate::domains::marketplace::error::MarketplaceError;
-use crate::domains::marketplace::scene_instantiator::{InstantiateParams, SceneInstantiator};
+use crate::domains::marketplace::scene_instantiator::{InstantiateParams, SceneInstantiator, toctou_fault};
 use crate::test_utils::{
     auth_header, create_test_token_with_workspace, response_parts, seed_test_workspace, setup_test_app_with_pool,
 };
@@ -453,6 +453,54 @@ async fn instantiate_concurrent_same_name_gets_suffix_not_500() {
     assert_eq!(names.len(), 2, "expected two distinct root names, got: {names:?}");
     assert!(names.contains("测试园区"));
     assert!(names.contains("测试园区-2"));
+}
+
+/// I12：TOCTOU 唯一约束兜底路径的故障注入覆盖。SQLite 下跨连接唯一冲突
+/// 不可达——并发事务的 in-tx 探测 SELECT 拿共享锁后，首个写操作先抛
+/// SQLITE_BUSY_SNAPSHOT（走整事务锁重试，见上一条并发测试），唯一约束冲突
+/// 根本没机会触发。这里用 cfg(test) seam 在名称插入前抢占计划名，制造真实
+/// 唯一约束冲突，断言：重试发生（warning 记录改名）、重探测得 -2 后缀名、
+/// 最终落库成功（无 500）。
+#[tokio::test]
+async fn instantiate_toctou_unique_violation_retries_with_suffix() {
+    let (pool, db) = setup_db().await;
+    let scene_id = seed_standard_templates(&pool).await;
+
+    toctou_fault::arm_once();
+    let outcome = SceneInstantiator::instantiate(&db, WS, &scene_id, &params(1, 1, false))
+        .await
+        .expect("TOCTOU unique violation must be recovered by re-probe retry, not 500");
+
+    // 重试发生且落库 -2 后缀名：根节点（第一个插入的节点）名为 测试园区-2
+    let root_id = outcome.root_thing_id.clone().expect("root thing id");
+    let root_name: String = sqlx::query_scalar("SELECT name FROM things WHERE id = ?")
+        .bind(&root_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(root_name, "测试园区-2");
+
+    // 抢占行真实存在（持有计划名），与重试落库行并存
+    let preempted_name: String = sqlx::query_scalar("SELECT name FROM things WHERE id = 'toctou-fault-1'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(preempted_name, "测试园区");
+
+    // warning 记录 计划名 → 后缀名（证明走的是重探测兜底而非整事务锁重试：
+    // 后者回滚后抢占行一并撤销，不会留下改名 warning 和抢占行）
+    assert!(
+        outcome
+            .warnings
+            .iter()
+            .any(|w| w.contains("测试园区") && w.contains("测试园区-2")),
+        "expected re-probe rename warning, got: {:?}",
+        outcome.warnings
+    );
+
+    // 树完整落库：4 节点 + 1 抢占行
+    assert_eq!(thing_count(&pool).await, 5);
+    assert_eq!(outcome.node_count, 4);
 }
 
 /// C1 回归：用真实 seed_system 播种的内置 smart_campus 必须能端到端实例化。

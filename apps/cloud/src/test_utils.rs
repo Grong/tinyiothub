@@ -4,6 +4,7 @@
 //! - `setup_test_app()` — creates Router with in-memory SQLite
 //! - `create_test_token()` — generates valid JWT for authenticated requests
 
+use std::str::FromStr;
 use std::sync::OnceLock;
 
 use axum::Router;
@@ -158,8 +159,16 @@ pub async fn seed_test_workspace(pool: &sqlx::SqlitePool, tenant_id: &str, works
 /// `tinyiothub_storage::seed` (Task 3) and is NOT applied here — handler tests
 /// seed only the rows they need.
 async fn create_test_app_state() -> AppState {
-    // In-memory SQLite — no temp file, no cleanup issues
-    let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+    // In-memory SQLite — no temp file, no cleanup issues.
+    // 连接配置与生产 `crates/db/src/pool.rs::connect_options` 对齐
+    // （FK on + busy_timeout 5000ms）：重载 CI 下并发测试的瞬时 SQLITE_BUSY
+    // 应等待锁窗口而非直接耗尽重试。
+    let options = sqlx::sqlite::SqliteConnectOptions::from_str("sqlite::memory:")
+        .expect("valid in-memory sqlite url")
+        .create_if_missing(true)
+        .foreign_keys(true)
+        .busy_timeout(std::time::Duration::from_millis(5000));
+    let pool = sqlx::SqlitePool::connect_with(options)
         .await
         .expect("Failed to create in-memory SQLite pool");
 

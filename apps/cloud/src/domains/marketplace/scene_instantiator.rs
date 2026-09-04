@@ -460,7 +460,7 @@ async fn persist_tree(
         let mut candidate = planned[i].clone();
         let (resolved, id) = loop {
             let req = build_thing_request(node, candidate.clone(), real_parent.clone(), template_id, workspace_id);
-            match db.create_thing_row_with_type_tx(tx, &req, &node.thing_type).await {
+            match insert_thing_node_tx(db, tx, &req, &node.thing_type).await {
                 Ok(id) => break (candidate, id),
                 Err(e) if is_unique_violation(&e) && tries < MAX_NAME_RETRIES => {
                     tries += 1;
@@ -486,6 +486,20 @@ async fn persist_tree(
         persist_children_tables(db, tx, workspace_id, &id, node, &mut warnings).await?;
     }
     Ok((root_id, final_names, warnings))
+}
+
+/// 名称插入（persist_tree 唯一调用点）。生产路径直通
+/// `Db::create_thing_row_with_type_tx`；`#[cfg(test)]` 下提供故障注入 seam，
+/// 用于覆盖 SQLite 下跨连接不可达的 TOCTOU 唯一约束重探测路径。
+async fn insert_thing_node_tx(
+    db: &Db,
+    tx: &mut Transaction<'_, Sqlite>,
+    req: &CreateThingRequest,
+    thing_type: &str,
+) -> std::result::Result<String, sqlx::Error> {
+    #[cfg(test)]
+    toctou_fault::maybe_preempt_name(tx, req, thing_type).await?;
+    db.create_thing_row_with_type_tx(tx, req, thing_type).await
 }
 
 fn is_unique_violation(e: &sqlx::Error) -> bool {
@@ -655,5 +669,44 @@ fn parse_alarm_level(s: &str) -> AlarmLevel {
         "error" => AlarmLevel::Error,
         "critical" => AlarmLevel::Critical,
         _ => AlarmLevel::Warning,
+    }
+}
+
+/// 测试故障注入（不进生产二进制）：arming 后下一次名称插入先在本事务内
+/// 抢占计划名，使随后的 INSERT 抛真实唯一约束冲突，驱动调用方的
+/// `is_unique_violation` 重探测重试路径。thread_local 保证并发测试间互不干扰
+/// （`#[tokio::test]` 默认 current_thread runtime，测试任务不跨线程迁移）。
+/// 置于文件末尾：clippy `items_after_test_module` 要求 cfg(test) mod 之后无其他项。
+#[cfg(test)]
+pub(crate) mod toctou_fault {
+    use std::cell::Cell;
+
+    use sqlx::{Sqlite, Transaction};
+    use tinyiothub_core::models::thing::CreateThingRequest;
+
+    thread_local! {
+        static ARMED: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// 武装一次故障：本线程下一次 `insert_thing_node_tx` 前抢占 `req.name`。
+    pub(crate) fn arm_once() {
+        ARMED.with(|c| c.set(true));
+    }
+
+    pub(super) async fn maybe_preempt_name(
+        tx: &mut Transaction<'_, Sqlite>,
+        req: &CreateThingRequest,
+        thing_type: &str,
+    ) -> Result<(), sqlx::Error> {
+        if !ARMED.with(|c| c.replace(false)) {
+            return Ok(());
+        }
+        sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES ('toctou-fault-1', ?, ?, ?)")
+            .bind(&req.name)
+            .bind(req.workspace_id.as_deref().unwrap_or_default())
+            .bind(thing_type)
+            .execute(&mut **tx)
+            .await?;
+        Ok(())
     }
 }
