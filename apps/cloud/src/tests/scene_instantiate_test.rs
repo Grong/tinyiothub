@@ -445,6 +445,45 @@ async fn instantiate_concurrent_same_name_gets_suffix_not_500() {
     assert!(names.contains("测试园区-2"));
 }
 
+/// C1 回归：用真实 seed_system 播种的内置 smart_campus 必须能端到端实例化。
+/// dry-run 不解析 condition，只有真实落库路径触发 AlarmCondition 反序列化——
+/// 内置模板曾携带非法 change condition 导致提交必炸，此用例防回归。
+#[tokio::test]
+async fn instantiate_builtin_smart_campus_from_real_seed() {
+    let (_state, pool) = setup_test_app_with_pool().await;
+    let db = Db::new(pool.clone());
+    tinyiothub_storage::seed::seed_system(&db).await.expect("seed system");
+    seed_test_workspace(&pool, TENANT, WS).await;
+
+    // building=1, floor=1：1 园区 + 1 楼 + 1 层 + 2 传感器 = 5
+    let outcome = SceneInstantiator::instantiate(&db, WS, "builtin_smart_campus", &params(1, 1, false))
+        .await
+        .expect("builtin smart_campus must instantiate from real seed");
+
+    assert_eq!(outcome.node_count, 5);
+    assert!(outcome.root_thing_id.is_some());
+    assert_eq!(thing_count(&pool).await, 5);
+
+    // 根节点「能耗异常」+ 2 个传感器「高温告警」= 3 条规则全部落库
+    let rules: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM thing_alarm_rules r JOIN things t ON r.thing_id = t.id WHERE t.workspace_id = ?",
+    )
+    .bind(WS)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rules, 3);
+    // 根节点的 change 规则（能耗异常，无 property_ref）
+    let root_rules: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM thing_alarm_rules WHERE thing_id = ? AND rule_type = 'change'",
+    )
+    .bind(outcome.root_thing_id.as_deref().unwrap())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(root_rules, 1);
+}
+
 // ──────────────────────────────────────────────────────────────
 // Marketplace API（列表 is_composition / 详情 / instantiate 端点）
 // ──────────────────────────────────────────────────────────────

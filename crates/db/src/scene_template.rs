@@ -201,7 +201,8 @@ use crate::thing_template::ThingTemplate;
 
 pub const MAX_NODES: usize = 500;
 pub const MAX_SCENE_REF_DEPTH: usize = 5;
-const ALLOWED_RULE_TYPES: [&str; 4] = ["threshold", "range", "change", "event"];
+/// 允许的告警规则类型（展开器校验 + 测试断言共用同一来源）。
+pub const ALLOWED_RULE_TYPES: [&str; 4] = ["threshold", "range", "change", "event"];
 
 #[derive(Debug, Error)]
 pub enum ExpandError {

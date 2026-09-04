@@ -740,7 +740,7 @@ SELECT
   "dashboard": {"cards": [{"property": "area"}, {"property": "plot_ratio"}]},
   "alarm_rules": [
     {"name": "能耗异常", "rule_type": "change",
-     "condition": {"type": "change", "field": "energy", "threshold_percent": 50.0},
+     "condition": {"type": "change", "change_type": "any", "threshold": 50.0, "time_window": 300},
      "alarm_level": "warning", "notification_config": {}}
   ],
   "children": [
