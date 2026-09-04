@@ -22,8 +22,9 @@
 //!   响应 tree_preview 用落库最终名称重建（预览/响应/DB 三者一致）
 //!
 //! 可观测性：项目当前无 metrics 注册表，v1 用 tracing 结构化日志承载
-//!（`#[instrument]` + info!/warn! 带 template/node_count/result 字段，
-//! 字段口径按 scene_instantiations_total{template, result} 可聚合设计）。
+//!（入口/出口/失败日志带 template_id、node_count、warnings_count、duration_ms、
+//! error_category 稳定短标签，字段口径按 scene_instantiations_total{template, result}
+//! 可聚合设计）。
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -40,7 +41,7 @@ use tinyiothub_storage::scene_template::{
 };
 use tinyiothub_storage::thing::thing_name_candidates;
 use tinyiothub_storage::thing_template::ThingTemplate;
-use tracing::{info, instrument, warn};
+use tracing::{error, info, instrument, warn};
 
 use super::error::{MarketplaceError, Result};
 
@@ -76,6 +77,47 @@ impl SceneInstantiator {
         template_id: &str,
         params: &InstantiateParams,
     ) -> Result<InstantiateOutcome> {
+        let started = std::time::Instant::now();
+        info!(
+            template_id,
+            dry_run = params.dry_run,
+            parameter_values = ?params.parameter_values,
+            scene_name = %params.scene_name,
+            parent_id = ?params.parent_id,
+            "场景包实例化开始"
+        );
+        let outcome = Self::do_instantiate(db, workspace_id, template_id, params).await;
+        let duration_ms = started.elapsed().as_millis() as u64;
+        match &outcome {
+            Ok(o) => info!(
+                template_id,
+                node_count = o.node_count,
+                warnings_count = o.warnings.len(),
+                duration_ms,
+                result = if params.dry_run { "dry_run" } else { "success" },
+                "场景包实例化完成"
+            ),
+            Err(e) => {
+                let category = error_category(e);
+                if is_client_error(e) {
+                    warn!(template_id, error_category = category, error = %e, duration_ms, "场景包实例化失败");
+                } else {
+                    error!(template_id, error_category = category, error = %e, duration_ms, "场景包实例化失败");
+                }
+            }
+        }
+        outcome
+    }
+
+    async fn do_instantiate(
+        db: &Db,
+        workspace_id: &str,
+        template_id: &str,
+        params: &InstantiateParams,
+    ) -> Result<InstantiateOutcome> {
+        // 0. scene_name 校验：trim 后非空、无控制字符、≤128 字符（防垃圾传播到整棵树每个节点名）
+        validate_scene_name(&params.scene_name)?;
+
         // 1. 加载模板
         let template = db
             .find_thing_template_by_id(template_id, workspace_id)
@@ -100,8 +142,7 @@ impl SceneInstantiator {
             &params.parameter_values,
             &device_templates,
             &scene_templates,
-        )
-        .map_err(|e| MarketplaceError::Validation(e.to_string()))?;
+        )?;
 
         // 4. 配额校验（真实行数，不用缓存计数）
         let current = db
@@ -139,7 +180,6 @@ impl SceneInstantiator {
             let mut warnings = name_warnings(&result.nodes, &resolved);
             warnings.extend(result.warnings.clone());
             let tree_preview = rebuild_tree_preview(&result.nodes, &resolved);
-            info!(node_count = result.node_count, template = %template.name, result = "dry_run", "场景包 dry-run 预览完成");
             return Ok(InstantiateOutcome {
                 node_count: result.node_count,
                 root_thing_id: None,
@@ -166,25 +206,18 @@ impl SceneInstantiator {
                 }
                 Err(e) if is_lock_contention(&e) && attempt < MAX_TX_RETRIES => {
                     attempt += 1;
-                    warn!(attempt, error = %e, template = %template.name, "实例化遇到锁竞争，回滚后重试");
+                    warn!(template_id, attempt, error_category = "lock_contention", error = %e, "实例化遇到锁竞争，回滚后重试");
                     drop(tx); // 显式回滚
                     tokio::time::sleep(std::time::Duration::from_millis(50 * attempt as u64)).await;
                     continue;
                 }
                 Err(e) => {
-                    warn!(error = %e, template = %template.name, result = "failure", "场景包实例化失败，事务回滚");
-                    // tx drop 自动回滚
+                    // tx drop 自动回滚；最终失败由 instantiate 出口统一记日志
                     return Err(e);
                 }
             }
         };
 
-        info!(
-            node_count = result.node_count,
-            template = %template.name,
-            result = "success",
-            "场景包实例化完成"
-        );
         Ok(InstantiateOutcome {
             node_count: result.node_count,
             root_thing_id: Some(root_id),
@@ -192,6 +225,54 @@ impl SceneInstantiator {
             warnings,
         })
     }
+}
+
+/// scene_name 上限（trim 后字符数）。
+const MAX_SCENE_NAME_LEN: usize = 128;
+
+/// scene_name 校验：trim 后非空、不含 C0 控制字符（\n/\r/\t 等）、长度 ≤128。
+fn validate_scene_name(name: &str) -> Result<()> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(MarketplaceError::Validation("scene_name 不能为空".to_string()));
+    }
+    if name.chars().any(char::is_control) {
+        return Err(MarketplaceError::Validation(
+            "scene_name 不能包含控制字符（换行/制表符等）".to_string(),
+        ));
+    }
+    if trimmed.chars().count() > MAX_SCENE_NAME_LEN {
+        return Err(MarketplaceError::Validation(format!(
+            "scene_name 长度不能超过 {} 字符",
+            MAX_SCENE_NAME_LEN
+        )));
+    }
+    Ok(())
+}
+
+/// 失败日志的稳定分类标签（可聚合）：客户端错误细分，服务器错误归 internal。
+fn error_category(e: &MarketplaceError) -> &'static str {
+    match e {
+        MarketplaceError::Expand(ExpandError::TooLarge { .. }) => "too_large",
+        MarketplaceError::Expand(ExpandError::RefNotFound { .. }) => "ref_not_found",
+        MarketplaceError::Expand(ExpandError::RefCycle { .. }) => "ref_cycle",
+        MarketplaceError::Expand(_) => "validation",
+        MarketplaceError::Validation(msg) if msg.starts_with("超出配额") => "quota",
+        MarketplaceError::Validation(_) | MarketplaceError::InvalidConfig(_) => "validation",
+        MarketplaceError::NotFound(_) => "not_found",
+        _ => "internal",
+    }
+}
+
+/// 客户端错误（4xx）记 warn，服务器错误（5xx）记 error。
+fn is_client_error(e: &MarketplaceError) -> bool {
+    matches!(
+        e,
+        MarketplaceError::Expand(_)
+            | MarketplaceError::Validation(_)
+            | MarketplaceError::InvalidConfig(_)
+            | MarketplaceError::NotFound(_)
+    )
 }
 
 /// 名称解析（dry-run 与 commit 共用步骤）：按拓扑序遍历展开节点，
@@ -303,7 +384,7 @@ async fn preload_refs(
 
     while let Some((name, depth)) = queue.pop_front() {
         if depth >= MAX_SCENE_REF_DEPTH {
-            return Err(MarketplaceError::Validation(ExpandError::TooDeep.to_string()));
+            return Err(MarketplaceError::Expand(ExpandError::TooDeep));
         }
         if !visited.insert(name.clone()) {
             continue;

@@ -35,6 +35,10 @@ pub enum MarketplaceError {
     #[error("参数校验失败: {0}")]
     Validation(String),
 
+    /// 场景包展开失败（结构化的 ExpandError，400；display 与 Validation 一致）。
+    #[error("参数校验失败: {0}")]
+    Expand(#[from] tinyiothub_storage::scene_template::ExpandError),
+
     #[error("Driver error: {0}")]
     Driver(String),
 

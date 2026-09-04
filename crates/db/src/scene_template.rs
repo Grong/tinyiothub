@@ -525,6 +525,13 @@ pub fn expand(
     device_templates: &HashMap<String, ThingTemplate>,
     scene_templates: &HashMap<String, SceneTemplateFile>,
 ) -> Result<ExpansionResult, ExpandError> {
+    // 未知参数键拒绝：请求 map 中每个键必须在本模板 parameters 中声明，
+    // 防笔误（如 building_counts）被静默忽略而用默认值创建出不同的树
+    for key in parameter_values.keys() {
+        if !template.parameters.iter().any(|p| &p.name == key) {
+            return Err(ExpandError::InvalidParameter { name: key.clone() });
+        }
+    }
     // 参数校验 + 默认值填充
     let mut params = HashMap::new();
     for p in &template.parameters {
@@ -661,6 +668,18 @@ mod tests {
         let r = expand(&t, "园区", &HashMap::new(), &HashMap::new(), &HashMap::new()).unwrap();
         // 默认 building=2, floor=5 → 1+2+10=13
         assert_eq!(r.node_count, 13);
+    }
+
+    #[test]
+    fn expand_rejects_unknown_param_key() {
+        let t = campus_template();
+        // 笔误 building_counts（已声明的是 building_count）必须报错且指出冒犯键名
+        let params = HashMap::from([("building_counts".to_string(), 2i64)]);
+        let e = expand(&t, "园区", &params, &HashMap::new(), &HashMap::new()).unwrap_err();
+        match e {
+            ExpandError::InvalidParameter { name } => assert_eq!(name, "building_counts"),
+            other => panic!("expected InvalidParameter, got {other:?}"),
+        }
     }
 
     #[test]

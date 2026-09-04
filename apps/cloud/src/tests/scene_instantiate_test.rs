@@ -142,6 +142,16 @@ fn params(building_count: i64, floor_count: i64, dry_run: bool) -> InstantiatePa
     }
 }
 
+/// 无声明参数的自定义场景包用：parameter_values 必须为空（未知键 → 400）。
+fn no_params(dry_run: bool) -> InstantiateParams {
+    InstantiateParams {
+        scene_name: "测试园区".to_string(),
+        parent_id: None,
+        parameter_values: HashMap::new(),
+        dry_run,
+    }
+}
+
 async fn thing_count(pool: &SqlitePool) -> i64 {
     sqlx::query_scalar("SELECT COUNT(*) FROM things WHERE workspace_id = ?")
         .bind(WS)
@@ -317,7 +327,7 @@ async fn instantiate_rolls_back_on_mid_failure() {
     }"#;
     let scene_id = seed_template(&pool, "bad_campus", "scenes", bad_scene, "[]", "[]").await;
 
-    let err = SceneInstantiator::instantiate(&db, WS, &scene_id, &params(1, 1, false))
+    let err = SceneInstantiator::instantiate(&db, WS, &scene_id, &no_params(false))
         .await
         .expect_err("bad alarm condition must fail");
     assert!(
@@ -531,7 +541,7 @@ async fn instantiate_scene_ref_chain_loads_transitively() {
     )
     .await;
 
-    let outcome = SceneInstantiator::instantiate(&db, WS, &a_id, &params(1, 1, false))
+    let outcome = SceneInstantiator::instantiate(&db, WS, &a_id, &no_params(false))
         .await
         .expect("A→B→C chain must instantiate via transitive preload");
 
@@ -566,14 +576,15 @@ async fn instantiate_scene_ref_cycle_returns_validation_with_chain() {
     )
     .await;
 
-    let err = SceneInstantiator::instantiate(&db, WS, &a_id, &params(1, 1, false))
+    let err = SceneInstantiator::instantiate(&db, WS, &a_id, &no_params(false))
         .await
         .expect_err("scene_ref cycle must fail");
     match err {
-        MarketplaceError::Validation(msg) => {
+        MarketplaceError::Expand(e) => {
+            let msg = e.to_string();
             assert!(msg.contains("cyc_a → cyc_b → cyc_a"), "错误须含引用链路径: {msg}");
         }
-        other => panic!("expected Validation (400), got: {other:?}"),
+        other => panic!("expected Expand (400), got: {other:?}"),
     }
     assert_eq!(thing_count(&pool).await, 0);
 }
@@ -614,11 +625,12 @@ async fn instantiate_mapped_value_over_target_max_returns_validation() {
         .await
         .expect_err("mapped value over target max must fail");
     match err {
-        MarketplaceError::Validation(msg) => {
+        MarketplaceError::Expand(e) => {
+            let msg = e.to_string();
             assert!(msg.contains("ovr_building"), "错误须含目标模板名: {msg}");
             assert!(msg.contains("floors"), "错误须含目标参数名: {msg}");
         }
-        other => panic!("expected Validation (400), got: {other:?}"),
+        other => panic!("expected Expand (400), got: {other:?}"),
     }
     assert_eq!(thing_count(&pool).await, 0);
 }
@@ -660,7 +672,7 @@ async fn instantiate_loads_template_ref_inside_scene_ref_subtree() {
     )
     .await;
 
-    let outcome = SceneInstantiator::instantiate(&db, WS, &a_id, &params(1, 1, false))
+    let outcome = SceneInstantiator::instantiate(&db, WS, &a_id, &no_params(false))
         .await
         .expect("template_ref inside scene_ref subtree must be preloaded");
 
@@ -702,14 +714,14 @@ async fn instantiate_event_rule_type_rejected_at_validation() {
     )
     .await;
 
-    let err = SceneInstantiator::instantiate(&db, WS, &scene_id, &params(1, 1, false))
+    let err = SceneInstantiator::instantiate(&db, WS, &scene_id, &no_params(false))
         .await
         .expect_err("event rule_type must be rejected at validation");
     match err {
-        MarketplaceError::Validation(msg) => {
-            assert!(msg.contains("event"), "错误须指出该类型: {msg}");
+        MarketplaceError::Expand(e) => {
+            assert!(e.to_string().contains("event"), "错误须指出该类型: {e}");
         }
-        other => panic!("expected Validation (400), got: {other:?}"),
+        other => panic!("expected Expand (400), got: {other:?}"),
     }
     assert_eq!(thing_count(&pool).await, 0);
 }
@@ -1082,5 +1094,79 @@ async fn api_instantiate_entity_template_400() {
         StatusCode::BAD_REQUEST,
         "entity template instantiate must be 400, got: {body}"
     );
+    assert_eq!(thing_count(&pool).await, 0);
+}
+
+/// scene_name 校验：空 / 纯空白 / 含控制字符 / 超 128 字符 → 各 400。
+#[tokio::test]
+async fn api_instantiate_invalid_scene_name_400() {
+    let (app, pool) = setup_app().await;
+    let scene_id = seed_standard_templates(&pool).await;
+    let token = create_test_token_with_workspace("user-1", TENANT, WS);
+
+    let cases = [
+        ("".to_string(), "empty"),
+        ("   ".to_string(), "whitespace-only"),
+        ("园区\nB栋".to_string(), "newline"),
+        ("园\t区".to_string(), "tab"),
+        ("园".repeat(129), "over 128 chars"),
+    ];
+    for (scene_name, case) in cases {
+        let response = app
+            .clone()
+            .oneshot(api_request(
+                "POST",
+                &format!("/api/v1/marketplace/thing-templates/{scene_id}/instantiate"),
+                &token,
+                Some(json!({"sceneName": scene_name})),
+            ))
+            .await
+            .unwrap();
+        let (status, body) = response_parts(response).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "scene_name case '{case}' must be 400, got: {body}"
+        );
+    }
+    // 边界：恰好 128 字符合法
+    let response = app
+        .oneshot(api_request(
+            "POST",
+            &format!("/api/v1/marketplace/thing-templates/{scene_id}/instantiate"),
+            &token,
+            Some(json!({"sceneName": "园".repeat(128)})),
+        ))
+        .await
+        .unwrap();
+    let (status, body) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "128-char scene_name must pass, got: {body}");
+}
+
+/// parameter_values 含未声明键 → 400 且错误信息指出冒犯键名（防笔误静默用默认值）。
+#[tokio::test]
+async fn api_instantiate_unknown_parameter_key_400() {
+    let (app, pool) = setup_app().await;
+    let scene_id = seed_standard_templates(&pool).await;
+    let token = create_test_token_with_workspace("user-1", TENANT, WS);
+
+    let response = app
+        .oneshot(api_request(
+            "POST",
+            &format!("/api/v1/marketplace/thing-templates/{scene_id}/instantiate"),
+            &token,
+            Some(json!({
+                "sceneName": "测试园区",
+                // 笔误：已声明的是 building_count
+                "parameterValues": {"building_counts": 5}
+            })),
+        ))
+        .await
+        .unwrap();
+
+    let (status, body) = response_parts(response).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "unknown key must be 400, got: {body}");
+    let msg = body["msg"].as_str().unwrap_or_default();
+    assert!(msg.contains("building_counts"), "错误须指出冒犯键名: {msg}");
     assert_eq!(thing_count(&pool).await, 0);
 }

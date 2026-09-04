@@ -452,10 +452,12 @@ async fn install_thing_template(
 // ──────────────────────────────────────────────────────────────────
 
 /// MarketplaceError → HTTP 状态码 + ApiResponse。
-/// Validation/InvalidConfig → 400，NotFound → 404，其余 → 500。
+/// Validation/Expand/InvalidConfig → 400，NotFound → 404，其余 → 500。
 fn marketplace_error_response(e: &MarketplaceError) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
     let status = match e {
-        MarketplaceError::Validation(_) | MarketplaceError::InvalidConfig(_) => StatusCode::BAD_REQUEST,
+        MarketplaceError::Validation(_) | MarketplaceError::Expand(_) | MarketplaceError::InvalidConfig(_) => {
+            StatusCode::BAD_REQUEST
+        }
         MarketplaceError::NotFound(_) => StatusCode::NOT_FOUND,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
@@ -577,8 +579,14 @@ async fn instantiate_thing_template(
             (StatusCode::OK, ApiResponseBuilder::success(result))
         }
         Err(e) => {
-            tracing::error!("Failed to instantiate thing_template {}: {}", id, e);
-            marketplace_error_response(&e)
+            let (status, response) = marketplace_error_response(&e);
+            // 4xx 为客户端错误记 warn，5xx 记 error（带 template_id 便于聚合）
+            if status.is_server_error() {
+                tracing::error!(template_id = %id, error = %e, "实例化场景包失败");
+            } else {
+                tracing::warn!(template_id = %id, status = status.as_u16(), error = %e, "实例化场景包请求被拒绝");
+            }
+            (status, response)
         }
     }
 }
