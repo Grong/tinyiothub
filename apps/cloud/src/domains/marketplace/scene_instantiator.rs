@@ -211,16 +211,10 @@ impl SceneInstantiator {
         // 7. 单事务落库；SQLite 单写者锁竞争时整体回滚重试
         let mut attempt = 0usize;
         let (root_id, final_names, warnings) = loop {
-            let mut tx = db
-                .pool()
-                .begin()
-                .await
-                .map_err(|e| db_err("开启事务", e))?;
+            let mut tx = db.pool().begin().await.map_err(|e| db_err("开启事务", e))?;
             match persist_tree(db, &mut tx, workspace_id, template_id, params, &result).await {
                 Ok((root_id, final_names, mut persist_warnings)) => {
-                    tx.commit()
-                        .await
-                        .map_err(|e| db_err("提交事务", e))?;
+                    tx.commit().await.map_err(|e| db_err("提交事务", e))?;
                     persist_warnings.extend(result.warnings.clone());
                     break (root_id, final_names, persist_warnings);
                 }
@@ -325,9 +319,8 @@ async fn resolve_node_names(
                 break;
             }
         }
-        let name = picked.ok_or_else(|| {
-            MarketplaceError::Validation(format!("同名冲突过多（{}），请手动指定名称", node.name))
-        })?;
+        let name = picked
+            .ok_or_else(|| MarketplaceError::Validation(format!("同名冲突过多（{}），请手动指定名称", node.name)))?;
         taken.insert(name.clone());
         resolved.push(name);
     }

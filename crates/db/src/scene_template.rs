@@ -530,8 +530,7 @@ impl<'a> Expander<'a> {
             root.device_info.default_name_pattern = node.device_info.default_name_pattern.clone();
         }
         if node.device_info.default_display_name_pattern.is_some() {
-            root.device_info.default_display_name_pattern =
-                node.device_info.default_display_name_pattern.clone();
+            root.device_info.default_display_name_pattern = node.device_info.default_display_name_pattern.clone();
         }
         if node.default_knowledge.is_some() {
             root.default_knowledge = node.default_knowledge.clone();
@@ -1125,7 +1124,9 @@ mod tests {
         assert!(r.nodes[1].commands.is_empty());
         assert!(r.nodes[1].event_defs.is_empty());
         assert!(
-            r.warnings.iter().any(|w| w.contains("broken_tpl") && w.contains("properties 解析失败")),
+            r.warnings
+                .iter()
+                .any(|w| w.contains("broken_tpl") && w.contains("properties 解析失败")),
             "properties 解析失败须记 warning: {:?}",
             r.warnings
         );

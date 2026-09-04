@@ -74,8 +74,7 @@ async fn seed_system_builtin_scene_templates_have_valid_alarm_rules() {
             .fetch_one(db.pool())
             .await
             .unwrap();
-        let t = SceneTemplateFile::from_json(&device_info)
-            .unwrap_or_else(|e| panic!("{id} device_info 解析失败: {e}"));
+        let t = SceneTemplateFile::from_json(&device_info).unwrap_or_else(|e| panic!("{id} device_info 解析失败: {e}"));
         assert!(!t.children.is_empty(), "{id} 必须有 children");
         // spec §4：seed 行 default_knowledge 列与根节点 knowledge 一致（非 NULL）
         let knowledge_col: Option<String> =
@@ -90,9 +89,8 @@ async fn seed_system_builtin_scene_templates_have_valid_alarm_rules() {
             "{id} default_knowledge 列须与根节点 knowledge 一致"
         );
         for rule in collect_alarm_rules(&t) {
-            serde_json::from_value::<AlarmCondition>(rule.condition.clone()).unwrap_or_else(|e| {
-                panic!("{id} 规则「{}」condition 非法: {e}（{:?}）", rule.name, rule.condition)
-            });
+            serde_json::from_value::<AlarmCondition>(rule.condition.clone())
+                .unwrap_or_else(|e| panic!("{id} 规则「{}」condition 非法: {e}（{:?}）", rule.name, rule.condition));
             assert!(
                 ALLOWED_RULE_TYPES.contains(&rule.rule_type.as_str()),
                 "{id} 规则「{}」rule_type 非法: {}",

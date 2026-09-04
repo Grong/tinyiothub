@@ -27,14 +27,16 @@ fn builtin_scene_templates_parse_and_validate() {
     for file in ["smart_campus", "smart_building", "smart_floor"] {
         let path = format!("../../templates/builtin/scenes/{}.json", file);
         let content = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{} 读取失败: {}", path, e));
-        let t = SceneTemplateFile::from_json(&content)
-            .unwrap_or_else(|e| panic!("{} 解析失败: {}", file, e));
+        let t = SceneTemplateFile::from_json(&content).unwrap_or_else(|e| panic!("{} 解析失败: {}", file, e));
         assert!(!t.children.is_empty(), "{} 必须有 children", file);
 
         // 告警规则：condition 必须可解析为 AlarmCondition，rule_type 必须在允许集合内
         for rule in collect_alarm_rules(&t) {
             serde_json::from_value::<AlarmCondition>(rule.condition.clone()).unwrap_or_else(|e| {
-                panic!("{} 规则「{}」condition 非法: {}（{:?}）", file, rule.name, e, rule.condition)
+                panic!(
+                    "{} 规则「{}」condition 非法: {}（{:?}）",
+                    file, rule.name, e, rule.condition
+                )
             });
             assert!(
                 ALLOWED_RULE_TYPES.contains(&rule.rule_type.as_str()),

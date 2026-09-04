@@ -162,7 +162,7 @@ pub async fn import_scene_template(
                     id,
                     name: candidate,
                     thing_type: thing_type.to_string(),
-                })
+                });
             }
             Err(e) if is_template_name_unique_violation(&e) => continue, // 竞态被抢占，试下一个后缀
             Err(e) => return Err(ImportError::Database(e)),

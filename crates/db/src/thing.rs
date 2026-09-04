@@ -1169,11 +1169,7 @@ impl Db {
     }
 
     /// 场景实例化器 dry-run：只读名称占用探测（pool 直连，与落库同口径）。
-    pub async fn thing_name_exists(
-        &self,
-        workspace_id: &str,
-        name: &str,
-    ) -> std::result::Result<bool, sqlx::Error> {
+    pub async fn thing_name_exists(&self, workspace_id: &str, name: &str) -> std::result::Result<bool, sqlx::Error> {
         thing_name_exists(self.pool(), workspace_id, name).await
     }
 

@@ -200,7 +200,10 @@ async fn instantiate_creates_full_tree_in_one_tx() {
     let linked = root_linked.expect("root linked_data");
     assert!(linked.contains("knowledge"), "linked_data missing knowledge: {linked}");
     assert!(linked.contains("园区知识库内容"));
-    assert!(linked.contains("event_defs"), "linked_data missing event_defs: {linked}");
+    assert!(
+        linked.contains("event_defs"),
+        "linked_data missing event_defs: {linked}"
+    );
     assert!(linked.contains("campus_event"), "event_defs 内容缺失: {linked}");
     assert!(linked.contains("dashboard"), "linked_data missing dashboard: {linked}");
 
@@ -664,13 +667,12 @@ async fn instantiate_builtin_smart_campus_from_real_seed() {
     .unwrap();
     assert_eq!(rules, 4);
     // 根节点的 change 规则（能耗异常，无 property_ref）
-    let root_rules: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM thing_alarm_rules WHERE thing_id = ? AND rule_type = 'change'",
-    )
-    .bind(outcome.root_thing_id.as_deref().unwrap())
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let root_rules: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarm_rules WHERE thing_id = ? AND rule_type = 'change'")
+            .bind(outcome.root_thing_id.as_deref().unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(root_rules, 1);
 }
 
@@ -805,7 +807,11 @@ async fn instantiate_scene_ref_chain_loads_transitively() {
     // A 根 + B 根 + C 根 + 1 室 = 4
     assert_eq!(outcome.node_count, 4);
     assert_eq!(thing_count(&pool).await, 4);
-    assert!(outcome.tree_preview.contains("1室"), "tree_preview: {}", outcome.tree_preview);
+    assert!(
+        outcome.tree_preview.contains("1室"),
+        "tree_preview: {}",
+        outcome.tree_preview
+    );
 }
 
 /// scene_ref 环 A→B→A：经 instantiate 路径可达环检测，400 且错误含引用链路径。
@@ -1034,7 +1040,11 @@ async fn instantiate_dry_run_and_commit_previews_match_with_preoccupied_name() {
     let dry = SceneInstantiator::instantiate(&db, WS, &scene_id, &params(1, 1, true))
         .await
         .expect("dry-run should succeed");
-    assert!(dry.tree_preview.contains("1号楼-2"), "dry-run preview: {}", dry.tree_preview);
+    assert!(
+        dry.tree_preview.contains("1号楼-2"),
+        "dry-run preview: {}",
+        dry.tree_preview
+    );
     // dry-run 不写库：只有预占的那一行
     assert_eq!(thing_count(&pool).await, 1, "dry-run 不写库");
 
@@ -1045,7 +1055,11 @@ async fn instantiate_dry_run_and_commit_previews_match_with_preoccupied_name() {
         dry.tree_preview, committed.tree_preview,
         "dry-run 与落库 tree_preview 须一致"
     );
-    assert!(committed.tree_preview.contains("1号楼-2"), "commit preview: {}", committed.tree_preview);
+    assert!(
+        committed.tree_preview.contains("1号楼-2"),
+        "commit preview: {}",
+        committed.tree_preview
+    );
 
     let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM things WHERE workspace_id = ? AND name = '1号楼-2'")
         .bind(WS)
@@ -1097,8 +1111,16 @@ async fn instantiate_commit_response_preview_uses_resolved_names() {
     let first = SceneInstantiator::instantiate(&db, WS, &scene_id, &params(1, 1, false))
         .await
         .expect("first instantiate");
-    assert!(first.tree_preview.contains("测试园区 (campus)"), "first preview: {}", first.tree_preview);
-    assert!(!first.tree_preview.contains("-2"), "first preview must have no suffix: {}", first.tree_preview);
+    assert!(
+        first.tree_preview.contains("测试园区 (campus)"),
+        "first preview: {}",
+        first.tree_preview
+    );
+    assert!(
+        !first.tree_preview.contains("-2"),
+        "first preview must have no suffix: {}",
+        first.tree_preview
+    );
 
     let second = SceneInstantiator::instantiate(&db, WS, &scene_id, &params(1, 1, false))
         .await
@@ -1151,11 +1173,12 @@ async fn instantiate_no_conflict_preview_matches_expander_output() {
         committed.warnings
     );
     // DB 名与预览一致（未改名的根）
-    let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM things WHERE workspace_id = ? AND name = '测试园区'")
-        .bind(WS)
-        .fetch_optional(&pool)
-        .await
-        .unwrap();
+    let exists: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM things WHERE workspace_id = ? AND name = '测试园区'")
+            .bind(WS)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
     assert!(exists.is_some());
 }
 
@@ -1242,7 +1265,10 @@ async fn api_instantiate_dry_run() {
     // X2：dry-run 响应带配额用量（夹具 plan_free thing_limit=0 → 无限制 null）
     assert_eq!(result["quota"]["current"], 0, "quota.current: {result}");
     assert_eq!(result["quota"]["after"], 11, "quota.after: {result}");
-    assert!(result["quota"]["limit"].is_null(), "quota.limit 无限制须为 null: {result}");
+    assert!(
+        result["quota"]["limit"].is_null(),
+        "quota.limit 无限制须为 null: {result}"
+    );
     assert_eq!(thing_count(&pool).await, 0, "dry-run must not write");
 }
 
