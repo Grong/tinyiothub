@@ -79,6 +79,8 @@
 }
 ```
 
+（注：上例为格式示意，演示递归 `children` 与 `template_ref`；实际内置 smart_campus 的楼栋子树改为经 `scene_ref` 组合 smart_building，见 §4。）
+
 ### 2.2 字段语义
 
 - **同一 schema 递归**：每个 child 节点支持顶层模板的全部能力块——`properties` / `commands` / `events` / `default_knowledge` / `resources` / `dashboard` / `alarm_rules` / `children`。Rust 侧为一个递归类型 `ThingNodeDef`，不区分"设备节点"与"空间节点"。
@@ -88,11 +90,11 @@
 - **`count`**：叶节点直接写死份数（如每层 2 个传感器）。
 - **命名模式**：`device_info.default_name_pattern` 中支持 `{index}` 与 `{scene_name}`。`{index}` 在**每个父节点内独立从 1 开始**（1号楼的楼层与2号楼的楼层各自从 1F 起）；多级模式的替换在展开该层时进行（父层的 `{index}` 已在父层替换完毕，子层只替换自己的）。
 - **`template_ref`**：叶节点快捷引用现有设备模板。查找顺序：当前 workspace 模板 → builtin 模板（按 `name`）；现有 `find_thing_template_by_name` 无 ORDER BY，实现时需加确定性排序（workspace 行优先于 builtin 行）或应用层取双候选后择优。都找不到或已停用（`is_active=0` 查找即返回 None）→ 400「引用不存在或已停用」，指出引用名。引用时把该模板的 properties/commands/events 内联；节点缺省 `thing_type="device"`，`category` 取被引用模板的 `category`（原 `device_type` 列已在重命名迁移中移除，不可依赖）。
-- **`scene_ref`**：节点快捷引用其他**场景包模板**（按 `name`，同样的 workspace→builtin 确定性查找顺序），实例化时把被引用模板的根子树内联到该位置。可带 `param_mapping`——**方向：键是被引用模板的参数名，值是本模板的参数名**，例：本模板参数 `floor_count` 传给被引用模板的 `floors` 写作 `{"floors": "floor_count"}`；缺省用被引用模板默认值；**映射指向的本模板参数不存在 → 400**，指出参数名与映射方向。展开器维护引用栈，检测到环（A→B→A）报 400 并指出引用链路径；引用深度上限 5 层。首批内置模板保持内联不引用（简单可读），`scene_ref` 能力在 schema 与展开器中支持，模板文件校验测试覆盖引用环静态检测。
+- **`scene_ref`**：节点快捷引用其他**场景包模板**（按 `name`，同样的 workspace→builtin 确定性查找顺序），实例化时把被引用模板的根子树内联到该位置。可带 `param_mapping`——**方向：键是被引用模板的参数名，值是本模板的参数名**，例：本模板参数 `floor_count` 传给被引用模板的 `floors` 写作 `{"floors": "floor_count"}`；缺省用被引用模板默认值；**映射指向的本模板参数不存在 → 400**，指出参数名与映射方向。展开器维护引用栈，检测到环（A→B→A）报 400 并指出引用链路径；引用深度上限 5 层。**组合语义裁定（PR #88 修复批）**：`scene_ref` 与 `count`/`count_param` 组合**合法**（引用 N 份——内置 smart_campus 即以 `scene_ref: smart_building` + `count_param: building_count` 组合引用楼栋子树）；`scene_ref` 与自有 `children` 组合 → 400（静默忽略会丢子树，故显式拒绝），`scene_ref` 节点仍可携带自有 `device_info`/`default_knowledge`/`alarm_rules` 等块（叠加在被引用根节点上）；`template_ref` 与自有 `properties`/`commands`/`events` 组合 → 400（内联语义二选一）。模板文件校验测试覆盖引用环静态检测。
 - **`parameters`**：仅允许 `type: "int"`，必填 `default`/`min`/`max`。
 - **`resources`**：通用资源定义 `{name, type, uri}`。`type` 取值 `image` / `model3d` / `document` / `file`；实现时给现有 `ResourceType` 枚举（`crates/core/src/models/workspace.rs`）补 `image`/`model3d` 两个值，并同步放开创建接口校验（`apps/cloud/src/domains/tenant/workspace/handler.rs` 当前硬编码仅接受 `File`）与前端资源创建 UI；DB `resources.resource_type` 无 CHECK 约束，无需迁移。
 - **`dashboard`**：v1 最小 schema：`{"cards": [{"property": "<属性名>"}]}`——属性卡片列表。不做 3D。
-- **`alarm_rules`**：节点级告警规则定义，模板文件用简写 `{name, rule_type, condition, alarm_level, notification_config, property_ref}`。`property_ref` 引用**本节点**的属性名，实例化展开后映射为真实 `property_id`；`notification_config` 缺省为 `{}`（不启用通知，避免渠道必填校验失败）。`condition` 对齐 `AlarmCondition` 枚举的 serde JSON，例：`{"type":"threshold","operator":"greater_than","value":80.0}`。**实例化器映射**：简写 → `AlarmRule::new(name, description=None, thing_id, property_id, rule_type, condition, alarm_level, notification_config, workspace_id)`，写 DB 时列名为 `rule_name`/`condition_config`。v1 `rule_type` 仅允许 **Rust `RuleType` 枚举与 DB CHECK 约束的交集** `threshold`/`range`/`change`/`event`（注意：DB CHECK 有 `offline` 但 Rust 无此变体；Rust 有 `Duration`/`Composite` 但 DB 不允许——模板作者用交集外类型在校验期报 400）。
+- **`alarm_rules`**：节点级告警规则定义，模板文件用简写 `{name, rule_type, condition, alarm_level, notification_config, property_ref}`。`property_ref` 引用**本节点**的属性名，实例化展开后映射为真实 `property_id`；`notification_config` 缺省为 `{}`（不启用通知，避免渠道必填校验失败）。`condition` 对齐 `AlarmCondition` 枚举的 serde JSON，例：`{"type":"threshold","operator":"greater_than","value":80.0}`。**实例化器映射**：简写 → `AlarmRule::new(name, description=None, thing_id, property_id, rule_type, condition, alarm_level, notification_config, workspace_id)`，写 DB 时列名为 `rule_name`/`condition_config`。v1 `rule_type` 仅允许 `threshold`/`range`/`change` 三类（原设计为 Rust `RuleType` 枚举与 DB CHECK 约束的交集并含 `event`；**`event` 已移出白名单**——`AlarmCondition` 无 Event 变体，event 规则实际存 `EventAlarmCondition` JSON，v1 诚实降级：模板含 `event` rule_type 在校验期报 400，指出规则名。DB CHECK 另有 `offline` 但 Rust 无此变体；Rust 有 `Duration`/`Composite` 但 DB 不允许。后续方向：模板 alarm_rules 块支持 `EventAlarmCondition` 形状后重新放开 `event`）。
 
 ### 2.3 存储
 
@@ -168,7 +170,7 @@
 
 1. **加载与校验**：取模板（`device_info` 原文按 `SceneTemplateFile` 解析）→ 校验参数值（类型、min/max）→ 校验所有 `template_ref`/`scene_ref` 引用存在（workspace→builtin 顺序）→ 检测 scene_ref 环与深度。
 2. **展开（纯函数，无 IO）**：递归遍历根节点，按 `count_param`/`count`/`scene_ref` 展开 children，输出 `ExpansionResult { nodes: Vec<ExpandedNode>, total_count, tree_preview, warnings }`。`ExpandedNode` 含 name/display_name/category/thing_type/properties/commands/event_defs/knowledge/resources/dashboard/alarm_rules 及**临时父子链接**（展开序号）。`{index}`、`{scene_name}` 在此替换。
-3. **落库（单事务）**：显式开启一个 sqlx `Transaction`，贯穿全部写入；各表（things/properties/commands/resources/alarm_rules）新增接受 `&mut Transaction` 的内部插入函数（现有单条插入接口不直接复用，避免隐式各自提交）。按拓扑序（父先于子）创建 Thing，临时链接映射为真实 `parent_id`，同时写入 `thing_type`；随后创建属性/命令/资源/alarm_rules，最后写 `linked_data`（knowledge/event_defs/dashboard）。**批量插入用 `QueryBuilder::push_values` 多行 INSERT，每语句 ≤100 行分批**（SQLite 绑定变量上限保护）。
+3. **落库（单事务）**：显式开启一个 sqlx `Transaction`，贯穿全部写入；各表（things/properties/commands/resources/alarm_rules）新增接受 `&mut Transaction` 的内部插入函数（现有单条插入接口不直接复用，避免隐式各自提交）。按拓扑序（父先于子）创建 Thing，临时链接映射为真实 `parent_id`，同时写入 `thing_type`；随后创建属性/命令/资源/alarm_rules，最后写 `linked_data`（knowledge/event_defs/dashboard）。~~批量插入用 `QueryBuilder::push_values` 多行 INSERT，每语句 ≤100 行分批~~（SQLite 绑定变量上限保护）——**实现偏差（PR #88 落地裁定）**：实际为逐行 INSERT；SQLite 规模下绑定上限不触达、单事务内逐行可接受，push_values 改造已登记 TODOS（迁 Postgres 或实测瓶颈再做）。
 4. **名称冲突处理**：`things.name` 有 `(workspace, name)` 唯一索引。算法：先剥离原名末尾的 `-N` 后缀得到 base，再**在事务内 SELECT 探测** `base`、`base-2`、`base-3`…，取第一个空闲名插入，记入 warnings；探测超过 10 个仍冲突返回 400「同名冲突过多，请手动指定名称」。SELECT 探测是快路径，**保留唯一约束捕获作兜底**：并发下两个事务可能探到同一名（TOCTOU），插入撞唯一约束时重新探测重试（同上限 10 次）。
 5. **返回结果**。
 
@@ -182,7 +184,7 @@
 ### 3.5 可观测性
 
 - **结构化日志（tracing）**：展开与落库的入口/出口各一条——模板 id、参数值、node_count、耗时、warnings 数；失败时带错误类别与引用链路径。
-- **指标**：`scene_instantiations_total{template, result}` 计数器（result = success/validation_error/too_large/tx_failed）。
+- **指标（降级为结构化日志契约，PR #88 修复批裁定）**：项目无 metrics 注册表，不设 `scene_instantiations_total` 计数器；原指标语义由结构化日志字段承载——入口/出口日志带 `template_id`、`dry_run`、`params`（参数值）、`node_count`、`warnings_count`、`duration_ms`；失败日志带 `error_category`（validation_error/too_large/tx_failed/lock_contention 等）与引用链路径（ref chain）。
 - 目标：上线 3 周后仅凭日志可复盘任何一次失败实例化。
 
 ### 3.4 反向导出（E5：另存为场景包）
@@ -199,7 +201,7 @@
 
 存放 `templates/builtin/scenes/`，随现有 seed 流程注册（`is_builtin=1`）。**seed 方式：SQL 内嵌**——当前 `crates/db/src/seed.rs` 只执行 `seed/system.sql`，现有 `templates/builtin/*/*.json` 本就是 SQL seed 的源文件、运行时不读文件；保持一致，场景包 JSON 内容内嵌进 system.sql（`device_info` 列存完整 JSON 全文），并新增 `scenes` 类别行。各模板 seed 行的 `thing_type`：smart_campus=`space`、smart_building=`building`、smart_floor=`space`；`default_knowledge` 列填根节点 knowledge（供 marketplace 详情展示人设，实例化时各节点 knowledge 另有 linked_data 落点，两处不互相同步）。
 
-首批 3 个，覆盖"由大到小"三个粒度，全部只引用现有 `temperature_humidity_sensor` 设备模板，不为场景包新增设备模板；均不使用 `scene_ref`（保持内联可读）：
+首批 3 个，覆盖"由大到小"三个粒度，全部只引用现有 `temperature_humidity_sensor` 设备模板，不为场景包新增设备模板；~~均不使用 `scene_ref`~~（PR #88 修复批：smart_campus 改为经 `scene_ref` 组合 smart_building——`count_param: building_count` + `param_mapping: {"floor_count": "floor_count"}`，scene_ref 节点上叠加自有 knowledge/alarm_rules；smart_building/smart_floor 保持内联可读）：
 
 1. **智慧园区（smart_campus）**：园区 → 楼栋 ×N → 楼层 ×N → 温湿度传感器 ×2/层。参数 `building_count`（默认 2）、`floor_count`（默认 5）。园区级：属性（占地面积、容积率）、knowledge（园区管家人设）、alarm_rules（能耗异常）；楼栋级：knowledge、alarm_rules（温度超阈值）；楼层级：resources（楼层平面图占位）。
 2. **单体建筑（smart_building）**：建筑 → 楼层 ×N → 温湿度传感器 ×2/层。参数 `floor_count`（默认 10）。
@@ -236,7 +238,12 @@ dashboard 块 v1 只放 `{"cards": [...]}` 属性卡片配置，不接 3D 场景
 | 场景 | 行为 |
 |---|---|
 | 参数缺失/类型错误/超 min/max | 400，逐字段返回错误信息 |
+| 未知参数键（`parameter_values` 含模板未声明的键） | 400，指出键名 |
+| `scene_name` 为空/含控制字符/超过 128 字符 | 400，指出校验规则 |
 | 节点同时声明 `count` 与 `count_param` | 400，指出节点 key |
+| `scene_ref` 节点同时声明自有 `children` | 400，指出节点 key（`scene_ref` + `count`/`count_param` 合法，见 §2.2） |
+| `template_ref` 节点同时声明自有 `properties`/`commands`/`events` | 400，指出节点 key |
+| `alarm_rules` 的 `rule_type` 为 `event` 或白名单外类型 | 400，指出规则名（v1 白名单：threshold/range/change，见 §2.2） |
 | 对非组合模板调 instantiate | 400，提示走 install 流程 |
 | `template_ref` / `scene_ref` 引用不存在（workspace 与 builtin 都没有） | 400，指出引用名 |
 | `scene_ref` 检测到引用环 / 深度 > 5 | 400，指出引用链路径 |
@@ -251,12 +258,12 @@ dashboard 块 v1 只放 `{"cards": [...]}` 属性卡片配置，不接 3D 场景
 ## 7. 测试
 
 1. **展开器单元测试**（纯函数，重点）：计数参数展开、`{index}` 每层独立序号、`{scene_name}` 替换、多层嵌套父子链接、`template_ref` 内联（workspace→builtin 查找顺序）、`scene_ref` 内联与参数映射、引用环/超深拒绝、超上限拒绝、缺参数报错、空 children 判为非组合。
-2. **dry-run 一致性测试**：同一输入下 dry-run 的 `node_count`/`tree_preview` 与实际落库结果一致（含名称后缀探测：预占名称后两者得到相同 `-N` 后缀）；配额超限在 dry-run 即报错。
+2. **dry-run 一致性测试**：dry-run 做**只读名称探测**（SELECT 探测名称占用与配额，绝不写入），同一输入下 dry-run 的 `node_count`/`tree_preview` 与实际落库结果一致（含名称后缀探测：预占名称后两者得到相同 `-N` 后缀）；配额超限在 dry-run 即报错。并发豁免维持 eng 外部视角 V3 裁定（dry-run 不持锁，并发下最终名称以落库响应为准）。
 3. **模板文件校验测试**：`templates/builtin/scenes/*.json` 全部可按 `SceneTemplateFile` 解析并通过 schema 校验。
 4. **反向导出 round-trip 测试**：实例化 → 导出 → 重新实例化，断言结构等价（节点数、层级、属性集）；命名泛化启发式的正/反例。
 5. **集成测试**：调 instantiate API → 断言库中树结构正确（数量、层级、`thing_type` 映射、属性、alarm_rules、resources 表记录、linked_data）；事务回滚用例（注入中途失败）；名称冲突自动追加序号用例。**测试环境必须跑完整迁移链**（baseline 中子表 FK 指向 `devices`，经 `20260825000001` 重命名为 `things`，仅跑 baseline 会 FK 不一致）。
 6. **前端手测**：参数表单渲染、dry-run 实时预览、warnings 展示、跳转、另存为场景包下载。
-7. **并发竞态测试（eng 评审补）**：两个并行实例化同名场景，断言一个得到 `-2` 后缀、无 500（覆盖 TOCTOU 兜底路径）。
+7. **并发竞态测试（eng 评审补）**：两个并行实例化同名场景，断言一个得到 `-2` 后缀、无 500（覆盖 TOCTOU 兜底路径）。**实现注记（PR #88 修复批）**：SQLite 下跨连接并发路径被 `BUSY_SNAPSHOT` 抢先命中（由整事务锁重试覆盖），真实并发测试打不到唯一约束兜底分支；唯一约束捕获→重探测重试由 `#[cfg(test)]` 故障注入单测覆盖（`scene_instantiator::toctou_fault` seam 在插入前抢占名称，断言重试成功且得到 `-N` 后缀）。
 8. **回归测试（eng 评审补，REGRESSION RULE）**：entity 模板走现有创建/预览路径行为不变；组合模板误入 entity 路径（`get_thing_info()` 门）优雅报错而非 panic/500。
 
 ## 8. 非目标（v1 明确不做）
@@ -289,6 +296,6 @@ dashboard 块 v1 只放 `{"cards": [...]}` 属性卡片配置，不接 3D 场景
 
 第 1 轮独立审查（质量分 6/10 → 修正后复审）提出的范围异议，经 CEO 裁定仪式由用户明确采纳，予以保留：
 
-1. `scene_ref` 跨模板引用在 v1 无实际使用场景（首批模板内联）——保留理由：用户裁定 E6 采纳，展开器能力先行。
+1. `scene_ref` 跨模板引用在 v1 无实际使用场景（首批模板内联）——保留理由：用户裁定 E6 采纳，展开器能力先行。（PR #88 修复批更新：smart_campus 已实际使用 `scene_ref` 组合 smart_building，此异议情形消除。）
 2. 反向导出（E5）超出最小可用范围——保留理由：用户裁定采纳，定位为模板生态供给侧起点。
 3. `resources` 块 v1 仅记录 uri、无真实托管——保留理由：楼层平面图占位对演示体验有价值，写入成本低。
