@@ -137,7 +137,7 @@ jobs:
           fi
           echo "✅ Domain dependency guard passed"
 
-      - name: Agent Purity Guard (G9: source + tree + manifests)
+      - name: "Agent Purity Guard (G9: source + tree + manifests)"
         run: bash scripts/guards/agent-purity.sh
 
       - name: DB SQL Residence Guard (Task 13)
