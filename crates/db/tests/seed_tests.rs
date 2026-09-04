@@ -77,6 +77,18 @@ async fn seed_system_builtin_scene_templates_have_valid_alarm_rules() {
         let t = SceneTemplateFile::from_json(&device_info)
             .unwrap_or_else(|e| panic!("{id} device_info 解析失败: {e}"));
         assert!(!t.children.is_empty(), "{id} 必须有 children");
+        // spec §4：seed 行 default_knowledge 列与根节点 knowledge 一致（非 NULL）
+        let knowledge_col: Option<String> =
+            sqlx::query_scalar("SELECT default_knowledge FROM thing_templates WHERE id = ?")
+                .bind(id)
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            knowledge_col.as_deref(),
+            t.default_knowledge.as_deref(),
+            "{id} default_knowledge 列须与根节点 knowledge 一致"
+        );
         for rule in collect_alarm_rules(&t) {
             serde_json::from_value::<AlarmCondition>(rule.condition.clone()).unwrap_or_else(|e| {
                 panic!("{id} 规则「{}」condition 非法: {e}（{:?}）", rule.name, rule.condition)

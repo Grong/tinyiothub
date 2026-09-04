@@ -15,6 +15,7 @@
     "default_name_pattern": "{scene_name}",
     "default_display_name_pattern": {"zh": "{scene_name}", "en": "{scene_name}"}
   },
+  "default_knowledge": "你是这层楼的楼层管家，关注各房间环境与设备状态。",
   "properties": [
     {"name": "area", "display_name": {"zh": "面积", "en": "Area"}, "data_type": "number", "unit": "m²", "is_read_only": false, "is_required": false}
   ],

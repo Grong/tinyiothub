@@ -200,6 +200,9 @@ use thiserror::Error;
 use crate::thing_template::ThingTemplate;
 
 pub const MAX_NODES: usize = 500;
+/// scene_ref 嵌套深度上限。口径：ref_stack 预置根模板名，故实际允许
+/// MAX_SCENE_REF_DEPTH - 1 = 4 层嵌套引用（4 嵌套 + 根 = 5 层模板），
+/// 与实例化器 preload_refs 的深度计数（直接引用从 depth=1 起，depth >= 5 拒绝）一致。
 pub const MAX_SCENE_REF_DEPTH: usize = 5;
 /// 允许的告警规则类型（展开器校验 + 测试断言共用同一来源）。
 /// event 规则存 EventAlarmCondition JSON（AlarmCondition 无 Event 变体），
@@ -223,10 +226,14 @@ pub enum ExpandError {
     RefCycle { chain: String },
     #[error("scene_ref 引用深度超过 {MAX_SCENE_REF_DEPTH} 层")]
     TooDeep,
-    #[error("展开后节点数 {count} 超过上限 {MAX_NODES}")]
+    #[error("展开节点数超过上限 {MAX_NODES}（第 {count} 个节点被拒绝，实际总数未知）")]
     TooLarge { count: usize },
     #[error("节点 {key} 同时声明 count 与 count_param")]
     BothCountFields { key: String },
+    #[error("节点 {key} 同时声明 scene_ref 与自己的 children")]
+    SceneRefWithChildren { key: String },
+    #[error("节点 {key} 同时声明 template_ref 与自己的 properties/commands/events")]
+    TemplateRefWithOwnBlocks { key: String },
     #[error("不支持的告警规则类型: {rule_type}（允许: threshold/range/change；event 暂不支持）")]
     RuleTypeNotAllowed { rule_type: String },
 }
@@ -344,6 +351,13 @@ impl<'a> Expander<'a> {
         }
 
         if let Some(scene_ref) = &node.scene_ref {
+            // scene_ref 节点不允许再声明自己的 children（静默忽略会丢子树）；
+            // scene_ref + count/count_param（引用 N 份）保留为合法组合
+            if !node.children.is_empty() {
+                return Err(ExpandError::SceneRefWithChildren {
+                    key: node.key.clone().unwrap_or_else(|| "<anonymous>".to_string()),
+                });
+            }
             return self.expand_scene_ref(node, scene_ref, parent_temp_id, depth);
         }
 
@@ -359,6 +373,13 @@ impl<'a> Expander<'a> {
         };
 
         if let Some(template_ref) = &node.template_ref {
+            // template_ref 节点不允许再声明自己的 properties/commands/events
+            // （内联会整体覆盖，自有块静默丢弃属于模板作者笔误）
+            if !node.properties.is_empty() || !node.commands.is_empty() || !node.events.is_empty() {
+                return Err(ExpandError::TemplateRefWithOwnBlocks {
+                    key: node.key.clone().unwrap_or_else(|| "<anonymous>".to_string()),
+                });
+            }
             // 设备模板引用：内联其 properties/commands/events
             let tpl = self
                 .device_templates
@@ -367,10 +388,31 @@ impl<'a> Expander<'a> {
                     name: template_ref.clone(),
                 })?;
             let category = tpl.category.clone();
-            let props: Vec<PropertyTemplate> = serde_json::from_str(&tpl.properties).unwrap_or_default();
-            let cmds: Vec<CommandTemplate> = serde_json::from_str(&tpl.actions).unwrap_or_default();
-            let events: Vec<serde_json::Value> =
-                serde_json::from_str(&tpl.events_json_for_inline()).unwrap_or_default();
+            // 列 JSON 解析失败不静默置空：记 warning 后按空块继续创建节点
+            let props: Vec<PropertyTemplate> = match serde_json::from_str(&tpl.properties) {
+                Ok(v) => v,
+                Err(e) => {
+                    self.warnings
+                        .push(format!("模板 {template_ref} 的 properties 解析失败（{e}），已跳过"));
+                    Vec::new()
+                }
+            };
+            let cmds: Vec<CommandTemplate> = match serde_json::from_str(&tpl.actions) {
+                Ok(v) => v,
+                Err(e) => {
+                    self.warnings
+                        .push(format!("模板 {template_ref} 的 actions 解析失败（{e}），已跳过"));
+                    Vec::new()
+                }
+            };
+            let events: Vec<serde_json::Value> = match serde_json::from_str(&tpl.events_json_for_inline()) {
+                Ok(v) => v,
+                Err(e) => {
+                    self.warnings
+                        .push(format!("模板 {template_ref} 的 events 解析失败（{e}），已跳过"));
+                    Vec::new()
+                }
+            };
             for i in 1..=copies {
                 let name = self.node_name(node, i);
                 let mut inlined = node.clone();
@@ -874,6 +916,138 @@ mod tests {
             ExpandError::RuleTypeNotAllowed { rule_type } => assert_eq!(rule_type, "event"),
             other => panic!("expected RuleTypeNotAllowed, got: {other:?}"),
         }
+    }
+
+    #[test]
+    fn expand_rejects_scene_ref_with_own_children() {
+        // scene_ref + 自有 children 必须 400（静默忽略会丢子树）；
+        // scene_ref + count/count_param（引用 N 份）保持合法
+        let sub = SceneTemplateFile::from_json(
+            r#"{
+            "name": "sub", "display_name": {"zh":"子"}, "category": "scenes",
+            "device_info": {"default_name_pattern": "{scene_name}子"},
+            "children": [{"category":"room","device_info":{"default_name_pattern":"{index}室"}}]
+        }"#,
+        )
+        .unwrap();
+        let t = SceneTemplateFile::from_json(
+            r#"{
+            "name": "s", "display_name": {"zh":"s"}, "category": "scenes",
+            "device_info": {"default_name_pattern": "{scene_name}"},
+            "children": [{"key":"x","scene_ref":"sub",
+                          "children":[{"category":"room","device_info":{"default_name_pattern":"{index}室"}}]}]
+        }"#,
+        )
+        .unwrap();
+        let scenes = HashMap::from([("sub".to_string(), sub)]);
+        let e = expand(&t, "x", &HashMap::new(), &HashMap::new(), &scenes).unwrap_err();
+        match e {
+            ExpandError::SceneRefWithChildren { key } => assert_eq!(key, "x"),
+            other => panic!("expected SceneRefWithChildren, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn expand_allows_scene_ref_with_count_param() {
+        // scene_ref + count/count_param（引用 N 份语义）是合法组合，不得被组合校验误杀
+        let sub = SceneTemplateFile::from_json(
+            r#"{
+            "name": "sub", "display_name": {"zh":"子"}, "category": "scenes",
+            "device_info": {"default_name_pattern": "{scene_name}子"},
+            "children": [{"category":"room","device_info":{"default_name_pattern":"{index}室"}}]
+        }"#,
+        )
+        .unwrap();
+        let t = SceneTemplateFile::from_json(
+            r#"{
+            "name": "s", "display_name": {"zh":"s"}, "category": "scenes",
+            "parameters": [{"name":"n","type":"int","default":2,"min":1,"max":9,"display_name":{}}],
+            "device_info": {"default_name_pattern": "{scene_name}"},
+            "children": [{"key":"x","scene_ref":"sub","count_param":"n"}]
+        }"#,
+        )
+        .unwrap();
+        let scenes = HashMap::from([("sub".to_string(), sub)]);
+        let r = expand(&t, "x", &HashMap::new(), &HashMap::new(), &scenes).unwrap();
+        assert!(r.node_count > 1);
+    }
+
+    #[test]
+    fn expand_rejects_template_ref_with_own_blocks() {
+        let t = SceneTemplateFile::from_json(
+            r#"{
+            "name": "s", "display_name": {"zh":"s"}, "category": "scenes",
+            "device_info": {"default_name_pattern": "{scene_name}"},
+            "children": [{"key":"x","template_ref":"th_sensor",
+                          "properties":[{"name":"temp","display_name":{},"data_type":"float","is_read_only":true,"is_required":false}],
+                          "device_info":{"default_name_pattern":"x{index}"}}]
+        }"#,
+        )
+        .unwrap();
+        let tpl = crate::thing_template::ThingTemplate {
+            category: "sensors".to_string(),
+            properties: "[]".to_string(),
+            actions: "[]".to_string(),
+            events: "[]".to_string(),
+            ..Default::default()
+        };
+        let device_templates = HashMap::from([("th_sensor".to_string(), tpl)]);
+        let e = expand(&t, "x", &HashMap::new(), &device_templates, &HashMap::new()).unwrap_err();
+        match e {
+            ExpandError::TemplateRefWithOwnBlocks { key } => assert_eq!(key, "x"),
+            other => panic!("expected TemplateRefWithOwnBlocks, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn expand_template_ref_bad_column_json_warns_and_continues() {
+        // 被引用模板 properties/actions/events 列 JSON 损坏：不静默置空——
+        // 推 warning，节点照常创建（空块）
+        let t = SceneTemplateFile::from_json(
+            r#"{
+            "name": "s", "display_name": {"zh":"s"}, "category": "scenes",
+            "device_info": {"default_name_pattern": "{scene_name}"},
+            "children": [{"template_ref":"broken_tpl","device_info":{"default_name_pattern":"x{index}"}}]
+        }"#,
+        )
+        .unwrap();
+        let tpl = crate::thing_template::ThingTemplate {
+            category: "sensors".to_string(),
+            properties: "{not-json".to_string(),
+            actions: "[broken".to_string(),
+            events: "???".to_string(),
+            ..Default::default()
+        };
+        let device_templates = HashMap::from([("broken_tpl".to_string(), tpl)]);
+        let r = expand(&t, "站点", &HashMap::new(), &device_templates, &HashMap::new()).unwrap();
+        assert_eq!(r.node_count, 2, "节点照常创建");
+        assert!(r.nodes[1].properties.is_empty());
+        assert!(r.nodes[1].commands.is_empty());
+        assert!(r.nodes[1].event_defs.is_empty());
+        assert!(
+            r.warnings.iter().any(|w| w.contains("broken_tpl") && w.contains("properties 解析失败")),
+            "properties 解析失败须记 warning: {:?}",
+            r.warnings
+        );
+        assert!(
+            r.warnings.iter().any(|w| w.contains("actions 解析失败")),
+            "actions 解析失败须记 warning: {:?}",
+            r.warnings
+        );
+        assert!(
+            r.warnings.iter().any(|w| w.contains("events 解析失败")),
+            "events 解析失败须记 warning: {:?}",
+            r.warnings
+        );
+    }
+
+    #[test]
+    fn sanitize_label_strips_newlines_and_fullwidths_parens() {
+        assert_eq!(sanitize_label("1号楼\n(b)"), "1号楼（b）");
+        assert_eq!(sanitize_label("a\r\nb"), "ab");
+        assert_eq!(sanitize_label("  前后空格  "), "前后空格");
+        assert_eq!(sanitize_label("楼层(东侧)"), "楼层（东侧）");
+        assert_eq!(sanitize_label("无特殊字符"), "无特殊字符");
     }
 
     #[test]

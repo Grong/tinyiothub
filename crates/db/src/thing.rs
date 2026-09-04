@@ -2315,11 +2315,11 @@ pub(crate) async fn resolve_thing_name_tx(
     )))
 }
 
-/// 名称候选序列：剥离末尾 -N 后缀得 base，产出 base / base-2 / ... / base-11（上限 10 次冲突）。
+/// 名称候选序列：剥离末尾 -N 后缀得 base，产出 base / base-2 / ... / base-10（上限 10 个候选）。
 /// dry-run 只读探测与落库解析共用此算法，保证两侧 -N 后缀一致。
 pub fn thing_name_candidates(base: &str) -> Vec<String> {
     let stripped = strip_numeric_suffix(base);
-    (0..=10)
+    (0..10)
         .map(|n| {
             if n == 0 {
                 stripped.clone()

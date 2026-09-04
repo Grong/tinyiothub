@@ -649,6 +649,7 @@ SELECT
     "default_name_pattern": "{scene_name}",
     "default_display_name_pattern": {"zh": "{scene_name}", "en": "{scene_name}"}
   },
+  "default_knowledge": "你是这层楼的楼层管家，关注各房间环境与设备状态。",
   "properties": [
     {"name": "area", "display_name": {"zh": "面积", "en": "Area"}, "data_type": "number", "unit": "m²", "is_read_only": false, "is_required": false}
   ],
@@ -658,7 +659,7 @@ SELECT
        "default_display_name_pattern": {"zh": "{index}室", "en": "Room {index}"}}}
   ]
 }',
-  '[]', '[]', '[]', NULL, 1, 1, NULL, datetime('now'), datetime('now')
+  '[]', '[]', '[]', '你是这层楼的楼层管家，关注各房间环境与设备状态。', 1, 1, NULL, datetime('now'), datetime('now')
 WHERE NOT EXISTS (SELECT 1 FROM thing_templates WHERE id = 'builtin_smart_floor');
 
 INSERT OR IGNORE INTO thing_templates (
@@ -704,7 +705,7 @@ SELECT
      ]}
   ]
 }',
-  '[]', '[]', '[]', NULL, 1, 1, NULL, datetime('now'), datetime('now')
+  '[]', '[]', '[]', '你是这栋楼的楼宇管家，关注各层环境与设备状态。', 1, 1, NULL, datetime('now'), datetime('now')
 WHERE NOT EXISTS (SELECT 1 FROM thing_templates WHERE id = 'builtin_smart_building');
 
 INSERT OR IGNORE INTO thing_templates (
@@ -748,9 +749,17 @@ SELECT
      "device_info": {"default_name_pattern": "{index}号楼",
        "default_display_name_pattern": {"zh": "{index}号楼", "en": "Building {index}"}},
      "default_knowledge": "你是楼栋管家，关注本楼各层环境。",
+     "alarm_rules": [
+       {"name": "楼栋温度超阈值", "rule_type": "threshold",
+        "condition": {"type": "threshold", "operator": "greater_than", "value": 35.0},
+        "alarm_level": "warning", "notification_config": {}}
+     ],
      "children": [
        {"key": "floor", "category": "floor", "count_param": "floor_count",
         "device_info": {"default_name_pattern": "{index}F"},
+        "resources": [
+          {"name": "floor_plan", "type": "image", "uri": "builtin://scenes/smart_campus/floor_plan.png"}
+        ],
         "children": [
           {"key": "th_sensor", "template_ref": "temperature_humidity_sensor", "count": 2,
            "device_info": {"default_name_pattern": "th_sensor_{index}"},
