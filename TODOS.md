@@ -488,3 +488,10 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 ### P3 — [seed] demo_data 进 configuration 参考
 - **What:** 把 `[seed] demo_data` 配置键写进 docs/getting-started/configuration.md（或等效参考文档）。
 - **Why:** 目前只在 CHANGELOG 与 app_settings.example.toml 有记录；0.5.0.0 起默认 false，用户需要权威参考。
+
+## CI Resurrection Follow-ups (PR #89, 2026-09-04)
+
+### P3 — 4 个 grandfathered DML 迁移并入下次 baseline
+- **What:** `scripts/guards/ddl-only.sh` 的 GRANDFATHERED 清单（20260825/20260826/20260828/20260831 共 4 个 device→thing 数据迁移）在下一次迁移基线化时并入 baseline，随后从清单移除。
+- **Why:** 这些迁移在 CI 瘫痪窗口（2026-08-21 ~ 09-04，ci.yml YAML 语法错误）合入，已随 v0.5.0.0 应用；sqlx 校验 checksum，改写会炸存量库，只能豁免不能修。
+- **Effort:** M（随下次基线化一起做） | **Depends on:** 下一次迁移基线化

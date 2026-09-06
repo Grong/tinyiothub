@@ -2,8 +2,9 @@
 # SQL 住所守卫（Task 13 + 终审 F1/F14）。
 # sqlx::(query|QueryBuilder|raw_sql) 只允许出现在 crates/db。豁免：
 # - 文件名含 test_utils / _test，或路径在 tests/ 下；
-# - 内联 #[cfg(test)] 测试模块（仅当标记后 3 行内有 mod 声明才截断，
-#   否则整文件扫描——截断点以下的生产 SQL 不得隐形）；
+# - 内联 #[cfg(test)] 测试模块（仅认列 0 的 item 级标记——fn 体内缩进的
+#   语句级 #[cfg(test)] seam（如故障注入）不作截断锚点；仅当标记后 3 行内
+#   有 mod 声明才截断，否则整文件扫描——截断点以下的生产 SQL 不得隐形）；
 # - 行内 `guard-exempt: <reason>`（必须带理由；无理由豁免即失败，
 #   有理由豁免打印备查）。
 # 多行构造：任何以 `sqlx::` 结尾的行即违规线索。
@@ -20,7 +21,10 @@ for f in $(grep -rEl --include='*.rs' -E 'sqlx::(query|QueryBuilder|raw_sql)|sql
   # 豁免判定：pattern 行本身或其 3 行内（多行调用的参数区）带
   # guard-exempt 注释。先剥豁免，再查违规。
   HEAD_ONLY=0
-  MARKER_LINE=$(grep -nE '#\[cfg\(test\)\]' "$f" | head -1 | cut -d: -f1 || true)
+  # 只认列 0 的 item 级 #[cfg(test)]；fn 体内缩进的语句级标记（故障注入
+  #  seam）不是测试模块边界，若误作锚点会把其后真实测试模块的 SQL 误判为
+  #  生产代码（scene_instantiator.rs 假阳性）。
+  MARKER_LINE=$(grep -nE '^#\[cfg\(test\)\]' "$f" | head -1 | cut -d: -f1 || true)
   if [ -n "$MARKER_LINE" ]; then
     # 可疑生产代码探测：首个标记之后、任何 mod 声明之前，存在列 0 起
     # 始且 3 行内无 #[cfg(test)] 属性的 fn 定义——测试标记被借来藏
@@ -47,7 +51,7 @@ for f in $(grep -rEl --include='*.rs' -E 'sqlx::(query|QueryBuilder|raw_sql)|sql
     [ "$SUSPECT" = "0" ] && HEAD_ONLY=1
   fi
   if [ "$HEAD_ONLY" = "1" ]; then
-    SCAN=$(sed '/#\[cfg(test)\]/,$d' "$f")
+    SCAN=$(sed '/^#\[cfg(test)\]/,$d' "$f")
   else
     SCAN=$(cat "$f")
   fi

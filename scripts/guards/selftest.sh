@@ -76,6 +76,25 @@ pub async fn production_fn(p: &sqlx::SqlitePool) {
 RS
 expect_fails "sql-residence (production SQL hidden below test marker)" bash scripts/guards/sql-residence.sh
 rm -f "$EVIL_RS"
+# 回归（scene_instantiator.rs 假阳性）：fn 体内缩进的语句级 #[cfg(test)]
+# seam 不是截断锚点；列 0 测试模块内的 SQL 必须放行。
+cat > "$EVIL_RS" << 'RS'
+pub async fn production_fn(p: &sqlx::SqlitePool) {
+    #[cfg(test)]
+    maybe_seam(p).await;
+}
+
+fn other_prod() {}
+
+#[cfg(test)]
+mod tests {
+    async fn inject(p: &sqlx::SqlitePool) {
+        sqlx::query("INSERT INTO t VALUES (1)").execute(p).await.unwrap();
+    }
+}
+RS
+expect_passes "sql-residence (statement-level seam + test-module SQL)" bash scripts/guards/sql-residence.sh
+rm -f "$EVIL_RS"
 expect_passes "sql-residence" bash scripts/guards/sql-residence.sh
 
 # ── Agent purity ───────────────────────────────────────────
