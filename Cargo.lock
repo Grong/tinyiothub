@@ -84,6 +84,7 @@ dependencies = [
  "dashmap",
  "futures",
  "hex",
+ "hostname",
  "llm",
  "parking_lot 0.12.5",
  "policy",

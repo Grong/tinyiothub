@@ -3,6 +3,8 @@
 pub mod attribution;
 pub mod events;
 pub mod outcome;
+pub mod prompt;
+pub mod prompt_sections;
 pub mod provider;
 pub mod tool;
 

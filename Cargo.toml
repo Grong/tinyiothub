@@ -44,6 +44,7 @@ tracing-appender = "0.2"
 
 # System
 num_cpus = "1.16"
+hostname = "0.4.2"
 
 # Database
 sqlx = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "sqlite", "chrono", "uuid", "migrate"] }
