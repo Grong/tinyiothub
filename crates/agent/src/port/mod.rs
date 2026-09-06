@@ -2,10 +2,13 @@
 //! 它们是合理的库级设计，且既有工具实现/ScriptedProvider 已长在该形状上。
 pub mod attribution;
 pub mod events;
+pub mod memory;
+pub mod observer;
 pub mod outcome;
 pub mod prompt;
 pub mod prompt_sections;
 pub mod provider;
+pub mod runtime;
 pub mod tool;
 
 #[cfg(test)]
