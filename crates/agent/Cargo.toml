@@ -33,6 +33,9 @@ uuid = { workspace = true }
 tokio-util = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
+futures = { workspace = true }
+rig-core = "=0.42.0"
+rig-agent = "=0.42.0"
 
 # ZeroClaw agent runtime contract（与 apps/cloud 同源；cloud 组合层工具同依赖，两侧均保留）
 zeroclaw = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched", package = "zeroclawlabs", features = ["agent-runtime"] }

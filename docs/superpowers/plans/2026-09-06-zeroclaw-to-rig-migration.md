@@ -1193,3 +1193,17 @@ git commit -m "docs(agent): rig 迁移决策记录与 AGENTS.md 引擎说明更�
 - **占位符扫描**：Task 7 Step 3 留了 `todo!()` 骨架但附带逐步实现注释与 spike 记录回指——这是有意为之（实现步骤依赖 Task 1 spike 的两个字段名确认，注释给出全部决策）；其余步骤均含完整代码。Task 7 Step 3/4 的"以编译为准"回指 spike，符合"Task 1 先行消除 API 未知"的全局设计。
 - **类型一致性**：`AgentLoopConfig.provider_factory` 在 Task 5 Step 4 引入、Task 6 Step 2 使用、Task 7/8 消费——同名同型。`AgentLoopHandle` 在 Task 4 定义、Task 5/7 生产、Task 6 消费。`MAX_LOOP_TURNS` Task 4 定义、Task 7 消费。canonical 编码在 Global Constraints #4 定义、Task 5 Step 3 与 Task 7 Step 3/Task 8 Step 1 双向使用。
 - **已知风险**：Task 7 Step 3 的 `stream()` 非流式代理构造方式、Step 4 的 `MemoryError` 构造、Step 5 的 `FinalResponse` 文本取值方法——全部收敛到 Task 1 Spike 记录，spike 未完成不得开始 Task 7。
+
+## Spike 记录（Task 1 实施者回填，2026-09-06）
+
+验证方式：rig 0.42.0 已入依赖树，`crates/agent` 临时 `#[cfg(test)]` 测试构造值并打印 Debug/方法输出，3 个测试通过后临时代码已删除（未进 commit）。以下为运行时实测结论。
+
+1. **`MultiTurnStreamItem::CompletionCall(c)` usage 字段路径**：`c.usage.input_tokens`（另有 `output_tokens`/`total_tokens`/`cached_input_tokens`/`cache_creation_input_tokens`/`tool_use_prompt_tokens`/`reasoning_tokens`，类型 `rig_core::completion::Usage` 全 `u64`）；判零用 `c.usage.has_values() -> bool`。Debug 实测输出：`CompletionCall(CompletionCall { call_index: 0, usage: Usage { input_tokens: 0, ... }, message_id: None, response_id: None, provider_request_id: None, finish_reason: None, raw: Null })`。
+2. **`PromptResponse` 取最终文本**：`rig_agent::agent::PromptResponse`（同时实现 `Display`）。**实际签名为 `pub fn output(&self) -> &str`（返回 &str，非简报预期的 String）**；也可读公有字段 `pub output: String` 或 `format!("{resp}")`。注意该类型定义在 **rig-agent**（`agent::PromptResponse`），不在 rig-core。
+3. **`ToolCallId` Display**：`rig_core::message::ToolCallId`（定义于 rig-core/src/completion/message.rs:381，Display impl 在 :428）。实测 `ToolCallId::mint().to_string()` 输出 21 字符 URL-safe id（如 `oO4R2sdqRtoko7mnDuiJQ`）。
+
+附（简报外，计划 Self-Review 提及的 Task 7 收敛点，源码级确认、非运行时 spike）：
+
+- `stream()` 非流式代理构造入口：`rig_core::streaming::StreamingCompletionResponse::stream(provider: impl Into<String>, inner: StreamingResult)`（rig-core/src/streaming/mod.rs:904,944），`StreamingResult = RawStreamingResult<StreamFinal>`（:838）——可把非流式 `CompletionResponse` 组装成单元素 `StreamFinal` 流后包装。
+- `MemoryError` 构造：`rig_core::memory::MemoryError`，变体 `Backend(MemoryBackendError)`/`Policy(String)`/`Internal(String)`（rig-core/src/memory.rs:58-72），便捷构造 `MemoryError::backend<E: Into<MemoryBackendError>>(source)`（:76）。
+- `FinalResponse` 文本取值：`MultiTurnStreamItem::FinalResponse(PromptResponse)`，文本用 `.output()`（即第 2 点，同一类型）。
