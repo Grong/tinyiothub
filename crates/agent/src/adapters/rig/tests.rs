@@ -261,6 +261,7 @@ async fn rig_loop_forwards_tool_and_usage_events() {
         workspace_dir: dir.path().to_path_buf(),
         security_summary: None,
         provider_factory: Arc::new(|| Ok(Box::new(ScriptModel { calls: Mutex::new(0) }))),
+        conversation_memory: false,
     };
     let loop_ = rig_loop_factory(cfg).expect("factory builds loop");
 
@@ -414,6 +415,7 @@ async fn failing_tool_result_is_delivered_as_text_not_retried() {
         workspace_dir: dir.path().to_path_buf(),
         security_summary: None,
         provider_factory: Arc::new(|| Ok(Box::new(AssertModel { calls: Mutex::new(0) }))),
+        conversation_memory: false,
     };
     let loop_ = rig_loop_factory(cfg).expect("factory builds loop");
 
@@ -426,4 +428,227 @@ async fn failing_tool_result_is_delivered_as_text_not_retried() {
         .expect("turn completes despite tool failure");
 
     assert_eq!(final_text, "recovered");
+}
+
+// ── C-1：ConversationMemory::load 顺序 ──────────────────────
+
+/// DescMemory：recall 按 zeroclaw 后端的 `ORDER BY updated_at DESC`
+/// 预置 3 条（最新在前）。
+struct DescMemory {
+    entries: Vec<crate::port::memory::MemoryEntry>,
+}
+
+impl Attributable for DescMemory {
+    fn role(&self) -> Role {
+        Role::Memory(crate::port::attribution::MemoryKind::None)
+    }
+    fn alias(&self) -> &str {
+        "DescMemory"
+    }
+}
+
+fn desc_entry(key: &str, content: &str) -> crate::port::memory::MemoryEntry {
+    crate::port::memory::MemoryEntry {
+        id: content.into(),
+        key: key.into(),
+        content: content.into(),
+        category: crate::port::memory::MemoryCategory::Conversation,
+        timestamp: String::new(),
+        session_id: Some("default".into()),
+        score: None,
+        namespace: "default".into(),
+        importance: None,
+        superseded_by: None,
+        agent_alias: None,
+        agent_id: None,
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::port::memory::Memory for DescMemory {
+    fn name(&self) -> &str {
+        "desc"
+    }
+    async fn store(
+        &self,
+        _key: &str,
+        _content: &str,
+        _category: crate::port::memory::MemoryCategory,
+        _session_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn recall(
+        &self,
+        _query: &str,
+        _limit: usize,
+        _session_id: Option<&str>,
+        _since: Option<&str>,
+        _until: Option<&str>,
+    ) -> anyhow::Result<Vec<crate::port::memory::MemoryEntry>> {
+        Ok(self.entries.clone())
+    }
+    async fn get(&self, _key: &str) -> anyhow::Result<Option<crate::port::memory::MemoryEntry>> {
+        Ok(None)
+    }
+    async fn list(
+        &self,
+        _category: Option<&crate::port::memory::MemoryCategory>,
+        _session_id: Option<&str>,
+    ) -> anyhow::Result<Vec<crate::port::memory::MemoryEntry>> {
+        Ok(vec![])
+    }
+    async fn forget(&self, _key: &str) -> anyhow::Result<bool> {
+        Ok(false)
+    }
+    async fn forget_for_agent(&self, _key: &str, _agent_id: &str) -> anyhow::Result<bool> {
+        Ok(false)
+    }
+    async fn count(&self) -> anyhow::Result<usize> {
+        Ok(self.entries.len())
+    }
+    async fn health_check(&self) -> bool {
+        true
+    }
+    async fn store_with_agent(
+        &self,
+        _key: &str,
+        _content: &str,
+        _category: crate::port::memory::MemoryCategory,
+        _session_id: Option<&str>,
+        _namespace: Option<&str>,
+        _importance: Option<f64>,
+        _agent_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn recall_for_agents(
+        &self,
+        _allowed_agent_ids: &[&str],
+        _query: &str,
+        _limit: usize,
+        _session_id: Option<&str>,
+        _since: Option<&str>,
+        _until: Option<&str>,
+    ) -> anyhow::Result<Vec<crate::port::memory::MemoryEntry>> {
+        Ok(vec![])
+    }
+}
+
+/// load 必须把 DESC（最新在前）的召回结果反转为时间正序（最早在前）。
+#[tokio::test]
+async fn conversation_load_reverses_desc_recall_to_ascending() {
+    use crate::adapters::rig::memory::PortMemoryAsConversation;
+    use rig_core::memory::ConversationMemory;
+    use rig_core::message::{Message, UserContent};
+
+    let memory = Arc::new(DescMemory {
+        entries: vec![
+            desc_entry("user", "third"),
+            desc_entry("assistant", r#"{"content":"second","tool_calls":[]}"#),
+            desc_entry("user", "first"),
+        ],
+    });
+    let bridge = PortMemoryAsConversation::new(memory);
+
+    let messages = bridge.load("default").await.expect("load succeeds");
+
+    let texts: Vec<String> = messages
+        .iter()
+        .map(|m| match m {
+            Message::User { content } => match &content[0] {
+                UserContent::Text(t) => t.text.clone(),
+                other => panic!("expected text user content, got {other:?}"),
+            },
+            Message::Assistant { content, .. } => match &content[0] {
+                rig_core::message::AssistantContent::Text(t) => t.text.clone(),
+                other => panic!("expected text assistant content, got {other:?}"),
+            },
+            Message::System { content } => content.clone(),
+        })
+        .collect();
+    assert_eq!(texts, vec!["first", "second", "third"]);
+}
+
+// ── I-2：stream 结束后 token 已 cancel 的归一化 ─────────────
+
+/// CancellingModel：在最后一次 chat 调用里 cancel token 后返回最终文本，
+/// 模拟"stream 已结束但 token 已 cancel"（如 BudgetHook 超预算先 cancel 再 stop）。
+struct CancellingModel {
+    calls: Mutex<usize>,
+    token: tokio_util::sync::CancellationToken,
+}
+
+impl Attributable for CancellingModel {
+    fn role(&self) -> Role {
+        Role::Provider(crate::port::attribution::ProviderKind::Model(
+            crate::port::attribution::ModelProviderKind::Custom,
+        ))
+    }
+    fn alias(&self) -> &str {
+        "CancellingModel"
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::port::provider::ModelProvider for CancellingModel {
+    async fn chat(
+        &self,
+        _request: crate::port::provider::ChatRequest<'_>,
+        _model: &str,
+        _temperature: Option<f64>,
+    ) -> anyhow::Result<crate::port::provider::ChatResponse> {
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        self.token.cancel();
+        Ok(crate::port::provider::ChatResponse {
+            text: Some("late answer".into()),
+            tool_calls: vec![],
+            usage: None,
+            reasoning_content: None,
+        })
+    }
+}
+
+#[tokio::test]
+async fn cancelled_after_stream_end_is_tool_loop_cancelled() {
+    use crate::adapters::rig::loop_::rig_loop_factory;
+    use crate::port::runtime::AgentLoopConfig;
+
+    let token = tokio_util::sync::CancellationToken::new();
+    let model = CancellingModel {
+        calls: Mutex::new(0),
+        token: token.clone(),
+    };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cfg = AgentLoopConfig {
+        model_name: "cancelling-model".into(),
+        prompt_builder: crate::port::prompt::SystemPromptBuilder::with_defaults(),
+        tools: vec![],
+        memory: Arc::new(crate::port::memory::NoopMemory),
+        observer: Arc::new(crate::port::observer::NoopObserver),
+        workspace_dir: dir.path().to_path_buf(),
+        security_summary: None,
+        provider_factory: Arc::new(move || {
+            Ok(Box::new(CancellingModel {
+                calls: Mutex::new(0),
+                token: model.token.clone(),
+            }))
+        }),
+        conversation_memory: false,
+    };
+    let loop_ = rig_loop_factory(cfg).expect("factory builds loop");
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::channel::<crate::port::events::TurnEvent>(64);
+    let err = loop_
+        .lock()
+        .await
+        .turn_streamed("go", event_tx, Some(token))
+        .await
+        .expect_err("turn must report cancellation, not a successful text end");
+
+    assert!(
+        crate::port::outcome::is_tool_loop_cancelled(&err),
+        "cancellation after stream end must normalize to ToolLoopCancelled, got {err:?}"
+    );
 }

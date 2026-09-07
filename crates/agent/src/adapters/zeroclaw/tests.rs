@@ -224,6 +224,7 @@ async fn zeroclaw_loop_forwards_tool_and_usage_events() {
         workspace_dir: dir.path().to_path_buf(),
         security_summary: None,
         provider_factory: Arc::new(|| Ok(Box::new(ScriptModel { calls: Mutex::new(0) }))),
+        conversation_memory: false,
     };
     let loop_ = zeroclaw_loop_factory(cfg).expect("factory builds loop");
 

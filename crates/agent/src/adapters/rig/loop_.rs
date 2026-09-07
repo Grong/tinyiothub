@@ -28,14 +28,34 @@ const CONVERSATION_ID: &str = "default";
 const MAX_TURN_DURATION: Duration = Duration::from_secs(300);
 
 /// port AgentLoop 的 rig 引擎实现。
+///
+/// `conversation_memory=false`（chat/heartbeat 路径）时 rig 不配
+/// ConversationMemory（无自动 load/append，避免与每轮 DB 重建重复累积），
+/// seed_history 改为注入内部缓冲、turn_streamed/run_single 经
+/// `.history(...)` 逐轮传入；`true`（thing_agent 自治路径）时照旧走
+/// port Memory 承载的会话内存。
 pub struct RigAgentLoop {
     agent: Agent,
-    memory: Arc<PortMemoryAsConversation>,
+    memory: Option<Arc<PortMemoryAsConversation>>,
+    seeded: tokio::sync::Mutex<Vec<rig_core::message::Message>>,
 }
 
 impl RigAgentLoop {
-    pub fn new(agent: Agent, memory: Arc<PortMemoryAsConversation>) -> Self {
-        Self { agent, memory }
+    pub fn new(agent: Agent, memory: Option<Arc<PortMemoryAsConversation>>) -> Self {
+        Self {
+            agent,
+            memory,
+            seeded: tokio::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// conversation_memory=false 时的每轮重建历史（seed_history 注入）。
+    async fn seeded_history(&self) -> Vec<rig_core::message::Message> {
+        if self.memory.is_some() {
+            Vec::new()
+        } else {
+            self.seeded.lock().await.clone()
+        }
     }
 }
 
@@ -75,7 +95,7 @@ impl AgentLoop for RigAgentLoop {
         event_tx: mpsc::Sender<TurnEvent>,
         cancel_token: Option<CancellationToken>,
     ) -> anyhow::Result<String> {
-        let request = self
+        let mut request = self
             .agent
             .stream_prompt(user_message.to_string())
             .max_turns(MAX_LOOP_TURNS)
@@ -85,6 +105,11 @@ impl AgentLoop for RigAgentLoop {
                 count: AtomicUsize::new(0),
                 cancel: cancel_token.clone(),
             });
+        // conversation_memory=false：历史由 cloud DB 每轮 seed，经 .history() 传入。
+        let seeded = self.seeded_history().await;
+        if !seeded.is_empty() {
+            request = request.history(seeded);
+        }
         let mut stream = request.await;
 
         let mut final_text = String::new();
@@ -159,26 +184,40 @@ impl AgentLoop for RigAgentLoop {
             }
         }
         drop(event_tx);
+        // I-2 取消竞态：stream 走 None（正常结束）后若 token 已触发
+        // （如 BudgetHook 超预算先 cancel 再 stop），归一化为
+        // ToolLoopCancelled，不让 runner 把预算超支误判为 TurnEnd::Text。
+        if cancel_token.is_some_and(|t| t.is_cancelled()) {
+            return Err(anyhow::Error::new(crate::port::outcome::ToolLoopCancelled));
+        }
         Ok(final_text)
     }
 
     async fn run_single(&self, message: &str) -> anyhow::Result<String> {
-        let text = self
-            .agent
-            .prompt(message.to_string())
-            .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let mut request = self.agent.prompt(message.to_string());
+        let seeded = self.seeded_history().await;
+        if !seeded.is_empty() {
+            request = request.history(seeded);
+        }
+        let text = request.await.map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(text)
     }
 
     async fn clear_history(&self) {
-        // port Memory 无会话级删除原语（Global Constraints #6），no-op。
-        let _ = rig_core::memory::ConversationMemory::clear(self.memory.as_ref(), CONVERSATION_ID).await;
+        self.seeded.lock().await.clear();
+        if let Some(memory) = &self.memory {
+            // port Memory 无会话级删除原语（Global Constraints #6），no-op。
+            let _ = rig_core::memory::ConversationMemory::clear(memory.as_ref(), CONVERSATION_ID).await;
+        }
     }
 
     async fn seed_history(&self, messages: &[crate::port::provider::ChatMessage]) {
         let rig_messages = port_messages_to_rig(messages);
-        let _ = rig_core::memory::ConversationMemory::append(self.memory.as_ref(), CONVERSATION_ID, rig_messages).await;
+        if let Some(memory) = &self.memory {
+            let _ = rig_core::memory::ConversationMemory::append(memory.as_ref(), CONVERSATION_ID, rig_messages).await;
+        } else {
+            *self.seeded.lock().await = rig_messages;
+        }
     }
 }
 
@@ -196,21 +235,25 @@ pub fn rig_loop_factory(cfg: AgentLoopConfig) -> anyhow::Result<AgentLoopHandle>
         security_summary: cfg.security_summary.clone(),
     })?;
 
-    let memory = Arc::new(PortMemoryAsConversation::new(Arc::clone(&cfg.memory)));
+    let memory = if cfg.conversation_memory {
+        Some(Arc::new(PortMemoryAsConversation::new(Arc::clone(&cfg.memory))))
+    } else {
+        None
+    };
+
+    // conversation_memory=false 时不调用 .memory()：rig 无 ConversationMemory
+    // 即无自动 load/append，chat/heartbeat 的每轮 DB 重建不会重复累积。
+    let mut builder = AgentBuilder::new(model)
+        .preamble(&preamble)
+        .default_max_turns(MAX_LOOP_TURNS);
+    if let Some(m) = &memory {
+        builder = builder.memory(Arc::clone(m)).conversation(CONVERSATION_ID);
+    }
 
     let agent = if cfg.tools.is_empty() {
-        AgentBuilder::new(model)
-            .preamble(&preamble)
-            .default_max_turns(MAX_LOOP_TURNS)
-            .memory(Arc::clone(&memory))
-            .conversation(CONVERSATION_ID)
-            .build()
+        builder.build()
     } else {
-        AgentBuilder::new(model)
-            .preamble(&preamble)
-            .default_max_turns(MAX_LOOP_TURNS)
-            .memory(Arc::clone(&memory))
-            .conversation(CONVERSATION_ID)
+        builder
             .dynamic_tools(cfg.tools.into_iter().map(|t| to_dynamic_tool(Arc::from(t))).collect())
             .build()
     };

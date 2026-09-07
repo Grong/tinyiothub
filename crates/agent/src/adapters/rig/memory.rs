@@ -24,9 +24,11 @@ const fn conversation_key(role: &str) -> &str {
 /// 存取语义：
 /// - `append`：把 rig 消息拍平为 port canonical ChatMessage，逐条 store
 ///   （key=角色、category=Conversation、session_id=conversation_id）。
-/// - `load`：recall 空查询召回该会话最近 RECALL_LIMIT 条，按时间正序
-///   （zeroclaw 各内存后端的空查询返回按 created_at 升序）复原为 rig 消息；
-///   非 canonical 内容回退为纯文本消息（见 provider 模块注释）。
+/// - `load`：recall 空查询召回该会话最近 RECALL_LIMIT 条。zeroclaw 各内存
+///   后端的空查询返回 `ORDER BY updated_at DESC`（最新在前，
+///   sqlite.rs:664 / postgres.rs:549），此处反转为时间正序（最早在前）再
+///   复原为 rig 消息；非 canonical 内容回退为纯文本消息（见 provider
+///   模块注释）。
 /// - `clear`：port Memory 无会话级删除原语（forget 按 key 删、跨会话），
 ///   保持 no-op —— Global Constraints #6 文档化差异。
 pub struct PortMemoryAsConversation {
@@ -46,11 +48,14 @@ impl PortMemoryAsConversation {
 impl ConversationMemory for PortMemoryAsConversation {
     fn load<'a>(&'a self, conversation_id: &'a str) -> WasmBoxedFuture<'a, Result<Vec<Message>, MemoryError>> {
         Box::pin(async move {
-            let entries = self
+            let mut entries = self
                 .inner
                 .recall("", RECALL_LIMIT, Some(conversation_id), None, None)
                 .await
                 .map_err(|e| MemoryError::backend(e.to_string()))?;
+            // zeroclaw 后端空查询返回 DESC（最新在前）——反转为正序，
+            // 让注入 rig chat_history 的历史最早在前。
+            entries.reverse();
             let port: Vec<crate::port::provider::ChatMessage> = entries
                 .into_iter()
                 .map(|e| crate::port::provider::ChatMessage {

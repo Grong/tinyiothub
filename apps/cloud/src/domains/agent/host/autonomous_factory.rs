@@ -136,6 +136,8 @@ impl AutonomousAgentFactory {
                     .into(),
             ),
             provider_factory: Arc::clone(&self.provider_factory),
+            // thing_agent 自治路径：保留 zeroclaw 时代的跨轮 recall 行为。
+            conversation_memory: true,
         };
         let agent = zeroclaw_loop_factory(cfg).map_err(|e| anyhow!("Autonomous agent build failed: {}", e))?;
 

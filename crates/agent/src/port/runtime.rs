@@ -19,6 +19,14 @@ pub struct AgentLoopConfig {
     pub security_summary: Option<String>,
     /// 每 agent 构建一个 model provider（provider 是 per-agent 的）。
     pub provider_factory: crate::pool::provider::ProviderFactory,
+    /// 是否给引擎接线会话级 ConversationMemory（自动 load/append）。
+    ///
+    /// chat/heartbeat 路径传 `false`：历史由 cloud 侧 DB 每轮重建
+    /// （clear_history + seed_history），不配 ConversationMemory 可避免
+    /// seed 与引擎自动 load/append 的重复累积。thing_agent 自治路径传
+    /// `true`：保留跨轮 recall 行为。zeroclaw 适配器接受并忽略该字段
+    /// （其 auto-save 是无害旁路，见 Task 7 报告）。
+    pub conversation_memory: bool,
 }
 
 /// zeroclaw Agent::turn_streamed 的 port 形状（返回去掉 ConversationMessage，
@@ -104,6 +112,7 @@ mod tests {
             workspace_dir: PathBuf::from("/tmp"),
             security_summary: None,
             provider_factory: stub_provider_factory(),
+            conversation_memory: false,
         };
         assert_eq!(config.model_name, "test-model");
         assert_eq!(config.tools.len(), 1);

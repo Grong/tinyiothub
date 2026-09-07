@@ -434,6 +434,8 @@ pub(crate) mod tests {
                 workspace_dir: dir.path().to_path_buf(),
                 security_summary: None,
                 provider_factory: Arc::new(move || Ok(Box::new(llm_for_factory.as_ref().clone()))),
+                // 自治语义的测试夹具：对齐真实 autonomous_factory 的 true。
+                conversation_memory: true,
             };
             let handle = crate::adapters::zeroclaw::loop_::zeroclaw_loop_factory(cfg).expect("build stub loop");
             Self {
