@@ -23,6 +23,7 @@ use crate::domains::thing::service::ThingService;
 use anyhow::anyhow;
 use dashmap::DashMap;
 use sqlx::SqlitePool;
+use tinyiothub_agent::adapters::zeroclaw::provider::PortProviderAsZeroclaw;
 use tinyiothub_agent::memory::workspace_memory::WorkspaceScopedMemory;
 use tinyiothub_agent::pool::ProviderFactory;
 use tinyiothub_agent::runtime::thing_agent::{AgentHandle, RunContextInner, manager::AutonomousAgentProvider};
@@ -126,7 +127,7 @@ impl AutonomousAgentFactory {
         // Mirrors AgentPool::build_agent, minus the response cache (an
         // autonomous control loop must never replay a stale decision).
         let agent = zeroclaw::agent::Agent::builder()
-            .model_provider(provider)
+            .model_provider(Box::new(PortProviderAsZeroclaw { inner: Arc::from(provider) }))
             .tools(tools)
             .memory(memory)
             .observer(Arc::clone(&self.observer))
@@ -249,9 +250,8 @@ mod tests {
     use std::sync::Mutex;
 
     use async_trait::async_trait;
-    use zeroclaw::providers::traits::ModelProvider;
-    use zeroclaw::providers::{ChatRequest, ChatResponse};
-    use zeroclaw_api::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
+    use tinyiothub_agent::port::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
+    use tinyiothub_agent::port::provider::{ChatRequest, ChatResponse, ModelProvider};
 
     use super::*;
 
@@ -271,16 +271,6 @@ mod tests {
 
     #[async_trait]
     impl ModelProvider for ScriptedModelProvider {
-        async fn chat_with_system(
-            &self,
-            _system_prompt: Option<&str>,
-            _message: &str,
-            _model: &str,
-            _temperature: Option<f64>,
-        ) -> anyhow::Result<String> {
-            Ok("done".into())
-        }
-
         async fn chat(
             &self,
             _request: ChatRequest<'_>,

@@ -37,11 +37,9 @@ use tinyiothub_agent::runtime::thing_agent::{
 };
 use tinyiothub_core::models::event::EventLevel;
 use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
-use zeroclaw::{
-    providers::{ChatRequest, ChatResponse, ToolCall},
-    tools::Tool,
-};
-use zeroclaw_api::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
+use tinyiothub_agent::port::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
+use tinyiothub_agent::port::provider::{ChatRequest, ChatResponse, ToolCall};
+use zeroclaw::tools::Tool;
 
 use crate::test_utils::seed_test_workspace;
 
@@ -68,17 +66,7 @@ impl LoopScriptedProvider {
 }
 
 #[async_trait::async_trait]
-impl zeroclaw::providers::traits::ModelProvider for LoopScriptedProvider {
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: Option<f64>,
-    ) -> anyhow::Result<String> {
-        Ok("done".into())
-    }
-
+impl tinyiothub_agent::port::provider::ModelProvider for LoopScriptedProvider {
     async fn chat(
         &self,
         request: ChatRequest<'_>,
@@ -107,7 +95,6 @@ impl zeroclaw::providers::traits::ModelProvider for LoopScriptedProvider {
                 id: id.to_string(),
                 name: name.to_string(),
                 arguments: args.to_string(),
-                extra_content: None,
             }],
             usage: None,
             reasoning_content: None,
@@ -160,17 +147,7 @@ impl HangingProvider {
 }
 
 #[async_trait::async_trait]
-impl zeroclaw::providers::traits::ModelProvider for HangingProvider {
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: Option<f64>,
-    ) -> anyhow::Result<String> {
-        Ok("done".into())
-    }
-
+impl tinyiothub_agent::port::provider::ModelProvider for HangingProvider {
     async fn chat(
         &self,
         _request: ChatRequest<'_>,
@@ -209,17 +186,7 @@ impl InjectionProvider {
 }
 
 #[async_trait::async_trait]
-impl zeroclaw::providers::traits::ModelProvider for InjectionProvider {
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: Option<f64>,
-    ) -> anyhow::Result<String> {
-        Ok("done".into())
-    }
-
+impl tinyiothub_agent::port::provider::ModelProvider for InjectionProvider {
     async fn chat(
         &self,
         request: ChatRequest<'_>,
@@ -251,7 +218,6 @@ impl zeroclaw::providers::traits::ModelProvider for InjectionProvider {
                     id: "c-inject".to_string(),
                     name: "invoke_action".to_string(),
                     arguments: serde_json::json!({"thingId": THING, "actionName": "factory_reset"}).to_string(),
-                    extra_content: None,
                 }],
                 usage: None,
                 reasoning_content: None,
@@ -446,7 +412,7 @@ async fn build_fixture(
 
 fn scripted_provider_factory(provider: &LoopScriptedProvider) -> ProviderFactory {
     let provider = provider.clone();
-    Arc::new(move || Ok(Box::new(provider.clone()) as Box<dyn zeroclaw::providers::traits::ModelProvider>))
+    Arc::new(move || Ok(Box::new(provider.clone()) as Box<dyn tinyiothub_agent::port::provider::ModelProvider>))
 }
 
 async fn fixture(name: &str) -> LoopFixture {
@@ -1047,7 +1013,7 @@ async fn queue_full_51st_directive_rejected_and_user_informed() {
     let hanging = HangingProvider::default();
     let provider_factory: ProviderFactory = {
         let provider = hanging.clone();
-        Arc::new(move || Ok(Box::new(provider.clone()) as Box<dyn zeroclaw::providers::traits::ModelProvider>))
+        Arc::new(move || Ok(Box::new(provider.clone()) as Box<dyn tinyiothub_agent::port::provider::ModelProvider>))
     };
     let parts = build_fixture(
         "loop_queue_full",
@@ -1173,7 +1139,7 @@ async fn hung_llm_run_forced_closed_as_budget_exceeded() {
     let hanging = HangingProvider::default();
     let provider_factory: ProviderFactory = {
         let provider = hanging.clone();
-        Arc::new(move || Ok(Box::new(provider.clone()) as Box<dyn zeroclaw::providers::traits::ModelProvider>))
+        Arc::new(move || Ok(Box::new(provider.clone()) as Box<dyn tinyiothub_agent::port::provider::ModelProvider>))
     };
     let parts = build_fixture(
         "loop_hung_llm",
@@ -1222,7 +1188,7 @@ async fn injected_event_payload_cannot_bypass_denylist() {
     let injection = InjectionProvider::default();
     let provider_factory: ProviderFactory = {
         let provider = injection.clone();
-        Arc::new(move || Ok(Box::new(provider.clone()) as Box<dyn zeroclaw::providers::traits::ModelProvider>))
+        Arc::new(move || Ok(Box::new(provider.clone()) as Box<dyn tinyiothub_agent::port::provider::ModelProvider>))
     };
     let deny_policy = AutonomyPolicy {
         denied_actions: vec!["factory_reset".to_string()],
