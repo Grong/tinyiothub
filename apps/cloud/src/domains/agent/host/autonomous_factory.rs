@@ -23,7 +23,7 @@ use crate::domains::thing::service::ThingService;
 use anyhow::anyhow;
 use dashmap::DashMap;
 use sqlx::SqlitePool;
-use tinyiothub_agent::adapters::zeroclaw::loop_::zeroclaw_loop_factory;
+use tinyiothub_agent::adapters::rig::loop_::rig_loop_factory;
 use tinyiothub_agent::memory::workspace_memory::WorkspaceScopedMemory;
 use tinyiothub_agent::pool::ProviderFactory;
 use tinyiothub_agent::port::memory::Memory;
@@ -121,7 +121,7 @@ impl AutonomousAgentFactory {
             workspace_id.to_string(),
         ));
 
-        // Mirrors AgentPool::create (same zeroclaw_loop_factory), minus the
+        // Mirrors AgentPool::create (same rig_loop_factory), minus the
         // skills section and response cache (an autonomous control loop must
         // never replay a stale decision).
         let cfg = AgentLoopConfig {
@@ -139,7 +139,7 @@ impl AutonomousAgentFactory {
             // thing_agent 自治路径：保留 zeroclaw 时代的跨轮 recall 行为。
             conversation_memory: true,
         };
-        let agent = zeroclaw_loop_factory(cfg).map_err(|e| anyhow!("Autonomous agent build failed: {}", e))?;
+        let agent = rig_loop_factory(cfg).map_err(|e| anyhow!("Autonomous agent build failed: {}", e))?;
 
         // Double-checked insert: a concurrent creator may have won the race
         // while we were building. The loser's agent is dropped unstarted —

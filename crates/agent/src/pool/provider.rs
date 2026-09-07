@@ -41,7 +41,22 @@ pub fn minimax_settings() -> Option<MinimaxSettings> {
 pub fn create_minimax_provider() -> anyhow::Result<Box<dyn ModelProvider>> {
     let cfg =
         minimax_settings().ok_or_else(|| anyhow::anyhow!("[minimax] config section is required but not found"))?;
-    crate::adapters::zeroclaw::provider::create_minimax_provider(&cfg.base_url, &cfg.auth_token)
+    create_minimax_provider_with(&cfg)
+}
+
+/// Create a MiniMax model provider from explicit settings (cloud composition
+/// layer passes its `[minimax]` config slice here).
+pub fn create_minimax_provider_with(cfg: &MinimaxSettings) -> anyhow::Result<Box<dyn ModelProvider>> {
+    // rig minimax provider：OpenAI 兼容协议，base_url/auth_token 直接对应。
+    use rig_core::client::CompletionClient;
+    let client = rig_core::providers::minimax::Client::builder()
+        .api_key(cfg.auth_token.clone())
+        .base_url(&cfg.base_url)
+        .build()
+        .map_err(|e| anyhow::anyhow!("[minimax] rig client build failed: {e}"))?;
+    Ok(Box::new(crate::adapters::rig::provider::RigMinimaxAsPort::new(
+        client.completion_model(&cfg.model),
+    )))
 }
 
 /// Production provider factory — `[minimax]` settings registered by the

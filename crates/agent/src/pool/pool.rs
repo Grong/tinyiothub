@@ -231,8 +231,8 @@ impl AgentPool {
             conversation_memory: false,
         };
 
-        let agent = crate::adapters::zeroclaw::loop_::zeroclaw_loop_factory(cfg)
-            .map_err(|e| AgentError::BuildError(e.to_string()))?;
+        let agent =
+            crate::adapters::rig::loop_::rig_loop_factory(cfg).map_err(|e| AgentError::BuildError(e.to_string()))?;
 
         let metadata = Agent {
             agent_id: agent_id.to_string(),

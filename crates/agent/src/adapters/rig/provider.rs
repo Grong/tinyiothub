@@ -251,6 +251,115 @@ fn port_response_to_rig(resp: crate::port::provider::ChatResponse) -> Completion
     CompletionResponse::new(choice, usage.unwrap_or_default(), "port")
 }
 
+// ── rig CompletionModel → port ModelProvider ────────────────
+
+/// rig CompletionModel（如 minimax）→ port ModelProvider。
+///
+/// [`PortModelAsRig`] 的镜像：port canonical ChatRequest 按
+/// [`port_messages_to_rig`] 解析回 rig 结构化 CompletionRequest，调 rig
+/// `completion()`，响应逆映射回 port ChatResponse。
+pub struct RigMinimaxAsPort<M> {
+    inner: M,
+}
+
+impl<M> RigMinimaxAsPort<M> {
+    pub fn new(inner: M) -> Self {
+        Self { inner }
+    }
+}
+
+impl<M> crate::port::attribution::Attributable for RigMinimaxAsPort<M> {
+    fn role(&self) -> crate::port::attribution::Role {
+        crate::port::attribution::Role::Provider(crate::port::attribution::ProviderKind::Model(
+            crate::port::attribution::ModelProviderKind::Minimax,
+        ))
+    }
+    fn alias(&self) -> &str {
+        "minimax"
+    }
+}
+
+/// rig CompletionResponse → port ChatResponse（`port_response_to_rig` 的逆）。
+fn rig_response_to_port(resp: CompletionResponse) -> crate::port::provider::ChatResponse {
+    let mut text = String::new();
+    let mut reasoning = String::new();
+    let mut tool_calls: Vec<PortToolCall> = Vec::new();
+    for block in resp.choice {
+        match block {
+            AssistantContent::Text(t) => text.push_str(&t.text),
+            AssistantContent::Reasoning(r) => {
+                for rb in &r.content {
+                    if let ReasoningContent::Text { text: t, .. } = rb {
+                        reasoning.push_str(t);
+                    }
+                }
+            }
+            AssistantContent::ToolCall(tc) => tool_calls.push(PortToolCall {
+                id: tc.id.to_string(),
+                name: tc.function.name,
+                arguments: tc.function.arguments.to_string(),
+            }),
+            AssistantContent::Image(_) => {}
+        }
+    }
+    let usage = resp.usage;
+    crate::port::provider::ChatResponse {
+        text: if text.is_empty() { None } else { Some(text) },
+        tool_calls,
+        // rig Usage 字段非 Option（未上报即 0）——按 rig 语义 Some 透传。
+        usage: Some(crate::port::provider::TokenUsage {
+            input_tokens: Some(usage.input_tokens),
+            output_tokens: Some(usage.output_tokens),
+            cached_input_tokens: Some(usage.cached_input_tokens),
+        }),
+        reasoning_content: if reasoning.is_empty() { None } else { Some(reasoning) },
+    }
+}
+
+#[async_trait::async_trait]
+impl<M: CompletionModel> ModelProvider for RigMinimaxAsPort<M> {
+    async fn chat(
+        &self,
+        request: ChatRequest<'_>,
+        model: &str,
+        temperature: Option<f64>,
+    ) -> anyhow::Result<crate::port::provider::ChatResponse> {
+        let tools: Vec<rig_core::completion::ToolDefinition> = request
+            .tools
+            .map(|specs| {
+                specs
+                    .iter()
+                    .map(|s| rig_core::completion::ToolDefinition {
+                        name: s.name.clone(),
+                        description: s.description.clone(),
+                        parameters: s.parameters.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let rig_request = CompletionRequest {
+            model: Some(model.to_string()),
+            // canonical 编码里 system 是首条 Message::System，不走 legacy preamble。
+            preamble: None,
+            chat_history: port_messages_to_rig(request.messages),
+            documents: vec![],
+            tools,
+            temperature,
+            max_tokens: None,
+            tool_choice: None,
+            additional_params: None,
+            output_schema: None,
+            record_telemetry_content: false,
+        };
+        let resp = self
+            .inner
+            .completion(rig_request)
+            .await
+            .map_err(|e| anyhow::anyhow!("rig completion failed: {e}"))?;
+        Ok(rig_response_to_port(resp))
+    }
+}
+
 // ── CompletionModel 实现 ────────────────────────────────────
 
 impl CompletionModel for PortModelAsRig {

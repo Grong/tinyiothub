@@ -203,7 +203,9 @@ impl tinyiothub_agent::port::provider::ModelProvider for InjectionProvider {
             .map(|m| m.content.as_str())
             .unwrap_or_default();
 
-        if any("\"denied\"") {
+        // 语义子串：zeroclaw 历史是原始 payload（{"denied":true,...}），
+        // rig canonical 信封转义为 \"denied\"——两种编码都含 action_denied。
+        if any("action_denied") {
             return Ok(ChatResponse {
                 text: Some("factory_reset 被策略拒绝，无法执行".to_string()),
                 tool_calls: vec![],

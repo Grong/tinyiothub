@@ -146,6 +146,214 @@ fn rig_tool_result_flattens_to_canonical_json() {
     assert_eq!(port[0].content, r#"{"content":"ok output","tool_call_id":"call_9"}"#);
 }
 
+// ── RigMinimaxAsPort round-trip ──────────────────────────────
+
+/// 记录收到的 CompletionRequest 并回放固定 CompletionResponse 的假 rig 模型。
+struct RecordingRigModel {
+    seen: Mutex<Option<rig_core::completion::CompletionRequest>>,
+    response: Vec<rig_core::message::AssistantContent>,
+    usage: rig_core::completion::Usage,
+}
+
+impl rig_core::completion::CompletionModel for RecordingRigModel {
+    async fn completion(
+        &self,
+        request: rig_core::completion::CompletionRequest,
+    ) -> Result<rig_core::completion::CompletionResponse, rig_core::completion::CompletionError> {
+        *self.seen.lock().unwrap() = Some(request);
+        Ok(rig_core::completion::CompletionResponse::new(
+            self.response.clone(),
+            self.usage,
+            "recording",
+        ))
+    }
+
+    async fn stream(
+        &self,
+        request: rig_core::completion::CompletionRequest,
+    ) -> Result<rig_core::streaming::StreamingCompletionResponse, rig_core::completion::CompletionError> {
+        let resp = self.completion(request).await?;
+        Ok(rig_core::streaming::StreamingCompletionResponse::stream(
+            "recording".to_string(),
+            Box::pin(futures::stream::iter([Ok(
+                rig_core::streaming::RawStreamingChoice::FinalResponse(rig_core::streaming::StreamFinal::new(
+                    "recording".to_string(),
+                    resp.usage,
+                )),
+            )])),
+        ))
+    }
+}
+
+fn recording_rig_model(
+    response: Vec<rig_core::message::AssistantContent>,
+) -> (
+    Arc<RecordingRigModel>,
+    crate::adapters::rig::provider::RigMinimaxAsPort<Arc<RecordingRigModel>>,
+) {
+    let model = Arc::new(RecordingRigModel {
+        seen: Mutex::new(None),
+        response,
+        usage: rig_core::completion::Usage {
+            input_tokens: 11,
+            output_tokens: 4,
+            total_tokens: 15,
+            cached_input_tokens: 2,
+            cache_creation_input_tokens: 0,
+            tool_use_prompt_tokens: 0,
+            reasoning_tokens: 0,
+        },
+    });
+    let port = crate::adapters::rig::provider::RigMinimaxAsPort::new(Arc::clone(&model));
+    (model, port)
+}
+
+/// port ChatRequest（含 assistant tool_call canonical JSON）→ rig 请求结构化
+/// 还原；rig 响应 ToolCall → port ChatResponse.tool_calls。
+#[tokio::test]
+async fn rig_minimax_as_port_round_trip_tool_call() {
+    use crate::port::provider::ModelProvider;
+    use rig_core::message::{AssistantContent, Message, ToolCallId, ToolFunction, UserContent};
+
+    let (model, port) = recording_rig_model(vec![AssistantContent::ToolCall(rig_core::message::ToolCall::new(
+        ToolCallId::new_or_mint("call_out"),
+        ToolFunction::new(
+            "write_property".into(),
+            serde_json::json!({"thingId": "t1", "value": 42}),
+        ),
+    ))]);
+
+    let messages = vec![
+        crate::port::provider::ChatMessage::system("sys"),
+        crate::port::provider::ChatMessage::user("u1"),
+        crate::port::provider::ChatMessage::assistant(
+            r#"{"content":"thinking","tool_calls":[{"arguments":"{\"thingId\":\"t1\"}","id":"call_1","name":"read_property"}]}"#,
+        ),
+    ];
+    let specs = vec![crate::port::tool::ToolSpec {
+        name: "read_property".into(),
+        description: "read a thing property".into(),
+        parameters: serde_json::json!({"type": "object", "properties": {"thingId": {"type": "string"}}}),
+    }];
+    let request = crate::port::provider::ChatRequest {
+        messages: &messages,
+        tools: Some(&specs),
+    };
+
+    let resp = port.chat(request, "MiniMax-M2.7", Some(0.3)).await.expect("chat");
+
+    // 出方向：canonical assistant JSON 还原为结构化 ToolCall。
+    let seen = model.seen.lock().unwrap().take().expect("request recorded");
+    assert_eq!(seen.model.as_deref(), Some("MiniMax-M2.7"));
+    assert_eq!(seen.temperature, Some(0.3));
+    assert!(matches!(&seen.chat_history[0], Message::System { content } if content == "sys"));
+    assert!(
+        matches!(&seen.chat_history[1], Message::User { content } if matches!(&content[0], UserContent::Text(t) if t.text == "u1"))
+    );
+    match &seen.chat_history[2] {
+        Message::Assistant { content, .. } => {
+            let tc = content
+                .iter()
+                .find_map(|b| match b {
+                    AssistantContent::ToolCall(tc) => Some(tc),
+                    _ => None,
+                })
+                .expect("tool call block");
+            assert_eq!(tc.id.to_string(), "call_1");
+            assert_eq!(tc.function.name, "read_property");
+            assert_eq!(tc.function.arguments, serde_json::json!({"thingId": "t1"}));
+            assert!(
+                content
+                    .iter()
+                    .any(|b| matches!(b, AssistantContent::Text(t) if t.text == "thinking"))
+            );
+        }
+        other => panic!("expected assistant message, got {other:?}"),
+    }
+    // 工具规范透传。
+    assert_eq!(seen.tools.len(), 1);
+    assert_eq!(seen.tools[0].name, "read_property");
+    assert_eq!(seen.tools[0].description, "read a thing property");
+    assert_eq!(
+        seen.tools[0].parameters,
+        serde_json::json!({"type": "object", "properties": {"thingId": {"type": "string"}}})
+    );
+
+    // 回方向：rig ToolCall → port tool_calls。
+    assert_eq!(resp.text, None);
+    assert_eq!(resp.tool_calls.len(), 1);
+    assert_eq!(resp.tool_calls[0].id, "call_out");
+    assert_eq!(resp.tool_calls[0].name, "write_property");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&resp.tool_calls[0].arguments).unwrap(),
+        serde_json::json!({"thingId": "t1", "value": 42})
+    );
+    let usage = resp.usage.expect("usage");
+    assert_eq!(usage.input_tokens, Some(11));
+    assert_eq!(usage.output_tokens, Some(4));
+    assert_eq!(usage.cached_input_tokens, Some(2));
+
+    // 响应回拍平为 canonical（与 Task 7 编码互逆闭合）。
+    let flat = crate::adapters::rig::provider::rig_messages_to_port(&[Message::Assistant {
+        id: None,
+        content: vec![AssistantContent::ToolCall(rig_core::message::ToolCall::new(
+            ToolCallId::new_or_mint("call_out"),
+            ToolFunction::new(
+                "write_property".into(),
+                serde_json::json!({"thingId": "t1", "value": 42}),
+            ),
+        ))],
+    }]);
+    assert_eq!(flat.len(), 1);
+    assert_eq!(flat[0].role, "assistant");
+    let v: serde_json::Value = serde_json::from_str(&flat[0].content).unwrap();
+    assert_eq!(v["tool_calls"][0]["id"], "call_out");
+    assert_eq!(v["tool_calls"][0]["name"], "write_property");
+}
+
+/// port ChatRequest（含 role=tool canonical JSON）→ rig 请求结构化 ToolResult；
+/// rig 文本响应 → port ChatResponse.text。
+#[tokio::test]
+async fn rig_minimax_as_port_round_trip_tool_result() {
+    use crate::port::provider::ModelProvider;
+    use rig_core::message::{AssistantContent, Message, Reasoning, Text, UserContent};
+
+    let (model, port) = recording_rig_model(vec![
+        AssistantContent::Reasoning(Reasoning::new("because")),
+        AssistantContent::Text(Text::new("done")),
+    ]);
+
+    let messages = vec![
+        crate::port::provider::ChatMessage::user("u1"),
+        crate::port::provider::ChatMessage::tool(r#"{"content":"{\"value\":21}","tool_call_id":"call_1"}"#),
+    ];
+    let request = crate::port::provider::ChatRequest {
+        messages: &messages,
+        tools: None,
+    };
+
+    let resp = port.chat(request, "m", None).await.expect("chat");
+
+    // 出方向：canonical tool JSON 还原为结构化 ToolResult。
+    let seen = model.seen.lock().unwrap().take().expect("request recorded");
+    assert!(seen.tools.is_empty());
+    match &seen.chat_history[1] {
+        Message::User { content } => match &content[0] {
+            UserContent::ToolResult(tr) => {
+                assert_eq!(tr.call.to_string(), "call_1");
+                assert_eq!(tr.content[0].as_text(), Some(r#"{"value":21}"#));
+            }
+            other => panic!("expected tool result, got {other:?}"),
+        },
+        other => panic!("expected user message, got {other:?}"),
+    }
+
+    // 回方向：rig Text/Reasoning → port text/reasoning_content。
+    assert_eq!(resp.text.as_deref(), Some("done"));
+    assert_eq!(resp.reasoning_content.as_deref(), Some("because"));
+    assert!(resp.tool_calls.is_empty());
+}
+
 // ── RigAgentLoop 事件转发 ────────────────────────────────────
 
 /// ScriptModel：第一次 chat 返回工具调用，第二次返回最终文本 + usage。
