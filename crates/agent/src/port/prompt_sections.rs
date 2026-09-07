@@ -255,71 +255,11 @@ impl PromptSection for ChannelMediaSection {
 mod tests {
     use std::path::Path;
 
-    /// zeroclaw 黑盒渲染：同一输入下 SystemPromptBuilder::with_defaults 的输出。
-    /// Phase 2 删除 zeroclaw 依赖后本 helper 移除，测试变为纯回归锁。
-    fn zeroclaw_render(workspace_dir: &Path) -> String {
-        struct TestTool;
-        zeroclaw_api::mock_tool_attribution!(TestTool);
-
-        #[async_trait::async_trait]
-        impl zeroclaw_api::tool::Tool for TestTool {
-            fn name(&self) -> &str {
-                "test_tool"
-            }
-            fn description(&self) -> &str {
-                "tool desc"
-            }
-            fn parameters_schema(&self) -> serde_json::Value {
-                serde_json::json!({"type": "object"})
-            }
-            async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<zeroclaw_api::tool::ToolResult> {
-                Ok(zeroclaw_api::tool::ToolResult {
-                    success: true,
-                    output: "ok".into(),
-                    error: None,
-                })
-            }
-        }
-
-        let tools: Vec<Box<dyn zeroclaw_api::tool::Tool>> = vec![Box::new(TestTool)];
-        let ctx = zeroclaw::agent::prompt::PromptContext {
+    /// 与 phase 1 黑盒对照测试相同的固定 PromptContext 输入。
+    fn fixed_ctx(workspace_dir: &Path) -> crate::port::prompt::PromptContext<'_> {
+        crate::port::prompt::PromptContext {
             workspace_dir,
             agent_workspace_dir: workspace_dir,
-            model_name: "MiniMax-M2",
-            tools: &tools,
-            skills: &[],
-            skills_prompt_mode: Default::default(), // SkillsPromptInjectionMode::Full
-            identity_config: None,
-            dispatcher_instructions: "",
-            sends_native_tool_specs: true,
-            security_summary: Some("test security summary".into()),
-            autonomy_level: Default::default(), // AutonomyLevel::Supervised
-        };
-        zeroclaw::agent::prompt::SystemPromptBuilder::with_defaults()
-            .build(&ctx)
-            .unwrap()
-    }
-
-    #[test]
-    fn vendored_defaults_match_zeroclaw_black_box() {
-        // 用 zeroclaw 黑盒（SystemPromptBuilder::with_defaults）与我们的 vendored
-        // sections 在同一 PromptContext 下分别渲染，必须逐字符相等。
-        // 该测试在 phase 1（zeroclaw 仍在依赖树里）成立，phase 2 删除 zeroclaw 后
-        // 变为纯回归锁（期望值已在 phase 1 固化）。
-        //
-        // workspace 放一个 SOUL.md，让 IdentitySection 的 personality 渲染
-        // 走非空分支（两侧读同一目录）。
-        //
-        // DateTimeSection 输出精度为天 + UTC offset（分钟级），两侧渲染间隔
-        // 微秒级，直接比较；仅当测试恰好跨午夜/DST 切换才会 flaky，此时再考虑归一化。
-        let workspace = tempfile::tempdir().unwrap();
-        std::fs::write(workspace.path().join("SOUL.md"), "I am a helpful assistant.").unwrap();
-
-        let zeroclaw_rendered = zeroclaw_render(workspace.path());
-
-        let ctx = crate::port::prompt::PromptContext {
-            workspace_dir: workspace.path(),
-            agent_workspace_dir: workspace.path(),
             model_name: "MiniMax-M2",
             tool_specs: vec![crate::port::tool::ToolSpec {
                 name: "test_tool".into(),
@@ -327,11 +267,32 @@ mod tests {
                 parameters: serde_json::json!({"type": "object"}),
             }],
             security_summary: Some("test security summary".into()),
-        };
-        let ours = crate::port::prompt::SystemPromptBuilder::with_defaults()
-            .build(&ctx)
-            .unwrap();
+        }
+    }
 
-        assert_eq!(ours, zeroclaw_rendered);
+    /// 归一化时间敏感行（日期/UTC offset）与 workspace 路径（tempdir 随机）。
+    fn normalize_datetime(s: &str) -> String {
+        let date_re = regex::Regex::new(r"Date: \d{4}-\d{2}-\d{2}").unwrap();
+        let offset_re = regex::Regex::new(r"UTC offset: [+-]\d{2}:\d{2}").unwrap();
+        let ws_re = regex::Regex::new(r"Working directory: `[^`]+`").unwrap();
+        let s = date_re.replace_all(s, "Date: <DATE>");
+        let s = offset_re.replace_all(&s, "UTC offset: <OFFSET>");
+        ws_re.replace_all(&s, "Working directory: `<WS>`").into_owned()
+    }
+
+    /// 回归锁：vendored 默认 prompt 与 phase 1 固化的 zeroclaw 黑盒输出逐字相等。
+    ///
+    /// 基线 snapshot 在 phase 1 由 `vendored_defaults_match_zeroclaw_black_box`
+    /// （当时与 zeroclaw 黑盒逐字符相等）捕获；phase 2 删除 zeroclaw 后
+    /// 该测试是纯回归锁——任何 section 文本改动都必须故意为之并更新基线。
+    #[test]
+    fn vendored_defaults_match_frozen_snapshot() {
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("SOUL.md"), "I am a helpful assistant.").unwrap();
+        let ours = crate::port::prompt::SystemPromptBuilder::with_defaults()
+            .build(&fixed_ctx(workspace.path()))
+            .unwrap();
+        let snapshot = include_str!("prompt_default_snapshot.md");
+        assert_eq!(normalize_datetime(&ours), normalize_datetime(snapshot));
     }
 }

@@ -22,7 +22,7 @@ use std::{
 
 use anyhow::Result;
 use async_trait::async_trait;
-use tinyiothub_agent::adapters::zeroclaw::loop_::zeroclaw_loop_factory;
+use tinyiothub_agent::adapters::rig::loop_::rig_loop_factory;
 use tinyiothub_agent::port::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
 use tinyiothub_agent::port::events::TurnEvent;
 use tinyiothub_agent::port::outcome::is_tool_loop_cancelled;
@@ -126,7 +126,7 @@ fn build_agent() -> AgentLoopHandle {
         conversation_memory: false,
         provider_factory: Arc::new(move || Ok(Box::new(scripted.clone()))),
     };
-    zeroclaw_loop_factory(cfg).expect("build agent")
+    rig_loop_factory(cfg).expect("build agent")
 }
 
 #[tokio::main]

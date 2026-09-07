@@ -48,12 +48,6 @@ impl SystemPromptBuilder {
         self
     }
 
-    /// 取出已注册的 section 列表（含默认 9 段 + 追加的自定义段）。
-    /// pub(crate)：供 adapters::zeroclaw::prompt 区分自定义段用。
-    pub(crate) fn into_sections(self) -> Vec<Box<dyn PromptSection>> {
-        self.sections
-    }
-
     pub fn build(&self, ctx: &PromptContext<'_>) -> anyhow::Result<String> {
         let mut output = String::new();
         for section in &self.sections {

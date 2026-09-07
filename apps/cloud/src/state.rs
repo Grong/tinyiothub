@@ -312,15 +312,12 @@ impl AppState {
             Arc::new(tinyiothub_storage::memory::MemoryStore::new(database.pool().clone()));
 
         // Task 7 起 AgentPool 不再持有存储句柄（db_pool/memory_store/
-        // memory_service）；调用方按请求注入。memory/observer 后端由组合层
-        // 经 zeroclaw 适配器构建后注入（crates/agent 保持零存储实现）。
-        let workspace_dir = tinyiothub_agent::prompt::paths::default_workspace_dir();
-        std::fs::create_dir_all(&workspace_dir).ok();
-        let agent_memory =
-            tinyiothub_agent::adapters::zeroclaw::memory::create_memory(&agent_settings.memory_backend, &workspace_dir)
-                .expect("failed to build agent memory backend");
-        let agent_observer =
-            tinyiothub_agent::adapters::zeroclaw::observer::create_observer(&agent_settings.observer_backend);
+        // memory_service）；调用方按请求注入。Task 9 移除 zeroclaw 后无
+        // 存储型 memory/observer 后端可接：chat 路径 conversation_memory=false
+        // 由 DB 每轮 seed 历史；memory_backend/observer_backend 设置暂为惰性，
+        // 与其他 AgentPool::new 调用点一致注入 Noop 实现。
+        let agent_memory = Arc::new(tinyiothub_agent::port::memory::NoopMemory);
+        let agent_observer = Arc::new(tinyiothub_agent::port::observer::NoopObserver);
         let agent_pool: Arc<AgentPool> = Arc::new(
             AgentPool::new(
                 &agent_settings,
