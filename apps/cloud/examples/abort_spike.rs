@@ -123,6 +123,7 @@ fn build_agent() -> AgentLoopHandle {
         observer: Arc::new(tinyiothub_agent::port::observer::NoopObserver),
         workspace_dir: std::env::temp_dir(),
         security_summary: None,
+        conversation_memory: false,
         provider_factory: Arc::new(move || Ok(Box::new(scripted.clone()))),
     };
     zeroclaw_loop_factory(cfg).expect("build agent")
