@@ -312,11 +312,18 @@ impl AppState {
             Arc::new(tinyiothub_storage::memory::MemoryStore::new(database.pool().clone()));
 
         // Task 7 起 AgentPool 不再持有存储句柄（db_pool/memory_store/
-        // memory_service）；调用方按请求注入。Task 9 移除 zeroclaw 后无
-        // 存储型 memory/observer 后端可接：chat 路径 conversation_memory=false
-        // 由 DB 每轮 seed 历史；memory_backend/observer_backend 设置暂为惰性，
-        // 与其他 AgentPool::new 调用点一致注入 Noop 实现。
-        let agent_memory = Arc::new(tinyiothub_agent::port::memory::NoopMemory);
+        // memory_service）；调用方按请求注入。
+        // Task 9b：memory 注入恢复为真实后端 JsonlMemory（Task 9 审查 I1 —
+        // NoopMemory 让 thing_agent 自治路径的持久化记忆静默丢失）。单一
+        // JSONL 文件全 workspace 共享，隔离经 WorkspaceScopedMemory 的
+        // namespace 包装（与原 zeroclaw per-workspace sqlite 等价）。
+        // chat 路径 conversation_memory=false，由 DB 每轮 seed 历史，不受
+        // 此后端影响。observer 暂保持 NoopObserver —— 观测接线待 phase 2
+        // hooks 完成（已知降级，本任务接受）。
+        let agents_base_dir = crate::shared::paths::agents_base_dir();
+        let agent_memory: Arc<dyn tinyiothub_agent::port::memory::Memory> = Arc::new(
+            crate::domains::agent::host::memory::jsonl::JsonlMemory::new(agents_base_dir.join("agent_memory.jsonl")),
+        );
         let agent_observer = Arc::new(tinyiothub_agent::port::observer::NoopObserver);
         let agent_pool: Arc<AgentPool> = Arc::new(
             AgentPool::new(
@@ -427,7 +434,6 @@ impl AppState {
             .clone()
             .map(|minimax| Arc::new(MinimaxTagSuggester { minimax }) as Arc<dyn crate::domains::tenant::TagSuggester>);
         let jwt_secret = settings.security.jwt.secret.clone();
-        let agents_base_dir = crate::shared::paths::agents_base_dir();
         let network_defaults = settings.network.defaults.clone();
         let mqtt_primary = settings.mqtt.primary.clone();
         let sms_config = settings.sms.clone();
