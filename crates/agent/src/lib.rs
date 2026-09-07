@@ -5,6 +5,11 @@
 //! 承载 agent loop（[`runtime`]）、记忆（[`memory`]）、pool（[`pool`]）、
 //! 工具框架（[`tools`]）、会话键（[`session`]）、prompt 组装（[`prompt`]）等共性能力。
 //!
+//! 引擎架构：业务代码只依赖自有接口面 [`port`]（反腐败层：Tool/ModelProvider/
+//! AgentLoop/Memory/Observer/PromptSection/TurnEvent），当前引擎为 rig 0.42，
+//! 桥接集中在 [`adapters::rig`]。迁移决策见
+//! `docs/designs/agent-engine-rig-migration.md`。
+//!
 //! ## 设计不变量（CI 守卫词表见 ci.yml G9 守卫；本注释刻意避开守卫词）
 //! - 零 Web 框架依赖（HTTP/Web 关切属于组合层 apps/cloud 的 host）
 //! - 零 SQL / 零存储实现依赖（持久化经端口抽象，实现住 apps/cloud）
