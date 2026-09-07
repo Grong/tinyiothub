@@ -81,7 +81,14 @@ impl zeroclaw::providers::traits::ModelProvider for PortProviderAsZeroclaw {
         messages.push(PortChatMessage::user(message));
         let response = self
             .inner
-            .chat(PortChatRequest { messages: &messages, tools: None }, model, temperature)
+            .chat(
+                PortChatRequest {
+                    messages: &messages,
+                    tools: None,
+                },
+                model,
+                temperature,
+            )
             .await?;
         Ok(response.text.unwrap_or_default())
     }
@@ -93,11 +100,16 @@ impl zeroclaw::providers::traits::ModelProvider for PortProviderAsZeroclaw {
         temperature: Option<f64>,
     ) -> anyhow::Result<zeroclaw::providers::traits::ChatResponse> {
         let messages = normalize_zeroclaw_messages(request.messages);
-        let tools = request.tools.map(|ts| ts.iter().map(port_tool_spec).collect::<Vec<_>>());
+        let tools = request
+            .tools
+            .map(|ts| ts.iter().map(port_tool_spec).collect::<Vec<_>>());
         let response = self
             .inner
             .chat(
-                PortChatRequest { messages: &messages, tools: tools.as_deref() },
+                PortChatRequest {
+                    messages: &messages,
+                    tools: tools.as_deref(),
+                },
                 model,
                 temperature,
             )

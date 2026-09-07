@@ -30,7 +30,11 @@ impl Tool for DummyTool {
         })
     }
     async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        Ok(ToolResult { success: true, output: "ok".into(), error: None })
+        Ok(ToolResult {
+            success: true,
+            output: "ok".into(),
+            error: None,
+        })
     }
 }
 
@@ -56,9 +60,7 @@ fn port_tool_bridge_preserves_identity() {
 
 #[test]
 fn kind_conversion_round_trips_port_side() {
-    use crate::adapters::zeroclaw::tools::{
-        port_memory_kind, port_tool_kind, zc_memory_kind, zc_role, zc_tool_kind,
-    };
+    use crate::adapters::zeroclaw::tools::{port_memory_kind, port_tool_kind, zc_memory_kind, zc_role, zc_tool_kind};
     // port → zc → port 恒等（变体名/顺序两侧一致是宏的编译期前提）
     for kind in [ToolKind::Plugin, ToolKind::Search, ToolKind::Shell] {
         assert_eq!(port_tool_kind(zc_tool_kind(kind)), kind);

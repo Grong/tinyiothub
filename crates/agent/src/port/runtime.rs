@@ -38,8 +38,7 @@ pub trait AgentLoop: Send + Sync {
 }
 
 pub type AgentLoopHandle = Arc<tokio::sync::Mutex<dyn AgentLoop>>;
-pub type AgentLoopFactory =
-    Arc<dyn Fn(AgentLoopConfig) -> anyhow::Result<AgentLoopHandle> + Send + Sync>;
+pub type AgentLoopFactory = Arc<dyn Fn(AgentLoopConfig) -> anyhow::Result<AgentLoopHandle> + Send + Sync>;
 
 #[cfg(test)]
 mod tests {
@@ -72,7 +71,11 @@ mod tests {
             serde_json::json!({"type": "object"})
         }
         async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
-            Ok(ToolResult { success: true, output: "ok".into(), error: None })
+            Ok(ToolResult {
+                success: true,
+                output: "ok".into(),
+                error: None,
+            })
         }
     }
 

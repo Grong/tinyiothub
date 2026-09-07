@@ -9,8 +9,8 @@ use crate::port::runtime::{AgentLoop, AgentLoopConfig, AgentLoopHandle};
 
 use super::memory::PortMemoryAsZeroclaw;
 use super::observer::PortObserverAsZeroclaw;
-use super::provider::PortProviderAsZeroclaw;
 use super::prompt::to_zeroclaw_builder;
+use super::provider::PortProviderAsZeroclaw;
 use super::tools::wrap_tools;
 
 /// zeroclaw 的取消错误归一化为 port 的 [`crate::port::outcome::ToolLoopCancelled`]。
@@ -63,7 +63,9 @@ pub struct ZeroclawAgentLoop {
 
 impl ZeroclawAgentLoop {
     pub fn new(agent: zeroclaw::agent::Agent) -> Self {
-        Self { agent: tokio::sync::Mutex::new(agent) }
+        Self {
+            agent: tokio::sync::Mutex::new(agent),
+        }
     }
 }
 
@@ -104,7 +106,9 @@ impl AgentLoop for ZeroclawAgentLoop {
 /// 用 port 零件组一个 zeroclaw 引擎的 AgentLoop（参数链对齐
 /// `pool.rs` 的 `build_agent`，response_cache 不传）。
 pub fn zeroclaw_loop_factory(cfg: AgentLoopConfig) -> anyhow::Result<AgentLoopHandle> {
-    let provider = PortProviderAsZeroclaw { inner: Arc::from((cfg.provider_factory)()?) };
+    let provider = PortProviderAsZeroclaw {
+        inner: Arc::from((cfg.provider_factory)()?),
+    };
     let prompt_builder = to_zeroclaw_builder(cfg.prompt_builder);
 
     let agent = zeroclaw::agent::Agent::builder()

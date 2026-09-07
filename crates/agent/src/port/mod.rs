@@ -13,21 +13,35 @@ pub mod tool;
 
 #[cfg(test)]
 mod tests {
-    use super::tool::{Tool, ToolResult};
     use super::attribution::{Attributable, Role, ToolKind};
+    use super::tool::{Tool, ToolResult};
 
     struct Dummy;
     impl Attributable for Dummy {
-        fn role(&self) -> Role { Role::Tool(ToolKind::Plugin) }
-        fn alias(&self) -> &str { "dummy" }
+        fn role(&self) -> Role {
+            Role::Tool(ToolKind::Plugin)
+        }
+        fn alias(&self) -> &str {
+            "dummy"
+        }
     }
     #[async_trait::async_trait]
     impl Tool for Dummy {
-        fn name(&self) -> &str { "dummy" }
-        fn description(&self) -> &str { "d" }
-        fn parameters_schema(&self) -> serde_json::Value { serde_json::json!({"type":"object"}) }
+        fn name(&self) -> &str {
+            "dummy"
+        }
+        fn description(&self) -> &str {
+            "d"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type":"object"})
+        }
         async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
-            Ok(ToolResult { success: true, output: "ok".into(), error: None })
+            Ok(ToolResult {
+                success: true,
+                output: "ok".into(),
+                error: None,
+            })
         }
     }
 

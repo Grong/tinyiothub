@@ -20,32 +20,198 @@ macro_rules! kind_conv {
     };
 }
 
-kind_conv!(zc_tool_kind, port_tool_kind, attribution::ToolKind, zeroclaw_api::attribution::ToolKind,
-    [Shell, HttpRequest, HttpServer, FetchUrl, Search, Memory, SpawnSubagent,
-     SopList, SopExecute, SopApprove, SopAdvance, SopStatus, SopHistory, Wait, Plugin]);
-kind_conv!(zc_cron_kind, port_cron_kind, attribution::CronKind, zeroclaw_api::attribution::CronKind,
-    [Interval, At, Cron, Once]);
-kind_conv!(zc_memory_kind, port_memory_kind, attribution::MemoryKind, zeroclaw_api::attribution::MemoryKind,
-    [Sqlite, Json, InMemory, Markdown, AgentScopedMarkdown, AgentScoped, Qdrant, Postgres, Lucid, None, Plugin]);
-kind_conv!(zc_tts_kind, port_tts_kind, attribution::TtsProviderKind, zeroclaw_api::attribution::TtsProviderKind,
-    [OpenAi, ElevenLabs, Cartesia, Google, Edge, Piper, Plugin]);
-kind_conv!(zc_transcription_kind, port_transcription_kind, attribution::TranscriptionProviderKind, zeroclaw_api::attribution::TranscriptionProviderKind,
-    [Whisper, OpenAi, Deepgram, Groq, AssemblyAi, Google, Plugin]);
-kind_conv!(zc_tunnel_kind, port_tunnel_kind, attribution::TunnelProviderKind, zeroclaw_api::attribution::TunnelProviderKind,
-    [Ngrok, Cloudflared, OpenVpn, Pinggy, Tailscale, None, Custom, Plugin]);
-kind_conv!(zc_channel_kind, port_channel_kind, attribution::ChannelKind, zeroclaw_api::attribution::ChannelKind,
-    [AcpChannel, Amqp, Bluesky, ClawdTalk, Cli, DingTalk, Discord, Email, GmailPush, IMessage, Irc,
-     Lark, Line, Linq, Matrix, Mattermost, MoChat, NextcloudTalk, Nostr, Notion, Qq, Reddit, Signal,
-     Slack, Telegram, Twitch, Twitter, VoiceCall, VoiceWake, Wati, WeCom, WeComWs, Webhook, Wechat,
-     WhatsappBusiness, WhatsappWeb]);
-kind_conv!(zc_model_kind, port_model_kind, attribution::ModelProviderKind, zeroclaw_api::attribution::ModelProviderKind,
-    [Anthropic, OpenAi, OpenAiCodex, Azure, Together, Bedrock, Ollama, Gemini, GeminiCli, GoogleAi,
-     Mistral, Groq, OpenRouter, Telnyx, Copilot, Glm, KiloCli, Kilo, Router, Moonshot, Qwen, Minimax,
-     Zai, Doubao, Yi, Hunyuan, Qianfan, Baichuan, Fireworks, Deepseek, AtomicChat, Cohere, Perplexity,
-     Xai, Cerebras, Sambanova, Hyperbolic, Deepinfra, Huggingface, Ai21, Reka, Baseten, Nscale,
-     Anyscale, Nebius, Friendli, Stepfun, Aihubmix, Siliconflow, Astrai, Avian, Deepmyst, Venice,
-     Nearai, Novita, Nvidia, Vercel, Cloudflare, Ovh, Lmstudio, Llamacpp, Sglang, Vllm, Osaurus,
-     Litellm, Lepton, Synthetic, Opencode, Custom, Plugin]);
+kind_conv!(
+    zc_tool_kind,
+    port_tool_kind,
+    attribution::ToolKind,
+    zeroclaw_api::attribution::ToolKind,
+    [
+        Shell,
+        HttpRequest,
+        HttpServer,
+        FetchUrl,
+        Search,
+        Memory,
+        SpawnSubagent,
+        SopList,
+        SopExecute,
+        SopApprove,
+        SopAdvance,
+        SopStatus,
+        SopHistory,
+        Wait,
+        Plugin
+    ]
+);
+kind_conv!(
+    zc_cron_kind,
+    port_cron_kind,
+    attribution::CronKind,
+    zeroclaw_api::attribution::CronKind,
+    [Interval, At, Cron, Once]
+);
+kind_conv!(
+    zc_memory_kind,
+    port_memory_kind,
+    attribution::MemoryKind,
+    zeroclaw_api::attribution::MemoryKind,
+    [
+        Sqlite,
+        Json,
+        InMemory,
+        Markdown,
+        AgentScopedMarkdown,
+        AgentScoped,
+        Qdrant,
+        Postgres,
+        Lucid,
+        None,
+        Plugin
+    ]
+);
+kind_conv!(
+    zc_tts_kind,
+    port_tts_kind,
+    attribution::TtsProviderKind,
+    zeroclaw_api::attribution::TtsProviderKind,
+    [OpenAi, ElevenLabs, Cartesia, Google, Edge, Piper, Plugin]
+);
+kind_conv!(
+    zc_transcription_kind,
+    port_transcription_kind,
+    attribution::TranscriptionProviderKind,
+    zeroclaw_api::attribution::TranscriptionProviderKind,
+    [Whisper, OpenAi, Deepgram, Groq, AssemblyAi, Google, Plugin]
+);
+kind_conv!(
+    zc_tunnel_kind,
+    port_tunnel_kind,
+    attribution::TunnelProviderKind,
+    zeroclaw_api::attribution::TunnelProviderKind,
+    [Ngrok, Cloudflared, OpenVpn, Pinggy, Tailscale, None, Custom, Plugin]
+);
+kind_conv!(
+    zc_channel_kind,
+    port_channel_kind,
+    attribution::ChannelKind,
+    zeroclaw_api::attribution::ChannelKind,
+    [
+        AcpChannel,
+        Amqp,
+        Bluesky,
+        ClawdTalk,
+        Cli,
+        DingTalk,
+        Discord,
+        Email,
+        GmailPush,
+        IMessage,
+        Irc,
+        Lark,
+        Line,
+        Linq,
+        Matrix,
+        Mattermost,
+        MoChat,
+        NextcloudTalk,
+        Nostr,
+        Notion,
+        Qq,
+        Reddit,
+        Signal,
+        Slack,
+        Telegram,
+        Twitch,
+        Twitter,
+        VoiceCall,
+        VoiceWake,
+        Wati,
+        WeCom,
+        WeComWs,
+        Webhook,
+        Wechat,
+        WhatsappBusiness,
+        WhatsappWeb
+    ]
+);
+kind_conv!(
+    zc_model_kind,
+    port_model_kind,
+    attribution::ModelProviderKind,
+    zeroclaw_api::attribution::ModelProviderKind,
+    [
+        Anthropic,
+        OpenAi,
+        OpenAiCodex,
+        Azure,
+        Together,
+        Bedrock,
+        Ollama,
+        Gemini,
+        GeminiCli,
+        GoogleAi,
+        Mistral,
+        Groq,
+        OpenRouter,
+        Telnyx,
+        Copilot,
+        Glm,
+        KiloCli,
+        Kilo,
+        Router,
+        Moonshot,
+        Qwen,
+        Minimax,
+        Zai,
+        Doubao,
+        Yi,
+        Hunyuan,
+        Qianfan,
+        Baichuan,
+        Fireworks,
+        Deepseek,
+        AtomicChat,
+        Cohere,
+        Perplexity,
+        Xai,
+        Cerebras,
+        Sambanova,
+        Hyperbolic,
+        Deepinfra,
+        Huggingface,
+        Ai21,
+        Reka,
+        Baseten,
+        Nscale,
+        Anyscale,
+        Nebius,
+        Friendli,
+        Stepfun,
+        Aihubmix,
+        Siliconflow,
+        Astrai,
+        Avian,
+        Deepmyst,
+        Venice,
+        Nearai,
+        Novita,
+        Nvidia,
+        Vercel,
+        Cloudflare,
+        Ovh,
+        Lmstudio,
+        Llamacpp,
+        Sglang,
+        Vllm,
+        Osaurus,
+        Litellm,
+        Lepton,
+        Synthetic,
+        Opencode,
+        Custom,
+        Plugin
+    ]
+);
 
 pub(crate) fn zc_provider_kind(k: &attribution::ProviderKind) -> zeroclaw_api::attribution::ProviderKind {
     use attribution::ProviderKind as P;
@@ -164,5 +330,8 @@ impl zeroclaw::tools::Tool for PortToolAsZeroclaw {
 /// 便捷：一批 port 工具直接转成 zeroclaw 盒子。
 #[allow(dead_code)] // Task 5b 的 zeroclaw_loop_factory 使用
 pub(crate) fn wrap_tools(tools: Vec<Box<dyn Tool>>) -> Vec<Box<dyn zeroclaw::tools::Tool>> {
-    tools.into_iter().map(|t| Box::new(PortToolAsZeroclaw(t)) as Box<dyn zeroclaw::tools::Tool>).collect()
+    tools
+        .into_iter()
+        .map(|t| Box::new(PortToolAsZeroclaw(t)) as Box<dyn zeroclaw::tools::Tool>)
+        .collect()
 }

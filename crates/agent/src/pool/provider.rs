@@ -41,11 +41,8 @@ pub fn minimax_settings() -> Option<MinimaxSettings> {
 pub fn create_minimax_provider() -> anyhow::Result<Box<dyn ModelProvider>> {
     let cfg =
         minimax_settings().ok_or_else(|| anyhow::anyhow!("[minimax] config section is required but not found"))?;
-    let inner = zeroclaw::providers::create_model_provider_with_url(
-        "minimaxi",
-        Some(&cfg.auth_token),
-        Some(&cfg.base_url),
-    )?;
+    let inner =
+        zeroclaw::providers::create_model_provider_with_url("minimaxi", Some(&cfg.auth_token), Some(&cfg.base_url))?;
     Ok(Box::new(ZeroclawProviderAsPort { inner }))
 }
 

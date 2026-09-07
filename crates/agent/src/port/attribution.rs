@@ -600,10 +600,7 @@ mod tests {
     #[test]
     fn channel_kind_snake_case() {
         assert_eq!(<&'static str>::from(ChannelKind::Telegram), "telegram");
-        assert_eq!(
-            <&'static str>::from(ChannelKind::WhatsappBusiness),
-            "whatsapp_business"
-        );
+        assert_eq!(<&'static str>::from(ChannelKind::WhatsappBusiness), "whatsapp_business");
     }
 
     #[test]
@@ -612,18 +609,12 @@ mod tests {
             ProviderKind::Model(ModelProviderKind::Anthropic).type_str(),
             "anthropic"
         );
-        assert_eq!(
-            ProviderKind::Tts(TtsProviderKind::ElevenLabs).type_str(),
-            "elevenlabs"
-        );
+        assert_eq!(ProviderKind::Tts(TtsProviderKind::ElevenLabs).type_str(), "elevenlabs");
     }
 
     #[test]
     fn role_composite_prefix() {
-        assert_eq!(
-            Role::Channel(ChannelKind::Discord).composite_prefix(),
-            Some("channel")
-        );
+        assert_eq!(Role::Channel(ChannelKind::Discord).composite_prefix(), Some("channel"));
         assert_eq!(
             Role::Provider(ProviderKind::Model(ModelProviderKind::Anthropic)).composite_prefix(),
             Some("model_provider"),
@@ -634,14 +625,7 @@ mod tests {
     #[test]
     fn role_attribution_field() {
         assert_eq!(Role::Agent.attribution_field(), Some("agent_alias"));
-        assert_eq!(
-            Role::Tool(ToolKind::Shell).attribution_field(),
-            Some("tool")
-        );
-        assert!(
-            Role::Channel(ChannelKind::Telegram)
-                .attribution_field()
-                .is_none()
-        );
+        assert_eq!(Role::Tool(ToolKind::Shell).attribution_field(), Some("tool"));
+        assert!(Role::Channel(ChannelKind::Telegram).attribution_field().is_none());
     }
 }
