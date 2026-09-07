@@ -270,14 +270,25 @@ mod tests {
         }
     }
 
-    /// 归一化时间敏感行（日期/UTC offset）与 workspace 路径（tempdir 随机）。
-    fn normalize_datetime(s: &str) -> String {
+    /// 归一化时间敏感行（日期/UTC offset）、workspace 路径（tempdir 随机）
+    /// 与机器指纹（RuntimeSection 的 Host/OS 行在 CI 与本地不同）。
+    fn normalize_frozen(s: &str) -> String {
         let date_re = regex::Regex::new(r"Date: \d{4}-\d{2}-\d{2}").unwrap();
         let offset_re = regex::Regex::new(r"UTC offset: [+-]\d{2}:\d{2}").unwrap();
         let ws_re = regex::Regex::new(r"Working directory: `[^`]+`").unwrap();
+        let host_re = regex::Regex::new(r"Host: [^|]+ \| OS: [a-z]+").unwrap();
         let s = date_re.replace_all(s, "Date: <DATE>");
         let s = offset_re.replace_all(&s, "UTC offset: <OFFSET>");
-        ws_re.replace_all(&s, "Working directory: `<WS>`").into_owned()
+        let s = ws_re.replace_all(&s, "Working directory: `<WS>`");
+        host_re.replace_all(&s, "Host: <HOST> | OS: <OS>").into_owned()
+    }
+
+    #[test]
+    fn normalize_frozen_erases_machine_fingerprint() {
+        let a = "## Runtime\n\nHost: 192.168.31.21 | OS: macos | Model: MiniMax-M2\n";
+        let b = "## Runtime\n\nHost: ip-10-0-0-7 | OS: linux | Model: MiniMax-M2\n";
+        assert_eq!(normalize_frozen(a), normalize_frozen(b));
+        assert!(normalize_frozen(a).contains("Host: <HOST> | OS: <OS>"));
     }
 
     /// 回归锁：vendored 默认 prompt 与 phase 1 固化的 zeroclaw 黑盒输出逐字相等。
@@ -293,6 +304,6 @@ mod tests {
             .build(&fixed_ctx(workspace.path()))
             .unwrap();
         let snapshot = include_str!("prompt_default_snapshot.md");
-        assert_eq!(normalize_datetime(&ours), normalize_datetime(snapshot));
+        assert_eq!(normalize_frozen(&ours), normalize_frozen(snapshot));
     }
 }

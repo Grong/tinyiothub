@@ -2,7 +2,7 @@
 
 The following is the ABSOLUTE TRUTH regarding the current date. Use this for all relative time calculations (e.g. "last 7 days").
 
-Date: 2026-09-07
+Date: <DATE>
 UTC offset: +08:00
 
 ## Project Context
@@ -35,11 +35,11 @@ test security summary
 
 ## Workspace
 
-Working directory: `/var/folders/r2/v6892_rs2758f3l8nkz4bb8c0000gn/T/.tmpmkePYw`
+Working directory: `<WS>`
 
 ## Runtime
 
-Host: 192.168.31.21 | OS: macos | Model: MiniMax-M2
+Host: <HOST> | OS: <OS> | Model: MiniMax-M2
 
 ## Channel Media Markers
 
