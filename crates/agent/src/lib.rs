@@ -11,6 +11,7 @@
 //! - 不感知 apps/cloud 的领域划分（不引用其 domains 路径）
 //! - CI 守卫：Agent Loop Purity Guard (G9) + cargo tree 依赖树检查
 
+pub mod adapters;
 pub mod config;
 pub mod error;
 pub mod memory;
