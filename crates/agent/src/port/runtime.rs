@@ -35,6 +35,13 @@ pub trait AgentLoop: Send + Sync {
     /// zeroclaw run_single = turn()（zeroclaw-runtime/src/agent/agent.rs:2520），
     /// 即完整工具循环，对应 rig 的 `.prompt()`。
     async fn run_single(&self, message: &str) -> anyhow::Result<String>;
+
+    /// 清空内存历史（zeroclaw Agent::clear_history）。cloud chat 每轮从
+    /// 会话持久化消息重建上下文，先清后种。
+    async fn clear_history(&self);
+
+    /// 用会话持久化消息水合内存历史（zeroclaw Agent::seed_history）。
+    async fn seed_history(&self, messages: &[crate::port::provider::ChatMessage]);
 }
 
 pub type AgentLoopHandle = Arc<tokio::sync::Mutex<dyn AgentLoop>>;

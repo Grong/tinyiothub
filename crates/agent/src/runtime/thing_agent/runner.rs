@@ -17,9 +17,9 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
-use zeroclaw::agent::TurnEvent;
-use zeroclaw::agent::loop_::is_tool_loop_cancelled;
 
+use crate::port::events::TurnEvent;
+use crate::port::outcome::is_tool_loop_cancelled;
 use crate::runtime::thing_agent::types::{ActionRecord, ActionResult, Outcome, RunReport};
 
 /// Hard per-run tool-call budget (spec O9). The (N+1)-th ToolCall event
@@ -40,8 +40,8 @@ const TOOL_INVOKE_ACTION: &str = "invoke_action";
 const TOOL_READ_PROPERTY: &str = "read_property";
 const TOOL_QUERY_EVENTS: &str = "query_events";
 
-/// Shared agent handle (T11 factory injects one per workspace).
-pub type AgentHandle = Arc<tokio::sync::Mutex<zeroclaw::agent::Agent>>;
+/// Shared agent loop handle (T11 factory injects one per workspace).
+pub type AgentHandle = crate::port::runtime::AgentLoopHandle;
 
 /// Why a run was truncated by a hard budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,7 +157,7 @@ impl Runner {
         // backstop timeout only fires if the turn ignores the cancel token;
         // normally the forward task's budget cancel lands first.
         let turn = {
-            let mut ag = agent.lock().await;
+            let ag = agent.lock().await;
             tokio::time::timeout(
                 self.max_duration + TURN_TIMEOUT_GRACE,
                 ag.turn_streamed(&prompt, event_tx, Some(cancel)),
@@ -170,8 +170,8 @@ impl Runner {
         }
 
         let end = match turn {
-            Ok(Ok((text, _))) if text.trim().is_empty() => TurnEnd::Empty,
-            Ok(Ok((text, _))) => TurnEnd::Text(text),
+            Ok(Ok(text)) if text.trim().is_empty() => TurnEnd::Empty,
+            Ok(Ok(text)) => TurnEnd::Text(text),
             Ok(Err(e)) if is_tool_loop_cancelled(&e) => TurnEnd::Cancelled,
             Ok(Err(e)) => {
                 tracing::warn!(error = %e, run_id = %ctx.run_id, "thing-agent turn failed");

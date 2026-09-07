@@ -33,8 +33,8 @@ use std::sync::Arc;
 
 use crate::domains::thing::service::ThingService;
 use sqlx::SqlitePool;
+use tinyiothub_agent::port::tool::{Tool, ToolResult};
 use tinyiothub_skills::trust::ToolSafety;
-use zeroclaw::tools::{Tool, ToolResult};
 
 pub use get::GetThingTool;
 pub use invoke_action::InvokeActionTool;

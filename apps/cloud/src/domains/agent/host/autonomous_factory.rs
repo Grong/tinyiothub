@@ -23,19 +23,17 @@ use crate::domains::thing::service::ThingService;
 use anyhow::anyhow;
 use dashmap::DashMap;
 use sqlx::SqlitePool;
-use tinyiothub_agent::adapters::zeroclaw::provider::PortProviderAsZeroclaw;
+use tinyiothub_agent::adapters::zeroclaw::loop_::zeroclaw_loop_factory;
 use tinyiothub_agent::memory::workspace_memory::WorkspaceScopedMemory;
 use tinyiothub_agent::pool::ProviderFactory;
+use tinyiothub_agent::port::memory::Memory;
+use tinyiothub_agent::port::observer::Observer;
+use tinyiothub_agent::port::prompt::SystemPromptBuilder;
+use tinyiothub_agent::port::runtime::AgentLoopConfig;
+use tinyiothub_agent::port::tool::Tool;
 use tinyiothub_agent::runtime::thing_agent::{AgentHandle, RunContextInner, manager::AutonomousAgentProvider};
 use tinyiothub_storage::Db;
 use tokio::sync::RwLock;
-use zeroclaw::{
-    agent::{dispatcher::NativeToolDispatcher, prompt::SystemPromptBuilder},
-    memory::Memory,
-    observability::Observer,
-    security::AutonomyLevel,
-    tools::Tool,
-};
 
 use super::tools::{
     AutonomousInvokeActionTool, RunContextSlot, ThingToolContext, create_thing_tools, new_run_context_slot,
@@ -118,31 +116,28 @@ impl AutonomousAgentFactory {
             &self.runtime,
         );
 
-        let provider = (self.provider_factory)()?;
         let memory: Arc<dyn Memory> = Arc::new(WorkspaceScopedMemory::new(
             Arc::clone(&self.memory),
             workspace_id.to_string(),
         ));
 
-        // Mirrors AgentPool::build_agent, minus the response cache (an
-        // autonomous control loop must never replay a stale decision).
-        let agent = zeroclaw::agent::Agent::builder()
-            .model_provider(Box::new(PortProviderAsZeroclaw { inner: Arc::from(provider) }))
-            .tools(tools)
-            .memory(memory)
-            .observer(Arc::clone(&self.observer))
-            .tool_dispatcher(Box::new(NativeToolDispatcher))
-            .model_name(self.model.clone())
-            .security_summary(Some(
+        // Mirrors AgentPool::create (same zeroclaw_loop_factory), minus the
+        // skills section and response cache (an autonomous control loop must
+        // never replay a stale decision).
+        let cfg = AgentLoopConfig {
+            model_name: self.model.clone(),
+            prompt_builder: SystemPromptBuilder::with_defaults(),
+            tools,
+            memory,
+            observer: Arc::clone(&self.observer),
+            workspace_dir: tinyiothub_agent::prompt::paths::workspace_dir(workspace_id),
+            security_summary: Some(
                 "Autonomous thing-agent loop: every action is gated by the workspace autonomy policy (mode/allowlist/denylist/rate fuses)."
                     .into(),
-            ))
-            .autonomy_level(AutonomyLevel::Supervised)
-            .response_cache(None)
-            .prompt_builder(SystemPromptBuilder::with_defaults())
-            .workspace_dir(tinyiothub_agent::prompt::paths::workspace_dir(workspace_id))
-            .build()
-            .map_err(|e| anyhow!("Autonomous agent build failed: {}", e))?;
+            ),
+            provider_factory: Arc::clone(&self.provider_factory),
+        };
+        let agent = zeroclaw_loop_factory(cfg).map_err(|e| anyhow!("Autonomous agent build failed: {}", e))?;
 
         // Double-checked insert: a concurrent creator may have won the race
         // while we were building. The loser's agent is dropped unstarted —
@@ -157,7 +152,7 @@ impl AutonomousAgentFactory {
                 Ok(handle)
             }
             Entry::Vacant(vacant) => {
-                let handle: AgentHandle = Arc::new(tokio::sync::Mutex::new(agent));
+                let handle: AgentHandle = agent;
                 vacant.insert(AutonomousEntry {
                     handle: Arc::clone(&handle),
                     run_ctx_slot: slot,
@@ -318,19 +313,13 @@ mod tests {
     }
 
     fn test_factory(pool: SqlitePool) -> AutonomousAgentFactory {
-        let observer: Arc<dyn Observer> = Arc::from(zeroclaw::observability::create_observer(
-            &zeroclaw::config::schema::ObservabilityConfig {
-                backend: zeroclaw::config::schema::ObservabilityBackend::None,
-                ..Default::default()
-            },
-        ));
         AutonomousAgentFactory::new(
             pool.clone(),
             Arc::new(tinyiothub_storage::Db::new(pool)),
             Arc::new(ThingEventBus::new()),
             Arc::new(ThrottleState::new(60)),
-            Arc::new(zeroclaw::memory::NoneMemory::new("test")),
-            observer,
+            Arc::new(tinyiothub_agent::port::memory::NoopMemory),
+            Arc::new(tinyiothub_agent::port::observer::NoopObserver),
             scripted_provider_factory(),
             "minimax-m2".to_string(),
             ThingToolContext {

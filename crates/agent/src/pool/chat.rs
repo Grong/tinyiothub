@@ -5,6 +5,7 @@
 // 的操作。
 
 use crate::error::AgentError;
+use crate::port::events::TurnEvent;
 use crate::session::SessionKey;
 
 use super::pool::AgentPool;
@@ -74,7 +75,7 @@ impl AgentPool {
         let agent = self
             .get_cached(&agent_id)
             .ok_or_else(|| AgentError::NotFound(format!("Heartbeat agent not pooled: {agent_id}")))?;
-        let mut ag = agent.lock().await;
+        let ag = agent.lock().await;
         ag.run_single(message)
             .await
             .map_err(|e| AgentError::RequestFailed(e.to_string()))
@@ -95,7 +96,7 @@ impl AgentPool {
             .ok_or_else(|| AgentError::NotFound(format!("Heartbeat agent not pooled: {agent_id}")))?;
 
         // Set up TurnEvent channel for real-time event interception
-        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<zeroclaw::agent::TurnEvent>(64);
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<TurnEvent>(64);
 
         // Spawn tool call collector
         let tool_calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -103,7 +104,7 @@ impl AgentPool {
         let collector = tokio::spawn(async move {
             while let Some(evt) = event_rx.recv().await {
                 match evt {
-                    zeroclaw::agent::TurnEvent::ToolCall { name, args, .. } => {
+                    TurnEvent::ToolCall { name, args, .. } => {
                         let mut calls = tool_calls_clone.lock().unwrap();
                         calls.push(StreamingToolCall {
                             name,
@@ -112,7 +113,7 @@ impl AgentPool {
                             success: true,
                         });
                     }
-                    zeroclaw::agent::TurnEvent::ToolResult { name, output, .. } => {
+                    TurnEvent::ToolResult { name, output, .. } => {
                         let mut calls = tool_calls_clone.lock().unwrap();
                         if let Some(last) = calls.iter_mut().rev().find(|c| c.name == name) {
                             last.result = Some(output.clone());
@@ -129,7 +130,7 @@ impl AgentPool {
         // No inner timeout here: the heartbeat tick bounds the whole run (see
         // heartbeat::loop_ TICK_TIMEOUT). A shorter inner timeout fires first
         // every time, making the tick-level bound unreachable.
-        let mut ag = agent.lock().await;
+        let ag = agent.lock().await;
         let result = ag.turn_streamed(message, event_tx, None).await;
         drop(ag);
 
@@ -142,7 +143,7 @@ impl AgentPool {
         };
 
         match result {
-            Ok((final_text, _conversation)) => Ok(StreamingRunResult { final_text, tool_calls }),
+            Ok(final_text) => Ok(StreamingRunResult { final_text, tool_calls }),
             Err(e) => Err(AgentError::RequestFailed(e.to_string())),
         }
     }
@@ -161,6 +162,8 @@ mod tests {
     fn test_pool() -> AgentPool {
         AgentPool::new(
             &tinyiothub_core::config::AgentSettings::default(),
+            std::sync::Arc::new(crate::port::memory::NoopMemory),
+            std::sync::Arc::new(crate::port::observer::NoopObserver),
             crate::pool::minimax_provider_factory(),
         )
         .expect("test AgentPool")

@@ -9,10 +9,10 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 use tinyiothub_agent::AgentError;
+use tinyiothub_agent::port::tool::Tool;
 use tinyiothub_agent::tools::{ToolProvider, ToolRegistry, ToolRuntimeContext, filter_by_denylist};
 use tinyiothub_skills::trust::{ToolSafety, classify_tool_safety};
 use tinyiothub_storage::cache::ThingCache;
-use zeroclaw::tools::Tool;
 
 use super::thing::{PendingActionStore, ThingToolContext, create_thing_tools};
 use super::{canvas::CanvasTool, dispatch_task::DispatchThingTaskTool, get_skill::GetSkillTool};

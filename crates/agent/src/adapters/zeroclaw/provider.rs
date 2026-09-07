@@ -136,7 +136,15 @@ impl zeroclaw::providers::traits::ModelProvider for PortProviderAsZeroclaw {
     }
 }
 
-/// zeroclaw ModelProvider 包装为 port ModelProvider（[`crate::pool::provider::create_minimax_provider`] 用）。
+/// zeroclaw ModelProvider 包装为 port ModelProvider（[`ZeroclawProviderAsPort`]）。
+///
+/// zeroclaw 收敛为 adapter 内部细节后，引擎的 minimax provider 构建也住这里：
+/// [`crate::pool::provider::create_minimax_provider`] 与本函数同名，代理到此处。
+pub fn create_minimax_provider(base_url: &str, auth_token: &str) -> anyhow::Result<Box<dyn PortModelProvider>> {
+    let inner = zeroclaw::providers::create_model_provider_with_url("minimaxi", Some(auth_token), Some(base_url))?;
+    Ok(Box::new(ZeroclawProviderAsPort { inner }))
+}
+
 pub struct ZeroclawProviderAsPort {
     pub inner: Box<dyn zeroclaw::providers::traits::ModelProvider>,
 }

@@ -34,12 +34,12 @@ use sqlx::Row;
 use tinyiothub_agent::pool::ProviderFactory;
 use tinyiothub_agent::port::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
 use tinyiothub_agent::port::provider::{ChatRequest, ChatResponse, ToolCall};
+use tinyiothub_agent::port::tool::Tool;
 use tinyiothub_agent::runtime::thing_agent::{
     DirectiveSink, EnqueueError, Runner, ThingAgentManager, ThingAgentManagerConfig, TriggerSource, WakeSignal,
 };
 use tinyiothub_core::models::event::EventLevel;
 use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
-use zeroclaw::tools::Tool;
 
 use crate::test_utils::seed_test_workspace;
 
@@ -332,19 +332,13 @@ async fn build_fixture(
         .expect("save policy");
 
     let bus = Arc::new(ThingEventBus::new());
-    let observer: Arc<dyn zeroclaw::observability::Observer> = Arc::from(zeroclaw::observability::create_observer(
-        &zeroclaw::config::schema::ObservabilityConfig {
-            backend: zeroclaw::config::schema::ObservabilityBackend::None,
-            ..Default::default()
-        },
-    ));
     let factory = Arc::new(AutonomousAgentFactory::new(
         pool.clone(),
         policy_repo.clone(),
         bus.clone(),
         Arc::new(ThrottleState::new(60)),
-        Arc::new(zeroclaw::memory::NoneMemory::new("loop-test")),
-        observer,
+        Arc::new(tinyiothub_agent::port::memory::NoopMemory),
+        Arc::new(tinyiothub_agent::port::observer::NoopObserver),
         provider_factory,
         "stub-model".to_string(),
         crate::domains::agent::host::tools::ThingToolContext {

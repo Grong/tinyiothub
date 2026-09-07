@@ -6,8 +6,8 @@
 // never subject to denylist filtering.
 
 use async_trait::async_trait;
-use zeroclaw::tools::{Tool, ToolResult};
-use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
+use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
+use tinyiothub_agent::port::tool::{Tool, ToolResult};
 
 pub struct CanvasTool;
 

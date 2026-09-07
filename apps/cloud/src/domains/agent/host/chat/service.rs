@@ -1,17 +1,18 @@
-// Stateless ChatService — zeroclaw Agent passed as parameter.
+// Stateless ChatService — agent loop handle passed as parameter.
 // Eliminates the SSE serialization round-trip:
-//   Before: zeroclaw TurnEvent → bytes → reqwest::Response → parse bytes → ChatEvent → SSE
-//   After:  zeroclaw TurnEvent → ChatEvent → SSE
+//   Before: TurnEvent → bytes → reqwest::Response → parse bytes → ChatEvent → SSE
+//   After:  TurnEvent → ChatEvent → SSE
 
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
-use zeroclaw::agent::TurnEvent;
 
 use crate::domains::agent::host::types::{ChatError, ChatEvent};
 use tinyiothub_agent::AgentError;
 use tinyiothub_agent::config::AgentRuntimeConfig;
 use tinyiothub_agent::pool::AgentPool;
+use tinyiothub_agent::port::events::TurnEvent;
+use tinyiothub_agent::port::runtime::AgentLoopHandle;
 
 // ============================================================================
 // Pool-facing entry points (db-backed; cloud side — Task 7 fix round 1)
@@ -25,7 +26,7 @@ pub async fn ensure_agent(
     agent_id: &str,
     workspace_id: &str,
     config: &AgentRuntimeConfig,
-) -> Result<Arc<tokio::sync::Mutex<zeroclaw::agent::Agent>>, AgentError> {
+) -> Result<AgentLoopHandle, AgentError> {
     if let Some(agent) = pool.get_cached(agent_id) {
         return Ok(agent);
     }
@@ -155,12 +156,12 @@ fn turn_event_to_chat_event(evt: &TurnEvent, run_id: &str, session_key: &str) ->
     }
 }
 
-/// Send a chat message to a zeroclaw Agent and receive ChatEvents directly.
+/// Send a chat message to a pooled agent loop and receive ChatEvents directly.
 ///
 /// Returns an mpsc::Receiver<ChatEvent> — no bytes round-trip.
 #[allow(clippy::too_many_arguments)]
 pub async fn send_message(
-    agent: &Arc<tokio::sync::Mutex<zeroclaw::agent::Agent>>,
+    agent: &AgentLoopHandle,
     message: &str,
     run_id: &str,
     session_key: &str,
@@ -240,7 +241,7 @@ pub async fn send_message(
         // session's persisted messages. Splitting this into two lock
         // acquisitions would let a concurrent turn on another session swap
         // the history in between.
-        let mut ag = agent.lock().await;
+        let ag = agent.lock().await;
 
         if let Err(e) = super::history::ensure_session(&db_pool, &session_key, &workspace_id, &agent_id).await {
             tracing::warn!(error = %e, %session_key, "Failed to ensure chat session row");
@@ -249,21 +250,20 @@ pub async fn send_message(
             super::history::list_messages(&db_pool, &session_key, super::history::SESSION_CONTEXT_MESSAGE_LIMIT)
                 .await
                 .unwrap_or_default();
-        ag.clear_history();
+        ag.clear_history().await;
         if !system_prompt.is_empty() || !prior.is_empty() {
             let mut seed = Vec::with_capacity(prior.len() + 1);
             if !system_prompt.is_empty() {
-                seed.push(zeroclaw::providers::traits::ChatMessage {
-                    role: "system".into(),
-                    content: system_prompt.clone(),
-                });
+                seed.push(tinyiothub_agent::port::provider::ChatMessage::system(
+                    system_prompt.clone(),
+                ));
             }
             seed.extend(
                 prior
                     .into_iter()
-                    .map(|(role, content)| zeroclaw::providers::traits::ChatMessage { role, content }),
+                    .map(|(role, content)| tinyiothub_agent::port::provider::ChatMessage { role, content }),
             );
-            ag.seed_history(&seed);
+            ag.seed_history(&seed).await;
         }
         if let Err(e) = super::history::append_message(&db_pool, &session_key, "user", &reflect_message, &run_id).await
         {
@@ -279,7 +279,7 @@ pub async fn send_message(
         drop(ag);
 
         let final_text = match result {
-            Ok(Ok((text, _conversation))) => {
+            Ok(Ok(text)) => {
                 let _ = tx
                     .send(ChatEvent::Final {
                         run_id: run_id.clone(),
@@ -378,6 +378,8 @@ mod tests {
         tinyiothub_storage::test_helpers::run_all_migrations(&db).await.unwrap();
         let pool = AgentPool::new(
             &tinyiothub_core::config::AgentSettings::default(),
+            Arc::new(tinyiothub_agent::port::memory::NoopMemory),
+            Arc::new(tinyiothub_agent::port::observer::NoopObserver),
             tinyiothub_agent::pool::minimax_provider_factory(),
         )
         .expect("test AgentPool");

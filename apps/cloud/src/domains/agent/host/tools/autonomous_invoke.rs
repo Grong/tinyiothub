@@ -37,13 +37,13 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
+use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
+use tinyiothub_agent::port::tool::{Tool, ToolResult};
 use tinyiothub_agent::runtime::thing_agent::RunContextInner;
 use tinyiothub_core::models::event::EventLevel;
 use tinyiothub_policy::autonomy::{GateVerdict, gate_check};
 use tinyiothub_storage::Db;
 use tokio::sync::RwLock;
-use zeroclaw::tools::{Tool, ToolResult};
-use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
 use super::thing::{InvokeActionTool, take_pending_action, tool_err, tool_ok};
 use crate::domains::event::{
@@ -381,9 +381,9 @@ fn self_pending_actions() -> Arc<super::thing::PendingActionStore> {
 #[cfg(test)]
 mod tests {
     use crate::domains::thing::service::ThingService;
+    use tinyiothub_agent::port::tool::Tool;
     use tinyiothub_agent::runtime::thing_agent::RunContextInner;
     use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
-    use zeroclaw::tools::Tool;
 
     use super::*;
     use crate::domains::agent::host::test_utils::seed_test_workspace;

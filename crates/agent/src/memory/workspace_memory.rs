@@ -1,19 +1,21 @@
 // WorkspaceScopedMemory — namespace-based memory isolation for workspaces
 //
-// Replaces zeroclaw's NamespacedMemory (removed in v0.8.1).
-// Wraps a Memory backend and scopes all operations to a workspace_id namespace.
+// Replaces zeroclaw's NamespacedMemory (removed in v0.8.1) — 历史说明。
+// Wraps a port Memory backend and scopes all operations to a workspace_id namespace.
 //
 // Design:
-//   - store() delegates to store_with_metadata(namespace=workspace_id)
-//   - recall() delegates to recall_namespaced(namespace=workspace_id)
+//   - store() delegates to store_with_agent(namespace=workspace_id)
+//   - recall() over-fetches 2x then filters by namespace and takes limit
+//     (复刻 zeroclaw recall_namespaced 的默认语义)
 //   - get() and list() post-filter by namespace
 //   - Other methods delegate to inner
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use zeroclaw::memory::{Memory, MemoryCategory, MemoryEntry};
-use zeroclaw_api::attribution::{Attributable, Role};
+
+use crate::port::attribution::{Attributable, Role};
+use crate::port::memory::{Memory, MemoryCategory, MemoryEntry};
 
 /// Decorator that wraps a `Memory` backend with namespace isolation by workspace_id.
 pub struct WorkspaceScopedMemory {
@@ -45,7 +47,7 @@ impl Memory for WorkspaceScopedMemory {
         session_id: Option<&str>,
     ) -> anyhow::Result<()> {
         self.inner
-            .store_with_metadata(key, content, category, session_id, Some(&self.namespace), None)
+            .store_with_agent(key, content, category, session_id, Some(&self.namespace), None, None)
             .await
     }
 
@@ -57,9 +59,14 @@ impl Memory for WorkspaceScopedMemory {
         since: Option<&str>,
         until: Option<&str>,
     ) -> anyhow::Result<Vec<MemoryEntry>> {
-        self.inner
-            .recall_namespaced(&self.namespace, query, limit, session_id, since, until)
-            .await
+        // Over-fetch 2x then filter by namespace and take limit — 复刻
+        // zeroclaw recall_namespaced 的默认语义（该默认方法未 port）。
+        let entries = self.inner.recall(query, limit * 2, session_id, since, until).await?;
+        Ok(entries
+            .into_iter()
+            .filter(|e| e.namespace == self.namespace)
+            .take(limit)
+            .collect())
     }
 
     async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>> {

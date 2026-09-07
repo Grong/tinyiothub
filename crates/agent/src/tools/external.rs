@@ -6,10 +6,10 @@
 
 use std::sync::Arc;
 
+use crate::port::attribution::{Attributable, Role, ToolKind};
+use crate::port::tool::{Tool, ToolResult};
 use async_trait::async_trait;
 use tinyiothub_skills::trust::{ToolSafety, classify_tool_safety};
-use zeroclaw::tools::{Tool, ToolResult};
-use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
 // ---------------------------------------------------------------------------
 // External tool registry (MCP seam)

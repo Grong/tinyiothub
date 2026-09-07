@@ -312,10 +312,23 @@ impl AppState {
             Arc::new(tinyiothub_storage::memory::MemoryStore::new(database.pool().clone()));
 
         // Task 7 起 AgentPool 不再持有存储句柄（db_pool/memory_store/
-        // memory_service）；调用方按请求注入。
+        // memory_service）；调用方按请求注入。memory/observer 后端由组合层
+        // 经 zeroclaw 适配器构建后注入（crates/agent 保持零存储实现）。
+        let workspace_dir = tinyiothub_agent::prompt::paths::default_workspace_dir();
+        std::fs::create_dir_all(&workspace_dir).ok();
+        let agent_memory =
+            tinyiothub_agent::adapters::zeroclaw::memory::create_memory(&agent_settings.memory_backend, &workspace_dir)
+                .expect("failed to build agent memory backend");
+        let agent_observer =
+            tinyiothub_agent::adapters::zeroclaw::observer::create_observer(&agent_settings.observer_backend);
         let agent_pool: Arc<AgentPool> = Arc::new(
-            AgentPool::new(&agent_settings, tinyiothub_agent::pool::minimax_provider_factory())
-                .expect("failed to build AgentPool"),
+            AgentPool::new(
+                &agent_settings,
+                agent_memory,
+                agent_observer,
+                tinyiothub_agent::pool::minimax_provider_factory(),
+            )
+            .expect("failed to build AgentPool"),
         );
 
         alarm_service.set_device_cache(device_cache.clone());
@@ -832,13 +845,22 @@ impl crate::domains::tenant::TagSuggester for MinimaxTagSuggester {
             "AI 服务初始化失败".to_string()
         })?;
 
+        let messages = [tinyiothub_agent::port::provider::ChatMessage::user(&prompt)];
         let response = provider
-            .chat_with_system(None, &prompt, &model, Some(0.3))
+            .chat(
+                tinyiothub_agent::port::provider::ChatRequest {
+                    messages: &messages,
+                    tools: None,
+                },
+                &model,
+                Some(0.3),
+            )
             .await
             .map_err(|e| {
                 tracing::error!("AI tag generation failed: {}", e);
                 "AI 生成标签失败，请稍后重试".to_string()
             })?;
+        let response = response.text.unwrap_or_default();
 
         let tags: Vec<String> = response
             .split([',', '，', '、', '\n'])

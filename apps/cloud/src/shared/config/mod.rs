@@ -41,8 +41,9 @@ pub fn load_configuration() -> Result<ApplicationSettings, ConfigError> {
 /// Create a MiniMax model provider using the configured base_url and auth_token.
 ///
 /// Takes the `[minimax]` config slice from the caller (G6 — injected, not global).
+/// The engine provider construction lives in the zeroclaw adapter.
 pub fn create_minimax_provider(
     cfg: &MinimaxConfig,
-) -> anyhow::Result<Box<dyn zeroclaw::providers::traits::ModelProvider>> {
-    zeroclaw::providers::create_model_provider_with_url("minimaxi", Some(&cfg.auth_token), Some(&cfg.base_url))
+) -> anyhow::Result<Box<dyn tinyiothub_agent::port::provider::ModelProvider>> {
+    tinyiothub_agent::adapters::zeroclaw::provider::create_minimax_provider(&cfg.base_url, &cfg.auth_token)
 }

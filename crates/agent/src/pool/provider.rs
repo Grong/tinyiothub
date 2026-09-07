@@ -2,11 +2,11 @@
 //!（Task 14 自 apps/cloud `host/autonomous_factory.rs` / `host/ports.rs` 迁入）。
 //!
 //! 组合层启动时自配置 `[minimax]` 段注册设置；provider 按 agent 构建
-//! （zeroclaw 中 provider 是 per-agent 的）。
+//! （provider 是 per-agent 的）。引擎 provider 的具体构建住
+//! adapters/zeroclaw（zeroclaw 是 adapter 内部细节）。
 
 use std::sync::Arc;
 
-use crate::adapters::zeroclaw::provider::ZeroclawProviderAsPort;
 use crate::port::provider::ModelProvider;
 
 /// Builds a fresh model provider per agent (providers are per-agent in
@@ -41,9 +41,7 @@ pub fn minimax_settings() -> Option<MinimaxSettings> {
 pub fn create_minimax_provider() -> anyhow::Result<Box<dyn ModelProvider>> {
     let cfg =
         minimax_settings().ok_or_else(|| anyhow::anyhow!("[minimax] config section is required but not found"))?;
-    let inner =
-        zeroclaw::providers::create_model_provider_with_url("minimaxi", Some(&cfg.auth_token), Some(&cfg.base_url))?;
-    Ok(Box::new(ZeroclawProviderAsPort { inner }))
+    crate::adapters::zeroclaw::provider::create_minimax_provider(&cfg.base_url, &cfg.auth_token)
 }
 
 /// Production provider factory — `[minimax]` settings registered by the

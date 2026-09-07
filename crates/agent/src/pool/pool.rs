@@ -1,33 +1,27 @@
 // AgentPool — pool lifecycle: construction, cache lookup, creation from
-// caller-injected parts, invalidation, idle cleanup, and the zeroclaw agent
-// builder.
+// caller-injected parts, invalidation, idle cleanup, and the agent loop
+// factory wiring.
 //
 // Task 14 自 apps/cloud `host/agent/pool.rs` 迁入（该文件 Task 7 起即存储无关）。
 
 use std::{sync::Arc, time::Instant};
 
-use anyhow::anyhow;
 use dashmap::DashMap;
-use zeroclaw::{
-    agent::{
-        dispatcher::NativeToolDispatcher,
-        prompt::{PromptContext, PromptSection, SystemPromptBuilder},
-    },
-    memory::Memory,
-    observability::Observer,
-    security::AutonomyLevel,
-    tools::Tool,
-};
 
 use crate::config::AgentRuntimeConfig;
 use crate::error::AgentError;
 use crate::memory::workspace_memory::WorkspaceScopedMemory;
+use crate::port::memory::Memory;
+use crate::port::observer::Observer;
+use crate::port::prompt::{PromptContext, PromptSection, SystemPromptBuilder};
+use crate::port::runtime::{AgentLoopConfig, AgentLoopHandle};
+use crate::port::tool::Tool;
 use crate::tools::{ToolRegistry, ToolRuntimeContext};
 
 use super::provider::ProviderFactory;
 
 // ============================================================================
-// Skills Section (zeroclaw SystemPromptBuilder integration)
+// Skills Section (port SystemPromptBuilder integration)
 // ============================================================================
 
 struct TinyIoTHubSkillsSection;
@@ -54,16 +48,16 @@ pub fn load_workspace_skills(workspace_dir: &std::path::Path) -> Vec<tinyiothub_
 // ============================================================================
 
 pub(crate) struct PoolEntry {
-    pub zeroclaw_agent: Arc<tokio::sync::Mutex<zeroclaw::agent::Agent>>,
+    pub agent: AgentLoopHandle,
     #[allow(dead_code)]
     pub metadata: Agent,
     pub last_used: Instant,
 }
 
 impl PoolEntry {
-    fn new(agent: zeroclaw::agent::Agent, metadata: Agent) -> Self {
+    fn new(agent: AgentLoopHandle, metadata: Agent) -> Self {
         Self {
-            zeroclaw_agent: Arc::new(tokio::sync::Mutex::new(agent)),
+            agent,
             metadata,
             last_used: Instant::now(),
         }
@@ -92,14 +86,13 @@ pub struct AgentPool {
     pub(crate) agents: Arc<DashMap<String, PoolEntry>>,
     pub(crate) shared_memory: Arc<dyn Memory>,
     pub(crate) observer: Arc<dyn Observer>,
-    pub(crate) response_cache: Option<Arc<zeroclaw::memory::ResponseCache>>,
     #[allow(dead_code)]
     pub(crate) agent_settings: tinyiothub_core::config::AgentSettings,
     pub chat_handles: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
     pub trust_configs: DashMap<String, tinyiothub_core::heartbeat::TrustConfig>,
     pub event_publisher: tokio::sync::RwLock<Option<Arc<crate::runtime::event::bus::AiEventPublisher>>>,
     /// Builds a fresh model provider per agent (injected by the composition
-    /// layer — providers are per-agent in zeroclaw).
+    /// layer — providers are per-agent).
     provider_factory: ProviderFactory,
     /// Late-bound runtime handles for tool construction (data server /
     /// directive sink), set once at startup after the composition state
@@ -112,55 +105,25 @@ pub struct AgentPool {
 }
 
 impl AgentPool {
-    /// Create a new AgentPool with shared memory and observer backends.
+    /// Create a new AgentPool with caller-injected memory and observer backends
+    /// (the composition layer builds them — crates/agent keeps zero storage
+    /// implementations).
     ///
     /// No storage handles: agent config and tools are resolved by the cloud
     /// caller and injected per creation (see [`Self::create`]).
     pub fn new(
         agent_settings: &tinyiothub_core::config::AgentSettings,
+        memory: Arc<dyn Memory>,
+        observer: Arc<dyn Observer>,
         provider_factory: ProviderFactory,
     ) -> anyhow::Result<Self> {
         let workspace_dir = crate::prompt::paths::default_workspace_dir();
         std::fs::create_dir_all(&workspace_dir).ok();
 
-        let memory_config = zeroclaw::config::schema::MemoryConfig {
-            backend: agent_settings.memory_backend.clone(),
-            auto_save: true,
-            hygiene_enabled: true,
-            response_cache_enabled: true,
-            ..Default::default()
-        };
-
-        let memory = zeroclaw::memory::create_memory(&memory_config, &workspace_dir, None).map_err(|e| {
-            anyhow!(
-                "Failed to create memory backend '{}': {}",
-                agent_settings.memory_backend,
-                e
-            )
-        })?;
-        let shared_memory: Arc<dyn Memory> = Arc::from(memory);
-
-        let response_cache = zeroclaw::memory::create_response_cache(&memory_config, &workspace_dir).map(Arc::new);
-
-        let observer_backend = match agent_settings.observer_backend.as_str() {
-            "none" | "noop" => zeroclaw::config::schema::ObservabilityBackend::None,
-            "verbose" => zeroclaw::config::schema::ObservabilityBackend::Verbose,
-            "prometheus" => zeroclaw::config::schema::ObservabilityBackend::Prometheus,
-            "otel" | "opentelemetry" | "otlp" => zeroclaw::config::schema::ObservabilityBackend::Otel,
-            _ => zeroclaw::config::schema::ObservabilityBackend::Log,
-        };
-        let observer_config = zeroclaw::config::schema::ObservabilityConfig {
-            backend: observer_backend,
-            ..Default::default()
-        };
-        let observer = zeroclaw::observability::create_observer(&observer_config);
-        let observer: Arc<dyn Observer> = Arc::from(observer);
-
         Ok(Self {
             agents: Arc::new(DashMap::new()),
-            shared_memory,
+            shared_memory: memory,
             observer,
-            response_cache,
             agent_settings: agent_settings.clone(),
             chat_handles: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             trust_configs: DashMap::new(),
@@ -224,15 +187,15 @@ impl AgentPool {
     /// Fast-path cache lookup; refreshes `last_used`. Never holds a DashMap
     /// entry across an await — callers resolve tools/config on a miss and
     /// come back through [`Self::create`].
-    pub fn get_cached(&self, agent_id: &str) -> Option<Arc<tokio::sync::Mutex<zeroclaw::agent::Agent>>> {
+    pub fn get_cached(&self, agent_id: &str) -> Option<AgentLoopHandle> {
         self.agents.get_mut(agent_id).map(|mut entry| {
-            let agent = Arc::clone(&entry.zeroclaw_agent);
+            let agent = Arc::clone(&entry.agent);
             entry.last_used = Instant::now();
             agent
         })
     }
 
-    /// Build and insert a per-agent zeroclaw Agent with NamespacedMemory
+    /// Build and insert a per-agent loop with WorkspaceScopedMemory
     /// isolation, from caller-injected parts.
     ///
     /// Pool key: `agent_id`. The runtime config and the fully resolved tool
@@ -244,27 +207,30 @@ impl AgentPool {
         workspace_id: &str,
         config: &AgentRuntimeConfig,
         tools: Vec<Box<dyn Tool>>,
-    ) -> Result<Arc<tokio::sync::Mutex<zeroclaw::agent::Agent>>, AgentError> {
+    ) -> Result<AgentLoopHandle, AgentError> {
         let namespaced: Arc<dyn Memory> = Arc::new(WorkspaceScopedMemory::new(
             Arc::clone(&self.shared_memory),
             workspace_id.to_string(),
         ));
 
-        let provider = (self.provider_factory)()
-            .map_err(|e| AgentError::BuildError(format!("Failed to create provider: {}", e)))?;
-
         let ws_dir = crate::prompt::paths::workspace_dir(workspace_id);
 
-        let agent = Self::build_agent(
-            &namespaced,
-            &self.observer,
-            config,
-            self.response_cache.clone(),
-            provider,
-            &ws_dir,
+        let cfg = AgentLoopConfig {
+            model_name: config.model.clone(),
+            prompt_builder: SystemPromptBuilder::with_defaults().add_section(Box::new(TinyIoTHubSkillsSection)),
             tools,
-        )
-        .map_err(|e| AgentError::BuildError(e.to_string()))?;
+            memory: namespaced,
+            observer: Arc::clone(&self.observer),
+            workspace_dir: ws_dir,
+            security_summary: Some(
+                "IoT device operations: destructive actions (delete, write) require user approval. Read-only operations are auto-approved."
+                    .into(),
+            ),
+            provider_factory: Arc::clone(&self.provider_factory),
+        };
+
+        let agent = crate::adapters::zeroclaw::loop_::zeroclaw_loop_factory(cfg)
+            .map_err(|e| AgentError::BuildError(e.to_string()))?;
 
         let metadata = Agent {
             agent_id: agent_id.to_string(),
@@ -277,13 +243,13 @@ impl AgentPool {
         use dashmap::mapref::entry::Entry;
         match self.agents.entry(agent_id.to_string()) {
             Entry::Occupied(mut occupied) => {
-                let agent = Arc::clone(&occupied.get().zeroclaw_agent);
+                let agent = Arc::clone(&occupied.get().agent);
                 occupied.get_mut().last_used = Instant::now();
                 Ok(agent)
             }
             Entry::Vacant(vacant) => {
                 let entry = PoolEntry::new(agent, metadata);
-                let agent_arc = Arc::clone(&entry.zeroclaw_agent);
+                let agent_arc = Arc::clone(&entry.agent);
                 vacant.insert(entry);
                 tracing::info!(agent_id = agent_id, pool_size = self.agents.len(), "Agent created");
                 Ok(agent_arc)
@@ -317,45 +283,6 @@ impl AgentPool {
         self.agents.clear();
         tracing::info!(cleared, "Agent tools refreshed: all cached agents cleared");
         Ok(())
-    }
-
-    // ========================================================================
-    // Agent builder
-    // ========================================================================
-
-    fn build_agent(
-        memory: &Arc<dyn Memory>,
-        observer: &Arc<dyn Observer>,
-        config: &AgentRuntimeConfig,
-        response_cache: Option<Arc<zeroclaw::memory::ResponseCache>>,
-        provider: Box<dyn crate::port::provider::ModelProvider>,
-        workspace_dir: &std::path::Path,
-        tools: Vec<Box<dyn Tool>>,
-    ) -> anyhow::Result<zeroclaw::agent::Agent> {
-        let tool_dispatcher = Box::new(NativeToolDispatcher);
-
-        let prompt_builder = SystemPromptBuilder::with_defaults().add_section(Box::new(TinyIoTHubSkillsSection));
-
-        let provider = crate::adapters::zeroclaw::provider::PortProviderAsZeroclaw {
-            inner: Arc::from(provider),
-        };
-
-        zeroclaw::agent::Agent::builder()
-            .model_provider(Box::new(provider))
-            .tools(tools)
-            .memory(Arc::clone(memory))
-            .observer(Arc::clone(observer))
-            .tool_dispatcher(tool_dispatcher)
-            .model_name(config.model.clone())
-            .security_summary(Some(
-                "IoT device operations: destructive actions (delete, write) require user approval. Read-only operations are auto-approved.".into(),
-            ))
-            .autonomy_level(AutonomyLevel::Supervised)
-            .response_cache(response_cache)
-            .prompt_builder(prompt_builder)
-            .workspace_dir(workspace_dir.to_path_buf())
-            .build()
-            .map_err(|e| anyhow!("Agent build failed: {}", e))
     }
 
     // ========================================================================
@@ -407,6 +334,16 @@ mod tests {
         Arc::new(|| Ok(Box::new(ScriptedModelProvider)))
     }
 
+    fn test_pool() -> AgentPool {
+        AgentPool::new(
+            &tinyiothub_core::config::AgentSettings::default(),
+            Arc::new(crate::port::memory::NoopMemory),
+            Arc::new(crate::port::observer::NoopObserver),
+            scripted_provider_factory(),
+        )
+        .expect("pool builds without storage")
+    }
+
     #[test]
     fn test_pool_entry_creation() {
         // PoolEntry::new is tested indirectly via AgentPool::create
@@ -433,22 +370,14 @@ mod tests {
     #[test]
     fn pool_constructs_without_storage_handles() {
         // Task 7: no db_pool / memory_store / memory_service — construction
-        // takes only settings + provider factory.
-        let pool = AgentPool::new(
-            &tinyiothub_core::config::AgentSettings::default(),
-            scripted_provider_factory(),
-        )
-        .expect("pool builds without storage");
+        // takes only settings + provider factory (memory/observer injected).
+        let pool = test_pool();
         assert_eq!(pool.pool_size(), 0);
     }
 
     #[test]
     fn create_uses_injected_config_and_caches() {
-        let pool = AgentPool::new(
-            &tinyiothub_core::config::AgentSettings::default(),
-            scripted_provider_factory(),
-        )
-        .expect("pool builds without storage");
+        let pool = test_pool();
         let config = AgentRuntimeConfig {
             model: "injected-model".to_string(),
             ..Default::default()

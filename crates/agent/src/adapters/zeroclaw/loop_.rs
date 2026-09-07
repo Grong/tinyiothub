@@ -101,6 +101,21 @@ impl AgentLoop for ZeroclawAgentLoop {
     async fn run_single(&self, message: &str) -> anyhow::Result<String> {
         self.agent.lock().await.turn(message).await.map_err(map_cancelled)
     }
+
+    async fn clear_history(&self) {
+        self.agent.lock().await.clear_history();
+    }
+
+    async fn seed_history(&self, messages: &[crate::port::provider::ChatMessage]) {
+        let zc_messages: Vec<zeroclaw::providers::traits::ChatMessage> = messages
+            .iter()
+            .map(|m| zeroclaw::providers::traits::ChatMessage {
+                role: m.role.clone(),
+                content: m.content.clone(),
+            })
+            .collect();
+        self.agent.lock().await.seed_history(&zc_messages);
+    }
 }
 
 /// 用 port 零件组一个 zeroclaw 引擎的 AgentLoop（参数链对齐

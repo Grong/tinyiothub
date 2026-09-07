@@ -3,11 +3,11 @@
 
 use std::sync::Arc;
 
+use crate::port::attribution::{Attributable, Role};
+use crate::port::tool::{Tool, ToolResult};
 use async_trait::async_trait;
 use tinyiothub_core::heartbeat::TrustConfig;
 use tinyiothub_skills::trust::{ToolSafety, TrustDecision};
-use zeroclaw::tools::{Tool, ToolResult};
-use zeroclaw_api::attribution::{Attributable, Role};
 
 /// Proxies a `Box<dyn Tool>`, delegating trust evaluation to the unified
 /// policy engine adapter.
@@ -80,7 +80,7 @@ impl Tool for TrustAwareTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeroclaw_api::attribution::ToolKind;
+    use crate::port::attribution::ToolKind;
 
     struct StubTool {
         name: &'static str,

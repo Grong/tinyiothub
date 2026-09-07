@@ -12,9 +12,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
+use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
+use tinyiothub_agent::port::tool::{Tool, ToolResult};
 use tinyiothub_agent::runtime::thing_agent::{DirectiveSink, EnqueueError, Priority, TriggerSource, WakeSignal};
-use zeroclaw::tools::{Tool, ToolResult};
-use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
 use super::thing::{tool_err, tool_ok};
 

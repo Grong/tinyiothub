@@ -38,3 +38,42 @@ impl zeroclaw::observability::Observer for PortObserverAsZeroclaw {
         self
     }
 }
+
+/// zeroclaw Observer 包装为 port Observer（组合层注入用）。
+///
+/// port 观测事件是 phase 1 占位形状（无生产端构造），record_event/
+/// record_metric 体留空；flush/name 直通。
+pub struct ZeroclawObserverAsPort(pub Arc<dyn zeroclaw::observability::Observer>);
+
+impl Observer for ZeroclawObserverAsPort {
+    fn record_event(&self, _event: &crate::port::observer::ObserverEvent) {}
+
+    fn record_metric(&self, _metric: &crate::port::observer::ObserverMetric) {}
+
+    fn flush(&self) {
+        self.0.flush();
+    }
+
+    fn name(&self) -> &str {
+        self.0.name()
+    }
+}
+
+/// 用 zeroclaw 观测实现建一个 port Observer（组合层注入入口；backend
+/// 字符串映射同迁移前 pool 自建 observer 的逻辑）。
+pub fn create_observer(backend: &str) -> Arc<dyn Observer> {
+    let backend = match backend {
+        "none" | "noop" => zeroclaw::config::schema::ObservabilityBackend::None,
+        "verbose" => zeroclaw::config::schema::ObservabilityBackend::Verbose,
+        "prometheus" => zeroclaw::config::schema::ObservabilityBackend::Prometheus,
+        "otel" | "opentelemetry" | "otlp" => zeroclaw::config::schema::ObservabilityBackend::Otel,
+        _ => zeroclaw::config::schema::ObservabilityBackend::Log,
+    };
+    let config = zeroclaw::config::schema::ObservabilityConfig {
+        backend,
+        ..Default::default()
+    };
+    Arc::new(ZeroclawObserverAsPort(Arc::from(
+        zeroclaw::observability::create_observer(&config),
+    )))
+}

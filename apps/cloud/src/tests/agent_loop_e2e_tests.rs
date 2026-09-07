@@ -225,19 +225,13 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
         let provider = provider.clone();
         Arc::new(move || Ok(Box::new(provider.clone()) as Box<dyn tinyiothub_agent::port::provider::ModelProvider>))
     };
-    let observer: Arc<dyn zeroclaw::observability::Observer> = Arc::from(zeroclaw::observability::create_observer(
-        &zeroclaw::config::schema::ObservabilityConfig {
-            backend: zeroclaw::config::schema::ObservabilityBackend::None,
-            ..Default::default()
-        },
-    ));
     let factory = Arc::new(AutonomousAgentFactory::new(
         pool.clone(),
         policy_repo.clone(),
         thing_bus.clone(),
         Arc::new(ThrottleState::new(60)),
-        Arc::new(zeroclaw::memory::NoneMemory::new("e2e")),
-        observer,
+        Arc::new(tinyiothub_agent::port::memory::NoopMemory),
+        Arc::new(tinyiothub_agent::port::observer::NoopObserver),
         provider_factory,
         "stub-model".to_string(),
         ThingToolContext {
