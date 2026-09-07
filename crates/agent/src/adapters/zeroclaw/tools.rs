@@ -79,6 +79,38 @@ pub(crate) fn zc_role(role: &attribution::Role) -> zeroclaw_api::attribution::Ro
     }
 }
 
+/// zeroclaw_api ProviderKind → port ProviderKind（zc_provider_kind 的反向）。
+pub(crate) fn port_provider_kind(k: zeroclaw_api::attribution::ProviderKind) -> attribution::ProviderKind {
+    use zeroclaw_api::attribution::ProviderKind as Z;
+    match k {
+        Z::Model(m) => attribution::ProviderKind::Model(port_model_kind(m)),
+        Z::Tts(t) => attribution::ProviderKind::Tts(port_tts_kind(t)),
+        Z::Transcription(t) => attribution::ProviderKind::Transcription(port_transcription_kind(t)),
+        Z::Tunnel(t) => attribution::ProviderKind::Tunnel(port_tunnel_kind(t)),
+    }
+}
+
+/// zeroclaw_api Attributable → port Attributable 的 Role 转换（zc_role 的反向）。
+pub(crate) fn port_role(role: zeroclaw_api::attribution::Role) -> attribution::Role {
+    use attribution::Role as P;
+    use zeroclaw_api::attribution::Role as Z;
+    match role {
+        Z::Swarm => P::Swarm,
+        Z::Agent => P::Agent,
+        Z::Channel(k) => P::Channel(port_channel_kind(k)),
+        Z::Tool(k) => P::Tool(port_tool_kind(k)),
+        Z::Cron(k) => P::Cron(port_cron_kind(k)),
+        Z::Provider(k) => P::Provider(port_provider_kind(k)),
+        Z::Memory(k) => P::Memory(port_memory_kind(k)),
+        Z::PeerGroup => P::PeerGroup,
+        Z::Skill => P::Skill,
+        Z::Mcp => P::Mcp,
+        Z::Sop => P::Sop,
+        Z::Session => P::Session,
+        Z::System => P::System,
+    }
+}
+
 /// port Tool 包装为 zeroclaw Tool（zeroclaw loop 经此调用我们的工具）。
 pub struct PortToolAsZeroclaw(pub Box<dyn Tool>);
 

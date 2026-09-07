@@ -6,7 +6,8 @@
 
 use std::sync::Arc;
 
-use zeroclaw::providers::traits::ModelProvider;
+use crate::adapters::zeroclaw::provider::ZeroclawProviderAsPort;
+use crate::port::provider::ModelProvider;
 
 /// Builds a fresh model provider per agent (providers are per-agent in
 /// zeroclaw). Production wires [`minimax_provider_factory`]; tests inject a
@@ -40,7 +41,12 @@ pub fn minimax_settings() -> Option<MinimaxSettings> {
 pub fn create_minimax_provider() -> anyhow::Result<Box<dyn ModelProvider>> {
     let cfg =
         minimax_settings().ok_or_else(|| anyhow::anyhow!("[minimax] config section is required but not found"))?;
-    zeroclaw::providers::create_model_provider_with_url("minimaxi", Some(&cfg.auth_token), Some(&cfg.base_url))
+    let inner = zeroclaw::providers::create_model_provider_with_url(
+        "minimaxi",
+        Some(&cfg.auth_token),
+        Some(&cfg.base_url),
+    )?;
+    Ok(Box::new(ZeroclawProviderAsPort { inner }))
 }
 
 /// Production provider factory — `[minimax]` settings registered by the

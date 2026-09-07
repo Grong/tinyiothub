@@ -17,6 +17,8 @@ pub struct AgentLoopConfig {
     pub observer: Arc<dyn crate::port::observer::Observer>,
     pub workspace_dir: PathBuf,
     pub security_summary: Option<String>,
+    /// 每 agent 构建一个 model provider（provider 是 per-agent 的）。
+    pub provider_factory: crate::pool::provider::ProviderFactory,
 }
 
 /// zeroclaw Agent::turn_streamed 的 port 形状（返回去掉 ConversationMessage，
@@ -74,6 +76,13 @@ mod tests {
         }
     }
 
+    /// 桩 factory：本组测试不走真实 provider，一律报错。
+    fn stub_provider_factory() -> crate::pool::provider::ProviderFactory {
+        Arc::new(|| -> anyhow::Result<Box<dyn crate::port::provider::ModelProvider>> {
+            anyhow::bail!("stub provider factory")
+        })
+    }
+
     #[test]
     fn agent_loop_config_constructs_and_turn_budget() {
         let config = AgentLoopConfig {
@@ -84,6 +93,7 @@ mod tests {
             observer: Arc::new(NoopObserver),
             workspace_dir: PathBuf::from("/tmp"),
             security_summary: None,
+            provider_factory: stub_provider_factory(),
         };
         assert_eq!(config.model_name, "test-model");
         assert_eq!(config.tools.len(), 1);

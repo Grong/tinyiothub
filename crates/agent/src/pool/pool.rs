@@ -328,7 +328,7 @@ impl AgentPool {
         observer: &Arc<dyn Observer>,
         config: &AgentRuntimeConfig,
         response_cache: Option<Arc<zeroclaw::memory::ResponseCache>>,
-        provider: Box<dyn zeroclaw::providers::traits::ModelProvider>,
+        provider: Box<dyn crate::port::provider::ModelProvider>,
         workspace_dir: &std::path::Path,
         tools: Vec<Box<dyn Tool>>,
     ) -> anyhow::Result<zeroclaw::agent::Agent> {
@@ -336,8 +336,12 @@ impl AgentPool {
 
         let prompt_builder = SystemPromptBuilder::with_defaults().add_section(Box::new(TinyIoTHubSkillsSection));
 
+        let provider = crate::adapters::zeroclaw::provider::PortProviderAsZeroclaw {
+            inner: Arc::from(provider),
+        };
+
         zeroclaw::agent::Agent::builder()
-            .model_provider(provider)
+            .model_provider(Box::new(provider))
             .tools(tools)
             .memory(Arc::clone(memory))
             .observer(Arc::clone(observer))
@@ -372,24 +376,14 @@ mod tests {
     struct ScriptedModelProvider;
 
     #[async_trait::async_trait]
-    impl zeroclaw::providers::traits::ModelProvider for ScriptedModelProvider {
-        async fn chat_with_system(
-            &self,
-            _system_prompt: Option<&str>,
-            _message: &str,
-            _model: &str,
-            _temperature: Option<f64>,
-        ) -> anyhow::Result<String> {
-            Ok("done".into())
-        }
-
+    impl crate::port::provider::ModelProvider for ScriptedModelProvider {
         async fn chat(
             &self,
-            _request: zeroclaw::providers::ChatRequest<'_>,
+            _request: crate::port::provider::ChatRequest<'_>,
             _model: &str,
             _temperature: Option<f64>,
-        ) -> anyhow::Result<zeroclaw::providers::ChatResponse> {
-            Ok(zeroclaw::providers::ChatResponse {
+        ) -> anyhow::Result<crate::port::provider::ChatResponse> {
+            Ok(crate::port::provider::ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
@@ -398,10 +392,10 @@ mod tests {
         }
     }
 
-    impl zeroclaw_api::attribution::Attributable for ScriptedModelProvider {
-        fn role(&self) -> zeroclaw_api::attribution::Role {
-            zeroclaw_api::attribution::Role::Provider(zeroclaw_api::attribution::ProviderKind::Model(
-                zeroclaw_api::attribution::ModelProviderKind::Custom,
+    impl crate::port::attribution::Attributable for ScriptedModelProvider {
+        fn role(&self) -> crate::port::attribution::Role {
+            crate::port::attribution::Role::Provider(crate::port::attribution::ProviderKind::Model(
+                crate::port::attribution::ModelProviderKind::Custom,
             ))
         }
         fn alias(&self) -> &str {
