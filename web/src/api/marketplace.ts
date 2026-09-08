@@ -115,8 +115,9 @@ export interface SceneParameter {
 export interface ThingTemplateItem {
   id: string;
   name: string;
-  displayName?: string;
-  description?: string;
+  /** 后端返回 {zh, en} 本地化对象；兼容纯字符串 */
+  displayName?: string | LocalizedString;
+  description?: string | LocalizedString;
   category: string;
   isBuiltin: boolean;
   isComposition: boolean;

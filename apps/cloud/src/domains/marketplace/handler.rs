@@ -22,7 +22,7 @@ use crate::{
         error::MarketplaceError,
         scene_instantiator::{InstantiateParams, SceneInstantiator},
         template_installer::TemplateInstaller,
-        thing_template_installer::ThingTemplateInstaller,
+        thing_template_installer::{ThingTemplateInstaller, localized_column},
     },
     shared::{api_response::ApiResponse, error_handling::AuthHelper},
     state::AppState,
@@ -529,7 +529,8 @@ async fn get_thing_template_detail(
     let result = serde_json::json!({
         "id": template.id,
         "name": template.name,
-        "description": template.description,
+        "displayName": localized_column(&template.display_name),
+        "description": template.description.as_deref().map(localized_column),
         "category": template.category,
         "isBuiltin": template.is_builtin != 0,
         "isComposition": is_composition,
