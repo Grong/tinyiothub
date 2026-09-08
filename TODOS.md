@@ -546,3 +546,14 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 - **What:** cloud proxy 已透传 marketplace 的 x-cache-stale 头（2026-09-08），但 web apiGet 丢弃响应头、市场页无降级指示。在 api 层暴露该头并在市场页渲染"数据可能未同步"提示。
 - **Why:** 降级信号链路目前终止在 proxy 响应头，真实消费者不可见。
 - **Effort:** S | **Depends on:** —
+
+### P3 — marketplace /health 拆分 liveness/readiness
+- **What:** 当前 degraded 返回 503——对 readiness 正确，但若被接成 k8s liveness probe，数据目录配置错误（持久态）会导致重启死循环。拆 `/health/live`（恒 200）与 `/health/ready`（现状语义），或确认部署只接 readiness。
+- **Why:** 对抗审查 F4：重启治不好数据问题，liveness 503 只会放大告警噪声。
+- **Context:** `apps/marketplace/src/handler/health.rs`；Dockerfile/compose healthcheck 现为 wget spider。
+- **Effort:** S | **Depends on:** 部署侧 probe 配置确认
+
+### P3 — 市场翻页跨页快照一致性
+- **What:** cloud `fetch_all_pages` 逐页独立请求；marketplace sync 整体重写缓存键。翻页中途遇 sync 重写会重复/漏条目（上游排序稳定只降低概率）。短期可接受（目录小、sync 低频）；目录增长后 client 端按 name/id 去重兜底或上游加快照导出端点。
+- **Why:** 对抗审查 F5；当前 23 条单页内完成，无实际影响。
+- **Effort:** M | **Depends on:** 目录规模增长信号

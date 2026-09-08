@@ -28,10 +28,7 @@ async fn list_templates(
         ));
     }
 
-    // 按资源自身判断冷缓存：None = 该类数据未加载（比全局 is_cold 更精确，
-    // 避免 templates 已加载而 drivers 缺失时误标/漏标）
     let cached = state.cache.get_templates();
-    let is_cold = matches!(cached, Ok(None));
 
     match cached {
         Ok(Some(items)) => {
@@ -46,9 +43,6 @@ async fn list_templates(
                 .collect();
 
             let mut headers = HeaderMap::new();
-            if is_cold {
-                headers.insert(CACHE_STALE_HEADER, "true".parse().unwrap());
-            }
             headers.insert("X-Total-Count", total.to_string().parse().unwrap());
             headers.insert("X-Page", params.page.to_string().parse().unwrap());
             headers.insert("X-Per-Page", params.per_page.to_string().parse().unwrap());
@@ -82,10 +76,7 @@ async fn get_template(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Response, (StatusCode, Json<tinyiothub_web::response::ApiResponse<()>>)> {
-    // 按资源自身判断冷缓存：None = 该类数据未加载（比全局 is_cold 更精确，
-    // 避免 templates 已加载而 drivers 缺失时误标/漏标）
     let cached = state.cache.get_templates();
-    let is_cold = matches!(cached, Ok(None));
 
     match cached {
         Ok(Some(items)) => {
@@ -94,13 +85,7 @@ async fn get_template(
                 .find(|item| item.get("name").and_then(|v| v.as_str()) == Some(&name))
             {
                 Some(v) => match serde_json::from_value::<Template>(v.clone()) {
-                    Ok(t) => {
-                        let mut headers = HeaderMap::new();
-                        if is_cold {
-                            headers.insert(CACHE_STALE_HEADER, "true".parse().unwrap());
-                        }
-                        Ok((headers, ApiResponseBuilder::success(t)).into_response())
-                    }
+                    Ok(t) => Ok(ApiResponseBuilder::success(t).into_response()),
                     Err(e) => Err((
                         StatusCode::INTERNAL_SERVER_ERROR,
                         ApiResponseBuilder::error_with_code(500, format!("Data error: {}", e)),

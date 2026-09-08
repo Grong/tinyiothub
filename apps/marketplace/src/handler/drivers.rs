@@ -28,9 +28,7 @@ async fn list_drivers(
         ));
     }
 
-    // 按资源自身判断冷缓存：None = 该类数据未加载（比全局 is_cold 更精确）
     let cached = state.cache.get_drivers();
-    let is_cold = matches!(cached, Ok(None));
 
     match cached {
         Ok(Some(items)) => {
@@ -45,9 +43,6 @@ async fn list_drivers(
                 .collect();
 
             let mut headers = HeaderMap::new();
-            if is_cold {
-                headers.insert(CACHE_STALE_HEADER, "true".parse().unwrap());
-            }
             headers.insert("X-Total-Count", total.to_string().parse().unwrap());
             headers.insert("X-Page", params.page.to_string().parse().unwrap());
             headers.insert("X-Per-Page", params.per_page.to_string().parse().unwrap());
@@ -81,9 +76,7 @@ async fn get_driver(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Response, (StatusCode, Json<tinyiothub_web::response::ApiResponse<()>>)> {
-    // 按资源自身判断冷缓存：None = 该类数据未加载（比全局 is_cold 更精确）
     let cached = state.cache.get_drivers();
-    let is_cold = matches!(cached, Ok(None));
 
     match cached {
         Ok(Some(items)) => {
@@ -92,13 +85,7 @@ async fn get_driver(
                 .find(|item| item.get("id").and_then(|v| v.as_str()) == Some(&id))
             {
                 Some(v) => match serde_json::from_value::<Driver>(v.clone()) {
-                    Ok(d) => {
-                        let mut headers = HeaderMap::new();
-                        if is_cold {
-                            headers.insert(CACHE_STALE_HEADER, "true".parse().unwrap());
-                        }
-                        Ok((headers, ApiResponseBuilder::success(d)).into_response())
-                    }
+                    Ok(d) => Ok(ApiResponseBuilder::success(d).into_response()),
                     Err(e) => Err((
                         StatusCode::INTERNAL_SERVER_ERROR,
                         ApiResponseBuilder::error_with_code(500, format!("Data error: {}", e)),

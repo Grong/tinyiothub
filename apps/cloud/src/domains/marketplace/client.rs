@@ -13,11 +13,9 @@ use super::{
 /// Marketplace API response wrapper.
 #[derive(Debug, serde::Deserialize)]
 struct ApiResponse<T> {
-    #[allow(dead_code)]
     code: i32,
-    #[allow(dead_code)]
     msg: String,
-    result: T,
+    result: Option<T>,
 }
 
 pub struct MarketplaceClient {
@@ -81,9 +79,18 @@ impl MarketplaceClient {
             }
 
             let response: ApiResponse<PaginatedList<M>> = resp.json().await?;
+            if response.code != 0 {
+                return Err(MarketplaceError::Driver(format!(
+                    "marketplace {} returned code {}: {}",
+                    path, response.code, response.msg
+                )));
+            }
+            let result = response
+                .result
+                .ok_or_else(|| MarketplaceError::Driver(format!("marketplace {} returned empty result", path)))?;
 
-            let total = response.result.total;
-            let items = response.result.items;
+            let total = result.total;
+            let items = result.items;
             // 末页判断：短页或空页（上游 total 撒谎时兜底）
             let is_last_page = items.len() < PER_PAGE;
             out.extend(items.into_iter().map(|m| map(base, m)));
@@ -93,12 +100,14 @@ impl MarketplaceClient {
             }
             page += 1;
             if page > MAX_PAGES {
-                tracing::warn!(
-                    "marketplace {} exceeded {} pages, returning partial catalog",
+                // 与 X-Cache-Stale 拒绝同一哲学：部分目录不能当全量返回，
+                // 同步管线无从区分。报错而非 warn-only。
+                return Err(MarketplaceError::Driver(format!(
+                    "marketplace {} exceeded {} pages (>{}) items, refusing partial catalog",
                     path,
-                    MAX_PAGES
-                );
-                break;
+                    MAX_PAGES,
+                    MAX_PAGES * PER_PAGE
+                )));
             }
         }
 
@@ -149,8 +158,16 @@ impl MarketplaceClient {
         tracing::info!("Fetching template from: {}", url);
 
         let response: ApiResponse<serde_json::Value> = self.http_client.get(&url).send().await?.json().await?;
+        if response.code != 0 {
+            return Err(MarketplaceError::Driver(format!(
+                "marketplace template {} returned code {}: {}",
+                name, response.code, response.msg
+            )));
+        }
 
-        Ok(response.result)
+        response
+            .result
+            .ok_or_else(|| MarketplaceError::Driver(format!("marketplace template {} returned empty result", name)))
     }
 
     /// Fetch driver list from marketplace API.

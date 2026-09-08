@@ -176,6 +176,17 @@ async fn proxy_marketplace_templates(
 
     match HTTP_CLIENT.get(&url).send().await {
         Ok(response) => {
+            // 信任边界：非 2xx 的上游响应（含中间层 nginx/网关的 JSON 错误体）
+            // 绝不能进 normalize——否则会被包装成 code 0 的成功响应
+            let status = response.status();
+            if !status.is_success() {
+                tracing::error!("Marketplace upstream returned HTTP {} for {}", status, url);
+                return ApiResponseBuilder::error::<serde_json::Value>(format!(
+                    "市场上游返回错误 (HTTP {})",
+                    status.as_u16()
+                ))
+                .into_response();
+            }
             let stale = response.headers().contains_key(CACHE_STALE_HEADER);
             match response.json::<serde_json::Value>().await {
                 Ok(data) => proxy_json_response(stale, normalize_marketplace_response(data)),
@@ -201,6 +212,17 @@ async fn proxy_marketplace_template(State(state): State<AppState>, Path(name): P
 
     match HTTP_CLIENT.get(&url).send().await {
         Ok(response) => {
+            // 信任边界：非 2xx 的上游响应（含中间层 nginx/网关的 JSON 错误体）
+            // 绝不能进 normalize——否则会被包装成 code 0 的成功响应
+            let status = response.status();
+            if !status.is_success() {
+                tracing::error!("Marketplace upstream returned HTTP {} for {}", status, url);
+                return ApiResponseBuilder::error::<serde_json::Value>(format!(
+                    "市场上游返回错误 (HTTP {})",
+                    status.as_u16()
+                ))
+                .into_response();
+            }
             let stale = response.headers().contains_key(CACHE_STALE_HEADER);
             match response.json::<serde_json::Value>().await {
                 Ok(data) => proxy_json_response(stale, normalize_marketplace_response(data)),
@@ -239,6 +261,17 @@ async fn proxy_marketplace_drivers(
 
     match HTTP_CLIENT.get(&url).send().await {
         Ok(response) => {
+            // 信任边界：非 2xx 的上游响应（含中间层 nginx/网关的 JSON 错误体）
+            // 绝不能进 normalize——否则会被包装成 code 0 的成功响应
+            let status = response.status();
+            if !status.is_success() {
+                tracing::error!("Marketplace upstream returned HTTP {} for {}", status, url);
+                return ApiResponseBuilder::error::<serde_json::Value>(format!(
+                    "市场上游返回错误 (HTTP {})",
+                    status.as_u16()
+                ))
+                .into_response();
+            }
             let stale = response.headers().contains_key(CACHE_STALE_HEADER);
             match response.json::<serde_json::Value>().await {
                 Ok(data) => proxy_json_response(stale, normalize_marketplace_response(data)),
@@ -264,6 +297,17 @@ async fn proxy_marketplace_driver(State(state): State<AppState>, Path(id): Path<
 
     match HTTP_CLIENT.get(&url).send().await {
         Ok(response) => {
+            // 信任边界：非 2xx 的上游响应（含中间层 nginx/网关的 JSON 错误体）
+            // 绝不能进 normalize——否则会被包装成 code 0 的成功响应
+            let status = response.status();
+            if !status.is_success() {
+                tracing::error!("Marketplace upstream returned HTTP {} for {}", status, url);
+                return ApiResponseBuilder::error::<serde_json::Value>(format!(
+                    "市场上游返回错误 (HTTP {})",
+                    status.as_u16()
+                ))
+                .into_response();
+            }
             let stale = response.headers().contains_key(CACHE_STALE_HEADER);
             match response.json::<serde_json::Value>().await {
                 Ok(data) => proxy_json_response(stale, normalize_marketplace_response(data)),

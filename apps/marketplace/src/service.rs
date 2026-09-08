@@ -145,8 +145,8 @@ impl SyncService {
 }
 
 /// 按 `key` 字段去重并按名称排序，保证 list 分页顺序稳定、同名文件不产生重复条目。
-/// 注意：read_dir 顺序未定义，同名冲突时保留者是任意一个（排序对相等键不稳定保留输入序）——
-/// 同名文件内容应一致；若不一致，以 warn 日志为准排查。
+/// 注意：sort_by 是稳定排序（相等键保留 read_dir 输入序），但 read_dir 顺序本身未定义，
+/// 所以同名冲突时保留者是任意一个——同名文件内容应一致；若不一致，以 warn 日志为准排查。
 fn dedup_and_sort(items: &mut Vec<Value>, key: &str, kind: &str) {
     items.sort_by(|a, b| {
         let ka = a.get(key).and_then(|v| v.as_str()).unwrap_or("");
