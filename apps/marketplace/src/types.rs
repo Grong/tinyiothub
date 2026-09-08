@@ -189,9 +189,9 @@ impl PaginationParams {
     }
 
     pub fn offset(&self) -> usize {
-        // checked：page 无上界（如 u64::MAX 经 query 反序列化进来），
-        // 乘法溢出在 debug 下 panic、release 下回绕成任意 offset
-        (self.page - 1).checked_mul(self.per_page).unwrap_or(usize::MAX)
+        // saturating：page 无上界（如 u64::MAX 经 query 反序列化进来），
+        // 朴素乘法溢出在 debug 下 panic、release 下回绕成任意 offset
+        self.page.saturating_sub(1).saturating_mul(self.per_page)
     }
 }
 
