@@ -210,7 +210,7 @@ Branch/commit/PR rules:
 ### Structural (enforced by CI architecture checks — guard scripts live in `scripts/guards/` with deliberate-violation selftests)
 
 - Do not create modules without searching existing domain crates and `crates/web/` for reusable components first.
-- Do not use `dto.rs` naming (use `types.rs`; `modules/marketplace/dto.rs` is a grandfathered external-API contract exception).
+- Do not use `dto.rs` naming (use `types.rs`; `apps/cloud/src/domains/marketplace/dto.rs` is a grandfathered external-API contract exception).
 - Do not create `application/` subdirectories in domain crates (use `service.rs`).
 - Do not create scatter-shot `utils/` or `helpers/` in `apps/cloud/src/` or any crate.
 - Do not call `fetch()` directly in front-end components (must use `web/src/api/` layer).
