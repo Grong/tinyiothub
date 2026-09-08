@@ -692,7 +692,7 @@ export class MarketplaceView extends LitElement {
           </div>
           <div class="mp-modal-body">
             ${this.sceneDetailLoading
-              ? html`<div style="padding: var(--space-8); text-align: center; color: var(--muted);">加载中...</div>`
+              ? html`<div class="mp-empty">加载中...</div>`
               : this.resultWarnings
                 ? this.renderSceneWarnings()
                 : this.renderSceneForm(errors)}
@@ -724,77 +724,68 @@ export class MarketplaceView extends LitElement {
   private renderSceneForm(errors: Record<string, string>) {
     const params = this.sceneDetail?.parameters ?? [];
     return html`
-      <div class="mp-dt-list">
-        <div class="mp-dt-item">
-          <div class="mp-dt-label">根节点名称 *</div>
-          <div class="mp-dt-value">
-            <input
-              type="text"
-              .value=${this.sceneName}
-              placeholder="如：3 号车间"
-              @input=${(e: InputEvent) => {
-                this.sceneName = (e.target as HTMLInputElement).value;
-                this.schedulePreview();
-              }}
-            />
-          </div>
+      <div class="mp-scene-form">
+        <div class="field">
+          <label>根节点名称 *</label>
+          <input
+            type="text"
+            .value=${this.sceneName}
+            placeholder="如：3 号车间"
+            @input=${(e: InputEvent) => {
+              this.sceneName = (e.target as HTMLInputElement).value;
+              this.schedulePreview();
+            }}
+          />
         </div>
-        <div class="mp-dt-item">
-          <div class="mp-dt-label">父本体 ID（可选）</div>
-          <div class="mp-dt-value">
-            <input
-              type="text"
-              .value=${this.sceneParentId}
-              placeholder="留空则挂在根下"
-              @input=${(e: InputEvent) => {
-                this.sceneParentId = (e.target as HTMLInputElement).value;
-                this.schedulePreview();
-              }}
-            />
-            <div style="font-size: 11px; color: var(--muted); margin-top: 2px;">
-              可留空；填本体 ID，无效 ID 会在预览中报错
-            </div>
-          </div>
+        <div class="field">
+          <label>父本体 ID（可选）</label>
+          <input
+            type="text"
+            .value=${this.sceneParentId}
+            placeholder="留空则挂在根下"
+            @input=${(e: InputEvent) => {
+              this.sceneParentId = (e.target as HTMLInputElement).value;
+              this.schedulePreview();
+            }}
+          />
+          <span>可留空；填本体 ID，无效 ID 会在预览中报错</span>
         </div>
         ${params.map((p) => html`
-          <div class="mp-dt-item">
-            <div class="mp-dt-label">${resolveLocalized(p.displayName ?? p.display_name) || p.name}</div>
-            <div class="mp-dt-value">
-              <input
-                type="number"
-                min=${p.min}
-                max=${p.max}
-                step="1"
-                .value=${String(this.sceneParams[p.name] ?? p.default)}
-                @input=${(e: InputEvent) => this.onSceneParamInput(p, e)}
-              />
-              <div style="font-size: 11px; color: var(--muted); margin-top: 2px;">
-                ${p.name} · 范围 ${p.min} ~ ${p.max}
-                ${errors[p.name] ? html` · <span style="color: var(--danger, #dc2626);">${errors[p.name]}</span>` : nothing}
-              </div>
-            </div>
+          <div class="field">
+            <label>${resolveLocalized(p.displayName ?? p.display_name) || p.name}</label>
+            <input
+              type="number"
+              min=${p.min}
+              max=${p.max}
+              step="1"
+              .value=${String(this.sceneParams[p.name] ?? p.default)}
+              aria-invalid=${errors[p.name] ? "true" : "false"}
+              @input=${(e: InputEvent) => this.onSceneParamInput(p, e)}
+            />
+            <span>
+              ${p.name} · 范围 ${p.min} ~ ${p.max}
+              ${errors[p.name] ? html` · <span class="mp-field-error">${errors[p.name]}</span>` : nothing}
+            </span>
           </div>
         `)}
       </div>
 
       ${this.previewLoading
-        ? html`<div style="color: var(--muted); margin-top: var(--space-4);">预览生成中...</div>`
+        ? html`<div class="mp-preview-note">预览生成中...</div>`
         : nothing}
       ${this.previewError
-        ? html`<div style="margin-top: var(--space-4); padding: var(--space-3); border: 1px solid var(--danger, #dc2626); border-radius: var(--radius-sm, 6px); color: var(--danger, #dc2626); font-size: 13px;">
-            预览失败：${this.previewError}
-          </div>`
+        ? html`<div class="mp-preview-error">预览失败：${this.previewError}</div>`
         : nothing}
       ${this.preview
         ? html`
-          <div style="margin-top: var(--space-4);">
-            <div style="font-weight: 600; margin-bottom: var(--space-2);">
+          <div class="mp-preview">
+            <div class="mp-preview-title">
               将创建 ${this.preview.nodeCount} 个本体${this.quotaText(this.preview.quota)}（预览，最终名称以创建结果为准）
             </div>
-            <pre style="margin: 0; padding: var(--space-3); background: var(--bg-secondary, rgba(0,0,0,0.04)); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto;">${this.preview.treePreview}</pre>
+            <pre class="mp-preview-tree">${this.preview.treePreview}</pre>
             ${this.preview.warnings && this.preview.warnings.length > 0
-              ? html`<ul style="margin: var(--space-2) 0 0; padding-left: var(--space-6); color: var(--muted); font-size: 12px;">
-                  ${this.preview.warnings.map((w) => html`<li style="margin-bottom: var(--space-1);">${w}</li>`)}
+              ? html`<ul class="mp-scene-warnings">
+                  ${this.preview.warnings.map((w) => html`<li>${w}</li>`)}
                 </ul>`
               : nothing}
           </div>
@@ -813,8 +804,8 @@ export class MarketplaceView extends LitElement {
     const warnings = this.resultWarnings ?? [];
     return html`
       <div class="mp-section-title">创建成功，但有 ${warnings.length} 条警告</div>
-      <ul style="margin: 0; padding-left: var(--space-6); color: var(--muted);">
-        ${warnings.map((w) => html`<li style="margin-bottom: var(--space-1);">${w}</li>`)}
+      <ul class="mp-scene-warnings">
+        ${warnings.map((w) => html`<li>${w}</li>`)}
       </ul>
     `;
   }
