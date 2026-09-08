@@ -80,6 +80,13 @@ impl MarketplacePublisher {
         let body_text = response.text().await.map_err(MarketplaceError::Network)?;
 
         if !status.is_success() {
+            // 本地 marketplace 服务是只读目录（无 POST /templates 路由）——
+            // 405 说明 api_url 指向了只读服务，给出可操作的指引而非裸状态码
+            if status == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+                return Err(MarketplaceError::Driver(
+                    "市场服务不支持发布（405：当前 api_url 指向只读目录服务）。发布需配置支持写入的托管市场".into(),
+                ));
+            }
             return Err(MarketplaceError::Driver(format!(
                 "marketplace returned {}: {}",
                 status, body_text

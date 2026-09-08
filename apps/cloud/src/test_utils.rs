@@ -54,6 +54,10 @@ fn ensure_test_config() -> &'static ApplicationSettings {
             // Use "none" memory backend in tests to avoid SQLite file lock
             // contention when multiple tests open agent memory concurrently.
             std::env::set_var("TINYIOTHUB__AGENT__MEMORY_BACKEND", "none");
+            // 测试不依赖公网市场服务：禁用后 proxy 走确定性"未启用"分支，
+            // 否则 MarketplaceConfig::default() 的 api_url 指向真实公网服务，
+            // 测试随网络/上游内容漂移。
+            std::env::set_var("TINYIOTHUB__MARKETPLACE__ENABLED", "false");
         }
 
         // Load config — panic if it fails so we know immediately

@@ -209,3 +209,26 @@ async fn test_marketplace_response_wrapper_consistency() {
         driver_json.as_object().map(|o| o.keys().collect::<Vec<_>>()),
     );
 }
+
+// ── Proxy 未配置防护（review 修复 F5 的回归钉）──
+
+#[tokio::test]
+async fn test_proxy_returns_clear_error_when_marketplace_unconfigured() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/marketplace/templates", &token, None))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    // 测试环境未配置 marketplace.api_url —— 代理必须返回明确错误，
+    // 而不是静默请求硬编码的公网地址（曾导致配置错误被伪装成网络错误）
+    assert_ne!(json["code"], 0, "expected error envelope, got: {}", json);
+    assert!(
+        json["msg"].as_str().unwrap_or("").contains("市场未启用"),
+        "expected disabled message, got: {}",
+        json["msg"]
+    );
+}

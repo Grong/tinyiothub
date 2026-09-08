@@ -1,3 +1,8 @@
+//! ⚠️ 保留代码（deferred，按项目 dead-code 规则不删除）：
+//! 动态驱动加载未支持，`install_marketplace_driver` handler 前置返回明确错误，
+//! 本模块及 `MarketplaceClient::fetch_drivers` 当前无活跃调用方。
+//! 待动态驱动加载落地后重新接通安装管线。
+
 use std::{path::PathBuf, sync::Arc};
 
 use tinyiothub_runtime::driver;
@@ -52,7 +57,7 @@ impl DriverInstaller {
         let driver_file = self.download_driver(driver_id, binary_info, &platform).await?;
 
         // 6. Verify checksum (skip in development mode)
-        if !binary_info.checksum.starts_with("sha256:test") && !binary_info.checksum.contains("test") {
+        if !should_skip_checksum_verify(&binary_info.checksum) {
             self.client.verify_checksum(&driver_file, &binary_info.checksum).await?;
         } else {
             tracing::warn!("Skipping checksum verification for test/development driver");
@@ -110,5 +115,31 @@ impl DriverInstaller {
         Err(MarketplaceError::Driver(
             "Dynamic driver unloading is not supported.".to_string(),
         ))
+    }
+}
+
+/// 是否跳过 checksum 校验：仅 debug 构建 + 明确的测试占位前缀。
+/// 抽出为纯函数以钉住安全边界——旧实现 contains("test") 子串匹配，
+/// 任何含 "test" 的值都会被豁免。
+fn should_skip_checksum_verify(checksum: &str) -> bool {
+    cfg!(debug_assertions) && checksum.starts_with("sha256:test")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_skip_checksum_verify;
+
+    #[test]
+    fn test_fixture_prefix_skips_in_debug() {
+        // cargo test 是 debug 构建：测试占位前缀豁免
+        assert!(should_skip_checksum_verify("sha256:test-fixture"));
+    }
+
+    #[test]
+    fn real_checksum_is_always_verified() {
+        // 回归：旧 contains("test") 实现会错误豁免这些值
+        assert!(!should_skip_checksum_verify("sha256:deadbeef"));
+        assert!(!should_skip_checksum_verify("sha256:contestdata")); // 含 test 子串但非前缀
+        assert!(!should_skip_checksum_verify(""));
     }
 }
