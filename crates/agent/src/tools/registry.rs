@@ -8,9 +8,9 @@
 use parking_lot::RwLock;
 use std::sync::Arc;
 
+use crate::port::tool::Tool;
 use tinyiothub_core::heartbeat::TrustConfig;
 use tinyiothub_skills::trust::ToolSafety;
-use zeroclaw::tools::Tool;
 
 use crate::config::AgentRuntimeConfig;
 
@@ -173,9 +173,9 @@ pub fn filter_by_denylist(tools: Vec<Box<dyn Tool>>, denylist: &[String]) -> Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::port::attribution::{Attributable, Role, ToolKind};
+    use crate::port::tool::ToolResult;
     use async_trait::async_trait;
-    use zeroclaw::tools::ToolResult;
-    use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
     pub(crate) struct NamedStubTool {
         pub name: &'static str,

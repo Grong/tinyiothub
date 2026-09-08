@@ -362,8 +362,9 @@ pub(crate) mod tests {
     use crate::runtime::thing_agent::types::{Outcome, Priority};
     use std::sync::Mutex;
 
-    use zeroclaw::providers::{ChatRequest, ChatResponse};
-    use zeroclaw_api::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
+    use crate::port::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
+    use crate::port::provider::{ChatRequest, ChatResponse, ModelProvider};
+    use crate::port::runtime::AgentLoopConfig;
 
     use crate::runtime::thing_agent::traits::ThingEventSignal;
     use tinyiothub_policy::autonomy::AutonomyPolicy;
@@ -380,17 +381,7 @@ pub(crate) mod tests {
     }
 
     #[async_trait::async_trait]
-    impl zeroclaw::providers::traits::ModelProvider for ScriptedProvider {
-        async fn chat_with_system(
-            &self,
-            _system_prompt: Option<&str>,
-            _message: &str,
-            _model: &str,
-            _temperature: Option<f64>,
-        ) -> anyhow::Result<String> {
-            Ok("done".into())
-        }
-
+    impl ModelProvider for ScriptedProvider {
         async fn chat(
             &self,
             request: ChatRequest<'_>,
@@ -419,8 +410,9 @@ pub(crate) mod tests {
         }
     }
 
-    /// Stub agent provider: one shared real zeroclaw Agent driven by the
-    /// scripted provider (serial scheduler ⇒ no concurrent turns).
+    /// Stub agent provider: one shared loop (port AgentLoop via the
+    /// zeroclaw adapter) driven by the scripted provider (serial scheduler ⇒
+    /// no concurrent turns).
     pub(crate) struct StubAgentProvider {
         handle: AgentHandle,
         pub(crate) llm: Arc<ScriptedProvider>,
@@ -432,25 +424,22 @@ pub(crate) mod tests {
         pub(crate) fn new() -> Self {
             let llm = Arc::new(ScriptedProvider::default());
             let dir = tempfile::tempdir().expect("tempdir");
-            let observer: Arc<dyn zeroclaw::observability::Observer> = Arc::from(
-                zeroclaw::observability::create_observer(&zeroclaw::config::schema::ObservabilityConfig {
-                    backend: zeroclaw::config::schema::ObservabilityBackend::None,
-                    ..Default::default()
-                }),
-            );
-            let agent = zeroclaw::agent::Agent::builder()
-                .model_provider(Box::new(llm.as_ref().clone()))
-                .tools(vec![])
-                .memory(Arc::new(zeroclaw::memory::NoneMemory::new("test")))
-                .observer(observer)
-                .tool_dispatcher(Box::new(zeroclaw::agent::dispatcher::NativeToolDispatcher))
-                .model_name("stub-model".to_string())
-                .prompt_builder(zeroclaw::agent::prompt::SystemPromptBuilder::with_defaults())
-                .workspace_dir(dir.path().to_path_buf())
-                .build()
-                .expect("build stub agent");
+            let llm_for_factory = Arc::clone(&llm);
+            let cfg = AgentLoopConfig {
+                model_name: "stub-model".to_string(),
+                prompt_builder: crate::port::prompt::SystemPromptBuilder::with_defaults(),
+                tools: vec![],
+                memory: Arc::new(crate::port::memory::NoopMemory),
+                observer: Arc::new(crate::port::observer::NoopObserver),
+                workspace_dir: dir.path().to_path_buf(),
+                security_summary: None,
+                provider_factory: Arc::new(move || Ok(Box::new(llm_for_factory.as_ref().clone()))),
+                // 自治语义的测试夹具：对齐真实 autonomous_factory 的 true。
+                conversation_memory: true,
+            };
+            let handle = crate::adapters::rig::loop_::rig_loop_factory(cfg).expect("build stub loop");
             Self {
-                handle: Arc::new(tokio::sync::Mutex::new(agent)),
+                handle,
                 llm,
                 invalidated: Mutex::new(vec![]),
                 _dir: dir,

@@ -2,11 +2,12 @@
 //!（Task 14 自 apps/cloud `host/autonomous_factory.rs` / `host/ports.rs` 迁入）。
 //!
 //! 组合层启动时自配置 `[minimax]` 段注册设置；provider 按 agent 构建
-//! （zeroclaw 中 provider 是 per-agent 的）。
+//! （provider 是 per-agent 的）。引擎 provider 的具体构建住
+//! adapters/zeroclaw（zeroclaw 是 adapter 内部细节）。
 
 use std::sync::Arc;
 
-use zeroclaw::providers::traits::ModelProvider;
+use crate::port::provider::ModelProvider;
 
 /// Builds a fresh model provider per agent (providers are per-agent in
 /// zeroclaw). Production wires [`minimax_provider_factory`]; tests inject a
@@ -40,7 +41,22 @@ pub fn minimax_settings() -> Option<MinimaxSettings> {
 pub fn create_minimax_provider() -> anyhow::Result<Box<dyn ModelProvider>> {
     let cfg =
         minimax_settings().ok_or_else(|| anyhow::anyhow!("[minimax] config section is required but not found"))?;
-    zeroclaw::providers::create_model_provider_with_url("minimaxi", Some(&cfg.auth_token), Some(&cfg.base_url))
+    create_minimax_provider_with(&cfg)
+}
+
+/// Create a MiniMax model provider from explicit settings (cloud composition
+/// layer passes its `[minimax]` config slice here).
+pub fn create_minimax_provider_with(cfg: &MinimaxSettings) -> anyhow::Result<Box<dyn ModelProvider>> {
+    // rig minimax provider：OpenAI 兼容协议，base_url/auth_token 直接对应。
+    use rig_core::client::CompletionClient;
+    let client = rig_core::providers::minimax::Client::builder()
+        .api_key(cfg.auth_token.clone())
+        .base_url(&cfg.base_url)
+        .build()
+        .map_err(|e| anyhow::anyhow!("[minimax] rig client build failed: {e}"))?;
+    Ok(Box::new(crate::adapters::rig::provider::RigMinimaxAsPort::new(
+        client.completion_model(&cfg.model),
+    )))
 }
 
 /// Production provider factory — `[minimax]` settings registered by the

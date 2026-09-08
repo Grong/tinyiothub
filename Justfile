@@ -13,17 +13,17 @@ fmt:
 fmt-check:
     cargo fmt --all -- --check
 
-# Run clippy lints (exclude zeroclaw external dep)
+# Run clippy lints
 lint:
-    cargo clippy --workspace --exclude zeroclaw --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets -- -D warnings
 
-# Run all tests (exclude zeroclaw + doc tests for CI parity)
+# Run all tests (doc tests excluded for CI parity)
 test:
-    cargo test --workspace --exclude zeroclaw --lib --bins --tests
+    cargo test --workspace --lib --bins --tests
 
 # Run only unit tests (faster)
 test-lib:
-    cargo test --workspace --exclude zeroclaw --lib
+    cargo test --workspace --lib
 
 # Run the full CI quality gate locally
 ci: fmt-check lint test

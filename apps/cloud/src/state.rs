@@ -313,9 +313,26 @@ impl AppState {
 
         // Task 7 起 AgentPool 不再持有存储句柄（db_pool/memory_store/
         // memory_service）；调用方按请求注入。
+        // Task 9b：memory 注入恢复为真实后端 JsonlMemory（Task 9 审查 I1 —
+        // NoopMemory 让 thing_agent 自治路径的持久化记忆静默丢失）。单一
+        // JSONL 文件全 workspace 共享，隔离经 WorkspaceScopedMemory 的
+        // namespace 包装（与原 zeroclaw per-workspace sqlite 等价）。
+        // chat 路径 conversation_memory=false，由 DB 每轮 seed 历史，不受
+        // 此后端影响。observer 暂保持 NoopObserver —— 观测接线待 phase 2
+        // hooks 完成（已知降级，本任务接受）。
+        let agents_base_dir = crate::shared::paths::agents_base_dir();
+        let agent_memory: Arc<dyn tinyiothub_agent::port::memory::Memory> = Arc::new(
+            crate::domains::agent::host::memory::jsonl::JsonlMemory::new(agents_base_dir.join("agent_memory.jsonl")),
+        );
+        let agent_observer = Arc::new(tinyiothub_agent::port::observer::NoopObserver);
         let agent_pool: Arc<AgentPool> = Arc::new(
-            AgentPool::new(&agent_settings, tinyiothub_agent::pool::minimax_provider_factory())
-                .expect("failed to build AgentPool"),
+            AgentPool::new(
+                &agent_settings,
+                agent_memory,
+                agent_observer,
+                tinyiothub_agent::pool::minimax_provider_factory(),
+            )
+            .expect("failed to build AgentPool"),
         );
 
         alarm_service.set_device_cache(device_cache.clone());
@@ -417,7 +434,6 @@ impl AppState {
             .clone()
             .map(|minimax| Arc::new(MinimaxTagSuggester { minimax }) as Arc<dyn crate::domains::tenant::TagSuggester>);
         let jwt_secret = settings.security.jwt.secret.clone();
-        let agents_base_dir = crate::shared::paths::agents_base_dir();
         let network_defaults = settings.network.defaults.clone();
         let mqtt_primary = settings.mqtt.primary.clone();
         let sms_config = settings.sms.clone();
@@ -832,13 +848,22 @@ impl crate::domains::tenant::TagSuggester for MinimaxTagSuggester {
             "AI 服务初始化失败".to_string()
         })?;
 
+        let messages = [tinyiothub_agent::port::provider::ChatMessage::user(&prompt)];
         let response = provider
-            .chat_with_system(None, &prompt, &model, Some(0.3))
+            .chat(
+                tinyiothub_agent::port::provider::ChatRequest {
+                    messages: &messages,
+                    tools: None,
+                },
+                &model,
+                Some(0.3),
+            )
             .await
             .map_err(|e| {
                 tracing::error!("AI tag generation failed: {}", e);
                 "AI 生成标签失败，请稍后重试".to_string()
             })?;
+        let response = response.text.unwrap_or_default();
 
         let tags: Vec<String> = response
             .split([',', '，', '、', '\n'])

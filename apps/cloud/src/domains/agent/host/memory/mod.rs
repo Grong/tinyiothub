@@ -1,5 +1,6 @@
 // Agent memory plane — HTTP handler + PromptMemorySource 接线（组合层）。
 pub mod handler;
+pub mod jsonl;
 pub mod types;
 
 /// `PromptMemorySource` 适配器（Task 14）—— newtype 包装存储层

@@ -24,10 +24,10 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+use tinyiothub_agent::port::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
+use tinyiothub_agent::port::provider::{ChatRequest, ChatResponse};
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
-use zeroclaw::providers::{ChatRequest, ChatResponse};
-use zeroclaw_api::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
 
 use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
 use tinyiothub_storage::Db;
@@ -70,17 +70,7 @@ impl E2eScriptedProvider {
 }
 
 #[async_trait::async_trait]
-impl zeroclaw::providers::traits::ModelProvider for E2eScriptedProvider {
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: Option<f64>,
-    ) -> anyhow::Result<String> {
-        Ok(SUMMARY.into())
-    }
-
+impl tinyiothub_agent::port::provider::ModelProvider for E2eScriptedProvider {
     async fn chat(
         &self,
         _request: ChatRequest<'_>,
@@ -233,21 +223,15 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
     let provider = E2eScriptedProvider::default();
     let provider_factory: ProviderFactory = {
         let provider = provider.clone();
-        Arc::new(move || Ok(Box::new(provider.clone()) as Box<dyn zeroclaw::providers::traits::ModelProvider>))
+        Arc::new(move || Ok(Box::new(provider.clone()) as Box<dyn tinyiothub_agent::port::provider::ModelProvider>))
     };
-    let observer: Arc<dyn zeroclaw::observability::Observer> = Arc::from(zeroclaw::observability::create_observer(
-        &zeroclaw::config::schema::ObservabilityConfig {
-            backend: zeroclaw::config::schema::ObservabilityBackend::None,
-            ..Default::default()
-        },
-    ));
     let factory = Arc::new(AutonomousAgentFactory::new(
         pool.clone(),
         policy_repo.clone(),
         thing_bus.clone(),
         Arc::new(ThrottleState::new(60)),
-        Arc::new(zeroclaw::memory::NoneMemory::new("e2e")),
-        observer,
+        Arc::new(tinyiothub_agent::port::memory::NoopMemory),
+        Arc::new(tinyiothub_agent::port::observer::NoopObserver),
         provider_factory,
         "stub-model".to_string(),
         ThingToolContext {

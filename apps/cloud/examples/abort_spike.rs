@@ -1,6 +1,6 @@
 //! Abort go/no-go spike for the Thing Agent Loop (Task 1 / T0).
 //!
-//! Question: does `Agent::turn_streamed`'s third parameter
+//! Question: does the agent loop's third parameter
 //! (`Option<CancellationToken>`) actually stop the tool loop when cancelled
 //! mid-tool-execution?
 //!
@@ -22,35 +22,27 @@ use std::{
 
 use anyhow::Result;
 use async_trait::async_trait;
+use tinyiothub_agent::adapters::rig::loop_::rig_loop_factory;
+use tinyiothub_agent::port::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
+use tinyiothub_agent::port::events::TurnEvent;
+use tinyiothub_agent::port::outcome::is_tool_loop_cancelled;
+use tinyiothub_agent::port::provider::{ChatRequest, ChatResponse, ModelProvider, ToolCall};
+use tinyiothub_agent::port::runtime::{AgentLoopConfig, AgentLoopHandle};
+use tinyiothub_agent::port::tool::{Tool, ToolResult};
 use tokio_util::sync::CancellationToken;
-use zeroclaw::{
-    agent::{Agent, TurnEvent, dispatcher::NativeToolDispatcher, loop_::is_tool_loop_cancelled},
-    observability::{NoopObserver, Observer},
-    providers::{ChatRequest, ChatResponse, ModelProvider, ToolCall},
-    tools::{Tool, ToolResult},
-};
 
 const SLOW_TOOL_SECS: u64 = 30;
 const GO_BUDGET: Duration = Duration::from_secs(5);
 
 /// Mock provider: first `chat` call returns a native tool call to
 /// `slow_tool`; anything after that returns plain text "done".
+#[derive(Clone)]
 struct ScriptedProvider {
-    responses: Mutex<Vec<ChatResponse>>,
+    responses: Arc<Mutex<Vec<ChatResponse>>>,
 }
 
 #[async_trait]
 impl ModelProvider for ScriptedProvider {
-    async fn chat_with_system(
-        &self,
-        _system_prompt: Option<&str>,
-        _message: &str,
-        _model: &str,
-        _temperature: Option<f64>,
-    ) -> Result<String> {
-        Ok("fallback".into())
-    }
-
     async fn chat(&self, _request: ChatRequest<'_>, _model: &str, _temperature: Option<f64>) -> Result<ChatResponse> {
         let mut guard = self.responses.lock().unwrap();
         if guard.is_empty() {
@@ -65,11 +57,9 @@ impl ModelProvider for ScriptedProvider {
     }
 }
 
-impl zeroclaw_api::attribution::Attributable for ScriptedProvider {
-    fn role(&self) -> zeroclaw_api::attribution::Role {
-        zeroclaw_api::attribution::Role::Provider(zeroclaw_api::attribution::ProviderKind::Model(
-            zeroclaw_api::attribution::ModelProviderKind::Custom,
-        ))
+impl Attributable for ScriptedProvider {
+    fn role(&self) -> Role {
+        Role::Provider(ProviderKind::Model(ModelProviderKind::Custom))
     }
     fn alias(&self) -> &str {
         "ScriptedProvider"
@@ -79,7 +69,14 @@ impl zeroclaw_api::attribution::Attributable for ScriptedProvider {
 /// Tool that sleeps 30s — stands in for a slow IoT operation.
 struct SlowTool;
 
-zeroclaw_api::mock_tool_attribution!(SlowTool);
+impl Attributable for SlowTool {
+    fn role(&self) -> Role {
+        Role::Tool(tinyiothub_agent::port::attribution::ToolKind::Plugin)
+    }
+    fn alias(&self) -> &str {
+        "SlowTool"
+    }
+}
 
 #[async_trait]
 impl Tool for SlowTool {
@@ -105,43 +102,36 @@ impl Tool for SlowTool {
     }
 }
 
-fn build_agent() -> Agent {
-    let provider = Box::new(ScriptedProvider {
-        responses: Mutex::new(vec![ChatResponse {
+fn build_agent() -> AgentLoopHandle {
+    let scripted = ScriptedProvider {
+        responses: Arc::new(Mutex::new(vec![ChatResponse {
             text: Some(String::new()),
             tool_calls: vec![ToolCall {
                 id: "call_1".into(),
                 name: "slow_tool".into(),
                 arguments: "{}".into(),
-                extra_content: None,
             }],
             usage: None,
             reasoning_content: None,
-        }]),
-    });
-
-    let memory_cfg = zeroclaw::config::schema::MemoryConfig {
-        backend: "none".into(),
-        ..Default::default()
+        }])),
     };
-    let memory = zeroclaw::memory::create_memory(&memory_cfg, &std::env::temp_dir(), None).expect("create noop memory");
-    let memory: Arc<dyn zeroclaw::memory::Memory> = Arc::from(memory);
-    let observer: Arc<dyn Observer> = Arc::from(NoopObserver {});
-
-    Agent::builder()
-        .model_provider(provider)
-        .tools(vec![Box::new(SlowTool) as Box<dyn Tool>])
-        .memory(memory)
-        .observer(observer)
-        .tool_dispatcher(Box::new(NativeToolDispatcher))
-        .workspace_dir(std::env::temp_dir())
-        .build()
-        .expect("build agent")
+    let cfg = AgentLoopConfig {
+        model_name: "spike".into(),
+        prompt_builder: tinyiothub_agent::port::prompt::SystemPromptBuilder::with_defaults(),
+        tools: vec![Box::new(SlowTool)],
+        memory: Arc::new(tinyiothub_agent::port::memory::NoopMemory),
+        observer: Arc::new(tinyiothub_agent::port::observer::NoopObserver),
+        workspace_dir: std::env::temp_dir(),
+        security_summary: None,
+        conversation_memory: false,
+        provider_factory: Arc::new(move || Ok(Box::new(scripted.clone()))),
+    };
+    rig_loop_factory(cfg).expect("build agent")
 }
 
 #[tokio::main]
 async fn main() {
-    let mut agent = build_agent();
+    let agent = build_agent();
     let token = CancellationToken::new();
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<TurnEvent>(64);
 
@@ -158,7 +148,9 @@ async fn main() {
     });
 
     let start = Instant::now();
-    let result = agent.turn_streamed("call the slow tool", event_tx, Some(token)).await;
+    let ag = agent.lock().await;
+    let result = ag.turn_streamed("call the slow tool", event_tx, Some(token)).await;
+    drop(ag);
     let elapsed = start.elapsed();
     watcher.abort();
 

@@ -7,8 +7,8 @@
 // the full content is fetched here from data/skills/<name>.md.
 
 use async_trait::async_trait;
-use zeroclaw::tools::{Tool, ToolResult};
-use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
+use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
+use tinyiothub_agent::port::tool::{Tool, ToolResult};
 
 pub struct GetSkillTool;
 

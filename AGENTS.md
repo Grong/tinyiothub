@@ -7,8 +7,8 @@ Cross-tool agent instructions for any AI coding assistant working on this reposi
 ```bash
 # Rust
 cargo fmt --all -- --check
-cargo clippy --workspace --exclude zeroclaw --all-targets -- -D warnings
-cargo test --workspace --exclude zeroclaw --lib --bins --tests
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --lib --bins --tests
 cargo build --release
 
 # Frontend
@@ -57,7 +57,7 @@ apps/* (cloud/edge/marketplace/cli) → crates/* (capability libs) → core
 | `memory` | `tinyiothub_memory` | Agent memory engine (MemoryService 持久化引擎；纯逻辑在 `agent`) | HTTP；禁止依赖 apps/*（db/llm 为例外） |
 | `policy` | `tinyiothub_policy` | Policy gate evaluation (pure logic) | HTTP/SQL |
 | `skills` | `tinyiothub_skills` | Skill/tool registries, trust engine | HTTP/SQL |
-| `agent` | `tinyiothub_agent` | Agent 共性能力运行时（loop/pool/tools-framework/session/prompt + memory 纯逻辑；事件溯源契约） | axum, sqlx, tinyiothub_storage, apps/* |
+| `agent` | `tinyiothub_agent` | Agent 共性能力运行时（loop/pool/tools-framework/session/prompt + memory 纯逻辑；事件溯源契约）。引擎：**rig 0.42**（rig-core/rig-agent，MIT 库），业务代码只依赖反腐败层 `crates/agent/src/port`（Tool/ModelProvider/AgentLoop/Memory/Observer/PromptSection/TurnEvent），rig 桥接集中在 `adapters/rig/`；迁移决策见 `docs/designs/agent-engine-rig-migration.md` | axum, sqlx, tinyiothub_storage, apps/* |
 | `authn` | `tinyiothub_authn` | 认证机制（JWT/SSE token/密码哈希；纯机制，构造注入零全局态） | axum, sqlx, db, tokio 依赖 |
 | `plugin-sdk` | `tinyiothub_plugin_sdk` | Driver-author SDK; ABI contract single source of truth | Depending on runtime/web |
 | `macros` | `tinyiothub_macros` | Proc macros | — |
