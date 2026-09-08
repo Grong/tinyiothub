@@ -1457,3 +1457,72 @@ async fn api_instantiate_unknown_parameter_key_400() {
     assert!(msg.contains("building_counts"), "错误须指出冒犯键名: {msg}");
     assert_eq!(thing_count(&pool).await, 0);
 }
+
+#[tokio::test]
+async fn api_list_and_detail_return_localized_fields() {
+    let (app, pool) = setup_app().await;
+    // 播种 display_name/description 为 {"zh","en"} JSON 字符串的场景包
+    seed_category(&pool, "scenes").await;
+    sqlx::query(
+        "INSERT INTO thing_templates (id, name, display_name, description, version, category, \
+         tags, device_info, properties, actions, events, is_builtin, is_active, workspace_id, created_at, updated_at) \
+         VALUES ('tpl-i18n_scene', 'i18n_scene', \
+         '{\"zh\":\"智慧楼宇\",\"en\":\"Smart Building\"}', \
+         '{\"zh\":\"楼栋 + N 层\",\"en\":\"Building with N floors\"}', \
+         '1.0.0', 'scenes', '[]', ?, '[]', '[]', '[]', 0, 1, ?, \
+         '2026-01-01 00:00:00', '2026-01-01 00:00:00')",
+    )
+    .bind(SCENE_PACK_JSON)
+    .bind(WS)
+    .execute(&pool)
+    .await
+    .expect("seed i18n scene template");
+    let token = create_test_token_with_workspace("user-1", TENANT, WS);
+
+    // 列表：displayName/description 必须是本地化对象而非 JSON 原文字符串
+    let response = app
+        .clone()
+        .oneshot(api_request("GET", "/api/v1/marketplace/thing-templates", &token, None))
+        .await
+        .unwrap();
+    let (status, body) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "expected 200, got: {body}");
+    let items = body["result"]["data"].as_array().expect("data array");
+    let scene = items
+        .iter()
+        .find(|i| i["id"] == "tpl-i18n_scene")
+        .expect("i18n scene in list");
+    assert_eq!(scene["displayName"]["zh"], "智慧楼宇", "list displayName: {scene}");
+    assert_eq!(
+        scene["displayName"]["en"], "Smart Building",
+        "list displayName: {scene}"
+    );
+    assert_eq!(scene["description"]["zh"], "楼栋 + N 层", "list description: {scene}");
+    assert_eq!(
+        scene["description"]["en"], "Building with N floors",
+        "list description: {scene}"
+    );
+
+    // 详情：同样返回本地化对象
+    let response = app
+        .oneshot(api_request(
+            "GET",
+            "/api/v1/marketplace/thing-templates/tpl-i18n_scene",
+            &token,
+            None,
+        ))
+        .await
+        .unwrap();
+    let (status, body) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "expected 200, got: {body}");
+    let result = &body["result"];
+    assert_eq!(result["displayName"]["zh"], "智慧楼宇", "detail displayName: {result}");
+    assert_eq!(
+        result["displayName"]["en"], "Smart Building",
+        "detail displayName: {result}"
+    );
+    assert_eq!(
+        result["description"]["en"], "Building with N floors",
+        "detail description: {result}"
+    );
+}

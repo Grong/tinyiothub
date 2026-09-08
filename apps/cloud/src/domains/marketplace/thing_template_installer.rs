@@ -19,9 +19,12 @@ use super::error::{MarketplaceError, Result};
 pub struct ThingTemplateItem {
     pub id: String,
     pub name: String,
+    /// 多语言显示名（{"zh":..,"en":..}），前端按 locale 选取。
+    pub display_name: serde_json::Value,
     pub thing_type: String,
+    /// 多语言描述，同 display_name；DB 为 NULL 时省略。
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    pub description: Option<serde_json::Value>,
     pub property_count: usize,
     pub action_count: usize,
     pub event_count: usize,
@@ -82,8 +85,9 @@ impl ThingTemplateInstaller {
                 ThingTemplateItem {
                     id: r.id,
                     name: r.name,
+                    display_name: localized_column(&r.display_name),
                     thing_type: r.thing_type,
-                    description: r.description,
+                    description: r.description.as_deref().map(localized_column),
                     property_count,
                     action_count,
                     event_count,
@@ -150,6 +154,12 @@ fn json_array_len(s: &str) -> usize {
     serde_json::from_str::<Vec<serde_json::Value>>(s)
         .map(|v| v.len())
         .unwrap_or(0)
+}
+
+/// DB 本地化列（display_name/description 存 {"zh":..,"en":..} JSON 字符串）
+/// 解析为 JSON 值输出，前端按 locale 选取；非 JSON 原文按普通字符串透传。
+pub(crate) fn localized_column(raw: &str) -> serde_json::Value {
+    serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
 }
 
 /// Resolve name conflicts in the target workspace.
