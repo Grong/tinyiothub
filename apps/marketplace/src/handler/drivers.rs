@@ -28,9 +28,11 @@ async fn list_drivers(
         ));
     }
 
-    let is_cold = state.cache.is_cold();
+    // 按资源自身判断冷缓存：None = 该类数据未加载（比全局 is_cold 更精确）
+    let cached = state.cache.get_drivers();
+    let is_cold = matches!(cached, Ok(None));
 
-    match state.cache.get_drivers() {
+    match cached {
         Ok(Some(items)) => {
             let filtered = filter_drivers(&items, &params);
             let total = filtered.len();
@@ -79,9 +81,11 @@ async fn get_driver(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Response, (StatusCode, Json<tinyiothub_web::response::ApiResponse<()>>)> {
-    let is_cold = state.cache.is_cold();
+    // 按资源自身判断冷缓存：None = 该类数据未加载（比全局 is_cold 更精确）
+    let cached = state.cache.get_drivers();
+    let is_cold = matches!(cached, Ok(None));
 
-    match state.cache.get_drivers() {
+    match cached {
         Ok(Some(items)) => {
             match items
                 .iter()
@@ -106,10 +110,18 @@ async fn get_driver(
                 )),
             }
         }
-        Ok(None) => Err((
-            StatusCode::NOT_FOUND,
-            ApiResponseBuilder::error_with_code(40401, "driver not found"),
-        )),
+        // 缓存未加载 ≠ 驱动不存在：返回 503 + X-Cache-Stale，与真正的 404 区分
+        // （经 Ok 返回是因为本函数 Err 变体声明为 (StatusCode, Json) 二元组）
+        Ok(None) => {
+            let mut headers = HeaderMap::new();
+            headers.insert(CACHE_STALE_HEADER, "true".parse().unwrap());
+            Ok((
+                StatusCode::SERVICE_UNAVAILABLE,
+                headers,
+                ApiResponseBuilder::error_with_code::<()>(50301, "driver cache not loaded, retry later"),
+            )
+                .into_response())
+        }
         Err(_) => Err((
             StatusCode::BAD_GATEWAY,
             ApiResponseBuilder::error_with_code(502, "cache unavailable"),

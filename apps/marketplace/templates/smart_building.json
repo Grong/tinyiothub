@@ -1,0 +1,34 @@
+{
+  "name": "smart_building",
+  "display_name": {"zh": "智慧楼宇", "en": "Smart Building"},
+  "description": {"zh": "单体建筑：楼栋 + N 层 + 每层 2 个温湿度传感器", "en": "Building with N floors, 2 temp/humidity sensors per floor"},
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "scenes",
+  "thing_category": "building",
+  "tags": ["building", "space"],
+  "parameters": [
+    {"name": "floor_count", "type": "int", "default": 10, "min": 1, "max": 15,
+     "display_name": {"zh": "楼层数", "en": "Floor Count"}}
+  ],
+  "device_info": {"default_name_pattern": "{scene_name}"},
+  "default_knowledge": "你是这栋楼的楼宇管家，关注各层环境与设备状态。",
+  "children": [
+    {"key": "floor", "category": "floor", "count_param": "floor_count",
+     "device_info": {"default_name_pattern": "{index}F",
+       "default_display_name_pattern": {"zh": "{index}F", "en": "{index}F"}},
+     "resources": [
+       {"name": "floor_plan", "type": "image", "uri": "builtin://scenes/smart_building/floor_plan.png"}
+     ],
+     "children": [
+       {"key": "th_sensor", "template_ref": "temperature_humidity_sensor", "count": 2,
+        "device_info": {"default_name_pattern": "th_sensor_{index}",
+          "default_display_name_pattern": {"zh": "温湿度传感器 {index}", "en": "Temp & Humidity Sensor {index}"}},
+        "alarm_rules": [
+          {"name": "高温告警", "rule_type": "threshold",
+           "condition": {"type": "threshold", "operator": "greater_than", "value": 35.0},
+           "alarm_level": "warning", "notification_config": {}, "property_ref": "temperature"}
+        ]}
+     ]}
+  ]
+}

@@ -28,9 +28,12 @@ async fn list_templates(
         ));
     }
 
-    let is_cold = state.cache.is_cold();
+    // 按资源自身判断冷缓存：None = 该类数据未加载（比全局 is_cold 更精确，
+    // 避免 templates 已加载而 drivers 缺失时误标/漏标）
+    let cached = state.cache.get_templates();
+    let is_cold = matches!(cached, Ok(None));
 
-    match state.cache.get_templates() {
+    match cached {
         Ok(Some(items)) => {
             let filtered = filter_templates(&items, &params);
             let total = filtered.len();
@@ -79,9 +82,12 @@ async fn get_template(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Response, (StatusCode, Json<tinyiothub_web::response::ApiResponse<()>>)> {
-    let is_cold = state.cache.is_cold();
+    // 按资源自身判断冷缓存：None = 该类数据未加载（比全局 is_cold 更精确，
+    // 避免 templates 已加载而 drivers 缺失时误标/漏标）
+    let cached = state.cache.get_templates();
+    let is_cold = matches!(cached, Ok(None));
 
-    match state.cache.get_templates() {
+    match cached {
         Ok(Some(items)) => {
             match items
                 .iter()
@@ -106,10 +112,18 @@ async fn get_template(
                 )),
             }
         }
-        Ok(None) => Err((
-            StatusCode::NOT_FOUND,
-            ApiResponseBuilder::error_with_code(40401, "template not found"),
-        )),
+        // 缓存未加载 ≠ 模板不存在：返回 503 + X-Cache-Stale，与真正的 404 区分
+        // （经 Ok 返回是因为本函数 Err 变体声明为 (StatusCode, Json) 二元组）
+        Ok(None) => {
+            let mut headers = HeaderMap::new();
+            headers.insert(CACHE_STALE_HEADER, "true".parse().unwrap());
+            Ok((
+                StatusCode::SERVICE_UNAVAILABLE,
+                headers,
+                ApiResponseBuilder::error_with_code::<()>(50301, "template cache not loaded, retry later"),
+            )
+                .into_response())
+        }
         Err(_) => Err((
             StatusCode::BAD_GATEWAY,
             ApiResponseBuilder::error_with_code(502, "cache unavailable"),
