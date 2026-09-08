@@ -495,3 +495,54 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 - **What:** `scripts/guards/ddl-only.sh` 的 GRANDFATHERED 清单（20260825/20260826/20260828/20260831 共 4 个 device→thing 数据迁移）在下一次迁移基线化时并入 baseline，随后从清单移除。
 - **Why:** 这些迁移在 CI 瘫痪窗口（2026-08-21 ~ 09-04，ci.yml YAML 语法错误）合入，已随 v0.5.0.0 应用；sqlx 校验 checksum，改写会炸存量库，只能豁免不能修。
 - **Effort:** M（随下次基线化一起做） | **Depends on:** 下一次迁移基线化
+
+## Marketplace API Review Follow-ups (2026-09-08, /plan-eng-review)
+
+> 来源：apps/marketplace API 整体审查（23 条发现：契约断裂类本期已修，以下为显式 deferred 项）。
+
+### P2 — 场景包双头分布：两条分发通道同一内容、不同契约
+- **What:** smart_building/smart_campus/smart_floor 同时存在于 marketplace `templates/`（经 proxy `/marketplace/templates`，只读无 instantiate）和 cloud 内置 thing_templates（本地 DB，`/marketplace/thing-templates`，有 instantiate）。前端 sceneApi 只用后者。需要决策：谁拥有场景包分发，另一边移除或做跳转。
+- **Why:** 双真相源会漂移；marketplace 列表展示的场景包走不通实例化流程，用户看得到用不了。
+- **Context:** 2026-09-08 为补齐 marketplace 场景包引入了这份重叠（审查裁定时的已知代价）。seed 源 `crates/db/src/seed/system.sql` 内嵌第三份拷贝。
+- **Effort:** M（含产品决策） | **Depends on:** 场景包分发战略讨论
+
+### P2 — cloud dto.rs 与 marketplace types.rs 零 drift 防护
+- **What:** `apps/cloud/src/domains/marketplace/dto.rs` 手工镜像 `apps/marketplace/src/types.rs`（注释自承"字段对齐"），无编译/测试强制。加契约测试：对 marketplace 真实发布 JSON 用 cloud dto 反序列化，或抽共享 crate。
+- **Why:** 字段改名/缺字段编译不报错、运行时静默丢数据——前端 `downloadCount`/`protocolType` 错配（已修）就是这种 drift 的实证。
+- **Effort:** S（契约测试）/ M（共享 crate） | **Depends on:** —
+
+### P3 — /marketplace/* 前缀下三种错误语义统一（API v2 候选）
+- **What:** marketplace 服务 not-found 用业务码 40401、参数错 400、缓存故障 502/50301；cloud 本地 thing-templates 错误码=HTTP 状态码；cloud proxy 不读上游状态一律 200 透传 body code。前端无法用统一方式判断"不存在"。
+- **Why:** 消费方错误处理分叉；v1 内改会破坏现有前端，适合随 v2 收敛。2026-09-08 /ship 期间试过在 proxy 透传上游 HTTP 状态码，立即撞破既有测试（v1 契约=200+envelope）——已回退，确认必须随 v2 做。
+- **Effort:** M | **Depends on:** API v2 规划
+
+### P3 — apps/marketplace/README.md 全面改写
+- **What:** README 描述的 `templates/index.json`、`drivers/index.json`、`source_type = "github"` 均不存在/未实现（服务只读 LOCAL_DATA_PATH 目录）；"所有文件必须提供 SHA256 checksum" 的信任模型未落地（list 内联完整内容，无 checksum/file_url/size）。按现状重写：本地目录即信任源、假定内网/反代部署、无写路径。
+- **Why:** 文档与现实相反比没有文档更糟。
+- **Effort:** S | **Depends on:** —
+
+### P3 — dead code 标注：cache.rs sync lock/idempotency、无效 RwLock
+- **What:** `apps/marketplace/src/cache.rs:103-151`（acquire/release_sync_lock、check_idempotency）零调用方，是已移除的 GitHub webhook 同步设计残留；`cache.rs:44-52` Db 包了 RwLock 但写操作也只取 read 锁，锁无作用。cloud `client.rs::fetch_templates` 当前无调用方。按项目规则不删，加注释标明来源与状态。
+- **Why:** 后来者会误以为这些机制在运作。
+- **Effort:** S | **Depends on:** —
+
+### P3 — marketplace list handler DRY 抽取
+- **What:** `templates.rs`/`drivers.rs` 的 list 分页+header+错误分支近乎复制，抽公共 `paginate_and_respond(items, params)` 辅助。
+- **Why:** 双份逻辑已各自演化过一次（冷缓存语义修复要改两处）。
+- **Effort:** S | **Depends on:** —
+
+### P3 — 性能：目录规模 500+ 时的全量反序列化与 HTTP 缓存
+- **What:** 全目录存单 sled value，每请求全量读+反序列化+过滤+逐条再反序列化；无 ETag/Cache-Control，cloud proxy 每次全量拉。当前 23 模板无感。
+- **Why:** 规模到 500+ 或 proxy 调用变频繁时再优化；过早优化是浪费。
+- **Effort:** M | **Depends on:** 目录规模增长信号
+
+### P2 — cloud marketplace proxy 测试基建：wiremock 本地假上游
+- **What:** 引入 wiremock（或等价）做本地假 marketplace，覆盖 proxy 真实转发路径：参数透传、x-cache-stale 透传、上游 4xx/5xx envelope 透传、client.rs 翻页聚合。当前测试一律 `enabled=false`（2026-09-08 起，杜绝打公网服务），proxy 转发路径零覆盖。
+- **Why:** 此前测试直连真实公网 marketplace（MarketplaceConfig::default() 内嵌 api_url），断言又只看 envelope 形状——既脆弱又无法钉住 proxy 行为。
+- **Context:** `apps/cloud/src/tests/marketplace_handler_tests.rs` 全部断言为 wrapper 形状；`test_utils.rs` ensure_test_config 设 `TINYIOTHUB__MARKETPLACE__ENABLED=false`。
+- **Effort:** M | **Depends on:** —
+
+### P3 — web 市场页展示 X-Cache-Stale 降级提示
+- **What:** cloud proxy 已透传 marketplace 的 x-cache-stale 头（2026-09-08），但 web apiGet 丢弃响应头、市场页无降级指示。在 api 层暴露该头并在市场页渲染"数据可能未同步"提示。
+- **Why:** 降级信号链路目前终止在 proxy 响应头，真实消费者不可见。
+- **Effort:** S | **Depends on:** —
