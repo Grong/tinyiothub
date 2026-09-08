@@ -50,7 +50,7 @@ export interface MarketplaceTemplate {
   protocolType?: string;
   driverName?: string;
   rating?: number;
-  downloadCount?: number;
+  downloads?: number;
   manufacturer?: string;
   properties?: TemplateProperty[];
   commands?: TemplateCommand[];
@@ -62,9 +62,9 @@ export interface MarketplaceDriver {
   name: string;
   version: string;
   description?: string;
-  protocolType?: string;
+  protocol?: string;
   rating?: number;
-  downloadCount?: number;
+  downloads?: number;
 }
 
 export const marketplaceApi = {

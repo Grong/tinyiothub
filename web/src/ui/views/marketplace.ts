@@ -119,7 +119,7 @@ export class MarketplaceView extends LitElement {
       ...raw,
       name: resolveLocalized(raw.name),
       description: resolveLocalized(raw.description),
-      protocolType: resolveLocalized(raw.protocolType),
+      protocol: resolveLocalized(raw.protocol),
     };
   }
 
@@ -603,7 +603,7 @@ export class MarketplaceView extends LitElement {
                 <span class="mp-version">${safeString(d.version)}</span>
               </div>
               <div class="mp-meta">
-                <span class="mp-meta-item">${safeString(d.protocolType, "通用协议")}</span>
+                <span class="mp-meta-item">${safeString(d.protocol, "通用协议")}</span>
               </div>
               <div class="mp-desc">${safeString(d.description, "暂无描述")}</div>
               <div class="mp-actions">
@@ -1020,7 +1020,7 @@ export class MarketplaceView extends LitElement {
       { label: "制造商", value: safeString(t.manufacturer, "") },
       { label: "作者", value: safeString(t.author, "") },
       { label: "评分", value: typeof t.rating === "number" ? String(t.rating) : "" },
-      { label: "下载", value: typeof t.downloadCount === "number" ? String(t.downloadCount) : "" },
+      { label: "下载", value: typeof t.downloads === "number" ? String(t.downloads) : "" },
     ];
 
     return html`
