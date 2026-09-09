@@ -68,6 +68,8 @@ pub struct Template {
     pub category: String,
     #[serde(default)]
     pub manufacturer: Option<String>,
+    // 场景包（category = "scenes"）无 protocol_type，缺省为空字符串
+    #[serde(default)]
     pub protocol_type: String,
     #[serde(default)]
     pub tags: Vec<String>,

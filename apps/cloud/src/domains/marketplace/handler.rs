@@ -5,7 +5,8 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use reqwest::Client;
@@ -18,7 +19,6 @@ use crate::{
     api::middleware::WorkspaceScope,
     domains::marketplace::{
         client::MarketplaceClient,
-        driver_installer::DriverInstaller,
         error::MarketplaceError,
         scene_instantiator::{InstantiateParams, SceneInstantiator},
         template_installer::TemplateInstaller,
@@ -43,12 +43,31 @@ pub fn create_router() -> Router<AppState> {
         .route("/thing-templates/{id}/instantiate", post(instantiate_thing_template))
 }
 
-fn marketplace_api_url(state: &AppState) -> String {
-    state
-        .marketplace
-        .api_url
-        .clone()
-        .unwrap_or_else(|| "https://marketplace.tinyiothub.com/api/v1".to_string())
+/// 市场未启用或未配置 api_url 时返回 None——不静默回退到公网地址，
+/// 配置错误必须表现为明确的配置错误，而不是网络超时。
+fn marketplace_api_url(state: &AppState) -> Option<String> {
+    if !state.marketplace.enabled {
+        return None;
+    }
+    state.marketplace.api_url.clone()
+}
+
+const MARKETPLACE_DISABLED_MSG: &str = "市场未启用或未配置 api_url";
+
+/// 与 marketplace 服务 CACHE_STALE_HEADER 对应的降级信号头
+const CACHE_STALE_HEADER: &str = "x-cache-stale";
+
+/// 透传上游 X-Cache-Stale 信号。
+/// 注意：HTTP 状态码不透传——v1 契约是 200 + envelope（body code 承载错误），
+/// 既有测试与前端 apiGet 都建立在该约定上；状态码语义统一属 API v2 议题（见 TODOS）。
+fn proxy_json_response(upstream_stale: bool, body: Json<ApiResponse<serde_json::Value>>) -> Response {
+    if upstream_stale {
+        let mut headers = HeaderMap::new();
+        headers.insert(CACHE_STALE_HEADER, axum::http::HeaderValue::from_static("true"));
+        (headers, body).into_response()
+    } else {
+        body.into_response()
+    }
 }
 
 static HTTP_CLIENT: std::sync::LazyLock<Client, fn() -> Client> = std::sync::LazyLock::new(|| {
@@ -138,8 +157,11 @@ fn normalize_marketplace_response(data: serde_json::Value) -> Json<ApiResponse<s
 async fn proxy_marketplace_templates(
     State(state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
-) -> Json<ApiResponse<serde_json::Value>> {
-    let mut url = format!("{}/templates", marketplace_api_url(&state));
+) -> Response {
+    let Some(base) = marketplace_api_url(&state) else {
+        return ApiResponseBuilder::error::<serde_json::Value>(MARKETPLACE_DISABLED_MSG).into_response();
+    };
+    let mut url = format!("{}/templates", base);
 
     if !params.is_empty() {
         let query_string = params
@@ -153,38 +175,66 @@ async fn proxy_marketplace_templates(
     tracing::info!("Proxying marketplace templates request to: {}", url);
 
     match HTTP_CLIENT.get(&url).send().await {
-        Ok(response) => match response.json::<serde_json::Value>().await {
-            Ok(data) => normalize_marketplace_response(data),
-            Err(e) => {
-                tracing::error!("Failed to parse marketplace response: {}", e);
-                ApiResponseBuilder::error(format!("解析市场响应失败: {}", e))
+        Ok(response) => {
+            // 信任边界：非 2xx 的上游响应（含中间层 nginx/网关的 JSON 错误体）
+            // 绝不能进 normalize——否则会被包装成 code 0 的成功响应
+            let status = response.status();
+            if !status.is_success() {
+                tracing::error!("Marketplace upstream returned HTTP {} for {}", status, url);
+                return ApiResponseBuilder::error::<serde_json::Value>(format!(
+                    "市场上游返回错误 (HTTP {})",
+                    status.as_u16()
+                ))
+                .into_response();
             }
-        },
+            let stale = response.headers().contains_key(CACHE_STALE_HEADER);
+            match response.json::<serde_json::Value>().await {
+                Ok(data) => proxy_json_response(stale, normalize_marketplace_response(data)),
+                Err(e) => {
+                    tracing::error!("Failed to parse marketplace response: {}", e);
+                    ApiResponseBuilder::error::<serde_json::Value>(format!("解析市场响应失败: {}", e)).into_response()
+                }
+            }
+        }
         Err(e) => {
             tracing::error!("Failed to fetch marketplace templates: {}", e);
-            ApiResponseBuilder::error(format!("获取市场模板失败: {}", e))
+            ApiResponseBuilder::error::<serde_json::Value>(format!("获取市场模板失败: {}", e)).into_response()
         }
     }
 }
 
-async fn proxy_marketplace_template(
-    State(state): State<AppState>,
-    Path(name): Path<String>,
-) -> Json<ApiResponse<serde_json::Value>> {
-    let url = format!("{}/templates/{}", marketplace_api_url(&state), name);
+async fn proxy_marketplace_template(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    let Some(base) = marketplace_api_url(&state) else {
+        return ApiResponseBuilder::error::<serde_json::Value>(MARKETPLACE_DISABLED_MSG).into_response();
+    };
+    let url = format!("{}/templates/{}", base, urlencoding::encode(&name));
     tracing::info!("Proxying marketplace template request to: {}", url);
 
     match HTTP_CLIENT.get(&url).send().await {
-        Ok(response) => match response.json::<serde_json::Value>().await {
-            Ok(data) => normalize_marketplace_response(data),
-            Err(e) => {
-                tracing::error!("Failed to parse marketplace response: {}", e);
-                ApiResponseBuilder::error(format!("解析市场响应失败: {}", e))
+        Ok(response) => {
+            // 信任边界：非 2xx 的上游响应（含中间层 nginx/网关的 JSON 错误体）
+            // 绝不能进 normalize——否则会被包装成 code 0 的成功响应
+            let status = response.status();
+            if !status.is_success() {
+                tracing::error!("Marketplace upstream returned HTTP {} for {}", status, url);
+                return ApiResponseBuilder::error::<serde_json::Value>(format!(
+                    "市场上游返回错误 (HTTP {})",
+                    status.as_u16()
+                ))
+                .into_response();
             }
-        },
+            let stale = response.headers().contains_key(CACHE_STALE_HEADER);
+            match response.json::<serde_json::Value>().await {
+                Ok(data) => proxy_json_response(stale, normalize_marketplace_response(data)),
+                Err(e) => {
+                    tracing::error!("Failed to parse marketplace response: {}", e);
+                    ApiResponseBuilder::error::<serde_json::Value>(format!("解析市场响应失败: {}", e)).into_response()
+                }
+            }
+        }
         Err(e) => {
             tracing::error!("Failed to fetch marketplace template {}: {}", name, e);
-            ApiResponseBuilder::error(format!("获取模板详情失败: {}", e))
+            ApiResponseBuilder::error::<serde_json::Value>(format!("获取模板详情失败: {}", e)).into_response()
         }
     }
 }
@@ -192,8 +242,11 @@ async fn proxy_marketplace_template(
 async fn proxy_marketplace_drivers(
     State(state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
-) -> Json<ApiResponse<serde_json::Value>> {
-    let mut url = format!("{}/drivers", marketplace_api_url(&state));
+) -> Response {
+    let Some(base) = marketplace_api_url(&state) else {
+        return ApiResponseBuilder::error::<serde_json::Value>(MARKETPLACE_DISABLED_MSG).into_response();
+    };
+    let mut url = format!("{}/drivers", base);
 
     if !params.is_empty() {
         let query_string = params
@@ -207,38 +260,66 @@ async fn proxy_marketplace_drivers(
     tracing::info!("Proxying marketplace drivers request to: {}", url);
 
     match HTTP_CLIENT.get(&url).send().await {
-        Ok(response) => match response.json::<serde_json::Value>().await {
-            Ok(data) => normalize_marketplace_response(data),
-            Err(e) => {
-                tracing::error!("Failed to parse marketplace response: {}", e);
-                ApiResponseBuilder::error(format!("解析市场响应失败: {}", e))
+        Ok(response) => {
+            // 信任边界：非 2xx 的上游响应（含中间层 nginx/网关的 JSON 错误体）
+            // 绝不能进 normalize——否则会被包装成 code 0 的成功响应
+            let status = response.status();
+            if !status.is_success() {
+                tracing::error!("Marketplace upstream returned HTTP {} for {}", status, url);
+                return ApiResponseBuilder::error::<serde_json::Value>(format!(
+                    "市场上游返回错误 (HTTP {})",
+                    status.as_u16()
+                ))
+                .into_response();
             }
-        },
+            let stale = response.headers().contains_key(CACHE_STALE_HEADER);
+            match response.json::<serde_json::Value>().await {
+                Ok(data) => proxy_json_response(stale, normalize_marketplace_response(data)),
+                Err(e) => {
+                    tracing::error!("Failed to parse marketplace response: {}", e);
+                    ApiResponseBuilder::error::<serde_json::Value>(format!("解析市场响应失败: {}", e)).into_response()
+                }
+            }
+        }
         Err(e) => {
             tracing::error!("Failed to fetch marketplace drivers: {}", e);
-            ApiResponseBuilder::error(format!("获取市场驱动失败: {}", e))
+            ApiResponseBuilder::error::<serde_json::Value>(format!("获取市场驱动失败: {}", e)).into_response()
         }
     }
 }
 
-async fn proxy_marketplace_driver(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Json<ApiResponse<serde_json::Value>> {
-    let url = format!("{}/drivers/{}", marketplace_api_url(&state), id);
+async fn proxy_marketplace_driver(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let Some(base) = marketplace_api_url(&state) else {
+        return ApiResponseBuilder::error::<serde_json::Value>(MARKETPLACE_DISABLED_MSG).into_response();
+    };
+    let url = format!("{}/drivers/{}", base, urlencoding::encode(&id));
     tracing::info!("Proxying marketplace driver request to: {}", url);
 
     match HTTP_CLIENT.get(&url).send().await {
-        Ok(response) => match response.json::<serde_json::Value>().await {
-            Ok(data) => normalize_marketplace_response(data),
-            Err(e) => {
-                tracing::error!("Failed to parse marketplace response: {}", e);
-                ApiResponseBuilder::error(format!("解析市场响应失败: {}", e))
+        Ok(response) => {
+            // 信任边界：非 2xx 的上游响应（含中间层 nginx/网关的 JSON 错误体）
+            // 绝不能进 normalize——否则会被包装成 code 0 的成功响应
+            let status = response.status();
+            if !status.is_success() {
+                tracing::error!("Marketplace upstream returned HTTP {} for {}", status, url);
+                return ApiResponseBuilder::error::<serde_json::Value>(format!(
+                    "市场上游返回错误 (HTTP {})",
+                    status.as_u16()
+                ))
+                .into_response();
             }
-        },
+            let stale = response.headers().contains_key(CACHE_STALE_HEADER);
+            match response.json::<serde_json::Value>().await {
+                Ok(data) => proxy_json_response(stale, normalize_marketplace_response(data)),
+                Err(e) => {
+                    tracing::error!("Failed to parse marketplace response: {}", e);
+                    ApiResponseBuilder::error::<serde_json::Value>(format!("解析市场响应失败: {}", e)).into_response()
+                }
+            }
+        }
         Err(e) => {
             tracing::error!("Failed to fetch marketplace driver {}: {}", id, e);
-            ApiResponseBuilder::error(format!("获取驱动详情失败: {}", e))
+            ApiResponseBuilder::error::<serde_json::Value>(format!("获取驱动详情失败: {}", e)).into_response()
         }
     }
 }
@@ -275,9 +356,9 @@ async fn install_marketplace_template(
 
 async fn install_marketplace_driver(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(_id): Path<String>,
     claims: Claims,
-    Json(req): Json<InstallRequest>,
+    Json(_req): Json<InstallRequest>,
 ) -> Json<ApiResponse<String>> {
     match AuthHelper::check_role(&state, &claims.user_id, "admin").await {
         Ok(true) => {}
@@ -288,26 +369,10 @@ async fn install_marketplace_driver(
         }
     }
 
-    let client = match MarketplaceClient::new(state.marketplace.clone()) {
-        Ok(client) => Arc::new(client),
-        Err(e) => {
-            tracing::error!("Failed to create marketplace client: {}", e);
-            return ApiResponseBuilder::error(format!("市场客户端初始化失败: {}", e));
-        }
-    };
-
-    let installer = DriverInstaller::new(client, std::path::PathBuf::from(&state.dynamic_drivers_dir));
-
-    match installer.install_from_marketplace(&id, req.version.as_deref()).await {
-        Ok(driver_name) => {
-            tracing::info!("Successfully installed driver: {}", driver_name);
-            ApiResponseBuilder::success(driver_name)
-        }
-        Err(e) => {
-            tracing::error!("Failed to install driver {}: {}", id, e);
-            ApiResponseBuilder::error(format!("安装驱动失败: {}", e))
-        }
-    }
+    // 动态驱动加载尚未支持（driver_installer::load_driver 固定失败）。
+    // 前置返回明确错误，避免走完 拉列表→下载→checksum 才失败，
+    // 也避免随包 fixture 的伪 checksum/file_url 造成"看起来能装"的假象。
+    ApiResponseBuilder::error("动态驱动加载暂不支持：驱动需编译进二进制。市场安装入口将在动态加载支持后开放")
 }
 
 #[derive(serde::Deserialize)]

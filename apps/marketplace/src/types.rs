@@ -52,6 +52,8 @@ pub struct LocalizedString {
 pub struct Property {
     pub name: String,
     pub display_name: LocalizedString,
+    // 场景包的属性（如占地面积/容积率）可以没有描述——与 cloud 运行时类型对齐
+    #[serde(default)]
     pub description: LocalizedString,
     pub data_type: String,
     #[serde(default)]
@@ -103,8 +105,12 @@ pub struct Template {
     pub category: String,
     #[serde(default)]
     pub manufacturer: Option<String>,
+    // 场景包（category = "scenes"）无设备字段，缺省为空字符串
+    #[serde(default)]
     pub device_type: String,
+    #[serde(default)]
     pub protocol_type: String,
+    #[serde(default)]
     pub driver_name: String,
     #[serde(default)]
     pub tags: Vec<String>,
@@ -128,6 +134,10 @@ pub struct Template {
     pub created_at: String,
     #[serde(default)]
     pub updated_at: String,
+    /// 透传未建模字段（场景包的 parameters/children/thing_category 等），
+    /// 保证 get_template 返回完整 JSON 而不丢字段。
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 fn default_mit_license() -> String {
@@ -140,10 +150,13 @@ fn default_mit_license() -> String {
 pub struct PaginationParams {
     #[serde(default = "default_page")]
     pub page: usize,
-    #[serde(default = "default_per_page")]
+    // 前端经 cloud proxy 透传 camelCase→snake_case 的 page_size，两种拼写都接受
+    #[serde(default = "default_per_page", alias = "page_size")]
     pub per_page: usize,
     pub search: Option<String>,
     pub category: Option<String>,
+    // 前端发 protocol_type；本服务驱动字段名为 protocol，两种拼写都接受
+    #[serde(alias = "protocol_type")]
     pub protocol: Option<String>,
 }
 
@@ -176,7 +189,9 @@ impl PaginationParams {
     }
 
     pub fn offset(&self) -> usize {
-        (self.page - 1) * self.per_page
+        // saturating：page 无上界（如 u64::MAX 经 query 反序列化进来），
+        // 朴素乘法溢出在 debug 下 panic、release 下回绕成任意 offset
+        self.page.saturating_sub(1).saturating_mul(self.per_page)
     }
 }
 
@@ -274,5 +289,18 @@ mod tests {
             protocol: None,
         };
         assert_eq!(params.offset(), 20);
+    }
+
+    #[test]
+    fn offset_overflow_saturates() {
+        // page 无 validate 上界：极大 page 不得 panic（debug）或回绕（release）
+        let params = PaginationParams {
+            page: usize::MAX,
+            per_page: 100,
+            search: None,
+            category: None,
+            protocol: None,
+        };
+        assert_eq!(params.offset(), usize::MAX);
     }
 }

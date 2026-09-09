@@ -28,9 +28,9 @@ async fn list_templates(
         ));
     }
 
-    let is_cold = state.cache.is_cold();
+    let cached = state.cache.get_templates();
 
-    match state.cache.get_templates() {
+    match cached {
         Ok(Some(items)) => {
             let filtered = filter_templates(&items, &params);
             let total = filtered.len();
@@ -43,9 +43,6 @@ async fn list_templates(
                 .collect();
 
             let mut headers = HeaderMap::new();
-            if is_cold {
-                headers.insert(CACHE_STALE_HEADER, "true".parse().unwrap());
-            }
             headers.insert("X-Total-Count", total.to_string().parse().unwrap());
             headers.insert("X-Page", params.page.to_string().parse().unwrap());
             headers.insert("X-Per-Page", params.per_page.to_string().parse().unwrap());
@@ -79,22 +76,16 @@ async fn get_template(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Response, (StatusCode, Json<tinyiothub_web::response::ApiResponse<()>>)> {
-    let is_cold = state.cache.is_cold();
+    let cached = state.cache.get_templates();
 
-    match state.cache.get_templates() {
+    match cached {
         Ok(Some(items)) => {
             match items
                 .iter()
                 .find(|item| item.get("name").and_then(|v| v.as_str()) == Some(&name))
             {
                 Some(v) => match serde_json::from_value::<Template>(v.clone()) {
-                    Ok(t) => {
-                        let mut headers = HeaderMap::new();
-                        if is_cold {
-                            headers.insert(CACHE_STALE_HEADER, "true".parse().unwrap());
-                        }
-                        Ok((headers, ApiResponseBuilder::success(t)).into_response())
-                    }
+                    Ok(t) => Ok(ApiResponseBuilder::success(t).into_response()),
                     Err(e) => Err((
                         StatusCode::INTERNAL_SERVER_ERROR,
                         ApiResponseBuilder::error_with_code(500, format!("Data error: {}", e)),
@@ -106,10 +97,18 @@ async fn get_template(
                 )),
             }
         }
-        Ok(None) => Err((
-            StatusCode::NOT_FOUND,
-            ApiResponseBuilder::error_with_code(40401, "template not found"),
-        )),
+        // 缓存未加载 ≠ 模板不存在：返回 503 + X-Cache-Stale，与真正的 404 区分
+        // （经 Ok 返回是因为本函数 Err 变体声明为 (StatusCode, Json) 二元组）
+        Ok(None) => {
+            let mut headers = HeaderMap::new();
+            headers.insert(CACHE_STALE_HEADER, "true".parse().unwrap());
+            Ok((
+                StatusCode::SERVICE_UNAVAILABLE,
+                headers,
+                ApiResponseBuilder::error_with_code::<()>(50301, "template cache not loaded, retry later"),
+            )
+                .into_response())
+        }
         Err(_) => Err((
             StatusCode::BAD_GATEWAY,
             ApiResponseBuilder::error_with_code(502, "cache unavailable"),
