@@ -347,6 +347,8 @@ mod fixtures {
             duration_ms: 1,
             tool_calls: 0,
             tokens: 0,
+            end_reason: None,
+            thing_id: None,
         }
     }
 

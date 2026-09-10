@@ -212,6 +212,9 @@ impl ServiceManager {
             // （多 agent 同时 tick + DB 抖动）即可逼入 Lagged→全量重投影循环。
             let agent_events = Arc::new(tinyiothub_agent::runtime::events::AgentEventBus::new(4096));
             let persist_rx = agent_events.subscribe();
+            // 工单订阅者（T5）：与 persist 同一 bus，restore 前取 receiver。
+            let ticket_rx = agent_events.subscribe();
+            let agent_events_ticket = agent_events.clone();
             // CEO review T1：监管循环重启订阅时需要 bus 句柄（deps 收走所有权前克隆）。
             let agent_events_supervisor = agent_events.clone();
             let pool = app_state.db.pool().clone();
@@ -251,6 +254,9 @@ impl ServiceManager {
                     event_bus: app_state.event_bus.clone(),
                     drop_notifier: Some(Arc::new(tinyiothub_agent::runtime::event::bus::LoggingDropNotifier)),
                     agent_events,
+                    ticket_resolutions: Arc::new(crate::domains::agent::host::ports::DbTicketResolutionProvider::new(
+                        app_state.db.clone(),
+                    )),
                 },
             ));
             // 3. 僵尸 reconcile：DB 里 status='running' 但 registry 无主的
@@ -282,6 +288,29 @@ impl ServiceManager {
                 self.service_handles.write().await.push(handle);
                 self.persistence_shutdown = Some(persist_shutdown);
                 info!("✅ Agent persistence subscriber started (supervised)");
+            }
+
+            // 工单订阅者（T5/T6）：RunRecorded → tickets 投影 + SSE 通知。
+            // 与 persist 同构的监管循环；共享同一 shutdown 编排。
+            {
+                let ticket_shutdown = tokio_util::sync::CancellationToken::new();
+                let db = app_state.db.clone();
+                let sse = app_state.sse_manager.clone();
+                let bus = agent_events_ticket.clone();
+                let token = ticket_shutdown.clone();
+                let handle = tokio::spawn(async move {
+                    crate::domains::agent::host::ticket_subscriber::supervise_ticket_subscriber(
+                        ticket_rx,
+                        move || bus.subscribe(),
+                        db,
+                        sse,
+                        token,
+                    )
+                    .await;
+                    Ok(())
+                });
+                self.service_handles.write().await.push(handle);
+                info!("✅ Ticket subscriber started (supervised)");
             }
 
             let heartbeat_runner = runtime.heartbeat_runner().clone();

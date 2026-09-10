@@ -57,6 +57,8 @@ fn report_json(run_id: &str, workspace_id: &str) -> String {
         duration_ms: 10,
         tool_calls: 0,
         tokens: 0,
+        end_reason: None,
+        thing_id: None,
     })
     .expect("serialize report")
 }

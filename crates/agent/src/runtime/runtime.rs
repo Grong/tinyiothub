@@ -56,6 +56,8 @@ pub struct RuntimeDeps {
     /// "先 subscribe 再 restore"的可实现形式）。lagged 订阅者经
     /// dump_state 对账恢复。
     pub agent_events: Arc<AgentEventBus>,
+    /// 工单人工解法注入源（T7：cloud 经 db 门面实现；测试用 Noop）。
+    pub ticket_resolutions: Arc<dyn super::thing_agent::traits::TicketResolutionProvider>,
 }
 
 /// Agent 子系统门面。命令入站（D3）；调用约定（D11-⑤）：cloud 先写 DB
@@ -96,6 +98,7 @@ impl AgentRuntime {
             events.clone(),
             Arc::new(Runner::new()),
             deps.thing_agent_config,
+            deps.ticket_resolutions,
         ));
         // T18 X6 心跳桥：HeartbeatCompleted 的结构化 proposals 投递 UserDirective。
         // Task 6 起 O11 dedup 走 RunRegistry 内存（与 thing_agents 共享同一实例）。
@@ -304,6 +307,7 @@ impl RuntimeDeps {
             event_bus,
             drop_notifier: None,
             agent_events: Arc::new(AgentEventBus::new(16)),
+            ticket_resolutions: Arc::new(super::thing_agent::traits::NoopTicketResolutions),
         }
     }
 }
@@ -437,6 +441,8 @@ mod tests {
             duration_ms: 10,
             tool_calls: 0,
             tokens: 0,
+            end_reason: None,
+            thing_id: None,
         }];
         let rt = AgentRuntime::restore(snap, RuntimeDeps::test_stub());
 
@@ -466,6 +472,8 @@ mod tests {
             duration_ms: 10,
             tool_calls: 0,
             tokens: 0,
+            end_reason: None,
+            thing_id: None,
         });
         rt.run_registry().set_run_keys(
             "run_keys",

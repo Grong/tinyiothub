@@ -38,6 +38,51 @@ impl Outcome {
     }
 }
 
+/// Why a run ended the way it did — 工单 briefing 的 failure_kind 数据源
+///（工单设计 T1：timeout/llm 在 Outcome 层折叠为 Failed，必须结构化细分，
+/// 禁止下游从 trigger/summary 字符串解析）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EndReason {
+    /// 预算截断（工具调用数/时长）。
+    Budget,
+    /// 全部动作被策略拒绝。
+    Policy,
+    /// LLM turn 返回错误。
+    Llm,
+    /// turn 超时（未响应取消）。
+    Timeout,
+    /// 动作全部执行失败（非策略拒绝）。
+    Tool,
+    /// Agent 进程/LLM 供应商不可用，run 未执行即中止。
+    AgentUnavailable,
+}
+
+impl EndReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EndReason::Budget => "budget",
+            EndReason::Policy => "policy",
+            EndReason::Llm => "llm",
+            EndReason::Timeout => "timeout",
+            EndReason::Tool => "tool",
+            EndReason::AgentUnavailable => "agent_unavailable",
+        }
+    }
+
+    pub fn from_db(s: &str) -> Option<Self> {
+        Some(match s {
+            "budget" => EndReason::Budget,
+            "policy" => EndReason::Policy,
+            "llm" => EndReason::Llm,
+            "timeout" => EndReason::Timeout,
+            "tool" => EndReason::Tool,
+            "agent_unavailable" => EndReason::AgentUnavailable,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ActionRecord {
     pub thing_id: String,
@@ -67,6 +112,13 @@ pub struct RunReport {
     pub duration_ms: u64,
     pub tool_calls: u32,
     pub tokens: u64,
+    /// 失败细分原因（Acted/NoActionNeeded 为 None）。serde(default) 向后兼容
+    /// 已落库的旧 report JSON。
+    #[serde(default)]
+    pub end_reason: Option<EndReason>,
+    /// 首个 invoke_action 的目标 thing；workspace 级 run（无动作）为 None。
+    #[serde(default)]
+    pub thing_id: Option<String>,
 }
 
 /// 记忆/历史段统一条目格式：`"[acted] 调低设定值成功"`。

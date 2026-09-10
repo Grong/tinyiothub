@@ -453,6 +453,11 @@ fn assemble_report(ctx: &RunContext, end: TurnEnd, duration_ms: u64, inner: &Run
         &actions,
     );
 
+    let end_reason = decide_end_reason(&end, inner.truncated, &actions, outcome);
+    // 结构化 thing 来源（工单 T1）：首个 invoke_action 的目标；禁止下游解析
+    // trigger 字符串。无动作（workspace 级 run）为 None。
+    let thing_id = actions.first().map(|a| a.thing_id.clone());
+
     let (summary, llm_text) = match end {
         TurnEnd::Text(text) => (text.clone(), Some(text)),
         other => (synthesize_summary(inner, &other, outcome), None),
@@ -470,8 +475,37 @@ fn assemble_report(ctx: &RunContext, end: TurnEnd, duration_ms: u64, inner: &Run
             duration_ms,
             tool_calls: inner.tool_calls,
             tokens: inner.input_tokens + inner.cached_input_tokens + inner.output_tokens,
+            end_reason,
+            thing_id,
         },
         llm_text,
+    }
+}
+
+/// EndReason 判定（纯函数，工单 T1）：truncated → Budget > TimedOut → Timeout >
+/// Failed → Llm > 全拒 → Policy > 全动作失败（非拒绝）→ Tool；正常结束 None。
+fn decide_end_reason(
+    end: &TurnEnd,
+    truncated: Option<TruncationReason>,
+    actions: &[ActionRecord],
+    outcome: Outcome,
+) -> Option<tinyiothub_core::agent_runs::EndReason> {
+    use tinyiothub_core::agent_runs::EndReason;
+    if truncated.is_some() {
+        return Some(EndReason::Budget);
+    }
+    match end {
+        TurnEnd::TimedOut => Some(EndReason::Timeout),
+        TurnEnd::Failed => Some(EndReason::Llm),
+        _ => {
+            if outcome == Outcome::Rejected {
+                Some(EndReason::Policy)
+            } else if !actions.is_empty() && actions.iter().all(|a| matches!(&a.result, ActionResult::Failed(_))) {
+                Some(EndReason::Tool)
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -934,5 +968,71 @@ mod tests {
 
         let out = assemble_report(&ctx, TurnEnd::Empty, 900, &inner);
         assert_eq!(out.report.outcome, Outcome::Acted, "部分拒绝（有动作成功）仍为 Acted");
+    }
+
+    /// 工单 T1：end_reason 判定矩阵 + thing_id 结构化来源。
+    #[test]
+    fn end_reason_matrix_and_thing_id() {
+        use tinyiothub_core::agent_runs::EndReason;
+
+        let ctx = RunContext::new("run_er".into(), "ws1".into(), "trigger".into());
+
+        // budget（truncated 优先于一切）
+        let inner = RunContextInner {
+            truncated: Some(TruncationReason::ToolCallBudget),
+            ..RunContextInner::default()
+        };
+        let out = assemble_report(&ctx, TurnEnd::Cancelled, 100, &inner);
+        assert_eq!(out.report.end_reason, Some(EndReason::Budget));
+        assert_eq!(out.report.thing_id, None, "无动作的 workspace 级 run 无 thing_id");
+
+        // timeout
+        let inner = RunContextInner::default();
+        let out = assemble_report(&ctx, TurnEnd::TimedOut, 100, &inner);
+        assert_eq!(out.report.end_reason, Some(EndReason::Timeout));
+
+        // llm 失败
+        let inner = RunContextInner::default();
+        let out = assemble_report(&ctx, TurnEnd::Failed, 100, &inner);
+        assert_eq!(out.report.end_reason, Some(EndReason::Llm));
+
+        // policy（全拒）+ thing_id 来自首个 invoke_action
+        let inner = RunContextInner {
+            trace: vec![denied_entry("c1", "pump3", "reboot", "action_not_allowed")],
+            tool_calls: 1,
+            ..RunContextInner::default()
+        };
+        let out = assemble_report(&ctx, TurnEnd::Empty, 100, &inner);
+        assert_eq!(out.report.end_reason, Some(EndReason::Policy));
+        assert_eq!(out.report.thing_id.as_deref(), Some("pump3"));
+
+        // tool（动作全部执行失败，非策略拒绝）
+        let inner = RunContextInner {
+            trace: vec![entry(
+                "c1",
+                TOOL_INVOKE_ACTION,
+                serde_json::json!({"thingId":"t9","actionName":"reboot"}),
+                Some("plain error"),
+            )],
+            tool_calls: 1,
+            ..RunContextInner::default()
+        };
+        let out = assemble_report(&ctx, TurnEnd::Empty, 100, &inner);
+        assert_eq!(out.report.end_reason, Some(EndReason::Tool));
+        assert_eq!(out.report.thing_id.as_deref(), Some("t9"));
+
+        // 正常 Acted → None
+        let inner = RunContextInner {
+            trace: vec![entry(
+                "c1",
+                TOOL_INVOKE_ACTION,
+                serde_json::json!({"thingId":"t1","actionName":"set_fan"}),
+                Some("{\"ok\":true}"),
+            )],
+            tool_calls: 1,
+            ..RunContextInner::default()
+        };
+        let out = assemble_report(&ctx, TurnEnd::Empty, 100, &inner);
+        assert_eq!(out.report.end_reason, None);
     }
 }

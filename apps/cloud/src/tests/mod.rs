@@ -41,6 +41,7 @@ mod thing_event_broadcast_tests;
 mod thing_event_pipeline_tests;
 mod thing_handler_tests;
 mod thing_tenant_isolation_tests;
+mod ticket_subscriber_tests;
 mod token_handler_tests;
 mod user_handler_tests;
 mod workspace_handler_tests;

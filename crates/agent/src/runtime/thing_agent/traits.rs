@@ -130,6 +130,35 @@ pub(crate) mod test_stubs {
     }
 }
 
+/// 工单人工解法读取端口（工单模块 T7）：thing agent prompt 的
+/// `<ticket_resolutions>` 注入源。具体持久化实现住 apps/cloud（db 门面），
+/// 本 crate 只面向本端口编程（agent crate 不依赖 db——buzz 分层）。
+#[async_trait::async_trait]
+pub trait TicketResolutionProvider: Send + Sync {
+    /// workspace 最近已解决工单的 (title, resolution_text)，同 thing 优先；
+    /// limit 上限由调用方定（M1=5）。
+    async fn recent_resolutions(
+        &self,
+        workspace_id: &str,
+        thing_id: Option<&str>,
+        limit: u32,
+    ) -> anyhow::Result<Vec<(String, String)>>;
+}
+
+/// 默认空实现（测试桩/未接线环境）：无解法可注入。
+pub struct NoopTicketResolutions;
+
+#[async_trait::async_trait]
+impl TicketResolutionProvider for NoopTicketResolutions {
+    async fn recent_resolutions(
+        &self,
+        _workspace_id: &str,
+        _thing_id: Option<&str>,
+        _limit: u32,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        Ok(vec![])
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,3 +287,4 @@ mod tests {
         );
     }
 }
+

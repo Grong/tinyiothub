@@ -11,4 +11,5 @@ pub mod mcp;
 pub mod notify;
 pub mod tenant;
 pub mod thing;
+pub mod ticket;
 pub mod user;

@@ -324,6 +324,8 @@ mod tests {
             duration_ms: 1234,
             tool_calls: 5,
             tokens: 6789,
+            end_reason: None,
+            thing_id: Some("t1".to_string()),
         }
     }
 
@@ -765,6 +767,8 @@ mod tests {
             duration_ms: 1234,
             tool_calls: 5,
             tokens: 6789,
+            end_reason: None,
+            thing_id: Some("t1".to_string()),
         };
 
         let json = serde_json::to_string(&report).expect("serialize");

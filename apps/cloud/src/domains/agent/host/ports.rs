@@ -97,3 +97,31 @@ impl tinyiothub_agent::runtime::thing_agent::traits::AutonomyPolicyReader for St
         Ok(self.db.load_autonomy_policy(workspace_id).await?)
     }
 }
+
+/// `TicketResolutionProvider` 的 cloud 适配器（工单 T7）—— 桥 db 门面的
+/// `recent_ticket_resolutions` 到 agent crate 的注入端口；buzz 分层下
+/// agent crate 不依赖 db，组合层在此接线。
+pub struct DbTicketResolutionProvider {
+    db: Arc<tinyiothub_storage::Db>,
+}
+
+impl DbTicketResolutionProvider {
+    pub fn new(db: Arc<tinyiothub_storage::Db>) -> Self {
+        Self { db }
+    }
+}
+
+#[async_trait]
+impl tinyiothub_agent::runtime::thing_agent::traits::TicketResolutionProvider for DbTicketResolutionProvider {
+    async fn recent_resolutions(
+        &self,
+        workspace_id: &str,
+        thing_id: Option<&str>,
+        limit: u32,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        Ok(self
+            .db
+            .recent_ticket_resolutions(workspace_id, thing_id, i64::from(limit))
+            .await?)
+    }
+}
