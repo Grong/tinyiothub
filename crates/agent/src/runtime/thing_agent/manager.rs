@@ -1089,21 +1089,28 @@ pub(crate) mod tests {
         }
         tokio::time::advance(Duration::from_secs(30)).await;
 
-        let report = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                match rx.recv().await {
+        // RunsProbe 同款排空模式（try_recv + yield 泵）：暂停时钟下 rx.recv()
+        // 挂起会让运行时误判空闲、自动快进到 timeout，合并窗口 flush 后的
+        // 管线可能还没被 poll 到——泵 yield 直到事件到达，有界防挂死。
+        // 过滤 thing_id：advance(30s) 同时 flush 了 timer 首 tick 的信号（同样
+        // 以 AgentUnavailable 中止但 thing_id=None），事件触发的 run 才是断言对象。
+        let report = 'outer: {
+            for _ in 0..10_000 {
+                match rx.try_recv() {
                     Ok(ev) => {
-                        if let AgentEventKind::RunRecorded { report, .. } = ev.kind {
-                            break report;
+                        if let AgentEventKind::RunRecorded { report, .. } = ev.kind
+                            && report.thing_id.is_some()
+                        {
+                            break 'outer report;
                         }
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(e) => panic!("event bus closed: {e}"),
+                    Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+                    Err(_) => {}
                 }
+                tokio::task::yield_now().await;
             }
-        })
-        .await
-        .expect("RunRecorded emitted for agent-unavailable abort");
+            panic!("RunRecorded not emitted for agent-unavailable abort");
+        };
 
         assert_eq!(report.outcome, Outcome::Failed);
         assert_eq!(
