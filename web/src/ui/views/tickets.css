@@ -260,3 +260,6 @@
   padding: 0 2px var(--space-3, 12px);
   flex-wrap: wrap;
 }
+
+/* 外层 app shell 已提供页面标题（保留外层标题）——本栏只剩计数徽标 + 刷新 */
+.tickets-header .btn { margin-left: auto; }
