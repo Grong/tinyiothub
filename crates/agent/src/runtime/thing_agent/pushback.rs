@@ -354,6 +354,8 @@ mod tests {
             duration_ms: 100,
             tool_calls: 2,
             tokens: 500,
+            end_reason: None,
+            thing_id: None,
         }
     }
 
@@ -442,6 +444,8 @@ mod tests {
             duration_ms: 100,
             tool_calls: 2,
             tokens: 500,
+            end_reason: None,
+            thing_id: None,
         }
     }
 

@@ -97,3 +97,41 @@ impl tinyiothub_agent::runtime::thing_agent::traits::AutonomyPolicyReader for St
         Ok(self.db.load_autonomy_policy(workspace_id).await?)
     }
 }
+
+/// `TicketResolutionProvider` 的 cloud 适配器（工单 T7）—— 桥 db 门面的
+/// `recent_ticket_resolutions` 到 agent crate 的注入端口；buzz 分层下
+/// agent crate 不依赖 db，组合层在此接线。
+pub struct DbTicketResolutionProvider {
+    db: Arc<tinyiothub_storage::Db>,
+}
+
+impl DbTicketResolutionProvider {
+    pub fn new(db: Arc<tinyiothub_storage::Db>) -> Self {
+        Self { db }
+    }
+}
+
+#[async_trait]
+impl tinyiothub_agent::runtime::thing_agent::traits::TicketResolutionProvider for DbTicketResolutionProvider {
+    async fn recent_resolutions(
+        &self,
+        workspace_id: &str,
+        thing_id: Option<&str>,
+        limit: u32,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        // M2-c：真源切到 agent_memories 知识层（zone=Work，
+        // tags=["ticket-resolution"]；content = "{title}\n{resolution}"）。
+        let rows = tinyiothub_storage::memory::MemoryStore::new(self.db.pool().clone())
+            .list_ticket_resolutions(workspace_id, "default", thing_id, i64::from(limit))
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(content, _)| {
+                let mut lines = content.splitn(2, '\n');
+                let title = lines.next().unwrap_or("").to_string();
+                let resolution = lines.next().unwrap_or("").to_string();
+                (title, resolution)
+            })
+            .collect())
+    }
+}

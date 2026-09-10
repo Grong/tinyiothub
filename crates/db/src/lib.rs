@@ -69,6 +69,8 @@ pub mod seed;
 /// Session persistence and row types.
 pub mod session;
 /// system_settings key-value storage (event security config).
+pub mod ticket;
+
 pub mod settings;
 /// SQL escaping helpers.
 pub mod sql_security;

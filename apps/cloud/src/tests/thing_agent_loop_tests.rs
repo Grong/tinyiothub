@@ -394,6 +394,7 @@ async fn build_fixture(
             // 亚秒合并窗口：真实时间下测试快速收敛。
             merge_window,
         },
+        Arc::new(tinyiothub_agent::runtime::thing_agent::traits::NoopTicketResolutions),
     ));
 
     FixtureParts {
@@ -820,7 +821,9 @@ async fn policy_denial_streak_triggers_relax_hint_with_registry() {
         verified: false,
         duration_ms: 100,
         tool_calls: 2,
-        tokens: 500,
+        tokens: 0,
+        end_reason: None,
+        thing_id: None,
     };
 
     // 当前 run 在 alert 之前已 record → recent_by_dedup 窗口第一条即当前 run。

@@ -94,6 +94,8 @@ struct PipelineDeps {
     events: Arc<AgentEventBus>,
     agent_provider: Arc<dyn AutonomousAgentProvider>,
     runner: Arc<Runner>,
+    /// 工单人工解法注入源（T7；NoopTicketResolutions = 未接线）。
+    ticket_resolutions: Arc<dyn crate::runtime::thing_agent::traits::TicketResolutionProvider>,
 }
 
 /// One running workspace loop: the scheduler handle plus the trigger/forward
@@ -122,6 +124,7 @@ impl ThingAgentManager {
         events: Arc<AgentEventBus>,
         runner: Arc<Runner>,
         config: ThingAgentManagerConfig,
+        ticket_resolutions: Arc<dyn crate::runtime::thing_agent::traits::TicketResolutionProvider>,
     ) -> Self {
         Self {
             deps: PipelineDeps {
@@ -131,6 +134,7 @@ impl ThingAgentManager {
                 events,
                 agent_provider,
                 runner,
+                ticket_resolutions,
             },
             config,
             workspaces: DashMap::new(),
@@ -305,12 +309,67 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
         }
     };
 
-    let prompt = build_prompt(&signal, &memory, &history, &allowed);
+    // T7 工单人工解法注入（fail-soft：读失败则空段，不阻断 run）。
+    // 同 thing 优先（ThingEvent 信号带 thing_id；其余源按 workspace 取最近）。
+    let signal_thing_id = match &signal.source {
+        TriggerSource::ThingEvent { thing_id, .. } => Some(thing_id.as_str()),
+        _ => None,
+    };
+    let resolutions = match deps
+        .ticket_resolutions
+        .recent_resolutions(&ws, signal_thing_id, 5)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::debug!(workspace_id = %ws, error = %e, "ticket resolutions read failed — prompt without them");
+            vec![]
+        }
+    };
+
+    let prompt = build_prompt(&signal, &memory, &history, &allowed, &resolutions);
 
     let agent = match deps.agent_provider.get_or_create(&ws, Arc::clone(&ctx.inner)).await {
         Ok(agent) => agent,
         Err(e) => {
             tracing::error!(workspace_id = %ws, run_id = %run_id, error = %e, "autonomous agent unavailable — run aborted");
+            // 工单 T2：Agent/LLM 供应商不可用是最需要人工介入的自治失败，
+            // 必须经 RunRecorded 走到工单订阅者——否则订阅者永远看不到这类
+            // 失败（"零静默失败"承诺在此断裂）。与正常路径同构：record + emit。
+            let thing_id = match &signal.source {
+                TriggerSource::ThingEvent { thing_id, .. } => Some(thing_id.clone()),
+                _ => None,
+            };
+            let problem_key = match &signal.source {
+                TriggerSource::UserDirective { problem_key, .. } => problem_key.as_deref(),
+                _ => None,
+            };
+            let report = tinyiothub_core::agent_runs::RunReport {
+                run_id: run_id.clone(),
+                workspace_id: ws.clone(),
+                trigger: trigger_label(&signal),
+                outcome: tinyiothub_core::agent_runs::Outcome::Failed,
+                summary: format!("自治 Agent 不可用（{e}），run 未执行即中止"),
+                actions: vec![],
+                verified: false,
+                duration_ms: 0,
+                tool_calls: 0,
+                tokens: 0,
+                end_reason: Some(tinyiothub_core::agent_runs::EndReason::AgentUnavailable),
+                thing_id,
+            };
+            deps.registry.record_with_keys(
+                report.clone(),
+                crate::runtime::snapshot::RunDedupKeys {
+                    problem_key: problem_key.map(str::to_owned),
+                    dedup_key: signal.dedup_key.clone(),
+                },
+            );
+            deps.events.emit(AgentEventKind::RunRecorded {
+                report: Box::new(report),
+                problem_key: problem_key.map(str::to_owned),
+                dedup_key: signal.dedup_key.clone(),
+            });
             return;
         }
     };
@@ -619,6 +678,7 @@ pub(crate) mod tests {
                 min_wake_level: 3,
                 merge_window: crate::runtime::thing_agent::scheduler::MERGE_WINDOW,
             },
+            Arc::new(crate::runtime::thing_agent::traits::NoopTicketResolutions),
         ));
         StubManagerParts {
             manager,
@@ -982,5 +1042,82 @@ pub(crate) mod tests {
             dedup_key: Some(EVENT_KEY.to_string()),
         };
         assert_eq!(trigger_label(&merged), format!("merged:{EVENT_KEY}"));
+    }
+
+    /// 工单 T2：agent_provider 失败的 early-return 必须发 RunRecorded
+    ///（outcome=Failed, end_reason=AgentUnavailable）——否则工单订阅者永远
+    /// 看不到这类最需要人工介入的失败，"零静默失败"承诺在此断裂。
+    #[tokio::test(start_paused = true)]
+    async fn agent_unavailable_emits_run_recorded() {
+        struct FailingProvider;
+        #[async_trait::async_trait]
+        impl AutonomousAgentProvider for FailingProvider {
+            async fn get_or_create(
+                &self,
+                _workspace_id: &str,
+                _ctx: Arc<tokio::sync::RwLock<RunContextInner>>,
+            ) -> anyhow::Result<AgentHandle> {
+                anyhow::bail!("llm provider down")
+            }
+            fn invalidate(&self, _workspace_id: &str) {}
+        }
+
+        let host = Arc::new(StubHost::new());
+        let registry = RunRegistry::new();
+        let events = Arc::new(AgentEventBus::new(64));
+        let mut rx = events.subscribe();
+        let manager = Arc::new(ThingAgentManager::new(
+            host.clone(),
+            stub_policy_reader(WS),
+            Arc::new(FailingProvider),
+            registry,
+            events,
+            Arc::new(Runner::new()),
+            ThingAgentManagerConfig {
+                timer_interval: Duration::from_secs(24 * 3600),
+                min_wake_level: 3,
+                merge_window: crate::runtime::thing_agent::scheduler::MERGE_WINDOW,
+            },
+            Arc::new(crate::runtime::thing_agent::traits::NoopTicketResolutions),
+        ));
+        manager.start(WS);
+        wait_subscribed(&host).await;
+
+        host.tx.send(event(1, 3, "device")).expect("send event");
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_secs(30)).await;
+
+        // RunsProbe 同款排空模式（try_recv + yield 泵）：暂停时钟下 rx.recv()
+        // 挂起会让运行时误判空闲、自动快进到 timeout，合并窗口 flush 后的
+        // 管线可能还没被 poll 到——泵 yield 直到事件到达，有界防挂死。
+        // 过滤 thing_id：advance(30s) 同时 flush 了 timer 首 tick 的信号（同样
+        // 以 AgentUnavailable 中止但 thing_id=None），事件触发的 run 才是断言对象。
+        let report = 'outer: {
+            for _ in 0..10_000 {
+                match rx.try_recv() {
+                    Ok(ev) => {
+                        if let AgentEventKind::RunRecorded { report, .. } = ev.kind
+                            && report.thing_id.is_some()
+                        {
+                            break 'outer report;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+                    Err(_) => {}
+                }
+                tokio::task::yield_now().await;
+            }
+            panic!("RunRecorded not emitted for agent-unavailable abort");
+        };
+
+        assert_eq!(report.outcome, Outcome::Failed);
+        assert_eq!(
+            report.end_reason,
+            Some(tinyiothub_core::agent_runs::EndReason::AgentUnavailable)
+        );
+        assert_eq!(report.thing_id.as_deref(), Some("t1"));
+        assert!(report.summary.contains("不可用"));
     }
 }

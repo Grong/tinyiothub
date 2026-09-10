@@ -48,6 +48,8 @@ fn report(run_id: &str, workspace_id: &str, summary: &str) -> RunReport {
         duration_ms: 10,
         tool_calls: 0,
         tokens: 0,
+        end_reason: None,
+        thing_id: None,
     }
 }
 

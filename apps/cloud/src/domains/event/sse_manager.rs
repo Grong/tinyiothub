@@ -179,6 +179,17 @@ impl SseConnectionManager {
         }
     }
 
+    /// 通用广播透传（工单模块 T6：复用同一 SSE 通道实例——客户端连接挂在
+    /// 本 manager 的 channel 上，新造 channel 实例会导致通知永不到达）。
+    /// data 中的 workspace_id 参与连接侧过滤（sse_channel::should_send_to_workspace）。
+    pub async fn broadcast_message(&self, message: SseMessage) {
+        if let Err(e) = self.sse_channel.broadcast(message).await {
+            error!("Failed to broadcast message: {}", e);
+        } else {
+            self.events_sent.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     /// Get connection statistics
     pub async fn get_overview(&self) -> SseOverview {
         let connection_count = self.sse_channel.get_connection_count().await;

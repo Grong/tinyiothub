@@ -259,6 +259,7 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
         event_bus,
         drop_notifier: None,
         agent_events: agent_events.clone(),
+        ticket_resolutions: Arc::new(tinyiothub_agent::runtime::thing_agent::traits::NoopTicketResolutions),
     };
     let runtime = Arc::new(AgentRuntime::restore(snapshot, deps));
     reconcile_zombie_runs(&db, &runtime).await;
