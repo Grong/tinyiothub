@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   STATE_TABS,
+  fmtDuration,
+  isAgentMessage,
+  messageText,
   availableActions,
   briefingSteps,
   failureKindLabel,
@@ -15,7 +18,7 @@ describe("tickets view helpers", () => {
     expect(availableActions("open")).toEqual(["claim", "close"]);
     expect(availableActions("claimed")).toEqual(["start", "abandon"]);
     expect(availableActions("in_progress")).toEqual(["resolve"]);
-    expect(availableActions("resolved")).toEqual(["close"]);
+    expect(availableActions("resolved")).toEqual(["close", "reopen"]);
     expect(availableActions("closed")).toEqual([]);
   });
 
@@ -46,6 +49,31 @@ describe("tickets view helpers", () => {
     expect(hasSuggestions({})).toBe(false);
     expect(hasSuggestions({ suggested_next_steps: ["现场检查"] })).toBe(true);
     expect(briefingSteps(undefined)).toEqual([]);
+  });
+
+  it("M2-d fmtDuration 人性化", () => {
+    expect(fmtDuration(null)).toBe("—");
+    expect(fmtDuration(45)).toBe("45 秒");
+    expect(fmtDuration(180)).toBe("3 分钟");
+    expect(fmtDuration(7200)).toBe("2.0 小时");
+    expect(fmtDuration(172800)).toBe("2.0 天");
+  });
+
+  it("M2-b 对话消息：纯文本提取与角色判定", () => {
+    expect(
+      messageText({
+        role: "assistant",
+        content: [
+          { type: "text", text: "我已升级此工单。" },
+          { type: "tool_call", name: "query_events" },
+          { type: "text", text: "建议现场检查。" },
+        ],
+      } as any),
+    ).toBe("我已升级此工单。\n建议现场检查。");
+    // tool/a2ui 块不进面板（XSS 面零新增）
+    expect(messageText({ role: "user", content: [{ type: "a2ui", text: undefined }] } as any)).toBe("");
+    expect(isAgentMessage({ role: "assistant", content: [] } as any)).toBe(true);
+    expect(isAgentMessage({ role: "user", content: [] } as any)).toBe(false);
   });
 
   it("状态 tabs 含全部五个", () => {

@@ -58,6 +58,19 @@ export interface TicketListPayload {
   unclaimed_count: number;
 }
 
+export interface TicketStatistics {
+  tickets_total: number;
+  runs_total: number;
+  escalation_rate: number;
+  open: number;
+  claimed: number;
+  in_progress: number;
+  resolved: number;
+  closed: number;
+  avg_time_to_ack_secs: number | null;
+  avg_time_to_resolve_secs: number | null;
+}
+
 export const ticketApi = {
   async list(params?: { state?: string; page?: number; page_size?: number }) {
     return apiGet<TicketListPayload>('/tickets', params as Record<string, any>);
@@ -85,5 +98,13 @@ export const ticketApi = {
 
   async abandon(id: number) {
     return apiPost<void>(`/tickets/${id}/abandon`);
+  },
+
+  async reopen(id: number) {
+    return apiPost<void>(`/tickets/${id}/reopen`);
+  },
+
+  async statistics() {
+    return apiGet<TicketStatistics>('/tickets/statistics');
   },
 };

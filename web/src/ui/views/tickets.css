@@ -218,3 +218,45 @@
     padding: var(--space-2, 8px) 0;
   }
 }
+
+/* 工单对话面板（M2-b） */
+.chat__body {
+  max-height: 360px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+  margin-bottom: var(--space-3, 12px);
+}
+.chat__loading { color: var(--muted, #6b7280); font-size: 12px; text-align: center; padding: var(--space-3, 12px); }
+.chat__msg {
+  max-width: 78%;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: var(--radius-md, 10px);
+  padding: 8px 12px;
+}
+.chat__msg--agent { background: var(--bg-soft, #f9fafb); align-self: flex-start; }
+.chat__msg--human { background: #fff; border-style: double; align-self: flex-end; }
+.chat__msg--thinking { opacity: 0.7; }
+.chat__who { font-size: 11px; color: var(--muted, #6b7280); margin-bottom: 2px; }
+.chat__text { font-size: 13px; white-space: pre-wrap; }
+.chat__input { display: flex; gap: var(--space-2, 8px); }
+.chat__box {
+  flex: 1;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: var(--radius-sm, 6px);
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 13px;
+  min-height: 44px;
+}
+
+/* 指标统计条（M2-d） */
+.stats-bar {
+  display: flex;
+  gap: var(--space-4, 16px);
+  font-size: 12px;
+  color: var(--muted, #6b7280);
+  padding: 0 2px var(--space-3, 12px);
+  flex-wrap: wrap;
+}

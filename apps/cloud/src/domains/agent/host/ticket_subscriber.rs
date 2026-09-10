@@ -152,6 +152,10 @@ pub(crate) async fn ticket_for_run(
     match db.create_ticket(&new_ticket).await {
         Ok(CreateOutcome::Created(id)) => {
             info!(ticket_id = id, run_id = %report.run_id, workspace_id = %report.workspace_id, "ticket created");
+            // M2-b：建工单对话 session（best-effort，失败不影响开票）。
+            if let Ok(Some(ticket)) = db.get_ticket(&report.workspace_id, id).await {
+                crate::domains::ticket::service::TicketService::ensure_ticket_session(db, &ticket).await;
+            }
             // T6：SSE 通知（复用 notify 域 workspace 广播；data 带
             // workspace_id 参与连接侧过滤，文案 = title + 点击查看简报）。
             let msg = SseMessage::new(

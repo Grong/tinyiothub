@@ -119,9 +119,19 @@ impl tinyiothub_agent::runtime::thing_agent::traits::TicketResolutionProvider fo
         thing_id: Option<&str>,
         limit: u32,
     ) -> anyhow::Result<Vec<(String, String)>> {
-        Ok(self
-            .db
-            .recent_ticket_resolutions(workspace_id, thing_id, i64::from(limit))
-            .await?)
+        // M2-c：真源切到 agent_memories 知识层（zone=Work，
+        // tags=["ticket-resolution"]；content = "{title}\n{resolution}"）。
+        let rows = tinyiothub_storage::memory::MemoryStore::new(self.db.pool().clone())
+            .list_ticket_resolutions(workspace_id, "default", thing_id, i64::from(limit))
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(content, _)| {
+                let mut lines = content.splitn(2, '\n');
+                let title = lines.next().unwrap_or("").to_string();
+                let resolution = lines.next().unwrap_or("").to_string();
+                (title, resolution)
+            })
+            .collect())
     }
 }

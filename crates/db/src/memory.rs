@@ -170,6 +170,49 @@ impl MemoryStore {
         Ok(())
     }
 
+    /// 工单解法检索（M2-c）：tags 含 "ticket-resolution" 的活跃记忆，
+    /// 同 thing 优先、按创建时间倒序。content 格式 "{title}\n{resolution}"。
+    pub async fn list_ticket_resolutions(
+        &self,
+        workspace_id: &str,
+        agent_id: &str,
+        thing_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<(String, Option<String>)>> {
+        let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT content, thing_id FROM agent_memories
+             WHERE workspace_id = ? AND agent_id = ?
+               AND tags LIKE '%\"ticket-resolution\"%'
+               AND id NOT IN (SELECT supersedes FROM agent_memories
+                              WHERE supersedes IS NOT NULL AND workspace_id = ? AND agent_id = ?)
+             ORDER BY (CASE WHEN thing_id = ? THEN 0 ELSE 1 END), created_at DESC
+             LIMIT ?",
+        )
+        .bind(workspace_id)
+        .bind(agent_id)
+        .bind(workspace_id)
+        .bind(agent_id)
+        .bind(thing_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// reopen 退役（M2-c）："上次修复未生效"的解法不得再注入 prompt。
+    pub async fn delete_ticket_resolutions(&self, workspace_id: &str, ticket_id: i64) -> Result<u64> {
+        let tag = format!("%\"ticket:{ticket_id}\"%");
+        let done = sqlx::query(
+            "DELETE FROM agent_memories
+             WHERE workspace_id = ? AND tags LIKE ? AND tags LIKE '%\"ticket-resolution\"%'",
+        )
+        .bind(workspace_id)
+        .bind(tag)
+        .execute(&self.pool)
+        .await?;
+        Ok(done.rows_affected())
+    }
+
     pub async fn get_pending_queue(&self, workspace_id: &str, agent_id: &str) -> Result<Vec<ReflectionQueueItem>> {
         let rows = sqlx::query_as::<_, QueueRow>(
             "SELECT id, workspace_id, agent_id, session_key, candidate_type, candidate_data, status, created_at \

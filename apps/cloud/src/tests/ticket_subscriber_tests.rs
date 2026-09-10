@@ -198,10 +198,13 @@ async fn closure_chain_resolution_flows_into_next_prompt() {
     assert_eq!(tickets.len(), 1);
     let id = tickets[0].id;
 
-    // 2. 人工认领 → 开始处理 → 解决（必填 resolution）
-    db.claim_ticket(id, "wang").await.unwrap();
-    db.start_ticket(id, "wang").await.unwrap();
-    db.resolve_ticket(id, "wang", "现场更换轴承 NSK-6205，复位闸阀执行器")
+    // 2. 人工认领 → 开始处理 → 解决（必填 resolution）。走 TicketService
+    // 真实用户路径——M2-c 起 resolution 的知识沉淀（agent_memories）由
+    // service 层写入，db 直调不再有读者。
+    let svc = crate::domains::ticket::service::TicketService::new(Arc::clone(&db));
+    svc.claim("ws1", id, "wang").await.unwrap();
+    svc.start("ws1", id, "wang").await.unwrap();
+    svc.resolve("ws1", id, "wang", "现场更换轴承 NSK-6205，复位闸阀执行器")
         .await
         .unwrap();
 
@@ -228,4 +231,68 @@ async fn closure_chain_resolution_flows_into_next_prompt() {
     assert!(prompt.contains("<ticket_resolutions>"));
     assert!(prompt.contains("现场更换轴承 NSK-6205"), "解法应出现在 prompt 里");
     assert!(prompt.contains("不可信人工输入"), "注入段必须带不可信标注");
+}
+
+/// M2-b：开票即建对话 session（种子消息 + tickets.session_key 回写）；
+/// 懒回填对已绑定工单幂等。
+#[tokio::test]
+async fn ticket_creation_binds_chat_session_with_seed() {
+    use crate::domains::ticket::service::TicketService;
+
+    let db = test_db_async().await;
+    let sse = sse();
+    let r = report("run_sess", Outcome::Rejected, Some(EndReason::Policy), Some("t1"));
+    ticket_for_run(&db, &sse, &r, None, Some("thing:t1:event:temp_high")).await;
+
+    let tickets = db.list_tickets("ws1", None, 20, 0).await.unwrap();
+    assert_eq!(tickets.len(), 1);
+    let key = tickets[0].session_key.as_ref().expect("session bound at creation");
+    assert!(key.starts_with("agent:ws1:default/ticket-"), "key: {key}");
+
+    // 种子消息：assistant 角色，含问题首行
+    let messages = db.list_session_messages(key, 10).await.unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].0, "assistant");
+    assert!(messages[0].1.contains("我已升级此工单"), "seed: {}", messages[0].1);
+
+    // 幂等：再次 ensure 不重建、不改 key
+    let again = TicketService::ensure_ticket_session(&db, &tickets[0]).await;
+    assert_eq!(again.as_deref(), Some(key.as_str()));
+    assert_eq!(db.list_session_messages(key, 10).await.unwrap().len(), 1);
+}
+
+/// M2-c：reopen 退役过期解法记忆（"上次修复未生效"不得再注入 prompt）。
+#[tokio::test]
+async fn reopen_retires_stale_resolution_memory() {
+    let db = Arc::new(test_db_async().await);
+    let sse = sse();
+    let r = report("run_retire", Outcome::Rejected, Some(EndReason::Policy), Some("t1"));
+    ticket_for_run(&db, &sse, &r, None, Some("thing:t1:event:temp_high")).await;
+    let id = db.list_tickets("ws1", None, 20, 0).await.unwrap()[0].id;
+
+    let svc = crate::domains::ticket::service::TicketService::new(Arc::clone(&db));
+    svc.claim("ws1", id, "wang").await.unwrap();
+    svc.start("ws1", id, "wang").await.unwrap();
+    svc.resolve("ws1", id, "wang", "换了个零件但没修好").await.unwrap();
+
+    let store = tinyiothub_storage::memory::MemoryStore::new(db.pool().clone());
+    assert_eq!(
+        store
+            .list_ticket_resolutions("ws1", "default", Some("t1"), 5)
+            .await
+            .unwrap()
+            .len(),
+        1,
+        "解决后记忆在"
+    );
+
+    svc.reopen("ws1", id, "wang").await.unwrap();
+    assert!(
+        store
+            .list_ticket_resolutions("ws1", "default", Some("t1"), 5)
+            .await
+            .unwrap()
+            .is_empty(),
+        "reopen 后过期解法必须退役"
+    );
 }

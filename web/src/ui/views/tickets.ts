@@ -12,8 +12,21 @@
 
 import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { ticketApi, type Ticket, type TicketDetail, type TicketBriefing } from "../../api/tickets.js";
+import {
+  ticketApi,
+  type Ticket,
+  type TicketDetail,
+  type TicketBriefing,
+  type TicketStatistics,
+} from "../../api/tickets.js";
 import { connectSse, type SseConnection } from "../../api/sse-client.js";
+import {
+  createChatState,
+  loadChatHistory,
+  sendChatMessage,
+  type ChatState,
+  type ChatMessage,
+} from "../controllers/chat.js";
 import { success, error as toastError, warn } from "../components/toast.js";
 import "./tickets.css";
 
@@ -62,7 +75,9 @@ export function failureKindLabel(kind: string | null | undefined): string {
 }
 
 /** 各状态下可用的操作（与后端状态机迁移矩阵一致）。 */
-export function availableActions(s: TicketState): Array<"claim" | "start" | "resolve" | "close" | "abandon"> {
+export function availableActions(
+  s: TicketState,
+): Array<"claim" | "start" | "resolve" | "close" | "abandon" | "reopen"> {
   switch (s) {
     case "open":
       return ["claim", "close"];
@@ -71,7 +86,7 @@ export function availableActions(s: TicketState): Array<"claim" | "start" | "res
     case "in_progress":
       return ["resolve"];
     case "resolved":
-      return ["close"];
+      return ["close", "reopen"];
     case "closed":
       return [];
   }
@@ -90,6 +105,28 @@ export function hasSuggestions(b: TicketBriefing | undefined): boolean {
   return (b?.suggested_next_steps?.length ?? 0) > 0;
 }
 
+/** 对话消息纯文本提取（M2-b：只渲 text block，tool/a2ui 块不进工单面板）。 */
+export function messageText(m: ChatMessage): string {
+  return (m.content ?? [])
+    .filter((b) => b.type === "text" && typeof b.text === "string")
+    .map((b) => b.text as string)
+    .join("\n");
+}
+
+/** 时长人性化（M2-d 统计条）：秒 → "3 分钟" / "2 小时" / "1 天"。 */
+export function fmtDuration(secs: number | null | undefined): string {
+  if (secs === null || secs === undefined) return "—";
+  if (secs < 60) return `${Math.round(secs)} 秒`;
+  if (secs < 3600) return `${Math.round(secs / 60)} 分钟`;
+  if (secs < 86400) return `${(secs / 3600).toFixed(1)} 小时`;
+  return `${(secs / 86400).toFixed(1)} 天`;
+}
+
+/** 面板可见角色（system 静默；其余按 role 分左右）。 */
+export function isAgentMessage(m: ChatMessage): boolean {
+  return (m.role || "").toLowerCase() !== "user";
+}
+
 // ── 视图 ──
 
 @customElement("view-tickets")
@@ -106,6 +143,10 @@ export class TicketsView extends LitElement {
   @state() sseConnected = true;
   /** 移动端：false=列表，true=详情 */
   @state() mobileDetail = false;
+  @state() stats: TicketStatistics | null = null;
+  /** 工单对话（M2-b）：detail.session_key 存在时初始化 */
+  @state() chatState: ChatState | null = null;
+  @state() chatDraft = "";
 
   private sseConn: SseConnection | null = null;
   private poller: number | null = null;
@@ -150,6 +191,7 @@ export class TicketsView extends LitElement {
       this.tickets = res.tickets;
       this.unclaimedCount = res.unclaimed_count;
       this.sseConnected = true;
+      this.stats = await ticketApi.statistics().catch(() => null);
     } catch (e) {
       toastError(`工单加载失败: ${(e as Error).message}`);
     } finally {
@@ -164,6 +206,14 @@ export class TicketsView extends LitElement {
       this.detail = await ticketApi.detail(id);
       this.resolutionText = "";
       this.resolutionError = null;
+      // M2-b：对话面板懒加载
+      if (this.detail.session_key) {
+        this.chatState = createChatState(this.detail.session_key, "default");
+        this.chatState.onChange = () => this.requestUpdate();
+        void loadChatHistory(this.chatState);
+      } else {
+        this.chatState = null;
+      }
     } catch (e) {
       toastError(`工单详情加载失败: ${(e as Error).message}`);
     } finally {
@@ -171,13 +221,17 @@ export class TicketsView extends LitElement {
     }
   }
 
-  private async act(action: "claim" | "start" | "close" | "abandon") {
+  private async act(action: "claim" | "start" | "close" | "abandon" | "reopen") {
     if (!this.detail || this.actionInFlight) return;
     this.actionInFlight = true;
     const id = this.detail.id;
     try {
       await ticketApi[action](id);
-      success({ claim: "已认领", start: "已开始处理", close: "已关闭", abandon: "已放弃认领" }[action]);
+      success(
+        { claim: "已认领", start: "已开始处理", close: "已关闭", abandon: "已放弃认领", reopen: "已重新打开" }[
+          action
+        ],
+      );
       await this.openDetail(id);
       void this.loadList(true);
     } catch (e) {
@@ -188,6 +242,13 @@ export class TicketsView extends LitElement {
     } finally {
       this.actionInFlight = false;
     }
+  }
+
+  private sendChat() {
+    const msg = this.chatDraft.trim();
+    if (!msg || !this.chatState || this.chatState.chatSending) return;
+    this.chatDraft = "";
+    sendChatMessage(this.chatState, msg);
   }
 
   private async submitResolve() {
@@ -223,6 +284,7 @@ export class TicketsView extends LitElement {
             : nothing}
           <button class="btn btn--ghost" @click=${() => this.loadList()} ?disabled=${this.loading}>刷新</button>
         </div>
+        ${this.renderStats()}
         ${!this.sseConnected
           ? html`<div class="sse-banner">实时更新已断开，点击刷新获取最新</div>`
           : nothing}
@@ -246,6 +308,18 @@ export class TicketsView extends LitElement {
           <div class="tickets-list">${this.renderList()}</div>
           <div class="tickets-detail">${this.renderDetail()}</div>
         </div>
+      </div>
+    `;
+  }
+
+  private renderStats(): TemplateResult {
+    const st = this.stats;
+    if (!st || st.runs_total === 0) return html`${nothing}`;
+    return html`
+      <div class="stats-bar" aria-label="工单指标">
+        <span>升级率 ${(st.escalation_rate * 100).toFixed(1)}%（${st.tickets_total}/${st.runs_total} runs）</span>
+        <span>平均响应 ${fmtDuration(st.avg_time_to_ack_secs)}</span>
+        <span>平均解决 ${fmtDuration(st.avg_time_to_resolve_secs)}</span>
       </div>
     `;
   }
@@ -312,6 +386,9 @@ export class TicketsView extends LitElement {
           ${actions.includes("close")
             ? html`<button class="btn btn--ghost" ?disabled=${this.actionInFlight} @click=${() => this.act("close")}>关闭</button>`
             : nothing}
+          ${actions.includes("reopen")
+            ? html`<button class="btn btn--ghost" ?disabled=${this.actionInFlight} @click=${() => this.act("reopen")}>重新打开</button>`
+            : nothing}
         </div>
       </div>
       <h3 class="detail-title">${d.title}</h3>
@@ -321,7 +398,7 @@ export class TicketsView extends LitElement {
         ${d.assignee_id ? html`<span>指派人：${d.assignee_id}</span>` : nothing}
         <span>${d.created_at.slice(0, 16)}</span>
       </div>
-      ${this.renderBriefing(d.briefing)} ${this.renderTimeline(d)} ${this.renderResolve(d)}
+      ${this.renderBriefing(d.briefing)} ${this.renderChat()} ${this.renderTimeline(d)} ${this.renderResolve(d)}
     `;
   }
 
@@ -361,6 +438,47 @@ export class TicketsView extends LitElement {
               </div>
             `
           : nothing}
+      </section>
+    `;
+  }
+
+  private renderChat(): TemplateResult {
+    const cs = this.chatState;
+    if (!cs) return html`${nothing}`;
+    const visible = cs.chatMessages.filter((m) => messageText(m).trim().length > 0);
+    return html`
+      <section class="ticket-panel chat">
+        <h4 class="ticket-panel__title">工单对话（人机同上下文）</h4>
+        <div class="chat__body">
+          ${cs.chatLoading ? html`<div class="chat__loading">加载对话…</div>` : nothing}
+          ${visible.map(
+            (m) => html`
+              <div class=${isAgentMessage(m) ? "chat__msg chat__msg--agent" : "chat__msg chat__msg--human"}>
+                <div class="chat__who">${isAgentMessage(m) ? "Agent" : "我"}</div>
+                <div class="chat__text">${messageText(m)}</div>
+              </div>
+            `,
+          )}
+          ${cs.chatSending
+            ? html`<div class="chat__msg chat__msg--agent chat__msg--thinking">
+                <div class="chat__who">Agent</div>
+                <div class="chat__text">${cs.chatStream || "正在思考…"}</div>
+              </div>`
+            : nothing}
+        </div>
+        <div class="chat__input">
+          <input
+            class="chat__box"
+            type="text"
+            placeholder="问 Agent：查历史、生成维修指引、换方案再试…"
+            .value=${this.chatDraft}
+            @input=${(e: InputEvent) => (this.chatDraft = (e.target as HTMLInputElement).value)}
+            @keydown=${(e: KeyboardEvent) => e.key === "Enter" && this.sendChat()}
+          />
+          <button class="btn btn--primary" ?disabled=${cs.chatSending || !this.chatDraft.trim()} @click=${() => this.sendChat()}>
+            发送
+          </button>
+        </div>
       </section>
     `;
   }

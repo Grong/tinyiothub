@@ -83,6 +83,20 @@ pub struct TicketEvent {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TicketStatistics {
+    pub tickets_total: i64,
+    pub runs_total: i64,
+    pub escalation_rate: f64,
+    pub open: i64,
+    pub claimed: i64,
+    pub in_progress: i64,
+    pub resolved: i64,
+    pub closed: i64,
+    pub avg_time_to_ack_secs: Option<f64>,
+    pub avg_time_to_resolve_secs: Option<f64>,
+}
+
 /// 开票入参（订阅者从 RunReport 装配）。
 pub struct NewTicket {
     pub workspace_id: String,
@@ -318,6 +332,52 @@ impl Db {
         }
     }
 
+    /// resolved → open（M2 reopen）：原 resolution 快照进 ticket_events，
+    /// 清 resolution_text/resolved_at/assignee/claimed_at，置 reopened_at。
+    /// 由调用方（domain service）负责重新 SSE 通知。
+    pub async fn reopen_ticket(&self, ticket_id: i64, user_id: &str) -> Result<TransitionOutcome> {
+        let pool = self.pool();
+        // 先取原 resolution（条件更新成功才快照进事件）
+        let prior: Option<(String, Option<String>)> =
+            sqlx::query_as("SELECT resolution_text, assignee_id FROM tickets WHERE id = ? AND state = 'resolved'")
+                .bind(ticket_id)
+                .fetch_optional(pool)
+                .await?;
+        let Some((prior_resolution, _)) = prior else {
+            return match current_state(pool, ticket_id).await? {
+                Some((state, assignee_id)) => Ok(TransitionOutcome::Conflict { state, assignee_id }),
+                None => Ok(TransitionOutcome::NotFound),
+            };
+        };
+        let done = sqlx::query(
+            "UPDATE tickets SET state = 'open', resolution_text = NULL, resolved_at = NULL,
+                    assignee_id = NULL, claimed_at = NULL, reopened_at = datetime('now')
+             WHERE id = ? AND state = 'resolved'",
+        )
+        .bind(ticket_id)
+        .execute(pool)
+        .await?;
+        if done.rows_affected() != 1 {
+            return match current_state(pool, ticket_id).await? {
+                Some((state, assignee_id)) => Ok(TransitionOutcome::Conflict { state, assignee_id }),
+                None => Ok(TransitionOutcome::NotFound),
+            };
+        }
+        let payload = serde_json::json!({
+            "from": "resolved", "to": "open", "prior_resolution": prior_resolution,
+        });
+        sqlx::query(
+            "INSERT INTO ticket_events (ticket_id, kind, actor_type, actor_id, payload)
+             VALUES (?, 'state_change', 'user', ?, ?)",
+        )
+        .bind(ticket_id)
+        .bind(user_id)
+        .bind(payload.to_string())
+        .execute(pool)
+        .await?;
+        Ok(TransitionOutcome::Done)
+    }
+
     /// open|resolved → closed（无效工单关闭 / 确认关闭；M1 无 system 自动关闭）。
     pub async fn close_ticket(&self, ticket_id: i64, user_id: &str) -> Result<TransitionOutcome> {
         let pool = self.pool();
@@ -350,6 +410,17 @@ impl Db {
             TicketState::Open,
         )
         .await
+    }
+
+    /// 绑定工单对话 session（M2）：只在未绑定时写入（幂等）；
+    /// session_key UNIQUE 冲突即已被绑定，视为成功。
+    pub async fn bind_ticket_session(&self, ticket_id: i64, session_key: &str) -> Result<()> {
+        sqlx::query("UPDATE tickets SET session_key = ? WHERE id = ? AND session_key IS NULL")
+            .bind(session_key)
+            .bind(ticket_id)
+            .execute(self.pool())
+            .await?;
+        Ok(())
     }
 
     pub async fn get_ticket(&self, workspace_id: &str, ticket_id: i64) -> Result<Option<Ticket>> {
@@ -435,6 +506,57 @@ impl Db {
         .fetch_all(self.pool())
         .await?;
         Ok(rows)
+    }
+
+    /// 升级指标（M2-d）：升级率 = 工单数 / agent run 总数；
+    /// time-to-ack / time-to-resolve 均值（秒，julianday 差）。
+    /// 只度量不告警（设计契约 Success Criteria #3）。
+    pub async fn ticket_statistics(&self, workspace_id: &str) -> Result<TicketStatistics> {
+        let (tickets_total, open_n, claimed_n, in_progress_n, resolved_n, closed_n, avg_ack, avg_resolve): (
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            Option<f64>,
+            Option<f64>,
+        ) = sqlx::query_as(
+            "SELECT COUNT(*),
+                    SUM(CASE WHEN state = 'open' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN state = 'claimed' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN state = 'in_progress' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN state = 'resolved' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN state = 'closed' THEN 1 ELSE 0 END),
+                    AVG((julianday(claimed_at) - julianday(created_at)) * 86400.0)
+                        FILTER (WHERE claimed_at IS NOT NULL),
+                    AVG((julianday(resolved_at) - julianday(created_at)) * 86400.0)
+                        FILTER (WHERE resolved_at IS NOT NULL)
+             FROM tickets WHERE workspace_id = ?",
+        )
+        .bind(workspace_id)
+        .fetch_one(self.pool())
+        .await?;
+        let (runs_total,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agent_runs WHERE workspace_id = ?")
+            .bind(workspace_id)
+            .fetch_one(self.pool())
+            .await?;
+        Ok(TicketStatistics {
+            tickets_total,
+            runs_total,
+            escalation_rate: if runs_total > 0 {
+                tickets_total as f64 / runs_total as f64
+            } else {
+                0.0
+            },
+            open: open_n,
+            claimed: claimed_n,
+            in_progress: in_progress_n,
+            resolved: resolved_n,
+            closed: closed_n,
+            avg_time_to_ack_secs: avg_ack,
+            avg_time_to_resolve_secs: avg_resolve,
+        })
     }
 
     /// 对账扫描（T5）：outcome∈触发集 且尚无工单的 run（复发已在去重路径
@@ -716,5 +838,146 @@ mod tests {
             .await
             .unwrap();
         assert!(db.unticketed_failed_runs("2000-01-01").await.unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod reopen_tests {
+    use super::*;
+    use crate::database::Db;
+
+    async fn test_db() -> Db {
+        Db::new(crate::test_helpers::test_pool().await)
+    }
+
+    fn ticket(ws: &str, run: &str, hash: &str) -> NewTicket {
+        NewTicket {
+            workspace_id: ws.to_string(),
+            thing_id: Some("t1".to_string()),
+            agent_run_id: run.to_string(),
+            title: "t".to_string(),
+            briefing: "{}".to_string(),
+            failure_hash: hash.to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn reopen_resolved_resets_to_open_and_snapshots_resolution() {
+        let db = test_db().await;
+        let CreateOutcome::Created(id) = db.create_ticket(&ticket("ws1", "r1", "h1")).await.unwrap() else {
+            panic!("expected Created");
+        };
+        db.claim_ticket(id, "u1").await.unwrap();
+        db.start_ticket(id, "u1").await.unwrap();
+        db.resolve_ticket(id, "u1", "换了轴承但没修好").await.unwrap();
+
+        // 非 resolved 状态 reopen → Conflict
+        let CreateOutcome::Created(other) = db.create_ticket(&ticket("ws1", "r2", "h2")).await.unwrap() else {
+            panic!("expected Created");
+        };
+        assert!(matches!(
+            db.reopen_ticket(other, "u1").await.unwrap(),
+            TransitionOutcome::Conflict { .. }
+        ));
+
+        db.reopen_ticket(id, "u1").await.unwrap();
+        let t = db.get_ticket("ws1", id).await.unwrap().unwrap();
+        assert_eq!(t.state, "open");
+        assert!(t.resolution_text.is_none(), "resolution 快照进事件后清列");
+        assert!(t.resolved_at.is_none() && t.assignee_id.is_none() && t.claimed_at.is_none());
+        assert!(t.reopened_at.is_some());
+
+        // 原 resolution 保留在事件里
+        let events = db.list_ticket_events(id).await.unwrap();
+        let reopen_ev = events
+            .iter()
+            .rev()
+            .find(|e| e.kind == "state_change")
+            .expect("reopen event");
+        let payload: serde_json::Value = serde_json::from_str(reopen_ev.payload.as_ref().unwrap()).unwrap();
+        assert_eq!(payload["from"], "resolved");
+        assert_eq!(payload["to"], "open");
+        assert_eq!(payload["prior_resolution"], "换了轴承但没修好");
+
+        // reopen 后 active 去重窗口重新覆盖该故障（同 hash 再复发 → Duplicate）
+        let CreateOutcome::Duplicate(dup) = db
+            .create_ticket(&NewTicket {
+                workspace_id: "ws1".to_string(),
+                thing_id: Some("t1".to_string()),
+                agent_run_id: "r3".to_string(),
+                title: "t".to_string(),
+                briefing: "{}".to_string(),
+                failure_hash: "h1".to_string(),
+            })
+            .await
+            .unwrap()
+        else {
+            panic!("expected Duplicate after reopen");
+        };
+        assert_eq!(dup, id);
+    }
+}
+
+#[cfg(test)]
+mod statistics_tests {
+    use super::*;
+    use crate::database::Db;
+
+    async fn test_db() -> Db {
+        Db::new(crate::test_helpers::test_pool().await)
+    }
+
+    #[tokio::test]
+    async fn statistics_counts_rates_and_durations() {
+        let db = test_db().await;
+        let t = |run: &str, hash: &str| NewTicket {
+            workspace_id: "ws1".to_string(),
+            thing_id: Some("t1".to_string()),
+            agent_run_id: run.to_string(),
+            title: "t".to_string(),
+            briefing: "{}".to_string(),
+            failure_hash: hash.to_string(),
+        };
+        let CreateOutcome::Created(id1) = db.create_ticket(&t("r1", "h1")).await.unwrap() else {
+            panic!("expected Created");
+        };
+        let CreateOutcome::Created(_id2) = db.create_ticket(&t("r2", "h2")).await.unwrap() else {
+            panic!("expected Created");
+        };
+        db.claim_ticket(id1, "u1").await.unwrap();
+        db.start_ticket(id1, "u1").await.unwrap();
+        db.resolve_ticket(id1, "u1", "修好了").await.unwrap();
+
+        // 两条 agent_runs（触发集 outcome）
+        for rid in ["r1", "r2"] {
+            let report = tinyiothub_core::agent_runs::RunReport {
+                run_id: rid.to_string(),
+                workspace_id: "ws1".to_string(),
+                trigger: "timer:ws1".to_string(),
+                outcome: tinyiothub_core::agent_runs::Outcome::Rejected,
+                summary: "s".to_string(),
+                actions: vec![],
+                verified: false,
+                duration_ms: 1,
+                tool_calls: 0,
+                tokens: 0,
+                end_reason: Some(tinyiothub_core::agent_runs::EndReason::Policy),
+                thing_id: None,
+            };
+            db.insert_agent_run(&report, None, None).await.unwrap();
+        }
+
+        let stats = db.ticket_statistics("ws1").await.unwrap();
+        assert_eq!(stats.tickets_total, 2);
+        assert_eq!(stats.runs_total, 2);
+        assert!((stats.escalation_rate - 1.0).abs() < 1e-9);
+        assert_eq!(stats.resolved, 1);
+        assert_eq!(stats.open, 1);
+        assert!(stats.avg_time_to_ack_secs.is_some());
+        assert!(stats.avg_time_to_resolve_secs.is_some());
+        // workspace 隔离
+        let empty = db.ticket_statistics("ws2").await.unwrap();
+        assert_eq!(empty.tickets_total, 0);
+        assert_eq!(empty.escalation_rate, 0.0);
     }
 }
