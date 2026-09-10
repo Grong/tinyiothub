@@ -84,6 +84,7 @@ pub struct TicketEvent {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TicketStatistics {
     pub tickets_total: i64,
     pub runs_total: i64,
@@ -979,5 +980,29 @@ mod statistics_tests {
         let empty = db.ticket_statistics("ws2").await.unwrap();
         assert_eq!(empty.tickets_total, 0);
         assert_eq!(empty.escalation_rate, 0.0);
+    }
+
+    /// 契约回归（CI 前端 tsc 失败根因）：API DTO 序列化必须是 camelCase——
+    /// web 层 keysToCamelCase 的运行时/类型级实现不对称（类型级只转第一个
+    /// 下划线），源头 camelCase 让两个转换器都幂等。
+    #[test]
+    fn dto_keys_are_camel_case() {
+        let stats = TicketStatistics {
+            tickets_total: 1,
+            runs_total: 2,
+            escalation_rate: 0.5,
+            open: 1,
+            claimed: 0,
+            in_progress: 0,
+            resolved: 0,
+            closed: 0,
+            avg_time_to_ack_secs: Some(12.0),
+            avg_time_to_resolve_secs: None,
+        };
+        let v = serde_json::to_value(&stats).unwrap();
+        assert!(v.get("ticketsTotal").is_some());
+        assert!(v.get("escalationRate").is_some());
+        assert!(v.get("avgTimeToAckSecs").is_some());
+        assert!(v.get("tickets_total").is_none(), "snake_case 泄漏到 API 契约");
     }
 }

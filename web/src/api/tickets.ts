@@ -1,8 +1,19 @@
 /**
- * 工单 API（工单模块 M1）
+ * 工单 API（工单模块）
+ *
+ * 契约（CI tsc 失败根因修复）：后端 DTO `#[serde(rename_all = "camelCase")]`
+ * 源头驼峰（alarm 域先例）；本文件类型一律 camelCase，与 client.ts 的
+ * keysToCamelCase（运行时全局）/ KeysToCamelCase（类型级仅首下划线）
+ * 两个转换器都幂等相遇。apiGet/apiPost 返回 ApiResponse<T>，在此解包
+ * `.result`——调用方拿裸数据。
  */
 
 import { apiGet, apiPost } from './client.js';
+
+function unwrap<T>(res: { result: T | null }): T {
+  if (res.result === null) throw new Error('空响应');
+  return res.result;
+}
 
 export interface TicketStep {
   action: string;
@@ -10,43 +21,46 @@ export interface TicketStep {
   error?: string | null;
 }
 
+/** 简报（subscriber 写入 DB 为 snake_case JSON，经运行时 keysToCamelCase 全局转换后为驼峰）。 */
 export interface TicketBriefing {
   problem?: string;
-  steps_attempted?: TicketStep[];
-  last_error?: string | null;
-  failure_kind?: string | null;
-  suggested_next_steps?: string[];
+  stepsAttempted?: TicketStep[];
+  lastError?: string | null;
+  failureKind?: string | null;
+  suggestedNextSteps?: string[];
 }
 
 export interface Ticket {
   id: number;
-  workspace_id: string;
-  thing_id: string | null;
-  agent_run_id: string;
+  workspaceId: string;
+  thingId: string | null;
+  agentRunId: string;
+  sessionKey: string | null;
   title: string;
   briefing: TicketBriefing;
   state: 'open' | 'claimed' | 'in_progress' | 'resolved' | 'closed';
-  assignee_id: string | null;
-  resolution_text: string | null;
-  created_at: string;
-  claimed_at: string | null;
-  resolved_at: string | null;
-  closed_at: string | null;
+  assigneeId: string | null;
+  resolutionText: string | null;
+  createdAt: string;
+  claimedAt: string | null;
+  resolvedAt: string | null;
+  closedAt: string | null;
 }
 
 export interface TicketEvent {
   id: number;
   kind: 'state_change' | 'system';
-  actor_type: 'user' | 'agent' | 'system';
-  actor_id: string | null;
+  actorType: 'user' | 'agent' | 'system';
+  actorId: string | null;
   payload: {
     from?: string;
     to?: string;
     kind?: string;
     count?: number;
-    agent_run_id?: string;
+    agentRunId?: string;
+    priorResolution?: string;
   } | null;
-  created_at: string;
+  createdAt: string;
 }
 
 export interface TicketDetail extends Ticket {
@@ -55,56 +69,56 @@ export interface TicketDetail extends Ticket {
 
 export interface TicketListPayload {
   tickets: Ticket[];
-  unclaimed_count: number;
+  unclaimedCount: number;
 }
 
 export interface TicketStatistics {
-  tickets_total: number;
-  runs_total: number;
-  escalation_rate: number;
+  ticketsTotal: number;
+  runsTotal: number;
+  escalationRate: number;
   open: number;
   claimed: number;
-  in_progress: number;
+  inProgress: number;
   resolved: number;
   closed: number;
-  avg_time_to_ack_secs: number | null;
-  avg_time_to_resolve_secs: number | null;
+  avgTimeToAckSecs: number | null;
+  avgTimeToResolveSecs: number | null;
 }
 
 export const ticketApi = {
-  async list(params?: { state?: string; page?: number; page_size?: number }) {
-    return apiGet<TicketListPayload>('/tickets', params as Record<string, any>);
+  async list(params?: { state?: string; page?: number; page_size?: number }): Promise<TicketListPayload> {
+    return unwrap(await apiGet<TicketListPayload>('/tickets', params as Record<string, any>));
   },
 
-  async detail(id: number) {
-    return apiGet<TicketDetail>(`/tickets/${id}`);
+  async detail(id: number): Promise<TicketDetail> {
+    return unwrap(await apiGet<TicketDetail>(`/tickets/${id}`));
   },
 
-  async claim(id: number) {
-    return apiPost<void>(`/tickets/${id}/claim`);
+  async claim(id: number): Promise<void> {
+    await apiPost<void>(`/tickets/${id}/claim`);
   },
 
-  async start(id: number) {
-    return apiPost<void>(`/tickets/${id}/start`);
+  async start(id: number): Promise<void> {
+    await apiPost<void>(`/tickets/${id}/start`);
   },
 
-  async resolve(id: number, resolutionText: string) {
-    return apiPost<void>(`/tickets/${id}/resolve`, { resolution_text: resolutionText });
+  async resolve(id: number, resolutionText: string): Promise<void> {
+    await apiPost<void>(`/tickets/${id}/resolve`, { resolutionText });
   },
 
-  async close(id: number) {
-    return apiPost<void>(`/tickets/${id}/close`);
+  async close(id: number): Promise<void> {
+    await apiPost<void>(`/tickets/${id}/close`);
   },
 
-  async abandon(id: number) {
-    return apiPost<void>(`/tickets/${id}/abandon`);
+  async abandon(id: number): Promise<void> {
+    await apiPost<void>(`/tickets/${id}/abandon`);
   },
 
-  async reopen(id: number) {
-    return apiPost<void>(`/tickets/${id}/reopen`);
+  async reopen(id: number): Promise<void> {
+    await apiPost<void>(`/tickets/${id}/reopen`);
   },
 
-  async statistics() {
-    return apiGet<TicketStatistics>('/tickets/statistics');
+  async statistics(): Promise<TicketStatistics> {
+    return unwrap(await apiGet<TicketStatistics>('/tickets/statistics'));
   },
 };

@@ -45,9 +45,9 @@ describe("tickets view helpers", () => {
   });
 
   it("简报部分字段缺失态：suggested 空则隐藏", () => {
-    expect(hasSuggestions({ suggested_next_steps: [] })).toBe(false);
+    expect(hasSuggestions({ suggestedNextSteps: [] })).toBe(false);
     expect(hasSuggestions({})).toBe(false);
-    expect(hasSuggestions({ suggested_next_steps: ["现场检查"] })).toBe(true);
+    expect(hasSuggestions({ suggestedNextSteps: ["现场检查"] })).toBe(true);
     expect(briefingSteps(undefined)).toEqual([]);
   });
 

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use tinyiothub_storage::ticket::{Ticket, TicketEvent};
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TicketDto {
     pub id: i64,
     pub workspace_id: String,
@@ -43,6 +44,7 @@ impl From<Ticket> for TicketDto {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TicketEventDto {
     pub id: i64,
     pub kind: String,
@@ -69,6 +71,7 @@ impl From<TicketEvent> for TicketEventDto {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TicketDetailDto {
     #[serde(flatten)]
     pub ticket: TicketDto,

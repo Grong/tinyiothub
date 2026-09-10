@@ -4,7 +4,7 @@
  * 设计规格（设计文档 Design Review Addendum）：
  * - 布局：≥768px 左列表(320px)+右详情；<768px 列表/详情全宽互斥切换+返回键。
  * - 简报是信任锚点：problem 置顶加粗，steps 编号列表（失败波浪线），
- *   suggested_next_steps 为空时隐藏该节。一律纯文本渲染（禁 unsafeHTML）。
+ *   suggestedNextSteps 为空时隐藏该节。一律纯文本渲染（禁 unsafeHTML）。
  * - 交互状态：loading 骨架 / 空态「暂无待办工单——Agent 都搞定了」/
  *   错误 toast+重试 / 认领冲突 toast「已被 X 认领」/ SSE 断线细条。
  * - 状态色复用 alarms 语义：待认领 #f97316 / 处理中 #eab308 / 已解决 绿 / 已关闭 灰。
@@ -98,11 +98,11 @@ export function validateResolution(text: string): string | null {
 }
 
 export function briefingSteps(b: TicketBriefing | undefined) {
-  return b?.steps_attempted ?? [];
+  return b?.stepsAttempted ?? [];
 }
 
 export function hasSuggestions(b: TicketBriefing | undefined): boolean {
-  return (b?.suggested_next_steps?.length ?? 0) > 0;
+  return (b?.suggestedNextSteps?.length ?? 0) > 0;
 }
 
 /** 对话消息纯文本提取（M2-b：只渲 text block，tool/a2ui 块不进工单面板）。 */
@@ -189,7 +189,7 @@ export class TicketsView extends LitElement {
         page_size: 50,
       });
       this.tickets = res.tickets;
-      this.unclaimedCount = res.unclaimed_count;
+      this.unclaimedCount = res.unclaimedCount;
       this.sseConnected = true;
       this.stats = await ticketApi.statistics().catch(() => null);
     } catch (e) {
@@ -207,8 +207,8 @@ export class TicketsView extends LitElement {
       this.resolutionText = "";
       this.resolutionError = null;
       // M2-b：对话面板懒加载
-      if (this.detail.session_key) {
-        this.chatState = createChatState(this.detail.session_key, "default");
+      if (this.detail.sessionKey) {
+        this.chatState = createChatState(this.detail.sessionKey, "default");
         this.chatState.onChange = () => this.requestUpdate();
         void loadChatHistory(this.chatState);
       } else {
@@ -314,12 +314,12 @@ export class TicketsView extends LitElement {
 
   private renderStats(): TemplateResult {
     const st = this.stats;
-    if (!st || st.runs_total === 0) return html`${nothing}`;
+    if (!st || st.runsTotal === 0) return html`${nothing}`;
     return html`
       <div class="stats-bar" aria-label="工单指标">
-        <span>升级率 ${(st.escalation_rate * 100).toFixed(1)}%（${st.tickets_total}/${st.runs_total} runs）</span>
-        <span>平均响应 ${fmtDuration(st.avg_time_to_ack_secs)}</span>
-        <span>平均解决 ${fmtDuration(st.avg_time_to_resolve_secs)}</span>
+        <span>升级率 ${(st.escalationRate * 100).toFixed(1)}%（${st.ticketsTotal}/${st.runsTotal} runs）</span>
+        <span>平均响应 ${fmtDuration(st.avgTimeToAckSecs)}</span>
+        <span>平均解决 ${fmtDuration(st.avgTimeToResolveSecs)}</span>
       </div>
     `;
   }
@@ -354,8 +354,8 @@ export class TicketsView extends LitElement {
             <div class="ticket-row__title">${t.title}</div>
             <div class="ticket-row__meta">
               <span class=${stateBadgeClass(t.state)}>${stateLabel(t.state)}</span>
-              ${t.thing_id ? html`<span class="ticket-row__thing">${t.thing_id}</span>` : nothing}
-              <span class="ticket-row__time">${t.created_at.slice(0, 16)}</span>
+              ${t.thingId ? html`<span class="ticket-row__thing">${t.thingId}</span>` : nothing}
+              <span class="ticket-row__time">${t.createdAt.slice(0, 16)}</span>
             </div>
           </div>
         `,
@@ -394,9 +394,9 @@ export class TicketsView extends LitElement {
       <h3 class="detail-title">${d.title}</h3>
       <div class="detail-meta">
         <span class=${stateBadgeClass(d.state)}>${stateLabel(d.state)}</span>
-        ${d.thing_id ? html`<span>物：${d.thing_id}</span>` : html`<span>工作区级故障</span>`}
-        ${d.assignee_id ? html`<span>指派人：${d.assignee_id}</span>` : nothing}
-        <span>${d.created_at.slice(0, 16)}</span>
+        ${d.thingId ? html`<span>物：${d.thingId}</span>` : html`<span>工作区级故障</span>`}
+        ${d.assigneeId ? html`<span>指派人：${d.assigneeId}</span>` : nothing}
+        <span>${d.createdAt.slice(0, 16)}</span>
       </div>
       ${this.renderBriefing(d.briefing)} ${this.renderChat()} ${this.renderTimeline(d)} ${this.renderResolve(d)}
     `;
@@ -422,19 +422,19 @@ export class TicketsView extends LitElement {
             `
           : nothing}
         <div class="briefing__kv">
-          ${b.last_error
-            ? html`<div class="briefing__row"><span class="briefing__k">最后错误</span><span>${b.last_error}</span></div>`
+          ${b.lastError
+            ? html`<div class="briefing__row"><span class="briefing__k">最后错误</span><span>${b.lastError}</span></div>`
             : nothing}
           <div class="briefing__row">
             <span class="briefing__k">失败类型</span>
-            <span class="ticket-badge ticket-badge--kind">${failureKindLabel(b.failure_kind)}</span>
+            <span class="ticket-badge ticket-badge--kind">${failureKindLabel(b.failureKind)}</span>
           </div>
         </div>
         ${hasSuggestions(b)
           ? html`
               <div class="briefing__suggest">
                 <div class="briefing__k">建议</div>
-                ${b.suggested_next_steps!.map((s) => html`<p>${s}</p>`)}
+                ${b.suggestedNextSteps!.map((s) => html`<p>${s}</p>`)}
               </div>
             `
           : nothing}
@@ -492,11 +492,11 @@ export class TicketsView extends LitElement {
           ${d.events.map((e) => {
             const text =
               e.kind === "state_change"
-                ? `${e.payload?.from ?? "?"} → ${e.payload?.to ?? "?"}（${e.actor_id ?? e.actor_type}）`
+                ? `${e.payload?.from ?? "?"} → ${e.payload?.to ?? "?"}（${e.actorId ?? e.actorType}）`
                 : e.payload?.kind === "recurrence"
-                  ? `故障又触发 ${e.payload.count} 次（最近 run: ${e.payload.agent_run_id}）`
+                  ? `故障又触发 ${e.payload.count} 次（最近 run: ${e.payload.agentRunId}）`
                   : "系统事件";
-            return html`<li><span class="timeline__time">${e.created_at.slice(5, 16)}</span>${text}</li>`;
+            return html`<li><span class="timeline__time">${e.createdAt.slice(5, 16)}</span>${text}</li>`;
           })}
         </ul>
       </section>
@@ -504,11 +504,11 @@ export class TicketsView extends LitElement {
   }
 
   private renderResolve(d: TicketDetail): TemplateResult {
-    if (d.state === "resolved" && d.resolution_text) {
+    if (d.state === "resolved" && d.resolutionText) {
       return html`
         <section class="ticket-panel">
           <h4 class="ticket-panel__title">解决方案（已回流 Agent 知识）</h4>
-          <p class="resolution-text">${d.resolution_text}</p>
+          <p class="resolution-text">${d.resolutionText}</p>
         </section>
       `;
     }
