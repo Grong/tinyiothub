@@ -276,7 +276,6 @@ export class TicketsView extends LitElement {
     return html`
       <div class="tickets-page">
         <div class="tickets-header">
-          <h2>工单</h2>
           ${this.unclaimedCount > 0
             ? html`<span class="unclaimed-badge" aria-label="${this.unclaimedCount} 条待认领工单"
                 >${this.unclaimedCount} 待认领</span
