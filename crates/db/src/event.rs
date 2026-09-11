@@ -492,6 +492,14 @@ pub(crate) async fn query_events(pool: &SqlitePool, criteria: &EventCriteria) ->
         sql.push_str(&format!(" AND event_level IN ({})", placeholders));
     }
 
+    // Add event type filters（正统行的 event_subtype 列存 EventType 的 serde JSON）
+    if let Some(event_types) = &criteria.event_types
+        && !event_types.is_empty()
+    {
+        let placeholders = vec!["?"; event_types.len()].join(",");
+        sql.push_str(&format!(" AND event_subtype IN ({})", placeholders));
+    }
+
     // Add device ID filters
     if let Some(thing_ids) = &criteria.thing_ids
         && !thing_ids.is_empty()
@@ -548,6 +556,13 @@ pub(crate) async fn query_events(pool: &SqlitePool, criteria: &EventCriteria) ->
         }
     }
 
+    // Bind event type filters
+    if let Some(event_types) = &criteria.event_types {
+        for event_type in event_types {
+            query = query.bind(serde_json::to_string(event_type).unwrap_or_default());
+        }
+    }
+
     // Bind device ID filters
     if let Some(thing_ids) = &criteria.thing_ids {
         for thing_id in thing_ids {
@@ -576,7 +591,13 @@ pub(crate) async fn query_events(pool: &SqlitePool, criteria: &EventCriteria) ->
 
     let mut events = Vec::new();
     for row in rows {
-        events.push(row_to_event(row)?);
+        // events 表混有两种行：正统领域事件（insert_event）与 thing/agent 原始行
+        //（event_subtype 是自定义事件名、content 非 RichContent）。后者走专用读
+        // 路径（search_thing_events / replay），这里跳过而不是拖垮整个查询。
+        match row_to_event(row) {
+            Ok(event) => events.push(event),
+            Err(e) => tracing::warn!("Skipping unparsable event row in query_events: {}", e),
+        }
     }
 
     Ok(events)
@@ -593,8 +614,9 @@ pub(crate) async fn count_events_by_level(pool: &SqlitePool, level: EventLevel) 
 }
 
 pub(crate) async fn count_events_by_type(pool: &SqlitePool, event_type: &EventType) -> Result<u64> {
+    // event_type 列存的是大类字符串（'system'/'device'/'ai'），不是 serde JSON
     let sql = "SELECT COUNT(*) as count FROM events WHERE event_type = ?";
-    let type_str = serde_json::to_string(event_type)?;
+    let type_str = event_type.type_string();
 
     let row = sqlx::query(sql).bind(type_str).fetch_one(pool).await?;
 
@@ -1188,8 +1210,9 @@ pub(crate) async fn fetch_thing_events_since(
         .collect())
 }
 
-/// agent 来源告警行（event_subtype = 'thing_agent_alert'，Error 级）。SQL 与原
-/// thing_agent_host::notify_alert 内联语句逐字一致。
+/// agent 来源告警行（Ai/ThingAgentAlert，Error 级）。写正统格式行：
+/// event_subtype 存 EventType 的 serde JSON、content 存 RichContent JSON，
+/// 与 insert_event 一致，保证 query_events 的 row_to_event 能往返解析。
 pub(crate) async fn insert_agent_alert_event(
     pool: &SqlitePool,
     workspace_id: &str,
@@ -1197,14 +1220,19 @@ pub(crate) async fn insert_agent_alert_event(
     content: &str,
 ) -> Result<()> {
     let now = Utc::now().to_rfc3339();
+    let event_type = EventType::Ai(tinyiothub_core::models::event::AiEventType::ThingAgentAlert);
+    let event_subtype_json = serde_json::to_string(&event_type)?;
+    // content 入参是原始 payload JSON 串，包一层 RichContent 以匹配读路径
+    let content_json = serde_json::to_string(&RichContent::new_text(title.to_string(), content.to_string()))?;
     sqlx::query(
         "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, source_type, source_id, thing_id, user_id, title, content, metadata, created_at, workspace_id, actor) \
-         VALUES (?, 'agent', 'thing_agent_alert', 4, ?, 'agent', 'thing-agent', NULL, NULL, ?, ?, '{}', ?, ?, 'agent')",
+         VALUES (?, 'ai', ?, 4, ?, 'agent', 'thing-agent', NULL, NULL, ?, ?, '{}', ?, ?, 'agent')",
     )
     .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&event_subtype_json)
     .bind(&now)
     .bind(title)
-    .bind(content)
+    .bind(&content_json)
     .bind(&now)
     .bind(workspace_id)
     .execute(pool)
@@ -1395,6 +1423,91 @@ impl Db {
 mod tests {
     use super::*;
     use tinyiothub_core::models::event::SystemEventType;
+
+    async fn test_db() -> Db {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        crate::test_helpers::run_all_migrations(&pool).await.unwrap();
+        Db::new(pool)
+    }
+
+    fn system_event(subtype: SystemEventType) -> Event {
+        system_event_at(subtype, EventLevel::Info)
+    }
+
+    fn system_event_at(subtype: SystemEventType, level: EventLevel) -> Event {
+        Event::new_system_event(
+            subtype,
+            level,
+            EventSource::new("system".to_string(), "test".to_string(), None, None::<String>),
+            RichContent::new_text("t".to_string(), "c".to_string()),
+        )
+        .unwrap()
+    }
+
+    /// 回归：events 表混入 thing 原始行（event_subtype=自定义事件名、content 非
+    /// RichContent）时，query_events 跳过坏行而不是整个查询失败。
+    #[tokio::test]
+    async fn test_query_events_skips_raw_thing_rows() {
+        let db = test_db().await;
+        db.insert_event(&system_event(SystemEventType::UserAuth)).await.unwrap();
+        db.insert_thing_event(&ThingEventInsert {
+            event_id: "evt-raw-1",
+            event_subtype: "high_temp", // 设备自定义事件名，非 EventType JSON
+            level_num: 3,
+            timestamp: &Utc::now().to_rfc3339(),
+            source_type: "thing",
+            source_id: "thing/t1",
+            thing_id: Some("t1"),
+            user_id: None,
+            title: "high_temp",
+            content: "{\"value\": 42}", // 裸 payload，非 RichContent
+            metadata: "{}",
+            created_at: &Utc::now().to_rfc3339(),
+            workspace_id: "ws",
+            actor: "device",
+        })
+        .await
+        .unwrap();
+
+        let events = db.query_events(&EventCriteria::default()).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type(), &EventType::System(SystemEventType::UserAuth));
+    }
+
+    /// 回归：criteria.event_types 过去被 SQL 构建器静默丢弃。
+    #[tokio::test]
+    async fn test_query_events_applies_event_types_filter() {
+        let db = test_db().await;
+        db.insert_event(&system_event(SystemEventType::UserAuth)).await.unwrap();
+        db.insert_event(&system_event_at(SystemEventType::SystemError, EventLevel::Error))
+            .await
+            .unwrap();
+
+        let criteria = EventCriteria {
+            event_types: Some(vec![EventType::System(SystemEventType::SystemError)]),
+            ..EventCriteria::default()
+        };
+        let events = db.query_events(&criteria).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type(), &EventType::System(SystemEventType::SystemError));
+    }
+
+    /// 回归：agent 告警行写正统格式，可经 row_to_event 往返解析。
+    #[tokio::test]
+    async fn test_agent_alert_event_roundtrips() {
+        let db = test_db().await;
+        db.insert_agent_alert_event("ws", "调低设定值失败", "{\"reason\":\"run_failed\"}")
+            .await
+            .unwrap();
+
+        let events = db.query_events(&EventCriteria::default()).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].event_type(),
+            &EventType::Ai(tinyiothub_core::models::event::AiEventType::ThingAgentAlert)
+        );
+        assert_eq!(events[0].level(), EventLevel::Error);
+    }
 
     #[test]
     fn test_criteria_builder() {
