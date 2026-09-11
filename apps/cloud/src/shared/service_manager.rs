@@ -113,6 +113,15 @@ impl ServiceManager {
         app_state.event_bus.register_handler(real_time_status_handler);
         info!("✅ RealTimeStatusHandler registered");
 
+        // 注册持久化事件处理器 - 领域事件落 events 表（Warning+ 全量、
+        // 非属性 Info 全量、属性变化仅在报警时；批量缓冲 100 条/5s 刷新）
+        let persistence_handler = Arc::new(crate::domains::event::subscribers::PersistenceEventHandler::new(
+            app_state.db.clone(),
+            crate::domains::event::subscribers::PersistenceConfig::default(),
+        ));
+        app_state.event_bus.register_handler(persistence_handler);
+        info!("✅ PersistenceEventHandler registered");
+
         // 保存到 AppState
         app_state.set_data_server(data_server.clone());
 
