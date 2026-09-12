@@ -90,6 +90,13 @@ pub(crate) async fn project(
     else {
         return;
     };
+
+    // 审批执行收尾（approve 端点派发的 exec run）
+    if let Some(judgment_id) = pk.strip_prefix("exec:") {
+        settle_execution(db, sse, alarm_service, judgment_id, report).await;
+        return;
+    }
+
     if !pk.starts_with(ALARM_KEY_PREFIX) {
         return;
     }
@@ -97,7 +104,6 @@ pub(crate) async fn project(
         warn!(problem_key = %pk, "malformed alarm problem_key");
         return;
     };
-
     let judgment = match db
         .find_open_judgment_by_thing_rule(&report.workspace_id, thing_id, rule_id)
         .await
@@ -128,6 +134,62 @@ pub(crate) async fn project(
                 fail_and_escalate(db, sse, &judgment, report, pk, "判断输出解析失败").await;
             }
         },
+    }
+}
+
+/// 审批执行收尾：exec run 完成 → resolved（+报警消除）或 escalated（+工单）。
+/// exec 失败的升级键按 judgment 唯一（执行失败是新事实，不与调查票折叠）。
+async fn settle_execution(
+    db: &Db,
+    sse: &SseConnectionManager,
+    alarm_service: &AlarmService,
+    judgment_id: &str,
+    report: &RunReport,
+) {
+    let judgment = match db.find_judgment_by_id(judgment_id, &report.workspace_id).await {
+        Ok(Some(j)) => j,
+        Ok(None) => {
+            debug!(judgment_id, "exec run for unknown judgment");
+            return;
+        }
+        Err(e) => {
+            error!(judgment_id, error = %e, "find judgment failed");
+            return;
+        }
+    };
+
+    match report.outcome {
+        Outcome::Acted | Outcome::NoActionNeeded => {
+            match db
+                .transit_judgment(judgment_id, JudgmentStatus::Executing, JudgmentStatus::Resolved, None)
+                .await
+            {
+                Ok(true) => {
+                    if let Some(alarm_id) = &judgment.alarm_id
+                        && let Err(e) = alarm_service.auto_resolve_alarm(alarm_id, &judgment.workspace_id).await
+                    {
+                        warn!(alarm_id, error = %e, "auto-resolve after execution failed");
+                    }
+                    broadcast_judgment(sse, &judgment.workspace_id, judgment_id, "judgment_updated").await;
+                }
+                Ok(false) => debug!(judgment_id, "settle skipped (not executing)"),
+                Err(e) => error!(judgment_id, error = %e, "settle transit failed"),
+            }
+        }
+        Outcome::Failed | Outcome::BudgetExceeded | Outcome::Rejected => {
+            match db
+                .transit_judgment(judgment_id, JudgmentStatus::Executing, JudgmentStatus::Escalated, None)
+                .await
+            {
+                Ok(true) => {
+                    let reason = format!("批准的动作执行失败：{}", report.summary.chars().take(80).collect::<String>());
+                    escalate_to_ticket(db, sse, &judgment, report, &format!("exec:{}", judgment_id), &reason).await;
+                    broadcast_judgment(sse, &judgment.workspace_id, judgment_id, "judgment_updated").await;
+                }
+                Ok(false) => debug!(judgment_id, "escalate skipped (not executing)"),
+                Err(e) => error!(judgment_id, error = %e, "escalate transit failed"),
+            }
+        }
     }
 }
 
@@ -268,6 +330,11 @@ async fn broadcast_judgment(sse: &SseConnectionManager, workspace_id: &str, judg
         }),
     );
     sse.broadcast_message(msg).await;
+}
+
+/// handler 层（approve/reject/feedback）复用的广播出口。
+pub async fn broadcast_judgment_pub(sse: &SseConnectionManager, workspace_id: &str, judgment_id: &str) {
+    broadcast_judgment(sse, workspace_id, judgment_id, "judgment_updated").await;
 }
 
 /// 主循环（测试接缝；生产经 [`supervise_judgment_subscriber`]）。
