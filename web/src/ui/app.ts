@@ -21,6 +21,7 @@ const lazyViews: Record<string, () => Promise<void>> = {
   things: () => import('./views/things.js').then(() => {}),
   alarms: () => import('./views/alarms.js').then(() => {}),
   tickets: () => import('./views/tickets.js').then(() => {}),
+  dispositions: () => import('./views/dispositions.js').then(() => {}),
   events: () => import('./views/events.js').then(() => {}),
   monitoring: () => import('./views/monitoring.js').then(() => {}),
   users: () => import('./views/users.js').then(() => {}),
@@ -92,6 +93,11 @@ const NAV_GROUPS: NavGroup[] = [
         route: 'tickets',
         label: '工单',
         icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2',
+      },
+      {
+        route: 'dispositions',
+        label: '处置中心',
+        icon: 'M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm-1 5h2v6h-2zm0 8h2v2h-2z',
       },
       {
         route: 'events',
@@ -372,6 +378,7 @@ export class TinyIoTHubApp extends LitElement {
       things: '物列表',
       alarms: '告警中心',
       tickets: '工单',
+      dispositions: '处置中心',
       events: '事件日志',
       monitoring: '系统监控',
       users: '用户管理',
@@ -398,6 +405,7 @@ export class TinyIoTHubApp extends LitElement {
       things: '浏览和管理物层级结构',
       alarms: '查看和管理物告警',
       tickets: '处理 Agent 升级的人工工单',
+      dispositions: 'AI 值班处置报警，你只处理例外',
       events: '查看物事件日志',
       monitoring: '系统资源和性能监控',
       users: '管理系统用户和权限',
@@ -614,6 +622,7 @@ export class TinyIoTHubApp extends LitElement {
     if (base === 'things') return html`<view-things></view-things>`;
     if (base === 'alarms') return html`<view-alarms></view-alarms>`;
     if (base === 'tickets') return html`<view-tickets></view-tickets>`;
+    if (base === 'dispositions') return html`<view-dispositions></view-dispositions>`;
     if (base === 'events') return html`<view-events></view-events>`;
     if (base === 'monitoring') return html`<view-monitoring></view-monitoring>`;
     if (base === 'users') return html`<view-users></view-users>`;
