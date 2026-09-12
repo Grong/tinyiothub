@@ -3,9 +3,9 @@
 
 use std::sync::Arc;
 
+use tinyiothub_storage::Db;
 use tinyiothub_storage::alarm::{Alarm, AlarmLevel, AlarmType};
 use tinyiothub_storage::judgment::JudgmentStatus;
-use tinyiothub_storage::Db;
 
 use crate::domains::alarm::service::AlarmService;
 
@@ -18,7 +18,9 @@ async fn test_db() -> Arc<Db> {
     tinyiothub_storage::migrations::run_migrations(&pool)
         .await
         .expect("run migrations");
-    tinyiothub_storage::seed::seed_system(&Db::new(pool.clone())).await.expect("seed");
+    tinyiothub_storage::seed::seed_system(&Db::new(pool.clone()))
+        .await
+        .expect("seed");
     sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws1','ws1','tenant-default-001','2025-01-01','2025-01-01')")
         .execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO things (id, name, workspace_id, created_at, updated_at) VALUES ('t1','t1','ws1','2025-01-01','2025-01-01')")
@@ -114,7 +116,10 @@ async fn critical_alarm_escalates_directly_to_ticket() {
 
     let db = test_db().await;
     let svc = AlarmService::new(db.clone());
-    let spy = Arc::new(RealEscalation { db: db.clone(), calls: Mutex::new(vec![]) });
+    let spy = Arc::new(RealEscalation {
+        db: db.clone(),
+        calls: Mutex::new(vec![]),
+    });
     svc.set_escalation(spy.clone());
 
     svc.create_alarm(make_alarm(AlarmLevel::Critical)).await.unwrap();

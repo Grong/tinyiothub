@@ -634,10 +634,12 @@ pub(crate) async fn find_alarms_by_criteria(pool: &SqlitePool, criteria: &AlarmQ
         for status in statuses {
             match status {
                 AlarmStatus::Active => {
-                    status_conditions.push("(is_resolved = false AND is_acknowledged = false AND is_suppressed = false)");
+                    status_conditions
+                        .push("(is_resolved = false AND is_acknowledged = false AND is_suppressed = false)");
                 }
                 AlarmStatus::Acknowledged => {
-                    status_conditions.push("(is_resolved = false AND is_acknowledged = true AND is_suppressed = false)");
+                    status_conditions
+                        .push("(is_resolved = false AND is_acknowledged = true AND is_suppressed = false)");
                 }
                 AlarmStatus::Resolved => {
                     status_conditions.push("is_resolved = true");
@@ -774,10 +776,12 @@ pub(crate) async fn count_alarms_by_criteria(pool: &SqlitePool, criteria: &Alarm
         for status in statuses {
             match status {
                 AlarmStatus::Active => {
-                    status_conditions.push("(is_resolved = false AND is_acknowledged = false AND is_suppressed = false)");
+                    status_conditions
+                        .push("(is_resolved = false AND is_acknowledged = false AND is_suppressed = false)");
                 }
                 AlarmStatus::Acknowledged => {
-                    status_conditions.push("(is_resolved = false AND is_acknowledged = true AND is_suppressed = false)");
+                    status_conditions
+                        .push("(is_resolved = false AND is_acknowledged = true AND is_suppressed = false)");
                 }
                 AlarmStatus::Resolved => {
                     status_conditions.push("is_resolved = true");
@@ -1143,7 +1147,10 @@ pub(crate) async fn count_active_alarms_scoped(pool: &SqlitePool, workspace_id: 
             "SELECT COUNT(*) FROM thing_alarms da JOIN things d ON da.thing_id = d.id WHERE da.is_resolved = 0 AND da.is_suppressed = 0 AND d.workspace_id = ?",
             Some(wid),
         ),
-        None => ("SELECT COUNT(*) FROM thing_alarms WHERE is_resolved = 0 AND is_suppressed = 0", None),
+        None => (
+            "SELECT COUNT(*) FROM thing_alarms WHERE is_resolved = 0 AND is_suppressed = 0",
+            None,
+        ),
     };
     let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(query_str));
     if let Some(w) = wid {

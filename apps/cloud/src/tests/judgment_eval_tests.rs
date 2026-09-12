@@ -44,13 +44,12 @@ async fn judgment_eval_verdict_accuracy() {
         return;
     };
     tinyiothub_agent::pool::set_minimax_settings(tinyiothub_agent::pool::MinimaxSettings {
-        base_url: std::env::var("MINIMAX_BASE_URL")
-            .unwrap_or_else(|_| "https://api.minimaxi.com/v1".to_string()),
+        base_url: std::env::var("MINIMAX_BASE_URL").unwrap_or_else(|_| "https://api.minimaxi.com/v1".to_string()),
         auth_token: api_key,
         model: std::env::var("MINIMAX_MODEL").unwrap_or_else(|_| "MiniMax-M2.5".to_string()),
     });
-    let provider: Box<dyn ModelProvider> = tinyiothub_agent::pool::minimax_provider_factory()()
-        .expect("provider build");
+    let provider: Box<dyn ModelProvider> =
+        tinyiothub_agent::pool::minimax_provider_factory()().expect("provider build");
 
     let scenarios: Vec<Scenario> = serde_json::from_str(
         &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../evals/scenarios.json"))
@@ -73,7 +72,14 @@ async fn judgment_eval_verdict_accuracy() {
         );
         let messages = [ChatMessage::user(prompt)];
         let resp = provider
-            .chat(ChatRequest { messages: &messages, tools: None }, "MiniMax-M2.5", Some(0.0))
+            .chat(
+                ChatRequest {
+                    messages: &messages,
+                    tools: None,
+                },
+                "MiniMax-M2.5",
+                Some(0.0),
+            )
             .await
             .expect("chat");
         let text = resp.text.unwrap_or_default();
@@ -92,7 +98,10 @@ async fn judgment_eval_verdict_accuracy() {
     let total = scenarios.len();
     let accuracy = correct as f64 / total as f64;
     println!("\n=== judgment eval baseline ===");
-    println!("scenarios: {total}, correct: {correct}, accuracy: {:.1}%, noise_misses: {noise_misses}", accuracy * 100.0);
+    println!(
+        "scenarios: {total}, correct: {correct}, accuracy: {:.1}%, noise_misses: {noise_misses}",
+        accuracy * 100.0
+    );
     for f in &failures {
         println!("  MISS: {f}");
     }

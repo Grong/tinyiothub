@@ -29,7 +29,10 @@ pub fn create_judgment_router() -> Router<AppState> {
         .route("/{id}/reject", post(reject_judgment))
 }
 
-fn to_dto(j: &tinyiothub_storage::judgment::Judgment, fb: Option<tinyiothub_storage::judgment::JudgmentFeedback>) -> JudgmentDto {
+fn to_dto(
+    j: &tinyiothub_storage::judgment::Judgment,
+    fb: Option<tinyiothub_storage::judgment::JudgmentFeedback>,
+) -> JudgmentDto {
     JudgmentDto {
         id: j.id.clone(),
         alarm_id: j.alarm_id.clone(),
@@ -64,7 +67,11 @@ async fn list_judgments(
         _ => None,
     };
     let page_size = params.page_size.unwrap_or(20).clamp(1, 100);
-    match state.db.list_judgments(ws, statuses.as_deref(), params.before.as_deref(), page_size).await {
+    match state
+        .db
+        .list_judgments(ws, statuses.as_deref(), params.before.as_deref(), page_size)
+        .await
+    {
         Ok(rows) => {
             let mut out = Vec::with_capacity(rows.len());
             for j in &rows {
@@ -79,8 +86,21 @@ async fn list_judgments(
 
 async fn judgment_summary(State(state): State<AppState>, claims: AuthClaims) -> Json<ApiResponse<JudgmentSummaryDto>> {
     let ws = &claims.0.workspace_id;
-    let needs_you = count_status(&state, ws, &[tinyiothub_storage::judgment::JudgmentStatus::AwaitingApproval, tinyiothub_storage::judgment::JudgmentStatus::Escalated]).await;
-    let investigating = count_status(&state, ws, &[tinyiothub_storage::judgment::JudgmentStatus::Investigating]).await;
+    let needs_you = count_status(
+        &state,
+        ws,
+        &[
+            tinyiothub_storage::judgment::JudgmentStatus::AwaitingApproval,
+            tinyiothub_storage::judgment::JudgmentStatus::Escalated,
+        ],
+    )
+    .await;
+    let investigating = count_status(
+        &state,
+        ws,
+        &[tinyiothub_storage::judgment::JudgmentStatus::Investigating],
+    )
+    .await;
     let digested_today = state.db.count_judgments_today(ws).await.unwrap_or(0);
     let stats = state.db.judgment_stats(ws).await.ok();
     ApiResponseBuilder::success(JudgmentSummaryDto {
@@ -115,10 +135,7 @@ async fn submit_feedback(
     }
     let reason = req.reason.as_deref().map(str::trim).filter(|r| !r.is_empty());
     if req.verdict == "wrong" && reason.map(|r| r.chars().count()).unwrap_or(0) < 4 {
-        return ApiResponseBuilder::error_with_code(
-            400,
-            "点错必须填写原因（至少 4 个字符）",
-        );
+        return ApiResponseBuilder::error_with_code(400, "点错必须填写原因（至少 4 个字符）");
     }
     let judgment = match state.db.find_judgment_by_id(&id, ws).await {
         Ok(Some(j)) => j,
@@ -212,7 +229,10 @@ async fn approve_judgment(
     }
 
     // 派发执行 directive（执行结果由 judgment_subscriber 的 exec: 键路径收尾）
-    let action = judgment.suggested_action.clone().unwrap_or_else(|| "按判断建议处置".to_string());
+    let action = judgment
+        .suggested_action
+        .clone()
+        .unwrap_or_else(|| "按判断建议处置".to_string());
     let signal = tinyiothub_agent::runtime::thing_agent::types::WakeSignal {
         workspace_id: judgment.workspace_id.clone(),
         priority: tinyiothub_agent::runtime::thing_agent::types::Priority::High,
@@ -244,10 +264,7 @@ async fn reject_judgment(
     let ws = &claims.0.workspace_id;
     let reason = req.reason.trim();
     if reason.chars().count() < 4 {
-        return ApiResponseBuilder::error_with_code(
-            400,
-            "拒绝必须填写原因（至少 4 个字符）",
-        );
+        return ApiResponseBuilder::error_with_code(400, "拒绝必须填写原因（至少 4 个字符）");
     }
     let judgment = match state.db.find_judgment_by_id(&id, ws).await {
         Ok(Some(j)) => j,

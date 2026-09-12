@@ -140,31 +140,65 @@ mod approval_timeout_tests {
     #[tokio::test]
     async fn stale_approval_escalates_to_ticket() {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        tinyiothub_storage::test_helpers::run_all_migrations(&pool).await.unwrap();
-        tinyiothub_storage::seed::seed_system(&tinyiothub_storage::Db::new(pool.clone())).await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
+        tinyiothub_storage::seed::seed_system(&tinyiothub_storage::Db::new(pool.clone()))
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws1','ws1','tenant-default-001','2025-01-01','2025-01-01')").execute(&pool).await.unwrap();
         let db = tinyiothub_storage::Db::new(pool);
 
         // 一条 awaiting_approval 且 judged_at 在 25h 前
         let jid = db.insert_judgment("ws1", None, None, Some("t1")).await.unwrap();
-        db.judge_judgment(&jid, tinyiothub_storage::judgment::JudgmentVerdict::SelfHealable, "可重连", "{}", Some("重连"), Some("connection_recovery"), None).await.unwrap();
-        sqlx::query("UPDATE judgments SET judged_at = datetime('now', '-25 hours') WHERE id = ?").bind(&jid).execute(db.pool()).await.unwrap();
+        db.judge_judgment(
+            &jid,
+            tinyiothub_storage::judgment::JudgmentVerdict::SelfHealable,
+            "可重连",
+            "{}",
+            Some("重连"),
+            Some("connection_recovery"),
+            None,
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE judgments SET judged_at = datetime('now', '-25 hours') WHERE id = ?")
+            .bind(&jid)
+            .execute(db.pool())
+            .await
+            .unwrap();
         // 一条新的（不应命中）
         let fresh = db.insert_judgment("ws1", None, None, Some("t2")).await.unwrap();
-        db.judge_judgment(&fresh, tinyiothub_storage::judgment::JudgmentVerdict::SelfHealable, "新的", "{}", None, None, None).await.unwrap();
+        db.judge_judgment(
+            &fresh,
+            tinyiothub_storage::judgment::JudgmentVerdict::SelfHealable,
+            "新的",
+            "{}",
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let adapter = ApprovalTimeoutAdapter {
             db: db.clone(),
             sse: Arc::new(crate::domains::event::sse_manager::SseConnectionManager::new()),
         };
         let cutoff = (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
-        let n = tinyiothub_runtime::ports::ApprovalTimeoutStore::escalate_stale_approvals(&adapter, &cutoff).await.unwrap();
+        let n = tinyiothub_runtime::ports::ApprovalTimeoutStore::escalate_stale_approvals(&adapter, &cutoff)
+            .await
+            .unwrap();
         assert_eq!(n, 1);
 
         let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, tinyiothub_storage::judgment::JudgmentStatus::Escalated);
         assert!(j.ticket_id.is_some());
         let f = db.find_judgment_by_id(&fresh, "ws1").await.unwrap().unwrap();
-        assert_eq!(f.status, tinyiothub_storage::judgment::JudgmentStatus::AwaitingApproval, "fresh untouched");
+        assert_eq!(
+            f.status,
+            tinyiothub_storage::judgment::JudgmentStatus::AwaitingApproval,
+            "fresh untouched"
+        );
     }
 }

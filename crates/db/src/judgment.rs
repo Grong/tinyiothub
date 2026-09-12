@@ -270,14 +270,12 @@ pub(crate) async fn fail_judgment(pool: &SqlitePool, id: &str, next: JudgmentSta
         next,
         JudgmentStatus::InvestigationFailed | JudgmentStatus::BudgetSkipped
     ));
-    let result = sqlx::query(
-        "UPDATE judgments SET status = ?, reason = ? WHERE id = ? AND status = 'investigating'",
-    )
-    .bind(next.as_str())
-    .bind(reason)
-    .bind(id)
-    .execute(pool)
-    .await?;
+    let result = sqlx::query("UPDATE judgments SET status = ?, reason = ? WHERE id = ? AND status = 'investigating'")
+        .bind(next.as_str())
+        .bind(reason)
+        .bind(id)
+        .execute(pool)
+        .await?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -335,12 +333,10 @@ pub(crate) async fn list_judgments(
 
 /// 审批超时扫描：awaiting_approval 且 judged_at 早于 cutoff。
 pub(crate) async fn stale_awaiting_approvals(pool: &SqlitePool, cutoff: &str) -> Result<Vec<Judgment>> {
-    let rows = sqlx::query(
-        "SELECT * FROM judgments WHERE status = 'awaiting_approval' AND judged_at < ?",
-    )
-    .bind(cutoff)
-    .fetch_all(pool)
-    .await?;
+    let rows = sqlx::query("SELECT * FROM judgments WHERE status = 'awaiting_approval' AND judged_at < ?")
+        .bind(cutoff)
+        .fetch_all(pool)
+        .await?;
     rows.into_iter().map(row_to_judgment).collect()
 }
 
@@ -455,12 +451,11 @@ pub(crate) async fn add_feedback(
 
 /// 每判断最新一条反馈（改判取最新）。
 pub(crate) async fn latest_feedback(pool: &SqlitePool, judgment_id: &str) -> Result<Option<JudgmentFeedback>> {
-    let row = sqlx::query(
-        "SELECT * FROM judgment_feedback WHERE judgment_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
-    )
-    .bind(judgment_id)
-    .fetch_optional(pool)
-    .await?;
+    let row =
+        sqlx::query("SELECT * FROM judgment_feedback WHERE judgment_id = ? ORDER BY created_at DESC, id DESC LIMIT 1")
+            .bind(judgment_id)
+            .fetch_optional(pool)
+            .await?;
     let Some(row) = row else { return Ok(None) };
     Ok(Some(JudgmentFeedback {
         id: row.get("id"),
@@ -603,7 +598,15 @@ mod tests {
         assert!(j.verdict.is_none());
 
         let ok = db
-            .judge_judgment(&id, JudgmentVerdict::SelfHealable, "历史同类事件 87% 由重连恢复", "{}", Some("重连网关"), Some("connection_recovery"), Some("prop-1"))
+            .judge_judgment(
+                &id,
+                JudgmentVerdict::SelfHealable,
+                "历史同类事件 87% 由重连恢复",
+                "{}",
+                Some("重连网关"),
+                Some("connection_recovery"),
+                Some("prop-1"),
+            )
             .await
             .unwrap();
         assert!(ok);
@@ -613,8 +616,16 @@ mod tests {
         assert!(j.judged_at.is_some());
 
         // 批准 → executing → resolved
-        assert!(db.transit_judgment(&id, JudgmentStatus::AwaitingApproval, JudgmentStatus::Executing, None).await.unwrap());
-        assert!(db.transit_judgment(&id, JudgmentStatus::Executing, JudgmentStatus::Resolved, None).await.unwrap());
+        assert!(
+            db.transit_judgment(&id, JudgmentStatus::AwaitingApproval, JudgmentStatus::Executing, None)
+                .await
+                .unwrap()
+        );
+        assert!(
+            db.transit_judgment(&id, JudgmentStatus::Executing, JudgmentStatus::Resolved, None)
+                .await
+                .unwrap()
+        );
         let j = db.find_judgment_by_id(&id, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, JudgmentStatus::Resolved);
         assert!(j.resolved_at.is_some());
@@ -625,10 +636,22 @@ mod tests {
         let db = test_db().await;
         let id = db.insert_judgment("ws1", None, None, None).await.unwrap();
         // investigating 直接跳 resolved 被拒
-        assert!(!db.transit_judgment(&id, JudgmentStatus::AwaitingApproval, JudgmentStatus::Executing, None).await.unwrap());
+        assert!(
+            !db.transit_judgment(&id, JudgmentStatus::AwaitingApproval, JudgmentStatus::Executing, None)
+                .await
+                .unwrap()
+        );
         // 重复 judge（并发 RunRecorded）幂等
-        assert!(db.judge_judgment(&id, JudgmentVerdict::Noise, "波动", "{}", None, None, None).await.unwrap());
-        assert!(!db.judge_judgment(&id, JudgmentVerdict::Noise, "波动", "{}", None, None, None).await.unwrap());
+        assert!(
+            db.judge_judgment(&id, JudgmentVerdict::Noise, "波动", "{}", None, None, None)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !db.judge_judgment(&id, JudgmentVerdict::Noise, "波动", "{}", None, None, None)
+                .await
+                .unwrap()
+        );
         let j = db.find_judgment_by_id(&id, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, JudgmentStatus::NoiseArchived);
     }
@@ -637,16 +660,26 @@ mod tests {
     async fn fail_and_budget_paths() {
         let db = test_db().await;
         let id1 = db.insert_judgment("ws1", None, None, None).await.unwrap();
-        assert!(db.fail_judgment(&id1, JudgmentStatus::InvestigationFailed, "LLM 超时").await.unwrap());
+        assert!(
+            db.fail_judgment(&id1, JudgmentStatus::InvestigationFailed, "LLM 超时")
+                .await
+                .unwrap()
+        );
         let id2 = db.insert_judgment("ws1", None, None, None).await.unwrap();
-        assert!(db.fail_judgment(&id2, JudgmentStatus::BudgetSkipped, "超日预算").await.unwrap());
+        assert!(
+            db.fail_judgment(&id2, JudgmentStatus::BudgetSkipped, "超日预算")
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
     async fn feedback_history_and_latest_wins() {
         let db = test_db().await;
         let id = db.insert_judgment("ws1", None, None, None).await.unwrap();
-        db.add_judgment_feedback(&id, "ws1", "u1", "wrong", Some("其实该报")).await.unwrap();
+        db.add_judgment_feedback(&id, "ws1", "u1", "wrong", Some("其实该报"))
+            .await
+            .unwrap();
         // 改判
         db.add_judgment_feedback(&id, "ws1", "u1", "right", None).await.unwrap();
         let latest = db.latest_judgment_feedback(&id).await.unwrap().unwrap();
@@ -657,7 +690,17 @@ mod tests {
     async fn stale_approvals_scan_and_daily_count() {
         let db = test_db().await;
         let id = db.insert_judgment("ws1", None, None, None).await.unwrap();
-        db.judge_judgment(&id, JudgmentVerdict::SelfHealable, "r", "{}", Some("a"), Some("other"), None).await.unwrap();
+        db.judge_judgment(
+            &id,
+            JudgmentVerdict::SelfHealable,
+            "r",
+            "{}",
+            Some("a"),
+            Some("other"),
+            None,
+        )
+        .await
+        .unwrap();
 
         // judged_at 是当下：24h 前的 cutoff 不应命中，未来的 cutoff 应命中
         assert!(db.stale_awaiting_approvals("2000-01-01").await.unwrap().is_empty());

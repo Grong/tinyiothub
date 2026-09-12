@@ -21,8 +21,8 @@ use tracing::{debug, error, warn};
 
 use tinyiothub_agent::runtime::events::{AgentEvent, AgentEventKind};
 use tinyiothub_core::agent_runs::{Outcome, RunReport};
-use tinyiothub_storage::judgment::{Judgment, JudgmentStatus, JudgmentVerdict};
 use tinyiothub_storage::Db;
+use tinyiothub_storage::judgment::{Judgment, JudgmentStatus, JudgmentVerdict};
 
 use crate::domains::alarm::service::AlarmService;
 use crate::domains::event::sse_manager::SseConnectionManager;
@@ -76,12 +76,7 @@ pub(crate) fn parse_verdict(summary: &str) -> Option<VerdictPayload> {
 }
 
 /// 单事件投影。所有错误就地处理（log），不向上传播。
-pub(crate) async fn project(
-    event: &AgentEvent,
-    db: &Db,
-    sse: &SseConnectionManager,
-    alarm_service: &AlarmService,
-) {
+pub(crate) async fn project(event: &AgentEvent, db: &Db, sse: &SseConnectionManager, alarm_service: &AlarmService) {
     let AgentEventKind::RunRecorded {
         report,
         problem_key: Some(pk),
@@ -126,7 +121,15 @@ pub(crate) async fn project(
 
     match report.outcome {
         Outcome::Failed | Outcome::BudgetExceeded | Outcome::Rejected => {
-            fail_and_escalate(db, sse, &judgment, report, pk, &format!("调查 run 失败：{}", report.summary)).await;
+            fail_and_escalate(
+                db,
+                sse,
+                &judgment,
+                report,
+                pk,
+                &format!("调查 run 失败：{}", report.summary),
+            )
+            .await;
         }
         _ => match parse_verdict(&report.summary) {
             Some(payload) => route_verdict(db, sse, alarm_service, &judgment, report, pk, payload).await,
@@ -182,7 +185,10 @@ async fn settle_execution(
                 .await
             {
                 Ok(true) => {
-                    let reason = format!("批准的动作执行失败：{}", report.summary.chars().take(80).collect::<String>());
+                    let reason = format!(
+                        "批准的动作执行失败：{}",
+                        report.summary.chars().take(80).collect::<String>()
+                    );
                     escalate_to_ticket(db, sse, &judgment, report, &format!("exec:{}", judgment_id), &reason).await;
                     broadcast_judgment(sse, &judgment.workspace_id, judgment_id, "judgment_updated").await;
                 }
@@ -206,7 +212,15 @@ async fn route_verdict(
     let reason: String = payload.reason.chars().take(120).collect(); // F13：理由 ≤120 字符
     let verdict = JudgmentVerdict::parse_str(&payload.verdict);
     let Some(verdict) = verdict else {
-        fail_and_escalate(db, sse, judgment, report, problem_key, &format!("未知 verdict: {}", payload.verdict)).await;
+        fail_and_escalate(
+            db,
+            sse,
+            judgment,
+            report,
+            problem_key,
+            &format!("未知 verdict: {}", payload.verdict),
+        )
+        .await;
         return;
     };
 
@@ -274,7 +288,10 @@ async fn fail_and_escalate(
     problem_key: &str,
     reason: &str,
 ) {
-    match db.fail_judgment(&judgment.id, JudgmentStatus::InvestigationFailed, reason).await {
+    match db
+        .fail_judgment(&judgment.id, JudgmentStatus::InvestigationFailed, reason)
+        .await
+    {
         Ok(true) => broadcast_judgment(sse, &judgment.workspace_id, &judgment.id, "judgment_judged").await,
         Ok(false) => debug!(judgment_id = %judgment.id, "fail skipped (not investigating)"),
         Err(e) => error!(judgment_id = %judgment.id, error = %e, "fail_judgment failed"),
@@ -463,8 +480,12 @@ mod tests {
 
     async fn fixture() -> (Arc<Db>, Arc<SseConnectionManager>, Arc<AlarmService>) {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        tinyiothub_storage::test_helpers::run_all_migrations(&pool).await.unwrap();
-        tinyiothub_storage::seed::seed_system(&tinyiothub_storage::Db::new(pool.clone())).await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
+        tinyiothub_storage::seed::seed_system(&tinyiothub_storage::Db::new(pool.clone()))
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws1','ws1','tenant-default-001','2025-01-01','2025-01-01')")
             .execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO things (id, name, workspace_id, created_at, updated_at) VALUES ('t1','t1','ws1','2025-01-01','2025-01-01')")
@@ -530,7 +551,13 @@ mod tests {
     async fn unparseable_verdict_escalates_not_silent() {
         let (db, sse, alarm) = fixture().await;
         let jid = db.insert_judgment("ws1", Some("a1"), None, Some("t1")).await.unwrap();
-        project(&event("r1", Outcome::NoActionNeeded, "没有结构化输出"), &db, &sse, &alarm).await;
+        project(
+            &event("r1", Outcome::NoActionNeeded, "没有结构化输出"),
+            &db,
+            &sse,
+            &alarm,
+        )
+        .await;
 
         let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, JudgmentStatus::InvestigationFailed);

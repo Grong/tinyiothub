@@ -13,7 +13,10 @@ use crate::test_utils::{
 };
 
 fn req(method: &str, uri: &str, token: &str, body: Option<Value>) -> Request<Body> {
-    let mut builder = Request::builder().method(method).uri(uri).header("Authorization", auth_header(token));
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("Authorization", auth_header(token));
     if body.is_some() {
         builder = builder.header("Content-Type", "application/json");
     }
@@ -32,7 +35,15 @@ async fn seed_judgment(app_state: &crate::state::AppState, ws: &str, verdict: Op
         };
         app_state
             .db
-            .judge_judgment(&jid, verdict, "测试理由", "{}", Some("重连"), Some("connection_recovery"), None)
+            .judge_judgment(
+                &jid,
+                verdict,
+                "测试理由",
+                "{}",
+                Some("重连"),
+                Some("connection_recovery"),
+                None,
+            )
             .await
             .unwrap();
     }
@@ -92,10 +103,18 @@ async fn feedback_wrong_requires_reason() {
     // 无原因 → 400
     let response = app
         .clone()
-        .oneshot(req("POST", &format!("/api/v1/judgments/{jid}/feedback"), &token, Some(json!({"verdict": "wrong"}))))
+        .oneshot(req(
+            "POST",
+            &format!("/api/v1/judgments/{jid}/feedback"),
+            &token,
+            Some(json!({"verdict": "wrong"})),
+        ))
         .await
         .unwrap();
-    { let (_s, json) = response_parts(response).await; assert_eq!(json["code"], 400); }
+    {
+        let (_s, json) = response_parts(response).await;
+        assert_eq!(json["code"], 400);
+    }
 
     // 有原因 → 200，且反馈可见
     let response = app
@@ -130,14 +149,28 @@ async fn approve_rejects_non_awaiting_status() {
     let app = axum::Router::new().nest("/api", app).with_state(app_state.clone());
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(req("POST", &format!("/api/v1/judgments/{jid}/approve"), &token, Some(json!({}))))
+        .oneshot(req(
+            "POST",
+            &format!("/api/v1/judgments/{jid}/approve"),
+            &token,
+            Some(json!({})),
+        ))
         .await
         .unwrap();
     // 测试态无 directive_sink → 先报执行通道未就绪（状态未被翻转）
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].as_i64().unwrap() != 0, "should error without sink");
-    let j = app_state.db.find_judgment_by_id(&jid, "ws-default-001").await.unwrap().unwrap();
-    assert_eq!(j.status, tinyiothub_storage::judgment::JudgmentStatus::Investigating, "状态未被错误翻转");
+    let j = app_state
+        .db
+        .find_judgment_by_id(&jid, "ws-default-001")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        j.status,
+        tinyiothub_storage::judgment::JudgmentStatus::Investigating,
+        "状态未被错误翻转"
+    );
 }
 
 #[tokio::test]
@@ -153,10 +186,18 @@ async fn reject_requires_reason_and_escalates() {
     // 无原因 → 400
     let response = app
         .clone()
-        .oneshot(req("POST", &format!("/api/v1/judgments/{jid}/reject"), &token, Some(json!({"reason": ""}))))
+        .oneshot(req(
+            "POST",
+            &format!("/api/v1/judgments/{jid}/reject"),
+            &token,
+            Some(json!({"reason": ""})),
+        ))
         .await
         .unwrap();
-    { let (_s, json) = response_parts(response).await; assert_eq!(json["code"], 400); }
+    {
+        let (_s, json) = response_parts(response).await;
+        assert_eq!(json["code"], 400);
+    }
 
     // 有原因 → escalated + ticket
     let response = app
@@ -169,7 +210,12 @@ async fn reject_requires_reason_and_escalates() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    let j = app_state.db.find_judgment_by_id(&jid, "ws-default-001").await.unwrap().unwrap();
+    let j = app_state
+        .db
+        .find_judgment_by_id(&jid, "ws-default-001")
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(j.status, tinyiothub_storage::judgment::JudgmentStatus::Escalated);
     assert!(j.ticket_id.is_some(), "ticket linked after reject");
 }

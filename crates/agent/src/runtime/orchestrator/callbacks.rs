@@ -970,7 +970,12 @@ pub(crate) mod tests {
             assert_eq!(sig.workspace_id, "ws_1");
             assert_eq!(sig.priority, Priority::High);
             match &sig.source {
-                TriggerSource::UserDirective { user_id, source, problem_key, .. } => {
+                TriggerSource::UserDirective {
+                    user_id,
+                    source,
+                    problem_key,
+                    ..
+                } => {
                     assert_eq!(user_id, "alarm-triage");
                     assert_eq!(source.as_deref(), Some("alarm"));
                     // problem_key 按 thing+rule（不是 alarm id——抖动去重的关键）

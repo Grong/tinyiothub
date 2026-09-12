@@ -95,7 +95,9 @@ impl AlarmService {
                 return;
             }
             Ok(_) => {}
-            Err(e) => tracing::warn!(workspace_id, error = %e, "read heartbeat config failed, defaulting to AI triage on"),
+            Err(e) => {
+                tracing::warn!(workspace_id, error = %e, "read heartbeat config failed, defaulting to AI triage on")
+            }
         }
 
         // T8 预算闸：超日预算的报警保持 Active 走人工路径（不转工单——外部
@@ -112,7 +114,11 @@ impl AlarmService {
                 {
                     let _ = self
                         .db
-                        .fail_judgment(&jid, tinyiothub_storage::judgment::JudgmentStatus::BudgetSkipped, "超日预算，未调查")
+                        .fail_judgment(
+                            &jid,
+                            tinyiothub_storage::judgment::JudgmentStatus::BudgetSkipped,
+                            "超日预算，未调查",
+                        )
                         .await;
                 }
                 return;
@@ -164,10 +170,7 @@ impl AlarmService {
                 // Critical/Error：judgment 立即关联工单（escalated 语义在 subscriber
                 // 调查完成后补充上下文；这里先把 ticket 链接上）
                 if let Some(tid) = ticket_id
-                    && let Err(e) = self
-                        .db
-                        .link_judgment_ticket(&judgment_id, tid)
-                        .await
+                    && let Err(e) = self.db.link_judgment_ticket(&judgment_id, tid).await
                 {
                     tracing::warn!(judgment_id, ticket_id = tid, error = %e, "link judgment ticket failed");
                 }

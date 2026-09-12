@@ -27,6 +27,7 @@ pub mod agent_hooks;
 pub mod directive_sink;
 pub mod dlq_repo;
 pub mod heartbeat;
+pub mod judgment_subscriber;
 pub mod persist;
 pub mod policy_engine;
 pub mod pool_adapter;
@@ -34,7 +35,6 @@ pub mod scaffold;
 pub mod thing_action_hooks;
 pub mod thing_agent_host;
 pub mod ticket_subscriber;
-pub mod judgment_subscriber;
 
 #[cfg(test)]
 pub(crate) mod test_utils;
