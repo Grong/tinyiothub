@@ -367,10 +367,11 @@ pub(crate) async fn find_open_judgment_by_thing_rule(
     row.map(row_to_judgment).transpose()
 }
 
-/// T8 预算：今日已发起判断数（含进行中，按自然日 UTC）。
+/// T8 预算：今日已发起判断数（不含 budget_skipped——超预算标记本身不是
+/// LLM 调用，不计入额度）。
 pub(crate) async fn count_judgments_today(pool: &SqlitePool, workspace_id: &str) -> Result<i64> {
     let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM judgments WHERE workspace_id = ? AND created_at >= date('now')",
+        "SELECT COUNT(*) FROM judgments WHERE workspace_id = ? AND created_at >= date('now') AND status != 'budget_skipped'",
     )
     .bind(workspace_id)
     .fetch_one(pool)

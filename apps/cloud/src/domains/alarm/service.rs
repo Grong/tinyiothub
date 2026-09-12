@@ -98,6 +98,29 @@ impl AlarmService {
             Err(e) => tracing::warn!(workspace_id, error = %e, "read heartbeat config failed, defaulting to AI triage on"),
         }
 
+        // T8 预算闸：超日预算的报警保持 Active 走人工路径（不转工单——外部
+        // 修正：预算耗尽转工单=工单风暴）。judgment 落 budget_skipped 作 feed
+        // 标记（"未调查（预算）"），不算 LLM 调用不计入额度。
+        const DAILY_JUDGMENT_BUDGET: i64 = 100;
+        match self.db.count_judgments_today(&workspace_id).await {
+            Ok(n) if n >= DAILY_JUDGMENT_BUDGET => {
+                tracing::warn!(workspace_id, alarm_id = %alarm.id, count = n, "daily judgment budget exhausted, alarm stays on manual path");
+                if let Ok(jid) = self
+                    .db
+                    .insert_judgment(&workspace_id, Some(&alarm.id), None, Some(&alarm.thing_id))
+                    .await
+                {
+                    let _ = self
+                        .db
+                        .fail_judgment(&jid, tinyiothub_storage::judgment::JudgmentStatus::BudgetSkipped, "超日预算，未调查")
+                        .await;
+                }
+                return;
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(workspace_id, error = %e, "budget check failed, proceeding"),
+        }
+
         // flapping 源头防抖
         match self
             .db
