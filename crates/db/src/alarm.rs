@@ -415,6 +415,7 @@ fn row_to_alarm(row: sqlx::sqlite::SqliteRow) -> Result<Alarm> {
     let acknowledged_at_str: Option<String> = row.get("acknowledged_at");
     let acknowledged_note: Option<String> = row.get("acknowledged_note");
     let is_resolved: bool = row.get("is_resolved");
+    let is_suppressed: bool = row.get("is_suppressed");
     let resolved_by: Option<String> = row.get("resolved_by");
     let resolved_at_str: Option<String> = row.get("resolved_at");
     let resolved_note: Option<String> = row.get("resolved_note");
@@ -474,8 +475,12 @@ fn row_to_alarm(row: sqlx::sqlite::SqliteRow) -> Result<Alarm> {
         None
     };
 
+    // 状态推导优先级：resolved > suppressed > acknowledged > active。
+    // is_suppressed 与 ack/resolved 正交（迁移 20260912000001 补的列）。
     let status = if is_resolved {
         AlarmStatus::Resolved
+    } else if is_suppressed {
+        AlarmStatus::Suppressed
     } else if is_acknowledged {
         AlarmStatus::Acknowledged
     } else {
@@ -508,8 +513,9 @@ pub(crate) async fn insert_alarm(pool: &SqlitePool, alarm: &Alarm) -> Result<()>
                 alarm_message, alarm_value, threshold_value, alarm_time,
                 is_acknowledged, acknowledged_by, acknowledged_at, acknowledged_note,
                 is_resolved, resolved_by, resolved_at, resolved_note, resolution_type,
+                is_suppressed,
                 workspace_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#;
 
     sqlx::query(query)
@@ -531,6 +537,7 @@ pub(crate) async fn insert_alarm(pool: &SqlitePool, alarm: &Alarm) -> Result<()>
         .bind(alarm.resolution.as_ref().map(|r| r.resolved_at.to_rfc3339()))
         .bind(alarm.resolution.as_ref().and_then(|r| r.note.as_ref()))
         .bind(alarm.resolution.as_ref().map(|r| r.resolution_type.as_str()))
+        .bind(alarm.status == AlarmStatus::Suppressed)
         .bind(&alarm.workspace_id)
         .bind(alarm.created_at.to_rfc3339())
         .execute(pool)
@@ -550,7 +557,8 @@ pub(crate) async fn update_alarm(pool: &SqlitePool, alarm: &Alarm) -> Result<()>
                 resolved_by = ?,
                 resolved_at = ?,
                 resolved_note = ?,
-                resolution_type = ?
+                resolution_type = ?,
+                is_suppressed = ?
             WHERE id = ?
         "#;
 
@@ -564,6 +572,7 @@ pub(crate) async fn update_alarm(pool: &SqlitePool, alarm: &Alarm) -> Result<()>
         .bind(alarm.resolution.as_ref().map(|r| r.resolved_at.to_rfc3339()))
         .bind(alarm.resolution.as_ref().and_then(|r| r.note.as_ref()))
         .bind(alarm.resolution.as_ref().map(|r| r.resolution_type.as_str()))
+        .bind(alarm.status == AlarmStatus::Suppressed)
         .bind(&alarm.id)
         .execute(pool)
         .await?;
@@ -625,15 +634,19 @@ pub(crate) async fn find_alarms_by_criteria(pool: &SqlitePool, criteria: &AlarmQ
         for status in statuses {
             match status {
                 AlarmStatus::Active => {
-                    status_conditions.push("(is_resolved = false AND is_acknowledged = false)");
+                    status_conditions
+                        .push("(is_resolved = false AND is_acknowledged = false AND is_suppressed = false)");
                 }
                 AlarmStatus::Acknowledged => {
-                    status_conditions.push("(is_resolved = false AND is_acknowledged = true)");
+                    status_conditions
+                        .push("(is_resolved = false AND is_acknowledged = true AND is_suppressed = false)");
                 }
                 AlarmStatus::Resolved => {
                     status_conditions.push("is_resolved = true");
                 }
-                AlarmStatus::Suppressed => {}
+                AlarmStatus::Suppressed => {
+                    status_conditions.push("(is_suppressed = true AND is_resolved = false)");
+                }
             }
         }
         if !status_conditions.is_empty() {
@@ -679,9 +692,9 @@ pub(crate) async fn find_alarms_by_criteria(pool: &SqlitePool, criteria: &AlarmQ
 
 pub(crate) async fn list_active_alarms(pool: &SqlitePool, thing_id: Option<&str>) -> Result<Vec<Alarm>> {
     let query = if thing_id.is_some() {
-        "SELECT * FROM thing_alarms WHERE is_resolved = false AND thing_id = ? ORDER BY alarm_time DESC"
+        "SELECT * FROM thing_alarms WHERE is_resolved = false AND is_suppressed = false AND thing_id = ? ORDER BY alarm_time DESC"
     } else {
-        "SELECT * FROM thing_alarms WHERE is_resolved = false ORDER BY alarm_time DESC"
+        "SELECT * FROM thing_alarms WHERE is_resolved = false AND is_suppressed = false ORDER BY alarm_time DESC"
     };
 
     let mut sqlx_query = sqlx::query(query);
@@ -704,9 +717,9 @@ pub(crate) async fn list_active_alarms(pool: &SqlitePool, thing_id: Option<&str>
 
 pub(crate) async fn list_unacknowledged_alarms(pool: &SqlitePool, thing_id: Option<&str>) -> Result<Vec<Alarm>> {
     let query = if thing_id.is_some() {
-        "SELECT * FROM thing_alarms WHERE is_acknowledged = false AND is_resolved = false AND thing_id = ? ORDER BY alarm_time DESC"
+        "SELECT * FROM thing_alarms WHERE is_acknowledged = false AND is_resolved = false AND is_suppressed = false AND thing_id = ? ORDER BY alarm_time DESC"
     } else {
-        "SELECT * FROM thing_alarms WHERE is_acknowledged = false AND is_resolved = false ORDER BY alarm_time DESC"
+        "SELECT * FROM thing_alarms WHERE is_acknowledged = false AND is_resolved = false AND is_suppressed = false ORDER BY alarm_time DESC"
     };
 
     let mut sqlx_query = sqlx::query(query);
@@ -763,15 +776,19 @@ pub(crate) async fn count_alarms_by_criteria(pool: &SqlitePool, criteria: &Alarm
         for status in statuses {
             match status {
                 AlarmStatus::Active => {
-                    status_conditions.push("(is_resolved = false AND is_acknowledged = false)");
+                    status_conditions
+                        .push("(is_resolved = false AND is_acknowledged = false AND is_suppressed = false)");
                 }
                 AlarmStatus::Acknowledged => {
-                    status_conditions.push("(is_resolved = false AND is_acknowledged = true)");
+                    status_conditions
+                        .push("(is_resolved = false AND is_acknowledged = true AND is_suppressed = false)");
                 }
                 AlarmStatus::Resolved => {
                     status_conditions.push("is_resolved = true");
                 }
-                AlarmStatus::Suppressed => {}
+                AlarmStatus::Suppressed => {
+                    status_conditions.push("(is_suppressed = true AND is_resolved = false)");
+                }
             }
         }
         if !status_conditions.is_empty() {
@@ -810,11 +827,41 @@ pub(crate) async fn batch_update_alarm_status(
         return Ok(0);
     }
 
+    let placeholders = vec!["?"; alarm_ids.len()].join(",");
+
+    // Suppressed 与 ack/resolved 正交，走独立 UPDATE（此前是 return Ok(0) 空操作，
+    // 导致抑制状态根本无法落库——eng-review 外部视角发现）。
+    if status == AlarmStatus::Suppressed {
+        let query = if workspace_id.is_empty() {
+            format!(
+                "UPDATE thing_alarms SET is_suppressed = 1 WHERE is_resolved = 0 AND is_suppressed = 0 AND id IN ({})",
+                placeholders
+            )
+        } else {
+            format!(
+                "UPDATE thing_alarms SET is_suppressed = 1 WHERE is_resolved = 0 AND is_suppressed = 0 AND id IN ({}) AND thing_id IN (SELECT id FROM things WHERE workspace_id = ?)",
+                placeholders
+            )
+        };
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(query));
+        for id in alarm_ids {
+            q = q.bind(id);
+        }
+        if !workspace_id.is_empty() {
+            q = q.bind(workspace_id);
+        }
+        let result = q
+            .execute(pool)
+            .await
+            .map_err(|e| DbError::Internal(format!("batch_update_status failed: {}", e)))?;
+        return Ok(result.rows_affected() as usize);
+    }
+
     let (is_resolved, is_acknowledged) = match status {
         AlarmStatus::Active => (false, false),
         AlarmStatus::Acknowledged => (false, true),
         AlarmStatus::Resolved => (true, true),
-        AlarmStatus::Suppressed => return Ok(0),
+        AlarmStatus::Suppressed => unreachable!(),
     };
 
     // When auto-resolving, also set resolution metadata.
@@ -830,7 +877,6 @@ pub(crate) async fn batch_update_alarm_status(
         (None, None, None)
     };
 
-    let placeholders = vec!["?"; alarm_ids.len()].join(",");
     // Filter by is_resolved = 0 to avoid re-resolving already-resolved alarms
     let query = if workspace_id.is_empty() {
         format!(
@@ -872,17 +918,20 @@ pub(crate) async fn delete_old_alarms(pool: &SqlitePool, before: DateTime<Utc>) 
 }
 
 pub(crate) async fn count_active_alarms_by_thing(pool: &SqlitePool, thing_id: &str) -> Result<u32> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarms WHERE thing_id = ? AND is_resolved = 0")
-        .bind(thing_id)
-        .fetch_one(pool)
-        .await?;
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM thing_alarms WHERE thing_id = ? AND is_resolved = 0 AND is_suppressed = 0",
+    )
+    .bind(thing_id)
+    .fetch_one(pool)
+    .await?;
     Ok(count as u32)
 }
 
 pub(crate) async fn count_all_active_alarms(pool: &SqlitePool) -> Result<u32> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarms WHERE is_resolved = 0")
-        .fetch_one(pool)
-        .await?;
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarms WHERE is_resolved = 0 AND is_suppressed = 0")
+            .fetch_one(pool)
+            .await?;
     Ok(count as u32)
 }
 
@@ -903,7 +952,7 @@ pub(crate) async fn count_offline_alarms(pool: &SqlitePool, thing_id: &str, days
 // ──────────────────────────────────────────────
 
 /// `/alarms/recent` 查询行：(id, thing_id, device_name, alarm_level,
-/// alarm_message, alarm_time, is_acknowledged, is_resolved)。
+/// alarm_message, alarm_time, is_acknowledged, is_resolved, is_suppressed)。
 pub type RecentAlarmRow = (
     String,
     String,
@@ -911,6 +960,7 @@ pub type RecentAlarmRow = (
     String,
     String,
     chrono::NaiveDateTime,
+    bool,
     bool,
     bool,
 );
@@ -932,7 +982,8 @@ pub(crate) async fn list_recent_alarms(
                 da.alarm_message,
                 da.alarm_time,
                 da.is_acknowledged,
-                da.is_resolved
+                da.is_resolved,
+                da.is_suppressed
             FROM thing_alarms da
             LEFT JOIN things d ON da.thing_id = d.id
             WHERE da.workspace_id = ?
@@ -954,7 +1005,8 @@ pub(crate) async fn list_recent_alarms(
                 da.alarm_message,
                 da.alarm_time,
                 da.is_acknowledged,
-                da.is_resolved
+                da.is_resolved,
+                da.is_suppressed
             FROM thing_alarms da
             LEFT JOIN things d ON da.thing_id = d.id
             ORDER BY da.alarm_time DESC
@@ -1092,10 +1144,13 @@ impl Db {
 pub(crate) async fn count_active_alarms_scoped(pool: &SqlitePool, workspace_id: Option<&str>) -> Result<i64> {
     let (query_str, wid) = match workspace_id {
         Some(wid) => (
-            "SELECT COUNT(*) FROM thing_alarms da JOIN things d ON da.thing_id = d.id WHERE da.is_resolved = 0 AND d.workspace_id = ?",
+            "SELECT COUNT(*) FROM thing_alarms da JOIN things d ON da.thing_id = d.id WHERE da.is_resolved = 0 AND da.is_suppressed = 0 AND d.workspace_id = ?",
             Some(wid),
         ),
-        None => ("SELECT COUNT(*) FROM thing_alarms WHERE is_resolved = 0", None),
+        None => (
+            "SELECT COUNT(*) FROM thing_alarms WHERE is_resolved = 0 AND is_suppressed = 0",
+            None,
+        ),
     };
     let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(query_str));
     if let Some(w) = wid {
@@ -1109,5 +1164,121 @@ impl Db {
     /// Dashboard：活跃告警数（Some(ws) 时经 things JOIN 过滤 workspace）。
     pub async fn count_active_alarms_scoped(&self, workspace_id: Option<&str>) -> Result<i64> {
         count_active_alarms_scoped(self.pool(), workspace_id).await
+    }
+}
+
+#[cfg(test)]
+mod suppressed_tests {
+    //! T1 回归：Suppressed 持久层（eng-review 外部视角发现该状态无持久层）。
+    //!
+    //! 状态推导优先级：resolved > suppressed > acknowledged > active
+    //! 活跃语义（list_active/count_active）= 未解决且未抑制
+    use super::*;
+
+    async fn test_db() -> Db {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        crate::test_helpers::run_all_migrations(&pool).await.unwrap();
+        // thing_alarms.thing_id 有 FK：seed 默认租户/工作区链 + 一个 thing
+        crate::seed::seed_system(&Db::new(pool.clone())).await.unwrap();
+        sqlx::query("INSERT INTO things (id, name, workspace_id, created_at, updated_at) VALUES ('t1','t1','ws-default-001','2025-01-01','2025-01-01')")
+            .execute(&pool).await.unwrap();
+        Db::new(pool)
+    }
+
+    fn new_alarm(thing: &str) -> Alarm {
+        Alarm::new(
+            thing.to_string(),
+            None,
+            None, // rule_id 有 FK，测试不涉及规则——置 None
+            AlarmType::PropertyThreshold,
+            AlarmLevel::Warning,
+            "温度越限".to_string(),
+            None,
+            None,
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn suppress_persists_and_roundtrips() {
+        let db = test_db().await;
+        let mut alarm = new_alarm("t1");
+        alarm.suppress().unwrap();
+        db.insert_alarm(&alarm).await.unwrap();
+
+        let got = db.find_alarm_by_id(&alarm.id, None).await.unwrap().unwrap();
+        assert_eq!(got.status, AlarmStatus::Suppressed);
+    }
+
+    #[tokio::test]
+    async fn suppressed_excluded_from_active_but_queryable_by_status() {
+        let db = test_db().await;
+        let active = new_alarm("t1");
+        let mut suppressed = new_alarm("t1");
+        suppressed.suppress().unwrap();
+        db.insert_alarm(&active).await.unwrap();
+        db.insert_alarm(&suppressed).await.unwrap();
+
+        // 活跃列表不含被抑制
+        let actives = db.list_active_alarms(None).await.unwrap();
+        assert_eq!(actives.len(), 1);
+        assert_eq!(actives[0].id, active.id);
+
+        // 按状态过滤：Suppressed 空分支曾是静默返回全部的 bug
+        let criteria = AlarmQueryCriteria {
+            statuses: Some(vec![AlarmStatus::Suppressed]),
+            ..Default::default()
+        };
+        let suppressed_rows = db.find_alarms_by_criteria(&criteria).await.unwrap();
+        assert_eq!(suppressed_rows.len(), 1);
+        assert_eq!(suppressed_rows[0].id, suppressed.id);
+
+        // Active 过滤不含被抑制
+        let criteria = AlarmQueryCriteria {
+            statuses: Some(vec![AlarmStatus::Active]),
+            ..Default::default()
+        };
+        let active_rows = db.find_alarms_by_criteria(&criteria).await.unwrap();
+        assert_eq!(active_rows.len(), 1);
+        assert_eq!(active_rows[0].id, active.id);
+
+        // 计数语义一致
+        assert_eq!(db.count_all_active_alarms().await.unwrap(), 1);
+        assert_eq!(db.count_active_alarms_by_thing("t1").await.unwrap(), 1);
+        assert_eq!(db.count_active_alarms_scoped(None).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn batch_suppress_updates_rows() {
+        let db = test_db().await;
+        let a1 = new_alarm("t1");
+        let a2 = new_alarm("t1");
+        db.insert_alarm(&a1).await.unwrap();
+        db.insert_alarm(&a2).await.unwrap();
+
+        // 此前对 Suppressed 直接 return Ok(0)
+        let updated = db
+            .batch_update_alarm_status(&[a1.id.clone(), a2.id.clone()], AlarmStatus::Suppressed, "")
+            .await
+            .unwrap();
+        assert_eq!(updated, 2);
+        assert_eq!(db.count_all_active_alarms().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn suppressed_alarm_can_still_auto_resolve_on_recovery() {
+        let db = test_db().await;
+        let mut alarm = new_alarm("t1");
+        alarm.suppress().unwrap();
+        db.insert_alarm(&alarm).await.unwrap();
+
+        // 恢复路径（batch_update Resolved）应能收掉被抑制的报警
+        let updated = db
+            .batch_update_alarm_status(&[alarm.id.clone()], AlarmStatus::Resolved, "")
+            .await
+            .unwrap();
+        assert_eq!(updated, 1);
+        let got = db.find_alarm_by_id(&alarm.id, None).await.unwrap().unwrap();
+        assert_eq!(got.status, AlarmStatus::Resolved);
     }
 }

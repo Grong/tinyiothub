@@ -29,6 +29,14 @@ pub trait EventRetentionStore: Send + Sync {
     async fn delete_occurrence_events_before(&self, cutoff_rfc3339: &str) -> Result<u64, String>;
 }
 
+/// Approval-timeout escalations (cron `approval_timeout` executor, T6):
+/// awaiting_approval 超过 24h 的判断自动升级为工单（防"审批堆积"——设计
+/// 文档状态机）。返回升级的条数。
+#[async_trait]
+pub trait ApprovalTimeoutStore: Send + Sync {
+    async fn escalate_stale_approvals(&self, cutoff_rfc3339: &str) -> Result<u64, String>;
+}
+
 /// Thing cache used by `DataServer`. Sync because every call site is sync
 /// (the backing implementation is an in-memory cache); making this async
 /// would add `.await` noise with no benefit.

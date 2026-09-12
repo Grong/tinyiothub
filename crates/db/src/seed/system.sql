@@ -202,6 +202,18 @@ SELECT
     300, 3, 1, NULL, datetime('now'), datetime('now')
 WHERE NOT EXISTS (SELECT 1 FROM cron_jobs WHERE id = 'sys-event-retention');
 
+-- ── approval timeout sweep (T6, AI 处置流) ──────────────────────────────────
+INSERT INTO cron_jobs (
+    id, workspace_id, name, description, job_type, cron_expression, config,
+    timeout_seconds, max_retries, is_enabled, created_by, created_at, updated_at
+)
+SELECT
+    'sys-approval-timeout', 'system', '审批超时升级',
+    'Escalate judgments awaiting approval longer than timeout_hours to tickets.',
+    'approval_timeout', '0 */15 * * * *', '{"timeout_hours": 24}',
+    300, 3, 1, NULL, datetime('now'), datetime('now')
+WHERE NOT EXISTS (SELECT 1 FROM cron_jobs WHERE id = 'sys-approval-timeout');
+
 -- ── builtin thing templates ─────────────────────────────────────────────────
 -- 20260108000001 (5, dash-style ids) + 20260516044444 (8, underscore-style
 -- ids), mapped device_templates.commands → thing_templates.actions,

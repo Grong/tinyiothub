@@ -1,0 +1,265 @@
+/* 处置中心（AI 处置判断 feed）— v6 线框稿定稿：单色纪律 + 明确卡片容器。
+   颜色只出现在「需要行动」处；其余黑白灰。 */
+
+view-dispositions {
+  display: block;
+}
+
+view-dispositions .disp-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+view-dispositions .disp-sub {
+  color: var(--muted-foreground, #71717a);
+  font-size: 12.5px;
+}
+
+view-dispositions .disp-learn {
+  color: var(--muted-foreground, #71717a);
+  font-size: 12px;
+  margin: 0 0 var(--space-4);
+}
+
+view-dispositions .disp-tabs {
+  display: flex;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border, #1f232b);
+  padding-bottom: var(--space-2);
+}
+
+view-dispositions .disp-tab {
+  font-size: 13px;
+  color: var(--muted-foreground, #71717a);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+view-dispositions .disp-tab.active {
+  color: var(--foreground, #e4e4e7);
+  border-bottom: 1px solid var(--foreground, #e4e4e7);
+  padding-bottom: var(--space-2);
+  margin-bottom: -9px;
+}
+
+view-dispositions .disp-tab .count {
+  color: var(--muted-foreground, #52525b);
+  margin-left: 3px;
+}
+
+/* 判断条目：独立卡片，单色纪律 */
+view-dispositions .j-item {
+  padding: 14px var(--space-4);
+  margin-bottom: 10px;
+  background: var(--card, #151920);
+  border: 1px solid var(--border, #21262f);
+  border-radius: var(--radius-md, 10px);
+}
+
+view-dispositions .j-item.needs-you {
+  background: var(--card, #181d26);
+  border-color: var(--border, #2b323e);
+}
+
+view-dispositions .j-row1 {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+view-dispositions .j-verdict {
+  font-size: 12px;
+  color: var(--muted-foreground, #71717a);
+  flex-shrink: 0;
+}
+
+view-dispositions .j-verdict.action {
+  color: var(--foreground, #d4d4d8);
+  font-weight: 600;
+}
+
+/* 唯一的警示色：需行动条目的琥珀点 */
+view-dispositions .j-verdict.action::before {
+  content: "●";
+  color: var(--warning, #f59e0b);
+  margin-right: 5px;
+  font-size: 10px;
+}
+
+view-dispositions .j-device {
+  font-size: 13px;
+  color: #a1a1aa;
+}
+
+view-dispositions .j-time {
+  font-size: 12px;
+  color: var(--muted-foreground, #52525b);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+view-dispositions .j-reason {
+  font-size: 13px;
+  color: #8b8b93;
+  margin-top: 3px;
+  line-height: 1.55;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+view-dispositions .j-item.needs-you .j-reason {
+  color: #c9c9cf;
+  white-space: normal;
+}
+
+view-dispositions .j-actions {
+  margin-top: var(--space-2);
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+view-dispositions .j-btn {
+  font-size: 12.5px;
+  padding: 5px 14px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border, #2a2f38);
+  background: none;
+  color: var(--foreground, #d4d4d8);
+  cursor: pointer;
+  transition: all var(--duration-fast, 120ms) var(--ease-in-out);
+}
+
+view-dispositions .j-btn:hover {
+  border-color: var(--muted-foreground, #71717a);
+}
+
+view-dispositions .j-btn.primary {
+  background: var(--foreground, #e4e4e7);
+  color: var(--background, #111);
+  border: none;
+  font-weight: 500;
+}
+
+view-dispositions .j-btn.text {
+  border: none;
+  color: var(--muted-foreground, #71717a);
+  padding: 5px 6px;
+}
+
+view-dispositions .j-countdown {
+  font-size: 12px;
+  color: var(--muted-foreground, #71717a);
+}
+
+/* ✓✕ 反馈：图标，无文字 */
+view-dispositions .j-fb {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+
+view-dispositions .j-fb button {
+  border: none;
+  background: none;
+  color: var(--muted-foreground, #52525b);
+  font-size: 13px;
+  padding: 3px 7px;
+  cursor: pointer;
+  border-radius: 5px;
+}
+
+view-dispositions .j-fb button:hover {
+  color: var(--foreground, #d4d4d8);
+  background: var(--muted, #1c2129);
+}
+
+view-dispositions .j-fb button.voted {
+  color: #a1a1aa;
+}
+
+/* 点错内联面板 */
+view-dispositions .j-wrong-panel {
+  margin-top: var(--space-2);
+  padding: var(--space-2) 0 4px;
+  border-top: 1px dashed var(--border, #1f232b);
+}
+
+view-dispositions .j-wrong-panel textarea {
+  width: 100%;
+  background: none;
+  border: 1px solid var(--border, #2a2f38);
+  border-radius: var(--radius-sm, 6px);
+  color: var(--foreground, #d4d4d8);
+  padding: var(--space-2);
+  font-size: 12.5px;
+  min-height: 48px;
+  font-family: inherit;
+}
+
+view-dispositions .j-wrong-panel .actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  justify-content: flex-end;
+}
+
+/* 已确认收拢行 */
+view-dispositions .j-done-row {
+  padding: var(--space-2) var(--space-4);
+  font-size: 12px;
+  color: var(--muted-foreground, #3f3f46);
+  background: var(--muted, #11141a);
+  border: 1px solid var(--border, #181c23);
+  border-radius: var(--radius-md, 10px);
+  margin-bottom: 10px;
+}
+
+/* 空态：一句话 */
+view-dispositions .j-empty {
+  text-align: center;
+  padding: 80px var(--space-5);
+}
+
+view-dispositions .j-empty h2 {
+  font-size: 15px;
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+
+view-dispositions .j-empty p {
+  font-size: 12.5px;
+  color: var(--muted-foreground, #71717a);
+}
+
+view-dispositions .j-empty a {
+  color: #a1a1aa;
+  font-size: 12.5px;
+  display: inline-block;
+  margin-top: var(--space-2);
+}
+
+/* 证据展开 */
+view-dispositions .j-evidence {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border, #1f232b);
+  font-size: 12px;
+  color: var(--muted-foreground, #8b8b93);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+view-dispositions .disp-loading,
+view-dispositions .disp-error {
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--muted-foreground, #71717a);
+  font-size: 13px;
+}

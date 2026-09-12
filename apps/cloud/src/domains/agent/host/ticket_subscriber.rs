@@ -23,15 +23,13 @@ use std::time::Duration;
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use tinyiothub_agent::runtime::events::{AgentEvent, AgentEventKind};
 use tinyiothub_core::agent_runs::{ActionResult, Outcome, RunReport};
 use tinyiothub_storage::Db;
-use tinyiothub_storage::ticket::{CreateOutcome, NewTicket};
 
 use crate::domains::event::sse_manager::SseConnectionManager;
-use crate::domains::notify::channels::sse_channel::SseMessage;
 
 /// 周期全量对账间隔（与 persist.rs 对齐）。
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(300);
@@ -133,7 +131,8 @@ pub(crate) fn synthesize_title(report: &RunReport) -> String {
     }
 }
 
-/// 单个 run 的开票路径（事件驱动与对账共用，幂等）。
+/// 单个 run 的开票路径（事件驱动与对账共用，幂等）。T4：创建走 ticket 域
+/// 统一入口 create_escalation（D6），DLQ 兜底留在本路径（run 上下文只有这里有）。
 pub(crate) async fn ticket_for_run(
     db: &Db,
     sse: &SseConnectionManager,
@@ -141,47 +140,22 @@ pub(crate) async fn ticket_for_run(
     problem_key: Option<&str>,
     dedup_key: Option<&str>,
 ) {
-    let new_ticket = NewTicket {
-        workspace_id: report.workspace_id.clone(),
-        thing_id: report.thing_id.clone(),
-        agent_run_id: report.run_id.clone(),
-        title: synthesize_title(report),
-        briefing: build_briefing(report).to_string(),
-        failure_hash: failure_hash(report, problem_key, dedup_key),
-    };
-    match db.create_ticket(&new_ticket).await {
-        Ok(CreateOutcome::Created(id)) => {
-            info!(ticket_id = id, run_id = %report.run_id, workspace_id = %report.workspace_id, "ticket created");
-            // M2-b：建工单对话 session（best-effort，失败不影响开票）。
-            if let Ok(Some(ticket)) = db.get_ticket(&report.workspace_id, id).await {
-                crate::domains::ticket::service::TicketService::ensure_ticket_session(db, &ticket).await;
-            }
-            // T6：SSE 通知（复用 notify 域 workspace 广播；data 带
-            // workspace_id 参与连接侧过滤，文案 = title + 点击查看简报）。
-            let msg = SseMessage::new(
-                "ticket_created".to_string(),
-                serde_json::json!({
-                    "workspace_id": report.workspace_id,
-                    "ticket_id": id,
-                    "title": new_ticket.title,
-                    "url": format!("/tickets/{id}"),
-                    "hint": "点击查看简报",
-                }),
-            );
-            sse.broadcast_message(msg).await;
-        }
-        Ok(CreateOutcome::Duplicate(existing_id)) => {
-            debug!(ticket_id = existing_id, run_id = %report.run_id, "dedup hit — recurrence");
-            if let Err(e) = db.ticket_recurrence(existing_id, &report.run_id).await {
-                error!(ticket_id = existing_id, error = %e, "recurrence append failed");
-                enqueue_dlq(db, report, &format!("recurrence append failed: {e}")).await;
-            }
-        }
-        Err(e) => {
-            // 创建失败必须可见（Success Criteria #5）：error 日志 + DLQ 持久兜底。
-            error!(run_id = %report.run_id, error = %e, "ticket creation failed");
-            enqueue_dlq(db, report, &format!("ticket creation failed: {e}")).await;
-        }
+    let created = crate::domains::ticket::create_escalation(
+        db,
+        sse,
+        crate::domains::ticket::Escalation {
+            workspace_id: report.workspace_id.clone(),
+            thing_id: report.thing_id.clone(),
+            agent_run_id: report.run_id.clone(),
+            title: synthesize_title(report),
+            briefing: build_briefing(report),
+            failure_hash: failure_hash(report, problem_key, dedup_key),
+        },
+    )
+    .await;
+    if created.is_none() {
+        // 创建失败必须可见（Success Criteria #5）：error 日志已在入口内，DLQ 持久兜底。
+        enqueue_dlq(db, report, "ticket creation failed").await;
     }
 }
 
