@@ -938,5 +938,62 @@ pub(crate) mod tests {
             let ev = rx.try_recv().expect("HeartbeatResultReady emitted synchronously");
             assert!(matches!(ev.kind, AgentEventKind::HeartbeatResultReady { .. }));
         }
+
+        // ── T12 回归（T3 报警直达 dispatch 改造）──
+
+        fn alarm_event(severity: &str) -> AiEvent {
+            AiEvent::AlarmCreated(tinyiothub_core::models::event::AlarmEvent {
+                id: "alarm-1".into(),
+                workspace_id: "ws_1".into(),
+                thing_id: "dev-1".into(),
+                alarm_type: "property_threshold".into(),
+                severity: severity.into(),
+                message: "温度超过阈值".into(),
+                rule_id: Some("rule-9".into()),
+                resolved: false,
+                created_at: Utc::now(),
+            })
+        }
+
+        /// T3：报警（全严重级）→ 直达 thing-agent 调查 dispatch，不再唤醒心跳。
+        #[tokio::test]
+        async fn alarm_created_dispatches_investigation_not_heartbeat() {
+            let (bridge, sink) = bridge(RunRegistry::new());
+            let (handler, _events) = make_handler(None, Some(Arc::new(bridge)), false);
+
+            handler.handle_ai_event(&wrap_ai_event(&alarm_event("warning"))).await;
+
+            let signals = sink.signals.lock().unwrap();
+            assert_eq!(signals.len(), 1, "alarm dispatched to thing-agent");
+            let sig = &signals[0];
+            assert_eq!(sig.workspace_id, "ws_1");
+            assert_eq!(sig.priority, Priority::High);
+            match &sig.source {
+                TriggerSource::UserDirective { user_id, source, problem_key, .. } => {
+                    assert_eq!(user_id, "alarm-triage");
+                    assert_eq!(source.as_deref(), Some("alarm"));
+                    // problem_key 按 thing+rule（不是 alarm id——抖动去重的关键）
+                    assert_eq!(problem_key.as_deref(), Some("alarm:dev-1:rule-9"));
+                }
+                other => panic!("expected UserDirective, got {other:?}"),
+            }
+        }
+
+        /// T3 回归：error/critical 同样走 dispatch（不再是唤醒心跳的另一条路）。
+        #[tokio::test]
+        async fn critical_alarm_also_dispatches_investigation() {
+            let (bridge, sink) = bridge(RunRegistry::new());
+            let (handler, _events) = make_handler(None, Some(Arc::new(bridge)), false);
+
+            handler.handle_ai_event(&wrap_ai_event(&alarm_event("critical"))).await;
+            assert_eq!(sink.signals.lock().unwrap().len(), 1);
+        }
+
+        /// T3 回归：无桥时不 panic、不派发。
+        #[tokio::test]
+        async fn alarm_created_without_bridge_is_noop() {
+            let (handler, _events) = make_handler(None, None, false);
+            handler.handle_ai_event(&wrap_ai_event(&alarm_event("error"))).await;
+        }
     }
 }

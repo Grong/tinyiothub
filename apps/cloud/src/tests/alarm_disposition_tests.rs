@@ -143,3 +143,54 @@ async fn over_budget_alarm_gets_budget_skipped_marker() {
     let count = db.count_judgments_today("ws1").await.unwrap();
     assert_eq!(count, 100);
 }
+
+/// T12 E2E（链路组合，真实 DB）：报警 → enter_disposition 建判断 → 调查
+/// RunRecorded → subscriber 路由 → 噪声抑制归档。不经真实 LLM（报告直接构造）。
+#[tokio::test]
+async fn full_chain_alarm_to_noise_archive() {
+    use tinyiothub_agent::runtime::events::{AgentEvent, AgentEventKind};
+    use tinyiothub_core::agent_runs::{Outcome, RunReport};
+
+    let db = test_db().await;
+    let svc = AlarmService::new(db.clone());
+    let alarm = svc.create_alarm(make_alarm(AlarmLevel::Warning)).await.unwrap();
+
+    // 链路第一段：判断已建（investigating）
+    let judgments = db.list_judgments("ws1", None, None, 10).await.unwrap();
+    assert_eq!(judgments.len(), 1);
+    let judgment = &judgments[0];
+    assert_eq!(judgment.alarm_id.as_deref(), Some(alarm.id.as_str()));
+
+    // 链路第二段：调查 run 完成 → subscriber 路由 noise
+    let report = RunReport {
+        run_id: "run-inv-1".to_string(),
+        workspace_id: "ws1".to_string(),
+        trigger: "alarm".to_string(),
+        outcome: Outcome::NoActionNeeded,
+        summary: "查过了。\n```json\n{\"verdict\": \"noise\", \"reason\": \"短暂波动已自行回落\", \"suggested_action\": null, \"action_category\": \"other\"}\n```".to_string(),
+        actions: vec![],
+        verified: false,
+        duration_ms: 1000,
+        tool_calls: 2,
+        tokens: 100,
+        end_reason: None,
+        thing_id: Some("t1".to_string()),
+    };
+    let event = AgentEvent {
+        seq: 1,
+        occurred_at: chrono::Utc::now(),
+        kind: AgentEventKind::RunRecorded {
+            report: Box::new(report),
+            problem_key: Some("alarm:t1:-".to_string()),
+            dedup_key: None,
+        },
+    };
+    let sse = crate::domains::event::sse_manager::SseConnectionManager::new();
+    crate::domains::agent::host::judgment_subscriber::project(&event, &db, &sse, &svc).await;
+
+    // 终态：判断归档 + 报警被抑制
+    let j = db.find_judgment_by_id(&judgment.id, "ws1").await.unwrap().unwrap();
+    assert_eq!(j.status, JudgmentStatus::NoiseArchived);
+    let a = db.find_alarm_by_id(&alarm.id, Some("ws1")).await.unwrap().unwrap();
+    assert_eq!(a.status, tinyiothub_storage::alarm::AlarmStatus::Suppressed);
+}
