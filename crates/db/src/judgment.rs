@@ -290,6 +290,16 @@ pub(crate) async fn set_judgment_run_id(pool: &SqlitePool, id: &str, run_id: &st
     Ok(())
 }
 
+/// Critical/Error 直达工单后把 judgment 关联上（上下文补充在调查完成后进行）。
+pub(crate) async fn link_judgment_ticket(pool: &SqlitePool, id: &str, ticket_id: i64) -> Result<()> {
+    sqlx::query("UPDATE judgments SET ticket_id = ? WHERE id = ? AND ticket_id IS NULL")
+        .bind(ticket_id)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// feed 页查询：workspace 隔离 + 可选 status/verdict 筛选 + 游标分页（created_at DESC + id 稳定序）。
 pub(crate) async fn list_judgments(
     pool: &SqlitePool,
@@ -332,6 +342,29 @@ pub(crate) async fn stale_awaiting_approvals(pool: &SqlitePool, cutoff: &str) ->
     .fetch_all(pool)
     .await?;
     rows.into_iter().map(row_to_judgment).collect()
+}
+
+/// flapping 源头防抖 + subscriber 找回判断：同 thing+rule 的未终态判断。
+///（problem_key=alarm:{thing_id}:{rule_id} 的数据层对应物；按 alarm_id 键控
+/// 对抖动永不命中——eng-review 外部视角修正。）
+pub(crate) async fn find_open_judgment_by_thing_rule(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    thing_id: &str,
+    rule_id: Option<&str>,
+) -> Result<Option<Judgment>> {
+    let row = sqlx::query(
+        "SELECT j.* FROM judgments j JOIN thing_alarms a ON j.alarm_id = a.id
+         WHERE j.workspace_id = ? AND a.thing_id = ? AND COALESCE(a.rule_id, '') = COALESCE(?, '')
+           AND j.status IN ('investigating','awaiting_approval','executing')
+         ORDER BY j.created_at DESC LIMIT 1",
+    )
+    .bind(workspace_id)
+    .bind(thing_id)
+    .bind(rule_id)
+    .fetch_optional(pool)
+    .await?;
+    row.map(row_to_judgment).transpose()
 }
 
 /// T8 预算：今日已发起判断数（含进行中，按自然日 UTC）。
@@ -498,6 +531,10 @@ impl Db {
         set_judgment_run_id(self.pool(), id, run_id).await
     }
 
+    pub async fn link_judgment_ticket(&self, id: &str, ticket_id: i64) -> Result<()> {
+        link_judgment_ticket(self.pool(), id, ticket_id).await
+    }
+
     pub async fn list_judgments(
         &self,
         workspace_id: &str,
@@ -510,6 +547,15 @@ impl Db {
 
     pub async fn stale_awaiting_approvals(&self, cutoff: &str) -> Result<Vec<Judgment>> {
         stale_awaiting_approvals(self.pool(), cutoff).await
+    }
+
+    pub async fn find_open_judgment_by_thing_rule(
+        &self,
+        workspace_id: &str,
+        thing_id: &str,
+        rule_id: Option<&str>,
+    ) -> Result<Option<Judgment>> {
+        find_open_judgment_by_thing_rule(self.pool(), workspace_id, thing_id, rule_id).await
     }
 
     pub async fn count_judgments_today(&self, workspace_id: &str) -> Result<i64> {

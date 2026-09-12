@@ -13,6 +13,14 @@ pub use tinyiothub_core::heartbeat::*;
 pub struct WorkspaceHeartbeatConfig {
     pub enabled: bool,
     pub interval_minutes: u32,
+    /// T7 kill switch：AI 报警分诊开关。默认开（产品方向）；关闭时报警走
+    /// 原人工路径（Active 等人处理，无调查无自动流转）。旧行无此字段 → 默认开。
+    #[serde(default = "default_ai_triage_enabled")]
+    pub ai_triage_enabled: bool,
+}
+
+fn default_ai_triage_enabled() -> bool {
+    true
 }
 
 impl WorkspaceHeartbeatConfig {
@@ -26,6 +34,7 @@ impl WorkspaceHeartbeatConfig {
         Ok(Self {
             enabled,
             interval_minutes,
+            ai_triage_enabled: true,
         })
     }
 
@@ -609,6 +618,7 @@ mod tests {
         let cfg = WorkspaceHeartbeatConfig {
             enabled: true,
             interval_minutes: 30,
+            ai_triage_enabled: true,
         };
         let json = cfg.to_db_json();
         let loaded = WorkspaceHeartbeatConfig::from_db_json(Some(&json)).expect("parse");
@@ -850,6 +860,7 @@ mod tests {
         let cfg = crate::heartbeat::WorkspaceHeartbeatConfig {
             enabled: true,
             interval_minutes: 30,
+            ai_triage_enabled: true,
         };
         db.save_heartbeat_config("ws_c", &cfg).await.expect("save");
         let loaded = db

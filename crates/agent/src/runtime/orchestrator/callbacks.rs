@@ -19,7 +19,7 @@ use tracing::{debug, info, warn};
 use crate::runtime::event::types::AiEvent;
 use crate::runtime::events::{AgentEventBus, AgentEventKind};
 use crate::runtime::heartbeat::runner::HeartbeatRunner;
-use crate::runtime::heartbeat::types::{HeartbeatResult, SignalPriority};
+use crate::runtime::heartbeat::types::HeartbeatResult;
 use crate::runtime::thing_agent::manager::ThingAgentManager;
 use crate::runtime::thing_agent::registry::RunRegistry;
 use crate::runtime::thing_agent::traits::DirectiveSink;
@@ -95,6 +95,45 @@ impl HeartbeatBridge {
         }
     }
 
+    /// T3：报警触发的调查 dispatch（AlarmCreated → thing-agent 直达，D3 裁决）。
+    /// problem_key = alarm:{thing_id}:{rule_id}（按 alarm id 键控对抖动永不命中，
+    /// 必须按 thing+rule——eng-review 外部视角修正）。O11 dedup 复用
+    /// should_dispatch，兼作 run 级防抖。
+    pub async fn dispatch_alarm_investigation(&self, alarm: &tinyiothub_core::models::event::AlarmEvent) {
+        let problem_key = format!("alarm:{}:{}", alarm.thing_id, alarm.rule_id.as_deref().unwrap_or("-"));
+        if !self.should_dispatch(&alarm.workspace_id, &problem_key) {
+            debug!(
+                workspace_id = %alarm.workspace_id,
+                problem_key, "alarm investigation suppressed by O11 dedup"
+            );
+            return;
+        }
+        let signal = WakeSignal {
+            workspace_id: alarm.workspace_id.clone(),
+            // 报警调查比例行巡检紧急：High 优先级（critical 报警由调用方
+            // AlarmService 先直达工单，这里所有调查同优先级即可）。
+            priority: Priority::High,
+            source: TriggerSource::UserDirective {
+                user_id: "alarm-triage".to_string(),
+                text: alarm_investigation_text(alarm),
+                session_key: None,
+                source: Some("alarm".to_string()),
+                problem_key: Some(problem_key.clone()),
+            },
+            dedup_key: None,
+        };
+        match self.sink.enqueue(signal) {
+            Ok(()) => info!(
+                workspace_id = %alarm.workspace_id,
+                problem_key, "alarm investigation dispatched to thing-agent loop"
+            ),
+            Err(e) => warn!(
+                workspace_id = %alarm.workspace_id,
+                problem_key, error = %e, "alarm investigation not admitted (queue full/throttled)"
+            ),
+        }
+    }
+
     /// O11 dedup（6h 窗口 + 窗口内计数 + 全 outcome 覆盖 + ack 抑制 7 天）：
     /// - 7d 窗口最近一次 Run 已 ack → 跳过（6h 窗口非空时 last(7d)==last(6h)， 6h 内 acked
     ///   由本分支覆盖；6h 空而 7d 内有 acked = 复发在 ack 抑制期内）
@@ -151,6 +190,19 @@ fn heartbeat_directive(workspace_id: &str, problem_key: String, proposal: &Propo
         },
         dedup_key: None,
     }
+}
+
+/// T3：报警调查指令。要求 agent 调查后给出结构化判断（judgment subscriber
+/// 解析 summary 尾部的 ```json verdict 块；解析失败按 outcome 兜底）。
+fn alarm_investigation_text(alarm: &tinyiothub_core::models::event::AlarmEvent) -> String {
+    format!(
+        "调查报警并给出处置判断。报警：{}（设备 {}，类型 {}，级别 {}）。\
+         请查询设备状态与近期事件后判断：noise（正常波动/无需处理）/ \
+         self_healable（可自愈，给出建议动作）/ needs_human（需要人工介入）。\
+         结束前输出一行结构化结论：```json {{\"verdict\": \"...\", \"reason\": \"一句人话理由\", \
+         \"suggested_action\": \"建议动作或 null\", \"action_category\": \"device_reboot|connection_recovery|property_adjust|threshold_tuning|other\"}}```",
+        alarm.message, alarm.thing_id, alarm.alarm_type, alarm.severity
+    )
 }
 
 /// Cross-domain callback handler.
@@ -223,22 +275,11 @@ impl AiEventHandler {
 
         match &ai_event {
             AiEvent::AlarmCreated(alarm) => {
-                let severity = alarm.severity.to_lowercase();
-                if severity == "critical" || severity == "error" {
-                    self.heartbeat_runner
-                        .signal(crate::runtime::heartbeat::types::HeartbeatSignal {
-                            workspace_id: alarm.workspace_id.clone(),
-                            reason: format!("Alarm: {}", alarm.message),
-                            context: format!("thing_id={}, alarm_type={}", alarm.thing_id, alarm.alarm_type),
-                            priority: if severity == "critical" {
-                                SignalPriority::Critical
-                            } else {
-                                SignalPriority::High
-                            },
-                            thing_id: Some(alarm.thing_id.clone()),
-                            alarm_type: Some(alarm.alarm_type.clone()),
-                            rule_id: alarm.rule_id.clone(),
-                        });
+                // T3（D3 裁决）：报警不再唤醒心跳，直达 thing-agent 调查 dispatch。
+                // 心跳保持主动巡检定位，报警是被动响应——两者不抢同一条串行队列。
+                // O11 dedup（6h 窗口 + ack 抑制）在 bridge 内生效，兼作 flapping 防抖。
+                if let Some(bridge) = &self.heartbeat_bridge {
+                    bridge.dispatch_alarm_investigation(alarm).await;
                 }
             }
             AiEvent::HeartbeatCompleted { workspace_id, result } => {

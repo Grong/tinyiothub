@@ -21,6 +21,9 @@ pub struct AlarmService {
     rule_engine: Arc<RuleEngine>,
     event_publisher: Mutex<Option<Arc<crate::shared::ai_adapter::AlarmAiPublisherAdapter>>>,
     device_cache: std::sync::OnceLock<Arc<ThingCache>>,
+    /// T4：alarm → ticket 单向端口（Critical/Error 直达工单）。未注入时直达
+    /// 路径降级为只建 judgment（仍走 AI 分诊）。
+    escalation: Mutex<Option<Arc<dyn crate::domains::ticket::AlarmEscalation>>>,
 }
 
 impl AlarmService {
@@ -31,6 +34,7 @@ impl AlarmService {
             rule_engine,
             event_publisher: Mutex::new(None),
             device_cache: std::sync::OnceLock::new(),
+            escalation: Mutex::new(None),
         }
     }
 
@@ -38,12 +42,16 @@ impl AlarmService {
         *self.event_publisher.lock().unwrap() = Some(publisher);
     }
 
+    pub fn set_escalation(&self, escalation: Arc<dyn crate::domains::ticket::AlarmEscalation>) {
+        *self.escalation.lock().unwrap() = Some(escalation);
+    }
+
     pub fn set_device_cache(&self, dc: Arc<ThingCache>) {
         let _ = self.device_cache.set(dc);
     }
 
-    /// Publish an AiEvent when a significant alarm occurs
-    fn wake_heartbeat(&self, alarm: &Alarm) {
+    /// 发布 AlarmCreated 到 AI 总线（investigation dispatch 的触发信号）。
+    fn publish_alarm_created(&self, alarm: &Alarm) {
         let severity = match alarm.alarm_level {
             AlarmLevel::Critical => "critical",
             AlarmLevel::Error => "error",
@@ -66,9 +74,91 @@ impl AlarmService {
         }
     }
 
+    /// T3/T7：报警进入 AI 处置流（取代原 wake_heartbeat 的心跳唤醒）。
+    ///
+    /// 分级出口（D8 严重级切分）：
+    ///   Critical/Error → 直达工单（escalation 端口）+ judgment 链接 + 并行 AI 调查
+    ///   Warning/Info   → judgment（investigating）+ AI 分诊调查
+    /// flapping 源头防抖：同 thing+rule 已有未终态判断 → 跳过（eng-review 修正：
+    /// 按 alarm_id 键控对抖动永不命中，须按 thing+rule）。
+    /// kill switch（D9）：workspace heartbeat_config.ai_triage_enabled=false 时
+    /// 报警保持 Active 走原人工路径。
+    async fn enter_disposition(&self, alarm: &Alarm) {
+        let Some(workspace_id) = alarm.workspace_id.clone() else {
+            return;
+        };
+
+        // kill switch（读取失败默认开——新功能默认启用，开关是退出舱门）
+        match self.db.load_heartbeat_config(&workspace_id).await {
+            Ok(Some(config)) if !config.ai_triage_enabled => {
+                tracing::info!(workspace_id, alarm_id = %alarm.id, "AI triage disabled by kill switch, alarm stays on manual path");
+                return;
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(workspace_id, error = %e, "read heartbeat config failed, defaulting to AI triage on"),
+        }
+
+        // flapping 源头防抖
+        match self
+            .db
+            .find_open_judgment_by_thing_rule(&workspace_id, &alarm.thing_id, alarm.rule_id.as_deref())
+            .await
+        {
+            Ok(Some(existing)) => {
+                tracing::debug!(
+                    alarm_id = %alarm.id,
+                    judgment_id = %existing.id,
+                    "open judgment exists for thing+rule, skipping duplicate investigation"
+                );
+                return;
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(alarm_id = %alarm.id, error = %e, "judgment dedup check failed, proceeding");
+            }
+        }
+
+        let is_severe = matches!(alarm.alarm_level, AlarmLevel::Critical | AlarmLevel::Error);
+        let ticket_id = if is_severe {
+            let sink = self.escalation.lock().unwrap().clone();
+            match sink {
+                Some(s) => s.escalate_alarm(alarm).await,
+                None => {
+                    tracing::warn!(alarm_id = %alarm.id, "no escalation sink wired, severe alarm goes to AI triage only");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        match self
+            .db
+            .insert_judgment(&workspace_id, Some(&alarm.id), None, Some(&alarm.thing_id))
+            .await
+        {
+            Ok(judgment_id) => {
+                // Critical/Error：judgment 立即关联工单（escalated 语义在 subscriber
+                // 调查完成后补充上下文；这里先把 ticket 链接上）
+                if let Some(tid) = ticket_id
+                    && let Err(e) = self
+                        .db
+                        .link_judgment_ticket(&judgment_id, tid)
+                        .await
+                {
+                    tracing::warn!(judgment_id, ticket_id = tid, error = %e, "link judgment ticket failed");
+                }
+            }
+            Err(e) => tracing::error!(alarm_id = %alarm.id, error = %e, "insert judgment failed"),
+        }
+
+        // 发布给 AI 总线 → callbacks 直达 thing-agent dispatch（调查）
+        self.publish_alarm_created(alarm);
+    }
+
     pub async fn create_alarm(&self, alarm: Alarm) -> AlarmResult<Alarm> {
         self.db.insert_alarm(&alarm).await?;
-        self.wake_heartbeat(&alarm);
+        self.enter_disposition(&alarm).await;
         Ok(alarm)
     }
 
