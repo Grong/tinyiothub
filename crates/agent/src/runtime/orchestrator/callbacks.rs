@@ -194,7 +194,8 @@ fn heartbeat_directive(workspace_id: &str, problem_key: String, proposal: &Propo
 
 /// T3：报警调查指令。要求 agent 调查后给出结构化判断（judgment subscriber
 /// 解析 summary 尾部的 ```json verdict 块；解析失败按 outcome 兜底）。
-fn alarm_investigation_text(alarm: &tinyiothub_core::models::event::AlarmEvent) -> String {
+/// pub：eval 套件（judgment_eval_tests）用同一模板保证 prompt  parity。
+pub fn alarm_investigation_text(alarm: &tinyiothub_core::models::event::AlarmEvent) -> String {
     format!(
         "调查报警并给出处置判断。报警：{}（设备 {}，类型 {}，级别 {}）。\
          请查询设备状态与近期事件后判断：noise（正常波动/无需处理）/ \

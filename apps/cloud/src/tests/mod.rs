@@ -24,6 +24,7 @@ mod heartbeat_bridge_tests;
 mod import_scene_test;
 mod invoke_action_flow_tests;
 mod jobs_handler_tests;
+mod judgment_eval_tests;
 mod judgment_handler_tests;
 mod marketplace_handler_tests;
 mod mcp_handler_tests;
