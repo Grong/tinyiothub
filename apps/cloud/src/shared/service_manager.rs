@@ -215,6 +215,9 @@ impl ServiceManager {
             // 工单订阅者（T5）：与 persist 同一 bus，restore 前取 receiver。
             let ticket_rx = agent_events.subscribe();
             let agent_events_ticket = agent_events.clone();
+            // T5 judgment 订阅者：同一 bus，同样 restore 前取 receiver。
+            let judgment_rx = agent_events.subscribe();
+            let agent_events_judgment = agent_events.clone();
             // CEO review T1：监管循环重启订阅时需要 bus 句柄（deps 收走所有权前克隆）。
             let agent_events_supervisor = agent_events.clone();
             let pool = app_state.db.pool().clone();
@@ -311,6 +314,31 @@ impl ServiceManager {
                 });
                 self.service_handles.write().await.push(handle);
                 info!("✅ Ticket subscriber started (supervised)");
+            }
+
+            // T5 judgment 订阅者：报警调查 run（problem_key="alarm:…"）→
+            // judgments 投影 + 三出口路由（噪声抑制/待审批/转工单）。
+            {
+                let judgment_shutdown = tokio_util::sync::CancellationToken::new();
+                let db = app_state.db.clone();
+                let sse = app_state.sse_manager.clone();
+                let alarm_service = app_state.alarm_service.clone();
+                let bus = agent_events_judgment.clone();
+                let token = judgment_shutdown.clone();
+                let handle = tokio::spawn(async move {
+                    crate::domains::agent::host::judgment_subscriber::supervise_judgment_subscriber(
+                        judgment_rx,
+                        move || bus.subscribe(),
+                        db,
+                        sse,
+                        alarm_service,
+                        token,
+                    )
+                    .await;
+                    Ok(())
+                });
+                self.service_handles.write().await.push(handle);
+                info!("✅ Judgment subscriber started (supervised)");
             }
 
             let heartbeat_runner = runtime.heartbeat_runner().clone();

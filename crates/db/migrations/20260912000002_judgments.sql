@@ -17,7 +17,9 @@ CREATE TABLE judgments (
     id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
     alarm_id TEXT REFERENCES thing_alarms(id),
-    run_id TEXT REFERENCES agent_runs(id),      -- 调查 run，run 完成前可 NULL
+    -- 无 FK：RunRecorded 广播到多个订阅者，judgment 订阅者回填 run_id 时
+    -- agent_runs 行可能尚未由 persist 订阅者落库（并发序不保证）。
+    run_id TEXT,
     ticket_id INTEGER REFERENCES tickets(id),   -- escalated 时的工单
     proposal_id TEXT,                           -- awaiting_approval 时的审批提案
     thing_id TEXT,

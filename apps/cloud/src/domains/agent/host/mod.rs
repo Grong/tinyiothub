@@ -34,6 +34,7 @@ pub mod scaffold;
 pub mod thing_action_hooks;
 pub mod thing_agent_host;
 pub mod ticket_subscriber;
+pub mod judgment_subscriber;
 
 #[cfg(test)]
 pub(crate) mod test_utils;
