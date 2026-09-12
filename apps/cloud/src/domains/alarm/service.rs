@@ -130,6 +130,27 @@ impl AlarmService {
         Ok(())
     }
 
+    /// 抑制报警（AI 判噪声的终态；仅 Active → Suppressed）。
+    /// 无人工 actor——suppress 的调用方是 judgment subscriber（T5）。
+    pub async fn suppress_alarm(&self, alarm_id: &str, workspace_id: &str) -> AlarmResult<()> {
+        let mut alarm = self
+            .db
+            .find_alarm_by_id(alarm_id, Some(workspace_id))
+            .await?
+            .ok_or_else(|| AlarmError::NotFound(alarm_id.to_string()))?;
+
+        if alarm.status != AlarmStatus::Active {
+            return Err(AlarmError::InvalidStatusTransition {
+                from: alarm.status.as_str().to_string(),
+                to: AlarmStatus::Suppressed.as_str().to_string(),
+            });
+        }
+
+        alarm.suppress()?;
+        self.db.update_alarm(&alarm).await?;
+        Ok(())
+    }
+
     pub async fn batch_acknowledge(
         &self,
         alarm_ids: Vec<String>,
@@ -2073,7 +2094,7 @@ mod integration_tests {
             acknowledged_by TEXT, acknowledged_at TEXT, acknowledged_note TEXT,
             is_resolved BOOLEAN NOT NULL DEFAULT false,
             resolved_by TEXT, resolved_at TEXT, resolved_note TEXT,
-            resolution_type TEXT, workspace_id TEXT,
+            resolution_type TEXT, is_suppressed BOOLEAN NOT NULL DEFAULT false, workspace_id TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             FOREIGN KEY (thing_id) REFERENCES things(id) ON DELETE CASCADE,
             FOREIGN KEY (property_id) REFERENCES thing_properties(id) ON DELETE SET NULL,
