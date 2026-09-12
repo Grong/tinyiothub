@@ -15,7 +15,7 @@ use serde_json::Value;
 pub use tinyiothub_core::cron::{ExecutionResult, ExecutorError, JobExecutor};
 use tinyiothub_core::models::cron_job::CronJob;
 
-use crate::ports::{EventRetentionStore, ThingCommandQueries};
+use crate::ports::{ApprovalTimeoutStore, EventRetentionStore, ThingCommandQueries};
 
 /// Executes device commands via DataServer.
 pub struct ThingCommandExecutor {
@@ -130,6 +130,57 @@ impl JobExecutor for EventRetentionExecutor {
             output: Some(format!(
                 "deleted {} occurrence-type events older than {} days",
                 deleted, retention_days
+            )),
+            error_message: None,
+            duration_ms,
+        })
+    }
+}
+
+/// T6：审批超时升级（approval_timeout）——awaiting_approval 超过
+/// `timeout_hours`（默认 24）的判断自动升级为工单。防"审批堆积"（创始人
+/// 批评的"工单永远不关闭"问题的审批版变体）。
+pub struct ApprovalTimeoutExecutor {
+    store: Arc<dyn ApprovalTimeoutStore>,
+}
+
+impl ApprovalTimeoutExecutor {
+    pub fn new(store: Arc<dyn ApprovalTimeoutStore>) -> Self {
+        Self { store }
+    }
+}
+
+#[async_trait]
+impl JobExecutor for ApprovalTimeoutExecutor {
+    fn can_handle(&self, job_type: &str) -> bool {
+        job_type == "approval_timeout"
+    }
+
+    async fn execute(&self, job: &CronJob, _run_id: &str) -> std::result::Result<ExecutionResult, ExecutorError> {
+        let start = Instant::now();
+
+        let config: Value =
+            serde_json::from_str(&job.config).map_err(|e| ExecutorError::InvalidConfig(e.to_string()))?;
+        let timeout_hours = config
+            .get("timeout_hours")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(24)
+            .max(1);
+        let cutoff = chrono::Utc::now() - chrono::Duration::hours(timeout_hours);
+
+        let escalated = self
+            .store
+            .escalate_stale_approvals(&cutoff.to_rfc3339())
+            .await
+            .map_err(|e| ExecutorError::CommandFailed(format!("approval timeout escalation failed: {}", e)))?;
+        let duration_ms = start.elapsed().as_millis() as i64;
+        tracing::info!(escalated, timeout_hours, "approval timeout sweep complete");
+
+        Ok(ExecutionResult {
+            status: "success".to_string(),
+            output: Some(format!(
+                "escalated {} judgments pending approval longer than {}h",
+                escalated, timeout_hours
             )),
             error_message: None,
             duration_ms,

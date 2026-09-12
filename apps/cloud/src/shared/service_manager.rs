@@ -133,6 +133,13 @@ impl ServiceManager {
             registry.register(Box::new(tinyiothub_runtime::EventRetentionExecutor::new(Arc::new(
                 crate::shared::runtime_ports::EventRetentionAdapter((*app_state.db).clone()),
             ))));
+            // T6：审批超时升级（24h 未响应的判断自动转工单）
+            registry.register(Box::new(tinyiothub_runtime::ApprovalTimeoutExecutor::new(Arc::new(
+                crate::shared::runtime_ports::ApprovalTimeoutAdapter {
+                    db: (*app_state.db).clone(),
+                    sse: app_state.sse_manager.clone(),
+                },
+            ))));
             let cron_scheduler = tinyiothub_scheduler::CronSchedulerService::new(app_state.db.clone(), registry);
             let cron_handle = cron_scheduler.start();
             self.service_handles.write().await.push(cron_handle);
