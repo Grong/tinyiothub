@@ -43,7 +43,7 @@ fn parse_alarm_key(problem_key: &str) -> Option<(&str, Option<&str>)> {
 
 /// 结构化判断载荷（调查指令约定的 ```json 块）。
 #[derive(Debug, serde::Deserialize)]
-struct VerdictPayload {
+pub(crate) struct VerdictPayload {
     verdict: String,
     reason: String,
     suggested_action: Option<String>,
@@ -57,19 +57,19 @@ pub(crate) fn parse_verdict(summary: &str) -> Option<VerdictPayload> {
     // 严格路径：```json ... ``` 围栏块
     if let Some(start) = summary.rfind("```json") {
         let block = &summary[start + 7..];
-        if let Some(end) = block.find("```") {
-            if let Ok(v) = serde_json::from_str::<VerdictPayload>(block[..end].trim()) {
-                return Some(v);
-            }
+        if let Some(end) = block.find("```")
+            && let Ok(v) = serde_json::from_str::<VerdictPayload>(block[..end].trim())
+        {
+            return Some(v);
         }
     }
     // 宽松路径：最后一个含 "verdict" 的 JSON 对象
     if let Some(start) = summary.rfind('{') {
         let candidate = &summary[start..];
-        if candidate.contains("\"verdict\"") {
-            if let Ok(v) = serde_json::from_str::<VerdictPayload>(candidate.trim()) {
-                return Some(v);
-            }
+        if candidate.contains("\"verdict\"")
+            && let Ok(v) = serde_json::from_str::<VerdictPayload>(candidate.trim())
+        {
+            return Some(v);
         }
     }
     None

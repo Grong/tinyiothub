@@ -68,7 +68,7 @@ async fn warning_alarm_creates_investigating_judgment() {
     let judgments = db.list_judgments("ws1", None, None, 10).await.unwrap();
     assert_eq!(judgments.len(), 1);
     assert_eq!(judgments[0].status, JudgmentStatus::Investigating);
-    assert_eq!(judgments[0].alarm_id.is_some(), true);
+    assert!(judgments[0].alarm_id.is_some());
 }
 
 /// T3：flapping 防抖——同 thing+rule 已有未终态判断时，新报警不再发起调查。

@@ -73,7 +73,7 @@ async fn list_judgments_returns_seeded() {
 #[tokio::test]
 async fn list_judgments_workspace_isolated() {
     let (app_state, pool) = setup_test_app_with_pool().await;
-    seed_test_workspace(&pool, "tenant-a", "ws-a");
+    seed_test_workspace(&pool, "tenant-a", "ws-a").await;
     seed_test_workspace(&pool, "tenant-b", "ws-b").await;
     seed_test_workspace(&pool, "tenant-a", "ws-a").await;
     let _jid = seed_judgment(&app_state, "ws-a", None).await;
