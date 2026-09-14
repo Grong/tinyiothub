@@ -63,6 +63,8 @@ pub struct JudgmentSummaryDto {
     pub feedback_wrong: u64,
     pub latency_p50_secs: Option<f64>,
     pub latency_p90_secs: Option<f64>,
+    /// 审批超时小时数（cron sys-approval-timeout 配置；F11 倒计时同源）
+    pub approval_timeout_hours: i64,
     pub feedback_by_category: std::collections::HashMap<String, CategoryFeedbackDto>,
 }
 

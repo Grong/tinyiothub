@@ -55,5 +55,5 @@ CREATE INDEX judgments_alarm ON judgments(alarm_id);
 -- 同一报警同时最多一个未终态判断（去重窗口之外的保险）
 CREATE UNIQUE INDEX judgments_active_alarm ON judgments(alarm_id)
     WHERE status IN ('investigating','awaiting_approval','executing');
--- 三态 SLA 清扫器：status + judged_at 全表过滤（E1/4A）
-CREATE INDEX judgments_open_sla ON judgments(status, judged_at);
+-- 三态 SLA 清扫器：status + state_entered_at 全表过滤（E1/4A）
+CREATE INDEX judgments_open_sla ON judgments(status, state_entered_at);

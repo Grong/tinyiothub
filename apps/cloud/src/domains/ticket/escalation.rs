@@ -63,7 +63,10 @@ pub async fn create_escalation(db: &Db, sse: &SseConnectionManager, esc: Escalat
         Ok(CreateOutcome::Duplicate(existing_id)) => {
             debug!(ticket_id = existing_id, "escalation dedup hit — recurrence");
             if let Err(e) = db.ticket_recurrence(existing_id, &esc.agent_run_id).await {
+                // F2（对抗审查）：recurrence 追加失败视同创建失败返回 None——
+                // ticket_subscriber 的 DLQ 兜底路径据此恢复覆盖（回归修复）。
                 error!(ticket_id = existing_id, error = %e, "recurrence append failed");
+                return None;
             }
             Some(existing_id)
         }
@@ -97,7 +100,12 @@ impl AlarmEscalationAdapter {
 #[async_trait::async_trait]
 impl AlarmEscalation for AlarmEscalationAdapter {
     async fn escalate_alarm(&self, alarm: &tinyiothub_storage::alarm::Alarm) -> Option<i64> {
-        let workspace_id = alarm.workspace_id.clone().unwrap_or_else(|| alarm.thing_id.clone());
+        // F7（对抗审查）：workspace 缺失时绝不用 thing_id 冒充（会在错误的
+        // "工作区"里开票，破坏隔离语义）——响亮失败。
+        let Some(workspace_id) = alarm.workspace_id.clone() else {
+            error!(alarm_id = %alarm.id, "escalate_alarm without workspace_id — refusing to escalate");
+            return None;
+        };
         let rule_part = alarm.rule_id.as_deref().unwrap_or("-");
         create_escalation(
             &self.db,

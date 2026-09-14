@@ -56,6 +56,8 @@ export interface JudgmentSummary {
   latencyP90Secs: number | null;
   /** E5：按动作类别的最新反馈对错数（P1 转正决策度量） */
   feedbackByCategory: Record<string, { right: number; wrong: number }>;
+  /** F11：审批超时小时数（后端 cron 配置下发，倒计时同源） */
+  approvalTimeoutHours: number;
 }
 
 export type JudgmentTab = 'needs_you' | 'investigating' | 'resolved' | 'noise' | 'all';

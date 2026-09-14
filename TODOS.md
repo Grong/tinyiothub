@@ -592,3 +592,19 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 - **What:** （2026-09-14 CEO 评审用户裁定暂缓，记录备查）解析失败先重试一次调查再落 investigation_failed。当前：宽松 fallback（带 parse_fallback 标记）+ 失败转工单。
 - **Why:** eng-review 修订 8 原裁决是重试+fallback 双保险；fallback 标记上线后若统计显示漂移率高再补。
 - **Effort:** S | **Depends on:** parse_fallback 统计（E22 落地后可见）
+
+### P2 — thing+rule 级速率闸（flapping 规则烧预算）
+- **What:** 每条 thing+rule 的调查速率闸（如每小时最多 N 次调查）：annotate 模式下报警保持 Active，规则立即再触发即再调查——flapping 规则可 100 分钟耗尽全天 100 条预算，随后全 workspace fail-closed 回人工。
+- **Why:** 对抗审查 I1（2026-09-14 /ship）。预算闸是 workspace 级总量，缺单规则级限流。
+- **Context:** `apps/cloud/src/domains/alarm/service.rs` enter_disposition 第 4 步防抖只对 investigating；判完后同规则再触发即新调查。
+- **Effort:** S | **Depends on:** 影子期观察真实 flapping 频率
+
+### P3 — subscriber Lagged 指标化
+- **What:** judgment subscriber 的 broadcast Lagged（丢 RunRecorded）计成指标/事件。当前只 warn 日志；丢的是已完成调查的 verdict（30min 后判断被误标 dispatch_suppressed）。
+- **Why:** 对抗审查 I2：工作丢失+终态标签误导，至少有观测面。
+- **Effort:** S | **Depends on:** —
+
+### P3 — 回滚重批的物理副作用非幂等记录
+- **What:** exec 回滚后重批，若 dedup_key 窗口过期，物理动作（如重启设备）可能执行第二次。记录该风险；长期方案是 exec run 幂等键穿透到设备层。
+- **Why:** 对抗审查 I3：每次都是人批准的，但物理副作用非幂等。
+- **Effort:** S（记录）/ M（设备层幂等） | **Depends on:** —

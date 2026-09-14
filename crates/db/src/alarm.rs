@@ -575,7 +575,9 @@ pub(crate) async fn update_alarm(pool: &SqlitePool, alarm: &Alarm) -> Result<()>
                 resolved_note = ?,
                 resolution_type = ?,
                 is_suppressed = ?
-            WHERE id = ?
+            WHERE id = ? AND is_resolved = 0
+            -- 防丢失更新（对抗审查 F1）：已解决报警的 resolution 永不被
+            -- 陈旧的 read-modify-write（suppress/unsuppress 路径）覆盖。
         "#;
 
     sqlx::query(query)

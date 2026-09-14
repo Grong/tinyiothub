@@ -78,11 +78,10 @@ export function fmtJudgmentTime(iso: string, now = Date.now()): string {
 }
 
 /** 审批倒计时文案（F6，导出供测试）：非待审批/无 judgedAt → null。 */
-export function approvalCountdown(j: Judgment, now = Date.now()): string | null {
+export function approvalCountdown(j: Judgment, now = Date.now(), timeoutHours = 24): string | null {
   if (j.status !== "awaiting_approval" || !j.judgedAt) return null;
-  // 24h 与后端 cron approval_timeout 的 timeout_hours 默认一致；
-  // 后端可配（system.sql seed config）——改了后端要同步这里。
-  const deadline = new Date(j.judgedAt).getTime() + 24 * 3600_000;
+  // F11：timeoutHours 由 summary 端点下发（与后端 cron 配置同源）
+  const deadline = new Date(j.judgedAt).getTime() + timeoutHours * 3600_000;
   const remainH = Math.max(0, Math.round((deadline - now) / 3600_000));
   return `${remainH} 小时后自动转工单`;
 }
@@ -269,7 +268,7 @@ export class DispositionsView extends LitElement {
 
   private renderCard(j: Judgment): TemplateResult {
     const needsAction = needsYou(j);
-    const countdown = approvalCountdown(j);
+    const countdown = approvalCountdown(j, Date.now(), this.summary?.approvalTimeoutHours ?? 24);
     const voted = j.latestFeedback?.verdict;
     return html`
       <div class="j-item ${needsAction ? "needs-you" : ""}">

@@ -340,15 +340,24 @@ pub(crate) async fn transit_judgment(
     } else {
         None
     };
+    // F9（对抗审查）：重回待审批时刷新 judged_at——审批 24h SLA 以 judged_at
+    // 起算，回滚后不刷新会被提前扫走。
+    let judged_at = if matches!(next, JudgmentStatus::AwaitingApproval) {
+        Some(Utc::now().to_rfc3339())
+    } else {
+        None
+    };
     let result = sqlx::query(
         "UPDATE judgments SET status = ?, ticket_id = COALESCE(?, ticket_id),
-            resolved_at = COALESCE(?, resolved_at), state_entered_at = ?
+            resolved_at = COALESCE(?, resolved_at), state_entered_at = ?,
+            judged_at = COALESCE(?, judged_at)
          WHERE id = ? AND status = ?",
     )
     .bind(next.as_str())
     .bind(ticket_id)
     .bind(resolved_at)
     .bind(Utc::now().to_rfc3339())
+    .bind(judged_at)
     .bind(id)
     .bind(expected.as_str())
     .execute(pool)
@@ -596,7 +605,8 @@ pub(crate) async fn reopen_judgment(pool: &SqlitePool, id: &str) -> Result<bool>
         });
     }
     let result = sqlx::query(
-        "UPDATE judgments SET status = 'investigating', verdict = NULL, judged_at = NULL, state_entered_at = ?
+        "UPDATE judgments SET status = 'investigating', verdict = NULL, judged_at = NULL, state_entered_at = ?,
+            reason = '', suggested_action = NULL, action_category = NULL, proposal_id = NULL
          WHERE id = ? AND status = 'noise_archived'",
     )
     .bind(Utc::now().to_rfc3339())
@@ -649,11 +659,15 @@ pub(crate) async fn judgment_stats(pool: &SqlitePool, workspace_id: &str) -> Res
     .await?;
 
     // 延迟分布：julianday 可解析 RFC3339（含 T 与 +00:00 时区后缀）
+    // F3（对抗审查）：30 天窗口——judgments 只增不删，summary 端点被每个
+    // 登录客户端 60s 轮询，无窗全表扫是随时间恶化的 DoS 放大器。
+    let window = (Utc::now() - chrono::Duration::days(30)).to_rfc3339();
     let latency_rows = sqlx::query(
         "SELECT (julianday(judged_at) - julianday(created_at)) * 86400.0 AS secs
-         FROM judgments WHERE workspace_id = ? AND judged_at IS NOT NULL ORDER BY secs",
+         FROM judgments WHERE workspace_id = ? AND judged_at IS NOT NULL AND created_at >= ? ORDER BY secs",
     )
     .bind(workspace_id)
+    .bind(&window)
     .fetch_all(pool)
     .await?;
     let latencies: Vec<f64> = latency_rows.iter().map(|r| r.get::<f64, _>("secs")).collect();
@@ -672,9 +686,11 @@ pub(crate) async fn judgment_stats(pool: &SqlitePool, workspace_id: &str) -> Res
          JOIN judgment_feedback f ON f.judgment_id = j.id
          WHERE j.workspace_id = ? AND j.action_category IS NOT NULL
            AND f.id IN (SELECT MAX(id) FROM judgment_feedback GROUP BY judgment_id)
+           AND j.created_at >= ?
          GROUP BY j.action_category, f.verdict",
     )
     .bind(workspace_id)
+    .bind(&window)
     .fetch_all(pool)
     .await?;
     let mut by_category: std::collections::HashMap<String, CategoryFeedback> = std::collections::HashMap::new();

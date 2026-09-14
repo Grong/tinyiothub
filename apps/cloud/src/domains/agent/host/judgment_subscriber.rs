@@ -364,14 +364,21 @@ async fn judge(
         "parse_fallback": used_fallback,
     })
     .to_string();
+    // F5：suggested_action 截断（LLM 输出无长度上限会撑爆行）；绑定局部
+    // 变量避免临时值借用问题。
+    let suggested_action: Option<String> = payload
+        .suggested_action
+        .as_deref()
+        .map(|a| a.chars().take(200).collect());
+    let action_category = tinyiothub_storage::judgment::normalize_action_category(payload.action_category.as_deref());
     match db
         .judge_judgment(
             &judgment.id,
             verdict,
             reason,
             &evidence,
-            payload.suggested_action.as_deref(),
-            tinyiothub_storage::judgment::normalize_action_category(payload.action_category.as_deref()).as_deref(),
+            suggested_action.as_deref(),
+            action_category.as_deref(),
             None,
         )
         .await
