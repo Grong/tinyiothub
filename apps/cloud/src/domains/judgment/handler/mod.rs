@@ -65,7 +65,12 @@ async fn list_judgments(
         "noise" => Some(vec![S::NoiseArchived]),
         "all" => None,
         // fail-closed：未知 tab 响亮 400，不静默返回全量（security specialist 发现）
-        _ => return ApiResponseBuilder::error_with_code(400, "未知 tab（可选：needs_you/investigating/resolved/noise/all）"),
+        _ => {
+            return ApiResponseBuilder::error_with_code(
+                400,
+                "未知 tab（可选：needs_you/investigating/resolved/noise/all）",
+            );
+        }
     };
     let page_size = params.page_size.unwrap_or(20).clamp(1, 100);
     match state

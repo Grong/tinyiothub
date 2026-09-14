@@ -224,7 +224,6 @@ async fn reject_requires_reason_and_escalates() {
     assert!(j.ticket_id.is_some(), "ticket linked after reject");
 }
 
-
 struct RecordingSink(std::sync::Mutex<Vec<tinyiothub_agent::runtime::thing_agent::types::WakeSignal>>);
 
 #[async_trait::async_trait]
@@ -262,7 +261,12 @@ async fn approve_dispatches_execution_signal() {
     let app = axum::Router::new().nest("/api", app).with_state(app_state.clone());
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(req("POST", &format!("/api/v1/judgments/{jid}/approve"), &token, Some(json!({}))))
+        .oneshot(req(
+            "POST",
+            &format!("/api/v1/judgments/{jid}/approve"),
+            &token,
+            Some(json!({})),
+        ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -277,14 +281,17 @@ async fn approve_dispatches_execution_signal() {
 
     let signals = sink.0.lock().unwrap();
     assert_eq!(signals.len(), 1, "恰好派发一条执行 directive");
-    let tinyiothub_agent::runtime::thing_agent::types::TriggerSource::UserDirective {
-        problem_key, ..
-    } = &signals[0].source
+    let tinyiothub_agent::runtime::thing_agent::types::TriggerSource::UserDirective { problem_key, .. } =
+        &signals[0].source
     else {
         panic!("exec 信号必须是 UserDirective");
     };
     assert_eq!(problem_key.as_deref(), Some(format!("exec:{jid}").as_str()));
-    assert_eq!(signals[0].dedup_key.as_deref(), Some(format!("exec:{jid}").as_str()), "C5/T-14 防重");
+    assert_eq!(
+        signals[0].dedup_key.as_deref(),
+        Some(format!("exec:{jid}").as_str()),
+        "C5/T-14 防重"
+    );
 }
 
 #[tokio::test]
@@ -298,7 +305,12 @@ async fn approve_enqueue_failure_rolls_back_to_awaiting() {
     let app = axum::Router::new().nest("/api", app).with_state(app_state.clone());
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(req("POST", &format!("/api/v1/judgments/{jid}/approve"), &token, Some(json!({}))))
+        .oneshot(req(
+            "POST",
+            &format!("/api/v1/judgments/{jid}/approve"),
+            &token,
+            Some(json!({})),
+        ))
         .await
         .unwrap();
     let (_s, json) = response_parts(response).await;
@@ -330,12 +342,22 @@ async fn approve_twice_second_gets_409() {
     let token = create_test_token("user-1", "tenant-1");
     let r1 = app
         .clone()
-        .oneshot(req("POST", &format!("/api/v1/judgments/{jid}/approve"), &token, Some(json!({}))))
+        .oneshot(req(
+            "POST",
+            &format!("/api/v1/judgments/{jid}/approve"),
+            &token,
+            Some(json!({})),
+        ))
         .await
         .unwrap();
     assert_eq!(r1.status(), StatusCode::OK);
     let r2 = app
-        .oneshot(req("POST", &format!("/api/v1/judgments/{jid}/approve"), &token, Some(json!({}))))
+        .oneshot(req(
+            "POST",
+            &format!("/api/v1/judgments/{jid}/approve"),
+            &token,
+            Some(json!({})),
+        ))
         .await
         .unwrap();
     let (_s, json) = response_parts(r2).await;
@@ -356,14 +378,12 @@ async fn feedback_and_reject_negative_paths() {
     // 非法 verdict 值 → 400
     let r = app
         .clone()
-        .oneshot(
-            req(
-                "POST",
-                &format!("/api/v1/judgments/{jid}/feedback"),
-                &token,
-                Some(json!({"verdict": "meh"})),
-            ),
-        )
+        .oneshot(req(
+            "POST",
+            &format!("/api/v1/judgments/{jid}/feedback"),
+            &token,
+            Some(json!({"verdict": "meh"})),
+        ))
         .await
         .unwrap();
     let (_s, json) = response_parts(r).await;
@@ -378,7 +398,12 @@ async fn feedback_and_reject_negative_paths() {
         };
         let r = app
             .clone()
-            .oneshot(req("POST", &format!("/api/v1/judgments/nonexistent/{path}"), &token, Some(body)))
+            .oneshot(req(
+                "POST",
+                &format!("/api/v1/judgments/nonexistent/{path}"),
+                &token,
+                Some(body),
+            ))
             .await
             .unwrap();
         let (_s, json) = response_parts(r).await;
@@ -420,14 +445,12 @@ async fn wrong_feedback_on_noise_restores_and_reopens() {
     let app = axum::Router::new().nest("/api", app).with_state(app_state.clone());
     let token = create_test_token("user-1", "tenant-1");
     let r = app
-        .oneshot(
-            req(
-                "POST",
-                &format!("/api/v1/judgments/{jid}/feedback"),
-                &token,
-                Some(json!({"verdict": "wrong", "reason": "这不是噪声，温度真的有问题"})),
-            ),
-        )
+        .oneshot(req(
+            "POST",
+            &format!("/api/v1/judgments/{jid}/feedback"),
+            &token,
+            Some(json!({"verdict": "wrong", "reason": "这不是噪声，温度真的有问题"})),
+        ))
         .await
         .unwrap();
     assert_eq!(r.status(), StatusCode::OK);

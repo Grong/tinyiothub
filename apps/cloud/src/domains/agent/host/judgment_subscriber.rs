@@ -780,7 +780,11 @@ mod tests {
         let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, JudgmentStatus::Executing, "未验证不闭环，等 SLA 转人工确认");
         let a = db.find_alarm_by_id("a1", Some("ws1")).await.unwrap().unwrap();
-        assert_ne!(a.status, tinyiothub_storage::alarm::AlarmStatus::Resolved, "未验证不消警");
+        assert_ne!(
+            a.status,
+            tinyiothub_storage::alarm::AlarmStatus::Resolved,
+            "未验证不消警"
+        );
     }
 
     #[tokio::test]

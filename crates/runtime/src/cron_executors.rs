@@ -230,7 +230,6 @@ impl JobExecutor for ApprovalTimeoutExecutor {
     }
 }
 
-
 #[cfg(test)]
 mod approval_timeout_tests {
     use super::*;
@@ -315,7 +314,10 @@ mod approval_timeout_tests {
         let res = ex.execute(&job("{\"timeout_hours\": 12}"), "run-1").await.unwrap();
         assert_eq!(res.status, "partial", "一阶段失败 → partial");
         assert!(res.error_message.unwrap().contains("approvals: db down"));
-        assert!(res.output.unwrap().contains("investigating marked: 4"), "其他阶段照常执行");
+        assert!(
+            res.output.unwrap().contains("investigating marked: 4"),
+            "其他阶段照常执行"
+        );
         assert_eq!(store.calls.lock().unwrap().len(), 3);
     }
 }
@@ -333,7 +335,11 @@ mod approval_timeout_executor_tests {
     #[async_trait]
     impl crate::ports::ApprovalTimeoutStore for MockStore {
         async fn escalate_stale_approvals(&self, _c: &str) -> Result<u64, String> {
-            if self.fail_approvals { Err("db down".to_string()) } else { Ok(2) }
+            if self.fail_approvals {
+                Err("db down".to_string())
+            } else {
+                Ok(2)
+            }
         }
         async fn mark_stale_investigating(&self, _c: &str) -> Result<u64, String> {
             Ok(1)
