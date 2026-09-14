@@ -170,6 +170,8 @@ export class TinyIoTHubApp extends LitElement {
   @state() userRole = '';
   @state() loadingRoute: string | null = null;
   @state() loadError: string | null = null;
+  /** E4：处置中心未读角标（needsYou 计数；「例外响亮」的前提是例外能到人） */
+  @state() dispositionNeedsYou = 0;
 
   private loadSeq = 0;
   private themeMediaQuery: MediaQueryList | null = null;
@@ -199,10 +201,27 @@ export class TinyIoTHubApp extends LitElement {
     requestAnimationFrame(() => {
       document.documentElement.dispatchEvent(new CustomEvent('app-ready'));
     });
+    // E4：处置中心角标轮询（60s；SSE 只覆盖在线用户，轮询保证回来后可见）
+    this.pollDispositionBadge();
+    this.dispositionBadgeTimer = window.setInterval(() => this.pollDispositionBadge(), 60_000);
+  }
+
+  private dispositionBadgeTimer: number | null = null;
+
+  private async pollDispositionBadge() {
+    if (!this.isAuthenticated) return;
+    try {
+      const { judgmentApi } = await import('../api/judgments.js');
+      const summary = await judgmentApi.summary();
+      this.dispositionNeedsYou = summary.needsYou;
+    } catch {
+      // 角标失败静默（下一轮再试；不打扰主流程）
+    }
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    if (this.dispositionBadgeTimer !== null) window.clearInterval(this.dispositionBadgeTimer);
     window.removeEventListener('popstate', this.boundHandleRoute);
     window.removeEventListener('auth-error', this.handleAuthError);
     if (this.themeMediaQuery) {
@@ -591,6 +610,9 @@ export class TinyIoTHubApp extends LitElement {
                       </svg>
                     </span>
                     <span class="nav-item__text">${item.label}</span>
+                    ${item.route === 'dispositions' && this.dispositionNeedsYou > 0
+                      ? html`<span class="nav-item__badge" title="需要你处理的判断">${this.dispositionNeedsYou}</span>`
+                      : ''}
                   </a>
                 `,
               )}

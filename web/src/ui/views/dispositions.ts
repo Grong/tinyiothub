@@ -81,6 +81,15 @@ export function approvalCountdown(j: Judgment, now = Date.now()): string | null 
   return `${remainH} 小时后自动转工单`;
 }
 
+/** 证据渲染（F-G，导出供测试）：P0 证据 = run 摘要摘录，按纯文本展示；
+ *  不再把整对象 JSON.stringify 给用户看。 */
+export function renderEvidence(evidence: unknown): string {
+  if (!evidence || typeof evidence !== "object") return "暂无证据";
+  const excerpt = (evidence as { excerpt?: unknown }).excerpt;
+  if (typeof excerpt === "string" && excerpt.trim()) return excerpt;
+  return "暂无证据";
+}
+
 /** 反馈校验（F13，导出供测试）：点错必填 ≥4 字符。 */
 export function validateWrongReason(reason: string): string | null {
   return reason.trim().length >= 4 ? null : "点错必须填写原因（至少 4 个字符）";
@@ -98,6 +107,7 @@ export class DispositionsView extends LitElement {
   @state() private wrongReason = "";
   @state() private rejectPanelId: string | null = null;
   @state() private rejectReason = "";
+  @state() private hasMore = false;
 
   private sseConn: SseConnection | null = null;
   private poller: number | null = null;
@@ -124,15 +134,30 @@ export class DispositionsView extends LitElement {
     this.loadError = null;
     try {
       const [judgments, summary] = await Promise.all([
-        judgmentApi.list(this.tab, undefined, 50),
+        judgmentApi.list(this.tab, undefined, 20),
         judgmentApi.summary(),
       ]);
       this.judgments = judgments;
       this.summary = summary;
+      // 游标分页（F12）：满页即可能还有
+      this.hasMore = judgments.length >= 20;
     } catch (e) {
       this.loadError = e instanceof Error ? e.message : "加载失败";
     } finally {
       this.loading = false;
+    }
+  }
+
+  /** F12：游标式「加载更多」（后续页纯时间流，折叠/置顶仅首页——T-13/C2）。 */
+  private async loadMore() {
+    const last = this.judgments[this.judgments.length - 1];
+    if (!last) return;
+    try {
+      const more = await judgmentApi.list(this.tab, last.id, 20);
+      this.judgments = [...this.judgments, ...more];
+      this.hasMore = more.length >= 20;
+    } catch (e) {
+      toastError(e instanceof Error ? e.message : "加载失败");
     }
   }
 
@@ -294,7 +319,7 @@ export class DispositionsView extends LitElement {
             `}
 
         ${this.expandedId === j.id
-          ? html`<div class="j-evidence">${JSON.stringify(j.evidence, null, 2)}</div>`
+          ? html`<div class="j-evidence">${renderEvidence(j.evidence)}</div>`
           : nothing}
 
         ${this.rejectPanelId === j.id
@@ -354,7 +379,14 @@ export class DispositionsView extends LitElement {
           ? html`<div class="disp-error">${this.loadError} <button class="j-btn" @click=${() => this.load()}>重试</button></div>`
           : this.judgments.length === 0
             ? this.renderEmpty()
-            : this.judgments.map((j) => this.renderCard(j))}
+            : html`
+                ${this.judgments.map((j) => this.renderCard(j))}
+                ${this.hasMore
+                  ? html`<div class="j-more">
+                      <button class="j-btn" @click=${() => this.loadMore()}>加载更多</button>
+                    </div>`
+                  : nothing}
+              `}
     `;
   }
 }

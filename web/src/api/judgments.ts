@@ -50,6 +50,11 @@ export interface JudgmentSummary {
   feedbackTotal: number;
   feedbackRight: number;
   feedbackWrong: number;
+  /** E2：判断延迟分位数（秒）；验收「5 分钟出判断 ≥90%」的度量 */
+  latencyP50Secs: number | null;
+  latencyP90Secs: number | null;
+  /** E5：按动作类别的最新反馈对错数（P1 转正决策度量） */
+  feedbackByCategory: Record<string, { right: number; wrong: number }>;
 }
 
 export type JudgmentTab = 'needs_you' | 'investigating' | 'resolved' | 'noise' | 'all';

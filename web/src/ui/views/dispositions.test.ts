@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  renderEvidence,
   approvalCountdown,
   fmtJudgmentTime,
   needsYou,
@@ -76,5 +77,18 @@ describe("dispositions view helpers", () => {
     expect(validateWrongReason("  ")).toContain("必须填写原因");
     expect(validateWrongReason("太短")).toContain("必须填写原因");
     expect(validateWrongReason("这个传感器梅雨季会越限")).toBeNull();
+  });
+});
+
+describe("renderEvidence (F-G)", () => {
+  it("renders excerpt as plain text", () => {
+    const ev = { source: "run_summary", run_id: "r1", excerpt: "查了设备状态，温度 40 秒回落" };
+    expect(renderEvidence(ev)).toBe("查了设备状态，温度 40 秒回落");
+  });
+
+  it("falls back for missing/empty evidence", () => {
+    expect(renderEvidence(null)).toBe("暂无证据");
+    expect(renderEvidence({})).toBe("暂无证据");
+    expect(renderEvidence({ excerpt: "  " })).toBe("暂无证据");
   });
 });
