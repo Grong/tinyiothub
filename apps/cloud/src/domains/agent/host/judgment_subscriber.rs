@@ -184,6 +184,7 @@ pub(crate) async fn project(event: &AgentEvent, db: &Db, sse: &SseConnectionMana
 /// - NoActionNeeded       → 停留 executing（agent 回报「无需动作」与已批准的
 ///   判断冲突，批准意图不可被 LLM 单方降级；同样由 SLA 转人工确认）
 /// - Failed 等            → escalated + 工单
+///
 /// exec 失败的升级键按 judgment 唯一（执行失败是新事实，不与调查票折叠）。
 async fn settle_execution(
     db: &Db,

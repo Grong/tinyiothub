@@ -150,7 +150,7 @@ pub fn exec_action_template(category: Option<&str>, thing_id: Option<&str>) -> S
         Some("device_reboot") => format!("重启设备 {thing}"),
         Some("connection_recovery") => format!("恢复设备 {thing} 的连接（重连/重订阅）"),
         Some("property_adjust") => format!("调整设备 {thing} 的属性设置"),
-        Some("threshold_tuning") => format!("调整报警规则阈值"),
+        Some("threshold_tuning") => "调整报警规则阈值".to_string(),
         _ => "按判断建议处置".to_string(),
     }
 }
