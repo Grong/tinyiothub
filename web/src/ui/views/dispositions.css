@@ -44,7 +44,7 @@ view-dispositions .disp-tab.active {
   color: var(--foreground, #e4e4e7);
   border-bottom: 1px solid var(--foreground, #e4e4e7);
   padding-bottom: var(--space-2);
-  margin-bottom: -9px;
+  margin-bottom: -9px; /* 有意：tab 与列表咬合的下压（刻度外） */
 }
 
 view-dispositions .disp-tab .count {
@@ -55,7 +55,7 @@ view-dispositions .disp-tab .count {
 /* 判断条目：独立卡片，单色纪律 */
 view-dispositions .j-item {
   padding: 14px var(--space-4);
-  margin-bottom: 10px;
+  margin-bottom: var(--space-3);
   background: var(--card, #151920);
   border: 1px solid var(--border, #21262f);
   border-radius: var(--radius-md, 10px);
@@ -218,13 +218,13 @@ view-dispositions .j-done-row {
   background: var(--muted, #11141a);
   border: 1px solid var(--border, #181c23);
   border-radius: var(--radius-md, 10px);
-  margin-bottom: 10px;
+  margin-bottom: var(--space-3);
 }
 
 /* 空态：一句话 */
 view-dispositions .j-empty {
   text-align: center;
-  padding: 80px var(--space-5);
+  padding: var(--space-9) var(--space-5);
 }
 
 view-dispositions .j-empty h2 {

@@ -14,6 +14,7 @@
 真实全链路演示用真实设备报警触发 enter_disposition。
 """
 import argparse
+import json
 import sqlite3
 import sys
 import uuid
@@ -40,7 +41,7 @@ HUMAN = [
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="tinyiothub.db")
-    ap.add_argument("--workspace", default="workspace-default-001")
+    ap.add_argument("--workspace", default="ws-default-001")
     args = ap.parse_args()
 
     con = sqlite3.connect(args.db)
@@ -66,7 +67,7 @@ def main() -> int:
         (rule_id, thing_id, ws),
     )
 
-    def mk_alarm(i: int, level: str, msg: str, minutes_ago: int) -> str:
+    def mk_alarm(level: str, msg: str, minutes_ago: int) -> str:
         aid = f"demo-alarm-{uuid.uuid4().hex[:8]}"
         t = (now - timedelta(minutes=minutes_ago)).isoformat()
         con.execute(
@@ -97,23 +98,23 @@ def main() -> int:
             "INSERT INTO tickets (workspace_id, thing_id, agent_run_id, title, briefing, failure_hash)"
             " VALUES (?, ?, ?, ?, ?, ?)",
             (ws, thing_id, f"demo-{uuid.uuid4().hex[:8]}", title,
-             f'{{"problem": "{problem}", "source": "demo_seed"}}', f"demo-{uuid.uuid4().hex[:8]}"),
+             json.dumps({"problem": problem, "source": "demo_seed"}, ensure_ascii=False),
+             f"demo-{uuid.uuid4().hex[:8]}"),
         )
         return cur.lastrowid  # type: ignore[return-value]
 
     for i, (title, detail) in enumerate(NOISE):
-        aid = mk_alarm(i, "info", title, 50 - i * 5)
-        con.execute("UPDATE thing_alarms SET is_suppressed = 0 WHERE id = ?", (aid,))  # annotate：不抑制
+        aid = mk_alarm("info", title, 50 - i * 5)  # annotate 模式：报警保持 Active，不抑制
         mk_judgment(aid, "noise_archived", "noise", f"{detail}——正常波动，已静默归档", 50 - i * 5)
 
     for i, (title, detail, cat, action) in enumerate(APPROVAL):
-        aid = mk_alarm(10 + i, "warning", title, 30 - i * 5)
+        aid = mk_alarm("warning", title, 30 - i * 5)
         mk_judgment(aid, "awaiting_approval", "self_healable",
                     f"{detail}。建议：{action}（待审批，24h 未响应自动转工单）",
                     30 - i * 5, category=cat, action=action)
 
     for i, (title, detail) in enumerate(HUMAN):
-        aid = mk_alarm(20 + i, "critical", title, 20 - i * 5)
+        aid = mk_alarm("critical", title, 20 - i * 5)
         tid = mk_ticket(f"需人工：{title}", detail)
         mk_judgment(aid, "escalated", "needs_human", f"{detail}。已转工单。", 20 - i * 5, ticket_id=tid)
 

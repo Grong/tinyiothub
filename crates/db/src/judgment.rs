@@ -103,11 +103,6 @@ impl JudgmentStatus {
             JudgmentStatus::Investigating | JudgmentStatus::AwaitingApproval | JudgmentStatus::Executing
         )
     }
-
-    /// feed 页「需要你」tab = 待审批 + 需人工已升级
-    pub fn needs_you(&self) -> bool {
-        matches!(self, JudgmentStatus::AwaitingApproval | JudgmentStatus::Escalated)
-    }
 }
 
 /// 显式迁移矩阵（T-19/S2）：所有状态翻转的唯一口径。transit_judgment /
@@ -1192,8 +1187,17 @@ mod tests {
             .insert_judgment("ws1", Some("a2"), None, Some("t1"), "annotate")
             .await
             .unwrap();
-        // j2 更新（同 thing+rule），j1 应被折叠
-        std::thread::sleep(std::time::Duration::from_millis(1100));
+        // 显式递增时间戳（不靠 wall-clock sleep——同文件 tuple_cursor 测试同款）
+        sqlx::query("UPDATE judgments SET created_at = '2026-09-14T01:00:00+00:00' WHERE id = ?")
+            .bind(&j1)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        sqlx::query("UPDATE judgments SET created_at = '2026-09-14T01:01:00+00:00' WHERE id = ?")
+            .bind(&j2)
+            .execute(db.pool())
+            .await
+            .unwrap();
         let j3 = db
             .insert_judgment("ws1", Some("a3"), None, Some("t1"), "annotate")
             .await

@@ -708,4 +708,105 @@ mod tests {
         let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, JudgmentStatus::Investigating, "untouched");
     }
+
+    /// 造一个 executing 状态的 judgment（走完整 investigate → judge → approve 链）。
+    async fn seed_executing(db: &Db) -> String {
+        let jid = db
+            .insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        db.judge_judgment(
+            &jid,
+            JudgmentVerdict::SelfHealable,
+            "可自愈",
+            "{}",
+            Some("重连"),
+            Some("connection_recovery"),
+            None,
+        )
+        .await
+        .unwrap();
+        let ok = db
+            .transit_judgment(&jid, JudgmentStatus::AwaitingApproval, JudgmentStatus::Executing, None)
+            .await
+            .unwrap();
+        assert!(ok, "awaiting_approval → executing");
+        jid
+    }
+
+    fn exec_event(jid: &str, run_id: &str, outcome: Outcome, verified: bool) -> AgentEvent {
+        let mut r = report(run_id, outcome, "执行完毕");
+        r.verified = verified;
+        AgentEvent {
+            seq: 1,
+            occurred_at: chrono::Utc::now(),
+            kind: AgentEventKind::RunRecorded {
+                report: Box::new(r),
+                problem_key: Some(format!("exec:{jid}")),
+                dedup_key: None,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn exec_acted_verified_resolves_and_clears_alarm() {
+        let (db, sse, alarm) = fixture().await;
+        let jid = seed_executing(&db).await;
+        project(&exec_event(&jid, "r-exec", Outcome::Acted, true), &db, &sse, &alarm).await;
+
+        let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
+        assert_eq!(j.status, JudgmentStatus::Resolved, "Acted+verified → resolved");
+        let a = db.find_alarm_by_id("a1", Some("ws1")).await.unwrap().unwrap();
+        assert_eq!(
+            a.status,
+            tinyiothub_storage::alarm::AlarmStatus::Resolved,
+            "verified 执行后自动消警（唯一消警路径）"
+        );
+    }
+
+    #[tokio::test]
+    async fn exec_acted_unverified_stays_executing() {
+        let (db, sse, alarm) = fixture().await;
+        let jid = seed_executing(&db).await;
+        project(&exec_event(&jid, "r-exec", Outcome::Acted, false), &db, &sse, &alarm).await;
+
+        let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
+        assert_eq!(j.status, JudgmentStatus::Executing, "未验证不闭环，等 SLA 转人工确认");
+        let a = db.find_alarm_by_id("a1", Some("ws1")).await.unwrap().unwrap();
+        assert_ne!(a.status, tinyiothub_storage::alarm::AlarmStatus::Resolved, "未验证不消警");
+    }
+
+    #[tokio::test]
+    async fn exec_failed_escalates_with_ticket() {
+        let (db, sse, alarm) = fixture().await;
+        let jid = seed_executing(&db).await;
+        project(&exec_event(&jid, "r-exec", Outcome::Failed, false), &db, &sse, &alarm).await;
+
+        let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
+        assert_eq!(j.status, JudgmentStatus::Escalated);
+        assert!(j.ticket_id.is_some(), "执行失败转工单");
+    }
+
+    #[tokio::test]
+    async fn late_acted_after_escalation_does_not_auto_resolve() {
+        let (db, sse, alarm) = fixture().await;
+        let jid = seed_executing(&db).await;
+        // SLA 清扫先转人工（executing → escalated）
+        let ok = db
+            .transit_judgment(&jid, JudgmentStatus::Executing, JudgmentStatus::Escalated, None)
+            .await
+            .unwrap();
+        assert!(ok);
+        // 迟到的 Acted+verified 到达：不自动消警（T-16/C4）
+        project(&exec_event(&jid, "r-exec", Outcome::Acted, true), &db, &sse, &alarm).await;
+
+        let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
+        assert_eq!(j.status, JudgmentStatus::Escalated, "迟到 Acted 不翻转终态");
+        let a = db.find_alarm_by_id("a1", Some("ws1")).await.unwrap().unwrap();
+        assert_ne!(
+            a.status,
+            tinyiothub_storage::alarm::AlarmStatus::Resolved,
+            "迟到 Acted 不消警"
+        );
+    }
 }

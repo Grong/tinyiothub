@@ -229,3 +229,168 @@ impl JobExecutor for ApprovalTimeoutExecutor {
         })
     }
 }
+
+
+#[cfg(test)]
+mod approval_timeout_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    struct MockStore {
+        approvals: Result<u64, String>,
+        investigating: Result<u64, String>,
+        executing: Result<u64, String>,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ApprovalTimeoutStore for MockStore {
+        async fn escalate_stale_approvals(&self, _c: &str) -> Result<u64, String> {
+            self.calls.lock().unwrap().push("approvals".into());
+            self.approvals.clone()
+        }
+        async fn mark_stale_investigating(&self, _c: &str) -> Result<u64, String> {
+            self.calls.lock().unwrap().push("investigating".into());
+            self.investigating.clone()
+        }
+        async fn escalate_stale_executing(&self, _c: &str) -> Result<u64, String> {
+            self.calls.lock().unwrap().push("executing".into());
+            self.executing.clone()
+        }
+    }
+
+    fn job(config: &str) -> CronJob {
+        CronJob {
+            id: "j1".into(),
+            name: "approval_timeout".into(),
+            description: None,
+            job_type: "approval_timeout".into(),
+            cron_expression: "*/5 * * * *".into(),
+            config: config.into(),
+            timeout_seconds: 60,
+            max_retries: 0,
+            is_enabled: true,
+            is_running: false,
+            last_run_at: None,
+            last_run_status: None,
+            last_run_error: None,
+            next_run_at: None,
+            run_count: 0,
+            success_count: 0,
+            fail_count: 0,
+            created_at: String::new(),
+            updated_at: String::new(),
+            created_by: None,
+            workspace_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn default_config_sweeps_all_three_states() {
+        let store = Arc::new(MockStore {
+            approvals: Ok(2),
+            investigating: Ok(3),
+            executing: Ok(1),
+            calls: Mutex::new(vec![]),
+        });
+        let ex = ApprovalTimeoutExecutor::new(store.clone());
+        let res = ex.execute(&job("{}"), "run-1").await.unwrap();
+        assert_eq!(res.status, "success");
+        let out = res.output.unwrap();
+        assert!(out.contains("approvals escalated: 2"), "{out}");
+        assert!(out.contains("investigating marked: 3"), "{out}");
+        assert!(out.contains("executing escalated: 1"), "{out}");
+        assert_eq!(store.calls.lock().unwrap().len(), 3, "三态各自独立清扫");
+    }
+
+    #[tokio::test]
+    async fn one_phase_failure_yields_partial_and_others_still_run() {
+        let store = Arc::new(MockStore {
+            approvals: Err("db down".into()),
+            investigating: Ok(4),
+            executing: Ok(0),
+            calls: Mutex::new(vec![]),
+        });
+        let ex = ApprovalTimeoutExecutor::new(store.clone());
+        let res = ex.execute(&job("{\"timeout_hours\": 12}"), "run-1").await.unwrap();
+        assert_eq!(res.status, "partial", "一阶段失败 → partial");
+        assert!(res.error_message.unwrap().contains("approvals: db down"));
+        assert!(res.output.unwrap().contains("investigating marked: 4"), "其他阶段照常执行");
+        assert_eq!(store.calls.lock().unwrap().len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod approval_timeout_executor_tests {
+    //! 评审补测：ApprovalTimeoutExecutor 本体（config 解析/默认值/部分失败聚合）。
+    use super::*;
+    use tinyiothub_core::models::cron_job::CronJob;
+
+    struct MockStore {
+        fail_approvals: bool,
+    }
+
+    #[async_trait]
+    impl crate::ports::ApprovalTimeoutStore for MockStore {
+        async fn escalate_stale_approvals(&self, _c: &str) -> Result<u64, String> {
+            if self.fail_approvals { Err("db down".to_string()) } else { Ok(2) }
+        }
+        async fn mark_stale_investigating(&self, _c: &str) -> Result<u64, String> {
+            Ok(1)
+        }
+        async fn escalate_stale_executing(&self, _c: &str) -> Result<u64, String> {
+            Ok(0)
+        }
+    }
+
+    fn job(config: &str) -> CronJob {
+        CronJob {
+            id: "j1".to_string(),
+            name: "t".to_string(),
+            description: None,
+            job_type: "approval_timeout".to_string(),
+            cron_expression: "0 * * * * *".to_string(),
+            config: config.to_string(),
+            timeout_seconds: 300,
+            max_retries: 3,
+            is_enabled: true,
+            is_running: false,
+            last_run_at: None,
+            last_run_status: None,
+            last_run_error: None,
+            next_run_at: None,
+            run_count: 0,
+            success_count: 0,
+            fail_count: 0,
+            created_at: "2026-01-01".to_string(),
+            updated_at: "2026-01-01".to_string(),
+            created_by: None,
+            workspace_id: Some("system".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_config_json_rejected_loudly() {
+        let exec = ApprovalTimeoutExecutor::new(Arc::new(MockStore { fail_approvals: false }));
+        let result = exec.execute(&job("not-json"), "r1").await;
+        assert!(matches!(result, Err(ExecutorError::InvalidConfig(_))));
+    }
+
+    #[tokio::test]
+    async fn empty_config_uses_defaults_and_sweeps_all_three() {
+        let exec = ApprovalTimeoutExecutor::new(Arc::new(MockStore { fail_approvals: false }));
+        let result = exec.execute(&job("{}"), "r1").await.unwrap();
+        assert_eq!(result.status, "success");
+        let out = result.output.unwrap();
+        assert!(out.contains("approvals escalated: 2"));
+        assert!(out.contains("investigating marked: 1"));
+    }
+
+    #[tokio::test]
+    async fn partial_failure_aggregates_not_aborts() {
+        let exec = ApprovalTimeoutExecutor::new(Arc::new(MockStore { fail_approvals: true }));
+        let result = exec.execute(&job("{}"), "r1").await.unwrap();
+        assert_eq!(result.status, "partial", "一阶段失败不阻其他阶段");
+        assert!(result.error_message.unwrap().contains("db down"));
+    }
+}

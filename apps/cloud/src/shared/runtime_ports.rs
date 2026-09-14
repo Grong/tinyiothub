@@ -126,12 +126,20 @@ impl ApprovalTimeoutAdapter {
             },
         )
         .await;
-        if let Some(tid) = ticket_id
-            && let Err(e) = self.db.link_judgment_ticket(&judgment.id, tid).await
-        {
-            tracing::warn!(judgment_id = %judgment.id, error = %e, "link ticket failed");
+        match ticket_id {
+            Some(tid) => {
+                if let Err(e) = self.db.link_judgment_ticket(&judgment.id, tid).await {
+                    tracing::warn!(judgment_id = %judgment.id, error = %e, "link ticket failed");
+                }
+                Ok(())
+            }
+            // 票建失败：judgment 已 escalated 但无工单——不计入升级数并 error
+            // （该判断此后不再被 SLA 命中，必须响亮）
+            None => Err(format!(
+                "judgment {} escalated but ticket creation failed (orphan escalated state)",
+                judgment.id
+            )),
         }
-        Ok(())
     }
 }
 

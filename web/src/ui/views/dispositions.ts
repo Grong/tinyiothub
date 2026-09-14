@@ -23,6 +23,9 @@ import { connectSse, type SseConnection } from "../../api/sse-client.js";
 import { success, error as toastError } from "../components/toast.js";
 import "./dispositions.css";
 
+/** F12 页大小（四处复用同一常量，防漂移） */
+const PAGE_SIZE = 20;
+
 const TAB_LABELS: Record<JudgmentTab, string> = {
   needs_you: "需要你",
   investigating: "调查中",
@@ -77,6 +80,8 @@ export function fmtJudgmentTime(iso: string, now = Date.now()): string {
 /** 审批倒计时文案（F6，导出供测试）：非待审批/无 judgedAt → null。 */
 export function approvalCountdown(j: Judgment, now = Date.now()): string | null {
   if (j.status !== "awaiting_approval" || !j.judgedAt) return null;
+  // 24h 与后端 cron approval_timeout 的 timeout_hours 默认一致；
+  // 后端可配（system.sql seed config）——改了后端要同步这里。
   const deadline = new Date(j.judgedAt).getTime() + 24 * 3600_000;
   const remainH = Math.max(0, Math.round((deadline - now) / 3600_000));
   return `${remainH} 小时后自动转工单`;
@@ -135,13 +140,13 @@ export class DispositionsView extends LitElement {
     this.loadError = null;
     try {
       const [judgments, summary] = await Promise.all([
-        judgmentApi.list(this.tab, undefined, 20),
+        judgmentApi.list(this.tab, undefined, PAGE_SIZE),
         judgmentApi.summary(),
       ]);
       this.judgments = judgments;
       this.summary = summary;
       // 游标分页（F12）：满页即可能还有
-      this.hasMore = judgments.length >= 20;
+      this.hasMore = judgments.length >= PAGE_SIZE;
     } catch (e) {
       this.loadError = e instanceof Error ? e.message : "加载失败";
     } finally {
@@ -154,9 +159,9 @@ export class DispositionsView extends LitElement {
     const last = this.judgments[this.judgments.length - 1];
     if (!last) return;
     try {
-      const more = await judgmentApi.list(this.tab, last.id, 20);
+      const more = await judgmentApi.list(this.tab, last.id, PAGE_SIZE);
       this.judgments = [...this.judgments, ...more];
-      this.hasMore = more.length >= 20;
+      this.hasMore = more.length >= PAGE_SIZE;
     } catch (e) {
       toastError(e instanceof Error ? e.message : "加载失败");
     }
@@ -236,6 +241,9 @@ export class DispositionsView extends LitElement {
         <h1 class="page-title">处置中心</h1>
         <span class="disp-sub">
           ${s ? html`今日 ${s.digestedToday} 条已消化 · ${s.needsYou} 条需要你` : "…"}
+          ${s?.latencyP50Secs != null
+            ? html` · 判断延迟 p50 ${Math.round(s.latencyP50Secs / 60)} 分钟`
+            : nothing}
         </span>
       </div>
       ${s && s.feedbackTotal > 0

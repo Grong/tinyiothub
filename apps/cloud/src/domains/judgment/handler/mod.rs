@@ -64,7 +64,8 @@ async fn list_judgments(
         "resolved" => Some(vec![S::Resolved]),
         "noise" => Some(vec![S::NoiseArchived]),
         "all" => None,
-        _ => None,
+        // fail-closed：未知 tab 响亮 400，不静默返回全量（security specialist 发现）
+        _ => return ApiResponseBuilder::error_with_code(400, "未知 tab（可选：needs_you/investigating/resolved/noise/all）"),
     };
     let page_size = params.page_size.unwrap_or(20).clamp(1, 100);
     match state
@@ -75,7 +76,13 @@ async fn list_judgments(
         Ok(rows) => {
             // F-H：批量取最新反馈（替代逐行查询的 N+1）
             let ids: Vec<String> = rows.iter().map(|j| j.id.clone()).collect();
-            let fbs = state.db.latest_feedbacks(&ids).await.unwrap_or_default();
+            let fbs = match state.db.latest_feedbacks(&ids).await {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::warn!(error = %e, "batch feedback query failed — feed renders without feedback badges");
+                    Default::default()
+                }
+            };
             let out = rows.iter().map(|j| to_dto(j, fbs.get(&j.id).cloned())).collect();
             ApiResponseBuilder::success(out)
         }

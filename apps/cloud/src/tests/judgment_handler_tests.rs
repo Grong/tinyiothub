@@ -223,3 +223,235 @@ async fn reject_requires_reason_and_escalates() {
     assert_eq!(j.status, tinyiothub_storage::judgment::JudgmentStatus::Escalated);
     assert!(j.ticket_id.is_some(), "ticket linked after reject");
 }
+
+
+struct RecordingSink(std::sync::Mutex<Vec<tinyiothub_agent::runtime::thing_agent::types::WakeSignal>>);
+
+#[async_trait::async_trait]
+impl tinyiothub_agent::runtime::thing_agent::DirectiveSink for RecordingSink {
+    fn enqueue(
+        &self,
+        signal: tinyiothub_agent::runtime::thing_agent::types::WakeSignal,
+    ) -> Result<(), tinyiothub_agent::runtime::thing_agent::scheduler::EnqueueError> {
+        self.0.lock().unwrap().push(signal);
+        Ok(())
+    }
+}
+
+struct FailingSink;
+
+#[async_trait::async_trait]
+impl tinyiothub_agent::runtime::thing_agent::DirectiveSink for FailingSink {
+    fn enqueue(
+        &self,
+        _signal: tinyiothub_agent::runtime::thing_agent::types::WakeSignal,
+    ) -> Result<(), tinyiothub_agent::runtime::thing_agent::scheduler::EnqueueError> {
+        Err(tinyiothub_agent::runtime::thing_agent::scheduler::EnqueueError::Rejected)
+    }
+}
+
+#[tokio::test]
+async fn approve_dispatches_execution_signal() {
+    let (mut app_state, pool) = setup_test_app_with_pool().await;
+    seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
+    let jid = seed_judgment(&app_state, "ws-default-001", Some("self_healable")).await;
+    let sink = std::sync::Arc::new(RecordingSink(std::sync::Mutex::new(vec![])));
+    app_state.set_directive_sink(sink.clone());
+
+    let app = crate::api::create_router(&app_state);
+    let app = axum::Router::new().nest("/api", app).with_state(app_state.clone());
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app
+        .oneshot(req("POST", &format!("/api/v1/judgments/{jid}/approve"), &token, Some(json!({}))))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let j = app_state
+        .db
+        .find_judgment_by_id(&jid, "ws-default-001")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(j.status, tinyiothub_storage::judgment::JudgmentStatus::Executing);
+
+    let signals = sink.0.lock().unwrap();
+    assert_eq!(signals.len(), 1, "恰好派发一条执行 directive");
+    let tinyiothub_agent::runtime::thing_agent::types::TriggerSource::UserDirective {
+        problem_key, ..
+    } = &signals[0].source
+    else {
+        panic!("exec 信号必须是 UserDirective");
+    };
+    assert_eq!(problem_key.as_deref(), Some(format!("exec:{jid}").as_str()));
+    assert_eq!(signals[0].dedup_key.as_deref(), Some(format!("exec:{jid}").as_str()), "C5/T-14 防重");
+}
+
+#[tokio::test]
+async fn approve_enqueue_failure_rolls_back_to_awaiting() {
+    let (mut app_state, pool) = setup_test_app_with_pool().await;
+    seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
+    let jid = seed_judgment(&app_state, "ws-default-001", Some("self_healable")).await;
+    app_state.set_directive_sink(std::sync::Arc::new(FailingSink));
+
+    let app = crate::api::create_router(&app_state);
+    let app = axum::Router::new().nest("/api", app).with_state(app_state.clone());
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app
+        .oneshot(req("POST", &format!("/api/v1/judgments/{jid}/approve"), &token, Some(json!({}))))
+        .await
+        .unwrap();
+    let (_s, json) = response_parts(response).await;
+    assert!(json["code"].as_i64().unwrap() != 0, "派发失败必须报错");
+
+    let j = app_state
+        .db
+        .find_judgment_by_id(&jid, "ws-default-001")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        j.status,
+        tinyiothub_storage::judgment::JudgmentStatus::AwaitingApproval,
+        "D3 补偿回滚：executing → awaiting_approval，可重试"
+    );
+}
+
+/// 评审补测：approve 重复点击 → 409（条件迁移防并发互撞）。
+#[tokio::test]
+async fn approve_twice_second_gets_409() {
+    let (mut app_state, pool) = setup_test_app_with_pool().await;
+    seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
+    let jid = seed_judgment(&app_state, "ws-default-001", Some("self_healable")).await;
+    app_state.set_directive_sink(std::sync::Arc::new(RecordingSink(std::sync::Mutex::new(vec![]))));
+
+    let app = crate::api::create_router(&app_state);
+    let app = axum::Router::new().nest("/api", app).with_state(app_state.clone());
+    let token = create_test_token("user-1", "tenant-1");
+    let r1 = app
+        .clone()
+        .oneshot(req("POST", &format!("/api/v1/judgments/{jid}/approve"), &token, Some(json!({}))))
+        .await
+        .unwrap();
+    assert_eq!(r1.status(), StatusCode::OK);
+    let r2 = app
+        .oneshot(req("POST", &format!("/api/v1/judgments/{jid}/approve"), &token, Some(json!({}))))
+        .await
+        .unwrap();
+    let (_s, json) = response_parts(r2).await;
+    assert!(json["code"].as_i64().unwrap() != 0, "重复批准必须 409 风格报错");
+}
+
+/// 评审补测：feedback 非法 verdict → 400；不存在 id → 404；reject 404。
+#[tokio::test]
+async fn feedback_and_reject_negative_paths() {
+    let (app_state, pool) = setup_test_app_with_pool().await;
+    seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
+    let jid = seed_judgment(&app_state, "ws-default-001", None).await;
+
+    let app = crate::api::create_router(&app_state);
+    let app = axum::Router::new().nest("/api", app).with_state(app_state.clone());
+    let token = create_test_token("user-1", "tenant-1");
+
+    // 非法 verdict 值 → 400
+    let r = app
+        .clone()
+        .oneshot(
+            req(
+                "POST",
+                &format!("/api/v1/judgments/{jid}/feedback"),
+                &token,
+                Some(json!({"verdict": "meh"})),
+            ),
+        )
+        .await
+        .unwrap();
+    let (_s, json) = response_parts(r).await;
+    assert_ne!(json["code"].as_i64().unwrap(), 0, "非法 verdict 必须 400");
+
+    // 不存在 id 的 feedback/reject → 404
+    for path in ["feedback", "reject"] {
+        let body = if path == "feedback" {
+            json!({"verdict": "right"})
+        } else {
+            json!({"reason": "不需要"})
+        };
+        let r = app
+            .clone()
+            .oneshot(req("POST", &format!("/api/v1/judgments/nonexistent/{path}"), &token, Some(body)))
+            .await
+            .unwrap();
+        let (_s, json) = response_parts(r).await;
+        assert_ne!(json["code"].as_i64().unwrap(), 0, "{path} 不存在 id 必须 404");
+    }
+}
+
+/// 评审补测（F-C/T-17 误判恢复闭环服务端侧）：suppress 模式 noise 归档后
+/// ✕ 反馈 → 报警恢复 Active + judgment 重开 investigating。
+#[tokio::test]
+async fn wrong_feedback_on_noise_restores_and_reopens() {
+    let (app_state, pool) = setup_test_app_with_pool().await;
+    seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
+    // 设备 + 被抑制的报警（恢复链路的对象）
+    sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type, state, created_at, updated_at) VALUES ('t1','t1','ws-default-001','sensor',1,'2025-01-01','2025-01-01')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO thing_alarms (id, thing_id, workspace_id, alarm_level, alarm_message, alarm_time, is_suppressed) VALUES ('a1','t1','ws-default-001','warning','温度越限','2025-01-01',1)")
+        .execute(&pool).await.unwrap();
+    let jid = app_state
+        .db
+        .insert_judgment("ws-default-001", Some("a1"), None, Some("t1"), "suppress")
+        .await
+        .unwrap();
+    app_state
+        .db
+        .judge_judgment(
+            &jid,
+            tinyiothub_storage::judgment::JudgmentVerdict::Noise,
+            "误判的噪声",
+            "{}",
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let app = crate::api::create_router(&app_state);
+    let app = axum::Router::new().nest("/api", app).with_state(app_state.clone());
+    let token = create_test_token("user-1", "tenant-1");
+    let r = app
+        .oneshot(
+            req(
+                "POST",
+                &format!("/api/v1/judgments/{jid}/feedback"),
+                &token,
+                Some(json!({"verdict": "wrong", "reason": "这不是噪声，温度真的有问题"})),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+
+    let a = app_state
+        .db
+        .find_alarm_by_id("a1", Some("ws-default-001"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        a.status,
+        tinyiothub_storage::alarm::AlarmStatus::Active,
+        "✕ 反馈后被抑制报警恢复 Active"
+    );
+    let j = app_state
+        .db
+        .find_judgment_by_id(&jid, "ws-default-001")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        j.status,
+        tinyiothub_storage::judgment::JudgmentStatus::Investigating,
+        "judgment 重开重调查"
+    );
+}

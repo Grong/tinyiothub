@@ -39,9 +39,11 @@ impl From<tinyiothub_storage::judgment::JudgmentFeedback> for JudgmentFeedbackDt
     }
 }
 
+/// 注意：feed 查询恒有 48h 时间窗（F12 契约——含 tab=all）。更早的判断
+/// 当前不经 API 可达（处置流是近实时面；历史审计走工单/事件日志）。
 #[derive(Debug, Deserialize)]
 pub struct JudgmentQueryParams {
-    /// needs_you | investigating | resolved | escalated | noise_archived | all（默认 needs_you）
+    /// needs_you | investigating | resolved | noise | all（默认 needs_you；未知值 400）
     pub tab: Option<String>,
     /// 游标（上一页最后一条 judgment id）
     pub before: Option<String>,

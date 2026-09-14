@@ -44,7 +44,7 @@ CREATE TABLE judgments_new (
 INSERT INTO judgments_new SELECT
     id, workspace_id, alarm_id, run_id, ticket_id, proposal_id, thing_id,
     verdict, reason, evidence_json, suggested_action, action_category, status,
-    'annotate', judged_at, created_at, judged_at, resolved_at
+    'annotate', COALESCE(judged_at, created_at), created_at, judged_at, resolved_at
 FROM judgments;
 DROP TABLE judgments;
 ALTER TABLE judgments_new RENAME TO judgments;
