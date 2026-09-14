@@ -46,6 +46,7 @@ const STATUS_LABELS: Record<Judgment["status"], string> = {
   escalated: "需人工",
   investigation_failed: "调查失败",
   budget_skipped: "未调查（预算）",
+  dispatch_suppressed: "未调查（防抖）",
 };
 
 /** 判断展示标签（导出供测试）。 */

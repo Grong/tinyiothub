@@ -36,7 +36,8 @@ export interface Judgment {
     | 'resolved'
     | 'escalated'
     | 'investigation_failed'
-    | 'budget_skipped';
+    | 'budget_skipped'
+    | 'dispatch_suppressed';
   latestFeedback: JudgmentFeedback | null;
   createdAt: string;
   judgedAt: string | null;
