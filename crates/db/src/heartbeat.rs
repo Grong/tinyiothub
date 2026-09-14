@@ -17,10 +17,19 @@ pub struct WorkspaceHeartbeatConfig {
     /// 原人工路径（Active 等人处理，无调查无自动流转）。旧行无此字段 → 默认开。
     #[serde(default = "default_ai_triage_enabled")]
     pub ai_triage_enabled: bool,
+    /// T-6 分级信任配置（triage mode）：annotate（只记录判断，不动报警——影子期
+    /// 默认，准确率验证后翻 suppress）| suppress（noise 判可抑制 Warning/Info
+    /// 报警；Critical/Error 永不抑制）。旧行无此字段 → annotate（保守默认）。
+    #[serde(default = "default_triage_mode")]
+    pub triage_mode: String,
 }
 
 fn default_ai_triage_enabled() -> bool {
     true
+}
+
+fn default_triage_mode() -> String {
+    "annotate".to_string()
 }
 
 impl WorkspaceHeartbeatConfig {
@@ -35,6 +44,7 @@ impl WorkspaceHeartbeatConfig {
             enabled,
             interval_minutes,
             ai_triage_enabled: true,
+            triage_mode: default_triage_mode(),
         })
     }
 
@@ -619,6 +629,7 @@ mod tests {
             enabled: true,
             interval_minutes: 30,
             ai_triage_enabled: true,
+            triage_mode: default_triage_mode(),
         };
         let json = cfg.to_db_json();
         let loaded = WorkspaceHeartbeatConfig::from_db_json(Some(&json)).expect("parse");
@@ -861,6 +872,7 @@ mod tests {
             enabled: true,
             interval_minutes: 30,
             ai_triage_enabled: true,
+            triage_mode: default_triage_mode(),
         };
         db.save_heartbeat_config("ws_c", &cfg).await.expect("save");
         let loaded = db
