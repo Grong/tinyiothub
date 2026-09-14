@@ -210,7 +210,7 @@ INSERT INTO cron_jobs (
 SELECT
     'sys-approval-timeout', 'system', '审批超时升级',
     'Escalate judgments awaiting approval longer than timeout_hours to tickets.',
-    'approval_timeout', '0 */15 * * * *', '{"timeout_hours": 24}',
+    'approval_timeout', '0 */15 * * * *', '{"timeout_hours": 24, "investigating_minutes": 30, "executing_hours": 1}',
     300, 3, 1, NULL, datetime('now'), datetime('now')
 WHERE NOT EXISTS (SELECT 1 FROM cron_jobs WHERE id = 'sys-approval-timeout');
 

@@ -1,12 +1,19 @@
 //! T5：judgment 订阅者——RunRecorded（problem_key="alarm:…" 的调查 run）→
 //! judgments 投影 + 三出口路由。
 //!
-//! 出口（设计文档状态机）：
-//! - verdict=noise         → AlarmService.suppress_alarm → noise_archived（静默归档）
+//! 出口（2026-09-14 eng-review 硬化版状态机）：
+//! - verdict=noise         → judge 落 noise_archived；抑制双闸门：快照
+//!   triage_mode=suppress 且非 Critical/Error 才 suppress_alarm（F-C/T-6/T-24）
 //! - verdict=self_healable → awaiting_approval（feed 页审批；执行由 approve 端点派发）
 //! - verdict=needs_human   → escalated + create_escalation 工单 + 关联
 //! - run 失败/判断解析失败  → investigation_failed + create_escalation 工单
 //!   （与 ticket_subscriber 撞同一 failure_hash → 折叠 recurrence，不开双票）
+//! - dispatch 被拦（O11/队列满）→ 清扫器标 dispatch_suppressed；迟到
+//!   RunRecorded 找回并按 verdict 恢复路由（T-7/L1，真实调查结果永不丢弃）
+//!
+//! 解析（T-15/C3）：围栏 ```json 块优先；宽松 fallback 保留但 evidence 打
+//! parse_fallback 标记（可统计可观测），注入面由 action_category 白名单
+//! 与服务端动作模板托底。
 //!
 //! 调查指令是"只调查不执行"（callbacks.rs alarm_investigation_text），执行
 //! 发生在审批通过后由 judgment approve 端点派发新 run——审批权在 judgment 域，
@@ -51,16 +58,18 @@ pub(crate) struct VerdictPayload {
 }
 
 /// 解析 report.summary 尾部的 ```json verdict 块；宽松 fallback：找最后一个
-/// 含 "verdict" 的 {...} 段（eng-review 外部修正 8：解析失败先宽松重试一次，
-/// 仍失败才 investigation_failed）。
-pub(crate) fn parse_verdict(summary: &str) -> Option<VerdictPayload> {
+/// 含 "verdict" 的 {...} 段（eng-review 外部修正 8 + T-15/C3：fallback 保留
+/// 但返回 used_fallback 标记——写进 evidence 可统计可审计，格式漂移不转嫁
+/// 工单队列；注入面由 action_category 白名单托底而非删除解析路径）。
+/// 返回 (payload, used_fallback)。
+pub(crate) fn parse_verdict(summary: &str) -> Option<(VerdictPayload, bool)> {
     // 严格路径：```json ... ``` 围栏块
     if let Some(start) = summary.rfind("```json") {
         let block = &summary[start + 7..];
         if let Some(end) = block.find("```")
             && let Ok(v) = serde_json::from_str::<VerdictPayload>(block[..end].trim())
         {
-            return Some(v);
+            return Some((v, false));
         }
     }
     // 宽松路径：最后一个含 "verdict" 的 JSON 对象
@@ -69,7 +78,7 @@ pub(crate) fn parse_verdict(summary: &str) -> Option<VerdictPayload> {
         if candidate.contains("\"verdict\"")
             && let Ok(v) = serde_json::from_str::<VerdictPayload>(candidate.trim())
         {
-            return Some(v);
+            return Some((v, true));
         }
     }
     None
@@ -99,17 +108,34 @@ pub(crate) async fn project(event: &AgentEvent, db: &Db, sse: &SseConnectionMana
         warn!(problem_key = %pk, "malformed alarm problem_key");
         return;
     };
+    // 正常路径：找 investigating 判断（T-9/L3：只有 investigating 算「在查」）。
+    // 迟到恢复（T-7/L1）：判断可能已被清扫器标 dispatch_suppressed（dispatch
+    // 当时被拦/误判），RunRecorded 迟到到达时找回它并照常路由 verdict——
+    // 真实完成的调查结果永不丢弃。
     let judgment = match db
-        .find_open_judgment_by_thing_rule(&report.workspace_id, thing_id, rule_id)
+        .find_investigating_judgment_by_thing_rule(&report.workspace_id, thing_id, rule_id)
         .await
     {
         Ok(Some(j)) => j,
-        Ok(None) => {
-            debug!(problem_key = %pk, "no open judgment for alarm investigation (flap-deduped?)");
-            return;
-        }
+        Ok(None) => match db
+            .find_latest_judgment_by_thing_rule(&report.workspace_id, thing_id, rule_id)
+            .await
+        {
+            Ok(Some(j)) if j.status == JudgmentStatus::DispatchSuppressed => {
+                tracing::info!(
+                    judgment_id = %j.id,
+                    problem_key = %pk,
+                    "late RunRecorded recovered for dispatch-suppressed judgment"
+                );
+                j
+            }
+            _ => {
+                debug!(problem_key = %pk, "no open judgment for alarm investigation (flap-deduped?)");
+                return;
+            }
+        },
         Err(e) => {
-            error!(problem_key = %pk, error = %e, "find open judgment failed");
+            error!(problem_key = %pk, error = %e, "find investigating judgment failed");
             return;
         }
     };
@@ -132,7 +158,9 @@ pub(crate) async fn project(event: &AgentEvent, db: &Db, sse: &SseConnectionMana
             .await;
         }
         _ => match parse_verdict(&report.summary) {
-            Some(payload) => route_verdict(db, sse, alarm_service, &judgment, report, pk, payload).await,
+            Some((payload, used_fallback)) => {
+                route_verdict(db, sse, alarm_service, &judgment, report, pk, payload, used_fallback).await
+            }
             None => {
                 fail_and_escalate(db, sse, &judgment, report, pk, "判断输出解析失败").await;
             }
@@ -140,7 +168,13 @@ pub(crate) async fn project(event: &AgentEvent, db: &Db, sse: &SseConnectionMana
     }
 }
 
-/// 审批执行收尾：exec run 完成 → resolved（+报警消除）或 escalated（+工单）。
+/// 审批执行收尾（T-4/5A verified 硬门 + T-10/L4 人工确认）：
+/// - Acted + verified     → resolved（+报警消除）——执行且验证，唯一消警路径
+/// - Acted + !verified    → 停留 executing（正名「等待人工确认」；1h SLA
+///   清扫转人工确认工单——没有死等回读，run 已结束）
+/// - NoActionNeeded       → 停留 executing（agent 回报「无需动作」与已批准的
+///   判断冲突，批准意图不可被 LLM 单方降级；同样由 SLA 转人工确认）
+/// - Failed 等            → escalated + 工单
 /// exec 失败的升级键按 judgment 唯一（执行失败是新事实，不与调查票折叠）。
 async fn settle_execution(
     db: &Db,
@@ -162,7 +196,7 @@ async fn settle_execution(
     };
 
     match report.outcome {
-        Outcome::Acted | Outcome::NoActionNeeded => {
+        Outcome::Acted if report.verified => {
             match db
                 .transit_judgment(judgment_id, JudgmentStatus::Executing, JudgmentStatus::Resolved, None)
                 .await
@@ -175,9 +209,33 @@ async fn settle_execution(
                     }
                     broadcast_judgment(sse, &judgment.workspace_id, judgment_id, "judgment_updated").await;
                 }
-                Ok(false) => debug!(judgment_id, "settle skipped (not executing)"),
+                Ok(false) => {
+                    // 迟到 Acted：judgment 可能已被 SLA 转人工（escalated）——
+                    // 动作实际执行了但不自动消警（T-16/C4），记录供审计。
+                    tracing::warn!(
+                        judgment_id,
+                        run_id = %report.run_id,
+                        "late Acted arrived for non-executing judgment — NOT auto-resolving alarm"
+                    );
+                }
                 Err(e) => error!(judgment_id, error = %e, "settle transit failed"),
             }
+        }
+        Outcome::Acted => {
+            // 执行了但未验证：停留 executing，等 SLA 转人工确认（不消警）
+            tracing::info!(
+                judgment_id,
+                run_id = %report.run_id,
+                "exec acted without verification — awaiting human confirmation via SLA sweep"
+            );
+        }
+        Outcome::NoActionNeeded => {
+            // 与已批准判断冲突：LLM 不可单方撤销人工批准（T-10/L4）
+            tracing::warn!(
+                judgment_id,
+                run_id = %report.run_id,
+                "exec run returned NoActionNeeded after human approval — awaiting human confirmation via SLA sweep"
+            );
         }
         Outcome::Failed | Outcome::BudgetExceeded | Outcome::Rejected => {
             match db
@@ -208,6 +266,7 @@ async fn route_verdict(
     report: &RunReport,
     problem_key: &str,
     payload: VerdictPayload,
+    used_fallback: bool,
 ) {
     let reason: String = payload.reason.chars().take(120).collect(); // F13：理由 ≤120 字符
     let verdict = JudgmentVerdict::parse_str(&payload.verdict);
@@ -226,24 +285,54 @@ async fn route_verdict(
 
     match verdict {
         JudgmentVerdict::Noise => {
-            // 先抑制报警（噪声的终态），再落判断
-            if let Some(alarm_id) = &judgment.alarm_id
-                && let Err(e) = alarm_service.suppress_alarm(alarm_id, &judgment.workspace_id).await
-            {
-                warn!(alarm_id, error = %e, "suppress alarm failed (already resolved?), judging anyway");
+            // T-3：先落判断（条件迁移），成功后才考虑抑制——抑制是可见副作用，
+            // 不能在 judge 输掉竞争时先行发生。
+            let judged = judge(db, sse, judgment, report, verdict, &reason, &payload, used_fallback).await;
+            if !judged {
+                return;
             }
-            judge(db, sse, judgment, report, verdict, &reason, &payload).await;
+            // F-C + T-6/T-24：抑制双闸门——① judgment 创建时快照的 triage_mode
+            // 必须为 suppress（影子期默认 annotate = 只标注不动报警）；
+            // ② Critical/Error 永不抑制（严重级切分的全部意义是严重报警必到人）。
+            if judgment.triage_mode != "suppress" {
+                debug!(judgment_id = %judgment.id, "annotate mode: noise judged without suppressing alarm");
+                return;
+            }
+            let Some(alarm_id) = &judgment.alarm_id else { return };
+            let severe = match db.find_alarm_by_id(alarm_id, Some(&judgment.workspace_id)).await {
+                Ok(Some(a)) => matches!(
+                    a.alarm_level,
+                    tinyiothub_storage::alarm::AlarmLevel::Critical | tinyiothub_storage::alarm::AlarmLevel::Error
+                ),
+                Ok(None) => {
+                    warn!(alarm_id, "alarm not found for noise suppression check");
+                    true // 查不到报警级别时按严重处理（不抑制 = 安全方向）
+                }
+                Err(e) => {
+                    warn!(alarm_id, error = %e, "alarm level lookup failed, skipping suppression");
+                    true
+                }
+            };
+            if severe {
+                tracing::info!(alarm_id, "severe alarm judged noise — NOT suppressing (feed mark only)");
+                return;
+            }
+            if let Err(e) = alarm_service.suppress_alarm(alarm_id, &judgment.workspace_id).await {
+                warn!(alarm_id, error = %e, "suppress alarm failed (already resolved?)");
+            }
         }
         JudgmentVerdict::SelfHealable => {
-            judge(db, sse, judgment, report, verdict, &reason, &payload).await;
+            judge(db, sse, judgment, report, verdict, &reason, &payload, used_fallback).await;
         }
         JudgmentVerdict::NeedsHuman => {
-            judge(db, sse, judgment, report, verdict, &reason, &payload).await;
+            judge(db, sse, judgment, report, verdict, &reason, &payload, used_fallback).await;
             escalate_to_ticket(db, sse, judgment, report, problem_key, &reason).await;
         }
     }
 }
 
+/// 落判断。返回是否成功迁移（true = 本调用胜出；false = 并发/重复/已终态）。
+#[allow(clippy::too_many_arguments)]
 async fn judge(
     db: &Db,
     sse: &SseConnectionManager,
@@ -252,14 +341,17 @@ async fn judge(
     verdict: JudgmentVerdict,
     reason: &str,
     payload: &VerdictPayload,
-) {
+    used_fallback: bool,
+) -> bool {
     // F11 证据契约 P0 版：调查 run 的摘要截取作为证据来源（属性快照/事件列表
-    // 的结构化提取在 P1 再做）
+    // 的结构化提取在 P1 再做）。T-15/C3：宽松解析命中时打 parse_fallback
+    // 标记——feed 可见、可统计，格式漂移有观测面。
     let summary_excerpt: String = report.summary.chars().take(500).collect();
     let evidence = serde_json::json!({
         "source": "run_summary",
         "run_id": report.run_id,
         "excerpt": summary_excerpt,
+        "parse_fallback": used_fallback,
     })
     .to_string();
     match db
@@ -269,14 +361,23 @@ async fn judge(
             reason,
             &evidence,
             payload.suggested_action.as_deref(),
-            payload.action_category.as_deref(),
+            tinyiothub_storage::judgment::normalize_action_category(payload.action_category.as_deref()).as_deref(),
             None,
         )
         .await
     {
-        Ok(true) => broadcast_judgment(sse, &judgment.workspace_id, &judgment.id, "judgment_judged").await,
-        Ok(false) => debug!(judgment_id = %judgment.id, "judge skipped (not investigating — duplicate RunRecorded)"),
-        Err(e) => error!(judgment_id = %judgment.id, error = %e, "judge_judgment failed"),
+        Ok(true) => {
+            broadcast_judgment(sse, &judgment.workspace_id, &judgment.id, "judgment_judged").await;
+            true
+        }
+        Ok(false) => {
+            debug!(judgment_id = %judgment.id, "judge skipped (not investigating — duplicate RunRecorded)");
+            false
+        }
+        Err(e) => {
+            error!(judgment_id = %judgment.id, error = %e, "judge_judgment failed");
+            false
+        }
     }
 }
 
@@ -443,16 +544,18 @@ mod tests {
     #[test]
     fn parse_verdict_strict_fenced_block() {
         let summary = "调查过程……\n```json\n{\"verdict\": \"noise\", \"reason\": \"短暂波动\", \"suggested_action\": null, \"action_category\": \"other\"}\n```";
-        let v = parse_verdict(summary).unwrap();
+        let (v, fallback) = parse_verdict(summary).unwrap();
+        assert!(!fallback);
         assert_eq!(v.verdict, "noise");
         assert_eq!(v.reason, "短暂波动");
     }
 
     #[test]
     fn parse_verdict_lenient_fallback() {
-        // 无围栏的裸 JSON（LLM 常见偷懒输出）
+        // 无围栏的裸 JSON（LLM 常见偷懒输出）——T-15/C3：fallback 保留但打标记
         let summary = "分析完毕。{\"verdict\": \"needs_human\", \"reason\": \"持续恶化\", \"suggested_action\": null, \"action_category\": null}";
-        let v = parse_verdict(summary).unwrap();
+        let (v, fallback) = parse_verdict(summary).unwrap();
+        assert!(fallback, "裸 JSON 应走 fallback 并打标记");
         assert_eq!(v.verdict, "needs_human");
     }
 
@@ -513,7 +616,7 @@ mod tests {
     #[tokio::test]
     async fn needs_human_escalates_to_ticket() {
         let (db, sse, alarm) = fixture().await;
-        let jid = db.insert_judgment("ws1", Some("a1"), None, Some("t1")).await.unwrap();
+        let jid = db.insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate").await.unwrap();
         let summary = "...\n```json\n{\"verdict\": \"needs_human\", \"reason\": \"冷却系统疑似故障\", \"suggested_action\": null, \"action_category\": \"other\"}\n```";
         project(&event("r1", Outcome::NoActionNeeded, summary), &db, &sse, &alarm).await;
 
@@ -526,7 +629,9 @@ mod tests {
     #[tokio::test]
     async fn noise_suppresses_alarm_and_archives() {
         let (db, sse, alarm) = fixture().await;
-        let jid = db.insert_judgment("ws1", Some("a1"), None, Some("t1")).await.unwrap();
+        // suppress 模式（T-6：快照在 judgment 行上；annotate 默认不抑制，
+        // 由 alarm_disposition_tests::annotate_mode_noise_does_not_suppress 覆盖）
+        let jid = db.insert_judgment("ws1", Some("a1"), None, Some("t1"), "suppress").await.unwrap();
         let summary = "```json\n{\"verdict\": \"noise\", \"reason\": \"正常波动\", \"suggested_action\": null, \"action_category\": \"other\"}\n```";
         project(&event("r1", Outcome::NoActionNeeded, summary), &db, &sse, &alarm).await;
 
@@ -539,7 +644,7 @@ mod tests {
     #[tokio::test]
     async fn failed_run_marks_investigation_failed_and_escalates() {
         let (db, sse, alarm) = fixture().await;
-        let jid = db.insert_judgment("ws1", Some("a1"), None, Some("t1")).await.unwrap();
+        let jid = db.insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate").await.unwrap();
         project(&event("r1", Outcome::Failed, "LLM 超时"), &db, &sse, &alarm).await;
 
         let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
@@ -550,7 +655,7 @@ mod tests {
     #[tokio::test]
     async fn unparseable_verdict_escalates_not_silent() {
         let (db, sse, alarm) = fixture().await;
-        let jid = db.insert_judgment("ws1", Some("a1"), None, Some("t1")).await.unwrap();
+        let jid = db.insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate").await.unwrap();
         project(
             &event("r1", Outcome::NoActionNeeded, "没有结构化输出"),
             &db,
@@ -567,7 +672,7 @@ mod tests {
     #[tokio::test]
     async fn unrelated_problem_keys_ignored() {
         let (db, sse, alarm) = fixture().await;
-        let jid = db.insert_judgment("ws1", Some("a1"), None, Some("t1")).await.unwrap();
+        let jid = db.insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate").await.unwrap();
         let mut e = event("r1", Outcome::NoActionNeeded, "x");
         e.kind = AgentEventKind::RunRecorded {
             report: Box::new(report("r1", Outcome::NoActionNeeded, "x")),

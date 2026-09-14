@@ -54,7 +54,7 @@ async fn kill_switch_off_produces_no_judgment() {
     let svc = AlarmService::new(db.clone());
     svc.create_alarm(make_alarm(AlarmLevel::Warning)).await.unwrap();
 
-    let judgments = db.list_judgments("ws1", None, None, 10).await.unwrap();
+    let judgments = db.list_judgments_feed("ws1", None, None, 10).await.unwrap();
     assert!(judgments.is_empty(), "kill switch off → no judgment");
 }
 
@@ -65,7 +65,7 @@ async fn warning_alarm_creates_investigating_judgment() {
     let svc = AlarmService::new(db.clone());
     svc.create_alarm(make_alarm(AlarmLevel::Warning)).await.unwrap();
 
-    let judgments = db.list_judgments("ws1", None, None, 10).await.unwrap();
+    let judgments = db.list_judgments_feed("ws1", None, None, 10).await.unwrap();
     assert_eq!(judgments.len(), 1);
     assert_eq!(judgments[0].status, JudgmentStatus::Investigating);
     assert!(judgments[0].alarm_id.is_some());
@@ -80,7 +80,7 @@ async fn flapping_alarm_does_not_duplicate_judgment() {
     svc.create_alarm(make_alarm(AlarmLevel::Warning)).await.unwrap();
     svc.create_alarm(make_alarm(AlarmLevel::Warning)).await.unwrap();
 
-    let judgments = db.list_judgments("ws1", None, None, 10).await.unwrap();
+    let judgments = db.list_judgments_feed("ws1", None, None, 10).await.unwrap();
     assert_eq!(judgments.len(), 1, "flapping deduped at source");
 }
 
@@ -125,7 +125,7 @@ async fn critical_alarm_escalates_directly_to_ticket() {
     svc.create_alarm(make_alarm(AlarmLevel::Critical)).await.unwrap();
 
     assert_eq!(spy.calls.lock().unwrap().len(), 1, "critical escalated directly");
-    let judgments = db.list_judgments("ws1", None, None, 10).await.unwrap();
+    let judgments = db.list_judgments_feed("ws1", None, None, 10).await.unwrap();
     assert_eq!(judgments.len(), 1);
     assert!(judgments[0].ticket_id.is_some(), "judgment linked to real ticket");
 }
@@ -136,12 +136,12 @@ async fn over_budget_alarm_gets_budget_skipped_marker() {
     let db = test_db().await;
     // 填满今日预算（budget_skipped 不计入，全用 investigating）
     for _ in 0..100 {
-        db.insert_judgment("ws1", None, None, Some("t1")).await.unwrap();
+        db.insert_judgment("ws1", None, None, Some("t1"), "annotate").await.unwrap();
     }
     let svc = AlarmService::new(db.clone());
     svc.create_alarm(make_alarm(AlarmLevel::Warning)).await.unwrap();
 
-    let all = db.list_judgments("ws1", None, None, 200).await.unwrap();
+    let all = db.list_judgments_feed("ws1", None, None, 200).await.unwrap();
     let skipped = all.iter().filter(|j| j.status == JudgmentStatus::BudgetSkipped).count();
     assert_eq!(skipped, 1, "over-budget alarm marked budget_skipped");
     // budget_skipped 不计入额度（否则明天也永远超预算）
@@ -150,21 +150,28 @@ async fn over_budget_alarm_gets_budget_skipped_marker() {
 }
 
 /// T12 E2E（链路组合，真实 DB）：报警 → enter_disposition 建判断 → 调查
-/// RunRecorded → subscriber 路由 → 噪声抑制归档。不经真实 LLM（报告直接构造）。
+/// RunRecorded → subscriber 路由 noise → suppress 模式下抑制归档。
+/// 不经真实 LLM（报告直接构造）。
 #[tokio::test]
 async fn full_chain_alarm_to_noise_archive() {
     use tinyiothub_agent::runtime::events::{AgentEvent, AgentEventKind};
     use tinyiothub_core::agent_runs::{Outcome, RunReport};
 
     let db = test_db().await;
+    // suppress 模式显式开启（T-6：影子期默认 annotate，抑制需验证后翻开）
+    let mut config = tinyiothub_storage::heartbeat::WorkspaceHeartbeatConfig::validated(true, 15).unwrap();
+    config.triage_mode = "suppress".to_string();
+    db.save_heartbeat_config("ws1", &config).await.unwrap();
+
     let svc = AlarmService::new(db.clone());
     let alarm = svc.create_alarm(make_alarm(AlarmLevel::Warning)).await.unwrap();
 
-    // 链路第一段：判断已建（investigating）
-    let judgments = db.list_judgments("ws1", None, None, 10).await.unwrap();
+    // 链路第一段：判断已建（investigating），快照为 suppress
+    let judgments = db.list_judgments_feed("ws1", None, None, 10).await.unwrap();
     assert_eq!(judgments.len(), 1);
     let judgment = &judgments[0];
     assert_eq!(judgment.alarm_id.as_deref(), Some(alarm.id.as_str()));
+    assert_eq!(judgment.triage_mode, "suppress", "triage_mode 创建时快照");
 
     // 链路第二段：调查 run 完成 → subscriber 路由 noise
     let report = RunReport {
@@ -193,9 +200,104 @@ async fn full_chain_alarm_to_noise_archive() {
     let sse = crate::domains::event::sse_manager::SseConnectionManager::new();
     crate::domains::agent::host::judgment_subscriber::project(&event, &db, &sse, &svc).await;
 
-    // 终态：判断归档 + 报警被抑制
+    // 终态：判断归档 + 报警被抑制（suppress 模式 + Warning）
     let j = db.find_judgment_by_id(&judgment.id, "ws1").await.unwrap().unwrap();
     assert_eq!(j.status, JudgmentStatus::NoiseArchived);
     let a = db.find_alarm_by_id(&alarm.id, Some("ws1")).await.unwrap().unwrap();
     assert_eq!(a.status, tinyiothub_storage::alarm::AlarmStatus::Suppressed);
+}
+
+/// T-6：annotate 模式（影子期默认）——noise 判断只归档标注，不动报警。
+#[tokio::test]
+async fn annotate_mode_noise_does_not_suppress() {
+    use tinyiothub_agent::runtime::events::{AgentEvent, AgentEventKind};
+    use tinyiothub_core::agent_runs::{Outcome, RunReport};
+
+    let db = test_db().await; // 无配置 → 默认 annotate
+    let svc = AlarmService::new(db.clone());
+    let alarm = svc.create_alarm(make_alarm(AlarmLevel::Warning)).await.unwrap();
+
+    let report = RunReport {
+        run_id: "run-inv-2".to_string(),
+        workspace_id: "ws1".to_string(),
+        trigger: "alarm".to_string(),
+        outcome: Outcome::NoActionNeeded,
+        summary: "```json\n{\"verdict\": \"noise\", \"reason\": \"波动\", \"suggested_action\": null, \"action_category\": \"other\"}\n```".to_string(),
+        actions: vec![],
+        verified: false,
+        duration_ms: 1000,
+        tool_calls: 1,
+        tokens: 50,
+        end_reason: None,
+        thing_id: Some("t1".to_string()),
+    };
+    let event = AgentEvent {
+        seq: 1,
+        occurred_at: chrono::Utc::now(),
+        kind: AgentEventKind::RunRecorded {
+            report: Box::new(report),
+            problem_key: Some("alarm:t1:-".to_string()),
+            dedup_key: None,
+        },
+    };
+    let sse = crate::domains::event::sse_manager::SseConnectionManager::new();
+    crate::domains::agent::host::judgment_subscriber::project(&event, &db, &sse, &svc).await;
+
+    let judgments = db.list_judgments_feed("ws1", None, None, 10).await.unwrap();
+    assert_eq!(judgments[0].status, JudgmentStatus::NoiseArchived, "判断照常归档");
+    let a = db.find_alarm_by_id(&alarm.id, Some("ws1")).await.unwrap().unwrap();
+    assert_eq!(
+        a.status,
+        tinyiothub_storage::alarm::AlarmStatus::Active,
+        "annotate 模式报警保持 Active（只标注不抑制）"
+    );
+}
+
+/// F-C：suppress 模式下 Critical 报警判 noise 也不抑制（严重级永不抑制）。
+#[tokio::test]
+async fn critical_alarm_never_suppressed_even_in_suppress_mode() {
+    use tinyiothub_agent::runtime::events::{AgentEvent, AgentEventKind};
+    use tinyiothub_core::agent_runs::{Outcome, RunReport};
+
+    let db = test_db().await;
+    let mut config = tinyiothub_storage::heartbeat::WorkspaceHeartbeatConfig::validated(true, 15).unwrap();
+    config.triage_mode = "suppress".to_string();
+    db.save_heartbeat_config("ws1", &config).await.unwrap();
+
+    let svc = AlarmService::new(db.clone());
+    // Critical：直达工单（escalation 未注入时降级为只建判断）+ 并行调查
+    let alarm = svc.create_alarm(make_alarm(AlarmLevel::Critical)).await.unwrap();
+
+    let report = RunReport {
+        run_id: "run-inv-3".to_string(),
+        workspace_id: "ws1".to_string(),
+        trigger: "alarm".to_string(),
+        outcome: Outcome::NoActionNeeded,
+        summary: "```json\n{\"verdict\": \"noise\", \"reason\": \"误判\", \"suggested_action\": null, \"action_category\": \"other\"}\n```".to_string(),
+        actions: vec![],
+        verified: false,
+        duration_ms: 1000,
+        tool_calls: 1,
+        tokens: 50,
+        end_reason: None,
+        thing_id: Some("t1".to_string()),
+    };
+    let event = AgentEvent {
+        seq: 1,
+        occurred_at: chrono::Utc::now(),
+        kind: AgentEventKind::RunRecorded {
+            report: Box::new(report),
+            problem_key: Some("alarm:t1:-".to_string()),
+            dedup_key: None,
+        },
+    };
+    let sse = crate::domains::event::sse_manager::SseConnectionManager::new();
+    crate::domains::agent::host::judgment_subscriber::project(&event, &db, &sse, &svc).await;
+
+    let a = db.find_alarm_by_id(&alarm.id, Some("ws1")).await.unwrap().unwrap();
+    assert_eq!(
+        a.status,
+        tinyiothub_storage::alarm::AlarmStatus::Active,
+        "Critical 判 noise 也不抑制（F-C 护栏）"
+    );
 }

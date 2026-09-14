@@ -26,7 +26,7 @@ fn req(method: &str, uri: &str, token: &str, body: Option<Value>) -> Request<Bod
 }
 
 async fn seed_judgment(app_state: &crate::state::AppState, ws: &str, verdict: Option<&str>) -> String {
-    let jid = app_state.db.insert_judgment(ws, None, None, Some("t1")).await.unwrap();
+    let jid = app_state.db.insert_judgment(ws, None, None, Some("t1"), "annotate").await.unwrap();
     if let Some(v) = verdict {
         let verdict = match v {
             "noise" => tinyiothub_storage::judgment::JudgmentVerdict::Noise,

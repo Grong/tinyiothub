@@ -166,23 +166,61 @@ impl JobExecutor for ApprovalTimeoutExecutor {
             .and_then(|v| v.as_i64())
             .unwrap_or(24)
             .max(1);
-        let cutoff = chrono::Utc::now() - chrono::Duration::hours(timeout_hours);
+        // E2/2A：三态 SLA（可配置）。investigating 默认 30min（dispatch 被拦/
+        // 调查挂起 → 标记不开票）；executing 默认 1h（执行未闭环 → 人工确认工单）。
+        let investigating_minutes = config
+            .get("investigating_minutes")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(30)
+            .max(1);
+        let executing_hours = config
+            .get("executing_hours")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(1)
+            .max(1);
 
-        let escalated = self
-            .store
-            .escalate_stale_approvals(&cutoff.to_rfc3339())
-            .await
-            .map_err(|e| ExecutorError::CommandFailed(format!("approval timeout escalation failed: {}", e)))?;
+        let now = chrono::Utc::now();
+        let approval_cutoff = (now - chrono::Duration::hours(timeout_hours)).to_rfc3339();
+        let investigating_cutoff = (now - chrono::Duration::minutes(investigating_minutes)).to_rfc3339();
+        let executing_cutoff = (now - chrono::Duration::hours(executing_hours)).to_rfc3339();
+
+        // 三个阶段各自独立成败（一阶段失败不阻其他阶段）
+        let approvals = self.store.escalate_stale_approvals(&approval_cutoff).await;
+        let investigating = self.store.mark_stale_investigating(&investigating_cutoff).await;
+        let executing = self.store.escalate_stale_executing(&executing_cutoff).await;
+
+        let mut errors = Vec::new();
+        let escalated_approvals = approvals.unwrap_or_else(|e| {
+            errors.push(format!("approvals: {e}"));
+            0
+        });
+        let marked_investigating = investigating.unwrap_or_else(|e| {
+            errors.push(format!("investigating: {e}"));
+            0
+        });
+        let escalated_executing = executing.unwrap_or_else(|e| {
+            errors.push(format!("executing: {e}"));
+            0
+        });
+
         let duration_ms = start.elapsed().as_millis() as i64;
-        tracing::info!(escalated, timeout_hours, "approval timeout sweep complete");
+        tracing::info!(
+            escalated_approvals,
+            marked_investigating,
+            escalated_executing,
+            timeout_hours,
+            investigating_minutes,
+            executing_hours,
+            "judgment SLA sweep complete"
+        );
 
         Ok(ExecutionResult {
-            status: "success".to_string(),
+            status: if errors.is_empty() { "success" } else { "partial" }.to_string(),
             output: Some(format!(
-                "escalated {} judgments pending approval longer than {}h",
-                escalated, timeout_hours
+                "approvals escalated: {}, investigating marked: {}, executing escalated: {}",
+                escalated_approvals, marked_investigating, escalated_executing
             )),
-            error_message: None,
+            error_message: if errors.is_empty() { None } else { Some(errors.join("; ")) },
             duration_ms,
         })
     }

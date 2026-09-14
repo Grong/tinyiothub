@@ -49,6 +49,7 @@ pub struct JudgmentQueryParams {
 }
 
 /// feed 头部摘要（v6 线框稿「今日 23 条已消化 · 2 条需要你」+ 学习计数）。
+/// E2：延迟分位数（验收「5min ≥90%」的度量）；E5：按类别的反馈聚合。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JudgmentSummaryDto {
@@ -58,6 +59,16 @@ pub struct JudgmentSummaryDto {
     pub feedback_total: u64,
     pub feedback_right: u64,
     pub feedback_wrong: u64,
+    pub latency_p50_secs: Option<f64>,
+    pub latency_p90_secs: Option<f64>,
+    pub feedback_by_category: std::collections::HashMap<String, CategoryFeedbackDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CategoryFeedbackDto {
+    pub right: u64,
+    pub wrong: u64,
 }
 
 #[derive(Debug, Deserialize)]

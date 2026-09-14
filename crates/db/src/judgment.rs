@@ -137,7 +137,34 @@ pub(crate) fn allowed_transition(from: JudgmentStatus, to: JudgmentStatus) -> bo
             | (Executing, Escalated)
             // 误判恢复：✕ 反馈噪声判断 → 重开重调查（T-17/C6）
             | (NoiseArchived, Investigating)
+            // approve 的补偿回滚（D3）：enqueue 失败时 executing → awaiting_approval
+            | (Executing, AwaitingApproval)
     )
+}
+
+/// 动作白名单（4A/T-3）：exec prompt 的动作文本由服务端模板按类别生成，
+/// LLM 的 suggested_action 只做展示、不进执行指令（注入面收敛到枚举本身）。
+pub fn exec_action_template(category: Option<&str>, thing_id: Option<&str>) -> String {
+    let thing = thing_id.unwrap_or("目标设备");
+    match category {
+        Some("device_reboot") => format!("重启设备 {thing}"),
+        Some("connection_recovery") => format!("恢复设备 {thing} 的连接（重连/重订阅）"),
+        Some("property_adjust") => format!("调整设备 {thing} 的属性设置"),
+        Some("threshold_tuning") => format!("调整报警规则阈值"),
+        _ => "按判断建议处置".to_string(),
+    }
+}
+
+/// action_category 归一化（白名单外 → other，避免 DB CHECK 失败让判断
+/// 卡 investigating，T-3）。
+pub fn normalize_action_category(category: Option<&str>) -> Option<String> {
+    match category {
+        Some(c @ ("device_reboot" | "connection_recovery" | "property_adjust" | "threshold_tuning" | "other")) => {
+            Some(c.to_string())
+        }
+        Some(_) => Some("other".to_string()),
+        None => None,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +185,9 @@ pub struct Judgment {
     /// 创建时从 workspace 配置快照的 triage 模式（T-20/S4）：verdict 路由按
     /// 快照而非到达时配置，中途切模式不影响在途判断。
     pub triage_mode: String,
+    /// 状态进入时刻（SLA 清扫起算点）：每次状态翻转更新（insert/judge/
+    /// transit/fail/reopen）。与 judged_at 分开——延迟指标用 judged_at。
+    pub state_entered_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
     pub judged_at: Option<DateTime<Utc>>,
     pub resolved_at: Option<DateTime<Utc>>,
@@ -187,8 +217,8 @@ pub(crate) async fn insert_judgment(
 ) -> Result<String> {
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query(
-        "INSERT INTO judgments (id, workspace_id, alarm_id, run_id, thing_id, status, triage_mode, created_at)
-         VALUES (?, ?, ?, ?, ?, 'investigating', ?, ?)",
+        "INSERT INTO judgments (id, workspace_id, alarm_id, run_id, thing_id, status, triage_mode, state_entered_at, created_at)
+         VALUES (?, ?, ?, ?, ?, 'investigating', ?, ?, ?)",
     )
     .bind(&id)
     .bind(workspace_id)
@@ -196,6 +226,7 @@ pub(crate) async fn insert_judgment(
     .bind(run_id)
     .bind(thing_id)
     .bind(triage_mode)
+    .bind(Utc::now().to_rfc3339())
     .bind(Utc::now().to_rfc3339())
     .execute(pool)
     .await?;
@@ -230,6 +261,8 @@ fn row_to_judgment(row: sqlx::sqlite::SqliteRow) -> Result<Judgment> {
         action_category: row.get("action_category"),
         status,
         triage_mode: row.get::<Option<String>, _>("triage_mode").unwrap_or_else(|| "annotate".to_string()),
+        state_entered_at: parse_ts_opt(row.get::<Option<String>, _>("state_entered_at"))
+            .unwrap_or_else(Utc::now),
         created_at: parse_ts_opt(row.get::<Option<String>, _>("created_at")).unwrap_or_else(Utc::now),
         judged_at: parse_ts_opt(row.get("judged_at")),
         resolved_at: parse_ts_opt(row.get("resolved_at")),
@@ -269,7 +302,7 @@ pub(crate) async fn judge_judgment(
     debug_assert!(allowed_transition(JudgmentStatus::DispatchSuppressed, target));
     let result = sqlx::query(
         "UPDATE judgments SET verdict = ?, reason = ?, evidence_json = ?, suggested_action = ?,
-            action_category = ?, proposal_id = ?, status = ?, judged_at = ?
+            action_category = ?, proposal_id = ?, status = ?, judged_at = ?, state_entered_at = ?
          WHERE id = ? AND status IN ('investigating','dispatch_suppressed')",
     )
     .bind(verdict.as_str())
@@ -279,6 +312,7 @@ pub(crate) async fn judge_judgment(
     .bind(action_category)
     .bind(proposal_id)
     .bind(target.as_str())
+    .bind(Utc::now().to_rfc3339())
     .bind(Utc::now().to_rfc3339())
     .bind(id)
     .execute(pool)
@@ -308,12 +342,13 @@ pub(crate) async fn transit_judgment(
     };
     let result = sqlx::query(
         "UPDATE judgments SET status = ?, ticket_id = COALESCE(?, ticket_id),
-            resolved_at = COALESCE(?, resolved_at)
+            resolved_at = COALESCE(?, resolved_at), state_entered_at = ?
          WHERE id = ? AND status = ?",
     )
     .bind(next.as_str())
     .bind(ticket_id)
     .bind(resolved_at)
+    .bind(Utc::now().to_rfc3339())
     .bind(id)
     .bind(expected.as_str())
     .execute(pool)
@@ -341,10 +376,11 @@ pub(crate) async fn fail_judgment(pool: &SqlitePool, id: &str, next: JudgmentSta
         "('investigating')"
     };
     let result = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "UPDATE judgments SET status = ?, reason = ? WHERE id = ? AND status IN {from}"
+        "UPDATE judgments SET status = ?, reason = ?, state_entered_at = ? WHERE id = ? AND status IN {from}"
     )))
     .bind(next.as_str())
     .bind(reason)
+    .bind(Utc::now().to_rfc3339())
     .bind(id)
     .execute(pool)
     .await?;
@@ -437,26 +473,24 @@ pub(crate) async fn list_judgments_feed(
 }
 
 /// 审批超时扫描：awaiting_approval 且 judged_at 早于 cutoff。
+/// 起算点是 judged_at（进入待审批时刻，与前端审批倒计时同一基准）。
 pub(crate) async fn stale_awaiting_approvals(pool: &SqlitePool, cutoff: &str) -> Result<Vec<Judgment>> {
-    stale_by_status(pool, JudgmentStatus::AwaitingApproval, cutoff).await
+    let rows = sqlx::query("SELECT * FROM judgments WHERE status = 'awaiting_approval' AND judged_at < ?")
+        .bind(cutoff)
+        .fetch_all(pool)
+        .await?;
+    rows.into_iter().map(row_to_judgment).collect()
 }
 
 /// 三态 SLA 清扫（E2）：investigating/executing 超 cutoff 的扫描。
-/// investigating 用 created_at 起算（无 judged_at）；executing 用 judged_at
-/// （状态进入≈批准时刻；在途 run 由调用方查 registry 排除，T-7/T-16）。
+/// 起算点 = state_entered_at（状态进入时刻；T-16/C4：executing 的 SLA 从
+/// 进入执行态起算，不从 judged_at——审批等待时间不该计入执行超时）。
 pub(crate) async fn stale_by_status(pool: &SqlitePool, status: JudgmentStatus, cutoff: &str) -> Result<Vec<Judgment>> {
-    let ts_col = if matches!(status, JudgmentStatus::Investigating) {
-        "created_at"
-    } else {
-        "judged_at"
-    };
-    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT * FROM judgments WHERE status = ? AND {ts_col} < ?"
-    )))
-    .bind(status.as_str())
-    .bind(cutoff)
-    .fetch_all(pool)
-    .await?;
+    let rows = sqlx::query("SELECT * FROM judgments WHERE status = ? AND state_entered_at < ?")
+        .bind(status.as_str())
+        .bind(cutoff)
+        .fetch_all(pool)
+        .await?;
     rows.into_iter().map(row_to_judgment).collect()
 }
 
@@ -558,9 +592,10 @@ pub(crate) async fn reopen_judgment(pool: &SqlitePool, id: &str) -> Result<bool>
         });
     }
     let result = sqlx::query(
-        "UPDATE judgments SET status = 'investigating', verdict = NULL, judged_at = NULL
+        "UPDATE judgments SET status = 'investigating', verdict = NULL, judged_at = NULL, state_entered_at = ?
          WHERE id = ? AND status = 'noise_archived'",
     )
+    .bind(Utc::now().to_rfc3339())
     .bind(id)
     .execute(pool)
     .await?;

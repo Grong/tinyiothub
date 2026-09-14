@@ -32,9 +32,17 @@ pub trait EventRetentionStore: Send + Sync {
 /// Approval-timeout escalations (cron `approval_timeout` executor, T6):
 /// awaiting_approval 超过 24h 的判断自动升级为工单（防"审批堆积"——设计
 /// 文档状态机）。返回升级的条数。
+///
+/// 2026-09-14 硬化（E2）：三态 SLA 清扫。
+/// - investigating 超 SLA（默认 30min）：dispatch 被拦/调查挂起 → 标
+///   dispatch_suppressed 标记（不开票、不计预算；迟到 RunRecorded 恢复路由）
+/// - executing 超 SLA（默认 1h）：执行未验证/队列卡死 → escalated + 人工
+///   确认工单（T-16/C4：起算点是 state_entered_at，不是批准时刻）
 #[async_trait]
 pub trait ApprovalTimeoutStore: Send + Sync {
     async fn escalate_stale_approvals(&self, cutoff_rfc3339: &str) -> Result<u64, String>;
+    async fn mark_stale_investigating(&self, cutoff_rfc3339: &str) -> Result<u64, String>;
+    async fn escalate_stale_executing(&self, cutoff_rfc3339: &str) -> Result<u64, String>;
 }
 
 /// Thing cache used by `DataServer`. Sync because every call site is sync

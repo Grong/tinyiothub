@@ -33,6 +33,9 @@ CREATE TABLE judgments_new (
     -- Warning/Info 报警。NULL 视为 'annotate'（保守默认）。
     triage_mode TEXT NOT NULL DEFAULT 'annotate'
         CHECK (triage_mode IN ('annotate','suppress')),
+    -- 状态进入时刻（SLA 清扫的起算点）：每次状态翻转更新。与 judged_at
+    -- 分开——judged_at 服务延迟指标（created→judged），不可被执行态覆盖。
+    state_entered_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     judged_at TEXT,
     resolved_at TEXT
@@ -41,7 +44,7 @@ CREATE TABLE judgments_new (
 INSERT INTO judgments_new SELECT
     id, workspace_id, alarm_id, run_id, ticket_id, proposal_id, thing_id,
     verdict, reason, evidence_json, suggested_action, action_category, status,
-    'annotate', created_at, judged_at, resolved_at
+    'annotate', judged_at, created_at, judged_at, resolved_at
 FROM judgments;
 DROP TABLE judgments;
 ALTER TABLE judgments_new RENAME TO judgments;

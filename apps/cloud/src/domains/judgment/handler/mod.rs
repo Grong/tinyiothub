@@ -69,15 +69,14 @@ async fn list_judgments(
     let page_size = params.page_size.unwrap_or(20).clamp(1, 100);
     match state
         .db
-        .list_judgments(ws, statuses.as_deref(), params.before.as_deref(), page_size)
+        .list_judgments_feed(ws, statuses.as_deref(), params.before.as_deref(), page_size)
         .await
     {
         Ok(rows) => {
-            let mut out = Vec::with_capacity(rows.len());
-            for j in &rows {
-                let fb = state.db.latest_judgment_feedback(&j.id).await.ok().flatten();
-                out.push(to_dto(j, fb));
-            }
+            // F-H：批量取最新反馈（替代逐行查询的 N+1）
+            let ids: Vec<String> = rows.iter().map(|j| j.id.clone()).collect();
+            let fbs = state.db.latest_feedbacks(&ids).await.unwrap_or_default();
+            let out = rows.iter().map(|j| to_dto(j, fbs.get(&j.id).cloned())).collect();
             ApiResponseBuilder::success(out)
         }
         Err(e) => ApiResponseBuilder::error(format!("查询失败: {e}")),
@@ -110,16 +109,22 @@ async fn judgment_summary(State(state): State<AppState>, claims: AuthClaims) -> 
         feedback_total: stats.as_ref().map(|s| s.feedback_right + s.feedback_wrong).unwrap_or(0),
         feedback_right: stats.as_ref().map(|s| s.feedback_right).unwrap_or(0),
         feedback_wrong: stats.as_ref().map(|s| s.feedback_wrong).unwrap_or(0),
+        latency_p50_secs: stats.as_ref().and_then(|s| s.latency_p50_secs),
+        latency_p90_secs: stats.as_ref().and_then(|s| s.latency_p90_secs),
+        feedback_by_category: stats
+            .as_ref()
+            .map(|s| {
+                s.feedback_by_category
+                    .iter()
+                    .map(|(k, v)| (k.clone(), CategoryFeedbackDto { right: v.right, wrong: v.wrong }))
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 
 async fn count_status(state: &AppState, ws: &str, statuses: &[tinyiothub_storage::judgment::JudgmentStatus]) -> i64 {
-    state
-        .db
-        .list_judgments(ws, Some(statuses), None, 1000)
-        .await
-        .map(|v| v.len() as i64)
-        .unwrap_or(0)
+    state.db.count_by_statuses(ws, statuses).await.unwrap_or(0)
 }
 
 /// ✓/✕ 反馈（D11 独立表全历史；「错」写 agent_memories 知识层）。
@@ -160,8 +165,74 @@ async fn submit_feedback(
         tracing::warn!(judgment_id = %id, error = %e, "feedback memory write failed (feedback persisted)");
     }
 
+    // 误判恢复闭环（F-C/T-17/C6）：噪声判断被点「错」→ 恢复被抑制的报警 +
+    // 重开 judgment 为 investigating + 重派调查（「你判错了」的正确响应是
+    // 「那我重查」，不是把报警丢回人工列表）。
+    if req.verdict == "wrong" && judgment.status == tinyiothub_storage::judgment::JudgmentStatus::NoiseArchived {
+        if let Some(alarm_id) = &judgment.alarm_id
+            && let Err(e) = state.alarm_service.unsuppress_alarm(alarm_id, ws).await
+        {
+            tracing::warn!(judgment_id = %id, alarm_id, error = %e, "unsuppress on wrong-feedback failed (not suppressed?)");
+        }
+        match state.db.reopen_judgment(&id).await {
+            Ok(true) => {
+                redispatch_investigation(&state, &judgment).await;
+            }
+            Ok(false) => tracing::debug!(judgment_id = %id, "reopen skipped (not noise_archived)"),
+            Err(e) => tracing::warn!(judgment_id = %id, error = %e, "reopen failed"),
+        }
+    }
+
     crate::domains::agent::host::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id).await;
     ApiResponseBuilder::success(serde_json::json!({"ok": true}))
+}
+
+/// 重派调查（T-17/C6）：误判重开后用同一 problem_key 再次 dispatch。
+/// 失败只记日志——清扫器的 investigating SLA 是兜底。
+async fn redispatch_investigation(state: &AppState, judgment: &tinyiothub_storage::judgment::Judgment) {
+    let Some(sink) = &state.directive_sink else {
+        tracing::warn!(judgment_id = %judgment.id, "no directive sink — reopened judgment relies on SLA sweep");
+        return;
+    };
+    let alarm = match (&judgment.alarm_id, &judgment.thing_id) {
+        (Some(aid), Some(tid)) => match state.db.find_alarm_by_id(aid, Some(&judgment.workspace_id)).await {
+            Ok(Some(a)) => Some((aid.clone(), tid.clone(), a)),
+            _ => None,
+        },
+        _ => None,
+    };
+    let Some((alarm_id, thing_id, alarm)) = alarm else {
+        tracing::warn!(judgment_id = %judgment.id, "reopened judgment lacks alarm/thing context — relies on SLA sweep");
+        return;
+    };
+    let severity = alarm.alarm_level.as_str().to_string();
+    let ai_alarm = tinyiothub_core::models::event::AlarmEvent {
+        id: alarm_id,
+        workspace_id: judgment.workspace_id.clone(),
+        thing_id: thing_id.clone(),
+        alarm_type: format!("{}", alarm.alarm_type),
+        severity,
+        message: alarm.message.clone(),
+        rule_id: alarm.rule_id.clone(),
+        resolved: false,
+        created_at: alarm.alarm_time,
+    };
+    let rule_part = alarm.rule_id.as_deref().unwrap_or("-");
+    let signal = tinyiothub_agent::runtime::thing_agent::types::WakeSignal {
+        workspace_id: judgment.workspace_id.clone(),
+        priority: tinyiothub_agent::runtime::thing_agent::types::Priority::High,
+        source: tinyiothub_agent::runtime::thing_agent::types::TriggerSource::UserDirective {
+            user_id: "alarm-triage".to_string(),
+            text: tinyiothub_agent::runtime::orchestrator::callbacks::alarm_investigation_text(&ai_alarm),
+            session_key: None,
+            source: Some("alarm".to_string()),
+            problem_key: Some(format!("alarm:{}:{}", thing_id, rule_part)),
+        },
+        dedup_key: None,
+    };
+    if let Err(e) = sink.enqueue(signal) {
+        tracing::warn!(judgment_id = %judgment.id, error = %e, "re-investigation dispatch failed — SLA sweep backstops");
+    }
 }
 
 /// 「错」反馈写知识层（tags 便于后续按 judgment 追溯退役）。
@@ -228,26 +299,52 @@ async fn approve_judgment(
         Err(e) => return ApiResponseBuilder::error(format!("状态迁移失败: {e}")),
     }
 
-    // 派发执行 directive（执行结果由 judgment_subscriber 的 exec: 键路径收尾）
-    let action = judgment
-        .suggested_action
-        .clone()
-        .unwrap_or_else(|| "按判断建议处置".to_string());
+    // 派发执行 directive（执行结果由 judgment_subscriber 的 exec: 键路径收尾）。
+    // 4A/T-3：动作文本由服务端模板按 action_category 生成——LLM 的
+    // suggested_action 只做展示，不进执行指令（注入面收敛）。
+    // 6A/T-4：exec prompt 携带调查上下文（判断理由 + 证据摘录）。
+    let action = tinyiothub_storage::judgment::exec_action_template(
+        judgment.action_category.as_deref(),
+        judgment.thing_id.as_deref(),
+    );
+    let evidence_excerpt = serde_json::from_str::<serde_json::Value>(&judgment.evidence_json)
+        .ok()
+        .and_then(|v| v.get("excerpt").and_then(|e| e.as_str()).map(str::to_string))
+        .map(|e| e.chars().take(300).collect::<String>())
+        .unwrap_or_default();
     let signal = tinyiothub_agent::runtime::thing_agent::types::WakeSignal {
         workspace_id: judgment.workspace_id.clone(),
         priority: tinyiothub_agent::runtime::thing_agent::types::Priority::High,
         source: tinyiothub_agent::runtime::thing_agent::types::TriggerSource::UserDirective {
             user_id: claims.0.user_id.clone(),
-            text: format!("执行已批准的处置动作：{action}。完成后简述结果。"),
+            text: format!(
+                "执行已批准的处置动作：{action}。\n调查结论：{}\n证据摘录：{}\n完成后简述结果。",
+                judgment.reason, evidence_excerpt
+            ),
             session_key: None,
             source: Some("judgment-approval".to_string()),
             problem_key: Some(format!("exec:{id}")),
         },
-        dedup_key: None,
+        // C5/T-14：judgment_id 作 dedup_key——回滚后重批/网络重试不会执行两次
+        dedup_key: Some(format!("exec:{id}")),
     };
     if let Err(e) = sink.enqueue(signal) {
         tracing::error!(judgment_id = %id, error = %e, "execution directive not admitted");
-        return ApiResponseBuilder::error("执行派发失败（队列满）");
+        // D3：补偿回滚（executing → awaiting_approval），用户可重试；
+        // 回滚失败由 executing SLA 清扫兜底（转人工确认工单）。
+        if let Err(re) = state
+            .db
+            .transit_judgment(
+                &id,
+                tinyiothub_storage::judgment::JudgmentStatus::Executing,
+                tinyiothub_storage::judgment::JudgmentStatus::AwaitingApproval,
+                None,
+            )
+            .await
+        {
+            tracing::error!(judgment_id = %id, error = %re, "rollback to awaiting_approval failed — SLA sweep will backstop");
+        }
+        return ApiResponseBuilder::error("执行派发失败（队列满），已回滚待审批，可重试");
     }
 
     crate::domains::agent::host::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id).await;
