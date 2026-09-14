@@ -128,3 +128,22 @@ IoT 特有的物理 blast radius 敬畏（执行必须分级信任）。
 磁盘阈值）→ 待审批卡，演示批准一条看执行收尾；3 条需人工（持续离线/压力超限/
 水浸）→ 带调查结论的工单。断言点：feed 头部计数变化、审批倒计时、工单简报含
 调查结论、✓/✕ 反馈后学习计数 +1。
+
+## Eng-Review Amendments（2026-09-14 /plan-eng-review，外部声音 14 项张力全部裁定）
+
+工程锁定（D 系列）+ 外部声音修正（T-7..T-20）。以下取代/细化上文对应内容：
+
+1. **F-D 实现反转（D3）**：approve 改 transit→enqueue→失败回滚（enqueue-first 会产生无审计记录的物理执行，不可接受）；exec signal dedup_key=judgment_id（C5）。
+2. **dispatch_suppressed 识别以 run registry 为事实源**（T-7/L1）：run_id NULL 覆盖整个在途期，不能作信号；清扫前查 registry 有无在途 run；迟到的 RunRecorded 按 verdict 内容恢复路由，不丢弃。
+3. **dispatch_suppressed 不计入日预算；O11「上次 failed 跳过 6h」豁免 alarm: 键域**（T-8/L2）。
+4. **flap 防抖只对 investigating 生效**（T-9/L3）：awaiting_approval/executing 期间新报警照落行照调查。
+5. **exec run NoActionNeeded 转人工确认**（T-10/L4）：批准意图不可被 LLM 单方降级；「Acted+!verified」正名为「超时转人工」，无死等回读。
+6. **三层限流统一 fail-closed + kill switch 跳过落 system event 可审计**（T-11/L5）；补限流判定序图（S3）。
+7. **游标改 (created_at, id) 元组**（T-12/C1，同秒丢行实锤）；**折叠与置顶只在首页生效**（T-13/C2）。
+8. **宽松 fallback 保留但打 parse_fallback 标记**（T-15/C3，部分反转 T-3 删除决定——注入面由动作白名单托底）。
+9. **judgments 显式迁移矩阵**（T-19/S2）：match 表单一口径，transit/fail 统一过表。
+10. **triage_mode 创建时快照进 judgment 行**（T-20/S4），随表重建迁移一起落。
+11. **unsuppress 同时重开 judgment 重派调查**（T-17/C6）。
+12. **S1 流程质疑已裁**：维持本 PR 施工（用户裁定，2026-09-14）。
+
+实施任务：tasks-eng-review-20260914-120402.jsonl（24 项，E1-E24）。
