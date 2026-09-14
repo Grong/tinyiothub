@@ -557,3 +557,54 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 - **What:** cloud `fetch_all_pages` 逐页独立请求；marketplace sync 整体重写缓存键。翻页中途遇 sync 重写会重复/漏条目（上游排序稳定只降低概率）。短期可接受（目录小、sync 低频）；目录增长后 client 端按 name/id 去重兜底或上游加快照导出端点。
 - **Why:** 对抗审查 F5；当前 23 条单页内完成，无实际影响。
 - **Effort:** M | **Depends on:** 目录规模增长信号
+
+## AI 大脑 P0 — Deferred (from /plan-ceo-review + /plan-eng-review 2026-09-14, PR #96)
+
+### P2 — 日预算 workspace 可配 + 内存计数器 + 严重级分池
+- **What:** DAILY_JUDGMENT_BUDGET 从 const 100 改为 workspace 可配（heartbeat_config JSON 先例）；预算查询改内存计数器+每日重置；按严重级分池或 Critical 豁免。
+- **Why:** 不同规模工作区合理预算差一个数量级；每报警两次 SQL 在报警风暴时自身成负载；Info 抖动可吃光额度让 Critical 裸奔（外部声音 #13/#15）。
+- **Context:** `apps/cloud/src/domains/alarm/service.rs` enter_disposition 预算闸；`crates/db/src/judgment.rs` count_judgments_today。
+- **Effort:** S | **Depends on:** 影子期数据定合理默认值
+
+### P3 — 无动作 self_healable 不产生空审批卡
+- **What:** verdict=self_healable 但 suggested_action 为 null 时不进 awaiting_approval（无审批对象），直接升级或标注；顺带修正 judge_judgment 注释与代码不符。
+- **Why:** 空审批卡 24h 后自动转工单，纯干扰噪声。
+- **Context:** `crates/db/src/judgment.rs` judge_judgment（注释声称直接升级但未实现）。
+- **Effort:** S | **Depends on:** —
+
+### P2 — 报警-工单状态同步
+- **What:** 关工单联动消警 / 消警联动关工单；flap dedup 考虑 open ticket（同问题票还开着时不重复烧调查预算）。
+- **Why:** 当前两系统状态各自漂移：工单关了报警还 Active，报警消了工单还开着（外部声音 #10）。
+- **Context:** `apps/cloud/src/domains/ticket/escalation.rs` + `apps/cloud/src/domains/alarm/service.rs`。
+- **Effort:** M | **Depends on:** P0 稳定
+
+### P3 — 执行失败重审批回路
+- **What:** 状态机加 executing→awaiting_approval 回头边：exec 失败 escalated 后支持重新审批（suggested_action 还在）。
+- **Why:** 执行失败（设备没响应）后想重试只能去工单人工处理——自动机单程票（外部声音 #17）。
+- **Effort:** S | **Depends on:** 显式迁移矩阵（E23）落地
+
+### P2 — 反馈回流 eval 场景库
+- **What:** 影子期真实「对/错」反馈定期回流为 evals/scenarios.json 新标注场景；判断质量度量随真实纠错演进。
+- **Why:** 静态 24 场景会过时；evals/README.md 变更规程已写明意图但无机制（外部声音 #19）。
+- **Effort:** S | **Depends on:** 影子期反馈数据积累
+
+### P2 — verdict 解析失败重试一次
+- **What:** （2026-09-14 CEO 评审用户裁定暂缓，记录备查）解析失败先重试一次调查再落 investigation_failed。当前：宽松 fallback（带 parse_fallback 标记）+ 失败转工单。
+- **Why:** eng-review 修订 8 原裁决是重试+fallback 双保险；fallback 标记上线后若统计显示漂移率高再补。
+- **Effort:** S | **Depends on:** parse_fallback 统计（E22 落地后可见）
+
+### P2 — thing+rule 级速率闸（flapping 规则烧预算）
+- **What:** 每条 thing+rule 的调查速率闸（如每小时最多 N 次调查）：annotate 模式下报警保持 Active，规则立即再触发即再调查——flapping 规则可 100 分钟耗尽全天 100 条预算，随后全 workspace fail-closed 回人工。
+- **Why:** 对抗审查 I1（2026-09-14 /ship）。预算闸是 workspace 级总量，缺单规则级限流。
+- **Context:** `apps/cloud/src/domains/alarm/service.rs` enter_disposition 第 4 步防抖只对 investigating；判完后同规则再触发即新调查。
+- **Effort:** S | **Depends on:** 影子期观察真实 flapping 频率
+
+### P3 — subscriber Lagged 指标化
+- **What:** judgment subscriber 的 broadcast Lagged（丢 RunRecorded）计成指标/事件。当前只 warn 日志；丢的是已完成调查的 verdict（30min 后判断被误标 dispatch_suppressed）。
+- **Why:** 对抗审查 I2：工作丢失+终态标签误导，至少有观测面。
+- **Effort:** S | **Depends on:** —
+
+### P3 — 回滚重批的物理副作用非幂等记录
+- **What:** exec 回滚后重批，若 dedup_key 窗口过期，物理动作（如重启设备）可能执行第二次。记录该风险；长期方案是 exec run 幂等键穿透到设备层。
+- **Why:** 对抗审查 I3：每次都是人批准的，但物理副作用非幂等。
+- **Effort:** S（记录）/ M（设备层幂等） | **Depends on:** —

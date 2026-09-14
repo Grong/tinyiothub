@@ -223,9 +223,12 @@ async fn get_recent_alarms(
 fn map_recent_alarms(rows: Vec<tinyiothub_storage::alarm::RecentAlarmRow>) -> Vec<RecentAlarm> {
     rows.into_iter()
         .map(
-            |(id, thing_id, device_name, level, message, alarm_time, is_acknowledged, is_resolved)| {
+            |(id, thing_id, device_name, level, message, alarm_time, is_acknowledged, is_resolved, is_suppressed)| {
+                // 与 db row_to_alarm 同一优先级：resolved > suppressed > acknowledged > active
                 let status = if is_resolved {
                     "resolved".to_string()
+                } else if is_suppressed {
+                    "suppressed".to_string()
                 } else if is_acknowledged {
                     "acknowledged".to_string()
                 } else {
@@ -568,7 +571,8 @@ mod tests {
                 alarm_message TEXT NOT NULL,
                 alarm_time TEXT NOT NULL,
                 is_acknowledged INTEGER NOT NULL DEFAULT 0,
-                is_resolved INTEGER NOT NULL DEFAULT 0
+                is_resolved INTEGER NOT NULL DEFAULT 0,
+                is_suppressed INTEGER NOT NULL DEFAULT 0
             )",
         )
         .execute(&pool)

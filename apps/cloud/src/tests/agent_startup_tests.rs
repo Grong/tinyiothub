@@ -161,6 +161,8 @@ async fn build_snapshot_prewarms_heartbeat_state_and_recent_runs_oldest_first() 
         &WorkspaceHeartbeatConfig {
             enabled: true,
             interval_minutes: 45,
+            ai_triage_enabled: true,
+            triage_mode: "annotate".to_string(),
         },
     )
     .await

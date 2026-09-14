@@ -46,6 +46,7 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
         .nest("/drivers", crate::domains::driver::router())
         .nest("/alarms", crate::domains::alarm::router())
         .nest("/tickets", crate::domains::ticket::router())
+        .nest("/judgments", crate::domains::judgment::router())
         .nest("/alarm-rules", crate::domains::alarm::rule_router())
         .nest(
             "/monitoring",

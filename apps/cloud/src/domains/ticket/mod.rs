@@ -13,10 +13,12 @@
 //! - workspace 隔离来自 AuthClaims（auth context），不信任请求参数。
 
 pub mod dto;
+pub mod escalation;
 pub mod handler;
 pub mod service;
 
 pub use dto::*;
+pub use escalation::{AlarmEscalation, AlarmEscalationAdapter, Escalation, create_escalation};
 pub use service::*;
 
 /// Tickets API router（`/tickets`），与 alarm 域同构。

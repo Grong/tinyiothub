@@ -250,6 +250,12 @@ impl AppState {
         // 创建SSE管理器（带 ThingCache 用于设备 workspace 查找）
         let sse_manager = Arc::new(SseConnectionManager::new());
 
+        // T4：alarm → ticket 单向端口接线（Critical/Error 报警直达工单）
+        alarm_service.set_escalation(Arc::new(crate::domains::ticket::AlarmEscalationAdapter::new(
+            database.clone(),
+            sse_manager.clone(),
+        )));
+
         // SSE Token 管理器 — 生成短期令牌用于 SSE 连接认证（替代 URL 中的 JWT）
         let sse_token_manager = Arc::new(tinyiothub_authn::sse_token::SseTokenManager::default());
 

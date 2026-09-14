@@ -21,6 +21,7 @@ const lazyViews: Record<string, () => Promise<void>> = {
   things: () => import('./views/things.js').then(() => {}),
   alarms: () => import('./views/alarms.js').then(() => {}),
   tickets: () => import('./views/tickets.js').then(() => {}),
+  dispositions: () => import('./views/dispositions.js').then(() => {}),
   events: () => import('./views/events.js').then(() => {}),
   monitoring: () => import('./views/monitoring.js').then(() => {}),
   users: () => import('./views/users.js').then(() => {}),
@@ -94,6 +95,11 @@ const NAV_GROUPS: NavGroup[] = [
         icon: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2',
       },
       {
+        route: 'dispositions',
+        label: '处置中心',
+        icon: 'M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm-1 5h2v6h-2zm0 8h2v2h-2z',
+      },
+      {
         route: 'events',
         label: '事件日志',
         icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z',
@@ -164,6 +170,8 @@ export class TinyIoTHubApp extends LitElement {
   @state() userRole = '';
   @state() loadingRoute: string | null = null;
   @state() loadError: string | null = null;
+  /** E4：处置中心未读角标（needsYou 计数；「例外响亮」的前提是例外能到人） */
+  @state() dispositionNeedsYou = 0;
 
   private loadSeq = 0;
   private themeMediaQuery: MediaQueryList | null = null;
@@ -193,10 +201,27 @@ export class TinyIoTHubApp extends LitElement {
     requestAnimationFrame(() => {
       document.documentElement.dispatchEvent(new CustomEvent('app-ready'));
     });
+    // E4：处置中心角标轮询（60s；SSE 只覆盖在线用户，轮询保证回来后可见）
+    this.pollDispositionBadge();
+    this.dispositionBadgeTimer = window.setInterval(() => this.pollDispositionBadge(), 60_000);
+  }
+
+  private dispositionBadgeTimer: number | null = null;
+
+  private async pollDispositionBadge() {
+    if (!this.isAuthenticated) return;
+    try {
+      const { judgmentApi } = await import('../api/judgments.js');
+      const summary = await judgmentApi.summary();
+      this.dispositionNeedsYou = summary.needsYou;
+    } catch {
+      // 角标失败静默（下一轮再试；不打扰主流程）
+    }
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    if (this.dispositionBadgeTimer !== null) window.clearInterval(this.dispositionBadgeTimer);
     window.removeEventListener('popstate', this.boundHandleRoute);
     window.removeEventListener('auth-error', this.handleAuthError);
     if (this.themeMediaQuery) {
@@ -372,6 +397,7 @@ export class TinyIoTHubApp extends LitElement {
       things: '物列表',
       alarms: '告警中心',
       tickets: '工单',
+      dispositions: '处置中心',
       events: '事件日志',
       monitoring: '系统监控',
       users: '用户管理',
@@ -398,6 +424,7 @@ export class TinyIoTHubApp extends LitElement {
       things: '浏览和管理物层级结构',
       alarms: '查看和管理物告警',
       tickets: '处理 Agent 升级的人工工单',
+      dispositions: 'AI 值班处置报警，你只处理例外',
       events: '查看物事件日志',
       monitoring: '系统资源和性能监控',
       users: '管理系统用户和权限',
@@ -583,6 +610,9 @@ export class TinyIoTHubApp extends LitElement {
                       </svg>
                     </span>
                     <span class="nav-item__text">${item.label}</span>
+                    ${item.route === 'dispositions' && this.dispositionNeedsYou > 0
+                      ? html`<span class="nav-item__badge" title="需要你处理的判断">${this.dispositionNeedsYou}</span>`
+                      : ''}
                   </a>
                 `,
               )}
@@ -614,6 +644,7 @@ export class TinyIoTHubApp extends LitElement {
     if (base === 'things') return html`<view-things></view-things>`;
     if (base === 'alarms') return html`<view-alarms></view-alarms>`;
     if (base === 'tickets') return html`<view-tickets></view-tickets>`;
+    if (base === 'dispositions') return html`<view-dispositions></view-dispositions>`;
     if (base === 'events') return html`<view-events></view-events>`;
     if (base === 'monitoring') return html`<view-monitoring></view-monitoring>`;
     if (base === 'users') return html`<view-users></view-users>`;

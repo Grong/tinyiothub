@@ -44,6 +44,7 @@ pub mod error;
 pub mod event;
 /// Heartbeat task/result/trust persistence and row types.
 pub mod heartbeat;
+pub mod judgment;
 /// Agent memory persistence.
 pub mod memory;
 /// Embedded migrations runner.

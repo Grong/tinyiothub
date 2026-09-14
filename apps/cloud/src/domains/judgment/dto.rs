@@ -1,0 +1,92 @@
+//! T9：处置中心 feed API DTO（camelCase，ticket 域先例）。
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JudgmentDto {
+    pub id: String,
+    pub alarm_id: Option<String>,
+    pub thing_id: Option<String>,
+    pub ticket_id: Option<i64>,
+    pub verdict: Option<String>,
+    pub reason: String,
+    pub evidence: serde_json::Value,
+    pub suggested_action: Option<String>,
+    pub action_category: Option<String>,
+    pub status: String,
+    pub latest_feedback: Option<JudgmentFeedbackDto>,
+    pub created_at: String,
+    pub judged_at: Option<String>,
+    pub resolved_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JudgmentFeedbackDto {
+    pub verdict: String,
+    pub reason: Option<String>,
+    pub created_at: String,
+}
+
+impl From<tinyiothub_storage::judgment::JudgmentFeedback> for JudgmentFeedbackDto {
+    fn from(f: tinyiothub_storage::judgment::JudgmentFeedback) -> Self {
+        Self {
+            verdict: f.verdict,
+            reason: f.reason,
+            created_at: f.created_at.to_rfc3339(),
+        }
+    }
+}
+
+/// 注意：feed 查询恒有 48h 时间窗（F12 契约——含 tab=all）。更早的判断
+/// 当前不经 API 可达（处置流是近实时面；历史审计走工单/事件日志）。
+#[derive(Debug, Deserialize)]
+pub struct JudgmentQueryParams {
+    /// needs_you | investigating | resolved | noise | all（默认 needs_you；未知值 400）
+    pub tab: Option<String>,
+    /// 游标（上一页最后一条 judgment id）
+    pub before: Option<String>,
+    pub page_size: Option<i64>,
+}
+
+/// feed 头部摘要（v6 线框稿「今日 23 条已消化 · 2 条需要你」+ 学习计数）。
+/// E2：延迟分位数（验收「5min ≥90%」的度量）；E5：按类别的反馈聚合。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JudgmentSummaryDto {
+    pub needs_you: i64,
+    pub investigating: i64,
+    pub digested_today: i64,
+    pub feedback_total: u64,
+    pub feedback_right: u64,
+    pub feedback_wrong: u64,
+    pub latency_p50_secs: Option<f64>,
+    pub latency_p90_secs: Option<f64>,
+    /// 审批超时小时数（cron sys-approval-timeout 配置；F11 倒计时同源）
+    pub approval_timeout_hours: i64,
+    pub feedback_by_category: std::collections::HashMap<String, CategoryFeedbackDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CategoryFeedbackDto {
+    pub right: u64,
+    pub wrong: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedbackRequest {
+    /// right | wrong
+    pub verdict: String,
+    /// verdict=wrong 时必填（≥4 字符，F13）
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RejectRequest {
+    /// F14：拒绝必填原因（决定工单质量）
+    pub reason: String,
+}

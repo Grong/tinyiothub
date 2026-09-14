@@ -1,0 +1,39 @@
+name: Judgment Eval (weekly)
+
+# E1（CEO 评审 2026-09-14）：判断质量 eval 的 weekly 哨兵——非 PR 阻断，
+# 模型/prompt 漂移时可见。手动触发：gh workflow run judgment-eval-weekly.yml
+
+on:
+  schedule:
+    - cron: "23 3 * * 1" # 每周一 03:23 UTC（避开整点拥挤）
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  eval:
+    name: Judgment verdict accuracy eval
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run judgment eval (real LLM)
+        env:
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          MINIMAX_BASE_URL: ${{ vars.MINIMAX_BASE_URL }}
+          MINIMAX_MODEL: ${{ vars.MINIMAX_MODEL }}
+        run: cargo test -p tinyiothub-cloud judgment_eval -- --ignored --nocapture
+
+      - name: Report failure
+        if: failure()
+        run: |
+          echo "::warning::判断质量基线跌破门槛（≥85% 或 needs_human→noise 误判）——检查模型/prompt 漂移"

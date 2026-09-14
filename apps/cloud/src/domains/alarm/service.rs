@@ -21,6 +21,9 @@ pub struct AlarmService {
     rule_engine: Arc<RuleEngine>,
     event_publisher: Mutex<Option<Arc<crate::shared::ai_adapter::AlarmAiPublisherAdapter>>>,
     device_cache: std::sync::OnceLock<Arc<ThingCache>>,
+    /// T4：alarm → ticket 单向端口（Critical/Error 直达工单）。未注入时直达
+    /// 路径降级为只建 judgment（仍走 AI 分诊）。
+    escalation: Mutex<Option<Arc<dyn crate::domains::ticket::AlarmEscalation>>>,
 }
 
 impl AlarmService {
@@ -31,6 +34,7 @@ impl AlarmService {
             rule_engine,
             event_publisher: Mutex::new(None),
             device_cache: std::sync::OnceLock::new(),
+            escalation: Mutex::new(None),
         }
     }
 
@@ -38,12 +42,16 @@ impl AlarmService {
         *self.event_publisher.lock().unwrap() = Some(publisher);
     }
 
+    pub fn set_escalation(&self, escalation: Arc<dyn crate::domains::ticket::AlarmEscalation>) {
+        *self.escalation.lock().unwrap() = Some(escalation);
+    }
+
     pub fn set_device_cache(&self, dc: Arc<ThingCache>) {
         let _ = self.device_cache.set(dc);
     }
 
-    /// Publish an AiEvent when a significant alarm occurs
-    fn wake_heartbeat(&self, alarm: &Alarm) {
+    /// 发布 AlarmCreated 到 AI 总线（investigation dispatch 的触发信号）。
+    fn publish_alarm_created(&self, alarm: &Alarm) {
         let severity = match alarm.alarm_level {
             AlarmLevel::Critical => "critical",
             AlarmLevel::Error => "error",
@@ -66,9 +74,165 @@ impl AlarmService {
         }
     }
 
+    /// T3/T7：报警进入 AI 处置流（取代原 wake_heartbeat 的心跳唤醒）。
+    ///
+    /// 判定序（eng-review 2026-09-14 锁定）：
+    ///   1. kill switch（fail-closed，T-2）：关闭或配置读失败 → 人工路径 +
+    ///      审计日志（ai_triage_skipped，T-11/L5）。
+    ///   2. 严重级切分（F-B）：Critical/Error 先直达工单——先于预算/防抖
+    ///      （工单风暴由 tickets_active_dedup 折叠兜底，不由这两道闸代劳）。
+    ///   3. 预算闸（T8，fail-closed T-11）：超日预算或计数查询失败 → judgment
+    ///      落 budget_skipped 标记（不开票不计额度），报警保持 Active。
+    ///   4. flapping 防抖（T-9/L3）：仅当同 thing+rule 有 investigating 判断
+    ///      时跳过——「正在查就别重查」；等审批/执行中不防抖。
+    ///   5. judgment 落库（triage_mode 创建时快照，T-20/S4）→ AlarmCreated
+    ///      发布 → callbacks 直达 thing-agent dispatch。
+    ///
+    /// 失败方向约定：闸门（kill switch/预算）fail toward 人工路径（安全）；
+    /// 防抖查询失败 fail toward 继续调查（只费额度不漏报警）。
+    async fn enter_disposition(&self, alarm: &Alarm) {
+        let Some(workspace_id) = alarm.workspace_id.clone() else {
+            return;
+        };
+
+        // 1. kill switch（fail-closed + 审计）
+        let triage_mode = match self.db.load_heartbeat_config(&workspace_id).await {
+            Ok(Some(config)) if !config.ai_triage_enabled => {
+                tracing::info!(workspace_id, alarm_id = %alarm.id, "AI triage disabled by kill switch, alarm stays on manual path");
+                self.audit_triage_skip(&workspace_id, alarm, "kill_switch_off").await;
+                return;
+            }
+            Ok(Some(config)) => config.triage_mode.clone(),
+            Ok(None) => "annotate".to_string(), // 未配置 = 影子期保守默认
+            Err(e) => {
+                tracing::error!(workspace_id, alarm_id = %alarm.id, error = %e, "read heartbeat config failed — fail-closed to manual path");
+                self.audit_triage_skip(&workspace_id, alarm, "config_read_failed").await;
+                return;
+            }
+        };
+
+        // 2. 严重级切分（F-B）：Critical/Error 直达工单，先于预算/防抖。
+        let is_severe = matches!(alarm.alarm_level, AlarmLevel::Critical | AlarmLevel::Error);
+        let ticket_id = if is_severe {
+            let sink = self.escalation.lock().unwrap().clone();
+            match sink {
+                Some(s) => s.escalate_alarm(alarm).await,
+                None => {
+                    tracing::error!(alarm_id = %alarm.id, "no escalation sink wired — severe alarm has NO ticket path");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // 3. 预算闸（fail-closed：计数查询失败视同超预算——DB 抖动与报警风暴
+        // 正相关，正是预算闸存在的场景，T-11/L5）
+        const DAILY_JUDGMENT_BUDGET: i64 = 100;
+        let over_budget = match self.db.count_judgments_today(&workspace_id).await {
+            Ok(n) => n >= DAILY_JUDGMENT_BUDGET,
+            Err(e) => {
+                tracing::error!(workspace_id, error = %e, "budget check failed — fail-closed (treat as over budget)");
+                true
+            }
+        };
+        if over_budget {
+            tracing::warn!(workspace_id, alarm_id = %alarm.id, "daily judgment budget exhausted, alarm stays on manual path");
+            if let Ok(jid) = self
+                .db
+                .insert_judgment(
+                    &workspace_id,
+                    Some(&alarm.id),
+                    None,
+                    Some(&alarm.thing_id),
+                    &triage_mode,
+                )
+                .await
+            {
+                let _ = self
+                    .db
+                    .fail_judgment(
+                        &jid,
+                        tinyiothub_storage::judgment::JudgmentStatus::BudgetSkipped,
+                        "超日预算，未调查",
+                    )
+                    .await;
+            }
+            return;
+        }
+
+        // 4. flapping 防抖（T-9/L3：只对 investigating——正在查就别重查）
+        match self
+            .db
+            .find_investigating_judgment_by_thing_rule(&workspace_id, &alarm.thing_id, alarm.rule_id.as_deref())
+            .await
+        {
+            Ok(Some(existing)) => {
+                tracing::debug!(
+                    alarm_id = %alarm.id,
+                    judgment_id = %existing.id,
+                    "investigating judgment exists for thing+rule, skipping duplicate investigation"
+                );
+                return;
+            }
+            Ok(None) => {}
+            Err(e) => {
+                // 防抖是省额度机制，失败方向 = 继续调查（宁可多查不漏查）
+                tracing::warn!(alarm_id = %alarm.id, error = %e, "judgment dedup check failed, proceeding");
+            }
+        }
+
+        // 5. judgment 落库（triage_mode 快照）+ 严重级关联工单
+        match self
+            .db
+            .insert_judgment(
+                &workspace_id,
+                Some(&alarm.id),
+                None,
+                Some(&alarm.thing_id),
+                &triage_mode,
+            )
+            .await
+        {
+            Ok(judgment_id) => {
+                if let Some(tid) = ticket_id
+                    && let Err(e) = self.db.link_judgment_ticket(&judgment_id, tid).await
+                {
+                    tracing::warn!(judgment_id, ticket_id = tid, error = %e, "link judgment ticket failed");
+                }
+            }
+            Err(e) => tracing::error!(alarm_id = %alarm.id, error = %e, "insert judgment failed"),
+        }
+
+        // 发布给 AI 总线 → callbacks 直达 thing-agent dispatch（调查）
+        self.publish_alarm_created(alarm);
+    }
+
+    /// 审计：kill switch / fail-closed 跳过的报警（T-11/L5——「哪些报警没被
+    /// 分诊」必须事后可查）。
+    async fn audit_triage_skip(&self, workspace_id: &str, alarm: &Alarm, reason: &str) {
+        let entry = tinyiothub_storage::audit_log::AuditLogEntry::new("ai_triage_skipped".to_string(), None)
+            .with_event_id(alarm.id.clone())
+            .with_event_type("alarm".to_string());
+        let entry = tinyiothub_storage::audit_log::AuditLogEntry {
+            details: Some(format!(
+                "workspace={} thing={} rule={:?} level={} reason={}",
+                workspace_id,
+                alarm.thing_id,
+                alarm.rule_id,
+                alarm.alarm_level.as_str(),
+                reason
+            )),
+            ..entry
+        };
+        if let Err(e) = self.db.insert_audit_log(&entry).await {
+            tracing::warn!(alarm_id = %alarm.id, error = %e, "triage-skip audit log write failed");
+        }
+    }
+
     pub async fn create_alarm(&self, alarm: Alarm) -> AlarmResult<Alarm> {
         self.db.insert_alarm(&alarm).await?;
-        self.wake_heartbeat(&alarm);
+        self.enter_disposition(&alarm).await;
         Ok(alarm)
     }
 
@@ -126,6 +290,48 @@ impl AlarmService {
         }
 
         alarm.resolve(user_id, resolution_type, note)?;
+        self.db.update_alarm(&alarm).await?;
+        Ok(())
+    }
+
+    /// 抑制报警（AI 判噪声的终态；仅 Active → Suppressed）。
+    /// 无人工 actor——suppress 的调用方是 judgment subscriber（T5）。
+    pub async fn suppress_alarm(&self, alarm_id: &str, workspace_id: &str) -> AlarmResult<()> {
+        let mut alarm = self
+            .db
+            .find_alarm_by_id(alarm_id, Some(workspace_id))
+            .await?
+            .ok_or_else(|| AlarmError::NotFound(alarm_id.to_string()))?;
+
+        if alarm.status != AlarmStatus::Active {
+            return Err(AlarmError::InvalidStatusTransition {
+                from: alarm.status.as_str().to_string(),
+                to: AlarmStatus::Suppressed.as_str().to_string(),
+            });
+        }
+
+        alarm.suppress()?;
+        self.db.update_alarm(&alarm).await?;
+        Ok(())
+    }
+
+    /// 解除抑制（F-C/T-17：✕ 反馈「判错了」的恢复路径；仅 Suppressed → Active）。
+    /// 调用方：judgment feedback handler（误判噪声的人工纠正）。
+    pub async fn unsuppress_alarm(&self, alarm_id: &str, workspace_id: &str) -> AlarmResult<()> {
+        let mut alarm = self
+            .db
+            .find_alarm_by_id(alarm_id, Some(workspace_id))
+            .await?
+            .ok_or_else(|| AlarmError::NotFound(alarm_id.to_string()))?;
+
+        if alarm.status != AlarmStatus::Suppressed {
+            return Err(AlarmError::InvalidStatusTransition {
+                from: alarm.status.as_str().to_string(),
+                to: AlarmStatus::Active.as_str().to_string(),
+            });
+        }
+
+        alarm.unsuppress()?;
         self.db.update_alarm(&alarm).await?;
         Ok(())
     }
@@ -2073,7 +2279,7 @@ mod integration_tests {
             acknowledged_by TEXT, acknowledged_at TEXT, acknowledged_note TEXT,
             is_resolved BOOLEAN NOT NULL DEFAULT false,
             resolved_by TEXT, resolved_at TEXT, resolved_note TEXT,
-            resolution_type TEXT, workspace_id TEXT,
+            resolution_type TEXT, is_suppressed BOOLEAN NOT NULL DEFAULT false, workspace_id TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             FOREIGN KEY (thing_id) REFERENCES things(id) ON DELETE CASCADE,
             FOREIGN KEY (property_id) REFERENCES thing_properties(id) ON DELETE SET NULL,
