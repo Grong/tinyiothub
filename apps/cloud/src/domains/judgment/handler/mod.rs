@@ -116,7 +116,15 @@ async fn judgment_summary(State(state): State<AppState>, claims: AuthClaims) -> 
             .map(|s| {
                 s.feedback_by_category
                     .iter()
-                    .map(|(k, v)| (k.clone(), CategoryFeedbackDto { right: v.right, wrong: v.wrong }))
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            CategoryFeedbackDto {
+                                right: v.right,
+                                wrong: v.wrong,
+                            },
+                        )
+                    })
                     .collect()
             })
             .unwrap_or_default(),

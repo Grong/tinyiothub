@@ -90,7 +90,12 @@ impl ApprovalTimeoutAdapter {
     ) -> Result<(), String> {
         let transitioned = self
             .db
-            .transit_judgment(&judgment.id, from, tinyiothub_storage::judgment::JudgmentStatus::Escalated, None)
+            .transit_judgment(
+                &judgment.id,
+                from,
+                tinyiothub_storage::judgment::JudgmentStatus::Escalated,
+                None,
+            )
             .await
             .map_err(|e| e.to_string())?;
         if !transitioned {
@@ -106,7 +111,10 @@ impl ApprovalTimeoutAdapter {
                     .run_id
                     .clone()
                     .unwrap_or_else(|| format!("{source}:{}", judgment.id)),
-                title: format!("{title_prefix}：{}", judgment.reason.chars().take(70).collect::<String>()),
+                title: format!(
+                    "{title_prefix}：{}",
+                    judgment.reason.chars().take(70).collect::<String>()
+                ),
                 briefing: serde_json::json!({
                     "problem": judgment.reason,
                     "source": source,
@@ -161,7 +169,10 @@ impl tinyiothub_runtime::ports::ApprovalTimeoutStore for ApprovalTimeoutAdapter 
     async fn mark_stale_investigating(&self, cutoff_rfc3339: &str) -> Result<u64, String> {
         let stale = self
             .db
-            .stale_by_status(tinyiothub_storage::judgment::JudgmentStatus::Investigating, cutoff_rfc3339)
+            .stale_by_status(
+                tinyiothub_storage::judgment::JudgmentStatus::Investigating,
+                cutoff_rfc3339,
+            )
             .await
             .map_err(|e| e.to_string())?;
         let mut marked = 0u64;
@@ -239,7 +250,10 @@ mod approval_timeout_tests {
         let (db, adapter) = fixture().await;
 
         // 一条 awaiting_approval 且 judged_at 在 25h 前
-        let jid = db.insert_judgment("ws1", None, None, Some("t1"), "annotate").await.unwrap();
+        let jid = db
+            .insert_judgment("ws1", None, None, Some("t1"), "annotate")
+            .await
+            .unwrap();
         db.judge_judgment(
             &jid,
             tinyiothub_storage::judgment::JudgmentVerdict::SelfHealable,
@@ -257,7 +271,10 @@ mod approval_timeout_tests {
             .await
             .unwrap();
         // 一条新的（不应命中）
-        let fresh = db.insert_judgment("ws1", None, None, Some("t2"), "annotate").await.unwrap();
+        let fresh = db
+            .insert_judgment("ws1", None, None, Some("t2"), "annotate")
+            .await
+            .unwrap();
         db.judge_judgment(
             &fresh,
             tinyiothub_storage::judgment::JudgmentVerdict::SelfHealable,
@@ -291,7 +308,10 @@ mod approval_timeout_tests {
     #[tokio::test]
     async fn stale_investigating_marked_suppressed_no_ticket() {
         let (db, adapter) = fixture().await;
-        let jid = db.insert_judgment("ws1", None, None, Some("t1"), "annotate").await.unwrap();
+        let jid = db
+            .insert_judgment("ws1", None, None, Some("t1"), "annotate")
+            .await
+            .unwrap();
         sqlx::query("UPDATE judgments SET state_entered_at = datetime('now', '-40 minutes') WHERE id = ?")
             .bind(&jid)
             .execute(db.pool())
@@ -308,14 +328,22 @@ mod approval_timeout_tests {
             tinyiothub_storage::judgment::JudgmentStatus::DispatchSuppressed
         );
         // 不开票
-        assert_eq!(db.count_by_statuses("ws1", &[tinyiothub_storage::judgment::JudgmentStatus::Escalated]).await.unwrap(), 0);
+        assert_eq!(
+            db.count_by_statuses("ws1", &[tinyiothub_storage::judgment::JudgmentStatus::Escalated])
+                .await
+                .unwrap(),
+            0
+        );
     }
 
     /// E2/T-16：executing 超 SLA → escalated + 人工确认工单。
     #[tokio::test]
     async fn stale_executing_escalates_to_human_confirm_ticket() {
         let (db, adapter) = fixture().await;
-        let jid = db.insert_judgment("ws1", None, None, Some("t1"), "annotate").await.unwrap();
+        let jid = db
+            .insert_judgment("ws1", None, None, Some("t1"), "annotate")
+            .await
+            .unwrap();
         db.judge_judgment(
             &jid,
             tinyiothub_storage::judgment::JudgmentVerdict::SelfHealable,

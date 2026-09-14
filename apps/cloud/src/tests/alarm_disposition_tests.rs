@@ -136,7 +136,9 @@ async fn over_budget_alarm_gets_budget_skipped_marker() {
     let db = test_db().await;
     // 填满今日预算（budget_skipped 不计入，全用 investigating）
     for _ in 0..100 {
-        db.insert_judgment("ws1", None, None, Some("t1"), "annotate").await.unwrap();
+        db.insert_judgment("ws1", None, None, Some("t1"), "annotate")
+            .await
+            .unwrap();
     }
     let svc = AlarmService::new(db.clone());
     svc.create_alarm(make_alarm(AlarmLevel::Warning)).await.unwrap();

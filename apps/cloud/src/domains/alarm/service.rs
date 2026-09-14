@@ -140,7 +140,13 @@ impl AlarmService {
             tracing::warn!(workspace_id, alarm_id = %alarm.id, "daily judgment budget exhausted, alarm stays on manual path");
             if let Ok(jid) = self
                 .db
-                .insert_judgment(&workspace_id, Some(&alarm.id), None, Some(&alarm.thing_id), &triage_mode)
+                .insert_judgment(
+                    &workspace_id,
+                    Some(&alarm.id),
+                    None,
+                    Some(&alarm.thing_id),
+                    &triage_mode,
+                )
                 .await
             {
                 let _ = self
@@ -179,7 +185,13 @@ impl AlarmService {
         // 5. judgment 落库（triage_mode 快照）+ 严重级关联工单
         match self
             .db
-            .insert_judgment(&workspace_id, Some(&alarm.id), None, Some(&alarm.thing_id), &triage_mode)
+            .insert_judgment(
+                &workspace_id,
+                Some(&alarm.id),
+                None,
+                Some(&alarm.thing_id),
+                &triage_mode,
+            )
             .await
         {
             Ok(judgment_id) => {
@@ -205,7 +217,11 @@ impl AlarmService {
         let entry = tinyiothub_storage::audit_log::AuditLogEntry {
             details: Some(format!(
                 "workspace={} thing={} rule={:?} level={} reason={}",
-                workspace_id, alarm.thing_id, alarm.rule_id, alarm.alarm_level.as_str(), reason
+                workspace_id,
+                alarm.thing_id,
+                alarm.rule_id,
+                alarm.alarm_level.as_str(),
+                reason
             )),
             ..entry
         };

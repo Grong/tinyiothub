@@ -220,7 +220,11 @@ impl JobExecutor for ApprovalTimeoutExecutor {
                 "approvals escalated: {}, investigating marked: {}, executing escalated: {}",
                 escalated_approvals, marked_investigating, escalated_executing
             )),
-            error_message: if errors.is_empty() { None } else { Some(errors.join("; ")) },
+            error_message: if errors.is_empty() {
+                None
+            } else {
+                Some(errors.join("; "))
+            },
             duration_ms,
         })
     }

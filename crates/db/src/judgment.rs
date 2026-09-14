@@ -260,9 +260,10 @@ fn row_to_judgment(row: sqlx::sqlite::SqliteRow) -> Result<Judgment> {
         suggested_action: row.get("suggested_action"),
         action_category: row.get("action_category"),
         status,
-        triage_mode: row.get::<Option<String>, _>("triage_mode").unwrap_or_else(|| "annotate".to_string()),
-        state_entered_at: parse_ts_opt(row.get::<Option<String>, _>("state_entered_at"))
-            .unwrap_or_else(Utc::now),
+        triage_mode: row
+            .get::<Option<String>, _>("triage_mode")
+            .unwrap_or_else(|| "annotate".to_string()),
+        state_entered_at: parse_ts_opt(row.get::<Option<String>, _>("state_entered_at")).unwrap_or_else(Utc::now),
         created_at: parse_ts_opt(row.get::<Option<String>, _>("created_at")).unwrap_or_else(Utc::now),
         judged_at: parse_ts_opt(row.get("judged_at")),
         resolved_at: parse_ts_opt(row.get("resolved_at")),
@@ -332,7 +333,11 @@ pub(crate) async fn transit_judgment(
 ) -> Result<bool> {
     if !allowed_transition(expected, next) {
         return Err(DbError::Validation {
-            message: format!("illegal judgment transition: {} -> {}", expected.as_str(), next.as_str()),
+            message: format!(
+                "illegal judgment transition: {} -> {}",
+                expected.as_str(),
+                next.as_str()
+            ),
         });
     }
     let resolved_at = if matches!(next, JudgmentStatus::Resolved) {
@@ -495,7 +500,11 @@ pub(crate) async fn stale_by_status(pool: &SqlitePool, status: JudgmentStatus, c
 }
 
 /// 摘要端点计数（F-H）：COUNT 替代拉行数长度。
-pub(crate) async fn count_by_statuses(pool: &SqlitePool, workspace_id: &str, statuses: &[JudgmentStatus]) -> Result<i64> {
+pub(crate) async fn count_by_statuses(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    statuses: &[JudgmentStatus],
+) -> Result<i64> {
     let placeholders = vec!["?"; statuses.len()].join(",");
     let sql = format!("SELECT COUNT(*) FROM judgments WHERE workspace_id = ? AND status IN ({placeholders})");
     let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(sql)).bind(workspace_id);
@@ -676,7 +685,9 @@ pub(crate) async fn judgment_stats(pool: &SqlitePool, workspace_id: &str) -> Res
     let mut by_category: std::collections::HashMap<String, CategoryFeedback> = std::collections::HashMap::new();
     for r in &cat_rows {
         let cat: String = r.get("cat");
-        let entry = by_category.entry(cat).or_insert(CategoryFeedback { right: 0, wrong: 0 });
+        let entry = by_category
+            .entry(cat)
+            .or_insert(CategoryFeedback { right: 0, wrong: 0 });
         match r.get::<String, _>("fb_verdict").as_str() {
             "right" => entry.right = r.get::<i64, _>("n") as u64,
             "wrong" => entry.wrong = r.get::<i64, _>("n") as u64,
@@ -924,7 +935,10 @@ mod tests {
     #[tokio::test]
     async fn judgment_lifecycle_happy_path() {
         let db = test_db().await;
-        let id = db.insert_judgment("ws1", None, None, Some("t1"), "annotate").await.unwrap();
+        let id = db
+            .insert_judgment("ws1", None, None, Some("t1"), "annotate")
+            .await
+            .unwrap();
 
         let j = db.find_judgment_by_id(&id, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, JudgmentStatus::Investigating);
@@ -1051,7 +1065,10 @@ mod tests {
 
         let page1 = db.list_judgments_feed("ws1", None, None, 1).await.unwrap();
         assert_eq!(page1.len(), 1);
-        let page2 = db.list_judgments_feed("ws1", None, Some(&page1[0].id), 10).await.unwrap();
+        let page2 = db
+            .list_judgments_feed("ws1", None, Some(&page1[0].id), 10)
+            .await
+            .unwrap();
         assert_eq!(page2.len(), 1);
         let ids: Vec<&str> = [page1[0].id.as_str(), page2[0].id.as_str()].into();
         assert!(ids.contains(&a.as_str()) && ids.contains(&b.as_str()));
@@ -1090,9 +1107,17 @@ mod tests {
         assert_eq!(db.count_judgments_today("ws1").await.unwrap(), 0);
         // 迟到的调查 verdict 恢复路由到三出口
         assert!(
-            db.judge_judgment(&id, JudgmentVerdict::Noise, "迟到的判断：正常波动", "{}", None, None, None)
-                .await
-                .unwrap()
+            db.judge_judgment(
+                &id,
+                JudgmentVerdict::Noise,
+                "迟到的判断：正常波动",
+                "{}",
+                None,
+                None,
+                None
+            )
+            .await
+            .unwrap()
         );
         let j = db.find_judgment_by_id(&id, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, JudgmentStatus::NoiseArchived);
@@ -1113,7 +1138,10 @@ mod tests {
             .unwrap();
         let page1 = db.list_judgments_feed("ws1", None, None, 2).await.unwrap();
         assert_eq!(page1.len(), 2);
-        let page2 = db.list_judgments_feed("ws1", None, Some(&page1[1].id), 10).await.unwrap();
+        let page2 = db
+            .list_judgments_feed("ws1", None, Some(&page1[1].id), 10)
+            .await
+            .unwrap();
         assert_eq!(page2.len(), 1, "同秒第三行必须可翻页到达");
     }
 
@@ -1156,11 +1184,20 @@ mod tests {
             .await
             .expect("alarm insert");
         }
-        let j1 = db.insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate").await.unwrap();
-        let j2 = db.insert_judgment("ws1", Some("a2"), None, Some("t1"), "annotate").await.unwrap();
+        let j1 = db
+            .insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        let j2 = db
+            .insert_judgment("ws1", Some("a2"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
         // j2 更新（同 thing+rule），j1 应被折叠
         std::thread::sleep(std::time::Duration::from_millis(1100));
-        let j3 = db.insert_judgment("ws1", Some("a3"), None, Some("t1"), "annotate").await.unwrap();
+        let j3 = db
+            .insert_judgment("ws1", Some("a3"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
         // j3 判为需人工 → escalated（置顶）
         db.judge_judgment(&j3, JudgmentVerdict::NeedsHuman, "要人", "{}", None, None, None)
             .await
@@ -1178,9 +1215,13 @@ mod tests {
         let db = test_db().await;
         let j1 = db.insert_judgment("ws1", None, None, None, "annotate").await.unwrap();
         let j2 = db.insert_judgment("ws1", None, None, None, "annotate").await.unwrap();
-        db.add_judgment_feedback(&j1, "ws1", "u1", "wrong", Some("判错了")).await.unwrap();
+        db.add_judgment_feedback(&j1, "ws1", "u1", "wrong", Some("判错了"))
+            .await
+            .unwrap();
         db.add_judgment_feedback(&j1, "ws1", "u1", "right", None).await.unwrap(); // 改判
-        db.add_judgment_feedback(&j2, "ws1", "u1", "wrong", Some("不对")).await.unwrap();
+        db.add_judgment_feedback(&j2, "ws1", "u1", "wrong", Some("不对"))
+            .await
+            .unwrap();
         let map = db.latest_feedbacks(&[j1.clone(), j2.clone()]).await.unwrap();
         assert_eq!(map.get(&j1).unwrap().verdict, "right", "改判取最新");
         assert_eq!(map.get(&j2).unwrap().verdict, "wrong");
@@ -1191,7 +1232,9 @@ mod tests {
     async fn latency_stats_computed() {
         let db = test_db().await;
         let j1 = db.insert_judgment("ws1", None, None, None, "annotate").await.unwrap();
-        db.judge_judgment(&j1, JudgmentVerdict::Noise, "r", "{}", None, None, None).await.unwrap();
+        db.judge_judgment(&j1, JudgmentVerdict::Noise, "r", "{}", None, None, None)
+            .await
+            .unwrap();
         let stats = db.judgment_stats("ws1").await.unwrap();
         assert!(stats.latency_p50_secs.is_some());
         assert!(stats.latency_p90_secs.is_some());
@@ -1203,7 +1246,9 @@ mod tests {
     async fn reopen_after_wrong_feedback() {
         let db = test_db().await;
         let id = db.insert_judgment("ws1", None, None, None, "annotate").await.unwrap();
-        db.judge_judgment(&id, JudgmentVerdict::Noise, "波动", "{}", None, None, None).await.unwrap();
+        db.judge_judgment(&id, JudgmentVerdict::Noise, "波动", "{}", None, None, None)
+            .await
+            .unwrap();
         assert!(db.reopen_judgment(&id).await.unwrap());
         let j = db.find_judgment_by_id(&id, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, JudgmentStatus::Investigating);

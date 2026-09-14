@@ -335,7 +335,11 @@ impl Alarm {
     pub fn unsuppress(&mut self) -> Result<()> {
         if self.status != AlarmStatus::Suppressed {
             return Err(DbError::Validation {
-                message: format!("无效的报警状态转换: 从 {} 到 {}", self.status.as_str(), "active(unsuppress)"),
+                message: format!(
+                    "无效的报警状态转换: 从 {} 到 {}",
+                    self.status.as_str(),
+                    "active(unsuppress)"
+                ),
             });
         }
         self.status = AlarmStatus::Active;

@@ -626,7 +626,10 @@ mod tests {
     #[tokio::test]
     async fn needs_human_escalates_to_ticket() {
         let (db, sse, alarm) = fixture().await;
-        let jid = db.insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate").await.unwrap();
+        let jid = db
+            .insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
         let summary = "...\n```json\n{\"verdict\": \"needs_human\", \"reason\": \"冷却系统疑似故障\", \"suggested_action\": null, \"action_category\": \"other\"}\n```";
         project(&event("r1", Outcome::NoActionNeeded, summary), &db, &sse, &alarm).await;
 
@@ -641,7 +644,10 @@ mod tests {
         let (db, sse, alarm) = fixture().await;
         // suppress 模式（T-6：快照在 judgment 行上；annotate 默认不抑制，
         // 由 alarm_disposition_tests::annotate_mode_noise_does_not_suppress 覆盖）
-        let jid = db.insert_judgment("ws1", Some("a1"), None, Some("t1"), "suppress").await.unwrap();
+        let jid = db
+            .insert_judgment("ws1", Some("a1"), None, Some("t1"), "suppress")
+            .await
+            .unwrap();
         let summary = "```json\n{\"verdict\": \"noise\", \"reason\": \"正常波动\", \"suggested_action\": null, \"action_category\": \"other\"}\n```";
         project(&event("r1", Outcome::NoActionNeeded, summary), &db, &sse, &alarm).await;
 
@@ -654,7 +660,10 @@ mod tests {
     #[tokio::test]
     async fn failed_run_marks_investigation_failed_and_escalates() {
         let (db, sse, alarm) = fixture().await;
-        let jid = db.insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate").await.unwrap();
+        let jid = db
+            .insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
         project(&event("r1", Outcome::Failed, "LLM 超时"), &db, &sse, &alarm).await;
 
         let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
@@ -665,7 +674,10 @@ mod tests {
     #[tokio::test]
     async fn unparseable_verdict_escalates_not_silent() {
         let (db, sse, alarm) = fixture().await;
-        let jid = db.insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate").await.unwrap();
+        let jid = db
+            .insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
         project(
             &event("r1", Outcome::NoActionNeeded, "没有结构化输出"),
             &db,
@@ -682,7 +694,10 @@ mod tests {
     #[tokio::test]
     async fn unrelated_problem_keys_ignored() {
         let (db, sse, alarm) = fixture().await;
-        let jid = db.insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate").await.unwrap();
+        let jid = db
+            .insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
         let mut e = event("r1", Outcome::NoActionNeeded, "x");
         e.kind = AgentEventKind::RunRecorded {
             report: Box::new(report("r1", Outcome::NoActionNeeded, "x")),
