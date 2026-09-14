@@ -147,3 +147,36 @@ IoT 特有的物理 blast radius 敬畏（执行必须分级信任）。
 12. **S1 流程质疑已裁**：维持本 PR 施工（用户裁定，2026-09-14）。
 
 实施任务：tasks-eng-review-20260914-120402.jsonl（24 项，E1-E24）。
+
+## 限流判定序图（S3，eng-review 要求的三层限流统一视图）
+
+一条报警穿过三个限流器的完整判定序（2026-09-14 落地实现）：
+
+```
+报警 create_alarm
+  │
+  ▼
+① kill switch（heartbeat_config.ai_triage_enabled）
+  │  关闭/读失败 → 人工路径 + audit_log(ai_triage_skipped)   [fail-closed]
+  ▼
+② 严重级切分：Critical/Error → 先直达工单（ticket dedup 折叠兜底）
+  ▼
+③ 日预算闸（judgments 计数，UTC 日界；budget_skipped/dispatch_suppressed 不计）
+  │  超限/查询失败 → budget_skipped 标记，报警保持 Active     [fail-closed]
+  ▼
+④ flap 防抖（judgments 表；仅 investigating 算「在查」——T-9）
+  │  命中 → 跳过重查（严重级工单不受影响，已在②建立）
+  │  查询失败 → 继续调查（防抖只省额度，失败方向=多查不漏查）
+  ▼
+⑤ judgment 落库（triage_mode 快照）→ AlarmCreated → O11 dedup（run 级，6h 窗）
+  │  alarm: 键域豁免 ack 抑制（T-5）与 Failed 跳过（T-8）
+  │  拦截/队列满 → 无 run → investigating SLA(30min) → dispatch_suppressed
+  │    （不开票不计预算；迟到 RunRecorded 按 verdict 恢复路由——T-7）
+  ▼
+thing-agent 调查 → RunRecorded → 三出口路由
+```
+
+三态 SLA 清扫（cron approval_timeout，15min 周期）：
+- investigating 30min → dispatch_suppressed（标记）
+- executing 1h（state_entered_at 起算）→ escalated + 人工确认工单
+- awaiting_approval 24h（judged_at 起算）→ escalated + 工单
