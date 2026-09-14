@@ -57,6 +57,15 @@ pub(crate) struct VerdictPayload {
     action_category: Option<String>,
 }
 
+impl VerdictPayload {
+    /// eval 套件断言用（T-11：eval 与生产共用解析，保真）。
+    /// 仅测试消费（lib 构建下未用）。
+    #[allow(dead_code)]
+    pub(crate) fn verdict_str(&self) -> &str {
+        &self.verdict
+    }
+}
+
 /// 解析 report.summary 尾部的 ```json verdict 块；宽松 fallback：找最后一个
 /// 含 "verdict" 的 {...} 段（eng-review 外部修正 8 + T-15/C3：fallback 保留
 /// 但返回 used_fallback 标记——写进 evidence 可统计可审计，格式漂移不转嫁

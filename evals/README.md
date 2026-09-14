@@ -1,6 +1,7 @@
 # 判断质量 Eval 套件（T11）
 
-AI 报警分诊的判断质量基线。手动运行，不进 CI（真 LLM 调用必 flaky）。
+AI 报警分诊的判断质量基线。weekly CI 定时跑（`.github/workflows/judgment-eval-weekly.yml`，
+非阻断哨兵，E1），也可手动运行。
 
 ## 运行
 
@@ -8,6 +9,12 @@ AI 报警分诊的判断质量基线。手动运行，不进 CI（真 LLM 调用
 MINIMAX_API_KEY=... cargo test -p tinyiothub-cloud judgment_eval -- --ignored --nocapture
 # 可选：MINIMAX_BASE_URL / MINIMAX_MODEL 覆盖
 ```
+
+## 保真约定（F-E/T-11，2026-09-14 工程评审）
+
+eval 与生产**共用同一 prompt 模板**（`callbacks.rs alarm_investigation_text`）与
+**同一解析函数**（`judgment_subscriber::parse_verdict`）——不维护手抄副本。
+改调查 prompt 或解析规则会直接进入本 eval；基线永远是生产管线的度量。
 
 ## 验收门槛（D7 裁决）
 

@@ -15,25 +15,11 @@ struct Scenario {
     expected: String,
 }
 
+/// F-E/T-11：eval 与生产同一解析函数（不再手抄副本——改解析规则时
+/// eval 自动跟随，漂移在编译期暴露）。
 fn parse_verdict_loose(text: &str) -> Option<String> {
-    // 与 judgment_subscriber::parse_verdict 同规则（围栏块 → 宽松 JSON）
-    if let Some(start) = text.rfind("```json") {
-        let block = &text[start + 7..];
-        if let Some(end) = block.find("```")
-            && let Ok(v) = serde_json::from_str::<serde_json::Value>(block[..end].trim())
-        {
-            return v.get("verdict")?.as_str().map(str::to_string);
-        }
-    }
-    if let Some(start) = text.rfind('{') {
-        let candidate = &text[start..];
-        if candidate.contains("\"verdict\"")
-            && let Ok(v) = serde_json::from_str::<serde_json::Value>(candidate.trim())
-        {
-            return v.get("verdict")?.as_str().map(str::to_string);
-        }
-    }
-    None
+    crate::domains::agent::host::judgment_subscriber::parse_verdict(text)
+        .map(|(p, _fallback)| p.verdict_str().to_string())
 }
 
 #[tokio::test]
@@ -62,14 +48,21 @@ async fn judgment_eval_verdict_accuracy() {
     let mut failures: Vec<String> = vec![];
 
     for s in &scenarios {
-        // 与生产同 prompt 模板（alarm_investigation_text 同结构；事实直接注入）
-        let prompt = format!(
-            "调查报警并给出处置判断。报警事实：{}。\
-             请判断：noise（正常波动/无需处理）/ self_healable（可自愈，给出建议动作）/ \
-             needs_human（需要人工介入）。结束前输出一行结构化结论：\
-             ```json {{\"verdict\": \"...\", \"reason\": \"一句人话理由\"}}```",
-            s.facts
-        );
+        // F-E/T-11：与生产同一 prompt 模板（alarm_investigation_text；
+        // 场景事实注入 message 字段）。改调查 prompt 会直接进入本 eval——
+        // 基线永远是生产管线的度量，不是手抄副本。
+        let alarm = tinyiothub_core::models::event::AlarmEvent {
+            id: format!("eval-{}", s.id),
+            workspace_id: "eval".to_string(),
+            thing_id: "eval-thing".to_string(),
+            alarm_type: "property_threshold".to_string(),
+            severity: "warning".to_string(),
+            message: s.facts.clone(),
+            rule_id: Some(format!("eval-rule-{}", s.id)),
+            resolved: false,
+            created_at: chrono::Utc::now(),
+        };
+        let prompt = tinyiothub_agent::runtime::orchestrator::callbacks::alarm_investigation_text(&alarm);
         let messages = [ChatMessage::user(prompt)];
         let resp = provider
             .chat(
