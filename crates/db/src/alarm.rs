@@ -330,6 +330,18 @@ impl Alarm {
         Ok(())
     }
 
+    /// 解除抑制（Suppressed → Active）：AI 误判 noise 的人工纠正路径
+    ///（F-C/T-17：✕ 反馈后报警必须可恢复）。
+    pub fn unsuppress(&mut self) -> Result<()> {
+        if self.status != AlarmStatus::Suppressed {
+            return Err(DbError::Validation {
+                message: format!("无效的报警状态转换: 从 {} 到 {}", self.status.as_str(), "active(unsuppress)"),
+            });
+        }
+        self.status = AlarmStatus::Active;
+        Ok(())
+    }
+
     pub fn can_acknowledge(&self) -> bool {
         self.status == AlarmStatus::Active
     }

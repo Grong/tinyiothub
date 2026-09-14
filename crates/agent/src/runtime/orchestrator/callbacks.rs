@@ -144,7 +144,12 @@ impl HeartbeatBridge {
     fn should_dispatch(&self, workspace_id: &str, problem_key: &str) -> bool {
         let ack_window = Duration::from_secs(u64::from(ACK_SUPPRESS_HOURS) * 3600);
         let problem_window = Duration::from_secs(u64::from(PROBLEM_WINDOW_HOURS) * 3600);
-        if let Some((_, _, acked)) = self.registry.last_problem_run(workspace_id, problem_key, ack_window)
+        // T-5/T-8：ack 抑制（7d）与「上次 Failed 即跳过」是为心跳 proposal
+        // 设计的语义，对 alarm: 键域豁免——ack 交互不存在于报警调查；一次
+        // 瞬时 LLM 超时（Failed）不应固化成该 thing+rule 的 6h 盲区。
+        let is_alarm_key = problem_key.starts_with("alarm:");
+        if !is_alarm_key
+            && let Some((_, _, acked)) = self.registry.last_problem_run(workspace_id, problem_key, ack_window)
             && acked
         {
             return false;
@@ -156,6 +161,7 @@ impl HeartbeatBridge {
             return true;
         };
         match outcome {
+            Outcome::Failed if is_alarm_key => true, // 瞬时故障不固化盲区（T-8）
             Outcome::Failed | Outcome::Rejected | Outcome::BudgetExceeded | Outcome::NoActionNeeded => false,
             Outcome::Acted if verified => false,
             Outcome::Acted => {
@@ -1000,6 +1006,27 @@ pub(crate) mod tests {
         async fn alarm_created_without_bridge_is_noop() {
             let (handler, _events) = make_handler(None, None, false);
             handler.handle_ai_event(&wrap_ai_event(&alarm_event("error"))).await;
+        }
+
+        /// T-8：alarm: 键域豁免「上次 Failed 即跳过」——瞬时 LLM 故障不固化
+        /// 成 6h 盲区；同 thing+rule 的下一条报警仍派发调查。
+        #[tokio::test]
+        async fn alarm_key_exempt_from_failed_suppression() {
+            let registry = RunRegistry::new();
+            registry.record_problem_run(
+                "ws_1",
+                "alarm:dev-1:rule-9",
+                "run-failed-1",
+                Outcome::Failed,
+                false,
+                Utc::now(),
+            );
+            let (bridge, sink) = bridge(registry);
+            let AiEvent::AlarmCreated(alarm) = alarm_event("warning") else {
+                unreachable!()
+            };
+            bridge.dispatch_alarm_investigation(&alarm).await;
+            assert_eq!(sink.signals.lock().unwrap().len(), 1, "Failed 后报警仍应重派调查");
         }
     }
 }
