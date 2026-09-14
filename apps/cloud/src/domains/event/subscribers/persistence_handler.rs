@@ -103,25 +103,18 @@ impl PersistenceEventHandler {
             drop((buffer, db, interval));
         }
 
-        // 其他平台: 使用panic保护的spawn
+        // 其他平台: 普通 async interval 循环（block_on 包在 spawn 里会立即 panic，
+        // 之前的 catch_unwind 写法导致 flush 任务从未真正运行）
         #[cfg(not(feature = "harmonyos"))]
         {
-            use std::panic;
             tokio::spawn(async move {
-                let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-                    tokio::runtime::Handle::current().block_on(async {
-                        let mut ticker = tokio::time::interval(interval);
-                        loop {
-                            ticker.tick().await;
-                            if let Err(e) = Self::flush_buffer(&buffer, &db).await {
-                                error!("Failed to flush event buffer: {}", e);
-                            }
-                        }
-                    })
-                }));
-
-                let Err(e) = result;
-                error!("Event flush task panicked: {:?}", e)
+                let mut ticker = tokio::time::interval(interval);
+                loop {
+                    ticker.tick().await;
+                    if let Err(e) = Self::flush_buffer(&buffer, &db).await {
+                        error!("Failed to flush event buffer: {}", e);
+                    }
+                }
             });
         }
     }

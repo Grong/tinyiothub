@@ -608,7 +608,7 @@ async fn warning_event_runs_full_loop_and_persists_verified_report() {
         let rid = run_id_for_alerts.clone();
         Box::pin(async move {
             let alerts: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM events WHERE event_subtype = 'thing_agent_alert' AND content LIKE '%' || ? || '%'",
+                "SELECT COUNT(*) FROM events WHERE event_subtype = '{\"Ai\":\"ThingAgentAlert\"}' AND content LIKE '%' || ? || '%'",
             )
             .bind(&rid)
             .fetch_one(&pool)
@@ -851,7 +851,7 @@ async fn policy_denial_streak_triggers_relax_hint_with_registry() {
 
     // run_rejected 告警落 events 表，payload 携带 policy_relax_hint。
     let content: String = sqlx::query_scalar(
-        "SELECT content FROM events WHERE event_subtype = 'thing_agent_alert' AND content LIKE '%run_rejected%' ORDER BY rowid DESC LIMIT 1",
+        "SELECT content FROM events WHERE event_subtype = '{\"Ai\":\"ThingAgentAlert\"}' AND content LIKE '%run_rejected%' ORDER BY rowid DESC LIMIT 1",
     )
     .fetch_one(&pool)
     .await

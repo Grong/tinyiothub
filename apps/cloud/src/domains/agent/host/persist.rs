@@ -293,6 +293,32 @@ pub(crate) async fn project(
                     shutdown.clone(),
                 );
             }
+            // G3 闭环：巡检者失败要可见。status=Error 的结果（连败暂停 /
+            // LLM 错误 tick）落一条 system_error 事件，事件日志页可见；
+            // 与 heartbeat 结果落库成败解耦，best-effort 不重试。
+            if result.status == tinyiothub_core::heartbeat::HeartbeatStatus::Error {
+                use tinyiothub_core::models::event::{Event, EventLevel, EventSource, RichContent, SystemEventType};
+                let title = format!("心跳巡检异常（工作区 {}）", result.workspace_id);
+                let body = format!("{}\n{}", result.summary, result.error.as_deref().unwrap_or(""));
+                let event = Event::new_system_event(
+                    SystemEventType::SystemError,
+                    EventLevel::Error,
+                    EventSource::new("agent".to_string(), "heartbeat".to_string(), None, None::<String>),
+                    RichContent::new_text(title, body),
+                );
+                match event {
+                    Ok(ev) => {
+                        if let Err(e) = db.insert_event(&ev).await {
+                            warn!(
+                                workspace_id = %result.workspace_id,
+                                error = %e,
+                                "heartbeat error event persist failed"
+                            );
+                        }
+                    }
+                    Err(e) => warn!(error = %e, "failed to build heartbeat error event"),
+                }
+            }
         }
         AgentEventKind::TrustConfigChanged { workspace_id, config } => {
             // fencing upsert（CEO review T2）：以事件的 occurred_at 与已应用

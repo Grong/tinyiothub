@@ -221,21 +221,31 @@ mod tests {
 
         let row = sqlx::query(
             "SELECT event_type, event_subtype, event_level, source_type, actor, title, content, workspace_id \
-             FROM events WHERE event_subtype = 'thing_agent_alert'",
+             FROM events WHERE event_type = 'ai'",
         )
         .fetch_one(&pool)
         .await
         .expect("row");
-        assert_eq!(row.get::<String, _>("event_type"), "agent");
+        assert_eq!(row.get::<String, _>("event_type"), "ai");
+        // 正统格式：event_subtype 存 EventType serde JSON，保证 row_to_event 可往返
+        let subtype: String = row.get("event_subtype");
+        let parsed: tinyiothub_core::models::event::EventType = serde_json::from_str(&subtype).unwrap();
+        assert_eq!(
+            parsed,
+            tinyiothub_core::models::event::EventType::Ai(tinyiothub_core::models::event::AiEventType::ThingAgentAlert)
+        );
         assert_eq!(row.get::<i32, _>("event_level"), 4);
         assert_eq!(row.get::<String, _>("source_type"), "agent");
         assert_eq!(row.get::<String, _>("actor"), "agent");
         assert_eq!(row.get::<String, _>("title"), "调低设定值失败");
         assert_eq!(row.get::<String, _>("workspace_id"), "ws");
+        // content 为 RichContent JSON，原始 payload 包在文本元素里
         let content: String = row.get("content");
-        let back: serde_json::Value = serde_json::from_str(&content).unwrap();
-        assert_eq!(back["reason"], "run_failed");
-        assert_eq!(back["run_id"], "run_1");
+        let rich: tinyiothub_core::models::event::RichContent = serde_json::from_str(&content).unwrap();
+        assert_eq!(rich.title(), "调低设定值失败");
+        let content_json = serde_json::to_string(&rich).unwrap();
+        assert!(content_json.contains("run_failed"));
+        assert!(content_json.contains("run_1"));
     }
 
     // append_message 参与回推路径，保留一个直连冒烟用例防 FK 回归。

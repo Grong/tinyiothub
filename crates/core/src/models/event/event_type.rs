@@ -72,6 +72,8 @@ pub enum AiEventType {
     ReflectionFailed,
     ProposalCreated,
     ProposalResolved,
+    /// Thing-agent 自治 run 上报告的告警（落 events 表，Error 级）
+    ThingAgentAlert,
 }
 
 impl AiEventType {
@@ -89,6 +91,7 @@ impl AiEventType {
             AiEventType::ReflectionFailed => "ReflectionFailed",
             AiEventType::ProposalCreated => "ProposalCreated",
             AiEventType::ProposalResolved => "ProposalResolved",
+            AiEventType::ThingAgentAlert => "ThingAgentAlert",
         }
     }
 
@@ -104,6 +107,7 @@ impl AiEventType {
             AiEventType::ReflectionFailed => "Reflection Failed",
             AiEventType::ProposalCreated => "Proposal Created",
             AiEventType::ProposalResolved => "Proposal Resolved",
+            AiEventType::ThingAgentAlert => "Thing Agent Alert",
         }
     }
 
@@ -119,6 +123,7 @@ impl AiEventType {
             AiEventType::ReflectionFailed => "reflection_failed",
             AiEventType::ProposalCreated => "proposal_created",
             AiEventType::ProposalResolved => "proposal_resolved",
+            AiEventType::ThingAgentAlert => "thing_agent_alert",
         }
     }
 }
@@ -231,6 +236,7 @@ impl EventType {
                 "reflection_failed" => Ok(EventType::Ai(AiEventType::ReflectionFailed)),
                 "proposal_created" => Ok(EventType::Ai(AiEventType::ProposalCreated)),
                 "proposal_resolved" => Ok(EventType::Ai(AiEventType::ProposalResolved)),
+                "thing_agent_alert" => Ok(EventType::Ai(AiEventType::ThingAgentAlert)),
                 _ => Err(format!("Unknown ai event subtype: {}", subtype_str)),
             },
             _ => Err(format!("Unknown event type: {}", type_str)),
