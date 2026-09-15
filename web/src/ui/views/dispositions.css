@@ -131,33 +131,22 @@ view-dispositions .j-actions {
   align-items: center;
 }
 
-view-dispositions .j-btn {
-  font-size: 12.5px;
-  padding: 5px 14px;
-  border-radius: var(--radius-sm, 6px);
-  border: 1px solid var(--border);
+/* 实体按钮统一用全局 .btn 体系（btn-small / primary / danger）；
+   这里只保留文字按钮，承载低强调动作（证据/取消/打开工单） */
+view-dispositions .j-btn-text {
+  border: none;
   background: none;
-  color: var(--text);
-  cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-in-out);
-}
-
-view-dispositions .j-btn:hover {
-  border-color: var(--border-hover);
-}
-
-/* 主按钮：前景/背景反转，双主题下都保持最高对比 */
-view-dispositions .j-btn.primary {
-  background: var(--text-strong);
-  color: var(--bg);
-  border: none;
-  font-weight: 500;
-}
-
-view-dispositions .j-btn.text {
-  border: none;
   color: var(--muted-foreground);
+  font-size: 12.5px;
   padding: 5px 6px;
+  cursor: pointer;
+  border-radius: var(--radius-sm, 6px);
+  text-decoration: none;
+  transition: color var(--duration-fast) var(--ease-in-out);
+}
+
+view-dispositions .j-btn-text:hover {
+  color: var(--text-strong);
 }
 
 view-dispositions .j-countdown {

@@ -300,16 +300,16 @@ export class DispositionsView extends LitElement {
           ? html`
               <div class="j-actions">
                 ${j.suggestedAction ? html`<span class="disp-sub">建议：${j.suggestedAction}</span>` : nothing}
-                <button class="j-btn primary" @click=${() => this.approve(j)}>批准执行</button>
+                <button class="btn primary btn-small" @click=${() => this.approve(j)}>批准执行</button>
                 <button
-                  class="j-btn"
+                  class="btn btn-small"
                   @click=${() => {
                     this.rejectPanelId = this.rejectPanelId === j.id ? null : j.id;
                     this.rejectReason = "";
                   }}
                 >拒绝</button>
                 <button
-                  class="j-btn text"
+                  class="j-btn-text"
                   @click=${() => (this.expandedId = this.expandedId === j.id ? null : j.id)}
                 >证据</button>
                 ${countdown ? html`<span class="j-countdown">${countdown}</span>` : nothing}
@@ -318,12 +318,12 @@ export class DispositionsView extends LitElement {
           : html`
               <div class="j-actions">
                 ${j.ticketId
-                  ? html`<a class="j-btn text" href="#/tickets/${j.ticketId}">打开工单 →</a>`
+                  ? html`<a class="j-btn-text" href="#/tickets/${j.ticketId}">打开工单 →</a>`
                   : nothing}
                 ${j.evidence && j.status !== "investigating"
                   ? html`
                       <button
-                        class="j-btn text"
+                        class="j-btn-text"
                         @click=${() => (this.expandedId = this.expandedId === j.id ? null : j.id)}
                       >证据</button>
                     `
@@ -344,8 +344,8 @@ export class DispositionsView extends LitElement {
                   @input=${(e: InputEvent) => (this.rejectReason = (e.target as HTMLTextAreaElement).value)}
                 ></textarea>
                 <div class="actions">
-                  <button class="j-btn text" @click=${() => (this.rejectPanelId = null)}>取消</button>
-                  <button class="j-btn primary" @click=${() => this.submitReject(j)}>确认拒绝</button>
+                  <button class="j-btn-text" @click=${() => (this.rejectPanelId = null)}>取消</button>
+                  <button class="btn danger btn-small" @click=${() => this.submitReject(j)}>确认拒绝</button>
                 </div>
               </div>
             `
@@ -360,8 +360,8 @@ export class DispositionsView extends LitElement {
                   @input=${(e: InputEvent) => (this.wrongReason = (e.target as HTMLTextAreaElement).value)}
                 ></textarea>
                 <div class="actions">
-                  <button class="j-btn text" @click=${() => (this.wrongPanelId = null)}>取消</button>
-                  <button class="j-btn primary" @click=${() => this.submitWrong(j)}>提交</button>
+                  <button class="j-btn-text" @click=${() => (this.wrongPanelId = null)}>取消</button>
+                  <button class="btn primary btn-small" @click=${() => this.submitWrong(j)}>提交</button>
                 </div>
               </div>
             `
@@ -389,14 +389,14 @@ export class DispositionsView extends LitElement {
       ${this.loading
         ? html`<div class="disp-loading">加载中…</div>`
         : this.loadError
-          ? html`<div class="disp-error">${this.loadError} <button class="j-btn" @click=${() => this.load()}>重试</button></div>`
+          ? html`<div class="disp-error">${this.loadError} <button class="btn btn-small" @click=${() => this.load()}>重试</button></div>`
           : this.judgments.length === 0
             ? this.renderEmpty()
             : html`
                 ${this.judgments.map((j) => this.renderCard(j))}
                 ${this.hasMore
                   ? html`<div class="j-more">
-                      <button class="j-btn" @click=${() => this.loadMore()}>加载更多</button>
+                      <button class="btn btn-small" @click=${() => this.loadMore()}>加载更多</button>
                     </div>`
                   : nothing}
               `}
