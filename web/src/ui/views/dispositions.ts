@@ -235,16 +235,14 @@ export class DispositionsView extends LitElement {
 
   private renderHeader(): TemplateResult {
     const s = this.summary;
+    // 页面标题由 app shell 的 content-header 统一渲染，这里只保留统计数据行
     return html`
-      <div class="disp-head">
-        <h1 class="page-title">处置中心</h1>
-        <span class="disp-sub">
-          ${s ? html`今日 ${s.digestedToday} 条已消化 · ${s.needsYou} 条需要你` : "…"}
-          ${s?.latencyP50Secs != null
-            ? html` · 判断延迟 p50 ${Math.round(s.latencyP50Secs / 60)} 分钟`
-            : nothing}
-        </span>
-      </div>
+      <p class="disp-stats">
+        ${s ? html`今日 ${s.digestedToday} 条已消化 · ${s.needsYou} 条需要你` : "…"}
+        ${s?.latencyP50Secs != null
+          ? html` · 判断延迟 p50 ${Math.round(s.latencyP50Secs / 60)} 分钟`
+          : nothing}
+      </p>
       ${s && s.feedbackTotal > 0
         ? html`<p class="disp-learn">AI 已从你的 ${s.feedbackTotal} 条反馈中学习
             （${s.feedbackRight} 对 / ${s.feedbackWrong} 错）</p>`
