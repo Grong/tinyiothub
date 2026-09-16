@@ -87,12 +87,19 @@ export function approvalCountdown(j: Judgment, now = Date.now(), timeoutHours = 
 }
 
 /** 证据渲染（F-G，导出供测试）：P0 证据 = run 摘要摘录，按纯文本展示；
- *  不再把整对象 JSON.stringify 给用户看。 */
+ *  不再把整对象 JSON.stringify 给用户看。
+ *  存量脏数据兜底：老行的 excerpt 是未清洗的原始 LLM 输出（含 <think>
+ *  思考块与尾部 ```json verdict 协议块），渲染前剥掉；新行由服务端
+ *  clean_summary_for_evidence 在写入时清洗。 */
 export function renderEvidence(evidence: unknown): string {
   if (!evidence || typeof evidence !== "object") return "暂无证据";
   const excerpt = (evidence as { excerpt?: unknown }).excerpt;
-  if (typeof excerpt === "string" && excerpt.trim()) return excerpt;
-  return "暂无证据";
+  if (typeof excerpt !== "string") return "暂无证据";
+  const cleaned = excerpt
+    .replace(/<think>[\s\S]*?(<\/think>|$)/g, "")
+    .replace(/```json[\s\S]*?(```|$)/g, "")
+    .trim();
+  return cleaned || "暂无证据";
 }
 
 /** 反馈校验（F13，导出供测试）：点错必填 ≥4 字符。 */

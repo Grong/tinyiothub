@@ -91,4 +91,18 @@ describe("renderEvidence (F-G)", () => {
     expect(renderEvidence({})).toBe("暂无证据");
     expect(renderEvidence({ excerpt: "  " })).toBe("暂无证据");
   });
+
+  it("strips raw LLM artifacts from legacy excerpts (think 块 + verdict 协议块)", () => {
+    // 存量脏数据：服务端清洗上线前写入的 excerpt 是原始 LLM 输出
+    const ev = {
+      excerpt:
+        '<think>让我分析一下历史报警…</think>温度 10°C 超限，door_open=true 是根因。```json {"verdict":"needs_human","reason":"门开着"}```',
+    };
+    expect(renderEvidence(ev)).toBe("温度 10°C 超限，door_open=true 是根因。");
+  });
+
+  it("strips unclosed think block (输出被截断时)", () => {
+    const ev = { excerpt: "<think>分析到一半被截断" };
+    expect(renderEvidence(ev)).toBe("暂无证据");
+  });
 });
