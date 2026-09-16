@@ -29,28 +29,32 @@ view-dispositions .disp-learn {
   margin: var(--space-1) 0 0;
 }
 
-/* 下划线 tab：active 下划线与容器边框重叠，无魔法数 */
+/* tab：与工单页（tickets.css .tab）同一模式——独立描边胶囊，
+   active 用页面信号色（琥珀）描边 + 同色文字；背景用 --card 修正
+   工单页 --surface 未定义回退纯白的问题，保证双主题安全 */
 view-dispositions .disp-tabs {
   display: flex;
-  gap: var(--space-4);
+  gap: var(--space-2);
   margin-bottom: var(--space-4);
-  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
 }
 
 view-dispositions .disp-tab {
-  font-size: 13px;
-  color: var(--muted-foreground);
-  background: none;
-  border: none;
-  border-bottom: 1px solid transparent;
+  border: 1px solid var(--border);
+  background: var(--card);
+  border-radius: var(--radius-sm, 6px);
+  padding: 6px 14px;
   cursor: pointer;
-  padding: 0 0 var(--space-2);
-  margin-bottom: -1px;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  min-height: 44px;
 }
 
 view-dispositions .disp-tab.active {
-  color: var(--text-strong);
-  border-bottom-color: var(--text-strong);
+  border-color: var(--warning);
+  color: var(--warning);
+  font-weight: 600;
 }
 
 view-dispositions .disp-tab .count {

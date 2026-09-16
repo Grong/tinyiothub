@@ -117,6 +117,11 @@ export class DispositionsView extends LitElement {
   private sseConn: SseConnection | null = null;
   private poller: number | null = null;
 
+  /** Light DOM：dispositions.css 与全局 .btn 样式才能生效（与 tickets/alarms 一致） */
+  createRenderRoot() {
+    return this;
+  }
+
   connectedCallback() {
     super.connectedCallback();
     void this.load();
