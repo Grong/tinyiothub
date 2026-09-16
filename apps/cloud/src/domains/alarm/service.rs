@@ -817,7 +817,11 @@ impl RuleEngine {
                     .map(|last| last.elapsed() < suppress_duration)
                     .unwrap_or(false);
                 if throttled {
-                    non_triggered_rule_ids.push(rule.id.clone());
+                    // 节流 ≠ 未触发：条件仍满足，只是抑制重复告警。误标
+                    // non_triggered 会被 auto-resolve 当成「已恢复」——实测
+                    // （2026-09-16）：温度持续超限时每 60s 一条新报警、3s 后
+                    // 被节流路径误恢复。
+                    pending_trigger_rule_ids.push(rule.id.clone());
                     continue;
                 }
                 self.throttle.insert(throttle_key, Instant::now());
@@ -1105,8 +1109,10 @@ impl RuleEngine {
                 ..
             } => {
                 let Some(current) = context.get_numeric_value() else {
-                    // Non-numeric values: can't evaluate, treat as recovered
-                    return true;
+                    // 读数缺失/非数值 = 无法判定恢复，而不是「已恢复」——
+                    // 此前按 recovered 处理，传感器异常读数（"N/A"/"--"）
+                    // 会把活跃报警误恢复。
+                    return false;
                 };
                 if let Some(recovery_val) = recovery_threshold {
                     // Hysteresis: use the recovery threshold instead of trigger threshold.
@@ -2558,6 +2564,115 @@ mod integration_tests {
             active_count, 0,
             "Alarm should be auto-resolved when value returns to normal"
         );
+    }
+
+    /// 回归（2026-09-16 实测）：节流窗口内的重复上报不得自动恢复报警。
+    /// 温度持续超限：首次上报触发报警，60s 抑制窗内的第二次上报被节流——
+    /// 此前节流路径把规则错标为 non_triggered，auto-resolve 立刻把仍超限
+    /// 的报警「恢复」掉（表现：每分钟一条新报警、3s 后即恢复）。
+    #[sqlx::test]
+    async fn test_throttled_repeat_report_does_not_auto_resolve(pool: sqlx::SqlitePool) {
+        setup_full_schema(&pool).await;
+        let db = Arc::new(Db::new(pool.clone()));
+
+        sqlx::query("INSERT INTO things (id, name, workspace_id) VALUES ('dev-ar', 'AutoResolve Thing', 'ws-ar')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO thing_properties (id, thing_id, name) VALUES ('prop-ar', 'dev-ar', 'temperature')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // suppress_duration 缺省 → 默认 60s 节流窗
+        sqlx::query(
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, workspace_id, created_at, updated_at)
+             VALUES ('rule-ar1', 'dev-ar', 'prop-ar', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', 'ws-ar', datetime('now'), datetime('now'))",
+        ).execute(&pool).await.unwrap();
+
+        let alarm_service = Arc::new(AlarmService::new(db.clone()));
+        let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
+        let handler = AlarmEventHandler::new(alarm_service.clone(), notification_dispatcher);
+
+        // Step 1: 触发报警（85 > 80）
+        handler
+            .handle(&make_test_event("dev-ar", "prop-ar", "temperature", 85.0, None))
+            .await
+            .unwrap();
+        // Step 2: 节流窗内再次上报，仍超限（90 > 80）
+        handler
+            .handle(&make_test_event("dev-ar", "prop-ar", "temperature", 90.0, None))
+            .await
+            .unwrap();
+
+        let active_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarms WHERE thing_id = 'dev-ar' AND is_resolved = 0")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(active_count, 1, "节流抑制的新上报不得恢复仍超限的报警");
+    }
+
+    /// 回归：非数值读数（传感器异常 "N/A"/"--"）= 无法判定恢复，
+    /// 不得当成「已恢复」误恢复活跃报警。
+    #[sqlx::test]
+    async fn test_non_numeric_report_does_not_auto_resolve(pool: sqlx::SqlitePool) {
+        setup_full_schema(&pool).await;
+        let db = Arc::new(Db::new(pool.clone()));
+
+        sqlx::query("INSERT INTO things (id, name, workspace_id) VALUES ('dev-ar', 'AutoResolve Thing', 'ws-ar')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO thing_properties (id, thing_id, name) VALUES ('prop-ar', 'dev-ar', 'temperature')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, workspace_id, created_at, updated_at)
+             VALUES ('rule-ar1', 'dev-ar', 'prop-ar', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', 'ws-ar', datetime('now'), datetime('now'))",
+        ).execute(&pool).await.unwrap();
+
+        let alarm_service = Arc::new(AlarmService::new(db.clone()));
+        let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
+        let handler = AlarmEventHandler::new(alarm_service.clone(), notification_dispatcher);
+
+        handler
+            .handle(&make_test_event("dev-ar", "prop-ar", "temperature", 85.0, None))
+            .await
+            .unwrap();
+
+        // 非数值上报（同属性）：metadata.value = "N/A"
+        let content = RichContent::new(
+            "Property Changed: temperature".to_string(),
+            vec![ContentElement::Text {
+                content: "Current value: N/A".to_string(),
+                format: TextFormat::Plain,
+            }],
+        )
+        .with_metadata(
+            "property_id".to_string(),
+            serde_json::Value::String("prop-ar".to_string()),
+        )
+        .with_metadata("value".to_string(), serde_json::Value::String("N/A".to_string()));
+        let event = Event::new_device_event(
+            ThingEventType::PropertyChange,
+            EventLevel::Info,
+            EventSource::device_property(
+                "dev-ar".to_string(),
+                "prop-ar".to_string(),
+                "data_collector".to_string(),
+            ),
+            content,
+        )
+        .unwrap();
+        handler.handle(&event).await.unwrap();
+
+        let active_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarms WHERE thing_id = 'dev-ar' AND is_resolved = 0")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(active_count, 1, "非数值读数不得误恢复活跃报警");
     }
 
     #[sqlx::test]
