@@ -211,6 +211,91 @@ pub(crate) fn port_messages_to_rig(messages: &[ChatMessage]) -> Vec<Message> {
         .collect()
 }
 
+/// 历史回放前的工具配对清洗（2026-09-16 实测全灭事故）：thing-agent 全部
+/// run 共享会话 "default"，recall 窗口（20 条）一旦切在 tool_call /
+/// tool_result 配对中间，回放历史就带孤儿引用——严格校验配对的 provider
+/// （MiniMax: "tool result's tool id not found" 400）会拒绝整轮，此后
+/// 每次 run 都在 turn 1 失败。
+///
+/// 两个方向都清：
+/// - 孤儿 tool_result：call id 不在窗口内的任何 assistant tool_calls 里 → 丢
+/// - 孤儿 tool_call：窗口内没有对应 tool_result → 从 assistant 消息里摘除
+///   （消息因此无任何内容块时整条丢弃）
+pub(crate) fn sanitize_tool_pairing(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    use std::collections::HashSet;
+
+    let mut call_ids = HashSet::new();
+    let mut result_ids = HashSet::new();
+    for m in &messages {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&m.content) else {
+            continue; // 纯文本消息无配对约束
+        };
+        match m.role.as_str() {
+            "assistant" => {
+                if let Some(calls) = v.get("tool_calls").and_then(|x| x.as_array()) {
+                    for c in calls {
+                        if let Some(id) = c.get("id").and_then(|x| x.as_str()) {
+                            call_ids.insert(id.to_string());
+                        }
+                    }
+                }
+            }
+            "tool" => {
+                if let Some(id) = v.get("tool_call_id").and_then(|x| x.as_str()) {
+                    result_ids.insert(id.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    messages
+        .into_iter()
+        .filter_map(|mut m| match m.role.as_str() {
+            "tool" => {
+                let keep = serde_json::from_str::<serde_json::Value>(&m.content)
+                    .ok()
+                    .and_then(|v| v.get("tool_call_id").and_then(|x| x.as_str()).map(str::to_string))
+                    .is_some_and(|id| call_ids.contains(&id));
+                keep.then_some(m) // 非 canonical 的 tool 消息一并丢弃（无法校验配对）
+            }
+            "assistant" => {
+                let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&m.content) else {
+                    return Some(m); // 纯文本 assistant 原样保留
+                };
+                if let Some(calls) = v.get("tool_calls").and_then(|x| x.as_array()) {
+                    let kept: Vec<serde_json::Value> = calls
+                        .iter()
+                        .filter(|c| {
+                            c.get("id")
+                                .and_then(|x| x.as_str())
+                                .is_some_and(|id| result_ids.contains(id))
+                        })
+                        .cloned()
+                        .collect();
+                    v["tool_calls"] = serde_json::Value::Array(kept);
+                }
+                let has_text = v.get("content").and_then(|x| x.as_str()).is_some_and(|s| !s.is_empty());
+                let has_calls = v
+                    .get("tool_calls")
+                    .and_then(|x| x.as_array())
+                    .is_some_and(|a| !a.is_empty());
+                let has_reasoning = v
+                    .get("reasoning_content")
+                    .and_then(|x| x.as_str())
+                    .is_some_and(|s| !s.is_empty());
+                if has_text || has_calls || has_reasoning {
+                    m.content = v.to_string();
+                    Some(m)
+                } else {
+                    None // 只剩孤儿 call 的空壳消息整条丢弃
+                }
+            }
+            _ => Some(m),
+        })
+        .collect()
+}
+
 // ── port → rig 响应组装 ──────────────────────────────────────
 
 fn port_tool_call_to_rig(tc: &PortToolCall) -> Result<rig_core::message::ToolCall, CompletionError> {
