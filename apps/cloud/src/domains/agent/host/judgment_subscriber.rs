@@ -341,28 +341,6 @@ async fn route_verdict(
     }
 }
 
-/// 证据摘要清洗（2026-09-16）：剥掉推理模型的 <think> 思考块与尾部
-/// ```json verdict 围栏块（机器协议载荷，已解析进 verdict 字段）——
-/// 证据面板给人看分析过程，不看原始推理轨迹与协议字段。
-pub(crate) fn clean_summary_for_evidence(summary: &str) -> String {
-    let mut text = summary.to_string();
-    // 剥 <think>...</think>（含未闭合的尾块——输出被截断时）
-    while let Some(start) = text.find("<think>") {
-        let end = text[start..]
-            .find("</think>")
-            .map(|i| start + i + "</think>".len())
-            .unwrap_or(text.len());
-        text.replace_range(start..end, "");
-    }
-    // 剥尾部 verdict 围栏块（调查指令约定在末尾输出）
-    if let Some(start) = text.rfind("```json")
-        && let Some(end_offset) = text[start + 7..].find("```")
-    {
-        text.replace_range(start..start + 7 + end_offset + 3, "");
-    }
-    text.trim().to_string()
-}
-
 /// 落判断。返回是否成功迁移（true = 本调用胜出；false = 并发/重复/已终态）。
 #[allow(clippy::too_many_arguments)]
 async fn judge(
@@ -375,23 +353,18 @@ async fn judge(
     payload: &VerdictPayload,
     used_fallback: bool,
 ) -> bool {
-    // F11 证据契约 P0 版：调查 run 的摘要截取作为证据来源（属性快照/事件列表
-    // 的结构化提取在 P1 再做）。T-15/C3：宽松解析命中时打 parse_fallback
-    // 标记——feed 可见、可统计，格式漂移有观测面。
-    // 先清洗再截取：think 块/verdict 围栏不占用户可见的篇幅；截断补省略号，
-    // 不再出现半个词的硬切（原 500 字符硬截实测截在 "su" 这类词中间）。
-    let cleaned = clean_summary_for_evidence(&report.summary);
-    let truncated = cleaned.chars().count() > 2000;
-    let summary_excerpt: String = cleaned.chars().take(2000).collect();
-    let summary_excerpt = if truncated {
-        format!("{summary_excerpt}…")
-    } else {
-        summary_excerpt
-    };
+    // F11 证据契约 v2（2026-09-16）：证据 = 完整审计记录，不截断不剥离——
+    // 存 summary 原文 + 动作记录 + run 元信息；think 块/verdict 协议块的
+    // 结构化呈现（折叠/分层）是渲染层职责（web 端 renderEvidence）。
+    // T-15/C3：宽松解析命中时打 parse_fallback 标记——feed 可见、可统计。
     let evidence = serde_json::json!({
         "source": "run_summary",
         "run_id": report.run_id,
-        "excerpt": summary_excerpt,
+        "summary": report.summary,
+        "actions": report.actions,
+        "tool_calls": report.tool_calls,
+        "duration_ms": report.duration_ms,
+        "tokens": report.tokens,
         "parse_fallback": used_fallback,
     })
     .to_string();
@@ -610,32 +583,6 @@ mod tests {
     #[test]
     fn parse_verdict_unparseable() {
         assert!(parse_verdict("全是自然语言没有结构化输出").is_none());
-    }
-
-    #[test]
-    fn clean_summary_strips_think_and_verdict_block() {
-        // 2026-09-16 用户实测：证据面板展示了含 <think> 的原始推理轨迹
-        let raw = "<think>先查历史报警……没有可查询的历史事件。</think>\
-                   温度 10°C 超限（阈值 8°C），door_open=true 是根因。\n\
-                   ```json\n{\"verdict\": \"needs_human\", \"reason\": \"门开着\", \"suggested_action\": null, \"action_category\": \"other\"}\n```";
-        assert_eq!(
-            clean_summary_for_evidence(raw),
-            "温度 10°C 超限（阈值 8°C），door_open=true 是根因。"
-        );
-    }
-
-    #[test]
-    fn clean_summary_handles_unclosed_think() {
-        // 输出截断导致 think 块未闭合——整块剥掉
-        assert_eq!(clean_summary_for_evidence("结论。<think>分析到一半"), "结论。");
-    }
-
-    #[test]
-    fn clean_summary_keeps_plain_summary() {
-        assert_eq!(
-            clean_summary_for_evidence("  正常波动，无需处理。  "),
-            "正常波动，无需处理。"
-        );
     }
 
     fn report(run_id: &str, outcome: Outcome, summary: &str) -> RunReport {

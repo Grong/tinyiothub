@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  renderEvidence,
+  evidenceRawText,
+  segmentEvidence,
   approvalCountdown,
   fmtJudgmentTime,
   needsYou,
@@ -80,29 +81,45 @@ describe("dispositions view helpers", () => {
   });
 });
 
-describe("renderEvidence (F-G)", () => {
-  it("renders excerpt as plain text", () => {
-    const ev = { source: "run_summary", run_id: "r1", excerpt: "查了设备状态，温度 40 秒回落" };
-    expect(renderEvidence(ev)).toBe("查了设备状态，温度 40 秒回落");
+describe("evidenceRawText（新行 summary / 存量老行 excerpt）", () => {
+  it("prefers full summary over excerpt", () => {
+    expect(evidenceRawText({ summary: "完整记录", excerpt: "旧摘录" })).toBe("完整记录");
+    expect(evidenceRawText({ excerpt: "旧摘录" })).toBe("旧摘录");
   });
 
-  it("falls back for missing/empty evidence", () => {
-    expect(renderEvidence(null)).toBe("暂无证据");
-    expect(renderEvidence({})).toBe("暂无证据");
-    expect(renderEvidence({ excerpt: "  " })).toBe("暂无证据");
+  it("returns empty for missing evidence", () => {
+    expect(evidenceRawText(null)).toBe("");
+    expect(evidenceRawText({})).toBe("");
+    expect(evidenceRawText({ summary: 42 })).toBe("");
+  });
+});
+
+describe("segmentEvidence（证据分段：think/verdict 折叠成段，正文保留）", () => {
+  it("plain text stays one text segment", () => {
+    expect(segmentEvidence("查了设备状态，温度 40 秒回落")).toEqual([
+      { kind: "text", text: "查了设备状态，温度 40 秒回落" },
+    ]);
   });
 
-  it("strips raw LLM artifacts from legacy excerpts (think 块 + verdict 协议块)", () => {
-    // 存量脏数据：服务端清洗上线前写入的 excerpt 是原始 LLM 输出
-    const ev = {
-      excerpt:
-        '<think>让我分析一下历史报警…</think>温度 10°C 超限，door_open=true 是根因。```json {"verdict":"needs_human","reason":"门开着"}```',
-    };
-    expect(renderEvidence(ev)).toBe("温度 10°C 超限，door_open=true 是根因。");
+  it("splits think block and trailing verdict fence, order preserved", () => {
+    const raw =
+      '<think>让我分析一下历史报警…</think>温度 10°C 超限，door_open=true 是根因。```json {"verdict":"needs_human"}```';
+    expect(segmentEvidence(raw)).toEqual([
+      { kind: "think", text: "让我分析一下历史报警…" },
+      { kind: "text", text: "温度 10°C 超限，door_open=true 是根因。" },
+      { kind: "verdict", text: '{"verdict":"needs_human"}' },
+    ]);
   });
 
-  it("strips unclosed think block (输出被截断时)", () => {
-    const ev = { excerpt: "<think>分析到一半被截断" };
-    expect(renderEvidence(ev)).toBe("暂无证据");
+  it("handles unclosed think block (输出截断)", () => {
+    expect(segmentEvidence("结论。<think>分析到一半")).toEqual([
+      { kind: "text", text: "结论。" },
+      { kind: "think", text: "分析到一半" },
+    ]);
+  });
+
+  it("returns no segments for empty input", () => {
+    expect(segmentEvidence("")).toEqual([]);
+    expect(segmentEvidence("  ")).toEqual([]);
   });
 });

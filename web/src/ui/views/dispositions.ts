@@ -86,20 +86,50 @@ export function approvalCountdown(j: Judgment, now = Date.now(), timeoutHours = 
   return `${remainH} 小时后自动转工单`;
 }
 
-/** 证据渲染（F-G，导出供测试）：P0 证据 = run 摘要摘录，按纯文本展示；
- *  不再把整对象 JSON.stringify 给用户看。
- *  存量脏数据兜底：老行的 excerpt 是未清洗的原始 LLM 输出（含 <think>
- *  思考块与尾部 ```json verdict 协议块），渲染前剥掉；新行由服务端
- *  clean_summary_for_evidence 在写入时清洗。 */
-export function renderEvidence(evidence: unknown): string {
-  if (!evidence || typeof evidence !== "object") return "暂无证据";
-  const excerpt = (evidence as { excerpt?: unknown }).excerpt;
-  if (typeof excerpt !== "string") return "暂无证据";
-  const cleaned = excerpt
-    .replace(/<think>[\s\S]*?(<\/think>|$)/g, "")
-    .replace(/```json[\s\S]*?(```|$)/g, "")
-    .trim();
-  return cleaned || "暂无证据";
+/** 证据段落（导出供测试）：think = 思考块，text = 正文，verdict = 尾部协议块原文。 */
+export interface EvidenceSegment {
+  kind: "think" | "text" | "verdict";
+  text: string;
+}
+
+/** 证据原文分段（导出供测试）。完整记录不丢弃：think 块与 verdict 协议块
+ *  各自成段（渲染层折叠展示），正文按原顺序保留。 */
+export function segmentEvidence(raw: string): EvidenceSegment[] {
+  // 先摘尾部 verdict 协议块（调查指令约定在末尾；完整保留，折叠展示）
+  let body = raw;
+  let verdict: string | null = null;
+  const fenceStart = body.lastIndexOf("```json");
+  if (fenceStart >= 0) {
+    const fenceEnd = body.indexOf("```", fenceStart + 7);
+    if (fenceEnd >= 0) {
+      verdict = body.slice(fenceStart + 7, fenceEnd).trim() || null;
+      body = (body.slice(0, fenceStart) + body.slice(fenceEnd + 3)).trim();
+    }
+  }
+  const segments: EvidenceSegment[] = [];
+  const thinkRe = /<think>([\s\S]*?)(?:<\/think>|$)/g; // 兼容未闭合尾块
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = thinkRe.exec(body)) !== null) {
+    const before = body.slice(last, m.index).trim();
+    if (before) segments.push({ kind: "text", text: before });
+    const think = m[1].trim();
+    if (think) segments.push({ kind: "think", text: think });
+    last = m.index + m[0].length;
+  }
+  const tail = body.slice(last).trim();
+  if (tail) segments.push({ kind: "text", text: tail });
+  if (verdict) segments.push({ kind: "verdict", text: verdict });
+  return segments;
+}
+
+/** 证据原文提取（导出供测试）：新行读 summary（完整记录），存量老行读 excerpt。 */
+export function evidenceRawText(evidence: unknown): string {
+  if (!evidence || typeof evidence !== "object") return "";
+  const ev = evidence as { summary?: unknown; excerpt?: unknown };
+  if (typeof ev.summary === "string") return ev.summary;
+  if (typeof ev.excerpt === "string") return ev.excerpt;
+  return "";
 }
 
 /** 反馈校验（F13，导出供测试）：点错必填 ≥4 字符。 */
@@ -283,6 +313,58 @@ export class DispositionsView extends LitElement {
     `;
   }
 
+  /** 证据面板：完整审计记录的结构化呈现——正文直展，think/verdict 原文折叠，
+   *  动作记录与 run 元信息收尾。 */
+  private renderEvidencePanel(evidence: unknown): TemplateResult {
+    const ev = (evidence && typeof evidence === "object" ? evidence : {}) as {
+      actions?: unknown;
+      tool_calls?: unknown;
+      duration_ms?: unknown;
+      tokens?: unknown;
+    };
+    const segments = segmentEvidence(evidenceRawText(evidence));
+    const actions = Array.isArray(ev.actions) ? ev.actions : [];
+    if (segments.length === 0 && actions.length === 0) {
+      return html`<div class="j-evidence">暂无证据</div>`;
+    }
+    const meta = [
+      typeof ev.tool_calls === "number" && ev.tool_calls > 0 ? `工具调用 ${ev.tool_calls} 次` : null,
+      typeof ev.duration_ms === "number" ? `耗时 ${(ev.duration_ms / 1000).toFixed(1)}s` : null,
+      typeof ev.tokens === "number" && ev.tokens > 0 ? `${ev.tokens} tokens` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    return html`
+      <div class="j-evidence">
+        ${segments.map((s) => {
+          if (s.kind === "think") {
+            return html`<details class="j-ev-fold">
+              <summary>思考过程</summary>
+              <pre>${s.text}</pre>
+            </details>`;
+          }
+          if (s.kind === "verdict") {
+            return html`<details class="j-ev-fold">
+              <summary>结构化结论（原始输出）</summary>
+              <pre>${s.text}</pre>
+            </details>`;
+          }
+          return html`<p class="j-ev-text">${s.text}</p>`;
+        })}
+        ${actions.length > 0
+          ? html`<div class="j-ev-actions">
+              ${actions.map((a) => {
+                const r = (a as { result?: Record<string, unknown> }).result;
+                const mark = r && "success" in r ? "✓" : r && "failed" in r ? "✗" : "–";
+                return html`<div class="j-ev-action">${mark} ${(a as { action_name?: string }).action_name ?? "action"}</div>`;
+              })}
+            </div>`
+          : nothing}
+        ${meta ? html`<div class="j-ev-meta">${meta}</div>` : nothing}
+      </div>
+    `;
+  }
+
   private renderCard(j: Judgment): TemplateResult {
     const needsAction = needsYou(j);
     const countdown = approvalCountdown(j, Date.now(), this.summary?.approvalTimeoutHours ?? 24);
@@ -343,9 +425,7 @@ export class DispositionsView extends LitElement {
               </div>
             `}
 
-        ${this.expandedId === j.id
-          ? html`<div class="j-evidence">${renderEvidence(j.evidence)}</div>`
-          : nothing}
+        ${this.expandedId === j.id ? this.renderEvidencePanel(j.evidence) : nothing}
 
         ${this.rejectPanelId === j.id
           ? html`

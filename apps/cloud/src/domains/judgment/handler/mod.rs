@@ -349,9 +349,15 @@ async fn approve_judgment(
         judgment.action_category.as_deref(),
         judgment.thing_id.as_deref(),
     );
+    // 证据契约 v2：新行写完整 summary，老行是 excerpt——都认，截 300 字符进 prompt。
     let evidence_excerpt = serde_json::from_str::<serde_json::Value>(&judgment.evidence_json)
         .ok()
-        .and_then(|v| v.get("excerpt").and_then(|e| e.as_str()).map(str::to_string))
+        .and_then(|v| {
+            v.get("summary")
+                .or_else(|| v.get("excerpt"))
+                .and_then(|e| e.as_str())
+                .map(str::to_string)
+        })
         .map(|e| e.chars().take(300).collect::<String>())
         .unwrap_or_default();
     let signal = tinyiothub_agent::runtime::thing_agent::types::WakeSignal {
