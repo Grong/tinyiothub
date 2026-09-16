@@ -73,6 +73,81 @@ impl AlarmService {
         };
         if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
             publisher.publish_alarm_created(ai_alarm);
+        } else {
+            // 启动竞态可观测化：驱动连接触发的早期报警会赶在 AI 总线接线前
+            // 到达（2026-09-16 实测：报警比 Orchestrator 就绪早 9ms，事件
+            // 静默丢失 → judgment 永久 investigating）。
+            tracing::warn!(alarm_id = %ai_alarm.id, thing_id = %ai_alarm.thing_id,
+                "AlarmCreated dropped: AI event publisher not wired yet (boot race)");
+        }
+    }
+
+    /// 解析报警所属 workspace：优先报警自带；缺失时从 thing 行回填（历史
+    /// 规则/报警缺 workspace_id 的兼容路径——2026-09-16 实测：老库规则
+    /// workspace_id 全 NULL，处置流曾因此整体静默空转）。
+    async fn resolve_workspace(&self, alarm: &Alarm) -> Option<String> {
+        if let Some(ws) = &alarm.workspace_id {
+            return Some(ws.clone());
+        }
+        match self.db.find_thing_row_by_id(&alarm.thing_id).await {
+            Ok(Some(thing)) => match thing.workspace_id {
+                Some(ws) => Some(ws),
+                None => {
+                    tracing::warn!(alarm_id = %alarm.id, thing_id = %alarm.thing_id, "alarm and thing both lack workspace_id");
+                    None
+                }
+            },
+            Ok(None) => {
+                tracing::warn!(alarm_id = %alarm.id, thing_id = %alarm.thing_id, "alarm lacks workspace_id and thing not found");
+                None
+            }
+            Err(e) => {
+                tracing::warn!(alarm_id = %alarm.id, thing_id = %alarm.thing_id, error = %e, "workspace fallback lookup failed");
+                None
+            }
+        }
+    }
+
+    /// 启动恢复（boot race 兜底）：AI 子系统接线前创建的报警，其
+    /// AlarmCreated 会被静默丢弃（publisher 未接线），judgment 永久卡在
+    /// investigating。AI 就绪后对 investigating 且无 run 挂接的判断重发
+    /// AlarmCreated——subscriber 按 thing+rule 匹配既有 judgment 不重复
+    /// 建行；重启后 O11 dedup 内存为空，不会误拦。
+    pub async fn redispatch_pending_investigations(&self, workspace_id: &str) {
+        let pending = match self
+            .db
+            .list_judgments_feed(
+                workspace_id,
+                Some(&[tinyiothub_storage::judgment::JudgmentStatus::Investigating]),
+                None,
+                50,
+            )
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(workspace_id, error = %e, "pending investigation scan failed");
+                return;
+            }
+        };
+        for j in pending.into_iter().filter(|j| j.run_id.is_none()) {
+            let Some(alarm_id) = j.alarm_id.clone() else {
+                continue;
+            };
+            match self.get_alarm_by_id(&alarm_id, None).await {
+                Ok(Some(alarm)) => {
+                    if let Some(ws) = self.resolve_workspace(&alarm).await {
+                        tracing::info!(judgment_id = %j.id, alarm_id, "redispatching boot-raced alarm investigation");
+                        self.publish_alarm_created(&alarm, &ws);
+                    }
+                }
+                Ok(None) => {
+                    tracing::warn!(judgment_id = %j.id, alarm_id, "alarm row missing for pending judgment");
+                }
+                Err(e) => {
+                    tracing::warn!(judgment_id = %j.id, error = %e, "redispatch alarm load failed");
+                }
+            }
         }
     }
 
@@ -93,28 +168,23 @@ impl AlarmService {
     /// 失败方向约定：闸门（kill switch/预算）fail toward 人工路径（安全）；
     /// 防抖查询失败 fail toward 继续调查（只费额度不漏报警）。
     async fn enter_disposition(&self, alarm: &Alarm) {
-        // 兼容历史数据：老规则/老报警缺 workspace_id 时从 thing 行回填解析。
-        // 此前这里静默 return——规则 workspace_id 全 NULL 时处置流整体空转，
-        // 无 judgment、无日志、无审计（2026-09-16 实测：17 条报警 0 条判断）。
-        let workspace_id = match alarm.workspace_id.clone() {
-            Some(ws) => ws,
-            None => match self.db.find_thing_row_by_id(&alarm.thing_id).await {
-                Ok(Some(thing)) => match thing.workspace_id {
-                    Some(ws) => ws,
-                    None => {
-                        tracing::warn!(alarm_id = %alarm.id, thing_id = %alarm.thing_id, "alarm and thing both lack workspace_id — skipping AI triage");
-                        return;
-                    }
-                },
-                Ok(None) => {
-                    tracing::warn!(alarm_id = %alarm.id, thing_id = %alarm.thing_id, "alarm lacks workspace_id and thing not found — skipping AI triage");
-                    return;
-                }
-                Err(e) => {
-                    tracing::warn!(alarm_id = %alarm.id, thing_id = %alarm.thing_id, error = %e, "workspace fallback lookup failed — skipping AI triage");
-                    return;
-                }
-            },
+        // workspace 无法解析 = 放弃分诊（resolve_workspace 内部已按场景 warn；
+        // 此前这里静默 return，处置流整体空转——2026-09-16 实测 17 报警 0 判断）。
+        let Some(workspace_id) = self.resolve_workspace(alarm).await else {
+            return;
+        };
+        // 回填后归一化：下游（严重级直达工单/事件发布）统一看到带 workspace
+        // 的报警——此前 escalation 拿到原始 None 直接拒绝，Critical 报警
+        // 既无调查也无工单（2026-09-16 日志实证）。
+        let alarm_owned;
+        let alarm = if alarm.workspace_id.is_some() {
+            alarm
+        } else {
+            alarm_owned = Alarm {
+                workspace_id: Some(workspace_id.clone()),
+                ..alarm.clone()
+            };
+            &alarm_owned
         };
 
         // 1. kill switch（fail-closed + 审计）

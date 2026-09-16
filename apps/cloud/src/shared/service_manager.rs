@@ -420,6 +420,12 @@ impl ServiceManager {
             }
             info!("✅ AI Orchestrator started ({} workspaces)", ws_ids.len());
 
+            // Boot race 恢复：AI 接线完成前创建的报警（publisher 未接线时
+            // AlarmCreated 被丢弃）留下的 investigating judgment 重派调查。
+            for ws_id in &ws_ids {
+                app_state.alarm_service.redispatch_pending_investigations(ws_id).await;
+            }
+
             // Store in ServiceManager for shutdown
             self.orchestrator = Some(orchestrator);
             self.heartbeat_runner = Some(heartbeat_runner);

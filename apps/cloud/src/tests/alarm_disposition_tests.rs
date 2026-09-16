@@ -150,6 +150,41 @@ async fn critical_alarm_escalates_directly_to_ticket() {
     assert!(judgments[0].ticket_id.is_some(), "judgment linked to real ticket");
 }
 
+/// 回归（2026-09-16 日志实证）：Critical 报警缺 workspace_id（历史规则遗留
+/// NULL）时 escalation 曾直接拒绝（ERROR: refusing to escalate）——既无
+/// 调查也无工单。现在 enter_disposition 先回填归一化，直达工单不再被拒。
+#[tokio::test]
+async fn critical_alarm_without_workspace_still_escalates() {
+    use std::sync::Mutex;
+    struct SpyEscalation {
+        seen: Mutex<Vec<Option<String>>>,
+    }
+    #[async_trait::async_trait]
+    impl crate::domains::ticket::AlarmEscalation for SpyEscalation {
+        async fn escalate_alarm(&self, alarm: &Alarm) -> Option<i64> {
+            self.seen.lock().unwrap().push(alarm.workspace_id.clone());
+            None // 不真建工单；只断言 escalation 被调用且 ws 已回填
+        }
+    }
+
+    let db = test_db().await;
+    let svc = AlarmService::new(db.clone());
+    let spy = Arc::new(SpyEscalation { seen: Mutex::new(vec![]) });
+    svc.set_escalation(spy.clone());
+
+    let mut alarm = make_alarm(AlarmLevel::Critical);
+    alarm.workspace_id = None; // 模拟历史遗留
+    svc.create_alarm(alarm).await.unwrap();
+
+    assert_eq!(
+        spy.seen.lock().unwrap().as_slice(),
+        &[Some("ws1".to_string())],
+        "escalation 收到回填后的 workspace"
+    );
+    let judgments = db.list_judgments_feed("ws1", None, None, 10).await.unwrap();
+    assert_eq!(judgments.len(), 1, "judgment 同样落库");
+}
+
 /// T8：超日预算 → 报警不发起调查，judgment 落 budget_skipped 标记。
 #[tokio::test]
 async fn over_budget_alarm_gets_budget_skipped_marker() {
