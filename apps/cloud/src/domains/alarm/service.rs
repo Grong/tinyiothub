@@ -1195,8 +1195,23 @@ impl RuleEngine {
         AlarmType::PropertyThreshold
     }
 
-    fn generate_message(&self, event: &Event, rule: &AlarmRule, _context: &EvaluationContext) -> String {
-        format!("{}: {}", rule.name, event.content().title())
+    /// 报警文案（2026-09-16 修正）：规则名 + 属性名 + 当前值 + 条件描述。
+    /// 此前拼接事件英文标题（"Property Changed: dev - temperature"），
+    /// 中英混杂且不含报警值——用户看不懂发生了什么。
+    fn generate_message(&self, _event: &Event, rule: &AlarmRule, context: &EvaluationContext) -> String {
+        let property_name = context
+            .metadata
+            .get("property_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("属性");
+        let current = context.current_value.as_deref().unwrap_or("-");
+        format!(
+            "{}：{} 当前值 {}（{}）",
+            rule.name,
+            property_name,
+            current,
+            describe_condition(&rule.condition)
+        )
     }
 
     fn extract_threshold(&self, condition: &AlarmCondition) -> Option<String> {
@@ -1217,6 +1232,42 @@ impl RuleEngine {
 
     pub async fn get_rule(&self, rule_id: &str) -> AlarmResult<Option<AlarmRule>> {
         self.db.find_alarm_rule_by_id(rule_id).await.map_err(AlarmError::from)
+    }
+}
+
+/// 报警文案用的条件描述（中文，面向用户）。
+fn describe_condition(condition: &AlarmCondition) -> String {
+    fn op_symbol(op: ComparisonOperator) -> &'static str {
+        match op {
+            ComparisonOperator::GreaterThan => ">",
+            ComparisonOperator::LessThan => "<",
+            ComparisonOperator::GreaterThanOrEqual => "≥",
+            ComparisonOperator::LessThanOrEqual => "≤",
+            ComparisonOperator::Equal => "=",
+            ComparisonOperator::NotEqual => "≠",
+        }
+    }
+    match condition {
+        AlarmCondition::Threshold { operator, value, .. } => format!("阈值 {} {}", op_symbol(*operator), value),
+        AlarmCondition::Range { min, max, .. } => {
+            let lo = min.map(|v| v.to_string()).unwrap_or_else(|| "-∞".into());
+            let hi = max.map(|v| v.to_string()).unwrap_or_else(|| "+∞".into());
+            format!("超出区间 [{}, {}]", lo, hi)
+        }
+        AlarmCondition::Change {
+            change_type, threshold, ..
+        } => {
+            let dir = match change_type {
+                ChangeType::Increase => "上升",
+                ChangeType::Decrease => "下降",
+                ChangeType::Any => "变化",
+            };
+            format!("短时{}超过 {}", dir, threshold)
+        }
+        AlarmCondition::Duration { condition, duration } => {
+            format!("{}，持续 {}s", describe_condition(condition), duration.as_secs())
+        }
+        AlarmCondition::Composite { .. } => "复合条件触发".to_string(),
     }
 }
 
@@ -2673,6 +2724,42 @@ mod integration_tests {
                 .await
                 .unwrap();
         assert_eq!(active_count, 1, "非数值读数不得误恢复活跃报警");
+    }
+
+    /// 报警文案（2026-09-16 修正）：中文统一格式 = 规则名：属性名 当前值 X（条件），
+    /// 不再拼接英文事件标题（"Property Changed: dev - temperature"）。
+    #[sqlx::test]
+    async fn test_alarm_message_shows_rule_value_and_threshold(pool: sqlx::SqlitePool) {
+        setup_full_schema(&pool).await;
+        let db = Arc::new(Db::new(pool.clone()));
+
+        sqlx::query("INSERT INTO things (id, name, workspace_id) VALUES ('dev-ar', 'AutoResolve Thing', 'ws-ar')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO thing_properties (id, thing_id, name) VALUES ('prop-ar', 'dev-ar', 'temperature')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, workspace_id, created_at, updated_at)
+             VALUES ('rule-ar1', 'dev-ar', 'prop-ar', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', 'ws-ar', datetime('now'), datetime('now'))",
+        ).execute(&pool).await.unwrap();
+
+        let alarm_service = Arc::new(AlarmService::new(db.clone()));
+        let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
+        let handler = AlarmEventHandler::new(alarm_service.clone(), notification_dispatcher);
+
+        handler
+            .handle(&make_test_event("dev-ar", "prop-ar", "温度", 85.0, None))
+            .await
+            .unwrap();
+
+        let msg: String = sqlx::query_scalar("SELECT alarm_message FROM thing_alarms WHERE thing_id = 'dev-ar'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(msg, "High Temp：温度 当前值 85（阈值 > 80）");
     }
 
     #[sqlx::test]
