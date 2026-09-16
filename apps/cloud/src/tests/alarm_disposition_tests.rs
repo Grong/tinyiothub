@@ -71,6 +71,26 @@ async fn warning_alarm_creates_investigating_judgment() {
     assert!(judgments[0].alarm_id.is_some());
 }
 
+/// 回归（2026-09-16）：历史报警缺 workspace_id（老规则遗留 NULL）时，
+/// enter_disposition 曾静默 return——处置流整体空转。现在从 thing 行回填
+/// 解析 workspace，judgment 落在 thing 所属 workspace。
+#[tokio::test]
+async fn alarm_without_workspace_falls_back_to_thing_workspace() {
+    let db = test_db().await;
+    let svc = AlarmService::new(db.clone());
+    let mut alarm = make_alarm(AlarmLevel::Warning);
+    alarm.workspace_id = None; // 模拟历史遗留：规则/报警无 workspace_id
+    svc.create_alarm(alarm).await.unwrap();
+
+    let judgments = db.list_judgments_feed("ws1", None, None, 10).await.unwrap();
+    assert_eq!(
+        judgments.len(),
+        1,
+        "workspace 从 thing 回填 → judgment 落在 thing 的 workspace"
+    );
+    assert_eq!(judgments[0].status, JudgmentStatus::Investigating);
+}
+
 /// T3：flapping 防抖——同 thing+rule 已有未终态判断时，新报警不再发起调查。
 #[tokio::test]
 async fn flapping_alarm_does_not_duplicate_judgment() {

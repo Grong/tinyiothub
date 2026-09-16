@@ -51,7 +51,9 @@ impl AlarmService {
     }
 
     /// 发布 AlarmCreated 到 AI 总线（investigation dispatch 的触发信号）。
-    fn publish_alarm_created(&self, alarm: &Alarm) {
+    /// workspace_id 由调用方解析（含 thing 回填），保证下游 dispatch/dedup
+    /// 与 judgment 行同 workspace。
+    fn publish_alarm_created(&self, alarm: &Alarm, workspace_id: &str) {
         let severity = match alarm.alarm_level {
             AlarmLevel::Critical => "critical",
             AlarmLevel::Error => "error",
@@ -60,7 +62,7 @@ impl AlarmService {
         };
         let ai_alarm = AlarmEvent {
             id: alarm.id.clone(),
-            workspace_id: alarm.workspace_id.clone().unwrap_or_else(|| alarm.thing_id.clone()),
+            workspace_id: workspace_id.to_string(),
             thing_id: alarm.thing_id.clone(),
             alarm_type: format!("{}", alarm.alarm_type),
             severity: severity.to_string(),
@@ -91,8 +93,28 @@ impl AlarmService {
     /// 失败方向约定：闸门（kill switch/预算）fail toward 人工路径（安全）；
     /// 防抖查询失败 fail toward 继续调查（只费额度不漏报警）。
     async fn enter_disposition(&self, alarm: &Alarm) {
-        let Some(workspace_id) = alarm.workspace_id.clone() else {
-            return;
+        // 兼容历史数据：老规则/老报警缺 workspace_id 时从 thing 行回填解析。
+        // 此前这里静默 return——规则 workspace_id 全 NULL 时处置流整体空转，
+        // 无 judgment、无日志、无审计（2026-09-16 实测：17 条报警 0 条判断）。
+        let workspace_id = match alarm.workspace_id.clone() {
+            Some(ws) => ws,
+            None => match self.db.find_thing_row_by_id(&alarm.thing_id).await {
+                Ok(Some(thing)) => match thing.workspace_id {
+                    Some(ws) => ws,
+                    None => {
+                        tracing::warn!(alarm_id = %alarm.id, thing_id = %alarm.thing_id, "alarm and thing both lack workspace_id — skipping AI triage");
+                        return;
+                    }
+                },
+                Ok(None) => {
+                    tracing::warn!(alarm_id = %alarm.id, thing_id = %alarm.thing_id, "alarm lacks workspace_id and thing not found — skipping AI triage");
+                    return;
+                }
+                Err(e) => {
+                    tracing::warn!(alarm_id = %alarm.id, thing_id = %alarm.thing_id, error = %e, "workspace fallback lookup failed — skipping AI triage");
+                    return;
+                }
+            },
         };
 
         // 1. kill switch（fail-closed + 审计）
@@ -205,7 +227,7 @@ impl AlarmService {
         }
 
         // 发布给 AI 总线 → callbacks 直达 thing-agent dispatch（调查）
-        self.publish_alarm_created(alarm);
+        self.publish_alarm_created(alarm, &workspace_id);
     }
 
     /// 审计：kill switch / fail-closed 跳过的报警（T-11/L5——「哪些报警没被
