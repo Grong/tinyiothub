@@ -169,7 +169,9 @@ async fn critical_alarm_without_workspace_still_escalates() {
 
     let db = test_db().await;
     let svc = AlarmService::new(db.clone());
-    let spy = Arc::new(SpyEscalation { seen: Mutex::new(vec![]) });
+    let spy = Arc::new(SpyEscalation {
+        seen: Mutex::new(vec![]),
+    });
     svc.set_escalation(spy.clone());
 
     let mut alarm = make_alarm(AlarmLevel::Critical);
