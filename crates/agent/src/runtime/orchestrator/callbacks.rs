@@ -201,14 +201,23 @@ fn heartbeat_directive(workspace_id: &str, problem_key: String, proposal: &Propo
 /// T3：报警调查指令。要求 agent 调查后给出结构化判断（judgment subscriber
 /// 解析 summary 尾部的 ```json verdict 块；解析失败按 outcome 兜底）。
 /// pub：eval 套件（judgment_eval_tests）用同一模板保证 prompt  parity。
+///
+/// 2026-09-16：携带规则条件描述（condition_desc）——实测 AI 在设备属性里
+/// 找不到阈值只能猜（"设备没有 alarm_threshold 属性"），三个 run 全部
+/// no_action_needed。条件直接给，不让 AI 猜。
 pub fn alarm_investigation_text(alarm: &tinyiothub_core::models::event::AlarmEvent) -> String {
+    let condition = alarm
+        .condition_desc
+        .as_deref()
+        .map(|c| format!("触发条件：{c}。"))
+        .unwrap_or_default();
     format!(
-        "调查报警并给出处置判断。报警：{}（设备 {}，类型 {}，级别 {}）。\
+        "调查报警并给出处置判断。报警：{}（设备 {}，类型 {}，级别 {}）。{}\
          请查询设备状态与近期事件后判断：noise（正常波动/无需处理）/ \
          self_healable（可自愈，给出建议动作）/ needs_human（需要人工介入）。\
          结束前输出一行结构化结论：```json {{\"verdict\": \"...\", \"reason\": \"一句人话理由\", \
          \"suggested_action\": \"建议动作或 null\", \"action_category\": \"device_reboot|connection_recovery|property_adjust|threshold_tuning|other\"}}```",
-        alarm.message, alarm.thing_id, alarm.alarm_type, alarm.severity
+        alarm.message, alarm.thing_id, alarm.alarm_type, alarm.severity, condition
     )
 }
 
@@ -499,6 +508,7 @@ pub(crate) mod tests {
             severity: "warning".into(),
             message: "Temperature is high".into(),
             rule_id: None,
+            condition_desc: None,
             resolved: false,
             created_at: chrono::Utc::now(),
         });
@@ -957,6 +967,7 @@ pub(crate) mod tests {
                 severity: severity.into(),
                 message: "温度超过阈值".into(),
                 rule_id: Some("rule-9".into()),
+                condition_desc: None,
                 resolved: false,
                 created_at: Utc::now(),
             })

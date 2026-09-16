@@ -52,8 +52,10 @@ impl AlarmService {
 
     /// 发布 AlarmCreated 到 AI 总线（investigation dispatch 的触发信号）。
     /// workspace_id 由调用方解析（含 thing 回填），保证下游 dispatch/dedup
-    /// 与 judgment 行同 workspace。
-    fn publish_alarm_created(&self, alarm: &Alarm, workspace_id: &str) {
+    /// 与 judgment 行同 workspace。condition_desc 随事件携带——调查指令直接
+    /// 拿到规则条件，AI 不用猜阈值（2026-09-16 实测三个 run 因缺阈值全
+    /// no_action_needed）。
+    fn publish_alarm_created(&self, alarm: &Alarm, workspace_id: &str, condition_desc: Option<String>) {
         let severity = match alarm.alarm_level {
             AlarmLevel::Critical => "critical",
             AlarmLevel::Error => "error",
@@ -68,6 +70,7 @@ impl AlarmService {
             severity: severity.to_string(),
             message: alarm.message.clone(),
             rule_id: alarm.rule_id.clone(),
+            condition_desc,
             resolved: matches!(alarm.status, AlarmStatus::Resolved),
             created_at: alarm.alarm_time,
         };
@@ -79,6 +82,20 @@ impl AlarmService {
             // 静默丢失 → judgment 永久 investigating）。
             tracing::warn!(alarm_id = %ai_alarm.id, thing_id = %ai_alarm.thing_id,
                 "AlarmCreated dropped: AI event publisher not wired yet (boot race)");
+        }
+    }
+
+    /// 装载报警规则的条件描述（调查指令用）；规则缺失/查询失败 → None，
+    /// 不阻断发布。
+    async fn load_condition_desc(&self, alarm: &Alarm) -> Option<String> {
+        let rule_id = alarm.rule_id.as_deref()?;
+        match self.db.find_alarm_rule_by_id(rule_id).await {
+            Ok(Some(rule)) => Some(describe_condition(&rule.condition)),
+            Ok(None) => None,
+            Err(e) => {
+                tracing::warn!(rule_id, error = %e, "rule condition load failed");
+                None
+            }
         }
     }
 
@@ -138,7 +155,8 @@ impl AlarmService {
                 Ok(Some(alarm)) => {
                     if let Some(ws) = self.resolve_workspace(&alarm).await {
                         tracing::info!(judgment_id = %j.id, alarm_id, "redispatching boot-raced alarm investigation");
-                        self.publish_alarm_created(&alarm, &ws);
+                        let condition_desc = self.load_condition_desc(&alarm).await;
+                        self.publish_alarm_created(&alarm, &ws, condition_desc);
                     }
                 }
                 Ok(None) => {
@@ -296,8 +314,10 @@ impl AlarmService {
             Err(e) => tracing::error!(alarm_id = %alarm.id, error = %e, "insert judgment failed"),
         }
 
-        // 发布给 AI 总线 → callbacks 直达 thing-agent dispatch（调查）
-        self.publish_alarm_created(alarm, &workspace_id);
+        // 发布给 AI 总线 → callbacks 直达 thing-agent dispatch（调查）；
+        // 规则条件随事件携带（调查指令直接引用，AI 不猜阈值）
+        let condition_desc = self.load_condition_desc(alarm).await;
+        self.publish_alarm_created(alarm, &workspace_id, condition_desc);
     }
 
     /// 审计：kill switch / fail-closed 跳过的报警（T-11/L5——「哪些报警没被
@@ -1236,7 +1256,9 @@ impl RuleEngine {
 }
 
 /// 报警文案用的条件描述（中文，面向用户）。
-fn describe_condition(condition: &AlarmCondition) -> String {
+/// 报警文案用的条件描述（中文，面向用户）。pub(crate)：judgment 重派路径
+///（handler 点错重开）复用同一描述，保证调查指令口径一致。
+pub(crate) fn describe_condition(condition: &AlarmCondition) -> String {
     fn op_symbol(op: ComparisonOperator) -> &'static str {
         match op {
             ComparisonOperator::GreaterThan => ">",
