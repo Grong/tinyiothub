@@ -150,6 +150,8 @@ export class DispositionsView extends LitElement {
   @state() private rejectPanelId: string | null = null;
   @state() private rejectReason = "";
   @state() private hasMore = false;
+  /** 操作防重入：进行中的 judgment id（快速连点/重复点击不重复提交） */
+  @state() private pendingIds = new Set<string>();
 
   private sseConn: SseConnection | null = null;
   private poller: number | null = null;
@@ -217,19 +219,35 @@ export class DispositionsView extends LitElement {
     void this.load();
   }
 
+  /** 防重入包装：同一 judgment 的操作在飞行中时忽略后续触发，
+   *  直到刷新落地（列表状态翻转）才解除。 */
+  private async runPending(id: string, fn: () => Promise<void>) {
+    if (this.pendingIds.has(id)) return;
+    this.pendingIds = new Set(this.pendingIds).add(id);
+    try {
+      await fn();
+    } finally {
+      const next = new Set(this.pendingIds);
+      next.delete(id);
+      this.pendingIds = next;
+    }
+  }
+
   private async vote(j: Judgment, verdict: "right" | "wrong") {
     if (verdict === "wrong") {
       this.wrongPanelId = this.wrongPanelId === j.id ? null : j.id;
       this.wrongReason = "";
       return;
     }
-    try {
-      await judgmentApi.feedback(j.id, "right");
-      success("已记录：AI 判断正确");
-      void this.load(true);
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "反馈失败");
-    }
+    await this.runPending(j.id, async () => {
+      try {
+        await judgmentApi.feedback(j.id, "right");
+        success("已记录：AI 判断正确");
+        await this.load(true);
+      } catch (e) {
+        toastError(e instanceof Error ? e.message : "反馈失败");
+      }
+    });
   }
 
   private async submitWrong(j: Judgment) {
@@ -238,24 +256,28 @@ export class DispositionsView extends LitElement {
       toastError(err);
       return;
     }
-    try {
-      await judgmentApi.feedback(j.id, "wrong", this.wrongReason.trim());
-      success("已写入 AI 的记忆，下次它会做得更好");
-      this.wrongPanelId = null;
-      void this.load(true);
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "反馈失败");
-    }
+    await this.runPending(j.id, async () => {
+      try {
+        await judgmentApi.feedback(j.id, "wrong", this.wrongReason.trim());
+        success("已写入 AI 的记忆，下次它会做得更好");
+        this.wrongPanelId = null;
+        await this.load(true);
+      } catch (e) {
+        toastError(e instanceof Error ? e.message : "反馈失败");
+      }
+    });
   }
 
   private async approve(j: Judgment) {
-    try {
-      await judgmentApi.approve(j.id);
-      success("已批准，开始执行");
-      void this.load(true);
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "批准失败");
-    }
+    await this.runPending(j.id, async () => {
+      try {
+        await judgmentApi.approve(j.id);
+        success("已批准，开始执行");
+        await this.load(true);
+      } catch (e) {
+        toastError(e instanceof Error ? e.message : "批准失败");
+      }
+    });
   }
 
   private async submitReject(j: Judgment) {
@@ -264,14 +286,16 @@ export class DispositionsView extends LitElement {
       toastError("拒绝必须填写原因（至少 4 个字符）");
       return;
     }
-    try {
-      await judgmentApi.reject(j.id, reason);
-      success("已拒绝并转工单");
-      this.rejectPanelId = null;
-      void this.load(true);
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "拒绝失败");
-    }
+    await this.runPending(j.id, async () => {
+      try {
+        await judgmentApi.reject(j.id, reason);
+        success("已拒绝并转工单");
+        this.rejectPanelId = null;
+        await this.load(true);
+      } catch (e) {
+        toastError(e instanceof Error ? e.message : "拒绝失败");
+      }
+    });
   }
 
 
@@ -378,11 +402,13 @@ export class DispositionsView extends LitElement {
             <button
               class="${voted === "right" ? "voted" : ""}"
               title="判断正确"
+              ?disabled=${this.pendingIds.has(j.id)}
               @click=${() => this.vote(j, "right")}
             >✓</button>
             <button
               class="${voted === "wrong" ? "voted" : ""}"
               title="判断错误"
+              ?disabled=${this.pendingIds.has(j.id)}
               @click=${() => this.vote(j, "wrong")}
             >✕</button>
           </div>
@@ -394,7 +420,7 @@ export class DispositionsView extends LitElement {
           ? html`
               <div class="j-actions">
                 ${j.suggestedAction ? html`<span class="disp-sub">建议：${j.suggestedAction}</span>` : nothing}
-                <button class="btn primary btn-small" @click=${() => this.approve(j)}>批准执行</button>
+                <button class="btn primary btn-small" ?disabled=${this.pendingIds.has(j.id)} @click=${() => this.approve(j)}>批准执行</button>
                 <button
                   class="btn btn-small"
                   @click=${() => {
@@ -437,7 +463,7 @@ export class DispositionsView extends LitElement {
                 ></textarea>
                 <div class="actions">
                   <button class="j-btn-text" @click=${() => (this.rejectPanelId = null)}>取消</button>
-                  <button class="btn danger btn-small" @click=${() => this.submitReject(j)}>确认拒绝</button>
+                  <button class="btn danger btn-small" ?disabled=${this.pendingIds.has(j.id)} @click=${() => this.submitReject(j)}>确认拒绝</button>
                 </div>
               </div>
             `
@@ -453,7 +479,7 @@ export class DispositionsView extends LitElement {
                 ></textarea>
                 <div class="actions">
                   <button class="j-btn-text" @click=${() => (this.wrongPanelId = null)}>取消</button>
-                  <button class="btn primary btn-small" @click=${() => this.submitWrong(j)}>提交</button>
+                  <button class="btn primary btn-small" ?disabled=${this.pendingIds.has(j.id)} @click=${() => this.submitWrong(j)}>提交</button>
                 </div>
               </div>
             `
