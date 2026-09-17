@@ -1,30 +1,36 @@
 import { describe, expect, it } from "vitest";
 import {
+  BADGE_MAP,
   evidenceRawText,
   segmentEvidence,
   approvalCountdown,
   fmtJudgmentTime,
   needsYou,
+  tabCount,
   validateWrongReason,
-  verdictLabel,
 } from "./dispositions.js";
-import type { Judgment } from "../../api/judgments.js";
+import type { BrainEvent, BrainEventsSummary } from "../../api/brain-events.js";
 
-function j(over: Partial<Judgment>): Judgment {
+function ev(over: Partial<BrainEvent>): BrainEvent {
   return {
-    id: "j1",
+    id: "alarm:j1",
+    workspaceId: "ws1",
+    source: "alarm",
     alarmId: null,
     thingId: "t1",
-    ticketId: null,
+    title: "",
     verdict: null,
     reason: "",
-    evidence: null,
     suggestedAction: null,
     actionCategory: null,
+    risk: null,
+    runId: null,
+    ticketId: null,
     status: "investigating",
-    latestFeedback: null,
+    triageMode: "annotate",
     createdAt: new Date().toISOString(),
     judgedAt: null,
+    stateEnteredAt: null,
     resolvedAt: null,
     ...over,
   };
@@ -32,20 +38,60 @@ function j(over: Partial<Judgment>): Judgment {
 
 describe("dispositions view helpers", () => {
   it("「需要你」= 待审批 + 需人工（F3/F15①）", () => {
-    expect(needsYou(j({ status: "awaiting_approval" }))).toBe(true);
-    expect(needsYou(j({ status: "escalated" }))).toBe(true);
-    expect(needsYou(j({ status: "investigating" }))).toBe(false);
-    expect(needsYou(j({ status: "resolved" }))).toBe(false);
-    expect(needsYou(j({ status: "noise_archived" }))).toBe(false);
+    expect(needsYou(ev({ status: "awaiting_approval" }))).toBe(true);
+    expect(needsYou(ev({ status: "escalated" }))).toBe(true);
+    expect(needsYou(ev({ status: "investigating" }))).toBe(false);
+    expect(needsYou(ev({ status: "resolved" }))).toBe(false);
+    expect(needsYou(ev({ status: "self_closed" }))).toBe(false);
+    expect(needsYou(ev({ status: "patrol_ok" }))).toBe(false);
   });
 
-  it("verdict 标签：状态优先于 verdict（调查中/未调查），verdict 其次", () => {
-    expect(verdictLabel(j({ status: "investigating" }))).toBe("调查中");
-    expect(verdictLabel(j({ status: "budget_skipped" }))).toBe("未调查");
-    expect(verdictLabel(j({ status: "noise_archived", verdict: "noise" }))).toBe("噪声");
-    expect(verdictLabel(j({ status: "awaiting_approval", verdict: "self_healable" }))).toBe("可自愈");
-    expect(verdictLabel(j({ status: "escalated", verdict: "needs_human" }))).toBe("需人工");
-    expect(verdictLabel(j({ status: "investigation_failed" }))).toBe("调查失败");
+  it("badge map covers all 11 states（含 patrol_tick 行的 patrol_ok）", () => {
+    const all = [
+      "investigating",
+      "self_closed",
+      "awaiting_approval",
+      "executing",
+      "resolved",
+      "escalated",
+      "investigation_failed",
+      "dismissed",
+      "budget_skipped",
+      "dispatch_suppressed",
+      "patrol_ok",
+    ] as const;
+    for (const s of all) {
+      expect(BADGE_MAP[s], `状态 ${s} 缺徽章`).toBeTruthy();
+    }
+    expect(Object.keys(BADGE_MAP).sort()).toEqual([...all].sort());
+    // 语义抽查（brief 指定措辞）
+    expect(BADGE_MAP.investigating).toBe("分析中");
+    expect(BADGE_MAP.self_closed).toBe("自行闭环");
+    expect(BADGE_MAP.awaiting_approval).toBe("需要你");
+    expect(BADGE_MAP.executing).toBe("执行中");
+    expect(BADGE_MAP.resolved).toBe("闭环");
+    expect(BADGE_MAP.escalated).toBe("转工单");
+    expect(BADGE_MAP.investigation_failed).toBe("转工单");
+    expect(BADGE_MAP.dismissed).toBe("已拒绝");
+    expect(BADGE_MAP.budget_skipped).toBe("未受理");
+    expect(BADGE_MAP.dispatch_suppressed).toBe("未受理");
+    expect(BADGE_MAP.patrol_ok).toBe("巡检正常");
+  });
+
+  it("tab counts from summary：needsYou 计数驱动 tab 角标", () => {
+    const summary: BrainEventsSummary = {
+      digestedToday: 12,
+      needsYou: 3,
+      latencyP50Secs: null,
+      feedbackRight: 5,
+      feedbackWrong: 2,
+    };
+    expect(tabCount(summary, "needs_you")).toBe(3);
+    expect(tabCount(summary, "all")).toBeNull();
+    expect(tabCount(summary, "patrol")).toBeNull();
+    expect(tabCount(summary, "alarm")).toBeNull();
+    expect(tabCount(summary, "directive")).toBeNull();
+    expect(tabCount(null, "needs_you")).toBeNull();
   });
 
   it("时间戳规则（F12⑤）", () => {
@@ -57,16 +103,16 @@ describe("dispositions view helpers", () => {
   });
 
   it("审批倒计时（F6）：非待审批 → null；待审批 → 剩余小时", () => {
-    expect(approvalCountdown(j({ status: "escalated" }))).toBeNull();
-    expect(approvalCountdown(j({ status: "awaiting_approval" }))).toBeNull(); // 无 judgedAt
+    expect(approvalCountdown(ev({ status: "escalated" }))).toBeNull();
+    expect(approvalCountdown(ev({ status: "awaiting_approval" }))).toBeNull(); // 无 judgedAt
     const now = Date.now();
-    const judged = j({
+    const judged = ev({
       status: "awaiting_approval",
       judgedAt: new Date(now - 6 * 3600_000).toISOString(),
     });
     expect(approvalCountdown(judged, now)).toBe("18 小时后自动转工单");
     // 超时后钳到 0
-    const overdue = j({
+    const overdue = ev({
       status: "awaiting_approval",
       judgedAt: new Date(now - 26 * 3600_000).toISOString(),
     });

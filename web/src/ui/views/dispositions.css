@@ -102,9 +102,19 @@ view-dispositions .j-verdict.action::before {
   font-size: 10px;
 }
 
+/* 标题行：事件标题（alarm 消息/提案摘要/指令原文）——两行结构的第一行 */
+view-dispositions .j-title {
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 view-dispositions .j-device {
   font-size: 13px;
   color: var(--muted-foreground);
+  flex-shrink: 0;
 }
 
 view-dispositions .j-time {
