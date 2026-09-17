@@ -24,6 +24,8 @@ pub mod audit_log;
 pub mod auth;
 /// Batch command persistence (batch_commands / batch_command_items) and row types.
 pub mod batch_command;
+/// brain_events 投影查询（AI 大脑 P0）：feed/summary/detail 读 brain_events 视图。
+pub mod brain_event;
 /// Thing cache (in-memory).
 pub mod cache;
 /// Db connection configuration.
@@ -103,6 +105,7 @@ pub mod test_helpers;
 
 // 公共面显式化（Task 13）：只re-export 跨crate 常用的入口类型；
 // 各领域行类型/函数一律经 `tinyiothub_storage::<domain>::...` 模块路径访问。
+pub use brain_event::{BrainEvent, BrainEventDetail, BrainEventTab, BrainEventsSummary};
 pub use cache::ThingCache;
 pub use config::DatabaseConfig;
 pub use database::Db;
