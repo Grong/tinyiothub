@@ -48,6 +48,7 @@ pub mod judgment;
 /// Agent memory persistence.
 pub mod memory;
 /// Embedded migrations runner.
+// 20260917000001_brain_events_view.sql：brain_events 只读投影视图（改此行使 cargo 重嵌迁移集）。
 pub mod migrations;
 /// Shared query model types.
 pub mod models;
