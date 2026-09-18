@@ -285,20 +285,26 @@ export class DispositionsView extends LitElement {
     void this.toggleEvidence(ev);
   }
 
-  /** 证据懒加载：展开时若未缓存则调 detail 端点取 evidence；失败内联记失败态。 */
+  /** detail 端点取证据：成功入缓存，失败内联记失败态（重试前清旧标记）。
+   *  不走 toggle 语义——失败分支的「重试」按钮直接调它。 */
+  private async fetchEvidence(id: string) {
+    if (this.evidenceFailedIds.delete(id)) {
+      this.evidenceFailedIds = new Set(this.evidenceFailedIds);
+    }
+    try {
+      const detail = await brainEventApi.detail(id);
+      this.evidenceById = new Map(this.evidenceById).set(id, detail.evidence);
+    } catch {
+      this.evidenceFailedIds = new Set(this.evidenceFailedIds).add(id);
+    }
+  }
+
+  /** 证据懒加载：展开时若未缓存则取证据。 */
   private async toggleEvidence(ev: BrainEvent) {
     const next = nextExpandedId(this.expandedId, ev.id);
     this.expandedId = next;
     if (next === null || this.evidenceById.has(ev.id)) return;
-    if (this.evidenceFailedIds.delete(ev.id)) {
-      this.evidenceFailedIds = new Set(this.evidenceFailedIds);
-    }
-    try {
-      const detail = await brainEventApi.detail(ev.id);
-      this.evidenceById = new Map(this.evidenceById).set(ev.id, detail.evidence);
-    } catch {
-      this.evidenceFailedIds = new Set(this.evidenceFailedIds).add(ev.id);
-    }
+    await this.fetchEvidence(ev.id);
   }
 
   private async vote(ev: BrainEvent, verdict: "right" | "wrong") {
@@ -481,7 +487,7 @@ export class DispositionsView extends LitElement {
   private renderEvidenceArea(ev: BrainEvent): TemplateResult {
     if (this.evidenceFailedIds.has(ev.id)) {
       return html`<div class="j-evidence j-ev-error" @click=${(e: Event) => e.stopPropagation()}>
-        证据加载失败，<button class="j-btn-text" @click=${() => this.toggleEvidence(ev)}>重试</button>
+        证据加载失败，<button class="j-btn-text" @click=${() => this.fetchEvidence(ev.id)}>重试</button>
       </div>`;
     }
     if (!this.evidenceById.has(ev.id)) {

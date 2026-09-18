@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   BADGE_MAP,
   evidenceRawText,
@@ -11,7 +11,29 @@ import {
   tabCount,
   validateWrongReason,
 } from "./dispositions.js";
-import type { BrainEvent, BrainEventsSummary } from "../../api/brain-events.js";
+import { brainEventApi, type BrainEvent, type BrainEventsSummary } from "../../api/brain-events.js";
+
+// 组件级用例需要挂载真实元素：外围副作用（API/SSE/toast）全部 mock。
+vi.mock("../../api/sse-client.js", () => ({
+  connectSse: vi.fn(() => ({ close() {}, closed: true })),
+}));
+vi.mock("../../api/judgments.js", () => ({
+  judgmentApi: { feedback: vi.fn(), approve: vi.fn(), reject: vi.fn() },
+}));
+vi.mock("../components/toast.js", () => ({ success: vi.fn(), error: vi.fn() }));
+vi.mock("../../api/brain-events.js", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("../../api/brain-events.js")>();
+  return {
+    ...orig,
+    brainEventApi: {
+      list: vi.fn(),
+      summary: vi.fn(),
+      detail: vi.fn(),
+      approve: vi.fn(),
+      reject: vi.fn(),
+    },
+  };
+});
 
 function ev(over: Partial<BrainEvent>): BrainEvent {
   return {
@@ -198,5 +220,42 @@ describe("segmentEvidence（证据分段：think/verdict 折叠成段，正文�
   it("returns no segments for empty input", () => {
     expect(segmentEvidence("")).toEqual([]);
     expect(segmentEvidence("  ")).toEqual([]);
+  });
+});
+
+describe("组件级：证据失败重试（fix round 1——「重试」不得收起面板）", () => {
+  it("点击「重试」重新请求 detail 并保持展开", async () => {
+    const ev1 = ev({ id: "alarm:j1", status: "resolved" });
+    const summary: BrainEventsSummary = {
+      digestedToday: 1,
+      needsYou: 0,
+      latencyP50Secs: null,
+      feedbackRight: 0,
+      feedbackWrong: 0,
+    };
+    vi.mocked(brainEventApi.list).mockResolvedValue([ev1]);
+    vi.mocked(brainEventApi.summary).mockResolvedValue(summary);
+    // 第一次展开：detail 失败 → 内联「证据加载失败，重试」
+    vi.mocked(brainEventApi.detail).mockRejectedValueOnce(new Error("boom"));
+
+    const el = document.createElement("view-dispositions");
+    document.body.appendChild(el);
+    try {
+      await vi.waitFor(() => expect(el.querySelector(".j-item")).toBeTruthy());
+      (el.querySelector(".j-item") as HTMLElement).click();
+      await vi.waitFor(() => expect(el.querySelector(".j-ev-error")).toBeTruthy());
+      expect(brainEventApi.detail).toHaveBeenCalledTimes(1);
+
+      // 重试：detail 成功 → 面板保持展开并渲染证据（不再收起）
+      vi.mocked(brainEventApi.detail).mockResolvedValueOnce({ ...ev1, evidence: { summary: "证据原文" } });
+      (el.querySelector(".j-ev-error button") as HTMLElement).click();
+      await vi.waitFor(() =>
+        expect(el.querySelector(".j-ev-text")?.textContent).toContain("证据原文"),
+      );
+      expect(brainEventApi.detail).toHaveBeenCalledTimes(2);
+      expect(el.querySelector(".j-ev-error")).toBeNull();
+    } finally {
+      el.remove();
+    }
   });
 });
