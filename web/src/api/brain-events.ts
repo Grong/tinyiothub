@@ -37,7 +37,6 @@ export type BrainEventStatus =
 /** 列表行（无 evidence——性能评审裁决：证据只由 detail 端点载）。 */
 export interface BrainEvent {
   id: string;
-  workspaceId: string;
   source: BrainEventSource;
   alarmId: string | null;
   thingId: string | null;

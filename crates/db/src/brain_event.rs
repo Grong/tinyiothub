@@ -74,6 +74,8 @@ const LIST_COLS: &str = "id, workspace_id, source, alarm_id, thing_id, title, ve
     created_at, judged_at, state_entered_at, resolved_at";
 
 /// 「需要你」口径（仅在 FROM brain_events 的作用域内使用）。
+/// 口径决定：needs_you 无时间窗——陈旧未认领恰恰最该被看见；其余 tab 保持 48h 窗防膨胀
+/// （见 list_brain_events 的 window 分支，与 summary.needs_you 计数对齐）。
 const NEEDS_YOU_COND: &str = "(status = 'awaiting_approval' OR (status = 'escalated' AND \
     (ticket_id IS NULL OR (SELECT t.state FROM tickets t WHERE t.id = brain_events.ticket_id) = 'open')))";
 
@@ -114,7 +116,7 @@ fn row_to_brain_event(row: sqlx::sqlite::SqliteRow) -> Result<BrainEvent> {
     })
 }
 
-/// feed 页查询：workspace 隔离 + tab 筛选 + 48h 窗口（RFC3339 字符串比较）。
+/// feed 页查询：workspace 隔离 + tab 筛选 + 48h 窗口（RFC3339 字符串比较；needs_you tab 除外）。
 /// - 首页（before=None）：alarm 源同 thing+rule 折叠最新（window function）+ 需要你置顶
 /// - 后续页（before=Some）：纯时间流（折叠/置顶不参与，同 judgment feed 语义）
 /// - 游标：(created_at, id) 元组比较，同秒多行不丢
@@ -127,6 +129,12 @@ pub(crate) async fn list_brain_events(
 ) -> Result<Vec<BrainEvent>> {
     let since = (chrono::Utc::now() - chrono::Duration::hours(48)).to_rfc3339();
     let filter = tab_filter(tab);
+    // needs_you 无时间窗——陈旧未认领恰恰最该被看见；其余 tab 保持 48h 窗防膨胀。
+    let window = if tab == BrainEventTab::NeedsYou {
+        ""
+    } else {
+        " AND created_at >= ?"
+    };
 
     let sql = if before.is_none() {
         // 折叠：仅 alarm 源按 thing+rule 分组取最新；非 alarm 行按 id 各自成组（rn 恒 1）。
@@ -143,7 +151,7 @@ pub(crate) async fn list_brain_events(
                    ORDER BY created_at DESC, id DESC
                  ) AS rn
                FROM brain_events
-               WHERE workspace_id = ? AND created_at >= ?{filter}
+               WHERE workspace_id = ?{window}{filter}
              ) WHERE rn = 1
              ORDER BY pin, created_at DESC, id DESC
              LIMIT ?"
@@ -152,7 +160,7 @@ pub(crate) async fn list_brain_events(
         // 后续页：纯时间流（不折叠不置顶）。元组游标：同秒行按 id 续翻。
         format!(
             "SELECT {LIST_COLS} FROM brain_events
-             WHERE workspace_id = ? AND created_at >= ?{filter}
+             WHERE workspace_id = ?{window}{filter}
                AND (created_at < (SELECT created_at FROM brain_events WHERE id = ?)
                     OR (created_at = (SELECT created_at FROM brain_events WHERE id = ?) AND id < ?))
              ORDER BY created_at DESC, id DESC
@@ -160,7 +168,10 @@ pub(crate) async fn list_brain_events(
         )
     };
 
-    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(workspace_id).bind(since);
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(workspace_id);
+    if tab != BrainEventTab::NeedsYou {
+        q = q.bind(since);
+    }
     if let Some(b) = before {
         q = q.bind(b).bind(b).bind(b);
     }
@@ -515,5 +526,41 @@ mod tests {
         let ids: Vec<&str> = feed.iter().map(|e| e.id.as_str()).collect();
         assert!(ids.contains(&"directive:r-user"), "用户指令 run 出现在 directive tab");
         assert!(!ids.contains(&"directive:r-alarm"), "problem_key 非空的不出现");
+    }
+
+    /// needs_you tab 无时间窗：72h 前 escalated + 工单 open 的事件仍可见（与 badge 计数口径一致）；
+    /// all tab 保持 48h 窗：同一事件不出现。
+    #[tokio::test]
+    async fn needs_you_no_time_window_all_keeps_48h() {
+        let db = test_db().await;
+        let j = db.insert_judgment("ws1", None, None, None, "annotate").await.unwrap();
+        let open_ticket = insert_ticket(&db, "open", "h-stale").await;
+        db.transit_judgment(
+            &j,
+            JudgmentStatus::Investigating,
+            JudgmentStatus::Escalated,
+            Some(open_ticket),
+        )
+        .await
+        .unwrap();
+        let old = (Utc::now() - chrono::Duration::hours(72)).to_rfc3339();
+        sqlx::query("UPDATE judgments SET created_at = ? WHERE id = ?")
+            .bind(&old)
+            .bind(&j)
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        let feed = db
+            .list_brain_events("ws1", BrainEventTab::NeedsYou, None, 10)
+            .await
+            .unwrap();
+        assert_eq!(feed.len(), 1, "needs_you 无时间窗——陈旧未认领仍可见");
+        assert_eq!(feed[0].id, format!("alarm:{j}"));
+        let summary = db.brain_events_summary("ws1").await.unwrap();
+        assert_eq!(summary.needs_you, 1, "badge 计数与 needs_you 列表口径一致");
+
+        let all = db.list_brain_events("ws1", BrainEventTab::All, None, 10).await.unwrap();
+        assert!(all.is_empty(), "all tab 保持 48h 窗——72h 前事件不出现");
     }
 }

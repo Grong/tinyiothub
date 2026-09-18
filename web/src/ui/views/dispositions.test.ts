@@ -38,7 +38,6 @@ vi.mock("../../api/brain-events.js", async (importOriginal) => {
 function ev(over: Partial<BrainEvent>): BrainEvent {
   return {
     id: "alarm:j1",
-    workspaceId: "ws1",
     source: "alarm",
     alarmId: null,
     thingId: "t1",
