@@ -4,8 +4,10 @@ import {
   evidenceRawText,
   segmentEvidence,
   approvalCountdown,
+  emptyStateCopy,
   fmtJudgmentTime,
   needsYou,
+  nextExpandedId,
   tabCount,
   validateWrongReason,
 } from "./dispositions.js";
@@ -124,6 +126,35 @@ describe("dispositions view helpers", () => {
     expect(validateWrongReason("  ")).toContain("必须填写原因");
     expect(validateWrongReason("太短")).toContain("必须填写原因");
     expect(validateWrongReason("这个传感器梅雨季会越限")).toBeNull();
+  });
+});
+
+describe("行交互与空态（Task 5：点行展开 + 空态产品时刻）", () => {
+  it("row click toggles evidence expand：点同一行收起，点他行切换", () => {
+    expect(nextExpandedId(null, "a")).toBe("a");
+    expect(nextExpandedId("a", "a")).toBeNull();
+    expect(nextExpandedId("a", "b")).toBe("b");
+    expect(nextExpandedId("b", "b")).toBeNull();
+  });
+
+  it("empty states carry product copy（needs_you / all 两案）", () => {
+    const summary: BrainEventsSummary = {
+      digestedToday: 7,
+      needsYou: 0,
+      latencyP50Secs: null,
+      feedbackRight: 0,
+      feedbackWrong: 0,
+    };
+    const ny = emptyStateCopy("needs_you", summary);
+    expect(ny.title).toContain("一切正常");
+    expect(ny.body).toContain("今日 7 条已消化");
+    expect(ny.body).toContain("没有需要你处理的事");
+    // summary 未落地时兜底仍成立
+    expect(emptyStateCopy("needs_you", null).body).toContain("没有需要你处理的事");
+
+    const all = emptyStateCopy("all", summary);
+    expect(all.title).toContain("还没有事件");
+    expect(all.body).toContain("大脑还没开始干活");
   });
 });
 

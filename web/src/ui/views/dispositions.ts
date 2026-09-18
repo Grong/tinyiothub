@@ -138,6 +138,28 @@ export function validateWrongReason(reason: string): string | null {
   return reason.trim().length >= 4 ? null : "点错必须填写原因（至少 4 个字符）";
 }
 
+/** 行点击展开/收起（导出供测试）：点同一行收起，点他行切换。 */
+export function nextExpandedId(current: string | null, clickedId: string): string | null {
+  return current === clickedId ? null : clickedId;
+}
+
+/** 空态产品文案（导出供测试）：需要你 = 「一切正常」一句话 + 今日摘要；
+ *  全部（及其余过滤 tab）= 「还没有事件——大脑还没开始干活」。 */
+export function emptyStateCopy(
+  tab: BrainEventTab,
+  summary: BrainEventsSummary | null,
+): { title: string; body: string } {
+  if (tab === "needs_you") {
+    return {
+      title: "一切正常",
+      body: summary
+        ? `今日 ${summary.digestedToday} 条已消化，没有需要你处理的事`
+        : "没有需要你处理的事",
+    };
+  }
+  return { title: "还没有事件", body: "大脑还没开始干活" };
+}
+
 @customElement("view-dispositions")
 export class DispositionsView extends LitElement {
   @state() private events: BrainEvent[] = [];
@@ -153,6 +175,10 @@ export class DispositionsView extends LitElement {
   @state() private hasMore = false;
   /** 证据懒加载缓存（列表行无 evidence）：event id → detail 端点取回的 evidence */
   @state() private evidenceById = new Map<string, unknown>();
+  /** 证据加载失败的 event id（内联「证据加载失败，重试」，不弹 toast） */
+  @state() private evidenceFailedIds = new Set<string>();
+  /** SSE 断连细条（仿 tickets.ts）：onError 置 false，load 成功复位 */
+  @state() private sseConnected = true;
   /** 操作防重入：进行中的 event id（快速连点/重复点击不重复提交） */
   @state() private pendingIds = new Set<string>();
 
@@ -167,11 +193,17 @@ export class DispositionsView extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     void this.load();
-    this.sseConn = connectSse("/api/v1/workspaces/notifications/stream", (event) => {
-      if (event === "judgment_judged" || event === "judgment_updated" || event === "ticket_created") {
-        void this.load(true);
-      }
-    });
+    this.sseConn = connectSse(
+      "/api/v1/workspaces/notifications/stream",
+      (event) => {
+        if (event === "judgment_judged" || event === "judgment_updated" || event === "ticket_created") {
+          void this.load(true);
+        }
+      },
+      () => {
+        this.sseConnected = false;
+      },
+    );
     this.poller = window.setInterval(() => void this.load(true), 60_000);
   }
 
@@ -191,6 +223,7 @@ export class DispositionsView extends LitElement {
       ]);
       this.events = events;
       this.summary = summary;
+      this.sseConnected = true;
       // 游标分页（F12）：满页即可能还有
       this.hasMore = events.length >= PAGE_SIZE;
     } catch (e) {
@@ -237,19 +270,34 @@ export class DispositionsView extends LitElement {
     }
   }
 
-  /** 证据懒加载：展开时若未缓存则调 detail 端点取 evidence。 */
-  private async toggleEvidence(ev: BrainEvent) {
-    if (this.expandedId === ev.id) {
-      this.expandedId = null;
+  /** 可展开证据的行：分析中（无结论）与巡检正常聚合行（跳巡检历史）除外。 */
+  private canEvidence(ev: BrainEvent): boolean {
+    return ev.status !== "investigating" && ev.status !== "patrol_ok";
+  }
+
+  /** 行点击：巡检正常聚合行（patrol_tick）跳 AI 运维巡检历史；其余可证据行展开/收起。 */
+  private onRowClick(ev: BrainEvent) {
+    if (ev.source === "patrol_tick") {
+      window.location.hash = "#/ai-ops";
       return;
     }
-    this.expandedId = ev.id;
-    if (this.evidenceById.has(ev.id)) return;
+    if (!this.canEvidence(ev)) return;
+    void this.toggleEvidence(ev);
+  }
+
+  /** 证据懒加载：展开时若未缓存则调 detail 端点取 evidence；失败内联记失败态。 */
+  private async toggleEvidence(ev: BrainEvent) {
+    const next = nextExpandedId(this.expandedId, ev.id);
+    this.expandedId = next;
+    if (next === null || this.evidenceById.has(ev.id)) return;
+    if (this.evidenceFailedIds.delete(ev.id)) {
+      this.evidenceFailedIds = new Set(this.evidenceFailedIds);
+    }
     try {
       const detail = await brainEventApi.detail(ev.id);
       this.evidenceById = new Map(this.evidenceById).set(ev.id, detail.evidence);
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "证据加载失败");
+    } catch {
+      this.evidenceFailedIds = new Set(this.evidenceFailedIds).add(ev.id);
     }
   }
 
@@ -429,20 +477,39 @@ export class DispositionsView extends LitElement {
     `;
   }
 
+  /** 展开区三态：已缓存 → 证据面板；加载中 → 「取证中…」骨架；失败 → 内联重试。 */
+  private renderEvidenceArea(ev: BrainEvent): TemplateResult {
+    if (this.evidenceFailedIds.has(ev.id)) {
+      return html`<div class="j-evidence j-ev-error" @click=${(e: Event) => e.stopPropagation()}>
+        证据加载失败，<button class="j-btn-text" @click=${() => this.toggleEvidence(ev)}>重试</button>
+      </div>`;
+    }
+    if (!this.evidenceById.has(ev.id)) {
+      return html`<div class="j-evidence j-ev-pending" @click=${(e: Event) => e.stopPropagation()}>取证中…</div>`;
+    }
+    return html`<div @click=${(e: Event) => e.stopPropagation()}>
+      ${this.renderEvidencePanel(this.evidenceById.get(ev.id))}
+    </div>`;
+  }
+
   private renderCard(ev: BrainEvent): TemplateResult {
     const needsAction = needsYou(ev);
     const countdown = approvalCountdown(ev);
     const pending = this.pendingIds.has(ev.id);
     const canFeedback = ev.source === "alarm";
-    const canEvidence = ev.status !== "investigating" && ev.status !== "patrol_ok";
+    const canEvidence = this.canEvidence(ev);
+    const clickable = ev.source === "patrol_tick" || canEvidence;
     return html`
-      <div class="j-item ${needsAction ? "needs-you" : ""}">
+      <div
+        class="j-item ${needsAction ? "needs-you" : ""} ${clickable ? "clickable" : ""}"
+        @click=${() => this.onRowClick(ev)}
+      >
         <div class="j-row1">
           <span class="j-verdict ${needsAction ? "action" : ""}">${BADGE_MAP[ev.status] ?? ev.status}</span>
           <span class="j-title">${ev.title || ev.thingId || "工作区"}</span>
           ${ev.title ? html`<span class="j-device">${ev.thingId ?? "工作区"}</span>` : nothing}
           ${canFeedback
-            ? html`<div class="j-fb">
+            ? html`<div class="j-fb" @click=${(e: Event) => e.stopPropagation()}>
                 <button title="判断正确" ?disabled=${pending} @click=${() => this.vote(ev, "right")}>✓</button>
                 <button title="判断错误" ?disabled=${pending} @click=${() => this.vote(ev, "wrong")}>✕</button>
               </div>`
@@ -453,7 +520,7 @@ export class DispositionsView extends LitElement {
 
         ${ev.status === "awaiting_approval"
           ? html`
-              <div class="j-actions">
+              <div class="j-actions" @click=${(e: Event) => e.stopPropagation()}>
                 ${ev.suggestedAction ? html`<span class="disp-sub">建议：${ev.suggestedAction}</span>` : nothing}
                 <button class="btn primary btn-small" ?disabled=${pending} @click=${() => this.approve(ev)}>批准执行</button>
                 <button class="btn btn-small" ?disabled=${pending} @click=${() => this.reject(ev)}>拒绝</button>
@@ -464,7 +531,7 @@ export class DispositionsView extends LitElement {
               </div>
             `
           : html`
-              <div class="j-actions">
+              <div class="j-actions" @click=${(e: Event) => e.stopPropagation()}>
                 ${ev.ticketId
                   ? html`<a class="j-btn-text" href="#/tickets/${ev.ticketId}">打开工单 →</a>`
                   : nothing}
@@ -474,11 +541,11 @@ export class DispositionsView extends LitElement {
               </div>
             `}
 
-        ${this.expandedId === ev.id ? this.renderEvidencePanel(this.evidenceById.get(ev.id)) : nothing}
+        ${this.expandedId === ev.id ? this.renderEvidenceArea(ev) : nothing}
 
         ${this.rejectPanelId === ev.id
           ? html`
-              <div class="j-wrong-panel">
+              <div class="j-wrong-panel" @click=${(e: Event) => e.stopPropagation()}>
                 <textarea
                   placeholder="拒绝原因（必填，会写进工单）"
                   .value=${this.rejectReason}
@@ -494,7 +561,7 @@ export class DispositionsView extends LitElement {
 
         ${this.wrongPanelId === ev.id
           ? html`
-              <div class="j-wrong-panel">
+              <div class="j-wrong-panel" @click=${(e: Event) => e.stopPropagation()}>
                 <textarea
                   placeholder="哪里不对？这句话会写进 AI 的记忆"
                   .value=${this.wrongReason}
@@ -512,21 +579,22 @@ export class DispositionsView extends LitElement {
   }
 
   private renderEmpty(): TemplateResult {
+    const copy = emptyStateCopy(this.tab, this.summary);
     return html`
       <div class="j-empty">
-        <h2>一切正常</h2>
-        <p>
-          ${this.summary
-            ? html`今日 ${this.summary.digestedToday} 条报警已消化，没有需要你处理的事。`
-            : "没有需要你处理的事。"}
-        </p>
+        <h2>${copy.title}</h2>
+        <p>${copy.body}</p>
       </div>
     `;
   }
 
   render(): TemplateResult {
     return html`
-      ${this.renderHeader()} ${this.renderTabs()}
+      ${this.renderHeader()}
+      ${!this.sseConnected
+        ? html`<div class="sse-banner">实时更新已断开，点击刷新获取最新</div>`
+        : nothing}
+      ${this.renderTabs()}
       ${this.loading
         ? html`<div class="disp-loading">加载中…</div>`
         : this.loadError

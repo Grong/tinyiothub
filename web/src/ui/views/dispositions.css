@@ -77,6 +77,21 @@ view-dispositions .j-item.needs-you {
   box-shadow: inset 2px 0 0 var(--warning);
 }
 
+/* 行可点（展开证据 / tick 聚合行跳巡检历史） */
+view-dispositions .j-item.clickable {
+  cursor: pointer;
+}
+
+/* SSE 断连细条：与工单页 .sse-banner 同一模式 */
+view-dispositions .sse-banner {
+  background: #fef3c7;
+  color: #92400e;
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  border-radius: var(--radius-sm, 6px);
+  font-size: 12px;
+  margin-bottom: var(--space-3, 12px);
+}
+
 view-dispositions .j-row1 {
   display: flex;
   align-items: baseline;
@@ -306,6 +321,13 @@ view-dispositions .j-ev-actions {
   margin-bottom: var(--space-2);
   font-size: 12px;
   color: var(--muted-foreground);
+}
+
+/* 证据加载中骨架 / 失败内联重试 */
+view-dispositions .j-ev-pending,
+view-dispositions .j-ev-error {
+  font-size: 12px;
+  color: var(--muted-strong);
 }
 
 view-dispositions .j-ev-meta {
