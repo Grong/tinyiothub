@@ -215,6 +215,7 @@ pub fn alarm_investigation_text(alarm: &tinyiothub_core::models::event::AlarmEve
         "调查报警并给出处置判断。报警：{}（设备 {}，类型 {}，级别 {}）。{}\
          请查询设备状态与近期事件后判断：noise（正常波动/无需处理）/ \
          self_healable（可自愈，给出建议动作）/ needs_human（需要人工介入）。\
+         全部输出必须使用中文。\
          结束前输出一行结构化结论：```json {{\"verdict\": \"...\", \"reason\": \"一句人话理由\", \
          \"suggested_action\": \"建议动作或 null\", \"action_category\": \"device_reboot|connection_recovery|property_adjust|threshold_tuning|other\"}}```",
         alarm.message, alarm.thing_id, alarm.alarm_type, alarm.severity, condition
