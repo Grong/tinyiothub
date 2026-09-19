@@ -1142,8 +1142,11 @@ mod tests {
         for _ in 0..3 {
             ids.push(db.insert_judgment("ws1", None, None, None, "annotate").await.unwrap());
         }
-        // 强制同秒（模拟报警风暴/种子脚本）
-        sqlx::query("UPDATE judgments SET created_at = '2026-09-14T01:00:00+00:00'")
+        // 强制同秒（模拟报警风暴/种子脚本）；以当前时间为锚——feed 查询有
+        // 48h 窗口（created_at >= now-48h），硬编码历史日期会随时间漂移出窗口
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("UPDATE judgments SET created_at = ?")
+            .bind(&now)
             .execute(db.pool())
             .await
             .unwrap();
@@ -1203,13 +1206,18 @@ mod tests {
             .insert_judgment("ws1", Some("a2"), None, Some("t1"), "annotate")
             .await
             .unwrap();
-        // 显式递增时间戳（不靠 wall-clock sleep——同文件 tuple_cursor 测试同款）
-        sqlx::query("UPDATE judgments SET created_at = '2026-09-14T01:00:00+00:00' WHERE id = ?")
+        // 显式递增时间戳（不靠 wall-clock sleep——同文件 tuple_cursor 测试同款）；
+        // 以当前时间为锚——feed 查询有 48h 窗口，硬编码历史日期会漂移出窗口
+        let t1 = (Utc::now() - chrono::Duration::minutes(2)).to_rfc3339();
+        let t2 = (Utc::now() - chrono::Duration::minutes(1)).to_rfc3339();
+        sqlx::query("UPDATE judgments SET created_at = ? WHERE id = ?")
+            .bind(&t1)
             .bind(&j1)
             .execute(db.pool())
             .await
             .unwrap();
-        sqlx::query("UPDATE judgments SET created_at = '2026-09-14T01:01:00+00:00' WHERE id = ?")
+        sqlx::query("UPDATE judgments SET created_at = ? WHERE id = ?")
+            .bind(&t2)
             .bind(&j2)
             .execute(db.pool())
             .await

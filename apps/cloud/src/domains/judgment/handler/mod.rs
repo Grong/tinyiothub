@@ -248,6 +248,14 @@ async fn redispatch_investigation(state: &AppState, judgment: &tinyiothub_storag
         return;
     };
     let severity = alarm.alarm_level.as_str().to_string();
+    // 与 enter_disposition 同口径：调查指令携带规则条件，AI 不猜阈值
+    let condition_desc = match alarm.rule_id.as_deref() {
+        Some(rid) => match state.db.find_alarm_rule_by_id(rid).await {
+            Ok(Some(rule)) => Some(crate::domains::alarm::service::describe_condition(&rule.condition)),
+            _ => None,
+        },
+        None => None,
+    };
     let ai_alarm = tinyiothub_core::models::event::AlarmEvent {
         id: alarm_id,
         workspace_id: judgment.workspace_id.clone(),
@@ -256,6 +264,7 @@ async fn redispatch_investigation(state: &AppState, judgment: &tinyiothub_storag
         severity,
         message: alarm.message.clone(),
         rule_id: alarm.rule_id.clone(),
+        condition_desc,
         resolved: false,
         created_at: alarm.alarm_time,
     };
@@ -349,9 +358,15 @@ async fn approve_judgment(
         judgment.action_category.as_deref(),
         judgment.thing_id.as_deref(),
     );
+    // 证据契约 v2：新行写完整 summary，老行是 excerpt——都认，截 300 字符进 prompt。
     let evidence_excerpt = serde_json::from_str::<serde_json::Value>(&judgment.evidence_json)
         .ok()
-        .and_then(|v| v.get("excerpt").and_then(|e| e.as_str()).map(str::to_string))
+        .and_then(|v| {
+            v.get("summary")
+                .or_else(|| v.get("excerpt"))
+                .and_then(|e| e.as_str())
+                .map(str::to_string)
+        })
         .map(|e| e.chars().take(300).collect::<String>())
         .unwrap_or_default();
     let signal = tinyiothub_agent::runtime::thing_agent::types::WakeSignal {

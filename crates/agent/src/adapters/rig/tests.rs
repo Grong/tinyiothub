@@ -84,6 +84,67 @@ fn canonical_flatten_round_trip_assistant_tool_call_turn() {
     }
 }
 
+// ── 工具配对清洗（recall 窗口切对事故，2026-09-16）──────────────
+
+/// 孤儿 tool_result（配对的 tool_call 掉出 recall 窗口）整条丢弃——
+/// 实测：MiniMax 400 "tool result's tool id not found"，所有 run turn 1 全灭。
+#[test]
+fn sanitize_drops_orphan_tool_result() {
+    use crate::adapters::rig::provider::sanitize_tool_pairing;
+    use crate::port::provider::ChatMessage;
+
+    let port = vec![
+        ChatMessage::user("调查报警"),
+        ChatMessage::tool(r#"{"content":"{\"value\":21}","tool_call_id":"call_orphan"}"#),
+        ChatMessage::assistant(r#"{"content":"结论","tool_calls":[]}"#),
+    ];
+    let out = sanitize_tool_pairing(port);
+    assert_eq!(out.len(), 2, "孤儿 tool_result 必须丢弃");
+    assert!(out.iter().all(|m| m.role != "tool"));
+}
+
+/// 孤儿 tool_call（窗口内无对应 result）从 assistant 消息摘除；
+/// 消息仍有文本时保留，只剩孤儿 call 时整条丢弃。
+#[test]
+fn sanitize_prunes_orphan_tool_call() {
+    use crate::adapters::rig::provider::sanitize_tool_pairing;
+    use crate::port::provider::ChatMessage;
+
+    // 有文本的 assistant：摘掉孤儿 call，消息保留
+    let with_text = vec![
+        ChatMessage::user("调查报警"),
+        ChatMessage::assistant(
+            r#"{"content":"先查一下","tool_calls":[{"arguments":"{}","id":"call_gone","name":"read_property"}]}"#,
+        ),
+    ];
+    let out = sanitize_tool_pairing(with_text);
+    assert_eq!(out.len(), 2, "user + 摘除孤儿 call 后的 assistant 都保留");
+    let v: serde_json::Value = serde_json::from_str(&out[1].content).unwrap();
+    assert_eq!(v["tool_calls"].as_array().unwrap().len(), 0, "孤儿 call 被摘除");
+    assert_eq!(v["content"].as_str(), Some("先查一下"));
+
+    // 只剩孤儿 call 的空壳：整条丢弃
+    let shell_only = vec![ChatMessage::assistant(
+        r#"{"content":null,"tool_calls":[{"arguments":"{}","id":"call_gone","name":"read_property"}]}"#,
+    )];
+    assert_eq!(sanitize_tool_pairing(shell_only).len(), 0);
+}
+
+/// 完整配对的 call+result 原样保留（不误伤）。
+#[test]
+fn sanitize_keeps_intact_pairs() {
+    use crate::adapters::rig::provider::sanitize_tool_pairing;
+    use crate::port::provider::ChatMessage;
+
+    let port = vec![
+        ChatMessage::assistant(
+            r#"{"content":"thinking","tool_calls":[{"arguments":"{}","id":"call_1","name":"read_property"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"content":"{\"value\":21}","tool_call_id":"call_1"}"#),
+    ];
+    assert_eq!(sanitize_tool_pairing(port).len(), 2, "完整配对不得误伤");
+}
+
 /// rig 结构化消息 → port canonical：纯文本 assistant 也走 JSON 形状
 /// （{"content":..., "tool_calls":[]}），assistant 同轮多条 tool call 合并为一条。
 #[test]

@@ -147,6 +147,7 @@ impl ServiceManager {
                 crate::shared::runtime_ports::ApprovalTimeoutAdapter {
                     db: (*app_state.db).clone(),
                     sse: app_state.sse_manager.clone(),
+                    alarm_service: app_state.alarm_service.clone(),
                 },
             ))));
             let cron_scheduler = tinyiothub_scheduler::CronSchedulerService::new(app_state.db.clone(), registry);
@@ -412,6 +413,42 @@ impl ServiceManager {
             // 对应工作区的 thing-agent 调度器。
             app_state.set_directive_sink(thing_agent_manager.clone());
 
+            // 启动补种（2026-09-16）：老工作区（早于 WorkspaceCreated 播种
+            // 功能）heartbeat_tasks 为 0，心跳循环永不启动（"No heartbeat
+            // tasks, skipping loop start"）——AI 巡检完全空转。0 任务时补种
+            // 默认任务：先写 DB，再 reload runner 内存真源，随后 start 不跳过。
+            for ws_id in &ws_ids {
+                match app_state.db.list_heartbeat_tasks(ws_id).await {
+                    Ok(tasks) if tasks.is_empty() => {
+                        let defaults: Vec<tinyiothub_core::heartbeat::NewHeartbeatTask> =
+                            crate::domains::agent::host::heartbeat::get_default_tasks()
+                                .into_iter()
+                                .map(|t| tinyiothub_core::heartbeat::NewHeartbeatTask {
+                                    priority: t.priority,
+                                    text: t.text,
+                                    paused: t.paused,
+                                })
+                                .collect();
+                        match app_state.db.replace_heartbeat_tasks(ws_id, &defaults).await {
+                            Ok(()) => match app_state.db.list_heartbeat_tasks(ws_id).await {
+                                Ok(seeded) => {
+                                    runtime.reload_heartbeat_tasks(ws_id, seeded);
+                                    info!(%ws_id, "seeded default heartbeat tasks at boot");
+                                }
+                                Err(e) => {
+                                    tracing::warn!(%ws_id, error = %e, "read back seeded heartbeat tasks failed")
+                                }
+                            },
+                            Err(e) => {
+                                tracing::warn!(%ws_id, error = %e, "seed default heartbeat tasks failed")
+                            }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(%ws_id, error = %e, "list heartbeat tasks failed"),
+                }
+            }
+
             // Start heartbeat loops for existing workspaces（内存真源已由
             // restore 预热：tasks 非空，start 不再跳过）。
             for ws_id in &ws_ids {
@@ -419,6 +456,12 @@ impl ServiceManager {
                 thing_agent_manager.start(ws_id);
             }
             info!("✅ AI Orchestrator started ({} workspaces)", ws_ids.len());
+
+            // Boot race 恢复：AI 接线完成前创建的报警（publisher 未接线时
+            // AlarmCreated 被丢弃）留下的 investigating judgment 重派调查。
+            for ws_id in &ws_ids {
+                app_state.alarm_service.redispatch_pending_investigations(ws_id).await;
+            }
 
             // Store in ServiceManager for shutdown
             self.orchestrator = Some(orchestrator);

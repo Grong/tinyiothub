@@ -59,6 +59,7 @@ async fn judgment_eval_verdict_accuracy() {
             severity: "warning".to_string(),
             message: s.facts.clone(),
             rule_id: Some(format!("eval-rule-{}", s.id)),
+            condition_desc: None,
             resolved: false,
             created_at: chrono::Utc::now(),
         };

@@ -353,14 +353,18 @@ async fn judge(
     payload: &VerdictPayload,
     used_fallback: bool,
 ) -> bool {
-    // F11 证据契约 P0 版：调查 run 的摘要截取作为证据来源（属性快照/事件列表
-    // 的结构化提取在 P1 再做）。T-15/C3：宽松解析命中时打 parse_fallback
-    // 标记——feed 可见、可统计，格式漂移有观测面。
-    let summary_excerpt: String = report.summary.chars().take(500).collect();
+    // F11 证据契约 v2（2026-09-16）：证据 = 完整审计记录，不截断不剥离——
+    // 存 summary 原文 + 动作记录 + run 元信息；think 块/verdict 协议块的
+    // 结构化呈现（折叠/分层）是渲染层职责（web 端 renderEvidence）。
+    // T-15/C3：宽松解析命中时打 parse_fallback 标记——feed 可见、可统计。
     let evidence = serde_json::json!({
         "source": "run_summary",
         "run_id": report.run_id,
-        "excerpt": summary_excerpt,
+        "summary": report.summary,
+        "actions": report.actions,
+        "tool_calls": report.tool_calls,
+        "duration_ms": report.duration_ms,
+        "tokens": report.tokens,
         "parse_fallback": used_fallback,
     })
     .to_string();

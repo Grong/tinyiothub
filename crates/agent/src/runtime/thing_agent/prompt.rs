@@ -89,9 +89,10 @@ pub fn build_prompt(
     // 3. 纪律段（固定文案）
     out.push_str(
         "\n\n行动纪律：\n\
-         1. 行动前先用 get_thing_profile 了解现状。\n\
-         2. invoke_action 后必须用 read_property 或 query_events 回读验证，未验证不得宣称完成。\n\
-         3. 做不到就如实报告，禁止虚报成功。",
+         1. 全部输出（分析、结论、理由、动作建议）必须使用中文，禁止英文。\n\
+         2. 行动前先用 get_thing_profile 了解现状。\n\
+         3. invoke_action 后必须用 read_property 或 query_events 回读验证，未验证不得宣称完成。\n\
+         4. 做不到就如实报告，禁止虚报成功。",
     );
 
     // 4. 边界段
@@ -257,9 +258,10 @@ mod tests {
     }
 
     const DISCIPLINE: &str = "行动纪律：\n\
-        1. 行动前先用 get_thing_profile 了解现状。\n\
-        2. invoke_action 后必须用 read_property 或 query_events 回读验证，未验证不得宣称完成。\n\
-        3. 做不到就如实报告，禁止虚报成功。";
+        1. 全部输出（分析、结论、理由、动作建议）必须使用中文，禁止英文。\n\
+        2. 行动前先用 get_thing_profile 了解现状。\n\
+        3. invoke_action 后必须用 read_property 或 query_events 回读验证，未验证不得宣称完成。\n\
+        4. 做不到就如实报告，禁止虚报成功。";
 
     #[test]
     fn snapshot_event_trigger() {

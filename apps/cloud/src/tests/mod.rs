@@ -12,6 +12,7 @@ mod alarm_disposition_tests;
 mod alarm_handler_tests;
 mod auth_handler_tests;
 mod batch_handler_tests;
+mod brain_event_tests;
 mod chat_handler_tests;
 mod cron_handler_tests;
 mod device_handler_tests;

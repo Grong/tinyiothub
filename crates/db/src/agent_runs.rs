@@ -131,6 +131,28 @@ pub(crate) async fn recent_runs_by_dedup_key(
         .collect()
 }
 
+/// 某 problem_key 的最新 RunReport（SLA sweep 对账用：调查 judgment 卡住时
+/// 从已完成的 run 恢复投影——事件丢失（Lagged/重启间隙）不该让判断永远
+/// 卡在 investigating）。
+pub(crate) async fn latest_run_report_by_problem_key(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    problem_key: &str,
+) -> Result<Option<RunReport>> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT report FROM agent_runs
+             WHERE workspace_id = ? AND problem_key = ?
+             ORDER BY created_at DESC, rowid DESC
+             LIMIT 1",
+    )
+    .bind(workspace_id)
+    .bind(problem_key)
+    .fetch_optional(pool)
+    .await?;
+    row.map(|(json,)| serde_json::from_str::<RunReport>(&json).map_err(Into::into))
+        .transpose()
+}
+
 pub(crate) async fn ack_run(pool: &SqlitePool, run_id: &str, actor: &str) -> Result<bool> {
     // 幂等：仅首认生效（acked_at IS NULL），重复确认/不存在 rows_affected = 0。
     let result = sqlx::query(
@@ -252,6 +274,15 @@ impl Db {
         limit: u32,
     ) -> Result<Vec<RunReport>> {
         recent_runs_by_dedup_key(self.pool(), workspace_id, key, limit).await
+    }
+
+    /// 某 problem_key 的最新 RunReport（SLA sweep 对账恢复用）。
+    pub async fn latest_agent_run_report_by_problem_key(
+        &self,
+        workspace_id: &str,
+        problem_key: &str,
+    ) -> Result<Option<RunReport>> {
+        latest_run_report_by_problem_key(self.pool(), workspace_id, problem_key).await
     }
 
     /// 幂等确认 run（仅首认生效；返回是否本次写入）。
