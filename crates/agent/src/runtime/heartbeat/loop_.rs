@@ -328,8 +328,14 @@ mod tests {
         let task = sample_task();
         let prompt = build_heartbeat_prompt("ws", &[&task], &TrustConfig::default());
         assert!(prompt.contains("工具调用预算"), "prompt must state the tool budget");
-        assert!(prompt.contains("异常项才逐个查详情"), "prompt must require anomaly-first reads");
-        assert!(prompt.contains("全部输出使用中文"), "prompt must require Chinese output");
+        assert!(
+            prompt.contains("异常项才逐个查详情"),
+            "prompt must require anomaly-first reads"
+        );
+        assert!(
+            prompt.contains("全部输出使用中文"),
+            "prompt must require Chinese output"
+        );
     }
 
     #[tokio::test]
