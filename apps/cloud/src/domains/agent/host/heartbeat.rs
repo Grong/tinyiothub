@@ -38,7 +38,7 @@ pub(crate) fn get_default_tasks() -> Vec<HeartbeatTask> {
         },
         HeartbeatTask {
             priority: "medium".into(),
-            text: "生成设备状态日报摘要".into(),
+            text: "生成设备状态摘要（聚焦异常与离线设备，正常设备一行带过，不逐台深挖）".into(),
             paused: false,
         },
         HeartbeatTask {
