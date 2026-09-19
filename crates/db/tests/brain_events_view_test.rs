@@ -225,3 +225,43 @@ async fn projection_matches_sources_exactly(pool: sqlx::SqlitePool) {
         .unwrap();
     assert_eq!(status, "patrol_ok");
 }
+
+/// 回归（2026-09-19 live 实测）：提案行 tick_id 恒 NULL，证据锚行连接必须用
+/// created_at（同一 tick 的锚行/提案行共享）；patrol 的 suggested_action 置
+/// NULL（title 即建议，英文工具名不上界面）。
+#[sqlx::test]
+async fn patrol_evidence_joins_on_created_at_and_suggestion_is_null(pool: sqlx::SqlitePool) {
+    tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+        .await
+        .unwrap();
+
+    // 同一 tick：锚行（summary，有 tick_id）+ 提案行（tick_id NULL——写入方实情）
+    sqlx::query(
+        "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, tick_id, created_at) \
+         VALUES ('s1', 'ws1', 'agent1', 'patrol', 'summary', '{\"result\":\"巡检发现仓库湿度偏高\"}', 'tick-a', '2026-09-19 03:34:37')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, tick_id, created_at) \
+         VALUES ('a1', 'ws1', 'agent1', 'patrol', 'proposal', \
+         '{\"proposalId\":\"p1\",\"status\":\"pending\",\"toolName\":\"update_threshold\",\"thingId\":\"t1\",\"summary\":\"建议调整湿度阈值\",\"reason\":\"偏高\",\"risk\":\"low\",\"parameters\":{}}', \
+         NULL, '2026-09-19 03:34:37')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let (evidence, suggested): (String, Option<String>) = sqlx::query_as(
+        "SELECT evidence_json, suggested_action FROM brain_events WHERE id = 'patrol:p1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        evidence.contains("巡检发现仓库湿度偏高"),
+        "证据必须命中同 tick 锚行（created_at 连接），实际: {evidence}"
+    );
+    assert!(suggested.is_none(), "patrol 的 suggested_action 必须为 NULL（title 即建议），实际: {suggested:?}");
+}

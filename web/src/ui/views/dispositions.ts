@@ -523,11 +523,13 @@ export class DispositionsView extends LitElement {
           <span class="j-time">${fmtJudgmentTime(ev.createdAt)}</span>
         </div>
         <p class="j-reason">${ev.reason || (ev.status === "investigating" ? "AI 正在查证…" : "")}</p>
+        ${ev.suggestedAction
+          ? html`<p class="j-suggestion">建议：${ev.suggestedAction}</p>`
+          : nothing}
 
         ${ev.status === "awaiting_approval"
           ? html`
               <div class="j-actions" @click=${(e: Event) => e.stopPropagation()}>
-                ${ev.suggestedAction ? html`<span class="disp-sub">建议：${ev.suggestedAction}</span>` : nothing}
                 <button class="btn primary btn-small" ?disabled=${pending} @click=${() => this.approve(ev)}>批准执行</button>
                 <button class="btn btn-small" ?disabled=${pending} @click=${() => this.reject(ev)}>拒绝</button>
                 ${canEvidence
