@@ -253,15 +253,17 @@ async fn patrol_evidence_joins_on_created_at_and_suggestion_is_null(pool: sqlx::
     .await
     .unwrap();
 
-    let (evidence, suggested): (String, Option<String>) = sqlx::query_as(
-        "SELECT evidence_json, suggested_action FROM brain_events WHERE id = 'patrol:p1'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let (evidence, suggested): (String, Option<String>) =
+        sqlx::query_as("SELECT evidence_json, suggested_action FROM brain_events WHERE id = 'patrol:p1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(
         evidence.contains("巡检发现仓库湿度偏高"),
         "证据必须命中同 tick 锚行（created_at 连接），实际: {evidence}"
     );
-    assert!(suggested.is_none(), "patrol 的 suggested_action 必须为 NULL（title 即建议），实际: {suggested:?}");
+    assert!(
+        suggested.is_none(),
+        "patrol 的 suggested_action 必须为 NULL（title 即建议），实际: {suggested:?}"
+    );
 }
