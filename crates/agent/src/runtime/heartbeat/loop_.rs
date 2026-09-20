@@ -236,7 +236,10 @@ fn build_heartbeat_prompt(workspace_id: &str, tasks: &[&HeartbeatTask], trust_co
          工具调用预算约 {budget} 次/本 tick，超支会被强制取消（上次失败即此因）。\n\
          - 优先汇总/批量查询：先拉设备列表与近期事件总览，**异常项才逐个查详情**，禁止无目的逐设备全量读取。\n\
          - 设备状态摘要聚焦异常与离线设备；正常设备一行带过，不逐台深挖。\n\
-         - 全部输出使用中文。\n\n\
+         - 全部输出使用中文。\n\
+         - 提案的 tool_name 必须来自你本轮实际可用的本体工具（如 invoke_action、read_property、\n\
+           query_events、get_thing_profile、list_things、search_knowledge）；不得使用对话/编排\n\
+           类工具（如 dispatch_thing_task）或编造工具名——编造的提案批准时会执行失败并自动拒绝。\n\n\
          逐项执行任务，输出 JSON 报告：\n\
          ```json\n\
          {{\n  \"status\": \"complete|partial|error\",\n  \
@@ -335,6 +338,10 @@ mod tests {
         assert!(
             prompt.contains("全部输出使用中文"),
             "prompt must require Chinese output"
+        );
+        assert!(
+            prompt.contains("不得使用对话/编排"),
+            "prompt must ban orchestration/meta tools in proposals"
         );
     }
 

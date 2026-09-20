@@ -564,10 +564,34 @@ async fn approve_and_execute(
     let thing_id = parsed["thingId"].as_str().map(str::to_string);
     let params = parsed.get("parameters").cloned().unwrap_or(serde_json::json!({}));
 
-    let handler = registry
-        .get_handler(&tool_name)
-        .await
-        .ok_or_else(|| format!("工具未注册: {}", tool_name))?;
+    let handler = match registry.get_handler(&tool_name).await {
+        Some(h) => h,
+        None => {
+            // 提案引用了不可执行的工具（LLM 幻觉工具名，如 dispatch_thing_task——
+            // 2026-09-20 实测）：自动拒绝并留痕，不让它永远挂在待审批队列里
+            // 报同一个错。
+            let reason = format!("工具 {tool_name} 不在可执行注册表中");
+            let mut rejected = parsed.clone();
+            rejected["status"] = serde_json::json!("rejected");
+            rejected["reject_reason"] = serde_json::json!(reason);
+            if let Err(e) = db.update_agent_action_content(&id, &rejected.to_string()).await {
+                tracing::warn!(%workspace_id, %proposal_id, error = %e, "auto-reject unregistered-tool proposal failed");
+            }
+            let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+            let outcome_content = serde_json::json!({
+                "tool": tool_name,
+                "thingId": thing_id,
+                "summary": reason,
+                "success": false,
+                "source": "unregistered_tool",
+                "proposalId": proposal_id,
+            });
+            let _ = db
+                .insert_agent_heartbeat_outcome(workspace_id, outcome_content.to_string(), &now)
+                .await;
+            return Err(format!("提案已自动拒绝：{reason}"));
+        }
+    };
 
     // Atomic flip: only a row still pending transitions, so a second approve
     // affects 0 rows and never re-executes.
@@ -921,6 +945,60 @@ mod tests {
         let result = approve_and_execute(&pool, "ws_1", "nope", &registry).await;
         assert!(result.is_err());
         assert!(calls.lock().unwrap().is_empty());
+    }
+
+    /// 回归（2026-09-20 实测）：LLM 幻觉工具名的提案（如 dispatch_thing_task）
+    /// 在批准时抛「工具未注册」裸错误且提案永远卡在 pending。现在自动拒绝
+    /// 并留痕（outcome 行 source=unregistered_tool）。
+    #[tokio::test]
+    async fn approve_unregistered_tool_auto_rejects_proposal() {
+        let pool = test_pool().await;
+        // 提案引用注册表里没有的工具（seed_proposal 的 write_properties 在
+        // TestRegistry 里注册；dispatch_thing_task 不在）
+        let content = serde_json::json!({
+            "proposalId": "p-hallucinated",
+            "status": "pending",
+            "toolName": "dispatch_thing_task",
+            "thingId": "dev_1",
+            "summary": "派发任务",
+            "reason": "巡检发现",
+            "risk": "medium",
+            "parameters": {},
+        });
+        sqlx::query(
+            "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at) \
+             VALUES (?, 'ws_1', '__heartbeat__:ws_1', 'heartbeat', 'proposal', ?, '2026-09-20 07:00:00')",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(content.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let handler = RecordingHandler {
+            calls: Arc::new(Mutex::new(vec![])),
+            fail: false,
+        };
+        let calls = handler.calls.clone();
+        let registry = registry_with(handler);
+
+        let result = approve_and_execute(&pool, "ws_1", "p-hallucinated", &registry).await;
+        let err = result.expect_err("unregistered tool must error");
+        assert!(err.contains("提案已自动拒绝"), "错误应说明自动拒绝: {err}");
+        assert!(calls.lock().unwrap().is_empty(), "未注册工具不得执行");
+
+        // 提案已拒绝（不再卡 pending 报同一个错）
+        assert_eq!(proposal_status(&pool, "p-hallucinated").await, "rejected");
+        // 留痕：outcome 行记录来源与原因
+        let (content,): (String,) =
+            sqlx::query_as("SELECT content FROM agent_actions WHERE action_type = 'auto_executed'")
+                .fetch_one(&pool)
+                .await
+                .expect("outcome row");
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["success"], false);
+        assert_eq!(parsed["source"].as_str().unwrap(), "unregistered_tool");
+        assert!(parsed["summary"].as_str().unwrap().contains("不在可执行注册表"));
     }
 
     #[test]
