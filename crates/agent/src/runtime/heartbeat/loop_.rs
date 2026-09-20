@@ -228,16 +228,16 @@ fn build_heartbeat_prompt(workspace_id: &str, tasks: &[&HeartbeatTask], trust_co
         .join("\n");
 
     format!(
-        "You are an IoT heartbeat agent for workspace {ws_id}.\n\
-         Trust level: {trust:?}\n\
-         Max auto-actions per tick: {max}\n\n\
-         ## Tasks:\n{tasks}\n\n\
+        "你是工作区 {ws_id} 的 IoT 巡检 Agent。\n\
+         信任级别：{trust:?}\n\
+         每次 tick 最多自动执行动作数：{max}\n\n\
+         ## 任务：\n{tasks}\n\n\
          ## 预算与纪律（重要）：\n\
          工具调用预算约 {budget} 次/本 tick，超支会被强制取消（上次失败即此因）。\n\
          - 优先汇总/批量查询：先拉设备列表与近期事件总览，**异常项才逐个查详情**，禁止无目的逐设备全量读取。\n\
          - 设备状态摘要聚焦异常与离线设备；正常设备一行带过，不逐台深挖。\n\
          - 全部输出使用中文。\n\n\
-         Execute each task. Output a JSON report:\n\
+         逐项执行任务，输出 JSON 报告：\n\
          ```json\n\
          {{\n  \"status\": \"complete|partial|error\",\n  \
          \"summary\": \"...\",\n  \
