@@ -2,7 +2,6 @@
 
 use tinyiothub_core::heartbeat::{HeartbeatTask, TrustConfig};
 
-use crate::port::runtime::MAX_LOOP_TURNS;
 use crate::prompt::constitution::CONSTITUTION;
 
 /// 组装巡检 tick 提示词：任务列表 + 工作区原则（用户文件层，空串省略）+
