@@ -178,7 +178,8 @@ async fn run_heartbeat_tick(
     event_publisher: &AiEventPublisher,
     metrics: &Metrics,
 ) -> Result<(), String> {
-    let prompt = build_heartbeat_prompt(workspace_id, tasks, trust_config);
+    let principles = crate::prompt::workspace::load_principles(workspace_id);
+    let prompt = crate::prompt::heartbeat::build_heartbeat_prompt(workspace_id, &principles, tasks, trust_config);
 
     let started = std::time::Instant::now();
     let output = match tokio::time::timeout(TICK_TIMEOUT, agent_pool.send_message(workspace_id, &prompt)).await {
@@ -218,41 +219,6 @@ async fn run_heartbeat_tick(
     });
 
     Ok(())
-}
-
-fn build_heartbeat_prompt(workspace_id: &str, tasks: &[&HeartbeatTask], trust_config: &TrustConfig) -> String {
-    let tasks_text: String = tasks
-        .iter()
-        .map(|t| format!("- [{}] {}", t.priority, crate::memory::reflect::sanitize_input(&t.text)))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    format!(
-        "你是工作区 {ws_id} 的 IoT 巡检 Agent。\n\
-         信任级别：{trust:?}\n\
-         每次 tick 最多自动执行动作数：{max}\n\n\
-         ## 任务：\n{tasks}\n\n\
-         ## 预算与纪律（重要）：\n\
-         工具调用预算约 {budget} 次/本 tick，超支会被强制取消（上次失败即此因）。\n\
-         - 优先汇总/批量查询：先拉设备列表与近期事件总览，**异常项才逐个查详情**，禁止无目的逐设备全量读取。\n\
-         - 设备状态摘要聚焦异常与离线设备；正常设备一行带过，不逐台深挖。\n\
-         - 全部输出使用中文。\n\
-         - 提案的 tool_name 必须来自你本轮实际可用的本体工具（如 invoke_action、read_property、\n\
-           query_events、get_thing_profile、list_things、search_knowledge）；不得使用对话/编排\n\
-           类工具（如 dispatch_thing_task）或编造工具名——编造的提案批准时会执行失败并自动拒绝。\n\n\
-         逐项执行任务，输出 JSON 报告：\n\
-         ```json\n\
-         {{\n  \"status\": \"complete|partial|error\",\n  \
-         \"summary\": \"...\",\n  \
-         \"executed_actions\": [{{\"tool_name\": \"...\", \"thing_id\": \"...\", \"success\": true, \"details\": \"...\"}}],\n  \
-         \"proposals\": [{{\"tool_name\": \"...\", \"thing_id\": \"...\", \"summary\": \"...\", \"reason\": \"...\", \"risk\": \"low|medium|high\", \"parameters\": {{...}}}}],\n  \
-         \"error\": null\n}}\n```",
-        ws_id = workspace_id,
-        trust = trust_config.trust_level,
-        max = trust_config.max_auto_actions_per_tick,
-        budget = crate::port::runtime::MAX_LOOP_TURNS,
-        tasks = tasks_text
-    )
 }
 
 #[cfg(test)]
@@ -310,39 +276,6 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
-    }
-
-    #[test]
-    fn prompt_asks_proposals_for_parameters() {
-        // Without parameters the approve-and-execute flow has nothing to run.
-        let task = sample_task();
-        let prompt = build_heartbeat_prompt("ws", &[&task], &TrustConfig::default());
-        assert!(
-            prompt.contains("\"parameters\""),
-            "proposal schema in the prompt must request tool parameters"
-        );
-    }
-
-    #[test]
-    fn prompt_is_budget_aware_and_chinese_only() {
-        // 回归（2026-09-19 实测）：tick 因 LLM 逐设备全量读取烧穿 25 次工具预算
-        // 被取消（PromptCancelled: tool call budget exceeded）。提示词必须让
-        // LLM 预算自知并要求聚合读取 + 中文输出。
-        let task = sample_task();
-        let prompt = build_heartbeat_prompt("ws", &[&task], &TrustConfig::default());
-        assert!(prompt.contains("工具调用预算"), "prompt must state the tool budget");
-        assert!(
-            prompt.contains("异常项才逐个查详情"),
-            "prompt must require anomaly-first reads"
-        );
-        assert!(
-            prompt.contains("全部输出使用中文"),
-            "prompt must require Chinese output"
-        );
-        assert!(
-            prompt.contains("不得使用对话/编排"),
-            "prompt must ban orchestration/meta tools in proposals"
-        );
     }
 
     #[tokio::test]

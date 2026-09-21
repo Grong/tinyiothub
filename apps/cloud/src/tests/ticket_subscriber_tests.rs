@@ -184,7 +184,7 @@ fn title_strips_trigger_prefix_and_truncates() {
 #[tokio::test]
 async fn closure_chain_resolution_flows_into_next_prompt() {
     use crate::domains::agent::host::ports::DbTicketResolutionProvider;
-    use tinyiothub_agent::runtime::thing_agent::prompt::build_prompt;
+    use tinyiothub_agent::prompt::runtime::build_prompt;
     use tinyiothub_agent::runtime::thing_agent::traits::TicketResolutionProvider;
     use tinyiothub_agent::runtime::thing_agent::types::{Priority, TriggerSource, WakeSignal};
 
@@ -227,7 +227,7 @@ async fn closure_chain_resolution_flows_into_next_prompt() {
         },
         dedup_key: Some("thing:t1:event:temp_high".to_string()),
     };
-    let prompt = build_prompt(&signal, &[], &[], &["reboot".to_string()], &resolutions);
+    let prompt = build_prompt(&signal, "", &[], &[], &["reboot".to_string()], &resolutions);
     assert!(prompt.contains("<ticket_resolutions>"));
     assert!(prompt.contains("现场更换轴承 NSK-6205"), "解法应出现在 prompt 里");
     assert!(prompt.contains("不可信人工输入"), "注入段必须带不可信标注");

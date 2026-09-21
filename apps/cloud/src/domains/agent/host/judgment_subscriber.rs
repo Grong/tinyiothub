@@ -15,7 +15,7 @@
 //! parse_fallback 标记（可统计可观测），注入面由 action_category 白名单
 //! 与服务端动作模板托底。
 //!
-//! 调查指令是"只调查不执行"（callbacks.rs alarm_investigation_text），执行
+//! 调查指令是"只调查不执行"（prompt::investigation::alarm_investigation_text），执行
 //! 发生在审批通过后由 judgment approve 端点派发新 run——审批权在 judgment 域，
 //! 不掺入 thing-agent 的 proposal 体系。
 

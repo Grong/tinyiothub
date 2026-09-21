@@ -274,7 +274,7 @@ async fn redispatch_investigation(state: &AppState, judgment: &tinyiothub_storag
         priority: tinyiothub_agent::runtime::thing_agent::types::Priority::High,
         source: tinyiothub_agent::runtime::thing_agent::types::TriggerSource::UserDirective {
             user_id: "alarm-triage".to_string(),
-            text: tinyiothub_agent::runtime::orchestrator::callbacks::alarm_investigation_text(&ai_alarm),
+            text: tinyiothub_agent::prompt::investigation::alarm_investigation_text(&ai_alarm),
             session_key: None,
             source: Some("alarm".to_string()),
             problem_key: Some(format!("alarm:{}:{}", thing_id, rule_part)),
@@ -354,7 +354,8 @@ async fn approve_judgment(
     // 4A/T-3：动作文本由服务端模板按 action_category 生成——LLM 的
     // suggested_action 只做展示，不进执行指令（注入面收敛）。
     // 6A/T-4：exec prompt 携带调查上下文（判断理由 + 证据摘录）。
-    let action = tinyiothub_storage::judgment::exec_action_template(
+    // 模板已迁入 prompt 层（tinyiothub_agent::prompt::exec，2026-09-20 提示词收敛）。
+    let action = tinyiothub_agent::prompt::exec::exec_action_template(
         judgment.action_category.as_deref(),
         judgment.thing_id.as_deref(),
     );

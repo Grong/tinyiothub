@@ -139,17 +139,6 @@ pub(crate) fn allowed_transition(from: JudgmentStatus, to: JudgmentStatus) -> bo
 
 /// 动作白名单（4A/T-3）：exec prompt 的动作文本由服务端模板按类别生成，
 /// LLM 的 suggested_action 只做展示、不进执行指令（注入面收敛到枚举本身）。
-pub fn exec_action_template(category: Option<&str>, thing_id: Option<&str>) -> String {
-    let thing = thing_id.unwrap_or("目标设备");
-    match category {
-        Some("device_reboot") => format!("重启设备 {thing}"),
-        Some("connection_recovery") => format!("恢复设备 {thing} 的连接（重连/重订阅）"),
-        Some("property_adjust") => format!("调整设备 {thing} 的属性设置"),
-        Some("threshold_tuning") => "调整报警规则阈值".to_string(),
-        _ => "按判断建议处置".to_string(),
-    }
-}
-
 /// action_category 归一化（白名单外 → other，避免 DB CHECK 失败让判断
 /// 卡 investigating，T-3）。
 pub fn normalize_action_category(category: Option<&str>) -> Option<String> {

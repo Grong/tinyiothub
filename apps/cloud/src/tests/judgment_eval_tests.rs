@@ -63,7 +63,7 @@ async fn judgment_eval_verdict_accuracy() {
             resolved: false,
             created_at: chrono::Utc::now(),
         };
-        let prompt = tinyiothub_agent::runtime::orchestrator::callbacks::alarm_investigation_text(&alarm);
+        let prompt = tinyiothub_agent::prompt::investigation::alarm_investigation_text(&alarm);
         let messages = [ChatMessage::user(prompt)];
         let resp = provider
             .chat(
