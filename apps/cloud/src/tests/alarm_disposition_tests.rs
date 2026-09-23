@@ -71,6 +71,26 @@ async fn warning_alarm_creates_investigating_judgment() {
     assert!(judgments[0].alarm_id.is_some());
 }
 
+/// 回归（2026-09-16）：历史报警缺 workspace_id（老规则遗留 NULL）时，
+/// enter_disposition 曾静默 return——处置流整体空转。现在从 thing 行回填
+/// 解析 workspace，judgment 落在 thing 所属 workspace。
+#[tokio::test]
+async fn alarm_without_workspace_falls_back_to_thing_workspace() {
+    let db = test_db().await;
+    let svc = AlarmService::new(db.clone());
+    let mut alarm = make_alarm(AlarmLevel::Warning);
+    alarm.workspace_id = None; // 模拟历史遗留：规则/报警无 workspace_id
+    svc.create_alarm(alarm).await.unwrap();
+
+    let judgments = db.list_judgments_feed("ws1", None, None, 10).await.unwrap();
+    assert_eq!(
+        judgments.len(),
+        1,
+        "workspace 从 thing 回填 → judgment 落在 thing 的 workspace"
+    );
+    assert_eq!(judgments[0].status, JudgmentStatus::Investigating);
+}
+
 /// T3：flapping 防抖——同 thing+rule 已有未终态判断时，新报警不再发起调查。
 #[tokio::test]
 async fn flapping_alarm_does_not_duplicate_judgment() {
@@ -128,6 +148,43 @@ async fn critical_alarm_escalates_directly_to_ticket() {
     let judgments = db.list_judgments_feed("ws1", None, None, 10).await.unwrap();
     assert_eq!(judgments.len(), 1);
     assert!(judgments[0].ticket_id.is_some(), "judgment linked to real ticket");
+}
+
+/// 回归（2026-09-16 日志实证）：Critical 报警缺 workspace_id（历史规则遗留
+/// NULL）时 escalation 曾直接拒绝（ERROR: refusing to escalate）——既无
+/// 调查也无工单。现在 enter_disposition 先回填归一化，直达工单不再被拒。
+#[tokio::test]
+async fn critical_alarm_without_workspace_still_escalates() {
+    use std::sync::Mutex;
+    struct SpyEscalation {
+        seen: Mutex<Vec<Option<String>>>,
+    }
+    #[async_trait::async_trait]
+    impl crate::domains::ticket::AlarmEscalation for SpyEscalation {
+        async fn escalate_alarm(&self, alarm: &Alarm) -> Option<i64> {
+            self.seen.lock().unwrap().push(alarm.workspace_id.clone());
+            None // 不真建工单；只断言 escalation 被调用且 ws 已回填
+        }
+    }
+
+    let db = test_db().await;
+    let svc = AlarmService::new(db.clone());
+    let spy = Arc::new(SpyEscalation {
+        seen: Mutex::new(vec![]),
+    });
+    svc.set_escalation(spy.clone());
+
+    let mut alarm = make_alarm(AlarmLevel::Critical);
+    alarm.workspace_id = None; // 模拟历史遗留
+    svc.create_alarm(alarm).await.unwrap();
+
+    assert_eq!(
+        spy.seen.lock().unwrap().as_slice(),
+        &[Some("ws1".to_string())],
+        "escalation 收到回填后的 workspace"
+    );
+    let judgments = db.list_judgments_feed("ws1", None, None, 10).await.unwrap();
+    assert_eq!(judgments.len(), 1, "judgment 同样落库");
 }
 
 /// T8：超日预算 → 报警不发起调查，judgment 落 budget_skipped 标记。

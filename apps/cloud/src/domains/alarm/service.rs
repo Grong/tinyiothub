@@ -51,7 +51,11 @@ impl AlarmService {
     }
 
     /// 发布 AlarmCreated 到 AI 总线（investigation dispatch 的触发信号）。
-    fn publish_alarm_created(&self, alarm: &Alarm) {
+    /// workspace_id 由调用方解析（含 thing 回填），保证下游 dispatch/dedup
+    /// 与 judgment 行同 workspace。condition_desc 随事件携带——调查指令直接
+    /// 拿到规则条件，AI 不用猜阈值（2026-09-16 实测三个 run 因缺阈值全
+    /// no_action_needed）。
+    fn publish_alarm_created(&self, alarm: &Alarm, workspace_id: &str, condition_desc: Option<String>) {
         let severity = match alarm.alarm_level {
             AlarmLevel::Critical => "critical",
             AlarmLevel::Error => "error",
@@ -60,17 +64,108 @@ impl AlarmService {
         };
         let ai_alarm = AlarmEvent {
             id: alarm.id.clone(),
-            workspace_id: alarm.workspace_id.clone().unwrap_or_else(|| alarm.thing_id.clone()),
+            workspace_id: workspace_id.to_string(),
             thing_id: alarm.thing_id.clone(),
             alarm_type: format!("{}", alarm.alarm_type),
             severity: severity.to_string(),
             message: alarm.message.clone(),
             rule_id: alarm.rule_id.clone(),
+            condition_desc,
             resolved: matches!(alarm.status, AlarmStatus::Resolved),
             created_at: alarm.alarm_time,
         };
         if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
             publisher.publish_alarm_created(ai_alarm);
+        } else {
+            // 启动竞态可观测化：驱动连接触发的早期报警会赶在 AI 总线接线前
+            // 到达（2026-09-16 实测：报警比 Orchestrator 就绪早 9ms，事件
+            // 静默丢失 → judgment 永久 investigating）。
+            tracing::warn!(alarm_id = %ai_alarm.id, thing_id = %ai_alarm.thing_id,
+                "AlarmCreated dropped: AI event publisher not wired yet (boot race)");
+        }
+    }
+
+    /// 装载报警规则的条件描述（调查指令用）；规则缺失/查询失败 → None，
+    /// 不阻断发布。
+    async fn load_condition_desc(&self, alarm: &Alarm) -> Option<String> {
+        let rule_id = alarm.rule_id.as_deref()?;
+        match self.db.find_alarm_rule_by_id(rule_id).await {
+            Ok(Some(rule)) => Some(describe_condition(&rule.condition)),
+            Ok(None) => None,
+            Err(e) => {
+                tracing::warn!(rule_id, error = %e, "rule condition load failed");
+                None
+            }
+        }
+    }
+
+    /// 解析报警所属 workspace：优先报警自带；缺失时从 thing 行回填（历史
+    /// 规则/报警缺 workspace_id 的兼容路径——2026-09-16 实测：老库规则
+    /// workspace_id 全 NULL，处置流曾因此整体静默空转）。
+    async fn resolve_workspace(&self, alarm: &Alarm) -> Option<String> {
+        if let Some(ws) = &alarm.workspace_id {
+            return Some(ws.clone());
+        }
+        match self.db.find_thing_row_by_id(&alarm.thing_id).await {
+            Ok(Some(thing)) => match thing.workspace_id {
+                Some(ws) => Some(ws),
+                None => {
+                    tracing::warn!(alarm_id = %alarm.id, thing_id = %alarm.thing_id, "alarm and thing both lack workspace_id");
+                    None
+                }
+            },
+            Ok(None) => {
+                tracing::warn!(alarm_id = %alarm.id, thing_id = %alarm.thing_id, "alarm lacks workspace_id and thing not found");
+                None
+            }
+            Err(e) => {
+                tracing::warn!(alarm_id = %alarm.id, thing_id = %alarm.thing_id, error = %e, "workspace fallback lookup failed");
+                None
+            }
+        }
+    }
+
+    /// 启动恢复（boot race 兜底）：AI 子系统接线前创建的报警，其
+    /// AlarmCreated 会被静默丢弃（publisher 未接线），judgment 永久卡在
+    /// investigating。AI 就绪后对 investigating 且无 run 挂接的判断重发
+    /// AlarmCreated——subscriber 按 thing+rule 匹配既有 judgment 不重复
+    /// 建行；重启后 O11 dedup 内存为空，不会误拦。
+    pub async fn redispatch_pending_investigations(&self, workspace_id: &str) {
+        let pending = match self
+            .db
+            .list_judgments_feed(
+                workspace_id,
+                Some(&[tinyiothub_storage::judgment::JudgmentStatus::Investigating]),
+                None,
+                50,
+            )
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(workspace_id, error = %e, "pending investigation scan failed");
+                return;
+            }
+        };
+        for j in pending.into_iter().filter(|j| j.run_id.is_none()) {
+            let Some(alarm_id) = j.alarm_id.clone() else {
+                continue;
+            };
+            match self.get_alarm_by_id(&alarm_id, None).await {
+                Ok(Some(alarm)) => {
+                    if let Some(ws) = self.resolve_workspace(&alarm).await {
+                        tracing::info!(judgment_id = %j.id, alarm_id, "redispatching boot-raced alarm investigation");
+                        let condition_desc = self.load_condition_desc(&alarm).await;
+                        self.publish_alarm_created(&alarm, &ws, condition_desc);
+                    }
+                }
+                Ok(None) => {
+                    tracing::warn!(judgment_id = %j.id, alarm_id, "alarm row missing for pending judgment");
+                }
+                Err(e) => {
+                    tracing::warn!(judgment_id = %j.id, error = %e, "redispatch alarm load failed");
+                }
+            }
         }
     }
 
@@ -91,8 +186,23 @@ impl AlarmService {
     /// 失败方向约定：闸门（kill switch/预算）fail toward 人工路径（安全）；
     /// 防抖查询失败 fail toward 继续调查（只费额度不漏报警）。
     async fn enter_disposition(&self, alarm: &Alarm) {
-        let Some(workspace_id) = alarm.workspace_id.clone() else {
+        // workspace 无法解析 = 放弃分诊（resolve_workspace 内部已按场景 warn；
+        // 此前这里静默 return，处置流整体空转——2026-09-16 实测 17 报警 0 判断）。
+        let Some(workspace_id) = self.resolve_workspace(alarm).await else {
             return;
+        };
+        // 回填后归一化：下游（严重级直达工单/事件发布）统一看到带 workspace
+        // 的报警——此前 escalation 拿到原始 None 直接拒绝，Critical 报警
+        // 既无调查也无工单（2026-09-16 日志实证）。
+        let alarm_owned;
+        let alarm = if alarm.workspace_id.is_some() {
+            alarm
+        } else {
+            alarm_owned = Alarm {
+                workspace_id: Some(workspace_id.clone()),
+                ..alarm.clone()
+            };
+            &alarm_owned
         };
 
         // 1. kill switch（fail-closed + 审计）
@@ -204,8 +314,10 @@ impl AlarmService {
             Err(e) => tracing::error!(alarm_id = %alarm.id, error = %e, "insert judgment failed"),
         }
 
-        // 发布给 AI 总线 → callbacks 直达 thing-agent dispatch（调查）
-        self.publish_alarm_created(alarm);
+        // 发布给 AI 总线 → callbacks 直达 thing-agent dispatch（调查）；
+        // 规则条件随事件携带（调查指令直接引用，AI 不猜阈值）
+        let condition_desc = self.load_condition_desc(alarm).await;
+        self.publish_alarm_created(alarm, &workspace_id, condition_desc);
     }
 
     /// 审计：kill switch / fail-closed 跳过的报警（T-11/L5——「哪些报警没被
@@ -725,7 +837,11 @@ impl RuleEngine {
                     .map(|last| last.elapsed() < suppress_duration)
                     .unwrap_or(false);
                 if throttled {
-                    non_triggered_rule_ids.push(rule.id.clone());
+                    // 节流 ≠ 未触发：条件仍满足，只是抑制重复告警。误标
+                    // non_triggered 会被 auto-resolve 当成「已恢复」——实测
+                    // （2026-09-16）：温度持续超限时每 60s 一条新报警、3s 后
+                    // 被节流路径误恢复。
+                    pending_trigger_rule_ids.push(rule.id.clone());
                     continue;
                 }
                 self.throttle.insert(throttle_key, Instant::now());
@@ -1013,8 +1129,10 @@ impl RuleEngine {
                 ..
             } => {
                 let Some(current) = context.get_numeric_value() else {
-                    // Non-numeric values: can't evaluate, treat as recovered
-                    return true;
+                    // 读数缺失/非数值 = 无法判定恢复，而不是「已恢复」——
+                    // 此前按 recovered 处理，传感器异常读数（"N/A"/"--"）
+                    // 会把活跃报警误恢复。
+                    return false;
                 };
                 if let Some(recovery_val) = recovery_threshold {
                     // Hysteresis: use the recovery threshold instead of trigger threshold.
@@ -1097,8 +1215,23 @@ impl RuleEngine {
         AlarmType::PropertyThreshold
     }
 
-    fn generate_message(&self, event: &Event, rule: &AlarmRule, _context: &EvaluationContext) -> String {
-        format!("{}: {}", rule.name, event.content().title())
+    /// 报警文案（2026-09-16 修正）：规则名 + 属性名 + 当前值 + 条件描述。
+    /// 此前拼接事件英文标题（"Property Changed: dev - temperature"），
+    /// 中英混杂且不含报警值——用户看不懂发生了什么。
+    fn generate_message(&self, _event: &Event, rule: &AlarmRule, context: &EvaluationContext) -> String {
+        let property_name = context
+            .metadata
+            .get("property_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("属性");
+        let current = context.current_value.as_deref().unwrap_or("-");
+        format!(
+            "{}：{} 当前值 {}（{}）",
+            rule.name,
+            property_name,
+            current,
+            describe_condition(&rule.condition)
+        )
     }
 
     fn extract_threshold(&self, condition: &AlarmCondition) -> Option<String> {
@@ -1119,6 +1252,44 @@ impl RuleEngine {
 
     pub async fn get_rule(&self, rule_id: &str) -> AlarmResult<Option<AlarmRule>> {
         self.db.find_alarm_rule_by_id(rule_id).await.map_err(AlarmError::from)
+    }
+}
+
+/// 报警文案用的条件描述（中文，面向用户）。
+/// 报警文案用的条件描述（中文，面向用户）。pub(crate)：judgment 重派路径
+///（handler 点错重开）复用同一描述，保证调查指令口径一致。
+pub(crate) fn describe_condition(condition: &AlarmCondition) -> String {
+    fn op_symbol(op: ComparisonOperator) -> &'static str {
+        match op {
+            ComparisonOperator::GreaterThan => ">",
+            ComparisonOperator::LessThan => "<",
+            ComparisonOperator::GreaterThanOrEqual => "≥",
+            ComparisonOperator::LessThanOrEqual => "≤",
+            ComparisonOperator::Equal => "=",
+            ComparisonOperator::NotEqual => "≠",
+        }
+    }
+    match condition {
+        AlarmCondition::Threshold { operator, value, .. } => format!("阈值 {} {}", op_symbol(*operator), value),
+        AlarmCondition::Range { min, max, .. } => {
+            let lo = min.map(|v| v.to_string()).unwrap_or_else(|| "-∞".into());
+            let hi = max.map(|v| v.to_string()).unwrap_or_else(|| "+∞".into());
+            format!("超出区间 [{}, {}]", lo, hi)
+        }
+        AlarmCondition::Change {
+            change_type, threshold, ..
+        } => {
+            let dir = match change_type {
+                ChangeType::Increase => "上升",
+                ChangeType::Decrease => "下降",
+                ChangeType::Any => "变化",
+            };
+            format!("短时{}超过 {}", dir, threshold)
+        }
+        AlarmCondition::Duration { condition, duration } => {
+            format!("{}，持续 {}s", describe_condition(condition), duration.as_secs())
+        }
+        AlarmCondition::Composite { .. } => "复合条件触发".to_string(),
     }
 }
 
@@ -2466,6 +2637,151 @@ mod integration_tests {
             active_count, 0,
             "Alarm should be auto-resolved when value returns to normal"
         );
+    }
+
+    /// 回归（2026-09-16 实测）：节流窗口内的重复上报不得自动恢复报警。
+    /// 温度持续超限：首次上报触发报警，60s 抑制窗内的第二次上报被节流——
+    /// 此前节流路径把规则错标为 non_triggered，auto-resolve 立刻把仍超限
+    /// 的报警「恢复」掉（表现：每分钟一条新报警、3s 后即恢复）。
+    #[sqlx::test]
+    async fn test_throttled_repeat_report_does_not_auto_resolve(pool: sqlx::SqlitePool) {
+        setup_full_schema(&pool).await;
+        let db = Arc::new(Db::new(pool.clone()));
+
+        sqlx::query("INSERT INTO things (id, name, workspace_id) VALUES ('dev-ar', 'AutoResolve Thing', 'ws-ar')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO thing_properties (id, thing_id, name) VALUES ('prop-ar', 'dev-ar', 'temperature')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // suppress_duration 缺省 → 默认 60s 节流窗
+        sqlx::query(
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, workspace_id, created_at, updated_at)
+             VALUES ('rule-ar1', 'dev-ar', 'prop-ar', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', 'ws-ar', datetime('now'), datetime('now'))",
+        ).execute(&pool).await.unwrap();
+
+        let alarm_service = Arc::new(AlarmService::new(db.clone()));
+        let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
+        let handler = AlarmEventHandler::new(alarm_service.clone(), notification_dispatcher);
+
+        // Step 1: 触发报警（85 > 80）
+        handler
+            .handle(&make_test_event("dev-ar", "prop-ar", "temperature", 85.0, None))
+            .await
+            .unwrap();
+        // Step 2: 节流窗内再次上报，仍超限（90 > 80）
+        handler
+            .handle(&make_test_event("dev-ar", "prop-ar", "temperature", 90.0, None))
+            .await
+            .unwrap();
+
+        let active_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarms WHERE thing_id = 'dev-ar' AND is_resolved = 0")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(active_count, 1, "节流抑制的新上报不得恢复仍超限的报警");
+    }
+
+    /// 回归：非数值读数（传感器异常 "N/A"/"--"）= 无法判定恢复，
+    /// 不得当成「已恢复」误恢复活跃报警。
+    #[sqlx::test]
+    async fn test_non_numeric_report_does_not_auto_resolve(pool: sqlx::SqlitePool) {
+        setup_full_schema(&pool).await;
+        let db = Arc::new(Db::new(pool.clone()));
+
+        sqlx::query("INSERT INTO things (id, name, workspace_id) VALUES ('dev-ar', 'AutoResolve Thing', 'ws-ar')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO thing_properties (id, thing_id, name) VALUES ('prop-ar', 'dev-ar', 'temperature')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, workspace_id, created_at, updated_at)
+             VALUES ('rule-ar1', 'dev-ar', 'prop-ar', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', 'ws-ar', datetime('now'), datetime('now'))",
+        ).execute(&pool).await.unwrap();
+
+        let alarm_service = Arc::new(AlarmService::new(db.clone()));
+        let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
+        let handler = AlarmEventHandler::new(alarm_service.clone(), notification_dispatcher);
+
+        handler
+            .handle(&make_test_event("dev-ar", "prop-ar", "temperature", 85.0, None))
+            .await
+            .unwrap();
+
+        // 非数值上报（同属性）：metadata.value = "N/A"
+        let content = RichContent::new(
+            "Property Changed: temperature".to_string(),
+            vec![ContentElement::Text {
+                content: "Current value: N/A".to_string(),
+                format: TextFormat::Plain,
+            }],
+        )
+        .with_metadata(
+            "property_id".to_string(),
+            serde_json::Value::String("prop-ar".to_string()),
+        )
+        .with_metadata("value".to_string(), serde_json::Value::String("N/A".to_string()));
+        let event = Event::new_device_event(
+            ThingEventType::PropertyChange,
+            EventLevel::Info,
+            EventSource::device_property(
+                "dev-ar".to_string(),
+                "prop-ar".to_string(),
+                "data_collector".to_string(),
+            ),
+            content,
+        )
+        .unwrap();
+        handler.handle(&event).await.unwrap();
+
+        let active_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM thing_alarms WHERE thing_id = 'dev-ar' AND is_resolved = 0")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(active_count, 1, "非数值读数不得误恢复活跃报警");
+    }
+
+    /// 报警文案（2026-09-16 修正）：中文统一格式 = 规则名：属性名 当前值 X（条件），
+    /// 不再拼接英文事件标题（"Property Changed: dev - temperature"）。
+    #[sqlx::test]
+    async fn test_alarm_message_shows_rule_value_and_threshold(pool: sqlx::SqlitePool) {
+        setup_full_schema(&pool).await;
+        let db = Arc::new(Db::new(pool.clone()));
+
+        sqlx::query("INSERT INTO things (id, name, workspace_id) VALUES ('dev-ar', 'AutoResolve Thing', 'ws-ar')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO thing_properties (id, thing_id, name) VALUES ('prop-ar', 'dev-ar', 'temperature')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO thing_alarm_rules (id, thing_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, workspace_id, created_at, updated_at)
+             VALUES ('rule-ar1', 'dev-ar', 'prop-ar', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', 'ws-ar', datetime('now'), datetime('now'))",
+        ).execute(&pool).await.unwrap();
+
+        let alarm_service = Arc::new(AlarmService::new(db.clone()));
+        let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
+        let handler = AlarmEventHandler::new(alarm_service.clone(), notification_dispatcher);
+
+        handler
+            .handle(&make_test_event("dev-ar", "prop-ar", "温度", 85.0, None))
+            .await
+            .unwrap();
+
+        let msg: String = sqlx::query_scalar("SELECT alarm_message FROM thing_alarms WHERE thing_id = 'dev-ar'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(msg, "High Temp：温度 当前值 85（阈值 > 80）");
     }
 
     #[sqlx::test]

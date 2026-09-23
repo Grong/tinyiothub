@@ -28,8 +28,8 @@ use dashmap::DashMap;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use crate::prompt::runtime::build_prompt;
 use crate::runtime::events::{AgentEventBus, AgentEventKind};
-use crate::runtime::thing_agent::prompt::build_prompt;
 use crate::runtime::thing_agent::pushback::deliver;
 use crate::runtime::thing_agent::registry::RunRegistry;
 use crate::runtime::thing_agent::runner::{AgentHandle, RunContext, RunContextInner, Runner};
@@ -327,7 +327,8 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
         }
     };
 
-    let prompt = build_prompt(&signal, &memory, &history, &allowed, &resolutions);
+    let principles = crate::prompt::workspace::load_principles(&ws);
+    let prompt = build_prompt(&signal, &principles, &memory, &history, &allowed, &resolutions);
 
     let agent = match deps.agent_provider.get_or_create(&ws, Arc::clone(&ctx.inner)).await {
         Ok(agent) => agent,

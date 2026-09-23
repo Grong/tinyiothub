@@ -4,8 +4,14 @@
 //! 记忆层通过 [`PromptMemorySource`] 端口读取活跃记忆 —— 端口由组合层适配
 //! 存储实现后注入（D2：本 crate 不触碰持久化）。
 
+pub mod constitution;
+pub mod exec;
+pub mod heartbeat;
+pub mod investigation;
 pub mod paths;
+pub mod runtime;
 pub mod templates;
+pub mod workspace;
 
 /// 记忆读取端口 —— prompt 组装只需要的两个操作（list_active / record_load）。
 /// 组合层以 newtype 适配存储层 `MemoryStore` 后注入。

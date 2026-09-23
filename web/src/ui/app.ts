@@ -96,7 +96,7 @@ const NAV_GROUPS: NavGroup[] = [
       },
       {
         route: 'dispositions',
-        label: '处置中心',
+        label: 'AI 工作台',
         icon: 'M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm-1 5h2v6h-2zm0 8h2v2h-2z',
       },
       {
@@ -397,7 +397,7 @@ export class TinyIoTHubApp extends LitElement {
       things: '物列表',
       alarms: '告警中心',
       tickets: '工单',
-      dispositions: '处置中心',
+      dispositions: 'AI 工作台',
       events: '事件日志',
       monitoring: '系统监控',
       users: '用户管理',
@@ -424,7 +424,7 @@ export class TinyIoTHubApp extends LitElement {
       things: '浏览和管理物层级结构',
       alarms: '查看和管理物告警',
       tickets: '处理 Agent 升级的人工工单',
-      dispositions: 'AI 值班处置报警，你只处理例外',
+      dispositions: '大脑的完整工作日志——巡检、报警理解、指令执行，你只处理例外',
       events: '查看物事件日志',
       monitoring: '系统资源和性能监控',
       users: '管理系统用户和权限',

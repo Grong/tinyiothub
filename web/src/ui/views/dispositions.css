@@ -29,28 +29,32 @@ view-dispositions .disp-learn {
   margin: var(--space-1) 0 0;
 }
 
-/* 下划线 tab：active 下划线与容器边框重叠，无魔法数 */
+/* tab：与工单页（tickets.css .tab）同一模式——独立描边胶囊，
+   active 用页面信号色（琥珀）描边 + 同色文字；背景用 --card 修正
+   工单页 --surface 未定义回退纯白的问题，保证双主题安全 */
 view-dispositions .disp-tabs {
   display: flex;
-  gap: var(--space-4);
+  gap: var(--space-2);
   margin-bottom: var(--space-4);
-  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
 }
 
 view-dispositions .disp-tab {
-  font-size: 13px;
-  color: var(--muted-foreground);
-  background: none;
-  border: none;
-  border-bottom: 1px solid transparent;
+  border: 1px solid var(--border);
+  background: var(--card);
+  border-radius: var(--radius-sm, 6px);
+  padding: 6px 14px;
   cursor: pointer;
-  padding: 0 0 var(--space-2);
-  margin-bottom: -1px;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  min-height: 44px;
 }
 
 view-dispositions .disp-tab.active {
-  color: var(--text-strong);
-  border-bottom-color: var(--text-strong);
+  border-color: var(--warning);
+  color: var(--warning);
+  font-weight: 600;
 }
 
 view-dispositions .disp-tab .count {
@@ -71,6 +75,21 @@ view-dispositions .j-item {
 view-dispositions .j-item.needs-you {
   border-color: var(--border-strong);
   box-shadow: inset 2px 0 0 var(--warning);
+}
+
+/* 行可点（展开证据 / tick 聚合行跳巡检历史） */
+view-dispositions .j-item.clickable {
+  cursor: pointer;
+}
+
+/* SSE 断连细条：与工单页 .sse-banner 同一模式 */
+view-dispositions .sse-banner {
+  background: #fef3c7;
+  color: #92400e;
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  border-radius: var(--radius-sm, 6px);
+  font-size: 12px;
+  margin-bottom: var(--space-3, 12px);
 }
 
 view-dispositions .j-row1 {
@@ -98,9 +117,19 @@ view-dispositions .j-verdict.action::before {
   font-size: 10px;
 }
 
+/* 标题行：事件标题（alarm 消息/提案摘要/指令原文）——两行结构的第一行 */
+view-dispositions .j-title {
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 view-dispositions .j-device {
   font-size: 13px;
   color: var(--muted-foreground);
+  flex-shrink: 0;
 }
 
 view-dispositions .j-time {
@@ -114,6 +143,16 @@ view-dispositions .j-reason {
   color: var(--muted-foreground);
   margin-top: 3px;
   line-height: 1.55;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 建议行：块级独占一行（不占按钮行，长文本不换行挤压操作区） */
+view-dispositions .j-suggestion {
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+  margin: 2px 0 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -241,15 +280,69 @@ view-dispositions .j-empty a {
   margin-top: var(--space-2);
 }
 
-/* 证据展开 */
+/* 证据展开：完整审计记录的结构化呈现 */
 view-dispositions .j-evidence {
   margin-top: var(--space-2);
   padding-top: var(--space-2);
   border-top: 1px solid var(--border);
   font-size: 12px;
   color: var(--muted-foreground);
+}
+
+view-dispositions .j-ev-text {
+  margin: 0 0 var(--space-2);
   white-space: pre-wrap;
-  word-break: break-all;
+  word-break: break-word;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+/* 思考过程 / 结构化结论原文：默认折叠 */
+view-dispositions .j-ev-fold {
+  margin-bottom: var(--space-2);
+}
+
+view-dispositions .j-ev-fold summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  user-select: none;
+}
+
+view-dispositions .j-ev-fold summary:hover {
+  color: var(--text);
+}
+
+view-dispositions .j-ev-fold pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted-foreground);
+  background: var(--bg-subtle);
+  border-radius: var(--radius-sm, 6px);
+  padding: var(--space-2);
+  margin: var(--space-1) 0 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+view-dispositions .j-ev-actions {
+  margin-bottom: var(--space-2);
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+/* 证据加载中骨架 / 失败内联重试 */
+view-dispositions .j-ev-pending,
+view-dispositions .j-ev-error {
+  font-size: 12px;
+  color: var(--muted-strong);
+}
+
+view-dispositions .j-ev-meta {
+  font-size: 11.5px;
+  color: var(--muted-strong);
 }
 
 view-dispositions .disp-loading,
