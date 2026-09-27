@@ -55,7 +55,10 @@ use crate::domains::event::{
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Input {
+    // alias：提案/报告的 parameters 常随模板写成蛇形键（thing_id）。
+    #[serde(alias = "thing_id")]
     thing_id: String,
+    #[serde(alias = "action_name")]
     action_name: String,
     params: Option<Value>,
 }
@@ -64,7 +67,10 @@ struct Input {
 /// Mirrors the dispatch tail in thing.rs:666-700 — keep in sync (O18 forbids
 /// editing thing.rs). Returns the executed/simulated payload, or an error
 /// result when the queue rejects it.
-fn dispatch_command(
+///
+/// pub(crate)：提案批准执行（workspace_heartbeat）的 invoke_action 自动确认
+/// 复用同一下发尾巴，避免第三份拷贝。
+pub(crate) fn dispatch_command(
     data_server: Option<&Arc<tinyiothub_runtime::DataServer>>,
     thing_id: &str,
     action_name: &str,

@@ -525,10 +525,21 @@ pub async fn approve_proposal(
 ) -> Json<ApiResponse<serde_json::Value>> {
     verify_workspace_access_port!(state, claims, workspace_id);
 
-    let Some(registry) = crate::domains::agent::host::ports::external_tool_registry() else {
-        return ApiResponseBuilder::error("工具注册表未初始化");
-    };
-    match approve_and_execute(state.db.pool(), &workspace_id, &proposal_id, &registry).await {
+    // 与 agent 会话同源的工具注册表（内建 thing 工具 + MCP 适配器）——
+    // 2026-09-24 前只查 MCP registry，thing 工具 9 件套里 8 个批准即
+    // 「未注册」自动拒绝（词表错位：提案 tool_name 来自 agent 会话工具）。
+    let registry = state.agent_pool.tool_registry();
+    let runtime = state.agent_pool.runtime_context().await;
+    match approve_and_execute(
+        state.db.pool(),
+        &workspace_id,
+        &proposal_id,
+        &registry,
+        &runtime,
+        &state.pending_actions,
+    )
+    .await
+    {
         Ok(output) => ApiResponseBuilder::success(serde_json::json!({
             "status": "approved",
             "output": output,
@@ -536,6 +547,12 @@ pub async fn approve_proposal(
         Err(e) => ApiResponseBuilder::error(&e),
     }
 }
+
+/// 批准通道不可执行的工具——编排工具（dispatch_thing_task，宪法禁止提案
+/// 使用）与会话上下文工具（canvas 会把 LLM 写的 UI JSON 推进工作区画布；
+/// get_skill 只在会话里有意义）。即使 agent 会话里注册了也不经批准通道
+/// 执行，走「未注册」自动拒绝路径。
+const APPROVAL_TOOL_DENYLIST: &[&str] = &["dispatch_thing_task", "canvas", "get_skill"];
 
 /// Approve a pending proposal and execute its tool with the stored parameters.
 /// The human approval IS the authorization, so execution bypasses the trust
@@ -545,7 +562,9 @@ async fn approve_and_execute(
     pool: &sqlx::SqlitePool,
     workspace_id: &str,
     proposal_id: &str,
-    registry: &std::sync::Arc<dyn tinyiothub_agent::tools::ExternalToolRegistry>,
+    registry: &tinyiothub_agent::tools::ToolRegistry,
+    runtime: &tinyiothub_agent::tools::ToolRuntimeContext,
+    pending_actions: &crate::domains::agent::host::tools::thing::PendingActionStore,
 ) -> Result<serde_json::Value, String> {
     let db = tinyiothub_storage::Db::new(pool.clone());
     let row: Option<(String, String)> = db
@@ -564,33 +583,61 @@ async fn approve_and_execute(
     let thing_id = parsed["thingId"].as_str().map(str::to_string);
     let params = parsed.get("parameters").cloned().unwrap_or(serde_json::json!({}));
 
-    let handler = match registry.get_handler(&tool_name).await {
-        Some(h) => h,
-        None => {
-            // 提案引用了不可执行的工具（LLM 幻觉工具名，如 dispatch_thing_task——
-            // 2026-09-20 实测）：自动拒绝并留痕，不让它永远挂在待审批队列里
-            // 报同一个错。
-            let reason = format!("工具 {tool_name} 不在可执行注册表中");
-            let mut rejected = parsed.clone();
-            rejected["status"] = serde_json::json!("rejected");
-            rejected["reject_reason"] = serde_json::json!(reason);
-            if let Err(e) = db.update_agent_action_content(&id, &rejected.to_string()).await {
-                tracing::warn!(%workspace_id, %proposal_id, error = %e, "auto-reject unregistered-tool proposal failed");
-            }
-            let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-            let outcome_content = serde_json::json!({
-                "tool": tool_name,
-                "thingId": thing_id,
-                "summary": reason,
-                "success": false,
-                "source": "unregistered_tool",
-                "proposalId": proposal_id,
-            });
-            let _ = db
-                .insert_agent_heartbeat_outcome(workspace_id, outcome_content.to_string(), &now)
-                .await;
-            return Err(format!("提案已自动拒绝：{reason}"));
+    // 盲签锚点一致性（对抗评审 F3）：顶层 thingId 是审批界面的显示锚点，
+    // parameters 里的 thingId/thing_id 才是执行目标。两者都在且不一致时
+    // 拒绝——人批的必须是实际执行的。
+    if let Some(anchor) = &thing_id {
+        let exec_target = params
+            .get("thingId")
+            .or_else(|| params.get("thing_id"))
+            .and_then(|v| v.as_str());
+        if let Some(target) = exec_target
+            && target != anchor
+        {
+            return Err(format!(
+                "提案参数不一致：界面显示 {anchor}，参数执行 {target}——已拒绝执行"
+            ));
         }
+    }
+
+    // 解析工具：内建（thing 工具 9 件套等）优先、MCP 适配器兜底——与
+    // agent 会话 load_all_tools 的碰撞规则一致。
+    let tool = if APPROVAL_TOOL_DENYLIST.contains(&tool_name.as_str()) {
+        None
+    } else {
+        registry
+            .load_all_tools(workspace_id, runtime)
+            .await
+            .into_iter()
+            .find(|t| t.name() == tool_name)
+    };
+    let Some(tool) = tool else {
+        // 提案引用了不可执行的工具（LLM 幻觉工具名，如 dispatch_thing_task——
+        // 2026-09-20 实测）：自动拒绝并留痕，不让它永远挂在待审批队列里
+        // 报同一个错。
+        let reason = format!("工具 {tool_name} 不在可执行注册表中");
+        let mut rejected = parsed.clone();
+        rejected["status"] = serde_json::json!("rejected");
+        rejected["reject_reason"] = serde_json::json!(reason);
+        if let Err(e) = db.update_agent_action_content(&id, &rejected.to_string()).await {
+            tracing::warn!(%workspace_id, %proposal_id, error = %e, "auto-reject unregistered-tool proposal failed");
+        }
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let outcome_content = serde_json::json!({
+            "tool": tool_name,
+            "thingId": thing_id,
+            "summary": reason,
+            "success": false,
+            "source": "unregistered_tool",
+            "proposalId": proposal_id,
+        });
+        let _ = db
+            .insert_agent_heartbeat_outcome(workspace_id, outcome_content.to_string(), &now)
+            .await
+            .inspect_err(
+                |e| tracing::warn!(%workspace_id, %proposal_id, error = %e, "auto-reject outcome insert failed"),
+            );
+        return Err(format!("提案已自动拒绝：{reason}"));
     };
 
     // Atomic flip: only a row still pending transitions, so a second approve
@@ -603,14 +650,7 @@ async fn approve_and_execute(
         return Err("提案已处理".to_string());
     }
 
-    // Execute under the same auth context as the heartbeat agent path — the
-    // composition layer's external-tool adapter scopes handler queries by
-    // this identity and fails closed without it.
-    let ctx = tinyiothub_agent::tools::ExternalToolContext {
-        workspace_id: workspace_id.to_string(),
-        actor: format!("__heartbeat__:{workspace_id}"),
-    };
-    let outcome = handler.execute(&ctx, params).await;
+    let outcome = execute_approved_tool(tool.as_ref(), params, workspace_id, runtime, pending_actions).await;
     let (success, summary) = match &outcome {
         Ok(v) => {
             let s = v.to_string();
@@ -636,6 +676,51 @@ async fn approve_and_execute(
     }
 
     outcome.map_err(|e| format!("执行失败: {}", e))
+}
+
+/// 执行已批准的工具。invoke_action 类工具若返回 confirmation_required +
+/// token，直接消费 token 下发——人工批准即授权，替代 chat 的二次确认
+/// （复用 autonomous_invoke 的 auto-confirm 语义与 dispatch 尾巴）。
+async fn execute_approved_tool(
+    tool: &dyn tinyiothub_agent::port::tool::Tool,
+    params: serde_json::Value,
+    workspace_id: &str,
+    runtime: &tinyiothub_agent::tools::ToolRuntimeContext,
+    pending_actions: &crate::domains::agent::host::tools::thing::PendingActionStore,
+) -> Result<serde_json::Value, String> {
+    fn output_json(output: String) -> serde_json::Value {
+        serde_json::from_str(&output).unwrap_or(serde_json::json!({ "output": output }))
+    }
+
+    let result = tool.execute(params).await.map_err(|e| e.to_string())?;
+    if !result.success {
+        return Err(result.error.unwrap_or(result.output));
+    }
+    let mut value = output_json(result.output);
+    if value.get("status").and_then(|s| s.as_str()) == Some("confirmation_required") {
+        let Some(token) = value.get("token").and_then(|t| t.as_str()) else {
+            return Err("auto-confirm failed: token missing; action NOT dispatched".to_string());
+        };
+        let pending = crate::domains::agent::host::tools::thing::take_pending_action(pending_actions, token)
+            .ok_or_else(|| "auto-confirm failed: token mismatch or expired; action NOT dispatched".to_string())?;
+        // 跨工作区绑定（对抗评审 F1）：token store 是全实例共享的，
+        // 任何工具（含 MCP 适配器）返回的 token 都必须属于本工作区，
+        // 否则一次批准点击会把别的工作区的设备命令下发出去。
+        if pending.workspace_id != workspace_id {
+            return Err("auto-confirm failed: workspace mismatch; action NOT dispatched".to_string());
+        }
+        let dispatched = crate::domains::agent::host::tools::autonomous_invoke::dispatch_command(
+            runtime.data_server.as_ref(),
+            &pending.thing_id,
+            &pending.action_name,
+            pending.params.as_ref(),
+        );
+        if !dispatched.success {
+            return Err(dispatched.error.unwrap_or(dispatched.output));
+        }
+        value = output_json(dispatched.output);
+    }
+    Ok(value)
 }
 
 // ── POST /{id}/heartbeat/approvals/{proposal_id}/reject ──
@@ -756,60 +841,109 @@ mod tests {
     use sqlx::SqlitePool;
 
     use super::*;
-    use tinyiothub_agent::tools::{ExternalToolContext, ExternalToolHandler, ExternalToolMeta, ExternalToolRegistry};
+    use crate::domains::agent::host::tools::thing::{PendingActionStore, store_pending_action};
+    use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
+    use tinyiothub_agent::port::tool::{Tool, ToolResult};
+    use tinyiothub_agent::tools::{ToolRegistry, ToolRuntimeContext};
+    use tinyiothub_skills::trust::ToolSafety;
 
     #[derive(Clone)]
-    struct RecordingHandler {
+    struct RecordingTool {
+        name: &'static str,
         calls: Arc<Mutex<Vec<serde_json::Value>>>,
         fail: bool,
+        /// 模拟 invoke_action 的确认流：mint token 进该 store 并返回
+        /// confirmation_required 载荷。mint 时用的 workspace 可与批准工作区
+        /// 不同（跨工作区失配测试）。
+        confirm_store: Option<(Arc<PendingActionStore>, &'static str)>,
+        /// 返回不带 token 的 confirmation_required 载荷（缺失字段分支）。
+        bare_confirm: bool,
+    }
+
+    impl Attributable for RecordingTool {
+        fn role(&self) -> Role {
+            Role::Tool(ToolKind::Plugin)
+        }
+        fn alias(&self) -> &str {
+            self.name
+        }
     }
 
     #[async_trait]
-    impl ExternalToolHandler for RecordingHandler {
+    impl Tool for RecordingTool {
         fn name(&self) -> &str {
-            "write_properties"
+            self.name
         }
         fn description(&self) -> &str {
             "test"
         }
-        fn input_schema(&self) -> serde_json::Value {
+        fn parameters_schema(&self) -> serde_json::Value {
             serde_json::json!({"type": "object", "properties": {}})
         }
-        async fn execute(
-            &self,
-            _ctx: &ExternalToolContext,
-            args: serde_json::Value,
-        ) -> Result<serde_json::Value, String> {
-            self.calls.lock().unwrap().push(args);
+        async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+            self.calls.lock().unwrap().push(args.clone());
             if self.fail {
-                return Err("device offline".into());
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("device offline".into()),
+                });
             }
-            Ok(serde_json::json!({"applied": true}))
+            if let Some((store, ws)) = &self.confirm_store {
+                let token = store_pending_action(
+                    store,
+                    "dev_1".to_string(),
+                    "reboot".to_string(),
+                    args.get("params").cloned(),
+                    ws.to_string(),
+                );
+                return Ok(ToolResult {
+                    success: true,
+                    output: serde_json::json!({
+                        "status": "confirmation_required",
+                        "token": token,
+                    })
+                    .to_string(),
+                    error: None,
+                });
+            }
+            if self.bare_confirm {
+                return Ok(ToolResult {
+                    success: true,
+                    output: serde_json::json!({"status": "confirmation_required"}).to_string(),
+                    error: None,
+                });
+            }
+            Ok(ToolResult {
+                success: true,
+                output: serde_json::json!({"applied": true}).to_string(),
+                error: None,
+            })
         }
     }
 
-    struct TestRegistry {
-        handler: Arc<dyn ExternalToolHandler>,
-    }
-
-    #[async_trait]
-    impl ExternalToolRegistry for TestRegistry {
-        async fn list_tools(&self) -> Vec<ExternalToolMeta> {
-            vec![ExternalToolMeta {
-                name: self.handler.name().to_string(),
-                description: self.handler.description().to_string(),
-                input_schema: self.handler.input_schema(),
-            }]
-        }
-        async fn get_handler(&self, name: &str) -> Option<Arc<dyn ExternalToolHandler>> {
-            (name == self.handler.name()).then(|| self.handler.clone())
+    fn recording_tool(name: &'static str, fail: bool) -> RecordingTool {
+        RecordingTool {
+            name,
+            calls: Arc::new(Mutex::new(vec![])),
+            fail,
+            confirm_store: None,
+            bare_confirm: false,
         }
     }
 
-    fn registry_with(handler: RecordingHandler) -> Arc<dyn ExternalToolRegistry> {
-        Arc::new(TestRegistry {
-            handler: Arc::new(handler),
-        })
+    /// 与生产同构的解析输入：ToolRegistry（provider 注册内建工具）+
+    /// 运行时上下文（无 DataServer → dispatch 走 simulated）+ 确认 store。
+    fn fixture(tool: RecordingTool) -> (ToolRegistry, ToolRuntimeContext, Arc<PendingActionStore>) {
+        let registry = ToolRegistry::default();
+        registry.register_provider(Arc::new(move |_, _| {
+            vec![(Box::new(tool.clone()) as Box<dyn Tool>, ToolSafety::Write)]
+        }));
+        (
+            registry,
+            ToolRuntimeContext::default(),
+            Arc::new(PendingActionStore::default()),
+        )
     }
 
     async fn test_pool() -> SqlitePool {
@@ -821,10 +955,14 @@ mod tests {
     }
 
     async fn seed_proposal(pool: &SqlitePool, proposal_id: &str, status: &str) {
+        seed_proposal_with_tool(pool, proposal_id, status, "write_properties").await;
+    }
+
+    async fn seed_proposal_with_tool(pool: &SqlitePool, proposal_id: &str, status: &str, tool_name: &str) {
         let content = serde_json::json!({
             "proposalId": proposal_id,
             "status": status,
-            "toolName": "write_properties",
+            "toolName": tool_name,
             "thingId": "dev_1",
             "summary": "set temp",
             "reason": "tune",
@@ -859,14 +997,11 @@ mod tests {
     async fn approve_executes_tool_with_stored_parameters() {
         let pool = test_pool().await;
         seed_proposal(&pool, "p1", "pending").await;
-        let handler = RecordingHandler {
-            calls: Arc::new(Mutex::new(vec![])),
-            fail: false,
-        };
-        let calls = handler.calls.clone();
-        let registry = registry_with(handler);
+        let tool = recording_tool("write_properties", false);
+        let calls = tool.calls.clone();
+        let (registry, runtime, pending) = fixture(tool);
 
-        approve_and_execute(&pool, "ws_1", "p1", &registry)
+        approve_and_execute(&pool, "ws_1", "p1", &registry, &runtime, &pending)
             .await
             .expect("approve");
 
@@ -896,15 +1031,14 @@ mod tests {
     async fn approve_twice_does_not_reexecute() {
         let pool = test_pool().await;
         seed_proposal(&pool, "p1", "pending").await;
-        let handler = RecordingHandler {
-            calls: Arc::new(Mutex::new(vec![])),
-            fail: false,
-        };
-        let calls = handler.calls.clone();
-        let registry = registry_with(handler);
+        let tool = recording_tool("write_properties", false);
+        let calls = tool.calls.clone();
+        let (registry, runtime, pending) = fixture(tool);
 
-        approve_and_execute(&pool, "ws_1", "p1", &registry).await.unwrap();
-        let second = approve_and_execute(&pool, "ws_1", "p1", &registry).await;
+        approve_and_execute(&pool, "ws_1", "p1", &registry, &runtime, &pending)
+            .await
+            .unwrap();
+        let second = approve_and_execute(&pool, "ws_1", "p1", &registry, &runtime, &pending).await;
         assert!(second.is_err(), "second approve must be rejected");
 
         assert_eq!(calls.lock().unwrap().len(), 1, "tool must run exactly once");
@@ -914,13 +1048,10 @@ mod tests {
     async fn approve_records_failed_execution() {
         let pool = test_pool().await;
         seed_proposal(&pool, "p1", "pending").await;
-        let handler = RecordingHandler {
-            calls: Arc::new(Mutex::new(vec![])),
-            fail: true,
-        };
-        let registry = registry_with(handler);
+        let tool = recording_tool("write_properties", true);
+        let (registry, runtime, pending) = fixture(tool);
 
-        let result = approve_and_execute(&pool, "ws_1", "p1", &registry).await;
+        let result = approve_and_execute(&pool, "ws_1", "p1", &registry, &runtime, &pending).await;
         assert!(result.is_err(), "execution failure must surface");
 
         let (content,): (String,) =
@@ -936,53 +1067,28 @@ mod tests {
     #[tokio::test]
     async fn approve_unknown_proposal_fails() {
         let pool = test_pool().await;
-        let handler = RecordingHandler {
-            calls: Arc::new(Mutex::new(vec![])),
-            fail: false,
-        };
-        let calls = handler.calls.clone();
-        let registry = registry_with(handler);
-        let result = approve_and_execute(&pool, "ws_1", "nope", &registry).await;
+        let tool = recording_tool("write_properties", false);
+        let calls = tool.calls.clone();
+        let (registry, runtime, pending) = fixture(tool);
+        let result = approve_and_execute(&pool, "ws_1", "nope", &registry, &runtime, &pending).await;
         assert!(result.is_err());
         assert!(calls.lock().unwrap().is_empty());
     }
 
-    /// 回归（2026-09-20 实测）：LLM 幻觉工具名的提案（如 dispatch_thing_task）
-    /// 在批准时抛「工具未注册」裸错误且提案永远卡在 pending。现在自动拒绝
-    /// 并留痕（outcome 行 source=unregistered_tool）。
+    /// 回归（2026-09-20 实测）：LLM 幻觉工具名的提案在批准时抛「工具未注册」
+    /// 裸错误且提案永远卡在 pending。现在自动拒绝并留痕（outcome 行
+    /// source=unregistered_tool）。
     #[tokio::test]
     async fn approve_unregistered_tool_auto_rejects_proposal() {
         let pool = test_pool().await;
-        // 提案引用注册表里没有的工具（seed_proposal 的 write_properties 在
-        // TestRegistry 里注册；dispatch_thing_task 不在）
-        let content = serde_json::json!({
-            "proposalId": "p-hallucinated",
-            "status": "pending",
-            "toolName": "dispatch_thing_task",
-            "thingId": "dev_1",
-            "summary": "派发任务",
-            "reason": "巡检发现",
-            "risk": "medium",
-            "parameters": {},
-        });
-        sqlx::query(
-            "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at) \
-             VALUES (?, 'ws_1', '__heartbeat__:ws_1', 'heartbeat', 'proposal', ?, '2026-09-20 07:00:00')",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(content.to_string())
-        .execute(&pool)
-        .await
-        .unwrap();
+        // 提案引用注册表里没有的工具
+        seed_proposal_with_tool(&pool, "p-hallucinated", "pending", "nonexistent_tool").await;
 
-        let handler = RecordingHandler {
-            calls: Arc::new(Mutex::new(vec![])),
-            fail: false,
-        };
-        let calls = handler.calls.clone();
-        let registry = registry_with(handler);
+        let tool = recording_tool("write_properties", false);
+        let calls = tool.calls.clone();
+        let (registry, runtime, pending) = fixture(tool);
 
-        let result = approve_and_execute(&pool, "ws_1", "p-hallucinated", &registry).await;
+        let result = approve_and_execute(&pool, "ws_1", "p-hallucinated", &registry, &runtime, &pending).await;
         let err = result.expect_err("unregistered tool must error");
         assert!(err.contains("提案已自动拒绝"), "错误应说明自动拒绝: {err}");
         assert!(calls.lock().unwrap().is_empty(), "未注册工具不得执行");
@@ -999,6 +1105,218 @@ mod tests {
         assert_eq!(parsed["success"], false);
         assert_eq!(parsed["source"].as_str().unwrap(), "unregistered_tool");
         assert!(parsed["summary"].as_str().unwrap().contains("不在可执行注册表"));
+    }
+
+    /// 回归（2026-09-24 实测）：提案 tool_name 来自 agent 会话的 thing 工具
+    /// 词表（宪法明文引用 get_thing_profile 等），而批准执行此前只查 MCP
+    /// registry——9 件套里 8 个批准即「未注册」。现在批准走与 agent 会话
+    /// 同源的 ToolRegistry，内建工具可直接批准执行。
+    #[tokio::test]
+    async fn approve_builtin_thing_tool_executes() {
+        let pool = test_pool().await;
+        seed_proposal_with_tool(&pool, "p-profile", "pending", "get_thing_profile").await;
+
+        let tool = recording_tool("get_thing_profile", false);
+        let calls = tool.calls.clone();
+        let (registry, runtime, pending) = fixture(tool);
+
+        approve_and_execute(&pool, "ws_1", "p-profile", &registry, &runtime, &pending)
+            .await
+            .expect("内建 thing 工具必须可批准执行");
+
+        assert_eq!(calls.lock().unwrap().len(), 1);
+        assert_eq!(proposal_status(&pool, "p-profile").await, "approved");
+    }
+
+    /// 编排工具（dispatch_thing_task）即使在 agent 会话里注册了，也不得经
+    /// 批准通道执行——宪法禁止提案使用它们，走「未注册」自动拒绝路径。
+    #[tokio::test]
+    async fn approve_orchestration_tool_auto_rejects() {
+        let pool = test_pool().await;
+        seed_proposal_with_tool(&pool, "p-orch", "pending", "dispatch_thing_task").await;
+
+        let tool = recording_tool("dispatch_thing_task", false);
+        let calls = tool.calls.clone();
+        let (registry, runtime, pending) = fixture(tool);
+
+        let result = approve_and_execute(&pool, "ws_1", "p-orch", &registry, &runtime, &pending).await;
+        let err = result.expect_err("orchestration tool must be denied");
+        assert!(err.contains("提案已自动拒绝"), "错误应说明自动拒绝: {err}");
+        assert!(calls.lock().unwrap().is_empty(), "编排工具不得经批准通道执行");
+        assert_eq!(proposal_status(&pool, "p-orch").await, "rejected");
+    }
+
+    /// invoke_action 类工具返回 confirmation_required + token 时，批准即
+    /// 授权——自动消费 token 下发（无 DataServer 时 simulated），不再要求
+    /// 二次确认。
+    #[tokio::test]
+    async fn approve_confirmation_required_auto_confirms() {
+        let pool = test_pool().await;
+        seed_proposal_with_tool(&pool, "p-invoke", "pending", "invoke_action").await;
+
+        // 工具 mint token 到同一个 store（与生产 provider 捕获同一实例同构）
+        let pending = Arc::new(PendingActionStore::default());
+        let tool = RecordingTool {
+            confirm_store: Some((pending.clone(), "ws_1")),
+            ..recording_tool("invoke_action", false)
+        };
+        let registry = ToolRegistry::default();
+        registry.register_provider(Arc::new(move |_, _| {
+            vec![(Box::new(tool.clone()) as Box<dyn Tool>, ToolSafety::Write)]
+        }));
+        let runtime = ToolRuntimeContext::default();
+
+        let output = approve_and_execute(&pool, "ws_1", "p-invoke", &registry, &runtime, &pending)
+            .await
+            .expect("auto-confirm must dispatch");
+
+        assert_eq!(output["status"].as_str().unwrap(), "simulated");
+        assert_eq!(output["thingId"].as_str().unwrap(), "dev_1");
+        assert_eq!(output["actionName"].as_str().unwrap(), "reboot");
+        // token 已消费——store 清空
+        assert!(pending.is_empty(), "consumed token must leave the store");
+    }
+
+    /// token 失配/过期分支（2026-09-27 覆盖率审计 GAP）：工具 mint 的 token
+    /// 不在批准路径的 store 里（或已过期）→ 必须报错且不得下发。
+    #[tokio::test]
+    async fn approve_auto_confirm_token_mismatch_fails_closed() {
+        let pool = test_pool().await;
+        seed_proposal_with_tool(&pool, "p-badtoken", "pending", "invoke_action").await;
+
+        // 工具 mint 到 store A；批准路径拿的是 store B —— token 取不到。
+        let store_a = Arc::new(PendingActionStore::default());
+        let pending_b = Arc::new(PendingActionStore::default());
+        let tool = RecordingTool {
+            confirm_store: Some((store_a, "ws_1")),
+            ..recording_tool("invoke_action", false)
+        };
+        let registry = ToolRegistry::default();
+        registry.register_provider(Arc::new(move |_, _| {
+            vec![(Box::new(tool.clone()) as Box<dyn Tool>, ToolSafety::Write)]
+        }));
+        let runtime = ToolRuntimeContext::default();
+
+        let result = approve_and_execute(&pool, "ws_1", "p-badtoken", &registry, &runtime, &pending_b).await;
+        let err = result.expect_err("token mismatch must fail closed");
+        assert!(err.contains("auto-confirm failed"), "{err}");
+
+        // 失败留痕：outcome 行 success=false
+        let (content,): (String,) =
+            sqlx::query_as("SELECT content FROM agent_actions WHERE action_type = 'auto_executed'")
+                .fetch_one(&pool)
+                .await
+                .expect("outcome row");
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["success"], false);
+    }
+
+    /// 跨工作区失配（对抗评审 F1 回归）：token 属于别的工作区时，
+    /// 批准点击不得下发该设备命令。
+    #[tokio::test]
+    async fn approve_auto_confirm_workspace_mismatch_fails_closed() {
+        let pool = test_pool().await;
+        seed_proposal_with_tool(&pool, "p-ws-mismatch", "pending", "invoke_action").await;
+
+        // token mint 自 ws_other；批准发生在 ws_1——同一 store 也绝不能下发。
+        let store = Arc::new(PendingActionStore::default());
+        let tool = RecordingTool {
+            confirm_store: Some((store.clone(), "ws_other")),
+            ..recording_tool("invoke_action", false)
+        };
+        let registry = ToolRegistry::default();
+        registry.register_provider(Arc::new(move |_, _| {
+            vec![(Box::new(tool.clone()) as Box<dyn Tool>, ToolSafety::Write)]
+        }));
+        let runtime = ToolRuntimeContext::default();
+
+        let result = approve_and_execute(&pool, "ws_1", "p-ws-mismatch", &registry, &runtime, &store).await;
+        let err = result.expect_err("workspace mismatch must fail closed");
+        assert!(err.contains("workspace mismatch"), "{err}");
+    }
+
+    /// confirmation_required 载荷缺 token 字段（testing 评审 GAP）：
+    /// 报错且不下发。
+    #[tokio::test]
+    async fn approve_confirmation_missing_token_fails_closed() {
+        let pool = test_pool().await;
+        seed_proposal_with_tool(&pool, "p-no-token", "pending", "invoke_action").await;
+
+        let tool = RecordingTool {
+            bare_confirm: true,
+            ..recording_tool("invoke_action", false)
+        };
+        let registry = ToolRegistry::default();
+        registry.register_provider(Arc::new(move |_, _| {
+            vec![(Box::new(tool.clone()) as Box<dyn Tool>, ToolSafety::Write)]
+        }));
+        let runtime = ToolRuntimeContext::default();
+        let pending = Arc::new(PendingActionStore::default());
+
+        let result = approve_and_execute(&pool, "ws_1", "p-no-token", &registry, &runtime, &pending).await;
+        let err = result.expect_err("missing token must fail closed");
+        assert!(err.contains("token missing"), "{err}");
+    }
+
+    /// 会话上下文工具（canvas/get_skill）同样不得经批准通道执行——canvas
+    /// 会把 LLM 写的 UI JSON 推进工作区画布（对抗评审 F2，2026-09-27 评审
+    /// 决策：denylist 扩展而非白名单，保留完整本体/MCP 工具可批准）。
+    #[tokio::test]
+    async fn approve_canvas_tool_auto_rejects() {
+        let pool = test_pool().await;
+        seed_proposal_with_tool(&pool, "p-canvas", "pending", "canvas").await;
+
+        let tool = recording_tool("canvas", false);
+        let calls = tool.calls.clone();
+        let (registry, runtime, pending) = fixture(tool);
+
+        let result = approve_and_execute(&pool, "ws_1", "p-canvas", &registry, &runtime, &pending).await;
+        let err = result.expect_err("canvas must be denied");
+        assert!(err.contains("提案已自动拒绝"), "{err}");
+        assert!(calls.lock().unwrap().is_empty(), "canvas 不得经批准通道执行");
+    }
+
+    /// 盲签锚点（对抗评审 F3 回归）：顶层 thingId（界面显示）与 parameters
+    /// 里的执行目标不一致 → 拒绝执行、不执行工具、提案保持 pending。
+    #[tokio::test]
+    async fn approve_thing_id_mismatch_refuses_execution() {
+        let pool = test_pool().await;
+        seed_proposal(&pool, "p-mismatch", "pending").await;
+        // 把参数里的执行目标改成另一台设备（显示 dev_1，执行 dev_prod_9）
+        let (id,): (String,) = sqlx::query_as(
+            "SELECT id FROM agent_actions WHERE action_type = 'proposal' \
+             AND json_extract(content, '$.proposalId') = 'p-mismatch'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let tampered = serde_json::json!({
+            "proposalId": "p-mismatch",
+            "status": "pending",
+            "toolName": "write_properties",
+            "thingId": "dev_1",
+            "parameters": {"thing_id": "dev_prod_9", "properties": {"target_temp": 22}},
+        });
+        sqlx::query("UPDATE agent_actions SET content = ? WHERE id = ?")
+            .bind(tampered.to_string())
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let tool = recording_tool("write_properties", false);
+        let calls = tool.calls.clone();
+        let (registry, runtime, pending) = fixture(tool);
+
+        let result = approve_and_execute(&pool, "ws_1", "p-mismatch", &registry, &runtime, &pending).await;
+        let err = result.expect_err("mismatched anchor must refuse");
+        assert!(err.contains("参数不一致"), "{err}");
+        assert!(calls.lock().unwrap().is_empty(), "不一致提案不得执行");
+        assert_eq!(
+            proposal_status(&pool, "p-mismatch").await,
+            "pending",
+            "保持待处理，由人处置"
+        );
     }
 
     #[test]

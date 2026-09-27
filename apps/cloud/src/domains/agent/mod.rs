@@ -49,6 +49,9 @@ pub struct AgentState {
     pub memory_store: Arc<tinyiothub_storage::memory::MemoryStore>,
     /// Agent Pool - chat proxy 的会话/配置/工具 API
     pub agent_pool: Arc<tinyiothub_agent::pool::AgentPool>,
+    /// invoke_action 确认 token 存储 - 提案批准执行的自动确认（与 chat 工具
+    /// provider 捕获的同一实例，token 才能互通）
+    pub pending_actions: Arc<host::tools::thing::PendingActionStore>,
     /// 会话服务 - chat sessions 列表/标签/删除
     pub session_service: Arc<host::SessionService>,
     /// System prompts 配置 - chat proxy 构造 full prompt
