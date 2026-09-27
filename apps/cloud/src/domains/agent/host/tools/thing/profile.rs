@@ -49,8 +49,10 @@ impl Tool for GetThingProfileTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        // thing_id 兜底：提案/报告的 parameters 常随模板写成蛇形键。
         let thing_id = args
             .get("thingId")
+            .or_else(|| args.get("thing_id"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("缺少必需参数: thingId"))?;
 

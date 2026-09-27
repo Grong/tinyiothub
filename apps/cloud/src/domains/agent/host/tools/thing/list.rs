@@ -75,7 +75,10 @@ impl Tool for ListThingsTool {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Input {
+            // alias：提案/报告的 parameters 常随模板写成蛇形键。
+            #[serde(alias = "thing_type")]
             thing_type: Option<String>,
+            #[serde(alias = "parent_id")]
             parent_id: Option<String>,
             tags: Option<String>,
             q: Option<String>,

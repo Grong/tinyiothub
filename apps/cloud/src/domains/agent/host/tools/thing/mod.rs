@@ -204,6 +204,74 @@ mod tests {
         );
     }
 
+    // ── snake_case 参数键兼容（提案盲写兜底）──────────────
+
+    /// 回归（2026-09-24 实测）：巡检报告的 proposals[].parameters 随模板写成
+    /// 蛇形键（thing_id），批准执行时 serde 报 missing field `thingId`。
+    /// 工具 Input 加 alias / 取值兜底后，驼峰与蛇形键都接受。
+    #[tokio::test]
+    async fn tools_accept_snake_case_parameter_keys() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
+        let tools = create_thing_tools(
+            pool,
+            "ws",
+            &ThingToolContext {
+                pending_actions: Some(Arc::new(PendingActionStore::default())),
+                ..Default::default()
+            },
+        );
+        let find = |name: &str| tools.iter().find(|(t, _)| t.name() == name).map(|(t, _)| t);
+
+        // serde 路径：解析必须过关——失败只能来自下游（物不存在/文档未找到），
+        // 不能是「参数解析失败」。每个加了 alias 的工具都覆盖一个蛇形键载荷。
+        for (name, args) in [
+            (
+                "read_property",
+                serde_json::json!({"thing_id": "dev_1", "property_name": "temp"}),
+            ),
+            (
+                "invoke_action",
+                serde_json::json!({"thing_id": "dev_1", "action_name": "reboot"}),
+            ),
+            (
+                "list_things",
+                serde_json::json!({"thing_type": "device", "parent_id": "p1"}),
+            ),
+            ("get_thing_tree", serde_json::json!({"root_id": "dev_1"})),
+            (
+                "query_events",
+                serde_json::json!({"thing_id": "dev_1", "event_name": "offline"}),
+            ),
+            (
+                "search_knowledge",
+                serde_json::json!({"thing_id": "dev_1", "q": "轴承"}),
+            ),
+            ("read_document", serde_json::json!({"resource_id": "doc_1"})),
+        ] {
+            let msg = match find(name).unwrap().execute(args).await {
+                Ok(r) => r.error.unwrap_or_default(),
+                Err(e) => e.to_string(),
+            };
+            assert!(!msg.contains("参数解析失败"), "{name} 必须接受蛇形键: {msg}");
+        }
+
+        // 手动取值路径（get_thing / get_thing_profile）：不能报「缺少必需参数」。
+        for name in ["get_thing", "get_thing_profile"] {
+            let msg = match find(name)
+                .unwrap()
+                .execute(serde_json::json!({"thing_id": "dev_1"}))
+                .await
+            {
+                Ok(r) => r.error.unwrap_or_default(),
+                Err(e) => e.to_string(),
+            };
+            assert!(!msg.contains("缺少必需参数"), "{name} 必须接受蛇形键: {msg}");
+        }
+    }
+
     // ── tool name uniqueness ────────────────────────────
 
     /// Verify all 9 tools are uniquely named.

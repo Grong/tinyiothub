@@ -36,7 +36,8 @@ pub fn build_heartbeat_prompt(
          \"summary\": \"...\",\n  \
          \"executed_actions\": [{{\"tool_name\": \"...\", \"thing_id\": \"...\", \"success\": true, \"details\": \"...\"}}],\n  \
          \"proposals\": [{{\"tool_name\": \"...\", \"thing_id\": \"...\", \"summary\": \"...\", \"reason\": \"...\", \"risk\": \"low|medium|high\", \"parameters\": {{...}}}}],\n  \
-         \"error\": null\n}}\n```",
+         \"error\": null\n}}\n```\n\
+         proposals 的 parameters 键名遵循目标工具的参数 schema（驼峰命名，如 thingId、actionName）。",
         ws_id = workspace_id,
         trust = trust_config.trust_level,
         max = trust_config.max_auto_actions_per_tick,
