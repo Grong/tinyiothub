@@ -155,12 +155,11 @@
   margin: 0 0 var(--space-3, 12px);
 }
 
-/* 简报是信任锚点：problem 置顶加粗 */
+/* 简报是信任锚点：problem 置顶加粗（Markdown 渲染，块结构由 md 输出提供） */
 .briefing__problem {
   font-weight: 700;
   font-size: 14px;
   margin-bottom: var(--space-3, 12px);
-  white-space: pre-wrap;
 }
 .briefing__steps { margin: 0 0 var(--space-3, 12px); padding-left: 20px; }
 .briefing__step { margin-bottom: 4px; font-size: 13px; }
@@ -168,7 +167,7 @@
 .briefing__kv { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-3, 12px); }
 .briefing__row { display: flex; gap: var(--space-3, 12px); font-size: 13px; align-items: center; }
 .briefing__k { color: var(--muted, #6b7280); font-size: 12px; min-width: 60px; }
-.briefing__suggest p { margin: 4px 0 0; font-size: 13px; white-space: pre-wrap; }
+.briefing__suggest-item { margin: 4px 0 0; font-size: 13px; }
 
 .timeline { list-style: none; margin: 0; padding: 0; font-size: 13px; }
 .timeline li { padding: 4px 0; border-bottom: 1px dashed var(--border, #f3f4f6); }
@@ -187,7 +186,7 @@
 }
 .resolve__error { color: #b91c1c; font-size: 12px; margin-top: 4px; }
 .resolve__hint { color: var(--muted, #6b7280); font-size: 12px; margin: 6px 0 10px; }
-.resolution-text { white-space: pre-wrap; font-size: 13px; margin: 0; }
+.resolution-text { font-size: 13px; margin: 0; }
 
 .btn {
   border: 1px solid var(--border, #d1d5db);
@@ -239,7 +238,7 @@
 .chat__msg--human { background: #fff; border-style: double; align-self: flex-end; }
 .chat__msg--thinking { opacity: 0.7; }
 .chat__who { font-size: 11px; color: var(--muted, #6b7280); margin-bottom: 2px; }
-.chat__text { font-size: 13px; white-space: pre-wrap; }
+.chat__text { font-size: 13px; }
 .chat__input { display: flex; gap: var(--space-2, 8px); }
 .chat__box {
   flex: 1;
