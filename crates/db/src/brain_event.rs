@@ -138,7 +138,8 @@ pub(crate) async fn list_brain_events(
 
     let sql = if before.is_none() {
         // 折叠：仅 alarm 源按 thing+rule 分组取最新；非 alarm 行按 id 各自成组（rn 恒 1）。
-        // 置顶：需要你（pin=0）在前，其余按 created_at DESC, id DESC。
+        // 置顶：需要你（pin=0）在前；需要你内部 escalated（要人动手）排在
+        // awaiting_approval（等点头）前（X6，v3 既定排序）；其余按 created_at DESC, id DESC。
         format!(
             "SELECT * FROM (
                SELECT {LIST_COLS},
@@ -153,7 +154,9 @@ pub(crate) async fn list_brain_events(
                FROM brain_events
                WHERE workspace_id = ?{window}{filter}
              ) WHERE rn = 1
-             ORDER BY pin, created_at DESC, id DESC
+             ORDER BY pin,
+               CASE WHEN pin = 0 AND status = 'escalated' THEN 0 ELSE 1 END,
+               created_at DESC, id DESC
              LIMIT ?"
         )
     } else {
@@ -365,6 +368,50 @@ mod tests {
         assert_eq!(summary.feedback_right, 1);
         assert_eq!(summary.feedback_wrong, 0);
         assert!(summary.latency_p50_secs.is_some(), "j1 已判定（alarm 源）");
+    }
+
+    /// X6：需要你内 escalated（要人动手）排在 awaiting_approval（等点头）前——
+    /// 即使 awaiting_approval 更新（时间倒序会让它靠前）。
+    #[tokio::test]
+    async fn needs_you_escalated_sorts_before_awaiting_approval() {
+        let db = test_db().await;
+        // 先建 escalated（较早），后建 awaiting_approval（较新）
+        let j_old = db.insert_judgment("ws1", None, None, None, "annotate").await.unwrap();
+        db.transit_judgment(&j_old, JudgmentStatus::Investigating, JudgmentStatus::Escalated, None)
+            .await
+            .unwrap();
+        let j_new = db
+            .insert_judgment("ws1", None, None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        db.judge_judgment(
+            &j_new,
+            JudgmentVerdict::SelfHealable,
+            "r",
+            "{}",
+            Some("a"),
+            Some("other"),
+            None,
+        )
+        .await
+        .unwrap();
+        // 确保 created_at 有秒级差（awaiting_approval 更新）
+        sqlx::query("UPDATE judgments SET created_at = datetime('now', '-1 hour') WHERE id = ?")
+            .bind(&j_old)
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        let feed = db
+            .list_brain_events("ws1", BrainEventTab::NeedsYou, None, 10)
+            .await
+            .unwrap();
+        assert_eq!(feed.len(), 2);
+        assert_eq!(
+            feed[0].status, "escalated",
+            "escalated 必须排在 awaiting_approval 前（即使更旧）"
+        );
+        assert_eq!(feed[1].status, "awaiting_approval");
     }
 
     /// 折叠仅 alarm 源生效：同 thing+rule 两条 alarm 事件折 1 行；
