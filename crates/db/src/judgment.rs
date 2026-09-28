@@ -1025,6 +1025,7 @@ mod tests {
         assert!(!JudgmentStatus::Dismissed.is_open());
     }
 
+    #[tokio::test]
     async fn conditional_transit_rejects_wrong_state() {
         let db = test_db().await;
         let id = db.insert_judgment("ws1", None, None, None, "annotate").await.unwrap();

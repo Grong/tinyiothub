@@ -299,6 +299,7 @@ async fn settle_execution(
 }
 
 /// 三出口路由。
+#[allow(clippy::too_many_arguments)] // X1 notify 参数后为 9 参；同 judge() 既有先例
 async fn route_verdict(
     db: &Db,
     sse: &SseConnectionManager,

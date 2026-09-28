@@ -423,9 +423,9 @@ impl AppState {
         let pending_actions: std::sync::Arc<crate::domains::agent::host::tools::thing::PendingActionStore> =
             std::sync::Arc::new(dashmap::DashMap::new());
         // F7：周期清扫超期确认 token——take 时的懒清扫只盖住有确认流量的路径。
-        // handle 刻意不持有：任务进程级生命周期，关停随 tokio runtime 一起 abort。
-        let _ =
-            crate::domains::agent::host::tools::thing::spawn_pending_action_sweeper_default(pending_actions.clone());
+        // handle 刻意 drop（不 let _：clippy let_underscore_future 拒绝）：任务
+        // 进程级生命周期，关停随 tokio runtime 一起 abort。
+        drop(crate::domains::agent::host::tools::thing::spawn_pending_action_sweeper_default(pending_actions.clone()));
 
         // Thing action hooks（G5a）—— agent 侧实现 thing 域 trait，注入给 thing handler
         let thing_action_hooks: Arc<dyn crate::domains::thing::hooks::ThingActionHooks> = Arc::new(
