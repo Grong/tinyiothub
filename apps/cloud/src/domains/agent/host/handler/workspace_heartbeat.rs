@@ -614,13 +614,20 @@ async fn approve_and_execute(
     let Some(tool) = tool else {
         // 提案引用了不可执行的工具（LLM 幻觉工具名，如 dispatch_thing_task——
         // 2026-09-20 实测）：自动拒绝并留痕，不让它永远挂在待审批队列里
-        // 报同一个错。
+        // 报同一个错。条件翻转（F4）：并发下已被处理的提案不被覆盖。
         let reason = format!("工具 {tool_name} 不在可执行注册表中");
-        let mut rejected = parsed.clone();
-        rejected["status"] = serde_json::json!("rejected");
-        rejected["reject_reason"] = serde_json::json!(reason);
-        if let Err(e) = db.update_agent_action_content(&id, &rejected.to_string()).await {
-            tracing::warn!(%workspace_id, %proposal_id, error = %e, "auto-reject unregistered-tool proposal failed");
+        match db
+            .flip_agent_proposal_status(&id, "pending", "rejected", Some(&reason))
+            .await
+        {
+            Ok(0) => {
+                tracing::warn!(%workspace_id, %proposal_id, "auto-reject skipped: proposal already processed");
+                return Err("提案已处理".to_string());
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(%workspace_id, %proposal_id, error = %e, "auto-reject unregistered-tool proposal failed");
+            }
         }
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let outcome_content = serde_json::json!({
@@ -732,41 +739,54 @@ pub async fn reject_proposal(
 ) -> Json<ApiResponse<serde_json::Value>> {
     verify_workspace_access_port!(state, claims, workspace_id);
 
-    match update_proposal_status(&state, &workspace_id, &proposal_id, "rejected").await {
+    match update_proposal_status(state.db.pool(), &workspace_id, &proposal_id, "rejected", None).await {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"status": "rejected"})),
-        Err(e) => ApiResponseBuilder::error(&e),
+        Err(ProposalFlipError::Conflict) => {
+            // F4：提案已被并发处理（如批准已执行）——审计记录不可覆盖，
+            // 明确 409 让前端提示刷新，而非静默改写。
+            ApiResponseBuilder::error_with_code(409, "提案已处理（状态已变更，请刷新）")
+        }
+        Err(ProposalFlipError::NotFound) => ApiResponseBuilder::error("提案不存在"),
+        Err(ProposalFlipError::Internal(e)) => ApiResponseBuilder::error(&e),
     }
 }
 
+/// 提案状态翻转的失败分类——冲突（已处理）与不存在/内部错误对外语义不同。
+#[derive(Debug)]
+enum ProposalFlipError {
+    NotFound,
+    Conflict,
+    Internal(String),
+}
+
+/// 条件翻转提案状态（F4）：只有仍为 pending 的行会被翻转——已批准/已拒绝的
+/// 审计记录不可被迟到的写入覆盖。reason 一并落 content（拒绝原因留痕）。
 async fn update_proposal_status(
-    state: &AgentState,
+    pool: &sqlx::SqlitePool,
     workspace_id: &str,
     proposal_id: &str,
     new_status: &str,
-) -> Result<(), String> {
+    reason: Option<&str>,
+) -> Result<(), ProposalFlipError> {
+    let db = tinyiothub_storage::Db::new(pool.clone());
     // Push proposal_id filtering to SQL via json_extract instead of
     // fetching up to 100 rows and scanning in Rust.
-    let row: Option<(String, String)> = state
-        .db
+    let row: Option<(String, String)> = db
         .find_agent_proposal(workspace_id, proposal_id)
         .await
-        .map_err(|e| format!("查询失败: {}", e))?;
+        .map_err(|e| ProposalFlipError::Internal(format!("查询失败: {}", e)))?;
 
-    match row {
-        Some((id, content)) => {
-            let mut parsed: serde_json::Value =
-                serde_json::from_str(&content).map_err(|e| format!("解析失败: {}", e))?;
-            parsed["status"] = serde_json::Value::String(new_status.to_string());
-            let new_content = parsed.to_string();
-            state
-                .db
-                .update_agent_action_content(&id, &new_content)
-                .await
-                .map_err(|e| format!("更新失败: {}", e))?;
-            Ok(())
-        }
-        None => Err("提案不存在".to_string()),
+    let Some((id, _)) = row else {
+        return Err(ProposalFlipError::NotFound);
+    };
+    let flipped = db
+        .flip_agent_proposal_status(&id, "pending", new_status, reason)
+        .await
+        .map_err(|e| ProposalFlipError::Internal(format!("更新失败: {}", e)))?;
+    if flipped == 0 {
+        return Err(ProposalFlipError::Conflict);
     }
+    Ok(())
 }
 
 // ── Helpers ──
@@ -1317,6 +1337,74 @@ mod tests {
             "pending",
             "保持待处理，由人处置"
         );
+    }
+
+    /// F4 两向竞态之 A：批准已执行后迟到的 reject 不得覆盖审计——
+    /// 条件翻转命中 0 行 → Conflict，content 保持 approved。
+    #[tokio::test]
+    async fn reject_after_approve_keeps_approved_audit() {
+        let pool = test_pool().await;
+        seed_proposal(&pool, "p-race-a", "pending").await;
+        let tool = recording_tool("write_properties", false);
+        let (registry, runtime, pending) = fixture(tool);
+
+        approve_and_execute(&pool, "ws_1", "p-race-a", &registry, &runtime, &pending)
+            .await
+            .expect("approve");
+        assert_eq!(proposal_status(&pool, "p-race-a").await, "approved");
+
+        let result = update_proposal_status(&pool, "ws_1", "p-race-a", "rejected", Some("迟到否决")).await;
+        assert!(
+            matches!(result, Err(ProposalFlipError::Conflict)),
+            "已执行批准不得被 reject 覆盖: {result:?}"
+        );
+        assert_eq!(
+            proposal_status(&pool, "p-race-a").await,
+            "approved",
+            "审计记录不可变——已执行批准保持 approved"
+        );
+    }
+
+    /// F4 两向竞态之 B：reject 先落盘后迟到的 approve 不得执行——
+    /// 读到的状态非 pending → 拒绝执行，工具零调用。
+    #[tokio::test]
+    async fn approve_after_reject_fails_closed() {
+        let pool = test_pool().await;
+        seed_proposal(&pool, "p-race-b", "pending").await;
+
+        update_proposal_status(&pool, "ws_1", "p-race-b", "rejected", Some("先否决"))
+            .await
+            .expect("reject pending");
+        assert_eq!(proposal_status(&pool, "p-race-b").await, "rejected");
+
+        let tool = recording_tool("write_properties", false);
+        let calls = tool.calls.clone();
+        let (registry, runtime, pending) = fixture(tool);
+        let result = approve_and_execute(&pool, "ws_1", "p-race-b", &registry, &runtime, &pending).await;
+        assert!(result.expect_err("已拒绝提案不得批准").contains("提案已处理"));
+        assert!(calls.lock().unwrap().is_empty(), "已拒绝提案不得执行");
+    }
+
+    /// reject 正常路径：pending → rejected 且原因落 content。
+    #[tokio::test]
+    async fn reject_pending_proposal_records_reason() {
+        let pool = test_pool().await;
+        seed_proposal(&pool, "p-reject", "pending").await;
+
+        update_proposal_status(&pool, "ws_1", "p-reject", "rejected", Some("误报，无需处理"))
+            .await
+            .expect("reject");
+
+        let (content,): (String,) = sqlx::query_as(
+            "SELECT content FROM agent_actions WHERE action_type = 'proposal' \
+             AND json_extract(content, '$.proposalId') = 'p-reject'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["status"], "rejected");
+        assert_eq!(parsed["reject_reason"], "误报，无需处理");
     }
 
     #[test]
