@@ -560,6 +560,12 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 
 ## AI 大脑 P0 — Deferred (from /plan-ceo-review + /plan-eng-review 2026-09-14, PR #96)
 
+### P2 — AI 工作台移动端最小规格
+- **What:** <768px 单列全宽（徽章与标题同行）、统计行折行、tab 可横滑、批准/拒绝/反馈按钮最小 44px 触摸目标。设计评审 Pass 6 规格，dispositions.css 当前零 media query。
+- **Why:** 运维值班不在电脑前；手机打开工作台当前体验未知。2026-09-28 CEO 评审（PR #99）用户裁定桌面先行、单独 PR。
+- **Context:** v3 设计稿响应式节（含色盲安全/键盘 tab 序列/对比度规格）；web/src/ui/views/dispositions.{ts,css}。
+- **Effort:** S/M (human: ~1d / CC: ~1h) | **Depends on:** PR #99 合并
+
 ### P2 — 日预算 workspace 可配 + 内存计数器 + 严重级分池
 - **What:** DAILY_JUDGMENT_BUDGET 从 const 100 改为 workspace 可配（heartbeat_config JSON 先例）；预算查询改内存计数器+每日重置；按严重级分池或 Critical 豁免。
 - **Why:** 不同规模工作区合理预算差一个数量级；每报警两次 SQL 在报警风暴时自身成负载；Info 抖动可吃光额度让 Critical 裸奔（外部声音 #13/#15）。
