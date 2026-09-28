@@ -29,8 +29,14 @@ pub fn alarm_investigation_text(alarm: &AlarmEvent) -> String {
         .unwrap_or_default();
     format!(
         "调查报警并给出处置判断。报警：{}（设备 {}，类型 {}，级别 {}）。{}\
-         请查询设备状态与近期事件后判断：noise（正常波动/无需处理）/ \
-         self_healable（可自愈，给出建议动作）/ needs_human（需要人工介入）。\
+         请查询设备状态与近期事件后判断（查不到设备数据时基于已有信息直接判断）：\
+         noise（异常已自行消失或当前状态正常——越限后回落且平稳、闪断已重连、节律性读数、\
+         与其他传感器交叉验证不符的已知漂移；无需任何动作）/ \
+         self_healable（异常仍存在，且有已知低风险可逆的恢复动作——重连/重试/重启模块——\
+         历史同类动作曾生效；给出建议动作）/ \
+         needs_human（恢复动作已失败、历史模式指向现场处置、或根因不明且影响持续）。\
+         判据要点：已自行恢复的是 noise 不是 self_healable（self_healable 要求问题仍然存在）；\
+         不确定时选 needs_human。\
          {CONSTITUTION_ONELINE}\
          结束前输出一行结构化结论：```json {{\"verdict\": \"...\", \"reason\": \"一句人话理由\", \
          \"suggested_action\": \"建议动作或 null\", \"action_category\": \"device_reboot|connection_recovery|property_adjust|threshold_tuning|other\"}}```",
@@ -61,6 +67,12 @@ mod tests {
         assert!(text.contains("触发条件：阈值 > 10。"), "条件段缺失: {text}");
         assert!(text.contains("全部输出必须使用中文"), "宪法单行缺失: {text}");
         assert!(text.contains("dispatch_thing_task"), "工具名禁令缺失: {text}");
+        // 2026-09-28 eval 质量修复：判据区分点 + fail-safe。
+        assert!(
+            text.contains("已自行恢复的是 noise 不是 self_healable"),
+            "判据要点缺失: {text}"
+        );
+        assert!(text.contains("不确定时选 needs_human"), "fail-safe 缺失: {text}");
     }
 
     #[test]

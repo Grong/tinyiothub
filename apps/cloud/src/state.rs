@@ -860,6 +860,7 @@ impl crate::domains::tenant::TagSuggester for MinimaxTagSuggester {
                 tinyiothub_agent::port::provider::ChatRequest {
                     messages: &messages,
                     tools: None,
+                    max_tokens: None,
                 },
                 &model,
                 Some(0.3),

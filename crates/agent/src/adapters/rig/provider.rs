@@ -430,7 +430,7 @@ impl<M: CompletionModel> ModelProvider for RigMinimaxAsPort<M> {
             documents: vec![],
             tools,
             temperature,
-            max_tokens: None,
+            max_tokens: request.max_tokens,
             tool_choice: None,
             additional_params: None,
             output_schema: None,
@@ -468,6 +468,7 @@ impl CompletionModel for PortModelAsRig {
         let port_request = ChatRequest {
             messages: &messages,
             tools: if tool_specs.is_empty() { None } else { Some(&tool_specs) },
+            max_tokens: request.max_tokens,
         };
         let resp = self
             .inner

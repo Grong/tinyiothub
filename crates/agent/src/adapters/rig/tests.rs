@@ -299,6 +299,7 @@ async fn rig_minimax_as_port_round_trip_tool_call() {
     let request = crate::port::provider::ChatRequest {
         messages: &messages,
         tools: Some(&specs),
+        max_tokens: None,
     };
 
     let resp = port.chat(request, "MiniMax-M2.7", Some(0.3)).await.expect("chat");
@@ -391,6 +392,7 @@ async fn rig_minimax_as_port_round_trip_tool_result() {
     let request = crate::port::provider::ChatRequest {
         messages: &messages,
         tools: None,
+        max_tokens: None,
     };
 
     let resp = port.chat(request, "m", None).await.expect("chat");

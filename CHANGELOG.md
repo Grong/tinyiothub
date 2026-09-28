@@ -55,6 +55,7 @@
 
 ### Fixed
 
+- **报警调查判断质量**：判据区分点明确化（已自行恢复的是 noise 不是 self_healable——self_healable 要求问题仍存在；不确定时选 needs_human）——此前模型把已自恢复的越限/闪断误判为可自愈。judgment eval 基线 91.7%（24 场景，needs_human→noise 零容忍方向 0 误判）；eval 套件新增 EVAL_ONLY 诊断过滤、unparseable 原始输出留痕、单次 LLM 调用失败不再中止全量，max_tokens 预算显式可配。
 - **批准执行大面积「工具未注册」误拒**：批准通道只查 MCP 注册表，而提案词表来自 Agent 会话工具——8/9 本体工具批准即被误拒；现改用 Agent 会话同源注册表。
 - **批准执行参数解析失败**（missing field `thingId`）：提案蛇形键与工具驼峰 schema 不匹配，工具 Input 加 serde alias 后并容。
 - **事件内容预览按字符截断**，修复中文内容 panic。
