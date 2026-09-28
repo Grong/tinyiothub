@@ -7,13 +7,15 @@
 //! ```text
 //! investigating ──verdict=noise─────────→ noise_archived（按 triage_mode 决定是否 suppress 报警）
 //!      │───────verdict=self_healable──→ awaiting_approval ─批准→ executing ─verified→ resolved
-//!      │                                   │ rejected / 24h 超时 → escalated   │失败/NoActionNeeded/1h SLA→ escalated
+//!      │                                   ├─拒绝──→ dismissed（不开票；原因落 evidence.dismiss_reason） │失败/NoActionNeeded/1h SLA→ escalated
+//!      │                                   └─24h 超时→ escalated
 //!      │───────verdict=needs_human────→ escalated（转工单，ticket_id 回填）
 //!      ├──调查失败/解析失败────────────→ investigation_failed（同样转工单）
 //!      ├──超日预算────────────────────→ budget_skipped（报警保持 Active，不计预算）
 //!      └──dispatch 被拦（O11/队列满）─→ dispatch_suppressed（不开票，不计预算；
 //!                                       迟到 RunRecorded 可按 verdict 恢复路由→三出口）
 //! noise_archived ──✕ 反馈「判错了」──→ investigating（重开重调查，T-17/C6）
+//! dismissed + 关联报警 3 天仍 Active ──审批超时清扫器──→ investigating（重浮重查，X5）
 //! ```
 
 use chrono::{DateTime, Utc};
@@ -64,6 +66,10 @@ pub enum JudgmentStatus {
     /// dispatch 被 O11 dedup/队列拦下（调查从未发起）。不开票、不计日预算；
     /// 迟到的 RunRecorded 可按 verdict 恢复路由到三出口（T-7/L1）。
     DispatchSuppressed,
+    /// 用户否决建议（X5，v3 既定语义：拒绝不开票）。拒绝原因落
+    /// evidence_json.dismiss_reason（P2 学习闭环输入）；关联报警 3 天仍
+    /// Active 时由审批超时清扫器重浮为 investigating 重查。
+    Dismissed,
 }
 
 impl JudgmentStatus {
@@ -78,6 +84,7 @@ impl JudgmentStatus {
             JudgmentStatus::InvestigationFailed => "investigation_failed",
             JudgmentStatus::BudgetSkipped => "budget_skipped",
             JudgmentStatus::DispatchSuppressed => "dispatch_suppressed",
+            JudgmentStatus::Dismissed => "dismissed",
         }
     }
 
@@ -92,6 +99,7 @@ impl JudgmentStatus {
             "investigation_failed" => Some(JudgmentStatus::InvestigationFailed),
             "budget_skipped" => Some(JudgmentStatus::BudgetSkipped),
             "dispatch_suppressed" => Some(JudgmentStatus::DispatchSuppressed),
+            "dismissed" => Some(JudgmentStatus::Dismissed),
             _ => None,
         }
     }
@@ -127,6 +135,9 @@ pub(crate) fn allowed_transition(from: JudgmentStatus, to: JudgmentStatus) -> bo
             // 审批出口
             | (AwaitingApproval, Executing)
             | (AwaitingApproval, Escalated)
+            // 拒绝出口（X5）：不开票；关联报警 3 天仍 Active 可重浮重查
+            | (AwaitingApproval, Dismissed)
+            | (Dismissed, Investigating)
             // 执行出口
             | (Executing, Resolved)
             | (Executing, Escalated)
@@ -398,6 +409,16 @@ pub(crate) async fn set_judgment_run_id(pool: &SqlitePool, id: &str, run_id: &st
 pub(crate) async fn link_judgment_ticket(pool: &SqlitePool, id: &str, ticket_id: i64) -> Result<()> {
     sqlx::query("UPDATE judgments SET ticket_id = ? WHERE id = ? AND ticket_id IS NULL")
         .bind(ticket_id)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// 拒绝原因落 evidence_json.dismiss_reason（X5：P2 学习闭环吃「用户为什么否决」）。
+pub(crate) async fn set_judgment_dismiss_reason(pool: &SqlitePool, id: &str, reason: &str) -> Result<()> {
+    sqlx::query("UPDATE judgments SET evidence_json = json_set(evidence_json, '$.dismiss_reason', ?) WHERE id = ?")
+        .bind(reason)
         .bind(id)
         .execute(pool)
         .await?;
@@ -840,6 +861,11 @@ impl Db {
         link_judgment_ticket(self.pool(), id, ticket_id).await
     }
 
+    /// 拒绝原因落 evidence_json.dismiss_reason（X5）。
+    pub async fn set_judgment_dismiss_reason(&self, id: &str, reason: &str) -> Result<()> {
+        set_judgment_dismiss_reason(self.pool(), id, reason).await
+    }
+
     pub async fn list_judgments_feed(
         &self,
         workspace_id: &str,
@@ -978,7 +1004,27 @@ mod tests {
         assert!(j.resolved_at.is_some());
     }
 
-    #[tokio::test]
+    #[test]
+    fn dismissed_edges_in_matrix() {
+        // X5：拒绝出口与重浮边登记；dismissed 是终态——除重浮外无出边。
+        assert!(allowed_transition(
+            JudgmentStatus::AwaitingApproval,
+            JudgmentStatus::Dismissed
+        ));
+        assert!(allowed_transition(
+            JudgmentStatus::Dismissed,
+            JudgmentStatus::Investigating
+        ));
+        assert!(!allowed_transition(
+            JudgmentStatus::Dismissed,
+            JudgmentStatus::Escalated
+        ));
+        assert!(!allowed_transition(JudgmentStatus::Dismissed, JudgmentStatus::Resolved));
+        assert!(!allowed_transition(JudgmentStatus::Resolved, JudgmentStatus::Dismissed));
+        // dismissed 是终态：不占用 active 唯一索引（新报警可重新触发调查）
+        assert!(!JudgmentStatus::Dismissed.is_open());
+    }
+
     async fn conditional_transit_rejects_wrong_state() {
         let db = test_db().await;
         let id = db.insert_judgment("ws1", None, None, None, "annotate").await.unwrap();

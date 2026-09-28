@@ -33,6 +33,9 @@ use tinyiothub_storage::judgment::{Judgment, JudgmentStatus, JudgmentVerdict};
 
 use crate::domains::alarm::service::AlarmService;
 use crate::domains::event::sse_manager::SseConnectionManager;
+use crate::domains::notify::{NotificationManager, NotificationMessage};
+use tinyiothub_core::models::event::EventLevel;
+use tinyiothub_core::notification_types::NotificationChannelType;
 
 /// problem_key 前缀（callbacks.rs dispatch_alarm_investigation 的键域）。
 const ALARM_KEY_PREFIX: &str = "alarm:";
@@ -94,7 +97,13 @@ pub(crate) fn parse_verdict(summary: &str) -> Option<(VerdictPayload, bool)> {
 }
 
 /// 单事件投影。所有错误就地处理（log），不向上传播。
-pub(crate) async fn project(event: &AgentEvent, db: &Db, sse: &SseConnectionManager, alarm_service: &AlarmService) {
+pub(crate) async fn project(
+    event: &AgentEvent,
+    db: &Db,
+    sse: &SseConnectionManager,
+    alarm_service: &AlarmService,
+    notify: &Option<Arc<NotificationManager>>,
+) {
     let AgentEventKind::RunRecorded {
         report,
         problem_key: Some(pk),
@@ -106,7 +115,7 @@ pub(crate) async fn project(event: &AgentEvent, db: &Db, sse: &SseConnectionMana
 
     // 审批执行收尾（approve 端点派发的 exec run）
     if let Some(judgment_id) = pk.strip_prefix("exec:") {
-        settle_execution(db, sse, alarm_service, judgment_id, report).await;
+        settle_execution(db, sse, alarm_service, notify, judgment_id, report).await;
         return;
     }
 
@@ -159,6 +168,7 @@ pub(crate) async fn project(event: &AgentEvent, db: &Db, sse: &SseConnectionMana
             fail_and_escalate(
                 db,
                 sse,
+                notify,
                 &judgment,
                 report,
                 pk,
@@ -168,10 +178,21 @@ pub(crate) async fn project(event: &AgentEvent, db: &Db, sse: &SseConnectionMana
         }
         _ => match parse_verdict(&report.summary) {
             Some((payload, used_fallback)) => {
-                route_verdict(db, sse, alarm_service, &judgment, report, pk, payload, used_fallback).await
+                route_verdict(
+                    db,
+                    sse,
+                    alarm_service,
+                    notify,
+                    &judgment,
+                    report,
+                    pk,
+                    payload,
+                    used_fallback,
+                )
+                .await
             }
             None => {
-                fail_and_escalate(db, sse, &judgment, report, pk, "判断输出解析失败").await;
+                fail_and_escalate(db, sse, notify, &judgment, report, pk, "判断输出解析失败").await;
             }
         },
     }
@@ -190,6 +211,7 @@ async fn settle_execution(
     db: &Db,
     sse: &SseConnectionManager,
     alarm_service: &AlarmService,
+    notify: &Option<Arc<NotificationManager>>,
     judgment_id: &str,
     report: &RunReport,
 ) {
@@ -257,7 +279,16 @@ async fn settle_execution(
                         "批准的动作执行失败：{}",
                         report.summary.chars().take(80).collect::<String>()
                     );
-                    escalate_to_ticket(db, sse, &judgment, report, &format!("exec:{}", judgment_id), &reason).await;
+                    escalate_to_ticket(
+                        db,
+                        sse,
+                        notify,
+                        &judgment,
+                        report,
+                        &format!("exec:{}", judgment_id),
+                        &reason,
+                    )
+                    .await;
                     broadcast_judgment(sse, &judgment.workspace_id, judgment_id, "judgment_updated").await;
                 }
                 Ok(false) => debug!(judgment_id, "escalate skipped (not executing)"),
@@ -272,6 +303,7 @@ async fn route_verdict(
     db: &Db,
     sse: &SseConnectionManager,
     alarm_service: &AlarmService,
+    notify: &Option<Arc<NotificationManager>>,
     judgment: &Judgment,
     report: &RunReport,
     problem_key: &str,
@@ -284,6 +316,7 @@ async fn route_verdict(
         fail_and_escalate(
             db,
             sse,
+            notify,
             judgment,
             report,
             problem_key,
@@ -297,7 +330,18 @@ async fn route_verdict(
         JudgmentVerdict::Noise => {
             // T-3：先落判断（条件迁移），成功后才考虑抑制——抑制是可见副作用，
             // 不能在 judge 输掉竞争时先行发生。
-            let judged = judge(db, sse, judgment, report, verdict, &reason, &payload, used_fallback).await;
+            let judged = judge(
+                db,
+                sse,
+                notify,
+                judgment,
+                report,
+                verdict,
+                &reason,
+                &payload,
+                used_fallback,
+            )
+            .await;
             if !judged {
                 return;
             }
@@ -332,11 +376,33 @@ async fn route_verdict(
             }
         }
         JudgmentVerdict::SelfHealable => {
-            judge(db, sse, judgment, report, verdict, &reason, &payload, used_fallback).await;
+            judge(
+                db,
+                sse,
+                notify,
+                judgment,
+                report,
+                verdict,
+                &reason,
+                &payload,
+                used_fallback,
+            )
+            .await;
         }
         JudgmentVerdict::NeedsHuman => {
-            judge(db, sse, judgment, report, verdict, &reason, &payload, used_fallback).await;
-            escalate_to_ticket(db, sse, judgment, report, problem_key, &reason).await;
+            judge(
+                db,
+                sse,
+                notify,
+                judgment,
+                report,
+                verdict,
+                &reason,
+                &payload,
+                used_fallback,
+            )
+            .await;
+            escalate_to_ticket(db, sse, notify, judgment, report, problem_key, &reason).await;
         }
     }
 }
@@ -346,6 +412,7 @@ async fn route_verdict(
 async fn judge(
     db: &Db,
     sse: &SseConnectionManager,
+    notify: &Option<Arc<NotificationManager>>,
     judgment: &Judgment,
     report: &RunReport,
     verdict: JudgmentVerdict,
@@ -389,6 +456,17 @@ async fn judge(
     {
         Ok(true) => {
             broadcast_judgment(sse, &judgment.workspace_id, &judgment.id, "judgment_judged").await;
+            // X1：self_healable → awaiting_approval（「需要你」批准）——通知到人。
+            // needs_human 的通知在 escalate_to_ticket 统一发出（与工单号一并）。
+            if verdict == JudgmentVerdict::SelfHealable {
+                spawn_needs_you_notify(
+                    notify,
+                    judgment,
+                    EventLevel::Warning,
+                    "需要你：AI 有建议动作等你批准",
+                    reason.to_string(),
+                );
+            }
             true
         }
         Ok(false) => {
@@ -405,6 +483,7 @@ async fn judge(
 async fn fail_and_escalate(
     db: &Db,
     sse: &SseConnectionManager,
+    notify: &Option<Arc<NotificationManager>>,
     judgment: &Judgment,
     report: &RunReport,
     problem_key: &str,
@@ -418,13 +497,15 @@ async fn fail_and_escalate(
         Ok(false) => debug!(judgment_id = %judgment.id, "fail skipped (not investigating)"),
         Err(e) => error!(judgment_id = %judgment.id, error = %e, "fail_judgment failed"),
     }
-    escalate_to_ticket(db, sse, judgment, report, problem_key, reason).await;
+    escalate_to_ticket(db, sse, notify, judgment, report, problem_key, reason).await;
 }
 
 /// 转工单（统一入口；failure_hash 与 ticket_subscriber 同键 → 撞单折叠）。
+/// X1：升级即「需要你」——通知到人（SSE 通道，best-effort）。
 async fn escalate_to_ticket(
     db: &Db,
     sse: &SseConnectionManager,
+    notify: &Option<Arc<NotificationManager>>,
     judgment: &Judgment,
     report: &RunReport,
     problem_key: &str,
@@ -458,6 +539,13 @@ async fn escalate_to_ticket(
     if let Err(e) = db.link_judgment_ticket(&judgment.id, ticket_id).await {
         warn!(judgment_id = %judgment.id, ticket_id, error = %e, "link ticket failed");
     }
+    spawn_needs_you_notify(
+        notify,
+        judgment,
+        EventLevel::Error,
+        "需要你：AI 已转工单",
+        format!("{}（工单 #{ticket_id}）", reason),
+    );
 }
 
 async fn broadcast_judgment(sse: &SseConnectionManager, workspace_id: &str, judgment_id: &str, kind: &str) {
@@ -471,6 +559,31 @@ async fn broadcast_judgment(sse: &SseConnectionManager, workspace_id: &str, judg
     sse.broadcast_message(msg).await;
 }
 
+/// X1：「需要你」事件 → notify 域（SSE/in-app 通道；sms/email 维持打桩）。
+/// best-effort：spawn 派发不 await，失败只 warn——永不阻塞判断/升级流水线。
+fn spawn_needs_you_notify(
+    notify: &Option<Arc<NotificationManager>>,
+    judgment: &Judgment,
+    level: EventLevel,
+    title: &str,
+    content: String,
+) {
+    let Some(manager) = notify.clone() else { return };
+    let message = NotificationMessage::new(
+        title.to_string(),
+        content,
+        level,
+        vec![NotificationChannelType::Sse],
+        vec![judgment.workspace_id.clone()],
+    );
+    let judgment_id = judgment.id.clone();
+    tokio::spawn(async move {
+        if let Err(e) = manager.send_notification(&message).await {
+            warn!(judgment_id, error = %e, "needs-you notify dispatch failed (best-effort)");
+        }
+    });
+}
+
 /// handler 层（approve/reject/feedback）复用的广播出口。
 pub async fn broadcast_judgment_pub(sse: &SseConnectionManager, workspace_id: &str, judgment_id: &str) {
     broadcast_judgment(sse, workspace_id, judgment_id, "judgment_updated").await;
@@ -482,6 +595,7 @@ async fn run_judgment_subscriber(
     db: Arc<Db>,
     sse: Arc<SseConnectionManager>,
     alarm_service: Arc<AlarmService>,
+    notify: Option<Arc<NotificationManager>>,
     shutdown: CancellationToken,
 ) {
     loop {
@@ -492,7 +606,7 @@ async fn run_judgment_subscriber(
             }
             event = rx.recv() => {
                 match event {
-                    Ok(event) => project(&event, &db, &sse, &alarm_service).await,
+                    Ok(event) => project(&event, &db, &sse, &alarm_service, &notify).await,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         // Lagged：无逐条重放（ticket_subscriber 的 300s 对账
                         // 会兜底开失败的 run 的票；卡在 investigating 的判断
@@ -514,6 +628,7 @@ pub async fn supervise_judgment_subscriber(
     db: Arc<Db>,
     sse: Arc<SseConnectionManager>,
     alarm_service: Arc<AlarmService>,
+    notify: Option<Arc<NotificationManager>>,
     shutdown: CancellationToken,
 ) {
     let mut backoff = Duration::from_secs(1);
@@ -527,8 +642,9 @@ pub async fn supervise_judgment_subscriber(
         let db2 = Arc::clone(&db);
         let sse2 = Arc::clone(&sse);
         let alarm2 = Arc::clone(&alarm_service);
+        let notify2 = notify.clone();
         let handle = tokio::spawn(async move {
-            run_judgment_subscriber(rx, db2, sse2, alarm2, token).await;
+            run_judgment_subscriber(rx, db2, sse2, alarm2, notify2, token).await;
         });
         match handle.await {
             Ok(()) => {
@@ -642,12 +758,112 @@ mod tests {
             .await
             .unwrap();
         let summary = "...\n```json\n{\"verdict\": \"needs_human\", \"reason\": \"冷却系统疑似故障\", \"suggested_action\": null, \"action_category\": \"other\"}\n```";
-        project(&event("r1", Outcome::NoActionNeeded, summary), &db, &sse, &alarm).await;
+        project(&event("r1", Outcome::NoActionNeeded, summary), &db, &sse, &alarm, &None).await;
 
         let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, JudgmentStatus::Escalated);
         assert!(j.ticket_id.is_some(), "ticket linked");
         assert_eq!(j.run_id.as_deref(), Some("r1"));
+    }
+
+    /// X1 测试渠道：记录标题或按 fail 注入失败。
+    struct RecordingChannel {
+        sent: Arc<std::sync::Mutex<Vec<String>>>,
+        fail: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::domains::notify::dto::NotificationChannel for RecordingChannel {
+        fn channel_type(&self) -> NotificationChannelType {
+            NotificationChannelType::Sse
+        }
+        async fn send(&self, message: &NotificationMessage) -> std::result::Result<(), String> {
+            if self.fail {
+                return Err("channel down (injected)".to_string());
+            }
+            self.sent.lock().unwrap().push(message.title.clone());
+            Ok(())
+        }
+        async fn is_available(&self) -> bool {
+            true
+        }
+        fn get_config(&self) -> std::collections::HashMap<String, String> {
+            Default::default()
+        }
+    }
+
+    fn notify_fixture(
+        sent: &Arc<std::sync::Mutex<Vec<String>>>,
+        db: &Arc<Db>,
+        fail: bool,
+    ) -> Option<Arc<NotificationManager>> {
+        let mut manager = NotificationManager::new(db.clone());
+        manager.register_channel(Box::new(RecordingChannel {
+            sent: sent.clone(),
+            fail,
+        }));
+        Some(Arc::new(manager))
+    }
+
+    /// X1：self_healable → awaiting_approval 时经 notify 域发「需要你」（SSE）。
+    #[tokio::test]
+    async fn self_healable_sends_needs_you_notify() {
+        let (db, sse, alarm) = fixture().await;
+        let sent = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let notify = notify_fixture(&sent, &db, false);
+
+        let jid = db
+            .insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        let summary = "```json\n{\"verdict\": \"self_healable\", \"reason\": \"网关掉线可重连\", \"suggested_action\": \"重连\", \"action_category\": \"connection_recovery\"}\n```";
+        project(
+            &event("r1", Outcome::NoActionNeeded, summary),
+            &db,
+            &sse,
+            &alarm,
+            &notify,
+        )
+        .await;
+
+        // spawn 派发不 await——短轮询等异步落盘（无长 sleep）
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while sent.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(sent.lock().unwrap().len(), 1, "awaiting_approval 应发「需要你」通知");
+        let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
+        assert_eq!(j.status, JudgmentStatus::AwaitingApproval);
+    }
+
+    /// X1 失败语义：渠道失败注入 → 投影照常完成（best-effort 不阻塞主流水线）。
+    #[tokio::test]
+    async fn notify_channel_failure_does_not_break_projection() {
+        let (db, sse, alarm) = fixture().await;
+        let sent = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let notify = notify_fixture(&sent, &db, true);
+
+        let jid = db
+            .insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        let summary = "```json\n{\"verdict\": \"self_healable\", \"reason\": \"网关掉线可重连\", \"suggested_action\": \"重连\", \"action_category\": \"connection_recovery\"}\n```";
+        project(
+            &event("r1", Outcome::NoActionNeeded, summary),
+            &db,
+            &sse,
+            &alarm,
+            &notify,
+        )
+        .await;
+
+        let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
+        assert_eq!(
+            j.status,
+            JudgmentStatus::AwaitingApproval,
+            "notify 失败不得影响判断迁移"
+        );
+        assert!(sent.lock().unwrap().is_empty(), "失败渠道零送达");
     }
 
     #[tokio::test]
@@ -660,7 +876,7 @@ mod tests {
             .await
             .unwrap();
         let summary = "```json\n{\"verdict\": \"noise\", \"reason\": \"正常波动\", \"suggested_action\": null, \"action_category\": \"other\"}\n```";
-        project(&event("r1", Outcome::NoActionNeeded, summary), &db, &sse, &alarm).await;
+        project(&event("r1", Outcome::NoActionNeeded, summary), &db, &sse, &alarm, &None).await;
 
         let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, JudgmentStatus::NoiseArchived);
@@ -675,7 +891,7 @@ mod tests {
             .insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate")
             .await
             .unwrap();
-        project(&event("r1", Outcome::Failed, "LLM 超时"), &db, &sse, &alarm).await;
+        project(&event("r1", Outcome::Failed, "LLM 超时"), &db, &sse, &alarm, &None).await;
 
         let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, JudgmentStatus::InvestigationFailed);
@@ -694,6 +910,7 @@ mod tests {
             &db,
             &sse,
             &alarm,
+            &None,
         )
         .await;
 
@@ -715,7 +932,7 @@ mod tests {
             problem_key: Some("reboot:t1".to_string()),
             dedup_key: None,
         };
-        project(&e, &db, &sse, &alarm).await;
+        project(&e, &db, &sse, &alarm, &None).await;
         let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, JudgmentStatus::Investigating, "untouched");
     }
@@ -763,7 +980,14 @@ mod tests {
     async fn exec_acted_verified_resolves_and_clears_alarm() {
         let (db, sse, alarm) = fixture().await;
         let jid = seed_executing(&db).await;
-        project(&exec_event(&jid, "r-exec", Outcome::Acted, true), &db, &sse, &alarm).await;
+        project(
+            &exec_event(&jid, "r-exec", Outcome::Acted, true),
+            &db,
+            &sse,
+            &alarm,
+            &None,
+        )
+        .await;
 
         let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, JudgmentStatus::Resolved, "Acted+verified → resolved");
@@ -779,7 +1003,14 @@ mod tests {
     async fn exec_acted_unverified_stays_executing() {
         let (db, sse, alarm) = fixture().await;
         let jid = seed_executing(&db).await;
-        project(&exec_event(&jid, "r-exec", Outcome::Acted, false), &db, &sse, &alarm).await;
+        project(
+            &exec_event(&jid, "r-exec", Outcome::Acted, false),
+            &db,
+            &sse,
+            &alarm,
+            &None,
+        )
+        .await;
 
         let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, JudgmentStatus::Executing, "未验证不闭环，等 SLA 转人工确认");
@@ -795,7 +1026,14 @@ mod tests {
     async fn exec_failed_escalates_with_ticket() {
         let (db, sse, alarm) = fixture().await;
         let jid = seed_executing(&db).await;
-        project(&exec_event(&jid, "r-exec", Outcome::Failed, false), &db, &sse, &alarm).await;
+        project(
+            &exec_event(&jid, "r-exec", Outcome::Failed, false),
+            &db,
+            &sse,
+            &alarm,
+            &None,
+        )
+        .await;
 
         let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, JudgmentStatus::Escalated);
@@ -813,7 +1051,14 @@ mod tests {
             .unwrap();
         assert!(ok);
         // 迟到的 Acted+verified 到达：不自动消警（T-16/C4）
-        project(&exec_event(&jid, "r-exec", Outcome::Acted, true), &db, &sse, &alarm).await;
+        project(
+            &exec_event(&jid, "r-exec", Outcome::Acted, true),
+            &db,
+            &sse,
+            &alarm,
+            &None,
+        )
+        .await;
 
         let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, JudgmentStatus::Escalated, "迟到 Acted 不翻转终态");

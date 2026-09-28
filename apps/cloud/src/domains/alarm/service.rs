@@ -148,23 +148,31 @@ impl AlarmService {
             }
         };
         for j in pending.into_iter().filter(|j| j.run_id.is_none()) {
-            let Some(alarm_id) = j.alarm_id.clone() else {
-                continue;
-            };
-            match self.get_alarm_by_id(&alarm_id, None).await {
-                Ok(Some(alarm)) => {
-                    if let Some(ws) = self.resolve_workspace(&alarm).await {
-                        tracing::info!(judgment_id = %j.id, alarm_id, "redispatching boot-raced alarm investigation");
-                        let condition_desc = self.load_condition_desc(&alarm).await;
-                        self.publish_alarm_created(&alarm, &ws, condition_desc);
-                    }
+            self.redispatch_judgment_investigation(&j).await;
+        }
+    }
+
+    /// 单判断重派调查（X5 dismissed 重浮复用 boot race 同机制）：对指定
+    /// investigating 判断重发 AlarmCreated——subscriber 按 thing+rule 匹配
+    /// 既有 judgment 不重复建行；原报警的 O11 dedup 窗口早已过期（3 天级）。
+    pub async fn redispatch_judgment_investigation(&self, judgment: &tinyiothub_storage::judgment::Judgment) {
+        let Some(alarm_id) = judgment.alarm_id.clone() else {
+            tracing::warn!(judgment_id = %judgment.id, "redispatch skipped: judgment lacks alarm context");
+            return;
+        };
+        match self.get_alarm_by_id(&alarm_id, None).await {
+            Ok(Some(alarm)) => {
+                if let Some(ws) = self.resolve_workspace(&alarm).await {
+                    tracing::info!(judgment_id = %judgment.id, alarm_id, "redispatching alarm investigation");
+                    let condition_desc = self.load_condition_desc(&alarm).await;
+                    self.publish_alarm_created(&alarm, &ws, condition_desc);
                 }
-                Ok(None) => {
-                    tracing::warn!(judgment_id = %j.id, alarm_id, "alarm row missing for pending judgment");
-                }
-                Err(e) => {
-                    tracing::warn!(judgment_id = %j.id, error = %e, "redispatch alarm load failed");
-                }
+            }
+            Ok(None) => {
+                tracing::warn!(judgment_id = %judgment.id, alarm_id, "alarm row missing for redispatch");
+            }
+            Err(e) => {
+                tracing::warn!(judgment_id = %judgment.id, error = %e, "redispatch alarm load failed");
             }
         }
     }

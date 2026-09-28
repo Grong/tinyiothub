@@ -148,6 +148,7 @@ impl ServiceManager {
                     db: (*app_state.db).clone(),
                     sse: app_state.sse_manager.clone(),
                     alarm_service: app_state.alarm_service.clone(),
+                    notify: app_state.notification_manager.clone(),
                 },
             ))));
             let cron_scheduler = tinyiothub_scheduler::CronSchedulerService::new(app_state.db.clone(), registry);
@@ -340,6 +341,7 @@ impl ServiceManager {
                 let db = app_state.db.clone();
                 let sse = app_state.sse_manager.clone();
                 let alarm_service = app_state.alarm_service.clone();
+                let notify = app_state.notification_manager.clone();
                 let bus = agent_events_judgment.clone();
                 let token = judgment_shutdown.clone();
                 let handle = tokio::spawn(async move {
@@ -349,6 +351,7 @@ impl ServiceManager {
                         db,
                         sse,
                         alarm_service,
+                        notify,
                         token,
                     )
                     .await;

@@ -43,6 +43,8 @@ pub trait ApprovalTimeoutStore: Send + Sync {
     async fn escalate_stale_approvals(&self, cutoff_rfc3339: &str) -> Result<u64, String>;
     async fn mark_stale_investigating(&self, cutoff_rfc3339: &str) -> Result<u64, String>;
     async fn escalate_stale_executing(&self, cutoff_rfc3339: &str) -> Result<u64, String>;
+    /// X5：dismissed 超 cutoff（默认 72h）且关联报警仍 Active → 重浮 investigating 重查。
+    async fn resurface_stale_dismissed(&self, cutoff_rfc3339: &str) -> Result<u64, String>;
 }
 
 /// Thing cache used by `DataServer`. Sync because every call site is sync

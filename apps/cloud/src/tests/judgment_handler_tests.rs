@@ -179,7 +179,7 @@ async fn approve_rejects_non_awaiting_status() {
 }
 
 #[tokio::test]
-async fn reject_requires_reason_and_escalates() {
+async fn reject_requires_reason_and_dismisses() {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
     let jid = seed_judgment(&app_state, "ws-default-001", Some("self_healable")).await;
@@ -204,7 +204,7 @@ async fn reject_requires_reason_and_escalates() {
         assert_eq!(json["code"], 400);
     }
 
-    // 有原因 → escalated + ticket
+    // 有原因 → dismissed（X5：不开工单）+ 原因落 evidence.dismiss_reason
     let response = app
         .oneshot(req(
             "POST",
@@ -221,8 +221,13 @@ async fn reject_requires_reason_and_escalates() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(j.status, tinyiothub_storage::judgment::JudgmentStatus::Escalated);
-    assert!(j.ticket_id.is_some(), "ticket linked after reject");
+    assert_eq!(j.status, tinyiothub_storage::judgment::JudgmentStatus::Dismissed);
+    assert!(j.ticket_id.is_none(), "X5：拒绝不开工单");
+    assert!(
+        j.evidence_json.contains("dismiss_reason") && j.evidence_json.contains("产线维护窗口"),
+        "拒绝原因落 evidence.dismiss_reason（P2 学习闭环输入）: {}",
+        j.evidence_json
+    );
 }
 
 struct RecordingSink(std::sync::Mutex<Vec<tinyiothub_agent::runtime::thing_agent::types::WakeSignal>>);

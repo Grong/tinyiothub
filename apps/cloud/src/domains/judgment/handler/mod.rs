@@ -413,7 +413,9 @@ async fn approve_judgment(
     ApiResponseBuilder::success(serde_json::json!({"ok": true, "status": "executing"}))
 }
 
-/// 拒绝：awaiting_approval → escalated + 工单（F14：必填原因，不写 feedback）。
+/// 拒绝：awaiting_approval → dismissed（X5，v3 既定语义：不开工单）；
+/// 原因落 evidence_json.dismiss_reason 喂 P2 学习闭环；不写 feedback（F14）。
+/// 关联报警 3 天仍 Active 时由审批超时清扫器重浮重查（否决有兜底）。
 async fn reject_judgment(
     Path(id): Path<String>,
     State(state): State<AppState>,
@@ -433,13 +435,13 @@ async fn reject_judgment(
         Ok(None) => return ApiResponseBuilder::error_with_code(404, "judgment 不存在"),
         Err(e) => return ApiResponseBuilder::error(format!("查询失败: {e}")),
     };
-
+    let _ = &judgment; // 存在性校验即用途（X5 后不再取字段建工单）
     match state
         .db
         .transit_judgment(
             &id,
             tinyiothub_storage::judgment::JudgmentStatus::AwaitingApproval,
-            tinyiothub_storage::judgment::JudgmentStatus::Escalated,
+            tinyiothub_storage::judgment::JudgmentStatus::Dismissed,
             None,
         )
         .await
@@ -451,29 +453,12 @@ async fn reject_judgment(
         Err(e) => return ApiResponseBuilder::error(format!("状态迁移失败: {e}")),
     }
 
-    let ticket_id = crate::domains::ticket::create_escalation(
-        &state.db,
-        &state.sse_manager,
-        crate::domains::ticket::Escalation {
-            workspace_id: judgment.workspace_id.clone(),
-            thing_id: judgment.thing_id.clone(),
-            agent_run_id: judgment.run_id.clone().unwrap_or_else(|| format!("reject:{id}")),
-            title: format!("审批被拒绝：{}", judgment.reason.chars().take(60).collect::<String>()),
-            briefing: serde_json::json!({
-                "problem": judgment.reason,
-                "source": "approval_rejected",
-                "judgment_id": id,
-                "dismiss_reason": reason,
-                "suggested_action": judgment.suggested_action,
-            }),
-            failure_hash: format!("pk:approval-rejected:{}", judgment.alarm_id.as_deref().unwrap_or(&id)),
-        },
-    )
-    .await;
-    if let Some(tid) = ticket_id {
-        let _ = state.db.link_judgment_ticket(&id, tid).await;
+    // 拒绝原因落 evidence.dismiss_reason（迁移成功后写；写失败不回头——
+    // 状态已是 dismissed，原因缺失由 warn 可见，不阻塞用户操作）。
+    if let Err(e) = state.db.set_judgment_dismiss_reason(&id, reason).await {
+        tracing::warn!(judgment_id = %id, error = %e, "dismiss_reason write failed (status already dismissed)");
     }
 
     crate::domains::agent::host::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id).await;
-    ApiResponseBuilder::success(serde_json::json!({"ok": true, "status": "escalated", "ticketId": ticket_id}))
+    ApiResponseBuilder::success(serde_json::json!({"ok": true, "status": "dismissed"}))
 }

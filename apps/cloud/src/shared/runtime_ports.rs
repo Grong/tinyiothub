@@ -80,6 +80,8 @@ pub struct ApprovalTimeoutAdapter {
     /// 对账恢复用：stale investigating 且存在已完成 run 时重投影路由
     /// （2026-09-16 实测：run 完成但事件丢失，judgment 永久卡死）。
     pub alarm_service: Arc<crate::domains::alarm::service::AlarmService>,
+    /// X1：SLA 升级（审批/执行超时转工单）时的「需要你」通知出口；None 静默。
+    pub notify: Option<Arc<crate::domains::notify::NotificationManager>>,
 }
 
 impl ApprovalTimeoutAdapter {
@@ -125,8 +127,14 @@ impl ApprovalTimeoutAdapter {
                 dedup_key: None,
             },
         };
-        crate::domains::agent::host::judgment_subscriber::project(&event, &self.db, &self.sse, &self.alarm_service)
-            .await;
+        crate::domains::agent::host::judgment_subscriber::project(
+            &event,
+            &self.db,
+            &self.sse,
+            &self.alarm_service,
+            &self.notify,
+        )
+        .await;
         // project 走条件迁移——确认判断真的离开了 investigating
         matches!(
             self.db.find_judgment_by_id(&judgment.id, &judgment.workspace_id).await,
@@ -184,6 +192,23 @@ impl ApprovalTimeoutAdapter {
             Some(tid) => {
                 if let Err(e) = self.db.link_judgment_ticket(&judgment.id, tid).await {
                     tracing::warn!(judgment_id = %judgment.id, error = %e, "link ticket failed");
+                }
+                // X1：SLA 升级也是「需要你」事件——通知到人（best-effort）。
+                if let Some(manager) = &self.notify {
+                    let message = crate::domains::notify::NotificationMessage::new(
+                        "需要你：AI 已转工单".to_string(),
+                        format!("{}（工单 #{}）", title_prefix, tid),
+                        tinyiothub_core::models::event::EventLevel::Error,
+                        vec![tinyiothub_core::notification_types::NotificationChannelType::Sse],
+                        vec![judgment.workspace_id.clone()],
+                    );
+                    let manager = manager.clone();
+                    let judgment_id = judgment.id.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = manager.send_notification(&message).await {
+                            tracing::warn!(judgment_id, error = %e, "needs-you notify dispatch failed (best-effort)");
+                        }
+                    });
                 }
                 Ok(())
             }
@@ -289,6 +314,55 @@ impl tinyiothub_runtime::ports::ApprovalTimeoutStore for ApprovalTimeoutAdapter 
         }
         Ok(escalated)
     }
+
+    /// X5：dismissed 超 cutoff 且关联报警仍 Active → 重浮 investigating 并重派
+    /// 调查（否决有兜底——「用户说不用处理」不能成为永久静默）。报警已消/无
+    /// 报警上下文的保持 dismissed（用户对了一半：事已经过去了）。
+    async fn resurface_stale_dismissed(&self, cutoff_rfc3339: &str) -> Result<u64, String> {
+        let stale = self
+            .db
+            .stale_by_status(tinyiothub_storage::judgment::JudgmentStatus::Dismissed, cutoff_rfc3339)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut resurfaced = 0u64;
+        for judgment in stale {
+            let active_alarm = match &judgment.alarm_id {
+                Some(alarm_id) => matches!(
+                    self.alarm_service
+                        .get_alarm_by_id(alarm_id, Some(&judgment.workspace_id))
+                        .await,
+                    Ok(Some(alarm)) if alarm.status.is_active()
+                ),
+                None => false,
+            };
+            if !active_alarm {
+                continue;
+            }
+            match self
+                .db
+                .transit_judgment(
+                    &judgment.id,
+                    tinyiothub_storage::judgment::JudgmentStatus::Dismissed,
+                    tinyiothub_storage::judgment::JudgmentStatus::Investigating,
+                    None,
+                )
+                .await
+            {
+                Ok(true) => {
+                    // 重派调查（boot race 同机制：subscriber 按 thing+rule 匹配既有
+                    // judgment 不重复建行）；失败只记日志——investigating SLA 兜底。
+                    self.alarm_service.redispatch_judgment_investigation(&judgment).await;
+                    resurfaced += 1;
+                }
+                Ok(false) => {} // 并发互撞（刚好被其他路径迁移）→ 跳过
+                Err(e) => {
+                    tracing::error!(judgment_id = %judgment.id, error = %e, "resurface dismissed failed (isolated)");
+                    continue;
+                }
+            }
+        }
+        Ok(resurfaced)
+    }
 }
 
 #[cfg(test)]
@@ -309,6 +383,7 @@ mod approval_timeout_tests {
             db: db.clone(),
             sse: Arc::new(crate::domains::event::sse_manager::SseConnectionManager::new()),
             alarm_service: Arc::new(crate::domains::alarm::service::AlarmService::new(Arc::new(db.clone()))),
+            notify: None,
         };
         (db, adapter)
     }
@@ -402,6 +477,129 @@ mod approval_timeout_tests {
                 .unwrap(),
             0
         );
+    }
+
+    /// X5：dismissed 超 72h 且关联报警仍 Active → 重浮 investigating（否决有兜底）。
+    #[tokio::test]
+    async fn dismissed_with_active_alarm_resurfaces() {
+        let (db, adapter) = fixture().await;
+        sqlx::query("INSERT INTO things (id, name, workspace_id, created_at, updated_at) VALUES ('t1','t1','ws1','2025-01-01','2025-01-01')")
+            .execute(db.pool()).await.unwrap();
+        let alarm = tinyiothub_storage::alarm::Alarm::new(
+            "t1".to_string(),
+            None,
+            None,
+            tinyiothub_storage::alarm::AlarmType::PropertyThreshold,
+            tinyiothub_storage::alarm::AlarmLevel::Warning,
+            "温度越限".to_string(),
+            None,
+            None,
+            Some("ws1".to_string()),
+        );
+        let alarm_id = alarm.id.clone();
+        db.insert_alarm(&alarm).await.unwrap();
+
+        let jid = db
+            .insert_judgment("ws1", Some(&alarm_id), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        db.judge_judgment(
+            &jid,
+            tinyiothub_storage::judgment::JudgmentVerdict::SelfHealable,
+            "可重连",
+            "{}",
+            Some("重连"),
+            Some("connection_recovery"),
+            None,
+        )
+        .await
+        .unwrap();
+        let flipped = db
+            .transit_judgment(
+                &jid,
+                tinyiothub_storage::judgment::JudgmentStatus::AwaitingApproval,
+                tinyiothub_storage::judgment::JudgmentStatus::Dismissed,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(flipped, "awaiting_approval → dismissed 是合法边");
+        sqlx::query("UPDATE judgments SET state_entered_at = datetime('now', '-73 hours') WHERE id = ?")
+            .bind(&jid)
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        let cutoff = (chrono::Utc::now() - chrono::Duration::hours(72)).to_rfc3339();
+        let n = tinyiothub_runtime::ports::ApprovalTimeoutStore::resurface_stale_dismissed(&adapter, &cutoff)
+            .await
+            .unwrap();
+        assert_eq!(n, 1, "报警仍 Active 的 dismissed 应重浮");
+        let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
+        assert_eq!(j.status, tinyiothub_storage::judgment::JudgmentStatus::Investigating);
+    }
+
+    /// X5 反向：报警已消（Resolved）的 dismissed 保持终态——用户对了一半。
+    #[tokio::test]
+    async fn dismissed_with_resolved_alarm_stays() {
+        let (db, adapter) = fixture().await;
+        sqlx::query("INSERT INTO things (id, name, workspace_id, created_at, updated_at) VALUES ('t1','t1','ws1','2025-01-01','2025-01-01')")
+            .execute(db.pool()).await.unwrap();
+        let alarm = tinyiothub_storage::alarm::Alarm::new(
+            "t1".to_string(),
+            None,
+            None,
+            tinyiothub_storage::alarm::AlarmType::PropertyThreshold,
+            tinyiothub_storage::alarm::AlarmLevel::Warning,
+            "温度越限".to_string(),
+            None,
+            None,
+            Some("ws1".to_string()),
+        );
+        let alarm_id = alarm.id.clone();
+        db.insert_alarm(&alarm).await.unwrap();
+        sqlx::query("UPDATE thing_alarms SET is_resolved = 1 WHERE id = ?")
+            .bind(&alarm_id)
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        let jid = db
+            .insert_judgment("ws1", Some(&alarm_id), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        db.judge_judgment(
+            &jid,
+            tinyiothub_storage::judgment::JudgmentVerdict::SelfHealable,
+            "可重连",
+            "{}",
+            Some("重连"),
+            Some("connection_recovery"),
+            None,
+        )
+        .await
+        .unwrap();
+        db.transit_judgment(
+            &jid,
+            tinyiothub_storage::judgment::JudgmentStatus::AwaitingApproval,
+            tinyiothub_storage::judgment::JudgmentStatus::Dismissed,
+            None,
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE judgments SET state_entered_at = datetime('now', '-73 hours') WHERE id = ?")
+            .bind(&jid)
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        let cutoff = (chrono::Utc::now() - chrono::Duration::hours(72)).to_rfc3339();
+        let n = tinyiothub_runtime::ports::ApprovalTimeoutStore::resurface_stale_dismissed(&adapter, &cutoff)
+            .await
+            .unwrap();
+        assert_eq!(n, 0, "报警已消的 dismissed 不重浮");
+        let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
+        assert_eq!(j.status, tinyiothub_storage::judgment::JudgmentStatus::Dismissed);
     }
 
     /// 对账恢复（2026-09-16 实测：run 完成且 verdict 合法，但 RunRecorded

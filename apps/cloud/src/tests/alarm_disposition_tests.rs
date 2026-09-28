@@ -257,7 +257,7 @@ async fn full_chain_alarm_to_noise_archive() {
         },
     };
     let sse = crate::domains::event::sse_manager::SseConnectionManager::new();
-    crate::domains::agent::host::judgment_subscriber::project(&event, &db, &sse, &svc).await;
+    crate::domains::agent::host::judgment_subscriber::project(&event, &db, &sse, &svc, &None).await;
 
     // 终态：判断归档 + 报警被抑制（suppress 模式 + Warning）
     let j = db.find_judgment_by_id(&judgment.id, "ws1").await.unwrap().unwrap();
@@ -300,7 +300,7 @@ async fn annotate_mode_noise_does_not_suppress() {
         },
     };
     let sse = crate::domains::event::sse_manager::SseConnectionManager::new();
-    crate::domains::agent::host::judgment_subscriber::project(&event, &db, &sse, &svc).await;
+    crate::domains::agent::host::judgment_subscriber::project(&event, &db, &sse, &svc, &None).await;
 
     let judgments = db.list_judgments_feed("ws1", None, None, 10).await.unwrap();
     assert_eq!(judgments[0].status, JudgmentStatus::NoiseArchived, "判断照常归档");
@@ -351,7 +351,7 @@ async fn critical_alarm_never_suppressed_even_in_suppress_mode() {
         },
     };
     let sse = crate::domains::event::sse_manager::SseConnectionManager::new();
-    crate::domains::agent::host::judgment_subscriber::project(&event, &db, &sse, &svc).await;
+    crate::domains::agent::host::judgment_subscriber::project(&event, &db, &sse, &svc, &None).await;
 
     let a = db.find_alarm_by_id(&alarm.id, Some("ws1")).await.unwrap().unwrap();
     assert_eq!(
