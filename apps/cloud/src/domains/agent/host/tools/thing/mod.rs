@@ -40,7 +40,8 @@ pub use get::GetThingTool;
 pub use invoke_action::InvokeActionTool;
 pub use list::ListThingsTool;
 pub use pending_action::{
-    PendingAction, PendingActionStore, cleanup_expired_tokens, store_pending_action, take_pending_action,
+    PendingAction, PendingActionStore, cleanup_expired_tokens, spawn_pending_action_sweeper,
+    spawn_pending_action_sweeper_default, store_pending_action, take_pending_action,
 };
 pub use profile::GetThingProfileTool;
 pub use query_events::QueryEventsTool;
