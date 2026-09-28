@@ -258,3 +258,43 @@ describe("组件级：证据失败重试（fix round 1——「重试」不得�
     }
   });
 });
+
+describe("组件级：键盘可达（X7——Enter 展开/收起，行可聚焦）", () => {
+  it("可点行带 tabindex/role，Enter 键展开证据", async () => {
+    const ev1 = ev({ id: "alarm:j-kbd", status: "resolved" });
+    const summary: BrainEventsSummary = {
+      digestedToday: 1,
+      needsYou: 0,
+      latencyP50Secs: null,
+      feedbackRight: 0,
+      feedbackWrong: 0,
+    };
+    vi.mocked(brainEventApi.list).mockResolvedValue([ev1]);
+    vi.mocked(brainEventApi.summary).mockResolvedValue(summary);
+    vi.mocked(brainEventApi.detail).mockResolvedValue({ ...ev1, evidence: { summary: "证据原文" } });
+    // 本文件的 API mock 跨测试共享计数——清零后断言相对增量
+    vi.mocked(brainEventApi.detail).mockClear();
+
+    const el = document.createElement("view-dispositions");
+    document.body.appendChild(el);
+    try {
+      await vi.waitFor(() => expect(el.querySelector(".j-item")).toBeTruthy());
+      const row = el.querySelector(".j-item") as HTMLElement;
+      expect(row.getAttribute("tabindex")).toBe("0");
+      expect(row.getAttribute("role")).toBe("button");
+
+      // Enter 展开（与点击同语义）
+      row.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await vi.waitFor(() =>
+        expect(el.querySelector(".j-ev-text")?.textContent).toContain("证据原文"),
+      );
+      expect(brainEventApi.detail).toHaveBeenCalledTimes(1);
+
+      // 再按 Enter 收起
+      row.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await vi.waitFor(() => expect(el.querySelector(".j-ev-text")).toBeNull());
+    } finally {
+      el.remove();
+    }
+  });
+});

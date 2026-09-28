@@ -352,3 +352,13 @@ view-dispositions .disp-error {
   color: var(--muted-foreground);
   font-size: 13px;
 }
+
+/* X7：键盘焦点环可见（设计 Pass 6）——用设计系统 --focus-ring 预设 */
+view-dispositions .j-item:focus-visible,
+view-dispositions .disp-tab:focus-visible,
+view-dispositions .j-item button:focus-visible,
+view-dispositions .j-fb button:focus-visible,
+view-dispositions .j-wrong-panel textarea:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}

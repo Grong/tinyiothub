@@ -113,7 +113,7 @@ export const brainEventApi = {
     await judgmentApi.approve(brainEventTargetId(ev));
   },
 
-  /** 拒绝：alarm 源 → /judgments/{id}/reject（必填原因，转工单）；
+  /** 拒绝：alarm 源 → /judgments/{id}/reject（必填原因，X5：落 dismissed 不开工单）；
    *  patrol 源 → /heartbeat/approvals/{pid}/reject（X2：必填原因，落 content.dismiss_reason）。 */
   async reject(ev: BrainEvent, reason?: string): Promise<void> {
     if (ev.source === 'patrol') {

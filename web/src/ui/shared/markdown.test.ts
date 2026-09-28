@@ -33,4 +33,15 @@ describe("md", () => {
     // 非字符串输入不应抛异常（防御性；运行时数据源可能给非字符串）
     expect(() => md("")).not.toThrow();
   });
+
+  it("F8: external links get noopener + _blank", () => {
+    const out = md("[文档](https://example.com/a)");
+    expect(out).toContain('rel="noopener noreferrer"');
+    expect(out).toContain('target="_blank"');
+  });
+
+  it("F8: external images are stripped, data URIs preserved", () => {
+    expect(md("![x](https://evil.com/track.png)")).not.toContain("<img");
+    expect(md("![x](data:image/png;base64,iVBORw0KGgo=)")).toContain("<img");
+  });
 });

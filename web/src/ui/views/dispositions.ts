@@ -369,7 +369,7 @@ export class DispositionsView extends LitElement {
     await this.runPending(ev.id, async () => {
       try {
         await brainEventApi.reject(ev, reason);
-        success(ev.source === "patrol" ? "已拒绝" : "已拒绝并转工单");
+        success("已拒绝");
         this.rejectPanelId = null;
         await this.load(true);
       } catch (e) {
@@ -496,7 +496,16 @@ export class DispositionsView extends LitElement {
     return html`
       <div
         class="j-item ${needsAction ? "needs-you" : ""} ${clickable ? "clickable" : ""}"
+        tabindex=${clickable ? "0" : nothing}
+        role=${clickable ? "button" : nothing}
         @click=${() => this.onRowClick(ev)}
+        @keydown=${(e: KeyboardEvent) => {
+          // X7：键盘可达——Enter/Space 展开/收起（与点击同语义）
+          if (clickable && (e.key === "Enter" || e.key === " ")) {
+            e.preventDefault();
+            this.onRowClick(ev);
+          }
+        }}
       >
         <div class="j-row1">
           <span class="j-verdict ${needsAction ? "action" : ""}">${BADGE_MAP[ev.status] ?? ev.status}</span>
@@ -543,7 +552,7 @@ export class DispositionsView extends LitElement {
           ? html`
               <div class="j-wrong-panel" @click=${(e: Event) => e.stopPropagation()}>
                 <textarea
-                  placeholder="拒绝原因（必填，会写进工单）"
+                  placeholder="拒绝原因（必填，AI 会记住这次否决）"
                   .value=${this.rejectReason}
                   @input=${(e: InputEvent) => (this.rejectReason = (e.target as HTMLTextAreaElement).value)}
                 ></textarea>
