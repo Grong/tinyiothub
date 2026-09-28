@@ -76,13 +76,14 @@ export function brainEventTargetId(ev: BrainEvent): string {
   return idx >= 0 ? ev.id.slice(idx + 1) : ev.id;
 }
 
-/** patrol 源提案审批走 heartbeat 域（工作区路径参数来自会话上下文）。 */
-async function postPatrolApproval(proposalId: string, action: 'approve' | 'reject'): Promise<void> {
+/** patrol 源提案审批走 heartbeat 域（工作区路径参数来自会话上下文）。
+ *  X2：reject 带必填原因（落 content.dismiss_reason）。 */
+async function postPatrolApproval(proposalId: string, action: 'approve' | 'reject', reason?: string): Promise<void> {
   const ws = getWorkspaceId();
   if (!ws) throw new Error('缺少工作区上下文');
   await apiPost(
     `/workspaces/${encodeURIComponent(ws)}/heartbeat/approvals/${encodeURIComponent(proposalId)}/${action}`,
-    {},
+    action === 'reject' ? { reason: reason ?? '' } : {},
   );
 }
 
@@ -113,10 +114,10 @@ export const brainEventApi = {
   },
 
   /** 拒绝：alarm 源 → /judgments/{id}/reject（必填原因，转工单）；
-   *  patrol 源 → /heartbeat/approvals/{pid}/reject（端点不收原因——P0 不改）。 */
+   *  patrol 源 → /heartbeat/approvals/{pid}/reject（X2：必填原因，落 content.dismiss_reason）。 */
   async reject(ev: BrainEvent, reason?: string): Promise<void> {
     if (ev.source === 'patrol') {
-      await postPatrolApproval(brainEventTargetId(ev), 'reject');
+      await postPatrolApproval(brainEventTargetId(ev), 'reject', reason);
       return;
     }
     await judgmentApi.reject(brainEventTargetId(ev), reason ?? '');

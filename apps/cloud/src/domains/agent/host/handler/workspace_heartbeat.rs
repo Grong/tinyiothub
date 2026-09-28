@@ -524,6 +524,10 @@ pub async fn approve_proposal(
     Path((workspace_id, proposal_id)): Path<(String, String)>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     verify_workspace_access_port!(state, claims, workspace_id);
+    // F9：批准 = 物理动作授权，强制 admin；角色查询失败 fail-closed 403。
+    if !super::is_admin(&state.db, &claims.user_id).await {
+        return ApiResponseBuilder::error_with_code(403, "需要管理员权限");
+    }
 
     // 与 agent 会话同源的工具注册表（内建 thing 工具 + MCP 适配器）——
     // 2026-09-24 前只查 MCP registry，thing 工具 9 件套里 8 个批准即
@@ -732,14 +736,30 @@ async fn execute_approved_tool(
 
 // ── POST /{id}/heartbeat/approvals/{proposal_id}/reject ──
 
+#[derive(serde::Deserialize)]
+pub struct RejectProposalRequest {
+    reason: String,
+}
+
 pub async fn reject_proposal(
     State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path((workspace_id, proposal_id)): Path<(String, String)>,
+    Json(req): Json<RejectProposalRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     verify_workspace_access_port!(state, claims, workspace_id);
 
-    match update_proposal_status(state.db.pool(), &workspace_id, &proposal_id, "rejected", None).await {
+    // X2：patrol 拒绝与 judgment 同一契约——必填原因（落 content.dismiss_reason，
+    // P2 学习闭环的输入信号）。
+    let reason = req.reason.trim();
+    if reason.chars().count() < 4 {
+        return ApiResponseBuilder::error_with_code(400, "拒绝必须填写原因（至少 4 个字符）");
+    }
+    if reason.chars().count() > 500 {
+        return ApiResponseBuilder::error_with_code(400, "拒绝原因过长（最多 500 字符）");
+    }
+
+    match update_proposal_status(state.db.pool(), &workspace_id, &proposal_id, "rejected", Some(reason)).await {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"status": "rejected"})),
         Err(ProposalFlipError::Conflict) => {
             // F4：提案已被并发处理（如批准已执行）——审计记录不可覆盖，
@@ -1404,7 +1424,7 @@ mod tests {
         .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["status"], "rejected");
-        assert_eq!(parsed["reject_reason"], "误报，无需处理");
+        assert_eq!(parsed["dismiss_reason"], "误报，无需处理");
     }
 
     #[test]

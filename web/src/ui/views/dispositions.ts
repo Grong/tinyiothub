@@ -354,22 +354,10 @@ export class DispositionsView extends LitElement {
     });
   }
 
-  /** alarm 源拒绝：必填原因（写进工单）；patrol 源拒绝：直接提交（端点不收原因）。 */
-  private async reject(ev: BrainEvent) {
-    if (ev.source !== "patrol") {
-      this.rejectPanelId = this.rejectPanelId === ev.id ? null : ev.id;
-      this.rejectReason = "";
-      return;
-    }
-    await this.runPending(ev.id, async () => {
-      try {
-        await brainEventApi.reject(ev);
-        success("已拒绝");
-        await this.load(true);
-      } catch (e) {
-        toastError(e instanceof Error ? e.message : "拒绝失败");
-      }
-    });
+  /** 拒绝（X2）：两源统一开内联面板必填原因——alarm 写进工单；patrol 落提案 content。 */
+  private reject(ev: BrainEvent) {
+    this.rejectPanelId = this.rejectPanelId === ev.id ? null : ev.id;
+    this.rejectReason = "";
   }
 
   private async submitReject(ev: BrainEvent) {
@@ -381,7 +369,7 @@ export class DispositionsView extends LitElement {
     await this.runPending(ev.id, async () => {
       try {
         await brainEventApi.reject(ev, reason);
-        success("已拒绝并转工单");
+        success(ev.source === "patrol" ? "已拒绝" : "已拒绝并转工单");
         this.rejectPanelId = null;
         await this.load(true);
       } catch (e) {

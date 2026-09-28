@@ -204,7 +204,7 @@ pub(crate) async fn flip_agent_proposal_status(
     let result = match reason {
         Some(reason) => {
             sqlx::query(
-                "UPDATE agent_actions SET content = json_set(content, '$.status', ?, '$.reject_reason', ?) \
+                "UPDATE agent_actions SET content = json_set(content, '$.status', ?, '$.dismiss_reason', ?) \
              WHERE id = ? AND json_extract(content, '$.status') = ?",
             )
             .bind(to)

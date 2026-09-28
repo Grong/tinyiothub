@@ -321,6 +321,10 @@ async fn approve_judgment(
     claims: AuthClaims,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let ws = &claims.0.workspace_id;
+    // F9：批准 = 物理动作授权，强制 admin；角色查询失败 fail-closed 403。
+    if !crate::domains::agent::host::handler::is_admin(&state.db, &claims.0.user_id).await {
+        return ApiResponseBuilder::error_with_code(403, "需要管理员权限");
+    }
     let judgment = match state.db.find_judgment_by_id(&id, ws).await {
         Ok(Some(j)) => j,
         Ok(None) => return ApiResponseBuilder::error_with_code(404, "judgment 不存在"),
@@ -421,6 +425,9 @@ async fn reject_judgment(
     if reason.chars().count() < 4 {
         return ApiResponseBuilder::error_with_code(400, "拒绝必须填写原因（至少 4 个字符）");
     }
+    if reason.chars().count() > 500 {
+        return ApiResponseBuilder::error_with_code(400, "拒绝原因过长（最多 500 字符）");
+    }
     let judgment = match state.db.find_judgment_by_id(&id, ws).await {
         Ok(Some(j)) => j,
         Ok(None) => return ApiResponseBuilder::error_with_code(404, "judgment 不存在"),
@@ -456,7 +463,7 @@ async fn reject_judgment(
                 "problem": judgment.reason,
                 "source": "approval_rejected",
                 "judgment_id": id,
-                "reject_reason": reason,
+                "dismiss_reason": reason,
                 "suggested_action": judgment.suggested_action,
             }),
             failure_hash: format!("pk:approval-rejected:{}", judgment.alarm_id.as_deref().unwrap_or(&id)),

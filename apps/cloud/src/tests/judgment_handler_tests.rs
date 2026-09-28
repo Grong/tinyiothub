@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::test_utils::{
-    auth_header, create_test_token, create_test_token_with_workspace, response_parts, seed_test_workspace,
-    setup_test_app_with_pool,
+    auth_header, create_test_token, create_test_token_with_workspace, response_parts, seed_admin_role,
+    seed_test_workspace, setup_test_app_with_pool,
 };
 
 fn req(method: &str, uri: &str, token: &str, body: Option<Value>) -> Request<Body> {
@@ -146,6 +146,7 @@ async fn feedback_wrong_requires_reason() {
 async fn approve_rejects_non_awaiting_status() {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
+    seed_admin_role(&pool, "user-1").await;
     // investigating 状态（未 judged）不可批准
     let jid = seed_judgment(&app_state, "ws-default-001", None).await;
 
@@ -253,6 +254,7 @@ impl tinyiothub_agent::runtime::thing_agent::DirectiveSink for FailingSink {
 async fn approve_dispatches_execution_signal() {
     let (mut app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
+    seed_admin_role(&pool, "user-1").await;
     let jid = seed_judgment(&app_state, "ws-default-001", Some("self_healable")).await;
     let sink = std::sync::Arc::new(RecordingSink(std::sync::Mutex::new(vec![])));
     app_state.set_directive_sink(sink.clone());
@@ -298,6 +300,7 @@ async fn approve_dispatches_execution_signal() {
 async fn approve_enqueue_failure_rolls_back_to_awaiting() {
     let (mut app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
+    seed_admin_role(&pool, "user-1").await;
     let jid = seed_judgment(&app_state, "ws-default-001", Some("self_healable")).await;
     app_state.set_directive_sink(std::sync::Arc::new(FailingSink));
 
@@ -334,6 +337,7 @@ async fn approve_enqueue_failure_rolls_back_to_awaiting() {
 async fn approve_twice_second_gets_409() {
     let (mut app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
+    seed_admin_role(&pool, "user-1").await;
     let jid = seed_judgment(&app_state, "ws-default-001", Some("self_healable")).await;
     app_state.set_directive_sink(std::sync::Arc::new(RecordingSink(std::sync::Mutex::new(vec![]))));
 
@@ -362,6 +366,42 @@ async fn approve_twice_second_gets_409() {
         .unwrap();
     let (_s, json) = response_parts(r2).await;
     assert!(json["code"].as_i64().unwrap() != 0, "重复批准必须 409 风格报错");
+}
+
+/// F9：非 admin 用户批准 → 403（角色闸 fail-closed），状态不翻转。
+#[tokio::test]
+async fn approve_non_admin_gets_403() {
+    let (mut app_state, pool) = setup_test_app_with_pool().await;
+    seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
+    // 注意：不 seed admin 角色——user-1 是 member
+    let jid = seed_judgment(&app_state, "ws-default-001", Some("self_healable")).await;
+    app_state.set_directive_sink(std::sync::Arc::new(RecordingSink(std::sync::Mutex::new(vec![]))));
+
+    let app = crate::api::create_router(&app_state);
+    let app = axum::Router::new().nest("/api", app).with_state(app_state.clone());
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app
+        .oneshot(req(
+            "POST",
+            &format!("/api/v1/judgments/{jid}/approve"),
+            &token,
+            Some(json!({})),
+        ))
+        .await
+        .unwrap();
+    let (_s, json) = response_parts(response).await;
+    assert_eq!(json["code"], 403, "非 admin 批准必须 403");
+    let j = app_state
+        .db
+        .find_judgment_by_id(&jid, "ws-default-001")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        j.status,
+        tinyiothub_storage::judgment::JudgmentStatus::AwaitingApproval,
+        "403 不得翻转状态"
+    );
 }
 
 /// 评审补测：feedback 非法 verdict → 400；不存在 id → 404；reject 404。
