@@ -341,6 +341,9 @@ impl tinyiothub_runtime::ports::ApprovalTimeoutStore for ApprovalTimeoutAdapter 
             // R-F1 守卫：同报警已有未终态判断（dismissed 不占 active 索引，
             // 新报警可合法触发新判断）→ 新判断才是活的，旧行保持 dismissed，
             // 不撞 judgments_active_alarm 唯一索引（每周期 error log 消除）。
+            // 已知残窗（check-then-act，外部声音 #2）：本查询与下方 transit 非
+            // 同事务，并发 insert_judgment 仍可能撞索引——主路径（存量 dismissed
+            // 行的周期重试噪声）已消除，残窗以 error log 形式残留可接受。
             if let Some(alarm_id) = &judgment.alarm_id {
                 match self.db.has_open_judgment_for_alarm(alarm_id).await {
                     Ok(true) => {
@@ -693,11 +696,11 @@ mod approval_timeout_tests {
         );
     }
 
-    /// G2：SLA 升级时 notify=Some → 「需要你」通知真实派发（X1 适配器分支）。
+    /// G2：SLA 升级时 notify=Some → 「需要你」通知真实派发且投递目标正确（X1 适配器分支）。
     #[tokio::test]
     async fn sla_escalation_sends_needs_you_notify() {
         struct RecordingChannel {
-            sent: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+            sent: std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<String>)>>>,
         }
         #[async_trait::async_trait]
         impl crate::domains::notify::dto::NotificationChannel for RecordingChannel {
@@ -708,7 +711,10 @@ mod approval_timeout_tests {
                 &self,
                 message: &crate::domains::notify::dto::NotificationMessage,
             ) -> std::result::Result<(), String> {
-                self.sent.lock().unwrap().push(message.title.clone());
+                self.sent
+                    .lock()
+                    .unwrap()
+                    .push((message.title.clone(), message.recipients.clone()));
                 Ok(())
             }
             async fn is_available(&self) -> bool {
@@ -765,7 +771,10 @@ mod approval_timeout_tests {
         while sent.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        assert_eq!(sent.lock().unwrap().len(), 1, "SLA 升级应发「需要你」通知");
+        let got = sent.lock().unwrap();
+        assert_eq!(got.len(), 1, "SLA 升级应发「需要你」通知");
+        // 外部声音 #5：断言投递目标——「例外到人」的路由维度，不只是派发次数
+        assert_eq!(got[0].1, vec!["ws1".to_string()], "通知必须投递到本工作区");
     }
 
     /// 对账恢复（2026-09-16 实测：run 完成且 verdict 合法，但 RunRecorded

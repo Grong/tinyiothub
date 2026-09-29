@@ -527,6 +527,9 @@ pub(crate) async fn stale_by_status(pool: &SqlitePool, status: JudgmentStatus, c
 
 /// 同报警是否已有未终态判断（X5 重浮守卫 R-F1）：dismissed 翻回 investigating
 /// 前必查——否则撞 judgments_active_alarm 部分唯一索引（每周期一条 error log）。
+/// ⚠ 状态清单与 judgments_active_alarm 的 WHERE 子句硬绑定——定义在三处迁移
+/// （20260912000002 / 20260914000001 / 20260928000001）。未终态集合变更时
+/// 必须四处同改，否则本守卫与唯一索引静默漂移（外部声音 #1）。
 pub(crate) async fn has_open_judgment_for_alarm(pool: &SqlitePool, alarm_id: &str) -> Result<bool> {
     let n: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM judgments WHERE alarm_id = ? \

@@ -28,7 +28,10 @@ fn req(method: &str, uri: &str, token: &str, body: Option<Value>) -> Request<Bod
         .unwrap()
 }
 
-/// 种一条 patrol 提案行（与生产 heartbeat 写入同构）。
+/// 种一条 patrol 提案行。
+/// ⚠ 有意的取舍（外部声音 #4）：手写 content JSON 形状镜像生产 heartbeat
+/// 写入（crates/agent 巡检 insert_result），而非调生产写入函数——生产提案
+/// 形状变更时本夹具会继续「绿」在旧形状上；改形状时同步此处。
 async fn seed_proposal(pool: &sqlx::SqlitePool, ws: &str, proposal_id: &str, status: &str) {
     let content = json!({
         "proposalId": proposal_id,
