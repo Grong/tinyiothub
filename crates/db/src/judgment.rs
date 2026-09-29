@@ -415,14 +415,26 @@ pub(crate) async fn link_judgment_ticket(pool: &SqlitePool, id: &str, ticket_id:
     Ok(())
 }
 
-/// 拒绝原因落 evidence_json.dismiss_reason（X5：P2 学习闭环吃「用户为什么否决」）。
-pub(crate) async fn set_judgment_dismiss_reason(pool: &SqlitePool, id: &str, reason: &str) -> Result<()> {
-    sqlx::query("UPDATE judgments SET evidence_json = json_set(evidence_json, '$.dismiss_reason', ?) WHERE id = ?")
-        .bind(reason)
-        .bind(id)
-        .execute(pool)
-        .await?;
-    Ok(())
+/// 拒绝（X5 + R-F2 原子化）：单条条件 UPDATE 同时翻状态与落原因——
+/// awaiting_approval → dismissed + evidence_json.dismiss_reason，要么一起
+/// 成立要么一起不成立（此前两步 await，第二步失败则原因永久缺失）。
+/// 返回是否迁移成功（false = 并发互撞，调用方按 409 处理）。
+pub(crate) async fn dismiss_judgment(pool: &SqlitePool, id: &str, reason: &str) -> Result<bool> {
+    if !allowed_transition(JudgmentStatus::AwaitingApproval, JudgmentStatus::Dismissed) {
+        return Err(DbError::Validation {
+            message: "illegal judgment transition: awaiting_approval -> dismissed".to_string(),
+        });
+    }
+    let result = sqlx::query(
+        "UPDATE judgments SET status = 'dismissed', state_entered_at = datetime('now'), \
+         evidence_json = json_set(evidence_json, '$.dismiss_reason', ?) \
+         WHERE id = ? AND status = 'awaiting_approval'",
+    )
+    .bind(reason)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 /// feed 页查询（F12 契约落地 + T-12/C1 元组游标 + T-13/C2 分页语义）：
@@ -511,6 +523,19 @@ pub(crate) async fn stale_by_status(pool: &SqlitePool, status: JudgmentStatus, c
         .fetch_all(pool)
         .await?;
     rows.into_iter().map(row_to_judgment).collect()
+}
+
+/// 同报警是否已有未终态判断（X5 重浮守卫 R-F1）：dismissed 翻回 investigating
+/// 前必查——否则撞 judgments_active_alarm 部分唯一索引（每周期一条 error log）。
+pub(crate) async fn has_open_judgment_for_alarm(pool: &SqlitePool, alarm_id: &str) -> Result<bool> {
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM judgments WHERE alarm_id = ? \
+         AND status IN ('investigating','awaiting_approval','executing')",
+    )
+    .bind(alarm_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(n > 0)
 }
 
 /// 摘要端点计数（F-H）：COUNT 替代拉行数长度。
@@ -861,9 +886,9 @@ impl Db {
         link_judgment_ticket(self.pool(), id, ticket_id).await
     }
 
-    /// 拒绝原因落 evidence_json.dismiss_reason（X5）。
-    pub async fn set_judgment_dismiss_reason(&self, id: &str, reason: &str) -> Result<()> {
-        set_judgment_dismiss_reason(self.pool(), id, reason).await
+    /// 拒绝原子化（R-F2）：单条条件 UPDATE 翻 dismissed + 落 dismiss_reason。
+    pub async fn dismiss_judgment(&self, id: &str, reason: &str) -> Result<bool> {
+        dismiss_judgment(self.pool(), id, reason).await
     }
 
     pub async fn list_judgments_feed(
@@ -882,6 +907,11 @@ impl Db {
 
     pub async fn stale_by_status(&self, status: JudgmentStatus, cutoff: &str) -> Result<Vec<Judgment>> {
         stale_by_status(self.pool(), status, cutoff).await
+    }
+
+    /// 同报警是否已有未终态判断（X5 重浮守卫 R-F1）。
+    pub async fn has_open_judgment_for_alarm(&self, alarm_id: &str) -> Result<bool> {
+        has_open_judgment_for_alarm(self.pool(), alarm_id).await
     }
 
     pub async fn count_by_statuses(&self, workspace_id: &str, statuses: &[JudgmentStatus]) -> Result<i64> {
@@ -1002,6 +1032,38 @@ mod tests {
         let j = db.find_judgment_by_id(&id, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, JudgmentStatus::Resolved);
         assert!(j.resolved_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn dismiss_judgment_atomic_status_and_reason() {
+        let db = test_db().await;
+        let id = db.insert_judgment("ws1", None, None, None, "annotate").await.unwrap();
+        db.judge_judgment(
+            &id,
+            JudgmentVerdict::SelfHealable,
+            "可重连",
+            "{}",
+            Some("重连"),
+            Some("connection_recovery"),
+            None,
+        )
+        .await
+        .unwrap();
+
+        // 单语句成立：status=dismissed 且 reason 同在（原子——无中间态）
+        assert!(db.dismiss_judgment(&id, "误报，无需处理").await.unwrap());
+        let j = db.find_judgment_by_id(&id, "ws1").await.unwrap().unwrap();
+        assert_eq!(j.status, JudgmentStatus::Dismissed);
+        assert!(j.evidence_json.contains("dismiss_reason") && j.evidence_json.contains("误报，无需处理"));
+        assert!(j.ticket_id.is_none(), "拒绝不开工单");
+
+        // 并发互撞：二次 dismiss → false（已不在 awaiting_approval）
+        assert!(!db.dismiss_judgment(&id, "迟到的否决").await.unwrap());
+        let j2 = db.find_judgment_by_id(&id, "ws1").await.unwrap().unwrap();
+        assert!(
+            j2.evidence_json.contains("误报，无需处理") && !j2.evidence_json.contains("迟到的否决"),
+            "首次审计记录不被覆盖"
+        );
     }
 
     #[test]

@@ -338,6 +338,22 @@ impl tinyiothub_runtime::ports::ApprovalTimeoutStore for ApprovalTimeoutAdapter 
             if !active_alarm {
                 continue;
             }
+            // R-F1 守卫：同报警已有未终态判断（dismissed 不占 active 索引，
+            // 新报警可合法触发新判断）→ 新判断才是活的，旧行保持 dismissed，
+            // 不撞 judgments_active_alarm 唯一索引（每周期 error log 消除）。
+            if let Some(alarm_id) = &judgment.alarm_id {
+                match self.db.has_open_judgment_for_alarm(alarm_id).await {
+                    Ok(true) => {
+                        tracing::debug!(judgment_id = %judgment.id, alarm_id, "resurface skipped: newer open judgment owns the alarm");
+                        continue;
+                    }
+                    Ok(false) => {}
+                    Err(e) => {
+                        tracing::warn!(judgment_id = %judgment.id, error = %e, "open-judgment guard query failed, skipping resurface this cycle");
+                        continue;
+                    }
+                }
+            }
             match self
                 .db
                 .transit_judgment(
@@ -600,6 +616,156 @@ mod approval_timeout_tests {
         assert_eq!(n, 0, "报警已消的 dismissed 不重浮");
         let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, tinyiothub_storage::judgment::JudgmentStatus::Dismissed);
+    }
+
+    /// R-F1 守卫：同报警已有新的未终态判断 → 重浮跳过（旧行保持 dismissed，
+    /// 不撞 judgments_active_alarm 唯一索引；新判断才是活的）。
+    #[tokio::test]
+    async fn dismissed_with_newer_open_judgment_not_resurfaced() {
+        let (db, adapter) = fixture().await;
+        sqlx::query("INSERT INTO things (id, name, workspace_id, created_at, updated_at) VALUES ('t1','t1','ws1','2025-01-01','2025-01-01')")
+            .execute(db.pool()).await.unwrap();
+        let alarm = tinyiothub_storage::alarm::Alarm::new(
+            "t1".to_string(),
+            None,
+            None,
+            tinyiothub_storage::alarm::AlarmType::PropertyThreshold,
+            tinyiothub_storage::alarm::AlarmLevel::Warning,
+            "温度越限".to_string(),
+            None,
+            None,
+            Some("ws1".to_string()),
+        );
+        let alarm_id = alarm.id.clone();
+        db.insert_alarm(&alarm).await.unwrap();
+
+        // j1：dismissed（旧，72h+）
+        let j1 = db
+            .insert_judgment("ws1", Some(&alarm_id), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        db.judge_judgment(
+            &j1,
+            tinyiothub_storage::judgment::JudgmentVerdict::SelfHealable,
+            "可重连",
+            "{}",
+            Some("重连"),
+            Some("connection_recovery"),
+            None,
+        )
+        .await
+        .unwrap();
+        db.transit_judgment(
+            &j1,
+            tinyiothub_storage::judgment::JudgmentStatus::AwaitingApproval,
+            tinyiothub_storage::judgment::JudgmentStatus::Dismissed,
+            None,
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE judgments SET state_entered_at = datetime('now', '-73 hours') WHERE id = ?")
+            .bind(&j1)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        // j2：同报警的新 investigating 判断（dismissed 不占 active 索引,合法建行）
+        let j2 = db
+            .insert_judgment("ws1", Some(&alarm_id), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+
+        let cutoff = (chrono::Utc::now() - chrono::Duration::hours(72)).to_rfc3339();
+        let n = tinyiothub_runtime::ports::ApprovalTimeoutStore::resurface_stale_dismissed(&adapter, &cutoff)
+            .await
+            .unwrap();
+        assert_eq!(n, 0, "新判断接管的重浮必须跳过");
+        let old = db.find_judgment_by_id(&j1, "ws1").await.unwrap().unwrap();
+        assert_eq!(
+            old.status,
+            tinyiothub_storage::judgment::JudgmentStatus::Dismissed,
+            "旧行保持 dismissed（不撞唯一索引）"
+        );
+        let new = db.find_judgment_by_id(&j2, "ws1").await.unwrap().unwrap();
+        assert_eq!(
+            new.status,
+            tinyiothub_storage::judgment::JudgmentStatus::Investigating,
+            "新判断不受影响"
+        );
+    }
+
+    /// G2：SLA 升级时 notify=Some → 「需要你」通知真实派发（X1 适配器分支）。
+    #[tokio::test]
+    async fn sla_escalation_sends_needs_you_notify() {
+        struct RecordingChannel {
+            sent: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        }
+        #[async_trait::async_trait]
+        impl crate::domains::notify::dto::NotificationChannel for RecordingChannel {
+            fn channel_type(&self) -> tinyiothub_core::notification_types::NotificationChannelType {
+                tinyiothub_core::notification_types::NotificationChannelType::Sse
+            }
+            async fn send(
+                &self,
+                message: &crate::domains::notify::dto::NotificationMessage,
+            ) -> std::result::Result<(), String> {
+                self.sent.lock().unwrap().push(message.title.clone());
+                Ok(())
+            }
+            async fn is_available(&self) -> bool {
+                true
+            }
+            fn get_config(&self) -> std::collections::HashMap<String, String> {
+                Default::default()
+            }
+        }
+
+        let (db, _) = fixture().await;
+        let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut manager = crate::domains::notify::NotificationManager::new(std::sync::Arc::new(db.clone()));
+        manager.register_channel(Box::new(RecordingChannel { sent: sent.clone() }));
+        let adapter = ApprovalTimeoutAdapter {
+            db: db.clone(),
+            sse: std::sync::Arc::new(crate::domains::event::sse_manager::SseConnectionManager::new()),
+            alarm_service: std::sync::Arc::new(crate::domains::alarm::service::AlarmService::new(std::sync::Arc::new(
+                db.clone(),
+            ))),
+            notify: Some(std::sync::Arc::new(manager)),
+        };
+
+        // 一条 awaiting_approval 且 judged_at 在 25h 前 → SLA 升级
+        let jid = db
+            .insert_judgment("ws1", None, None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        db.judge_judgment(
+            &jid,
+            tinyiothub_storage::judgment::JudgmentVerdict::SelfHealable,
+            "可重连",
+            "{}",
+            Some("重连"),
+            Some("connection_recovery"),
+            None,
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE judgments SET judged_at = datetime('now', '-25 hours') WHERE id = ?")
+            .bind(&jid)
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        let cutoff = (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
+        let n = tinyiothub_runtime::ports::ApprovalTimeoutStore::escalate_stale_approvals(&adapter, &cutoff)
+            .await
+            .unwrap();
+        assert_eq!(n, 1);
+
+        // spawn 派发不 await——短轮询等异步落盘
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while sent.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(sent.lock().unwrap().len(), 1, "SLA 升级应发「需要你」通知");
     }
 
     /// 对账恢复（2026-09-16 实测：run 完成且 verdict 合法，但 RunRecorded

@@ -2,19 +2,8 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { repeat } from "lit/directives/repeat.js";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
+import { md } from "../shared/markdown.js";
 import { apiGet, apiPut, apiPost } from "../../api/client.js";
-
-marked.setOptions({ async: false, gfm: true });
-
-function md(text: string): string {
-  try {
-    return DOMPurify.sanitize(marked.parse(text) as string);
-  } catch {
-    return DOMPurify.sanitize(text);
-  }
-}
 
 // ── Types ──
 

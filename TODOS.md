@@ -566,6 +566,12 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 - **Context:** v3 设计稿响应式节（含色盲安全/键盘 tab 序列/对比度规格）；web/src/ui/views/dispositions.{ts,css}。
 - **Effort:** S/M (human: ~1d / CC: ~1h) | **Depends on:** PR #99 合并
 
+### P2 — notify 扇出聚合/限流（风暴防护）
+- **What:** X1「需要你」通知按事件逐条 SSE 广播——报警风暴下 N 事件=N 广播。设计聚合（同 workspace 窗口内合并为一条「N 件需要你」）或限流。
+- **Why:** 风暴场景通知洪峰会淹没「需要你」信号本身；P1 接真实渠道（sms/email/webhook）前必须有此设计，否则风暴=真实短信轰炸。
+- **Context:** 派发点 judgment_subscriber.rs spawn_needs_you_notify + runtime_ports escalate_one（eng 评审 F-3，2026-09-29 裁定 defer）。影子期预发布规模无实际风暴，故 defer 不阻塞 PR #99。
+- **Effort:** M (human: ~1d / CC: ~1h) | **Depends on:** P1 真实通知渠道设计
+
 ### P2 — 日预算 workspace 可配 + 内存计数器 + 严重级分池
 - **What:** DAILY_JUDGMENT_BUDGET 从 const 100 改为 workspace 可配（heartbeat_config JSON 先例）；预算查询改内存计数器+每日重置；按严重级分池或 Critical 豁免。
 - **Why:** 不同规模工作区合理预算差一个数量级；每报警两次 SQL 在报警风暴时自身成负载；Info 抖动可吃光额度让 Critical 裸奔（外部声音 #13/#15）。

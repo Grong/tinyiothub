@@ -436,27 +436,14 @@ async fn reject_judgment(
         Err(e) => return ApiResponseBuilder::error(format!("查询失败: {e}")),
     };
     let _ = &judgment; // 存在性校验即用途（X5 后不再取字段建工单）
-    match state
-        .db
-        .transit_judgment(
-            &id,
-            tinyiothub_storage::judgment::JudgmentStatus::AwaitingApproval,
-            tinyiothub_storage::judgment::JudgmentStatus::Dismissed,
-            None,
-        )
-        .await
-    {
+    // R-F2 原子化：单条条件 UPDATE 同时翻 dismissed + 落 dismiss_reason——
+    // 不存在「状态翻了原因丢了」的中间态。
+    match state.db.dismiss_judgment(&id, reason).await {
         Ok(true) => {}
         Ok(false) => {
             return ApiResponseBuilder::error_with_code(409, "该判断已不在待审批状态");
         }
         Err(e) => return ApiResponseBuilder::error(format!("状态迁移失败: {e}")),
-    }
-
-    // 拒绝原因落 evidence.dismiss_reason（迁移成功后写；写失败不回头——
-    // 状态已是 dismissed，原因缺失由 warn 可见，不阻塞用户操作）。
-    if let Err(e) = state.db.set_judgment_dismiss_reason(&id, reason).await {
-        tracing::warn!(judgment_id = %id, error = %e, "dismiss_reason write failed (status already dismissed)");
     }
 
     crate::domains::agent::host::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id).await;
