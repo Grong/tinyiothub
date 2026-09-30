@@ -492,8 +492,8 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 ## CI Resurrection Follow-ups (PR #89, 2026-09-04)
 
 ### P3 — 4 个 grandfathered DML 迁移并入下次 baseline
-- **What:** `scripts/guards/ddl-only.sh` 的 GRANDFATHERED 清单（20260825/20260826/20260828/20260831 共 4 个 device→thing 数据迁移）在下一次迁移基线化时并入 baseline，随后从清单移除。**2026-09-28 补充：** 清单外另有 3 个后到的 DML 重建迁移同样待并入——20260912000003（cron job type）、20260914000001（judgments 硬化）、20260928000001（judgments dismissed）；guard 当前对 main 与本分支均报红（被「与 main 基线对比」的门禁口径掩盖）。
-- **Why:** 这些迁移在 CI 瘫痪窗口（2026-08-21 ~ 09-04，ci.yml YAML 语法错误）合入或沿用重建表先例（CHECK 变更只能重建+拷数据），已随版本应用；sqlx 校验 checksum，改写会炸存量库，只能豁免不能修。
+- **What:** `scripts/guards/ddl-only.sh` 的 GRANDFATHERED 清单（20260825/20260826/20260828/20260831 共 4 个 device→thing 数据迁移）在下一次迁移基线化时并入 baseline，随后从清单移除。**2026-09-30 已解决（政策修复）：** 守卫加白重建表自拷贝模式（`INSERT INTO <x>_new SELECT…FROM <x>`——SQLite 改 CHECK 的唯一合法路径），20260912000003/20260914000001/20260928000001 三个重建迁移不再报红；裸 INSERT 依然拒绝（负向用例验证）。
+- **Why:** 这些迁移在 CI 瘫痪窗口（2026-08-21 ~ 09-04，ci.yml YAML 语法错误）合入或沿用重建表先例，已随版本应用；sqlx 校验 checksum，改写会炸存量库，只能豁免不能修。
 - **Effort:** M（随下次基线化一起做） | **Depends on:** 下一次迁移基线化
 
 ## Marketplace API Review Follow-ups (2026-09-08, /plan-eng-review)

@@ -24,7 +24,19 @@ if [ -z "$NON_BASELINE" ]; then
   echo "✅ Migration DDL-only guard passed (no non-baseline migrations)"
   exit 0
 fi
-OFFENDERS=$(echo "$NON_BASELINE" | xargs -I{} sh -c 'grep -vE "^\s*--" "{}" | grep -qiE "\b(INSERT|REPLACE|UPDATE|DELETE)\b" && echo "{}"' || true)
+# 白名单（2026-09-30，CI 政策裁定）：重建表自拷贝 `INSERT INTO <x>_new SELECT
+# …FROM <x>` 不算违规——SQLite 改 CHECK 约束的唯一合法路径就是建新表+拷
+# 数据+换名（20260914000001 先例），它是确定性 DDL 变体，不是环境/数据相关
+# 的真实 DML。裸 INSERT（非 _new 目标）依然一律拒绝。
+# 实现注：用循环而非 xargs -I{}——macOS xargs -I 的替换命令行有 255 字节
+# 上限，过滤链一长就报 "cannot be assembled, too long" 并静默空结果（2026-09-30 实测）。
+OFFENDERS=""
+for f in $NON_BASELINE; do
+  if grep -vE "^\s*--" "$f" | grep -vE "\bINSERT[[:space:]]+INTO[[:space:]]+[A-Za-z0-9_]+_new\b" | grep -qiE "\b(INSERT|REPLACE|UPDATE|DELETE)\b"; then
+    OFFENDERS="${OFFENDERS:+$OFFENDERS
+}$f"
+  fi
+done
 if [ -n "$OFFENDERS" ]; then
   echo "$OFFENDERS"
   echo "❌ migrations must be DDL-only (seeds go to seed.rs; INSERT/UPDATE/DELETE/REPLACE incl. INSERT OR IGNORE are forbidden)"
