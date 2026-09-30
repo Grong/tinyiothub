@@ -271,8 +271,10 @@ fn generate_content_preview(content: &tinyiothub_core::models::event::RichConten
     if let Some(first_element) = content.elements().first() {
         match first_element {
             tinyiothub_core::models::event::ContentElement::Text { content, .. } => {
-                if content.len() > 100 {
-                    format!("{}...", &content[..97])
+                // 按字符数截断（不能按字节切——多字节 UTF-8 切半会 panic，2026-09-23 实测）
+                if content.chars().count() > 100 {
+                    let preview: String = content.chars().take(97).collect();
+                    format!("{preview}...")
                 } else {
                     content.clone()
                 }
@@ -318,6 +320,46 @@ mod tests {
 
         let invalid = parse_sort_order(Some("invalid"));
         assert!(invalid.is_err());
+    }
+
+    /// 回归（2026-09-23 实测 panic）：内容预览按字节切中文（'设' 占 96..99，
+    /// 切在 97 上）触发 "not a char boundary" panic。截断必须按字符数。
+    #[test]
+    fn content_preview_truncates_multibyte_utf8_without_panic() {
+        // 构造一段全中文、超过 100 个字符的内容（字节数远超 100，第 97 字节
+        // 必然落在某个多字节字符内部）
+        let chinese_text: String = "【人工处理清单：已执行/尝试/卡点/建议人工步骤，检查设备连接与告警状态】".repeat(3);
+        assert!(chinese_text.len() > 100, "fixture must exceed 100 bytes");
+
+        let content = tinyiothub_core::models::event::RichContent::new(
+            "title".to_string(),
+            vec![tinyiothub_core::models::event::ContentElement::Text {
+                content: chinese_text.clone(),
+                format: tinyiothub_core::models::event::TextFormat::Plain,
+            }],
+        );
+
+        // 修复前此处 panic；修复后按字符截断为 97 字符 + "..."
+        let preview = generate_content_preview(&content);
+        assert!(preview.ends_with("..."), "long content must be truncated: {preview}");
+        assert_eq!(preview.chars().count(), 97 + 3, "preview must be 97 chars + ellipsis");
+        assert!(
+            preview.is_char_boundary(preview.len() - 3),
+            "truncation must not split a char"
+        );
+    }
+
+    #[test]
+    fn content_preview_short_text_unchanged() {
+        let short = "短文本".to_string();
+        let content = tinyiothub_core::models::event::RichContent::new(
+            "title".to_string(),
+            vec![tinyiothub_core::models::event::ContentElement::Text {
+                content: short.clone(),
+                format: tinyiothub_core::models::event::TextFormat::Plain,
+            }],
+        );
+        assert_eq!(generate_content_preview(&content), short);
     }
 }
 

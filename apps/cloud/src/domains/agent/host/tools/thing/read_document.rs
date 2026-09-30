@@ -51,6 +51,8 @@ impl Tool for ReadDocumentTool {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Input {
+            // alias：提案/报告的 parameters 常随模板写成蛇形键。
+            #[serde(alias = "resource_id")]
             resource_id: String,
         }
 

@@ -422,6 +422,10 @@ impl AppState {
 
         let pending_actions: std::sync::Arc<crate::domains::agent::host::tools::thing::PendingActionStore> =
             std::sync::Arc::new(dashmap::DashMap::new());
+        // F7：周期清扫超期确认 token——take 时的懒清扫只盖住有确认流量的路径。
+        // handle 刻意 drop（不 let _：clippy let_underscore_future 拒绝）：任务
+        // 进程级生命周期，关停随 tokio runtime 一起 abort。
+        drop(crate::domains::agent::host::tools::thing::spawn_pending_action_sweeper_default(pending_actions.clone()));
 
         // Thing action hooks（G5a）—— agent 侧实现 thing 域 trait，注入给 thing handler
         let thing_action_hooks: Arc<dyn crate::domains::thing::hooks::ThingActionHooks> = Arc::new(
@@ -860,6 +864,7 @@ impl crate::domains::tenant::TagSuggester for MinimaxTagSuggester {
                 tinyiothub_agent::port::provider::ChatRequest {
                     messages: &messages,
                     tools: None,
+                    max_tokens: None,
                 },
                 &model,
                 Some(0.3),
@@ -989,6 +994,7 @@ impl axum::extract::FromRef<AppState> for crate::domains::agent::AgentState {
             memory_service: state.memory_service.clone(),
             memory_store: state.memory_store.clone(),
             agent_pool: state.agent_pool.clone(),
+            pending_actions: state.pending_actions.clone(),
             session_service: state.session_service.clone(),
             system_prompts: state.system_prompts.clone(),
         }

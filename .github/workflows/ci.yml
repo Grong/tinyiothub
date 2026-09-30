@@ -229,8 +229,8 @@ jobs:
                 ;;
             esac
 
-            # 新增的 API 文件必须有导出
-            if echo "$file" | grep -qE "^web/src/api/.*\.ts$"; then
+            # 新增的 API 文件必须有导出（测试文件不是 API 模块——豁免 *.test.ts）
+            if echo "$file" | grep -qE "^web/src/api/.*\.ts$" && ! echo "$file" | grep -qE "\.test\.ts$"; then
               if ! grep -qE "^export " "$rel" 2>/dev/null; then
                 echo "❌ VIOLATION: API file has no exports: $file"
                 exit 1

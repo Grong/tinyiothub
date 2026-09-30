@@ -178,7 +178,8 @@ async fn run_heartbeat_tick(
     event_publisher: &AiEventPublisher,
     metrics: &Metrics,
 ) -> Result<(), String> {
-    let prompt = build_heartbeat_prompt(workspace_id, tasks, trust_config);
+    let principles = crate::prompt::workspace::load_principles(workspace_id);
+    let prompt = crate::prompt::heartbeat::build_heartbeat_prompt(workspace_id, &principles, tasks, trust_config);
 
     let started = std::time::Instant::now();
     let output = match tokio::time::timeout(TICK_TIMEOUT, agent_pool.send_message(workspace_id, &prompt)).await {
@@ -218,32 +219,6 @@ async fn run_heartbeat_tick(
     });
 
     Ok(())
-}
-
-fn build_heartbeat_prompt(workspace_id: &str, tasks: &[&HeartbeatTask], trust_config: &TrustConfig) -> String {
-    let tasks_text: String = tasks
-        .iter()
-        .map(|t| format!("- [{}] {}", t.priority, crate::memory::reflect::sanitize_input(&t.text)))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    format!(
-        "You are an IoT heartbeat agent for workspace {ws_id}.\n\
-         Trust level: {trust:?}\n\
-         Max auto-actions per tick: {max}\n\n\
-         ## Tasks:\n{tasks}\n\n\
-         Execute each task. Output a JSON report:\n\
-         ```json\n\
-         {{\n  \"status\": \"complete|partial|error\",\n  \
-         \"summary\": \"...\",\n  \
-         \"executed_actions\": [{{\"tool_name\": \"...\", \"thing_id\": \"...\", \"success\": true, \"details\": \"...\"}}],\n  \
-         \"proposals\": [{{\"tool_name\": \"...\", \"thing_id\": \"...\", \"summary\": \"...\", \"reason\": \"...\", \"risk\": \"low|medium|high\", \"parameters\": {{...}}}}],\n  \
-         \"error\": null\n}}\n```",
-        ws_id = workspace_id,
-        trust = trust_config.trust_level,
-        max = trust_config.max_auto_actions_per_tick,
-        tasks = tasks_text
-    )
 }
 
 #[cfg(test)]
@@ -301,17 +276,6 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
-    }
-
-    #[test]
-    fn prompt_asks_proposals_for_parameters() {
-        // Without parameters the approve-and-execute flow has nothing to run.
-        let task = sample_task();
-        let prompt = build_heartbeat_prompt("ws", &[&task], &TrustConfig::default());
-        assert!(
-            prompt.contains("\"parameters\""),
-            "proposal schema in the prompt must request tool parameters"
-        );
     }
 
     #[tokio::test]

@@ -492,8 +492,8 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 ## CI Resurrection Follow-ups (PR #89, 2026-09-04)
 
 ### P3 — 4 个 grandfathered DML 迁移并入下次 baseline
-- **What:** `scripts/guards/ddl-only.sh` 的 GRANDFATHERED 清单（20260825/20260826/20260828/20260831 共 4 个 device→thing 数据迁移）在下一次迁移基线化时并入 baseline，随后从清单移除。
-- **Why:** 这些迁移在 CI 瘫痪窗口（2026-08-21 ~ 09-04，ci.yml YAML 语法错误）合入，已随 v0.5.0.0 应用；sqlx 校验 checksum，改写会炸存量库，只能豁免不能修。
+- **What:** `scripts/guards/ddl-only.sh` 的 GRANDFATHERED 清单（20260825/20260826/20260828/20260831 共 4 个 device→thing 数据迁移）在下一次迁移基线化时并入 baseline，随后从清单移除。**2026-09-30 已解决（政策修复）：** 守卫加白重建表自拷贝模式（`INSERT INTO <x>_new SELECT…FROM <x>`——SQLite 改 CHECK 的唯一合法路径），20260912000003/20260914000001/20260928000001 三个重建迁移不再报红；裸 INSERT 依然拒绝（负向用例验证）。
+- **Why:** 这些迁移在 CI 瘫痪窗口（2026-08-21 ~ 09-04，ci.yml YAML 语法错误）合入或沿用重建表先例，已随版本应用；sqlx 校验 checksum，改写会炸存量库，只能豁免不能修。
 - **Effort:** M（随下次基线化一起做） | **Depends on:** 下一次迁移基线化
 
 ## Marketplace API Review Follow-ups (2026-09-08, /plan-eng-review)
@@ -560,6 +560,18 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 
 ## AI 大脑 P0 — Deferred (from /plan-ceo-review + /plan-eng-review 2026-09-14, PR #96)
 
+### P2 — AI 工作台移动端最小规格
+- **What:** <768px 单列全宽（徽章与标题同行）、统计行折行、tab 可横滑、批准/拒绝/反馈按钮最小 44px 触摸目标。设计评审 Pass 6 规格，dispositions.css 当前零 media query。
+- **Why:** 运维值班不在电脑前；手机打开工作台当前体验未知。2026-09-28 CEO 评审（PR #99）用户裁定桌面先行、单独 PR。
+- **Context:** v3 设计稿响应式节（含色盲安全/键盘 tab 序列/对比度规格）；web/src/ui/views/dispositions.{ts,css}。
+- **Effort:** S/M (human: ~1d / CC: ~1h) | **Depends on:** PR #99 合并
+
+### P2 — notify 扇出聚合/限流（风暴防护）
+- **What:** X1「需要你」通知按事件逐条 SSE 广播——报警风暴下 N 事件=N 广播。设计聚合（同 workspace 窗口内合并为一条「N 件需要你」）或限流。
+- **Why:** 风暴场景通知洪峰会淹没「需要你」信号本身；P1 接真实渠道（sms/email/webhook）前必须有此设计，否则风暴=真实短信轰炸。
+- **Context:** 派发点 judgment_subscriber.rs spawn_needs_you_notify + runtime_ports escalate_one（eng 评审 F-3，2026-09-29 裁定 defer）。影子期预发布规模无实际风暴，故 defer 不阻塞 PR #99。
+- **Effort:** M (human: ~1d / CC: ~1h) | **Depends on:** P1 真实通知渠道设计
+
 ### P2 — 日预算 workspace 可配 + 内存计数器 + 严重级分池
 - **What:** DAILY_JUDGMENT_BUDGET 从 const 100 改为 workspace 可配（heartbeat_config JSON 先例）；预算查询改内存计数器+每日重置；按严重级分池或 Critical 豁免。
 - **Why:** 不同规模工作区合理预算差一个数量级；每报警两次 SQL 在报警风暴时自身成负载；Info 抖动可吃光额度让 Critical 裸奔（外部声音 #13/#15）。
@@ -608,3 +620,19 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 - **What:** exec 回滚后重批，若 dedup_key 窗口过期，物理动作（如重启设备）可能执行第二次。记录该风险；长期方案是 exec run 幂等键穿透到设备层。
 - **Why:** 对抗审查 I3：每次都是人批准的，但物理副作用非幂等。
 - **Effort:** S（记录）/ M（设备层幂等） | **Depends on:** —
+
+### P2 — 知觉权立项：大脑直接消费遥测流、自主发现规则未覆盖异常
+- **What:** 让 AI 大脑直接读原始遥测流做异常发现（不再只分诊规则引擎标记的集合）的设计与实现——异常检测质量、LLM 调用成本、风暴控制。
+- **Why:** 这是「真正 AI 大脑」承诺的另一半。AI 大脑 v3 设计稿（2026-09-17）只交付地基（可见+审计+分诊权移交），知觉权经用户确认推迟至本立项。
+- **Pros:** 大脑从「规则说什么我评什么」变成「我自己看出问题」——产品的核心差异化。
+- **Cons:** 大工程：检测质量、调用成本、误报风暴都要定价。
+- **Context:** 外部声音（eng review 2026-09-17）指出「P0–P3 后系统决策方式与今天几乎一样」——知觉权是缺的另一半。设计稿：~/.gstack/projects/Grong-tinyiothub/chenguorong-fix-dispositions-ui-design-20260917-103834.md。
+- **Depends on:** AI 大脑 P1 完成（brain_events 物理表落地）。
+
+### P2 — 学习闭环独立设计稿：记忆检索与注入
+- **What:** ✓✕反馈/工单结果/用户纠正 → 记忆 → 注入后续循环上下文的完整设计——哪些记忆进哪个循环、token 成本、陈旧/冲突处理、「越用越准」的度量指标。
+- **Why:** P2 是产品承诺（越用越准）的兑现期，但 v3 设计稿里只有两句话。外部声音：「检索与注入才是硬问题，P2 开工前需要自己的设计稿」。
+- **Pros:** 大脑开始从用户纠正中学习；处置中心 ✓✕ 反馈第一次真正影响行为。
+- **Cons:** 检索质量差 = 越用越偏；需要可度量的成功指标。
+- **Context:** 复用现有 write_feedback_memory（judgment handler）+ crates/agent/src/memory——接线不是新建。拒绝原因已从 P0 起落 evidence_json.dismiss_reason，是本设计的输入信号。
+- **Depends on:** AI 大脑 P1 完成。

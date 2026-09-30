@@ -51,6 +51,7 @@ testing = []
 
 [dev-dependencies]
 tokio = { workspace = true }
+sqlx = { workspace = true, features = ["macros"] }
 
 [lints]
 workspace = true

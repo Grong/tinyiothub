@@ -60,6 +60,10 @@ pub struct ChatResponse {
 pub struct ChatRequest<'a> {
     pub messages: &'a [ChatMessage],
     pub tools: Option<&'a [crate::port::tool::ToolSpec]>,
+    /// 输出 token 预算（None = 服务端默认）。推理模型的默认预算可能被
+    /// reasoning 吃光导致正文截断（2026-09-28 judgment eval 实测：
+    /// intro 截断、verdict 块未生成）——调用方需要确定性输出时应显式给足。
+    pub max_tokens: Option<u64>,
 }
 
 /// 极简 provider 抽象：agent loop 只走 `chat`。

@@ -403,7 +403,7 @@ pub(crate) async fn insert_result(
         } else {
             proposal.id.clone()
         };
-        let content = serde_json::json!({
+        let mut content = serde_json::json!({
             "proposalId": proposal_id,
             "status": proposal.status.to_string(),
             "toolName": proposal.tool_name,
@@ -414,7 +414,48 @@ pub(crate) async fn insert_result(
             "risk": proposal.risk,
             "parameters": proposal.parameters,
         });
-        insert_action_row(&mut tx, workspace_id, &agent_id, "proposal", &content.to_string(), &now).await?;
+
+        // problem_key 折叠（2026-09-23 实测：同一 tool:thing 的提案每 tick 换皮
+        // 重提，134 条 pending 里 26/20/18 条同一 key）：已有同 key 的 pending
+        // 提案 → 就地刷新最新表述（保留行 id/proposalId/首次发现时间），不再新增。
+        let existing: Option<(String, String)> = sqlx::query_as(
+            "SELECT id, content FROM agent_actions
+             WHERE workspace_id = ? AND action_type = 'proposal'
+               AND json_extract(content, '$.toolName') = ?
+               AND COALESCE(json_extract(content, '$.thingId'), '') = COALESCE(?, '')
+               AND json_extract(content, '$.status') = 'pending'
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(workspace_id)
+        .bind(&proposal.tool_name)
+        .bind(proposal.thing_id.as_deref())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        if let Some((row_id, old_content)) = existing {
+            // 保留原 proposalId（身份稳定，审批/去重链接不断）；内容用最新表述。
+            if let Some(old_id) = serde_json::from_str::<serde_json::Value>(&old_content)
+                .ok()
+                .and_then(|v| v["proposalId"].as_str().map(str::to_string))
+            {
+                content["proposalId"] = serde_json::Value::String(old_id);
+            }
+            sqlx::query("UPDATE agent_actions SET content = ? WHERE id = ?")
+                .bind(content.to_string())
+                .bind(&row_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| RepoError::Database(e.to_string()))?;
+            tracing::debug!(
+                workspace_id,
+                tool = %proposal.tool_name,
+                thing = ?proposal.thing_id,
+                "pending proposal refreshed in place (problem_key dedup)"
+            );
+        } else {
+            insert_action_row(&mut tx, workspace_id, &agent_id, "proposal", &content.to_string(), &now).await?;
+        }
     }
 
     tx.commit().await.map_err(|e| RepoError::Database(e.to_string()))?;

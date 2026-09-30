@@ -115,7 +115,7 @@ impl HeartbeatBridge {
             priority: Priority::High,
             source: TriggerSource::UserDirective {
                 user_id: "alarm-triage".to_string(),
-                text: alarm_investigation_text(alarm),
+                text: crate::prompt::investigation::alarm_investigation_text(alarm),
                 session_key: None,
                 source: Some("alarm".to_string()),
                 problem_key: Some(problem_key.clone()),
@@ -173,14 +173,6 @@ impl HeartbeatBridge {
     }
 }
 
-/// 心跳 directive 文本：从 proposal 生成可执行指令（O2）。
-fn heartbeat_directive_text(problem_key: &str, proposal: &Proposal) -> String {
-    format!(
-        "心跳巡检发现待处置问题 {problem_key}：{}（原因：{}；风险：{}）。请诊断并处置。",
-        proposal.summary, proposal.reason, proposal.risk
-    )
-}
-
 /// 心跳来源 directive（O5/O24）：Normal 优先级、dedup_key=None 不参与合并、
 /// source=Some("heartbeat") 标记来源（不走 60s 同文去重、不享排队不丢）。
 fn heartbeat_directive(workspace_id: &str, problem_key: String, proposal: &Proposal) -> WakeSignal {
@@ -189,27 +181,13 @@ fn heartbeat_directive(workspace_id: &str, problem_key: String, proposal: &Propo
         priority: Priority::Normal,
         source: TriggerSource::UserDirective {
             user_id: "heartbeat".to_string(),
-            text: heartbeat_directive_text(&problem_key, proposal),
+            text: crate::prompt::investigation::heartbeat_directive_text(&problem_key, proposal),
             session_key: None,
             source: Some("heartbeat".to_string()),
             problem_key: Some(problem_key),
         },
         dedup_key: None,
     }
-}
-
-/// T3：报警调查指令。要求 agent 调查后给出结构化判断（judgment subscriber
-/// 解析 summary 尾部的 ```json verdict 块；解析失败按 outcome 兜底）。
-/// pub：eval 套件（judgment_eval_tests）用同一模板保证 prompt  parity。
-pub fn alarm_investigation_text(alarm: &tinyiothub_core::models::event::AlarmEvent) -> String {
-    format!(
-        "调查报警并给出处置判断。报警：{}（设备 {}，类型 {}，级别 {}）。\
-         请查询设备状态与近期事件后判断：noise（正常波动/无需处理）/ \
-         self_healable（可自愈，给出建议动作）/ needs_human（需要人工介入）。\
-         结束前输出一行结构化结论：```json {{\"verdict\": \"...\", \"reason\": \"一句人话理由\", \
-         \"suggested_action\": \"建议动作或 null\", \"action_category\": \"device_reboot|connection_recovery|property_adjust|threshold_tuning|other\"}}```",
-        alarm.message, alarm.thing_id, alarm.alarm_type, alarm.severity
-    )
 }
 
 /// Cross-domain callback handler.
@@ -499,6 +477,7 @@ pub(crate) mod tests {
             severity: "warning".into(),
             message: "Temperature is high".into(),
             rule_id: None,
+            condition_desc: None,
             resolved: false,
             created_at: chrono::Utc::now(),
         });
@@ -957,6 +936,7 @@ pub(crate) mod tests {
                 severity: severity.into(),
                 message: "温度超过阈值".into(),
                 rule_id: Some("rule-9".into()),
+                condition_desc: None,
                 resolved: false,
                 created_at: Utc::now(),
             })

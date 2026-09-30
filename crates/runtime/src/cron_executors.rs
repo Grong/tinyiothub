@@ -178,16 +178,25 @@ impl JobExecutor for ApprovalTimeoutExecutor {
             .and_then(|v| v.as_i64())
             .unwrap_or(1)
             .max(1);
+        // X5：dismissed 重浮（可配置）。默认 72h——「用户否决」不是永久静默，
+        // 报警 3 天仍 Active 说明否决的前提可能已变，重浮重查。
+        let dismissed_hours = config
+            .get("dismissed_hours")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(72)
+            .max(1);
 
         let now = chrono::Utc::now();
         let approval_cutoff = (now - chrono::Duration::hours(timeout_hours)).to_rfc3339();
         let investigating_cutoff = (now - chrono::Duration::minutes(investigating_minutes)).to_rfc3339();
         let executing_cutoff = (now - chrono::Duration::hours(executing_hours)).to_rfc3339();
+        let dismissed_cutoff = (now - chrono::Duration::hours(dismissed_hours)).to_rfc3339();
 
-        // 三个阶段各自独立成败（一阶段失败不阻其他阶段）
+        // 四个阶段各自独立成败（一阶段失败不阻其他阶段）
         let approvals = self.store.escalate_stale_approvals(&approval_cutoff).await;
         let investigating = self.store.mark_stale_investigating(&investigating_cutoff).await;
         let executing = self.store.escalate_stale_executing(&executing_cutoff).await;
+        let dismissed = self.store.resurface_stale_dismissed(&dismissed_cutoff).await;
 
         let mut errors = Vec::new();
         let escalated_approvals = approvals.unwrap_or_else(|e| {
@@ -202,23 +211,29 @@ impl JobExecutor for ApprovalTimeoutExecutor {
             errors.push(format!("executing: {e}"));
             0
         });
+        let resurfaced_dismissed = dismissed.unwrap_or_else(|e| {
+            errors.push(format!("dismissed: {e}"));
+            0
+        });
 
         let duration_ms = start.elapsed().as_millis() as i64;
         tracing::info!(
             escalated_approvals,
             marked_investigating,
             escalated_executing,
+            resurfaced_dismissed,
             timeout_hours,
             investigating_minutes,
             executing_hours,
+            dismissed_hours,
             "judgment SLA sweep complete"
         );
 
         Ok(ExecutionResult {
             status: if errors.is_empty() { "success" } else { "partial" }.to_string(),
             output: Some(format!(
-                "approvals escalated: {}, investigating marked: {}, executing escalated: {}",
-                escalated_approvals, marked_investigating, escalated_executing
+                "approvals escalated: {}, investigating marked: {}, executing escalated: {}, dismissed resurfaced: {}",
+                escalated_approvals, marked_investigating, escalated_executing, resurfaced_dismissed
             )),
             error_message: if errors.is_empty() {
                 None
@@ -256,6 +271,10 @@ mod approval_timeout_tests {
             self.calls.lock().unwrap().push("executing".into());
             self.executing.clone()
         }
+        async fn resurface_stale_dismissed(&self, _c: &str) -> Result<u64, String> {
+            self.calls.lock().unwrap().push("dismissed".into());
+            Ok(0)
+        }
     }
 
     fn job(config: &str) -> CronJob {
@@ -285,7 +304,7 @@ mod approval_timeout_tests {
     }
 
     #[tokio::test]
-    async fn default_config_sweeps_all_three_states() {
+    async fn default_config_sweeps_all_states() {
         let store = Arc::new(MockStore {
             approvals: Ok(2),
             investigating: Ok(3),
@@ -299,7 +318,8 @@ mod approval_timeout_tests {
         assert!(out.contains("approvals escalated: 2"), "{out}");
         assert!(out.contains("investigating marked: 3"), "{out}");
         assert!(out.contains("executing escalated: 1"), "{out}");
-        assert_eq!(store.calls.lock().unwrap().len(), 3, "三态各自独立清扫");
+        assert!(out.contains("dismissed resurfaced: 0"), "{out}");
+        assert_eq!(store.calls.lock().unwrap().len(), 4, "四态各自独立清扫");
     }
 
     #[tokio::test]
@@ -318,7 +338,7 @@ mod approval_timeout_tests {
             res.output.unwrap().contains("investigating marked: 4"),
             "其他阶段照常执行"
         );
-        assert_eq!(store.calls.lock().unwrap().len(), 3);
+        assert_eq!(store.calls.lock().unwrap().len(), 4, "四阶段各自独立成败");
     }
 }
 
@@ -345,6 +365,9 @@ mod approval_timeout_executor_tests {
             Ok(1)
         }
         async fn escalate_stale_executing(&self, _c: &str) -> Result<u64, String> {
+            Ok(0)
+        }
+        async fn resurface_stale_dismissed(&self, _c: &str) -> Result<u64, String> {
             Ok(0)
         }
     }

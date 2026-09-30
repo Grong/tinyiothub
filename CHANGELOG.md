@@ -25,10 +25,21 @@
 - 严重报警在日预算耗尽或同源抖动场景下不再丢失工单路径。
 - 调查/执行卡死不再有永久悬挂状态（三态 SLA 清扫 + 迟到结果恢复路由）。
 
-## [Unreleased]
+## [0.5.3.0] - 2026-09-27
+
+### Added
+
+- **AI 工作台（处置中心更名）**：AI 判断动态改读 brain_events 只读投影（judgments/proposals/runs/tick 聚合、同类折叠、置顶、游标分页），新增 `/brain-events` list/summary/detail 端点；行点击展开、五格状态、空态引导、SSE 断连提示条；证据懒加载与独立重试。
+- **处置证据契约 v2**：判断附带完整审计记录，前端结构化呈现（不再暴露原始 LLM 推理轨迹）。
+- **批准执行链补全**：AI 工作台批准的提案现在用与 Agent 会话同源的工具集执行——本体 9 工具 + MCP 16 工具全覆盖（此前 8/9 本体工具批准即「未注册」被误拒）；invoke_action 类提案批准即授权、自动确认下发设备命令；编排/会话工具（dispatch_thing_task/canvas/get_skill）与幻觉工具名一律自动拒绝并留痕。
+- **工单页 Markdown**：简报问题描述、建议、解决方案、工单对话均渲染 Markdown（marked + DOMPurify 消毒）。
 
 ### Changed
 
+- **批准通道安全护栏**：提案参数蛇形/驼峰键并容（thing_id/thingId 都收）；界面显示的 thingId 与执行参数不一致时拒绝执行（显示=执行，盲签防呆）；确认 token 校验工作区归属，跨工作区 token 不得下发。
+- **巡检/调查提示词全中文化**：纪律规则收敛为唯一宪法段单源；巡检 tick 预算自知（提示词告知工具预算、要求聚合读取）；报警调查指令携带规则条件（规则名/属性名/当前值/阈值），AI 不再猜阈值；报警文案统一中文。
+- **心跳任务启动补种**：重启后滞留判断从已完成 run 对账恢复，不再丢调查。
+- **工单标题人话化**：裸触发标签（user:heartbeat 等）不再直接当标题，改为「心跳巡检失败： 设备.动作 失败（原因）」式可读标题。
 - **BREAKING (DB/API)**: device schema 全面更名为 thing——表 `devices`→`things` 等 5 张，列 `device_id`→`thing_id`（13 张表）、`device_type`→`category`、`device_limit`→`thing_limit`；JSON 字段 `deviceId`→`thingId`、`deviceType`→`category`。老库经迁移 `20260825000001` 自动升级（启动前自动备份）。前端适配在后续 PR。
 - **BREAKING (REST JSON)**: REST 响应/请求 JSON 键 `deviceId`→`thingId`、`deviceType`→`category` 对前端为破坏性变更（前端适配在 PR-2）。
 - **BREAKING (cron 配置)**: `device_command` 类型定时任务的配置键 `device_id`→`thing_id`——已存量的 `device_command` 任务配置需手工更新，不提供数据迁移。
@@ -44,6 +55,15 @@
 
 ### Fixed
 
+- **报警调查判断质量**：判据区分点明确化（已自行恢复的是 noise 不是 self_healable——self_healable 要求问题仍存在；不确定时选 needs_human）——此前模型把已自恢复的越限/闪断误判为可自愈。judgment eval 基线 91.7%（24 场景，needs_human→noise 零容忍方向 0 误判）；eval 套件新增 EVAL_ONLY 诊断过滤、unparseable 原始输出留痕、单次 LLM 调用失败不再中止全量，max_tokens 预算显式可配。
+- **批准执行大面积「工具未注册」误拒**：批准通道只查 MCP 注册表，而提案词表来自 Agent 会话工具——8/9 本体工具批准即被误拒；现改用 Agent 会话同源注册表。
+- **批准执行参数解析失败**（missing field `thingId`）：提案蛇形键与工具驼峰 schema 不匹配，工具 Input 加 serde alias 后并容。
+- **事件内容预览按字符截断**，修复中文内容 panic。
+- **同 tool:thing 重复提案**就地刷新（problem_key 折叠），不再每次新增。
+- **历史回放工具配对清洗**——recall 窗口错切导致 LLM 400 全灭。
+- **节流中的报警被误自动恢复**（throttle 路径错标 non_triggered）。
+- **Critical 报警直达工单被 NULL workspace 拒升** + 启动竞态恢复；处置流空转（报警缺 workspace_id 时从 thing 回填解析）。
+- **处置中心操作防重入**（同一判断按钮飞行中禁用）；页面样式真正生效（补 createRenderRoot）；证据重试不走 toggle 语义。
 - **MQTT gateway discovery 端到端修复（PR-3）**：cloud 路由守卫 off-by-one——6 段 `thing/discover` topic 被 `parts.len() >= 7` 守卫静默丢弃（pre-existing 死链）；edge 发布 topic `{prefix}/discovery`→`{prefix}/thing/discover`、payload 对齐 `ThingDiscoverMessage`；edge `publish_discovery` 已接线，cloud `handle_thing_discover → create_things_batch` 真实落库。
 - **edge telemetry payload 对齐 cloud 契约（PR-3）**：edge 上行 telemetry 包装为 `TelemetryMessage` 形状（`type`/`data`/`timestamp`），与 cloud `route_data_message` 解析端一致；**edge 须与 cloud 同步升级**。
 - **agent tools catalog 工具 id 对齐 MCP 注册名（PR-3）**：静态兜底 catalog 的 `search_devices`/`get_device`/`create_device`/`delete_device` 更名为 `search_things`/`get_thing`/`create_thing`/`delete_thing`（对齐 `mcp/tools/thing.rs` 注册名）；存量 `agent_configs.config` `tool_denylist` 中的旧名经迁移 `20260831000001` 自动翻转（带引号 token 精确替换，不误伤前缀/子串）。

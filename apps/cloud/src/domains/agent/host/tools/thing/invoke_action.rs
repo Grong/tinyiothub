@@ -68,7 +68,11 @@ impl Tool for InvokeActionTool {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Input {
+            // alias：提案/报告的 parameters 常随模板写成蛇形键
+            // （thing_id），与 schema 的驼峰并容。
+            #[serde(alias = "thing_id")]
             thing_id: String,
+            #[serde(alias = "action_name")]
             action_name: String,
             params: Option<Value>,
         }

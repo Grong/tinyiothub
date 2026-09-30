@@ -60,7 +60,10 @@ impl Tool for ReadPropertyTool {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Input {
+            // alias：提案/报告的 parameters 常随模板写成蛇形键。
+            #[serde(alias = "thing_id")]
             thing_id: String,
+            #[serde(alias = "property_name")]
             property_name: String,
         }
 

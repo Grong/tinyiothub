@@ -4,6 +4,7 @@ pub mod admin;
 pub mod agent;
 pub mod alarm;
 pub mod auth;
+pub mod brain_event;
 pub mod driver;
 pub mod event;
 pub mod judgment;

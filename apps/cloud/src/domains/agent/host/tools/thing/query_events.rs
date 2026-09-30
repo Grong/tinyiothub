@@ -67,7 +67,10 @@ impl Tool for QueryEventsTool {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Input {
+            // alias：提案/报告的 parameters 常随模板写成蛇形键。
+            #[serde(alias = "thing_id")]
             thing_id: String,
+            #[serde(alias = "event_name")]
             event_name: Option<String>,
             level: Option<i32>,
             since: Option<String>,

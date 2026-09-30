@@ -13,6 +13,10 @@ pub struct AlarmEvent {
     pub severity: String,
     pub message: String,
     pub rule_id: Option<String>,
+    /// 规则条件描述（如「阈值 > 10」）——调查指令直接携带，AI 不用猜阈值。
+    /// serde default：旧事件载荷无此字段也能反序列化。
+    #[serde(default)]
+    pub condition_desc: Option<String>,
     pub resolved: bool,
     pub created_at: DateTime<Utc>,
 }

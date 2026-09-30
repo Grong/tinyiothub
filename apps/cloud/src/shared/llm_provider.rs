@@ -49,6 +49,7 @@ impl LlmProvider for MinimaxLlmProvider {
                 tinyiothub_agent::port::provider::ChatRequest {
                     messages: &messages,
                     tools: None,
+                    max_tokens: None,
                 },
                 model,
                 Some(temperature as f64),

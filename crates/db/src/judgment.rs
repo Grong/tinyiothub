@@ -7,13 +7,15 @@
 //! ```text
 //! investigating ──verdict=noise─────────→ noise_archived（按 triage_mode 决定是否 suppress 报警）
 //!      │───────verdict=self_healable──→ awaiting_approval ─批准→ executing ─verified→ resolved
-//!      │                                   │ rejected / 24h 超时 → escalated   │失败/NoActionNeeded/1h SLA→ escalated
+//!      │                                   ├─拒绝──→ dismissed（不开票；原因落 evidence.dismiss_reason） │失败/NoActionNeeded/1h SLA→ escalated
+//!      │                                   └─24h 超时→ escalated
 //!      │───────verdict=needs_human────→ escalated（转工单，ticket_id 回填）
 //!      ├──调查失败/解析失败────────────→ investigation_failed（同样转工单）
 //!      ├──超日预算────────────────────→ budget_skipped（报警保持 Active，不计预算）
 //!      └──dispatch 被拦（O11/队列满）─→ dispatch_suppressed（不开票，不计预算；
 //!                                       迟到 RunRecorded 可按 verdict 恢复路由→三出口）
 //! noise_archived ──✕ 反馈「判错了」──→ investigating（重开重调查，T-17/C6）
+//! dismissed + 关联报警 3 天仍 Active ──审批超时清扫器──→ investigating（重浮重查，X5）
 //! ```
 
 use chrono::{DateTime, Utc};
@@ -64,6 +66,10 @@ pub enum JudgmentStatus {
     /// dispatch 被 O11 dedup/队列拦下（调查从未发起）。不开票、不计日预算；
     /// 迟到的 RunRecorded 可按 verdict 恢复路由到三出口（T-7/L1）。
     DispatchSuppressed,
+    /// 用户否决建议（X5，v3 既定语义：拒绝不开票）。拒绝原因落
+    /// evidence_json.dismiss_reason（P2 学习闭环输入）；关联报警 3 天仍
+    /// Active 时由审批超时清扫器重浮为 investigating 重查。
+    Dismissed,
 }
 
 impl JudgmentStatus {
@@ -78,6 +84,7 @@ impl JudgmentStatus {
             JudgmentStatus::InvestigationFailed => "investigation_failed",
             JudgmentStatus::BudgetSkipped => "budget_skipped",
             JudgmentStatus::DispatchSuppressed => "dispatch_suppressed",
+            JudgmentStatus::Dismissed => "dismissed",
         }
     }
 
@@ -92,6 +99,7 @@ impl JudgmentStatus {
             "investigation_failed" => Some(JudgmentStatus::InvestigationFailed),
             "budget_skipped" => Some(JudgmentStatus::BudgetSkipped),
             "dispatch_suppressed" => Some(JudgmentStatus::DispatchSuppressed),
+            "dismissed" => Some(JudgmentStatus::Dismissed),
             _ => None,
         }
     }
@@ -127,6 +135,9 @@ pub(crate) fn allowed_transition(from: JudgmentStatus, to: JudgmentStatus) -> bo
             // 审批出口
             | (AwaitingApproval, Executing)
             | (AwaitingApproval, Escalated)
+            // 拒绝出口（X5）：不开票；关联报警 3 天仍 Active 可重浮重查
+            | (AwaitingApproval, Dismissed)
+            | (Dismissed, Investigating)
             // 执行出口
             | (Executing, Resolved)
             | (Executing, Escalated)
@@ -139,17 +150,6 @@ pub(crate) fn allowed_transition(from: JudgmentStatus, to: JudgmentStatus) -> bo
 
 /// 动作白名单（4A/T-3）：exec prompt 的动作文本由服务端模板按类别生成，
 /// LLM 的 suggested_action 只做展示、不进执行指令（注入面收敛到枚举本身）。
-pub fn exec_action_template(category: Option<&str>, thing_id: Option<&str>) -> String {
-    let thing = thing_id.unwrap_or("目标设备");
-    match category {
-        Some("device_reboot") => format!("重启设备 {thing}"),
-        Some("connection_recovery") => format!("恢复设备 {thing} 的连接（重连/重订阅）"),
-        Some("property_adjust") => format!("调整设备 {thing} 的属性设置"),
-        Some("threshold_tuning") => "调整报警规则阈值".to_string(),
-        _ => "按判断建议处置".to_string(),
-    }
-}
-
 /// action_category 归一化（白名单外 → other，避免 DB CHECK 失败让判断
 /// 卡 investigating，T-3）。
 pub fn normalize_action_category(category: Option<&str>) -> Option<String> {
@@ -415,6 +415,28 @@ pub(crate) async fn link_judgment_ticket(pool: &SqlitePool, id: &str, ticket_id:
     Ok(())
 }
 
+/// 拒绝（X5 + R-F2 原子化）：单条条件 UPDATE 同时翻状态与落原因——
+/// awaiting_approval → dismissed + evidence_json.dismiss_reason，要么一起
+/// 成立要么一起不成立（此前两步 await，第二步失败则原因永久缺失）。
+/// 返回是否迁移成功（false = 并发互撞，调用方按 409 处理）。
+pub(crate) async fn dismiss_judgment(pool: &SqlitePool, id: &str, reason: &str) -> Result<bool> {
+    if !allowed_transition(JudgmentStatus::AwaitingApproval, JudgmentStatus::Dismissed) {
+        return Err(DbError::Validation {
+            message: "illegal judgment transition: awaiting_approval -> dismissed".to_string(),
+        });
+    }
+    let result = sqlx::query(
+        "UPDATE judgments SET status = 'dismissed', state_entered_at = datetime('now'), \
+         evidence_json = json_set(evidence_json, '$.dismiss_reason', ?) \
+         WHERE id = ? AND status = 'awaiting_approval'",
+    )
+    .bind(reason)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// feed 页查询（F12 契约落地 + T-12/C1 元组游标 + T-13/C2 分页语义）：
 /// - workspace 隔离 + 可选 status 筛选 + 48h 窗口（RFC3339 字符串比较）
 /// - 首页（before=None）：同 thing+rule 折叠最新（window function）+ 需行动置顶
@@ -501,6 +523,22 @@ pub(crate) async fn stale_by_status(pool: &SqlitePool, status: JudgmentStatus, c
         .fetch_all(pool)
         .await?;
     rows.into_iter().map(row_to_judgment).collect()
+}
+
+/// 同报警是否已有未终态判断（X5 重浮守卫 R-F1）：dismissed 翻回 investigating
+/// 前必查——否则撞 judgments_active_alarm 部分唯一索引（每周期一条 error log）。
+/// ⚠ 状态清单与 judgments_active_alarm 的 WHERE 子句硬绑定——定义在三处迁移
+/// （20260912000002 / 20260914000001 / 20260928000001）。未终态集合变更时
+/// 必须四处同改，否则本守卫与唯一索引静默漂移（外部声音 #1）。
+pub(crate) async fn has_open_judgment_for_alarm(pool: &SqlitePool, alarm_id: &str) -> Result<bool> {
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM judgments WHERE alarm_id = ? \
+         AND status IN ('investigating','awaiting_approval','executing')",
+    )
+    .bind(alarm_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(n > 0)
 }
 
 /// 摘要端点计数（F-H）：COUNT 替代拉行数长度。
@@ -851,6 +889,11 @@ impl Db {
         link_judgment_ticket(self.pool(), id, ticket_id).await
     }
 
+    /// 拒绝原子化（R-F2）：单条条件 UPDATE 翻 dismissed + 落 dismiss_reason。
+    pub async fn dismiss_judgment(&self, id: &str, reason: &str) -> Result<bool> {
+        dismiss_judgment(self.pool(), id, reason).await
+    }
+
     pub async fn list_judgments_feed(
         &self,
         workspace_id: &str,
@@ -867,6 +910,11 @@ impl Db {
 
     pub async fn stale_by_status(&self, status: JudgmentStatus, cutoff: &str) -> Result<Vec<Judgment>> {
         stale_by_status(self.pool(), status, cutoff).await
+    }
+
+    /// 同报警是否已有未终态判断（X5 重浮守卫 R-F1）。
+    pub async fn has_open_judgment_for_alarm(&self, alarm_id: &str) -> Result<bool> {
+        has_open_judgment_for_alarm(self.pool(), alarm_id).await
     }
 
     pub async fn count_by_statuses(&self, workspace_id: &str, statuses: &[JudgmentStatus]) -> Result<i64> {
@@ -987,6 +1035,59 @@ mod tests {
         let j = db.find_judgment_by_id(&id, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, JudgmentStatus::Resolved);
         assert!(j.resolved_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn dismiss_judgment_atomic_status_and_reason() {
+        let db = test_db().await;
+        let id = db.insert_judgment("ws1", None, None, None, "annotate").await.unwrap();
+        db.judge_judgment(
+            &id,
+            JudgmentVerdict::SelfHealable,
+            "可重连",
+            "{}",
+            Some("重连"),
+            Some("connection_recovery"),
+            None,
+        )
+        .await
+        .unwrap();
+
+        // 单语句成立：status=dismissed 且 reason 同在（原子——无中间态）
+        assert!(db.dismiss_judgment(&id, "误报，无需处理").await.unwrap());
+        let j = db.find_judgment_by_id(&id, "ws1").await.unwrap().unwrap();
+        assert_eq!(j.status, JudgmentStatus::Dismissed);
+        assert!(j.evidence_json.contains("dismiss_reason") && j.evidence_json.contains("误报，无需处理"));
+        assert!(j.ticket_id.is_none(), "拒绝不开工单");
+
+        // 并发互撞：二次 dismiss → false（已不在 awaiting_approval）
+        assert!(!db.dismiss_judgment(&id, "迟到的否决").await.unwrap());
+        let j2 = db.find_judgment_by_id(&id, "ws1").await.unwrap().unwrap();
+        assert!(
+            j2.evidence_json.contains("误报，无需处理") && !j2.evidence_json.contains("迟到的否决"),
+            "首次审计记录不被覆盖"
+        );
+    }
+
+    #[test]
+    fn dismissed_edges_in_matrix() {
+        // X5：拒绝出口与重浮边登记；dismissed 是终态——除重浮外无出边。
+        assert!(allowed_transition(
+            JudgmentStatus::AwaitingApproval,
+            JudgmentStatus::Dismissed
+        ));
+        assert!(allowed_transition(
+            JudgmentStatus::Dismissed,
+            JudgmentStatus::Investigating
+        ));
+        assert!(!allowed_transition(
+            JudgmentStatus::Dismissed,
+            JudgmentStatus::Escalated
+        ));
+        assert!(!allowed_transition(JudgmentStatus::Dismissed, JudgmentStatus::Resolved));
+        assert!(!allowed_transition(JudgmentStatus::Resolved, JudgmentStatus::Dismissed));
+        // dismissed 是终态：不占用 active 唯一索引（新报警可重新触发调查）
+        assert!(!JudgmentStatus::Dismissed.is_open());
     }
 
     #[tokio::test]
@@ -1142,8 +1243,11 @@ mod tests {
         for _ in 0..3 {
             ids.push(db.insert_judgment("ws1", None, None, None, "annotate").await.unwrap());
         }
-        // 强制同秒（模拟报警风暴/种子脚本）
-        sqlx::query("UPDATE judgments SET created_at = '2026-09-14T01:00:00+00:00'")
+        // 强制同秒（模拟报警风暴/种子脚本）；以当前时间为锚——feed 查询有
+        // 48h 窗口（created_at >= now-48h），硬编码历史日期会随时间漂移出窗口
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("UPDATE judgments SET created_at = ?")
+            .bind(&now)
             .execute(db.pool())
             .await
             .unwrap();
@@ -1203,13 +1307,18 @@ mod tests {
             .insert_judgment("ws1", Some("a2"), None, Some("t1"), "annotate")
             .await
             .unwrap();
-        // 显式递增时间戳（不靠 wall-clock sleep——同文件 tuple_cursor 测试同款）
-        sqlx::query("UPDATE judgments SET created_at = '2026-09-14T01:00:00+00:00' WHERE id = ?")
+        // 显式递增时间戳（不靠 wall-clock sleep——同文件 tuple_cursor 测试同款）；
+        // 以当前时间为锚——feed 查询有 48h 窗口，硬编码历史日期会漂移出窗口
+        let t1 = (Utc::now() - chrono::Duration::minutes(2)).to_rfc3339();
+        let t2 = (Utc::now() - chrono::Duration::minutes(1)).to_rfc3339();
+        sqlx::query("UPDATE judgments SET created_at = ? WHERE id = ?")
+            .bind(&t1)
             .bind(&j1)
             .execute(db.pool())
             .await
             .unwrap();
-        sqlx::query("UPDATE judgments SET created_at = '2026-09-14T01:01:00+00:00' WHERE id = ?")
+        sqlx::query("UPDATE judgments SET created_at = ? WHERE id = ?")
+            .bind(&t2)
             .bind(&j2)
             .execute(db.pool())
             .await

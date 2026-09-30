@@ -191,6 +191,44 @@ pub(crate) async fn flip_agent_proposal_approved(pool: &SqlitePool, id: &str) ->
     Ok(result.rows_affected())
 }
 
+/// 条件翻转 proposal 状态（仅当前状态 = from 的行生效），可同时落拒绝原因。
+/// 返回受影响行数——0 表示状态已被并发翻转，调用方应视作冲突（F4：
+/// 已处理提案的审计记录不可被迟到的 reject/auto-reject 覆盖）。
+pub(crate) async fn flip_agent_proposal_status(
+    pool: &SqlitePool,
+    id: &str,
+    from: &str,
+    to: &str,
+    reason: Option<&str>,
+) -> Result<u64, sqlx::Error> {
+    let result = match reason {
+        Some(reason) => {
+            sqlx::query(
+                "UPDATE agent_actions SET content = json_set(content, '$.status', ?, '$.dismiss_reason', ?) \
+             WHERE id = ? AND json_extract(content, '$.status') = ?",
+            )
+            .bind(to)
+            .bind(reason)
+            .bind(id)
+            .bind(from)
+            .execute(pool)
+            .await?
+        }
+        None => {
+            sqlx::query(
+                "UPDATE agent_actions SET content = json_set(content, '$.status', ?) \
+             WHERE id = ? AND json_extract(content, '$.status') = ?",
+            )
+            .bind(to)
+            .bind(id)
+            .bind(from)
+            .execute(pool)
+            .await?
+        }
+    };
+    Ok(result.rows_affected())
+}
+
 /// 记录 proposal 执行结果（auto_executed 行；id 内部生成）。
 pub(crate) async fn insert_agent_heartbeat_outcome(
     pool: &SqlitePool,
@@ -379,6 +417,17 @@ impl Db {
     /// 原子翻转 proposal 状态为 approved，返回受影响行数。
     pub async fn flip_agent_proposal_approved(&self, id: &str) -> Result<u64, sqlx::Error> {
         flip_agent_proposal_approved(self.pool(), id).await
+    }
+
+    /// 条件翻转 proposal 状态（仅当前状态 = from 生效），返回受影响行数。
+    pub async fn flip_agent_proposal_status(
+        &self,
+        id: &str,
+        from: &str,
+        to: &str,
+        reason: Option<&str>,
+    ) -> Result<u64, sqlx::Error> {
+        flip_agent_proposal_status(self.pool(), id, from, to, reason).await
     }
 
     /// 记录 proposal 执行结果（auto_executed 行）。

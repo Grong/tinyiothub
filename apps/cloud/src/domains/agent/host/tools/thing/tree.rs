@@ -57,6 +57,8 @@ impl Tool for GetThingTreeTool {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Input {
+            // alias：提案/报告的 parameters 常随模板写成蛇形键。
+            #[serde(alias = "root_id")]
             root_id: Option<String>,
             depth: Option<u32>,
         }

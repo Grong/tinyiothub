@@ -248,6 +248,14 @@ async fn redispatch_investigation(state: &AppState, judgment: &tinyiothub_storag
         return;
     };
     let severity = alarm.alarm_level.as_str().to_string();
+    // 与 enter_disposition 同口径：调查指令携带规则条件，AI 不猜阈值
+    let condition_desc = match alarm.rule_id.as_deref() {
+        Some(rid) => match state.db.find_alarm_rule_by_id(rid).await {
+            Ok(Some(rule)) => Some(crate::domains::alarm::service::describe_condition(&rule.condition)),
+            _ => None,
+        },
+        None => None,
+    };
     let ai_alarm = tinyiothub_core::models::event::AlarmEvent {
         id: alarm_id,
         workspace_id: judgment.workspace_id.clone(),
@@ -256,6 +264,7 @@ async fn redispatch_investigation(state: &AppState, judgment: &tinyiothub_storag
         severity,
         message: alarm.message.clone(),
         rule_id: alarm.rule_id.clone(),
+        condition_desc,
         resolved: false,
         created_at: alarm.alarm_time,
     };
@@ -265,7 +274,7 @@ async fn redispatch_investigation(state: &AppState, judgment: &tinyiothub_storag
         priority: tinyiothub_agent::runtime::thing_agent::types::Priority::High,
         source: tinyiothub_agent::runtime::thing_agent::types::TriggerSource::UserDirective {
             user_id: "alarm-triage".to_string(),
-            text: tinyiothub_agent::runtime::orchestrator::callbacks::alarm_investigation_text(&ai_alarm),
+            text: tinyiothub_agent::prompt::investigation::alarm_investigation_text(&ai_alarm),
             session_key: None,
             source: Some("alarm".to_string()),
             problem_key: Some(format!("alarm:{}:{}", thing_id, rule_part)),
@@ -312,6 +321,10 @@ async fn approve_judgment(
     claims: AuthClaims,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let ws = &claims.0.workspace_id;
+    // F9：批准 = 物理动作授权，强制 admin；角色查询失败 fail-closed 403。
+    if !crate::domains::agent::host::handler::is_admin(&state.db, &claims.0.user_id).await {
+        return ApiResponseBuilder::error_with_code(403, "需要管理员权限");
+    }
     let judgment = match state.db.find_judgment_by_id(&id, ws).await {
         Ok(Some(j)) => j,
         Ok(None) => return ApiResponseBuilder::error_with_code(404, "judgment 不存在"),
@@ -345,13 +358,20 @@ async fn approve_judgment(
     // 4A/T-3：动作文本由服务端模板按 action_category 生成——LLM 的
     // suggested_action 只做展示，不进执行指令（注入面收敛）。
     // 6A/T-4：exec prompt 携带调查上下文（判断理由 + 证据摘录）。
-    let action = tinyiothub_storage::judgment::exec_action_template(
+    // 模板已迁入 prompt 层（tinyiothub_agent::prompt::exec，2026-09-20 提示词收敛）。
+    let action = tinyiothub_agent::prompt::exec::exec_action_template(
         judgment.action_category.as_deref(),
         judgment.thing_id.as_deref(),
     );
+    // 证据契约 v2：新行写完整 summary，老行是 excerpt——都认，截 300 字符进 prompt。
     let evidence_excerpt = serde_json::from_str::<serde_json::Value>(&judgment.evidence_json)
         .ok()
-        .and_then(|v| v.get("excerpt").and_then(|e| e.as_str()).map(str::to_string))
+        .and_then(|v| {
+            v.get("summary")
+                .or_else(|| v.get("excerpt"))
+                .and_then(|e| e.as_str())
+                .map(str::to_string)
+        })
         .map(|e| e.chars().take(300).collect::<String>())
         .unwrap_or_default();
     let signal = tinyiothub_agent::runtime::thing_agent::types::WakeSignal {
@@ -393,7 +413,9 @@ async fn approve_judgment(
     ApiResponseBuilder::success(serde_json::json!({"ok": true, "status": "executing"}))
 }
 
-/// 拒绝：awaiting_approval → escalated + 工单（F14：必填原因，不写 feedback）。
+/// 拒绝：awaiting_approval → dismissed（X5，v3 既定语义：不开工单）；
+/// 原因落 evidence_json.dismiss_reason 喂 P2 学习闭环；不写 feedback（F14）。
+/// 关联报警 3 天仍 Active 时由审批超时清扫器重浮重查（否决有兜底）。
 async fn reject_judgment(
     Path(id): Path<String>,
     State(state): State<AppState>,
@@ -405,22 +427,18 @@ async fn reject_judgment(
     if reason.chars().count() < 4 {
         return ApiResponseBuilder::error_with_code(400, "拒绝必须填写原因（至少 4 个字符）");
     }
+    if reason.chars().count() > 500 {
+        return ApiResponseBuilder::error_with_code(400, "拒绝原因过长（最多 500 字符）");
+    }
     let judgment = match state.db.find_judgment_by_id(&id, ws).await {
         Ok(Some(j)) => j,
         Ok(None) => return ApiResponseBuilder::error_with_code(404, "judgment 不存在"),
         Err(e) => return ApiResponseBuilder::error(format!("查询失败: {e}")),
     };
-
-    match state
-        .db
-        .transit_judgment(
-            &id,
-            tinyiothub_storage::judgment::JudgmentStatus::AwaitingApproval,
-            tinyiothub_storage::judgment::JudgmentStatus::Escalated,
-            None,
-        )
-        .await
-    {
+    let _ = &judgment; // 存在性校验即用途（X5 后不再取字段建工单）
+    // R-F2 原子化：单条条件 UPDATE 同时翻 dismissed + 落 dismiss_reason——
+    // 不存在「状态翻了原因丢了」的中间态。
+    match state.db.dismiss_judgment(&id, reason).await {
         Ok(true) => {}
         Ok(false) => {
             return ApiResponseBuilder::error_with_code(409, "该判断已不在待审批状态");
@@ -428,29 +446,6 @@ async fn reject_judgment(
         Err(e) => return ApiResponseBuilder::error(format!("状态迁移失败: {e}")),
     }
 
-    let ticket_id = crate::domains::ticket::create_escalation(
-        &state.db,
-        &state.sse_manager,
-        crate::domains::ticket::Escalation {
-            workspace_id: judgment.workspace_id.clone(),
-            thing_id: judgment.thing_id.clone(),
-            agent_run_id: judgment.run_id.clone().unwrap_or_else(|| format!("reject:{id}")),
-            title: format!("审批被拒绝：{}", judgment.reason.chars().take(60).collect::<String>()),
-            briefing: serde_json::json!({
-                "problem": judgment.reason,
-                "source": "approval_rejected",
-                "judgment_id": id,
-                "reject_reason": reason,
-                "suggested_action": judgment.suggested_action,
-            }),
-            failure_hash: format!("pk:approval-rejected:{}", judgment.alarm_id.as_deref().unwrap_or(&id)),
-        },
-    )
-    .await;
-    if let Some(tid) = ticket_id {
-        let _ = state.db.link_judgment_ticket(&id, tid).await;
-    }
-
     crate::domains::agent::host::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id).await;
-    ApiResponseBuilder::success(serde_json::json!({"ok": true, "status": "escalated", "ticketId": ticket_id}))
+    ApiResponseBuilder::success(serde_json::json!({"ok": true, "status": "dismissed"}))
 }

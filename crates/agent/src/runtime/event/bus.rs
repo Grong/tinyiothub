@@ -303,6 +303,7 @@ mod tests {
             severity: "critical".into(),
             message: "test".into(),
             rule_id: None,
+            condition_desc: None,
             resolved: false,
             created_at: chrono::Utc::now(),
         });
