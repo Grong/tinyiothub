@@ -26,7 +26,7 @@ pub enum BrainEventTab {
     Directive,
 }
 
-/// 列表行（19 列；无 evidence_json/action_params——列表不载证据与动作参数）。
+/// 列表行（20 列；无 evidence_json/action_params——列表不载证据与动作参数）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrainEvent {
     pub id: String,
@@ -41,6 +41,7 @@ pub struct BrainEvent {
     pub action_category: Option<String>,
     pub risk: Option<String>,
     pub run_id: Option<String>,
+    pub tick_id: Option<String>,
     pub ticket_id: Option<i64>,
     pub status: String,
     pub triage_mode: String,
@@ -70,7 +71,7 @@ pub struct BrainEventsSummary {
 
 /// 列表列清单（不含 evidence_json/action_params）。
 const LIST_COLS: &str = "id, workspace_id, source, alarm_id, thing_id, title, verdict, reason, \
-    suggested_action, action_category, risk, run_id, ticket_id, status, triage_mode, \
+    suggested_action, action_category, risk, run_id, tick_id, ticket_id, status, triage_mode, \
     created_at, judged_at, state_entered_at, resolved_at";
 
 /// 「需要你」口径（仅在 FROM brain_events 的作用域内使用）。
@@ -106,6 +107,7 @@ fn row_to_brain_event(row: sqlx::sqlite::SqliteRow) -> Result<BrainEvent> {
         action_category: row.get("action_category"),
         risk: row.get("risk"),
         run_id: row.get("run_id"),
+        tick_id: row.get("tick_id"),
         ticket_id: row.get("ticket_id"),
         status: row.get("status"),
         triage_mode: row.get("triage_mode"),
@@ -573,6 +575,45 @@ mod tests {
         let ids: Vec<&str> = feed.iter().map(|e| e.id.as_str()).collect();
         assert!(ids.contains(&"directive:r-user"), "用户指令 run 出现在 directive tab");
         assert!(!ids.contains(&"directive:r-alarm"), "problem_key 非空的不出现");
+    }
+
+    /// 提案行投影 tick_id（Task 2 视图重建）：同 tick 锚行（summary）插 tick_id=t1、
+    /// 提案行手工带 tick_id=t1（Task 9 才由写入方填——此处手工 INSERT 模拟），
+    /// 断言提案行 tick_id == Some("t1")、tick 聚合行 tick_id 为 NULL。
+    #[tokio::test]
+    async fn proposal_row_projects_tick_id() {
+        let db = test_db().await;
+        let now = Utc::now().to_rfc3339();
+        // tick 锚行（action_type='summary'）。
+        // 注：tick_id 上有部分唯一索引（20260824000002），同库两行不能同值——
+        // 锚行用 't0'，提案行用 't1'（简报草图同值 t1 与真实约束不符，按真实代码修正）。
+        sqlx::query(
+            "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, tick_id, created_at)
+             VALUES ('act-sum','ws1','agent1','patrol','summary','{\"result\":\"ok\"}','t0',?)",
+        )
+        .bind(&now)
+        .execute(db.pool())
+        .await
+        .expect("summary anchor insert");
+        // 提案行（Task 9 才写 tick_id——此处手工 INSERT 模拟）
+        sqlx::query(
+            "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, tick_id, created_at)
+             VALUES ('act-prop','ws1','agent1','patrol','proposal',?,'t1',?)",
+        )
+        .bind("{\"proposalId\":\"p1\",\"thingId\":\"t1\",\"summary\":\"s-p1\",\"status\":\"pending\"}")
+        .bind(&now)
+        .execute(db.pool())
+        .await
+        .expect("proposal insert");
+
+        let feed = db.list_brain_events("ws1", BrainEventTab::All, None, 10).await.unwrap();
+        let proposal = feed.iter().find(|e| e.id == "patrol:p1").expect("提案行存在");
+        assert_eq!(proposal.tick_id.as_deref(), Some("t1"), "提案行投影 tick_id");
+        let tick_row = feed
+            .iter()
+            .find(|e| e.source == "patrol_tick")
+            .expect("tick 聚合行存在");
+        assert!(tick_row.tick_id.is_none(), "tick 聚合行 tick_id 保持 NULL");
     }
 
     /// needs_you tab 无时间窗：72h 前 escalated + 工单 open 的事件仍可见（与 badge 计数口径一致）；

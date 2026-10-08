@@ -1385,4 +1385,20 @@ mod tests {
         // 已重开的不能重复重开
         assert!(!db.reopen_judgment(&id).await.unwrap());
     }
+
+    /// Task 2 迁移：judgments.narrative TEXT NULL——迁移前写入的旧行 narrative 为 NULL。
+    #[tokio::test]
+    async fn narrative_defaults_null_for_existing_rows() {
+        let db = test_db().await;
+        let id = db
+            .insert_judgment("ws1", None, None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        let narrative: Option<String> = sqlx::query_scalar("SELECT narrative FROM judgments WHERE id = ?")
+            .bind(&id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert!(narrative.is_none(), "旧行 narrative 应为 NULL");
+    }
 }
