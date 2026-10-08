@@ -44,8 +44,8 @@ AI 中心（处置中心 `web/src/ui/views/dispositions.ts` + AI 运维中心 `a
 
 **② 活动 run 注册表 + 轨迹端点（进行中轨迹出口）**
 
-- `crates/agent` 新文件 `active_runs.rs`：`ActiveRunRegistry`（`DashMap<run_id, RunContext>`），runner `execute` 入口注册、RAII guard 出口注销（panic/cancel 路径不泄漏）；注册表有界（上限 = 最大并发 run 数，超出拒绝注册并 warn，纯防御）。registry 实例由 thing_agent_host 持有（与 AgentEventBus 同路径注入），经 AppState 暴露给路由层。
-- cloud 新增只读端点 `GET /agent-runs/{run_id}/trace`，响应 schema（进行中/已结束两源同形）：
+- `crates/agent` 新文件 `active_runs.rs`：`ActiveRunRegistry`（`DashMap<run_id, RunContext>`），runner `execute` 入口注册、RAII guard 出口注销（panic/cancel 路径不泄漏）；注册表有界——**上限与 scheduler 并发容量同一常量**（外部声音 #6：防失配；拒绝注册 warn 带 metric 名，正常不触发，纯防御）。registry 实例由 thing_agent_host 持有（与 AgentEventBus 同路径注入），经 AppState 暴露给路由层。
+- cloud 新增只读端点 `GET /agent-runs/{run_id}/trace`（**实现注意：handler 读 registry 时 `read().await` 后立即 clone trace 并 drop guard，不持 guard 跨 await**——外部声音 #9），响应 schema（进行中/已结束两源同形）：
   ```json
   { "live": true, "budget_max": 25, "entries": [{ "id": "...", "name": "read_property", "args": {...}, "output": null }] }
   ```
@@ -53,30 +53,30 @@ AI 中心（处置中心 `web/src/ui/views/dispositions.ts` + AI 运维中心 `a
   - 未命中 → 查 `agent_runs.report`（已结束）→ 持久化 trace + `live: false`；
   - 都没有 → 404。`output: null` = 配对的 ToolResult 未到（在途/取消）；entries 全量不截断（见 ④ 的 F11 决策）。`budget_max` 两分支同值，取自 crates/agent 的 pub 常量 `MAX_TOOL_CALLS_PER_RUN`（cloud 可直接引用，runner.rs:27）。
 - **run_id 链路修复（评审 C1+Y1/F1，D6 裁定：回填路线 + bus 写入者）**：
-  1. **写入者 = 新 bus 事件**：`AgentEventKind::RunStarted { run_id, workspace_id, problem_keys: Vec<String> }`——run_pipeline 启动时（合并落定后）经 AgentEventBus 发出；cloud 订阅者（judgment_subscriber 同域）按每个 problem_key 匹配 investigating judgment **逐个回填 run_id**（合并扇入：一 run 服务多 judgment 全覆盖）。run_id 生成点与 WakeSignal **不动**（事件自带 run_id，生成上移冗余——D6 裁定的最小实现）；
+  1. **写入者 = 新 bus 事件**：`AgentEventKind::RunStarted { run_id, workspace_id, problem_keys: Vec<String> }`——run_pipeline 启动时（合并落定后）经 AgentEventBus 发出，**时序约定：runner 先注册进 registry 再发 RunStarted**（外部声音 #7：消除"回填快于注册→前端立刻轮询 404"的时序窗）；cloud 订阅者（judgment_subscriber 同域）按每个 problem_key 匹配 investigating judgment **逐个回填 run_id**。匹配集 ≤1（外部声音 #4 消解：既有 flapping 防抖不变量——同 thing+rule 同时仅一个 investigating，alarm/service.rs:285 拒建重复调查——多匹配与"窗口内新建误挂"都不可能发生）。problem_keys 提取规则（eng S1-P2 核实）：递归 `Merged.signals` 收集 `UserDirective.problem_key` 的 Some 值去重（ThingEvent/Timer 无 problem_key；Merged 保留全部原始信号 types.rs:35）。run_id 生成点与 WakeSignal **不动**（事件自带 run_id，生成上移冗余——D6 裁定的最小实现）；
   2. **双时点回填**：RunStarted 回填 = 准入时点（进行中即可轮询，实时进度的时序闭环）；run 结束后既有回填（judgment_subscriber.rs:162）保留作幂等兜底（`set_judgment_run_id` 的 `WHERE run_id IS NULL` 天然支持双时点）。信号排队未启动时 judgment.run_id 为 NULL——前端对 run_id 为 NULL 的 investigating 卡片显示"排队中"，不提供展开入口；信号被队列拒绝/丢弃时无 RunStarted、无需回填（走既有卡死兜底/重发）；
   3. **API 断面**：`JudgmentDto` 增 `run_id` 字段 + 列表查询投影——investigating 卡片拿不到 run_id 就无从轮询，这是实时进度主目标的 API 出口。
 
 **③ narrative（终端用户大白话）**
 
-- verdict JSON 协议块加 `narrative` 字段（"我检查了温度曲线，发现 2 点后持续超阈，建议……"）——**协议层要求必填（提示词+宪法段约束），解析层 `Option<String>` 容错**（评审 F3：`parse_verdict` 两路径都是 serde 解析，必填 String 会让缺字段的 verdict 两路径全败 → investigation_failed 生产回归；必须与已批准的 fallback 行为一致）；
+- verdict JSON 协议块加 `narrative` 字段（"我检查了温度曲线，发现 2 点后持续超阈，建议……"）——**协议层要求必填（提示词+宪法段约束），解析层 `Option<String>` 容错**（评审 F3：`parse_verdict` 两路径都是 serde 解析，必填 String 会让缺字段的 verdict 两路径全败 → investigation_failed 生产回归；必须与已批准的 fallback 行为一致）。**协议防爆约束**（外部声音 #5）：narrative ≤200 字、只能出现在 verdict JSON 块内、禁止块外散文——大白话字段最易诱发模型在块外泄漏叙述冲击解析路径，eval 基线是兜底不是唯一防线；
 - `parse_verdict` 解析；`judgments` 表加列 `narrative TEXT`（一个小迁移）；
 - 宽松 fallback / 老数据 → NULL，前端降级显示现有 reason。零额外 LLM 调用。
 - **进通知（扩展 #9）**：notify 域 X1 通道的两个"需要你"触发点——`self_healable → awaiting_approval`（judgment_subscriber.rs:463）与 `needs_human → escalated`（:543，经 escalate_to_ticket 统一发出）——投递时都携带 narrative（NULL 降级 reason）。大白话出现在用户最痛的触点。仅 payload 加字段，sms/email 打桩通道不动。
 
-**④ evidence_json 带 trace（全量，守 F11）**
+**④ evidence_json 存 trace 引用，不存副本（eng D2 裁定，守 F11）**
 
-`judgment_subscriber.rs:428` 组装点加 `trace: report.trace`——brain-event detail 端点直接出事后轨迹，前端不用 join agent_runs。**不截断**：F11 证据契约 v2（2026-09-16，`judgment_subscriber.rs:424`）"证据 = 完整审计记录，不截断不剥离"原文维持，trace 条目 output 全量入库（report 列与 evidence 同）。前端展示层的可折叠 JSON 是渲染选择，不是数据截断。已接受风险（作者裁定 D4）：LLM 读了大遥测 blob 会原样落 report 列——实践中 trace 条数被 `MAX_TOOL_CALLS_PER_RUN` 限界；若体积真成问题，未来以独立决策加存储护栏，不在本期。
+`judgment_subscriber.rs:428` 组装点加 `trace_run_id: report.run_id`（引用），**不嵌 trace 副本**——合并扇入时一个 run 服务 K 个 judgment，嵌入会产生 K+1 份无上限 blob（外部声音 #3，D4 只裁定过单副本场景）。trace 的单一事实源 = `agent_runs.report`；brain-events detail 端点对 judgment 类事件**从 report 取 trace 透出**（响应形状不变，前端零感知，服务器多一次查询）。F11 证据契约维持：report 列是唯一全量副本，不截断不剥离；evidence 的 dismiss_reason 等既有字段不动。已接受风险（D4）随之收窄为单份：report 列体积由 `MAX_TOOL_CALLS_PER_RUN` 限界。
 
 **⑤ 心跳巡检 trace（D7 裁定：HeartbeatRunner 也装仪表）**
 
 外部声音核实：心跳走**独立 HeartbeatRunner**（非 thing_agent），`HeartbeatResult`（core/heartbeat.rs:77）只有 summary/task_count/executed_actions/proposals——无 trace、无 run_id（有 tick_id，agent_actions.tick_id 唯一索引）。装仪表四件套：
 - HeartbeatRunner 的工具调用循环按 `ToolTraceEntry` 同样式记录 trace（复用 ① 挪到 core 的类型）；
 - `HeartbeatResult` 加 `#[serde(default)] pub trace: Vec<ToolTraceEntry>`；
-- 落库：tick anchor 行（insert_tick_anchor_row）的 payload 加 trace（全量，守 F11 同一裁定）；
+- 落库：tick anchor 行（insert_tick_anchor_row）的 content JSON 加 trace（全量，守 F11/eng D2 同一裁定——tick 级单副本，无扇入倍增面）；**同时 `insert_action_row` 加 tick_id 参数，提案/auto_executed 行也写 tick_id**（外部声音 #1 核实：当前只有 anchor 行写 tick_id，提案行不写——不写则视图投影全 NULL、链接永不渲染）；
 - 心跳 trace 本期**只做事后**（落库+详情透出），实时轮询不做（进行中 tick 的实时进度属 ai-ops 页，留后续）。
 
-**改动清单**：`crates/core/src/agent_runs.rs`（挪类型+加字段）、`crates/core/src/heartbeat.rs`（HeartbeatResult 加 trace）、`crates/agent/src/runtime/thing_agent/runner.rs`（注册/注销+搬 trace）、`crates/agent` 新文件 `active_runs.rs`、`crates/agent/src/runtime/heartbeat/runner.rs`（trace 仪表化）、`events.rs`（RunStarted 变体）+ `manager.rs`（run 启动时发出，带合并后 problem_keys）、`judgment_subscriber.rs`（narrative+trace 进 evidence、RunStarted 订阅扇入回填）、`JudgmentDto`+列表查询（run_id 断面）、`heartbeat.rs`(db) tick anchor payload 带 trace + brain_events 视图迁移（#3 tick_id 投影）、1 个 judgments 加列迁移、提示词模块、1 个 HTTP handler + registry→AppState 接线、notify X1 两触发点 payload。
+**改动清单**：`crates/core/src/agent_runs.rs`（挪类型+加字段）、`crates/core/src/heartbeat.rs`（HeartbeatResult 加 trace）、`crates/agent/src/runtime/thing_agent/runner.rs`（注册/注销+搬 trace）、`crates/agent` 新文件 `active_runs.rs`、`crates/agent/src/runtime/heartbeat/runner.rs`（trace 仪表化）、`events.rs`（RunStarted 变体）+ `manager.rs`（run 启动时发出，先注册后发，带提取后的 problem_keys）、`judgment_subscriber.rs`（narrative+trace_run_id 引用进 evidence、RunStarted 订阅回填）、`JudgmentDto`+列表查询（run_id 断面）、`heartbeat.rs`(db)（tick anchor content 带 trace + **insert_action_row 加 tick_id 参数**）+ brain_events 视图迁移（#3 tick_id 投影）+ brain_event detail 查询（judgment 类从 report 取 trace、patrol 提案按 tick_id join anchor）、1 个 judgments 加列迁移、提示词模块（narrative 协议+防爆约束）、1 个 HTTP handler + registry→AppState 接线、notify X1 两触发点 payload。
 
 ### 2. 前端两层展示
 
@@ -85,7 +85,7 @@ AI 中心（处置中心 `web/src/ui/views/dispositions.ts` + AI 运维中心 `a
 - `investigating` 卡片变为可展开：展开后启动 3s 轮询 `/agent-runs/{run_id}/trace`，渲染进度时间线——每个工具调用一行（图标 + 工具名中文映射 + 参数摘要），`output` 未到的显示进行中 spinner；收起或卡片变终态时停轮询。
 - **预算进度（扩展 #10）**：investigating 卡片时间线头部显示"工具调用 n / budget_max"（n = trace 长度，budget_max 随端点响应下发）。预算拦截是 fire-and-forget（在途调用可使条数略超 MAX），显示"n / 25"不设上限断言——出现"27 / 25"是正常态不是 bug。
 - 终态卡片摘要区显示 `narrative`（NULL 降级为现有 reason）。
-- **patrol 卡片轨迹链接（扩展 #3，评审 C2 重估为 M；D7 后改 tick_id 关联）**：评审核实 brain_events 视图现状——patrol 提案行/tick 聚合行 `run_id` 均为 NULL；外部声音进一步核实心跳**没有 run_id**（只有 tick_id）。因此 #3 落为三件套：① §1⑤ 的 HeartbeatRunner trace 装仪表（trace 落 tick anchor 行）；② brain_events 视图迁移，patrol 提案行投影 **tick_id**（tick 聚合行按小时 GROUP BY、天然不对应单一 tick，**不链接**并标注）；③ 有 tick_id 的 patrol 提案卡片加"查看完整轨迹"链接——详情数据源走 brain-events detail（patrol 证据透出 tick trace），不需要 run_id。
+- **patrol 卡片轨迹链接（扩展 #3，评审 C2 重估为 M；D7 后改 tick_id 关联）**：评审核实 brain_events 视图现状——patrol 提案行/tick 聚合行 `run_id` 均为 NULL；外部声音进一步核实心跳**没有 run_id**（只有 tick_id）且**提案行当前不写 tick_id**（只 anchor 行写）。因此 #3 落为三件套：① §1⑤ 的 HeartbeatRunner trace 装仪表（trace 落 tick anchor 行 content）+ 提案行写 tick_id；② brain_events 视图迁移，patrol 提案行投影 **tick_id**（tick 聚合行按小时 GROUP BY、天然不对应单一 tick，**不链接**并标注）；③ 有 tick_id 的 patrol 提案卡片加"查看完整轨迹"链接——**detail 取数规则**（外部声音 #2）：brain-events detail 对 patrol 提案行按 tick_id join 同 workspace 的 tick anchor 行，从其 content JSON 取 trace 透出（归 T10 的 db 查询扩展）。
 - SSE 通道不动（仍靠 judgment_judged/judgment_updated 刷新信号 + 现有轮询/断连细条模式）。
 
 **详情层（新视图）**
@@ -102,6 +102,7 @@ AI 中心（处置中心 `web/src/ui/views/dispositions.ts` + AI 运维中心 `a
 - **轮询竞态**：run 在两次轮询间完成 → 端点自动落到 report 分支返回 `live:false` + 完整 trace，前端收到 `live:false` 即停轮询并刷新卡片。无状态缝隙。
 - **轮询生命周期竞态（S2/S4）**：快速展开/收起、SSE 整表刷新重渲染会启停多个轮询实例——前端轮询必须带**代际守卫**（generation counter，收起即 abort，过期实例的响应直接丢弃），防串数据。
 - **准入回填失败（S2）**：准入时 `set_judgment_run_id` 失败 → warn log（带 judgment_id/run_id）并继续——结束后的幂等兜底回填会补上，用户只看到短暂"排队中"后自愈。
+- **RunStarted 丢失（eng S1-P3）**：broadcast Lagged/订阅者短暂离线 → 准入回填丢失——与上同机制自愈（结束后既有回填兜底），卡片短暂"排队中"，不静默不永久。
 - **404 异步窗口（评审 C3）**：registry 在 execute 出口注销，report 经总线异步落库（persist.rs）——两者间存在"run 已结束、registry 已注销、report 未落库"的窗口，端点返回 404。前端对 404 做**有限重试**（3 次，间隔 3s，共约 9s）才放弃并显示"轨迹不可用"——窗口是毫秒到秒级，有限重试足以闭合，误报不会永久化。
 - **trace 端点 404（真性）**：run_id 错误或实例重启后查进行中的 run → 重试耗尽后前端显示"轨迹不可用"并停轮询，不 crash。
 - **narrative 缺失**：老数据/fallback → 降级 reason。
@@ -111,10 +112,10 @@ AI 中心（处置中心 `web/src/ui/views/dispositions.ts` + AI 运维中心 `a
 
 ### 4. 测试策略（先写失败测试）
 
-- **crates/agent**：execute 期间注册表可查、trace 逐步增长；结束后注销且 report.trace 完整；cancel 路径也注销；run 启动时发出 RunStarted（合并信号携带全部 problem_keys）；HeartbeatRunner trace 记录进 HeartbeatResult。
-- **crates/db**：迁移测试——judgments 加列后旧行 narrative 为 NULL；brain_events 视图迁移后 patrol 提案行投影 tick_id、tick 聚合行仍为 NULL；tick anchor payload 含 trace。
-- **cloud handler 测试**：trace 端点三分支（live / 持久化 / 404）+ 响应 schema 断言（live/budget_max/entries 形状）；JudgmentDto 列表响应携带 run_id；RunStarted 扇入回填（一 run 多 judgment 全覆盖）+ 结束后既有回填幂等兜底（双时点）。
-- **judgment_subscriber 测试**：verdict 带 narrative → 落列；evidence_json 含 **全量** trace（F11：不截断）；fallback 无 narrative 不炸。
+- **crates/agent**：execute 期间注册表可查、trace 逐步增长；结束后注销且 report.trace 完整；cancel 路径也注销；run 启动时发出 RunStarted（合并信号携带全部 problem_keys；**混合信号提取规则**——Merged 含 ThingEvent+UserDirective 时只提 UserDirective.problem_key 的 Some 值）；HeartbeatRunner trace 记录进 HeartbeatResult + **OV#4 手工镜像 heartbeat fixture 同步加 trace 字段**。
+- **crates/db**：迁移测试——judgments 加列后旧行 narrative 为 NULL；brain_events 视图迁移后 patrol 提案行投影 tick_id、tick 聚合行仍为 NULL；**insert_action_row 提案/auto_executed 行写 tick_id**（外部声音 #1）；tick anchor content 含 trace。
+- **cloud handler 测试**：trace 端点三分支（live / 持久化 / 404）+ 响应 schema 断言（live/budget_max/entries 形状）；JudgmentDto 列表响应携带 run_id；RunStarted 扇入回填（**匹配集 ≤1**——同 thing+rule 仅一个 investigating 不变量）+ 结束后既有回填幂等兜底（双时点）；brain-events detail 对 judgment 类从 report 取 trace 透出（eng D2 引用式）、对 patrol 提案按 tick_id join anchor 透出。
+- **judgment_subscriber 测试**：verdict 带 narrative → 落列；evidence_json 含 **trace_run_id 引用而非 trace 副本**（eng D2：扇入 K>1 时零副本）；fallback 无 narrative 不炸。
 - **前端 vitest**：investigating 卡片可展开 + 轮询启动/停止；`live:false` 停轮询；404 有限重试（3 次）后放弃；轮询代际守卫（快速展开/收起 + SSE 刷新不串数据）；run_id 为 NULL 的 investigating 卡片显示"排队中"且无展开入口；时间线组件两模式渲染；trace 纯文本渲染（不走 md()）；narrative 缺失降级 reason；patrol 提案卡片轨迹链接（有/无 run_id 两态，tick 行无链接）；预算进度"n / budget_max"（含 n 略超时不截断显示）；导出按钮写剪贴板。
 - **提示词**：现有 verdict 协议测试夹具加 narrative 必填断言；**跑 eval 基线**（7a2b5f87 转绿的 91.7% 那条）并加 narrative 用例——CLAUDE.md prompt/LLM 约定，防协议回归。
 - **notify**：两个"需要你"触发点（awaiting_approval / escalated）payload 均携带 narrative（NULL 降级 reason）的断言，挂在现有 X1 notify 测试上。
@@ -125,7 +126,7 @@ AI 中心（处置中心 `web/src/ui/views/dispositions.ts` + AI 运维中心 `a
 
 ## 实现时序要点（CEO 评审 0I）
 
-- **顺序**：ToolTraceEntry 挪 core 第一刀 → 三个迁移（judgments 加 narrative 列、agent_actions 加 run_id 列、brain_events 视图重建——走 DDL 守卫加白的重建表模式，**视图重建必须配逆迁移**）→ runner/manager/registry → 端点+DTO → 前端。
+- **顺序**：ToolTraceEntry 挪 core 第一刀 → 两个迁移（judgments 加 narrative 列、brain_events 视图重建——走 DDL 守卫加白的重建表模式，**视图重建必须配逆迁移**；tick anchor 的 content 是 JSON TEXT 列已核实，**无需 DDL**）→ runner/manager/registry → 端点+DTO → 前端。
 - **埋伏**：① 前端 case-converter 运行时/类型级不对称——`budget_max`/`run_id` 等字段走惯例解法：后端 DTO `#[serde(rename_all="camelCase")]` + 前端类型直接写 camelCase；② live:false 分支从 report JSON 列提取 trace 用 serde 反序列化整个 report，别写 SQL JSON 函数；③ web 构建/测试需 Node 24；④ 合并信号扇入名单看 scheduler 的 Merged 实现。
 - **门禁**：pre-push 全量 fmt+clippy+测试约 10min；本地先 `cargo clippy --workspace` 与 `tsc --noEmit`（vite build 不查类型，CI 前端守卫才查）。
 - **估计**：human ~3-4 天 / CC+gstack ~1 天。
@@ -233,7 +234,7 @@ NULL(排队中,不可展开) ──RunStarted 回填──► run_id(可轮询 l
 
 **5. 部署顺序**
 ```
-迁移①judgments+narrative ──► 迁移②tick anchor payload(如需DDL) ──► 迁移③视图重建(+逆迁移)
+迁移①judgments+narrative ──► 迁移②brain_events 视图重建(tick_id 投影,+逆迁移)
         ──► 部署代码(core→agent→cloud→web) ──► 冒烟: 调查 run 触发→卡片排队中→进度→完成
 混跑窗口: 旧代码+新视图=无害(只加列)；新代码+旧视图=#3 链接不渲染(前端判空)
 ```
@@ -270,10 +271,10 @@ NULL(排队中,不可展开) ──RunStarted 回填──► run_id(可轮询 l
   - Surfaced by: spec §1②；评审 C1/Y2/Y3；S3 鉴权行
   - Files: apps/cloud/src/domains/（新 handler）, domains/judgment/dto.rs
   - Verify: handler 三分支 + schema + DTO 断言测试
-- [ ] **T6 (P1, human: ~2h / CC: ~15min)** — cloud — narrative Option 解析落列 + evidence 全量 trace（守 F11）
-  - Surfaced by: spec §1③④；外部声音 F3
-  - Files: apps/cloud/src/domains/agent/host/judgment_subscriber.rs
-  - Verify: verdict 夹具 + fallback + 全量不断言测试
+- [ ] **T6 (P1, human: ~2h / CC: ~15min)** — cloud — narrative Option 解析落列 + evidence 存 trace_run_id 引用（eng D2，不嵌副本）+ detail 从 report 透出 trace
+  - Surfaced by: spec §1③④；外部声音 F3/#3
+  - Files: apps/cloud/src/domains/agent/host/judgment_subscriber.rs, crates/db/src/brain_event.rs
+  - Verify: verdict 夹具 + fallback + 引用式断言（扇入 K>1 零副本）+ detail 透出测试
 - [ ] **T7 (P1, human: ~4h / CC: ~40min)** — web — 卡片层：investigating 展开 + 3s 轮询 + 代际守卫 + 预算条 + 排队中态 + narrative 降级 + 404 有限重试
   - Surfaced by: spec §2 卡片层；S2/S4 轮询竞态；S11 设计约束
   - Files: web/src/ui/views/dispositions.ts/.css/.test.ts, web/src/api/（新 trace 客户端）
@@ -282,14 +283,14 @@ NULL(排队中,不可展开) ──RunStarted 回填──► run_id(可轮询 l
   - Surfaced by: spec §2 详情层；S3 XSS 行；S11
   - Files: web/src/ui/views/（新 run-detail）, web/src/ui/app.ts
   - Verify: vitest（导出剪贴板/纯文本断言）
-- [ ] **T9 (P2, human: ~4h / CC: ~35min)** — agent — HeartbeatRunner trace 仪表化 + HeartbeatResult.trace + tick anchor payload 落库
-  - Surfaced by: spec §1⑤（D7）；外部声音 F2
+- [ ] **T9 (P2, human: ~5h / CC: ~45min)** — agent+db — HeartbeatRunner trace 仪表化 + HeartbeatResult.trace + tick anchor content 落库 + **insert_action_row 提案/auto_executed 行写 tick_id**（外部声音 #1）
+  - Surfaced by: spec §1⑤（D7）；外部声音 F2/#1
   - Files: crates/agent/src/runtime/heartbeat/runner.rs, crates/core/src/heartbeat.rs, crates/db/src/heartbeat.rs
-  - Verify: trace 记录 + 落库测试
-- [ ] **T10 (P2, human: ~1h / CC: ~10min)** — web+db — #3：patrol 提案卡片"查看完整轨迹"链接（有 tick_id 两态，tick 行无链接）
-  - Surfaced by: spec §2 #3
-  - Files: web/src/ui/views/dispositions.ts
-  - Verify: vitest 两态
+  - Verify: trace 记录 + 落库测试（含提案行 tick_id 断言）+ OV#4 fixture 同步
+- [ ] **T10 (P2, human: ~2h / CC: ~20min)** — web+db — #3：brain-events detail 按 tick_id join anchor 透出 trace（外部声音 #2）+ patrol 提案卡片"查看完整轨迹"链接（有 tick_id 两态，tick 行无链接）
+  - Surfaced by: spec §2 #3；外部声音 #2
+  - Files: crates/db/src/brain_event.rs, web/src/ui/views/dispositions.ts
+  - Verify: detail join 测试 + vitest 两态
 - [ ] **T11 (P2, human: ~1h / CC: ~10min)** — cloud — notify X1 两触发点 payload 带 narrative（NULL 降级）
   - Surfaced by: spec §1③ #9；评审 N2
   - Files: apps/cloud/src/domains/agent/host/judgment_subscriber.rs（spawn_needs_you_notify/escalate_to_ticket 路径）
@@ -336,17 +337,66 @@ NULL(排队中,不可展开) ──RunStarted 回填──► run_id(可轮询 l
   +====================================================================+
 
 
+## Eng Review — Scope Record（2026-10-08）
+
+- **feature answers**：无新 cut 提案（功能清单已由 CEO 评审 D2/D3/D6/D7 裁定，eng 复核无新证据）
+- **structure**：**Original arrangement**（eng D1）——新单元独立成文：`active_runs.rs`、独立 trace handler、独立 run-detail 视图、独立 timeline 组件、独立 trace api 客户端；不并入 runner.rs/brain_event handler/dispositions.ts
+- **accepted scope**：spec 改动清单全量（~19 文件、4 新单元），结构按 D1
+- **pending remedies**：无
+
+## Eng Review — Findings & Dispositions（2026-10-08）
+
+**四节发现**（置信度校准后全部 ≥7）：
+- `[P2] (8/10)` S1：RunStarted problem_keys 提取规则未指明 → factual 修正入 §1②（Merged.signals 递归收集 UserDirective.problem_key）
+- `[P3] (7/10)` S1：RunStarted 丢失面（broadcast Lagged）→ factual 补 §3（结束后回填自愈）
+- `[P3] (9/10)` S1：tick anchor 无需 DDL（content JSON TEXT）→ 部署图/时序修正
+- S3 测试 2 GAP（混合信号提取规则测试、OV#4 fixture 同步）→ 已入测试节
+- S2 代码质量 / S4 性能：No issues found
+
+**外部声音**（codex broken_install → native fallback 超时无覆盖；其超时前报告 9 条线索由主审查独立核实）：
+- OV#1 High：提案行不写 tick_id（已核实 insert_action_row 无 tick_id 参数）→ T9 显式补
+- OV#2 High：提案详情→tick trace 取数路径未指定 → #3 补 detail join 规则（按 tick_id join anchor）
+- OV#3 High：F11×扇入=K+1 副本 → **eng D2 裁定：evidence 存 trace_run_id 引用不嵌副本**
+- OV#4 Medium：回填匹配歧义 → 消解（flapping 防抖不变量，匹配集≤1，service.rs:285）
+- OV#5 Medium：narrative 协议防爆 → §1③ 补约束（≤200 字、块内、禁块外散文）
+- OV#6 Medium：registry 上限未指 → 与 scheduler 并发容量同一常量 + warn 带 metric
+- OV#7 Medium：RunStarted/注册顺序 → 先注册后发事件
+- OV#8 Low：部署图迁移②残留 → 已改
+- OV#9 Low：RwLock guard 跨 await → §1② 实现注意（clone 后 drop）
+
+## Decision ledger（eng review）
+
+### R-ENG-1: 新单元文件结构
+- Plan baseline：spec 改动清单（~19 文件、4 新单元，结构未定）
+- Runtime evidence：dispositions.ts ~570 行；仓库惯例=领域平铺+焦点文件（buzz 模式）
+- State: approved | Actual answer: D1 = **Original arrangement**（新单元独立成文）
+- Accepted scope: active_runs.rs / 独立 trace handler / run-detail 视图 / timeline 组件 / trace api 客户端各自独立
+
+### R-ENG-2: evidence 的 trace 存储方式
+- Plan baseline：§1④ evidence_json 嵌全量 trace（CEO D4 裁定不截断，语境=单副本）
+- Runtime evidence：Merged 扇入一 run 服务 K judgment → K+1 份副本（外部声音 OV#3）
+- State: approved | Actual answer: D2 = **evidence 存 trace_run_id 引用**，detail 端点从 agent_runs.report 透出（单一事实源，前端零感知）
+- Accepted scope: judgment_subscriber 组装点写 trace_run_id；brain_event detail 查询扩展；F11 不截断维持（report 列=唯一全量副本）
+
+### CEO 轮裁定结转（不再问）
+D1 模式=SELECTIVE_EXPANSION；D2 cherry-pick 全选；D3 #3 重估 M；D4 不截断守 F11；D5 文档批准；D6 run_id 回填+RunStarted；D7 心跳装仪表——全部结转到本 spec 正文。
+
+Approval readiness: PASS（检查行：R-ENG-1→D1、R-ENG-2→D2、CEO D1-D7 结转引用；无 pending 行）
+
+### Suppressed findings
+无（全部发现置信度 ≥7，无压制项）
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 2 | CLEAR | 9 proposals, 4 accepted, 5 deferred |
-| Outside Review | codex (auto) | Independent 2nd opinion | 4 | unavailable | codex CLI broken (ENOENT); native fallback 5min timeout — no completed external review |
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 2 | STALE | last clean 2026-09-29 @0b3df3b5 — 9 days old, 2 commits since, predates this review |
+| Outside Review | codex (auto) | Independent 2nd opinion | 5 | unavailable | codex CLI broken (ENOENT) ×2；native fallback 超时 ×2——无完成的外部评审；其线索由 native 审查独立核实并修复（CEO F1-F3、eng OV#1-#9） |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 3 | ISSUES OPEN | 3 issues, 0 critical gaps（全部修复入 spec） |
 | Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | finding count not recorded |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | finding count not recorded |
 
-- **OUTSIDE COVERAGE:** codex, plan-review phase, **unavailable** — CLI broken_install (vendor binary ENOENT, reinstall: `npm install -g @openai/codex`); native Plan-subagent fallback exceeded the 5-minute bounded wait (stopped, no credit). Its in-flight leads (F1 回填无写入者 / F2 心跳独立 runner 无 trace / F3 narrative 必填矛盾) were independently verified against repo code by the native review and resolved via D6/D7 and spec fixes — but no completed external review exists, and no outside coverage is claimed.
-- **VERDICT:** CEO CLEARED — eng review required (stale, and this review expanded scope + changed architecture: RunStarted event, registry, HeartbeatRunner instrumentation).
+- **OUTSIDE COVERAGE:** codex, plan-review phase, **unavailable** — CLI broken_install（vendor binary ENOENT，修复：`npm install -g @openai/codex`）；两次 native Plan-subagent fallback 均超 5 分钟有界等待（已停止，不计覆盖）。两次的在途线索均由 native 审查对仓库代码独立核实并处置——但不构成外部覆盖。
+- **VERDICT:** CEO CLEAR + ENG reviewed（3 issues 全部修复入 spec，0 unresolved，0 critical gaps）——可实现；Design Review 可选（UI 范围已在 CEO S11 约束）。
 
 NO UNRESOLVED DECISIONS
