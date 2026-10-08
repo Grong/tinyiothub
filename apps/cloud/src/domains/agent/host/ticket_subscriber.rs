@@ -368,6 +368,7 @@ mod tests {
             tokens: 0,
             end_reason,
             thing_id: None,
+            trace: vec![],
         }
     }
 

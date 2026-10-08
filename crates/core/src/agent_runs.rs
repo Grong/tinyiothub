@@ -84,8 +84,7 @@ impl EndReason {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ActionRecord {
-    pub thing_id: String,
+pub struct ActionRecord {    pub thing_id: String,
     pub action_name: String,
     pub params: serde_json::Value,
     pub result: ActionResult,
@@ -98,6 +97,15 @@ pub enum ActionResult {
     Success(serde_json::Value),
     Failed(String),
     UnknownCancelled,
+}
+
+/// 一次工具调用轨迹（自 agent runner.rs 下放；output=None = 配对 ToolResult 未到）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ToolTraceEntry {
+    pub id: String,
+    pub name: String,
+    pub args: serde_json::Value,
+    pub output: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -119,9 +127,54 @@ pub struct RunReport {
     /// 首个 invoke_action 的目标 thing；workspace 级 run（无动作）为 None。
     #[serde(default)]
     pub thing_id: Option<String>,
+    /// 完整工具调用轨迹（到达序）。serde(default) 向后兼容已落库的旧 report JSON。
+    #[serde(default)]
+    pub trace: Vec<ToolTraceEntry>,
 }
 
 /// 记忆/历史段统一条目格式：`"[acted] 调低设定值成功"`。
 pub fn format_summary(outcome: &str, summary: &str) -> String {
     format!("[{outcome}] {summary}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 向后兼容：已落库的旧 report JSON（无 trace/end_reason/thing_id 字段）
+    /// 必须仍能反序列化，trace 默认为空。
+    #[test]
+    fn old_report_json_without_trace_deserializes() {
+        let old = r#"{
+            "run_id": "r1",
+            "workspace_id": "ws1",
+            "trigger": "timer:ws1",
+            "outcome": "acted",
+            "summary": "[acted] 调低设定值成功",
+            "actions": [],
+            "verified": true,
+            "duration_ms": 1200,
+            "tool_calls": 3,
+            "tokens": 456
+        }"#;
+        let report: RunReport = serde_json::from_str(old).expect("旧 report JSON 必须可反序列化");
+        assert!(report.trace.is_empty());
+        assert_eq!(report.end_reason, None);
+        assert_eq!(report.thing_id, None);
+    }
+
+    /// trace 字段的序列化往返：含未配对 output=None 的条目。
+    #[test]
+    fn trace_roundtrip() {
+        let entry = ToolTraceEntry {
+            id: "c1".into(),
+            name: "read_property".into(),
+            args: serde_json::json!({"p": "temperature"}),
+            output: None,
+        };
+        let v = serde_json::to_value(&entry).expect("serialize");
+        assert_eq!(v["output"], serde_json::Value::Null);
+        let back: ToolTraceEntry = serde_json::from_value(v).expect("deserialize");
+        assert_eq!(back.output, None);
+    }
 }

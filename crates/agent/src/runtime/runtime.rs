@@ -443,6 +443,7 @@ mod tests {
             tokens: 0,
             end_reason: None,
             thing_id: None,
+            trace: vec![],
         }];
         let rt = AgentRuntime::restore(snap, RuntimeDeps::test_stub());
 
@@ -474,6 +475,7 @@ mod tests {
             tokens: 0,
             end_reason: None,
             thing_id: None,
+            trace: vec![],
         });
         rt.run_registry().set_run_keys(
             "run_keys",

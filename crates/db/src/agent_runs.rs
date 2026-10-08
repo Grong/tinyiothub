@@ -357,6 +357,7 @@ mod tests {
             tokens: 6789,
             end_reason: None,
             thing_id: Some("t1".to_string()),
+            trace: vec![],
         }
     }
 
@@ -800,6 +801,7 @@ mod tests {
             tokens: 6789,
             end_reason: None,
             thing_id: Some("t1".to_string()),
+            trace: vec![],
         };
 
         let json = serde_json::to_string(&report).expect("serialize");

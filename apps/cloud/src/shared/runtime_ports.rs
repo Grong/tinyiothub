@@ -815,6 +815,7 @@ mod approval_timeout_tests {
             tokens: 100,
             end_reason: None,
             thing_id: Some("t1".to_string()),
+            trace: vec![],
         };
         db.insert_agent_run(&report, Some("alarm:t1:r1"), None).await.unwrap();
 

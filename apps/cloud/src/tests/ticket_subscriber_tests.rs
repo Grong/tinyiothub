@@ -43,6 +43,7 @@ fn report(run_id: &str, outcome: Outcome, end_reason: Option<EndReason>, thing: 
         tokens: 10,
         end_reason,
         thing_id: thing.map(str::to_string),
+        trace: vec![],
     }
 }
 

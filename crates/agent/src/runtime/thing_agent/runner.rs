@@ -54,14 +54,9 @@ pub enum TruncationReason {
 
 /// One recorded tool interaction, in event arrival order. `output` is filled
 /// in when the matching `ToolResult` arrives (paired by stable `id`).
-#[derive(Debug, Clone)]
-pub struct ToolTraceEntry {
-    pub id: String,
-    pub name: String,
-    pub args: serde_json::Value,
-    /// `None` = no paired ToolResult (cancelled in flight / stream ended).
-    pub output: Option<String>,
-}
+/// 定义下放 `tinyiothub_core::agent_runs`（RunReport.trace 共享契约）；
+/// 此处 pub re-export 保持 mod.rs / pushback.rs 既有引用不变。
+pub use tinyiothub_core::agent_runs::ToolTraceEntry;
 
 /// Mutable per-run state shared with the thing tools (O8): tools read the
 /// per-thing action counts for their in-tool policy gates (T11); the runner's
@@ -477,6 +472,7 @@ fn assemble_report(ctx: &RunContext, end: TurnEnd, duration_ms: u64, inner: &Run
             tokens: inner.input_tokens + inner.cached_input_tokens + inner.output_tokens,
             end_reason,
             thing_id,
+            trace: inner.trace.clone(),
         },
         llm_text,
     }
@@ -900,6 +896,25 @@ mod tests {
         assert!(out.report.actions.is_empty());
         // Vacuous truth: nothing to verify.
         assert!(out.report.verified);
+    }
+
+    #[test]
+    fn report_carries_full_trace() {
+        // 完整轨迹（含未配对 ToolResult 的条目）必须随 report 落库。
+        let (ctx, mut inner) = ctx_with();
+        inner.trace.push(entry(
+            "c1",
+            "read_property",
+            serde_json::json!({"p":"temperature"}),
+            Some("26.5"),
+        ));
+        inner
+            .trace
+            .push(entry("c2", "query_events", serde_json::json!({}), None));
+
+        let out = assemble_report(&ctx, TurnEnd::Empty, 100, &inner);
+        assert_eq!(out.report.trace.len(), 2);
+        assert_eq!(out.report.trace[1].output, None);
     }
 
     /// T11 结构化拒绝的 invoke_action 轨迹条目。

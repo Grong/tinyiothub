@@ -824,6 +824,7 @@ async fn policy_denial_streak_triggers_relax_hint_with_registry() {
         tokens: 0,
         end_reason: None,
         thing_id: None,
+        trace: vec![],
     };
 
     // 当前 run 在 alert 之前已 record → recent_by_dedup 窗口第一条即当前 run。

@@ -358,6 +358,7 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
                 tokens: 0,
                 end_reason: Some(tinyiothub_core::agent_runs::EndReason::AgentUnavailable),
                 thing_id,
+                trace: vec![],
             };
             deps.registry.record_with_keys(
                 report.clone(),
