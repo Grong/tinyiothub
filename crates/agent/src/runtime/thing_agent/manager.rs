@@ -30,6 +30,7 @@ use tokio::task::JoinHandle;
 
 use crate::prompt::runtime::build_prompt;
 use crate::runtime::events::{AgentEventBus, AgentEventKind};
+use crate::runtime::thing_agent::active_runs::ActiveRunRegistry;
 use crate::runtime::thing_agent::pushback::deliver;
 use crate::runtime::thing_agent::registry::RunRegistry;
 use crate::runtime::thing_agent::runner::{AgentHandle, RunContext, RunContextInner, Runner};
@@ -100,6 +101,9 @@ struct PipelineDeps {
     runner: Arc<Runner>,
     /// 工单人工解法注入源（T7；NoopTicketResolutions = 未接线）。
     ticket_resolutions: Arc<dyn crate::runtime::thing_agent::traits::TicketResolutionProvider>,
+    /// 进行中 run 的内存注册表（T3/T4）：run_pipeline 每个 run 先注册再发
+    /// RunStarted，实时进度轮询的数据源。RAII guard 随 run 结束注销。
+    active_runs: ActiveRunRegistry,
 }
 
 /// One running workspace loop: the scheduler handle plus the trigger/forward
@@ -139,6 +143,7 @@ impl ThingAgentManager {
                 agent_provider,
                 runner,
                 ticket_resolutions,
+                active_runs: ActiveRunRegistry::with_default_capacity(),
             },
             config,
             workspaces: DashMap::new(),
@@ -277,12 +282,50 @@ fn trigger_label(signal: &WakeSignal) -> String {
     }
 }
 
+/// RunStarted 事件的 problem_keys 提取（T4）：递归 `Merged.signals`，收集
+/// `UserDirective.problem_key` 的 Some 值去重（保持首次出现序）；
+/// ThingEvent/Timer 无 problem_key。
+fn collect_problem_keys(source: &TriggerSource) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_problem_keys_into(source, &mut out);
+    out
+}
+
+fn collect_problem_keys_into(source: &TriggerSource, out: &mut Vec<String>) {
+    match source {
+        TriggerSource::UserDirective {
+            problem_key: Some(pk),
+            ..
+        } if !out.contains(pk) => out.push(pk.clone()),
+        TriggerSource::Merged { signals } => {
+            for s in signals {
+                collect_problem_keys_into(&s.source, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// The full run chain (T9–T13) driven by the scheduler for every admitted
 /// wake signal.
 async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
     let ws = signal.workspace_id.clone();
     let run_id = format!("run_{}", uuid::Uuid::new_v4().simple());
-    let ctx = RunContext::new(run_id.clone(), ws.clone(), trigger_label(&signal));
+    let ctx = RunContext {
+        active_runs: Some(deps.active_runs.clone()),
+        ..RunContext::new(run_id.clone(), ws.clone(), trigger_label(&signal))
+    };
+
+    // T4 时序约定：**先注册 active registry 再发 RunStarted**——订阅者
+    // （judgment_subscriber）回填 judgment.run_id 后前端轮询必命中注册表，
+    // 消除"回填快于注册→轮询 404"窗。guard 生命周期横跨整个 execute，
+    // run 结束（含 agent 不可用的早退）自动注销。
+    let _guard = ctx.active_runs.as_ref().and_then(|r| r.register(ctx.clone()));
+    deps.events.emit(AgentEventKind::RunStarted {
+        run_id: run_id.clone(),
+        workspace_id: ws.clone(),
+        problem_keys: collect_problem_keys(&signal.source),
+    });
 
     // T10 injection sources: 内存 registry（Task 4 替代 T12 repo 读取）。
     // 内存读无 I/O 失败路径，不再有 fail-soft 降级分支。
@@ -999,6 +1042,47 @@ pub(crate) mod tests {
             .expect("run must record the heartbeat problem_key");
         assert_eq!(run.trigger, "user:heartbeat");
         assert_eq!(run.dedup_key, None, "心跳 directive 不参与合并，dedup_key 为空");
+    }
+
+    /// T4：RunStarted 的 problem_keys 提取——递归 Merged.signals，收集
+    /// UserDirective.problem_key 的 Some 值并去重（ThingEvent/Timer 无）。
+    #[test]
+    fn collect_problem_keys_recurses_merged_and_dedups() {
+        let directive = |problem_key: Option<&str>| WakeSignal {
+            workspace_id: WS.to_string(),
+            priority: Priority::Normal,
+            source: TriggerSource::UserDirective {
+                user_id: "heartbeat".to_string(),
+                text: "x".to_string(),
+                session_key: None,
+                source: Some("heartbeat".to_string()),
+                problem_key: problem_key.map(str::to_owned),
+            },
+            dedup_key: None,
+        };
+        let thing = WakeSignal {
+            workspace_id: WS.to_string(),
+            priority: Priority::Normal,
+            source: TriggerSource::ThingEvent {
+                thing_id: "t1".to_string(),
+                event_name: "temp_high".to_string(),
+                event_id: 1,
+                level: 3,
+                data: serde_json::Value::Null,
+            },
+            dedup_key: None,
+        };
+        let merged = TriggerSource::Merged {
+            signals: vec![thing, directive(Some("k1")), directive(Some("k1")), directive(None)],
+        };
+        assert_eq!(collect_problem_keys(&merged), vec!["k1".to_string()]);
+
+        // 非合并源：直取；无 problem_key 的源为空。
+        assert_eq!(
+            collect_problem_keys(&directive(Some("k2")).source),
+            vec!["k2".to_string()]
+        );
+        assert!(collect_problem_keys(&TriggerSource::Timer).is_empty());
     }
 
     #[test]

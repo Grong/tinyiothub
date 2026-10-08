@@ -270,6 +270,10 @@ pub(crate) async fn project(
     shutdown: &CancellationToken,
 ) {
     match &event.kind {
+        AgentEventKind::RunStarted { .. } => {
+            // 无持久化投影：run 启动事件的消费方是 judgment_subscriber
+            // （回填 judgment.run_id）；run 行由 RunRecorded 落库。
+        }
         AgentEventKind::RunRecorded {
             report,
             problem_key,

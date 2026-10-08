@@ -24,6 +24,16 @@ pub struct AgentEvent {
 
 #[derive(Clone)]
 pub enum AgentEventKind {
+    /// thing_agent run 启动（AI 运行透明化 T4）：manager 在 run_pipeline 创建
+    /// ctx 后**先注册 ActiveRunRegistry 再发本事件**——订阅者回填
+    /// judgment.run_id 后前端轮询必命中注册表，无"回填快于注册→404"窗。
+    /// problem_keys 由 collect_problem_keys 从触发源提取（递归 Merged，
+    /// 收集 UserDirective.problem_key 的 Some 值去重）。
+    RunStarted {
+        run_id: String,
+        workspace_id: String,
+        problem_keys: Vec<String>,
+    },
     /// thing_agent run 完成记录（含完整 RunReport，幂等 insert-or-ignore by run_id）
     RunRecorded {
         report: Box<RunReport>,

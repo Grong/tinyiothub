@@ -104,6 +104,18 @@ pub(crate) async fn project(
     alarm_service: &AlarmService,
     notify: &Option<Arc<NotificationManager>>,
 ) {
+    // T4：RunStarted 扇入回填——run 启动即把 investigating judgment 关联到
+    // run_id（实时进度时序闭环）；与下方 RunRecorded 路径双时点幂等。
+    if let AgentEventKind::RunStarted {
+        run_id,
+        workspace_id,
+        problem_keys,
+    } = &event.kind
+    {
+        backfill_run_started(db, workspace_id, run_id, problem_keys).await;
+        return;
+    }
+
     let AgentEventKind::RunRecorded {
         report,
         problem_key: Some(pk),
@@ -195,6 +207,31 @@ pub(crate) async fn project(
                 fail_and_escalate(db, sse, notify, &judgment, report, pk, "判断输出解析失败").await;
             }
         },
+    }
+}
+
+/// RunStarted 回填（T4）：对每个 alarm problem_key 找 investigating 判断
+/// （同 thing+rule 同时仅一个——flapping 防抖不变量，alarm/service.rs）并
+/// 回填 run_id。set_judgment_run_id 自带 `WHERE run_id IS NULL` 幂等守卫，
+/// 与 RunRecorded 路径双时点安全；失败 warn 不传播。
+async fn backfill_run_started(db: &Db, workspace_id: &str, run_id: &str, problem_keys: &[String]) {
+    for pk in problem_keys {
+        // 非 alarm 键（心跳桥 problem 域如 "set_hvac:dev-1" 等）无判断可回填。
+        let Some((thing_id, rule_id)) = parse_alarm_key(pk) else {
+            continue;
+        };
+        match db
+            .find_investigating_judgment_by_thing_rule(workspace_id, thing_id, rule_id)
+            .await
+        {
+            Ok(Some(j)) => {
+                if let Err(e) = db.set_judgment_run_id(&j.id, run_id).await {
+                    warn!(judgment_id = %j.id, run_id, error = %e, "RunStarted backfill run_id failed");
+                }
+            }
+            Ok(None) => debug!(problem_key = %pk, "RunStarted: no investigating judgment to backfill"),
+            Err(e) => warn!(problem_key = %pk, error = %e, "RunStarted backfill lookup failed"),
+        }
     }
 }
 
@@ -734,6 +771,17 @@ mod tests {
             .execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO thing_alarms (id, thing_id, workspace_id, alarm_level, alarm_message, alarm_time) VALUES ('a1','t1','ws1','warning','温度越限','2025-01-01')")
             .execute(&pool).await.unwrap();
+        // T4 RunStarted 测试用：带 rule_id 的报警（problem_key "alarm:t1:rule1"
+        // 的解析目标——find_investigating 按 thing+rule 键匹配）。rule_id 有
+        // FK 到 thing_alarm_rules，先落规则行。
+        sqlx::query("INSERT INTO thing_alarm_rules (id, thing_id, rule_name, rule_type, condition_config, alarm_level, workspace_id) VALUES ('rule1','t1','r1','threshold','{}','warning','ws1')")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO thing_alarms (id, thing_id, workspace_id, alarm_level, alarm_message, alarm_time, rule_id) VALUES ('a2','t1','ws1','warning','温度越限','2025-01-01','rule1')")
+            .execute(&pool).await.unwrap();
+        // a3：同 thing+rule 的第二条报警（judgments.alarm_id UNIQUE，「同
+        // problem_key 两个判断」的用例需要两条报警行来承载）。
+        sqlx::query("INSERT INTO thing_alarms (id, thing_id, workspace_id, alarm_level, alarm_message, alarm_time, rule_id) VALUES ('a3','t1','ws1','warning','温度越限','2025-01-01','rule1')")
+            .execute(&pool).await.unwrap();
         let db = Arc::new(tinyiothub_storage::Db::new(pool));
         let sse = Arc::new(SseConnectionManager::new());
         let alarm = Arc::new(AlarmService::new(db.clone()));
@@ -750,6 +798,127 @@ mod tests {
                 dedup_key: None,
             },
         }
+    }
+
+    /// T4：run 启动事件（manager 先注册 active registry 后发——本订阅者
+    /// 回填 judgment.run_id 时前端轮询必命中）。
+    fn run_started_event(run_id: &str, problem_keys: Vec<String>) -> AgentEvent {
+        AgentEvent {
+            seq: 1,
+            occurred_at: chrono::Utc::now(),
+            kind: AgentEventKind::RunStarted {
+                run_id: run_id.to_string(),
+                workspace_id: "ws1".to_string(),
+                problem_keys,
+            },
+        }
+    }
+
+    /// T4：RunStarted 到达即回填 investigating judgment 的 run_id（实时进度
+    /// 时序闭环的第一环）；状态不动（仍 investigating，等 RunRecorded 路由）。
+    #[tokio::test]
+    async fn run_started_backfills_investigating_judgment() {
+        let (db, sse, alarm) = fixture().await;
+        let jid = db
+            .insert_judgment("ws1", Some("a2"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        project(
+            &run_started_event("r9", vec!["alarm:t1:rule1".to_string()]),
+            &db,
+            &sse,
+            &alarm,
+            &None,
+        )
+        .await;
+
+        let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
+        assert_eq!(j.run_id.as_deref(), Some("r9"));
+        assert_eq!(j.status, JudgmentStatus::Investigating, "回填不改判断状态");
+    }
+
+    /// 同 problem_key 同时仅一个 investigating（flapping 防抖不变量，
+    /// alarm/service.rs）——只回填它；同 thing+rule 的非 investigating
+    /// 判断不受影响。
+    #[tokio::test]
+    async fn run_started_matches_at_most_one_per_problem_key() {
+        let (db, sse, alarm) = fixture().await;
+        // 同 thing+rule 的已裁决旧判断（离开 investigating； judgments.alarm_id
+        // UNIQUE，落在同规则的另一条报警 a3 上）。
+        let judged = db
+            .insert_judgment("ws1", Some("a3"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        db.judge_judgment(
+            &judged,
+            JudgmentVerdict::SelfHealable,
+            "可自愈",
+            "{}",
+            Some("重连"),
+            Some("connection_recovery"),
+            None,
+        )
+        .await
+        .unwrap();
+        // 在查的新判断（同 thing+rule，防抖窗口内唯一 investigating）。
+        let open = db
+            .insert_judgment("ws1", Some("a2"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+
+        project(
+            &run_started_event("r9", vec!["alarm:t1:rule1".to_string()]),
+            &db,
+            &sse,
+            &alarm,
+            &None,
+        )
+        .await;
+
+        let j_open = db.find_judgment_by_id(&open, "ws1").await.unwrap().unwrap();
+        let j_judged = db.find_judgment_by_id(&judged, "ws1").await.unwrap().unwrap();
+        assert_eq!(j_open.run_id.as_deref(), Some("r9"), "只回填 investigating 判断");
+        assert_eq!(j_judged.run_id, None, "非 investigating 判断不回填");
+    }
+
+    /// 双时点幂等（T4 Step 4）：RunStarted 已回填后，迟到 RunRecorded 的
+    /// 回填是 no-op（set_judgment_run_id 的 NULL 守卫）——run_id 不被覆盖。
+    #[tokio::test]
+    async fn run_started_backfill_wins_over_late_run_recorded() {
+        let (db, sse, alarm) = fixture().await;
+        let jid = db
+            .insert_judgment("ws1", Some("a2"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        project(
+            &run_started_event("r9", vec!["alarm:t1:rule1".to_string()]),
+            &db,
+            &sse,
+            &alarm,
+            &None,
+        )
+        .await;
+
+        // 迟到 RunRecorded（同一 alarm 键、不同 run_id）：走 verdict 路由，
+        // 但其回填不得覆盖 RunStarted 已写入的 run_id。
+        let summary = "```json\n{\"verdict\": \"noise\", \"reason\": \"波动\", \"suggested_action\": null, \"action_category\": \"other\"}\n```";
+        let e = AgentEvent {
+            seq: 2,
+            occurred_at: chrono::Utc::now(),
+            kind: AgentEventKind::RunRecorded {
+                report: Box::new(report("r10", Outcome::NoActionNeeded, summary)),
+                problem_key: Some("alarm:t1:rule1".to_string()),
+                dedup_key: None,
+            },
+        };
+        project(&e, &db, &sse, &alarm, &None).await;
+
+        let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
+        assert_eq!(
+            j.run_id.as_deref(),
+            Some("r9"),
+            "迟到 RunRecorded 不得覆盖 RunStarted 已回填的 run_id"
+        );
     }
 
     #[tokio::test]
