@@ -45,6 +45,10 @@ use tinyiothub_policy::autonomy::AutonomyMode;
 /// and recovers through cursor replay (O27).
 const TRIGGER_CHANNEL_CAPACITY: usize = 64;
 
+/// In-flight run registry capacity (T3) — same source as scheduler
+/// concurrency capacity so a full trigger channel can't out-run the registry.
+pub(crate) const ACTIVE_RUNS_CAPACITY: usize = TRIGGER_CHANNEL_CAPACITY;
+
 /// Factory abstraction over the T11 autonomous agent factory (implemented by
 /// `AutonomousAgentFactory` in the cloud crate; stubbed in tests). One call
 /// per run: binds the run context and returns the per-workspace agent.

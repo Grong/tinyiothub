@@ -1,5 +1,6 @@
 //! Thing-agent wake/run loop — types shared by trigger, scheduler, runner, policy.
 
+pub mod active_runs;
 pub mod manager;
 pub mod pushback;
 pub mod registry;
@@ -8,6 +9,7 @@ pub mod scheduler;
 pub mod traits;
 pub mod trigger;
 pub mod types;
+pub use active_runs::{ActiveRunGuard, ActiveRunRegistry};
 pub use manager::{AutonomousAgentProvider, ThingAgentManager, ThingAgentManagerConfig};
 pub use runner::{AgentHandle, RunContext, RunContextInner, RunOutcome, Runner, ToolTraceEntry, TruncationReason};
 pub use scheduler::{EnqueueError, Scheduler, SchedulerHandle};

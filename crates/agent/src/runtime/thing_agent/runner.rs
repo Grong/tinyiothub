@@ -83,10 +83,14 @@ pub struct RunContextInner {
     pub tool_call_budget: Option<u32>,
 }
 
+#[derive(Clone)]
 pub struct RunContext {
     pub run_id: String,
     pub workspace_id: String,
     pub inner: Arc<RwLock<RunContextInner>>,
+    /// Live-run registry this run registers into (T3). `None` = 不注册
+    /// （既有构造点默认）；manager 在 run_pipeline 装配后由 T4 接线。
+    pub active_runs: Option<crate::runtime::thing_agent::active_runs::ActiveRunRegistry>,
 }
 
 impl RunContext {
@@ -98,6 +102,7 @@ impl RunContext {
                 trigger,
                 ..RunContextInner::default()
             })),
+            active_runs: None,
         }
     }
 }
@@ -774,6 +779,7 @@ mod tests {
             run_id: "run_1".to_string(),
             workspace_id: "ws_1".to_string(),
             inner: Arc::new(RwLock::new(RunContextInner::default())),
+            active_runs: None,
         };
         (ctx, RunContextInner::default())
     }
