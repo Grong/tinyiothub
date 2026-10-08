@@ -84,7 +84,8 @@ impl EndReason {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ActionRecord {    pub thing_id: String,
+pub struct ActionRecord {
+    pub thing_id: String,
     pub action_name: String,
     pub params: serde_json::Value,
     pub result: ActionResult,
@@ -105,6 +106,7 @@ pub struct ToolTraceEntry {
     pub id: String,
     pub name: String,
     pub args: serde_json::Value,
+    /// `None` = no paired ToolResult (cancelled in flight / stream ended).
     pub output: Option<String>,
 }
 
