@@ -43,7 +43,7 @@ view-dispositions .disp-tab {
   border: 1px solid var(--border);
   background: var(--card);
   border-radius: var(--radius-sm, 6px);
-  padding: 6px 14px;
+  padding: var(--space-2) var(--space-4);
   cursor: pointer;
   font-size: 13px;
   color: var(--text);
@@ -84,8 +84,8 @@ view-dispositions .j-item.clickable {
 
 /* SSE 断连细条：与工单页 .sse-banner 同一模式 */
 view-dispositions .sse-banner {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--warn-subtle);
+  color: var(--warn);
   padding: var(--space-2, 8px) var(--space-3, 12px);
   border-radius: var(--radius-sm, 6px);
   font-size: 12px;
@@ -152,7 +152,7 @@ view-dispositions .j-reason {
 view-dispositions .j-suggestion {
   font-size: 12.5px;
   color: var(--muted-foreground);
-  margin: 2px 0 0;
+  margin: var(--space-1) 0 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -341,7 +341,7 @@ view-dispositions .j-ev-error {
 }
 
 view-dispositions .j-ev-meta {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted-strong);
 }
 

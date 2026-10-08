@@ -281,7 +281,8 @@ describe("组件级：键盘可达（X7——Enter 展开/收起，行可聚焦�
       await vi.waitFor(() => expect(el.querySelector(".j-item")).toBeTruthy());
       const row = el.querySelector(".j-item") as HTMLElement;
       expect(row.getAttribute("tabindex")).toBe("0");
-      expect(row.getAttribute("role")).toBe("button");
+      // 不设 role=button（嵌套交互元素的 WCAG 4.1.2 约束，见 dispositions.ts 注释）
+      expect(row.getAttribute("role")).toBeNull();
 
       // Enter 展开（与点击同语义）
       row.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));

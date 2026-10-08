@@ -497,10 +497,11 @@ export class DispositionsView extends LitElement {
       <div
         class="j-item ${needsAction ? "needs-you" : ""} ${clickable ? "clickable" : ""}"
         tabindex=${clickable ? "0" : nothing}
-        role=${clickable ? "button" : nothing}
         @click=${() => this.onRowClick(ev)}
         @keydown=${(e: KeyboardEvent) => {
-          // X7：键盘可达——Enter/Space 展开/收起（与点击同语义）
+          // X7：键盘可达——Enter/Space 展开/收起（与点击同语义）。
+          // 不设 role=button：行内嵌套真实按钮/链接/输入框，button 角色会把
+          // 后代强制 presentational，屏幕阅读器丢失内部语义（WCAG 4.1.2）。
           if (clickable && (e.key === "Enter" || e.key === " ")) {
             e.preventDefault();
             this.onRowClick(ev);

@@ -26,8 +26,8 @@
 }
 
 .sse-banner {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--warn-subtle);
+  color: var(--warn);
   padding: var(--space-2, 8px) var(--space-3, 12px);
   border-radius: var(--radius-sm, 6px);
   font-size: 12px;
