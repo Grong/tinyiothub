@@ -317,6 +317,7 @@ async fn evidence_stores_reference_not_copy() { /* evidence.trace_run_id == run_
 - Modify: `crates/core/src/heartbeat.rs`（HeartbeatResult 加 trace）
 - Modify: `crates/agent/src/runtime/heartbeat/runner.rs`（记录 trace）
 - Modify: `crates/db/src/heartbeat.rs`（`insert_action_row` 加 tick_id 参数；tick anchor content 加 trace；`insert_heartbeat_result` 传 tick_id）
+- Create: `crates/db/migrations/<date>_tick_id_index_scope.sql`——**执行中发现（T2 实测）：`idx_agent_actions_tick_id` 是 `WHERE tick_id IS NOT NULL` 的部分唯一索引（20260824000002），anchor+提案同 tick_id 会撞唯一约束。必须 DROP INDEX 重建为仅 anchor 行唯一**（`WHERE tick_id IS NOT NULL AND action_type = 'summary'`——anchor 幂等语义原样保留，提案/动作行放行）
 - Test: heartbeat runner 测试 + db 测试；**OV#4 手工镜像 fixture 同步加 trace 字段**
 
 **Interfaces:**
