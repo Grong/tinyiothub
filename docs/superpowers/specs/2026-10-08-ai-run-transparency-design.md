@@ -82,19 +82,20 @@ AI 中心（处置中心 `web/src/ui/views/dispositions.ts` + AI 运维中心 `a
 
 **卡片层（dispositions.ts 改造）**
 
-- `investigating` 卡片变为可展开：展开后启动 3s 轮询 `/agent-runs/{run_id}/trace`，渲染进度时间线——每个工具调用一行（图标 + 工具名中文映射 + 参数摘要），`output` 未到的显示进行中 spinner；收起或卡片变终态时停轮询。
+- **展开区统一为时间线（设计 D3）**：investigating 卡片可展开=live 进度时间线（3s 轮询 `/agent-runs/{run_id}/trace`，每个工具调用一行：图标 + 工具名中文映射 + 参数摘要，`output` 未到的显示进行中 spinner；收起或卡片变终态时停轮询）；run 完成后同位置变为完成态时间线 + narrative + "查看完整轨迹"链接。**展开区限高内滚（设计 D5）**：max-height ≈300px + 内部滚动，全量步骤可滚完（不限 5 步），列表不被撑爆。**既有证据面板（think 块/verdict 原文/动作清单）从卡片移除，收进详情页**——展开区一节一职，无"完成瞬间换脸"。
 - **预算进度（扩展 #10）**：investigating 卡片时间线头部显示"工具调用 n / budget_max"（n = trace 长度，budget_max 随端点响应下发）。预算拦截是 fire-and-forget（在途调用可使条数略超 MAX），显示"n / 25"不设上限断言——出现"27 / 25"是正常态不是 bug。
 - 终态卡片摘要区显示 `narrative`（NULL 降级为现有 reason）。
-- **patrol 卡片轨迹链接（扩展 #3，评审 C2 重估为 M；D7 后改 tick_id 关联）**：评审核实 brain_events 视图现状——patrol 提案行/tick 聚合行 `run_id` 均为 NULL；外部声音进一步核实心跳**没有 run_id**（只有 tick_id）且**提案行当前不写 tick_id**（只 anchor 行写）。因此 #3 落为三件套：① §1⑤ 的 HeartbeatRunner trace 装仪表（trace 落 tick anchor 行 content）+ 提案行写 tick_id；② brain_events 视图迁移，patrol 提案行投影 **tick_id**（tick 聚合行按小时 GROUP BY、天然不对应单一 tick，**不链接**并标注）；③ 有 tick_id 的 patrol 提案卡片加"查看完整轨迹"链接——**detail 取数规则**（外部声音 #2）：brain-events detail 对 patrol 提案行按 tick_id join 同 workspace 的 tick anchor 行，从其 content JSON 取 trace 透出（归 T10 的 db 查询扩展）。
+- **patrol 卡片轨迹链接（扩展 #3，评审 C2 重估为 M；D7 后改 tick_id 关联）**：评审核实 brain_events 视图现状——patrol 提案行/tick 聚合行 `run_id` 均为 NULL；外部声音进一步核实心跳**没有 run_id**（只有 tick_id）且**提案行当前不写 tick_id**（只 anchor 行写）。因此 #3 落为三件套：① §1⑤ 的 HeartbeatRunner trace 装仪表（trace 落 tick anchor 行 content）+ 提案行写 tick_id；② brain_events 视图迁移，patrol 提案行投影 **tick_id**（tick 聚合行按小时 GROUP BY、天然不对应单一 tick，**不链接**并标注）；③ 有 tick_id 的 patrol 提案卡片**点击展开=内嵌完成态时间线**（复用时间线组件，数据走 brain-events detail 按 tick_id join anchor 透出——设计 D10：不跳转详情页，与 D3「展开区统一为时间线」同构）。
 - SSE 通道不动（仍靠 judgment_judged/judgment_updated 刷新信号 + 现有轮询/断连细条模式）。
 
 **详情层（新视图）**
 
-- 展开面板底部加"查看完整轨迹"→ 新路由 `#/ai-ops/runs/{run_id}`，全宽时间线：think 块（折叠）、每次工具调用的完整参数+输出（可展开 JSON）、✓/✗ 验证标记、尾部 verdict 原文、元信息（耗时/tokens/工具数）。
+- 展开面板底部加"查看完整轨迹"→ 新路由 `#/ai-ops/runs/{run_id}`。**信息层级（设计 D2：时间线为主视觉）**：顶部元信息条（状态/耗时/tokens/工具数）→ **时间线（主视觉，默认展开）**：每次工具调用的完整参数+输出（可展开 JSON 纯文本）、✓/✗ 验证标记 → verdict 原文（折叠）→ think 块（折叠）。
 - **trace 导出（扩展 #8）**：详情页加"导出 JSON"按钮——完整轨迹+元信息复制到剪贴板，排障时可贴给同事或喂给 LLM。
-- 数据源：进行中走 trace 端点轮询；已结束走 `/brain-events/{id}` detail（evidence 已带 trace）。
+- **页面级状态（设计 D4）**：loading=时间线骨架屏（3 行灰色占位）；404=「该运行记录不存在或已过期」+ 返回链接；空 trace=「本次运行未调用工具」+ 元信息条（有信息量的空态，不与错误混淆）。
+- 数据源：进行中走 trace 端点轮询；已结束走 `/brain-events/{id}` detail（judgment 类从 report 透出 trace，patrol 提案按 tick_id join anchor）。
 
-**前端新建**：trace API 客户端、进度时间线组件（卡片层/详情层共用，**单一组件 props 控制详略密度**，不做两份实现）、run 详情视图。设计约束（S11）：走 web/DESIGN_SYSTEM.md 令牌（禁硬编码色值/像素）；时间线行不套 role=button（X7 先例）、spinner 加 aria-live；桌面优先，移动端沿用 X3 延期。
+**前端新建**：trace API 客户端、进度时间线组件（卡片层/详情层共用，**单一组件 props 控制详略密度**，不做两份实现）、run 详情视图。**时间线令牌（设计 D7：新建 view-scoped 令牌层）**：按 DESIGN_SYSTEM.md §1.2 规则在时间线组件根选择器下定义 `--timeline-done` / `--timeline-active` / `--timeline-connector` / `--timeline-gap` 等（初始值取自既有调色板，但与徽章色解耦——时间线有自己的语义层）；live 指示用进行中步的 spinner，**不加脉冲点**（detector: pulsing-dot 是 AI 味信号，功能场景 spinner 已够）。**键盘/焦点（设计 D8）**：展开/收起焦点留在行上不抢夺，Esc 收起回行（X7 保守路线）；详情页 h1=run 标题 + 「← 返回」链接。**aria-live（设计 D9）**：`aria-live="polite"` 且只在步数变化时更新可播报内容（轮询是传输层细节，播报是语义事件），完成时播报一次"分析完成"。设计约束（S11）：其余走 web/DESIGN_SYSTEM.md 令牌（禁硬编码色值/像素）；时间线行不套 role=button（X7 先例）；桌面优先，移动端沿用 X3 延期。
 
 ### 3. 错误处理
 
@@ -275,14 +276,14 @@ NULL(排队中,不可展开) ──RunStarted 回填──► run_id(可轮询 l
   - Surfaced by: spec §1③④；外部声音 F3/#3
   - Files: apps/cloud/src/domains/agent/host/judgment_subscriber.rs, crates/db/src/brain_event.rs
   - Verify: verdict 夹具 + fallback + 引用式断言（扇入 K>1 零副本）+ detail 透出测试
-- [ ] **T7 (P1, human: ~4h / CC: ~40min)** — web — 卡片层：investigating 展开 + 3s 轮询 + 代际守卫 + 预算条 + 排队中态 + narrative 降级 + 404 有限重试
-  - Surfaced by: spec §2 卡片层；S2/S4 轮询竞态；S11 设计约束
+- [ ] **T7 (P1, human: ~4h / CC: ~40min)** — web — 卡片层：展开区统一为时间线（设计 D3，证据面板迁出）+ 3s 轮询 + 代际守卫 + 预算条 + 排队中态 + narrative 降级 + 404 有限重试 + 限高内滚（D5）+ 焦点不抢夺/Esc（D8）+ aria-live polite 步数变化才播报（D9）+ patrol 提案内嵌完成态时间线（D10）
+  - Surfaced by: spec §2 卡片层；S2/S4 轮询竞态；设计 D3/D5/D8/D9/D10
   - Files: web/src/ui/views/dispositions.ts/.css/.test.ts, web/src/api/（新 trace 客户端）
-  - Verify: vitest（含代际守卫/重试/排队中/降级）
-- [ ] **T8 (P1, human: ~4h / CC: ~40min)** — web — run 详情页：路由 + 全宽时间线（单组件 props 密度）+ 导出 JSON + trace 纯文本渲染
-  - Surfaced by: spec §2 详情层；S3 XSS 行；S11
+  - Verify: vitest（含代际守卫/重试/排队中/降级/键盘 Esc/aria-live 节流）
+- [ ] **T8 (P1, human: ~4h / CC: ~40min)** — web — run 详情页：路由 + 时间线主视觉层级（D2：元信息条→时间线→verdict 折叠→think 折叠）+ 页面三态（骨架屏/404/空 trace，D4）+ 导出 JSON + trace 纯文本渲染 + h1/返回链接（D8）+ 时间线 `--timeline-*` 令牌层（D7）
+  - Surfaced by: spec §2 详情层；S3 XSS 行；设计 D2/D4/D7/D8
   - Files: web/src/ui/views/（新 run-detail）, web/src/ui/app.ts
-  - Verify: vitest（导出剪贴板/纯文本断言）
+  - Verify: vitest（导出剪贴板/纯文本断言/三态）
 - [ ] **T9 (P2, human: ~5h / CC: ~45min)** — agent+db — HeartbeatRunner trace 仪表化 + HeartbeatResult.trace + tick anchor content 落库 + **insert_action_row 提案/auto_executed 行写 tick_id**（外部声音 #1）
   - Surfaced by: spec §1⑤（D7）；外部声音 F2/#1
   - Files: crates/agent/src/runtime/heartbeat/runner.rs, crates/core/src/heartbeat.rs, crates/db/src/heartbeat.rs
@@ -364,6 +365,18 @@ NULL(排队中,不可展开) ──RunStarted 回填──► run_id(可轮询 l
 - OV#8 Low：部署图迁移②残留 → 已改
 - OV#9 Low：RwLock guard 跨 await → §1② 实现注意（clone 后 drop）
 
+## Design Review — 7 维评审记录（2026-10-08）
+
+- **Pass 1 信息架构 5→8**：D2 详情页时间线为主视觉（元信息条→时间线→verdict 折叠→think 折叠）；D3 卡片展开区统一为时间线（证据面板迁详情页，无换脸缝）。
+- **Pass 2 状态覆盖 6→9**：D4 详情页三态（骨架屏/404+返回/空 trace 有信息量）；D5 卡片展开区限高内滚（未按推荐——未选 5 步截断）。
+- **Pass 3 情感弧线 6→7**：信任旅程逐步覆盖（焦虑→安心→掌控）；**D6 拒绝**——错误态保持系统腔"轨迹不可用"，不加安抚句（缺口记录在案）。
+- **Pass 4 AI Slop 8**：无 hard rejection；pulsing-dot 规避已入令牌条。
+- **Pass 5 设计系统 6→9**：**D7 新建 `--timeline-*` view-scoped 令牌层**（未按推荐——未选映射既有令牌），与徽章色解耦。
+- **Pass 6 响应式/可达性 5→8**：D8 焦点不抢夺+Esc 收起+详情页 h1/返回；D9 aria-live polite 只在步数变化时播报。
+- **Pass 7 未决项**：D10 patrol 提案卡片内嵌时间线不跳转（未按推荐——未选路由泛化）；**D11 拒绝**——预算条保持中性色不变色。时间线令牌初始色值实现时从既有调色板取（条件项，非决策）。
+- **外部设计声音**：跳过（D12；Codex ENOENT 不可用，native 复核边际价值低）。
+- **Mockups**：未生成（designer 无 OpenAI key——`$D setup` 后可补）。
+
 ## Decision ledger（eng review）
 
 ### R-ENG-1: 新单元文件结构
@@ -393,10 +406,10 @@ Approval readiness: PASS（检查行：R-ENG-1→D1、R-ENG-2→D2、CEO D1-D7 �
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 2 | CLEAR | 9 proposals, 4 accepted, 5 deferred |
 | Outside Review | codex (auto) | Independent 2nd opinion | 5 | unavailable | codex CLI broken (ENOENT) ×2；native fallback 超时 ×2——无完成的外部评审；其线索由 native 审查独立核实并修复（CEO F1-F3、eng OV#1-#9） |
 | Eng Review | `/plan-eng-review` | Architecture & tests (required) | 3 | ISSUES OPEN | 3 issues, 0 critical gaps（全部修复入 spec） |
-| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | finding count not recorded |
+| Design Review | `/plan-design-review` | UI/UX gaps | 1 | ISSUES OPEN | score: 5/10 → 7/10, 8 decisions（D6/D11 拒绝记录在案） |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | finding count not recorded |
 
-- **OUTSIDE COVERAGE:** codex, plan-review phase, **unavailable** — CLI broken_install（vendor binary ENOENT，修复：`npm install -g @openai/codex`）；两次 native Plan-subagent fallback 均超 5 分钟有界等待（已停止，不计覆盖）。两次的在途线索均由 native 审查对仓库代码独立核实并处置——但不构成外部覆盖。
-- **VERDICT:** CEO CLEAR + ENG reviewed（3 issues 全部修复入 spec，0 unresolved，0 critical gaps）——可实现；Design Review 可选（UI 范围已在 CEO S11 约束）。
+- **OUTSIDE COVERAGE:** codex, plan-review phase, **unavailable** — CLI broken_install（vendor binary ENOENT，修复：`npm install -g @openai/codex`）；两次 native Plan-subagent fallback 均超 5 分钟有界等待（已停止，不计覆盖）。两次的在途线索均由 native 审查对仓库代码独立核实并处置——但不构成外部覆盖。设计外部声音：用户裁定跳过（D12）。
+- **VERDICT:** CEO CLEAR + ENG reviewed（3 issues 修复入 spec）+ DESIGN reviewed（5/10→7/10，8 裁定；Pass 3 文案温度被 D6 有意拒绝故 <8）——可实现；实现后跑 /design-review 做渲染态视觉 QA。
 
 NO UNRESOLVED DECISIONS
