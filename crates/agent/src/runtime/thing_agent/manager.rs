@@ -294,8 +294,7 @@ fn collect_problem_keys(source: &TriggerSource) -> Vec<String> {
 fn collect_problem_keys_into(source: &TriggerSource, out: &mut Vec<String>) {
     match source {
         TriggerSource::UserDirective {
-            problem_key: Some(pk),
-            ..
+            problem_key: Some(pk), ..
         } if !out.contains(pk) => out.push(pk.clone()),
         TriggerSource::Merged { signals } => {
             for s in signals {
