@@ -636,3 +636,45 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 - **Cons:** 检索质量差 = 越用越偏；需要可度量的成功指标。
 - **Context:** 复用现有 write_feedback_memory（judgment handler）+ crates/agent/src/memory——接线不是新建。拒绝原因已从 P0 起落 evidence_json.dismiss_reason，是本设计的输入信号。
 - **Depends on:** AI 大脑 P1 完成。
+
+## AI 运行透明化 — Deferred (from /plan-ceo-review 2026-10-08, spec: docs/superpowers/specs/2026-10-08-ai-run-transparency-design.md)
+
+### P2 — #1 trace→eval 反馈闭环
+- **What:** judgment_feedback 的 ✓/✕ 与逐步 trace 关联——反馈"错"时能定位到哪一步错（误读数据/工具选错/推理错），喂回提示词调优与 eval 用例库。
+- **Why:** trace 数据落地后反馈才有可操作的颗粒度；现在 ✓/✕ 只知道结果不对，不知道哪步错。
+- **Context:** trace 随 RunReport 落库（本期 ①）；judgment_feedback 表已有。依赖本期 trace 数据积累后再设计。
+- **Effort:** M（human）/ S（CC+gstack） | **Depends on:** 本期 trace 落库
+
+### P2 — #2 对话链路接入 trace 端点
+- **What:** 用户指令 run（chat SSE 回推的 assistant 消息）也暴露逐步轨迹——chat 侧"正在调用工具…"进度 + 事后轨迹。
+- **Why:** 本期聚焦巡检/处置链路；对话链路的黑盒感是同一类问题的另一面。
+- **Context:** 用户指令 run 走同一 thing_agent runner，trace 随 RunReport 已有；chat 回推通道在 chat/service.rs。registry/端点本期就绪，接入成本低。
+- **Effort:** M（human）/ S（CC+gstack） | **Depends on:** 本期 trace 端点
+
+### P3 — #4 SSE 推送轨迹替代轮询
+- **What:** trace 步骤经 AgentEventBus 新变体 + SSE 推送，替代 3s 轮询。
+- **Why:** 秒级实时；轮询对分钟级分析已够，升级属优化不是补缺。
+- **Context:** 初版方案被作者以复杂度否决改走 registry+轮询；升级路径在 spec 架构决策节有案。
+- **Effort:** M（human）/ S（CC+gstack） | **Depends on:** 本期 registry
+
+### P3 — #5 AI 运维页 trace 统计面板
+- **What:** 今日工具调用分布、平均轮数、预算触顶率等聚合视图。
+- **Why:** 锦上添花；数据已在 agent_runs.report，纯查询层。
+- **Effort:** S（human）/ S（CC+gstack） | **Depends on:** 本期 trace 落库
+
+### P3 — #7 run 重放调试
+- **What:** 运营从详情页一键重放某个 run（同 trigger 再跑一次对比轨迹）。
+- **Why:** 排障深化；但二次触发自治动作需要单独威胁建模（重放可能再次 invoke_action）。
+- **Context:** 涉及自治策略门（workspace_autonomy_policy）的二次执行语义，不可随手做。
+- **Effort:** M（human）/ S（CC+gstack） | **Depends on:** 本期详情页 + 威胁建模
+
+### P2 — 心跳 tick 实时进度轮询
+- **What:** 进行中 tick 的实时进度（HeartbeatRunner 注册 ActiveRunRegistry + ai-ops 页轮询）。
+- **Why:** D7 裁定心跳 trace 本期只做事后（落库+详情透出）；实时属 ai-ops 页体验升级。
+- **Effort:** S（human）/ S（CC+gstack） | **Depends on:** 本期 HeartbeatRunner trace 仪表化
+
+### P3 — trace 存储护栏（若体积成问题）
+- **What:** assemble_report / tick anchor 落库前的单条 output 体积上限（如 64KB/条）。
+- **Why:** D4 裁定不截断守 F11、接受大遥测 blob 落库风险；若 report/tick 列体积真成问题再启动。
+- **Context:** 触发条件=DB 体积或可观测到的膨胀；届时独立决策，不违反 F11（护栏非展示截断，需重新裁定）。
+- **Effort:** S（human）/ S（CC+gstack） | **Depends on:** 体积问题实际出现
