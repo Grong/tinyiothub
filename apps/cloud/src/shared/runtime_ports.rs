@@ -424,6 +424,7 @@ mod approval_timeout_tests {
             Some("重连"),
             Some("connection_recovery"),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -442,6 +443,7 @@ mod approval_timeout_tests {
             tinyiothub_storage::judgment::JudgmentVerdict::SelfHealable,
             "新的",
             "{}",
+            None,
             None,
             None,
             None,
@@ -530,6 +532,7 @@ mod approval_timeout_tests {
             Some("重连"),
             Some("connection_recovery"),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -595,6 +598,7 @@ mod approval_timeout_tests {
             Some("重连"),
             Some("connection_recovery"),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -654,6 +658,7 @@ mod approval_timeout_tests {
             "{}",
             Some("重连"),
             Some("connection_recovery"),
+            None,
             None,
         )
         .await
@@ -750,6 +755,7 @@ mod approval_timeout_tests {
             "{}",
             Some("重连"),
             Some("connection_recovery"),
+            None,
             None,
         )
         .await
@@ -848,6 +854,7 @@ mod approval_timeout_tests {
             "{}",
             Some("重连"),
             Some("connection_recovery"),
+            None,
             None,
         )
         .await

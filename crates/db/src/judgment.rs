@@ -173,6 +173,8 @@ pub struct Judgment {
     pub thing_id: Option<String>,
     pub verdict: Option<JudgmentVerdict>,
     pub reason: String,
+    /// 调查叙事（AI 运行透明化 Task 6）：verdict JSON 可选字段，老协议行 NULL。
+    pub narrative: Option<String>,
     pub evidence_json: String,
     pub suggested_action: Option<String>,
     pub action_category: Option<String>,
@@ -251,6 +253,7 @@ fn row_to_judgment(row: sqlx::sqlite::SqliteRow) -> Result<Judgment> {
         thing_id: row.get("thing_id"),
         verdict,
         reason: row.get("reason"),
+        narrative: row.get("narrative"),
         evidence_json: row.get("evidence_json"),
         suggested_action: row.get("suggested_action"),
         action_category: row.get("action_category"),
@@ -274,7 +277,8 @@ pub(crate) async fn find_judgment_by_id(pool: &SqlitePool, id: &str, workspace_i
     row.map(row_to_judgment).transpose()
 }
 
-/// 调查完成：写 verdict + 理由 + 证据，并迁移到 verdict 对应的状态。
+/// 调查完成：写 verdict + 理由 + 叙事（Task 6，Option——老协议 NULL）+ 证据，
+/// 并迁移到 verdict 对应的状态。
 /// 条件更新：仅 investigating → 目标态（另允许 dispatch_suppressed → 目标态：
 /// 迟到 RunRecorded 的恢复路由，T-7/L1）；0 行 = 并发/重复 RunRecorded，幂等。
 #[allow(clippy::too_many_arguments)]
@@ -287,6 +291,7 @@ pub(crate) async fn judge_judgment(
     suggested_action: Option<&str>,
     action_category: Option<&str>,
     proposal_id: Option<&str>,
+    narrative: Option<&str>,
 ) -> Result<bool> {
     let target = match verdict {
         JudgmentVerdict::Noise => JudgmentStatus::NoiseArchived,
@@ -298,7 +303,7 @@ pub(crate) async fn judge_judgment(
     debug_assert!(allowed_transition(JudgmentStatus::DispatchSuppressed, target));
     let result = sqlx::query(
         "UPDATE judgments SET verdict = ?, reason = ?, evidence_json = ?, suggested_action = ?,
-            action_category = ?, proposal_id = ?, status = ?, judged_at = ?, state_entered_at = ?
+            action_category = ?, proposal_id = ?, narrative = ?, status = ?, judged_at = ?, state_entered_at = ?
          WHERE id = ? AND status IN ('investigating','dispatch_suppressed')",
     )
     .bind(verdict.as_str())
@@ -307,6 +312,7 @@ pub(crate) async fn judge_judgment(
     .bind(suggested_action)
     .bind(action_category)
     .bind(proposal_id)
+    .bind(narrative)
     .bind(target.as_str())
     .bind(Utc::now().to_rfc3339())
     .bind(Utc::now().to_rfc3339())
@@ -644,7 +650,7 @@ pub(crate) async fn reopen_judgment(pool: &SqlitePool, id: &str) -> Result<bool>
     }
     let result = sqlx::query(
         "UPDATE judgments SET status = 'investigating', verdict = NULL, judged_at = NULL, state_entered_at = ?,
-            reason = '', suggested_action = NULL, action_category = NULL, proposal_id = NULL
+            reason = '', suggested_action = NULL, action_category = NULL, proposal_id = NULL, narrative = NULL
          WHERE id = ? AND status = 'noise_archived'",
     )
     .bind(Utc::now().to_rfc3339())
@@ -853,6 +859,7 @@ impl Db {
         suggested_action: Option<&str>,
         action_category: Option<&str>,
         proposal_id: Option<&str>,
+        narrative: Option<&str>,
     ) -> Result<bool> {
         judge_judgment(
             self.pool(),
@@ -863,6 +870,7 @@ impl Db {
             suggested_action,
             action_category,
             proposal_id,
+            narrative,
         )
         .await
     }
@@ -1012,6 +1020,7 @@ mod tests {
                 Some("重连网关"),
                 Some("connection_recovery"),
                 Some("prop-1"),
+                None,
             )
             .await
             .unwrap();
@@ -1048,6 +1057,7 @@ mod tests {
             "{}",
             Some("重连"),
             Some("connection_recovery"),
+            None,
             None,
         )
         .await
@@ -1102,12 +1112,12 @@ mod tests {
         );
         // 重复 judge（并发 RunRecorded）幂等
         assert!(
-            db.judge_judgment(&id, JudgmentVerdict::Noise, "波动", "{}", None, None, None)
+            db.judge_judgment(&id, JudgmentVerdict::Noise, "波动", "{}", None, None, None, None)
                 .await
                 .unwrap()
         );
         assert!(
-            !db.judge_judgment(&id, JudgmentVerdict::Noise, "波动", "{}", None, None, None)
+            !db.judge_judgment(&id, JudgmentVerdict::Noise, "波动", "{}", None, None, None, None)
                 .await
                 .unwrap()
         );
@@ -1156,6 +1166,7 @@ mod tests {
             "{}",
             Some("a"),
             Some("other"),
+            None,
             None,
         )
         .await
@@ -1224,6 +1235,7 @@ mod tests {
                 JudgmentVerdict::Noise,
                 "迟到的判断：正常波动",
                 "{}",
+                None,
                 None,
                 None,
                 None
@@ -1328,7 +1340,7 @@ mod tests {
             .await
             .unwrap();
         // j3 判为需人工 → escalated（置顶）
-        db.judge_judgment(&j3, JudgmentVerdict::NeedsHuman, "要人", "{}", None, None, None)
+        db.judge_judgment(&j3, JudgmentVerdict::NeedsHuman, "要人", "{}", None, None, None, None)
             .await
             .unwrap();
         let feed = db.list_judgments_feed("ws1", None, None, 10).await.unwrap();
@@ -1361,7 +1373,7 @@ mod tests {
     async fn latency_stats_computed() {
         let db = test_db().await;
         let j1 = db.insert_judgment("ws1", None, None, None, "annotate").await.unwrap();
-        db.judge_judgment(&j1, JudgmentVerdict::Noise, "r", "{}", None, None, None)
+        db.judge_judgment(&j1, JudgmentVerdict::Noise, "r", "{}", None, None, None, None)
             .await
             .unwrap();
         let stats = db.judgment_stats("ws1").await.unwrap();
@@ -1375,7 +1387,7 @@ mod tests {
     async fn reopen_after_wrong_feedback() {
         let db = test_db().await;
         let id = db.insert_judgment("ws1", None, None, None, "annotate").await.unwrap();
-        db.judge_judgment(&id, JudgmentVerdict::Noise, "波动", "{}", None, None, None)
+        db.judge_judgment(&id, JudgmentVerdict::Noise, "波动", "{}", None, None, None, None)
             .await
             .unwrap();
         assert!(db.reopen_judgment(&id).await.unwrap());

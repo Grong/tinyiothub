@@ -56,6 +56,7 @@ async fn seed_judgment(
                 Some("重连"),
                 Some("connection_recovery"),
                 None,
+                None,
             )
             .await
             .unwrap();

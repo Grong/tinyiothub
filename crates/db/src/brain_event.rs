@@ -51,12 +51,15 @@ pub struct BrainEvent {
     pub resolved_at: Option<String>,
 }
 
-/// 详情 = 列表行 + 完整证据。
+/// 详情 = 列表行 + 完整证据 + 工具调用轨迹（Task 6：judgment 类按 evidence
+/// .trace_run_id 引用从 agent_runs.report 取；非 judgment 类/引用缺失为空）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrainEventDetail {
     #[serde(flatten)]
     pub event: BrainEvent,
     pub evidence_json: String,
+    #[serde(default)]
+    pub trace: Vec<crate::agent_runs::ToolTraceEntry>,
 }
 
 /// 摘要：今日消化 / 需要你 / alarm 判定延迟 p50 / 反馈对错（judgment_feedback 现状表）。
@@ -184,7 +187,7 @@ pub(crate) async fn list_brain_events(
     rows.into_iter().map(row_to_brain_event).collect()
 }
 
-/// 详情：列表行 + evidence_json（证据只在这里载）。
+/// 详情：列表行 + evidence_json（证据只在这里载）+ trace（Task 6 透出）。
 pub(crate) async fn brain_event_detail(
     pool: &SqlitePool,
     workspace_id: &str,
@@ -199,9 +202,27 @@ pub(crate) async fn brain_event_detail(
     .await?;
     let Some(row) = row else { return Ok(None) };
     let evidence_json: String = row.get("evidence_json");
+    let event = row_to_brain_event(row)?;
+    // Task 6（eng D2）：judgment 类证据存 trace 引用（trace_run_id）不存副本——
+    // detail 时按引用回 agent_runs.report 取 trace 透出。引用缺失（老数据）/
+    // 报告丢失/report 解析失败均降级为空 trace：证据主体 evidence_json 仍在，
+    // 不让 detail 整体失败。
+    let trace = match serde_json::from_str::<serde_json::Value>(&evidence_json)
+        .ok()
+        .and_then(|v| v.get("trace_run_id")?.as_str().map(str::to_string))
+    {
+        Some(run_id) => match crate::agent_runs::find_run_report_json(pool, workspace_id, &run_id).await {
+            Ok(Some(report_json)) => serde_json::from_str::<crate::agent_runs::RunReport>(&report_json)
+                .map(|r| r.trace)
+                .unwrap_or_default(),
+            _ => vec![],
+        },
+        None => vec![],
+    };
     Ok(Some(BrainEventDetail {
-        event: row_to_brain_event(row)?,
+        event,
         evidence_json,
+        trace,
     }))
 }
 
@@ -330,6 +351,7 @@ mod tests {
             Some("a"),
             Some("other"),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -393,6 +415,7 @@ mod tests {
             "{}",
             Some("a"),
             Some("other"),
+            None,
             None,
         )
         .await
@@ -533,7 +556,7 @@ mod tests {
             .await
             .unwrap();
         let evidence = "{\"run\":\"r1\",\"steps\":[]}";
-        db.judge_judgment(&j, JudgmentVerdict::Noise, "波动", evidence, None, None, None)
+        db.judge_judgment(&j, JudgmentVerdict::Noise, "波动", evidence, None, None, None, None)
             .await
             .unwrap();
         let feed = db.list_brain_events("ws1", BrainEventTab::All, None, 10).await.unwrap();
@@ -614,6 +637,91 @@ mod tests {
             .find(|e| e.source == "patrol_tick")
             .expect("tick 聚合行存在");
         assert!(tick_row.tick_id.is_none(), "tick 聚合行 tick_id 保持 NULL");
+    }
+
+    /// Task 6：judgment 类 detail 透出 trace——evidence.trace_run_id（引用式，
+    /// eng D2）→ agent_runs.report.trace；引用缺失/报告丢失/报告解析失败均降级
+    /// 为空 trace，不让 detail 失败。
+    #[tokio::test]
+    async fn detail_exposes_trace_for_judgment_event() {
+        let db = test_db().await;
+        // 调查 run 的 report（带 1 条 trace）
+        let report = crate::agent_runs::RunReport {
+            run_id: "r-trace".to_string(),
+            workspace_id: "ws1".to_string(),
+            trigger: "alarm".to_string(),
+            outcome: crate::agent_runs::Outcome::NoActionNeeded,
+            summary: "调查完毕".to_string(),
+            actions: vec![],
+            verified: false,
+            duration_ms: 100,
+            tool_calls: 1,
+            tokens: 10,
+            end_reason: None,
+            thing_id: Some("t1".to_string()),
+            trace: vec![crate::agent_runs::ToolTraceEntry {
+                id: "c1".to_string(),
+                name: "read_property".to_string(),
+                args: serde_json::json!({"p": "temp"}),
+                output: Some("26.5".to_string()),
+            }],
+        };
+        db.insert_agent_run(&report, Some("alarm:t1:-"), None).await.unwrap();
+
+        let j = db
+            .insert_judgment("ws1", None, None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        let evidence = serde_json::json!({
+            "source": "run_summary",
+            "run_id": "r-trace",
+            "trace_run_id": "r-trace",
+            "summary": "调查完毕",
+        })
+        .to_string();
+        db.judge_judgment(&j, JudgmentVerdict::Noise, "波动", &evidence, None, None, None, None)
+            .await
+            .unwrap();
+
+        let detail = db
+            .brain_event_detail("ws1", &format!("alarm:{j}"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(detail.trace.len(), 1, "detail 透出 report.trace");
+        assert_eq!(detail.trace[0].name, "read_property");
+        assert_eq!(detail.trace[0].output.as_deref(), Some("26.5"));
+
+        // 老数据：evidence 无 trace_run_id → 空 trace，detail 照常返回
+        let j2 = db
+            .insert_judgment("ws1", None, None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        db.judge_judgment(&j2, JudgmentVerdict::Noise, "波动", "{}", None, None, None, None)
+            .await
+            .unwrap();
+        let detail2 = db
+            .brain_event_detail("ws1", &format!("alarm:{j2}"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(detail2.trace.is_empty(), "无 trace_run_id 引用 → 空 trace 不炸");
+
+        // 引用悬空：trace_run_id 指向不存在的 run → 空 trace，detail 照常返回
+        let j3 = db
+            .insert_judgment("ws1", None, None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        let dangling = serde_json::json!({"trace_run_id": "r-gone"}).to_string();
+        db.judge_judgment(&j3, JudgmentVerdict::Noise, "波动", &dangling, None, None, None, None)
+            .await
+            .unwrap();
+        let detail3 = db
+            .brain_event_detail("ws1", &format!("alarm:{j3}"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(detail3.trace.is_empty(), "引用悬空 → 空 trace 不炸");
     }
 
     /// needs_you tab 无时间窗：72h 前 escalated + 工单 open 的事件仍可见（与 badge 计数口径一致）；

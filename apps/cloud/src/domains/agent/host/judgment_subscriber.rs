@@ -58,6 +58,10 @@ pub(crate) struct VerdictPayload {
     reason: String,
     suggested_action: Option<String>,
     action_category: Option<String>,
+    /// 调查叙事（Task 6）。必须 Option + serde(default)：必填 String 会让旧协议
+    /// JSON 在严格/宽松双路径全败 → investigation_failed 回归（外部声音 F3）。
+    #[serde(default)]
+    narrative: Option<String>,
 }
 
 impl VerdictPayload {
@@ -462,9 +466,13 @@ async fn judge(
     // 存 summary 原文 + 动作记录 + run 元信息；think 块/verdict 协议块的
     // 结构化呈现（折叠/分层）是渲染层职责（web 端 renderEvidence）。
     // T-15/C3：宽松解析命中时打 parse_fallback 标记——feed 可见、可统计。
+    // Task 6（eng D2）：trace 存引用（trace_run_id）不存副本——扇入时一 run
+    // 服务 K 个 judgment，嵌副本会 K+1 倍增；trace 本体由 brain_event detail
+    // 按引用从 agent_runs.report 透出。
     let evidence = serde_json::json!({
         "source": "run_summary",
         "run_id": report.run_id,
+        "trace_run_id": report.run_id,
         "summary": report.summary,
         "actions": report.actions,
         "tool_calls": report.tool_calls,
@@ -489,6 +497,7 @@ async fn judge(
             suggested_action.as_deref(),
             action_category.as_deref(),
             None,
+            payload.narrative.as_deref(),
         )
         .await
     {
@@ -857,6 +866,7 @@ mod tests {
             Some("重连"),
             Some("connection_recovery"),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -919,6 +929,106 @@ mod tests {
             Some("r9"),
             "迟到 RunRecorded 不得覆盖 RunStarted 已回填的 run_id"
         );
+    }
+
+    /// Task 6：verdict JSON 带 narrative → judgments.narrative 落列。
+    #[tokio::test]
+    async fn verdict_with_narrative_persisted() {
+        let (db, sse, alarm) = fixture().await;
+        let jid = db
+            .insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        let summary = "```json\n{\"verdict\": \"noise\", \"reason\": \"正常波动\", \"narrative\": \"查了温度曲线，24h 内三次尖峰均自恢复\", \"suggested_action\": null, \"action_category\": \"other\"}\n```";
+        project(&event("r1", Outcome::NoActionNeeded, summary), &db, &sse, &alarm, &None).await;
+
+        let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
+        assert_eq!(j.status, JudgmentStatus::NoiseArchived);
+        assert_eq!(
+            j.narrative.as_deref(),
+            Some("查了温度曲线，24h 内三次尖峰均自恢复"),
+            "narrative 必须落列"
+        );
+    }
+
+    /// Task 6 + 外部声音 F3 回归护栏：老协议 verdict JSON（无 narrative 字段）——
+    /// 严格/宽松双 serde 路径均解析成功、正常裁决，narrative 列保持 NULL。
+    /// （narrative 若为必填 String，旧协议 JSON 两路径全败 → investigation_failed。）
+    #[tokio::test]
+    async fn verdict_without_narrative_fallback_ok() {
+        // 严格路径（围栏块，无 narrative）：走完整 project，裁决照常、列 NULL
+        let (db, sse, alarm) = fixture().await;
+        let jid = db
+            .insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        let summary = "```json\n{\"verdict\": \"noise\", \"reason\": \"波动\", \"suggested_action\": null, \"action_category\": \"other\"}\n```";
+        project(&event("r1", Outcome::NoActionNeeded, summary), &db, &sse, &alarm, &None).await;
+
+        let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
+        assert_eq!(
+            j.status,
+            JudgmentStatus::NoiseArchived,
+            "老协议 JSON 必须照常裁决（不得退化 investigation_failed）"
+        );
+        assert!(j.narrative.is_none(), "无 narrative 字段 → 列 NULL");
+
+        // 宽松路径（裸 JSON，无 narrative）：parse_verdict 必须命中 fallback
+        let (v, fallback) = parse_verdict("分析完毕。{\"verdict\": \"needs_human\", \"reason\": \"持续恶化\"}")
+            .expect("老协议裸 JSON 必须可解析");
+        assert!(fallback);
+        assert_eq!(v.verdict, "needs_human");
+    }
+
+    /// Task 6（eng D2）：evidence 存引用不存副本——trace_run_id == run_id；
+    /// evidence 无 trace 键；扇入（同一 run 服务 2 个 judgment）零副本。
+    #[tokio::test]
+    async fn evidence_stores_reference_not_copy() {
+        let (db, sse, alarm) = fixture().await;
+        let j1 = db
+            .insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        let j2 = db
+            .insert_judgment("ws1", Some("a3"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+
+        // 扇入：同一调查 run（带非空 trace）服务两个 judgment（不同 problem_key 报警）
+        let summary = "```json\n{\"verdict\": \"noise\", \"reason\": \"波动\", \"suggested_action\": null, \"action_category\": \"other\"}\n```";
+        for pk in ["alarm:t1:-", "alarm:t1:rule1"] {
+            let mut r = report("r-fanin", Outcome::NoActionNeeded, summary);
+            r.trace = vec![tinyiothub_core::agent_runs::ToolTraceEntry {
+                id: "c1".to_string(),
+                name: "read_property".to_string(),
+                args: serde_json::json!({"p": "temp"}),
+                output: Some("26.5".to_string()),
+            }];
+            let e = AgentEvent {
+                seq: 1,
+                occurred_at: chrono::Utc::now(),
+                kind: AgentEventKind::RunRecorded {
+                    report: Box::new(r),
+                    problem_key: Some(pk.to_string()),
+                    dedup_key: None,
+                },
+            };
+            project(&e, &db, &sse, &alarm, &None).await;
+        }
+
+        for jid in [&j1, &j2] {
+            let j = db.find_judgment_by_id(jid, "ws1").await.unwrap().unwrap();
+            let ev: serde_json::Value = serde_json::from_str(&j.evidence_json).expect("evidence 是 JSON");
+            assert_eq!(
+                ev.get("trace_run_id").and_then(|v| v.as_str()),
+                Some("r-fanin"),
+                "evidence 存 trace 引用"
+            );
+            assert!(
+                ev.get("trace").is_none(),
+                "evidence 不得存 trace 副本（D2：一 run 扇入 K 个 judgment 零副本）"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1121,6 +1231,7 @@ mod tests {
             "{}",
             Some("重连"),
             Some("connection_recovery"),
+            None,
             None,
         )
         .await

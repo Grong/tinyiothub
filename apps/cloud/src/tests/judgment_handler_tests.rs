@@ -47,6 +47,7 @@ async fn seed_judgment(app_state: &crate::state::AppState, ws: &str, verdict: Op
                 Some("重连"),
                 Some("connection_recovery"),
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -479,6 +480,7 @@ async fn wrong_feedback_on_noise_restores_and_reopens() {
             tinyiothub_storage::judgment::JudgmentVerdict::Noise,
             "误判的噪声",
             "{}",
+            None,
             None,
             None,
             None,
