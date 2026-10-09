@@ -412,6 +412,7 @@ pub(crate) mod tests {
             executed_actions: vec![],
             proposals: vec![],
             error: None,
+            trace: vec![],
         }
     }
 
@@ -658,6 +659,7 @@ pub(crate) mod tests {
                 executed_actions: vec![],
                 proposals,
                 error: None,
+                trace: vec![],
             }
         }
 

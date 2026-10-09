@@ -99,6 +99,7 @@ pub async fn heartbeat_loop(
                                     executed_actions: vec![],
                                     proposals: vec![],
                                     error: Some(e.to_string()),
+                                    trace: vec![],
                                 },
                             });
                         }
@@ -199,6 +200,9 @@ async fn run_heartbeat_tick(
 
     let mut result = super::report::parse_healing_report(&output.text, workspace_id);
     result.task_count = tasks.len() as u32;
+    // Task 9：完整工具轨迹随结果走（id 配对、output=None=在途/取消），
+    // 落库侧写进 tick anchor content——巡检提案的事后轨迹数据源。
+    result.trace = output.trace;
     // Audit-trail reconciliation: executed_actions come from the framework's
     // actual tool-call records, not the LLM's self-report (which can fabricate
     // actions it never performed).
@@ -298,6 +302,7 @@ mod tests {
                     success: true,
                     details: "actually executed".into(),
                 }],
+                trace: vec![],
             },
         });
 
@@ -314,6 +319,61 @@ mod tests {
         assert!(
             !seen[0].contains("fake_tool"),
             "LLM self-reported action must be discarded"
+        );
+    }
+
+    /// Task 9：tick 结果携带完整工具轨迹（含 output=None 的未配对/在途条目），
+    /// 经 HeartbeatCompleted 事件透出——落库侧（anchor content）的数据源。
+    #[tokio::test]
+    async fn tick_forwards_tool_trace_into_result() {
+        let bus = Arc::new(tinyiothub_runtime::EventBus::new());
+        let seen = Arc::new(RecordingHandler {
+            seen: Mutex::new(Vec::new()),
+        });
+        bus.register_handler(seen.clone());
+        let publisher = AiEventPublisher::new(bus);
+        let metrics = crate::runtime::heartbeat::metrics::Metrics::new();
+
+        let pool: Arc<dyn AgentPoolLike> = Arc::new(MockPool {
+            output: AgentRunOutput {
+                text: r#"{"status":"complete","summary":"done","proposals":[]}"#.into(),
+                tool_calls: vec![],
+                trace: vec![
+                    tinyiothub_core::agent_runs::ToolTraceEntry {
+                        id: "c1".into(),
+                        name: "read_property".into(),
+                        args: serde_json::json!({"thingId": "d1"}),
+                        output: Some("26.5".into()),
+                    },
+                    tinyiothub_core::agent_runs::ToolTraceEntry {
+                        id: "c2".into(),
+                        name: "query_events".into(),
+                        args: serde_json::json!({}),
+                        output: None,
+                    },
+                ],
+            },
+        });
+
+        let task = sample_task();
+        run_heartbeat_tick("ws", &[&task], &TrustConfig::default(), &pool, &publisher, &metrics)
+            .await
+            .unwrap();
+        publisher.shutdown().await;
+
+        let seen = seen.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        // plain text 形如 "AiEvent\n<json payload>"（RichContent 标题前缀）。
+        let json_start = seen[0].find('{').expect("payload contains JSON");
+        let payload: serde_json::Value = serde_json::from_str(&seen[0][json_start..]).expect("event payload is JSON");
+        let trace = &payload["HeartbeatCompleted"]["result"]["trace"];
+        assert_eq!(trace[0]["id"], "c1");
+        assert_eq!(trace[0]["output"], "26.5");
+        assert_eq!(trace[1]["id"], "c2");
+        assert_eq!(
+            trace[1]["output"],
+            serde_json::Value::Null,
+            "unpaired/in-flight entry must keep output=None"
         );
     }
 
@@ -350,6 +410,7 @@ mod tests {
             output: AgentRunOutput {
                 text: r#"{"status":"complete","summary":"done","proposals":[]}"#.into(),
                 tool_calls: vec![],
+                trace: vec![],
             },
         });
 
@@ -527,6 +588,7 @@ mod tests {
             output: AgentRunOutput {
                 text: r#"{"status":"complete","summary":"done","proposals":[]}"#.into(),
                 tool_calls: vec![],
+                trace: vec![],
             },
         });
         let tasks_source = empty_tasks_source();

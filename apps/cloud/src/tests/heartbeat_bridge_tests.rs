@@ -74,6 +74,7 @@ fn result_with(proposals: Vec<Proposal>) -> HeartbeatResult {
         executed_actions: vec![],
         proposals,
         error: None,
+        trace: vec![],
     }
 }
 

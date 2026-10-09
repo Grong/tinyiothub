@@ -292,6 +292,7 @@ async fn projects_heartbeat_result_to_agent_actions() {
                 executed_actions: vec![],
                 proposals: vec![],
                 error: None,
+                trace: vec![],
             }),
         });
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -783,6 +784,7 @@ async fn resync_recovers_heartbeat_results_idempotently() {
         executed_actions: vec![],
         proposals: vec![],
         error: None,
+        trace: vec![],
     };
     let snap = RestoreSnapshot {
         heartbeat_results: vec![result],
@@ -828,6 +830,7 @@ async fn heartbeat_retry_aborted_by_shutdown_goes_to_dlq() {
                     executed_actions: vec![],
                     proposals: vec![],
                     error: None,
+                    trace: vec![],
                 }),
             },
         },

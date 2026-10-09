@@ -791,6 +791,7 @@ mod tests {
                     executed_actions: vec![],
                     proposals: vec![],
                     error: None,
+                    trace: vec![],
                 },
             );
         }
@@ -818,6 +819,7 @@ mod tests {
             Ok(crate::runtime::agent::pool::AgentRunOutput {
                 text: r#"{"status":"complete","summary":"ok","proposals":[]}"#.into(),
                 tool_calls: vec![],
+                trace: vec![],
             })
         }
         async fn shutdown(&self) {}

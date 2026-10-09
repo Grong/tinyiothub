@@ -124,6 +124,7 @@ mod tests {
             executed_actions: vec![],
             proposals: vec![],
             error: None,
+            trace: vec![],
         }
     }
 

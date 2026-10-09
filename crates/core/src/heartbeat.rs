@@ -90,6 +90,12 @@ pub struct HeartbeatResult {
     pub executed_actions: Vec<ExecutedAction>,
     pub proposals: Vec<crate::policy::Proposal>,
     pub error: Option<String>,
+    /// 完整工具调用轨迹（Task 9，巡检提案的事后轨迹来源）：与
+    /// `agent_runs::ToolTraceEntry` 同一契约（id 配对 ToolResult，
+    /// output=None = 在途/取消）。serde(default) 向后兼容旧 JSON。
+    /// 落库进 tick anchor 行 content（全量不截断，F11）。
+    #[serde(default)]
+    pub trace: Vec<crate::agent_runs::ToolTraceEntry>,
 }
 
 /// A periodic heartbeat check task.
@@ -116,3 +122,25 @@ pub struct NewHeartbeatTask {
 /// Lowest interval a workspace may configure — a tick can take minutes
 /// (LLM call + tool execution), so tighter loops just pile up.
 pub const MIN_HEARTBEAT_INTERVAL_MINUTES: u32 = 5;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Task 9：旧 HeartbeatResult JSON（无 trace 字段）必须仍能反序列化，
+    /// trace 默认为空——serde(default) 向后兼容已落库/在途事件里的旧 JSON。
+    #[test]
+    fn old_result_json_without_trace_deserializes() {
+        let old = r#"{
+            "id": "t1",
+            "workspace_id": "ws1",
+            "status": "Complete",
+            "summary": "ok",
+            "executed_actions": [],
+            "proposals": [],
+            "error": null
+        }"#;
+        let result: HeartbeatResult = serde_json::from_str(old).expect("旧结果 JSON 必须可反序列化");
+        assert!(result.trace.is_empty());
+    }
+}
