@@ -75,6 +75,8 @@ async fn brain_event_detail(
         Ok(Some(d)) => ApiResponseBuilder::success(BrainEventDetailDto {
             event: BrainEventDto::from(&d.event),
             evidence: serde_json::from_str(&d.evidence_json).unwrap_or(serde_json::Value::Null),
+            trace: d.trace,
+            narrative: d.narrative,
         }),
         Ok(None) => ApiResponseBuilder::error_with_code(404, "brain event 不存在"),
         Err(e) => ApiResponseBuilder::error(format!("查询失败: {e}")),

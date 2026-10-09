@@ -192,6 +192,157 @@ async fn brain_events_detail_carries_evidence() {
     assert_eq!(json["code"], 404);
 }
 
+/// Task 10 评审 I-1 修复契约：detail HTTP 响应必须透出 trace + narrative——
+/// judgment 类含 trace（trace_run_id → report）与 narrative；patrol 提案类含
+/// trace（tick_id → 锚行 content.trace）；降级时字段为空不炸。
+#[tokio::test]
+async fn brain_events_detail_carries_trace_and_narrative() {
+    let (app_state, pool) = setup_test_app_with_pool().await;
+    seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
+    let ws = "ws-default-001";
+
+    // ── judgment 类：trace（evidence.trace_run_id → report）+ narrative ──
+    let report = tinyiothub_storage::agent_runs::RunReport {
+        run_id: "r-http".to_string(),
+        workspace_id: ws.to_string(),
+        trigger: "alarm".to_string(),
+        outcome: tinyiothub_storage::agent_runs::Outcome::NoActionNeeded,
+        summary: "调查完毕".to_string(),
+        actions: vec![],
+        verified: false,
+        duration_ms: 100,
+        tool_calls: 1,
+        tokens: 10,
+        end_reason: None,
+        thing_id: Some("t1".to_string()),
+        trace: vec![tinyiothub_storage::agent_runs::ToolTraceEntry {
+            id: "c1".to_string(),
+            name: "read_property".to_string(),
+            args: serde_json::json!({"p": "temp"}),
+            output: Some("26.5".to_string()),
+        }],
+    };
+    app_state
+        .db
+        .insert_agent_run(&report, Some("alarm:t1:-"), None)
+        .await
+        .unwrap();
+    let jid = app_state
+        .db
+        .insert_judgment(ws, None, None, Some("t1"), "annotate")
+        .await
+        .unwrap();
+    let evidence = serde_json::json!({"trace_run_id": "r-http", "summary": "调查完毕"}).to_string();
+    app_state
+        .db
+        .judge_judgment(
+            &jid,
+            tinyiothub_storage::judgment::JudgmentVerdict::Noise,
+            "波动",
+            &evidence,
+            None,
+            None,
+            None,
+            Some("温度短暂波动后自行恢复"),
+        )
+        .await
+        .unwrap();
+
+    // ── patrol 提案类：trace（tick_id → 锚行 content.trace）──
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, tick_id, created_at)
+         VALUES ('act-sum','ws-default-001','agent1','patrol','summary',?,'tk1',?)",
+    )
+    .bind(
+        serde_json::json!({
+            "taskCount": 1, "result": "ok",
+            "trace": [{"id":"c9","name":"list_things","args":{},"output":"3 devices"}],
+        })
+        .to_string(),
+    )
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, tick_id, created_at)
+         VALUES ('act-prop','ws-default-001','agent1','patrol','proposal',?,'tk1',?)",
+    )
+    .bind("{\"proposalId\":\"p1\",\"thingId\":\"t1\",\"summary\":\"s-p1\",\"status\":\"pending\"}")
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // 无 tick_id 提案（降级路径）
+    sqlx::query(
+        "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at)
+         VALUES ('act-prop2','ws-default-001','agent1','patrol','proposal',?,?)",
+    )
+    .bind("{\"proposalId\":\"p2\",\"thingId\":\"t1\",\"summary\":\"s-p2\",\"status\":\"pending\"}")
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let app = crate::api::create_router(&app_state);
+    let app = axum::Router::new().nest("/api", app).with_state(app_state.clone());
+    let token = create_test_token("user-1", "tenant-1");
+
+    // judgment detail：trace + narrative 都透出
+    let response = app
+        .clone()
+        .oneshot(req("GET", &format!("/api/v1/brain-events/alarm:{jid}"), &token, None))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    let result = &json["result"];
+    assert_eq!(
+        result["trace"].as_array().map(|t| t.len()),
+        Some(1),
+        "judgment detail 透出 trace: {result:?}"
+    );
+    assert_eq!(result["trace"][0]["name"], "read_property");
+    assert_eq!(result["trace"][0]["output"], "26.5");
+    assert_eq!(
+        result["narrative"], "温度短暂波动后自行恢复",
+        "judgment detail 透出 narrative"
+    );
+
+    // patrol 提案 detail：trace 透出
+    let response = app
+        .clone()
+        .oneshot(req("GET", "/api/v1/brain-events/patrol:p1", &token, None))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    let result = &json["result"];
+    assert_eq!(
+        result["trace"].as_array().map(|t| t.len()),
+        Some(1),
+        "提案 detail 透出锚 trace: {result:?}"
+    );
+    assert_eq!(result["trace"][0]["name"], "list_things");
+    assert!(result["narrative"].is_null(), "非 judgment 行 narrative 为 null");
+
+    // 降级：无 tick_id 提案 → trace 空数组、narrative null，200 不炸
+    let response = app
+        .oneshot(req("GET", "/api/v1/brain-events/patrol:p2", &token, None))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    let result = &json["result"];
+    assert_eq!(
+        result["trace"].as_array().map(|t| t.len()),
+        Some(0),
+        "降级为空 trace 不炸: {result:?}"
+    );
+    assert!(result["narrative"].is_null());
+}
+
 #[tokio::test]
 async fn brain_events_summary_counts() {
     let (app_state, pool) = setup_test_app_with_pool().await;

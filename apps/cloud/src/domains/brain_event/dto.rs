@@ -52,12 +52,17 @@ impl From<&tinyiothub_storage::brain_event::BrainEvent> for BrainEventDto {
 }
 
 /// 详情 = 列表行 + 完整证据（解析为 JSON，同 judgment evidence 先例）。
+/// trace：工具调用轨迹（Task 6/10：judgment 走 trace_run_id、patrol 提案走
+/// tick_id 锚行，同一 trace 字段）。narrative：judgment 叙述（T6 评审 N1：
+/// detail 懒加载透出，非 judgment 行/NULL 降级 null）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrainEventDetailDto {
     #[serde(flatten)]
     pub event: BrainEventDto,
     pub evidence: serde_json::Value,
+    pub trace: Vec<tinyiothub_storage::agent_runs::ToolTraceEntry>,
+    pub narrative: Option<String>,
 }
 
 /// feed 头部摘要。
