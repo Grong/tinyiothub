@@ -318,7 +318,9 @@ export class DispositionsView extends LitElement {
       this.collapseExpanded();
       return;
     }
-    if (mode === "detail" && (this.traceAbort !== null || this.traceTimer !== null || this.liveTrace !== null)) {
+    // 终审 I-2：liveTraceFailed（404 用尽）也算在 live 过——否则翻终态后
+    // 不切 detail 通道，展开区永卡「加载中…」。
+    if (mode === "detail" && (this.traceAbort !== null || this.traceTimer !== null || this.liveTrace !== null || this.liveTraceFailed)) {
       // 完成态切换：同位置换成完成时间线 + narrative（无「完成瞬间换脸」之外的二次跳动）
       this.stopLiveTrace();
       this.liveTrace = null;
@@ -362,6 +364,7 @@ export class DispositionsView extends LitElement {
         if (!trace.live) {
           this.traceAnnouncement = "分析完成";
           this.traceAbort = null;
+          this.traceTimer = null; // 卫生：已触发的定时器 id 不残留（I-2）
           return; // 自然结束：不再排下一趟
         }
       } catch {
@@ -370,6 +373,7 @@ export class DispositionsView extends LitElement {
         if (retries > TRACE_MAX_RETRIES) {
           this.liveTraceFailed = true;
           this.traceAbort = null;
+          this.traceTimer = null; // 卫生同上——翻终态判定靠 liveTraceFailed，不靠残留 id
           return;
         }
       }

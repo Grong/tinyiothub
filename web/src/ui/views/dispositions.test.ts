@@ -277,6 +277,7 @@ describe("组件级：investigating 卡片 live 时间线（T12）", () => {
       vi.mocked(fetchRunTrace).mockResolvedValue({
         live: true,
         budgetMax: 12,
+        summary: null,
         entries: [traceEntry({})],
       });
       const row = el.querySelector(".j-item") as HTMLElement;
@@ -312,7 +313,7 @@ describe("组件级：investigating 卡片 live 时间线（T12）", () => {
     const el = await mountView([evA, evB]);
     try {
       vi.mocked(fetchRunTrace).mockClear();
-      let resolveA!: (t: { live: boolean; budgetMax: number; entries: TraceEntry[] }) => void;
+      let resolveA!: (t: { live: boolean; budgetMax: number; entries: TraceEntry[]; summary: string | null; }) => void;
       vi.mocked(fetchRunTrace).mockImplementation((runId: string) =>
         runId === "run-a"
           ? new Promise((r) => {
@@ -321,6 +322,7 @@ describe("组件级：investigating 卡片 live 时间线（T12）", () => {
           : Promise.resolve({
               live: true,
               budgetMax: 12,
+              summary: null,
               entries: [traceEntry({ id: "cb", name: "read_property" })],
             }),
       );
@@ -335,6 +337,7 @@ describe("组件级：investigating 卡片 live 时间线（T12）", () => {
       resolveA({
         live: true,
         budgetMax: 12,
+        summary: null,
         entries: [traceEntry({ id: "ca", name: "invoke_action", output: null })],
       });
       await vi.advanceTimersByTimeAsync(0);
@@ -398,10 +401,11 @@ describe("组件级：investigating 卡片 live 时间线（T12）", () => {
         call += 1;
         return Promise.resolve(
           call === 1
-            ? { live: true, budgetMax: 12, entries: [traceEntry({ id: "c1" })] }
+            ? { live: true, budgetMax: 12, entries: [traceEntry({ id: "c1" })], summary: null }
             : {
                 live: false,
                 budgetMax: 12,
+                summary: null,
                 entries: [traceEntry({ id: "c1" }), traceEntry({ id: "c2", output: null })],
               },
         );
@@ -443,6 +447,7 @@ describe("组件级：investigating 卡片 live 时间线（T12）", () => {
       vi.mocked(fetchRunTrace).mockResolvedValue({
         live: true,
         budgetMax: 12,
+        summary: null,
         entries: [traceEntry({})],
       });
       vi.mocked(brainEventApi.detail).mockClear();
@@ -466,6 +471,47 @@ describe("组件级：investigating 卡片 live 时间线（T12）", () => {
       await vi.waitFor(() =>
         expect(el.querySelector(".j-narrative")?.textContent).toContain("刷新后叙述"),
       );
+    } finally {
+      el.remove();
+      vi.useRealTimers();
+    }
+  });
+
+  it("404 用尽后翻终态：reconcileExpanded 仍切 detail（终审 I-2——liveTraceFailed 也触发换道）", async () => {
+    vi.useFakeTimers();
+    const investigating = ev({ id: "alarm:fp", status: "investigating", runId: "run-fp" });
+    const resolvedRow = ev({ id: "alarm:fp", status: "resolved", runId: "run-fp", reason: "已闭环" });
+    vi.mocked(brainEventApi.list)
+      .mockResolvedValueOnce([investigating])
+      .mockResolvedValue([resolvedRow]);
+    vi.mocked(brainEventApi.summary).mockResolvedValue(summaryStub());
+    const el = document.createElement("view-dispositions");
+    document.body.appendChild(el);
+    try {
+      await vi.waitFor(() => expect(el.querySelector(".j-item")).toBeTruthy());
+      // trace 端点全程 404（registry 注销与 report 落库间的异步窗口）
+      vi.mocked(fetchRunTrace).mockClear();
+      vi.mocked(fetchRunTrace).mockRejectedValue(new TraceNotFoundError("run-fp"));
+      vi.mocked(brainEventApi.detail).mockClear();
+      vi.mocked(brainEventApi.detail).mockResolvedValue({
+        ...resolvedRow,
+        evidence: {},
+        trace: [traceEntry({ id: "cd" })],
+        narrative: "窗口期后的叙述",
+      });
+      (el.querySelector(".j-item") as HTMLElement).click();
+      await vi.waitFor(() => expect(fetchRunTrace).toHaveBeenCalledTimes(1));
+      // 3 次重试用尽 → 「轨迹不可用」
+      await vi.advanceTimersByTimeAsync(9000);
+      await vi.waitFor(() => expect(el.textContent).toContain("轨迹不可用"));
+
+      // 此刻整表刷新把卡片翻终态——I-2 前：三条件全空不切 detail，永卡「加载中…」
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.waitFor(() => expect(brainEventApi.detail).toHaveBeenCalledWith("alarm:fp"));
+      await vi.waitFor(() =>
+        expect(el.querySelector(".j-narrative")?.textContent).toContain("窗口期后的叙述"),
+      );
+      expect(el.textContent).not.toContain("加载中…");
     } finally {
       el.remove();
       vi.useRealTimers();

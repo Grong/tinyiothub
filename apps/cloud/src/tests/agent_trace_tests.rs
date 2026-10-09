@@ -85,6 +85,7 @@ async fn trace_live_from_registry() {
     let result = &json["result"];
     assert_eq!(result["live"], true);
     assert_eq!(result["budgetMax"], MAX_TOOL_CALLS_PER_RUN);
+    assert!(result["summary"].is_null(), "进行中 run 无结论——summary 为 null");
     let entries = result["entries"].as_array().expect("entries array");
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0]["id"], "c1");
@@ -120,6 +121,9 @@ async fn trace_ended_from_report() {
     let result = &json["result"];
     assert_eq!(result["live"], false);
     assert_eq!(result["budgetMax"], MAX_TOOL_CALLS_PER_RUN);
+    // 终审 I-1：ended 分支透出 report.summary——详情页主路径（trace 命中）
+    // 的 verdict/think/正文段靠它渲染。
+    assert_eq!(result["summary"], "巡检无异常");
     let entries = result["entries"].as_array().expect("entries array");
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0]["id"], "c9");

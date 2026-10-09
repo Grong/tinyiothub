@@ -18,6 +18,7 @@ import { fetchRunTrace, TraceNotFoundError, type RunTrace } from "./agent-runs.j
 const trace: RunTrace = {
   live: false,
   budgetMax: 12,
+  summary: null,
   entries: [
     { id: "c1", name: "read_property", args: { thingId: "t1" }, output: "{\"value\": 23}" },
     { id: "c2", name: "invoke_action", args: { thingId: "t1", action: "reboot" }, output: null },

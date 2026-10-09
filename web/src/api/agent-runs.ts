@@ -22,6 +22,9 @@ export interface RunTrace {
   live: boolean;
   budgetMax: number;
   entries: TraceEntry[];
+  /** run 的最终结论文本（含 think/verdict 原文）：live 进行中为 null，
+   *  ended 取 report.summary。详情页主路径的 verdict/think/正文段靠它（终审 I-1）。 */
+  summary: string | null;
 }
 
 /** 404 —— run 不存在（含跨 workspace 命中，后端不泄漏存在性）。 */

@@ -88,6 +88,7 @@ describe("run-detail · 层级与主数据源", () => {
     vi.mocked(fetchRunTrace).mockResolvedValue({
       live: false,
       budgetMax: 12,
+      summary: null,
       entries: [entry({ id: "c1" }), entry({ id: "c2", name: "invoke_action", args: { action: "reboot" } })],
     });
     const el = await mountView("run-1");
@@ -107,6 +108,26 @@ describe("run-detail · 层级与主数据源", () => {
     const timeline = el.querySelector("run-timeline");
     expect(timeline).toBeTruthy();
     await vi.waitFor(() => expect(timeline!.querySelectorAll("details.rt-step").length).toBe(2));
+  });
+
+  it("trace 主路径（端点命中）也渲染 verdict/think/正文折叠段（终审 I-1）", async () => {
+    vi.mocked(fetchRunTrace).mockResolvedValue({
+      live: false,
+      budgetMax: 12,
+      entries: [entry({ id: "c1" })],
+      summary: "调查正文。<think>逐步推理</think>\n```json\n{\"verdict\":\"noise\"}\n```",
+    });
+    const el = await mountView("run-1");
+    await vi.waitFor(() => expect(el.querySelector(".rd-meta")).toBeTruthy());
+
+    // trace 命中的主路径：summary 里的 verdict 协议块与 think 块必须可达
+    const folds = el.querySelectorAll("details.rd-fold");
+    expect(folds.length).toBe(2);
+    expect(folds[0].textContent).toContain("verdict 原文");
+    expect(folds[0].textContent).toContain("{\"verdict\":\"noise\"}");
+    expect(folds[1].textContent).toContain("思考过程");
+    expect(folds[1].textContent).toContain("逐步推理");
+    expect(el.textContent).toContain("调查正文。");
   });
 
   it("trace 端点 404 → 退 brain-event detail：时间线/narrative/verdict 折叠/think 折叠/耗时", async () => {
@@ -168,7 +189,7 @@ describe("run-detail · 三态", () => {
   });
 
   it("空 trace → 「本次运行未调用工具」+ 元信息条仍渲染（D4）", async () => {
-    vi.mocked(fetchRunTrace).mockResolvedValue({ live: false, budgetMax: 12, entries: [] });
+    vi.mocked(fetchRunTrace).mockResolvedValue({ live: false, budgetMax: 12, entries: [], summary: null });
     const el = await mountView("run-1");
     await vi.waitFor(() => expect(el.querySelector(".rd-empty")).toBeTruthy());
     expect(el.querySelector(".rd-empty")!.textContent).toContain("本次运行未调用工具");
@@ -181,8 +202,8 @@ describe("run-detail · live 轮询", () => {
     vi.useFakeTimers();
     try {
       vi.mocked(fetchRunTrace)
-        .mockResolvedValueOnce({ live: true, budgetMax: 12, entries: [entry({ id: "c1", output: null })] })
-        .mockResolvedValueOnce({ live: false, budgetMax: 12, entries: [entry({ id: "c1" }), entry({ id: "c2" })] });
+        .mockResolvedValueOnce({ live: true, budgetMax: 12, entries: [entry({ id: "c1", output: null })], summary: null })
+        .mockResolvedValueOnce({ live: false, budgetMax: 12, entries: [entry({ id: "c1" }), entry({ id: "c2" })], summary: null });
       const el = await mountView("run-1");
       await vi.advanceTimersByTimeAsync(0);
       expect(fetchRunTrace).toHaveBeenCalledTimes(1);
@@ -203,7 +224,7 @@ describe("run-detail · live 轮询", () => {
   it("离开页面（卸载）停止轮询", async () => {
     vi.useFakeTimers();
     try {
-      vi.mocked(fetchRunTrace).mockResolvedValue({ live: true, budgetMax: 12, entries: [] });
+      vi.mocked(fetchRunTrace).mockResolvedValue({ live: true, budgetMax: 12, entries: [], summary: null });
       const el = await mountView("run-1");
       await vi.advanceTimersByTimeAsync(0);
       expect(fetchRunTrace).toHaveBeenCalledTimes(1);
@@ -223,6 +244,7 @@ describe("run-detail · 导出 JSON（扩展 #8）", () => {
     vi.mocked(fetchRunTrace).mockResolvedValue({
       live: false,
       budgetMax: 12,
+      summary: null,
       entries: [entry({ id: "c1" }), entry({ id: "c2" })],
     });
     const el = await mountView("run-9");
@@ -244,6 +266,7 @@ describe("run-detail · S3 纯文本渲染铁律", () => {
     vi.mocked(fetchRunTrace).mockResolvedValue({
       live: false,
       budgetMax: 12,
+      summary: null,
       entries: [entry({ args: { q: "<img src=x onerror=alert(1)>" } })],
     });
     const el = await mountView("run-1");

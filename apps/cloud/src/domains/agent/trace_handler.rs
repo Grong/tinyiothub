@@ -38,6 +38,10 @@ pub struct TraceResponse {
     pub live: bool,
     pub budget_max: u32,
     pub entries: Vec<ToolTraceEntry>,
+    /// run 的最终结论文本（含 think 块与 verdict 协议块原文）：ended 分支
+    /// 取 report.summary；live 分支（进行中，尚无结论）为 None。详情页主
+    /// 路径的 verdict/think/正文段靠它渲染（终审 I-1）。
+    pub summary: Option<String>,
 }
 
 /// `/agent-runs` 只读路由（G7：agent 域切片态萃取，组合层 nest）。
@@ -69,6 +73,7 @@ async fn get_run_trace(
             live: true,
             budget_max: MAX_TOOL_CALLS_PER_RUN,
             entries,
+            summary: None,
         });
     }
 
@@ -79,6 +84,7 @@ async fn get_run_trace(
                 live: false,
                 budget_max: MAX_TOOL_CALLS_PER_RUN,
                 entries: report.trace,
+                summary: Some(report.summary),
             }),
             Err(e) => {
                 tracing::error!(run_id = %run_id, error = %e, "agent_runs.report 反序列化失败");

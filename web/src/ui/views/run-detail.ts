@@ -221,8 +221,12 @@ export class RunDetailView extends LitElement {
 
   private renderReady(): TemplateResult {
     const entries = this.entries;
-    // verdict/think 切分（D2）：仅 detail 兜底路径有 evidence
-    const raw = this.detail ? evidenceRawText(this.detail.evidence) : "";
+    // verdict/think 切分（D2 + 终审 I-1）：detail 兜底路径取 evidence.summary；
+    // trace 主路径（端点命中）取 trace.summary——两路都必须渲染分段，否则
+    // alarm 调查的结论正文/think/verdict 在 UI 中无出口。
+    const raw = this.detail
+      ? evidenceRawText(this.detail.evidence)
+      : (this.trace?.summary ?? "");
     const segments = raw ? segmentEvidence(raw) : [];
     const texts = segments.filter((s) => s.kind === "text");
     const verdicts = segments.filter((s) => s.kind === "verdict");
