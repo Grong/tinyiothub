@@ -39,7 +39,10 @@ pub fn alarm_investigation_text(alarm: &AlarmEvent) -> String {
          不确定时选 needs_human。\
          {CONSTITUTION_ONELINE}\
          结束前输出一行结构化结论：```json {{\"verdict\": \"...\", \"reason\": \"一句人话理由\", \
-         \"suggested_action\": \"建议动作或 null\", \"action_category\": \"device_reboot|connection_recovery|property_adjust|threshold_tuning|other\"}}```",
+         \"suggested_action\": \"建议动作或 null\", \"action_category\": \"device_reboot|connection_recovery|property_adjust|threshold_tuning|other\", \
+         \"narrative\": \"调查叙事\"}}```。\
+         narrative 必填：≤200 字、第一人称大白话讲清你查了什么、看到什么、为何这么判（如\"我检查了温度曲线，三次尖峰都自行回落\"）；\
+         调查叙述只能写在 json 块的 narrative 字段内，块外禁止散文叙述调查过程。",
         alarm.message, alarm.thing_id, alarm.alarm_type, alarm.severity, condition
     )
 }
@@ -73,6 +76,13 @@ mod tests {
             "判据要点缺失: {text}"
         );
         assert!(text.contains("不确定时选 needs_human"), "fail-safe 缺失: {text}");
+        // Task 7：verdict 协议 narrative 字段约束——必填、≤200 字、第一人称
+        // 大白话、只能在 ```json verdict 块内（块外禁止散文叙述）。
+        assert!(text.contains("\"narrative\""), "narrative 字段缺失: {text}");
+        assert!(text.contains("narrative 必填"), "narrative 必填约束缺失: {text}");
+        assert!(text.contains("≤200 字"), "narrative 长度约束缺失: {text}");
+        assert!(text.contains("第一人称"), "narrative 人称约束缺失: {text}");
+        assert!(text.contains("块外禁止散文"), "narrative 块外禁散文约束缺失: {text}");
     }
 
     #[test]

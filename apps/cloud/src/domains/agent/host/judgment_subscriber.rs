@@ -71,6 +71,13 @@ impl VerdictPayload {
     pub(crate) fn verdict_str(&self) -> &str {
         &self.verdict
     }
+
+    /// eval 夹具断言用（Task 7：narrative 协议断言——带 narrative 解析出、
+    /// 缺 narrative 为 None 不炸）。仅测试消费。
+    #[allow(dead_code)]
+    pub(crate) fn narrative_str(&self) -> Option<&str> {
+        self.narrative.as_deref()
+    }
 }
 
 /// 解析 report.summary 尾部的 ```json verdict 块；宽松 fallback：找最后一个
