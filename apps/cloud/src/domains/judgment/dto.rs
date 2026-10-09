@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 pub struct JudgmentDto {
     pub id: String,
     pub alarm_id: Option<String>,
+    /// 调查 run 关联（AI 运行透明化 T5）——前端经 runId 轮询
+    /// /agent-runs/{runId}/trace 看实时进度。
+    pub run_id: Option<String>,
     pub thing_id: Option<String>,
     pub ticket_id: Option<i64>,
     pub verdict: Option<String>,

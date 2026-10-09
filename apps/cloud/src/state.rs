@@ -140,6 +140,12 @@ pub struct AppState {
     /// 并注入；None 时指令入口返回 503。
     pub directive_sink: Option<Arc<dyn tinyiothub_agent::runtime::thing_agent::DirectiveSink>>,
 
+    /// 进行中 agent run 注册表（AI 运行透明化 T5）—— /agent-runs/{id}/trace
+    /// 实时分支数据源，与 ThingAgentManager 内 PipelineDeps 共享同一实例
+    /// （克隆共享 DashMap）。None = 未接线（测试/降级路径），trace 端点
+    /// 只剩 DB 分支。
+    pub active_runs: Option<tinyiothub_agent::runtime::thing_agent::ActiveRunRegistry>,
+
     /// Agent 记忆存储 - 持久化 agent 记忆到 SQLite
     pub memory_store: Arc<MemoryStore>,
 
@@ -512,6 +518,7 @@ impl AppState {
             mqtt_client: Some(mqtt_client),
             thing_event_bus,
             directive_sink: None, // T15 闭环接线时注入 ThingAgentManager
+            active_runs: None,    // AI 运行透明化 T5：AI 子系统接线时注入
 
             memory_store,
             thing_action_hooks,
@@ -521,6 +528,12 @@ impl AppState {
     /// 注入用户指令投递入口（T15 闭环接线调用）
     pub fn set_directive_sink(&mut self, sink: Arc<dyn tinyiothub_agent::runtime::thing_agent::DirectiveSink>) {
         self.directive_sink = Some(sink);
+    }
+
+    /// 注入进行中 run 注册表（AI 运行透明化 T5；service_manager 在
+    /// set_directive_sink 同点调用，与 manager 共享同一实例）。
+    pub fn set_active_runs(&mut self, registry: tinyiothub_agent::runtime::thing_agent::ActiveRunRegistry) {
+        self.active_runs = Some(registry);
     }
 
     /// 设置数据服务器（由 ServiceManager 调用）
@@ -989,6 +1002,7 @@ impl axum::extract::FromRef<AppState> for crate::domains::agent::AgentState {
             workspace_service: state.workspace_service.clone(),
             workspace_access: state.workspace_access.clone(),
             directive_sink: state.directive_sink.clone(),
+            active_runs: state.active_runs.clone(),
             heartbeat_runner: state.heartbeat_runner.clone(),
             orchestrator: state.orchestrator.clone(),
             memory_service: state.memory_service.clone(),

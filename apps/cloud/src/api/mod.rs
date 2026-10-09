@@ -48,6 +48,10 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
         .nest("/tickets", crate::domains::ticket::router())
         .nest("/judgments", crate::domains::judgment::router())
         .nest("/brain-events", crate::domains::brain_event::router())
+        .nest(
+            "/agent-runs",
+            crate::domains::agent::trace_handler::create_agent_runs_router(),
+        )
         .nest("/alarm-rules", crate::domains::alarm::rule_router())
         .nest(
             "/monitoring",

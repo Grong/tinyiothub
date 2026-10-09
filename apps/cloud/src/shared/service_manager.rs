@@ -415,6 +415,9 @@ impl ServiceManager {
             // T14 用户指令入口：chat 工具 / HTTP 端点经 directive_sink 投递到
             // 对应工作区的 thing-agent 调度器。
             app_state.set_directive_sink(thing_agent_manager.clone());
+            // AI 运行透明化 T5：/agent-runs/{id}/trace 实时分支数据源——与
+            // manager 内 PipelineDeps 同一实例（克隆共享 DashMap）。
+            app_state.set_active_runs(thing_agent_manager.active_run_registry());
 
             // 启动补种（2026-09-16）：老工作区（早于 WorkspaceCreated 播种
             // 功能）heartbeat_tasks 为 0，心跳循环永不启动（"No heartbeat

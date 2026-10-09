@@ -18,6 +18,7 @@
 
 pub mod chat;
 pub mod host;
+pub mod trace_handler;
 
 use std::sync::Arc;
 
@@ -38,6 +39,8 @@ pub struct AgentState {
     pub workspace_access: Arc<crate::state::TenantWorkspaceAccess>,
     /// 用户指令投递入口 - agent_tasks 指令端点（None 时 503）
     pub directive_sink: Option<Arc<dyn tinyiothub_agent::runtime::thing_agent::DirectiveSink>>,
+    /// 进行中 run 注册表 - trace 端点实时分支（None = 未接线，只剩 DB 分支）
+    pub active_runs: Option<tinyiothub_agent::runtime::thing_agent::ActiveRunRegistry>,
     /// 心跳运行器 - workspace heartbeat 配置/任务/信任 API
     pub heartbeat_runner: Option<Arc<tinyiothub_agent::runtime::heartbeat::runner::HeartbeatRunner>>,
     /// AI subsystem orchestrator - agent run ack 的 O11 抑制回写（Task 6）

@@ -231,6 +231,13 @@ impl ThingAgentManager {
     pub fn workspace_count(&self) -> usize {
         self.workspaces.len()
     }
+
+    /// 进行中 run 注册表（T3）的共享句柄——克隆零成本（内部 Arc 共享同一
+    /// DashMap）。路由层（trace 端点实时分支）经此读进度；注册/注销仍由
+    /// run_pipeline 的 RAII guard 管理。
+    pub fn active_run_registry(&self) -> ActiveRunRegistry {
+        self.deps.active_runs.clone()
+    }
 }
 
 #[async_trait::async_trait]

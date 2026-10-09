@@ -36,6 +36,7 @@ fn to_dto(
     JudgmentDto {
         id: j.id.clone(),
         alarm_id: j.alarm_id.clone(),
+        run_id: j.run_id.clone(),
         thing_id: j.thing_id.clone(),
         ticket_id: j.ticket_id,
         verdict: j.verdict.map(|v| v.as_str().to_string()),

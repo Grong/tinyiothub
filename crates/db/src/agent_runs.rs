@@ -153,6 +153,22 @@ pub(crate) async fn latest_run_report_by_problem_key(
         .transpose()
 }
 
+/// 单条 run 的 report 原始 JSON（AI 运行透明化 T5 trace 端点 live:false 分支；
+/// workspace 隔离）。返回原始串——反序列化归调用方（失败按 500 + error log
+/// 处理），此处不写 SQL JSON 函数。
+pub(crate) async fn find_run_report_json(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    run_id: &str,
+) -> Result<Option<String>> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT report FROM agent_runs WHERE id = ? AND workspace_id = ?")
+        .bind(run_id)
+        .bind(workspace_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.map(|(json,)| json))
+}
+
 pub(crate) async fn ack_run(pool: &SqlitePool, run_id: &str, actor: &str) -> Result<bool> {
     // 幂等：仅首认生效（acked_at IS NULL），重复确认/不存在 rows_affected = 0。
     let result = sqlx::query(
@@ -285,6 +301,12 @@ impl Db {
         latest_run_report_by_problem_key(self.pool(), workspace_id, problem_key).await
     }
 
+    /// 单条 run 的 report 原始 JSON（trace 端点 live:false 分支；workspace 隔离，
+    /// 反序列化归调用方）。
+    pub async fn find_agent_run_report_json(&self, workspace_id: &str, run_id: &str) -> Result<Option<String>> {
+        find_run_report_json(self.pool(), workspace_id, run_id).await
+    }
+
     /// 幂等确认 run（仅首认生效；返回是否本次写入）。
     pub async fn ack_agent_run(&self, run_id: &str, actor: &str) -> Result<bool> {
         ack_run(self.pool(), run_id, actor).await
@@ -390,6 +412,47 @@ mod tests {
         .execute(pool)
         .await
         .expect("raw insert agent_run");
+    }
+
+    /// T5：find_run_report_json —— 命中返回原始 report JSON（含 trace），
+    /// 未命中/跨 workspace 为 None。
+    #[tokio::test]
+    pub async fn find_run_report_json_hit_miss_and_workspace_isolation() {
+        let pool = test_pool().await;
+        let db = Db::new(pool.clone());
+
+        let mut report = sample_report("run_t5", "ws_1", "trace 源");
+        report.trace = vec![tinyiothub_core::agent_runs::ToolTraceEntry {
+            id: "c1".to_string(),
+            name: "read_property".to_string(),
+            args: serde_json::json!({"p": "temp"}),
+            output: Some("26.5".to_string()),
+        }];
+        db.insert_agent_run(&report, None, None).await.expect("insert");
+
+        let json = db
+            .find_agent_run_report_json("ws_1", "run_t5")
+            .await
+            .expect("query")
+            .expect("hit");
+        let back: RunReport = serde_json::from_str(&json).expect("report json parses");
+        assert_eq!(back.trace.len(), 1);
+        assert_eq!(back.trace[0].output.as_deref(), Some("26.5"));
+
+        assert!(
+            db.find_agent_run_report_json("ws_1", "run_nope")
+                .await
+                .expect("query")
+                .is_none(),
+            "未命中 → None"
+        );
+        assert!(
+            db.find_agent_run_report_json("ws_other", "run_t5")
+                .await
+                .expect("query")
+                .is_none(),
+            "跨 workspace → None"
+        );
     }
 
     #[tokio::test]
