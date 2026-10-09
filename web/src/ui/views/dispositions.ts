@@ -97,51 +97,13 @@ export function approvalCountdown(ev: BrainEvent, now = Date.now(), timeoutHours
   return `${remainH} 小时后自动转工单`;
 }
 
-/** 证据段落（导出供测试）：think = 思考块，text = 正文，verdict = 尾部协议块原文。 */
-export interface EvidenceSegment {
-  kind: "think" | "text" | "verdict";
-  text: string;
-}
-
-/** 证据原文分段（导出供测试）。完整记录不丢弃：think 块与 verdict 协议块
- *  各自成段（渲染层折叠展示），正文按原顺序保留。 */
-export function segmentEvidence(raw: string): EvidenceSegment[] {
-  // 先摘尾部 verdict 协议块（调查指令约定在末尾；完整保留，折叠展示）
-  let body = raw;
-  let verdict: string | null = null;
-  const fenceStart = body.lastIndexOf("```json");
-  if (fenceStart >= 0) {
-    const fenceEnd = body.indexOf("```", fenceStart + 7);
-    if (fenceEnd >= 0) {
-      verdict = body.slice(fenceStart + 7, fenceEnd).trim() || null;
-      body = (body.slice(0, fenceStart) + body.slice(fenceEnd + 3)).trim();
-    }
-  }
-  const segments: EvidenceSegment[] = [];
-  const thinkRe = /<think>([\s\S]*?)(?:<\/think>|$)/g; // 兼容未闭合尾块
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = thinkRe.exec(body)) !== null) {
-    const before = body.slice(last, m.index).trim();
-    if (before) segments.push({ kind: "text", text: before });
-    const think = m[1].trim();
-    if (think) segments.push({ kind: "think", text: think });
-    last = m.index + m[0].length;
-  }
-  const tail = body.slice(last).trim();
-  if (tail) segments.push({ kind: "text", text: tail });
-  if (verdict) segments.push({ kind: "verdict", text: verdict });
-  return segments;
-}
-
-/** 证据原文提取（导出供测试）：新行读 summary（完整记录），存量老行读 excerpt。 */
-export function evidenceRawText(evidence: unknown): string {
-  if (!evidence || typeof evidence !== "object") return "";
-  const ev = evidence as { summary?: unknown; excerpt?: unknown };
-  if (typeof ev.summary === "string") return ev.summary;
-  if (typeof ev.excerpt === "string") return ev.excerpt;
-  return "";
-}
+/** 证据切分（T13 起单源在 ui/shared/evidence-segments.ts——详情页复用，
+ *  此处 re-export 保持既有导入/测试不破）。 */
+export {
+  segmentEvidence,
+  evidenceRawText,
+  type EvidenceSegment,
+} from "../shared/evidence-segments.js";
 
 /** 反馈校验（F13，导出供测试）：点错必填 ≥4 字符。 */
 export function validateWrongReason(reason: string): string | null {

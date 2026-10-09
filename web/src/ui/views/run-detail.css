@@ -1,0 +1,104 @@
+/* run 详情页（AI 运行透明化 T13）——层级：元信息条 → 时间线主视觉 → verdict/think 折叠。
+   全部颜色/间距/圆角走全局设计令牌（DESIGN_SYSTEM.md + base.css），禁硬编码色值。
+   骨架屏复用全局 .skeleton 工具类（utilities.css）。 */
+
+view-run-detail {
+  display: block;
+  max-width: 880px;
+}
+
+view-run-detail .rd-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+view-run-detail .rd-back {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+view-run-detail .rd-title {
+  margin: 0;
+  font-size: 18px;
+  color: var(--text-strong);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+view-run-detail .rd-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  margin-bottom: var(--space-4);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+}
+
+view-run-detail .rd-status--live {
+  color: var(--accent);
+}
+
+view-run-detail .rd-runid {
+  font-family: var(--mono);
+}
+
+view-run-detail .rd-empty {
+  color: var(--muted-foreground);
+  padding: var(--space-6) 0;
+  text-align: center;
+}
+
+view-run-detail .rd-narrative {
+  color: var(--text);
+  margin: var(--space-3) 0 0;
+}
+
+view-run-detail .rd-text {
+  color: var(--text);
+  margin: var(--space-2) 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+view-run-detail .rd-fold {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+}
+
+view-run-detail .rd-fold summary {
+  cursor: pointer;
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+}
+
+view-run-detail .rd-pre {
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  margin: var(--space-2) 0 0;
+}
+
+view-run-detail .rd-notfound {
+  text-align: center;
+  padding: var(--space-8) 0;
+  color: var(--muted-foreground);
+}
+
+view-run-detail .rd-notfound p {
+  margin: 0 0 var(--space-3);
+}
