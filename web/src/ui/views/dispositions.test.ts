@@ -425,6 +425,52 @@ describe("组件级：investigating 卡片 live 时间线（T12）", () => {
       vi.useRealTimers();
     }
   });
+
+  it("整表刷新翻终态（reconcileExpanded live→detail）：停 live 轮询、改取 detail、换完成时间线", async () => {
+    vi.useFakeTimers();
+    const investigating = ev({ id: "alarm:sw", status: "investigating", runId: "run-sw" });
+    const resolvedRow = ev({ id: "alarm:sw", status: "resolved", runId: "run-sw", reason: "已闭环" });
+    // 首屏 investigating；60s 整表轮询刷新后同一事件翻终态（SSE 路径同走 load(true)）
+    vi.mocked(brainEventApi.list)
+      .mockResolvedValueOnce([investigating])
+      .mockResolvedValue([resolvedRow]);
+    vi.mocked(brainEventApi.summary).mockResolvedValue(summaryStub());
+    const el = document.createElement("view-dispositions");
+    document.body.appendChild(el);
+    try {
+      await vi.waitFor(() => expect(el.querySelector(".j-item")).toBeTruthy());
+      vi.mocked(fetchRunTrace).mockClear();
+      vi.mocked(fetchRunTrace).mockResolvedValue({
+        live: true,
+        budgetMax: 12,
+        entries: [traceEntry({})],
+      });
+      vi.mocked(brainEventApi.detail).mockClear();
+      vi.mocked(brainEventApi.detail).mockResolvedValue({
+        ...resolvedRow,
+        evidence: {},
+        trace: [traceEntry({ id: "cd" })],
+        narrative: "刷新后叙述",
+      });
+      (el.querySelector(".j-item") as HTMLElement).click();
+      await vi.waitFor(() => expect(fetchRunTrace).toHaveBeenCalledTimes(1));
+
+      // 60s 整表刷新：列表返回终态行 → reconcileExpanded 停轮询 + 取 detail
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.waitFor(() => expect(brainEventApi.detail).toHaveBeenCalledWith("alarm:sw"));
+      // live 轮询已停：继续推进时间不再打 trace 端点
+      const traceCalls = vi.mocked(fetchRunTrace).mock.calls.length;
+      await vi.advanceTimersByTimeAsync(12_000);
+      expect(fetchRunTrace).toHaveBeenCalledTimes(traceCalls);
+      // 展开区换成完成态：narrative 来自 detail（不再渲染 live 快照）
+      await vi.waitFor(() =>
+        expect(el.querySelector(".j-narrative")?.textContent).toContain("刷新后叙述"),
+      );
+    } finally {
+      el.remove();
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("组件级：完成态卡片展开区（T12：时间线 + narrative + 完整轨迹链接）", () => {
