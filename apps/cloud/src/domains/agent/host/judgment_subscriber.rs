@@ -335,6 +335,7 @@ async fn settle_execution(
                         report,
                         &format!("exec:{}", judgment_id),
                         &reason,
+                        None,
                     )
                     .await;
                     broadcast_judgment(sse, &judgment.workspace_id, judgment_id, "judgment_updated").await;
@@ -451,7 +452,17 @@ async fn route_verdict(
                 used_fallback,
             )
             .await;
-            escalate_to_ticket(db, sse, notify, judgment, report, problem_key, &reason).await;
+            escalate_to_ticket(
+                db,
+                sse,
+                notify,
+                judgment,
+                report,
+                problem_key,
+                &reason,
+                payload.narrative.as_deref(),
+            )
+            .await;
         }
     }
 }
@@ -513,12 +524,13 @@ async fn judge(
             // X1：self_healable → awaiting_approval（「需要你」批准）——通知到人。
             // needs_human 的通知在 escalate_to_ticket 统一发出（与工单号一并）。
             if verdict == JudgmentVerdict::SelfHealable {
+                // Task 8：大白话优先——narrative 落 notify 正文，NULL 降级 reason。
                 spawn_needs_you_notify(
                     notify,
                     judgment,
                     EventLevel::Warning,
                     "需要你：AI 有建议动作等你批准",
-                    reason.to_string(),
+                    payload.narrative.as_deref().unwrap_or(reason).to_string(),
                 );
             }
             true
@@ -551,11 +563,13 @@ async fn fail_and_escalate(
         Ok(false) => debug!(judgment_id = %judgment.id, "fail skipped (not investigating)"),
         Err(e) => error!(judgment_id = %judgment.id, error = %e, "fail_judgment failed"),
     }
-    escalate_to_ticket(db, sse, notify, judgment, report, problem_key, reason).await;
+    escalate_to_ticket(db, sse, notify, judgment, report, problem_key, reason, None).await;
 }
 
 /// 转工单（统一入口；failure_hash 与 ticket_subscriber 同键 → 撞单折叠）。
 /// X1：升级即「需要你」——通知到人（SSE 通道，best-effort）。
+/// Task 8：narrative 大白话优先进通知正文，NULL（run 失败/解析失败路径）降级 reason。
+#[allow(clippy::too_many_arguments)] // Task 8 narrative 参数后为 8 参；同 judge() 既有先例
 async fn escalate_to_ticket(
     db: &Db,
     sse: &SseConnectionManager,
@@ -564,6 +578,7 @@ async fn escalate_to_ticket(
     report: &RunReport,
     problem_key: &str,
     reason: &str,
+    narrative: Option<&str>,
 ) {
     let Some(ticket_id) = crate::domains::ticket::create_escalation(
         db,
@@ -598,7 +613,7 @@ async fn escalate_to_ticket(
         judgment,
         EventLevel::Error,
         "需要你：AI 已转工单",
-        format!("{}（工单 #{ticket_id}）", reason),
+        format!("{}（工单 #{ticket_id}）", narrative.unwrap_or(reason)),
     );
 }
 
@@ -1054,9 +1069,10 @@ mod tests {
         assert_eq!(j.run_id.as_deref(), Some("r1"));
     }
 
-    /// X1 测试渠道：记录标题或按 fail 注入失败。
+    /// X1 测试渠道：记录 (标题, 正文) 或按 fail 注入失败。
+    /// Task 8：正文一并记录——narrative 落在 content，断言需要。
     struct RecordingChannel {
-        sent: Arc<std::sync::Mutex<Vec<String>>>,
+        sent: Arc<std::sync::Mutex<Vec<(String, String)>>>,
         fail: bool,
     }
 
@@ -1069,7 +1085,10 @@ mod tests {
             if self.fail {
                 return Err("channel down (injected)".to_string());
             }
-            self.sent.lock().unwrap().push(message.title.clone());
+            self.sent
+                .lock()
+                .unwrap()
+                .push((message.title.clone(), message.content.clone()));
             Ok(())
         }
         async fn is_available(&self) -> bool {
@@ -1081,7 +1100,7 @@ mod tests {
     }
 
     fn notify_fixture(
-        sent: &Arc<std::sync::Mutex<Vec<String>>>,
+        sent: &Arc<std::sync::Mutex<Vec<(String, String)>>>,
         db: &Arc<Db>,
         fail: bool,
     ) -> Option<Arc<NotificationManager>> {
@@ -1152,6 +1171,132 @@ mod tests {
             "notify 失败不得影响判断迁移"
         );
         assert!(sent.lock().unwrap().is_empty(), "失败渠道零送达");
+    }
+
+    /// Task 8 触发点①：self_healable → awaiting_approval 的「需要你」通知
+    /// 正文优先 narrative（大白话），不带 reason。
+    #[tokio::test]
+    async fn awaiting_approval_notify_prefers_narrative() {
+        let (db, sse, alarm) = fixture().await;
+        let sent = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let notify = notify_fixture(&sent, &db, false);
+
+        db.insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        let summary = "```json\n{\"verdict\": \"self_healable\", \"reason\": \"网关掉线可重连\", \"narrative\": \"查了网关心跳，断连 3 分钟，重连即可恢复\", \"suggested_action\": \"重连\", \"action_category\": \"connection_recovery\"}\n```";
+        project(
+            &event("r1", Outcome::NoActionNeeded, summary),
+            &db,
+            &sse,
+            &alarm,
+            &notify,
+        )
+        .await;
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while sent.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent.len(), 1, "awaiting_approval 应发「需要你」通知");
+        assert_eq!(
+            sent[0].1, "查了网关心跳，断连 3 分钟，重连即可恢复",
+            "正文应为大白话 narrative，而非技术 reason"
+        );
+    }
+
+    /// Task 8 触发点②：needs_human → escalated 的转工单通知正文优先
+    /// narrative（工单号后缀保留）。
+    #[tokio::test]
+    async fn escalated_notify_prefers_narrative() {
+        let (db, sse, alarm) = fixture().await;
+        let sent = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let notify = notify_fixture(&sent, &db, false);
+
+        let jid = db
+            .insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        let summary = "```json\n{\"verdict\": \"needs_human\", \"reason\": \"冷却系统疑似故障\", \"narrative\": \"冷却泵连续 2 小时超温，需要人工现场检查\", \"suggested_action\": null, \"action_category\": \"other\"}\n```";
+        project(
+            &event("r1", Outcome::NoActionNeeded, summary),
+            &db,
+            &sse,
+            &alarm,
+            &notify,
+        )
+        .await;
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while sent.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        {
+            let sent = sent.lock().unwrap();
+            assert_eq!(sent.len(), 1, "escalated 应发「需要你」通知");
+            assert!(
+                sent[0].1.starts_with("冷却泵连续 2 小时超温，需要人工现场检查"),
+                "正文应以 narrative 开头，实际：{}",
+                sent[0].1
+            );
+            assert!(sent[0].1.contains("工单 #"), "工单号后缀保留");
+        }
+        let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
+        assert_eq!(j.status, JudgmentStatus::Escalated);
+    }
+
+    /// Task 8 降级：narrative 为 NULL（老协议 JSON 无该字段）时，
+    /// 两触发点正文回退现有 reason。
+    #[tokio::test]
+    async fn notify_falls_back_to_reason_when_narrative_null() {
+        let (db, sse, alarm) = fixture().await;
+        let sent = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let notify = notify_fixture(&sent, &db, false);
+
+        // 触发点①降级：self_healable 无 narrative
+        db.insert_judgment("ws1", Some("a1"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        let summary = "```json\n{\"verdict\": \"self_healable\", \"reason\": \"网关掉线可重连\", \"suggested_action\": \"重连\", \"action_category\": \"connection_recovery\"}\n```";
+        project(
+            &event("r1", Outcome::NoActionNeeded, summary),
+            &db,
+            &sse,
+            &alarm,
+            &notify,
+        )
+        .await;
+
+        // 触发点②降级：needs_human 无 narrative（a2 带 rule1 → 另一 problem_key，
+        // 避免与触发点①同键折叠）
+        db.insert_judgment("ws1", Some("a2"), None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        let summary2 = "```json\n{\"verdict\": \"needs_human\", \"reason\": \"冷却系统疑似故障\", \"suggested_action\": null, \"action_category\": \"other\"}\n```";
+        let e2 = AgentEvent {
+            seq: 2,
+            occurred_at: chrono::Utc::now(),
+            kind: AgentEventKind::RunRecorded {
+                report: Box::new(report("r2", Outcome::NoActionNeeded, summary2)),
+                problem_key: Some("alarm:t1:rule1".to_string()),
+                dedup_key: None,
+            },
+        };
+        project(&e2, &db, &sse, &alarm, &notify).await;
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while sent.lock().unwrap().len() < 2 && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent.len(), 2, "两触发点各发一条");
+        assert_eq!(sent[0].1, "网关掉线可重连", "触发点①正文降级 reason");
+        assert!(
+            sent[1].1.starts_with("冷却系统疑似故障"),
+            "触发点②正文降级 reason，实际：{}",
+            sent[1].1
+        );
     }
 
     #[tokio::test]
