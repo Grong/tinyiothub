@@ -10,6 +10,9 @@
  *   动作审批（批准/拒绝）在卡片动作区；判断反馈（✓/✕）仅 alarm 源——
  *   审批只影响处置流不写 feedback（F14）；alarm 拒绝必填原因；点错必填原因。
  * - 列表行无 evidence：证据懒加载，展开才调 /brain-events/{id}。
+ * - 展开区统一为进度时间线（T12，设计 D3/D5/D8/D9/D10）：investigating=live 轮询
+ *   /agent-runs/{runId}/trace（3s + 代际守卫 + AbortController）；终态=detail.trace
+ *   完成时间线 + narrative + 「查看完整轨迹」链接；证据面板（think/verdict）由详情页承接。
  * - 空态 = 产品故事时刻：「一切正常」一句话 + 摘要入口。
  * - SSE：judgment_judged/judgment_updated → 刷新列表与摘要。
  */
@@ -20,17 +23,24 @@ import {
   brainEventApi,
   brainEventTargetId,
   type BrainEvent,
+  type BrainEventDetail,
   type BrainEventsSummary,
   type BrainEventStatus,
   type BrainEventTab,
 } from "../../api/brain-events.js";
+import { fetchRunTrace, type RunTrace } from "../../api/agent-runs.js";
 import { judgmentApi } from "../../api/judgments.js";
 import { connectSse, type SseConnection } from "../../api/sse-client.js";
 import { success, error as toastError } from "../components/toast.js";
+import { renderRunTimeline } from "../shared/run-timeline.js";
 import "./dispositions.css";
 
 /** F12 页大小（四处复用同一常量，防漂移） */
 const PAGE_SIZE = 20;
+
+/** T12：live 轮询节奏与有限重试上限（3s × 重试 3 次后「轨迹不可用」）。 */
+const TRACE_POLL_MS = 3_000;
+const TRACE_MAX_RETRIES = 3;
 
 const TAB_LABELS: Record<BrainEventTab, string> = {
   needs_you: "需要你",
@@ -143,6 +153,17 @@ export function nextExpandedId(current: string | null, clickedId: string): strin
   return current === clickedId ? null : clickedId;
 }
 
+/** 展开区模式（T12，导出供测试）：
+ *  - live：investigating + runId——实时轮询 trace 端点；
+ *  - queue：investigating 无 runId——「排队中」，无展开入口；
+ *  - detail：终态（含 patrol 提案）——detail.trace 完成时间线 + narrative；
+ *  - none：patrol_tick 聚合行 / patrol_ok——跳巡检历史，不展开。 */
+export function expandMode(ev: BrainEvent): "live" | "queue" | "detail" | "none" {
+  if (ev.source === "patrol_tick" || ev.status === "patrol_ok") return "none";
+  if (ev.status === "investigating") return ev.runId ? "live" : "queue";
+  return "detail";
+}
+
 /** 空态产品文案（导出供测试）：需要你 = 「一切正常」一句话 + 今日摘要；
  *  全部（及其余过滤 tab）= 「还没有事件——大脑还没开始干活」。 */
 export function emptyStateCopy(
@@ -173,10 +194,16 @@ export class DispositionsView extends LitElement {
   @state() private rejectPanelId: string | null = null;
   @state() private rejectReason = "";
   @state() private hasMore = false;
-  /** 证据懒加载缓存（列表行无 evidence）：event id → detail 端点取回的 evidence */
-  @state() private evidenceById = new Map<string, unknown>();
-  /** 证据加载失败的 event id（内联「证据加载失败，重试」，不弹 toast） */
-  @state() private evidenceFailedIds = new Set<string>();
+  /** 完成态展开缓存（detail 懒加载：trace + narrative）：event id → detail */
+  @state() private detailById = new Map<string, BrainEventDetail>();
+  /** detail 加载失败的 event id（内联「加载失败，重试」，不弹 toast） */
+  @state() private detailFailedIds = new Set<string>();
+  /** live 轮询快照（investigating 展开卡）：null=未取回；配合 liveTraceFailed 三态 */
+  @state() private liveTrace: RunTrace | null = null;
+  /** 404 有限重试用尽：内联「轨迹不可用」（不再请求） */
+  @state() private liveTraceFailed = false;
+  /** aria-live 可播报内容（D9：只在步数变化时更新；完成播报一次「分析完成」） */
+  @state() private traceAnnouncement = "";
   /** SSE 断连细条（仿 tickets.ts）：onError 置 false，load 成功复位 */
   @state() private sseConnected = true;
   /** 操作防重入：进行中的 event id（快速连点/重复点击不重复提交） */
@@ -184,6 +211,12 @@ export class DispositionsView extends LitElement {
 
   private sseConn: SseConnection | null = null;
   private poller: number | null = null;
+  /** live 轮询：定时器 + 代际守卫 + AbortController（收起/SSE 刷新/切换不串数据） */
+  private traceTimer: number | null = null;
+  private traceGen = 0;
+  private traceAbort: AbortController | null = null;
+  /** 上次播报的步数（-1=本轮未播报；0 步不播报——无话可说） */
+  private traceAnnouncedSteps = -1;
 
   /** Light DOM：dispositions.css 与全局 .btn 样式才能生效（与 tickets/alarms 一致） */
   createRenderRoot() {
@@ -211,6 +244,7 @@ export class DispositionsView extends LitElement {
     super.disconnectedCallback();
     this.sseConn?.close();
     if (this.poller !== null) window.clearInterval(this.poller);
+    this.stopLiveTrace();
   }
 
   private async load(quiet = false) {
@@ -226,6 +260,8 @@ export class DispositionsView extends LitElement {
       this.sseConnected = true;
       // 游标分页（F12）：满页即可能还有
       this.hasMore = events.length >= PAGE_SIZE;
+      // SSE/轮询整表刷新后的展开卡 reconciliation（代际守卫配套，不串数据）
+      this.reconcileExpanded();
     } catch (e) {
       this.loadError = e instanceof Error ? e.message : "加载失败";
     } finally {
@@ -252,7 +288,10 @@ export class DispositionsView extends LitElement {
     this.expandedId = null;
     this.wrongPanelId = null;
     this.rejectPanelId = null;
-    this.evidenceById = new Map();
+    this.detailById = new Map();
+    this.detailFailedIds = new Set();
+    this.stopLiveTrace();
+    this.liveTrace = null;
     void this.load();
   }
 
@@ -270,41 +309,122 @@ export class DispositionsView extends LitElement {
     }
   }
 
-  /** 可展开证据的行：分析中（无结论）与巡检正常聚合行（跳巡检历史）除外。 */
-  private canEvidence(ev: BrainEvent): boolean {
-    return ev.status !== "investigating" && ev.status !== "patrol_ok";
-  }
-
-  /** 行点击：巡检正常聚合行（patrol_tick）跳 AI 运维巡检历史；其余可证据行展开/收起。 */
+  /** 行点击：巡检正常聚合行（patrol_tick）跳 AI 运维巡检历史；排队中/聚合行不可展开；
+   *  其余可展开行展开/收起（展开区统一为进度时间线，T12）。 */
   private onRowClick(ev: BrainEvent) {
     if (ev.source === "patrol_tick") {
       window.location.hash = "#/ai-ops";
       return;
     }
-    if (!this.canEvidence(ev)) return;
-    void this.toggleEvidence(ev);
+    const mode = expandMode(ev);
+    if (mode === "none" || mode === "queue") return;
+    void this.toggleExpand(ev);
   }
 
-  /** detail 端点取证据：成功入缓存，失败内联记失败态（重试前清旧标记）。
-   *  不走 toggle 语义——失败分支的「重试」按钮直接调它。 */
-  private async fetchEvidence(id: string) {
-    if (this.evidenceFailedIds.delete(id)) {
-      this.evidenceFailedIds = new Set(this.evidenceFailedIds);
+  /** 展开/收起：切换时先停旧轮询（代际守卫 bump + abort），再按模式取数。 */
+  private async toggleExpand(ev: BrainEvent) {
+    const next = nextExpandedId(this.expandedId, ev.id);
+    this.stopLiveTrace();
+    this.liveTrace = null;
+    this.liveTraceFailed = false;
+    this.traceAnnouncement = "";
+    this.expandedId = next;
+    if (next === null) return;
+    const mode = expandMode(ev);
+    if (mode === "live" && ev.runId) {
+      this.startLiveTrace(ev.runId);
+    } else if (mode === "detail" && !this.detailById.has(ev.id)) {
+      await this.fetchDetail(ev.id);
+    }
+  }
+
+  /** Esc 收起（D8）：焦点交还卡片行由调用处负责。 */
+  private collapseExpanded() {
+    this.expandedId = null;
+    this.stopLiveTrace();
+    this.liveTrace = null;
+    this.traceAnnouncement = "";
+  }
+
+  /** SSE/轮询整表刷新后的展开卡 reconciliation：
+   *  行消失/变不可展开 → 收起；investigating 翻终态 → 停 live 轮询、改取 detail。 */
+  private reconcileExpanded() {
+    if (!this.expandedId) return;
+    const cur = this.events.find((e) => e.id === this.expandedId);
+    const mode = cur ? expandMode(cur) : "none";
+    if (!cur || mode === "none" || mode === "queue") {
+      this.collapseExpanded();
+      return;
+    }
+    if (mode === "detail" && (this.traceAbort !== null || this.traceTimer !== null || this.liveTrace !== null)) {
+      // 完成态切换：同位置换成完成时间线 + narrative（无「完成瞬间换脸」之外的二次跳动）
+      this.stopLiveTrace();
+      this.liveTrace = null;
+      if (!this.detailById.has(cur.id)) void this.fetchDetail(cur.id);
+    }
+  }
+
+  /** detail 端点取完成时间线数据（trace + narrative）：成功入缓存，失败内联记失败态。 */
+  private async fetchDetail(id: string) {
+    if (this.detailFailedIds.delete(id)) {
+      this.detailFailedIds = new Set(this.detailFailedIds);
     }
     try {
       const detail = await brainEventApi.detail(id);
-      this.evidenceById = new Map(this.evidenceById).set(id, detail.evidence);
+      this.detailById = new Map(this.detailById).set(id, detail);
     } catch {
-      this.evidenceFailedIds = new Set(this.evidenceFailedIds).add(id);
+      this.detailFailedIds = new Set(this.detailFailedIds).add(id);
     }
   }
 
-  /** 证据懒加载：展开时若未缓存则取证据。 */
-  private async toggleEvidence(ev: BrainEvent) {
-    const next = nextExpandedId(this.expandedId, ev.id);
-    this.expandedId = next;
-    if (next === null || this.evidenceById.has(ev.id)) return;
-    await this.fetchEvidence(ev.id);
+  /** live 轮询：3s 节奏 + 代际守卫 + AbortController；
+   *  失败（含 404 TraceNotFoundError）有限重试 3 次后「轨迹不可用」；
+   *  trace.live 翻 false → 播报「分析完成」一次并自然停轮询（SSE 刷新接棒换完成态）。 */
+  private startLiveTrace(runId: string) {
+    const gen = ++this.traceGen;
+    const abort = new AbortController();
+    this.traceAbort = abort;
+    this.traceAnnouncedSteps = -1;
+    let retries = 0;
+    const tick = async () => {
+      try {
+        const trace = await fetchRunTrace(runId, abort.signal);
+        if (gen !== this.traceGen || abort.signal.aborted) return;
+        retries = 0;
+        this.liveTrace = trace;
+        // D9：只在步数变化时更新可播报内容（0 步不播报）
+        if (trace.entries.length > 0 && trace.entries.length !== this.traceAnnouncedSteps) {
+          this.traceAnnouncedSteps = trace.entries.length;
+          this.traceAnnouncement = `已完成 ${trace.entries.length} 步`;
+        }
+        if (!trace.live) {
+          this.traceAnnouncement = "分析完成";
+          this.traceAbort = null;
+          return; // 自然结束：不再排下一趟
+        }
+      } catch {
+        if (gen !== this.traceGen || abort.signal.aborted) return;
+        retries += 1;
+        if (retries > TRACE_MAX_RETRIES) {
+          this.liveTraceFailed = true;
+          this.traceAbort = null;
+          return;
+        }
+      }
+      this.traceTimer = window.setTimeout(() => void tick(), TRACE_POLL_MS);
+    };
+    void tick();
+  }
+
+  /** 停 live 轮询：bump 代际 + abort 在飞请求 + 清定时器（收起/切换/翻终态/卸载）。 */
+  private stopLiveTrace() {
+    this.traceGen += 1;
+    this.traceAbort?.abort();
+    this.traceAbort = null;
+    if (this.traceTimer !== null) {
+      window.clearTimeout(this.traceTimer);
+      this.traceTimer = null;
+    }
   }
 
   private async vote(ev: BrainEvent, verdict: "right" | "wrong") {
@@ -419,70 +539,52 @@ export class DispositionsView extends LitElement {
     `;
   }
 
-  /** 证据面板：完整审计记录的结构化呈现——正文直展，think/verdict 原文折叠，
-   *  动作记录与 run 元信息收尾。 */
-  private renderEvidencePanel(evidence: unknown): TemplateResult {
-    const ev = (evidence && typeof evidence === "object" ? evidence : {}) as {
-      actions?: unknown;
-      tool_calls?: unknown;
-      duration_ms?: unknown;
-      tokens?: unknown;
-    };
-    const segments = segmentEvidence(evidenceRawText(evidence));
-    const actions = Array.isArray(ev.actions) ? ev.actions : [];
-    if (segments.length === 0 && actions.length === 0) {
-      return html`<div class="j-evidence">暂无证据</div>`;
-    }
-    const meta = [
-      typeof ev.tool_calls === "number" && ev.tool_calls > 0 ? `工具调用 ${ev.tool_calls} 次` : null,
-      typeof ev.duration_ms === "number" ? `耗时 ${(ev.duration_ms / 1000).toFixed(1)}s` : null,
-      typeof ev.tokens === "number" && ev.tokens > 0 ? `${ev.tokens} tokens` : null,
-    ]
-      .filter(Boolean)
-      .join(" · ");
-    return html`
-      <div class="j-evidence">
-        ${segments.map((s) => {
-          if (s.kind === "think") {
-            return html`<details class="j-ev-fold">
-              <summary>思考过程</summary>
-              <pre>${s.text}</pre>
-            </details>`;
-          }
-          if (s.kind === "verdict") {
-            return html`<details class="j-ev-fold">
-              <summary>结构化结论（原始输出）</summary>
-              <pre>${s.text}</pre>
-            </details>`;
-          }
-          return html`<p class="j-ev-text">${s.text}</p>`;
-        })}
-        ${actions.length > 0
-          ? html`<div class="j-ev-actions">
-              ${actions.map((a) => {
-                const r = (a as { result?: Record<string, unknown> }).result;
-                const mark = r && "success" in r ? "✓" : r && "failed" in r ? "✗" : "–";
-                return html`<div class="j-ev-action">${mark} ${(a as { action_name?: string }).action_name ?? "action"}</div>`;
-              })}
-            </div>`
-          : nothing}
-        ${meta ? html`<div class="j-ev-meta">${meta}</div>` : nothing}
-      </div>
-    `;
+  /** 展开区（T12，D3/D5）：统一为进度时间线。
+   *  live= investigating 实时轮询；detail= 完成态时间线 + narrative + 完整轨迹链接。
+   *  限高内滚（max-height≈300px）由 .j-expand CSS 承担。 */
+  private renderExpanded(ev: BrainEvent): TemplateResult {
+    return expandMode(ev) === "live" ? this.renderLiveTraceArea() : this.renderDetailArea(ev);
   }
 
-  /** 展开区三态：已缓存 → 证据面板；加载中 → 「取证中…」骨架；失败 → 内联重试。 */
-  private renderEvidenceArea(ev: BrainEvent): TemplateResult {
-    if (this.evidenceFailedIds.has(ev.id)) {
-      return html`<div class="j-evidence j-ev-error" @click=${(e: Event) => e.stopPropagation()}>
-        证据加载失败，<button class="j-btn-text" @click=${() => this.fetchEvidence(ev.id)}>重试</button>
+  /** investigating 展开区：aria-live 播报区 + 三态（取证中 / 时间线 / 轨迹不可用）。 */
+  private renderLiveTraceArea(): TemplateResult {
+    return html`<div class="j-expand" @click=${(e: Event) => e.stopPropagation()}>
+      <div class="j-sr-only" aria-live="polite">${this.traceAnnouncement}</div>
+      ${this.liveTraceFailed
+        ? html`<div class="j-expand-note">轨迹不可用</div>`
+        : this.liveTrace === null
+          ? html`<div class="j-expand-note">取证中…</div>`
+          : renderRunTimeline({
+              entries: this.liveTrace.entries,
+              live: this.liveTrace.live,
+              budgetMax: this.liveTrace.budgetMax,
+              mode: "live",
+            })}
+    </div>`;
+  }
+
+  /** 终态展开区：完成时间线（detail.trace）+ narrative（缺失降级 reason）+
+   *  「查看完整轨迹」链接（T13 详情页：runId 优先，patrol 提案用 brain event id 兜底）。 */
+  private renderDetailArea(ev: BrainEvent): TemplateResult {
+    if (this.detailFailedIds.has(ev.id)) {
+      return html`<div class="j-expand j-expand-error" @click=${(e: Event) => e.stopPropagation()}>
+        加载失败，<button class="j-btn-text" @click=${() => this.fetchDetail(ev.id)}>重试</button>
       </div>`;
     }
-    if (!this.evidenceById.has(ev.id)) {
-      return html`<div class="j-evidence j-ev-pending" @click=${(e: Event) => e.stopPropagation()}>取证中…</div>`;
+    const detail = this.detailById.get(ev.id);
+    if (!detail) {
+      return html`<div class="j-expand" @click=${(e: Event) => e.stopPropagation()}>
+        <div class="j-expand-note">加载中…</div>
+      </div>`;
     }
-    return html`<div @click=${(e: Event) => e.stopPropagation()}>
-      ${this.renderEvidencePanel(this.evidenceById.get(ev.id))}
+    const narrative = detail.narrative ?? (ev.reason || null);
+    const traceHref = ev.runId ?? (ev.tickId ? ev.id : null);
+    return html`<div class="j-expand" @click=${(e: Event) => e.stopPropagation()}>
+      ${renderRunTimeline({ entries: detail.trace, live: false, budgetMax: 0, mode: "live" })}
+      ${narrative ? html`<p class="j-narrative">${narrative}</p>` : nothing}
+      ${traceHref
+        ? html`<a class="j-btn-text j-trace-link" href="#/ai-ops/runs/${traceHref}">查看完整轨迹 →</a>`
+        : nothing}
     </div>`;
   }
 
@@ -491,8 +593,9 @@ export class DispositionsView extends LitElement {
     const countdown = approvalCountdown(ev);
     const pending = this.pendingIds.has(ev.id);
     const canFeedback = ev.source === "alarm";
-    const canEvidence = this.canEvidence(ev);
-    const clickable = ev.source === "patrol_tick" || canEvidence;
+    const mode = expandMode(ev);
+    const expandable = mode === "live" || mode === "detail";
+    const clickable = ev.source === "patrol_tick" || expandable;
     return html`
       <div
         class="j-item ${needsAction ? "needs-you" : ""} ${clickable ? "clickable" : ""}"
@@ -505,6 +608,18 @@ export class DispositionsView extends LitElement {
           if (clickable && (e.key === "Enter" || e.key === " ")) {
             e.preventDefault();
             this.onRowClick(ev);
+            return;
+          }
+          // D8：Esc 收起并把焦点交还卡片行（输入框内的 Esc 不劫持）。
+          if (
+            e.key === "Escape" &&
+            this.expandedId === ev.id &&
+            !(e.target instanceof HTMLTextAreaElement) &&
+            !(e.target instanceof HTMLInputElement)
+          ) {
+            e.preventDefault();
+            this.collapseExpanded();
+            (e.currentTarget as HTMLElement).focus();
           }
         }}
       >
@@ -521,6 +636,7 @@ export class DispositionsView extends LitElement {
           <span class="j-time">${fmtJudgmentTime(ev.createdAt)}</span>
         </div>
         <p class="j-reason">${ev.reason || (ev.status === "investigating" ? "AI 正在查证…" : "")}</p>
+        ${mode === "queue" ? html`<p class="j-queue">排队中，AI 尚未开始取证</p>` : nothing}
         ${ev.suggestedAction
           ? html`<p class="j-suggestion">建议：${ev.suggestedAction}</p>`
           : nothing}
@@ -530,24 +646,26 @@ export class DispositionsView extends LitElement {
               <div class="j-actions" @click=${(e: Event) => e.stopPropagation()}>
                 <button class="btn primary btn-small" ?disabled=${pending} @click=${() => this.approve(ev)}>批准执行</button>
                 <button class="btn btn-small" ?disabled=${pending} @click=${() => this.reject(ev)}>拒绝</button>
-                ${canEvidence
-                  ? html`<button class="j-btn-text" @click=${() => this.toggleEvidence(ev)}>证据</button>`
+                ${expandable
+                  ? html`<button class="j-btn-text" @click=${() => this.toggleExpand(ev)}>轨迹</button>`
                   : nothing}
                 ${countdown ? html`<span class="j-countdown">${countdown}</span>` : nothing}
               </div>
             `
-          : html`
-              <div class="j-actions" @click=${(e: Event) => e.stopPropagation()}>
-                ${ev.ticketId
-                  ? html`<a class="j-btn-text" href="#/tickets/${ev.ticketId}">打开工单 →</a>`
-                  : nothing}
-                ${canEvidence
-                  ? html`<button class="j-btn-text" @click=${() => this.toggleEvidence(ev)}>证据</button>`
-                  : nothing}
-              </div>
-            `}
+          : expandable || ev.ticketId
+            ? html`
+                <div class="j-actions" @click=${(e: Event) => e.stopPropagation()}>
+                  ${ev.ticketId
+                    ? html`<a class="j-btn-text" href="#/tickets/${ev.ticketId}">打开工单 →</a>`
+                    : nothing}
+                  ${expandable
+                    ? html`<button class="j-btn-text" @click=${() => this.toggleExpand(ev)}>轨迹</button>`
+                    : nothing}
+                </div>
+              `
+            : nothing}
 
-        ${this.expandedId === ev.id ? this.renderEvidenceArea(ev) : nothing}
+        ${this.expandedId === ev.id ? this.renderExpanded(ev) : nothing}
 
         ${this.rejectPanelId === ev.id
           ? html`

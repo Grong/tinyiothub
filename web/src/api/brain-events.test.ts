@@ -31,6 +31,7 @@ const row: BrainEvent = {
   actionCategory: "connection_recovery",
   risk: "medium",
   runId: "r1",
+  tickId: null,
   ticketId: null,
   status: "awaiting_approval",
   triageMode: "annotate",
@@ -84,11 +85,22 @@ describe("brainEventApi.summary / detail", () => {
     expect(out.latencyP50Secs).toBe(42.5);
   });
 
-  it("detail 按 id 取（含 evidence），id 含冒号正确转义", async () => {
-    vi.mocked(apiGet).mockResolvedValue({ code: 0, msg: "ok", result: { ...row, evidence: { summary: "原文" } } });
+  it("detail 按 id 取（含 evidence/trace/narrative，T10 fix 透出），id 含冒号正确转义", async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      code: 0,
+      msg: "ok",
+      result: {
+        ...row,
+        evidence: { summary: "原文" },
+        trace: [{ id: "c1", name: "read_property", args: {}, output: "23" }],
+        narrative: "AI 已闭环",
+      },
+    });
     const out = await brainEventApi.detail("alarm:j1");
     expect(apiGet).toHaveBeenCalledWith("/brain-events/alarm%3Aj1");
     expect(out.evidence).toEqual({ summary: "原文" });
+    expect(out.trace).toHaveLength(1);
+    expect(out.narrative).toBe("AI 已闭环");
   });
 });
 

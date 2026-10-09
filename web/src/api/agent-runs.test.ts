@@ -32,7 +32,7 @@ describe("fetchRunTrace", () => {
   it("命中 /agent-runs/{run_id}/trace，unwrap 后保留 camelCase 与 output:null", async () => {
     vi.mocked(apiGet).mockResolvedValue({ code: 0, msg: "ok", result: trace });
     const out = await fetchRunTrace("r-1");
-    expect(apiGet).toHaveBeenCalledWith("/agent-runs/r-1/trace");
+    expect(apiGet).toHaveBeenCalledWith("/agent-runs/r-1/trace", undefined, undefined);
     expect(out.live).toBe(false);
     expect(out.budgetMax).toBe(12);
     expect(out.entries).toHaveLength(2);
@@ -43,7 +43,14 @@ describe("fetchRunTrace", () => {
   it("run_id 特殊字符正确转义", async () => {
     vi.mocked(apiGet).mockResolvedValue({ code: 0, msg: "ok", result: trace });
     await fetchRunTrace("run:with/slash");
-    expect(apiGet).toHaveBeenCalledWith("/agent-runs/run%3Awith%2Fslash/trace");
+    expect(apiGet).toHaveBeenCalledWith("/agent-runs/run%3Awith%2Fslash/trace", undefined, undefined);
+  });
+
+  it("signal 透传（T12 卡片轮询 AbortController）", async () => {
+    vi.mocked(apiGet).mockResolvedValue({ code: 0, msg: "ok", result: trace });
+    const abort = new AbortController();
+    await fetchRunTrace("r-1", abort.signal);
+    expect(apiGet).toHaveBeenCalledWith("/agent-runs/r-1/trace", undefined, abort.signal);
   });
 
   it("404 → TraceNotFoundError（区分「不存在」与「其他故障」）", async () => {

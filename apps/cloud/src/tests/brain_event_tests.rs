@@ -326,6 +326,8 @@ async fn brain_events_detail_carries_trace_and_narrative() {
     );
     assert_eq!(result["trace"][0]["name"], "list_things");
     assert!(result["narrative"].is_null(), "非 judgment 行 narrative 为 null");
+    // T12 结转：tick_id 透出（前端提案卡片「查看完整轨迹」链接兜底依据）
+    assert_eq!(result["tickId"], "tk1", "提案行透出 tickId: {result:?}");
 
     // 降级：无 tick_id 提案 → trace 空数组、narrative null，200 不炸
     let response = app
@@ -341,6 +343,7 @@ async fn brain_events_detail_carries_trace_and_narrative() {
         "降级为空 trace 不炸: {result:?}"
     );
     assert!(result["narrative"].is_null());
+    assert!(result["tickId"].is_null(), "无 tick_id 提案降级 null: {result:?}");
 }
 
 #[tokio::test]

@@ -11,6 +11,7 @@
 
 import { apiGet, apiPost, getWorkspaceId } from './client.js';
 import { judgmentApi } from './judgments.js';
+import type { TraceEntry } from './agent-runs.js';
 
 function unwrap<T>(res: { result: T | null }): T {
   if (res.result === null) throw new Error('空响应');
@@ -47,6 +48,8 @@ export interface BrainEvent {
   actionCategory: string | null;
   risk: 'low' | 'medium' | 'high' | null;
   runId: string | null;
+  /** patrol 提案行的 tick 锚（T2 视图投影，T12 补透出）；非提案行恒 null。 */
+  tickId: string | null;
   ticketId: number | null;
   status: BrainEventStatus;
   triageMode: string;
@@ -56,9 +59,13 @@ export interface BrainEvent {
   resolvedAt: string | null;
 }
 
-/** 详情 = 列表行 + 完整证据。 */
+/** 详情 = 列表行 + 完整证据 + 工具轨迹 + judgment 叙述（T10 fix 透出）。
+ *  trace：judgment 走 evidence.traceRunId、patrol 提案走 tickId 锚行（同一字段，
+ *  两类来源互斥）；无轨迹来源时为空数组。narrative：非 judgment 行/NULL 降级 null。 */
 export interface BrainEventDetail extends BrainEvent {
   evidence: unknown;
+  trace: TraceEntry[];
+  narrative: string | null;
 }
 
 /** feed 头部摘要。 */

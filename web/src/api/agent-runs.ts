@@ -32,10 +32,11 @@ export class TraceNotFoundError extends Error {
   }
 }
 
-/** 拉取 run 工具轨迹；404 抛 TraceNotFoundError，其余 ApiError 原样透传。 */
-export async function fetchRunTrace(runId: string): Promise<RunTrace> {
+/** 拉取 run 工具轨迹；404 抛 TraceNotFoundError，其余 ApiError 原样透传。
+ *  signal：T12 卡片轮询的 AbortController——收起/切换展开卡时中止在飞请求。 */
+export async function fetchRunTrace(runId: string, signal?: AbortSignal): Promise<RunTrace> {
   try {
-    const res = await apiGet<RunTrace>(`/agent-runs/${encodeURIComponent(runId)}/trace`);
+    const res = await apiGet<RunTrace>(`/agent-runs/${encodeURIComponent(runId)}/trace`, undefined, signal);
     if (res.result === null) throw new Error("空响应");
     return res.result;
   } catch (e) {

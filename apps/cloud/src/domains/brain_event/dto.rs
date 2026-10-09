@@ -17,6 +17,9 @@ pub struct BrainEventDto {
     pub action_category: Option<String>,
     pub risk: Option<String>,
     pub run_id: Option<String>,
+    /// patrol 提案行的 tick 锚（T2 视图投影；T12 结转：补透出，前端卡片层用）。
+    /// 非提案行恒 None。
+    pub tick_id: Option<String>,
     pub ticket_id: Option<i64>,
     pub status: String,
     pub triage_mode: String,
@@ -40,6 +43,7 @@ impl From<&tinyiothub_storage::brain_event::BrainEvent> for BrainEventDto {
             action_category: e.action_category.clone(),
             risk: e.risk.clone(),
             run_id: e.run_id.clone(),
+            tick_id: e.tick_id.clone(),
             ticket_id: e.ticket_id,
             status: e.status.clone(),
             triage_mode: e.triage_mode.clone(),
