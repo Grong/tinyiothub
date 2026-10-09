@@ -51,8 +51,11 @@ pub struct BrainEvent {
     pub resolved_at: Option<String>,
 }
 
-/// 详情 = 列表行 + 完整证据 + 工具调用轨迹（Task 6：judgment 类按 evidence
-/// .trace_run_id 引用从 agent_runs.report 取；非 judgment 类/引用缺失为空）。
+/// 详情 = 列表行 + 完整证据 + 工具调用轨迹 + judgment 叙述。
+/// trace 透出（judgment 类走 evidence.trace_run_id → agent_runs.report，
+/// Task 6；patrol 提案类走 tick_id → 同 workspace tick 锚行 content.trace，
+/// Task 10；同一响应字段，两类来源互斥）。narrative 懒加载（T6 评审 N1：
+/// 列表不载，detail 才取；NULL/非 judgment 行降级 None）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrainEventDetail {
     #[serde(flatten)]
@@ -60,6 +63,8 @@ pub struct BrainEventDetail {
     pub evidence_json: String,
     #[serde(default)]
     pub trace: Vec<crate::agent_runs::ToolTraceEntry>,
+    #[serde(default)]
+    pub narrative: Option<String>,
 }
 
 /// 摘要：今日消化 / 需要你 / alarm 判定延迟 p50 / 反馈对错（judgment_feedback 现状表）。
@@ -207,22 +212,56 @@ pub(crate) async fn brain_event_detail(
     // detail 时按引用回 agent_runs.report 取 trace 透出。引用缺失（老数据）/
     // 报告丢失/report 解析失败均降级为空 trace：证据主体 evidence_json 仍在，
     // 不让 detail 整体失败。
-    let trace = match serde_json::from_str::<serde_json::Value>(&evidence_json)
+    // Task 10：patrol 提案类走 tick_id——join 同 workspace 的 tick 锚行
+    // （action_type IN ('summary','error')，部分唯一索引保证至多一行）取
+    // content.trace。两类来源互斥（judgment 行 tick_id 恒 NULL，提案行证据
+    // 无 trace_run_id）；锚行缺失/content 解析失败同样降级空 trace。
+    let trace_run_id = serde_json::from_str::<serde_json::Value>(&evidence_json)
         .ok()
-        .and_then(|v| v.get("trace_run_id")?.as_str().map(str::to_string))
-    {
+        .and_then(|v| v.get("trace_run_id")?.as_str().map(str::to_string));
+    let trace = match trace_run_id {
         Some(run_id) => match crate::agent_runs::find_run_report_json(pool, workspace_id, &run_id).await {
             Ok(Some(report_json)) => serde_json::from_str::<crate::agent_runs::RunReport>(&report_json)
                 .map(|r| r.trace)
                 .unwrap_or_default(),
             _ => vec![],
         },
-        None => vec![],
+        None => match &event.tick_id {
+            Some(tick_id) => {
+                let content: Option<String> = sqlx::query_scalar(
+                    "SELECT content FROM agent_actions
+                     WHERE workspace_id = ? AND tick_id = ? AND action_type IN ('summary','error')
+                     LIMIT 1",
+                )
+                .bind(workspace_id)
+                .bind(tick_id)
+                .fetch_optional(pool)
+                .await?;
+                content
+                    .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                    .and_then(|v| v.get("trace").cloned())
+                    .and_then(|t| serde_json::from_value::<Vec<crate::agent_runs::ToolTraceEntry>>(t).ok())
+                    .unwrap_or_default()
+            }
+            None => vec![],
+        },
+    };
+    // T6 评审 N1：judgment 的 narrative 在 detail 懒加载透出（列表不载）。
+    // judgment 类行 id 形如 'alarm:<judgment_id>'；非 judgment 行/NULL 降级 None。
+    let narrative = match event.id.strip_prefix("alarm:") {
+        Some(judgment_id) => sqlx::query_scalar("SELECT narrative FROM judgments WHERE id = ? AND workspace_id = ?")
+            .bind(judgment_id)
+            .bind(workspace_id)
+            .fetch_optional(pool)
+            .await?
+            .flatten(),
+        None => None,
     };
     Ok(Some(BrainEventDetail {
         event,
         evidence_json,
         trace,
+        narrative,
     }))
 }
 
@@ -722,6 +761,137 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(detail3.trace.is_empty(), "引用悬空 → 空 trace 不炸");
+    }
+
+    /// Task 10：patrol 提案行 detail 透出同 tick 锚行的全量 trace（按 tick_id
+    /// join 同 workspace 的 summary/error 锚行 content.trace）；无 tick_id 的
+    /// 提案、tick 聚合行（tick_id 恒 NULL）均降级为空 trace 不炸。
+    #[tokio::test]
+    async fn detail_exposes_anchor_trace_for_patrol_proposal() {
+        let db = test_db().await;
+        let now = Utc::now().to_rfc3339();
+        // tick 锚行（action_type='summary'，content 含全量 trace——Task 9 形状）。
+        sqlx::query(
+            "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, tick_id, created_at)
+             VALUES ('act-sum','ws1','agent1','patrol','summary',?,'tk1',?)",
+        )
+        .bind(serde_json::json!({
+            "taskCount": 1,
+            "result": "ok",
+            "trace": [{"id":"c1","name":"read_property","args":{"p":"temp"},"output":"26.5"}],
+        }).to_string())
+        .bind(&now)
+        .execute(db.pool())
+        .await
+        .expect("anchor insert");
+        // 提案行携带同一 tick_id（Task 9 写入方行为，手工 INSERT 模拟）。
+        sqlx::query(
+            "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, tick_id, created_at)
+             VALUES ('act-prop','ws1','agent1','patrol','proposal',?,'tk1',?)",
+        )
+        .bind("{\"proposalId\":\"p1\",\"thingId\":\"t1\",\"summary\":\"s-p1\",\"status\":\"pending\"}")
+        .bind(&now)
+        .execute(db.pool())
+        .await
+        .expect("proposal insert");
+
+        let detail = db.brain_event_detail("ws1", "patrol:p1").await.unwrap().unwrap();
+        assert_eq!(detail.trace.len(), 1, "提案 detail 透出锚行 trace");
+        assert_eq!(detail.trace[0].name, "read_property");
+        assert_eq!(detail.trace[0].output.as_deref(), Some("26.5"));
+
+        // 无 tick_id 的提案行（历史数据）→ 空 trace 不炸。
+        sqlx::query(
+            "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at)
+             VALUES ('act-prop2','ws1','agent1','patrol','proposal',?,?)",
+        )
+        .bind("{\"proposalId\":\"p2\",\"thingId\":\"t1\",\"summary\":\"s-p2\",\"status\":\"pending\"}")
+        .bind(&now)
+        .execute(db.pool())
+        .await
+        .expect("proposal2 insert");
+        let detail2 = db.brain_event_detail("ws1", "patrol:p2").await.unwrap().unwrap();
+        assert!(detail2.trace.is_empty(), "无 tick_id 提案 → 空 trace 不炸");
+
+        // tick_id 悬空（锚行不存在）→ 空 trace 不炸。
+        sqlx::query(
+            "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, tick_id, created_at)
+             VALUES ('act-prop3','ws1','agent1','patrol','proposal',?,'tk-gone',?)",
+        )
+        .bind("{\"proposalId\":\"p3\",\"thingId\":\"t1\",\"summary\":\"s-p3\",\"status\":\"pending\"}")
+        .bind(&now)
+        .execute(db.pool())
+        .await
+        .expect("proposal3 insert");
+        let detail3 = db.brain_event_detail("ws1", "patrol:p3").await.unwrap().unwrap();
+        assert!(detail3.trace.is_empty(), "tick_id 悬空 → 空 trace 不炸");
+
+        // tick 聚合行（tick_id 恒 NULL）→ 空 trace 不炸。
+        let feed = db.list_brain_events("ws1", BrainEventTab::All, None, 20).await.unwrap();
+        let tick_row = feed
+            .iter()
+            .find(|e| e.source == "patrol_tick")
+            .expect("tick 聚合行存在");
+        let detail4 = db.brain_event_detail("ws1", &tick_row.id).await.unwrap().unwrap();
+        assert!(detail4.trace.is_empty(), "tick 聚合行 trace 为空不炸");
+    }
+
+    /// Task 10（T6 评审 N1 结转）：detail 透出 judgment 的 narrative（懒加载，
+    /// 列表不载）；narrative 为 NULL（未填充/非 judgment 行）时透出 None 不炸。
+    #[tokio::test]
+    async fn detail_exposes_judgment_narrative() {
+        let db = test_db().await;
+        let j = db
+            .insert_judgment("ws1", None, None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        db.judge_judgment(
+            &j,
+            JudgmentVerdict::Noise,
+            "波动",
+            "{}",
+            None,
+            None,
+            None,
+            Some("温度短暂波动后自行恢复，无需处理"),
+        )
+        .await
+        .unwrap();
+        let detail = db
+            .brain_event_detail("ws1", &format!("alarm:{j}"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(detail.narrative.as_deref(), Some("温度短暂波动后自行恢复，无需处理"));
+
+        // narrative NULL（老数据）→ None 降级不炸。
+        let j2 = db
+            .insert_judgment("ws1", None, None, Some("t1"), "annotate")
+            .await
+            .unwrap();
+        db.judge_judgment(&j2, JudgmentVerdict::Noise, "波动", "{}", None, None, None, None)
+            .await
+            .unwrap();
+        let detail2 = db
+            .brain_event_detail("ws1", &format!("alarm:{j2}"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(detail2.narrative.is_none(), "narrative NULL → None 降级");
+
+        // 非 judgment 行（patrol 提案）→ None。
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at)
+             VALUES ('act-np','ws1','agent1','patrol','proposal',?,?)",
+        )
+        .bind("{\"proposalId\":\"np\",\"thingId\":\"t1\",\"summary\":\"s\",\"status\":\"pending\"}")
+        .bind(&now)
+        .execute(db.pool())
+        .await
+        .expect("proposal insert");
+        let detail3 = db.brain_event_detail("ws1", "patrol:np").await.unwrap().unwrap();
+        assert!(detail3.narrative.is_none(), "非 judgment 行 narrative 为 None");
     }
 
     /// needs_you tab 无时间窗：72h 前 escalated + 工单 open 的事件仍可见（与 badge 计数口径一致）；
