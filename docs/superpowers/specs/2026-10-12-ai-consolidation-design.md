@@ -96,7 +96,7 @@ host/
   host 壳     ← thing_agent_host + service + scaffold + pool_adapter
 ```
 
-每组 mod.rs 写三行契约（做什么/谁调用/依赖谁）。
+每组 mod.rs 写三行契约（做什么/谁调用/依赖谁）。**RunRegistry（记忆注入源）与 ActiveRunRegistry（实时 trace 源）是两个职责不同的注册表，归一时不合并、注明关系**（eng S1-P3）。
 
 ### 3. 前端 AI 中心（run 流为组织单位 + 信任分级前置）
 
@@ -185,17 +185,36 @@ codex broken_install（vendor 二进制 ENOENT）；native fallback 两次完成
 - Phase 2：内核归一（行为保持清单逐项 TDD + shadow 双跑 + 迁移三件套 + host 分组 + RunRecorded 重试+DLQ）
 - Phase 3：前端 AI 中心（#/ai 单入口 + E1/E2/E4/E5/E6 + 归并映射 + 重定向）
 
+## Eng Review — Scope Record（2026-10-12）
+
+- **feature answers**：无新 cut 提案（范围已由 CEO 评审裁定）
+- **structure**：**Original arrangement**（eng D1）——三 phase 各为最小可交付单元，不再拆小
+- **accepted scope**：spec 全量（三 phase 主方案 + E1-E6），结构按 D1
+- **pending remedies**：无
+- **Reality rows**：premise-table/already-done/surface-check/binding-decisions 全 pass；numbers=工作量估计值 [estimated]；deferred-asks n/a；pr-count=三 phase 的 PR 划分待实施时定（建议 Phase 2/3 合一或按 ship-policy）
+
+## Eng Review — 评审记录（2026-10-12）
+
+- **Scope Challenge**：B 结构门禁触发（~40+ 文件估计），D1=Original arrangement（三 phase 不再拆小）；C=No issues found。
+- **Reality rows**：premise-table/already-done/surface-check/binding-decisions pass；numbers=估计值标注；deferred-asks n/a；pr-count=PR 划分待实施时定（记此备查）。
+- **Section 1 架构**：1 发现（P3 RunRegistry vs ActiveRunRegistry 关系注明——已落 spec §2 末行）。**Dispositions**：P3 → accepted（措辞级补充，不改行为）。
+- **Section 2 代码质量 / Section 3 测试 / Section 4 性能**：No issues found（测试分类+行为保持清单+shadow 白名单已在前两轮夯实）。
+- **测试计划 artifact**：~/.gstack/projects/Grong-tinyiothub/chenguorong-ai-brain-p0-eng-review-test-plan-20261012-130000.md
+- **外部声音**：codex broken_install；native fallback 完成但报告内容丢失（已知问题）——无可计覆盖。
+- **Approval readiness: PASS**（D1 结构裁定；CEO 轮 D8-D11 结转；无 pending 行）
+- **Suppressed findings**：无。
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 3 | CLEAR | 6 proposals, 6 accepted, 0 deferred |
-| Outside Review | codex (auto) | Independent 2nd opinion | 6 | unavailable | codex broken_install；native fallback 内容丢失——无可计覆盖 |
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 3 | STALE | 上次 2026-10-08 @AI 透明化 spec——本 spec 需新一轮 |
-| Design Review | `/plan-design-review` | UI/UX gaps | 1 | ISSUES OPEN | 上轮（AI 透明化）5→7/10；本 spec 的 AI 中心建议实现前专项 |
+| Outside Review | codex (auto) | Independent 2nd opinion | 7 | unavailable | codex broken_install；native 内容丢失——无可计覆盖 |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 4 | CLEAR (PLAN) | 1 issue（P3 注册表关系注明——已落 spec），0 critical gaps |
+| Design Review | `/plan-design-review` | UI/UX gaps | 1 | ISSUES OPEN | 上轮（透明化）5→7/10；本 spec 的 AI 中心建议实现前专项 |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
 
-- **OUTSIDE COVERAGE:** codex, plan-review phase, **unavailable** — CLI broken_install（vendor binary ENOENT，修复：`npm install -g @openai/codex`）；native fallback 两次完成但报告内容丢失。无可计覆盖。
-- **VERDICT:** CEO CLEARED（两轮对抗评审 18+5 条全部修复，D8-D11 裁定齐）——本 spec 的 eng review 与 design review 需各跑新一轮（实现前）。
+- **OUTSIDE COVERAGE:** codex, plan-review phase, **unavailable** — CLI broken_install（vendor binary ENOENT，修复：`npm install -g @openai/codex`）；native fallback 完成但报告内容丢失。无可计覆盖。
+- **VERDICT:** CEO + ENG CLEARED——可实现；实现前建议对 AI 中心跑一轮 /plan-design-review 专项（非阻塞）。
 
 NO UNRESOLVED DECISIONS
