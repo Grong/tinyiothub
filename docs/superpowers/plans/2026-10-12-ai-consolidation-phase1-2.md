@@ -733,6 +733,7 @@ async fn run_recorded_persist_retries_before_dlq() {
   2. proposal 行写 agent_actions,`tick_id = report.run_id`(C3 联结);
   3. problem_key 就地刷新逻辑复用(heartbeat.rs:420-460 的 SELECT+UPDATE 块抽成 `pub(crate) async fn upsert_proposal_rows(tx_or_pool, ws, agent_id, proposals, tick_id)`);
   4. `outcome == Failed` 时补 G3 system_error 事件(对齐 persist.rs:303-325)
+- **Shadow 门控(spec「统一 Run 路径只产报告不落库/不落提案」的实现点)**:以上 heartbeat 支路整体挂在 `ShadowFlags.heartbeat_unified_persist`(默认 false)后——双跑期统一路径的 RunRecorded 只进 shadow observer(Task 13),不落 agent_runs 也不落提案;切换期(T15)翻旗删除门控
 
 - [ ] **Step 1: 写失败测试**
 
@@ -951,6 +952,7 @@ impl crate::runtime::thing_agent::traits::DirectiveSink for RecordingSink {
 
 **Interfaces:**
 - Produces: cloud 启动时:heartbeat 任务表/trust 表/intervals 表/last_ticks 表/governor 注入 ThingAgentManager;HeartbeatBridge 换接 DirectiveSink(Task 11);**`ThingAgentManager` 持每工作区 `Arc<Notify>` 表并暴露 `pub fn heartbeat_reload_notify(&self, ws: &str) -> Arc<tokio::sync::Notify>`;update_tasks/update_config handler 在写穿 DB+内存表后调它**(行为保持清单第 3 行的接线点);HeartbeatRunner 仍启动(双跑期)
+- **Shadow observer(spec「比对期 N=7 天或 M=50 次 tick」的生产观测面)**:新增 persist 并列订阅者 `shadow_observer`:同时订阅 HeartbeatResultReady(旧路径结果)与 RunRecorded(trigger=heartbeat:%,新路径报告),按 workspace 配对后比对白名单(status/summary/proposals 集合/trace 工具名序列),不一致打 `warn!`(带字段级 diff)并递增 `shadow_mismatches` 计数(Metrics);生产双跑期靠日志/计数观察等价性。**真实 LLM 下两路径输出天然有方差**——observer 比对的是结构白名单(状态映射/proposals 工具名集合/trace 工具名序列),summary 文本只记长度级差异提示,不做逐字断言(逐字等价由 Task 14 的确定性 harness 负责)
 
 - [ ] **Step 1: 写失败测试**(启动后 manager 持有 heartbeat deps;workspace start 后 heartbeat trigger 任务在 WorkspaceLoop.tasks 中)
 - [ ] **Step 2: 跑确认失败**
@@ -1003,8 +1005,8 @@ async fn shadow_equiv_status_summary_proposals_trace() {
 **Files:**
 - Delete: `crates/agent/src/runtime/heartbeat/loop_.rs`、`runner.rs`(heartbeat 的)
 - Modify: `crates/agent/src/runtime/heartbeat/mod.rs`(保留 types/report/metrics 中被引用的部分)
-- Modify: `apps/cloud/src/shared/app_state.rs`(heartbeat_runner 字段删除)、`bootstrap.rs`
-- Modify: `apps/cloud/src/domains/agent/host/persist.rs`(HeartbeatResultReady 支路+spawn_heartbeat_retry 删除;AgentEventKind::HeartbeatResultReady 删除——事件枚举精简)
+- Modify: `apps/cloud/src/shared/app_state.rs`(heartbeat_runner 字段删除)、`bootstrap.rs`(含 shadow observer 与 `ShadowFlags.heartbeat_unified_persist` 翻旗为 true 后删门控)
+- Modify: `apps/cloud/src/domains/agent/host/persist.rs`(HeartbeatResultReady 支路+spawn_heartbeat_retry 删除;AgentEventKind::HeartbeatResultReady 删除——事件枚举精简;heartbeat 支路的 shadow 门控删除,Task 8 代码转为唯一路径)
 
 **Interfaces:**
 - 前置:Task 14 生产双跑 N=7天/M=50 tick 达标;get_logs 读侧已切(Task 10)
