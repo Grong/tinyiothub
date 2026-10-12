@@ -4,9 +4,11 @@ use tokio::sync::mpsc;
 
 use crate::runtime::thing_agent::types::WakeSignal;
 
+pub mod heartbeat;
 pub mod thing_event;
 pub mod timer;
 
+pub use heartbeat::HeartbeatTrigger;
 pub use thing_event::ThingEventTrigger;
 pub use timer::TimerTrigger;
 
