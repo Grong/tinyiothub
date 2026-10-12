@@ -282,6 +282,10 @@ fn trigger_label(signal: &WakeSignal) -> String {
             thing_id, event_name, ..
         } => format!("thing:{thing_id}:event:{event_name}"),
         TriggerSource::Timer => format!("timer:{}", signal.workspace_id),
+        TriggerSource::Heartbeat { .. } => signal
+            .dedup_key
+            .clone()
+            .unwrap_or_else(|| format!("heartbeat:{}", signal.workspace_id)),
         TriggerSource::UserDirective { user_id, .. } => format!("user:{user_id}"),
         TriggerSource::Merged { .. } => {
             format!("merged:{}", signal.dedup_key.as_deref().unwrap_or("signals"))
@@ -308,6 +312,8 @@ fn collect_problem_keys_into(source: &TriggerSource, out: &mut Vec<String>) {
                 collect_problem_keys_into(&s.source, out);
             }
         }
+        // 心跳无 problem_key;X6 桥指令走 UserDirective 不变。
+        TriggerSource::Heartbeat { .. } => {}
         _ => {}
     }
 }
@@ -363,9 +369,12 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
     };
 
     // T7 工单人工解法注入（fail-soft：读失败则空段，不阻断 run）。
-    // 同 thing 优先（ThingEvent 信号带 thing_id；其余源按 workspace 取最近）。
+    // 同 thing 优先（ThingEvent / 告警心跳信号带 thing_id；其余源按 workspace 取最近）。
     let signal_thing_id = match &signal.source {
         TriggerSource::ThingEvent { thing_id, .. } => Some(thing_id.as_str()),
+        TriggerSource::Heartbeat {
+            alarm: Some(alarm),
+        } => alarm.thing_id.as_deref(),
         _ => None,
     };
     let resolutions = match deps
@@ -473,7 +482,7 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::runtime::thing_agent::types::{Outcome, Priority};
+    use crate::runtime::thing_agent::types::{HeartbeatAlarmContext, Outcome, Priority};
     use std::sync::Mutex;
 
     use crate::port::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
@@ -1138,6 +1147,39 @@ pub(crate) mod tests {
             dedup_key: Some(EVENT_KEY.to_string()),
         };
         assert_eq!(trigger_label(&merged), format!("merged:{EVENT_KEY}"));
+    }
+
+    #[test]
+    fn heartbeat_variant_trigger_label_uses_dedup_key() {
+        // 定时 tick:dedup heartbeat:{ws};告警:heartbeat:{ws}:{thing}:{alarm_type}
+        let tick = WakeSignal {
+            workspace_id: "ws1".into(),
+            priority: Priority::Normal,
+            source: TriggerSource::Heartbeat { alarm: None },
+            dedup_key: Some("heartbeat:ws1".into()),
+        };
+        assert_eq!(trigger_label(&tick), "heartbeat:ws1");
+        // trigger_type_of 取前缀 → "heartbeat"(读侧/统计按类型过滤依赖此前缀)
+        assert_eq!(tick.dedup_key.as_deref().unwrap().split(':').next().unwrap(), "heartbeat");
+    }
+
+    #[test]
+    fn heartbeat_alarm_variant_carries_context_and_distinct_dedup() {
+        let alarm = WakeSignal {
+            workspace_id: "ws1".into(),
+            priority: Priority::Critical,
+            source: TriggerSource::Heartbeat {
+                alarm: Some(HeartbeatAlarmContext {
+                    thing_id: Some("d1".into()),
+                    alarm_type: Some("offline".into()),
+                    rule_id: Some("r1".into()),
+                    reason: "设备离线".into(),
+                    context: "{}".into(),
+                }),
+            },
+            dedup_key: Some("heartbeat:ws1:d1:offline".into()),
+        };
+        assert_eq!(trigger_label(&alarm), "heartbeat:ws1:d1:offline");
     }
 
     /// 工单 T2：agent_provider 失败的 early-return 必须发 RunRecorded

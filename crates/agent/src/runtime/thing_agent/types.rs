@@ -19,6 +19,10 @@ pub enum TriggerSource {
         data: serde_json::Value,
     },
     Timer,
+    /// 心跳巡检 tick(D11 专用变体——不复用 Timer:丢每工作区可配间隔,
+    /// 且 dedup 与 timer:{ws} 碰撞吞 tick)。alarm=None=定时 tick;
+    /// Some=告警驱动(优先级映射:Critical→Critical,High/Normal→Normal)。
+    Heartbeat { alarm: Option<HeartbeatAlarmContext> },
     UserDirective {
         user_id: String,
         text: String,
@@ -37,12 +41,23 @@ pub enum TriggerSource {
     },
 }
 
+/// 告警驱动心跳 run 的上下文（D11）：定时 tick 为 None；告警触发时携带
+/// 命中的物/告警类型/规则与人读原因，`context` 为告警规则评估快照 JSON。
+#[derive(Debug, Clone)]
+pub struct HeartbeatAlarmContext {
+    pub thing_id: Option<String>,
+    pub alarm_type: Option<String>,
+    pub rule_id: Option<String>,
+    pub reason: String,
+    pub context: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct WakeSignal {
     pub workspace_id: String,
     pub priority: Priority,
     pub source: TriggerSource,
-    pub dedup_key: Option<String>, // 事件: thing:{id}:event:{name}; Timer: timer:{ws}; UserDirective: None
+    pub dedup_key: Option<String>, // 事件: thing:{id}:event:{name}; Timer: timer:{ws}; Heartbeat: heartbeat:{ws}(:{thing}:{alarm_type}); UserDirective: None
 }
 
 #[cfg(test)]

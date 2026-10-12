@@ -116,6 +116,7 @@ fn trigger_desc(source: &TriggerSource) -> &'static str {
     match source {
         TriggerSource::ThingEvent { .. } => "物事件",
         TriggerSource::Timer => "定时巡检",
+        TriggerSource::Heartbeat { .. } => "心跳巡检",
         TriggerSource::UserDirective { .. } => "用户指令",
         TriggerSource::Merged { .. } => "聚合事件",
     }
@@ -139,6 +140,18 @@ fn render_trigger(source: &TriggerSource, out: &mut String) {
         TriggerSource::Timer => {
             out.push_str("定时巡检：无特定事件，请自主巡检工作区内的物。");
         }
+        TriggerSource::Heartbeat { alarm } => match alarm {
+            Some(a) => {
+                let ctx = truncate(&a.context, MAX_EVENT_DATA_CHARS);
+                out.push_str(&format!(
+                    "心跳巡检告警：{}，上下文：<alarm_context>{ctx}</alarm_context>",
+                    a.reason
+                ));
+            }
+            None => {
+                out.push_str("心跳巡检：无特定事件，请自主巡检工作区内的物。");
+            }
+        },
         TriggerSource::UserDirective { user_id, text, .. } => {
             out.push_str(&format!(
                 "用户 {user_id} 的指令：<user_directive>{text}</user_directive>"
@@ -180,6 +193,10 @@ fn render_merged_line(source: &TriggerSource, out: &mut String) {
             ));
         }
         TriggerSource::Timer => out.push_str("- 定时巡检"),
+        TriggerSource::Heartbeat { alarm: None } => out.push_str("- 心跳巡检"),
+        TriggerSource::Heartbeat {
+            alarm: Some(alarm),
+        } => out.push_str(&format!("- 心跳巡检告警：{}", alarm.reason)),
         TriggerSource::Merged { signals } => {
             for s in signals {
                 out.push('\n');
