@@ -1,6 +1,7 @@
 //! Thing-agent wake/run loop — types shared by trigger, scheduler, runner, policy.
 
 pub mod active_runs;
+pub mod governor;
 pub mod manager;
 pub mod pushback;
 pub mod registry;
