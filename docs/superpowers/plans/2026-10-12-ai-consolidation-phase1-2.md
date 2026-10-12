@@ -149,7 +149,7 @@ fn heartbeat_alarm_variant_carries_context_and_distinct_dedup() {
 
 - [ ] **Step 2: 跑测试确认编译错误**
 
-Run: `cargo test -p tinyiothub-agent heartbeat_variant 2>&1 | tail -3`
+Run: `cargo test -p agent heartbeat_variant 2>&1 | tail -3`
 Expected: FAIL(变体不存在)
 
 - [ ] **Step 3: 实现变体 + 两个 match arm**
@@ -176,7 +176,7 @@ TriggerSource::Heartbeat { .. } => signal
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `cargo test -p tinyiothub-agent heartbeat 2>&1 | tail -3`
+Run: `cargo test -p agent heartbeat 2>&1 | tail -3`
 Expected: PASS(含新 2 测试 + 既有全绿——match 穷尽性会强制补齐所有 match arm,编译器领着走)
 
 - [ ] **Step 5: Commit**
@@ -239,7 +239,7 @@ fn success_resets_failure_count() {
 }
 ```
 
-- [ ] **Step 2: 跑确认失败** — Run: `cargo test -p tinyiothub-agent governor 2>&1 | tail -3` Expected: FAIL(类型不存在)
+- [ ] **Step 2: 跑确认失败** — Run: `cargo test -p agent governor 2>&1 | tail -3` Expected: FAIL(类型不存在)
 
 - [ ] **Step 3: 实现 governor.rs**
 
@@ -300,7 +300,7 @@ impl HeartbeatGovernor {
 }
 ```
 
-- [ ] **Step 4: 跑确认通过** — Run: `cargo test -p tinyiothub-agent governor` Expected: 2 PASS
+- [ ] **Step 4: 跑确认通过** — Run: `cargo test -p agent governor` Expected: 2 PASS
 - [ ] **Step 5: Commit** — `git add crates/agent/src/runtime/thing_agent/ && git commit -m "feat(agent): HeartbeatGovernor 连败治理——统一循环的心跳暂停语义"`
 
 ### Task 5: HeartbeatTrigger(行为保持清单第 4 行:每工作区可配间隔)
@@ -493,7 +493,7 @@ async fn empty_or_all_paused_tasks_emit_nothing() {
 }
 ```
 
-- [ ] **Step 2: 跑确认失败** — `cargo test -p tinyiothub-agent heartbeat_trigger` Expected: FAIL
+- [ ] **Step 2: 跑确认失败** — `cargo test -p agent heartbeat_trigger` Expected: FAIL
 
 - [ ] **Step 3: 实现 trigger/heartbeat.rs**(发射优先——对齐 loop_.rs 先 tick 后等待;每轮重读间隔/policy/governor/任务表):
 
@@ -578,7 +578,7 @@ async fn reload_notify_forces_immediate_tick() {
 }
 ```
 
-- [ ] **Step 4: 跑确认通过** — `cargo test -p tinyiothub-agent heartbeat_trigger` Expected: 3 PASS
+- [ ] **Step 4: 跑确认通过** — `cargo test -p agent heartbeat_trigger` Expected: 3 PASS
 - [ ] **Step 5: Commit** — `git commit -m "feat(agent): HeartbeatTrigger——每工作区间隔+policy 抑制+governor 暂停"`
 
 ### Task 6: 统一循环接线——manager 装配 Heartbeat 源 run
@@ -611,7 +611,7 @@ async fn heartbeat_prompt_contains_tasks_and_trust() {
 }
 ```
 
-- [ ] **Step 2: 跑确认失败** — `cargo test -p tinyiothub-agent heartbeat_signal` Expected: FAIL
+- [ ] **Step 2: 跑确认失败** — `cargo test -p agent heartbeat_signal` Expected: FAIL
 
 - [ ] **Step 3: 实现**
 
@@ -689,7 +689,7 @@ let heartbeat = HeartbeatTrigger {
 
 (PipelineDeps 相应持有 `heartbeat_intervals: Arc<DashMap<String,u32>>`、`heartbeat_tasks_map: Arc<DashMap<String, Vec<HeartbeatTask>>>`、governor——由 cloud bootstrap 注入,与 handler 写穿共享同一张表,D11-⑤ 写序不变。)
 
-- [ ] **Step 4: 跑确认通过** — `cargo test -p tinyiothub-agent` Expected: 全绿
+- [ ] **Step 4: 跑确认通过** — `cargo test -p agent` Expected: 全绿
 - [ ] **Step 5: Commit** — `git commit -m "feat(agent): 统一循环接 Heartbeat 源——prompt 装配+governor 记账+trigger 挂载"`
 
 ### Task 7: RunRecorded 重试对齐(D10)
@@ -787,9 +787,9 @@ async fn migration_skips_trace_less_anchor_gracefully() {
 }
 ```
 
-- [ ] **Step 2: 跑确认失败** — `cargo test -p tinyiothub-db migration` Expected: FAIL(迁移不存在)
+- [ ] **Step 2: 跑确认失败** — `cargo test -p db migration` Expected: FAIL(迁移不存在)
 - [ ] **Step 3: 写迁移 SQL**(INSERT OR IGNORE + 分两步,顺序注释标明埋伏③)
-- [ ] **Step 4: 跑确认通过 + `touch crates/db/src/lib.rs` 后全量** — `cargo test -p tinyiothub-db` Expected: 全绿
+- [ ] **Step 4: 跑确认通过 + `touch crates/db/src/lib.rs` 后全量** — `cargo test -p db` Expected: 全绿
 - [ ] **Step 5: Commit** — `git commit -m "feat(db): 心跳历史迁移——trace 回填合成 agent_runs+提案改锚 run_id(埋伏③顺序)"`
 
 ### Task 10: 读侧兼容视角——get_logs 改读 agent_runs
@@ -924,7 +924,7 @@ impl crate::runtime::thing_agent::traits::DirectiveSink for RecordingSink {
 
 - [ ] **Step 2: 跑确认失败** — Expected: FAIL
 - [ ] **Step 3: 实现**(bridge 构造点换依赖:HeartbeatRunner→DirectiveSink+HeartbeatGovernor;bootstrap 接线在 Task 13)
-- [ ] **Step 4: 跑确认通过** — `cargo test -p tinyiothub-agent` Expected: 全绿
+- [ ] **Step 4: 跑确认通过** — `cargo test -p agent` Expected: 全绿
 - [ ] **Step 5: Commit** — `git commit -m "feat(agent): 告警链转 Heartbeat 变体入统一循环——优先级映射+分键 dedup(N3)"`
 
 ### Task 12: last_tick D13 实时读透出
@@ -995,7 +995,7 @@ async fn shadow_equiv_status_summary_proposals_trace() {
 
 - [ ] **Step 1: 写对照测试(先红——新路径在 shadow 期不落库断言就位)**
 - [ ] **Step 2: 跑确认失败/通过调平**——两路径输出差异调齐到白名单一致(差异即归一引入的行为漂移,逐个对齐或记录为有意变更)
-- [ ] **Step 3: 跑全量** — `cargo test -p tinyiothub-agent --test heartbeat_shadow_equiv` Expected: PASS
+- [ ] **Step 3: 跑全量** — `cargo test -p agent --test heartbeat_shadow_equiv` Expected: PASS
 - [ ] **Step 4: Commit** — `git commit -m "test(agent): shadow 双跑等价对照——白名单 status/summary/proposals/trace"`
 
 注:spec 的「比对期 N=7 天或 M=50 次 tick 后切换」指**部署后**生产双跑观察期——由运维节奏执行,不是本计划的代码任务;切换判据达标后才进 Task 15。
