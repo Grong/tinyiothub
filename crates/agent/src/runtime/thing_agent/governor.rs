@@ -44,8 +44,17 @@ impl HeartbeatGovernor {
         }
     }
 
+    /// 告警信号/外部唤醒恢复——仅暂停时清态(对齐 loop_.rs:128-133:外部信号
+    /// 仅在 paused 时清连败);未暂停时调用是 no-op,不动连败计数。
     pub fn resume(&self, workspace_id: &str) {
-        self.inner.remove(workspace_id);
+        let paused = self
+            .inner
+            .get(workspace_id)
+            .map(|e| e.paused_at.is_some())
+            .unwrap_or(false);
+        if paused {
+            self.inner.remove(workspace_id);
+        }
     }
 
     pub fn consecutive_failures(&self, workspace_id: &str) -> u32 {
@@ -68,11 +77,29 @@ mod tests {
         g.record_failure("ws");
         assert!(g.is_paused("ws", Duration::from_secs(60)), "5 连败暂停");
         assert!(g.is_paused("ws", Duration::from_secs(60)));
-        // cooldown 用注入时钟测:paused_at 用 Instant,测试用短 cooldown 无法穿越——
-        // is_paused 第三个语义(恢复)由 record_success/resume 测:
+        // Duration::ZERO 恒过 cooldown=覆盖自动恢复分支:
+        assert!(!g.is_paused("ws", Duration::ZERO));
+        assert_eq!(g.consecutive_failures("ws"), 0, "cooldown 到点自动清态");
+        // 恢复路径再由 record_failure/resume 测:
+        for _ in 0..5 {
+            g.record_failure("ws");
+        }
+        assert!(g.is_paused("ws", Duration::from_secs(60)));
         g.resume("ws");
         assert!(!g.is_paused("ws", Duration::from_secs(60)));
         assert_eq!(g.consecutive_failures("ws"), 0);
+    }
+
+    #[test]
+    fn resume_when_not_paused_keeps_failure_count() {
+        let g = HeartbeatGovernor::default();
+        for _ in 0..4 {
+            g.record_failure("ws");
+        }
+        g.resume("ws");
+        assert_eq!(g.consecutive_failures("ws"), 4, "未暂停时 resume 是 no-op");
+        g.record_failure("ws");
+        assert!(g.is_paused("ws", Duration::from_secs(60)), "连败计数续跑到阈值");
     }
 
     #[test]
