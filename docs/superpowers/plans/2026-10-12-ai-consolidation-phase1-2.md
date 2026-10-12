@@ -522,7 +522,7 @@ async fn run(&self, tx: mpsc::Sender<WakeSignal>) -> anyhow::Result<()> {
         let interval = self
             .intervals
             .get(&self.workspace_id)
-            .map(|m| Duration::from_secs(*m as u64 * 60))
+            .map(|m| Duration::from_secs((*m).max(MIN_HEARTBEAT_INTERVAL_MINUTES) as u64 * 60))
             .unwrap_or(self.default_interval);
 
         if has_active_tasks && policy_ok && !self.governor.is_paused(&self.workspace_id, interval) {
