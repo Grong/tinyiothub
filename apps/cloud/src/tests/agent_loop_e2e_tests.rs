@@ -255,6 +255,7 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
             // 30s 合并窗口：timer 首 tick 停在窗口内，测试时长（≪30s）内仅
             // 指令 run 落库——"仅 1 行"的断言因此确定。
             merge_window: Duration::from_secs(30),
+            ..Default::default()
         },
         event_bus,
         drop_notifier: None,

@@ -13,7 +13,7 @@ use super::Trigger;
 use crate::runtime::thing_agent::governor::HeartbeatGovernor;
 use crate::runtime::thing_agent::traits::AutonomyPolicyReader;
 use crate::runtime::thing_agent::types::{Priority, TriggerSource, WakeSignal};
-use tinyiothub_core::heartbeat::HeartbeatTask;
+use tinyiothub_core::heartbeat::{HeartbeatTask, MIN_HEARTBEAT_INTERVAL_MINUTES};
 use tinyiothub_policy::autonomy::AutonomyMode;
 
 /// 周期心跳触发器:每工作区可配间隔(intervals 表每轮重读,
@@ -66,11 +66,12 @@ impl Trigger for HeartbeatTrigger {
                 }
             };
 
-            // 每轮重读间隔(interval_minutes 热改生效)
+            // 每轮重读间隔(interval_minutes 热改生效);clamp 下限对齐
+            // runner.rs:404 / db validated(T5 评审结转,T6 补)。
             let interval = self
                 .intervals
                 .get(&self.workspace_id)
-                .map(|m| Duration::from_secs(*m as u64 * 60))
+                .map(|m| Duration::from_secs(u64::from((*m).max(MIN_HEARTBEAT_INTERVAL_MINUTES)) * 60))
                 .unwrap_or(self.default_interval);
 
             if has_active_tasks && policy_ok && !self.governor.is_paused(&self.workspace_id, interval) {

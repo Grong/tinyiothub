@@ -393,8 +393,11 @@ async fn build_fixture(
             min_wake_level: 3,
             // 亚秒合并窗口：真实时间下测试快速收敛。
             merge_window,
+            ..Default::default()
         },
         Arc::new(tinyiothub_agent::runtime::thing_agent::traits::NoopTicketResolutions),
+        // Task 6：空表默认——heartbeat trigger 空任务抑制不 tick。
+        tinyiothub_agent::runtime::thing_agent::HeartbeatDeps::default(),
     ));
 
     FixtureParts {

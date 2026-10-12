@@ -11,7 +11,7 @@ pub mod traits;
 pub mod trigger;
 pub mod types;
 pub use active_runs::{ActiveRunGuard, ActiveRunRegistry};
-pub use manager::{AutonomousAgentProvider, ThingAgentManager, ThingAgentManagerConfig};
+pub use manager::{AutonomousAgentProvider, HeartbeatDeps, ThingAgentManager, ThingAgentManagerConfig};
 pub use runner::{AgentHandle, RunContext, RunContextInner, RunOutcome, Runner, ToolTraceEntry, TruncationReason};
 pub use scheduler::{EnqueueError, Scheduler, SchedulerHandle};
 pub use traits::*;

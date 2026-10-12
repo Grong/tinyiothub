@@ -8,7 +8,7 @@
 
 use super::constitution::CONSTITUTION;
 use crate::runtime::thing_agent::runner::MAX_TOOL_CALLS_PER_RUN;
-use crate::runtime::thing_agent::types::{TriggerSource, WakeSignal};
+use crate::runtime::thing_agent::types::{HeartbeatAlarmContext, TriggerSource, WakeSignal};
 
 /// Max memory entries injected (aligned with the history cap, enforced here).
 const MAX_MEMORY_ENTRIES: usize = 5;
@@ -141,13 +141,7 @@ fn render_trigger(source: &TriggerSource, out: &mut String) {
             out.push_str("定时巡检：无特定事件，请自主巡检工作区内的物。");
         }
         TriggerSource::Heartbeat { alarm } => match alarm {
-            Some(a) => {
-                let ctx = truncate(&a.context, MAX_EVENT_DATA_CHARS);
-                out.push_str(&format!(
-                    "心跳巡检告警：{}，上下文：<alarm_context>{ctx}</alarm_context>",
-                    a.reason
-                ));
-            }
+            Some(a) => render_heartbeat_alarm(a, out),
             None => {
                 out.push_str("心跳巡检：无特定事件，请自主巡检工作区内的物。");
             }
@@ -165,6 +159,17 @@ fn render_trigger(source: &TriggerSource, out: &mut String) {
             }
         }
     }
+}
+
+/// 心跳告警渲染（T3 落点，Task 6 抽出为 pub）：四段式 prompt 的触发段与
+/// manager 的 heartbeat 专用 prompt 路径（告警驱动 run 附触发上下文）共用
+/// 同一渲染，格式不重复造。
+pub fn render_heartbeat_alarm(alarm: &HeartbeatAlarmContext, out: &mut String) {
+    let ctx = truncate(&alarm.context, MAX_EVENT_DATA_CHARS);
+    out.push_str(&format!(
+        "心跳巡检告警：{}，上下文：<alarm_context>{ctx}</alarm_context>",
+        alarm.reason
+    ));
 }
 
 /// One line per aggregated signal (T8 merge window): event name / thing id /
@@ -194,9 +199,7 @@ fn render_merged_line(source: &TriggerSource, out: &mut String) {
         }
         TriggerSource::Timer => out.push_str("- 定时巡检"),
         TriggerSource::Heartbeat { alarm: None } => out.push_str("- 心跳巡检"),
-        TriggerSource::Heartbeat {
-            alarm: Some(alarm),
-        } => out.push_str(&format!("- 心跳巡检告警：{}", alarm.reason)),
+        TriggerSource::Heartbeat { alarm: Some(alarm) } => out.push_str(&format!("- 心跳巡检告警：{}", alarm.reason)),
         TriggerSource::Merged { signals } => {
             for s in signals {
                 out.push('\n');

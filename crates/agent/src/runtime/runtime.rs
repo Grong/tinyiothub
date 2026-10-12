@@ -99,6 +99,9 @@ impl AgentRuntime {
             Arc::new(Runner::new()),
             deps.thing_agent_config,
             deps.ticket_resolutions,
+            // Task 6：heartbeat 共享表默认空——trigger 空任务抑制不 tick
+            // （双跑期安全）；真实共享表注入由 T13 bootstrap 接线。
+            super::thing_agent::HeartbeatDeps::default(),
         ));
         // T18 X6 心跳桥：HeartbeatCompleted 的结构化 proposals 投递 UserDirective。
         // Task 6 起 O11 dedup 走 RunRegistry 内存（与 thing_agents 共享同一实例）。

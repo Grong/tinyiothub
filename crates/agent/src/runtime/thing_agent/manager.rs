@@ -5,21 +5,25 @@
 //!
 //! ```text
 //! WorkspaceCreated → start(): ThingEventTrigger ─┐
-//!                       TimerTrigger ────────────┼─► forward ─► SchedulerHandle ─► run_pipeline
+//!                       TimerTrigger ────────────┤
+//!                       HeartbeatTrigger (T5) ───┼─► forward ─► SchedulerHandle ─► run_pipeline
 //!                       DirectiveSink (T14) ─────┘                    │
 //!                                                                     ▼
-//!                                              build_prompt (T10, memory/history from RunRegistry)
+//!                                              build_prompt (T10, memory/history from RunRegistry;
+//!                                              Heartbeat 源走 heartbeat 专用 prompt,Task 6)
 //!                                                                     │
 //!                                              factory.get_or_create (T11) → runner.execute (T9)
 //!                                                                     │
 //!                                              registry.record + RunRecorded 事件 (Task 4) → deliver (T13)
+//!                                              Heartbeat 源另记 governor 连败 (Task 6,行为保持清单第 1 行)
 //! WorkspaceDeleted → stop(): abort triggers, drain (O26), drop handle
 //! ```
 //!
-//! Mode gating (off/diagnose/act) is NOT re-implemented here: both triggers
-//! (T5 timer / T7 thing-event) already suppress signals when the policy mode
-//! is off, and the autonomous `invoke_action` tool (T11) fail-closes on the
-//! policy gate. The manager is deliberately a dumb wiring layer.
+//! Mode gating (off/diagnose/act) is NOT re-implemented here: all triggers
+//! (T5 timer / T5 heartbeat / T7 thing-event) already suppress signals when
+//! the policy mode is off, and the autonomous `invoke_action` tool (T11)
+//! fail-closes on the policy gate. The manager is deliberately a dumb wiring
+//! layer.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,14 +35,18 @@ use tokio::task::JoinHandle;
 use crate::prompt::runtime::build_prompt;
 use crate::runtime::events::{AgentEventBus, AgentEventKind};
 use crate::runtime::thing_agent::active_runs::ActiveRunRegistry;
+use crate::runtime::thing_agent::governor::HeartbeatGovernor;
 use crate::runtime::thing_agent::pushback::deliver;
 use crate::runtime::thing_agent::registry::RunRegistry;
 use crate::runtime::thing_agent::runner::{AgentHandle, RunContext, RunContextInner, Runner};
 use crate::runtime::thing_agent::scheduler::{EnqueueError, Scheduler, SchedulerHandle};
-use crate::runtime::thing_agent::traits::{AutonomyPolicyReader, DirectiveSink, ThingAgentHost};
-use crate::runtime::thing_agent::trigger::{ThingEventTrigger, TimerTrigger, Trigger};
+use crate::runtime::thing_agent::traits::{
+    AutonomyPolicyReader, DirectiveSink, HeartbeatTaskReader, ThingAgentHost, TrustConfigReader,
+};
+use crate::runtime::thing_agent::trigger::{HeartbeatTrigger, ThingEventTrigger, TimerTrigger, Trigger};
 use crate::runtime::thing_agent::types::{TriggerSource, WakeSignal};
 use tinyiothub_core::agent_runs::format_summary;
+use tinyiothub_core::heartbeat::{HeartbeatTask, TrustConfig};
 use tinyiothub_policy::autonomy::AutonomyMode;
 
 /// Capacity of the per-workspace trigger→scheduler channel. Backpressure
@@ -76,6 +84,9 @@ pub struct ThingAgentManagerConfig {
     /// 调度器合并窗口（spec 默认 30s）。集成测试用亚秒窗口在真实时间下
     /// 运行（暂停时钟 auto-advance 与 sqlx 工作线程往返不兼容）。
     pub merge_window: Duration,
+    /// 心跳巡检默认间隔（T6；bootstrap 期自 HeartbeatConfig.interval_minutes
+    /// 来，T13 接线；每工作区覆盖走 heartbeat intervals 共享表）。
+    pub heartbeat_default_interval: Duration,
 }
 
 impl Default for ThingAgentManagerConfig {
@@ -84,8 +95,27 @@ impl Default for ThingAgentManagerConfig {
             timer_interval: Duration::from_secs(15 * 60),
             min_wake_level: 3,
             merge_window: crate::runtime::thing_agent::scheduler::MERGE_WINDOW,
+            heartbeat_default_interval: Duration::from_secs(15 * 60),
         }
     }
+}
+
+/// Heartbeat 源的共享内存依赖（Task 6）：trigger 的 tasks/intervals 读表、
+/// prompt 装配的任务/信任注入源、governor 连败治理、reload_notify 热更新
+/// 信号。cloud bootstrap（T13）注入，handler 写穿共享同一张表（D11-⑤ 写序
+/// 不变）。默认空表 = trigger 空任务抑制不 tick（行为保持 loop_.rs:63）。
+#[derive(Clone, Default)]
+pub struct HeartbeatDeps {
+    /// 每工作区巡检任务表（trigger 读 + prompt 读共享同一张）。
+    pub tasks: Arc<DashMap<String, Vec<HeartbeatTask>>>,
+    /// 每工作区间隔（分钟）覆盖表——update_config 写穿。
+    pub intervals: Arc<DashMap<String, u32>>,
+    /// 每工作区信任配置表——prompt 信任段注入源。
+    pub trust_configs: Arc<DashMap<String, TrustConfig>>,
+    /// 连败治理（T4）：run_pipeline 记账，trigger 读暂停态。
+    pub governor: HeartbeatGovernor,
+    /// 热更新信号：handler 写穿 DB+内存表后 notify，trigger 立即 tick。
+    pub reload_notify: Arc<tokio::sync::Notify>,
 }
 
 /// Clonable dependency bundle for the run pipeline.
@@ -104,6 +134,18 @@ struct PipelineDeps {
     /// 进行中 run 的内存注册表（T3/T4）：run_pipeline 每个 run 先注册再发
     /// RunStarted，实时进度轮询的数据源。RAII guard 随 run 结束注销。
     active_runs: ActiveRunRegistry,
+    /// heartbeat 源 prompt 任务注入源（Task 6；与 heartbeat_tasks_map 同一张表）。
+    heartbeat_tasks: Arc<dyn HeartbeatTaskReader>,
+    /// heartbeat 源 prompt 信任段注入源（Task 6）。
+    trust_configs: Arc<dyn TrustConfigReader>,
+    /// heartbeat trigger 的任务读表（空任务/全暂停不 tick，loop_.rs:63）。
+    heartbeat_tasks_map: Arc<DashMap<String, Vec<HeartbeatTask>>>,
+    /// heartbeat trigger 的每工作区间隔（分钟）覆盖表。
+    heartbeat_intervals: Arc<DashMap<String, u32>>,
+    /// heartbeat 连败治理（T4）：run_pipeline 记账，trigger 读暂停态。
+    governor: HeartbeatGovernor,
+    /// heartbeat 热更新信号：handler 写穿后 notify，trigger 立即 tick。
+    heartbeat_reload_notify: Arc<tokio::sync::Notify>,
 }
 
 /// One running workspace loop: the scheduler handle plus the trigger/forward
@@ -124,6 +166,9 @@ pub struct ThingAgentManager {
 }
 
 impl ThingAgentManager {
+    // 9 参（超 workspace 阈值 8）：Task 6 起 heartbeat 依赖以 HeartbeatDeps
+    // 聚合一束进场，余下均为不可再合的核心管线依赖（db crate 同款 allow 先例）。
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         host: Arc<dyn ThingAgentHost>,
         policy_repo: Arc<dyn AutonomyPolicyReader>,
@@ -133,6 +178,7 @@ impl ThingAgentManager {
         runner: Arc<Runner>,
         config: ThingAgentManagerConfig,
         ticket_resolutions: Arc<dyn crate::runtime::thing_agent::traits::TicketResolutionProvider>,
+        heartbeat: HeartbeatDeps,
     ) -> Self {
         Self {
             deps: PipelineDeps {
@@ -144,6 +190,12 @@ impl ThingAgentManager {
                 runner,
                 ticket_resolutions,
                 active_runs: ActiveRunRegistry::with_default_capacity(),
+                heartbeat_tasks: heartbeat.tasks.clone(),
+                trust_configs: heartbeat.trust_configs.clone(),
+                heartbeat_tasks_map: heartbeat.tasks,
+                heartbeat_intervals: heartbeat.intervals,
+                governor: heartbeat.governor,
+                heartbeat_reload_notify: heartbeat.reload_notify,
             },
             config,
             workspaces: DashMap::new(),
@@ -193,15 +245,34 @@ impl ThingAgentManager {
             interval: self.config.timer_interval,
             policy_repo: Arc::clone(&self.deps.policy_repo),
         };
+        let timer_tx = tx.clone();
         let timer_task = tokio::spawn(async move {
-            if let Err(e) = timer.run(tx).await {
+            if let Err(e) = timer.run(timer_tx).await {
                 tracing::warn!(workspace_id = %ws, error = %e, "timer trigger exited with error");
+            }
+        });
+
+        // Task 6：心跳触发器挂载（T5）。空任务/全暂停不 tick；governor 暂停
+        // 抑制；reload_notify 到达立即 tick（行为保持清单第 1/3 行）。
+        let heartbeat = HeartbeatTrigger {
+            workspace_id: workspace_id.to_string(),
+            default_interval: self.config.heartbeat_default_interval,
+            intervals: Arc::clone(&self.deps.heartbeat_intervals),
+            tasks_source: Arc::clone(&self.deps.heartbeat_tasks_map),
+            policy_repo: Arc::clone(&self.deps.policy_repo),
+            governor: self.deps.governor.clone(),
+            reload_notify: Arc::clone(&self.deps.heartbeat_reload_notify),
+        };
+        let heartbeat_ws = workspace_id.to_string();
+        let heartbeat_task = tokio::spawn(async move {
+            if let Err(e) = heartbeat.run(tx).await {
+                tracing::warn!(workspace_id = %heartbeat_ws, error = %e, "heartbeat trigger exited with error");
             }
         });
 
         vacant.insert(WorkspaceLoop {
             handle,
-            tasks: vec![forward, event_task, timer_task],
+            tasks: vec![forward, event_task, timer_task, heartbeat_task],
         });
         tracing::info!(workspace_id, "thing-agent loop started");
     }
@@ -372,9 +443,7 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
     // 同 thing 优先（ThingEvent / 告警心跳信号带 thing_id；其余源按 workspace 取最近）。
     let signal_thing_id = match &signal.source {
         TriggerSource::ThingEvent { thing_id, .. } => Some(thing_id.as_str()),
-        TriggerSource::Heartbeat {
-            alarm: Some(alarm),
-        } => alarm.thing_id.as_deref(),
+        TriggerSource::Heartbeat { alarm: Some(alarm) } => alarm.thing_id.as_deref(),
         _ => None,
     };
     let resolutions = match deps
@@ -390,7 +459,25 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
     };
 
     let principles = crate::prompt::workspace::load_principles(&ws);
-    let prompt = build_prompt(&signal, &principles, &memory, &history, &allowed, &resolutions);
+    // Task 6：Heartbeat 源走 heartbeat 专用 prompt（任务列表+信任段+JSON
+    // 报告模板，行为保持 loop_.rs build_heartbeat_prompt）；告警渲染复用
+    // prompt::runtime 的既有 Heartbeat arm（T3 落点），不重复造。其余源
+    // 走四段式 build_prompt 不变。
+    let prompt = match &signal.source {
+        TriggerSource::Heartbeat { alarm } => {
+            let tasks = deps.heartbeat_tasks.active_tasks(&ws);
+            let trust = deps.trust_configs.get(&ws);
+            let task_refs: Vec<&HeartbeatTask> = tasks.iter().collect();
+            let mut p = crate::prompt::heartbeat::build_heartbeat_prompt(&ws, &principles, &task_refs, &trust);
+            if let Some(a) = alarm {
+                // 告警驱动 run：附上触发上下文（审计链 trigger_label 已含告警身份）。
+                p.push_str("\n\n");
+                crate::prompt::runtime::render_heartbeat_alarm(a, &mut p);
+            }
+            p
+        }
+        _ => build_prompt(&signal, &principles, &memory, &history, &allowed, &resolutions),
+    };
 
     let agent = match deps.agent_provider.get_or_create(&ws, Arc::clone(&ctx.inner)).await {
         Ok(agent) => agent,
@@ -401,6 +488,8 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
             // 失败（"零静默失败"承诺在此断裂）。与正常路径同构：record + emit。
             let thing_id = match &signal.source {
                 TriggerSource::ThingEvent { thing_id, .. } => Some(thing_id.clone()),
+                // T3 评审 Minor 3 结转（T6 裁决 1）：告警心跳与 ThingEvent 一致取 thing_id。
+                TriggerSource::Heartbeat { alarm: Some(alarm) } => alarm.thing_id.clone(),
                 _ => None,
             };
             let problem_key = match &signal.source {
@@ -476,6 +565,14 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
         problem_key: problem_key.map(str::to_owned),
         dedup_key: signal.dedup_key.clone(),
     });
+    // Task 6 心跳连败治理（行为保持清单第 1 行）：heartbeat 源 run 结果记账
+    // 到 governor——连败达阈由 trigger 侧暂停定时 tick；告警入口不受影响。
+    if matches!(signal.source, TriggerSource::Heartbeat { .. }) {
+        match report.outcome {
+            tinyiothub_core::agent_runs::Outcome::Failed => deps.governor.record_failure(&ws),
+            _ => deps.governor.record_success(&ws),
+        }
+    }
     deliver(&report, &signal, &deps.registry, deps.host.as_ref()).await;
 }
 
@@ -498,9 +595,11 @@ pub(crate) mod tests {
 
     /// Replies a fixed text, never calls tools; records every prompt.
     /// Clones share the prompt log (the agent holds one, the test another).
+    /// `fail` 为故障注入开关（T6 governor 连败路径）：true 时 chat 报错。
     #[derive(Clone, Default)]
     pub(crate) struct ScriptedProvider {
         pub(crate) prompts: Arc<Mutex<Vec<String>>>,
+        pub(crate) fail: Arc<std::sync::atomic::AtomicBool>,
     }
 
     #[async_trait::async_trait]
@@ -511,6 +610,9 @@ pub(crate) mod tests {
             _model: &str,
             _temperature: Option<f64>,
         ) -> anyhow::Result<ChatResponse> {
+            if self.fail.load(std::sync::atomic::Ordering::Relaxed) {
+                anyhow::bail!("scripted provider failure (test injection)");
+            }
             self.prompts
                 .lock()
                 .unwrap()
@@ -714,6 +816,9 @@ pub(crate) mod tests {
         pub(crate) host: Arc<StubHost>,
         pub(crate) runs: RunsProbe,
         pub(crate) agents: Arc<StubAgentProvider>,
+        /// T6 heartbeat 依赖（空表默认）：测试可播种 tasks/trust 后再 start，
+        /// governor 克隆读连败计数。
+        pub(crate) heartbeat: HeartbeatDeps,
     }
 
     /// Manager with all-stub deps and a 24h timer interval (the timer's
@@ -730,6 +835,7 @@ pub(crate) mod tests {
             seen: Mutex::new(vec![]),
         };
         let agents = Arc::new(StubAgentProvider::new());
+        let heartbeat = HeartbeatDeps::default();
         let manager = Arc::new(ThingAgentManager::new(
             host.clone(),
             stub_policy_reader(WS),
@@ -741,14 +847,17 @@ pub(crate) mod tests {
                 timer_interval: Duration::from_secs(24 * 3600),
                 min_wake_level: 3,
                 merge_window: crate::runtime::thing_agent::scheduler::MERGE_WINDOW,
+                heartbeat_default_interval: Duration::from_secs(24 * 3600),
             },
             Arc::new(crate::runtime::thing_agent::traits::NoopTicketResolutions),
+            heartbeat.clone(),
         ));
         StubManagerParts {
             manager,
             host,
             runs,
             agents,
+            heartbeat,
         }
     }
 
@@ -1059,6 +1168,113 @@ pub(crate) mod tests {
         assert_eq!(run.dedup_key, None, "心跳 directive 不参与合并，dedup_key 为空");
     }
 
+    // T6：heartbeat 信号走统一循环全管线——run 落库 trigger=heartbeat:{ws},
+    // governor 按结果记账(成功清零/失败+1)。空任务表下 trigger 不 tick,
+    // 信号由 DirectiveSink 手工投递。
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_signal_produces_run_report_and_governor_records_outcome() {
+        let parts = stub_manager().await;
+        let governor = parts.heartbeat.governor.clone();
+        // 预置一败:成功 run 必须清零(证明 record_success 真的跑了)。
+        governor.record_failure(WS);
+        assert_eq!(governor.consecutive_failures(WS), 1);
+        parts.manager.start(WS);
+
+        let sink: &dyn DirectiveSink = parts.manager.as_ref();
+        let heartbeat_signal = || WakeSignal {
+            workspace_id: WS.to_string(),
+            priority: Priority::Normal,
+            source: TriggerSource::Heartbeat { alarm: None },
+            dedup_key: Some("heartbeat:ws_01".to_string()),
+        };
+        sink.enqueue(heartbeat_signal()).expect("heartbeat signal accepted");
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_secs(30)).await;
+        wait_until(
+            || parts.runs.runs_with_dedup("heartbeat:ws_01") == 1,
+            "heartbeat run persisted",
+        )
+        .await;
+
+        let runs = parts.runs.all();
+        let run = runs
+            .iter()
+            .find(|r| r.dedup_key.as_deref() == Some("heartbeat:ws_01"))
+            .expect("heartbeat run recorded");
+        assert_eq!(run.trigger, "heartbeat:ws_01");
+        drop(runs);
+        wait_until(|| governor.consecutive_failures(WS) == 0, "success resets failures").await;
+
+        // provider 失败一次 → run outcome=Failed → governor 记一败。
+        parts.agents.llm.fail.store(true, std::sync::atomic::Ordering::Relaxed);
+        sink.enqueue(heartbeat_signal())
+            .expect("second heartbeat signal accepted");
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_secs(30)).await;
+        wait_until(
+            || parts.runs.runs_with_dedup("heartbeat:ws_01") == 2,
+            "failed run persisted",
+        )
+        .await;
+        wait_until(|| governor.consecutive_failures(WS) == 1, "failure recorded").await;
+    }
+
+    // T6:heartbeat 源 prompt 装配——任务文本与信任段(仿 loop_.rs
+    // build_heartbeat_prompt 的内容)必须进 LLM 实际收到的 prompt。
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_prompt_contains_tasks_and_trust() {
+        let parts = stub_manager().await;
+        parts.heartbeat.tasks.insert(
+            WS.to_string(),
+            vec![tinyiothub_core::heartbeat::HeartbeatTask {
+                id: 1,
+                workspace_id: WS.into(),
+                priority: "high".into(),
+                text: "检查车间温度传感器".into(),
+                paused: false,
+                version: 1,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            }],
+        );
+        parts.heartbeat.trust_configs.insert(
+            WS.to_string(),
+            tinyiothub_core::heartbeat::TrustConfig {
+                trust_level: tinyiothub_core::heartbeat::TrustLevel::FullAuto,
+                max_auto_actions_per_tick: 7,
+                ..Default::default()
+            },
+        );
+        parts.manager.start(WS);
+
+        // heartbeat trigger 启动即首 tick(有活动任务);30s 合并窗口 flush 后执行。
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_secs(30)).await;
+        wait_until(
+            || parts.runs.runs_with_dedup("heartbeat:ws_01") == 1,
+            "heartbeat tick run",
+        )
+        .await;
+
+        let prompts = parts.agents.llm.prompts.lock().unwrap();
+        assert!(
+            prompts.iter().any(|p| p.contains("检查车间温度传感器")),
+            "任务文本必须进 heartbeat prompt: {prompts:?}"
+        );
+        assert!(
+            prompts
+                .iter()
+                .any(|p| p.contains("FullAuto") && p.contains("每次 tick 最多自动执行动作数：7")),
+            "信任段必须进 heartbeat prompt: {prompts:?}"
+        );
+    }
+
     /// T4：RunStarted 的 problem_keys 提取——递归 Merged.signals，收集
     /// UserDirective.problem_key 的 Some 值并去重（ThingEvent/Timer 无）。
     #[test]
@@ -1160,7 +1376,10 @@ pub(crate) mod tests {
         };
         assert_eq!(trigger_label(&tick), "heartbeat:ws1");
         // trigger_type_of 取前缀 → "heartbeat"(读侧/统计按类型过滤依赖此前缀)
-        assert_eq!(tick.dedup_key.as_deref().unwrap().split(':').next().unwrap(), "heartbeat");
+        assert_eq!(
+            tick.dedup_key.as_deref().unwrap().split(':').next().unwrap(),
+            "heartbeat"
+        );
     }
 
     #[test]
@@ -1215,8 +1434,10 @@ pub(crate) mod tests {
                 timer_interval: Duration::from_secs(24 * 3600),
                 min_wake_level: 3,
                 merge_window: crate::runtime::thing_agent::scheduler::MERGE_WINDOW,
+                heartbeat_default_interval: Duration::from_secs(24 * 3600),
             },
             Arc::new(crate::runtime::thing_agent::traits::NoopTicketResolutions),
+            HeartbeatDeps::default(),
         ));
         manager.start(WS);
         wait_subscribed(&host).await;

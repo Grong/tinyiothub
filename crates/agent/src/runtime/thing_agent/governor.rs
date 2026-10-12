@@ -31,7 +31,9 @@ impl HeartbeatGovernor {
     }
 
     pub fn is_paused(&self, workspace_id: &str, cooldown: Duration) -> bool {
-        let Some(e) = self.inner.get(workspace_id) else { return false };
+        let Some(e) = self.inner.get(workspace_id) else {
+            return false;
+        };
         match e.paused_at {
             None => false,
             Some(at) if at.elapsed() >= cooldown => {

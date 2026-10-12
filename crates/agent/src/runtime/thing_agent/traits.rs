@@ -159,6 +159,37 @@ impl TicketResolutionProvider for NoopTicketResolutions {
         Ok(vec![])
     }
 }
+
+/// 心跳任务读取端口（Task 6 统一循环接线）：heartbeat 源 run 的 prompt
+/// 装配注入源。同步读共享内存表（对齐 loop_.rs parking_lot 同步读先例；
+/// DashMap 读路径无 await，不进 async trait）。
+pub trait HeartbeatTaskReader: Send + Sync {
+    /// 工作区当前活动（未暂停）巡检任务；无配置/全暂停返回空。
+    fn active_tasks(&self, workspace_id: &str) -> Vec<tinyiothub_core::heartbeat::HeartbeatTask>;
+}
+
+/// 心跳信任配置读取端口（Task 6）：heartbeat 源 prompt 的信任段注入源。
+pub trait TrustConfigReader: Send + Sync {
+    /// 工作区信任配置；无配置回退安全默认（[`TrustConfig::default`]）。
+    ///
+    /// [`TrustConfig::default`]: tinyiothub_core::heartbeat::TrustConfig::default
+    fn get(&self, workspace_id: &str) -> tinyiothub_core::heartbeat::TrustConfig;
+}
+
+impl HeartbeatTaskReader for dashmap::DashMap<String, Vec<tinyiothub_core::heartbeat::HeartbeatTask>> {
+    fn active_tasks(&self, workspace_id: &str) -> Vec<tinyiothub_core::heartbeat::HeartbeatTask> {
+        self.get(workspace_id)
+            .map(|ts| ts.iter().filter(|t| !t.paused).cloned().collect())
+            .unwrap_or_default()
+    }
+}
+
+impl TrustConfigReader for dashmap::DashMap<String, tinyiothub_core::heartbeat::TrustConfig> {
+    fn get(&self, workspace_id: &str) -> tinyiothub_core::heartbeat::TrustConfig {
+        // DashMap 固有 get 优先于本 trait 方法被解析，返回 Option<Ref>。
+        self.get(workspace_id).map(|r| r.value().clone()).unwrap_or_default()
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -22,7 +22,9 @@ pub enum TriggerSource {
     /// 心跳巡检 tick(D11 专用变体——不复用 Timer:丢每工作区可配间隔,
     /// 且 dedup 与 timer:{ws} 碰撞吞 tick)。alarm=None=定时 tick;
     /// Some=告警驱动(优先级映射:Critical→Critical,High/Normal→Normal)。
-    Heartbeat { alarm: Option<HeartbeatAlarmContext> },
+    Heartbeat {
+        alarm: Option<HeartbeatAlarmContext>,
+    },
     UserDirective {
         user_id: String,
         text: String,
