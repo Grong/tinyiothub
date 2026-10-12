@@ -33,8 +33,8 @@
 | 概念 | 代码 | 表 |
 |---|---|---|
 | Run | crates/agent/src/runtime/thing_agent（runner.rs/manager.rs） | agent_runs |
-| Verdict | apps/cloud/src/domains/agent/host/judge（judgment_subscriber.rs parse_verdict） | judgments |
-| Proposal | crates/db/src/brain_event.rs 提案行写入（host/persist.rs 负责 RunRecorded/HeartbeatResultReady 落库） | agent_actions（action_type='proposal'） |
+| Verdict | apps/cloud/src/domains/agent/host/judgment_subscriber.rs（parse_verdict:88） | judgments |
+| Proposal | crates/db/src/heartbeat.rs insert_action_row（582-604 行生产写入，由 host/persist.rs HeartbeatResultReady 支路驱动） | agent_actions（action_type='proposal'） |
 | Trace | ToolTraceEntry（crates/core/src/agent_runs.rs） | agent_runs.report JSON |
 | Trust Mode | apps/cloud/src/domains/agent/host/policy_engine.rs + host/tools/autonomous_invoke.rs（每动作新鲜读，O7） | workspaces + policy_rules |
 | Narrative | =summary 的展示形态（D8，无独立字段） | — |
