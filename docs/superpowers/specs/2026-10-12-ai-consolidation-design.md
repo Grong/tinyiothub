@@ -38,8 +38,9 @@ AI 相关功能是三次需求各自长出来的（心跳线 / ai-brain-p0 处�
 ```
 触发（Trigger）──► 运行（Run）──► 判断（Verdict）──► 处置（Disposition）
   告警/定时/指令      一次 AI 工作单元      noise/self_healable/     自行闭环/待审批/
-                     （trace+summary+        needs_human            转工单
-                      narrative）
+                     （trace+summary；         needs_human            转工单
+                      narrative=summary 的
+                      展示形态）
 ```
 
 词汇表（收编异名）：
@@ -69,7 +70,7 @@ Trigger ────────►│                                    ├─
 - HeartbeatRunner 归并进 thing_agent Run 循环：心跳 tick = `TriggerSource::Heartbeat` **新变体**驱动的 run（D11 裁定：专用变体+专用 dedup key `heartbeat:{ws}`——复用 TimerTrigger 会丢每工作区可配间隔且与 `timer:{ws}` dedup 碰撞吞 tick）。HeartbeatResult 退役为 RunReport 的读侧兼容视角（适配层=handler 侧纯函数 RunReport→ExecutionRecord；历史无 trace 行前端显示"无过程记录"不炸）；
 - 不做（YAGNI）：不动自治策略门、调度器合并、判断流水线——已是统一通道。归一只合并"执行循环+结果形态"这一层；
 - 落库归一：tick trace 从 agent_actions anchor content 迁至 agent_runs.report（迁移回填可回填的；历史无 trace 不补）。提案/审批仍留 agent_actions——它们是动作不是 run；**提案行 tick_id 迁移时一并改写为 run_id**（C3：联结不断链），读侧兼容期保留 tick_id→run_id 映射视图，切换完成后删。**耐久性对齐（D10）**：RunRecorded 补心跳同款重试+DLQ（persist.rs 现成模式）——归一不得静默降级可靠性；
-- 告警触发链（HeartbeatSignal 带优先级+dedup）本期保留入口、内部转 TriggerSource::Heartbeat 变体（优先级映射：Critical→Critical，High/Normal→Normal）；
+- 告警触发链（HeartbeatSignal 带优先级+dedup）本期保留入口、内部转 TriggerSource::Heartbeat 变体（优先级映射：Critical→Critical，High/Normal→Normal）；**告警 run 的 dedup key 保留原语义维度：`heartbeat:{ws}:{thing_id}:{alarm_type}`，与定时 tick（`heartbeat:{ws}`）不互合并**（N3——Critical 告警不得被在途 tick 吞）；
 
 **行为保持清单**（C1，每项=行为/归一后归宿/验证）：
 
@@ -136,7 +137,7 @@ host/
 三步各自独立可交付、可回滚：
 
 1. **Phase 1 概念文档**（纯 docs 零风险）：docs/ai-concept-model.md 先出——后两 phase 的评审校准尺。
-2. **Phase 2 内核归一**（行为保持重构）：护栏=分类后的现有套件全绿（K3 修正：落库改向后直接断言 agent_actions 内容的测试——crates/db/src/heartbeat.rs 锚行/提案共存、agent_persist_tests、heartbeat_bridge_tests——属"实现细节重写"类，先分类再改）+ 每步独立 commit；迁移只做 trace 回填+读侧切换；心跳并入后补「等价对照测试」（Q1/F2 修正：**shadow 双跑**——心跳路径照常执行，统一 Run 路径在 mock 池接缝上只产报告不落库/不落提案，比对字段白名单=status/summary/proposals 集合/trace 工具名序列；比对期 N=7 天或 M=50 次 tick 后切换）。
+2. **Phase 2 内核归一**（行为保持重构）：护栏=分类后的现有套件全绿（K3 修正：落库改向后直接断言 agent_actions 内容的测试——crates/db/src/heartbeat.rs 锚行/提案共存、agent_persist_tests、heartbeat_bridge_tests——属"实现细节重写"类，先分类再改）+ 每步独立 commit；迁移只做 trace 回填+提案 tick_id 改写+读侧切换（N4）；心跳并入后补「等价对照测试」（Q1/F2 修正：**shadow 双跑**——比对 harness 内两路径共用 mock 池接缝（确定性接缝），心跳逻辑照常执行，统一 Run 路径只产报告不落库/不落提案，比对字段白名单=status/summary/proposals 集合/trace 工具名序列；比对期 N=7 天或 M=50 次 tick 后切换）。
    - **概念模型 lint（E3）**：CI 脚本扫描 `web/src` 文案 + `apps/cloud/src/domains/agent` 注释（Q4 修正——限定范围防误报），异名清单即词汇表右列；首版 warn-only 一个版本后转 fail。
 3. **Phase 3 前端 AI 中心**（最后做）：#/ai 落地，旧 URL 保留一个版本的 hash 重定向（#/dispositions→#/ai 等）防书签/历史链接 404，下版本删。
 
