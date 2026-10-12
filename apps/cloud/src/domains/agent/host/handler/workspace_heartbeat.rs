@@ -89,6 +89,9 @@ pub struct HeartbeatLogEntry {
     result: Option<String>,
     auto_executed: Vec<ActionDetail>,
     pending_proposals: Vec<ProposalDetail>,
+    /// tick 的逐步工具轨迹（T9 起 anchor content 含 trace；investigate
+    /// 断口修复：此前 get_logs 解析时丢弃）。旧 tick 无 trace → 空数组。
+    trace: Vec<tinyiothub_core::agent_runs::ToolTraceEntry>,
 }
 
 #[derive(Debug, Serialize)]
@@ -367,6 +370,7 @@ pub async fn get_logs(
                         result: if status == "success" { message } else { None },
                         auto_executed,
                         pending_proposals,
+                        trace: parse_action_trace(&content),
                     }
                 })
                 .collect()
@@ -871,6 +875,15 @@ fn parse_action_content(content: &str) -> (u32, Option<String>) {
     }
     // Legacy format: plain text content
     (0, Some(content.to_string()))
+}
+
+/// 从 anchor content JSON 提取 trace（T9 起写入；旧 tick/缺字段/解析失败 → 空）。
+fn parse_action_trace(content: &str) -> Vec<tinyiothub_core::agent_runs::ToolTraceEntry> {
+    serde_json::from_str::<serde_json::Value>(content)
+        .ok()
+        .and_then(|v| v.get("trace").cloned())
+        .and_then(|t| serde_json::from_value(t).ok())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

@@ -202,3 +202,47 @@ async fn judgments_list_carries_run_id() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["runId"], "run-j-1", "JudgmentDto 必须带 runId");
 }
+
+/// 心跳执行历史的 trace 透出（investigate 断口修复）：anchor content 含
+/// trace（T9 起落库）→ get_logs 必须透到 HeartbeatLogEntry，不得丢弃。
+#[tokio::test]
+async fn heartbeat_logs_carry_anchor_trace() {
+    let (app_state, pool) = setup_test_app_with_pool().await;
+    seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
+
+    let content = serde_json::json!({
+        "taskCount": 2,
+        "result": "巡检完成，温度正常",
+        "trace": [{
+            "id": "c1",
+            "name": "read_property",
+            "args": {"thingId": "t1", "p": "temperature"},
+            "output": "26.5"
+        }],
+    });
+    sqlx::query(
+        "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, tick_id, created_at)
+         VALUES ('hb-trace-1', 'ws-default-001', 'agent1', 'heartbeat', 'summary', ?, 'tick-1', '2026-10-12 10:00:00')",
+    )
+    .bind(content.to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let app = crate::api::create_router(&app_state);
+    let app = axum::Router::new().nest("/api", app).with_state(app_state.clone());
+    let token = create_test_token("user-1", "tenant-1");
+
+    let response = app
+        .oneshot(req("GET", "/api/v1/workspaces/ws-default-001/heartbeat/logs", &token))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    let logs = json["result"]["logs"].as_array().expect("logs array");
+    assert_eq!(logs.len(), 1);
+    let trace = logs[0]["trace"].as_array().expect("trace 必须透出");
+    assert_eq!(trace.len(), 1);
+    assert_eq!(trace[0]["name"], "read_property");
+    assert_eq!(trace[0]["output"], "26.5");
+}
