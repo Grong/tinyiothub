@@ -145,9 +145,57 @@ host/
 
 测试：Phase 2 行为保持=分类后套件即回归网；Phase 3 复用 dispositions/ai-ops 既有测试搬家（行为不变只搬家，含站内路由引用改写——F3：runs 详情链接从 #/ai-ops/runs 改 #/ai/runs）+ 重定向测试；每 phase 收尾跑全量门禁。
 
-## 非目标（YAGNI）
+## 实现时序要点（CEO 评审 0I）
 
+- **顺序**：Phase 1 概念文档（评审校准尺先行）→ Phase 2 内核归一（行为保持清单逐项先写失败测试）→ Phase 3 前端 AI 中心；
+- **埋伏**：① shadow 双跑的 mock 池接缝在 AgentPoolLike 测试接缝处；② HeartbeatSignal→Heartbeat 变体转换点在入口适配层；③ 迁移顺序=先 trace 回填再 tick_id→run_id 改写（否则提案行找不到锚）；④ 测试分类（契约保/细节重写）先行，否则中途被"测试红了"卡住；
+- **估计**：human ~1-2 周（三 phase）/ CC+gstack ~2-3 天。
+
+## 非目标（YAGNI）
 - chat 链路重构（独立形态，本期不动）；
 - OpenClaw 接入（后续扩展，本梳理的"内核归一"是它的前置地基）；
 - 自治策略门/调度器/判断流水线重构（已是统一通道）；
 - sms/email 通知通道（仍打桩）。
+
+---
+
+# CEO 审查输出（/plan-ceo-review 2026-10-12，SCOPE EXPANSION）
+
+## NOT in scope
+
+延期：无（E1-E6 全收）。拒绝：chat 链路统一（独立形态本期边界）、OpenClaw 接入（后续扩展，内核归一为其地基）、复用 TimerTrigger（D11 否决——丢 per-workspace 间隔+dedup 碰撞）、narrative 增字段（D8 否决——复用 summary）、接受对账窗口不补重试（D10 否决——可靠性不降级）。
+
+## 评审历程
+
+- 第 1 轮对抗性评审（6/10 FAIL，18 条全部对代码核实）：C1 心跳 4 行为无归宿 / C2 落库耐久降级 / C3 tick_id 断链 / C4 narrative 无数据面 / C5 信任语义扩张 / C6 适配层未定义 / K1-K4 矛盾 / Q1-Q5 歧义 / F1-F3 可行性缺口——全部落回 spec；
+- 作者裁定 D8-D11（复用 summary / 全部 run 过门 / 补重试+DLQ / 专用变体+键）；
+- 第 2 轮复审（8/10 PASS，16/18 全解）：残留 N1-N5（CEO 头部/概念链措辞/迁移措辞/shadow 消歧/告警 dedup key 形态）全部修复。
+
+## 11 节深审结论
+
+架构/错误/安全/数据流/代码质量/测试/性能/可观测/部署/长期轨迹 10 节无新增阻断；第 11 节（设计）IA 级通过，建议实现前对 AI 中心跑一轮 /plan-design-review 专项。详见证录各节。
+
+## 外部声音
+
+codex broken_install（vendor 二进制 ENOENT）；native fallback 两次完成但报告内容丢失（subagent 最终消息丢内容的已知问题）——无可计覆盖，记录在案。实质审查由两轮对抗性 spec 评审+11 节深审承担。
+
+## 实现任务（Phase 维度，实现前由 writing-plans 拆细）
+
+- Phase 1：概念文档 docs/ai-concept-model.md
+- Phase 2：内核归一（行为保持清单逐项 TDD + shadow 双跑 + 迁移三件套 + host 分组 + RunRecorded 重试+DLQ）
+- Phase 3：前端 AI 中心（#/ai 单入口 + E1/E2/E4/E5/E6 + 归并映射 + 重定向）
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 3 | CLEAR | 6 proposals, 6 accepted, 0 deferred |
+| Outside Review | codex (auto) | Independent 2nd opinion | 6 | unavailable | codex broken_install；native fallback 内容丢失——无可计覆盖 |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 3 | STALE | 上次 2026-10-08 @AI 透明化 spec——本 spec 需新一轮 |
+| Design Review | `/plan-design-review` | UI/UX gaps | 1 | ISSUES OPEN | 上轮（AI 透明化）5→7/10；本 spec 的 AI 中心建议实现前专项 |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
+
+- **OUTSIDE COVERAGE:** codex, plan-review phase, **unavailable** — CLI broken_install（vendor binary ENOENT，修复：`npm install -g @openai/codex`）；native fallback 两次完成但报告内容丢失。无可计覆盖。
+- **VERDICT:** CEO CLEARED（两轮对抗评审 18+5 条全部修复，D8-D11 裁定齐）——本 spec 的 eng review 与 design review 需各跑新一轮（实现前）。
+
+NO UNRESOLVED DECISIONS
