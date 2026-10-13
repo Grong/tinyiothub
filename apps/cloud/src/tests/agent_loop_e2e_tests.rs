@@ -272,6 +272,7 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
         db.clone(),
         persist_rx,
         shutdown.clone(),
+        None,
     ));
 
     // HTTP 应用与 loop 共享同一文件库（生产路由树，含 auth 中间件）。

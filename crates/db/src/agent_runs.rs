@@ -17,8 +17,8 @@ pub use tinyiothub_core::agent_runs::*;
 // ──────────────────────────────────────────────
 
 /// trigger 串前缀作为 trigger_type（"thing:t1:event:x" → "thing"）；无 ':'
-/// 时用整串。
-pub(crate) fn trigger_type_of(trigger: &str) -> &str {
+/// 时用整串。pub：cloud persist 心跳支路（Task 8）按此前缀识别 heartbeat run。
+pub fn trigger_type_of(trigger: &str) -> &str {
     trigger.split(':').next().unwrap_or(trigger)
 }
 

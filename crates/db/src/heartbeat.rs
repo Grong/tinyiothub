@@ -77,6 +77,8 @@ pub enum RepoError {
 
 use sqlx::SqlitePool;
 
+use tinyiothub_core::policy::Proposal;
+
 use crate::database::Db;
 
 /// DB row struct with sqlx::FromRow — maps to domain HeartbeatTask.
@@ -398,7 +400,28 @@ pub(crate) async fn insert_result(
         .await?;
     }
 
-    for proposal in &result.proposals {
+    upsert_proposal_rows(&mut tx, workspace_id, &agent_id, &result.proposals, tick_id, &now).await?;
+
+    tx.commit().await.map_err(|e| RepoError::Database(e.to_string()))?;
+    Ok(())
+}
+
+/// 提案行 upsert（Task 8 抽取，insert_result 与 persist 心跳支路共用）。
+///
+/// problem_key 折叠（2026-09-23 实测：同一 tool:thing 的提案每 tick 换皮
+/// 重提，134 条 pending 里 26/20/18 条同一 key）：已有同 key 的 pending
+/// 提案 → 就地刷新最新表述（保留行 id/proposalId/首次发现时间），不再新增。
+/// `created_at` 由调用方给——insert_result 路径要求与锚行/动作行同戳
+/// （读侧按 created_at 分组到 tick）。
+pub(crate) async fn upsert_proposal_rows(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    workspace_id: &str,
+    agent_id: &str,
+    proposals: &[Proposal],
+    tick_id: Option<&str>,
+    created_at: &str,
+) -> Result<(), RepoError> {
+    for proposal in proposals {
         let proposal_id = if proposal.id.is_empty() {
             uuid::Uuid::new_v4().to_string()
         } else {
@@ -430,7 +453,7 @@ pub(crate) async fn insert_result(
         .bind(workspace_id)
         .bind(&proposal.tool_name)
         .bind(proposal.thing_id.as_deref())
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
 
@@ -445,7 +468,7 @@ pub(crate) async fn insert_result(
             sqlx::query("UPDATE agent_actions SET content = ? WHERE id = ?")
                 .bind(content.to_string())
                 .bind(&row_id)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await
                 .map_err(|e| RepoError::Database(e.to_string()))?;
             tracing::debug!(
@@ -456,19 +479,17 @@ pub(crate) async fn insert_result(
             );
         } else {
             insert_action_row(
-                &mut tx,
+                tx,
                 workspace_id,
-                &agent_id,
+                agent_id,
                 "proposal",
                 &content.to_string(),
-                &now,
+                created_at,
                 tick_id,
             )
             .await?;
         }
     }
-
-    tx.commit().await.map_err(|e| RepoError::Database(e.to_string()))?;
     Ok(())
 }
 
@@ -575,6 +596,31 @@ impl Db {
     /// 行，同事务共享 created_at）。
     pub async fn insert_heartbeat_result(&self, workspace_id: &str, result: &HeartbeatResult) -> Result<(), RepoError> {
         insert_result(self.pool(), workspace_id, result).await
+    }
+
+    /// persist 心跳支路（Task 8）：统一 Run 路径的提案落 agent_actions，
+    /// tick_id 位写 run_id（C3 联结，提案可回溯到产生它的 run）。
+    /// problem_key 就地刷新语义与 insert_heartbeat_result 同一家
+    /// （[`upsert_proposal_rows`]）。
+    pub async fn upsert_heartbeat_proposals(
+        &self,
+        workspace_id: &str,
+        agent_id: &str,
+        proposals: &[Proposal],
+        tick_id: Option<&str>,
+    ) -> Result<(), RepoError> {
+        if proposals.is_empty() {
+            return Ok(());
+        }
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let mut tx = self
+            .pool()
+            .begin()
+            .await
+            .map_err(|e| RepoError::Database(e.to_string()))?;
+        upsert_proposal_rows(&mut tx, workspace_id, agent_id, proposals, tick_id, &now).await?;
+        tx.commit().await.map_err(|e| RepoError::Database(e.to_string()))?;
+        Ok(())
     }
 }
 

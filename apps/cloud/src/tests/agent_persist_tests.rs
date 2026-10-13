@@ -126,6 +126,7 @@ async fn projects_run_recorded_to_agent_runs() {
         db.clone(),
         runtime.subscribe(),
         CancellationToken::new(),
+        None,
     ));
 
     emit_run_until_persisted(&runtime, &pool, &report("run1", "ws1", "巡检正常")).await;
@@ -149,6 +150,7 @@ async fn stale_event_does_not_overwrite_newer_row() {
         db.clone(),
         runtime.subscribe(),
         CancellationToken::new(),
+        None,
     ));
 
     // 顺序保证：先确认新事件落库，再回放 stale（订阅者按序处理）。
@@ -214,6 +216,7 @@ async fn lagged_subscriber_resyncs_from_dump_state() {
         test_publisher(),
         Duration::from_secs(3600),
         CancellationToken::new(),
+        None,
     ));
 
     wait_until(|| async { count_runs(&pool, "run_lagged").await == 1 }).await;
@@ -251,6 +254,7 @@ async fn periodic_reconcile_projects_dump_state() {
         test_publisher(),
         Duration::from_millis(50),
         CancellationToken::new(),
+        None,
     ));
 
     // 无任何事件：只有周期对账能把 dump_state 投影落库
@@ -267,6 +271,7 @@ async fn projects_heartbeat_result_to_agent_actions() {
         db.clone(),
         runtime.subscribe(),
         CancellationToken::new(),
+        None,
     ));
 
     let count_actions = || async {
@@ -587,7 +592,7 @@ async fn supervisor_does_not_restart_when_panic_happens_during_shutdown() {
 /// 格式化接线、fenced 分支（不写）、远未来偏移守卫，全部经 project() 验证。
 #[tokio::test]
 async fn trust_config_event_fencing_at_projection_level() {
-    use crate::domains::agent::host::persist::project;
+    use crate::domains::agent::host::persist::{ShadowFlags, project};
 
     let (db, pool) = test_db().await;
     seed_test_workspace(&pool, "t1", "ws1").await;
@@ -620,6 +625,7 @@ async fn trust_config_event_fencing_at_projection_level() {
         &pool,
         &publisher,
         &token,
+        &ShadowFlags::default(),
     )
     .await;
     let current = db
@@ -645,6 +651,7 @@ async fn trust_config_event_fencing_at_projection_level() {
         &pool,
         &publisher,
         &token,
+        &ShadowFlags::default(),
     )
     .await;
     let current = db
@@ -670,6 +677,7 @@ async fn trust_config_event_fencing_at_projection_level() {
         &pool,
         &publisher,
         &token,
+        &ShadowFlags::default(),
     )
     .await;
     let current = db
@@ -702,6 +710,7 @@ async fn shutdown_drains_buffered_events() {
         test_publisher(),
         Duration::from_secs(3600),
         shutdown.clone(),
+        None,
     ));
 
     // 连续发射 5 条（同步入缓冲，不给循环处理窗口）后立即取消。
@@ -731,7 +740,7 @@ async fn shutdown_drains_buffered_events() {
 /// 升级路径间接覆盖。
 #[tokio::test]
 async fn projects_dlq_entry_added_to_agent_dead_letters() {
-    use crate::domains::agent::host::persist::project;
+    use crate::domains::agent::host::persist::{ShadowFlags, project};
     use tinyiothub_agent::runtime::event::dlq::DeadLetterEntry;
 
     let (_db, pool) = test_db().await;
@@ -754,6 +763,7 @@ async fn projects_dlq_entry_added_to_agent_dead_letters() {
         &pool,
         &test_publisher(),
         &CancellationToken::new(),
+        &ShadowFlags::default(),
     )
     .await;
 
@@ -806,7 +816,7 @@ async fn resync_recovers_heartbeat_results_idempotently() {
 /// 不入 DLQ——归一不得静默降级可靠性（此前 insert 失败直入 DLQ）。
 #[tokio::test]
 async fn run_recorded_persist_retries_before_dlq() {
-    use crate::domains::agent::host::persist::project;
+    use crate::domains::agent::host::persist::{ShadowFlags, project};
 
     let (_db, pool) = test_db().await;
 
@@ -839,6 +849,7 @@ async fn run_recorded_persist_retries_before_dlq() {
         &pool,
         &test_publisher(),
         &shutdown,
+        &ShadowFlags::default(),
     )
     .await;
 
@@ -876,7 +887,7 @@ async fn run_recorded_persist_retries_before_dlq() {
 /// 该 tick 永久消失且无记录）。
 #[tokio::test]
 async fn heartbeat_retry_aborted_by_shutdown_goes_to_dlq() {
-    use crate::domains::agent::host::persist::project;
+    use crate::domains::agent::host::persist::{ShadowFlags, project};
 
     let (_db, pool) = test_db().await;
     // 让首次 insert 失败以触发重试路径（DLQ 表保留可用）。
@@ -907,6 +918,7 @@ async fn heartbeat_retry_aborted_by_shutdown_goes_to_dlq() {
         &pool,
         &test_publisher(),
         &shutdown,
+        &ShadowFlags::default(),
     )
     .await;
     // 重试任务已 spawn（2s 退避窗口内）；立即关停 → DLQ 分支。
@@ -926,4 +938,160 @@ async fn heartbeat_retry_aborted_by_shutdown_goes_to_dlq() {
             .await
             .expect("dlq row");
     assert!(reason.contains("shutdown"), "reason must name shutdown abort: {reason}");
+}
+
+/// Task 8（C3 联结）：heartbeat 源 RunRecorded（shadow 旗开）→ summary 中的
+/// healing report 解出 proposals 落 agent_actions，tick_id 位写 run_id；
+/// 同 problem_key（tool:thing）再提 → 就地刷新不新增（折叠语义保持）；
+/// 旗关（默认）时统一路径不落提案（shadow 期双跑，提案仍走旧路径）。
+#[tokio::test]
+async fn heartbeat_run_recorded_writes_proposal_rows_with_run_id_anchor() {
+    use crate::domains::agent::host::persist::{ShadowFlags, project};
+
+    let (_db, pool) = test_db().await;
+    seed_test_workspace(&pool, "t1", "ws1").await;
+    let publisher = test_publisher();
+    let token = CancellationToken::new();
+
+    let summary_v1 = r#"```json
+{"status": "complete", "summary": "d1 卡死", "executed_actions": [],
+ "proposals": [{"tool_name": "reboot_thing", "thing_id": "d1", "summary": "重启 d1", "reason": "无响应"}]}
+```"#;
+    let heartbeat_report = |run_id: &str, summary: &str| {
+        let mut rep = report(run_id, "ws1", summary);
+        rep.trigger = "heartbeat:ws1".into();
+        rep.outcome = Outcome::Acted;
+        rep
+    };
+    let event = |seq: u64, rep: RunReport| tinyiothub_agent::runtime::events::AgentEvent {
+        seq,
+        occurred_at: chrono::Utc::now(),
+        kind: AgentEventKind::RunRecorded {
+            report: Box::new(rep),
+            problem_key: None,
+            dedup_key: None,
+        },
+    };
+    let count_proposals = |pool: &SqlitePool| {
+        let pool = pool.clone();
+        async move {
+            let (n,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM agent_actions WHERE workspace_id = 'ws1' AND action_type = 'proposal'",
+            )
+            .fetch_one(&pool)
+            .await
+            .expect("count proposals");
+            n
+        }
+    };
+
+    // 旗关（默认）：heartbeat run 只落 agent_runs，不落提案（shadow 期契约）。
+    project(
+        &event(1, heartbeat_report("hb-run-0", summary_v1)),
+        &pool,
+        &publisher,
+        &token,
+        &ShadowFlags::default(),
+    )
+    .await;
+    assert_eq!(count_runs(&pool, "hb-run-0").await, 1, "run 行照常落库");
+    assert_eq!(count_proposals(&pool).await, 0, "旗关时统一路径不落提案");
+
+    // 旗开：proposal 行落库，tick_id 位写 run_id（C3 联结）。
+    let shadow = ShadowFlags {
+        heartbeat_unified_persist: true,
+    };
+    project(
+        &event(2, heartbeat_report("hb-run-1", summary_v1)),
+        &pool,
+        &publisher,
+        &token,
+        &shadow,
+    )
+    .await;
+    assert_eq!(count_proposals(&pool).await, 1, "proposal 行必须落库");
+    let (tick_id, content, agent_id): (Option<String>, String, String) = sqlx::query_as(
+        "SELECT tick_id, content, agent_id FROM agent_actions WHERE workspace_id = 'ws1' AND action_type = 'proposal'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("proposal row");
+    assert_eq!(tick_id.as_deref(), Some("hb-run-1"), "tick_id 位写 run_id（C3 联结）");
+    assert_eq!(agent_id, "__heartbeat__:ws1", "读侧分组 agent_id 契约不变");
+    let content: serde_json::Value = serde_json::from_str(&content).expect("content json");
+    assert_eq!(content["toolName"], "reboot_thing");
+    assert_eq!(content["thingId"], "d1");
+    assert_eq!(content["summary"], "重启 d1");
+    let first_proposal_id = content["proposalId"].as_str().expect("proposalId").to_string();
+
+    // 同 problem_key（tool:thing）再来一条（新 run、新表述）→ 就地刷新不新增。
+    let summary_v2 = r#"```json
+{"status": "complete", "summary": "d1 仍卡死", "executed_actions": [],
+ "proposals": [{"tool_name": "reboot_thing", "thing_id": "d1", "summary": "重启 d1（仍无响应）", "reason": "连续两 tick 无响应"}]}
+```"#;
+    project(
+        &event(3, heartbeat_report("hb-run-2", summary_v2)),
+        &pool,
+        &publisher,
+        &token,
+        &shadow,
+    )
+    .await;
+    assert_eq!(count_proposals(&pool).await, 1, "同 problem_key 折叠：就地刷新不新增");
+    let (content2,): (String,) =
+        sqlx::query_as("SELECT content FROM agent_actions WHERE workspace_id = 'ws1' AND action_type = 'proposal'")
+            .fetch_one(&pool)
+            .await
+            .expect("proposal row");
+    let content2: serde_json::Value = serde_json::from_str(&content2).expect("content json");
+    assert_eq!(content2["summary"], "重启 d1（仍无响应）", "内容用最新表述");
+    assert_eq!(
+        content2["proposalId"].as_str().expect("proposalId"),
+        first_proposal_id,
+        "proposalId 身份稳定（审批/去重链接不断）"
+    );
+}
+
+/// Task 8（G3 parity）：outcome=Failed 的 heartbeat run 补 system_error
+/// 事件（对齐 HeartbeatResultReady 支路的巡检失败可见性）。
+#[tokio::test]
+async fn failed_heartbeat_run_emits_system_error_event() {
+    use crate::domains::agent::host::persist::{ShadowFlags, project};
+
+    let (_db, pool) = test_db().await;
+    seed_test_workspace(&pool, "t1", "ws1").await;
+
+    let mut rep = report("hb-run-fail", "ws1", "LLM 超时，tick 未完成");
+    rep.trigger = "heartbeat:ws1".into();
+    rep.outcome = Outcome::Failed;
+
+    project(
+        &tinyiothub_agent::runtime::events::AgentEvent {
+            seq: 1,
+            occurred_at: chrono::Utc::now(),
+            kind: AgentEventKind::RunRecorded {
+                report: Box::new(rep),
+                problem_key: None,
+                dedup_key: None,
+            },
+        },
+        &pool,
+        &test_publisher(),
+        &CancellationToken::new(),
+        &ShadowFlags {
+            heartbeat_unified_persist: true,
+        },
+    )
+    .await;
+
+    let (n,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM events
+         WHERE event_type = 'system' AND event_subtype LIKE '%SystemError%'
+           AND source_type = 'agent' AND source_id = 'heartbeat'
+           AND title LIKE '心跳巡检异常%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count system_error events");
+    assert_eq!(n, 1, "失败的 heartbeat run 必须补一条 system_error 事件（G3 闭环）");
 }

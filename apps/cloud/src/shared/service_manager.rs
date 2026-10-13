@@ -301,6 +301,9 @@ impl ServiceManager {
                             agent_events_supervisor,
                             persist_rx,
                             token,
+                            // Task 8：ShadowFlags 由 T13 bootstrap 双跑装配
+                            // 接线；当前默认关（统一路径不落提案）。
+                            None,
                         )
                         .await;
                         Ok(())
