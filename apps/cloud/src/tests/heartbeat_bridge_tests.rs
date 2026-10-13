@@ -16,6 +16,7 @@ use chrono::Utc;
 use tinyiothub_agent::runtime::{
     heartbeat::types::{HeartbeatResult, HeartbeatStatus},
     orchestrator::callbacks::HeartbeatBridge,
+    thing_agent::governor::HeartbeatGovernor,
     thing_agent::registry::RunRegistry,
     thing_agent::types::Outcome,
     thing_agent::{DirectiveSink, EnqueueError, Priority, TriggerSource, WakeSignal},
@@ -80,7 +81,12 @@ fn result_with(proposals: Vec<Proposal>) -> HeartbeatResult {
 
 fn bridge(registry: RunRegistry) -> (HeartbeatBridge, Arc<RecordingSink>) {
     let sink = Arc::new(RecordingSink::default());
-    (HeartbeatBridge::new(registry, sink.clone()), sink)
+    // Task 11 临时适配:构造增 governor 参数(T13 bootstrap 注入共享实例);
+    // 本文件只测提案 dedup 路径,独立空 governor 即可。
+    (
+        HeartbeatBridge::new(registry, sink.clone(), HeartbeatGovernor::default()),
+        sink,
+    )
 }
 
 /// problem_key 为 `{tool}:dev-1` 的提案经 dedup 后是否投递。

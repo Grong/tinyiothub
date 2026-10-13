@@ -90,6 +90,12 @@ impl AgentRuntime {
             heartbeat.update_trust_config(&state.workspace_id, state.trust_config.clone());
             heartbeat.set_interval_minutes(&state.workspace_id, state.interval_minutes);
         }
+        // Task 6：heartbeat 共享表默认空——trigger 空任务抑制不 tick
+        // （双跑期安全）；真实共享表注入由 T13 bootstrap 接线。
+        let heartbeat_deps = super::thing_agent::HeartbeatDeps::default();
+        // Task 11：桥与统一循环共享同一 governor——告警信号 resume 的暂停态
+        // 必须作用于 trigger 读的那一份（克隆共享同一 DashMap 真源）。
+        let heartbeat_governor = heartbeat_deps.governor.clone();
         let thing_agents = Arc::new(ThingAgentManager::new(
             deps.thing_agent_host,
             deps.policy_repo,
@@ -99,13 +105,15 @@ impl AgentRuntime {
             Arc::new(Runner::new()),
             deps.thing_agent_config,
             deps.ticket_resolutions,
-            // Task 6：heartbeat 共享表默认空——trigger 空任务抑制不 tick
-            // （双跑期安全）；真实共享表注入由 T13 bootstrap 接线。
-            super::thing_agent::HeartbeatDeps::default(),
+            heartbeat_deps,
         ));
         // T18 X6 心跳桥：HeartbeatCompleted 的结构化 proposals 投递 UserDirective。
         // Task 6 起 O11 dedup 走 RunRegistry 内存（与 thing_agents 共享同一实例）。
-        let bridge = Arc::new(HeartbeatBridge::new(run_registry.clone(), thing_agents.clone()));
+        let bridge = Arc::new(HeartbeatBridge::new(
+            run_registry.clone(),
+            thing_agents.clone(),
+            heartbeat_governor,
+        ));
         let orchestrator = Arc::new(Orchestrator::new(
             deps.event_bus,
             heartbeat.clone(),

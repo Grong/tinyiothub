@@ -1,6 +1,8 @@
 //! Cross-domain event callbacks -- dispatched by Orchestrator.
 //!
-//! AlarmCreated       --> HeartbeatRunner.signal()
+//! AlarmCreated       --> HeartbeatBridge.dispatch() (Task 11:转
+//!                        TriggerSource::Heartbeat 变体入统一循环,N3 优先级
+//!                        映射+分键 dedup)
 //! HeartbeatCompleted --> AgentEventBus.emit(HeartbeatResultReady)（Task 6；
 //!                        Task 8 持久化订阅者落库，零订阅者 emit 为 no-op）
 //!                    --> HeartbeatBridge.dispatch_proposals() (X6, O21)
@@ -19,11 +21,12 @@ use tracing::{debug, info, warn};
 use crate::runtime::event::types::AiEvent;
 use crate::runtime::events::{AgentEventBus, AgentEventKind};
 use crate::runtime::heartbeat::runner::HeartbeatRunner;
-use crate::runtime::heartbeat::types::HeartbeatResult;
+use crate::runtime::heartbeat::types::{HeartbeatResult, HeartbeatSignal, SignalPriority};
+use crate::runtime::thing_agent::governor::HeartbeatGovernor;
 use crate::runtime::thing_agent::manager::ThingAgentManager;
 use crate::runtime::thing_agent::registry::RunRegistry;
 use crate::runtime::thing_agent::traits::DirectiveSink;
-use crate::runtime::thing_agent::types::{Outcome, Priority, TriggerSource, WakeSignal};
+use crate::runtime::thing_agent::types::{HeartbeatAlarmContext, Outcome, Priority, TriggerSource, WakeSignal};
 use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 
 /// X6 心跳桥（O21 裁决）：订阅既有 `AiEvent::HeartbeatCompleted`（loop_.rs
@@ -40,6 +43,10 @@ use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 pub struct HeartbeatBridge {
     registry: RunRegistry,
     sink: Arc<dyn DirectiveSink>,
+    /// 连败治理（T4）：告警信号到达时 resume 暂停态（loop_.rs:128-133 语义）。
+    /// 与 ThingAgentManager 的 heartbeat governor 共享同一实例（T13 bootstrap
+    /// 接线；agent crate 内 runtime.rs 先行共享）。
+    governor: HeartbeatGovernor,
 }
 
 /// O11 dedup 窗口：同 problem_key 6h 内的 Run 参与抑制判定；超窗旧 Run 不
@@ -49,8 +56,12 @@ pub const PROBLEM_WINDOW_HOURS: u32 = 6;
 pub const ACK_SUPPRESS_HOURS: u32 = 7 * 24;
 
 impl HeartbeatBridge {
-    pub fn new(registry: RunRegistry, sink: Arc<dyn DirectiveSink>) -> Self {
-        Self { registry, sink }
+    pub fn new(registry: RunRegistry, sink: Arc<dyn DirectiveSink>, governor: HeartbeatGovernor) -> Self {
+        Self {
+            registry,
+            sink,
+            governor,
+        }
     }
 
     /// problem_key：结构化字段 `{tool_name}:{thing_id}`；无目标设备的提案
@@ -95,41 +106,51 @@ impl HeartbeatBridge {
         }
     }
 
-    /// T3：报警触发的调查 dispatch（AlarmCreated → thing-agent 直达，D3 裁决）。
-    /// problem_key = alarm:{thing_id}:{rule_id}（按 alarm id 键控对抖动永不命中，
-    /// 必须按 thing+rule——eng-review 外部视角修正）。O11 dedup 复用
-    /// should_dispatch，兼作 run 级防抖。
+    /// T11（N3）：告警链转 Heartbeat 变体入统一循环——AlarmEvent 还原为
+    /// HeartbeatSignal（沿用 T3 前 runner.signal 的信号形态：reason/context/
+    /// 优先级按 severity），经 [`Self::dispatch`] 投递
+    /// `TriggerSource::Heartbeat { alarm: Some(..) }`。
+    ///
+    /// 与 T3 旧路的差异：不再产 UserDirective 调查指令、不做 O11 run 级抑制
+    /// ——防抖由调度层分键 dedup（`heartbeat:{ws}:{thing}:{alarm_type}` 的
+    /// 30s merge window）承担；Critical 告警映射 Priority::Critical，绕 merge
+    /// window 与节流（scheduler ②），不被在途 tick 吞（N3）。
     pub async fn dispatch_alarm_investigation(&self, alarm: &tinyiothub_core::models::event::AlarmEvent) {
-        let problem_key = format!("alarm:{}:{}", alarm.thing_id, alarm.rule_id.as_deref().unwrap_or("-"));
-        if !self.should_dispatch(&alarm.workspace_id, &problem_key) {
-            debug!(
-                workspace_id = %alarm.workspace_id,
-                problem_key, "alarm investigation suppressed by O11 dedup"
-            );
-            return;
-        }
-        let signal = WakeSignal {
+        let signal = HeartbeatSignal {
             workspace_id: alarm.workspace_id.clone(),
-            // 报警调查比例行巡检紧急：High 优先级（critical 报警由调用方
-            // AlarmService 先直达工单，这里所有调查同优先级即可）。
-            priority: Priority::High,
-            source: TriggerSource::UserDirective {
-                user_id: "alarm-triage".to_string(),
-                text: crate::prompt::investigation::alarm_investigation_text(alarm),
-                session_key: None,
-                source: Some("alarm".to_string()),
-                problem_key: Some(problem_key.clone()),
+            reason: format!("Alarm: {}", alarm.message),
+            context: format!("thing_id={}, alarm_type={}", alarm.thing_id, alarm.alarm_type),
+            priority: if alarm.severity.eq_ignore_ascii_case("critical") {
+                SignalPriority::Critical
+            } else {
+                SignalPriority::High
             },
-            dedup_key: None,
+            thing_id: Some(alarm.thing_id.clone()),
+            alarm_type: Some(alarm.alarm_type.clone()),
+            rule_id: alarm.rule_id.clone(),
         };
+        self.dispatch(&signal).await;
+    }
+
+    /// 告警信号统一入口（Task 11）：enqueue 前 `governor.resume()`——外部信号
+    /// 恢复暂停（对齐 loop_.rs:128-133；resume 仅 paused 时清态，未暂停为
+    /// no-op）。投递失败（队列满/loop 未启动）仅记录日志——告警信号不享
+    /// "排队不丢"（O5 同心跳 directive 先例），丢弃可接受。
+    pub async fn dispatch(&self, s: &HeartbeatSignal) {
+        self.governor.resume(&s.workspace_id);
+        let signal = to_wake_signal(s);
         match self.sink.enqueue(signal) {
             Ok(()) => info!(
-                workspace_id = %alarm.workspace_id,
-                problem_key, "alarm investigation dispatched to thing-agent loop"
+                workspace_id = %s.workspace_id,
+                priority = %s.priority.label(),
+                reason = %s.reason,
+                "alarm signal dispatched to unified loop"
             ),
             Err(e) => warn!(
-                workspace_id = %alarm.workspace_id,
-                problem_key, error = %e, "alarm investigation not admitted (queue full/throttled)"
+                workspace_id = %s.workspace_id,
+                reason = %s.reason,
+                error = %e,
+                "alarm signal not admitted (queue full/loop not started)"
             ),
         }
     }
@@ -144,12 +165,7 @@ impl HeartbeatBridge {
     fn should_dispatch(&self, workspace_id: &str, problem_key: &str) -> bool {
         let ack_window = Duration::from_secs(u64::from(ACK_SUPPRESS_HOURS) * 3600);
         let problem_window = Duration::from_secs(u64::from(PROBLEM_WINDOW_HOURS) * 3600);
-        // T-5/T-8：ack 抑制（7d）与「上次 Failed 即跳过」是为心跳 proposal
-        // 设计的语义，对 alarm: 键域豁免——ack 交互不存在于报警调查；一次
-        // 瞬时 LLM 超时（Failed）不应固化成该 thing+rule 的 6h 盲区。
-        let is_alarm_key = problem_key.starts_with("alarm:");
-        if !is_alarm_key
-            && let Some((_, _, acked)) = self.registry.last_problem_run(workspace_id, problem_key, ack_window)
+        if let Some((_, _, acked)) = self.registry.last_problem_run(workspace_id, problem_key, ack_window)
             && acked
         {
             return false;
@@ -161,7 +177,6 @@ impl HeartbeatBridge {
             return true;
         };
         match outcome {
-            Outcome::Failed if is_alarm_key => true, // 瞬时故障不固化盲区（T-8）
             Outcome::Failed | Outcome::Rejected | Outcome::BudgetExceeded | Outcome::NoActionNeeded => false,
             Outcome::Acted if verified => false,
             Outcome::Acted => {
@@ -170,6 +185,33 @@ impl HeartbeatBridge {
                     <= 1
             }
         }
+    }
+}
+
+/// HeartbeatSignal → WakeSignal 转换（优先级映射 N3：Critical→Critical，
+/// High/Normal→Normal）。
+fn to_wake_signal(s: &HeartbeatSignal) -> WakeSignal {
+    let priority = match s.priority {
+        SignalPriority::Critical => Priority::Critical, // 绕过 merge window 与节流（scheduler ②）
+        SignalPriority::High | SignalPriority::Normal => Priority::Normal,
+    };
+    let dedup_key = match s.dedup_key() {
+        Some((thing, alarm)) => format!("heartbeat:{}:{}:{}", s.workspace_id, thing, alarm),
+        None => format!("heartbeat:{}", s.workspace_id),
+    };
+    WakeSignal {
+        workspace_id: s.workspace_id.clone(),
+        priority,
+        source: TriggerSource::Heartbeat {
+            alarm: Some(HeartbeatAlarmContext {
+                thing_id: s.thing_id.clone(),
+                alarm_type: s.alarm_type.clone(),
+                rule_id: s.rule_id.clone(),
+                reason: s.reason.clone(),
+                context: s.context.clone(),
+            }),
+        },
+        dedup_key: Some(dedup_key),
     }
 }
 
@@ -260,9 +302,9 @@ impl AiEventHandler {
 
         match &ai_event {
             AiEvent::AlarmCreated(alarm) => {
-                // T3（D3 裁决）：报警不再唤醒心跳，直达 thing-agent 调查 dispatch。
-                // 心跳保持主动巡检定位，报警是被动响应——两者不抢同一条串行队列。
-                // O11 dedup（6h 窗口 + ack 抑制）在 bridge 内生效，兼作 flapping 防抖。
+                // T11（N3）：告警转 Heartbeat 变体入统一循环（bridge 内做
+                // 优先级映射+分键 dedup+ governor resume）。心跳保持主动巡检
+                // 定位，告警是被动响应——两者共用统一串行循环但分键不互合并。
                 if let Some(bridge) = &self.heartbeat_bridge {
                     bridge.dispatch_alarm_investigation(alarm).await;
                 }
@@ -626,10 +668,32 @@ pub(crate) mod tests {
             signals: Mutex<Vec<WakeSignal>>,
         }
 
+        impl RecordingSink {
+            fn last(&self) -> Option<WakeSignal> {
+                self.signals.lock().unwrap().last().cloned()
+            }
+        }
+
+        #[async_trait::async_trait]
         impl DirectiveSink for RecordingSink {
             fn enqueue(&self, signal: WakeSignal) -> Result<(), EnqueueError> {
                 self.signals.lock().unwrap().push(signal);
                 Ok(())
+            }
+
+            async fn drain(&self, _workspace_id: &str) {}
+        }
+
+        /// 字段照 loop_.rs:443-452 的 sample_signal；带 thing_id/alarm_type 走分键路径。
+        fn sample_alarm_signal(ws: &str) -> HeartbeatSignal {
+            HeartbeatSignal {
+                workspace_id: ws.into(),
+                reason: "设备离线".into(),
+                context: "{}".into(),
+                priority: SignalPriority::Critical,
+                thing_id: Some("d1".into()),
+                alarm_type: Some("offline".into()),
+                rule_id: Some("r1".into()),
             }
         }
 
@@ -665,7 +729,10 @@ pub(crate) mod tests {
 
         fn bridge(registry: RunRegistry) -> (HeartbeatBridge, Arc<RecordingSink>) {
             let sink = Arc::new(RecordingSink::default());
-            (HeartbeatBridge::new(registry, sink.clone()), sink)
+            (
+                HeartbeatBridge::new(registry, sink.clone(), HeartbeatGovernor::default()),
+                sink,
+            )
         }
 
         async fn dispatched(runs: Vec<(Outcome, bool, u32)>) -> Arc<RecordingSink> {
@@ -927,7 +994,61 @@ pub(crate) mod tests {
             assert!(matches!(ev.kind, AgentEventKind::HeartbeatResultReady { .. }));
         }
 
-        // ── T12 回归（T3 报警直达 dispatch 改造）──
+        // ── T11 告警链转 Heartbeat 变体(N3)──
+
+        #[test]
+        fn alarm_signal_maps_priority_and_distinct_dedup_key() {
+            // Critical→Critical;dedup 分键 heartbeat:{ws}:{thing}:{alarm_type}
+            let sig = to_wake_signal(&sample_alarm_signal("ws1"));
+            assert_eq!(sig.workspace_id, "ws1");
+            assert_eq!(sig.priority, Priority::Critical);
+            assert_eq!(sig.dedup_key.as_deref(), Some("heartbeat:ws1:d1:offline"));
+            match &sig.source {
+                TriggerSource::Heartbeat { alarm: Some(a) } => {
+                    assert_eq!(a.thing_id.as_deref(), Some("d1"));
+                    assert_eq!(a.alarm_type.as_deref(), Some("offline"));
+                    assert_eq!(a.rule_id.as_deref(), Some("r1"));
+                    assert_eq!(a.reason, "设备离线");
+                    assert_eq!(a.context, "{}");
+                }
+                other => panic!("expected Heartbeat alarm source, got {other:?}"),
+            }
+            // High→Normal(不绕 merge window,但分键天然不合并)
+            let mut high = sample_alarm_signal("ws1");
+            high.priority = SignalPriority::High;
+            assert_eq!(to_wake_signal(&high).priority, Priority::Normal);
+            // 无 thing/alarm 时退化为 heartbeat:{ws}
+            let mut bare = sample_alarm_signal("ws1");
+            bare.thing_id = None;
+            bare.alarm_type = None;
+            assert_eq!(to_wake_signal(&bare).dedup_key.as_deref(), Some("heartbeat:ws1"));
+            // N3:告警键 ≠ 定时 tick 键 heartbeat:ws1——Critical 告警不被在途 tick 吞
+            assert_ne!(sig.dedup_key.as_deref(), Some("heartbeat:ws1"));
+        }
+
+        #[tokio::test]
+        async fn alarm_signal_resumes_paused_governor_and_enqueues() {
+            let governor = HeartbeatGovernor::default();
+            for _ in 0..5 {
+                governor.record_failure("ws1");
+            }
+            assert!(governor.is_paused("ws1", Duration::from_secs(3600)));
+
+            // RecordingSink:实现 `DirectiveSink` 的测试桩,enqueue 记录 WakeSignal
+            let sink = Arc::new(RecordingSink::default());
+            let bridge = HeartbeatBridge::new(RunRegistry::new(), sink.clone(), governor.clone());
+            bridge.dispatch(&sample_alarm_signal("ws1")).await;
+
+            assert!(
+                !governor.is_paused("ws1", Duration::from_secs(3600)),
+                "告警信号恢复暂停(loop_.rs:128-133 语义)"
+            );
+            let sig = sink.last().expect("wake signal enqueued");
+            assert_eq!(sig.priority, Priority::Critical);
+            assert_eq!(sig.dedup_key.as_deref(), Some("heartbeat:ws1:d1:offline"));
+        }
+
+        // ── T12 回归(T11 改写:告警链走 Heartbeat 变体)──
 
         fn alarm_event(severity: &str) -> AiEvent {
             AiEvent::AlarmCreated(tinyiothub_core::models::event::AlarmEvent {
@@ -944,56 +1065,63 @@ pub(crate) mod tests {
             })
         }
 
-        /// T3：报警（全严重级）→ 直达 thing-agent 调查 dispatch，不再唤醒心跳。
+        /// T11(N3):告警(全严重级)→ Heartbeat 变体入统一循环,不再产
+        /// UserDirective 调查指令。warning→High→Normal;分键 dedup 与定时
+        /// tick 的 heartbeat:{ws} 不互合并。
         #[tokio::test]
-        async fn alarm_created_dispatches_investigation_not_heartbeat() {
+        async fn alarm_created_dispatches_heartbeat_variant_with_distinct_dedup_key() {
             let (bridge, sink) = bridge(RunRegistry::new());
             let (handler, _events) = make_handler(None, Some(Arc::new(bridge)), false);
 
             handler.handle_ai_event(&wrap_ai_event(&alarm_event("warning"))).await;
 
             let signals = sink.signals.lock().unwrap();
-            assert_eq!(signals.len(), 1, "alarm dispatched to thing-agent");
+            assert_eq!(signals.len(), 1, "alarm dispatched to unified loop");
             let sig = &signals[0];
             assert_eq!(sig.workspace_id, "ws_1");
-            assert_eq!(sig.priority, Priority::High);
+            // N3 映射:仅 Critical 绕 merge window+节流,其余 Normal。
+            assert_eq!(sig.priority, Priority::Normal);
+            assert_eq!(
+                sig.dedup_key.as_deref(),
+                Some("heartbeat:ws_1:dev-1:property_threshold"),
+                "告警分键,不与在途 tick 合并"
+            );
             match &sig.source {
-                TriggerSource::UserDirective {
-                    user_id,
-                    source,
-                    problem_key,
-                    ..
-                } => {
-                    assert_eq!(user_id, "alarm-triage");
-                    assert_eq!(source.as_deref(), Some("alarm"));
-                    // problem_key 按 thing+rule（不是 alarm id——抖动去重的关键）
-                    assert_eq!(problem_key.as_deref(), Some("alarm:dev-1:rule-9"));
+                TriggerSource::Heartbeat { alarm: Some(a) } => {
+                    assert_eq!(a.thing_id.as_deref(), Some("dev-1"));
+                    assert_eq!(a.alarm_type.as_deref(), Some("property_threshold"));
+                    assert_eq!(a.rule_id.as_deref(), Some("rule-9"));
+                    assert!(a.reason.contains("温度超过阈值"), "告警原因入上下文:{}", a.reason);
                 }
-                other => panic!("expected UserDirective, got {other:?}"),
+                other => panic!("expected Heartbeat alarm source, got {other:?}"),
             }
         }
 
-        /// T3 回归：error/critical 同样走 dispatch（不再是唤醒心跳的另一条路）。
+        /// N3:critical 告警 → SignalPriority::Critical → Priority::Critical,
+        /// 绕 merge window 与节流(scheduler ②)——不得被在途 tick 吞。
         #[tokio::test]
-        async fn critical_alarm_also_dispatches_investigation() {
+        async fn critical_alarm_maps_to_critical_priority() {
             let (bridge, sink) = bridge(RunRegistry::new());
             let (handler, _events) = make_handler(None, Some(Arc::new(bridge)), false);
 
             handler.handle_ai_event(&wrap_ai_event(&alarm_event("critical"))).await;
-            assert_eq!(sink.signals.lock().unwrap().len(), 1);
+
+            let signals = sink.signals.lock().unwrap();
+            assert_eq!(signals.len(), 1);
+            assert_eq!(signals[0].priority, Priority::Critical);
         }
 
-        /// T3 回归：无桥时不 panic、不派发。
+        /// T11 回归:无桥时不 panic、不派发。
         #[tokio::test]
         async fn alarm_created_without_bridge_is_noop() {
             let (handler, _events) = make_handler(None, None, false);
             handler.handle_ai_event(&wrap_ai_event(&alarm_event("error"))).await;
         }
 
-        /// T-8：alarm: 键域豁免「上次 Failed 即跳过」——瞬时 LLM 故障不固化
-        /// 成 6h 盲区；同 thing+rule 的下一条报警仍派发调查。
+        /// T-8(T11 形态):告警路径不做 outcome 抑制——历史 Failed run 不固化
+        /// 盲区,同 thing+rule 的下一条告警仍入队。
         #[tokio::test]
-        async fn alarm_key_exempt_from_failed_suppression() {
+        async fn alarm_dispatch_not_suppressed_by_prior_failed_run() {
             let registry = RunRegistry::new();
             registry.record_problem_run(
                 "ws_1",
@@ -1008,7 +1136,7 @@ pub(crate) mod tests {
                 unreachable!()
             };
             bridge.dispatch_alarm_investigation(&alarm).await;
-            assert_eq!(sink.signals.lock().unwrap().len(), 1, "Failed 后报警仍应重派调查");
+            assert_eq!(sink.signals.lock().unwrap().len(), 1, "Failed 后告警仍入队");
         }
     }
 }

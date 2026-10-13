@@ -37,7 +37,8 @@ use crate::domains::notify::{NotificationManager, NotificationMessage};
 use tinyiothub_core::models::event::EventLevel;
 use tinyiothub_core::notification_types::NotificationChannelType;
 
-/// problem_key 前缀（callbacks.rs dispatch_alarm_investigation 的键域）。
+/// problem_key 前缀（judgment handler 告警调查指令的键域，mod.rs:281；
+/// T11 起 callbacks.rs 告警链改走 heartbeat: 分键，不再产 alarm: 键）。
 const ALARM_KEY_PREFIX: &str = "alarm:";
 
 /// 从 problem_key "alarm:{thing_id}:{rule_id|-}" 解析。
