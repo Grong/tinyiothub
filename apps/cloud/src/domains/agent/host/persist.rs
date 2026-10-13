@@ -2,7 +2,9 @@
 //!
 //! 事件 → 落库映射（context 核实版）：
 //! - `RunRecorded` → `agent_runs` insert-once：裸 INSERT 撞 unique 约束，
-//!   预 SELECT 把"已存在"视为幂等成功（幂等即 fencing，stale 回放不覆盖）
+//!   预 SELECT 把"已存在"视为幂等成功（幂等即 fencing，stale 回放不覆盖）；
+//!   非幂等失败 spawn 独立重试（与心跳同款退避，D10：归一不降级可靠性），
+//!   重试耗尽/shutdown 中止 → DLQ
 //! - `HeartbeatResultReady` → `agent_actions`（首次失败 spawn 独立重试任务：
 //!   2s base、2^attempt 退避、5 次 → DLQ + `AiEvent::HeartbeatPersistFailed`）
 //! - `TrustConfigChanged` → `workspaces.heartbeat_trust_config` fencing upsert
@@ -279,7 +281,7 @@ pub(crate) async fn project(
             problem_key,
             dedup_key,
         } => {
-            project_run(pool, report, problem_key.as_deref(), dedup_key.as_deref()).await;
+            project_run(pool, report, problem_key.as_deref(), dedup_key.as_deref(), shutdown).await;
         }
         AgentEventKind::HeartbeatResultReady { result } => {
             let db = Db::new(pool.clone());
@@ -382,7 +384,15 @@ pub(crate) async fn project(
 
 /// run 记录幂等投影：预 SELECT 把重复 run_id 视为成功；并发下预检穿透
 /// 撞 unique 约束同样按幂等成功处理（insert-once，幂等即 fencing）。
-async fn project_run(pool: &SqlitePool, report: &RunReport, problem_key: Option<&str>, dedup_key: Option<&str>) {
+/// 非幂等失败不再直入 DLQ（D10：归一不降级可靠性）——spawn 独立重试
+/// （与心跳同款退避），重试耗尽/shutdown 中止才入 DLQ。
+async fn project_run(
+    pool: &SqlitePool,
+    report: &RunReport,
+    problem_key: Option<&str>,
+    dedup_key: Option<&str>,
+    shutdown: &CancellationToken,
+) {
     match run_exists(pool, &report.run_id).await {
         Ok(true) => {
             debug!(run_id = %report.run_id, "run already persisted, skipping (idempotent)");
@@ -400,20 +410,18 @@ async fn project_run(pool: &SqlitePool, report: &RunReport, problem_key: Option<
             debug!(run_id = %report.run_id, "run insert hit unique constraint (concurrent duplicate), treating as success");
             return;
         }
-        error!(run_id = %report.run_id, error = %e, "run record projection failed");
-        let payload = serde_json::to_string(report).unwrap_or_else(|se| {
-            format!(
-                r#"{{"unserializable":true,"run_id":"{}","serialize_error":"{}"}}"#,
-                report.run_id, se
-            )
-        });
-        let dlq = SqliteDeadLetterQueue::new(pool.clone());
-        if let Err(dlq_err) = dlq
-            .enqueue(&report.workspace_id, "RunRecorded", &payload, &e.to_string())
-            .await
-        {
-            error!(run_id = %report.run_id, error = %dlq_err, "DLQ enqueue failed — run record lost");
-        }
+        warn!(
+            run_id = %report.run_id,
+            error = %e,
+            "run record persist failed, spawning retry task"
+        );
+        spawn_run_retry(
+            pool.clone(),
+            report.clone(),
+            problem_key.map(str::to_string),
+            dedup_key.map(str::to_string),
+            shutdown.clone(),
+        );
     }
 }
 
@@ -548,19 +556,42 @@ pub(crate) async fn resync(snapshot: RestoreSnapshot, pool: &SqlitePool, failure
     }
 }
 
-/// 心跳结果重试任务（重建自 4d102722 `retry_with_backoff`）：独立 spawn，
-/// 2s base、2^attempt 退避，累计 5 次失败 → DLQ + HeartbeatPersistFailed。
-/// subscriber 侧采用简化形式：无 in-flight 计数。shutdown（Task 9 接线）：
-/// backoff 睡眠响应 CancellationToken，进程退出时不滞留重试任务。
-fn spawn_heartbeat_retry(
-    pool: SqlitePool,
-    publisher: Arc<AiEventPublisher>,
+/// 持久化重试公共骨架（D10：heartbeat 与 run 共用，泛化 payload 类型）。
+/// 独立 spawn，RETRY_BASE_DELAY（2s）base、2^attempt 退避，累计
+/// RETRY_MAX_ATTEMPTS 次失败 → DLQ + `on_exhausted` 回调；shutdown 取消
+/// → 中止并入 DLQ（不静默丢）。subscriber 侧采用简化形式：无 in-flight
+/// 计数。DLQ payload 由调用方预序列化（重试期间内容不变，与原先在循环
+/// 内惰性序列化等价）。
+struct PersistRetryCtx {
+    /// DLQ 归属工作区与日志上下文。
     workspace_id: String,
-    result: HeartbeatResult,
+    /// DLQ event_type（心跳 "HeartbeatCompleted" / run "RunRecorded"）。
+    event_type: &'static str,
+    /// 日志关联键（心跳=workspace_id，run=run_id）。
+    key: String,
+    /// DLQ 负载（预序列化）。
+    payload: String,
+}
+
+/// 单次重试尝试的结果。
+enum RetryStep {
+    /// 落库成功（含幂等成功），重试结束。
+    Done,
+    /// 失败，携带错误串；未耗尽则继续退避。
+    Failed(String),
+}
+
+fn spawn_persist_retry<F, Fut>(
+    pool: SqlitePool,
     shutdown: CancellationToken,
-) {
+    ctx: PersistRetryCtx,
+    mut try_once: F,
+    on_exhausted: impl FnOnce(String) + Send + 'static,
+) where
+    F: FnMut() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = RetryStep> + Send,
+{
     tokio::spawn(async move {
-        let db = Db::new(pool.clone());
         let dlq = SqliteDeadLetterQueue::new(pool);
         let mut attempt: u32 = 0;
         loop {
@@ -568,67 +599,173 @@ fn spawn_heartbeat_retry(
                 _ = tokio::time::sleep(RETRY_BASE_DELAY * 2u32.pow(attempt)) => {}
                 _ = shutdown.cancelled() => {
                     // CEO review T9：关停中止重试不得静默丢结果——入 DLQ
-                    // （此前仅 debug 返回，该 tick 永久消失且无记录）。
-                    let payload = serde_json::to_string(&result).unwrap_or_else(|se| {
-                        format!(
-                            r#"{{"unserializable":true,"workspace_id":"{}","serialize_error":"{}"}}"#,
-                            result.workspace_id, se
-                        )
-                    });
+                    // （此前仅 debug 返回，该事件永久消失且无记录）。
                     match dlq
-                        .enqueue(&workspace_id, "HeartbeatCompleted", &payload, "persist retry aborted by shutdown")
+                        .enqueue(&ctx.workspace_id, ctx.event_type, &ctx.payload, "persist retry aborted by shutdown")
                         .await
                     {
                         Ok(()) => {
-                            warn!(workspace_id = %workspace_id, attempt, "heartbeat persist retry aborted by shutdown — result sent to DLQ");
+                            warn!(
+                                workspace_id = %ctx.workspace_id,
+                                key = %ctx.key,
+                                attempt,
+                                event_type = ctx.event_type,
+                                "persist retry aborted by shutdown — sent to DLQ"
+                            );
                         }
                         Err(dlq_err) => {
-                            error!(workspace_id = %workspace_id, error = %dlq_err, "shutdown abort AND DLQ enqueue failed — heartbeat result lost");
+                            error!(
+                                workspace_id = %ctx.workspace_id,
+                                key = %ctx.key,
+                                error = %dlq_err,
+                                event_type = ctx.event_type,
+                                "shutdown abort AND DLQ enqueue failed — event lost"
+                            );
                         }
                     }
                     return;
                 }
             }
-            match db.insert_heartbeat_result(&workspace_id, &result).await {
-                Ok(_) => {
-                    debug!(workspace_id = %workspace_id, attempt, "heartbeat result persisted on retry");
+            match try_once().await {
+                RetryStep::Done => {
+                    debug!(
+                        workspace_id = %ctx.workspace_id,
+                        key = %ctx.key,
+                        attempt,
+                        event_type = ctx.event_type,
+                        "persisted on retry"
+                    );
                     return;
                 }
-                Err(e) => {
+                RetryStep::Failed(last_error) => {
                     attempt += 1;
-                    let last_error = e.to_string();
                     if attempt >= RETRY_MAX_ATTEMPTS {
                         error!(
-                            workspace_id = %workspace_id,
+                            workspace_id = %ctx.workspace_id,
+                            key = %ctx.key,
                             attempts = attempt,
                             error = %last_error,
-                            "heartbeat persist exhausted retries, enqueuing to DLQ"
+                            event_type = ctx.event_type,
+                            "persist exhausted retries, enqueuing to DLQ"
                         );
-                        let payload = serde_json::to_string(&result).unwrap_or_else(|se| {
-                            format!(
-                                r#"{{"unserializable":true,"workspace_id":"{}","serialize_error":"{}"}}"#,
-                                result.workspace_id, se
-                            )
-                        });
                         if let Err(dlq_err) = dlq
-                            .enqueue(&workspace_id, "HeartbeatCompleted", &payload, &last_error)
+                            .enqueue(&ctx.workspace_id, ctx.event_type, &ctx.payload, &last_error)
                             .await
                         {
                             error!(
-                                workspace_id = %workspace_id,
+                                workspace_id = %ctx.workspace_id,
+                                key = %ctx.key,
                                 error = %dlq_err,
-                                "DLQ enqueue failed — heartbeat result lost"
+                                event_type = ctx.event_type,
+                                "DLQ enqueue failed — event lost"
                             );
                         }
-                        publisher.publish(AiEvent::HeartbeatPersistFailed {
-                            workspace_id: workspace_id.clone(),
-                            reason: format!("Failed after {} attempts: {}", RETRY_MAX_ATTEMPTS, last_error),
-                        });
+                        on_exhausted(format!("Failed after {} attempts: {}", RETRY_MAX_ATTEMPTS, last_error));
                         return;
                     }
-                    warn!(workspace_id = %workspace_id, attempt, error = %last_error, "heartbeat persist retry");
+                    warn!(
+                        workspace_id = %ctx.workspace_id,
+                        key = %ctx.key,
+                        attempt,
+                        error = %last_error,
+                        event_type = ctx.event_type,
+                        "persist retry"
+                    );
                 }
             }
         }
     });
+}
+
+/// 心跳结果重试任务（重建自 4d102722 `retry_with_backoff`，D10 起基于
+/// 公共骨架 [`spawn_persist_retry`]）：耗尽后除 DLQ 外另发
+/// `AiEvent::HeartbeatPersistFailed`。
+fn spawn_heartbeat_retry(
+    pool: SqlitePool,
+    publisher: Arc<AiEventPublisher>,
+    workspace_id: String,
+    result: HeartbeatResult,
+    shutdown: CancellationToken,
+) {
+    let payload = serde_json::to_string(&result).unwrap_or_else(|se| {
+        format!(
+            r#"{{"unserializable":true,"workspace_id":"{}","serialize_error":"{}"}}"#,
+            result.workspace_id, se
+        )
+    });
+    let ctx = PersistRetryCtx {
+        workspace_id: workspace_id.clone(),
+        event_type: "HeartbeatCompleted",
+        key: workspace_id.clone(),
+        payload,
+    };
+    let db = Db::new(pool.clone());
+    let attempt_workspace = workspace_id.clone();
+    spawn_persist_retry(
+        pool,
+        shutdown,
+        ctx,
+        move || {
+            let db = db.clone();
+            let result = result.clone();
+            let workspace_id = attempt_workspace.clone();
+            async move {
+                match db.insert_heartbeat_result(&workspace_id, &result).await {
+                    Ok(_) => RetryStep::Done,
+                    Err(e) => RetryStep::Failed(e.to_string()),
+                }
+            }
+        },
+        move |reason| {
+            publisher.publish(AiEvent::HeartbeatPersistFailed { workspace_id, reason });
+        },
+    );
+}
+
+/// RunRecorded 落库重试（D10：与心跳同款退避，归一不降级可靠性）。
+/// insert 幂等（UNIQUE=成功）在重试路径同样成立；耗尽/shutdown 中止 →
+/// DLQ（event_type="RunRecorded"，payload/reason 形态与原直入 DLQ 一致）。
+fn spawn_run_retry(
+    pool: SqlitePool,
+    report: RunReport,
+    problem_key: Option<String>,
+    dedup_key: Option<String>,
+    shutdown: CancellationToken,
+) {
+    let payload = serde_json::to_string(&report).unwrap_or_else(|se| {
+        format!(
+            r#"{{"unserializable":true,"run_id":"{}","serialize_error":"{}"}}"#,
+            report.run_id, se
+        )
+    });
+    let ctx = PersistRetryCtx {
+        workspace_id: report.workspace_id.clone(),
+        event_type: "RunRecorded",
+        key: report.run_id.clone(),
+        payload,
+    };
+    let db = Db::new(pool.clone());
+    spawn_persist_retry(
+        pool,
+        shutdown,
+        ctx,
+        move || {
+            let db = db.clone();
+            let report = report.clone();
+            let problem_key = problem_key.clone();
+            let dedup_key = dedup_key.clone();
+            async move {
+                match db
+                    .insert_agent_run(&report, problem_key.as_deref(), dedup_key.as_deref())
+                    .await
+                {
+                    Ok(_) => RetryStep::Done,
+                    // 并发下预检穿透撞 unique：幂等成功（与 project_run 一致）。
+                    Err(e) if e.to_string().contains("UNIQUE") => RetryStep::Done,
+                    Err(e) => RetryStep::Failed(e.to_string()),
+                }
+            }
+        },
+        |_| {},
+    );
 }

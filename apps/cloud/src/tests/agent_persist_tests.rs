@@ -802,6 +802,76 @@ async fn resync_recovers_heartbeat_results_idempotently() {
     assert_eq!(n, 1, "tick-42 must be persisted exactly once across two resyncs");
 }
 
+/// Task 7（D10）：RunRecorded 落库失败先重试（心跳同款退避），重试成功
+/// 不入 DLQ——归一不得静默降级可靠性（此前 insert 失败直入 DLQ）。
+#[tokio::test]
+async fn run_recorded_persist_retries_before_dlq() {
+    use crate::domains::agent::host::persist::project;
+
+    let (_db, pool) = test_db().await;
+
+    // 故障注入：假表只留 id 列——existence check（SELECT COUNT by id）通过
+    // 返回 false，insert（13 列）失败且非 UNIQUE，触发重试路径。
+    let (create_sql,): (String,) = sqlx::query_as("SELECT sql FROM sqlite_master WHERE name = 'agent_runs'")
+        .fetch_one(&pool)
+        .await
+        .expect("agent_runs schema");
+    sqlx::query("DROP TABLE agent_runs")
+        .execute(&pool)
+        .await
+        .expect("drop agent_runs");
+    sqlx::query("CREATE TABLE agent_runs (id TEXT PRIMARY KEY)")
+        .execute(&pool)
+        .await
+        .expect("create stub agent_runs");
+
+    let shutdown = CancellationToken::new();
+    project(
+        &tinyiothub_agent::runtime::events::AgentEvent {
+            seq: 1,
+            occurred_at: chrono::Utc::now(),
+            kind: AgentEventKind::RunRecorded {
+                report: Box::new(report("run-retry", "ws1", "首次失败二次成功")),
+                problem_key: None,
+                dedup_key: None,
+            },
+        },
+        &pool,
+        &test_publisher(),
+        &shutdown,
+    )
+    .await;
+
+    // 首次 insert 已失败、重试任务在 2s 退避窗口内——立即恢复真表。
+    sqlx::query("DROP TABLE agent_runs")
+        .execute(&pool)
+        .await
+        .expect("drop stub agent_runs");
+    sqlx::query(sqlx::AssertSqlSafe(create_sql.as_str()))
+        .execute(&pool)
+        .await
+        .expect("restore agent_runs");
+
+    // 重试退避 base 2s：放宽等待窗口到 10s。
+    let mut persisted = false;
+    for _ in 0..1000 {
+        if count_runs(&pool, "run-retry").await == 1 {
+            persisted = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(persisted, "run must be persisted by retry within 10s");
+
+    let (dlq_n,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM agent_dead_letters WHERE workspace_id = 'ws1' AND event_type = 'RunRecorded'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("dlq count");
+    assert_eq!(dlq_n, 0, "retry 成功不得入 DLQ");
+}
+
 /// CEO review T9：关停中止心跳重试 → 结果入 DLQ（此前仅 debug 返回，
 /// 该 tick 永久消失且无记录）。
 #[tokio::test]
