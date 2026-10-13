@@ -82,16 +82,17 @@ pub struct UpdateHeartbeatConfigRequest {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HeartbeatLogEntry {
-    timestamp: String,
-    task_count: u32,
-    status: String,
-    error_message: Option<String>,
-    result: Option<String>,
-    auto_executed: Vec<ActionDetail>,
-    pending_proposals: Vec<ProposalDetail>,
+    // pub(crate)：execution_record 适配器（同 crate 兄弟模块）构造本类型。
+    pub(crate) timestamp: String,
+    pub(crate) task_count: u32,
+    pub(crate) status: String,
+    pub(crate) error_message: Option<String>,
+    pub(crate) result: Option<String>,
+    pub(crate) auto_executed: Vec<ActionDetail>,
+    pub(crate) pending_proposals: Vec<ProposalDetail>,
     /// tick 的逐步工具轨迹（T9 起 anchor content 含 trace；investigate
     /// 断口修复：此前 get_logs 解析时丢弃）。旧 tick 无 trace → 空数组。
-    trace: Vec<tinyiothub_core::agent_runs::ToolTraceEntry>,
+    pub(crate) trace: Vec<tinyiothub_core::agent_runs::ToolTraceEntry>,
 }
 
 #[derive(Debug, Serialize)]
@@ -271,10 +272,113 @@ pub async fn get_logs(
 ) -> Json<ApiResponse<HeartbeatLogsResponse>> {
     verify_workspace_access_port!(state, claims, workspace_id);
 
-    // Fetch all heartbeat rows (summary + error + auto_executed + proposal)
-    let rows = state.db.list_agent_heartbeat_actions(&workspace_id).await;
+    // Task 10（C6 读侧切换）：主查询读 agent_runs（trigger 前缀 heartbeat:），
+    // 每行经纯函数适配器 RunReport→ExecutionRecord 映射；提案/auto_executed
+    // 明细数据源不变（agent_actions，按 tick_id=run_id 联结）。
+    // 兼容期 fallback：agent_runs 查空且旧 agent_actions 锚行仍在时回旧查询
+    // （双读；切换完成后删 legacy 分支）。
+    let logs = match state.db.list_heartbeat_run_rows(&workspace_id, 50).await {
+        Ok(runs) if !runs.is_empty() => assemble_logs_from_runs(&state, &workspace_id, runs).await,
+        Ok(_) => legacy_logs_from_agent_actions(&state, &workspace_id).await,
+        Err(e) => {
+            tracing::error!(%workspace_id, "Failed to query heartbeat runs: {}", e);
+            vec![]
+        }
+    };
 
-    let logs = match rows {
+    ApiResponseBuilder::success(HeartbeatLogsResponse { logs })
+}
+
+/// 新源装配（Task 10）：agent_runs 行 → ExecutionRecord（适配器纯函数），
+/// 明细按 tick_id=run_id 联结 agent_actions。明细查询失败不拖垮主时间线
+/// （log + 空明细，与旧路径行级解析失败跳过同向）。
+async fn assemble_logs_from_runs(
+    state: &AgentState,
+    workspace_id: &str,
+    runs: Vec<(String, String, String, String, String, String)>,
+) -> Vec<HeartbeatLogEntry> {
+    let run_ids: Vec<String> = runs.iter().map(|(id, ..)| id.clone()).collect();
+    let mut details_by_tick: std::collections::HashMap<String, (Vec<ActionDetail>, Vec<ProposalDetail>)> =
+        std::collections::HashMap::new();
+    match state
+        .db
+        .list_agent_heartbeat_details_by_ticks(workspace_id, &run_ids)
+        .await
+    {
+        Ok(rows) => {
+            for (tick_id, action_type, content) in rows {
+                let entry = details_by_tick.entry(tick_id).or_default();
+                match action_type.as_str() {
+                    "auto_executed" => {
+                        if let Some(d) = parse_auto_executed_detail(&content) {
+                            entry.0.push(d);
+                        }
+                    }
+                    "proposal" => {
+                        if let Some(d) = parse_proposal_detail(&content) {
+                            entry.1.push(d);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Err(e) => tracing::error!(%workspace_id, "Failed to query heartbeat run details: {}", e),
+    }
+
+    runs.into_iter()
+        .map(|(id, trigger, outcome, summary, report, created_at)| {
+            let report_json = serde_json::from_str(&report).unwrap_or(serde_json::Value::Null);
+            let mut record = super::execution_record::run_row_to_execution_record(
+                &id,
+                &trigger,
+                &outcome,
+                &summary,
+                &report_json,
+                &created_at,
+            );
+            if let Some((auto_executed, pending_proposals)) = details_by_tick.remove(&id) {
+                record.auto_executed = auto_executed;
+                record.pending_proposals = pending_proposals;
+            }
+            record
+        })
+        .collect()
+}
+
+fn parse_auto_executed_detail(content: &str) -> Option<ActionDetail> {
+    let parsed: serde_json::Value = serde_json::from_str(content).ok()?;
+    let str_field = |key: &str| parsed.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    Some(ActionDetail {
+        tool: str_field("tool"),
+        thing_id: str_field("thingId"),
+        summary: str_field("summary"),
+    })
+}
+
+fn parse_proposal_detail(content: &str) -> Option<ProposalDetail> {
+    let parsed: serde_json::Value = serde_json::from_str(content).ok()?;
+    let str_field = |key: &str| parsed.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    Some(ProposalDetail {
+        level: str_field("level"),
+        tool_name: str_field("toolName"),
+        thing_id: str_field("thingId"),
+        device_name: str_field("deviceName"),
+        summary: str_field("summary"),
+        reason: str_field("reason"),
+        risk: str_field("risk"),
+        status: str_field("status"),
+    })
+}
+
+/// 兼容期 fallback（Task 10 前旧路径，原样保留）：读 agent_actions 锚行
+/// （summary/error）驱动时间线，同 created_at 的提案/动作行嵌进条目。
+/// agent_runs 查空且锚行仍在时启用；切换完成后删除。
+async fn legacy_logs_from_agent_actions(state: &AgentState, workspace_id: &str) -> Vec<HeartbeatLogEntry> {
+    // Fetch all heartbeat rows (summary + error + auto_executed + proposal)
+    let rows = state.db.list_agent_heartbeat_actions(workspace_id).await;
+
+    match rows {
         Ok(rows) => {
             // Group rows by timestamp — summary/error rows drive the timeline,
             // auto_executed/proposal rows from the same tick are nested inside
@@ -306,61 +410,16 @@ pub async fn get_logs(
                     let (task_count, message) = parse_action_content(&content);
 
                     let related = details.remove(&created_at).unwrap_or_default();
-                    let mut auto_executed = Vec::new();
-                    let mut pending_proposals = Vec::new();
-
-                    for (a_type, a_content) in related {
-                        match a_type.as_str() {
-                            "auto_executed" => {
-                                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&a_content) {
-                                    auto_executed.push(ActionDetail {
-                                        tool: parsed.get("tool").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                        thing_id: parsed
-                                            .get("thingId")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string(),
-                                        summary: parsed
-                                            .get("summary")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string(),
-                                    });
-                                }
-                            }
-                            "proposal" => {
-                                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&a_content) {
-                                    pending_proposals.push(ProposalDetail {
-                                        level: parsed.get("level").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                        tool_name: parsed
-                                            .get("toolName")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string(),
-                                        thing_id: parsed
-                                            .get("thingId")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string(),
-                                        device_name: parsed
-                                            .get("deviceName")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string(),
-                                        summary: parsed
-                                            .get("summary")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string(),
-                                        reason: parsed.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                        risk: parsed.get("risk").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                        status: parsed.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                    });
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
+                    let auto_executed: Vec<ActionDetail> = related
+                        .iter()
+                        .filter(|(t, _)| t == "auto_executed")
+                        .filter_map(|(_, c)| parse_auto_executed_detail(c))
+                        .collect();
+                    let pending_proposals: Vec<ProposalDetail> = related
+                        .iter()
+                        .filter(|(t, _)| t == "proposal")
+                        .filter_map(|(_, c)| parse_proposal_detail(c))
+                        .collect();
 
                     HeartbeatLogEntry {
                         timestamp: created_at,
@@ -379,9 +438,7 @@ pub async fn get_logs(
             tracing::error!(%workspace_id, "Failed to query heartbeat logs: {}", e);
             vec![]
         }
-    };
-
-    ApiResponseBuilder::success(HeartbeatLogsResponse { logs })
+    }
 }
 
 // ── GET /{id}/heartbeat/tasks ──

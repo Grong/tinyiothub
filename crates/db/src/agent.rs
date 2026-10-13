@@ -146,6 +146,33 @@ pub(crate) async fn list_agent_heartbeat_actions(
     .await
 }
 
+/// 指定 tick（=run_id，C3 联结）集合的提案/动作明细行，(tick_id, action_type,
+/// content)，tick 内按时间升序。get_logs 明细数据源（Task 10：主查询切
+/// agent_runs 后明细仍按 tick_id 从 agent_actions 取——数据源不变）。
+pub(crate) async fn list_agent_heartbeat_details_by_ticks(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    tick_ids: &[String],
+) -> Result<Vec<(String, String, String)>, sqlx::Error> {
+    if tick_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = vec!["?"; tick_ids.len()].join(", ");
+    // AssertSqlSafe 仅满足 sqlx 0.9 的 SqlSafeStr bound：placeholders 是
+    // 硬编码 "?" 重复，值全部走 bind 参数。
+    let sql = sqlx::AssertSqlSafe(format!(
+        "SELECT tick_id, action_type, content FROM agent_actions \
+         WHERE workspace_id = ? AND action_type IN ('proposal', 'auto_executed') \
+           AND tick_id IN ({placeholders}) \
+         ORDER BY created_at ASC, rowid ASC"
+    ));
+    let mut query = sqlx::query_as(sql).bind(workspace_id);
+    for tick_id in tick_ids {
+        query = query.bind(tick_id);
+    }
+    query.fetch_all(pool).await
+}
+
 /// Proposal 动作行（action_type, content, created_at），最新 50 条。
 pub(crate) async fn list_agent_proposal_actions(
     pool: &SqlitePool,
@@ -395,6 +422,15 @@ impl Db {
         workspace_id: &str,
     ) -> Result<Vec<(String, String, String)>, sqlx::Error> {
         list_agent_heartbeat_actions(self.pool(), workspace_id).await
+    }
+
+    /// 指定 tick（=run_id）集合的提案/动作明细行（get_logs 明细源，Task 10）。
+    pub async fn list_agent_heartbeat_details_by_ticks(
+        &self,
+        workspace_id: &str,
+        tick_ids: &[String],
+    ) -> Result<Vec<(String, String, String)>, sqlx::Error> {
+        list_agent_heartbeat_details_by_ticks(self.pool(), workspace_id, tick_ids).await
     }
 
     /// Proposal 动作行（最新 50 条）。

@@ -921,6 +921,29 @@ pub struct AgentRunRow {
     pub created_at: String,
 }
 
+/// 心跳 run 行（get_logs 读侧新源，Task 10/C6）：workspace 内 trigger 前缀
+/// `heartbeat:` 的 run，最新在前，limit 截断。列元组 = (id, trigger,
+/// outcome, summary, report_json, created_at)——适配器
+/// run_row_to_execution_record 的输入契约。
+pub(crate) async fn list_heartbeat_run_rows(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    limit: i64,
+) -> std::result::Result<Vec<(String, String, String, String, String, String)>, sqlx::Error> {
+    // rowid 决胜：created_at 秒级精度，同秒批量插入仍保持插入序（recent_summaries 先例）。
+    sqlx::query_as(
+        "SELECT id, COALESCE(trigger_context, ''), outcome, summary, report, created_at
+         FROM agent_runs
+         WHERE workspace_id = ? AND trigger_context LIKE 'heartbeat:%'
+         ORDER BY created_at DESC, rowid DESC
+         LIMIT ?",
+    )
+    .bind(workspace_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
 /// 检查 agent_run 是否存在。
 pub(crate) async fn agent_run_exists(pool: &SqlitePool, run_id: &str) -> std::result::Result<bool, sqlx::Error> {
     let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agent_runs WHERE id = ?")
@@ -959,6 +982,15 @@ pub(crate) async fn find_agent_run_owner(
 }
 
 impl Db {
+    /// 心跳 run 行（get_logs 新源，最新在前，limit 截断）。
+    pub async fn list_heartbeat_run_rows(
+        &self,
+        workspace_id: &str,
+        limit: i64,
+    ) -> std::result::Result<Vec<(String, String, String, String, String, String)>, sqlx::Error> {
+        list_heartbeat_run_rows(self.pool(), workspace_id, limit).await
+    }
+
     /// 检查 agent_run 是否存在。
     pub async fn agent_run_exists(&self, run_id: &str) -> std::result::Result<bool, sqlx::Error> {
         agent_run_exists(self.pool(), run_id).await

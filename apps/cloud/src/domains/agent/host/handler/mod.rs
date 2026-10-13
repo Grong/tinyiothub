@@ -7,6 +7,7 @@
 // - /agents/{id}/files/* - workspace files
 
 pub mod agent_tasks;
+pub mod execution_record;
 pub mod files;
 pub mod skills;
 pub mod types;
