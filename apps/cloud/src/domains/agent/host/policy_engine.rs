@@ -211,6 +211,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn policy_reads_are_fresh_per_evaluate_kill_switch_immediate() {
+        // O7/R1 锁定:evaluate 每次新鲜读档(语义源头见
+        // tools/autonomous_invoke.rs:278-280——「fresh read on EVERY call
+        // (O7: kill switch takes effect immediately)」)。
+        // 允许规则下 evaluate 放行;把同一规则翻成 Block(kill switch)后,
+        // 下一次 evaluate 必须立即拒——无任何缓存/快照窗口。
+        // 防有人把读档「优化」成 run 触发时快照。
+        let pool = test_pool().await;
+        let engine = SqlitePolicyEngine::new(pool);
+
+        engine
+            .add_rule(rule("kill-switch", "ws1", PolicyAction::Allow, "reboot", 10))
+            .await
+            .unwrap();
+        assert_eq!(
+            engine.evaluate("ws1", PolicyCategory::AgentAction, "reboot").await,
+            PolicyDecision::Allow
+        );
+
+        // Flip the same rule to Block — the very next evaluate must deny.
+        engine
+            .add_rule(rule("kill-switch", "ws1", PolicyAction::Block, "reboot", 10))
+            .await
+            .unwrap();
+        assert_eq!(
+            engine.evaluate("ws1", PolicyCategory::AgentAction, "reboot").await,
+            PolicyDecision::Block {
+                reason: "reason-kill-switch".to_string()
+            }
+        );
+
+        // Flip back to Allow — immediate again, in both directions.
+        engine
+            .add_rule(rule("kill-switch", "ws1", PolicyAction::Allow, "reboot", 10))
+            .await
+            .unwrap();
+        assert_eq!(
+            engine.evaluate("ws1", PolicyCategory::AgentAction, "reboot").await,
+            PolicyDecision::Allow
+        );
+    }
+
+    #[tokio::test]
     async fn rules_are_workspace_isolated() {
         let pool = test_pool().await;
         let engine = SqlitePolicyEngine::new(pool);
