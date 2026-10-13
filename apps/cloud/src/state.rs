@@ -114,6 +114,11 @@ pub struct AppState {
     /// handler 回旧 runner 内存出口（双轨过渡，T15 runner 退役后删 fallback）。
     pub heartbeat_last_ticks: Option<Arc<dashmap::DashMap<String, chrono::DateTime<chrono::Utc>>>>,
 
+    /// 统一循环管理器（T13 bootstrap 双跑装配注入）——heartbeat handler 的
+    /// 写穿出口（任务表/intervals/trust 共享表 + 每工作区 reload_notify）。
+    /// None = AI 子系统未接线（测试/降级路径），handler 只写旧 runner。
+    pub thing_agents: Option<Arc<tinyiothub_agent::runtime::thing_agent::ThingAgentManager>>,
+
     /// Agent MemoryService（set during async startup）—— Task 6 起由 cloud 侧
     /// 自持（memory profile compile / weekly digest handler），不再经
     /// Orchestrator 中转。
@@ -511,6 +516,7 @@ impl AppState {
             orchestrator: None,
             heartbeat_runner: None,
             heartbeat_last_ticks: None,
+            thing_agents: None, // T13 bootstrap 双跑装配时注入
             memory_service: None,
             user_service,
             tenant_service,
@@ -1011,6 +1017,7 @@ impl axum::extract::FromRef<AppState> for crate::domains::agent::AgentState {
             active_runs: state.active_runs.clone(),
             heartbeat_runner: state.heartbeat_runner.clone(),
             heartbeat_last_ticks: state.heartbeat_last_ticks.clone(),
+            thing_agents: state.thing_agents.clone(),
             orchestrator: state.orchestrator.clone(),
             memory_service: state.memory_service.clone(),
             memory_store: state.memory_store.clone(),

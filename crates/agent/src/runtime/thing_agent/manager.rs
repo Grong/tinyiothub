@@ -101,9 +101,10 @@ impl Default for ThingAgentManagerConfig {
 }
 
 /// Heartbeat 源的共享内存依赖（Task 6）：trigger 的 tasks/intervals 读表、
-/// prompt 装配的任务/信任注入源、governor 连败治理、reload_notify 热更新
-/// 信号。cloud bootstrap（T13）注入，handler 写穿共享同一张表（D11-⑤ 写序
-/// 不变）。默认空表 = trigger 空任务抑制不 tick（行为保持 loop_.rs:63）。
+/// prompt 装配的任务/信任注入源、governor 连败治理、last_ticks 实时读透出。
+/// cloud bootstrap（T13）经 restore 自快照预热，handler 写穿共享同一张表
+///（D11-⑤ 写序不变）。默认空表 = trigger 空任务抑制不 tick（行为保持
+/// loop_.rs:63）。
 #[derive(Clone, Default)]
 pub struct HeartbeatDeps {
     /// 每工作区巡检任务表（trigger 读 + prompt 读共享同一张）。
@@ -114,8 +115,6 @@ pub struct HeartbeatDeps {
     pub trust_configs: Arc<DashMap<String, TrustConfig>>,
     /// 连败治理（T4）：run_pipeline 记账，trigger 读暂停态。
     pub governor: HeartbeatGovernor,
-    /// 热更新信号：handler 写穿 DB+内存表后 notify，trigger 立即 tick。
-    pub reload_notify: Arc<tokio::sync::Notify>,
     /// 每工作区最近 tick 完成时间表（Task 12，D13 实时读）：run_pipeline 在
     /// heartbeat 源 run 完成时写入（成败均计，对齐旧 loop_.rs:74-75）；handler
     /// get_config 的 last_tick 读源（T13 bootstrap 注入同一张表）。
@@ -148,8 +147,6 @@ struct PipelineDeps {
     heartbeat_intervals: Arc<DashMap<String, u32>>,
     /// heartbeat 连败治理（T4）：run_pipeline 记账，trigger 读暂停态。
     governor: HeartbeatGovernor,
-    /// heartbeat 热更新信号：handler 写穿后 notify，trigger 立即 tick。
-    heartbeat_reload_notify: Arc<tokio::sync::Notify>,
     /// heartbeat 源最近 tick 完成时间表（Task 12，D13 实时读透出）——成败均计，
     /// 与 governor 记账同一落点（record_heartbeat_outcome 两条路径共用）。
     last_ticks: Arc<DashMap<String, chrono::DateTime<chrono::Utc>>>,
@@ -170,6 +167,14 @@ pub struct ThingAgentManager {
     deps: PipelineDeps,
     config: ThingAgentManagerConfig,
     workspaces: DashMap<String, WorkspaceLoop>,
+    /// T13：handler 写穿与 bootstrap 注入用的 heartbeat 共享表句柄——与
+    /// PipelineDeps 内读侧共享同一 DashMap 真源。
+    heartbeat: HeartbeatDeps,
+    /// T13：每工作区心跳热更新信号。独立实例而非单一全局 Notify——
+    /// `Notify::notify_one` 只唤醒一个等待者，多工作区共享会叫错/叫漏。
+    /// get-or-insert：handler 先于 start 调用也安全；stop 时丢弃条目，
+    /// 旧 trigger 持有的 Notify 不再被唤醒（避免 stale permit 补 tick）。
+    heartbeat_reload_notifies: DashMap<String, Arc<tokio::sync::Notify>>,
 }
 
 impl ThingAgentManager {
@@ -199,14 +204,15 @@ impl ThingAgentManager {
                 active_runs: ActiveRunRegistry::with_default_capacity(),
                 heartbeat_tasks: heartbeat.tasks.clone(),
                 trust_configs: heartbeat.trust_configs.clone(),
-                heartbeat_tasks_map: heartbeat.tasks,
-                heartbeat_intervals: heartbeat.intervals,
-                governor: heartbeat.governor,
-                heartbeat_reload_notify: heartbeat.reload_notify,
-                last_ticks: heartbeat.last_ticks,
+                heartbeat_tasks_map: heartbeat.tasks.clone(),
+                heartbeat_intervals: heartbeat.intervals.clone(),
+                governor: heartbeat.governor.clone(),
+                last_ticks: heartbeat.last_ticks.clone(),
             },
             config,
             workspaces: DashMap::new(),
+            heartbeat,
+            heartbeat_reload_notifies: DashMap::new(),
         }
     }
 
@@ -262,6 +268,7 @@ impl ThingAgentManager {
 
         // Task 6：心跳触发器挂载（T5）。空任务/全暂停不 tick；governor 暂停
         // 抑制；reload_notify 到达立即 tick（行为保持清单第 1/3 行）。
+        // T13：reload_notify 为每工作区独立实例（见 heartbeat_reload_notify）。
         let heartbeat = HeartbeatTrigger {
             workspace_id: workspace_id.to_string(),
             default_interval: self.config.heartbeat_default_interval,
@@ -269,7 +276,7 @@ impl ThingAgentManager {
             tasks_source: Arc::clone(&self.deps.heartbeat_tasks_map),
             policy_repo: Arc::clone(&self.deps.policy_repo),
             governor: self.deps.governor.clone(),
-            reload_notify: Arc::clone(&self.deps.heartbeat_reload_notify),
+            reload_notify: self.heartbeat_reload_notify(workspace_id),
         };
         let heartbeat_ws = workspace_id.to_string();
         let heartbeat_task = tokio::spawn(async move {
@@ -299,6 +306,10 @@ impl ThingAgentManager {
         }
         lp.handle.drain().await;
         drop(lp.handle);
+        // T13：notify 条目随 loop 退役——重启后重建，handler 不会唤醒旧
+        // trigger 持有的 Notify（notify_one 无等待者时存的 stale permit
+        // 会在新 trigger 首轮等待时触发一次意外立即 tick）。
+        self.heartbeat_reload_notifies.remove(workspace_id);
         self.deps.agent_provider.invalidate(workspace_id);
         tracing::info!(workspace_id, "thing-agent loop stopped");
     }
@@ -316,6 +327,63 @@ impl ThingAgentManager {
     /// run_pipeline 的 RAII guard 管理。
     pub fn active_run_registry(&self) -> ActiveRunRegistry {
         self.deps.active_runs.clone()
+    }
+
+    // ── T13 heartbeat 依赖接管：bootstrap 注入 + handler 写穿 ────────────
+
+    /// 每工作区心跳热更新信号（T13，行为保持清单第 3 行接线点）：
+    /// update_tasks/update_config handler 写穿 DB+内存表后
+    /// `manager.heartbeat_reload_notify(ws).notify_one()`，目标工作区的
+    /// heartbeat trigger 立即醒来 tick。get-or-insert：handler 先于 start
+    /// 调用也安全（trigger start 时取同一实例）。
+    pub fn heartbeat_reload_notify(&self, workspace_id: &str) -> Arc<tokio::sync::Notify> {
+        self.heartbeat_reload_notifies
+            .entry(workspace_id.to_string())
+            .or_default()
+            .clone()
+    }
+
+    /// heartbeat 最近 tick 完成时间共享表（T12 透出）——T13 bootstrap 注入
+    /// `AppState.heartbeat_last_ticks` 的句柄来源（克隆共享同一 DashMap）。
+    pub fn heartbeat_last_ticks(&self) -> Arc<DashMap<String, chrono::DateTime<chrono::Utc>>> {
+        Arc::clone(&self.heartbeat.last_ticks)
+    }
+
+    /// handler 写穿（D11-⑤：调用方已写 DB 成功）：任务表全量替换，trigger
+    /// 与 prompt 装配读侧同一张表。
+    pub fn set_heartbeat_tasks(&self, workspace_id: &str, tasks: Vec<HeartbeatTask>) {
+        self.heartbeat.tasks.insert(workspace_id.to_string(), tasks);
+    }
+
+    /// handler 写穿：每工作区间隔（分钟）覆盖——trigger 每轮重读生效。
+    pub fn set_heartbeat_interval_minutes(&self, workspace_id: &str, interval_minutes: u32) {
+        self.heartbeat
+            .intervals
+            .insert(workspace_id.to_string(), interval_minutes);
+    }
+
+    /// handler 写穿：信任配置（prompt 信任段注入源，下一 run 生效）。
+    pub fn set_trust_config(&self, workspace_id: &str, config: TrustConfig) {
+        self.heartbeat.trust_configs.insert(workspace_id.to_string(), config);
+    }
+
+    /// 读出口（启动接线断言/调试）：任务表快照。
+    pub fn heartbeat_tasks(&self, workspace_id: &str) -> Vec<HeartbeatTask> {
+        self.heartbeat
+            .tasks
+            .get(workspace_id)
+            .map(|r| r.clone())
+            .unwrap_or_default()
+    }
+
+    /// 读出口：每工作区间隔（分钟）覆盖值。
+    pub fn heartbeat_interval_minutes(&self, workspace_id: &str) -> Option<u32> {
+        self.heartbeat.intervals.get(workspace_id).map(|r| *r)
+    }
+
+    /// 读出口：信任配置快照。
+    pub fn heartbeat_trust_config(&self, workspace_id: &str) -> Option<TrustConfig> {
+        self.heartbeat.trust_configs.get(workspace_id).map(|r| r.clone())
     }
 }
 
@@ -1109,6 +1177,91 @@ pub(crate) mod tests {
             1,
             "duplicate start must not double runs"
         );
+    }
+
+    // ── T13 bootstrap 双跑装配 ────────────────────────────────
+
+    /// T13：start 挂载 4 个任务——forward + thing-event trigger + timer
+    /// trigger + heartbeat trigger（统一循环接管心跳依赖的结构断言）。
+    #[tokio::test(start_paused = true)]
+    async fn start_mounts_heartbeat_trigger_alongside_timer_and_event() {
+        let parts = stub_manager().await;
+        parts.manager.start(WS);
+        let lp = parts.manager.workspaces.get(WS).expect("loop running");
+        assert_eq!(
+            lp.tasks.len(),
+            4,
+            "forward + event + timer + heartbeat trigger 四个任务"
+        );
+    }
+
+    /// T13：reload_notify 每工作区独立且稳定——handler 写穿后 notify_one
+    /// 只唤醒目标工作区的 trigger（单全局 Notify 的 notify_one 只唤醒一个
+    /// 等待者，多工作区下会叫错/叫漏）。
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_reload_notify_is_per_workspace_and_stable() {
+        let parts = stub_manager().await;
+        let a1 = parts.manager.heartbeat_reload_notify("ws_a");
+        let a2 = parts.manager.heartbeat_reload_notify("ws_a");
+        let b = parts.manager.heartbeat_reload_notify("ws_b");
+        assert!(Arc::ptr_eq(&a1, &a2), "同一工作区须为同一 Notify");
+        assert!(!Arc::ptr_eq(&a1, &b), "不同工作区不得共享 Notify");
+    }
+
+    /// T13：stop 丢弃 notify 条目——重启后重建，旧 trigger 持有的 Notify
+    /// 不再被 handler 唤醒（避免 stale permit 触发立即补 tick）。
+    #[tokio::test(start_paused = true)]
+    async fn stop_drops_reload_notify_entry() {
+        let parts = stub_manager().await;
+        parts.manager.start(WS);
+        let before = parts.manager.heartbeat_reload_notify(WS);
+        parts.manager.stop(WS).await;
+        let after = parts.manager.heartbeat_reload_notify(WS);
+        assert!(!Arc::ptr_eq(&before, &after), "stop 后须重建 Notify");
+    }
+
+    /// T13：handler 写穿访问器更新共享表（与 trigger/prompt 读侧同一
+    /// DashMap 真源——经 stub 夹具保留的 HeartbeatDeps 句柄双向验证）。
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_write_through_updates_shared_tables() {
+        let parts = stub_manager().await;
+        parts.manager.set_heartbeat_tasks(
+            WS,
+            vec![HeartbeatTask {
+                id: 1,
+                workspace_id: WS.into(),
+                priority: "P1".into(),
+                text: "巡检设备在线率".into(),
+                paused: false,
+                version: 1,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            }],
+        );
+        assert_eq!(parts.manager.heartbeat_tasks(WS).len(), 1);
+        assert_eq!(parts.heartbeat.tasks.get(WS).map(|t| t.len()), Some(1));
+
+        parts.manager.set_heartbeat_interval_minutes(WS, 45);
+        assert_eq!(parts.manager.heartbeat_interval_minutes(WS), Some(45));
+        assert_eq!(parts.heartbeat.intervals.get(WS).map(|v| *v), Some(45));
+
+        parts.manager.set_trust_config(
+            WS,
+            TrustConfig {
+                max_auto_actions_per_tick: 3,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            parts
+                .manager
+                .heartbeat_trust_config(WS)
+                .map(|t| t.max_auto_actions_per_tick),
+            Some(3)
+        );
+
+        // last_ticks 共享表句柄（T12 透出）经 manager 暴露给 bootstrap 注入。
+        assert!(parts.manager.heartbeat_last_ticks().is_empty());
     }
 
     // stop(): triggers aborted, queued signals drained, later events ignored.

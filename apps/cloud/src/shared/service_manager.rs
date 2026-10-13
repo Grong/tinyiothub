@@ -172,6 +172,10 @@ impl ServiceManager {
                 enabled: true,
                 interval_minutes: 15,
             };
+            // T13：统一循环心跳默认间隔与旧 runner 同源（HeartbeatConfig.
+            // interval_minutes）；每工作区覆盖走 intervals 共享表。
+            let heartbeat_default_interval =
+                std::time::Duration::from_secs(u64::from(heartbeat_config.interval_minutes) * 60);
             let event_publisher = Arc::new(
                 tinyiothub_agent::runtime::event::bus::AiEventPublisher::new(app_state.event_bus.clone())
                     .with_drop_notifier(Arc::new(tinyiothub_agent::runtime::event::bus::LoggingDropNotifier)),
@@ -236,6 +240,9 @@ impl ServiceManager {
             // T5 judgment 订阅者：同一 bus，同样 restore 前取 receiver。
             let judgment_rx = agent_events.subscribe();
             let agent_events_judgment = agent_events.clone();
+            // T13 shadow observer：同一 bus，restore 前取 receiver（双跑期
+            // 观测 HeartbeatResultReady 与 heartbeat 源 RunRecorded 的配对）。
+            let shadow_rx = agent_events.subscribe();
             // CEO review T1：监管循环重启订阅时需要 bus 句柄（deps 收走所有权前克隆）。
             let agent_events_supervisor = agent_events.clone();
             let pool = app_state.db.pool().clone();
@@ -271,7 +278,10 @@ impl ServiceManager {
                             },
                         ),
                     ),
-                    thing_agent_config: tinyiothub_agent::runtime::thing_agent::ThingAgentManagerConfig::default(),
+                    thing_agent_config: tinyiothub_agent::runtime::thing_agent::ThingAgentManagerConfig {
+                        heartbeat_default_interval,
+                        ..Default::default()
+                    },
                     event_bus: app_state.event_bus.clone(),
                     drop_notifier: Some(Arc::new(tinyiothub_agent::runtime::event::bus::LoggingDropNotifier)),
                     agent_events,
@@ -301,9 +311,10 @@ impl ServiceManager {
                             agent_events_supervisor,
                             persist_rx,
                             token,
-                            // Task 8：ShadowFlags 由 T13 bootstrap 双跑装配
-                            // 接线；当前默认关（统一路径不落提案）。
-                            None,
+                            // Task 8 ShadowFlags（T13 接线）：默认关——双跑期
+                            // 统一路径只落 agent_runs + 进 shadow observer 比对，
+                            // 提案仍由 HeartbeatResultReady 旧路径写（不重复）。
+                            Some(crate::domains::agent::host::persist::ShadowFlags::default()),
                         )
                         .await;
                         Ok(())
@@ -367,6 +378,28 @@ impl ServiceManager {
             let heartbeat_runner = runtime.heartbeat_runner().clone();
             let thing_agent_manager = runtime.thing_agents().clone();
             let orchestrator = runtime.orchestrator().clone();
+
+            // T13 shadow observer（spec 比对期 N=7 天或 M=50 次 tick 的生产
+            // 观测面）：配对 HeartbeatResultReady（旧）与 heartbeat 源
+            // RunRecorded（新），结构白名单比对，不一致 warn! + 递增
+            // Metrics::shadow_mismatches。纯观测面，不监管重启——死亡仅失
+            // 观测不失数据（落库关键路径是 persist/judgment 订阅者，均有
+            // 监管循环）。共享 persist 的 shutdown 编排。
+            {
+                let shadow_token = self
+                    .persistence_shutdown
+                    .as_ref()
+                    .expect("persist shutdown token set above")
+                    .clone();
+                let metrics = heartbeat_runner.metrics.clone();
+                let handle = tokio::spawn(async move {
+                    crate::domains::agent::host::shadow_observer::run_shadow_observer(shadow_rx, metrics, shadow_token)
+                        .await;
+                    Ok(())
+                });
+                self.service_handles.write().await.push(handle);
+                info!("✅ Shadow observer started (heartbeat dual-run)");
+            }
 
             // Wire event publisher to services that need cross-domain dispatching
             app_state.alarm_service.set_event_publisher(Arc::new(
@@ -480,6 +513,13 @@ impl ServiceManager {
             // Also store in AppState for potential access by other subsystems
             app_state.orchestrator = self.orchestrator.clone();
             app_state.heartbeat_runner = self.heartbeat_runner.clone();
+            // T13 bootstrap 双跑装配：统一循环管理器 + last_ticks 共享表注入。
+            // 双跑窗口语义（T12 评审结转 2）：统一表与旧 runner 的 last_tick
+            // 并存期间，两路径各写各自表；handler 读侧统一表条目优先——即使
+            // 它比旧 runner 的值更旧。这是有意选择：统一循环是未来真相源
+            // （T15 runner 退役后删 fallback），不取两者较新值。
+            app_state.thing_agents = Some(thing_agent_manager.clone());
+            app_state.heartbeat_last_ticks = Some(thing_agent_manager.heartbeat_last_ticks());
         }
 
         // 5. Start SSE token cleanup to prevent expired tokens from accumulating in memory.

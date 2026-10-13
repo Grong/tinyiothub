@@ -261,6 +261,74 @@ async fn build_snapshot_restores_problem_dedup_metadata() {
     assert!(acked, "最新 run 的行级 ack 标记必须随预热恢复");
 }
 
+/// Task 13 bootstrap 双跑装配：restore 后统一循环（ThingAgentManager）持有
+/// heartbeat 依赖——任务表/trust/intervals 自同一快照预热，last_ticks 共享表
+/// 可注入；旧 runner 同步预热（双跑期并存，T15 才退役）。workspace start 后
+/// 统一 loop 运行；reload_notify 为每工作区独立实例（单一全局 Notify 的
+/// notify_one 只唤醒一个等待者，多工作区会叫错/叫漏）。
+#[tokio::test]
+async fn restore_prewarms_unified_loop_heartbeat_deps_alongside_legacy_runner() {
+    let (db, pool) = test_db().await;
+    seed_test_workspace(&pool, "tenant1", "ws1").await;
+
+    db.insert_heartbeat_task("ws1", "P1", "巡检设备在线率")
+        .await
+        .expect("insert task");
+    let trust = TrustConfig {
+        max_auto_actions_per_tick: 7,
+        ..Default::default()
+    };
+    db.save_heartbeat_trust_config("ws1", &trust).await.expect("save trust");
+    db.save_heartbeat_config(
+        "ws1",
+        &WorkspaceHeartbeatConfig {
+            enabled: true,
+            interval_minutes: 45,
+            ai_triage_enabled: true,
+            triage_mode: "annotate".to_string(),
+        },
+    )
+    .await
+    .expect("save heartbeat config");
+
+    let runtime = bootstrap_test_runtime(&db).await;
+
+    // 旧 runner 并存预热（双跑期不退役）。
+    assert_eq!(runtime.heartbeat_tasks("ws1").len(), 1, "旧 runner 内存真源预热不变");
+    // 统一循环持有同一快照的 heartbeat 依赖（T13 接管点）。
+    let manager = runtime.thing_agents();
+    assert_eq!(
+        manager.heartbeat_tasks("ws1").len(),
+        1,
+        "统一循环任务表须自同一快照预热"
+    );
+    assert_eq!(manager.heartbeat_interval_minutes("ws1"), Some(45));
+    assert_eq!(
+        manager
+            .heartbeat_trust_config("ws1")
+            .map(|t| t.max_auto_actions_per_tick),
+        Some(7)
+    );
+    // last_ticks 共享表句柄可注入 AppState（启动时尚无 tick，表为空）。
+    assert!(manager.heartbeat_last_ticks().is_empty());
+
+    // workspace start 后统一 loop 运行（heartbeat trigger 挂载的断言在
+    // agent crate manager 单测：WorkspaceLoop.tasks 含 4 个任务）。
+    manager.start("ws1");
+    assert!(manager.is_running("ws1"));
+    // reload_notify 每工作区独立且稳定（handler 写穿后 notify_one 的接线点）。
+    let n1 = manager.heartbeat_reload_notify("ws1");
+    assert!(
+        Arc::ptr_eq(&n1, &manager.heartbeat_reload_notify("ws1")),
+        "同一工作区必须返回同一 Notify"
+    );
+    assert!(
+        !Arc::ptr_eq(&n1, &manager.heartbeat_reload_notify("ws2")),
+        "不同工作区不得共享 Notify"
+    );
+    manager.stop("ws1").await;
+}
+
 /// CEO review T21：启动快照 fail-closed——DB 读失败必须 Err（中止启动），
 /// 不得降级为空快照/宽松默认（TrustConfig::default() 含 write 类别，
 /// fail-open 会被内存→DB 对账固化，重启不可愈）。

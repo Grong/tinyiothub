@@ -90,9 +90,22 @@ impl AgentRuntime {
             heartbeat.update_trust_config(&state.workspace_id, state.trust_config.clone());
             heartbeat.set_interval_minutes(&state.workspace_id, state.interval_minutes);
         }
-        // Task 6：heartbeat 共享表默认空——trigger 空任务抑制不 tick
-        // （双跑期安全）；真实共享表注入由 T13 bootstrap 接线。
+        // Task 13（bootstrap 双跑装配）：统一循环接管心跳依赖——heartbeat
+        // 共享表自同一快照预热（tasks/trust/intervals 与上方旧 runner 同源，
+        // 双跑期两路并存）；last_ticks/governor 空态起步（连败治理不持久化，
+        // 与旧 runner 重启语义一致）。
         let heartbeat_deps = super::thing_agent::HeartbeatDeps::default();
+        for state in &snapshot.heartbeat {
+            heartbeat_deps
+                .tasks
+                .insert(state.workspace_id.clone(), state.tasks.clone());
+            heartbeat_deps
+                .trust_configs
+                .insert(state.workspace_id.clone(), state.trust_config.clone());
+            heartbeat_deps
+                .intervals
+                .insert(state.workspace_id.clone(), state.interval_minutes);
+        }
         // Task 11：桥与统一循环共享同一 governor——告警信号 resume 的暂停态
         // 必须作用于 trigger 读的那一份（克隆共享同一 DashMap 真源）。
         let heartbeat_governor = heartbeat_deps.governor.clone();

@@ -20,6 +20,9 @@ pub struct Metrics {
     pub events_published: AtomicU64,
     pub events_dropped: AtomicU64,
     pub reflection_skips: AtomicU64,
+    /// Shadow 双跑比对不一致计数（T13 shadow observer）——双跑期靠它观察
+    /// 统一循环与旧 runner 的结构白名单等价性。
+    pub shadow_mismatches: AtomicU64,
 }
 
 impl Metrics {
@@ -45,6 +48,7 @@ impl Metrics {
             events_published: AtomicU64::new(0),
             events_dropped: AtomicU64::new(0),
             reflection_skips: AtomicU64::new(0),
+            shadow_mismatches: AtomicU64::new(0),
         }
     }
 
@@ -109,6 +113,8 @@ pub struct MetricsSnapshot {
     pub events_published: u64,
     pub events_dropped: u64,
     pub reflection_skips: u64,
+    /// T13 shadow observer 比对不一致累计数。
+    pub shadow_mismatches: u64,
 }
 
 impl Metrics {
@@ -125,6 +131,7 @@ impl Metrics {
             events_published: self.events_published.load(Ordering::Relaxed),
             events_dropped: self.events_dropped.load(Ordering::Relaxed),
             reflection_skips: self.reflection_skips.load(Ordering::Relaxed),
+            shadow_mismatches: self.shadow_mismatches.load(Ordering::Relaxed),
         }
     }
 }

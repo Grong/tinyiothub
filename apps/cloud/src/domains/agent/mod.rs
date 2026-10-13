@@ -46,6 +46,9 @@ pub struct AgentState {
     /// 统一循环 heartbeat 最近 tick 完成时间表（Task 12 透出，T13 bootstrap
     /// 注入）——get_config 的 last_tick 优先读源；None 回旧 runner 内存出口。
     pub heartbeat_last_ticks: Option<Arc<dashmap::DashMap<String, chrono::DateTime<chrono::Utc>>>>,
+    /// 统一循环管理器（T13 bootstrap 双跑装配注入）——heartbeat handler 写穿
+    /// 共享表后调 `heartbeat_reload_notify(ws).notify_one()` 立即 tick。
+    pub thing_agents: Option<Arc<tinyiothub_agent::runtime::thing_agent::ThingAgentManager>>,
     /// AI subsystem orchestrator - agent run ack 的 O11 抑制回写（Task 6）
     pub orchestrator: Option<Arc<tinyiothub_agent::runtime::orchestrator::Orchestrator>>,
     /// Agent MemoryService - memory profile compile/weekly digest（Task 6 起

@@ -150,15 +150,11 @@ pub async fn get_config(
         interval_minutes = runner.effective_interval_minutes(&workspace_id);
     }
 
-    // D13 实时字段：last_tick 优先读统一循环共享表（Task 12 透出，T13 bootstrap
-    // 注入）；表未注入或该工作区尚无记录时回旧 runner 内存出口（双轨过渡，T15
-    // runner 退役后删 fallback）。历史/归档仍读 DB，见 /logs。
-    let last_tick = state
-        .heartbeat_last_ticks
-        .as_ref()
-        .and_then(|t| t.get(&workspace_id).map(|r| *r.value()))
-        .or_else(|| state.heartbeat_runner.as_ref().and_then(|r| r.last_tick(&workspace_id)))
-        .map(|t| t.to_rfc3339());
+    // D13 实时字段：last_tick 双轨读见 resolve_last_tick（统一表优先，
+    // miss/未注入回退旧 runner）。历史/归档仍读 DB，见 /logs。
+    let legacy_last_tick = state.heartbeat_runner.as_ref().and_then(|r| r.last_tick(&workspace_id));
+    let last_tick =
+        resolve_last_tick(state.heartbeat_last_ticks.as_ref(), legacy_last_tick, &workspace_id).map(|t| t.to_rfc3339());
 
     ApiResponseBuilder::success(HeartbeatConfigResponse {
         enabled,
@@ -201,6 +197,14 @@ pub async fn update_config(
         return ApiResponseBuilder::error("保存心跳配置失败");
     }
     runner.set_interval_minutes(&workspace_id, interval);
+
+    // T13 双跑写穿（行为保持清单第 3 行）：统一循环 intervals 共享表同步
+    // 更新（trigger 每轮重读生效），并 notify 立即 tick 一次；旧 runner 的
+    // start/stop 路径不变（双跑期并存）。
+    if let Some(ref manager) = state.thing_agents {
+        manager.set_heartbeat_interval_minutes(&workspace_id, interval);
+        manager.heartbeat_reload_notify(&workspace_id).notify_one();
+    }
 
     let interval_changed = interval != current_interval;
     if enabled && (!is_active || interval_changed) {
@@ -263,6 +267,11 @@ pub async fn update_trust_config(
         return ApiResponseBuilder::error("保存信任配置失败");
     }
     runner.update_trust_config(&workspace_id, config.clone());
+    // T13 双跑写穿：统一循环 trust 共享表同步更新（prompt 信任段注入源，
+    // 下一 run 生效；需求书接线点不含 trust 的立即 tick，不 notify）。
+    if let Some(ref manager) = state.thing_agents {
+        manager.set_trust_config(&workspace_id, config.clone());
+    }
 
     ApiResponseBuilder::success(serde_json::to_value(config).unwrap_or_default())
 }
@@ -501,7 +510,13 @@ pub async fn update_tasks(
         }
     };
     let has_tasks = !stored.is_empty();
-    runner.set_tasks(&workspace_id, stored);
+    runner.set_tasks(&workspace_id, stored.clone());
+    // T13 双跑写穿（行为保持清单第 3 行）：统一循环任务共享表同步更新 +
+    // notify 立即 tick（对齐旧 runner set_tasks 内含的 ReloadTasks 语义）。
+    if let Some(ref manager) = state.thing_agents {
+        manager.set_heartbeat_tasks(&workspace_id, stored);
+        manager.heartbeat_reload_notify(&workspace_id).notify_one();
+    }
     if has_tasks && !runner.active_workspaces().contains(&workspace_id) {
         runner.start(&workspace_id).await;
     }
@@ -875,6 +890,19 @@ async fn update_proposal_status(
 }
 
 // ── Helpers ──
+
+/// last_tick 双轨读（Task 12 透出，T13 bootstrap 注入后统一表为生产主读
+/// 路径）：统一循环共享表 Some+命中即返回，即使该条目比旧 runner 值更旧
+/// （双跑期两路径各写各自表；统一表优先是有意选择——统一循环是未来真相
+/// 源，见 service_manager 注入点注释）。表未注入（None）或该工作区尚无
+/// 记录时回退旧 runner 值；T15 runner 退役后删 legacy 参。
+fn resolve_last_tick(
+    unified: Option<&std::sync::Arc<dashmap::DashMap<String, chrono::DateTime<chrono::Utc>>>>,
+    legacy: Option<chrono::DateTime<chrono::Utc>>,
+    workspace_id: &str,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    unified.and_then(|t| t.get(workspace_id).map(|r| *r.value())).or(legacy)
+}
 
 /// DB is the single source of truth for heartbeat tasks. Migrates legacy
 /// HEARTBEAT.md on first access; falls back to file/defaults when the
@@ -1542,5 +1570,50 @@ mod tests {
         let approved = serde_json::json!({"proposalId": "p", "status": "approved"}).to_string();
         assert!(proposal_from_row(&approved, "t".to_string()).is_none());
         assert!(proposal_from_row("not json", "t".to_string()).is_none());
+    }
+
+    // ── T13 last_tick 双轨读（T12 评审结转）─────────────────────
+
+    /// T12 评审结转 1：统一表 Some+命中分支——bootstrap 注入后这就是生产
+    /// 唯一主读路径，必须返回统一表条目。
+    #[test]
+    fn resolve_last_tick_unified_hit_wins() {
+        let unified = std::sync::Arc::new(dashmap::DashMap::new());
+        let t = chrono::Utc::now();
+        unified.insert("ws1".to_string(), t);
+        assert_eq!(resolve_last_tick(Some(&unified), None, "ws1"), Some(t));
+    }
+
+    /// T12 评审结转 2：双跑窗口语义——统一表与旧 runner 的 last_tick 并存时，
+    /// 统一表条目优先，即使更旧（有意选择：统一循环是未来真相源；双跑期两
+    /// 路径各写各自表，不取两者较新值）。
+    #[test]
+    fn resolve_last_tick_unified_preferred_even_when_older() {
+        let unified = std::sync::Arc::new(dashmap::DashMap::new());
+        let older = chrono::Utc::now() - chrono::Duration::hours(2);
+        unified.insert("ws1".to_string(), older);
+        let newer_from_legacy_runner = chrono::Utc::now();
+        assert_eq!(
+            resolve_last_tick(Some(&unified), Some(newer_from_legacy_runner), "ws1"),
+            Some(older)
+        );
+    }
+
+    /// 统一表已注入但该工作区尚无记录（统一循环尚未 tick）→ 回退旧 runner
+    /// 值，避免双跑窗口内 last_tick 从有值退化为 null。
+    #[test]
+    fn resolve_last_tick_falls_back_to_legacy_on_workspace_miss() {
+        let unified: std::sync::Arc<dashmap::DashMap<String, chrono::DateTime<chrono::Utc>>> =
+            std::sync::Arc::new(dashmap::DashMap::new());
+        let legacy = chrono::Utc::now();
+        assert_eq!(resolve_last_tick(Some(&unified), Some(legacy), "ws1"), Some(legacy));
+    }
+
+    /// 统一表未注入（None，T13 前/接线失败）→ 旧 runner 值；两者皆无 → None。
+    #[test]
+    fn resolve_last_tick_legacy_when_unified_absent() {
+        let legacy = chrono::Utc::now();
+        assert_eq!(resolve_last_tick(None, Some(legacy), "ws1"), Some(legacy));
+        assert_eq!(resolve_last_tick(None, None, "ws1"), None);
     }
 }
