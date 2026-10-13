@@ -153,10 +153,28 @@ async fn migration_backfills_runs_then_relinks_proposals() {
     .await;
     // 负对照：非心跳 agent（tick_id 撞名 t1 也不动）/ NULL tick_id 提案 /
     // 无 anchor 的孤儿 tick / NULL tick_id 的 legacy anchor（无锚可合成）。
-    insert_action(&pool, "nb1", "ws1", "agent_other", "proposal", r#"{"proposalId":"x"}"#, Some("t1"), "2026-10-01 10:00:00")
-        .await;
-    insert_action(&pool, "nb2", "ws1", "__heartbeat__:ws1", "proposal", r#"{"proposalId":"y"}"#, None, "2026-10-02 10:00:00")
-        .await;
+    insert_action(
+        &pool,
+        "nb1",
+        "ws1",
+        "agent_other",
+        "proposal",
+        r#"{"proposalId":"x"}"#,
+        Some("t1"),
+        "2026-10-01 10:00:00",
+    )
+    .await;
+    insert_action(
+        &pool,
+        "nb2",
+        "ws1",
+        "__heartbeat__:ws1",
+        "proposal",
+        r#"{"proposalId":"y"}"#,
+        None,
+        "2026-10-02 10:00:00",
+    )
+    .await;
     insert_action(
         &pool,
         "nb3",
@@ -214,6 +232,8 @@ async fn migration_backfills_runs_then_relinks_proposals() {
     assert_eq!(parsed.trace.len(), 1, "anchor content 的 trace 必须回填");
     assert_eq!(parsed.trace[0].name, "read_property");
     assert_eq!(parsed.trace[0].output.as_deref(), Some("26.5"));
+    // 修复轮 1：anchor content.taskCount 迁入 report.task_count（读侧 parity）。
+    assert_eq!(parsed.task_count, Some(2), "taskCount 必须迁入 task_count");
 
     // action_count 补写（T4 count_actions_last_hour 依赖
     // json_extract(report,'$.action_count')；提案+动作共 2 行）。
@@ -246,7 +266,11 @@ async fn migration_backfills_runs_then_relinks_proposals() {
     // anchor 行自身的 tick_id 不改写（它是视图的数据源）。
     assert_eq!(tick_id_of(&pool, "anc1").await.as_deref(), Some("t1"));
     // 负对照全部不动。
-    assert_eq!(tick_id_of(&pool, "nb1").await.as_deref(), Some("t1"), "非心跳 agent 不动");
+    assert_eq!(
+        tick_id_of(&pool, "nb1").await.as_deref(),
+        Some("t1"),
+        "非心跳 agent 不动"
+    );
     assert_eq!(tick_id_of(&pool, "nb2").await, None, "NULL tick_id 不动");
     assert_eq!(
         tick_id_of(&pool, "nb3").await.as_deref(),
@@ -282,7 +306,11 @@ async fn migration_backfills_runs_then_relinks_proposals() {
         .await
         .unwrap();
     assert_eq!(runs_total, 2, "INSERT OR IGNORE：重跑不重复合成");
-    assert_eq!(tick_id_of(&pool, "p1").await.as_deref(), Some("hbm_t1"), "重跑不得二次加前缀");
+    assert_eq!(
+        tick_id_of(&pool, "p1").await.as_deref(),
+        Some("hbm_t1"),
+        "重跑不得二次加前缀"
+    );
     let (double_prefixed,): (i64,) =
         sqlx::query_as(r"SELECT COUNT(*) FROM agent_actions WHERE tick_id LIKE 'hbm\_hbm\_%' ESCAPE '\'")
             .fetch_one(&pool)
@@ -329,8 +357,17 @@ async fn migration_skips_trace_less_anchor_gracefully() {
         .expect("synthesized run row hbm_t2");
     let parsed: RunReport = serde_json::from_str(&report).expect("report 必须可反序列化为 RunReport");
     assert!(parsed.trace.is_empty(), "无 trace 的历史行 trace=[]，不伪造");
-    assert_eq!(parsed.outcome, Outcome::NoActionNeeded, "无提案/动作的 summary → no_action_needed");
+    assert_eq!(
+        parsed.outcome,
+        Outcome::NoActionNeeded,
+        "无提案/动作的 summary → no_action_needed"
+    );
     assert_eq!(parsed.summary, "一切正常");
+    assert_eq!(
+        parsed.task_count,
+        Some(1),
+        "修复轮 1：taskCount 迁入（无 trace 行同样带）"
+    );
 
     let (trace_json,): (String,) =
         sqlx::query_as("SELECT json_extract(report, '$.trace') FROM agent_runs WHERE id = 'hbm_t2'")

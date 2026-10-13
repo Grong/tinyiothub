@@ -563,6 +563,9 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
                 end_reason: Some(tinyiothub_core::agent_runs::EndReason::AgentUnavailable),
                 thing_id,
                 trace: vec![],
+                // 供应商不可用 run 未执行即中止，无任务表消费——None（适配器映射 0，
+                // 与旧 error 锚行 taskCount=0 同显）。
+                task_count: None,
             };
             deps.registry.record_with_keys(
                 report.clone(),
@@ -585,7 +588,13 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
     };
 
     let outcome = deps.runner.execute(agent, prompt, ctx).await;
-    let report = outcome.report;
+    let mut report = outcome.report;
+    // 读侧 parity（Task 10 修复轮 1）：heartbeat 源 run 把任务表大小写进
+    // report.task_count——get_logs ExecutionRecord.taskCount 的数据源，对齐旧
+    // loop_.rs `result.task_count = tasks.len()` 语义（prompt 同一张 active 表）。
+    if has_heartbeat_member(&signal.source) {
+        report.task_count = Some(deps.heartbeat_tasks.active_tasks(&ws).len() as u32);
+    }
 
     // 内存记录（真相源）+ 事件出口（持久化投影）。落库失败不阻断回推语义
     // 不变（T12）：持久化已移出调用路径，由 Task 8 的 RunRecorded 订阅者落库；
@@ -827,6 +836,8 @@ pub(crate) mod tests {
         pub(crate) run_id: String,
         pub(crate) trigger: String,
         pub(crate) outcome: Outcome,
+        /// 修复轮 1：task_count 装配断言的观测口（持久化投影同一事件流）。
+        pub(crate) task_count: Option<u32>,
         pub(crate) problem_key: Option<String>,
         pub(crate) dedup_key: Option<String>,
     }
@@ -872,6 +883,7 @@ pub(crate) mod tests {
                         run_id: report.run_id.clone(),
                         trigger: report.trigger.clone(),
                         outcome: report.outcome,
+                        task_count: report.task_count,
                         problem_key,
                         dedup_key,
                     });
@@ -1342,6 +1354,16 @@ pub(crate) mod tests {
                 .any(|p| p.contains("FullAuto") && p.contains("每次 tick 最多自动执行动作数：7")),
             "信任段必须进 heartbeat prompt: {prompts:?}"
         );
+        drop(prompts);
+
+        // 修复轮 1：heartbeat 装配点把任务表大小写进 report.task_count
+        // （读侧 ExecutionRecord.taskCount 数据源，对齐旧 loop task_count 语义）。
+        let runs = parts.runs.all();
+        let hb = runs
+            .iter()
+            .find(|r| r.trigger == "heartbeat:ws_01")
+            .expect("heartbeat run recorded");
+        assert_eq!(hb.task_count, Some(1), "任务表 1 条 → report.task_count=Some(1)");
     }
 
     // T6 修复轮 1①：agent 不可用早退对 heartbeat 源同样计连败（旧 loop 语义:

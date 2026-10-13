@@ -221,6 +221,7 @@ async fn brain_events_detail_carries_trace_and_narrative() {
             args: serde_json::json!({"p": "temp"}),
             output: Some("26.5".to_string()),
         }],
+        task_count: None,
     };
     app_state
         .db

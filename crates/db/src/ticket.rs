@@ -831,6 +831,7 @@ mod tests {
             end_reason: Some(tinyiothub_core::agent_runs::EndReason::Policy),
             thing_id: Some("t1".to_string()),
             trace: vec![],
+            task_count: None,
         };
         db.insert_agent_run(&report, None, None).await.unwrap();
         let unticketed = db.unticketed_failed_runs("2000-01-01").await.unwrap();
@@ -966,6 +967,7 @@ mod statistics_tests {
                 end_reason: Some(tinyiothub_core::agent_runs::EndReason::Policy),
                 thing_id: None,
                 trace: vec![],
+                task_count: None,
             };
             db.insert_agent_run(&report, None, None).await.unwrap();
         }

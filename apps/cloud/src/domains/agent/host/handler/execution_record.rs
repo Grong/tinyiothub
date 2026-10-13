@@ -19,9 +19,9 @@ pub type ExecutionRecord = HeartbeatLogEntry;
 /// | ExecutionRecord | 来源 |
 /// |---|---|
 /// | timestamp | created_at |
-/// | status | outcome='failed' → "error"；其余 → "success" |
+/// | status | outcome ∈ {failed, budget_exceeded, rejected} → "error"（巡检未完成，对应旧模型 error 锚行）；{acted, no_action_needed} 及其余 → "success"（修复轮 1 裁决：词表全映射，不截断） |
 /// | errorMessage / result | status=error → errorMessage=消息；否则 result=消息 |
-/// | taskCount | report.taskCount（RunReport 无此字段 → 0） |
+/// | taskCount | report.task_count（Option<u32>，None/缺 → 0；修复轮 1 起由 manager 装配点/T9 迁移写入） |
 /// | trace | report.trace（缺字段/解析失败 → 空数组） |
 /// | autoExecuted / pendingProposals | 此处空，handler 联结明细后填充 |
 ///
@@ -39,10 +39,15 @@ pub fn run_row_to_execution_record(
     // 签名锚定 C6 契约；当前映射不消费 run_id/trigger（明细联结在 handler 侧）。
     let _ = (run_id, trigger);
     let message = extract_message(summary);
-    let status = if outcome == "failed" { "error" } else { "success" };
+    let status = match outcome {
+        // 修复轮 1 裁决：这三个 outcome 都=巡检未完成，对应旧模型 error 锚行；
+        // 截断到 success 会让前端绿点误显「完成」。
+        "failed" | "budget_exceeded" | "rejected" => "error",
+        _ => "success",
+    };
     HeartbeatLogEntry {
         timestamp: created_at.to_string(),
-        task_count: report_json.get("taskCount").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        task_count: report_json.get("task_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
         status: status.to_string(),
         error_message: if status == "error" { message.clone() } else { None },
         result: if status == "success" { message } else { None },
@@ -177,5 +182,48 @@ mod tests {
             extract_message("{\"summary\": \"一切正常\"}").as_deref(),
             Some("一切正常")
         );
+    }
+
+    /// 修复轮 1 裁决：status 词表全映射——failed/budget_exceeded/rejected
+    /// 都=巡检未完成 → error（截断到 success 会让前端绿点误显「完成」）；
+    /// acted/no_action_needed → success。
+    #[test]
+    fn status_maps_full_outcome_vocabulary() {
+        let report = serde_json::json!({});
+        for outcome in ["failed", "budget_exceeded", "rejected"] {
+            let rec = run_row_to_execution_record("r", "heartbeat:ws", outcome, "出问题", &report, "t");
+            assert_eq!(rec.status, "error", "{outcome} 必须映 error");
+            assert_eq!(
+                rec.error_message.as_deref(),
+                Some("出问题"),
+                "{outcome} 消息进 errorMessage"
+            );
+            assert!(rec.result.is_none());
+        }
+        for outcome in ["acted", "no_action_needed"] {
+            let rec = run_row_to_execution_record("r", "heartbeat:ws", outcome, "正常", &report, "t");
+            assert_eq!(rec.status, "success", "{outcome} 必须映 success");
+            assert_eq!(rec.result.as_deref(), Some("正常"));
+            assert!(rec.error_message.is_none());
+        }
+    }
+
+    /// 修复轮 1：taskCount 透出——report.task_count（Some）→ taskCount；
+    /// None/缺字段 → 0（与现状显示一致）。
+    #[test]
+    fn task_count_passes_through_from_report() {
+        let with = serde_json::json!({"task_count": 3});
+        let rec = run_row_to_execution_record("r", "heartbeat:ws", "acted", "s", &with, "t");
+        assert_eq!(rec.task_count, 3);
+
+        // serde(default) 后兼容：旧 report JSON 无 task_count 键
+        let without = serde_json::json!({"trace": []});
+        let rec = run_row_to_execution_record("r", "heartbeat:ws", "acted", "s", &without, "t");
+        assert_eq!(rec.task_count, 0);
+
+        // 迁移行 content 缺 taskCount → json_extract NULL → null → 0
+        let null = serde_json::json!({"task_count": null});
+        let rec = run_row_to_execution_record("r", "heartbeat:ws", "acted", "s", &null, "t");
+        assert_eq!(rec.task_count, 0);
     }
 }

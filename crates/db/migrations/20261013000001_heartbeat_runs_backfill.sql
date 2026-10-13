@@ -37,7 +37,9 @@
 --   report      = RunReport 形状 JSON（trace 端点 live:false 分支按
 --                 RunReport 反序列化）：trace 取自 anchor content，无
 --                 trace 的历史行补空数组——"历史无 trace 不补"=不伪造
---                 过程记录；action_count=同 tick 提案+动作行数（T4
+--                 过程记录；task_count 取自 content.taskCount（修复轮 1：
+--                 读侧 taskCount parity，缺则 NULL→None→前端显示 0）；
+--                 action_count=同 tick 提案+动作行数（T4
 --                 count_actions_last_hour 依赖
 --                 json_extract(report,'$.action_count')，insert_run
 --                 落库同款补写先例）
@@ -80,6 +82,7 @@ SELECT
         'tool_calls',   0,
         'tokens',       0,
         'trace',        json(COALESCE(json_extract(a.content, '$.trace'), '[]')),
+        'task_count',   json_extract(a.content, '$.taskCount'),
         'action_count', (
             SELECT COUNT(*) FROM agent_actions s
             WHERE s.agent_id = a.agent_id AND s.tick_id = a.tick_id

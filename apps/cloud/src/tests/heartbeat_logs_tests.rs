@@ -110,6 +110,7 @@ async fn get_logs_reads_from_agent_runs_after_switch() {
             "run_id": "run_1",
             "trace": [{"id": "c1", "name": "read_property", "args": {"p": "temp"}, "output": "26.5"}],
             "action_count": 2,
+            "task_count": 2,
         }),
         "2026-10-13 01:00:00",
     )
@@ -142,6 +143,7 @@ async fn get_logs_reads_from_agent_runs_after_switch() {
     assert_eq!(log["timestamp"], "2026-10-13 01:00:00");
     assert_eq!(log["status"], "success");
     assert_eq!(log["result"], "巡检完成：发现 1 个待审批提案");
+    assert_eq!(log["taskCount"], 2, "修复轮 1：report.task_count 必须透出为 taskCount");
     assert_eq!(log["trace"].as_array().unwrap().len(), 1, "trace 必须进条目");
     assert_eq!(log["trace"][0]["name"], "read_property");
     assert_eq!(log["pendingProposals"][0]["toolName"], "firmware_update");

@@ -51,6 +51,7 @@ fn report(run_id: &str, workspace_id: &str, summary: &str) -> RunReport {
         end_reason: None,
         thing_id: None,
         trace: vec![],
+        task_count: None,
     }
 }
 

@@ -132,6 +132,11 @@ pub struct RunReport {
     /// 完整工具调用轨迹（到达序）。serde(default) 向后兼容已落库的旧 report JSON。
     #[serde(default)]
     pub trace: Vec<ToolTraceEntry>,
+    /// 巡检任务数（读侧 parity 元数据，Task 10 修复轮 1）：heartbeat 源 run 由
+    /// manager 装配点写入 tasks.len()（对齐旧 HeartbeatResult.task_count 语义）；
+    /// 其余源 None。serde(default) 向后兼容已落库的旧 report JSON。
+    #[serde(default)]
+    pub task_count: Option<u32>,
 }
 
 /// 记忆/历史段统一条目格式：`"[acted] 调低设定值成功"`。

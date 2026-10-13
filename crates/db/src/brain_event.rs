@@ -704,6 +704,7 @@ mod tests {
                 args: serde_json::json!({"p": "temp"}),
                 output: Some("26.5".to_string()),
             }],
+            task_count: None,
         };
         db.insert_agent_run(&report, Some("alarm:t1:-"), None).await.unwrap();
 

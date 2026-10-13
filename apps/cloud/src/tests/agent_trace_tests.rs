@@ -52,6 +52,7 @@ fn ended_report(
         end_reason: None,
         thing_id: None,
         trace,
+        task_count: None,
     }
 }
 

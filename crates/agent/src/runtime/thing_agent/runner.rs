@@ -478,6 +478,9 @@ fn assemble_report(ctx: &RunContext, end: TurnEnd, duration_ms: u64, inner: &Run
             end_reason,
             thing_id,
             trace: inner.trace.clone(),
+            // heartbeat 源的 task_count 由 manager 装配点回写（它持有任务表）；
+            // runner 不感知源类型，此处 None。
+            task_count: None,
         },
         llm_text,
     }

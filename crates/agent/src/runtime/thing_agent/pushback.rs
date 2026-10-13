@@ -357,6 +357,7 @@ mod tests {
             end_reason: None,
             thing_id: None,
             trace: vec![],
+            task_count: None,
         }
     }
 
@@ -448,6 +449,7 @@ mod tests {
             end_reason: None,
             thing_id: None,
             trace: vec![],
+            task_count: None,
         }
     }
 

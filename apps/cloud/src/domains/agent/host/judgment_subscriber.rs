@@ -785,6 +785,7 @@ mod tests {
             end_reason: None::<EndReason>,
             thing_id: Some("t1".to_string()),
             trace: vec![],
+            task_count: None,
         }
     }
 

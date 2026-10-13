@@ -447,6 +447,7 @@ mod tests {
             end_reason: None,
             thing_id: None,
             trace: vec![],
+            task_count: None,
         }];
         let rt = AgentRuntime::restore(snap, RuntimeDeps::test_stub());
 
@@ -479,6 +480,7 @@ mod tests {
             end_reason: None,
             thing_id: None,
             trace: vec![],
+            task_count: None,
         });
         rt.run_registry().set_run_keys(
             "run_keys",

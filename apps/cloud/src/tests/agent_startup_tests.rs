@@ -60,6 +60,7 @@ fn report_json(run_id: &str, workspace_id: &str) -> String {
         end_reason: None,
         thing_id: None,
         trace: vec![],
+        task_count: None,
     })
     .expect("serialize report")
 }

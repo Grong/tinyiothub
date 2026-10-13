@@ -350,6 +350,7 @@ mod fixtures {
             end_reason: None,
             thing_id: None,
             trace: vec![],
+            task_count: None,
         }
     }
 
