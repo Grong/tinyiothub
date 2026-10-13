@@ -12,11 +12,19 @@ GRANDFATHERED="20260825000001_rename_device_to_thing.sql
 20260826000001_thing_contract_data.sql
 20260828000001_policy_action_rename.sql
 20260831000001_tool_override_rename.sql"
+# spec 裁定的一次性数据迁移（2026-10-12 ai-consolidation §4 N4/埋伏③，
+# docs/superpowers/specs/2026-10-12-ai-consolidation-design.md）：心跳历史
+# trace 回填合成 agent_runs + 提案 tick_id 改锚 run_id + 读侧映射视图。
+# 幂等形态（INSERT OR IGNORE / EXISTS+前缀守卫 / CREATE VIEW IF NOT
+# EXISTS），TDD 迁移测试锁定语义与重跑零副作用
+# （crates/db/tests/heartbeat_migration_tests.rs）。此清单是例外不是先例——
+# 新迁移仍一律 DDL-only，数据回填默认走应用层，不得未经 spec 裁定加入。
+SPEC_APPROVED="20261013000001_heartbeat_runs_backfill.sql"
 set -u
 cd "$(git rev-parse --show-toplevel)"
 
 NON_BASELINE=$(ls crates/db/migrations/*.sql | grep -v baseline || true)
-for g in $GRANDFATHERED; do
+for g in $GRANDFATHERED $SPEC_APPROVED; do
   NON_BASELINE=$(echo "$NON_BASELINE" | grep -v "/$g\$" || true)
 done
 NON_BASELINE=$(echo "$NON_BASELINE" | grep -v '^\s*$' || true)
