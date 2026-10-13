@@ -171,7 +171,10 @@ pub async fn heartbeat_loop(
     }
 }
 
-async fn run_heartbeat_tick(
+/// 单 tick 主体。`pub` 仅为 Task 14 shadow 双跑等价对照 harness
+///（tests/heartbeat_shadow_equiv.rs 经本函数驱动旧路径）；T15 退役 loop 时一并收回。
+#[doc(hidden)]
+pub async fn run_heartbeat_tick(
     workspace_id: &str,
     tasks: &[&HeartbeatTask],
     trust_config: &TrustConfig,
