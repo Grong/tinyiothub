@@ -163,12 +163,15 @@ fn render_trigger(source: &TriggerSource, out: &mut String) {
 
 /// 心跳告警渲染（T3 落点，Task 6 抽出为 pub）：四段式 prompt 的触发段与
 /// manager 的 heartbeat 专用 prompt 路径（告警驱动 run 附触发上下文）共用
-/// 同一渲染，格式不重复造。
+/// 同一渲染，格式不重复造。修复轮 1：补设备/告警类型两行（None 显示「-」），
+/// 对齐需求书 Step 3b 草图。
 pub fn render_heartbeat_alarm(alarm: &HeartbeatAlarmContext, out: &mut String) {
     let ctx = truncate(&alarm.context, MAX_EVENT_DATA_CHARS);
     out.push_str(&format!(
-        "心跳巡检告警：{}，上下文：<alarm_context>{ctx}</alarm_context>",
-        alarm.reason
+        "心跳巡检告警\n- 原因：{}\n- 设备：{}\n- 告警类型：{}\n- 上下文：<alarm_context>{ctx}</alarm_context>",
+        alarm.reason,
+        alarm.thing_id.as_deref().unwrap_or("-"),
+        alarm.alarm_type.as_deref().unwrap_or("-"),
     ));
 }
 

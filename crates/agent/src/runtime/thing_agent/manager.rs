@@ -44,7 +44,7 @@ use crate::runtime::thing_agent::traits::{
     AutonomyPolicyReader, DirectiveSink, HeartbeatTaskReader, ThingAgentHost, TrustConfigReader,
 };
 use crate::runtime::thing_agent::trigger::{HeartbeatTrigger, ThingEventTrigger, TimerTrigger, Trigger};
-use crate::runtime::thing_agent::types::{TriggerSource, WakeSignal};
+use crate::runtime::thing_agent::types::{HeartbeatAlarmContext, TriggerSource, WakeSignal};
 use tinyiothub_core::agent_runs::format_summary;
 use tinyiothub_core::heartbeat::{HeartbeatTask, TrustConfig};
 use tinyiothub_policy::autonomy::AutonomyMode;
@@ -389,6 +389,58 @@ fn collect_problem_keys_into(source: &TriggerSource, out: &mut Vec<String>) {
     }
 }
 
+/// heartbeat 成员判定（T6 修复轮 1）：scheduler 只按同 dedup_key 合并——
+/// heartbeat: 前缀键只与 heartbeat 键同窗，Merged 含 Heartbeat 成员则必然
+/// 全为 heartbeat 成员，混合不可能。防御性递归（合并窗口不嵌套 Merged，
+/// 散兵不丢信号）。
+fn has_heartbeat_member(source: &TriggerSource) -> bool {
+    match source {
+        TriggerSource::Heartbeat { .. } => true,
+        TriggerSource::Merged { signals } => signals.iter().any(|s| has_heartbeat_member(&s.source)),
+        _ => false,
+    }
+}
+
+/// 收集信号（含 Merged 成员）里的心跳告警上下文——告警驱动 run 的 prompt
+/// 附段数据源，多个告警各一段。
+fn heartbeat_alarms(source: &TriggerSource) -> Vec<&HeartbeatAlarmContext> {
+    let mut out = Vec::new();
+    collect_heartbeat_alarms(source, &mut out);
+    out
+}
+
+fn collect_heartbeat_alarms<'a>(source: &'a TriggerSource, out: &mut Vec<&'a HeartbeatAlarmContext>) {
+    match source {
+        TriggerSource::Heartbeat { alarm: Some(a) } => out.push(a),
+        TriggerSource::Merged { signals } => {
+            for s in signals {
+                collect_heartbeat_alarms(&s.source, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Task 6 心跳连败治理（行为保持清单第 1 行）：heartbeat 源 run 结果记账到
+/// governor——连败达阈由 trigger 侧暂停定时 tick，告警入口（alarm=Some）
+/// 同样计入，与旧 loop 语义一致。修复轮 1：① Merged 穿透（has_heartbeat_member）；
+/// ② agent-unavailable 早退路径同样经此记账（旧 loop 的 send_message 错误
+/// 路径含 get_or_create 失败——agent 不可用计连败）。
+fn record_heartbeat_outcome(
+    deps: &PipelineDeps,
+    source: &TriggerSource,
+    workspace_id: &str,
+    outcome: tinyiothub_core::agent_runs::Outcome,
+) {
+    if !has_heartbeat_member(source) {
+        return;
+    }
+    match outcome {
+        tinyiothub_core::agent_runs::Outcome::Failed => deps.governor.record_failure(workspace_id),
+        _ => deps.governor.record_success(workspace_id),
+    }
+}
+
 /// The full run chain (T9–T13) driven by the scheduler for every admitted
 /// wake signal.
 async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
@@ -459,24 +511,25 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
     };
 
     let principles = crate::prompt::workspace::load_principles(&ws);
-    // Task 6：Heartbeat 源走 heartbeat 专用 prompt（任务列表+信任段+JSON
-    // 报告模板，行为保持 loop_.rs build_heartbeat_prompt）；告警渲染复用
-    // prompt::runtime 的既有 Heartbeat arm（T3 落点），不重复造。其余源
-    // 走四段式 build_prompt 不变。
-    let prompt = match &signal.source {
-        TriggerSource::Heartbeat { alarm } => {
-            let tasks = deps.heartbeat_tasks.active_tasks(&ws);
-            let trust = deps.trust_configs.get(&ws);
-            let task_refs: Vec<&HeartbeatTask> = tasks.iter().collect();
-            let mut p = crate::prompt::heartbeat::build_heartbeat_prompt(&ws, &principles, &task_refs, &trust);
-            if let Some(a) = alarm {
-                // 告警驱动 run：附上触发上下文（审计链 trigger_label 已含告警身份）。
-                p.push_str("\n\n");
-                crate::prompt::runtime::render_heartbeat_alarm(a, &mut p);
-            }
-            p
+    // Task 6：heartbeat 源走 heartbeat 专用 prompt（任务列表+信任段+JSON
+    // 报告模板，行为保持 loop_.rs build_heartbeat_prompt）。修复轮 1：Merged
+    // 穿透（has_heartbeat_member——scheduler 只按同 dedup_key 合并，含
+    // Heartbeat 成员的 Merged 必然全为 heartbeat 成员），成员告警上下文逐个
+    // 渲染（渲染复用 prompt::runtime 的既有 arm，T3 落点，不重复造）。
+    // 其余源走四段式 build_prompt 不变。
+    let prompt = if has_heartbeat_member(&signal.source) {
+        let tasks = deps.heartbeat_tasks.active_tasks(&ws);
+        let trust = deps.trust_configs.get(&ws);
+        let task_refs: Vec<&HeartbeatTask> = tasks.iter().collect();
+        let mut p = crate::prompt::heartbeat::build_heartbeat_prompt(&ws, &principles, &task_refs, &trust);
+        for a in heartbeat_alarms(&signal.source) {
+            // 告警驱动 run：附上触发上下文（审计链 trigger_label 已含告警身份）。
+            p.push_str("\n\n");
+            crate::prompt::runtime::render_heartbeat_alarm(a, &mut p);
         }
-        _ => build_prompt(&signal, &principles, &memory, &history, &allowed, &resolutions),
+        p
+    } else {
+        build_prompt(&signal, &principles, &memory, &history, &allowed, &resolutions)
     };
 
     let agent = match deps.agent_provider.get_or_create(&ws, Arc::clone(&ctx.inner)).await {
@@ -518,6 +571,10 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
                     dedup_key: signal.dedup_key.clone(),
                 },
             );
+            // 修复轮 1：agent 不可用早退对 heartbeat 源同样计连败（旧 loop 语义：
+            // get_or_create 失败在 send_message 错误路径内，计连败）——否则 provider
+            // 永久不可用时永远到不了暂停阈值。
+            record_heartbeat_outcome(&deps, &signal.source, &ws, tinyiothub_core::agent_runs::Outcome::Failed);
             deps.events.emit(AgentEventKind::RunRecorded {
                 report: Box::new(report),
                 problem_key: problem_key.map(str::to_owned),
@@ -567,12 +624,8 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
     });
     // Task 6 心跳连败治理（行为保持清单第 1 行）：heartbeat 源 run 结果记账
     // 到 governor——连败达阈由 trigger 侧暂停定时 tick；告警入口不受影响。
-    if matches!(signal.source, TriggerSource::Heartbeat { .. }) {
-        match report.outcome {
-            tinyiothub_core::agent_runs::Outcome::Failed => deps.governor.record_failure(&ws),
-            _ => deps.governor.record_success(&ws),
-        }
-    }
+    // 修复轮 1：记账与早退路径共用 record_heartbeat_outcome（Merged 穿透）。
+    record_heartbeat_outcome(&deps, &signal.source, &ws, report.outcome);
     deliver(&report, &signal, &deps.registry, deps.host.as_ref()).await;
 }
 
@@ -685,6 +738,22 @@ pub(crate) mod tests {
         fn invalidate(&self, workspace_id: &str) {
             self.invalidated.lock().unwrap().push(workspace_id.to_string());
         }
+    }
+
+    /// 永远失败的 agent provider（工单 T2 早退路径 + T6 修复轮 1 早退连败
+    /// 记账测试共用）。
+    pub(crate) struct FailingProvider;
+
+    #[async_trait::async_trait]
+    impl AutonomousAgentProvider for FailingProvider {
+        async fn get_or_create(
+            &self,
+            _workspace_id: &str,
+            _ctx: Arc<tokio::sync::RwLock<RunContextInner>>,
+        ) -> anyhow::Result<AgentHandle> {
+            anyhow::bail!("llm provider down")
+        }
+        fn invalidate(&self, _workspace_id: &str) {}
     }
 
     // ── host / policy / runs stubs ─────────────────────────────
@@ -1275,6 +1344,130 @@ pub(crate) mod tests {
         );
     }
 
+    // T6 修复轮 1①：agent 不可用早退对 heartbeat 源同样计连败（旧 loop 语义:
+    // get_or_create 失败在 send_message 错误路径内,计连败)——否则 provider
+    // 永久不可用时永远到不了暂停阈值。
+    #[tokio::test(start_paused = true)]
+    async fn agent_unavailable_heartbeat_run_records_governor_failure() {
+        let host = Arc::new(StubHost::new());
+        let registry = RunRegistry::new();
+        let events = Arc::new(AgentEventBus::new(64));
+        let heartbeat = HeartbeatDeps::default();
+        let governor = heartbeat.governor.clone();
+        let manager = Arc::new(ThingAgentManager::new(
+            host.clone(),
+            stub_policy_reader(WS),
+            Arc::new(FailingProvider),
+            registry,
+            events,
+            Arc::new(Runner::new()),
+            ThingAgentManagerConfig {
+                timer_interval: Duration::from_secs(24 * 3600),
+                min_wake_level: 3,
+                merge_window: crate::runtime::thing_agent::scheduler::MERGE_WINDOW,
+                heartbeat_default_interval: Duration::from_secs(24 * 3600),
+            },
+            Arc::new(crate::runtime::thing_agent::traits::NoopTicketResolutions),
+            heartbeat,
+        ));
+        manager.start(WS);
+
+        let sink: &dyn DirectiveSink = manager.as_ref();
+        sink.enqueue(WakeSignal {
+            workspace_id: WS.to_string(),
+            priority: Priority::Normal,
+            source: TriggerSource::Heartbeat { alarm: None },
+            dedup_key: Some("heartbeat:ws_01".to_string()),
+        })
+        .expect("heartbeat signal accepted");
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_secs(30)).await;
+        wait_until(
+            || governor.consecutive_failures(WS) == 1,
+            "agent-unavailable heartbeat run counts as governor failure",
+        )
+        .await;
+    }
+
+    // T6 修复轮 1②：Merged 穿透——两条同 dedup_key 的 heartbeat 信号在合并
+    // 窗口聚成 Merged(顶层不再是 Heartbeat),run 仍走 heartbeat 专用 prompt
+    // (任务+信任段)且 governor 记账。trigger 标签 merged:heartbeat:ws_01
+    // 证明合并路径真的被走过(单信号不包 Merged)。
+    #[tokio::test(start_paused = true)]
+    async fn merged_heartbeat_ticks_use_heartbeat_prompt_and_record_governor() {
+        let parts = stub_manager().await;
+        parts.heartbeat.tasks.insert(
+            WS.to_string(),
+            vec![tinyiothub_core::heartbeat::HeartbeatTask {
+                id: 1,
+                workspace_id: WS.into(),
+                priority: "normal".into(),
+                text: "巡检固件版本".into(),
+                paused: false,
+                version: 1,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            }],
+        );
+        parts.heartbeat.trust_configs.insert(
+            WS.to_string(),
+            tinyiothub_core::heartbeat::TrustConfig {
+                trust_level: tinyiothub_core::heartbeat::TrustLevel::FullAuto,
+                max_auto_actions_per_tick: 9,
+                ..Default::default()
+            },
+        );
+        let governor = parts.heartbeat.governor.clone();
+        governor.record_failure(WS); // 预置一败:成功 run 清零才证明记账穿透 Merged
+        parts.manager.start(WS);
+
+        let sink: &dyn DirectiveSink = parts.manager.as_ref();
+        let hb = || WakeSignal {
+            workspace_id: WS.to_string(),
+            priority: Priority::Normal,
+            source: TriggerSource::Heartbeat { alarm: None },
+            dedup_key: Some("heartbeat:ws_01".to_string()),
+        };
+        sink.enqueue(hb()).expect("first heartbeat tick");
+        sink.enqueue(hb()).expect("second heartbeat tick");
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_secs(30)).await;
+        wait_until(
+            || parts.runs.runs_with_dedup("heartbeat:ws_01") == 1,
+            "merged heartbeat run",
+        )
+        .await;
+
+        let runs = parts.runs.all();
+        let run = runs
+            .iter()
+            .find(|r| r.dedup_key.as_deref() == Some("heartbeat:ws_01"))
+            .expect("merged heartbeat run recorded");
+        assert_eq!(
+            run.trigger, "merged:heartbeat:ws_01",
+            "两 tick 必须聚成 Merged(单信号不包 Merged,标签无 merged: 前缀)"
+        );
+        drop(runs);
+
+        // 锁内克隆快照,守卫立即释放(clippy: guard 不得跨 await)。
+        let prompts = parts.agents.llm.prompts.lock().unwrap().clone();
+        assert!(
+            prompts.iter().any(|p| p.contains("巡检固件版本")),
+            "Merged heartbeat run 必须走 heartbeat 专用 prompt(任务段): {prompts:?}"
+        );
+        assert!(
+            prompts
+                .iter()
+                .any(|p| p.contains("FullAuto") && p.contains("每次 tick 最多自动执行动作数：9")),
+            "Merged heartbeat run 必须走 heartbeat 专用 prompt(信任段): {prompts:?}"
+        );
+        wait_until(|| governor.consecutive_failures(WS) == 0, "governor 记账穿透 Merged").await;
+    }
+
     /// T4：RunStarted 的 problem_keys 提取——递归 Merged.signals，收集
     /// UserDirective.problem_key 的 Some 值并去重（ThingEvent/Timer 无）。
     #[test]
@@ -1406,19 +1599,6 @@ pub(crate) mod tests {
     /// 看不到这类最需要人工介入的失败，"零静默失败"承诺在此断裂。
     #[tokio::test(start_paused = true)]
     async fn agent_unavailable_emits_run_recorded() {
-        struct FailingProvider;
-        #[async_trait::async_trait]
-        impl AutonomousAgentProvider for FailingProvider {
-            async fn get_or_create(
-                &self,
-                _workspace_id: &str,
-                _ctx: Arc<tokio::sync::RwLock<RunContextInner>>,
-            ) -> anyhow::Result<AgentHandle> {
-                anyhow::bail!("llm provider down")
-            }
-            fn invalidate(&self, _workspace_id: &str) {}
-        }
-
         let host = Arc::new(StubHost::new());
         let registry = RunRegistry::new();
         let events = Arc::new(AgentEventBus::new(64));
