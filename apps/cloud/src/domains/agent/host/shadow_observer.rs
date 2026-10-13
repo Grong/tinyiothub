@@ -3,11 +3,21 @@
 //!
 //! 订阅同一 AgentEventBus，同时收：
 //! - `HeartbeatResultReady`（旧路径：HeartbeatRunner tick 结果）；
-//! - `RunRecorded` 且 trigger 前缀 `heartbeat:`（新路径：统一循环报告）。
+//! - `RunRecorded` 且 trigger 全等 `heartbeat:{ws}`（新路径：统一循环**周期
+//!   tick** 报告；评审修复轮 1 裁决 1——告警分键 `heartbeat:{ws}:{thing}:
+//!   {alarm}` run 不参与配对：T11 后告警只入统一循环，旧 runner 不产对应
+//!   HeartbeatResultReady，配对必假 mismatch；只递增 `alarm_unified_total`
+//!   记数观测）。
 //!
 //! 按 workspace 配对（各存最新一条，成对即比对并清空），比对**结构白名单**：
 //! status 映射 / proposals 工具名集合 / trace 工具名序列。不一致打 `warn!`
 //! （带字段级 diff）并递增 `Metrics::shadow_mismatches` 计数。
+//!
+//! 观测盲区暴露（评审修复轮 1 裁决 2）：无 policy/mode=off 工作区的统一
+//! trigger fail-closed 不 tick 而旧 runner 照常 tick，legacy 单边到达永不
+//! 配对——同一 ws 连续 [`ORPHAN_STREAK_THRESHOLD`] 次 legacy 无 unified
+//! 配对时打一次 `warn!` 并递增 `shadow_orphan_streaks`；配对成功或
+//! unified 到达清零。
 //!
 //! 真实 LLM 下两路径输出天然有方差——summary 文本只记长度级差异提示，不做
 //! 逐字断言（逐字等价由 Task 14 的确定性 harness 负责）。observer 是纯观测
@@ -28,12 +38,21 @@ use tinyiothub_agent::runtime::events::{AgentEvent, AgentEventKind};
 use tinyiothub_core::agent_runs::RunReport;
 use tinyiothub_core::heartbeat::HeartbeatResult;
 
+/// orphan streak 告警阈值（评审修复轮 1 裁决 2）：同一 ws 连续这么多次
+/// legacy tick 无 unified 配对即判盲区嫌疑。
+const ORPHAN_STREAK_THRESHOLD: u32 = 3;
+
 /// 每工作区配对槽：两侧各存最新一条，成对即比对并清空。乱序/漏事件
 /// （Lagged）下配对精度天然降级——观测面语义，不追求精确对齐。
 #[derive(Default)]
 struct PairSlot {
     legacy: Option<Box<HeartbeatResult>>,
     unified: Option<Box<RunReport>>,
+    /// 连续 legacy 单边到达计数（无 policy/mode=off 盲区探测）：达
+    /// [`ORPHAN_STREAK_THRESHOLD`] 打一次 warn + 递增指标；配对成功或
+    /// unified 到达清零。告警分键 run 不清零（告警链活跃不证明周期
+    /// tick 链路存活）。
+    orphan_streak: u32,
 }
 
 /// 字段级比对结果。`summary_len` 只作长度级差异提示，不参与 `is_match`
@@ -113,8 +132,14 @@ fn on_event(slots: &DashMap<String, PairSlot>, metrics: &Metrics, event: AgentEv
             (ws, SlotUpdate::Legacy(result))
         }
         AgentEventKind::RunRecorded { report, .. } => {
-            // 只配对 heartbeat 源 run（trigger 前缀 heartbeat:，含告警分键）。
-            if tinyiothub_storage::agent_runs::trigger_type_of(&report.trigger) != "heartbeat" {
+            // 评审修复轮 1 裁决 1：配对只收 trigger 全等 heartbeat:{ws} 的
+            // 周期 tick（定时对定时）。告警分键 run（heartbeat:{ws}:{thing}:
+            // {alarm}）不参与配对——T11 后告警只入统一循环，旧 runner 不产
+            // 对应 HeartbeatResultReady，配对必假 mismatch；只记数不比对。
+            if report.trigger != format!("heartbeat:{}", report.workspace_id) {
+                if tinyiothub_storage::agent_runs::trigger_type_of(&report.trigger) == "heartbeat" {
+                    metrics.alarm_unified_total.fetch_add(1, Ordering::Relaxed);
+                }
                 return;
             }
             let ws = report.workspace_id.clone();
@@ -123,22 +148,44 @@ fn on_event(slots: &DashMap<String, PairSlot>, metrics: &Metrics, event: AgentEv
         _ => return,
     };
 
-    let pair = {
+    let is_legacy_arrival = matches!(slot_update, SlotUpdate::Legacy(_));
+    let (pair, orphan_warn) = {
         let mut slot = slots.entry(workspace_id.clone()).or_default();
         match slot_update {
             SlotUpdate::Legacy(result) => slot.legacy = Some(result),
             SlotUpdate::Unified(report) => slot.unified = Some(report),
         }
         // 成对即取出比对并清空槽位（下一 tick 重新配对）。
-        match (slot.legacy.take(), slot.unified.take()) {
+        let pair = match (slot.legacy.take(), slot.unified.take()) {
             (Some(legacy), Some(unified)) => Some((legacy, unified)),
             (legacy, unified) => {
                 slot.legacy = legacy;
                 slot.unified = unified;
                 None
             }
+        };
+        // orphan streak（裁决 2）：配对成功或 unified 到达清零；legacy 单边
+        // 到达累计，阈值穿越当次告警一次（streak 延续不重复告警）。
+        let mut warn_hit = None;
+        if pair.is_some() || !is_legacy_arrival {
+            slot.orphan_streak = 0;
+        } else {
+            slot.orphan_streak += 1;
+            if slot.orphan_streak == ORPHAN_STREAK_THRESHOLD {
+                metrics.shadow_orphan_streaks.fetch_add(1, Ordering::Relaxed);
+                warn_hit = Some(slot.orphan_streak);
+            }
         }
+        (pair, warn_hit)
     };
+
+    if let Some(streak) = orphan_warn {
+        warn!(
+            workspace_id = %workspace_id,
+            legacy_streak = streak,
+            "shadow observer: legacy heartbeat ticks without unified pair — unified loop blind spot (policy off / trigger suppressed?)"
+        );
+    }
 
     if let Some((legacy, unified)) = pair {
         let diff = compare_pair(&legacy, &unified);
@@ -412,6 +459,138 @@ mod tests {
         for _ in 0..100 {
             tokio::task::yield_now().await;
         }
+        assert_eq!(metrics.shadow_mismatches.load(Ordering::Relaxed), 0);
+
+        shutdown.cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(1), handle)
+            .await
+            .expect("observer exits")
+            .expect("observer task");
+    }
+
+    // ── 评审修复轮 1 ──────────────────────────────────────────
+
+    /// 修复轮 1（裁决 1）：告警分键 run（heartbeat:{ws}:{thing}:{alarm}）不
+    /// 参与配对、不占槽位——T11 后告警只入统一循环，旧 runner 不产对应
+    /// HeartbeatResultReady，配对必假 mismatch。只递增 alarm_unified_total。
+    #[tokio::test]
+    async fn alarm_keyed_run_does_not_pair_or_occupy_slot() {
+        let bus = Arc::new(AgentEventBus::new(64));
+        let rx = bus.subscribe();
+        let metrics = Arc::new(Metrics::new());
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let handle = tokio::spawn(run_shadow_observer(rx, metrics.clone(), shutdown.clone()));
+
+        // 旧路径周期 tick 到达，等待配对。
+        bus.emit(AgentEventKind::HeartbeatResultReady {
+            result: Box::new(legacy(
+                "ws1",
+                HeartbeatStatus::Complete,
+                &["write_properties"],
+                &[],
+                "s",
+            )),
+        });
+        // 告警源统一 run（内容故意与 legacy 不一致）：不占槽、不比对、只记数。
+        let mut alarm_run = unified("ws1", "error", &["ghost_tool"], &["ghost_tool"], "s");
+        alarm_run.trigger = "heartbeat:ws1:dev1:offline".to_string();
+        bus.emit(AgentEventKind::RunRecorded {
+            report: Box::new(alarm_run),
+            problem_key: None,
+            dedup_key: None,
+        });
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            metrics.shadow_mismatches.load(Ordering::Relaxed),
+            0,
+            "告警分键 run 不得产生 mismatch"
+        );
+        assert_eq!(metrics.alarm_unified_total.load(Ordering::Relaxed), 1);
+
+        // 周期 unified 到达：与等待中的 legacy 配对（内容一致）→ 仍 0
+        // mismatch，证明告警 run 没有占槽/毒化配对。
+        bus.emit(AgentEventKind::RunRecorded {
+            report: Box::new(unified("ws1", "complete", &["write_properties"], &[], "s")),
+            problem_key: None,
+            dedup_key: None,
+        });
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(metrics.shadow_mismatches.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.alarm_unified_total.load(Ordering::Relaxed), 1);
+
+        shutdown.cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(1), handle)
+            .await
+            .expect("observer exits")
+            .expect("observer task");
+    }
+
+    /// 修复轮 1（裁决 2）：orphan 盲区计数——同一 ws 连续 legacy 到达 3 次
+    /// 无 unified 配对，打一次 warn 并递增 shadow_orphan_streaks（阈值穿越
+    /// 只计一次）；配对成功清零，新一轮 streak 可再次触发。
+    #[tokio::test]
+    async fn orphan_streak_counts_once_per_streak_and_resets_on_pair() {
+        let bus = Arc::new(AgentEventBus::new(64));
+        let rx = bus.subscribe();
+        let metrics = Arc::new(Metrics::new());
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let handle = tokio::spawn(run_shadow_observer(rx, metrics.clone(), shutdown.clone()));
+
+        let emit_legacy = |bus: &AgentEventBus| {
+            bus.emit(AgentEventKind::HeartbeatResultReady {
+                result: Box::new(legacy("ws1", HeartbeatStatus::Complete, &[], &[], "s")),
+            });
+        };
+
+        // 3 次单边 legacy → 阈值穿越，计数 1。
+        for _ in 0..3 {
+            emit_legacy(&bus);
+        }
+        for _ in 0..20_000 {
+            if metrics.shadow_orphan_streaks.load(Ordering::Relaxed) == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(metrics.shadow_orphan_streaks.load(Ordering::Relaxed), 1);
+
+        // 第 4 次单边 legacy：streak 延续但不重复计数（一次 streak 只 warn 一次）。
+        emit_legacy(&bus);
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(metrics.shadow_orphan_streaks.load(Ordering::Relaxed), 1);
+
+        // unified 到达 → 配对（一致）→ streak 清零；mismatch 保持 0。
+        bus.emit(AgentEventKind::RunRecorded {
+            report: Box::new(unified("ws1", "complete", &[], &[], "s")),
+            problem_key: None,
+            dedup_key: None,
+        });
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(metrics.shadow_mismatches.load(Ordering::Relaxed), 0);
+
+        // 新一轮 3 次单边 legacy → streak 重新累计并再次计数。
+        for _ in 0..3 {
+            emit_legacy(&bus);
+        }
+        for _ in 0..20_000 {
+            if metrics.shadow_orphan_streaks.load(Ordering::Relaxed) == 2 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            metrics.shadow_orphan_streaks.load(Ordering::Relaxed),
+            2,
+            "清零后的新 streak 须能再次触发"
+        );
         assert_eq!(metrics.shadow_mismatches.load(Ordering::Relaxed), 0);
 
         shutdown.cancel();
