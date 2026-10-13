@@ -683,6 +683,54 @@ mod tests {
         assert_eq!(out["reason"], "policy_read_failed");
     }
 
+    #[tokio::test]
+    async fn autonomous_invoke_policy_gate_reads_fresh_per_call() {
+        // O7 锁定(本文件 execute 第 1 步,autonomous_invoke.rs:278-280:
+        // 「Policy gate — fresh read on EVERY call (O7: kill switch takes
+        // effect immediately)」)+ R1(spec §2 读门时机):两次调用之间只翻
+        // 持久层的 policy 行,不重建 tool、不走任何内存缓存——下一次调用
+        // 必须立即按新档位裁决。防有人把 load_autonomy_policy 「优化」成
+        // run 触发时快照。
+        let fx = fixture("ws-o7").await;
+        seed_thing(&fx.pool, "ws-o7", "dev-1", "device").await;
+        register_action(&fx.pool, "dev-1", "reboot").await;
+        fx.policy_repo
+            .save_autonomy_policy("ws-o7", &act_policy(), "test")
+            .await
+            .unwrap();
+
+        // Act 档:放行。
+        let result = dispatch(&fx, "dev-1", "reboot").await;
+        let out = output_json(&result);
+        assert!(out.get("denied").is_none(), "Act mode must allow: {out}");
+
+        // kill switch:同一 DB 行翻成 Off —— 下一次调用立即拒。
+        let mut off = act_policy();
+        off.mode = AutonomyMode::Off;
+        fx.policy_repo
+            .save_autonomy_policy("ws-o7", &off, "test")
+            .await
+            .unwrap();
+        let result = dispatch(&fx, "dev-1", "reboot").await;
+        let out = output_json(&result);
+        assert_eq!(out["denied"], true);
+        assert_eq!(out["reason"], "autonomy_not_act");
+
+        // 翻回 Act:立即恢复放行(双向都锁,无快照窗口)。
+        fx.policy_repo
+            .save_autonomy_policy("ws-o7", &act_policy(), "test")
+            .await
+            .unwrap();
+        let result = dispatch(&fx, "dev-1", "reboot").await;
+        let out = output_json(&result);
+        assert!(out.get("denied").is_none(), "flipping back to Act must allow immediately: {out}");
+        assert_eq!(
+            agent_event_count(&fx.pool, "dev-1").await,
+            2,
+            "only the two allowed dispatches write events"
+        );
+    }
+
     // ── allow path ─────────────────────────────────────────────
 
     #[tokio::test]
