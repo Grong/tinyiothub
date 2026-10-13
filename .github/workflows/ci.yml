@@ -149,6 +149,13 @@ jobs:
       - name: Guard Self-Test (deliberate violations must fire)
         run: bash scripts/guards/selftest.sh
 
+      # E3 概念模型 lint：异名扫描（docs/ai-concept-model.md 词汇表右列）。
+      # 首版 warn-only——脚本本身 exit 0，continue-on-error 双保险；baseline
+      # 清零或逐个豁免后转 fail（T19 门禁裁定）。
+      - name: Concept Model Lint (E3, warn-only)
+        run: bash scripts/concept-lint.sh
+        continue-on-error: true
+
   # -----------------------------------------------------------------------------
   # 前端检查
   # -----------------------------------------------------------------------------
