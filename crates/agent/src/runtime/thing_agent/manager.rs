@@ -116,6 +116,10 @@ pub struct HeartbeatDeps {
     pub governor: HeartbeatGovernor,
     /// 热更新信号：handler 写穿 DB+内存表后 notify，trigger 立即 tick。
     pub reload_notify: Arc<tokio::sync::Notify>,
+    /// 每工作区最近 tick 完成时间表（Task 12，D13 实时读）：run_pipeline 在
+    /// heartbeat 源 run 完成时写入（成败均计，对齐旧 loop_.rs:74-75）；handler
+    /// get_config 的 last_tick 读源（T13 bootstrap 注入同一张表）。
+    pub last_ticks: Arc<DashMap<String, chrono::DateTime<chrono::Utc>>>,
 }
 
 /// Clonable dependency bundle for the run pipeline.
@@ -146,6 +150,9 @@ struct PipelineDeps {
     governor: HeartbeatGovernor,
     /// heartbeat 热更新信号：handler 写穿后 notify，trigger 立即 tick。
     heartbeat_reload_notify: Arc<tokio::sync::Notify>,
+    /// heartbeat 源最近 tick 完成时间表（Task 12，D13 实时读透出）——成败均计，
+    /// 与 governor 记账同一落点（record_heartbeat_outcome 两条路径共用）。
+    last_ticks: Arc<DashMap<String, chrono::DateTime<chrono::Utc>>>,
 }
 
 /// One running workspace loop: the scheduler handle plus the trigger/forward
@@ -196,6 +203,7 @@ impl ThingAgentManager {
                 heartbeat_intervals: heartbeat.intervals,
                 governor: heartbeat.governor,
                 heartbeat_reload_notify: heartbeat.reload_notify,
+                last_ticks: heartbeat.last_ticks,
             },
             config,
             workspaces: DashMap::new(),
@@ -426,6 +434,9 @@ fn collect_heartbeat_alarms<'a>(source: &'a TriggerSource, out: &mut Vec<&'a Hea
 /// 同样计入，与旧 loop 语义一致。修复轮 1：① Merged 穿透（has_heartbeat_member）；
 /// ② agent-unavailable 早退路径同样经此记账（旧 loop 的 send_message 错误
 /// 路径含 get_or_create 失败——agent 不可用计连败）。
+/// Task 12（D13 实时读透出）：tick 完成（成败均计）同时写共享 last_ticks 表
+/// ——对齐旧 loop_.rs:74-75；本函数由正常完成与 agent-unavailable 早退两条
+/// 路径共用，写一次即两路覆盖。
 fn record_heartbeat_outcome(
     deps: &PipelineDeps,
     source: &TriggerSource,
@@ -435,6 +446,8 @@ fn record_heartbeat_outcome(
     if !has_heartbeat_member(source) {
         return;
     }
+    // D13 实时读：tick 完成（成败均计）即记录内存态 last_tick。
+    deps.last_ticks.insert(workspace_id.to_string(), chrono::Utc::now());
     match outcome {
         tinyiothub_core::agent_runs::Outcome::Failed => deps.governor.record_failure(workspace_id),
         _ => deps.governor.record_success(workspace_id),
@@ -1488,6 +1501,114 @@ pub(crate) mod tests {
             "Merged heartbeat run 必须走 heartbeat 专用 prompt(信任段): {prompts:?}"
         );
         wait_until(|| governor.consecutive_failures(WS) == 0, "governor 记账穿透 Merged").await;
+    }
+
+    // Task 12（D13 实时读透出）：统一循环 heartbeat 源 run 完成（成败均计）写
+    // 共享 last_ticks 表——对齐旧 loop_.rs:74-75 语义，handler 读源切换后的数据源。
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_run_records_last_tick_in_shared_map() {
+        let parts = stub_manager().await;
+        let last_ticks = parts.heartbeat.last_ticks.clone();
+        parts.manager.start(WS);
+
+        let sink: &dyn DirectiveSink = parts.manager.as_ref();
+        let heartbeat_signal = || WakeSignal {
+            workspace_id: WS.to_string(),
+            priority: Priority::Normal,
+            source: TriggerSource::Heartbeat { alarm: None },
+            dedup_key: Some("heartbeat:ws_01".to_string()),
+        };
+        sink.enqueue(heartbeat_signal()).expect("heartbeat signal accepted");
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_secs(30)).await;
+        wait_until(
+            || parts.runs.runs_with_dedup("heartbeat:ws_01") == 1,
+            "heartbeat run persisted",
+        )
+        .await;
+        wait_until(|| last_ticks.contains_key(WS), "success tick records last_tick").await;
+
+        // 失败 run 同样计（成败均计）：清表后注入 provider 失败再跑一轮，
+        // 表重新有值才证明失败路径也写。
+        last_ticks.remove(WS);
+        parts.agents.llm.fail.store(true, std::sync::atomic::Ordering::Relaxed);
+        sink.enqueue(heartbeat_signal())
+            .expect("second heartbeat signal accepted");
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_secs(30)).await;
+        wait_until(
+            || parts.runs.runs_with_dedup("heartbeat:ws_01") == 2,
+            "failed run persisted",
+        )
+        .await;
+        wait_until(|| last_ticks.contains_key(WS), "failed tick also records last_tick").await;
+    }
+
+    // Task 12：agent 不可用早退路径同样写 last_ticks（旧 loop 语义：tick 完成
+    // 成败均计，get_or_create 失败在 send_message 错误路径内）——与 governor
+    // 连败记账同一落点，两条路径共用。
+    #[tokio::test(start_paused = true)]
+    async fn agent_unavailable_heartbeat_run_records_last_tick() {
+        let host = Arc::new(StubHost::new());
+        let registry = RunRegistry::new();
+        let events = Arc::new(AgentEventBus::new(64));
+        let heartbeat = HeartbeatDeps::default();
+        let last_ticks = heartbeat.last_ticks.clone();
+        let manager = Arc::new(ThingAgentManager::new(
+            host.clone(),
+            stub_policy_reader(WS),
+            Arc::new(FailingProvider),
+            registry,
+            events,
+            Arc::new(Runner::new()),
+            ThingAgentManagerConfig {
+                timer_interval: Duration::from_secs(24 * 3600),
+                min_wake_level: 3,
+                merge_window: crate::runtime::thing_agent::scheduler::MERGE_WINDOW,
+                heartbeat_default_interval: Duration::from_secs(24 * 3600),
+            },
+            Arc::new(crate::runtime::thing_agent::traits::NoopTicketResolutions),
+            heartbeat,
+        ));
+        manager.start(WS);
+
+        let sink: &dyn DirectiveSink = manager.as_ref();
+        sink.enqueue(WakeSignal {
+            workspace_id: WS.to_string(),
+            priority: Priority::Normal,
+            source: TriggerSource::Heartbeat { alarm: None },
+            dedup_key: Some("heartbeat:ws_01".to_string()),
+        })
+        .expect("heartbeat signal accepted");
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_secs(30)).await;
+        wait_until(
+            || last_ticks.contains_key(WS),
+            "agent-unavailable heartbeat run records last_tick",
+        )
+        .await;
+    }
+
+    // Task 12 行为锁：非 heartbeat 源 run 不写 last_ticks（表是 heartbeat 支路
+    // 专属——thing 事件 run 完成后表必须仍为空）。
+    #[tokio::test(start_paused = true)]
+    async fn non_heartbeat_run_does_not_write_last_tick() {
+        let parts = stub_manager().await;
+        parts.manager.start(WS);
+        wait_subscribed(&parts.host).await;
+
+        parts.host.tx.send(event(1, 5, "device")).expect("send critical event");
+        wait_until(|| parts.runs.runs_with_dedup(EVENT_KEY) == 1, "run persisted").await;
+        assert!(
+            parts.heartbeat.last_ticks.is_empty(),
+            "thing-event run must not write heartbeat last_ticks"
+        );
     }
 
     /// T4：RunStarted 的 problem_keys 提取——递归 Merged.signals，收集

@@ -67,7 +67,8 @@ pub struct HeartbeatConfigResponse {
     workspace_id: String,
     agent_id: String,
     tasks: Vec<HeartbeatTaskDef>,
-    /// 最近一次 tick 完成时间（D13 实时读：runner 内存态；无 tick 过为 null）
+    /// 最近一次 tick 完成时间（D13 实时读：统一循环共享表优先，未接线回退
+    /// runner 内存态；无 tick 过为 null）
     last_tick: Option<String>,
 }
 
@@ -149,11 +150,14 @@ pub async fn get_config(
         interval_minutes = runner.effective_interval_minutes(&workspace_id);
     }
 
-    // D13 实时字段：last_tick 读 runner 内存出口（历史/归档仍读 DB，见 /logs）。
+    // D13 实时字段：last_tick 优先读统一循环共享表（Task 12 透出，T13 bootstrap
+    // 注入）；表未注入或该工作区尚无记录时回旧 runner 内存出口（双轨过渡，T15
+    // runner 退役后删 fallback）。历史/归档仍读 DB，见 /logs。
     let last_tick = state
-        .heartbeat_runner
+        .heartbeat_last_ticks
         .as_ref()
-        .and_then(|r| r.last_tick(&workspace_id))
+        .and_then(|t| t.get(&workspace_id).map(|r| *r.value()))
+        .or_else(|| state.heartbeat_runner.as_ref().and_then(|r| r.last_tick(&workspace_id)))
         .map(|t| t.to_rfc3339());
 
     ApiResponseBuilder::success(HeartbeatConfigResponse {

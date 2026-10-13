@@ -109,6 +109,11 @@ pub struct AppState {
     /// AI subsystem heartbeat runner (set during async startup)
     pub heartbeat_runner: Option<Arc<tinyiothub_agent::runtime::heartbeat::runner::HeartbeatRunner>>,
 
+    /// 统一循环 heartbeat 最近 tick 完成时间表（Task 12 透出，T13 bootstrap
+    /// 注入同一张表）——get_config 的 last_tick 读源；None = 统一循环未接线，
+    /// handler 回旧 runner 内存出口（双轨过渡，T15 runner 退役后删 fallback）。
+    pub heartbeat_last_ticks: Option<Arc<dashmap::DashMap<String, chrono::DateTime<chrono::Utc>>>>,
+
     /// Agent MemoryService（set during async startup）—— Task 6 起由 cloud 侧
     /// 自持（memory profile compile / weekly digest handler），不再经
     /// Orchestrator 中转。
@@ -505,6 +510,7 @@ impl AppState {
             agent_pool,
             orchestrator: None,
             heartbeat_runner: None,
+            heartbeat_last_ticks: None,
             memory_service: None,
             user_service,
             tenant_service,
@@ -1004,6 +1010,7 @@ impl axum::extract::FromRef<AppState> for crate::domains::agent::AgentState {
             directive_sink: state.directive_sink.clone(),
             active_runs: state.active_runs.clone(),
             heartbeat_runner: state.heartbeat_runner.clone(),
+            heartbeat_last_ticks: state.heartbeat_last_ticks.clone(),
             orchestrator: state.orchestrator.clone(),
             memory_service: state.memory_service.clone(),
             memory_store: state.memory_store.clone(),
