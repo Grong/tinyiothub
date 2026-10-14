@@ -435,6 +435,7 @@ impl HeartbeatRunner {
         for r in self.intervals.iter() {
             ws_ids.insert(r.key().clone());
         }
+        let ws_ids_active: std::collections::HashSet<String> = self.active_workspaces().into_iter().collect();
         ws_ids
             .into_iter()
             .map(|ws| WorkspaceHeartbeatState {
@@ -445,6 +446,9 @@ impl HeartbeatRunner {
                     .get(&ws)
                     .map(|r| *r.value())
                     .unwrap_or(self.config.interval_minutes),
+                // 旧 runner 无 enabled 内存态——enabled 语义即 active_workspaces
+                // （get_config 同口径）；dump_state 仅供对账，恢复真源是 DB。
+                enabled: ws_ids_active.contains(&ws),
                 workspace_id: ws,
             })
             .collect()

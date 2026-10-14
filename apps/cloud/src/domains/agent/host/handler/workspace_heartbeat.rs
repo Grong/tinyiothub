@@ -198,11 +198,13 @@ pub async fn update_config(
     }
     runner.set_interval_minutes(&workspace_id, interval);
 
-    // T13 双跑写穿（行为保持清单第 3 行）：统一循环 intervals 共享表同步
-    // 更新（trigger 每轮重读生效），并 notify 立即 tick 一次；旧 runner 的
-    // start/stop 路径不变（双跑期并存）。
+    // T13 双跑写穿（行为保持清单第 3 行）：统一循环 intervals+enabled 共享
+    // 表同步更新（intervals trigger 每轮重读生效；enabled 进 trigger 判定集，
+    // 终审 I-1——false 时定时 tick 与 notify 立即 tick 双双抑制），并 notify
+    // 立即 tick 一次；旧 runner 的 start/stop 路径不变（双跑期并存）。
     if let Some(ref manager) = state.thing_agents {
         manager.set_heartbeat_interval_minutes(&workspace_id, interval);
+        manager.set_heartbeat_enabled(&workspace_id, enabled);
         manager.heartbeat_reload_notify(&workspace_id).notify_one();
     }
 

@@ -15,6 +15,11 @@ pub struct WorkspaceHeartbeatState {
     pub tasks: Vec<HeartbeatTask>,
     pub trust_config: TrustConfig,
     pub interval_minutes: u32,
+    /// 心跳开关（终审 I-1）：随快照预热进统一循环共享表；构建器自 DB
+    /// `workspaces.heartbeat_config` 读，缺省 true（对齐 HeartbeatConfig::
+    /// default enabled:true）。旧 runner 无 enabled 内存态（enabled 语义=
+    /// active_workspaces），dump_state 导出口径见 runner::snapshot_states。
+    pub enabled: bool,
 }
 
 /// O11 dedup 预热行（Task 9）：agent_runs 表的 problem_key 元数据投影。

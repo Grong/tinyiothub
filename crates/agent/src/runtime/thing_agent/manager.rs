@@ -111,6 +111,11 @@ pub struct HeartbeatDeps {
     pub tasks: Arc<DashMap<String, Vec<HeartbeatTask>>>,
     /// 每工作区间隔（分钟）覆盖表——update_config 写穿。
     pub intervals: Arc<DashMap<String, u32>>,
+    /// 每工作区心跳开关表（终审 I-1）：trigger 判定集新增维度，false 抑制
+    /// 定时 tick 与 notify 立即 tick；缺省（表无条目）= true（对齐
+    /// HeartbeatConfig::default enabled:true）。restore 预热自 DB
+    /// heartbeat_config，update_config 写穿。
+    pub enabled: Arc<DashMap<String, bool>>,
     /// 每工作区信任配置表——prompt 信任段注入源。
     pub trust_configs: Arc<DashMap<String, TrustConfig>>,
     /// 连败治理（T4）：run_pipeline 记账，trigger 读暂停态。
@@ -145,6 +150,9 @@ struct PipelineDeps {
     heartbeat_tasks_map: Arc<DashMap<String, Vec<HeartbeatTask>>>,
     /// heartbeat trigger 的每工作区间隔（分钟）覆盖表。
     heartbeat_intervals: Arc<DashMap<String, u32>>,
+    /// heartbeat trigger 的每工作区开关表（终审 I-1）：false 不 tick，
+    /// 缺省 true。
+    heartbeat_enabled: Arc<DashMap<String, bool>>,
     /// heartbeat 连败治理（T4）：run_pipeline 记账，trigger 读暂停态。
     governor: HeartbeatGovernor,
     /// heartbeat 源最近 tick 完成时间表（Task 12，D13 实时读透出）——成败均计，
@@ -206,6 +214,7 @@ impl ThingAgentManager {
                 trust_configs: heartbeat.trust_configs.clone(),
                 heartbeat_tasks_map: heartbeat.tasks.clone(),
                 heartbeat_intervals: heartbeat.intervals.clone(),
+                heartbeat_enabled: heartbeat.enabled.clone(),
                 governor: heartbeat.governor.clone(),
                 last_ticks: heartbeat.last_ticks.clone(),
             },
@@ -273,6 +282,7 @@ impl ThingAgentManager {
             workspace_id: workspace_id.to_string(),
             default_interval: self.config.heartbeat_default_interval,
             intervals: Arc::clone(&self.deps.heartbeat_intervals),
+            enabled: Arc::clone(&self.deps.heartbeat_enabled),
             tasks_source: Arc::clone(&self.deps.heartbeat_tasks_map),
             policy_repo: Arc::clone(&self.deps.policy_repo),
             governor: self.deps.governor.clone(),
@@ -362,6 +372,13 @@ impl ThingAgentManager {
             .insert(workspace_id.to_string(), interval_minutes);
     }
 
+    /// handler 写穿（终审 I-1）：心跳开关——trigger 判定集新增维度，false
+    /// 抑制定时 tick 与 notify 立即 tick（抑制在判定集，handler 侧 notify
+    /// 语义不变）。缺省 true（对齐 HeartbeatConfig::default enabled:true）。
+    pub fn set_heartbeat_enabled(&self, workspace_id: &str, enabled: bool) {
+        self.heartbeat.enabled.insert(workspace_id.to_string(), enabled);
+    }
+
     /// handler 写穿：信任配置（prompt 信任段注入源，下一 run 生效）。
     pub fn set_trust_config(&self, workspace_id: &str, config: TrustConfig) {
         self.heartbeat.trust_configs.insert(workspace_id.to_string(), config);
@@ -379,6 +396,11 @@ impl ThingAgentManager {
     /// 读出口：每工作区间隔（分钟）覆盖值。
     pub fn heartbeat_interval_minutes(&self, workspace_id: &str) -> Option<u32> {
         self.heartbeat.intervals.get(workspace_id).map(|r| *r)
+    }
+
+    /// 读出口（终审 I-1）：心跳开关——缺省（表无条目）= true。
+    pub fn heartbeat_enabled(&self, workspace_id: &str) -> bool {
+        self.heartbeat.enabled.get(workspace_id).map(|r| *r).unwrap_or(true)
     }
 
     /// 读出口：信任配置快照。
@@ -1262,6 +1284,77 @@ pub(crate) mod tests {
 
         // last_ticks 共享表句柄（T12 透出）经 manager 暴露给 bootstrap 注入。
         assert!(parts.manager.heartbeat_last_ticks().is_empty());
+    }
+
+    /// 终审 I-1：enabled 开关接入统一循环——写穿 false 后启动心跳 trigger
+    /// 不 tick（含 notify 立即 tick），翻回 true 恢复；缺省（未写）= true
+    /// （对齐 HeartbeatConfig::default enabled:true）。
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_enabled_write_through_gates_unified_tick() {
+        let parts = stub_manager().await;
+        // 缺省 true（表无条目）。
+        assert!(parts.manager.heartbeat_enabled(WS), "缺省须为 true");
+
+        parts.heartbeat.tasks.insert(
+            WS.to_string(),
+            vec![HeartbeatTask {
+                id: 1,
+                workspace_id: WS.into(),
+                priority: "P1".into(),
+                text: "巡检设备在线率".into(),
+                paused: false,
+                version: 1,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            }],
+        );
+        // update_config(enabled=false) 写穿（handler D11-⑤ DB 先写后的内存步）。
+        parts.manager.set_heartbeat_enabled(WS, false);
+        assert!(!parts.manager.heartbeat_enabled(WS));
+        assert_eq!(
+            parts.heartbeat.enabled.get(WS).map(|v| *v),
+            Some(false),
+            "写穿与 trigger 读侧共享同一 DashMap 真源"
+        );
+        parts.manager.start(WS);
+
+        // 启动首 tick 被抑制;越过合并窗口也不得落 run。
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_secs(30)).await;
+        settle().await;
+        assert_eq!(
+            parts.runs.runs_with_dedup("heartbeat:ws_01"),
+            0,
+            "enabled=false 的启动 tick 不得落 run"
+        );
+
+        // notify 立即 tick 同样被抑制（update_config(false) 后 handler 仍 notify）。
+        parts.manager.heartbeat_reload_notify(WS).notify_one();
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_secs(30)).await;
+        settle().await;
+        assert_eq!(
+            parts.runs.runs_with_dedup("heartbeat:ws_01"),
+            0,
+            "enabled=false 时 notify 不得补 tick"
+        );
+
+        // 翻回 true：notify 立即 tick 恢复，run 落库。
+        parts.manager.set_heartbeat_enabled(WS, true);
+        parts.manager.heartbeat_reload_notify(WS).notify_one();
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_secs(30)).await;
+        wait_until(
+            || parts.runs.runs_with_dedup("heartbeat:ws_01") == 1,
+            "enabled=true 后 notify 立即 tick 落 run",
+        )
+        .await;
     }
 
     // stop(): triggers aborted, queued signals drained, later events ignored.

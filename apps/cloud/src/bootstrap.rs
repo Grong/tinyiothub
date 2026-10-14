@@ -229,17 +229,23 @@ pub async fn build_agent_snapshot(db: &Db) -> Result<RestoreSnapshot, String> {
             .await
             .map_err(|e| format!("agent snapshot: load trust config for {ws_id} failed: {e}"))?
             .unwrap_or_default();
-        let interval_minutes = db
+        let hb_config = db
             .load_heartbeat_config(ws_id)
             .await
-            .map_err(|e| format!("agent snapshot: load heartbeat config for {ws_id} failed: {e}"))?
+            .map_err(|e| format!("agent snapshot: load heartbeat config for {ws_id} failed: {e}"))?;
+        let interval_minutes = hb_config
+            .as_ref()
             .map(|c| c.interval_minutes)
             .unwrap_or(default_interval);
+        // 终审 I-1：enabled 随快照预热进统一循环共享表（trigger 判定集维度）；
+        // 无配置行缺省 true（对齐 HeartbeatConfig::default enabled:true）。
+        let enabled = hb_config.as_ref().map(|c| c.enabled).unwrap_or(true);
         heartbeat.push(WorkspaceHeartbeatState {
             workspace_id: ws_id.clone(),
             tasks,
             trust_config,
             interval_minutes,
+            enabled,
         });
         recent_runs.extend(load_recent_runs(pool, ws_id).await?);
     }

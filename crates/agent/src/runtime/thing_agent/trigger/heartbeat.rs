@@ -1,5 +1,6 @@
 //! 周期心跳触发器:每工作区可配间隔(intervals 表每轮重读,
-//! 对齐 interval_minutes 热改);policy mode=off 抑制(O6/O19);
+//! 对齐 interval_minutes 热改);enabled=false 抑制(终审 I-1,缺省 true);
+//! policy mode=off 抑制(O6/O19);
 //! governor 暂停抑制(连败治理);reload_notify 到达立即 tick
 //! (行为保持清单第 3 行:ReloadTasks/ReloadConfig 写穿+立即 tick,
 //! 对齐 loop_.rs:146-150);dedup heartbeat:{ws}。
@@ -26,6 +27,10 @@ pub struct HeartbeatTrigger {
     pub default_interval: Duration,
     /// 每工作区间隔(分钟)共享表——cloud 侧 update_config 写穿(D11-⑤ 写序)。
     pub intervals: Arc<dashmap::DashMap<String, u32>>,
+    /// 每工作区开关共享表(终审 I-1):false 抑制定时 tick 与 reload_notify
+    /// 立即 tick;缺省(表无条目)=true,对齐 HeartbeatConfig::default
+    /// enabled:true。restore 预热自 DB heartbeat_config,update_config 写穿。
+    pub enabled: Arc<dashmap::DashMap<String, bool>>,
     /// 任务表共享内存源(空任务/全暂停不 tick,对齐 loop_.rs:63)。
     pub tasks_source: Arc<dashmap::DashMap<String, Vec<HeartbeatTask>>>,
     pub policy_repo: Arc<dyn AutonomyPolicyReader>,
@@ -55,6 +60,11 @@ impl Trigger for HeartbeatTrigger {
                 .map(|ts| ts.iter().any(|t| !t.paused))
                 .unwrap_or(false);
 
+            // enabled 开关(终审 I-1):缺省 true(对齐 HeartbeatConfig::default
+            // enabled:true);false 时定时 tick 与 notify 立即 tick 双双抑制
+            // ——抑制在判定集,notify 只承担"立即醒",不醒出 tick。
+            let enabled = self.enabled.get(&self.workspace_id).map(|v| *v).unwrap_or(true);
+
             // policy kill switch(O6/O19,fail-closed)
             let policy_ok = match self.policy_repo.load_autonomy(&self.workspace_id).await {
                 Ok(Some(policy)) => policy.mode != AutonomyMode::Off,
@@ -74,7 +84,7 @@ impl Trigger for HeartbeatTrigger {
                 .map(|m| Duration::from_secs(u64::from((*m).max(MIN_HEARTBEAT_INTERVAL_MINUTES)) * 60))
                 .unwrap_or(self.default_interval);
 
-            if has_active_tasks && policy_ok && !self.governor.is_paused(&self.workspace_id, interval) {
+            if enabled && has_active_tasks && policy_ok && !self.governor.is_paused(&self.workspace_id, interval) {
                 let signal = WakeSignal {
                     workspace_id: self.workspace_id.clone(),
                     priority: Priority::Normal,
@@ -137,6 +147,7 @@ mod tests {
             workspace_id: "ws_01".into(),
             default_interval: Duration::from_secs(60),
             intervals: Arc::new(dashmap::DashMap::new()),
+            enabled: Arc::new(dashmap::DashMap::new()), // 缺省=true
             tasks_source: seeded_tasks_source("ws_01"),
             policy_repo: repo,
             governor,
@@ -165,6 +176,7 @@ mod tests {
             workspace_id: "ws_02".into(),
             default_interval: Duration::from_secs(3600),
             intervals,
+            enabled: Arc::new(dashmap::DashMap::new()), // 缺省=true
             tasks_source: seeded_tasks_source("ws_02"),
             policy_repo: repo,
             governor: HeartbeatGovernor::default(),
@@ -213,6 +225,7 @@ mod tests {
             workspace_id: "ws_03".into(),
             default_interval: Duration::from_secs(60),
             intervals: Arc::new(dashmap::DashMap::new()),
+            enabled: Arc::new(dashmap::DashMap::new()), // 缺省=true
             tasks_source: seeded_tasks_source("ws_03"),
             policy_repo: repo,
             governor: governor.clone(),
@@ -262,6 +275,7 @@ mod tests {
             workspace_id: "ws_04".into(),
             default_interval: Duration::from_secs(60),
             intervals: Arc::new(dashmap::DashMap::new()),
+            enabled: Arc::new(dashmap::DashMap::new()),      // 缺省=true
             tasks_source: Arc::new(dashmap::DashMap::new()), // 无任务
             policy_repo: repo,
             governor: HeartbeatGovernor::default(),
@@ -288,6 +302,7 @@ mod tests {
             workspace_id: "ws_05".into(),
             default_interval: Duration::from_secs(3600), // 长间隔:不靠到点
             intervals: Arc::new(dashmap::DashMap::new()),
+            enabled: Arc::new(dashmap::DashMap::new()), // 缺省=true
             tasks_source: seeded_tasks_source("ws_05"),
             policy_repo: repo,
             governor: HeartbeatGovernor::default(),
@@ -300,6 +315,53 @@ mod tests {
         reload.notify_one(); // update_config/update_tasks 写穿后调用
         let second = rx.recv().await.expect("notify 立即 tick,不等 3600s");
         assert_eq!(second.dedup_key.as_deref(), Some("heartbeat:ws_05"));
+
+        drop(rx);
+        handle.await.expect("run task").expect("run result");
+    }
+
+    // 终审 I-1：enabled=false 对统一循环生效——定时 tick 与 reload_notify
+    // 立即 tick 双双抑制;翻回 true 恢复。缺省(表无条目)=true,对齐
+    // HeartbeatConfig::default enabled:true。
+    #[tokio::test]
+    async fn disabled_workspace_suppresses_ticks_until_re_enabled() {
+        pause();
+        let repo = stub_repo("ws_06", AutonomyMode::Act);
+        let enabled = Arc::new(dashmap::DashMap::new());
+        enabled.insert("ws_06".to_string(), false); // update_config(enabled=false) 写穿
+        let reload = Arc::new(tokio::sync::Notify::new());
+        let trigger = HeartbeatTrigger {
+            workspace_id: "ws_06".into(),
+            default_interval: Duration::from_secs(60),
+            intervals: Arc::new(dashmap::DashMap::new()),
+            enabled: enabled.clone(),
+            tasks_source: seeded_tasks_source("ws_06"),
+            policy_repo: repo,
+            governor: HeartbeatGovernor::default(),
+            reload_notify: reload.clone(),
+        };
+        let (tx, mut rx) = mpsc::channel(16);
+        let handle = tokio::spawn(async move { trigger.run(tx).await });
+
+        // 禁用:启动检查与 +60s 到点检查都被抑制(泵 70s 无信号)。
+        for _ in 0..70 {
+            advance(Duration::from_secs(1)).await;
+            tokio::task::yield_now().await;
+            assert!(rx.try_recv().is_err(), "enabled=false 不得发 tick");
+        }
+        // notify 立即 tick 同样被抑制(update_config(false) 写穿后 handler
+        // 仍会 notify_one——抑制在判定集,不在 notify)。
+        reload.notify_one();
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+            assert!(rx.try_recv().is_err(), "enabled=false 时 notify 不得补 tick");
+        }
+
+        // 翻回 true:notify 立即 tick 恢复。
+        enabled.insert("ws_06".to_string(), true);
+        reload.notify_one();
+        let tick = rx.recv().await.expect("enabled=true 后 notify 立即 tick");
+        assert_eq!(tick.dedup_key.as_deref(), Some("heartbeat:ws_06"));
 
         drop(rx);
         handle.await.expect("run task").expect("run result");

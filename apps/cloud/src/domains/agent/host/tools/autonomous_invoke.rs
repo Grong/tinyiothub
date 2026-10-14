@@ -723,7 +723,10 @@ mod tests {
             .unwrap();
         let result = dispatch(&fx, "dev-1", "reboot").await;
         let out = output_json(&result);
-        assert!(out.get("denied").is_none(), "flipping back to Act must allow immediately: {out}");
+        assert!(
+            out.get("denied").is_none(),
+            "flipping back to Act must allow immediately: {out}"
+        );
         assert_eq!(
             agent_event_count(&fx.pool, "dev-1").await,
             2,

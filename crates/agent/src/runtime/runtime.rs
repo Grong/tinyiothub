@@ -105,6 +105,9 @@ impl AgentRuntime {
             heartbeat_deps
                 .intervals
                 .insert(state.workspace_id.clone(), state.interval_minutes);
+            // 终审 I-1：enabled 开关随快照预热进统一循环共享表——禁用工作区
+            // 重启后 trigger 仍不 tick（此前 enabled 只停旧 runner）。
+            heartbeat_deps.enabled.insert(state.workspace_id.clone(), state.enabled);
         }
         // Task 11：桥与统一循环共享同一 governor——告警信号 resume 的暂停态
         // 必须作用于 trigger 读的那一份（克隆共享同一 DashMap 真源）。
@@ -364,6 +367,7 @@ mod tests {
                 tasks: vec![task_fixture()],
                 trust_config: TrustConfig::default(),
                 interval_minutes: 30,
+                enabled: true,
             }],
             recent_runs: vec![],
             problem_meta: vec![],
@@ -417,6 +421,23 @@ mod tests {
         let rt = AgentRuntime::restore(snapshot_with_ws1(), RuntimeDeps::test_stub());
         assert_eq!(rt.heartbeat_tasks("ws1").len(), 1);
         assert!(rt.heartbeat_tasks("unknown").is_empty());
+    }
+
+    /// 终审 I-1：restore 预热把快照 enabled 写入统一循环共享表——禁用工作区
+    /// 重启后 trigger 仍不 tick（此前 enabled 只在旧 runner 生效，重启后统一
+    /// 循环无视持久化的开关）。缺省语义（快照 true）预热后读出口为 true。
+    #[tokio::test]
+    async fn restore_prewarms_heartbeat_enabled_into_unified_loop() {
+        let mut snap = snapshot_with_ws1();
+        snap.heartbeat[0].enabled = false;
+        let rt = AgentRuntime::restore(snap, RuntimeDeps::test_stub());
+        assert!(
+            !rt.thing_agents().heartbeat_enabled("ws1"),
+            "快照 enabled=false 必须预热进统一循环共享表"
+        );
+
+        let rt = AgentRuntime::restore(snapshot_with_ws1(), RuntimeDeps::test_stub());
+        assert!(rt.thing_agents().heartbeat_enabled("ws1"));
     }
 
     #[tokio::test]

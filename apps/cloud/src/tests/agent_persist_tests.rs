@@ -190,6 +190,7 @@ async fn lagged_subscriber_resyncs_from_dump_state() {
             tasks: vec![],
             trust_config: trust,
             interval_minutes: 30,
+            enabled: true,
         }],
         recent_runs: vec![report("run_lagged", "ws1", "resync me")],
         problem_meta: vec![],

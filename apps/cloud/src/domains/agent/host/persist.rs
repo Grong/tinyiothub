@@ -468,6 +468,7 @@ async fn run_exists(pool: &SqlitePool, run_id: &str) -> Result<bool, sqlx::Error
 ///    `upsert_heartbeat_proposals`（与 insert_heartbeat_result 同一家）。
 /// 2. `outcome == Failed` 补 G3 system_error 事件（对齐上方
 ///    HeartbeatResultReady 支路的写法，巡检者失败要可见）。
+///
 /// 提案落库失败仅 warn：双跑期旧路径仍在写（门控外），切换期（T15）前
 /// 由 T14 shadow 等价对照兜底比对。
 async fn project_heartbeat_run(pool: &SqlitePool, report: &RunReport) {

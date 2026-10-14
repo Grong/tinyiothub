@@ -303,6 +303,9 @@ async fn restore_prewarms_unified_loop_heartbeat_deps_alongside_legacy_runner() 
         "统一循环任务表须自同一快照预热"
     );
     assert_eq!(manager.heartbeat_interval_minutes("ws1"), Some(45));
+    // 终审 I-1：enabled 自同一快照预热（本用例 DB 配置 enabled=true；
+    // 禁用路径见 restore_prewarms_heartbeat_enabled_from_db_config）。
+    assert!(manager.heartbeat_enabled("ws1"));
     assert_eq!(
         manager
             .heartbeat_trust_config("ws1")
@@ -327,6 +330,40 @@ async fn restore_prewarms_unified_loop_heartbeat_deps_alongside_legacy_runner() 
         "不同工作区不得共享 Notify"
     );
     manager.stop("ws1").await;
+}
+
+/// 终审 I-1：restore 预热把 DB `workspaces.heartbeat_config` 的 enabled 读进
+/// 统一循环共享表——禁用工作区重启后统一 trigger 不 tick（此前 enabled 只
+/// 停旧 runner，统一循环无视持久化开关，禁用的心跳在「执行历史」继续出 run）。
+/// 无配置行的工作区缺省 true（对齐 HeartbeatConfig::default enabled:true）。
+#[tokio::test]
+async fn restore_prewarms_heartbeat_enabled_from_db_config() {
+    let (db, pool) = test_db().await;
+    seed_test_workspace(&pool, "tenant1", "ws_off").await;
+    seed_test_workspace(&pool, "tenant1", "ws_default").await;
+
+    db.save_heartbeat_config(
+        "ws_off",
+        &WorkspaceHeartbeatConfig {
+            enabled: false,
+            interval_minutes: 30,
+            ai_triage_enabled: true,
+            triage_mode: "annotate".to_string(),
+        },
+    )
+    .await
+    .expect("save disabled heartbeat config");
+
+    let runtime = bootstrap_test_runtime(&db).await;
+    let manager = runtime.thing_agents();
+    assert!(
+        !manager.heartbeat_enabled("ws_off"),
+        "DB enabled=false 必须预热进统一循环共享表"
+    );
+    assert!(
+        manager.heartbeat_enabled("ws_default"),
+        "无配置行缺省 true（HeartbeatConfig::default enabled:true）"
+    );
 }
 
 /// CEO review T21：启动快照 fail-closed——DB 读失败必须 Err（中止启动），
