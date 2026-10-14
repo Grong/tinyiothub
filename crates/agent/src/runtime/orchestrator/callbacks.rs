@@ -3,12 +3,13 @@
 //! AlarmCreated       --> HeartbeatBridge.dispatch() (Task 11:转
 //!                        TriggerSource::Heartbeat 变体入统一循环,N3 优先级
 //!                        映射+分键 dedup)
-//! HeartbeatCompleted --> AgentEventBus.emit(HeartbeatResultReady)（Task 6；
-//!                        Task 8 持久化订阅者落库，零订阅者 emit 为 no-op）
-//!                    --> HeartbeatBridge.dispatch_proposals() (X6, O21)
+//! HeartbeatCompleted --> HeartbeatBridge.dispatch_proposals() (X6, O21)
+//!                        （T15 起无生产发布者——统一 Run 循环内的心跳 run
+//!                        提案由持久化订阅者 RunRecorded 支路落库；臂保留
+//!                        供桥接单测与测试注入）
 //! (Chat reflection is handled directly in chat/service.rs)
-//! WorkspaceCreated    --> HeartbeatRunner.start() + ThingAgentManager.start()
-//! WorkspaceDeleted    --> HeartbeatRunner.remove_workspace() + ThingAgentManager.stop()
+//! WorkspaceCreated    --> ThingAgentManager.start()
+//! WorkspaceDeleted    --> ThingAgentManager.stop()
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,8 +20,6 @@ use tinyiothub_core::models::event::{ContentElement, Event, EventType, RichConte
 use tracing::{debug, info, warn};
 
 use crate::runtime::event::types::AiEvent;
-use crate::runtime::events::{AgentEventBus, AgentEventKind};
-use crate::runtime::heartbeat::runner::HeartbeatRunner;
 use crate::runtime::heartbeat::types::{HeartbeatResult, HeartbeatSignal, SignalPriority};
 use crate::runtime::thing_agent::governor::HeartbeatGovernor;
 use crate::runtime::thing_agent::manager::ThingAgentManager;
@@ -29,10 +28,11 @@ use crate::runtime::thing_agent::traits::DirectiveSink;
 use crate::runtime::thing_agent::types::{HeartbeatAlarmContext, Outcome, Priority, TriggerSource, WakeSignal};
 use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 
-/// X6 心跳桥（O21 裁决）：订阅既有 `AiEvent::HeartbeatCompleted`（loop_.rs
-/// 零改动），从心跳报告的结构化 proposals 提取问题，按 O11 dedup 后投递
-/// `UserDirective{ source: Some("heartbeat"), priority: Normal }` 给
-/// thing-agent loop 处置。
+/// X6 心跳桥（O21 裁决）：订阅 `AiEvent::HeartbeatCompleted`（T15 起无
+/// 生产发布者——统一 Run 循环内的心跳 run 提案由持久化订阅者落库；臂
+/// 保留供测试注入），从心跳报告的结构化 proposals 提取问题，按 O11 dedup
+/// 后投递 `UserDirective{ source: Some("heartbeat"), priority: Normal }`
+/// 给 thing-agent loop 处置。
 ///
 /// problem_key 从结构化字段派生（`{tool_name}:{thing_id}`），不用自由文本
 /// 摘要——LLM 措辞变化会击穿去重（O21）。
@@ -43,7 +43,7 @@ use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 pub struct HeartbeatBridge {
     registry: RunRegistry,
     sink: Arc<dyn DirectiveSink>,
-    /// 连败治理（T4）：告警信号到达时 resume 暂停态（loop_.rs:128-133 语义）。
+    /// 连败治理（T4）：告警信号到达时 resume 暂停态（外部信号恢复暂停）。
     /// 与 ThingAgentManager 的 heartbeat governor 共享同一实例（T13 bootstrap
     /// 接线；agent crate 内 runtime.rs 先行共享）。
     governor: HeartbeatGovernor,
@@ -133,8 +133,8 @@ impl HeartbeatBridge {
     }
 
     /// 告警信号统一入口（Task 11）：enqueue 前 `governor.resume()`——外部信号
-    /// 恢复暂停（对齐 loop_.rs:128-133；resume 仅 paused 时清态，未暂停为
-    /// no-op）。投递失败（队列满/loop 未启动）仅记录日志——告警信号不享
+    /// 恢复暂停（resume 仅 paused 时清态，未暂停为 no-op）。投递失败
+    /// （队列满/loop 未启动）仅记录日志——告警信号不享
     /// "排队不丢"（O5 同心跳 directive 先例），丢弃可接受。
     pub async fn dispatch(&self, s: &HeartbeatSignal) {
         self.governor.resume(&s.workspace_id);
@@ -234,35 +234,24 @@ fn heartbeat_directive(workspace_id: &str, problem_key: String, proposal: &Propo
 
 /// Cross-domain callback handler.
 pub struct AiEventHandler {
-    heartbeat_runner: Arc<HeartbeatRunner>,
-    /// AgentEvent 出口（Task 2/6）：HeartbeatCompleted → HeartbeatResultReady。
-    agent_events: Arc<AgentEventBus>,
     /// T15 thing-agent loop registry; None where the loop is not deployed.
     thing_agent_manager: Option<Arc<ThingAgentManager>>,
-    /// T18 X6 心跳桥；None 时 HeartbeatCompleted 仅发射事件不投递 directive。
+    /// T18 X6 心跳桥；None 时 HeartbeatCompleted/AlarmCreated 不投递。
     heartbeat_bridge: Option<Arc<HeartbeatBridge>>,
     shutting_down: Arc<AtomicBool>,
 }
 
 impl AiEventHandler {
     pub fn new(
-        heartbeat_runner: Arc<HeartbeatRunner>,
-        agent_events: Arc<AgentEventBus>,
         thing_agent_manager: Option<Arc<ThingAgentManager>>,
         heartbeat_bridge: Option<Arc<HeartbeatBridge>>,
         shutting_down: Arc<AtomicBool>,
     ) -> Self {
         Self {
-            heartbeat_runner,
-            agent_events,
             thing_agent_manager,
             heartbeat_bridge,
             shutting_down,
         }
-    }
-
-    pub fn heartbeat_runner(&self) -> &Arc<HeartbeatRunner> {
-        &self.heartbeat_runner
     }
 
     /// O11 ack 抑制转发（Task 6）：无桥（None）时 no-op。
@@ -310,31 +299,19 @@ impl AiEventHandler {
                 }
             }
             AiEvent::HeartbeatCompleted { workspace_id, result } => {
-                // 落库出口（Task 6）：HeartbeatResultReady 由 Task 8 持久化
-                // 订阅者落库；零订阅者时 emit 为 no-op（Task 4 RunRecorded
-                // 同先例）。
-                // CEO review T22：同源写入 runner 近期结果窗口——dump_state
-                // 导出与"已发射"一致，Lagged resync/周期对账可补回丢失行。
-                self.heartbeat_runner.record_result(workspace_id, result.clone());
-                self.agent_events.emit(AgentEventKind::HeartbeatResultReady {
-                    result: Box::new(result.clone()),
-                });
                 // X6 心跳桥：O11 dedup 依据 RunRegistry 内存（Task 6），
-                // 不依赖本次心跳结果的持久化。
+                // 不依赖本次心跳结果的持久化（T15 起落库由持久化订阅者的
+                // RunRecorded 心跳支路承担）。
                 if let Some(bridge) = &self.heartbeat_bridge {
                     bridge.dispatch_proposals(workspace_id, result).await;
                 }
             }
             AiEvent::WorkspaceCreated { workspace_id } => {
-                self.heartbeat_runner.start(workspace_id).await;
                 if let Some(manager) = &self.thing_agent_manager {
                     manager.start(workspace_id);
                 }
             }
             AiEvent::WorkspaceDeleted { workspace_id } => {
-                // remove_workspace = stop + 清三表内存真源，防止已删工作区
-                // 在内存与 dump_state 快照中残留（Task 5 fix round 1）。
-                self.heartbeat_runner.remove_workspace(workspace_id).await;
                 if let Some(manager) = &self.thing_agent_manager {
                     manager.stop(workspace_id).await;
                 }
@@ -395,40 +372,20 @@ fn extract_payload(content: &RichContent) -> Option<String> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::runtime::event::bus::AiEventPublisher;
-    use crate::runtime::heartbeat::types::HeartbeatConfig;
     use crate::runtime::heartbeat::types::HeartbeatStatus;
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use tinyiothub_core::models::event::{Event, EventLevel, EventSource, EventType, RichContent};
-    use tinyiothub_runtime::EventBus;
 
     use tinyiothub_core::event::EventHandler;
 
-    fn make_publisher() -> Arc<AiEventPublisher> {
-        Arc::new(AiEventPublisher::new(Arc::new(EventBus::new())))
-    }
-
-    fn make_heartbeat_runner() -> Arc<HeartbeatRunner> {
-        Arc::new(HeartbeatRunner::new(make_publisher(), HeartbeatConfig::default()))
-    }
-
-    /// 显式构造夹具（无 Default 上下文）：返回 handler 与其 AgentEventBus
-    /// （测试经 bus.subscribe() 断言 HeartbeatResultReady 发射）。
+    /// 显式构造夹具（无 Default 上下文）。
     fn make_handler(
         thing_agent_manager: Option<Arc<ThingAgentManager>>,
         bridge: Option<Arc<HeartbeatBridge>>,
         shutting_down: bool,
-    ) -> (AiEventHandler, Arc<AgentEventBus>) {
-        let events = Arc::new(AgentEventBus::new(16));
-        let handler = AiEventHandler::new(
-            make_heartbeat_runner(),
-            events.clone(),
-            thing_agent_manager,
-            bridge,
-            Arc::new(AtomicBool::new(shutting_down)),
-        );
-        (handler, events)
+    ) -> AiEventHandler {
+        AiEventHandler::new(thing_agent_manager, bridge, Arc::new(AtomicBool::new(shutting_down)))
     }
 
     /// Wrap an AiEvent inside a tinyiothub_core Event for handler dispatch.
@@ -444,29 +401,15 @@ pub(crate) mod tests {
         .expect("Failed to create test event")
     }
 
-    fn ok_result(workspace_id: &str) -> HeartbeatResult {
-        HeartbeatResult {
-            id: "test-tick".to_string(),
-            workspace_id: workspace_id.to_string(),
-            status: HeartbeatStatus::Complete,
-            summary: "All good".to_string(),
-            task_count: 0,
-            executed_actions: vec![],
-            proposals: vec![],
-            error: None,
-            trace: vec![],
-        }
-    }
-
     #[tokio::test]
     async fn test_handler_construction() {
-        let (handler, _events) = make_handler(None, None, false);
+        let handler = make_handler(None, None, false);
         assert_eq!(handler.name(), "AiEventHandler");
     }
 
     #[tokio::test]
     async fn test_should_handle_filters_ai_events() {
-        let (handler, _events) = make_handler(None, None, false);
+        let handler = make_handler(None, None, false);
 
         let ai_event = wrap_ai_event(&AiEvent::WorkspaceCreated {
             workspace_id: "ws_1".into(),
@@ -484,32 +427,9 @@ pub(crate) mod tests {
         assert!(!handler.should_handle(&system_event));
     }
 
-    // Task 6：HeartbeatCompleted 不再直接落库，转为发射 HeartbeatResultReady
-    // （Task 8 持久化订阅者消费）。
-    #[tokio::test]
-    async fn test_heartbeat_completed_emits_result_ready() {
-        let (handler, events) = make_handler(None, None, false);
-        let mut rx = events.subscribe();
-
-        let event = wrap_ai_event(&AiEvent::HeartbeatCompleted {
-            workspace_id: "ws_test".to_string(),
-            result: ok_result("ws_test"),
-        });
-        handler.handle_ai_event(&event).await;
-
-        let ev = rx.try_recv().expect("HeartbeatResultReady emitted synchronously");
-        match ev.kind {
-            AgentEventKind::HeartbeatResultReady { result } => {
-                assert_eq!(result.workspace_id, "ws_test");
-                assert_eq!(result.summary, "All good");
-            }
-            _ => panic!("expected HeartbeatResultReady"),
-        }
-    }
-
     #[tokio::test]
     async fn test_alarm_created_non_critical_no_signal() {
-        let (handler, _events) = make_handler(None, None, false);
+        let handler = make_handler(None, None, false);
 
         // Non-critical alarm should not trigger heartbeat signal
         let alarm = AiEvent::AlarmCreated(tinyiothub_core::models::event::AlarmEvent {
@@ -532,7 +452,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_workspace_created_and_deleted_no_panic() {
-        let (handler, _events) = make_handler(None, None, false);
+        let handler = make_handler(None, None, false);
 
         // WorkspaceCreated (no tasks loaded → loop won't start, but no panic)
         let event = wrap_ai_event(&AiEvent::WorkspaceCreated {
@@ -554,7 +474,7 @@ pub(crate) mod tests {
         let parts = crate::runtime::thing_agent::manager::tests::stub_manager().await;
         let manager = parts.manager.clone();
 
-        let (handler, _events) = make_handler(Some(manager.clone()), None, false);
+        let handler = make_handler(Some(manager.clone()), None, false);
 
         assert!(!manager.is_running("ws_life"));
         let event = wrap_ai_event(&AiEvent::WorkspaceCreated {
@@ -572,7 +492,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_self_referential_events_are_noop() {
-        let (handler, _events) = make_handler(None, None, false);
+        let handler = make_handler(None, None, false);
 
         // Self-referential events should not panic
         for event_variant in [
@@ -606,19 +526,13 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_shutting_down_skips_handling() {
-        let (handler, events) = make_handler(None, None, true); // shutting_down = true
-        let mut rx = events.subscribe();
+        let handler = make_handler(None, None, true); // shutting_down = true
 
-        let event = wrap_ai_event(&AiEvent::HeartbeatCompleted {
+        let event = wrap_ai_event(&AiEvent::WorkspaceCreated {
             workspace_id: "ws_test".to_string(),
-            result: ok_result("ws_test"),
         });
+        // 关停中跳过处理（无 manager 时本臂本就 no-op——仅断言不 panic 早退）。
         handler.handle_ai_event(&event).await;
-
-        assert!(
-            rx.try_recv().is_err(),
-            "shutting down must skip HeartbeatResultReady emission"
-        );
     }
 
     #[tokio::test]
@@ -684,7 +598,7 @@ pub(crate) mod tests {
             async fn drain(&self, _workspace_id: &str) {}
         }
 
-        /// 字段照 loop_.rs:443-452 的 sample_signal；带 thing_id/alarm_type 走分键路径。
+        /// 带 thing_id/alarm_type 的分键路径夹具。
         fn sample_alarm_signal(ws: &str) -> HeartbeatSignal {
             HeartbeatSignal {
                 workspace_id: ws.into(),
@@ -954,13 +868,12 @@ pub(crate) mod tests {
             assert!(!matches!(second.source, TriggerSource::Merged { .. }));
         }
 
-        // Orchestrator 接线（Task 6）：HeartbeatCompleted 发射
-        // HeartbeatResultReady（Task 8 订阅者落库）并驱动心跳桥投递。
+        // Orchestrator 接线：HeartbeatCompleted 驱动心跳桥投递（T15 起结果
+        // 落库由持久化订阅者 RunRecorded 心跳支路承担，不再经本 handler）。
         #[tokio::test]
-        async fn heartbeat_completed_emits_result_ready_and_drives_bridge() {
+        async fn heartbeat_completed_drives_bridge() {
             let (bridge, sink) = bridge(RunRegistry::new());
-            let (handler, events) = make_handler(None, Some(Arc::new(bridge)), false);
-            let mut rx = events.subscribe();
+            let handler = make_handler(None, Some(Arc::new(bridge)), false);
 
             let event = wrap_ai_event(&AiEvent::HeartbeatCompleted {
                 workspace_id: "ws_1".to_string(),
@@ -968,30 +881,19 @@ pub(crate) mod tests {
             });
             handler.handle_ai_event(&event).await;
 
-            let ev = rx.try_recv().expect("HeartbeatResultReady emitted synchronously");
-            match ev.kind {
-                AgentEventKind::HeartbeatResultReady { result } => {
-                    assert_eq!(result.workspace_id, "ws_1");
-                    assert_eq!(result.proposals.len(), 1);
-                }
-                _ => panic!("expected HeartbeatResultReady"),
-            }
             assert_eq!(sink.signals.lock().unwrap().len(), 1, "bridge dispatched the proposal");
         }
 
-        // 无桥（None）时 HeartbeatCompleted 仅发射事件，不 panic。
+        // 无桥（None）时 HeartbeatCompleted 不投递、不 panic。
         #[tokio::test]
-        async fn heartbeat_completed_without_bridge_only_emits() {
-            let (handler, events) = make_handler(None, None, false);
-            let mut rx = events.subscribe();
+        async fn heartbeat_completed_without_bridge_is_noop() {
+            let handler = make_handler(None, None, false);
 
             let event = wrap_ai_event(&AiEvent::HeartbeatCompleted {
                 workspace_id: "ws_1".to_string(),
                 result: result_with(vec![proposal("set_hvac", Some("dev-1"))]),
             });
             handler.handle_ai_event(&event).await;
-            let ev = rx.try_recv().expect("HeartbeatResultReady emitted synchronously");
-            assert!(matches!(ev.kind, AgentEventKind::HeartbeatResultReady { .. }));
         }
 
         // ── T11 告警链转 Heartbeat 变体(N3)──
@@ -1041,7 +943,7 @@ pub(crate) mod tests {
 
             assert!(
                 !governor.is_paused("ws1", Duration::from_secs(3600)),
-                "告警信号恢复暂停(loop_.rs:128-133 语义)"
+                "告警信号恢复暂停"
             );
             let sig = sink.last().expect("wake signal enqueued");
             assert_eq!(sig.priority, Priority::Critical);
@@ -1071,7 +973,7 @@ pub(crate) mod tests {
         #[tokio::test]
         async fn alarm_created_dispatches_heartbeat_variant_with_distinct_dedup_key() {
             let (bridge, sink) = bridge(RunRegistry::new());
-            let (handler, _events) = make_handler(None, Some(Arc::new(bridge)), false);
+            let handler = make_handler(None, Some(Arc::new(bridge)), false);
 
             handler.handle_ai_event(&wrap_ai_event(&alarm_event("warning"))).await;
 
@@ -1102,7 +1004,7 @@ pub(crate) mod tests {
         #[tokio::test]
         async fn critical_alarm_maps_to_critical_priority() {
             let (bridge, sink) = bridge(RunRegistry::new());
-            let (handler, _events) = make_handler(None, Some(Arc::new(bridge)), false);
+            let handler = make_handler(None, Some(Arc::new(bridge)), false);
 
             handler.handle_ai_event(&wrap_ai_event(&alarm_event("critical"))).await;
 
@@ -1114,7 +1016,7 @@ pub(crate) mod tests {
         /// T11 回归:无桥时不 panic、不派发。
         #[tokio::test]
         async fn alarm_created_without_bridge_is_noop() {
-            let (handler, _events) = make_handler(None, None, false);
+            let handler = make_handler(None, None, false);
             handler.handle_ai_event(&wrap_ai_event(&alarm_event("error"))).await;
         }
 

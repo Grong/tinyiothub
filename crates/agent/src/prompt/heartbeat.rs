@@ -1,4 +1,4 @@
-//! 巡检 tick 提示词（从 runtime/heartbeat/loop_.rs 迁入，2026-09-20 提示词收敛）。
+//! 巡检 tick 提示词（2026-09-20 提示词收敛迁入）。
 
 use tinyiothub_core::heartbeat::{HeartbeatTask, TrustConfig};
 

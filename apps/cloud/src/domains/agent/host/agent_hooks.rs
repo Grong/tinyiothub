@@ -29,7 +29,7 @@ impl AgentHooksImpl {
     }
 
     /// Task 9 接线：注入 runtime，使新工作区种子任务可经 reload 命令
-    /// 推入 runner 内存真源。
+    /// 推入统一循环共享表（内存真源）。
     pub fn with_runtime(self, runtime: Arc<AgentRuntime>) -> Self {
         *self.runtime.write().unwrap() = Some(runtime);
         self
@@ -51,8 +51,9 @@ impl crate::domains::tenant::hooks::AgentHooks for AgentHooksImpl {
     fn heartbeat_tasks_seeded(&self, workspace_id: &str, tasks: Vec<HeartbeatTask>) {
         let runtime = self.runtime.read().unwrap().clone();
         match runtime {
-            // reload 命令：更新 runner 内存 + 发射 HeartbeatTasksChanged
-            // （无投影，仅内存信号）；DB 已由调用方先写（D11-⑤）。
+            // reload 命令：更新统一循环任务共享表 + 发射
+            // HeartbeatTasksChanged（无投影，仅内存信号）；DB 已由调用方
+            // 先写（D11-⑤）。
             Some(runtime) => runtime.reload_heartbeat_tasks(workspace_id, tasks),
             None => tracing::warn!(
                 workspace_id,

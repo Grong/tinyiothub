@@ -301,7 +301,7 @@ async fn reopen_retires_stale_resolution_memory() {
 
 #[tokio::test]
 async fn heartbeat_run_failure_does_not_ticket() {
-    // 旧语义(loop_.rs/G3):周期 tick 失败只产 system_error 事件,从不开票。
+    // 语义保持(G3):周期 tick 失败只产 system_error 事件,从不开票。
     // 统一循环后 heartbeat 源 run 也走 RunRecorded——ticket_for_run 漏斗守卫
     // 把这类失败挡在工单系统外(事件路径+对账路径共用此漏斗)。
     // T9 迁移合成行(hbm_ 前缀 id)trigger 同样带 heartbeat: 前缀,对账不误捞。

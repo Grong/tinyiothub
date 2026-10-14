@@ -20,16 +20,6 @@ pub struct Metrics {
     pub events_published: AtomicU64,
     pub events_dropped: AtomicU64,
     pub reflection_skips: AtomicU64,
-    /// Shadow 双跑比对不一致计数（T13 shadow observer）——双跑期靠它观察
-    /// 统一循环与旧 runner 的结构白名单等价性。
-    pub shadow_mismatches: AtomicU64,
-    /// 告警分键统一 run 计数（T13 评审修复轮 1）：heartbeat:{ws}:{thing}:
-    /// {alarm} run 不参与配对（旧路径无对应结果），只记数观测告警链活跃度。
-    pub alarm_unified_total: AtomicU64,
-    /// legacy 单边到达 streak 告警计数（T13 评审修复轮 1）：同一 ws 连续
-    /// N 次旧路径 tick 无统一循环配对——无 policy/mode=off 工作区的观测
-    /// 盲区由此暴露。
-    pub shadow_orphan_streaks: AtomicU64,
 }
 
 impl Metrics {
@@ -55,9 +45,6 @@ impl Metrics {
             events_published: AtomicU64::new(0),
             events_dropped: AtomicU64::new(0),
             reflection_skips: AtomicU64::new(0),
-            shadow_mismatches: AtomicU64::new(0),
-            alarm_unified_total: AtomicU64::new(0),
-            shadow_orphan_streaks: AtomicU64::new(0),
         }
     }
 
@@ -122,12 +109,6 @@ pub struct MetricsSnapshot {
     pub events_published: u64,
     pub events_dropped: u64,
     pub reflection_skips: u64,
-    /// T13 shadow observer 比对不一致累计数。
-    pub shadow_mismatches: u64,
-    /// T13 评审修复轮 1：告警分键统一 run 累计数（只记数不比对）。
-    pub alarm_unified_total: u64,
-    /// T13 评审修复轮 1：legacy 单边 streak 告警累计数。
-    pub shadow_orphan_streaks: u64,
 }
 
 impl Metrics {
@@ -144,9 +125,6 @@ impl Metrics {
             events_published: self.events_published.load(Ordering::Relaxed),
             events_dropped: self.events_dropped.load(Ordering::Relaxed),
             reflection_skips: self.reflection_skips.load(Ordering::Relaxed),
-            shadow_mismatches: self.shadow_mismatches.load(Ordering::Relaxed),
-            alarm_unified_total: self.alarm_unified_total.load(Ordering::Relaxed),
-            shadow_orphan_streaks: self.shadow_orphan_streaks.load(Ordering::Relaxed),
         }
     }
 }

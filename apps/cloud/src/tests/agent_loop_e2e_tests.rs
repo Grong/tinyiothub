@@ -41,9 +41,7 @@ use crate::domains::event::{bus::ThingEventBus, router::ThrottleState};
 use crate::test_utils::{auth_header, create_test_token, response_parts, seed_test_workspace, test_app_state_on_pool};
 use tinyiothub_agent::pool::ProviderFactory;
 use tinyiothub_agent::runtime::{
-    event::bus::AiEventPublisher,
     events::{AgentEventBus, AgentEventKind},
-    heartbeat::types::HeartbeatConfig,
     runtime::{AgentRuntime, RuntimeDeps},
     thing_agent::{DirectiveSink, Priority, ThingAgentManagerConfig, TriggerSource, WakeSignal},
 };
@@ -242,8 +240,6 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
 
     let event_bus = Arc::new(tinyiothub_runtime::EventBus::new());
     let deps = RuntimeDeps {
-        event_publisher: Arc::new(AiEventPublisher::new(event_bus.clone())),
-        heartbeat_config: HeartbeatConfig::default(),
         thing_agent_host: Arc::new(CloudThingAgentHost::new(pool.clone(), thing_bus)),
         policy_repo: Arc::new(crate::domains::agent::host::ports::StorageAutonomyPolicyReader::new(
             policy_repo,
@@ -272,7 +268,6 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
         db.clone(),
         persist_rx,
         shutdown.clone(),
-        None,
     ));
 
     // HTTP 应用与 loop 共享同一文件库（生产路由树，含 auth 中间件）。

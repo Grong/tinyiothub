@@ -263,7 +263,6 @@ pub async fn build_agent_snapshot(db: &Db) -> Result<RestoreSnapshot, String> {
         recent_runs,
         problem_meta,
         recent_run_meta: std::collections::HashMap::new(),
-        heartbeat_results: vec![],
     })
 }
 

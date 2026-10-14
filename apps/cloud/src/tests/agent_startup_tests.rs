@@ -261,13 +261,13 @@ async fn build_snapshot_restores_problem_dedup_metadata() {
     assert!(acked, "最新 run 的行级 ack 标记必须随预热恢复");
 }
 
-/// Task 13 bootstrap 双跑装配：restore 后统一循环（ThingAgentManager）持有
-/// heartbeat 依赖——任务表/trust/intervals 自同一快照预热，last_ticks 共享表
-/// 可注入；旧 runner 同步预热（双跑期并存，T15 才退役）。workspace start 后
-/// 统一 loop 运行；reload_notify 为每工作区独立实例（单一全局 Notify 的
-/// notify_one 只唤醒一个等待者，多工作区会叫错/叫漏）。
+/// Task 13 bootstrap 装配（T15 起唯一路径）：restore 后统一循环
+/// （ThingAgentManager）持有 heartbeat 依赖——任务表/trust/intervals 自
+/// 快照预热，last_ticks 共享表可注入。workspace start 后统一 loop 运行；
+/// reload_notify 为每工作区独立实例（单一全局 Notify 的 notify_one 只
+/// 唤醒一个等待者，多工作区会叫错/叫漏）。
 #[tokio::test]
-async fn restore_prewarms_unified_loop_heartbeat_deps_alongside_legacy_runner() {
+async fn restore_prewarms_unified_loop_heartbeat_deps() {
     let (db, pool) = test_db().await;
     seed_test_workspace(&pool, "tenant1", "ws1").await;
 
@@ -293,9 +293,9 @@ async fn restore_prewarms_unified_loop_heartbeat_deps_alongside_legacy_runner() 
 
     let runtime = bootstrap_test_runtime(&db).await;
 
-    // 旧 runner 并存预热（双跑期不退役）。
-    assert_eq!(runtime.heartbeat_tasks("ws1").len(), 1, "旧 runner 内存真源预热不变");
-    // 统一循环持有同一快照的 heartbeat 依赖（T13 接管点）。
+    // 门面读出口与统一循环共享同一内存真源（T15 起唯一）。
+    assert_eq!(runtime.heartbeat_tasks("ws1").len(), 1, "门面 heartbeat_tasks 读共享表");
+    // 统一循环持有同一快照的 heartbeat 依赖。
     let manager = runtime.thing_agents();
     assert_eq!(
         manager.heartbeat_tasks("ws1").len(),

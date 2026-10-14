@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::{DateTime, Utc};
 use tinyiothub_core::agent_runs::RunReport;
-use tinyiothub_core::heartbeat::{HeartbeatResult, TrustConfig};
+use tinyiothub_core::heartbeat::TrustConfig;
 use tokio::sync::broadcast;
 
 use super::event::dlq::DeadLetterEntry;
@@ -40,8 +40,6 @@ pub enum AgentEventKind {
         problem_key: Option<String>,
         dedup_key: Option<String>,
     },
-    /// 心跳 tick 结果（orchestrator 的 insert_result 替代）
-    HeartbeatResultReady { result: Box<HeartbeatResult> },
     /// trust config 变更（状态跃迁，非每 tick）
     TrustConfigChanged {
         workspace_id: String,

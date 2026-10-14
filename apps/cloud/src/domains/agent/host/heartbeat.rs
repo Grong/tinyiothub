@@ -1,7 +1,8 @@
 // Heartbeat module — per-workspace HEARTBEAT.md task parsing utilities.
 //
-// The heartbeat_loop and HeartbeatManager have been replaced by
-// tinyiothub_agent::runtime::heartbeat (HeartbeatRunner + heartbeat_loop).
+// The legacy heartbeat loop has been retired (T15) — ticks run inside the
+// unified thing-agent Run loop; this module keeps only task file parsing and
+// the one-time HEARTBEAT.md → DB migration.
 
 use serde::{Deserialize, Serialize};
 

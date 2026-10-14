@@ -1201,7 +1201,7 @@ pub(crate) mod tests {
         );
     }
 
-    // ── T13 bootstrap 双跑装配 ────────────────────────────────
+    // ── T13 bootstrap 装配（T15 起唯一心跳路径）───────────────
 
     /// T13：start 挂载 4 个任务——forward + thing-event trigger + timer
     /// trigger + heartbeat trigger（统一循环接管心跳依赖的结构断言）。

@@ -136,9 +136,9 @@ impl AgentPool {
             }
         });
 
-        // No inner timeout here: the heartbeat tick bounds the whole run (see
-        // heartbeat::loop_ TICK_TIMEOUT). A shorter inner timeout fires first
-        // every time, making the tick-level bound unreachable.
+        // No inner timeout here: the run's deadline bounds the whole turn (see
+        // thing_agent::runner backstop timeout). A shorter inner timeout fires
+        // first every time, making the run-level bound unreachable.
         let ag = agent.lock().await;
         let result = ag.turn_streamed(message, event_tx, None).await;
         drop(ag);

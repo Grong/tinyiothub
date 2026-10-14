@@ -6,7 +6,9 @@
 //!    agent_id LIKE '__heartbeat__:%'）合成 agent_runs 行
 //!    （id='hbm_'||tick_id，report 含 trace 与 action_count）；
 //! 2. 同 tick 的 proposal/auto_executed 行 tick_id 改写为 'hbm_'||tick_id；
-//! 3. heartbeat_tick_map 视图可查 tick_id→run_id；
+//! 3. heartbeat_tick_map 视图可查 tick_id→run_id（本测试锚定该迁移自身
+//!    的效果；该视图无任何代码消费，T15 已由
+//!    20261014000001_drop_heartbeat_tick_map DROP，生产库不再有）；
 //! 4. 迁移幂等（重跑零副作用）。
 //!
 //! 顺序=埋伏③：先合成 run 行再改锚——反过来提案行的 EXISTS 锚检查找不到

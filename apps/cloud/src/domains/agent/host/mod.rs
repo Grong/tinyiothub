@@ -32,7 +32,6 @@ pub mod persist;
 pub mod policy_engine;
 pub mod pool_adapter;
 pub mod scaffold;
-pub mod shadow_observer;
 pub mod thing_action_hooks;
 pub mod thing_agent_host;
 pub mod ticket_subscriber;

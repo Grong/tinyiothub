@@ -3,10 +3,13 @@
 //! 事件 → 落库映射（context 核实版）：
 //! - `RunRecorded` → `agent_runs` insert-once：裸 INSERT 撞 unique 约束，
 //!   预 SELECT 把"已存在"视为幂等成功（幂等即 fencing，stale 回放不覆盖）；
-//!   非幂等失败 spawn 独立重试（与心跳同款退避，D10：归一不降级可靠性），
+//!   非幂等失败 spawn 独立重试（2s base、2^attempt 退避、5 次 → DLQ），
 //!   重试耗尽/shutdown 中止 → DLQ
-//! - `HeartbeatResultReady` → `agent_actions`（首次失败 spawn 独立重试任务：
-//!   2s base、2^attempt 退避、5 次 → DLQ + `AiEvent::HeartbeatPersistFailed`）
+//! - `RunRecorded`（heartbeat 源，trigger_type='heartbeat'）追加心跳支路
+//!   （T15 起唯一提案通道，门控已随翻旗删除）：summary 内嵌 healing report
+//!   的 proposals 落 `agent_actions`（tick_id=run_id，C3 联结），落库失败
+//!   接同一重试骨架（耗尽 → DLQ + `AiEvent::HeartbeatPersistFailed`）；
+//!   outcome=Failed 补 G3 system_error 事件（best-effort）
 //! - `TrustConfigChanged` → `workspaces.heartbeat_trust_config` fencing upsert
 //!   （CEO review T2：occurred_at 不早于已应用时间戳才写入；与 handler 先写
 //!   路径双写同值无害，D11-⑤）
@@ -21,7 +24,7 @@
 //! **之前**从该 bus 取得。生产入口是 [`supervise_persistence_subscriber`]
 //! （CEO review T1：监管重启循环）；[`run_persistence_subscriber`] 保留为
 //! 无监管测试接缝（agent_persist_tests / agent_loop_e2e_tests 直接使用）。
-//! shutdown 经 CancellationToken 编排：主循环与心跳重试任务都响应取消。
+//! shutdown 经 CancellationToken 编排：主循环与落库重试任务都响应取消。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,7 +35,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
 use tinyiothub_core::agent_runs::RunReport;
-use tinyiothub_core::heartbeat::HeartbeatResult;
 use tinyiothub_storage::Db;
 
 use super::dlq_repo::SqliteDeadLetterQueue;
@@ -45,7 +47,7 @@ use tinyiothub_agent::runtime::snapshot::RestoreSnapshot;
 
 /// 周期全量对账间隔（生产）。
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(300);
-/// 心跳结果落库重试：5 次，2s base，2^attempt 退避（Task 6 删除的
+/// 落库重试：5 次，2s base，2^attempt 退避（Task 6 删除的
 /// `retry_with_backoff` 语义在此重建）。
 const RETRY_MAX_ATTEMPTS: u32 = 5;
 const RETRY_BASE_DELAY: Duration = Duration::from_secs(2);
@@ -67,16 +69,6 @@ pub(crate) struct ResyncFailures {
     pub(crate) trust_configs: std::collections::HashMap<String, u32>,
 }
 
-/// Shadow 双跑门控（Task 8；T13 bootstrap 接线，T15 切换期翻旗后删除门控）。
-/// 默认全 false：统一 Run 路径只产报告/进 shadow observer，不落提案——
-/// 双跑期提案仍走 HeartbeatResultReady 旧路径，两边不重复写。
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ShadowFlags {
-    /// heartbeat 源 RunRecorded 的提案落 agent_actions（tick_id=run_id，
-    /// C3 联结）+ outcome=Failed 补 G3 system_error 事件。
-    pub heartbeat_unified_persist: bool,
-}
-
 fn record_failure(map: &mut std::collections::HashMap<String, u32>, key: &str) -> u32 {
     let count = map.entry(key.to_string()).or_insert(0);
     *count += 1;
@@ -91,14 +83,13 @@ pub async fn run_persistence_subscriber(
     db: Arc<Db>,
     rx: tokio::sync::broadcast::Receiver<AgentEvent>,
     shutdown: CancellationToken,
-    shadow: Option<ShadowFlags>,
 ) {
     let publisher = runtime.orchestrator().event_publisher().clone();
     let dump = {
         let runtime = runtime.clone();
         move || runtime.dump_state()
     };
-    run_persistence_loop(rx, dump, db, publisher, RECONCILE_INTERVAL, shutdown, shadow).await
+    run_persistence_loop(rx, dump, db, publisher, RECONCILE_INTERVAL, shutdown).await
 }
 
 /// subscriber 监管循环（CEO review T1）。
@@ -119,7 +110,6 @@ pub async fn supervise_persistence_subscriber(
     bus: Arc<AgentEventBus>,
     first_rx: tokio::sync::broadcast::Receiver<AgentEvent>,
     shutdown: CancellationToken,
-    shadow: Option<ShadowFlags>,
 ) {
     let publisher = runtime.orchestrator().event_publisher().clone();
     let dump: Arc<dyn Fn() -> RestoreSnapshot + Send + Sync> = {
@@ -138,16 +128,7 @@ pub async fn supervise_persistence_subscriber(
             let publisher = publisher.clone();
             let dump = dump_for_loop.clone();
             async move {
-                run_persistence_loop(
-                    rx,
-                    move || dump(),
-                    task_db,
-                    publisher,
-                    RECONCILE_INTERVAL,
-                    child,
-                    shadow,
-                )
-                .await;
+                run_persistence_loop(rx, move || dump(), task_db, publisher, RECONCILE_INTERVAL, child).await;
             }
         },
     )
@@ -234,9 +215,7 @@ pub async fn run_persistence_loop(
     publisher: Arc<AiEventPublisher>,
     reconcile_interval: Duration,
     shutdown: CancellationToken,
-    shadow: Option<ShadowFlags>,
 ) {
-    let shadow = shadow.unwrap_or_default();
     // 首次 tick 推迟一个完整周期：启动对账已由 Task 9 启动编排（restore
     // 预热 + 僵尸 reconcile）覆盖，避免与 restore 竞态。
     let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + reconcile_interval, reconcile_interval);
@@ -245,7 +224,7 @@ pub async fn run_persistence_loop(
     loop {
         tokio::select! {
             msg = rx.recv() => match msg {
-                Ok(event) => project(&event, db.pool(), &publisher, &shutdown, &shadow).await,
+                Ok(event) => project(&event, db.pool(), &publisher, &shutdown).await,
                 Err(RecvError::Lagged(n)) => {
                     warn!(dropped = n, "persistence subscriber lagged, full resync");
                     resync(dump_state(), db.pool(), &mut resync_failures).await;
@@ -265,7 +244,7 @@ pub async fn run_persistence_loop(
                 let mut lagged: Option<u64> = None;
                 loop {
                     match rx.try_recv() {
-                        Ok(event) => project(&event, db.pool(), &publisher, &shutdown, &shadow).await,
+                        Ok(event) => project(&event, db.pool(), &publisher, &shutdown).await,
                         Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
                         Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
                             lagged = Some(n);
@@ -293,7 +272,6 @@ pub(crate) async fn project(
     pool: &SqlitePool,
     publisher: &Arc<AiEventPublisher>,
     shutdown: &CancellationToken,
-    shadow: &ShadowFlags,
 ) {
     match &event.kind {
         AgentEventKind::RunStarted { .. } => {
@@ -306,56 +284,10 @@ pub(crate) async fn project(
             dedup_key,
         } => {
             project_run(pool, report, problem_key.as_deref(), dedup_key.as_deref(), shutdown).await;
-            // Task 8 心跳支路（Shadow 门控）：heartbeat 源 run 的提案落
-            // agent_actions + G3 失败事件。旗关时统一路径只落 agent_runs，
-            // 提案仍由 HeartbeatResultReady 旧路径写（双跑不重复）。
-            if shadow.heartbeat_unified_persist
-                && tinyiothub_storage::agent_runs::trigger_type_of(&report.trigger) == "heartbeat"
-            {
-                project_heartbeat_run(pool, report).await;
-            }
-        }
-        AgentEventKind::HeartbeatResultReady { result } => {
-            let db = Db::new(pool.clone());
-            if let Err(e) = db.insert_heartbeat_result(&result.workspace_id, result).await {
-                warn!(
-                    workspace_id = %result.workspace_id,
-                    error = %e,
-                    "heartbeat result persist failed, spawning retry task"
-                );
-                spawn_heartbeat_retry(
-                    pool.clone(),
-                    publisher.clone(),
-                    result.workspace_id.clone(),
-                    (**result).clone(),
-                    shutdown.clone(),
-                );
-            }
-            // G3 闭环：巡检者失败要可见。status=Error 的结果（连败暂停 /
-            // LLM 错误 tick）落一条 system_error 事件，事件日志页可见；
-            // 与 heartbeat 结果落库成败解耦，best-effort 不重试。
-            if result.status == tinyiothub_core::heartbeat::HeartbeatStatus::Error {
-                use tinyiothub_core::models::event::{Event, EventLevel, EventSource, RichContent, SystemEventType};
-                let title = format!("心跳巡检异常（工作区 {}）", result.workspace_id);
-                let body = format!("{}\n{}", result.summary, result.error.as_deref().unwrap_or(""));
-                let event = Event::new_system_event(
-                    SystemEventType::SystemError,
-                    EventLevel::Error,
-                    EventSource::new("agent".to_string(), "heartbeat".to_string(), None, None::<String>),
-                    RichContent::new_text(title, body),
-                );
-                match event {
-                    Ok(ev) => {
-                        if let Err(e) = db.insert_event(&ev).await {
-                            warn!(
-                                workspace_id = %result.workspace_id,
-                                error = %e,
-                                "heartbeat error event persist failed"
-                            );
-                        }
-                    }
-                    Err(e) => warn!(error = %e, "failed to build heartbeat error event"),
-                }
+            // 心跳支路（T15 翻旗后唯一提案通道）：heartbeat 源 run 的提案落
+            // agent_actions（失败接重试骨架）+ outcome=Failed 补 G3 失败事件。
+            if tinyiothub_storage::agent_runs::trigger_type_of(&report.trigger) == "heartbeat" {
+                project_heartbeat_run(pool, report, publisher, shutdown).await;
             }
         }
         AgentEventKind::TrustConfigChanged { workspace_id, config } => {
@@ -461,17 +393,21 @@ async fn run_exists(pool: &SqlitePool, run_id: &str) -> Result<bool, sqlx::Error
     Db::new(pool.clone()).agent_run_exists(run_id).await
 }
 
-/// Task 8 心跳支路（ShadowFlags.heartbeat_unified_persist 门控内）：
+/// 心跳支路（T15 翻旗后为唯一提案通道）：
 /// 1. `report.summary` 中的 healing report JSON 解出 proposals，落
 ///    agent_actions，tick_id 位写 `report.run_id`（C3 联结：提案行可回溯
 ///    到产生它的 run）；problem_key 就地刷新复用 db 侧
-///    `upsert_heartbeat_proposals`（与 insert_heartbeat_result 同一家）。
-/// 2. `outcome == Failed` 补 G3 system_error 事件（对齐上方
-///    HeartbeatResultReady 支路的写法，巡检者失败要可见）。
-///
-/// 提案落库失败仅 warn：双跑期旧路径仍在写（门控外），切换期（T15）前
-/// 由 T14 shadow 等价对照兜底比对。
-async fn project_heartbeat_run(pool: &SqlitePool, report: &RunReport) {
+///    `upsert_heartbeat_proposals`。落库失败接 T7 重试骨架（5 次 2s base
+///    退避 → DLQ + `AiEvent::HeartbeatPersistFailed`）——翻旗后本支路是
+///    唯一提案通道，warn-only 是可靠性缺口（终审挂账收口）。
+/// 2. `outcome == Failed` 补 G3 system_error 事件（巡检者失败要可见；
+///    与提案落库成败解耦，best-effort 不重试——对齐退役前旧路径语义）。
+async fn project_heartbeat_run(
+    pool: &SqlitePool,
+    report: &RunReport,
+    publisher: &Arc<AiEventPublisher>,
+    shutdown: &CancellationToken,
+) {
     let parsed =
         tinyiothub_agent::runtime::heartbeat::report::parse_healing_report(&report.summary, &report.workspace_id);
     if !parsed.proposals.is_empty() {
@@ -485,7 +421,15 @@ async fn project_heartbeat_run(pool: &SqlitePool, report: &RunReport) {
                 run_id = %report.run_id,
                 workspace_id = %report.workspace_id,
                 error = %e,
-                "heartbeat run proposals persist failed"
+                "heartbeat run proposals persist failed, spawning retry task"
+            );
+            spawn_heartbeat_proposals_retry(
+                pool.clone(),
+                publisher.clone(),
+                report.workspace_id.clone(),
+                report.run_id.clone(),
+                parsed.proposals.clone(),
+                shutdown.clone(),
             );
         }
     }
@@ -628,19 +572,6 @@ pub(crate) async fn resync(snapshot: RestoreSnapshot, pool: &SqlitePool, failure
             }
         }
     }
-    // CEO review T22：心跳结果对账——tick_id 锚行幂等（重复投影静默
-    // no-op），丢失的 agent_actions 行由此补回。失败仅 warn：事件路径的
-    // 5 次重试 + DLQ 是升级通道，对账每 5 分钟还有下一次机会。
-    for result in &snapshot.heartbeat_results {
-        if let Err(e) = db.insert_heartbeat_result(&result.workspace_id, result).await {
-            warn!(
-                workspace_id = %result.workspace_id,
-                tick_id = %result.id,
-                error = %e,
-                "resync heartbeat result failed"
-            );
-        }
-    }
 }
 
 /// 持久化重试公共骨架（D10：heartbeat 与 run 共用，泛化 payload 类型）。
@@ -764,47 +695,63 @@ fn spawn_persist_retry<F, Fut>(
     });
 }
 
-/// 心跳结果重试任务（重建自 4d102722 `retry_with_backoff`，D10 起基于
-/// 公共骨架 [`spawn_persist_retry`]）：耗尽后除 DLQ 外另发
-/// `AiEvent::HeartbeatPersistFailed`。
-fn spawn_heartbeat_retry(
+/// 心跳提案落库重试（T15 终审挂账收口：翻旗后心跳支路是唯一提案通道，
+/// warn-only 是可靠性缺口——接 T7 公共骨架 [`spawn_persist_retry`]）：
+/// 耗尽后除 DLQ 外另发 `AiEvent::HeartbeatPersistFailed`（升级语义与退役前
+/// 旧路径一致）。DLQ payload 携带重投所需的全部字段（ws/run_id/proposals）。
+fn spawn_heartbeat_proposals_retry(
     pool: SqlitePool,
     publisher: Arc<AiEventPublisher>,
     workspace_id: String,
-    result: HeartbeatResult,
+    run_id: String,
+    proposals: Vec<tinyiothub_core::policy::Proposal>,
     shutdown: CancellationToken,
 ) {
-    let payload = serde_json::to_string(&result).unwrap_or_else(|se| {
+    let payload = serde_json::to_string(&serde_json::json!({
+        "workspace_id": workspace_id,
+        "run_id": run_id,
+        "proposals": proposals,
+    }))
+    .unwrap_or_else(|se| {
         format!(
-            r#"{{"unserializable":true,"workspace_id":"{}","serialize_error":"{}"}}"#,
-            result.workspace_id, se
+            r#"{{"unserializable":true,"workspace_id":"{}","run_id":"{}","serialize_error":"{}"}}"#,
+            workspace_id, run_id, se
         )
     });
     let ctx = PersistRetryCtx {
         workspace_id: workspace_id.clone(),
         event_type: "HeartbeatCompleted",
-        key: workspace_id.clone(),
+        key: run_id.clone(),
         payload,
     };
     let db = Db::new(pool.clone());
-    let attempt_workspace = workspace_id.clone();
+    let agent_id = format!("__heartbeat__:{workspace_id}");
+    let exhausted_workspace = workspace_id.clone();
     spawn_persist_retry(
         pool,
         shutdown,
         ctx,
         move || {
             let db = db.clone();
-            let result = result.clone();
-            let workspace_id = attempt_workspace.clone();
+            let workspace_id = workspace_id.clone();
+            let agent_id = agent_id.clone();
+            let run_id = run_id.clone();
+            let proposals = proposals.clone();
             async move {
-                match db.insert_heartbeat_result(&workspace_id, &result).await {
+                match db
+                    .upsert_heartbeat_proposals(&workspace_id, &agent_id, &proposals, Some(&run_id))
+                    .await
+                {
                     Ok(_) => RetryStep::Done,
                     Err(e) => RetryStep::Failed(e.to_string()),
                 }
             }
         },
         move |reason| {
-            publisher.publish(AiEvent::HeartbeatPersistFailed { workspace_id, reason });
+            publisher.publish(AiEvent::HeartbeatPersistFailed {
+                workspace_id: exhausted_workspace,
+                reason,
+            });
         },
     );
 }

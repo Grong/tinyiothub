@@ -67,8 +67,8 @@ pub struct HeartbeatConfigResponse {
     workspace_id: String,
     agent_id: String,
     tasks: Vec<HeartbeatTaskDef>,
-    /// 最近一次 tick 完成时间（D13 实时读：统一循环共享表优先，未接线回退
-    /// runner 内存态；无 tick 过为 null）
+    /// 最近一次 tick 完成时间（D13 实时读：统一循环共享表，T15 起唯一读源；
+    /// 无 tick 过为 null）
     last_tick: Option<String>,
 }
 
@@ -139,22 +139,26 @@ pub async fn get_config(
 
     let tasks = load_tasks(&state, &workspace_id).await;
 
-    let enabled = state
-        .heartbeat_runner
+    // enabled/interval/last_tick 读统一循环共享表（T15 起唯一读源）；
+    // 未接线（测试/降级路径）回退缺省。
+    let default_interval = tinyiothub_agent::runtime::heartbeat::types::HeartbeatConfig::default().interval_minutes;
+    let (enabled, interval_minutes) = match state.thing_agents.as_ref() {
+        Some(manager) => (
+            manager.heartbeat_enabled(&workspace_id),
+            manager
+                .heartbeat_interval_minutes(&workspace_id)
+                .unwrap_or(default_interval),
+        ),
+        None => (false, default_interval),
+    };
+
+    // D13 实时字段：last_tick 读统一循环共享表（T15 起唯一读源）。历史/
+    // 归档仍读 DB，见 /logs。
+    let last_tick = state
+        .heartbeat_last_ticks
         .as_ref()
-        .map(|pm| pm.active_workspaces().contains(&workspace_id))
-        .unwrap_or(false);
-
-    let mut interval_minutes = 15;
-    if let Some(ref runner) = state.heartbeat_runner {
-        interval_minutes = runner.effective_interval_minutes(&workspace_id);
-    }
-
-    // D13 实时字段：last_tick 双轨读见 resolve_last_tick（统一表优先，
-    // miss/未注入回退旧 runner）。历史/归档仍读 DB，见 /logs。
-    let legacy_last_tick = state.heartbeat_runner.as_ref().and_then(|r| r.last_tick(&workspace_id));
-    let last_tick =
-        resolve_last_tick(state.heartbeat_last_ticks.as_ref(), legacy_last_tick, &workspace_id).map(|t| t.to_rfc3339());
+        .and_then(|t| t.get(&workspace_id).map(|r| *r.value()))
+        .map(|t| t.to_rfc3339());
 
     ApiResponseBuilder::success(HeartbeatConfigResponse {
         enabled,
@@ -176,45 +180,35 @@ pub async fn update_config(
 ) -> Json<ApiResponse<serde_json::Value>> {
     verify_workspace_access_port!(state, claims, workspace_id);
 
-    let Some(ref runner) = state.heartbeat_runner else {
+    let Some(ref manager) = state.thing_agents else {
         return ApiResponseBuilder::error("心跳服务未启用");
     };
 
     // Merge with persisted/current values so a partial update doesn't reset
-    // the other field.
-    let current_interval = runner.effective_interval_minutes(&workspace_id);
-    let is_active = runner.active_workspaces().contains(&workspace_id);
-    let enabled = req.enabled.unwrap_or(is_active);
+    // the other field（读统一循环共享表，T15 起唯一读源）。
+    let current_interval = manager
+        .heartbeat_interval_minutes(&workspace_id)
+        .unwrap_or(tinyiothub_agent::runtime::heartbeat::types::HeartbeatConfig::default().interval_minutes);
+    let current_enabled = manager.heartbeat_enabled(&workspace_id);
+    let enabled = req.enabled.unwrap_or(current_enabled);
     let interval = req.interval_minutes.unwrap_or(current_interval);
 
     let config = match tinyiothub_storage::heartbeat::WorkspaceHeartbeatConfig::validated(enabled, interval) {
         Ok(c) => c,
         Err(e) => return ApiResponseBuilder::error(&e),
     };
-    // D11-⑤ 写序：先写 DB，成功后更新 runner 内存（Task 5 起 runner 不触库）。
+    // D11-⑤ 写序：先写 DB，成功后更新统一循环共享表（Task 5 起内存不触库）。
     if let Err(e) = state.db.save_heartbeat_config(&workspace_id, &config).await {
         tracing::error!(%workspace_id, "Failed to persist heartbeat config: {}", e);
         return ApiResponseBuilder::error("保存心跳配置失败");
     }
-    runner.set_interval_minutes(&workspace_id, interval);
-
-    // T13 双跑写穿（行为保持清单第 3 行）：统一循环 intervals+enabled 共享
-    // 表同步更新（intervals trigger 每轮重读生效；enabled 进 trigger 判定集，
-    // 终审 I-1——false 时定时 tick 与 notify 立即 tick 双双抑制），并 notify
-    // 立即 tick 一次；旧 runner 的 start/stop 路径不变（双跑期并存）。
-    if let Some(ref manager) = state.thing_agents {
-        manager.set_heartbeat_interval_minutes(&workspace_id, interval);
-        manager.set_heartbeat_enabled(&workspace_id, enabled);
-        manager.heartbeat_reload_notify(&workspace_id).notify_one();
-    }
-
-    let interval_changed = interval != current_interval;
-    if enabled && (!is_active || interval_changed) {
-        // (Re)start so a changed interval takes effect immediately.
-        runner.start(&workspace_id).await;
-    } else if !enabled && is_active {
-        runner.stop(&workspace_id).await;
-    }
+    // 统一循环写穿（行为保持清单第 3 行）：intervals+enabled 共享表同步更新
+    // （intervals trigger 每轮重读生效；enabled 进 trigger 判定集，终审
+    // I-1——false 时定时 tick 与 notify 立即 tick 双双抑制），并 notify 立即
+    // tick 一次（间隔变更即时生效；禁用则此次唤醒被 enabled 抑制）。
+    manager.set_heartbeat_interval_minutes(&workspace_id, interval);
+    manager.set_heartbeat_enabled(&workspace_id, enabled);
+    manager.heartbeat_reload_notify(&workspace_id).notify_one();
 
     ApiResponseBuilder::success(serde_json::json!({
         "enabled": enabled,
@@ -231,18 +225,20 @@ pub async fn get_trust_config(
 ) -> Json<ApiResponse<serde_json::Value>> {
     verify_workspace_access_port!(state, claims, workspace_id);
 
-    let config = match state.heartbeat_runner {
-        Some(ref runner) => match runner.get_trust_config(&workspace_id) {
-            Some(c) => c,
-            None => state
-                .db
-                .load_heartbeat_trust_config(&workspace_id)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_default(),
-        },
-        None => tinyiothub_core::heartbeat::TrustConfig::default(),
+    // 统一循环共享表优先（T15 起唯一内存读源），miss/未接线回退 DB。
+    let config = match state
+        .thing_agents
+        .as_ref()
+        .and_then(|m| m.heartbeat_trust_config(&workspace_id))
+    {
+        Some(c) => c,
+        None => state
+            .db
+            .load_heartbeat_trust_config(&workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default(),
     };
 
     ApiResponseBuilder::success(serde_json::to_value(config).unwrap_or_default())
@@ -258,22 +254,17 @@ pub async fn update_trust_config(
 ) -> Json<ApiResponse<serde_json::Value>> {
     verify_workspace_access_port!(state, claims, workspace_id);
 
-    let Some(ref runner) = state.heartbeat_runner else {
+    let Some(ref manager) = state.thing_agents else {
         return ApiResponseBuilder::error("心跳服务未启用");
     };
 
-    // D11-⑤ 写序：先写 DB，成功后更新 runner 内存（Task 5 起 runner 不触库；
-    // 内存更新热更 pool + 通知运行中 loop）。
+    // D11-⑤ 写序：先写 DB，成功后更新统一循环 trust 共享表（prompt 信任段
+    // 注入源，下一 run 生效；需求书接线点不含 trust 的立即 tick，不 notify）。
     if let Err(e) = state.db.save_heartbeat_trust_config(&workspace_id, &config).await {
         tracing::error!(%workspace_id, "Failed to persist trust config: {}", e);
         return ApiResponseBuilder::error("保存信任配置失败");
     }
-    runner.update_trust_config(&workspace_id, config.clone());
-    // T13 双跑写穿：统一循环 trust 共享表同步更新（prompt 信任段注入源，
-    // 下一 run 生效；需求书接线点不含 trust 的立即 tick，不 notify）。
-    if let Some(ref manager) = state.thing_agents {
-        manager.set_trust_config(&workspace_id, config.clone());
-    }
+    manager.set_trust_config(&workspace_id, config.clone());
 
     ApiResponseBuilder::success(serde_json::to_value(config).unwrap_or_default())
 }
@@ -480,7 +471,7 @@ pub async fn update_tasks(
 ) -> Json<ApiResponse<Vec<HeartbeatTaskDef>>> {
     verify_workspace_access_port!(state, claims, workspace_id);
 
-    let Some(ref runner) = state.heartbeat_runner else {
+    let Some(ref manager) = state.thing_agents else {
         return ApiResponseBuilder::error("心跳服务未启用");
     };
 
@@ -494,8 +485,8 @@ pub async fn update_tasks(
         })
         .collect();
 
-    // D11-⑤ 写序：先写 DB，成功后注入 runner 内存（set_tasks 内含
-    // ReloadTasks 通知，运行中 loop 重读内存）。
+    // D11-⑤ 写序：先写 DB，成功后注入统一循环任务共享表 + notify 立即
+    // tick（trigger 每轮重读任务表）。
     if let Err(e) = state.db.replace_heartbeat_tasks(&workspace_id, &new_tasks).await {
         tracing::error!(%workspace_id, "Failed to save heartbeat tasks: {}", e);
         return ApiResponseBuilder::error("保存心跳任务失败");
@@ -511,17 +502,8 @@ pub async fn update_tasks(
             return ApiResponseBuilder::error("读取心跳任务失败");
         }
     };
-    let has_tasks = !stored.is_empty();
-    runner.set_tasks(&workspace_id, stored.clone());
-    // T13 双跑写穿（行为保持清单第 3 行）：统一循环任务共享表同步更新 +
-    // notify 立即 tick（对齐旧 runner set_tasks 内含的 ReloadTasks 语义）。
-    if let Some(ref manager) = state.thing_agents {
-        manager.set_heartbeat_tasks(&workspace_id, stored);
-        manager.heartbeat_reload_notify(&workspace_id).notify_one();
-    }
-    if has_tasks && !runner.active_workspaces().contains(&workspace_id) {
-        runner.start(&workspace_id).await;
-    }
+    manager.set_heartbeat_tasks(&workspace_id, stored);
+    manager.heartbeat_reload_notify(&workspace_id).notify_one();
 
     ApiResponseBuilder::success(req.tasks)
 }
@@ -893,22 +875,9 @@ async fn update_proposal_status(
 
 // ── Helpers ──
 
-/// last_tick 双轨读（Task 12 透出，T13 bootstrap 注入后统一表为生产主读
-/// 路径）：统一循环共享表 Some+命中即返回，即使该条目比旧 runner 值更旧
-/// （双跑期两路径各写各自表；统一表优先是有意选择——统一循环是未来真相
-/// 源，见 service_manager 注入点注释）。表未注入（None）或该工作区尚无
-/// 记录时回退旧 runner 值；T15 runner 退役后删 legacy 参。
-fn resolve_last_tick(
-    unified: Option<&std::sync::Arc<dashmap::DashMap<String, chrono::DateTime<chrono::Utc>>>>,
-    legacy: Option<chrono::DateTime<chrono::Utc>>,
-    workspace_id: &str,
-) -> Option<chrono::DateTime<chrono::Utc>> {
-    unified.and_then(|t| t.get(workspace_id).map(|r| *r.value())).or(legacy)
-}
-
 /// DB is the single source of truth for heartbeat tasks. Migrates legacy
-/// HEARTBEAT.md on first access; falls back to file/defaults when the
-/// heartbeat runner (and thus the repo) is unavailable.
+/// HEARTBEAT.md on first access（幂等：表空且文件在才迁）；读库失败回退
+/// 文件/缺省（T15 起迁移门与 runner 存在性无关，始终走 DB 路径）。
 async fn load_tasks(state: &AgentState, workspace_id: &str) -> Vec<HeartbeatTaskDef> {
     fn to_def(t: heartbeat::HeartbeatTask) -> HeartbeatTaskDef {
         HeartbeatTaskDef {
@@ -917,29 +886,26 @@ async fn load_tasks(state: &AgentState, workspace_id: &str) -> Vec<HeartbeatTask
             paused: t.paused,
         }
     }
-    if let Some(ref _runner) = state.heartbeat_runner {
-        // DB 门面只依赖连接池，就地取用（Task 5 起 runner 不再持有存储句柄）。
-        let workspace_dir = paths::workspace_dir(workspace_id);
-        if let Err(e) = heartbeat::migrate_file_tasks_to_db(&state.db, workspace_id, &workspace_dir).await {
-            tracing::warn!(%workspace_id, "Heartbeat task migration failed: {}", e);
+    // DB 门面只依赖连接池，就地取用。
+    let workspace_dir = paths::workspace_dir(workspace_id);
+    if let Err(e) = heartbeat::migrate_file_tasks_to_db(&state.db, workspace_id, &workspace_dir).await {
+        tracing::warn!(%workspace_id, "Heartbeat task migration failed: {}", e);
+    }
+    match state.db.list_heartbeat_tasks(workspace_id).await {
+        Ok(tasks) => {
+            return tasks
+                .into_iter()
+                .map(|t| HeartbeatTaskDef {
+                    priority: t.priority,
+                    text: t.text,
+                    paused: t.paused,
+                })
+                .collect();
         }
-        match state.db.list_heartbeat_tasks(workspace_id).await {
-            Ok(tasks) => {
-                return tasks
-                    .into_iter()
-                    .map(|t| HeartbeatTaskDef {
-                        priority: t.priority,
-                        text: t.text,
-                        paused: t.paused,
-                    })
-                    .collect();
-            }
-            Err(e) => {
-                tracing::warn!(%workspace_id, "Failed to list heartbeat tasks: {}", e);
-            }
+        Err(e) => {
+            tracing::warn!(%workspace_id, "Failed to list heartbeat tasks: {}", e);
         }
     }
-    let workspace_dir = paths::workspace_dir(workspace_id);
     heartbeat::read_heartbeat_tasks(&workspace_dir)
         .await
         .map(|tasks| tasks.into_iter().map(to_def).collect())
@@ -1572,50 +1538,5 @@ mod tests {
         let approved = serde_json::json!({"proposalId": "p", "status": "approved"}).to_string();
         assert!(proposal_from_row(&approved, "t".to_string()).is_none());
         assert!(proposal_from_row("not json", "t".to_string()).is_none());
-    }
-
-    // ── T13 last_tick 双轨读（T12 评审结转）─────────────────────
-
-    /// T12 评审结转 1：统一表 Some+命中分支——bootstrap 注入后这就是生产
-    /// 唯一主读路径，必须返回统一表条目。
-    #[test]
-    fn resolve_last_tick_unified_hit_wins() {
-        let unified = std::sync::Arc::new(dashmap::DashMap::new());
-        let t = chrono::Utc::now();
-        unified.insert("ws1".to_string(), t);
-        assert_eq!(resolve_last_tick(Some(&unified), None, "ws1"), Some(t));
-    }
-
-    /// T12 评审结转 2：双跑窗口语义——统一表与旧 runner 的 last_tick 并存时，
-    /// 统一表条目优先，即使更旧（有意选择：统一循环是未来真相源；双跑期两
-    /// 路径各写各自表，不取两者较新值）。
-    #[test]
-    fn resolve_last_tick_unified_preferred_even_when_older() {
-        let unified = std::sync::Arc::new(dashmap::DashMap::new());
-        let older = chrono::Utc::now() - chrono::Duration::hours(2);
-        unified.insert("ws1".to_string(), older);
-        let newer_from_legacy_runner = chrono::Utc::now();
-        assert_eq!(
-            resolve_last_tick(Some(&unified), Some(newer_from_legacy_runner), "ws1"),
-            Some(older)
-        );
-    }
-
-    /// 统一表已注入但该工作区尚无记录（统一循环尚未 tick）→ 回退旧 runner
-    /// 值，避免双跑窗口内 last_tick 从有值退化为 null。
-    #[test]
-    fn resolve_last_tick_falls_back_to_legacy_on_workspace_miss() {
-        let unified: std::sync::Arc<dashmap::DashMap<String, chrono::DateTime<chrono::Utc>>> =
-            std::sync::Arc::new(dashmap::DashMap::new());
-        let legacy = chrono::Utc::now();
-        assert_eq!(resolve_last_tick(Some(&unified), Some(legacy), "ws1"), Some(legacy));
-    }
-
-    /// 统一表未注入（None，T13 前/接线失败）→ 旧 runner 值；两者皆无 → None。
-    #[test]
-    fn resolve_last_tick_legacy_when_unified_absent() {
-        let legacy = chrono::Utc::now();
-        assert_eq!(resolve_last_tick(None, Some(legacy), "ws1"), Some(legacy));
-        assert_eq!(resolve_last_tick(None, None, "ws1"), None);
     }
 }

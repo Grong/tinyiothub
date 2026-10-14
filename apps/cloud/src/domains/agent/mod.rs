@@ -41,13 +41,12 @@ pub struct AgentState {
     pub directive_sink: Option<Arc<dyn tinyiothub_agent::runtime::thing_agent::DirectiveSink>>,
     /// 进行中 run 注册表 - trace 端点实时分支（None = 未接线，只剩 DB 分支）
     pub active_runs: Option<tinyiothub_agent::runtime::thing_agent::ActiveRunRegistry>,
-    /// 心跳运行器 - workspace heartbeat 配置/任务/信任 API
-    pub heartbeat_runner: Option<Arc<tinyiothub_agent::runtime::heartbeat::runner::HeartbeatRunner>>,
     /// 统一循环 heartbeat 最近 tick 完成时间表（Task 12 透出，T13 bootstrap
-    /// 注入）——get_config 的 last_tick 优先读源；None 回旧 runner 内存出口。
+    /// 注入）——get_config 的 last_tick 读源（T15 起唯一）。
     pub heartbeat_last_ticks: Option<Arc<dashmap::DashMap<String, chrono::DateTime<chrono::Utc>>>>,
-    /// 统一循环管理器（T13 bootstrap 双跑装配注入）——heartbeat handler 写穿
-    /// 共享表后调 `heartbeat_reload_notify(ws).notify_one()` 立即 tick。
+    /// 统一循环管理器（T13 bootstrap 装配注入）——heartbeat handler 的
+    /// enabled/interval/trust/tasks 读写源（T15 起唯一），写穿共享表后调
+    /// `heartbeat_reload_notify(ws).notify_one()` 立即 tick。
     pub thing_agents: Option<Arc<tinyiothub_agent::runtime::thing_agent::ThingAgentManager>>,
     /// AI subsystem orchestrator - agent run ack 的 O11 抑制回写（Task 6）
     pub orchestrator: Option<Arc<tinyiothub_agent::runtime::orchestrator::Orchestrator>>,
