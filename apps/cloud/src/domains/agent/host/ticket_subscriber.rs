@@ -23,7 +23,7 @@ use std::time::Duration;
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use tinyiothub_agent::runtime::events::{AgentEvent, AgentEventKind};
 use tinyiothub_core::agent_runs::{ActionResult, Outcome, RunReport};
@@ -204,6 +204,18 @@ pub(crate) async fn ticket_for_run(
     problem_key: Option<&str>,
     dedup_key: Option<&str>,
 ) {
+    // 心跳源失败不开票(2026-10-14 事故修复):周期 tick 的 LLM 失败/预算拒绝
+    // 是例行噪声,旧模型只产 G3 system_error 事件;统一循环后这些 run 也走
+    // RunRecorded,若不挡,T9 迁移合成行与切换后的每次 tick 失败都会开票。
+    // 判断流水线(needs_human)经 judgment_subscriber 另行升级,不受影响。
+    if report.trigger.starts_with("heartbeat:") {
+        debug!(
+            run_id = %report.run_id,
+            outcome = %report.outcome.as_str(),
+            "heartbeat run failure — event channel only, no ticket"
+        );
+        return;
+    }
     let created = crate::domains::ticket::create_escalation(
         db,
         sse,

@@ -1010,6 +1010,14 @@ async fn shadow_equiv_status_summary_proposals_trace() {
 - Modify: `apps/cloud/src/shared/app_state.rs`(heartbeat_runner 字段删除)、`bootstrap.rs`(含 shadow observer 与 `ShadowFlags.heartbeat_unified_persist` 翻旗为 true 后删门控)
 - Modify: `apps/cloud/src/domains/agent/host/persist.rs`(HeartbeatResultReady 支路+spawn_heartbeat_retry 删除;AgentEventKind::HeartbeatResultReady 删除——事件枚举精简;heartbeat 支路的 shadow 门控删除,Task 8 代码转为唯一路径)
 
+**终审 I-3 补充耦合点**(全量 grep 后计划外的隐藏耦合,删除前必须先行迁移):
+1. `workspace_heartbeat.rs` 四个 handler 以 `let Some(ref runner) = state.heartbeat_runner else { return 报错 }` 开场——删字段前先把 enabled/interval/trust 读源切到 manager,否则端点 503;
+2. `workspace_heartbeat.rs:918` `load_tasks` 以 heartbeat_runner 存在与否决定 legacy 文件迁移路径——删字段会改变任务加载行为,须显式改门;
+3. `service_manager.rs:394/436` shadow observer 的 Metrics 取自 `heartbeat_runner.metrics`——Metrics 实例所有权须迁走;
+4. `orchestrator/mod.rs:4` 模块头注仍写 `HeartbeatRunner.signal()`——同 commit 更新(陈旧图比没图更坏)。
+
+**评审修复轮已落的关联变更(2026-10-14 事故)**:心跳失败不开票——ticket_for_run 漏斗守卫+对账 SQL 排除 trigger_type='heartbeat'(spec §2 行为保持清单新增行);切换后统一心跳 run 的 LLM 失败只走 G3 事件,与旧语义一致。T15 翻旗时提案落库失败目前 warn-only(终审挂账)——翻旗同 commit 必须把该支路接上 T7 的重试骨架。
+
 **终审 I-3 补充耦合点(删除清单之外,退役时逐项处置;行号为终审时 HEAD 口径,执行时以 grep 为准):**
 
 1. `apps/cloud/src/domains/agent/host/handler/workspace_heartbeat.rs` 全部 handler 以 runner 存在性开场(:149 `if let`、:179/:261/:483 `let Some(ref runner) = ... else { return 报错 }`,另 :155/:234 直接读 `state.heartbeat_runner`)——**删字段前须先把 enabled/interval/trust/last_tick 读源切到 manager 共享表**,否则四个端点运行时 503(编译器不领着走:字段删了编译错在 app_state,503 是运行时行为)。

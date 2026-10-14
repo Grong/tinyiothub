@@ -298,3 +298,24 @@ async fn reopen_retires_stale_resolution_memory() {
         "reopen 后过期解法必须退役"
     );
 }
+
+#[tokio::test]
+async fn heartbeat_run_failure_does_not_ticket() {
+    // 旧语义(loop_.rs/G3):周期 tick 失败只产 system_error 事件,从不开票。
+    // 统一循环后 heartbeat 源 run 也走 RunRecorded——ticket_for_run 漏斗守卫
+    // 把这类失败挡在工单系统外(事件路径+对账路径共用此漏斗)。
+    // T9 迁移合成行(hbm_ 前缀 id)trigger 同样带 heartbeat: 前缀,对账不误捞。
+    let db = test_db_async().await;
+    let sse = sse();
+    let mut r = report("run_hb_1", Outcome::Failed, Some(EndReason::Llm), None);
+    r.trigger = "heartbeat:ws1".to_string();
+    ticket_for_run(&db, &sse, &r, None, Some("heartbeat:ws1")).await;
+    let tickets = db.list_tickets("ws1", None, 20, 0).await.unwrap();
+    assert!(tickets.is_empty(), "心跳失败不开票——走 G3 事件通道");
+
+    // 对照:非心跳源(thing event)失败照常开票——守卫不误伤
+    let r2 = report("run_te_1", Outcome::Rejected, Some(EndReason::Policy), Some("t1"));
+    ticket_for_run(&db, &sse, &r2, None, Some("thing:t1:event:temp_high")).await;
+    let tickets = db.list_tickets("ws1", None, 20, 0).await.unwrap();
+    assert_eq!(tickets.len(), 1, "非心跳源的失败 run 照常开票");
+}

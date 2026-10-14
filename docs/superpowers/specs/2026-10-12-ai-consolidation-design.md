@@ -80,6 +80,7 @@ Trigger ────────►│                                    ├─
 | last_tick D13 实时读（runner 内存态） | 统一循环内存态同字段透出 | handler 测试不变 |
 | 任务/配置热更新（ReloadTasks/ReloadConfig 写穿） | 统一循环信号通道承接 | 热更新测试 |
 | 每工作区可配间隔（interval_minutes） | Heartbeat 变体 per-workspace 间隔驱动 | 间隔配置测试 |
+| 心跳失败不开票（周期 tick 失败只产 G3 system_error 事件——旧模型从不进工单系统） | ticket_for_run 漏斗守卫：trigger 前缀 heartbeat: 的失败 run 不开票；对账 SQL 同步排除 trigger_type='heartbeat'（2026-10-14 事故：T9 合成行被对账误捞补开 3 票） | ticket_subscriber_tests::heartbeat_run_failure_does_not_ticket + ticket.rs::unticketed_failed_runs_excludes_heartbeat_trigger |
 
 **信任门控作用域（D9 裁定的行为变更）**：统一循环后所有 run 过信任门（调查/指令也受约束）——一等 UX 言行一致。行为保持清单的显式例外（唯一故意行为变更），迁移期告警路径先行验证。**读门时机（F2，eng 复审 R1 改裁）**：每次动作调用新鲜读档（保持 O7 kill-switch 立即生效 seam，autonomous_invoke.rs:278-280）——切换立即生效，在途 run 的后续动作也按新档执行。
 
