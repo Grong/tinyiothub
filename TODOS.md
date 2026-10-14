@@ -678,3 +678,9 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 - **Why:** D4 裁定不截断守 F11、接受大遥测 blob 落库风险；若 report/tick 列体积真成问题再启动。
 - **Context:** 触发条件=DB 体积或可观测到的膨胀；届时独立决策，不违反 F11（护栏非展示截断，需重新裁定）。
 - **Effort:** S（human）/ S（CC+gstack） | **Depends on:** 体积问题实际出现
+
+## Critical 告警在 ready queue 满时被丢 (from ai-consolidation T11 评审结转, 2026-10-14)
+- **What:** scheduler ready queue cap 50 满时,Critical 告警信号仍被 warn 丢弃(绕 merge window 与节流但不绕容量)
+- **Why:** N3 的直觉承诺是「Critical 告警不丢」;容量满+告警风暴同时发生时,最该到的信号反而丢
+- **Context:** crates/agent/src/runtime/thing_agent/scheduler.rs ready queue 容量语义;评审记录在 .superpowers/sdd/2026-10-12-ai-consolidation-phase1-2/task-11-review.md
+- **Depends on:** 无;可独立做(如:Critical 溢出时降级为最旧 Normal 出队,或独立高优队列)

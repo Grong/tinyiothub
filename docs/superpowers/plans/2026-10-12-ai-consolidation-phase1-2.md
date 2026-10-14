@@ -34,7 +34,7 @@
 **Interfaces:**
 - Produces: 概念图 + 词汇表 + 概念→代码/表映射(Phase 2/3 的评审校准尺;E3 lint 的异名清单来源=词汇表右列)
 
-- [ ] **Step 1: 写文档**
+- [x] **Step 1: 写文档**
 
 内容骨架(逐项落,词汇表与 spec §1 逐字一致):
 
@@ -62,7 +62,7 @@
 RunRegistry=记忆注入源(run_pipeline 读最近 5 条摘要进 prompt);ActiveRunRegistry=实时 trace 源(trace 端点轮询)。职责不同,不合并。
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add docs/ai-concept-model.md
@@ -81,16 +81,16 @@ git commit -m "docs(concept): AI 概念模型单一事实源——概念图+词�
 **Interfaces:**
 - Produces: 三份必重写测试清单(落库改向后直接断言 agent_actions 内容的):`crates/db/src/heartbeat.rs` 锚行/提案共存测试、`apps/cloud/src/tests/agent_persist_tests.rs`、`heartbeat_bridge_tests`——标「实现细节重写」;其余标「契约保」
 
-- [ ] **Step 1: 跑基线**
+- [x] **Step 1: 跑基线**
 
 Run: `cargo test 2>&1 | tail -5`
 Expected: 全绿(分类前的基线;红了先修红再动手)
 
-- [ ] **Step 2: 写分类清单**
+- [x] **Step 2: 写分类清单**
 
 对上述三个文件的每个测试函数打标签(契约保=归一后必须仍绿;实现细节重写=落库改向后允许重写断言)。清单格式:`文件 | 测试函数 | 分类 | 理由`。
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add docs/superpowers/plans/ai-consolidation-test-classification.md
@@ -108,7 +108,7 @@ git commit -m "test(agent): Phase 2 测试分类——契约保 vs 实现细节�
 - Produces: `TriggerSource::Heartbeat { alarm: Option<HeartbeatAlarmContext> }`;`HeartbeatAlarmContext { thing_id: Option<String>, alarm_type: Option<String>, rule_id: Option<String>, reason: String, context: String }`
 - dedup key 语义:定时 tick=`heartbeat:{ws}`;告警=`heartbeat:{ws}:{thing_id}:{alarm_type}`(N3:不互合并)
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```rust
 #[test]
@@ -147,12 +147,12 @@ fn heartbeat_alarm_variant_carries_context_and_distinct_dedup() {
 
 注:`trigger_label`/`collect_problem_keys_into` 目前在 manager.rs 是私有 fn——测试放 manager.rs 的 `#[cfg(test)] mod tests`,types.rs 只放变体定义。
 
-- [ ] **Step 2: 跑测试确认编译错误**
+- [x] **Step 2: 跑测试确认编译错误**
 
 Run: `cargo test -p agent heartbeat_variant 2>&1 | tail -3`
 Expected: FAIL(变体不存在)
 
-- [ ] **Step 3: 实现变体 + 两个 match arm**
+- [x] **Step 3: 实现变体 + 两个 match arm**
 
 types.rs 加:
 
@@ -174,12 +174,12 @@ TriggerSource::Heartbeat { .. } => signal
 
 `collect_problem_keys_into` 加 arm:`TriggerSource::Heartbeat { .. } => {}`(心跳无 problem_key;X6 桥指令走 UserDirective 不变)。`signal_thing_id`(manager.rs:367)加 arm:alarm.Some 时取 `thing_id`(T7 工单解法注入的同 thing 优先对告警 run 生效)。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `cargo test -p agent heartbeat 2>&1 | tail -3`
 Expected: PASS(含新 2 测试 + 既有全绿——match 穷尽性会强制补齐所有 match arm,编译器领着走)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/agent/src/runtime/thing_agent/
@@ -211,7 +211,7 @@ impl HeartbeatGovernor {
 }
 ```
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```rust
 #[test]
@@ -239,9 +239,9 @@ fn success_resets_failure_count() {
 }
 ```
 
-- [ ] **Step 2: 跑确认失败** — Run: `cargo test -p agent governor 2>&1 | tail -3` Expected: FAIL(类型不存在)
+- [x] **Step 2: 跑确认失败** — Run: `cargo test -p agent governor 2>&1 | tail -3` Expected: FAIL(类型不存在)
 
-- [ ] **Step 3: 实现 governor.rs**
+- [x] **Step 3: 实现 governor.rs**
 
 ```rust
 //! 心跳连败治理(行为保持清单第 1 行):heartbeat 源 run 连败达阈暂停
@@ -300,8 +300,8 @@ impl HeartbeatGovernor {
 }
 ```
 
-- [ ] **Step 4: 跑确认通过** — Run: `cargo test -p agent governor` Expected: 2 PASS
-- [ ] **Step 5: Commit** — `git add crates/agent/src/runtime/thing_agent/ && git commit -m "feat(agent): HeartbeatGovernor 连败治理——统一循环的心跳暂停语义"`
+- [x] **Step 4: 跑确认通过** — Run: `cargo test -p agent governor` Expected: 2 PASS
+- [x] **Step 5: Commit** — `git add crates/agent/src/runtime/thing_agent/ && git commit -m "feat(agent): HeartbeatGovernor 连败治理——统一循环的心跳暂停语义"`
 
 ### Task 5: HeartbeatTrigger(行为保持清单第 4 行:每工作区可配间隔)
 
@@ -335,7 +335,7 @@ pub struct HeartbeatTrigger {
 }
 ```
 
-- [ ] **Step 1: 写失败测试**(照 timer.rs:105-170 模式;`stub_repo`/`spawn_trigger` 助手从 timer.rs tests 复制改造,`seeded_tasks_source` 见下)
+- [x] **Step 1: 写失败测试**(照 timer.rs:105-170 模式;`stub_repo`/`spawn_trigger` 助手从 timer.rs tests 复制改造,`seeded_tasks_source` 见下)
 
 测试文件内共享夹具:
 
@@ -493,9 +493,9 @@ async fn empty_or_all_paused_tasks_emit_nothing() {
 }
 ```
 
-- [ ] **Step 2: 跑确认失败** — `cargo test -p agent heartbeat_trigger` Expected: FAIL
+- [x] **Step 2: 跑确认失败** — `cargo test -p agent heartbeat_trigger` Expected: FAIL
 
-- [ ] **Step 3: 实现 trigger/heartbeat.rs**(发射优先——对齐 loop_.rs 先 tick 后等待;每轮重读间隔/policy/governor/任务表):
+- [x] **Step 3: 实现 trigger/heartbeat.rs**(发射优先——对齐 loop_.rs 先 tick 后等待;每轮重读间隔/policy/governor/任务表):
 
 ```rust
 async fn run(&self, tx: mpsc::Sender<WakeSignal>) -> anyhow::Result<()> {
@@ -578,8 +578,8 @@ async fn reload_notify_forces_immediate_tick() {
 }
 ```
 
-- [ ] **Step 4: 跑确认通过** — `cargo test -p agent heartbeat_trigger` Expected: 3 PASS
-- [ ] **Step 5: Commit** — `git commit -m "feat(agent): HeartbeatTrigger——每工作区间隔+policy 抑制+governor 暂停"`
+- [x] **Step 4: 跑确认通过** — `cargo test -p agent heartbeat_trigger` Expected: 3 PASS
+- [x] **Step 5: Commit** — `git commit -m "feat(agent): HeartbeatTrigger——每工作区间隔+policy 抑制+governor 暂停"`
 
 ### Task 6: 统一循环接线——manager 装配 Heartbeat 源 run
 
@@ -593,7 +593,7 @@ async fn reload_notify_forces_immediate_tick() {
 - Consumes: Task 3/4/5
 - Produces: `PipelineDeps` 新增字段 `heartbeat_tasks: Arc<dyn HeartbeatTaskReader>`、`trust_configs: Arc<dyn TrustConfigReader>`、`governor: HeartbeatGovernor`;`trait HeartbeatTaskReader { fn active_tasks(&self, ws: &str) -> Vec<HeartbeatTask>; }`、`trait TrustConfigReader { fn get(&self, ws: &str) -> TrustConfig; }`(同步读共享内存表,无 async——对齐 loop_.rs:61 parking_lot 同步读)
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```rust
 #[tokio::test]
@@ -611,9 +611,9 @@ async fn heartbeat_prompt_contains_tasks_and_trust() {
 }
 ```
 
-- [ ] **Step 2: 跑确认失败** — `cargo test -p agent heartbeat_signal` Expected: FAIL
+- [x] **Step 2: 跑确认失败** — `cargo test -p agent heartbeat_signal` Expected: FAIL
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 a) traits.rs 加两个 reader trait + DashMap 的 blanket impl:
 
@@ -689,8 +689,8 @@ let heartbeat = HeartbeatTrigger {
 
 (PipelineDeps 相应持有 `heartbeat_intervals: Arc<DashMap<String,u32>>`、`heartbeat_tasks_map: Arc<DashMap<String, Vec<HeartbeatTask>>>`、governor——由 cloud bootstrap 注入,与 handler 写穿共享同一张表,D11-⑤ 写序不变。)
 
-- [ ] **Step 4: 跑确认通过** — `cargo test -p agent` Expected: 全绿
-- [ ] **Step 5: Commit** — `git commit -m "feat(agent): 统一循环接 Heartbeat 源——prompt 装配+governor 记账+trigger 挂载"`
+- [x] **Step 4: 跑确认通过** — `cargo test -p agent` Expected: 全绿
+- [x] **Step 5: Commit** — `git commit -m "feat(agent): 统一循环接 Heartbeat 源——prompt 装配+governor 记账+trigger 挂载"`
 
 ### Task 7: RunRecorded 重试对齐(D10)
 
@@ -702,7 +702,7 @@ let heartbeat = HeartbeatTrigger {
 - Consumes: `spawn_heartbeat_retry`(persist.rs:555+)的指数退避+shutdown→DLQ 模式
 - Produces: `spawn_run_retry(pool, publisher, report, problem_key, dedup_key, shutdown)`——RunRecorded 落库失败不再直入 DLQ,先重试(对齐心跳);重试被 shutdown 中止/耗尽→DLQ(现状 DLQ 行为保持)
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```rust
 #[tokio::test]
@@ -713,12 +713,12 @@ async fn run_recorded_persist_retries_before_dlq() {
 }
 ```
 
-- [ ] **Step 2: 跑确认失败** — `cargo test -p tinyiothub-cloud run_recorded_persist_retries` Expected: FAIL(现行为直入 DLQ)
+- [x] **Step 2: 跑确认失败** — `cargo test -p tinyiothub-cloud run_recorded_persist_retries` Expected: FAIL(现行为直入 DLQ)
 
-- [ ] **Step 3: 实现**——抽公共重试骨架(heartbeat 与 run 共用,泛化 payload 类型),`project_run` 的 insert 失败分支改调 `spawn_run_retry`;重试成功路径复用 `insert_agent_run` 幂等(UNIQUE=成功)。
+- [x] **Step 3: 实现**——抽公共重试骨架(heartbeat 与 run 共用,泛化 payload 类型),`project_run` 的 insert 失败分支改调 `spawn_run_retry`;重试成功路径复用 `insert_agent_run` 幂等(UNIQUE=成功)。
 
-- [ ] **Step 4: 跑确认通过** — `cargo test -p tinyiothub-cloud persist` Expected: 全绿
-- [ ] **Step 5: Commit** — `git commit -m "fix(cloud): RunRecorded 补心跳同款重试(D10)——归一不降级可靠性"`
+- [x] **Step 4: 跑确认通过** — `cargo test -p tinyiothub-cloud persist` Expected: 全绿
+- [x] **Step 5: Commit** — `git commit -m "fix(cloud): RunRecorded 补心跳同款重试(D10)——归一不降级可靠性"`
 
 ### Task 8: persist 心跳支路——提案从 RunReport 落 agent_actions
 
@@ -735,7 +735,7 @@ async fn run_recorded_persist_retries_before_dlq() {
   4. `outcome == Failed` 时补 G3 system_error 事件(对齐 persist.rs:303-325)
 - **Shadow 门控(spec「统一 Run 路径只产报告不落库/不落提案」的实现点)**:以上 heartbeat 支路整体挂在 `ShadowFlags.heartbeat_unified_persist`(默认 false)后——双跑期统一路径的 RunRecorded 只进 shadow observer(Task 13),不落 agent_runs 也不落提案;切换期(T15)翻旗删除门控
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```rust
 #[tokio::test]
@@ -751,10 +751,10 @@ async fn failed_heartbeat_run_emits_system_error_event() {
 }
 ```
 
-- [ ] **Step 2: 跑确认失败** — Expected: FAIL
-- [ ] **Step 3: 实现**(按 Interfaces 四步;`insert_heartbeat_result` 的提案块抽函数后,旧路径与新支路共用——抽函数时旧路径测试必须仍绿)
-- [ ] **Step 4: 跑确认通过** — `cargo test -p tinyiothub-cloud` Expected: 全绿
-- [ ] **Step 5: Commit** — `git commit -m "feat(cloud): heartbeat run 提案落 agent_actions——tick_id 位写 run_id(C3)"`
+- [x] **Step 2: 跑确认失败** — Expected: FAIL
+- [x] **Step 3: 实现**(按 Interfaces 四步;`insert_heartbeat_result` 的提案块抽函数后,旧路径与新支路共用——抽函数时旧路径测试必须仍绿)
+- [x] **Step 4: 跑确认通过** — `cargo test -p tinyiothub-cloud` Expected: 全绿
+- [x] **Step 5: Commit** — `git commit -m "feat(cloud): heartbeat run 提案落 agent_actions——tick_id 位写 run_id(C3)"`
 
 ### Task 9: 迁移三件套(trace 回填 → tick_id 改写 → 读侧切换)
 
@@ -769,7 +769,7 @@ async fn failed_heartbeat_run_emits_system_error_event() {
   2. `UPDATE agent_actions SET tick_id='hbm_'||tick_id WHERE agent_id LIKE '__heartbeat__:%' AND tick_id IS NOT NULL AND action_type IN ('proposal','auto_executed')` 且目标 run 行存在;
   3. 读侧兼容视图:新建 VIEW `heartbeat_tick_map`(tick_id, run_id)供过渡查询;切换完成后删(下版本)。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```rust
 #[tokio::test]
@@ -787,10 +787,10 @@ async fn migration_skips_trace_less_anchor_gracefully() {
 }
 ```
 
-- [ ] **Step 2: 跑确认失败** — `cargo test -p db migration` Expected: FAIL(迁移不存在)
-- [ ] **Step 3: 写迁移 SQL**(INSERT OR IGNORE + 分两步,顺序注释标明埋伏③)
-- [ ] **Step 4: 跑确认通过 + `touch crates/db/src/lib.rs` 后全量** — `cargo test -p db` Expected: 全绿
-- [ ] **Step 5: Commit** — `git commit -m "feat(db): 心跳历史迁移——trace 回填合成 agent_runs+提案改锚 run_id(埋伏③顺序)"`
+- [x] **Step 2: 跑确认失败** — `cargo test -p db migration` Expected: FAIL(迁移不存在)
+- [x] **Step 3: 写迁移 SQL**(INSERT OR IGNORE + 分两步,顺序注释标明埋伏③)
+- [x] **Step 4: 跑确认通过 + `touch crates/db/src/lib.rs` 后全量** — `cargo test -p db` Expected: 全绿
+- [x] **Step 5: Commit** — `git commit -m "feat(db): 心跳历史迁移——trace 回填合成 agent_runs+提案改锚 run_id(埋伏③顺序)"`
 
 ### Task 10: 读侧兼容视角——get_logs 改读 agent_runs
 
@@ -813,11 +813,11 @@ pub fn run_row_to_execution_record(
 
 - get_logs 查询改:`SELECT ... FROM agent_runs WHERE workspace_id=? AND trigger LIKE 'heartbeat:%' ORDER BY created_at DESC LIMIT 50`;proposal/auto_executed 明细仍 join agent_actions(tick_id=run_id)——明细数据源不变
 
-- [ ] **Step 1: 写失败测试**(适配器单测:有 trace/无 trace/error 行三态;handler 测试:切换后 get_logs 返回新源数据)
-- [ ] **Step 2: 跑确认失败** — Expected: FAIL
-- [ ] **Step 3: 实现适配器 + 切换查询**(保留旧 agent_actions 路径一个 feature-flag-free 的 fallback:agent_runs 空且 agent_actions 有 anchor 时回旧查询——兼容期双读,切换完成后删)
-- [ ] **Step 4: 跑确认通过** — `cargo test -p tinyiothub-cloud` Expected: 全绿(含任务分类清单里标「实现细节重写」的三个文件已按新落库改写完)
-- [ ] **Step 5: Commit** — `git commit -m "feat(cloud): get_logs 读侧切换 agent_runs——RunReport→ExecutionRecord 纯函数适配(C6)"`
+- [x] **Step 1: 写失败测试**(适配器单测:有 trace/无 trace/error 行三态;handler 测试:切换后 get_logs 返回新源数据)
+- [x] **Step 2: 跑确认失败** — Expected: FAIL
+- [x] **Step 3: 实现适配器 + 切换查询**(保留旧 agent_actions 路径一个 feature-flag-free 的 fallback:agent_runs 空且 agent_actions 有 anchor 时回旧查询——兼容期双读,切换完成后删)
+- [x] **Step 4: 跑确认通过** — `cargo test -p tinyiothub-cloud` Expected: 全绿(含任务分类清单里标「实现细节重写」的三个文件已按新落库改写完)
+- [x] **Step 5: Commit** — `git commit -m "feat(cloud): get_logs 读侧切换 agent_runs——RunReport→ExecutionRecord 纯函数适配(C6)"`
 
 ### Task 11: 告警链接入统一循环(N3)
 
@@ -859,7 +859,7 @@ fn to_wake_signal(s: &HeartbeatSignal) -> WakeSignal {
 
 enqueue 前 `governor.resume(&s.workspace_id)`(外部信号恢复暂停——对齐 loop_.rs:128-133)。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```rust
 #[test]
@@ -922,10 +922,10 @@ impl crate::runtime::thing_agent::traits::DirectiveSink for RecordingSink {
 }
 ```
 
-- [ ] **Step 2: 跑确认失败** — Expected: FAIL
-- [ ] **Step 3: 实现**(bridge 构造点换依赖:HeartbeatRunner→DirectiveSink+HeartbeatGovernor;bootstrap 接线在 Task 13)
-- [ ] **Step 4: 跑确认通过** — `cargo test -p agent` Expected: 全绿
-- [ ] **Step 5: Commit** — `git commit -m "feat(agent): 告警链转 Heartbeat 变体入统一循环——优先级映射+分键 dedup(N3)"`
+- [x] **Step 2: 跑确认失败** — Expected: FAIL
+- [x] **Step 3: 实现**(bridge 构造点换依赖:HeartbeatRunner→DirectiveSink+HeartbeatGovernor;bootstrap 接线在 Task 13)
+- [x] **Step 4: 跑确认通过** — `cargo test -p agent` Expected: 全绿
+- [x] **Step 5: Commit** — `git commit -m "feat(agent): 告警链转 Heartbeat 变体入统一循环——优先级映射+分键 dedup(N3)"`
 
 ### Task 12: last_tick D13 实时读透出
 
@@ -937,11 +937,11 @@ impl crate::runtime::thing_agent::traits::DirectiveSink for RecordingSink {
 **Interfaces:**
 - Produces: PipelineDeps 加 `last_ticks: Arc<DashMap<String, chrono::DateTime<chrono::Utc>>>`;heartbeat 源 run 完成(成败均计)写 `last_ticks.insert(ws, now)`——对齐 loop_.rs:74-75
 
-- [ ] **Step 1: 写失败测试**(统一循环 heartbeat run 完成后 last_ticks 有值;handler 读到的 last_tick 与 run 完成时间一致)
-- [ ] **Step 2: 跑确认失败**
-- [ ] **Step 3: 实现**(两行插入 + handler 读源换注入表)
-- [ ] **Step 4: 跑确认通过**——**handler 测试零修改通过是本任务的验收**
-- [ ] **Step 5: Commit** — `git commit -m "feat(agent): 统一循环透出 last_tick 内存态(D13)——handler 测试不变"`
+- [x] **Step 1: 写失败测试**(统一循环 heartbeat run 完成后 last_ticks 有值;handler 读到的 last_tick 与 run 完成时间一致)
+- [x] **Step 2: 跑确认失败**
+- [x] **Step 3: 实现**(两行插入 + handler 读源换注入表)
+- [x] **Step 4: 跑确认通过**——**handler 测试零修改通过是本任务的验收**
+- [x] **Step 5: Commit** — `git commit -m "feat(agent): 统一循环透出 last_tick 内存态(D13)——handler 测试不变"`
 
 ### Task 13: bootstrap 接线 + 双跑装配
 
@@ -954,11 +954,11 @@ impl crate::runtime::thing_agent::traits::DirectiveSink for RecordingSink {
 - Produces: cloud 启动时:heartbeat 任务表/trust 表/intervals 表/last_ticks 表/governor 注入 ThingAgentManager;HeartbeatBridge 换接 DirectiveSink(Task 11);**`ThingAgentManager` 持每工作区 `Arc<Notify>` 表并暴露 `pub fn heartbeat_reload_notify(&self, ws: &str) -> Arc<tokio::sync::Notify>`;update_tasks/update_config handler 在写穿 DB+内存表后调它**(行为保持清单第 3 行的接线点);HeartbeatRunner 仍启动(双跑期)
 - **Shadow observer(spec「比对期 N=7 天或 M=50 次 tick」的生产观测面)**:新增 persist 并列订阅者 `shadow_observer`:同时订阅 HeartbeatResultReady(旧路径结果)与 RunRecorded(trigger=heartbeat:%,新路径报告),按 workspace 配对后比对白名单(status/summary/proposals 集合/trace 工具名序列),不一致打 `warn!`(带字段级 diff)并递增 `shadow_mismatches` 计数(Metrics);生产双跑期靠日志/计数观察等价性。**真实 LLM 下两路径输出天然有方差**——observer 比对的是结构白名单(状态映射/proposals 工具名集合/trace 工具名序列),summary 文本只记长度级差异提示,不做逐字断言(逐字等价由 Task 14 的确定性 harness 负责)
 
-- [ ] **Step 1: 写失败测试**(启动后 manager 持有 heartbeat deps;workspace start 后 heartbeat trigger 任务在 WorkspaceLoop.tasks 中)
-- [ ] **Step 2: 跑确认失败**
-- [ ] **Step 3: 实现接线**
-- [ ] **Step 4: 跑确认通过** — `cargo test -p tinyiothub-cloud startup` Expected: 全绿
-- [ ] **Step 5: Commit** — `git commit -m "feat(cloud): bootstrap 双跑接线——统一循环持 heartbeat 依赖,旧 runner 并存"`
+- [x] **Step 1: 写失败测试**(启动后 manager 持有 heartbeat deps;workspace start 后 heartbeat trigger 任务在 WorkspaceLoop.tasks 中)
+- [x] **Step 2: 跑确认失败**
+- [x] **Step 3: 实现接线**
+- [x] **Step 4: 跑确认通过** — `cargo test -p tinyiothub-cloud startup` Expected: 全绿
+- [x] **Step 5: Commit** — `git commit -m "feat(cloud): bootstrap 双跑接线——统一循环持 heartbeat 依赖,旧 runner 并存"`
 
 ### Task 14: shadow 双跑等价对照(Q1/F2)
 
@@ -993,10 +993,10 @@ async fn shadow_equiv_status_summary_proposals_trace() {
 }
 ```
 
-- [ ] **Step 1: 写对照测试(先红——新路径在 shadow 期不落库断言就位)**
-- [ ] **Step 2: 跑确认失败/通过调平**——两路径输出差异调齐到白名单一致(差异即归一引入的行为漂移,逐个对齐或记录为有意变更)
-- [ ] **Step 3: 跑全量** — `cargo test -p agent --test heartbeat_shadow_equiv` Expected: PASS
-- [ ] **Step 4: Commit** — `git commit -m "test(agent): shadow 双跑等价对照——白名单 status/summary/proposals/trace"`
+- [x] **Step 1: 写对照测试(先红——新路径在 shadow 期不落库断言就位)**
+- [x] **Step 2: 跑确认失败/通过调平**——两路径输出差异调齐到白名单一致(差异即归一引入的行为漂移,逐个对齐或记录为有意变更)
+- [x] **Step 3: 跑全量** — `cargo test -p agent --test heartbeat_shadow_equiv` Expected: PASS
+- [x] **Step 4: Commit** — `git commit -m "test(agent): shadow 双跑等价对照——白名单 status/summary/proposals/trace"`
 
 注:spec 的「比对期 N=7 天或 M=50 次 tick 后切换」指**部署后**生产双跑观察期——由运维节奏执行,不是本计划的代码任务;切换判据达标后才进 Task 15。
 
@@ -1033,9 +1033,9 @@ async fn shadow_equiv_status_summary_proposals_trace() {
 - 前置:Task 14 生产双跑 N=7天/M=50 tick 达标;get_logs 读侧已切(Task 10)
 - 删除前 grep 确认零引用:`grep -rn "HeartbeatResultReady\|heartbeat_runner\|HeartbeatRunner" --include="*.rs" apps/ crates/`
 
-- [ ] **Step 1: 删除 + 编译器领着清引用**(`cargo check` 迭代到干净)
-- [ ] **Step 2: 跑全量门禁** — `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` Expected: 全绿
-- [ ] **Step 3: Commit** — `git commit -m "refactor(agent): HeartbeatRunner/heartbeat_loop 退役——统一 Run 循环接管"`
+- [x] **Step 1: 删除 + 编译器领着清引用**(`cargo check` 迭代到干净)
+- [x] **Step 2: 跑全量门禁** — `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` Expected: 全绿
+- [x] **Step 3: Commit** — `git commit -m "refactor(agent): HeartbeatRunner/heartbeat_loop 退役——统一 Run 循环接管"`
 
 ### Task 16: host/ 模块分组(20+ 平铺→按概念归位)
 
@@ -1051,16 +1051,16 @@ async fn shadow_equiv_status_summary_proposals_trace() {
 - Modify: 每组 `mod.rs` 写三行契约(做什么/谁调用/依赖谁);RunRegistry vs ActiveRunRegistry 关系注记放 persist/或壳的 mod.rs(eng S1-P3)
 - Test: 无新测试——移动后全量套件绿即验收
 
-- [ ] **Step 1: git mv + mod.rs 契约 + use 路径全改**(编译器领着走)
-- [ ] **Step 2: 全量门禁绿**
-- [ ] **Step 3: Commit** — `git commit -m "refactor(cloud): host/ 按概念分组——judge/notify/persist/trigger/chat+三行契约"`
+- [x] **Step 1: git mv + mod.rs 契约 + use 路径全改**(编译器领着走)
+- [x] **Step 2: 全量门禁绿**
+- [x] **Step 3: Commit** — `git commit -m "refactor(cloud): host/ 按概念分组——judge/notify/persist/trigger/chat+三行契约"`
 
 ### Task 17: O7 立即生效回归测试(eng T11)
 
 **Files:**
 - Test: `apps/cloud/src/domains/agent/host/policy_engine.rs` mod tests 或 `apps/cloud/src/tests/`
 
-- [ ] **Step 1: 写测试**
+- [x] **Step 1: 写测试**
 
 ```rust
 #[tokio::test]
@@ -1074,8 +1074,8 @@ async fn policy_reads_are_fresh_per_evaluate_kill_switch_immediate() {
 }
 ```
 
-- [ ] **Step 2: 跑确认通过**(现行为即如此——这是锁定测试,一次绿;若红说明 seam 已被改,停下来对齐 R1)
-- [ ] **Step 3: Commit** — `git commit -m "test(cloud): O7 立即生效回归锁——切换档位下一动作按新档"`
+- [x] **Step 2: 跑确认通过**(现行为即如此——这是锁定测试,一次绿;若红说明 seam 已被改,停下来对齐 R1)
+- [x] **Step 3: Commit** — `git commit -m "test(cloud): O7 立即生效回归锁——切换档位下一动作按新档"`
 
 ### Task 18: 概念模型 lint(E3,warn-only)
 
@@ -1086,15 +1086,15 @@ async fn policy_reads_are_fresh_per_evaluate_kill_switch_immediate() {
 **Interfaces:**
 - 扫描范围(Q4):`web/src` 文案 + `apps/cloud/src/domains/agent` 注释;命中异名(调查 run 以外语境的 "tick"/"执行历史"/"证据" 等)打印 warning;首版 warn-only(exit 0),一版本后转 fail
 
-- [ ] **Step 1: 写脚本 + 本地跑出当前命中清单**(作为 baseline 注释进脚本头)
-- [ ] **Step 2: CI 接线(continue-on-error: true)**
-- [ ] **Step 3: Commit** — `git commit -m "chore(ci): 概念模型 lint(E3)——异名扫描 warn-only"`
+- [x] **Step 1: 写脚本 + 本地跑出当前命中清单**(作为 baseline 注释进脚本头)
+- [x] **Step 2: CI 接线(continue-on-error: true)**
+- [x] **Step 3: Commit** — `git commit -m "chore(ci): 概念模型 lint(E3)——异名扫描 warn-only"`
 
 ### Task 19: Phase 2 收尾门禁
 
-- [ ] **Step 1: 行为保持清单四行逐项核对**(连败暂停=governor 测试+Task 5;last_tick=Task 12 handler 测试;热更新=ReloadTasks/ReloadConfig 信号通道测试迁移到统一循环——若旧信号测试随 runner 退役,统一循环侧等价测试须在 Task 6/13 已含;每工作区间隔=Task 5 测试)
-- [ ] **Step 2: 全量门禁** — `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`
-- [ ] **Step 3: spec 勾选 + commit** — `git commit -m "chore: Phase 2 内核归一收口——行为保持清单逐项核对"`
+- [x] **Step 1: 行为保持清单四行逐项核对**(连败暂停=governor 测试+Task 5;last_tick=Task 12 handler 测试;热更新=ReloadTasks/ReloadConfig 信号通道测试迁移到统一循环——若旧信号测试随 runner 退役,统一循环侧等价测试须在 Task 6/13 已含;每工作区间隔=Task 5 测试)
+- [x] **Step 2: 全量门禁** — `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`
+- [x] **Step 3: spec 勾选 + commit** — `git commit -m "chore: Phase 2 内核归一收口——行为保持清单逐项核对"`
 
 ---
 
