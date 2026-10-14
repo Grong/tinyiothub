@@ -943,6 +943,64 @@ async fn heartbeat_run_recorded_writes_proposal_rows_with_run_id_anchor() {
     );
 }
 
+/// T15 评审修复轮 1（D10 残余缺口）：Lagged 吞掉心跳源 RunRecorded 时，
+/// resync 对账补插 run 行后必须追加提案投影——否则提案永久缺失且无 DLQ
+/// 记录。重复 resync 幂等（upsert 按 problem_key 折叠，不新增行）。
+#[tokio::test]
+async fn resync_recovers_heartbeat_run_proposals_idempotently() {
+    let (db, pool) = test_db().await;
+    seed_test_workspace(&pool, "t1", "ws1").await;
+
+    let snap = || {
+        let mut rep = report("hb-run-lagged", "ws1", "");
+        rep.trigger = "heartbeat:ws1".into();
+        rep.outcome = Outcome::Acted;
+        rep.summary = r#"```json
+{"status": "complete", "summary": "d1 卡死", "executed_actions": [],
+ "proposals": [{"tool_name": "reboot_thing", "thing_id": "d1", "summary": "重启 d1", "reason": "无响应"}]}
+```"#
+            .to_string();
+        RestoreSnapshot {
+            heartbeat: vec![],
+            recent_runs: vec![rep],
+            problem_meta: vec![],
+            recent_run_meta: Default::default(),
+        }
+    };
+    let count_proposals = || async {
+        let (n,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM agent_actions WHERE workspace_id = 'ws1' AND action_type = 'proposal'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("count proposals");
+        n
+    };
+
+    // 首次 resync：run 行补插 + 提案行投影（tick_id=run_id，C3 联结）。
+    let mut failures = ResyncFailures::default();
+    resync(snap(), db.pool(), &mut failures).await;
+    assert_eq!(count_runs(&pool, "hb-run-lagged").await, 1, "run 行补插");
+    assert_eq!(count_proposals().await, 1, "提案行必须随 resync 补回");
+    let (tick_id, agent_id): (Option<String>, String) = sqlx::query_as(
+        "SELECT tick_id, agent_id FROM agent_actions WHERE workspace_id = 'ws1' AND action_type = 'proposal'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("proposal row");
+    assert_eq!(
+        tick_id.as_deref(),
+        Some("hb-run-lagged"),
+        "tick_id 位写 run_id（C3 联结）"
+    );
+    assert_eq!(agent_id, "__heartbeat__:ws1", "读侧分组 agent_id 契约不变");
+
+    // 重复 resync：run 幂等 no-op（已存在早退），提案不新增。
+    resync(snap(), db.pool(), &mut failures).await;
+    assert_eq!(count_runs(&pool, "hb-run-lagged").await, 1, "run 行幂等");
+    assert_eq!(count_proposals().await, 1, "提案幂等：重复 resync 不新增行");
+}
+
 /// Task 8（G3 parity）：outcome=Failed 的 heartbeat run 补 system_error
 /// 事件（巡检失败可见性，与退役前旧路径语义一致）。
 #[tokio::test]

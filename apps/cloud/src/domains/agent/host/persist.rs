@@ -393,6 +393,22 @@ async fn run_exists(pool: &SqlitePool, run_id: &str) -> Result<bool, sqlx::Error
     Db::new(pool.clone()).agent_run_exists(run_id).await
 }
 
+/// 心跳提案 upsert（事件支路 [`project_heartbeat_run`] 与 resync 对账环
+/// 共用）：tick_id 位写 `report.run_id`（C3 联结），agent_id 分组契约
+/// `__heartbeat__:{ws}`；`upsert_heartbeat_proposals` 按 problem_key
+/// 折叠，幂等安全（重复投影就地刷新不新增行）。
+async fn upsert_heartbeat_run_proposals(
+    pool: &SqlitePool,
+    report: &RunReport,
+    proposals: &[tinyiothub_core::policy::Proposal],
+) -> Result<(), String> {
+    let db = Db::new(pool.clone());
+    let agent_id = format!("__heartbeat__:{}", report.workspace_id);
+    db.upsert_heartbeat_proposals(&report.workspace_id, &agent_id, proposals, Some(&report.run_id))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// 心跳支路（T15 翻旗后为唯一提案通道）：
 /// 1. `report.summary` 中的 healing report JSON 解出 proposals，落
 ///    agent_actions，tick_id 位写 `report.run_id`（C3 联结：提案行可回溯
@@ -410,28 +426,23 @@ async fn project_heartbeat_run(
 ) {
     let parsed =
         tinyiothub_agent::runtime::heartbeat::report::parse_healing_report(&report.summary, &report.workspace_id);
-    if !parsed.proposals.is_empty() {
-        let db = Db::new(pool.clone());
-        let agent_id = format!("__heartbeat__:{}", report.workspace_id);
-        if let Err(e) = db
-            .upsert_heartbeat_proposals(&report.workspace_id, &agent_id, &parsed.proposals, Some(&report.run_id))
-            .await
-        {
-            warn!(
-                run_id = %report.run_id,
-                workspace_id = %report.workspace_id,
-                error = %e,
-                "heartbeat run proposals persist failed, spawning retry task"
-            );
-            spawn_heartbeat_proposals_retry(
-                pool.clone(),
-                publisher.clone(),
-                report.workspace_id.clone(),
-                report.run_id.clone(),
-                parsed.proposals.clone(),
-                shutdown.clone(),
-            );
-        }
+    if !parsed.proposals.is_empty()
+        && let Err(e) = upsert_heartbeat_run_proposals(pool, report, &parsed.proposals).await
+    {
+        warn!(
+            run_id = %report.run_id,
+            workspace_id = %report.workspace_id,
+            error = %e,
+            "heartbeat run proposals persist failed, spawning retry task"
+        );
+        spawn_heartbeat_proposals_retry(
+            pool.clone(),
+            publisher.clone(),
+            report.workspace_id.clone(),
+            report.run_id.clone(),
+            parsed.proposals.clone(),
+            shutdown.clone(),
+        );
     }
     if report.outcome == tinyiothub_core::agent_runs::Outcome::Failed {
         use tinyiothub_core::models::event::{Event, EventLevel, EventSource, RichContent, SystemEventType};
@@ -460,7 +471,8 @@ async fn project_heartbeat_run(
     }
 }
 
-/// 全量重投影（Lagged resync / 周期对账）：recent_runs 幂等插入、
+/// 全量重投影（Lagged resync / 周期对账）：recent_runs 幂等插入（心跳源
+/// run 补插后追加提案投影，复用 [`upsert_heartbeat_run_proposals`]）、
 /// trust config 幂等 upsert。单项失败计入连续失败计数：达
 /// RESYNC_FAILURE_ESCALATION_THRESHOLD 升级 error! + DLQ（越阈值只升级
 /// 一次，不每周期刷 DLQ），恢复后计数清零（Task 8 fix round 1）。
@@ -483,7 +495,23 @@ pub(crate) async fn resync(snapshot: RestoreSnapshot, pool: &SqlitePool, failure
                 .map(|k| (k.problem_key.as_deref(), k.dedup_key.as_deref()))
                 .unwrap_or((None, None));
             match db.insert_agent_run(report, problem_key, dedup_key).await {
-                Ok(_) => Ok(()),
+                Ok(_) => {
+                    // T15 评审修复轮 1（D10 残余缺口）：心跳源 run 补插成功
+                    // 后追加提案投影——Lagged 吞掉整条 RunRecorded 时 run 行
+                    // 与提案行同丢，只补 run 会让提案永久缺失且无 DLQ 记录。
+                    // upsert 按 problem_key 折叠，幂等安全（重复 resync 不
+                    // 新增行）；失败计入本 run 的连续失败计数，下周期重试。
+                    if tinyiothub_storage::agent_runs::trigger_type_of(&report.trigger) == "heartbeat" {
+                        let parsed = tinyiothub_agent::runtime::heartbeat::report::parse_healing_report(
+                            &report.summary,
+                            &report.workspace_id,
+                        );
+                        if !parsed.proposals.is_empty() {
+                            upsert_heartbeat_run_proposals(pool, report, &parsed.proposals).await?;
+                        }
+                    }
+                    Ok(())
+                }
                 Err(e) if e.to_string().contains("UNIQUE") => Ok(()), // 并发重复：幂等成功
                 Err(e) => Err(e.to_string()),
             }
