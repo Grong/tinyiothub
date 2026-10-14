@@ -1010,6 +1010,17 @@ async fn shadow_equiv_status_summary_proposals_trace() {
 - Modify: `apps/cloud/src/shared/app_state.rs`(heartbeat_runner 字段删除)、`bootstrap.rs`(含 shadow observer 与 `ShadowFlags.heartbeat_unified_persist` 翻旗为 true 后删门控)
 - Modify: `apps/cloud/src/domains/agent/host/persist.rs`(HeartbeatResultReady 支路+spawn_heartbeat_retry 删除;AgentEventKind::HeartbeatResultReady 删除——事件枚举精简;heartbeat 支路的 shadow 门控删除,Task 8 代码转为唯一路径)
 
+**终审 I-3 补充耦合点(删除清单之外,退役时逐项处置;行号为终审时 HEAD 口径,执行时以 grep 为准):**
+
+1. `apps/cloud/src/domains/agent/host/handler/workspace_heartbeat.rs` 全部 handler 以 runner 存在性开场(:149 `if let`、:179/:261/:483 `let Some(ref runner) = ... else { return 报错 }`,另 :155/:234 直接读 `state.heartbeat_runner`)——**删字段前须先把 enabled/interval/trust/last_tick 读源切到 manager 共享表**,否则四个端点运行时 503(编译器不领着走:字段删了编译错在 app_state,503 是运行时行为)。
+2. 同文件 `load_tasks`(:912,:920 以 `heartbeat_runner` 存在与否决定 legacy HEARTBEAT.md 文件迁移路径)——删字段会静默改变任务加载行为,**须显式改门**(迁移触发条件改为与 runner 无关的判定)。
+3. `apps/cloud/src/shared/service_manager.rs:394`(shadow observer 的 Metrics 取自 `heartbeat_runner.metrics`)与 `:436`(`.with_metrics(heartbeat_runner.metrics.clone())`)——**Metrics 实例所有权须先迁走**(迁移到 manager/bootstrap 持有),否则观测面与新接线一起落空。
+4. `apps/cloud/src/domains/agent/host/shadow_observer.rs` 本体订阅 `HeartbeatResultReady`——旧路径一删它必须**同步退役**(与 persist 支路同一刀,已含于上方 Files,此处强调不可拆分)。
+5. `crates/agent/src/runtime/heartbeat/runner.rs:321` `HeartbeatRunner::signal` 已零生产调用方——纯死代码,随 runner 删;`loop_.rs:176` `run_heartbeat_tick` 的 `pub #[doc(hidden)]` 与 `crates/agent/tests/heartbeat_shadow_equiv.rs` harness 同命运:**要么 harness 改为「manager vs manager 回放」对照保留,要么随 T15 一并删**(执行时先做取舍裁定再动手)。
+6. `crates/agent/src/runtime/orchestrator/mod.rs:4` 头注仍写 `AlarmCreated --> HeartbeatRunner.signal()`——T11 起已不成立,**退役时务必带走**(它正是 T15 grep 清单会撞见的第一个文件)。
+7. `heartbeat_tick_map` 视图(`crates/db/migrations/20261013000001_heartbeat_runs_backfill.sql` Step 3,:117)当前**无代码消费**(Task 10 直接按 run_id join)——退役时**下版本迁移 DROP**,不留孤儿视图。
+8. 好消息(非耦合,勿误删):`alarm:` problem_key 域仍有活生产者(`domains/judgment/handler/mod.rs:281`、`shared/runtime_ports.rs:106`),judgment_subscriber 的告警处理在 T15 后不受影响。
+
 **Interfaces:**
 - 前置:Task 14 生产双跑 N=7天/M=50 tick 达标;get_logs 读侧已切(Task 10)
 - 删除前 grep 确认零引用:`grep -rn "HeartbeatResultReady\|heartbeat_runner\|HeartbeatRunner" --include="*.rs" apps/ crates/`
