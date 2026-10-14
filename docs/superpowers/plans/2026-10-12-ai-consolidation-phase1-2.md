@@ -1000,6 +1000,8 @@ async fn shadow_equiv_status_summary_proposals_trace() {
 
 注:spec 的「比对期 N=7 天或 M=50 次 tick 后切换」指**部署后**生产双跑观察期——由运维节奏执行,不是本计划的代码任务;切换判据达标后才进 Task 15。
 
+**双跑期用户可见行为(终审 I-2,须写进发布说明)**:观测窗内前端「执行历史」页对**旧路径新产生的提案/动作明细不可见**——旧路径提案行锚的是 legacy tick_id(`tick_N`),统一 run 的 run_id 是 `run_xxx`,get_logs 的明细 join(`tick_id=run_id`)必然 miss;且 ShadowFlags 关 → 统一路径不落提案 → 统一 run 的 pendingProposals/autoExecuted 恒空。`/heartbeat/approvals` 端点**不受影响**(独立查询)。T15 翻旗后提案锚 run_id,明细自动恢复——**观测窗内明细空属预期**,不是回归。
+
 ### Task 15: HeartbeatRunner 退役(切换判据达标后)
 
 **Files:**
