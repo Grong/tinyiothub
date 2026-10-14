@@ -41,7 +41,7 @@ pub async fn chat_stream(
         .unwrap_or_default();
     let system_prompts = &state.system_prompts;
     let memory_source: std::sync::Arc<dyn tinyiothub_agent::prompt::PromptMemorySource> = std::sync::Arc::new(
-        crate::domains::agent::host::memory::PromptMemoryStoreAdapter(state.memory_store.clone()),
+        crate::domains::agent::host::persist::memory::PromptMemoryStoreAdapter(state.memory_store.clone()),
     );
     let mut full_prompt = tinyiothub_agent::prompt::build_full_system_prompt(
         system_prompts,

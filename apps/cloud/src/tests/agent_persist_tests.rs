@@ -15,7 +15,9 @@ use tinyiothub_core::agent_runs::{Outcome, RunReport};
 use tinyiothub_core::heartbeat::TrustConfig;
 use tinyiothub_storage::Db;
 
-use crate::domains::agent::host::persist::{ResyncFailures, resync, run_persistence_loop, run_persistence_subscriber};
+use crate::domains::agent::host::persist::persist::{
+    ResyncFailures, resync, run_persistence_loop, run_persistence_subscriber,
+};
 use crate::domains::agent::host::test_utils::seed_test_workspace;
 use tinyiothub_agent::runtime::event::bus::AiEventPublisher;
 use tinyiothub_agent::runtime::events::{AgentEventBus, AgentEventKind};
@@ -320,7 +322,7 @@ async fn resync_escalates_to_dlq_after_consecutive_failures_then_recovers() {
 /// 并在 shutdown 取消时干净退出。
 #[tokio::test]
 async fn supervisor_restarts_panicked_subscriber_and_exits_on_shutdown() {
-    use crate::domains::agent::host::persist::supervise_impl;
+    use crate::domains::agent::host::persist::persist::supervise_impl;
     use std::sync::atomic::{AtomicU32, Ordering};
 
     let (db, _pool) = test_db().await;
@@ -440,7 +442,7 @@ async fn resync_without_sidecar_meta_falls_back_to_null_keys() {
 /// 监管同样必须重启（持久化同样处于 DOWN 状态）。
 #[tokio::test]
 async fn supervisor_restarts_after_unexpected_clean_exit() {
-    use crate::domains::agent::host::persist::supervise_impl;
+    use crate::domains::agent::host::persist::persist::supervise_impl;
     use std::sync::atomic::{AtomicU32, Ordering};
 
     let (db, _pool) = test_db().await;
@@ -485,7 +487,7 @@ async fn supervisor_restarts_after_unexpected_clean_exit() {
 /// 监管识别关停语境并直接返回。
 #[tokio::test]
 async fn supervisor_does_not_restart_when_panic_happens_during_shutdown() {
-    use crate::domains::agent::host::persist::supervise_impl;
+    use crate::domains::agent::host::persist::persist::supervise_impl;
     use std::sync::atomic::{AtomicU32, Ordering};
 
     let (db, _pool) = test_db().await;
@@ -536,7 +538,7 @@ async fn supervisor_does_not_restart_when_panic_happens_during_shutdown() {
 /// 格式化接线、fenced 分支（不写）、远未来偏移守卫，全部经 project() 验证。
 #[tokio::test]
 async fn trust_config_event_fencing_at_projection_level() {
-    use crate::domains::agent::host::persist::project;
+    use crate::domains::agent::host::persist::persist::project;
 
     let (db, pool) = test_db().await;
     seed_test_workspace(&pool, "t1", "ws1").await;
@@ -680,7 +682,7 @@ async fn shutdown_drains_buffered_events() {
 /// 升级路径间接覆盖。
 #[tokio::test]
 async fn projects_dlq_entry_added_to_agent_dead_letters() {
-    use crate::domains::agent::host::persist::project;
+    use crate::domains::agent::host::persist::persist::project;
     use tinyiothub_agent::runtime::event::dlq::DeadLetterEntry;
 
     let (_db, pool) = test_db().await;
@@ -721,7 +723,7 @@ async fn projects_dlq_entry_added_to_agent_dead_letters() {
 /// 不入 DLQ——归一不得静默降级可靠性（此前 insert 失败直入 DLQ）。
 #[tokio::test]
 async fn run_recorded_persist_retries_before_dlq() {
-    use crate::domains::agent::host::persist::project;
+    use crate::domains::agent::host::persist::persist::project;
 
     let (_db, pool) = test_db().await;
 
@@ -792,7 +794,7 @@ async fn run_recorded_persist_retries_before_dlq() {
 /// 此前仅 debug 返回，该 tick 提案永久消失且无记录）。
 #[tokio::test]
 async fn heartbeat_proposals_retry_aborted_by_shutdown_goes_to_dlq() {
-    use crate::domains::agent::host::persist::project;
+    use crate::domains::agent::host::persist::persist::project;
 
     let (_db, pool) = test_db().await;
     seed_test_workspace(&pool, "t1", "ws1").await;
@@ -854,7 +856,7 @@ async fn heartbeat_proposals_retry_aborted_by_shutdown_goes_to_dlq() {
 /// 保持）。
 #[tokio::test]
 async fn heartbeat_run_recorded_writes_proposal_rows_with_run_id_anchor() {
-    use crate::domains::agent::host::persist::project;
+    use crate::domains::agent::host::persist::persist::project;
 
     let (_db, pool) = test_db().await;
     seed_test_workspace(&pool, "t1", "ws1").await;
@@ -1005,7 +1007,7 @@ async fn resync_recovers_heartbeat_run_proposals_idempotently() {
 /// 事件（巡检失败可见性，与退役前旧路径语义一致）。
 #[tokio::test]
 async fn failed_heartbeat_run_emits_system_error_event() {
-    use crate::domains::agent::host::persist::project;
+    use crate::domains::agent::host::persist::persist::project;
 
     let (_db, pool) = test_db().await;
     seed_test_workspace(&pool, "t1", "ws1").await;

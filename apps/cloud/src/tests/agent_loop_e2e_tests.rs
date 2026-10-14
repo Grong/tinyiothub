@@ -34,7 +34,7 @@ use tinyiothub_storage::Db;
 
 use crate::bootstrap::{build_agent_snapshot, reconcile_zombie_runs};
 use crate::domains::agent::host::{
-    autonomous_factory::AutonomousAgentFactory, persist::run_persistence_subscriber,
+    autonomous_factory::AutonomousAgentFactory, persist::persist::run_persistence_subscriber,
     thing_agent_host::CloudThingAgentHost, tools::ThingToolContext,
 };
 use crate::domains::event::{bus::ThingEventBus, router::ThrottleState};

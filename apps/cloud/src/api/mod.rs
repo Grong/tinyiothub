@@ -81,7 +81,7 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
         .nest("/workspaces", crate::domains::tenant::workspace_router())
         .nest(
             "/workspaces",
-            crate::domains::agent::host::memory::handler::create_router(),
+            crate::domains::agent::host::persist::memory::handler::create_router(),
         )
         .nest(
             "/workspaces",
@@ -92,7 +92,7 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
             crate::domains::agent::host::handler::workspace_heartbeat::create_router(),
         )
         .nest("/mcp", crate::domains::mcp::router())
-        .nest("/chat", crate::domains::agent::chat::handler::create_router())
+        .nest("/chat", crate::domains::agent::host::chat::handler::create_router())
         .nest(
             "/agents/skills",
             crate::domains::agent::host::handler::skills::create_router(),
@@ -105,15 +105,15 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
         .nest("/things/admin", crate::domains::admin::thing::create_router())
         .route(
             "/tools/catalog",
-            get(crate::domains::agent::chat::handler::proxy::tools_catalog),
+            get(crate::domains::agent::host::chat::handler::proxy::tools_catalog),
         )
         .route(
             "/tools/effective",
-            get(crate::domains::agent::chat::handler::proxy::tools_effective),
+            get(crate::domains::agent::host::chat::handler::proxy::tools_effective),
         )
         .route(
             "/tools/toggle",
-            post(crate::domains::agent::chat::handler::proxy::tools_toggle),
+            post(crate::domains::agent::host::chat::handler::proxy::tools_toggle),
         )
         .nest("/auth", crate::domains::auth::router())
         .route("/test-auth", get(test_auth_endpoint))

@@ -18,7 +18,7 @@ struct Scenario {
 /// F-E/T-11：eval 与生产同一解析函数（不再手抄副本——改解析规则时
 /// eval 自动跟随，漂移在编译期暴露）。
 fn parse_verdict_loose(text: &str) -> Option<String> {
-    crate::domains::agent::host::judgment_subscriber::parse_verdict(text)
+    crate::domains::agent::host::judge::judgment_subscriber::parse_verdict(text)
         .map(|(p, _fallback)| p.verdict_str().to_string())
 }
 
@@ -27,7 +27,7 @@ fn parse_verdict_loose(text: &str) -> Option<String> {
 #[test]
 fn verdict_with_narrative_parsed_out() {
     let text = "```json\n{\"verdict\": \"noise\", \"reason\": \"正常波动\", \"suggested_action\": null, \"action_category\": \"other\", \"narrative\": \"我检查了温度曲线，看到 24 小时内三次尖峰都自行回落，所以判定是噪声。\"}\n```";
-    let (p, fallback) = crate::domains::agent::host::judgment_subscriber::parse_verdict(text)
+    let (p, fallback) = crate::domains::agent::host::judge::judgment_subscriber::parse_verdict(text)
         .expect("带 narrative 的 verdict 必须解析成功");
     assert!(!fallback, "围栏块不应走宽松 fallback");
     assert_eq!(p.verdict_str(), "noise");
@@ -42,16 +42,16 @@ fn verdict_with_narrative_parsed_out() {
 fn verdict_without_narrative_still_parses() {
     // 严格路径：围栏块、无 narrative → 解析成功、非 fallback、narrative None。
     let fenced = "```json\n{\"verdict\": \"needs_human\", \"reason\": \"根因不明\", \"suggested_action\": null, \"action_category\": \"other\"}\n```";
-    let (p, fallback) =
-        crate::domains::agent::host::judgment_subscriber::parse_verdict(fenced).expect("旧协议（无 narrative）不得炸");
+    let (p, fallback) = crate::domains::agent::host::judge::judgment_subscriber::parse_verdict(fenced)
+        .expect("旧协议（无 narrative）不得炸");
     assert!(!fallback);
     assert_eq!(p.verdict_str(), "needs_human");
     assert_eq!(p.narrative_str(), None, "缺 narrative → None 兜底");
 
     // 宽松路径：裸 JSON、无 narrative → 命中 fallback 标记且不炸。
     let bare = "调查完成 {\"verdict\": \"self_healable\", \"reason\": \"重连可恢复\", \"suggested_action\": \"重启模块\", \"action_category\": \"device_reboot\"}";
-    let (p2, fallback2) =
-        crate::domains::agent::host::judgment_subscriber::parse_verdict(bare).expect("裸 JSON 无 narrative 不得炸");
+    let (p2, fallback2) = crate::domains::agent::host::judge::judgment_subscriber::parse_verdict(bare)
+        .expect("裸 JSON 无 narrative 不得炸");
     assert!(fallback2, "裸 JSON 必须标 fallback");
     assert_eq!(p2.narrative_str(), None);
 }

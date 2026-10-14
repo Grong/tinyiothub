@@ -120,7 +120,7 @@ mod tests {
     use tinyiothub_agent::runtime::thing_agent::EnqueueError;
 
     use super::*;
-    use crate::domains::agent::host::directive_sink::StubDirectiveSink;
+    use crate::domains::agent::host::trigger::directive_sink::StubDirectiveSink;
 
     fn tool_with(sink: Arc<StubDirectiveSink>) -> DispatchThingTaskTool {
         DispatchThingTaskTool::new("ws_1", Some(sink))

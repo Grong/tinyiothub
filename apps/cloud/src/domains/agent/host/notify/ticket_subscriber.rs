@@ -236,7 +236,7 @@ pub(crate) async fn ticket_for_run(
 }
 
 async fn enqueue_dlq(db: &Db, report: &RunReport, reason: &str) {
-    let dlq = super::dlq_repo::SqliteDeadLetterQueue::new(db.pool().clone());
+    let dlq = crate::domains::agent::host::persist::dlq_repo::SqliteDeadLetterQueue::new(db.pool().clone());
     use tinyiothub_agent::runtime::event::dlq::DeadLetterQueue;
     let payload = serde_json::json!({
         "run_id": report.run_id,

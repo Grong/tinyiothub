@@ -339,9 +339,10 @@ impl AppState {
         // 此后端影响。observer 暂保持 NoopObserver —— 观测接线待 phase 2
         // hooks 完成（已知降级，本任务接受）。
         let agents_base_dir = crate::shared::paths::agents_base_dir();
-        let agent_memory: Arc<dyn tinyiothub_agent::port::memory::Memory> = Arc::new(
-            crate::domains::agent::host::memory::jsonl::JsonlMemory::new(agents_base_dir.join("agent_memory.jsonl")),
-        );
+        let agent_memory: Arc<dyn tinyiothub_agent::port::memory::Memory> =
+            Arc::new(crate::domains::agent::host::persist::memory::jsonl::JsonlMemory::new(
+                agents_base_dir.join("agent_memory.jsonl"),
+            ));
         let agent_observer = Arc::new(tinyiothub_agent::port::observer::NoopObserver);
         let agent_pool: Arc<AgentPool> = Arc::new(
             AgentPool::new(
@@ -441,7 +442,7 @@ impl AppState {
 
         // Thing action hooks（G5a）—— agent 侧实现 thing 域 trait，注入给 thing handler
         let thing_action_hooks: Arc<dyn crate::domains::thing::hooks::ThingActionHooks> = Arc::new(
-            crate::domains::agent::host::thing_action_hooks::AgentThingActionHooks::new(
+            crate::domains::agent::host::trigger::thing_action_hooks::AgentThingActionHooks::new(
                 database.pool().clone(),
                 pending_actions.clone(),
             ),

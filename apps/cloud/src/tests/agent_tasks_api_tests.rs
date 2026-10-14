@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::domains::agent::host::directive_sink::StubDirectiveSink;
+use crate::domains::agent::host::trigger::directive_sink::StubDirectiveSink;
 use axum::{
     Router,
     body::Body,

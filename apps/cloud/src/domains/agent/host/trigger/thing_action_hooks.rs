@@ -13,7 +13,7 @@ use sqlx::SqlitePool;
 use tinyiothub_policy::adapters::{ChatConfirmAdapter, ChatConfirmVerdict};
 
 use crate::domains::agent::host::{
-    policy_engine::SqlitePolicyEngine,
+    judge::policy_engine::SqlitePolicyEngine,
     tools::thing::{store_pending_action, take_pending_action, validate_action_params},
 };
 

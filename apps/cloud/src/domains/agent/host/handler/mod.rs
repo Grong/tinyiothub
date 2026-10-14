@@ -26,7 +26,7 @@ pub(crate) async fn is_admin(db: &tinyiothub_storage::Db, user_id: &str) -> bool
     db.count_user_admin_roles(user_id).await.map(|n| n > 0).unwrap_or(false)
 }
 
-use crate::domains::agent::chat::handler::proxy as chat_proxy;
+use crate::domains::agent::host::chat::handler::proxy as chat_proxy;
 
 pub fn create_router<S>() -> Router<S>
 where

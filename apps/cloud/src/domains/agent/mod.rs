@@ -1,4 +1,5 @@
-//! Agent domain for TinyIoTHub — host + chat（Task 13 起 loop 运行时迁出）。
+//! Agent domain for TinyIoTHub — host（Task 13 起 loop 运行时迁出；
+//! T16 起 chat 代理面并入 host/chat，不再单设顶层 chat 模块）。
 //!
 //! Two internal layers, plus the extracted runtime crate:
 //!
@@ -6,8 +7,9 @@
 //!   thing-agent loop, orchestrator, heartbeat runner, AI event bus, agent
 //!   pool contract. Pure runtime code; lives in crates/agent (Task 13).
 //! - [`host`] — the HTTP/service host: AgentPool, session/chat services,
-//!   tools, handlers, repos, prompt scaffolding. Consumes the runtime crate.
-//! - [`chat`] — the chat session proxy plane (OpenClaw-facing handlers).
+//!   tools, handlers, repos, prompt scaffolding, and the chat session proxy
+//!   plane (OpenClaw-facing handlers, host/chat/handler). Consumes the
+//!   runtime crate.
 //!
 //! ## 设计不变量
 //! - 运行时/宿主隔离：crates/agent（纯运行时，不依赖 web/存储实现）← host + chat
@@ -16,7 +18,6 @@
 //!   tinyiothub_agent / tinyiothub_core / tinyiothub_llm / tinyiothub_policy /
 //!   tinyiothub_skills 的真实住所导入。
 
-pub mod chat;
 pub mod host;
 pub mod trace_handler;
 

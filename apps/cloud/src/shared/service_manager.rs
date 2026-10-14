@@ -294,7 +294,7 @@ impl ServiceManager {
                     let db = app_state.db.clone();
                     let token = persist_shutdown.clone();
                     async move {
-                        crate::domains::agent::host::persist::supervise_persistence_subscriber(
+                        crate::domains::agent::host::persist::persist::supervise_persistence_subscriber(
                             runtime,
                             db,
                             agent_events_supervisor,
@@ -319,7 +319,7 @@ impl ServiceManager {
                 let bus = agent_events_ticket.clone();
                 let token = ticket_shutdown.clone();
                 let handle = tokio::spawn(async move {
-                    crate::domains::agent::host::ticket_subscriber::supervise_ticket_subscriber(
+                    crate::domains::agent::host::notify::ticket_subscriber::supervise_ticket_subscriber(
                         ticket_rx,
                         move || bus.subscribe(),
                         db,
@@ -344,7 +344,7 @@ impl ServiceManager {
                 let bus = agent_events_judgment.clone();
                 let token = judgment_shutdown.clone();
                 let handle = tokio::spawn(async move {
-                    crate::domains::agent::host::judgment_subscriber::supervise_judgment_subscriber(
+                    crate::domains::agent::host::judge::judgment_subscriber::supervise_judgment_subscriber(
                         judgment_rx,
                         move || bus.subscribe(),
                         db,
@@ -377,7 +377,7 @@ impl ServiceManager {
             // 在发布事件前同步推入统一循环共享表（D11-⑤：DB 已先写），随后
             // 的 trigger tick 才能读到任务集。
             app_state.workspace_service.set_agent_hooks(Arc::new(
-                crate::domains::agent::host::agent_hooks::AgentHooksImpl::new().with_runtime(runtime.clone()),
+                crate::domains::agent::host::trigger::agent_hooks::AgentHooksImpl::new().with_runtime(runtime.clone()),
             ));
 
             // T15 退役接线：Metrics 所有权自旧 runner 迁出——MemoryService

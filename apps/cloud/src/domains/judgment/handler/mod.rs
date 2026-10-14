@@ -226,7 +226,7 @@ async fn submit_feedback(
         }
     }
 
-    crate::domains::agent::host::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id).await;
+    crate::domains::agent::host::judge::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id).await;
     ApiResponseBuilder::success(serde_json::json!({"ok": true}))
 }
 
@@ -410,7 +410,7 @@ async fn approve_judgment(
         return ApiResponseBuilder::error("执行派发失败（队列满），已回滚待审批，可重试");
     }
 
-    crate::domains::agent::host::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id).await;
+    crate::domains::agent::host::judge::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id).await;
     ApiResponseBuilder::success(serde_json::json!({"ok": true, "status": "executing"}))
 }
 
@@ -447,6 +447,6 @@ async fn reject_judgment(
         Err(e) => return ApiResponseBuilder::error(format!("状态迁移失败: {e}")),
     }
 
-    crate::domains::agent::host::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id).await;
+    crate::domains::agent::host::judge::judgment_subscriber::broadcast_judgment_pub(&state.sse_manager, ws, &id).await;
     ApiResponseBuilder::success(serde_json::json!({"ok": true, "status": "dismissed"}))
 }
