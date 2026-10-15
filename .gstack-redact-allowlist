@@ -1,0 +1,13 @@
+# gstack-redact allowlist — 逐条人工核实的误报(2026-10-15,env.kv/pii.cc)
+# env.kv:Rust 标识符以 _key 结尾 + 冒号 + 高熵值字面量,非凭据
+problem_key: Option<&str>,
+dedup_key: Option<&str>,
+problem_key: Option<String>,
+dedup_key: Option<String>,
+key = %ctx.key,
+dedup_key: Some(format!("heartbeat:{}", self.workspace_id)),
+# pii.cc:迁移时间戳(14 位,恰好过 Luhn)
+20260912000002
+20260912000003
+20260914000001
+20260928000001

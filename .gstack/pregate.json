@@ -1,0 +1,21 @@
+{
+  "$schema": "https://github.com/garrytan/gstack/docs/pregate.md#pregate-v1",
+  "runner": "bash scripts/test-lane.sh {files}",
+  "dependencies": {
+    "apps/**": [],
+    "crates/**": [],
+    "web/**": [],
+    "docs/**": [],
+    "scripts/**": [],
+    ".github/**": [],
+    ".gstack-redact-allowlist": [],
+    "CHANGELOG.md": [],
+    "TODOS.md": [],
+    "VERSION": []
+  },
+  "selection": {},
+  "warn": [],
+  "strays": {
+    "allow": []
+  }
+}
