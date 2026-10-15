@@ -200,10 +200,17 @@ async fn migration_backfills_runs_then_relinks_proposals() {
     )
     .await;
 
-    // ── 跑迁移（只有本迁移未标记，run_migrations 只执行它）──
-    tinyiothub_storage::migrations::run_migrations(&pool)
+    // ── 跑迁移（只应用本迁移——run_migrations 会把后续迁移（含 T15 的 DROP
+    // 视图）一并应用，本测试锚定的是本迁移自身的效果）──
+    let migrator = sqlx::migrate!("./migrations");
+    let m = migrator
+        .iter()
+        .find(|m| m.version == NEW_VERSION)
+        .expect("迁移必须在嵌入迁移集内");
+    sqlx::raw_sql(m.sql.clone())
+        .execute(&pool)
         .await
-        .expect("run_migrations");
+        .expect("apply backfill migration");
 
     // ── Step 1：anchor 合成 agent_runs 行 ──
     let row: (String, String, String, String, String, String) = sqlx::query_as(
@@ -347,9 +354,16 @@ async fn migration_skips_trace_less_anchor_gracefully() {
     )
     .await;
 
-    tinyiothub_storage::migrations::run_migrations(&pool)
+    // 只应用本迁移（同主用例：run_migrations 会连后续 DROP 视图迁移一起跑）。
+    let migrator = sqlx::migrate!("./migrations");
+    let m = migrator
+        .iter()
+        .find(|m| m.version == NEW_VERSION)
+        .expect("迁移必须在嵌入迁移集内");
+    sqlx::raw_sql(m.sql.clone())
+        .execute(&pool)
         .await
-        .expect("run_migrations");
+        .expect("apply backfill migration");
 
     // "历史无 trace 不补"=不伪造过程记录：行仍合成，trace 为空数组，
     // 前端"无过程记录"的展示由读侧决定。
@@ -386,4 +400,33 @@ async fn migration_skips_trace_less_anchor_gracefully() {
 
     drop(pool);
     let _ = std::fs::remove_file(path);
+}
+
+// Value card
+// - 覆盖路径：20261014000001_drop_heartbeat_tick_map 在全量迁移后生效——
+//   T15 双跑期对账视图 heartbeat_tick_map（无任何代码消费）必须被 DROP。
+// - 真实回归场景：drop 迁移被改名/删行/版本号写错——孤儿视图永久残留，
+//   且本文件的背填用例（锚定 20261013000001 自身效果、只应用单迁移）
+//   不会发现。
+// - 失败信号：全量 run_migrations 后视图仍存在即断言失败。
+// - 覆盖理由：此前无任何用例钉住 drop 生效；2026-10-15 审计实测——
+//   sqlx::migrate! 宏对目录新增文件不重展开（陈旧 target 缓存）时，
+//   drop 在本地静默不执行而全部门禁依旧绿。
+#[tokio::test]
+async fn full_migration_run_drops_heartbeat_tick_map_view() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    tinyiothub_storage::migrations::run_migrations(&pool)
+        .await
+        .expect("run_migrations");
+    let view_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'view' AND name = 'heartbeat_tick_map')",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("view existence query");
+    assert!(!view_exists, "T15 后 heartbeat_tick_map 视图必须被 20261014000001 DROP");
 }
