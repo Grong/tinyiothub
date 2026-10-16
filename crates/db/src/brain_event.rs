@@ -171,11 +171,13 @@ pub(crate) async fn list_brain_events(
         )
     } else {
         // 后续页：纯时间流（不折叠不置顶）。元组游标：同秒行按 id 续翻。
+        // 游标子查询加 workspace 过滤(2026-10-16 ship 评审):他 workspace 的
+        // id 作游标时子查询不再回行——存在性/时间戳弱 oracle 堵死。
         format!(
             "SELECT {LIST_COLS} FROM brain_events
              WHERE workspace_id = ?{window}{filter}
-               AND (created_at < (SELECT created_at FROM brain_events WHERE id = ?)
-                    OR (created_at = (SELECT created_at FROM brain_events WHERE id = ?) AND id < ?))
+               AND (created_at < (SELECT created_at FROM brain_events WHERE id = ? AND workspace_id = ?)
+                    OR (created_at = (SELECT created_at FROM brain_events WHERE id = ? AND workspace_id = ?) AND id < ?))
              ORDER BY created_at DESC, id DESC
              LIMIT ?"
         )
@@ -186,7 +188,9 @@ pub(crate) async fn list_brain_events(
         q = q.bind(since);
     }
     if let Some(b) = before {
-        q = q.bind(b).bind(b).bind(b);
+        // 游标子查询绑定序:子查询1(id, ws)、子查询2(id, ws)、元组 id——
+        // 与 SQL 文本中 ? 的出现顺序一致。
+        q = q.bind(b).bind(workspace_id).bind(b).bind(workspace_id).bind(b);
     }
     let rows = q.bind(limit).fetch_all(pool).await?;
     rows.into_iter().map(row_to_brain_event).collect()
@@ -584,6 +588,52 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(page2.len(), 1, "同秒第三行必须可翻页到达");
+    }
+
+    /// 游标跨 workspace 隔离回归（2026-10-16 ship 评审补）：游标子查询带
+    /// workspace 过滤——用 ws-B 的行 id 作 ws-A 的 before 游标时，子查询不
+    /// 回行（NULL），ws-A 得空页而不是借到 ws-B 的时间戳翻页（弱 oracle
+    /// 锁定：修复前会返回 ws-A 中早于 ws-B 游标行时间戳的行）。
+    #[tokio::test]
+    async fn cursor_from_other_workspace_yields_empty_page() {
+        let db = test_db().await;
+        // ws-A 两行：一行早于、一行晚于 ws-B 游标行的时间戳。
+        let j_a_old = db.insert_judgment("ws1", None, None, None, "annotate").await.unwrap();
+        let j_a_new = db.insert_judgment("ws1", None, None, None, "annotate").await.unwrap();
+        // ws-B 游标行。
+        let j_b = db.insert_judgment("ws2", None, None, None, "annotate").await.unwrap();
+        let t_old = (Utc::now() - chrono::Duration::hours(3)).to_rfc3339();
+        let t_mid = (Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        let t_new = Utc::now().to_rfc3339();
+        for (id, ts) in [(&j_a_old, &t_old), (&j_b, &t_mid), (&j_a_new, &t_new)] {
+            sqlx::query("UPDATE judgments SET created_at = ? WHERE id = ?")
+                .bind(ts)
+                .bind(id)
+                .execute(db.pool())
+                .await
+                .unwrap();
+        }
+
+        let page = db
+            .list_brain_events("ws1", BrainEventTab::All, Some(&format!("alarm:{j_b}")), 10)
+            .await
+            .unwrap();
+        assert!(
+            page.is_empty(),
+            "ws-B 的行 id 作 ws-A 游标不得借到 ws-B 时间戳（修复前会返回 j_a_old）: {:?}",
+            page.iter().map(|e| &e.id).collect::<Vec<_>>()
+        );
+
+        // 对照：ws-A 自己的游标正常翻页（锁定子查询未塌缩为恒空）。
+        let page1 = db.list_brain_events("ws1", BrainEventTab::All, None, 1).await.unwrap();
+        assert_eq!(page1.len(), 1);
+        assert_eq!(page1[0].id, format!("alarm:{j_a_new}"));
+        let page2 = db
+            .list_brain_events("ws1", BrainEventTab::All, Some(&page1[0].id), 10)
+            .await
+            .unwrap();
+        assert_eq!(page2.len(), 1, "本 workspace 游标翻页不受影响");
+        assert_eq!(page2[0].id, format!("alarm:{j_a_old}"));
     }
 
     /// list 行无证据字段（结构层面无 evidence_json）；detail 返回完整证据。
