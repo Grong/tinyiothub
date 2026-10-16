@@ -208,7 +208,9 @@ pub(crate) async fn ticket_for_run(
     // 是例行噪声,旧模型只产 G3 system_error 事件;统一循环后这些 run 也走
     // RunRecorded,若不挡,T9 迁移合成行与切换后的每次 tick 失败都会开票。
     // 判断流水线(needs_human)经 judgment_subscriber 另行升级,不受影响。
-    if report.trigger.starts_with("heartbeat:") {
+    // merged: 前缀剥除(RT-1):30s 合并窗内的 merged heartbeat run 标签是
+    // 'merged:heartbeat:{ws}',不剥前缀守卫形同虚设。
+    if tinyiothub_storage::agent_runs::trigger_type_of(&report.trigger) == "heartbeat" {
         debug!(
             run_id = %report.run_id,
             outcome = %report.outcome.as_str(),

@@ -320,6 +320,14 @@ impl ThingAgentManager {
         // trigger 持有的 Notify（notify_one 无等待者时存的 stale permit
         // 会在新 trigger 首轮等待时触发一次意外立即 tick）。
         self.heartbeat_reload_notifies.remove(workspace_id);
+        // 心跳共享表随工作区清(RT-6):旧 HeartbeatRunner.remove_workspace 清
+        // last_ticks;不清则工作区churn 下表无限增长,且 id 复用时残留
+        // enabled=false/旧间隔/旧暂停态复活。governor 以 record_success 清态。
+        self.deps.heartbeat_tasks_map.remove(workspace_id);
+        self.deps.heartbeat_intervals.remove(workspace_id);
+        self.deps.heartbeat_enabled.remove(workspace_id);
+        self.deps.last_ticks.remove(workspace_id);
+        self.deps.governor.record_success(workspace_id);
         self.deps.agent_provider.invalidate(workspace_id);
         tracing::info!(workspace_id, "thing-agent loop stopped");
     }
@@ -1984,6 +1992,94 @@ pub(crate) mod tests {
             dedup_key: Some("heartbeat:ws1:d1:offline".into()),
         };
         assert_eq!(trigger_label(&alarm), "heartbeat:ws1:d1:offline");
+    }
+
+    // Value card
+    // - 覆盖路径：告警驱动心跳 run 全管线（scheduler 分键合并 → run_pipeline
+    //   的 heartbeat prompt + heartbeat_alarms 递归抽取 + render_heartbeat_alarm
+    //   附段 + task_count 回写 + governor 记账）。
+    // - 真实回归场景：有人删掉 run_pipeline 里的告警附段循环或
+    //   collect_heartbeat_alarms 不递归 Merged——LLM 收到的告警 run 丢失
+    //   原因/设备/类型上下文，自治处置质量静默退化，无任何测试报警。
+    // - 失败信号：prompt 缺「设备离线」/「dev-1」/「offline」即断口；
+    //   trigger 标签缺 merged: 前缀说明合并路径未走（散兵信号不包 Merged）。
+    // - 覆盖理由：callbacks 单测只到信号构造（to_wake_signal/优先级映射），
+    //   manager 既有用例只覆盖 alarm=None 的定时 tick——告警上下文进 prompt
+    //   的唯一管线在此。
+    #[tokio::test(start_paused = true)]
+    async fn merged_alarm_heartbeat_run_renders_alarm_context_in_prompt() {
+        let parts = stub_manager().await;
+        parts.heartbeat.tasks.insert(
+            WS.to_string(),
+            vec![tinyiothub_core::heartbeat::HeartbeatTask {
+                id: 1,
+                workspace_id: WS.into(),
+                priority: "P1".into(),
+                text: "巡检设备在线率".into(),
+                paused: false,
+                version: 1,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            }],
+        );
+        let governor = parts.heartbeat.governor.clone();
+        governor.record_failure(WS); // 预置一败：成功 run 清零才证明记账穿透
+        parts.manager.start(WS);
+
+        let sink: &dyn DirectiveSink = parts.manager.as_ref();
+        let alarm_signal = || WakeSignal {
+            workspace_id: WS.to_string(),
+            priority: Priority::Normal,
+            source: TriggerSource::Heartbeat {
+                alarm: Some(HeartbeatAlarmContext {
+                    thing_id: Some("dev-1".into()),
+                    alarm_type: Some("offline".into()),
+                    rule_id: Some("r1".into()),
+                    reason: "设备离线".into(),
+                    context: "{}".into(),
+                }),
+            },
+            dedup_key: Some("heartbeat:ws_01:dev-1:offline".to_string()),
+        };
+        // 两条同键告警信号在合并窗口聚成 Merged——collect_heartbeat_alarms
+        // 必须递归 Merged.signals 抽取告警上下文（顶层不再是 Heartbeat）。
+        sink.enqueue(alarm_signal()).expect("first alarm signal");
+        sink.enqueue(alarm_signal()).expect("second alarm signal");
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_secs(30)).await;
+        wait_until(
+            || parts.runs.runs_with_dedup("heartbeat:ws_01:dev-1:offline") == 1,
+            "merged alarm run",
+        )
+        .await;
+
+        let runs = parts.runs.all();
+        let run = runs
+            .iter()
+            .find(|r| r.dedup_key.as_deref() == Some("heartbeat:ws_01:dev-1:offline"))
+            .expect("alarm run recorded");
+        assert_eq!(
+            run.trigger, "merged:heartbeat:ws_01:dev-1:offline",
+            "两条同键告警须聚成 Merged（单信号不包 Merged，标签无 merged: 前缀）"
+        );
+        assert_eq!(run.task_count, Some(1), "告警 run 同样回写 task_count");
+        drop(runs);
+
+        let prompts = parts.agents.llm.prompts.lock().unwrap().clone();
+        assert!(
+            prompts.iter().any(|p| p.contains("巡检设备在线率")
+                && p.contains("设备离线")
+                && p.contains("dev-1")
+                && p.contains("offline")),
+            "告警 run 必须走 heartbeat prompt 且附告警上下文（原因/设备/类型）: {prompts:?}"
+        );
+        wait_until(
+            || governor.consecutive_failures(WS) == 0,
+            "governor 记账穿透告警 Merged",
+        )
+        .await;
     }
 
     /// 工单 T2：agent_provider 失败的 early-return 必须发 RunRecorded

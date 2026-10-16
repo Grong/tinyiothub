@@ -262,3 +262,39 @@ async fn get_logs_excludes_non_heartbeat_runs() {
     let logs = get_logs(app).await;
     assert_eq!(logs.as_array().unwrap().len(), 0, "thing 事件 run 不得混入: {logs}");
 }
+
+/// 明细查询失败隔离(ship 评审 testing 发现):assemble_logs_from_runs 的
+/// agent_actions 明细联结失败时,主时间线不塌——条目在、明细为空(设计契约:
+/// 「部分字段缺失时只缺该字段,不塌整区」)。
+#[tokio::test]
+async fn get_logs_survives_detail_query_failure() {
+    let (app, pool) = app().await;
+    seed_run(
+        &pool,
+        "run_det_fail",
+        "acted",
+        "巡检完成",
+        json!({"trace": []}),
+        "2026-10-15 01:00:00",
+    )
+    .await;
+    // 明细表改名→明细联结查询必然失败(主 run 查询不受影响)。
+    sqlx::query("ALTER TABLE agent_actions RENAME TO agent_actions_bak")
+        .execute(&pool)
+        .await
+        .expect("rename detail table");
+
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app
+        .oneshot(get(&format!("/api/v1/workspaces/{WS}/heartbeat/logs"), &token))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status.as_u16(), 200, "明细查询失败不得拖垮主时间线: {json}");
+    assert_eq!(json["code"], 0, "明细查询失败响应仍须成功: {json}");
+    let arr = json["result"]["logs"].as_array().expect("logs array");
+    assert_eq!(arr.len(), 1, "run 条目仍在");
+    let proposals = arr[0]["pendingProposals"].as_array().map(|a| a.len()).unwrap_or(0);
+    let executed = arr[0]["autoExecuted"].as_array().map(|a| a.len()).unwrap_or(0);
+    assert_eq!(proposals + executed, 0, "明细为空但不缺条目: {}", arr[0]);
+}

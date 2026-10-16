@@ -18,8 +18,12 @@ pub use tinyiothub_core::agent_runs::*;
 
 /// trigger 串前缀作为 trigger_type（"thing:t1:event:x" → "thing"）；无 ':'
 /// 时用整串。pub：cloud persist 心跳支路（Task 8）按此前缀识别 heartbeat run。
+/// Merged 标签（"merged:{dedup_key}"）先剥前缀还原源类型——否则 merged heartbeat
+/// run 的 trigger_type='merged'，下游按 heartbeat 分类的消费者（提案投影/读侧/
+/// 对账排除）全部静默漏掉（2026-10-15 ship 评审 RT-1）。
 pub fn trigger_type_of(trigger: &str) -> &str {
-    trigger.split(':').next().unwrap_or(trigger)
+    let t = trigger.strip_prefix("merged:").unwrap_or(trigger);
+    t.split(':').next().unwrap_or(t)
 }
 
 pub(crate) async fn insert_run(
@@ -899,6 +903,50 @@ mod tests {
         );
         assert_eq!(serde_json::to_string(&Outcome::Acted).expect("serialize"), "\"acted\"");
     }
+
+    // RT-1(2026-10-15 ship 评审):merged heartbeat run 的标签是
+    // 'merged:heartbeat:{ws}',下游按 heartbeat 分类的消费者必须仍命中——
+    // trigger_type_of 剥 merged: 前缀 + list_heartbeat_run_rows 匹配 merged:heartbeat:%。
+    #[test]
+    fn trigger_type_of_strips_merged_prefix() {
+        assert_eq!(trigger_type_of("merged:heartbeat:ws1"), "heartbeat");
+        assert_eq!(trigger_type_of("heartbeat:ws1"), "heartbeat");
+        assert_eq!(trigger_type_of("merged:timer:ws1"), "timer");
+        assert_eq!(trigger_type_of("merged:thing:t1:event:x"), "thing");
+        assert_eq!(trigger_type_of("thing:t1:event:x"), "thing");
+    }
+
+    #[tokio::test]
+    async fn list_heartbeat_run_rows_matches_merged_heartbeat() {
+        let pool = test_pool().await;
+        let db = Db::new(pool.clone());
+        let mut merged = sample_report("run_merged_hb", "ws1", "merged tick");
+        merged.trigger = "merged:heartbeat:ws1".to_string();
+        merged.outcome = Outcome::NoActionNeeded;
+        db.insert_agent_run(&merged, None, Some("heartbeat:ws1")).await.unwrap();
+        let mut plain = sample_report("run_plain_hb", "ws1", "plain tick");
+        plain.trigger = "heartbeat:ws1".to_string();
+        plain.outcome = Outcome::NoActionNeeded;
+        db.insert_agent_run(&plain, None, Some("heartbeat:ws1")).await.unwrap();
+
+        let rows = list_heartbeat_run_rows(&pool, "ws1", 50).await.unwrap();
+        let ids: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+        assert!(
+            ids.contains(&"run_merged_hb"),
+            "merged heartbeat run 必须出现在心跳读侧"
+        );
+        assert!(ids.contains(&"run_plain_hb"));
+
+        // trigger_type 列:merged 前缀剥落后存 heartbeat(对账排除/统计同源)。
+        let (t,): (String,) = sqlx::query_as("SELECT trigger_type FROM agent_runs WHERE id = 'run_merged_hb'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            t, "heartbeat",
+            "merged heartbeat 的 trigger_type 列须为 heartbeat(RT-1)"
+        );
+    }
 }
 
 // ──────────────────────────────────────────────
@@ -936,7 +984,8 @@ pub(crate) async fn list_heartbeat_run_rows(
     sqlx::query_as(
         "SELECT id, COALESCE(trigger_context, ''), outcome, summary, report, created_at
          FROM agent_runs
-         WHERE workspace_id = ? AND trigger_context LIKE 'heartbeat:%'
+         WHERE workspace_id = ?
+           AND (trigger_context LIKE 'heartbeat:%' OR trigger_context LIKE 'merged:heartbeat:%')
          ORDER BY created_at DESC, rowid DESC
          LIMIT ?",
     )

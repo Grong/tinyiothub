@@ -138,6 +138,60 @@ mod tests {
         Arc::new(m)
     }
 
+    /// 读取故障桩(照 timer.rs broken_repo):load_autonomy 必失败。
+    fn broken_repo() -> Arc<StubAutonomyPolicyReader> {
+        let stub = Arc::new(StubAutonomyPolicyReader::new());
+        stub.set_fail(true);
+        stub
+    }
+
+    fn trigger(ws: &str, repo: Arc<dyn AutonomyPolicyReader>) -> HeartbeatTrigger {
+        HeartbeatTrigger {
+            workspace_id: ws.into(),
+            default_interval: Duration::from_secs(60),
+            intervals: Arc::new(dashmap::DashMap::new()),
+            enabled: Arc::new(dashmap::DashMap::new()),
+            tasks_source: seeded_tasks_source(ws),
+            policy_repo: repo,
+            governor: HeartbeatGovernor::default(),
+            reload_notify: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    // kill switch 分支(ship 评审 testing 发现:timer.rs 有 Off 用例,心跳没有——
+    // 误改 `Ok(_) => false` 或 mode 判定时 kill switch 静默失效)。
+    #[tokio::test]
+    async fn policy_mode_off_suppresses_ticks() {
+        pause();
+        let repo = stub_repo("ws_off", AutonomyMode::Off);
+        let trig = trigger("ws_off", repo);
+        let (tx, mut rx) = mpsc::channel(16);
+        let handle = tokio::spawn(async move { trig.run(tx).await });
+        for _ in 0..130 {
+            advance(Duration::from_secs(1)).await;
+            tokio::task::yield_now().await;
+            assert!(rx.try_recv().is_err(), "mode=off 不得发 tick(kill switch)");
+        }
+        drop(rx);
+        handle.await.expect("run task").expect("run result");
+    }
+
+    #[tokio::test]
+    async fn policy_read_failure_fail_closed_no_ticks() {
+        pause();
+        let repo = broken_repo();
+        let trig = trigger("ws_err", repo);
+        let (tx, mut rx) = mpsc::channel(16);
+        let handle = tokio::spawn(async move { trig.run(tx).await });
+        for _ in 0..130 {
+            advance(Duration::from_secs(1)).await;
+            tokio::task::yield_now().await;
+            assert!(rx.try_recv().is_err(), "policy 读失败 fail-closed 不得发 tick");
+        }
+        drop(rx);
+        handle.await.expect("run task").expect("run result");
+    }
+
     #[tokio::test]
     async fn emits_heartbeat_signal_with_workspace_dedup_key() {
         pause();
@@ -266,17 +320,19 @@ mod tests {
         handle.await.expect("run task").expect("run result");
     }
 
-    // 空任务抑制(对齐 loop_.rs:63 空任务列表不 tick)
+    // 空任务抑制(对齐 loop_.rs:63 空任务列表不 tick;全暂停同理——
+    // any(!paused)=false 与空表同路径)
     #[tokio::test]
     async fn empty_or_all_paused_tasks_emit_nothing() {
         pause();
         let repo = stub_repo("ws_04", AutonomyMode::Act);
+        let tasks_source = Arc::new(dashmap::DashMap::new()); // 第一阶段:无任务
         let trigger = HeartbeatTrigger {
             workspace_id: "ws_04".into(),
             default_interval: Duration::from_secs(60),
             intervals: Arc::new(dashmap::DashMap::new()),
-            enabled: Arc::new(dashmap::DashMap::new()),      // 缺省=true
-            tasks_source: Arc::new(dashmap::DashMap::new()), // 无任务
+            enabled: Arc::new(dashmap::DashMap::new()), // 缺省=true
+            tasks_source: tasks_source.clone(),
             policy_repo: repo,
             governor: HeartbeatGovernor::default(),
             reload_notify: Arc::new(tokio::sync::Notify::new()),
@@ -287,6 +343,25 @@ mod tests {
             advance(Duration::from_secs(1)).await;
             tokio::task::yield_now().await;
             assert!(rx.try_recv().is_err(), "空任务工作区不发 tick(loop_.rs:63)");
+        }
+        // 第二阶段:任务表非空但全部 paused——any(!paused)=false 同样不 tick。
+        tasks_source.insert(
+            "ws_04".to_string(),
+            vec![HeartbeatTask {
+                id: 1,
+                workspace_id: "ws_04".into(),
+                priority: "high".into(),
+                text: "paused task".into(),
+                paused: true,
+                version: 1,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            }],
+        );
+        for _ in 0..70 {
+            advance(Duration::from_secs(1)).await;
+            tokio::task::yield_now().await;
+            assert!(rx.try_recv().is_err(), "全暂停任务工作区不发 tick");
         }
         drop(rx);
         handle.await.expect("run task").expect("run result");

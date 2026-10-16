@@ -313,6 +313,15 @@ async fn heartbeat_run_failure_does_not_ticket() {
     let tickets = db.list_tickets("ws1", None, 20, 0).await.unwrap();
     assert!(tickets.is_empty(), "心跳失败不开票——走 G3 事件通道");
 
+    // RT-1:merged heartbeat run(合并窗内)同样不开票——标签是 merged: 前缀。
+    let mut rm = report("run_hb_merged", Outcome::Failed, Some(EndReason::Llm), None);
+    rm.trigger = "merged:heartbeat:ws1".to_string();
+    ticket_for_run(&db, &sse, &rm, None, Some("heartbeat:ws1")).await;
+    assert!(
+        db.list_tickets("ws1", None, 20, 0).await.unwrap().is_empty(),
+        "merged heartbeat 失败同样不开票(RT-1)"
+    );
+
     // 对照:非心跳源(thing event)失败照常开票——守卫不误伤
     let r2 = report("run_te_1", Outcome::Rejected, Some(EndReason::Policy), Some("t1"));
     ticket_for_run(&db, &sse, &r2, None, Some("thing:t1:event:temp_high")).await;

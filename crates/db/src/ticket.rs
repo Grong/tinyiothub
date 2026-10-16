@@ -872,6 +872,20 @@ mod tests {
             db.unticketed_failed_runs("2000-01-01").await.unwrap().is_empty(),
             "heartbeat 源失败 run 不进对账补票扫描"
         );
+
+        // RT-1:merged heartbeat run(trigger_type 剥前缀后为 heartbeat)同样排除——
+        // 否则 30s 合并窗内的心跳失败会绕开心跳不开票守卫。
+        let merged_failure = RunReport {
+            run_id: "run_merged_hb".to_string(),
+            trigger: "merged:heartbeat:ws1".to_string(),
+            summary: "merged tick failed".to_string(),
+            ..heartbeat_failure
+        };
+        db.insert_agent_run(&merged_failure, None, None).await.unwrap();
+        assert!(
+            db.unticketed_failed_runs("2000-01-01").await.unwrap().is_empty(),
+            "merged heartbeat 失败 run 同样不进对账补票扫描(RT-1)"
+        );
     }
 }
 
