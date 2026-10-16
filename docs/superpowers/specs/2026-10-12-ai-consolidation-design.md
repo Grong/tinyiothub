@@ -82,6 +82,8 @@ Trigger ────────►│                                    ├─
 | 每工作区可配间隔（interval_minutes） | Heartbeat 变体 per-workspace 间隔驱动 | 间隔配置测试 |
 | 心跳失败不开票（周期 tick 失败只产 G3 system_error 事件——旧模型从不进工单系统） | ticket_for_run 漏斗守卫：trigger 前缀 heartbeat: 的失败 run 不开票；对账 SQL 同步排除 trigger_type='heartbeat'（2026-10-14 事故：T9 合成行被对账误捞补开 3 票） | ticket_subscriber_tests::heartbeat_run_failure_does_not_ticket + ticket.rs::unticketed_failed_runs_excludes_heartbeat_trigger |
 
+> **裁定补记（2026-10-16 用户裁定）**：X6 心跳桥自动派发退役——提案一律走审批队列（agent_actions），不再自动派 UserDirective 修复 run（`dispatch_proposals`/`should_dispatch`/`problem_key_of` 已删，`HeartbeatCompleted` 事件枚举保留供 DLQ 重放兼容）；告警 flapping 抑制 = 调度层 30s 分键合并窗（接受现状：O11 6h run 级抑制不恢复，成本自担已裁定）；迁移 tick_map 视图同批次建删（注释自指——读侧兼容期在合并迁移内完成，运维窗口本就不存在，无消费方）。O11 machinery（RunRegistry problem_meta/ack 回写链）写-读失衡，保留待后续清理。
+
 **信任门控作用域（D9 裁定的行为变更）**：统一循环后所有 run 过信任门（调查/指令也受约束）——一等 UX 言行一致。行为保持清单的显式例外（唯一故意行为变更），迁移期告警路径先行验证。**读门时机（F2，eng 复审 R1 改裁）**：每次动作调用新鲜读档（保持 O7 kill-switch 立即生效 seam，autonomous_invoke.rs:278-280）——切换立即生效，在途 run 的后续动作也按新档执行。
 
 host/ 模块分组（20+ 平铺 → 按概念归位）：
