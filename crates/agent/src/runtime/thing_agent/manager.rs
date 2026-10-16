@@ -702,8 +702,10 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
     // 内存记录（真相源）+ 事件出口（持久化投影）。落库失败不阻断回推语义
     // 不变（T12）：持久化已移出调用路径，由 Task 8 的 RunRecorded 订阅者落库；
     // record/emit 均不可失败，回推（T13）永远能读到含当前 run 的窗口。
-    // X6：心跳桥投递的指令携带 problem_key（O11 dedup 判定依据）；其余触发
-    // 源为 None。
+    // X6：原心跳桥投递的指令携带 problem_key（O11 dedup 判定依据）；其余触发
+    // 源为 None。X6 自动派发已退役（2026-10-16 裁定：提案走审批队列）——
+    // 生产路径不再有 source=Some("heartbeat") 的 UserDirective，problem_key
+    // 恒为 None；字段与写入路径保留待 O11 machinery 整体清理。
     let problem_key = match &signal.source {
         TriggerSource::UserDirective { problem_key, .. } => problem_key.as_deref(),
         _ => None,
@@ -717,8 +719,9 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
             dedup_key: signal.dedup_key.clone(),
         },
     );
-    // O11 dedup 元数据（Task 6）：problem run 结果写入内存 dedup 真源，供
-    // HeartbeatBridge 抑制判定（替代原 runs_repo 的 problem_key SQL 查询）。
+    // O11 dedup 元数据（Task 6）：problem run 结果写入内存 dedup 真源。
+    // X6 退役（2026-10-16）后写-读失衡：读侧（HeartbeatBridge::should_dispatch）
+    // 已删除，ack 回写（mark_problem_acked）仍在；machinery 保留待后续清理。
     if let Some(pk) = problem_key {
         deps.registry.record_problem_run(
             &report.workspace_id,

@@ -1,18 +1,10 @@
-//! 调查指令文本——报警调查 + 心跳提案 directive（从 orchestrator/callbacks.rs
-//! 迁入，2026-09-20 提示词收敛）。
+//! 调查指令文本——报警调查（从 orchestrator/callbacks.rs 迁入，2026-09-20
+//! 提示词收敛）。心跳提案 directive 文本已随 X6 心跳桥自动派发退役
+//! （2026-10-16 用户裁定）删除——提案一律走审批队列，不再自动派修复 run。
 
 use tinyiothub_core::models::event::AlarmEvent;
-use tinyiothub_core::policy::Proposal;
 
 use crate::prompt::constitution::CONSTITUTION_ONELINE;
-
-/// 心跳 directive 文本：从 proposal 生成可执行指令（O2）。
-pub fn heartbeat_directive_text(problem_key: &str, proposal: &Proposal) -> String {
-    format!(
-        "心跳巡检发现待处置问题 {problem_key}：{}（原因：{}；风险：{}）。请诊断并处置。{CONSTITUTION_ONELINE}",
-        proposal.summary, proposal.reason, proposal.risk
-    )
-}
 
 /// T3：报警调查指令。要求 agent 调查后给出结构化判断（judgment subscriber
 /// 解析 summary 尾部的 ```json verdict 块；解析失败按 outcome 兜底）。
@@ -83,25 +75,5 @@ mod tests {
         assert!(text.contains("≤200 字"), "narrative 长度约束缺失: {text}");
         assert!(text.contains("第一人称"), "narrative 人称约束缺失: {text}");
         assert!(text.contains("块外禁止散文"), "narrative 块外禁散文约束缺失: {text}");
-    }
-
-    #[test]
-    fn heartbeat_directive_text_carries_constitution() {
-        let proposal = Proposal {
-            id: "p1".into(),
-            workspace_id: "ws".into(),
-            agent_id: "a1".into(),
-            tool_name: "reboot".into(),
-            thing_id: Some("d1".into()),
-            summary: "重启网关".into(),
-            reason: "离线".into(),
-            risk: "low".into(),
-            parameters: None,
-            created_at: "2026-09-20".into(),
-            status: tinyiothub_core::policy::ProposalStatus::Pending,
-        };
-        let text = heartbeat_directive_text("alarm:d1:r1", &proposal);
-        assert!(text.contains("重启网关"));
-        assert!(text.contains("全部输出必须使用中文"), "宪法单行缺失: {text}");
     }
 }

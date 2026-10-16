@@ -113,8 +113,9 @@ impl AgentRuntime {
             deps.ticket_resolutions,
             heartbeat_deps.clone(),
         ));
-        // T18 X6 心跳桥：HeartbeatCompleted 的结构化 proposals 投递 UserDirective。
-        // Task 6 起 O11 dedup 走 RunRegistry 内存（与 thing_agents 共享同一实例）。
+        // 告警桥（原 T18 X6 心跳桥）：AlarmCreated 转 Heartbeat 变体入统一
+        // 循环。X6 自动派发已退役（2026-10-16 裁定：提案走审批队列）；
+        // registry 仍共享同一实例（ack 回写链 + 回推窗口读）。
         let bridge = Arc::new(HeartbeatBridge::new(
             run_registry.clone(),
             thing_agents.clone(),

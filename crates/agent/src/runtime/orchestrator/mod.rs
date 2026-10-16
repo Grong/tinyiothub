@@ -4,8 +4,8 @@
 //! AlarmCreated       --> EventBus --> Orchestrator --> HeartbeatBridge.dispatch()
 //!                    (TriggerSource::Heartbeat 变体入统一循环)
 //! (Chat reflection is handled directly in chat/service.rs)
-//! HeartbeatCompleted --> EventBus --> Orchestrator -->
-//!                    HeartbeatBridge.dispatch_proposals()
+//! HeartbeatCompleted --> 无订阅臂（X6 心跳桥自动派发 2026-10-16 退役：提案
+//!                    一律走审批队列；事件枚举保留供 DLQ 重放兼容）
 //! WorkspaceCreated    --> EventBus --> Orchestrator --> ThingAgentManager.start()
 //! WorkspaceDeleted    --> EventBus --> Orchestrator --> ThingAgentManager.stop()
 
@@ -101,38 +101,26 @@ mod tests {
     use std::time::Duration;
 
     use crate::runtime::event::types::AiEvent;
-    use crate::runtime::heartbeat::types::{HeartbeatResult, HeartbeatStatus};
     use crate::runtime::orchestrator::callbacks::HeartbeatBridge;
     use crate::runtime::thing_agent::governor::HeartbeatGovernor;
     use crate::runtime::thing_agent::registry::RunRegistry;
     use crate::runtime::thing_agent::scheduler::EnqueueError;
     use crate::runtime::thing_agent::traits::DirectiveSink;
     use crate::runtime::thing_agent::types::WakeSignal;
-    use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 
-    fn sample_result() -> HeartbeatResult {
-        HeartbeatResult {
-            id: "test-tick".to_string(),
+    /// 告警事件夹具（X6 退役后观测量改走 AlarmCreated 告警路径投递）。
+    fn sample_alarm() -> tinyiothub_core::models::event::AlarmEvent {
+        tinyiothub_core::models::event::AlarmEvent {
+            id: "a1".into(),
             workspace_id: "ws_1".into(),
-            status: HeartbeatStatus::Complete,
-            summary: "done".into(),
-            task_count: 1,
-            executed_actions: vec![],
-            proposals: vec![Proposal {
-                id: "p1".into(),
-                workspace_id: "ws_1".into(),
-                agent_id: "hb".into(),
-                tool_name: "set_hvac".into(),
-                thing_id: Some("dev-1".into()),
-                summary: "s".into(),
-                reason: "r".into(),
-                risk: "low".into(),
-                parameters: None,
-                created_at: "2026-08-03T00:00:00Z".into(),
-                status: ProposalStatus::Pending,
-            }],
-            error: None,
-            trace: vec![],
+            thing_id: "dev-1".into(),
+            alarm_type: "offline".into(),
+            severity: "critical".into(),
+            message: "设备离线".into(),
+            rule_id: None,
+            condition_desc: None,
+            resolved: false,
+            created_at: chrono::Utc::now(),
         }
     }
 
@@ -167,10 +155,7 @@ mod tests {
         orch.start();
         orch.start();
 
-        orch.event_publisher().publish(AiEvent::HeartbeatCompleted {
-            workspace_id: "ws_1".into(),
-            result: sample_result(),
-        });
+        orch.event_publisher().publish(AiEvent::AlarmCreated(sample_alarm()));
         // publisher→worker→bus→handler→bridge 为异步链，轮询等待首次投递。
         for _ in 0..100 {
             if !sink.signals.lock().unwrap().is_empty() {
