@@ -551,4 +551,73 @@ mod tests {
         assert_eq!(keys.problem_key.as_deref(), Some("漏水"));
         assert_eq!(keys.dedup_key.as_deref(), Some("t:1"));
     }
+
+    // Value card
+    // - 覆盖路径：remove_workspace 清五张心跳共享表（tasks/trust/intervals/
+    //   enabled/last_ticks）+ governor.resume + dump_state 不残留。
+    // - 真实回归场景：T15 把清表从旧 runner 迁到门面时漏清某张表——工作区
+    //   删除后重建，残留的 enabled=false / 旧任务表 / 旧 last_tick 直接生效，
+    //   dump_state 对账还把幽灵工作区写回 DB。
+    // - 失败信号：任一表未清即断言失败；enabled 读出口回缺省 true 证明表已清。
+    // - 覆盖理由：orchestrator 生命周期测试只断言 manager.start/stop，门面
+    //   清表命令无任何直接断言。
+    #[tokio::test]
+    async fn remove_workspace_clears_heartbeat_shared_tables() {
+        let rt = AgentRuntime::restore(snapshot_with_ws1(), RuntimeDeps::test_stub());
+        // 前置：预热态非空 + last_ticks 有值。
+        assert_eq!(rt.heartbeat_tasks("ws1").len(), 1);
+        rt.thing_agents()
+            .heartbeat_last_ticks()
+            .insert("ws1".to_string(), chrono::Utc::now());
+
+        rt.remove_workspace("ws1");
+
+        assert!(rt.heartbeat_tasks("ws1").is_empty(), "tasks 表须清");
+        assert!(
+            rt.thing_agents().heartbeat_trust_config("ws1").is_none(),
+            "trust 表须清"
+        );
+        assert_eq!(
+            rt.thing_agents().heartbeat_interval_minutes("ws1"),
+            None,
+            "intervals 表须清"
+        );
+        assert!(
+            rt.thing_agents().heartbeat_enabled("ws1"),
+            "enabled 表清后读出口回缺省 true"
+        );
+        assert!(
+            !rt.thing_agents().heartbeat_last_ticks().contains_key("ws1"),
+            "last_ticks 表须清"
+        );
+        assert!(rt.dump_state().heartbeat.is_empty(), "dump_state 不得残留已删工作区");
+    }
+
+    // Value card
+    // - 覆盖路径：update_heartbeat_interval / reload_heartbeat_tasks 命令在
+    //   更新共享表后调用 heartbeat_reload_notify().notify_one()（行为保持
+    //   清单第 3 行：配置/任务变更立即 tick，不等下个周期间隔）。
+    // - 真实回归场景：有人删掉 notify_one 调用——间隔热改与任务变更退化为
+    //   「下一个周期才生效」，最长延迟一个 interval（默认 15min），trigger
+    //   侧 reload_notify_forces_immediate_tick 测试依旧绿（它直接 notify）。
+    // - 失败信号：notified() 超时即 notify 断链。
+    // - 覆盖理由：既有 commands_update_facade_state 只断言表值，不覆盖
+    //   notify 副作用。
+    #[tokio::test]
+    async fn interval_and_task_commands_notify_unified_trigger() {
+        let rt = AgentRuntime::restore(snapshot_with_ws1(), RuntimeDeps::test_stub());
+        let notify = rt.thing_agents().heartbeat_reload_notify("ws1");
+
+        let waited = notify.notified();
+        rt.update_heartbeat_interval("ws1", 45);
+        tokio::time::timeout(std::time::Duration::from_millis(100), waited)
+            .await
+            .expect("interval 命令必须 notify 统一 trigger");
+
+        let waited = notify.notified();
+        rt.reload_heartbeat_tasks("ws1", vec![]);
+        tokio::time::timeout(std::time::Duration::from_millis(100), waited)
+            .await
+            .expect("任务替换命令必须 notify 统一 trigger");
+    }
 }

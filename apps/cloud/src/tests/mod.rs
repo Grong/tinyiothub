@@ -23,6 +23,7 @@ mod event_handler_tests;
 pub mod event_retention_tests;
 mod export_template_test;
 mod heartbeat_approvals_tests;
+mod heartbeat_config_tests;
 mod heartbeat_logs_tests;
 mod import_scene_test;
 mod invoke_action_flow_tests;
