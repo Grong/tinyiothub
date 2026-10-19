@@ -16,7 +16,10 @@
   "device_info": {"default_name_pattern": "{scene_name}"},
   "properties": [
     {"name": "area", "display_name": {"zh": "占地面积", "en": "Site Area"}, "data_type": "number", "unit": "m²", "is_read_only": false, "is_required": false},
-    {"name": "plot_ratio", "display_name": {"zh": "容积率", "en": "Plot Ratio"}, "data_type": "number", "is_read_only": false, "is_required": false}
+    {"name": "plot_ratio", "display_name": {"zh": "容积率", "en": "Plot Ratio"}, "data_type": "number", "is_read_only": false, "is_required": false},
+    {"name": "total_power", "display_name": {"zh": "总用电", "en": "Total Power"}, "data_type": "number", "unit": "kWh", "is_read_only": true, "is_required": false},
+    {"name": "total_water", "display_name": {"zh": "总用水", "en": "Total Water"}, "data_type": "number", "unit": "m³", "is_read_only": true, "is_required": false},
+    {"name": "device_count", "display_name": {"zh": "设备数量", "en": "Device Count"}, "data_type": "integer", "unit": "个", "is_read_only": true, "is_required": false}
   ],
   "default_knowledge": "你是园区管家，统览各楼栋运行状态与告警。",
   "dashboard": {"cards": [{"property": "area"}, {"property": "plot_ratio"}]},
