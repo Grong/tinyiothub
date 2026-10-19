@@ -19,6 +19,7 @@ pub mod cron_executors;
 pub mod data_server;
 pub mod driver;
 pub mod event_bus;
+pub mod expression;
 pub mod plugin;
 pub mod ports;
 
