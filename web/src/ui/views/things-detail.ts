@@ -238,6 +238,18 @@ export function renderDeviceDetail(host: DevicesView) {
   }
 
 
+/** 解析派生属性 refs JSON：[{"thing_id":"...","property_name":"..."}]；坏串按无引用处理 */
+function parseDerivedRefs(refs?: string): { thing_id: string; property_name?: string }[] {
+    if (!refs) return [];
+    try {
+      const arr = JSON.parse(refs);
+      return Array.isArray(arr) ? arr.filter(r => r && typeof r.thing_id === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+
+
 export function renderDetailProperties(host: DevicesView) {
     const profile = host.selectedDevice;
     if (!profile) return html`<div class="card empty-center">暂无属性数据</div>`;
@@ -279,13 +291,25 @@ export function renderDetailProperties(host: DevicesView) {
             </tr>
           </thead>
           <tbody>
-            ${properties.map((p: ThingProperty) => html`
+            ${properties.map((p: ThingProperty) => {
+              const derived = p.source === "derived";
+              const stale = derived && p.derivedStatus?.stale === true;
+              const staleReason = p.derivedStatus?.staleReason || null;
+              const refs = derived ? parseDerivedRefs(p.refs) : [];
+              return html`
               <tr>
                 <td>${p.name}</td>
                 <td>${p.displayName || p.name}</td>
                 <td>
                   <span class="prop-value">${p.currentValue ?? p.value ?? "-"}</span>
                   ${p.unit ? html`<span class="prop-unit">${p.unit}</span>` : nothing}
+                  ${stale ? html`
+                    <span class="prop-stale">
+                      <span class="status-dot status-dot--stale"></span>
+                      <span class="prop-stale__label">等待数据</span>
+                      ${staleReason ? html`<span class="prop-stale__reason">${staleReason}</span>` : nothing}
+                    </span>
+                  ` : nothing}
                 </td>
                 <td class="cell-actions">
                   ${host.isNumericType(p.dataType) ? html`
@@ -303,9 +327,24 @@ export function renderDetailProperties(host: DevicesView) {
                     ${p.isReadOnly ? '只读' : '读写'}
                   </span>
                 </td>
-                <td class="prop-type">${p.updatedAt?.slice(0, 16) || "-"}</td>
+                <td class="prop-type">${p.updatedAt?.slice(0, 16) || "-"}${derived ? html`<span class="prop-derived-badge">派生</span>` : nothing}</td>
               </tr>
-            `)}
+              ${derived && p.expression ? html`
+              <tr class="prop-derived-row">
+                <td colspan="7">
+                  <details class="prop-derived-details">
+                    <summary>表达式</summary>
+                    <code class="prop-expression">${p.expression}</code>
+                    ${refs.length > 0 ? html`
+                      <div class="prop-refs">
+                        引用：
+                        ${refs.map((r, i) => html`${i > 0 ? "、" : nothing}<a class="prop-ref-link" href="#/things/${r.thing_id}">${r.thing_id}</a>${r.property_name ? html`<span class="prop-ref-prop">.${r.property_name}</span>` : nothing}`)}
+                      </div>
+                    ` : nothing}
+                  </details>
+                </td>
+              </tr>` : nothing}
+            `;})}
           </tbody>
         </table>
       </div>

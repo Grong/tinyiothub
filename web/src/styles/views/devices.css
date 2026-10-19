@@ -305,6 +305,54 @@
   color: var(--success);
 }
 
+/* 派生属性（园区物派生属性 Task 10）：徽标 + stale 灰点 + 表达式只读展开 */
+.prop-derived-badge {
+  display: inline-block;
+  margin-left: var(--space-1);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+.status-dot--stale {
+  background: var(--muted);
+}
+.prop-stale {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: var(--space-2);
+}
+.prop-stale__label,
+.prop-stale__reason {
+  font-size: 11px;
+  color: var(--muted);
+}
+.prop-derived-row > td {
+  padding-top: 0;
+  border-top: none;
+}
+.prop-derived-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+}
+.prop-expression {
+  display: block;
+  margin: var(--space-1) 0;
+  font-size: 12px;
+  word-break: break-all;
+}
+.prop-refs {
+  font-size: 12px;
+  color: var(--muted);
+}
+.prop-ref-link {
+  color: var(--accent);
+}
+
 /* Tag editor popover */
 .tag-popover {
   position: absolute;
