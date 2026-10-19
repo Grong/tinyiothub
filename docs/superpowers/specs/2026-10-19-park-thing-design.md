@@ -60,6 +60,8 @@ thing_properties（新增列）
 ├── source TEXT NOT NULL DEFAULT 'template'   -- 'template'（模板拷贝）| 'derived'（派生）
 ├── expression TEXT                            -- 表达式原文，NULL = 非派生
 └── refs TEXT                                  -- 解析后引用 JSON：[{thing_id, property_name}, ...]
+
+顺带：CREATE INDEX idx_devices_parent_id ON devices(parent_id)  -- E6：descendant_count 树查询防患
 ```
 
 - 派生属性就是物的一个普通属性实例：`data_type='number'`、`is_read_only=1`（值只允许 DerivedDriver 写）、`UNIQUE(device_id, name)` 免费保证 owner 内唯一
@@ -67,6 +69,7 @@ thing_properties（新增列）
 - 保存时：解析表达式 → 校验 refs（同 workspace 内物/属性存在）→ DAG 环检测 → 落库
 - **refs 以 thing_id 为准**：引用的物事后改名不影响计算；表达式原文中的名字会滞后，编辑器重新打开时按 refs 刷新显示
 - **运行期反查索引（内存）**：`(thing_id, property_name) → [derived_property_id]`；启动时扫 `expression IS NOT NULL` 的行重建，配置增删改时增量维护。派生属性数量级小，不为此规范化 refs 子表（YAGNI）
+- **stale 状态归属（E3/E4）**：`stale`/`stale_reason`/`last_eval_at` 是 Manager 内存态，**不落库**（重启后经全量重算自然重建）；GET properties 响应中的派生状态由 cloud 经 AppState 的 runtime 句柄向 Manager 查询（state.rs device_cache 注入先例）
 
 ### 表达式语言（最小集，自写递归下降解析器 ~200 行，不引第三方库）
 
@@ -142,6 +145,10 @@ data_server 统一消费 → 共享下游管线（变更收集 → 缓存更新 
 | 引用对象删除 | 引用的物/属性被删除 → 同一管理面钩子通知 Manager，受影响派生标 stale（reason：引用缺失）并热更新引用表（CEO 审查 F-B） |
 
 **并发与顺序**：同一 DerivedDriver 的计算在 data_server 消费 sink 时串行化。EventBus 是 broadcast（slow consumer 可能丢消息）——可接受：计算输入永远是最新缓存值而非事件增量，下次任一引用变更即自愈，启动全量重算兜底。
+
+**sink 消费结构（E3）**：ValueSink 的 mpsc 接收端由 data_server **独立 spawn** 消费（`tokio::select!` 于 shutdown 信号），不嵌入 100ms tick 轮询循环——推送流量不拉长轮询周期，轮询慢也不阻塞派生计算。
+
+**ports 约束（E1）**：Manager 的全部 DB 读取（启动扫 `expression IS NOT NULL` 行重建索引、`descendant_count()` 树查询）必须经新增 port trait `DerivedPropertyQueries`（crates/runtime/src/ports.rs，ThingCacheSource 先例）——runtime crate 禁止直接 sqlx（b4ac6db7 runtime→db 隔离是硬架构约束）。
 
 **可观测性**：`derived_eval_total` / `derived_eval_stale` / `derived_eval_error` / `derived_eventbus_lagged`（slow consumer 丢消息计数，CEO 审查 F-E）；结构化日志含 derived_property_id、owner_thing_id、表达式、结果。**Runbook**：派生属性 stale → ①查 stale_reason 指向的引用物是否在线/已删 → ②查 derived_eventbus_lagged 是否增长（lag 丢消息靠下次变更自愈）→ ③重启触发全量重算兜底。
 
@@ -220,6 +227,8 @@ DELETE /api/v1/things/admin/{id}/properties/{pid}    新增——删除属性定
 
 沿用项目铁律：集成测试 sqlx 真实 DB，禁 mock-only（LLM 才可 mock）。
 
+- **轮询回归先行（E2，CRITICAL）**：共享下游管线抽取**之前**，先为 data_server 轮询路径补行为回归测试（变更事件收集、device_cache 更新、命令分发三条），锁定现有行为后再重构——当前 data_server 无 mod tests，裸抽取等于无保护改热路径
+- **EventBus 时序可控点（E5）**：涉 EventBus 的测试必须先确认订阅已建立再发布事件（屏障/ack 机制），禁止 sleep 碰运气
 - **单元**：表达式解析器（合法/非法语法、优先级、括号、除零）、求值规则（无值→stale、非数值→stale）、DAG 环检测、refs 提取
 - **集成**：
   - 全链路：模拟表计上报 → PropertyChange → 派生重算 → 园区属性值更新 + 事件发布（不接受 mock 管线——dead path 前科 R2）
@@ -331,17 +340,72 @@ CRITICAL GAPS: 0（无 RESCUED=N 且静默的行）。WARNING 1 行：驱动 pan
   - Files: apps/cloud/src/domains/agent/host/tools/thing/search_knowledge.rs（核实后定）
   - Verify: 工具测试——返回含 resource_type 与可访问 URL
 
+---
+
+## Eng 审查记录（2026-10-19，/plan-eng-review）
+
+### Scope record
+
+- feature answers: CEO D2 复用（递延 2 条集成测试，其余全保留），无新裁减
+- structure: **Original arrangement**（D1）——expression.rs / derived.rs / derived_manager.rs 三新服务分文件
+- accepted scope: spec 全量（双模重构+解析器+Manager+API+前端+模板物料+A2UI 链路）
+- pending remedies: E1-E6 见下
+
+### 核查出的事实（file:line 收据）
+
+- `crates/runtime/src/ports.rs:18,53` —— runtime 不直连 db，一切经 port trait（b4ac6db7 隔离约束）
+- `crates/runtime/src/data_server.rs:20` —— DriverCache = moka Cache<String, Arc<RwLock<DriverWrapper>>>；`:84-88` 100ms tick 扫全部驱动；`:64` device_cache 类型是 `Arc<dyn ThingCacheSource>`（port）
+- `crates/runtime/src/data_server.rs` 无 `mod tests`；runtime 仅 `tests/ports_injection_test.rs`（3 例）
+- `crates/db/migrations/20260819000001_baseline.sql` —— devices 表无 parent_id 索引（CEO S7 曾误称有，此条更正）
+
+### Findings（置信度校准，引用动机行）
+
+- **E1 [P1] (9/10)** ports.rs:18 —— spec 未提 ports 约束：Manager 启动索引重建（扫 expression 行）与 descendant_count 树查询必须新增 port trait（如 `DerivedPropertyQueries`），runtime 内禁止直接 sqlx
+- **E2 [P1] (9/10)** data_server.rs 无 mod tests —— 共享下游管线抽取是对**无直接单测的热路径**重构（REGRESSION RULE）：抽取前必须先锁定轮询行为回归（变更收集/缓存更新/命令分发）
+- **E3 [P2] (8/10)** data_server.rs:84-88 —— sink 消费结构 spec 未指明：ValueSink mpsc 的消费应独立 spawn（select! 于 shutdown），不嵌进 100ms tick 轮询循环，避免推送流量拉长轮询周期
+- **E4 [P2] (8/10)** spec 未写清 stale 状态归属：stale/stale_reason/last_eval_at 为 Manager 内存态（重启经全量重算重建），cloud GET properties 经 AppState 的 runtime 句柄查询（state.rs device_cache 先例）；不落库
+- **E5 [P2] (7/10)** EventBus 时序测试需可控暂停点（订阅确认后再发布），防 flaky
+- **E6 [P3] (9/10)** baseline.sql 索引清单 —— devices 无 parent_id 索引：顺手加 `idx_devices_parent_id`（CREATE INDEX 零成本，descendant_count 树大时防患）
+
+### 测试覆盖图（新增路径）
+
+```
+CODE PATHS                                              USER FLOWS
+[+] runtime/expression.rs (解析+求值)                   [+] 园区详情页属性 Tab
+  ├── [★★★ 计划] 语法/优先级/括号/ref/func 穷举单测      ├── [★★ 计划] 派生行徽标+stale 灰点渲染(vitest)
+  ├── [★★★ 计划] 无值/非数值/除零 → stale              └── [GAP→手测] 实时刷新(WS)——验收旅程 step4
+  └── [★★★ 计划] 上限 F-C(1000字符/50refs/类型)        [+] 派生编辑器 drawer
+[+] runtime/driver/derived.rs + derived_manager.rs         ├── [★★ 计划] 保存 400 行内红字定位(vitest)
+  ├── [★★★ 计划] 事件命中→重算→sink(集成,真实DB)         └── [GAP→手测] 物选择器树+搜索
+  ├── [★★★ 计划] 启动全量重算/索引损坏 fail-closed(F-F)  [+] 验收旅程 6 步 [→E2E 手测]
+  ├── [★★★ 计划] 引用删除→stale(F-B)/子树变更→重算       [→E2E] 模拟表计上报→园区值更新(集成,禁mock管线)
+  ├── [★★  计划] panic 监督重启(T1)                     [→EVAL] 无 LLM 变更,不需要 eval
+  └── [★★  计划] lag 计数(F-E)
+[+] data_server 共享管线抽取
+  └── [GAP→CRITICAL] 轮询行为回归(E2：抽取前锁定)
+[+] admin properties POST/PUT/DELETE
+  ├── [★★★ 计划] 校验 400(语法/环/上限)/唯一约束 409
+  ├── [★★  计划] workspace 隔离 404/拒绝跨域引用
+  └── [★★  计划] PUT value 拒绝派生(T3)
+
+COVERAGE: 计划覆盖 15/17 路径 | GAPS: 2 手测项(WS刷新/选择器) + 1 CRITICAL(轮询回归 E2)
+```
+
+### Dispositions
+
+E1-E6 **accepted**（D2 批量裁定全采纳，2026-10-19）：E1 ports 约束已落 §三；E2 轮询回归先行已落 §七（CRITICAL，重构前必经）；E3 sink 独立消费已落 §三；E4 stale 内存态归属已落 §二；E5 时序可控点已落 §七；E6 parent_id 索引已落 §二迁移。
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | CLEAR | mode: SCOPE_REDUCTION, 0 critical gaps |
-| Outside Review | codex (auto) | Independent 2nd opinion | 1 | unavailable | codex 模型路由未配置 + native fallback 超时，no completed external review |
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 0 | — | 未运行 |
+| Outside Review | codex (auto) | Independent 2nd opinion | 2 | unavailable | codex 模型路由未配置 + native fallback 两轮超时，no completed external review |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | ISSUES OPEN | 6 issues, 0 critical gaps（E1-E6 全采纳落 spec） |
 | Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | 未运行（REDUCTION 模式不推荐） |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | 未运行 |
 
-- **OUTSIDE COVERAGE:** codex, plan-review, unavailable — custom endpoint 未配 frontier 模型（CODEX_MODEL invalid）；native fallback 5 分钟无完整报告；无外部覆盖
-- **VERDICT:** CEO CLEARED — eng review required
+- **OUTSIDE COVERAGE:** codex, plan-review, unavailable（两轮）——custom endpoint 未配 frontier 模型（CODEX_MODEL invalid）；native fallback 各 5 分钟无完整报告；无外部覆盖
+- **VERDICT:** CEO CLEARED + ENG ISSUES OPEN——6 项 eng 发现已全部裁定采纳并落入 spec 正文，无未决项；可进入 writing-plans 实现规划
 
 NO UNRESOLVED DECISIONS
