@@ -5,6 +5,7 @@ import { thingCache } from "../../stores/thing-cache.js";
 import { icons } from "../icons.js";
 import type { ThingProperty, ThingEvent, Tag } from "../../types/index.js";
 import type { DevicesView } from "./things.js";
+import { openDerivedEditorCreate, openDerivedEditorEdit, renderDerivedEditor } from "./derived-editor.js";
 
 export function renderHistoryDialog(host: DevicesView) {
     if (!host.showHistoryDialog) return nothing;
@@ -234,6 +235,7 @@ export function renderDeviceDetail(host: DevicesView) {
       ${host.showModal ? host.renderModal() : nothing}
       ${host.showHistoryDialog ? host.renderHistoryDialog() : nothing}
       ${host.showResourceModal ? host.renderResourceModal() : nothing}
+      ${renderDerivedEditor(host)}
     `;
   }
 
@@ -272,11 +274,18 @@ export function renderDetailProperties(host: DevicesView) {
       properties = profile.properties;
     }
 
+    const derivedToolbar = html`
+      <div class="prop-toolbar">
+        <button class="btn btn--primary btn--sm" @click=${() => openDerivedEditorCreate(host)}>+ 新增派生属性</button>
+      </div>
+    `;
+
     if (properties.length === 0) {
-      return html`<div class="card empty-center">暂无属性数据</div>`;
+      return html`${derivedToolbar}<div class="card empty-center">暂无属性数据</div>`;
     }
 
     return html`
+      ${derivedToolbar}
       <div class="card prop-table-wrap">
         <table class="data-table--compact">
           <thead>
@@ -319,6 +328,14 @@ export function renderDetailProperties(host: DevicesView) {
                       aria-label="历史曲线"
                       @click=${() => host.openPropertyHistory(p.name, p.unit || "")}
                     >${icons.trendingUp}</button>
+                  ` : nothing}
+                  ${derived ? html`
+                    <button
+                      class="btn btn--icon btn--xs"
+                      title="编辑派生"
+                      aria-label="编辑派生属性"
+                      @click=${() => openDerivedEditorEdit(host, p)}
+                    >${icons.edit}</button>
                   ` : nothing}
                 </td>
                 <td class="prop-type">${p.dataType}</td>

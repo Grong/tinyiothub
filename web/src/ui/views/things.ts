@@ -395,6 +395,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   private historyDeviceId = "";
 
+  // 派生属性编辑器 drawer（园区物派生属性 Task 11；行为见 derived-editor.ts）
+
+  @state() derivedEditor: import("./derived-editor.js").DerivedEditorState | null = null;
+
   private _boundHandleDeviceUpdated: EventListener = () => {};
 
 

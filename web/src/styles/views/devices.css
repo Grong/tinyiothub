@@ -353,6 +353,171 @@
   color: var(--accent);
 }
 
+/* 派生属性编辑器 drawer（园区物派生属性 Task 11） */
+.prop-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-2);
+}
+.derived-drawer-overlay {
+  justify-content: flex-end;
+  align-items: stretch;
+}
+.derived-drawer {
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  width: 420px;
+  max-width: 92vw;
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.derived-drawer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+.derived-drawer__body {
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1;
+}
+.derived-drawer__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: 13px;
+}
+.derived-drawer__field > span {
+  color: var(--muted);
+}
+.derived-drawer__field input,
+.derived-drawer__expression {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+}
+.derived-drawer__field input:focus-visible,
+.derived-drawer__expression:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.derived-drawer__expression {
+  font-family: ui-monospace, monospace;
+  resize: vertical;
+}
+.derived-drawer__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+.derived-drawer__op {
+  min-width: 32px;
+}
+.derived-editor__error {
+  color: var(--danger);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.derived-drawer__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+}
+.derived-drawer__picker {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* 物选择器（renderThingPicker，可复用） */
+.thing-picker__search {
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 10px;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+}
+.thing-picker__search:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.thing-picker__body {
+  padding: var(--space-1) 0;
+}
+.thing-picker__thing,
+.thing-picker__prop {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.thing-picker__thing:hover,
+.thing-picker__prop:hover {
+  background: var(--bg-hover);
+}
+.thing-picker__thing:focus-visible,
+.thing-picker__prop:focus-visible,
+.thing-picker__clear:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.thing-picker__thing--active {
+  color: var(--accent);
+  font-weight: 600;
+}
+.thing-picker__prop {
+  padding-left: 26px;
+}
+.thing-picker__hint,
+.thing-picker__empty {
+  padding: var(--space-3) var(--space-2);
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+.thing-picker__error {
+  margin: var(--space-2);
+  padding: var(--space-2);
+  font-size: 12px;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.thing-picker__clear {
+  border: none;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12px;
+  text-decoration: underline;
+}
+
 /* Tag editor popover */
 .tag-popover {
   position: absolute;
