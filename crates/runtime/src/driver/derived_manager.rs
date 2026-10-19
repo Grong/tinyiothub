@@ -1,5 +1,11 @@
 //! 派生驱动管理器（spec §三）：反向索引、生命周期、stale 内存态、三类触发源入口。
 //!
+//! **硬性规则（SDD 终审 2026-10-20，已两次漏接后立下）**：任何新的物管理面
+//! 变更点（REST/MCP/场景包实例化/批量导入/未来的管理面）在建物、删物、换父、
+//! 增删派生属性时，必须接对应钩子：`notify_config_changed`（派生配置增删改）、
+//! `notify_tree_changed`（建子物/删子物/换父）、`notify_thing_deleted`（删物）。
+//! 漏接 = 派生静默失效（索引不热更新、不重算、不标 stale），无报错可查。
+//!
 //! - `start`：扫派生定义重建索引（F-F：表达式/refs JSON 损坏行 fail-closed
 //!   标 stale 不阻断），为每个 owner 物注册 `DerivedDriver`（mode=Push）进
 //!   与 DataServer 共享的 driver_cache——轮询循环按 mode 跳过，读数经

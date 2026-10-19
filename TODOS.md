@@ -698,3 +698,37 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 - **Why:** 2026-10-19 CEO 审查 SCOPE REDUCTION 裁定递延——DAG 环检测在配置侧已兜底防死循环，链式是纯增量场景；能力本身保留（事件链天然成立）。
 - **Context:** docs/superpowers/specs/2026-10-19-park-thing-design.md §1 链式派生；补测试时构造三级树逐级断言。
 - **Effort:** S | **Depends on:** 派生属性引擎落地
+
+## 园区物（派生属性）终审分诊 — Deferred (from SDD final review 2026-10-20)
+
+### P3 — core/Cargo.toml tokio 改 workspace 继承
+- **What:** core 的 tokio 依赖直写 `version = "1.22.0"`（features=["sync"]，因 ValueSink/PropertyChangeSource 签名需要）；改 workspace 继承并保持 sync-only。
+- **Why:** 直写版本未来会与 workspace 漂移（分诊 #3）。workspace 版 feature 集含 I/O 且 default-features 不可覆盖，需单独处理。
+- **Effort:** S | **Depends on:** —
+
+### P3 — DerivedDriver 订阅生命周期收口（CancellationToken）
+- **What:** ①被删 owner 的订阅任务在 EventBus 不 Closed 时永不退出（泄漏）；②末条派生定义删除时驱动不摘除（空 defs 驻留）；③ensure_driver 防御性检查（Poll 跳过）在 start_push 之后，产生僵尸订阅——防御检查应前移到 spawn 订阅之前。
+- **Why:** 终审分诊 #5/#6 + 修复复审残留观察；owner 删除低频故延期，但删除高频场景是 O(已删物数×事件数) 常驻浪费。
+- **Context:** crates/runtime/src/driver/derived.rs start_push；derived_manager.rs ensure_driver/notify_thing_deleted。
+- **Effort:** M | **Depends on:** —
+
+### P3 — 模板改动必须 JSON 源 + system.sql 双写（流程约束）
+- **What:** 内置模板运行时来源是 `crates/db/src/seed/system.sql` 的 INSERT（templates/builtin/ 仅测试引用，无运行时加载器扫描）。后续任何模板改动必须双写两处；注意 `INSERT OR IGNORE` 使**存量库拿不到新骨架**（仅新库生效）。
+- **Why:** Task 9 评审 Important 已证明漂移不拦（无平价测试）；分诊 #9。
+- **Effort:** —（流程） | **Depends on:** —
+
+### P3 — 派生编辑器 spec F-D 状态表增强×4
+- **What:** 物选择器加载骨架、空态"+引导"动作、"部分引用失效"保存前黄条、空态语义细化（"还没有带数值属性的物" vs 无物）。
+- **Why:** spec §四交互状态表承诺（Task 11 评审 Minor，分诊 #11）；主链路不受影响。
+- **Effort:** M | **Depends on:** —
+
+### P2 — serve_resource_file 大文件流式化
+- **What:** `GET /api/v1/resources/{id}/file` 目前 tokio::fs::read 整文件读内存；GLB 三维模型可达数十~数百 MB。改 `tokio::fs::File` + `ReaderStream`（或加 size guard）。
+- **Why:** 并发大文件请求内存线性放大（Task 12 评审 Minor，分诊 #12）；GLB 上线前必修。
+- **Context:** apps/cloud/src/domains/thing/handler/resources.rs serve_resource_file。
+- **Effort:** S | **Depends on:** —
+
+### P3 — 派生值变更的 events 表历史可见性（策略项）
+- **What:** 派生值变更事件（Info 级 PropertyChange）被 persistence_handler 防噪过滤不落 events 表——实时走 SSE/缓存不受影响，告警走 EventBus 订阅不受影响，但历史查询不可见。是否给派生变更开落库口子（如 metadata 标记派生）另立策略裁定。
+- **Why:** Task 13 评审取舍#2 落档；生产防噪策略是有意的，不视为缺陷。
+- **Effort:** S | **Depends on:** 产品裁定
