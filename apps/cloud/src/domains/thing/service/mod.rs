@@ -525,6 +525,19 @@ impl ThingService {
         if rows.is_empty() {
             return None;
         }
-        Some(rows.into_iter().filter_map(|r| serde_json::to_value(r).ok()).collect())
+        Some(
+            rows.into_iter()
+                .filter_map(|r| {
+                    let mut v = serde_json::to_value(r).ok()?;
+                    // T6：补可访问 url（与 search_knowledge 工具一致），Agent 据此加载资源。
+                    let id = v.get("id")?.as_str()?.to_string();
+                    v.as_object_mut()?.insert(
+                        "url".to_string(),
+                        serde_json::json!(super::handler::resources::resource_file_url(&id)),
+                    );
+                    Some(v)
+                })
+                .collect(),
+        )
     }
 }

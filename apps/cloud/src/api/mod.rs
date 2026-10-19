@@ -102,6 +102,10 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
         .nest("/agents", crate::domains::agent::host::handler::create_router())
         .nest("/driver-health", crate::domains::driver::driver_health_router())
         .nest("/things", crate::domains::thing::router())
+        .route(
+            "/resources/{id}/file",
+            get(crate::domains::thing::handler::resources::serve_resource_file),
+        )
         .nest("/things/admin", crate::domains::admin::thing::create_router())
         .route(
             "/tools/catalog",
