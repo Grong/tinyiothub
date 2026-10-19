@@ -37,6 +37,7 @@ mod mcp_handler_tests;
 mod monitoring_handler_tests;
 mod notification_handler_tests;
 mod open_handler_tests;
+mod park_derived_e2e_test;
 mod permission_handler_tests;
 mod resource_file_tests;
 mod role_handler_tests;
