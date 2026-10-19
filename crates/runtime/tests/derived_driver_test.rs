@@ -10,11 +10,13 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tinyiothub_core::driver::{DriverReading, PropertyChangeSource};
+use tinyiothub_core::driver::{DriverMode, DriverReading, PropertyChangeSource, ResultValue, ThingDriver};
 use tinyiothub_core::models::event::{Event, EventLevel, EventSource, EventType, RichContent, ThingEventType};
 use tinyiothub_core::models::thing::Thing;
+use tinyiothub_core::models::thing_command::ThingCommand;
 use tinyiothub_core::models::thing_property::ThingProperty;
 use tinyiothub_runtime::data_server::{DataServer, DriverCache};
+use tinyiothub_runtime::driver::DriverWrapper;
 use tinyiothub_runtime::driver::derived::DERIVED_EVENTBUS_LAGGED;
 use tinyiothub_runtime::driver::derived_manager::DerivedDriverManager;
 use tinyiothub_runtime::event_bus::EventBus;
@@ -258,7 +260,10 @@ fn cached_prop(cache: &FakeCache, thing_id: &str, prop_name: &str) -> Option<Str
 async fn recompute_on_referenced_property_change() {
     let event_bus = Arc::new(EventBus::new());
     let rig = assemble(
-        vec![meter("meter-1", "电表1", Some("100")), meter("meter-2", "电表2", Some("200"))],
+        vec![
+            meter("meter-1", "电表1", Some("100")),
+            meter("meter-2", "电表2", Some("200")),
+        ],
         vec![total_power_prop()],
         event_bus.clone(),
         event_bus.clone(),
@@ -282,7 +287,10 @@ async fn recompute_on_referenced_property_change() {
     let mut m1 = rig.device_cache.get("meter-1").expect("meter-1");
     m1.properties.as_mut().unwrap()[0].set_current_value("150".to_string());
     rig.device_cache.update(m1);
-    event_bus.publish(prop_change_event("meter-1", "prop-meter-1")).await.unwrap();
+    event_bus
+        .publish(prop_change_event("meter-1", "prop-meter-1"))
+        .await
+        .unwrap();
 
     // 重算：150+200=350，且园区物自己也产生 PropertyChange 事件。
     wait_until("重算 total_power=350", || {
@@ -328,15 +336,25 @@ async fn missing_ref_value_marks_stale_no_write() {
     .await;
     let status = rig.manager.derived_status("prop-total").expect("status");
     let reason = status.stale_reason.unwrap_or_default();
-    assert!(reason.contains("等待数据"), "stale_reason 须含\"等待数据\", got: {reason}");
-    assert_eq!(cached_prop(&rig.device_cache, "campus-1", "total_power"), None, "缺引用值不写入");
+    assert!(
+        reason.contains("等待数据"),
+        "stale_reason 须含\"等待数据\", got: {reason}"
+    );
+    assert_eq!(
+        cached_prop(&rig.device_cache, "campus-1", "total_power"),
+        None,
+        "缺引用值不写入"
+    );
 }
 
 #[tokio::test]
 async fn startup_full_recompute_produces_first_value() {
     let event_bus = Arc::new(EventBus::new());
     let rig = assemble(
-        vec![meter("meter-1", "电表1", Some("100")), meter("meter-2", "电表2", Some("200"))],
+        vec![
+            meter("meter-1", "电表1", Some("100")),
+            meter("meter-2", "电表2", Some("200")),
+        ],
         vec![total_power_prop()],
         event_bus.clone(),
         event_bus,
@@ -357,7 +375,10 @@ async fn lagged_triggers_full_recompute_and_metric() {
     let small_bus = SmallBus::new();
     let dummy_bus = Arc::new(EventBus::new());
     let rig = assemble(
-        vec![meter("meter-1", "电表1", Some("100")), meter("meter-2", "电表2", Some("200"))],
+        vec![
+            meter("meter-1", "电表1", Some("100")),
+            meter("meter-2", "电表2", Some("200")),
+        ],
         vec![total_power_prop()],
         Arc::new(small_bus.clone()),
         dummy_bus,
@@ -390,7 +411,10 @@ async fn lagged_triggers_full_recompute_and_metric() {
 async fn thing_deleted_marks_stale_and_hot_updates_index() {
     let event_bus = Arc::new(EventBus::new());
     let rig = assemble(
-        vec![meter("meter-1", "电表1", Some("100")), meter("meter-2", "电表2", Some("200"))],
+        vec![
+            meter("meter-1", "电表1", Some("100")),
+            meter("meter-2", "电表2", Some("200")),
+        ],
         vec![total_power_prop()],
         event_bus.clone(),
         event_bus.clone(),
@@ -408,11 +432,17 @@ async fn thing_deleted_marks_stale_and_hot_updates_index() {
     let status = rig.manager.derived_status("prop-total").expect("status");
     assert!(status.stale, "删除引用物后必须 stale");
     let reason = status.stale_reason.clone().unwrap_or_default();
-    assert!(reason.contains("引用缺失"), "stale_reason 须含\"引用缺失\", got: {reason}");
+    assert!(
+        reason.contains("引用缺失"),
+        "stale_reason 须含\"引用缺失\", got: {reason}"
+    );
 
     // 索引/refs 热更新：被删物的迟到事件不再触发重算（否则 reason 会被
     // 重算覆写为"等待数据"——下面的断言即热更新证明，负向等待有界）。
-    event_bus.publish(prop_change_event("meter-1", "prop-meter-1")).await.unwrap();
+    event_bus
+        .publish(prop_change_event("meter-1", "prop-meter-1"))
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(250)).await;
     let reason_after = rig
         .manager
@@ -426,7 +456,10 @@ async fn thing_deleted_marks_stale_and_hot_updates_index() {
 
     // 正向对照：存活引用物的事件仍触发重算（驱动存活），此时 meter-1 无值
     // → "等待数据"。
-    event_bus.publish(prop_change_event("meter-2", "prop-meter-2")).await.unwrap();
+    event_bus
+        .publish(prop_change_event("meter-2", "prop-meter-2"))
+        .await
+        .unwrap();
     wait_until("meter-2 事件触发重算", || {
         rig.manager
             .derived_status("prop-total")
@@ -473,12 +506,14 @@ async fn panic_in_one_recompute_does_not_kill_subscriber_loop() {
             self.inner.all()
         }
         fn get(&self, id: &str) -> Option<Thing> {
+            // I-2 后求值按 thing_id 走 get（owner 自身 get("campus-1") 发生在
+            // ensure_driver 注册路径，不注入——只杀重算任务的引用解析）
+            if id != "campus-1" && self.armed.swap(false, Ordering::SeqCst) {
+                panic!("T1 注入：重算路径 panic");
+            }
             self.inner.get(id)
         }
         fn get_by_name(&self, name: &str) -> Option<Thing> {
-            if self.armed.swap(false, Ordering::SeqCst) {
-                panic!("T1 注入：重算路径 panic");
-            }
             self.inner.get_by_name(name)
         }
         fn insert(&self, device: Thing) {
@@ -523,15 +558,22 @@ async fn panic_in_one_recompute_does_not_kill_subscriber_loop() {
     });
 
     manager.start().await.expect("manager start");
-    // 首值补偿任务在第一次 get_by_name 时 panic——该任务死亡，sink 无读数。
-    // 给补偿任务一个执行的窗口（正向探测：armed 已被消耗）。
+    // 首值补偿任务在第一次引用解析（I-2 后按 id get）时 panic——该任务死亡，
+    // sink 无读数。给补偿任务一个执行的窗口（正向探测：armed 已被消耗）。
     wait_until("panic 已注入", || !panic_cache.armed.load(Ordering::SeqCst)).await;
     // 注意：swap 先于 panic 执行，armed=false 不代表任务已死；但后续断言
     // 不依赖死亡时刻，只依赖订阅循环仍工作。
-    assert_eq!(cached_prop(&panic_cache.inner, "campus-1", "total_power"), None, "panic 任务不产生读数");
+    assert_eq!(
+        cached_prop(&panic_cache.inner, "campus-1", "total_power"),
+        None,
+        "panic 任务不产生读数"
+    );
 
     // 订阅循环（独立任务）仍存活：发布事件 → 重算成功 → 值出现（自愈）。
-    event_bus.publish(prop_change_event("meter-1", "prop-meter-1")).await.unwrap();
+    event_bus
+        .publish(prop_change_event("meter-1", "prop-meter-1"))
+        .await
+        .unwrap();
     wait_until("订阅循环自愈 total_power=300", || {
         cached_prop(&panic_cache.inner, "campus-1", "total_power").as_deref() == Some("300")
     })
@@ -539,4 +581,63 @@ async fn panic_in_one_recompute_does_not_kill_subscriber_loop() {
 
     drop(consumer);
     let _ = &manager;
+}
+
+// ── 终审 I-1：ensure_driver 不得顶掉同 key 物理 Poll wrapper ─────────────
+// API 侧已拒绝物理驱动物建派生（properties.rs reject_derived_on_physical_thing）；
+// 本测试钉死 Manager 防御性兜底：启动扫库/存量数据路径撞上同 key mode=Poll
+// wrapper 时 log error 跳过，绝不覆盖（覆盖 = 该物轮询与命令静默死亡）。
+
+struct PollStubDriver {
+    thing: Thing,
+}
+
+impl ThingDriver for PollStubDriver {
+    fn thing(&self) -> &Thing {
+        &self.thing
+    }
+    fn thing_mut(&mut self) -> &mut Thing {
+        &mut self.thing
+    }
+    fn mode(&self) -> DriverMode {
+        DriverMode::Poll
+    }
+    fn read_data(&mut self) -> Result<Vec<ResultValue>, tinyiothub_core::error::Error> {
+        Ok(vec![])
+    }
+    fn execute_command(&mut self, _cmd: &ThingCommand) -> Result<bool, tinyiothub_core::error::Error> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn ensure_driver_does_not_override_physical_poll_wrapper() {
+    let device_cache = Arc::new(FakeCache::new(vec![meter("meter-1", "电表1", Some("100")), campus()]));
+    let cache_dyn: Arc<dyn ThingCacheSource> = device_cache.clone();
+    let driver_cache: DriverCache = moka::sync::Cache::new(100);
+    // 预登记物理 wrapper（mode=Poll）——同 key 的 DerivedDriver 注册必须跳过
+    driver_cache.insert(
+        "campus-1".to_string(),
+        Arc::new(parking_lot::RwLock::new(DriverWrapper::new(Box::new(PollStubDriver {
+            thing: campus(),
+        })))),
+    );
+    let (sink_tx, _sink_rx) = tokio::sync::mpsc::channel::<DriverReading>(64);
+    let manager = DerivedDriverManager::new(
+        Arc::new(StubQueries {
+            props: vec![total_power_prop()],
+            descendants: Arc::new(AtomicI64::new(0)),
+        }),
+        cache_dyn,
+        driver_cache.clone(),
+        sink_tx,
+        Arc::new(EventBus::new()),
+    );
+    manager.start().await.expect("manager start");
+
+    let wrapper = driver_cache.get("campus-1").expect("物理 wrapper 应仍在 driver_cache");
+    assert!(
+        wrapper.read().inner_driver().mode() == DriverMode::Poll,
+        "物理 Poll wrapper 不得被派生驱动顶掉（顶掉 = 轮询/命令静默死亡）"
+    );
 }

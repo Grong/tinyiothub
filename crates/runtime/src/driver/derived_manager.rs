@@ -16,13 +16,13 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use tinyiothub_core::driver::{DriverReading, PropertyChangeSource, ThingDriver, ValueSink};
+use tinyiothub_core::driver::{DriverMode, DriverReading, PropertyChangeSource, ThingDriver, ValueSink};
 use tinyiothub_core::models::thing_property::ThingProperty;
 
 use crate::data_server::DriverCache;
 use crate::driver::derived::{
     DerivedDef, DerivedDefsHandle, DerivedDriver, DerivedStatus, DerivedStatusMap, DescendantCounter,
-    ast_has_descendant_count, now_string, recompute_defs,
+    ast_has_descendant_count, now_string, recompute_defs, rewrite_refs_to_ids,
 };
 use crate::driver::wrapper::DriverWrapper;
 use crate::expression;
@@ -134,6 +134,9 @@ impl DerivedDriverManager {
             })
             .collect::<Vec<_>>();
         let has_dc = ast_has_descendant_count(&ast);
+        // 终审 I-2：AST 物名改写为 thing_id（spec §二 refs 以 id 为准），
+        // 求值不再依赖物名——引用物改名后重算仍出值。
+        let ast = rewrite_refs_to_ids(&ast, &refs);
         Ok(DerivedDef {
             property_id: p.id.clone(),
             property_name: p.name.clone(),
@@ -186,13 +189,30 @@ impl DerivedDriverManager {
         driver.start_push(self.sink.clone(), self.events.clone());
         // 与 DataServer 同一 driver_cache（parking_lot wrapper，迭代风格一致）：
         // mode()=Push 使轮询跳过；sink 消费侧按 thing_id 找到本 wrapper 走共享管线。
+        //
+        // 终审 I-1 防御：同 key 已有 mode=Poll 物理 wrapper 时绝不顶掉（顶掉 =
+        // 该物轮询与命令静默死亡）。API 侧已拒绝物理驱动物建派生，此处是启动
+        // 扫库/存量数据路径的兜底——log error 后跳过本 owner，不影响其余注册。
+        if let Some(existing) = self.driver_cache.get(owner_id)
+            && existing.read().inner_driver().mode() == DriverMode::Poll
+        {
+            tracing::error!(
+                owner = %owner_id,
+                "derived driver 注册跳过：driver_cache 已有物理驱动 wrapper（mode=Poll），拒绝覆盖"
+            );
+            return Ok(());
+        }
         self.driver_cache.insert(
             owner_id.to_string(),
             Arc::new(parking_lot::RwLock::new(DriverWrapper::new(Box::new(driver)))),
         );
-        self.owners
-            .write()
-            .insert(owner_id.to_string(), OwnerEntry { defs: defs_handle, counter });
+        self.owners.write().insert(
+            owner_id.to_string(),
+            OwnerEntry {
+                defs: defs_handle,
+                counter,
+            },
+        );
         Ok(())
     }
 
@@ -259,7 +279,13 @@ impl DerivedDriverManager {
             let snapshot = defs_handle.read().clone();
             let values = recompute_defs(&snapshot, &self.cache, &counter, &self.status).await;
             if !values.is_empty() {
-                let _ = self.sink.send(DriverReading { thing_id: owner_id, values }).await;
+                let _ = self
+                    .sink
+                    .send(DriverReading {
+                        thing_id: owner_id,
+                        values,
+                    })
+                    .await;
             }
         }
     }

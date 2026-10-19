@@ -89,15 +89,57 @@ impl DerivedDriver {
     }
 }
 
-/// 从缓存解析引用值：表达式文本里的 `{物名.属性名}` 以物名解析（refs JSON 的
-/// thing_id 只用于事件命中表），兼容纳 id 为名的场景。
+/// 从缓存解析引用值：构建 DerivedDef 时 AST 各 PropertyRef.thing_name 已被
+/// 改写为 thing_id（spec §二：refs 以 id 为准——物改名不影响计算），按 id
+/// 直取；名解析仅作 refs JSON 损坏行的兼容兜底。
 fn resolve_ref(cache: &Arc<dyn ThingCacheSource>, r: &PropertyRef) -> Option<String> {
-    let thing = cache.get_by_name(&r.thing_name).or_else(|| cache.get(&r.thing_name))?;
+    let thing = cache.get(&r.thing_name).or_else(|| cache.get_by_name(&r.thing_name))?;
     thing
         .properties?
         .into_iter()
         .find(|p| p.name == r.property_name)?
         .current_value
+}
+
+/// 终审 I-2：把 AST 中各 `PropertyRef.thing_name`（表达式原文物名）改写为
+/// thing_id，求值全程走 id——物改名后重算仍出值。
+///
+/// 对齐依据：refs JSON 由保存侧校验（derived_validation）按
+/// `expression::extract_refs` 的输出顺序（去重后首现序）落库，此处对同一
+/// 表达式重新 parse 得到同序列表，按序 zip 对齐（同一属性名挂在不同物上时
+/// 靠 (物名, 属性名) 键区分，不会错配）。refs JSON 比 AST 引用短（损坏行）
+/// 时未对齐项保留原物名，退化到名解析兜底。
+pub(crate) fn rewrite_refs_to_ids(ast: &Ast, refs: &[(String, String)]) -> Ast {
+    let ast_refs = expression::extract_refs(ast);
+    let mut id_of: HashMap<(String, String), String> = HashMap::new();
+    for (r, (tid, _)) in ast_refs.iter().zip(refs.iter()) {
+        id_of.insert((r.thing_name.clone(), r.property_name.clone()), tid.clone());
+    }
+    if id_of.is_empty() {
+        return ast.clone();
+    }
+    rewrite_ast(ast, &id_of)
+}
+
+fn rewrite_ast(ast: &Ast, id_of: &HashMap<(String, String), String>) -> Ast {
+    match ast {
+        Ast::Num(n) => Ast::Num(*n),
+        Ast::Ref(r) => {
+            let key = (r.thing_name.clone(), r.property_name.clone());
+            match id_of.get(&key) {
+                Some(id) => Ast::Ref(PropertyRef {
+                    thing_name: id.clone(),
+                    property_name: r.property_name.clone(),
+                }),
+                None => Ast::Ref(r.clone()),
+            }
+        }
+        Ast::DescendantCount(t) => Ast::DescendantCount(t.clone()),
+        Ast::Add(a, b) => Ast::Add(Box::new(rewrite_ast(a, id_of)), Box::new(rewrite_ast(b, id_of))),
+        Ast::Sub(a, b) => Ast::Sub(Box::new(rewrite_ast(a, id_of)), Box::new(rewrite_ast(b, id_of))),
+        Ast::Mul(a, b) => Ast::Mul(Box::new(rewrite_ast(a, id_of)), Box::new(rewrite_ast(b, id_of))),
+        Ast::Div(a, b) => Ast::Div(Box::new(rewrite_ast(a, id_of)), Box::new(rewrite_ast(b, id_of))),
+    }
 }
 
 /// EvalError → stale 原因文案（"等待数据" 前缀被 spec/测试契约引用，勿改）。
@@ -145,16 +187,14 @@ async fn eval_def(
         let v = counter.count(arg.as_deref()).await?;
         counts.insert(arg, v);
     }
-    expression::eval(
-        &def.ast,
-        &|r: &PropertyRef| resolve_ref(cache, r),
-        &|t: Option<&str>| {
-            counts
-                .get(&t.map(str::to_string))
-                .copied()
-                .ok_or_else(|| "descendant_count 未预取".to_string())
-        },
-    )
+    expression::eval(&def.ast, &|r: &PropertyRef| resolve_ref(cache, r), &|t: Option<
+        &str,
+    >| {
+        counts
+            .get(&t.map(str::to_string))
+            .copied()
+            .ok_or_else(|| "descendant_count 未预取".to_string())
+    })
     .map_err(|e| stale_reason(&e))
 }
 
@@ -202,7 +242,11 @@ pub(crate) async fn recompute_defs(
 }
 
 fn trim_float(n: f64) -> String {
-    if n.fract() == 0.0 { format!("{}", n as i64) } else { format!("{n}") }
+    if n.fract() == 0.0 {
+        format!("{}", n as i64)
+    } else {
+        format!("{n}")
+    }
 }
 
 impl ThingDriver for DerivedDriver {
