@@ -15,6 +15,15 @@ pub struct ThingProperty {
     pub max_value: Option<f64>,
     pub default_value: Option<String>,
     pub is_read_only: i32,
+    /// 属性来源：'template'（默认）| 'derived'（派生，spec §二）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// 派生表达式原文（仅 derived）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression: Option<String>,
+    /// 解析后引用 JSON：[{"thing_id":"...","property_name":"..."}]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
     /// 运行时属性（不存储在数据库中）
@@ -50,6 +59,9 @@ pub struct CreateThingPropertyRequest {
     pub max_value: Option<f64>,
     pub default_value: Option<String>,
     pub is_read_only: Option<i32>,
+    /// 派生表达式原文（仅派生属性；serde default）
+    #[serde(default)]
+    pub expression: Option<String>,
 }
 
 /// 更新设备属性请求
@@ -194,6 +206,9 @@ impl Default for ThingProperty {
             max_value: None,
             default_value: None,
             is_read_only: 0,
+            source: None,
+            expression: None,
+            refs: None,
             created_at: Some(now.clone()),
             updated_at: Some(now),
             current_value: None,

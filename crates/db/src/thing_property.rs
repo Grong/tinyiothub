@@ -18,6 +18,9 @@ struct ThingPropertyRow {
     max_value: Option<f64>,
     default_value: Option<String>,
     is_read_only: i32,
+    source: String,
+    expression: Option<String>,
+    refs: Option<String>,
     created_at: Option<String>,
     updated_at: Option<String>,
 }
@@ -36,6 +39,9 @@ impl From<ThingPropertyRow> for ThingProperty {
             max_value: row.max_value,
             default_value: row.default_value,
             is_read_only: row.is_read_only,
+            source: Some(row.source),
+            expression: row.expression,
+            refs: row.refs,
             created_at: row.created_at,
             updated_at: row.updated_at,
             current_value: None,
@@ -52,7 +58,8 @@ pub(crate) async fn find_thing_property_by_id(
     let row = sqlx::query_as::<_, ThingPropertyRow>(
         r#"
         SELECT id, thing_id, name, display_name, description, data_type, unit,
-               min_value, max_value, default_value, is_read_only, created_at, updated_at
+               min_value, max_value, default_value, is_read_only, source, expression, refs,
+               created_at, updated_at
         FROM thing_properties WHERE id = ?
         "#,
     )
@@ -76,7 +83,8 @@ pub(crate) async fn find_thing_properties_by_thing_id(
     let rows = sqlx::query_as::<_, ThingPropertyRow>(
         r#"
         SELECT id, thing_id, name, display_name, description, data_type, unit,
-               min_value, max_value, default_value, is_read_only, created_at, updated_at
+               min_value, max_value, default_value, is_read_only, source, expression, refs,
+               created_at, updated_at
         FROM thing_properties WHERE thing_id = ?
         ORDER BY name
         "#,
@@ -91,6 +99,21 @@ pub(crate) async fn find_thing_properties_by_thing_id(
     }
 
     Ok(properties)
+}
+
+/// 全量派生属性（启动重建内存反向索引用，spec §二）。
+pub(crate) async fn find_derived_properties(
+    pool: &SqlitePool,
+) -> Result<Vec<ThingProperty>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, ThingPropertyRow>(
+        r#"SELECT id, thing_id, name, display_name, description, data_type, unit,
+                  min_value, max_value, default_value, is_read_only, source, expression, refs,
+                  created_at, updated_at
+           FROM thing_properties WHERE expression IS NOT NULL"#,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(Into::into).collect())
 }
 
 /// 在调用方事务内批量插入物属性（场景实例化器专用），返回新建 id 列表。
@@ -110,8 +133,9 @@ pub(crate) async fn create_thing_properties_batch_tx(
             r#"
             INSERT INTO thing_properties (
                 id, thing_id, name, display_name, description, data_type, unit,
-                min_value, max_value, default_value, is_read_only, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                min_value, max_value, default_value, is_read_only, expression,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&id)
@@ -125,6 +149,7 @@ pub(crate) async fn create_thing_properties_batch_tx(
         .bind(request.max_value)
         .bind(&request.default_value)
         .bind(is_read_only)
+        .bind(&request.expression)
         .bind(&now)
         .bind(&now)
         .execute(&mut **tx)
@@ -164,6 +189,11 @@ impl Db {
     /// 按物 ID 列出属性（按名称排序，清除运行时字段）。
     pub async fn find_thing_properties_by_thing_id(&self, thing_id: &str) -> Result<Vec<ThingProperty>, sqlx::Error> {
         find_thing_properties_by_thing_id(self.pool(), thing_id).await
+    }
+
+    /// 全量派生属性（expression IS NOT NULL；启动重建内存反向索引用）。
+    pub async fn find_derived_properties(&self) -> Result<Vec<ThingProperty>, sqlx::Error> {
+        find_derived_properties(self.pool()).await
     }
 
     /// 批量创建物属性（内部事务，逐条回读）。

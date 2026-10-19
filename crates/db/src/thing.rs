@@ -1891,6 +1891,7 @@ mod tests {
                 max_value: None,
                 default_value: None,
                 is_read_only: Some(1),
+                expression: None,
             }],
         )
         .await
@@ -1947,6 +1948,7 @@ mod tests {
                 max_value: None,
                 default_value: None,
                 is_read_only: None,
+                expression: None,
             }],
         )
         .await
