@@ -133,7 +133,8 @@ impl DataServer {
                             }
                             device.status = tinyiothub_core::models::thing::ThingStatus::Online;
                             device.last_heartbeat = Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string());
-                            let events = Self::collect_property_change_events(&mut device, &values);
+                            let thing_name = device.name.clone();
+                            let events = Self::apply_property_values(&mut device, &thing_name, &values);
                             pending_events.extend(events);
                         }
                         Err(e) => {
@@ -168,12 +169,7 @@ impl DataServer {
                 }
 
                 if let Some(device) = updated_device {
-                    device_cache.update(device);
-                }
-                if let Some(bus) = event_bus_ref {
-                    for event in pending_events {
-                        publish_event_safe(bus.clone(), event).await;
-                    }
+                    Self::cache_and_publish(device, pending_events, &device_cache, event_bus_ref).await;
                 }
             }
         }
@@ -209,6 +205,31 @@ impl DataServer {
             }
         }
         pending_events
+    }
+
+    /// 应用一批属性读数：更新当前值并收集变更事件。轮询/推送共用（spec §一 共享下游管线）。
+    pub(crate) fn apply_property_values(
+        device: &mut Thing,
+        thing_name: &str,
+        values: &[ResultValue],
+    ) -> Vec<DomainEvent> {
+        let _ = thing_name;
+        Self::collect_property_change_events(device, values)
+    }
+
+    /// 缓存更新 + 事件逐个发布（缓存先于发布——订阅者读缓存必见新值）。
+    pub(crate) async fn cache_and_publish(
+        device: Thing,
+        events: Vec<DomainEvent>,
+        device_cache: &Arc<dyn ThingCacheSource>,
+        event_bus: Option<Arc<EventBus>>,
+    ) {
+        device_cache.update(device);
+        if let Some(bus) = event_bus {
+            for event in events {
+                publish_event_safe(bus.clone(), event).await;
+            }
+        }
     }
 
     pub(crate) fn build_property_change_event_static(
