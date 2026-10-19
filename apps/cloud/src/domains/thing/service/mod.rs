@@ -1,5 +1,6 @@
 // Thing service — business logic layer
 
+pub mod derived_validation;
 pub mod export_template;
 pub mod import_export;
 
@@ -237,6 +238,7 @@ impl ThingService {
                 max_value: p.get("maxValue").and_then(|v| v.as_f64()),
                 default_value: p.get("defaultValue").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 is_read_only: Some(p.get("isReadOnly").and_then(|v| v.as_bool()).unwrap_or(false) as i32),
+                expression: None,
             })
             .collect();
         let db = Db::new(self.pool.clone());

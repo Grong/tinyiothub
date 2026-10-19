@@ -648,6 +648,7 @@ async fn persist_children_tables(
             max_value: p.max_value,
             default_value: p.default_value.clone(),
             is_read_only: Some(p.is_read_only as i32),
+            expression: None,
         })
         .collect();
     db.create_thing_properties_batch_tx(tx, &props)

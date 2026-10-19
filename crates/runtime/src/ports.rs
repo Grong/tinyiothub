@@ -12,6 +12,7 @@ use async_trait::async_trait;
 
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
+use tinyiothub_core::models::thing_property::ThingProperty;
 
 /// Read-side queries for device commands (cron `device_command` executor).
 #[async_trait]
@@ -45,6 +46,16 @@ pub trait ApprovalTimeoutStore: Send + Sync {
     async fn escalate_stale_executing(&self, cutoff_rfc3339: &str) -> Result<u64, String>;
     /// X5：dismissed 超 cutoff（默认 72h）且关联报警仍 Active → 重浮 investigating 重查。
     async fn resurface_stale_dismissed(&self, cutoff_rfc3339: &str) -> Result<u64, String>;
+}
+
+/// 派生属性读取（DerivedDriverManager：启动索引重建 + descendant_count 求值）。
+/// spec §三 E1：runtime 禁止直接 sqlx。
+#[async_trait]
+pub trait DerivedPropertyQueries: Send + Sync {
+    /// 全部派生属性定义（expression IS NOT NULL），含 workspace 隔离由调用方按物过滤。
+    async fn list_derived(&self) -> Result<Vec<ThingProperty>, String>;
+    /// root 物的后代计数（沿 parent_id 递归，深度上限 10）；thing_type 为空计全部。
+    async fn count_descendants(&self, root_thing_id: &str, thing_type: Option<&str>) -> Result<i64, String>;
 }
 
 /// Thing cache used by `DataServer`. Sync because every call site is sync

@@ -16,6 +16,7 @@ mod batch_handler_tests;
 mod brain_event_tests;
 mod chat_handler_tests;
 mod cron_handler_tests;
+mod derived_validation_test;
 mod device_handler_tests;
 mod driver_handler_tests;
 mod driver_health_handler_tests;

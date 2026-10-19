@@ -313,6 +313,13 @@ mod tests {
         assert_eq!(v, 25.0);
     }
     #[test]
+    fn unary_minus_on_ref_evaluates() {
+        // parse_factor 的 Tok::Minus 臂：一元减作用于引用
+        let ast = parse("-{a.x} + 1").unwrap();
+        let v = eval(&ast, &|_| Some("3".into()), &dc).unwrap();
+        assert_eq!(v, -2.0);
+    }
+    #[test]
     fn descendant_count_with_and_without_type() {
         assert!(matches!(
             parse("descendant_count()").unwrap(),

@@ -9,7 +9,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
-use tinyiothub_runtime::ports::{EventRetentionStore, ThingCacheSource, ThingCommandQueries};
+use tinyiothub_core::models::thing_property::ThingProperty;
+use tinyiothub_runtime::ports::{DerivedPropertyQueries, EventRetentionStore, ThingCacheSource, ThingCommandQueries};
 use tinyiothub_storage::Db;
 use tinyiothub_storage::cache::ThingCache;
 
@@ -66,6 +67,37 @@ impl EventRetentionStore for EventRetentionAdapter {
             .delete_occurrence_events_before(cutoff_rfc3339)
             .await
             .map_err(|e| e.to_string())
+    }
+}
+
+/// `Db` → `DerivedPropertyQueries`（spec §三 E1：派生驱动管理器的启动索引
+/// 重建与 descendant_count 求值经此端口读库）。
+pub struct DbDerivedPropertyQueries(pub Db);
+
+#[async_trait]
+impl DerivedPropertyQueries for DbDerivedPropertyQueries {
+    async fn list_derived(&self) -> Result<Vec<ThingProperty>, String> {
+        self.0.find_derived_properties().await.map_err(|e| e.to_string())
+    }
+
+    async fn count_descendants(&self, root_thing_id: &str, thing_type: Option<&str>) -> Result<i64, String> {
+        // 递归 CTE，深度上限 10（spec §二 防环兜底）；表名 things（20260825000001 改名）
+        let row: (i64,) = sqlx::query_as(
+            r#"WITH RECURSIVE sub(id, depth) AS (
+                 SELECT id, 0 FROM things WHERE parent_id = ?1
+                 UNION ALL
+                 SELECT d.id, s.depth + 1 FROM things d JOIN sub s ON d.parent_id = s.id
+                 WHERE s.depth < 10
+               )
+               SELECT COUNT(*) FROM things d JOIN sub s ON d.id = s.id
+               WHERE (?2 IS NULL OR d.thing_type = ?2)"#,
+        )
+        .bind(root_thing_id)
+        .bind(thing_type)
+        .fetch_one(self.0.pool())
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.0)
     }
 }
 

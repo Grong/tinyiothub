@@ -241,8 +241,8 @@ impl TemplateEngine {
                 max_value: property.max_value,
                 default_value,
                 is_read_only: Some(if property.is_read_only { 1 } else { 0 }),
+                expression: None,
             };
-
             device_properties.push(device_property);
         }
 
