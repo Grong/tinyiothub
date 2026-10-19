@@ -123,6 +123,29 @@ impl ServiceManager {
 
         info!("✅ DataServer started and registered");
 
+        // 1.5 派生驱动管理器（Task 7，spec §三）：启动索引重建 + 为派生物注册
+        // DerivedDriver（mode=Push）进同一 driver_cache + 首值补偿。读数经
+        // data_server.value_sink() → 共享管线回流。list_derived 失败 = 启动期
+        // DB 读失败，中止启动（与 T21 fail-closed 同源）。三类触发源
+        // （notify_config_changed / notify_tree_changed / notify_thing_deleted）
+        // 由 Task 8 物管理面钩子接线。
+        let derived_manager = Arc::new(
+            tinyiothub_runtime::driver::derived_manager::DerivedDriverManager::new(
+                Arc::new(crate::shared::runtime_ports::DbDerivedPropertyQueries(
+                    (*app_state.db).clone(),
+                )),
+                Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(
+                    app_state.device_cache.clone(),
+                )),
+                data_server.driver_cache(),
+                data_server.value_sink(),
+                app_state.event_bus.clone(),
+            ),
+        );
+        derived_manager.start().await.map_err(Error::IOError)?;
+        app_state.derived_manager = Some(derived_manager);
+        info!("✅ DerivedDriverManager started");
+
         // 2. 启动 Cron 调度器
         #[cfg(not(feature = "harmonyos"))]
         {

@@ -52,6 +52,13 @@ impl DataServer {
         self.value_sink_tx.clone()
     }
 
+    /// 驱动缓存句柄（Task 7：DerivedDriverManager 把 DerivedDriver 注册进同一
+    /// 缓存——轮询迭代按 mode()=Push 跳过，sink 消费侧按 thing_id 找到 wrapper
+    /// 走共享管线）。moka `Cache` 克隆是廉价句柄，与 `value_sink()` 同级。
+    pub fn driver_cache(&self) -> DriverCache {
+        self.driver_cache.clone()
+    }
+
     fn initialize_drivers(cache: &DriverCache, device_cache: &Arc<dyn ThingCacheSource>, event_bus: &Arc<EventBus>) {
         let devices = device_cache.all();
         for device in devices {
@@ -574,6 +581,7 @@ impl Clone for DataServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tinyiothub_core::driver::ThingDriver;
     use tinyiothub_core::models::thing::Thing;
     use tinyiothub_core::models::thing_property::ThingProperty;
 
@@ -635,5 +643,93 @@ mod tests {
         let values = vec![ResultValue::new("不存在的属性".into(), "float".into(), Some("1".to_string()))];
         let events = DataServer::collect_property_change_events(&mut thing, &values);
         assert_eq!(events.len(), 0);
+    }
+
+    // ── Task 7 台账追讨：Push 驱动跳过轮询的集成断言（Task 3 评审 ⚠️）──
+
+    struct EmptyCache;
+
+    impl ThingCacheSource for EmptyCache {
+        fn all(&self) -> Vec<Thing> {
+            vec![]
+        }
+        fn get(&self, _id: &str) -> Option<Thing> {
+            None
+        }
+        fn get_by_name(&self, _name: &str) -> Option<Thing> {
+            None
+        }
+        fn insert(&self, _device: Thing) {}
+        fn update(&self, _device: Thing) {}
+        fn remove(&self, _id: &str) {}
+    }
+
+    /// 计数 stub 驱动：read_data 被调用即计数（Push 驱动必须保持 0）。
+    struct CountingDriver {
+        thing: Thing,
+        mode: DriverMode,
+        reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl ThingDriver for CountingDriver {
+        fn thing(&self) -> &Thing {
+            &self.thing
+        }
+        fn thing_mut(&mut self) -> &mut Thing {
+            &mut self.thing
+        }
+        fn mode(&self) -> DriverMode {
+            self.mode
+        }
+        fn read_data(&mut self) -> Result<Vec<ResultValue>, Error> {
+            self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(vec![])
+        }
+        fn execute_command(&mut self, _cmd: &ThingCommand) -> Result<bool, Error> {
+            Ok(true)
+        }
+    }
+
+    /// 真实跑 `process_all_drivers` 循环：同缓存内一个 Push + 一个 Poll 驱动。
+    /// Poll 计数 >0 证明循环确实在迭代；Push 计数 == 0 证明 read_data_once
+    /// 路径按 mode() 跳过推送驱动（spec §一）。
+    #[tokio::test]
+    async fn push_mode_driver_is_never_polled() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let driver_cache: DriverCache = Cache::new(10);
+        let push_reads = Arc::new(AtomicUsize::new(0));
+        let poll_reads = Arc::new(AtomicUsize::new(0));
+        for (id, mode, reads) in [
+            ("push-1", DriverMode::Push, push_reads.clone()),
+            ("poll-1", DriverMode::Poll, poll_reads.clone()),
+        ] {
+            let thing = Thing {
+                id: id.to_string(),
+                name: id.to_string(),
+                ..Thing::default()
+            };
+            let wrapper = DriverWrapper::new(Box::new(CountingDriver { thing, mode, reads }));
+            driver_cache.insert(id.to_string(), Arc::new(RwLock::new(wrapper)));
+        }
+
+        let device_cache: Arc<dyn ThingCacheSource> = Arc::new(EmptyCache);
+        let command_queue: CommandQueue = Arc::new(DashMap::new());
+        let handle = tokio::spawn(DataServer::process_all_drivers(driver_cache, device_cache, command_queue));
+        // 100ms 间隔：350ms 至少 3 个 tick（首个 tick 立即触发）。
+        tokio::time::sleep(tokio::time::Duration::from_millis(350)).await;
+        handle.abort();
+
+        assert!(
+            poll_reads.load(Ordering::SeqCst) >= 2,
+            "轮询循环必须在迭代（Poll 驱动计数 >= 2），got {}",
+            poll_reads.load(Ordering::SeqCst)
+        );
+        assert_eq!(
+            push_reads.load(Ordering::SeqCst),
+            0,
+            "mode()=Push 的驱动绝不经过 process_all_drivers 的 read_data_once 路径"
+        );
     }
 }

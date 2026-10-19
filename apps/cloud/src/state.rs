@@ -47,6 +47,10 @@ pub struct AppState {
     /// 数据服务器 - 设备数据采集和命令执行
     pub data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
 
+    /// 派生驱动管理器（Task 7，spec §三）——派生属性反向索引/生命周期/stale
+    /// 内存态；Task 8 GET derived_status 唯一读源。None = 未装配（测试/降级路径）。
+    pub derived_manager: Option<Arc<tinyiothub_runtime::driver::derived_manager::DerivedDriverManager>>,
+
     /// === 领域服务层 ===
     /// 设备基础服务 - CRUD 操作
     pub device_service: Arc<ThingService>,
@@ -496,6 +500,7 @@ impl AppState {
             system_prompts: Arc::new(settings.agent.system_prompts.clone()),
             db: database,
             data_server: None, // DataServer 由 ServiceManager 设置
+            derived_manager: None, // DerivedDriverManager 由 ServiceManager 设置
             device_service,
             device_query_service,
             monitoring_service,
