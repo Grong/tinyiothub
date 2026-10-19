@@ -587,3 +587,130 @@ async fn notify_config_changed_full_path_hot_update_takes_effect() {
         "热更新后应按新表达式求值（缺 备用 值）: {reason}"
     );
 }
+
+// ── Task 8 评审 Important：MCP 物管理面不得绕过 notify 钩子 ──────────
+// MCP delete_thing 删除被派生引用的物 → notify_thing_deleted 同步标 stale
+// （"引用缺失"）——若钩子缺失，派生会继续按缓存旧值出数直到进程重启。
+
+#[tokio::test]
+async fn mcp_delete_thing_triggers_notify_marks_derived_stale() {
+    use axum::extract::FromRef;
+
+    use crate::domains::mcp::McpState;
+    use crate::domains::mcp::handlers::{McpAuthContext, with_mcp_context};
+    use crate::domains::mcp::tool_registry::ToolHandler;
+    use crate::domains::mcp::tools::thing::DeleteThingHandler;
+
+    let (app, app_state, manager) = setup_app_with_manager().await;
+    let token = token();
+    let meter = create_thing(&app, &token, "电表1").await;
+    let owner = create_thing(&app, &token, "总表").await;
+    let (status, _) = post_property(&app, &token, &meter, json!({"name": "用电数"})).await;
+    assert_eq!(status, StatusCode::OK);
+
+    app_state.device_cache.insert(cache_thing(
+        &meter,
+        "电表1",
+        vec![cache_prop(&format!("prop-{meter}"), &meter, "用电数", Some("21"))],
+    ));
+    app_state.device_cache.insert(cache_thing(&owner, "总表", vec![]));
+
+    let (status, json) = post_property(
+        &app,
+        &token,
+        &owner,
+        json!({"name": "calc", "expression": "{电表1.用电数} * 2"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    let prop_id = json["result"]["id"].as_str().unwrap().to_string();
+    wait_status(&manager, &prop_id, false).await;
+
+    // 经 MCP 工具删除被引用的电表（活管理面路径）
+    let mcp_state = Arc::new(McpState::from_ref(&app_state));
+    let handler = DeleteThingHandler::new(Some(mcp_state));
+    let ctx = McpAuthContext::for_jwt(WS.to_string(), "user-1".to_string());
+    let result = with_mcp_context(ctx, || handler.execute(json!({"id": meter.clone()}))).await;
+    assert!(result.is_ok(), "MCP delete_thing 失败: {result:?}");
+
+    // notify_thing_deleted 是 execute 内同步 await——返回即应已标 stale
+    let s = manager.derived_status(&prop_id).expect("删除后状态条目仍在");
+    assert!(s.stale, "MCP 删除引用物后派生应标 stale: {s:?}");
+    let reason = s.stale_reason.unwrap_or_default();
+    assert!(reason.contains("已删除"), "{reason}");
+}
+
+// ── 评审 Minor 1：PUT value 先验物归属，跨 workspace 派生 id 不泄漏存在性 ──
+
+#[tokio::test]
+async fn put_value_cross_workspace_derived_id_no_leak() {
+    let (app, pool) = setup_app().await;
+    seed_test_workspace(&pool, "tenant-1", "ws-other-001").await;
+    let token_ws2 = create_test_token_with_workspace("user-1", "tenant-1", "ws-other-001");
+    let meter2 = create_thing(&app, &token_ws2, "电表X").await;
+    let owner2 = create_thing(&app, &token_ws2, "总表X").await;
+    let (status, _) = post_property(&app, &token_ws2, &meter2, json!({"name": "用电数"})).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, json) = post_property(
+        &app,
+        &token_ws2,
+        &owner2,
+        json!({"name": "calc", "expression": "{电表X.用电数}"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    let calc_id = json["result"]["id"].as_str().unwrap().to_string();
+
+    // ws1 视角：物/属性都存在但不在本 workspace——必须报"不存在"而非 400 派生拒绝
+    let token = token();
+    let response = app
+        .clone()
+        .oneshot(auth_request(
+            "PUT",
+            &format!("/api/v1/things/admin/{owner2}/properties/{calc_id}/value"),
+            &token,
+            Some(json!({"value": "5"})),
+        ))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    let msg = json["msg"].as_str().unwrap();
+    assert!(msg.contains("不存在"), "跨 workspace 应报不存在: {msg}");
+    assert!(!msg.contains("派生"), "不得泄漏派生属性存在性: {msg}");
+}
+
+// ── 评审 Minor 2：非派生 → 派生转换时 data_type 未给则补 'number' ─────
+
+#[tokio::test]
+async fn update_to_derived_defaults_data_type_number() {
+    let (app, _pool) = setup_app().await;
+    let token = token();
+    let meter = create_thing(&app, &token, "电表1").await;
+    let owner = create_thing(&app, &token, "总表").await;
+    let (status, _) = post_property(&app, &token, &meter, json!({"name": "用电数"})).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // 非派生创建：data_type 缺省 'string'
+    let (status, json) = post_property(&app, &token, &owner, json!({"name": "calc"})).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    assert_eq!(json["result"]["data_type"], "string");
+    let prop_id = json["result"]["id"].as_str().unwrap().to_string();
+
+    // PUT 转派生（未显式给 data_type）→ 应补 'number'，与创建路径一致
+    let response = app
+        .clone()
+        .oneshot(auth_request(
+            "PUT",
+            &format!("/api/v1/things/admin/{owner}/properties/{prop_id}"),
+            &token,
+            Some(json!({"expression": "{电表1.用电数} * 2"})),
+        ))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    assert_eq!(json["result"]["source"], "derived");
+    assert_eq!(json["result"]["data_type"], "number", "转派生 data_type 应补 number");
+    assert_eq!(json["result"]["is_read_only"], 1);
+}

@@ -68,7 +68,11 @@ pub async fn create_thing(
     match svc.create_thing(&req, Some(workspace_id.as_str())).await {
         Ok(thing) => {
             // Task 7 评审 ⚠️ 钩子②：新增子物 → 含 descendant_count 的派生重算
-            if let (Some(manager), Some(parent)) = (&state.derived_manager, &req.parent_id) {
+            // （空串 parent 视为无父，评审 Minor 3）
+            if let (Some(manager), Some(parent)) = (
+                &state.derived_manager,
+                req.parent_id.as_deref().filter(|p| !p.is_empty()),
+            ) {
                 manager.notify_tree_changed(parent).await;
             }
             let resp = ApiResponseBuilder::success(thing);

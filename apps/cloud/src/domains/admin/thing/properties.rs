@@ -31,8 +31,9 @@ pub struct CreatePropertyRequest {
     pub expression: Option<String>,
 }
 
-/// 更新属性定义（PUT = 替换语义）：expression 给出则全量重新校验并写穿派生
-/// 三件套；缺省则保留既有派生定义（不做 derived → 非派生转换）。
+/// 更新属性定义（部分更新：None 字段经 COALESCE 保持原值；expression 给出
+/// 则全量重新校验并写穿派生三件套，缺省则保留既有派生定义——不做
+/// derived → 非派生转换）。
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct UpdatePropertyRequest {
@@ -221,7 +222,7 @@ async fn create_property(
     (StatusCode::OK, ApiResponseBuilder::success(created))
 }
 
-/// 更新属性定义（PUT = 替换语义；改 expression → 全量重新校验）
+/// 更新属性定义（部分更新；改 expression → 全量重新校验）
 async fn update_property(
     State(state): State<AdminState>,
     Path((thing_id, property_id)): Path<(String, String)>,
@@ -253,6 +254,13 @@ async fn update_property(
         None => None,
     };
 
+    // 非派生 → 派生转换时 data_type 未显式给出则补 'number'（与创建路径缺省
+    // 一致，评审 Minor 2）；已是派生的属性走 COALESCE 保旧。
+    let data_type = match (&req.expression, &req.data_type) {
+        (Some(_), None) if existing.source.as_deref() != Some("derived") => Some("number".to_string()),
+        _ => req.data_type.clone(),
+    };
+
     let affected = match state
         .db()
         .update_thing_property_definition(
@@ -261,7 +269,7 @@ async fn update_property(
             req.name.as_deref(),
             req.display_name.as_deref(),
             req.unit.as_deref(),
-            req.data_type.as_deref(),
+            data_type.as_deref(),
             derived.as_ref().map(|(e, r)| (*e, r.as_str())),
         )
         .await
@@ -342,6 +350,18 @@ async fn update_property_value(
     claims: Claims,
     Json(req): Json<UpdatePropertyValueRequest>,
 ) -> (StatusCode, Json<ApiResponse<bool>>) {
+    // D3（评审 Minor 1）：先经 tenant service 验物归属再判派生——直接按 id 读
+    // 属性会让跨 workspace 的派生属性 id 拿到 400 而非"不存在"（存在性泄漏）。
+    let tenant_device_service = state.tenant_device_service(&Some(claims.workspace_id.clone()));
+    match tenant_device_service.get_thing_by_id(&thing_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return (StatusCode::OK, ApiResponseBuilder::error("设备或属性不存在")),
+        Err(e) => {
+            tracing::error!("Failed to load thing {}: {}", thing_id, e);
+            return (StatusCode::OK, ApiResponseBuilder::error("更新属性值失败"));
+        }
+    }
+
     // T3：派生属性值只由 DerivedDriver 写（spec §四）——先读属性再判
     match state.db().find_thing_property_by_id(&property_id).await {
         Ok(Some(p)) if p.thing_id == thing_id && p.source.as_deref() == Some("derived") => {

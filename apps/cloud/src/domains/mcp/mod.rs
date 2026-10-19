@@ -43,6 +43,9 @@ pub struct McpState {
     pub alarm_service: Arc<crate::domains::alarm::service::AlarmService>,
     /// 租户服务 - X-API-Key 校验
     pub tenant_service: Arc<crate::domains::tenant::TenantService>,
+    /// 派生驱动管理器（Task 8 评审 Important）——MCP 是活的物管理面，
+    /// create/delete 工具必须接同一组 notify 钩子，否则绕过索引热更新。
+    pub derived_manager: Option<Arc<tinyiothub_runtime::driver::derived_manager::DerivedDriverManager>>,
 }
 
 impl McpState {
