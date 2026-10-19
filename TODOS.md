@@ -684,3 +684,17 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 - **Why:** N3 的直觉承诺是「Critical 告警不丢」;容量满+告警风暴同时发生时,最该到的信号反而丢
 - **Context:** crates/agent/src/runtime/thing_agent/scheduler.rs ready queue 容量语义;评审记录在 .superpowers/sdd/2026-10-12-ai-consolidation-phase1-2/task-11-review.md
 - **Depends on:** 无;可独立做(如:Critical 溢出时降级为最旧 Normal 出队,或独立高优队列)
+
+## 园区物（派生属性）— Deferred (from /plan-ceo-review 2026-10-19, D2 裁定)
+
+### P3 — 派生属性挂告警规则的集成测试
+- **What:** 园区派生属性（如 total_power）作为告警规则目标的端到端集成测试（阈值触发 → 告警产生）。
+- **Why:** 2026-10-19 CEO 审查 SCOPE REDUCTION 裁定递延——告警读的是属性值缓存，走既有路径，派生属性对它无特殊性，风险低；能力本身不受影响，随时可挂。
+- **Context:** docs/superpowers/specs/2026-10-19-park-thing-design.md §3 事件流注明告警免费生效；补测试时验证告警规则评估读到派生写回值。
+- **Effort:** S | **Depends on:** 派生属性引擎落地
+
+### P3 — 链式派生集成测试
+- **What:** 楼栋派生属性被园区派生属性引用的逐级触发集成测试（电表→楼栋用电→园区用电）。
+- **Why:** 2026-10-19 CEO 审查 SCOPE REDUCTION 裁定递延——DAG 环检测在配置侧已兜底防死循环，链式是纯增量场景；能力本身保留（事件链天然成立）。
+- **Context:** docs/superpowers/specs/2026-10-19-park-thing-design.md §1 链式派生；补测试时构造三级树逐级断言。
+- **Effort:** S | **Depends on:** 派生属性引擎落地

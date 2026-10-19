@@ -13,7 +13,7 @@
 | 3 | 计算时机 | **绑定的属性变更时触发计算**（事件驱动），结果写回园区物属性值 |
 | 4 | 驱动架构 | **区分轮询驱动与推送驱动两种模式**（DriverMode::Poll/Push）；派生驱动是首个推送驱动 |
 | 5 | 派生定义存储 | **复用 thing_properties 表加三列**（source/expression/refs），不建新表 |
-| 6 | API 面 | **复用 /api/things/{id}/properties**，补齐属性定义管理（POST/PUT/DELETE），不开 derived 子资源 |
+| 6 | API 面 | **复用 /api/v1/things/admin/{id}/properties**，补齐属性定义管理（POST/PUT/DELETE），不开 derived 子资源 |
 | 7 | 资源定位 | 3D 模型/图片/文档都是物的**知识**；AI 经知识检索发现资源，在 A2UI 中渲染 |
 | 8 | D5 细化裁决 | 非 device 物允许挂平台内置虚拟驱动 derived（非物理连接、无协议、不可下发动作）；物理驱动连接仍限定 device |
 | 9 | deviceInstances 3D 点位标注 | 本期**不做**（无设备三维坐标数据来源），记入 TODOS |
@@ -80,6 +80,7 @@ func       := 'descendant_count(' [thing_type] ')' -- 后代物计数，设备�
 
 - 配置 UI 用"选物 → 选属性"选择器生成 ref，用户不手敲语法；表达式原文只做展示与二次编辑
 - 不支持：变量、自定义函数、字符串运算、外部调用
+- **输入上限**（CEO 审查 F-C）：expression ≤1000 字符、refs ≤50 个、`descendant_count()` 参数必须是合法 thing_type——超限保存时 400，防表达式被当成规则引擎滥写
 
 ### 求值规则
 
@@ -136,22 +137,25 @@ data_server 统一消费 → 共享下游管线（变更收集 → 缓存更新 
 | 触发源 | 说明 |
 |---|---|
 | PropertyChange 事件 | 主路径，引用属性变更即算 |
-| 启动全量重算 | 重启后首值补偿 |
+| 启动全量重算 | 重启后首值补偿；refs 内存索引重建时遇 JSON 损坏行 → 该派生属性 fail-closed（标 stale + 结构化日志），不阻断启动（CEO 审查 F-F） |
 | 子树结构变更 | 物增删/换父 → 只影响含 descendant_count() 的派生；物管理面变更点直接调 Manager（不走 EventBus） |
+| 引用对象删除 | 引用的物/属性被删除 → 同一管理面钩子通知 Manager，受影响派生标 stale（reason：引用缺失）并热更新引用表（CEO 审查 F-B） |
 
 **并发与顺序**：同一 DerivedDriver 的计算在 data_server 消费 sink 时串行化。EventBus 是 broadcast（slow consumer 可能丢消息）——可接受：计算输入永远是最新缓存值而非事件增量，下次任一引用变更即自愈，启动全量重算兜底。
 
-**可观测性**：`derived_eval_total` / `derived_eval_stale` / `derived_eval_error` 计数；结构化日志含 derived_property_id、owner_thing_id、表达式、结果。
+**可观测性**：`derived_eval_total` / `derived_eval_stale` / `derived_eval_error` / `derived_eventbus_lagged`（slow consumer 丢消息计数，CEO 审查 F-E）；结构化日志含 derived_property_id、owner_thing_id、表达式、结果。**Runbook**：派生属性 stale → ①查 stale_reason 指向的引用物是否在线/已删 → ②查 derived_eventbus_lagged 是否增长（lag 丢消息靠下次变更自愈）→ ③重启触发全量重算兜底。
 
 ## 四、管理面 API 与前端
 
-### API（复用 /api/things/{id}/properties 资源，补齐定义管理）
+### API（复用现有 properties 资源，补齐定义管理）
+
+路由实际挂载点（2026-10-19 CEO 审查核实，`apps/cloud/src/api/mod.rs:105` + `admin/thing/properties.rs`）：
 
 ```
-GET    /api/things/{id}/properties          现有——派生属性自动出现在列表
-POST   /api/things/{id}/properties          新增——创建属性定义；payload 带 expression 即派生
-PUT    /api/things/{id}/properties/{pid}    新增——更新定义（改表达式→重新校验+环检测）
-DELETE /api/things/{id}/properties/{pid}    新增——删除属性定义
+GET    /api/v1/things/admin/{id}/properties          现有——派生属性自动出现在列表
+POST   /api/v1/things/admin/{id}/properties          新增——创建属性定义；payload 带 expression 即派生
+PUT    /api/v1/things/admin/{id}/properties/{pid}    新增——更新定义（改表达式→重新校验+环检测）
+DELETE /api/v1/things/admin/{id}/properties/{pid}    新增——删除属性定义
 ```
 
 - POST body：`{name, display_name, unit, data_type, expression?}`；带 expression 时服务端解析 refs、校验、DAG 检测，`source='derived'`；不带则是普通实例层手动属性（顺带补齐本体设计 V1 裁决"物模型=每物自己的实例"一直缺的管理面）
@@ -168,6 +172,15 @@ DELETE /api/things/{id}/properties/{pid}    新增——删除属性定义
    - 运算符按钮（+ − × ÷ 括号）+ descendant_count() 插入按钮
    - 实时表达式预览 + 保存时服务端校验错误行内红字定位
 3. **创建后即时反馈**：保存成功 → 属性行出现，首值计算完成前显示"计算中…"，stale 时显示原因（哪几个引用无数据）
+
+**交互状态表**（CEO 审查 F-D，沿用本体设计 D7 先例——描述用户看到的）：
+
+| 功能 | 加载中 | 空 | 错误 | 成功 | 部分 |
+|---|---|---|---|---|---|
+| 属性 Tab 派生行 | 行骨架 | —（无派生不显示区块） | 值计算失败=灰点+"等待数据"文字 | 实时值+「派生」徽标 | 部分引用无值=stale 灰点+缺失引用数 |
+| 表达式只读展开 | — | — | 引用物已删=该引用红字划线+"已删除" | 表达式+可跳转引用 | — |
+| 派生编辑器 drawer | 物选择器骨架 | 无候选物="本工作区还没有带数值属性的物"+引导 | 保存 400=行内红字定位（语法/环/上限） | 保存成功 toast+drawer 关闭 | 部分引用失效=保存前黄条提示 |
+| 物选择器 | 树骨架 | "无匹配的物，清除搜索"链接 | 加载失败=错误条+重试 | 树形+搜索渲染 | — |
 
 ## 五、资源/A2UI 链路与跑通物料
 
@@ -214,6 +227,9 @@ DELETE /api/things/{id}/properties/{pid}    新增——删除属性定义
   - 链式派生：楼栋派生 → 园区派生逐级触发；成环配置被拒
   - 生命周期：创建→驱动注册；改表达式→热更新；删最后一个派生→驱动回收；重启→全量重算首值
   - stale 流：停掉一块表 → stale 标记 + GET properties 返回 stale_reason
+  - 引用对象删除（F-B）：删除被引用的物/属性 → 派生转 stale（reason：引用缺失）+ 引用表热更新
+  - 索引重建容错（F-F）：refs JSON 损坏行 → 该派生 fail-closed 标 stale，启动不阻断
+  - 输入上限（F-C）：expression 1001 字符 / refs 51 个 / 非法 thing_type 参数 → 400
   - workspace 隔离：跨 workspace 引用被拒、跨 workspace 读派生状态 404
   - 子树变更：增删后代物 → descendant_count() 派生自动重算
 - **前端手测**：验收旅程 6 步全过
@@ -235,3 +251,97 @@ DELETE /api/things/{id}/properties/{pid}    新增——删除属性定义
 - R2：dead path 前科——派生管线验收必须真实全链路（模拟驱动上报，不接受 mock）
 - R3：EventBus broadcast 丢消息导致派生值延迟——缓解：计算基于缓存当前值自愈 + 启动全量重算；接受最坏情况为"下次引用变更时刷新"
 - R4：表达式被当成通用规则引擎滥用——缓解：语法最小集硬限制（无变量/无自定义函数），需求超出时另行设计
+
+---
+
+## CEO 审查记录（2026-10-19，/plan-ceo-review）
+
+### 模式与裁定
+
+| 决策 | 结果 |
+|---|---|
+| D1 审查模式 | SCOPE REDUCTION（用户选定）——估计 ~20-24 文件越 >15 规则线，spec 已 YAGNI 硬裁，杠杆=分段而非砍能力 |
+| D2 裁减裁定 | 编辑器全量保留；A2UI 旅程保留；**递延**：派生挂告警集成测试、链式派生集成测试（已记 TODOS.md） |
+| D3 spec 修订 | 五项全采纳：F-B 引用删除触发、F-C 输入上限、F-D 交互状态表、F-E lag 指标+runbook、F-F 索引重建 fail-closed |
+| F-A 笔误更正 | API 路径 /api/things/... → /api/v1/things/admin/...（事实性更正，无需裁定） |
+
+### REALITY 行（PLAN_REALITY: phase=ceo rows=7/7 verdict=complete, unverified=2）
+
+- premise-table: finding unverified=2（资源 HTTP URL 服务、知识工具资源元数据——spec 自声明缺口，实现任务 T5/T6）
+- already-done: pass（派生/表达式零既有实现，commit 72381d26 工作树 grep）
+- surface-check: finding（API 路径笔误，已更正）
+- binding-decisions / numbers / deferred-asks / pr-count: pass
+
+### NOT in scope
+
+- 递延（记 TODOS.md）：①派生属性挂告警集成测试（D2：告警读属性值走既有路径，风险低）；②链式派生集成测试（D2：DAG 校验已兜底防环）
+- 拒绝（不计 TODOS）：编辑器降级为文本框（D2 用户保留全量编辑器）；A2UI 旅程递延（D2 用户保留——验收终点）
+- 既有裁剪（设计阶段）：deviceInstances 3D 点位标注（无坐标数据源，记 TODOS）；模板层表达式（用户裁决实例层）；定时回写（用户裁决事件驱动）
+
+### What already exists
+
+EventBus 广播+订阅（crates/runtime/src/event_bus.rs:49,74）；PropertyChange 事件构造与"缓存先于发布"（crates/runtime/src/data_server.rs:171,214）；ThingDriver trait + wrapper can_read_now/read_data_once/event_bus_ref（crates/core/src/driver/mod.rs:254; crates/runtime/src/driver/wrapper.rs:71,91,99）；thing_properties 表（baseline.sql:1236）；GET properties + PUT value（admin/thing/properties.rs:28-29）；resources 挂载 API（thing/handler/mod.rs:48-49）；A2UI scene-3d/image 组件（web/src/ui/chat/a2ui/catalog/）；smart_campus 场景包+实例化（templates/builtin/scenes/）；MQTT 驱动为 stub（推模式无历史包袱）——全部复用，无重建。
+
+### Dream state delta
+
+12 个月理想：任意空间层级（区域→园区→楼栋→楼层）表达式派生指标 + 3D 数字孪生 + AI 空间语义。本计划交付：首个推送驱动、首个派生属性引擎、首个园区全链路 demo。留下：deviceInstances 点位、模板层表达式复用、派生历史曲线。
+
+### Error & Rescue Registry / Failure Modes
+
+```
+CODEPATH                | FAILURE MODE            | RESCUED? | TEST? | USER SEES      | LOGGED?
+------------------------|-------------------------|----------|-------|----------------|--------
+保存-表达式解析          | 语法错误/超上限(F-C)      | Y 400行内 | Y     | 行内红字定位     | Y
+保存-refs 校验           | 引用不存在/跨workspace   | Y 400    | Y     | 无效引用清单     | Y
+保存-DAG 环检测          | 引用成环                 | Y 400    | Y     | 环路径展示       | Y
+求值                     | 引用无值/非数值/除零      | Y stale  | Y     | stale 灰点+原因 | Y
+EventBus 订阅            | lag 丢消息               | Y 自愈    | 部分  | 无感            | Y lag计数
+启动索引重建              | refs JSON 损坏(F-F)      | Y stale  | Y     | stale           | Y
+引用对象删除(F-B)         | 物/属性被删              | Y stale  | Y     | 引用红字划线     | Y
+DerivedDriver 运行        | 驱动 panic              | Y 监督重启| 未指定 ← WARNING(实现期验证, T1) | 无感 | Y
+PUT value 手写派生        | is_read_only            | Y 拒绝    | T3补  | 错误提示        | Y
+```
+
+CRITICAL GAPS: 0（无 RESCUED=N 且静默的行）。WARNING 1 行：驱动 panic 监督重启——spec 声称 data_server 监督重启，实现期必须证明该机制存在或补上（T1）。
+
+### Implementation Tasks
+
+- [ ] **T1 (P1, human: ~2h / CC: ~25min)** — runtime — 验证/补齐 DerivedDriver panic 监督重启
+  - Surfaced by: S2 Error & Rescue — spec §6 声称"data_server 监督重启驱动"，现有轮询驱动读错误只标 offline，panic 监督机制未证实
+  - Files: crates/runtime/src/data_server.rs, crates/runtime/src/driver/（派生驱动新文件）
+  - Verify: 集成测试——注入 panic 的推送驱动被重启并重订阅+全量重算
+- [ ] **T2 (P1, human: ~3h / CC: ~30min)** — thing 域 — 物/属性删除管理面钩子通知 DerivedDriverManager（F-B）
+  - Surfaced by: S4 数据流 — 引用对象删除时派生转 stale 无触发路径
+  - Files: apps/cloud/src/domains/thing/handler/crud.rs, apps/cloud/src/domains/thing/service/, crates/runtime/src/driver/（Manager）
+  - Verify: 集成测试——删除被引用物 → 派生 stale（reason：引用缺失）+ 引用表热更新
+- [ ] **T3 (P2, human: ~30min / CC: ~5min)** — admin API — PUT .../value 对派生属性拒绝的测试
+  - Surfaced by: S2 registry 行"PUT value 手写派生"
+  - Files: apps/cloud/src/domains/admin/thing/properties.rs（+测试）
+  - Verify: API 测试——对 source='derived' 属性 PUT value 返回 4xx
+- [ ] **T4 (P2, human: ~1h / CC: ~10min)** — runtime — derived_eventbus_lagged 指标（F-E）
+  - Surfaced by: S8 可观测 — slow consumer 丢消息不可见
+  - Files: crates/runtime/src/driver/（DerivedDriver 订阅处）
+  - Verify: 单测/集成——构造 lag 后计数 +1
+- [ ] **T5 (P2, human: ~1h / CC: ~10min)** — thing 域 — 资源文件 HTTP URL 服务缺口核实与补齐
+  - Surfaced by: premise-table unverified #1 — resources.file_path → 前端/A2UI 可加载 URL
+  - Files: apps/cloud/src/domains/thing/handler/resources.rs（核实后定）
+  - Verify: 手测——上传 glTF 后前端可直接加载 URL
+- [ ] **T6 (P2, human: ~1h / CC: ~10min)** — agent 工具 — 知识工具资源元数据（URL+类型）核实与补齐
+  - Surfaced by: premise-table unverified #2 — AI 发现资源的前提
+  - Files: apps/cloud/src/domains/agent/host/tools/thing/search_knowledge.rs（核实后定）
+  - Verify: 工具测试——返回含 resource_type 与可访问 URL
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | CLEAR | mode: SCOPE_REDUCTION, 0 critical gaps |
+| Outside Review | codex (auto) | Independent 2nd opinion | 1 | unavailable | codex 模型路由未配置 + native fallback 超时，no completed external review |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 0 | — | 未运行 |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | 未运行（REDUCTION 模式不推荐） |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | 未运行 |
+
+- **OUTSIDE COVERAGE:** codex, plan-review, unavailable — custom endpoint 未配 frontier 模型（CODEX_MODEL invalid）；native fallback 5 分钟无完整报告；无外部覆盖
+- **VERDICT:** CEO CLEARED — eng review required
+
+NO UNRESOLVED DECISIONS
