@@ -582,9 +582,10 @@ async fn notify_config_changed_full_path_hot_update_takes_effect() {
 
     let s = wait_status(&manager, &prop_id, true).await;
     let reason = s.stale_reason.unwrap_or_default();
+    // I-2 后求值全程走 thing_id，stale 原因点名 id 级引用
     assert!(
-        reason.contains("电表1.备用"),
-        "热更新后应按新表达式求值（缺 备用 值）: {reason}"
+        reason.contains("备用") && reason.contains(&meter),
+        "热更新后应按新表达式求值（缺 备用 值，引用以 thing_id 标识）: {reason}"
     );
 }
 
@@ -713,4 +714,159 @@ async fn update_to_derived_defaults_data_type_number() {
     assert_eq!(json["result"]["source"], "derived");
     assert_eq!(json["result"]["data_type"], "number", "转派生 data_type 应补 number");
     assert_eq!(json["result"]["is_read_only"], 1);
+}
+
+// ── 终审 C-1：profile 端点（详情页真实数据源）必须带派生字段 + 活注入运行状态 ──
+// R2 钉死形态：此前 load_properties 字段清单缺 source/expression/refs、
+// derivedStatus 无处可来——前端派生徽标/stale 灰点在生产永不出现，vitest 恰好
+// 绕过真实端点。本测试走真实路由 GET /things/{id}/profile 全程断言。
+
+#[tokio::test]
+async fn profile_includes_derived_fields_and_live_status() {
+    let (app, app_state, manager) = setup_app_with_manager().await;
+    let token = token();
+    let meter = create_thing(&app, &token, "电表1").await;
+    let owner = create_thing(&app, &token, "总表").await;
+    let (status, _) = post_property(&app, &token, &meter, json!({"name": "用电数", "data_type": "float"})).await;
+    assert_eq!(status, StatusCode::OK);
+
+    app_state.device_cache.insert(cache_thing(
+        &meter,
+        "电表1",
+        vec![cache_prop(&format!("prop-{meter}"), &meter, "用电数", Some("21"))],
+    ));
+    app_state.device_cache.insert(cache_thing(&owner, "总表", vec![]));
+
+    let (status, json) = post_property(
+        &app,
+        &token,
+        &owner,
+        json!({"name": "calc", "expression": "{电表1.用电数} * 2"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    let prop_id = json["result"]["id"].as_str().unwrap().to_string();
+    wait_status(&manager, &prop_id, false).await;
+
+    let get_profile_row = async |app: &Router, prop_id: &str| {
+        let response = app
+            .clone()
+            .oneshot(auth_request(
+                "GET",
+                &format!("/api/v1/things/{owner}/profile"),
+                &token,
+                None,
+            ))
+            .await
+            .unwrap();
+        let json = response_json(response).await;
+        assert_eq!(json["code"], 0, "GET profile 失败: {json}");
+        json["result"]["properties"]
+            .as_array()
+            .expect("profile.properties 为数组")
+            .iter()
+            .find(|p| p["id"] == prop_id)
+            .unwrap_or_else(|| panic!("profile 中找不到派生属性 {prop_id}: {json}"))
+            .clone()
+    };
+
+    // ① 派生行必须带 source/expression/refs + derivedStatus（前端徽标/表达式
+    //    展开/stale 灰点的全部数据依据）
+    let row = get_profile_row(&app, &prop_id).await;
+    assert_eq!(row["source"], "derived", "{row}");
+    assert_eq!(row["expression"], "{电表1.用电数} * 2", "{row}");
+    assert!(row["refs"].as_str().unwrap().contains(&meter), "{row}");
+    assert_eq!(row["derivedStatus"]["stale"], false, "{row}");
+    assert!(row["derivedStatus"]["lastEvalAt"].is_string(), "{row}");
+
+    // ② derivedStatus 是活注入而非一次性快照：引用值清空 + 事件触发 →
+    //    Manager 标 stale → profile 同步反映
+    let mut m = app_state.device_cache.get(&meter).expect("电表 cached");
+    m.properties.as_mut().unwrap()[0].current_value = None;
+    app_state.device_cache.update(m);
+    let event = Event::new_device_event(
+        ThingEventType::PropertyChange,
+        EventLevel::Info,
+        EventSource::device_property(meter.clone(), format!("prop-{meter}"), "test".to_string()),
+        RichContent::new_text("t".to_string(), "c".to_string()),
+    )
+    .expect("构造测试事件");
+    app_state.event_bus.publish(event).await.expect("发布属性变更事件");
+    wait_status(&manager, &prop_id, true).await;
+
+    let row = get_profile_row(&app, &prop_id).await;
+    assert_eq!(row["derivedStatus"]["stale"], true, "{row}");
+    assert!(
+        row["derivedStatus"]["staleReason"]
+            .as_str()
+            .unwrap()
+            .contains("等待数据"),
+        "{row}"
+    );
+}
+
+// ── 终审 I-1：带物理驱动（driver_name 非空）的物拒绝派生（创建 + 更新）──
+// 派生挂在物理物上会让 Manager 注册 DerivedDriver 顶掉 driver_cache 里的物理
+// wrapper → 轮询/命令静默死亡（spec D5 精神：derived 挂非物理连接物）。
+
+#[tokio::test]
+async fn derived_rejected_on_thing_with_physical_driver() {
+    let (app, _pool) = setup_app().await;
+    let token = token();
+    let response = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/api/v1/things",
+            &token,
+            Some(json!({ "name": "物理表", "driverName": "modbus" })),
+        ))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::CREATED, "创建物理驱动物失败: {json}");
+    let physical = json["result"]["id"].as_str().unwrap().to_string();
+
+    // 创建路径：POST 派生 → 400
+    let (status, json) = post_property(
+        &app,
+        &token,
+        &physical,
+        json!({"name": "calc", "expression": "descendant_count()"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+    let msg = json["msg"].as_str().unwrap();
+    assert!(msg.contains("无物理连接"), "{msg}");
+    assert!(msg.contains("modbus"), "文案应点名已配置驱动: {msg}");
+
+    // 更新路径：普通属性 PUT 转派生 → 400
+    let (status, json) = post_property(&app, &token, &physical, json!({"name": "plain"})).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    let pid = json["result"]["id"].as_str().unwrap().to_string();
+    let response = app
+        .clone()
+        .oneshot(auth_request(
+            "PUT",
+            &format!("/api/v1/things/admin/{physical}/properties/{pid}"),
+            &token,
+            Some(json!({"expression": "descendant_count()"})),
+        ))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+    assert!(json["msg"].as_str().unwrap().contains("无物理连接"), "{json}");
+
+    // 对照：无驱动物派生仍放行（不误伤正常路径）
+    let owner = create_thing(&app, &token, "总表").await;
+    let (status, json) = post_property(
+        &app,
+        &token,
+        &owner,
+        json!({"name": "calc", "expression": "descendant_count()"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    assert_eq!(json["result"]["source"], "derived");
 }

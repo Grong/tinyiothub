@@ -350,11 +350,19 @@ async fn meter_report_triggers_park_total_recompute() {
     .await;
 
     // 2) 缓存种子（真实 id，理据见文件头）+ 表计 ingest 载体
-    register_manual_thing(&rig, mk_thing(&meter1, "电表1", vec![mk_prop(&m1_prop, &meter1, "用电数")]));
-    register_manual_thing(&rig, mk_thing(&meter2, "电表2", vec![mk_prop(&m2_prop, &meter2, "用电数")]));
-    rig.app_state
-        .device_cache
-        .insert(mk_thing(&park, "园区", vec![mk_prop(&total_prop, &park, "total_power")]));
+    register_manual_thing(
+        &rig,
+        mk_thing(&meter1, "电表1", vec![mk_prop(&m1_prop, &meter1, "用电数")]),
+    );
+    register_manual_thing(
+        &rig,
+        mk_thing(&meter2, "电表2", vec![mk_prop(&m2_prop, &meter2, "用电数")]),
+    );
+    rig.app_state.device_cache.insert(mk_thing(
+        &park,
+        "园区",
+        vec![mk_prop(&total_prop, &park, "total_power")],
+    ));
 
     // 3) 装配 Manager（冷启动重建索引；start 返回即订阅已建立）
     let manager = install_manager(&mut rig).await;
@@ -388,7 +396,9 @@ async fn meter_report_triggers_park_total_recompute() {
         .and_then(|s| s.stale_reason)
         .unwrap_or_default();
     assert!(reason.contains("等待数据"), "{reason}");
-    assert!(reason.contains("电表2.用电数"), "{reason}");
+    // I-2 后求值全程走 thing_id，stale 原因点名 id 级引用（spec §二 refs 以 id 为准）
+    assert!(reason.contains(&meter2), "stale 原因应点名失效引用物: {reason}");
+    assert!(reason.contains("用电数"), "{reason}");
     assert_eq!(
         cached_prop(&rig, &park, "total_power").as_deref(),
         Some("30"),
@@ -405,7 +415,10 @@ async fn meter_report_triggers_park_total_recompute() {
         .unwrap();
     assert!(row["derived_status"]["stale"] == true, "{row}");
     assert!(
-        row["derived_status"]["stale_reason"].as_str().unwrap().contains("等待数据"),
+        row["derived_status"]["stale_reason"]
+            .as_str()
+            .unwrap()
+            .contains("等待数据"),
         "{row}"
     );
 
@@ -459,7 +472,8 @@ async fn device_count_recomputed_on_tree_change() {
 /// spec §三/§七：重启（全新 Manager 冷启动 start()）→ 索引从库重建 +
 /// 首值补偿——不经任何事件 total_power 即有值。
 #[tokio::test]
-async fn restart_rebuilds_index_and_first_value() {    let mut rig = setup_rig().await;
+async fn restart_rebuilds_index_and_first_value() {
+    let mut rig = setup_rig().await;
     let app = build_router(&rig.app_state);
     let token = token();
 
@@ -476,11 +490,19 @@ async fn restart_rebuilds_index_and_first_value() {    let mut rig = setup_rig()
     )
     .await;
 
-    register_manual_thing(&rig, mk_thing(&meter1, "电表1", vec![mk_prop(&m1_prop, &meter1, "用电数")]));
-    register_manual_thing(&rig, mk_thing(&meter2, "电表2", vec![mk_prop(&m2_prop, &meter2, "用电数")]));
-    rig.app_state
-        .device_cache
-        .insert(mk_thing(&park, "园区", vec![mk_prop(&total_prop, &park, "total_power")]));
+    register_manual_thing(
+        &rig,
+        mk_thing(&meter1, "电表1", vec![mk_prop(&m1_prop, &meter1, "用电数")]),
+    );
+    register_manual_thing(
+        &rig,
+        mk_thing(&meter2, "电表2", vec![mk_prop(&m2_prop, &meter2, "用电数")]),
+    );
+    rig.app_state.device_cache.insert(mk_thing(
+        &park,
+        "园区",
+        vec![mk_prop(&total_prop, &park, "total_power")],
+    ));
 
     // 表计读数经真实 ingest 进缓存（模拟"重启前已上报"的存量状态）
     ingest(&rig, &meter1, "用电数", "100").await;
@@ -532,8 +554,14 @@ async fn hot_path_rest_created_owner_self_heals_without_restart() {
     .await;
 
     // 电表是数据源：ingest 载体登记（园区物仍不进缓存）
-    register_manual_thing(&rig, mk_thing(&meter1, "电表1", vec![mk_prop(&m1_prop, &meter1, "用电数")]));
-    register_manual_thing(&rig, mk_thing(&meter2, "电表2", vec![mk_prop(&m2_prop, &meter2, "用电数")]));
+    register_manual_thing(
+        &rig,
+        mk_thing(&meter1, "电表1", vec![mk_prop(&m1_prop, &meter1, "用电数")]),
+    );
+    register_manual_thing(
+        &rig,
+        mk_thing(&meter2, "电表2", vec![mk_prop(&m2_prop, &meter2, "用电数")]),
+    );
 
     // 自愈证据：园区物已补载进缓存且带派生属性（非测试播种）
     let cached_park = rig.app_state.device_cache.get(&park).expect("自愈后园区物应已进缓存");
@@ -555,6 +583,193 @@ async fn hot_path_rest_created_owner_self_heals_without_restart() {
     let s = manager.derived_status(&total_prop).expect("派生状态");
     assert!(!s.stale, "{s:?}");
     wait_park_property_change(&rig.pool, &park, "30").await;
+
+    let _ = rig.shutdown_tx.send(());
+}
+
+/// 终审 I-2：引用物改名后重算仍按 thing_id 出值（spec §二 "refs 以 thing_id
+/// 为准（改名不影响计算）"）。旧实现按表达式原文物名解析——重启/缓存刷新后
+/// name_to_id 只认新名，派生永久 stale「等待数据」。
+#[tokio::test]
+async fn rename_ref_thing_recompute_still_resolves_by_id() {
+    let mut rig = setup_rig().await;
+    let app = build_router(&rig.app_state);
+    let token = token();
+
+    let park = create_thing(&app, &token, "园区", None).await;
+    let meter1 = create_thing(&app, &token, "电表1", None).await;
+    let m1_prop = create_property(&app, &token, &meter1, json!({"name": "用电数", "data_type": "float"})).await;
+    let total_prop = create_property(
+        &app,
+        &token,
+        &park,
+        json!({"name": "total_power", "expression": "{电表1.用电数} * 2"}),
+    )
+    .await;
+
+    register_manual_thing(
+        &rig,
+        mk_thing(&meter1, "电表1", vec![mk_prop(&m1_prop, &meter1, "用电数")]),
+    );
+    rig.app_state.device_cache.insert(mk_thing(
+        &park,
+        "园区",
+        vec![mk_prop(&total_prop, &park, "total_power")],
+    ));
+    let manager = install_manager(&mut rig).await;
+    let app = build_router(&rig.app_state);
+
+    ingest(&rig, &meter1, "用电数", "21").await;
+    wait_until("改名前 total_power=42", || {
+        cached_prop(&rig, &park, "total_power").as_deref() == Some("42")
+    })
+    .await;
+
+    // 真实 API 改名 + 缓存以新名重建（模拟重启后 load_device_cache 全量重插：
+    // name_to_id 只有新名——ThingCache::update 本就不刷新 name_to_id，
+    // remove+insert 等价于重启后的缓存状态）
+    let response = app
+        .clone()
+        .oneshot(auth_request(
+            "PUT",
+            &format!("/api/v1/things/{meter1}"),
+            &token,
+            Some(json!({"name": "电表1改"})),
+        ))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "改名失败: {json}");
+    let mut renamed = rig.app_state.device_cache.get(&meter1).expect("电表 cached");
+    renamed.name = "电表1改".to_string();
+    rig.app_state.device_cache.remove(&meter1);
+    rig.app_state.device_cache.insert(renamed);
+    assert!(
+        rig.app_state.device_cache.get_by_name("电表1").is_none(),
+        "旧名不应再可解析（重启后缓存状态）"
+    );
+
+    // 改名后新读数 → 事件按 thing_id 命中、求值按 thing_id 取数 → 仍出值
+    ingest(&rig, &meter1, "用电数", "22").await;
+    wait_until("改名后 total_power=44", || {
+        cached_prop(&rig, &park, "total_power").as_deref() == Some("44")
+    })
+    .await;
+    let s = manager.derived_status(&total_prop).expect("派生状态");
+    assert!(!s.stale, "改名后重算不应 stale: {s:?}");
+
+    let _ = rig.shutdown_tx.send(());
+}
+
+// ── 终审 I-3：场景包实例化挂到既有园区下 = 子树变更，处理器接 ─────────────
+// notify_tree_changed → device_count 重算 +N（漏接则静默陈旧到重启）。
+
+/// 迷你场景包：根（campus/space）→ 3 个 template_ref 传感器（thing_type=device）。
+const MINI_SCENE_JSON: &str = r#"{
+    "name": "mini_scene",
+    "display_name": {"zh": "迷你场景"},
+    "category": "scenes",
+    "thing_category": "campus",
+    "parameters": [],
+    "device_info": {"default_name_pattern": "{scene_name}"},
+    "children": [
+        {"key": "sensor", "template_ref": "mini_sensor", "count": 3,
+         "device_info": {"default_name_pattern": "传感器{index}"}}
+    ]
+}"#;
+
+async fn seed_template_category(pool: &sqlx::SqlitePool, name: &str) {
+    sqlx::query("INSERT OR IGNORE INTO template_categories (name, display_name, created_at) VALUES (?, '{\"zh\":\"分类\"}', '2026-01-01 00:00:00')")
+        .bind(name)
+        .execute(pool)
+        .await
+        .expect("seed template category");
+}
+
+/// 向 thing_templates 插入一行模板（与 scene_instantiate_test 同夹具），返回模板 id。
+async fn seed_thing_template(
+    pool: &sqlx::SqlitePool,
+    name: &str,
+    category: &str,
+    device_info: &str,
+    properties: &str,
+    actions: &str,
+) -> String {
+    seed_template_category(pool, category).await;
+    let id = format!("tpl-{name}");
+    sqlx::query(
+        "INSERT INTO thing_templates (id, name, display_name, version, category, \
+         tags, device_info, properties, actions, events, is_builtin, is_active, workspace_id, created_at, updated_at) \
+         VALUES (?, ?, '{\"zh\":\"模板\"}', '1.0.0', ?, '[]', ?, ?, ?, '[]', 0, 1, ?, \
+         '2026-01-01 00:00:00', '2026-01-01 00:00:00')",
+    )
+    .bind(&id)
+    .bind(name)
+    .bind(category)
+    .bind(device_info)
+    .bind(properties)
+    .bind(actions)
+    .bind(WS)
+    .execute(pool)
+    .await
+    .expect("seed thing template");
+    id
+}
+
+#[tokio::test]
+async fn scene_instantiation_bumps_device_count() {
+    let mut rig = setup_rig().await;
+    // Manager 先装配——POST 属性走 notify_config_changed 活路径、实例化走
+    // notify_tree_changed 活路径（均真实路由钩子）
+    install_manager(&mut rig).await;
+    let app = build_router(&rig.app_state);
+    let token = token();
+
+    let park = create_thing(&app, &token, "园区", None).await;
+    create_property(
+        &app,
+        &token,
+        &park,
+        json!({"name": "device_count", "expression": "descendant_count(device)"}),
+    )
+    .await;
+
+    // 首值补偿（ensure_driver 库载自愈）：园区下 0 个 device 后代
+    wait_until("首值 device_count=0", || {
+        cached_prop(&rig, &park, "device_count").as_deref() == Some("0")
+    })
+    .await;
+
+    // 种子：传感器设备模板 + 场景包模板（真实表行，与 scene_instantiate_test 同法）
+    seed_thing_template(&rig.pool, "mini_sensor", "sensor", "{}", "[]", "[]").await;
+    let scene_tpl = seed_thing_template(&rig.pool, "mini_scene", "scenes", MINI_SCENE_JSON, "[]", "[]").await;
+
+    // 真实 API 实例化（挂到既有园区下）→ 处理器 notify_tree_changed → 重算
+    let response = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            &format!("/api/v1/marketplace/thing-templates/{scene_tpl}/instantiate"),
+            &token,
+            Some(json!({
+                "sceneName": "南区",
+                "parentId": park,
+                "parameterValues": {},
+                "dryRun": false,
+            })),
+        ))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "实例化失败: {json}");
+    assert_eq!(json["result"]["nodeCount"], 4, "根 + 3 传感器: {json}");
+
+    // 实例化的 3 个 device 后代被 descendant_count(device) 真实计入
+    wait_until("实例化后 device_count=3", || {
+        cached_prop(&rig, &park, "device_count").as_deref() == Some("3")
+    })
+    .await;
+    wait_park_property_change(&rig.pool, &park, "3").await;
 
     let _ = rig.shutdown_tx.send(());
 }

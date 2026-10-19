@@ -456,6 +456,11 @@ impl ThingService {
                         "maxValue": p.max_value,
                         "defaultValue": p.default_value,
                         "isReadOnly": p.is_read_only != 0,
+                        // 派生三件套（终审 C-1：详情页派生徽标/表达式展开依赖
+                        // 这些字段；缺了它们前端 derived 恒 false，展示链路是死路）
+                        "source": p.source,
+                        "expression": p.expression,
+                        "refs": p.refs,
                         "createdAt": p.created_at,
                         "updatedAt": p.updated_at,
                     })

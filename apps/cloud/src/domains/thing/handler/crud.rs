@@ -229,7 +229,31 @@ pub async fn get_thing_profile(
     let ws = workspace_id.unwrap_or_default();
 
     match svc.get_thing_profile(&id, &ws).await {
-        Ok(profile) => {
+        Ok(mut profile) => {
+            // 终审 C-1：详情页派生 stale 灰点/徽标的唯一数据源——派生行注入
+            // 运行状态（与 admin GET 同模式，内存态不落库，spec §二 E4）。
+            if let (Some(manager), Some(props)) = (&state.derived_manager, profile.properties.as_mut()) {
+                for p in props
+                    .iter_mut()
+                    .filter(|p| p.get("source").and_then(|s| s.as_str()) == Some("derived"))
+                {
+                    let Some(prop_id) = p.get("id").and_then(|i| i.as_str()).map(str::to_string) else {
+                        continue;
+                    };
+                    if let Some(s) = manager.derived_status(&prop_id)
+                        && let Some(obj) = p.as_object_mut()
+                    {
+                        obj.insert(
+                            "derivedStatus".to_string(),
+                            serde_json::json!({
+                                "stale": s.stale,
+                                "staleReason": s.stale_reason,
+                                "lastEvalAt": s.last_eval_at,
+                            }),
+                        );
+                    }
+                }
+            }
             tracing::info!(
                 thing_id = %id,
                 props = profile.properties.as_ref().map_or(0, |v| v.len()),

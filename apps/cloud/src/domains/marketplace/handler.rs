@@ -633,6 +633,8 @@ async fn instantiate_thing_template(
         return marketplace_error_response(&MarketplaceError::Validation("需要指定工作空间".to_string()));
     }
 
+    let parent_id = body.parent_id.clone();
+    let dry_run = body.dry_run;
     let params = InstantiateParams {
         scene_name: body.scene_name,
         parent_id: body.parent_id,
@@ -641,6 +643,15 @@ async fn instantiate_thing_template(
     };
     match SceneInstantiator::instantiate(state.db.as_ref(), ws, &id, &params).await {
         Ok(outcome) => {
+            // 终审 I-3：实例化挂到既有父下 = 子树变更，必须通知 Manager（含
+            // descendant_count 的派生重算）——漏接则 device_count 静默陈旧到
+            // 重启。与 thing 域 crud.rs create_thing 的钩子②同模式。
+            if !dry_run
+                && let (Some(manager), Some(parent)) =
+                    (&state.derived_manager, parent_id.as_deref().filter(|p| !p.is_empty()))
+            {
+                manager.notify_tree_changed(parent).await;
+            }
             let result = serde_json::to_value(&outcome).unwrap_or(serde_json::Value::Null);
             (StatusCode::OK, ApiResponseBuilder::success(result))
         }
