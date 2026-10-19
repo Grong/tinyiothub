@@ -89,7 +89,6 @@ view-knowledge {
   color: var(--text);
   background: var(--bg-hover);
   box-shadow: var(--glass-shadow-hover);
-  transform: translateY(-1px);
 }
 
 .knowledge-filter-chip.active {

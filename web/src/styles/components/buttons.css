@@ -97,13 +97,11 @@
 
 .btn:hover {
   background: var(--bg-hover);
-  transform: translateY(-1px);
   box-shadow: var(--shadow-sm);
 }
 
 .btn:active {
   background: var(--secondary);
-  transform: translateY(0);
   box-shadow: var(--shadow-sm);
 }
 
@@ -134,7 +132,6 @@
 .btn.primary:hover {
   background: var(--accent-gradient-soft);
   box-shadow: 0 4px 16px var(--accent-glow-strong);
-  transform: translateY(-1px);
 }
 
 /* Keyboard shortcut badge (shadcn style) */
@@ -181,7 +178,6 @@
 .btn.danger:hover {
   background: var(--danger-line-15);
   box-shadow: 0 2px 8px var(--danger-subtle);
-  transform: translateY(-1px);
 }
 
 .btn-success {
@@ -193,7 +189,6 @@
 .btn-success:hover {
   background: var(--ok-fill-10);
   box-shadow: 0 2px 8px var(--ok-subtle);
-  transform: translateY(-1px);
 }
 
 .btn-warning {
@@ -205,7 +200,6 @@
 .btn-warning:hover {
   background: var(--warn-subtle);
   box-shadow: 0 2px 8px var(--warn-subtle);
-  transform: translateY(-1px);
 }
 
 .btn--sm {

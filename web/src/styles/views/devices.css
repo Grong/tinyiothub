@@ -1118,7 +1118,6 @@
 .level-chip:hover {
   border-color: var(--chip-color, var(--accent));
   color: var(--chip-color, var(--text));
-  transform: translateY(-1px);
 }
 
 .level-chip--active {
