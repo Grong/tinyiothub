@@ -179,7 +179,7 @@ impl DataServer {
         }
     }
 
-    fn collect_property_change_events(device: &mut Thing, values: &[ResultValue]) -> Vec<DomainEvent> {
+    pub(crate) fn collect_property_change_events(device: &mut Thing, values: &[ResultValue]) -> Vec<DomainEvent> {
         let mut pending_events = Vec::new();
         let thing_id = device.id.clone();
         let thing_name = device.name.clone();
@@ -211,7 +211,7 @@ impl DataServer {
         pending_events
     }
 
-    fn build_property_change_event_static(
+    pub(crate) fn build_property_change_event_static(
         thing_id: &str,
         thing_name: &str,
         property: &ThingProperty,
@@ -490,5 +490,72 @@ impl Clone for DataServer {
             command_queue: self.command_queue.clone(),
             event_bus: self.event_bus.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tinyiothub_core::models::thing::Thing;
+    use tinyiothub_core::models::thing_property::ThingProperty;
+
+    fn make_thing_with_prop(name: &str, value: Option<&str>) -> Thing {
+        let mut t = Thing {
+            id: "thing-1".to_string(),
+            name: "电表1".to_string(),
+            ..Thing::default()
+        };
+        let mut p = ThingProperty {
+            id: "prop-1".to_string(),
+            thing_id: "thing-1".to_string(),
+            name: name.to_string(),
+            ..ThingProperty::default()
+        };
+        if let Some(v) = value {
+            p.set_current_value(v.to_string());
+        }
+        t.properties = Some(vec![p]);
+        t
+    }
+
+    #[test]
+    fn property_change_emits_event_only_when_value_changes() {
+        let mut thing = make_thing_with_prop("用电数", Some("100"));
+        // 新值不同 → 产生 1 个 PropertyChange 事件，缓存值被更新
+        let values = vec![ResultValue::new("用电数".into(), "float".into(), Some("101.5".to_string()))];
+        let events = DataServer::collect_property_change_events(&mut thing, &values);
+        assert_eq!(events.len(), 1);
+        let prop = &thing.properties.as_ref().unwrap()[0];
+        assert_eq!(prop.current_value.as_deref(), Some("101.5"));
+        // 同值再来 → 0 事件
+        let events2 = DataServer::collect_property_change_events(&mut thing, &values);
+        assert_eq!(events2.len(), 0);
+    }
+
+    #[test]
+    fn property_change_first_report_emits_event() {
+        let mut thing = make_thing_with_prop("用电数", None);
+        let values = vec![ResultValue::new("用电数".into(), "float".into(), Some("42".to_string()))];
+        let events = DataServer::collect_property_change_events(&mut thing, &values);
+        assert_eq!(events.len(), 1, "首次上报（old=None）必须产生事件");
+    }
+
+    #[test]
+    fn property_change_event_metadata_carries_old_and_new() {
+        let mut thing = make_thing_with_prop("用电数", Some("100"));
+        let values = vec![ResultValue::new("用电数".into(), "float".into(), Some("200".to_string()))];
+        let events = DataServer::collect_property_change_events(&mut thing, &values);
+        let json = serde_json::to_value(&events[0]).unwrap();
+        let s = json.to_string();
+        assert!(s.contains("\"value\":\"200\""), "metadata.value 必须是新值: {s}");
+        assert!(s.contains("\"old_value\":\"100\""), "metadata.old_value 必须是旧值: {s}");
+    }
+
+    #[test]
+    fn unknown_result_value_is_ignored() {
+        let mut thing = make_thing_with_prop("用电数", Some("100"));
+        let values = vec![ResultValue::new("不存在的属性".into(), "float".into(), Some("1".to_string()))];
+        let events = DataServer::collect_property_change_events(&mut thing, &values);
+        assert_eq!(events.len(), 0);
     }
 }
