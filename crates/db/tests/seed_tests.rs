@@ -35,7 +35,7 @@ async fn seed_system_creates_subscription_plans_and_builtin_templates() {
         .fetch_one(db.pool())
         .await
         .unwrap();
-    assert_eq!(templates, 16);
+    assert_eq!(templates, 17);
 
     let admin: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE username = 'admin')")
         .fetch_one(db.pool())
@@ -88,6 +88,17 @@ async fn seed_system_builtin_scene_templates_have_valid_alarm_rules() {
             t.default_knowledge.as_deref(),
             "{id} default_knowledge 列须与根节点 knowledge 一致"
         );
+        // 防漂移（Task 9 fix round 1）：种子副本须含园区指标骨架，
+        // 与 templates/builtin/scenes/smart_campus.json 保持一致
+        if id == "builtin_smart_campus" {
+            let names: Vec<&str> = t.properties.iter().map(|p| p.name.as_str()).collect();
+            for expected in ["total_power", "total_water", "device_count"] {
+                assert!(
+                    names.contains(&expected),
+                    "builtin_smart_campus 种子副本缺少园区指标骨架属性 {expected}（现有: {names:?}）"
+                );
+            }
+        }
         for rule in collect_alarm_rules(&t) {
             serde_json::from_value::<AlarmCondition>(rule.condition.clone())
                 .unwrap_or_else(|e| panic!("{id} 规则「{}」condition 非法: {e}（{:?}）", rule.name, rule.condition));
