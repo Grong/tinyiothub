@@ -80,6 +80,22 @@ impl DerivedPropertyQueries for DbDerivedPropertyQueries {
         self.0.find_derived_properties().await.map_err(|e| e.to_string())
     }
 
+    async fn find_thing_with_properties(&self, thing_id: &str) -> Result<Option<Thing>, String> {
+        // 既有 find 组合（ensure_driver 热路径自愈，Task 13 评审 Important-1）：
+        // find_thing_by_id(None,…) 不做 workspace 过滤（钩子已鉴权，id 全局唯一）。
+        let mut thing = match self.0.find_thing_by_id(None, thing_id).await.map_err(|e| e.to_string())? {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+        let props = self
+            .0
+            .find_thing_properties_by_thing_id(thing_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        thing.properties = Some(props);
+        Ok(Some(thing))
+    }
+
     async fn count_descendants(&self, root_thing_id: &str, thing_type: Option<&str>) -> Result<i64, String> {
         // 递归 CTE，深度上限 10（spec §二 防环兜底）；表名 things（20260825000001 改名）
         let row: (i64,) = sqlx::query_as(

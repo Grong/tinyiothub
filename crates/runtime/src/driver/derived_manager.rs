@@ -145,14 +145,32 @@ impl DerivedDriverManager {
 
     /// 注册或热更新 owner 驱动。热更新走共享 defs 句柄改写（抉择点②），
     /// 不触碰 DriverWrapper。
+    ///
+    /// 热路径自愈（Task 13 评审 Important-1）：REST 建物/场景包实例化不写
+    /// device_cache（仅 bootstrap `load_device_cache` 重启路径全量写入），
+    /// cache miss 时从库加载 owner 物（含属性）进缓存后继续注册——运行中
+    /// 建物→配派生不再静默失效到重启。
     async fn ensure_driver(&self, owner_id: &str, defs: Vec<DerivedDef>) -> Result<(), String> {
         if let Some(handle) = self.owners.read().get(owner_id).map(|e| e.defs.clone()) {
             *handle.write() = defs;
             return Ok(());
         }
-        let Some(thing) = self.cache.get(owner_id) else {
-            return Err(format!("owner 物 {owner_id} 不在缓存"));
+        let thing = match self.cache.get(owner_id) {
+            Some(t) => t,
+            None => {
+                // DB 加载在写锁外做（check-then-act 原子性：下方双检兜底）。
+                let Some(t) = self.queries.find_thing_with_properties(owner_id).await? else {
+                    return Err(format!("owner 物 {owner_id} 不存在（缓存与库均无）"));
+                };
+                self.cache.insert(t.clone());
+                t
+            }
         };
+        // await 窗口内可能已有并发注册——双检，后到者退化为热更新。
+        if let Some(handle) = self.owners.read().get(owner_id).map(|e| e.defs.clone()) {
+            *handle.write() = defs;
+            return Ok(());
+        }
         let counter: Arc<dyn DescendantCounter> = Arc::new(PortCounter {
             queries: self.queries.clone(),
             owner_id: owner_id.to_string(),

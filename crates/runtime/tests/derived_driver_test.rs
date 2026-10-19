@@ -69,6 +69,9 @@ impl DerivedPropertyQueries for StubQueries {
     async fn list_derived(&self) -> Result<Vec<ThingProperty>, String> {
         Ok(self.props.clone())
     }
+    async fn find_thing_with_properties(&self, _thing_id: &str) -> Result<Option<Thing>, String> {
+        Ok(None) // 既有用例缓存预置齐全，不命中补载路径
+    }
     async fn count_descendants(&self, _root: &str, _thing_type: Option<&str>) -> Result<i64, String> {
         Ok(self.descendants.load(Ordering::SeqCst))
     }

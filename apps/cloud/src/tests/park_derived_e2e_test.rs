@@ -17,11 +17,13 @@
 //!   EventBus 上注册 RecordingEvents——实现生产 EventHandler trait、走相同
 //!   的 bus 分发 + 真实 `Db::insert_event`——证明"事件真实发布且真实落库"。
 //! - 园区物缓存种子：DerivedDriver 注册时从缓存捕获 owner 物
-//!   （derived_manager.rs ensure_driver），园区物必须带派生属性进缓存
-//!   （生产由 DeviceCreated/Updated → DataServer 缓存插入保证；测试直接播种
-//!   真实 id）。因此 Manager 在 API 建物/建属性之后装配（冷启动路径；
-//!   notify_config_changed 活路径由 Task 8 测试覆盖，本文件 test 2 活验
-//!   create_thing 处理器 → notify_tree_changed → 重算）。
+//!   （derived_manager.rs ensure_driver），园区物必须带派生属性进缓存。
+//!   生产的缓存写入保证此前只有 bootstrap load_device_cache（重启路径）——
+//!   REST 建物/场景实例化不写缓存（DeviceCreated/Updated 事件仅 legacy
+//!   driver service 发布），评审 Important-1 已为 ensure_driver 补库载自愈；
+//!   本文件 test 1-3 仍直接播种（真实 id）覆盖缓存命中路径，test 4 不播种
+//!   园区物、不重启，覆盖 cache-miss 自愈活路径（notify_config_changed 活
+//!   路径同验）；notify_tree_changed 活路径由 test 2 活验。
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -457,8 +459,7 @@ async fn device_count_recomputed_on_tree_change() {
 /// spec §三/§七：重启（全新 Manager 冷启动 start()）→ 索引从库重建 +
 /// 首值补偿——不经任何事件 total_power 即有值。
 #[tokio::test]
-async fn restart_rebuilds_index_and_first_value() {
-    let mut rig = setup_rig().await;
+async fn restart_rebuilds_index_and_first_value() {    let mut rig = setup_rig().await;
     let app = build_router(&rig.app_state);
     let token = token();
 
@@ -498,6 +499,62 @@ async fn restart_rebuilds_index_and_first_value() {
     let s = manager.derived_status(&total_prop).expect("派生状态");
     assert!(!s.stale && s.last_eval_at.is_some(), "首值补偿应已真实求值: {s:?}");
     wait_park_property_change(&rig.pool, &park, "300").await;
+
+    let _ = rig.shutdown_tx.send(());
+}
+
+/// Task 13 评审 Important-1 热路径自愈：经真实 REST API 建园区物（不经
+/// bootstrap 播种、不进缓存——与场景包实例化同构的热路径缺口）→ POST
+/// 派生属性（notify_config_changed 活路径）→ 不重启，注入电表读数 →
+/// total_power 重算出值。
+#[tokio::test]
+async fn hot_path_rest_created_owner_self_heals_without_restart() {
+    let mut rig = setup_rig().await;
+    // Manager 先装配——POST 属性走 notify_config_changed 活路径
+    let manager = install_manager(&mut rig).await;
+    let app = build_router(&rig.app_state);
+    let token = token();
+
+    // 园区物只经真实 REST 落库，全程不手动播种缓存（自愈断言点）
+    let park = create_thing(&app, &token, "园区", None).await;
+    let meter1 = create_thing(&app, &token, "电表1", None).await;
+    let meter2 = create_thing(&app, &token, "电表2", None).await;
+    let m1_prop = create_property(&app, &token, &meter1, json!({"name": "用电数", "data_type": "float"})).await;
+    let m2_prop = create_property(&app, &token, &meter2, json!({"name": "用电数", "data_type": "float"})).await;
+    // notify_config_changed → ensure_driver cache miss → 从库补载园区物
+    // （含刚创建的 total_power 属性）→ 注册 DerivedDriver
+    let total_prop = create_property(
+        &app,
+        &token,
+        &park,
+        json!({"name": "total_power", "expression": "{电表1.用电数}+{电表2.用电数}"}),
+    )
+    .await;
+
+    // 电表是数据源：ingest 载体登记（园区物仍不进缓存）
+    register_manual_thing(&rig, mk_thing(&meter1, "电表1", vec![mk_prop(&m1_prop, &meter1, "用电数")]));
+    register_manual_thing(&rig, mk_thing(&meter2, "电表2", vec![mk_prop(&m2_prop, &meter2, "用电数")]));
+
+    // 自愈证据：园区物已补载进缓存且带派生属性（非测试播种）
+    let cached_park = rig.app_state.device_cache.get(&park).expect("自愈后园区物应已进缓存");
+    assert!(
+        cached_park
+            .properties
+            .as_ref()
+            .is_some_and(|ps| ps.iter().any(|p| p.name == "total_power")),
+        "库载补种必须含派生属性: {cached_park:?}"
+    );
+
+    // 不重启：注入电表读数 → 重算出值 + 事件落库
+    ingest(&rig, &meter1, "用电数", "10").await;
+    ingest(&rig, &meter2, "用电数", "20").await;
+    wait_until("热路径 total_power=30", || {
+        cached_prop(&rig, &park, "total_power").as_deref() == Some("30")
+    })
+    .await;
+    let s = manager.derived_status(&total_prop).expect("派生状态");
+    assert!(!s.stale, "{s:?}");
+    wait_park_property_change(&rig.pool, &park, "30").await;
 
     let _ = rig.shutdown_tx.send(());
 }
