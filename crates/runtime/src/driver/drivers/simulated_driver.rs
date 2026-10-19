@@ -335,6 +335,7 @@ mod tests {
                 updated_at: None,
                 current_value: None,
                 alarm_status: None,
+                derived_status: None,
             }]),
             commands: None,
             created_at: Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
@@ -374,6 +375,7 @@ mod tests {
                     updated_at: None,
                     current_value: None,
                     alarm_status: None,
+                    derived_status: None,
                 },
                 ThingProperty {
                     id: "prop-current".to_string(),
@@ -394,6 +396,7 @@ mod tests {
                     updated_at: None,
                     current_value: None,
                     alarm_status: None,
+                    derived_status: None,
                 },
                 ThingProperty {
                     id: "prop-power".to_string(),
@@ -414,6 +417,7 @@ mod tests {
                     updated_at: None,
                     current_value: None,
                     alarm_status: None,
+                    derived_status: None,
                 },
             ]),
             commands: None,

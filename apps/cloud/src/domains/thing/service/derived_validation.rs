@@ -64,8 +64,9 @@ async fn detect_cycle(
     new_edges: &[ResolvedRef],
 ) -> Result<(), String> {
     // 既有边：workspace 内所有派生属性 thing_id -> refs.thing_id（refs 为 JSON）
+    // COALESCE 双保险（Task 6 评审）：历史行 refs 可能为 NULL，按 '[]' 处理不炸行。
     let rows: Vec<(String, String)> = sqlx::query_as(
-        r#"SELECT p.thing_id, p.refs FROM thing_properties p
+        r#"SELECT p.thing_id, COALESCE(p.refs, '[]') FROM thing_properties p
            JOIN things d ON d.id = p.thing_id
            WHERE d.workspace_id = ? AND p.expression IS NOT NULL"#,
     )

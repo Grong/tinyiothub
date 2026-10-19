@@ -239,6 +239,8 @@ impl ThingService {
                 default_value: p.get("defaultValue").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 is_read_only: Some(p.get("isReadOnly").and_then(|v| v.as_bool()).unwrap_or(false) as i32),
                 expression: None,
+                source: None,
+                refs: None,
             })
             .collect();
         let db = Db::new(self.pool.clone());

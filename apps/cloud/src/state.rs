@@ -499,7 +499,7 @@ impl AppState {
             }),
             system_prompts: Arc::new(settings.agent.system_prompts.clone()),
             db: database,
-            data_server: None, // DataServer 由 ServiceManager 设置
+            data_server: None,     // DataServer 由 ServiceManager 设置
             derived_manager: None, // DerivedDriverManager 由 ServiceManager 设置
             device_service,
             device_query_service,
@@ -994,6 +994,7 @@ impl axum::extract::FromRef<AppState> for crate::domains::admin::AdminState {
             tenant_service: state.tenant_service.clone(),
             sysinfo_system: state.sysinfo_system.clone(),
             role_checker: Arc::new(EventSecurityAdminRoleChecker { state: state.clone() }),
+            derived_manager: state.derived_manager.clone(),
             network_defaults: state.network_defaults.clone(),
             mqtt_primary: state.mqtt_primary.clone(),
             started_at: state.started_at,

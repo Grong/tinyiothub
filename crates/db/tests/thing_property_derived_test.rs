@@ -12,11 +12,10 @@ async fn derived_columns_default_and_roundtrip(pool: sqlx::SqlitePool) {
         .unwrap();
 
     // 0) PRAGMA 自证：三列已就位
-    let cols: Vec<(String,)> =
-        sqlx::query_as("SELECT name FROM pragma_table_info('thing_properties')")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
+    let cols: Vec<(String,)> = sqlx::query_as("SELECT name FROM pragma_table_info('thing_properties')")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
     let cols: Vec<String> = cols.into_iter().map(|(c,)| c).collect();
     for col in ["source", "expression", "refs"] {
         assert!(cols.contains(&col.to_string()), "缺列 {col}: {cols:?}");
@@ -55,6 +54,8 @@ async fn derived_columns_default_and_roundtrip(pool: sqlx::SqlitePool) {
             default_value: None,
             is_read_only: None,
             expression: Some("{电表1.用电数}".to_string()),
+            source: Some("derived".to_string()),
+            refs: Some(r#"[{"thing_id":"t1","property_name":"用电数"}]"#.to_string()),
         }])
         .await
         .unwrap();

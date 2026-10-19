@@ -221,6 +221,7 @@ mod tests {
             updated_at: None,
             current_value: None,
             alarm_status: None,
+            derived_status: None,
         }];
         let result = TemplateExporter::map_properties(Some(&props));
         assert_eq!(result.len(), 1);

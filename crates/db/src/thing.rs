@@ -1892,6 +1892,8 @@ mod tests {
                 default_value: None,
                 is_read_only: Some(1),
                 expression: None,
+                source: None,
+                refs: None,
             }],
         )
         .await
@@ -1949,6 +1951,8 @@ mod tests {
                 default_value: None,
                 is_read_only: None,
                 expression: None,
+                source: None,
+                refs: None,
             }],
         )
         .await

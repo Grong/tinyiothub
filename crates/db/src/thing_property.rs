@@ -46,6 +46,7 @@ impl From<ThingPropertyRow> for ThingProperty {
             updated_at: row.updated_at,
             current_value: None,
             alarm_status: None,
+            derived_status: None,
         }
     }
 }
@@ -102,9 +103,7 @@ pub(crate) async fn find_thing_properties_by_thing_id(
 }
 
 /// 全量派生属性（启动重建内存反向索引用，spec §二）。
-pub(crate) async fn find_derived_properties(
-    pool: &SqlitePool,
-) -> Result<Vec<ThingProperty>, sqlx::Error> {
+pub(crate) async fn find_derived_properties(pool: &SqlitePool) -> Result<Vec<ThingProperty>, sqlx::Error> {
     let rows = sqlx::query_as::<_, ThingPropertyRow>(
         r#"SELECT id, thing_id, name, display_name, description, data_type, unit,
                   min_value, max_value, default_value, is_read_only, source, expression, refs,
@@ -128,14 +127,18 @@ pub(crate) async fn create_thing_properties_batch_tx(
         let id = generate_id();
         let now = now_string();
         let is_read_only = request.is_read_only.unwrap_or(0);
+        // source 显式写穿（Task 4 评审：派生创建必须落 'derived'，模板/手动路径
+        // 不传则保持默认 'template'）；refs 不传保持 NULL（与模板拷贝存量一致），
+        // 派生保存路径由调用方恒写非空 JSON。
+        let source = request.source.as_deref().unwrap_or("template");
 
         sqlx::query(
             r#"
             INSERT INTO thing_properties (
                 id, thing_id, name, display_name, description, data_type, unit,
-                min_value, max_value, default_value, is_read_only, expression,
+                min_value, max_value, default_value, is_read_only, source, expression, refs,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&id)
@@ -149,7 +152,9 @@ pub(crate) async fn create_thing_properties_batch_tx(
         .bind(request.max_value)
         .bind(&request.default_value)
         .bind(is_read_only)
+        .bind(source)
         .bind(&request.expression)
+        .bind(&request.refs)
         .bind(&now)
         .bind(&now)
         .execute(&mut **tx)
@@ -180,6 +185,72 @@ pub(crate) async fn create_thing_properties_batch(
     Ok(results)
 }
 
+/// 更新属性定义（Task 8 管理面 PUT）：标量字段 None 保持不变（COALESCE）；
+/// `derived = Some((expression, refs_json))` 时写穿 source='derived' +
+/// expression/refs + is_read_only=1（派生校验已通过，refs 恒非空 JSON）。
+/// 单事务两条 UPDATE；UNIQUE(thing_id, name) 冲突原样抛给调用方映 409。
+pub(crate) async fn update_thing_property_definition(
+    pool: &SqlitePool,
+    id: &str,
+    thing_id: &str,
+    name: Option<&str>,
+    display_name: Option<&str>,
+    unit: Option<&str>,
+    data_type: Option<&str>,
+    derived: Option<(&str, &str)>,
+) -> Result<u64, sqlx::Error> {
+    let now = now_string();
+    let mut tx = pool.begin().await?;
+    let r = sqlx::query(
+        r#"
+        UPDATE thing_properties SET
+            name = COALESCE(?, name),
+            display_name = COALESCE(?, display_name),
+            unit = COALESCE(?, unit),
+            data_type = COALESCE(?, data_type),
+            updated_at = ?
+        WHERE id = ? AND thing_id = ?
+        "#,
+    )
+    .bind(name)
+    .bind(display_name)
+    .bind(unit)
+    .bind(data_type)
+    .bind(&now)
+    .bind(id)
+    .bind(thing_id)
+    .execute(&mut *tx)
+    .await?;
+    if let Some((expression, refs_json)) = derived {
+        sqlx::query(
+            r#"
+            UPDATE thing_properties SET
+                source = 'derived', expression = ?, refs = ?, is_read_only = 1, updated_at = ?
+            WHERE id = ? AND thing_id = ?
+            "#,
+        )
+        .bind(expression)
+        .bind(refs_json)
+        .bind(&now)
+        .bind(id)
+        .bind(thing_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(r.rows_affected())
+}
+
+/// 删除属性定义（Task 8 管理面 DELETE），返回受影响行数（0 = 不存在）。
+pub(crate) async fn delete_thing_property(pool: &SqlitePool, id: &str, thing_id: &str) -> Result<u64, sqlx::Error> {
+    let r = sqlx::query("DELETE FROM thing_properties WHERE id = ? AND thing_id = ?")
+        .bind(id)
+        .bind(thing_id)
+        .execute(pool)
+        .await?;
+    Ok(r.rows_affected())
+}
+
 impl Db {
     /// 按 ID 查物属性（清除运行时字段）。
     pub async fn find_thing_property_by_id(&self, id: &str) -> Result<Option<ThingProperty>, sqlx::Error> {
@@ -202,6 +273,25 @@ impl Db {
         requests: &[CreateThingPropertyRequest],
     ) -> Result<Vec<ThingProperty>, sqlx::Error> {
         create_thing_properties_batch(self.pool(), requests).await
+    }
+
+    /// 更新属性定义（标量 COALESCE 保旧；derived = Some((expression, refs_json)) 写穿派生三件套）。
+    pub async fn update_thing_property_definition(
+        &self,
+        id: &str,
+        thing_id: &str,
+        name: Option<&str>,
+        display_name: Option<&str>,
+        unit: Option<&str>,
+        data_type: Option<&str>,
+        derived: Option<(&str, &str)>,
+    ) -> Result<u64, sqlx::Error> {
+        update_thing_property_definition(self.pool(), id, thing_id, name, display_name, unit, data_type, derived).await
+    }
+
+    /// 删除属性定义，返回受影响行数（0 = 不存在）。
+    pub async fn delete_thing_property(&self, id: &str, thing_id: &str) -> Result<u64, sqlx::Error> {
+        delete_thing_property(self.pool(), id, thing_id).await
     }
 
     /// 场景实例化器：在调用方事务内批量插入物属性，返回新建 id 列表。

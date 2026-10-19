@@ -242,6 +242,8 @@ impl TemplateEngine {
                 default_value,
                 is_read_only: Some(if property.is_read_only { 1 } else { 0 }),
                 expression: None,
+                source: None,
+                refs: None,
             };
             device_properties.push(device_property);
         }
