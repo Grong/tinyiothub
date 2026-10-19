@@ -101,9 +101,9 @@ The UI adopts a deep-space IoT dashboard aesthetic inspired by Tuya: dark navy c
 
 | Token | Value | Usage |
 |-------|-------|-------|
-| `--accent-gradient` | `linear-gradient(135deg, #00d4ff 0%, #7b61ff 100%)` | Primary gradients: buttons, metric bars, stat values |
+| `--accent-gradient` | `linear-gradient(135deg, #00d4ff 0%, #0098FF 50%, #7b61ff 100%)` | Primary gradients: buttons, metric bars, stat values |
 | `--accent-gradient-soft` | `linear-gradient(135deg, rgba(0,212,255,0.9) 0%, rgba(0,152,255,0.9) 60%, rgba(123,97,255,0.8) 100%)` | Hover states, softer glows |
-| `--accent-glow` | `rgba(0, 212, 255, 0.35)` | Standard glow shadow color |
+| `--accent-glow` | `rgba(0, 152, 255, 0.25)` | Standard glow shadow color |
 | `--accent-glow-strong` | `rgba(0, 212, 255, 0.45)` | Intense glows, pulsing dots |
 | `--glass-bg` | `rgba(26, 29, 37, 0.65)` | Glass card backgrounds |
 | `--glass-border` | `rgba(255, 255, 255, 0.08)` | Glass edge borders |
@@ -231,7 +231,6 @@ For premium landing-page cards, use a 3-layer shadow stack plus a subtle inset h
 
 .floating-card:hover {
   background: rgba(10, 14, 22, 0.95);
-  transform: translateY(-4px);
   box-shadow:
     0 8px 30px rgba(0,0,0,0.4),
     0 20px 70px rgba(0,0,0,0.32),
@@ -308,31 +307,27 @@ All continuous animations (orbits, pulses, drifts, spins) must respect `prefers-
 
 ## 5. Gradient Rules
 
-### 5.1 Prefer Smooth 2-Stop Gradients
+### 5.1 The Brand Gradient Is the Sanctioned 3-Stop
 
-Avoid 3-stop gradients with hard middle anchors. They often create banding or muddy transitions.
+`--accent-gradient` is a deliberate 3-stop gradient: the middle anchor is the signal blue (#0098FF at 50%), the product's signature action color. This is the one brand gradient — use it as-is, do not "fix" it to 2 stops.
 
 ```css
-/* Good */
-background: linear-gradient(135deg, #00d4ff 0%, #7b61ff 100%);
-
-/* Bad: middle #0098FF at 50% creates a muddy transition zone */
+/* The brand gradient (canonical, both themes) */
 background: linear-gradient(135deg, #00d4ff 0%, #0098FF 50%, #7b61ff 100%);
 ```
 
-### 5.2 Brand Gradients Must Survive Theme Switch
+### 5.2 All Other Gradients: Prefer Smooth 2-Stop
 
-Light theme should not drop the violet endpoint. Keep the brand gradient recognizable in both modes.
+For non-brand gradients, avoid 3-stop gradients with hard middle anchors. They often create banding or muddy transitions.
+
+### 5.3 Brand Gradients Must Survive Theme Switch
+
+Light theme should not drop the violet endpoint. Keep the brand gradient recognizable in both modes — both themes use the identical 3-stop brand gradient.
 
 ```css
-/* Dark */
+/* Dark and light (identical) */
 .btn--primary {
-  background: linear-gradient(135deg, #00d4ff 0%, #7b61ff 100%);
-}
-
-/* Light */
-.btn--primary {
-  background: linear-gradient(135deg, #0099cc 0%, #7b61ff 100%);
+  background: linear-gradient(135deg, #00d4ff 0%, #0098FF 50%, #7b61ff 100%);
 }
 ```
 
