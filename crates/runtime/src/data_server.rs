@@ -4,7 +4,7 @@ use dashmap::DashMap;
 use moka::sync::Cache;
 use parking_lot::RwLock;
 
-use tinyiothub_core::driver::ResultValue;
+use tinyiothub_core::driver::{DriverMode, DriverReading, ResultValue, ValueSink};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::event::EventHandler;
 use tinyiothub_core::models::event::{
@@ -17,7 +17,7 @@ use crate::driver::{DriverWrapper, ThingOverview, create_driver};
 use crate::event_bus::{EventBus, publish_event_safe};
 use crate::ports::ThingCacheSource;
 
-type DriverCache = Cache<String, Arc<RwLock<DriverWrapper>>>;
+pub type DriverCache = Cache<String, Arc<RwLock<DriverWrapper>>>;
 type CommandQueue = Arc<DashMap<String, Vec<ThingCommand>>>;
 
 /// Thing data server — manages driver lifecycle and the polling loop.
@@ -26,18 +26,30 @@ pub struct DataServer {
     driver_cache: DriverCache,
     command_queue: CommandQueue,
     event_bus: Arc<EventBus>,
+    /// 推送驱动上报入口（spec §一 ValueSink）：Task 7 的 Manager 注册推送驱动时经 `value_sink()` 注入。
+    value_sink_tx: ValueSink,
+    /// 消费端只能被 `run()` 取走一次（take 后为 None，重复 run 不再 spawn 消费任务）。
+    value_sink_rx: Arc<parking_lot::Mutex<Option<tokio::sync::mpsc::Receiver<DriverReading>>>>,
 }
 
 impl DataServer {
     pub fn new(device_cache: Arc<dyn ThingCacheSource>, event_bus: Arc<EventBus>) -> Self {
         let driver_cache = Cache::new(10_000);
+        let (value_sink_tx, value_sink_rx) = tokio::sync::mpsc::channel(256);
         Self::initialize_drivers(&driver_cache, &device_cache, &event_bus);
         Self {
             device_cache,
             driver_cache,
             command_queue: Arc::new(DashMap::new()),
             event_bus,
+            value_sink_tx,
+            value_sink_rx: Arc::new(parking_lot::Mutex::new(Some(value_sink_rx))),
         }
+    }
+
+    /// 推送驱动的上报句柄（Task 7 注册推送驱动时注入给 `start_push`）。
+    pub fn value_sink(&self) -> ValueSink {
+        self.value_sink_tx.clone()
     }
 
     fn initialize_drivers(cache: &DriverCache, device_cache: &Arc<dyn ThingCacheSource>, event_bus: &Arc<EventBus>) {
@@ -76,7 +88,49 @@ impl DataServer {
                 }
             }
         });
+
+        // 推送驱动 sink 独立消费任务：不经 100ms 轮询，读数到达即走共享管线（spec §一/E3）。
+        if let Some(mut rx) = self.value_sink_rx.lock().take() {
+            let device_cache2 = self.device_cache.clone();
+            let driver_cache2 = self.driver_cache.clone();
+            let event_bus2 = self.event_bus.clone();
+            let mut shutdown_rx2 = shutdown_rx.resubscribe();
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = shutdown_rx2.recv() => break,
+                        maybe = rx.recv() => {
+                            let Some(reading) = maybe else { break };
+                            Self::consume_driver_reading(reading, &driver_cache2, &device_cache2, event_bus2.clone()).await;
+                        }
+                    }
+                }
+            });
+        }
         Ok(())
+    }
+
+    /// 消费一条推送读数：经 driver_cache 找到 owner 物的 wrapper，走共享管线
+    /// （apply_property_values → cache_and_publish）。未知物的读数丢弃并告警。
+    pub async fn consume_driver_reading(
+        reading: DriverReading,
+        driver_cache: &DriverCache,
+        device_cache: &Arc<dyn ThingCacheSource>,
+        event_bus: Arc<EventBus>,
+    ) {
+        let Some(driver_arc) = driver_cache.get(&reading.thing_id) else {
+            tracing::warn!("Push reading for unknown thing '{}' dropped", reading.thing_id);
+            return;
+        };
+        let (device, events) = {
+            let mut driver = driver_arc.write();
+            let mut device = driver.thing().clone();
+            let thing_name = device.name.clone();
+            let events = Self::apply_property_values(&mut device, &thing_name, &reading.values);
+            *driver.thing_mut() = device.clone();
+            (device, events)
+        };
+        Self::cache_and_publish(device, events, device_cache, Some(event_bus)).await;
     }
 
     async fn process_all_drivers(
@@ -104,7 +158,8 @@ impl DataServer {
             for driver_arc in &drivers {
                 let can_read = {
                     if let Some(driver) = driver_arc.try_read() {
-                        driver.can_read_now()
+                        // 推送驱动不经轮询拉取（spec §一）
+                        driver.inner_driver().mode() == DriverMode::Poll && driver.can_read_now()
                     } else {
                         false
                     }
@@ -510,6 +565,8 @@ impl Clone for DataServer {
             driver_cache: self.driver_cache.clone(),
             command_queue: self.command_queue.clone(),
             event_bus: self.event_bus.clone(),
+            value_sink_tx: self.value_sink_tx.clone(),
+            value_sink_rx: self.value_sink_rx.clone(),
         }
     }
 }

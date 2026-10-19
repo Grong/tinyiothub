@@ -246,6 +246,31 @@ impl ResultValue {
     }
 }
 
+// ─── 驱动双模（spec 2026-10-19 §一）───
+
+/// 驱动数据获取模式：Poll=运行时轮询拉取；Push=驱动内部订阅数据源主动上报。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DriverMode {
+    #[default]
+    Poll,
+    Push,
+}
+
+/// 推送驱动的一次上报：某物的一批属性读数。
+#[derive(Debug, Clone)]
+pub struct DriverReading {
+    pub thing_id: String,
+    pub values: Vec<ResultValue>,
+}
+
+/// 运行时交给推送驱动的上报句柄（spec §一 ValueSink）。
+pub type ValueSink = tokio::sync::mpsc::Sender<DriverReading>;
+
+/// 属性变更事件源抽象（core 不依赖 runtime 的 EventBus，spec 伪签名按依赖方向微调）。
+pub trait PropertyChangeSource: Send + Sync {
+    fn subscribe(&self) -> tokio::sync::broadcast::Receiver<crate::models::event::Event>;
+}
+
 // ─── ThingDriver trait ─────────────────────────────────────────────
 
 /// 设备驱动特征
@@ -307,6 +332,16 @@ pub trait ThingDriver: Send + Sync {
         let config = self.init_config();
         config.get_string(key, default)
     }
+
+    // === 双模（默认轮询，存量驱动零改动） ===
+
+    fn mode(&self) -> DriverMode {
+        DriverMode::Poll
+    }
+
+    /// 推送驱动启动钩子：实现方在此订阅数据源，数据到达后经 sink 上报。
+    /// 默认空实现（轮询驱动永不调用）。
+    fn start_push(&mut self, _sink: ValueSink, _events: std::sync::Arc<dyn PropertyChangeSource>) {}
 
     // === 核心功能接口 ===
 

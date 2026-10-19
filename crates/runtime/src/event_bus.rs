@@ -157,6 +157,12 @@ pub async fn publish_event_safe(event_bus: Arc<EventBus>, event: Event) {
     });
 }
 
+impl tinyiothub_core::driver::PropertyChangeSource for EventBus {
+    fn subscribe(&self) -> broadcast::Receiver<Event> {
+        self.subscribe()
+    }
+}
+
 impl std::fmt::Debug for EventBus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EventBus")
