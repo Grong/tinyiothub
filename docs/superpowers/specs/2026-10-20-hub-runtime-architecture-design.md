@@ -246,3 +246,198 @@ pre-alpha 无发布承诺；公网部署未验证；进程内插件无隔离；�
 - 关键文档：docs/develop/architecture.md（请求路径与状态归属）、packages/mhs/server/hub-api.md（brain 接口全集）、packages/mhs/spec/mhs-spec.md（设备侧协议）、docs/guide/security.md（审批/信任/沙箱）、docs/guide/sessions.md（恢复语义）、docs/guide/packages.md（包治理）、examples/mars-world/README.md（多设备协同示例）
 - 我方关键代码：`crates/agent/src/runtime/thing_agent/`（loop 本体）、`crates/runtime/src/data_server.rs`（设备运行时）、`apps/cloud/src/domains/agent/host/tools/thing/`（AI 工具集）、`crates/policy/src/autonomy.rs`（自治门控）
 - 相关 spec：2026-10-12-ai-consolidation-design.md（概念模型与 Run 归一）、2026-07-06-ai-harness-loop-design.md、2026-10-08-ai-run-transparency-design.md、2026-08-31-scene-template-design.md、2026-05-28-scene3d-a2ui-design.md
+
+---
+
+# CEO 审查输出（/plan-ceo-review 2026-10-20，SCOPE EXPANSION）
+
+## 评审历程
+
+- 模式：SCOPE EXPANSION（D1 用户选择）；裁定方式：逐项（D2.0）。
+- 扩张裁定：X1/X2/X3/X4/X6/X7 Include，X5 Defer（D2.1-D2.7），总装 D2.final 确认（依赖闭合）。
+- 对抗性 spec 评审 Round 1：6/10 FAIL，11 条发现（5 阻塞/4 重要/2 轻微），D3 批量裁定全修。
+- Round 2：8/10，11/11 落实；残留 1 重要 + 4 轻微，6 条一行级修补全落（标 R2-x-x）；评审员确认无需第三轮。
+- 文档批准：D4 批准 spec + CEO 摘要当前版本。
+- TODO 裁定：D5 快照 token 计数=留在当前计划（E2 必需工作）；D6 watch 命中推送=TODOS.md；D7 watch/告警统一方向=留在当前计划（架构观察项，见 §6 后注）。
+- 外部声音：codex CODEX_MODEL invalid（custom endpoint 未配 frontier 模型）；native fallback 完成但报告内容丢失（已知问题，第三次复现）——无可计外部覆盖，记录在案。
+
+## NOT in scope
+
+- 延期：X5 云边两级 Hub（D2.5，TODOS.md 已录，启动条件=edge 成熟+E1-E4）。
+- 拒绝：无（7 项无一 Cut）。
+- 沿用原裁定不采纳：OpState 程序计数器（#11）、哈希链账本（#12）、插件双哈希治理（#13）、手动接管/运动安全（#15）——触发条件见 §6 E5。
+- D7（watch/告警规则评估统一）为架构观察项留在本计划：告警规则与 watch 条件是同构机制（声明条件+事件流求值+触发动作），远期方向=告警规则编译为 watch 条件；**本期不动告警系统**，E1 落地后重评。
+
+## 0I 时序拷问（实施者视角）
+
+- **HOUR 1（地基）**：LiveState 挂 EventBus 的事件类型清单（PropertyChange 等，E1 spec 枚举）；**W1 证明项：watch 唤醒信号与 scheduler 的优先级语义**——scheduler 有 30s 合并窗（非 Critical）+ 小时预算 20/ws + ready 队列 50（满时 Critical 也丢，TODOS 结转项）；watch 命中若被合并窗压 30s，"秒级反射弧"承诺破产。**Implementation owner must prove**：watch 唤醒走独立 WakeSignal 变体、绕过 30s 合并窗、计入独立配额（E1 spec 阶段裁定）。合并顺序：ai-consolidation 先落地（同批文件 runner/manager），E1a 在其上生长。
+- **HOUR 2-3（核心逻辑）**：watch 条件字段路径映射（AGH state field/source field → 我们 thing property/遥测流的词表对齐）；GoalWatch 目标→watch 编译的模型输出 schema；快照 6KB 是英文参数，中文字节预算 E2 实测重定 [estimated]。
+- **HOUR 4-5（集成）**：E1d 检测算法选型（基线漂移/阈值学习——E1d spec 前置调研）；X7 模板规则引用与场景包 `{index}` 计数参数的解析交互。
+- **HOUR 6+（打磨）**：watch 命中率/误唤醒率/唤醒延迟指标；账本体积增长估算（状态变更全量落；参照 agent_runs 480 行/天/工作区先例）。
+- **估计**：human ~2-3 月（E1-E4）/ CC+gstack ~2-3 周 [estimated]。
+
+## 评审节发现（Sections 1-11，strategy-only 深度）
+
+- **S1 架构**：依赖图=呈现→Hub→接入，Brain→Hub，接缝在 Brain 层；新耦合（Brain 对 Hub 快照/唤醒的依赖）即架构目的，成立。10x 先断点=事件总线吞吐与账本写盘；SPOF=Hub 运行时与 DataServer 同进程（重启语义已覆盖）。回滚=关触发源开关，心跳巡检不受影响。发现 2 项（W1 调度优先级、账本写放大）均转为证明项/指标项。
+- **S2 错误与救援**：能力行映射——watch 注册失败（schema 非法→拒绝+原因）、事件流中断（watch 超时 matched:false）、唤醒投递失败（重试+DLQ，复用 RunRecorded 模式）、LiveState Lagged（health 派生标 unknown）、目标编译模型失败（拒绝目标+原因）、知觉权误报风暴（成本闸门 fail-closed）、快照装配失败（不得炸 run——AGH "hook never throws" 同款）、仲裁持有者崩溃（**job 需租约 TTL**，参照 AGH 10min 结果保留）、run 进行中唤醒（steer 入队）。0 CRITICAL GAP（各项有主）。
+- **S3 安全**：watch 条件注册=确定性比较器无代码执行，注入面小；快照进 prompt 复用现有不可信围栏模式；**目标表自然语言→模型编译出的 watch 规则必须落库可审计+给人看**（新增要求）；caller 配额防资源耗尽。3 项发现均有归宿。高severity 0。
+- **S4 数据流/交互边界**：同会话重复条件→幂等/计数；N watch 同时命中→1s 合并（AGH 先例）；重启重织竞态→重织幂等（注册表 upsert）；设备删除时有活跃 watch→失效事件 matched:false+原因。4 项边界全映射。
+- **S5 代码质量**：双读面过渡（device_cache 驱动侧写面/LiveState AI 侧读面）已裁定；catalog 单一事实源顺手消债。No issues found。
+- **S6 测试**：退出标准 R2 修复后可测；金字塔=watch 比较器纯函数单测（大量）+唤醒链路集成+退出标准端到端。**LLM/prompt 变更**（快照注入+目标编译）→ 必须跑 evals/ 场景库并加基线对比。缺口 2（E1d 成本硬顶实测、重织测试）已进 E1 退出标准。
+- **S7 性能**：LiveState 内存=工作区设备数×状态大小（moka 10k 先例）；快照注入=每 run 一次的 token 成本主预算项；**账本写放大**——高频遥测变更设备的状态变更全量落需要去抖/聚合上限（implementation owner must prove：状态变更落账本的频率上限）；watch 评估按字段倒排索引避免 O(事件×watches)。2 项。
+- **S8 可观测**：指标组=watch 注册数/命中率/误唤醒率/唤醒延迟/重织耗时/LiveState 事件年龄/快照字节实测；day-1 dashboard=watch 拓扑（E3 Flow 即此）；watch 命中/超时/重织事件落账本即可回放=自 observability。1 组 gap 已录。
+- **S9 部署**：迁移 additive（目标表新表）；绞杀者并行（心跳与 watch 共存无切换窗口）；feature flag=watch 引擎总开关复用 mode 门控；回滚=关开关。1 项风险（账本体积）已在 S7 记录。
+- **S10 长期轨迹**：债务 2（双读面过渡期、临时 watch 无持久化——均已显式声明）；Reversibility 4/5（E1-E3 关开关即回滚；E4 协议变更 3/5）；平台潜力=watch 引擎是可被告警系统消费的通用能力（D7 观察项）；1-year 可读性=P1-P6+分层图。 
+- **S11 设计/UX**：E3 工作台有 UI 范围。IA=设备卡/Flow/World 三 tab 对应三种投影；状态覆盖矩阵（loading/empty/error/partial）与移动规格留给 E3 spec；**建议 E3 实现前跑 /plan-design-review**。
+
+## Dream state delta
+
+本计划落地后：watch 网值守+目标维持+协同链可溯可回放成立（12 个月理想的主干）；仍未到：云边自治（X5）、治理层（E5 等触发）、composite 原语的成熟抽象（E2 只交框架）。
+
+## What already exists（复用清单）
+
+- Trigger 接口（`crates/agent/src/runtime/thing_agent/trigger/mod.rs:18-24`）——watch/知觉权唤醒的挂载点
+- DataServer device_cache+EventBus+cache-before-publish 不变量（`crates/runtime/src/data_server.rs`）——LiveState 底座
+- 派生表达式引擎（`crates/runtime/src/expression.rs`）——zone 推算复用
+- runner 硬预算（`crates/agent/src/runtime/thing_agent/runner.rs:25-28`）——E1d 成本闸门退化形态附着点
+- policy crate gate_check——Policy 接缝现成实现
+- ai-consolidation 统一 Run/RunReport/ DLQ 重试模式（persist.rs）——E2 前身与唤醒投递可靠性模式
+- 场景包实例化管线（dry-run/幂等）——X7 模板分发通道
+
+## Error & Rescue Registry（strategy-only 能力行）
+
+| 能力 | 失败机制 | 用户影响 | 已有护栏 | 实施前验证责任人 |
+|---|---|---|---|---|
+| Watch 引擎 | 条件 schema 非法 | 注册被拒+原因 | 词表注册表校验 | E1 spec |
+| Watch 引擎 | 事件流中断 | watch 超时 matched:false | 超时上限 3600s | E1 spec |
+| 唤醒通道 | 投递失败 | run 未唤醒 | 重试+DLQ（persist.rs 模式） | E1 spec（W1 优先级裁定同） |
+| LiveState | EventBus Lagged | 摘要空洞 | health 派生标 unknown | E1 spec |
+| GoalWatch | 目标编译失败 | 目标被拒+原因 | 编译结果落库可审计（S3 新增） | E1c spec |
+| 知觉权 | 误报风暴 | token 烧穿 | 成本闸门 fail-closed（E1 退化形态） | E1d spec |
+| 快照注入 | 装配失败 | —（不得炸 run） | hook never throws 同款 | E2 spec |
+| Job 仲裁 | 持有者崩溃 | 资源死锁 | **job 租约 TTL**（S2 新增） | E1 spec |
+| 重织 | 重启重织竞态 | 重复/丢失 watch | 重织幂等 upsert | E1c spec |
+
+## Failure Modes Registry
+
+```
+  CODEPATH      | FAILURE MODE        | RESCUED? | TEST?  | USER SEES?      | LOGGED?
+  --------------|---------------------|----------|--------|-----------------|--------
+  watch 注册    | schema 非法          | Y 拒绝   | E1 单测 | 注册失败+原因    | 账本
+  watch 评估    | 事件流中断           | Y 超时   | E1 集成 | 超时事件         | 账本
+  watch 唤醒    | scheduler 节流吞掉   | W1 待证  | E1 集成 | 延迟≤独立配额    | 指标
+  LiveState     | EventBus Lagged     | Y 降级   | E1 单测 | health=unknown  | 指标
+  GoalWatch     | 编译模型输出非法     | Y 拒绝   | E1c 单测| 目标被拒+原因    | 账本
+  知觉权        | 误报风暴             | Y 闸门   | E1d 实测| 成本硬顶生效     | 指标
+  快照注入      | 装配异常             | Y 吞掉   | E2 单测 | run 照常         | trace
+  仲裁          | 持有者崩溃           | Y TTL    | E1 集成 | busy 带持有者    | 账本
+  重织          | 重启竞态             | Y 幂等   | E1c 集成| 无感            | 账本
+```
+
+9 行，0 CRITICAL GAP（W1 行为语义待 E1 spec 裁定，有主）。
+
+## Diagrams
+
+**watch 生命周期状态机**：
+
+```
+registered ──事件命中──► matched（唤醒会话，one-shot 结束）
+    │────超时(≤3600s)──► timeout（matched:false 事件）
+    │────unwatch───────► cancelled
+    │────Hub 重启──────► 易失消失（目标表 watch 由重织重建；临时 watch 不重建）
+    非法转移：matched 后再命中（one-shot 已结束，注册表已移除）
+```
+
+**唤醒数据流（含影子路径）**：
+
+```
+事件流 → LiveState 更新 → watch 词表求值（纯函数）
+  │命中                       │设备离线/字段缺失=nil 路径：挂起至超时
+  ▼                           │空工作区=empty 路径：无 watch，快照为空（正常）
+唤醒信号（合并 1s 窗）→ WakeSignal 变体 → scheduler（W1：独立变体绕 30s 合并窗）
+  │                                        │调度器故障=error 路径：重试+DLQ
+  ▼                                        ▼
+run 触发（含快照注入）              DLQ 事件+指标告警
+```
+
+**部署/回滚**：E1a→E1b→E1c→E1d 各自 feature flag（mode 门控）独立开关；回滚=关开关，心跳巡检路径不受影响（绞杀者并行期）。
+
+## Implementation Tasks（strategy-only：下一步=设计/调研动作）
+
+- [ ] **T1 (P1, human: ~1w / CC: ~1d)** — E1 — 编写 E1 值守中枢子 spec：watch 词表/LiveState/唤醒 W1 优先级裁定/账本捕获实现形态/仲裁 TTL/重织
+  - Surfaced by: S1 W1 证明项 + S2 仲裁 TTL + 0I HOUR 1
+  - Files: to be determined（新建 docs/superpowers/specs/2026-XX-XX-e1-watch-hub-design.md）
+  - Verify: spec 对抗评审 PASS
+- [ ] **T2 (P2, human: ~3d / CC: ~2h)** — E2 — 五接缝封闭契约设计文档（Trigger/Budget/Approval/Policy/ToolExec 输入输出契约+替换规则）
+  - Surfaced by: §4 Brain 层 + P4
+  - Files: to be determined
+  - Verify: 契约评审 + 一个真实替换实现的概念验证
+- [ ] **T3 (P2, human: ~2d / CC: ~1h)** — E3 — 工作台设计评审前置（/plan-design-review）
+  - Surfaced by: S11
+  - Files: to be determined
+  - Verify: 设计评审 PASS
+- [ ] **T4 (P2, human: ~3d / CC: ~4h)** — E1d — 知觉权检测算法选型调研（基线漂移 vs 阈值学习 vs 统计异常检测）+ 成本模型
+  - Surfaced by: 0I HOUR 4-5 + E1d 退出标准
+  - Files: evals/（调研产物）
+  - Verify: 选型报告 + 成本上限实测方案
+- [ ] **T5 (P3, human: ~1d / CC: ~30min)** — E2 — 快照中文 token 预算实测基线（D5 已裁定进当前计划）
+  - Surfaced by: D5 + 0I HOUR 2-3
+  - Files: crates/agent/src/prompt/runtime.rs
+  - Verify: run trace 含快照字节/token 实测字段
+
+## TODOS.md updates
+
+2 项已录：X5 云边两级 Hub（P2）、watch 命中推送「需要你」（P2）。
+
+## Completion Summary
+
+```
+  +====================================================================+
+  |            MEGA PLAN REVIEW — COMPLETION SUMMARY                   |
+  +====================================================================+
+  | Mode selected        | SCOPE EXPANSION                             |
+  | System Audit         | binding decisions 无冲突;learnings 2 条应用  |
+  | Step 0               | 扩张 6 收 1 延;两轮 spec 评审 17 条全修      |
+  | Section 1  (Arch)    | 2 issues noted (W1 调度/账本写放大→证明项)   |
+  | Section 2  (Errors)  | 9 能力行映射, 0 GAPS                         |
+  | Section 3  (Security)| 3 issues found, 0 High severity              |
+  | Section 4  (Data/UX) | 4 edge cases mapped, 0 unhandled             |
+  | Section 5  (Quality) | No issues found                              |
+  | Section 6  (Tests)   | Diagram produced, 2 gaps(已入 E1 退出标准)   |
+  | Section 7  (Perf)    | 2 issues found                               |
+  | Section 8  (Observ)  | 1 组 gap(指标组已录)                          |
+  | Section 9  (Deploy)  | 1 risk flagged(账本体积)                      |
+  | Section 10 (Future)  | Reversibility: 4/5, debt items: 2            |
+  | Section 11 (Design)  | E3 UI scope——建议实现前 /plan-design-review  |
+  +--------------------------------------------------------------------+
+  | NOT in scope         | written (5 items)                            |
+  | What already exists  | written                                      |
+  | Dream state delta    | written                                      |
+  | Error/rescue registry| 9 rows, 0 CRITICAL GAPS                      |
+  | Failure modes        | 9 total, 0 CRITICAL GAPS                     |
+  | TODOS.md updates     | 2 items proposed, 2 accepted                 |
+  | Scope proposals      | 7 proposed, 6 accepted (EXPANSION)           |
+  | CEO plan             | written (~/.gstack/.../ceo-plans/)           |
+  | Outside voice        | codex unavailable + native lost; no coverage |
+  | Lake Score           | N/A（无 coverage 计分题）                     |
+  | Diagrams produced    | 3 (state machine / wake dataflow / rollback) |
+  | Stale diagrams found | 0                                            |
+  | Unresolved decisions | 0                                            |
+  | Reality rows         | 7/7 rows pass, 0 unverified                  |
+  +====================================================================+
+```
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 2 | CLEAR | 7 proposals, 6 accepted, 1 deferred |
+| Outside Review | codex (auto) | Independent 2nd opinion | 9 | unavailable | CODEX_MODEL invalid（custom endpoint 未配 frontier 模型；修复：`gstack-config set model_frontier_openai <id>`）；native fallback 完成但报告丢失（已知问题）——无可计覆盖 |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 5 | CLEAR (PLAN) | 2026-10-19 园区物轮，与本文档不同对象；**本架构 spec 需新一轮 eng review** |
+| Design Review | `/plan-design-review` | UI/UX gaps | 2 | CLEAR | 2026-10-12 AI 中心轮；E3 工作台实现前需新一轮 |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
+
+- **OUTSIDE COVERAGE:** codex, plan-review phase, **unavailable**——CODEX_MODEL invalid；native fallback 完成但最终消息只剩 "Complete."（报告内容丢失，已知问题第三次复现）。无可计外部覆盖。
+- **VERDICT:** CEO CLEARED（两轮对抗 spec 评审 6/10→8/10，17 条全修；11 节评审 0 critical gap）；**eng review required**（E1 子 spec 编写后）。
+
+NO UNRESOLVED DECISIONS

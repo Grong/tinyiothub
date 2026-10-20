@@ -3,6 +3,20 @@
 > **最新完整 TODO 清单已迁移至:** `docs/superpowers/plans/2026-04-14-todo-audit-and-cleanup-plan.md`
 > 本文档保留 Edge Intelligence Agent 历史记录，新项目 TODO 请查阅上方计划。
 
+## Hub 运行时架构 — Deferred (from /plan-ceo-review 2026-10-20, spec: docs/superpowers/specs/2026-10-20-hub-runtime-architecture-design.md)
+
+### P2 — X5 云边两级 Hub（edge 断网自治）
+- **What:** edge 节点作为 Hub 运行时的下游：云端断连时边缘本地 watch 值守，复连后同步。
+- **Why:** CEO 评审 D2.5 裁定 Defer——架构预留（P5 版本化契约+分层边界），但 edge 运行时自身未成年（do_scan stub）时不该升级部署形态假设。
+- **Context:** 启动条件=edge do_scan/驱动运行时落地（见 Thing Rename P2）+ E1-E4 就位。spec §6 有「X5 方向预留」段。
+- **Effort:** XL (human: ~2w+ / CC: ~2-3d) | **Depends on:** E1-E4 + edge 驱动运行时
+
+### P2 — watch 命中推送进 AI 中心「需要你」区
+- **What:** watch 命中唤醒的 run 产出的提案经 SSE 实时出现在 #/ai 置顶区（复用 run_recorded 推送通道）。
+- **Why:** 值守价值最后一公里——条件命中但运维没刷新就看不见，反射弧在人这端断了（CEO 评审 D6）。
+- **Context:** ai-consolidation spec F10/E6 已定义 run_recorded 推送；watch 唤醒 run 只是新 trigger 来源。
+- **Effort:** S (human: ~0.5d / CC: ~30min) | **Depends on:** E1 + ai-consolidation E6
+
 ## Thing Rename Follow-ups — Deferred (PR-3, from /superpowers plan 2026-08-31)
 
 ### P2 — examples/* 与 drivers/* 不在 workspace members，未受编译门禁保护
