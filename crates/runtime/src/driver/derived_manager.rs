@@ -206,9 +206,8 @@ impl DerivedDriverManager {
                         };
                         // def 级 property 过滤的输入；解析不出 → None 退化 thing 级。
                         let prop_name = Self::event_property_name(&cache, &event);
-                        let matches = |t: &String, p: &String| {
-                            *t == src_thing && prop_name.as_ref().is_none_or(|pn| p == pn)
-                        };
+                        let matches =
+                            |t: &String, p: &String| *t == src_thing && prop_name.as_ref().is_none_or(|pn| p == pn);
                         let mut hit_owners: Vec<String> = {
                             let idx = index.read();
                             idx.iter()
@@ -219,10 +218,8 @@ impl DerivedDriverManager {
                         hit_owners.sort();
                         hit_owners.dedup();
                         for owner in hit_owners {
-                            let Some((defs_handle, counter)) = owners
-                                .read()
-                                .get(&owner)
-                                .map(|e| (e.defs.clone(), e.counter.clone()))
+                            let Some((defs_handle, counter)) =
+                                owners.read().get(&owner).map(|e| (e.defs.clone(), e.counter.clone()))
                             else {
                                 continue;
                             };
@@ -238,7 +235,12 @@ impl DerivedDriverManager {
                             }
                             let values = recompute_defs(&snapshot, &cache, &counter, &status).await;
                             if !values.is_empty() {
-                                let _ = sink.send(DriverReading { thing_id: owner, values }).await;
+                                let _ = sink
+                                    .send(DriverReading {
+                                        thing_id: owner,
+                                        values,
+                                    })
+                                    .await;
                             }
                         }
                     }
@@ -254,7 +256,12 @@ impl DerivedDriverManager {
                             let snapshot = defs_handle.read().clone();
                             let values = recompute_defs(&snapshot, &cache, &counter, &status).await;
                             if !values.is_empty() {
-                                let _ = sink.send(DriverReading { thing_id: owner, values }).await;
+                                let _ = sink
+                                    .send(DriverReading {
+                                        thing_id: owner,
+                                        values,
+                                    })
+                                    .await;
                             }
                         }
                     }
@@ -271,11 +278,7 @@ impl DerivedDriverManager {
         let thing_id = src.thing_id()?;
         let prop_id = src.source_id().strip_prefix(thing_id)?.strip_prefix(':')?;
         let thing = cache.get(thing_id)?;
-        thing
-            .properties?
-            .into_iter()
-            .find(|p| p.id == prop_id)
-            .map(|p| p.name)
+        thing.properties?.into_iter().find(|p| p.id == prop_id).map(|p| p.name)
     }
 
     /// 建/热更新 owner 的 defs 句柄 + 首值补偿。热更新走共享 defs 句柄改写
@@ -326,7 +329,12 @@ impl DerivedDriverManager {
                 let snapshot = defs_handle.read().clone();
                 let values = recompute_defs(&snapshot, &cache, &counter, &status).await;
                 if !values.is_empty() {
-                    let _ = sink.send(DriverReading { thing_id: owner, values }).await;
+                    let _ = sink
+                        .send(DriverReading {
+                            thing_id: owner,
+                            values,
+                        })
+                        .await;
                 }
             });
         }

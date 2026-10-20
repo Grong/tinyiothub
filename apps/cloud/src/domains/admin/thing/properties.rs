@@ -284,7 +284,9 @@ async fn update_property(
             req.display_name.as_deref(),
             req.unit.as_deref(),
             data_type.as_deref(),
-            derived.as_ref().map(|inner| inner.as_ref().map(|(e, r)| (*e, r.as_str()))),
+            derived
+                .as_ref()
+                .map(|inner| inner.as_ref().map(|(e, r)| (*e, r.as_str()))),
         )
         .await
     {

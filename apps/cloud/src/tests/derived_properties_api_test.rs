@@ -433,8 +433,13 @@ async fn omit_expression_field_leaves_it_unchanged() {
     let owner = create_thing(&app, &token, "总表").await;
     let (status, _) = post_property(&app, &token, &meter, json!({"name": "用电数"})).await;
     assert_eq!(status, StatusCode::OK);
-    let (status, json) =
-        post_property(&app, &token, &owner, json!({"name": "calc", "expression": "{电表1.用电数}"})).await;
+    let (status, json) = post_property(
+        &app,
+        &token,
+        &owner,
+        json!({"name": "calc", "expression": "{电表1.用电数}"}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{json}");
     let prop_id = json["result"]["id"].as_str().unwrap().to_string();
 
@@ -468,8 +473,7 @@ async fn rebind_expression_revalidates() {
     assert_eq!(status, StatusCode::OK);
     let (status, _) = post_property(&app, &token, &meter2, json!({"name": "energy"})).await;
     assert_eq!(status, StatusCode::OK);
-    let (status, json) =
-        post_property(&app, &token, &owner, json!({"name": "calc", "expression": "{电表1.a}"})).await;
+    let (status, json) = post_property(&app, &token, &owner, json!({"name": "calc", "expression": "{电表1.a}"})).await;
     assert_eq!(status, StatusCode::OK, "{json}");
     let prop_id = json["result"]["id"].as_str().unwrap().to_string();
 

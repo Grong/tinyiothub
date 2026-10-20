@@ -963,7 +963,13 @@ async fn physical_thing_derived_property_coexists_with_driver_values() {
     let meter = create_thing(&app, &token, "电表1", None).await;
     let m_prop = create_property(&app, &token, &meter, json!({"name": "用电数", "data_type": "float"})).await;
     // 物理物自身的驱动采集属性（非派生，驱动写值）
-    let v_prop = create_property(&app, &token, &physical, json!({"name": "voltage", "data_type": "float"})).await;
+    let v_prop = create_property(
+        &app,
+        &token,
+        &physical,
+        json!({"name": "voltage", "data_type": "float"}),
+    )
+    .await;
     // I-1 取消：物理物配派生 → 200（引用另一物属性——物级自环被拒，见函数头）
     let d_prop = create_property(
         &app,

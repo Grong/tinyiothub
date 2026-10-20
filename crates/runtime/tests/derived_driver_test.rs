@@ -257,7 +257,12 @@ fn assemble(
     let descendants = Arc::new(AtomicI64::new(5));
     let queries = Arc::new(StubQueries::new(derived_props, descendants.clone()));
 
-    let manager = Arc::new(DerivedDriverManager::new(queries.clone(), cache_dyn.clone(), sink_tx, events));
+    let manager = Arc::new(DerivedDriverManager::new(
+        queries.clone(),
+        cache_dyn.clone(),
+        sink_tx,
+        events,
+    ));
 
     let consumer_cache = cache_dyn.clone();
     let consumer = tokio::spawn(async move {
@@ -711,11 +716,7 @@ async fn engine_uses_single_eventbus_subscription() {
     rig.device_cache.insert(campus2());
     rig.queries.add_prop(campus2_total_prop());
     rig.manager.notify_config_changed("campus-2").await;
-    assert_eq!(
-        event_bus.subscriber_count(),
-        baseline + 1,
-        "第二个 owner 不得新增订阅"
-    );
+    assert_eq!(event_bus.subscriber_count(), baseline + 1, "第二个 owner 不得新增订阅");
 
     // 删光全部 owner → 引擎停，订阅回落到基线（abort 异步生效——确定性轮询）。
     rig.manager.notify_thing_deleted("campus-1").await;
@@ -742,11 +743,7 @@ async fn removing_last_derived_stops_engine_subscription() {
         event_bus.clone(),
     );
     rig.manager.start().await.expect("manager start");
-    assert_eq!(
-        event_bus.subscriber_count(),
-        baseline + 1,
-        "start 后应有一个派生订阅"
-    );
+    assert_eq!(event_bus.subscriber_count(), baseline + 1, "start 后应有一个派生订阅");
 
     // 管理面删除该 owner 最后一条派生定义，再走配置变更钩子。
     rig.queries.remove_props_of("campus-1");

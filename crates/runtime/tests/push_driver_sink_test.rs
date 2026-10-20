@@ -324,11 +324,7 @@ async fn wrapper_path_and_cache_fallback_coexist() {
     for thing_id in ["campus-1", "spatial-1"] {
         let cached = device_cache.get(thing_id).expect("cached thing");
         let prop = &cached.properties.as_ref().unwrap()[0];
-        assert_eq!(
-            prop.current_value.as_deref(),
-            Some("7"),
-            "{thing_id} 属性值必须更新"
-        );
+        assert_eq!(prop.current_value.as_deref(), Some("7"), "{thing_id} 属性值必须更新");
     }
     // 两条路径各发 1 条 PropertyChange
     let mut seen = std::collections::HashSet::new();
