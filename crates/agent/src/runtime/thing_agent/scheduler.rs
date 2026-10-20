@@ -1,19 +1,22 @@
-//! Per-workspace wake scheduler — merge window, hourly throttle, directive
-//! dedup, serial run execution, drain (T8).
+//! Per-workspace wake scheduler — same-key rate limit, hourly throttle,
+//! directive dedup, serial run execution, drain (T8; E1 Task 7 废除合并窗).
 //!
 //! Pipeline:
 //!
 //! ```text
-//! triggers → handle.enqueue() ─┬─ Critical / user directive ─→ ready queue (cap 50) ─→ serial consumer → run()
-//!                              └─ mergeable (dedup_key) ─────→ merger task (30s window) ─┘
+//! triggers → handle.enqueue() ─→ Critical 直通 / 用户指令去重 / 同键限速 / 小时预算 ─→ ready queue (cap 50) ─→ serial consumer → run()
 //! ```
 //!
-//! Behavior rules (T8 brief):
-//! ① non-Critical signals with the same `dedup_key` aggregate into a 30s
-//!   merge window: collected inside the window, emitted as ONE signal on the
-//!   deadline; the merged signal carries every member in arrival order via
-//!   [`TriggerSource::Merged`]
-//! ② Critical bypasses the merge window AND the hourly throttle (O10)
+//! Behavior rules:
+//! ① same-key rate limit (E1 D3/D4, replaces the deleted 30s merge window):
+//!   signals with a `dedup_key` are admitted at most N times per key per
+//!   rolling minute (default [`DEFAULT_RATE_LIMIT_PER_MIN`], per-workspace
+//!   override via the shared `rate_limits` table written through from
+//!   apps/cloud config, hot-effective like heartbeat intervals); over-limit
+//!   signals are rejected with [`EnqueueError::RateLimited`] + metric
+//!   `agent_wake_rate_limited` + a `rate_limited` hub-ledger entry when a
+//!   ledger is wired (spec §3：被限的 flap 必须可见，防静默)
+//! ② Critical bypasses the rate limit AND the hourly throttle (O10)
 //! ③ hourly wake budget 20/ws: budgeted signals over budget are dropped
 //!   (metric `agent_wake_throttled`); user directives
 //!   (`TriggerSource::UserDirective` with `source: None`) are never
@@ -21,13 +24,13 @@
 //! ④ same-text user directives dedup for 60s (O5)
 //! ⑤ serial execution: one run at a time per workspace
 //!
-//! `drain()` (O26): mode→off clears both the ready queue and pending merge
-//! windows, waiting for both tasks to acknowledge.
+//! `drain()` (O26): mode→off clears the ready queue and waits for the
+//! consumer to acknowledge. An in-flight run is NOT cancelled; drain
+//! completes once it finishes.
 //!
-//! Budget accounting: a wake counts against the hourly budget when a
-//! non-Critical, non-user-directive signal is admitted into the ready queue
-//! (a 5-signal merge window counts ONCE, at flush). Critical and user
-//! directives are exempt and do not consume budget.
+//! Budget accounting: every admitted non-Critical, non-user-directive
+//! signal counts ONCE against the hourly budget (合并窗已废，无聚合记账).
+//! `TriggerSource::Merged` 变体保留（存储/回放兼容），scheduler 不再产生。
 
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
@@ -36,27 +39,32 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use dashmap::DashMap;
 use parking_lot::Mutex;
 use tokio::sync::{Notify, mpsc};
 use tokio::time::Instant;
+
+use tinyiothub_runtime::ports::HubLedger;
 
 use crate::runtime::thing_agent::types::{Priority, TriggerSource, WakeSignal};
 
 /// Ready-queue capacity per workspace (O5).
 pub const QUEUE_CAPACITY: usize = 50;
-/// Merge window for non-Critical signals sharing a `dedup_key`.
-pub const MERGE_WINDOW: Duration = Duration::from_secs(30);
 /// Max budgeted wakes per workspace per rolling hour.
 pub const HOURLY_WAKE_LIMIT: usize = 20;
 /// Same-text user directive dedup window (O5).
 pub const DIRECTIVE_DEDUP: Duration = Duration::from_secs(60);
+/// Default same-key rate limit per workspace (E1 spec §3：每键每分钟 3 次).
+pub const DEFAULT_RATE_LIMIT_PER_MIN: u32 = 3;
+/// Rate-limit sliding window length (per key).
+const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
 
 type BoxRunFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 type RunFn = Arc<dyn Fn(WakeSignal) -> BoxRunFuture + Send + Sync>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum EnqueueError {
-    /// Scheduler shut down (consumer/merger tasks exited).
+    /// Scheduler shut down (consumer task exited).
     #[error("scheduler shut down")]
     Closed,
     /// User directive and the queue is full — the caller must inform the
@@ -74,52 +82,40 @@ pub enum EnqueueError {
     /// Same-text user directive already enqueued within 60s (O5).
     #[error("duplicate user directive within 60s")]
     Duplicate,
+    /// Same-key signal over the per-minute rate limit (E1 D3/D4) — dropped,
+    /// metric `agent_wake_rate_limited` logged, `rate_limited` ledger entry.
+    #[error("signal rate-limited: same-key per-minute limit exceeded")]
+    RateLimited,
 }
 
 pub struct Scheduler;
 
 impl Scheduler {
-    /// Spawn the per-workspace scheduler: a merger task (30s windows) and a
-    /// serial consumer task driving `run`. Both tasks exit once the returned
-    /// handle (and its clones) are dropped.
+    /// Spawn the per-workspace scheduler: a serial consumer task driving
+    /// `run`. The task exits once the returned handle (and its clones) are
+    /// dropped. `rate_limits` is the shared per-workspace override table
+    /// (key workspace_id, value N/min; 照 heartbeat intervals 写穿模式).
     pub fn spawn(
         workspace_id: String,
         run: impl Fn(WakeSignal) -> BoxRunFuture + Send + Sync + 'static,
-    ) -> SchedulerHandle {
-        Self::spawn_with_merge_window(workspace_id, run, MERGE_WINDOW)
-    }
-
-    /// [`Scheduler::spawn`] with a custom merge window — integration tests
-    /// use sub-second windows so they can run in real time (paused-clock
-    /// auto-advance interacts badly with sqlx worker-thread roundtrips).
-    pub fn spawn_with_merge_window(
-        workspace_id: String,
-        run: impl Fn(WakeSignal) -> BoxRunFuture + Send + Sync + 'static,
-        merge_window: Duration,
+        rate_limits: Arc<DashMap<String, u32>>,
     ) -> SchedulerHandle {
         let (ready_tx, ready_rx) = mpsc::channel(QUEUE_CAPACITY);
-        let (ingress_tx, ingress_rx) = mpsc::unbounded_channel();
         let throttle = Arc::new(Mutex::new(Throttle::default()));
         let drain = Arc::new(DrainState::default());
         let run: RunFn = Arc::new(run);
 
-        tokio::spawn(merger_loop(
-            workspace_id.clone(),
-            ingress_rx,
-            ready_tx.clone(),
-            throttle.clone(),
-            drain.clone(),
-            merge_window,
-        ));
         tokio::spawn(consumer_loop(ready_rx, run, drain.clone()));
 
         SchedulerHandle {
             workspace_id,
             ready_tx,
-            ingress_tx,
             throttle,
+            rate_limiter: Arc::new(Mutex::new(RateLimiter::default())),
+            rate_limits,
             directive_dedup: Arc::new(Mutex::new(HashMap::new())),
             drain,
+            ledger: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -128,10 +124,13 @@ impl Scheduler {
 pub struct SchedulerHandle {
     workspace_id: String,
     ready_tx: mpsc::Sender<WakeSignal>,
-    ingress_tx: mpsc::UnboundedSender<WakeSignal>,
     throttle: Arc<Mutex<Throttle>>,
+    rate_limiter: Arc<Mutex<RateLimiter>>,
+    rate_limits: Arc<DashMap<String, u32>>,
     directive_dedup: Arc<Mutex<HashMap<String, Instant>>>,
     drain: Arc<DrainState>,
+    /// 限速事件账本（E1 spec §3）：None = 只留 metric（测试/边缘形态）。
+    ledger: Arc<Mutex<Option<Arc<dyn HubLedger>>>>,
 }
 
 impl SchedulerHandle {
@@ -139,11 +138,17 @@ impl SchedulerHandle {
         &self.workspace_id
     }
 
-    /// Route a wake signal: Critical and user directives go straight to the
-    /// ready queue; other keyed signals join a merge window; everything else
-    /// passes through the hourly throttle into the ready queue.
+    /// 限速事件账本接线（E1 spec §3）：None（默认）只留 metric——测试/边缘形态。
+    pub fn set_ledger(&self, ledger: Arc<dyn HubLedger>) {
+        *self.ledger.lock() = Some(ledger);
+    }
+
+    /// Route a wake signal: Critical goes straight to the ready queue; user
+    /// directives dedup then queue; keyed signals pass the same-key rate
+    /// limiter, then the hourly throttle; keyless normal signals pass the
+    /// hourly throttle only.
     pub fn enqueue(&self, sig: WakeSignal) -> Result<(), EnqueueError> {
-        // ② Critical bypasses the merge window and the throttle (O10).
+        // ② Critical bypasses the rate limit and the throttle (O10).
         if sig.priority == Priority::Critical {
             return self.ready_tx.try_send(sig).map_err(|e| match e {
                 mpsc::error::TrySendError::Full(_) => {
@@ -188,13 +193,28 @@ impl SchedulerHandle {
             };
         }
 
-        // ① mergeable: parked in the merger task until the window deadline.
-        if sig.dedup_key.is_some() {
-            return self.ingress_tx.send(sig).map_err(|_| EnqueueError::Closed);
+        // ① same-key rate limit (E1 D3/D4): keyed signals pass the limiter
+        // BEFORE the hourly budget; over-limit → reject + metric + ledger.
+        if let Some(key) = &sig.dedup_key {
+            let limit = self
+                .rate_limits
+                .get(&self.workspace_id)
+                .map(|v| *v)
+                .unwrap_or(DEFAULT_RATE_LIMIT_PER_MIN);
+            if !self.rate_limiter.lock().allow(key, limit) {
+                tracing::warn!(
+                    metric = "agent_wake_rate_limited",
+                    workspace_id = %self.workspace_id,
+                    dedup_key = %key,
+                    limit,
+                    "signal rate-limited"
+                );
+                self.record_rate_limited(key, limit);
+                return Err(EnqueueError::RateLimited);
+            }
         }
 
-        // Pass-through normal signal (e.g. heartbeat directive, O24):
-        // budgeted, mergeless, droppable.
+        // ③ hourly budget → ready queue (budgeted, droppable).
         let mut throttle = self.throttle.lock();
         if throttle.over_budget() {
             tracing::warn!(
@@ -221,22 +241,40 @@ impl SchedulerHandle {
         }
     }
 
-    /// O26: mode→off — clear the ready queue and all pending merge windows.
-    /// Waits until both the consumer and the merger have acknowledged, so
-    /// signals enqueued after `drain()` returns are never wiped. An
-    /// in-flight run is NOT cancelled; drain completes once it finishes.
+    /// 限速事件落账（spec §3：被限的 flap 必须可见）。fire-and-forget：
+    /// 落账失败只留 warn，不阻断调度链路（账本可补，唤醒不能丢——照
+    /// WatchEngine append_ledger 先例）；无 runtime/ledger 时只留 metric。
+    fn record_rate_limited(&self, key: &str, limit: u32) {
+        let Some(ledger) = self.ledger.lock().clone() else {
+            return;
+        };
+        let workspace_id = self.workspace_id.clone();
+        let payload = serde_json::json!({ "v": 1, "dedup_key": key, "limit": limit });
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        rt.spawn(async move {
+            if let Err(e) = ledger.append(&workspace_id, "rate_limited", None, payload).await {
+                tracing::warn!(
+                    metric = "hub_ledger_write_failed",
+                    workspace_id = %workspace_id,
+                    error = %e,
+                    "rate_limited 落账失败（不中断调度链路）"
+                );
+            }
+        });
+    }
+
+    /// O26: mode→off — clear the ready queue. Waits until the consumer has
+    /// acknowledged, so signals enqueued after `drain()` returns are never
+    /// wiped. An in-flight run is NOT cancelled; drain completes once it
+    /// finishes.
     ///
     /// Concurrent drains are serialized: acks record only the LATEST
     /// generation, so two overlapping drains would starve the later one.
     pub async fn drain(&self) {
         let _guard = self.drain.lock.lock().await;
         let generation = self.drain.requested.fetch_add(1, Ordering::SeqCst) + 1;
-        // Phase 1: the merger acks first — after this it no longer flushes
-        // pre-drain windows into the ready queue.
-        self.drain.merger_notify.notify_one();
-        wait_ack(&self.drain, &self.drain.merger_acked, generation).await;
-        // Phase 2: only then the consumer purges the ready queue, so a
-        // window flushed just before the drain cannot slip through.
         self.drain.consumer_notify.notify_one();
         wait_ack(&self.drain, &self.drain.consumer_acked, generation).await;
     }
@@ -297,15 +335,42 @@ impl Throttle {
     }
 }
 
-/// Drain coordination: `requested` is a monotonic generation; each task
+/// ① same-key rate limiter (E1 D3/D4): per-`dedup_key` sliding window
+/// (60s) of admitted hits, same shape as [`Throttle`]. The handle is
+/// per-workspace, so keys need no workspace dimension.
+#[derive(Default)]
+struct RateLimiter {
+    hits: HashMap<String, VecDeque<Instant>>,
+}
+
+impl RateLimiter {
+    /// Admit one hit for `key` if fewer than `limit` hits are inside the
+    /// rolling window. A rejected hit does NOT consume quota.
+    fn allow(&mut self, key: &str, limit: u32) -> bool {
+        let now = Instant::now();
+        let hits = self.hits.entry(key.to_string()).or_default();
+        while hits.front().is_some_and(|&t| now.duration_since(t) >= RATE_LIMIT_WINDOW) {
+            hits.pop_front();
+        }
+        if hits.len() >= limit as usize {
+            // limit=0 → 该工作区 keyed 信号全拒；空条目即清，防键 churn 泄漏。
+            if hits.is_empty() {
+                self.hits.remove(key);
+            }
+            return false;
+        }
+        hits.push_back(now);
+        true
+    }
+}
+
+/// Drain coordination: `requested` is a monotonic generation; the consumer
 /// records the latest generation it acked after purging its pending state.
 #[derive(Default)]
 struct DrainState {
     requested: AtomicU64,
     consumer_acked: AtomicU64,
-    merger_acked: AtomicU64,
     consumer_notify: Notify,
-    merger_notify: Notify,
     ack_notify: Notify,
     /// Serializes concurrent `drain()` calls.
     lock: tokio::sync::Mutex<()>,
@@ -346,140 +411,6 @@ async fn consumer_loop(mut ready_rx: mpsc::Receiver<WakeSignal>, run: RunFn, dra
             // stored permit covers drains requested while a run was active.
             () = drain.consumer_notify.notified() => {}
         }
-    }
-}
-
-struct MergeWindow {
-    signals: Vec<WakeSignal>,
-    deadline: Instant,
-}
-
-/// ① merger: collects keyed non-Critical signals into per-key windows
-/// and flushes one (possibly merged) signal per window into the ready queue.
-async fn merger_loop(
-    workspace_id: String,
-    mut ingress_rx: mpsc::UnboundedReceiver<WakeSignal>,
-    ready_tx: mpsc::Sender<WakeSignal>,
-    throttle: Arc<Mutex<Throttle>>,
-    drain: Arc<DrainState>,
-    merge_window: Duration,
-) {
-    let mut windows: HashMap<String, MergeWindow> = HashMap::new();
-    let mut last_gen = 0u64;
-    loop {
-        let generation = drain.requested.load(Ordering::SeqCst);
-        if generation > last_gen {
-            windows.clear();
-            while ingress_rx.try_recv().is_ok() {}
-            drain.ack(&drain.merger_acked, &mut last_gen, generation);
-            tracing::info!(workspace_id = %workspace_id, "scheduler drained merge windows");
-        }
-
-        let next_deadline = windows.values().map(|w| w.deadline).min();
-        // Disarmed (far-future) when no window is open; the `if` guard on
-        // the select arm keeps it from firing.
-        let deadline = next_deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(365 * 24 * 3600));
-        let sleep = tokio::time::sleep_until(deadline);
-        tokio::pin!(sleep);
-
-        tokio::select! {
-            maybe = ingress_rx.recv() => match maybe {
-                Some(sig) => add_to_window(&mut windows, sig, merge_window),
-                None => break,
-            },
-            () = &mut sleep, if next_deadline.is_some() => {
-                // Pull everything still buffered in ingress first so signals
-                // that arrived before the deadline join this window.
-                while let Ok(sig) = ingress_rx.try_recv() {
-                    add_to_window(&mut windows, sig, merge_window);
-                }
-                flush_due_windows(&workspace_id, &mut windows, &throttle, &ready_tx);
-            }
-            () = drain.merger_notify.notified() => {}
-        }
-    }
-}
-
-fn add_to_window(windows: &mut HashMap<String, MergeWindow>, sig: WakeSignal, merge_window: Duration) {
-    let Some(key) = sig.dedup_key.clone() else {
-        // enqueue() only routes keyed signals here; drop defensively.
-        tracing::warn!(
-            metric = "agent_wake_dropped",
-            "mergeable signal without dedup_key — dropped"
-        );
-        return;
-    };
-    windows
-        .entry(key)
-        .or_insert_with(|| MergeWindow {
-            signals: Vec::new(),
-            deadline: Instant::now() + merge_window,
-        })
-        .signals
-        .push(sig);
-}
-
-fn flush_due_windows(
-    workspace_id: &str,
-    windows: &mut HashMap<String, MergeWindow>,
-    throttle: &Mutex<Throttle>,
-    ready_tx: &mpsc::Sender<WakeSignal>,
-) {
-    let now = Instant::now();
-    let due: Vec<String> = windows
-        .iter()
-        .filter(|(_, w)| w.deadline <= now)
-        .map(|(key, _)| key.clone())
-        .collect();
-    for key in due {
-        let Some(window) = windows.remove(&key) else {
-            continue;
-        };
-        let signal = build_window_signal(workspace_id, key, window.signals);
-        let mut throttle = throttle.lock();
-        if throttle.over_budget() {
-            // ③ merged flush over budget → drop with metric.
-            tracing::warn!(
-                metric = "agent_wake_throttled",
-                workspace_id = %workspace_id,
-                "merged window throttled: hourly wake budget exhausted"
-            );
-            continue;
-        }
-        match ready_tx.try_send(signal) {
-            Ok(()) => throttle.record(),
-            Err(_) => {
-                tracing::warn!(
-                    metric = "agent_wake_dropped",
-                    workspace_id = %workspace_id,
-                    "merged window dropped: ready queue full"
-                );
-            }
-        }
-    }
-}
-
-/// One signal flushes unchanged; multiple collapse into a single
-/// [`TriggerSource::Merged`] signal carrying all members in arrival order.
-fn build_window_signal(workspace_id: &str, key: String, signals: Vec<WakeSignal>) -> WakeSignal {
-    if signals.len() == 1 {
-        return signals.into_iter().next().expect("window is never empty");
-    }
-    let priority = signals.iter().map(|s| s.priority).max().expect("window is never empty");
-    // Flatten defensively: scheduler input must be raw trigger signals, but
-    // a re-enqueued Merged signal must not nest.
-    let mut flat = Vec::with_capacity(signals.len());
-    for sig in signals {
-        match sig.source {
-            TriggerSource::Merged { signals: inner } => flat.extend(inner),
-            _ => flat.push(sig),
-        }
-    }
-    WakeSignal {
-        workspace_id: workspace_id.to_string(),
-        priority,
-        source: TriggerSource::Merged { signals: flat },
-        dedup_key: Some(key),
     }
 }
 
@@ -556,135 +487,242 @@ mod tests {
 
     /// Scheduler whose run callback forwards every executed signal.
     fn spawn_collector() -> (SchedulerHandle, mpsc::UnboundedReceiver<WakeSignal>) {
+        spawn_collector_with(Arc::new(DashMap::new()))
+    }
+
+    fn spawn_collector_with(
+        rate_limits: Arc<DashMap<String, u32>>,
+    ) -> (SchedulerHandle, mpsc::UnboundedReceiver<WakeSignal>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        let handle = Scheduler::spawn(WS.to_string(), move |sig| {
-            let tx = tx.clone();
-            Box::pin(async move {
-                let _ = tx.send(sig);
-            })
-        });
+        let handle = Scheduler::spawn(
+            WS.to_string(),
+            move |sig| {
+                let tx = tx.clone();
+                Box::pin(async move {
+                    let _ = tx.send(sig);
+                })
+            },
+            rate_limits,
+        );
         (handle, rx)
     }
 
-    /// Let the merger task pick up freshly enqueued signals so window
-    /// deadlines anchor at the current (paused) instant.
+    /// 账本桩：记录全部 append 调用（限速落账断言口）。
+    #[derive(Default)]
+    struct RecordingLedger {
+        entries: Mutex<Vec<(String, String, Option<String>, serde_json::Value)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HubLedger for RecordingLedger {
+        async fn append(
+            &self,
+            workspace_id: &str,
+            kind: &str,
+            thing_id: Option<&str>,
+            payload: serde_json::Value,
+        ) -> Result<(), String> {
+            self.entries.lock().push((
+                workspace_id.to_string(),
+                kind.to_string(),
+                thing_id.map(str::to_string),
+                payload,
+            ));
+            Ok(())
+        }
+    }
+
+    /// Yield pump so freshly enqueued signals reach the consumer.
     async fn settle() {
         for _ in 0..3 {
             tokio::task::yield_now().await;
         }
     }
 
-    // ① five same-key signals in one 30s window collapse into a single
-    // merged run carrying all five members in arrival order.
+    // ① 合并窗已废（E1 D3/D4）：带键普通信号不再聚合，即来即醒、各自成 run。
     #[tokio::test]
-    async fn merge_window_aggregates_five_signals_into_one() {
-        pause();
-        let (handle, mut runs) = spawn_collector();
-
-        for id in 1..=5 {
-            handle.enqueue(event_signal(id)).expect("enqueue");
-        }
-        settle().await;
-
-        advance(Duration::from_secs(29)).await;
-        settle().await;
-        assert!(
-            runs.try_recv().is_err(),
-            "window must not flush before its 30s deadline"
-        );
-
-        advance(Duration::from_secs(1)).await;
-        let merged = runs.recv().await.expect("merged run at window deadline");
-        assert_eq!(merged.workspace_id, WS);
-        assert_eq!(merged.priority, Priority::Normal);
-        assert_eq!(merged.dedup_key.as_deref(), Some(KEY));
-        match &merged.source {
-            TriggerSource::Merged { signals } => {
-                let ids: Vec<i64> = signals.iter().map(source_event_id).collect();
-                assert_eq!(
-                    ids,
-                    vec![1, 2, 3, 4, 5],
-                    "merged context must carry all window events in order"
-                );
-            }
-            other => panic!("expected Merged source, got {other:?}"),
-        }
-        assert!(runs.try_recv().is_err(), "5 signals must collapse into exactly 1 run");
-    }
-
-    // ① merged signal priority is the max of its members.
-    #[tokio::test]
-    async fn merged_priority_is_max_of_members() {
-        pause();
-        let (handle, mut runs) = spawn_collector();
-
-        handle.enqueue(event_signal(1)).expect("enqueue");
-        let mut high = event_signal(2);
-        high.priority = Priority::High;
-        handle.enqueue(high).expect("enqueue");
-        settle().await;
-
-        advance(Duration::from_secs(30)).await;
-        let merged = runs.recv().await.expect("merged run");
-        assert_eq!(merged.priority, Priority::High);
-    }
-
-    // ① a window with a single signal flushes that signal unchanged
-    // (not wrapped in Merged).
-    #[tokio::test]
-    async fn single_signal_window_flushes_unmerged() {
+    async fn keyed_signal_runs_immediately_without_merge_window() {
         pause();
         let (handle, mut runs) = spawn_collector();
 
         handle.enqueue(event_signal(7)).expect("enqueue");
-        settle().await;
-        advance(Duration::from_secs(30)).await;
 
-        let sig = runs.recv().await.expect("run at deadline");
+        // 不 advance：若仍有合并窗，paused 时钟下这个 recv 永远等不到。
+        let sig = runs.recv().await.expect("keyed signal runs immediately");
         assert_eq!(source_event_id(&sig), 7);
+        assert!(matches!(sig.source, TriggerSource::ThingEvent { .. }), "不再包 Merged");
         assert!(runs.try_recv().is_err());
     }
 
-    // ② Critical bypasses the merge window: it runs without any time
-    // advance and is never wrapped in Merged (O10).
+    // ① 同键限速：默认每键每分钟 3 次，第 4 次拒 RateLimited；前三条各自成 run。
     #[tokio::test]
-    async fn critical_bypasses_merge_window() {
+    async fn same_key_fourth_signal_within_a_minute_is_rate_limited() {
         pause();
         let (handle, mut runs) = spawn_collector();
 
-        handle.enqueue(critical_signal(1)).expect("enqueue");
+        for id in 1..=3 {
+            handle.enqueue(event_signal(id)).expect("within default limit 3/min");
+        }
+        assert_eq!(
+            handle.enqueue(event_signal(4)),
+            Err(EnqueueError::RateLimited),
+            "第 4 次同键信号必须被拒（agent_wake_rate_limited）"
+        );
 
-        // No advance(): if the signal had joined a merge window this recv
-        // could never complete under paused time.
-        let sig = runs.recv().await.expect("critical runs immediately");
-        assert_eq!(sig.priority, Priority::Critical);
-        assert_eq!(source_event_id(&sig), 1);
-
-        advance(Duration::from_secs(60)).await;
-        settle().await;
-        assert!(runs.try_recv().is_err(), "no window artifacts after a critical");
+        for want in 1..=3 {
+            let sig = runs.recv().await.expect("admitted signal runs");
+            assert_eq!(source_event_id(&sig), want);
+        }
+        assert!(runs.try_recv().is_err(), "被拒信号不得成 run");
     }
 
-    // ③ a merged flush counts as ONE wake against the 20/h budget.
+    // ① 限速窗 60s 滑动：窗内持续拒，窗过期后同键信号重新放行。
     #[tokio::test]
-    async fn merged_flush_counts_as_one_wake_against_hourly_budget() {
+    async fn rate_limit_window_resets_after_one_minute() {
+        pause();
+        let (handle, _runs) = spawn_collector();
+
+        for id in 1..=3 {
+            handle.enqueue(event_signal(id)).expect("within limit");
+        }
+        assert_eq!(handle.enqueue(event_signal(4)), Err(EnqueueError::RateLimited));
+
+        advance(Duration::from_secs(30)).await;
+        assert_eq!(
+            handle.enqueue(event_signal(5)),
+            Err(EnqueueError::RateLimited),
+            "30s 后仍在 60s 窗内（首次命中尚未滑出）"
+        );
+
+        advance(Duration::from_secs(31)).await;
+        handle.enqueue(event_signal(6)).expect("61s 后窗已滑出，重新放行");
+    }
+
+    // ① 每工作区限速值读共享配置表（照 heartbeat intervals 写穿模式）：
+    // N=1 时第 2 次同键信号即被拒。
+    #[tokio::test]
+    async fn per_workspace_limit_comes_from_shared_table() {
+        pause();
+        let rate_limits = Arc::new(DashMap::new());
+        rate_limits.insert(WS.to_string(), 1u32);
+        let (handle, _runs) = spawn_collector_with(rate_limits);
+
+        handle.enqueue(event_signal(1)).expect("first within N=1");
+        assert_eq!(handle.enqueue(event_signal(2)), Err(EnqueueError::RateLimited));
+    }
+
+    // ② Critical 绕过限速（O10 保持）：同键 critical 连发不受 3/min 约束，
+    // 且不消耗限速配额（随后的普通同键信号仍按满额放行）。
+    #[tokio::test]
+    async fn critical_bypasses_rate_limit() {
         pause();
         let (handle, mut runs) = spawn_collector();
 
         for id in 1..=5 {
-            handle.enqueue(event_signal(id)).expect("enqueue");
+            handle.enqueue(critical_signal(id)).expect("critical bypasses rate limit");
         }
-        settle().await;
-        advance(Duration::from_secs(30)).await;
-        let _merged = runs.recv().await.expect("merged run");
+        for want in 1..=5 {
+            let sig = runs.recv().await.expect("critical runs immediately");
+            assert_eq!(sig.priority, Priority::Critical);
+            assert_eq!(source_event_id(&sig), want);
+        }
 
-        for tick in 0..19 {
+        // Critical 不碰限速器：普通信号仍享完整 3/min 配额。
+        for id in 1..=3 {
+            handle.enqueue(event_signal(id)).expect("limiter untouched by criticals");
+        }
+        assert_eq!(handle.enqueue(event_signal(4)), Err(EnqueueError::RateLimited));
+    }
+
+    // ① 无键信号不过限速器（小时预算仍是其上界）。
+    #[tokio::test]
+    async fn keyless_signals_are_not_rate_limited() {
+        pause();
+        let (handle, _runs) = spawn_collector();
+
+        for tick in 0..5 {
+            handle.enqueue(heartbeat(tick)).expect("keyless signal unaffected by rate limit");
+        }
+    }
+
+    // ① 限速落账（spec §3：被限的 flap 必须可见，防静默）：RateLimited 路径
+    // 向 HubLedger 落 kind=rate_limited、payload v=1 的事件。
+    #[tokio::test]
+    async fn rate_limited_event_is_recorded_in_ledger() {
+        pause();
+        let ledger = Arc::new(RecordingLedger::default());
+        let (handle, _runs) = spawn_collector();
+        handle.set_ledger(ledger.clone());
+
+        for id in 1..=3 {
+            handle.enqueue(event_signal(id)).expect("within limit");
+        }
+        assert_eq!(handle.enqueue(event_signal(4)), Err(EnqueueError::RateLimited));
+
+        // 落账是 fire-and-forget 的 spawned 写——泵 yield 直到可见。
+        for _ in 0..100 {
+            if !ledger.entries.lock().is_empty() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let entries = ledger.entries.lock();
+        assert_eq!(entries.len(), 1, "恰一条限速事件（第 4 次被拒）");
+        let (ws, kind, thing, payload) = &entries[0];
+        assert_eq!(ws, WS);
+        assert_eq!(kind, "rate_limited");
+        assert_eq!(thing, &None);
+        assert_eq!(payload["v"], 1);
+        assert_eq!(payload["dedup_key"], KEY);
+        assert_eq!(payload["limit"], 3);
+    }
+
+    // ① 账本写失败不中断调度链路（账本可补，唤醒不能丢）：拒绝语义不变。
+    #[tokio::test]
+    async fn rate_limited_ledger_failure_does_not_break_enqueue() {
+        pause();
+        struct FailingLedger;
+        #[async_trait::async_trait]
+        impl HubLedger for FailingLedger {
+            async fn append(
+                &self,
+                _: &str,
+                _: &str,
+                _: Option<&str>,
+                _: serde_json::Value,
+            ) -> Result<(), String> {
+                Err("db down".into())
+            }
+        }
+        let (handle, _runs) = spawn_collector();
+        handle.set_ledger(Arc::new(FailingLedger));
+
+        for id in 1..=3 {
+            handle.enqueue(event_signal(id)).expect("within limit");
+        }
+        assert_eq!(handle.enqueue(event_signal(4)), Err(EnqueueError::RateLimited));
+        // 不 panic、不阻塞；spawned 写失败只留 warn。
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    // ③ 合并窗已废：每条准入的同键信号各占一次小时预算（20/h），无聚合记账。
+    #[tokio::test]
+    async fn each_admitted_keyed_signal_counts_against_hourly_budget() {
+        pause();
+        let (handle, _runs) = spawn_collector();
+
+        for id in 1..=3 {
+            handle.enqueue(event_signal(id)).expect("rate limit 3/min");
+        }
+        for tick in 0..17 {
             handle.enqueue(heartbeat(tick)).expect("within budget");
         }
         assert_eq!(
-            handle.enqueue(heartbeat(19)),
+            handle.enqueue(heartbeat(17)),
             Err(EnqueueError::Throttled),
-            "budget = 1 merged wake + 19 pass-through wakes = 20"
+            "budget = 3 keyed wakes + 17 pass-through wakes = 20"
         );
     }
 
@@ -744,14 +782,18 @@ mod tests {
         let gate = Arc::new(Notify::new());
         let started = Arc::new(Notify::new());
         let (gate_run, started_run) = (gate.clone(), started.clone());
-        let handle = Scheduler::spawn(WS.to_string(), move |_sig| {
-            let gate = gate_run.clone();
-            let started = started_run.clone();
-            Box::pin(async move {
-                started.notify_one();
-                gate.notified().await;
-            })
-        });
+        let handle = Scheduler::spawn(
+            WS.to_string(),
+            move |_sig| {
+                let gate = gate_run.clone();
+                let started = started_run.clone();
+                Box::pin(async move {
+                    started.notify_one();
+                    gate.notified().await;
+                })
+            },
+            Arc::new(DashMap::new()),
+        );
 
         handle.enqueue(directive("in-flight")).expect("first signal");
         started.notified().await; // consumer now holds one run in flight
@@ -778,36 +820,40 @@ mod tests {
         gate.notify_waiters(); // let the in-flight run finish; remaining tasks abort with the runtime
     }
 
-    // O26 drain(): clears the ready queue AND pending merge windows while a
-    // run is in flight; the scheduler stays live afterwards.
+    // O26 drain(): 清 ready 队列（合并窗已废，ready 队列是唯一待清面）；
+    // 在途 run 不取消，drain 等其完成；drain 后调度器仍存活。
     #[tokio::test]
-    async fn drain_clears_ready_queue_and_merge_windows() {
+    async fn drain_clears_ready_queue_and_stays_live() {
         pause();
         let blocking = Arc::new(AtomicBool::new(true));
         let gate = Arc::new(Notify::new());
         let started = Arc::new(Notify::new());
         let (log_tx, mut log_rx) = mpsc::unbounded_channel();
         let (blocking_run, gate_run, started_run) = (blocking.clone(), gate.clone(), started.clone());
-        let handle = Scheduler::spawn(WS.to_string(), move |sig| {
-            let tx = log_tx.clone();
-            let blocking = blocking_run.clone();
-            let gate = gate_run.clone();
-            let started = started_run.clone();
-            Box::pin(async move {
-                let _ = tx.send(sig);
-                started.notify_one();
-                while blocking.load(Ordering::SeqCst) {
-                    gate.notified().await;
-                }
-            })
-        });
+        let handle = Scheduler::spawn(
+            WS.to_string(),
+            move |sig| {
+                let tx = log_tx.clone();
+                let blocking = blocking_run.clone();
+                let gate = gate_run.clone();
+                let started = started_run.clone();
+                Box::pin(async move {
+                    let _ = tx.send(sig);
+                    started.notify_one();
+                    while blocking.load(Ordering::SeqCst) {
+                        gate.notified().await;
+                    }
+                })
+            },
+            Arc::new(DashMap::new()),
+        );
 
         handle.enqueue(directive("in-flight")).expect("in-flight");
         started.notified().await; // consumer blocked inside the first run
 
         handle.enqueue(directive("queued-1")).expect("queued directive");
         handle.enqueue(critical_signal(7)).expect("queued critical");
-        handle.enqueue(event_signal(1)).expect("signal parked in merge window");
+        handle.enqueue(event_signal(1)).expect("queued keyed signal");
 
         // Drain while the first run is still blocked: drain must wait for
         // the in-flight run, then purge everything pending.
@@ -822,11 +868,7 @@ mod tests {
         );
         blocking.store(false, Ordering::SeqCst);
         gate.notify_waiters();
-        draining.await.expect("drain completes after both tasks ack");
-
-        // A merge window that survived would flush at t+30s.
-        advance(Duration::from_secs(60)).await;
-        settle().await;
+        draining.await.expect("drain completes after consumer ack");
 
         handle.enqueue(directive("after-drain")).expect("scheduler stays live");
 
@@ -836,7 +878,7 @@ mod tests {
         assert!(matches!(after.source, TriggerSource::UserDirective { ref text, .. } if text == "after-drain"));
         assert!(
             log_rx.try_recv().is_err(),
-            "queued-1, critical and the windowed signal must have been drained"
+            "queued-1, critical and the keyed signal must have been drained"
         );
     }
 
@@ -850,19 +892,23 @@ mod tests {
         let release = Arc::new(Notify::new());
         let (if_run, max_run, st_run, rel_run) =
             (in_flight.clone(), max_seen.clone(), started.clone(), release.clone());
-        let handle = Scheduler::spawn(WS.to_string(), move |_sig| {
-            let in_flight = if_run.clone();
-            let max_seen = max_run.clone();
-            let started = st_run.clone();
-            let release = rel_run.clone();
-            started.fetch_add(1, Ordering::SeqCst);
-            Box::pin(async move {
-                let n = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
-                max_seen.fetch_max(n, Ordering::SeqCst);
-                release.notified().await;
-                in_flight.fetch_sub(1, Ordering::SeqCst);
-            })
-        });
+        let handle = Scheduler::spawn(
+            WS.to_string(),
+            move |_sig| {
+                let in_flight = if_run.clone();
+                let max_seen = max_run.clone();
+                let started = st_run.clone();
+                let release = rel_run.clone();
+                started.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async move {
+                    let n = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                    max_seen.fetch_max(n, Ordering::SeqCst);
+                    release.notified().await;
+                    in_flight.fetch_sub(1, Ordering::SeqCst);
+                })
+            },
+            Arc::new(DashMap::new()),
+        );
 
         handle.enqueue(critical_signal(1)).expect("first");
         handle.enqueue(directive("second")).expect("second");
@@ -895,17 +941,17 @@ mod tests {
 
         // Order A: ack lands while NO waiter is registered. The stored
         // permit must still release a waiter created afterwards.
-        drain.ack(&drain.merger_acked, &mut last, 1);
-        wait_ack(&drain, &drain.merger_acked, 1).await;
+        drain.ack(&drain.consumer_acked, &mut last, 1);
+        wait_ack(&drain, &drain.consumer_acked, 1).await;
 
         // Order B: waiter registered (enabled) BEFORE the ack — the ack
         // must wake it (this is the check-then-register gap in wait_ack).
         let notified = drain.ack_notify.notified();
         tokio::pin!(notified);
         notified.as_mut().enable();
-        drain.ack(&drain.consumer_acked, &mut last, 1);
+        drain.ack(&drain.consumer_acked, &mut last, 2);
         notified.await;
-        assert_eq!(drain.consumer_acked.load(Ordering::SeqCst), 1);
+        assert_eq!(drain.consumer_acked.load(Ordering::SeqCst), 2);
     }
 
     // Regression (review I2): two concurrent drain() calls must BOTH
@@ -918,17 +964,21 @@ mod tests {
         let gate = Arc::new(Notify::new());
         let started = Arc::new(Notify::new());
         let (blocking_run, gate_run, started_run) = (blocking.clone(), gate.clone(), started.clone());
-        let handle = Scheduler::spawn(WS.to_string(), move |_sig| {
-            let blocking = blocking_run.clone();
-            let gate = gate_run.clone();
-            let started = started_run.clone();
-            Box::pin(async move {
-                started.notify_one();
-                while blocking.load(Ordering::SeqCst) {
-                    gate.notified().await;
-                }
-            })
-        });
+        let handle = Scheduler::spawn(
+            WS.to_string(),
+            move |_sig| {
+                let blocking = blocking_run.clone();
+                let gate = gate_run.clone();
+                let started = started_run.clone();
+                Box::pin(async move {
+                    started.notify_one();
+                    while blocking.load(Ordering::SeqCst) {
+                        gate.notified().await;
+                    }
+                })
+            },
+            Arc::new(DashMap::new()),
+        );
 
         handle.enqueue(directive("in-flight")).expect("enqueue");
         started.notified().await; // consumer blocked inside the run
@@ -971,17 +1021,21 @@ mod tests {
         let gate = Arc::new(Notify::new());
         let started = Arc::new(Notify::new());
         let (blocking_run, gate_run, started_run) = (blocking.clone(), gate.clone(), started.clone());
-        let handle = Scheduler::spawn(WS.to_string(), move |_sig| {
-            let blocking = blocking_run.clone();
-            let gate = gate_run.clone();
-            let started = started_run.clone();
-            Box::pin(async move {
-                started.notify_one();
-                while blocking.load(Ordering::SeqCst) {
-                    gate.notified().await;
-                }
-            })
-        });
+        let handle = Scheduler::spawn(
+            WS.to_string(),
+            move |_sig| {
+                let blocking = blocking_run.clone();
+                let gate = gate_run.clone();
+                let started = started_run.clone();
+                Box::pin(async move {
+                    started.notify_one();
+                    while blocking.load(Ordering::SeqCst) {
+                        gate.notified().await;
+                    }
+                })
+            },
+            Arc::new(DashMap::new()),
+        );
 
         handle.enqueue(directive("in-flight")).expect("first signal");
         started.notified().await; // consumer holds one run in flight

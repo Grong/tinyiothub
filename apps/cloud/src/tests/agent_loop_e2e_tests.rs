@@ -12,7 +12,8 @@
 //! （与 loop 共享同一文件库），断言事件 → DB → API 三段一致。
 //!
 //! 确定性：无裸 sleep 依赖——事件经 timeout recv 捕获，DB 投影经真实时间
-//! 轮询收敛；timer 首 tick 停在 30s 合并窗口内，测试窗口内仅指令 run 落库。
+//! 轮询收敛；policy=Off 门控 timer 首 tick（E1 合并窗已废，timer 即来即
+//! 醒），测试窗口内仅指令 run 落库（指令 run 无工具调用，不过策略门）。
 
 use std::{
     sync::{Arc, Mutex},
@@ -202,7 +203,17 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
 
     let policy_repo = db.clone();
     policy_repo
-        .save_autonomy_policy(WS, &act_policy(), "test")
+        // mode=Off：门控 timer 首 tick（E1 合并窗已废，timer 即来即醒即跑），
+        // "仅 1 行"断言因此确定。指令 run 无工具调用（provider 直接回文本），
+        // 不过 invoke_action 策略门，Off 不影响被测链路。
+        .save_autonomy_policy(
+            WS,
+            &AutonomyPolicy {
+                mode: AutonomyMode::Off,
+                ..act_policy()
+            },
+            "test",
+        )
         .await
         .expect("save policy");
 
@@ -248,9 +259,6 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
         thing_agent_config: ThingAgentManagerConfig {
             timer_interval: Duration::from_secs(24 * 3600),
             min_wake_level: 3,
-            // 30s 合并窗口：timer 首 tick 停在窗口内，测试时长（≪30s）内仅
-            // 指令 run 落库——"仅 1 行"的断言因此确定。
-            merge_window: Duration::from_secs(30),
             ..Default::default()
         },
         event_bus,
@@ -333,7 +341,7 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
     assert_eq!(
         runs.len(),
         1,
-        "仅指令 run 一行（timer 首 tick 停在 30s 合并窗口）: {runs:?}"
+        "仅指令 run 一行（policy=Off 门控 timer 首 tick）: {runs:?}"
     );
     assert_eq!(runs[0]["id"].as_str().unwrap(), report.run_id);
     assert_eq!(runs[0]["triggerType"], "user");

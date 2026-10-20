@@ -270,12 +270,16 @@ mod tests {
         use crate::runtime::thing_agent::types::{Priority, TriggerSource, WakeSignal};
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let handle = Scheduler::spawn("ws_01".to_string(), move |sig| {
-            let tx = tx.clone();
-            Box::pin(async move {
-                let _ = tx.send(sig);
-            })
-        });
+        let handle = Scheduler::spawn(
+            "ws_01".to_string(),
+            move |sig| {
+                let tx = tx.clone();
+                Box::pin(async move {
+                    let _ = tx.send(sig);
+                })
+            },
+            std::sync::Arc::new(dashmap::DashMap::new()),
+        );
 
         let sink: &dyn DirectiveSink = &handle;
         sink.enqueue(WakeSignal {

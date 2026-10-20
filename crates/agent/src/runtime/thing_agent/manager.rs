@@ -81,9 +81,6 @@ pub struct ThingAgentManagerConfig {
     pub timer_interval: Duration,
     /// 物事件唤醒最低级别（spec 默认 3 = warning）。
     pub min_wake_level: i32,
-    /// 调度器合并窗口（spec 默认 30s）。集成测试用亚秒窗口在真实时间下
-    /// 运行（暂停时钟 auto-advance 与 sqlx 工作线程往返不兼容）。
-    pub merge_window: Duration,
     /// 心跳巡检默认间隔（T6；bootstrap 期自 HeartbeatConfig.interval_minutes
     /// 来，T13 接线；每工作区覆盖走 heartbeat intervals 共享表）。
     pub heartbeat_default_interval: Duration,
@@ -94,7 +91,6 @@ impl Default for ThingAgentManagerConfig {
         Self {
             timer_interval: Duration::from_secs(15 * 60),
             min_wake_level: 3,
-            merge_window: crate::runtime::thing_agent::scheduler::MERGE_WINDOW,
             heartbeat_default_interval: Duration::from_secs(15 * 60),
         }
     }
@@ -162,7 +158,7 @@ struct PipelineDeps {
 
 /// One running workspace loop: the scheduler handle plus the trigger/forward
 /// tasks feeding it. Dropping the handle after drain lets the scheduler's
-/// merger/consumer tasks exit on closed channels.
+/// consumer task exit on the closed channel.
 struct WorkspaceLoop {
     handle: SchedulerHandle,
     tasks: Vec<JoinHandle<()>>,
@@ -183,6 +179,12 @@ pub struct ThingAgentManager {
     /// get-or-insert：handler 先于 start 调用也安全；stop 时丢弃条目，
     /// 旧 trigger 持有的 Notify 不再被唤醒（避免 stale permit 补 tick）。
     heartbeat_reload_notifies: DashMap<String, Arc<tokio::sync::Notify>>,
+    /// E1 同键限速共享表（D3/D4，照 heartbeat intervals 先例）：键
+    /// workspace_id，值 N/分钟；start 时注入 scheduler，handler 写穿热改生效。
+    rate_limits: Arc<DashMap<String, u32>>,
+    /// E1 限速事件账本（spec §3）：None 时 scheduler 只留 metric（测试/
+    /// 边缘形态）；bootstrap 接线后 start 的工作区落账 kind=rate_limited。
+    wake_ledger: std::sync::Mutex<Option<Arc<dyn tinyiothub_runtime::ports::HubLedger>>>,
 }
 
 impl ThingAgentManager {
@@ -222,6 +224,8 @@ impl ThingAgentManager {
             workspaces: DashMap::new(),
             heartbeat,
             heartbeat_reload_notifies: DashMap::new(),
+            rate_limits: Arc::new(DashMap::new()),
+            wake_ledger: std::sync::Mutex::new(None),
         }
     }
 
@@ -237,14 +241,18 @@ impl ThingAgentManager {
 
         let ws = workspace_id.to_string();
         let deps = self.deps.clone();
-        let handle = Scheduler::spawn_with_merge_window(
+        let handle = Scheduler::spawn(
             ws.clone(),
             move |signal| {
                 let deps = deps.clone();
                 Box::pin(async move { run_pipeline(deps, signal).await })
             },
-            self.config.merge_window,
+            Arc::clone(&self.rate_limits),
         );
+        // E1 限速落账（spec §3）：bootstrap 已接线账本则注入，None 只留 metric。
+        if let Some(ledger) = self.wake_ledger.lock().expect("wake_ledger poisoned").clone() {
+            handle.set_ledger(ledger);
+        }
 
         let (tx, rx) = mpsc::channel::<WakeSignal>(TRIGGER_CHANNEL_CAPACITY);
         let forward = tokio::spawn(forward_signals(rx, handle.clone()));
@@ -415,6 +423,32 @@ impl ThingAgentManager {
     pub fn heartbeat_trust_config(&self, workspace_id: &str) -> Option<TrustConfig> {
         self.heartbeat.trust_configs.get(workspace_id).map(|r| r.clone())
     }
+
+    // ── E1 同键限速（D3/D4）：共享表 + 账本接线 ─────────────────────────
+
+    /// 同键限速共享表句柄（E1 Task 8 bootstrap 注入/handler 写穿用——克隆
+    /// 共享同一 DashMap 真源，照 heartbeat_last_ticks 先例）。
+    pub fn wake_rate_limits(&self) -> Arc<DashMap<String, u32>> {
+        Arc::clone(&self.rate_limits)
+    }
+
+    /// handler 写穿（D11-⑤ 同款：调用方已写 DB 成功）：每工作区同键限速
+    /// （N/分钟）——scheduler enqueue 每信号重读生效，热改无需重启 loop。
+    pub fn set_wake_rate_limit_per_min(&self, workspace_id: &str, per_min: u32) {
+        self.rate_limits.insert(workspace_id.to_string(), per_min);
+    }
+
+    /// 读出口（启动接线断言/调试）：每工作区同键限速覆盖值。
+    pub fn wake_rate_limit_per_min(&self, workspace_id: &str) -> Option<u32> {
+        self.rate_limits.get(workspace_id).map(|r| *r)
+    }
+
+    /// E1 限速事件账本接线（spec §3）：bootstrap 注入 HubLedger 适配器；
+    /// 之后 start 的工作区 scheduler 落账 kind=rate_limited。None（默认）
+    /// 只留 metric（测试/边缘形态）。
+    pub fn set_wake_ledger(&self, ledger: Arc<dyn tinyiothub_runtime::ports::HubLedger>) {
+        *self.wake_ledger.lock().expect("wake_ledger poisoned") = Some(ledger);
+    }
 }
 
 #[async_trait::async_trait]
@@ -496,10 +530,10 @@ fn collect_problem_keys_into(source: &TriggerSource, out: &mut Vec<String>) {
     }
 }
 
-/// heartbeat 成员判定（T6 修复轮 1）：scheduler 只按同 dedup_key 合并——
-/// heartbeat: 前缀键只与 heartbeat 键同窗，Merged 含 Heartbeat 成员则必然
-/// 全为 heartbeat 成员，混合不可能。防御性递归（合并窗口不嵌套 Merged，
-/// 散兵不丢信号）。
+/// heartbeat 成员判定（T6 修复轮 1）：Merged 变体保留（存储/回放兼容，
+/// E1 Task 7 起 scheduler 不再产生）——Merged 含 Heartbeat 成员则必然全为
+/// heartbeat 成员（合并窗时代只按同 dedup_key 合并，混合不可能遗留）。
+/// 防御性递归（合并信号不嵌套 Merged，散兵不丢信号）。
 fn has_heartbeat_member(source: &TriggerSource) -> bool {
     match source {
         TriggerSource::Heartbeat { .. } => true,
@@ -1017,10 +1051,10 @@ pub(crate) mod tests {
         pub(crate) heartbeat: HeartbeatDeps,
     }
 
-    /// Manager with all-stub deps and a 24h timer interval (the timer's
-    /// immediate first tick still parks one signal in a merge window;
-    /// assertions filter by dedup_key). Task 4：run 记录走内存 registry +
-    /// 事件总线，探针订阅同一总线（先 subscribe 再 start，不丢事件）。
+    /// Manager with all-stub deps and a 24h timer interval. Task 4：run 记录
+    /// 走内存 registry + 事件总线，探针订阅同一总线（先 subscribe 再 start，
+    /// 不丢事件）。E1 Task 7（合并窗已废）：timer 首 tick 即醒即跑成一条
+    /// `timer:{ws}` run——断言一律按 dedup_key 过滤，不吃总数。
     pub(crate) async fn stub_manager() -> StubManagerParts {
         let host = Arc::new(StubHost::new());
         let registry = RunRegistry::new();
@@ -1042,7 +1076,6 @@ pub(crate) mod tests {
             ThingAgentManagerConfig {
                 timer_interval: Duration::from_secs(24 * 3600),
                 min_wake_level: 3,
-                merge_window: crate::runtime::thing_agent::scheduler::MERGE_WINDOW,
                 heartbeat_default_interval: Duration::from_secs(24 * 3600),
             },
             Arc::new(crate::runtime::thing_agent::traits::NoopTicketResolutions),
@@ -1096,7 +1129,8 @@ pub(crate) mod tests {
         panic!("timed out waiting for {what}");
     }
 
-    /// Let the trigger→forward→merger chain pick up freshly sent events.
+    /// Yield pump so the trigger→forward→consumer chain picks up freshly
+    /// sent events.
     async fn settle() {
         for _ in 0..10 {
             tokio::task::yield_now().await;
@@ -1140,9 +1174,10 @@ pub(crate) mod tests {
         );
     }
 
-    // 5 same-key warning events inside the 30s merge window → exactly 1 run.
+    // 5 same-key warning events → 同键限速（E1 D3/D4，合并窗已废）：前 3 条
+    // 即来即醒各自成 run，第 4/5 条被限速拒绝（默认 3/min）。
     #[tokio::test(start_paused = true)]
-    async fn normal_events_merge_into_single_run() {
+    async fn same_key_events_rate_limited_after_third() {
         let parts = stub_manager().await;
         parts.manager.start(WS);
         wait_subscribed(&parts.host).await;
@@ -1150,22 +1185,14 @@ pub(crate) mod tests {
         for id in 1..=5 {
             parts.host.tx.send(event(id, 3, "device")).expect("send event");
         }
-        // 真实 SQLite repo（E3）每个事件的政策读取产生 I/O 让出点；10 次 yield
-        // 不足以让 5 个事件全部进入合并窗口（窗口提前 flush 会裂成两个 run）。
-        // 泵足够多的 yield 槽位排空 trigger 处理管线，时钟保持冻结。
-        for _ in 0..200 {
-            tokio::task::yield_now().await;
-        }
+        wait_until(|| parts.runs.runs_with_dedup(EVENT_KEY) == 3, "3 admitted runs").await;
 
-        tokio::time::advance(Duration::from_secs(30)).await;
-        wait_until(|| parts.runs.runs_with_dedup(EVENT_KEY) == 1, "merged run").await;
-
-        tokio::time::advance(Duration::from_secs(60)).await;
-        settle().await;
+        // 限速拒绝是 enqueue 的同步决策——3 条落库即管道排空到第 5 条
+        // （trigger/forward 串行 FIFO），无需墙钟等待即可阴性断言。
         assert_eq!(
             parts.runs.runs_with_dedup(EVENT_KEY),
-            1,
-            "5 events in one window must collapse into exactly 1 run"
+            3,
+            "第 4/5 条同键事件必须被限速（agent_wake_rate_limited），不得成 run"
         );
     }
 
@@ -1183,9 +1210,13 @@ pub(crate) mod tests {
             .send(event(1, 5, "agent"))
             .expect("send agent-actor event");
         settle().await;
-        // No time advance: any wake would have run by now (critical bypasses
-        // the merge window); the timer's first tick is parked unflushed.
-        assert_eq!(parts.runs.len(), 0, "agent-actor event must not wake");
+        // No wake for the agent-actor event (合并窗已废，任何唤醒都会立即
+        // 落 run；timer 首 tick 的 run 落在另一条 dedup_key 上，按键过滤)。
+        assert_eq!(
+            parts.runs.runs_with_dedup(EVENT_KEY),
+            0,
+            "agent-actor event must not wake"
+        );
 
         // A device-actor event at the same level DOES wake — the block above
         // was the actor filter, not a dead loop.
@@ -1330,7 +1361,7 @@ pub(crate) mod tests {
         );
         parts.manager.start(WS);
 
-        // 启动首 tick 被抑制;越过合并窗口也不得落 run。
+        // 启动首 tick 被抑制（enabled=false）：不得落 run。
         for _ in 0..200 {
             tokio::task::yield_now().await;
         }
@@ -1376,14 +1407,23 @@ pub(crate) mod tests {
         parts.manager.start(WS);
         wait_subscribed(&parts.host).await;
 
+        // 排空屏障（E1 Task 7：timer 首 tick 即醒即跑）——等其落定后 stop，
+        // 之后的 before/after 计数不受在途 run 干扰。
+        wait_until(
+            || parts.runs.runs_with_dedup("timer:ws_01") == 1,
+            "timer first-tick run",
+        )
+        .await;
+
         parts.manager.stop(WS).await;
         assert!(!parts.manager.is_running(WS));
         assert_eq!(parts.manager.workspace_count(), 0);
 
+        let before = parts.runs.len();
         // Broadcast with zero receivers errors — the loop is gone, as intended.
         let _ = parts.host.tx.send(event(1, 5, "device"));
         settle().await;
-        assert!(parts.runs.is_empty(), "stopped loop must not run");
+        assert_eq!(parts.runs.len(), before, "stopped loop must not run");
 
         // Stop is idempotent.
         parts.manager.stop(WS).await;
@@ -1410,30 +1450,37 @@ pub(crate) mod tests {
     }
 
     // O26 kill switch 接线：DirectiveSink::drain 经 manager 路由到目标工作区
-    // 调度器，清空合并窗口里待处理的信号；未知工作区 no-op。
+    // 调度器；未知工作区 no-op；drain 后 loop 仍存活接活（合并窗已废——
+    // drain 清 ready 队列的语义锁在 scheduler 单测，本用例锁路由与存活）。
     #[tokio::test(start_paused = true)]
-    async fn directive_sink_drain_clears_pending_queue() {
+    async fn directive_sink_drain_routes_and_loop_survives() {
         let parts = stub_manager().await;
         parts.manager.start(WS);
         wait_subscribed(&parts.host).await;
 
-        // warning 事件进 30s 合并窗口（pending，尚未 flush）。
-        parts.host.tx.send(event(1, 3, "device")).expect("send event");
-        settle().await;
-
         let sink: &dyn DirectiveSink = parts.manager.as_ref();
         sink.drain("ws_unknown").await; // no-op，不得 panic
-        sink.drain(WS).await;
+        sink.drain(WS).await; // 在途 run（timer 首 tick）不取消，drain 等其完成
 
-        // 越过合并窗口：被 drain 的信号不得产生 run（对照组见
-        // normal_events_merge_into_single_run —— 不 drain 则 1 run）。
-        tokio::time::advance(Duration::from_secs(60)).await;
-        settle().await;
-        assert_eq!(
-            parts.runs.runs_with_dedup(EVENT_KEY),
-            0,
-            "drained pending signal must not run"
-        );
+        // drain 后调度器仍接活：指令照常全管线执行落库。
+        sink.enqueue(WakeSignal {
+            workspace_id: WS.to_string(),
+            priority: Priority::High,
+            source: TriggerSource::UserDirective {
+                user_id: "u1".to_string(),
+                text: "drain 后仍接活".to_string(),
+                session_key: None,
+                source: None,
+                problem_key: None,
+            },
+            dedup_key: None,
+        })
+        .expect("directive accepted");
+        wait_until(
+            || parts.runs.all().iter().any(|r| r.trigger == "user:u1"),
+            "post-drain directive run",
+        )
+        .await;
     }
 
     // T14 DirectiveSink: directives route to the workspace scheduler and run
@@ -1603,7 +1650,7 @@ pub(crate) mod tests {
         );
         parts.manager.start(WS);
 
-        // heartbeat trigger 启动即首 tick(有活动任务);30s 合并窗口 flush 后执行。
+        // heartbeat trigger 启动即首 tick(有活动任务);合并窗已废,即来即醒。
         for _ in 0..200 {
             tokio::task::yield_now().await;
         }
@@ -1657,7 +1704,6 @@ pub(crate) mod tests {
             ThingAgentManagerConfig {
                 timer_interval: Duration::from_secs(24 * 3600),
                 min_wake_level: 3,
-                merge_window: crate::runtime::thing_agent::scheduler::MERGE_WINDOW,
                 heartbeat_default_interval: Duration::from_secs(24 * 3600),
             },
             Arc::new(crate::runtime::thing_agent::traits::NoopTicketResolutions),
@@ -1684,12 +1730,14 @@ pub(crate) mod tests {
         .await;
     }
 
-    // T6 修复轮 1②：Merged 穿透——两条同 dedup_key 的 heartbeat 信号在合并
-    // 窗口聚成 Merged(顶层不再是 Heartbeat),run 仍走 heartbeat 专用 prompt
-    // (任务+信任段)且 governor 记账。trigger 标签 merged:heartbeat:ws_01
-    // 证明合并路径真的被走过(单信号不包 Merged)。
+    // T6 修复轮 1②（E1 Task 7 改写）：Merged 穿透——合并窗已废，scheduler
+    // 不再产生 Merged；变体保留（存储/回放兼容），直接经 DirectiveSink 注入
+    // Merged 信号锁穿透语义：run 走 heartbeat 专用 prompt（任务+信任段）且
+    // governor 记账。trigger 标签 merged:heartbeat:ws_01 证明 Merged 路径
+    // 真的被走过（单信号不包 Merged）。enabled=false 抑制 trigger 首 tick，
+    // 只留注入一路，run 计数确定。
     #[tokio::test(start_paused = true)]
-    async fn merged_heartbeat_ticks_use_heartbeat_prompt_and_record_governor() {
+    async fn merged_heartbeat_signal_uses_heartbeat_prompt_and_records_governor() {
         let parts = stub_manager().await;
         parts.heartbeat.tasks.insert(
             WS.to_string(),
@@ -1714,6 +1762,7 @@ pub(crate) mod tests {
         );
         let governor = parts.heartbeat.governor.clone();
         governor.record_failure(WS); // 预置一败:成功 run 清零才证明记账穿透 Merged
+        parts.manager.set_heartbeat_enabled(WS, false);
         parts.manager.start(WS);
 
         let sink: &dyn DirectiveSink = parts.manager.as_ref();
@@ -1723,12 +1772,13 @@ pub(crate) mod tests {
             source: TriggerSource::Heartbeat { alarm: None },
             dedup_key: Some("heartbeat:ws_01".to_string()),
         };
-        sink.enqueue(hb()).expect("first heartbeat tick");
-        sink.enqueue(hb()).expect("second heartbeat tick");
-        for _ in 0..200 {
-            tokio::task::yield_now().await;
-        }
-        tokio::time::advance(Duration::from_secs(30)).await;
+        sink.enqueue(WakeSignal {
+            workspace_id: WS.to_string(),
+            priority: Priority::Normal,
+            source: TriggerSource::Merged { signals: vec![hb(), hb()] },
+            dedup_key: Some("heartbeat:ws_01".to_string()),
+        })
+        .expect("merged heartbeat signal accepted");
         wait_until(
             || parts.runs.runs_with_dedup("heartbeat:ws_01") == 1,
             "merged heartbeat run",
@@ -1742,7 +1792,7 @@ pub(crate) mod tests {
             .expect("merged heartbeat run recorded");
         assert_eq!(
             run.trigger, "merged:heartbeat:ws_01",
-            "两 tick 必须聚成 Merged(单信号不包 Merged,标签无 merged: 前缀)"
+            "Merged 信号必须保持 Merged 标签（单信号无 merged: 前缀）"
         );
         drop(runs);
 
@@ -1826,7 +1876,6 @@ pub(crate) mod tests {
             ThingAgentManagerConfig {
                 timer_interval: Duration::from_secs(24 * 3600),
                 min_wake_level: 3,
-                merge_window: crate::runtime::thing_agent::scheduler::MERGE_WINDOW,
                 heartbeat_default_interval: Duration::from_secs(24 * 3600),
             },
             Arc::new(crate::runtime::thing_agent::traits::NoopTicketResolutions),
@@ -1996,14 +2045,16 @@ pub(crate) mod tests {
     }
 
     // Value card
-    // - 覆盖路径：告警驱动心跳 run 全管线（scheduler 分键合并 → run_pipeline
-    //   的 heartbeat prompt + heartbeat_alarms 递归抽取 + render_heartbeat_alarm
-    //   附段 + task_count 回写 + governor 记账）。
+    // - 覆盖路径：告警驱动心跳 run 全管线（Merged 信号经 scheduler 普通路径
+    //   → run_pipeline 的 heartbeat prompt + heartbeat_alarms 递归抽取 +
+    //   render_heartbeat_alarm 附段 + task_count 回写 + governor 记账）。
+    //   E1 Task 7 改写：合并窗已废，scheduler 不再产生 Merged；变体保留
+    //   （存储/回放兼容），直接经 DirectiveSink 注入 Merged 信号锁穿透。
     // - 真实回归场景：有人删掉 run_pipeline 里的告警附段循环或
     //   collect_heartbeat_alarms 不递归 Merged——LLM 收到的告警 run 丢失
     //   原因/设备/类型上下文，自治处置质量静默退化，无任何测试报警。
     // - 失败信号：prompt 缺「设备离线」/「dev-1」/「offline」即断口；
-    //   trigger 标签缺 merged: 前缀说明合并路径未走（散兵信号不包 Merged）。
+    //   trigger 标签缺 merged: 前缀说明 Merged 路径未走（散兵信号不包 Merged）。
     // - 覆盖理由：callbacks 单测只到信号构造（to_wake_signal/优先级映射），
     //   manager 既有用例只覆盖 alarm=None 的定时 tick——告警上下文进 prompt
     //   的唯一管线在此。
@@ -2025,6 +2076,9 @@ pub(crate) mod tests {
         );
         let governor = parts.heartbeat.governor.clone();
         governor.record_failure(WS); // 预置一败：成功 run 清零才证明记账穿透
+        // 抑制 trigger 首 tick（enabled=false）——只留注入的 Merged 一路，
+        // run 计数断言确定。
+        parts.manager.set_heartbeat_enabled(WS, false);
         parts.manager.start(WS);
 
         let sink: &dyn DirectiveSink = parts.manager.as_ref();
@@ -2042,14 +2096,17 @@ pub(crate) mod tests {
             },
             dedup_key: Some("heartbeat:ws_01:dev-1:offline".to_string()),
         };
-        // 两条同键告警信号在合并窗口聚成 Merged——collect_heartbeat_alarms
+        // 两条同键告警成员包进 Merged 直接注入——collect_heartbeat_alarms
         // 必须递归 Merged.signals 抽取告警上下文（顶层不再是 Heartbeat）。
-        sink.enqueue(alarm_signal()).expect("first alarm signal");
-        sink.enqueue(alarm_signal()).expect("second alarm signal");
-        for _ in 0..200 {
-            tokio::task::yield_now().await;
-        }
-        tokio::time::advance(Duration::from_secs(30)).await;
+        sink.enqueue(WakeSignal {
+            workspace_id: WS.to_string(),
+            priority: Priority::Normal,
+            source: TriggerSource::Merged {
+                signals: vec![alarm_signal(), alarm_signal()],
+            },
+            dedup_key: Some("heartbeat:ws_01:dev-1:offline".to_string()),
+        })
+        .expect("merged alarm signal accepted");
         wait_until(
             || parts.runs.runs_with_dedup("heartbeat:ws_01:dev-1:offline") == 1,
             "merged alarm run",
@@ -2063,7 +2120,7 @@ pub(crate) mod tests {
             .expect("alarm run recorded");
         assert_eq!(
             run.trigger, "merged:heartbeat:ws_01:dev-1:offline",
-            "两条同键告警须聚成 Merged（单信号不包 Merged，标签无 merged: 前缀）"
+            "Merged 信号必须保持 Merged 标签（单信号无 merged: 前缀）"
         );
         assert_eq!(run.task_count, Some(1), "告警 run 同样回写 task_count");
         drop(runs);
@@ -2102,7 +2159,6 @@ pub(crate) mod tests {
             ThingAgentManagerConfig {
                 timer_interval: Duration::from_secs(24 * 3600),
                 min_wake_level: 3,
-                merge_window: crate::runtime::thing_agent::scheduler::MERGE_WINDOW,
                 heartbeat_default_interval: Duration::from_secs(24 * 3600),
             },
             Arc::new(crate::runtime::thing_agent::traits::NoopTicketResolutions),
@@ -2118,10 +2174,10 @@ pub(crate) mod tests {
         tokio::time::advance(Duration::from_secs(30)).await;
 
         // RunsProbe 同款排空模式（try_recv + yield 泵）：暂停时钟下 rx.recv()
-        // 挂起会让运行时误判空闲、自动快进到 timeout，合并窗口 flush 后的
-        // 管线可能还没被 poll 到——泵 yield 直到事件到达，有界防挂死。
-        // 过滤 thing_id：advance(30s) 同时 flush 了 timer 首 tick 的信号（同样
-        // 以 AgentUnavailable 中止但 thing_id=None），事件触发的 run 才是断言对象。
+        // 挂起会让运行时误判空闲、自动快进到 timeout，管线可能还没被 poll 到
+        // ——泵 yield 直到事件到达，有界防挂死。
+        // 过滤 thing_id：timer 首 tick 即醒即跑（合并窗已废），同样以
+        // AgentUnavailable 中止但 thing_id=None；事件触发的 run 才是断言对象。
         let report = 'outer: {
             for _ in 0..10_000 {
                 match rx.try_recv() {
