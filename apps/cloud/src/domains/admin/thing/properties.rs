@@ -116,30 +116,6 @@ async fn notify_config_changed(state: &AdminState, thing_id: &str) {
     }
 }
 
-/// 终审 I-1：派生只能挂在无物理连接的物上（spec D5 精神）。物已配置物理驱动
-/// （driver_name 非空）时拒绝派生——否则 Manager 注册 DerivedDriver 会顶掉
-/// driver_cache 里的物理 wrapper，轮询/命令静默死亡。
-async fn reject_derived_on_physical_thing<T>(
-    state: &AdminState,
-    workspace_id: &str,
-    thing_id: &str,
-) -> Result<(), (StatusCode, Json<ApiResponse<T>>)> {
-    match state.db().find_thing_by_id_scoped(thing_id, workspace_id).await {
-        Ok(Some(row)) => match row.driver_name.as_deref().filter(|d| !d.is_empty()) {
-            Some(driver) => Err(err(
-                StatusCode::BAD_REQUEST,
-                format!("派生属性只能挂在无物理连接的物上（该物已配置驱动 {driver}）"),
-            )),
-            None => Ok(()),
-        },
-        Ok(None) => Err(err(StatusCode::NOT_FOUND, "物不存在")),
-        Err(e) => {
-            tracing::error!("Failed to load thing {}: {}", thing_id, e);
-            Err(err(StatusCode::INTERNAL_SERVER_ERROR, "查询物失败"))
-        }
-    }
-}
-
 /// 获取设备属性列表（派生行注入运行状态，spec §四）
 async fn get_thing_properties(
     State(state): State<AdminState>,
@@ -190,10 +166,6 @@ async fn create_property(
 
     let (source, refs_json, data_type, is_read_only) = match &req.expression {
         Some(expr) => {
-            // I-1：物理驱动物拒绝派生（在表达式校验前挡下，错误语义更直接）
-            if let Err(resp) = reject_derived_on_physical_thing(&state, &ws, &thing_id).await {
-                return resp;
-            }
             let refs = match validate_derived(&state, &ws, &thing_id, expr).await {
                 Ok(r) => r,
                 Err(resp) => return resp,
@@ -276,10 +248,6 @@ async fn update_property(
     // 已构成环，与既存无环不变量矛盾），故合并判定无假阳性，无需先摘旧边。
     let derived = match &req.expression {
         Some(expr) => {
-            // I-1：物理驱动物拒绝派生（与创建路径同规则）
-            if let Err(resp) = reject_derived_on_physical_thing(&state, &ws, &thing_id).await {
-                return resp;
-            }
             match validate_derived(&state, &ws, &thing_id, expr).await {
                 Ok(refs) => Some((expr.as_str(), refs)),
                 Err(resp) => return resp,

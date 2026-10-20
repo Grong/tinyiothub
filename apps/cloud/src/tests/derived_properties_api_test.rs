@@ -804,13 +804,14 @@ async fn profile_includes_derived_fields_and_live_status() {
     );
 }
 
-// ── 终审 I-1：带物理驱动（driver_name 非空）的物拒绝派生（创建 + 更新）──
-// 派生挂在物理物上的语义混乱（X4 前 Manager 注册 wrapper 会顶掉 driver_cache
-// 里的物理 wrapper → 轮询/命令静默死亡），API 侧一律拒绝
-// （spec D5 精神：derived 挂非物理连接物）。
+// ── X4 收尾（Task 3）：I-1 限制取消——带物理驱动（driver_name 非空）的物可配派生 ──
+// X4 引擎单一化后 Manager 不注册 wrapper（全 workspace 单订阅直发 sink），
+// wrapper 顶撞结构性不存在——派生计算值与驱动采集值可共存同一 Thing（混合模式，
+// 共存语义 E2E 见 park_derived_e2e_test
+// physical_thing_derived_property_coexists_with_driver_values）。
 
 #[tokio::test]
-async fn derived_rejected_on_thing_with_physical_driver() {
+async fn derived_allowed_on_thing_with_physical_driver() {
     let (app, _pool) = setup_app().await;
     let token = token();
     let response = app
@@ -827,7 +828,7 @@ async fn derived_rejected_on_thing_with_physical_driver() {
     assert_eq!(status, StatusCode::CREATED, "创建物理驱动物失败: {json}");
     let physical = json["result"]["id"].as_str().unwrap().to_string();
 
-    // 创建路径：POST 派生 → 400
+    // 创建路径：POST 派生 → 200（I-1 取消，不再 400）
     let (status, json) = post_property(
         &app,
         &token,
@@ -835,12 +836,11 @@ async fn derived_rejected_on_thing_with_physical_driver() {
         json!({"name": "calc", "expression": "descendant_count()"}),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
-    let msg = json["msg"].as_str().unwrap();
-    assert!(msg.contains("无物理连接"), "{msg}");
-    assert!(msg.contains("modbus"), "文案应点名已配置驱动: {msg}");
+    assert_eq!(status, StatusCode::OK, "{json}");
+    assert_eq!(json["result"]["source"], "derived");
+    assert_eq!(json["result"]["is_read_only"], 1);
 
-    // 更新路径：普通属性 PUT 转派生 → 400
+    // 更新路径：普通属性 PUT 转派生 → 200
     let (status, json) = post_property(&app, &token, &physical, json!({"name": "plain"})).await;
     assert_eq!(status, StatusCode::OK, "{json}");
     let pid = json["result"]["id"].as_str().unwrap().to_string();
@@ -855,18 +855,6 @@ async fn derived_rejected_on_thing_with_physical_driver() {
         .await
         .unwrap();
     let (status, json) = response_parts(response).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
-    assert!(json["msg"].as_str().unwrap().contains("无物理连接"), "{json}");
-
-    // 对照：无驱动物派生仍放行（不误伤正常路径）
-    let owner = create_thing(&app, &token, "总表").await;
-    let (status, json) = post_property(
-        &app,
-        &token,
-        &owner,
-        json!({"name": "calc", "expression": "descendant_count()"}),
-    )
-    .await;
     assert_eq!(status, StatusCode::OK, "{json}");
     assert_eq!(json["result"]["source"], "derived");
 }

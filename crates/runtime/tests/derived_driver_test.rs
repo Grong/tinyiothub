@@ -622,8 +622,8 @@ async fn panic_in_one_recompute_does_not_kill_subscriber_loop() {
 // 等价断言：Manager 启动后同 key 物理 Poll wrapper 原样保留、派生 owner 物
 // 不会被塞进任何 wrapper。轮询循环 process_all_drivers 只迭代 driver_cache
 // ——无 wrapper 即不可能对无驱动物调用 read_data（"Push 跳过轮询"语义由
-// 结构保证）。API 侧仍拒绝物理驱动物建派生（properties.rs
-// reject_derived_on_physical_thing）。
+// 结构保证）。X4 收尾（Task 3）后 API 侧亦放行物理驱动物配派生（I-1 限制
+// 取消，混合模式共存语义见 park_derived_e2e_test）。
 
 struct PollStubDriver {
     thing: Thing,

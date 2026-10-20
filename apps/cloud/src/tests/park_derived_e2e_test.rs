@@ -773,3 +773,91 @@ async fn scene_instantiation_bumps_device_count() {
 
     let _ = rig.shutdown_tx.send(());
 }
+
+/// X4 收尾（Task 3）混合模式：物理驱动物（driver_name='modbus'）上派生计算值
+/// 与驱动采集值共存同一 Thing，双向互不覆盖——
+///   派生写回（sink → consume wrapper 路径）不覆盖采集值；
+///   驱动采集（consume 同管线）不覆盖派生值。
+/// 形态适配记录：derived_validation 的 DAG 环检测为物级（owner→引用物一条边），
+/// owner 引用本物属性构成自环 X→X 被拒（"引用成环"），故派生引用另一物属性——
+/// 共存语义不变（简报已授权此适配）。
+#[tokio::test]
+async fn physical_thing_derived_property_coexists_with_driver_values() {
+    let mut rig = setup_rig().await;
+    let app = build_router(&rig.app_state);
+    let token = token();
+
+    // 1) 物理物（driver_name='modbus'，真实 API）+ 数据源电表
+    let response = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/api/v1/things",
+            &token,
+            Some(json!({ "name": "物理表", "driverName": "modbus" })),
+        ))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::CREATED, "创建物理驱动物失败: {json}");
+    let physical = json["result"]["id"].as_str().unwrap().to_string();
+
+    let meter = create_thing(&app, &token, "电表1", None).await;
+    let m_prop = create_property(&app, &token, &meter, json!({"name": "用电数", "data_type": "float"})).await;
+    // 物理物自身的驱动采集属性（非派生，驱动写值）
+    let v_prop = create_property(&app, &token, &physical, json!({"name": "voltage", "data_type": "float"})).await;
+    // I-1 取消：物理物配派生 → 200（引用另一物属性——物级自环被拒，见函数头）
+    let d_prop = create_property(
+        &app,
+        &token,
+        &physical,
+        json!({"name": "power_double", "expression": "{电表1.用电数} * 2"}),
+    )
+    .await;
+
+    // 2) 缓存种子 + ingest 载体（物理表带采集属性与派生属性，真实 id）
+    register_manual_thing(
+        &rig,
+        mk_thing(
+            &physical,
+            "物理表",
+            vec![
+                mk_prop(&v_prop, &physical, "voltage"),
+                mk_prop(&d_prop, &physical, "power_double"),
+            ],
+        ),
+    );
+    register_manual_thing(
+        &rig,
+        mk_thing(&meter, "电表1", vec![mk_prop(&m_prop, &meter, "用电数")]),
+    );
+    install_manager(&mut rig).await;
+
+    // 3) 驱动采集注入（物理 wrapper consume 路径）→ voltage 落缓存
+    ingest(&rig, &physical, "voltage", "220").await;
+    assert_eq!(cached_prop(&rig, &physical, "voltage").as_deref(), Some("220"));
+
+    // 4) 引用物上报 → 派生重算写回同一物理物（110*2=220），采集值不被覆盖
+    ingest(&rig, &meter, "用电数", "110").await;
+    wait_until("power_double=220", || {
+        cached_prop(&rig, &physical, "power_double").as_deref() == Some("220")
+    })
+    .await;
+    assert_eq!(
+        cached_prop(&rig, &physical, "voltage").as_deref(),
+        Some("220"),
+        "派生写回不得覆盖驱动采集值"
+    );
+
+    // 5) 驱动再采集 → voltage 更新，派生值不被覆盖（无引用 voltage 的 def，
+    //    采集事件不触发重算；即便重算也只写 defs 值）
+    ingest(&rig, &physical, "voltage", "221").await;
+    assert_eq!(cached_prop(&rig, &physical, "voltage").as_deref(), Some("221"));
+    assert_eq!(
+        cached_prop(&rig, &physical, "power_double").as_deref(),
+        Some("220"),
+        "驱动采集不得覆盖派生计算值"
+    );
+
+    let _ = rig.shutdown_tx.send(());
+}
