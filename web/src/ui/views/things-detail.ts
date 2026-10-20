@@ -2,10 +2,12 @@
 // Render helpers take the host view instance; behavior unchanged.
 import { html, nothing } from "lit";
 import { thingCache } from "../../stores/thing-cache.js";
+import { thingApi } from "../../api/things.js";
 import { icons } from "../icons.js";
+import { success } from "../components/toast.js";
 import type { ThingProperty, ThingEvent, Tag } from "../../types/index.js";
 import type { DevicesView } from "./things.js";
-import { openDerivedEditorCreate, openDerivedEditorEdit, renderDerivedEditor } from "./derived-editor.js";
+import { openDerivedEditorBind, openDerivedEditorCreate, openDerivedEditorEdit, renderDerivedEditor } from "./derived-editor.js";
 
 export function renderHistoryDialog(host: DevicesView) {
     if (!host.showHistoryDialog) return nothing;
@@ -252,6 +254,119 @@ function parseDerivedRefs(refs?: string): { thing_id: string; property_name?: st
   }
 
 
+// ---------------------------------------------------------------------------
+// 派生状态卡 + 解绑（园区物体验修复 Task 5，X1/X2）
+// ---------------------------------------------------------------------------
+
+/** 解绑确认状态（expando 挂在宿主上，避免改 DevicesView 类；随宿主实例生灭） */
+interface DerivedUnbindHost {
+  __derivedUnbind?: { prop: ThingProperty; saving: boolean; error?: string };
+}
+
+export function openUnbindDerived(host: DevicesView, prop: ThingProperty): void {
+    (host as unknown as DerivedUnbindHost).__derivedUnbind = { prop, saving: false };
+    host.requestUpdate();
+  }
+
+export function cancelUnbindDerived(host: DevicesView): void {
+    const st = (host as unknown as DerivedUnbindHost).__derivedUnbind;
+    if (st?.saving) return;
+    delete (host as unknown as DerivedUnbindHost).__derivedUnbind;
+    host.requestUpdate();
+  }
+
+export async function confirmUnbindDerived(host: DevicesView): Promise<void> {
+    const h = host as unknown as DerivedUnbindHost;
+    const st = h.__derivedUnbind;
+    const thingId = host.selectedDevice?.thing?.id;
+    if (!st || st.saving || !thingId) return;
+    st.saving = true;
+    host.requestUpdate();
+    try {
+      // Task 4 PUT 三态：expression=null → 解绑（行保留，回到普通属性）
+      await thingApi.updatePropertyDef(thingId, st.prop.id, { expression: null as unknown as string });
+    } catch (e: any) {
+      st.saving = false;
+      st.error = e?.message || "解绑失败";
+      host.requestUpdate();
+      return;
+    }
+    const name = st.prop.displayName || st.prop.name;
+    delete h.__derivedUnbind;
+    host.requestUpdate();
+    success(`「${name}」已解绑，恢复为普通属性`);
+    await host.loadDeviceDetail(thingId);
+  }
+
+/** 派生计算状态卡：仅该物有派生属性时显示；数据源=GET properties 行（API 元数据） */
+export function renderDerivedStatusCard(properties: ThingProperty[]) {
+    const derived = properties.filter(p => p.source === "derived");
+    if (derived.length === 0) return nothing;
+    const staleOnes = derived.filter(p => p.derivedStatus?.stale === true);
+    const lastEval = derived
+      .map(p => p.derivedStatus?.lastEvalAt)
+      .filter((t): t is string => !!t)
+      .sort()
+      .pop();
+    return html`
+      <div class="card derived-status-card">
+        <div style="display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap;">
+          <span style="font-weight: 600;">派生计算</span>
+          <span style="display: inline-flex; align-items: center; gap: 6px; color: var(--muted);">
+            <span class="status-dot status-dot--sm" style="background: var(--accent);"></span>${derived.length} 个属性
+          </span>
+          ${staleOnes.length > 0 ? html`
+            <span style="display: inline-flex; align-items: center; gap: 6px; color: var(--muted);">
+              <span class="status-dot status-dot--sm status-dot--stale"></span>${staleOnes.length} 个等待数据
+            </span>
+          ` : nothing}
+          <span style="color: var(--muted);">最近计算 ${lastEval ? lastEval.slice(11, 19) : "—"}</span>
+        </div>
+        ${staleOnes.length > 0 ? html`
+          <details class="derived-status-card__stale-details">
+            <summary style="cursor: pointer; color: var(--muted);">等待数据明细</summary>
+            <ul style="margin: var(--space-2) 0 0; padding-left: var(--space-5); color: var(--muted);">
+              ${staleOnes.map(p => html`
+                <li>${p.displayName || p.name}${p.derivedStatus?.staleReason ? html` — ${p.derivedStatus.staleReason}` : nothing}</li>
+              `)}
+            </ul>
+          </details>
+        ` : nothing}
+      </div>
+    `;
+  }
+
+/** 解绑确认弹窗（D11 模式：Esc 取消 / Enter 确认） */
+function renderUnbindConfirm(host: DevicesView) {
+    const st = (host as unknown as DerivedUnbindHost).__derivedUnbind;
+    if (!st) return nothing;
+    const name = st.prop.displayName || st.prop.name;
+    return html`
+      <div class="modal-overlay unbind-confirm-overlay" role="dialog" aria-modal="true" aria-label="解绑派生表达式"
+        @click=${() => cancelUnbindDerived(host)}
+        @keydown=${(e: KeyboardEvent) => {
+          if (e.key === "Escape") { e.preventDefault(); cancelUnbindDerived(host); }
+          else if (e.key === "Enter") { e.preventDefault(); void confirmUnbindDerived(host); }
+        }}>
+        <div class="modal" @click=${(e: Event) => e.stopPropagation()}>
+          <div class="modal-header">
+            <span>解绑派生表达式</span>
+            <button class="btn btn--icon" aria-label="关闭" ?disabled=${st.saving} @click=${() => cancelUnbindDerived(host)}>×</button>
+          </div>
+          <div class="modal-body">
+            <p>解绑后「${name}」将恢复为普通属性，表达式与派生计算结果将被移除。</p>
+            ${st.error ? html`<div class="derived-editor__error" role="alert">${st.error}</div>` : nothing}
+          </div>
+          <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: var(--space-2);">
+            <button class="btn btn--ghost" ?disabled=${st.saving} @click=${() => cancelUnbindDerived(host)}>取消</button>
+            <button class="btn btn--danger" ?disabled=${st.saving} @click=${() => void confirmUnbindDerived(host)}>${st.saving ? "解绑中…" : "确认解绑"}</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+
 export function renderDetailProperties(host: DevicesView) {
     const profile = host.selectedDevice;
     if (!profile) return html`<div class="card empty-center">暂无属性数据</div>`;
@@ -286,6 +401,7 @@ export function renderDetailProperties(host: DevicesView) {
 
     return html`
       ${derivedToolbar}
+      ${renderDerivedStatusCard(profile.properties ?? [])}
       <div class="card prop-table-wrap">
         <table class="data-table--compact">
           <thead>
@@ -331,11 +447,18 @@ export function renderDetailProperties(host: DevicesView) {
                   ` : nothing}
                   ${derived ? html`
                     <button
-                      class="btn btn--icon btn--xs"
-                      title="编辑派生"
-                      aria-label="编辑派生属性"
+                      class="btn btn--ghost btn--xs"
                       @click=${() => openDerivedEditorEdit(host, p)}
-                    >${icons.edit}</button>
+                    >编辑表达式</button>
+                    <button
+                      class="btn btn--ghost btn--xs btn--danger-text"
+                      @click=${() => openUnbindDerived(host, p)}
+                    >解绑</button>
+                  ` : host.isNumericType(p.dataType) ? html`
+                    <button
+                      class="btn btn--ghost btn--xs"
+                      @click=${() => openDerivedEditorBind(host, p)}
+                    >绑定表达式</button>
                   ` : nothing}
                 </td>
                 <td class="prop-type">${p.dataType}</td>
@@ -365,6 +488,7 @@ export function renderDetailProperties(host: DevicesView) {
           </tbody>
         </table>
       </div>
+      ${renderUnbindConfirm(host)}
     `;
   }
 

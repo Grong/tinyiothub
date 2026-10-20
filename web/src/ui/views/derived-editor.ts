@@ -223,7 +223,8 @@ export function renderThingPicker(container: HTMLElement, opts: ThingPickerOptio
 // ---------------------------------------------------------------------------
 
 export interface DerivedEditorState {
-  mode: "create" | "edit";
+  /** create=新增派生（POST）；edit=编辑派生（PUT 全量）；bind=普通数值行就地绑定（PUT 仅 expression） */
+  mode: "create" | "edit" | "bind";
   propertyId?: string;
   name: string;
   displayName: string;
@@ -278,6 +279,22 @@ export function openDerivedEditorEdit(host: DerivedEditorHost, prop: ThingProper
   host.requestUpdate();
 }
 
+/** 绑定模式（园区物 Task 5）：普通数值行就地升级——属性名/显示名/单位预填只读，只编辑表达式 */
+export function openDerivedEditorBind(host: DerivedEditorHost, prop: ThingProperty): void {
+  host.derivedEditor = {
+    mode: "bind",
+    propertyId: prop.id,
+    name: prop.name || "",
+    displayName: prop.displayName || "",
+    unit: prop.unit || "",
+    expression: "",
+    pickerOpen: false,
+    saving: false,
+    saveError: "",
+  };
+  host.requestUpdate();
+}
+
 export function closeDerivedEditor(host: DerivedEditorHost): void {
   if (host.derivedEditor?.saving) return;
   host.derivedEditor = null;
@@ -303,26 +320,34 @@ export async function saveDerivedEditor(host: DerivedEditorHost): Promise<void> 
     return;
   }
   setState(host, { saving: true, saveError: "" });
-  const body = {
-    name: st.name.trim(),
-    displayName: st.displayName.trim() || undefined,
-    unit: st.unit.trim() || undefined,
-    expression: st.expression,
-  };
   try {
-    if (st.mode === "edit" && st.propertyId) {
-      await thingApi.updatePropertyDef(thingId, st.propertyId, body);
+    if (st.mode === "bind" && st.propertyId) {
+      // 绑定模式：只提交表达式（PUT 三态：缺省不动，Task 4）；属性名/单位保持原样
+      await thingApi.updatePropertyDef(thingId, st.propertyId, { expression: st.expression });
+    } else if (st.mode === "edit" && st.propertyId) {
+      await thingApi.updatePropertyDef(thingId, st.propertyId, {
+        name: st.name.trim(),
+        displayName: st.displayName.trim() || undefined,
+        unit: st.unit.trim() || undefined,
+        expression: st.expression,
+      });
     } else {
-      await thingApi.createProperty(thingId, body);
+      await thingApi.createProperty(thingId, {
+        name: st.name.trim(),
+        displayName: st.displayName.trim() || undefined,
+        unit: st.unit.trim() || undefined,
+        expression: st.expression,
+      });
     }
   } catch (e: any) {
     // 400 明细文本（语法定位/无效引用/环）原样行内展示，不二次解析
     setState(host, { saving: false, saveError: e?.message || "保存失败" });
     return;
   }
+  const bindMode = st.mode === "bind";
   host.derivedEditor = null;
   host.requestUpdate();
-  success("派生属性已保存");
+  success(bindMode ? "表达式已绑定，属性已升级为派生" : "派生属性已保存");
   await host.loadDeviceDetail(thingId);
 }
 
@@ -367,23 +392,26 @@ export function renderDerivedEditor(host: DerivedEditorHost) {
       @keydown=${(e: KeyboardEvent) => onDrawerKeydown(host, e)}>
       <div class="derived-drawer" @click=${(e: Event) => e.stopPropagation()}>
         <div class="derived-drawer__header">
-          <span>${st.mode === "edit" ? "编辑派生属性" : "新增派生属性"}</span>
+          <span>${st.mode === "bind" ? "绑定表达式" : st.mode === "edit" ? "编辑派生属性" : "新增派生属性"}</span>
           <button class="btn btn--icon" aria-label="关闭" @click=${() => closeDerivedEditor(host)}>×</button>
         </div>
         <div class="derived-drawer__body">
+          ${st.mode === "bind" ? html`
+            <div class="derived-drawer__hint">已有属性就地升级为派生：属性名与单位保持不变，只绑定表达式。</div>
+          ` : nothing}
           <label class="derived-drawer__field">
             <span>属性名</span>
-            <input type="text" .value=${st.name} placeholder="如 avg_power"
+            <input type="text" .value=${st.name} placeholder="如 avg_power" ?readonly=${st.mode === "bind"}
               @input=${(e: Event) => setState(host, { name: (e.target as HTMLInputElement).value })} />
           </label>
           <label class="derived-drawer__field">
             <span>显示名</span>
-            <input type="text" .value=${st.displayName} placeholder="如 平均功率"
+            <input type="text" .value=${st.displayName} placeholder="如 平均功率" ?readonly=${st.mode === "bind"}
               @input=${(e: Event) => setState(host, { displayName: (e.target as HTMLInputElement).value })} />
           </label>
           <label class="derived-drawer__field">
             <span>单位</span>
-            <input type="text" .value=${st.unit} placeholder="如 kW"
+            <input type="text" .value=${st.unit} placeholder="如 kW" ?readonly=${st.mode === "bind"}
               @input=${(e: Event) => setState(host, { unit: (e.target as HTMLInputElement).value })} />
           </label>
 

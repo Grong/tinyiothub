@@ -15,6 +15,7 @@ import {
   renderThingPicker,
   renderDerivedEditor,
   openDerivedEditorCreate,
+  openDerivedEditorBind,
   saveDerivedEditor,
   type DerivedEditorHost,
   type DerivedEditorState,
@@ -174,6 +175,30 @@ describe("派生编辑器 drawer", () => {
       displayName: "平均功率",
     }));
     expect(success).toHaveBeenCalledWith("派生属性已保存");
+    expect(host.derivedEditor).toBeNull();
+    expect(host.loadDeviceDetail).toHaveBeenCalledWith("t-host");
+  });
+
+  it("绑定模式：属性名/显示名/单位只读，保存调 PUT（仅 expression）而非 POST", async () => {
+    vi.mocked(thingApi.updatePropertyDef).mockResolvedValue({ result: {} } as any);
+    const host = hostStub();
+    openDerivedEditorBind(host, { id: "p9", name: "power", displayName: "功率", unit: "kW" } as any);
+    const el = mountDrawer(host);
+
+    // 标题 + 三字段只读且预填
+    expect(el.textContent).toContain("绑定表达式");
+    const inputs = [...el.querySelectorAll<HTMLInputElement>(".derived-drawer__field input")];
+    expect(inputs.length).toBe(3);
+    for (const i of inputs) expect(i.readOnly).toBe(true);
+    expect(inputs[0].value).toBe("power");
+    expect(inputs[1].value).toBe("功率");
+    expect(inputs[2].value).toBe("kW");
+
+    // 录入表达式并保存 → PUT 仅 expression，不走 POST
+    host.derivedEditor = { ...host.derivedEditor!, expression: "{a.x} * 2" };
+    await saveDerivedEditor(host);
+    expect(thingApi.updatePropertyDef).toHaveBeenCalledWith("t-host", "p9", { expression: "{a.x} * 2" });
+    expect(thingApi.createProperty).not.toHaveBeenCalled();
     expect(host.derivedEditor).toBeNull();
     expect(host.loadDeviceDetail).toHaveBeenCalledWith("t-host");
   });
