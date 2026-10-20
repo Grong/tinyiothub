@@ -39,7 +39,7 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
-use tinyiothub_agent::runtime::thing_agent::RunContextInner;
+use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, RunContextInner};
 use tinyiothub_core::models::event::EventLevel;
 use tinyiothub_policy::autonomy::{GateVerdict, gate_check};
 use tinyiothub_storage::Db;
@@ -68,6 +68,10 @@ struct Input {
 /// editing thing.rs). Returns the executed/simulated payload, or an error
 /// result when the queue rejects it.
 ///
+/// E1 仲裁（Task 9 fix）：确认门之后的真实下发同样抢设备互斥锁——
+/// `arbitration` 给 Some 时执行前 acquire，持锁期间他人下发被 busy 拒绝
+/// （带持有者名）；Lease RAII 随本次下发返回释放。None = 不仲裁。
+///
 /// pub(crate)：提案批准执行（workspace_heartbeat）的 invoke_action 自动确认
 /// 复用同一下发尾巴，避免第三份拷贝。
 pub(crate) fn dispatch_command(
@@ -75,7 +79,18 @@ pub(crate) fn dispatch_command(
     thing_id: &str,
     action_name: &str,
     params: Option<&Value>,
+    arbitration: Option<&ArbitrationRegistry>,
+    holder: &str,
 ) -> ToolResult {
+    let _lease = match arbitration {
+        Some(registry) => match registry.try_acquire_default(thing_id, holder.to_string()) {
+            Ok(lease) => Some(lease),
+            Err(busy) => {
+                return tool_err(format!("busy: 设备正被 {} 占用，请稍后重试", busy.holder)).expect("static message");
+            }
+        },
+        None => None,
+    };
     match data_server.cloned() {
         Some(data_server) => {
             let cmd = tinyiothub_core::models::thing_command::ThingCommand {
@@ -176,6 +191,8 @@ impl AutonomousInvokeActionTool {
             &pending.thing_id,
             &pending.action_name,
             pending.params.as_ref(),
+            self.inner.arbitration.as_deref(),
+            &self.inner.arbitration_holder,
         ))
     }
 
@@ -921,6 +938,65 @@ mod tests {
         assert!(!result.success);
         assert!(result.error.as_deref().unwrap_or("").contains("未在物"));
         assert_eq!(agent_event_count(&fx.pool, "dev-1").await, 0);
+    }
+
+    /// E1 仲裁（Task 9 fix）：开确认门的 workspace 里，auto-confirm 的
+    /// 真实下发同样抢设备互斥锁——他人持锁时 busy 拒绝（带持有者名），
+    /// 释放后放行。
+    #[tokio::test]
+    async fn auto_confirm_dispatch_respects_arbitration_lock() {
+        let pool = test_pool().await;
+        seed_thing(&pool, "ws-arb-ac", "dev-1", "device").await;
+        register_action(&pool, "dev-1", "reboot").await;
+        let policy_repo = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
+        policy_repo
+            .save_autonomy_policy("ws-arb-ac", &act_policy(), "test")
+            .await
+            .unwrap();
+        let ctx = Arc::new(RwLock::new(RunContextInner::default()));
+        let registry = Arc::new(ArbitrationRegistry::default());
+        let inner = InvokeActionTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            pool: pool.clone(),
+            workspace_id: "ws-arb-ac".to_string(),
+            data_server: None,
+            pending_actions: self_pending_actions(),
+            arbitration: Some(registry.clone()),
+            arbitration_holder: "autonomous:ws-arb-ac".to_string(),
+        };
+        let tool = AutonomousInvokeActionTool::new(
+            inner,
+            policy_repo,
+            new_run_context_slot(Arc::clone(&ctx)),
+            pool.clone(),
+            "ws-arb-ac".to_string(),
+            Arc::new(ThingEventBus::new()),
+            Arc::new(ThrottleState::new(60)),
+        );
+        // 测试前置：确认门默认 ON（走 auto-confirm 路径，评审 Issue 1 的漏洞路径）。
+        let require: i64 = sqlx::query_scalar("SELECT require_action_confirm FROM workspaces WHERE id = 'ws-arb-ac'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(require, 1, "test precondition: confirm gate defaults ON");
+
+        // 另一执行体持锁 → auto-confirm 下发被 busy 拒绝（带持有者名）。
+        let lease = registry
+            .try_acquire_default("dev-1", "watch-run-A".to_string())
+            .expect("run-A acquire");
+        *ctx.write().await.action_counts.entry("dev-1".to_string()).or_insert(0) += 1;
+        let busy = tool.execute(args("dev-1", "reboot")).await.expect("execute");
+        assert!(!busy.success, "持锁期间必须 busy: {busy:?}");
+        let msg = busy.error.unwrap_or_default();
+        assert!(msg.contains("watch-run-A"), "busy 必须带持有者名: {msg}");
+
+        // 释放后放行（无 DataServer → simulated）。
+        drop(lease);
+        *ctx.write().await.action_counts.entry("dev-1".to_string()).or_insert(0) += 1;
+        let ok = tool.execute(args("dev-1", "reboot")).await.expect("execute");
+        assert!(ok.success, "释放后必须放行: {:?}", ok.error);
+        let out = output_json(&ok);
+        assert!(out["status"] == "simulated" || out["status"] == "executed", "{out}");
     }
 
     #[tokio::test]

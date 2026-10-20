@@ -647,6 +647,7 @@ pub async fn approve_proposal(
         &registry,
         &runtime,
         &state.pending_actions,
+        Some(&state.arbitration),
     )
     .await
     {
@@ -675,6 +676,7 @@ async fn approve_and_execute(
     registry: &tinyiothub_agent::tools::ToolRegistry,
     runtime: &tinyiothub_agent::tools::ToolRuntimeContext,
     pending_actions: &crate::domains::agent::host::tools::thing::PendingActionStore,
+    arbitration: Option<&tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry>,
 ) -> Result<serde_json::Value, String> {
     let db = tinyiothub_storage::Db::new(pool.clone());
     let row: Option<(String, String)> = db
@@ -767,7 +769,15 @@ async fn approve_and_execute(
         return Err("提案已处理".to_string());
     }
 
-    let outcome = execute_approved_tool(tool.as_ref(), params, workspace_id, runtime, pending_actions).await;
+    let outcome = execute_approved_tool(
+        tool.as_ref(),
+        params,
+        workspace_id,
+        runtime,
+        pending_actions,
+        arbitration,
+    )
+    .await;
     let (success, summary) = match &outcome {
         Ok(v) => {
             let s = v.to_string();
@@ -804,6 +814,7 @@ async fn execute_approved_tool(
     workspace_id: &str,
     runtime: &tinyiothub_agent::tools::ToolRuntimeContext,
     pending_actions: &crate::domains::agent::host::tools::thing::PendingActionStore,
+    arbitration: Option<&tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry>,
 ) -> Result<serde_json::Value, String> {
     fn output_json(output: String) -> serde_json::Value {
         serde_json::from_str(&output).unwrap_or(serde_json::json!({ "output": output }))
@@ -826,11 +837,15 @@ async fn execute_approved_tool(
         if pending.workspace_id != workspace_id {
             return Err("auto-confirm failed: workspace mismatch; action NOT dispatched".to_string());
         }
+        // E1 仲裁（Task 9 fix）：批准后的真实下发同样抢设备互斥锁——
+        // holder 语义 approved:{ws}（人工批准的执行体）。
         let dispatched = crate::domains::agent::host::tools::autonomous_invoke::dispatch_command(
             runtime.data_server.as_ref(),
             &pending.thing_id,
             &pending.action_name,
             pending.params.as_ref(),
+            arbitration,
+            &format!("approved:{workspace_id}"),
         );
         if !dispatched.success {
             return Err(dispatched.error.unwrap_or(dispatched.output));
@@ -1153,7 +1168,7 @@ mod tests {
         let calls = tool.calls.clone();
         let (registry, runtime, pending) = fixture(tool);
 
-        approve_and_execute(&pool, "ws_1", "p1", &registry, &runtime, &pending)
+        approve_and_execute(&pool, "ws_1", "p1", &registry, &runtime, &pending, None)
             .await
             .expect("approve");
 
@@ -1187,10 +1202,10 @@ mod tests {
         let calls = tool.calls.clone();
         let (registry, runtime, pending) = fixture(tool);
 
-        approve_and_execute(&pool, "ws_1", "p1", &registry, &runtime, &pending)
+        approve_and_execute(&pool, "ws_1", "p1", &registry, &runtime, &pending, None)
             .await
             .unwrap();
-        let second = approve_and_execute(&pool, "ws_1", "p1", &registry, &runtime, &pending).await;
+        let second = approve_and_execute(&pool, "ws_1", "p1", &registry, &runtime, &pending, None).await;
         assert!(second.is_err(), "second approve must be rejected");
 
         assert_eq!(calls.lock().unwrap().len(), 1, "tool must run exactly once");
@@ -1203,7 +1218,7 @@ mod tests {
         let tool = recording_tool("write_properties", true);
         let (registry, runtime, pending) = fixture(tool);
 
-        let result = approve_and_execute(&pool, "ws_1", "p1", &registry, &runtime, &pending).await;
+        let result = approve_and_execute(&pool, "ws_1", "p1", &registry, &runtime, &pending, None).await;
         assert!(result.is_err(), "execution failure must surface");
 
         let (content,): (String,) =
@@ -1216,13 +1231,60 @@ mod tests {
         assert!(parsed["summary"].as_str().unwrap().contains("device offline"));
     }
 
+    /// E1 仲裁（Task 9 fix）：批准路径的真实下发同样过设备互斥锁——
+    /// 他人持锁时 busy 拒绝（带持有者名），释放后放行。
+    #[tokio::test]
+    async fn approve_dispatch_respects_arbitration_lock() {
+        let pool = test_pool().await;
+        seed_proposal(&pool, "p-lock", "pending").await;
+        seed_proposal(&pool, "p-free", "pending").await;
+        let pending = Arc::new(PendingActionStore::default());
+        let mut tool = recording_tool("write_properties", false);
+        // 确认流：mint token（thing_id=dev_1）→ 批准后 dispatch_command 下发。
+        tool.confirm_store = Some((pending.clone(), "ws_1"));
+        let (registry, runtime, _) = fixture(tool);
+        let arbitration = tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry::default();
+
+        // 值守 run 持锁期间：批准下发被拒，busy 带持有者名。
+        let lease = arbitration
+            .try_acquire_default("dev_1", "watch-run-A".to_string())
+            .expect("run-A acquire");
+        let err = approve_and_execute(
+            &pool,
+            "ws_1",
+            "p-lock",
+            &registry,
+            &runtime,
+            &pending,
+            Some(&arbitration),
+        )
+        .await
+        .expect_err("持锁期间批准下发必须被拒");
+        assert!(err.contains("watch-run-A"), "busy 必须带持有者名: {err}");
+
+        // 锁释放后：放行（无 DataServer → simulated）。
+        drop(lease);
+        let ok = approve_and_execute(
+            &pool,
+            "ws_1",
+            "p-free",
+            &registry,
+            &runtime,
+            &pending,
+            Some(&arbitration),
+        )
+        .await
+        .expect("释放后批准必须放行");
+        assert_eq!(ok["status"].as_str().unwrap_or(""), "simulated", "{ok}");
+    }
+
     #[tokio::test]
     async fn approve_unknown_proposal_fails() {
         let pool = test_pool().await;
         let tool = recording_tool("write_properties", false);
         let calls = tool.calls.clone();
         let (registry, runtime, pending) = fixture(tool);
-        let result = approve_and_execute(&pool, "ws_1", "nope", &registry, &runtime, &pending).await;
+        let result = approve_and_execute(&pool, "ws_1", "nope", &registry, &runtime, &pending, None).await;
         assert!(result.is_err());
         assert!(calls.lock().unwrap().is_empty());
     }
@@ -1240,7 +1302,7 @@ mod tests {
         let calls = tool.calls.clone();
         let (registry, runtime, pending) = fixture(tool);
 
-        let result = approve_and_execute(&pool, "ws_1", "p-hallucinated", &registry, &runtime, &pending).await;
+        let result = approve_and_execute(&pool, "ws_1", "p-hallucinated", &registry, &runtime, &pending, None).await;
         let err = result.expect_err("unregistered tool must error");
         assert!(err.contains("提案已自动拒绝"), "错误应说明自动拒绝: {err}");
         assert!(calls.lock().unwrap().is_empty(), "未注册工具不得执行");
@@ -1272,7 +1334,7 @@ mod tests {
         let calls = tool.calls.clone();
         let (registry, runtime, pending) = fixture(tool);
 
-        approve_and_execute(&pool, "ws_1", "p-profile", &registry, &runtime, &pending)
+        approve_and_execute(&pool, "ws_1", "p-profile", &registry, &runtime, &pending, None)
             .await
             .expect("内建 thing 工具必须可批准执行");
 
@@ -1291,7 +1353,7 @@ mod tests {
         let calls = tool.calls.clone();
         let (registry, runtime, pending) = fixture(tool);
 
-        let result = approve_and_execute(&pool, "ws_1", "p-orch", &registry, &runtime, &pending).await;
+        let result = approve_and_execute(&pool, "ws_1", "p-orch", &registry, &runtime, &pending, None).await;
         let err = result.expect_err("orchestration tool must be denied");
         assert!(err.contains("提案已自动拒绝"), "错误应说明自动拒绝: {err}");
         assert!(calls.lock().unwrap().is_empty(), "编排工具不得经批准通道执行");
@@ -1318,7 +1380,7 @@ mod tests {
         }));
         let runtime = ToolRuntimeContext::default();
 
-        let output = approve_and_execute(&pool, "ws_1", "p-invoke", &registry, &runtime, &pending)
+        let output = approve_and_execute(&pool, "ws_1", "p-invoke", &registry, &runtime, &pending, None)
             .await
             .expect("auto-confirm must dispatch");
 
@@ -1349,7 +1411,7 @@ mod tests {
         }));
         let runtime = ToolRuntimeContext::default();
 
-        let result = approve_and_execute(&pool, "ws_1", "p-badtoken", &registry, &runtime, &pending_b).await;
+        let result = approve_and_execute(&pool, "ws_1", "p-badtoken", &registry, &runtime, &pending_b, None).await;
         let err = result.expect_err("token mismatch must fail closed");
         assert!(err.contains("auto-confirm failed"), "{err}");
 
@@ -1382,7 +1444,7 @@ mod tests {
         }));
         let runtime = ToolRuntimeContext::default();
 
-        let result = approve_and_execute(&pool, "ws_1", "p-ws-mismatch", &registry, &runtime, &store).await;
+        let result = approve_and_execute(&pool, "ws_1", "p-ws-mismatch", &registry, &runtime, &store, None).await;
         let err = result.expect_err("workspace mismatch must fail closed");
         assert!(err.contains("workspace mismatch"), "{err}");
     }
@@ -1405,7 +1467,7 @@ mod tests {
         let runtime = ToolRuntimeContext::default();
         let pending = Arc::new(PendingActionStore::default());
 
-        let result = approve_and_execute(&pool, "ws_1", "p-no-token", &registry, &runtime, &pending).await;
+        let result = approve_and_execute(&pool, "ws_1", "p-no-token", &registry, &runtime, &pending, None).await;
         let err = result.expect_err("missing token must fail closed");
         assert!(err.contains("token missing"), "{err}");
     }
@@ -1422,7 +1484,7 @@ mod tests {
         let calls = tool.calls.clone();
         let (registry, runtime, pending) = fixture(tool);
 
-        let result = approve_and_execute(&pool, "ws_1", "p-canvas", &registry, &runtime, &pending).await;
+        let result = approve_and_execute(&pool, "ws_1", "p-canvas", &registry, &runtime, &pending, None).await;
         let err = result.expect_err("canvas must be denied");
         assert!(err.contains("提案已自动拒绝"), "{err}");
         assert!(calls.lock().unwrap().is_empty(), "canvas 不得经批准通道执行");
@@ -1460,7 +1522,7 @@ mod tests {
         let calls = tool.calls.clone();
         let (registry, runtime, pending) = fixture(tool);
 
-        let result = approve_and_execute(&pool, "ws_1", "p-mismatch", &registry, &runtime, &pending).await;
+        let result = approve_and_execute(&pool, "ws_1", "p-mismatch", &registry, &runtime, &pending, None).await;
         let err = result.expect_err("mismatched anchor must refuse");
         assert!(err.contains("参数不一致"), "{err}");
         assert!(calls.lock().unwrap().is_empty(), "不一致提案不得执行");
@@ -1480,7 +1542,7 @@ mod tests {
         let tool = recording_tool("write_properties", false);
         let (registry, runtime, pending) = fixture(tool);
 
-        approve_and_execute(&pool, "ws_1", "p-race-a", &registry, &runtime, &pending)
+        approve_and_execute(&pool, "ws_1", "p-race-a", &registry, &runtime, &pending, None)
             .await
             .expect("approve");
         assert_eq!(proposal_status(&pool, "p-race-a").await, "approved");
@@ -1512,7 +1574,7 @@ mod tests {
         let tool = recording_tool("write_properties", false);
         let calls = tool.calls.clone();
         let (registry, runtime, pending) = fixture(tool);
-        let result = approve_and_execute(&pool, "ws_1", "p-race-b", &registry, &runtime, &pending).await;
+        let result = approve_and_execute(&pool, "ws_1", "p-race-b", &registry, &runtime, &pending, None).await;
         assert!(result.expect_err("已拒绝提案不得批准").contains("提案已处理"));
         assert!(calls.lock().unwrap().is_empty(), "已拒绝提案不得执行");
     }

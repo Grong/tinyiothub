@@ -159,6 +159,8 @@ impl Tool for InvokeActionTool {
         // 已被另一持有者（chat 会话/值守 run）占用同设备时拒绝，busy 文案
         // 带持有者名；持有者崩溃不死锁（TTL 过期自动可再 acquire）。
         // Lease RAII：本次调用返回即释放（run 级持续占用由 E4 声明制细化）。
+        // 确认门路径：mint token 不持锁，但批准后的真实下发经
+        // dispatch_command 同样 acquire（autonomous_invoke.rs，Task 9 fix）。
         let _lease = match &self.arbitration {
             Some(registry) => {
                 match registry.try_acquire(&input.thing_id, self.arbitration_holder.clone(), DEFAULT_LEASE_TTL) {

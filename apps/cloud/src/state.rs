@@ -1032,6 +1032,7 @@ impl axum::extract::FromRef<AppState> for crate::domains::agent::AgentState {
             memory_store: state.memory_store.clone(),
             agent_pool: state.agent_pool.clone(),
             pending_actions: state.pending_actions.clone(),
+            arbitration: state.arbitration.clone(),
             session_service: state.session_service.clone(),
             system_prompts: state.system_prompts.clone(),
         }
