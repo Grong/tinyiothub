@@ -1,10 +1,32 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { marketplaceApi, sceneApi, type MarketplaceTemplate, type MarketplaceDriver, type ThingTemplateItem, type SceneTemplateDetail, type SceneParameter, type InstantiateResult, type InstantiateQuota } from "../../api/marketplace.js";
+import { marketplaceApi, sceneApi, type MarketplaceTemplate, type MarketplaceDriver, type ThingTemplateItem, type SceneTemplateDetail, type SceneParameter, type InstantiateResult, type InstantiateQuota, type InstantiateBody } from "../../api/marketplace.js";
 import { templateApi } from "../../api/templates.js";
 import { driverApi } from "../../api/drivers.js";
 import { success, error as toastError } from "../components/toast.js";
 import { i18n } from "../../i18n/index.js";
+import {
+  buildExtraNodesPayload,
+  buildSceneTree,
+  pendingNodeTotal,
+  renderSceneTree,
+  SIMULATOR_DRIVER,
+  type ExtraNodePayload,
+  type PendingNode,
+  type SceneStructRoot,
+  type SceneTreeDriverOption,
+  type SceneTreeHost,
+} from "./scene-tree.js";
+import { wizardSelectableTemplates } from "./things-wizard.js";
+
+/** 实例化编辑器提交体：在 InstantiateBody 上扩展 X3a 字段（后端 camelCase 契约） */
+interface InstantiateEditorBody extends InstantiateBody {
+  attachSimulatedDriver: boolean;
+  extraNodes: ExtraNodePayload[];
+}
+
+/** 「+ 添加设备」候选模板：列表 API 实际返回 propertyCount，TS 类型未声明，本地扩展 */
+type DeviceTemplateOption = ThingTemplateItem & { propertyCount?: number };
 
 type Tab = "templates" | "drivers" | "scenes";
 
@@ -86,6 +108,28 @@ export class MarketplaceView extends LitElement {
   @state() resultRootId: string | null = null;
   private previewTimer: number | undefined;
   private previewSeq = 0;
+
+  // 实例化可视化编辑器（X3a）
+  /** 「为设备挂模拟驱动」总开关（默认开）→ 提交 attach_simulated_driver */
+  @state() attachSim = true;
+  /** 本地待建节点（不提交 dry-run；确认时组装 extra_nodes） */
+  @state() pendingNodes: PendingNode[] = [];
+  /** 「+ 添加设备」表单打开的挂载点（JSON 序列化的 keyPath；null=未打开） */
+  @state() addFormKeyPath: string | null = null;
+  @state() addTemplateId = "";
+  @state() addName = "";
+  @state() addCount = 1;
+  @state() addDriver: string = SIMULATOR_DRIVER;
+  @state() deviceTemplateOptions: DeviceTemplateOption[] = [];
+  /** 本地已装驱动（待建节点物理驱动候选；driver_name 提交的是名称） */
+  @state() localDrivers: { id: string; name: string }[] = [];
+  /** 场景结构走查上下文（key 路径/设备判定/属性数；加载失败仅不可挂接，树仍渲染） */
+  private sceneStruct: {
+    root: SceneStructRoot;
+    refs: Map<string, SceneStructRoot>;
+    devices: Map<string, { propertyCount?: number; category?: string }>;
+  } | null = null;
+  private pendingSeq = 0;
 
   createRenderRoot() {
     return this;
@@ -217,12 +261,19 @@ export class MarketplaceView extends LitElement {
     this.previewError = null;
     this.resultWarnings = null;
     this.resultRootId = null;
+    this.attachSim = true;
+    this.pendingNodes = [];
+    this.addFormKeyPath = null;
+    this.deviceTemplateOptions = [];
+    this.sceneStruct = null;
     try {
       const detail = await sceneApi.getThingTemplate(item.id);
       this.sceneDetail = detail;
       const params: Record<string, number> = {};
       for (const p of detail?.parameters ?? []) params[p.name] = p.default;
       this.sceneParams = params;
+      // 结构/设备模板后台加载：失败仅降级（不可挂接），不阻塞表单与预览
+      void this.loadSceneEditorData(item);
     } catch (e: any) {
       toastError(e.message || "加载场景包详情失败");
       this.closeSceneDialog(); // 详情加载失败不留可提交的空表单
@@ -247,8 +298,147 @@ export class MarketplaceView extends LitElement {
       this.submitting = false;
       this.resultWarnings = null;
       this.resultRootId = null;
+      this.pendingNodes = [];
+      this.addFormKeyPath = null;
+      this.deviceTemplateOptions = [];
+      this.sceneStruct = null;
     }, 300);
   };
+
+  /** 解析模板 device_info 列（场景包 JSON 字符串）；失败返回 null */
+  private parseSceneJson(raw: unknown): SceneStructRoot | null {
+    if (raw == null) return null;
+    if (typeof raw === "string") {
+      try {
+        const v = JSON.parse(raw);
+        return v && typeof v === "object" ? (v as SceneStructRoot) : null;
+      } catch {
+        return null;
+      }
+    }
+    return typeof raw === "object" ? (raw as SceneStructRoot) : null;
+  }
+
+  /** 加载场景结构（key 走查用）+ 可挂接设备模板候选；后台 best-effort，失败仅降级 */
+  private async loadSceneEditorData(item: ThingTemplateItem) {
+    try {
+      const list = await sceneApi.listThingTemplates();
+      if (this.sceneDialogItem?.id !== item.id) return; // 对话框已切换/关闭
+      const all = (list?.data ?? []) as DeviceTemplateOption[];
+      // 场景包不能作为挂接设备（后端兜底校验同口径；复用 Fix B 的过滤）
+      this.deviceTemplateOptions = wizardSelectableTemplates(all).filter((t) => !t.isComposition);
+      const byName = new Map(all.map((t) => [t.name, t]));
+      const devices = new Map(all.map((t) => [t.name, { propertyCount: t.propertyCount, category: t.category }]));
+      const res = await templateApi.getTemplate(item.id);
+      const rootScene = this.parseSceneJson((res.result as any)?.deviceInfo);
+      if (!rootScene) return;
+      const refs = await this.loadRefScenes(rootScene, item.name, byName);
+      if (this.sceneDialogItem?.id !== item.id) return; // 对话框已切换/关闭
+      this.sceneStruct = { root: rootScene, refs, devices };
+      this.requestUpdate();
+    } catch {
+      // 结构加载失败：树仍渲染，仅不可挂接/改数
+    }
+  }
+
+  /** 递归解析 scene_ref 引用模板（深度上限与后端一致，由 scene-tree 走查兜底） */
+  private async loadRefScenes(
+    root: SceneStructRoot,
+    rootName: string,
+    byName: Map<string, ThingTemplateItem>,
+  ): Promise<Map<string, SceneStructRoot>> {
+    const refs = new Map<string, SceneStructRoot>();
+    const walk = async (scene: SceneStructRoot, stack: string[]) => {
+      if (stack.length >= 5) return;
+      for (const child of scene.children ?? []) {
+        const ref = child.scene_ref;
+        if (!ref || refs.has(ref) || stack.includes(ref)) continue;
+        const target = byName.get(ref);
+        if (!target) continue;
+        try {
+          const res = await templateApi.getTemplate(target.id);
+          const sub = this.parseSceneJson((res.result as any)?.deviceInfo);
+          if (sub) {
+            refs.set(ref, sub);
+            await walk(sub, [...stack, ref]);
+          }
+        } catch {
+          // 单个引用加载失败：该子树不可挂接，其余照常
+        }
+      }
+    };
+    await walk(root, [rootName]);
+    return refs;
+  }
+
+  /** 树上 +/- 改数：回写参数（夹取 min/max）→ 防抖 dry-run 重算 */
+  stepSceneParam = (param: string, delta: number) => {
+    const def = (this.sceneDetail?.parameters ?? []).find((p) => p.name === param);
+    if (!def) return;
+    const cur = this.sceneParams[param];
+    const base = typeof cur === "number" && !Number.isNaN(cur) ? cur : def.default;
+    const next = Math.min(def.max, Math.max(def.min, base + delta));
+    if (next === cur) return;
+    this.sceneParams = { ...this.sceneParams, [param]: next };
+    this.schedulePreview();
+  };
+
+  private treeHost: SceneTreeHost = {
+    onTreeParamStep: (param, delta) => this.stepSceneParam(param, delta),
+    onTreeAddDevice: (keyPath) => this.openAddDeviceFormFor(keyPath),
+    onTreeRemovePending: (id) => {
+      this.pendingNodes = this.pendingNodes.filter((p) => p.id !== id);
+    },
+    onTreePendingDriver: (id, driver) => {
+      this.pendingNodes = this.pendingNodes.map((p) => (p.id === id ? { ...p, driverName: driver } : p));
+    },
+    renderAddDeviceForm: (keyPath) => this.renderAddDeviceForm(keyPath),
+  };
+
+  /** 打开/收起某挂载点的「+ 添加设备」表单（重选模板时名称跟随模板显示名） */
+  openAddDeviceFormFor(keyPath: string[]) {
+    const key = JSON.stringify(keyPath);
+    if (this.addFormKeyPath === key) {
+      this.addFormKeyPath = null;
+      return;
+    }
+    this.addFormKeyPath = key;
+    const first = this.deviceTemplateOptions[0];
+    this.addTemplateId = first?.id ?? "";
+    this.addName = first ? resolveLocalized(first.displayName) || first.name : "";
+    this.addCount = 1;
+    this.addDriver = SIMULATOR_DRIVER;
+  }
+
+  confirmAddDevice() {
+    const keyPath = this.addFormKeyPath ? (JSON.parse(this.addFormKeyPath) as string[]) : null;
+    const tpl = this.deviceTemplateOptions.find((t) => t.id === this.addTemplateId);
+    const name = this.addName.trim();
+    const count = Math.trunc(this.addCount);
+    if (!keyPath || !tpl || !name || !Number.isFinite(count) || count < 1 || count > 20) return;
+    this.pendingNodes = [
+      ...this.pendingNodes,
+      {
+        id: `p${++this.pendingSeq}`,
+        templateId: tpl.id,
+        category: tpl.category,
+        propertyCount: tpl.propertyCount ?? null,
+        name,
+        count,
+        driverName: this.addDriver === "none" ? null : this.addDriver,
+        parentPath: keyPath,
+      },
+    ];
+    this.addFormKeyPath = null;
+  }
+
+  private treeDriverOptions(): SceneTreeDriverOption[] {
+    return [
+      { value: SIMULATOR_DRIVER, label: "模拟驱动 (simulator)" },
+      ...this.localDrivers.map((d) => ({ value: d.name, label: d.name })),
+      { value: "none", label: "无驱动" },
+    ];
+  }
 
   private schedulePreview() {
     window.clearTimeout(this.previewTimer);
@@ -322,12 +512,16 @@ export class MarketplaceView extends LitElement {
     if (Object.keys(this.sceneParamErrors).length > 0) return;
     this.submitting = true;
     try {
-      const result = await sceneApi.instantiate(id, {
+      // dry-run 只预览场景包本体（不含待建节点）；待建节点确认时一次性组装提交
+      const body: InstantiateEditorBody = {
         sceneName,
         parentId: this.sceneParentId.trim() || undefined,
         parameterValues: this.sceneParams,
         dryRun: false,
-      });
+        attachSimulatedDriver: this.attachSim,
+        extraNodes: buildExtraNodesPayload(this.pendingNodes),
+      };
+      const result = await sceneApi.instantiate(id, body);
       if (result.warnings && result.warnings.length > 0) {
         // 先展示警告，由用户确认后再跳转
         this.resultWarnings = result.warnings;
@@ -367,6 +561,7 @@ export class MarketplaceView extends LitElement {
       const data = res.result;
       const drivers = Array.isArray(data) ? data : (data?.data ?? []);
       this.installedDriverIds = new Set(drivers.map((d: any) => d.id));
+      this.localDrivers = drivers.map((d: any) => ({ id: d.id, name: resolveLocalized(d.name) || d.id }));
     } catch {
       // ignore
     }
@@ -712,7 +907,9 @@ export class MarketplaceView extends LitElement {
                   ?disabled=${!canSubmit}
                   @click=${() => this.submitScene()}
                 >
-                  ${this.submitting ? html`<span class="mp-spinner"></span>创建中...` : "创建"}
+                  ${this.submitting
+                    ? html`<span class="mp-spinner"></span>创建中...`
+                    : `确认实例化（将创建 ${(this.preview?.nodeCount ?? 0) + pendingNodeTotal(this.pendingNodes)} 个本体）`}
                 </button>
               `}
           </div>
@@ -785,21 +982,107 @@ export class MarketplaceView extends LitElement {
             预览失败：${this.previewError}
           </div>`
         : nothing}
-      ${this.preview
-        ? html`
-          <div style="margin-top: var(--space-4);">
-            <div style="font-weight: 600; margin-bottom: var(--space-2);">
-              将创建 ${this.preview.nodeCount} 个本体${this.quotaText(this.preview.quota)}（预览，最终名称以创建结果为准）
-            </div>
-            <pre style="margin: 0; padding: var(--space-3); background: var(--bg-secondary, rgba(0,0,0,0.04)); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto;">${this.preview.treePreview}</pre>
-            ${this.preview.warnings && this.preview.warnings.length > 0
-              ? html`<ul style="margin: var(--space-2) 0 0; padding-left: var(--space-6); color: var(--muted); font-size: 12px;">
-                  ${this.preview.warnings.map((w) => html`<li style="margin-bottom: var(--space-1);">${w}</li>`)}
-                </ul>`
-              : nothing}
-          </div>
-        `
-        : nothing}
+      ${this.preview ? this.renderSceneTreeSection(this.preview) : nothing}
+    `;
+  }
+
+  /** 交互树预览区：总数行 + 模拟驱动开关 + 可编辑树（替代旧静态 <pre> 预览） */
+  private renderSceneTreeSection(preview: InstantiateResult) {
+    const tree = buildSceneTree({
+      previewText: preview.treePreview,
+      rootScene: this.sceneStruct?.root ?? null,
+      rootName: this.sceneDialogItem?.name,
+      refScenes: this.sceneStruct?.refs,
+      deviceTemplates: this.sceneStruct?.devices,
+      params: this.sceneParams,
+      editableParams: new Set((this.sceneDetail?.parameters ?? []).map((p) => p.name)),
+      rootPropertyCount: (this.sceneDetail as any)?.propertyCount ?? null,
+      attachSim: this.attachSim,
+      pending: this.pendingNodes,
+    });
+    const total = preview.nodeCount + pendingNodeTotal(this.pendingNodes);
+    return html`
+      <div style="margin-top: var(--space-4);">
+        <div style="font-weight: 600; margin-bottom: var(--space-2);">
+          将创建 ${total} 个本体${this.quotaText(preview.quota)}（预览，最终名称以创建结果为准）
+        </div>
+        <label style="display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); font-size: 13px;">
+          <input
+            type="checkbox"
+            .checked=${this.attachSim}
+            @change=${(e: Event) => {
+              this.attachSim = (e.target as HTMLInputElement).checked;
+            }}
+          />
+          为设备挂模拟驱动（开箱即出数）
+        </label>
+        ${renderSceneTree(this.treeHost, tree, { editable: true, driverOptions: this.treeDriverOptions() })}
+        ${preview.warnings && preview.warnings.length > 0
+          ? html`<ul style="margin: var(--space-2) 0 0; padding-left: var(--space-6); color: var(--muted); font-size: 12px;">
+              ${preview.warnings.map((w) => html`<li style="margin-bottom: var(--space-1);">${w}</li>`)}
+            </ul>`
+          : nothing}
+      </div>
+    `;
+  }
+
+  /** 「+ 添加设备」行内表单：模板（过滤场景包）+ 名称 + 数量 + 驱动（默认模拟） */
+  private renderAddDeviceForm(keyPath: string[]) {
+    if (this.addFormKeyPath !== JSON.stringify(keyPath)) return nothing;
+    if (this.deviceTemplateOptions.length === 0) {
+      return html`<div style="margin: var(--space-2) 0; color: var(--muted); font-size: 12px;">无可挂接的设备模板</div>`;
+    }
+    return html`
+      <div class="st-add-form" style="border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); padding: var(--space-3); margin: var(--space-2) 0; display: grid; gap: var(--space-2);">
+        <select
+          .value=${this.addTemplateId}
+          @change=${(e: Event) => {
+            this.addTemplateId = (e.target as HTMLSelectElement).value;
+            const tpl = this.deviceTemplateOptions.find((t) => t.id === this.addTemplateId);
+            if (tpl) this.addName = resolveLocalized(tpl.displayName) || tpl.name;
+          }}
+        >
+          ${this.deviceTemplateOptions.map(
+            (t) => html`<option value=${t.id}>${resolveLocalized(t.displayName) || t.name}</option>`,
+          )}
+        </select>
+        <input
+          type="text"
+          placeholder="设备名称"
+          .value=${this.addName}
+          @input=${(e: InputEvent) => {
+            this.addName = (e.target as HTMLInputElement).value;
+          }}
+        />
+        <input
+          type="number"
+          min="1"
+          max="20"
+          step="1"
+          title="数量（1~20）"
+          .value=${String(this.addCount)}
+          @input=${(e: InputEvent) => {
+            this.addCount = Number((e.target as HTMLInputElement).value);
+          }}
+        />
+        <select
+          .value=${this.addDriver}
+          @change=${(e: Event) => {
+            this.addDriver = (e.target as HTMLSelectElement).value;
+          }}
+        >
+          ${this.treeDriverOptions().map((o) => html`<option value=${o.value}>${o.label}</option>`)}
+        </select>
+        <div style="display: flex; gap: var(--space-2);">
+          <button class="btn primary btn--sm" @click=${() => this.confirmAddDevice()}>添加</button>
+          <button
+            class="btn btn--sm"
+            @click=${() => {
+              this.addFormKeyPath = null;
+            }}
+          >取消</button>
+        </div>
+      </div>
     `;
   }
 
