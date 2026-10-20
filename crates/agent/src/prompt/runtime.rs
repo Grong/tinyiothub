@@ -118,6 +118,7 @@ fn trigger_desc(source: &TriggerSource) -> &'static str {
         TriggerSource::Timer => "定时巡检",
         TriggerSource::Heartbeat { .. } => "心跳巡检",
         TriggerSource::UserDirective { .. } => "用户指令",
+        TriggerSource::Watch { .. } => "值守命中",
         TriggerSource::Merged { .. } => "聚合事件",
     }
 }
@@ -157,6 +158,20 @@ fn render_trigger(source: &TriggerSource, out: &mut String) {
                 out.push('\n');
                 render_merged_line(&s.source, out);
             }
+        }
+        TriggerSource::Watch {
+            rule_id,
+            summary,
+            current_value,
+            health,
+            zone,
+        } => {
+            out.push_str(&format!(
+                "值守规则 {rule_id} 命中\n- 摘要：{summary}\n- 当前值：{}\n- 健康度：{}\n- 区域：{}",
+                current_value.as_deref().unwrap_or("-"),
+                health.as_deref().unwrap_or("-"),
+                zone.as_deref().unwrap_or("-"),
+            ));
         }
     }
 }
@@ -203,6 +218,7 @@ fn render_merged_line(source: &TriggerSource, out: &mut String) {
         TriggerSource::Timer => out.push_str("- 定时巡检"),
         TriggerSource::Heartbeat { alarm: None } => out.push_str("- 心跳巡检"),
         TriggerSource::Heartbeat { alarm: Some(alarm) } => out.push_str(&format!("- 心跳巡检告警：{}", alarm.reason)),
+        TriggerSource::Watch { rule_id, summary, .. } => out.push_str(&format!("- 值守规则 {rule_id} 命中：{summary}")),
         TriggerSource::Merged { signals } => {
             for s in signals {
                 out.push('\n');

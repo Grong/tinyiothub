@@ -464,6 +464,7 @@ fn trigger_label(signal: &WakeSignal) -> String {
             .clone()
             .unwrap_or_else(|| format!("heartbeat:{}", signal.workspace_id)),
         TriggerSource::UserDirective { user_id, .. } => format!("user:{user_id}"),
+        TriggerSource::Watch { rule_id, .. } => signal.dedup_key.clone().unwrap_or_else(|| format!("watch:{rule_id}")),
         TriggerSource::Merged { .. } => {
             format!("merged:{}", signal.dedup_key.as_deref().unwrap_or("signals"))
         }

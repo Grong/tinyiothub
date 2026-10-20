@@ -35,6 +35,15 @@ pub enum TriggerSource {
         /// chat/API 用户指令为 None。
         problem_key: Option<String>,
     },
+    /// E1 watch 命中唤醒（spec 2026-10-20-e1 §1）：调度语义=普通信号
+    /// （合并窗已废，无窗可绕），变体只为上下文携带与 dedup key。
+    Watch {
+        rule_id: String,
+        summary: String,
+        current_value: Option<String>,
+        health: Option<String>,
+        zone: Option<String>,
+    },
     /// Output of the scheduler's merge window (T8): every non-Critical signal
     /// sharing one `dedup_key` inside a 30s window, in arrival order. T9/T10
     /// prompt assembly recurses into `signals` to build the aggregated context.

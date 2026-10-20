@@ -7,10 +7,12 @@ use crate::runtime::thing_agent::types::WakeSignal;
 pub mod heartbeat;
 pub mod thing_event;
 pub mod timer;
+pub mod watch;
 
 pub use heartbeat::HeartbeatTrigger;
 pub use thing_event::ThingEventTrigger;
 pub use timer::TimerTrigger;
+pub use watch::WatchTrigger;
 
 /// A source of [`WakeSignal`]s. Implementations run until the channel closes
 /// or the task is cancelled by the caller.
