@@ -22,6 +22,7 @@ pub mod event_bus;
 pub mod expression;
 pub mod plugin;
 pub mod ports;
+pub mod watch;
 
 // Re-exports for convenience
 pub use cron_executors::{ApprovalTimeoutExecutor, EventRetentionExecutor, ThingCommandExecutor};
