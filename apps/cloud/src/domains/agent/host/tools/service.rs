@@ -15,7 +15,7 @@ use tinyiothub_agent::tools::{ToolProvider, ToolRegistry, ToolRuntimeContext, fi
 use tinyiothub_skills::trust::{ToolSafety, classify_tool_safety};
 use tinyiothub_storage::cache::ThingCache;
 
-use super::thing::{PendingActionStore, ThingToolContext, create_thing_tools};
+use super::thing::{LiveSummarySource, PendingActionStore, ThingToolContext, create_thing_tools};
 use super::{canvas::CanvasTool, dispatch_task::DispatchThingTaskTool, get_skill::GetSkillTool};
 use crate::domains::agent::host::config::service as config_service;
 
@@ -31,6 +31,7 @@ pub fn chat_builtin_tools_provider(
     device_cache: Option<Arc<ThingCache>>,
     pending_actions: Arc<PendingActionStore>,
     arbitration: Arc<ArbitrationRegistry>,
+    live: Arc<dyn LiveSummarySource>,
 ) -> ToolProvider {
     Arc::new(move |workspace_id: &str, runtime: &ToolRuntimeContext| {
         let mut tools: Vec<(Box<dyn Tool>, ToolSafety)> = Vec::new();
@@ -46,6 +47,7 @@ pub fn chat_builtin_tools_provider(
                 data_server: runtime.data_server.clone(),
                 pending_actions: Some(pending_actions.clone()),
                 arbitration: Some(arbitration.clone()),
+                live: Some(live.clone()),
             },
         ));
 

@@ -187,6 +187,12 @@ impl WatchEngine {
         self.live.handle_lagged();
     }
 
+    /// 单物实时摘要（Task 10 工具读面；委托 LiveState::summary，
+    /// 无实时态 → None）。
+    pub fn summary(&self, thing_id: &str) -> Option<ThingLiveSummary> {
+        self.live.summary(thing_id)
+    }
+
     /// 账本写彻底失败计数（metric 兜底）。
     pub fn ledger_write_failures(&self) -> u64 {
         self.ledger_write_failures.load(Ordering::Relaxed)

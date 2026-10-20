@@ -236,11 +236,18 @@ impl ServiceManager {
             // 捕获。外部（MCP）工具工厂按需从 MCP_REGISTRY 派生（G3 —
             // 单一事实源，无第二注册静态）。
             let tool_registry = app_state.agent_pool.tool_registry();
+            // E1 Task 10：LiveState 读面迟绑定槽——此处注入 chat/自治两侧工具
+            // 上下文，manager 就绪（runtime.thing_agents() 之后）set；未 set 时
+            // get_thing_profile 的 live=null。
+            let live_summary_slot = crate::domains::agent::host::tools::thing::LiveSummarySlot::default();
+            let live_summary: Arc<dyn crate::domains::agent::host::tools::thing::LiveSummarySource> =
+                Arc::new(live_summary_slot.clone());
             tool_registry.register_provider(crate::domains::agent::host::tools::chat_builtin_tools_provider(
                 app_state.db.pool().clone(),
                 Some(app_state.device_cache.clone()),
                 app_state.pending_actions.clone(),
                 app_state.arbitration.clone(),
+                live_summary.clone(),
             ));
             tool_registry.set_external_tool_factory(Arc::new(|| {
                 crate::domains::agent::host::ports::external_tool_registry()
@@ -287,6 +294,7 @@ impl ServiceManager {
                                 data_server: app_state.data_server.clone(),
                                 pending_actions: Some(app_state.pending_actions.clone()),
                                 arbitration: Some(app_state.arbitration.clone()),
+                                live: Some(live_summary.clone()),
                             },
                         ),
                     ),
@@ -384,6 +392,9 @@ impl ServiceManager {
             }
 
             let thing_agent_manager = runtime.thing_agents().clone();
+            // E1 Task 10：manager 就绪，LiveState 读面槽封口——此后工具查询
+            // 经 watch 命令通道生效（此前 live=null）。
+            live_summary_slot.set(thing_agent_manager.clone());
             let orchestrator = runtime.orchestrator().clone();
 
             // Wire event publisher to services that need cross-domain dispatching

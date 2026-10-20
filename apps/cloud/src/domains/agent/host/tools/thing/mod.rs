@@ -34,7 +34,8 @@ use std::sync::Arc;
 use crate::domains::thing::service::ThingService;
 use sqlx::SqlitePool;
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
-use tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry;
+use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, ThingAgentManager, WatchCommand};
+use tinyiothub_runtime::watch::live_state::ThingLiveSummary;
 use tinyiothub_skills::trust::ToolSafety;
 
 pub use get::GetThingTool;
@@ -51,6 +52,50 @@ pub use read_property::ReadPropertyTool;
 pub use search_knowledge::SearchKnowledgeTool;
 pub use tree::GetThingTreeTool;
 pub use validate::validate_action_params;
+
+// ============================================================================
+// E1 Task 10：LiveState 读面（get_thing_profile 附 live 摘要）
+// ============================================================================
+
+/// 单物实时摘要读面。profile 工具经它取 LiveState::summary；
+/// 返回 None = 该物无实时态（live 序列化为 null，不炸）。
+#[async_trait::async_trait]
+pub trait LiveSummarySource: Send + Sync {
+    async fn summary(&self, workspace_id: &str, thing_id: &str) -> Option<ThingLiveSummary>;
+}
+
+/// 生产实现：迟绑定槽。bootstrap 早期注入工具上下文（manager 尚未就绪——
+/// provider 注册先于 AgentRuntime 构建），manager 就位后 `set`；查询走该
+/// 工作区 watch engine 命令通道（actor 单写者不破）。未 set / 工作区 loop
+/// 未运行 / engine 无该物 → None（profile live=null）。
+#[derive(Clone, Default)]
+pub struct LiveSummarySlot {
+    manager: Arc<std::sync::RwLock<Option<Arc<ThingAgentManager>>>>,
+}
+
+impl LiveSummarySlot {
+    /// bootstrap：thing_agent_manager 就绪后调用（与 app_state.thing_agents
+    /// 赋值同点）。
+    pub fn set(&self, manager: Arc<ThingAgentManager>) {
+        *self.manager.write().expect("live summary slot poisoned") = Some(manager);
+    }
+}
+
+#[async_trait::async_trait]
+impl LiveSummarySource for LiveSummarySlot {
+    async fn summary(&self, workspace_id: &str, thing_id: &str) -> Option<ThingLiveSummary> {
+        let manager = self.manager.read().expect("live summary slot poisoned").clone()?;
+        let sink = manager.watch_command_sink(workspace_id)?;
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        sink.send(WatchCommand::Summary {
+            thing_id: thing_id.to_string(),
+            reply,
+        })
+        .await
+        .ok()?;
+        rx.await.ok().flatten()
+    }
+}
 
 // ============================================================================
 // Helpers
@@ -93,6 +138,9 @@ pub struct ThingToolContext {
     /// E1 仲裁（Task 9）：跨 chat/自治 run 共享的每设备互斥锁注册表；
     /// None = 不仲裁。
     pub arbitration: Option<Arc<ArbitrationRegistry>>,
+    /// E1 值守读面（Task 10）：get_thing_profile 附 live 摘要；
+    /// None = 未接线（live=null）。
+    pub live: Option<Arc<dyn LiveSummarySource>>,
 }
 
 /// Create all 9 Thing Ontology agent tools with their safety classifications.
@@ -126,6 +174,7 @@ pub fn create_thing_tools(
         read_only(Box::new(GetThingProfileTool {
             thing_service: thing_service.clone(),
             workspace_id: ws.clone(),
+            live: runtime.live.clone(),
         })),
         read_only(Box::new(GetThingTreeTool {
             thing_service: thing_service.clone(),
@@ -277,6 +326,15 @@ mod tests {
             };
             assert!(!msg.contains("缺少必需参数"), "{name} 必须接受蛇形键: {msg}");
         }
+    }
+
+    // ── LiveSummarySlot（E1 Task 10）────────────────────
+
+    /// 未 set（manager 未就绪）→ None：profile live=null，不炸。
+    #[tokio::test]
+    async fn live_summary_slot_unset_returns_none() {
+        let slot = LiveSummarySlot::default();
+        assert!(slot.summary("ws", "t1").await.is_none());
     }
 
     // ── tool name uniqueness ────────────────────────────

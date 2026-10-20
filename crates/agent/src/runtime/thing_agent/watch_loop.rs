@@ -26,7 +26,7 @@ use tinyiothub_core::watch::WatchRule;
 use tinyiothub_runtime::EventBus;
 use tinyiothub_runtime::ports::{HubLedger, ThingCacheSource, WatchRuleStore};
 use tinyiothub_runtime::watch::engine::{WatchEngine, WatchHit};
-use tinyiothub_runtime::watch::live_state::LiveState;
+use tinyiothub_runtime::watch::live_state::{LiveState, ThingLiveSummary};
 
 /// 超时清扫周期（超时默认 600s 量级，5s 粒度足够；命中路径不经过它）。
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
@@ -51,6 +51,12 @@ pub struct WatchDeps {
 pub enum WatchCommand {
     Upsert(WatchRule),
     Remove(String),
+    /// 单物实时摘要查询（Task 10 工具读面：get_thing_profile 附 live）；
+    /// oneshot 回传，engine 无该物实时态 → None。
+    Summary {
+        thing_id: String,
+        reply: tokio::sync::oneshot::Sender<Option<ThingLiveSummary>>,
+    },
 }
 
 /// 每工作区 watch engine 事件循环。通道关闭/任务 abort = 退役（stop 路径）。
@@ -90,6 +96,10 @@ pub async fn watch_engine_loop(
                     }
                     WatchCommand::Remove(id) => {
                         engine.remove_rule(&id);
+                    }
+                    WatchCommand::Summary { thing_id, reply } => {
+                        // 读面查询：调用方已脱离（工具超时应答），send 失败只丢本次。
+                        let _ = reply.send(engine.summary(&thing_id));
                     }
                 }
             }

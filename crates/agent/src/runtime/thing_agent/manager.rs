@@ -2465,4 +2465,41 @@ pub(crate) mod tests {
         assert_eq!(parts.manager.workspaces.get(WS).unwrap().tasks.len(), 4);
         assert!(parts.manager.watch_command_sink(WS).is_none());
     }
+
+    /// Task 10：Summary 命令经命令通道回传单物实时摘要（get_thing_profile
+    /// 工具读面的生产路径）——无实时态 → None；事件进场后 → Some 且值一致。
+    #[tokio::test(start_paused = true)]
+    async fn watch_command_summary_returns_live_state_snapshot() {
+        let parts = stub_manager().await;
+        let ledger = Arc::new(RecordingLedger::default());
+        let deps = watch_deps(vec![], ledger); // 空规则起步——Summary 不依赖规则
+        let bus = deps.events.clone();
+        parts.manager.set_watch_deps(deps);
+        parts.manager.start(WS);
+        let sink = parts.manager.watch_command_sink(WS).expect("command sink");
+
+        // 无实时态（未见过该物事件）→ None。
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        sink.send(WatchCommand::Summary {
+            thing_id: "t1".into(),
+            reply: tx,
+        })
+        .await
+        .expect("summary query sent");
+        assert!(rx.await.expect("reply").is_none());
+
+        // 属性事件进场 → LiveState 有该物 → Some 且值一致。
+        publish_property_change(&bus, "t1", "31").await;
+        settle().await; // 单循环串行消费：事件先于其后的 Summary 命令
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        sink.send(WatchCommand::Summary {
+            thing_id: "t1".into(),
+            reply: tx,
+        })
+        .await
+        .expect("summary query sent");
+        let s = rx.await.expect("reply").expect("summary after event");
+        assert_eq!(s.values.get("温度").map(String::as_str), Some("31"));
+        assert!(s.online);
+    }
 }
