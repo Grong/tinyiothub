@@ -166,6 +166,9 @@ fn render_trigger(source: &TriggerSource, out: &mut String) {
             health,
             zone,
         } => {
+            // M-1：summary 是 ThingLiveSummary 的 Debug 串（含全量 values map），
+            // 多属性设备尺寸无界，照心跳臂 truncate 保护。
+            let summary = truncate(summary, MAX_EVENT_DATA_CHARS);
             out.push_str(&format!(
                 "值守规则 {rule_id} 命中\n- 摘要：{summary}\n- 当前值：{}\n- 健康度：{}\n- 区域：{}",
                 current_value.as_deref().unwrap_or("-"),

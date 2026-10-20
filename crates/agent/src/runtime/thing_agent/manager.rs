@@ -378,6 +378,9 @@ impl ThingAgentManager {
         // E1 watch：命令通道条目随 loop 退役——engine 任务已被 abort，
         // 残留 sender 只会让 handler 写穿投进死通道。
         self.watch_cmds.remove(workspace_id);
+        // M-4：同键限速表随 loop 退役（RT-6 同款）——不清则 workspace id
+        // 复用时旧限速值复活。
+        self.rate_limits.remove(workspace_id);
         tracing::info!(workspace_id, "thing-agent loop stopped");
     }
 

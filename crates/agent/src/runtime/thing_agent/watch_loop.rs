@@ -68,7 +68,12 @@ pub async fn watch_engine_loop(
 ) {
     // 先订阅再重织：重织窗口内的事件经 broadcast 缓冲，不丢。
     let mut rx = deps.events.subscribe();
-    let mut engine = WatchEngine::new(LiveState::new(deps.cache.clone()), deps.ledger.clone(), hit_tx);
+    let mut engine = WatchEngine::new(
+        LiveState::new(deps.cache.clone()),
+        deps.ledger.clone(),
+        deps.rules.clone(), // C-2：退役路径（one-shot 命中/超时/物失效）写穿删除 DB 行
+        hit_tx,
+    );
 
     // 启动重织（spec §2.1）：持久源全量 → 本区规则幂等 upsert；单条非法
     // 规则跳过不株连（引用物已删等），整表读失败空注册表起步 + error。

@@ -107,11 +107,6 @@ impl LiveState {
         }
     }
 
-    /// 物存在性（watch 注册校验用）：实时态或 cache 任一知情即存在。
-    pub fn thing_exists(&self, thing_id: &str) -> bool {
-        self.states.contains_key(thing_id) || self.cache.get(thing_id).is_some()
-    }
-
     /// 单物摘要；无实时态（未见过该物事件且未经重同步）返回 None。
     /// health/zone 在读时即时派生，永远与 cache 真相一致。
     pub fn summary(&self, thing_id: &str) -> Option<ThingLiveSummary> {
