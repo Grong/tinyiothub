@@ -94,6 +94,8 @@ async fn instantiate_floor(pool: &SqlitePool, template_id: &str) -> String {
         parent_id: None,
         parameter_values: HashMap::from([("room_count".to_string(), 4i64)]),
         dry_run: false,
+        attach_simulated_driver: false,
+        extra_nodes: vec![],
     };
     let outcome = SceneInstantiator::instantiate(&db, WS, template_id, &params)
         .await
@@ -337,6 +339,8 @@ async fn instantiate_building(pool: &SqlitePool, template_id: &str) -> String {
         parent_id: None,
         parameter_values: HashMap::from([("floor_count".to_string(), 2i64)]),
         dry_run: false,
+        attach_simulated_driver: false,
+        extra_nodes: vec![],
     };
     let outcome = SceneInstantiator::instantiate(&db, WS, template_id, &params)
         .await

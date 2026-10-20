@@ -20,7 +20,7 @@ use crate::{
     domains::marketplace::{
         client::MarketplaceClient,
         error::MarketplaceError,
-        scene_instantiator::{InstantiateParams, SceneInstantiator},
+        scene_instantiator::{ExtraNode, InstantiateParams, SceneInstantiator},
         template_installer::TemplateInstaller,
         thing_template_installer::{ThingTemplateInstaller, localized_column},
     },
@@ -611,6 +611,25 @@ async fn get_thing_template_detail(
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ExtraNodeBody {
+    pub template_id: String,
+    /// 场景节点 key 路径（[] = 挂到根节点下）
+    #[serde(default)]
+    pub parent_path: Vec<String>,
+    pub name: String,
+    /// 份数（1..=20，缺省 1）
+    #[serde(default = "default_extra_count")]
+    pub count: u32,
+    /// 显式驱动名；缺省时由 attach_simulated_driver 决定是否填 simulator
+    pub driver_name: Option<String>,
+}
+
+fn default_extra_count() -> u32 {
+    1
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InstantiateRequestBody {
     pub scene_name: String,
     pub parent_id: Option<String>,
@@ -618,6 +637,12 @@ pub struct InstantiateRequestBody {
     pub parameter_values: std::collections::HashMap<String, i64>,
     #[serde(default)]
     pub dry_run: bool,
+    /// true 时叶节点设备统一挂 simulator 驱动开箱出数（默认 false）
+    #[serde(default)]
+    pub attach_simulated_driver: bool,
+    /// 实例化时额外挂接的设备节点（与场景节点同一事务）
+    #[serde(default)]
+    pub extra_nodes: Vec<ExtraNodeBody>,
 }
 
 /// 实例化场景包：展开 → 配额校验 → 单事务落库；dry_run 只读预览。
@@ -640,6 +665,18 @@ async fn instantiate_thing_template(
         parent_id: body.parent_id,
         parameter_values: body.parameter_values,
         dry_run: body.dry_run,
+        attach_simulated_driver: body.attach_simulated_driver,
+        extra_nodes: body
+            .extra_nodes
+            .into_iter()
+            .map(|e| ExtraNode {
+                template_id: e.template_id,
+                parent_path: e.parent_path,
+                name: e.name,
+                count: e.count,
+                driver_name: e.driver_name,
+            })
+            .collect(),
     };
     match SceneInstantiator::instantiate(state.db.as_ref(), ws, &id, &params).await {
         Ok(outcome) => {

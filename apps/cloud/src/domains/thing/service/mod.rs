@@ -224,7 +224,8 @@ impl ThingService {
     }
 
     /// 列 JSON 非空判定：空串/"[]"/"null" 视为无定义。（Fix A）
-    fn nonempty_json(j: &Option<String>) -> Option<String> {
+    /// pub(crate)：场景实例化器 extra_nodes 属性/命令拷贝复用同一路径。
+    pub(crate) fn nonempty_json(j: &Option<String>) -> Option<String> {
         j.as_ref().and_then(|s| {
             let t = s.trim();
             if t.is_empty() || t == "[]" || t == "null" {
@@ -236,7 +237,8 @@ impl ThingService {
     }
 
     /// 场景包回退：device_info 内嵌场景 JSON 的指定段（properties/commands）。（Fix A）
-    fn scene_section(device_info: &Option<String>, key: &str) -> Option<String> {
+    /// pub(crate)：场景实例化器 extra_nodes 复用。
+    pub(crate) fn scene_section(device_info: &Option<String>, key: &str) -> Option<String> {
         let info = device_info.as_deref()?;
         let v: serde_json::Value = serde_json::from_str(info).ok()?;
         v.get(key).map(|s| s.to_string())
@@ -257,7 +259,8 @@ impl ThingService {
     }
 
     /// 键兼容读取：snake_case 优先，camelCase 兜底。（Fix A）
-    fn key<'a>(p: &'a serde_json::Value, snake: &str, camel: &str) -> Option<&'a serde_json::Value> {
+    /// pub(crate)：场景实例化器 extra_nodes 复用。
+    pub(crate) fn key<'a>(p: &'a serde_json::Value, snake: &str, camel: &str) -> Option<&'a serde_json::Value> {
         p.get(snake).or_else(|| p.get(camel))
     }
 
