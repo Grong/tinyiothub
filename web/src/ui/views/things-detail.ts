@@ -1,6 +1,7 @@
 // Extracted from things.ts (eng-review T14 god-file split).
 // Render helpers take the host view instance; behavior unchanged.
 import { html, nothing } from "lit";
+import { ref } from "lit/directives/ref.js";
 import { thingCache } from "../../stores/thing-cache.js";
 import { thingApi } from "../../api/things.js";
 import { icons } from "../icons.js";
@@ -260,7 +261,7 @@ function parseDerivedRefs(refs?: string): { thing_id: string; property_name?: st
 
 /** 解绑确认状态（expando 挂在宿主上，避免改 DevicesView 类；随宿主实例生灭） */
 interface DerivedUnbindHost {
-  __derivedUnbind?: { prop: ThingProperty; saving: boolean; error?: string };
+  __derivedUnbind?: { prop: ThingProperty; saving: boolean; error?: string; focused?: boolean };
 }
 
 export function openUnbindDerived(host: DevicesView, prop: ThingProperty): void {
@@ -359,7 +360,16 @@ function renderUnbindConfirm(host: DevicesView) {
           </div>
           <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: var(--space-2);">
             <button class="btn btn--ghost" ?disabled=${st.saving} @click=${() => cancelUnbindDerived(host)}>取消</button>
-            <button class="btn btn--danger" ?disabled=${st.saving} @click=${() => void confirmUnbindDerived(host)}>${st.saving ? "解绑中…" : "确认解绑"}</button>
+            <button class="btn btn--danger" ?disabled=${st.saving}
+              ${ref(el => {
+                // D13 范式（confirm-modal）：打开即聚焦确认按钮，
+                // 否则焦点留在 overlay 外的行内按钮上，Esc/Enter 不经过 overlay 的 keydown handler
+                if (el && !st.focused) {
+                  st.focused = true;
+                  requestAnimationFrame(() => (el as HTMLElement).focus());
+                }
+              })}
+              @click=${() => void confirmUnbindDerived(host)}>${st.saving ? "解绑中…" : "确认解绑"}</button>
           </div>
         </div>
       </div>

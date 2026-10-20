@@ -223,22 +223,25 @@ describe("物详情属性 Tab — 派生状态卡与行动作（Task 5）", () =
     const unbindBtn = () =>
       [...el.querySelectorAll("button")].find(b => b.textContent?.trim() === "解绑")!;
 
-    // 打开 confirm → Esc 取消，不调 API
+    // 打开 confirm：焦点进入 overlay 内（D13 范式），Esc 经焦点元素冒泡到 overlay handler 取消，不调 API
     unbindBtn().click();
     render(renderDetailProperties(host), el);
-    const overlay = el.querySelector(".unbind-confirm-overlay");
+    const overlay = el.querySelector(".unbind-confirm-overlay")!;
     expect(overlay).toBeTruthy();
-    overlay!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await vi.waitFor(() => expect(overlay.contains(document.activeElement)).toBe(true));
+    (document.activeElement as HTMLElement).dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     render(renderDetailProperties(host), el);
     expect(el.querySelector(".unbind-confirm-overlay")).toBeNull();
     expect(thingApi.updatePropertyDef).not.toHaveBeenCalled();
 
-    // 再次打开 → 确认 → PUT expression:null
+    // 再次打开 → Enter 经焦点元素冒泡确认 → PUT expression:null
     unbindBtn().click();
     render(renderDetailProperties(host), el);
-    const confirmBtn = [...el.querySelectorAll<HTMLButtonElement>(".unbind-confirm-overlay button")]
-      .find(b => b.textContent?.includes("确认解绑"))!;
-    confirmBtn.click();
+    const overlay2 = el.querySelector(".unbind-confirm-overlay")!;
+    await vi.waitFor(() => expect(overlay2.contains(document.activeElement)).toBe(true));
+    (document.activeElement as HTMLElement).dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     await vi.waitFor(() =>
       expect(thingApi.updatePropertyDef).toHaveBeenCalledWith("t1", "p1", { expression: null }));
     expect(host.loadDeviceDetail).toHaveBeenCalledWith("t1");
