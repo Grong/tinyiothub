@@ -732,3 +732,26 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 - **What:** 派生值变更事件（Info 级 PropertyChange）被 persistence_handler 防噪过滤不落 events 表——实时走 SSE/缓存不受影响，告警走 EventBus 订阅不受影响，但历史查询不可见。是否给派生变更开落库口子（如 metadata 标记派生）另立策略裁定。
 - **Why:** Task 13 评审取舍#2 落档；生产防噪策略是有意的，不视为缺陷。
 - **Effort:** S | **Depends on:** 产品裁定
+
+## 园区物体验修复包（X1-X4）终审分诊 — Deferred (from SDD final review 2026-10-20)
+
+### P2 — loadDevices 分页参数名惰性 bug（page/pageSize → limit/offset）
+- **What:** `web/src/ui/views/things.ts` 既有 `loadDevices` 与已修的 `loadThingTree` 犯同样的错：传 `page`/`pageSize`，后端 `ListThingsParams` 读 `limit`/`offset`——静默丢弃，limit 缺省 50。超 50 物时列表分页 UI 掩盖但数据同样截断。
+- **Why:** 2026-10-20 UX 包终审 I-1 修了树视图并留注释钉坑；loadDevices 是第二批露点（终审声明不在本包范围）。
+- **Context:** 后端 `crates/db/src/thing.rs:65` camelCase serde；clamp 上限 200。
+- **Effort:** S | **Depends on:** —
+
+### P3 — 物树视图三项产品取舍（UX 包 T9 遗留）
+- **What:** ①树节点「+」hover vs 常显（产品确认）；②拖到空白处=移到根（当前无根落点）；③树模式忽略列表筛选条件——建议在树视图加一行说明文字。
+- **Why:** T9 评审记录为范围外交代/产品取向，需产品确认后统一处理。
+- **Effort:** S | **Depends on:** 产品确认
+
+### P3 — 前端一致性小项（M-c/M-d/M-f）
+- **What:** ①树视图切换按钮 emoji 🌲 与兄弟按钮 HTML 实体（☰/▦）统一；②`openWizard(parentId?: string | Event)` 重载 hack 改包一层 `() => openWizard(null)`（things.ts:1532）；③`parseTreePreview` 名称含 ` (...)` 误切（scene-tree.ts 正则，预览名来自后端 sanitize 风险低）。
+- **Why:** 终审 Minor 分诊可延期项，均一行级修复。
+- **Effort:** S | **Depends on:** —
+
+### P3 — 派生前端收紧（UX 包 T5/T6 遗留）
+- **What:** ①`updatePropertyDef` 签名放宽 `expression: string | null` 并移除调用侧 cast（things-detail.ts:287）；②解绑弹窗 expando 状态改正式 state（T5 M-4）；③extra 属性缺 name 时跳过+告警（scene_instantiator parse_extra_properties，当前静默落空串）；④显式 driver 的 driver_options IS NULL 断言锁（scene_instantiate_test）。
+- **Why:** 各任务评审 Minor 分诊可延期；②④为测试/状态健壮性收紧。
+- **Effort:** S | **Depends on:** —
