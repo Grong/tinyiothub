@@ -66,15 +66,23 @@ impl LiveState {
         }
     }
 
-    /// 可用性事件：online=true→Online，false→Offline。
+    /// 可用性事件：cache 有真相则以真相刷新 status/online（Error 不被可用性
+    /// 信号掩盖，与 apply_property_change 对称）；cache miss 才按事件信号落
+    /// Online/Offline。
     pub fn set_availability(&mut self, thing_id: &str, online: bool) {
+        let cached = self.cache.get(thing_id);
         let live = self.states.entry(thing_id.to_string()).or_default();
-        live.online = online;
-        live.status = Some(if online {
-            ThingStatus::Online
+        if let Some(thing) = cached {
+            live.status = Some(thing.status.clone());
+            live.online = thing.is_online();
         } else {
-            ThingStatus::Offline
-        });
+            live.online = online;
+            live.status = Some(if online {
+                ThingStatus::Online
+            } else {
+                ThingStatus::Offline
+            });
+        }
     }
 
     /// Lagged 空洞：清空内部态，从 cache 全量重建（cache 先写后发，重读即真相）。
@@ -97,6 +105,11 @@ impl LiveState {
                 },
             );
         }
+    }
+
+    /// 物存在性（watch 注册校验用）：实时态或 cache 任一知情即存在。
+    pub fn thing_exists(&self, thing_id: &str) -> bool {
+        self.states.contains_key(thing_id) || self.cache.get(thing_id).is_some()
     }
 
     /// 单物摘要；无实时态（未见过该物事件且未经重同步）返回 None。
@@ -321,5 +334,24 @@ mod tests {
         let s = live.summary("t1").unwrap();
         assert!(!s.online);
         assert_eq!(s.health, Health::Attention);
+    }
+
+    /// Error 物收到可用性事件仍 Bad：cache 真相压过可用性信号，
+    /// 不得被无条件覆写成 Online/Offline（与 apply_property_change 对称）。
+    #[test]
+    fn error_thing_stays_bad_on_availability_event() {
+        let cache = Arc::new(StubCache::with_things(vec![Thing {
+            id: "t-err".into(),
+            name: "t-err".into(),
+            status: ThingStatus::Error,
+            ..Thing::default()
+        }]));
+        let mut live = LiveState::new(cache);
+        live.handle_lagged();
+        assert_eq!(live.summary("t-err").unwrap().health, Health::Bad);
+        live.set_availability("t-err", true);
+        assert_eq!(live.summary("t-err").unwrap().health, Health::Bad);
+        live.set_availability("t-err", false);
+        assert_eq!(live.summary("t-err").unwrap().health, Health::Bad);
     }
 }
