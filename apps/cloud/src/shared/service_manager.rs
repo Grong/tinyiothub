@@ -488,7 +488,7 @@ impl ServiceManager {
             //
             // E1 Task 8 bootstrap 硬顺序：set_wake_ledger / set_watch_deps /
             // 限速预热全部先于 start——三者都只影响其后 start 的工作区。
-            let hub_ledger = Arc::new(crate::shared::runtime_ports::HubLedgerAdapter((*app_state.db).clone()));
+            let hub_ledger = Arc::new(crate::shared::runtime_ports::HubLedgerAdapter::new((*app_state.db).clone()));
             thing_agent_manager.set_wake_ledger(hub_ledger.clone());
             thing_agent_manager.set_watch_deps(tinyiothub_agent::runtime::thing_agent::WatchDeps {
                 cache: Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(

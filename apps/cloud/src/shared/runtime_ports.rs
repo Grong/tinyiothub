@@ -439,7 +439,40 @@ impl tinyiothub_runtime::ports::ApprovalTimeoutStore for ApprovalTimeoutAdapter 
 
 /// `Db` → `HubLedger`（E1 spec §4.2）：账本只增不改，ts 由适配器落 RFC3339，
 /// payload 序列化为 JSON 文本（词表版本见 payload.v，P5）。
-pub struct HubLedgerAdapter(pub Db);
+///
+/// F4 兜底观测：append 成功路径按 (workspace, UTC 日) 进程内计数，日增越过
+/// [`HUB_LEDGER_DAILY_WARN_THRESHOLD`] 当日 warn 一次（metric=
+/// "hub_ledger_volume"）。进程内计数重启清零——兜底告警非精确计量（精确
+/// 体量由运维慢查 SQL 兜底），观测不影响落账成败。
+pub struct HubLedgerAdapter {
+    db: Db,
+    /// (workspace_id, "YYYY-MM-DD") → 本进程当日成功落账行数。
+    daily_counts: dashmap::DashMap<(String, String), u64>,
+}
+
+/// F4 兜底：hub_ledger 单工作区日增行数告警阈值。
+const HUB_LEDGER_DAILY_WARN_THRESHOLD: u64 = 100_000;
+
+impl HubLedgerAdapter {
+    pub fn new(db: Db) -> Self {
+        Self {
+            db,
+            daily_counts: dashmap::DashMap::new(),
+        }
+    }
+
+    /// 落账成功后计数：返回 Some((day, count)) = 本日首次越阈（调用方 warn 一次）。
+    fn note_appended(&self, workspace_id: &str) -> Option<(String, u64)> {
+        let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let mut entry = self
+            .daily_counts
+            .entry((workspace_id.to_string(), day.clone()))
+            .or_insert(0);
+        *entry += 1;
+        let count = *entry;
+        (count == HUB_LEDGER_DAILY_WARN_THRESHOLD).then_some((day, count))
+    }
+}
 
 #[async_trait]
 impl tinyiothub_runtime::ports::HubLedger for HubLedgerAdapter {
@@ -452,9 +485,19 @@ impl tinyiothub_runtime::ports::HubLedger for HubLedgerAdapter {
     ) -> Result<(), String> {
         let ts = chrono::Utc::now().to_rfc3339();
         let payload = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
-        tinyiothub_storage::watch::append_ledger(self.0.pool(), workspace_id, &ts, kind, thing_id, &payload)
+        tinyiothub_storage::watch::append_ledger(self.db.pool(), workspace_id, &ts, kind, thing_id, &payload)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        if let Some((day, count)) = self.note_appended(workspace_id) {
+            tracing::warn!(
+                metric = "hub_ledger_volume",
+                workspace_id,
+                %day,
+                count,
+                "hub_ledger 日增行数越阈（F4 兜底观测）"
+            );
+        }
+        Ok(())
     }
 }
 
@@ -1047,11 +1090,72 @@ mod watch_ports_tests {
         }
     }
 
+    /// F4 兜底：append 按 (workspace, 日) 计数，日增越阈 warn 一次
+    /// （metric="hub_ledger_volume"），同日后续落账不重复刷；他区/他日独立。
+    #[tokio::test(flavor = "current_thread")]
+    async fn ledger_volume_warns_once_when_daily_threshold_crossed() {
+        use tracing_subscriber::fmt::MakeWriter;
+
+        /// 内存 writer：捕获 fmt 输出断言 warn 次数与 metric 字段。
+        #[derive(Clone, Default)]
+        struct LogBuf(Arc<std::sync::Mutex<Vec<u8>>>);
+
+        impl std::io::Write for LogBuf {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'a> MakeWriter<'a> for LogBuf {
+            type Writer = LogBuf;
+            fn make_writer(&self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let buf = LogBuf::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(buf.clone())
+            .with_ansi(false)
+            .finish();
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+        // set_default 守卫：current_thread runtime 全程同线程轮询，
+        // 线程本地默认订阅者覆盖整个异步块（with_default 只包闭包调用期，
+        // 不包返回 future 的轮询期，捕不到）。
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let db = fixture_db().await;
+        let adapter = HubLedgerAdapter::new(db);
+        // 预置计数到阈值前一行（不灌 10 万行——计数逻辑即被测对象）。
+        adapter
+            .daily_counts
+            .insert(("ws1".to_string(), today.clone()), HUB_LEDGER_DAILY_WARN_THRESHOLD - 1);
+
+        HubLedger::append(&adapter, "ws1", "watch_hit", Some("t1"), serde_json::json!({"v": 1}))
+            .await
+            .unwrap(); // 越阈 → warn
+        HubLedger::append(&adapter, "ws1", "watch_hit", Some("t1"), serde_json::json!({"v": 1}))
+            .await
+            .unwrap(); // 同日再越 → 不重复 warn
+        HubLedger::append(&adapter, "ws2", "watch_hit", None, serde_json::json!({"v": 1}))
+            .await
+            .unwrap(); // 他区计数独立 → 不 warn
+
+        let logs = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+        let hits = logs.matches("hub_ledger_volume").count();
+        assert_eq!(hits, 1, "越阈当日应 warn 恰好一次: {logs}");
+        assert!(logs.contains("hub_ledger 日增行数越阈"), "{logs}");
+    }
+
     /// append 后能从 db 读回（kind/thing_id/payload 落列，ts 由适配器生成）。
     #[tokio::test]
     async fn ledger_append_then_read_back() {
         let db = fixture_db().await;
-        let adapter = HubLedgerAdapter(db.clone());
+        let adapter = HubLedgerAdapter::new(db.clone());
         HubLedger::append(
             &adapter,
             "ws1",
