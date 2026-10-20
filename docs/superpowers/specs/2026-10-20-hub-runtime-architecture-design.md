@@ -427,17 +427,147 @@ run 触发（含快照注入）              DLQ 事件+指标告警
   +====================================================================+
 ```
 
+## Eng Review — Scope Record（2026-10-20，/plan-eng-review）
+
+- **目标**：本架构 spec（CEO CLEARED 版，commit fc8aac90）
+- **feature answers**：无新 cut 提案
+- **structure**：**Original arrangement**（D1）——架构 spec 保持 E1-E5 整体，实施按 E1a→d 子阶段各出实施计划；与 ai-consolidation eng D1 先例一致
+- **accepted scope**：spec 全量（CEO 批准版）
+- **pending remedies**：无
+- **Reality rows**：premise-table(unverified=0)/already-done/surface-check/binding-decisions/numbers/deferred-asks/pr-count 全 pass；tier2 transaction-semantics（新表 additive）/perf-table（无 benchmark 声明）pass；关键实测：EventBus broadcast(1000) Lagged 丢弃（event_bus.rs:39,63）、scheduler QUEUE_CAPACITY=50/MERGE_WINDOW=30s/HOURLY_WAKE_LIMIT=20（scheduler.rs:46-50）
+- **复杂度**：E1 ~15-20 文件+4 新服务类 [estimated]；触发结构门禁，D1 裁定 Original
+
+## Eng Review — Decision ledger
+
+### R1: watch 唤醒信号的调度语义（W1 从 prove-note 升级为裁定）
+Finding: [P1] (confidence: 9/10) crates/agent/src/runtime/thing_agent/scheduler.rs:46-50 — `QUEUE_CAPACITY=50`、`MERGE_WINDOW=30s`、`HOURLY_WAKE_LIMIT=20`；非 Critical 同 dedup_key 进 30s 合并窗、超预算丢弃。watch 命中若走普通通道：延迟 30s 且值守场景（N watch 频繁命中）迅速烧穿 20/h 预算。
+Plan baseline: spec 0I W1 prove-note「建议：独立 WakeSignal 变体、绕过 30s 合并窗、计入独立配额」——未裁定。
+Runtime evidence: scheduler.rs:46-50 实测常量；TriggerSource 五变体 types.rs:13；Critical 绕合并窗与节流（scheduler.rs:12-20 注释）。
+Comparison grid:
+
+| Choice | Current | A | B | C |
+|---|---|---|---|---|
+| watch 唤醒通道 | 未裁定 | 独立变体+独立配额 | 复用 Critical 通道 | 普通通道（现状语义） |
+| 30s 合并窗 | 非 Critical 合并 | 绕过 | 绕过 | 被合并（+30s 延迟） |
+| 20/h 预算 | budgeted 超即丢 | watch 独立配额不占用 | 绕过（与告警共享 Critical 豁免） | 超预算被丢 |
+| Critical 语义纯度 | Critical=告警 | 不染 | 稀释（watch≠告警） | 不染 |
+| 反射弧延迟承诺 | 秒级目标 | 成立 | 成立 | 破产（分钟级） |
+
+History: D2（2026-10-20）三选项（独立变体/复用 Critical/普通通道）被用户全部推翻，裁定方向=「30s 合并窗本身是坏设计，应改合并窗设计（配置化或其他手段），而非让 watch 绕道」——根因修复取向。D3 按此方向重做选项。
+
+State: approved
+Actual answer: D3=C（去掉合并窗）+ D4=A（同键速率限制替代）— 2026-10-20
+Accepted scope: **scheduler 废除 30s 合并窗（merger task 退役），所有信号即来即醒；防风暴语义由同 dedup_key 速率限制承接（每分钟每键 N 次，workspace 可配，超出丢弃+指标 `agent_wake_rate_limited`）**——一并清偿 TODOS P2「thing+rule 级速率闸」旧债。watch 唤醒无需特例变体（无窗可绕）。**回归面**：心跳/事件类信号失去 30s 聚合（每次上报都可能唤醒）——速率限制参数（N 默认值、是否按 trigger 类型分档）与小时预算的联动在 E1 spec 裁定；现有 scheduler 测试套件中合并窗相关用例需重写为限速语义（REGRESSION：合并窗行为保持清单项由 ai-consolidation spec 继承，本次为显式行为变更，需用户已知悉——D3/D4 即此裁定）。
+
+
+### R2: LiveState 的 EventBus Lagged 恢复语义
+Finding: [P2] (confidence: 8/10) crates/runtime/src/event_bus.rs:39,63 — `broadcast::channel(1000)`，慢订阅者在 recv 侧 Lagged 丢弃；LiveState 以 EventBus 为唯一输入（R1-3-2 裁定），滞后丢事件→派生摘要空洞。
+Plan baseline: spec §4「LiveState Lagged→health 派生标 unknown」（CEO 轮 S2 行）——只有降级，无恢复。
+Runtime evidence: data_server.rs `cache_and_publish`（R2 评审员复核 :292）先写 device_cache 再发事件——cache 始终是完整真相，可支撑全量重同步。
+Comparison grid:
+
+| Choice | Current | A | B |
+|---|---|---|---|
+| Lagged 后行为 | 未规定 | 检测 Lagged→从 device_cache 全量重同步+health 恢复 | 只标 unknown 不补 |
+| 摘要正确性 | — | 空洞自愈（秒级） | 空洞持续到下一次该设备变化 |
+| 实现成本 | — | 小（cache 是完整真相，重读即可） | 零 |
+
+State: approved
+Actual answer: D5=A（Lagged 检测+全量重同步）— 2026-10-20
+Accepted scope: LiveState 订阅 EventBus 时检测 Lagged；触发即从 device_cache 全量重同步（cache-before-publish 不变量支撑），重同步可加去抖；health 派生在空洞期标 unknown、重同步后恢复。
+
+## Eng Review — Sections 1-4（2026-10-20）
+
+### Section 1 架构
+- F1（P1，scheduler 合并窗）→ **accepted**：D3=C 去掉合并窗 + D4=A 同键速率限制替代（R1 台账）。连带收益：merger task 退役使调度器少一类机制；TODOS「thing+rule 级速率闸」旧债清偿；「Critical 队列满被丢」结转项的语义空间打开（E1 spec 一并回答）。
+- F2（P2，EventBus Lagged）→ **accepted**：D5=A Lagged 检测+全量重同步（R2 台账）。
+- 分发架构：无新 artifact（全部能力在现有 cloud binary 内）；edge 不涉及（X5 已 Defer）。
+- SPOF/回滚：CEO 轮已覆盖（关触发源开关即回滚）；本轮补充——合并窗删除是行为变更，回滚=恢复窗口常量+速率限制开关（feature flag 复用 mode 门控）。
+
+### Section 2 代码质量
+- F3（P3，ports 约束）→ **记录**（事实性补强，无行为变更）：目标表/账本持久化必须走 `crates/runtime/src/ports.rs` port trait（runtime 禁止直接 sqlx，learning runtime-db-via-ports-only）——E1 spec 写明。
+- **watch 引擎 crate 归属**（E1 spec 裁定项，记录备查）：评估器（条件词表+纯函数比较器）宜在 crates/runtime（近 EventBus/DataServer，零 sqlx）；唤醒适配器（Trigger 实现，发 WakeSignal）在 crates/agent。跨 crate 数据经 ports。
+- catalog 单一事实源消债（CEO 轮已录，E2 顺手做）。
+
+### Section 3 测试
+框架：Rust `cargo test`（workspace）+ web `vitest`（124 个测试文件现存）。
+
+覆盖图（新增路径）：
+
+```
+CODE PATHS                                              USER FLOWS
+[+] watch 评估器（runtime, 纯函数）                      [+] 运维设目标→值守
+  ├── 条件词表注册/比较器  [GAP→表驱动单测]                 ├── [GAP→E2E] 设目标→越限→提案出现（E1 退出标准）
+  ├── 字段路径解析          [GAP→单测含非法路径]             └── [GAP→E2E] 重启后 watch 网重织（E1c 退出标准）
+  └── one-shot/超时语义    [GAP→单测]                      [+] watch 命中→「需要你」推送（D6 TODOS 已录）
+[+] LiveState                                            [+] 告警 flapping（回归面）
+  ├── Lagged 检测+重同步   [GAP→集成测试（D5 批准）]         └── [CRITICAL→REGRESSION] 合并窗删除后限速语义
+  └── health/zone 派生     [GAP→单测]                          （D3/D4 批准范围：scheduler 合并窗用例重写为限速用例；
+[+] scheduler 限速器                                         保留行为=60s 指令去重/小时预算/Critical 绕过/队列容量）
+  ├── 同键 N/min 计数      [GAP→单测+边界]                 [+] LLM 链路
+  └── 配额耗尽丢弃+指标    [GAP→单测]                        ├── [GAP→EVAL] 快照注入 prompt 变更→evals/ 场景库+基线
+[+] 仲裁（单资源退化形态）  [GAP→集成：并发 busy 带持有者]     └── [GAP→EVAL] 目标→watch 编译输出 schema→evals/ 用例
+[+] 快照装配               [GAP→单测（预算超限截断）+不得炸 run]
+```
+
+**LLM/eval scope**：快照注入（E2）与目标编译（E1c）触及 prompt——evals/scenarios.json 需加快照注入基线用例与目标编译合法/非法输出用例，对比基线=现四段式 prompt 的现有场景。
+
+**Tests made obsolete by this plan**（提案，实现期走 /test-audit 退休卡）：scheduler 合并窗相关用例（merger task 测试）——语义被限速器替代，重写非删除。
+
+### Section 4 性能
+- F4（P3，账本写放大）→ **pending**（E1 spec 裁定数值框架：每物每分钟状态变更落账上限+去抖；owner=E1 spec 作者）。
+- watch 评估热路径：按字段倒排索引（spec 已录），评估复杂度 O(命中字段的 watch 数) [estimated]。
+- LiveState 内存：设备数×状态大小，moka 10k 容量先例；Lagged 重同步去抖（D5 范围）。
+- 无 N+1 新风险（LiveState 内存读；快照装配一次/turn）。
+
+### Suppressed findings
+无（所有发现 ≥5/10 置信均已在主报告）。
+
+## Eng Review — Implementation Tasks
+
+- [ ] **T1 (P1, human: ~1w / CC: ~1d)** — E1 — E1 值守中枢子 spec：并入本轮裁定（合并窗废除+同键限速器、Lagged 全量重同步、仲裁 TTL、重织）+ F4 账本数值框架 + watch crate 归属（评估器 runtime / 适配器 agent）
+  - Surfaced by: R1/R2 台账 + F3/F4
+  - Files: to be determined（新建 docs/superpowers/specs/2026-XX-XX-e1-watch-hub-design.md）
+  - Verify: eng 复审收敛 F4；spec 对抗评审 PASS
+- [ ] **T2 (P2, human: ~1d / CC: ~1h)** — scheduler — 合并窗删除+限速器的回归测试重写（保留行为：60s 指令去重/小时预算/Critical 绕过/队列容量 50；merger 用例走退休卡）
+  - Surfaced by: Section 3 REGRESSION（D3/D4 批准范围）
+  - Files: crates/agent/src/runtime/thing_agent/scheduler.rs（测试）
+  - Verify: `cargo test -p tinyiothub_agent scheduler`
+- [ ] **T3 (P2, human: ~0.5d / CC: ~30min)** — evals — 快照注入+目标编译的 evals 场景用例与基线
+  - Surfaced by: Section 3 LLM/eval scope
+  - Files: evals/scenarios.json
+  - Verify: eval 跑通且基线对比在案
+
+## Eng Review — Completion summary
+
+- Step 0: Scope Challenge — scope accepted as-is（structure: Original arrangement，D1）
+- Reality rows: 7/7 tier-1 + 2 tier-2 emitted（全 pass），0 unverified premises
+- Architecture Review: 2 issues found（F1/F2，均裁定落地）
+- Code Quality Review: 1 recorded（F3 ports 约束，事实性）
+- Test Review: diagram produced，gaps 已转化为 E1 退出标准/回归契约/eval 范围
+- Performance Review: 1 issue（F4 pending→E1 spec）
+- NOT in scope: written（CEO 节）
+- What already exists: written（CEO 节）
+- TODOS.md updates: 0 new（本轮无新候选）
+- Failure modes: 0 critical gaps
+- Unresolved decisions: 1（F4 账本写放大数值框架，owner=E1 spec）
+- Outside voice: codex unavailable + native 报告丢失；no coverage
+- Parallelization: Sequential implementation, no parallelization opportunity.（E1a→d 严格串行，子阶段共享 scheduler/runtime 模块）
+- Lake Score: N/A（无 coverage 计分题）
+- Test Plan Artifact: ~/.gstack/projects/Grong-tinyiothub/chenguorong-ai-consolidation-eng-review-test-plan-20261020-204046.md
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 2 | CLEAR | 7 proposals, 6 accepted, 1 deferred |
-| Outside Review | codex (auto) | Independent 2nd opinion | 9 | unavailable | CODEX_MODEL invalid（custom endpoint 未配 frontier 模型；修复：`gstack-config set model_frontier_openai <id>`）；native fallback 完成但报告丢失（已知问题）——无可计覆盖 |
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 5 | CLEAR (PLAN) | 2026-10-19 园区物轮，与本文档不同对象；**本架构 spec 需新一轮 eng review** |
-| Design Review | `/plan-design-review` | UI/UX gaps | 2 | CLEAR | 2026-10-12 AI 中心轮；E3 工作台实现前需新一轮 |
+| Outside Review | codex (auto) | Independent 2nd opinion | 10 | unavailable | CODEX_MODEL invalid（修复：`gstack-config set model_frontier_openai <id>`）；native fallback 报告内容丢失（本日 4 次复现）——无可计覆盖 |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 6 | ISSUES OPEN | 4 issues, 0 critical gaps（F1/F2 裁定落地，F3 记录，F4 递延 E1 spec） |
+| Design Review | `/plan-design-review` | UI/UX gaps | 2 | CLEAR | 2026-10-12 AI 中心轮（旧对象）；E3 工作台实现前需新一轮 |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
 
-- **OUTSIDE COVERAGE:** codex, plan-review phase, **unavailable**——CODEX_MODEL invalid；native fallback 完成但最终消息只剩 "Complete."（报告内容丢失，已知问题第三次复现）。无可计外部覆盖。
-- **VERDICT:** CEO CLEARED（两轮对抗 spec 评审 6/10→8/10，17 条全修；11 节评审 0 critical gap）；**eng review required**（E1 子 spec 编写后）。
+- **OUTSIDE COVERAGE:** codex, plan-review phase, **unavailable**——CODEX_MODEL invalid；native fallback（Plan subagent）完成但最终消息只剩 "Complete."，报告内容丢失。无可计外部覆盖。
+- **VERDICT:** CEO CLEARED；ENG 本轮 4 issues 中 3 裁定落地（合并窗废除+限速器、Lagged 重同步、ports 约束）、1 递延 E1 spec（F4）——**E1 子 spec 完成后 eng 复审收敛 F4 方可实施**。
 
-NO UNRESOLVED DECISIONS
+**UNRESOLVED DECISIONS:**
+- F4：账本写放大的数值框架（每物每分钟状态变更落账上限+去抖）——owner=E1 spec 作者（T1）
