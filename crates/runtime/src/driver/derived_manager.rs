@@ -161,9 +161,18 @@ impl DerivedDriverManager {
     /// 引擎生命周期 = 有 owner 即跑、无 owner 即停（全 workspace 单订阅）。
     /// subscribe 在 spawn 前同步完成（E5）：本函数返回即订阅已建立，调用方
     /// 可凭 `subscriber_count` 确认，禁裸 sleep。
+    ///
+    /// 竞态防护（X4 复审 Important）：owners 快照与 spawn/abort 决策必须在同一
+    /// 临界区——`engine.write()` 持锁期间重读 owners，消除"读快照 → 拿决策锁"
+    /// 窗口（并发 notify 曾可产出两种错误终态：A 已登记但引擎被误停 / 零 owner
+    /// 但孤儿订阅存活）。正确性依据：owners 的变更恒先于其对应 sync_engine 调用
+    /// （notify_* 内顺序），决策经 engine 写锁串行化后到者必见最新 owners。
+    /// 锁序恒为 engine → owners；引擎订阅任务只读 owners/index/status、从不取
+    /// engine 锁，notify_* 写 owners 时不持 engine 锁——不构成锁序环
+    /// （parking_lot RwLock 读套写非升级路径，无死锁）。
     fn sync_engine(&self) {
-        let should_run = !self.owners.read().is_empty();
         let mut engine = self.engine.write();
+        let should_run = !self.owners.read().is_empty();
         match (should_run, engine.is_some()) {
             (true, false) => *engine = Some(self.spawn_engine()),
             (false, true) => {
