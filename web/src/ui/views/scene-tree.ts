@@ -100,6 +100,11 @@ export interface SceneTreeHost {
   onTreePendingDriver(id: string, driver: string | null): void;
   /** 在该节点下渲染行内「添加设备」表单（未打开时返回 nothing/null） */
   renderAddDeviceForm?(keyPath: string[]): unknown;
+  /**
+   * Task 9 拖拽换父：合法落点松手时回调（dragId, newParentId）。
+   * 提供即启用 HTML5 原生拖拽；拖到自身/后代由组件实时红框 + 提示拒绝（不回调、不落库）。
+   */
+  onTreeReparent?(dragId: string, newParentId: string): void;
 }
 
 // ──────────────────────────────────────────────
@@ -364,6 +369,99 @@ export function pendingNodeTotal(pending: PendingNode[]): number {
 }
 
 // ──────────────────────────────────────────────
+// 拖拽换父（Task 9，D12）：纯函数层
+// ──────────────────────────────────────────────
+
+/** 按 id 深度优先查找节点。 */
+export function findTreeNode(nodes: SceneTreeNode[], id: string): SceneTreeNode | null {
+  for (const n of nodes) {
+    if (n.id === id) return n;
+    const hit = findTreeNode(n.children, id);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** targetId 是否为 drag 子树内的节点（含 drag 自身）——前端祖先链成环判定。 */
+export function isDescendantOrSelf(drag: SceneTreeNode, targetId: string): boolean {
+  if (drag.id === targetId) return true;
+  return drag.children.some((c) => isDescendantOrSelf(c, targetId));
+}
+
+function removeTreeNode(
+  nodes: SceneTreeNode[],
+  id: string,
+): { nodes: SceneTreeNode[]; removed: SceneTreeNode | null } {
+  const idx = nodes.findIndex((n) => n.id === id);
+  if (idx >= 0) {
+    return { nodes: [...nodes.slice(0, idx), ...nodes.slice(idx + 1)], removed: nodes[idx] };
+  }
+  let removed: SceneTreeNode | null = null;
+  const out = nodes.map((n) => {
+    if (removed) return n;
+    const r = removeTreeNode(n.children, id);
+    if (!r.removed) return n;
+    removed = r.removed;
+    return { ...n, children: r.nodes };
+  });
+  return { nodes: out, removed };
+}
+
+function appendTreeNode(nodes: SceneTreeNode[], parentId: string, child: SceneTreeNode): SceneTreeNode[] {
+  return nodes.map((n) =>
+    n.id === parentId
+      ? { ...n, children: [...n.children, child] }
+      : { ...n, children: appendTreeNode(n.children, parentId, child) },
+  );
+}
+
+/**
+ * 本地换父（不可变：仅返回新森林，不改写原树）。
+ * 自身/后代落点或未找到节点 → null（调用方视为非法，原树不动）。
+ */
+export function moveTreeNode(
+  nodes: SceneTreeNode[],
+  dragId: string,
+  newParentId: string,
+): SceneTreeNode[] | null {
+  const drag = findTreeNode(nodes, dragId);
+  if (!drag || isDescendantOrSelf(drag, newParentId)) return null;
+  if (!findTreeNode(nodes, newParentId)) return null;
+  const r = removeTreeNode(nodes, dragId);
+  if (!r.removed) return null;
+  return appendTreeNode(r.nodes, newParentId, r.removed);
+}
+
+export interface ReparentTreeDeps {
+  /** PUT parent_id（换父 API 调用） */
+  updateParent(id: string, parentId: string): Promise<unknown>;
+  /** 失败提示（toast） */
+  onError(message: string): void;
+}
+
+/**
+ * 换父编排（Task 9）：成环（自身/后代落点）→ 不调 API 原样返回；
+ * 合法落点 → 先调 API，成功返回局部移动后的新树（局部刷新），
+ * 失败 onError(toast) + 返回原树（回滚原位）。
+ */
+export async function reparentTreeNode(
+  nodes: SceneTreeNode[],
+  dragId: string,
+  newParentId: string,
+  deps: ReparentTreeDeps,
+): Promise<SceneTreeNode[]> {
+  const moved = moveTreeNode(nodes, dragId, newParentId);
+  if (!moved) return nodes;
+  try {
+    await deps.updateParent(dragId, newParentId);
+  } catch (e) {
+    deps.onError(e instanceof Error ? e.message : String(e));
+    return nodes;
+  }
+  return moved;
+}
+
+// ──────────────────────────────────────────────
 // 渲染
 // ──────────────────────────────────────────────
 
@@ -372,6 +470,35 @@ const DRIVER_LABELS: Record<TreeDriver, string> = {
   physical: "物理",
   none: "无",
 };
+
+// ── 拖拽换父（Task 9，D12）：DOM 交互层 ──
+// 拖拽态挂在 .st-tree 容器上（WeakMap，多树并存安全；dragover 跨重渲染仍可读）
+
+const DROP_BAD_HINT = "不能移动到自身或其子节点";
+
+interface TreeDragState {
+  dragId: string;
+  /** 拖拽子树全部 id（含自身）——落点命中即成环 */
+  subtreeIds: Set<string>;
+}
+
+const treeDragState = new WeakMap<Element, TreeDragState>();
+
+function collectSubtreeIds(node: SceneTreeNode, out: Set<string>): Set<string> {
+  out.add(node.id);
+  for (const c of node.children) collectSubtreeIds(c, out);
+  return out;
+}
+
+function clearDropMarks(tree: Element) {
+  for (const r of tree.querySelectorAll<HTMLElement>(".st-drop-ok, .st-drop-bad")) {
+    r.classList.remove("st-drop-ok", "st-drop-bad");
+    r.style.outline = "";
+    r.title = "";
+  }
+  const hint = tree.querySelector<HTMLElement>(".st-drop-hint");
+  if (hint) hint.style.display = "none";
+}
 
 export interface RenderSceneTreeOpts {
   editable?: boolean;
@@ -385,7 +512,13 @@ export function renderSceneTree(
   opts: RenderSceneTreeOpts = {},
 ): TemplateResult | typeof nothing {
   if (!nodes.length) return nothing;
-  return html`<div class="st-tree" role="tree">${nodes.map((n) => renderNode(host, n, 0, opts))}</div>`;
+  const dnd = opts.editable !== false && !!host.onTreeReparent;
+  return html`<div class="st-tree" role="tree">
+    ${dnd
+      ? html`<div class="st-drop-hint" role="status" style="display: none; color: var(--danger, #dc2626); font-size: 12px; padding: 2px 0;"></div>`
+      : nothing}
+    ${nodes.map((n) => renderNode(host, n, 0, opts))}
+  </div>`;
 }
 
 function renderNode(
@@ -395,6 +528,67 @@ function renderNode(
   opts: RenderSceneTreeOpts,
 ): TemplateResult {
   const editable = opts.editable !== false;
+  const dnd = editable && !!host.onTreeReparent;
+
+  // ── 拖拽换父（Task 9）：HTML5 原生 DnD；dataTransfer 一律可选链访问（jsdom 无实现）
+  const treeOf = (row: HTMLElement) => row.closest(".st-tree");
+  const onDragStart = (e: DragEvent) => {
+    const tree = treeOf(e.currentTarget as HTMLElement);
+    if (!tree) return;
+    treeDragState.set(tree, { dragId: node.id, subtreeIds: collectSubtreeIds(node, new Set()) });
+    if (e.dataTransfer) {
+      e.dataTransfer.setData("text/plain", node.id);
+      e.dataTransfer.effectAllowed = "move";
+    }
+  };
+  const onDragOver = (e: DragEvent) => {
+    const row = e.currentTarget as HTMLElement;
+    const tree = treeOf(row);
+    const st = tree && treeDragState.get(tree);
+    if (!tree || !st) return;
+    const bad = st.subtreeIds.has(node.id);
+    row.classList.toggle("st-drop-bad", bad);
+    row.classList.toggle("st-drop-ok", !bad);
+    row.style.outline = bad ? "2px solid var(--danger, #dc2626)" : "2px solid var(--accent, #2563eb)";
+    const hint = tree.querySelector<HTMLElement>(".st-drop-hint");
+    if (bad) {
+      // 非法落点（自身/后代）：不 preventDefault → 原生 drop 不触发；红框 + 提示拒绝
+      row.title = DROP_BAD_HINT;
+      if (hint) {
+        hint.textContent = DROP_BAD_HINT;
+        hint.style.display = "";
+      }
+    } else {
+      e.preventDefault(); // 合法落点：允许 drop
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      row.title = "";
+      if (hint) hint.style.display = "none";
+    }
+  };
+  const onDragLeave = (e: DragEvent) => {
+    const row = e.currentTarget as HTMLElement;
+    row.classList.remove("st-drop-ok", "st-drop-bad");
+    row.style.outline = "";
+    row.title = "";
+  };
+  const onDrop = (e: DragEvent) => {
+    const row = e.currentTarget as HTMLElement;
+    const tree = treeOf(row);
+    const st = tree && treeDragState.get(tree);
+    if (!tree || !st) return;
+    e.preventDefault();
+    const bad = st.subtreeIds.has(node.id);
+    clearDropMarks(tree);
+    treeDragState.delete(tree);
+    if (!bad) host.onTreeReparent!(st.dragId, node.id);
+  };
+  const onDragEnd = (e: DragEvent) => {
+    const tree = treeOf(e.currentTarget as HTMLElement);
+    if (!tree) return;
+    clearDropMarks(tree);
+    treeDragState.delete(tree);
+  };
+
   return html`
     <div
       class="st-node ${node.pending ? "st-node--pending" : ""}"
@@ -404,7 +598,14 @@ function renderNode(
         ? "border-style: dashed; border-width: 1px; border-color: var(--border); border-radius: var(--radius-sm, 6px); margin: 2px 0; padding: 2px 4px;"
         : ""}
     >
-      <div class="st-row" style="display: flex; align-items: center; gap: var(--space-2, 8px); flex-wrap: wrap; padding: 2px 0; padding-left: ${depth * 16}px;">
+      <div class="st-row" style="display: flex; align-items: center; gap: var(--space-2, 8px); flex-wrap: wrap; padding: 2px 0; padding-left: ${depth * 16}px;"
+        draggable=${dnd ? "true" : nothing}
+        @dragstart=${dnd ? onDragStart : nothing}
+        @dragover=${dnd ? onDragOver : nothing}
+        @dragleave=${dnd ? onDragLeave : nothing}
+        @drop=${dnd ? onDrop : nothing}
+        @dragend=${dnd ? onDragEnd : nothing}
+      >
         <span class="st-name" style=${depth === 0 ? "font-weight: 600;" : ""}>${node.name}</span>
         ${node.category ? html`<span class="mp-type-badge">${node.category}</span>` : nothing}
         ${typeof node.propertyCount === "number"

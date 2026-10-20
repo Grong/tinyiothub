@@ -32,6 +32,12 @@ import type { Thing, ThingProfile, DriverConfigOption, Tag } from "../../types/i
 import type { AlarmRule, AlarmLevel, RuleType, AlarmCondition, ComparisonOperator, ChangeType, LogicalOperator, NotificationChannelType, CreateAlarmRuleRequest, UpdateAlarmRuleRequest } from "../../types/index.js";
 import { success, error as toastError, warn } from "../components/toast.js";
 import { icons } from "../icons.js";
+import {
+  renderSceneTree,
+  reparentTreeNode,
+  type SceneTreeHost,
+  type SceneTreeNode,
+} from "./scene-tree.js";
 import "./gateway-pairing.js";
 
 // Template with parsed JSON fields (backend returns JSON-as-string)
@@ -103,6 +109,42 @@ export function getLocalizedText(obj: Record<string, string> | undefined, fallba
   return obj["en"] || obj["zh"] || Object.values(obj)[0] || fallback;
 }
 
+/**
+ * 物列表平铺数据 → 交互树森林（Task 9）。
+ * keyPath = 根到自身的 thing id 路径（「+」回调末位即该节点 id，向导预填用）；
+ * parentId 悬空（父不在本批/已删）按根处理，不丢节点。
+ */
+export function buildThingForest(items: Thing[]): SceneTreeNode[] {
+  const byId = new Map<string, SceneTreeNode>();
+  for (const t of items) {
+    byId.set(t.id, {
+      id: t.id,
+      name: t.displayName || t.name,
+      category: t.category || "",
+      children: [],
+      keyPath: null,
+      mountBlocked: null,
+      propertyCount: null,
+      isDevice: false, // 物树中任意节点都可挂子节点（「+」入口）
+      countParam: null,
+      driver: null,
+    });
+  }
+  const roots: SceneTreeNode[] = [];
+  for (const t of items) {
+    const node = byId.get(t.id)!;
+    const parent = t.parentId ? byId.get(t.parentId) : undefined;
+    if (parent) parent.children.push(node);
+    else roots.push(node);
+  }
+  const assignPath = (node: SceneTreeNode, base: string[]) => {
+    node.keyPath = [...base, node.id];
+    for (const c of node.children) assignPath(c, node.keyPath);
+  };
+  for (const r of roots) assignPath(r, []);
+  return roots;
+}
+
 export const CATEGORY_LABELS: Record<string, string> = {
   sensors: "传感器",
   controllers: "控制器",
@@ -155,7 +197,7 @@ export const CATEGORY_ICONS: Record<string, ReturnType<typeof html>> = {
   `,
 };
 
-type ViewMode = "table" | "grid";
+type ViewMode = "table" | "grid" | "tree";
 
 @customElement("view-things")
 export class DevicesView extends SignalWatcher(LitElement) {
@@ -186,6 +228,17 @@ export class DevicesView extends SignalWatcher(LitElement) {
   // View mode
 
   @state() viewMode: ViewMode = "grid";
+
+  // 树视图（Task 9，D12：拖拽换父 + 树上「+」新增设备）
+
+  @state() treeNodes: SceneTreeNode[] = [];
+
+  @state() treeLoading = false;
+
+  @state() treeError = "";
+
+  /** 树上「+」入口的建物向导 parent_id 预填（null = 无父） */
+  @state() wizParentId: string | null = null;
 
 
   // Filters
@@ -473,7 +526,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
     // SSE 推送时刷新当前分页数据
     this._boundHandleDeviceUpdated = () => {
       if (!this.selectedDevice) {
-        this.loadDevices();
+        if (this.viewMode === "tree") void this.loadThingTree();
+        else this.loadDevices();
       }
     };
     document.addEventListener("thing-updated", this._boundHandleDeviceUpdated);
@@ -529,6 +583,47 @@ export class DevicesView extends SignalWatcher(LitElement) {
     } finally {
       this.loading = false;
     }
+  }
+
+
+  // ── 树视图（Task 9，D12：拖拽换父 + 树上「+」新增设备）──────────────
+
+  /** 物列表全量拉取（树视图不分页；pageSize 500 与后端列表上限同量级） */
+  async loadThingTree() {
+    this.treeLoading = true;
+    this.treeError = "";
+    try {
+      const res = await thingApi.list({ page: "1", pageSize: "500" });
+      const items: Thing[] = (res.result as any)?.items || [];
+      this.treeNodes = buildThingForest(items);
+    } catch (err: any) {
+      this.treeError = err.message || "加载物树失败";
+      this.treeNodes = [];
+    } finally {
+      this.treeLoading = false;
+    }
+  }
+
+  /** 交互树宿主适配：「+」→ 向导预填 parent_id；合法落点 → 换父编排 */
+  private thingTreeHost: SceneTreeHost = {
+    onTreeParamStep: () => {},
+    onTreeAddDevice: (keyPath) => {
+      const pid = keyPath[keyPath.length - 1];
+      if (pid) this.openWizard(pid);
+    },
+    onTreeRemovePending: () => {},
+    onTreePendingDriver: () => {},
+    onTreeReparent: (dragId, newParentId) => {
+      void this.reparentThing(dragId, newParentId);
+    },
+  };
+
+  /** 换父：PUT parent_id；成功局部刷新，失败 toast + 树回滚原位（reparentTreeNode 语义） */
+  async reparentThing(dragId: string, newParentId: string) {
+    this.treeNodes = await reparentTreeNode(this.treeNodes, dragId, newParentId, {
+      updateParent: (id, pid) => thingApi.update(id, { parentId: pid }),
+      onError: (m) => toastError(`移动失败：${m}`),
+    });
   }
 
 
@@ -1441,7 +1536,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   // === Wizard (2-step template-based) ===
 
 
-  openWizard() {
+  openWizard(parentId?: string | Event) {
     this.wizardLastFocus = document.activeElement ?? undefined;
     this.wizardStep = "template";
     this.wizSelectedTemplate = null;
@@ -1457,6 +1552,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.wizardSaving = false;
     this.wizUnassignedResources = [];
     this.wizSelectedResourceIds = new Set();
+    // 树上「+」入口预填父节点；工具栏按钮走 click（Event 入参）不预填
+    this.wizParentId = typeof parentId === "string" && parentId ? parentId : null;
     this.showWizard = true;
     this.loadTemplates();
     this.loadUnassignedResources();
@@ -1636,6 +1733,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
         driverOptions: Object.keys(finalDriverConfig).length > 0 ? JSON.stringify(finalDriverConfig) : undefined,
         propertyValues: {},
         enabledCommands: this.wizSelectedTemplate.commands?.map((c: any) => c.name) || [],
+        // 树上「+」入口预填的父节点（Task 9）
+        parentId: this.wizParentId || undefined,
       };
 
       const res = await thingApi.createFromTemplate({
@@ -1656,7 +1755,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
       success("物创建成功");
       this.closeWizard();
-      await this.loadDevices();
+      // 树上「+」建物后树局部刷新（Task 9）
+      if (this.viewMode === "tree") await this.loadThingTree();
+      else await this.loadDevices();
     } catch (err: any) {
       toastError(err.message || "物创建失败");
     } finally {
@@ -1734,6 +1835,11 @@ export class DevicesView extends SignalWatcher(LitElement) {
             @click=${() => { this.viewMode = "grid"; }}
             title="卡片视图"
           >&#9638;</button>
+          <button
+            class="btn btn--ghost btn--sm view-toggle__btn ${this.viewMode === 'tree' ? 'view-toggle__btn--active' : ''}"
+            @click=${() => { this.viewMode = "tree"; void this.loadThingTree(); }}
+            title="树视图"
+          >🌲</button>
         </div>
         <button class="btn btn--primary" @click=${this.openWizard}>新建物</button>
         <button class="btn btn--outline" @click=${() => { this.showPairingDialog = true; }}>${t("gatewayPairing.addGateway")}</button>
@@ -1747,9 +1853,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
       <div class="device-list">
         ${this.renderToolbar()}
         <div class="device-list__content">
-          ${this.viewMode === "table" ? this.renderTableView() : this.renderGridView()}
+          ${this.viewMode === "tree" ? this.renderTreeView() : this.viewMode === "table" ? this.renderTableView() : this.renderGridView()}
         </div>
-        ${this.renderPagination()}
+        ${this.viewMode === "tree" ? nothing : this.renderPagination()}
         ${this.showModal ? this.renderModal() : nothing}
         ${this.showWizard ? this.renderWizard() : nothing}
         ${this.showPairingDialog
@@ -1800,6 +1906,26 @@ export class DevicesView extends SignalWatcher(LitElement) {
         <span class="pagination__meta">${this.page} / ${this.totalPages}</span>
       </div>
     `;
+  }
+
+
+  /** 树视图（Task 9，D12）：拖拽换父 + 节点「+」新增设备（向导预填 parent_id） */
+  renderTreeView() {
+    if (this.treeLoading) {
+      return html`<div class="page-loading"><span class="loading-spinner"></span><span>加载物树中...</span></div>`;
+    }
+    if (this.treeError) {
+      return html`<div class="page-error">
+        <div class="page-error__message">${this.treeError}</div>
+        <button class="btn btn--primary" @click=${() => this.loadThingTree()}>重试</button>
+      </div>`;
+    }
+    if (!this.treeNodes.length) {
+      return html`<div class="empty-hint--sm">暂无物，点击「新建物」创建根节点</div>`;
+    }
+    return html`<div class="card" style="padding: var(--space-3, 12px);">
+      ${renderSceneTree(this.thingTreeHost, this.treeNodes, { editable: true })}
+    </div>`;
   }
 
 

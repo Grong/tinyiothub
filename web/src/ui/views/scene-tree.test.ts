@@ -13,13 +13,19 @@ import { render } from "lit";
 import {
   buildExtraNodesPayload,
   buildSceneTree,
+  findTreeNode,
+  isDescendantOrSelf,
   parseTreePreview,
   renderSceneTree,
+  reparentTreeNode,
   type PendingNode,
   type SceneStructRoot,
   type SceneTreeHost,
   type SceneTreeNode,
 } from "./scene-tree.js";
+
+// toast 仅作物视图（用例4）导入链的副作用隔离
+vi.mock("../components/toast.js", () => ({ success: vi.fn(), error: vi.fn(), warn: vi.fn(), info: vi.fn() }));
 
 const mounted: HTMLElement[] = [];
 beforeEach(() => vi.clearAllMocks());
@@ -334,5 +340,164 @@ describe("用例4：提交 payload 组装", () => {
       { templateId: "meter", parentPath: ["building"], name: "电表", count: 3, driverName: "simulator" },
       { templateId: "water", parentPath: [], name: "水表", count: 1, driverName: null },
     ]);
+  });
+});
+
+// ──────────────────────────────────────────────
+// Task 9：拖拽换父 + 树上新增设备（D12 落地）
+// ──────────────────────────────────────────────
+
+/** 物树节点（keyPath = 根到自身的 thing id 路径，末位=自身 id） */
+function thingNode(id: string, children: SceneTreeNode[] = [], path: string[] = [id]): SceneTreeNode {
+  return {
+    id,
+    name: id,
+    category: "thing",
+    children,
+    keyPath: path,
+    mountBlocked: null,
+    propertyCount: null,
+    isDevice: false,
+    countParam: null,
+    driver: null,
+  };
+}
+
+/** A ─ B ─ C；D（B 的路径 ["A","B"]，C 的路径 ["A","B","C"]） */
+function thingForest(): SceneTreeNode[] {
+  return [
+    thingNode("A", [thingNode("B", [thingNode("C", [], ["A", "B", "C"])], ["A", "B"])]),
+    thingNode("D"),
+  ];
+}
+
+function rowOf(el: HTMLElement, id: string): HTMLElement {
+  const row = el.querySelector(`[data-node-id="${id}"] > .st-row`);
+  expect(row, `节点 ${id} 的行`).not.toBeNull();
+  return row as HTMLElement;
+}
+
+/**
+ * jsdom 无 DragEvent/DataTransfer 实现（组件侧对 dataTransfer 一律可选链访问，
+ * 仅真实浏览器需要 setData 才能触发原生 drop），故用原生 Event + 最小 stub。
+ */
+function dndEvent(type: string): Event {
+  const e = new Event(type, { bubbles: true, cancelable: true });
+  (e as unknown as { dataTransfer: unknown }).dataTransfer = {
+    setData: () => {},
+    effectAllowed: "",
+    dropEffect: "",
+  };
+  return e;
+}
+
+describe("Task 9：拖拽换父（D12）", () => {
+  it("用例1：拖到自身/后代 → 红框 class + 拒绝提示，不发请求", () => {
+    const host = hostStub({ onTreeReparent: vi.fn() });
+    const el = mount(host, thingForest());
+    const rowA = rowOf(el, "A");
+    const rowC = rowOf(el, "C");
+    // 拖 A
+    rowA.dispatchEvent(dndEvent("dragstart"));
+    expect(rowA.getAttribute("draggable")).toBe("true");
+    // 落到自身 → 红框
+    rowA.dispatchEvent(dndEvent("dragover"));
+    expect(rowA.classList.contains("st-drop-bad")).toBe(true);
+    // 落到后代 C → 红框 + 提示
+    rowC.dispatchEvent(dndEvent("dragover"));
+    expect(rowC.classList.contains("st-drop-bad")).toBe(true);
+    const hint = el.querySelector(".st-drop-hint") as HTMLElement;
+    expect(hint).not.toBeNull();
+    expect(hint.style.display).not.toBe("none");
+    expect(hint.textContent).toContain("不能移动");
+    // 非法落点 drop → 不回调（不落库）
+    rowC.dispatchEvent(dndEvent("drop"));
+    expect(host.onTreeReparent).not.toHaveBeenCalled();
+    // dragend 后清理
+    rowA.dispatchEvent(dndEvent("dragend"));
+    expect(rowA.classList.contains("st-drop-bad")).toBe(false);
+    expect((el.querySelector(".st-drop-hint") as HTMLElement).style.display).toBe("none");
+  });
+
+  it("用例2：合法落点 drop → 调 PUT parent_id，树局部刷新", async () => {
+    const onTreeReparent = vi.fn();
+    const host = hostStub({ onTreeReparent });
+    const forest = thingForest();
+    const el = mount(host, forest);
+    const rowC = rowOf(el, "C");
+    const rowD = rowOf(el, "D");
+    // 拖 C 到 D（非自身/后代）→ 合法落点标记，drop 触发回调
+    rowC.dispatchEvent(dndEvent("dragstart"));
+    rowD.dispatchEvent(dndEvent("dragover"));
+    expect(rowD.classList.contains("st-drop-ok")).toBe(true);
+    expect(rowD.classList.contains("st-drop-bad")).toBe(false);
+    rowD.dispatchEvent(dndEvent("drop"));
+    expect(onTreeReparent).toHaveBeenCalledWith("C", "D");
+    // 编排层：调 PUT（updateParent stub）+ 返回局部移动后的新树
+    const updateParent = vi.fn().mockResolvedValue({});
+    const next = await reparentTreeNode(forest, "C", "D", { updateParent, onError: vi.fn() });
+    expect(updateParent).toHaveBeenCalledWith("C", "D");
+    expect(findTreeNode(next, "D")!.children.map((n) => n.id)).toEqual(["C"]);
+    expect(findTreeNode(next, "B")!.children).toHaveLength(0);
+    // 原树不被改写（不可变局部刷新）
+    expect(findTreeNode(forest, "B")!.children).toHaveLength(1);
+  });
+
+  it("用例3：PUT 失败 → toast + 树回滚原位置", async () => {
+    const forest = thingForest();
+    const onError = vi.fn();
+    const updateParent = vi.fn().mockRejectedValue(new Error("网络错误"));
+    const next = await reparentTreeNode(forest, "B", "D", { updateParent, onError });
+    expect(onError).toHaveBeenCalledWith(expect.stringContaining("网络错误"));
+    // 回滚：返回原树（位置不变，引用同原）
+    expect(next).toBe(forest);
+    expect(findTreeNode(next, "A")!.children.map((n) => n.id)).toEqual(["B"]);
+    expect(findTreeNode(next, "D")!.children).toHaveLength(0);
+  });
+
+  it("编排层成环兜底：目标为自身/后代时 reparentTreeNode 不调 API 原样返回", async () => {
+    const forest = thingForest();
+    const updateParent = vi.fn();
+    expect(isDescendantOrSelf(findTreeNode(forest, "A")!, "C")).toBe(true);
+    expect(isDescendantOrSelf(findTreeNode(forest, "A")!, "A")).toBe(true);
+    expect(isDescendantOrSelf(findTreeNode(forest, "A")!, "D")).toBe(false);
+    const next = await reparentTreeNode(forest, "A", "C", { updateParent, onError: vi.fn() });
+    expect(updateParent).not.toHaveBeenCalled();
+    expect(next).toBe(forest);
+  });
+
+  it("用例4：节点「+」→ 打开建物向导且 parent_id 预填为该节点", async () => {
+    // 树侧：「+」回调带出该节点的 id 路径（末位 = 该节点 thing id）
+    const host = hostStub();
+    const el = mount(host, thingForest());
+    const addBtn = rowOf(el, "B").querySelector(".st-add-device") as HTMLButtonElement;
+    expect(addBtn).not.toBeNull();
+    addBtn.click();
+    expect(host.onTreeAddDevice).toHaveBeenCalledWith(["A", "B"]);
+
+    // 视图侧：openWizard(parentId) 预填，提交载荷带 parentId
+    const { DevicesView } = await import("./things.js");
+    const { thingApi } = await import("../../api/things.js");
+    const view = new DevicesView();
+    view.openWizard("thing-B");
+    expect(view.wizParentId).toBe("thing-B");
+    // 工具栏「新建物」走 click（Event 入参）→ 不预填
+    view.openWizard(new MouseEvent("click"));
+    expect(view.wizParentId).toBeNull();
+
+    const createSpy = vi
+      .spyOn(thingApi, "createFromTemplate")
+      .mockResolvedValue({ code: 0, result: { id: "new-1" } } as never);
+    vi.spyOn(thingApi, "list").mockResolvedValue({ code: 0, result: { items: [], total: 0 } } as never);
+    view.openWizard("thing-B");
+    view.wizSelectedTemplate = { id: "tpl-1", name: "电表", deviceInfo: {}, commands: [] } as never;
+    view.wizName = "子电表";
+    await view.submitWizard();
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        templateId: "tpl-1",
+        input: expect.objectContaining({ parentId: "thing-B" }),
+      }),
+    );
   });
 });

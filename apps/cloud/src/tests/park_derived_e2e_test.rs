@@ -469,6 +469,85 @@ async fn device_count_recomputed_on_tree_change() {
     let _ = rig.shutdown_tx.send(());
 }
 
+/// Task 9（spec §四 X3b）API 级断言：REST update_thing 换父 → 处理器
+/// notify_tree_changed 双侧触发——旧父 device_count -1、新父 +1
+/// （descendant_count 派生重算；漏接钩子则静默陈旧到重启）。
+/// 成环 400 兜底由 thing_handler_tests::test_parent_id_cycle_rejected 覆盖。
+#[tokio::test]
+async fn device_count_recomputed_on_reparent() {
+    let mut rig = setup_rig().await;
+    let app = build_router(&rig.app_state);
+    let token = token();
+
+    let park_a = create_thing(&app, &token, "园区A", None).await;
+    let park_b = create_thing(&app, &token, "园区B", None).await;
+    let meter = create_thing(&app, &token, "电表1", Some(&park_a)).await;
+    let dc_a = create_property(
+        &app,
+        &token,
+        &park_a,
+        json!({"name": "device_count", "expression": "descendant_count(device)"}),
+    )
+    .await;
+    let dc_b = create_property(
+        &app,
+        &token,
+        &park_b,
+        json!({"name": "device_count", "expression": "descendant_count(device)"}),
+    )
+    .await;
+
+    rig.app_state.device_cache.insert(mk_thing(
+        &park_a,
+        "园区A",
+        vec![mk_prop(&dc_a, &park_a, "device_count")],
+    ));
+    rig.app_state.device_cache.insert(mk_thing(
+        &park_b,
+        "园区B",
+        vec![mk_prop(&dc_b, &park_b, "device_count")],
+    ));
+    install_manager(&mut rig).await;
+    // 含 manager 的路由——update_thing 换父钩子在处理器侧生效
+    let app = build_router(&rig.app_state);
+
+    // 首值补偿：A=1（电表1）、B=0
+    wait_until("首值 园区A device_count=1", || {
+        cached_prop(&rig, &park_a, "device_count").as_deref() == Some("1")
+    })
+    .await;
+    wait_until("首值 园区B device_count=0", || {
+        cached_prop(&rig, &park_b, "device_count").as_deref() == Some("0")
+    })
+    .await;
+
+    // 换父（真实 API PUT parent_id）：电表1 → 园区B
+    let response = app
+        .clone()
+        .oneshot(auth_request(
+            "PUT",
+            &format!("/api/v1/things/{meter}"),
+            &token,
+            Some(json!({"parentId": park_b})),
+        ))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "换父失败: {json}");
+
+    // 双侧重算：旧父 -1、新父 +1
+    wait_until("旧父 园区A device_count=0", || {
+        cached_prop(&rig, &park_a, "device_count").as_deref() == Some("0")
+    })
+    .await;
+    wait_until("新父 园区B device_count=1", || {
+        cached_prop(&rig, &park_b, "device_count").as_deref() == Some("1")
+    })
+    .await;
+
+    let _ = rig.shutdown_tx.send(());
+}
+
 /// spec §三/§七：重启（全新 Manager 冷启动 start()）→ 索引从库重建 +
 /// 首值补偿——不经任何事件 total_power 即有值。
 #[tokio::test]
