@@ -96,6 +96,8 @@ pub mod thing_template;
 pub mod thing_trace;
 /// User persistence and row types.
 pub mod user;
+/// E1 值守中枢持久源：watch_rules + hub_ledger。
+pub mod watch;
 /// Workspace + knowledge resource persistence and row types.
 pub mod workspace;
 
