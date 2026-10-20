@@ -13,6 +13,7 @@ use async_trait::async_trait;
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
 use tinyiothub_core::models::thing_property::ThingProperty;
+use tinyiothub_core::watch::WatchRule;
 
 /// Read-side queries for device commands (cron `device_command` executor).
 #[async_trait]
@@ -61,6 +62,26 @@ pub trait DerivedPropertyQueries: Send + Sync {
     async fn find_thing_with_properties(&self, thing_id: &str) -> Result<Option<Thing>, String>;
     /// root 物的后代计数（沿 parent_id 递归，深度上限 10）；thing_type 为空计全部。
     async fn count_descendants(&self, root_thing_id: &str, thing_type: Option<&str>) -> Result<i64, String>;
+}
+
+/// E1 账本写入（spec §4.2）：kind 词表 versioned，payload 含 v=1。
+#[async_trait]
+pub trait HubLedger: Send + Sync {
+    async fn append(
+        &self,
+        workspace_id: &str,
+        kind: &str,
+        thing_id: Option<&str>,
+        payload: serde_json::Value,
+    ) -> Result<(), String>;
+}
+
+/// E1 watch 规则持久源（spec §4.1）：启动重织读全量，注册/删除写穿。
+#[async_trait]
+pub trait WatchRuleStore: Send + Sync {
+    async fn list_all(&self) -> Result<Vec<WatchRule>, String>;
+    async fn insert(&self, rule: &WatchRule) -> Result<(), String>;
+    async fn delete(&self, workspace_id: &str, id: &str) -> Result<bool, String>;
 }
 
 /// Thing cache used by `DataServer`. Sync because every call site is sync

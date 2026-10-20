@@ -437,6 +437,84 @@ impl tinyiothub_runtime::ports::ApprovalTimeoutStore for ApprovalTimeoutAdapter 
     }
 }
 
+/// `Db` → `HubLedger`（E1 spec §4.2）：账本只增不改，ts 由适配器落 RFC3339，
+/// payload 序列化为 JSON 文本（词表版本见 payload.v，P5）。
+pub struct HubLedgerAdapter(pub Db);
+
+#[async_trait]
+impl tinyiothub_runtime::ports::HubLedger for HubLedgerAdapter {
+    async fn append(
+        &self,
+        workspace_id: &str,
+        kind: &str,
+        thing_id: Option<&str>,
+        payload: serde_json::Value,
+    ) -> Result<(), String> {
+        let ts = chrono::Utc::now().to_rfc3339();
+        let payload = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
+        tinyiothub_storage::watch::append_ledger(self.0.pool(), workspace_id, &ts, kind, thing_id, &payload)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// `Db` → `WatchRuleStore`（E1 spec §4.1）：kind 列存 condition 的 serde type
+/// tag（property|health|availability），condition 列存完整 condition JSON；
+/// 读回按 JSON 反序列化重构 `WatchCondition`（core 的 WatchRule 无 serde
+/// derive，按字段映射，不回改 core）。
+pub struct WatchRuleStoreAdapter(pub Db);
+
+#[async_trait]
+impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
+    async fn list_all(&self) -> Result<Vec<tinyiothub_core::watch::WatchRule>, String> {
+        let rows = tinyiothub_storage::watch::list_rules(self.0.pool())
+            .await
+            .map_err(|e| e.to_string())?;
+        rows.iter()
+            .map(|row| {
+                let condition: tinyiothub_core::watch::WatchCondition = serde_json::from_str(&row.condition)
+                    .map_err(|e| format!("watch_rule {} condition JSON 损坏: {e}", row.id))?;
+                Ok(tinyiothub_core::watch::WatchRule {
+                    id: row.id.clone(),
+                    workspace_id: row.workspace_id.clone(),
+                    condition,
+                    persistent: row.persistent != 0,
+                    timeout_secs: row.timeout_secs as u32,
+                    created_at: row.created_at.clone(),
+                })
+            })
+            .collect()
+    }
+
+    async fn insert(&self, rule: &tinyiothub_core::watch::WatchRule) -> Result<(), String> {
+        let condition = serde_json::to_value(&rule.condition).map_err(|e| e.to_string())?;
+        let kind = condition
+            .get("type")
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| "WatchCondition 序列化缺 type tag".to_string())?
+            .to_string();
+        let row = tinyiothub_storage::watch::WatchRuleRow {
+            id: rule.id.clone(),
+            workspace_id: rule.workspace_id.clone(),
+            kind,
+            condition: serde_json::to_string(&condition).map_err(|e| e.to_string())?,
+            persistent: i64::from(rule.persistent),
+            timeout_secs: i64::from(rule.timeout_secs),
+            created_at: rule.created_at.clone(),
+        };
+        tinyiothub_storage::watch::insert_rule(self.0.pool(), &row)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn delete(&self, workspace_id: &str, id: &str) -> Result<bool, String> {
+        let affected = tinyiothub_storage::watch::delete_rule(self.0.pool(), workspace_id, id)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(affected > 0)
+    }
+}
+
 #[cfg(test)]
 mod approval_timeout_tests {
     use super::*;
@@ -934,5 +1012,111 @@ mod approval_timeout_tests {
         let j = db.find_judgment_by_id(&jid, "ws1").await.unwrap().unwrap();
         assert_eq!(j.status, tinyiothub_storage::judgment::JudgmentStatus::Escalated);
         assert!(j.ticket_id.is_some(), "人工确认工单已建");
+    }
+}
+
+/// E1：HubLedger / WatchRuleStore 的 db 适配器测试（TDD Step 1——trait 与
+/// 适配器尚不存在，本模块必须先编译失败）。
+#[cfg(test)]
+mod watch_ports_tests {
+    use super::*;
+    use tinyiothub_core::watch::{CompareOp, WatchCondition, WatchRule};
+    use tinyiothub_runtime::ports::{HubLedger, WatchRuleStore};
+
+    async fn fixture_db() -> tinyiothub_storage::Db {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
+        tinyiothub_storage::Db::new(pool)
+    }
+
+    fn sample_rule(id: &str, ws: &str) -> WatchRule {
+        WatchRule {
+            id: id.into(),
+            workspace_id: ws.into(),
+            condition: WatchCondition::Property {
+                thing_id: "t1".into(),
+                property: "温度".into(),
+                op: CompareOp::Gt,
+                value: serde_json::json!(30.0),
+            },
+            persistent: true,
+            timeout_secs: 600,
+            created_at: "2026-10-20T00:00:00Z".into(),
+        }
+    }
+
+    /// append 后能从 db 读回（kind/thing_id/payload 落列，ts 由适配器生成）。
+    #[tokio::test]
+    async fn ledger_append_then_read_back() {
+        let db = fixture_db().await;
+        let adapter = HubLedgerAdapter(db.clone());
+        HubLedger::append(
+            &adapter,
+            "ws1",
+            "watch_hit",
+            Some("t1"),
+            serde_json::json!({"v": 1, "rule_id": "r1"}),
+        )
+        .await
+        .unwrap();
+
+        let row: (String, String, Option<String>, String) =
+            sqlx::query_as("SELECT workspace_id, kind, thing_id, payload FROM hub_ledger")
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(row.0, "ws1");
+        assert_eq!(row.1, "watch_hit");
+        assert_eq!(row.2.as_deref(), Some("t1"));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&row.3).unwrap(),
+            serde_json::json!({"v": 1, "rule_id": "r1"})
+        );
+    }
+
+    /// insert 后 list_all 可见，condition 完整 JSON 往返、kind 列存 type tag。
+    #[tokio::test]
+    async fn rule_insert_then_list_all_visible() {
+        let db = fixture_db().await;
+        let adapter = WatchRuleStoreAdapter(db.clone());
+        let rule = sample_rule("r1", "ws1");
+        WatchRuleStore::insert(&adapter, &rule).await.unwrap();
+
+        // kind 列存 condition 的 serde type tag
+        let (kind,): (String,) = sqlx::query_as("SELECT kind FROM watch_rules WHERE id = 'r1'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(kind, "property");
+
+        let all = WatchRuleStore::list_all(&adapter).await.unwrap();
+        assert_eq!(all.len(), 1);
+        let got = &all[0];
+        assert_eq!(got.id, "r1");
+        assert_eq!(got.workspace_id, "ws1");
+        assert_eq!(got.condition, rule.condition, "condition JSON 往返不失真");
+        assert!(got.persistent);
+        assert_eq!(got.timeout_secs, 600);
+        assert_eq!(got.created_at, "2026-10-20T00:00:00Z");
+    }
+
+    /// delete 跨工作区落空（多租户隔离），本工作区删得掉。
+    #[tokio::test]
+    async fn rule_delete_cross_workspace_misses() {
+        let db = fixture_db().await;
+        let adapter = WatchRuleStoreAdapter(db.clone());
+        WatchRuleStore::insert(&adapter, &sample_rule("r1", "ws1"))
+            .await
+            .unwrap();
+
+        assert!(
+            !WatchRuleStore::delete(&adapter, "ws2", "r1").await.unwrap(),
+            "跨工作区删除必须落空"
+        );
+        assert_eq!(WatchRuleStore::list_all(&adapter).await.unwrap().len(), 1);
+        assert!(WatchRuleStore::delete(&adapter, "ws1", "r1").await.unwrap());
+        assert!(WatchRuleStore::list_all(&adapter).await.unwrap().is_empty());
     }
 }
