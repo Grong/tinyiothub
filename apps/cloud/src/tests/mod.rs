@@ -56,4 +56,5 @@ mod thing_tenant_isolation_tests;
 mod ticket_subscriber_tests;
 mod token_handler_tests;
 mod user_handler_tests;
+mod watch_rules_api_tests;
 mod workspace_handler_tests;

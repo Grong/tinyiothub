@@ -43,8 +43,9 @@ use crate::runtime::thing_agent::scheduler::{EnqueueError, Scheduler, SchedulerH
 use crate::runtime::thing_agent::traits::{
     AutonomyPolicyReader, DirectiveSink, HeartbeatTaskReader, ThingAgentHost, TrustConfigReader,
 };
-use crate::runtime::thing_agent::trigger::{HeartbeatTrigger, ThingEventTrigger, TimerTrigger, Trigger};
+use crate::runtime::thing_agent::trigger::{HeartbeatTrigger, ThingEventTrigger, TimerTrigger, Trigger, WatchTrigger};
 use crate::runtime::thing_agent::types::{HeartbeatAlarmContext, TriggerSource, WakeSignal};
+use crate::runtime::thing_agent::watch_loop::{WatchCommand, WatchDeps, watch_engine_loop};
 use tinyiothub_core::agent_runs::format_summary;
 use tinyiothub_core::heartbeat::{HeartbeatTask, TrustConfig};
 use tinyiothub_policy::autonomy::AutonomyMode;
@@ -185,6 +186,13 @@ pub struct ThingAgentManager {
     /// E1 限速事件账本（spec §3）：None 时 scheduler 只留 metric（测试/
     /// 边缘形态）；bootstrap 接线后 start 的工作区落账 kind=rate_limited。
     wake_ledger: std::sync::Mutex<Option<Arc<dyn tinyiothub_runtime::ports::HubLedger>>>,
+    /// E1 watch 值守构建依赖（Task 8）：bootstrap 注入（`set_watch_deps`，
+    /// 与 set_wake_ledger 同序约束——只影响其后 start 的工作区）；None =
+    /// watch 未接线（测试/边缘形态），loop 不含 engine/trigger 任务。
+    watch_deps: std::sync::Mutex<Option<WatchDeps>>,
+    /// E1 watch API 写穿命令通道（每工作区）：start 时建立，stop 时丢弃；
+    /// handler 经 `watch_command_sink` 取 sender 投递 Upsert/Remove。
+    watch_cmds: DashMap<String, mpsc::Sender<WatchCommand>>,
 }
 
 impl ThingAgentManager {
@@ -226,6 +234,8 @@ impl ThingAgentManager {
             heartbeat_reload_notifies: DashMap::new(),
             rate_limits: Arc::new(DashMap::new()),
             wake_ledger: std::sync::Mutex::new(None),
+            watch_deps: std::sync::Mutex::new(None),
+            watch_cmds: DashMap::new(),
         }
     }
 
@@ -277,9 +287,10 @@ impl ThingAgentManager {
             policy_repo: Arc::clone(&self.deps.policy_repo),
         };
         let timer_tx = tx.clone();
+        let timer_ws = ws.clone();
         let timer_task = tokio::spawn(async move {
             if let Err(e) = timer.run(timer_tx).await {
-                tracing::warn!(workspace_id = %ws, error = %e, "timer trigger exited with error");
+                tracing::warn!(workspace_id = %timer_ws, error = %e, "timer trigger exited with error");
             }
         });
 
@@ -297,16 +308,43 @@ impl ThingAgentManager {
             reload_notify: self.heartbeat_reload_notify(workspace_id),
         };
         let heartbeat_ws = workspace_id.to_string();
+        let heartbeat_tx = tx.clone();
         let heartbeat_task = tokio::spawn(async move {
-            if let Err(e) = heartbeat.run(tx).await {
+            if let Err(e) = heartbeat.run(heartbeat_tx).await {
                 tracing::warn!(workspace_id = %heartbeat_ws, error = %e, "heartbeat trigger exited with error");
             }
         });
 
-        vacant.insert(WorkspaceLoop {
-            handle,
-            tasks: vec![forward, event_task, timer_task, heartbeat_task],
-        });
+        let mut tasks = vec![forward, event_task, timer_task, heartbeat_task];
+
+        // E1 watch 值守（Task 8）：deps 已接线则构建本区 engine 事件循环
+        // （启动重织 + EventBus 订阅 + 超时清扫）并注册 WatchTrigger 进
+        // trigger 集合（照 heartbeat trigger 模式——命中即 WakeSignal，
+        // 无 policy 抑制，spec §1：注册即显式订阅）。
+        if let Some(watch) = self.watch_deps.lock().expect("watch_deps poisoned").clone() {
+            let (hit_tx, hit_rx) = mpsc::channel(TRIGGER_CHANNEL_CAPACITY);
+            let (cmd_tx, cmd_rx) = mpsc::channel(TRIGGER_CHANNEL_CAPACITY);
+            self.watch_cmds.insert(ws.clone(), cmd_tx);
+            let engine_ws = ws.clone();
+            let engine_task = tokio::spawn(async move {
+                watch_engine_loop(engine_ws, watch, hit_tx, cmd_rx).await;
+            });
+            let watch_trigger = WatchTrigger {
+                workspace_id: ws.clone(),
+                hit_rx: Arc::new(tokio::sync::Mutex::new(hit_rx)),
+            };
+            let watch_tx = tx.clone();
+            let watch_ws = ws.clone();
+            let watch_task = tokio::spawn(async move {
+                if let Err(e) = watch_trigger.run(watch_tx).await {
+                    tracing::warn!(workspace_id = %watch_ws, error = %e, "watch trigger exited with error");
+                }
+            });
+            tasks.push(engine_task);
+            tasks.push(watch_task);
+        }
+
+        vacant.insert(WorkspaceLoop { handle, tasks });
         tracing::info!(workspace_id, "thing-agent loop started");
     }
 
@@ -337,6 +375,9 @@ impl ThingAgentManager {
         self.deps.last_ticks.remove(workspace_id);
         self.deps.governor.record_success(workspace_id);
         self.deps.agent_provider.invalidate(workspace_id);
+        // E1 watch：命令通道条目随 loop 退役——engine 任务已被 abort，
+        // 残留 sender 只会让 handler 写穿投进死通道。
+        self.watch_cmds.remove(workspace_id);
         tracing::info!(workspace_id, "thing-agent loop stopped");
     }
 
@@ -448,6 +489,22 @@ impl ThingAgentManager {
     /// 只留 metric（测试/边缘形态）。
     pub fn set_wake_ledger(&self, ledger: Arc<dyn tinyiothub_runtime::ports::HubLedger>) {
         *self.wake_ledger.lock().expect("wake_ledger poisoned") = Some(ledger);
+    }
+
+    // ── E1 watch 值守（Task 8）：构建依赖注入 + API 写穿命令通道 ──────────
+
+    /// watch 构建依赖接线（bootstrap，与 set_wake_ledger 同序约束——必须在
+    /// start 之前，只影响其后 start 的工作区）：注入后 start 的 loop 含
+    /// engine 事件循环 + WatchTrigger 两个任务。
+    pub fn set_watch_deps(&self, deps: WatchDeps) {
+        *self.watch_deps.lock().expect("watch_deps poisoned") = Some(deps);
+    }
+
+    /// watch API 写穿出口（D11-⑤：handler 已写 DB 成功）：目标工作区的
+    /// engine 命令通道。None = loop 未运行或 watch 未接线——跳过即可，
+    /// 下次 start 经启动重织自愈。
+    pub fn watch_command_sink(&self, workspace_id: &str) -> Option<mpsc::Sender<WatchCommand>> {
+        self.watch_cmds.get(workspace_id).map(|r| r.clone())
     }
 }
 
@@ -1775,7 +1832,9 @@ pub(crate) mod tests {
         sink.enqueue(WakeSignal {
             workspace_id: WS.to_string(),
             priority: Priority::Normal,
-            source: TriggerSource::Merged { signals: vec![hb(), hb()] },
+            source: TriggerSource::Merged {
+                signals: vec![hb(), hb()],
+            },
             dedup_key: Some("heartbeat:ws_01".to_string()),
         })
         .expect("merged heartbeat signal accepted");
@@ -2203,5 +2262,207 @@ pub(crate) mod tests {
         );
         assert_eq!(report.thing_id.as_deref(), Some("t1"));
         assert!(report.summary.contains("不可用"));
+    }
+
+    // ── E1 Task 8：watch 值守装配（engine 重织 + 事件接线 + 命令写穿）────
+
+    use tinyiothub_core::models::thing::{Thing, ThingStatus};
+    use tinyiothub_core::watch::{CompareOp, WatchCondition, WatchRule};
+    use tinyiothub_runtime::ports::{HubLedger, ThingCacheSource, WatchRuleStore};
+
+    /// 内存桩：最小可读 ThingCacheSource（engine LiveState 真相源）。
+    struct StubThingCache {
+        things: Vec<Thing>,
+    }
+
+    impl ThingCacheSource for StubThingCache {
+        fn all(&self) -> Vec<Thing> {
+            self.things.clone()
+        }
+        fn get(&self, id: &str) -> Option<Thing> {
+            self.things.iter().find(|t| t.id == id).cloned()
+        }
+        fn get_by_name(&self, name: &str) -> Option<Thing> {
+            self.things.iter().find(|t| t.name == name).cloned()
+        }
+        fn insert(&self, _device: Thing) {}
+        fn update(&self, _device: Thing) {}
+        fn remove(&self, _id: &str) {}
+    }
+
+    /// 内存桩：固定规则集的 WatchRuleStore（启动重织读面）。
+    struct StubWatchRuleStore {
+        rules: Vec<WatchRule>,
+    }
+
+    #[async_trait::async_trait]
+    impl WatchRuleStore for StubWatchRuleStore {
+        async fn list_all(&self) -> Result<Vec<WatchRule>, String> {
+            Ok(self.rules.clone())
+        }
+        async fn insert(&self, _rule: &WatchRule) -> Result<(), String> {
+            Ok(())
+        }
+        async fn delete(&self, _workspace_id: &str, _id: &str) -> Result<bool, String> {
+            Ok(true)
+        }
+    }
+
+    /// 内存桩：记录全部 append 的 HubLedger。
+    #[derive(Default)]
+    struct RecordingLedger {
+        entries: Mutex<Vec<(String, String, Option<String>)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HubLedger for RecordingLedger {
+        async fn append(
+            &self,
+            workspace_id: &str,
+            kind: &str,
+            thing_id: Option<&str>,
+            _payload: serde_json::Value,
+        ) -> Result<(), String> {
+            self.entries.lock().unwrap().push((
+                workspace_id.to_string(),
+                kind.to_string(),
+                thing_id.map(str::to_string),
+            ));
+            Ok(())
+        }
+    }
+
+    fn watch_thing(id: &str) -> Thing {
+        Thing {
+            id: id.into(),
+            name: id.into(),
+            workspace_id: Some(WS.to_string()),
+            status: ThingStatus::Online,
+            ..Thing::default()
+        }
+    }
+
+    fn watch_rule(id: &str, thing_id: &str) -> WatchRule {
+        WatchRule {
+            id: id.into(),
+            workspace_id: WS.into(),
+            condition: WatchCondition::Property {
+                thing_id: thing_id.into(),
+                property: "温度".into(),
+                op: CompareOp::Gt,
+                value: serde_json::json!(30.0),
+            },
+            persistent: false,
+            timeout_secs: 600,
+            created_at: "2026-10-20T00:00:00Z".into(),
+        }
+    }
+
+    fn watch_deps(rules: Vec<WatchRule>, ledger: Arc<RecordingLedger>) -> WatchDeps {
+        WatchDeps {
+            cache: Arc::new(StubThingCache {
+                things: vec![watch_thing("t1")],
+            }),
+            ledger,
+            rules: Arc::new(StubWatchRuleStore { rules }),
+            events: Arc::new(tinyiothub_runtime::EventBus::new()),
+        }
+    }
+
+    /// 发布一条 PropertyChange 领域事件（data_server cache_and_publish 同款
+    /// 载荷：metadata property_name/value + device_property source）。
+    async fn publish_property_change(bus: &tinyiothub_runtime::EventBus, thing_id: &str, value: &str) {
+        let content = tinyiothub_core::models::event::RichContent::new_text("t".into(), "c".into())
+            .with_metadata("property_name".to_string(), serde_json::json!("温度"))
+            .with_metadata("value".to_string(), serde_json::json!(value));
+        let event = tinyiothub_core::models::event::Event::new_device_event(
+            tinyiothub_core::models::event::ThingEventType::PropertyChange,
+            tinyiothub_core::models::event::EventLevel::Debug,
+            tinyiothub_core::models::event::EventSource::device_property(
+                thing_id.to_string(),
+                "p1".to_string(),
+                "data_collector".to_string(),
+            ),
+            content,
+        )
+        .expect("event");
+        bus.publish(event).await.expect("publish");
+    }
+
+    // Value card
+    // - 覆盖路径：set_watch_deps → start 挂载 engine+trigger → 启动重织
+    //   （store 里的规则 upsert 进 engine）→ EventBus PropertyChange 越限 →
+    //   WatchHit → WatchTrigger → WakeSignal(watch:r1) → 全管线 run 落库 +
+    //   账本 watch_hit 落行。
+    // - 真实回归场景：接线漏一环（重织没跑 / 事件没分发 / trigger 没注册）
+    //   ——值守规则静默不命中，用户以为有值守实际没有，无任何告警。
+    // - 失败信号：run 不落 dedup watch:r1 或账本缺 watch_hit 即断口。
+    // - 覆盖理由：engine/trigger 单测都不经 manager 装配；API 测试不经
+    //   事件链路。本用例是唯一端到端锁。
+    #[tokio::test(start_paused = true)]
+    async fn watch_hit_wakes_workspace_run_end_to_end() {
+        let parts = stub_manager().await;
+        let ledger = Arc::new(RecordingLedger::default());
+        let deps = watch_deps(vec![watch_rule("r1", "t1")], ledger.clone());
+        let bus = deps.events.clone();
+        parts.manager.set_watch_deps(deps);
+        parts.manager.start(WS);
+
+        // engine + trigger 两个任务随 deps 挂载（forward+event+timer+heartbeat 之上）。
+        assert_eq!(parts.manager.workspaces.get(WS).unwrap().tasks.len(), 6);
+        assert!(parts.manager.watch_command_sink(WS).is_some());
+
+        // 未越限：不命中（only-new-data 语义之外的一般路径）。
+        publish_property_change(&bus, "t1", "25").await;
+        settle().await;
+        assert_eq!(parts.runs.runs_with_dedup("watch:r1"), 0);
+
+        // 越限：命中 → run 落库 + 账本 watch_hit。
+        publish_property_change(&bus, "t1", "31").await;
+        wait_until(|| parts.runs.runs_with_dedup("watch:r1") == 1, "watch run persisted").await;
+        wait_until(
+            || ledger.entries.lock().unwrap().iter().any(|e| e.1 == "watch_hit"),
+            "ledger watch_hit",
+        )
+        .await;
+    }
+
+    /// API 写穿（D11-⑤ 内存步）：Upsert 命令进 engine → 事件命中；Remove
+    /// 后同事物越限不再命中。stop 丢弃命令通道。
+    #[tokio::test(start_paused = true)]
+    async fn watch_command_upsert_then_remove_controls_engine() {
+        let parts = stub_manager().await;
+        let ledger = Arc::new(RecordingLedger::default());
+        let deps = watch_deps(vec![], ledger); // 空规则起步——不经重织
+        let bus = deps.events.clone();
+        parts.manager.set_watch_deps(deps);
+        parts.manager.start(WS);
+        let sink = parts.manager.watch_command_sink(WS).expect("command sink");
+
+        sink.send(WatchCommand::Upsert(watch_rule("r2", "t1")))
+            .await
+            .expect("upsert sent");
+        settle().await; // 命令先于事件进 engine（单循环串行消费）
+        publish_property_change(&bus, "t1", "31").await;
+        wait_until(|| parts.runs.runs_with_dedup("watch:r2") == 1, "upserted rule hits").await;
+
+        // one-shot 命中后已自动移除；显式 Remove 幂等不炸，再越限不命中。
+        sink.send(WatchCommand::Remove("r2".into())).await.expect("remove sent");
+        settle().await;
+        publish_property_change(&bus, "t1", "32").await;
+        settle().await;
+        assert_eq!(parts.runs.runs_with_dedup("watch:r2"), 1, "移除后不得再命中");
+
+        parts.manager.stop(WS).await;
+        assert!(parts.manager.watch_command_sink(WS).is_none(), "stop 丢弃命令通道");
+    }
+
+    /// 未接线（默认 None）：loop 不含 watch 任务，无命令通道。
+    #[tokio::test(start_paused = true)]
+    async fn start_without_watch_deps_mounts_no_watch_tasks() {
+        let parts = stub_manager().await;
+        parts.manager.start(WS);
+        assert_eq!(parts.manager.workspaces.get(WS).unwrap().tasks.len(), 4);
+        assert!(parts.manager.watch_command_sink(WS).is_none());
     }
 }

@@ -196,3 +196,58 @@ async fn update_tasks_writes_through_and_get_config_exposes_last_tick() {
         "lastTick 必须来自统一循环 last_ticks 共享表"
     );
 }
+
+// Value card
+// - 覆盖路径：PUT /heartbeat/config 带 rate_limit_per_key_per_min → DB
+//   heartbeat_config JSON 落键 + manager 同键限速共享表写穿（spec §3 热改
+//   生效）+ get_config 回读透出；不带该键的部分更新不得重置既有值。
+// - 真实回归场景：写穿漏调 set_wake_rate_limit_per_min——DB 已改但
+//   scheduler 仍按旧限速；或 validated() 重建配置把既有 rate_limit 抹掉。
+// - 失败信号：manager.wake_rate_limit_per_min / DB 行 / get_config 三方
+//   不一致即断口。
+// - 覆盖理由：manager 访问器单测不经 handler 归并与 DB 写序。
+#[tokio::test]
+async fn update_config_rate_limit_writes_through_and_survives_partial_update() {
+    let (app, pool, manager) = app_with_manager().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let db = Db::new(pool.clone());
+
+    let result = call(
+        &app,
+        put(
+            &format!("/api/v1/workspaces/{WS}/heartbeat/config"),
+            &token,
+            json!({"rate_limit_per_key_per_min": 7}),
+        ),
+    )
+    .await;
+    assert_eq!(result["rateLimitPerKeyPerMin"], 7);
+    assert_eq!(manager.wake_rate_limit_per_min(WS), Some(7), "限速共享表写穿");
+    let persisted = db
+        .load_heartbeat_config(WS)
+        .await
+        .expect("load")
+        .expect("persisted config");
+    assert_eq!(persisted.rate_limit_per_key_per_min, Some(7), "DB JSON 落键");
+
+    let cfg = call(&app, get(&format!("/api/v1/workspaces/{WS}/heartbeat/config"), &token)).await;
+    assert_eq!(cfg["rateLimitPerKeyPerMin"], 7, "get_config 透出限速");
+
+    // 部分更新（只改 enabled）不得重置既有 rate_limit。
+    call(
+        &app,
+        put(
+            &format!("/api/v1/workspaces/{WS}/heartbeat/config"),
+            &token,
+            json!({"enabled": false}),
+        ),
+    )
+    .await;
+    assert_eq!(manager.wake_rate_limit_per_min(WS), Some(7), "部分更新不得重置限速");
+    let persisted = db
+        .load_heartbeat_config(WS)
+        .await
+        .expect("load")
+        .expect("persisted config");
+    assert_eq!(persisted.rate_limit_per_key_per_min, Some(7));
+}

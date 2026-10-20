@@ -181,6 +181,12 @@ impl WatchEngine {
         }
     }
 
+    /// EventBus Lagged 空洞（Task 8 接线点）：清空实时态，从 cache 全量重建
+    ///（cache 先写后发不变量，重读即真相）。
+    pub fn handle_lagged(&mut self) {
+        self.live.handle_lagged();
+    }
+
     /// 账本写彻底失败计数（metric 兜底）。
     pub fn ledger_write_failures(&self) -> u64 {
         self.ledger_write_failures.load(Ordering::Relaxed)

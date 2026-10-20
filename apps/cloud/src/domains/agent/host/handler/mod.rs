@@ -11,6 +11,7 @@ pub mod execution_record;
 pub mod files;
 pub mod skills;
 pub mod types;
+pub mod watch;
 pub mod workspace_heartbeat;
 
 #[cfg(test)]

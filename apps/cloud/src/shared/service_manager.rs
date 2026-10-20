@@ -472,6 +472,35 @@ impl ServiceManager {
 
             // Start unified agent loops for existing workspaces（heartbeat
             // 共享表已由 restore 预热：tasks 非空，trigger 不抑制）。
+            //
+            // E1 Task 8 bootstrap 硬顺序：set_wake_ledger / set_watch_deps /
+            // 限速预热全部先于 start——三者都只影响其后 start 的工作区。
+            let hub_ledger = Arc::new(crate::shared::runtime_ports::HubLedgerAdapter((*app_state.db).clone()));
+            thing_agent_manager.set_wake_ledger(hub_ledger.clone());
+            thing_agent_manager.set_watch_deps(tinyiothub_agent::runtime::thing_agent::WatchDeps {
+                cache: Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(
+                    app_state.device_cache.clone(),
+                )),
+                ledger: hub_ledger,
+                rules: Arc::new(crate::shared::runtime_ports::WatchRuleStoreAdapter(
+                    (*app_state.db).clone(),
+                )),
+                events: app_state.event_bus.clone(),
+            });
+            // E1 同键限速预热：DB heartbeat_config JSON 的
+            // rate_limit_per_key_per_min → scheduler 共享表（spec §3 热改
+            // 生效；读失败只记日志，缺省 3/min 兜底）。
+            for ws_id in &ws_ids {
+                match app_state.db.load_heartbeat_config(ws_id).await {
+                    Ok(Some(cfg)) => {
+                        if let Some(per_min) = cfg.rate_limit_per_key_per_min {
+                            thing_agent_manager.set_wake_rate_limit_per_min(ws_id, per_min);
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => tracing::warn!(%ws_id, error = %e, "load heartbeat config for rate-limit prewarm failed"),
+                }
+            }
             for ws_id in &ws_ids {
                 thing_agent_manager.start(ws_id);
             }

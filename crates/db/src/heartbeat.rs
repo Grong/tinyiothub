@@ -22,6 +22,12 @@ pub struct WorkspaceHeartbeatConfig {
     /// 报警；Critical/Error 永不抑制）。旧行无此字段 → annotate（保守默认）。
     #[serde(default = "default_triage_mode")]
     pub triage_mode: String,
+    /// E1 同键限速覆盖（spec §3：`workspaces.heartbeat_config` JSON 加键
+    /// `rate_limit_per_key_per_min`，复用配置先例）：每 dedup_key 每分钟最多
+    /// N 次唤醒；None = 缺省 3（scheduler DEFAULT_RATE_LIMIT_PER_MIN）。
+    /// 旧行无此字段 → None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit_per_key_per_min: Option<u32>,
 }
 
 fn default_ai_triage_enabled() -> bool {
@@ -45,6 +51,7 @@ impl WorkspaceHeartbeatConfig {
             interval_minutes,
             ai_triage_enabled: true,
             triage_mode: default_triage_mode(),
+            rate_limit_per_key_per_min: None,
         })
     }
 
@@ -729,6 +736,7 @@ mod tests {
             interval_minutes: 30,
             ai_triage_enabled: true,
             triage_mode: default_triage_mode(),
+            rate_limit_per_key_per_min: None,
         };
         let json = cfg.to_db_json();
         let loaded = WorkspaceHeartbeatConfig::from_db_json(Some(&json)).expect("parse");
@@ -1018,6 +1026,7 @@ mod tests {
             interval_minutes: 30,
             ai_triage_enabled: true,
             triage_mode: default_triage_mode(),
+            rate_limit_per_key_per_min: None,
         };
         db.save_heartbeat_config("ws_c", &cfg).await.expect("save");
         let loaded = db

@@ -70,6 +70,9 @@ pub struct HeartbeatConfigResponse {
     /// 最近一次 tick 完成时间（D13 实时读：统一循环共享表，T15 起唯一读源；
     /// 无 tick 过为 null）
     last_tick: Option<String>,
+    /// E1 同键限速覆盖（spec §3）：统一循环共享表优先，回退 DB 持久值；
+    /// 未配置为 null（缺省 3 由 scheduler 侧兜底）。
+    rate_limit_per_key_per_min: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,6 +81,10 @@ pub struct UpdateHeartbeatConfigRequest {
     pub enabled: Option<bool>,
     #[serde(default)]
     pub interval_minutes: Option<u32>,
+    /// E1 同键限速覆盖（spec §3 heartbeat_config JSON 加键）：每 dedup_key
+    /// 每分钟最多 N 次唤醒；缺省不改动当前值。
+    #[serde(default)]
+    pub rate_limit_per_key_per_min: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -160,6 +167,22 @@ pub async fn get_config(
         .and_then(|t| t.get(&workspace_id).map(|r| *r.value()))
         .map(|t| t.to_rfc3339());
 
+    // E1 同键限速读侧：统一循环共享表优先（热改真相），miss 回退 DB 持久值。
+    let rate_limit_per_key_per_min = match state
+        .thing_agents
+        .as_ref()
+        .and_then(|m| m.wake_rate_limit_per_min(&workspace_id))
+    {
+        Some(n) => Some(n),
+        None => state
+            .db
+            .load_heartbeat_config(&workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|c| c.rate_limit_per_key_per_min),
+    };
+
     ApiResponseBuilder::success(HeartbeatConfigResponse {
         enabled,
         interval_minutes,
@@ -167,6 +190,7 @@ pub async fn get_config(
         agent_id: "default".to_string(),
         tasks,
         last_tick,
+        rate_limit_per_key_per_min,
     })
 }
 
@@ -197,10 +221,27 @@ pub async fn update_config(
         Ok(c) => c,
         Err(e) => return ApiResponseBuilder::error(&e),
     };
+    // validated() 只构造 enabled/interval 两字段的基线——其余已持久化的扩展
+    // 字段（ai_triage/triage_mode/rate_limit）必须从既有行归并，否则一次
+    // 部分更新把限速/分诊配置静默重置（E1 rate_limit 写穿的前提）。
+    let mut config = config;
+    if let Ok(Some(existing)) = state.db.load_heartbeat_config(&workspace_id).await {
+        config.ai_triage_enabled = existing.ai_triage_enabled;
+        config.triage_mode = existing.triage_mode;
+        config.rate_limit_per_key_per_min = existing.rate_limit_per_key_per_min;
+    }
+    if req.rate_limit_per_key_per_min.is_some() {
+        config.rate_limit_per_key_per_min = req.rate_limit_per_key_per_min;
+    }
     // D11-⑤ 写序：先写 DB，成功后更新统一循环共享表（Task 5 起内存不触库）。
     if let Err(e) = state.db.save_heartbeat_config(&workspace_id, &config).await {
         tracing::error!(%workspace_id, "Failed to persist heartbeat config: {}", e);
         return ApiResponseBuilder::error("保存心跳配置失败");
+    }
+    // E1 同键限速写穿（照 intervals 先例）：scheduler enqueue 每信号重读
+    // 共享表 = 热改生效，无需重启 loop。
+    if let Some(per_min) = config.rate_limit_per_key_per_min {
+        manager.set_wake_rate_limit_per_min(&workspace_id, per_min);
     }
     // 统一循环写穿（行为保持清单第 3 行）：intervals+enabled 共享表同步更新
     // （intervals trigger 每轮重读生效；enabled 进 trigger 判定集，终审
@@ -213,6 +254,7 @@ pub async fn update_config(
     ApiResponseBuilder::success(serde_json::json!({
         "enabled": enabled,
         "intervalMinutes": interval,
+        "rateLimitPerKeyPerMin": config.rate_limit_per_key_per_min,
     }))
 }
 

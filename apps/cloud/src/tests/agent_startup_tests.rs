@@ -165,6 +165,7 @@ async fn build_snapshot_prewarms_heartbeat_state_and_recent_runs_oldest_first() 
             interval_minutes: 45,
             ai_triage_enabled: true,
             triage_mode: "annotate".to_string(),
+            rate_limit_per_key_per_min: None,
         },
     )
     .await
@@ -286,6 +287,7 @@ async fn restore_prewarms_unified_loop_heartbeat_deps() {
             interval_minutes: 45,
             ai_triage_enabled: true,
             triage_mode: "annotate".to_string(),
+            rate_limit_per_key_per_min: None,
         },
     )
     .await
@@ -349,6 +351,7 @@ async fn restore_prewarms_heartbeat_enabled_from_db_config() {
             interval_minutes: 30,
             ai_triage_enabled: true,
             triage_mode: "annotate".to_string(),
+            rate_limit_per_key_per_min: None,
         },
     )
     .await
