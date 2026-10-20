@@ -608,7 +608,11 @@ mod tests {
     fn property_change_emits_event_only_when_value_changes() {
         let mut thing = make_thing_with_prop("用电数", Some("100"));
         // 新值不同 → 产生 1 个 PropertyChange 事件，缓存值被更新
-        let values = vec![ResultValue::new("用电数".into(), "float".into(), Some("101.5".to_string()))];
+        let values = vec![ResultValue::new(
+            "用电数".into(),
+            "float".into(),
+            Some("101.5".to_string()),
+        )];
         let events = DataServer::collect_property_change_events(&mut thing, &values);
         assert_eq!(events.len(), 1);
         let prop = &thing.properties.as_ref().unwrap()[0];
@@ -621,7 +625,11 @@ mod tests {
     #[test]
     fn property_change_first_report_emits_event() {
         let mut thing = make_thing_with_prop("用电数", None);
-        let values = vec![ResultValue::new("用电数".into(), "float".into(), Some("42".to_string()))];
+        let values = vec![ResultValue::new(
+            "用电数".into(),
+            "float".into(),
+            Some("42".to_string()),
+        )];
         let events = DataServer::collect_property_change_events(&mut thing, &values);
         assert_eq!(events.len(), 1, "首次上报（old=None）必须产生事件");
     }
@@ -629,18 +637,29 @@ mod tests {
     #[test]
     fn property_change_event_metadata_carries_old_and_new() {
         let mut thing = make_thing_with_prop("用电数", Some("100"));
-        let values = vec![ResultValue::new("用电数".into(), "float".into(), Some("200".to_string()))];
+        let values = vec![ResultValue::new(
+            "用电数".into(),
+            "float".into(),
+            Some("200".to_string()),
+        )];
         let events = DataServer::collect_property_change_events(&mut thing, &values);
         let json = serde_json::to_value(&events[0]).unwrap();
         let s = json.to_string();
         assert!(s.contains("\"value\":\"200\""), "metadata.value 必须是新值: {s}");
-        assert!(s.contains("\"old_value\":\"100\""), "metadata.old_value 必须是旧值: {s}");
+        assert!(
+            s.contains("\"old_value\":\"100\""),
+            "metadata.old_value 必须是旧值: {s}"
+        );
     }
 
     #[test]
     fn unknown_result_value_is_ignored() {
         let mut thing = make_thing_with_prop("用电数", Some("100"));
-        let values = vec![ResultValue::new("不存在的属性".into(), "float".into(), Some("1".to_string()))];
+        let values = vec![ResultValue::new(
+            "不存在的属性".into(),
+            "float".into(),
+            Some("1".to_string()),
+        )];
         let events = DataServer::collect_property_change_events(&mut thing, &values);
         assert_eq!(events.len(), 0);
     }
@@ -716,7 +735,11 @@ mod tests {
 
         let device_cache: Arc<dyn ThingCacheSource> = Arc::new(EmptyCache);
         let command_queue: CommandQueue = Arc::new(DashMap::new());
-        let handle = tokio::spawn(DataServer::process_all_drivers(driver_cache, device_cache, command_queue));
+        let handle = tokio::spawn(DataServer::process_all_drivers(
+            driver_cache,
+            device_cache,
+            command_queue,
+        ));
         // 100ms 间隔：350ms 至少 3 个 tick（首个 tick 立即触发）。
         tokio::time::sleep(tokio::time::Duration::from_millis(350)).await;
         handle.abort();

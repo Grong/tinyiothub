@@ -178,7 +178,9 @@ async fn push_reading_flows_through_shared_pipeline() {
         "metadata.value 必须是新值"
     );
     assert!(
-        tokio::time::timeout(Duration::from_millis(200), event_rx.recv()).await.is_err(),
+        tokio::time::timeout(Duration::from_millis(200), event_rx.recv())
+            .await
+            .is_err(),
         "只允许 1 条事件"
     );
 

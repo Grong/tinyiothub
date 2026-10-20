@@ -129,19 +129,17 @@ impl ServiceManager {
         // DB 读失败，中止启动（与 T21 fail-closed 同源）。三类触发源
         // （notify_config_changed / notify_tree_changed / notify_thing_deleted）
         // 由 Task 8 物管理面钩子接线。
-        let derived_manager = Arc::new(
-            tinyiothub_runtime::driver::derived_manager::DerivedDriverManager::new(
-                Arc::new(crate::shared::runtime_ports::DbDerivedPropertyQueries(
-                    (*app_state.db).clone(),
-                )),
-                Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(
-                    app_state.device_cache.clone(),
-                )),
-                data_server.driver_cache(),
-                data_server.value_sink(),
-                app_state.event_bus.clone(),
-            ),
-        );
+        let derived_manager = Arc::new(tinyiothub_runtime::driver::derived_manager::DerivedDriverManager::new(
+            Arc::new(crate::shared::runtime_ports::DbDerivedPropertyQueries(
+                (*app_state.db).clone(),
+            )),
+            Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(
+                app_state.device_cache.clone(),
+            )),
+            data_server.driver_cache(),
+            data_server.value_sink(),
+            app_state.event_bus.clone(),
+        ));
         derived_manager.start().await.map_err(Error::IOError)?;
         app_state.derived_manager = Some(derived_manager);
         info!("✅ DerivedDriverManager started");
