@@ -185,9 +185,15 @@ pub(crate) async fn create_thing_properties_batch(
     Ok(results)
 }
 
-/// 更新属性定义（Task 8 管理面 PUT）：标量字段 None 保持不变（COALESCE）；
-/// `derived = Some((expression, refs_json))` 时写穿 source='derived' +
-/// expression/refs + is_read_only=1（派生校验已通过，refs 恒非空 JSON）。
+/// 更新属性定义（Task 8 管理面 PUT）：标量字段 None 保持不变（COALESCE）。
+/// `derived` 三态（PUT expression 字段语义，X2 后端半）：
+/// - `None` 缺省，不动 source/expression/refs/is_read_only。
+/// - `Some(None)` 即 expression=null 解绑：清 expression/refs，source 回
+///   'template'（模板拷贝/手动无法区分，统一 'template'），is_read_only 归 0
+///   回普通可写属性；属性行与运行时当前值保留（只动定义列）。
+/// - `Some(Some((expression, refs_json)))` 写穿派生三件套：source='derived'
+///   且 is_read_only=1（派生校验已通过，refs 恒非空 JSON）。
+///
 /// 单事务两条 UPDATE；UNIQUE(thing_id, name) 冲突原样抛给调用方映 409。
 pub(crate) async fn update_thing_property_definition(
     pool: &SqlitePool,
@@ -197,7 +203,7 @@ pub(crate) async fn update_thing_property_definition(
     display_name: Option<&str>,
     unit: Option<&str>,
     data_type: Option<&str>,
-    derived: Option<(&str, &str)>,
+    derived: Option<Option<(&str, &str)>>,
 ) -> Result<u64, sqlx::Error> {
     let now = now_string();
     let mut tx = pool.begin().await?;
@@ -221,21 +227,38 @@ pub(crate) async fn update_thing_property_definition(
     .bind(thing_id)
     .execute(&mut *tx)
     .await?;
-    if let Some((expression, refs_json)) = derived {
-        sqlx::query(
-            r#"
-            UPDATE thing_properties SET
-                source = 'derived', expression = ?, refs = ?, is_read_only = 1, updated_at = ?
-            WHERE id = ? AND thing_id = ?
-            "#,
-        )
-        .bind(expression)
-        .bind(refs_json)
-        .bind(&now)
-        .bind(id)
-        .bind(thing_id)
-        .execute(&mut *tx)
-        .await?;
+    match derived {
+        Some(Some((expression, refs_json))) => {
+            sqlx::query(
+                r#"
+                UPDATE thing_properties SET
+                    source = 'derived', expression = ?, refs = ?, is_read_only = 1, updated_at = ?
+                WHERE id = ? AND thing_id = ?
+                "#,
+            )
+            .bind(expression)
+            .bind(refs_json)
+            .bind(&now)
+            .bind(id)
+            .bind(thing_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        Some(None) => {
+            sqlx::query(
+                r#"
+                UPDATE thing_properties SET
+                    source = 'template', expression = NULL, refs = NULL, is_read_only = 0, updated_at = ?
+                WHERE id = ? AND thing_id = ?
+                "#,
+            )
+            .bind(&now)
+            .bind(id)
+            .bind(thing_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        None => {}
     }
     tx.commit().await?;
     Ok(r.rows_affected())
@@ -275,7 +298,8 @@ impl Db {
         create_thing_properties_batch(self.pool(), requests).await
     }
 
-    /// 更新属性定义（标量 COALESCE 保旧；derived = Some((expression, refs_json)) 写穿派生三件套）。
+    /// 更新属性定义（标量 COALESCE 保旧；derived 三态：None 不动 /
+    /// Some(None) 解绑回退普通属性 / Some(Some((expression, refs_json))) 写穿派生三件套）。
     pub async fn update_thing_property_definition(
         &self,
         id: &str,
@@ -284,7 +308,7 @@ impl Db {
         display_name: Option<&str>,
         unit: Option<&str>,
         data_type: Option<&str>,
-        derived: Option<(&str, &str)>,
+        derived: Option<Option<(&str, &str)>>,
     ) -> Result<u64, sqlx::Error> {
         update_thing_property_definition(self.pool(), id, thing_id, name, display_name, unit, data_type, derived).await
     }

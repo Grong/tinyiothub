@@ -359,6 +359,146 @@ async fn update_expression_revalidates() {
     assert!(!refs.contains("\"property_name\":\"a\""), "{refs}");
 }
 
+// ── PUT expression 三态（X2 后端半）：缺省=不动 / null=解绑 / 字符串=重设 ──
+
+#[tokio::test]
+async fn unbind_expression_reverts_to_plain_property() {
+    let (app, _pool) = setup_app().await;
+    let token = token();
+    let meter = create_thing(&app, &token, "电表1").await;
+    let owner = create_thing(&app, &token, "总表").await;
+    let (status, _) = post_property(&app, &token, &meter, json!({"name": "用电数"})).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, json) = post_property(
+        &app,
+        &token,
+        &owner,
+        json!({"name": "calc", "expression": "{电表1.用电数} * 2"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    assert_eq!(json["result"]["source"], "derived");
+    let prop_id = json["result"]["id"].as_str().unwrap().to_string();
+
+    // PUT {"expression": null} → 解绑回退普通属性
+    let response = app
+        .clone()
+        .oneshot(auth_request(
+            "PUT",
+            &format!("/api/v1/things/admin/{owner}/properties/{prop_id}"),
+            &token,
+            Some(json!({"expression": null})),
+        ))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    assert_eq!(json["result"]["source"], "template", "解绑后 source 回退: {json}");
+    assert!(json["result"]["expression"].is_null(), "expression 应清空: {json}");
+    assert!(json["result"]["refs"].is_null(), "refs 应清空: {json}");
+    assert_eq!(json["result"]["is_read_only"], 0, "解绑后回普通可写属性: {json}");
+
+    // 属性行保留（同 id/name 仍在 GET 列表）
+    let props = get_properties(&app, &token, &owner).await;
+    let row = props
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == prop_id)
+        .expect("解绑后属性行应保留");
+    assert_eq!(row["name"], "calc");
+    assert!(row["expression"].is_null(), "{row}");
+
+    // 回退普通属性实证：手动写值不再被派生拒绝
+    let response = app
+        .clone()
+        .oneshot(auth_request(
+            "PUT",
+            &format!("/api/v1/things/admin/{owner}/properties/{prop_id}/value"),
+            &token,
+            Some(json!({"value": "42"})),
+        ))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "解绑后应可手动写值: {json}");
+    assert_eq!(json["result"], true, "{json}");
+}
+
+#[tokio::test]
+async fn omit_expression_field_leaves_it_unchanged() {
+    let (app, _pool) = setup_app().await;
+    let token = token();
+    let meter = create_thing(&app, &token, "电表1").await;
+    let owner = create_thing(&app, &token, "总表").await;
+    let (status, _) = post_property(&app, &token, &meter, json!({"name": "用电数"})).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, json) =
+        post_property(&app, &token, &owner, json!({"name": "calc", "expression": "{电表1.用电数}"})).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    let prop_id = json["result"]["id"].as_str().unwrap().to_string();
+
+    // PUT 无 expression 字段 → 派生定义原样保留
+    let response = app
+        .clone()
+        .oneshot(auth_request(
+            "PUT",
+            &format!("/api/v1/things/admin/{owner}/properties/{prop_id}"),
+            &token,
+            Some(json!({"unit": "kW"})),
+        ))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    assert_eq!(json["result"]["unit"], "kW");
+    assert_eq!(json["result"]["expression"], "{电表1.用电数}", "缺省字段不得动表达式");
+    assert_eq!(json["result"]["source"], "derived");
+    assert_eq!(json["result"]["is_read_only"], 1);
+}
+
+#[tokio::test]
+async fn rebind_expression_revalidates() {
+    let (app, _pool) = setup_app().await;
+    let token = token();
+    let meter1 = create_thing(&app, &token, "电表1").await;
+    let meter2 = create_thing(&app, &token, "电表2").await;
+    let owner = create_thing(&app, &token, "总表").await;
+    let (status, _) = post_property(&app, &token, &meter1, json!({"name": "a"})).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = post_property(&app, &token, &meter2, json!({"name": "energy"})).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, json) =
+        post_property(&app, &token, &owner, json!({"name": "calc", "expression": "{电表1.a}"})).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    let prop_id = json["result"]["id"].as_str().unwrap().to_string();
+
+    // 字符串 → 重设：全量重新校验并落库新 refs
+    let response = app
+        .clone()
+        .oneshot(auth_request(
+            "PUT",
+            &format!("/api/v1/things/admin/{owner}/properties/{prop_id}"),
+            &token,
+            Some(json!({"expression": "{电表2.energy}+1"})),
+        ))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    assert_eq!(json["result"]["expression"], "{电表2.energy}+1");
+    assert_eq!(json["result"]["source"], "derived");
+
+    let props = get_properties(&app, &token, &owner).await;
+    let row = props.as_array().unwrap().iter().find(|p| p["id"] == prop_id).unwrap();
+    let refs = row["refs"].as_str().unwrap();
+    assert!(
+        refs.contains(&format!("\"thing_id\":\"{meter2}\"")) && refs.contains("\"property_name\":\"energy\""),
+        "GET 应见重校验后的新 refs: {refs}"
+    );
+    assert!(!refs.contains(&meter1), "旧引用应被替换: {refs}");
+}
+
 // ── 删除 ─────────────────────────────────────────────────────────────
 
 #[tokio::test]

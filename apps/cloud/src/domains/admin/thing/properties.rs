@@ -31,9 +31,20 @@ pub struct CreatePropertyRequest {
     pub expression: Option<String>,
 }
 
-/// 更新属性定义（部分更新：None 字段经 COALESCE 保持原值；expression 给出
-/// 则全量重新校验并写穿派生三件套，缺省则保留既有派生定义——不做
-/// derived → 非派生转换）。
+/// PUT body 字段三态解码：字段缺省 → None；显式 null → Some(None)；
+/// 有值 → Some(Some(v))。serde 原生会把缺省与 null 都收成 None，
+/// 必须经此 deserialize_with 区分（X2 expression 三态的关键）。
+fn deserialize_some<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+/// 更新属性定义（部分更新：None 字段经 COALESCE 保持原值；expression 三态——
+/// 缺省=不动派生定义、null=解绑回退普通属性（清 expression/refs，source 回
+/// 'template'）、字符串=全量重新校验并写穿派生三件套）。
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct UpdatePropertyRequest {
@@ -41,7 +52,8 @@ pub struct UpdatePropertyRequest {
     pub display_name: Option<String>,
     pub unit: Option<String>,
     pub data_type: Option<String>,
-    pub expression: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub expression: Option<Option<String>>,
 }
 
 pub fn create_router<S>() -> Router<S>
@@ -243,23 +255,23 @@ async fn update_property(
     };
     let ws = workspace_id.clone().unwrap_or_default();
 
-    // expression 给出 → 全量重新校验（PUT 语义）。环检测把该属性旧边与新边合并
-    // 判定：库内既存图无环时，合并图成环 ⟺ 新边成环（旧边参与的回边在旧图中
-    // 已构成环，与既存无环不变量矛盾），故合并判定无假阳性，无需先摘旧边。
+    // expression 三态（X2）：缺省=不动；null=解绑回退普通属性；字符串=全量
+    // 重新校验（PUT 语义）。环检测把该属性旧边与新边合并判定：库内既存图无环
+    // 时，合并图成环 ⟺ 新边成环（旧边参与的回边在旧图中已构成环，与既存无环
+    // 不变量矛盾），故合并判定无假阳性，无需先摘旧边。
     let derived = match &req.expression {
-        Some(expr) => {
-            match validate_derived(&state, &ws, &thing_id, expr).await {
-                Ok(refs) => Some((expr.as_str(), refs)),
-                Err(resp) => return resp,
-            }
-        }
+        Some(Some(expr)) => match validate_derived(&state, &ws, &thing_id, expr).await {
+            Ok(refs) => Some(Some((expr.as_str(), refs))),
+            Err(resp) => return resp,
+        },
+        Some(None) => Some(None),
         None => None,
     };
 
     // 非派生 → 派生转换时 data_type 未显式给出则补 'number'（与创建路径缺省
     // 一致，评审 Minor 2）；已是派生的属性走 COALESCE 保旧。
     let data_type = match (&req.expression, &req.data_type) {
-        (Some(_), None) if existing.source.as_deref() != Some("derived") => Some("number".to_string()),
+        (Some(Some(_)), None) if existing.source.as_deref() != Some("derived") => Some("number".to_string()),
         _ => req.data_type.clone(),
     };
 
@@ -272,7 +284,7 @@ async fn update_property(
             req.display_name.as_deref(),
             req.unit.as_deref(),
             data_type.as_deref(),
-            derived.as_ref().map(|(e, r)| (*e, r.as_str())),
+            derived.as_ref().map(|inner| inner.as_ref().map(|(e, r)| (*e, r.as_str()))),
         )
         .await
     {
