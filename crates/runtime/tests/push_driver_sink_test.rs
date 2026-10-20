@@ -202,6 +202,184 @@ async fn push_reading_flows_through_shared_pipeline() {
     assert!(device_cache.get("ghost").is_none());
 }
 
+/// X4：无 wrapper 的物（空间物/无驱动物）→ device_cache 回退写值（spec §一）。
+#[tokio::test]
+async fn sink_reading_for_thing_without_wrapper_falls_back_to_cache() {
+    let mut spatial = Thing {
+        id: "spatial-1".to_string(),
+        name: "中庭空间".to_string(),
+        ..Thing::default()
+    };
+    let prop = ThingProperty {
+        id: "prop-spatial-power".to_string(),
+        thing_id: "spatial-1".to_string(),
+        name: "total_power".to_string(),
+        data_type: Some("float".to_string()),
+        ..ThingProperty::default()
+    };
+    spatial.properties = Some(vec![prop]);
+
+    // 装配：device_cache 有物，driver_cache 为空（无 wrapper）
+    let driver_cache: DriverCache = moka::sync::Cache::new(100);
+    let device_cache: Arc<dyn ThingCacheSource> = Arc::new(FakeCache::with_device(spatial));
+    let event_bus = Arc::new(EventBus::new());
+
+    // E5：先确认订阅建立再发送
+    let baseline = event_bus.subscriber_count();
+    let mut event_rx = event_bus.subscribe();
+    assert_eq!(event_bus.subscriber_count(), baseline + 1, "订阅必须先于发送建立");
+
+    DataServer::consume_driver_reading(
+        DriverReading {
+            thing_id: "spatial-1".to_string(),
+            values: vec![ResultValue::new(
+                "total_power".to_string(),
+                "float".to_string(),
+                Some("42".to_string()),
+            )],
+        },
+        &driver_cache,
+        &device_cache,
+        event_bus.clone(),
+    )
+    .await;
+
+    // 1) 缓存先于发布：consume 返回时 device_cache 必已更新
+    let cached = device_cache.get("spatial-1").expect("cached thing");
+    let prop = &cached.properties.as_ref().unwrap()[0];
+    assert_eq!(
+        prop.current_value.as_deref(),
+        Some("42"),
+        "回退路径必须更新 device_cache 属性值"
+    );
+
+    // 2) 订阅者收到恰好 1 条 PropertyChange
+    let event = tokio::time::timeout(Duration::from_secs(2), event_rx.recv())
+        .await
+        .expect("必须在 2s 内收到事件")
+        .expect("事件通道必须打开");
+    assert!(
+        matches!(event.event_type(), EventType::Device(ThingEventType::PropertyChange)),
+        "必须是 PropertyChange 事件, got {:?}",
+        event.event_type()
+    );
+    assert_eq!(event.source().thing_id(), Some("spatial-1"));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), event_rx.recv())
+            .await
+            .is_err(),
+        "只允许 1 条事件"
+    );
+}
+
+/// X4 两路径并存：有 wrapper 的物走 wrapper 路径，无 wrapper 的物走 device_cache 回退。
+#[tokio::test]
+async fn wrapper_path_and_cache_fallback_coexist() {
+    let sink_seen: Arc<Mutex<Option<ValueSink>>> = Arc::new(Mutex::new(None));
+    let wrapper = DriverWrapper::new(Box::new(StubPushDriver {
+        thing: campus_thing(),
+        sink_seen: sink_seen.clone(),
+    }));
+    let driver_cache: DriverCache = moka::sync::Cache::new(100);
+    driver_cache.insert("campus-1".to_string(), Arc::new(parking_lot::RwLock::new(wrapper)));
+
+    let mut spatial = Thing {
+        id: "spatial-1".to_string(),
+        name: "中庭空间".to_string(),
+        ..Thing::default()
+    };
+    spatial.properties = Some(vec![ThingProperty {
+        id: "prop-spatial-power".to_string(),
+        thing_id: "spatial-1".to_string(),
+        name: "total_power".to_string(),
+        data_type: Some("float".to_string()),
+        ..ThingProperty::default()
+    }]);
+
+    let device_cache: Arc<dyn ThingCacheSource> = Arc::new(FakeCache::with_device(campus_thing()));
+    device_cache.insert(spatial);
+    let event_bus = Arc::new(EventBus::new());
+    let baseline = event_bus.subscriber_count();
+    let mut event_rx = event_bus.subscribe();
+    assert_eq!(event_bus.subscriber_count(), baseline + 1, "订阅必须先于发送建立");
+
+    for thing_id in ["campus-1", "spatial-1"] {
+        DataServer::consume_driver_reading(
+            DriverReading {
+                thing_id: thing_id.to_string(),
+                values: vec![ResultValue::new(
+                    "total_power".to_string(),
+                    "float".to_string(),
+                    Some("7".to_string()),
+                )],
+            },
+            &driver_cache,
+            &device_cache,
+            event_bus.clone(),
+        )
+        .await;
+    }
+
+    // 两条路径都写缓存
+    for thing_id in ["campus-1", "spatial-1"] {
+        let cached = device_cache.get(thing_id).expect("cached thing");
+        let prop = &cached.properties.as_ref().unwrap()[0];
+        assert_eq!(
+            prop.current_value.as_deref(),
+            Some("7"),
+            "{thing_id} 属性值必须更新"
+        );
+    }
+    // 两条路径各发 1 条 PropertyChange
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..2 {
+        let event = tokio::time::timeout(Duration::from_secs(2), event_rx.recv())
+            .await
+            .expect("必须在 2s 内收到事件")
+            .expect("事件通道必须打开");
+        assert!(matches!(
+            event.event_type(),
+            EventType::Device(ThingEventType::PropertyChange)
+        ));
+        seen.insert(event.source().thing_id().unwrap().to_string());
+    }
+    assert_eq!(seen.len(), 2, "campus-1 与 spatial-1 必须各发 1 条事件");
+}
+
+/// 回退也 miss（物已删的迟到读数）→ 丢弃，不 panic、不发布事件。
+#[tokio::test]
+async fn reading_for_thing_missing_everywhere_is_dropped() {
+    let driver_cache: DriverCache = moka::sync::Cache::new(100);
+    let device_cache: Arc<dyn ThingCacheSource> = Arc::new(FakeCache::empty());
+    let event_bus = Arc::new(EventBus::new());
+    let baseline = event_bus.subscriber_count();
+    let mut event_rx = event_bus.subscribe();
+    assert_eq!(event_bus.subscriber_count(), baseline + 1, "订阅必须先于发送建立");
+
+    DataServer::consume_driver_reading(
+        DriverReading {
+            thing_id: "ghost".to_string(),
+            values: vec![ResultValue::new(
+                "total_power".to_string(),
+                "float".to_string(),
+                Some("1".to_string()),
+            )],
+        },
+        &driver_cache,
+        &device_cache,
+        event_bus.clone(),
+    )
+    .await;
+
+    assert!(device_cache.get("ghost").is_none());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), event_rx.recv())
+            .await
+            .is_err(),
+        "双 miss 的读数不得发布任何事件"
+    );
+}
+
 #[tokio::test]
 async fn run_spawns_sink_consumer_and_shutdown_stops_it() {
     let device_cache: Arc<dyn ThingCacheSource> = Arc::new(FakeCache::empty());

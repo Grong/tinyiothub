@@ -118,7 +118,8 @@ impl DataServer {
     }
 
     /// 消费一条推送读数：经 driver_cache 找到 owner 物的 wrapper，走共享管线
-    /// （apply_property_values → cache_and_publish）。未知物的读数丢弃并告警。
+    /// （apply_property_values → cache_and_publish）。无 wrapper（空间物/无驱动物）
+    /// 时回退 device_cache 直写（X4）；两处都无该物 → 丢弃并告警（物已删的迟到读数）。
     pub async fn consume_driver_reading(
         reading: DriverReading,
         driver_cache: &DriverCache,
@@ -126,7 +127,14 @@ impl DataServer {
         event_bus: Arc<EventBus>,
     ) {
         let Some(driver_arc) = driver_cache.get(&reading.thing_id) else {
-            tracing::warn!("Push reading for unknown thing '{}' dropped", reading.thing_id);
+            // X4：无 wrapper → device_cache 回退（spec §一）
+            let Some(mut device) = device_cache.get(&reading.thing_id) else {
+                tracing::warn!(thing_id = %reading.thing_id, "sink 读数丢弃：物不在 wrapper 也不在缓存（已删？）");
+                return;
+            };
+            let thing_name = device.name.clone();
+            let events = Self::apply_property_values(&mut device, &thing_name, &reading.values);
+            Self::cache_and_publish(device, events, device_cache, Some(event_bus)).await;
             return;
         };
         let (device, events) = {
