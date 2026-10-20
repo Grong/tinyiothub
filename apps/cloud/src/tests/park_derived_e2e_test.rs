@@ -774,6 +774,85 @@ async fn scene_instantiation_bumps_device_count() {
     let _ = rig.shutdown_tx.send(());
 }
 
+// ── Task 7（X3a 收尾）：实例化模拟驱动热加载——不重启即出数 ─────────────
+// 核实结论：驱动注册热路径已存在（REST create_thing → DeviceCreated 事件
+// metadata 带完整物 → DataServer 事件处理器热建驱动），但场景包实例化
+// 直写库不发事件，driver_name='simulator' 的新物需重启才出数。本用例
+// 钉住目标行为：真实 API 实例化（attachSimulatedDriver）→ 不重启 →
+// ≤3.5s（interval=3000+首拍）任一传感器属性出现非空当前值。
+
+/// 挂 simulator 的传感器模板属性（float，模拟器可直接产值）。
+const SIM_SENSOR_PROPERTIES: &str = r#"[
+    {"name": "temperature", "display_name": {"zh": "温度"}, "description": null,
+     "data_type": "float", "unit": "°C", "min_value": null, "max_value": null,
+     "default_value": null, "is_read_only": true, "is_required": true, "validation_rules": null}
+]"#;
+
+#[tokio::test]
+async fn instantiated_simulated_thing_produces_values_without_restart() {
+    let rig = setup_rig().await;
+    // 生产同款接线（service_manager.rs start_all）：DataServer 注册为事件
+    // 处理器 = DeviceCreated 热建驱动的入口
+    rig.app_state
+        .event_bus
+        .register_handler(Arc::new(rig.data_server.clone()));
+    let app = build_router(&rig.app_state);
+    let token = token();
+
+    // 种子：带属性的传感器模板 + 迷你场景包（根 + 3 传感器叶节点）
+    seed_thing_template(&rig.pool, "mini_sensor", "sensor", "{}", SIM_SENSOR_PROPERTIES, "[]").await;
+    let scene_tpl = seed_thing_template(&rig.pool, "mini_scene", "scenes", MINI_SCENE_JSON, "[]", "[]").await;
+
+    // 真实 API 实例化（attachSimulatedDriver → 叶节点统一挂 simulator）
+    let response = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            &format!("/api/v1/marketplace/thing-templates/{scene_tpl}/instantiate"),
+            &token,
+            Some(json!({
+                "sceneName": "南区",
+                "parameterValues": {},
+                "dryRun": false,
+                "attachSimulatedDriver": true,
+            })),
+        ))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "实例化失败: {json}");
+
+    let sim_ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM things WHERE workspace_id = ? AND driver_name = 'simulator'")
+            .bind(WS)
+            .fetch_all(&rig.pool)
+            .await
+            .expect("查询模拟驱动物");
+    assert_eq!(sim_ids.len(), 3, "3 个传感器叶节点均应挂 simulator: {sim_ids:?}");
+
+    // 不重启：≤3.5s 确定性轮询等待任一传感器属性出现非空当前值
+    let deadline = Instant::now() + Duration::from_millis(3500);
+    loop {
+        let produced = sim_ids.iter().any(|id| {
+            rig.app_state
+                .device_cache
+                .get(id)
+                .and_then(|t| t.properties)
+                .is_some_and(|ps| ps.iter().any(|p| p.current_value.is_some()))
+        });
+        if produced {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "3.5s 内模拟驱动未出数——实例化后驱动热加载未生效"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    let _ = rig.shutdown_tx.send(());
+}
+
 /// X4 收尾（Task 3）混合模式：物理驱动物（driver_name='modbus'）上派生计算值
 /// 与驱动采集值共存同一 Thing，双向互不覆盖——
 ///   派生写回（sink → consume wrapper 路径）不覆盖采集值；

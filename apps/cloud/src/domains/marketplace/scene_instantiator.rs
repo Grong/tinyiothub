@@ -30,11 +30,16 @@
 //! 可聚合设计）。
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 
 use sqlx::{Sqlite, Transaction};
-use tinyiothub_core::models::thing::CreateThingRequest;
+use tinyiothub_core::models::event::{
+    ContentElement, Event as DomainEvent, EventLevel, EventSource, RichContent, TextFormat, ThingEventType,
+};
+use tinyiothub_core::models::thing::{CreateThingRequest, Thing};
 use tinyiothub_core::models::thing_command::CreateThingCommandRequest;
 use tinyiothub_core::models::thing_property::CreateThingPropertyRequest;
+use tinyiothub_runtime::event_bus::{EventBus, publish_event_safe};
 use tinyiothub_storage::Db;
 use tinyiothub_storage::alarm::AlarmLevel;
 use tinyiothub_storage::alarm_rule::{AlarmCondition, AlarmRule, NotificationConfig, RuleType};
@@ -110,12 +115,36 @@ pub struct QuotaInfo {
 pub struct SceneInstantiator;
 
 impl SceneInstantiator {
-    #[instrument(skip(db, params), fields(dry_run = params.dry_run))]
+    /// 实例化（不发热加载事件）；REST 入口走 `instantiate_with_events`。
     pub async fn instantiate(
         db: &Db,
         workspace_id: &str,
         template_id: &str,
         params: &InstantiateParams,
+    ) -> Result<InstantiateOutcome> {
+        Self::run(db, workspace_id, template_id, params, None).await
+    }
+
+    /// 实例化并在提交成功后为带驱动的节点发布 DeviceCreated（metadata 带完整物）——
+    /// DataServer 事件处理器据此热建驱动（与 REST 建物同一热路径，X3a），
+    /// driver_name 非空的新物不重启即注册进 data_server 并出数。
+    pub async fn instantiate_with_events(
+        db: &Db,
+        workspace_id: &str,
+        template_id: &str,
+        params: &InstantiateParams,
+        event_bus: &Arc<EventBus>,
+    ) -> Result<InstantiateOutcome> {
+        Self::run(db, workspace_id, template_id, params, Some(event_bus)).await
+    }
+
+    #[instrument(skip(db, params, event_bus), fields(dry_run = params.dry_run))]
+    async fn run(
+        db: &Db,
+        workspace_id: &str,
+        template_id: &str,
+        params: &InstantiateParams,
+        event_bus: Option<&Arc<EventBus>>,
     ) -> Result<InstantiateOutcome> {
         let started = std::time::Instant::now();
         info!(
@@ -126,7 +155,7 @@ impl SceneInstantiator {
             parent_id = ?params.parent_id,
             "场景包实例化开始"
         );
-        let outcome = Self::do_instantiate(db, workspace_id, template_id, params).await;
+        let outcome = Self::do_instantiate(db, workspace_id, template_id, params, event_bus).await;
         let duration_ms = started.elapsed().as_millis() as u64;
         match &outcome {
             Ok(o) => info!(
@@ -154,6 +183,7 @@ impl SceneInstantiator {
         workspace_id: &str,
         template_id: &str,
         params: &InstantiateParams,
+        event_bus: Option<&Arc<EventBus>>,
     ) -> Result<InstantiateOutcome> {
         // 0. scene_name 校验：trim 后非空、无控制字符、≤128 字符（防垃圾传播到整棵树每个节点名）
         validate_scene_name(&params.scene_name)?;
@@ -242,13 +272,13 @@ impl SceneInstantiator {
 
         // 7. 单事务落库；SQLite 单写者锁竞争时整体回滚重试
         let mut attempt = 0usize;
-        let (root_id, final_names, warnings) = loop {
+        let persisted = loop {
             let mut tx = db.pool().begin().await.map_err(|e| db_err("开启事务", e))?;
             match persist_tree(db, &mut tx, workspace_id, template_id, params, &result, &drivers).await {
-                Ok((root_id, final_names, mut persist_warnings)) => {
+                Ok(mut persisted) => {
                     tx.commit().await.map_err(|e| db_err("提交事务", e))?;
-                    persist_warnings.extend(result.warnings.clone());
-                    break (root_id, final_names, persist_warnings);
+                    persisted.warnings.extend(result.warnings.clone());
+                    break persisted;
                 }
                 Err(e) if is_lock_contention(&e) && attempt < MAX_TX_RETRIES => {
                     attempt += 1;
@@ -264,11 +294,18 @@ impl SceneInstantiator {
             }
         };
 
+        // 8. 驱动热加载（X3a）：提交成功后为带驱动的节点发布 DeviceCreated，
+        // DataServer 事件处理器热建驱动——新物不重启即出数。best-effort：
+        // 发布失败只记 warn，不影响已提交的实例化结果。
+        if let Some(bus) = event_bus {
+            publish_driver_things_created(db, workspace_id, &persisted.driver_thing_ids, bus).await;
+        }
+
         Ok(InstantiateOutcome {
             node_count: result.node_count,
-            root_thing_id: Some(root_id),
-            tree_preview: rebuild_tree_preview(&result.nodes, &final_names),
-            warnings,
+            root_thing_id: Some(persisted.root_id),
+            tree_preview: rebuild_tree_preview(&result.nodes, &persisted.final_names),
+            warnings: persisted.warnings,
             quota,
         })
     }
@@ -728,8 +765,17 @@ fn parse_extra_commands(json: Option<&str>, template_id: &str, warnings: &mut Ve
         .collect()
 }
 
+/// 落库产物：根 id、最终名称、warnings，以及带驱动节点的真实 thing id
+/// （提交后热加载事件的输入——DataServer 按 DeviceCreated 热建驱动）。
+struct PersistedTree {
+    root_id: String,
+    final_names: Vec<String>,
+    warnings: Vec<String>,
+    driver_thing_ids: Vec<String>,
+}
+
 /// 事务内落库：名称解析（与 dry-run 共用步骤）→ 拓扑序创建本体 → 子表。
-/// 返回 (root_thing_id, 最终名称列表, warnings)。任何一步失败即返回 Err，由调用方回滚整个事务。
+/// 任何一步失败即返回 Err，由调用方回滚整个事务。
 #[allow(clippy::too_many_arguments)]
 async fn persist_tree(
     db: &Db,
@@ -739,12 +785,13 @@ async fn persist_tree(
     params: &InstantiateParams,
     result: &ExpansionResult,
     drivers: &[Option<NodeDriver>],
-) -> Result<(String, Vec<String>, Vec<String>)> {
+) -> Result<PersistedTree> {
     // 事务内名称解析（与 dry-run 同算法）：事务可见自身写入，计划名即落库名（无并发干预下）
     let planned = resolve_node_names(db, Some(tx), workspace_id, &result.nodes).await?;
     let mut warnings = name_warnings(&result.nodes, &planned);
     let mut final_names: Vec<String> = Vec::with_capacity(result.nodes.len());
     let mut real_ids: HashMap<usize, String> = HashMap::new();
+    let mut driver_thing_ids: Vec<String> = Vec::new();
     let mut root_id = String::new();
 
     for (i, node) in result.nodes.iter().enumerate() {
@@ -796,13 +843,21 @@ async fn persist_tree(
 
         final_names.push(resolved);
         real_ids.insert(node.temp_id, id.clone());
+        if drivers[i].is_some() {
+            driver_thing_ids.push(id.clone());
+        }
         if node.temp_id == 0 {
             root_id = id.clone();
         }
 
         persist_children_tables(db, tx, workspace_id, &id, node, &mut warnings).await?;
     }
-    Ok((root_id, final_names, warnings))
+    Ok(PersistedTree {
+        root_id,
+        final_names,
+        warnings,
+        driver_thing_ids,
+    })
 }
 
 /// 名称插入（persist_tree 唯一调用点）。生产路径直通
@@ -1057,6 +1112,55 @@ fn parse_alarm_level(s: &str) -> Option<AlarmLevel> {
         "critical" => Some(AlarmLevel::Critical),
         _ => None,
     }
+}
+
+/// 提交成功后为带驱动的节点发布 DeviceCreated（metadata 带完整物，与 REST 建物
+/// 同形状）——DataServer 事件处理器据此热建驱动并插入 device_cache（复用既有
+/// 热路径，不重写注册逻辑）。best-effort：加载/构造失败只记 warn，不影响已提交
+/// 的实例化结果（与 REST 路径 `let _ =` 同语义）。
+async fn publish_driver_things_created(db: &Db, workspace_id: &str, thing_ids: &[String], event_bus: &Arc<EventBus>) {
+    for id in thing_ids {
+        match load_complete_thing(db, workspace_id, id).await {
+            Ok(Some(device)) => {
+                let device_json = serde_json::to_value(&device).unwrap_or(serde_json::Value::Null);
+                let content = RichContent::new(
+                    format!("Thing Created: {}", device.name),
+                    vec![ContentElement::Text {
+                        content: format!("Thing '{}' has been created successfully", device.name),
+                        format: TextFormat::Plain,
+                    }],
+                )
+                .with_metadata("device".to_string(), device_json);
+                match DomainEvent::new_device_event(
+                    ThingEventType::DeviceCreated,
+                    EventLevel::Info,
+                    EventSource::device(device.id.clone(), Some("scene_instantiator".to_string())),
+                    content,
+                ) {
+                    Ok(event) => publish_event_safe(event_bus.clone(), event).await,
+                    Err(e) => warn!(thing_id = %id, error = %e, "实例化热加载：DeviceCreated 事件构造失败"),
+                }
+            }
+            Ok(None) => warn!(thing_id = %id, "实例化热加载：提交后读不到新物"),
+            Err(e) => warn!(thing_id = %id, error = %e, "实例化热加载：加载完整物失败"),
+        }
+    }
+}
+
+/// 加载完整物（含属性——模拟驱动按属性产值；DataServer 的 device_cache 插入同用）。
+async fn load_complete_thing(db: &Db, workspace_id: &str, thing_id: &str) -> Result<Option<Thing>> {
+    let mut thing = db
+        .find_thing_by_id(Some(workspace_id), thing_id)
+        .await
+        .map_err(|e| MarketplaceError::Template(format!("加载实例化物失败: {e}")))?;
+    if let Some(t) = &mut thing {
+        t.properties = Some(
+            db.find_thing_properties_by_thing_id(thing_id)
+                .await
+                .map_err(|e| MarketplaceError::Template(format!("加载实例化物属性失败: {e}")))?,
+        );
+    }
+    Ok(thing)
 }
 
 /// 测试故障注入（不进生产二进制）：arming 后下一次名称插入先在本事务内

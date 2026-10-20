@@ -678,7 +678,9 @@ async fn instantiate_thing_template(
             })
             .collect(),
     };
-    match SceneInstantiator::instantiate(state.db.as_ref(), ws, &id, &params).await {
+    // instantiate_with_events：提交成功后为带驱动的节点发 DeviceCreated——
+    // DataServer 热建驱动，新模拟物不重启即出数（X3a 收尾，Task 7）
+    match SceneInstantiator::instantiate_with_events(state.db.as_ref(), ws, &id, &params, &state.event_bus).await {
         Ok(outcome) => {
             // 终审 I-3：实例化挂到既有父下 = 子树变更，必须通知 Manager（含
             // descendant_count 的派生重算）——漏接则 device_count 静默陈旧到
