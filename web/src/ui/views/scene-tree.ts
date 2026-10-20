@@ -63,8 +63,10 @@ export interface SceneTreeNode {
   name: string;
   category: string;
   children: SceneTreeNode[];
-  /** 场景节点 key 路径；null = 不可作为挂载点（结构未解析/无 key/待建节点） */
+  /** 场景节点 key 路径；null = 不可作为挂载点（结构未解析/无 key/待建节点/对齐发散） */
   keyPath: string[] | null;
+  /** 不可挂接原因（D11 文字标签）；null/undefined = 正常。设置时 keyPath 恒为 null */
+  mountBlocked?: string | null;
   propertyCount: number | null;
   /** template_ref 展开的叶设备（驱动标记与挂载按钮的依据） */
   isDevice: boolean;
@@ -87,6 +89,8 @@ export interface ExtraNodePayload {
 export interface SceneTreeDriverOption {
   value: string;
   label: string;
+  /** true 时选项禁用（如总开关开启时「无驱动」不可用——协议上 null=服从总开关） */
+  disabled?: boolean;
 }
 
 export interface SceneTreeHost {
@@ -119,6 +123,7 @@ export function parseTreePreview(text: string): SceneTreeNode[] {
       category: m ? m[2] : "",
       children: [],
       keyPath: null,
+      mountBlocked: null,
       propertyCount: null,
       isDevice: false,
       countParam: null,
@@ -136,11 +141,17 @@ export function parseTreePreview(text: string): SceneTreeNode[] {
 // 结构走查（key/设备/属性数/参数化 叠加）
 // ──────────────────────────────────────────────
 
+/** 不可挂接原因（D11 文字标签） */
+export const MOUNT_BLOCKED_REF = "引用加载失败，不可挂接";
+export const MOUNT_BLOCKED_MISALIGN = "结构对齐失败，不可挂接";
+
 interface Skeleton {
   key: string | null;
   isDevice: boolean;
   countParam: string | null;
   propertyCount: number | null;
+  /** 不可挂接原因（ref 拉取失败等）；非 null 时该节点整棵子树标记不可挂接 */
+  blocked: string | null;
   children: Skeleton[];
 }
 
@@ -169,11 +180,20 @@ function expandStructNodes(
   const out: Skeleton[] = [];
   for (const n of nodes ?? []) {
     if (n.scene_ref) {
-      // 环/超深/缺引用：跳过该子树（对应预览节点拿不到 key，不可挂接，降级安全）
-      if (refStack.includes(n.scene_ref) || refStack.length >= MAX_SCENE_REF_DEPTH) continue;
-      const target = ctx.refScenes.get(n.scene_ref);
-      if (!target) continue;
+      // 份数在本模板参数空间求值（与后端同口径，不依赖目标模板）
       const copies = resolveCount(n, params);
+      // 环/超深/引用拉取失败：产出等份 blocked 骨架保持兄弟序对齐，
+      // 对应预览节点整棵子树标记不可挂接（静默错位会挂错父节点）
+      const target =
+        refStack.includes(n.scene_ref) || refStack.length >= MAX_SCENE_REF_DEPTH
+          ? null
+          : ctx.refScenes.get(n.scene_ref) ?? null;
+      if (!target) {
+        for (let i = 0; i < copies; i++) {
+          out.push({ key: null, isDevice: false, countParam: null, propertyCount: null, blocked: MOUNT_BLOCKED_REF, children: [] });
+        }
+        continue;
+      }
       // 目标参数空间：目标默认 ← param_mapping {目标参数: 本模板参数}
       const mapped: Record<string, number> = {};
       for (const p of target.parameters ?? []) mapped[p.name] = p.default;
@@ -186,6 +206,7 @@ function expandStructNodes(
           isDevice: false,
           countParam: n.count_param ?? null,
           propertyCount: Array.isArray(n.properties) && n.properties.length > 0 ? n.properties.length : null,
+          blocked: null,
           children: expandStructNodes(target.children ?? [], mapped, ctx, [...refStack, n.scene_ref]),
         });
       }
@@ -201,6 +222,7 @@ function expandStructNodes(
         isDevice,
         countParam: n.count_param ?? null,
         propertyCount: ownProps ?? tpl?.propertyCount ?? null,
+        blocked: null,
         children: expandStructNodes(n.children ?? [], params, ctx, refStack),
       });
     }
@@ -213,12 +235,31 @@ interface AssignCtx {
   attachSim: boolean;
 }
 
-/** 按位置（兄弟序）把骨架信息叠加到预览树上；数量不一致时只对齐前缀，余者保持不可挂接。 */
+/** 整棵子树标记不可挂接（keyPath 置 null + 原因文字），不再参与对齐 */
+function markSubtreeBlocked(node: SceneTreeNode, reason: string) {
+  node.keyPath = null;
+  node.mountBlocked = reason;
+  node.countParam = null;
+  for (const c of node.children) markSubtreeBlocked(c, reason);
+}
+
+/**
+ * 按位置（兄弟序）把骨架信息叠加到预览树上。
+ * 数量一致性闸门：任一层骨架/预览数量不一致（500 截断、参数竞态等）→
+ * 该层整层及子树标记不可挂接——宁可整层禁用，也不静默错位挂错父节点。
+ */
 function assignMeta(previewNodes: SceneTreeNode[], skels: Skeleton[], parentPath: string[] | null, ctx: AssignCtx) {
-  const n = Math.min(previewNodes.length, skels.length);
-  for (let i = 0; i < n; i++) {
+  if (previewNodes.length !== skels.length) {
+    for (const p of previewNodes) markSubtreeBlocked(p, MOUNT_BLOCKED_MISALIGN);
+    return;
+  }
+  for (let i = 0; i < previewNodes.length; i++) {
     const p = previewNodes[i];
     const s = skels[i];
+    if (s.blocked) {
+      markSubtreeBlocked(p, s.blocked);
+      continue;
+    }
     if (parentPath !== null) {
       p.keyPath = s.key != null ? [...parentPath, s.key] : parentPath.length === 0 ? [] : null;
     }
@@ -266,6 +307,7 @@ export function buildSceneTree(args: BuildSceneTreeArgs): SceneTreeNode[] {
       isDevice: false,
       countParam: null,
       propertyCount: args.rootPropertyCount ?? null,
+      blocked: null,
       children: expandStructNodes(args.rootScene.children ?? [], args.params, expandCtx, [args.rootName ?? ""]),
     };
     assignMeta(roots, [rootSkel], [], {
@@ -282,10 +324,20 @@ export function buildSceneTree(args: BuildSceneTreeArgs): SceneTreeNode[] {
       category: p.category,
       children: [],
       keyPath: null,
+      mountBlocked: null,
       propertyCount: p.propertyCount,
       isDevice: true,
       countParam: null,
-      driver: p.driverName == null ? "none" : p.driverName === SIMULATOR_DRIVER ? "sim" : "physical",
+      // 协议语义：driverName=null = 服从总开关（后端 resolve_node_drivers 同口径）——
+      // 开关开时徽标必须显示「模拟」，不能让 UI 与创建结果不一致
+      driver:
+        p.driverName == null
+          ? args.attachSim
+            ? "sim"
+            : "none"
+          : p.driverName === SIMULATOR_DRIVER
+            ? "sim"
+            : "physical",
       driverName: p.driverName,
       pending: p,
     });
@@ -361,6 +413,9 @@ function renderNode(
         ${node.driver
           ? html`<span class="mp-tag st-driver" data-driver=${node.driver}>${DRIVER_LABELS[node.driver]}</span>`
           : nothing}
+        ${node.mountBlocked
+          ? html`<span class="st-mount-blocked" style="color: var(--danger, #dc2626); font-size: 11px;">${node.mountBlocked}</span>`
+          : nothing}
         ${node.countParam && editable
           ? html`
             <span class="st-stepper" data-count-param=${node.countParam} style="display: inline-flex; gap: 2px;">
@@ -373,13 +428,15 @@ function renderNode(
             ${opts.driverOptions
               ? html`<select
                   class="st-pending-driver"
-                  .value=${node.pending.driverName ?? "none"}
+                  .value=${node.pending.driverName ?? (node.driver === "sim" ? SIMULATOR_DRIVER : "none")}
                   @change=${(e: Event) => {
                     const v = (e.target as HTMLSelectElement).value;
                     host.onTreePendingDriver(node.pending!.id, v === "none" ? null : v);
                   }}
                 >
-                  ${opts.driverOptions.map((o) => html`<option value=${o.value}>${o.label}</option>`)}
+                  ${opts.driverOptions.map(
+                    (o) => html`<option value=${o.value} ?disabled=${!!o.disabled}>${o.label}</option>`,
+                  )}
                 </select>`
               : nothing}
             <button class="btn btn--sm st-pending-del" @click=${() => host.onTreeRemovePending(node.pending!.id)}>删除</button>`

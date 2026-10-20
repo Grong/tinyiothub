@@ -436,7 +436,13 @@ export class MarketplaceView extends LitElement {
     return [
       { value: SIMULATOR_DRIVER, label: "模拟驱动 (simulator)" },
       ...this.localDrivers.map((d) => ({ value: d.name, label: d.name })),
-      { value: "none", label: "无驱动" },
+      // 协议上 driver_name=null = 服从总开关（后端无"显式无驱动"表达）——
+      // 总开关开启时「无驱动」实际仍会挂 simulator，禁用并明示，避免 UI 说谎
+      {
+        value: "none",
+        label: this.attachSim ? "无驱动（总开关开启时仍将挂模拟驱动）" : "无驱动",
+        disabled: this.attachSim,
+      },
     ];
   }
 

@@ -180,18 +180,72 @@ describe("buildSceneTree — 结构走查叠加", () => {
     expect(off[0].children[0].children[0].children[0].driver).toBe("none");
   });
 
-  it("待建节点按 parentPath 叠加到挂载点（count>1 显示 ×N），驱动三态", () => {
+  it("待建节点按 parentPath 叠加到挂载点（count>1 显示 ×N）", () => {
     const pending: PendingNode[] = [
       { id: "p1", templateId: "meter", category: "meter", propertyCount: 6, name: "电表", count: 3, driverName: "simulator", parentPath: ["building"] },
       { id: "p2", templateId: "water", category: "meter", propertyCount: 4, name: "水表", count: 1, driverName: "modbus_rtu", parentPath: [] },
-      { id: "p3", templateId: "water", category: "meter", propertyCount: 4, name: "水表2", count: 1, driverName: null, parentPath: [] },
     ];
     const tree = buildSceneTree(baseArgs({ pending }));
     const buildingMeter = tree[0].children[0].children.find((n) => n.pending?.id === "p1");
     expect(buildingMeter?.name).toBe("电表 ×3");
     expect(buildingMeter?.driver).toBe("sim");
-    const rootChildren = tree[0].children.filter((n) => n.pending);
-    expect(rootChildren.map((n) => n.driver)).toEqual(["physical", "none"]);
+    expect(tree[0].children.find((n) => n.pending?.id === "p2")?.driver).toBe("physical");
+  });
+
+  it("待建节点 driverName=null = 服从总开关（与后端协议同口径）：开→「模拟」，关→「无」", () => {
+    const pending: PendingNode[] = [
+      { id: "p1", templateId: "water", category: "meter", propertyCount: 4, name: "水表", count: 1, driverName: null, parentPath: [] },
+    ];
+    const on = buildSceneTree(baseArgs({ pending, attachSim: true }));
+    expect(on[0].children.find((n) => n.pending)?.driver).toBe("sim");
+    const off = buildSceneTree(baseArgs({ pending, attachSim: false }));
+    expect(off[0].children.find((n) => n.pending)?.driver).toBe("none");
+  });
+
+  it("降级保护①：scene_ref 拉取失败 → 该节点整棵子树标记「引用加载失败，不可挂接」，根仍可挂接", () => {
+    const campus: SceneStructRoot = {
+      parameters: [{ name: "building_count", default: 1 }],
+      children: [{ key: "building", category: "building", scene_ref: "smart_building", count_param: "building_count" }],
+    };
+    const preview = ["园区A (campus)", "  1号楼 (building)", "    1F (floor)"].join("\n");
+    // refScenes 为空 = 引用模板拉取失败
+    const tree = buildSceneTree(
+      baseArgs({ previewText: preview, rootScene: campus, refScenes: new Map(), params: { building_count: 1 } }),
+    );
+    const root = tree[0];
+    const building = root.children[0];
+    const floor = building.children[0];
+    expect(root.keyPath).toEqual([]);
+    expect(root.mountBlocked).toBeFalsy();
+    expect(building.keyPath).toBeNull();
+    expect(building.mountBlocked).toContain("引用加载失败");
+    expect(floor.mountBlocked).toContain("引用加载失败");
+    const el = mount(hostStub(), tree);
+    const buildingEl = [...el.querySelectorAll(".st-node")].find(
+      (n) => n.querySelector(":scope > .st-row .st-name")?.textContent === "1号楼",
+    )!;
+    expect(buildingEl.querySelector(":scope > .st-row .st-add-device")).toBeNull();
+    expect(buildingEl.textContent).toContain("不可挂接");
+    // 根不受影响
+    const rootEl = el.querySelector(".st-node")!;
+    expect(rootEl.querySelector(":scope > .st-row .st-add-device")).not.toBeNull();
+  });
+
+  it("降级保护②：骨架/预览数量发散 → 该层整层标记「结构对齐失败」禁用加设备（不静默错位）", () => {
+    // 结构按参数展开 1 栋楼，预览却有 2 栋（如 500 截断/参数竞态）→ 兄弟序不可信
+    const preview = ["园区A (campus)", "  1号楼 (building)", "  2号楼 (building)"].join("\n");
+    const tree = buildSceneTree(baseArgs({ previewText: preview, params: { building_count: 1, floor_count: 2 } }));
+    const root = tree[0];
+    expect(root.keyPath).toEqual([]); // 根层 1v1 对齐正常
+    for (const b of root.children) {
+      expect(b.keyPath).toBeNull();
+      expect(b.mountBlocked).toContain("结构对齐失败");
+    }
+    const el = mount(hostStub(), tree);
+    expect(el.textContent).toContain("结构对齐失败，不可挂接");
+    // 发散层无加设备按钮；根仍有
+    const addBtns = [...el.querySelectorAll(".st-add-device")];
+    expect(addBtns).toHaveLength(1);
   });
 });
 

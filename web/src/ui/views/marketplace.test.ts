@@ -151,6 +151,30 @@ describe("确认按钮文案与待建节点", () => {
     await el.updateComplete;
     expect(el.querySelector(".st-node--pending")).not.toBeNull();
   });
+
+  it("总开关开时「无驱动」选项禁用并带提示（协议上 null=服从总开关）；关时恢复可选", async () => {
+    const el = await createView();
+    primeDialog(el);
+    el.preview = { nodeCount: 1, rootThingId: null, treePreview: "园区A (campus)", warnings: [], quota: { current: 0, limit: null, after: 1 } };
+    (el as any).sceneStruct = { root: { children: [] }, refs: new Map(), devices: new Map() };
+    el.pendingNodes = [
+      { id: "p1", templateId: "meter-tpl", category: "meter", propertyCount: 6, name: "电表", count: 1, driverName: null, parentPath: [] },
+    ];
+    el.attachSim = true;
+    await el.updateComplete;
+    // 开关开：null 徽标显示「模拟」（与后端实际行为一致），「无驱动」禁用+提示
+    expect(el.querySelector(".st-node--pending")?.textContent).toContain("模拟");
+    const noneOn = el.querySelector('.st-pending-driver option[value="none"]') as HTMLOptionElement;
+    expect(noneOn.disabled).toBe(true);
+    expect(noneOn.textContent).toContain("仍将挂模拟驱动");
+    // 开关关：三态全部有效，null 徽标显示「无」
+    el.attachSim = false;
+    await el.updateComplete;
+    const noneOff = el.querySelector('.st-pending-driver option[value="none"]') as HTMLOptionElement;
+    expect(noneOff.disabled).toBe(false);
+    expect(noneOff.textContent).toBe("无驱动");
+    expect(el.querySelector(".st-node--pending")?.textContent).toContain("无");
+  });
 });
 
 /** createView 的非 await 变体（submitScene 路径不依赖渲染完成） */
