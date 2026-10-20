@@ -372,8 +372,12 @@ impl DerivedDriverManager {
                 }
             }
         }
-        if defs.is_empty() && !self.owners.read().contains_key(owner_thing_id) {
-            return; // 无派生定义且无存量登记，无需建句柄
+        if defs.is_empty() {
+            // 终审 M-a：defs 空时回收 owner 登记——空 defs 的 OwnerEntry 永留
+            // owners 表会让 sync_engine 的 should_run 恒 true（订阅空转到删物）。
+            self.owners.write().remove(owner_thing_id);
+            self.sync_engine();
+            return;
         }
         if let Err(e) = self.ensure_owner(owner_thing_id, defs).await {
             tracing::error!(error = %e, owner = %owner_thing_id, "derived owner ensure failed");
@@ -419,6 +423,13 @@ impl DerivedDriverManager {
                 .flat_map(|(_, owners)| owners.clone())
                 .collect::<Vec<_>>();
             idx.retain(|(tid, _), _| tid != thing_id);
+            // owner 侧残留一并 scrub（终审 M-a）：被删物若是派生 owner，其 id
+            // 可能留在其他 ref key 的 owner vec 里（引擎侧 owners.get miss 有
+            // continue 兜底，内存级无害，但索引应保持干净）。
+            idx.retain(|_, owners| {
+                owners.retain(|o| o != thing_id);
+                !owners.is_empty()
+            });
             affected
         };
         affected.sort();

@@ -1077,7 +1077,7 @@ export class MarketplaceView extends LitElement {
             this.addDriver = (e.target as HTMLSelectElement).value;
           }}
         >
-          ${this.treeDriverOptions().map((o) => html`<option value=${o.value}>${o.label}</option>`)}
+          ${this.treeDriverOptions().map((o) => html`<option value=${o.value} ?disabled=${!!o.disabled}>${o.label}</option>`)}
         </select>
         <div style="display: flex; gap: var(--space-2);">
           <button class="btn primary btn--sm" @click=${() => this.confirmAddDevice()}>添加</button>

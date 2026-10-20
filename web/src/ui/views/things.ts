@@ -237,6 +237,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   @state() treeError = "";
 
+  /** 树被后端列表上限截断（total > 已加载条数）时置 true，树顶部出提示 */
+  @state() treeTruncated = false;
+
   /** 树上「+」入口的建物向导 parent_id 预填（null = 无父） */
   @state() wizParentId: string | null = null;
 
@@ -588,17 +591,26 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   // ── 树视图（Task 9，D12：拖拽换父 + 树上「+」新增设备）──────────────
 
-  /** 物列表全量拉取（树视图不分页；pageSize 500 与后端列表上限同量级） */
+  /** 树视图单次拉取上限 = 后端 limit clamp 上限（crates/db/src/thing.rs ListThingsParams） */
+  private static readonly TREE_LIST_LIMIT = 200;
+
+  /** 物列表全量拉取（树视图不分页）。
+   *  注意：后端 ListThingsParams 的分页参数名是 limit/offset（camelCase），
+   *  不是 page/pageSize——后者会被 serde 静默丢弃，limit 缺省 50、clamp 上限 200。
+   *  （loadDevices 的表格分页有同款历史坑；终审 I-1，2026-10-20） */
   async loadThingTree() {
     this.treeLoading = true;
     this.treeError = "";
     try {
-      const res = await thingApi.list({ page: "1", pageSize: "500" });
-      const items: Thing[] = (res.result as any)?.items || [];
+      const res = await thingApi.list({ limit: String(DevicesView.TREE_LIST_LIMIT) });
+      const data: any = res.result;
+      const items: Thing[] = data?.items || [];
+      this.treeTruncated = typeof data?.total === "number" && data.total > items.length;
       this.treeNodes = buildThingForest(items);
     } catch (err: any) {
       this.treeError = err.message || "加载物树失败";
       this.treeNodes = [];
+      this.treeTruncated = false;
     } finally {
       this.treeLoading = false;
     }
@@ -1924,6 +1936,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
       return html`<div class="empty-hint--sm">暂无物，点击「新建物」创建根节点</div>`;
     }
     return html`<div class="card" style="padding: var(--space-3, 12px);">
+      ${this.treeTruncated
+        ? html`<div class="empty-hint--sm" style="margin-bottom: var(--space-2, 8px);">仅显示前 ${DevicesView.TREE_LIST_LIMIT} 个物（超出部分未加载）</div>`
+        : nothing}
       ${renderSceneTree(this.thingTreeHost, this.treeNodes, { editable: true })}
     </div>`;
   }

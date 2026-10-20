@@ -78,6 +78,9 @@ impl StubQueries {
     fn add_prop(&self, p: ThingProperty) {
         self.props.lock().unwrap().push(p);
     }
+    fn remove_props_of(&self, thing_id: &str) {
+        self.props.lock().unwrap().retain(|p| p.thing_id != thing_id);
+    }
 }
 
 #[async_trait::async_trait]
@@ -718,6 +721,39 @@ async fn engine_uses_single_eventbus_subscription() {
     rig.manager.notify_thing_deleted("campus-1").await;
     rig.manager.notify_thing_deleted("campus-2").await;
     wait_until("owner 删光后订阅回落基线", || {
+        event_bus.subscriber_count() == baseline
+    })
+    .await;
+}
+
+/// 终审 M-a：配置面删掉最后一条派生 → notify_config_changed 回收 owner 登记
+/// → 引擎订阅停止（不空转到删物）。
+#[tokio::test]
+async fn removing_last_derived_stops_engine_subscription() {
+    let event_bus = Arc::new(EventBus::new());
+    let baseline = event_bus.subscriber_count();
+    let rig = assemble(
+        vec![
+            meter("meter-1", "电表1", Some("100")),
+            meter("meter-2", "电表2", Some("200")),
+        ],
+        vec![total_power_prop()],
+        event_bus.clone(),
+        event_bus.clone(),
+    );
+    rig.manager.start().await.expect("manager start");
+    assert_eq!(
+        event_bus.subscriber_count(),
+        baseline + 1,
+        "start 后应有一个派生订阅"
+    );
+
+    // 管理面删除该 owner 最后一条派生定义，再走配置变更钩子。
+    rig.queries.remove_props_of("campus-1");
+    rig.manager.notify_config_changed("campus-1").await;
+
+    // defs 空 → owner 登记回收 → 引擎停（abort 异步生效——确定性轮询）。
+    wait_until("末条派生删除后订阅回落基线", || {
         event_bus.subscriber_count() == baseline
     })
     .await;
