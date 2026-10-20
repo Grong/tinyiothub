@@ -225,6 +225,10 @@ pub(crate) fn build_autonomous_tools(
             .pending_actions
             .clone()
             .expect("pending_actions must be wired in ThingToolContext"),
+        // E1 仲裁（Task 9）：与 chat 路径共享同一注册表；串行调度保证
+        // 同 workspace 无并发 run，持有者名以 workspace 粒度即可读。
+        arbitration: runtime.arbitration.clone(),
+        arbitration_holder: format!("autonomous:{workspace_id}"),
     };
     tools.push(Box::new(AutonomousInvokeActionTool::new(
         inner,

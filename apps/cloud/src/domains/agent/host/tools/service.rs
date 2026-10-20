@@ -10,6 +10,7 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 use tinyiothub_agent::AgentError;
 use tinyiothub_agent::port::tool::Tool;
+use tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry;
 use tinyiothub_agent::tools::{ToolProvider, ToolRegistry, ToolRuntimeContext, filter_by_denylist};
 use tinyiothub_skills::trust::{ToolSafety, classify_tool_safety};
 use tinyiothub_storage::cache::ThingCache;
@@ -29,6 +30,7 @@ pub fn chat_builtin_tools_provider(
     db_pool: SqlitePool,
     device_cache: Option<Arc<ThingCache>>,
     pending_actions: Arc<PendingActionStore>,
+    arbitration: Arc<ArbitrationRegistry>,
 ) -> ToolProvider {
     Arc::new(move |workspace_id: &str, runtime: &ToolRuntimeContext| {
         let mut tools: Vec<(Box<dyn Tool>, ToolSafety)> = Vec::new();
@@ -43,6 +45,7 @@ pub fn chat_builtin_tools_provider(
                 device_cache: device_cache.clone(),
                 data_server: runtime.data_server.clone(),
                 pending_actions: Some(pending_actions.clone()),
+                arbitration: Some(arbitration.clone()),
             },
         ));
 

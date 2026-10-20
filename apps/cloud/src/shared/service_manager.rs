@@ -240,6 +240,7 @@ impl ServiceManager {
                 app_state.db.pool().clone(),
                 Some(app_state.device_cache.clone()),
                 app_state.pending_actions.clone(),
+                app_state.arbitration.clone(),
             ));
             tool_registry.set_external_tool_factory(Arc::new(|| {
                 crate::domains::agent::host::ports::external_tool_registry()
@@ -285,6 +286,7 @@ impl ServiceManager {
                                 device_cache: Some(app_state.device_cache.clone()),
                                 data_server: app_state.data_server.clone(),
                                 pending_actions: Some(app_state.pending_actions.clone()),
+                                arbitration: Some(app_state.arbitration.clone()),
                             },
                         ),
                     ),

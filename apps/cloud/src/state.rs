@@ -202,6 +202,8 @@ pub struct AppState {
     pub started_at: std::time::SystemTime,
     /// 待确认动作暂存（G3，替代 PENDING_ACTIONS 全局静态）
     pub pending_actions: std::sync::Arc<crate::domains::agent::host::tools::thing::PendingActionStore>,
+    /// E1 仲裁（Task 9）：每设备互斥锁注册表，跨 chat/自治 run 共享
+    pub arbitration: std::sync::Arc<tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry>,
     /// 驱动心跳状态/配置（G3，替代 HEARTBEAT_STATUS/CONFIG 双全局静态）
     pub driver_heartbeat_status:
         std::sync::Arc<tokio::sync::RwLock<crate::domains::driver::heartbeat::types::HeartbeatStatus>>,
@@ -444,6 +446,10 @@ impl AppState {
         // 进程级生命周期，关停随 tokio runtime 一起 abort。
         drop(crate::domains::agent::host::tools::thing::spawn_pending_action_sweeper_default(pending_actions.clone()));
 
+        // E1 仲裁（Task 9）：每设备互斥锁注册表——chat 工具与自治 run 共享
+        // 同一份，TTL 过期自动恢复，无清扫任务（acquire 时懒判定）。
+        let arbitration = std::sync::Arc::new(tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry::default());
+
         // Thing action hooks（G5a）—— agent 侧实现 thing 域 trait，注入给 thing handler
         let thing_action_hooks: Arc<dyn crate::domains::thing::hooks::ThingActionHooks> = Arc::new(
             crate::domains::agent::host::trigger::thing_action_hooks::AgentThingActionHooks::new(
@@ -492,6 +498,7 @@ impl AppState {
             jwt_service,
             started_at: std::time::SystemTime::now(),
             pending_actions,
+            arbitration,
             driver_heartbeat_status: std::sync::Arc::new(tokio::sync::RwLock::new(Default::default())),
             driver_heartbeat_config: std::sync::Arc::new(tokio::sync::RwLock::new(Default::default())),
             workspace_access: Arc::new(TenantWorkspaceAccess {

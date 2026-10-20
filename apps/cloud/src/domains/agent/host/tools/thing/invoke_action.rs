@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
+use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL};
 
 use super::{PendingActionStore, store_pending_action, tool_err, tool_ok, validate_action_params};
 use crate::domains::thing::service::ThingService;
@@ -20,6 +21,11 @@ pub struct InvokeActionTool {
     pub(crate) workspace_id: String,
     pub(crate) data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
     pub(crate) pending_actions: Arc<PendingActionStore>,
+    /// E1 仲裁（Task 9）：每设备互斥锁注册表，跨 chat/自治 run 共享；
+    /// None = 不仲裁（既有行为不变）。
+    pub(crate) arbitration: Option<Arc<ArbitrationRegistry>>,
+    /// busy 拒绝里的持有者名（人读得懂的拒绝）——chat 会话/值守 run 标识。
+    pub(crate) arbitration_holder: String,
 }
 
 impl Attributable for InvokeActionTool {
@@ -149,6 +155,22 @@ impl Tool for InvokeActionTool {
             }));
         }
 
+        // 5. E1 仲裁（Task 9）：执行前抢设备互斥锁——TTL（默认 10min）内
+        // 已被另一持有者（chat 会话/值守 run）占用同设备时拒绝，busy 文案
+        // 带持有者名；持有者崩溃不死锁（TTL 过期自动可再 acquire）。
+        // Lease RAII：本次调用返回即释放（run 级持续占用由 E4 声明制细化）。
+        let _lease = match &self.arbitration {
+            Some(registry) => {
+                match registry.try_acquire(&input.thing_id, self.arbitration_holder.clone(), DEFAULT_LEASE_TTL) {
+                    Ok(lease) => Some(lease),
+                    Err(busy) => {
+                        return tool_err(format!("busy: 设备正被 {} 占用，请稍后重试", busy.holder));
+                    }
+                }
+            }
+            None => None,
+        };
+
         // Execute via DataServer if available.
         // NOTE: this dispatch tail (through the closing brace of this match)
         // is mirrored by `dispatch_command` in autonomous_invoke.rs — if you
@@ -184,5 +206,117 @@ impl Tool for InvokeActionTool {
                 }))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domains::agent::host::test_utils::seed_test_workspace;
+
+    async fn test_pool() -> SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory pool");
+        tinyiothub_storage::migrations::run_migrations(&pool)
+            .await
+            .expect("migrations");
+        pool
+    }
+
+    /// 一台 device + 一个已注册动作 + 关闭确认门（仲裁在执行前——绕过
+    /// 确认分支，直达执行路径）。
+    async fn seed_device(pool: &SqlitePool, ws: &str, thing_id: &str) {
+        seed_test_workspace(pool, "tenant-1", ws).await;
+        sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES (?, ?, ?, 'device')")
+            .bind(thing_id)
+            .bind(format!("Thing {thing_id}"))
+            .bind(ws)
+            .execute(pool)
+            .await
+            .expect("insert device");
+        sqlx::query("INSERT INTO thing_actions (id, thing_id, name) VALUES (?, ?, ?)")
+            .bind(format!("act-reboot-{thing_id}"))
+            .bind(thing_id)
+            .bind("reboot")
+            .execute(pool)
+            .await
+            .expect("register action");
+        sqlx::query("UPDATE workspaces SET require_action_confirm = 0 WHERE id = ?")
+            .bind(ws)
+            .execute(pool)
+            .await
+            .expect("disable confirm gate");
+    }
+
+    fn tool(
+        pool: &SqlitePool,
+        ws: &str,
+        arbitration: Option<Arc<ArbitrationRegistry>>,
+        holder: &str,
+    ) -> InvokeActionTool {
+        InvokeActionTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            pool: pool.clone(),
+            workspace_id: ws.to_string(),
+            data_server: None,
+            pending_actions: Arc::new(PendingActionStore::new()),
+            arbitration,
+            arbitration_holder: holder.to_string(),
+        }
+    }
+
+    /// 两 run 并发同设备：run-A 持锁期间 run-B 的 invoke_action 被仲裁
+    /// 拒绝且 busy 文案带持有者名；run-A 结束（Lease drop）后 run-B 放行。
+    #[tokio::test]
+    async fn concurrent_runs_same_device_second_gets_busy_with_holder() {
+        let pool = test_pool().await;
+        seed_device(&pool, "ws-arb", "dev-1").await;
+        let registry = Arc::new(ArbitrationRegistry::default());
+        let challenger = tool(&pool, "ws-arb", Some(registry.clone()), "watch-run-B");
+
+        // run-A 在飞（持锁）。
+        let lease_a = registry
+            .try_acquire_default("dev-1", "watch-run-A".to_string())
+            .expect("run-A acquire");
+
+        let busy = challenger
+            .execute(json!({"thingId": "dev-1", "actionName": "reboot"}))
+            .await
+            .expect("execute");
+        assert!(!busy.success, "run-B 必须被仲裁拒绝: {busy:?}");
+        let msg = busy.error.unwrap_or_default();
+        assert!(
+            msg.contains("watch-run-A"),
+            "busy 必须带持有者名（人读得懂的拒绝）: {msg}"
+        );
+
+        // run-A 结束释放 → run-B 可执行（无 DataServer → simulated）。
+        drop(lease_a);
+        let ok = challenger
+            .execute(json!({"thingId": "dev-1", "actionName": "reboot"}))
+            .await
+            .expect("execute");
+        assert!(ok.success, "释放后必须放行: {:?}", ok.error);
+        assert!(ok.output.contains("simulated"), "无 DataServer 走模拟: {ok:?}");
+    }
+
+    /// 未接线仲裁注册表（None）时行为不变——即使他人持锁也照常执行。
+    #[tokio::test]
+    async fn no_registry_keeps_legacy_behavior() {
+        let pool = test_pool().await;
+        seed_device(&pool, "ws-legacy", "dev-1").await;
+        let registry = Arc::new(ArbitrationRegistry::default());
+        let _held = registry
+            .try_acquire_default("dev-1", "someone-else".to_string())
+            .expect("held");
+        let unwired = tool(&pool, "ws-legacy", None, "chat");
+        let ok = unwired
+            .execute(json!({"thingId": "dev-1", "actionName": "reboot"}))
+            .await
+            .expect("execute");
+        assert!(ok.success, "未接线仲裁时行为不变: {:?}", ok.error);
     }
 }

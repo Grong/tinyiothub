@@ -34,6 +34,7 @@ use std::sync::Arc;
 use crate::domains::thing::service::ThingService;
 use sqlx::SqlitePool;
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
+use tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry;
 use tinyiothub_skills::trust::ToolSafety;
 
 pub use get::GetThingTool;
@@ -89,6 +90,9 @@ pub struct ThingToolContext {
     pub device_cache: Option<Arc<tinyiothub_storage::cache::ThingCache>>,
     pub data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
     pub pending_actions: Option<Arc<PendingActionStore>>,
+    /// E1 仲裁（Task 9）：跨 chat/自治 run 共享的每设备互斥锁注册表；
+    /// None = 不仲裁。
+    pub arbitration: Option<Arc<ArbitrationRegistry>>,
 }
 
 /// Create all 9 Thing Ontology agent tools with their safety classifications.
@@ -149,12 +153,14 @@ pub fn create_thing_tools(
         destructive(Box::new(InvokeActionTool {
             thing_service,
             pool,
-            workspace_id: ws,
+            workspace_id: ws.clone(),
             data_server: runtime.data_server.clone(),
             pending_actions: runtime
                 .pending_actions
                 .clone()
                 .expect("pending_actions must be wired in ThingToolContext"),
+            arbitration: runtime.arbitration.clone(),
+            arbitration_holder: format!("chat:{ws}"),
         })),
     ]
 }

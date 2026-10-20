@@ -460,6 +460,8 @@ mod tests {
             workspace_id: workspace_id.to_string(),
             data_server: None,
             pending_actions: self_pending_actions(),
+            arbitration: None,
+            arbitration_holder: "test".to_string(),
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -664,6 +666,8 @@ mod tests {
             workspace_id: "ws-err".to_string(),
             data_server: None,
             pending_actions: self_pending_actions(),
+            arbitration: None,
+            arbitration_holder: "test".to_string(),
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -826,6 +830,8 @@ mod tests {
             workspace_id: inner_ws.to_string(),
             data_server: None,
             pending_actions: self_pending_actions(),
+            arbitration: None,
+            arbitration_holder: "test".to_string(),
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -935,6 +941,8 @@ mod tests {
             workspace_id: "ws-norun".to_string(),
             data_server: None,
             pending_actions: self_pending_actions(),
+            arbitration: None,
+            arbitration_holder: "test".to_string(),
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
