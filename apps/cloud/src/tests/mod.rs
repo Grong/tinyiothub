@@ -45,6 +45,7 @@ mod scene_instantiate_test;
 mod seed_profile_e2e_tests;
 mod system_handler_tests;
 mod tag_handler_tests;
+mod template_copy_test;
 mod template_handler_tests;
 mod tenant_handler_tests;
 mod thing_agent_loop_tests;

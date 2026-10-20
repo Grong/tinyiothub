@@ -213,8 +213,58 @@ impl ThingService {
         Ok(Self::row_to_response(&created, vec![]))
     }
 
+    /// 模板三段定义一次取回（properties/actions/device_info），避免动态列名（SqlSafeStr）。
+    async fn template_parts(&self, tid: &str) -> Result<(Option<String>, Option<String>, Option<String>), sqlx::Error> {
+        let row: Option<(Option<String>, Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT properties, actions, device_info FROM thing_templates WHERE id=?")
+                .bind(tid)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.unwrap_or((None, None, None)))
+    }
+
+    /// 列 JSON 非空判定：空串/"[]"/"null" 视为无定义。（Fix A）
+    fn nonempty_json(j: &Option<String>) -> Option<String> {
+        j.as_ref().and_then(|s| {
+            let t = s.trim();
+            if t.is_empty() || t == "[]" || t == "null" {
+                None
+            } else {
+                Some(s.clone())
+            }
+        })
+    }
+
+    /// 场景包回退：device_info 内嵌场景 JSON 的指定段（properties/commands）。（Fix A）
+    fn scene_section(device_info: &Option<String>, key: &str) -> Option<String> {
+        let info = device_info.as_deref()?;
+        let v: serde_json::Value = serde_json::from_str(info).ok()?;
+        v.get(key).map(|s| s.to_string())
+    }
+
+    /// i18n 字段取值：字符串直接用；对象按 zh > en > 首值；缺失 None。（Fix A）
+    fn i18n_pick(v: Option<&serde_json::Value>) -> Option<String> {
+        let v = v?;
+        if let Some(s) = v.as_str() {
+            return Some(s.to_string());
+        }
+        let obj = v.as_object()?;
+        obj.get("zh")
+            .or_else(|| obj.get("en"))
+            .or_else(|| obj.values().next())
+            .and_then(|s| s.as_str())
+            .map(|s| s.to_string())
+    }
+
+    /// 键兼容读取：snake_case 优先，camelCase 兜底。（Fix A）
+    fn key<'a>(p: &'a serde_json::Value, snake: &str, camel: &str) -> Option<&'a serde_json::Value> {
+        p.get(snake).or_else(|| p.get(camel))
+    }
+
     async fn copy_template_props(&self, thing_id: &str, tid: &str) -> Result<(), sqlx::Error> {
-        let Some(json) = self.db.find_thing_template_properties(tid).await? else {
+        let (props_col, _, device_info) = self.template_parts(tid).await?;
+        let json = Self::nonempty_json(&props_col).or_else(|| Self::scene_section(&device_info, "properties"));
+        let Some(json) = json else {
             return Ok(());
         };
         // Inserts go through the storage layer (single source of SQL for
@@ -225,19 +275,28 @@ impl ThingService {
             .map(|p| CreateThingPropertyRequest {
                 thing_id: thing_id.to_string(),
                 name: p["name"].as_str().unwrap_or("").to_string(),
-                display_name: p.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                description: None,
+                display_name: Self::i18n_pick(Self::key(&p, "display_name", "displayName")),
+                description: Self::i18n_pick(p.get("description")),
                 data_type: Some(
-                    p.get("dataType")
+                    Self::key(&p, "data_type", "dataType")
                         .and_then(|v| v.as_str())
                         .unwrap_or("string")
                         .to_string(),
                 ),
-                unit: Some(p.get("unit").and_then(|v| v.as_str()).unwrap_or("").to_string()),
-                min_value: p.get("minValue").and_then(|v| v.as_f64()),
-                max_value: p.get("maxValue").and_then(|v| v.as_f64()),
-                default_value: p.get("defaultValue").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                is_read_only: Some(p.get("isReadOnly").and_then(|v| v.as_bool()).unwrap_or(false) as i32),
+                unit: Self::key(&p, "unit", "unit")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                min_value: Self::key(&p, "min_value", "minValue").and_then(|v| v.as_f64()),
+                max_value: Self::key(&p, "max_value", "maxValue").and_then(|v| v.as_f64()),
+                default_value: Self::key(&p, "default_value", "defaultValue").map(|v| match v.as_str() {
+                    Some(s) => s.to_string(),
+                    None => v.to_string(),
+                }),
+                is_read_only: Some(
+                    Self::key(&p, "is_read_only", "isReadOnly")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false) as i32,
+                ),
                 expression: None,
                 source: None,
                 refs: None,
@@ -249,7 +308,10 @@ impl ThingService {
     }
 
     async fn copy_template_acts(&self, thing_id: &str, tid: &str) -> Result<(), sqlx::Error> {
-        let Some(json) = self.db.find_thing_template_actions(tid).await? else {
+        // 场景包的命令定义在场景 JSON 的 commands 段（模板 actions 列为空）（Fix A）
+        let (_, acts_col, device_info) = self.template_parts(tid).await?;
+        let json = Self::nonempty_json(&acts_col).or_else(|| Self::scene_section(&device_info, "commands"));
+        let Some(json) = json else {
             return Ok(());
         };
         let db = Db::new(self.pool.clone());
@@ -257,8 +319,8 @@ impl ThingService {
             let req = CreateThingCommandRequest {
                 thing_id: thing_id.to_string(),
                 name: a["name"].as_str().unwrap_or("").to_string(),
-                display_name: a.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                description: None,
+                display_name: Self::i18n_pick(Self::key(&a, "display_name", "displayName")),
+                description: Self::i18n_pick(a.get("description")),
                 parameters: a.get("parameters").map(|v| v.to_string()),
             };
             db.create_thing_command(&req).await?;

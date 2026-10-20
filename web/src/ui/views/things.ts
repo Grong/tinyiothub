@@ -18,6 +18,7 @@ import {
   renderWizardTemplateSelection as renderWizardTemplateSelectionFn,
   renderWizardDeviceInfo as renderWizardDeviceInfoFn,
   renderWizardConfigField as renderWizardConfigFieldFn,
+  wizardSelectableTemplates,
 } from "./things-wizard.js";
 import { driverApi } from "../../api/drivers.js";
 import { sceneApi } from "../../api/marketplace.js";
@@ -1543,9 +1544,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
 
   get filteredWizardTemplates(): ProcessedTemplate[] {
+    const selectable = wizardSelectableTemplates(this.wizTemplates);
     const q = this.wizTemplateSearch.trim().toLowerCase();
-    if (!q) return this.wizTemplates;
-    return this.wizTemplates.filter(t => {
+    if (!q) return selectable;
+    return selectable.filter(t => {
       const name = t.name?.toLowerCase() || "";
       const displayName = getLocalizedText(t.displayName, "").toLowerCase();
       const desc = t.description ? Object.values(t.description).join(" ").toLowerCase() : "";

@@ -6,6 +6,16 @@ import { CATEGORY_LABELS, CATEGORY_ICONS, getLocalizedText, isFieldRequired } fr
 import type { DriverConfigOption } from "../../types/index.js";
 import type { DevicesView } from "./things.js";
 
+/**
+ * 建物向导可选模板过滤（Fix B，2026-10-20）。
+ * 场景包（category='scenes'）是组合模板（带 children 的子树蓝图），只能走
+ * 市场实例化建整棵树，不能作为"新建单物"的模板——选它建物语义错位
+ * （实测：选园区模板建物，属性骨架在场景 JSON 而非模板列，用户看到空属性）。
+ */
+export function wizardSelectableTemplates<T extends { category?: string | null }>(templates: T[]): T[] {
+  return templates.filter(t => t.category !== "scenes");
+}
+
 export function renderWizard(host: DevicesView) {
     const isStep1 = host.wizardStep === "template";
     return html`
