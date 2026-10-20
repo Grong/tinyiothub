@@ -102,8 +102,8 @@ async fn get_properties(app: &Router, token: &str, thing_id: &str) -> Value {
 }
 
 /// 装配带 DerivedDriverManager 的测试应用（与 ServiceManager 生产装配同构：
-/// 真 DB queries + 真 ThingCache + 真 EventBus；DataServer 仅取
-/// driver_cache/value_sink 句柄，不跑 run 循环）。
+/// 真 DB queries + 真 ThingCache + 真 EventBus；DataServer 仅取 value_sink
+/// 句柄，不跑 run 循环）。
 async fn setup_app_with_manager() -> (Router, AppState, Arc<DerivedDriverManager>) {
     let (mut app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", WS).await;
@@ -114,7 +114,6 @@ async fn setup_app_with_manager() -> (Router, AppState, Arc<DerivedDriverManager
     let manager = Arc::new(DerivedDriverManager::new(
         Arc::new(DbDerivedPropertyQueries((*app_state.db).clone())),
         Arc::new(ThingCacheAdapter(app_state.device_cache.clone())),
-        data_server.driver_cache(),
         data_server.value_sink(),
         app_state.event_bus.clone(),
     ));
@@ -806,8 +805,9 @@ async fn profile_includes_derived_fields_and_live_status() {
 }
 
 // ── 终审 I-1：带物理驱动（driver_name 非空）的物拒绝派生（创建 + 更新）──
-// 派生挂在物理物上会让 Manager 注册 DerivedDriver 顶掉 driver_cache 里的物理
-// wrapper → 轮询/命令静默死亡（spec D5 精神：derived 挂非物理连接物）。
+// 派生挂在物理物上的语义混乱（X4 前 Manager 注册 wrapper 会顶掉 driver_cache
+// 里的物理 wrapper → 轮询/命令静默死亡），API 侧一律拒绝
+// （spec D5 精神：derived 挂非物理连接物）。
 
 #[tokio::test]
 async fn derived_rejected_on_thing_with_physical_driver() {

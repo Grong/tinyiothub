@@ -81,7 +81,7 @@ impl DerivedPropertyQueries for DbDerivedPropertyQueries {
     }
 
     async fn find_thing_with_properties(&self, thing_id: &str) -> Result<Option<Thing>, String> {
-        // 既有 find 组合（ensure_driver 热路径自愈，Task 13 评审 Important-1）：
+        // 既有 find 组合（ensure_owner 热路径自愈，Task 13 评审 Important-1）：
         // find_thing_by_id(None,…) 不做 workspace 过滤（钩子已鉴权，id 全局唯一）。
         let mut thing = match self
             .0

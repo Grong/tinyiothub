@@ -123,10 +123,11 @@ impl ServiceManager {
 
         info!("✅ DataServer started and registered");
 
-        // 1.5 派生驱动管理器（Task 7，spec §三）：启动索引重建 + 为派生物注册
-        // DerivedDriver（mode=Push）进同一 driver_cache + 首值补偿。读数经
-        // data_server.value_sink() → 共享管线回流。list_derived 失败 = 启动期
-        // DB 读失败，中止启动（与 T21 fail-closed 同源）。三类触发源
+        // 1.5 派生引擎管理器（Task 7 + X4 单引擎化，spec §三）：启动索引重建 +
+        // 全 workspace 单 EventBus 订阅 + 首值补偿。读数经 data_server.value_sink()
+        // → 共享管线回流（consume_driver_reading 的 device_cache 回退写 owner 物，
+        // 不再注册任何 driver wrapper）。list_derived 失败 = 启动期 DB 读失败，
+        // 中止启动（与 T21 fail-closed 同源）。三类触发源
         // （notify_config_changed / notify_tree_changed / notify_thing_deleted）
         // 由 Task 8 物管理面钩子接线。
         let derived_manager = Arc::new(tinyiothub_runtime::driver::derived_manager::DerivedDriverManager::new(
@@ -136,7 +137,6 @@ impl ServiceManager {
             Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(
                 app_state.device_cache.clone(),
             )),
-            data_server.driver_cache(),
             data_server.value_sink(),
             app_state.event_bus.clone(),
         ));

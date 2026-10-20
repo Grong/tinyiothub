@@ -1,26 +1,18 @@
-//! 派生驱动（spec §一/§三）：平台内置推送驱动，挂在拥有派生属性的物上。
-//! 订阅 EventBus 的 PropertyChange，命中引用表即重算并经 sink 上报。
+//! 派生属性纯逻辑（spec §一/§二）：DerivedDef / 求值 / stale 内存态。
+//! 引擎装配（单订阅循环、反向索引）见 `derived_manager.rs`。
 //!
 //! 设计要点：
-//! - `mode() = Push`：不经 `process_all_drivers` 轮询拉取（spec §一）；
-//! - 首值补偿：`start_push` 立即全量重算一次（spec §三）；
-//! - lag 自愈：broadcast Lagged 计数进 `DERIVED_EVENTBUS_LAGGED` 并全量重算，
-//!   输入永远是最新缓存（spec §三）；
+//! - lag 自愈计数：broadcast Lagged 进 `DERIVED_EVENTBUS_LAGGED`（spec §三）；
 //! - recompute 全链路 **无 panic 面**（T1 监督降级依据）：parse/eval 错误全部
 //!   映射为 stale 状态，sink 发送失败仅丢弃，路径上无 unwrap/expect。
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 
 use parking_lot::RwLock;
-use tokio::sync::broadcast::error::RecvError;
 
-use tinyiothub_core::driver::{DriverMode, DriverReading, PropertyChangeSource, ResultValue, ThingDriver, ValueSink};
-use tinyiothub_core::error::Error;
-use tinyiothub_core::models::event::{EventType, ThingEventType};
-use tinyiothub_core::models::thing::Thing;
-use tinyiothub_core::models::thing_command::ThingCommand;
+use tinyiothub_core::driver::ResultValue;
 
 use crate::expression::{self, Ast, EvalError, PropertyRef};
 use crate::ports::ThingCacheSource;
@@ -44,13 +36,13 @@ pub struct DerivedStatus {
     pub last_eval_at: Option<String>,
 }
 
-/// property_id → 状态。Manager 与 DerivedDriver 共享（驱动重算时写入，
+/// property_id → 状态。Manager 与引擎订阅任务共享（重算时写入，
 /// Manager 经 `derived_status` 透出）。
 pub type DerivedStatusMap = Arc<RwLock<HashMap<String, DerivedStatus>>>;
 
-/// 每 owner 物的 defs 共享句柄（热更新抉择点②：Manager 与驱动共享同一把
-/// `RwLock<Vec<DerivedDef>>`，配置变更时 Manager 直接改写，不动 DriverWrapper /
-/// core ThingDriver trait——零下行转型、零 trait 改动）。
+/// 每 owner 物的 defs 共享句柄（热更新抉择点②：Manager 与引擎订阅任务共享
+/// 同一把 `RwLock<Vec<DerivedDef>>`，配置变更时 Manager 直接改写——零下行
+/// 转型、零 trait 改动）。
 pub type DerivedDefsHandle = Arc<RwLock<Vec<DerivedDef>>>;
 
 /// descendant_count 求值器（抉择点①：recompute 全链路 async，先把计数值经
@@ -62,32 +54,6 @@ pub trait DescendantCounter: Send + Sync {
 
 /// broadcast Lagged 累计（spec §三 观测指标；测试断言 >0）。
 pub static DERIVED_EVENTBUS_LAGGED: AtomicU64 = AtomicU64::new(0);
-
-pub struct DerivedDriver {
-    thing: Thing,
-    defs: DerivedDefsHandle,
-    cache: Arc<dyn ThingCacheSource>,
-    counter: Arc<dyn DescendantCounter>,
-    status: DerivedStatusMap,
-}
-
-impl DerivedDriver {
-    pub fn new(
-        thing: Thing,
-        defs: DerivedDefsHandle,
-        cache: Arc<dyn ThingCacheSource>,
-        counter: Arc<dyn DescendantCounter>,
-        status: DerivedStatusMap,
-    ) -> Self {
-        Self {
-            thing,
-            defs,
-            cache,
-            counter,
-            status,
-        }
-    }
-}
 
 /// 从缓存解析引用值：构建 DerivedDef 时 AST 各 PropertyRef.thing_name 已被
 /// 改写为 thing_id（spec §二：refs 以 id 为准——物改名不影响计算），按 id
@@ -246,100 +212,5 @@ fn trim_float(n: f64) -> String {
         format!("{}", n as i64)
     } else {
         format!("{n}")
-    }
-}
-
-impl ThingDriver for DerivedDriver {
-    fn thing(&self) -> &Thing {
-        &self.thing
-    }
-
-    fn thing_mut(&mut self) -> &mut Thing {
-        &mut self.thing
-    }
-
-    fn mode(&self) -> DriverMode {
-        DriverMode::Push
-    }
-
-    fn start_push(&mut self, sink: ValueSink, events: Arc<dyn PropertyChangeSource>) {
-        let thing_id = self.thing.id.clone();
-        let defs = self.defs.clone();
-        let cache = self.cache.clone();
-        let counter = self.counter.clone();
-        let status = self.status.clone();
-
-        // 首值补偿（spec §三：启动即全量重算）。
-        {
-            let sink = sink.clone();
-            let defs = defs.clone();
-            let cache = cache.clone();
-            let counter = counter.clone();
-            let status = status.clone();
-            let thing_id = thing_id.clone();
-            tokio::spawn(async move {
-                let snapshot = defs.read().clone();
-                let values = recompute_defs(&snapshot, &cache, &counter, &status).await;
-                if !values.is_empty() {
-                    let _ = sink.send(DriverReading { thing_id, values }).await;
-                }
-            });
-        }
-
-        // 事件订阅循环。注意：subscribe 在 spawn 之前同步完成——调用方
-        // （Manager.start 返回后）即可凭 subscriber_count 确认订阅已建立（E5）。
-        let mut rx = events.subscribe();
-        tokio::spawn(async move {
-            loop {
-                match rx.recv().await {
-                    Ok(event) => {
-                        if !matches!(event.event_type(), EventType::Device(ThingEventType::PropertyChange)) {
-                            continue;
-                        }
-                        let Some(src_thing) = event.source().thing_id().map(str::to_string) else {
-                            continue;
-                        };
-                        let snapshot = defs.read().clone();
-                        // 命中引用表才重算（refs 以 thing_id 为准）。
-                        let hit = snapshot.iter().any(|d| d.refs.iter().any(|(tid, _)| *tid == src_thing));
-                        if !hit {
-                            continue;
-                        }
-                        let values = recompute_defs(&snapshot, &cache, &counter, &status).await;
-                        if !values.is_empty() {
-                            let _ = sink
-                                .send(DriverReading {
-                                    thing_id: thing_id.clone(),
-                                    values,
-                                })
-                                .await;
-                        }
-                    }
-                    Err(RecvError::Lagged(n)) => {
-                        DERIVED_EVENTBUS_LAGGED.fetch_add(n, Ordering::Relaxed);
-                        // 自愈（spec §三）：lag 后全量重算，输入永远是最新缓存。
-                        let snapshot = defs.read().clone();
-                        let values = recompute_defs(&snapshot, &cache, &counter, &status).await;
-                        if !values.is_empty() {
-                            let _ = sink
-                                .send(DriverReading {
-                                    thing_id: thing_id.clone(),
-                                    values,
-                                })
-                                .await;
-                        }
-                    }
-                    Err(RecvError::Closed) => break,
-                }
-            }
-        });
-    }
-
-    fn read_data(&mut self) -> Result<Vec<ResultValue>, Error> {
-        Ok(vec![]) // 推送驱动不经轮询拉取（process_all_drivers 按 mode()=Push 跳过）
-    }
-
-    fn execute_command(&mut self, _cmd: &ThingCommand) -> Result<bool, Error> {
-        Err(Error::DriverError("该物不支持动作".into()))
     }
 }

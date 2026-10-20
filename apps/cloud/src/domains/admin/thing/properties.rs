@@ -396,7 +396,7 @@ async fn update_property_value(
         }
     }
 
-    // T3：派生属性值只由 DerivedDriver 写（spec §四）——先读属性再判
+    // T3：派生属性值只由派生引擎写（spec §四）——先读属性再判
     match state.db().find_thing_property_by_id(&property_id).await {
         Ok(Some(p)) if p.thing_id == thing_id && p.source.as_deref() == Some("derived") => {
             return err(StatusCode::BAD_REQUEST, "派生属性不支持手动写值");

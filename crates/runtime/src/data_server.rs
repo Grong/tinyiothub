@@ -52,9 +52,10 @@ impl DataServer {
         self.value_sink_tx.clone()
     }
 
-    /// 驱动缓存句柄（Task 7：DerivedDriverManager 把 DerivedDriver 注册进同一
-    /// 缓存——轮询迭代按 mode()=Push 跳过，sink 消费侧按 thing_id 找到 wrapper
-    /// 走共享管线）。moka `Cache` 克隆是廉价句柄，与 `value_sink()` 同级。
+    /// 驱动缓存句柄（物理驱动 wrapper 表——轮询迭代按 mode() 过滤，sink 消费
+    /// 侧按 thing_id 找 wrapper 走共享管线；X4 后派生引擎不再注册进此表，
+    /// 无 wrapper 的读数走 device_cache 回退）。moka `Cache` 克隆是廉价句柄，
+    /// 与 `value_sink()` 同级。
     pub fn driver_cache(&self) -> DriverCache {
         self.driver_cache.clone()
     }

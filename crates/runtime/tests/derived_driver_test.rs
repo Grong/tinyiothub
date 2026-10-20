@@ -1,10 +1,11 @@
-//! DerivedDriver 事件驱动重算全链路（spec §三）。
-//! 链：模拟源物属性变更事件 → EventBus → DerivedDriver 命中引用表 →
-//! 缓存取引用值 → 求值 → sink →（测试内直接消费 rx 走共享管线
-//! `DataServer::consume_driver_reading`）→ 园区物缓存更新。
+//! 派生引擎事件驱动重算全链路（spec §三；X4 单引擎化）。
+//! 链：模拟源物属性变更事件 → EventBus → Manager 单订阅引擎命中反向索引
+//! （def 级 property 过滤）→ 缓存取引用值 → 求值 → sink →（测试内直接消费
+//! rx 走共享管线 `DataServer::consume_driver_reading`）→ 园区物缓存更新。
 //!
-//! E5 时序：Manager.start() 返回即订阅已建立（start_push 内同步 subscribe），
-//! 断言 subscriber_count 后再发布；等待一律用确定性轮询（wait_until），禁裸 sleep。
+//! E5 时序：Manager.start()/notify_config_changed 返回即订阅已建立（引擎
+//! subscribe 同步完成），断言 subscriber_count 后再发布；等待一律用确定性
+//! 轮询（wait_until），禁裸 sleep。
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -60,16 +61,29 @@ impl ThingCacheSource for FakeCache {
     }
 }
 
-/// port 测试替身：派生定义表 + descendant_count 计数（可调）。
+/// port 测试替身：派生定义表（可运行中追加——单订阅用例加热更新 owner）+
+/// descendant_count 计数（可调）。
 struct StubQueries {
-    props: Vec<ThingProperty>,
+    props: Mutex<Vec<ThingProperty>>,
     descendants: Arc<AtomicI64>,
+}
+
+impl StubQueries {
+    fn new(props: Vec<ThingProperty>, descendants: Arc<AtomicI64>) -> Self {
+        Self {
+            props: Mutex::new(props),
+            descendants,
+        }
+    }
+    fn add_prop(&self, p: ThingProperty) {
+        self.props.lock().unwrap().push(p);
+    }
 }
 
 #[async_trait::async_trait]
 impl DerivedPropertyQueries for StubQueries {
     async fn list_derived(&self) -> Result<Vec<ThingProperty>, String> {
-        Ok(self.props.clone())
+        Ok(self.props.lock().unwrap().clone())
     }
     async fn find_thing_with_properties(&self, _thing_id: &str) -> Result<Option<Thing>, String> {
         Ok(None) // 既有用例缓存预置齐全，不命中补载路径
@@ -175,6 +189,35 @@ fn device_count_prop() -> ThingProperty {
     }
 }
 
+/// 第二 owner（单订阅用例）：园区2 + 其派生 total_power（引用电表1）。
+fn campus2() -> Thing {
+    let mut t = Thing {
+        id: "campus-2".to_string(),
+        name: "园区2".to_string(),
+        ..Thing::default()
+    };
+    t.properties = Some(vec![ThingProperty {
+        id: "prop-total-2".to_string(),
+        thing_id: "campus-2".to_string(),
+        name: "total_power".to_string(),
+        data_type: Some("float".to_string()),
+        ..ThingProperty::default()
+    }]);
+    t
+}
+
+fn campus2_total_prop() -> ThingProperty {
+    ThingProperty {
+        id: "prop-total-2".to_string(),
+        thing_id: "campus-2".to_string(),
+        name: "total_power".to_string(),
+        source: Some("derived".to_string()),
+        expression: Some("{电表1.用电数} * 2".to_string()),
+        refs: Some(r#"[{"thing_id":"meter-1","property_name":"用电数"}]"#.to_string()),
+        ..ThingProperty::default()
+    }
+}
+
 fn prop_change_event(thing_id: &str, prop_id: &str) -> Event {
     Event::new_device_event(
         ThingEventType::PropertyChange,
@@ -188,12 +231,14 @@ fn prop_change_event(thing_id: &str, prop_id: &str) -> Event {
 struct Rig {
     manager: Arc<DerivedDriverManager>,
     device_cache: Arc<FakeCache>,
+    queries: Arc<StubQueries>,
     descendants: Arc<AtomicI64>,
     _consumer: tokio::task::JoinHandle<()>,
 }
 
-/// 标准装配：电表1(100)/电表2(200)/园区物；Manager 注册 DerivedDriver，
-/// sink 读数由消费任务走共享管线回流（与 DataServer::run 内同一函数）。
+/// 标准装配：电表1(100)/电表2(200)/园区物；Manager 单引擎（ensure_owner 建
+/// defs 句柄 + 首值补偿），sink 读数由消费任务走共享管线回流（与
+/// DataServer::run 内同一函数）。
 fn assemble(
     meters: Vec<Thing>,
     derived_props: Vec<ThingProperty>,
@@ -207,18 +252,9 @@ fn assemble(
     let driver_cache: DriverCache = moka::sync::Cache::new(100);
     let (sink_tx, mut sink_rx) = tokio::sync::mpsc::channel::<DriverReading>(64);
     let descendants = Arc::new(AtomicI64::new(5));
-    let queries = Arc::new(StubQueries {
-        props: derived_props,
-        descendants: descendants.clone(),
-    });
+    let queries = Arc::new(StubQueries::new(derived_props, descendants.clone()));
 
-    let manager = Arc::new(DerivedDriverManager::new(
-        queries,
-        cache_dyn.clone(),
-        driver_cache.clone(),
-        sink_tx,
-        events,
-    ));
+    let manager = Arc::new(DerivedDriverManager::new(queries.clone(), cache_dyn.clone(), sink_tx, events));
 
     let consumer_cache = cache_dyn.clone();
     let consumer = tokio::spawn(async move {
@@ -230,6 +266,7 @@ fn assemble(
     Rig {
         manager,
         device_cache,
+        queries,
         descendants,
         _consumer: consumer,
     }
@@ -270,8 +307,8 @@ async fn recompute_on_referenced_property_change() {
     );
     rig.manager.start().await.expect("manager start");
 
-    // E5：start 返回即订阅已建立。
-    assert!(event_bus.subscriber_count() >= 2, "派生驱动订阅必须已建立");
+    // E5：start 返回即订阅已建立（bus 自保持 receiver + 引擎单订阅 = 2）。
+    assert!(event_bus.subscriber_count() >= 2, "派生引擎订阅必须已建立");
 
     // 首值补偿先就位（100+200）
     wait_until("首值 total_power=300", || {
@@ -492,8 +529,8 @@ async fn tree_change_recomputes_descendant_count() {
     .await;
 }
 
-/// T1 监督注入测试：一次重算 panic（注入到缓存读取）只杀死该 spawn 任务，
-/// 事件订阅循环是独立任务仍然存活——下一次触发即自愈。
+/// T1 监督注入测试：一次重算 panic（注入到缓存读取）只杀死该 spawn 任务
+/// （首值补偿任务），引擎订阅循环是独立任务仍然存活——下一次触发即自愈。
 /// 佐证 T1 降级结论：派生路径无 panic 面，残余风险（宿主 bug）不扩散。
 #[tokio::test]
 async fn panic_in_one_recompute_does_not_kill_subscriber_loop() {
@@ -507,7 +544,7 @@ async fn panic_in_one_recompute_does_not_kill_subscriber_loop() {
         }
         fn get(&self, id: &str) -> Option<Thing> {
             // I-2 后求值按 thing_id 走 get（owner 自身 get("campus-1") 发生在
-            // ensure_driver 注册路径，不注入——只杀重算任务的引用解析）
+            // ensure_owner 捕获路径，不注入——只杀重算任务的引用解析）
             if id != "campus-1" && self.armed.swap(false, Ordering::SeqCst) {
                 panic!("T1 注入：重算路径 panic");
             }
@@ -538,14 +575,10 @@ async fn panic_in_one_recompute_does_not_kill_subscriber_loop() {
     let cache_dyn: Arc<dyn ThingCacheSource> = panic_cache.clone();
     let driver_cache: DriverCache = moka::sync::Cache::new(100);
     let (sink_tx, mut sink_rx) = tokio::sync::mpsc::channel::<DriverReading>(64);
-    let queries = Arc::new(StubQueries {
-        props: vec![total_power_prop()],
-        descendants: Arc::new(AtomicI64::new(0)),
-    });
+    let queries = Arc::new(StubQueries::new(vec![total_power_prop()], Arc::new(AtomicI64::new(0))));
     let manager = Arc::new(DerivedDriverManager::new(
         queries,
         cache_dyn.clone(),
-        driver_cache.clone(),
         sink_tx,
         event_bus.clone(),
     ));
@@ -583,10 +616,14 @@ async fn panic_in_one_recompute_does_not_kill_subscriber_loop() {
     let _ = &manager;
 }
 
-// ── 终审 I-1：ensure_driver 不得顶掉同 key 物理 Poll wrapper ─────────────
-// API 侧已拒绝物理驱动物建派生（properties.rs reject_derived_on_physical_thing）；
-// 本测试钉死 Manager 防御性兜底：启动扫库/存量数据路径撞上同 key mode=Poll
-// wrapper 时 log error 跳过，绝不覆盖（覆盖 = 该物轮询与命令静默死亡）。
+// ── 终审 I-1 等价改写（X4 单引擎化）：Manager 不再触碰 driver_cache ────────
+// 原语义：ensure_driver 不得顶掉同 key 物理 Poll wrapper（顶掉 = 轮询/命令
+// 静默死亡）。wrapper 模型删除后 Manager 根本不写 driver_cache——本测试钉死
+// 等价断言：Manager 启动后同 key 物理 Poll wrapper 原样保留、派生 owner 物
+// 不会被塞进任何 wrapper。轮询循环 process_all_drivers 只迭代 driver_cache
+// ——无 wrapper 即不可能对无驱动物调用 read_data（"Push 跳过轮询"语义由
+// 结构保证）。API 侧仍拒绝物理驱动物建派生（properties.rs
+// reject_derived_on_physical_thing）。
 
 struct PollStubDriver {
     thing: Thing,
@@ -611,11 +648,11 @@ impl ThingDriver for PollStubDriver {
 }
 
 #[tokio::test]
-async fn ensure_driver_does_not_override_physical_poll_wrapper() {
+async fn poll_wrapper_untouched_and_no_wrapper_for_derived_owner() {
     let device_cache = Arc::new(FakeCache::new(vec![meter("meter-1", "电表1", Some("100")), campus()]));
     let cache_dyn: Arc<dyn ThingCacheSource> = device_cache.clone();
     let driver_cache: DriverCache = moka::sync::Cache::new(100);
-    // 预登记物理 wrapper（mode=Poll）——同 key 的 DerivedDriver 注册必须跳过
+    // 预登记物理 wrapper（mode=Poll）于 owner 同 key——Manager 启动后必须原样保留
     driver_cache.insert(
         "campus-1".to_string(),
         Arc::new(parking_lot::RwLock::new(DriverWrapper::new(Box::new(PollStubDriver {
@@ -624,12 +661,8 @@ async fn ensure_driver_does_not_override_physical_poll_wrapper() {
     );
     let (sink_tx, _sink_rx) = tokio::sync::mpsc::channel::<DriverReading>(64);
     let manager = DerivedDriverManager::new(
-        Arc::new(StubQueries {
-            props: vec![total_power_prop()],
-            descendants: Arc::new(AtomicI64::new(0)),
-        }),
+        Arc::new(StubQueries::new(vec![total_power_prop()], Arc::new(AtomicI64::new(0)))),
         cache_dyn,
-        driver_cache.clone(),
         sink_tx,
         Arc::new(EventBus::new()),
     );
@@ -638,6 +671,54 @@ async fn ensure_driver_does_not_override_physical_poll_wrapper() {
     let wrapper = driver_cache.get("campus-1").expect("物理 wrapper 应仍在 driver_cache");
     assert!(
         wrapper.read().inner_driver().mode() == DriverMode::Poll,
-        "物理 Poll wrapper 不得被派生驱动顶掉（顶掉 = 轮询/命令静默死亡）"
+        "物理 Poll wrapper 不得被派生引擎影响"
     );
+    assert_eq!(
+        driver_cache.iter().count(),
+        1,
+        "Manager 启动不得向 driver_cache 新增任何 wrapper（无 wrapper 即轮询循环不会对 owner 物 read_data）"
+    );
+}
+
+/// X4 单引擎断言：全 workspace 一个 EventBus 订阅——加第二个 owner 不增，
+/// owner 删光回落（引擎停）。
+#[tokio::test]
+async fn engine_uses_single_eventbus_subscription() {
+    let event_bus = Arc::new(EventBus::new());
+    let baseline = event_bus.subscriber_count(); // bus 自保持 receiver
+    let rig = assemble(
+        vec![
+            meter("meter-1", "电表1", Some("100")),
+            meter("meter-2", "电表2", Some("200")),
+        ],
+        vec![total_power_prop()],
+        event_bus.clone(),
+        event_bus.clone(),
+    );
+    rig.manager.start().await.expect("manager start");
+    // E5：start 返回即订阅已建立。
+    assert_eq!(
+        event_bus.subscriber_count(),
+        baseline + 1,
+        "start 后全 workspace 应只有一个派生订阅"
+    );
+
+    // 第二个 owner 物的派生属性（热更新活路径）：索引/defs 句柄登记，
+    // 不新增订阅（不是每物一个订阅）。
+    rig.device_cache.insert(campus2());
+    rig.queries.add_prop(campus2_total_prop());
+    rig.manager.notify_config_changed("campus-2").await;
+    assert_eq!(
+        event_bus.subscriber_count(),
+        baseline + 1,
+        "第二个 owner 不得新增订阅"
+    );
+
+    // 删光全部 owner → 引擎停，订阅回落到基线（abort 异步生效——确定性轮询）。
+    rig.manager.notify_thing_deleted("campus-1").await;
+    rig.manager.notify_thing_deleted("campus-2").await;
+    wait_until("owner 删光后订阅回落基线", || {
+        event_bus.subscriber_count() == baseline
+    })
+    .await;
 }

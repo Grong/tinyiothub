@@ -16,11 +16,11 @@
 //!   （防噪，见 persistence_handler.rs should_persist），故本测试在真实
 //!   EventBus 上注册 RecordingEvents——实现生产 EventHandler trait、走相同
 //!   的 bus 分发 + 真实 `Db::insert_event`——证明"事件真实发布且真实落库"。
-//! - 园区物缓存种子：DerivedDriver 注册时从缓存捕获 owner 物
-//!   （derived_manager.rs ensure_driver），园区物必须带派生属性进缓存。
+//! - 园区物缓存种子：派生引擎从缓存捕获 owner 物
+//!   （derived_manager.rs ensure_owner），园区物必须带派生属性进缓存。
 //!   生产的缓存写入保证此前只有 bootstrap load_device_cache（重启路径）——
 //!   REST 建物/场景实例化不写缓存（DeviceCreated/Updated 事件仅 legacy
-//!   driver service 发布），评审 Important-1 已为 ensure_driver 补库载自愈；
+//!   driver service 发布），评审 Important-1 已为 ensure_owner 补库载自愈；
 //!   本文件 test 1-3 仍直接播种（真实 id）覆盖缓存命中路径，test 4 不播种
 //!   园区物、不重启，覆盖 cache-miss 自愈活路径（notify_config_changed 活
 //!   路径同验）；notify_tree_changed 活路径由 test 2 活验。
@@ -116,7 +116,8 @@ struct Rig {
 }
 
 /// 真实 DB + 真实 EventBus + 真实 DataServer（run() 已启动 sink 消费与
-/// 轮询循环；ManualPushDriver/DerivedDriver 均 mode=Push，轮询空转）。
+/// 轮询循环；ManualPushDriver mode=Push，轮询空转——派生引擎不注册任何
+/// wrapper，不占轮询迭代）。
 async fn setup_rig() -> Rig {
     let (app_state, pool) = setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", WS).await;
@@ -141,13 +142,12 @@ fn build_router(app_state: &AppState) -> Router {
     Router::new().nest("/api", api_router).with_state(app_state.clone())
 }
 
-/// 冷启动装配 Manager：扫库重建索引 + 注册 DerivedDriver + 首值补偿
-/// （start 返回即事件订阅已建立，E5）。
+/// 冷启动装配 Manager：扫库重建索引 + 建 owner defs 句柄 + 首值补偿 +
+/// 单订阅引擎（start 返回即事件订阅已建立，E5）。
 async fn install_manager(rig: &mut Rig) -> Arc<DerivedDriverManager> {
     let manager = Arc::new(DerivedDriverManager::new(
         Arc::new(DbDerivedPropertyQueries((*rig.app_state.db).clone())),
         rig.cache_src.clone(),
-        rig.data_server.driver_cache(),
         rig.data_server.value_sink(),
         rig.app_state.event_bus.clone(),
     ));
@@ -543,8 +543,8 @@ async fn hot_path_rest_created_owner_self_heals_without_restart() {
     let meter2 = create_thing(&app, &token, "电表2", None).await;
     let m1_prop = create_property(&app, &token, &meter1, json!({"name": "用电数", "data_type": "float"})).await;
     let m2_prop = create_property(&app, &token, &meter2, json!({"name": "用电数", "data_type": "float"})).await;
-    // notify_config_changed → ensure_driver cache miss → 从库补载园区物
-    // （含刚创建的 total_power 属性）→ 注册 DerivedDriver
+    // notify_config_changed → ensure_owner cache miss → 从库补载园区物
+    // （含刚创建的 total_power 属性）→ 建 defs 句柄 + 首值补偿
     let total_prop = create_property(
         &app,
         &token,
@@ -734,7 +734,7 @@ async fn scene_instantiation_bumps_device_count() {
     )
     .await;
 
-    // 首值补偿（ensure_driver 库载自愈）：园区下 0 个 device 后代
+    // 首值补偿（ensure_owner 库载自愈）：园区下 0 个 device 后代
     wait_until("首值 device_count=0", || {
         cached_prop(&rig, &park, "device_count").as_deref() == Some("0")
     })

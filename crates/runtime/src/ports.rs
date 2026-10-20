@@ -54,8 +54,8 @@ pub trait ApprovalTimeoutStore: Send + Sync {
 pub trait DerivedPropertyQueries: Send + Sync {
     /// 全部派生属性定义（expression IS NOT NULL），含 workspace 隔离由调用方按物过滤。
     async fn list_derived(&self) -> Result<Vec<ThingProperty>, String>;
-    /// 按 id 加载物（含属性；ensure_driver 热路径自愈用——REST 建物/场景实例化
-    /// 不写 device_cache，cache miss 时经此方法从库补载后继续注册，不再静默
+    /// 按 id 加载物（含属性；ensure_owner 热路径自愈用——REST 建物/场景实例化
+    /// 不写 device_cache，cache miss 时经此方法从库补载后继续登记，不再静默
     /// 失效）。无 workspace 过滤：调用方（物管理面钩子）已完成作用域鉴权，
     /// thing_id 全局唯一。
     async fn find_thing_with_properties(&self, thing_id: &str) -> Result<Option<Thing>, String>;
