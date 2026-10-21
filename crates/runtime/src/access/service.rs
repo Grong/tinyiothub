@@ -290,6 +290,18 @@ impl AccessService {
                 }
             };
             if let Err(e) = self.bind_thing(workspace_id, &thing).await {
+                // `bind_thing` persists the new declaration before
+                // materializing; put the previous row back so a failed
+                // rebind truly keeps the old declaration.
+                if let Err(restore) = self.device_store.upsert(&row).await {
+                    tracing::warn!(
+                        workspace_id,
+                        driver,
+                        thing_id = %row.thing_id,
+                        error = %restore,
+                        "failed to restore the previous declaration after a failed rebind"
+                    );
+                }
                 tracing::warn!(
                     workspace_id,
                     driver,
@@ -595,6 +607,21 @@ mod tests {
         }
         async fn mark_stale(&self, _thing_id: &str, _keep_p: &[String], _keep_c: &[String]) -> Result<(), String> {
             Ok(())
+        }
+    }
+
+    struct FailingProjection;
+
+    #[async_trait::async_trait]
+    impl DeclarationProjectionStore for FailingProjection {
+        async fn upsert_properties(&self, _thing_id: &str, _fields: &[StateFieldDecl]) -> Result<(), String> {
+            Err("projection write failed".into())
+        }
+        async fn upsert_commands(&self, _thing_id: &str, _tools: &[ManifestTool]) -> Result<(), String> {
+            Err("projection write failed".into())
+        }
+        async fn mark_stale(&self, _thing_id: &str, _keep_p: &[String], _keep_c: &[String]) -> Result<(), String> {
+            Err("projection write failed".into())
         }
     }
 
@@ -961,6 +988,47 @@ mod tests {
         assert_eq!(pkg.warnings.len(), 1, "warnings: {:?}", pkg.warnings);
         assert!(pkg.warnings[0].contains("gone"), "{:?}", pkg.warnings);
         assert!(fx.service.get_manifest(&ws, "demo-declarative").is_some());
+    }
+
+    #[tokio::test]
+    async fn failed_rebind_restores_the_previous_declaration_row() {
+        if skip_without_demo_cdylib("failed_rebind_restores_the_previous_declaration_row") {
+            return;
+        }
+        let ws = unique_workspace("ws-restore");
+        let t = thing_in(&ws, "demo-declarative");
+        let data = tempfile::tempdir().unwrap();
+        let device_store = Arc::new(FakeDeviceStore::default());
+        let old = DeviceDeclarationRecord {
+            workspace_id: ws.clone(),
+            thing_id: t.id.clone(),
+            driver_name: "demo-declarative".into(),
+            driver_version: "1.0.0".into(),
+            declaration_json: "{\"driver\":\"old\"}".into(),
+            declaration_hash: "old".into(),
+            status: "active".into(),
+            updated_at: "2026-10-21".into(),
+        };
+        device_store.upsert(&old).await.unwrap();
+        let service = AccessService::new(
+            data.path().to_path_buf(),
+            Arc::new(ManifestRegistry::new()),
+            Arc::new(FakeDriverStore::default()),
+            device_store.clone(),
+            Arc::new(FailingProjection),
+            Arc::new(FakeThings(Some(t))),
+            Arc::new(FakeAcceptance),
+        );
+
+        let src = demo_package().expect("demo package");
+        let pkg = service.install_dir(&ws, src.path()).await.unwrap();
+        assert_eq!(pkg.warnings.len(), 1, "warnings: {:?}", pkg.warnings);
+
+        let restored = device_store.find(&ws, "t1").await.unwrap().expect("row");
+        assert_eq!(
+            restored.declaration_json, old.declaration_json,
+            "failed rebind must restore the previous declaration row"
+        );
     }
 
     #[tokio::test]
