@@ -50,16 +50,21 @@ struct DoneState {
 }
 
 extern "C" fn done_cb(user_data: *mut c_void, status: i32, out_json: *mut c_char) {
-    // SAFETY: user_data is a Box<DoneState> allocated in `call`.
+    // SAFETY: user_data is a Box<DoneState> allocated in `call_with_timeout`.
     let state = unsafe { Box::from_raw(user_data as *mut DoneState) };
+    // Destructure so the owned token clone is dropped *before* `tx.send` wakes
+    // the receiver. This makes reclamation observable as soon as the call
+    // returns (and keeps E4b lifecycle accounting deterministic).
+    let DoneState { tx, free, token } = *state;
     let json = if out_json.is_null() {
         None
     } else {
         let s = unsafe { CStr::from_ptr(out_json).to_string_lossy().into_owned() };
-        (state.free)(out_json);
+        free(out_json);
         Some(s)
     };
-    let _ = state.tx.send((status, json));
+    drop(token);
+    let _ = tx.send((status, json));
 }
 
 extern "C" fn cancel_is_cancelled(ctx: *mut c_void) -> i32 {

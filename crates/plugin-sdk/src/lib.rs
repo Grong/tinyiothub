@@ -5,7 +5,10 @@
 //! # 快速开始
 //!
 //! ```rust,ignore
-//! use tinyiothub_core::driver::{CancelToken, ThingDriver};
+//! use tinyiothub_core::driver::{CancelToken, ResultValue, ThingDriver};
+//! use tinyiothub_core::error::Error;
+//! use tinyiothub_core::models::thing::Thing;
+//! use tinyiothub_core::models::thing_command::ThingCommand;
 //! use tinyiothub_plugin_sdk::*;
 //!
 //! pub struct MyDriver {
@@ -21,8 +24,8 @@
 //! impl ThingDriver for MyDriver {
 //!     fn thing(&self) -> &Thing { &self.thing }
 //!     fn thing_mut(&mut self) -> &mut Thing { &mut self.thing }
-//!     fn read_data(&mut self, _cancel: &CancelToken) -> Result<Vec<ResultValue>> { Ok(vec![]) }
-//!     fn execute_command(&mut self, _cmd: &ThingCommand, _cancel: &CancelToken) -> Result<bool> { Ok(true) }
+//!     fn read_data(&mut self, _cancel: &CancelToken) -> std::result::Result<Vec<ResultValue>, Error> { Ok(vec![]) }
+//!     fn execute_command(&mut self, _cmd: &ThingCommand, _cancel: &CancelToken) -> std::result::Result<bool, Error> { Ok(true) }
 //! }
 //!
 //! export_driver!(MyDriver);
