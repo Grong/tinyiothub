@@ -537,6 +537,30 @@ mod tests {
         assert_eq!(reading.values.get("temperature"), Some(&json!("23")));
     }
 
+    /// 进程级 resync 计数在帧出队时累加（全局单调，允许并发测试叠加）。
+    #[tokio::test]
+    async fn resync_frames_increment_the_process_counter() {
+        let before = hub_stream_metrics().resyncs();
+        let tracker = Arc::new(DemandTracker::new());
+        let guard = subscribe_with_guard(tracker, "ws", &["t1".to_string()], &["telemetry".to_string()]);
+        let (_tx, rx) = tokio::sync::broadcast::channel(4);
+        let mut pending = VecDeque::new();
+        pending.push_back(OutFrame::resync("reconnect"));
+
+        let state = connection_state(
+            HubStreamState::new([ThingSpec::new("t1", vec![SourceSpec::new("telemetry", Vec::new())])]),
+            guard,
+            rx,
+            pending,
+        );
+        let (frame, _state) = next_out_frame(state).await.expect("resync frame");
+        assert!(matches!(frame, OutFrame::Resync(_)));
+        assert!(
+            hub_stream_metrics().resyncs() > before,
+            "emitting a resync frame must increment the process counter"
+        );
+    }
+
     #[tokio::test]
     async fn dropping_the_stream_state_unsubscribes_demand() {
         let tracker = Arc::new(DemandTracker::new());

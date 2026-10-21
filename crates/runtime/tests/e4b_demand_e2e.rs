@@ -13,6 +13,7 @@ use tinyiothub_core::driver::manifest::SourceDecl;
 use tinyiothub_runtime::access::catalog::{SampledThing, SamplingCatalog};
 use tinyiothub_runtime::access::demand::{DemandTracker, SUBSCRIPTION_TTL};
 use tinyiothub_runtime::access::sampler::{Sampler, SamplingWorkers};
+use tinyiothub_runtime::hub_stream::subscribe_with_guard;
 
 /// 记录 sampler 下发的读/需求（fake worker 面）。
 #[derive(Default)]
@@ -165,6 +166,41 @@ fn hub_subscription_drives_demand_only_source_and_health_continues() {
 
     // 计数器：4 个 tick 共提交 1 + 2 + 2 + 1 个 source 读。
     assert_eq!(sampler.metrics().reads_submitted, 6);
+}
+
+/// 跨层：真实 Hub stream `DemandGuard`（连接建立/断开）驱动采样，而不是
+/// 直接操作 `DemandTracker`。
+#[test]
+fn hub_stream_guard_lifecycle_drives_demand_only_sampling() {
+    let workers = Arc::new(RecordingWorkers::new(false));
+    let (sampler, demand) = sampler(workers.clone());
+    let base = Instant::now();
+
+    // 无 Hub 连接：slow 跳过，health 照采。
+    sampler.tick_once(base);
+    assert_eq!(workers.last_read(), vec!["health"]);
+
+    // Hub stream 连接建立（handler 用的同一入口）。
+    let guard = subscribe_with_guard(demand.clone(), "ws", &["t1".to_string()], &["slow".to_string()]);
+    sampler.tick_once(base + Duration::from_secs(1));
+    assert_eq!(
+        sorted(workers.last_read()),
+        vec!["health".to_string(), "slow".to_string()]
+    );
+
+    // 客户端断开 → guard Drop 立即 unsubscribe；宽限内仍采。
+    drop(guard);
+    assert!(
+        !demand.has_subscription_demand_at("ws", "t1", "slow", base + Duration::from_secs(2)),
+        "guard Drop 必须立即移除订阅需求"
+    );
+    sampler.tick_once(base + Duration::from_secs(20));
+    assert!(workers.last_read().contains(&"slow".to_string()));
+
+    // 宽限结束：slow 停采，health 继续。
+    sampler.tick_once(base + Duration::from_secs(32));
+    assert_eq!(workers.last_read(), vec!["health"]);
+    assert_eq!(sampler.metrics().demand_skipped_sources, 2);
 }
 
 #[test]

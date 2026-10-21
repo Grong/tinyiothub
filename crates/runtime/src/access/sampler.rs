@@ -65,6 +65,11 @@ pub struct SamplerMetrics {
     /// 累计提交给 worker 的 source 读次数（同一 thing 的 due source 合并为
     /// 一次 `submit_read`，这里按合并前的 source 数计）。
     pub reads_submitted: u64,
+    /// 调度滞后累计毫秒数：每次到期 source 实际采样时刻晚于 `due_at` 的
+    /// 时长之和（首次采样与准点 tick 记 0）。
+    pub sampling_lag_ms_total: u64,
+    /// 观测到的单次调度滞后最大值（毫秒）。
+    pub sampling_lag_ms_max: u64,
 }
 
 /// 易失的调度状态（重启后由 catalog/manifest 重建，spec §3.1）。
@@ -92,6 +97,8 @@ pub struct Sampler {
     demand_active_sources: AtomicU64,
     demand_skipped_sources: AtomicU64,
     reads_submitted: AtomicU64,
+    sampling_lag_ms_total: AtomicU64,
+    sampling_lag_ms_max: AtomicU64,
 }
 
 impl Sampler {
@@ -110,6 +117,8 @@ impl Sampler {
             demand_active_sources: AtomicU64::new(0),
             demand_skipped_sources: AtomicU64::new(0),
             reads_submitted: AtomicU64::new(0),
+            sampling_lag_ms_total: AtomicU64::new(0),
+            sampling_lag_ms_max: AtomicU64::new(0),
         }
     }
 
@@ -119,6 +128,8 @@ impl Sampler {
             demand_active_sources: self.demand_active_sources.load(Ordering::Relaxed),
             demand_skipped_sources: self.demand_skipped_sources.load(Ordering::Relaxed),
             reads_submitted: self.reads_submitted.load(Ordering::Relaxed),
+            sampling_lag_ms_total: self.sampling_lag_ms_total.load(Ordering::Relaxed),
+            sampling_lag_ms_max: self.sampling_lag_ms_max.load(Ordering::Relaxed),
         }
     }
 
@@ -182,11 +193,16 @@ impl Sampler {
                 }
                 let key = (thing.workspace_id.clone(), thing.thing_id.clone(), source.id.clone());
                 let interval = Duration::from_millis(source.interval_ms.max(source.min_interval_ms));
-                let is_due = state
-                    .last_sample
-                    .get(&key)
-                    .is_none_or(|last| now.saturating_duration_since(*last) >= interval);
+                // 首次采样没有 due_at，滞后记 0；此后 due_at = 上次采样 + interval。
+                let due_at = state.last_sample.get(&key).map(|last| *last + interval);
+                let is_due = due_at.is_none_or(|due_at| now >= due_at);
                 if is_due {
+                    if let Some(due_at) = due_at {
+                        let lag_ms =
+                            u64::try_from(now.saturating_duration_since(due_at).as_millis()).unwrap_or(u64::MAX);
+                        self.sampling_lag_ms_total.fetch_add(lag_ms, Ordering::Relaxed);
+                        self.sampling_lag_ms_max.fetch_max(lag_ms, Ordering::Relaxed);
+                    }
                     state.last_sample.insert(key, now);
                     due.push(source.id.clone());
                 }
@@ -520,6 +536,8 @@ mod tests {
                 demand_active_sources: 0,
                 demand_skipped_sources: 1,
                 reads_submitted: 1,
+                sampling_lag_ms_total: 0,
+                sampling_lag_ms_max: 0,
             }
         );
         assert_eq!(workers.last_read(), ("t1".into(), vec!["health".into()]));
@@ -533,9 +551,43 @@ mod tests {
                 demand_active_sources: 1,
                 demand_skipped_sources: 1,
                 reads_submitted: 3,
+                sampling_lag_ms_total: 0,
+                sampling_lag_ms_max: 0,
             }
         );
         assert_eq!(workers.last_read(), ("t1".into(), vec!["slow".into(), "health".into()]));
+    }
+
+    /// `sampling_lag_ms`：准点 tick 记 0，迟到 tick 记 `now - due_at`。
+    #[test]
+    fn sampling_lag_is_zero_on_time_and_positive_when_late() {
+        let workers = Arc::new(FakeWorkers::default());
+        let sampler = sampler(
+            vec![thing("ws", "t1", vec![src("telemetry", 1000, false, false)])],
+            workers.clone(),
+        );
+        let base = Instant::now();
+
+        // 首次采样没有 due_at → 0。
+        sampler.tick_once(base);
+        assert_eq!(sampler.metrics().sampling_lag_ms_total, 0);
+        assert_eq!(sampler.metrics().sampling_lag_ms_max, 0);
+
+        // due_at = base + 1000，晚 250ms。
+        sampler.tick_once(base + Duration::from_millis(1250));
+        assert_eq!(sampler.metrics().sampling_lag_ms_total, 250);
+        assert_eq!(sampler.metrics().sampling_lag_ms_max, 250);
+
+        // due_at = 1250 + 1000 = 2250，准点 → 不增加。
+        sampler.tick_once(base + Duration::from_millis(2250));
+        assert_eq!(sampler.metrics().sampling_lag_ms_total, 250);
+        assert_eq!(sampler.metrics().sampling_lag_ms_max, 250);
+
+        // due_at = 3250，晚 350ms → total 600、max 350。
+        sampler.tick_once(base + Duration::from_millis(3600));
+        assert_eq!(sampler.metrics().sampling_lag_ms_total, 600);
+        assert_eq!(sampler.metrics().sampling_lag_ms_max, 350);
+        assert_eq!(workers.read_count(), 4);
     }
 
     #[test]
