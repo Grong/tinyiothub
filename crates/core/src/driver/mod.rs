@@ -12,7 +12,10 @@ use crate::error::Error;
 use crate::models::thing::Thing;
 use crate::models::thing_command::ThingCommand;
 
+pub mod declaration;
 pub mod dynamic;
+pub mod manifest;
+pub mod schema;
 pub use dynamic::{DRIVER_ABI_VERSION, DriverDestroyFn, DriverInitFn, DriverVTable, DriverVTableFn};
 
 // ─── Retry configuration ────────────────────────────────────────────
