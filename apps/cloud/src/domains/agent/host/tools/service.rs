@@ -16,7 +16,7 @@ use tinyiothub_agent::tools::{ToolProvider, ToolRegistry, ToolRuntimeContext, fi
 use tinyiothub_skills::trust::{ToolSafety, classify_tool_safety};
 use tinyiothub_storage::cache::ThingCache;
 
-use super::thing::{LiveSummarySource, PendingActionStore, ThingToolContext, create_thing_tools};
+use super::thing::{LiveSummarySource, ManagerSlot, PendingActionStore, ThingToolContext, create_thing_tools};
 use super::{canvas::CanvasTool, dispatch_task::DispatchThingTaskTool, get_skill::GetSkillTool};
 use crate::domains::agent::host::config::service as config_service;
 
@@ -34,6 +34,8 @@ pub fn chat_builtin_tools_provider(
     arbitration: Arc<ArbitrationRegistry>,
     live: Arc<dyn LiveSummarySource>,
     tool_exec: Arc<dyn ToolExecSeam>,
+    event_bus: Option<Arc<tinyiothub_runtime::event_bus::EventBus>>,
+    manager: ManagerSlot,
 ) -> ToolProvider {
     Arc::new(move |workspace_id: &str, runtime: &ToolRuntimeContext| {
         let mut tools: Vec<(Box<dyn Tool>, ToolSafety)> = Vec::new();
@@ -50,6 +52,8 @@ pub fn chat_builtin_tools_provider(
                 pending_actions: Some(pending_actions.clone()),
                 arbitration: Some(arbitration.clone()),
                 live: Some(live.clone()),
+                event_bus: event_bus.clone(),
+                manager: Some(manager.clone()),
             },
         ));
 
@@ -64,8 +68,7 @@ pub fn chat_builtin_tools_provider(
         tools
             .into_iter()
             .map(|(tool, safety)| {
-                let wrapped: Box<dyn Tool> =
-                    Box::new(SeamTool::new(tool, Arc::clone(&tool_exec), workspace_id));
+                let wrapped: Box<dyn Tool> = Box::new(SeamTool::new(tool, Arc::clone(&tool_exec), workspace_id));
                 (wrapped, safety)
             })
             .collect()

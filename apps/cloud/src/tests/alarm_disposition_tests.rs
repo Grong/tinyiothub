@@ -248,6 +248,7 @@ async fn full_chain_alarm_to_noise_archive() {
         thing_id: Some("t1".to_string()),
         trace: vec![],
         task_count: None,
+        snapshot: None,
     };
     let event = AgentEvent {
         seq: 1,
@@ -293,6 +294,7 @@ async fn annotate_mode_noise_does_not_suppress() {
         thing_id: Some("t1".to_string()),
         trace: vec![],
         task_count: None,
+        snapshot: None,
     };
     let event = AgentEvent {
         seq: 1,
@@ -346,6 +348,7 @@ async fn critical_alarm_never_suppressed_even_in_suppress_mode() {
         thing_id: Some("t1".to_string()),
         trace: vec![],
         task_count: None,
+        snapshot: None,
     };
     let event = AgentEvent {
         seq: 1,

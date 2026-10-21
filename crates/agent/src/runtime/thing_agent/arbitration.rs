@@ -17,6 +17,9 @@ use dashmap::mapref::entry::Entry;
 /// 崩溃后最长 10min 自动恢复可 acquire，不死锁。
 pub const DEFAULT_LEASE_TTL: Duration = Duration::from_secs(10 * 60);
 
+/// E2 stop 闸门默认 TTL：阻断该设备后续 call/set 的窗口。
+pub const DEFAULT_STOP_TTL: Duration = Duration::from_secs(60);
+
 /// E1 仲裁退化形态（spec §4 Hub 层）：每设备单一互斥资源，E4 声明制后细化。
 /// busy 拒绝必须带持有者名（人读得懂的拒绝）。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -45,6 +48,8 @@ impl LockEntry {
 #[derive(Clone, Default)]
 pub struct ArbitrationRegistry {
     locks: Arc<DashMap<String, LockEntry>>,
+    /// E2 stop 闸门：设备 → (原因, 截止时刻)。期间 call/set 一律拒绝。
+    stops: Arc<DashMap<String, (String, Instant)>>,
     next_token: Arc<AtomicU64>,
 }
 
@@ -88,6 +93,31 @@ impl ArbitrationRegistry {
     /// 默认 TTL（10min）的 acquire 便捷入口。
     pub fn try_acquire_default(&self, thing_id: &str, holder: String) -> Result<Lease, Busy> {
         self.try_acquire(thing_id, holder, DEFAULT_LEASE_TTL)
+    }
+
+    /// E2 stop：置设备 stop 闸门并释放当前租约（在途单次调用不可中断）。
+    pub fn set_stop(&self, thing_id: &str, reason: String, ttl: Duration) {
+        self.stops.insert(thing_id.to_string(), (reason, Instant::now() + ttl));
+        // 释放占用：stop 是最高优先级的"让路"指令。
+        self.locks.remove(thing_id);
+    }
+
+    /// stop 闸门命中返回原因；已过期/未设置返回 None。
+    pub fn stop_reason(&self, thing_id: &str) -> Option<String> {
+        let expired = match self.stops.get(thing_id) {
+            Some(entry) if Instant::now() < entry.1 => return Some(entry.0.clone()),
+            Some(_) => true,
+            None => false,
+        };
+        if expired {
+            self.stops.remove(thing_id);
+        }
+        None
+    }
+
+    /// 强制释放设备租约（不设 stop 闸门）。
+    pub fn force_release(&self, thing_id: &str) {
+        self.locks.remove(thing_id);
     }
 
     fn lease(&self, thing_id: &str, token: u64) -> Lease {
@@ -223,5 +253,30 @@ mod tests {
             .filter(|won| *won)
             .count();
         assert_eq!(wins, 1, "并发 acquire 只能有一个胜出");
+    }
+
+    /// E2 stop：闸门命中带原因；释放占用；TTL 过期自动恢复。
+    #[test]
+    fn stop_gate_blocks_releases_and_expires() {
+        let reg = ArbitrationRegistry::default();
+        let lease = reg.try_acquire("dev_1", "run-A".into(), TTL).expect("acquire");
+        reg.set_stop("dev_1", "operator stop".into(), Duration::from_secs(60));
+        assert_eq!(reg.stop_reason("dev_1").as_deref(), Some("operator stop"));
+        // stop 释放占用：新持有者可 acquire。
+        drop(lease);
+        assert!(reg.try_acquire("dev_1", "run-B".into(), TTL).is_ok());
+
+        // 零 TTL = 立即过期。
+        reg.set_stop("dev_2", "x".into(), Duration::ZERO);
+        assert_eq!(reg.stop_reason("dev_2"), None);
+    }
+
+    #[test]
+    fn force_release_frees_device_without_stop_gate() {
+        let reg = ArbitrationRegistry::default();
+        let _lease = reg.try_acquire("dev_3", "run-A".into(), TTL).expect("acquire");
+        reg.force_release("dev_3");
+        assert!(reg.try_acquire("dev_3", "run-B".into(), TTL).is_ok());
+        assert_eq!(reg.stop_reason("dev_3"), None);
     }
 }

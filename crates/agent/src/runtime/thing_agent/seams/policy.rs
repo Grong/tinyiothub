@@ -85,12 +85,18 @@ mod tests {
     fn default_policy_matches_gate_check_reasons() {
         let p = policy();
         let seam = DefaultPolicy;
-        assert_eq!(seam.evaluate(&input(None, "reboot", 0, 0)), PolicyDecision::Deny {
-            code: "autonomy_not_act".into(),
-            message: "autonomy_not_act".into()
-        });
+        assert_eq!(
+            seam.evaluate(&input(None, "reboot", 0, 0)),
+            PolicyDecision::Deny {
+                code: "autonomy_not_act".into(),
+                message: "autonomy_not_act".into()
+            }
+        );
         assert_eq!(code(seam.evaluate(&input(Some(&p), "wipe", 0, 0))), "action_denied");
-        assert_eq!(code(seam.evaluate(&input(Some(&p), "open", 0, 0))), "action_not_allowed");
+        assert_eq!(
+            code(seam.evaluate(&input(Some(&p), "open", 0, 0))),
+            "action_not_allowed"
+        );
         assert_eq!(code(seam.evaluate(&input(Some(&p), "reboot", 3, 0))), "run_action_cap");
         assert_eq!(code(seam.evaluate(&input(Some(&p), "reboot", 0, 30))), "hourly_fuse");
         assert_eq!(seam.evaluate(&input(Some(&p), "reboot", 0, 0)), PolicyDecision::Allow);
@@ -120,11 +126,12 @@ mod tests {
     #[test]
     fn replacement_only_narrows() {
         let p = policy();
-        let seam = DenyExtraAction {
-            inner: DefaultPolicy,
-        };
+        let seam = DenyExtraAction { inner: DefaultPolicy };
         assert_eq!(seam.evaluate(&input(Some(&p), "reboot", 0, 0)), PolicyDecision::Allow);
-        assert_eq!(code(seam.evaluate(&input(Some(&p), "open_valve", 0, 0))), "seam_extra_deny");
+        assert_eq!(
+            code(seam.evaluate(&input(Some(&p), "open_valve", 0, 0))),
+            "seam_extra_deny"
+        );
         assert!(seam.next().is_some());
     }
 }

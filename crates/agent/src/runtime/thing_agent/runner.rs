@@ -40,8 +40,24 @@ const TURN_TIMEOUT_GRACE: Duration = Duration::from_secs(30);
 /// trajectory judgment is name-based and tinyiothub-ai must not depend on
 /// cloud.
 const TOOL_INVOKE_ACTION: &str = "invoke_action";
+/// E2 固定工具集的设备动作名（旧名 `invoke_action` 仍是隐藏别名）。
+const TOOL_CALL_DEVICE: &str = "call_device";
 const TOOL_READ_PROPERTY: &str = "read_property";
+/// E2 固定工具集的设备读名（替代逐物查 profile）。
+const TOOL_READ_DEVICE: &str = "read_device";
 const TOOL_QUERY_EVENTS: &str = "query_events";
+
+/// 设备动作工具名（新固定名 + 旧隐藏别名）。
+fn is_action_tool(name: &str) -> bool {
+    matches!(name, TOOL_CALL_DEVICE | TOOL_INVOKE_ACTION)
+}
+
+fn action_name_of(args: &serde_json::Value) -> Option<&str> {
+    args.get("action")
+        .or_else(|| args.get("actionName"))
+        .or_else(|| args.get("action_name"))
+        .and_then(|v| v.as_str())
+}
 
 /// Shared agent loop handle (T11 factory injects one per workspace).
 pub type AgentHandle = crate::port::runtime::AgentLoopHandle;
@@ -91,6 +107,8 @@ pub struct RunContextInner {
     /// past the budget in one shot, so the summary must report this, not
     /// `tool_calls - 1`.
     pub tool_call_budget: Option<u32>,
+    /// E2：turn 开头工作区快照的实测指标（manager 注入）。
+    pub snapshot: Option<tinyiothub_core::agent_runs::SnapshotMetrics>,
 }
 
 #[derive(Clone)]
@@ -229,7 +247,7 @@ impl RunContextInner {
         match evt {
             TurnEvent::ToolCall { id, name, args } => {
                 self.tool_calls += 1;
-                if name == TOOL_INVOKE_ACTION
+                if is_action_tool(name)
                     && let Some(thing_id) = thing_id_of(args)
                 {
                     *self.action_counts.entry(thing_id).or_insert(0) += 1;
@@ -354,8 +372,9 @@ async fn consume_events(
     }
 }
 
-/// Project the trajectory into action records: every `invoke_action` entry
-/// becomes one [`ActionRecord`]. A paired result parses as JSON →
+/// Project the trajectory into action records: every `call_device` (or the
+/// legacy hidden alias `invoke_action`) entry becomes one [`ActionRecord`].
+/// A paired result parses as JSON →
 /// [`ActionResult::Success`] (cloud `tool_ok` always serializes payloads to
 /// JSON); a non-JSON output → [`ActionResult::Failed`] (cloud `tool_err`
 /// returns a plain message); no paired result →
@@ -363,15 +382,10 @@ async fn consume_events(
 pub fn build_actions(trace: &[ToolTraceEntry]) -> Vec<ActionRecord> {
     trace
         .iter()
-        .filter(|e| e.name == TOOL_INVOKE_ACTION)
+        .filter(|e| is_action_tool(&e.name))
         .map(|e| ActionRecord {
             thing_id: thing_id_of(&e.args).unwrap_or_default(),
-            action_name: e
-                .args
-                .get("actionName")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string(),
+            action_name: action_name_of(&e.args).unwrap_or_default().to_string(),
             params: e.args.get("params").cloned().unwrap_or(serde_json::Value::Null),
             result: match &e.output {
                 None => ActionResult::UnknownCancelled,
@@ -393,14 +407,17 @@ pub fn build_actions(trace: &[ToolTraceEntry]) -> Vec<ActionRecord> {
 pub fn judge_verified(trace: &[ToolTraceEntry], actions: &mut [ActionRecord]) -> bool {
     let mut next_action = 0;
     for (i, e) in trace.iter().enumerate() {
-        if e.name != TOOL_INVOKE_ACTION {
+        if !is_action_tool(&e.name) {
             continue;
         }
         let thing_id = thing_id_of(&e.args).unwrap_or_default();
         let verified = !thing_id.is_empty()
             && trace[i + 1..].iter().any(|later| {
                 later.output.is_some()
-                    && (later.name == TOOL_READ_PROPERTY || later.name == TOOL_QUERY_EVENTS)
+                    && matches!(
+                        later.name.as_str(),
+                        TOOL_READ_PROPERTY | TOOL_QUERY_EVENTS | TOOL_READ_DEVICE
+                    )
                     && thing_id_of(&later.args).as_deref() == Some(thing_id.as_str())
             });
         if let Some(action) = actions.get_mut(next_action) {
@@ -527,6 +544,7 @@ fn assemble_report(ctx: &RunContext, end: TurnEnd, duration_ms: u64, inner: &Run
             tool_calls: inner.tool_calls,
             tokens: inner.input_tokens + inner.cached_input_tokens + inner.output_tokens,
             end_reason,
+            snapshot: inner.snapshot,
             thing_id,
             trace: inner.trace.clone(),
             // heartbeat 源的 task_count 由 manager 装配点回写（它持有任务表）；

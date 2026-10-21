@@ -632,7 +632,9 @@ pub async fn approve_proposal(
     verify_workspace_access_port!(state, claims, workspace_id);
     // F9：批准 = 物理动作授权，强制 admin；角色查询失败 fail-closed 403。
     if !super::is_admin(&state.db, &claims.user_id).await {
-        return ApiResponseBuilder::error_with_code(403, "需要管理员权限");
+        // E2：无人可问（无审批权限）是 unavailable，不是 rejected——提案保持
+        // pending，且绝不执行。
+        return ApiResponseBuilder::error_with_code(403, "需要管理员权限（审批不可用：未执行）");
     }
 
     // 与 agent 会话同源的工具注册表（内建 thing 工具 + MCP 适配器）——
@@ -653,6 +655,8 @@ pub async fn approve_proposal(
     {
         Ok(output) => ApiResponseBuilder::success(serde_json::json!({
             "status": "approved",
+            // E2 审批六分类：人工批准是执行授权来源。
+            "reason": "human_approved",
             "output": output,
         })),
         Err(e) => ApiResponseBuilder::error(&e),
@@ -728,8 +732,9 @@ async fn approve_and_execute(
         // 2026-09-20 实测）：自动拒绝并留痕，不让它永远挂在待审批队列里
         // 报同一个错。条件翻转（F4）：并发下已被处理的提案不被覆盖。
         let reason = format!("工具 {tool_name} 不在可执行注册表中");
+        // E2：不可执行 = unavailable（"没人/没办法执行"），不是用户否决。
         match db
-            .flip_agent_proposal_status(&id, "pending", "rejected", Some(&reason))
+            .flip_agent_proposal_status(&id, "pending", "unavailable", Some(&reason))
             .await
         {
             Ok(0) => {
@@ -748,6 +753,7 @@ async fn approve_and_execute(
             "summary": reason,
             "success": false,
             "source": "unregistered_tool",
+            "decisionReason": "unavailable",
             "proposalId": proposal_id,
         });
         let _ = db
@@ -756,7 +762,7 @@ async fn approve_and_execute(
             .inspect_err(
                 |e| tracing::warn!(%workspace_id, %proposal_id, error = %e, "auto-reject outcome insert failed"),
             );
-        return Err(format!("提案已自动拒绝：{reason}"));
+        return Err(format!("提案标记不可执行（unavailable）：{reason}"));
     };
 
     // Atomic flip: only a row still pending transitions, so a second approve
@@ -793,6 +799,8 @@ async fn approve_and_execute(
         "summary": summary,
         "success": success,
         "source": "approved_proposal",
+        // 人工批准即授权；失败是执行问题，不是审批否决。
+        "decisionReason": success.then_some("human_approved"),
         "proposalId": proposal_id,
     });
     if let Err(e) = db
@@ -829,8 +837,27 @@ async fn execute_approved_tool(
         let Some(token) = value.get("token").and_then(|t| t.as_str()) else {
             return Err("auto-confirm failed: token missing; action NOT dispatched".to_string());
         };
-        let pending = crate::domains::agent::host::tools::thing::take_pending_action(pending_actions, token)
-            .ok_or_else(|| "auto-confirm failed: token mismatch or expired; action NOT dispatched".to_string())?;
+        // E2 composite：整链批准 = 一次授权。token 交回工具消费并执行整链
+        // （不逐步二次确认）。
+        if tool.name() == "run_composite" {
+            let composite_id = value
+                .get("compositeId")
+                .cloned()
+                .ok_or_else(|| "auto-confirm failed: compositeId missing; action NOT dispatched".to_string())?;
+            let retry = tool
+                .execute(serde_json::json!({
+                    "compositeId": composite_id,
+                    "confirmationToken": token,
+                }))
+                .await
+                .map_err(|e| e.to_string())?;
+            if !retry.success {
+                return Err(retry.error.unwrap_or(retry.output));
+            }
+            return Ok(output_json(retry.output));
+        }
+        let pending = crate::domains::agent::host::tools::thing::take_pending_action_reasoned(pending_actions, token)
+            .map_err(|e| format!("auto-confirm failed: {}; action NOT dispatched", e.reason_code()))?;
         // 跨工作区绑定（对抗评审 F1）：token store 是全实例共享的，
         // 任何工具（含 MCP 适配器）返回的 token 都必须属于本工作区，
         // 否则一次批准点击会把别的工作区的设备命令下发出去。
@@ -881,7 +908,10 @@ pub async fn reject_proposal(
     }
 
     match update_proposal_status(state.db.pool(), &workspace_id, &proposal_id, "rejected", Some(reason)).await {
-        Ok(()) => ApiResponseBuilder::success(serde_json::json!({"status": "rejected"})),
+        Ok(()) => ApiResponseBuilder::success(serde_json::json!({
+            "status": "rejected",
+            "reason": "human_rejected",
+        })),
         Err(ProposalFlipError::Conflict) => {
             // F4：提案已被并发处理（如批准已执行）——审计记录不可覆盖，
             // 明确 409 让前端提示刷新，而非静默改写。
@@ -1290,10 +1320,9 @@ mod tests {
     }
 
     /// 回归（2026-09-20 实测）：LLM 幻觉工具名的提案在批准时抛「工具未注册」
-    /// 裸错误且提案永远卡在 pending。现在自动拒绝并留痕（outcome 行
-    /// source=unregistered_tool）。
+    /// 裸错误且提案永远卡在 pending。E2：标记 unavailable（不是用户否决）。
     #[tokio::test]
-    async fn approve_unregistered_tool_auto_rejects_proposal() {
+    async fn approve_unregistered_tool_marks_unavailable_not_rejected() {
         let pool = test_pool().await;
         // 提案引用注册表里没有的工具
         seed_proposal_with_tool(&pool, "p-hallucinated", "pending", "nonexistent_tool").await;
@@ -1304,11 +1333,12 @@ mod tests {
 
         let result = approve_and_execute(&pool, "ws_1", "p-hallucinated", &registry, &runtime, &pending, None).await;
         let err = result.expect_err("unregistered tool must error");
-        assert!(err.contains("提案已自动拒绝"), "错误应说明自动拒绝: {err}");
+        assert!(err.contains("unavailable"), "错误应说明不可执行: {err}");
         assert!(calls.lock().unwrap().is_empty(), "未注册工具不得执行");
 
-        // 提案已拒绝（不再卡 pending 报同一个错）
-        assert_eq!(proposal_status(&pool, "p-hallucinated").await, "rejected");
+        // E2：不可执行 ≠ 用户拒绝——状态必须是 unavailable。
+        assert_eq!(proposal_status(&pool, "p-hallucinated").await, "unavailable");
+        assert_ne!(proposal_status(&pool, "p-hallucinated").await, "rejected");
         // 留痕：outcome 行记录来源与原因
         let (content,): (String,) =
             sqlx::query_as("SELECT content FROM agent_actions WHERE action_type = 'auto_executed'")
@@ -1318,6 +1348,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["success"], false);
         assert_eq!(parsed["source"].as_str().unwrap(), "unregistered_tool");
+        assert_eq!(parsed["decisionReason"], "unavailable");
         assert!(parsed["summary"].as_str().unwrap().contains("不在可执行注册表"));
     }
 
@@ -1345,7 +1376,7 @@ mod tests {
     /// 编排工具（dispatch_thing_task）即使在 agent 会话里注册了，也不得经
     /// 批准通道执行——宪法禁止提案使用它们，走「未注册」自动拒绝路径。
     #[tokio::test]
-    async fn approve_orchestration_tool_auto_rejects() {
+    async fn approve_orchestration_tool_marks_unavailable() {
         let pool = test_pool().await;
         seed_proposal_with_tool(&pool, "p-orch", "pending", "dispatch_thing_task").await;
 
@@ -1355,9 +1386,10 @@ mod tests {
 
         let result = approve_and_execute(&pool, "ws_1", "p-orch", &registry, &runtime, &pending, None).await;
         let err = result.expect_err("orchestration tool must be denied");
-        assert!(err.contains("提案已自动拒绝"), "错误应说明自动拒绝: {err}");
+        assert!(err.contains("unavailable"), "错误应说明不可执行: {err}");
         assert!(calls.lock().unwrap().is_empty(), "编排工具不得经批准通道执行");
-        assert_eq!(proposal_status(&pool, "p-orch").await, "rejected");
+        // E2：不可执行 ≠ 用户拒绝。
+        assert_eq!(proposal_status(&pool, "p-orch").await, "unavailable");
     }
 
     /// invoke_action 类工具返回 confirmation_required + token 时，批准即
@@ -1476,7 +1508,7 @@ mod tests {
     /// 会把 LLM 写的 UI JSON 推进工作区画布（对抗评审 F2，2026-09-27 评审
     /// 决策：denylist 扩展而非白名单，保留完整本体/MCP 工具可批准）。
     #[tokio::test]
-    async fn approve_canvas_tool_auto_rejects() {
+    async fn approve_canvas_tool_marks_unavailable() {
         let pool = test_pool().await;
         seed_proposal_with_tool(&pool, "p-canvas", "pending", "canvas").await;
 
@@ -1486,8 +1518,9 @@ mod tests {
 
         let result = approve_and_execute(&pool, "ws_1", "p-canvas", &registry, &runtime, &pending, None).await;
         let err = result.expect_err("canvas must be denied");
-        assert!(err.contains("提案已自动拒绝"), "{err}");
+        assert!(err.contains("unavailable"), "{err}");
         assert!(calls.lock().unwrap().is_empty(), "canvas 不得经批准通道执行");
+        assert_eq!(proposal_status(&pool, "p-canvas").await, "unavailable");
     }
 
     /// 盲签锚点（对抗评审 F3 回归）：顶层 thingId（界面显示）与 parameters

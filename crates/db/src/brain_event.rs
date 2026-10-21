@@ -755,6 +755,7 @@ mod tests {
                 output: Some("26.5".to_string()),
             }],
             task_count: None,
+            snapshot: None,
         };
         db.insert_agent_run(&report, Some("alarm:t1:-"), None).await.unwrap();
 

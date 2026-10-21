@@ -17,6 +17,8 @@
 // Shared homes: confirmation store [pending_action.rs], param validation
 // [validate.rs], the create_thing_tools factory and helpers live here.
 
+mod composite_tools;
+mod device;
 mod get;
 mod invoke_action;
 mod list;
@@ -28,6 +30,7 @@ mod read_property;
 mod search_knowledge;
 mod tree;
 mod validate;
+mod watch_tools;
 
 use std::sync::Arc;
 
@@ -42,8 +45,8 @@ pub use get::GetThingTool;
 pub use invoke_action::InvokeActionTool;
 pub use list::ListThingsTool;
 pub use pending_action::{
-    PendingAction, PendingActionStore, cleanup_expired_tokens, spawn_pending_action_sweeper,
-    spawn_pending_action_sweeper_default, store_pending_action, take_pending_action,
+    PendingAction, PendingActionStore, TakeError, cleanup_expired_tokens, spawn_pending_action_sweeper,
+    spawn_pending_action_sweeper_default, store_pending_action, take_pending_action, take_pending_action_reasoned,
 };
 pub use profile::GetThingProfileTool;
 pub use query_events::QueryEventsTool;
@@ -125,7 +128,45 @@ pub(crate) fn clamp_limit(limit: Option<u32>, default: u32, max: u32) -> u32 {
 }
 
 // ============================================================================
-// Factory: create all 9 thing tools
+// E2：manager 迟绑定槽（watch 工具经命令通道写穿内存注册表）
+// ============================================================================
+
+/// 照 [`LiveSummarySlot`] 先例的迟绑定槽：bootstrap 早期构建工具上下文时
+/// manager 尚未就绪，就绪后 `set`；查询走每工作区 watch 命令通道（actor
+/// 单写者不破）。未 set = 只落 DB（下次启动重织自愈）。
+#[derive(Clone, Default)]
+pub struct ManagerSlot {
+    inner: Arc<std::sync::RwLock<Option<Arc<ThingAgentManager>>>>,
+}
+
+impl ManagerSlot {
+    pub fn set(&self, manager: Arc<ThingAgentManager>) {
+        *self.inner.write().expect("manager slot poisoned") = Some(manager);
+    }
+
+    fn sink(&self, workspace_id: &str) -> Option<tokio::sync::mpsc::Sender<WatchCommand>> {
+        self.inner.read().ok()?.as_ref()?.watch_command_sink(workspace_id)
+    }
+
+    pub fn upsert(&self, workspace_id: &str, rule: tinyiothub_core::watch::WatchRule) {
+        if let Some(sink) = self.sink(workspace_id)
+            && let Err(e) = sink.try_send(WatchCommand::Upsert(rule))
+        {
+            tracing::warn!(workspace_id, error = %e, "watch 命令通道投递失败（DB 已写，重启重织自愈）");
+        }
+    }
+
+    pub fn remove(&self, workspace_id: &str, rule_id: &str) {
+        if let Some(sink) = self.sink(workspace_id)
+            && let Err(e) = sink.try_send(WatchCommand::Remove(rule_id.to_string()))
+        {
+            tracing::warn!(workspace_id, error = %e, "unwatch 命令通道投递失败（DB 已删）");
+        }
+    }
+}
+
+// ============================================================================
+// Factory: E2 固定设备工具集 + 隐藏旧别名 + 非设备工具
 // ============================================================================
 
 /// thing 工具构建期需要的数据句柄（组合层持有；agent crate 的
@@ -141,12 +182,17 @@ pub struct ThingToolContext {
     /// E1 值守读面（Task 10）：get_thing_profile 附 live 摘要；
     /// None = 未接线（live=null）。
     pub live: Option<Arc<dyn LiveSummarySource>>,
+    /// E2 set_device：属性变更事件发布（DataServer 消费后更新缓存）。
+    pub event_bus: Option<Arc<tinyiothub_runtime::event_bus::EventBus>>,
+    /// E2 watch/unwatch：manager 迟绑定槽（内存注册表写穿）。
+    pub manager: Option<ManagerSlot>,
 }
 
-/// Create all 9 Thing Ontology agent tools with their safety classifications.
+/// Create the E2 fixed device tool set + non-device tools + hidden legacy aliases.
 ///
-/// Read-only tools (searches, gets): safety ReadOnly => auto-approved.
-/// Destructive tools (invoke_action): safety Destructive => requires trust approval.
+/// 模型可见设备工具恒为 7 个：list_devices / read_device / call_device /
+/// set_device / stop / watch / unwatch。旧 5 个设备名作为隐藏别名注册
+/// （批准通道可解析存量提案），《E3 删除》。
 pub fn create_thing_tools(
     pool: SqlitePool,
     workspace_id: &str,
@@ -154,37 +200,59 @@ pub fn create_thing_tools(
 ) -> Vec<(Box<dyn Tool>, ToolSafety)> {
     let thing_service = Arc::new(ThingService::new(pool.clone()));
     let ws = workspace_id.to_string();
+    let manager = runtime.manager.clone().unwrap_or_default();
+    let pending = runtime
+        .pending_actions
+        .clone()
+        .expect("pending_actions must be wired in ThingToolContext");
 
-    // Read-only tools — auto-approved
     let read_only = |t: Box<dyn Tool>| (t, ToolSafety::ReadOnly);
-
-    // Destructive tools — require trust approval
     let destructive = |t: Box<dyn Tool>| (t, ToolSafety::Destructive);
 
-    vec![
-        // Read-only tools (8)
-        read_only(Box::new(ListThingsTool {
-            thing_service: thing_service.clone(),
-            workspace_id: ws.clone(),
-        })),
-        read_only(Box::new(GetThingTool {
-            thing_service: thing_service.clone(),
-            workspace_id: ws.clone(),
-        })),
-        read_only(Box::new(GetThingProfileTool {
+    let mut tools: Vec<(Box<dyn Tool>, ToolSafety)> = vec![
+        // ── 固定设备工具（模型可见）──
+        read_only(device::list_devices_tool(thing_service.clone(), ws.clone())),
+        read_only(Box::new(device::ReadDeviceTool {
             thing_service: thing_service.clone(),
             workspace_id: ws.clone(),
             live: runtime.live.clone(),
+            device_cache: runtime.device_cache.clone(),
         })),
-        read_only(Box::new(GetThingTreeTool {
-            thing_service: thing_service.clone(),
-            workspace_id: ws.clone(),
-        })),
-        read_only(Box::new(ReadPropertyTool {
+        destructive(device::call_device_tool(Box::new(InvokeActionTool {
             thing_service: thing_service.clone(),
             pool: pool.clone(),
             workspace_id: ws.clone(),
-            device_cache: runtime.device_cache.clone(),
+            data_server: runtime.data_server.clone(),
+            pending_actions: pending.clone(),
+            arbitration: runtime.arbitration.clone(),
+            arbitration_holder: format!("chat:{ws}"),
+            approval: None,
+        }))),
+        destructive(Box::new(device::SetDeviceTool {
+            thing_service: thing_service.clone(),
+            pool: pool.clone(),
+            workspace_id: ws.clone(),
+            event_bus: runtime.event_bus.clone(),
+            arbitration: runtime.arbitration.clone(),
+            holder: format!("chat:{ws}"),
+        })),
+        destructive(Box::new(device::StopTool {
+            arbitration: runtime.arbitration.clone(),
+        })),
+        read_only(Box::new(watch_tools::WatchTool {
+            pool: pool.clone(),
+            workspace_id: ws.clone(),
+            manager: manager.clone(),
+        })),
+        read_only(Box::new(watch_tools::UnwatchTool {
+            pool: pool.clone(),
+            workspace_id: ws.clone(),
+            manager,
+        })),
+        // ── 非设备工具（独立类别）──
+        read_only(Box::new(GetThingTreeTool {
+            thing_service: thing_service.clone(),
+            workspace_id: ws.clone(),
         })),
         read_only(Box::new(QueryEventsTool {
             pool: pool.clone(),
@@ -198,21 +266,59 @@ pub fn create_thing_tools(
             pool: pool.clone(),
             workspace_id: ws.clone(),
         })),
-        // Destructive tool (1)
-        destructive(Box::new(InvokeActionTool {
+        // ── E2 composite（工具列表恒定两条）──
+        read_only(Box::new(composite_tools::ListCompositesTool {
+            pool: pool.clone(),
+            workspace_id: ws.clone(),
+        })),
+        destructive(Box::new(composite_tools::RunCompositeTool {
+            pool: pool.clone(),
+            workspace_id: ws.clone(),
+            pending_actions: pending.clone(),
+            executor: Arc::new(crate::domains::agent::host::composite::CompositeExecutor {
+                pool: pool.clone(),
+                workspace_id: ws.clone(),
+                data_server: runtime.data_server.clone(),
+                event_bus: runtime.event_bus.clone(),
+                arbitration: runtime.arbitration.clone(),
+                holder: format!("chat:{ws}"),
+            }),
+        })),
+        // ── 旧 9 工具（隐藏别名：批准通道兼容，模型不可见）──
+        read_only(Box::new(device::HiddenTool(Box::new(ListThingsTool {
+            thing_service: thing_service.clone(),
+            workspace_id: ws.clone(),
+        })))),
+        read_only(Box::new(device::HiddenTool(Box::new(GetThingTool {
+            thing_service: thing_service.clone(),
+            workspace_id: ws.clone(),
+        })))),
+        read_only(Box::new(device::HiddenTool(Box::new(GetThingProfileTool {
+            thing_service: thing_service.clone(),
+            workspace_id: ws.clone(),
+            live: runtime.live.clone(),
+        })))),
+        read_only(Box::new(device::HiddenTool(Box::new(ReadPropertyTool {
+            thing_service: thing_service.clone(),
+            pool: pool.clone(),
+            workspace_id: ws.clone(),
+            device_cache: runtime.device_cache.clone(),
+        })))),
+        destructive(Box::new(device::HiddenTool(Box::new(InvokeActionTool {
             thing_service,
             pool,
             workspace_id: ws.clone(),
             data_server: runtime.data_server.clone(),
-            pending_actions: runtime
-                .pending_actions
-                .clone()
-                .expect("pending_actions must be wired in ThingToolContext"),
+            pending_actions: pending,
             arbitration: runtime.arbitration.clone(),
             arbitration_holder: format!("chat:{ws}"),
             approval: None,
-        })),
-    ]
+        })))),
+    ];
+
+    // 工具名唯一性由注册表/测试保证；这里只排序让输出稳定（测试友好）。
+    tools.sort_by(|a, b| a.0.name().cmp(b.0.name()));
+    tools
 }
 
 // ============================================================================
@@ -382,5 +488,168 @@ mod tests {
         // Write: doesn't match read/destructive patterns
         assert_eq!(classify_tool_safety("invoke_action"), ToolSafety::Write);
         assert_eq!(classify_tool_safety("query_events"), ToolSafety::Write);
+    }
+
+    // ── E2：固定设备工具集 + 隐藏别名 ─────────────────
+
+    #[tokio::test]
+    async fn fixed_device_tools_exposed_and_legacy_aliases_hidden() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let tools = create_thing_tools(
+            pool,
+            "ws",
+            &ThingToolContext {
+                pending_actions: Some(Arc::new(PendingActionStore::default())),
+                ..Default::default()
+            },
+        );
+
+        let mut exposed: Vec<&str> = tools
+            .iter()
+            .filter(|(t, _)| t.exposed())
+            .map(|(t, _)| t.name())
+            .collect();
+        exposed.sort_unstable();
+        assert_eq!(
+            exposed,
+            vec![
+                "call_device",
+                "get_thing_tree",
+                "list_composites",
+                "list_devices",
+                "query_events",
+                "read_device",
+                "read_document",
+                "run_composite",
+                "search_knowledge",
+                "set_device",
+                "stop",
+                "unwatch",
+                "watch",
+            ],
+            "模型可见设备工具恒为固定 7 个 + 非设备 4 个 + composite 2 个"
+        );
+
+        for legacy in [
+            "list_things",
+            "get_thing",
+            "get_thing_profile",
+            "read_property",
+            "invoke_action",
+        ] {
+            let (tool, _) = tools
+                .iter()
+                .find(|(t, _)| t.name() == legacy)
+                .unwrap_or_else(|| panic!("legacy alias {legacy} must stay registered"));
+            assert!(!tool.exposed(), "legacy alias {legacy} must be hidden");
+        }
+    }
+
+    /// E2 watch/unwatch：真实 DB 往返（manager 未接线时只落 DB）。
+    #[tokio::test]
+    async fn watch_tool_registers_and_unwatch_removes() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
+        crate::domains::agent::host::test_utils::seed_test_workspace(&pool, "tenant-1", "ws").await;
+        sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES ('t1','T1','ws','device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let watch = watch_tools::WatchTool {
+            pool: pool.clone(),
+            workspace_id: "ws".into(),
+            manager: ManagerSlot::default(),
+        };
+        let out = watch
+            .execute(serde_json::json!({
+                "thingId": "t1",
+                "property": "温度",
+                "op": "gt",
+                "value": 30
+            }))
+            .await
+            .unwrap();
+        assert!(out.success, "{}", out.error.unwrap_or_default());
+        let payload: serde_json::Value = serde_json::from_str(&out.output).unwrap();
+        let rule_id = payload["ruleId"].as_str().expect("ruleId");
+        assert_eq!(payload["persistent"], false, "会话 watch 必须不持久");
+        let rows = tinyiothub_storage::watch::list_rules(&pool).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].persistent, 0);
+
+        let unwatch = watch_tools::UnwatchTool {
+            pool: pool.clone(),
+            workspace_id: "ws".into(),
+            manager: ManagerSlot::default(),
+        };
+        let out = unwatch.execute(serde_json::json!({"ruleId": rule_id})).await.unwrap();
+        assert!(out.success, "{}", out.error.unwrap_or_default());
+        assert!(tinyiothub_storage::watch::list_rules(&pool).await.unwrap().is_empty());
+    }
+
+    /// E2 read_device：live 摘要存在时一次返回 state+health+zone+text。
+    #[tokio::test]
+    async fn read_device_returns_live_summary_and_text() {
+        use tinyiothub_runtime::watch::live_state::{Health, ThingLiveSummary};
+
+        struct StubLive(ThingLiveSummary);
+
+        #[async_trait::async_trait]
+        impl LiveSummarySource for StubLive {
+            async fn summary(&self, _ws: &str, _thing_id: &str) -> Option<ThingLiveSummary> {
+                Some(self.0.clone())
+            }
+        }
+
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
+        tinyiothub_storage::seed::seed_system(&tinyiothub_storage::Db::new(pool.clone()))
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) \
+             VALUES ('ws','ws','tenant-default-001','2026-01-01','2026-01-01')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let service = Arc::new(ThingService::new(pool));
+        let created = service
+            .create_thing(
+                &serde_json::from_value(serde_json::json!({"name":"温感-1","thingType":"device"})).unwrap(),
+                Some("ws"),
+            )
+            .await
+            .unwrap();
+
+        let mut values = std::collections::HashMap::new();
+        values.insert("温度".to_string(), "31.5".to_string());
+        let tool = device::ReadDeviceTool {
+            thing_service: service,
+            workspace_id: "ws".into(),
+            live: Some(Arc::new(StubLive(ThingLiveSummary {
+                health: Health::Attention,
+                zone: "园区A/3号楼".into(),
+                online: false,
+                values,
+            }))),
+            device_cache: None,
+        };
+        let out = tool
+            .execute(serde_json::json!({"thingId": created.id, "properties": ["温度"]}))
+            .await
+            .unwrap();
+        assert!(out.success, "{}", out.error.unwrap_or_default());
+        let v: serde_json::Value = serde_json::from_str(&out.output).unwrap();
+        assert_eq!(v["health"], "attention");
+        assert_eq!(v["zone"], "园区A/3号楼");
+        assert_eq!(v["state"]["温度"], "31.5");
+        assert!(v["text"].as_str().unwrap().contains("园区A/3号楼"));
+        assert_eq!(v["v"], 1);
     }
 }

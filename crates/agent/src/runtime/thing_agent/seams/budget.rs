@@ -94,7 +94,11 @@ impl BudgetSeam for DefaultBudget {
         {
             return BudgetDecision::Truncate(BudgetReason::Tokens);
         }
-        if input.per_thing_actions.values().any(|n| *n > self.max_actions_per_thing) {
+        if input
+            .per_thing_actions
+            .values()
+            .any(|n| *n > self.max_actions_per_thing)
+        {
             return BudgetDecision::Truncate(BudgetReason::PerThingActions);
         }
         BudgetDecision::Continue

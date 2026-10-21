@@ -33,6 +33,38 @@ pub struct ThingLiveSummary {
     pub values: HashMap<String, String>,
 }
 
+/// E2 turn 开头快照（spec §4）：工作区实时态投影。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceSnapshot {
+    pub v: u8,
+    /// health worst-first，同级按 zone、name。
+    pub devices: Vec<DeviceSnapshot>,
+    /// 本工作区已知设备数（快照渲染时用；omitted 由渲染器按预算计算）。
+    pub total: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceSnapshot {
+    pub thing_id: String,
+    pub name: String,
+    pub health: Health,
+    pub online: bool,
+    pub zone: String,
+    pub values: Vec<(String, String)>,
+}
+
+impl Health {
+    /// 排序权重：Bad > Attention > Unknown > Ok（worst-first）。
+    pub fn rank(&self) -> u8 {
+        match self {
+            Self::Bad => 0,
+            Self::Attention => 1,
+            Self::Unknown => 2,
+            Self::Ok => 3,
+        }
+    }
+}
+
 /// 单物内部实时态。`status: None` 表示状态未知（空洞期/cache 查无此物）。
 #[derive(Debug, Default)]
 struct ThingLive {
@@ -117,6 +149,41 @@ impl LiveState {
             online: live.online,
             values: live.values.clone(),
         })
+    }
+
+    /// E2：工作区实时快照。只含 cache 确知属于该工作区的物
+    /// （Lagged 重同步读全局 cache，必须在此按工作区隔离）。
+    pub fn workspace_snapshot(&self, workspace_id: &str) -> WorkspaceSnapshot {
+        let mut devices: Vec<DeviceSnapshot> = self
+            .states
+            .iter()
+            .filter_map(|(id, live)| {
+                let cached = self.cache.get(id)?;
+                if cached.workspace_id.as_deref() != Some(workspace_id) {
+                    return None;
+                }
+                Some(DeviceSnapshot {
+                    thing_id: id.clone(),
+                    name: cached.get_display_name().to_string(),
+                    health: Self::derive_health(live),
+                    online: live.online,
+                    zone: self.derive_zone(id),
+                    values: live.values.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                })
+            })
+            .collect();
+        devices.sort_by(|a, b| {
+            a.health
+                .rank()
+                .cmp(&b.health.rank())
+                .then_with(|| a.zone.cmp(&b.zone))
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        WorkspaceSnapshot {
+            v: 1,
+            total: devices.len() as u32,
+            devices,
+        }
     }
 
     /// health v1：error→Bad；offline→Attention；否则 Ok；状态未知（空洞期）→Unknown。

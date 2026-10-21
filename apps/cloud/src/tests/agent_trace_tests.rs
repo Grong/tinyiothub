@@ -53,6 +53,7 @@ fn ended_report(
         thing_id: None,
         trace,
         task_count: None,
+        snapshot: None,
     }
 }
 

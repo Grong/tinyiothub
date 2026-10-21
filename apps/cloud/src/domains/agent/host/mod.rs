@@ -22,6 +22,7 @@
 
 pub mod autonomous_factory;
 pub mod chat;
+pub mod composite;
 pub mod config;
 pub mod judge;
 pub mod notify;

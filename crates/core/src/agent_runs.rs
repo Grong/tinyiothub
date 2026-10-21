@@ -137,6 +137,21 @@ pub struct RunReport {
     /// 其余源 None。serde(default) 向后兼容已落库的旧 report JSON。
     #[serde(default)]
     pub task_count: Option<u32>,
+    /// E2 快照注入实测指标（bytes/chars/设备数/估算 token）；
+    /// None = 未注入（空快照/装配失败/旧报告）。
+    #[serde(default)]
+    pub snapshot: Option<SnapshotMetrics>,
+}
+
+/// E2 turn 开头快照的实测指标（T5：中文预算基线进 run trace）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct SnapshotMetrics {
+    pub bytes: u32,
+    pub chars: u32,
+    pub devices: u32,
+    pub omitted: u32,
+    /// 估算 token（中文按 chars / 1.5 保守折算；只作观测，不作硬闸门）。
+    pub est_tokens: u32,
 }
 
 /// 记忆/历史段统一条目格式：`"[acted] 调低设定值成功"`。

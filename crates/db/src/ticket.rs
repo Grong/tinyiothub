@@ -833,6 +833,7 @@ mod tests {
             thing_id: Some("t1".to_string()),
             trace: vec![],
             task_count: None,
+            snapshot: None,
         };
         db.insert_agent_run(&report, None, None).await.unwrap();
         let unticketed = db.unticketed_failed_runs("2000-01-01").await.unwrap();
@@ -866,6 +867,7 @@ mod tests {
             thing_id: None,
             trace: vec![],
             task_count: None,
+            snapshot: None,
         };
         db.insert_agent_run(&heartbeat_failure, None, None).await.unwrap();
         assert!(
@@ -1013,6 +1015,7 @@ mod statistics_tests {
                 thing_id: None,
                 trace: vec![],
                 task_count: None,
+                snapshot: None,
             };
             db.insert_agent_run(&report, None, None).await.unwrap();
         }

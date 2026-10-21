@@ -32,7 +32,7 @@ use dashmap::DashMap;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use crate::prompt::runtime::build_prompt;
+use crate::prompt::runtime::build_prompt_with_snapshot;
 use crate::runtime::events::{AgentEventBus, AgentEventKind};
 use crate::runtime::thing_agent::active_runs::ActiveRunRegistry;
 use crate::runtime::thing_agent::governor::HeartbeatGovernor;
@@ -150,6 +150,8 @@ struct PipelineDeps {
     /// heartbeat trigger 的每工作区开关表（终审 I-1）：false 不 tick，
     /// 缺省 true。
     heartbeat_enabled: Arc<DashMap<String, bool>>,
+    /// E2 快照读面：每工作区 watch 命令通道（Snapshot 查询在 engine actor 内）。
+    watch_cmds: Arc<DashMap<String, mpsc::Sender<WatchCommand>>>,
     /// heartbeat 连败治理（T4）：run_pipeline 记账，trigger 读暂停态。
     governor: HeartbeatGovernor,
     /// heartbeat 源最近 tick 完成时间表（Task 12，D13 实时读透出）——成败均计，
@@ -192,7 +194,7 @@ pub struct ThingAgentManager {
     watch_deps: std::sync::Mutex<Option<WatchDeps>>,
     /// E1 watch API 写穿命令通道（每工作区）：start 时建立，stop 时丢弃；
     /// handler 经 `watch_command_sink` 取 sender 投递 Upsert/Remove。
-    watch_cmds: DashMap<String, mpsc::Sender<WatchCommand>>,
+    watch_cmds: Arc<DashMap<String, mpsc::Sender<WatchCommand>>>,
 }
 
 impl ThingAgentManager {
@@ -210,8 +212,10 @@ impl ThingAgentManager {
         ticket_resolutions: Arc<dyn crate::runtime::thing_agent::traits::TicketResolutionProvider>,
         heartbeat: HeartbeatDeps,
     ) -> Self {
+        let watch_cmds: Arc<DashMap<String, mpsc::Sender<WatchCommand>>> = Arc::new(DashMap::new());
         Self {
             deps: PipelineDeps {
+                watch_cmds: Arc::clone(&watch_cmds),
                 host,
                 policy_repo,
                 registry,
@@ -235,7 +239,7 @@ impl ThingAgentManager {
             rate_limits: Arc::new(DashMap::new()),
             wake_ledger: std::sync::Mutex::new(None),
             watch_deps: std::sync::Mutex::new(None),
-            watch_cmds: DashMap::new(),
+            watch_cmds,
         }
     }
 
@@ -647,6 +651,34 @@ fn record_heartbeat_outcome(
     }
 }
 
+/// E2：向 engine actor 要本工作区实时快照（120ms 超时，fail-soft）。
+async fn fetch_workspace_snapshot(
+    cmds: &Arc<DashMap<String, mpsc::Sender<WatchCommand>>>,
+    workspace_id: &str,
+) -> (Option<String>, Option<tinyiothub_core::agent_runs::SnapshotMetrics>) {
+    let Some(sink) = cmds.get(workspace_id).map(|s| s.clone()) else {
+        return (None, None);
+    };
+    let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+    if sink.send(WatchCommand::Snapshot { reply: reply_tx }).await.is_err() {
+        return (None, None);
+    }
+    match tokio::time::timeout(Duration::from_millis(120), reply_rx).await {
+        Ok(Ok(Some(snapshot))) => {
+            let (body, metrics) = crate::prompt::snapshot::render_snapshot(&snapshot);
+            if body.is_empty() {
+                (None, None)
+            } else {
+                (Some(body), Some(metrics))
+            }
+        }
+        _ => {
+            tracing::warn!(workspace_id, "workspace snapshot 装配超时/失败——空快照，run 照常");
+            (None, None)
+        }
+    }
+}
+
 /// The full run chain (T9–T13) driven by the scheduler for every admitted
 /// wake signal.
 async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
@@ -716,6 +748,12 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
         }
     };
 
+    // E2：turn 开头工作区快照（fail-soft：超时/无 engine → 空段，run 照常）。
+    let (snapshot_body, snapshot_metrics) = fetch_workspace_snapshot(&deps.watch_cmds, &ws).await;
+    if let Some(metrics) = snapshot_metrics {
+        ctx.inner.write().await.snapshot = Some(metrics);
+    }
+
     let principles = crate::prompt::workspace::load_principles(&ws);
     // Task 6：heartbeat 源走 heartbeat 专用 prompt（任务列表+信任段+JSON
     // 报告模板，行为保持 loop_.rs build_heartbeat_prompt）。修复轮 1：Merged
@@ -733,9 +771,20 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
             p.push_str("\n\n");
             crate::prompt::runtime::render_heartbeat_alarm(a, &mut p);
         }
+        if let Some(body) = snapshot_body.as_deref() {
+            p.push_str(&crate::prompt::snapshot::section(body));
+        }
         p
     } else {
-        build_prompt(&signal, &principles, &memory, &history, &allowed, &resolutions)
+        build_prompt_with_snapshot(
+            &signal,
+            &principles,
+            &memory,
+            &history,
+            &allowed,
+            &resolutions,
+            snapshot_body.as_deref(),
+        )
     };
 
     let agent = match deps.agent_provider.get_or_create(&ws, Arc::clone(&ctx.inner)).await {
@@ -772,6 +821,7 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
                 // 供应商不可用 run 未执行即中止，无任务表消费——None（适配器映射 0，
                 // 与旧 error 锚行 taskCount=0 同显）。
                 task_count: None,
+                snapshot: None,
             };
             deps.registry.record_with_keys(
                 report.clone(),

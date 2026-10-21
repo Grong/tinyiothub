@@ -84,9 +84,7 @@ impl AutonomousAgentFactory {
             provider_factory,
             model,
             runtime,
-            tool_exec: Arc::new(
-                tinyiothub_agent::runtime::thing_agent::seams::tool_exec::DefaultToolExec,
-            ),
+            tool_exec: Arc::new(tinyiothub_agent::runtime::thing_agent::seams::tool_exec::DefaultToolExec),
             agents: DashMap::new(),
         }
     }
@@ -235,7 +233,7 @@ pub(crate) fn build_autonomous_tools(
     // flow), plus the autonomous invoke_action (policy-gated).
     let mut tools: Vec<Box<dyn Tool>> = create_thing_tools(pool.clone(), workspace_id, runtime)
         .into_iter()
-        .filter(|(tool, _)| tool.name() != "invoke_action")
+        .filter(|(tool, _)| tool.name() != "call_device")
         .map(|(tool, _)| tool)
         .collect();
 
@@ -366,7 +364,7 @@ mod tests {
     // ── tool composition ───────────────────────────────────────
 
     #[tokio::test]
-    async fn build_autonomous_tools_has_9_unique_tools_with_autonomous_invoke() {
+    async fn build_autonomous_tools_exposes_fixed_set_and_keeps_hidden_aliases() {
         let pool = test_pool().await;
         let tools = build_autonomous_tools(
             &pool,
@@ -381,30 +379,48 @@ mod tests {
             },
         );
 
-        let mut names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-        names.sort_unstable();
+        // E2：模型可见 = 7 设备工具 + 4 非设备工具（固定集合）。
+        let mut exposed: Vec<&str> = tools.iter().filter(|t| t.exposed()).map(|t| t.name()).collect();
+        exposed.sort_unstable();
         assert_eq!(
-            names,
+            exposed,
             vec![
-                "get_thing",
-                "get_thing_profile",
+                "call_device",
                 "get_thing_tree",
-                "invoke_action",
-                "list_things",
+                "list_composites",
+                "list_devices",
                 "query_events",
+                "read_device",
                 "read_document",
-                "read_property",
+                "run_composite",
                 "search_knowledge",
+                "set_device",
+                "stop",
+                "unwatch",
+                "watch",
             ],
-            "autonomous agent must carry exactly the 9 ontology tools"
+            "exposed tool list must be fixed (device tools never grow per device)"
         );
-        let invoke = tools
-            .iter()
-            .find(|t| t.name() == "invoke_action")
-            .expect("invoke_action");
+
+        // 旧名仍注册为隐藏别名（批准通道兼容），但绝不进模型列表。
+        for legacy in [
+            "list_things",
+            "get_thing",
+            "get_thing_profile",
+            "read_property",
+            "invoke_action",
+        ] {
+            let tool = tools
+                .iter()
+                .find(|t| t.name() == legacy)
+                .unwrap_or_else(|| panic!("legacy alias {legacy} must stay registered"));
+            assert!(!tool.exposed(), "legacy alias {legacy} must be hidden");
+        }
+
+        let invoke = tools.iter().find(|t| t.name() == "call_device").expect("call_device");
         assert!(
             invoke.description().contains("自治"),
-            "invoke_action must be the autonomous variant, got: {}",
+            "call_device must be the autonomous variant, got: {}",
             invoke.description()
         );
     }

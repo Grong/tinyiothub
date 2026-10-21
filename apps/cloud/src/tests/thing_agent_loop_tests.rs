@@ -100,21 +100,22 @@ impl tinyiothub_agent::port::provider::ModelProvider for LoopScriptedProvider {
             reasoning_content: None,
         };
 
-        if any("\"currentValue\"") || any("currentValue") {
+        // E2：read_device 的输出含 health 键——作为"已回读"的稳定信号
+        //（rig 消息里 JSON 被转义，不能匹配带引号的 needle）。
+        if any("health") {
             Ok(text("已开启风扇并确认温度回落"))
         } else if any("simulated") || any("\"executed\"") {
-            // invoke_action 已下发（模拟/真实驱动）→ 回读验证。
-            // 工具结果在消息流中的序列化间距不可依赖，匹配裸子串。
+            // call_device 已下发（模拟/真实驱动）→ read_device 回读验证。
             Ok(call(
                 "c-read",
-                "read_property",
-                serde_json::json!({"thingId": THING, "propertyName": "temp"}),
+                "read_device",
+                serde_json::json!({"thingId": THING, "properties": ["temp"]}),
             ))
         } else if current_user.contains("temp_high") {
             Ok(call(
                 "c-invoke",
-                "invoke_action",
-                serde_json::json!({"thingId": THING, "actionName": "set_fan", "params": {"speed": 3}}),
+                "call_device",
+                serde_json::json!({"thingId": THING, "action": "set_fan", "params": {"speed": 3}}),
             ))
         } else {
             Ok(text("done"))
@@ -218,8 +219,8 @@ impl tinyiothub_agent::port::provider::ModelProvider for InjectionProvider {
                 text: None,
                 tool_calls: vec![ToolCall {
                     id: "c-inject".to_string(),
-                    name: "invoke_action".to_string(),
-                    arguments: serde_json::json!({"thingId": THING, "actionName": "factory_reset"}).to_string(),
+                    name: "call_device".to_string(),
+                    arguments: serde_json::json!({"thingId": THING, "action": "factory_reset"}).to_string(),
                 }],
                 usage: None,
                 reasoning_content: None,
@@ -827,6 +828,7 @@ async fn policy_denial_streak_triggers_relax_hint_with_registry() {
         thing_id: None,
         trace: vec![],
         task_count: None,
+        snapshot: None,
     };
 
     // 当前 run 在 alert 之前已 record → recent_by_dedup 窗口第一条即当前 run。
@@ -990,7 +992,10 @@ async fn critical_event_runs_immediately_end_to_end() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let wake_latency = started.elapsed();
-    assert!(wake_latency < Duration::from_secs(5), "唤醒延迟 {wake_latency:?} 必须是亚秒级");
+    assert!(
+        wake_latency < Duration::from_secs(5),
+        "唤醒延迟 {wake_latency:?} 必须是亚秒级"
+    );
 
     let (outcome, trigger_type): (String, String) =
         sqlx::query_as("SELECT outcome, trigger_type FROM agent_runs WHERE dedup_key = ?")

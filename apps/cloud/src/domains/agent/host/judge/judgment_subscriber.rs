@@ -787,6 +787,7 @@ mod tests {
             thing_id: Some("t1".to_string()),
             trace: vec![],
             task_count: None,
+            snapshot: None,
         }
     }
 

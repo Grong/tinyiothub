@@ -10,6 +10,7 @@ pub mod heartbeat;
 pub mod investigation;
 pub mod paths;
 pub mod runtime;
+pub mod snapshot;
 pub mod templates;
 pub mod workspace;
 

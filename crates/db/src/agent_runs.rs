@@ -385,6 +385,7 @@ mod tests {
             thing_id: Some("t1".to_string()),
             trace: vec![],
             task_count: None,
+            snapshot: None,
         }
     }
 
@@ -871,6 +872,7 @@ mod tests {
             thing_id: Some("t1".to_string()),
             trace: vec![],
             task_count: None,
+            snapshot: None,
         };
 
         let json = serde_json::to_string(&report).expect("serialize");

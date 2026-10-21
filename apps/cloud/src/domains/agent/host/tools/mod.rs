@@ -13,4 +13,4 @@ pub use canvas::CanvasTool;
 pub use dispatch_task::DispatchThingTaskTool;
 pub use get_skill::GetSkillTool;
 pub use service::{chat_builtin_tools_provider, effective_tool_names};
-pub use thing::{ThingToolContext, create_thing_tools, take_pending_action};
+pub use thing::{TakeError, ThingToolContext, create_thing_tools, take_pending_action, take_pending_action_reasoned};

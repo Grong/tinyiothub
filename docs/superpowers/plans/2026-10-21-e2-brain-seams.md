@@ -739,3 +739,16 @@ git commit -am "test(e2): 端到端+全量门禁+架构 spec 回写"
 - 每个子阶段独立开关（mode 门控）：`fixed_tools_enabled` / `snapshot_enabled` / `composite_enabled`；接缝默认实现无行为变更，回滚=恢复直连调用（git revert 粒度）
 - 旧工具别名保留一个版本，批准通道不因改名断链
 - 快照装配 fail-soft；composite 失败显式 partial/rolled_back，不静默成功
+
+## 执行记录（2026-10-21）
+
+| 子阶段 | 交付 | 验证 |
+|---|---|---|
+| E2a | 五接缝 + 组合根注入 + 替换证明（Budget/Policy/Approval/ToolExec；Trigger 契约） | commit 83334d7b；`cargo test -p agent seams` |
+| E2b | 固定设备工具 7 件 + 旧名隐藏别名 + `Tool::exposed` + catalog 词表 | `host::tools::thing` / `autonomous_factory` 测试 |
+| E2c | LiveState 工作区快照 → WatchCommand::Snapshot → 6KB 渲染 → prompt 注入 → RunReport.snapshot（T5 中文基线） | `prompt::snapshot` / `watch` / `runner` 测试 |
+| E2d | 审批原因六分类后端落地（unavailable≠rejected；token 过期/缺失区分） | `workspace_heartbeat` / `pending_action` 测试 |
+| E2e | agent_composites 声明 + run_composite/list_composites + 顺序执行/回滚/逐步 job 账本/整链审批 | `composite` 测试 |
+| 全量 | cloud lib 1078 passed；agent 325 / runtime 177 / core 94 / db 89；clippy 无新增告警 | 2026-10-21 |
+
+**显式延后（已录 TODOS.md P3）**：旧工具别名删除、审批 reason 前端展示、composite 声明写入 API、stop 中断在途调用。

@@ -242,6 +242,8 @@ impl ServiceManager {
             let live_summary_slot = crate::domains::agent::host::tools::thing::LiveSummarySlot::default();
             let live_summary: Arc<dyn crate::domains::agent::host::tools::thing::LiveSummarySource> =
                 Arc::new(live_summary_slot.clone());
+            // E2 watch/unwatch：manager 迟绑定槽（与 live_summary_slot 同点 set）。
+            let manager_slot = crate::domains::agent::host::tools::thing::ManagerSlot::default();
             tool_registry.register_provider(crate::domains::agent::host::tools::chat_builtin_tools_provider(
                 app_state.db.pool().clone(),
                 Some(app_state.device_cache.clone()),
@@ -249,9 +251,9 @@ impl ServiceManager {
                 app_state.arbitration.clone(),
                 live_summary.clone(),
                 // E2 ToolExec 接缝默认实现（直通内层工具）。
-                std::sync::Arc::new(
-                    tinyiothub_agent::runtime::thing_agent::seams::tool_exec::DefaultToolExec,
-                ),
+                std::sync::Arc::new(tinyiothub_agent::runtime::thing_agent::seams::tool_exec::DefaultToolExec),
+                Some(app_state.event_bus.clone()),
+                manager_slot.clone(),
             ));
             tool_registry.set_external_tool_factory(Arc::new(|| {
                 crate::domains::agent::host::ports::external_tool_registry()
@@ -299,6 +301,8 @@ impl ServiceManager {
                                 pending_actions: Some(app_state.pending_actions.clone()),
                                 arbitration: Some(app_state.arbitration.clone()),
                                 live: Some(live_summary.clone()),
+                                event_bus: Some(app_state.event_bus.clone()),
+                                manager: Some(manager_slot.clone()),
                             },
                         ),
                     ),
@@ -399,6 +403,7 @@ impl ServiceManager {
             // E1 Task 10：manager 就绪，LiveState 读面槽封口——此后工具查询
             // 经 watch 命令通道生效（此前 live=null）。
             live_summary_slot.set(thing_agent_manager.clone());
+            manager_slot.set(thing_agent_manager.clone());
             let orchestrator = runtime.orchestrator().clone();
 
             // Wire event publisher to services that need cross-domain dispatching
@@ -492,7 +497,9 @@ impl ServiceManager {
             //
             // E1 Task 8 bootstrap 硬顺序：set_wake_ledger / set_watch_deps /
             // 限速预热全部先于 start——三者都只影响其后 start 的工作区。
-            let hub_ledger = Arc::new(crate::shared::runtime_ports::HubLedgerAdapter::new((*app_state.db).clone()));
+            let hub_ledger = Arc::new(crate::shared::runtime_ports::HubLedgerAdapter::new(
+                (*app_state.db).clone(),
+            ));
             thing_agent_manager.set_wake_ledger(hub_ledger.clone());
             thing_agent_manager.set_watch_deps(tinyiothub_agent::runtime::thing_agent::WatchDeps {
                 cache: Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(

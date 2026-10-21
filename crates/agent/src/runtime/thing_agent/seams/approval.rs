@@ -63,7 +63,9 @@ impl ApprovalReason {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApprovalDecision {
     /// 需要人工确认；token 由工具层 mint（接缝不持存储）。
-    Pending { message: String },
+    Pending {
+        message: String,
+    },
     Decided(ApprovalReason),
 }
 
@@ -133,10 +135,17 @@ mod tests {
             assert!(!r.executes(), "{r:?} must not execute");
         }
         assert!(ApprovalReason::HumanRejected.is_denial());
-        for r in [ApprovalReason::Unavailable, ApprovalReason::Expired, ApprovalReason::Cancelled] {
+        for r in [
+            ApprovalReason::Unavailable,
+            ApprovalReason::Expired,
+            ApprovalReason::Cancelled,
+        ] {
             assert!(!r.is_denial(), "{r:?} is not a denial");
         }
-        assert_eq!(ApprovalReason::from_code("unavailable"), Some(ApprovalReason::Unavailable));
+        assert_eq!(
+            ApprovalReason::from_code("unavailable"),
+            Some(ApprovalReason::Unavailable)
+        );
         assert_eq!(ApprovalReason::Unavailable.code(), "unavailable");
         assert_eq!(ApprovalReason::from_code("nope"), None);
     }
@@ -180,9 +189,7 @@ mod tests {
 
     #[test]
     fn replacement_only_narrows() {
-        let s = StrictApproval {
-            inner: DefaultApproval,
-        };
+        let s = StrictApproval { inner: DefaultApproval };
         assert!(matches!(
             s.decide(&input(false, ToolSafety::Write)),
             ApprovalDecision::Pending { .. }

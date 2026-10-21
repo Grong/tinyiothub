@@ -21,6 +21,16 @@ fn name_infers_destructive(name: &str) -> bool {
 fn tool_label(name: &str) -> &str {
     match name {
         // Device-runtime tools (MCP)
+        // E2 fixed device tools
+        "list_devices" => "列出设备",
+        "read_device" => "读取设备",
+        "call_device" => "执行设备操作",
+        "set_device" => "写入属性",
+        "stop" => "立即停止",
+        "watch" => "条件等待",
+        "unwatch" => "取消条件等待",
+        "list_composites" => "列出动作链",
+        "run_composite" => "执行动作链",
         "search_things" => "搜索物",
         "read_properties" => "读取属性",
         "write_properties" => "写入属性",
@@ -59,7 +69,20 @@ fn tool_label(name: &str) -> &str {
 fn tool_group(name: &str) -> (&str, &str) {
     if name == "search_workspace_resources" {
         ("workspace", "工作空间")
-    } else if name.starts_with("search_") || matches!(name, "read_properties" | "write_properties" | "send_command") {
+    } else if matches!(
+        name,
+        "list_devices"
+            | "read_device"
+            | "call_device"
+            | "set_device"
+            | "stop"
+            | "watch"
+            | "unwatch"
+            | "list_composites"
+            | "run_composite"
+    ) || name.starts_with("search_")
+        || matches!(name, "read_properties" | "write_properties" | "send_command")
+    {
         ("device", "设备管理")
     } else if matches!(
         name,
@@ -210,6 +233,9 @@ mod tests {
 
     #[test]
     fn test_tool_label_mapping() {
+        assert_eq!(tool_label("list_devices"), "列出设备");
+        assert_eq!(tool_label("read_device"), "读取设备");
+        assert_eq!(tool_label("watch"), "条件等待");
         assert_eq!(tool_label("search_things"), "搜索物");
         assert_eq!(tool_label("get_thing"), "查看物");
         assert_eq!(tool_label("alarm_list"), "查询告警列表");

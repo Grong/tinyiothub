@@ -75,6 +75,9 @@ pub mod session;
 /// system_settings key-value storage (event security config).
 pub mod ticket;
 
+/// Thing row mapping helpers.
+/// E2 composite 声明持久源（agent_composites）。
+pub mod composite;
 pub mod settings;
 /// SQL escaping helpers.
 pub mod sql_security;
@@ -88,7 +91,6 @@ pub mod thing;
 pub mod thing_command;
 /// Thing property persistence.
 pub mod thing_property;
-/// Thing row mapping helpers.
 pub mod thing_row_mapper;
 /// Thing template persistence (thing_templates / template_categories).
 pub mod thing_template;

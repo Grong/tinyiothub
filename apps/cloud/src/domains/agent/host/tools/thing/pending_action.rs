@@ -46,14 +46,38 @@ pub fn store_pending_action(
     token
 }
 
+/// Why a confirmation token could not be consumed（E2 审批六分类）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TakeError {
+    NotFound,
+    Expired,
+    /// 调用方工作区与 token 绑定的工作区不一致（跨区绑定，E2 归为 unavailable：
+    /// 不是用户否决，且不执行）。
+    WorkspaceMismatch,
+}
+
+impl TakeError {
+    pub fn reason_code(&self) -> &'static str {
+        match self {
+            Self::NotFound | Self::WorkspaceMismatch => "unavailable",
+            Self::Expired => "expired",
+        }
+    }
+}
+
 /// Retrieve and consume a pending action by token (returns None if expired or not found).
 pub fn take_pending_action(store: &PendingActionStore, token: &str) -> Option<PendingAction> {
-    cleanup_expired_tokens(store);
-    let entry = store.remove(token)?;
+    take_pending_action_reasoned(store, token).ok()
+}
+
+/// E2：消费 token 并区分原因（过期 ≠ 不存在；跨区由调用方校验后映射）。
+pub fn take_pending_action_reasoned(store: &PendingActionStore, token: &str) -> Result<PendingAction, TakeError> {
+    // 注意：先 remove 再判过期——过期 token 也必须被消费掉（防重放）。
+    let entry = store.remove(token).ok_or(TakeError::NotFound)?;
     if entry.1.created_at.elapsed() > CONFIRMATION_TTL {
-        return None;
+        return Err(TakeError::Expired);
     }
-    Some(entry.1)
+    Ok(entry.1)
 }
 
 /// Cleanup expired tokens (called on every take — keeps the map bounded).
@@ -105,6 +129,23 @@ mod tests {
                 created_at: Instant::now() - age,
             },
         );
+    }
+
+    /// E2 审批六分类：过期 ≠ 不存在（都未执行，但原因不同）。
+    #[test]
+    fn reasoned_take_distinguishes_expired_from_missing() {
+        let store = PendingActionStore::new();
+        insert_entry(&store, "old", CONFIRMATION_TTL + Duration::from_secs(60));
+        assert!(matches!(
+            take_pending_action_reasoned(&store, "old"),
+            Err(TakeError::Expired)
+        ));
+        assert!(matches!(
+            take_pending_action_reasoned(&store, "nope"),
+            Err(TakeError::NotFound)
+        ));
+        assert_eq!(TakeError::Expired.reason_code(), "expired");
+        assert_eq!(TakeError::NotFound.reason_code(), "unavailable");
     }
 
     #[tokio::test]

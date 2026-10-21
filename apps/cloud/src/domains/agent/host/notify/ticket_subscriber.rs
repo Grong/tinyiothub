@@ -384,6 +384,7 @@ mod tests {
             thing_id: None,
             trace: vec![],
             task_count: None,
+            snapshot: None,
         }
     }
 

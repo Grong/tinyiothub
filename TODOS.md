@@ -17,6 +17,18 @@
 - **Context:** ai-consolidation spec F10/E6 已定义 run_recorded 推送；watch 唤醒 run 只是新 trigger 来源。
 - **Effort:** S (human: ~0.5d / CC: ~30min) | **Depends on:** E1 + ai-consolidation E6
 
+### P3 — E2 结转：旧设备工具别名删除 + 审批 reason 前端展示 + composite 声明 API
+- **What:** (1) 删除 `list_things/get_thing/get_thing_profile/read_property/invoke_action` 隐藏别名（保留一个版本后）；(2) BrainEvent 投影透出 `decisionReason`，`#/ai` 对 unavailable/expired/cancelled 显示"未执行"；(3) `GET/POST/DELETE /workspaces/{id}/composites` 声明写入 API（E3 场景包导入前置）。
+- **Why:** E2 已交付后端能力；这三项是显式延后的收尾，不处理会留下双名工具集与不可见的审批语义。
+- **Context:** spec `docs/superpowers/specs/2026-10-21-e2-brain-seams-design.md` §3.2/§5/§6.1。
+- **Effort:** M (human: ~2d / CC: ~2h) | **Depends on:** E2 合入 + E3 工作台
+
+### P3 — E2 结转：stop 不中断在途单次调用
+- **What:** `stop` 目前只阻断后续 call/set 并释放租约；在途的单次设备调用完成才返回。
+- **Why:** 架构要求"stop 永远可用"，双通道中断语义留到 E4 声明制 resources 一并细化。
+- **Context:** E2 spec §3.1 / §11 非目标。
+- **Effort:** M | **Depends on:** E4 接入层
+
 ## Thing Rename Follow-ups — Deferred (PR-3, from /superpowers plan 2026-08-31)
 
 ### P2 — examples/* 与 drivers/* 不在 workspace members，未受编译门禁保护

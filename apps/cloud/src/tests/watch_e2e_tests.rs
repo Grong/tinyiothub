@@ -125,11 +125,13 @@ async fn seed_scene(pool: &sqlx::SqlitePool, app_state: &AppState) {
         .execute(pool)
         .await
         .expect("insert device");
-    sqlx::query("INSERT INTO thing_properties (id, thing_id, name, data_type) VALUES ('prop-temp', ?, '温度', 'float')")
-        .bind(THING)
-        .execute(pool)
-        .await
-        .expect("register property");
+    sqlx::query(
+        "INSERT INTO thing_properties (id, thing_id, name, data_type) VALUES ('prop-temp', ?, '温度', 'float')",
+    )
+    .bind(THING)
+    .execute(pool)
+    .await
+    .expect("register property");
 
     app_state.device_cache.insert(Thing {
         id: THING.into(),
@@ -156,7 +158,11 @@ struct AgentStack {
     subscriber: tokio::task::JoinHandle<()>,
 }
 
-async fn assemble(pool: &sqlx::SqlitePool, app_state: &mut AppState, cache_src: &Arc<dyn ThingCacheSource>) -> AgentStack {
+async fn assemble(
+    pool: &sqlx::SqlitePool,
+    app_state: &mut AppState,
+    cache_src: &Arc<dyn ThingCacheSource>,
+) -> AgentStack {
     let db = Arc::new(Db::new(pool.clone()));
     let snapshot = build_agent_snapshot(&db).await.expect("snapshot build");
     let agent_events = Arc::new(AgentEventBus::new(256));
@@ -183,7 +189,9 @@ async fn assemble(pool: &sqlx::SqlitePool, app_state: &mut AppState, cache_src: 
 
     let deps = RuntimeDeps {
         thing_agent_host: Arc::new(CloudThingAgentHost::new(pool.clone(), thing_bus)),
-        policy_repo: Arc::new(crate::domains::agent::host::ports::StorageAutonomyPolicyReader::new(db.clone())),
+        policy_repo: Arc::new(crate::domains::agent::host::ports::StorageAutonomyPolicyReader::new(
+            db.clone(),
+        )),
         agent_provider: factory,
         thing_agent_config: ThingAgentManagerConfig {
             timer_interval: Duration::from_secs(24 * 3600),
@@ -256,13 +264,14 @@ async fn live_summary(manager: &ThingAgentManager) -> Option<ThingLiveSummary> {
 async fn wait_live_temp(manager: &ThingAgentManager, want: &str) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let got = live_summary(manager)
-            .await
-            .and_then(|s| s.values.get("温度").cloned());
+        let got = live_summary(manager).await.and_then(|s| s.values.get("温度").cloned());
         if got.as_deref() == Some(want) {
             return;
         }
-        assert!(Instant::now() < deadline, "超时等待 LiveState 温度={want}（最近 {got:?}）");
+        assert!(
+            Instant::now() < deadline,
+            "超时等待 LiveState 温度={want}（最近 {got:?}）"
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
@@ -271,11 +280,20 @@ async fn wait_live_temp(manager: &ThingAgentManager, want: &str) {
 
 /// 温度上报入口：与 DataServer::run() 消费任务同一函数（真实共享管线；
 /// 返回即缓存已更新、事件已发布进 bus）。
-async fn ingest_temp(driver_cache: &DriverCache, cache_src: &Arc<dyn ThingCacheSource>, app_state: &AppState, value: &str) {
+async fn ingest_temp(
+    driver_cache: &DriverCache,
+    cache_src: &Arc<dyn ThingCacheSource>,
+    app_state: &AppState,
+    value: &str,
+) {
     DataServer::consume_driver_reading(
         DriverReading {
             thing_id: THING.to_string(),
-            values: vec![ResultValue::new("温度".to_string(), "float".to_string(), Some(value.to_string()))],
+            values: vec![ResultValue::new(
+                "温度".to_string(),
+                "float".to_string(),
+                Some(value.to_string()),
+            )],
         },
         driver_cache,
         cache_src,
@@ -431,7 +449,12 @@ async fn watch_hit_wakes_run_within_2s_and_restart_reweaves() {
     // 持久源仍在（重启不丢规则）。
     let response = app2
         .clone()
-        .oneshot(auth_request("GET", &format!("/api/v1/workspaces/{WS}/watch-rules"), &token, None))
+        .oneshot(auth_request(
+            "GET",
+            &format!("/api/v1/workspaces/{WS}/watch-rules"),
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     let (_status, body) = response_parts(response).await;

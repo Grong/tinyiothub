@@ -227,6 +227,11 @@ impl WatchEngine {
         self.live.summary(thing_id)
     }
 
+    /// E2 turn 开头快照（spec §4）：本工作区实时态，health worst-first。
+    pub fn workspace_snapshot(&self, workspace_id: &str) -> super::live_state::WorkspaceSnapshot {
+        self.live.workspace_snapshot(workspace_id)
+    }
+
     /// 账本写彻底失败计数（metric 兜底）。
     pub fn ledger_write_failures(&self) -> u64 {
         self.ledger_write_failures.load(Ordering::Relaxed)

@@ -8,6 +8,7 @@
 
 pub mod approval;
 pub mod budget;
+pub mod composite;
 pub mod policy;
 pub mod tool_exec;
 pub mod trigger;

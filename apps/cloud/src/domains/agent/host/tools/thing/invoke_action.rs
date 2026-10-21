@@ -84,7 +84,7 @@ impl Tool for InvokeActionTool {
             // （thing_id），与 schema 的驼峰并容。
             #[serde(alias = "thing_id")]
             thing_id: String,
-            #[serde(alias = "action_name")]
+            #[serde(alias = "action_name", alias = "action")]
             action_name: String,
             params: Option<Value>,
         }
@@ -145,10 +145,7 @@ impl Tool for InvokeActionTool {
 
         // 4. Execute or request confirmation（E2：经 Approval 接缝裁决；
         // 默认实现与 E2 前语义逐项一致，Pending 分支 payload 不变）。
-        let approval: Arc<dyn ApprovalSeam> = self
-            .approval
-            .clone()
-            .unwrap_or_else(|| Arc::new(DefaultApproval));
+        let approval: Arc<dyn ApprovalSeam> = self.approval.clone().unwrap_or_else(|| Arc::new(DefaultApproval));
         match approval.decide(&ApprovalInput {
             workspace_id: &self.workspace_id,
             tool_name: self.name(),

@@ -39,11 +39,9 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
+use tinyiothub_agent::runtime::thing_agent::seams::policy::{DefaultPolicy, PolicyDecision, PolicyInput, PolicySeam};
 use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, RunContextInner};
 use tinyiothub_core::models::event::EventLevel;
-use tinyiothub_agent::runtime::thing_agent::seams::policy::{
-    DefaultPolicy, PolicyDecision, PolicyInput, PolicySeam,
-};
 use tinyiothub_policy::autonomy::AutonomyPolicy;
 use tinyiothub_storage::Db;
 use tokio::sync::RwLock;
@@ -61,7 +59,7 @@ struct Input {
     // alias：提案/报告的 parameters 常随模板写成蛇形键（thing_id）。
     #[serde(alias = "thing_id")]
     thing_id: String,
-    #[serde(alias = "action_name")]
+    #[serde(alias = "action_name", alias = "action")]
     action_name: String,
     params: Option<Value>,
 }
@@ -250,9 +248,9 @@ impl Attributable for AutonomousInvokeActionTool {
 #[async_trait]
 impl Tool for AutonomousInvokeActionTool {
     fn name(&self) -> &str {
-        // MUST stay "invoke_action": the T9 runner trajectory matching and
-        // the T10 prompt refer to this name.
-        "invoke_action"
+        // E2：模型可见的固定设备动作名。runner 轨迹匹配同时接受旧名
+        // `invoke_action`（隐藏别名，兼容存量报告）。
+        "call_device"
     }
 
     fn description(&self) -> &str {
@@ -270,7 +268,7 @@ impl Tool for AutonomousInvokeActionTool {
                     "type": "string",
                     "description": "物ID（必需）"
                 },
-                "actionName": {
+                "action": {
                     "type": "string",
                     "description": "操作名称（必需）"
                 },
@@ -279,7 +277,7 @@ impl Tool for AutonomousInvokeActionTool {
                     "description": "操作参数（可选，JSON 键值对）"
                 }
             },
-            "required": ["thingId", "actionName"]
+            "required": ["thingId", "action"]
         })
     }
 
@@ -351,10 +349,7 @@ impl Tool for AutonomousInvokeActionTool {
             None => 0,
         };
 
-        let seam: Arc<dyn PolicySeam> = self
-            .policy_seam
-            .clone()
-            .unwrap_or_else(|| Arc::new(DefaultPolicy));
+        let seam: Arc<dyn PolicySeam> = self.policy_seam.clone().unwrap_or_else(|| Arc::new(DefaultPolicy));
         let policy_ref: Option<&AutonomyPolicy> = policy.as_ref();
         if let PolicyDecision::Deny { code, .. } = seam.evaluate(&PolicyInput {
             workspace_id: &self.workspace_id,
@@ -614,7 +609,12 @@ mod tests {
             .unwrap();
 
         let tool = fx.tool.with_policy_seam(Arc::new(DenyAllSeam));
-        *fx.ctx.write().await.action_counts.entry("dev-1".to_string()).or_insert(0) += 1;
+        *fx.ctx
+            .write()
+            .await
+            .action_counts
+            .entry("dev-1".to_string())
+            .or_insert(0) += 1;
         let result = tool.execute(args("dev-1", "reboot")).await.expect("execute");
         let out = output_json(&result);
         assert_eq!(out["denied"], true);

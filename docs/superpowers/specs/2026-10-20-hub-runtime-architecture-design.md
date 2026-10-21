@@ -368,10 +368,10 @@ run 触发（含快照注入）              DLQ 事件+指标告警
   - Surfaced by: S1 W1 证明项 + S2 仲裁 TTL + 0I HOUR 1
   - Files: to be determined（新建 docs/superpowers/specs/2026-XX-XX-e1-watch-hub-design.md）
   - Verify: spec 对抗评审 PASS
-- [ ] **T2 (P2, human: ~3d / CC: ~2h)** — E2 — 五接缝封闭契约设计文档（Trigger/Budget/Approval/Policy/ToolExec 输入输出契约+替换规则）
+- [x] **T2 (P2, human: ~3d / CC: ~2h)** — E2 — 五接缝封闭契约设计文档（Trigger/Budget/Approval/Policy/ToolExec 输入输出契约+替换规则）
   - Surfaced by: §4 Brain 层 + P4
-  - Files: to be determined
-  - Verify: 契约评审 + 一个真实替换实现的概念验证
+  - Files: `docs/superpowers/specs/2026-10-21-e2-brain-seams-design.md` + `crates/agent/src/runtime/thing_agent/seams/`
+  - Verify: 契约评审 + 每接缝真实替换实现（`seams::*::tests`，2026-10-21 完成）
 - [ ] **T3 (P2, human: ~2d / CC: ~1h)** — E3 — 工作台设计评审前置（/plan-design-review）
   - Surfaced by: S11
   - Files: to be determined
@@ -380,10 +380,10 @@ run 触发（含快照注入）              DLQ 事件+指标告警
   - Surfaced by: 0I HOUR 4-5 + E1d 退出标准
   - Files: evals/（调研产物）
   - Verify: 选型报告 + 成本上限实测方案
-- [ ] **T5 (P3, human: ~1d / CC: ~30min)** — E2 — 快照中文 token 预算实测基线（D5 已裁定进当前计划）
+- [x] **T5 (P3, human: ~1d / CC: ~30min)** — E2 — 快照中文 token 预算实测基线（D5 已裁定进当前计划）
   - Surfaced by: D5 + 0I HOUR 2-3
-  - Files: crates/agent/src/prompt/runtime.rs
-  - Verify: run trace 含快照字节/token 实测字段
+  - Files: `crates/agent/src/prompt/snapshot.rs`（6KB 字节硬上限 + 中文 50 台基线用例）+ `RunReport.snapshot` 指标
+  - Verify: `prompt::snapshot::tests::chinese_baseline_stays_within_6kb`（bytes/chars/est_tokens 实测，2026-10-21）
 
 ## TODOS.md updates
 

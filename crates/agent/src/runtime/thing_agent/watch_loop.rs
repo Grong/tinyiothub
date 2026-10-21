@@ -57,6 +57,10 @@ pub enum WatchCommand {
         thing_id: String,
         reply: tokio::sync::oneshot::Sender<Option<ThingLiveSummary>>,
     },
+    /// E2 turn 开头工作区快照查询；engine 未运行/无实时态 → 空快照。
+    Snapshot {
+        reply: tokio::sync::oneshot::Sender<Option<tinyiothub_runtime::watch::live_state::WorkspaceSnapshot>>,
+    },
 }
 
 /// 每工作区 watch engine 事件循环。通道关闭/任务 abort = 退役（stop 路径）。
@@ -105,6 +109,9 @@ pub async fn watch_engine_loop(
                     WatchCommand::Summary { thing_id, reply } => {
                         // 读面查询：调用方已脱离（工具超时应答），send 失败只丢本次。
                         let _ = reply.send(engine.summary(&thing_id));
+                    }
+                    WatchCommand::Snapshot { reply } => {
+                        let _ = reply.send(Some(engine.workspace_snapshot(&workspace_id)));
                     }
                 }
             }

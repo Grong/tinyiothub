@@ -45,6 +45,20 @@ pub fn build_prompt(
     allowed: &[String],
     resolutions: &[(String, String)],
 ) -> String {
+    build_prompt_with_snapshot(signal, principles, memory, history, allowed, resolutions, None)
+}
+
+/// E2：四段式 + 工作区实时快照（`None`/空串 = 整段省略，输出与
+/// [`build_prompt`] 逐字节一致）。
+pub fn build_prompt_with_snapshot(
+    signal: &WakeSignal,
+    principles: &str,
+    memory: &[String],
+    history: &[String],
+    allowed: &[String],
+    resolutions: &[(String, String)],
+    snapshot: Option<&str>,
+) -> String {
     let mut out = String::new();
 
     // 1. 角色段
@@ -58,6 +72,11 @@ pub fn build_prompt(
     // 加载后传入；空串则整段省略。行为风格用户可改，安全纪律由宪法段兜底）。
     if !principles.is_empty() {
         out.push_str(&format!("\n\n{principles}"));
+    }
+
+    // E2：先看世界（快照），再看发生了什么（触发段）。空快照整段省略。
+    if let Some(body) = snapshot {
+        out.push_str(&crate::prompt::snapshot::section(body));
     }
 
     // 2. 触发段（事件 payload / 用户指令围栏，O13）

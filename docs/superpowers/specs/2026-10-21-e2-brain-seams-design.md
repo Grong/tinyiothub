@@ -140,7 +140,8 @@ impl ApprovalReason {
 }
 
 pub enum ApprovalDecision {
-    Pending { token: String, message: String },  // 状态：等待人工
+    /// 状态：等待人工。token 由工具层 mint（接缝不持存储）。
+    Pending { message: String },
     Decided(ApprovalReason),
 }
 
@@ -282,7 +283,7 @@ run_pipeline（每个 run 一次）
 | 自动批准路径（heartbeat 批准即授权） | 直接执行 | HumanApproved（人工批准是授权来源） |
 
 - API 响应统一新增 `reason` 字段（`approve`/`reject`/`take_pending_action`）。
-- 提案内容新增 `decisionReason`；DB status 扩展词表；前端 `#/ai` 待审批卡片按 reason 显示（unavailable/expired/cancelled 显示"未执行"而非"已拒绝"）。
+- 提案内容新增 `decisionReason`；DB status 扩展词表。前端 `#/ai` 的 reason 展示留 E3：BrainEvent 投影尚未携带 reason 字段，本期后端字段与状态已就位（`unavailable/expired/cancelled` 不写 `rejected`）。
 - 测试矩阵：六类各一例（工具层 + 端点层），并断言 `Unavailable` 不写 `rejected`。
 
 ## 6. composite 编排原语框架（E2e）
@@ -305,13 +306,14 @@ pub enum CompositeStepOp {
 }
 
 pub struct CompositeStep {
+    #[serde(flatten)]                 // JSON 展平：{"op":"call","thing_id":...}
     pub op: CompositeStepOp,
     /// 回滚动作（可选）；已完成步骤在链失败时逆序执行。
-    pub rollback: Option<Box<CompositeStepOp>>,
+    pub rollback: Option<CompositeStepOp>,
 }
 ```
 
-持久源：新表 `agent_composites(id, workspace_id, name, description, definition, created_at)`；`CompositeStore` port（runtime 侧定义、db 适配）。最小 API：`GET/POST /workspaces/{id}/composites`、`DELETE /workspaces/{id}/composites/{cid}`（E3 场景包可直接导入）。
+持久源：新表 `agent_composites(id, workspace_id, name, description, definition, created_at)`；存储函数在 `crates/db/src/composite.rs`（本轮最小面）。声明写入 API 与场景包导入留 E3（E3 场景包可直接落库）；本轮经 DB 函数/测试夹具建声明。
 
 ### 6.2 工具形态（固定工具列表）
 
