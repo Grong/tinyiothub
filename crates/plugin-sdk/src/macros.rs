@@ -7,6 +7,7 @@
 /// # 示例
 ///
 /// ```rust,ignore
+/// use tinyiothub_core::driver::CancelToken;
 /// use tinyiothub_plugin_sdk::*;
 ///
 /// pub struct MyDriver {
@@ -35,8 +36,8 @@
 ///     // 实现trait方法...
 /// #   fn thing(&self) -> &Thing { &self.device }
 /// #   fn thing_mut(&mut self) -> &mut Thing { &mut self.device }
-/// #   fn read_data(&mut self) -> Result<Vec<ResultValue>> { Ok(vec![]) }
-/// #   fn execute_command(&mut self, _cmd: &ThingCommand) -> Result<bool> { Ok(true) }
+/// #   fn read_data(&mut self, _cancel: &CancelToken) -> Result<Vec<ResultValue>> { Ok(vec![]) }
+/// #   fn execute_command(&mut self, _cmd: &ThingCommand, _cancel: &CancelToken) -> Result<bool> { Ok(true) }
 /// }
 ///
 /// // 导出驱动

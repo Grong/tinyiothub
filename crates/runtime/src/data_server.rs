@@ -590,7 +590,7 @@ impl Clone for DataServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tinyiothub_core::driver::ThingDriver;
+    use tinyiothub_core::driver::{CancelToken, ThingDriver};
     use tinyiothub_core::models::thing::Thing;
     use tinyiothub_core::models::thing_property::ThingProperty;
 
@@ -709,11 +709,17 @@ mod tests {
         fn mode(&self) -> DriverMode {
             self.mode
         }
-        fn read_data(&mut self) -> Result<Vec<ResultValue>, Error> {
+        fn read_data(&mut self, cancel: &CancelToken) -> Result<Vec<ResultValue>, Error> {
+            if cancel.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
             self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(vec![])
         }
-        fn execute_command(&mut self, _cmd: &ThingCommand) -> Result<bool, Error> {
+        fn execute_command(&mut self, _cmd: &ThingCommand, cancel: &CancelToken) -> Result<bool, Error> {
+            if cancel.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
             Ok(true)
         }
     }

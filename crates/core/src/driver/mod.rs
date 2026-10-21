@@ -4,6 +4,8 @@
 //! concrete driver implementations depend on.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -279,6 +281,27 @@ pub trait PropertyChangeSource: Send + Sync {
     fn subscribe(&self) -> tokio::sync::broadcast::Receiver<crate::models::event::Event>;
 }
 
+// ─── Cancellation ──────────────────────────────────────────────────
+
+/// 协作式取消令牌。驱动在长操作入口/循环中检查，取消后返回
+/// [`Error::Cancelled`](crate::error::Error::Cancelled)。
+#[derive(Clone, Default)]
+pub struct CancelToken(Arc<AtomicBool>);
+
+impl CancelToken {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
 // ─── ThingDriver trait ─────────────────────────────────────────────
 
 /// 设备驱动特征
@@ -353,8 +376,16 @@ pub trait ThingDriver: Send + Sync {
 
     // === 核心功能接口 ===
 
-    fn read_data(&mut self) -> Result<Vec<ResultValue>, Error>;
-    fn execute_command(&mut self, cmd: &ThingCommand) -> Result<bool, Error>;
+    fn read_data(&mut self, cancel: &CancelToken) -> Result<Vec<ResultValue>, Error>;
+    fn execute_command(&mut self, cmd: &ThingCommand, cancel: &CancelToken) -> Result<bool, Error>;
+
+    /// 推送/流式驱动按活跃 source 集合起停订阅。默认空实现。
+    fn set_demand(&mut self, _sources: &[String]) {}
+
+    /// 返回实例声明。未实现 `describe` 的驱动返回 `Unsupported`。
+    fn describe(&mut self) -> Result<crate::driver::declaration::DeviceDeclaration, Error> {
+        Err(Error::Unsupported("driver does not implement describe".into()))
+    }
 
     // === 配置接口 ===
 
@@ -489,5 +520,16 @@ mod tests {
         let config = RetryConfig::default();
         assert_eq!(config.max_attempts, 3);
         assert_eq!(config.base_interval, Duration::from_millis(500));
+    }
+
+    #[test]
+    fn cancel_token_defaults_to_not_cancelled_and_propagates_to_clones() {
+        let token = CancelToken::new();
+        assert!(!token.is_cancelled());
+
+        let clone = token.clone();
+        token.cancel();
+        assert!(token.is_cancelled());
+        assert!(clone.is_cancelled(), "clone 共享同一取消状态");
     }
 }

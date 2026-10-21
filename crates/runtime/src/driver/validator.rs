@@ -17,9 +17,27 @@ impl DriverValidator {
     }
 
     fn dry_load(driver_path: &Path) -> Result<(), DriverValidationError> {
-        let _lib = unsafe {
+        use tinyiothub_core::driver::dynamic::{
+            DriverVTableV2, SYMBOL_VTABLE_V2, v1_unsupported_message, verify_v2_version,
+        };
+
+        let lib = unsafe {
             libloading::Library::new(driver_path).map_err(|e| DriverValidationError::LoadFailed(e.to_string()))?
         };
+
+        let vtable_fn: libloading::Symbol<unsafe extern "C" fn() -> *const DriverVTableV2> =
+            match unsafe { lib.get(SYMBOL_VTABLE_V2) } {
+                Ok(f) => f,
+                Err(_) => return Err(DriverValidationError::InvalidFile(v1_unsupported_message(driver_path))),
+            };
+
+        let vtable_ptr = unsafe { vtable_fn() };
+        if vtable_ptr.is_null() {
+            return Err(DriverValidationError::InvalidFile("driver vtable v2 is null".into()));
+        }
+        let vtable: &'static DriverVTableV2 = unsafe { &*vtable_ptr };
+        verify_v2_version(vtable.version).map_err(DriverValidationError::InvalidFile)?;
+
         Ok(())
     }
 }

@@ -8,7 +8,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use chrono::{DateTime, Utc};
 use libloading::Library;
 use parking_lot::RwLock;
-use tinyiothub_core::driver::dynamic::{DriverVTable, SYMBOL_DESTROY, SYMBOL_INIT, SYMBOL_VTABLE};
+use tinyiothub_core::driver::dynamic::{
+    DriverVTableV2, SYMBOL_DESTROY, SYMBOL_INIT, SYMBOL_VTABLE_V2, v1_unsupported_message, verify_v2_version,
+};
 use tinyiothub_core::error::Error;
 
 use super::dynamic_adapter::DynamicEntry;
@@ -55,29 +57,24 @@ impl DriverRegistry {
                 .map_err(|e| Error::DriverError(format!("missing symbol tinyiothub_driver_init: {}", e)))?
         };
 
-        let vtable_fn: libloading::Symbol<unsafe extern "C" fn() -> *const DriverVTable> = unsafe {
-            lib.get(SYMBOL_VTABLE)
-                .map_err(|e| Error::DriverError(format!("missing symbol tinyiothub_driver_vtable: {}", e)))?
-        };
+        // ABI v2 is the only loadable ABI. Missing v2 symbol means the driver
+        // is v1 (or older) and must be rejected with migration guidance.
+        let vtable_fn: libloading::Symbol<unsafe extern "C" fn() -> *const DriverVTableV2> =
+            match unsafe { lib.get(SYMBOL_VTABLE_V2) } {
+                Ok(f) => f,
+                Err(_) => return Err(Error::DriverError(v1_unsupported_message(path))),
+            };
+
+        let vtable_ptr = unsafe { vtable_fn() };
+        if vtable_ptr.is_null() {
+            return Err(Error::DriverError("driver vtable v2 is null".into()));
+        }
+        let vtable: &'static DriverVTableV2 = unsafe { &*vtable_ptr };
+        verify_v2_version(vtable.version).map_err(Error::DriverError)?;
 
         let ctx = unsafe { init() };
         if ctx.is_null() {
             return Err(Error::DriverError("driver init returned null".into()));
-        }
-
-        let vtable_ptr: *const DriverVTable = unsafe { vtable_fn() };
-        if vtable_ptr.is_null() {
-            return Err(Error::DriverError("driver vtable is null".into()));
-        }
-
-        let vtable: &'static DriverVTable = unsafe { &*vtable_ptr };
-
-        if vtable.version != tinyiothub_core::driver::dynamic::DRIVER_ABI_VERSION {
-            return Err(Error::DriverError(format!(
-                "ABI version mismatch: expected {}, got {}",
-                tinyiothub_core::driver::dynamic::DRIVER_ABI_VERSION,
-                vtable.version
-            )));
         }
 
         let driver_name = path

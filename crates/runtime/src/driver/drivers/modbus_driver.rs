@@ -4,7 +4,7 @@ use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 #[cfg(feature = "serialport")]
 use serialport::SerialPort;
 
-use tinyiothub_core::driver::{ResultValue, ThingDriver};
+use tinyiothub_core::driver::{CancelToken, ResultValue, ThingDriver};
 use tinyiothub_core::error::Error;
 
 #[derive(Debug, Clone, tinyiothub_macros::ThingDriver)]
@@ -103,7 +103,10 @@ impl ThingDriver for ModbusDriver {
         Self::get_default_config()
     }
 
-    fn read_data(&mut self) -> Result<Vec<ResultValue>, Error> {
+    fn read_data(&mut self, cancel: &CancelToken) -> Result<Vec<ResultValue>, Error> {
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
         let mut results = Vec::new();
 
         #[cfg(feature = "serialport")]
@@ -144,7 +147,10 @@ impl ThingDriver for ModbusDriver {
         Ok(results)
     }
 
-    fn execute_command(&mut self, cmd: &ThingCommand) -> Result<bool, Error> {
+    fn execute_command(&mut self, cmd: &ThingCommand, cancel: &CancelToken) -> Result<bool, Error> {
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
         tracing::info!("Executing Modbus command: {} on device {}", cmd.name, self.device.name);
         match cmd.name.as_str() {
             "set_temperature" | "reset_device" | "start_measurement" => Ok(true),

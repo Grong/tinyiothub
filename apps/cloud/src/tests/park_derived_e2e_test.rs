@@ -36,7 +36,7 @@ use axum::{
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-use tinyiothub_core::driver::{DriverMode, DriverReading, ResultValue, ThingDriver};
+use tinyiothub_core::driver::{CancelToken, DriverMode, DriverReading, ResultValue, ThingDriver};
 use tinyiothub_core::models::event::Event;
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
@@ -73,10 +73,20 @@ impl ThingDriver for ManualPushDriver {
     fn mode(&self) -> DriverMode {
         DriverMode::Push
     }
-    fn read_data(&mut self) -> Result<Vec<ResultValue>, tinyiothub_core::error::Error> {
+    fn read_data(&mut self, cancel: &CancelToken) -> Result<Vec<ResultValue>, tinyiothub_core::error::Error> {
+        if cancel.is_cancelled() {
+            return Err(tinyiothub_core::error::Error::Cancelled);
+        }
         Ok(vec![]) // Push 驱动不经轮询拉取（防御性空读，正常永不调用）
     }
-    fn execute_command(&mut self, _cmd: &ThingCommand) -> Result<bool, tinyiothub_core::error::Error> {
+    fn execute_command(
+        &mut self,
+        _cmd: &ThingCommand,
+        cancel: &CancelToken,
+    ) -> Result<bool, tinyiothub_core::error::Error> {
+        if cancel.is_cancelled() {
+            return Err(tinyiothub_core::error::Error::Cancelled);
+        }
         Err(tinyiothub_core::error::Error::DriverError(
             "手动注入驱动不支持动作".into(),
         ))

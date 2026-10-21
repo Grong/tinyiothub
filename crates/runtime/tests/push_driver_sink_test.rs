@@ -10,7 +10,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tinyiothub_core::driver::{DriverMode, DriverReading, PropertyChangeSource, ResultValue, ThingDriver, ValueSink};
+use tinyiothub_core::driver::{
+    CancelToken, DriverMode, DriverReading, PropertyChangeSource, ResultValue, ThingDriver, ValueSink,
+};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::models::event::{EventType, ThingEventType};
 use tinyiothub_core::models::thing::Thing;
@@ -83,11 +85,17 @@ impl ThingDriver for StubPushDriver {
         &mut self.thing
     }
 
-    fn read_data(&mut self) -> Result<Vec<ResultValue>, Error> {
+    fn read_data(&mut self, cancel: &CancelToken) -> Result<Vec<ResultValue>, Error> {
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
         Ok(vec![])
     }
 
-    fn execute_command(&mut self, _cmd: &ThingCommand) -> Result<bool, Error> {
+    fn execute_command(&mut self, _cmd: &ThingCommand, cancel: &CancelToken) -> Result<bool, Error> {
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
         Ok(true)
     }
 
