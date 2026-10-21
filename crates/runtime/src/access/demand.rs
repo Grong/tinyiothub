@@ -143,8 +143,9 @@ impl DemandTracker {
     /// `source` filters explicit subscriptions only. Snapshot references and
     /// recent reads are property-level and carry no source, so they count as
     /// demand for every source of the thing — over-sampling rather than
-    /// dropping demand; the sampler maps properties to sources via the
-    /// catalog.
+    /// dropping demand. Use [`Self::has_demand_for_property_at`] for exact
+    /// per-property gating (e.g. mapping properties to sources via the
+    /// catalog).
     pub fn has_demand_at(&self, workspace_id: &str, thing_id: &str, source: &str, now: Instant) -> bool {
         {
             let subscriptions = self.subscriptions.read();
@@ -171,6 +172,50 @@ impl DemandTracker {
             .read()
             .get(&(workspace_id.to_string(), thing_id.to_string()))
             .is_some_and(|properties| !properties.is_empty())
+    }
+
+    /// Properties currently demanded for this thing at the current instant.
+    pub fn demanded_properties(&self, workspace_id: &str, thing_id: &str) -> BTreeSet<String> {
+        self.demanded_properties_at(workspace_id, thing_id, Instant::now())
+    }
+
+    /// `demanded_properties` at `now` (test/simulation entry point).
+    ///
+    /// Snapshot properties ∪ non-expired recent-read properties. Subscriptions
+    /// are source-level, not property-level, so they do not contribute here.
+    pub fn demanded_properties_at(&self, workspace_id: &str, thing_id: &str, now: Instant) -> BTreeSet<String> {
+        let mut demanded = self
+            .snapshot
+            .read()
+            .get(&(workspace_id.to_string(), thing_id.to_string()))
+            .cloned()
+            .unwrap_or_default();
+
+        let recent_reads = self.recent_reads.read();
+        for ((workspace, thing, property), at) in recent_reads.iter() {
+            if workspace == workspace_id && thing == thing_id && now.saturating_duration_since(*at) < RECENT_READ_TTL {
+                demanded.insert(property.clone());
+            }
+        }
+        demanded
+    }
+
+    /// Is `property` demanded for this thing right now?
+    pub fn has_demand_for_property(&self, workspace_id: &str, thing_id: &str, property: &str) -> bool {
+        self.has_demand_for_property_at(workspace_id, thing_id, property, Instant::now())
+    }
+
+    /// `has_demand_for_property` at `now` (test/simulation entry point).
+    ///
+    /// An empty property means thing-level demand: it is true when anything is
+    /// demanded. A snapshot ref with an empty property (health/availability
+    /// watch) demands every property of the thing.
+    pub fn has_demand_for_property_at(&self, workspace_id: &str, thing_id: &str, property: &str, now: Instant) -> bool {
+        let demanded = self.demanded_properties_at(workspace_id, thing_id, now);
+        if property.is_empty() {
+            return !demanded.is_empty();
+        }
+        demanded.contains(property) || demanded.contains("")
     }
 
     /// Drop expired subscriptions and reads.
@@ -357,5 +402,81 @@ mod tests {
         tracker.gc();
         tracker.unsubscribe(&id);
         assert!(tracker.has_demand("ws", "t1", "telemetry")); // recent read remains
+        assert!(tracker.has_demand_for_property("ws", "t1", "temperature"));
+        assert_eq!(
+            tracker.demanded_properties("ws", "t1"),
+            BTreeSet::from(["temperature".to_string()])
+        );
+    }
+
+    #[test]
+    fn read_demands_only_the_read_property() {
+        let tracker = DemandTracker::new();
+        let base = Instant::now();
+        tracker.record_read_at("ws", "t1", "humidity", base);
+
+        assert_eq!(
+            tracker.demanded_properties_at("ws", "t1", base),
+            BTreeSet::from(["humidity".to_string()])
+        );
+        assert!(tracker.has_demand_for_property_at("ws", "t1", "humidity", base));
+        assert!(!tracker.has_demand_for_property_at("ws", "t1", "temperature", base));
+        assert!(tracker.has_demand_for_property_at("ws", "t1", "", base));
+        assert!(!tracker.has_demand_for_property_at("ws", "t2", "humidity", base));
+        assert!(!tracker.has_demand_for_property_at("other", "t1", "humidity", base));
+    }
+
+    #[test]
+    fn snapshot_demands_only_referenced_properties() {
+        let tracker = DemandTracker::new();
+        let base = Instant::now();
+        tracker.set_snapshot(refs("ws", "t1", &["temperature"]));
+
+        assert_eq!(
+            tracker.demanded_properties_at("ws", "t1", base),
+            BTreeSet::from(["temperature".to_string()])
+        );
+        assert!(tracker.has_demand_for_property_at("ws", "t1", "temperature", base));
+        assert!(!tracker.has_demand_for_property_at("ws", "t1", "humidity", base));
+    }
+
+    #[test]
+    fn expired_read_drops_from_demanded_properties() {
+        let tracker = DemandTracker::new();
+        let base = Instant::now();
+        tracker.set_snapshot(refs("ws", "t1", &["temperature"]));
+        tracker.record_read_at("ws", "t1", "humidity", base);
+
+        let late = base + RECENT_READ_TTL;
+        assert_eq!(
+            tracker.demanded_properties_at("ws", "t1", late),
+            BTreeSet::from(["temperature".to_string()])
+        );
+        assert!(!tracker.has_demand_for_property_at("ws", "t1", "humidity", late));
+        assert!(tracker.has_demand_for_property_at("ws", "t1", "temperature", late));
+    }
+
+    #[test]
+    fn subscription_is_source_level_not_property_level() {
+        let tracker = DemandTracker::new();
+        let base = Instant::now();
+        add_subscription(&tracker, "ws", &["t1"], &["telemetry"], SUBSCRIPTION_TTL, base);
+
+        assert!(tracker.demanded_properties_at("ws", "t1", base).is_empty());
+        assert!(!tracker.has_demand_for_property_at("ws", "t1", "temperature", base));
+        assert!(!tracker.has_demand_for_property_at("ws", "t1", "", base));
+        // But it does demand the source.
+        assert!(tracker.has_demand_at("ws", "t1", "telemetry", base));
+    }
+
+    #[test]
+    fn empty_property_snapshot_ref_demands_every_property() {
+        let tracker = DemandTracker::new();
+        let base = Instant::now();
+        tracker.set_snapshot(refs("ws", "t1", &[""]));
+
+        assert!(tracker.has_demand_for_property_at("ws", "t1", "temperature", base));
+        assert!(tracker.has_demand_for_property_at("ws", "t1", "", base));
+        assert!(!tracker.has_demand_for_property_at("ws", "t2", "temperature", base));
     }
 }
