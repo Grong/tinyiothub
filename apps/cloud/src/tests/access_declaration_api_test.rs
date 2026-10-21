@@ -55,6 +55,7 @@ fn access_service(db: Arc<tinyiothub_storage::Db>, data_dir: PathBuf) -> Arc<Acc
         Arc::new(DbProjectionStore(db.clone())),
         Arc::new(DbThingSource(db.clone())),
         Arc::new(DbAcceptanceStore(db)),
+        Arc::new(tinyiothub_runtime::access::demand::DemandTracker::new()),
     ))
 }
 

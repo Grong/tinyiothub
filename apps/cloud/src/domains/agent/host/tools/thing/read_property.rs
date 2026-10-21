@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
+use tinyiothub_runtime::access::DemandRecorder;
 
 use super::tool_ok;
 use crate::domains::thing::service::ThingService;
@@ -17,6 +18,8 @@ pub struct ReadPropertyTool {
     pub(super) pool: SqlitePool,
     pub(super) workspace_id: String,
     pub(super) device_cache: Option<Arc<tinyiothub_storage::cache::ThingCache>>,
+    /// E4b：成功读取后写入 DemandTracker（None = 未接线）。
+    pub(super) demand: Option<Arc<dyn DemandRecorder>>,
 }
 
 impl Attributable for ReadPropertyTool {
@@ -101,6 +104,11 @@ impl Tool for ReadPropertyTool {
             Some((v, ts)) => (json!(v), json!(ts), Value::Null),
             None => (Value::Null, Value::Null, json!("该属性暂无上报数据")),
         };
+
+        // 读取成功（物与属性都存在）→ 近期读取需求，供 demandOnly 采样。
+        if let Some(demand) = &self.demand {
+            demand.record_read(&self.workspace_id, &input.thing_id, &prop.name);
+        }
 
         tool_ok(json!({
             "thingId": input.thing_id,

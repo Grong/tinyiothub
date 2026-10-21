@@ -15,6 +15,7 @@ use tinyiothub_agent::port::tool::{Tool, ToolResult};
 use tinyiothub_agent::runtime::thing_agent::arbitration::DEFAULT_STOP_TTL;
 use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL};
 use tinyiothub_core::models::event::{ContentElement, Event, EventSource, RichContent, TextFormat};
+use tinyiothub_runtime::access::DemandRecorder;
 use tinyiothub_runtime::event_bus::EventBus;
 
 use super::profile::health_str;
@@ -160,6 +161,8 @@ pub(super) struct ReadDeviceTool {
     pub(super) live: Option<Arc<dyn LiveSummarySource>>,
     /// 无实时态时的属性值回退源（cache 是最新真相；None = 只回 live）。
     pub(super) device_cache: Option<Arc<tinyiothub_storage::cache::ThingCache>>,
+    /// E4b：读取成功后写入 DemandTracker（None = 未接线）。
+    pub(super) demand: Option<Arc<dyn DemandRecorder>>,
 }
 
 impl Attributable for ReadDeviceTool {
@@ -233,6 +236,25 @@ impl Tool for ReadDeviceTool {
                 }
             }
         }
+        // 读取成功（物存在）→ 记录需求：显式 properties 只记存在项，
+        // 否则记返回的每个属性。失败/未找到在更早处已返回，不会写入。
+        if let Some(demand) = &self.demand {
+            match &input.properties {
+                Some(wanted) => {
+                    for property in wanted {
+                        if state.contains_key(property) {
+                            demand.record_read(&self.workspace_id, &input.thing_id, property);
+                        }
+                    }
+                }
+                None => {
+                    for property in state.keys() {
+                        demand.record_read(&self.workspace_id, &input.thing_id, property);
+                    }
+                }
+            }
+        }
+
         if let Some(wanted) = &input.properties {
             let filtered: BTreeMap<String, Value> = wanted
                 .iter()

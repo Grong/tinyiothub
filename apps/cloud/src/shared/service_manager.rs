@@ -78,6 +78,9 @@ impl ServiceManager {
                 .seed_builtin(json)
                 .map_err(|e| Error::IOError(e.to_string()))?;
         }
+        // Demand tracker 先于 AccessService 建立：读工具经 AccessService 写入、
+        // sampler（下方）与 Hub 订阅共享同一实例。
+        let demand_tracker = Arc::new(tinyiothub_runtime::access::demand::DemandTracker::new());
         let access = Arc::new(tinyiothub_runtime::access::service::AccessService::new(
             crate::shared::paths::api_data_dir(),
             manifests,
@@ -86,6 +89,7 @@ impl ServiceManager {
             Arc::new(crate::shared::access_ports::DbProjectionStore(app_state.db.clone())),
             Arc::new(crate::shared::access_ports::DbThingSource(app_state.db.clone())),
             Arc::new(crate::shared::access_ports::DbAcceptanceStore(app_state.db.clone())),
+            demand_tracker.clone(),
         ));
         // Installed packages live on disk + DB; restore them before serving
         // so a restart does not silently lose everything but the built-ins.
@@ -103,7 +107,6 @@ impl ServiceManager {
 
         // 2.1 中央 sampler：catalog = device_cache ∪ 已安装 manifest；
         // 需求先只有本地订阅/近期读取（Task 7 接 DbDemandSource）。
-        let demand_tracker = Arc::new(tinyiothub_runtime::access::demand::DemandTracker::new());
         let sampling_catalog = Arc::new(tinyiothub_runtime::access::catalog::CachedManifestCatalog::new(
             device_cache,
             access.manifests.clone(),
@@ -301,6 +304,11 @@ impl ServiceManager {
                     .access
                     .clone()
                     .map(|a| a as Arc<dyn tinyiothub_runtime::access::validator::AccessCallValidator>),
+                // E4b：读取需求写入 sampler 共享的 DemandTracker。
+                app_state
+                    .access
+                    .clone()
+                    .map(|a| a as Arc<dyn tinyiothub_runtime::access::DemandRecorder>),
             ));
             tool_registry.set_external_tool_factory(Arc::new(|| {
                 crate::domains::agent::host::ports::external_tool_registry()
@@ -354,6 +362,10 @@ impl ServiceManager {
                                     .access
                                     .clone()
                                     .map(|a| a as Arc<dyn tinyiothub_runtime::access::validator::AccessCallValidator>),
+                                demand: app_state
+                                    .access
+                                    .clone()
+                                    .map(|a| a as Arc<dyn tinyiothub_runtime::access::DemandRecorder>),
                             },
                         ),
                     ),

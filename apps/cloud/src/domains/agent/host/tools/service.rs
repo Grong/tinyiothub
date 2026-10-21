@@ -38,6 +38,7 @@ pub fn chat_builtin_tools_provider(
     event_bus: Option<Arc<tinyiothub_runtime::event_bus::EventBus>>,
     manager: ManagerSlot,
     access: Option<Arc<dyn tinyiothub_runtime::access::validator::AccessCallValidator>>,
+    demand: Option<Arc<dyn tinyiothub_runtime::access::DemandRecorder>>,
 ) -> ToolProvider {
     Arc::new(move |workspace_id: &str, runtime: &ToolRuntimeContext| {
         let mut tools: Vec<(Box<dyn Tool>, ToolSafety)> = Vec::new();
@@ -57,6 +58,7 @@ pub fn chat_builtin_tools_provider(
                 event_bus: event_bus.clone(),
                 manager: Some(manager.clone()),
                 access: access.clone(),
+                demand: demand.clone(),
             },
         ));
 

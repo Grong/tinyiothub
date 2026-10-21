@@ -15,6 +15,8 @@ use tinyiothub_core::driver::manifest::MANIFEST_FILE;
 use tinyiothub_core::models::thing::Thing;
 
 use super::AccessError;
+use super::DemandRecorder;
+use super::demand::{DemandTracker, SUBSCRIPTION_TTL, SubscriptionId};
 use super::device::DeviceDeclarationRegistry;
 use super::materialize::materialize_declaration;
 use super::package::{hex_sha256, read_package};
@@ -34,6 +36,8 @@ pub struct AccessService {
     pub projection: Arc<dyn DeclarationProjectionStore>,
     pub things: Arc<dyn ThingDeclarationSource>,
     pub acceptance_store: Arc<dyn AcceptanceReportStore>,
+    /// Shared demand tracker (sampler + read tools + Hub stream).
+    pub demand: Arc<DemandTracker>,
 }
 
 /// Releases the dynamic-registry reference acquired by `create_driver` on
@@ -70,6 +74,7 @@ impl AccessService {
         projection: Arc<dyn DeclarationProjectionStore>,
         things: Arc<dyn ThingDeclarationSource>,
         acceptance_store: Arc<dyn AcceptanceReportStore>,
+        demand: Arc<DemandTracker>,
     ) -> Self {
         Self {
             data_dir,
@@ -80,7 +85,28 @@ impl AccessService {
             projection,
             things,
             acceptance_store,
+            demand,
         }
+    }
+
+    /// Record a recent read so `demandOnly` sources keep sampling it.
+    pub fn record_read(&self, workspace_id: &str, thing_id: &str, property: &str) {
+        self.demand.record_read(workspace_id, thing_id, property);
+    }
+
+    /// Register an explicit subscription with the default TTL.
+    pub fn subscribe(&self, workspace_id: &str, things: &[String], sources: &[String]) -> SubscriptionId {
+        self.demand.subscribe(workspace_id, things, sources, SUBSCRIPTION_TTL)
+    }
+
+    /// Renew a subscription for another full TTL. Returns false if unknown.
+    pub fn touch_subscription(&self, id: &SubscriptionId) -> bool {
+        self.demand.touch(id)
+    }
+
+    /// Drop a subscription. Unknown ids are a no-op.
+    pub fn unsubscribe(&self, id: &SubscriptionId) {
+        self.demand.unsubscribe(id);
     }
 
     /// Persist a driver package under
@@ -470,6 +496,12 @@ impl AccessService {
     }
 }
 
+impl DemandRecorder for AccessService {
+    fn record_read(&self, workspace_id: &str, thing_id: &str, property: &str) {
+        self.demand.record_read(workspace_id, thing_id, property);
+    }
+}
+
 #[async_trait::async_trait]
 impl super::validator::AccessCallValidator for AccessService {
     async fn validate(
@@ -649,6 +681,7 @@ mod tests {
         device_store: Arc<FakeDeviceStore>,
         projection: Arc<FakeProjection>,
         things: Arc<FakeThings>,
+        demand: Arc<DemandTracker>,
         _data: tempfile::TempDir,
     }
 
@@ -658,6 +691,7 @@ mod tests {
         let device_store = Arc::new(FakeDeviceStore::default());
         let projection = Arc::new(FakeProjection::default());
         let things = Arc::new(FakeThings(thing));
+        let demand = Arc::new(DemandTracker::new());
         let service = AccessService::new(
             data.path().to_path_buf(),
             Arc::new(ManifestRegistry::new()),
@@ -666,6 +700,7 @@ mod tests {
             projection.clone(),
             things.clone(),
             Arc::new(FakeAcceptance),
+            demand.clone(),
         );
         Fixture {
             service,
@@ -673,6 +708,7 @@ mod tests {
             device_store,
             projection,
             things,
+            demand,
             _data: data,
         }
     }
@@ -1018,6 +1054,7 @@ mod tests {
             Arc::new(FailingProjection),
             Arc::new(FakeThings(Some(t))),
             Arc::new(FakeAcceptance),
+            Arc::new(DemandTracker::new()),
         );
 
         let src = demo_package().expect("demo package");
@@ -1045,6 +1082,7 @@ mod tests {
             Arc::new(FakeProjection::default()),
             Arc::new(FakeThings(None)),
             Arc::new(FakeAcceptance),
+            Arc::new(DemandTracker::new()),
         );
         let src = demo_package().expect("demo package");
         let ws = unique_workspace("ws-dbfail");
@@ -1195,5 +1233,41 @@ mod tests {
         fx.device_store.0.lock().unwrap().clear();
         assert_eq!(fx.service.load_declaration("ws1", "t1").await.unwrap(), Some(decl));
         assert!(fx.service.load_declaration("ws1", "nope").await.unwrap().is_none());
+    }
+
+    #[test]
+    fn access_service_records_reads_and_subscriptions_in_shared_tracker() {
+        let fx = fixture(None);
+        let demand = &fx.demand;
+
+        // Fresh tracker: nothing is demanded.
+        assert!(!demand.has_demand_for_property("ws1", "t1", "level"));
+
+        // A read keeps the property (and thus the thing) in demand.
+        fx.service.record_read("ws1", "t1", "level");
+        assert!(demand.has_demand_for_property("ws1", "t1", "level"));
+        assert!(demand.has_demand("ws1", "t1", "telemetry"));
+        // Workspace isolation: another workspace sees no demand.
+        assert!(!demand.has_demand_for_property("ws2", "t1", "level"));
+        assert!(!demand.has_demand("ws2", "t1", "telemetry"));
+
+        // Trait-object dispatch used by the read tools hits the same tracker.
+        let recorder: &dyn DemandRecorder = &fx.service;
+        recorder.record_read("ws1", "t1", "humidity");
+        assert!(demand.has_demand_for_property("ws1", "t1", "humidity"));
+
+        // Subscribe → touch → unsubscribe.
+        let things = vec!["t1".to_string()];
+        let sources = vec!["telemetry".to_string()];
+        let id = fx.service.subscribe("ws1", &things, &sources);
+        assert!(demand.has_subscription_demand("ws1", "t1", "telemetry"));
+        assert!(!demand.has_subscription_demand("ws2", "t1", "telemetry"));
+        assert!(fx.service.touch_subscription(&id));
+
+        fx.service.unsubscribe(&id);
+        assert!(!demand.has_subscription_demand("ws1", "t1", "telemetry"));
+        // Unknown ids are no-ops.
+        assert!(!fx.service.touch_subscription(&id));
+        fx.service.unsubscribe(&id);
     }
 }

@@ -12,6 +12,15 @@ pub mod validator;
 
 use std::path::PathBuf;
 
+/// Runtime-facing sink for "a property was just read" signals.
+///
+/// Cloud tools depend on this narrow trait (not on the concrete
+/// [`service::AccessService`]) so recent reads feed the [`demand::DemandTracker`]
+/// without pulling composition-root types into tool code.
+pub trait DemandRecorder: Send + Sync {
+    fn record_read(&self, workspace_id: &str, thing_id: &str, property: &str);
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AccessError {
     #[error("missing driver.manifest.json in {0}")]

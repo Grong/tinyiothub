@@ -188,6 +188,9 @@ pub struct ThingToolContext {
     pub manager: Option<ManagerSlot>,
     /// E4a 调用边界校验：None = 未接线（既有行为不变）。
     pub access: Option<Arc<dyn tinyiothub_runtime::access::validator::AccessCallValidator>>,
+    /// E4b 近期读取：read_device/read_property 成功读取后写入 DemandTracker。
+    /// None = 未接线（既有行为不变）。
+    pub demand: Option<Arc<dyn tinyiothub_runtime::access::DemandRecorder>>,
 }
 
 /// Create the E2 fixed device tool set + non-device tools + hidden legacy aliases.
@@ -219,6 +222,7 @@ pub fn create_thing_tools(
             workspace_id: ws.clone(),
             live: runtime.live.clone(),
             device_cache: runtime.device_cache.clone(),
+            demand: runtime.demand.clone(),
         })),
         destructive(device::call_device_tool(Box::new(InvokeActionTool {
             thing_service: thing_service.clone(),
@@ -306,6 +310,7 @@ pub fn create_thing_tools(
             pool: pool.clone(),
             workspace_id: ws.clone(),
             device_cache: runtime.device_cache.clone(),
+            demand: runtime.demand.clone(),
         })))),
         destructive(Box::new(device::HiddenTool(Box::new(InvokeActionTool {
             thing_service,
@@ -643,6 +648,7 @@ mod tests {
                 values,
             }))),
             device_cache: None,
+            demand: None,
         };
         let out = tool
             .execute(serde_json::json!({"thingId": created.id, "properties": ["温度"]}))
@@ -655,5 +661,152 @@ mod tests {
         assert_eq!(v["state"]["温度"], "31.5");
         assert!(v["text"].as_str().unwrap().contains("园区A/3号楼"));
         assert_eq!(v["v"], 1);
+    }
+
+    // ── E4b：读取写入 DemandRecorder ─────────────────────
+
+    #[derive(Default)]
+    struct RecordingDemand(std::sync::Mutex<Vec<(String, String, String)>>);
+
+    impl RecordingDemand {
+        fn reads(&self) -> Vec<(String, String, String)> {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    impl tinyiothub_runtime::access::DemandRecorder for RecordingDemand {
+        fn record_read(&self, workspace_id: &str, thing_id: &str, property: &str) {
+            self.0
+                .lock()
+                .unwrap()
+                .push((workspace_id.into(), thing_id.into(), property.into()));
+        }
+    }
+
+    async fn pool_with_thing_and_property(name: &str, data_type: &str) -> (SqlitePool, String) {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
+        tinyiothub_storage::seed::seed_system(&tinyiothub_storage::Db::new(pool.clone()))
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) \
+             VALUES ('ws','ws','tenant-default-001','2026-01-01','2026-01-01')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let service = ThingService::new(pool.clone());
+        let created = service
+            .create_thing(
+                &serde_json::from_value(serde_json::json!({"name":"温感-1","thingType":"device"})).unwrap(),
+                Some("ws"),
+            )
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO thing_properties (id, thing_id, name, data_type) VALUES ('prop-1', ?, ?, ?)")
+            .bind(&created.id)
+            .bind(name)
+            .bind(data_type)
+            .execute(&pool)
+            .await
+            .unwrap();
+        (pool, created.id)
+    }
+
+    #[tokio::test]
+    async fn read_device_records_requested_or_returned_properties() {
+        use tinyiothub_runtime::watch::live_state::{Health, ThingLiveSummary};
+
+        struct StubLive(ThingLiveSummary);
+
+        #[async_trait::async_trait]
+        impl LiveSummarySource for StubLive {
+            async fn summary(&self, _ws: &str, _thing_id: &str) -> Option<ThingLiveSummary> {
+                Some(self.0.clone())
+            }
+        }
+
+        let (pool, thing_id) = pool_with_thing_and_property("温度", "float").await;
+        let service = Arc::new(ThingService::new(pool));
+        let mut values = std::collections::HashMap::new();
+        values.insert("温度".to_string(), "31.5".to_string());
+        values.insert("湿度".to_string(), "60".to_string());
+        let live: Arc<dyn LiveSummarySource> = Arc::new(StubLive(ThingLiveSummary {
+            health: Health::Ok,
+            zone: String::new(),
+            online: true,
+            values,
+        }));
+        let demand = Arc::new(RecordingDemand::default());
+        let tool = device::ReadDeviceTool {
+            thing_service: service,
+            workspace_id: "ws".into(),
+            live: Some(live),
+            device_cache: None,
+            demand: Some(demand.clone()),
+        };
+
+        // Explicit properties: only requested *existing* ones are recorded.
+        tool.execute(serde_json::json!({"thingId": thing_id, "properties": ["温度", "不存在"]}))
+            .await
+            .unwrap();
+        assert_eq!(
+            demand.reads(),
+            vec![("ws".to_string(), thing_id.clone(), "温度".to_string())],
+            "only requested properties that exist are recorded"
+        );
+
+        // No properties arg: every returned state property is recorded.
+        demand.0.lock().unwrap().clear();
+        tool.execute(serde_json::json!({"thingId": thing_id})).await.unwrap();
+        let mut reads = demand.reads();
+        reads.sort();
+        assert_eq!(
+            reads,
+            vec![
+                ("ws".to_string(), thing_id.clone(), "温度".to_string()),
+                ("ws".to_string(), thing_id.clone(), "湿度".to_string()),
+            ]
+        );
+
+        // Failure path records nothing.
+        demand.0.lock().unwrap().clear();
+        let out = tool.execute(serde_json::json!({"thingId": "missing"})).await.unwrap();
+        assert!(!out.success);
+        assert!(demand.reads().is_empty(), "failed reads must not record demand");
+    }
+
+    #[tokio::test]
+    async fn read_property_records_only_successful_reads() {
+        let (pool, thing_id) = pool_with_thing_and_property("温度", "float").await;
+        let demand = Arc::new(RecordingDemand::default());
+        let tool = ReadPropertyTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            pool,
+            workspace_id: "ws".into(),
+            device_cache: None,
+            demand: Some(demand.clone()),
+        };
+
+        let out = tool
+            .execute(serde_json::json!({"thingId": thing_id, "propertyName": "温度"}))
+            .await
+            .unwrap();
+        assert!(out.success, "{}", out.error.unwrap_or_default());
+        assert_eq!(
+            demand.reads(),
+            vec![("ws".to_string(), thing_id.clone(), "温度".to_string())]
+        );
+
+        // Unknown property → not-found error, no demand recorded.
+        demand.0.lock().unwrap().clear();
+        let result = tool
+            .execute(serde_json::json!({"thingId": thing_id, "propertyName": "不存在"}))
+            .await;
+        assert!(result.is_err(), "unknown property must fail");
+        assert!(demand.reads().is_empty());
     }
 }
