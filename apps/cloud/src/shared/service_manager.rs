@@ -248,6 +248,10 @@ impl ServiceManager {
                 app_state.pending_actions.clone(),
                 app_state.arbitration.clone(),
                 live_summary.clone(),
+                // E2 ToolExec 接缝默认实现（直通内层工具）。
+                std::sync::Arc::new(
+                    tinyiothub_agent::runtime::thing_agent::seams::tool_exec::DefaultToolExec,
+                ),
             ));
             tool_registry.set_external_tool_factory(Arc::new(|| {
                 crate::domains::agent::host::ports::external_tool_registry()

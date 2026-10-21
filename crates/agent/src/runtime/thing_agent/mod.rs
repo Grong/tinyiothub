@@ -8,6 +8,7 @@ pub mod pushback;
 pub mod registry;
 pub mod runner;
 pub mod scheduler;
+pub mod seams;
 pub mod traits;
 pub mod trigger;
 pub mod types;

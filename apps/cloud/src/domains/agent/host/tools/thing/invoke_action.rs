@@ -8,7 +8,11 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
+use tinyiothub_agent::runtime::thing_agent::seams::approval::{
+    ApprovalDecision, ApprovalInput, ApprovalSeam, DefaultApproval,
+};
 use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL};
+use tinyiothub_skills::trust::ToolSafety;
 
 use super::{PendingActionStore, store_pending_action, tool_err, tool_ok, validate_action_params};
 use crate::domains::thing::service::ThingService;
@@ -26,6 +30,8 @@ pub struct InvokeActionTool {
     pub(crate) arbitration: Option<Arc<ArbitrationRegistry>>,
     /// busy 拒绝里的持有者名（人读得懂的拒绝）——chat 会话/值守 run 标识。
     pub(crate) arbitration_holder: String,
+    /// E2 Approval 接缝（None = 内置 DefaultApproval）。
+    pub(crate) approval: Option<Arc<dyn ApprovalSeam>>,
 }
 
 impl Attributable for InvokeActionTool {
@@ -83,6 +89,7 @@ impl Tool for InvokeActionTool {
             params: Option<Value>,
         }
 
+        let raw_args = args.clone();
         let input: Input = serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
         // 1. Verify thing exists and check type
@@ -136,23 +143,43 @@ impl Tool for InvokeActionTool {
             return tool_err(msg);
         }
 
-        // 4. Execute or request confirmation
-        if require_confirm {
-            let token = store_pending_action(
-                &self.pending_actions,
-                input.thing_id.clone(),
-                input.action_name.clone(),
-                input.params.clone(),
-                self.workspace_id.clone(),
-            );
-            return tool_ok(json!({
-                "thingId": input.thing_id,
-                "actionName": input.action_name,
-                "status": "confirmation_required",
-                "token": token,
-                "message": "该操作需要用户确认后才能执行。请使用确认接口提交 token。",
-                "requireConfirm": true
-            }));
+        // 4. Execute or request confirmation（E2：经 Approval 接缝裁决；
+        // 默认实现与 E2 前语义逐项一致，Pending 分支 payload 不变）。
+        let approval: Arc<dyn ApprovalSeam> = self
+            .approval
+            .clone()
+            .unwrap_or_else(|| Arc::new(DefaultApproval));
+        match approval.decide(&ApprovalInput {
+            workspace_id: &self.workspace_id,
+            tool_name: self.name(),
+            args: &raw_args,
+            thing_id: Some(&input.thing_id),
+            trigger: "chat",
+            require_confirm,
+            // invoke_action 在工厂里声明为 Destructive（信任门依赖此分级）。
+            safety: ToolSafety::Destructive,
+        }) {
+            ApprovalDecision::Pending { .. } => {
+                let token = store_pending_action(
+                    &self.pending_actions,
+                    input.thing_id.clone(),
+                    input.action_name.clone(),
+                    input.params.clone(),
+                    self.workspace_id.clone(),
+                );
+                return tool_ok(json!({
+                    "thingId": input.thing_id,
+                    "actionName": input.action_name,
+                    "status": "confirmation_required",
+                    "token": token,
+                    "message": "该操作需要用户确认后才能执行。请使用确认接口提交 token。",
+                    "requireConfirm": true
+                }));
+            }
+            ApprovalDecision::Decided(reason) if reason.executes() => {}
+            ApprovalDecision::Decided(reason) => {
+                return tool_err(format!("approval {}: action NOT executed", reason.code()));
+            }
         }
 
         // 5. E1 仲裁（Task 9）：执行前抢设备互斥锁——TTL（默认 10min）内
@@ -267,6 +294,7 @@ mod tests {
             pending_actions: Arc::new(PendingActionStore::new()),
             arbitration,
             arbitration_holder: holder.to_string(),
+            approval: None,
         }
     }
 

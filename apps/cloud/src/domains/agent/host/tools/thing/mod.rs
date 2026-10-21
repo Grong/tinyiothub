@@ -210,6 +210,7 @@ pub fn create_thing_tools(
                 .expect("pending_actions must be wired in ThingToolContext"),
             arbitration: runtime.arbitration.clone(),
             arbitration_holder: format!("chat:{ws}"),
+            approval: None,
         })),
     ]
 }

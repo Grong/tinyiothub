@@ -11,6 +11,7 @@ use sqlx::SqlitePool;
 use tinyiothub_agent::AgentError;
 use tinyiothub_agent::port::tool::Tool;
 use tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry;
+use tinyiothub_agent::runtime::thing_agent::seams::tool_exec::{SeamTool, ToolExecSeam};
 use tinyiothub_agent::tools::{ToolProvider, ToolRegistry, ToolRuntimeContext, filter_by_denylist};
 use tinyiothub_skills::trust::{ToolSafety, classify_tool_safety};
 use tinyiothub_storage::cache::ThingCache;
@@ -32,6 +33,7 @@ pub fn chat_builtin_tools_provider(
     pending_actions: Arc<PendingActionStore>,
     arbitration: Arc<ArbitrationRegistry>,
     live: Arc<dyn LiveSummarySource>,
+    tool_exec: Arc<dyn ToolExecSeam>,
 ) -> ToolProvider {
     Arc::new(move |workspace_id: &str, runtime: &ToolRuntimeContext| {
         let mut tools: Vec<(Box<dyn Tool>, ToolSafety)> = Vec::new();
@@ -58,7 +60,15 @@ pub fn chat_builtin_tools_provider(
             classify_tool_safety("dispatch_thing_task"),
         ));
 
+        // E2 ToolExec 接缝：所有内建工具经统一执行外壳（默认直通）。
         tools
+            .into_iter()
+            .map(|(tool, safety)| {
+                let wrapped: Box<dyn Tool> =
+                    Box::new(SeamTool::new(tool, Arc::clone(&tool_exec), workspace_id));
+                (wrapped, safety)
+            })
+            .collect()
     })
 }
 

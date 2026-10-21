@@ -56,6 +56,8 @@ pub struct AutonomousAgentFactory {
     provider_factory: ProviderFactory,
     model: String,
     runtime: ThingToolContext,
+    /// E2 ToolExec 接缝（默认直通；组合根可替换证明可换）。
+    tool_exec: Arc<dyn tinyiothub_agent::runtime::thing_agent::seams::tool_exec::ToolExecSeam>,
     pub(crate) agents: DashMap<String, AutonomousEntry>,
 }
 
@@ -82,8 +84,20 @@ impl AutonomousAgentFactory {
             provider_factory,
             model,
             runtime,
+            tool_exec: Arc::new(
+                tinyiothub_agent::runtime::thing_agent::seams::tool_exec::DefaultToolExec,
+            ),
             agents: DashMap::new(),
         }
+    }
+
+    /// E2：注入 ToolExec 接缝替换实现（组合根调用）。
+    pub fn with_tool_exec(
+        mut self,
+        seam: Arc<dyn tinyiothub_agent::runtime::thing_agent::seams::tool_exec::ToolExecSeam>,
+    ) -> Self {
+        self.tool_exec = seam;
+        self
     }
 
     /// Get or lazily create the per-workspace autonomous agent, binding the
@@ -106,7 +120,7 @@ impl AutonomousAgentFactory {
         }
 
         let slot = new_run_context_slot(Arc::clone(&ctx));
-        let tools = build_autonomous_tools(
+        let tools: Vec<Box<dyn tinyiothub_agent::port::tool::Tool>> = build_autonomous_tools(
             &self.db_pool,
             workspace_id,
             Arc::clone(&self.policy_repo),
@@ -114,7 +128,16 @@ impl AutonomousAgentFactory {
             Arc::clone(&self.event_bus),
             Arc::clone(&self.throttle),
             &self.runtime,
-        );
+        )
+        .into_iter()
+        .map(|t| {
+            Box::new(tinyiothub_agent::runtime::thing_agent::seams::tool_exec::SeamTool::new(
+                t,
+                Arc::clone(&self.tool_exec),
+                workspace_id,
+            )) as Box<dyn tinyiothub_agent::port::tool::Tool>
+        })
+        .collect();
 
         let memory: Arc<dyn Memory> = Arc::new(WorkspaceScopedMemory::new(
             Arc::clone(&self.memory),
@@ -229,6 +252,7 @@ pub(crate) fn build_autonomous_tools(
         // 同 workspace 无并发 run，持有者名以 workspace 粒度即可读。
         arbitration: runtime.arbitration.clone(),
         arbitration_holder: format!("autonomous:{workspace_id}"),
+        approval: None,
     };
     tools.push(Box::new(AutonomousInvokeActionTool::new(
         inner,

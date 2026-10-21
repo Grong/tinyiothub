@@ -20,6 +20,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::port::events::TurnEvent;
 use crate::port::outcome::is_tool_loop_cancelled;
+use crate::runtime::thing_agent::seams::budget::{
+    BudgetDecision, BudgetInput, BudgetReason, BudgetSeam, DefaultBudget,
+};
 use crate::runtime::thing_agent::types::{ActionRecord, ActionResult, Outcome, RunReport};
 
 /// Hard per-run tool-call budget (spec O9). The (N+1)-th ToolCall event
@@ -50,6 +53,10 @@ pub enum TruncationReason {
     ToolCallBudget,
     /// Run exceeded [`MAX_RUN_DURATION`].
     DurationBudget,
+    /// BudgetSeam 的 token 上限触发（默认预算未启用）。
+    TokenBudget,
+    /// BudgetSeam 的单物动作上限触发（默认在执行前由工具外壳拦截）。
+    PerThingActionBudget,
 }
 
 /// One recorded tool interaction, in event arrival order. `output` is filled
@@ -63,6 +70,9 @@ pub use tinyiothub_core::agent_runs::ToolTraceEntry;
 /// forward task records the trajectory.
 #[derive(Debug, Default)]
 pub struct RunContextInner {
+    /// Identifies this run to the budget seam (mirrors [`RunContext`]).
+    pub run_id: String,
+    pub workspace_id: String,
     /// Human-readable trigger description (built by T10 prompt assembly).
     pub trigger: String,
     /// Tool call/result trajectory in arrival order.
@@ -96,12 +106,14 @@ pub struct RunContext {
 impl RunContext {
     pub fn new(run_id: String, workspace_id: String, trigger: String) -> Self {
         Self {
-            run_id,
-            workspace_id,
             inner: Arc::new(RwLock::new(RunContextInner {
+                run_id: run_id.clone(),
+                workspace_id: workspace_id.clone(),
                 trigger,
                 ..RunContextInner::default()
             })),
+            run_id,
+            workspace_id,
             active_runs: None,
         }
     }
@@ -115,15 +127,13 @@ pub struct RunOutcome {
 }
 
 pub struct Runner {
-    max_tool_calls: u32,
-    max_duration: Duration,
+    budget: Arc<dyn BudgetSeam>,
 }
 
 impl Default for Runner {
     fn default() -> Self {
         Self {
-            max_tool_calls: MAX_TOOL_CALLS_PER_RUN,
-            max_duration: MAX_RUN_DURATION,
+            budget: Arc::new(DefaultBudget::default()),
         }
     }
 }
@@ -136,9 +146,17 @@ impl Runner {
     /// Custom budgets (tests; production uses [`Runner::new`]).
     pub fn with_budget(max_tool_calls: u32, max_duration: Duration) -> Self {
         Self {
-            max_tool_calls,
-            max_duration,
+            budget: Arc::new(DefaultBudget {
+                max_tool_calls,
+                max_duration,
+                ..Default::default()
+            }),
         }
+    }
+
+    /// Seam injection point (E2): production callers may replace the budget.
+    pub fn with_budget_seam(budget: Arc<dyn BudgetSeam>) -> Self {
+        Self { budget }
     }
 
     pub async fn execute(&self, agent: AgentHandle, prompt: String, ctx: RunContext) -> RunOutcome {
@@ -149,8 +167,7 @@ impl Runner {
             event_rx,
             Arc::clone(&ctx.inner),
             cancel.clone(),
-            self.max_tool_calls,
-            self.max_duration,
+            Arc::clone(&self.budget),
         ));
 
         // One lock across the whole turn (chat/service.rs precedent). The
@@ -159,7 +176,7 @@ impl Runner {
         let turn = {
             let ag = agent.lock().await;
             tokio::time::timeout(
-                self.max_duration + TURN_TIMEOUT_GRACE,
+                self.budget.duration_cap().unwrap_or(MAX_RUN_DURATION) + TURN_TIMEOUT_GRACE,
                 ag.turn_streamed(&prompt, event_tx, Some(cancel)),
             )
             .await
@@ -206,15 +223,9 @@ fn thing_id_of(args: &serde_json::Value) -> Option<String> {
 }
 
 impl RunContextInner {
-    /// Record one streamed event. Returns the (sticky) truncation state; the
-    /// caller must cancel the turn when this becomes `Some`.
-    fn record_event(
-        &mut self,
-        evt: &TurnEvent,
-        elapsed: Duration,
-        max_tool_calls: u32,
-        max_duration: Duration,
-    ) -> Option<TruncationReason> {
+    /// Record one streamed event. Budget decisions live in the consume loop
+    /// (BudgetSeam), not here.
+    fn record_event(&mut self, evt: &TurnEvent) {
         match evt {
             TurnEvent::ToolCall { id, name, args } => {
                 self.tool_calls += 1;
@@ -232,11 +243,8 @@ impl RunContextInner {
                 // Fire-and-forget (O1): the tool is already dispatched when we
                 // see the event, so the budget stops the NEXT call, not this
                 // one. The excess call stays in the trace (unpaired →
-                // UnknownCancelled once the abort drops it).
-                if self.truncated.is_none() && self.tool_calls > max_tool_calls {
-                    self.truncated = Some(TruncationReason::ToolCallBudget);
-                    self.tool_call_budget = Some(max_tool_calls);
-                }
+                // UnknownCancelled once the abort drops it). The budget seam
+                // decides after recording (consume loop).
             }
             TurnEvent::ToolResult { id, output, .. } => {
                 // Pair by stable id; latest unpaired wins (ids are unique per
@@ -257,10 +265,25 @@ impl RunContextInner {
             }
             _ => {}
         }
-        if self.truncated.is_none() && elapsed >= max_duration {
-            self.truncated = Some(TruncationReason::DurationBudget);
+    }
+
+    /// Apply a budget decision; returns true when the run must be cancelled.
+    fn apply_budget(&mut self, decision: BudgetDecision, budget: &dyn BudgetSeam) -> bool {
+        let BudgetDecision::Truncate(reason) = decision else {
+            return false;
+        };
+        if self.truncated.is_none() {
+            self.truncated = Some(match reason {
+                BudgetReason::ToolCalls => TruncationReason::ToolCallBudget,
+                BudgetReason::Duration => TruncationReason::DurationBudget,
+                BudgetReason::Tokens => TruncationReason::TokenBudget,
+                BudgetReason::PerThingActions => TruncationReason::PerThingActionBudget,
+            });
+            if reason == BudgetReason::ToolCalls {
+                self.tool_call_budget = budget.tool_call_cap();
+            }
         }
-        self.truncated
+        true
     }
 }
 
@@ -272,31 +295,57 @@ async fn consume_events(
     mut rx: mpsc::Receiver<TurnEvent>,
     inner: Arc<RwLock<RunContextInner>>,
     cancel: CancellationToken,
-    max_tool_calls: u32,
-    max_duration: Duration,
+    budget: Arc<dyn BudgetSeam>,
 ) {
     let start = tokio::time::Instant::now();
-    let deadline = start + max_duration;
-    let mut deadline_fired = false;
+    // Tick (not a fixed deadline) so a replacement seam can shorten or extend
+    // the duration budget at runtime. First tick fires immediately.
+    let mut tick = tokio::time::interval(Duration::from_secs(1));
     loop {
         tokio::select! {
             evt = rx.recv() => {
                 let Some(evt) = evt else { break };
-                let truncated = inner
-                    .write()
-                    .await
-                    .record_event(&evt, start.elapsed(), max_tool_calls, max_duration);
-                if truncated.is_some() {
+                let truncated = {
+                    let mut guard = inner.write().await;
+                    guard.record_event(&evt);
+                    let decision = {
+                        let g = &*guard;
+                        budget.check(&BudgetInput {
+                            workspace_id: &g.workspace_id,
+                            run_id: &g.run_id,
+                            tool_calls: g.tool_calls,
+                            elapsed: start.elapsed(),
+                            input_tokens: g.input_tokens,
+                            output_tokens: g.output_tokens,
+                            per_thing_actions: &g.action_counts,
+                        })
+                    };
+                    guard.apply_budget(decision, budget.as_ref())
+                };
+                if truncated {
                     cancel.cancel();
                 }
             }
-            () = tokio::time::sleep_until(deadline), if !deadline_fired => {
-                deadline_fired = true;
-                let mut guard = inner.write().await;
-                if guard.truncated.is_none() {
-                    guard.truncated = Some(TruncationReason::DurationBudget);
+            _ = tick.tick() => {
+                let truncated = {
+                    let mut guard = inner.write().await;
+                    let decision = {
+                        let g = &*guard;
+                        budget.check(&BudgetInput {
+                            workspace_id: &g.workspace_id,
+                            run_id: &g.run_id,
+                            tool_calls: g.tool_calls,
+                            elapsed: start.elapsed(),
+                            input_tokens: g.input_tokens,
+                            output_tokens: g.output_tokens,
+                            per_thing_actions: &g.action_counts,
+                        })
+                    };
+                    guard.apply_budget(decision, budget.as_ref())
+                };
+                if truncated {
+                    cancel.cancel();
                 }
-                cancel.cancel();
                 // Keep draining: the turn honours cancel within ms (T1 spike),
                 // but draining also guarantees zeroclaw never blocks on a full
                 // channel while it winds down.
@@ -432,6 +481,8 @@ fn synthesize_summary(inner: &RunContextInner, end: &TurnEnd, outcome: Outcome) 
                 format!("执行被预算截断（工具调用超过 {budget} 次）")
             }
             Some(TruncationReason::DurationBudget) => "执行被预算截断（时长超限）".to_string(),
+            Some(TruncationReason::TokenBudget) => "执行被预算截断（token 超限）".to_string(),
+            Some(TruncationReason::PerThingActionBudget) => "执行被预算截断（单物动作超限）".to_string(),
             None if outcome == Outcome::Rejected => "动作被策略拒绝，建议检查自治策略配置".to_string(),
             None => "LLM 未产生总结文本".to_string(),
         },
@@ -569,13 +620,12 @@ mod tests {
         let inner = Arc::new(RwLock::new(RunContextInner::default()));
         let cancel = CancellationToken::new();
         let (tx, rx) = mpsc::channel(32);
-        let handle = tokio::spawn(consume_events(
-            rx,
-            Arc::clone(&inner),
-            cancel.clone(),
-            max_calls,
-            max_dur,
-        ));
+        let budget: Arc<dyn BudgetSeam> = Arc::new(DefaultBudget {
+            max_tool_calls: max_calls,
+            max_duration: max_dur,
+            ..Default::default()
+        });
+        let handle = tokio::spawn(consume_events(rx, Arc::clone(&inner), cancel.clone(), budget));
         for evt in events {
             tx.send(evt).await.expect("send");
         }
@@ -612,18 +662,58 @@ mod tests {
         assert_eq!(actions[0].params, serde_json::json!({"speed": 3}));
     }
 
+    /// 替换证明（E2a）：真实的预算接缝替换在 consume 路径上生效。
+    struct TwoCallBudget {
+        inner: DefaultBudget,
+    }
+
+    impl BudgetSeam for TwoCallBudget {
+        fn check(&self, input: &BudgetInput<'_>) -> BudgetDecision {
+            if input.tool_calls > 2 {
+                BudgetDecision::Truncate(BudgetReason::ToolCalls)
+            } else {
+                self.inner.check(input)
+            }
+        }
+        fn tool_call_cap(&self) -> Option<u32> {
+            Some(2)
+        }
+        fn next(&self) -> Option<&dyn BudgetSeam> {
+            Some(&self.inner)
+        }
+    }
+
+    #[tokio::test]
+    async fn replacement_budget_truncates_the_real_consume_path() {
+        let inner = Arc::new(RwLock::new(RunContextInner::default()));
+        let cancel = CancellationToken::new();
+        let (tx, rx) = mpsc::channel(32);
+        let budget: Arc<dyn BudgetSeam> = Arc::new(TwoCallBudget {
+            inner: DefaultBudget::default(),
+        });
+        let handle = tokio::spawn(consume_events(rx, Arc::clone(&inner), cancel.clone(), budget));
+        for i in 1..=3 {
+            tx.send(invoke(&format!("c{i}"), "t1", &format!("act{i}")))
+                .await
+                .expect("send");
+        }
+        drop(tx);
+        handle.await.expect("consume task");
+        let inner = Arc::try_unwrap(inner).expect("single ref").into_inner();
+        assert_eq!(inner.truncated, Some(TruncationReason::ToolCallBudget));
+        assert_eq!(inner.tool_call_budget, Some(2));
+    }
+
     #[tokio::test(start_paused = true)]
     async fn duration_budget_truncates_at_deadline() {
         let inner = Arc::new(RwLock::new(RunContextInner::default()));
         let cancel = CancellationToken::new();
         let (tx, rx) = mpsc::channel(32);
-        let handle = tokio::spawn(consume_events(
-            rx,
-            Arc::clone(&inner),
-            cancel.clone(),
-            25,
-            Duration::from_secs(300),
-        ));
+        let budget: Arc<dyn BudgetSeam> = Arc::new(DefaultBudget {
+            max_duration: Duration::from_secs(300),
+            ..Default::default()
+        });
+        let handle = tokio::spawn(consume_events(rx, Arc::clone(&inner), cancel.clone(), budget));
         tx.send(read("r1", "t1")).await.expect("send");
         tx.send(result("r1", TOOL_READ_PROPERTY, "{\"value\":42}"))
             .await

@@ -41,7 +41,10 @@ use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
 use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, RunContextInner};
 use tinyiothub_core::models::event::EventLevel;
-use tinyiothub_policy::autonomy::{GateVerdict, gate_check};
+use tinyiothub_agent::runtime::thing_agent::seams::policy::{
+    DefaultPolicy, PolicyDecision, PolicyInput, PolicySeam,
+};
+use tinyiothub_policy::autonomy::AutonomyPolicy;
 use tinyiothub_storage::Db;
 use tokio::sync::RwLock;
 
@@ -144,6 +147,8 @@ pub struct AutonomousInvokeActionTool {
     workspace_id: String,
     event_bus: Arc<ThingEventBus>,
     throttle: Arc<ThrottleState>,
+    /// E2 Policy 接缝（None = 内置 gate_check）。
+    policy_seam: Option<Arc<dyn PolicySeam>>,
 }
 
 impl AutonomousInvokeActionTool {
@@ -164,7 +169,14 @@ impl AutonomousInvokeActionTool {
             workspace_id,
             event_bus,
             throttle,
+            policy_seam: None,
         }
+    }
+
+    /// E2：注入 Policy 接缝替换实现（只能收窄）。
+    pub fn with_policy_seam(mut self, seam: Arc<dyn PolicySeam>) -> Self {
+        self.policy_seam = Some(seam);
+        self
     }
 
     /// Consume the confirmation token minted by the inner tool and dispatch
@@ -339,8 +351,19 @@ impl Tool for AutonomousInvokeActionTool {
             None => 0,
         };
 
-        if let GateVerdict::Deny { reason } = gate_check(policy.as_ref(), &input.action_name, prior_actions, hourly) {
-            return denied(&reason);
+        let seam: Arc<dyn PolicySeam> = self
+            .policy_seam
+            .clone()
+            .unwrap_or_else(|| Arc::new(DefaultPolicy));
+        let policy_ref: Option<&AutonomyPolicy> = policy.as_ref();
+        if let PolicyDecision::Deny { code, .. } = seam.evaluate(&PolicyInput {
+            workspace_id: &self.workspace_id,
+            action_name: &input.action_name,
+            actions_this_run: prior_actions,
+            actions_last_hour: hourly,
+            policy: policy_ref,
+        }) {
+            return denied(&code);
         }
 
         // 3. Validation + dispatch via the inner tool (thing.rs reuse).
@@ -479,6 +502,7 @@ mod tests {
             pending_actions: self_pending_actions(),
             arbitration: None,
             arbitration_holder: "test".to_string(),
+            approval: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -565,6 +589,37 @@ mod tests {
         let out = output_json(&result);
         assert_eq!(out["denied"], true);
         assert_eq!(out["reason"], "autonomy_not_act");
+    }
+
+    /// E2 替换证明：Policy 接缝替换实现走真实工具路径生效（只能收窄）。
+    struct DenyAllSeam;
+
+    impl PolicySeam for DenyAllSeam {
+        fn evaluate(&self, _input: &PolicyInput<'_>) -> PolicyDecision {
+            PolicyDecision::Deny {
+                code: "seam_deny".to_string(),
+                message: "replacement seam denies everything".to_string(),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn replacement_policy_seam_is_consulted() {
+        let fx = fixture("ws-seam").await;
+        seed_thing(&fx.pool, "ws-seam", "dev-1", "device").await;
+        register_action(&fx.pool, "dev-1", "reboot").await;
+        fx.policy_repo
+            .save_autonomy_policy("ws-seam", &act_policy(), "test")
+            .await
+            .unwrap();
+
+        let tool = fx.tool.with_policy_seam(Arc::new(DenyAllSeam));
+        *fx.ctx.write().await.action_counts.entry("dev-1".to_string()).or_insert(0) += 1;
+        let result = tool.execute(args("dev-1", "reboot")).await.expect("execute");
+        let out = output_json(&result);
+        assert_eq!(out["denied"], true);
+        assert_eq!(out["reason"], "seam_deny");
+        assert_eq!(agent_event_count(&fx.pool, "dev-1").await, 0);
     }
 
     #[tokio::test]
@@ -685,6 +740,7 @@ mod tests {
             pending_actions: self_pending_actions(),
             arbitration: None,
             arbitration_holder: "test".to_string(),
+            approval: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -849,6 +905,7 @@ mod tests {
             pending_actions: self_pending_actions(),
             arbitration: None,
             arbitration_holder: "test".to_string(),
+            approval: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -963,6 +1020,7 @@ mod tests {
             pending_actions: self_pending_actions(),
             arbitration: Some(registry.clone()),
             arbitration_holder: "autonomous:ws-arb-ac".to_string(),
+            approval: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -1019,6 +1077,7 @@ mod tests {
             pending_actions: self_pending_actions(),
             arbitration: None,
             arbitration_holder: "test".to_string(),
+            approval: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
