@@ -442,7 +442,7 @@ pub enum ManifestError {
     #[error("tool '{tool}' references unknown resource '{resource}'")]
     UnknownResource { tool: String, resource: String },
     #[error("source '{source}' references unknown state field '{field}'")]
-    UnknownSourceField { source: String, field: String },
+    UnknownSourceField { source_id: String, field: String },
     #[error("limits must be greater than zero")]
     InvalidLimits,
     #[error("declaration identity mismatch: expected {expected}, got {got}")]
@@ -508,7 +508,7 @@ pub fn validate_manifest(m: &DriverManifest) -> Result<(), ManifestError> {
     for s in &m.sources {
         for f in &s.fields {
             if !names.contains(f) {
-                return Err(ManifestError::UnknownSourceField { source: s.id.clone(), field: f.clone() });
+                return Err(ManifestError::UnknownSourceField { source_id: s.id.clone(), field: f.clone() });
             }
         }
     }
@@ -618,8 +618,8 @@ mod tests {
 
 - [ ] **Step 5: Run tests**
 
-Run: `cargo test -p core driver::manifest driver::schema`
-Expected: PASS (10 tests).
+Run: `cargo test -p core driver::`
+Expected: PASS (10 new tests + pre-existing driver tests).
 
 - [ ] **Step 6: Commit**
 
@@ -927,7 +927,7 @@ pub fn validate_device_declaration(
     for s in &package.sources {
         for f in &s.fields {
             if !fields.contains(f.as_str()) {
-                return Err(ManifestError::UnknownSourceField { source: s.id.clone(), field: f.clone() });
+                return Err(ManifestError::UnknownSourceField { source_id: s.id.clone(), field: f.clone() });
             }
         }
     }
