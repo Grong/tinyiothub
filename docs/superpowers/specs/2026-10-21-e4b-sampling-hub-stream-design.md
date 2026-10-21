@@ -119,10 +119,10 @@ Authorization: Bearer <jwt>
 ```
 
 - 校验：workspace 归属；things 必须属于该 workspace；sources 必须在各 thing 的 manifest 中声明；单连接 things ≤50、sources ≤16；非法 400/403。
-- 首帧：`snapshot` = 当前 LiveState/缓存读数（每 thing/source 最新值 + lastChangeAt）。
+- 首帧：`snapshot` = 当前 LiveState/缓存读数（每 thing/source 最新值 + `lastHeartbeatAt`，RFC3339）。`lastChangeAt`（逐属性变更时刻）留待后续，不在 E4b 伪造。
 - 增量：
   - `reading` `{v:1, ts, thingId, source, values}` — 遥测 latest-wins；慢客户端只保留每个 `(thing,source)` 最新一条。
-  - `control` `{v:1, ts, thingId, kind, payload}` — watch/job/state_change，按到达顺序；有界队列（256），溢出发 `resync` 并清空。
+  - `control` `{v:1, ts, thingId, kind, payload}` — job/state_change，按到达顺序；有界队列（256），溢出发 `resync` 并清空。watch 命中/超时仍由 E3 `/live/stream` 账本流提供（E4b control 不含 watch）。
   - `ping` 15s；`resync` `{v:1, reason:"lagged"|"overflow"|"reconnect"}`。
 - 生命周期：连接建立 → `DemandTracker.subscribe`；SSE 断开/Drop → `unsubscribe`；heartbeat 续期。
 - 实现：EventBus broadcast 订阅（1000 容量）；Lagged → `resync`；`reading` 由 PropertyChange 事件映射；`control` 由 watch/job 事件映射；首帧从 `DataServer.get_device` + LiveState 摘要。

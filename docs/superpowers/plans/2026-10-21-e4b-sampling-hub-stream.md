@@ -169,7 +169,7 @@
 **Interfaces:**
 - `HubStreamRegistry::{subscribe, unsubscribe, connections}` (or direct DemandTracker)
 - `GET /v1/workspaces/{id}/hub/stream?things=&sources=`
-- Events: `snapshot`, `reading`, `control`, `ping`, `resync`
+- Events: `snapshot`（每 source 带 `lastHeartbeatAt` RFC3339）、`reading`、`control`（job/state_change；watch 仍在 E3 `/live/stream`）、`ping`、`resync`
 
 - [ ] Auth/tenant check from `Claims`; validate things/sources against manifests; limits 50/16; return 400/403.
 - [ ] First frame: snapshot from `DataServer.get_device` + LiveState summary.
