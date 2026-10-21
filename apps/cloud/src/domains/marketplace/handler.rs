@@ -41,6 +41,130 @@ pub fn create_router() -> Router<AppState> {
         .route("/thing-templates/{id}", get(get_thing_template_detail))
         .route("/thing-templates/{id}/install", post(install_thing_template))
         .route("/thing-templates/{id}/instantiate", post(instantiate_thing_template))
+        .route("/template-rules/validate", post(validate_template_rules))
+        .route("/template-rules/apply", post(apply_template_rules))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateRulesRequest {
+    /// 场景包模板 JSON（含 watch_rules/composites；未知字段忽略）。
+    pub template: serde_json::Value,
+    /// slug → 真实 thing_id。
+    #[serde(default)]
+    pub mapping: std::collections::HashMap<String, String>,
+}
+
+/// POST /marketplace/template-rules/validate（E3：只校验，不落库）。
+async fn validate_template_rules(
+    State(state): State<AppState>,
+    claims: Claims,
+    Json(req): Json<TemplateRulesRequest>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    let workspace_id = claims.workspace_id;
+    let existing = existing_composite_names(&state, &workspace_id).await;
+    let (_resolved, report) = crate::domains::marketplace::template_rules::resolve_template_rules(
+        &req.template,
+        &workspace_id,
+        &req.mapping,
+        &existing,
+    );
+    ApiResponseBuilder::success(serde_json::to_value(report).unwrap_or_default())
+}
+
+/// POST /marketplace/template-rules/apply（E3：校验通过后同事务落库；失败整包拒绝）。
+async fn apply_template_rules(
+    State(state): State<AppState>,
+    claims: Claims,
+    Json(req): Json<TemplateRulesRequest>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    let workspace_id = claims.workspace_id;
+    let existing = existing_composite_names(&state, &workspace_id).await;
+    let (resolved, report) = crate::domains::marketplace::template_rules::resolve_template_rules(
+        &req.template,
+        &workspace_id,
+        &req.mapping,
+        &existing,
+    );
+    if !report.ok {
+        return ApiResponseBuilder::success(serde_json::json!({
+            "applied": false,
+            "report": report,
+        }));
+    }
+
+    let pool = state.db.pool();
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => return ApiResponseBuilder::error(&format!("事务开启失败: {e}")),
+    };
+    for rule in &resolved.watch_rules {
+        let condition = match serde_json::to_value(&rule.condition) {
+            Ok(v) => v,
+            Err(e) => return ApiResponseBuilder::error(&format!("条件序列化失败: {e}")),
+        };
+        let kind = condition
+            .get("type")
+            .and_then(|t| t.as_str())
+            .unwrap_or("property");
+        if let Err(e) = sqlx::query(
+            "INSERT INTO watch_rules (id, workspace_id, kind, condition, persistent, timeout_secs, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&rule.id)
+        .bind(&rule.workspace_id)
+        .bind(kind)
+        .bind(condition.to_string())
+        .bind(i64::from(rule.persistent))
+        .bind(i64::from(rule.timeout_secs))
+        .bind(&rule.created_at)
+        .execute(&mut *tx)
+        .await
+        {
+            let _ = tx.rollback().await;
+            return ApiResponseBuilder::error(&format!("watch 规则落库失败（整包回滚）: {e}"));
+        }
+    }
+    for def in &resolved.composites {
+        let definition = match serde_json::to_string(def) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = tx.rollback().await;
+                return ApiResponseBuilder::error(&format!("composite 序列化失败: {e}"));
+            }
+        };
+        if let Err(e) = sqlx::query(
+            "INSERT INTO agent_composites (id, workspace_id, name, description, definition, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&def.id)
+        .bind(&def.workspace_id)
+        .bind(&def.name)
+        .bind(&def.description)
+        .bind(definition)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(&mut *tx)
+        .await
+        {
+            let _ = tx.rollback().await;
+            return ApiResponseBuilder::error(&format!("composite 落库失败（整包回滚）: {e}"));
+        }
+    }
+    if let Err(e) = tx.commit().await {
+        return ApiResponseBuilder::error(&format!("事务提交失败: {e}"));
+    }
+
+    ApiResponseBuilder::success(serde_json::json!({
+        "applied": true,
+        "report": report,
+    }))
+}
+
+async fn existing_composite_names(state: &AppState, workspace_id: &str) -> Vec<String> {
+    tinyiothub_storage::composite::list_composites(state.db.pool(), workspace_id)
+        .await
+        .map(|rows| rows.into_iter().map(|r| r.name).collect())
+        .unwrap_or_default()
 }
 
 /// 市场未启用或未配置 api_url 时返回 None——不静默回退到公网地址，
