@@ -112,8 +112,8 @@ impl Tool for InvokeActionTool {
 
         // 1b. E4a declaration validation（fail-closed when wired）：未声明
         // 操作、参数 schema/范围不符、声明缺失都在此拒绝；仲裁/确认门不动。
-        if let Some(access) = &self.access {
-            access
+        if let Some(access) = &self.access
+            && let Err(e) = access
                 .validate(
                     &self.workspace_id,
                     &input.thing_id,
@@ -121,7 +121,14 @@ impl Tool for InvokeActionTool {
                     input.params.as_ref(),
                 )
                 .await
-                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        {
+            // Declaration rejections are user-actionable → failed ToolResult
+            // (the model can correct/retry); only true infrastructure errors
+            // surface as Err.
+            if e.is_user_actionable() {
+                return tool_err(e.to_string());
+            }
+            return Err(anyhow::anyhow!(e.to_string()));
         }
 
         // 2. Check require_action_confirm from workspace

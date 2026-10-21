@@ -252,58 +252,87 @@ async fn test_invoke_denied_by_policy_block_rule() {
 // E4a declaration validation (Task 11): tool-level fail-closed
 // ──────────────────────────────────────────────
 
-struct UndeclaredAccess;
+enum AccessRejection {
+    UndeclaredTool,
+    NoDeclaration,
+}
+
+struct RejectingAccess(AccessRejection);
 
 #[async_trait::async_trait]
-impl tinyiothub_runtime::access::validator::AccessCallValidator for UndeclaredAccess {
+impl tinyiothub_runtime::access::validator::AccessCallValidator for RejectingAccess {
     async fn validate(
         &self,
         _workspace_id: &str,
-        _thing_id: &str,
+        thing_id: &str,
         tool: &str,
         _params: Option<&Value>,
     ) -> Result<tinyiothub_runtime::access::validator::ValidatedCall, tinyiothub_runtime::access::validator::CallError>
     {
-        Err(tinyiothub_runtime::access::validator::CallError::UndeclaredTool(
-            tool.to_string(),
-        ))
+        use tinyiothub_runtime::access::validator::CallError;
+        Err(match self.0 {
+            AccessRejection::UndeclaredTool => CallError::UndeclaredTool(tool.to_string()),
+            AccessRejection::NoDeclaration => CallError::NoDeclaration(thing_id.to_string()),
+        })
     }
 }
 
-#[tokio::test]
-async fn test_invoke_action_rejects_undeclared_tool_when_access_wired() {
+/// Seed a device + action and build the tool with the rejecting validator.
+async fn seeded_tool(
+    ws: &str,
+    rejection: AccessRejection,
+) -> (crate::domains::agent::host::tools::thing::InvokeActionTool, String) {
     use std::sync::Arc;
 
-    use crate::domains::agent::host::tools::thing::{InvokeActionTool, PendingActionStore};
+    use crate::domains::agent::host::tools::thing::PendingActionStore;
     use crate::domains::thing::service::ThingService;
-    use tinyiothub_agent::port::tool::Tool;
 
-    let (app, pool, token) = setup("ws-decl").await;
-    let thing = create_thing(&app, &token, "ws-decl", "dev-decl", "device").await;
+    let (app, pool, token) = setup(ws).await;
+    let thing = create_thing(&app, &token, ws, &format!("dev-{ws}"), "device").await;
     register_action(&pool, &thing, "reboot").await;
 
-    let tool = InvokeActionTool {
+    let tool = crate::domains::agent::host::tools::thing::InvokeActionTool {
         thing_service: Arc::new(ThingService::new(pool.clone())),
         pool,
-        workspace_id: "ws-decl".to_string(),
+        workspace_id: ws.to_string(),
         data_server: None,
         pending_actions: Arc::new(PendingActionStore::new()),
         arbitration: None,
         arbitration_holder: "test".to_string(),
         approval: None,
-        access: Some(Arc::new(UndeclaredAccess)),
+        access: Some(Arc::new(RejectingAccess(rejection))),
     };
-    // 声明校验失败 = 工具调用失败：既可能是 Ok(success=false)，也可能是
-    // execute 的 anyhow Err（rig 桥映射为 ToolExecutionError）。
-    let error = match tool.execute(json!({"thingId": thing, "actionName": "reboot"})).await {
-        Ok(result) => {
-            assert!(!result.success, "undeclared tool must be rejected: {result:?}");
-            result.error.unwrap_or_default()
-        }
-        Err(e) => e.to_string(),
-    };
+    (tool, thing)
+}
+
+#[tokio::test]
+async fn test_invoke_action_rejects_undeclared_tool_when_access_wired() {
+    use tinyiothub_agent::port::tool::Tool;
+
+    let (tool, thing) = seeded_tool("ws-decl", AccessRejection::UndeclaredTool).await;
+    let result = tool
+        .execute(json!({"thingId": thing, "actionName": "reboot"}))
+        .await
+        .expect("user-actionable rejection must be Ok(success=false)");
+    assert!(!result.success, "undeclared tool must be rejected: {result:?}");
     assert!(
-        error.contains("not declared"),
-        "rejection must name the undeclared tool, got: {error}"
+        result.error.unwrap_or_default().contains("not declared"),
+        "rejection must name the undeclared tool"
+    );
+}
+
+#[tokio::test]
+async fn test_invoke_action_rejects_missing_declaration_when_access_wired() {
+    use tinyiothub_agent::port::tool::Tool;
+
+    let (tool, thing) = seeded_tool("ws-nodecl", AccessRejection::NoDeclaration).await;
+    let result = tool
+        .execute(json!({"thingId": thing, "actionName": "reboot"}))
+        .await
+        .expect("user-actionable rejection must be Ok(success=false)");
+    assert!(!result.success, "missing declaration must be rejected: {result:?}");
+    assert!(
+        result.error.unwrap_or_default().contains("no declaration"),
+        "rejection must explain the missing declaration"
     );
 }
