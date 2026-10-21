@@ -967,6 +967,7 @@ impl axum::extract::FromRef<AppState> for crate::domains::mcp::McpState {
             alarm_service: state.alarm_service.clone(),
             tenant_service: state.tenant_service.clone(),
             derived_manager: state.derived_manager.clone(),
+            access: state.access.clone(),
         }
     }
 }

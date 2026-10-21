@@ -46,6 +46,9 @@ pub struct McpState {
     /// 派生驱动管理器（Task 8 评审 Important）——MCP 是活的物管理面，
     /// create/delete 工具必须接同一组 notify 钩子，否则绕过索引热更新。
     pub derived_manager: Option<Arc<tinyiothub_runtime::driver::derived_manager::DerivedDriverManager>>,
+    /// E4a access service — MCP is the primary AI creation surface, so its
+    /// `ThingService` instances must carry the declaration hook too.
+    pub access: Option<Arc<tinyiothub_runtime::access::service::AccessService>>,
 }
 
 impl McpState {
@@ -68,11 +71,22 @@ impl McpState {
     ///
     /// AppState 同名方法的域内移植。
     pub fn tenant_device_service_str(&self, workspace_id: &str) -> Arc<ThingService> {
-        Arc::new(
-            ThingService::new(self.db.clone())
-                .for_workspace(workspace_id.to_string())
-                .with_tag_repository(self.db.clone()),
-        )
+        let mut service = ThingService::new(self.db.clone())
+            .for_workspace(workspace_id.to_string())
+            .with_tag_repository(self.db.clone());
+        self.attach_declaration_hook(&mut service);
+        Arc::new(service)
+    }
+
+    /// Attach the E4a declaration hook when the access service is wired.
+    /// Without it, AI-created things get no `device_declarations` row and
+    /// every declared call is rejected.
+    fn attach_declaration_hook(&self, service: &mut ThingService) {
+        if let Some(access) = &self.access {
+            service.set_declaration_hook(Arc::new(crate::domains::driver::declaration::AccessDeclarationHook {
+                access: access.clone(),
+            }));
+        }
     }
 
     /// Returns a tenant-scoped device service.
@@ -89,11 +103,11 @@ impl McpState {
             String::new()
         });
 
-        Arc::new(
-            ThingService::with_event_bus(self.db.clone(), self.event_bus.clone())
-                .for_workspace(ws_id)
-                .with_tag_repository(self.db.clone()),
-        )
+        let mut service = ThingService::with_event_bus(self.db.clone(), self.event_bus.clone())
+            .for_workspace(ws_id)
+            .with_tag_repository(self.db.clone());
+        self.attach_declaration_hook(&mut service);
+        Arc::new(service)
     }
 
     /// 更新设备属性值

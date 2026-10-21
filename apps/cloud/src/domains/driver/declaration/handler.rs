@@ -1,15 +1,23 @@
 //! E4a install / declaration routes, mounted under the existing
 //! `/v1/drivers` prefix.
+//!
+//! `install` and `acceptance` execute native driver code inside the hub
+//! process, so both require an admin role. Every route requires a resolved,
+//! non-empty workspace: the empty string is the built-in namespaced slot.
 
 use axum::extract::{Multipart, Path, State};
+use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{Value, json};
 use tinyiothub_core::driver::declaration::AcceptanceReportRecord;
 use tinyiothub_runtime::acceptance::runner::run_profiles;
-use tinyiothub_web::middleware::workspace::WorkspaceScope;
+use tinyiothub_runtime::access::AccessError;
+use tinyiothub_web::middleware::workspace::{AuthClaims, WorkspaceScope};
 
 use crate::state::AppState;
+
+type ApiResult = (StatusCode, Json<Value>);
 
 pub fn create_router() -> Router<AppState> {
     Router::new()
@@ -19,21 +27,73 @@ pub fn create_router() -> Router<AppState> {
         .route("/{driver}/acceptance", post(run_acceptance))
 }
 
+fn fail(status: StatusCode, message: impl Into<String>) -> ApiResult {
+    (status, Json(json!({"success": false, "error": message.into()})))
+}
+
+fn access_failure(err: &AccessError) -> ApiResult {
+    let status = match err {
+        AccessError::NotFound(_, _) => StatusCode::NOT_FOUND,
+        AccessError::Store(_) | AccessError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        AccessError::Abi(_) => StatusCode::UNPROCESSABLE_ENTITY,
+        AccessError::Manifest(_)
+        | AccessError::Json(_)
+        | AccessError::MissingManifest(_)
+        | AccessError::Validation(_) => StatusCode::BAD_REQUEST,
+    };
+    fail(status, err.to_string())
+}
+
+/// Require a concrete workspace. `WorkspaceScope` is `None` or empty when the
+/// token carries no workspace; writing then would land in the built-in slot.
+fn scoped_workspace(ws: WorkspaceScope) -> Result<String, ApiResult> {
+    match ws.0 {
+        Some(ws) if !ws.trim().is_empty() => Ok(ws),
+        _ => Err(fail(
+            StatusCode::FORBIDDEN,
+            "workspace id is required for driver declaration operations",
+        )),
+    }
+}
+
+/// Admin gate for native-code execution. Uses the same role source as the
+/// agent/admin handler pattern (`roles.is_administrator`), failing closed.
+async fn ensure_admin(state: &AppState, user_id: &str) -> Result<(), ApiResult> {
+    match state.db.count_user_admin_roles(user_id).await {
+        Ok(n) if n > 0 => Ok(()),
+        Ok(_) => Err(fail(StatusCode::FORBIDDEN, "Access denied: admin role required")),
+        Err(e) => {
+            tracing::warn!(error = %e, user = %user_id, "admin role check failed");
+            Err(fail(StatusCode::INTERNAL_SERVER_ERROR, "Permission check failed"))
+        }
+    }
+}
+
+fn access_missing() -> ApiResult {
+    fail(StatusCode::SERVICE_UNAVAILABLE, "access service not wired")
+}
+
 /// `POST /v1/drivers/install` — multipart fields `manifest` (required) and
-/// optional `binary`. The package is copied out of the request tempdir into
-/// the workspace package store before returning.
+/// optional `binary`. Admin only: the binary is loaded in-process.
 async fn install_driver(
     State(state): State<AppState>,
+    AuthClaims(claims): AuthClaims,
     WorkspaceScope(ws): WorkspaceScope,
     mut multipart: Multipart,
-) -> Json<Value> {
-    let ws = ws.unwrap_or_default();
+) -> ApiResult {
+    if let Err(e) = ensure_admin(&state, &claims.user_id).await {
+        return e;
+    }
+    let ws = match scoped_workspace(WorkspaceScope(ws)) {
+        Ok(ws) => ws,
+        Err(e) => return e,
+    };
     let Some(access) = state.access.clone() else {
-        return Json(json!({"success": false, "error": "access service not wired"}));
+        return access_missing();
     };
     let dir = match tempfile::tempdir() {
         Ok(d) => d,
-        Err(e) => return Json(json!({"success": false, "error": e.to_string()})),
+        Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };
     let mut manifest_seen = false;
     while let Ok(Some(field)) = multipart.next_field().await {
@@ -41,43 +101,50 @@ async fn install_driver(
             Some("manifest") => match field.text().await {
                 Ok(text) => {
                     if std::fs::write(dir.path().join("driver.manifest.json"), text).is_err() {
-                        return Json(json!({"success": false, "error": "write manifest failed"}));
+                        return fail(StatusCode::INTERNAL_SERVER_ERROR, "write manifest failed");
                     }
                     manifest_seen = true;
                 }
-                Err(e) => return Json(json!({"success": false, "error": e.to_string()})),
+                Err(e) => return fail(StatusCode::BAD_REQUEST, e.to_string()),
             },
             Some("binary") => match field.bytes().await {
                 Ok(bytes) => {
                     if std::fs::write(dir.path().join("driver.so"), bytes).is_err() {
-                        return Json(json!({"success": false, "error": "write binary failed"}));
+                        return fail(StatusCode::INTERNAL_SERVER_ERROR, "write binary failed");
                     }
                 }
-                Err(e) => return Json(json!({"success": false, "error": e.to_string()})),
+                Err(e) => return fail(StatusCode::BAD_REQUEST, e.to_string()),
             },
             _ => {}
         }
     }
     if !manifest_seen {
-        return Json(json!({"success": false, "error": "missing manifest field"}));
+        return fail(StatusCode::BAD_REQUEST, "missing manifest field");
     }
     match access.install_dir(&ws, dir.path()).await {
-        Ok(pkg) => Json(json!({
-            "success": true,
-            "driver": pkg.manifest.identity.driver,
-            "version": pkg.manifest.identity.version,
-            "manifestHash": pkg.manifest_hash,
-        })),
-        Err(e) => Json(json!({"success": false, "error": e.to_string()})),
+        Ok(pkg) => (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "driver": pkg.manifest.identity.driver,
+                "version": pkg.manifest.identity.version,
+                "manifestHash": pkg.manifest_hash,
+                "warnings": pkg.warnings,
+            })),
+        ),
+        Err(e) => access_failure(&e),
     }
 }
 
 /// `GET /v1/drivers/declarations` — active packages visible to the caller's
 /// workspace (installed packages plus built-in fallbacks).
-async fn list_declarations(State(state): State<AppState>, WorkspaceScope(ws): WorkspaceScope) -> Json<Value> {
-    let ws = ws.unwrap_or_default();
+async fn list_declarations(State(state): State<AppState>, WorkspaceScope(ws): WorkspaceScope) -> ApiResult {
+    let ws = match scoped_workspace(WorkspaceScope(ws)) {
+        Ok(ws) => ws,
+        Err(e) => return e,
+    };
     let Some(access) = state.access.clone() else {
-        return Json(json!({"success": false, "error": "access service not wired"}));
+        return access_missing();
     };
     let items: Vec<Value> = access
         .manifests
@@ -93,7 +160,7 @@ async fn list_declarations(State(state): State<AppState>, WorkspaceScope(ws): Wo
             })
         })
         .collect();
-    Json(json!({"success": true, "data": items}))
+    (StatusCode::OK, Json(json!({"success": true, "data": items})))
 }
 
 /// `GET /v1/drivers/{driver}/declaration` — the active package manifest.
@@ -101,39 +168,58 @@ async fn get_declaration(
     State(state): State<AppState>,
     WorkspaceScope(ws): WorkspaceScope,
     Path(driver): Path<String>,
-) -> Json<Value> {
-    let ws = ws.unwrap_or_default();
+) -> ApiResult {
+    let ws = match scoped_workspace(WorkspaceScope(ws)) {
+        Ok(ws) => ws,
+        Err(e) => return e,
+    };
     let Some(access) = state.access.clone() else {
-        return Json(json!({"success": false, "error": "access service not wired"}));
+        return access_missing();
     };
     match access.get_manifest(&ws, &driver) {
-        Some(pkg) => Json(json!({
-            "success": true,
-            "data": serde_json::to_value(&pkg.manifest).unwrap_or_default(),
-        })),
-        None => Json(json!({"success": false, "error": "driver not installed"})),
+        Some(pkg) => (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "data": serde_json::to_value(&pkg.manifest).unwrap_or_default(),
+            })),
+        ),
+        None => fail(StatusCode::NOT_FOUND, "driver not installed"),
     }
 }
 
 /// `POST /v1/drivers/{driver}/acceptance` — run every auto profile against the
-/// installed package and persist the aggregate report.
+/// installed package and persist the aggregate report. Admin only: the runner
+/// loads the package binary.
 async fn run_acceptance(
     State(state): State<AppState>,
+    AuthClaims(claims): AuthClaims,
     WorkspaceScope(ws): WorkspaceScope,
     Path(driver): Path<String>,
-) -> Json<Value> {
-    let ws = ws.unwrap_or_default();
+) -> ApiResult {
+    if let Err(e) = ensure_admin(&state, &claims.user_id).await {
+        return e;
+    }
+    let ws = match scoped_workspace(WorkspaceScope(ws)) {
+        Ok(ws) => ws,
+        Err(e) => return e,
+    };
     let Some(access) = state.access.clone() else {
-        return Json(json!({"success": false, "error": "access service not wired"}));
+        return access_missing();
     };
     let Some(dir) = access.package_dir(&ws, &driver) else {
-        return Json(json!({"success": false, "error": "driver not installed"}));
+        return fail(StatusCode::NOT_FOUND, "driver not installed");
     };
     // The runner is synchronous and spins up its own tokio runtime for
     // materialization; keep it off the request's runtime thread.
     let report = match tokio::task::spawn_blocking(move || run_profiles(&dir, &["all"])).await {
         Ok(report) => report,
-        Err(e) => return Json(json!({"success": false, "error": format!("acceptance runner failed: {e}")})),
+        Err(e) => {
+            return fail(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("acceptance runner failed: {e}"),
+            );
+        }
     };
     // An unreadable package has no identity; persist the requested driver
     // name rather than the runner's `<unreadable>` placeholder.
@@ -154,5 +240,5 @@ async fn run_acceptance(
     if let Err(e) = access.acceptance_store.insert(&rec).await {
         tracing::warn!(error = %e, "acceptance report persist failed");
     }
-    Json(json!({"success": true, "report": report}))
+    (StatusCode::OK, Json(json!({"success": true, "report": report})))
 }

@@ -241,10 +241,20 @@ impl ThingService {
                 let _ = self.copy_template_acts(&created.id, tid).await;
             }
         }
-        if let (Some(hook), Some(_)) = (&hook, &req.driver_name) {
-            hook.materialize(workspace_id.unwrap_or_default(), &created.id)
-                .await
-                .map_err(ThingError::Validation)?;
+        if let (Some(hook), Some(_)) = (&hook, &req.driver_name)
+            && let Err(e) = hook.materialize(workspace_id.unwrap_or_default(), &created.id).await
+        {
+            // No orphan devices: the row (and its template rows, via FK
+            // cascade) is removed before surfacing the rejection, otherwise
+            // retrying the same name fails with NameConflict.
+            if let Err(cleanup) = self.db.delete_thing_row(&created.id).await {
+                tracing::error!(
+                    thing_id = %created.id,
+                    error = %cleanup,
+                    "failed to roll back thing after declaration materialization failure"
+                );
+            }
+            return Err(ThingError::Validation(e));
         }
         Ok(Self::row_to_response(&created, vec![]))
     }

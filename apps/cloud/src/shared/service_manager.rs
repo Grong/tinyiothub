@@ -68,7 +68,34 @@ impl ServiceManager {
         // 更新状态为启动中
         *self.status.write().await = ServiceStatus::Starting;
 
-        // 1. 创建并启动数据服务器（device_cache 经 D15 端口适配器注入）
+        // 1. E4a 驱动访问服务（声明协议）：内置 manifest 播种 + Db 端口
+        // 适配器注入（runtime 不依赖 db/sqlx）。必须先于 DataServer::new：
+        // 后者在构造时按缓存物 create_driver，E4a 动态驱动只有 rehydrate
+        // 之后才在注册表里，否则重启后这些物要再重启一次才开始轮询。
+        let manifests = Arc::new(tinyiothub_runtime::access::registry::ManifestRegistry::new());
+        for (_, json) in tinyiothub_runtime::driver::describe::builtin_manifest_jsons() {
+            manifests
+                .seed_builtin(json)
+                .map_err(|e| Error::IOError(e.to_string()))?;
+        }
+        let access = Arc::new(tinyiothub_runtime::access::service::AccessService::new(
+            crate::shared::paths::api_data_dir(),
+            manifests,
+            Arc::new(crate::shared::access_ports::DbDriverStore(app_state.db.clone())),
+            Arc::new(crate::shared::access_ports::DbDeviceStore(app_state.db.clone())),
+            Arc::new(crate::shared::access_ports::DbProjectionStore(app_state.db.clone())),
+            Arc::new(crate::shared::access_ports::DbThingSource(app_state.db.clone())),
+            Arc::new(crate::shared::access_ports::DbAcceptanceStore(app_state.db.clone())),
+        ));
+        // Installed packages live on disk + DB; restore them before serving
+        // so a restart does not silently lose everything but the built-ins.
+        if let Err(e) = access.rehydrate().await {
+            tracing::warn!(error = %e, "E4a driver package rehydrate failed");
+        }
+        app_state.set_access(access);
+        info!("✅ AccessService started");
+
+        // 2. 创建并启动数据服务器（device_cache 经 D15 端口适配器注入）
         let data_server = Arc::new(DataServer::new(
             Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(
                 app_state.device_cache.clone(),
@@ -123,33 +150,7 @@ impl ServiceManager {
 
         info!("✅ DataServer started and registered");
 
-        // 1.2 E4a 驱动访问服务（声明协议）：内置 manifest 播种 + Db 端口
-        // 适配器注入（runtime 不依赖 db/sqlx）。安装包落在 data/drivers/
-        // workspaces/{ws}/{driver}/{version}/。
-        let manifests = Arc::new(tinyiothub_runtime::access::registry::ManifestRegistry::new());
-        for (_, json) in tinyiothub_runtime::driver::describe::builtin_manifest_jsons() {
-            manifests
-                .seed_builtin(json)
-                .map_err(|e| Error::IOError(e.to_string()))?;
-        }
-        let access = Arc::new(tinyiothub_runtime::access::service::AccessService::new(
-            crate::shared::paths::api_data_dir(),
-            manifests,
-            Arc::new(crate::shared::access_ports::DbDriverStore(app_state.db.clone())),
-            Arc::new(crate::shared::access_ports::DbDeviceStore(app_state.db.clone())),
-            Arc::new(crate::shared::access_ports::DbProjectionStore(app_state.db.clone())),
-            Arc::new(crate::shared::access_ports::DbThingSource(app_state.db.clone())),
-            Arc::new(crate::shared::access_ports::DbAcceptanceStore(app_state.db.clone())),
-        ));
-        // Installed packages live on disk + DB; restore them before serving
-        // so a restart does not silently lose everything but the built-ins.
-        if let Err(e) = access.rehydrate().await {
-            tracing::warn!(error = %e, "E4a driver package rehydrate failed");
-        }
-        app_state.set_access(access);
-        info!("✅ AccessService started");
-
-        // 1.5 派生引擎管理器（Task 7 + X4 单引擎化，spec §三）：启动索引重建 +
+        // 2.5 派生引擎管理器（Task 7 + X4 单引擎化，spec §三）：启动索引重建 +
         // 全 workspace 单 EventBus 订阅 + 首值补偿。读数经 data_server.value_sink()
         // → 共享管线回流（consume_driver_reading 的 device_cache 回退写 owner 物，
         // 不再注册任何 driver wrapper）。list_derived 失败 = 启动期 DB 读失败，
