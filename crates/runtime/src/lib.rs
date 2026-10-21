@@ -22,6 +22,7 @@ pub mod data_server;
 pub mod driver;
 pub mod event_bus;
 pub mod expression;
+pub mod hub_stream;
 pub mod plugin;
 pub mod ports;
 pub mod watch;

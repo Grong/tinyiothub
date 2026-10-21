@@ -103,6 +103,10 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
             "/workspaces",
             crate::domains::agent::host::handler::live_stream::create_router(),
         )
+        .nest(
+            "/workspaces",
+            crate::domains::agent::host::handler::hub_stream::create_router(),
+        )
         .nest("/mcp", crate::domains::mcp::router())
         .nest("/chat", crate::domains::agent::host::chat::handler::create_router())
         .nest(

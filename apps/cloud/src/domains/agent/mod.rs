@@ -68,6 +68,13 @@ pub struct AgentState {
     pub session_service: Arc<host::SessionService>,
     /// System prompts 配置 - chat proxy 构造 full prompt
     pub system_prompts: Arc<crate::shared::config::SystemPromptsConfig>,
+    /// E4a 驱动访问服务 - Hub stream 的 manifest/source 校验与需求订阅
+    /// （None = 未装配，端点 503）。
+    pub access: Option<Arc<tinyiothub_runtime::access::service::AccessService>>,
+    /// 数据服务器 - Hub stream 首帧快照的 `get_device` 读源（None = 503）。
+    pub data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
+    /// 事件总线 - Hub stream 的 reading/control 增量源。
+    pub event_bus: Arc<tinyiothub_runtime::event_bus::EventBus>,
 }
 
 impl AgentState {

@@ -9,6 +9,7 @@
 pub mod agent_tasks;
 pub mod execution_record;
 pub mod files;
+pub mod hub_stream;
 pub mod ledger;
 pub mod live_stream;
 pub mod skills;
