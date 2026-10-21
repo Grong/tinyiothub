@@ -2130,7 +2130,9 @@ mod tests {
             f.store(true, Ordering::SeqCst);
         });
         let check = flag.clone();
+        let started = std::time::Instant::now();
         assert!(run_long_task(1000, move || check.load(Ordering::SeqCst)).is_err());
+        assert!(started.elapsed() < std::time::Duration::from_millis(250));
     }
 }
 ```
@@ -2199,7 +2201,7 @@ extern "C" fn demo_read(
     _cancel: *mut CancelHandle, done: DriverDone, user: *mut c_void,
 ) -> c_int {
     let state = unsafe { &*(ctx as *const DemoState) };
-    emit(done, user, 0, format!(r#"[{{"name":"level","valueType":"int","value":"{}"}}]"#, state.level));
+    emit(done, user, 0, format!(r#"[{{"name":"level","value_type":"int","value":"{}"}}]"#, state.level));
     0
 }
 
@@ -2216,12 +2218,12 @@ extern "C" fn demo_execute(
     match v.get("name").and_then(|x| x.as_str()).unwrap_or("") {
         "echo" => {
             let msg = param(&v, "message").and_then(|x| x.as_str().map(str::to_string)).unwrap_or_default();
-            emit(done, user, 0, serde_json::json!({"echo": msg}).to_string());
+            emit(done, user, 0, "true".to_string());
         }
         "set_level" => {
             let level = param(&v, "level").and_then(|x| x.as_i64()).unwrap_or(-1);
             match state.set_level(level) {
-                Ok(()) => emit(done, user, 0, serde_json::json!({"level": level}).to_string()),
+                Ok(()) => emit(done, user, 0, "true".to_string()),
                 Err(e) => emit(done, user, 1, serde_json::json!({"error": e}).to_string()),
             }
         }
@@ -2245,7 +2247,7 @@ extern "C" fn demo_execute(
                     None => false,
                 };
                 match run_long_task(ms, is_cancelled) {
-                    Ok(()) => emit(done_f, user_p, 0, "{}".to_string()),
+                    Ok(()) => emit(done_f, user_p, 0, "true".to_string()),
                     Err(e) => emit(done_f, user_p, 2, serde_json::json!({"error": e}).to_string()),
                 }
             });
@@ -2305,7 +2307,7 @@ pub extern "C" fn tinyiothub_driver_destroy(ctx: *mut c_void) {
 }
 ```
 
-Note: E4a deliberately does not wire the cancel handle into `long_task`; E4c does. The thread returns status 0 on completion.
+The worker polls the ABI cancel handle every 50 ms and emits status 2 on cancellation; `stop_device` wiring is E4c. Execute status 0 is a JSON boolean (`true`) because the hub parses `execute_command` results as `bool`.
 
 - [ ] **Step 6: Test and build**
 
