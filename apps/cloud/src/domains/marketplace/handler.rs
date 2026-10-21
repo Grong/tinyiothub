@@ -691,7 +691,7 @@ async fn get_thing_template_detail(
     };
 
     let is_composition = template.is_composition();
-    let (parameters, structure_summary) = if is_composition {
+    let (parameters, structure_summary, watch_rules, composites) = if is_composition {
         match SceneTemplateFile::from_json(&template.device_info) {
             Ok(scene) => {
                 let max_depth = scene_max_depth(&scene.children, 1);
@@ -701,6 +701,8 @@ async fn get_thing_template_detail(
                         "parameterCount": scene.parameters.len(),
                         "maxDepth": max_depth,
                     }),
+                    scene.watch_rules,
+                    scene.composites,
                 )
             }
             Err(e) => {
@@ -712,6 +714,8 @@ async fn get_thing_template_detail(
         (
             serde_json::json!([]),
             serde_json::json!({"parameterCount": 0, "maxDepth": 1}),
+            Vec::new(),
+            Vec::new(),
         )
     };
 
@@ -729,6 +733,9 @@ async fn get_thing_template_detail(
         "createdAt": template.created_at,
         "parameters": parameters,
         "structureSummary": structure_summary,
+        // E3 模板库：只透出规则段，正文仍走模板实例化接口。
+        "watchRules": watch_rules,
+        "composites": composites,
     });
     (StatusCode::OK, ApiResponseBuilder::success(result))
 }

@@ -43,6 +43,12 @@ pub struct SceneTemplateFile {
     pub alarm_rules: Vec<SceneAlarmRule>,
     #[serde(default)]
     pub children: Vec<ThingNodeDef>,
+    /// E3：场景包自带的 watch 条件（模板超集，未知字段忽略）。
+    #[serde(default)]
+    pub watch_rules: Vec<serde_json::Value>,
+    /// E3：场景包自带的 composite 动作链。
+    #[serde(default)]
+    pub composites: Vec<serde_json::Value>,
 }
 
 fn default_version() -> String {

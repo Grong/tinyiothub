@@ -2,7 +2,19 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { SignalWatcher } from "@lit-labs/signals";
 import { thingApi } from "../../api/things.js";
+import { getWorkspaceId } from "../../api/client.js";
 import "./confirm-modal.js";
+import "./flow.js";
+import "./world.js";
+import "./template-library.js";
+import "./workbench.css";
+import {
+  backToNow,
+  isHistorical,
+  parseWorkbenchUrl,
+  toWorkbenchUrl,
+  type WorkbenchState,
+} from "./workbench-state.js";
 import {
   renderDeviceDetail as renderDeviceDetailFn,
   renderDetailProperties as renderDetailPropertiesFn,
@@ -204,6 +216,12 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() loading = true;
 
   @state() error = "";
+  /** E3 工作台状态（tab/历史锚点），由 URL 驱动。 */
+  @state() private wb: WorkbenchState = parseWorkbenchUrl(
+    typeof window !== 'undefined' ? window.location.search : '',
+  );
+  @state() private showTemplates = false;
+  private _boundPopState?: () => void;
 
   @state() devices: Thing[] = [];
 
@@ -534,6 +552,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
       }
     };
     document.addEventListener("thing-updated", this._boundHandleDeviceUpdated);
+    this._boundPopState = () => {
+      this.wb = parseWorkbenchUrl(window.location.search);
+    };
+    window.addEventListener("popstate", this._boundPopState);
     const path = window.location.pathname;
     if (path.startsWith("/things/")) {
       const id = path.split("/")[2];
@@ -555,6 +577,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     // 不断开 SSE — 缓存层管理连接生命周期
     document.removeEventListener("click", this._boundCloseTagEditor);
     document.removeEventListener("thing-updated", this._boundHandleDeviceUpdated);
+    if (this._boundPopState) window.removeEventListener("popstate", this._boundPopState);
   }
 
 
@@ -1804,7 +1827,91 @@ export class DevicesView extends SignalWatcher(LitElement) {
       return html`${this.renderDeviceDetail()}${this.renderConfirmModal()}`;
     }
 
-    return html`${this.renderUpgradeBanner()}${this.renderDeviceList()}${this.renderConfirmModal()}`;
+    const ws = getWorkspaceId() ?? '';
+    const historical = isHistorical(this.wb);
+    return html`
+      <div class="wb ${historical ? 'wb--history' : ''}">
+        ${this.renderWorkbenchHeader()}
+        ${
+          this.wb.tab === 'devices'
+            ? html`${this.renderUpgradeBanner()}${this.renderDeviceList()}`
+            : nothing
+        }
+        ${
+          this.wb.tab === 'flow'
+            ? html`<flow-timeline
+                .workspaceId=${ws}
+                .at=${this.wb.at}
+                .eventId=${this.wb.event}
+                .historical=${historical}
+              ></flow-timeline>`
+            : nothing
+        }
+        ${
+          this.wb.tab === 'world'
+            ? html`<world-view .workspaceId=${ws}></world-view>`
+            : nothing
+        }
+      </div>
+      ${
+        this.showTemplates
+          ? html`<template-library
+              .workspaceId=${ws}
+              @templates-closed=${() => {
+                this.showTemplates = false;
+              }}
+            ></template-library>`
+          : nothing
+      }
+      ${this.renderConfirmModal()}
+    `;
+  }
+
+  private setWorkbench(next: WorkbenchState): void {
+    this.wb = next;
+    window.history.pushState({}, '', `/things${toWorkbenchUrl(next)}`);
+    if (next.tab === 'devices' && !this.devices.length && !this.loading) {
+      void this.loadDevices();
+    }
+  }
+
+  private renderWorkbenchHeader() {
+    const tab = (id: WorkbenchState['tab'], label: string) => html`
+      <button
+        class="wb-tab ${this.wb.tab === id ? 'wb-tab--active' : ''}"
+        role="tab"
+        aria-selected=${this.wb.tab === id ? 'true' : 'false'}
+        @click=${() => this.setWorkbench({ ...this.wb, tab: id })}
+      >
+        ${label}
+      </button>
+    `;
+    return html`
+      <div class="wb-header">
+        <div class="wb-header__title">
+          <h2>设备工作台</h2>
+          ${this.wb.at ? html`<span class="wb-history-chip">历史回放 · ${this.wb.at}</span>` : nothing}
+        </div>
+        <div class="wb-tabs" role="tablist" aria-label="工作台视图">
+          ${tab('devices', '设备')} ${tab('flow', 'Flow')} ${tab('world', 'World')}
+        </div>
+        <div class="wb-header__actions">
+          ${
+            isHistorical(this.wb)
+              ? html`<button
+                  class="btn btn--primary btn--sm"
+                  @click=${() => this.setWorkbench(backToNow(this.wb))}
+                >
+                  回到现在
+                </button>`
+              : html`<span class="wb-live" role="status"><span class="wb-live__dot"></span>实时</span>`
+          }
+          <button class="btn btn--outline btn--sm" @click=${() => { this.showTemplates = true; }}>
+            模板库
+          </button>
+        </div>
+      </div>
+    `;
   }
 
 
