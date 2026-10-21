@@ -37,6 +37,100 @@ pub struct DynamicThingDriver {
 /// per-device workers with per-operation budgets.
 const CALL_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Spec §2.3: `describe()` must return within 2 s and at most 256 KiB.
+pub(crate) const DESCRIBE_TIMEOUT: Duration = Duration::from_secs(2);
+pub(crate) const MAX_JSON_OUTPUT_BYTES: usize = 256 * 1024;
+
+/// Convert a driver-allocated out-string into an owned `String`, enforcing
+/// the output cap and always releasing the driver's allocation.
+fn take_json_out(out_ptr: *mut c_char, free: extern "C" fn(*mut c_char), desc: &str) -> Result<String, Error> {
+    if out_ptr.is_null() {
+        return Err(Error::DriverError(format!("{desc} returned null")));
+    }
+    // SAFETY: the ABI contract says a non-null success out-pointer is a
+    // NUL-terminated allocation owned by the driver until `free_string`.
+    let bytes = unsafe { CStr::from_ptr(out_ptr) }.to_bytes();
+    if bytes.len() > MAX_JSON_OUTPUT_BYTES {
+        free(out_ptr);
+        return Err(Error::DriverError(format!(
+            "{desc} output exceeds {MAX_JSON_OUTPUT_BYTES} bytes"
+        )));
+    }
+    let s = String::from_utf8_lossy(bytes).into_owned();
+    free(out_ptr);
+    Ok(s)
+}
+
+/// Work item for the dedicated `describe` thread. `ctx` is an opaque driver
+/// pointer and `library` keeps the code mapped for the duration of the call.
+struct DescribeJob {
+    ctx: *mut c_void,
+    vtable: &'static DriverVTableV2,
+    config: std::ffi::CString,
+    _library: Option<Arc<Library>>,
+}
+
+// SAFETY: `ctx` is only ever passed back to the driver's own vtable function,
+// and the `Arc<Library>` keeps that code loaded while the thread runs.
+unsafe impl Send for DescribeJob {}
+
+/// Thread body for [`describe_with_timeout`]. Kept as a free function so the
+/// closure moves the whole `Send` job instead of disjoint-capturing `ctx`.
+fn run_describe_job(job: DescribeJob, tx: mpsc::Sender<Result<String, Error>>) {
+    let DescribeJob {
+        ctx,
+        vtable,
+        config,
+        _library,
+    } = job;
+    let mut out_ptr: *mut c_char = std::ptr::null_mut();
+    let ret = (vtable.describe)(ctx, config.as_ptr(), &mut out_ptr);
+    let result = if ret != 0 {
+        Err(Error::DriverError(format!("describe failed: code {ret}")))
+    } else {
+        take_json_out(out_ptr, vtable.free_string, "describe")
+    };
+    let _ = tx.send(result);
+}
+
+/// Run `describe()` on a dedicated thread with a hard deadline.
+///
+/// On timeout the thread is abandoned: the driver may still be executing, so
+/// we neither free its context nor unmap the library from this side. The
+/// worker owns a library clone, keeping the code valid until it finishes (or
+/// forever, if the driver never returns). This matches the E4a staging
+/// callback-timeout policy and is replaced by per-device workers in E4b.
+pub(crate) fn describe_with_timeout(
+    ctx: *mut c_void,
+    vtable: &'static DriverVTableV2,
+    config: std::ffi::CString,
+    library: Option<Arc<Library>>,
+    timeout: Duration,
+) -> Result<String, Error> {
+    let (tx, rx) = mpsc::channel();
+    let job = DescribeJob {
+        ctx,
+        vtable,
+        config,
+        _library: library,
+    };
+    std::thread::Builder::new()
+        .name("tinyiothub-driver-describe".into())
+        .spawn(move || run_describe_job(job, tx))
+        .map_err(|e| Error::DriverError(format!("failed to spawn describe worker: {e}")))?;
+
+    match rx.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(Error::DriverError(format!(
+            "describe timed out after {}ms",
+            timeout.as_millis()
+        ))),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err(Error::DriverError("describe worker exited without a result".into()))
+        }
+    }
+}
+
 /// Heap state shared with the driver's completion callback.
 ///
 /// The callback owns this allocation: it reclaims the box (and with it the
@@ -172,23 +266,11 @@ impl DynamicThingDriver {
         std::ffi::CString::new(config).map_err(|e| Error::DriverError(format!("invalid config JSON: {e}")))
     }
 
-    /// Helper: call an FFI function that returns a JSON string via out-pointer.
-    /// The string is freed via the driver's `free_string` function.
-    unsafe fn call_json_out<F>(&self, f: F, desc: &str) -> Result<String, Error>
-    where
-        F: FnOnce(*mut *mut c_char) -> i32,
-    {
-        let mut out_ptr: *mut c_char = std::ptr::null_mut();
-        let ret = f(&mut out_ptr);
-        if ret != 0 {
-            return Err(Error::DriverError(format!("{} failed: code {}", desc, ret)));
-        }
-        if out_ptr.is_null() {
-            return Err(Error::DriverError(format!("{} returned null", desc)));
-        }
-        let s = unsafe { CStr::from_ptr(out_ptr).to_string_lossy().to_string() };
-        (self.vtable.free_string)(out_ptr);
-        Ok(s)
+    /// Describe with an explicit deadline (tests use a short timeout).
+    fn describe_with_timeout(&mut self, timeout: Duration) -> Result<DeviceDeclaration, Error> {
+        let config_c = self.config_json()?;
+        let result_json = describe_with_timeout(self.ctx, self.vtable, config_c, self._library.clone(), timeout)?;
+        serde_json::from_str(&result_json).map_err(|e| Error::DriverError(format!("describe JSON parse error: {e}")))
     }
 }
 
@@ -266,14 +348,7 @@ impl ThingDriver for DynamicThingDriver {
     }
 
     fn describe(&mut self) -> Result<DeviceDeclaration, Error> {
-        let config_c = self.config_json()?;
-        let result_json = unsafe {
-            self.call_json_out(
-                |out| (self.vtable.describe)(self.ctx, config_c.as_ptr(), out),
-                "describe",
-            )?
-        };
-        serde_json::from_str(&result_json).map_err(|e| Error::DriverError(format!("describe JSON parse error: {e}")))
+        self.describe_with_timeout(DESCRIBE_TIMEOUT)
     }
 }
 
@@ -303,6 +378,20 @@ mod tests {
             *out = leak_json(r#"{"manifestVersion":"1","driver":"stub","driverVersion":"0.0.0"}"#);
         }
         0
+    }
+
+    extern "C" fn stub_describe_huge(_ctx: *mut c_void, _config: *const c_char, out: *mut *mut c_char) -> i32 {
+        let s = "x".repeat(MAX_JSON_OUTPUT_BYTES + 1);
+        // SAFETY: out is a valid out-pointer supplied by the adapter.
+        unsafe {
+            *out = leak_json(&s);
+        }
+        0
+    }
+
+    extern "C" fn stub_describe_slow(_ctx: *mut c_void, _config: *const c_char, out: *mut *mut c_char) -> i32 {
+        std::thread::sleep(Duration::from_millis(200));
+        stub_describe(std::ptr::null_mut(), std::ptr::null(), out)
     }
 
     extern "C" fn read_ok(
@@ -402,6 +491,24 @@ mod tests {
         free_string: stub_free_string,
     };
 
+    static HUGE_DESCRIBE_VTABLE: DriverVTableV2 = DriverVTableV2 {
+        version: 2,
+        read_async: read_ok,
+        execute_async: read_ok,
+        set_demand: stub_set_demand,
+        describe: stub_describe_huge,
+        free_string: stub_free_string,
+    };
+
+    static SLOW_DESCRIBE_VTABLE: DriverVTableV2 = DriverVTableV2 {
+        version: 2,
+        read_async: read_ok,
+        execute_async: read_ok,
+        set_demand: stub_set_demand,
+        describe: stub_describe_slow,
+        free_string: stub_free_string,
+    };
+
     static TIMEOUT_VTABLE: DriverVTableV2 = DriverVTableV2 {
         version: 2,
         read_async: read_never_done,
@@ -492,6 +599,37 @@ mod tests {
             token.strong_count(),
             2,
             "DoneState must outlive the call when no callback arrives"
+        );
+    }
+
+    #[test]
+    fn describe_returns_the_instance_declaration() {
+        let mut driver = test_driver(&OK_VTABLE);
+        let decl = driver.describe().expect("describe should succeed");
+        assert_eq!(decl.driver, "stub");
+        assert_eq!(decl.driver_version, "0.0.0");
+    }
+
+    #[test]
+    fn oversized_describe_output_is_rejected() {
+        let mut driver = test_driver(&HUGE_DESCRIBE_VTABLE);
+        let message = driver.describe().unwrap_err().to_string();
+        assert!(message.contains("exceeds"), "{message}");
+        assert!(message.contains("262144"), "{message}");
+    }
+
+    #[test]
+    fn hung_describe_times_out_without_blocking_the_caller() {
+        let mut driver = test_driver(&SLOW_DESCRIBE_VTABLE);
+        let started = std::time::Instant::now();
+        let message = driver
+            .describe_with_timeout(Duration::from_millis(20))
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("timed out"), "{message}");
+        assert!(
+            started.elapsed() < Duration::from_millis(150),
+            "describe must not wait for the hung driver"
         );
     }
 

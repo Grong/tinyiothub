@@ -102,6 +102,7 @@ pub fn validate_device_declaration(package: &DriverManifest, decl: &DeviceDeclar
                     field: field.clone(),
                 });
             }
+            super::manifest::validate_set_tool_schema(t, f)?;
         }
     }
     for s in &package.sources {
@@ -191,7 +192,7 @@ mod tests {
                 name: "set_level".into(),
                 kind: ToolKindDecl::Set,
                 target_field: Some("level".into()),
-                parameters: json!({"type":"object","properties":{"level":{"type":"integer"}},"required":["level"]}),
+                parameters: json!({"type":"object","properties":{"level":{"type":"integer","minimum":0,"maximum":100}},"required":["level"]}),
                 timeout: ToolTimeout::default(),
                 safety: ToolSafetyDecl::Control,
                 resources: vec![],

@@ -21,6 +21,8 @@ pub enum AccessError {
     Io(#[from] std::io::Error),
     #[error("driver '{0}' not installed in workspace '{1}'")]
     NotFound(String, String),
+    #[error("validation error: {0}")]
+    Validation(String),
     #[error("ABI error: {0}")]
     Abi(String),
     #[error("store error: {0}")]

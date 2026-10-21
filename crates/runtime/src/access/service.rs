@@ -93,16 +93,40 @@ impl AccessService {
     /// on-disk package and the previously loaded binary.
     pub async fn install_dir(&self, workspace_id: &str, src: &Path) -> Result<InstalledPackage, AccessError> {
         // 1. Validate the entire incoming package before touching anything.
-        let src_pkg = read_package(src)?;
-        if let Some(bin) = &src_pkg.binary_path {
-            DriverValidator::validate(bin, "{}").map_err(|e| AccessError::Abi(e.to_string()))?;
+        //    The workspace id must be non-empty: `""` is the built-in slot.
+        if workspace_id.trim().is_empty() {
+            return Err(AccessError::Validation(
+                "workspace id is required for driver install".into(),
+            ));
         }
+        let src_pkg = read_package(src)?;
         let id = &src_pkg.manifest.identity;
-        if id.dynamic_capabilities && src_pkg.binary_path.is_none() && !crate::driver::is_driver_supported(&id.driver) {
-            return Err(AccessError::Abi(format!(
-                "driver '{}' declares dynamic capabilities but ships no ABI v2 binary",
+        // Path-safe identity: these values become directory names below.
+        crate::driver::validation::validate_driver_name(&id.driver)
+            .map_err(|e| AccessError::Validation(e.to_string()))?;
+        tinyiothub_core::driver::manifest::validate_driver_version(&id.version)?;
+        // A workspace package must not shadow a built-in implementation:
+        // `create_driver` always prefers built-ins, so execution and the
+        // declaration would come from different sources.
+        if crate::driver::is_driver_supported(&id.driver) {
+            return Err(AccessError::Validation(format!(
+                "driver '{}' is a built-in implementation; install the package under a distinct driver name",
                 id.driver
             )));
+        }
+        // Anything we accept must be executable: a non-built-in package with
+        // no binary would materialize a declaration that can never poll.
+        if src_pkg.binary_path.is_none() {
+            return Err(AccessError::Validation(format!(
+                "driver '{}' ships no ABI v2 binary and is not a built-in implementation, so it cannot execute",
+                id.driver
+            )));
+        }
+        if let Some(bin) = &src_pkg.binary_path {
+            // Reject manifest/binary identity mismatches before committing
+            // (spec §2.2/§3.1), using the 2 s / 256 KiB describe limits.
+            DriverValidator::validate_identity(bin, &id.driver, &id.version)
+                .map_err(|e| AccessError::Abi(e.to_string()))?;
         }
 
         let driver_dir = self
@@ -225,7 +249,58 @@ impl AccessService {
         if had_backup {
             let _ = std::fs::remove_dir_all(&backup);
         }
-        self.manifests.install(workspace_id, pkg)
+        let mut installed = self.manifests.install(workspace_id, pkg)?;
+        // Re-describe/re-materialize devices already bound to this driver.
+        // Per-device failures keep the old declaration and never fail the
+        // install (spec §3.1: upgrade then drift is reported, not rolled back).
+        installed.warnings = self.rebind_bound_devices(workspace_id, &id.driver).await;
+        Ok(installed)
+    }
+
+    /// Re-bind every active device of `(workspace, driver)` after an install.
+    /// Returns human-readable warnings for devices that could not be
+    /// re-described; their previous declaration/projection is left untouched.
+    async fn rebind_bound_devices(&self, workspace_id: &str, driver: &str) -> Vec<String> {
+        let rows = match self.device_store.list_by_workspace(workspace_id).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::warn!(
+                    workspace_id,
+                    driver,
+                    error = %e,
+                    "failed to list bound devices for post-install re-materialization"
+                );
+                return vec![format!("could not list bound devices for re-materialization: {e}")];
+            }
+        };
+        let mut warnings = Vec::new();
+        for row in rows
+            .into_iter()
+            .filter(|r| r.driver_name == driver && r.status == "active")
+        {
+            let thing = match self.things.load_thing(&row.thing_id).await {
+                Ok(Some(thing)) => thing,
+                Ok(None) => {
+                    warnings.push(format!("thing '{}' no longer exists", row.thing_id));
+                    continue;
+                }
+                Err(e) => {
+                    warnings.push(format!("thing '{}' could not be loaded: {e}", row.thing_id));
+                    continue;
+                }
+            };
+            if let Err(e) = self.bind_thing(workspace_id, &thing).await {
+                tracing::warn!(
+                    workspace_id,
+                    driver,
+                    thing_id = %row.thing_id,
+                    error = %e,
+                    "post-install re-materialization failed; keeping the previous declaration"
+                );
+                warnings.push(format!("thing '{}' kept its previous declaration: {e}", row.thing_id));
+            }
+        }
+        warnings
     }
 
     pub fn get_manifest(&self, workspace_id: &str, driver: &str) -> Option<Arc<InstalledPackage>> {
@@ -233,8 +308,16 @@ impl AccessService {
     }
 
     pub fn package_dir(&self, workspace_id: &str, driver: &str) -> Option<PathBuf> {
+        if workspace_id.trim().is_empty() {
+            return None;
+        }
         let pkg = self.manifests.get(workspace_id, driver)?;
         let id = &pkg.manifest.identity;
+        if crate::driver::validation::validate_driver_name(&id.driver).is_err()
+            || tinyiothub_core::driver::manifest::validate_driver_version(&id.version).is_err()
+        {
+            return None;
+        }
         Some(
             self.data_dir
                 .join("drivers/workspaces")
@@ -341,6 +424,14 @@ impl AccessService {
     }
 
     fn rehydrate_row(&self, row: &DriverDeclarationRecord) -> Result<(), AccessError> {
+        // Rows come from the DB, but the path is still built from them:
+        // never trust persisted identity strings for path construction.
+        if row.workspace_id.trim().is_empty() {
+            return Err(AccessError::Validation("empty workspace id in persisted row".into()));
+        }
+        crate::driver::validation::validate_driver_name(&row.driver_name)
+            .map_err(|e| AccessError::Validation(e.to_string()))?;
+        tinyiothub_core::driver::manifest::validate_driver_version(&row.driver_version)?;
         let dir = self
             .data_dir
             .join("drivers/workspaces")
@@ -565,12 +656,46 @@ mod tests {
         dir
     }
 
+    /// A manifest-only package that is intentionally unusable, used for
+    /// "must reject" cases.
+    fn manifest_only_package(manifest: &str) -> tempfile::TempDir {
+        package_dir(manifest)
+    }
+
+    /// The vendored reference package (manifest + built cdylib). Returns
+    /// `None` when the cdylib has not been built, so runtime-only test runs
+    /// skip instead of failing.
+    fn demo_package() -> Option<tempfile::TempDir> {
+        demo_package_with_manifest(DEMO_REAL_MANIFEST)
+    }
+
+    fn demo_package_with_manifest(manifest: &str) -> Option<tempfile::TempDir> {
+        let lib = demo_cdylib()?;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(MANIFEST_FILE), manifest).unwrap();
+        let ext = lib.extension().and_then(|e| e.to_str()).unwrap_or("so");
+        std::fs::copy(&lib, dir.path().join(format!("driver.{ext}"))).unwrap();
+        Some(dir)
+    }
+
+    fn skip_without_demo_cdylib(test: &str) -> bool {
+        if demo_cdylib().is_none() {
+            eprintln!("skipping {test}: demo-declarative cdylib not built");
+            return true;
+        }
+        false
+    }
+
     fn thing(driver: &str) -> Thing {
+        thing_in("ws1", driver)
+    }
+
+    fn thing_in(workspace: &str, driver: &str) -> Thing {
         Thing {
             id: "t1".into(),
             name: "t1".into(),
             driver_name: Some(driver.into()),
-            workspace_id: Some("ws1".into()),
+            workspace_id: Some(workspace.into()),
             status: ThingStatus::Offline,
             ..Default::default()
         }
@@ -601,22 +726,75 @@ mod tests {
 
     #[tokio::test]
     async fn install_persists_package_and_records_active_row() {
+        if skip_without_demo_cdylib("install_persists_package_and_records_active_row") {
+            return;
+        }
+        let ws = unique_workspace("ws-install");
         let fx = fixture(None);
-        let src = package_dir(FIXED_MANIFEST);
+        let src = demo_package().expect("demo package");
 
-        let pkg = fx.service.install_dir("ws1", src.path()).await.unwrap();
+        let pkg = fx.service.install_dir(&ws, src.path()).await.unwrap();
 
-        assert_eq!(pkg.manifest.identity.driver, "demo");
+        assert_eq!(pkg.manifest.identity.driver, "demo-declarative");
+        assert!(pkg.warnings.is_empty(), "warnings: {:?}", pkg.warnings);
         let persisted = fx
             .service
-            .package_dir("ws1", "demo")
+            .package_dir(&ws, "demo-declarative")
             .expect("package dir should be resolvable");
         assert!(persisted.join(MANIFEST_FILE).is_file());
-        assert!(fx.service.get_manifest("ws1", "demo").is_some());
-        let rows = fx.driver_store.list_active("ws1").await.unwrap();
+        assert!(fx.service.get_manifest(&ws, "demo-declarative").is_some());
+        let rows = fx.driver_store.list_active(&ws).await.unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].status, "active");
         assert_eq!(rows[0].manifest_hash, pkg.manifest_hash);
+    }
+
+    #[tokio::test]
+    async fn install_rejects_path_traversal_and_empty_workspace() {
+        let fx = fixture(None);
+        // Driver name traversal: read_package accepts it (non-empty), the
+        // service must reject it before building any path.
+        let traversal = package_dir(&FIXED_MANIFEST.replace("\"driver\":\"demo\"", "\"driver\":\"../wsB/foo\""));
+        let err = fx.service.install_dir("ws1", traversal.path()).await.unwrap_err();
+        assert!(matches!(err, AccessError::Validation(_)), "{err:?}");
+
+        // Version traversal is rejected by manifest validation.
+        let bad_version = package_dir(&FIXED_MANIFEST.replace("\"version\":\"1.0.0\"", "\"version\":\"..\""));
+        assert!(fx.service.install_dir("ws1", bad_version.path()).await.is_err());
+        let oversized = format!("1.{}", "0".repeat(128));
+        let bad_version =
+            package_dir(&FIXED_MANIFEST.replace("\"version\":\"1.0.0\"", &format!("\"version\":\"{oversized}\"")));
+        assert!(fx.service.install_dir("ws1", bad_version.path()).await.is_err());
+
+        // Empty workspace would write into the built-in slot.
+        let src = package_dir(FIXED_MANIFEST);
+        let err = fx.service.install_dir("", src.path()).await.unwrap_err();
+        assert!(matches!(err, AccessError::Validation(_)), "{err:?}");
+        assert!(!fx.service.data_dir.join("drivers/workspaces").exists());
+    }
+
+    #[tokio::test]
+    async fn install_rejects_manifest_only_and_builtin_packages() {
+        let fx = fixture(None);
+        // Non-built-in without a binary: accepted by the old dynamic-only
+        // check, unusable at runtime.
+        let err = fx
+            .service
+            .install_dir("ws1", manifest_only_package(FIXED_MANIFEST).path())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AccessError::Validation(_)), "{err:?}");
+        assert!(err.to_string().contains("cannot execute"), "{err}");
+
+        // Built-in names must not be shadowed by a workspace package.
+        let builtin = DYNAMIC_MANIFEST.replace("demo-dynamic", "simulator");
+        let err = fx
+            .service
+            .install_dir("ws1", manifest_only_package(&builtin).path())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AccessError::Validation(_)), "{err:?}");
+        assert!(err.to_string().contains("built-in"), "{err}");
     }
 
     #[tokio::test]
@@ -640,61 +818,63 @@ mod tests {
         let fx = fixture(None);
         let src = package_dir(DYNAMIC_MANIFEST);
         let err = fx.service.install_dir("ws1", src.path()).await.unwrap_err();
-        assert!(matches!(err, AccessError::Abi(_)), "{err:?}");
+        assert!(matches!(err, AccessError::Validation(_)), "{err:?}");
         assert!(fx.service.get_manifest("ws1", "demo-dynamic").is_none());
     }
 
     #[tokio::test]
-    async fn builtin_dynamic_manifest_without_binary_is_allowed() {
+    async fn reinstall_replaces_the_whole_version_directory() {
+        if skip_without_demo_cdylib("reinstall_replaces_the_whole_version_directory") {
+            return;
+        }
+        let ws = unique_workspace("ws-reinstall");
         let fx = fixture(None);
-        let manifest = DYNAMIC_MANIFEST.replace("demo-dynamic", "simulator");
-        let src = package_dir(&manifest);
-        let pkg = fx.service.install_dir("ws1", src.path()).await.unwrap();
-        assert_eq!(pkg.manifest.identity.driver, "simulator");
-        assert!(pkg.binary_path.is_none());
-    }
+        let src = demo_package().expect("demo package");
+        let pkg = fx.service.install_dir(&ws, src.path()).await.unwrap();
+        let dest = fx
+            .service
+            .data_dir
+            .join("drivers/workspaces")
+            .join(&ws)
+            .join("demo-declarative/1.0.0");
+        let binary = pkg.binary_path.as_ref().expect("binary package");
+        let actual_ext = binary.extension().and_then(|e| e.to_str()).unwrap_or("so");
+        let stale_ext = if actual_ext == "dylib" { "so" } else { "dylib" };
+        std::fs::write(dest.join(format!("driver.{stale_ext}")), b"stale binary").unwrap();
 
-    #[tokio::test]
-    async fn manifest_only_reinstall_removes_stale_binary() {
-        let fx = fixture(None);
-        let src = package_dir(FIXED_MANIFEST);
-        fx.service.install_dir("ws1", src.path()).await.unwrap();
+        let pkg = fx.service.install_dir(&ws, src.path()).await.unwrap();
 
-        let dest = fx.service.data_dir.join("drivers/workspaces/ws1/demo/1.0.0");
-        std::fs::write(dest.join("driver.dylib"), b"stale binary").unwrap();
-
-        let pkg = fx.service.install_dir("ws1", src.path()).await.unwrap();
-
+        assert!(pkg.binary_path.is_some(), "binary package must stay binary");
         assert!(
-            pkg.binary_path.is_none(),
-            "manifest-only package must not carry a binary"
-        );
-        let active = fx.driver_store.list_active("ws1").await.unwrap();
-        assert!(
-            active.last().expect("active row").binary_hash.is_none(),
-            "manifest-only package must not record a binary hash"
-        );
-        assert!(
-            !dest.join("driver.dylib").exists(),
-            "stale binary survived a manifest-only reinstall"
+            !dest.join(format!("driver.{stale_ext}")).exists(),
+            "stale binary survived a reinstall"
         );
         assert!(dest.join(MANIFEST_FILE).is_file());
     }
 
     #[tokio::test]
     async fn corrupt_binary_is_rejected_before_the_working_package_is_touched() {
+        if skip_without_demo_cdylib("corrupt_binary_is_rejected_before_the_working_package_is_touched") {
+            return;
+        }
+        let ws = unique_workspace("ws-corrupt");
         let fx = fixture(None);
-        let src = package_dir(FIXED_MANIFEST);
-        fx.service.install_dir("ws1", src.path()).await.unwrap();
-        let dest = fx.service.data_dir.join("drivers/workspaces/ws1/demo/1.0.0");
+        let src = demo_package().expect("demo package");
+        fx.service.install_dir(&ws, src.path()).await.unwrap();
+        let dest = fx
+            .service
+            .data_dir
+            .join("drivers/workspaces")
+            .join(&ws)
+            .join("demo-declarative/1.0.0");
 
         let bad = tempfile::tempdir().unwrap();
-        std::fs::write(bad.path().join(MANIFEST_FILE), FIXED_MANIFEST).unwrap();
+        std::fs::write(bad.path().join(MANIFEST_FILE), DEMO_REAL_MANIFEST).unwrap();
         std::fs::write(bad.path().join("driver.so"), b"not a shared library").unwrap();
-        assert!(fx.service.install_dir("ws1", bad.path()).await.is_err());
+        assert!(fx.service.install_dir(&ws, bad.path()).await.is_err());
 
         assert!(
-            fx.service.get_manifest("ws1", "demo").is_some(),
+            fx.service.get_manifest(&ws, "demo-declarative").is_some(),
             "working manifest must remain installed"
         );
         assert!(dest.join(MANIFEST_FILE).is_file());
@@ -702,7 +882,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn binary_identity_mismatch_is_rejected_before_commit() {
+        if skip_without_demo_cdylib("binary_identity_mismatch_is_rejected_before_commit") {
+            return;
+        }
+        let fx = fixture(None);
+        let mismatched = DEMO_REAL_MANIFEST.replace("\"driver\": \"demo-declarative\"", "\"driver\": \"demo-other\"");
+        let src = demo_package_with_manifest(&mismatched).expect("demo package");
+        let err = fx.service.install_dir("ws1", src.path()).await.unwrap_err();
+        assert!(matches!(err, AccessError::Abi(_)), "{err:?}");
+        assert!(err.to_string().contains("identity mismatch"), "{err}");
+        assert!(fx.service.get_manifest("ws1", "demo-other").is_none());
+    }
+
+    #[tokio::test]
+    async fn install_rematerializes_already_bound_devices() {
+        if skip_without_demo_cdylib("install_rematerializes_already_bound_devices") {
+            return;
+        }
+        let ws = unique_workspace("ws-rematerialize");
+        let t = thing_in(&ws, "demo-declarative");
+        let fx = fixture(Some(t.clone()));
+        let src = demo_package().expect("demo package");
+        fx.service.install_dir(&ws, src.path()).await.unwrap();
+        fx.service.bind_thing(&ws, &t).await.unwrap();
+
+        // Same identity/version, but the package now declares an extra state
+        // field. Bound devices must pick it up without being recreated.
+        let updated = DEMO_REAL_MANIFEST.replace(
+            "\"stateFields\": [",
+            "\"stateFields\": [{\"name\":\"temp\",\"type\":\"float\",\"required\":false},",
+        );
+        let src = demo_package_with_manifest(&updated).expect("updated package");
+        let pkg = fx.service.install_dir(&ws, src.path()).await.unwrap();
+        assert!(pkg.warnings.is_empty(), "warnings: {:?}", pkg.warnings);
+
+        let rows = fx.device_store.list_by_workspace(&ws).await.unwrap();
+        let latest = rows.last().expect("re-materialized row");
+        assert!(
+            latest.declaration_json.contains("\"temp\""),
+            "bound device kept the old declaration: {}",
+            latest.declaration_json
+        );
+        assert!(
+            fx.projection.props.lock().unwrap().contains(&"temp".to_string()),
+            "projection was not refreshed"
+        );
+    }
+
+    #[tokio::test]
+    async fn install_records_a_warning_when_a_bound_device_cannot_rebind() {
+        if skip_without_demo_cdylib("install_records_a_warning_when_a_bound_device_cannot_rebind") {
+            return;
+        }
+        // `FakeThings(None)` cannot load the bound thing: install succeeds
+        // but reports the per-device failure instead of rolling back.
+        let ws = unique_workspace("ws-warning");
+        let fx = fixture(None);
+        fx.device_store
+            .upsert(&DeviceDeclarationRecord {
+                workspace_id: ws.clone(),
+                thing_id: "gone".into(),
+                driver_name: "demo-declarative".into(),
+                driver_version: "1.0.0".into(),
+                declaration_json: "{}".into(),
+                declaration_hash: "h".into(),
+                status: "active".into(),
+                updated_at: "2026-10-21".into(),
+            })
+            .await
+            .unwrap();
+        let src = demo_package().expect("demo package");
+        let pkg = fx.service.install_dir(&ws, src.path()).await.unwrap();
+        assert_eq!(pkg.warnings.len(), 1, "warnings: {:?}", pkg.warnings);
+        assert!(pkg.warnings[0].contains("gone"), "{:?}", pkg.warnings);
+        assert!(fx.service.get_manifest(&ws, "demo-declarative").is_some());
+    }
+
+    #[tokio::test]
     async fn db_failure_is_reported_and_package_is_not_registered() {
+        if skip_without_demo_cdylib("db_failure_is_reported_and_package_is_not_registered") {
+            return;
+        }
         let data = tempfile::tempdir().unwrap();
         let service = AccessService::new(
             data.path().to_path_buf(),
@@ -713,29 +974,34 @@ mod tests {
             Arc::new(FakeThings(None)),
             Arc::new(FakeAcceptance),
         );
-        let src = package_dir(FIXED_MANIFEST);
-        let err = service.install_dir("ws1", src.path()).await.unwrap_err();
+        let src = demo_package().expect("demo package");
+        let ws = unique_workspace("ws-dbfail");
+        let err = service.install_dir(&ws, src.path()).await.unwrap_err();
         assert!(matches!(err, AccessError::Store(_)), "{err:?}");
-        assert!(service.get_manifest("ws1", "demo").is_none());
+        assert!(service.get_manifest(&ws, "demo-declarative").is_none());
     }
 
     #[tokio::test]
     async fn bind_fixed_driver_persists_and_materializes_declaration() {
-        let t = thing("demo");
+        if skip_without_demo_cdylib("bind_fixed_driver_persists_and_materializes_declaration") {
+            return;
+        }
+        let ws = unique_workspace("ws-bind");
+        let t = thing_in(&ws, "demo-declarative");
         let fx = fixture(Some(t.clone()));
-        let src = package_dir(FIXED_MANIFEST);
-        fx.service.install_dir("ws1", src.path()).await.unwrap();
+        let src = demo_package().expect("demo package");
+        fx.service.install_dir(&ws, src.path()).await.unwrap();
 
-        let decl = fx.service.bind_thing("ws1", &t).await.unwrap();
+        let decl = fx.service.bind_thing(&ws, &t).await.unwrap();
 
-        assert_eq!(decl.driver, "demo");
+        assert_eq!(decl.driver, "demo-declarative");
         assert_eq!(decl.state_fields[0].name, "level");
         assert_eq!(fx.projection.props.lock().unwrap().as_slice(), ["level"]);
-        let rows = fx.device_store.list_by_workspace("ws1").await.unwrap();
+        let rows = fx.device_store.list_by_workspace(&ws).await.unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].declaration_hash.len(), 64);
         // Cached: second read must not hit the store (store returns the same row).
-        let loaded = fx.service.load_declaration("ws1", "t1").await.unwrap().unwrap();
+        let loaded = fx.service.load_declaration(&ws, "t1").await.unwrap().unwrap();
         assert_eq!(loaded, decl);
         assert_eq!(fx.things.0.as_ref().unwrap().id, "t1");
     }

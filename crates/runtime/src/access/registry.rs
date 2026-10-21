@@ -16,6 +16,9 @@ pub struct InstalledPackage {
     pub manifest: DriverManifest,
     pub manifest_hash: String,
     pub binary_path: Option<std::path::PathBuf>,
+    /// Non-fatal problems after the package became active (e.g. a bound
+    /// device that could not be re-described and kept its old declaration).
+    pub warnings: Vec<String>,
 }
 
 pub struct ManifestRegistry {
@@ -39,6 +42,7 @@ impl ManifestRegistry {
             manifest: manifest.clone(),
             manifest_hash: hex_sha256(manifest_json.as_bytes()),
             binary_path: None,
+            warnings: Vec::new(),
         });
         self.active
             .write()
@@ -52,6 +56,7 @@ impl ManifestRegistry {
             manifest: pkg.manifest,
             manifest_hash: pkg.manifest_hash,
             binary_path: pkg.binary_path,
+            warnings: Vec::new(),
         };
         self.active.write().insert(
             (workspace_id.to_string(), installed.manifest.identity.driver.clone()),

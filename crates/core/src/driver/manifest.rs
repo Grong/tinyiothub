@@ -267,6 +267,10 @@ pub enum ManifestError {
     UnsupportedAbi(u32),
     #[error("identity.driver must not be empty")]
     EmptyDriver,
+    #[error("identity.version '{0}' is invalid (expected 1-64 chars from [A-Za-z0-9._+-], not '.' or '..')")]
+    InvalidDriverVersion(String),
+    #[error("set tool '{tool}' schema does not match its target field: {detail}")]
+    SetToolSchemaMismatch { tool: String, detail: String },
     #[error("duplicate {kind}: {name}")]
     Duplicate { kind: &'static str, name: String },
     #[error("tool '{0}' parameters must be an object schema")]
@@ -311,6 +315,90 @@ pub fn negotiate_manifest_version(v: &str) -> Result<(u32, u32), ManifestError> 
     Ok((major, minor))
 }
 
+/// Validate `identity.version` as a path-safe, printable version token.
+///
+/// The version becomes a directory name under the workspace package store,
+/// so path separators and `.`/`..` must never be accepted.
+pub fn validate_driver_version(version: &str) -> Result<(), ManifestError> {
+    let valid = !version.is_empty()
+        && version.len() <= 64
+        && version != "."
+        && version != ".."
+        && version
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'+' | b'-'));
+    if valid {
+        Ok(())
+    } else {
+        Err(ManifestError::InvalidDriverVersion(version.to_string()))
+    }
+}
+
+/// Enforce the spec §2.1 `set` tool contract: `parameters` declares exactly
+/// the `targetField`, with the same type, range and required-ness as the
+/// corresponding state field.
+pub(crate) fn validate_set_tool_schema(t: &ManifestTool, field: &StateFieldDecl) -> Result<(), ManifestError> {
+    let mismatch = |detail: String| ManifestError::SetToolSchemaMismatch {
+        tool: t.name.clone(),
+        detail,
+    };
+    let obj = t
+        .parameters
+        .as_object()
+        .ok_or_else(|| ManifestError::InvalidToolSchema(t.name.clone()))?;
+    let props = obj
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| mismatch("parameters.properties must be an object".into()))?;
+    if props.len() != 1 || !props.contains_key(&field.name) {
+        return Err(mismatch(format!(
+            "parameters.properties must contain exactly '{}'",
+            field.name
+        )));
+    }
+    let prop = props
+        .get(&field.name)
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| mismatch(format!("parameter '{}' must be an object schema", field.name)))?;
+    let data_type = prop
+        .get("type")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| mismatch(format!("parameter '{}' must declare a type", field.name)))?;
+    if data_type != field.data_type {
+        return Err(mismatch(format!(
+            "parameter type '{}' does not match state field type '{}'",
+            data_type, field.data_type
+        )));
+    }
+
+    let expected_min = field.range.as_ref().and_then(|r| r.min);
+    let expected_max = field.range.as_ref().and_then(|r| r.max);
+    let bound = |key: &str| -> Result<Option<f64>, ManifestError> {
+        match prop.get(key) {
+            None => Ok(None),
+            Some(v) => v
+                .as_f64()
+                .map(Some)
+                .ok_or_else(|| mismatch(format!("{key} must be a number"))),
+        }
+    };
+    let (actual_min, actual_max) = (bound("minimum")?, bound("maximum")?);
+    if actual_min != expected_min || actual_max != expected_max {
+        return Err(mismatch(format!(
+            "parameter range [{actual_min:?}, {actual_max:?}] does not match state field range [{expected_min:?}, {expected_max:?}]"
+        )));
+    }
+
+    let required = obj
+        .get("required")
+        .and_then(|v| v.as_array())
+        .is_some_and(|r| r.iter().any(|v| v.as_str() == Some(field.name.as_str())));
+    if !required {
+        return Err(mismatch(format!("required must include '{}'", field.name)));
+    }
+    Ok(())
+}
+
 pub fn validate_manifest(m: &DriverManifest) -> Result<(), ManifestError> {
     negotiate_manifest_version(&m.manifest_version)?;
     if m.identity.abi_version != DRIVER_ABI_V2 {
@@ -319,6 +407,7 @@ pub fn validate_manifest(m: &DriverManifest) -> Result<(), ManifestError> {
     if m.identity.driver.trim().is_empty() {
         return Err(ManifestError::EmptyDriver);
     }
+    validate_driver_version(&m.identity.version)?;
     if m.limits.max_concurrent_jobs == 0 || m.limits.max_calls_per_min == 0 {
         return Err(ManifestError::InvalidLimits);
     }
@@ -371,6 +460,7 @@ pub fn validate_manifest(m: &DriverManifest) -> Result<(), ManifestError> {
                     field: field.clone(),
                 });
             }
+            validate_set_tool_schema(t, decl)?;
         }
     }
     for s in &m.sources {
@@ -468,6 +558,64 @@ mod tests {
         assert!(matches!(
             validate_manifest(&m),
             Err(ManifestError::UnknownTargetField { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_identity_version_tokens() {
+        for bad in ["", ".", "..", "../x", "1/2", &"1".repeat(65)] {
+            let mut v = valid_manifest_json();
+            v["identity"]["version"] = json!(bad);
+            let m: DriverManifest = serde_json::from_value(v).unwrap();
+            assert!(
+                matches!(validate_manifest(&m), Err(ManifestError::InvalidDriverVersion(_))),
+                "version {bad:?} must be rejected"
+            );
+        }
+        assert!(validate_driver_version("1.0.0+build_2-a").is_ok());
+    }
+
+    #[test]
+    fn rejects_set_tool_with_extra_parameter() {
+        let mut v = valid_manifest_json();
+        v["tools"][0]["parameters"]["properties"]["extra"] = json!({"type": "string"});
+        let m: DriverManifest = serde_json::from_value(v).unwrap();
+        assert!(matches!(
+            validate_manifest(&m),
+            Err(ManifestError::SetToolSchemaMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_set_tool_with_mismatched_type() {
+        let mut v = valid_manifest_json();
+        v["tools"][0]["parameters"]["properties"]["level"]["type"] = json!("string");
+        let m: DriverManifest = serde_json::from_value(v).unwrap();
+        assert!(matches!(
+            validate_manifest(&m),
+            Err(ManifestError::SetToolSchemaMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_set_tool_with_mismatched_range() {
+        let mut v = valid_manifest_json();
+        v["tools"][0]["parameters"]["properties"]["level"]["maximum"] = json!(200);
+        let m: DriverManifest = serde_json::from_value(v).unwrap();
+        assert!(matches!(
+            validate_manifest(&m),
+            Err(ManifestError::SetToolSchemaMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_set_tool_missing_required_field() {
+        let mut v = valid_manifest_json();
+        v["tools"][0]["parameters"]["required"] = json!([]);
+        let m: DriverManifest = serde_json::from_value(v).unwrap();
+        assert!(matches!(
+            validate_manifest(&m),
+            Err(ManifestError::SetToolSchemaMismatch { .. })
         ));
     }
 
