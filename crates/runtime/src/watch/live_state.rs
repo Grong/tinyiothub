@@ -50,7 +50,11 @@ pub struct DeviceSnapshot {
     pub health: Health,
     pub online: bool,
     pub zone: String,
+    /// Properties with a reported value (rendered into the prompt).
     pub values: Vec<(String, String)>,
+    /// Declared property names from the cached thing (E4b: snapshot reads
+    /// record demand for unsampled declared properties too).
+    pub properties: Vec<String>,
 }
 
 impl Health {
@@ -169,6 +173,11 @@ impl LiveState {
                     online: live.online,
                     zone: self.derive_zone(id),
                     values: live.values.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                    properties: cached
+                        .properties
+                        .as_ref()
+                        .map(|props| props.iter().map(|p| p.name.clone()).collect())
+                        .unwrap_or_default(),
                 })
             })
             .collect();

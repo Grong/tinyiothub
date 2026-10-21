@@ -236,20 +236,20 @@ impl Tool for ReadDeviceTool {
                 }
             }
         }
-        // 读取成功（物存在）→ 记录需求：显式 properties 只记存在项，
-        // 否则记返回的每个属性。失败/未找到在更早处已返回，不会写入。
+        // 读取成功（物存在）→ 记录需求。显式 properties 记全部请求名
+        // （即使当前未采样、state 里没有值——这正是需求要拉起的场景）；
+        // 缺省则记该物全部声明属性，不把 LiveState 里的未声明键当成需求。
+        // 失败/未找到在更早处已返回，不会写入。
         if let Some(demand) = &self.demand {
             match &input.properties {
                 Some(wanted) => {
                     for property in wanted {
-                        if state.contains_key(property) {
-                            demand.record_read(&self.workspace_id, &input.thing_id, property);
-                        }
+                        demand.record_read(&self.workspace_id, &input.thing_id, property);
                     }
                 }
                 None => {
-                    for property in state.keys() {
-                        demand.record_read(&self.workspace_id, &input.thing_id, property);
+                    for property in self.thing_service.load_property_names(&input.thing_id).await {
+                        demand.record_read(&self.workspace_id, &input.thing_id, &property);
                     }
                 }
             }

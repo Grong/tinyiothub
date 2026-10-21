@@ -11,6 +11,13 @@
 /// loop on those (resonance guard, O21).
 pub use tinyiothub_core::models::event::ThingEventSignal;
 
+/// E4b §3.2: sink for "the turn-start workspace snapshot read these
+/// properties" signals. Cloud injects its demand-tracker adapter; this crate
+/// never names the access service.
+pub trait SnapshotDemandSink: Send + Sync {
+    fn record_read(&self, workspace_id: &str, thing_id: &str, property: &str);
+}
+
 /// 工作区自治策略读取端口（Task 13：斩断 runtime → 存储实现边）。
 ///
 /// 运行时需要按工作区读取自治策略（mode/配额）做 gate；具体持久化实现住

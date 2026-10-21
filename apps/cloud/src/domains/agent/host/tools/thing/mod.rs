@@ -304,6 +304,7 @@ pub fn create_thing_tools(
             thing_service: thing_service.clone(),
             workspace_id: ws.clone(),
             live: runtime.live.clone(),
+            demand: runtime.demand.clone(),
         })))),
         read_only(Box::new(device::HiddenTool(Box::new(ReadPropertyTool {
             thing_service: thing_service.clone(),
@@ -749,27 +750,40 @@ mod tests {
             demand: Some(demand.clone()),
         };
 
-        // Explicit properties: only requested *existing* ones are recorded.
+        // Explicit properties: every requested name is recorded — including
+        // ones absent from the current state (unsampled), which is exactly
+        // the case demand is meant to pull into sampling.
         tool.execute(serde_json::json!({"thingId": thing_id, "properties": ["温度", "不存在"]}))
             .await
             .unwrap();
         assert_eq!(
             demand.reads(),
-            vec![("ws".to_string(), thing_id.clone(), "温度".to_string())],
-            "only requested properties that exist are recorded"
-        );
-
-        // No properties arg: every returned state property is recorded.
-        demand.0.lock().unwrap().clear();
-        tool.execute(serde_json::json!({"thingId": thing_id})).await.unwrap();
-        let mut reads = demand.reads();
-        reads.sort();
-        assert_eq!(
-            reads,
             vec![
                 ("ws".to_string(), thing_id.clone(), "温度".to_string()),
-                ("ws".to_string(), thing_id.clone(), "湿度".to_string()),
-            ]
+                ("ws".to_string(), thing_id.clone(), "不存在".to_string()),
+            ],
+            "every requested property is recorded, sampled or not"
+        );
+
+        // Requested-but-unsampled (never present in LiveState) still records.
+        demand.0.lock().unwrap().clear();
+        tool.execute(serde_json::json!({"thingId": thing_id, "properties": ["未采样"]}))
+            .await
+            .unwrap();
+        assert_eq!(
+            demand.reads(),
+            vec![("ws".to_string(), thing_id.clone(), "未采样".to_string())],
+            "unsampled requested property must gain demand"
+        );
+
+        // No properties arg: every *declared* property is recorded; the
+        // undeclared LiveState key 湿度 is not.
+        demand.0.lock().unwrap().clear();
+        tool.execute(serde_json::json!({"thingId": thing_id})).await.unwrap();
+        assert_eq!(
+            demand.reads(),
+            vec![("ws".to_string(), thing_id.clone(), "温度".to_string())],
+            "only declared properties are recorded when properties is omitted"
         );
 
         // Failure path records nothing.

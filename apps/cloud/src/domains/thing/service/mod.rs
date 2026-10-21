@@ -541,6 +541,20 @@ impl ThingService {
         }
     }
 
+    /// Declared property names for a thing (E4b demand recording).
+    ///
+    /// Best-effort: a storage error yields an empty list — demand bookkeeping
+    /// must never fail the read tool whose output is already built.
+    pub async fn load_property_names(&self, thing_id: &str) -> Vec<String> {
+        match self.db.find_thing_properties_by_thing_id(thing_id).await {
+            Ok(props) => props.into_iter().map(|p| p.name).collect(),
+            Err(e) => {
+                tracing::warn!(thing_id, error = %e, "failed to load declared property names for demand tracking");
+                Vec::new()
+            }
+        }
+    }
+
     /// Load properties from the storage layer (single source of SQL for
     /// thing_properties — eng-review T9). No template fallback: the blueprint
     /// model means a thing with no instances has no properties (D6).

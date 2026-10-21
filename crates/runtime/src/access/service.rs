@@ -524,6 +524,7 @@ impl super::validator::AccessCallValidator for AccessService {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+    use std::time::{Duration, Instant};
     use tinyiothub_core::driver::declaration::AcceptanceReportRecord;
     use tinyiothub_core::driver::manifest::{ManifestTool, StateFieldDecl};
     use tinyiothub_core::models::thing::{Thing, ThingStatus};
@@ -1268,6 +1269,40 @@ mod tests {
         assert!(!demand.has_subscription_demand("ws1", "t1", "telemetry"));
         // Unknown ids are no-ops.
         assert!(!fx.service.touch_subscription(&id));
+        fx.service.unsubscribe(&id);
+    }
+
+    #[test]
+    fn subscribe_uses_the_30s_ttl_boundary() {
+        let fx = fixture(None);
+        let things = vec!["t1".to_string()];
+        let sources = vec!["telemetry".to_string()];
+
+        // subscribe() uses the current instant internally; bracket it so the
+        // 29s / 31s assertions pin TTL=30s regardless of scheduling jitter.
+        let before = Instant::now();
+        let id = fx.service.subscribe("ws1", &things, &sources);
+        let after = Instant::now();
+
+        assert!(
+            fx.demand
+                .has_subscription_demand_at("ws1", "t1", "telemetry", before + Duration::from_secs(29)),
+            "subscription must still demand at 29s"
+        );
+        assert!(
+            !fx.demand
+                .has_subscription_demand_at("ws1", "t1", "telemetry", after + Duration::from_secs(31)),
+            "subscription must be expired by 31s"
+        );
+
+        // touch renews the full TTL from the touch instant.
+        assert!(fx.service.touch_subscription(&id));
+        assert!(fx.demand.has_subscription_demand_at(
+            "ws1",
+            "t1",
+            "telemetry",
+            Instant::now() + Duration::from_secs(29)
+        ));
         fx.service.unsubscribe(&id);
     }
 }

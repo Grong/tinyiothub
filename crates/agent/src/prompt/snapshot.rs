@@ -150,6 +150,7 @@ mod tests {
             online: true,
             zone: zone.into(),
             values: vec![("温度".into(), "31.5".into())],
+            properties: vec!["温度".into()],
         }
     }
 
@@ -205,6 +206,7 @@ mod tests {
                 online: i % 5 != 0,
                 zone: "园区A/3号楼".into(),
                 values: values.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                properties: values.keys().cloned().collect(),
             })
             .collect();
         let snap = WorkspaceSnapshot {

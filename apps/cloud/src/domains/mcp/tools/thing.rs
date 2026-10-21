@@ -230,7 +230,7 @@ impl ToolHandler for ThingPropertyGetHandler {
             .as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        let _workspace_id = crate::domains::mcp::handlers::get_mcp_context()
+        let workspace_id = crate::domains::mcp::handlers::get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
@@ -254,6 +254,11 @@ impl ToolHandler for ThingPropertyGetHandler {
                     input.property_name, input.thing_id
                 ))
             })?;
+
+        // E4b §3.2：读取成功即记录需求（失败/未找到在上方已 return）。
+        if let Some(access) = &state.access {
+            access.record_read(&workspace_id, &input.thing_id, &prop.name);
+        }
 
         let current_value = state
             .device_cache

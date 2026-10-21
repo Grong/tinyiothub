@@ -463,6 +463,10 @@ impl ServiceManager {
             }
 
             let thing_agent_manager = runtime.thing_agents().clone();
+            // E4b §3.2：turn 开头工作区快照的声明属性读取也计入需求。
+            thing_agent_manager.set_snapshot_demand_sink(Arc::new(
+                crate::shared::access_ports::AccessSnapshotDemandSink(access.clone()),
+            ));
             // E1 Task 10：manager 就绪，LiveState 读面槽封口——此后工具查询
             // 经 watch 命令通道生效（此前 live=null）。
             live_summary_slot.set(thing_agent_manager.clone());

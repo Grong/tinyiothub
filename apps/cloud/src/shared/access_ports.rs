@@ -93,6 +93,16 @@ impl ThingDeclarationSource for DbThingSource {
     }
 }
 
+/// E4b §3.2：agent crate 的 turn 快照需求出口 → 共享 DemandTracker
+/// （经 AccessService，与 sampler / 读工具同一实例）。
+pub struct AccessSnapshotDemandSink(pub Arc<tinyiothub_runtime::access::service::AccessService>);
+
+impl tinyiothub_agent::runtime::thing_agent::SnapshotDemandSink for AccessSnapshotDemandSink {
+    fn record_read(&self, workspace_id: &str, thing_id: &str, property: &str) {
+        self.0.record_read(workspace_id, thing_id, property);
+    }
+}
+
 pub struct DbAcceptanceStore(pub Arc<Db>);
 
 #[async_trait]

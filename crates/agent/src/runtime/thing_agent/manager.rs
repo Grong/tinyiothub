@@ -41,7 +41,7 @@ use crate::runtime::thing_agent::registry::RunRegistry;
 use crate::runtime::thing_agent::runner::{AgentHandle, RunContext, RunContextInner, Runner};
 use crate::runtime::thing_agent::scheduler::{EnqueueError, Scheduler, SchedulerHandle};
 use crate::runtime::thing_agent::traits::{
-    AutonomyPolicyReader, DirectiveSink, HeartbeatTaskReader, ThingAgentHost, TrustConfigReader,
+    AutonomyPolicyReader, DirectiveSink, HeartbeatTaskReader, SnapshotDemandSink, ThingAgentHost, TrustConfigReader,
 };
 use crate::runtime::thing_agent::trigger::{HeartbeatTrigger, ThingEventTrigger, TimerTrigger, Trigger, WatchTrigger};
 use crate::runtime::thing_agent::types::{HeartbeatAlarmContext, TriggerSource, WakeSignal};
@@ -157,6 +157,9 @@ struct PipelineDeps {
     /// heartbeat 源最近 tick 完成时间表（Task 12，D13 实时读透出）——成败均计，
     /// 与 governor 记账同一落点（record_heartbeat_outcome 两条路径共用）。
     last_ticks: Arc<DashMap<String, chrono::DateTime<chrono::Utc>>>,
+    /// E4b §3.2：turn 开头工作区快照的读取需求出口（`set_snapshot_demand_sink`
+    /// 注入）。None = 未接线（测试/边缘形态）。
+    snapshot_demand: Arc<std::sync::RwLock<Option<Arc<dyn SnapshotDemandSink>>>>,
 }
 
 /// One running workspace loop: the scheduler handle plus the trigger/forward
@@ -188,6 +191,8 @@ pub struct ThingAgentManager {
     /// E1 限速事件账本（spec §3）：None 时 scheduler 只留 metric（测试/
     /// 边缘形态）；bootstrap 接线后 start 的工作区落账 kind=rate_limited。
     wake_ledger: std::sync::Mutex<Option<Arc<dyn tinyiothub_runtime::ports::HubLedger>>>,
+    /// E4b §3.2：快照读取需求出口（与 `deps.snapshot_demand` 共享同一锁）。
+    snapshot_demand: Arc<std::sync::RwLock<Option<Arc<dyn SnapshotDemandSink>>>>,
     /// E1 watch 值守构建依赖（Task 8）：bootstrap 注入（`set_watch_deps`，
     /// 与 set_wake_ledger 同序约束——只影响其后 start 的工作区）；None =
     /// watch 未接线（测试/边缘形态），loop 不含 engine/trigger 任务。
@@ -213,6 +218,8 @@ impl ThingAgentManager {
         heartbeat: HeartbeatDeps,
     ) -> Self {
         let watch_cmds: Arc<DashMap<String, mpsc::Sender<WatchCommand>>> = Arc::new(DashMap::new());
+        let snapshot_demand: Arc<std::sync::RwLock<Option<Arc<dyn SnapshotDemandSink>>>> =
+            Arc::new(std::sync::RwLock::new(None));
         Self {
             deps: PipelineDeps {
                 watch_cmds: Arc::clone(&watch_cmds),
@@ -231,6 +238,7 @@ impl ThingAgentManager {
                 heartbeat_enabled: heartbeat.enabled.clone(),
                 governor: heartbeat.governor.clone(),
                 last_ticks: heartbeat.last_ticks.clone(),
+                snapshot_demand: Arc::clone(&snapshot_demand),
             },
             config,
             workspaces: DashMap::new(),
@@ -238,6 +246,7 @@ impl ThingAgentManager {
             heartbeat_reload_notifies: DashMap::new(),
             rate_limits: Arc::new(DashMap::new()),
             wake_ledger: std::sync::Mutex::new(None),
+            snapshot_demand,
             watch_deps: std::sync::Mutex::new(None),
             watch_cmds,
         }
@@ -498,6 +507,12 @@ impl ThingAgentManager {
         *self.wake_ledger.lock().expect("wake_ledger poisoned") = Some(ledger);
     }
 
+    /// E4b §3.2：注入 turn 快照读取需求出口。可在 start 后调用——pipeline
+    /// 每次 run 读取共享槽，只影响其后的 run。
+    pub fn set_snapshot_demand_sink(&self, sink: Arc<dyn SnapshotDemandSink>) {
+        *self.snapshot_demand.write().expect("snapshot_demand poisoned") = Some(sink);
+    }
+
     // ── E1 watch 值守（Task 8）：构建依赖注入 + API 写穿命令通道 ──────────
 
     /// watch 构建依赖接线（bootstrap，与 set_wake_ledger 同序约束——必须在
@@ -669,6 +684,7 @@ fn record_heartbeat_outcome(
 async fn fetch_workspace_snapshot(
     cmds: &Arc<DashMap<String, mpsc::Sender<WatchCommand>>>,
     workspace_id: &str,
+    demand: Option<&dyn SnapshotDemandSink>,
 ) -> (Option<String>, Option<tinyiothub_core::agent_runs::SnapshotMetrics>) {
     let Some(sink) = cmds.get(workspace_id).map(|s| s.clone()) else {
         return (None, None);
@@ -679,6 +695,15 @@ async fn fetch_workspace_snapshot(
     }
     match tokio::time::timeout(Duration::from_millis(120), reply_rx).await {
         Ok(Ok(Some(snapshot))) => {
+            // E4b §3.2：快照装配属于一次读取——按设备声明属性记需求
+            // （只记声明项，不把 LiveState 里的未声明键当作需求）。
+            if let Some(sink) = demand {
+                for device in &snapshot.devices {
+                    for property in &device.properties {
+                        sink.record_read(workspace_id, &device.thing_id, property);
+                    }
+                }
+            }
             let (body, metrics) = crate::prompt::snapshot::render_snapshot(&snapshot);
             if body.is_empty() {
                 (None, None)
@@ -763,7 +788,13 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
     };
 
     // E2：turn 开头工作区快照（fail-soft：超时/无 engine → 空段，run 照常）。
-    let (snapshot_body, snapshot_metrics) = fetch_workspace_snapshot(&deps.watch_cmds, &ws).await;
+    let snapshot_demand = deps
+        .snapshot_demand
+        .read()
+        .ok()
+        .and_then(|sink| sink.as_ref().map(Arc::clone));
+    let (snapshot_body, snapshot_metrics) =
+        fetch_workspace_snapshot(&deps.watch_cmds, &ws, snapshot_demand.as_deref()).await;
     if let Some(metrics) = snapshot_metrics {
         ctx.inner.write().await.snapshot = Some(metrics);
     }
@@ -2568,5 +2599,64 @@ pub(crate) mod tests {
         let s = rx.await.expect("reply").expect("summary after event");
         assert_eq!(s.values.get("温度").map(String::as_str), Some("31"));
         assert!(s.online);
+    }
+
+    /// E4b §3.2：turn 快照装配把每台设备声明的属性（含未采样项）写入需求出口。
+    #[tokio::test]
+    async fn workspace_snapshot_records_declared_properties_as_demand() {
+        use crate::runtime::thing_agent::traits::SnapshotDemandSink;
+        use tinyiothub_runtime::watch::live_state::{DeviceSnapshot, Health, WorkspaceSnapshot};
+
+        #[derive(Default)]
+        struct RecordingSink(Mutex<Vec<(String, String, String)>>);
+
+        impl SnapshotDemandSink for RecordingSink {
+            fn record_read(&self, workspace_id: &str, thing_id: &str, property: &str) {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push((workspace_id.into(), thing_id.into(), property.into()));
+            }
+        }
+
+        let cmds: Arc<DashMap<String, mpsc::Sender<WatchCommand>>> = Arc::new(DashMap::new());
+        let (tx, mut rx) = mpsc::channel(4);
+        cmds.insert(WS.to_string(), tx);
+        tokio::spawn(async move {
+            while let Some(command) = rx.recv().await {
+                if let WatchCommand::Snapshot { reply } = command {
+                    let _ = reply.send(Some(WorkspaceSnapshot {
+                        v: 1,
+                        total: 1,
+                        devices: vec![DeviceSnapshot {
+                            thing_id: "t1".into(),
+                            name: "T1".into(),
+                            health: Health::Ok,
+                            online: true,
+                            zone: "z".into(),
+                            // 湿度只声明、未上报：快照读取仍要为它建立需求。
+                            values: vec![("温度".into(), "31".into())],
+                            properties: vec!["温度".into(), "湿度".into()],
+                        }],
+                    }));
+                }
+            }
+        });
+
+        let sink = RecordingSink::default();
+        let (body, metrics) = fetch_workspace_snapshot(&cmds, WS, Some(&sink)).await;
+        assert!(body.is_some());
+        assert_eq!(metrics.expect("metrics").devices, 1);
+
+        let mut reads = sink.0.lock().unwrap().clone();
+        reads.sort();
+        assert_eq!(
+            reads,
+            vec![
+                (WS.to_string(), "t1".to_string(), "温度".to_string()),
+                (WS.to_string(), "t1".to_string(), "湿度".to_string()),
+            ],
+            "declared properties (including unsampled) must be recorded"
+        );
     }
 }
