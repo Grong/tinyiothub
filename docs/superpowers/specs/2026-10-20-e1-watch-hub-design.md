@@ -66,7 +66,7 @@ DataServer cache_and_publish → EventBus(broadcast 1000)
   → scheduler（§3）→ run_pipeline → run 读 LiveState 摘要
 ```
 
-one-shot：命中后 watch 从注册表移除（临时 watch）或保持（持久规则型 watch 由 `watch_rules.persistent` 标记——v1 两类：one-shot 临时 watch（API 注册默认）与 persistent 规则）。同一 watch 1s 内多次命中合并为一次唤醒。
+v1 两类规则：one-shot 临时 watch（API 注册默认）与 persistent 持久规则（`watch_rules.persistent` 标记）。one-shot：命中后 watch 从注册表移除并**回写删除 DB 行**（终审 C-2：持久源↔投影一致，防重启复活）；persistent 命中后保持但 1s 合并窗内不重复发（DashMap 记录 last_hit_at）；**persistent 规则免超时清扫**（终审 I-1 裁定：临时 watch 有时钟寿命，持久规则有用户寿命）；命中/超时/失效都落账本（kind=watch_hit/watch_timeout/watch_expired）。
 
 ### 2.3 watch 条件词表 v1（注册表可扩）
 
@@ -103,7 +103,7 @@ one-shot：命中后 watch 从注册表移除（临时 watch）或保持（持�
 ### 4.2 账本（F4：先不限速）
 
 新表 `hub_ledger`：`id, workspace_id, ts, kind, thing_id, payload(json)`；`kind` 词表版本化。
-落账内容：状态变更（全量）/ watch 注册·命中·超时·失效 / job 生命周期（accepted/progress/result/rejected）/ 限速事件。
+落账内容：状态变更（全量，kind=state_change，含字段+新旧值——终审 I-2 裁定本期补全，退出标准「账本可回放全程」成立）/ watch 命中·超时·失效 / 限速事件。watch 注册事件与 job 生命周期落账延至 E2（job 概念随 E2 工具链补齐，本期仲裁 Lease 是最接近的形态但未落账——终审已记录）。
 观测兜底：`hub_ledger` 日增行数与字节数进指标，日增超阈值（默认 100k 行，可配）告警——先不限速不等于瞎。
 
 ### 4.3 错误处理矩阵
