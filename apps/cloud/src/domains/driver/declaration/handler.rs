@@ -135,10 +135,17 @@ async fn run_acceptance(
         Ok(report) => report,
         Err(e) => return Json(json!({"success": false, "error": format!("acceptance runner failed: {e}")})),
     };
+    // An unreadable package has no identity; persist the requested driver
+    // name rather than the runner's `<unreadable>` placeholder.
+    let (driver_name, driver_version) = if report.driver == "<unreadable>" {
+        (driver.clone(), String::new())
+    } else {
+        (report.driver.clone(), report.version.clone())
+    };
     let rec = AcceptanceReportRecord {
         workspace_id: ws.clone(),
-        driver_name: report.driver.clone(),
-        driver_version: report.version.clone(),
+        driver_name,
+        driver_version,
         profile: "all".into(),
         level: if report.passed() { "pass".into() } else { "fail".into() },
         report_json: serde_json::to_string(&report).unwrap_or_default(),

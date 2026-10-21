@@ -7,27 +7,39 @@ use crate::acceptance::report::{CheckResult, Level, ProfileReport};
 
 const PROFILE: &str = "core";
 
-fn check(name: &str, level: Level, detail: String) -> CheckResult {
+fn check(name: &str, level: Level, detail: String, evidence: serde_json::Value) -> CheckResult {
     CheckResult {
         profile: PROFILE.into(),
         check: name.into(),
         level,
         detail,
-        evidence: serde_json::Value::Null,
+        evidence,
     }
 }
 
 pub fn run(dir: &Path) -> ProfileReport {
     let mut checks = Vec::new();
-    match crate::access::package::read_package(dir) {
-        Ok(pkg) => {
-            let schema_ok = tinyiothub_core::driver::manifest::validate_manifest(&pkg.manifest).is_ok();
+    // Parse without validation so the checks below stay independent: a
+    // manifest that fails `validate_manifest` must be reported by
+    // `manifest.schema` / `identity.abi`, not swallowed by `manifest.load`.
+    match crate::access::package::read_package_raw(dir) {
+        Ok((manifest_json, manifest)) => {
+            let schema = tinyiothub_core::driver::manifest::validate_manifest(&manifest);
             checks.push(check(
                 "manifest.schema",
-                if schema_ok { Level::Pass } else { Level::Fail },
-                schema_ok.to_string(),
+                if schema.is_ok() { Level::Pass } else { Level::Fail },
+                match &schema {
+                    Ok(()) => "manifest schema valid".into(),
+                    Err(e) => e.to_string(),
+                },
+                serde_json::json!({
+                    "valid": schema.is_ok(),
+                    "manifestVersion": manifest.manifest_version,
+                    "driver": manifest.identity.driver,
+                    "bytes": manifest_json.len(),
+                }),
             ));
-            let abi = pkg.manifest.identity.abi_version;
+            let abi = manifest.identity.abi_version;
             checks.push(check(
                 "identity.abi",
                 if abi == tinyiothub_core::driver::manifest::DRIVER_ABI_V2 {
@@ -36,26 +48,46 @@ pub fn run(dir: &Path) -> ProfileReport {
                     Level::Fail
                 },
                 format!("abi={abi}"),
+                serde_json::json!({
+                    "abiVersion": abi,
+                    "required": tinyiothub_core::driver::manifest::DRIVER_ABI_V2,
+                }),
             ));
+            let config_ok = manifest.config.is_object();
             checks.push(check(
                 "config.schema",
-                if pkg.manifest.config.is_object() {
-                    Level::Pass
-                } else {
-                    Level::Fail
-                },
+                if config_ok { Level::Pass } else { Level::Fail },
                 "config must be an object schema".into(),
+                serde_json::json!({
+                    "configType": match &manifest.config {
+                        serde_json::Value::Null => "null",
+                        serde_json::Value::Bool(_) => "bool",
+                        serde_json::Value::Number(_) => "number",
+                        serde_json::Value::String(_) => "string",
+                        serde_json::Value::Array(_) => "array",
+                        serde_json::Value::Object(_) => "object",
+                    },
+                }),
             ));
-            if let Some(bin) = &pkg.binary_path {
-                let ok = crate::driver::validator::DriverValidator::validate(bin, "{}").is_ok();
+            if let Some(bin) = crate::access::package::find_binary(dir) {
+                let result = crate::driver::validator::DriverValidator::validate(&bin, "{}");
                 checks.push(check(
                     "binary.abi_v2",
-                    if ok { Level::Pass } else { Level::Fail },
-                    bin.display().to_string(),
+                    if result.is_ok() { Level::Pass } else { Level::Fail },
+                    match &result {
+                        Ok(()) => bin.display().to_string(),
+                        Err(e) => format!("{}: {e}", bin.display()),
+                    },
+                    serde_json::json!({"binary": bin.display().to_string()}),
                 ));
             }
         }
-        Err(e) => checks.push(check("manifest.load", Level::Fail, e.to_string())),
+        Err(e) => checks.push(check(
+            "manifest.load",
+            Level::Fail,
+            e.to_string(),
+            serde_json::json!({"error": e.to_string()}),
+        )),
     }
     ProfileReport {
         profile: PROFILE.into(),
@@ -104,6 +136,38 @@ mod tests {
         let report = run(dir.path());
         assert_eq!(report.level(), Level::Fail);
         assert_eq!(level_of(&report, "manifest.load"), Some(Level::Fail));
+    }
+
+    #[test]
+    fn malformed_json_fails_manifest_load() {
+        let dir = package("{not json");
+        let report = run(dir.path());
+        assert_eq!(report.level(), Level::Fail);
+        assert_eq!(level_of(&report, "manifest.load"), Some(Level::Fail));
+        assert_eq!(level_of(&report, "manifest.schema"), None);
+    }
+
+    #[test]
+    fn schema_and_identity_checks_are_independent_of_loading() {
+        let dir = package(&MANIFEST.replace("\"abiVersion\":2", "\"abiVersion\":1"));
+        let report = run(dir.path());
+        assert_eq!(report.level(), Level::Fail, "{report:?}");
+        assert_eq!(level_of(&report, "manifest.load"), None);
+        assert_eq!(level_of(&report, "manifest.schema"), Some(Level::Fail));
+        assert_eq!(level_of(&report, "identity.abi"), Some(Level::Fail));
+        assert_eq!(level_of(&report, "config.schema"), Some(Level::Pass));
+
+        let schema_check = report.checks.iter().find(|c| c.check == "manifest.schema").unwrap();
+        assert_eq!(schema_check.evidence["manifestVersion"], "1.0");
+    }
+
+    #[test]
+    fn non_object_config_fails_config_schema_only() {
+        let dir = package(&MANIFEST.replace("\"config\":{\"type\":\"object\"}", "\"config\":null"));
+        let report = run(dir.path());
+        assert_eq!(level_of(&report, "manifest.schema"), Some(Level::Pass));
+        assert_eq!(level_of(&report, "config.schema"), Some(Level::Fail));
+        assert_eq!(report.level(), Level::Fail);
     }
 
     #[test]

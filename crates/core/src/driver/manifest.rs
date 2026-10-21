@@ -501,6 +501,8 @@ mod tests {
         let schema = schemars::schema_for!(DriverManifest);
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../spec/driver-manifest.schema.json");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, serde_json::to_string_pretty(&schema).unwrap()).unwrap();
+        let mut json = serde_json::to_string_pretty(&schema).unwrap();
+        json.push('\n');
+        std::fs::write(path, json).unwrap();
     }
 }

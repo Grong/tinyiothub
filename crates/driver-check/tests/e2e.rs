@@ -1,4 +1,8 @@
 //! End-to-end acceptance against the reference declarative driver.
+//!
+//! The binary coverage below is deterministic: run
+//! `cargo build -p demo-declarative` before `cargo test -p driver-check`
+//! (the workspace pre-push gate builds it too).
 
 use std::path::{Path, PathBuf};
 
@@ -19,10 +23,8 @@ fn demo_declarative_passes_core_materialization_migration() {
 
 #[test]
 fn demo_declarative_binary_passes_core_when_built() {
-    let Some(lib) = demo_cdylib() else {
-        eprintln!("skipping binary acceptance: demo-declarative cdylib not built");
-        return;
-    };
+    let lib =
+        demo_cdylib().unwrap_or_else(|| panic!("build the reference cdylib first: cargo build -p demo-declarative"));
     let dir = tempfile::tempdir().unwrap();
     std::fs::copy(
         demo_dir().join("driver.manifest.json"),

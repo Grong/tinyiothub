@@ -72,11 +72,9 @@ pub struct AcceptanceReport {
 }
 
 impl AcceptanceReport {
-    /// `warn` does not fail acceptance; only `fail` does.
+    /// `warn` does not fail acceptance; only a profile-level `fail` does.
     pub fn passed(&self) -> bool {
-        self.profiles
-            .iter()
-            .all(|p| matches!(p.level(), Level::Pass | Level::Skip | Level::Manual))
+        self.profiles.iter().all(|p| p.level() != Level::Fail)
     }
 }
 
@@ -107,7 +105,7 @@ mod tests {
     }
 
     #[test]
-    fn warn_dominates_pass_but_is_not_a_pass_verdict() {
+    fn warn_dominates_pass_but_does_not_block_acceptance() {
         let report = AcceptanceReport {
             package: "/pkg".into(),
             driver: "d".into(),
@@ -115,7 +113,7 @@ mod tests {
             profiles: vec![profile(&[Level::Pass, Level::Warn])],
         };
         assert_eq!(report.profiles[0].level(), Level::Warn);
-        assert!(!report.passed(), "a warn profile is not in pass/skip/manual");
+        assert!(report.passed(), "warn must not block acceptance");
     }
 
     #[test]

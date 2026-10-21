@@ -3384,7 +3384,12 @@ Expected: clean.
 
 - [ ] **Step 2: Test set**
 
+> `cargo build -p demo-declarative` must run before `cargo test -p driver-check`: the
+> driver-check binary test asserts on the built cdylib and fails (rather than skips)
+> when it is missing.
+
 ```bash
+cargo build -p demo-declarative
 cargo test -p core
 cargo test -p runtime
 cargo test -p db

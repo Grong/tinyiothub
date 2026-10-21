@@ -16,13 +16,21 @@ pub struct LoadedPackage {
     pub binary_hash: Option<String>,
 }
 
-pub fn read_package(dir: &Path) -> Result<LoadedPackage, AccessError> {
+/// Read and parse the manifest without running `validate_manifest`. The
+/// acceptance `core` profile needs the raw parse so schema/identity checks
+/// stay independent of package loading.
+pub fn read_package_raw(dir: &Path) -> Result<(String, DriverManifest), AccessError> {
     let manifest_path = dir.join(MANIFEST_FILE);
     if !manifest_path.is_file() {
         return Err(AccessError::MissingManifest(dir.to_path_buf()));
     }
     let manifest_json = std::fs::read_to_string(&manifest_path)?;
     let manifest: DriverManifest = serde_json::from_str(&manifest_json)?;
+    Ok((manifest_json, manifest))
+}
+
+pub fn read_package(dir: &Path) -> Result<LoadedPackage, AccessError> {
+    let (manifest_json, manifest) = read_package_raw(dir)?;
     validate_manifest(&manifest)?;
     let manifest_hash = hex_sha256(manifest_json.as_bytes());
     let binary_path = find_binary(dir);
@@ -39,7 +47,7 @@ pub fn read_package(dir: &Path) -> Result<LoadedPackage, AccessError> {
     })
 }
 
-fn find_binary(dir: &Path) -> Option<PathBuf> {
+pub(crate) fn find_binary(dir: &Path) -> Option<PathBuf> {
     let candidates = [
         "driver.so",
         "driver.dylib",
@@ -105,5 +113,24 @@ mod tests {
         let bad = MANIFEST.replace("\"manifestVersion\":\"1.0\"", "\"manifestVersion\":\"2.0\"");
         fs::write(dir.path().join("driver.manifest.json"), bad).unwrap();
         assert!(matches!(read_package(dir.path()), Err(AccessError::Manifest(_))));
+    }
+
+    #[test]
+    fn raw_read_parses_without_validating() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad_abi = MANIFEST.replace("\"abiVersion\":2", "\"abiVersion\":1");
+        fs::write(dir.path().join("driver.manifest.json"), &bad_abi).unwrap();
+
+        let (json, manifest) = read_package_raw(dir.path()).unwrap();
+        assert_eq!(json, bad_abi);
+        assert_eq!(manifest.identity.abi_version, 1);
+        assert!(matches!(read_package(dir.path()), Err(AccessError::Manifest(_))));
+    }
+
+    #[test]
+    fn raw_read_reports_parse_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("driver.manifest.json"), "{not json").unwrap();
+        assert!(matches!(read_package_raw(dir.path()), Err(AccessError::Json(_))));
     }
 }
