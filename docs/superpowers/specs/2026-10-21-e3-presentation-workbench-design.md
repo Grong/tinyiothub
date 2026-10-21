@@ -280,6 +280,32 @@ GET /workspaces/{id}/live/stream   (Accept: text/event-stream)
 - 端到端：watch 命中 → 账本 → Flow 查询 → 状态重建；场景包应用 → 规则与链落库 → Flow 可见协同链。
 - a11y：axe 或等价检查；键盘走查脚本。
 
+## Design Review Completion Summary
+
+```
+  +====================================================================+
+  |         DESIGN PLAN REVIEW — COMPLETION SUMMARY                    |
+  +====================================================================+
+  | System Audit         | web/DESIGN_SYSTEM.md 存在；UI scope=三 tab  |
+  | Step 0               | 2/10；聚焦全量 7 维                          |
+  | Pass 1  (Info Arch)  | 2/10 → 8/10 after fixes                     |
+  | Pass 2  (States)     | 1/10 → 8/10 after fixes                     |
+  | Pass 3  (Journey)    | 2/10 → 8/10 after fixes                     |
+  | Pass 4  (AI Slop)    | 2/10 → 8/10 after fixes                     |
+  | Pass 5  (Design Sys) | 3/10 → 8/10 after fixes                     |
+  | Pass 6  (Responsive) | 1/10 → 8/10 after fixes                     |
+  | Pass 7  (Decisions)  | 4 resolved, 0 deferred                      |
+  +--------------------------------------------------------------------+
+  | NOT in scope         | written (6 items, §10)                       |
+  | What already exists  | written (§0/§1)                              |
+  | TODOS.md updates     | 1 item proposed（E3 结转）                   |
+  | Approved Mockups     | 0 generated（缺 OpenAI key）, 0 approved     |
+  | Decisions made       | 4（D3/D4/D5/D6）                             |
+  | Decisions deferred   | 0                                            |
+  | Overall design score | 2/10 → 8/10                                 |
+  +====================================================================+
+```
+
 ## 13. GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
