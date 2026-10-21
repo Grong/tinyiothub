@@ -513,6 +513,20 @@ impl ThingAgentManager {
     pub fn watch_command_sink(&self, workspace_id: &str) -> Option<mpsc::Sender<WatchCommand>> {
         self.watch_cmds.get(workspace_id).map(|r| r.clone())
     }
+
+    /// E3：工作区实时快照（SSE 首帧）。engine 未运行时返回 None。
+    pub async fn workspace_snapshot(
+        &self,
+        workspace_id: &str,
+    ) -> Option<tinyiothub_runtime::watch::live_state::WorkspaceSnapshot> {
+        let sink = self.watch_command_sink(workspace_id)?;
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        sink.send(WatchCommand::Snapshot { reply }).await.ok()?;
+        tokio::time::timeout(std::time::Duration::from_millis(120), rx)
+            .await
+            .ok()?
+            .ok()?
+    }
 }
 
 #[async_trait::async_trait]
