@@ -16,7 +16,12 @@ pub mod declaration;
 pub mod dynamic;
 pub mod manifest;
 pub mod schema;
+pub use declaration::{
+    AcceptanceReportRecord, DeviceDeclaration, DeviceDeclarationRecord, DriverDeclarationRecord, fixed_declaration,
+    validate_device_declaration,
+};
 pub use dynamic::{DRIVER_ABI_VERSION, DriverDestroyFn, DriverInitFn, DriverVTable, DriverVTableFn};
+pub use manifest::{DriverManifest, ManifestError, validate_manifest};
 
 // ─── Retry configuration ────────────────────────────────────────────
 
