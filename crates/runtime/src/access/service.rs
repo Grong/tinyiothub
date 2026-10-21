@@ -757,6 +757,10 @@ mod tests {
         let traversal = package_dir(&FIXED_MANIFEST.replace("\"driver\":\"demo\"", "\"driver\":\"../wsB/foo\""));
         let err = fx.service.install_dir("ws1", traversal.path()).await.unwrap_err();
         assert!(matches!(err, AccessError::Validation(_)), "{err:?}");
+        assert!(
+            !fx.service.data_dir.join("drivers/workspaces/wsB").exists(),
+            "traversal manifest must not create a cross-workspace directory"
+        );
 
         // Version traversal is rejected by manifest validation.
         let bad_version = package_dir(&FIXED_MANIFEST.replace("\"version\":\"1.0.0\"", "\"version\":\"..\""));
