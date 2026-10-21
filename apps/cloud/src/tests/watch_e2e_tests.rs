@@ -425,6 +425,24 @@ async fn watch_hit_wakes_run_within_2s_and_restart_reweaves() {
     let elapsed = wait_watch_runs(&pool, 1, Duration::from_secs(2)).await;
     assert!(elapsed < Duration::from_secs(2), "秒级唤醒: {elapsed:?}");
 
+    // E2：被唤醒的 run 报告携带 turn 开头快照实测指标（≤6KB 预算）。
+    let (report,): (String,) = sqlx::query_as(
+        "SELECT report FROM agent_runs WHERE workspace_id = ? AND trigger_type = 'watch' ORDER BY rowid DESC LIMIT 1",
+    )
+    .bind(WS)
+    .fetch_one(&pool)
+    .await
+    .expect("watch run report");
+    let report: Value = serde_json::from_str(&report).unwrap();
+    let snap = &report["snapshot"];
+    assert!(!snap.is_null(), "watch run 必须携带快照指标: {report}");
+    assert!(snap["bytes"].as_u64().unwrap() > 0, "快照字节数必须为正");
+    assert!(
+        snap["bytes"].as_u64().unwrap() <= 6144,
+        "快照不得超过 6KB: {snap}"
+    );
+    assert!(snap["devices"].as_u64().unwrap() >= 1, "至少列出 1 台设备");
+
     // 账本可回放：watch_hit 落行（rule_id 对得上）。
     assert_eq!(ledger_hit_count(&pool).await, 1, "账本落 watch_hit 一行");
     let (payload,): (String,) = sqlx::query_as(
