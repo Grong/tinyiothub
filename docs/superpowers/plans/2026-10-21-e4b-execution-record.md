@@ -1,7 +1,11 @@
 # E4b 执行记录与验证结果
 
 - 日期：2026-10-21
-- 提交范围：`190d0e86^..HEAD`（19 个提交，起于 E4b 首个提交 `190d0e86`，全部在 `ai-consolidation`；Task 10 的代码/修复与文档为最后四个提交）
+- 提交范围：`f55364a6..HEAD`（E4b 首个提交 `0433f9d1`；评审时 `git rev-list --count f55364a6..HEAD` = **24**，全部在 `ai-consolidation`；Task 10 的代码/修复与文档为最后五个提交 `1bd6c594`、`38dc9dea`、`c63b8210`、`21d7674b`、`b1c4863b`，此后的全分支评审收口提交另计）
+  - `0433f9d1` feat(e4b): DemandTracker 与 DemandSource port
+  - `c6cb2935` fix(e4b): DemandTracker 属性级需求访问器
+  - `72836d0c` feat(e4b): sampling catalog 与 property→source 映射
+  - `0acab38b` fix(e4b): fallback 不因 health 排除唯一 poll source
   - `190d0e86` feat(e4b): 每设备 driver worker 与队列策略
   - `21f41573` fix(e4b): worker 写回 Thing、sink 非阻塞上报并补失败读测试
   - `823b3e04` refactor(e4b): DataServer 每设备 worker
@@ -77,7 +81,8 @@
    - unsubscribe 后 19s（宽限内）：`slow` 仍采；
    - 31s（>30s 宽限）：`slow` 停采、`health` 继续；核对 active/skipped/reads 计数。
 2. `push_worker_set_demand_is_health_union_demanded_and_only_on_transitions`：
-   - 首 tick 下发 `["health"]`；集合不变不重发；
+   - 首 tick 下发 `["health"]`；集合不变且未满 30s 不重发（满 30s 的周期重发见
+     `push_demand_is_re_sent_periodically_even_when_unchanged`，I-2 修复）；
    - 订阅 `slow` → `["health","slow"]`；持续/宽限内不抖动；
    - 宽限结束 → 回到 `["health"]`；push 路径 `submit_read` 恒为 0。
 3. `demand_metrics_match_the_push_active_set`：tick 级计数与 push 活跃集一致，push 不提交读。
@@ -92,6 +97,8 @@
 
 - runtime `access::sampler::tests::sampling_lag_is_zero_on_time_and_positive_when_late`（首次/准点 = 0；晚 250ms 与 350ms 累计 600、max 350）。
 - runtime `access::sampler::tests::metrics_track_gate_transitions_and_reads`（skipped → active、`reads_submitted` 按 source 计）。
+- runtime `access::sampler::tests::sampling_lag_ignores_reactivation_idle`（重新激活的空闲期不计入 lag，M-2）。
+- runtime `access::sampler::tests::push_demand_is_re_sent_periodically_even_when_unchanged`（集合不变每 30s 重发，I-2）。
 - runtime `access::sampler::tests::demand_only_source_skips_without_demand`（追加 skipped 断言）。
 - runtime `driver::worker::tests::two_reads_while_busy_coalesce_to_latest_source_set`（coalesced = 1）。
 - runtime `driver::worker::tests::exec_queue_overflow_returns_busy`（队列满 depth = 32；busy 不改变深度；消费完归零）。
@@ -127,7 +134,7 @@
 1. **per-source 读 payload 仍为 advisory**：`Read { sources }` 只决定调度时机；worker 调用 `read_data_once_with` 仍返回驱动全部值，未按 source 裁剪。按 source 精确读取/裁剪留 E4c。
 2. **catalog 20Hz 成本**：sampler 每 50ms 全量 `catalog.list()`（device_cache 遍历 + manifest 克隆）；大设备量下需增量/缓存。E4c-e 性能验收时评估。
 3. **sampler 状态不清理**：`last_sample` / `last_demand` / `demand_gate` 以 `(ws,thing,source)` 为键，物/驱动卸载后条目不会移除（`last_active` 同）。重启易失可自愈，长期运行需随 catalog 差集修剪。
-4. **push 断开/存活语义**：push 驱动断连时 sampler 仅按健康 source 的 `set_demand` 维持集合，未做断线重连后的需求重放/对账；`WorkerResult::Disconnected` 与 demand 的联动留 E4c。
+4. **push 断开/存活语义**：全分支评审后已加 30s 周期重发（worker 被替换/重建后其空 demand watch 能恢复），但断线事件驱动的即时重放/对账仍未做；`WorkerResult::Disconnected` 与 demand 的联动留 E4c。
 5. **watch control 仍留 E3**：Hub stream `control` 只含 job/state_change；watch 命中/超时继续由 `/live/stream` 账本尾随提供（spec 裁定，非缺口）。
 6. **snapshot 过度记录需求**：`read_device` 未指定 properties 时会记录该物全部声明属性，可能放大 demandOnly 采样；E4c/e 按调用实际字段收窄。
 7. **声明失败 UI 状态**：设备卡在驱动未声明 source 时显示离线且不建流（已有测试），但声明获取失败/重试的可见状态与手动重试留 E4e。
