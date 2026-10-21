@@ -686,6 +686,9 @@ async fn poll_worker_untouched_and_no_worker_for_derived_owner() {
         data_server.get_driver_overview("campus-1").is_some(),
         "物理 Poll worker 不得被派生引擎影响"
     );
+    let workers = data_server.workers();
+    let worker = workers.get("campus-1").expect("物理 Poll worker 必须仍在");
+    assert!(!worker.is_push(), "物理 Poll worker 不得被派生引擎替换为 Push/其他模式");
     assert_eq!(
         data_server.worker_count(),
         1,

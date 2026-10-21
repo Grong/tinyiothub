@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use moka::sync::Cache;
 
@@ -20,6 +21,16 @@ use crate::ports::ThingCacheSource;
 /// worker 表：每个物一个独占驱动的 worker（E4b spec §1/§2.3）。
 pub type WorkerCache = Cache<String, Arc<WorkerHandle>>;
 
+/// 读数与 worker 结果的唯一消费端。
+///
+/// 两路输入共用**一个**消费任务（`tokio::select!` 顺序处理），避免两个消费者
+/// 对 device_cache 做非原子的 get→mutate→update 而互相覆盖（Sticky Offline /
+/// 派生值回滚）。
+struct Consumers {
+    readings: tokio::sync::mpsc::Receiver<DriverReading>,
+    results: tokio::sync::mpsc::UnboundedReceiver<WorkerResult>,
+}
+
 /// Thing data server — manages driver worker lifecycle and the polling loop.
 pub struct DataServer {
     device_cache: Arc<dyn ThingCacheSource>,
@@ -27,26 +38,26 @@ pub struct DataServer {
     event_bus: Arc<EventBus>,
     /// 推送驱动上报入口（spec §一 ValueSink）：Task 7 的 Manager 注册推送驱动时经 `value_sink()` 注入。
     value_sink_tx: ValueSink,
-    /// 消费端只能被 `run()` 取走一次（take 后为 None，重复 run 不再 spawn 消费任务）。
-    value_sink_rx: Arc<parking_lot::Mutex<Option<tokio::sync::mpsc::Receiver<DriverReading>>>>,
+    /// 唯一消费端：`run()` take 一次（重复 run 不会 spawn 第二个消费者）。
+    consumers: Arc<parking_lot::Mutex<Option<Consumers>>>,
     /// worker 结果上报入口（命令/连接迁移）。
     worker_result_tx: tokio::sync::mpsc::UnboundedSender<WorkerResult>,
-    /// 结果消费端同 value_sink_rx：`run()` 取走一次。
-    worker_result_rx: Arc<parking_lot::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<WorkerResult>>>>,
+    /// 临时轮询任务的启动闸（重复 `run()` 不重复起轮询）。
+    poll_started: Arc<AtomicBool>,
 }
 
 impl DataServer {
     pub fn new(device_cache: Arc<dyn ThingCacheSource>, event_bus: Arc<EventBus>) -> Self {
-        let (value_sink_tx, value_sink_rx) = tokio::sync::mpsc::channel(256);
-        let (worker_result_tx, worker_result_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (value_sink_tx, readings) = tokio::sync::mpsc::channel(256);
+        let (worker_result_tx, results) = tokio::sync::mpsc::unbounded_channel();
         let server = Self {
             device_cache,
             workers: Cache::new(10_000),
             event_bus,
             value_sink_tx,
-            value_sink_rx: Arc::new(parking_lot::Mutex::new(Some(value_sink_rx))),
+            consumers: Arc::new(parking_lot::Mutex::new(Some(Consumers { readings, results }))),
             worker_result_tx,
-            worker_result_rx: Arc::new(parking_lot::Mutex::new(Some(worker_result_rx))),
+            poll_started: Arc::new(AtomicBool::new(false)),
         };
         server.initialize_drivers();
         server
@@ -107,63 +118,87 @@ impl DataServer {
     pub async fn run(&self, shutdown_rx: tokio::sync::broadcast::Receiver<()>) -> Result<(), Error> {
         // 临时 100ms 轮询：向所有非 Push worker 提交 Read（Task 5 的中央 sampler
         // 接管后删除）。worker 内部做 latest-wins 合并与重试退避。
-        let workers = self.workers.clone();
-        let mut shutdown_rx_clone = shutdown_rx.resubscribe();
-        tokio::spawn(async move {
-            tokio::select! {
-                _ = Self::poll_workers(workers) => {
-                    tracing::debug!("Driver polling task completed");
-                }
-                _ = shutdown_rx_clone.recv() => {
-                    tracing::info!("Driver polling task received shutdown signal");
-                }
-            }
-        });
-
-        // worker 结果消费任务：命令完成/连接迁移 → 领域事件。
-        if let Some(mut rx) = self.worker_result_rx.lock().take() {
-            let device_cache = self.device_cache.clone();
-            let event_bus = self.event_bus.clone();
-            let mut shutdown_rx_results = shutdown_rx.resubscribe();
+        // 启动闸：重复 `run()` 不得再起一条轮询任务。
+        if !self.poll_started.swap(true, Ordering::SeqCst) {
+            let workers = self.workers.clone();
+            let mut shutdown_rx_clone = shutdown_rx.resubscribe();
             tokio::spawn(async move {
-                loop {
-                    tokio::select! {
-                        _ = shutdown_rx_results.recv() => break,
-                        maybe = rx.recv() => {
-                            let Some(result) = maybe else { break };
-                            Self::consume_worker_result(result, &device_cache, event_bus.clone()).await;
-                        }
+                tokio::select! {
+                    _ = Self::poll_workers(workers) => {
+                        tracing::debug!("Driver polling task completed");
+                    }
+                    _ = shutdown_rx_clone.recv() => {
+                        tracing::info!("Driver polling task received shutdown signal");
                     }
                 }
             });
         }
 
-        // 推送驱动 sink 独立消费任务：不经 100ms 轮询，读数到达即走共享管线（spec §一/E3）。
-        if let Some(mut rx) = self.value_sink_rx.lock().take() {
-            let device_cache2 = self.device_cache.clone();
-            let event_bus2 = self.event_bus.clone();
-            let mut shutdown_rx2 = shutdown_rx.resubscribe();
+        // 单一消费任务：worker 结果与 ValueSink 读数顺序处理，device_cache 的
+        // get→mutate→update 不跨任务并发（防 Connected 被旧读数快照覆盖）。
+        if let Some(consumers) = self.consumers.lock().take() {
+            let workers = self.workers.clone();
+            let device_cache = self.device_cache.clone();
+            let event_bus = self.event_bus.clone();
+            let mut shutdown_rx_consumers = shutdown_rx.resubscribe();
             tokio::spawn(async move {
-                loop {
-                    tokio::select! {
-                        _ = shutdown_rx2.recv() => break,
-                        maybe = rx.recv() => {
-                            let Some(reading) = maybe else { break };
-                            Self::consume_driver_reading(reading, &device_cache2, event_bus2.clone()).await;
-                        }
-                    }
-                }
+                Self::consume_loop(consumers, workers, device_cache, event_bus, &mut shutdown_rx_consumers).await;
             });
         }
         Ok(())
+    }
+
+    async fn consume_loop(
+        mut consumers: Consumers,
+        workers: WorkerCache,
+        device_cache: Arc<dyn ThingCacheSource>,
+        event_bus: Arc<EventBus>,
+        shutdown_rx: &mut tokio::sync::broadcast::Receiver<()>,
+    ) {
+        loop {
+            tokio::select! {
+                _ = shutdown_rx.recv() => break,
+                maybe = consumers.readings.recv() => {
+                    let Some(reading) = maybe else { break };
+                    // 只有“有 worker 且当前健康”的读数才刷新 heartbeat/Online：
+                    // 旧的成功读数不得覆盖随后发生的失败迁移（跨通道乱序防线）。
+                    let worker_online = workers
+                        .get(&reading.thing_id)
+                        .is_some_and(|worker| worker.status().health.is_online());
+                    Self::consume_driver_reading_with(
+                        reading,
+                        worker_online,
+                        &device_cache,
+                        event_bus.clone(),
+                    )
+                    .await;
+                }
+                maybe = consumers.results.recv() => {
+                    let Some(result) = maybe else { break };
+                    Self::consume_worker_result(result, &device_cache, event_bus.clone()).await;
+                }
+            }
+        }
     }
 
     /// 消费一条读数：走共享管线（apply_property_values → cache_and_publish）。
     ///
     /// worker 已把读数写回自己持有的 `Thing`；DataServer 只按 thing_id 从
     /// device_cache 取当前物（派生/空间物同样适用）。物已删 → 丢弃并告警。
+    ///
+    /// 测试/兼容入口：无 worker 关联（派生 owner / 空间物的注入读数），不写
+    /// `last_heartbeat`。
     pub async fn consume_driver_reading(
         reading: DriverReading,
+        device_cache: &Arc<dyn ThingCacheSource>,
+        event_bus: Arc<EventBus>,
+    ) {
+        Self::consume_driver_reading_with(reading, false, device_cache, event_bus).await;
+    }
+
+    async fn consume_driver_reading_with(
+        reading: DriverReading,
+        heartbeat: bool,
         device_cache: &Arc<dyn ThingCacheSource>,
         event_bus: Arc<EventBus>,
     ) {
@@ -171,6 +206,12 @@ impl DataServer {
             tracing::warn!(thing_id = %reading.thing_id, "sink 读数丢弃：物不在缓存（已删？）");
             return;
         };
+        // 成功读数即心跳：与属性值在**同一次** cache write 中落盘（管理面 5 分钟
+        // 在线判定不因仅在迁移时刷新而误报离线）。
+        if heartbeat {
+            device.status = ThingStatus::Online;
+            device.last_heartbeat = Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string());
+        }
         let thing_name = device.name.clone();
         let events = Self::apply_property_values(&mut device, &thing_name, &reading.values);
         Self::cache_and_publish(device, events, device_cache, Some(event_bus)).await;
@@ -632,9 +673,9 @@ impl Clone for DataServer {
             workers: self.workers.clone(),
             event_bus: self.event_bus.clone(),
             value_sink_tx: self.value_sink_tx.clone(),
-            value_sink_rx: self.value_sink_rx.clone(),
+            consumers: self.consumers.clone(),
             worker_result_tx: self.worker_result_tx.clone(),
-            worker_result_rx: self.worker_result_rx.clone(),
+            poll_started: self.poll_started.clone(),
         }
     }
 }
@@ -784,7 +825,7 @@ mod tests {
     async fn wait_until(mut condition: impl FnMut() -> bool) {
         tokio::time::timeout(tokio::time::Duration::from_secs(2), async {
             while !condition() {
-                tokio::task::yield_now().await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             }
         })
         .await
@@ -1020,6 +1061,143 @@ mod tests {
                 break;
             }
         }
+
+        let _ = shutdown_tx.send(());
+    }
+
+    /// 可切换成功/失败的 Poll 驱动（无阻塞，供 100ms 采样循环驱动 E2E）。
+    struct FlakyPollDriver {
+        thing: Thing,
+        failing: Arc<AtomicBool>,
+    }
+
+    impl ThingDriver for FlakyPollDriver {
+        fn thing(&self) -> &Thing {
+            &self.thing
+        }
+        fn thing_mut(&mut self) -> &mut Thing {
+            &mut self.thing
+        }
+        fn mode(&self) -> DriverMode {
+            DriverMode::Poll
+        }
+        fn retry_config(&self) -> tinyiothub_core::driver::RetryConfig {
+            tinyiothub_core::driver::RetryConfig {
+                max_attempts: 1,
+                base_interval: std::time::Duration::from_millis(1),
+                max_interval: std::time::Duration::from_millis(1),
+                timeout: std::time::Duration::from_millis(1),
+                ..tinyiothub_core::driver::RetryConfig::default()
+            }
+        }
+        fn read_data(&mut self, _cancel: &CancelToken) -> Result<Vec<ResultValue>, Error> {
+            if self.failing.load(Ordering::SeqCst) {
+                return Err(Error::IOError("boom".to_string()));
+            }
+            Ok(vec![ResultValue::new(
+                "temp".to_string(),
+                "float".to_string(),
+                Some("42".to_string()),
+            )])
+        }
+        fn execute_command(&mut self, _cmd: &ThingCommand, _cancel: &CancelToken) -> Result<bool, Error> {
+            Ok(true)
+        }
+    }
+
+    /// E2E（worker 路径）：成功轮询 → sink → device_cache/EventBus（Online +
+    /// heartbeat + PropertyChange）；随后终态失败只发一次 offline 迁移。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn worker_poll_flows_to_cache_heartbeat_and_events() {
+        use tinyiothub_core::models::event::{EventLevel, EventType, ThingEventType};
+
+        let thing = make_thing_with_prop("temp", None); // id = thing-1
+        let cache = Arc::new(VecCache::new(vec![thing.clone()]));
+        let event_bus = Arc::new(EventBus::new());
+        let mut events = event_bus.subscribe();
+        let server = DataServer::new(cache.clone(), event_bus.clone());
+        let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
+        server.run(shutdown_rx).await.expect("run");
+
+        let failing = Arc::new(AtomicBool::new(false));
+        server.register_worker(
+            "thing-1",
+            DriverWrapper::new(Box::new(FlakyPollDriver {
+                thing,
+                failing: failing.clone(),
+            })),
+        );
+
+        // 1) worker 成功读数落 device_cache：值 + Online + heartbeat。
+        wait_until(|| {
+            cache.get("thing-1").is_some_and(|device| {
+                device
+                    .properties
+                    .as_ref()
+                    .and_then(|props| props.iter().find(|p| p.name == "temp"))
+                    .and_then(|p| p.current_value.as_deref())
+                    == Some("42")
+            })
+        })
+        .await;
+        let cached = cache.get("thing-1").expect("cached thing");
+        assert_eq!(cached.status, ThingStatus::Online, "成功读数必须保持 Online");
+        assert!(
+            cached.last_heartbeat.is_some(),
+            "每次成功轮询都必须刷新 last_heartbeat（管理面 5 分钟在线判定）"
+        );
+
+        // 2) EventBus 上出现同一条 PropertyChange（value=42）。
+        loop {
+            let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+                .await
+                .expect("PropertyChange within deadline")
+                .expect("event channel open");
+            if matches!(event.event_type(), EventType::Device(ThingEventType::PropertyChange)) {
+                assert_eq!(event.source().thing_id(), Some("thing-1"));
+                assert_eq!(
+                    event.content().metadata().get("value"),
+                    Some(&serde_json::Value::String("42".to_string()))
+                );
+                break;
+            }
+        }
+
+        // 3) 终态失败：Online → Offline，并发出一次 Connection(Warning)。
+        failing.store(true, Ordering::SeqCst);
+        wait_until(|| {
+            cache
+                .get("thing-1")
+                .is_some_and(|device| device.status == ThingStatus::Offline)
+        })
+        .await;
+        loop {
+            let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+                .await
+                .expect("offline transition event within deadline")
+                .expect("event channel open");
+            if matches!(event.event_type(), EventType::Device(ThingEventType::Connection))
+                && event.level() == EventLevel::Warning
+            {
+                break;
+            }
+        }
+
+        // 4) 同一失败 streak 内（>=3 个 100ms tick）不得再发 offline 事件。
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(350);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            match tokio::time::timeout(remaining, events.recv()).await {
+                Ok(Ok(event)) => assert!(
+                    !(matches!(event.event_type(), EventType::Device(ThingEventType::Connection))
+                        && event.level() == EventLevel::Warning),
+                    "失败 streak 内不得重复发 offline 迁移事件"
+                ),
+                Ok(Err(_)) => break,
+                Err(_) => break,
+            }
+        }
+        assert_eq!(cache.get("thing-1").expect("cached thing").status, ThingStatus::Offline);
 
         let _ = shutdown_tx.send(());
     }

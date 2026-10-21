@@ -221,6 +221,9 @@ async fn run_worker(
     status: Arc<RwLock<ThingOverview>>,
     last_read_sources: Arc<RwLock<Vec<String>>>,
 ) {
+    // 失败 streak 状态：终态失败只上报一次（否则 retry timeout 前每 100ms 刷
+    // 一条 ReadFailed/告警）；恢复时上报一次 Connected 事件。
+    let mut failing = false;
     loop {
         tokio::select! {
             biased;
@@ -273,6 +276,10 @@ async fn run_worker(
                         let address = driver.thing().address.clone();
                         apply_read_values(&mut driver, &values, true);
                         *status.write() = driver.overview();
+                        if failing {
+                            failing = false;
+                            tracing::info!(thing_id = %thing_id, "driver read recovered");
+                        }
                         if !was_online {
                             let _ = results.send(WorkerResult::Connected {
                                 thing_id: thing_id.clone(),
@@ -292,23 +299,28 @@ async fn run_worker(
                         if outcome.retry_info.as_ref().is_some_and(|info| info.will_retry) {
                             continue;
                         }
-                        tracing::warn!(
-                            thing_id = %thing_id,
-                            error = %err,
-                            elapsed_ms = outcome.elapsed.as_millis() as u64,
-                            "driver read failed"
-                        );
                         apply_read_values(&mut driver, &[], false);
                         *status.write() = driver.overview();
-                        if was_online {
-                            let _ = results.send(WorkerResult::Disconnected {
+                        // 同一失败 streak 只在进入时上报/告警一次；读取仍每 tick
+                        // 重试，恢复后 Connected 恰好一次。
+                        if !failing {
+                            failing = true;
+                            tracing::warn!(
+                                thing_id = %thing_id,
+                                error = %err,
+                                elapsed_ms = outcome.elapsed.as_millis() as u64,
+                                "driver read failed"
+                            );
+                            if was_online {
+                                let _ = results.send(WorkerResult::Disconnected {
+                                    thing_id: thing_id.clone(),
+                                    reason: Some(err.to_string()),
+                                });
+                            }
+                            let _ = results.send(WorkerResult::ReadFailed {
                                 thing_id: thing_id.clone(),
-                                reason: Some(err.to_string()),
                             });
                         }
-                        let _ = results.send(WorkerResult::ReadFailed {
-                            thing_id: thing_id.clone(),
-                        });
                     }
                 }
             }
@@ -776,6 +788,51 @@ mod tests {
 
         assert_eq!(h.sink_rx.try_recv().unwrap().thing_id, "filler");
         assert!(h.sink_rx.try_recv().is_err(), "dropped reading must not appear");
+
+        h.handle.stop();
+        wait_finished(&h.handle).await;
+    }
+
+    /// 失败 streak：终态失败只上报一次 ReadFailed（不因 100ms 重试刷屏），
+    /// 恢复时恰好一次 Connected + 正常读数。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn failure_streak_emits_read_failed_once_and_recovers() {
+        let mut h = make(DriverMode::Poll);
+        h.log.fail_next_reads.store(100, Ordering::SeqCst);
+
+        // 首次终态失败：一次 ReadFailed（此前从未在线 → 无 Disconnected）。
+        h.handle.submit_read(vec!["a".to_string()]);
+        h.log.read_started.notified().await;
+        h.release.send(()).unwrap();
+        match h.result_rx.recv().await.expect("first result") {
+            WorkerResult::ReadFailed { thing_id } => assert_eq!(thing_id, "thing-1"),
+            other => panic!("expected ReadFailed, got {other:?}"),
+        }
+
+        // 同一 streak 内的下一次读取仍然执行（可恢复），但不再上报。
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        h.handle.submit_read(vec!["a".to_string()]);
+        h.log.read_started.notified().await;
+        h.release.send(()).unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(150), h.result_rx.recv())
+                .await
+                .is_err(),
+            "failure streak must emit ReadFailed only once"
+        );
+
+        // 恢复：一次 Connected + 一条读数进 sink。
+        h.log.fail_next_reads.store(0, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        h.handle.submit_read(vec!["a".to_string()]);
+        h.log.read_started.notified().await;
+        h.release.send(()).unwrap();
+        match h.result_rx.recv().await.expect("recovery result") {
+            WorkerResult::Connected { thing_id, .. } => assert_eq!(thing_id, "thing-1"),
+            other => panic!("expected Connected, got {other:?}"),
+        }
+        let reading = h.sink_rx.recv().await.expect("recovered reading");
+        assert_eq!(reading.values.first().and_then(|v| v.value.as_deref()), Some("42"));
 
         h.handle.stop();
         wait_finished(&h.handle).await;
