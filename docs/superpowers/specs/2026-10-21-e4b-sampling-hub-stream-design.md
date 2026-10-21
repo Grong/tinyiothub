@@ -66,7 +66,7 @@ pub trait DemandSource: Send + Sync {
 ```
 
 - cloud 适配器每 1s 调用；失败保留上一份快照并记 `demand_snapshot_error` 指标。
-- 查询来源：`watch_rules`（kind=property/health/availability）、派生属性 `thing_properties.expression/refs`、`device_alarm_rules`（is_enabled=1，property_id → 属性名）。
+- 查询来源：`watch_rules`（kind=property/health/availability）、派生属性 `thing_properties.expression/refs`、`thing_alarm_rules`（is_enabled=1，property_id → 属性名）。
 - runtime 将 property 引用映射到 source：manifest 中 `sources[].fields` 精确匹配优先；否则若只有一个人可读 poll source，映射到它；否则丢弃并记 `demand_unmapped`。
 
 ### 2.2 DemandTracker
@@ -125,7 +125,7 @@ Authorization: Bearer <jwt>
   - `control` `{v:1, ts, thingId, kind, payload}` — job/state_change，按到达顺序；有界队列（256），溢出发 `resync` 并清空。watch 命中/超时仍由 E3 `/live/stream` 账本流提供（E4b control 不含 watch）。
   - `ping` 15s；`resync` `{v:1, reason:"lagged"|"overflow"|"reconnect"}`。
 - 生命周期：连接建立 → `DemandTracker.subscribe`；SSE 断开/Drop → `unsubscribe`；heartbeat 续期。
-- 实现：EventBus broadcast 订阅（1000 容量）；Lagged → `resync`；`reading` 由 PropertyChange 事件映射；`control` 由 watch/job 事件映射；首帧从 `DataServer.get_device` + LiveState 摘要。
+- 实现：EventBus broadcast 订阅（1000 容量）；Lagged → `resync`；`reading` 由 PropertyChange 事件映射；`control` 由 job/state_change 事件映射（watch 留 E3）；首帧从 `DataServer.get_device` + LiveState 摘要。
 
 ## 3. 数据流
 
