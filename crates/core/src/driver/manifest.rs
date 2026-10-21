@@ -481,4 +481,26 @@ mod tests {
             Err(ManifestError::UnknownSourceField { .. })
         ));
     }
+
+    #[test]
+    fn schema_file_matches_types() {
+        let schema = schemars::schema_for!(DriverManifest);
+        let generated = serde_json::to_string_pretty(&schema).unwrap();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../spec/driver-manifest.schema.json");
+        let checked_in = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            checked_in.trim(),
+            generated.trim(),
+            "run `cargo test -p core generate_manifest_schema -- --ignored` and commit the file"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn generate_manifest_schema() {
+        let schema = schemars::schema_for!(DriverManifest);
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../spec/driver-manifest.schema.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, serde_json::to_string_pretty(&schema).unwrap()).unwrap();
+    }
 }

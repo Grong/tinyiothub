@@ -1,0 +1,416 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DriverManifest",
+  "type": "object",
+  "properties": {
+    "capabilities": {
+      "$ref": "#/$defs/ManifestCapabilities",
+      "default": {
+        "cancel": false,
+        "push": false,
+        "streaming": false
+      }
+    },
+    "config": {
+      "default": {
+        "type": "object"
+      }
+    },
+    "identity": {
+      "$ref": "#/$defs/ManifestIdentity"
+    },
+    "limits": {
+      "$ref": "#/$defs/ManifestLimits",
+      "default": {
+        "maxCallsPerMin": 60,
+        "maxConcurrentJobs": 1
+      }
+    },
+    "manifestVersion": {
+      "type": "string"
+    },
+    "placement": {
+      "$ref": "#/$defs/PlacementDecl",
+      "default": {
+        "fromSource": null,
+        "mapRef": null,
+        "mode": "runtime",
+        "position": null,
+        "trust": "trusted",
+        "zoneRef": null
+      }
+    },
+    "resources": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ResourceDecl"
+      }
+    },
+    "sources": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SourceDecl"
+      }
+    },
+    "stateFields": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/StateFieldDecl"
+      }
+    },
+    "tools": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ManifestTool"
+      }
+    }
+  },
+  "required": [
+    "manifestVersion",
+    "identity"
+  ],
+  "$defs": {
+    "LocationTrustDecl": {
+      "type": "string",
+      "enum": [
+        "trusted",
+        "uncertain",
+        "lost"
+      ]
+    },
+    "ManifestCapabilities": {
+      "type": "object",
+      "properties": {
+        "cancel": {
+          "type": "boolean",
+          "default": false
+        },
+        "push": {
+          "type": "boolean",
+          "default": false
+        },
+        "streaming": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "ManifestIdentity": {
+      "type": "object",
+      "properties": {
+        "abiVersion": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "driver": {
+          "type": "string"
+        },
+        "dynamicCapabilities": {
+          "type": "boolean",
+          "default": false
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "driver",
+        "version",
+        "protocol",
+        "abiVersion"
+      ]
+    },
+    "ManifestLimits": {
+      "type": "object",
+      "properties": {
+        "maxCallsPerMin": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 60,
+          "minimum": 0
+        },
+        "maxConcurrentJobs": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 1,
+          "minimum": 0
+        }
+      }
+    },
+    "ManifestTool": {
+      "type": "object",
+      "properties": {
+        "cancellable": {
+          "type": "boolean",
+          "default": true
+        },
+        "kind": {
+          "$ref": "#/$defs/ToolKindDecl",
+          "default": "action"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parameters": {
+          "default": null
+        },
+        "resources": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "safety": {
+          "$ref": "#/$defs/ToolSafetyDecl",
+          "default": "control"
+        },
+        "targetField": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "timeout": {
+          "$ref": "#/$defs/ToolTimeout",
+          "default": {
+            "defaultMs": 3000,
+            "maxMs": 5000
+          }
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "NumericRange": {
+      "type": "object",
+      "properties": {
+        "max": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "min": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      }
+    },
+    "PlacementDecl": {
+      "type": "object",
+      "properties": {
+        "fromSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "mapRef": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "mode": {
+          "$ref": "#/$defs/PlacementMode",
+          "default": "runtime"
+        },
+        "position": {
+          "default": null
+        },
+        "trust": {
+          "$ref": "#/$defs/LocationTrustDecl",
+          "default": "trusted"
+        },
+        "zoneRef": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "PlacementMode": {
+      "type": "string",
+      "enum": [
+        "fixed",
+        "runtime",
+        "declared"
+      ]
+    },
+    "ResourceDecl": {
+      "type": "object",
+      "properties": {
+        "capacity": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 1,
+          "minimum": 0
+        },
+        "id": {
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/ResourceMode",
+          "default": "exclusive"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "ResourceMode": {
+      "type": "string",
+      "enum": [
+        "exclusive",
+        "shared"
+      ]
+    },
+    "SourceDecl": {
+      "type": "object",
+      "properties": {
+        "demandOnly": {
+          "type": "boolean",
+          "default": false
+        },
+        "fields": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "health": {
+          "type": "boolean",
+          "default": false
+        },
+        "id": {
+          "type": "string"
+        },
+        "intervalMs": {
+          "type": "integer",
+          "format": "uint64",
+          "default": 1000,
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string"
+        },
+        "minIntervalMs": {
+          "type": "integer",
+          "format": "uint64",
+          "default": 200,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ]
+    },
+    "StateFieldDecl": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "range": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NumericRange"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "readOnly": {
+          "type": "boolean",
+          "default": false
+        },
+        "required": {
+          "type": "boolean",
+          "default": false
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "type": {
+          "type": "string"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ]
+    },
+    "ToolKindDecl": {
+      "type": "string",
+      "enum": [
+        "action",
+        "set"
+      ]
+    },
+    "ToolSafetyDecl": {
+      "type": "string",
+      "enum": [
+        "safe",
+        "control",
+        "dangerous"
+      ]
+    },
+    "ToolTimeout": {
+      "type": "object",
+      "properties": {
+        "defaultMs": {
+          "type": "integer",
+          "format": "uint64",
+          "default": 3000,
+          "minimum": 0
+        },
+        "maxMs": {
+          "type": "integer",
+          "format": "uint64",
+          "default": 5000,
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

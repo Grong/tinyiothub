@@ -15,6 +15,7 @@
 //!   持久化一律经 `ports` trait 注入，D15）
 //! - unsafe 仅限驱动/plugin 动态加载路径（manifest lint 例外已标注）
 
+pub mod acceptance;
 pub mod access;
 pub mod cron_executors;
 pub mod data_server;

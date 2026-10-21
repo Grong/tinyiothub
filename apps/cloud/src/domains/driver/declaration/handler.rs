@@ -5,6 +5,8 @@ use axum::extract::{Multipart, Path, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{Value, json};
+use tinyiothub_core::driver::declaration::AcceptanceReportRecord;
+use tinyiothub_runtime::acceptance::runner::run_profiles;
 use tinyiothub_web::middleware::workspace::WorkspaceScope;
 
 use crate::state::AppState;
@@ -14,6 +16,7 @@ pub fn create_router() -> Router<AppState> {
         .route("/install", post(install_driver))
         .route("/declarations", get(list_declarations))
         .route("/{driver}/declaration", get(get_declaration))
+        .route("/{driver}/acceptance", post(run_acceptance))
 }
 
 /// `POST /v1/drivers/install` — multipart fields `manifest` (required) and
@@ -110,4 +113,39 @@ async fn get_declaration(
         })),
         None => Json(json!({"success": false, "error": "driver not installed"})),
     }
+}
+
+/// `POST /v1/drivers/{driver}/acceptance` — run every auto profile against the
+/// installed package and persist the aggregate report.
+async fn run_acceptance(
+    State(state): State<AppState>,
+    WorkspaceScope(ws): WorkspaceScope,
+    Path(driver): Path<String>,
+) -> Json<Value> {
+    let ws = ws.unwrap_or_default();
+    let Some(access) = state.access.clone() else {
+        return Json(json!({"success": false, "error": "access service not wired"}));
+    };
+    let Some(dir) = access.package_dir(&ws, &driver) else {
+        return Json(json!({"success": false, "error": "driver not installed"}));
+    };
+    // The runner is synchronous and spins up its own tokio runtime for
+    // materialization; keep it off the request's runtime thread.
+    let report = match tokio::task::spawn_blocking(move || run_profiles(&dir, &["all"])).await {
+        Ok(report) => report,
+        Err(e) => return Json(json!({"success": false, "error": format!("acceptance runner failed: {e}")})),
+    };
+    let rec = AcceptanceReportRecord {
+        workspace_id: ws.clone(),
+        driver_name: report.driver.clone(),
+        driver_version: report.version.clone(),
+        profile: "all".into(),
+        level: if report.passed() { "pass".into() } else { "fail".into() },
+        report_json: serde_json::to_string(&report).unwrap_or_default(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+    };
+    if let Err(e) = access.acceptance_store.insert(&rec).await {
+        tracing::warn!(error = %e, "acceptance report persist failed");
+    }
+    Json(json!({"success": true, "report": report}))
 }
