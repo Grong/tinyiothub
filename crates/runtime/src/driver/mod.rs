@@ -12,6 +12,7 @@ use tinyiothub_core::models::thing::Thing;
 
 pub mod derived;
 pub mod derived_manager;
+pub mod describe;
 pub mod drivers;
 pub mod dynamic_adapter;
 pub mod loader;

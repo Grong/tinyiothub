@@ -103,6 +103,14 @@ impl ThingDriver for ModbusDriver {
         Self::get_default_config()
     }
 
+    fn describe(&mut self) -> Result<tinyiothub_core::driver::declaration::DeviceDeclaration, Error> {
+        Ok(crate::driver::describe::declaration_from_thing(
+            &self.device,
+            "modbus_rtu",
+            "1.0.0",
+        ))
+    }
+
     fn read_data(&mut self, cancel: &CancelToken) -> Result<Vec<ResultValue>, Error> {
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);

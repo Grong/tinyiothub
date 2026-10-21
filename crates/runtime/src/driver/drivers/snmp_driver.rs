@@ -62,6 +62,14 @@ impl ThingDriver for SnmpDriver {
         &mut self.device
     }
 
+    fn describe(&mut self) -> Result<tinyiothub_core::driver::declaration::DeviceDeclaration, Error> {
+        Ok(crate::driver::describe::declaration_from_thing(
+            &self.device,
+            "snmp",
+            "1.0.0",
+        ))
+    }
+
     fn read_data(&mut self, cancel: &CancelToken) -> Result<Vec<ResultValue>, Error> {
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);

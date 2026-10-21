@@ -181,6 +181,14 @@ impl ThingDriver for SimulatedDriver {
         }
     }
 
+    fn describe(&mut self) -> Result<tinyiothub_core::driver::declaration::DeviceDeclaration, Error> {
+        Ok(crate::driver::describe::declaration_from_thing(
+            &self.device,
+            "simulator",
+            "2.0.0",
+        ))
+    }
+
     #[allow(clippy::collapsible_if)]
     fn read_data(&mut self, cancel: &CancelToken) -> Result<Vec<ResultValue>, Error> {
         if cancel.is_cancelled() {
