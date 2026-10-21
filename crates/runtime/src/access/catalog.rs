@@ -28,9 +28,10 @@ fn is_poll(source: &SourceDecl) -> bool {
 /// Map a demanded property to a source id.
 ///
 /// A `poll` source that declares the property in `fields` wins. Otherwise, if
-/// exactly one non-health `poll` source exists (dynamic drivers may leave
-/// `fields` empty), that source is the fallback. Non-poll sources are never
-/// candidates. An empty property (thing-level watch) maps to nothing.
+/// exactly one `poll` source exists (dynamic drivers may leave `fields` empty),
+/// that source is the fallback regardless of its `health` flag. Non-poll
+/// sources are never candidates. An empty property (thing-level watch) maps to
+/// nothing.
 pub fn source_for_property(sources: &[SourceDecl], property: &str) -> Option<String> {
     if property.is_empty() {
         return None;
@@ -42,7 +43,7 @@ pub fn source_for_property(sources: &[SourceDecl], property: &str) -> Option<Str
     {
         return Some(matched.id.clone());
     }
-    let mut candidates = sources.iter().filter(|source| is_poll(source) && !source.health);
+    let mut candidates = sources.iter().filter(|source| is_poll(source));
     match (candidates.next(), candidates.next()) {
         (Some(source), None) => Some(source.id.clone()),
         _ => None,
@@ -101,9 +102,21 @@ mod tests {
     }
 
     #[test]
-    fn fallback_skips_health_source() {
-        let sources = vec![src("telemetry", "poll", &[]), health_src("health", &[])];
-        assert_eq!(source_for_property(&sources, "level"), Some("telemetry".into()));
+    fn sole_health_poll_source_is_the_fallback() {
+        let sources = vec![health_src("health", &[])];
+        assert_eq!(source_for_property(&sources, "level"), Some("health".into()));
+    }
+
+    #[test]
+    fn sole_poll_source_with_other_fields_is_the_fallback() {
+        let sources = vec![src("telemetry", "poll", &["level"])];
+        assert_eq!(source_for_property(&sources, "temperature"), Some("telemetry".into()));
+    }
+
+    #[test]
+    fn two_poll_sources_one_health_without_exact_match_is_ambiguous() {
+        let sources = vec![src("telemetry", "poll", &[]), health_src("health", &["online"])];
+        assert_eq!(source_for_property(&sources, "level"), None);
     }
 
     #[test]
