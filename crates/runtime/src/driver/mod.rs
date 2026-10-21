@@ -21,7 +21,10 @@ pub mod retry;
 pub mod status;
 pub mod validation;
 pub mod validator;
+pub mod worker;
 pub mod wrapper;
+
+pub use worker::{WorkerCommand, WorkerHandle, spawn_worker};
 
 // Register all drivers via macro
 tinyiothub_macros::register_drivers! {
