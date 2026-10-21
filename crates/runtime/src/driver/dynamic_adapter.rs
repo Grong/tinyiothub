@@ -29,14 +29,24 @@ pub struct DynamicEntry {
 pub struct DynamicThingDriver {
     ctx: *mut c_void,
     vtable: &'static DriverVTableV2,
-    _library: Arc<Library>,
+    _library: Option<Arc<Library>>,
     device: Thing,
 }
 
+/// E4a staging timeout for the completion callback. E4b moves calls to
+/// per-device workers with per-operation budgets.
+const CALL_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Heap state shared with the driver's completion callback.
+///
+/// The callback owns this allocation: it reclaims the box (and with it the
+/// token clone) when it fires. `token` is deliberately owned here so that
+/// `CancelHandle::ctx` never points at a borrowed stack temporary — drivers
+/// may poll it from worker threads, including after `call` has timed out.
 struct DoneState {
     tx: mpsc::Sender<(i32, Option<String>)>,
     free: extern "C" fn(*mut c_char),
+    token: Box<CancelToken>,
 }
 
 extern "C" fn done_cb(user_data: *mut c_void, status: i32, out_json: *mut c_char) {
@@ -53,8 +63,20 @@ extern "C" fn done_cb(user_data: *mut c_void, status: i32, out_json: *mut c_char
 }
 
 extern "C" fn cancel_is_cancelled(ctx: *mut c_void) -> i32 {
-    // SAFETY: ctx points at a CancelToken that outlives the call.
+    // SAFETY: ctx points into the DoneState-owned CancelToken clone, which
+    // outlives every driver use of the handle (callback reclaims it).
     unsafe { (*(ctx as *const CancelToken)).is_cancelled() as i32 }
+}
+
+/// Maximum error body echoed into `DriverError` messages.
+const ERROR_BODY_LIMIT: usize = 256;
+
+fn truncate_body(body: &str) -> String {
+    let mut truncated: String = body.chars().take(ERROR_BODY_LIMIT).collect();
+    if body.chars().count() > ERROR_BODY_LIMIT {
+        truncated.push('…');
+    }
+    truncated
 }
 
 impl DynamicThingDriver {
@@ -66,9 +88,19 @@ impl DynamicThingDriver {
         Ok(Self {
             ctx: entry.ctx,
             vtable: vtable_ref,
-            _library: Arc::clone(&entry.library),
+            _library: Some(Arc::clone(&entry.library)),
             device,
         })
+    }
+
+    #[cfg(test)]
+    fn for_test(device: Thing, ctx: *mut c_void, vtable: &'static DriverVTableV2) -> Self {
+        Self {
+            ctx,
+            vtable,
+            _library: None,
+            device,
+        }
     }
 
     /// Invoke an async ABI v2 call and wait (E4a staging: synchronous wait on
@@ -78,25 +110,53 @@ impl DynamicThingDriver {
         invoke: impl FnOnce(*mut CancelHandle, DriverDone, *mut c_void) -> i32,
         cancel: &CancelToken,
     ) -> Result<String, Error> {
+        self.call_with_timeout(invoke, cancel, CALL_TIMEOUT)
+    }
+
+    /// Same as [`Self::call`] with an explicit callback timeout.
+    ///
+    /// The driver receives a `CancelHandle` whose `ctx` points into the
+    /// heap-allocated `DoneState` (an owned clone of `cancel`), so it stays
+    /// valid for as long as the driver may use it. The callback reclaims the
+    /// `DoneState`; if the timeout elapses without a callback, the allocation
+    /// is intentionally leaked for E4a staging — reclaiming it could race a
+    /// late callback still holding `user_data`. E4b's per-device workers make
+    /// callback lifetimes explicit.
+    fn call_with_timeout(
+        &self,
+        invoke: impl FnOnce(*mut CancelHandle, DriverDone, *mut c_void) -> i32,
+        cancel: &CancelToken,
+        timeout: Duration,
+    ) -> Result<String, Error> {
         let (tx, rx) = mpsc::channel();
-        let mut handle = CancelHandle {
-            is_cancelled: cancel_is_cancelled,
-            ctx: cancel as *const _ as *mut _,
-        };
         let state = Box::new(DoneState {
             tx,
             free: self.vtable.free_string,
+            token: Box::new(cancel.clone()),
         });
+        // `Box::into_raw` keeps the heap allocation (and the token inside it)
+        // at a stable address. The handle must never point at the borrowed
+        // `cancel` reference, which may die before a worker thread sees it.
+        let token_ptr = &*state.token as *const CancelToken as *mut c_void;
         let user_data = Box::into_raw(state) as *mut c_void;
+        let mut handle = CancelHandle {
+            is_cancelled: cancel_is_cancelled,
+            ctx: token_ptr,
+        };
         let rc = invoke(&mut handle, done_cb, user_data);
         if rc != 0 {
             // SAFETY: the callback was not invoked on the error path.
             unsafe { drop(Box::from_raw(user_data as *mut DoneState)) };
             return Err(Error::DriverError(format!("driver call returned {rc}")));
         }
-        match rx.recv_timeout(Duration::from_secs(5)) {
+        match rx.recv_timeout(timeout) {
             Ok((0, Some(json))) => Ok(json),
             Ok((2, _)) => Err(Error::Cancelled),
+            Ok((1, Some(body))) => Err(Error::DriverError(format!(
+                "driver callback status 1: {}",
+                truncate_body(&body)
+            ))),
+            Ok((1, None)) => Err(Error::DriverError("driver callback status 1".into())),
             Ok((code, _)) => Err(Error::DriverError(format!("driver callback status {code}"))),
             Err(_) => Err(Error::DriverError("driver callback timed out".into())),
         }
@@ -209,5 +269,232 @@ impl ThingDriver for DynamicThingDriver {
             )?
         };
         serde_json::from_str(&result_json).map_err(|e| Error::DriverError(format!("describe JSON parse error: {e}")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CString;
+
+    fn leak_json(s: &str) -> *mut c_char {
+        CString::new(s).expect("no interior NUL").into_raw()
+    }
+
+    extern "C" fn stub_free_string(s: *mut c_char) {
+        if !s.is_null() {
+            // SAFETY: every stub string comes from CString::into_raw.
+            unsafe { drop(CString::from_raw(s)) };
+        }
+    }
+
+    extern "C" fn stub_set_demand(_ctx: *mut c_void, _json: *const c_char) -> i32 {
+        0
+    }
+
+    extern "C" fn stub_describe(_ctx: *mut c_void, _config: *const c_char, out: *mut *mut c_char) -> i32 {
+        // SAFETY: out is a valid out-pointer supplied by the adapter.
+        unsafe {
+            *out = leak_json(r#"{"manifestVersion":"1","driver":"stub","driverVersion":"0.0.0"}"#);
+        }
+        0
+    }
+
+    extern "C" fn read_ok(
+        _ctx: *mut c_void,
+        _config: *const c_char,
+        _sources: *const c_char,
+        _cancel: *mut CancelHandle,
+        done: DriverDone,
+        user_data: *mut c_void,
+    ) -> i32 {
+        done(
+            user_data,
+            0,
+            leak_json(r#"[{"name":"x","value_type":"int","value":"1"}]"#),
+        );
+        0
+    }
+
+    extern "C" fn read_err(
+        _ctx: *mut c_void,
+        _config: *const c_char,
+        _sources: *const c_char,
+        _cancel: *mut CancelHandle,
+        done: DriverDone,
+        user_data: *mut c_void,
+    ) -> i32 {
+        done(user_data, 1, leak_json("boom details"));
+        0
+    }
+
+    /// Fires `done` from a detached thread. Uses the cancel handle to report
+    /// whether the adapter-owned token observed cancellation: status 2 when it
+    /// did, status 1 with a body when it did not.
+    extern "C" fn read_cancel_async(
+        _ctx: *mut c_void,
+        _config: *const c_char,
+        _sources: *const c_char,
+        cancel: *mut CancelHandle,
+        done: DriverDone,
+        user_data: *mut c_void,
+    ) -> i32 {
+        let cancel = cancel as usize;
+        let user_data = user_data as usize;
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            // SAFETY: DoneState (and its token) is alive until `done` below.
+            let handle = cancel as *mut CancelHandle;
+            let cancelled = unsafe { ((*handle).is_cancelled)((*handle).ctx) };
+            if cancelled == 1 {
+                done(user_data as *mut c_void, 2, std::ptr::null_mut());
+            } else {
+                done(
+                    user_data as *mut c_void,
+                    1,
+                    leak_json("token not observed as cancelled"),
+                );
+            }
+        });
+        0
+    }
+
+    extern "C" fn read_never_done(
+        _ctx: *mut c_void,
+        _config: *const c_char,
+        _sources: *const c_char,
+        _cancel: *mut CancelHandle,
+        _done: DriverDone,
+        _user_data: *mut c_void,
+    ) -> i32 {
+        0
+    }
+
+    static OK_VTABLE: DriverVTableV2 = DriverVTableV2 {
+        version: 2,
+        read_async: read_ok,
+        execute_async: read_ok,
+        set_demand: stub_set_demand,
+        describe: stub_describe,
+        free_string: stub_free_string,
+    };
+
+    static ERR_VTABLE: DriverVTableV2 = DriverVTableV2 {
+        version: 2,
+        read_async: read_err,
+        execute_async: read_err,
+        set_demand: stub_set_demand,
+        describe: stub_describe,
+        free_string: stub_free_string,
+    };
+
+    static CANCEL_ASYNC_VTABLE: DriverVTableV2 = DriverVTableV2 {
+        version: 2,
+        read_async: read_cancel_async,
+        execute_async: read_cancel_async,
+        set_demand: stub_set_demand,
+        describe: stub_describe,
+        free_string: stub_free_string,
+    };
+
+    static TIMEOUT_VTABLE: DriverVTableV2 = DriverVTableV2 {
+        version: 2,
+        read_async: read_never_done,
+        execute_async: read_never_done,
+        set_demand: stub_set_demand,
+        describe: stub_describe,
+        free_string: stub_free_string,
+    };
+
+    fn test_driver(vtable: &'static DriverVTableV2) -> DynamicThingDriver {
+        let thing = Thing {
+            id: "stub-1".to_string(),
+            name: "stub-1".to_string(),
+            ..Thing::default()
+        };
+        DynamicThingDriver::for_test(thing, std::ptr::null_mut(), vtable)
+    }
+
+    #[test]
+    fn sync_status_zero_returns_json_and_reclaims_done_state() {
+        let mut driver = test_driver(&OK_VTABLE);
+        let token = CancelToken::new();
+
+        let values = driver.read_data(&token).expect("status 0 maps to Ok");
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].name, "x");
+        assert_eq!(
+            token.strong_count(),
+            1,
+            "callback must reclaim DoneState (and its token clone)"
+        );
+    }
+
+    #[test]
+    fn sync_status_one_reports_error_body_and_reclaims_done_state() {
+        let mut driver = test_driver(&ERR_VTABLE);
+        let token = CancelToken::new();
+
+        let message = driver.read_data(&token).unwrap_err().to_string();
+        assert!(message.contains("status 1"), "{message}");
+        assert!(
+            message.contains("boom details"),
+            "error body must be surfaced: {message}"
+        );
+        assert_eq!(
+            token.strong_count(),
+            1,
+            "callback must reclaim DoneState (and its token clone)"
+        );
+    }
+
+    #[test]
+    fn async_status_two_maps_to_cancelled_and_reclaims_done_state() {
+        let mut driver = test_driver(&CANCEL_ASYNC_VTABLE);
+        let token = CancelToken::new();
+        let token_for_cancel = token.clone();
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            token_for_cancel.cancel();
+        });
+
+        let result = driver.read_data(&token);
+        canceller.join().expect("canceller thread");
+        assert!(
+            matches!(result, Err(Error::Cancelled)),
+            "the adapter-owned token must observe cross-thread cancellation; got {result:?}"
+        );
+        assert_eq!(
+            token.strong_count(),
+            1,
+            "callback must reclaim DoneState (and its token clone)"
+        );
+    }
+
+    #[test]
+    fn timeout_maps_to_driver_error_and_keeps_token_alive() {
+        let driver = test_driver(&TIMEOUT_VTABLE);
+        let token = CancelToken::new();
+
+        let message = driver
+            .call_with_timeout(|_handle, _done, _user_data| 0, &token, Duration::from_millis(20))
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("timed out"), "{message}");
+        // E4a staging intentionally leaks DoneState on timeout so a late
+        // callback never dereferences freed memory; the owned clone stays alive.
+        assert_eq!(
+            token.strong_count(),
+            2,
+            "DoneState must outlive the call when no callback arrives"
+        );
+    }
+
+    #[test]
+    fn long_error_bodies_are_truncated() {
+        let body = "x".repeat(ERROR_BODY_LIMIT + 10);
+        let truncated = truncate_body(&body);
+        assert_eq!(truncated.chars().count(), ERROR_BODY_LIMIT + 1);
+        assert!(truncated.ends_with('…'));
     }
 }

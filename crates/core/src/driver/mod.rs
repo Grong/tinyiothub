@@ -300,6 +300,12 @@ impl CancelToken {
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::SeqCst)
     }
+
+    /// 当前共享该取消状态的句柄数。用于诊断与适配器生命周期测试。
+    #[doc(hidden)]
+    pub fn strong_count(&self) -> usize {
+        Arc::strong_count(&self.0)
+    }
 }
 
 // ─── ThingDriver trait ─────────────────────────────────────────────

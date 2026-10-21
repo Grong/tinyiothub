@@ -7,7 +7,7 @@
 /// # 示例
 ///
 /// ```rust,ignore
-/// use tinyiothub_core::driver::CancelToken;
+/// use tinyiothub_core::driver::{CancelToken, ThingDriver};
 /// use tinyiothub_plugin_sdk::*;
 ///
 /// pub struct MyDriver {
@@ -43,6 +43,9 @@
 /// // 导出驱动
 /// export_driver!(MyDriver);
 /// ```
+///
+/// > 注：SDK 自带的 `ThingDriver` trait 目前仍是 v1 签名，迁移到 ABI v2 见后续任务；
+/// > 上面的 import 显式选用 core 的 v2 trait。
 #[macro_export]
 macro_rules! export_driver {
     ($driver_type:ty) => {

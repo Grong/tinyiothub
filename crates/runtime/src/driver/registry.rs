@@ -15,6 +15,17 @@ use tinyiothub_core::error::Error;
 
 use super::dynamic_adapter::DynamicEntry;
 
+type V2VTableFn = unsafe extern "C" fn() -> *const DriverVTableV2;
+
+/// Resolve the ABI v2 vtable symbol, mapping absence to the v1 migration
+/// message. Factored out so the rejection path is testable without a `.so`.
+fn v2_vtable_or_v1_error<'lib>(
+    symbol: Option<libloading::Symbol<'lib, V2VTableFn>>,
+    path: &std::path::Path,
+) -> Result<libloading::Symbol<'lib, V2VTableFn>, Error> {
+    symbol.ok_or_else(|| Error::DriverError(v1_unsupported_message(path)))
+}
+
 /// Registry of all drivers: built-in (static) + dynamic (per-workspace).
 pub struct DriverRegistry {
     /// Per-workspace dynamic driver registries.
@@ -52,18 +63,15 @@ impl DriverRegistry {
             unsafe { Library::new(path).map_err(|e| Error::DriverError(format!("failed to load library: {}", e)))? };
         let lib = Arc::new(lib);
 
+        // ABI v2 is the only loadable ABI. Check the v2 vtable symbol before
+        // anything else so any non-v2 artifact gets migration guidance.
+        let vtable_fn: libloading::Symbol<V2VTableFn> =
+            v2_vtable_or_v1_error(unsafe { lib.get(SYMBOL_VTABLE_V2) }.ok(), path)?;
+
         let init: libloading::Symbol<unsafe extern "C" fn() -> *mut std::ffi::c_void> = unsafe {
             lib.get(SYMBOL_INIT)
                 .map_err(|e| Error::DriverError(format!("missing symbol tinyiothub_driver_init: {}", e)))?
         };
-
-        // ABI v2 is the only loadable ABI. Missing v2 symbol means the driver
-        // is v1 (or older) and must be rejected with migration guidance.
-        let vtable_fn: libloading::Symbol<unsafe extern "C" fn() -> *const DriverVTableV2> =
-            match unsafe { lib.get(SYMBOL_VTABLE_V2) } {
-                Ok(f) => f,
-                Err(_) => return Err(Error::DriverError(v1_unsupported_message(path))),
-            };
 
         let vtable_ptr = unsafe { vtable_fn() };
         if vtable_ptr.is_null() {
@@ -321,5 +329,14 @@ mod tests {
             .load(&PathBuf::from("/nonexistent/driver.so"), "ws1")
             .unwrap_err();
         assert!(err.to_string().contains("failed to load library"));
+    }
+
+    #[test]
+    fn missing_v2_symbol_yields_v1_migration_message() {
+        let err = v2_vtable_or_v1_error(None, std::path::Path::new("/tmp/liblegacy.so")).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("ABI v1 is unsupported"), "{message}");
+        assert!(message.contains("tinyiothub_driver_vtable_v2"), "{message}");
+        assert!(message.contains("liblegacy.so"), "{message}");
     }
 }

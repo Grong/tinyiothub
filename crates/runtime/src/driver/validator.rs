@@ -2,6 +2,19 @@
 
 use std::path::Path;
 
+use tinyiothub_core::driver::dynamic::{DriverVTableV2, SYMBOL_VTABLE_V2, v1_unsupported_message, verify_v2_version};
+
+type V2VTableFn = unsafe extern "C" fn() -> *const DriverVTableV2;
+
+/// Resolve the ABI v2 vtable symbol, mapping absence to `InvalidFile` with
+/// v1 migration guidance. Factored out for testability without a `.so`.
+fn v2_vtable_or_v1_error<'lib>(
+    symbol: Option<libloading::Symbol<'lib, V2VTableFn>>,
+    path: &Path,
+) -> Result<libloading::Symbol<'lib, V2VTableFn>, DriverValidationError> {
+    symbol.ok_or_else(|| DriverValidationError::InvalidFile(v1_unsupported_message(path)))
+}
+
 /// Validates a driver by attempting a dry load (RTLD_LAZY).
 pub struct DriverValidator;
 
@@ -17,19 +30,12 @@ impl DriverValidator {
     }
 
     fn dry_load(driver_path: &Path) -> Result<(), DriverValidationError> {
-        use tinyiothub_core::driver::dynamic::{
-            DriverVTableV2, SYMBOL_VTABLE_V2, v1_unsupported_message, verify_v2_version,
-        };
-
         let lib = unsafe {
             libloading::Library::new(driver_path).map_err(|e| DriverValidationError::LoadFailed(e.to_string()))?
         };
 
-        let vtable_fn: libloading::Symbol<unsafe extern "C" fn() -> *const DriverVTableV2> =
-            match unsafe { lib.get(SYMBOL_VTABLE_V2) } {
-                Ok(f) => f,
-                Err(_) => return Err(DriverValidationError::InvalidFile(v1_unsupported_message(driver_path))),
-            };
+        let vtable_fn: libloading::Symbol<V2VTableFn> =
+            v2_vtable_or_v1_error(unsafe { lib.get(SYMBOL_VTABLE_V2) }.ok(), driver_path)?;
 
         let vtable_ptr = unsafe { vtable_fn() };
         if vtable_ptr.is_null() {
@@ -64,3 +70,17 @@ impl std::fmt::Display for DriverValidationError {
 }
 
 impl std::error::Error for DriverValidationError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_v2_symbol_is_invalid_file_with_migration_guidance() {
+        let err = v2_vtable_or_v1_error(None, Path::new("/tmp/liblegacy.so")).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("invalid file"), "{message}");
+        assert!(message.contains("ABI v1 is unsupported"), "{message}");
+        assert!(message.contains("tinyiothub_driver_vtable_v2"), "{message}");
+    }
+}
