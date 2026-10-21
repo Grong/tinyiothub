@@ -123,9 +123,9 @@ drivers/demo-declarative/   参考驱动（manifest + .so）
 
 字段语义：
 
-- `identity.dynamicCapabilities`：`false` = 固定能力，实例声明=包级清单；`true` = 通用驱动（modbus/snmp/opcua…），绑定时必须 `describe(config)` 返回实例声明，Hub 对实例声明做结构校验（工具/字段 schema 元校验 + `limits` 上限），不要求是包级 tools 的子集。
+- `identity.dynamicCapabilities`：`false` = 固定能力，实例声明=包级清单；`true` = 通用驱动（modbus/snmp/opcua…），绑定时必须 `describe(config)` 返回实例声明，Hub 对实例声明做结构校验（工具/字段 schema 元校验 + `limits` 上限），不要求是包级 tools 的子集。为 `true` 时包级 `tools`/`stateFields` 可为空，实例声明提供具体能力。
 - `config`：驱动参数 JSON Schema；安装时校验已存在物的 `driver_options`（warn），建物/绑定驱动时校验（拒绝）。
-- `tools[].kind`：`action`（自由命令）| `set`（写某个 `readOnly=false` 的 state field）。`set` 工具的 `parameters` 必须恰好含目标字段名，且类型/范围与 state field 一致，否则安装校验拒绝。
+- `tools[].kind`：`action`（自由命令）| `set`（写某个 `readOnly=false` 的 state field）。`set` 工具必须声明 `targetField`，其 `parameters` 必须恰好含该字段名，且类型/范围与 state field 一致，否则安装校验拒绝。
 - `tools[].safety`：`safe | control | dangerous`；验收只自动调用 `safe`，`dangerous` 记 manual。
 - `tools[].timeout`：`defaultMs` 用于 AI 未指定时；`maxMs` 是钳制上限。
 - `tools[].resources`：调用期间 claim 的资源 id。
@@ -185,15 +185,19 @@ POST /workspaces/{ws}/drivers/install  (manifest + 可选 .so)
   → driver_declarations 写新行 (active)，旧版本置 retired
   → ManifestRegistry upsert；v1 .so 在此拒载
   → 已绑定物：重新 describe(config) → device_declarations upsert → 重物化
-      stateFields→thing_properties、tools→device_commands、placement→坐标列
+      stateFields→thing_properties、tools→device_commands
+      （placement→坐标列自 E4d 起；E4a 只解析/校验 placement）
       只 upsert，不删除（消失项标 stale，交给验收报 drift）
 
 建物/绑定驱动
   → 必须有 active manifest（无清单 → 拒绝，fail closed）
   → driver_options 按 manifest.config 校验（非法拒绝）
   → dynamicCapabilities=true → describe(config) → 实例声明校验 → device_declarations
-  → 物化投影；模板的 properties/actions **不再拷贝**（清单是事实源），
-    模板只提供 display_name/category 等展示元数据
+  → 物化投影；固定能力驱动（dynamicCapabilities=false）不拷贝模板 properties/actions
+    （清单是事实源），模板只提供 display_name/category 等展示元数据
+    通用驱动（dynamicCapabilities=true）迁移期允许模板能力作为实例声明的引导输入：
+    先落库 → describe 读取 → device_declarations 生效后以声明为准；
+    E4e 迁移计划负责把字段定义迁入 driver_options/config
 
 启动时
   → device_declarations 全量重织 DeviceDeclarationRegistry（幂等 upsert）
@@ -261,12 +265,12 @@ LiveState 摘要读 maps 的 zone 结果；per-workspace flag `zone.source=hiera
 | `acceptance_reports` | id, workspace_id, driver_name, driver_version, profile, level, report_json, created_at |
 | `things`（增加列） | map_id, position_x, position_y, position_level, position_heading, position_trust, position_updated_at；原 `position TEXT` 保留不动 |
 
-API（workspace 隔离）：
+API（workspace 由认证作用域 `WorkspaceScope` 注入，沿用现有 `/v1` 路由约定）：
 
-- `POST /workspaces/{ws}/drivers/install`、`GET /workspaces/{ws}/drivers`、`POST /workspaces/{ws}/drivers/{name}/acceptance`
-- `GET/POST/PATCH/DELETE /workspaces/{ws}/maps`、`/workspaces/{ws}/maps/{id}/places`
-- `PUT /things/{id}/position`（人工校正；body 含 x/y/level/heading/trust）
-- `GET /workspaces/{ws}/things/{id}/declaration`（实例声明与 drift）
+- `POST /v1/drivers/install`、`GET /v1/drivers/declarations`、`GET /v1/drivers/{name}/declaration`、`POST /v1/drivers/{name}/acceptance`
+- `GET/POST/PATCH/DELETE /v1/maps`、`/v1/maps/{id}/places`（E4d）
+- `PUT /v1/things/{id}/position`（人工校正；body 含 x/y/level/heading/trust，E4d）
+- 实例声明与 drift 随 `GET /v1/drivers/{name}/declaration` 返回
 
 ## 4. 错误处理、验收与测试
 
@@ -294,7 +298,7 @@ API（workspace 隔离）：
 | profile | 检查 |
 |---|---|
 | `core` | manifest schema、identity、工具 schema 元校验、state field 类型/范围、resources、config schema |
-| `materialization` | 装包+建测试物 → `thing_properties/device_commands/坐标` 与声明逐项一致；无模板能力拷贝 |
+| `materialization` | 装包+建测试物 → `thing_properties/device_commands` 与声明逐项一致（坐标在 E4d 加入）；无模板能力拷贝 |
 | `lifecycle` | 连接/读数/断开/重连；offline 状态与 health |
 | `telemetry` | 读数覆盖 required 字段；类型/范围；interval 生效；push 模式送达 |
 | `tools` | safe 工具参数往返（合法/非法）；未声明工具拒绝；越界拒绝理由正确 |
@@ -330,7 +334,7 @@ API（workspace 隔离）：
 
 | 子阶段 | 交付 | 对应验收 profile |
 |---|---|---|
-| **E4a 协议先行** | manifest v1 + ABI v2（含 cancel 通道；stop 接线在 E4c）+ 双层声明（`describe(config)`→`device_declarations`）+ 3 个内置驱动迁 v2 + demo-declarative + 安装/物化 API；v1 `.so` 拒载 | core / materialization / migration |
+| **E4a 协议先行** | manifest v1 + ABI v2（含 cancel 通道；stop 接线在 E4c）+ 双层声明（`describe(config)`→`device_declarations`）+ 3 个内置驱动迁 v2 + demo-declarative + 安装/物化 API（属性/命令；坐标 E4d）；v1 `.so` 拒载 | core / materialization / migration |
 | **E4b 采样** | per-source 调度、DemandTracker、health 慢通道、push `set_demand` | telemetry / streaming |
 | **E4c 资源与取消** | 多资源 claim/lease、busy 持有者、stop 取消在途（1s 宽限/unknown） | resources / cancel / lifecycle |
 | **E4d 空间** | maps/places 数据模型 + API、坐标/trust、point-in-polygon、zone 权威切换（flag） | placement |
