@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/*",
     "apps/*",
+    "drivers/demo-declarative",
     "tests/integration",
 ]
 exclude = [

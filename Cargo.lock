@@ -915,6 +915,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "demo-declarative"
+version = "1.0.0"
+dependencies = [
+ "core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
