@@ -4,11 +4,14 @@ pub mod derived_validation;
 pub mod export_template;
 pub mod import_export;
 
+use std::sync::Arc;
+
 use sqlx::SqlitePool;
 use tinyiothub_core::models::{thing_command::CreateThingCommandRequest, thing_property::CreateThingPropertyRequest};
 
 use super::{
     errors::ThingError,
+    hooks::CreationMode,
     summary::{self, StubLlmClient, SummaryComputer},
 };
 use crate::domains::thing::types::CreateThingRequest;
@@ -27,6 +30,9 @@ pub struct ThingService {
     db: Db,
     pool: SqlitePool,
     summary_computer: SummaryComputer,
+    /// E4a declaration seam — injected by the composition layer. None means
+    /// the access service is not wired (tests / degraded paths).
+    declaration_hook: parking_lot::RwLock<Option<Arc<dyn super::hooks::ThingDeclarationHook>>>,
 }
 
 impl ThingService {
@@ -35,7 +41,12 @@ impl ThingService {
             db: Db::new(pool.clone()),
             pool,
             summary_computer: SummaryComputer::new(),
+            declaration_hook: parking_lot::RwLock::new(None),
         }
+    }
+
+    pub fn set_declaration_hook(&self, hook: Arc<dyn super::hooks::ThingDeclarationHook>) {
+        *self.declaration_hook.write() = Some(hook);
     }
 
     // ──────────────────────────────────────────
@@ -175,6 +186,19 @@ impl ThingService {
             return Err(ThingError::NameConflict(req.name.clone()));
         }
 
+        // E4a: validate driver options and decide the capability bootstrap
+        // mode before inserting anything (invalid config must not create a
+        // half-bound thing).
+        let hook = self.declaration_hook.read().clone();
+        let mut creation_mode = None;
+        if let (Some(hook), Some(driver)) = (&hook, &req.driver_name) {
+            creation_mode = Some(
+                hook.prepare_creation(workspace_id.unwrap_or_default(), driver, req.driver_options.as_deref())
+                    .await
+                    .map_err(ThingError::Validation)?,
+            );
+        }
+
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let row = ThingRow {
             id: uuid::Uuid::new_v4().to_string(),
@@ -190,7 +214,7 @@ impl ThingService {
             protocol_type: req.protocol_type.clone(),
             factory_name: None,
             linked_data: None,
-            driver_options: None,
+            driver_options: req.driver_options.clone(),
             state: 0,
             parent_id: req.parent_id.clone(),
             organization_id: None,
@@ -207,8 +231,20 @@ impl ThingService {
 
         let created = self.db.create_thing_row(&row).await?;
         if let Some(ref tid) = req.template_id {
-            let _ = self.copy_template_props(&created.id, tid).await;
-            let _ = self.copy_template_acts(&created.id, tid).await;
+            // Fixed-capability drivers declare their own capability set, so
+            // template rows must not pollute it. Dynamic-capability drivers
+            // use template rows as the bootstrap that `describe()` then
+            // refines during materialization.
+            let bootstrap = !matches!(creation_mode, Some(CreationMode::Declarative));
+            if bootstrap {
+                let _ = self.copy_template_props(&created.id, tid).await;
+                let _ = self.copy_template_acts(&created.id, tid).await;
+            }
+        }
+        if let (Some(hook), Some(_)) = (&hook, &req.driver_name) {
+            hook.materialize(workspace_id.unwrap_or_default(), &created.id)
+                .await
+                .map_err(ThingError::Validation)?;
         }
         Ok(Self::row_to_response(&created, vec![]))
     }

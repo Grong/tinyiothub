@@ -58,7 +58,22 @@ impl DriverRegistry {
     }
 
     /// Load a dynamic library driver from disk and register it for a workspace.
+    ///
+    /// The registered name is derived from the file stem (`lib` prefix
+    /// stripped). Use [`Self::load_named`] when the package manifest names
+    /// the driver explicitly.
     pub fn load(&self, path: &PathBuf, workspace_id: &str) -> Result<String, Error> {
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.strip_prefix("lib").unwrap_or(s))
+            .unwrap_or("unknown")
+            .to_string();
+        self.load_named(path, workspace_id, &name)
+    }
+
+    /// Load a dynamic library driver under an explicit driver name.
+    pub fn load_named(&self, path: &PathBuf, workspace_id: &str, driver_name: &str) -> Result<String, Error> {
         let lib =
             unsafe { Library::new(path).map_err(|e| Error::DriverError(format!("failed to load library: {}", e)))? };
         let lib = Arc::new(lib);
@@ -85,15 +100,8 @@ impl DriverRegistry {
             return Err(Error::DriverError("driver init returned null".into()));
         }
 
-        let driver_name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(|s| s.strip_prefix("lib").unwrap_or(s))
-            .unwrap_or("unknown")
-            .to_string();
-
         let entry = DynamicEntry {
-            name: driver_name.clone(),
+            name: driver_name.to_string(),
             version: "0.0.0".to_string(),
             path: path.clone(),
             library: Arc::clone(&lib),
@@ -115,21 +123,21 @@ impl DriverRegistry {
                 drivers: HashMap::new(),
             });
 
-        if ws.drivers.contains_key(&driver_name) {
+        if ws.drivers.contains_key(driver_name) {
             return Err(Error::DriverError(format!(
                 "driver '{}' already loaded in workspace '{}'",
                 driver_name, workspace_id
             )));
         }
 
-        ws.drivers.insert(driver_name.clone(), loaded);
+        ws.drivers.insert(driver_name.to_string(), loaded);
         tracing::info!(
             "loaded dynamic driver '{}' for workspace '{}'",
             driver_name,
             workspace_id
         );
 
-        Ok(driver_name)
+        Ok(driver_name.to_string())
     }
 
     /// Unload a driver from a workspace. Fails if ref_count > 0.

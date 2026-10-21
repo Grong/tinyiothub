@@ -33,6 +33,39 @@ pub enum ThingConfirmVerdict {
     Deny { reason: String },
 }
 
+/// How a thing's capabilities become available at creation time.
+///
+/// `Declarative` — the installed driver package declares a fixed capability
+/// set; template rows must not be copied. `TemplateBootstrap` — a dynamic
+/// capability driver starts from template rows and then `describe()` refines
+/// them during materialization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreationMode {
+    Declarative,
+    TemplateBootstrap,
+}
+
+/// Driver-access capabilities consumed by thing creation (E4a).
+///
+/// The thing domain defines the trait; the composition layer injects the
+/// access-service-backed implementation, keeping thing → runtime free of a
+/// direct dependency on the access service.
+#[async_trait::async_trait]
+pub trait ThingDeclarationHook: Send + Sync {
+    /// Validate the driver's package config against `options` and decide how
+    /// template rows should be handled. `Err(msg)` rejects the creation.
+    async fn prepare_creation(
+        &self,
+        workspace_id: &str,
+        driver_name: &str,
+        options: Option<&str>,
+    ) -> Result<CreationMode, String>;
+
+    /// Bind the created thing to its driver: resolve/validate the device
+    /// declaration and materialize it into properties/actions.
+    async fn materialize(&self, workspace_id: &str, thing_id: &str) -> Result<(), String>;
+}
+
 /// Agent-owned capabilities consumed by the thing domain's action handlers.
 #[async_trait::async_trait]
 pub trait ThingActionHooks: Send + Sync {

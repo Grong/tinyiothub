@@ -88,3 +88,23 @@ impl Default for ManifestRegistry {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seeds_and_validates_every_builtin_manifest() {
+        let registry = ManifestRegistry::new();
+        for (name, json) in crate::driver::describe::builtin_manifest_jsons() {
+            registry
+                .seed_builtin(json)
+                .unwrap_or_else(|e| panic!("built-in manifest '{name}' must validate: {e}"));
+            let pkg = registry
+                .get("any-workspace", name)
+                .unwrap_or_else(|| panic!("built-in '{name}' must be a fallback for every workspace"));
+            assert_eq!(pkg.manifest.identity.driver, name);
+        }
+        assert_eq!(registry.list("any-workspace").len(), 3);
+    }
+}

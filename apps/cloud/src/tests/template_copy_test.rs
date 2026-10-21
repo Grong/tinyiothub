@@ -77,6 +77,7 @@ fn create_req(name: &str, template_id: &str) -> CreateThingRequest {
         template_id: Some(template_id.to_string()),
         protocol_type: None,
         driver_name: None,
+        driver_options: None,
         tags: None,
         workspace_id: None,
     }

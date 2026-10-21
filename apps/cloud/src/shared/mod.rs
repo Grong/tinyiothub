@@ -1,3 +1,4 @@
+pub mod access_ports;
 pub mod ai_adapter;
 pub mod llm_provider;
 

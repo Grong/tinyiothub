@@ -183,6 +183,10 @@ pub struct CreateThingRequest {
     pub template_id: Option<String>,
     pub protocol_type: Option<String>,
     pub driver_name: Option<String>,
+    /// Driver package config (JSON object string). Validated against the
+    /// installed manifest's `config` schema at creation time (E4a).
+    #[serde(default)]
+    pub driver_options: Option<String>,
     /// Tags: comma-separated or JSON array string.
     pub tags: Option<String>,
     pub workspace_id: Option<String>,

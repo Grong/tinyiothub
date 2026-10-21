@@ -51,6 +51,10 @@ pub struct AppState {
     /// 内存态；Task 8 GET derived_status 唯一读源。None = 未装配（测试/降级路径）。
     pub derived_manager: Option<Arc<tinyiothub_runtime::driver::derived_manager::DerivedDriverManager>>,
 
+    /// E4a 驱动访问服务——安装包清单、设备声明绑定/物化。由 ServiceManager
+    /// 启动时注入；None = 未装配（测试/降级路径），相关路由返回错误。
+    pub access: Option<Arc<tinyiothub_runtime::access::service::AccessService>>,
+
     /// === 领域服务层 ===
     /// 设备基础服务 - CRUD 操作
     pub device_service: Arc<ThingService>,
@@ -508,6 +512,7 @@ impl AppState {
             db: database,
             data_server: None,     // DataServer 由 ServiceManager 设置
             derived_manager: None, // DerivedDriverManager 由 ServiceManager 设置
+            access: None,          // AccessService 由 ServiceManager 设置
             device_service,
             device_query_service,
             monitoring_service,
@@ -559,6 +564,11 @@ impl AppState {
     /// 设置数据服务器（由 ServiceManager 调用）
     pub fn set_data_server(&mut self, data_server: Arc<tinyiothub_runtime::DataServer>) {
         self.data_server = Some(data_server);
+    }
+
+    /// 设置 E4a 驱动访问服务（由 ServiceManager 启动时调用）
+    pub fn set_access(&mut self, access: Arc<tinyiothub_runtime::access::service::AccessService>) {
+        self.access = Some(access);
     }
 
     /// 获取数据服务器

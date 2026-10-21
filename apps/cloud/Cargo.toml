@@ -151,6 +151,9 @@ validator = { workspace = true }
 # Performance
 smallvec = { workspace = true }
 
+# Temp dirs — driver install multipart staging (production code)
+tempfile = { workspace = true }
+
 [features]
 default = []
 harmonyos = []

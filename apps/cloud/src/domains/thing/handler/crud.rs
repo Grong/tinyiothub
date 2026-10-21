@@ -1,5 +1,7 @@
 // Thing CRUD handlers
 
+use std::sync::Arc;
+
 use crate::state::AppState;
 use axum::{
     Json,
@@ -17,8 +19,14 @@ use super::super::{
 use tinyiothub_web::middleware::workspace::WorkspaceScope;
 use tinyiothub_web::response::ApiResponseBuilder;
 
-fn thing_service(pool: &sqlx::SqlitePool) -> ThingService {
-    ThingService::new(pool.clone())
+fn thing_service(state: &AppState) -> ThingService {
+    let svc = ThingService::new(state.db.pool().clone());
+    if let Some(access) = &state.access {
+        svc.set_declaration_hook(Arc::new(crate::domains::driver::declaration::AccessDeclarationHook {
+            access: access.clone(),
+        }));
+    }
+    svc
 }
 
 // ──────────────────────────────────────────────
@@ -30,8 +38,7 @@ pub async fn list_things(
     WorkspaceScope(workspace_id): WorkspaceScope,
     Query(params): Query<ListThingsParams>,
 ) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
-    let pool = state.db.pool().clone();
-    let svc = thing_service(&pool);
+    let svc = thing_service(&state);
 
     let ws = workspace_id.unwrap_or_default();
 
@@ -60,8 +67,7 @@ pub async fn create_thing(
     WorkspaceScope(ws): WorkspaceScope,
     Json(req): Json<CreateThingRequest>,
 ) -> (StatusCode, Json<ApiResponse<ThingResponse>>) {
-    let pool = state.db.pool().clone();
-    let svc = thing_service(&pool);
+    let svc = thing_service(&state);
 
     let workspace_id = ws.unwrap_or_default();
 
@@ -95,8 +101,7 @@ pub async fn get_thing(
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<ThingResponse>>) {
-    let pool = state.db.pool().clone();
-    let svc = thing_service(&pool);
+    let svc = thing_service(&state);
     let ws = workspace_id.unwrap_or_default();
 
     match svc.get_thing(&id, &ws).await {
@@ -122,8 +127,7 @@ pub async fn update_thing(
     Path(id): Path<String>,
     Json(req): Json<UpdateThingRequest>,
 ) -> (StatusCode, Json<ApiResponse<ThingResponse>>) {
-    let pool = state.db.pool().clone();
-    let svc = thing_service(&pool);
+    let svc = thing_service(&state);
     let ws = workspace_id.unwrap_or_default();
 
     // 换父 diff（Task 7 评审 ⚠️ 钩子②）：只有请求带 parent_id 才可能换父，
@@ -171,8 +175,7 @@ pub async fn delete_thing(
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<()>>) {
-    let pool = state.db.pool().clone();
-    let svc = thing_service(&pool);
+    let svc = thing_service(&state);
     let ws = workspace_id.unwrap_or_default();
 
     // 删除前取 parent（F-B 钩子③ + 树变更钩子② 要用；物不存在时 delete 会
@@ -224,8 +227,7 @@ pub async fn get_thing_profile(
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<ThingProfileResponse>>) {
-    let pool = state.db.pool().clone();
-    let svc = thing_service(&pool);
+    let svc = thing_service(&state);
     let ws = workspace_id.unwrap_or_default();
 
     match svc.get_thing_profile(&id, &ws).await {
@@ -290,8 +292,7 @@ pub async fn get_thing_tree(
     Path(id): Path<String>,
     Query(query): Query<TreeQuery>,
 ) -> (StatusCode, Json<ApiResponse<Vec<ThingTreeNode>>>) {
-    let pool = state.db.pool().clone();
-    let svc = thing_service(&pool);
+    let svc = thing_service(&state);
 
     let ws = workspace_id.unwrap_or_default();
 

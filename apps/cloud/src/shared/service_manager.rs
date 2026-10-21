@@ -123,6 +123,27 @@ impl ServiceManager {
 
         info!("✅ DataServer started and registered");
 
+        // 1.2 E4a 驱动访问服务（声明协议）：内置 manifest 播种 + Db 端口
+        // 适配器注入（runtime 不依赖 db/sqlx）。安装包落在 data/drivers/
+        // workspaces/{ws}/{driver}/{version}/。
+        let manifests = Arc::new(tinyiothub_runtime::access::registry::ManifestRegistry::new());
+        for (_, json) in tinyiothub_runtime::driver::describe::builtin_manifest_jsons() {
+            manifests
+                .seed_builtin(json)
+                .map_err(|e| Error::IOError(e.to_string()))?;
+        }
+        let access = Arc::new(tinyiothub_runtime::access::service::AccessService::new(
+            crate::shared::paths::api_data_dir(),
+            manifests,
+            Arc::new(crate::shared::access_ports::DbDriverStore(app_state.db.clone())),
+            Arc::new(crate::shared::access_ports::DbDeviceStore(app_state.db.clone())),
+            Arc::new(crate::shared::access_ports::DbProjectionStore(app_state.db.clone())),
+            Arc::new(crate::shared::access_ports::DbThingSource(app_state.db.clone())),
+            Arc::new(crate::shared::access_ports::DbAcceptanceStore(app_state.db.clone())),
+        ));
+        app_state.set_access(access);
+        info!("✅ AccessService started");
+
         // 1.5 派生引擎管理器（Task 7 + X4 单引擎化，spec §三）：启动索引重建 +
         // 全 workspace 单 EventBus 订阅 + 首值补偿。读数经 data_server.value_sink()
         // → 共享管线回流（consume_driver_reading 的 device_cache 回退写 owner 物，

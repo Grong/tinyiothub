@@ -3,6 +3,7 @@
 //! All handler-level integration tests live here as `#[cfg(test)]` modules.
 //! They use `tower::ServiceExt::oneshot()` to test HTTP handlers without starting a real server.
 
+mod access_declaration_api_test;
 mod agent_handler_tests;
 mod agent_loop_e2e_tests;
 mod agent_persist_tests;
