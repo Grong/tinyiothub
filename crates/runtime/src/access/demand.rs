@@ -174,6 +174,26 @@ impl DemandTracker {
             .is_some_and(|properties| !properties.is_empty())
     }
 
+    /// Does an explicit subscription demand `source` right now?
+    ///
+    /// Unlike [`Self::has_demand_at`], this checks **only** subscriptions:
+    /// snapshot refs and recent reads are property-level and may map to a
+    /// different source, so callers doing per-source gating must union this
+    /// with their own property→source mapping.
+    pub fn has_subscription_demand(&self, workspace_id: &str, thing_id: &str, source: &str) -> bool {
+        self.has_subscription_demand_at(workspace_id, thing_id, source, Instant::now())
+    }
+
+    /// `has_subscription_demand` at `now` (test/simulation entry point).
+    pub fn has_subscription_demand_at(&self, workspace_id: &str, thing_id: &str, source: &str, now: Instant) -> bool {
+        self.subscriptions.read().values().any(|subscription| {
+            subscription.workspace_id == workspace_id
+                && subscription.things.iter().any(|thing| thing == thing_id)
+                && subscription.sources.iter().any(|subscribed| subscribed == source)
+                && subscription.expires_at > now
+        })
+    }
+
     /// Properties currently demanded for this thing at the current instant.
     pub fn demanded_properties(&self, workspace_id: &str, thing_id: &str) -> BTreeSet<String> {
         self.demanded_properties_at(workspace_id, thing_id, Instant::now())
@@ -303,6 +323,29 @@ mod tests {
         assert!(!tracker.has_demand_at("ws", "t2", "telemetry", base));
         assert!(!tracker.has_demand_at("ws", "t1", "control", base));
         assert!(!tracker.has_demand_at("other", "t1", "telemetry", base));
+    }
+
+    #[test]
+    fn subscription_demand_is_per_source_and_expires() {
+        let tracker = DemandTracker::new();
+        let base = Instant::now();
+        let subscription = add_subscription(&tracker, "ws", &["t1"], &["source_a"], SUBSCRIPTION_TTL, base);
+
+        assert!(tracker.has_subscription_demand_at("ws", "t1", "source_a", base));
+        assert!(!tracker.has_subscription_demand_at("ws", "t1", "source_b", base));
+        assert!(!tracker.has_subscription_demand_at("other", "t1", "source_a", base));
+        assert!(!tracker.has_subscription_demand_at("ws", "t2", "source_a", base));
+
+        // Expired subscriptions stop counting.
+        let expired = base + SUBSCRIPTION_TTL;
+        assert!(!tracker.has_subscription_demand_at("ws", "t1", "source_a", expired));
+        // ...and snapshot/recent reads never count here.
+        tracker.set_snapshot(refs("ws", "t2", &["temperature"]));
+        assert!(!tracker.has_subscription_demand_at("ws", "t2", "source_a", expired));
+
+        // Re-subscribing works; touch renews.
+        assert!(tracker.touch_at(&subscription, expired));
+        assert!(tracker.has_subscription_demand_at("ws", "t1", "source_a", expired));
     }
 
     #[test]

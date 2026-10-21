@@ -17,7 +17,7 @@
 //! 份）、显式订阅（source 级）、近期读取（property 级）。property → source
 //! 映射走 [`source_for_property`]；`""` 表示 thing 级需求。
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -125,11 +125,15 @@ impl Sampler {
         for thing in self.catalog.list() {
             let thing_key = (thing.workspace_id.clone(), thing.thing_id.clone());
             let push = self.workers.is_push(&thing.thing_id);
+            // 每 thing 每 tick 只取一次需求属性集，per-source 门控复用它。
+            let demanded = self
+                .demand
+                .demanded_properties_at(&thing.workspace_id, &thing.thing_id, now);
             let mut active = Vec::new();
             let mut due = Vec::new();
 
             for source in &thing.sources {
-                let is_active = Self::source_active(&mut state, &self.demand, &thing, source, now);
+                let is_active = Self::source_active(&mut state, &self.demand, &thing, source, &demanded, now);
                 if !is_active {
                     continue;
                 }
@@ -171,6 +175,7 @@ impl Sampler {
         demand: &DemandTracker,
         thing: &SampledThing,
         source: &SourceDecl,
+        demanded_properties: &BTreeSet<String>,
         now: Instant,
     ) -> bool {
         if source.health || !source.demand_only {
@@ -178,7 +183,7 @@ impl Sampler {
         }
 
         let key = (thing.workspace_id.clone(), thing.thing_id.clone(), source.id.clone());
-        let demanded = has_demand_now(demand, thing, source, now);
+        let demanded = has_demand_now(demand, thing, source, demanded_properties, now);
         if demanded {
             state.last_demand.insert(key.clone(), now);
         }
@@ -237,24 +242,28 @@ impl Sampler {
     }
 }
 
-/// 当前是否对该 source 有需求。
+/// 当前是否对该 source 有需求（精确到 source）。
 ///
-/// `DemandTracker::has_demand_at` 覆盖 source 级订阅、近期读取与快照属
-/// 性（后两者按 property 记录，不携带 source，对 thing 的任一 source 都
-/// 算需求——宁可过采，不可漏采）。额外的 property→source 映射检查与
-/// thing 级 `""` 需求显式表达 spec 的语义。
-fn has_demand_now(demand: &DemandTracker, thing: &SampledThing, source: &SourceDecl, now: Instant) -> bool {
-    let workspace_id = thing.workspace_id.as_str();
-    let thing_id = thing.thing_id.as_str();
-    if demand.has_demand_at(workspace_id, thing_id, &source.id, now) {
+/// **不能**使用 `DemandTracker::has_demand_at`：快照属性与近期读取按
+/// property 记录、不携带 source，那个方法会把任意 property 需求算到
+/// thing 的每个 source 上，导致 `demand_only` 门控失效。这里按 spec 的
+/// 三条件判定：
+/// 1. 显式订阅命中该 source（source 级）；
+/// 2. 需求属性含 `""`（thing 级 health/availability watch）；
+/// 3. 需求属性经 [`source_for_property`] 精确映射到该 source。
+fn has_demand_now(
+    demand: &DemandTracker,
+    thing: &SampledThing,
+    source: &SourceDecl,
+    demanded_properties: &BTreeSet<String>,
+    now: Instant,
+) -> bool {
+    if demand.has_subscription_demand_at(&thing.workspace_id, &thing.thing_id, &source.id, now) {
         return true;
     }
-    demand
-        .demanded_properties_at(workspace_id, thing_id, now)
-        .iter()
-        .any(|property| {
-            property.is_empty() || source_for_property(&thing.sources, property).as_deref() == Some(source.id.as_str())
-        })
+    demanded_properties.iter().any(|property| {
+        property.is_empty() || source_for_property(&thing.sources, property).as_deref() == Some(source.id.as_str())
+    })
 }
 
 #[cfg(test)]
@@ -476,6 +485,51 @@ mod tests {
         }]);
         sampler.tick_once(base);
         assert_eq!(workers.last_read(), ("t1".into(), vec!["telemetry".into()]));
+    }
+
+    /// 回归：property 需求只能激活其映射到的 source，不得因
+    /// `has_demand_at` 的 thing 级合并而激活所有 demand_only source。
+    #[test]
+    fn per_source_demand_does_not_activate_other_sources() {
+        let base = Instant::now();
+        let ab_sources = || {
+            let mut a = src("source_a", 1000, true, false);
+            a.fields = vec!["a".into()];
+            let mut b = src("source_b", 1000, true, false);
+            b.fields = vec!["b".into()];
+            vec![a, b]
+        };
+        let snapshot = |property: &str| {
+            vec![DemandPropertyRef {
+                workspace_id: "ws".into(),
+                thing_id: "t1".into(),
+                property: property.into(),
+            }]
+        };
+
+        // 快照属性 "a" → 只采 A。
+        let workers = Arc::new(FakeWorkers::default());
+        let (sampler, demand) = sampler_with_demand(vec![thing("ws", "t1", ab_sources())], workers.clone());
+        demand.set_snapshot(snapshot("a"));
+        sampler.tick_once(base);
+        assert_eq!(workers.last_read(), ("t1".into(), vec!["source_a".into()]));
+
+        // 订阅 source B → 只采 B。
+        let workers = Arc::new(FakeWorkers::default());
+        let (sampler, demand) = sampler_with_demand(vec![thing("ws", "t1", ab_sources())], workers.clone());
+        subscribe(&demand, "ws", "t1", "source_b", base);
+        sampler.tick_once(base);
+        assert_eq!(workers.last_read(), ("t1".into(), vec!["source_b".into()]));
+
+        // thing 级 `""` 需求 → 两个 source 都采。
+        let workers = Arc::new(FakeWorkers::default());
+        let (sampler, demand) = sampler_with_demand(vec![thing("ws", "t1", ab_sources())], workers.clone());
+        demand.set_snapshot(snapshot(""));
+        sampler.tick_once(base);
+        let (thing_id, mut sources) = workers.last_read();
+        sources.sort();
+        assert_eq!(thing_id, "t1");
+        assert_eq!(sources, vec!["source_a".to_string(), "source_b".to_string()]);
     }
 
     #[test]

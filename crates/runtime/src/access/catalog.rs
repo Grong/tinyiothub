@@ -1,6 +1,7 @@
 //! Sampling catalog: which things the sampler reads, and how demanded
 //! properties map back to their manifest source.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use tinyiothub_core::driver::manifest::SourceDecl;
@@ -34,6 +35,9 @@ pub trait SamplingCatalog: Send + Sync {
 pub struct CachedManifestCatalog {
     device_cache: Arc<dyn ThingCacheSource>,
     manifests: Arc<ManifestRegistry>,
+    /// 上一轮缺失 manifest 的 thing id；只在进入/离开缺失状态时记日志
+    /// （catalog 每 50ms 列一次，逐 tick 记会刷屏）。
+    missing_manifests: parking_lot::Mutex<HashSet<String>>,
 }
 
 impl CachedManifestCatalog {
@@ -41,34 +45,49 @@ impl CachedManifestCatalog {
         Self {
             device_cache,
             manifests,
+            missing_manifests: parking_lot::Mutex::new(HashSet::new()),
         }
     }
 }
 
 impl SamplingCatalog for CachedManifestCatalog {
     fn list(&self) -> Vec<SampledThing> {
-        self.device_cache
-            .all()
-            .into_iter()
-            .filter_map(|device| {
-                let driver_name = device.driver_name.clone()?;
-                let workspace_id = device.workspace_id.clone().unwrap_or_default();
-                let Some(package) = self.manifests.get(&workspace_id, &driver_name) else {
-                    tracing::debug!(
-                        thing_id = %device.id,
-                        driver = %driver_name,
-                        "sampling_no_manifest：manifest 缺失，跳过采样（fail-closed）"
-                    );
-                    return None;
-                };
-                Some(SampledThing {
-                    workspace_id,
-                    thing_id: device.id,
-                    driver_name,
-                    sources: package.manifest.sources.clone(),
-                })
-            })
-            .collect()
+        let mut sampled = Vec::new();
+        let mut missing = HashSet::new();
+        for device in self.device_cache.all() {
+            let Some(driver_name) = device.driver_name.clone() else {
+                continue;
+            };
+            let workspace_id = device.workspace_id.clone().unwrap_or_default();
+            let Some(package) = self.manifests.get(&workspace_id, &driver_name) else {
+                missing.insert(device.id);
+                continue;
+            };
+            sampled.push(SampledThing {
+                workspace_id,
+                thing_id: device.id,
+                driver_name,
+                sources: package.manifest.sources.clone(),
+            });
+        }
+
+        {
+            let mut previously_missing = self.missing_manifests.lock();
+            for thing_id in missing.difference(&previously_missing) {
+                tracing::debug!(
+                    thing_id = %thing_id,
+                    "sampling_no_manifest：manifest 缺失，跳过采样（fail-closed）"
+                );
+            }
+            for thing_id in previously_missing.difference(&missing) {
+                tracing::debug!(
+                    thing_id = %thing_id,
+                    "sampling_manifest_recovered：manifest 已可用，恢复采样"
+                );
+            }
+            *previously_missing = missing;
+        }
+        sampled
     }
 }
 
@@ -216,5 +235,62 @@ mod tests {
         fn list(&self) -> Vec<SampledThing> {
             self.things.clone()
         }
+    }
+
+    struct FakeCache(std::sync::Mutex<Vec<tinyiothub_core::models::thing::Thing>>);
+
+    impl ThingCacheSource for FakeCache {
+        fn all(&self) -> Vec<tinyiothub_core::models::thing::Thing> {
+            self.0.lock().unwrap().clone()
+        }
+        fn get(&self, id: &str) -> Option<tinyiothub_core::models::thing::Thing> {
+            self.0.lock().unwrap().iter().find(|thing| thing.id == id).cloned()
+        }
+        fn get_by_name(&self, name: &str) -> Option<tinyiothub_core::models::thing::Thing> {
+            self.0.lock().unwrap().iter().find(|thing| thing.name == name).cloned()
+        }
+        fn insert(&self, _thing: tinyiothub_core::models::thing::Thing) {}
+        fn update(&self, _thing: tinyiothub_core::models::thing::Thing) {}
+        fn remove(&self, _id: &str) {}
+    }
+
+    fn cached_thing(id: &str, driver: Option<&str>) -> tinyiothub_core::models::thing::Thing {
+        tinyiothub_core::models::thing::Thing {
+            id: id.into(),
+            name: id.into(),
+            workspace_id: Some("ws".into()),
+            driver_name: driver.map(Into::into),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn cached_catalog_skips_missing_manifests_and_recovers() {
+        let manifests = Arc::new(ManifestRegistry::new());
+        let simulator = include_str!("../../manifests/simulator.json");
+        manifests.seed_builtin(simulator).unwrap();
+
+        let cache = Arc::new(FakeCache(std::sync::Mutex::new(vec![
+            cached_thing("good", Some("simulator")),
+            cached_thing("unknown", Some("nope")),
+            cached_thing("no-driver", None),
+        ])));
+        let catalog = CachedManifestCatalog::new(cache, manifests.clone());
+
+        let listed = catalog.list();
+        assert_eq!(listed.len(), 1, "无 manifest / 无 driver 的物必须跳过");
+        assert_eq!(listed[0].thing_id, "good");
+        assert!(!listed[0].sources.is_empty());
+
+        // 连续列 catalog 不重复记录缺失（行为稳定）。
+        assert_eq!(catalog.list().len(), 1);
+
+        // 安装缺失驱动的 manifest 后，下一轮自动恢复。
+        let mut renamed: serde_json::Value = serde_json::from_str(simulator).unwrap();
+        renamed["identity"]["driver"] = serde_json::Value::String("nope".into());
+        manifests.seed_builtin(&renamed.to_string()).unwrap();
+        let listed = catalog.list();
+        assert_eq!(listed.len(), 2);
+        assert!(listed.iter().any(|thing| thing.thing_id == "unknown"));
     }
 }
