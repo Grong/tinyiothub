@@ -437,10 +437,7 @@ async fn watch_hit_wakes_run_within_2s_and_restart_reweaves() {
     let snap = &report["snapshot"];
     assert!(!snap.is_null(), "watch run 必须携带快照指标: {report}");
     assert!(snap["bytes"].as_u64().unwrap() > 0, "快照字节数必须为正");
-    assert!(
-        snap["bytes"].as_u64().unwrap() <= 6144,
-        "快照不得超过 6KB: {snap}"
-    );
+    assert!(snap["bytes"].as_u64().unwrap() <= 6144, "快照不得超过 6KB: {snap}");
     assert!(snap["devices"].as_u64().unwrap() >= 1, "至少列出 1 台设备");
 
     // 账本可回放：watch_hit 落行（rule_id 对得上）。

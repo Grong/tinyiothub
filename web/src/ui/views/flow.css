@@ -27,6 +27,25 @@ flow-timeline {
   flex: 1;
 }
 
+.flow-live {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--glass-border);
+  color: var(--muted);
+}
+
+.flow-live--open {
+  color: #22c55e;
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.flow-live--error,
+.flow-live--closed {
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
 .flow-gap-banner {
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);

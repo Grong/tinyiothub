@@ -298,8 +298,11 @@ git commit -am "test(e3): 端到端+全量门禁+文档回写"
 | T3 | 场景包 `watch_rules/composites` + `{slug}` 解析 + 逐条报告 + 事务应用 | `template_rules` 4 tests；详情透出 watchRules/composites |
 | T4 | 前端 ledger/live/scene-pack 客户端（SSE 分帧/重连/坏帧） | `live.test.ts` 4 tests |
 | T5-T9 | 工作台三 tab + Flow 泳道/scrubber/检查器/列表回退 + World zone 聚类 + 模板库 | 前端 151 tests；tsc；vite build |
-| T10 | 五状态/断点/键盘/ARIA/reduced-motion（首版） | flow.css/workbench.css/world.css/template-library.css |
-| T11 | 后端全量门禁未跑（cloud lib 10min）；已跑：db/cloud 定向 tests + clippy 无新增 | 见上 |
+| T6 补 | 设备 tab「健康卡」：SSE snapshot 驱动、worst-first、watch/job 活动徽标、断线重连 | `live-devices.ts` + 工作台切换 |
+| T7 补 | Flow 实时模式接 SSE（事件合并 800ms 重查、连接状态/重连） | `flow.ts` syncLive |
+| T10 | 历史模式设备 tab 改走账本重建只读卡（动作不可达） | `renderHistoricDevices` |
+| T3 补 | 场景实例化事务内自动解析并落地 watch_rules/composites；引用失败整包回滚 | `apply_scene_rules_tx` + 2 tests |
+| T11 | E3 e2e（账本回放/状态重建/模板规则落库）2 tests；定向 suites 全绿 | `e3_workbench_e2e_tests.rs` |
 
 **显式延后**：Flow 播放期间缺口斜纹的精确 id 映射、World 坐标帧（E4 后）、模板映射自动建议、模板可视化编辑器、移动端手势。
 

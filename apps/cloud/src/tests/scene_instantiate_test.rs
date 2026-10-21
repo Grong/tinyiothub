@@ -1824,3 +1824,118 @@ async fn api_instantiate_with_extra_nodes_and_simulator() {
             .unwrap();
     assert_eq!(meters_under_building, 2);
 }
+
+// ──────────────────────────────────────────────────────────────
+// E3：场景包自带值守规则（watch_rules/composites）同事务落地
+// ──────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn scene_pack_watch_and_composite_rules_land_in_same_tx() {
+    let (pool, db) = setup_db().await;
+    let template_id = seed_scene(
+        &pool,
+        "e3_rules",
+        r#"{
+        "name": "e3_rules", "display_name": {"zh": "E3规则"}, "category": "scenes",
+        "thing_category": "campus",
+        "device_info": {"default_name_pattern": "{scene_name}"},
+        "watch_rules": [
+            {"ref": "temp_high", "thing": "sensor", "kind": "property",
+             "property": "temperature", "op": "gt", "value": 30,
+             "persistent": true, "timeout_secs": 3600}
+        ],
+        "composites": [
+            {"name": "reboot_sensor", "steps": [
+                {"op": "call", "thing": "sensor", "action": "reboot", "params": {}}
+            ]}
+        ],
+        "children": [
+            {"key": "sensor", "thing_type": "device", "count": 1,
+             "device_info": {"default_name_pattern": "传感器"}}
+        ]
+    }"#,
+    )
+    .await;
+    let p = InstantiateParams {
+        scene_name: "E3园区".into(),
+        parent_id: None,
+        parameter_values: HashMap::new(),
+        dry_run: false,
+        attach_simulated_driver: false,
+        extra_nodes: vec![],
+    };
+    SceneInstantiator::instantiate(&db, WS, &template_id, &p)
+        .await
+        .expect("scene with rules must instantiate");
+
+    let sensor_id: String =
+        sqlx::query_scalar("SELECT id FROM things WHERE workspace_id = ? AND thing_type = 'device'")
+            .bind(WS)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let rule_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM watch_rules WHERE workspace_id = ?")
+        .bind(WS)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rule_count, 1, "watch 规则必须在实例化事务内落库");
+    let condition: String = sqlx::query_scalar("SELECT condition FROM watch_rules WHERE workspace_id = ?")
+        .bind(WS)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(condition.contains(&sensor_id), "规则必须引用新建节点: {condition}");
+
+    let definition: String =
+        sqlx::query_scalar("SELECT definition FROM agent_composites WHERE workspace_id = ? AND name = 'reboot_sensor'")
+            .bind(WS)
+            .fetch_one(&pool)
+            .await
+            .expect("composite must land");
+    assert!(
+        definition.contains(&sensor_id),
+        "composite 必须引用新建节点: {definition}"
+    );
+}
+
+#[tokio::test]
+async fn scene_pack_bad_rule_reference_rolls_back_whole_instantiation() {
+    let (pool, db) = setup_db().await;
+    let template_id = seed_scene(
+        &pool,
+        "e3_bad_rules",
+        r#"{
+        "name": "e3_bad_rules", "display_name": {"zh": "E3坏规则"}, "category": "scenes",
+        "thing_category": "campus",
+        "device_info": {"default_name_pattern": "{scene_name}"},
+        "watch_rules": [
+            {"ref": "ghost", "thing": "ghost", "kind": "health", "level": "bad"}
+        ],
+        "children": [
+            {"key": "sensor", "thing_type": "device", "count": 1,
+             "device_info": {"default_name_pattern": "传感器"}}
+        ]
+    }"#,
+    )
+    .await;
+    let p = InstantiateParams {
+        scene_name: "E3坏规则园区".into(),
+        parent_id: None,
+        parameter_values: HashMap::new(),
+        dry_run: false,
+        attach_simulated_driver: false,
+        extra_nodes: vec![],
+    };
+    let err = SceneInstantiator::instantiate(&db, WS, &template_id, &p)
+        .await
+        .expect_err("missing rule ref must fail the whole pack");
+    assert!(format!("{err:?}").contains("值守规则校验失败"), "{err:?}");
+    assert_eq!(thing_count(&pool).await, 0, "整包回滚：不得留下部分本体");
+    let rule_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM watch_rules WHERE workspace_id = ?")
+        .bind(WS)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rule_count, 0);
+}

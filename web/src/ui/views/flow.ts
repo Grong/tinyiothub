@@ -9,6 +9,7 @@ import { LitElement, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import './flow.css';
 import { ledgerApi, type LedgerDeviceState, type LedgerEntry, type LedgerGap } from '../../api/ledger.js';
+import { connectLive, type LiveConnection, type SseEvent } from '../../api/live.js';
 import { buildFlow, chipPosition, type FlowChip, type FlowModel } from './flow-model.js';
 
 const WINDOW_MS = 40 * 60 * 1000;
@@ -38,26 +39,74 @@ export class FlowTimeline extends LitElement {
   @state() private speed = 1;
   @state() private scrubIndex = 0;
   @state() private precisionUnknown: string[] = [];
+  /** 实时模式（at == null）的 SSE 状态。 */
+  @state() private liveStatus: 'off' | 'connecting' | 'open' | 'closed' | 'error' = 'off';
 
   private playTimer: number | null = null;
   private stateTimer: number | null = null;
+  private reloadTimer: number | null = null;
+  private liveConn: LiveConnection | null = null;
   private loadSeq = 0;
   private stateSeq = 0;
 
   connectedCallback(): void {
     super.connectedCallback();
     void this.load();
+    this.syncLive();
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
     this.stopPlay();
+    this.liveConn?.close();
+    this.liveConn = null;
+    if (this.reloadTimer != null) clearTimeout(this.reloadTimer);
   }
 
   updated(changed: Map<string, unknown>): void {
     if (changed.has('at') || changed.has('workspaceId')) {
       void this.load();
+      this.syncLive();
     }
+  }
+
+  /** 只有实时模式订阅 SSE；历史模式关闭连接。 */
+  private syncLive(): void {
+    const shouldLive = !this.at && Boolean(this.workspaceId);
+    if (!shouldLive) {
+      this.liveConn?.close();
+      this.liveConn = null;
+      this.liveStatus = 'off';
+      return;
+    }
+    if (this.liveConn) return;
+    this.liveConn = connectLive(this.workspaceId, {
+      onStatus: (status) => {
+        this.liveStatus =
+          status === 'connecting' ? 'connecting' : status === 'open' ? 'open' : status === 'error' ? 'error' : 'closed';
+        if (status === 'open') this.scheduleReload();
+      },
+      onEvent: (ev: SseEvent) => {
+        if (['snapshot', 'state_change', 'watch', 'job', 'resync'].includes(ev.event)) {
+          this.scheduleReload();
+        }
+      },
+    });
+  }
+
+  private reconnectLive(): void {
+    this.liveConn?.close();
+    this.liveConn = null;
+    this.syncLive();
+  }
+
+  /** 实时事件合并为 800ms 一次的窗口重查（幂等、无需增量合并）。 */
+  private scheduleReload(): void {
+    if (this.at) return;
+    if (this.reloadTimer != null) clearTimeout(this.reloadTimer);
+    this.reloadTimer = window.setTimeout(() => {
+      void this.load();
+    }, 800);
   }
 
   private async load(): Promise<void> {
@@ -79,6 +128,7 @@ export class FlowTimeline extends LitElement {
       this.devices = stateAt.devices;
       this.precisionUnknown = stateAt.unknown;
       const preferred =
+        page.entries.find((e) => e.id === this.selectedId) ??
         page.entries.find((e) => e.id === this.eventId) ??
         page.entries[page.entries.length - 1] ??
         null;
@@ -302,6 +352,24 @@ export class FlowTimeline extends LitElement {
         <div class="flow-toolbar">
           <span class="flow-toolbar__range">${rangeLabel}</span>
           <span class="flow-toolbar__count">${this.entries.length} 个事件</span>
+          ${!this.at
+            ? html`
+                <span class="flow-live flow-live--${this.liveStatus}" role="status">
+                  ${this.liveStatus === 'open'
+                    ? '实时'
+                    : this.liveStatus === 'connecting'
+                      ? '连接中…'
+                      : this.liveStatus === 'error'
+                        ? '连接错误'
+                        : this.liveStatus === 'closed'
+                          ? '连接中断'
+                          : ''}
+                </span>
+                ${this.liveStatus === 'error' || this.liveStatus === 'closed'
+                  ? html`<button class="btn btn--ghost btn--sm" @click=${() => this.reconnectLive()}>重连</button>`
+                  : nothing}
+              `
+            : nothing}
           <div class="flow-toolbar__spacer"></div>
           <button
             class="btn btn--ghost btn--sm"

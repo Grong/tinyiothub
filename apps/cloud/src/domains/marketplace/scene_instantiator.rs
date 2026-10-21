@@ -52,6 +52,7 @@ use tinyiothub_storage::thing_template::{CommandTemplate, PropertyTemplate, Thin
 use tracing::{error, info, instrument, warn};
 
 use super::error::{MarketplaceError, Result};
+use super::template_rules::resolve_template_rules;
 use crate::domains::thing::service::ThingService;
 
 /// 唯一约束兜底重试上限（TOCTOU：SELECT 探测与 INSERT 之间被并发抢占）。
@@ -274,7 +275,18 @@ impl SceneInstantiator {
         let mut attempt = 0usize;
         let persisted = loop {
             let mut tx = db.pool().begin().await.map_err(|e| db_err("开启事务", e))?;
-            match persist_tree(db, &mut tx, workspace_id, template_id, params, &result, &drivers).await {
+            match persist_tree(
+                db,
+                &mut tx,
+                workspace_id,
+                template_id,
+                params,
+                &result,
+                &drivers,
+                &scene,
+            )
+            .await
+            {
                 Ok(mut persisted) => {
                     tx.commit().await.map_err(|e| db_err("提交事务", e))?;
                     persisted.warnings.extend(result.warnings.clone());
@@ -785,6 +797,7 @@ async fn persist_tree(
     params: &InstantiateParams,
     result: &ExpansionResult,
     drivers: &[Option<NodeDriver>],
+    scene: &SceneTemplateFile,
 ) -> Result<PersistedTree> {
     // 事务内名称解析（与 dry-run 同算法）：事务可见自身写入，计划名即落库名（无并发干预下）
     let planned = resolve_node_names(db, Some(tx), workspace_id, &result.nodes).await?;
@@ -852,12 +865,97 @@ async fn persist_tree(
 
         persist_children_tables(db, tx, workspace_id, &id, node, &mut warnings).await?;
     }
+
+    // E3：场景包自带的 watch_rules/composites 同事务落地（"装完即自带值守"）。
+    apply_scene_rules_tx(tx, workspace_id, result, &real_ids, scene).await?;
+
     Ok(PersistedTree {
         root_id,
         final_names,
         warnings,
         driver_thing_ids,
     })
+}
+
+/// E3：场景包自带 watch_rules/composites 的同事务落地。
+/// 引用映射 = 节点 key → 新建 thing_id；任一引用/冲突失败 → 整包回滚。
+async fn apply_scene_rules_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    workspace_id: &str,
+    result: &ExpansionResult,
+    real_ids: &HashMap<usize, String>,
+    scene: &SceneTemplateFile,
+) -> Result<()> {
+    if scene.watch_rules.is_empty() && scene.composites.is_empty() {
+        return Ok(());
+    }
+    let mut mapping: HashMap<String, String> = HashMap::new();
+    for node in &result.nodes {
+        if let Some(key) = &node.key
+            && let Some(id) = real_ids.get(&node.temp_id)
+        {
+            mapping.entry(key.clone()).or_insert_with(|| id.clone());
+        }
+    }
+    let template = serde_json::json!({
+        "watch_rules": scene.watch_rules,
+        "composites": scene.composites,
+    });
+    let existing: Vec<String> = sqlx::query_scalar("SELECT name FROM agent_composites WHERE workspace_id = ?")
+        .bind(workspace_id)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(|e| db_err("读取 composite 名称", e))?;
+    let (resolved, report) = resolve_template_rules(&template, workspace_id, &mapping, &existing);
+    if !report.ok {
+        let detail = report
+            .references
+            .iter()
+            .map(|r| format!("{}:{}", r.path, r.status))
+            .chain(report.conflicts.iter().map(|c| format!("{}:{}", c.kind, c.ref_id)))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(MarketplaceError::Validation(format!(
+            "场景包值守规则校验失败（整包回滚）：{detail}"
+        )));
+    }
+    for rule in &resolved.watch_rules {
+        let condition = serde_json::to_value(&rule.condition)
+            .map_err(|e| MarketplaceError::Template(format!("watch 条件序列化失败: {e}")))?;
+        let kind = condition.get("type").and_then(|t| t.as_str()).unwrap_or("property");
+        sqlx::query(
+            "INSERT INTO watch_rules (id, workspace_id, kind, condition, persistent, timeout_secs, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&rule.id)
+        .bind(&rule.workspace_id)
+        .bind(kind)
+        .bind(condition.to_string())
+        .bind(i64::from(rule.persistent))
+        .bind(i64::from(rule.timeout_secs))
+        .bind(&rule.created_at)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| db_err("watch 规则落库", e))?;
+    }
+    for def in &resolved.composites {
+        let definition =
+            serde_json::to_string(def).map_err(|e| MarketplaceError::Template(format!("composite 序列化失败: {e}")))?;
+        sqlx::query(
+            "INSERT INTO agent_composites (id, workspace_id, name, description, definition, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&def.id)
+        .bind(&def.workspace_id)
+        .bind(&def.name)
+        .bind(&def.description)
+        .bind(definition)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| db_err("composite 落库", e))?;
+    }
+    Ok(())
 }
 
 /// 名称插入（persist_tree 唯一调用点）。生产路径直通

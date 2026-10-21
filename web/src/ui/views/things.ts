@@ -3,9 +3,11 @@ import { customElement, state } from "lit/decorators.js";
 import { SignalWatcher } from "@lit-labs/signals";
 import { thingApi } from "../../api/things.js";
 import { getWorkspaceId } from "../../api/client.js";
+import { ledgerApi, type LedgerDeviceState } from "../../api/ledger.js";
 import "./confirm-modal.js";
 import "./flow.js";
 import "./world.js";
+import "./live-devices.js";
 import "./template-library.js";
 import "./workbench.css";
 import {
@@ -221,6 +223,13 @@ export class DevicesView extends SignalWatcher(LitElement) {
     typeof window !== 'undefined' ? window.location.search : '',
   );
   @state() private showTemplates = false;
+  /** 设备 tab 视图：传统列表/网格/树 或 E3 实时健康卡。 */
+  @state() private deviceView: 'list' | 'health' = 'list';
+  /** 历史模式下设备 tab 的只读快照（账本重建）。 */
+  @state() private historicDevices: LedgerDeviceState[] = [];
+  @state() private historicLoading = false;
+  @state() private historicError = '';
+  private historicSeq = 0;
   private _boundPopState?: () => void;
 
   @state() devices: Thing[] = [];
@@ -554,6 +563,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     document.addEventListener("thing-updated", this._boundHandleDeviceUpdated);
     this._boundPopState = () => {
       this.wb = parseWorkbenchUrl(window.location.search);
+      this.syncHistoricDevices();
     };
     window.addEventListener("popstate", this._boundPopState);
     const path = window.location.pathname;
@@ -568,6 +578,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.loadDevices();
     this.loadDriverNames();
     this.loadAllTags();
+    this.syncHistoricDevices();
   }
 
 
@@ -1834,7 +1845,16 @@ export class DevicesView extends SignalWatcher(LitElement) {
         ${this.renderWorkbenchHeader()}
         ${
           this.wb.tab === 'devices'
-            ? html`${this.renderUpgradeBanner()}${this.renderDeviceList()}`
+            ? historical
+              ? this.renderHistoricDevices()
+              : this.deviceView === 'health'
+                ? html`<live-devices
+                    .workspaceId=${ws}
+                    @device-open=${(e: CustomEvent<{ thingId: string }>) => {
+                      void this.loadDeviceDetail(e.detail.thingId);
+                    }}
+                  ></live-devices>`
+                : html`${this.renderUpgradeBanner()}${this.renderDeviceList()}`
             : nothing
         }
         ${
@@ -1873,6 +1893,86 @@ export class DevicesView extends SignalWatcher(LitElement) {
     if (next.tab === 'devices' && !this.devices.length && !this.loading) {
       void this.loadDevices();
     }
+    this.syncHistoricDevices();
+  }
+
+  /** 历史 + 设备 tab → 载入账本重建的只读快照；否则清空。 */
+  private syncHistoricDevices(): void {
+    if (this.wb.tab === 'devices' && isHistorical(this.wb)) {
+      void this.loadHistoricDevices();
+    } else {
+      this.historicDevices = [];
+      this.historicError = '';
+    }
+  }
+
+  private async loadHistoricDevices(): Promise<void> {
+    const ws = getWorkspaceId();
+    if (!ws) return;
+    const seq = ++this.historicSeq;
+    this.historicLoading = true;
+    this.historicError = '';
+    try {
+      const at = this.wb.at ?? new Date().toISOString();
+      const state = await ledgerApi.stateAt(ws, at);
+      if (seq !== this.historicSeq) return;
+      this.historicDevices = [...state.devices].sort((a, b) => {
+        if (a.online !== b.online) return a.online ? -1 : 1;
+        return a.thingId.localeCompare(b.thingId);
+      });
+    } catch (e) {
+      if (seq !== this.historicSeq) return;
+      this.historicError = e instanceof Error ? e.message : String(e);
+    } finally {
+      if (seq === this.historicSeq) this.historicLoading = false;
+    }
+  }
+
+  private renderHistoricDevices() {
+    if (this.historicLoading) {
+      return html`<div class="wb-history-state">正在从账本重建该时刻设备状态…</div>`;
+    }
+    if (this.historicError) {
+      return html`
+        <div class="wb-history-state wb-history-state--error">
+          历史状态重建失败：${this.historicError}
+          <button class="btn btn--primary btn--sm" @click=${() => this.loadHistoricDevices()}>重试</button>
+        </div>
+      `;
+    }
+    if (!this.historicDevices.length) {
+      return html`
+        <div class="wb-history-state">
+          该时刻没有可重建的设备状态。
+          <div class="wb-history-state__hint">回放精度=状态变更粒度；可尝试调整时间点。</div>
+        </div>
+      `;
+    }
+    return html`
+      <div class="wb-history-note">
+        历史模式：以下为账本重建值，只读。health / zone 不在账本中，标记为不可得。
+      </div>
+      <div class="wb-history-grid">
+        ${this.historicDevices.map(
+          (d) => html`
+            <article class="wb-history-card">
+              <header>
+                <span class="wb-history-card__name">${d.thingId}</span>
+                <span class="wb-history-card__online ${d.online ? 'is-online' : ''}">
+                  ${d.online == null ? '连接未知' : d.online ? '在线' : '离线'}
+                </span>
+              </header>
+              <dl class="wb-history-card__values">
+                ${Object.entries(d.state).map(
+                  ([k, v]) => html`<dt>${k}</dt><dd>${String(v)}</dd>`,
+                )}
+              </dl>
+              <footer>最后变更 ${d.lastChangeAt}</footer>
+            </article>
+          `,
+        )}
+      </div>
+    `;
   }
 
   private renderWorkbenchHeader() {
@@ -1905,6 +2005,18 @@ export class DevicesView extends SignalWatcher(LitElement) {
                   回到现在
                 </button>`
               : html`<span class="wb-live" role="status"><span class="wb-live__dot"></span>实时</span>`
+          }
+          ${
+            this.wb.tab === 'devices' && !isHistorical(this.wb)
+              ? html`<button
+                  class="btn btn--ghost btn--sm"
+                  @click=${() => {
+                    this.deviceView = this.deviceView === 'health' ? 'list' : 'health';
+                  }}
+                >
+                  ${this.deviceView === 'health' ? '列表视图' : '健康卡'}
+                </button>`
+              : nothing
           }
           <button class="btn btn--outline btn--sm" @click=${() => { this.showTemplates = true; }}>
             模板库

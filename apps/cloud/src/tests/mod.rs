@@ -21,6 +21,7 @@ mod derived_validation_test;
 mod device_handler_tests;
 mod driver_handler_tests;
 mod driver_health_handler_tests;
+mod e3_workbench_e2e_tests;
 mod event_handler_tests;
 pub mod event_retention_tests;
 mod export_template_test;
