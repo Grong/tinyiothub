@@ -141,6 +141,11 @@ impl ServiceManager {
             Arc::new(crate::shared::access_ports::DbThingSource(app_state.db.clone())),
             Arc::new(crate::shared::access_ports::DbAcceptanceStore(app_state.db.clone())),
         ));
+        // Installed packages live on disk + DB; restore them before serving
+        // so a restart does not silently lose everything but the built-ins.
+        if let Err(e) = access.rehydrate().await {
+            tracing::warn!(error = %e, "E4a driver package rehydrate failed");
+        }
         app_state.set_access(access);
         info!("✅ AccessService started");
 

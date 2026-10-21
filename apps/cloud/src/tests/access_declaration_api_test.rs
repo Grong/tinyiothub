@@ -19,6 +19,18 @@ use tinyiothub_runtime::access::service::AccessService;
 const DEMO_MANIFEST: &str = include_str!("../../../../drivers/demo-declarative/driver.manifest.json");
 const WORKSPACE: &str = "ws-default-001";
 
+/// Dynamic-capability driver that ships no binary and is not a built-in:
+/// unusable, so install must reject it instead of returning success.
+const DYNAMIC_NO_BINARY_MANIFEST: &str = r#"{
+  "manifestVersion": "1.0",
+  "identity": { "driver": "demo-dynamic", "version": "1.0.0", "protocol": "demo",
+                "abiVersion": 2, "dynamicCapabilities": true },
+  "config": { "type": "object" },
+  "tools": [], "stateFields": [], "sources": [], "resources": [],
+  "placement": { "mode": "runtime" },
+  "limits": { "maxConcurrentJobs": 1, "maxCallsPerMin": 60 }
+}"#;
+
 /// Build a test app with the E4a access service wired to an in-memory DB and
 /// a temp package store.
 async fn setup_with_access() -> (Router, sqlx::SqlitePool, tempfile::TempDir) {
@@ -142,6 +154,28 @@ async fn install_without_manifest_field_is_rejected() {
     assert_eq!(body["success"], json!(false));
     assert!(
         body["error"].as_str().unwrap_or_default().contains("missing manifest"),
+        "unexpected error: {body}"
+    );
+}
+
+#[tokio::test]
+async fn install_rejects_unusable_dynamic_package() {
+    let (app, _pool, _data) = setup_with_access().await;
+    let token = create_test_token_with_workspace("user-1", "tenant-1", WORKSPACE);
+
+    let response = app
+        .oneshot(install_request(&token, DYNAMIC_NO_BINARY_MANIFEST))
+        .await
+        .unwrap();
+    let (status, body) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["success"],
+        json!(false),
+        "unusable package reported as installed: {body}"
+    );
+    assert!(
+        body["error"].as_str().unwrap_or_default().contains("no ABI v2 binary"),
         "unexpected error: {body}"
     );
 }
