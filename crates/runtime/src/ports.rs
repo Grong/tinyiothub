@@ -127,6 +127,25 @@ pub trait ThingDeclarationSource: Send + Sync {
     async fn load_thing(&self, thing_id: &str) -> Result<Option<Thing>, String>;
 }
 
+/// A property demanded by a persisted rule (E4b spec §2.1): watch rules,
+/// derived-property references, and device alarm rules. `property` is empty
+/// for health/availability watches, which demand the thing as a whole.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DemandPropertyRef {
+    pub workspace_id: String,
+    pub thing_id: String,
+    pub property: String,
+}
+
+/// E4b demand snapshot port (spec §2.1): the cloud adapter unions
+/// `watch_rules`, derived-property refs and `device_alarm_rules`, polling
+/// about once per second. runtime keeps no db dependency; it only unions the
+/// snapshot with local subscriptions/reads in `DemandTracker`.
+#[async_trait]
+pub trait DemandSource: Send + Sync {
+    async fn snapshot(&self) -> Result<Vec<DemandPropertyRef>, String>;
+}
+
 /// Thing cache used by `DataServer`. Sync because every call site is sync
 /// (the backing implementation is an in-memory cache); making this async
 /// would add `.await` noise with no benefit.
