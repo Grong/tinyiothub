@@ -22,7 +22,6 @@ pub async fn materialize_declaration(
 mod tests {
     use super::*;
     use std::sync::Mutex;
-    use tinyiothub_core::driver::declaration::DeviceDeclaration;
     use tinyiothub_core::driver::manifest::*;
 
     #[derive(Default)]
@@ -85,8 +84,12 @@ mod tests {
             }],
         };
         materialize_declaration(&store, "t1", &decl).await.unwrap();
+        assert_eq!(store.props.lock().unwrap()[0].0, "t1");
         assert_eq!(store.props.lock().unwrap()[0].1, vec!["level"]);
+        assert_eq!(store.cmds.lock().unwrap()[0].0, "t1");
         assert_eq!(store.cmds.lock().unwrap()[0].1, vec!["set_level"]);
+        assert_eq!(store.stale.lock().unwrap()[0].0, "t1");
         assert_eq!(store.stale.lock().unwrap()[0].1, vec!["level"]);
+        assert_eq!(store.stale.lock().unwrap()[0].2, vec!["set_level"]);
     }
 }
