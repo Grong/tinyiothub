@@ -10,6 +10,8 @@
 
 use async_trait::async_trait;
 
+use tinyiothub_core::driver::declaration::{AcceptanceReportRecord, DeviceDeclarationRecord, DriverDeclarationRecord};
+use tinyiothub_core::driver::manifest::{ManifestTool, StateFieldDecl};
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
 use tinyiothub_core::models::thing_property::ThingProperty;
@@ -82,6 +84,47 @@ pub trait WatchRuleStore: Send + Sync {
     async fn list_all(&self) -> Result<Vec<WatchRule>, String>;
     async fn insert(&self, rule: &WatchRule) -> Result<(), String>;
     async fn delete(&self, workspace_id: &str, id: &str) -> Result<bool, String>;
+}
+
+/// E4a 包级声明持久源：安装/升级写穿，启动重织读全量。
+#[async_trait]
+pub trait DriverDeclarationStore: Send + Sync {
+    async fn upsert_active(&self, row: &DriverDeclarationRecord) -> Result<(), String>;
+    async fn list_active(&self, workspace_id: &str) -> Result<Vec<DriverDeclarationRecord>, String>;
+    async fn list_all(&self) -> Result<Vec<DriverDeclarationRecord>, String>;
+}
+
+/// E4a 设备级声明持久源（describe(config) 结果）。
+#[async_trait]
+pub trait DeviceDeclarationStore: Send + Sync {
+    async fn upsert(&self, row: &DeviceDeclarationRecord) -> Result<(), String>;
+    async fn list_by_workspace(&self, workspace_id: &str) -> Result<Vec<DeviceDeclarationRecord>, String>;
+    async fn find(&self, workspace_id: &str, thing_id: &str) -> Result<Option<DeviceDeclarationRecord>, String>;
+}
+
+/// E4a 验收报告写入（append-only）。
+#[async_trait]
+pub trait AcceptanceReportStore: Send + Sync {
+    async fn insert(&self, row: &AcceptanceReportRecord) -> Result<(), String>;
+}
+
+/// E4a 声明物化（thing_properties / thing_actions 投影；只 upsert + stale）。
+#[async_trait]
+pub trait DeclarationProjectionStore: Send + Sync {
+    async fn upsert_properties(&self, thing_id: &str, fields: &[StateFieldDecl]) -> Result<(), String>;
+    async fn upsert_commands(&self, thing_id: &str, tools: &[ManifestTool]) -> Result<(), String>;
+    async fn mark_stale(
+        &self,
+        thing_id: &str,
+        keep_properties: &[String],
+        keep_commands: &[String],
+    ) -> Result<(), String>;
+}
+
+/// E4a 物 + 属性加载（绑定/物化前的配置读取）。
+#[async_trait]
+pub trait ThingDeclarationSource: Send + Sync {
+    async fn load_thing(&self, thing_id: &str) -> Result<Option<Thing>, String>;
 }
 
 /// Thing cache used by `DataServer`. Sync because every call site is sync

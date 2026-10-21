@@ -36,6 +36,8 @@ pub mod cron_job;
 pub mod cron_run;
 /// Db facade (connection + domain accessors).
 pub mod database;
+/// E4a driver/device declarations + projection writes.
+pub mod driver_declaration;
 /// Driver installation persistence.
 pub mod driver_installation;
 /// Edge 网关本地持久化（offline_buffer / config_meta，edge 专有表）。
