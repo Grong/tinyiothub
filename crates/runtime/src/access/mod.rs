@@ -6,6 +6,7 @@ pub mod device;
 pub mod materialize;
 pub mod package;
 pub mod registry;
+pub mod sampler;
 pub mod service;
 pub mod validator;
 

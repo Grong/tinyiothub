@@ -92,16 +92,31 @@ impl ServiceManager {
         if let Err(e) = access.rehydrate().await {
             tracing::warn!(error = %e, "E4a driver package rehydrate failed");
         }
-        app_state.set_access(access);
+        app_state.set_access(access.clone());
         info!("✅ AccessService started");
 
         // 2. 创建并启动数据服务器（device_cache 经 D15 端口适配器注入）
-        let data_server = Arc::new(DataServer::new(
-            Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(
-                app_state.device_cache.clone(),
-            )),
-            app_state.event_bus.clone(),
+        let device_cache: Arc<dyn tinyiothub_runtime::ports::ThingCacheSource> = Arc::new(
+            crate::shared::runtime_ports::ThingCacheAdapter(app_state.device_cache.clone()),
+        );
+        let data_server = Arc::new(DataServer::new(device_cache.clone(), app_state.event_bus.clone()));
+
+        // 2.1 中央 sampler：catalog = device_cache ∪ 已安装 manifest；
+        // 需求先只有本地订阅/近期读取（Task 7 接 DbDemandSource）。
+        let demand_tracker = Arc::new(tinyiothub_runtime::access::demand::DemandTracker::new());
+        let sampling_catalog = Arc::new(tinyiothub_runtime::access::catalog::CachedManifestCatalog::new(
+            device_cache,
+            access.manifests.clone(),
         ));
+        let sampler = Arc::new(tinyiothub_runtime::access::sampler::Sampler::new(
+            sampling_catalog,
+            demand_tracker.clone(),
+            data_server.sampling_workers(),
+            None,
+        ));
+        data_server.set_sampler(sampler);
+        // Task 6 的 AccessService/Hub 订阅经 AppState 取同一实例。
+        app_state.set_demand_tracker(demand_tracker.clone());
 
         // 启动数据服务器
         let shutdown_rx = self.shutdown_tx.subscribe();

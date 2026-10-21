@@ -1,7 +1,12 @@
 //! Sampling catalog: which things the sampler reads, and how demanded
 //! properties map back to their manifest source.
 
+use std::sync::Arc;
+
 use tinyiothub_core::driver::manifest::SourceDecl;
+
+use crate::access::registry::ManifestRegistry;
+use crate::ports::ThingCacheSource;
 
 /// The manifest source kind that can be sampled on a schedule.
 const POLL_KIND: &str = "poll";
@@ -19,6 +24,52 @@ pub struct SampledThing {
 /// Source of the sampler's work list (device cache + manifests in cloud).
 pub trait SamplingCatalog: Send + Sync {
     fn list(&self) -> Vec<SampledThing>;
+}
+
+/// Production catalog: every cached thing with a driver + that driver's
+/// installed manifest sources.
+///
+/// Things without a driver or whose manifest cannot be found are skipped
+/// (fail-closed, spec §3.1 `sampling_no_manifest`).
+pub struct CachedManifestCatalog {
+    device_cache: Arc<dyn ThingCacheSource>,
+    manifests: Arc<ManifestRegistry>,
+}
+
+impl CachedManifestCatalog {
+    pub fn new(device_cache: Arc<dyn ThingCacheSource>, manifests: Arc<ManifestRegistry>) -> Self {
+        Self {
+            device_cache,
+            manifests,
+        }
+    }
+}
+
+impl SamplingCatalog for CachedManifestCatalog {
+    fn list(&self) -> Vec<SampledThing> {
+        self.device_cache
+            .all()
+            .into_iter()
+            .filter_map(|device| {
+                let driver_name = device.driver_name.clone()?;
+                let workspace_id = device.workspace_id.clone().unwrap_or_default();
+                let Some(package) = self.manifests.get(&workspace_id, &driver_name) else {
+                    tracing::debug!(
+                        thing_id = %device.id,
+                        driver = %driver_name,
+                        "sampling_no_manifest：manifest 缺失，跳过采样（fail-closed）"
+                    );
+                    return None;
+                };
+                Some(SampledThing {
+                    workspace_id,
+                    thing_id: device.id,
+                    driver_name,
+                    sources: package.manifest.sources.clone(),
+                })
+            })
+            .collect()
+    }
 }
 
 fn is_poll(source: &SourceDecl) -> bool {

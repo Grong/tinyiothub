@@ -13,6 +13,7 @@ use tinyiothub_core::models::thing::ThingStatus;
 use tinyiothub_core::models::thing_property::ThingProperty;
 use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 
+use crate::access::sampler::{Sampler, SamplingWorkers};
 use crate::driver::worker::{WorkerHandle, WorkerResult, spawn_worker};
 use crate::driver::{DriverWrapper, ThingOverview, create_driver};
 use crate::event_bus::{EventBus, publish_event_safe};
@@ -42,8 +43,11 @@ pub struct DataServer {
     consumers: Arc<parking_lot::Mutex<Option<Consumers>>>,
     /// worker 结果上报入口（命令/连接迁移）。
     worker_result_tx: tokio::sync::mpsc::UnboundedSender<WorkerResult>,
-    /// 临时轮询任务的启动闸（重复 `run()` 不重复起轮询）。
+    /// 采样任务的启动闸（重复 `run()` 不重复起轮询/sampler）。
     poll_started: Arc<AtomicBool>,
+    /// 中央 sampler（由 ServiceManager 在 `run()` 前注入）。为 None 时保留
+    /// 临时 100ms 全量轮询（旧测试/降级路径）。
+    sampler: Arc<parking_lot::Mutex<Option<Arc<Sampler>>>>,
 }
 
 impl DataServer {
@@ -58,6 +62,7 @@ impl DataServer {
             consumers: Arc::new(parking_lot::Mutex::new(Some(Consumers { readings, results }))),
             worker_result_tx,
             poll_started: Arc::new(AtomicBool::new(false)),
+            sampler: Arc::new(parking_lot::Mutex::new(None)),
         };
         server.initialize_drivers();
         server
@@ -71,6 +76,19 @@ impl DataServer {
     /// worker 表句柄（诊断/测试用）。moka `Cache` 克隆是廉价句柄。
     pub fn workers(&self) -> WorkerCache {
         self.workers.clone()
+    }
+
+    /// 给 Central sampler 用的 worker 面（读/需求/模式查询）。
+    pub fn sampling_workers(&self) -> Arc<dyn SamplingWorkers> {
+        Arc::new(CachedSamplingWorkers {
+            workers: self.workers.clone(),
+        })
+    }
+
+    /// 注入中央 sampler（必须在 `run()` 之前调用）。注入后 `run()` 不再启动
+    /// 临时 100ms 全量轮询。
+    pub fn set_sampler(&self, sampler: Arc<Sampler>) {
+        *self.sampler.lock() = Some(sampler);
     }
 
     /// 从外部 wrapper 注册一个 worker（测试装配 / 动态注册入口）。
@@ -116,22 +134,32 @@ impl DataServer {
     }
 
     pub async fn run(&self, shutdown_rx: tokio::sync::broadcast::Receiver<()>) -> Result<(), Error> {
-        // 临时 100ms 轮询：向所有非 Push worker 提交 Read（Task 5 的中央 sampler
-        // 接管后删除）。worker 内部做 latest-wins 合并与重试退避。
-        // 启动闸：重复 `run()` 不得再起一条轮询任务。
+        // 启动闸：重复 `run()` 不得再起第二条采样/轮询任务。
+        let sampler = self.sampler.lock().clone();
         if !self.poll_started.swap(true, Ordering::SeqCst) {
-            let workers = self.workers.clone();
-            let mut shutdown_rx_clone = shutdown_rx.resubscribe();
-            tokio::spawn(async move {
-                tokio::select! {
-                    _ = Self::poll_workers(workers) => {
-                        tracing::debug!("Driver polling task completed");
+            if let Some(sampler) = sampler {
+                // 中央 sampler 接管：50ms tick、需求门控/health/宽限。
+                let sampler_shutdown_rx = shutdown_rx.resubscribe();
+                tokio::spawn(async move {
+                    sampler.run(sampler_shutdown_rx).await;
+                });
+            } else {
+                // 兼容路径（未注入 sampler 的测试/降级）：临时 100ms 轮询向
+                // 所有非 Push worker 提交全量 Read。worker 内部做 latest-wins
+                // 合并与重试退避。
+                let workers = self.workers.clone();
+                let mut shutdown_rx_clone = shutdown_rx.resubscribe();
+                tokio::spawn(async move {
+                    tokio::select! {
+                        _ = Self::poll_workers(workers) => {
+                            tracing::debug!("Driver polling task completed");
+                        }
+                        _ = shutdown_rx_clone.recv() => {
+                            tracing::info!("Driver polling task received shutdown signal");
+                        }
                     }
-                    _ = shutdown_rx_clone.recv() => {
-                        tracing::info!("Driver polling task received shutdown signal");
-                    }
-                }
-            });
+                });
+            }
         }
 
         // 单一消费任务：worker 结果与 ValueSink 读数顺序处理，device_cache 的
@@ -676,7 +704,32 @@ impl Clone for DataServer {
             consumers: self.consumers.clone(),
             worker_result_tx: self.worker_result_tx.clone(),
             poll_started: self.poll_started.clone(),
+            sampler: self.sampler.clone(),
         }
+    }
+}
+
+/// [`SamplingWorkers`] 的 worker 表适配器：没有 worker 的物（派生/空间物）
+/// 静默跳过。
+struct CachedSamplingWorkers {
+    workers: WorkerCache,
+}
+
+impl SamplingWorkers for CachedSamplingWorkers {
+    fn submit_read(&self, thing_id: &str, sources: Vec<String>) {
+        if let Some(worker) = self.workers.get(thing_id) {
+            worker.submit_read(sources);
+        }
+    }
+
+    fn set_demand(&self, thing_id: &str, sources: Vec<String>) {
+        if let Some(worker) = self.workers.get(thing_id) {
+            worker.set_demand(sources);
+        }
+    }
+
+    fn is_push(&self, thing_id: &str) -> bool {
+        self.workers.get(thing_id).is_some_and(|worker| worker.is_push())
     }
 }
 
@@ -913,6 +966,53 @@ mod tests {
             0,
             "Push worker 绝不经过 poll_workers 的 Read 路径"
         );
+    }
+
+    /// 注入 sampler 后 `run()` 不得再起临时 100ms 全量轮询。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sampler_replaces_temporary_poll_loop() {
+        use std::sync::atomic::AtomicUsize;
+
+        use crate::access::catalog::CachedManifestCatalog;
+        use crate::access::demand::DemandTracker;
+        use crate::access::registry::ManifestRegistry;
+
+        let thing = worker_thing("dev-1");
+        let cache = Arc::new(VecCache::new(vec![thing.clone()]));
+        let server = DataServer::new(cache, Arc::new(EventBus::new()));
+        let reads = Arc::new(AtomicUsize::new(0));
+        server.register_worker(
+            "dev-1",
+            DriverWrapper::new(Box::new(CountingDriver {
+                thing,
+                mode: DriverMode::Poll,
+                reads: reads.clone(),
+            })),
+        );
+
+        let catalog = Arc::new(CachedManifestCatalog::new(
+            Arc::new(VecCache::new(Vec::new())),
+            Arc::new(ManifestRegistry::new()),
+        ));
+        let sampler = Arc::new(Sampler::new(
+            catalog,
+            Arc::new(DemandTracker::new()),
+            server.sampling_workers(),
+            None,
+        ));
+        server.set_sampler(sampler);
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
+        server.run(shutdown_rx).await.expect("run");
+        tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            0,
+            "空 catalog 的 sampler 不得读；若 100ms 轮询仍存在则计数 >0"
+        );
+        let _ = shutdown_tx.send(());
+        server.remove_device("dev-1");
     }
 
     /// 阻塞执行的假驱动：execute_command 通知测试后等待放行，用于灌满队列。
