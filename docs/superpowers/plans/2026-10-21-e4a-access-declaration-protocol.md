@@ -2120,7 +2120,8 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
             f.store(true, Ordering::SeqCst);
         });
-        assert!(run_long_task(1000, &flag).is_err());
+        let check = flag.clone();
+        assert!(run_long_task(1000, move || check.load(Ordering::SeqCst)).is_err());
     }
 }
 ```
@@ -2157,11 +2158,11 @@ impl DemoState {
     }
 }
 
-fn run_long_task(ms: u64, cancelled: &AtomicBool) -> Result<(), String> {
+fn run_long_task(ms: u64, is_cancelled: impl Fn() -> bool) -> Result<(), String> {
     let step = 50u64;
     let mut elapsed = 0u64;
     while elapsed < ms {
-        if cancelled.load(Ordering::SeqCst) {
+        if is_cancelled() {
             return Err("cancelled".into());
         }
         std::thread::sleep(std::time::Duration::from_millis(step.min(ms - elapsed)));
@@ -2195,7 +2196,7 @@ extern "C" fn demo_read(
 
 extern "C" fn demo_execute(
     ctx: *mut c_void, _config: *const c_char, cmd_json: *const c_char,
-    _cancel: *mut CancelHandle, done: DriverDone, user: *mut c_void,
+    cancel: *mut CancelHandle, done: DriverDone, user: *mut c_void,
 ) -> c_int {
     let state = unsafe { &mut *(ctx as *mut DemoState) };
     let raw = unsafe { CStr::from_ptr(cmd_json) }.to_string_lossy().to_string();
@@ -2219,10 +2220,22 @@ extern "C" fn demo_execute(
             let ms = param(&v, "ms").and_then(|x| x.as_u64()).unwrap_or(1000);
             let done_addr = done as usize;
             let user_addr = user as usize;
+            let cancel_fn: Option<(usize, usize)> = if cancel.is_null() {
+                None
+            } else {
+                unsafe { Some(((*cancel).is_cancelled as usize, (*cancel).ctx as usize)) }
+            };
             std::thread::spawn(move || {
                 let done_f: DriverDone = unsafe { std::mem::transmute(done_addr) };
                 let user_p = user_addr as *mut c_void;
-                match run_long_task(ms, &AtomicBool::new(false)) {
+                let is_cancelled = move || match cancel_fn {
+                    Some((f, ctx)) => unsafe {
+                        let f: extern "C" fn(*mut c_void) -> c_int = std::mem::transmute(f);
+                        f(ctx as *mut c_void) != 0
+                    },
+                    None => false,
+                };
+                match run_long_task(ms, is_cancelled) {
                     Ok(()) => emit(done_f, user_p, 0, "{}".to_string()),
                     Err(e) => emit(done_f, user_p, 2, serde_json::json!({"error": e}).to_string()),
                 }
@@ -3409,4 +3422,4 @@ git commit -m "docs(e4a): 执行记录与验证结果"
 
 **Type consistency:** `DriverManifest`, `DeviceDeclaration`, `StateFieldDecl`, `ManifestTool`, `CancelToken`, `DriverVTableV2`, `LoadedPackage`, `InstalledPackage`, `AccessService`, `ValidatedCall`, `Level` are defined once. Port traits live in `runtime::ports`; `db` does not depend on runtime — adapters live in `apps/cloud/src/shared/access_ports.rs`.
 
-**Known sequencing:** Task 7 is a workspace-wide signature change; after Step 2 run `cargo check` and update every listed impl before Task 8. `long_task` cancellation is intentionally not wired in E4a (E4c).
+**Known sequencing:** Task 7 is a workspace-wide signature change; after Step 2 run `cargo check` and update every listed impl before Task 8. `long_task` cooperates with the ABI cancel handle; wiring `stop_device` to cancel in-flight calls remains E4c.
