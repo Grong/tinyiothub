@@ -44,10 +44,14 @@ fn device_record_from_row(row: &SqliteRow) -> Result<DeviceDeclarationRecord, sq
 }
 
 /// 写入包级声明；同 (workspace, driver) 下的其他版本置 retired。
+///
+/// retire UPDATE 与 active INSERT 在同一事务内：并发安装不会留下两条
+/// active，崩溃也不会停在"零 active"的中间态。
 pub(crate) async fn upsert_driver_declaration(
     pool: &SqlitePool,
     r: &DriverDeclarationRecord,
 ) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
     sqlx::query(
         "UPDATE driver_declarations SET status='retired' \
          WHERE workspace_id=? AND driver_name=? AND driver_version<>?",
@@ -55,7 +59,7 @@ pub(crate) async fn upsert_driver_declaration(
     .bind(&r.workspace_id)
     .bind(&r.driver_name)
     .bind(&r.driver_version)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
     sqlx::query(
         r#"INSERT INTO driver_declarations
@@ -76,8 +80,9 @@ pub(crate) async fn upsert_driver_declaration(
     .bind(&r.binary_hash)
     .bind(&r.status)
     .bind(&r.installed_at)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -359,18 +364,12 @@ impl Db {
         &self,
         thing_id: &str,
     ) -> Result<Option<tinyiothub_core::models::thing::Thing>, sqlx::Error> {
-        let sql = format!(
-            "SELECT {} FROM things WHERE id = ?",
-            crate::thing_row_mapper::SELECT_COLUMNS
-        );
-        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
-            .bind(thing_id)
-            .fetch_optional(self.pool())
-            .await?;
-        let Some(row) = row else {
+        let Some(mut thing) = crate::thing::find_thing_by_id(self.pool(), None, thing_id)
+            .await
+            .map_err(|e| sqlx::Error::Protocol(e.to_string()))?
+        else {
             return Ok(None);
         };
-        let mut thing = crate::thing_row_mapper::row_to_thing(row).map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
         thing.properties = Some(crate::thing_property::find_thing_properties_by_thing_id(self.pool(), thing_id).await?);
         Ok(Some(thing))
     }
@@ -381,7 +380,7 @@ mod tests {
     use super::*;
     use crate::test_helpers::test_pool;
     use tinyiothub_core::driver::declaration::{DeviceDeclarationRecord, DriverDeclarationRecord};
-    use tinyiothub_core::driver::manifest::{NumericRange, StateFieldDecl};
+    use tinyiothub_core::driver::manifest::{NumericRange, StateFieldDecl, ToolKindDecl};
 
     fn driver_rec() -> DriverDeclarationRecord {
         DriverDeclarationRecord {
@@ -395,6 +394,57 @@ mod tests {
             status: "active".into(),
             installed_at: "2026-10-21T00:00:00Z".into(),
         }
+    }
+
+    /// things.workspace_id 有 FK → workspaces(id)：先补租户/工作区链。
+    async fn setup_thing(db: &Db) {
+        crate::seed::seed_system(db).await.unwrap();
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) \
+             VALUES ('ws1','ws1','tenant-default-001','2026-10-21','2026-10-21')",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO things (id, name, thing_type, state, workspace_id, created_at, updated_at) \
+             VALUES ('t1','t1','device',0,'ws1','2026-10-21','2026-10-21')",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+    }
+
+    fn field(name: &str) -> StateFieldDecl {
+        StateFieldDecl {
+            name: name.into(),
+            data_type: "integer".into(),
+            unit: Some("%".into()),
+            range: Some(NumericRange {
+                min: Some(0.0),
+                max: Some(100.0),
+            }),
+            read_only: false,
+            required: true,
+            source: Some("telemetry".into()),
+        }
+    }
+
+    fn tool(name: &str) -> ManifestTool {
+        ManifestTool {
+            name: name.into(),
+            kind: ToolKindDecl::Action,
+            target_field: None,
+            parameters: serde_json::json!({"type": "object"}),
+            timeout: Default::default(),
+            safety: Default::default(),
+            resources: vec![],
+            cancellable: true,
+        }
+    }
+
+    async fn sources(db: &Db, sql: &'static str) -> Vec<(String, String)> {
+        sqlx::query_as(sql).fetch_all(db.pool()).await.unwrap()
     }
 
     #[tokio::test]
@@ -414,39 +464,85 @@ mod tests {
     #[tokio::test]
     async fn upserts_declared_properties_and_marks_stale() {
         let db = Db::new(test_pool().await);
-        // things.workspace_id 有 FK → workspaces(id)：先补租户/工作区链。
-        crate::seed::seed_system(&db).await.unwrap();
-        sqlx::query(
-            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) \
-             VALUES ('ws1','ws1','tenant-default-001','2026-10-21','2026-10-21')",
-        )
-        .execute(db.pool())
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO things (id, name, thing_type, state, workspace_id, created_at, updated_at) \
-             VALUES ('t1','t1','device',0,'ws1','2026-10-21','2026-10-21')",
-        )
-        .execute(db.pool())
-        .await
-        .unwrap();
-        let fields = vec![StateFieldDecl {
-            name: "level".into(),
-            data_type: "integer".into(),
-            unit: Some("%".into()),
-            range: Some(NumericRange {
-                min: Some(0.0),
-                max: Some(100.0),
-            }),
-            read_only: false,
-            required: true,
-            source: Some("telemetry".into()),
-        }];
-        db.upsert_declared_properties("t1", &fields).await.unwrap();
+        setup_thing(&db).await;
+        db.upsert_declared_properties("t1", &[field("level")]).await.unwrap();
         db.mark_stale_declared_capabilities("t1", &[], &[]).await.unwrap();
         let props = db.find_thing_properties_by_thing_id("t1").await.unwrap();
         assert_eq!(props[0].name, "level");
         assert_eq!(props[0].source.as_deref(), Some("stale"));
+    }
+
+    #[tokio::test]
+    async fn mark_stale_keeps_named_capabilities_and_stales_the_rest() {
+        let db = Db::new(test_pool().await);
+        setup_thing(&db).await;
+        db.upsert_declared_properties("t1", &[field("level"), field("humidity")])
+            .await
+            .unwrap();
+        db.upsert_declared_commands("t1", &[tool("set_level"), tool("reboot")])
+            .await
+            .unwrap();
+
+        db.mark_stale_declared_capabilities("t1", &["level".into()], &["set_level".into()])
+            .await
+            .unwrap();
+
+        let props = sources(
+            &db,
+            "SELECT name, source FROM thing_properties WHERE thing_id='t1' ORDER BY name",
+        )
+        .await;
+        assert_eq!(
+            props,
+            vec![
+                ("humidity".to_string(), "stale".to_string()),
+                ("level".to_string(), "driver".to_string()),
+            ]
+        );
+        let cmds = sources(
+            &db,
+            "SELECT name, source FROM thing_actions WHERE thing_id='t1' ORDER BY name",
+        )
+        .await;
+        assert_eq!(
+            cmds,
+            vec![
+                ("reboot".to_string(), "stale".to_string()),
+                ("set_level".to_string(), "driver".to_string()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_stale_command_only_keeps_named_command() {
+        let db = Db::new(test_pool().await);
+        setup_thing(&db).await;
+        db.upsert_declared_commands("t1", &[tool("reboot"), tool("set_level")])
+            .await
+            .unwrap();
+
+        db.mark_stale_declared_capabilities("t1", &[], &["reboot".into()])
+            .await
+            .unwrap();
+
+        let props = sources(
+            &db,
+            "SELECT name, source FROM thing_properties WHERE thing_id='t1' ORDER BY name",
+        )
+        .await;
+        assert!(props.is_empty(), "command-only thing must have no props: {props:?}");
+        let cmds = sources(
+            &db,
+            "SELECT name, source FROM thing_actions WHERE thing_id='t1' ORDER BY name",
+        )
+        .await;
+        assert_eq!(
+            cmds,
+            vec![
+                ("reboot".to_string(), "driver".to_string()),
+                ("set_level".to_string(), "stale".to_string()),
+            ]
+        );
     }
 
     #[tokio::test]
