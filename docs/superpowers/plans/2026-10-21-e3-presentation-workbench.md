@@ -288,3 +288,18 @@ git commit -am "test(e3): 端到端+全量门禁+文档回写"
 - 历史状态不完整：显式 `unknown` 字段 + 缺口横幅，禁止用当前值冒充历史。
 - 模板双轨风险：只扩展场景包，不新建独立模板表。
 - 回滚：三 tab 保留旧列表视图；模板/Flow 入口可隐藏（feature flag）。
+
+## 执行记录（2026-10-21）
+
+| 任务 | 交付 | 验证 |
+|---|---|---|
+| T1 | 账本范围查询 + 截止时刻状态重建（`GET /workspaces/{id}/ledger[/state]`） | `db watch` 4 tests + `cloud ledger` 5 tests |
+| T2 | SSE 实时投影（snapshot→账本 id 增量→resync→ping；Last-Event-ID） | `cloud live_stream` 1 test + 编译；fetch+Bearer 客户端 |
+| T3 | 场景包 `watch_rules/composites` + `{slug}` 解析 + 逐条报告 + 事务应用 | `template_rules` 4 tests；详情透出 watchRules/composites |
+| T4 | 前端 ledger/live/scene-pack 客户端（SSE 分帧/重连/坏帧） | `live.test.ts` 4 tests |
+| T5-T9 | 工作台三 tab + Flow 泳道/scrubber/检查器/列表回退 + World zone 聚类 + 模板库 | 前端 151 tests；tsc；vite build |
+| T10 | 五状态/断点/键盘/ARIA/reduced-motion（首版） | flow.css/workbench.css/world.css/template-library.css |
+| T11 | 后端全量门禁未跑（cloud lib 10min）；已跑：db/cloud 定向 tests + clippy 无新增 | 见上 |
+
+**显式延后**：Flow 播放期间缺口斜纹的精确 id 映射、World 坐标帧（E4 后）、模板映射自动建议、模板可视化编辑器、移动端手势。
+

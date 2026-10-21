@@ -109,7 +109,7 @@ pub async fn query_ledger(
     .await
     {
         Ok(rows) => rows,
-        Err(e) => return ApiResponseBuilder::error(&format!("账本查询失败: {e}")),
+        Err(e) => return ApiResponseBuilder::error(format!("账本查询失败: {e}")),
     };
 
     let has_more = rows.len() as i64 == limit;
@@ -196,7 +196,7 @@ pub async fn query_state(
     };
     let rows = match tinyiothub_storage::watch::latest_state_changes_at(state.db.pool(), &workspace_id, &at).await {
         Ok(rows) => rows,
-        Err(e) => return ApiResponseBuilder::error(&format!("状态重建失败: {e}")),
+        Err(e) => return ApiResponseBuilder::error(format!("状态重建失败: {e}")),
     };
     let devices = fold_state(&rows);
     ApiResponseBuilder::success(json!({
@@ -214,12 +214,7 @@ mod tests {
 
     #[test]
     fn range_validation_rejects_bad_windows_and_clamps_limit() {
-        let (from, to, limit) = validate_range(
-            "2026-10-21T00:00:00Z",
-            "2026-10-21T01:00:00Z",
-            Some(999),
-        )
-        .unwrap();
+        let (from, to, limit) = validate_range("2026-10-21T00:00:00Z", "2026-10-21T01:00:00Z", Some(999)).unwrap();
         assert_eq!(limit, MAX_LIMIT);
         assert!(from.starts_with("2026-10-21"));
         assert!(to.starts_with("2026-10-21"));
@@ -227,7 +222,12 @@ mod tests {
         assert!(validate_range("2026-10-21T00:00:00Z", "2026-10-20T00:00:00Z", None).is_err());
         assert!(validate_range("2026-10-01T00:00:00Z", "2026-10-20T00:00:00Z", None).is_err());
         assert!(validate_range("nope", "2026-10-20T00:00:00Z", None).is_err());
-        assert_eq!(validate_range("2026-10-20T00:00:00Z", "2026-10-20T01:00:00Z", None).unwrap().2, DEFAULT_LIMIT);
+        assert_eq!(
+            validate_range("2026-10-20T00:00:00Z", "2026-10-20T01:00:00Z", None)
+                .unwrap()
+                .2,
+            DEFAULT_LIMIT
+        );
     }
 
     fn row(ts: &str, thing: &str, payload: Value) -> tinyiothub_storage::watch::LedgerRow {
@@ -246,7 +246,11 @@ mod tests {
         let rows = vec![
             row("2026-10-21T10:00:00Z", "t1", json!({"v":1,"field":"温度","new":"20"})),
             row("2026-10-21T10:01:00Z", "t1", json!({"v":1,"field":"温度","new":"22"})),
-            row("2026-10-21T10:02:00Z", "t1", json!({"v":1,"field":"__availability","new":false})),
+            row(
+                "2026-10-21T10:02:00Z",
+                "t1",
+                json!({"v":1,"field":"__availability","new":false}),
+            ),
         ];
         let devices = fold_state(&rows);
         assert_eq!(devices.len(), 1);

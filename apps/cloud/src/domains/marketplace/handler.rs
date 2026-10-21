@@ -96,17 +96,14 @@ async fn apply_template_rules(
     let pool = state.db.pool();
     let mut tx = match pool.begin().await {
         Ok(tx) => tx,
-        Err(e) => return ApiResponseBuilder::error(&format!("事务开启失败: {e}")),
+        Err(e) => return ApiResponseBuilder::error(format!("事务开启失败: {e}")),
     };
     for rule in &resolved.watch_rules {
         let condition = match serde_json::to_value(&rule.condition) {
             Ok(v) => v,
-            Err(e) => return ApiResponseBuilder::error(&format!("条件序列化失败: {e}")),
+            Err(e) => return ApiResponseBuilder::error(format!("条件序列化失败: {e}")),
         };
-        let kind = condition
-            .get("type")
-            .and_then(|t| t.as_str())
-            .unwrap_or("property");
+        let kind = condition.get("type").and_then(|t| t.as_str()).unwrap_or("property");
         if let Err(e) = sqlx::query(
             "INSERT INTO watch_rules (id, workspace_id, kind, condition, persistent, timeout_secs, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -122,7 +119,7 @@ async fn apply_template_rules(
         .await
         {
             let _ = tx.rollback().await;
-            return ApiResponseBuilder::error(&format!("watch 规则落库失败（整包回滚）: {e}"));
+            return ApiResponseBuilder::error(format!("watch 规则落库失败（整包回滚）: {e}"));
         }
     }
     for def in &resolved.composites {
@@ -130,7 +127,7 @@ async fn apply_template_rules(
             Ok(s) => s,
             Err(e) => {
                 let _ = tx.rollback().await;
-                return ApiResponseBuilder::error(&format!("composite 序列化失败: {e}"));
+                return ApiResponseBuilder::error(format!("composite 序列化失败: {e}"));
             }
         };
         if let Err(e) = sqlx::query(
@@ -147,11 +144,11 @@ async fn apply_template_rules(
         .await
         {
             let _ = tx.rollback().await;
-            return ApiResponseBuilder::error(&format!("composite 落库失败（整包回滚）: {e}"));
+            return ApiResponseBuilder::error(format!("composite 落库失败（整包回滚）: {e}"));
         }
     }
     if let Err(e) = tx.commit().await {
-        return ApiResponseBuilder::error(&format!("事务提交失败: {e}"));
+        return ApiResponseBuilder::error(format!("事务提交失败: {e}"));
     }
 
     ApiResponseBuilder::success(serde_json::json!({

@@ -12,6 +12,7 @@ use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::time::Duration;
 
+use axum::http::StatusCode;
 use axum::{
     Router,
     extract::{Extension, Path, State},
@@ -22,7 +23,6 @@ use axum::{
     },
     routing::get,
 };
-use axum::http::StatusCode;
 use serde_json::{Value, json};
 use tinyiothub_web::security::Claims;
 
@@ -64,7 +64,12 @@ pub fn row_to_event(row: &tinyiothub_storage::watch::LedgerRow) -> Option<Event>
         "thingId": row.thing_id,
         "payload": payload,
     });
-    Some(Event::default().id(row.id.to_string()).event(name).data(data.to_string()))
+    Some(
+        Event::default()
+            .id(row.id.to_string())
+            .event(name)
+            .data(data.to_string()),
+    )
 }
 
 struct StreamState {

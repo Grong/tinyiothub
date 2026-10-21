@@ -9,9 +9,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tinyiothub_agent::runtime::thing_agent::seams::composite::{
-    COMPOSITE_V, CompositeDef, CompositeOp, CompositeStep,
-};
+use tinyiothub_agent::runtime::thing_agent::seams::composite::{COMPOSITE_V, CompositeDef, CompositeOp, CompositeStep};
 use tinyiothub_core::watch::{CompareOp, HealthLevel, WatchCondition, WatchRule};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -204,8 +202,7 @@ pub fn resolve_template_rules(
                     continue;
                 }
             };
-            if existing_composite_names.iter().any(|n| n == &def.name)
-                || seen_composites.iter().any(|n| n == &def.name)
+            if existing_composite_names.iter().any(|n| n == &def.name) || seen_composites.iter().any(|n| n == &def.name)
             {
                 report.conflicts.push(Conflict {
                     kind: "duplicate_composite_name".into(),
@@ -221,12 +218,7 @@ pub fn resolve_template_rules(
                 composite_ok &= ok;
                 let rollback = match &step.rollback {
                     Some(rb) => {
-                        let (op, ok) = resolve_op(
-                            rb,
-                            mapping,
-                            &format!("{path}.steps[{j}].rollback"),
-                            &mut report,
-                        );
+                        let (op, ok) = resolve_op(rb, mapping, &format!("{path}.steps[{j}].rollback"), &mut report);
                         composite_ok &= ok;
                         op
                     }
@@ -275,9 +267,7 @@ fn resolve_op(
         return (None, false);
     };
     let out = match op {
-        OpJson::Call {
-            action, params, ..
-        } => CompositeOp::Call {
+        OpJson::Call { action, params, .. } => CompositeOp::Call {
             thing_id,
             action: action.clone(),
             params: params.clone(),
@@ -354,8 +344,7 @@ mod tests {
                 ]}
             ]
         });
-        let (resolved, report) =
-            resolve_template_rules(&template, "ws", &mapping(), &[]);
+        let (resolved, report) = resolve_template_rules(&template, "ws", &mapping(), &[]);
         assert!(report.ok, "{report:?}");
         assert_eq!(report.resolved.watch_rules, 1);
         assert_eq!(report.resolved.composites, 1);
@@ -383,8 +372,7 @@ mod tests {
         let template = json!({
             "composites": [{"name":"guard","steps":[{"op":"call","thing":"window","action":"close"}]}]
         });
-        let (_resolved, report) =
-            resolve_template_rules(&template, "ws", &mapping(), &["guard".to_string()]);
+        let (_resolved, report) = resolve_template_rules(&template, "ws", &mapping(), &["guard".to_string()]);
         assert!(!report.ok);
         assert_eq!(report.conflicts[0].kind, "duplicate_composite_name");
     }

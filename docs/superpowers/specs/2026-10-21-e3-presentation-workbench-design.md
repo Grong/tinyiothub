@@ -138,7 +138,7 @@ GET /workspaces/{id}/live/stream   (Accept: text/event-stream)
   event: ping         data: {}                                                        # 15s keepalive
 ```
 
-- 服务端：每工作区订阅 EventBus；首帧读 LiveState 快照；账本事件按 `hub_ledger.id` 作为 SSE `id:`，支持 `Last-Event-ID` 断线续传（回放缺口 → `resync`）。
+- 服务端：首帧读 LiveState 快照；增量以**账本 id 游标 1s 尾随查询**推送（与 `Last-Event-ID` 同一坐标系，重放/缺口可验证）；`Last-Event-ID` 断线续传，回放缺口/重连 → `resync`。EventBus 直连留后续优化。
 - 前端：fetch + ReadableStream（Bearer 认证），指数退避重连（1s→30s，上限），页面隐藏时暂停、可见时重连。
 - 客户端状态：实时模式只接受 `ts >= lastSeen` 的事件；历史模式下 SSE 连接保持但事件只更新「回到现在」徽标计数，不改变画面。
 

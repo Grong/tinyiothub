@@ -23,6 +23,12 @@
 - **Context:** spec `docs/superpowers/specs/2026-10-21-e2-brain-seams-design.md` §3.2/§5/§6.1。
 - **Effort:** M (human: ~2d / CC: ~2h) | **Depends on:** E2 合入 + E3 工作台
 
+### P3 — E3 结转：Flow 缺口精确定位、模板映射建议、模板编辑器、World 坐标
+- **What:** (1) Flow 缺口在时间轴上的精确 id→像素映射（当前 query_cap 只能横幅+首尾近似）；(2) 模板引用映射按已实例化节点自动建议；(3) 模板可视化编辑器；(4) World 坐标/地图帧（E4 数据模型后）。
+- **Why:** E3 已交付回放/模板主路径；这些是精度与效率收尾，不阻塞退出标准。
+- **Context:** spec `docs/superpowers/specs/2026-10-21-e3-presentation-workbench-design.md` §3.3/§5/§9；计划执行记录。
+- **Effort:** M (human: ~2d / CC: ~2h) | **Depends on:** E3 合入 + E4（仅坐标项）
+
 ### P3 — E2 结转：stop 不中断在途单次调用
 - **What:** `stop` 目前只阻断后续 call/set 并释放租约；在途的单次设备调用完成才返回。
 - **Why:** 架构要求"stop 永远可用"，双通道中断语义留到 E4 声明制 resources 一并细化。

@@ -372,10 +372,10 @@ run 触发（含快照注入）              DLQ 事件+指标告警
   - Surfaced by: §4 Brain 层 + P4
   - Files: `docs/superpowers/specs/2026-10-21-e2-brain-seams-design.md` + `crates/agent/src/runtime/thing_agent/seams/`
   - Verify: 契约评审 + 每接缝真实替换实现（`seams::*::tests`，2026-10-21 完成）
-- [ ] **T3 (P2, human: ~2d / CC: ~1h)** — E3 — 工作台设计评审前置（/plan-design-review）
+- [x] **T3 (P2, human: ~2d / CC: ~1h)** — E3 — 工作台设计评审前置（/plan-design-review）
   - Surfaced by: S11
-  - Files: to be determined
-  - Verify: 设计评审 PASS
+  - Files: `docs/superpowers/specs/2026-10-21-e3-presentation-workbench-design.md`（4 裁定：IA 全套/SSE/全量状态覆盖/场景包超集）
+  - Verify: 设计评审完成（2/10 → 8/10，2026-10-21；mockup 因缺 OpenAI key 走文本评审）
 - [ ] **T4 (P2, human: ~3d / CC: ~4h)** — E1d — 知觉权检测算法选型调研（基线漂移 vs 阈值学习 vs 统计异常检测）+ 成本模型
   - Surfaced by: 0I HOUR 4-5 + E1d 退出标准
   - Files: evals/（调研产物）
