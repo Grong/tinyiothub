@@ -26,7 +26,7 @@ use tinyiothub_core::models::event::Event as DomainEvent;
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_runtime::hub_stream::{
     DemandGuard, HubStreamState, MAX_SOURCES, MAX_THINGS, OutFrame, PING_INTERVAL, READING_FLUSH_INTERVAL, SourceSpec,
-    ThingSpec, build_snapshot, subscribe_with_guard,
+    ThingSpec, build_snapshot, hub_stream_metrics, subscribe_with_guard,
 };
 use tinyiothub_web::security::Claims;
 use tokio::sync::broadcast::error::RecvError;
@@ -220,6 +220,7 @@ pub async fn stream(
 
     let (devices, specs): (Vec<Thing>, Vec<ThingSpec>) = targets.into_iter().unzip();
     let guard = subscribe_with_guard(access.demand.clone(), &workspace_id, &things, &sources);
+    hub_stream_metrics().record_connection();
 
     let mut pending = VecDeque::new();
     pending.push_back(build_snapshot(&devices, &specs));
@@ -267,6 +268,11 @@ async fn next_frame(state: ConnectionState) -> Option<(Result<Event, Infallible>
 async fn next_out_frame(mut state: ConnectionState) -> Option<(OutFrame, ConnectionState)> {
     loop {
         if let Some(frame) = state.pending.pop_front() {
+            // 所有 resync 都经由 pending 出队（reconnect/lagged/overflow），
+            // 在此统一计数。
+            if matches!(frame, OutFrame::Resync(_)) {
+                hub_stream_metrics().record_resync();
+            }
             return Some((frame, state));
         }
 

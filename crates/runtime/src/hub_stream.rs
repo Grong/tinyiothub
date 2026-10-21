@@ -11,6 +11,7 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -30,6 +31,52 @@ pub const CONTROL_QUEUE_LIMIT: usize = 256;
 pub const READING_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 /// `ping` 周期。
 pub const PING_INTERVAL: Duration = Duration::from_secs(15);
+
+/// 进程级 Hub stream 计数器（spec §4）。
+///
+/// 连接建立 / 发送 resync 时累加；无指标后端依赖。
+#[derive(Debug, Default)]
+pub struct HubStreamMetrics {
+    connections: AtomicU64,
+    resyncs: AtomicU64,
+}
+
+impl HubStreamMetrics {
+    pub const fn new() -> Self {
+        Self {
+            connections: AtomicU64::new(0),
+            resyncs: AtomicU64::new(0),
+        }
+    }
+
+    /// 一条订阅流连接建立。
+    pub fn record_connection(&self) {
+        self.connections.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// 发出一个 `resync` 帧（reconnect/lagged/overflow）。
+    pub fn record_resync(&self) {
+        self.resyncs.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// 累计建立的连接数。
+    pub fn connections(&self) -> u64 {
+        self.connections.load(Ordering::Relaxed)
+    }
+
+    /// 累计发出的 resync 帧数。
+    pub fn resyncs(&self) -> u64 {
+        self.resyncs.load(Ordering::Relaxed)
+    }
+}
+
+/// 进程级计数器实例。
+static HUB_STREAM_METRICS: HubStreamMetrics = HubStreamMetrics::new();
+
+/// 访问进程级 Hub stream 计数器。
+pub fn hub_stream_metrics() -> &'static HubStreamMetrics {
+    &HUB_STREAM_METRICS
+}
 
 /// 请求中声明的 source 及其字段（空 `fields` = 该 source 返回全部属性）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -661,6 +708,17 @@ mod tests {
         );
         assert_eq!(heartbeat_rfc3339("not a timestamp"), None);
         assert_eq!(heartbeat_rfc3339("2026-10-21T10:00:00Z"), None);
+    }
+
+    #[test]
+    fn metrics_count_connections_and_resyncs() {
+        let metrics = HubStreamMetrics::new();
+        assert_eq!((metrics.connections(), metrics.resyncs()), (0, 0));
+
+        metrics.record_connection();
+        metrics.record_connection();
+        metrics.record_resync();
+        assert_eq!((metrics.connections(), metrics.resyncs()), (2, 1));
     }
 
     #[test]

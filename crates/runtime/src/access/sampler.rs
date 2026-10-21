@@ -19,6 +19,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
@@ -53,6 +54,19 @@ pub trait SamplingWorkers: Send + Sync {
 type SourceKey = (String, String, String);
 type ThingKey = (String, String);
 
+/// 采样器计数器快照（轻量 atomics，不引入指标后端）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SamplerMetrics {
+    /// 受需求门控的 source 本进程累计“活跃”的 tick 次数（`demand_only` 且非
+    /// health）。按 source·tick 计，不是去重后的 source 数。
+    pub demand_active_sources: u64,
+    /// 受需求门控的 source 因无需求（且宽限已过）被跳过的 tick 次数。
+    pub demand_skipped_sources: u64,
+    /// 累计提交给 worker 的 source 读次数（同一 thing 的 due source 合并为
+    /// 一次 `submit_read`，这里按合并前的 source 数计）。
+    pub reads_submitted: u64,
+}
+
 /// 易失的调度状态（重启后由 catalog/manifest 重建，spec §3.1）。
 #[derive(Default)]
 struct SamplerState {
@@ -75,6 +89,9 @@ pub struct Sampler {
     /// Task 7 之前为 `None`（只用本地订阅/近期读取）。
     demand_source: Option<Arc<dyn DemandSource>>,
     state: Mutex<SamplerState>,
+    demand_active_sources: AtomicU64,
+    demand_skipped_sources: AtomicU64,
+    reads_submitted: AtomicU64,
 }
 
 impl Sampler {
@@ -90,6 +107,18 @@ impl Sampler {
             workers,
             demand_source,
             state: Mutex::new(SamplerState::default()),
+            demand_active_sources: AtomicU64::new(0),
+            demand_skipped_sources: AtomicU64::new(0),
+            reads_submitted: AtomicU64::new(0),
+        }
+    }
+
+    /// 当前计数器快照（只读，供诊断/测试）。
+    pub fn metrics(&self) -> SamplerMetrics {
+        SamplerMetrics {
+            demand_active_sources: self.demand_active_sources.load(Ordering::Relaxed),
+            demand_skipped_sources: self.demand_skipped_sources.load(Ordering::Relaxed),
+            reads_submitted: self.reads_submitted.load(Ordering::Relaxed),
         }
     }
 
@@ -134,6 +163,16 @@ impl Sampler {
 
             for source in &thing.sources {
                 let is_active = Self::source_active(&mut state, &self.demand, &thing, source, &demanded, now);
+                // 指标只统计受需求门控的 source：health/默认全采恒活跃，
+                // 计入会让 active/skipped 失去意义。
+                if source.demand_only && !source.health {
+                    let counter = if is_active {
+                        &self.demand_active_sources
+                    } else {
+                        &self.demand_skipped_sources
+                    };
+                    counter.fetch_add(1, Ordering::Relaxed);
+                }
                 if !is_active {
                     continue;
                 }
@@ -161,6 +200,7 @@ impl Sampler {
                 }
             } else if !due.is_empty() {
                 // 同一 thing 的所有 due source 一次提交（spec §3.1）。
+                self.reads_submitted.fetch_add(due.len() as u64, Ordering::Relaxed);
                 self.workers.submit_read(&thing.thing_id, due);
             }
         }
@@ -425,6 +465,9 @@ mod tests {
         assert_eq!(workers.read_count(), 0, "无需求时 demand_only 不采");
         sampler.tick_once(base + Duration::from_secs(10));
         assert_eq!(workers.read_count(), 0);
+        assert_eq!(sampler.metrics().demand_skipped_sources, 2);
+        assert_eq!(sampler.metrics().demand_active_sources, 0);
+        assert_eq!(sampler.metrics().reads_submitted, 0);
     }
 
     #[test]
@@ -453,6 +496,46 @@ mod tests {
         subscribe(&demand, "ws", "t1", "energy", base);
         sampler.tick_once(base);
         assert_eq!(other.last_read(), ("t1".into(), vec!["energy".into()]));
+    }
+
+    /// 指标跟随门控转换：skipped → active；reads_submitted 按 source 计。
+    #[test]
+    fn metrics_track_gate_transitions_and_reads() {
+        let workers = Arc::new(FakeWorkers::default());
+        let (sampler, demand) = sampler_with_demand(
+            vec![thing(
+                "ws",
+                "t1",
+                vec![src("slow", 1000, true, false), src("health", 1000, false, true)],
+            )],
+            workers.clone(),
+        );
+        let base = Instant::now();
+
+        // 无需求：slow 跳过，health 照采。
+        sampler.tick_once(base);
+        assert_eq!(
+            sampler.metrics(),
+            SamplerMetrics {
+                demand_active_sources: 0,
+                demand_skipped_sources: 1,
+                reads_submitted: 1,
+            }
+        );
+        assert_eq!(workers.last_read(), ("t1".into(), vec!["health".into()]));
+
+        // 订阅 slow：下一次 due tick 同时采 slow + health。
+        subscribe(&demand, "ws", "t1", "slow", base);
+        sampler.tick_once(base + Duration::from_secs(1));
+        assert_eq!(
+            sampler.metrics(),
+            SamplerMetrics {
+                demand_active_sources: 1,
+                demand_skipped_sources: 1,
+                reads_submitted: 3,
+            }
+        );
+        assert_eq!(workers.last_read(), ("t1".into(), vec!["slow".into(), "health".into()]));
     }
 
     #[test]

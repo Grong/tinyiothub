@@ -28,6 +28,7 @@
 //! 结果消费端背压而阻塞。
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use parking_lot::RwLock;
 use tokio::sync::{mpsc, watch};
@@ -86,6 +87,17 @@ pub enum WorkerResult {
     ReadFailed { thing_id: String },
 }
 
+/// worker 计数器快照（atomics，无指标后端依赖）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WorkerMetrics {
+    /// Execute FIFO 中排队待处理的命令数（不含正在执行的）。
+    pub queue_depth: usize,
+    /// 因 worker 忙而覆盖掉未处理 Read 的次数（latest-wins 合并）。
+    pub reads_coalesced: u64,
+    /// ValueSink 满/关闭导致丢弃的读数条数。
+    pub readings_dropped: u64,
+}
+
 /// 每设备 worker 句柄：所有提交方法都不阻塞（Execute 满时返回 busy）。
 pub struct WorkerHandle {
     exec_tx: mpsc::Sender<WorkerCommand>,
@@ -96,6 +108,11 @@ pub struct WorkerHandle {
     last_read_sources: Arc<RwLock<Vec<String>>>,
     is_push: bool,
     join: JoinHandle<()>,
+    queue_depth: Arc<AtomicUsize>,
+    reads_coalesced: Arc<AtomicU64>,
+    readings_dropped: Arc<AtomicU64>,
+    /// 已提交但尚未被 worker 取走的 Read 是否占用合并槽位。
+    read_pending: Arc<AtomicBool>,
 }
 
 impl WorkerHandle {
@@ -103,26 +120,47 @@ impl WorkerHandle {
     ///
     /// 使用 `watch::send_replace`，接收端已退出也不 panic、不阻塞。
     pub fn submit_read(&self, sources: Vec<String>) {
+        // 上一次 Read 还没被 worker 取走就被覆盖 → 合并计数。
+        if self.read_pending.swap(true, Ordering::Relaxed) {
+            self.reads_coalesced.fetch_add(1, Ordering::Relaxed);
+        }
         self.read_tx.send_replace(Some(sources));
     }
 
     /// 提交命令执行。队列（32）已满时返回 `DriverError("busy")`。
     pub fn submit_execute(&self, cmd: ThingCommand) -> Result<(), Error> {
+        // 先加再发：避免 worker 抢先取出并减计数导致瞬时下溢。
+        self.queue_depth.fetch_add(1, Ordering::Relaxed);
         match self.exec_tx.try_send(WorkerCommand::Execute { cmd }) {
             Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(_)) => Err(Error::DriverError("busy".to_string())),
-            Err(mpsc::error::TrySendError::Closed(_)) => Err(Error::DriverError("worker stopped".to_string())),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.queue_depth.fetch_sub(1, Ordering::Relaxed);
+                Err(Error::DriverError("busy".to_string()))
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                self.queue_depth.fetch_sub(1, Ordering::Relaxed);
+                Err(Error::DriverError("worker stopped".to_string()))
+            }
         }
     }
 
     /// 软重置驱动状态（排队执行，队列满/已停时返回 false）。
     pub fn reset(&self) -> bool {
-        self.exec_tx.try_send(WorkerCommand::Reset).is_ok()
+        self.enqueue_control(WorkerCommand::Reset)
     }
 
     /// 标记驱动离线（排队执行，队列满/已停时返回 false）。
     pub fn set_offline(&self) -> bool {
-        self.exec_tx.try_send(WorkerCommand::SetOffline).is_ok()
+        self.enqueue_control(WorkerCommand::SetOffline)
+    }
+
+    fn enqueue_control(&self, command: WorkerCommand) -> bool {
+        self.queue_depth.fetch_add(1, Ordering::Relaxed);
+        let queued = self.exec_tx.try_send(command).is_ok();
+        if !queued {
+            self.queue_depth.fetch_sub(1, Ordering::Relaxed);
+        }
+        queued
     }
 
     /// 是否为 Push 驱动（Push 由 start_push 上报，不经轮询/Read）。
@@ -148,6 +186,30 @@ impl WorkerHandle {
     /// 最近一次实际执行的 Read 的 source 集（诊断/指标用）。
     pub fn last_read_sources(&self) -> Vec<String> {
         self.last_read_sources.read().clone()
+    }
+
+    /// 当前计数器快照。
+    pub fn metrics(&self) -> WorkerMetrics {
+        WorkerMetrics {
+            queue_depth: self.queue_depth(),
+            reads_coalesced: self.reads_coalesced(),
+            readings_dropped: self.readings_dropped(),
+        }
+    }
+
+    /// Execute FIFO 中排队待处理的命令数。
+    pub fn queue_depth(&self) -> usize {
+        self.queue_depth.load(Ordering::Relaxed)
+    }
+
+    /// 因 worker 忙而合并掉的 Read 次数。
+    pub fn reads_coalesced(&self) -> u64 {
+        self.reads_coalesced.load(Ordering::Relaxed)
+    }
+
+    /// ValueSink 满/关闭丢弃的读数条数。
+    pub fn readings_dropped(&self) -> u64 {
+        self.readings_dropped.load(Ordering::Relaxed)
     }
 
     /// worker 任务是否已退出。
@@ -179,6 +241,10 @@ pub fn spawn_worker(
 
     let status = Arc::new(RwLock::new(ThingOverview::new(&thing)));
     let last_read_sources = Arc::new(RwLock::new(Vec::new()));
+    let queue_depth = Arc::new(AtomicUsize::new(0));
+    let reads_coalesced = Arc::new(AtomicU64::new(0));
+    let readings_dropped = Arc::new(AtomicU64::new(0));
+    let read_pending = Arc::new(AtomicBool::new(false));
     let thing_id = thing.id.clone();
 
     let join = tokio::spawn(run_worker(
@@ -193,6 +259,11 @@ pub fn spawn_worker(
         results,
         status.clone(),
         last_read_sources.clone(),
+        WorkerCounters {
+            queue_depth: queue_depth.clone(),
+            readings_dropped: readings_dropped.clone(),
+            read_pending: read_pending.clone(),
+        },
     ));
 
     WorkerHandle {
@@ -204,7 +275,18 @@ pub fn spawn_worker(
         last_read_sources,
         is_push,
         join,
+        queue_depth,
+        reads_coalesced,
+        readings_dropped,
+        read_pending,
     }
+}
+
+/// worker 任务侧共享的计数器（句柄侧另有 coalesced 计数）。
+struct WorkerCounters {
+    queue_depth: Arc<AtomicUsize>,
+    readings_dropped: Arc<AtomicU64>,
+    read_pending: Arc<AtomicBool>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -220,6 +302,7 @@ async fn run_worker(
     results: mpsc::UnboundedSender<WorkerResult>,
     status: Arc<RwLock<ThingOverview>>,
     last_read_sources: Arc<RwLock<Vec<String>>>,
+    counters: WorkerCounters,
 ) {
     // 失败 streak 状态：终态失败只上报一次（否则 retry timeout 前每 100ms 刷
     // 一条 ReadFailed/告警）；恢复时上报一次 Connected 事件。
@@ -237,6 +320,9 @@ async fn run_worker(
 
             // Execute 优先于 Read（spec §2.3）。
             cmd = exec_rx.recv() => {
+                if cmd.is_some() {
+                    counters.queue_depth.fetch_sub(1, Ordering::Relaxed);
+                }
                 match cmd {
                     Some(WorkerCommand::Execute { cmd }) => {
                         execute_and_report(&mut driver, &cmd, &results);
@@ -260,6 +346,7 @@ async fn run_worker(
                 if res.is_err() {
                     break;
                 }
+                counters.read_pending.store(false, Ordering::Relaxed);
                 let sources = read_rx.borrow_and_update().clone().unwrap_or_default();
                 // Push 驱动由 start_push 上报，Read 不触发轮询。
                 if is_push {
@@ -288,6 +375,7 @@ async fn run_worker(
                         }
                         send_reading(
                             &value_sink,
+                            &counters.readings_dropped,
                             DriverReading {
                                 thing_id: thing_id.clone(),
                                 values,
@@ -335,6 +423,8 @@ async fn run_worker(
         }
     }
 
+    // 停止后未处理的命令不会再执行；队列深度归零以免指标长期悬空。
+    counters.queue_depth.store(0, Ordering::Relaxed);
     tracing::debug!(thing_id = %thing_id, "driver worker stopped");
 }
 
@@ -365,14 +455,16 @@ fn apply_read_values(driver: &mut DriverWrapper, values: &[ResultValue], online:
 }
 
 /// 非阻塞上报：sink 满/关闭时丢弃本条读数并告警（下一次采样会补）。
-fn send_reading(value_sink: &ValueSink, reading: DriverReading) {
+fn send_reading(value_sink: &ValueSink, dropped: &AtomicU64, reading: DriverReading) {
     let thing_id = reading.thing_id.clone();
     match value_sink.try_send(reading) {
         Ok(()) => {}
         Err(mpsc::error::TrySendError::Full(_)) => {
+            dropped.fetch_add(1, Ordering::Relaxed);
             tracing::warn!(thing_id = %thing_id, "driver worker value sink full; dropping reading");
         }
         Err(mpsc::error::TrySendError::Closed(_)) => {
+            dropped.fetch_add(1, Ordering::Relaxed);
             tracing::warn!(thing_id = %thing_id, "driver worker value sink closed; dropping reading");
         }
     }
@@ -599,6 +691,7 @@ mod tests {
 
         h.handle.submit_read(vec!["b".to_string()]);
         h.handle.submit_read(vec!["c".to_string()]);
+        assert_eq!(h.handle.reads_coalesced(), 1, "覆盖未处理的 Read 计一次合并");
         h.release.send(()).unwrap(); // 放行第一次读
 
         h.log.read_started.notified().await; // 合并后只补一次读
@@ -644,11 +737,13 @@ mod tests {
         for i in 0..EXEC_QUEUE_CAP {
             h.handle.submit_execute(cmd(i)).expect("queue below cap must accept");
         }
+        assert_eq!(h.handle.queue_depth(), EXEC_QUEUE_CAP, "队列深度反映未处理命令");
         match h.handle.submit_execute(cmd(EXEC_QUEUE_CAP)) {
             Err(Error::DriverError(msg)) => assert_eq!(msg, "busy"),
             Err(other) => panic!("expected busy, got {other}"),
             Ok(()) => panic!("expected busy, got Ok"),
         }
+        assert_eq!(h.handle.queue_depth(), EXEC_QUEUE_CAP, "busy 拒绝不得改变队列深度");
 
         // 放行并让 32 条命令全部执行完。
         h.release.send(()).unwrap();
@@ -659,6 +754,7 @@ mod tests {
         })
         .await
         .expect("queued commands should all run");
+        wait_until(|| h.handle.queue_depth() == 0).await;
 
         h.handle.stop();
         wait_finished(&h.handle).await;
@@ -785,9 +881,11 @@ mod tests {
         wait_until(|| h.log.reads.load(Ordering::SeqCst) == 1).await;
         h.handle.submit_execute(cmd(0)).expect("queue has room");
         wait_until(|| h.log.executes.load(Ordering::SeqCst) == 1).await;
+        wait_until(|| h.handle.readings_dropped() == 1).await;
 
         assert_eq!(h.sink_rx.try_recv().unwrap().thing_id, "filler");
         assert!(h.sink_rx.try_recv().is_err(), "dropped reading must not appear");
+        assert_eq!(h.handle.metrics().readings_dropped, 1);
 
         h.handle.stop();
         wait_finished(&h.handle).await;
