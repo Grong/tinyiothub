@@ -1,7 +1,7 @@
 # E4b 执行记录与验证结果
 
 - 日期：2026-10-21
-- 提交范围：`190d0e86^..HEAD`（18 个提交，起于 E4b 首个提交 `190d0e86`，全部在 `ai-consolidation`；Task 10 的代码/修复与文档为最后四个提交）
+- 提交范围：`190d0e86^..HEAD`（19 个提交，起于 E4b 首个提交 `190d0e86`，全部在 `ai-consolidation`；Task 10 的代码/修复与文档为最后四个提交）
   - `190d0e86` feat(e4b): 每设备 driver worker 与队列策略
   - `21f41573` fix(e4b): worker 写回 Thing、sink 非阻塞上报并补失败读测试
   - `823b3e04` refactor(e4b): DataServer 每设备 worker
