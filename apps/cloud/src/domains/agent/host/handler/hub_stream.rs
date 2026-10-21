@@ -195,6 +195,10 @@ pub async fn stream(
         return (StatusCode::SERVICE_UNAVAILABLE, "数据服务未装配").into_response();
     };
 
+    // 先订阅 EventBus，再读设备快照：快照读取与校验期间发生的事件会先
+    // 进入本连接的 broadcast 缓冲，避免「快照之后、订阅之前」的增量丢失。
+    let events = state.event_bus.subscribe();
+
     let (things, sources) = match parse_query(query.things.as_deref(), query.sources.as_deref()) {
         Ok(parsed) => parsed,
         Err(error) => return error.into_response(),
@@ -225,13 +229,15 @@ pub async fn stream(
 
     let mut readings_tick = tokio::time::interval(READING_FLUSH_INTERVAL);
     readings_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut ping_tick = tokio::time::interval(PING_INTERVAL);
+    // 首帧已是 snapshot；ping 从第一个完整周期后开始（interval 的首 tick
+    // 是立即完成的，这里显式推迟）。
+    let mut ping_tick = tokio::time::interval_at(tokio::time::Instant::now() + PING_INTERVAL, PING_INTERVAL);
     ping_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     let connection = ConnectionState {
         hub: HubStreamState::new(specs),
         guard,
-        events: state.event_bus.subscribe(),
+        events,
         pending,
         readings_tick,
         ping_tick,
@@ -252,10 +258,16 @@ struct ConnectionState {
     ping_tick: tokio::time::Interval,
 }
 
-async fn next_frame(mut state: ConnectionState) -> Option<(Result<Event, Infallible>, ConnectionState)> {
+async fn next_frame(state: ConnectionState) -> Option<(Result<Event, Infallible>, ConnectionState)> {
+    let (frame, state) = next_out_frame(state).await?;
+    Some((Ok(to_sse(frame)), state))
+}
+
+/// 帧选择循环（与 SSE 序列化分离，便于单测快照→增量顺序与生命周期）。
+async fn next_out_frame(mut state: ConnectionState) -> Option<(OutFrame, ConnectionState)> {
     loop {
         if let Some(frame) = state.pending.pop_front() {
-            return Some((Ok(to_sse(frame)), state));
+            return Some((frame, state));
         }
 
         tokio::select! {
@@ -305,9 +317,14 @@ fn to_sse(frame: OutFrame) -> Event {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::time::Duration;
 
+    use serde_json::json;
+    use tinyiothub_core::models::event::{EventLevel, EventSource, RichContent, ThingEventType};
     use tinyiothub_core::models::thing::ThingStatus;
     use tinyiothub_core::models::thing_property::ThingProperty;
+    use tinyiothub_runtime::access::demand::DemandTracker;
 
     fn source(id: &str, fields: &[&str]) -> SourceDecl {
         SourceDecl {
@@ -449,6 +466,90 @@ mod tests {
         assert_eq!(
             ValidationError::forbidden("x").into_response().status(),
             StatusCode::FORBIDDEN
+        );
+    }
+
+    fn property_event(thing_id: &str, property: &str, value: &str) -> DomainEvent {
+        let content = RichContent::new_text("Property Changed".into(), "changed".into())
+            .with_metadata("property_name".to_string(), json!(property))
+            .with_metadata("value".to_string(), json!(value));
+        DomainEvent::new_device_event(
+            ThingEventType::PropertyChange,
+            EventLevel::Info,
+            EventSource::device_property(thing_id.into(), format!("{thing_id}-p1"), "test".into()),
+            content,
+        )
+        .unwrap()
+    }
+
+    fn connection_state(
+        hub: HubStreamState,
+        guard: DemandGuard,
+        events: tokio::sync::broadcast::Receiver<DomainEvent>,
+        pending: VecDeque<OutFrame>,
+    ) -> ConnectionState {
+        let mut readings_tick = tokio::time::interval(Duration::from_millis(5));
+        readings_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut ping_tick = tokio::time::interval_at(
+            tokio::time::Instant::now() + Duration::from_secs(3600),
+            Duration::from_secs(3600),
+        );
+        ping_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ConnectionState {
+            hub,
+            guard,
+            events,
+            pending,
+            readings_tick,
+            ping_tick,
+        }
+    }
+
+    #[tokio::test]
+    async fn next_frame_emits_snapshot_before_reading() {
+        let tracker = Arc::new(DemandTracker::new());
+        let guard = subscribe_with_guard(tracker.clone(), "ws", &["t1".to_string()], &["telemetry".to_string()]);
+        let specs = vec![ThingSpec::new("t1", vec![SourceSpec::new("telemetry", Vec::new())])];
+        let mut pending = VecDeque::new();
+        pending.push_back(build_snapshot(&[thing("t1", "ws", "demo")], &specs));
+
+        let (tx, rx) = tokio::sync::broadcast::channel(16);
+        let state = connection_state(HubStreamState::new(specs), guard, rx, pending);
+        tx.send(property_event("t1", "temperature", "23")).unwrap();
+
+        let (first, state) = next_out_frame(state).await.expect("snapshot frame");
+        assert!(
+            matches!(first, OutFrame::Snapshot(_)),
+            "first frame must be the snapshot, got {first:?}"
+        );
+
+        let (second, _state) = next_out_frame(state).await.expect("reading frame");
+        let OutFrame::Reading(reading) = second else {
+            panic!("second frame must be a reading, got {second:?}");
+        };
+        assert_eq!(reading.source, "telemetry");
+        assert_eq!(reading.values.get("temperature"), Some(&json!("23")));
+    }
+
+    #[tokio::test]
+    async fn dropping_the_stream_state_unsubscribes_demand() {
+        let tracker = Arc::new(DemandTracker::new());
+        let guard = subscribe_with_guard(tracker.clone(), "ws", &["t1".to_string()], &["telemetry".to_string()]);
+        assert!(tracker.has_subscription_demand("ws", "t1", "telemetry"));
+
+        let (_tx, rx) = tokio::sync::broadcast::channel(4);
+        let state = connection_state(
+            HubStreamState::new([ThingSpec::new("t1", vec![SourceSpec::new("telemetry", Vec::new())])]),
+            guard,
+            rx,
+            VecDeque::new(),
+        );
+
+        // 客户端突然断开 → SSE 流被 drop → 连接态（含 DemandGuard）drop。
+        drop(state);
+        assert!(
+            !tracker.has_subscription_demand("ws", "t1", "telemetry"),
+            "dropping the connection state must unsubscribe demand immediately"
         );
     }
 }

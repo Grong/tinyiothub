@@ -80,7 +80,8 @@ impl ThingSpec {
 pub struct SourceSnapshot {
     pub source: String,
     pub values: Map<String, Value>,
-    pub last_change_at: Option<String>,
+    /// 设备最近心跳（RFC3339）。E4b 不伪造逐属性 `lastChangeAt`。
+    pub last_heartbeat_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -204,7 +205,7 @@ pub fn build_snapshot(things: &[Thing], specs: &[ThingSpec]) -> OutFrame {
                     SourceSnapshot {
                         source: source.id.clone(),
                         values,
-                        last_change_at: thing.last_heartbeat.clone(),
+                        last_heartbeat_at: thing.last_heartbeat.as_deref().and_then(heartbeat_rfc3339),
                     }
                 })
                 .collect();
@@ -216,6 +217,14 @@ pub fn build_snapshot(things: &[Thing], specs: &[ThingSpec]) -> OutFrame {
         })
         .collect();
     OutFrame::snapshot(devices)
+}
+
+/// 设备缓存里的心跳是 `%Y-%m-%d %H:%M:%S`（UTC，无时区）；快照统一转
+/// RFC3339，解析失败返回 `None`（不猜测、不伪造）。
+fn heartbeat_rfc3339(raw: &str) -> Option<String> {
+    chrono::NaiveDateTime::parse_from_str(raw.trim(), "%Y-%m-%d %H:%M:%S")
+        .ok()
+        .map(|naive| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc).to_rfc3339())
 }
 
 /// 每连接的事件映射 / 合并 / 有界队列状态机。
@@ -271,6 +280,8 @@ impl HubStreamState {
             EventType::Device(
                 ThingEventType::CommandStarted | ThingEventType::CommandCompleted | ThingEventType::CommandFailed,
             ) => self.push_control(event, thing_id, "job"),
+            // E4b 的 control 面只覆盖 job / state_change；watch 命中与超时
+            // 仍由 E3 `/live/stream`（账本尾随）投影，不在此重复。
             EventType::Device(ThingEventType::Connection) => self.push_control(event, thing_id, "state_change"),
             _ => None,
         }
@@ -294,18 +305,20 @@ impl HubStreamState {
         };
         let ts = event.timestamp().to_rfc3339();
         for source in sources.iter().filter(|source| source.covers(&property)) {
-            let mut values = Map::new();
-            values.insert(property.clone(), Value::String(value.clone()));
-            self.coalesce.insert(
-                (thing_id.to_string(), source.id.clone()),
-                ReadingFrame {
+            // latest-wins 是「同一属性取最新值」，不是「只保留最后一个属性」：
+            // 同一 (thing, source) 窗口内到达的兄弟属性必须合并进同一帧。
+            let frame = self
+                .coalesce
+                .entry((thing_id.to_string(), source.id.clone()))
+                .or_insert_with(|| ReadingFrame {
                     v: 1,
                     ts: ts.clone(),
                     thing_id: thing_id.to_string(),
                     source: source.id.clone(),
-                    values,
-                },
-            );
+                    values: Map::new(),
+                });
+            frame.ts = ts.clone();
+            frame.values.insert(property.clone(), Value::String(value.clone()));
         }
     }
 
@@ -488,6 +501,23 @@ mod tests {
     }
 
     #[test]
+    fn sibling_properties_on_one_source_merge_into_the_same_flushed_frame() {
+        let mut state = HubStreamState::new([spec("t1", &[("telemetry", &["temperature", "humidity"])])]);
+        state.apply(&property_change("t1", "p1", "temperature", "20"));
+        state.apply(&property_change("t1", "p2", "humidity", "40"));
+
+        let frames = state.take_readings();
+        assert_eq!(frames.len(), 1, "one (thing, source) must yield one frame");
+        let OutFrame::Reading(reading) = &frames[0] else {
+            panic!("expected reading");
+        };
+        assert_eq!(reading.source, "telemetry");
+        assert_eq!(reading.values.len(), 2, "sibling properties must not be dropped");
+        assert_eq!(reading.values.get("temperature"), Some(&json!("20")));
+        assert_eq!(reading.values.get("humidity"), Some(&json!("40")));
+    }
+
+    #[test]
     fn events_for_other_things_or_other_event_kinds_are_ignored() {
         let mut state = HubStreamState::new([spec("t1", &[("telemetry", &[])])]);
         state.apply(&property_change("t2", "p1", "temperature", "20"));
@@ -583,7 +613,8 @@ mod tests {
             id: "t1".into(),
             name: "Sensor".into(),
             status: ThingStatus::Online,
-            last_heartbeat: Some("2026-10-21T10:00:00Z".into()),
+            // 设备缓存的心跳格式（无时区）；快照必须转成 RFC3339。
+            last_heartbeat: Some("2026-10-21 10:00:00".into()),
             properties: Some(vec![
                 ThingProperty {
                     id: "p1".into(),
@@ -616,10 +647,20 @@ mod tests {
         assert_eq!(device.sources[0].values.len(), 1);
         assert_eq!(device.sources[0].values.get("temperature"), Some(&json!("22")));
         assert_eq!(
-            device.sources[0].last_change_at.as_deref(),
-            Some("2026-10-21T10:00:00Z")
+            device.sources[0].last_heartbeat_at.as_deref(),
+            Some("2026-10-21T10:00:00+00:00")
         );
         assert_eq!(device.sources[1].values.len(), 2);
+    }
+
+    #[test]
+    fn snapshot_heartbeat_is_rfc3339_or_null() {
+        assert_eq!(
+            heartbeat_rfc3339("2026-10-21 10:00:00").as_deref(),
+            Some("2026-10-21T10:00:00+00:00")
+        );
+        assert_eq!(heartbeat_rfc3339("not a timestamp"), None);
+        assert_eq!(heartbeat_rfc3339("2026-10-21T10:00:00Z"), None);
     }
 
     #[test]
