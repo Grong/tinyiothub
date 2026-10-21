@@ -1,8 +1,6 @@
 /* E3 实时设备健康卡（spec §2.2/§8）——只用 DESIGN_SYSTEM tokens。 */
 
-live-devices {
-  display: block;
-}
+live-devices { display: block; }
 
 .ld-banner {
   margin-bottom: var(--space-3);
@@ -38,17 +36,8 @@ live-devices {
   outline: none;
 }
 
-.ld-card--bad {
-  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.35);
-}
-.ld-card--attention {
-  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.3);
-}
-
-.ld-card--selected {
-  border-color: var(--accent-glow-strong);
-  box-shadow: inset 0 0 0 1px var(--accent-glow-strong);
-}
+.ld-card--bad { box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.35); }
+.ld-card--attention { box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.3); }
 
 .ld-card header {
   display: flex;
@@ -62,18 +51,10 @@ live-devices {
   border-radius: var(--radius-full);
 }
 
-.ld-card__dot--ok {
-  background: linear-gradient(135deg, #00d4ff, #22c55e);
-}
-.ld-card__dot--attention {
-  background: linear-gradient(135deg, #fbbf24, #f97316);
-}
-.ld-card__dot--bad {
-  background: #ef4444;
-}
-.ld-card__dot--unknown {
-  background: var(--muted);
-}
+.ld-card__dot--ok { background: linear-gradient(135deg, #00d4ff, #22c55e); }
+.ld-card__dot--attention { background: linear-gradient(135deg, #fbbf24, #f97316); }
+.ld-card__dot--bad { background: #ef4444; }
+.ld-card__dot--unknown { background: var(--muted); }
 
 .ld-card__name {
   font-size: 14px;
@@ -82,15 +63,8 @@ live-devices {
   white-space: nowrap;
 }
 
-.ld-card__health {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 11px;
-}
-.ld-card__zone {
-  color: var(--muted);
-  font-size: 12px;
-}
+.ld-card__health { margin-left: auto; color: var(--muted); font-size: 11px; }
+.ld-card__zone { color: var(--muted); font-size: 12px; }
 
 .ld-card__values {
   display: grid;
@@ -100,18 +74,10 @@ live-devices {
   font-size: 12px;
 }
 
-.ld-card__values dt {
-  color: var(--muted);
-}
-.ld-card__values dd {
-  margin: 0;
-  font-variant-numeric: tabular-nums;
-}
+.ld-card__values dt { color: var(--muted); }
+.ld-card__values dd { margin: 0; font-variant-numeric: tabular-nums; }
 
-.ld-card__badges {
-  display: flex;
-  gap: var(--space-1);
-}
+.ld-card__badges { display: flex; gap: var(--space-1); }
 .ld-card__badges span {
   font-size: 10px;
   padding: 1px 6px;
@@ -120,54 +86,45 @@ live-devices {
   color: #22d3ee;
 }
 
-/* E4b 选中卡片：Hub 订阅流实时读数 + 连接状态 */
+.ld-state { padding: var(--space-6); text-align: center; color: var(--muted); }
+.ld-state__hint { margin-top: var(--space-2); font-size: 12px; }
+
+@media (max-width: 767px) {
+  .ld-grid { grid-template-columns: 1fr; }
+  .ld-card { min-height: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  live-devices * { animation: none !important; transition: none !important; }
+}
+
+.ld-cell { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.ld-card--selected {
+  border-color: var(--accent-glow-strong);
+  box-shadow: inset 0 0 0 1px var(--accent-glow-strong);
+}
+
+/* E4b 选中卡片：Hub 订阅流实时读数 + 连接状态（与卡片同级，避免交互控件嵌套）。 */
 .ld-live {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  margin-top: var(--space-1);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--glass-border);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
 }
 
-.ld-live__status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.ld-live__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: var(--muted);
-}
-
-.ld-live--live .ld-live__dot {
-  background: #22c55e;
-}
+.ld-live__status { display: flex; align-items: center; gap: var(--space-1); font-size: 11px; color: var(--muted); }
+.ld-live__dot { width: 6px; height: 6px; border-radius: var(--radius-full); background: var(--muted); }
+.ld-live--live .ld-live__dot { background: #22c55e; }
 .ld-live--connecting .ld-live__dot,
-.ld-live--reconnecting .ld-live__dot {
-  background: #f59e0b;
-}
-.ld-live--offline .ld-live__dot {
-  background: #ef4444;
-}
+.ld-live--reconnecting .ld-live__dot { background: #f59e0b; }
+.ld-live--offline .ld-live__dot { background: #ef4444; }
 
-.ld-live__sources {
-  margin-left: auto;
-  max-width: 60%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ld-live__note {
-  font-size: 11px;
-  color: #fbbf24;
-}
+.ld-live__sources { margin-left: auto; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ld-live__note { font-size: 11px; color: #fbbf24; }
 
 .ld-live__values {
   display: grid;
@@ -177,44 +134,7 @@ live-devices {
   font-size: 12px;
 }
 
-.ld-live__values dt {
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.ld-live__values dt { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ld-live__values dd { margin: 0; font-variant-numeric: tabular-nums; }
 
-.ld-live__values dd {
-  margin: 0;
-  font-variant-numeric: tabular-nums;
-}
-
-.ld-live__open {
-  align-self: flex-start;
-}
-
-.ld-state {
-  padding: var(--space-6);
-  text-align: center;
-  color: var(--muted);
-}
-.ld-state__hint {
-  margin-top: var(--space-2);
-  font-size: 12px;
-}
-
-@media (max-width: 767px) {
-  .ld-grid {
-    grid-template-columns: 1fr;
-  }
-  .ld-card {
-    min-height: 44px;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  live-devices * {
-    animation: none !important;
-    transition: none !important;
-  }
-}
+.ld-live__open { align-self: flex-start; }

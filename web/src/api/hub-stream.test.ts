@@ -73,6 +73,12 @@ describe('buildHubStreamPath', () => {
       '/workspaces/ws%201/hub/stream?things=thing%2F1,t2&sources=telemetry,pos%26x',
     );
   });
+
+  it('returns an empty path for empty things/sources instead of a 400 URL', () => {
+    expect(buildHubStreamPath('ws', [], ['telemetry'])).toBe('');
+    expect(buildHubStreamPath('ws', ['t1'], ['   '])).toBe('');
+    expect(buildHubStreamPath('  ', ['t1'], ['telemetry'])).toBe('');
+  });
 });
 
 describe('parseHubEvent', () => {
@@ -277,6 +283,59 @@ describe('connectHubStream', () => {
     conn.close();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(mock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not fetch when things/sources are empty', () => {
+    const mock = vi.fn();
+    vi.stubGlobal('fetch', mock);
+    const statuses: HubStreamStatus[] = [];
+    const conn = connectHubStream('ws', [], ['telemetry'], {
+      onStatus: (status) => statuses.push(status),
+    });
+    expect(mock).not.toHaveBeenCalled();
+    expect(statuses).toEqual(['offline']);
+    conn.pause();
+    conn.resume();
+    expect(mock).not.toHaveBeenCalled();
+    conn.close();
+  });
+
+  it('resync aborts the old stream and keeps growing the backoff', async () => {
+    vi.useFakeTimers();
+    const { mock, streams } = streamingFetch();
+    vi.stubGlobal('fetch', mock);
+    const conn = connectHubStream(
+      'ws',
+      ['t1'],
+      ['telemetry'],
+      { onStatus: () => {} },
+      { jitterMs: 0, pauseOnHidden: false, baseDelayMs: 1000, maxDelayMs: 30_000 },
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mock).toHaveBeenCalledTimes(1);
+    const firstSignal = (mock.mock.calls[0] as unknown as [string, RequestInit])[1].signal!;
+
+    streams[0].push(frame('resync', { v: 1, reason: 'lagged' }));
+    await vi.advanceTimersByTimeAsync(0);
+    // 旧 fetch body 必须被终止（服务端据此 Drop DemandGuard），而不是只跳出读循环。
+    expect(firstSignal.aborted).toBe(true);
+    expect(mock).toHaveBeenCalledTimes(1);
+
+    // 第一次 resync 仍按 1s 退避重连。
+    await vi.advanceTimersByTimeAsync(999);
+    expect(mock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(mock).toHaveBeenCalledTimes(2);
+
+    // 持续 lag：第二次 resync 的退避应翻倍到 2s，而不是又回到 1s。
+    streams[1].push(frame('resync', { v: 1, reason: 'lagged' }));
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mock).toHaveBeenCalledTimes(3);
+
+    conn.close();
   });
 
   it('pauses while hidden and resumes when visible', async () => {

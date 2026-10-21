@@ -139,6 +139,61 @@ describe('live-devices × Hub 订阅流', () => {
     expect(secondClose).toHaveBeenCalledTimes(1);
   });
 
+  it('键盘 Enter/Space 可选中卡片；打开详情发出 device-open 且不被卡片抢走', async () => {
+    const el = await mount();
+    const first = cards(el)[0];
+    first.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await vi.waitFor(() => expect(hubMock.connect).toHaveBeenCalledTimes(1));
+    expect(hubMock.connect.mock.calls[0][1]).toEqual(['t1']);
+
+    cards(el)[1].dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    await vi.waitFor(() => expect(hubMock.connect).toHaveBeenCalledTimes(2));
+    expect(hubMock.connect.mock.calls[1][1]).toEqual(['t2']);
+
+    const opened: string[] = [];
+    el.addEventListener('device-open', (e) =>
+      opened.push((e as CustomEvent<{ thingId: string }>).detail.thingId),
+    );
+    const button = el.shadowRoot!.querySelector<HTMLButtonElement>('.ld-live__open')!;
+    expect(button).toBeTruthy();
+    // 详情按钮不在 role=button 卡片内部，避免交互控件嵌套。
+    expect(cards(el)[1].contains(button)).toBe(false);
+
+    // 冒泡到卡片的 Enter 不应被卡片 keydown 抢走（target 守卫）。
+    button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(hubMock.connect).toHaveBeenCalledTimes(2);
+    button.click();
+    expect(opened).toEqual(['t2']);
+  });
+
+  it('A→B→A 时丢弃第一次 A 的过期声明结果', async () => {
+    const el = await mount();
+    let resolveFirst!: (sources: string[]) => void;
+    const firstPending = new Promise<string[]>((resolve) => {
+      resolveFirst = resolve;
+    });
+    hubMock.fetchSources
+      .mockImplementationOnce(() => firstPending)
+      .mockResolvedValue(['telemetry']);
+
+    cards(el)[0].click(); // A(t1)：声明挂起
+    await vi.waitFor(() => expect(hubMock.fetchSources).toHaveBeenCalledTimes(1));
+
+    cards(el)[1].click(); // B(t2)
+    await vi.waitFor(() => expect(hubMock.connect).toHaveBeenCalledTimes(1));
+    expect(hubMock.connect.mock.calls[0][1]).toEqual(['t2']);
+
+    cards(el)[0].click(); // A(t1) 再次选中
+    await vi.waitFor(() => expect(hubMock.connect).toHaveBeenCalledTimes(2));
+    expect(hubMock.connect.mock.calls[1][1]).toEqual(['t1']);
+
+    resolveFirst(['position']); // 第一次 A 的过期结果
+    await Promise.resolve();
+    await el.updateComplete;
+    expect(hubMock.connect).toHaveBeenCalledTimes(2);
+    expect(hubMock.connect.mock.calls[1][2]).toEqual(['telemetry']);
+  });
+
   it('驱动未声明 source 时显示离线且不建流', async () => {
     hubMock.fetchSources.mockResolvedValue([]);
     const el = await mount();

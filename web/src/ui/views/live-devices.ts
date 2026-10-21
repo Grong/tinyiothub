@@ -281,10 +281,7 @@ export class LiveDevices extends LitElement {
           : nothing}
         <button
           class="btn btn--ghost btn--sm ld-live__open"
-          @click=${(e: Event) => {
-            e.stopPropagation();
-            this.open(device.thingId);
-          }}
+          @click=${() => this.open(device.thingId)}
         >
           打开详情
         </button>
@@ -318,46 +315,51 @@ export class LiveDevices extends LitElement {
                 const selected = this.selectedThingId === d.thingId;
                 const values = Object.entries(d.values ?? {}).slice(0, 3);
                 return html`
-                  <article
-                    class="ld-card ld-card--${d.health} ${selected ? 'ld-card--selected' : ''}"
-                    tabindex="0"
-                    role="button"
-                    aria-pressed=${selected ? 'true' : 'false'}
-                    aria-label="${d.name} ${d.health} ${d.online ? '在线' : '离线'}"
-                    @click=${() => this.select(d.thingId)}
-                    @keydown=${(e: KeyboardEvent) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        this.select(d.thingId);
-                      }
-                    }}
-                  >
-                    <header>
-                      <span
-                        class="ld-card__dot ld-card__dot--${d.health}"
-                        aria-hidden="true"
-                      ></span>
-                      <span class="ld-card__name">${d.name}</span>
-                      <span class="ld-card__health">${d.health}</span>
-                    </header>
-                    <div class="ld-card__zone">
-                      ${d.zone || '未归属区域'} · ${d.online ? '在线' : '离线'}
-                    </div>
-                    <dl class="ld-card__values">
-                      ${values.map(
-                        ([k, v]) =>
-                          html`<dt>${k}</dt>
-                            <dd>${v}</dd>`,
-                      )}
-                    </dl>
-                    ${a
-                      ? html`<footer class="ld-card__badges">
-                          ${a.watch ? html`<span>watch ${a.watch}</span>` : nothing}
-                          ${a.job ? html`<span>job ${a.job}</span>` : nothing}
-                        </footer>`
-                      : nothing}
+                  <div class="ld-cell">
+                    <article
+                      class="ld-card ld-card--${d.health} ${selected ? 'ld-card--selected' : ''}"
+                      tabindex="0"
+                      role="button"
+                      aria-pressed=${selected ? 'true' : 'false'}
+                      aria-label="${d.name} ${d.health} ${d.online ? '在线' : '离线'}"
+                      @click=${() => this.select(d.thingId)}
+                      @keydown=${(e: KeyboardEvent) => {
+                        // 子元素（如实时面板里的按钮）的键盘事件需自行处理，
+                        // 不能被卡片的 Enter/Space 抢走并 preventDefault。
+                        if (e.target !== e.currentTarget) return;
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          this.select(d.thingId);
+                        }
+                      }}
+                    >
+                      <header>
+                        <span
+                          class="ld-card__dot ld-card__dot--${d.health}"
+                          aria-hidden="true"
+                        ></span>
+                        <span class="ld-card__name">${d.name}</span>
+                        <span class="ld-card__health">${d.health}</span>
+                      </header>
+                      <div class="ld-card__zone">
+                        ${d.zone || '未归属区域'} · ${d.online ? '在线' : '离线'}
+                      </div>
+                      <dl class="ld-card__values">
+                        ${values.map(
+                          ([k, v]) =>
+                            html`<dt>${k}</dt>
+                              <dd>${v}</dd>`,
+                        )}
+                      </dl>
+                      ${a
+                        ? html`<footer class="ld-card__badges">
+                            ${a.watch ? html`<span>watch ${a.watch}</span>` : nothing}
+                            ${a.job ? html`<span>job ${a.job}</span>` : nothing}
+                          </footer>`
+                        : nothing}
+                    </article>
                     ${selected ? this.renderHubPanel(d) : nothing}
-                  </article>
+                  </div>
                 `;
               })}
             </div>

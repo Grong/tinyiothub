@@ -194,15 +194,19 @@ function encodeList(items: string[]): string {
   return encoded.join(',');
 }
 
-/** 构建 Hub 流路径（含 URL 编码；逗号保留为分隔符）。 */
+/**
+ * 构建 Hub 流路径（含 URL 编码；逗号保留为分隔符）。
+ * things/sources 任一为空时返回 ''（后端会 400，客户端不应发起请求）。
+ */
 export function buildHubStreamPath(
   workspaceId: string,
   things: string[],
   sources: string[],
 ): string {
-  return `/workspaces/${encodeURIComponent(workspaceId)}/hub/stream?things=${encodeList(
-    things,
-  )}&sources=${encodeList(sources)}`;
+  const encodedThings = encodeList(things);
+  const encodedSources = encodeList(sources);
+  if (!workspaceId.trim() || !encodedThings || !encodedSources) return '';
+  return `/workspaces/${encodeURIComponent(workspaceId)}/hub/stream?things=${encodedThings}&sources=${encodedSources}`;
 }
 
 /** 读取驱动声明中的 source id（设备卡据此订阅它真正声明过的源）。 */
@@ -266,6 +270,9 @@ export function connectHubStream(
   let attempts = 0;
   let retry = baseDelay;
   let controller: AbortController | null = null;
+  /** 退避 sleep 的独立 controller：fetch 的 controller 在 resync 清理时
+   * 已 abort，不能复用它（否则 sleep 立刻返回，退避失效）。 */
+  let sleeper: AbortController | null = null;
 
   const deliver = (parsed: HubEvent): void => {
     switch (parsed.type) {
@@ -288,13 +295,17 @@ export function connectHubStream(
   };
 
   const run = async (): Promise<void> => {
-    if (running) return;
+    if (running || !path) return;
     running = true;
     while (!closed && !paused) {
       controller = new AbortController();
       const signal = controller.signal;
       handlers.onStatus(attempts === 0 ? 'connecting' : 'reconnecting');
       attempts += 1;
+      // `opened`：本次尝试是否成功建立过流；连续 fetch 失败时保持指数退避。
+      let opened = false;
+      // `reconnectRequested`：服务端 resync 要求本连接重连以重取 snapshot。
+      let reconnectRequested = false;
       try {
         // Hub 流不用 Last-Event-ID：重连即收到新 snapshot，服务端会以
         // resync("reconnect") 表达这一语义，客户端不应再带游标造成环。
@@ -303,34 +314,48 @@ export function connectHubStream(
         if (token) headers.Authorization = `Bearer ${token}`;
         const res = await fetch(buildUrl(path), { headers, signal });
         if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+        opened = true;
         handlers.onStatus('live');
-        retry = baseDelay;
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
-        let reconnectRequested = false;
-        while (!closed && !paused) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const { events, rest } = parseSseChunk(buffer);
-          buffer = rest;
-          for (const ev of events) {
-            const parsed = parseHubEvent(ev);
-            if (!parsed) continue;
-            // resync 表示本连接已丢帧：断开重连以重新拿首帧 snapshot。
-            if (parsed.type === 'resync') reconnectRequested = true;
-            deliver(parsed);
+        try {
+          while (!closed && !paused) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const { events, rest } = parseSseChunk(buffer);
+            buffer = rest;
+            for (const ev of events) {
+              const parsed = parseHubEvent(ev);
+              if (!parsed) continue;
+              if (parsed.type === 'resync') reconnectRequested = true;
+              deliver(parsed);
+            }
+            if (reconnectRequested) break;
           }
-          if (reconnectRequested) break;
+        } finally {
+          // resync / 暂停 / 关闭都要真正终止旧 fetch body：仅跳出循环而
+          // 不 abort 会让服务端继续持有该 SSE 与其 DemandGuard 订阅。
+          controller.abort();
+          try {
+            await reader.cancel();
+          } catch {
+            // body 已随 abort 关闭
+          }
         }
       } catch {
         if (closed || paused) break;
       }
       if (closed || paused) break;
+      // 健康连接自然结束/网络断开 → 退避回到 1s；resync 则沿用当前退避
+      // 并继续翻倍，避免持续 lag 时以 1s 间隔无限重连。
+      if (opened && !reconnectRequested) retry = baseDelay;
       handlers.onStatus('reconnecting');
       const jitter = jitterMs > 0 ? Math.floor(Math.random() * jitterMs) : 0;
-      await sleep(retry + jitter, signal);
+      sleeper = new AbortController();
+      await sleep(retry + jitter, sleeper.signal);
+      sleeper = null;
       retry = Math.min(retry * 2, maxDelay);
     }
     running = false;
@@ -356,12 +381,14 @@ export function connectHubStream(
         document.removeEventListener('visibilitychange', onVisibilityChange);
       }
       controller?.abort();
+      sleeper?.abort();
       handlers.onStatus('offline');
     },
     pause() {
       if (closed || paused) return;
       paused = true;
       controller?.abort();
+      sleeper?.abort();
     },
     resume() {
       if (closed || !paused) return;
@@ -372,6 +399,11 @@ export function connectHubStream(
     },
   };
 
-  void run();
+  if (path) {
+    void run();
+  } else {
+    // 空 things/sources：不发起注定 400 的请求，直接以离线状态返回。
+    handlers.onStatus('offline');
+  }
   return connection;
 }
