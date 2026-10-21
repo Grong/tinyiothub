@@ -1560,7 +1560,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   renderUpgradeBanner() {
     if (this.upgradeBannerDismissed || this.selectedDevice) return nothing;
     return html`
-      <div class="card" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;border-left:3px solid var(--cyan,#00d4ff);">
+      <div class="card" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
         <span>设备已升级为「物」，全部数据已迁移。物可以是设备，也可以是车间、产线、园区等概念节点。</span>
         <button class="btn btn--icon" aria-label="关闭提示" @click=${this.dismissUpgradeBanner}>&times;</button>
       </div>
