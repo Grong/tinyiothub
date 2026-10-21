@@ -190,9 +190,11 @@ impl DataServer {
                     let Some(reading) = maybe else { break };
                     // 只有“有 worker 且当前健康”的读数才刷新 heartbeat/Online：
                     // 旧的成功读数不得覆盖随后发生的失败迁移（跨通道乱序防线）。
-                    let worker_online = workers
-                        .get(&reading.thing_id)
-                        .is_some_and(|worker| worker.status().health.is_online());
+                    // Push 驱动不轮询，overview 永远不会转为 Online；其上报读数
+                    // 本身就是在线证据（Task 4 评审结转）。
+                    let worker_online = workers.get(&reading.thing_id).is_some_and(|worker| {
+                        worker.is_push() || worker.status().health.is_online()
+                    });
                     Self::consume_driver_reading_with(
                         reading,
                         worker_online,
@@ -966,6 +968,89 @@ mod tests {
             0,
             "Push worker 绝不经过 poll_workers 的 Read 路径"
         );
+    }
+
+    /// 无上报的 Push 驱动 stub（读数由测试经 `value_sink()` 注入）。
+    struct IdlePushDriver {
+        thing: Thing,
+    }
+
+    impl ThingDriver for IdlePushDriver {
+        fn thing(&self) -> &Thing {
+            &self.thing
+        }
+        fn thing_mut(&mut self) -> &mut Thing {
+            &mut self.thing
+        }
+        fn mode(&self) -> DriverMode {
+            DriverMode::Push
+        }
+        fn read_data(&mut self, _cancel: &CancelToken) -> Result<Vec<ResultValue>, Error> {
+            Ok(vec![])
+        }
+        fn execute_command(&mut self, _cmd: &ThingCommand, _cancel: &CancelToken) -> Result<bool, Error> {
+            Ok(true)
+        }
+    }
+
+    /// Task 4 评审结转：Push worker 的 overview 永不转 Online（不轮询），
+    /// 但上报读数必须刷新缓存 Online/last_heartbeat。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn push_reading_refreshes_heartbeat_without_worker_overview() {
+        let thing = make_thing_with_prop("temp", None); // id = thing-1
+        let cache = Arc::new(VecCache::new(vec![thing.clone()]));
+        let event_bus = Arc::new(EventBus::new());
+        let server = DataServer::new(cache.clone(), event_bus);
+        let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
+        server.run(shutdown_rx).await.expect("run");
+
+        server.register_worker("thing-1", DriverWrapper::new(Box::new(IdlePushDriver { thing })));
+        let overview = server.get_driver_overview("thing-1").expect("overview");
+        assert!(
+            !overview.health.is_online(),
+            "Push worker 的 overview 不应被视为在线（前置条件）"
+        );
+
+        server
+            .value_sink()
+            .try_send(DriverReading {
+                thing_id: "thing-1".to_string(),
+                values: vec![ResultValue::new(
+                    "temp".to_string(),
+                    "float".to_string(),
+                    Some("9".to_string()),
+                )],
+            })
+            .expect("reading accepted");
+
+        wait_until(|| {
+            cache.get("thing-1").is_some_and(|device| {
+                device
+                    .properties
+                    .as_ref()
+                    .and_then(|props| props.iter().find(|p| p.name == "temp"))
+                    .and_then(|p| p.current_value.as_deref())
+                    == Some("9")
+            })
+        })
+        .await;
+        let cached = cache.get("thing-1").expect("cached thing");
+        assert_eq!(
+            cached.status,
+            ThingStatus::Online,
+            "Push 读数必须刷新缓存在线状态，即使 overview 尚未 Online"
+        );
+        assert!(cached.last_heartbeat.is_some(), "Push 读数必须刷新 last_heartbeat");
+        assert!(
+            !server
+                .get_driver_overview("thing-1")
+                .expect("overview")
+                .health
+                .is_online(),
+            "overview 仍非 Online，证明心跳来自 Push 分支而非轮询成功"
+        );
+
+        let _ = shutdown_tx.send(());
     }
 
     /// 注入 sampler 后 `run()` 不得再起临时 100ms 全量轮询。

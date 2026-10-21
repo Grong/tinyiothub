@@ -10,8 +10,8 @@ use tinyiothub_core::driver::declaration::{AcceptanceReportRecord, DeviceDeclara
 use tinyiothub_core::driver::manifest::{ManifestTool, StateFieldDecl};
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_runtime::ports::{
-    AcceptanceReportStore, DeclarationProjectionStore, DeviceDeclarationStore, DriverDeclarationStore,
-    ThingDeclarationSource,
+    AcceptanceReportStore, DeclarationProjectionStore, DemandPropertyRef, DemandSource, DeviceDeclarationStore,
+    DriverDeclarationStore, ThingDeclarationSource,
 };
 use tinyiothub_storage::Db;
 
@@ -103,11 +103,90 @@ impl tinyiothub_agent::runtime::thing_agent::SnapshotDemandSink for AccessSnapsh
     }
 }
 
+/// E4b §2.1：持久规则（watch/派生/告警）→ sampler 需求快照。
+pub struct DbDemandSource(pub Arc<Db>);
+
+#[async_trait]
+impl DemandSource for DbDemandSource {
+    async fn snapshot(&self) -> Result<Vec<DemandPropertyRef>, String> {
+        self.0
+            .list_demand_property_refs()
+            .await
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|row| DemandPropertyRef {
+                        workspace_id: row.workspace_id,
+                        thing_id: row.thing_id,
+                        property: row.property,
+                    })
+                    .collect()
+            })
+            .map_err(|e| e.to_string())
+    }
+}
+
 pub struct DbAcceptanceStore(pub Arc<Db>);
 
 #[async_trait]
 impl AcceptanceReportStore for DbAcceptanceStore {
     async fn insert(&self, r: &AcceptanceReportRecord) -> Result<(), String> {
         self.0.insert_acceptance_report(r).await.map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tinyiothub_storage::watch::{WatchRuleRow, insert_rule};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn db_demand_source_maps_rows_to_port_type() {
+        let pool = tinyiothub_storage::test_helpers::test_pool().await;
+        for (id, kind, condition) in [
+            (
+                "w-prop",
+                "property",
+                r#"{"type":"property","thing_id":"t-1","property":"temp","op":"gt","value":30}"#,
+            ),
+            (
+                "w-health",
+                "health",
+                r#"{"type":"health","thing_id":"t-2","level":"bad"}"#,
+            ),
+        ] {
+            insert_rule(
+                &pool,
+                &WatchRuleRow {
+                    id: id.into(),
+                    workspace_id: "ws-1".into(),
+                    kind: kind.into(),
+                    condition: condition.into(),
+                    persistent: 0,
+                    timeout_secs: 600,
+                    created_at: "2026-10-21T00:00:00Z".into(),
+                },
+            )
+            .await
+            .expect("watch rule");
+        }
+
+        let source = DbDemandSource(Arc::new(Db::new(pool)));
+        let snapshot = source.snapshot().await.expect("snapshot");
+        assert_eq!(
+            snapshot,
+            vec![
+                DemandPropertyRef {
+                    workspace_id: "ws-1".into(),
+                    thing_id: "t-1".into(),
+                    property: "temp".into(),
+                },
+                DemandPropertyRef {
+                    workspace_id: "ws-1".into(),
+                    thing_id: "t-2".into(),
+                    property: String::new(),
+                },
+            ]
+        );
     }
 }

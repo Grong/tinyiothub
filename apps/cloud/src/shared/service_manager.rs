@@ -106,7 +106,8 @@ impl ServiceManager {
         let data_server = Arc::new(DataServer::new(device_cache.clone(), app_state.event_bus.clone()));
 
         // 2.1 中央 sampler：catalog = device_cache ∪ 已安装 manifest；
-        // 需求先只有本地订阅/近期读取（Task 7 接 DbDemandSource）。
+        // 需求 = 本地订阅/近期读取（DemandTracker）+ 持久规则快照
+        // （DbDemandSource：watch/派生/告警，每秒刷新一次）。
         let sampling_catalog = Arc::new(tinyiothub_runtime::access::catalog::CachedManifestCatalog::new(
             device_cache,
             access.manifests.clone(),
@@ -115,7 +116,9 @@ impl ServiceManager {
             sampling_catalog,
             demand_tracker.clone(),
             data_server.sampling_workers(),
-            None,
+            Some(Arc::new(crate::shared::access_ports::DbDemandSource(
+                app_state.db.clone(),
+            ))),
         ));
         data_server.set_sampler(sampler);
         // Task 6 的 AccessService/Hub 订阅经 AppState 取同一实例。

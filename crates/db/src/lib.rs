@@ -36,6 +36,8 @@ pub mod cron_job;
 pub mod cron_run;
 /// Db facade (connection + domain accessors).
 pub mod database;
+/// E4b sampling demand snapshot (watch rules, derived refs, alarm rules).
+pub mod demand;
 /// E4a driver/device declarations + projection writes.
 pub mod driver_declaration;
 /// Driver installation persistence.
