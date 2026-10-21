@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::manifest::{
     DriverManifest, MAX_INSTANCE_STATE_FIELDS, MAX_INSTANCE_TOOLS, ManifestError, ManifestTool, StateFieldDecl,
+    negotiate_manifest_version,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -31,11 +32,23 @@ pub fn fixed_declaration(m: &DriverManifest) -> DeviceDeclaration {
 }
 
 pub fn validate_device_declaration(package: &DriverManifest, decl: &DeviceDeclaration) -> Result<(), ManifestError> {
+    negotiate_manifest_version(&decl.manifest_version)?;
+    if decl.manifest_version != package.manifest_version {
+        return Err(ManifestError::ManifestVersionMismatch {
+            expected: package.manifest_version.clone(),
+            got: decl.manifest_version.clone(),
+        });
+    }
     if decl.driver != package.identity.driver || decl.driver_version != package.identity.version {
         return Err(ManifestError::IdentityMismatch {
             expected: format!("{}@{}", package.identity.driver, package.identity.version),
             got: format!("{}@{}", decl.driver, decl.driver_version),
         });
+    }
+    if !package.identity.dynamic_capabilities
+        && (decl.state_fields != package.state_fields || decl.tools != package.tools)
+    {
+        return Err(ManifestError::FixedDeclarationMismatch);
     }
     if decl.state_fields.len() > MAX_INSTANCE_STATE_FIELDS {
         return Err(ManifestError::TooMany {
@@ -226,6 +239,144 @@ mod tests {
         assert!(matches!(
             validate_device_declaration(&p, &d),
             Err(ManifestError::TooMany { .. })
+        ));
+    }
+
+    fn fixed_package_with_caps() -> DriverManifest {
+        let mut p = package(false);
+        p.state_fields = decl().state_fields;
+        p.tools = decl().tools;
+        p
+    }
+
+    #[test]
+    fn fixed_declaration_rejects_extra_state_field() {
+        let p = fixed_package_with_caps();
+        let mut d = fixed_declaration(&p);
+        d.state_fields.push(StateFieldDecl {
+            name: "extra".into(),
+            data_type: "integer".into(),
+            unit: None,
+            range: None,
+            read_only: false,
+            required: false,
+            source: None,
+        });
+        assert!(matches!(
+            validate_device_declaration(&p, &d),
+            Err(ManifestError::FixedDeclarationMismatch)
+        ));
+    }
+
+    #[test]
+    fn fixed_declaration_rejects_extra_tool() {
+        let p = fixed_package_with_caps();
+        let mut d = fixed_declaration(&p);
+        d.tools.push(ManifestTool {
+            name: "extra".into(),
+            ..d.tools[0].clone()
+        });
+        assert!(matches!(
+            validate_device_declaration(&p, &d),
+            Err(ManifestError::FixedDeclarationMismatch)
+        ));
+    }
+
+    #[test]
+    fn fixed_declaration_rejects_changed_tool_schema() {
+        let p = fixed_package_with_caps();
+        let mut d = fixed_declaration(&p);
+        d.tools[0].timeout.max_ms += 1;
+        assert!(matches!(
+            validate_device_declaration(&p, &d),
+            Err(ManifestError::FixedDeclarationMismatch)
+        ));
+    }
+
+    #[test]
+    fn rejects_manifest_version_mismatch() {
+        let p = package(true);
+        let mut d = decl();
+        d.manifest_version = "1.1".into();
+        assert!(matches!(
+            validate_device_declaration(&p, &d),
+            Err(ManifestError::ManifestVersionMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_duplicate_state_field() {
+        let p = package(true);
+        let mut d = decl();
+        d.state_fields.push(d.state_fields[0].clone());
+        assert!(matches!(
+            validate_device_declaration(&p, &d),
+            Err(ManifestError::Duplicate {
+                kind: "state field",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_duplicate_tool() {
+        let p = package(true);
+        let mut d = decl();
+        d.tools.push(d.tools[0].clone());
+        assert!(matches!(
+            validate_device_declaration(&p, &d),
+            Err(ManifestError::Duplicate { kind: "tool", .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_state_field_limit_overflow() {
+        let p = package(true);
+        let mut d = decl();
+        d.state_fields = (0..=MAX_INSTANCE_STATE_FIELDS)
+            .map(|i| StateFieldDecl {
+                name: format!("f{i}"),
+                ..d.state_fields[0].clone()
+            })
+            .collect();
+        assert!(matches!(
+            validate_device_declaration(&p, &d),
+            Err(ManifestError::TooMany {
+                kind: "state fields",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_set_tool_without_target_field() {
+        let p = package(true);
+        let mut d = decl();
+        d.tools[0].target_field = None;
+        assert!(matches!(
+            validate_device_declaration(&p, &d),
+            Err(ManifestError::MissingTargetField { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_set_tool_targeting_read_only_field() {
+        let p = package(true);
+        let mut d = decl();
+        d.state_fields[0].read_only = true;
+        assert!(matches!(
+            validate_device_declaration(&p, &d),
+            Err(ManifestError::UnknownTargetField { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_source_field_absent_from_declaration() {
+        let mut p = package(true);
+        p.sources[0].fields = vec!["level".into(), "missing".into()];
+        assert!(matches!(
+            validate_device_declaration(&p, &decl()),
+            Err(ManifestError::UnknownSourceField { .. })
         ));
     }
 }

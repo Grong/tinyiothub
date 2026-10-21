@@ -283,6 +283,10 @@ pub enum ManifestError {
     InvalidLimits,
     #[error("declaration identity mismatch: expected {expected}, got {got}")]
     IdentityMismatch { expected: String, got: String },
+    #[error("declaration manifest version mismatch: expected {expected}, got {got}")]
+    ManifestVersionMismatch { expected: String, got: String },
+    #[error("declaration must match the fixed package declaration")]
+    FixedDeclarationMismatch,
     #[error("too many {kind}: {count} (max {max})")]
     TooMany {
         kind: &'static str,
