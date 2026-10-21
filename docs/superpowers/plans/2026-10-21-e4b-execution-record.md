@@ -1,7 +1,7 @@
 # E4b 执行记录与验证结果
 
 - 日期：2026-10-21
-- 提交范围：`190d0e86..HEAD`（16 个提交，全部在 `ai-consolidation`；Task 10 的代码与文档提交为最后两个）
+- 提交范围：`190d0e86^..HEAD`（18 个提交，起于 E4b 首个提交 `190d0e86`，全部在 `ai-consolidation`；Task 10 的代码/修复与文档为最后四个提交）
   - `190d0e86` feat(e4b): 每设备 driver worker 与队列策略
   - `21f41573` fix(e4b): worker 写回 Thing、sink 非阻塞上报并补失败读测试
   - `823b3e04` refactor(e4b): DataServer 每设备 worker
@@ -17,7 +17,10 @@
   - `29eaac32` docs(e4b): 修正 control/告警表引用
   - `df82bf07` feat(e4b): Hub 订阅流 web 客户端与设备卡接入
   - `5f2f58bb` fix(e4b): Hub resync 连接清理与设备卡可访问性
-  - Task 10（本记录所在提交）`feat(e4b): 采样/Hub 指标与确定性需求 E2E` + `docs(e4b): 执行记录与验证结果`
+  - `1bd6c594` feat(e4b): 采样/Hub 指标与确定性需求 E2E
+  - `38dc9dea` docs(e4b): 执行记录与验证结果
+  - `c63b8210` fix(e4b): 补 sampling_lag_ms 指标与 Hub 连接生命周期 E2E（评审修复）
+  - 本记录更新提交 `docs(e4b): 补齐 sampling_lag 指标记录与验证结果`
 - 工具链：rustc 1.95.0 / cargo 1.95.0，macOS（darwin）；Node v24.14.0（web）
 - 计划：`docs/superpowers/plans/2026-10-21-e4b-sampling-hub-stream.md`
 - 上位 spec：`docs/superpowers/specs/2026-10-21-e4b-sampling-hub-stream-design.md`
@@ -27,9 +30,11 @@
 | # | 命令 | 结果 |
 |---|---|---|
 | 1 | `cargo fmt --all -- --check` | **失败（预期内，存量）**：仅 `crates/agent/src/runtime/thing_agent/scheduler.rs`、`crates/core/src/watch.rs` 两处既有漂移；本任务未修改、已 `git checkout` 还原。E4b 触及文件均无 fmt 漂移 |
-| 2 | `cargo clippy --workspace --all-targets -- -D warnings` | 通过（exit 0，57.68s）；仅 `redis v0.25.4` future-incompat 提示，非本次改动 |
-| 3 | `cargo test --workspace --lib --bins --tests` | **2254 passed / 0 failed / 4 ignored**（53 个测试二进制，exit 0）；其中 cloud 1113 passed / 1 ignored（636.73s），runtime 222 passed |
-| 4 | `cargo test -p runtime --test e4b_demand_e2e` | 3 passed / 0 failed（确定性 E2E，无 sleep） |
+| 2 | `cargo clippy --workspace --all-targets -- -D warnings` | 通过（exit 0；评审修复后复跑 exit 0）；仅 `redis v0.25.4` future-incompat 提示，非本次改动 |
+| 3 | `cargo test --workspace --lib --bins --tests`（评审修复前基线） | **2254 passed / 0 failed / 4 ignored**（53 个测试二进制，exit 0）；其中 cloud 1113 passed / 1 ignored（636.73s），runtime 222 passed |
+| 3b | `cargo test -p runtime`（评审修复后） | **247 passed / 0 failed**（223 lib + 10 + 2 + 4 E2E + 3 + 5，exit 0） |
+| 3c | `cargo test -p tinyiothub-cloud domains::agent::host::handler::hub_stream`（评审修复后） | 8 passed / 0 failed（含新增 resync 计数断言） |
+| 4 | `cargo test -p runtime --test e4b_demand_e2e` | 4 passed / 0 failed（确定性 E2E，无 sleep；含真实 `DemandGuard` 跨层用例） |
 | 5 | `cargo build -p demo-declarative` | 通过（exit 0） |
 | 6 | `cargo test -p driver-check` | 2 passed / 0 failed |
 | 7 | `cargo run -p driver-check -- --package drivers/demo-declarative --profile all` | exit 0；`demo-declarative@1.0.0 -> PASS`（core/materialization/migration 3/3 profile） |
@@ -48,7 +53,9 @@
 | Sampler | `demand_active_sources` | `demand_only && !health` 的 source 本 tick 处于活跃（需求或宽限）的次数累计；`tick_once` 内累加 |
 | Sampler | `demand_skipped_sources` | 同上门控 source 因无需求且宽限已过被跳过的次数累计 |
 | Sampler | `reads_submitted` | 提交给 worker 的 source 读次数累计（同一 thing 的 due source 仍合并为一次 `submit_read`，计数按 source 数） |
-| Sampler | `Sampler::metrics() -> SamplerMetrics` | 一次性快照 |
+| Sampler | `sampling_lag_ms_total` | 调度滞后累计毫秒：每次到期 source 的实际采样时刻晚于 `due_at = last_sample + interval` 的时长之和；首次采样与准点 tick 记 0 |
+| Sampler | `sampling_lag_ms_max` | 单次调度滞后最大值（毫秒），`fetch_max` 维护 |
+| Sampler | `Sampler::metrics() -> SamplerMetrics` | 一次性快照（含上述全部计数） |
 | Worker | `queue_depth` | Execute FIFO（32）中排队待处理命令数；入队先加、失败回滚，worker 取出时递减，停止时归零 |
 | Worker | `reads_coalesced` | worker 忙期间覆盖未处理 Read（latest-wins）的次数 |
 | Worker | `readings_dropped` | ValueSink 满/关闭导致丢弃的读数条数 |
@@ -61,7 +68,7 @@
 
 ### 2.2 确定性 E2E
 
-新增 `crates/runtime/tests/e4b_demand_e2e.rs`（3 个测试，全部注入 `Instant`，0 真实等待）：
+新增 `crates/runtime/tests/e4b_demand_e2e.rs`（4 个测试，全部注入 `Instant`，0 真实等待）：
 
 1. `hub_subscription_drives_demand_only_source_and_health_continues`：
    - fake catalog 一个物，`slow`（demandOnly poll）+ `health`（health poll）；
@@ -74,38 +81,44 @@
    - 订阅 `slow` → `["health","slow"]`；持续/宽限内不抖动；
    - 宽限结束 → 回到 `["health"]`；push 路径 `submit_read` 恒为 0。
 3. `demand_metrics_match_the_push_active_set`：tick 级计数与 push 活跃集一致，push 不提交读。
+4. `hub_stream_guard_lifecycle_drives_demand_only_sampling`（跨层）：用生产 handler 的同一入口
+   `subscribe_with_guard` 建立连接 → 下一 due tick 采 `slow + health`；`drop(guard)` 立即
+   `unsubscribe`（断言 `has_subscription_demand_at` 为 false），宽限内仍采；31s 后停采
+   `slow`、`health` 继续。证明 Hub 连接生命周期（而非直接操作 tracker）驱动采样。
 
-E2E 直接使用真实 `DemandTracker`（`AccessService` 的 `subscribe/touch` 最终落到同一 tracker），未额外拉起 AccessService；Hub 连接生命周期另有 cloud handler 测试覆盖（见 §3）。
+前 3 项直接使用真实 `DemandTracker`；第 4 项组合真实 `DemandGuard` + tracker + sampler + fake worker。cloud handler 另有 SSE 连接/断开与 resync 计数测试（见 §3）。
 
 ### 2.3 指标单测
 
+- runtime `access::sampler::tests::sampling_lag_is_zero_on_time_and_positive_when_late`（首次/准点 = 0；晚 250ms 与 350ms 累计 600、max 350）。
 - runtime `access::sampler::tests::metrics_track_gate_transitions_and_reads`（skipped → active、`reads_submitted` 按 source 计）。
 - runtime `access::sampler::tests::demand_only_source_skips_without_demand`（追加 skipped 断言）。
 - runtime `driver::worker::tests::two_reads_while_busy_coalesce_to_latest_source_set`（coalesced = 1）。
 - runtime `driver::worker::tests::exec_queue_overflow_returns_busy`（队列满 depth = 32；busy 不改变深度；消费完归零）。
 - runtime `driver::worker::tests::full_value_sink_does_not_block_execute`（sink 满 dropped = 1）。
 - runtime `hub_stream::tests::metrics_count_connections_and_resyncs`。
+- cloud `domains::agent::host::handler::hub_stream::tests::resync_frames_increment_the_process_counter`（帧出队累加进程级 resync 计数）。
 
 ## 3. E4b 退出清单证据
 
 | 退出项 | 证据 | 结论 |
 |---|---|---|
-| Hub stream 连接驱动 demand → `demandOnly` 源按 interval 采样 | E2E `hub_subscription_drives_demand_only_source_and_health_continues`；cloud `next_frame_emits_snapshot_before_reading`；runtime `demand_only_source_samples_with_source_subscription` | PASS |
-| 断开 30s 后停采，health 源继续 | E2E 同上（unsubscribe → 19s 仍采 → 31s 停采，health 持续）；runtime `demand_grace_keeps_sampling_then_stops`、`health_source_samples_regardless_of_demand`；cloud `dropping_the_stream_state_unsubscribes_demand`（Drop 立即 unsubscribe，TTL 兜底） | PASS |
+| Hub stream 连接驱动 demand → `demandOnly` 源按 interval 采样 | 跨层 E2E `hub_stream_guard_lifecycle_drives_demand_only_sampling`（真实 `DemandGuard` → sampler）；E2E `hub_subscription_drives_demand_only_source_and_health_continues`；cloud `next_frame_emits_snapshot_before_reading`；runtime `demand_only_source_samples_with_source_subscription` | PASS |
+| 断开 30s 后停采，health 源继续 | 跨层 E2E 同上（`drop(guard)` 立即 unsubscribe → 19s 仍采 → 31s 停采，health 持续）；E2E `hub_subscription_drives_demand_only_source_and_health_continues`；runtime `demand_grace_keeps_sampling_then_stops`、`health_source_samples_regardless_of_demand`；cloud `dropping_the_stream_state_unsubscribes_demand` | PASS |
 | push 驱动 `set_demand` 起停 | E2E `push_worker_set_demand_is_health_union_demanded_and_only_on_transitions`；runtime `push_worker_gets_set_demand_only_on_changes_and_never_reads`、`push_health_source_is_always_active` | PASS |
 | worker 队列策略（合并/优先/上限） | runtime `two_reads_while_busy_coalesce_to_latest_source_set`、`execute_is_served_before_pending_read`、`exec_queue_overflow_returns_busy`、`full_value_sink_does_not_block_execute`、`failure_streak_emits_read_failed_once_and_recovers` | PASS |
 | Devices 工作台选中设备卡 Hub stream latest-wins | web `src/api/hub-stream.test.ts`（分帧/重连/resync/pause/visibility）+ `src/ui/views/live-devices.test.ts`「选中卡片后按声明 source 订阅，并用 reading 合并、snapshot 替换」「切换选中与卸载都会关闭上一条连接」「A→B→A 时丢弃第一次 A 的过期声明结果」；vitest 22 files / 169 tests | PASS |
 | E3 `/live/stream` 回归 | 全量 `cargo test --workspace --lib --bins --tests`：cloud 1113 passed / 0 failed（含 E3 live/ledger/watch/derived/alarm 套件）；E3 端点代码未改动 | PASS |
-| 指标 | 本任务 atomics + getter（§2.1），无新依赖 | PASS |
+| 指标 | sampler（含 `sampling_lag_ms_total/max`）、worker、Hub stream 全部 atomics + getter（§2.1），无新依赖；runtime `sampling_lag_is_zero_on_time_and_positive_when_late`、cloud `resync_frames_increment_the_process_counter` | PASS |
 
 ## 4. 偏差与说明
 
-1. **`sampling_lag_ms` 未实现**：Task 10 的 Required 明确以 `reads_submitted` 替代；lag 需要记录提交→读数回写时延，worker/ValueSink 当前不回传时间戳，留 E4c/E4e。记录为已知缺口，不影响退出标准。
+1. **`sampling_lag_ms` 已实现（评审修复）**：按 `due_at = last_sample + interval` 计算每次到期 source 的调度滞后，累计 `sampling_lag_ms_total` 并维护 `sampling_lag_ms_max`；`reads_submitted` 保留为额外计数。该指标衡量 **tick 调度滞后**（`now - due_at`），不含「提交 → 读数回写」时延；后者需 ValueSink 携带提交时间戳，留 E4c/e。
 2. **指标未暴露 HTTP/Prometheus 端点**：按约束只做 atomics + getter；进程级 Hub 计数为全局静态，跨多个 runtime 实例共享（单进程生产可接受）。
 3. **`demand_active_sources` 为 source·tick 累计值**，不是当前活跃 source 的 gauge；宽限内也计为 active（门控仍开）。
 4. **`reads_coalesced` 为尽力计数**：以「覆盖尚未被 worker 取走的 Read」为准；worker 正在执行读时的新提交会在下一次 `changed()` 处理，不计合并（它确实会产生一次新读）。存在极小窗口的近似，不影响队列策略正确性。
 5. **`queue_depth` 在 worker 停止时归零**：未执行完的排队命令不会继续运行（E4c 接在途取消），指标不长期悬空。
-6. **E2E 未额外组合 `AccessService::subscribe`**：`AccessService` 的订阅最终写入同一 `DemandTracker`，直接测试真实 tracker 已覆盖退出语义；AccessService 的 TTL/快照路径另有 `e3f62061` 单测。
+6. **E2E 未额外组合 `AccessService::subscribe`**：跨层 E2E 已组合生产 handler 的同一入口 `subscribe_with_guard`（Hub 连接生命周期 → 同一 `DemandTracker`）；AccessService 的 TTL/快照路径另有 `e3f62061` 单测。
 7. **fmt 非全局干净（存量）**：同 E4a，仅 `scheduler.rs`、`watch.rs` 两处非 E4b 漂移；未提交、未修改。
 8. 工作区在验证后仅含本任务文件（`git status --short` 无格式化噪声）。
 
