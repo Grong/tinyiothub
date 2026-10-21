@@ -1,5 +1,6 @@
 //! Driver access layer: package loading, manifest registry, materialization.
 
+pub mod catalog;
 pub mod demand;
 pub mod device;
 pub mod materialize;
