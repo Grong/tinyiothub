@@ -27,6 +27,7 @@ use crate::domains::agent::host::config::service as config_service;
 /// 由闭包捕获（D2 —— 这些类型不进 agent crate）；`data_server` /
 /// `directive_sink` 走 `ToolRuntimeContext` 晚绑定（启动后经
 /// `AgentPool::set_runtime_context` 注入）。
+#[allow(clippy::too_many_arguments)] // 组合根 provider：参数即依赖清单，收敛于此一处
 pub fn chat_builtin_tools_provider(
     db_pool: SqlitePool,
     device_cache: Option<Arc<ThingCache>>,
@@ -36,6 +37,7 @@ pub fn chat_builtin_tools_provider(
     tool_exec: Arc<dyn ToolExecSeam>,
     event_bus: Option<Arc<tinyiothub_runtime::event_bus::EventBus>>,
     manager: ManagerSlot,
+    access: Option<Arc<dyn tinyiothub_runtime::access::validator::AccessCallValidator>>,
 ) -> ToolProvider {
     Arc::new(move |workspace_id: &str, runtime: &ToolRuntimeContext| {
         let mut tools: Vec<(Box<dyn Tool>, ToolSafety)> = Vec::new();
@@ -54,6 +56,7 @@ pub fn chat_builtin_tools_provider(
                 live: Some(live.clone()),
                 event_bus: event_bus.clone(),
                 manager: Some(manager.clone()),
+                access: access.clone(),
             },
         ));
 

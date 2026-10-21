@@ -498,6 +498,7 @@ mod tests {
             arbitration: None,
             arbitration_holder: "test".to_string(),
             approval: None,
+            access: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -741,6 +742,7 @@ mod tests {
             arbitration: None,
             arbitration_holder: "test".to_string(),
             approval: None,
+            access: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -906,6 +908,7 @@ mod tests {
             arbitration: None,
             arbitration_holder: "test".to_string(),
             approval: None,
+            access: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -1021,6 +1024,7 @@ mod tests {
             arbitration: Some(registry.clone()),
             arbitration_holder: "autonomous:ws-arb-ac".to_string(),
             approval: None,
+            access: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -1078,6 +1082,7 @@ mod tests {
             arbitration: None,
             arbitration_holder: "test".to_string(),
             approval: None,
+            access: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,

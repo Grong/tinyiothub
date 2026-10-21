@@ -32,6 +32,9 @@ pub struct InvokeActionTool {
     pub(crate) arbitration_holder: String,
     /// E2 Approval 接缝（None = 内置 DefaultApproval）。
     pub(crate) approval: Option<Arc<dyn ApprovalSeam>>,
+    /// E4a 声明校验（None = 未接线，既有行为不变）。接线后 fail-closed：
+    /// 未声明操作/参数越界直接拒绝，不回退 DB schema。
+    pub access: Option<Arc<dyn tinyiothub_runtime::access::validator::AccessCallValidator>>,
 }
 
 impl Attributable for InvokeActionTool {
@@ -105,6 +108,20 @@ impl Tool for InvokeActionTool {
                  对于 space/line/building 类型，请使用其属性或知识库。",
                 thing.thing_type
             ));
+        }
+
+        // 1b. E4a declaration validation（fail-closed when wired）：未声明
+        // 操作、参数 schema/范围不符、声明缺失都在此拒绝；仲裁/确认门不动。
+        if let Some(access) = &self.access {
+            access
+                .validate(
+                    &self.workspace_id,
+                    &input.thing_id,
+                    &input.action_name,
+                    input.params.as_ref(),
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         }
 
         // 2. Check require_action_confirm from workspace
@@ -292,6 +309,7 @@ mod tests {
             arbitration,
             arbitration_holder: holder.to_string(),
             approval: None,
+            access: None,
         }
     }
 

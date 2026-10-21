@@ -186,6 +186,8 @@ pub struct ThingToolContext {
     pub event_bus: Option<Arc<tinyiothub_runtime::event_bus::EventBus>>,
     /// E2 watch/unwatch：manager 迟绑定槽（内存注册表写穿）。
     pub manager: Option<ManagerSlot>,
+    /// E4a 调用边界校验：None = 未接线（既有行为不变）。
+    pub access: Option<Arc<dyn tinyiothub_runtime::access::validator::AccessCallValidator>>,
 }
 
 /// Create the E2 fixed device tool set + non-device tools + hidden legacy aliases.
@@ -227,6 +229,7 @@ pub fn create_thing_tools(
             arbitration: runtime.arbitration.clone(),
             arbitration_holder: format!("chat:{ws}"),
             approval: None,
+            access: runtime.access.clone(),
         }))),
         destructive(Box::new(device::SetDeviceTool {
             thing_service: thing_service.clone(),
@@ -313,6 +316,7 @@ pub fn create_thing_tools(
             arbitration: runtime.arbitration.clone(),
             arbitration_holder: format!("chat:{ws}"),
             approval: None,
+            access: runtime.access.clone(),
         })))),
     ];
 

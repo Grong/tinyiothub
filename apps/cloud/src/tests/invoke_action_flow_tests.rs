@@ -247,3 +247,63 @@ async fn test_invoke_denied_by_policy_block_rule() {
     assert_eq!(status, StatusCode::OK, "unrelated action must still invoke: {body:?}");
     assert_eq!(body["result"]["status"], "confirmation_required");
 }
+
+// ──────────────────────────────────────────────
+// E4a declaration validation (Task 11): tool-level fail-closed
+// ──────────────────────────────────────────────
+
+struct UndeclaredAccess;
+
+#[async_trait::async_trait]
+impl tinyiothub_runtime::access::validator::AccessCallValidator for UndeclaredAccess {
+    async fn validate(
+        &self,
+        _workspace_id: &str,
+        _thing_id: &str,
+        tool: &str,
+        _params: Option<&Value>,
+    ) -> Result<tinyiothub_runtime::access::validator::ValidatedCall, tinyiothub_runtime::access::validator::CallError>
+    {
+        Err(tinyiothub_runtime::access::validator::CallError::UndeclaredTool(
+            tool.to_string(),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn test_invoke_action_rejects_undeclared_tool_when_access_wired() {
+    use std::sync::Arc;
+
+    use crate::domains::agent::host::tools::thing::{InvokeActionTool, PendingActionStore};
+    use crate::domains::thing::service::ThingService;
+    use tinyiothub_agent::port::tool::Tool;
+
+    let (app, pool, token) = setup("ws-decl").await;
+    let thing = create_thing(&app, &token, "ws-decl", "dev-decl", "device").await;
+    register_action(&pool, &thing, "reboot").await;
+
+    let tool = InvokeActionTool {
+        thing_service: Arc::new(ThingService::new(pool.clone())),
+        pool,
+        workspace_id: "ws-decl".to_string(),
+        data_server: None,
+        pending_actions: Arc::new(PendingActionStore::new()),
+        arbitration: None,
+        arbitration_holder: "test".to_string(),
+        approval: None,
+        access: Some(Arc::new(UndeclaredAccess)),
+    };
+    // 声明校验失败 = 工具调用失败：既可能是 Ok(success=false)，也可能是
+    // execute 的 anyhow Err（rig 桥映射为 ToolExecutionError）。
+    let error = match tool.execute(json!({"thingId": thing, "actionName": "reboot"})).await {
+        Ok(result) => {
+            assert!(!result.success, "undeclared tool must be rejected: {result:?}");
+            result.error.unwrap_or_default()
+        }
+        Err(e) => e.to_string(),
+    };
+    assert!(
+        error.contains("not declared"),
+        "rejection must name the undeclared tool, got: {error}"
+    );
+}

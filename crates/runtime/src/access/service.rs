@@ -367,6 +367,24 @@ impl AccessService {
     }
 }
 
+#[async_trait::async_trait]
+impl super::validator::AccessCallValidator for AccessService {
+    async fn validate(
+        &self,
+        workspace_id: &str,
+        thing_id: &str,
+        tool: &str,
+        params: Option<&serde_json::Value>,
+    ) -> Result<super::validator::ValidatedCall, super::validator::CallError> {
+        let decl = self
+            .load_declaration(workspace_id, thing_id)
+            .await
+            .map_err(|e| super::validator::CallError::Unavailable(e.to_string()))?
+            .ok_or_else(|| super::validator::CallError::NoDeclaration(thing_id.into()))?;
+        super::validator::validate_call(&decl, tool, params, None)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

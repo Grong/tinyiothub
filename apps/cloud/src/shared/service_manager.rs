@@ -280,6 +280,11 @@ impl ServiceManager {
                 std::sync::Arc::new(tinyiothub_agent::runtime::thing_agent::seams::tool_exec::DefaultToolExec),
                 Some(app_state.event_bus.clone()),
                 manager_slot.clone(),
+                // E4a：调用边界校验（声明缺失/未声明操作/参数越界 → 拒绝）。
+                app_state
+                    .access
+                    .clone()
+                    .map(|a| a as Arc<dyn tinyiothub_runtime::access::validator::AccessCallValidator>),
             ));
             tool_registry.set_external_tool_factory(Arc::new(|| {
                 crate::domains::agent::host::ports::external_tool_registry()
@@ -329,6 +334,10 @@ impl ServiceManager {
                                 live: Some(live_summary.clone()),
                                 event_bus: Some(app_state.event_bus.clone()),
                                 manager: Some(manager_slot.clone()),
+                                access: app_state
+                                    .access
+                                    .clone()
+                                    .map(|a| a as Arc<dyn tinyiothub_runtime::access::validator::AccessCallValidator>),
                             },
                         ),
                     ),

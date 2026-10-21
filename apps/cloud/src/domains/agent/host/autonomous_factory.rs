@@ -251,6 +251,8 @@ pub(crate) fn build_autonomous_tools(
         arbitration: runtime.arbitration.clone(),
         arbitration_holder: format!("autonomous:{workspace_id}"),
         approval: None,
+        // E4a：上下文已接线则沿用（自治 run 后续单独接线时只需注入 context）。
+        access: runtime.access.clone(),
     };
     tools.push(Box::new(AutonomousInvokeActionTool::new(
         inner,
