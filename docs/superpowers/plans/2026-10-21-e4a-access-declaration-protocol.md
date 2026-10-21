@@ -2312,7 +2312,7 @@ The worker polls the ABI cancel handle every 50 ms and emits status 2 on cancell
 - [ ] **Step 6: Test and build**
 
 Run: `cargo test -p demo-declarative`
-Expected: PASS (3 tests).
+Expected: PASS (5 tests).
 Run: `cargo build -p demo-declarative`
 Expected: `target/debug/libdemo_declarative.{so,dylib}` exists.
 
