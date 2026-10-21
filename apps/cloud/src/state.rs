@@ -55,10 +55,6 @@ pub struct AppState {
     /// 启动时注入；None = 未装配（测试/降级路径），相关路由返回错误。
     pub access: Option<Arc<tinyiothub_runtime::access::service::AccessService>>,
 
-    /// E4b 需求跟踪器——Hub 订阅/近期读取/端口快照的并集。由 ServiceManager
-    /// 与中央 sampler 共享；None = 未装配（测试/降级路径）。
-    pub demand_tracker: Option<Arc<tinyiothub_runtime::access::demand::DemandTracker>>,
-
     /// === 领域服务层 ===
     /// 设备基础服务 - CRUD 操作
     pub device_service: Arc<ThingService>,
@@ -517,7 +513,6 @@ impl AppState {
             data_server: None,     // DataServer 由 ServiceManager 设置
             derived_manager: None, // DerivedDriverManager 由 ServiceManager 设置
             access: None,          // AccessService 由 ServiceManager 设置
-            demand_tracker: None,  // 由 ServiceManager 与 sampler 共享
             device_service,
             device_query_service,
             monitoring_service,
@@ -574,11 +569,6 @@ impl AppState {
     /// 设置 E4a 驱动访问服务（由 ServiceManager 启动时调用）
     pub fn set_access(&mut self, access: Arc<tinyiothub_runtime::access::service::AccessService>) {
         self.access = Some(access);
-    }
-
-    /// 设置 E4b 需求跟踪器（由 ServiceManager 启动时与 sampler 共享）
-    pub fn set_demand_tracker(&mut self, demand: Arc<tinyiothub_runtime::access::demand::DemandTracker>) {
-        self.demand_tracker = Some(demand);
     }
 
     /// 获取数据服务器

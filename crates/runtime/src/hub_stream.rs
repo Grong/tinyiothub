@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -443,9 +443,14 @@ impl DemandGuard {
         self.id
     }
 
-    /// 续期一个完整 TTL（ping / 事件 / 冲刷 tick 调用）。
+    /// 续期一个完整 TTL（ping / 事件，由调用方节流）。
     pub fn touch(&self) {
         self.demand.touch(&self.id);
+    }
+
+    /// 在 `now` 续期一个完整 TTL（测试/模拟入口）。
+    pub fn touch_at(&self, now: Instant) {
+        self.demand.touch_at(&self.id, now);
     }
 }
 

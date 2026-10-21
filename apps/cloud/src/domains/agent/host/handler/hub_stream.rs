@@ -9,6 +9,7 @@
 
 use std::collections::VecDeque;
 use std::convert::Infallible;
+use std::time::{Duration, Instant};
 
 use axum::{
     Extension, Router,
@@ -32,6 +33,9 @@ use tinyiothub_web::security::Claims;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::domains::agent::AgentState;
+
+/// 订阅续期节流：TTL 为 30s，≥10s 续一次留足 20s 余量；50ms 读帧冲刷不再续期。
+const TOUCH_THROTTLE: Duration = Duration::from_secs(10);
 
 pub fn create_router<S>() -> Router<S>
 where
@@ -242,6 +246,8 @@ pub async fn stream(
         pending,
         readings_tick,
         ping_tick,
+        // 订阅建立时已经写入完整 TTL，视为一次续期。
+        last_touch: Instant::now(),
     };
 
     Sse::new(futures::stream::unfold(connection, next_frame))
@@ -257,6 +263,19 @@ struct ConnectionState {
     pending: VecDeque<OutFrame>,
     readings_tick: tokio::time::Interval,
     ping_tick: tokio::time::Interval,
+    /// 上次续期时刻；读帧冲刷（20 Hz）不续期，避免全局订阅锁被高频写。
+    last_touch: Instant,
+}
+
+impl ConnectionState {
+    /// 至多每 [`TOUCH_THROTTLE`] 续期一次。事件突发时也不会放大写锁压力，
+    /// 而 ping（15s）保证静默连接始终在 TTL 内。
+    fn renew_demand(guard: &DemandGuard, last_touch: &mut Instant, now: Instant) {
+        if now.saturating_duration_since(*last_touch) >= TOUCH_THROTTLE {
+            guard.touch_at(now);
+            *last_touch = now;
+        }
+    }
 }
 
 async fn next_frame(state: ConnectionState) -> Option<(Result<Event, Infallible>, ConnectionState)> {
@@ -278,8 +297,8 @@ async fn next_out_frame(mut state: ConnectionState) -> Option<(OutFrame, Connect
 
         tokio::select! {
             received = state.events.recv() => {
-                // 每个事件都续期；客户端静默也不会在 30s 内被 TTL 清掉。
-                state.guard.touch();
+                // 事件续期（节流 ≥10s）；客户端静默时由 ping 兜底。
+                ConnectionState::renew_demand(&state.guard, &mut state.last_touch, Instant::now());
                 match received {
                     Ok(event) => {
                         // 控制帧留到 50ms 冲刷点统一出队：突发时由状态机的
@@ -299,7 +318,7 @@ async fn next_out_frame(mut state: ConnectionState) -> Option<(OutFrame, Connect
                 }
             }
             _ = state.readings_tick.tick() => {
-                state.guard.touch();
+                // 读帧冲刷不续期：这是 20 Hz 路径，续期交给 ping/事件。
                 for frame in state.hub.take_readings() {
                     state.pending.push_back(frame);
                 }
@@ -308,7 +327,7 @@ async fn next_out_frame(mut state: ConnectionState) -> Option<(OutFrame, Connect
                 }
             }
             _ = state.ping_tick.tick() => {
-                state.guard.touch();
+                ConnectionState::renew_demand(&state.guard, &mut state.last_touch, Instant::now());
                 state.pending.push_back(OutFrame::ping());
             }
         }
@@ -508,6 +527,7 @@ mod tests {
             pending,
             readings_tick,
             ping_tick,
+            last_touch: Instant::now(),
         }
     }
 
@@ -558,6 +578,45 @@ mod tests {
         assert!(
             hub_stream_metrics().resyncs() > before,
             "emitting a resync frame must increment the process counter"
+        );
+    }
+
+    /// 续期节流：<10s 不续期，≥10s 续期一次；TTL 30s 由 ping（15s）兜底。
+    #[test]
+    fn demand_renewal_is_throttled_to_ten_seconds() {
+        use tinyiothub_runtime::access::demand::SUBSCRIPTION_TTL;
+
+        let base = Instant::now();
+        let tracker = Arc::new(DemandTracker::new());
+        let id = tracker.subscribe_at(
+            "ws",
+            &["t1".to_string()],
+            &["telemetry".to_string()],
+            SUBSCRIPTION_TTL,
+            base,
+        );
+        let guard = DemandGuard::new(tracker.clone(), id);
+        let mut last_touch = base;
+
+        // 10s 内的事件不续期：原 TTL 在 base+30s 到期。
+        ConnectionState::renew_demand(&guard, &mut last_touch, base + Duration::from_secs(5));
+        ConnectionState::renew_demand(&guard, &mut last_touch, base + Duration::from_millis(9_999));
+        assert_eq!(last_touch, base);
+        assert!(
+            !tracker.has_subscription_demand_at("ws", "t1", "telemetry", base + Duration::from_secs(31)),
+            "10s 内不得续期"
+        );
+
+        // 满 10s 续期 → 到期时间后移一个 TTL。
+        ConnectionState::renew_demand(&guard, &mut last_touch, base + Duration::from_secs(10));
+        assert_eq!(last_touch, base + Duration::from_secs(10));
+        assert!(
+            tracker.has_subscription_demand_at("ws", "t1", "telemetry", base + Duration::from_secs(31)),
+            "续期后应在原 TTL 之后仍然有效"
+        );
+        assert!(
+            !tracker.has_subscription_demand_at("ws", "t1", "telemetry", base + Duration::from_secs(41)),
+            "续期只延长一个 TTL"
         );
     }
 

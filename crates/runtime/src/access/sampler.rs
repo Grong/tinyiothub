@@ -11,7 +11,8 @@
 //! - `demand_only == true`：只有当前有需求才采；需求消失后保留
 //!   [`DEMAND_GRACE`]（30s）宽限，宽限内继续按 interval 采。
 //! - Push/stream worker 永不 `submit_read`；改为按活跃 source 集
-//!   `set_demand`，仅在集合变化时提交。
+//!   `set_demand`，集合变化时提交，且至少每 [`DEMAND_RESEND_INTERVAL`]
+//!   重发一次（worker 被重建时其 demand watch 是空的）。
 //!
 //! 需求 = [`DemandTracker`] 的并集：端口快照属性（每 1s 刷新，失败保留上一
 //! 份）、显式订阅（source 级）、近期读取（property 级）。property → source
@@ -36,6 +37,9 @@ pub const DEMAND_GRACE: Duration = Duration::from_secs(30);
 pub const TICK_INTERVAL: Duration = Duration::from_millis(50);
 /// `DemandSource` 快照刷新间隔（spec §2.1）。
 pub const SNAPSHOT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+/// Push worker 活跃集的重发周期：worker 被替换/重建后其 `demand_tx` watch
+/// 是空的，集合不变也必须定期重发。
+pub const DEMAND_RESEND_INTERVAL: Duration = Duration::from_secs(30);
 
 /// 只有 `poll` source 进入 worker 的 Read 路径。
 const POLL_KIND: &str = "poll";
@@ -81,8 +85,10 @@ struct SamplerState {
     last_demand: HashMap<SourceKey, Instant>,
     /// 门控状态（仅 state 变化时记 `sampling_demand_start/stop`）。
     demand_gate: HashMap<SourceKey, bool>,
-    /// push thing 上次下发的活跃 source 集（排序后）——仅在变化时下发。
+    /// push thing 上次下发的活跃 source 集（排序后）。
     last_active: HashMap<ThingKey, Vec<String>>,
+    /// push thing 上次 `set_demand` 的 tick——集合不变也按周期重发。
+    last_demand_sent: HashMap<ThingKey, Instant>,
     /// 上次快照刷新 tick。
     last_snapshot_at: Option<Instant>,
 }
@@ -173,7 +179,8 @@ impl Sampler {
             let mut due = Vec::new();
 
             for source in &thing.sources {
-                let is_active = Self::source_active(&mut state, &self.demand, &thing, source, &demanded, now);
+                let (is_active, just_activated) =
+                    Self::source_active(&mut state, &self.demand, &thing, source, &demanded, now);
                 // 指标只统计受需求门控的 source：health/默认全采恒活跃，
                 // 计入会让 active/skipped 失去意义。
                 if source.demand_only && !source.health {
@@ -193,6 +200,13 @@ impl Sampler {
                 }
                 let key = (thing.workspace_id.clone(), thing.thing_id.clone(), source.id.clone());
                 let interval = Duration::from_millis(source.interval_ms.max(source.min_interval_ms));
+                if just_activated {
+                    // 门控从关到开：把基准拉回“一个 interval 之前”（不早于 now），
+                    // 首个 due tick 的滞后不把门控空闲期算进去（M-2）。
+                    state
+                        .last_sample
+                        .insert(key.clone(), now.checked_sub(interval).unwrap_or(now));
+                }
                 // 首次采样没有 due_at，滞后记 0；此后 due_at = 上次采样 + interval。
                 let due_at = state.last_sample.get(&key).map(|last| *last + interval);
                 let is_due = due_at.is_none_or(|due_at| now >= due_at);
@@ -210,9 +224,17 @@ impl Sampler {
 
             if push {
                 active.sort();
-                if state.last_active.get(&thing_key) != Some(&active) {
+                let changed = state.last_active.get(&thing_key) != Some(&active);
+                // 集合不变也周期重发：worker 可能已被替换/重建，其 demand
+                // watch 为空，只有重发才能恢复推送（I-2）。
+                let stale = state
+                    .last_demand_sent
+                    .get(&thing_key)
+                    .is_none_or(|sent| now.saturating_duration_since(*sent) >= DEMAND_RESEND_INTERVAL);
+                if changed || stale {
                     self.workers.set_demand(&thing.thing_id, active.clone());
-                    state.last_active.insert(thing_key, active);
+                    state.last_active.insert(thing_key.clone(), active);
+                    state.last_demand_sent.insert(thing_key, now);
                 }
             } else if !due.is_empty() {
                 // 同一 thing 的所有 due source 一次提交（spec §3.1）。
@@ -222,7 +244,8 @@ impl Sampler {
         }
     }
 
-    /// 该 source 本 tick 是否“活跃”（应采/应订阅）。
+    /// 该 source 本 tick 是否“活跃”（应采/应订阅），以及是否刚从门控关闭
+    /// 转为活跃（用于重置滞后基准）。
     ///
     /// 非 `demand_only` 与 `health` 恒活跃；`demand_only` 由需求 + 30s 宽限
     /// 决定，并在门控状态变化时记一次账本事件。
@@ -233,9 +256,9 @@ impl Sampler {
         source: &SourceDecl,
         demanded_properties: &BTreeSet<String>,
         now: Instant,
-    ) -> bool {
+    ) -> (bool, bool) {
         if source.health || !source.demand_only {
-            return true;
+            return (true, false);
         }
 
         let key = (thing.workspace_id.clone(), thing.thing_id.clone(), source.id.clone());
@@ -249,7 +272,8 @@ impl Sampler {
             .is_some_and(|at| now.saturating_duration_since(*at) < DEMAND_GRACE);
         let active = demanded || in_grace;
 
-        if let Some(previous) = state.demand_gate.insert(key, active)
+        let previous = state.demand_gate.insert(key, active);
+        if let Some(previous) = previous
             && previous != active
         {
             if active {
@@ -268,7 +292,7 @@ impl Sampler {
                 );
             }
         }
-        active
+        (active, active && previous == Some(false))
     }
 
     /// 按 1s 节奏刷新端口快照；失败保留上一份并记 `demand_snapshot_error`。
@@ -590,6 +614,43 @@ mod tests {
         assert_eq!(workers.read_count(), 4);
     }
 
+    /// M-2：`demand_only` source 重新激活时，首个 due tick 的滞后不得把
+    /// 门控空闲期算进去（基准重置为 `now - interval`）。
+    #[test]
+    fn sampling_lag_ignores_reactivation_idle() {
+        let workers = Arc::new(FakeWorkers::default());
+        let (sampler, demand) = sampler_with_demand(
+            vec![thing("ws", "t1", vec![src("telemetry", 1000, true, false)])],
+            workers.clone(),
+        );
+        let base = Instant::now();
+
+        // 无需求：跳过，不产生滞后。
+        sampler.tick_once(base);
+        assert_eq!(workers.read_count(), 0);
+
+        // 需求出现（首次激活）：立即采，滞后 0。
+        subscribe(&demand, "ws", "t1", "telemetry", base);
+        sampler.tick_once(base + Duration::from_secs(10));
+        assert_eq!(workers.read_count(), 1);
+        assert_eq!(sampler.metrics().sampling_lag_ms_total, 0);
+
+        // 需求过期（宽限 30s 后）→ 门控关闭，期间继续推进时钟。
+        sampler.tick_once(base + Duration::from_secs(41));
+        assert_eq!(workers.read_count(), 1, "宽限结束后停采");
+
+        // 需求再次出现：若沿用旧 last_sample，滞后会是 ~30s。
+        subscribe(&demand, "ws", "t1", "telemetry", base + Duration::from_secs(41));
+        sampler.tick_once(base + Duration::from_secs(41));
+        assert_eq!(workers.read_count(), 2, "重新激活后立即采");
+        assert_eq!(
+            sampler.metrics().sampling_lag_ms_total,
+            0,
+            "重新激活的空闲期不得计入 sampling_lag_ms"
+        );
+        assert_eq!(sampler.metrics().sampling_lag_ms_max, 0);
+    }
+
     #[test]
     fn demand_only_source_samples_with_matching_property_demand() {
         let workers = Arc::new(FakeWorkers::default());
@@ -782,6 +843,35 @@ mod tests {
         assert_eq!(workers.demand_count(), 2);
 
         assert_eq!(workers.read_count(), 0, "push worker 绝不 submit_read");
+    }
+
+    /// I-2：活跃集不变时也必须每 30s 重发，覆盖 worker 被重建（新 worker
+    /// 的 demand watch 为空）的场景。
+    #[test]
+    fn push_demand_is_re_sent_periodically_even_when_unchanged() {
+        let workers = Arc::new(FakeWorkers::push_for("t1"));
+        let sampler = sampler(
+            vec![thing("ws", "t1", vec![src("always", 1000, false, false)])],
+            workers.clone(),
+        );
+        let base = Instant::now();
+
+        sampler.tick_once(base);
+        assert_eq!(workers.demand_count(), 1);
+
+        // 周期未到：集合不变 → 不重发。
+        sampler.tick_once(base + Duration::from_secs(29));
+        assert_eq!(workers.demand_count(), 1);
+
+        // 满 30s：即使集合不变也重发一次（新 worker 借此拿到活跃集）。
+        sampler.tick_once(base + DEMAND_RESEND_INTERVAL);
+        assert_eq!(workers.demand_count(), 2);
+        assert_eq!(workers.last_demand(), ("t1".into(), vec!["always".into()]));
+
+        sampler.tick_once(base + Duration::from_secs(59));
+        assert_eq!(workers.demand_count(), 2);
+        sampler.tick_once(base + Duration::from_secs(60));
+        assert_eq!(workers.demand_count(), 3);
     }
 
     #[test]

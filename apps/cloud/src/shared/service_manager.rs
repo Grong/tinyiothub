@@ -121,8 +121,6 @@ impl ServiceManager {
             ))),
         ));
         data_server.set_sampler(sampler);
-        // Task 6 的 AccessService/Hub 订阅经 AppState 取同一实例。
-        app_state.set_demand_tracker(demand_tracker.clone());
 
         // 启动数据服务器
         let shutdown_rx = self.shutdown_tx.subscribe();
