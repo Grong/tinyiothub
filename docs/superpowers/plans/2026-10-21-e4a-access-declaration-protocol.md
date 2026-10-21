@@ -1763,6 +1763,10 @@ use tinyiothub_core::driver::dynamic::{CancelHandle, DriverDone, DriverVTableV2}
 struct DoneState {
     tx: mpsc::Sender<(i32, Option<String>)>,
     free: extern "C" fn(*mut c_char),
+    /// Stable heap allocation the driver may poll from its worker thread.
+    /// The callback reclaims it; on timeout it is intentionally leaked so
+    /// the token stays valid for the still-running call (E4a staging).
+    token: Box<CancelToken>,
 }
 
 extern "C" fn done_cb(user_data: *mut std::ffi::c_void, status: i32, out_json: *mut c_char) {
@@ -1779,7 +1783,8 @@ extern "C" fn done_cb(user_data: *mut std::ffi::c_void, status: i32, out_json: *
 }
 
 extern "C" fn cancel_is_cancelled(ctx: *mut std::ffi::c_void) -> i32 {
-    // SAFETY: ctx points at a CancelToken that outlives the call.
+    // SAFETY: ctx points into the Box<CancelToken> owned by DoneState; it is
+    // valid until the callback reclaims DoneState (or leaks it on timeout).
     unsafe { (*(ctx as *const CancelToken)).is_cancelled() as i32 }
 }
 
@@ -1790,11 +1795,15 @@ impl DynamicThingDriver {
         cancel: &CancelToken,
     ) -> Result<String, Error> {
         let (tx, rx) = mpsc::channel();
+        // The driver may poll the cancel handle from its worker thread after
+        // this call returns (including after the staging timeout), so the
+        // token must live at a stable address owned by DoneState.
+        let token = Box::new(cancel.clone());
         let mut handle = CancelHandle {
             is_cancelled: cancel_is_cancelled,
-            ctx: cancel as *const _ as *mut _,
+            ctx: &*token as *const CancelToken as *mut std::ffi::c_void,
         };
-        let state = Box::new(DoneState { tx, free: self.vtable.free_string });
+        let state = Box::new(DoneState { tx, free: self.vtable.free_string, token });
         let user_data = Box::into_raw(state) as *mut std::ffi::c_void;
         let rc = invoke(&mut handle, done_cb, user_data);
         if rc != 0 {
