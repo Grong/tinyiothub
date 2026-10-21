@@ -64,7 +64,28 @@ CLI 验收详情（`driver-check --profile all`）：
 | `demo-declarative` 仅凭 manifest + `.so` 接入，Hub 零代码 | 包仅含 `driver.manifest.json`、`Cargo.toml`、`src/lib.rs`；`apps/cloud`/`runtime` 生产代码无引用（仅测试 fixture 的 `include_str!` 与 cdylib 文件名候选）；`driver-check` 直接按目录加载并 PASS | PASS |
 | core / materialization / migration profiles | `driver-check --profile all`：3/3 profile、8/8 检查 pass | PASS |
 | v1 拒载且带迁移指引 | `migration.v1.rejected` pass；`v1_message_names_the_artifact` 1 passed；文案含 `.so` 名、`tinyiothub_driver_vtable_v2` 与 spec §2.3 | PASS |
-| 调用校验：未声明拒绝、业务越界拒绝、超时钳制 | runtime `undeclared_tool_is_rejected` / `out_of_range_param_is_rejected` / `timeout_defaults_to_declared_and_clamps_to_max`；cloud `test_invoke_action_rejects_undeclared_tool_when_access_wired` / `test_invoke_action_rejects_missing_declaration_when_access_wired` 均通过 | PASS |
+| 调用校验：未声明拒绝、业务越界拒绝；超时**钳制计算** | runtime `undeclared_tool_is_rejected` / `out_of_range_param_is_rejected` / `timeout_defaults_to_declared_and_clamps_to_max`；cloud `test_invoke_action_rejects_undeclared_tool_when_access_wired` / `test_invoke_action_rejects_missing_declaration_when_access_wired` 均通过 | PASS（钳制值已计算/校验）；**强制生效在 E4b**——`AccessService::validate` 恒传 `None`，`InvokeActionTool` 未消费 `ValidatedCall.timeout_ms`，dispatch 无逐命令超时 |
 | 安装 / 持久化 / 重水化 | runtime `install_persists_package_and_records_active_row`、`manifest_only_reinstall_removes_stale_binary`、`bind_fixed_driver_persists_and_materializes_declaration`、`dynamic_bind_releases_ref_count_and_allows_reinstall`、`rehydrate_restores_active_packages_and_skips_retired`；cloud `installs_multipart_package_and_lists_declaration`、`reinstall_keeps_single_declaration_entry` 等 6 项全通过 | PASS |
 
 **结论：E4a 范围内的自动检查全部通过；fmt 仅剩两处非本计划的存量漂移，作为已知项记录。**
+
+## 5. 最终整支评审修复（2026-10-21，第二修复波）
+
+评审 `.superpowers/sdd/2026-10-21-e4a-access-declaration-protocol/final-review.md` 的 Critical 1-2 与 Important 3-13 已在本波修复，14 为本文档措辞更正：
+
+| # | 修复 |
+|---|---|
+| 1 | `install_dir`/`rehydrate_row`/`package_dir` 在任何路径拼接前校验 driver 名（`validate_driver_name`）、version（`^[A-Za-z0-9._+-]{1,64}$`、拒 `.`/`..`/空）与非空 workspace；新增遍历/空 ws 回归测试 |
+| 2 | `POST /v1/drivers/install` 与 `.../acceptance` 需 admin（`Db::count_user_admin_roles`，fail-closed）；非 admin 403 测试 |
+| 3 | `describe()` 在专用线程执行并 `recv_timeout(2s)`；输出上限 256 KiB；超时线程放弃且不释放 ctx（文档化）；新增超大输出/超时测试 |
+| 4 | 安装时 `DriverValidator::validate_identity` 调 `describe("{}")` 交叉校验 manifest identity；新增错配 cdylib 测试与比较 helper 单测 |
+| 5 | 安装成功后按 `(workspace, driver)` 重绑已绑定物：逐物 `bind_thing`，失败保留旧声明、记 warning（返回 `warnings`，不失败安装） |
+| 6 | `ServiceManager::start_all` 先构造 `AccessService` 并 `rehydrate()`，再 `DataServer::new` |
+| 7 | `create_thing` 物化失败先 `delete_thing_row`（模板行随 FK 级联）再返回 422；新增无孤儿测试 |
+| 8 | 声明 API 返回 `(StatusCode, Json)`：manifest/JSON/validation → 400，ABI/identity → 422，store/io → 500，not found → 404 |
+| 9 | 无二进制且非内置的包一律拒绝（不再只看 `dynamicCapabilities`）；测试改用真实 demo cdylib |
+| 10 | 四个声明路由空 workspace → 403；`install_dir`/`package_dir`/`rehydrate_row` 亦拒绝空 workspace |
+| 11 | 安装拒绝内置驱动名（防止 workspace 清单遮蔽内置执行） |
+| 12 | `McpState` 携带 `access` 并在两个 `ThingService` 构造路径注入声明钩子；回归测试断言钩子存在 |
+| 13 | `set` 工具 schema 与目标 state field 强校验（唯一参数、type、min/max、required），安装与实例声明共用 |
+| 14 | 本节退出清单措辞更正（见上） |
