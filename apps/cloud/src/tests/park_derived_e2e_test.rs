@@ -8,10 +8,10 @@
 //! 取舍记录（均为"数据源入口"层，管线每一级都是生产代码）：
 //! - 表计读数入口：经 `DataServer::consume_driver_reading`（run() 消费任务
 //!   调用的同一 pub 函数）直接注入——简报明示"模拟器行为已在 Task 3 证明，
-//!   本测试经 ingest 注入即可，不装模拟驱动"。driver_cache 里为表计登记的
-//!   ManualPushDriver（mode=Push、永不产生读数）只是 consume 按 thing_id
-//!   查 wrapper 的载体；下游 apply_property_values → cache_and_publish →
-//!   EventBus → 派生重算 → sink → run() 真实消费 → 缓存 + 事件全真。
+//!   本测试经 ingest 注入即可，不装模拟驱动"。为表计注册的 ManualPushDriver
+//!   worker（mode=Push、永不产生读数）代表真实驱动连接；下游
+//!   apply_property_values → cache_and_publish → EventBus → 派生重算 →
+//!   sink → run() 真实消费 → 缓存 + 事件全真。
 //! - 事件落库：生产 PersistenceEventHandler 按策略不落 Info 级 PropertyChange
 //!   （防噪，见 persistence_handler.rs should_persist），故本测试在真实
 //!   EventBus 上注册 RecordingEvents——实现生产 EventHandler trait、走相同
@@ -57,8 +57,8 @@ const WS: &str = "ws-default-001";
 
 // ── 测试数据源（非管线替身，见文件头）─────────────────────────────────
 
-/// mode=Push 的空读驱动：DataServer 轮询循环按 mode 跳过，自身永不产生
-/// 读数；存在仅为让 consume_driver_reading 按 thing_id 找到 wrapper。
+/// mode=Push 的空读驱动：worker 轮询按 mode 跳过，自身永不产生读数；
+/// 存在仅为代表表计的真实驱动连接（读数据由 ingest 注入）。
 struct ManualPushDriver {
     thing: Thing,
 }
@@ -166,15 +166,12 @@ async fn install_manager(rig: &mut Rig) -> Arc<DerivedDriverManager> {
     manager
 }
 
-/// 物进缓存 + 登记 ingest 载体 wrapper（真实属性 id）。
+/// 物进缓存 + 登记 ingest 载体 worker（真实属性 id）。
 fn register_manual_thing(rig: &Rig, thing: Thing) {
     rig.app_state.device_cache.insert(thing.clone());
-    rig.data_server.driver_cache().insert(
-        thing.id.clone(),
-        Arc::new(parking_lot::RwLock::new(DriverWrapper::new(Box::new(
-            ManualPushDriver { thing },
-        )))),
-    );
+    let thing_id = thing.id.clone();
+    rig.data_server
+        .register_worker(&thing_id, DriverWrapper::new(Box::new(ManualPushDriver { thing })));
 }
 
 /// 表计上报入口：与 DataServer::run() 消费任务同一函数（真实共享管线；
@@ -189,7 +186,6 @@ async fn ingest(rig: &Rig, thing_id: &str, prop_name: &str, value: &str) {
                 Some(value.to_string()),
             )],
         },
-        &rig.data_server.driver_cache(),
         &rig.cache_src,
         rig.app_state.event_bus.clone(),
     )

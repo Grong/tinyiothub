@@ -18,7 +18,7 @@ use tinyiothub_core::models::event::{EventType, ThingEventType};
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
 use tinyiothub_core::models::thing_property::ThingProperty;
-use tinyiothub_runtime::data_server::{DataServer, DriverCache};
+use tinyiothub_runtime::data_server::DataServer;
 use tinyiothub_runtime::driver::DriverWrapper;
 use tinyiothub_runtime::event_bus::EventBus;
 use tinyiothub_runtime::ports::ThingCacheSource;
@@ -141,9 +141,7 @@ async fn push_reading_flows_through_shared_pipeline() {
     wrapper.inner_driver_mut().start_push(tx, events_source);
     assert!(sink_seen.lock().unwrap().is_some(), "start_push 必须收到 sink");
 
-    // 装配：driver_cache 以 thing_id 为键持有 wrapper；device_cache 持有同一物
-    let driver_cache: DriverCache = moka::sync::Cache::new(100);
-    driver_cache.insert("campus-1".to_string(), Arc::new(parking_lot::RwLock::new(wrapper)));
+    // 装配：DataServer 的共享管线按 thing_id 从 device_cache 取物
     let device_cache: Arc<dyn ThingCacheSource> = Arc::new(FakeCache::with_device(campus_thing()));
 
     // E5：先 subscribe 再发送
@@ -158,7 +156,6 @@ async fn push_reading_flows_through_shared_pipeline() {
                 Some("42".to_string()),
             )],
         },
-        &driver_cache,
         &device_cache,
         event_bus.clone(),
     )
@@ -202,7 +199,6 @@ async fn push_reading_flows_through_shared_pipeline() {
                 Some("1".to_string()),
             )],
         },
-        &driver_cache,
         &device_cache,
         event_bus.clone(),
     )
@@ -227,8 +223,7 @@ async fn sink_reading_for_thing_without_wrapper_falls_back_to_cache() {
     };
     spatial.properties = Some(vec![prop]);
 
-    // 装配：device_cache 有物，driver_cache 为空（无 wrapper）
-    let driver_cache: DriverCache = moka::sync::Cache::new(100);
+    // 装配：device_cache 有物（无 worker 的物同样走共享管线）
     let device_cache: Arc<dyn ThingCacheSource> = Arc::new(FakeCache::with_device(spatial));
     let event_bus = Arc::new(EventBus::new());
 
@@ -246,7 +241,6 @@ async fn sink_reading_for_thing_without_wrapper_falls_back_to_cache() {
                 Some("42".to_string()),
             )],
         },
-        &driver_cache,
         &device_cache,
         event_bus.clone(),
     )
@@ -280,17 +274,9 @@ async fn sink_reading_for_thing_without_wrapper_falls_back_to_cache() {
     );
 }
 
-/// X4 两路径并存：有 wrapper 的物走 wrapper 路径，无 wrapper 的物走 device_cache 回退。
+/// 有 worker 的物与无 worker 的物（空间物/派生物）共用同一条共享管线。
 #[tokio::test]
-async fn wrapper_path_and_cache_fallback_coexist() {
-    let sink_seen: Arc<Mutex<Option<ValueSink>>> = Arc::new(Mutex::new(None));
-    let wrapper = DriverWrapper::new(Box::new(StubPushDriver {
-        thing: campus_thing(),
-        sink_seen: sink_seen.clone(),
-    }));
-    let driver_cache: DriverCache = moka::sync::Cache::new(100);
-    driver_cache.insert("campus-1".to_string(), Arc::new(parking_lot::RwLock::new(wrapper)));
-
+async fn worker_and_non_worker_things_share_pipeline() {
     let mut spatial = Thing {
         id: "spatial-1".to_string(),
         name: "中庭空间".to_string(),
@@ -321,20 +307,19 @@ async fn wrapper_path_and_cache_fallback_coexist() {
                     Some("7".to_string()),
                 )],
             },
-            &driver_cache,
             &device_cache,
             event_bus.clone(),
         )
         .await;
     }
 
-    // 两条路径都写缓存
+    // 两类物都写缓存
     for thing_id in ["campus-1", "spatial-1"] {
         let cached = device_cache.get(thing_id).expect("cached thing");
         let prop = &cached.properties.as_ref().unwrap()[0];
         assert_eq!(prop.current_value.as_deref(), Some("7"), "{thing_id} 属性值必须更新");
     }
-    // 两条路径各发 1 条 PropertyChange
+    // 两类物各发 1 条 PropertyChange
     let mut seen = std::collections::HashSet::new();
     for _ in 0..2 {
         let event = tokio::time::timeout(Duration::from_secs(2), event_rx.recv())
@@ -353,7 +338,6 @@ async fn wrapper_path_and_cache_fallback_coexist() {
 /// 回退也 miss（物已删的迟到读数）→ 丢弃，不 panic、不发布事件。
 #[tokio::test]
 async fn reading_for_thing_missing_everywhere_is_dropped() {
-    let driver_cache: DriverCache = moka::sync::Cache::new(100);
     let device_cache: Arc<dyn ThingCacheSource> = Arc::new(FakeCache::empty());
     let event_bus = Arc::new(EventBus::new());
     let baseline = event_bus.subscriber_count();
@@ -369,7 +353,6 @@ async fn reading_for_thing_missing_everywhere_is_dropped() {
                 Some("1".to_string()),
             )],
         },
-        &driver_cache,
         &device_cache,
         event_bus.clone(),
     )

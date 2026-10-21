@@ -20,6 +20,12 @@
 //! 调度用 `tokio::select! { biased; ... }`：Execute 优先于 Read。
 //! ValueSink 使用非阻塞 `try_send`：满/关闭时丢弃本条读数（下一 tick 会重采），
 //! 绝不因下游背压阻塞 worker 的 Execute/Stop。
+//!
+//! **结果通道（E4b Task 4）**：worker 是驱动的唯一所有者，DataServer 不再能
+//! 直接读驱动状态。命令结果、连接状态迁移经 [`WorkerResult`] 上报，由
+//! DataServer 的消费任务翻译成领域事件（CommandCompleted/CommandFailed/
+//! Connection）。上报使用无界通道且从不等待——worker 的 Execute/Read 绝不因
+//! 结果消费端背压而阻塞。
 
 use std::sync::Arc;
 
@@ -29,7 +35,7 @@ use tokio::task::JoinHandle;
 
 use tinyiothub_core::driver::{CancelToken, DriverMode, DriverReading, PropertyChangeSource, ResultValue, ValueSink};
 use tinyiothub_core::error::Error;
-use tinyiothub_core::models::thing::Thing;
+use tinyiothub_core::models::thing::{Thing, ThingStatus};
 use tinyiothub_core::models::thing_command::ThingCommand;
 
 use super::status::ThingOverview;
@@ -43,10 +49,41 @@ const EXEC_QUEUE_CAP: usize = 32;
 /// `Read` / `SetDemand` / `Stop` 走各自的无阻塞 `watch` 槽位；`Execute` 走
 /// 有界 FIFO 队列。枚举保留完整命令面供外部按契约引用。
 pub enum WorkerCommand {
-    Read { sources: Vec<String> },
-    Execute { cmd: ThingCommand },
-    SetDemand { sources: Vec<String> },
+    Read {
+        sources: Vec<String>,
+    },
+    Execute {
+        cmd: ThingCommand,
+    },
+    SetDemand {
+        sources: Vec<String>,
+    },
+    /// 软重置驱动状态（DataServer::reset_device_driver）。
+    Reset,
+    /// 标记离线（DataServer::set_device_offline）。
+    SetOffline,
     Stop,
+}
+
+/// worker → DataServer 的结果上报（DataServer 据此构造领域事件/缓存状态）。
+///
+/// worker 持有驱动，事件构造留在 DataServer——两侧只经这个只读结果面对话。
+#[derive(Debug)]
+pub enum WorkerResult {
+    /// 一条命令执行完毕（成功或失败）。
+    Command {
+        thing_id: String,
+        cmd: ThingCommand,
+        success: bool,
+        elapsed_ms: u64,
+        error: Option<String>,
+    },
+    /// 轮询从离线转为在线（on_connected 等价迁移）。
+    Connected { thing_id: String, address: Option<String> },
+    /// 轮询从在线转为离线（on_disconnected 等价迁移，终态失败才上报）。
+    Disconnected { thing_id: String, reason: Option<String> },
+    /// 一次终态读取失败（未产生事件；DataServer 据此刷新缓存状态）。
+    ReadFailed { thing_id: String },
 }
 
 /// 每设备 worker 句柄：所有提交方法都不阻塞（Execute 满时返回 busy）。
@@ -57,6 +94,7 @@ pub struct WorkerHandle {
     stop_tx: watch::Sender<bool>,
     status: Arc<RwLock<ThingOverview>>,
     last_read_sources: Arc<RwLock<Vec<String>>>,
+    is_push: bool,
     join: JoinHandle<()>,
 }
 
@@ -75,6 +113,21 @@ impl WorkerHandle {
             Err(mpsc::error::TrySendError::Full(_)) => Err(Error::DriverError("busy".to_string())),
             Err(mpsc::error::TrySendError::Closed(_)) => Err(Error::DriverError("worker stopped".to_string())),
         }
+    }
+
+    /// 软重置驱动状态（排队执行，队列满/已停时返回 false）。
+    pub fn reset(&self) -> bool {
+        self.exec_tx.try_send(WorkerCommand::Reset).is_ok()
+    }
+
+    /// 标记驱动离线（排队执行，队列满/已停时返回 false）。
+    pub fn set_offline(&self) -> bool {
+        self.exec_tx.try_send(WorkerCommand::SetOffline).is_ok()
+    }
+
+    /// 是否为 Push 驱动（Push 由 start_push 上报，不经轮询/Read）。
+    pub fn is_push(&self) -> bool {
+        self.is_push
     }
 
     /// 更新 Push 驱动的活跃 source 集（latest-wins，不阻塞）。
@@ -112,6 +165,7 @@ pub fn spawn_worker(
     mut driver: DriverWrapper,
     value_sink: ValueSink,
     events: Arc<dyn PropertyChangeSource>,
+    results: mpsc::UnboundedSender<WorkerResult>,
 ) -> WorkerHandle {
     let is_push = driver.inner_driver().mode() == DriverMode::Push;
     if is_push {
@@ -136,6 +190,7 @@ pub fn spawn_worker(
         read_rx,
         demand_rx,
         stop_rx,
+        results,
         status.clone(),
         last_read_sources.clone(),
     ));
@@ -147,6 +202,7 @@ pub fn spawn_worker(
         stop_tx,
         status,
         last_read_sources,
+        is_push,
         join,
     }
 }
@@ -161,6 +217,7 @@ async fn run_worker(
     mut read_rx: watch::Receiver<Option<Vec<String>>>,
     mut demand_rx: watch::Receiver<Vec<String>>,
     mut stop_rx: watch::Receiver<bool>,
+    results: mpsc::UnboundedSender<WorkerResult>,
     status: Arc<RwLock<ThingOverview>>,
     last_read_sources: Arc<RwLock<Vec<String>>>,
 ) {
@@ -179,7 +236,15 @@ async fn run_worker(
             cmd = exec_rx.recv() => {
                 match cmd {
                     Some(WorkerCommand::Execute { cmd }) => {
-                        execute_command(&mut driver, &cmd);
+                        execute_and_report(&mut driver, &cmd, &results);
+                        *status.write() = driver.overview();
+                    }
+                    Some(WorkerCommand::Reset) => {
+                        driver.reset();
+                        *status.write() = driver.overview();
+                    }
+                    Some(WorkerCommand::SetOffline) => {
+                        driver.set_offline();
                         *status.write() = driver.overview();
                     }
                     // Read/SetDemand 的契约路径是各自的无阻塞 watch 槽位。
@@ -198,10 +263,53 @@ async fn run_worker(
                     continue;
                 }
                 last_read_sources.write().clone_from(&sources);
-                let reading = read_once(&mut driver, &thing_id);
-                *status.write() = driver.overview();
-                if let Some(reading) = reading {
-                    send_reading(&value_sink, reading);
+                // 重试退避由 DriverWrapper::execute_once 内部裁决：终态失败后的
+                // 下一次 Read 仍会进入（否则 max_attempts 用尽就永远无法恢复），
+                // 退避期内 execute_once 返回 Retrying → 不上报。
+                let was_online = driver.is_online();
+                let outcome = driver.read_data_once_with(&CancelToken::new());
+                match outcome.result {
+                    Ok(values) => {
+                        let address = driver.thing().address.clone();
+                        apply_read_values(&mut driver, &values, true);
+                        *status.write() = driver.overview();
+                        if !was_online {
+                            let _ = results.send(WorkerResult::Connected {
+                                thing_id: thing_id.clone(),
+                                address,
+                            });
+                        }
+                        send_reading(
+                            &value_sink,
+                            DriverReading {
+                                thing_id: thing_id.clone(),
+                                values,
+                            },
+                        );
+                    }
+                    Err(err) => {
+                        // 重试中的失败由驱动自身负责；只有终态失败才迁移状态。
+                        if outcome.retry_info.as_ref().is_some_and(|info| info.will_retry) {
+                            continue;
+                        }
+                        tracing::warn!(
+                            thing_id = %thing_id,
+                            error = %err,
+                            elapsed_ms = outcome.elapsed.as_millis() as u64,
+                            "driver read failed"
+                        );
+                        apply_read_values(&mut driver, &[], false);
+                        *status.write() = driver.overview();
+                        if was_online {
+                            let _ = results.send(WorkerResult::Disconnected {
+                                thing_id: thing_id.clone(),
+                                reason: Some(err.to_string()),
+                            });
+                        }
+                        let _ = results.send(WorkerResult::ReadFailed {
+                            thing_id: thing_id.clone(),
+                        });
+                    }
                 }
             }
 
@@ -218,38 +326,13 @@ async fn run_worker(
     tracing::debug!(thing_id = %thing_id, "driver worker stopped");
 }
 
-/// 执行一次轮询读取：成功时先把读数写回驱动自己的 `Thing`，返回待上报的
-/// [`DriverReading`]（上报由调用方在刷新 overview 之后做，保证 sink 消费者
-/// 看到的状态不落后于共享 overview）。
-fn read_once(driver: &mut DriverWrapper, thing_id: &str) -> Option<DriverReading> {
-    let outcome = driver.read_data_once_with(&CancelToken::new());
-    match outcome.result {
-        Ok(values) => {
-            apply_read_values(driver, &values);
-            Some(DriverReading {
-                thing_id: thing_id.to_string(),
-                values,
-            })
-        }
-        Err(err) => {
-            tracing::warn!(
-                thing_id = %thing_id,
-                error = %err,
-                elapsed_ms = outcome.elapsed.as_millis() as u64,
-                "driver read failed"
-            );
-            None
-        }
-    }
-}
-
 /// 把一批读数写回驱动自己的 `Thing`（worker 是驱动单写者）。
 ///
 /// 与 `DataServer::apply_property_values` 同语义：按属性名匹配、只写
-/// `current_value`（`set_current_value` 同时刷新 `updated_at`）；另按轮询成功
-/// 路径刷新 `last_heartbeat`。worker 不发布事件——事件仍由 DataServer 的共享
-/// 管线在消费 ValueSink 时产生。
-fn apply_read_values(driver: &mut DriverWrapper, values: &[ResultValue]) {
+/// `current_value`（`set_current_value` 同时刷新 `updated_at`）；成功轮询另
+/// 刷新 `last_heartbeat` 与在线状态。worker 不发布事件——事件仍由 DataServer
+/// 的共享管线在消费 ValueSink / WorkerResult 时产生。
+fn apply_read_values(driver: &mut DriverWrapper, values: &[ResultValue], online: bool) {
     let mut thing = driver.thing().clone();
     if let Some(properties) = thing.properties.as_mut() {
         for property in properties.iter_mut() {
@@ -260,7 +343,12 @@ fn apply_read_values(driver: &mut DriverWrapper, values: &[ResultValue]) {
             }
         }
     }
-    thing.last_heartbeat = Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string());
+    thing.status = if online {
+        thing.last_heartbeat = Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string());
+        ThingStatus::Online
+    } else {
+        ThingStatus::Offline
+    };
     *driver.thing_mut() = thing;
 }
 
@@ -278,18 +366,29 @@ fn send_reading(value_sink: &ValueSink, reading: DriverReading) {
     }
 }
 
-/// 执行一条命令；失败只记日志（E4b 命令流仍为 fire-and-forget）。
-fn execute_command(driver: &mut DriverWrapper, cmd: &ThingCommand) {
+/// 执行一条命令并把结果上报给 DataServer（事件构造/发布归 DataServer）。
+fn execute_and_report(driver: &mut DriverWrapper, cmd: &ThingCommand, results: &mpsc::UnboundedSender<WorkerResult>) {
+    let thing_id = driver.thing().id.clone();
     let outcome = driver.execute_command_with(cmd, &CancelToken::new());
-    if let Err(err) = outcome.result {
+    let success = outcome.result.is_ok();
+    let error = outcome.result.as_ref().err().map(|err| err.to_string());
+    let elapsed_ms = outcome.elapsed.as_millis() as u64;
+    if let Some(ref err) = error {
         tracing::warn!(
-            thing_id = %driver.thing().id,
+            thing_id = %thing_id,
             command = %cmd.name,
             error = %err,
-            elapsed_ms = outcome.elapsed.as_millis() as u64,
+            elapsed_ms = elapsed_ms,
             "driver command failed"
         );
     }
+    let _ = results.send(WorkerResult::Command {
+        thing_id,
+        cmd: cmd.clone(),
+        success,
+        elapsed_ms,
+        error,
+    });
 }
 
 #[cfg(test)]
@@ -380,14 +479,15 @@ mod tests {
             if cancel.is_cancelled() {
                 return Err(Error::Cancelled);
             }
-            self.log.executes.fetch_add(1, Ordering::SeqCst);
-            self.log.events.lock().unwrap().push("execute".to_string());
+            // 先写观测值再递增计数：测试以 executes 计数为屏障读取 observed_value。
             *self.log.observed_value.lock().unwrap() = self
                 .thing
                 .properties
                 .as_ref()
                 .and_then(|properties| properties.iter().find(|p| p.name == "temp"))
                 .and_then(|p| p.current_value.clone());
+            self.log.events.lock().unwrap().push("execute".to_string());
+            self.log.executes.fetch_add(1, Ordering::SeqCst);
             Ok(true)
         }
     }
@@ -412,6 +512,7 @@ mod tests {
         release: std_mpsc::Sender<()>,
         sink_tx: ValueSink,
         sink_rx: mpsc::Receiver<DriverReading>,
+        result_rx: mpsc::UnboundedReceiver<WorkerResult>,
     }
 
     fn make(mode: DriverMode) -> Harness {
@@ -439,13 +540,15 @@ mod tests {
             release_rx: Mutex::new(release_rx),
         }));
         let (sink_tx, sink_rx) = mpsc::channel(cap);
-        let handle = spawn_worker(thing, driver, sink_tx.clone(), Arc::new(FakeEvents::new()));
+        let (result_tx, result_rx) = mpsc::unbounded_channel();
+        let handle = spawn_worker(thing, driver, sink_tx.clone(), Arc::new(FakeEvents::new()), result_tx);
         Harness {
             handle,
             log,
             release,
             sink_tx,
             sink_rx,
+            result_rx,
         }
     }
 
@@ -594,6 +697,59 @@ mod tests {
         h.handle.submit_execute(cmd(0)).expect("queue has room");
         wait_until(|| h.log.executes.load(Ordering::SeqCst) == 1).await;
         assert_eq!(h.log.observed_value.lock().unwrap().clone(), Some("42".to_string()));
+
+        h.handle.stop();
+        wait_finished(&h.handle).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn command_and_connection_transitions_are_reported() {
+        let mut h = make(DriverMode::Poll);
+
+        // 首次成功读取：离线→在线迁移上报 Connected，随后读数进 sink。
+        h.handle.submit_read(vec!["a".to_string()]);
+        h.log.read_started.notified().await;
+        h.release.send(()).unwrap();
+        match h.result_rx.recv().await.expect("result") {
+            WorkerResult::Connected { thing_id, .. } => assert_eq!(thing_id, "thing-1"),
+            other => panic!("expected Connected, got {other:?}"),
+        }
+
+        // Execute：命令结果（成功/耗时）上报给 DataServer。
+        h.handle.submit_execute(cmd(0)).expect("queue has room");
+        loop {
+            match h.result_rx.recv().await.expect("result") {
+                WorkerResult::Command {
+                    thing_id,
+                    cmd: reported,
+                    success,
+                    error,
+                    ..
+                } => {
+                    assert_eq!(thing_id, "thing-1");
+                    assert_eq!(reported.id, "cmd-0");
+                    assert!(success);
+                    assert!(error.is_none());
+                    break;
+                }
+                _ => continue,
+            }
+        }
+
+        // 终态失败：在线→离线迁移上报 Disconnected，并附带 ReadFailed。
+        h.log.fail_next_reads.store(1, Ordering::SeqCst);
+        h.handle.submit_read(vec!["b".to_string()]);
+        h.log.read_started.notified().await;
+        h.release.send(()).unwrap();
+        let mut kinds = Vec::new();
+        for _ in 0..2 {
+            match h.result_rx.recv().await.expect("result") {
+                WorkerResult::Disconnected { .. } => kinds.push("disconnected"),
+                WorkerResult::ReadFailed { .. } => kinds.push("read_failed"),
+                other => panic!("unexpected result {other:?}"),
+            }
+        }
+        assert_eq!(kinds, vec!["disconnected", "read_failed"]);
 
         h.handle.stop();
         wait_finished(&h.handle).await;

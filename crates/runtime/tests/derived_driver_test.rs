@@ -16,7 +16,7 @@ use tinyiothub_core::models::event::{Event, EventLevel, EventSource, EventType, 
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
 use tinyiothub_core::models::thing_property::ThingProperty;
-use tinyiothub_runtime::data_server::{DataServer, DriverCache};
+use tinyiothub_runtime::data_server::DataServer;
 use tinyiothub_runtime::driver::DriverWrapper;
 use tinyiothub_runtime::driver::derived::DERIVED_EVENTBUS_LAGGED;
 use tinyiothub_runtime::driver::derived_manager::DerivedDriverManager;
@@ -252,7 +252,6 @@ fn assemble(
     things.push(campus());
     let device_cache = Arc::new(FakeCache::new(things));
     let cache_dyn: Arc<dyn ThingCacheSource> = device_cache.clone();
-    let driver_cache: DriverCache = moka::sync::Cache::new(100);
     let (sink_tx, mut sink_rx) = tokio::sync::mpsc::channel::<DriverReading>(64);
     let descendants = Arc::new(AtomicI64::new(5));
     let queries = Arc::new(StubQueries::new(derived_props, descendants.clone()));
@@ -267,7 +266,7 @@ fn assemble(
     let consumer_cache = cache_dyn.clone();
     let consumer = tokio::spawn(async move {
         while let Some(reading) = sink_rx.recv().await {
-            DataServer::consume_driver_reading(reading, &driver_cache, &consumer_cache, publish_bus.clone()).await;
+            DataServer::consume_driver_reading(reading, &consumer_cache, publish_bus.clone()).await;
         }
     });
 
@@ -581,7 +580,6 @@ async fn panic_in_one_recompute_does_not_kill_subscriber_loop() {
     let armed = Arc::new(AtomicBool::new(true));
     let panic_cache = Arc::new(PanicOnceCache { inner, armed });
     let cache_dyn: Arc<dyn ThingCacheSource> = panic_cache.clone();
-    let driver_cache: DriverCache = moka::sync::Cache::new(100);
     let (sink_tx, mut sink_rx) = tokio::sync::mpsc::channel::<DriverReading>(64);
     let queries = Arc::new(StubQueries::new(vec![total_power_prop()], Arc::new(AtomicI64::new(0))));
     let manager = Arc::new(DerivedDriverManager::new(
@@ -594,7 +592,7 @@ async fn panic_in_one_recompute_does_not_kill_subscriber_loop() {
     let bus_for_consume = event_bus.clone();
     let consumer = tokio::spawn(async move {
         while let Some(reading) = sink_rx.recv().await {
-            DataServer::consume_driver_reading(reading, &driver_cache, &consumer_cache, bus_for_consume.clone()).await;
+            DataServer::consume_driver_reading(reading, &consumer_cache, bus_for_consume.clone()).await;
         }
     });
 
@@ -624,14 +622,13 @@ async fn panic_in_one_recompute_does_not_kill_subscriber_loop() {
     let _ = &manager;
 }
 
-// ── 终审 I-1 等价改写（X4 单引擎化）：Manager 不再触碰 driver_cache ────────
+// ── 终审 I-1 等价改写（X4 单引擎化 + E4b worker）：Manager 不触碰 worker ──
 // 原语义：ensure_driver 不得顶掉同 key 物理 Poll wrapper（顶掉 = 轮询/命令
-// 静默死亡）。wrapper 模型删除后 Manager 根本不写 driver_cache——本测试钉死
-// 等价断言：Manager 启动后同 key 物理 Poll wrapper 原样保留、派生 owner 物
-// 不会被塞进任何 wrapper。轮询循环 process_all_drivers 只迭代 driver_cache
-// ——无 wrapper 即不可能对无驱动物调用 read_data（"Push 跳过轮询"语义由
-// 结构保证）。X4 收尾（Task 3）后 API 侧亦放行物理驱动物配派生（I-1 限制
-// 取消，混合模式共存语义见 park_derived_e2e_test）。
+// 静默死亡）。worker 模型下 DataServer 独占 worker 表，Manager 无任何写入
+// 入口——本测试钉死等价断言：Manager 启动后同 key 物理 Poll worker 仍在、
+// 派生 owner 物不会被注册成 worker（无 worker 即不可能对其 read_data）。
+// X4 收尾（Task 3）后 API 侧亦放行物理驱动物配派生（I-1 限制取消，混合
+// 模式共存语义见 park_derived_e2e_test）。
 
 struct PollStubDriver {
     thing: Thing,
@@ -666,35 +663,33 @@ impl ThingDriver for PollStubDriver {
 }
 
 #[tokio::test]
-async fn poll_wrapper_untouched_and_no_wrapper_for_derived_owner() {
+async fn poll_worker_untouched_and_no_worker_for_derived_owner() {
     let device_cache = Arc::new(FakeCache::new(vec![meter("meter-1", "电表1", Some("100")), campus()]));
     let cache_dyn: Arc<dyn ThingCacheSource> = device_cache.clone();
-    let driver_cache: DriverCache = moka::sync::Cache::new(100);
-    // 预登记物理 wrapper（mode=Poll）于 owner 同 key——Manager 启动后必须原样保留
-    driver_cache.insert(
-        "campus-1".to_string(),
-        Arc::new(parking_lot::RwLock::new(DriverWrapper::new(Box::new(PollStubDriver {
-            thing: campus(),
-        })))),
+    let event_bus = Arc::new(EventBus::new());
+    let data_server = DataServer::new(cache_dyn.clone(), event_bus.clone());
+    // 预登记物理 Poll worker 于 owner 同 key——Manager 启动后必须原样保留。
+    data_server.register_worker(
+        "campus-1",
+        DriverWrapper::new(Box::new(PollStubDriver { thing: campus() })),
     );
     let (sink_tx, _sink_rx) = tokio::sync::mpsc::channel::<DriverReading>(64);
     let manager = DerivedDriverManager::new(
         Arc::new(StubQueries::new(vec![total_power_prop()], Arc::new(AtomicI64::new(0)))),
         cache_dyn,
         sink_tx,
-        Arc::new(EventBus::new()),
+        event_bus,
     );
     manager.start().await.expect("manager start");
 
-    let wrapper = driver_cache.get("campus-1").expect("物理 wrapper 应仍在 driver_cache");
     assert!(
-        wrapper.read().inner_driver().mode() == DriverMode::Poll,
-        "物理 Poll wrapper 不得被派生引擎影响"
+        data_server.get_driver_overview("campus-1").is_some(),
+        "物理 Poll worker 不得被派生引擎影响"
     );
     assert_eq!(
-        driver_cache.iter().count(),
+        data_server.worker_count(),
         1,
-        "Manager 启动不得向 driver_cache 新增任何 wrapper（无 wrapper 即轮询循环不会对 owner 物 read_data）"
+        "Manager 启动不得新增 worker（无 worker 即轮询循环不会对 owner 物 read_data）"
     );
 }
 

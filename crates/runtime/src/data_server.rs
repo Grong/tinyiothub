@@ -1,50 +1,55 @@
 use std::sync::Arc;
 
-use dashmap::DashMap;
 use moka::sync::Cache;
-use parking_lot::RwLock;
 
-use tinyiothub_core::driver::{DriverMode, DriverReading, ResultValue, ValueSink};
+use tinyiothub_core::driver::{DriverReading, ResultValue, ValueSink};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::event::EventHandler;
 use tinyiothub_core::models::event::{
     ContentElement, Event as DomainEvent, EventLevel, EventSource, RichContent, TextFormat, ThingEventType,
 };
+use tinyiothub_core::models::thing::ThingStatus;
 use tinyiothub_core::models::thing_property::ThingProperty;
 use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 
+use crate::driver::worker::{WorkerHandle, WorkerResult, spawn_worker};
 use crate::driver::{DriverWrapper, ThingOverview, create_driver};
 use crate::event_bus::{EventBus, publish_event_safe};
 use crate::ports::ThingCacheSource;
 
-pub type DriverCache = Cache<String, Arc<RwLock<DriverWrapper>>>;
-type CommandQueue = Arc<DashMap<String, Vec<ThingCommand>>>;
+/// worker 表：每个物一个独占驱动的 worker（E4b spec §1/§2.3）。
+pub type WorkerCache = Cache<String, Arc<WorkerHandle>>;
 
-/// Thing data server — manages driver lifecycle and the polling loop.
+/// Thing data server — manages driver worker lifecycle and the polling loop.
 pub struct DataServer {
     device_cache: Arc<dyn ThingCacheSource>,
-    driver_cache: DriverCache,
-    command_queue: CommandQueue,
+    workers: WorkerCache,
     event_bus: Arc<EventBus>,
     /// 推送驱动上报入口（spec §一 ValueSink）：Task 7 的 Manager 注册推送驱动时经 `value_sink()` 注入。
     value_sink_tx: ValueSink,
     /// 消费端只能被 `run()` 取走一次（take 后为 None，重复 run 不再 spawn 消费任务）。
     value_sink_rx: Arc<parking_lot::Mutex<Option<tokio::sync::mpsc::Receiver<DriverReading>>>>,
+    /// worker 结果上报入口（命令/连接迁移）。
+    worker_result_tx: tokio::sync::mpsc::UnboundedSender<WorkerResult>,
+    /// 结果消费端同 value_sink_rx：`run()` 取走一次。
+    worker_result_rx: Arc<parking_lot::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<WorkerResult>>>>,
 }
 
 impl DataServer {
     pub fn new(device_cache: Arc<dyn ThingCacheSource>, event_bus: Arc<EventBus>) -> Self {
-        let driver_cache = Cache::new(10_000);
         let (value_sink_tx, value_sink_rx) = tokio::sync::mpsc::channel(256);
-        Self::initialize_drivers(&driver_cache, &device_cache, &event_bus);
-        Self {
+        let (worker_result_tx, worker_result_rx) = tokio::sync::mpsc::unbounded_channel();
+        let server = Self {
             device_cache,
-            driver_cache,
-            command_queue: Arc::new(DashMap::new()),
+            workers: Cache::new(10_000),
             event_bus,
             value_sink_tx,
             value_sink_rx: Arc::new(parking_lot::Mutex::new(Some(value_sink_rx))),
-        }
+            worker_result_tx,
+            worker_result_rx: Arc::new(parking_lot::Mutex::new(Some(worker_result_rx))),
+        };
+        server.initialize_drivers();
+        server
     }
 
     /// 推送驱动的上报句柄（Task 7 注册推送驱动时注入给 `start_push`）。
@@ -52,22 +57,24 @@ impl DataServer {
         self.value_sink_tx.clone()
     }
 
-    /// 驱动缓存句柄（物理驱动 wrapper 表——轮询迭代按 mode() 过滤，sink 消费
-    /// 侧按 thing_id 找 wrapper 走共享管线；X4 后派生引擎不再注册进此表，
-    /// 无 wrapper 的读数走 device_cache 回退）。moka `Cache` 克隆是廉价句柄，
-    /// 与 `value_sink()` 同级。
-    pub fn driver_cache(&self) -> DriverCache {
-        self.driver_cache.clone()
+    /// worker 表句柄（诊断/测试用）。moka `Cache` 克隆是廉价句柄。
+    pub fn workers(&self) -> WorkerCache {
+        self.workers.clone()
     }
 
-    fn initialize_drivers(cache: &DriverCache, device_cache: &Arc<dyn ThingCacheSource>, event_bus: &Arc<EventBus>) {
-        let devices = device_cache.all();
-        for device in devices {
+    /// 从外部 wrapper 注册一个 worker（测试装配 / 动态注册入口）。
+    ///
+    /// 同 key 已有 worker 时先停止旧 worker 再替换。
+    pub fn register_worker(&self, thing_id: &str, driver: DriverWrapper) {
+        self.spawn_driver_worker(thing_id.to_string(), driver);
+    }
+
+    fn initialize_drivers(&self) {
+        for device in self.device_cache.all() {
             if let Some(driver_name) = &device.driver_name {
                 match create_driver(driver_name, &device) {
-                    Ok(mut driver) => {
-                        driver.set_event_bus(event_bus.clone());
-                        cache.insert(device.id.clone(), Arc::new(RwLock::new(driver)));
+                    Ok(driver) => {
+                        self.spawn_driver_worker(device.id.clone(), driver);
                     }
                     Err(e) => {
                         tracing::error!(
@@ -81,14 +88,30 @@ impl DataServer {
         }
     }
 
+    fn spawn_driver_worker(&self, thing_id: String, mut driver: DriverWrapper) {
+        if let Some(previous) = self.workers.get(&thing_id) {
+            previous.stop();
+        }
+        driver.set_event_bus(self.event_bus.clone());
+        let thing = driver.thing().clone();
+        let handle = spawn_worker(
+            thing,
+            driver,
+            self.value_sink_tx.clone(),
+            self.event_bus.clone(),
+            self.worker_result_tx.clone(),
+        );
+        self.workers.insert(thing_id, Arc::new(handle));
+    }
+
     pub async fn run(&self, shutdown_rx: tokio::sync::broadcast::Receiver<()>) -> Result<(), Error> {
-        let driver_cache = self.driver_cache.clone();
-        let device_cache = self.device_cache.clone();
-        let command_queue = self.command_queue.clone();
+        // 临时 100ms 轮询：向所有非 Push worker 提交 Read（Task 5 的中央 sampler
+        // 接管后删除）。worker 内部做 latest-wins 合并与重试退避。
+        let workers = self.workers.clone();
         let mut shutdown_rx_clone = shutdown_rx.resubscribe();
         tokio::spawn(async move {
             tokio::select! {
-                _ = Self::process_all_drivers(driver_cache, device_cache, command_queue) => {
+                _ = Self::poll_workers(workers) => {
                     tracing::debug!("Driver polling task completed");
                 }
                 _ = shutdown_rx_clone.recv() => {
@@ -97,10 +120,27 @@ impl DataServer {
             }
         });
 
+        // worker 结果消费任务：命令完成/连接迁移 → 领域事件。
+        if let Some(mut rx) = self.worker_result_rx.lock().take() {
+            let device_cache = self.device_cache.clone();
+            let event_bus = self.event_bus.clone();
+            let mut shutdown_rx_results = shutdown_rx.resubscribe();
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = shutdown_rx_results.recv() => break,
+                        maybe = rx.recv() => {
+                            let Some(result) = maybe else { break };
+                            Self::consume_worker_result(result, &device_cache, event_bus.clone()).await;
+                        }
+                    }
+                }
+            });
+        }
+
         // 推送驱动 sink 独立消费任务：不经 100ms 轮询，读数到达即走共享管线（spec §一/E3）。
         if let Some(mut rx) = self.value_sink_rx.lock().take() {
             let device_cache2 = self.device_cache.clone();
-            let driver_cache2 = self.driver_cache.clone();
             let event_bus2 = self.event_bus.clone();
             let mut shutdown_rx2 = shutdown_rx.resubscribe();
             tokio::spawn(async move {
@@ -109,7 +149,7 @@ impl DataServer {
                         _ = shutdown_rx2.recv() => break,
                         maybe = rx.recv() => {
                             let Some(reading) = maybe else { break };
-                            Self::consume_driver_reading(reading, &driver_cache2, &device_cache2, event_bus2.clone()).await;
+                            Self::consume_driver_reading(reading, &device_cache2, event_bus2.clone()).await;
                         }
                     }
                 }
@@ -118,129 +158,87 @@ impl DataServer {
         Ok(())
     }
 
-    /// 消费一条推送读数：经 driver_cache 找到 owner 物的 wrapper，走共享管线
-    /// （apply_property_values → cache_and_publish）。无 wrapper（空间物/无驱动物）
-    /// 时回退 device_cache 直写（X4）；两处都无该物 → 丢弃并告警（物已删的迟到读数）。
+    /// 消费一条读数：走共享管线（apply_property_values → cache_and_publish）。
+    ///
+    /// worker 已把读数写回自己持有的 `Thing`；DataServer 只按 thing_id 从
+    /// device_cache 取当前物（派生/空间物同样适用）。物已删 → 丢弃并告警。
     pub async fn consume_driver_reading(
         reading: DriverReading,
-        driver_cache: &DriverCache,
         device_cache: &Arc<dyn ThingCacheSource>,
         event_bus: Arc<EventBus>,
     ) {
-        let Some(driver_arc) = driver_cache.get(&reading.thing_id) else {
-            // X4：无 wrapper → device_cache 回退（spec §一）
-            let Some(mut device) = device_cache.get(&reading.thing_id) else {
-                tracing::warn!(thing_id = %reading.thing_id, "sink 读数丢弃：物不在 wrapper 也不在缓存（已删？）");
-                return;
-            };
-            let thing_name = device.name.clone();
-            let events = Self::apply_property_values(&mut device, &thing_name, &reading.values);
-            Self::cache_and_publish(device, events, device_cache, Some(event_bus)).await;
+        let Some(mut device) = device_cache.get(&reading.thing_id) else {
+            tracing::warn!(thing_id = %reading.thing_id, "sink 读数丢弃：物不在缓存（已删？）");
             return;
         };
-        let (device, events) = {
-            let mut driver = driver_arc.write();
-            let mut device = driver.thing().clone();
-            let thing_name = device.name.clone();
-            let events = Self::apply_property_values(&mut device, &thing_name, &reading.values);
-            *driver.thing_mut() = device.clone();
-            (device, events)
-        };
+        let thing_name = device.name.clone();
+        let events = Self::apply_property_values(&mut device, &thing_name, &reading.values);
         Self::cache_and_publish(device, events, device_cache, Some(event_bus)).await;
     }
 
-    async fn process_all_drivers(
-        driver_cache: DriverCache,
-        device_cache: Arc<dyn ThingCacheSource>,
-        command_queue: CommandQueue,
+    /// 消费一条 worker 结果：命令完成/失败与连接迁移翻译成领域事件，并刷新
+    /// 缓存中的设备状态（事件构造与旧 `DriverWrapper::on_*` 保持一致）。
+    async fn consume_worker_result(
+        result: WorkerResult,
+        device_cache: &Arc<dyn ThingCacheSource>,
+        event_bus: Arc<EventBus>,
     ) {
+        match result {
+            WorkerResult::Command {
+                thing_id,
+                cmd,
+                success,
+                elapsed_ms,
+                error,
+            } => {
+                let Some(device) = device_cache.get(&thing_id) else {
+                    return;
+                };
+                if let Some(event) = Self::build_command_event(&device, &cmd, success, elapsed_ms, error) {
+                    publish_event_safe(event_bus, event).await;
+                }
+            }
+            WorkerResult::Connected { thing_id, address } => {
+                let Some(mut device) = device_cache.get(&thing_id) else {
+                    return;
+                };
+                device.status = ThingStatus::Online;
+                device.last_heartbeat = Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string());
+                let event = Self::build_connection_event(&device, true, address, None);
+                device_cache.update(device);
+                if let Some(event) = event {
+                    publish_event_safe(event_bus, event).await;
+                }
+            }
+            WorkerResult::Disconnected { thing_id, reason } => {
+                let Some(mut device) = device_cache.get(&thing_id) else {
+                    return;
+                };
+                device.status = ThingStatus::Offline;
+                let event = Self::build_connection_event(&device, false, None, reason);
+                device_cache.update(device);
+                if let Some(event) = event {
+                    publish_event_safe(event_bus, event).await;
+                }
+            }
+            WorkerResult::ReadFailed { thing_id } => {
+                if let Some(mut device) = device_cache.get(&thing_id) {
+                    device.status = ThingStatus::Offline;
+                    device_cache.update(device);
+                }
+            }
+        }
+    }
+
+    /// 临时轮询循环：每 100ms 向非 Push worker 提交一次 Read（source 集为空 =
+    /// 读全部，与旧 `read_data_once` 语义一致）。
+    async fn poll_workers(workers: WorkerCache) {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
         loop {
             interval.tick().await;
-
-            let mut drivers = Vec::new();
-            for (_, driver_arc) in driver_cache.iter() {
-                drivers.push(driver_arc.clone());
-            }
-
-            let mut all_commands = Vec::new();
-            let keys: Vec<String> = command_queue.iter().map(|e| e.key().clone()).collect();
-            for key in keys {
-                if let Some((_, cmds)) = command_queue.remove(&key) {
-                    all_commands.extend(cmds);
-                }
-            }
-
-            for driver_arc in &drivers {
-                let can_read = {
-                    if let Some(driver) = driver_arc.try_read() {
-                        // 推送驱动不经轮询拉取（spec §一）
-                        driver.inner_driver().mode() == DriverMode::Poll && driver.can_read_now()
-                    } else {
-                        false
-                    }
-                };
-                if !can_read {
-                    continue;
-                }
-
-                let mut pending_events: Vec<DomainEvent> = Vec::new();
-                let mut event_bus_ref: Option<std::sync::Arc<EventBus>> = None;
-                let mut updated_device: Option<Thing> = None;
-
-                if let Some(mut driver) = driver_arc.try_write() {
-                    let thing_id = driver.thing().id.clone();
-                    let read_result = driver.read_data_once();
-                    let mut device = driver.thing().clone();
-                    let was_online = device.is_online();
-                    let device_address = device.address.clone();
-
-                    event_bus_ref = driver.event_bus_ref().cloned();
-
-                    match read_result.result {
-                        Ok(values) => {
-                            if !was_online && let Some(event) = driver.on_connected(device_address) {
-                                pending_events.push(event);
-                            }
-                            device.status = tinyiothub_core::models::thing::ThingStatus::Online;
-                            device.last_heartbeat = Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string());
-                            let thing_name = device.name.clone();
-                            let events = Self::apply_property_values(&mut device, &thing_name, &values);
-                            pending_events.extend(events);
-                        }
-                        Err(e) => {
-                            if let Some(retry_info) = &read_result.retry_info
-                                && retry_info.will_retry
-                            {
-                                continue;
-                            }
-                            if was_online && let Some(event) = driver.on_disconnected(Some(e.to_string())) {
-                                pending_events.push(event);
-                            }
-                            device.status = tinyiothub_core::models::thing::ThingStatus::Offline;
-                        }
-                    }
-
-                    for cmd in all_commands.iter().filter(|c| c.thing_id == thing_id) {
-                        let cmd_result = driver.execute_command(cmd);
-                        let execution_time_ms = cmd_result.elapsed.as_millis() as u64;
-                        if let Some(event) = Self::build_command_event(
-                            &device,
-                            cmd,
-                            cmd_result.result.is_ok(),
-                            execution_time_ms,
-                            cmd_result.result.as_ref().err().map(|e| e.to_string()),
-                        ) {
-                            pending_events.push(event);
-                        }
-                    }
-
-                    *driver.thing_mut() = device.clone();
-                    updated_device = Some(device);
-                }
-
-                if let Some(device) = updated_device {
-                    Self::cache_and_publish(device, pending_events, &device_cache, event_bus_ref).await;
+            for (_, handle) in workers.iter() {
+                if !handle.is_push() {
+                    handle.submit_read(Vec::new());
                 }
             }
         }
@@ -396,6 +394,59 @@ impl DataServer {
         .ok()
     }
 
+    /// 连接迁移事件（等价于旧 `DriverWrapper::on_connected` / `on_disconnected`）。
+    fn build_connection_event(
+        device: &Thing,
+        connected: bool,
+        address: Option<String>,
+        reason: Option<String>,
+    ) -> Option<DomainEvent> {
+        let source = EventSource::device(device.id.clone(), Some("driver".to_string()));
+        if connected {
+            DomainEvent::new_device_event(
+                ThingEventType::Connection,
+                EventLevel::Info,
+                source,
+                RichContent::new(
+                    format!("Thing Online: {}", device.name),
+                    vec![
+                        ContentElement::Text {
+                            content: format!("Thing '{}' is now online", device.name),
+                            format: TextFormat::Plain,
+                        },
+                        ContentElement::Text {
+                            content: format!("Protocol: {}", device.protocol_type.as_deref().unwrap_or("Unknown")),
+                            format: TextFormat::Plain,
+                        },
+                        ContentElement::Text {
+                            content: format!("Address: {}", address.as_deref().unwrap_or("N/A")),
+                            format: TextFormat::Plain,
+                        },
+                    ],
+                ),
+            )
+            .ok()
+        } else {
+            let mut elements = vec![ContentElement::Text {
+                content: format!("Thing '{}' is now offline", device.name),
+                format: TextFormat::Plain,
+            }];
+            if let Some(ref reason_text) = reason {
+                elements.push(ContentElement::Text {
+                    content: format!("Reason: {}", reason_text),
+                    format: TextFormat::Plain,
+                });
+            }
+            DomainEvent::new_device_event(
+                ThingEventType::Connection,
+                EventLevel::Warning,
+                source,
+                RichContent::new(format!("Thing Offline: {}", device.name), elements),
+            )
+            .ok()
+        }
+    }
+
     // === Public API ===
 
     pub fn get_things(&self) -> Vec<Thing> {
@@ -411,13 +462,15 @@ impl DataServer {
     }
 
     pub fn execute_command(&self, cmd: ThingCommand) -> Result<(), Error> {
-        if let Some(device) = self.device_cache.get(&cmd.thing_id) {
-            let protocol = device.driver_name.unwrap_or_else(|| "unknown".to_string());
-            self.command_queue.entry(protocol).or_default().push(cmd);
-            Ok(())
-        } else {
-            Err(Error::NotFound)
+        if self.device_cache.get(&cmd.thing_id).is_none() {
+            return Err(Error::NotFound);
         }
+        // 无 worker 的物（无驱动/派生 owner）沿用旧语义：命令被接受但无执行者。
+        let Some(worker) = self.workers.get(&cmd.thing_id) else {
+            tracing::debug!(thing_id = %cmd.thing_id, command = %cmd.name, "command accepted without a driver worker");
+            return Ok(());
+        };
+        worker.submit_execute(cmd)
     }
 
     pub fn execute_commands(&self, cmds: Vec<ThingCommand>) -> Result<(), Error> {
@@ -429,7 +482,10 @@ impl DataServer {
 
     pub fn remove_device(&self, thing_id: &str) {
         self.device_cache.remove(thing_id);
-        self.driver_cache.invalidate(thing_id);
+        if let Some(worker) = self.workers.get(thing_id) {
+            worker.stop();
+        }
+        self.workers.invalidate(thing_id);
     }
 
     pub fn remove_things(&self, thing_ids: &[String]) {
@@ -438,68 +494,65 @@ impl DataServer {
         }
     }
 
+    /// 设备驱动概览（worker 共享的 `ThingOverview` 快照）。
+    pub fn get_driver_overview(&self, thing_id: &str) -> Option<ThingOverview> {
+        self.workers.get(thing_id).map(|worker| worker.status())
+    }
+
+    /// 兼容旧名：与 [`Self::get_driver_overview`] 同义。
     pub fn get_device_overview(&self, thing_id: &str) -> Option<ThingOverview> {
-        self.driver_cache
-            .get(thing_id)
-            .and_then(|driver_arc| driver_arc.try_read().map(|driver| driver.overview()))
+        self.get_driver_overview(thing_id)
     }
 
     pub fn get_all_device_overview(&self) -> Vec<ThingOverview> {
-        self.driver_cache
-            .iter()
-            .filter_map(|(_, driver_arc)| driver_arc.try_read().map(|driver| driver.overview()))
-            .collect()
+        self.workers.iter().map(|(_, worker)| worker.status()).collect()
     }
 
     pub fn get_online_count(&self) -> usize {
-        self.driver_cache
+        self.workers
             .iter()
-            .filter_map(|(_, driver_arc)| driver_arc.try_read().map(|driver| driver.is_online()))
-            .filter(|&online| online)
+            .filter(|(_, worker)| worker.status().health.is_online())
             .count()
     }
 
     pub fn get_healthy_count(&self) -> usize {
-        self.driver_cache
+        self.workers
             .iter()
-            .filter_map(|(_, driver_arc)| driver_arc.try_read().map(|driver| driver.is_healthy()))
-            .filter(|&healthy| healthy)
+            .filter(|(_, worker)| worker.status().health.is_healthy())
             .count()
     }
 
     pub fn reset_device_driver(&self, thing_id: &str) -> bool {
-        if let Some(driver_arc) = self.driver_cache.get(thing_id)
-            && let Some(mut driver) = driver_arc.try_write()
-        {
-            driver.reset();
-            return true;
-        }
-        false
+        self.workers.get(thing_id).is_some_and(|worker| worker.reset())
     }
 
     pub fn set_device_offline(&self, thing_id: &str) -> bool {
-        if let Some(driver_arc) = self.driver_cache.get(thing_id)
-            && let Some(mut driver) = driver_arc.try_write()
-        {
-            driver.set_offline();
-            return true;
-        }
-        false
+        self.workers.get(thing_id).is_some_and(|worker| worker.set_offline())
     }
 
     pub fn get_driver_cache_size(&self) -> u64 {
-        self.driver_cache.entry_count()
+        self.worker_count()
+    }
+
+    /// worker 数量（Task 4 接口名；`get_driver_cache_size` 的别名）。
+    ///
+    /// moka 的 `entry_count` 是最终一致的：先跑一次 pending tasks 保证
+    /// insert/invalidate 已反映到计数（管理面/测试需要精确值）。
+    pub fn worker_count(&self) -> u64 {
+        self.workers.run_pending_tasks();
+        self.workers.entry_count()
     }
 
     pub fn cleanup_driver_cache(&self) {
         let mut to_remove = Vec::new();
-        for (thing_id, _) in self.driver_cache.iter() {
+        for (thing_id, worker) in self.workers.iter() {
             if self.device_cache.get(&thing_id).is_none() {
+                worker.stop();
                 to_remove.push(thing_id.to_string());
             }
         }
         for thing_id in to_remove {
-            self.driver_cache.invalidate(&thing_id);
+            self.workers.invalidate(&thing_id);
         }
     }
 }
@@ -529,17 +582,15 @@ impl EventHandler for DataServer {
                     if let Some(device) = device {
                         // 插入/更新缓存（单一写入者）
                         self.device_cache.insert(device.clone());
-                        // 创建驱动并加入采集循环
+                        // 创建 worker 并加入采集循环
                         if let Some(driver_name) = &device.driver_name
-                            && !self.driver_cache.contains_key(thing_id)
+                            && !self.workers.contains_key(thing_id)
                         {
                             match create_driver(driver_name, &device) {
-                                Ok(mut driver) => {
-                                    driver.set_event_bus(self.event_bus.clone());
-                                    self.driver_cache
-                                        .insert(thing_id.to_string(), Arc::new(RwLock::new(driver)));
+                                Ok(driver) => {
+                                    self.spawn_driver_worker(thing_id.to_string(), driver);
                                     tracing::info!(
-                                        "Created driver for device '{}' and started data collection",
+                                        "Created driver worker for device '{}' and started data collection",
                                         device.name
                                     );
                                 }
@@ -578,11 +629,12 @@ impl Clone for DataServer {
     fn clone(&self) -> Self {
         Self {
             device_cache: self.device_cache.clone(),
-            driver_cache: self.driver_cache.clone(),
-            command_queue: self.command_queue.clone(),
+            workers: self.workers.clone(),
             event_bus: self.event_bus.clone(),
             value_sink_tx: self.value_sink_tx.clone(),
             value_sink_rx: self.value_sink_rx.clone(),
+            worker_result_tx: self.worker_result_tx.clone(),
+            worker_result_rx: self.worker_result_rx.clone(),
         }
     }
 }
@@ -590,7 +642,7 @@ impl Clone for DataServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tinyiothub_core::driver::{CancelToken, ThingDriver};
+    use tinyiothub_core::driver::{CancelToken, DriverMode, ThingDriver};
     use tinyiothub_core::models::thing::Thing;
     use tinyiothub_core::models::thing_property::ThingProperty;
 
@@ -673,23 +725,70 @@ mod tests {
         assert_eq!(events.len(), 0);
     }
 
-    // ── Task 7 台账追讨：Push 驱动跳过轮询的集成断言（Task 3 评审 ⚠️）──
+    // ── Task 4：worker 路径（轮询跳过 / busy / overview / remove）──────
 
-    struct EmptyCache;
+    struct VecCache(std::sync::Mutex<Vec<Thing>>);
 
-    impl ThingCacheSource for EmptyCache {
+    impl VecCache {
+        fn new(devices: Vec<Thing>) -> Self {
+            Self(std::sync::Mutex::new(devices))
+        }
+    }
+
+    impl ThingCacheSource for VecCache {
         fn all(&self) -> Vec<Thing> {
-            vec![]
+            self.0.lock().unwrap().clone()
         }
-        fn get(&self, _id: &str) -> Option<Thing> {
-            None
+        fn get(&self, id: &str) -> Option<Thing> {
+            self.0.lock().unwrap().iter().find(|d| d.id == id).cloned()
         }
-        fn get_by_name(&self, _name: &str) -> Option<Thing> {
-            None
+        fn get_by_name(&self, name: &str) -> Option<Thing> {
+            self.0.lock().unwrap().iter().find(|d| d.name == name).cloned()
         }
-        fn insert(&self, _device: Thing) {}
-        fn update(&self, _device: Thing) {}
-        fn remove(&self, _id: &str) {}
+        fn insert(&self, device: Thing) {
+            let mut devices = self.0.lock().unwrap();
+            if let Some(existing) = devices.iter_mut().find(|d| d.id == device.id) {
+                *existing = device;
+            } else {
+                devices.push(device);
+            }
+        }
+        fn update(&self, device: Thing) {
+            self.insert(device);
+        }
+        fn remove(&self, id: &str) {
+            self.0.lock().unwrap().retain(|d| d.id != id);
+        }
+    }
+
+    fn worker_thing(id: &str) -> Thing {
+        Thing {
+            id: id.to_string(),
+            name: id.to_string(),
+            ..Thing::default()
+        }
+    }
+
+    fn ping_cmd(id: &str, thing_id: &str) -> ThingCommand {
+        ThingCommand {
+            id: id.to_string(),
+            thing_id: thing_id.to_string(),
+            name: "ping".to_string(),
+            display_name: None,
+            description: None,
+            parameters: None,
+            created_at: String::new(),
+        }
+    }
+
+    async fn wait_until(mut condition: impl FnMut() -> bool) {
+        tokio::time::timeout(tokio::time::Duration::from_secs(2), async {
+            while !condition() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("condition should become true");
     }
 
     /// 计数 stub 驱动：read_data 被调用即计数（Push 驱动必须保持 0）。
@@ -724,40 +823,44 @@ mod tests {
         }
     }
 
-    /// 真实跑 `process_all_drivers` 循环：同缓存内一个 Push + 一个 Poll 驱动。
-    /// Poll 计数 >0 证明循环确实在迭代；Push 计数 == 0 证明 read_data_once
-    /// 路径按 mode() 跳过推送驱动（spec §一）。
-    #[tokio::test]
+    /// 真实跑 `poll_workers` 循环：同缓存内一个 Push + 一个 Poll worker。
+    /// Poll 计数 >0 证明循环确实在迭代；Push 计数 == 0 证明轮询跳过推送驱动。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn push_mode_driver_is_never_polled() {
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        let driver_cache: DriverCache = Cache::new(10);
+        let workers: WorkerCache = Cache::new(10);
         let push_reads = Arc::new(AtomicUsize::new(0));
         let poll_reads = Arc::new(AtomicUsize::new(0));
+        let (sink_tx, _sink_rx) = tokio::sync::mpsc::channel(16);
+        let (result_tx, _result_rx) = tokio::sync::mpsc::unbounded_channel();
         for (id, mode, reads) in [
             ("push-1", DriverMode::Push, push_reads.clone()),
             ("poll-1", DriverMode::Poll, poll_reads.clone()),
         ] {
-            let thing = Thing {
-                id: id.to_string(),
-                name: id.to_string(),
-                ..Thing::default()
-            };
-            let wrapper = DriverWrapper::new(Box::new(CountingDriver { thing, mode, reads }));
-            driver_cache.insert(id.to_string(), Arc::new(RwLock::new(wrapper)));
+            let thing = worker_thing(id);
+            let wrapper = DriverWrapper::new(Box::new(CountingDriver {
+                thing: thing.clone(),
+                mode,
+                reads,
+            }));
+            let handle = spawn_worker(
+                thing,
+                wrapper,
+                sink_tx.clone(),
+                Arc::new(EventBus::new()),
+                result_tx.clone(),
+            );
+            workers.insert(id.to_string(), Arc::new(handle));
         }
 
-        let device_cache: Arc<dyn ThingCacheSource> = Arc::new(EmptyCache);
-        let command_queue: CommandQueue = Arc::new(DashMap::new());
-        let handle = tokio::spawn(DataServer::process_all_drivers(
-            driver_cache,
-            device_cache,
-            command_queue,
-        ));
+        let handle = tokio::spawn(DataServer::poll_workers(workers.clone()));
         // 100ms 间隔：350ms 至少 3 个 tick（首个 tick 立即触发）。
         tokio::time::sleep(tokio::time::Duration::from_millis(350)).await;
         handle.abort();
+        for (_, worker) in workers.iter() {
+            worker.stop();
+        }
 
         assert!(
             poll_reads.load(Ordering::SeqCst) >= 2,
@@ -767,7 +870,157 @@ mod tests {
         assert_eq!(
             push_reads.load(Ordering::SeqCst),
             0,
-            "mode()=Push 的驱动绝不经过 process_all_drivers 的 read_data_once 路径"
+            "Push worker 绝不经过 poll_workers 的 Read 路径"
         );
+    }
+
+    /// 阻塞执行的假驱动：execute_command 通知测试后等待放行，用于灌满队列。
+    struct BlockingExecDriver {
+        thing: Thing,
+        started: Arc<tokio::sync::Notify>,
+        release: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl ThingDriver for BlockingExecDriver {
+        fn thing(&self) -> &Thing {
+            &self.thing
+        }
+        fn thing_mut(&mut self) -> &mut Thing {
+            &mut self.thing
+        }
+        fn read_data(&mut self, _cancel: &CancelToken) -> Result<Vec<ResultValue>, Error> {
+            Ok(vec![])
+        }
+        fn execute_command(&mut self, _cmd: &ThingCommand, _cancel: &CancelToken) -> Result<bool, Error> {
+            self.started.notify_one();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !self.release.load(std::sync::atomic::Ordering::SeqCst) && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Ok(true)
+        }
+    }
+
+    /// `execute_command` 直投 worker；队列（32）满时返回 busy，不静默丢弃。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn execute_command_returns_busy_when_worker_queue_full() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let thing = worker_thing("dev-1");
+        let cache = Arc::new(VecCache::new(vec![thing.clone()]));
+        let server = DataServer::new(cache, Arc::new(EventBus::new()));
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(AtomicBool::new(false));
+        server.register_worker(
+            "dev-1",
+            DriverWrapper::new(Box::new(BlockingExecDriver {
+                thing,
+                started: started.clone(),
+                release: release.clone(),
+            })),
+        );
+
+        // 第一条进入执行（阻塞），后续 32 条填满队列。
+        server
+            .execute_command(ping_cmd("cmd-0", "dev-1"))
+            .expect("first command accepted");
+        tokio::time::timeout(tokio::time::Duration::from_secs(2), started.notified())
+            .await
+            .expect("worker must start the first command");
+
+        for i in 1..=32 {
+            server
+                .execute_command(ping_cmd(&format!("cmd-{i}"), "dev-1"))
+                .expect("queue below cap must accept");
+        }
+        match server.execute_command(ping_cmd("cmd-overflow", "dev-1")) {
+            Err(Error::DriverError(msg)) => assert_eq!(msg, "busy"),
+            Err(other) => panic!("expected busy, got {other}"),
+            Ok(()) => panic!("expected busy, got Ok"),
+        }
+
+        release.store(true, Ordering::SeqCst);
+        server.remove_device("dev-1");
+    }
+
+    /// overview 读 worker 共享状态；remove_device 停止并移除 worker。
+    #[tokio::test]
+    async fn worker_backed_overview_and_remove() {
+        use std::sync::atomic::AtomicUsize;
+
+        let thing = worker_thing("dev-1");
+        let cache = Arc::new(VecCache::new(vec![thing.clone()]));
+        let server = DataServer::new(cache, Arc::new(EventBus::new()));
+        server.register_worker(
+            "dev-1",
+            DriverWrapper::new(Box::new(CountingDriver {
+                thing,
+                mode: DriverMode::Poll,
+                reads: Arc::new(AtomicUsize::new(0)),
+            })),
+        );
+
+        assert_eq!(server.worker_count(), 1);
+        let overview = server.get_driver_overview("dev-1").expect("overview");
+        assert_eq!(overview.thing_id, "dev-1");
+        assert_eq!(overview.health.total_successes, 0);
+
+        // 命令执行成功后 worker 刷新共享 overview。
+        server
+            .execute_command(ping_cmd("cmd-1", "dev-1"))
+            .expect("command accepted");
+        wait_until(|| {
+            server
+                .get_driver_overview("dev-1")
+                .is_some_and(|o| o.health.total_successes == 1)
+        })
+        .await;
+
+        server.remove_device("dev-1");
+        assert!(server.get_driver_overview("dev-1").is_none());
+        wait_until(|| server.worker_count() == 0).await;
+    }
+
+    /// worker 的 Command 结果经 DataServer 结果消费任务发布为 CommandCompleted。
+    #[tokio::test]
+    async fn worker_command_result_publishes_command_event() {
+        use std::sync::atomic::AtomicUsize;
+        use tinyiothub_core::models::event::{EventType, ThingEventType};
+
+        let thing = worker_thing("dev-1");
+        let cache = Arc::new(VecCache::new(vec![thing.clone()]));
+        let event_bus = Arc::new(EventBus::new());
+        let server = DataServer::new(cache, event_bus.clone());
+        let mut event_rx = event_bus.subscribe();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
+        server.run(shutdown_rx).await.expect("run");
+
+        server.register_worker(
+            "dev-1",
+            DriverWrapper::new(Box::new(CountingDriver {
+                thing,
+                mode: DriverMode::Poll,
+                reads: Arc::new(AtomicUsize::new(0)),
+            })),
+        );
+        server
+            .execute_command(ping_cmd("cmd-1", "dev-1"))
+            .expect("command accepted");
+
+        // 轮询也可能先发 Connection；只断言命令事件出现。
+        let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(2);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            let event = tokio::time::timeout(remaining, event_rx.recv())
+                .await
+                .expect("command event within deadline")
+                .expect("event channel open");
+            if matches!(event.event_type(), EventType::Device(ThingEventType::CommandCompleted)) {
+                assert_eq!(event.source().thing_id(), Some("dev-1"));
+                break;
+            }
+        }
+
+        let _ = shutdown_tx.send(());
     }
 }

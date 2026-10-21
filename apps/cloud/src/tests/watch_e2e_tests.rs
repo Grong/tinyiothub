@@ -15,8 +15,8 @@
 //!   （DataServer::run 消费任务调用的同一 pub 入口）注入受控值——管线
 //!   （apply_property_values → cache_and_publish → EventBus → WatchEngine
 //!   → WatchTrigger → manager → run → agent_runs）全真，数据源受控
-//!   （park_derived_e2e_test 同款取舍）。无 wrapper 物走 X4 device_cache
-//!   回退直写——生产代码路径，事件形状与 wrapper 路径一致。
+//!   （park_derived_e2e_test 同款取舍）。消费端按 thing_id 从 device_cache
+//!   取物——生产代码路径，事件形状与 worker 读数路径一致。
 //! - 确定性无裸 sleep：引擎就绪屏障用 WatchCommand::Summary——与 Upsert
 //!   同通道 FIFO，oneshot 应答即注册/重织已生效；事件到位以 Summary 回读
 //!   LiveState 值收敛为证。2s 上限是 spec §6 的秒级唤醒断言。
@@ -43,7 +43,7 @@ use tinyiothub_core::driver::{DriverReading, ResultValue};
 use tinyiothub_core::models::thing::{Thing, ThingStatus};
 use tinyiothub_core::models::thing_property::ThingProperty;
 use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
-use tinyiothub_runtime::data_server::{DataServer, DriverCache};
+use tinyiothub_runtime::data_server::DataServer;
 use tinyiothub_runtime::ports::ThingCacheSource;
 use tinyiothub_runtime::watch::live_state::ThingLiveSummary;
 use tinyiothub_storage::Db;
@@ -280,12 +280,7 @@ async fn wait_live_temp(manager: &ThingAgentManager, want: &str) {
 
 /// 温度上报入口：与 DataServer::run() 消费任务同一函数（真实共享管线；
 /// 返回即缓存已更新、事件已发布进 bus）。
-async fn ingest_temp(
-    driver_cache: &DriverCache,
-    cache_src: &Arc<dyn ThingCacheSource>,
-    app_state: &AppState,
-    value: &str,
-) {
+async fn ingest_temp(cache_src: &Arc<dyn ThingCacheSource>, app_state: &AppState, value: &str) {
     DataServer::consume_driver_reading(
         DriverReading {
             thing_id: THING.to_string(),
@@ -295,7 +290,6 @@ async fn ingest_temp(
                 Some(value.to_string()),
             )],
         },
-        driver_cache,
         cache_src,
         app_state.event_bus.clone(),
     )
@@ -367,9 +361,6 @@ async fn watch_hit_wakes_run_within_2s_and_restart_reweaves() {
     let mut app_state = test_app_state_on_pool(pool.clone()).await;
     seed_scene(&pool, &app_state).await;
     let cache_src: Arc<dyn ThingCacheSource> = Arc::new(ThingCacheAdapter(app_state.device_cache.clone()));
-    // 空 driver_cache：无 wrapper 物走 X4 device_cache 回退直写（生产路径）。
-    let driver_cache: DriverCache = DriverCache::new(16);
-
     // policy=Off：门控 timer 首 tick，测试窗口内仅 watch run 落库（watch run
     // 无工具调用，不过 invoke_action 策略门，Off 不影响被测链路）。
     app_state
@@ -416,12 +407,12 @@ async fn watch_hit_wakes_run_within_2s_and_restart_reweaves() {
     live_summary(&manager).await;
 
     // 未越限基线：25 落到 LiveState 后不命中（且强制 armed=true）。
-    ingest_temp(&driver_cache, &cache_src, &app_state, "25").await;
+    ingest_temp(&cache_src, &app_state, "25").await;
     wait_live_temp(&manager, "25").await;
     assert_eq!(watch_run_count(&pool).await, 0, "未越限不得产生 watch run");
 
     // 越限：上报时刻起计时，2s 内 watch run 落库（spec §6 秒级唤醒）。
-    ingest_temp(&driver_cache, &cache_src, &app_state, "31").await;
+    ingest_temp(&cache_src, &app_state, "31").await;
     let elapsed = wait_watch_runs(&pool, 1, Duration::from_secs(2)).await;
     assert!(elapsed < Duration::from_secs(2), "秒级唤醒: {elapsed:?}");
 
@@ -482,11 +473,11 @@ async fn watch_hit_wakes_run_within_2s_and_restart_reweaves() {
 
     // rearm：重启后 cache 真相温度=31 已越限，only-new-data 语义可能使
     // 重织注册未武装——先落 25（不成立 → rearm），再越限。
-    ingest_temp(&driver_cache, &cache_src, &app_state, "25").await;
+    ingest_temp(&cache_src, &app_state, "25").await;
     wait_live_temp(&manager2, "25").await;
 
     // 再越限：重织的 watch 网 2s 内再次唤醒（值守无人工介入继续）。
-    ingest_temp(&driver_cache, &cache_src, &app_state, "32").await;
+    ingest_temp(&cache_src, &app_state, "32").await;
     wait_watch_runs(&pool, 2, Duration::from_secs(2)).await;
     assert_eq!(ledger_hit_count(&pool).await, 2, "账本可回放全程：两次命中各一行");
 
