@@ -125,8 +125,16 @@ pub async fn find_default_map(pool: &SqlitePool, workspace_id: &str) -> Result<O
 
 /// upsert 地图；`is_default=true` 时在同一事务内清掉同工作区其他默认标记。
 /// id 已存在时只允许同工作区更新，禁止跨工作区重归属。
+///
+/// 并发创建同名地图时，共享缓存 SQLite 可能对第二个写事务立即返回
+/// `SQLITE_BUSY`/`SQLITE_LOCKED`（`busy_timeout` 不覆盖表锁），旧行为是
+/// HTTP 500。事务未提交，可安全重放；短暂退避后再读预检查/UNIQUE 兜底。
 pub async fn upsert_map(pool: &SqlitePool, rec: &MapRecord) -> Result<(), sqlx::Error> {
     let bounds_json = serde_json::to_string(&rec.bounds).map_err(encode_err)?;
+    retry_locked(|| upsert_map_once(pool, rec, &bounds_json)).await
+}
+
+async fn upsert_map_once(pool: &SqlitePool, rec: &MapRecord, bounds_json: &str) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
     let existing_ws: Option<String> = sqlx::query_scalar("SELECT workspace_id FROM maps WHERE id = ?")
         .bind(&rec.id)
@@ -164,8 +172,39 @@ pub async fn upsert_map(pool: &SqlitePool, rec: &MapRecord) -> Result<(), sqlx::
     .bind(&rec.updated_at)
     .execute(&mut *tx)
     .await?;
-    tx.commit().await?;
-    Ok(())
+    tx.commit().await
+}
+
+/// 写事务遇到瞬时锁冲突（`SQLITE_BUSY`=5 / `SQLITE_LOCKED`=6）时退避重试。
+///
+/// 仅用于可安全重放的事务（未提交即失败）；其它错误原样返回。
+async fn retry_locked<F, Fut>(mut op: F) -> Result<(), sqlx::Error>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<(), sqlx::Error>>,
+{
+    const MAX_RETRIES: u32 = 8;
+    let mut retries = 0;
+    loop {
+        match op().await {
+            Err(e) if retries < MAX_RETRIES && is_lock_error(&e) => {
+                retries += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(5 * u64::from(retries))).await;
+            }
+            other => return other,
+        }
+    }
+}
+
+fn is_lock_error(error: &sqlx::Error) -> bool {
+    match error {
+        sqlx::Error::Database(db) => {
+            matches!(db.code().as_deref(), Some("5") | Some("6"))
+                || db.message().contains("database is locked")
+                || db.message().contains("database is deadlocked")
+        }
+        _ => false,
+    }
 }
 
 pub async fn delete_map(pool: &SqlitePool, workspace_id: &str, id: &str) -> Result<bool, sqlx::Error> {
