@@ -2,7 +2,7 @@
 
 - 日期：2026-10-22
 - 分支：`ai-consolidation`
-- 提交范围：`42908cca..HEAD`（spec 提交 `42908cca` 之后的 E4c 首个代码提交为 `3696ece0`；验证时 `git rev-list --count 42908cca..HEAD` = **10**；随后为收口测试修正（第 11 个），本执行记录为第 12 个提交，`42908cca..HEAD` 现为 **12**）
+- 提交范围：`42908cca..HEAD`（spec 提交 `42908cca` 之后的 E4c 首个代码提交为 `3696ece0`；验证时 `git rev-list --count 42908cca..HEAD` = **10**；随后为收口测试修正（第 11 个），本执行记录为第 12 个提交，`42908cca..HEAD` 现为 **13**）
   - `3696ece0` feat(e4c): 多资源 claim 注册表
   - `ec6d808a` fix(e4c): stop 与 claim 互斥 + 去重/排序加固
   - `0860be25` feat(e4c): call/set 按声明 claim 资源
@@ -14,6 +14,7 @@
   - `7a900abf` fix(e4c): resources/cancel 验收 profile 修复评审缺陷
   - `0f1ef113` test(e4c): 资源/取消 E2E
   - 另含收口修正 `test(e4c): 不合作驱动阻塞窗口 1.2s→1.5s …`（Task 8 内提交）
+  - `25e49ad8` fix(e4c): set stop 闸门单测 + cancel profile 宽限余量 + 记录校正
 - 工具链：rustc 1.95.0 / cargo 1.95.0，macOS（darwin）；Node v24.14.0（web）
 - 计划：`docs/superpowers/plans/2026-10-22-e4c-resources-stop.md`
 - 上位 spec：`docs/superpowers/specs/2026-10-22-e4c-resources-stop-design.md`
@@ -24,7 +25,7 @@
 |---|---|---|
 | 1 | `cargo fmt --all -- --check` | **失败（预期内，存量）**：仅 `crates/agent/src/runtime/thing_agent/scheduler.rs`、`crates/core/src/watch.rs` 两处既有漂移；本次未修改、未提交。E4c 触及文件（含 E2E）无 fmt 漂移 |
 | 2 | `cargo clippy --workspace --all-targets -- -D warnings` | 通过（exit 0，1m06s）；仅 `redis v0.25.4` future-incompat 提示，非本次改动 |
-| 3 | `cargo test --workspace --lib --bins --tests` | **2326 passed / 0 failed / 4 ignored**（53 个测试二进制，exit 0）。E4b 基线 2254 passed，E4c 净增 72 |
+| 3 | `cargo test --workspace --lib --bins --tests` | **2326 passed / 0 failed / 4 ignored**（53 个测试二进制，exit 0）。E4b 基线 2254 passed（该数字为 E4b 评审修复前基线），E4c 净增 72（相对该基线的近似值） |
 | 4 | `cargo build -p demo-declarative` | 通过（exit 0） |
 | 5 | `cargo test -p driver-check` | 4 passed / 0 failed（exit 0；lib 0 + e2e 4） |
 | 6 | `cargo run -p driver-check -- --package drivers/demo-declarative --profile all` | exit 0；`demo-declarative@1.0.0 -> PASS (5 profiles: core/materialization/migration/resources/cancel 全部 pass)` |
@@ -35,6 +36,8 @@
 未运行 `cargo test --doc`（任务要求为 `--lib --bins --tests`）。
 
 ### 1.1 定向回归
+
+收口修复后（HEAD）补跑：`set_device_stop_gate_rejects_and_publishes_no_event` 1 passed；`e4c_resources_stop` 5 passed；`acceptance::profiles::cancel` 1 passed。
 
 | 过滤词 | 结果 |
 |---|---|
@@ -62,11 +65,12 @@
 
 ## 3. 偏差与说明
 
-1. **stop 也会取消采样读**：`WorkerHandle::cancel_current` 设置 worker 当前在途 token，read 与 execute 共用同一取消槽；`WorkerResult::Cancelled` 的消费与事件/账本路径不区分调用类型（kind-agnostic），故 stop 同样会取消在途采样读并留 `cancelled*` 痕迹。E2E 驱动为 `DriverMode::Push`（execute-only），未直接覆盖读取消；runtime 单测 `cancelled read must be the only outcome` 覆盖读路径。
+1. **stop 也会取消采样读**：`WorkerHandle::cancel_current` 设置 worker 当前在途 token，read 与 execute 共用同一取消槽；`WorkerResult::Cancelled` 的消费与事件/账本路径不区分调用类型（kind-agnostic），故 stop 同样会取消在途采样读并留 `cancelled*` 痕迹。E2E 驱动为 `DriverMode::Push`（execute-only），未直接覆盖读取消；runtime 单测 `cancel_current_cancels_cooperative_read_within_grace` 与 `non_cooperative_read_reports_cancelled_unknown_after_return` 覆盖读路径。
 2. **指标为 atomics + getter，无命名 metric 日志/Prometheus**：`DataServer::cancelled_counts() -> (cancelled, cancelled_unknown)` 由 `AtomicU64` 维护；`stop_status`/latency 等未单独命名导出。spec §2.4 的 `arbitration_busy_total`、`stop_requests_total`、`stop_latency_ms` 等未接线为独立指标，留 E4e 运维可见性。
 3. **composite 的 stop 文案为 `busy: stop:<reason> holds <resource>`**：composite 步骤不做独立 stop 闸门检查，依赖 `set_stop` 释放 claim 后 `try_acquire_resources` 的 Busy 兜底；与单工具层的 `stopped: <reason>` 文案不同，语义仍是拒绝且带原因。
-4. **`set_device` 的 stop E2E 缺口**：E2E 的资源/停止场景以 `call_device` 为主；`set_device` 由 `device.rs` 单测覆盖（stop 闸门、claim、E1 合成资源），未在 E2E rig 中重复 stop 管线。
+4. **`set_device` 的 stop E2E 缺口**：E2E 的资源/停止场景以 `call_device` 为主；`set_device` 由 `device.rs` 单测 `set_device_stop_gate_rejects_and_publishes_no_event` 覆盖 stop 闸门（拒绝且不发布属性事件），另有 claim/E1 合成资源单测；未在 E2E rig 中重复 stop 管线。
 5. **账本 append 在 DataServer 消费循环内完成**：`consume_worker_result` 收到 `Cancelled` 后发布事件并 `append` 账本；stop 工具本身不等待写账本，符合“立即返回、异步留痕”。账本失败只记 warn，不影响取消终态。
+7. **账本 append 在 DataServer 单消费循环内**：账本写失败只 warn，不阻断取消终态；慢 DB 可能延迟同循环的读数应用。已记录为 E4d/e 性能/隔离项。
 6. **stop 闸门检查先于 workspace/物存在性查询**：`invoke_action`/`set_device` 在工具入口读取 `ArbitrationRegistry::stop_reason(thing_id)`（注册表按 thing_id 全局键），因此闸门文案先于工作区归属校验；跨工作区同 id 的调用可能看到 `stopped:` 而非 404。属既有 thing_id 全局键裁定（spec §1 边界 5）的延伸，留 E4d/e 多租户收口。
 7. **自治自动确认派发仍用合成 `__device__`**：`autonomous_invoke.rs` 的 auto-confirm dispatch helper（`try_acquire_default`）保持 E1 单设备互斥；`autonomous_factory` 已注入 `runtime.resources` 供 chat/工具层声明解析，但该直派路径未做细粒度资源 claim，留 E4d/e。
 8. **不做排队/分布式仲裁**：资源 busy 立即拒绝，无等待队列；仲裁仅进程内 `DashMap`，跨进程/边缘（X5）不在本期（spec §4）。

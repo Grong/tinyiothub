@@ -803,6 +803,45 @@ mod tests {
         );
     }
 
+    /// stop 闸门对 set_device 同样生效：正常 set 先成功并发布属性事件；置闸后
+    /// 统一 `stopped: <reason>` 拒绝，且不得发布任何属性变更事件。
+    #[tokio::test]
+    async fn set_device_stop_gate_rejects_and_publishes_no_event() {
+        let pool = pool_with_device().await;
+        let access = resource_access(&pool, set_tools()).await;
+        let registry = Arc::new(ArbitrationRegistry::default());
+        let bus = Arc::new(EventBus::new());
+        let mut rx = bus.subscribe();
+        let tool = SetDeviceTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            pool: pool.clone(),
+            workspace_id: "ws-set".into(),
+            event_bus: Some(bus),
+            arbitration: Some(registry.clone()),
+            holder: "watch-run-B".into(),
+            resources: Some(access as Arc<dyn ResourceResolver>),
+        };
+
+        // 闸门未置：正常写入成功并发布一条属性变更事件。
+        let ok = tool
+            .execute(json!({"thingId": "dev-1", "properties": {"level": 10}}))
+            .await
+            .expect("execute");
+        assert!(ok.success, "正常 set 必须成功: {:?}", ok.error);
+        let event = rx.try_recv().expect("正常 set 应发布属性变更事件");
+        assert_eq!(event.source().thing_id(), Some("dev-1"));
+
+        // 置闸门后：闸门先于物查询/claim，文案为 `stopped: <reason>`。
+        registry.set_stop("dev-1", "ops emergency".into(), DEFAULT_LEASE_TTL);
+        let blocked = tool
+            .execute(json!({"thingId": "dev-1", "properties": {"level": 11}}))
+            .await
+            .expect("execute");
+        assert!(!blocked.success, "闸门期间必须拒绝");
+        assert_eq!(blocked.error.as_deref(), Some("stopped: ops emergency"));
+        assert!(rx.try_recv().is_err(), "闸门拒绝不得发布属性变更事件");
+    }
+
     /// 未声明 resources 的 set 工具回落合成 `__device__`（E1 语义）。
     #[tokio::test]
     async fn set_device_empty_resources_claims_device_resource() {

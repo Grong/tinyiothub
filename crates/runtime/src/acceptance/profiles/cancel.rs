@@ -30,8 +30,9 @@ use crate::ports::{HubLedger, ThingCacheSource};
 const PROFILE: &str = "cancel";
 const THING_ID: &str = "acceptance-cancel-thing";
 const GRACE_MS: u64 = 1_000;
-/// Non-cooperative driver ignores the token for this long (> 1s grace).
-const NON_COOPERATIVE_BLOCK: Duration = Duration::from_millis(1_200);
+/// Non-cooperative driver ignores the token for this long (> 1s grace);
+/// 1.5s leaves a 500ms margin so load-induced jitter cannot flip the outcome.
+const NON_COOPERATIVE_BLOCK: Duration = Duration::from_millis(1_500);
 
 fn check(name: &str, level: Level, detail: impl Into<String>, evidence: serde_json::Value) -> CheckResult {
     CheckResult {
