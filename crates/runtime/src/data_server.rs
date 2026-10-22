@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use moka::sync::Cache;
 
@@ -17,7 +17,7 @@ use crate::access::sampler::{Sampler, SamplingWorkers};
 use crate::driver::worker::{WorkerHandle, WorkerResult, spawn_worker};
 use crate::driver::{DriverWrapper, ThingOverview, create_driver};
 use crate::event_bus::{EventBus, publish_event_safe};
-use crate::ports::ThingCacheSource;
+use crate::ports::{HubLedger, ThingCacheSource};
 
 /// worker 表：每个物一个独占驱动的 worker（E4b spec §1/§2.3）。
 pub type WorkerCache = Cache<String, Arc<WorkerHandle>>;
@@ -48,6 +48,31 @@ pub struct DataServer {
     /// 中央 sampler（由 ServiceManager 在 `run()` 前注入）。为 None 时保留
     /// 临时 100ms 全量轮询（旧测试/降级路径）。
     sampler: Arc<parking_lot::Mutex<Option<Arc<Sampler>>>>,
+    /// E4c 取消留痕：可选账本（组合根注入）+ 进程内计数。
+    cancellation: Arc<CancellationRecorder>,
+}
+
+/// 取消终态的留痕面：账本迟绑定（`run()` 的消费任务在 spawn 前持有 clone），
+/// 计数用 atomics（getter 供指标/测试读取）。
+#[derive(Default)]
+struct CancellationRecorder {
+    ledger: parking_lot::RwLock<Option<Arc<dyn HubLedger>>>,
+    cancelled_total: AtomicU64,
+    cancelled_unknown_total: AtomicU64,
+}
+
+impl CancellationRecorder {
+    fn record(&self, within_grace: bool) {
+        if within_grace {
+            self.cancelled_total.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.cancelled_unknown_total.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn ledger(&self) -> Option<Arc<dyn HubLedger>> {
+        self.ledger.read().clone()
+    }
 }
 
 impl DataServer {
@@ -63,6 +88,7 @@ impl DataServer {
             worker_result_tx,
             poll_started: Arc::new(AtomicBool::new(false)),
             sampler: Arc::new(parking_lot::Mutex::new(None)),
+            cancellation: Arc::new(CancellationRecorder::default()),
         };
         server.initialize_drivers();
         server
@@ -89,6 +115,27 @@ impl DataServer {
     /// 临时 100ms 全量轮询。
     pub fn set_sampler(&self, sampler: Arc<Sampler>) {
         *self.sampler.lock() = Some(sampler);
+    }
+
+    /// 注入账本（E4c 取消留痕；组合根在 `run()` 前后皆可调用）。None = 只发
+    /// 事件/指标，不落账。
+    pub fn set_hub_ledger(&self, ledger: Arc<dyn HubLedger>) {
+        *self.cancellation.ledger.write() = Some(ledger);
+    }
+
+    /// E4c stop：取消该设备当前在途调用（协作式，不等待）。返回取消到的
+    /// 在途调用数（0/1）。
+    pub fn cancel_calls(&self, thing_id: &str) -> usize {
+        self.workers.get(thing_id).is_some_and(|worker| worker.cancel_current()) as usize
+    }
+
+    /// 取消终态计数：宽限内退出（`cancelled`）与超时/迟到返回
+    /// （`cancelled_unknown`）。
+    pub fn cancelled_counts(&self) -> (u64, u64) {
+        (
+            self.cancellation.cancelled_total.load(Ordering::Relaxed),
+            self.cancellation.cancelled_unknown_total.load(Ordering::Relaxed),
+        )
     }
 
     /// 从外部 wrapper 注册一个 worker（测试装配 / 动态注册入口）。
@@ -168,9 +215,18 @@ impl DataServer {
             let workers = self.workers.clone();
             let device_cache = self.device_cache.clone();
             let event_bus = self.event_bus.clone();
+            let cancellation = self.cancellation.clone();
             let mut shutdown_rx_consumers = shutdown_rx.resubscribe();
             tokio::spawn(async move {
-                Self::consume_loop(consumers, workers, device_cache, event_bus, &mut shutdown_rx_consumers).await;
+                Self::consume_loop(
+                    consumers,
+                    workers,
+                    device_cache,
+                    event_bus,
+                    cancellation,
+                    &mut shutdown_rx_consumers,
+                )
+                .await;
             });
         }
         Ok(())
@@ -181,6 +237,7 @@ impl DataServer {
         workers: WorkerCache,
         device_cache: Arc<dyn ThingCacheSource>,
         event_bus: Arc<EventBus>,
+        cancellation: Arc<CancellationRecorder>,
         shutdown_rx: &mut tokio::sync::broadcast::Receiver<()>,
     ) {
         loop {
@@ -205,7 +262,7 @@ impl DataServer {
                 }
                 maybe = consumers.results.recv() => {
                     let Some(result) = maybe else { break };
-                    Self::consume_worker_result(result, &device_cache, event_bus.clone()).await;
+                    Self::consume_worker_result(result, &device_cache, event_bus.clone(), &cancellation).await;
                 }
             }
         }
@@ -253,6 +310,7 @@ impl DataServer {
         result: WorkerResult,
         device_cache: &Arc<dyn ThingCacheSource>,
         event_bus: Arc<EventBus>,
+        cancellation: &CancellationRecorder,
     ) {
         match result {
             WorkerResult::Command {
@@ -298,8 +356,43 @@ impl DataServer {
                     device_cache.update(device);
                 }
             }
-            // E4c：事件/账本由 Task 4 接管；本期先消费掉，避免未处理分支。
-            WorkerResult::Cancelled { .. } => {}
+            // E4c stop 的异步终态：取消调用不再发 Command 结果，由这里补齐
+            // 事件 + 账本 + 指标（一次调用一个 outcome）。
+            WorkerResult::Cancelled {
+                thing_id,
+                within_grace,
+                elapsed_ms,
+            } => {
+                cancellation.record(within_grace);
+                let Some(device) = device_cache.get(&thing_id) else {
+                    tracing::warn!(thing_id = %thing_id, "取消终态丢弃：物不在缓存（已删？）");
+                    return;
+                };
+                if let Some(event) = Self::build_command_cancelled_event(&device, within_grace, elapsed_ms) {
+                    publish_event_safe(event_bus, event).await;
+                }
+                if let Some(ledger) = cancellation.ledger() {
+                    let Some(workspace_id) = device.workspace_id.as_deref() else {
+                        tracing::debug!(thing_id = %thing_id, "取消终态无 workspace_id，跳过账本");
+                        return;
+                    };
+                    let outcome = if within_grace { "cancelled" } else { "cancelled_unknown" };
+                    let kind = if within_grace {
+                        "call_cancelled"
+                    } else {
+                        "call_cancelled_unknown"
+                    };
+                    let payload = serde_json::json!({
+                        "v": 1,
+                        "thingId": thing_id,
+                        "outcome": outcome,
+                        "elapsedMs": elapsed_ms,
+                    });
+                    if let Err(e) = ledger.append(workspace_id, kind, Some(&thing_id), payload).await {
+                        tracing::warn!(thing_id = %thing_id, kind, error = %e, "取消终态账本写入失败");
+                    }
+                }
+            }
         }
     }
 
@@ -463,6 +556,33 @@ impl DataServer {
                 format!("Command '{}' on device '{}': {}", cmd.name, device.name, status),
                 elements,
             ),
+        )
+        .ok()
+    }
+
+    /// E4c 取消终态事件：`outcome` 区分宽限内退出与迟到返回（spec §2.4）。
+    fn build_command_cancelled_event(device: &Thing, within_grace: bool, elapsed_ms: u64) -> Option<DomainEvent> {
+        let outcome = if within_grace { "cancelled" } else { "cancelled_unknown" };
+        let level = if within_grace {
+            EventLevel::Info
+        } else {
+            EventLevel::Warning
+        };
+        let content = RichContent::new(
+            format!("Command on device '{}': {}", device.name, outcome),
+            vec![ContentElement::Text {
+                content: format!("Cancellation outcome: {}, elapsed: {}ms", outcome, elapsed_ms),
+                format: TextFormat::Plain,
+            }],
+        )
+        .with_metadata("outcome".to_string(), serde_json::json!(outcome))
+        .with_metadata("elapsedMs".to_string(), serde_json::json!(elapsed_ms))
+        .with_metadata("thingId".to_string(), serde_json::json!(device.id));
+        DomainEvent::new_device_event(
+            ThingEventType::CommandCancelled,
+            level,
+            EventSource::device(device.id.clone(), Some("driver".to_string())),
+            content,
         )
         .ok()
     }
@@ -709,6 +829,7 @@ impl Clone for DataServer {
             worker_result_tx: self.worker_result_tx.clone(),
             poll_started: self.poll_started.clone(),
             sampler: self.sampler.clone(),
+            cancellation: self.cancellation.clone(),
         }
     }
 }
@@ -863,6 +984,7 @@ mod tests {
         Thing {
             id: id.to_string(),
             name: id.to_string(),
+            workspace_id: Some("ws-1".to_string()),
             ..Thing::default()
         }
     }
@@ -1387,5 +1509,234 @@ mod tests {
         assert_eq!(cache.get("thing-1").expect("cached thing").status, ThingStatus::Offline);
 
         let _ = shutdown_tx.send(());
+    }
+
+    // ── E4c Task 4：stop 立即返回 + 取消异步留痕 ─────────────────────
+
+    /// 协作式阻塞读：进入驱动后通知测试，放行后检查取消令牌。
+    struct CooperativeGateDriver {
+        thing: Thing,
+        started: Arc<tokio::sync::Notify>,
+        released: Arc<AtomicBool>,
+        observed_cancel: Arc<AtomicBool>,
+    }
+
+    impl ThingDriver for CooperativeGateDriver {
+        fn thing(&self) -> &Thing {
+            &self.thing
+        }
+        fn thing_mut(&mut self) -> &mut Thing {
+            &mut self.thing
+        }
+        fn mode(&self) -> DriverMode {
+            DriverMode::Poll
+        }
+        fn read_data(&mut self, cancel: &CancelToken) -> Result<Vec<ResultValue>, Error> {
+            self.started.notify_one();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !self.released.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            if cancel.is_cancelled() {
+                self.observed_cancel.store(true, Ordering::SeqCst);
+                return Err(Error::Cancelled);
+            }
+            Ok(vec![])
+        }
+        fn execute_command(&mut self, _cmd: &ThingCommand, cancel: &CancelToken) -> Result<bool, Error> {
+            if cancel.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
+            Ok(true)
+        }
+    }
+
+    /// `cancel_calls` 置在途调用的取消令牌并返回命中数；空闲/结束后返回 0。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancel_calls_cancels_in_flight_and_returns_count() {
+        let thing = worker_thing("dev-1");
+        let cache = Arc::new(VecCache::new(vec![thing.clone()]));
+        let server = DataServer::new(cache, Arc::new(EventBus::new()));
+        let started = Arc::new(tokio::sync::Notify::new());
+        let released = Arc::new(AtomicBool::new(false));
+        let observed_cancel = Arc::new(AtomicBool::new(false));
+        server.register_worker(
+            "dev-1",
+            DriverWrapper::new(Box::new(CooperativeGateDriver {
+                thing,
+                started: started.clone(),
+                released: released.clone(),
+                observed_cancel: observed_cancel.clone(),
+            })),
+        );
+        let worker = server.workers().get("dev-1").expect("worker").clone();
+        worker.submit_read(Vec::new());
+        tokio::time::timeout(std::time::Duration::from_secs(2), started.notified())
+            .await
+            .expect("read must start");
+        assert_eq!(server.cancel_calls("dev-1"), 1, "在途调用应被命中");
+        assert_eq!(server.cancel_calls("missing"), 0, "无 worker 时返回 0");
+
+        released.store(true, Ordering::SeqCst);
+        wait_until(|| observed_cancel.load(Ordering::SeqCst) && !worker.in_flight()).await;
+        assert_eq!(server.cancel_calls("dev-1"), 0, "调用已结束后不应再报告在途");
+        server.remove_device("dev-1");
+    }
+
+    /// 假账本：记录 (workspace, kind, thing_id, payload)。
+    #[derive(Default)]
+    struct RecordingLedger(std::sync::Mutex<Vec<(String, String, Option<String>, serde_json::Value)>>);
+
+    impl RecordingLedger {
+        fn rows(&self) -> Vec<(String, String, Option<String>, serde_json::Value)> {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HubLedger for RecordingLedger {
+        async fn append(
+            &self,
+            workspace_id: &str,
+            kind: &str,
+            thing_id: Option<&str>,
+            payload: serde_json::Value,
+        ) -> Result<(), String> {
+            self.0.lock().unwrap().push((
+                workspace_id.to_string(),
+                kind.to_string(),
+                thing_id.map(str::to_string),
+                payload,
+            ));
+            Ok(())
+        }
+    }
+
+    /// 取消终态：事件 metadata 带 outcome/elapsedMs/thingId，账本每次调用一行；
+    /// 计数按宽限内/未知分开。
+    #[tokio::test]
+    async fn cancelled_result_publishes_event_and_appends_ledger_row() {
+        use tinyiothub_core::models::event::{EventType, ThingEventType};
+
+        let thing = worker_thing("dev-1");
+        let cache: Arc<dyn ThingCacheSource> = Arc::new(VecCache::new(vec![thing]));
+        let bus = Arc::new(EventBus::new());
+        let server = DataServer::new(cache.clone(), bus.clone());
+        let ledger = Arc::new(RecordingLedger::default());
+        server.set_hub_ledger(ledger.clone());
+        let mut events = bus.subscribe();
+
+        DataServer::consume_worker_result(
+            WorkerResult::Cancelled {
+                thing_id: "dev-1".to_string(),
+                within_grace: true,
+                elapsed_ms: 42,
+            },
+            &cache,
+            bus.clone(),
+            &server.cancellation,
+        )
+        .await;
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+            .await
+            .expect("cancelled event within deadline")
+            .expect("event channel open");
+        assert_eq!(
+            event.event_type(),
+            &EventType::Device(ThingEventType::CommandCancelled),
+            "取消终态必须发 CommandCancelled"
+        );
+        let metadata = event.content().metadata();
+        assert_eq!(
+            metadata.get("outcome"),
+            Some(&serde_json::json!("cancelled")),
+            "宽限内退出 outcome=cancelled"
+        );
+        assert_eq!(metadata.get("elapsedMs"), Some(&serde_json::json!(42)));
+        assert_eq!(metadata.get("thingId"), Some(&serde_json::json!("dev-1")));
+        assert_eq!(event.source().thing_id(), Some("dev-1"));
+
+        let rows = ledger.rows();
+        assert_eq!(rows.len(), 1, "每次取消一条账本");
+        assert_eq!(rows[0].0, "ws-1");
+        assert_eq!(rows[0].1, "call_cancelled");
+        assert_eq!(rows[0].2.as_deref(), Some("dev-1"));
+        assert_eq!(
+            rows[0].3,
+            serde_json::json!({"v": 1, "thingId": "dev-1", "outcome": "cancelled", "elapsedMs": 42})
+        );
+        assert_eq!(server.cancelled_counts(), (1, 0));
+
+        // 不合作驱动迟到返回：outcome/kind 都是 *_unknown。
+        DataServer::consume_worker_result(
+            WorkerResult::Cancelled {
+                thing_id: "dev-1".to_string(),
+                within_grace: false,
+                elapsed_ms: 1500,
+            },
+            &cache,
+            bus,
+            &server.cancellation,
+        )
+        .await;
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+            .await
+            .expect("unknown event within deadline")
+            .expect("event channel open");
+        assert_eq!(event.event_type(), &EventType::Device(ThingEventType::CommandCancelled));
+        assert_eq!(
+            event.content().metadata().get("outcome"),
+            Some(&serde_json::json!("cancelled_unknown"))
+        );
+        let rows = ledger.rows();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].1, "call_cancelled_unknown");
+        assert_eq!(rows[1].3["outcome"], "cancelled_unknown");
+        assert_eq!(rows[1].3["elapsedMs"], 1500);
+        assert_eq!(server.cancelled_counts(), (1, 1));
+    }
+
+    /// 驱动返回 `Error::Cancelled` 不计失败预算、不标离线、不进重试退避。
+    struct AlwaysCancelledDriver {
+        thing: Thing,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl ThingDriver for AlwaysCancelledDriver {
+        fn thing(&self) -> &Thing {
+            &self.thing
+        }
+        fn thing_mut(&mut self) -> &mut Thing {
+            &mut self.thing
+        }
+        fn read_data(&mut self, _cancel: &CancelToken) -> Result<Vec<ResultValue>, Error> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(Error::Cancelled)
+        }
+        fn execute_command(&mut self, _cmd: &ThingCommand, _cancel: &CancelToken) -> Result<bool, Error> {
+            Err(Error::Cancelled)
+        }
+    }
+
+    #[test]
+    fn cancelled_error_does_not_count_as_driver_failure() {
+        use std::sync::atomic::AtomicUsize;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut wrapper = DriverWrapper::new(Box::new(AlwaysCancelledDriver {
+            thing: worker_thing("dev-1"),
+            calls: calls.clone(),
+        }));
+
+        assert!(wrapper.read_data_once().result.is_err());
+        let health = wrapper.overview().health;
+        assert_eq!(health.total_failures, 0, "取消不得计失败");
+        assert_eq!(health.consecutive_failures, 0);
+        assert_eq!(health.total_attempts, 0);
+
+        // 未记录失败 → 下次调用不进入退避，驱动再次被调用。
+        assert!(wrapper.read_data_once().result.is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "取消后不得进入重试退避");
     }
 }

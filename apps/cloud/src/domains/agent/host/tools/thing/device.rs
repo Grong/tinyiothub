@@ -473,6 +473,8 @@ fn scalar_text(value: &Value) -> Option<String> {
 
 pub(super) struct StopTool {
     pub(super) arbitration: Option<Arc<ArbitrationRegistry>>,
+    /// E4c：取消在途调用的入口（None = 只置闸门，无法协作取消）。
+    pub(super) data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
 }
 
 impl Attributable for StopTool {
@@ -491,8 +493,10 @@ impl Tool for StopTool {
     }
 
     fn description(&self) -> &str {
-        "立即停止对设备的后续操作：置 stop 闸门（默认 60s）并释放设备占用。\
-         在途的单次调用不会被中断；闸门期间 call_device/set_device 返回 stopped。"
+        "立即停止对设备的后续操作：置 stop 闸门（默认 60s）、释放设备占用并请求\
+         取消在途调用。工具立即返回 cancellation_requested（不代表已中止）；\
+         驱动的异步终态（cancelled / cancelled_unknown）随后落事件与账本。\
+         闸门期间 call_device/set_device 返回 stopped。"
     }
 
     fn parameters_schema(&self) -> Value {
@@ -527,14 +531,22 @@ impl Tool for StopTool {
             .map(std::time::Duration::from_secs)
             .unwrap_or(DEFAULT_STOP_TTL);
         let reason = input.reason.unwrap_or_else(|| "operator stop".to_string());
+        // 1) 闸门 + 释放全部 claim；2) 协作式取消当前在途调用；3) 立即返回，
+        // 不等待驱动退出（异步终态由 worker → DataServer 留痕）。
         registry.set_stop(&input.thing_id, reason.clone(), ttl);
+        let in_flight = self
+            .data_server
+            .as_ref()
+            .map(|server| server.cancel_calls(&input.thing_id))
+            .unwrap_or(0);
         let until = chrono::Utc::now() + chrono::Duration::seconds(ttl.as_secs() as i64);
         tool_ok(json!({
             "v": 1,
             "thingId": input.thing_id,
-            "status": "stopped",
+            "status": "cancellation_requested",
             "reason": reason,
             "until": until.to_rfc3339(),
+            "inFlight": in_flight,
         }))
     }
 }
@@ -737,6 +749,57 @@ mod tests {
                 .unwrap_or_default()
                 .contains("unknown resource 'not-declared'"),
             "fail-closed 文案"
+        );
+    }
+
+    // ── E4c：stop 立即返回 + 闸门文案一致 ───────────────
+
+    /// stop 立即返回 cancellation_requested（不等待驱动）、置闸门；随后
+    /// invoke_action 以 `stopped: <reason>` 拒绝（不是 claim 的 busy 文案）。
+    #[tokio::test]
+    async fn stop_returns_cancellation_requested_and_gate_rejects_next_call() {
+        let registry = Arc::new(ArbitrationRegistry::default());
+        let tool = StopTool {
+            arbitration: Some(registry.clone()),
+            data_server: None,
+        };
+
+        let out = tool
+            .execute(json!({"thingId": "dev-1", "reason": "ops emergency", "ttlSecs": 5}))
+            .await
+            .expect("execute");
+        assert!(out.success, "{:?}", out.error);
+        let payload: Value = serde_json::from_str(&out.output).unwrap();
+        assert_eq!(payload["status"], "cancellation_requested");
+        assert_eq!(payload["thingId"], "dev-1");
+        assert_eq!(payload["reason"], "ops emergency");
+        assert_eq!(payload["inFlight"], 0, "无 DataServer 时无在途调用可取消");
+        assert!(payload["until"].as_str().is_some_and(|s| !s.is_empty()));
+        assert_eq!(registry.stop_reason("dev-1").as_deref(), Some("ops emergency"));
+
+        // 后续调用：闸门优先于确认/claim，统一 `stopped:` 文案。
+        let pool = pool_with_device().await;
+        let invoke = super::super::invoke_action::InvokeActionTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            pool,
+            workspace_id: "ws-set".into(),
+            data_server: None,
+            pending_actions: Arc::new(super::super::pending_action::PendingActionStore::new()),
+            arbitration: Some(registry),
+            arbitration_holder: "chat:ws-set".into(),
+            approval: None,
+            access: None,
+            resources: None,
+        };
+        let blocked = invoke
+            .execute(json!({"thingId": "dev-1", "actionName": "reboot"}))
+            .await
+            .expect("execute");
+        assert!(!blocked.success, "闸门期间必须拒绝");
+        assert_eq!(
+            blocked.error.as_deref(),
+            Some("stopped: ops emergency"),
+            "必须是 stopped: <reason> 而非 busy: stop:..."
         );
     }
 

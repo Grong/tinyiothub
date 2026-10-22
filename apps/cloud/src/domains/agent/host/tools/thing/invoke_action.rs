@@ -99,6 +99,14 @@ impl Tool for InvokeActionTool {
         let raw_args = args.clone();
         let input: Input = serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
+        // 0. stop 闸门优先：闸门期间直接拒绝（`stopped: <reason>`），不再走
+        // 确认/claim（与 set_device 文案一致；claim 的 busy 文案只是兜底）。
+        if let Some(registry) = &self.arbitration
+            && let Some(reason) = registry.stop_reason(&input.thing_id)
+        {
+            return tool_err(format!("stopped: {reason}"));
+        }
+
         // 1. Verify thing exists and check type
         let thing = self
             .thing_service
@@ -631,9 +639,10 @@ mod tests {
             .expect("失败解析不得留下 claim");
     }
 
-    /// stop 闸门期间的 claim 返回 busy，holder 带 stop 原因（spec §2.1）。
+    /// stop 闸门期间调用在确认/claim 之前直接拒绝，统一 `stopped: <reason>`
+    /// 文案（spec §2.4；不再是 claim 的 busy 文案）。
     #[tokio::test]
-    async fn post_stop_claim_is_rejected_with_stop_reason() {
+    async fn post_stop_call_is_rejected_with_stopped_reason() {
         let pool = test_pool().await;
         seed_device(&pool, "ws-stop", "dev-1").await;
         let access = resource_access(
@@ -655,9 +664,11 @@ mod tests {
             .execute(json!({"thingId": "dev-1", "actionName": "reboot"}))
             .await
             .expect("execute");
-        assert!(!failed.success, "stop 期间 claim 必须拒绝");
-        let msg = failed.error.unwrap_or_default();
-        assert!(msg.contains("stop:operator stop"), "busy 必须带 stop 原因: {msg}");
-        assert!(msg.contains("__device__"), "stop busy 资源为合成设备资源: {msg}");
+        assert!(!failed.success, "stop 期间调用必须拒绝");
+        assert_eq!(
+            failed.error.as_deref(),
+            Some("stopped: operator stop"),
+            "闸门文案必须是 stopped: <reason>"
+        );
     }
 }

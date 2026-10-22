@@ -257,10 +257,9 @@ impl RetryManager {
                 RetryResult::Success(result)
             }
             Err(error) => {
-                self.state.record_failure(error.clone());
-
                 // 取消是终态：即使 max_attempts 未用尽也立即失败，不再调用驱动、
-                // 不进入退避（E4c stop 宽限期约束）。
+                // 不进入退避（E4c stop 宽限期约束）。取消不计入失败预算——
+                // 否则 stop 会把驱动推向退避/离线，等于把协作取消当故障。
                 if matches!(error, Error::Cancelled) {
                     return RetryResult::Failed {
                         attempts: self.state.current_attempt,
@@ -268,6 +267,8 @@ impl RetryManager {
                         total_duration: self.state.start_time.elapsed(),
                     };
                 }
+
+                self.state.record_failure(error.clone());
 
                 if self.state.current_attempt >= self.config.max_attempts
                     || self.state.start_time.elapsed() >= self.config.timeout

@@ -270,6 +270,7 @@ pub fn create_thing_tools(
         })),
         destructive(Box::new(device::StopTool {
             arbitration: runtime.arbitration.clone(),
+            data_server: runtime.data_server.clone(),
         })),
         read_only(Box::new(watch_tools::WatchTool {
             pool: pool.clone(),

@@ -325,7 +325,10 @@ impl HubStreamState {
                 None
             }
             EventType::Device(
-                ThingEventType::CommandStarted | ThingEventType::CommandCompleted | ThingEventType::CommandFailed,
+                ThingEventType::CommandStarted
+                | ThingEventType::CommandCompleted
+                | ThingEventType::CommandFailed
+                | ThingEventType::CommandCancelled,
             ) => self.push_control(event, thing_id, "job"),
             // E4b 的 control 面只覆盖 job / state_change；watch 命中与超时
             // 仍由 E3 `/live/stream`（账本尾随）投影，不在此重复。

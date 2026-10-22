@@ -130,6 +130,12 @@ impl DriverWrapper {
             RetryResult::Success(_) => {
                 self.status_manager.record_success(elapsed);
             }
+            // E4c：取消是 stop 的协作结果，不是驱动故障——不得计失败预算
+            // 或把设备标离线（重试层已把 Cancelled 视为终态）。
+            RetryResult::Failed {
+                last_error: Error::Cancelled,
+                ..
+            } => {}
             RetryResult::Failed { .. } | RetryResult::Timeout { .. } => {
                 self.status_manager.record_failure();
             }

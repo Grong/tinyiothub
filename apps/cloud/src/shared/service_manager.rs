@@ -103,7 +103,13 @@ impl ServiceManager {
         let device_cache: Arc<dyn tinyiothub_runtime::ports::ThingCacheSource> = Arc::new(
             crate::shared::runtime_ports::ThingCacheAdapter(app_state.device_cache.clone()),
         );
+        // E1/E4c 账本适配器：取消终态（call_cancelled*）与 wake/watch 账本
+        // 共用同一实例（含日增观测计数）。
+        let hub_ledger = Arc::new(crate::shared::runtime_ports::HubLedgerAdapter::new(
+            (*app_state.db).clone(),
+        ));
         let data_server = Arc::new(DataServer::new(device_cache.clone(), app_state.event_bus.clone()));
+        data_server.set_hub_ledger(hub_ledger.clone());
 
         // 2.1 中央 sampler：catalog = device_cache ∪ 已安装 manifest；
         // 需求 = 本地订阅/近期读取（DemandTracker）+ 持久规则快照
@@ -574,9 +580,6 @@ impl ServiceManager {
             //
             // E1 Task 8 bootstrap 硬顺序：set_wake_ledger / set_watch_deps /
             // 限速预热全部先于 start——三者都只影响其后 start 的工作区。
-            let hub_ledger = Arc::new(crate::shared::runtime_ports::HubLedgerAdapter::new(
-                (*app_state.db).clone(),
-            ));
             thing_agent_manager.set_wake_ledger(hub_ledger.clone());
             thing_agent_manager.set_watch_deps(tinyiothub_agent::runtime::thing_agent::WatchDeps {
                 cache: Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(

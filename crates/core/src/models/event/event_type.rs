@@ -49,6 +49,9 @@ pub enum ThingEventType {
     CommandCompleted,
     /// Command execution failed
     CommandFailed,
+    /// In-flight command cancelled by stop (async outcome: cancelled /
+    /// cancelled_unknown)
+    CommandCancelled,
 
     // === Thing lifecycle events ===
     /// Thing created
@@ -157,6 +160,7 @@ impl EventType {
                 ThingEventType::CommandStarted => "command_started".to_string(),
                 ThingEventType::CommandCompleted => "command_completed".to_string(),
                 ThingEventType::CommandFailed => "command_failed".to_string(),
+                ThingEventType::CommandCancelled => "command_cancelled".to_string(),
                 ThingEventType::DeviceCreated => "device_created".to_string(),
                 ThingEventType::DeviceUpdated => "device_updated".to_string(),
                 ThingEventType::DeviceDeleted => "device_deleted".to_string(),
@@ -217,6 +221,7 @@ impl EventType {
                 "command_started" => Ok(EventType::Device(ThingEventType::CommandStarted)),
                 "command_completed" => Ok(EventType::Device(ThingEventType::CommandCompleted)),
                 "command_failed" => Ok(EventType::Device(ThingEventType::CommandFailed)),
+                "command_cancelled" => Ok(EventType::Device(ThingEventType::CommandCancelled)),
                 "device_created" => Ok(EventType::Device(ThingEventType::DeviceCreated)),
                 "device_updated" => Ok(EventType::Device(ThingEventType::DeviceUpdated)),
                 "device_deleted" => Ok(EventType::Device(ThingEventType::DeviceDeleted)),
@@ -299,7 +304,10 @@ impl ThingEventType {
     pub fn is_command_event(&self) -> bool {
         matches!(
             self,
-            ThingEventType::CommandStarted | ThingEventType::CommandCompleted | ThingEventType::CommandFailed
+            ThingEventType::CommandStarted
+                | ThingEventType::CommandCompleted
+                | ThingEventType::CommandFailed
+                | ThingEventType::CommandCancelled
         )
     }
 
@@ -315,6 +323,7 @@ impl ThingEventType {
             ThingEventType::CommandStarted => "Command Started",
             ThingEventType::CommandCompleted => "Command Completed",
             ThingEventType::CommandFailed => "Command Failed",
+            ThingEventType::CommandCancelled => "Command Cancelled",
             ThingEventType::DeviceCreated => "Thing Created",
             ThingEventType::DeviceUpdated => "Thing Updated",
             ThingEventType::DeviceDeleted => "Thing Deleted",
@@ -330,6 +339,7 @@ impl ThingEventType {
             ThingEventType::DeviceNormal | ThingEventType::PropertyNormal => EventLevel::Info,
             ThingEventType::CommandFailed => EventLevel::Error,
             ThingEventType::CommandCompleted => EventLevel::Info,
+            ThingEventType::CommandCancelled => EventLevel::Info,
             ThingEventType::CommandStarted => EventLevel::Debug,
             ThingEventType::PropertyChange => EventLevel::Debug,
             ThingEventType::Connection => EventLevel::Info,
@@ -404,7 +414,24 @@ mod tests {
         assert!(ThingEventType::CommandStarted.is_command_event());
         assert!(ThingEventType::CommandCompleted.is_command_event());
         assert!(ThingEventType::CommandFailed.is_command_event());
+        assert!(ThingEventType::CommandCancelled.is_command_event());
         assert!(!ThingEventType::PropertyChange.is_command_event());
+    }
+
+    #[test]
+    fn test_command_cancelled_wire_round_trip() {
+        let event_type = EventType::Device(ThingEventType::CommandCancelled);
+        assert_eq!(event_type.subtype_string(), "command_cancelled");
+        assert_eq!(event_type.to_string(), "device:command_cancelled");
+        assert_eq!(
+            EventType::from_strings("device", "command_cancelled").unwrap(),
+            event_type
+        );
+        assert_eq!(
+            serde_json::to_value(ThingEventType::CommandCancelled).unwrap(),
+            serde_json::json!("CommandCancelled"),
+            "wire 形状与既有变体一致（数据库 subtype 走 subtype_string）"
+        );
     }
 
     #[test]
