@@ -301,6 +301,7 @@ async fn seeded_tool(
         arbitration_holder: "test".to_string(),
         approval: None,
         access: Some(Arc::new(RejectingAccess(rejection))),
+        resources: None,
     };
     (tool, thing)
 }

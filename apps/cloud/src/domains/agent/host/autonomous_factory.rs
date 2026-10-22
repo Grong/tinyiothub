@@ -253,6 +253,8 @@ pub(crate) fn build_autonomous_tools(
         approval: None,
         // E4a：上下文已接线则沿用（自治 run 后续单独接线时只需注入 context）。
         access: runtime.access.clone(),
+        // E4c：与 chat 路径共享声明资源解析。
+        resources: runtime.resources.clone(),
     };
     tools.push(Box::new(AutonomousInvokeActionTool::new(
         inner,

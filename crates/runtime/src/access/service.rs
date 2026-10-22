@@ -440,6 +440,25 @@ impl AccessService {
         Ok(Some(decl))
     }
 
+    /// E4c: load the device declaration plus its package (the declaration
+    /// itself does not carry the package-level `resources[]`).
+    async fn declaration_with_package(
+        &self,
+        workspace_id: &str,
+        thing_id: &str,
+    ) -> Result<(DeviceDeclaration, Arc<InstalledPackage>), String> {
+        let decl = self
+            .load_declaration(workspace_id, thing_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("no declaration for thing '{thing_id}'"))?;
+        let package = self
+            .manifests
+            .get(workspace_id, &decl.driver)
+            .ok_or_else(|| format!("manifest for driver '{}' unavailable", decl.driver))?;
+        Ok((decl, package))
+    }
+
     /// Restore installed packages after a restart: re-read active DB rows,
     /// load their persisted binaries and repopulate the in-memory registry.
     ///
@@ -517,6 +536,46 @@ impl super::validator::AccessCallValidator for AccessService {
             .map_err(|e| super::validator::CallError::Unavailable(e.to_string()))?
             .ok_or_else(|| super::validator::CallError::NoDeclaration(thing_id.into()))?;
         super::validator::validate_call(&decl, tool, params, None)
+    }
+}
+
+#[async_trait::async_trait]
+impl super::resources::ResourceResolver for AccessService {
+    async fn resolve_action(
+        &self,
+        workspace_id: &str,
+        thing_id: &str,
+        tool_name: &str,
+    ) -> Result<Vec<super::resources::ResourceClaim>, String> {
+        let (decl, package) = self.declaration_with_package(workspace_id, thing_id).await?;
+        let tool = decl
+            .tools
+            .iter()
+            .find(|t| t.name == tool_name)
+            .ok_or_else(|| format!("action '{tool_name}' not declared"))?;
+        super::resources::resolve_tool_claims(&package.manifest.resources, tool)
+    }
+
+    async fn resolve_properties(
+        &self,
+        workspace_id: &str,
+        thing_id: &str,
+        properties: &[String],
+    ) -> Result<Vec<super::resources::ResourceClaim>, String> {
+        // set_device 从未要求设备必须有声明：无声明时沿用 E1 合成设备资源
+        // （仍然每设备互斥），而不是把存量设备的写入拒绝掉。
+        let Some(decl) = self
+            .load_declaration(workspace_id, thing_id)
+            .await
+            .map_err(|e| e.to_string())?
+        else {
+            return Ok(vec![super::resources::device_claim()]);
+        };
+        let package = self
+            .manifests
+            .get(workspace_id, &decl.driver)
+            .ok_or_else(|| format!("manifest for driver '{}' unavailable", decl.driver))?;
+        super::resources::resolve_property_claims(&package.manifest.resources, &decl, properties)
     }
 }
 
@@ -1304,5 +1363,123 @@ mod tests {
             Instant::now() + Duration::from_secs(29)
         ));
         fx.service.unsubscribe(&id);
+    }
+
+    // ── E4c：资源解析（声明 → 包级 resources[]）────────────
+
+    const RESOURCE_MANIFEST: &str = r#"{
+      "manifestVersion":"1.0",
+      "identity":{"driver":"resource-demo","version":"1.0.0","protocol":"demo",
+                  "abiVersion":2,"dynamicCapabilities":true},
+      "config":{"type":"object"},"tools":[],
+      "stateFields":[{"name":"level","type":"integer"}],
+      "sources":[],
+      "resources":[
+        {"id":"actuator","mode":"exclusive","capacity":1},
+        {"id":"stream","mode":"shared","capacity":2}
+      ],
+      "placement":{"mode":"runtime"},
+      "limits":{"maxConcurrentJobs":1,"maxCallsPerMin":60}
+    }"#;
+
+    fn resource_declaration() -> DeviceDeclaration {
+        serde_json::from_value(serde_json::json!({
+            "manifestVersion":"1.0",
+            "driver":"resource-demo",
+            "driverVersion":"1.0.0",
+            "stateFields":[{"name":"level","type":"integer"}],
+            "tools":[
+                {"name":"fire","kind":"action","parameters":{"type":"object"},
+                 "resources":["stream","actuator"]},
+                {"name":"set_level","kind":"set","targetField":"level",
+                 "parameters":{"type":"object","properties":{"level":{"type":"integer"}}},
+                 "resources":["stream"]},
+                {"name":"ghost","kind":"action","parameters":{"type":"object"},
+                 "resources":["not-declared"]}
+            ]
+        }))
+        .expect("declaration json")
+    }
+
+    async fn fixture_with_resource_declaration() -> Fixture {
+        let fx = fixture(None);
+        fx.service
+            .manifests
+            .seed_builtin(RESOURCE_MANIFEST)
+            .expect("resource manifest must validate");
+        let decl = resource_declaration();
+        let json = serde_json::to_string(&decl).unwrap();
+        fx.service
+            .device_store
+            .upsert(&DeviceDeclarationRecord {
+                workspace_id: "ws1".into(),
+                thing_id: "t1".into(),
+                driver_name: decl.driver.clone(),
+                driver_version: decl.driver_version.clone(),
+                declaration_json: json.clone(),
+                declaration_hash: "hash".into(),
+                status: "active".into(),
+                updated_at: "2026-10-22T00:00:00Z".into(),
+            })
+            .await
+            .expect("device store");
+        fx
+    }
+
+    #[tokio::test]
+    async fn resolver_reads_package_resources_for_actions_and_properties() {
+        use super::super::resources::{ResourceClaim, ResourceResolver};
+
+        let fx = fixture_with_resource_declaration().await;
+        let resolver: &dyn ResourceResolver = &fx.service;
+
+        // 排序 + 声明模式/容量。
+        let claims = resolver.resolve_action("ws1", "t1", "fire").await.unwrap();
+        assert_eq!(
+            claims,
+            vec![
+                ResourceClaim {
+                    id: "actuator".into(),
+                    exclusive: true,
+                    capacity: 1,
+                },
+                ResourceClaim {
+                    id: "stream".into(),
+                    exclusive: false,
+                    capacity: 2,
+                },
+            ]
+        );
+
+        // 属性 → kind=set 工具的 resources。
+        let claims = resolver
+            .resolve_properties("ws1", "t1", &["level".into()])
+            .await
+            .unwrap();
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].id, "stream");
+        assert!(!claims[0].exclusive);
+
+        // 未声明的属性 → 合成设备资源（E1）。
+        let claims = resolver
+            .resolve_properties("ws1", "t1", &["temp".into()])
+            .await
+            .unwrap();
+        assert_eq!(claims[0].id, super::super::resources::DEVICE_RESOURCE);
+
+        // fail-closed：未声明的资源 id / 工具。
+        let err = resolver.resolve_action("ws1", "t1", "ghost").await.unwrap_err();
+        assert_eq!(err, "unknown resource 'not-declared'");
+        let err = resolver.resolve_action("ws1", "t1", "missing").await.unwrap_err();
+        assert_eq!(err, "action 'missing' not declared");
+
+        // 无声明设备（set_device 存量路径）→ E1 合成设备资源。
+        let undeclared = fixture(None);
+        let resolver: &dyn ResourceResolver = &undeclared.service;
+        let claims = resolver
+            .resolve_properties("ws1", "legacy", &["level".into()])
+            .await
+            .unwrap();
+        assert_eq!(claims, vec![super::super::resources::device_claim()]);
     }
 }

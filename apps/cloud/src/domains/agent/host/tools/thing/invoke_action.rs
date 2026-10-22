@@ -12,9 +12,10 @@ use tinyiothub_agent::runtime::thing_agent::seams::approval::{
     ApprovalDecision, ApprovalInput, ApprovalSeam, DefaultApproval,
 };
 use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL};
+use tinyiothub_runtime::access::resources::ResourceResolver;
 use tinyiothub_skills::trust::ToolSafety;
 
-use super::{PendingActionStore, store_pending_action, tool_err, tool_ok, validate_action_params};
+use super::{PendingActionStore, resource_specs, store_pending_action, tool_err, tool_ok, validate_action_params};
 use crate::domains::thing::service::ThingService;
 
 pub struct InvokeActionTool {
@@ -35,6 +36,9 @@ pub struct InvokeActionTool {
     /// E4a 声明校验（None = 未接线，既有行为不变）。接线后 fail-closed：
     /// 未声明操作/参数越界直接拒绝，不回退 DB schema。
     pub access: Option<Arc<dyn tinyiothub_runtime::access::validator::AccessCallValidator>>,
+    /// E4c 声明资源解析（None = 未接线）：接线后按工具声明 claim 资源，
+    /// 未声明 resources 的工具仍 claim 合成 `__device__`（E1 语义）。
+    pub resources: Option<Arc<dyn ResourceResolver>>,
 }
 
 impl Attributable for InvokeActionTool {
@@ -203,16 +207,35 @@ impl Tool for InvokeActionTool {
             }
         }
 
-        // 5. E1 仲裁（Task 9）：执行前抢设备互斥锁——TTL（默认 10min）内
-        // 已被另一持有者（chat 会话/值守 run）占用同设备时拒绝，busy 文案
-        // 带持有者名；持有者崩溃不死锁（TTL 过期自动可再 acquire）。
-        // Lease RAII：本次调用返回即释放（run 级持续占用由 E4 声明制细化）。
+        // 5. E1/E4c 仲裁：执行前按声明资源 claim——TTL（默认 10min）内
+        // 已被另一持有者（chat 会话/值守 run）占用时拒绝，busy 文案带持有者
+        // 名与资源 id；持有者崩溃不死锁（TTL 过期自动可再 acquire）。
+        // 未接线资源解析时沿用 E1 合成 `__device__`（每设备互斥）。
+        // Lease RAII：本次调用返回即释放。
         // 确认门路径：mint token 不持锁，但批准后的真实下发经
         // dispatch_command 同样 acquire（autonomous_invoke.rs，Task 9 fix）。
         let _lease = match &self.arbitration {
             Some(registry) => {
-                match registry.try_acquire(&input.thing_id, self.arbitration_holder.clone(), DEFAULT_LEASE_TTL) {
+                let acquired = match &self.resources {
+                    Some(resolver) => match resolver
+                        .resolve_action(&self.workspace_id, &input.thing_id, &input.action_name)
+                        .await
+                    {
+                        Ok(claims) => registry.try_acquire_resources(
+                            &input.thing_id,
+                            self.arbitration_holder.clone(),
+                            &resource_specs(&claims),
+                            DEFAULT_LEASE_TTL,
+                        ),
+                        Err(e) => return tool_err(format!("资源解析失败: {e}")),
+                    },
+                    None => registry.try_acquire(&input.thing_id, self.arbitration_holder.clone(), DEFAULT_LEASE_TTL),
+                };
+                match acquired {
                     Ok(lease) => Some(lease),
+                    // 声明资源路径带 holder + resource（spec §2.4）；兼容路径
+                    // 保持 E1 既有文案。
+                    Err(busy) if self.resources.is_some() => return tool_err(busy.to_string()),
                     Err(busy) => {
                         return tool_err(format!("busy: 设备正被 {} 占用，请稍后重试", busy.holder));
                     }
@@ -263,6 +286,100 @@ impl Tool for InvokeActionTool {
 mod tests {
     use super::*;
     use crate::domains::agent::host::test_utils::seed_test_workspace;
+    use crate::shared::access_ports::{
+        DbAcceptanceStore, DbDeviceStore, DbDriverStore, DbProjectionStore, DbThingSource,
+    };
+    use tinyiothub_agent::runtime::thing_agent::{ResourceMode, ResourceSpec};
+    use tinyiothub_core::driver::declaration::{DeviceDeclaration, DeviceDeclarationRecord};
+    use tinyiothub_runtime::access::demand::DemandTracker;
+    use tinyiothub_runtime::access::registry::ManifestRegistry;
+    use tinyiothub_runtime::access::service::AccessService;
+    use tinyiothub_runtime::access::validator::AccessCallValidator;
+
+    /// 包级资源声明：actuator exclusive、camera exclusive。
+    const RESOURCE_MANIFEST: &str = r#"{
+      "manifestVersion":"1.0",
+      "identity":{"driver":"resource-demo","version":"1.0.0","protocol":"demo",
+                  "abiVersion":2,"dynamicCapabilities":true},
+      "config":{"type":"object"},"tools":[],
+      "stateFields":[{"name":"level","type":"integer"}],
+      "sources":[],
+      "resources":[
+        {"id":"actuator","mode":"exclusive","capacity":1},
+        {"id":"camera","mode":"exclusive","capacity":1}
+      ],
+      "placement":{"mode":"runtime"},
+      "limits":{"maxConcurrentJobs":1,"maxCallsPerMin":60}
+    }"#;
+
+    /// 真 AccessService：声明写入 store，包级 resources 来自内置 manifest。
+    async fn resource_access(pool: &SqlitePool, ws: &str, thing_id: &str, tools: Value) -> Arc<AccessService> {
+        let db = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
+        let manifests = Arc::new(ManifestRegistry::new());
+        manifests.seed_builtin(RESOURCE_MANIFEST).expect("resource manifest");
+        let access = Arc::new(AccessService::new(
+            std::path::PathBuf::from("."),
+            manifests,
+            Arc::new(DbDriverStore(db.clone())),
+            Arc::new(DbDeviceStore(db.clone())),
+            Arc::new(DbProjectionStore(db.clone())),
+            Arc::new(DbThingSource(db.clone())),
+            Arc::new(DbAcceptanceStore(db.clone())),
+            Arc::new(DemandTracker::new()),
+        ));
+        let decl: DeviceDeclaration = serde_json::from_value(json!({
+            "manifestVersion": "1.0",
+            "driver": "resource-demo",
+            "driverVersion": "1.0.0",
+            "stateFields": [{"name":"level","type":"integer"}],
+            "tools": tools,
+        }))
+        .expect("declaration json");
+        db.upsert_device_declaration(&DeviceDeclarationRecord {
+            workspace_id: ws.into(),
+            thing_id: thing_id.into(),
+            driver_name: decl.driver.clone(),
+            driver_version: decl.driver_version.clone(),
+            declaration_json: serde_json::to_string(&decl).unwrap(),
+            declaration_hash: "test-hash".into(),
+            status: "active".into(),
+            updated_at: "2026-10-22T00:00:00Z".into(),
+        })
+        .await
+        .expect("declaration row");
+        access
+    }
+
+    fn tool_with_access(
+        pool: &SqlitePool,
+        ws: &str,
+        registry: Arc<ArbitrationRegistry>,
+        holder: &str,
+        access: Arc<AccessService>,
+    ) -> InvokeActionTool {
+        let mut tool = tool(pool, ws, Some(registry), holder);
+        tool.access = Some(access.clone() as Arc<dyn AccessCallValidator>);
+        tool.resources = Some(access as Arc<dyn ResourceResolver>);
+        tool
+    }
+
+    async fn register_action(pool: &SqlitePool, thing_id: &str, name: &str) {
+        sqlx::query("INSERT INTO thing_actions (id, thing_id, name) VALUES (?, ?, ?)")
+            .bind(format!("act-{name}-{thing_id}"))
+            .bind(thing_id)
+            .bind(name)
+            .execute(pool)
+            .await
+            .expect("register action");
+    }
+
+    fn exclusive(id: &str) -> ResourceSpec {
+        ResourceSpec {
+            id: id.into(),
+            mode: ResourceMode::Exclusive,
+            capacity: 1,
+        }
+    }
 
     async fn test_pool() -> SqlitePool {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -317,6 +434,7 @@ mod tests {
             arbitration_holder: holder.to_string(),
             approval: None,
             access: None,
+            resources: None,
         }
     }
 
@@ -370,5 +488,176 @@ mod tests {
             .await
             .expect("execute");
         assert!(ok.success, "未接线仲裁时行为不变: {:?}", ok.error);
+    }
+
+    // ── E4c：声明资源 claim ─────────────────────────────
+
+    /// 声明了 resources 的 action：claim 该资源；他人持有时 busy 带
+    /// holder + resource（spec §2.4）。
+    #[tokio::test]
+    async fn declared_resources_are_claimed_and_busy_carries_holder_and_resource() {
+        let pool = test_pool().await;
+        seed_device(&pool, "ws-res", "dev-1").await;
+        let access = resource_access(
+            &pool,
+            "ws-res",
+            "dev-1",
+            json!([{"name":"reboot","kind":"action","parameters":{"type":"object"},"resources":["actuator"]}]),
+        )
+        .await;
+        let registry = Arc::new(ArbitrationRegistry::default());
+        let tool = tool_with_access(&pool, "ws-res", registry.clone(), "watch-run-B", access);
+
+        let held = registry
+            .try_acquire_resources(
+                "dev-1",
+                "watch-run-A".into(),
+                &[exclusive("actuator")],
+                DEFAULT_LEASE_TTL,
+            )
+            .expect("run-A 占 actuator");
+        let busy = tool
+            .execute(json!({"thingId": "dev-1", "actionName": "reboot"}))
+            .await
+            .expect("execute");
+        assert!(!busy.success, "同资源被占必须 busy");
+        let msg = busy.error.unwrap_or_default();
+        assert!(msg.contains("busy:"), "busy 文案: {msg}");
+        assert!(msg.contains("watch-run-A"), "busy 必须带持有者: {msg}");
+        assert!(msg.contains("actuator"), "busy 必须带资源 id: {msg}");
+
+        // 释放后同一工具可执行。
+        drop(held);
+        let ok = tool
+            .execute(json!({"thingId": "dev-1", "actionName": "reboot"}))
+            .await
+            .expect("execute");
+        assert!(ok.success, "释放后必须放行: {:?}", ok.error);
+    }
+
+    /// 不同声明资源互不冲突：actuator 被占不影响 camera 上的 action。
+    #[tokio::test]
+    async fn different_declared_resources_do_not_conflict() {
+        let pool = test_pool().await;
+        seed_device(&pool, "ws-res2", "dev-1").await;
+        register_action(&pool, "dev-1", "calibrate").await;
+        let access = resource_access(
+            &pool,
+            "ws-res2",
+            "dev-1",
+            json!([
+                {"name":"reboot","kind":"action","parameters":{"type":"object"},"resources":["actuator"]},
+                {"name":"calibrate","kind":"action","parameters":{"type":"object"},"resources":["camera"]}
+            ]),
+        )
+        .await;
+        let registry = Arc::new(ArbitrationRegistry::default());
+        let tool = tool_with_access(&pool, "ws-res2", registry.clone(), "chat", access);
+
+        let _held = registry
+            .try_acquire_resources(
+                "dev-1",
+                "watch-run-A".into(),
+                &[exclusive("actuator")],
+                DEFAULT_LEASE_TTL,
+            )
+            .expect("run-A 占 actuator");
+        let ok = tool
+            .execute(json!({"thingId": "dev-1", "actionName": "calibrate"}))
+            .await
+            .expect("execute");
+        assert!(ok.success, "不同资源必须可并行: {:?}", ok.error);
+    }
+
+    /// 未声明 resources 的 action 仍 claim 合成 `__device__`（E1 语义）。
+    #[tokio::test]
+    async fn action_with_empty_resources_claims_device_resource() {
+        let pool = test_pool().await;
+        seed_device(&pool, "ws-dev", "dev-1").await;
+        register_action(&pool, "dev-1", "echo").await;
+        let access = resource_access(
+            &pool,
+            "ws-dev",
+            "dev-1",
+            json!([{"name":"echo","kind":"action","parameters":{"type":"object"},"resources":[]}]),
+        )
+        .await;
+        let registry = Arc::new(ArbitrationRegistry::default());
+        let tool = tool_with_access(&pool, "ws-dev", registry.clone(), "chat", access);
+
+        let _held = registry
+            .try_acquire_default("dev-1", "someone-else".to_string())
+            .expect("held");
+        let busy = tool
+            .execute(json!({"thingId": "dev-1", "actionName": "echo"}))
+            .await
+            .expect("execute");
+        assert!(!busy.success, "空声明必须回落到设备互斥");
+        let msg = busy.error.unwrap_or_default();
+        assert!(msg.contains("someone-else"), "busy 带持有者: {msg}");
+        assert!(msg.contains("__device__"), "busy 带合成资源: {msg}");
+    }
+
+    /// 未知资源 id fail-closed：拒绝且不留下 partial claim。
+    #[tokio::test]
+    async fn unknown_resource_is_rejected_before_claim() {
+        let pool = test_pool().await;
+        seed_device(&pool, "ws-ghost", "dev-1").await;
+        register_action(&pool, "dev-1", "ghost").await;
+        let access = resource_access(
+            &pool,
+            "ws-ghost",
+            "dev-1",
+            json!([{"name":"ghost","kind":"action","parameters":{"type":"object"},"resources":["not-declared"]}]),
+        )
+        .await;
+        let registry = Arc::new(ArbitrationRegistry::default());
+        let tool = tool_with_access(&pool, "ws-ghost", registry.clone(), "chat", access);
+
+        let failed = tool
+            .execute(json!({"thingId": "dev-1", "actionName": "ghost"}))
+            .await
+            .expect("execute");
+        assert!(!failed.success);
+        let msg = failed.error.unwrap_or_default();
+        assert!(
+            msg.contains("unknown resource 'not-declared'"),
+            "fail-closed 文案: {msg}"
+        );
+
+        // 解析失败发生在 claim 之前：设备资源未被占用。
+        registry
+            .try_acquire_default("dev-1", "after".to_string())
+            .expect("失败解析不得留下 claim");
+    }
+
+    /// stop 闸门期间的 claim 返回 busy，holder 带 stop 原因（spec §2.1）。
+    #[tokio::test]
+    async fn post_stop_claim_is_rejected_with_stop_reason() {
+        let pool = test_pool().await;
+        seed_device(&pool, "ws-stop", "dev-1").await;
+        let access = resource_access(
+            &pool,
+            "ws-stop",
+            "dev-1",
+            json!([{"name":"reboot","kind":"action","parameters":{"type":"object"},"resources":["actuator"]}]),
+        )
+        .await;
+        let registry = Arc::new(ArbitrationRegistry::default());
+        registry.set_stop(
+            "dev-1",
+            "operator stop".into(),
+            tinyiothub_agent::runtime::thing_agent::arbitration::DEFAULT_STOP_TTL,
+        );
+        let tool = tool_with_access(&pool, "ws-stop", registry, "chat", access);
+
+        let failed = tool
+            .execute(json!({"thingId": "dev-1", "actionName": "reboot"}))
+            .await
+            .expect("execute");
+        assert!(!failed.success, "stop 期间 claim 必须拒绝");
+        let msg = failed.error.unwrap_or_default();
+        assert!(msg.contains("stop:operator stop"), "busy 必须带 stop 原因: {msg}");
+        assert!(msg.contains("__device__"), "stop busy 资源为合成设备资源: {msg}");
     }
 }

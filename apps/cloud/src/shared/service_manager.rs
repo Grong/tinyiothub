@@ -305,6 +305,11 @@ impl ServiceManager {
                     .access
                     .clone()
                     .map(|a| a as Arc<dyn tinyiothub_runtime::access::validator::AccessCallValidator>),
+                // E4c：call/set 按声明 resources 解析并 claim。
+                app_state
+                    .access
+                    .clone()
+                    .map(|a| a as Arc<dyn tinyiothub_runtime::access::resources::ResourceResolver>),
                 // E4b：读取需求写入 sampler 共享的 DemandTracker。
                 app_state
                     .access
@@ -363,6 +368,10 @@ impl ServiceManager {
                                     .access
                                     .clone()
                                     .map(|a| a as Arc<dyn tinyiothub_runtime::access::validator::AccessCallValidator>),
+                                resources: app_state
+                                    .access
+                                    .clone()
+                                    .map(|a| a as Arc<dyn tinyiothub_runtime::access::resources::ResourceResolver>),
                                 demand: app_state
                                     .access
                                     .clone()

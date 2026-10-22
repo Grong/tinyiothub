@@ -37,7 +37,10 @@ use std::sync::Arc;
 use crate::domains::thing::service::ThingService;
 use sqlx::SqlitePool;
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
-use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, ThingAgentManager, WatchCommand};
+use tinyiothub_agent::runtime::thing_agent::{
+    ArbitrationRegistry, ResourceMode, ResourceSpec, ThingAgentManager, WatchCommand,
+};
+use tinyiothub_runtime::access::resources::{ResourceClaim, ResourceResolver};
 use tinyiothub_runtime::watch::live_state::ThingLiveSummary;
 use tinyiothub_skills::trust::ToolSafety;
 
@@ -191,6 +194,26 @@ pub struct ThingToolContext {
     /// E4b 近期读取：read_device/read_property 成功读取后写入 DemandTracker。
     /// None = 未接线（既有行为不变）。
     pub demand: Option<Arc<dyn tinyiothub_runtime::access::DemandRecorder>>,
+    /// E4c 声明资源解析：call/set 在 claim 前从声明解析资源规格。
+    /// None = 未接线（沿用 E1 每设备合成资源 claim）。
+    pub resources: Option<Arc<dyn ResourceResolver>>,
+}
+
+/// E4c：runtime 的声明解析结果 → agent 仲裁规格（agent 资源类型不进
+/// runtime，转换留在组合层）。
+pub(crate) fn resource_specs(claims: &[ResourceClaim]) -> Vec<ResourceSpec> {
+    claims
+        .iter()
+        .map(|claim| ResourceSpec {
+            id: claim.id.clone(),
+            mode: if claim.exclusive {
+                ResourceMode::Exclusive
+            } else {
+                ResourceMode::Shared
+            },
+            capacity: if claim.exclusive { 1 } else { claim.capacity },
+        })
+        .collect()
 }
 
 /// Create the E2 fixed device tool set + non-device tools + hidden legacy aliases.
@@ -234,6 +257,7 @@ pub fn create_thing_tools(
             arbitration_holder: format!("chat:{ws}"),
             approval: None,
             access: runtime.access.clone(),
+            resources: runtime.resources.clone(),
         }))),
         destructive(Box::new(device::SetDeviceTool {
             thing_service: thing_service.clone(),
@@ -242,6 +266,7 @@ pub fn create_thing_tools(
             event_bus: runtime.event_bus.clone(),
             arbitration: runtime.arbitration.clone(),
             holder: format!("chat:{ws}"),
+            resources: runtime.resources.clone(),
         })),
         destructive(Box::new(device::StopTool {
             arbitration: runtime.arbitration.clone(),
@@ -323,6 +348,7 @@ pub fn create_thing_tools(
             arbitration_holder: format!("chat:{ws}"),
             approval: None,
             access: runtime.access.clone(),
+            resources: runtime.resources.clone(),
         })))),
     ];
 
@@ -791,6 +817,75 @@ mod tests {
         let out = tool.execute(serde_json::json!({"thingId": "missing"})).await.unwrap();
         assert!(!out.success);
         assert!(demand.reads().is_empty(), "failed reads must not record demand");
+    }
+
+    // ── E4c：只读工具不解析/claim 资源 ──────────────────
+
+    #[derive(Default)]
+    struct RecordingResolver(std::sync::Mutex<Vec<String>>);
+
+    #[async_trait::async_trait]
+    impl ResourceResolver for RecordingResolver {
+        async fn resolve_action(
+            &self,
+            _ws: &str,
+            _thing_id: &str,
+            tool_name: &str,
+        ) -> Result<Vec<ResourceClaim>, String> {
+            self.0.lock().unwrap().push(format!("action:{tool_name}"));
+            Ok(vec![])
+        }
+
+        async fn resolve_properties(
+            &self,
+            _ws: &str,
+            _thing_id: &str,
+            properties: &[String],
+        ) -> Result<Vec<ResourceClaim>, String> {
+            self.0.lock().unwrap().push(format!("properties:{properties:?}"));
+            Ok(vec![])
+        }
+    }
+
+    /// runtime 侧合成资源 id 与 agent 仲裁常量必须一致（两者各自定义以免
+    /// runtime 依赖 agent）。
+    #[test]
+    fn device_resource_constants_agree_between_runtime_and_agent() {
+        assert_eq!(
+            tinyiothub_runtime::access::resources::DEVICE_RESOURCE,
+            tinyiothub_agent::runtime::thing_agent::DEVICE_RESOURCE
+        );
+    }
+
+    #[tokio::test]
+    async fn read_tools_do_not_resolve_or_claim_resources() {
+        let (pool, thing_id) = pool_with_thing_and_property("温度", "float").await;
+        let resolver = Arc::new(RecordingResolver::default());
+        let tools = create_thing_tools(
+            pool.clone(),
+            "ws",
+            &ThingToolContext {
+                pending_actions: Some(Arc::new(PendingActionStore::default())),
+                resources: Some(resolver.clone()),
+                ..Default::default()
+            },
+        );
+        let find = |name: &str| tools.iter().find(|(t, _)| t.name() == name).map(|(t, _)| t);
+
+        let read = find("read_device")
+            .expect("read_device")
+            .execute(serde_json::json!({"thingId": thing_id}))
+            .await
+            .unwrap();
+        assert!(read.success, "{:?}", read.error);
+        let read = find("read_property")
+            .expect("read_property")
+            .execute(serde_json::json!({"thingId": thing_id, "propertyName": "温度"}))
+            .await
+            .unwrap();
+        assert!(read.success, "{:?}", read.error);
+
+        assert!(resolver.0.lock().unwrap().is_empty(), "只读工具不得解析或 claim 资源");
     }
 
     #[tokio::test]
