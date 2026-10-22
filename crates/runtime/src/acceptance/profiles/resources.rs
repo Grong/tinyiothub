@@ -169,51 +169,54 @@ fn exclusive_check(resources: &[ResourceDecl]) -> CheckResult {
 }
 
 fn shared_check(resources: &[ResourceDecl]) -> CheckResult {
-    // A declared shared resource demonstrates capacity if it allows ≥2 holders;
-    // otherwise fall back to a synthetic capacity-2 spec.
+    // Exercise the declared shared capacity at its full size; a package with
+    // no usable shared declaration falls back to a synthetic capacity-3 spec.
     let (spec, source) = match resources
         .iter()
-        .find(|r| r.mode == DeclaredResourceMode::Shared && r.capacity >= 2)
+        .filter(|r| r.mode == DeclaredResourceMode::Shared)
+        .max_by_key(|r| r.capacity)
+        .filter(|r| r.capacity >= 2)
     {
         Some(r) => (spec_of(r), "manifest"),
-        None => (synthetic_shared("acceptance:shared", 2), "synthetic"),
+        None => (synthetic_shared("acceptance:shared", 3), "synthetic"),
     };
     let registry = ArbitrationRegistry::default();
-    let capacity = spec.capacity;
-    let a = registry.try_acquire_resources(
-        "acceptance:shared-thing",
-        "acceptance:a".into(),
-        std::slice::from_ref(&spec),
-        TTL,
-    );
-    let b = registry.try_acquire_resources(
-        "acceptance:shared-thing",
-        "acceptance:b".into(),
-        std::slice::from_ref(&spec),
-        TTL,
-    );
-    let (Ok(a), Ok(b)) = (a, b) else {
-        return check(
-            "resources.shared",
-            Level::Fail,
-            "shared resource rejected a holder within capacity",
-            serde_json::json!({"resource": spec.id, "capacity": capacity, "source": source}),
-        );
-    };
+    let capacity = spec.capacity.max(2);
+    let mut held = Vec::new();
+    for i in 0..capacity {
+        match registry.try_acquire_resources(
+            "acceptance:shared-thing",
+            format!("acceptance:h{i}"),
+            std::slice::from_ref(&spec),
+            TTL,
+        ) {
+            Ok(lease) => held.push(lease),
+            Err(e) => {
+                return check(
+                    "resources.shared",
+                    Level::Fail,
+                    format!("shared resource rejected holder {i} within capacity {capacity}: {e}"),
+                    serde_json::json!({"resource": spec.id, "capacity": capacity, "source": source}),
+                );
+            }
+        }
+    }
+    // Every slot is now occupied: one more holder must be rejected.
     let saturated = registry.try_acquire_resources(
         "acceptance:shared-thing",
-        "acceptance:c".into(),
+        "acceptance:overflow".into(),
         std::slice::from_ref(&spec),
         TTL,
     );
-    drop(a);
+    // Free exactly one slot and retry.
+    held.remove(0);
     let after_release = registry.try_acquire_resources(
         "acceptance:shared-thing",
-        "acceptance:d".into(),
+        "acceptance:recovered".into(),
         std::slice::from_ref(&spec),
         TTL,
     );
-    drop(b);
+    drop(held);
     let after_release_ok = after_release.is_ok();
     let released_slot_reacquired = saturated.is_err() && after_release_ok;
     drop(after_release);
@@ -228,7 +231,9 @@ fn shared_check(resources: &[ResourceDecl]) -> CheckResult {
         "released_slot_reacquired": released_slot_reacquired,
     });
     match (saturated, after_release_ok) {
-        (Err(Busy { holder, resource }), true) if holder == "acceptance:a" && resource == spec.id => check(
+        // The saturated attempt happened before freeing slot 0, so the busy
+        // holder is h0; after `held.remove(0)` the freed slot is reclaimable.
+        (Err(Busy { holder, resource }), true) if holder == "acceptance:h0" && resource == spec.id => check(
             "resources.shared",
             Level::Pass,
             format!("capacity {capacity} enforced; busy carries {holder} holds {resource}"),
@@ -263,7 +268,7 @@ fn all_or_nothing_check(resources: &[ResourceDecl]) -> CheckResult {
         .iter()
         .filter(|r| r.mode == DeclaredResourceMode::Exclusive)
         .collect();
-    let (first, second, source) = if exclusive.len() >= 2 {
+    let (mut first, mut second, source) = if exclusive.len() >= 2 {
         (spec_of(exclusive[0]), spec_of(exclusive[1]), "manifest")
     } else {
         (
@@ -272,6 +277,12 @@ fn all_or_nothing_check(resources: &[ResourceDecl]) -> CheckResult {
             "synthetic",
         )
     };
+    // Normalise to ascending ids: the registry sorts, claims `first`, then hits
+    // the held `second` and must roll `first` back. Without this the declared
+    // order could already be descending and never exercise rollback.
+    if first.id > second.id {
+        std::mem::swap(&mut first, &mut second);
+    }
     let registry = ArbitrationRegistry::default();
     let Some(held) = registry
         .try_acquire_resources(
@@ -289,23 +300,36 @@ fn all_or_nothing_check(resources: &[ResourceDecl]) -> CheckResult {
             serde_json::json!({"source": source}),
         );
     };
-    // Deliberately reversed input order: the registry sorts by id, claims
-    // `first`, then fails on `second` and must roll `first` back.
+    // Reversed input order is deliberate; the registry sorts by id.
     let attempt = registry.try_acquire_resources(
         "acceptance:multi-thing",
         "acceptance:multi".into(),
         &[second.clone(), first.clone()],
         TTL,
     );
-    // If `first` leaked, this probe fails.
+    // If `first` leaked, this probe fails; `second` must still be held.
     let probe = registry.try_acquire_resources(
         "acceptance:multi-thing",
         "acceptance:probe".into(),
         std::slice::from_ref(&first),
         TTL,
     );
+    let second_probe = registry.try_acquire_resources(
+        "acceptance:multi-thing",
+        "acceptance:probe2".into(),
+        std::slice::from_ref(&second),
+        TTL,
+    );
+    let probe_ok = probe.is_ok();
+    let second_still_held = second_probe.is_err();
+    let busy_on_second = matches!(
+        &attempt,
+        Err(Busy { holder, resource })
+            if holder == "acceptance:holder" && resource == &second.id
+    );
     drop(held);
     drop(probe);
+    drop(second_probe);
     let evidence = serde_json::json!({
         "source": source,
         "first": first.id,
@@ -314,26 +338,39 @@ fn all_or_nothing_check(resources: &[ResourceDecl]) -> CheckResult {
             Err(busy) => serde_json::json!({"holder": busy.holder, "resource": busy.resource}),
             Ok(_) => serde_json::json!(null),
         },
+        "rollback_probe_ok": probe_ok,
+        "second_still_held": second_still_held,
+        "rolled_back": busy_on_second && probe_ok && second_still_held,
     });
-    match attempt {
-        Err(Busy { holder, resource }) if holder == "acceptance:holder" && resource == second.id => check(
+    if busy_on_second && probe_ok && second_still_held {
+        check(
             "resources.all_or_nothing",
             Level::Pass,
-            format!("busy: {holder} holds {resource}; partial claim rolled back"),
+            format!(
+                "busy: acceptance:holder holds {}; partial claim on {} rolled back",
+                second.id, first.id
+            ),
             evidence,
-        ),
-        Err(other) => check(
+        )
+    } else if !busy_on_second {
+        check(
             "resources.all_or_nothing",
             Level::Fail,
-            format!("unexpected busy identity: {other}"),
+            match &attempt {
+                Err(other) => format!("unexpected busy identity: {other}"),
+                Ok(_) => "multi-resource claim succeeded despite a busy resource".to_string(),
+            },
             evidence,
-        ),
-        Ok(_) => check(
+        )
+    } else {
+        check(
             "resources.all_or_nothing",
             Level::Fail,
-            "multi-resource claim succeeded despite a busy resource",
+            format!(
+                "partial claim not rolled back (first reclaimable={probe_ok}, second still held={second_still_held})"
+            ),
             evidence,
-        ),
+        )
     }
 }
 
@@ -391,9 +428,12 @@ fn ttl_check(resources: &[ResourceDecl]) -> CheckResult {
 /// A tool with no declared resources resolves to the synthetic `__device__`
 /// exclusive claim (E1 per-device mutual exclusion preserved).
 fn default_device_check(tools: &[ManifestTool]) -> CheckResult {
+    // Prefer a mutating tool (action/set): read-only tools never claim, so the
+    // synthetic `__device__` fallback only applies to mutations.
     let probe = tools
         .iter()
-        .find(|t| t.resources.is_empty())
+        .find(|t| t.resources.is_empty() && matches!(t.kind, ToolKindDecl::Action | ToolKindDecl::Set))
+        .or_else(|| tools.iter().find(|t| t.resources.is_empty()))
         .cloned()
         .unwrap_or_else(empty_resource_tool);
     let claims = match resolve_tool_claims(&[], &probe) {
@@ -565,6 +605,69 @@ mod tests {
         let shared = report.checks.iter().find(|c| c.check == "resources.shared").unwrap();
         assert_eq!(shared.evidence["source"], "manifest");
         assert_eq!(shared.evidence["capacity"], 2);
+
+        let multi = report
+            .checks
+            .iter()
+            .find(|c| c.check == "resources.all_or_nothing")
+            .unwrap();
+        assert_eq!(multi.evidence["rollback_probe_ok"], true);
+        assert_eq!(multi.evidence["second_still_held"], true);
+        assert_eq!(multi.evidence["rolled_back"], true);
+
+        let default = report
+            .checks
+            .iter()
+            .find(|c| c.check == "resources.default_device")
+            .unwrap();
+        assert_eq!(default.evidence["tool"], "echo", "prefer the action tool");
+    }
+
+    #[test]
+    fn synthetic_shared_capacity_three_saturates_correctly() {
+        let result = shared_check(&[]);
+        assert_eq!(result.level, Level::Pass, "{result:?}");
+        assert_eq!(result.evidence["source"], "synthetic");
+        assert_eq!(result.evidence["capacity"], 3);
+        assert_eq!(result.evidence["released_slot_reacquired"], true);
+    }
+
+    #[test]
+    fn declared_shared_capacity_three_is_exercised_at_full_size() {
+        let manifest = MANIFEST.replace(
+            r#""id":"stream","mode":"shared","capacity":2"#,
+            r#""id":"stream","mode":"shared","capacity":3"#,
+        );
+        let dir = package(&manifest);
+        let report = run(dir.path());
+        assert_eq!(report.level(), Level::Pass, "{report:?}");
+        let shared = report.checks.iter().find(|c| c.check == "resources.shared").unwrap();
+        assert_eq!(shared.evidence["source"], "manifest");
+        assert_eq!(shared.evidence["capacity"], 3);
+        assert_eq!(shared.evidence["released_slot_reacquired"], true);
+    }
+
+    #[test]
+    fn all_or_nothing_sorts_descending_declared_ids() {
+        // Declared exclusive ids are deliberately descending; the check must
+        // normalise the pair so rollback actually happens.
+        let manifest = MANIFEST.replace(
+            r#"{"id":"actuator","mode":"exclusive","capacity":1}"#,
+            r#"{"id":"z_actuator","mode":"exclusive","capacity":1},
+               {"id":"a_light","mode":"exclusive","capacity":1}"#,
+        );
+        let dir = package(&manifest);
+        let report = run(dir.path());
+        assert_eq!(report.level(), Level::Pass, "{report:?}");
+        let multi = report
+            .checks
+            .iter()
+            .find(|c| c.check == "resources.all_or_nothing")
+            .unwrap();
+        assert_eq!(multi.level, Level::Pass, "{multi:?}");
+        assert_eq!(multi.evidence["first"], "a_light");
+        assert_eq!(multi.evidence["second"], "z_actuator");
+        assert_eq!(multi.evidence["rollback_probe_ok"], true);
     }
 
     #[test]

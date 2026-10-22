@@ -1,16 +1,18 @@
 //! `cancel` profile (E4c spec §2.5): a stop request cooperatively cancels an
 //! in-flight long call within the 1s grace, a driver that ignores the token is
-//! recorded as `cancelled_unknown`, and the stop gate rejects subsequent
-//! claims (`busy: stop:<reason> holds __device__`).
+//! recorded as `cancelled_unknown`, the stop pipeline returns immediately and
+//! leaves a `CommandCancelled` event + `call_cancelled` ledger row, and the
+//! stop gate rejects subsequent claims (`busy: stop:<reason> holds __device__`).
 //!
-//! These checks exercise the real worker/registry with fake drivers, so they
-//! are package-independent. The non-cooperative scenario blocks for 1.2s — no
-//! longer than the grace window it is designed to exceed.
+//! These checks exercise the real worker/registry/DataServer with fake
+//! drivers, so they are package-independent. The non-cooperative scenario
+//! blocks for 1.2s — no longer than the grace window it is designed to exceed.
+//! Cloud `StopTool` composition (auth/approval/response shape) is Task 7's job.
 
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::mpsc as std_mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tinyiothub_core::driver::{CancelToken, DriverMode, PropertyChangeSource, ResultValue, RetryConfig, ThingDriver};
 use tinyiothub_core::error::Error;
@@ -18,10 +20,12 @@ use tinyiothub_core::models::event::Event;
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
 
+use crate::DataServer;
 use crate::acceptance::report::{CheckResult, Level, ProfileReport};
 use crate::arbitration::{ArbitrationRegistry, Busy, DEVICE_RESOURCE};
 use crate::driver::worker::{WorkerHandle, WorkerResult};
 use crate::driver::{DriverWrapper, spawn_worker};
+use crate::ports::{HubLedger, ThingCacheSource};
 
 const PROFILE: &str = "cancel";
 const THING_ID: &str = "acceptance-cancel-thing";
@@ -41,8 +45,13 @@ fn check(name: &str, level: Level, detail: impl Into<String>, evidence: serde_js
 
 pub fn run(_dir: &Path) -> ProfileReport {
     let rt = tokio::runtime::Runtime::new().expect("build acceptance runtime");
-    let mut checks: Vec<CheckResult> =
-        rt.block_on(async { vec![cooperative_check().await, non_cooperative_check().await] });
+    let mut checks: Vec<CheckResult> = rt.block_on(async {
+        vec![
+            cooperative_check().await,
+            pipeline_check().await,
+            non_cooperative_check().await,
+        ]
+    });
     checks.push(gate_check());
     ProfileReport {
         profile: PROFILE.into(),
@@ -85,6 +94,141 @@ async fn cooperative_check() -> CheckResult {
             }
         }
         Err(e) => check("cancel.cooperative", Level::Fail, e, serde_json::Value::Null),
+    }
+}
+
+/// End-to-end stop pipeline (minus the cloud `StopTool` wrapper): gate + cancel
+/// returns while the long call is still running, then the worker's late result
+/// is turned into one `CommandCancelled` event and one `call_cancelled` ledger
+/// row by the DataServer consumer.
+async fn pipeline_check() -> CheckResult {
+    use tinyiothub_core::models::event::{EventType, ThingEventType};
+
+    let thing = Thing {
+        id: THING_ID.to_string(),
+        name: THING_ID.to_string(),
+        workspace_id: Some("ws-acceptance".to_string()),
+        ..Thing::default()
+    };
+    let cache: Arc<dyn ThingCacheSource> = Arc::new(SingleThingCache::new(thing.clone()));
+    let bus = Arc::new(crate::event_bus::EventBus::new());
+    let server = DataServer::new(cache, bus.clone());
+    let ledger = Arc::new(RecordingLedger::default());
+    server.set_hub_ledger(ledger.clone());
+    let mut events = bus.subscribe();
+    // Keep the sender alive so the consumer loop is not shut down mid-check.
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
+
+    let (release, release_rx) = std_mpsc::channel();
+    let (started_tx, started) = std_mpsc::channel();
+    server.register_worker(
+        THING_ID,
+        DriverWrapper::new(Box::new(BlockingDriver {
+            thing: thing.clone(),
+            cooperative: true,
+            block: Duration::ZERO,
+            release: std::sync::Mutex::new(release_rx),
+            started: started_tx,
+        })),
+    );
+    if let Err(e) = server.run(shutdown_rx).await {
+        return check(
+            "cancel.pipeline",
+            Level::Fail,
+            format!("DataServer consumer failed to start: {e}"),
+            serde_json::Value::Null,
+        );
+    }
+    let Some(worker) = server.workers().get(THING_ID) else {
+        return check(
+            "cancel.pipeline",
+            Level::Fail,
+            "worker was not registered",
+            serde_json::Value::Null,
+        );
+    };
+
+    let submitted = worker.submit_execute(command()).is_ok();
+    let entered = submitted && started.recv_timeout(Duration::from_secs(2)).is_ok();
+
+    let registry = ArbitrationRegistry::default();
+    registry.set_stop(THING_ID, "acceptance stop".into(), Duration::from_secs(60));
+    let stop_started = Instant::now();
+    let in_flight_hit = server.cancel_calls(THING_ID);
+    let stop_elapsed_ms = stop_started.elapsed().as_millis() as u64;
+    // The driver is still blocked on `release` (not sent yet): returning at all
+    // proves the stop path does not await the long call.
+    let immediate = in_flight_hit == 1 && worker.in_flight() && stop_elapsed_ms < GRACE_MS;
+    let gated = registry.stop_reason(THING_ID).as_deref() == Some("acceptance stop");
+
+    let _ = release.send(());
+
+    // Bounded await: the first CommandCancelled outcome must be `cancelled`.
+    let event_ok = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            match events.recv().await {
+                Ok(event) if event.event_type() == &EventType::Device(ThingEventType::CommandCancelled) => {
+                    return event.content().metadata().get("outcome") == Some(&serde_json::json!("cancelled"));
+                }
+                Ok(_) => continue,
+                Err(_) => return false,
+            }
+        }
+    })
+    .await
+    .unwrap_or(false);
+
+    // Bounded await: exactly one `call_cancelled` row.
+    let ledger_seen = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if !ledger.rows().is_empty() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or(false);
+    let rows = ledger.rows();
+    let ledger_ok = ledger_seen
+        && rows.len() == 1
+        && rows[0].0 == "ws-acceptance"
+        && rows[0].1 == "call_cancelled"
+        && rows[0].2.as_deref() == Some(THING_ID)
+        && rows[0].3["outcome"] == "cancelled";
+    let counts = server.cancelled_counts();
+    server.remove_device(THING_ID);
+
+    let evidence = serde_json::json!({
+        "submitted": submitted,
+        "driver_entered": entered,
+        "stop_gate": gated,
+        "cancel_hits": in_flight_hit,
+        "immediate": immediate,
+        "stop_elapsed_ms": stop_elapsed_ms,
+        "event_command_cancelled": event_ok,
+        "ledger_rows": rows.len(),
+        "ledger_ok": ledger_ok,
+        "cancelled_counts": {"cancelled": counts.0, "cancelled_unknown": counts.1},
+    });
+    if submitted && entered && immediate && gated && event_ok && ledger_ok && counts == (1, 0) {
+        check(
+            "cancel.pipeline",
+            Level::Pass,
+            format!(
+                "stop returned in {stop_elapsed_ms}ms while the call was in flight; CommandCancelled + call_cancelled recorded"
+            ),
+            evidence,
+        )
+    } else {
+        check(
+            "cancel.pipeline",
+            Level::Fail,
+            format!(
+                "stop pipeline incomplete (immediate={immediate}, event={event_ok}, ledger={ledger_ok}, counts={counts:?})"
+            ),
+            evidence,
+        )
     }
 }
 
@@ -256,6 +400,70 @@ impl Harness {
     }
 }
 
+/// Minimal one-thing cache for the DataServer pipeline check.
+struct SingleThingCache(std::sync::Mutex<Thing>);
+
+impl SingleThingCache {
+    fn new(thing: Thing) -> Self {
+        Self(std::sync::Mutex::new(thing))
+    }
+}
+
+impl ThingCacheSource for SingleThingCache {
+    fn all(&self) -> Vec<Thing> {
+        vec![self.0.lock().unwrap().clone()]
+    }
+
+    fn get(&self, id: &str) -> Option<Thing> {
+        let thing = self.0.lock().unwrap();
+        (thing.id == id).then(|| thing.clone())
+    }
+
+    fn get_by_name(&self, name: &str) -> Option<Thing> {
+        let thing = self.0.lock().unwrap();
+        (thing.name == name).then(|| thing.clone())
+    }
+
+    fn insert(&self, device: Thing) {
+        *self.0.lock().unwrap() = device;
+    }
+
+    fn update(&self, device: Thing) {
+        *self.0.lock().unwrap() = device;
+    }
+
+    fn remove(&self, _id: &str) {}
+}
+
+/// Records `(workspace, kind, thing_id, payload)` ledger rows.
+#[derive(Default)]
+struct RecordingLedger(std::sync::Mutex<Vec<(String, String, Option<String>, serde_json::Value)>>);
+
+impl RecordingLedger {
+    fn rows(&self) -> Vec<(String, String, Option<String>, serde_json::Value)> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl HubLedger for RecordingLedger {
+    async fn append(
+        &self,
+        workspace_id: &str,
+        kind: &str,
+        thing_id: Option<&str>,
+        payload: serde_json::Value,
+    ) -> Result<(), String> {
+        self.0.lock().unwrap().push((
+            workspace_id.to_string(),
+            kind.to_string(),
+            thing_id.map(str::to_string),
+            payload,
+        ));
+        Ok(())
+    }
+}
+
 struct NoEvents(tokio::sync::broadcast::Sender<Event>);
 
 impl NoEvents {
@@ -344,8 +552,13 @@ mod tests {
     fn cancel_profile_passes_against_fake_drivers() {
         let report = run(Path::new("."));
         assert_eq!(report.level(), Level::Pass, "{report:?}");
-        assert_eq!(report.checks.len(), 3);
-        for name in ["cancel.cooperative", "cancel.non_cooperative", "cancel.stop_gate"] {
+        assert_eq!(report.checks.len(), 4);
+        for name in [
+            "cancel.cooperative",
+            "cancel.pipeline",
+            "cancel.non_cooperative",
+            "cancel.stop_gate",
+        ] {
             let check = report
                 .checks
                 .iter()
@@ -353,6 +566,11 @@ mod tests {
                 .unwrap_or_else(|| panic!("{name}"));
             assert_eq!(check.level, Level::Pass, "{name}: {report:?}");
         }
+        let pipeline = report.checks.iter().find(|c| c.check == "cancel.pipeline").unwrap();
+        assert_eq!(pipeline.evidence["immediate"], true);
+        assert_eq!(pipeline.evidence["event_command_cancelled"], true);
+        assert_eq!(pipeline.evidence["ledger_ok"], true);
+        assert_eq!(pipeline.evidence["ledger_rows"], 1);
         let non_coop = report
             .checks
             .iter()

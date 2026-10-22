@@ -1,10 +1,10 @@
 //! E4c resource resolution (spec 2026-10-22-e4c §2.2).
 //!
-//! The access layer owns the declaration and package manifest; the agent
+//! The access layer owns the declaration and package manifest; the runtime
 //! arbitration registry owns the claim table. This module is the narrow
 //! bridge: it turns a declared tool's `resources` ids into [`ResourceClaim`]s
 //! (mode/capacity resolved from the package manifest's `resources[]`), and
-//! the cloud composition root converts those into agent `ResourceSpec`s.
+//! the cloud composition root converts those into registry `ResourceSpec`s.
 //!
 //! Unknown resource ids fail closed: a declaration that names a resource the
 //! package never declared is rejected rather than silently unprotected.
@@ -22,7 +22,7 @@ use tinyiothub_core::driver::manifest::{
 pub use crate::arbitration::DEVICE_RESOURCE;
 
 /// 一次调用的资源需求（声明解析结果）。`exclusive` 与 `capacity` 的语义
-/// 与 agent 的 `ResourceSpec` 一致，但 runtime 不引入 agent 的仲裁类型。
+/// 与 runtime 仲裁注册表的 `ResourceSpec` 一致；组合层负责转换。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceClaim {
     pub id: String,
