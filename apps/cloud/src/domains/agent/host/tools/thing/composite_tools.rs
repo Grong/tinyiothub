@@ -206,14 +206,8 @@ impl Tool for RunCompositeTool {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use tinyiothub_agent::runtime::thing_agent::{
-        ArbitrationRegistry, DEFAULT_LEASE_TTL, Lease, ResourceMode, ResourceSpec,
-    };
+    use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL, ResourceMode, ResourceSpec};
     use tinyiothub_runtime::access::resources::{ResourceClaim, ResourceResolver};
-
-    fn resource_specs(claims: &[ResourceClaim]) -> Vec<ResourceSpec> {
-        crate::domains::agent::host::tools::thing::resource_specs(claims)
-    }
 
     async fn setup() -> SqlitePool {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -407,7 +401,7 @@ mod tests {
         )
         .await;
         let arbitration = Arc::new(ArbitrationRegistry::default());
-        let _held = arbitration
+        let held = arbitration
             .try_acquire("t1", "other-run".into(), DEFAULT_LEASE_TTL)
             .unwrap();
         let mut t = tool(&pool, Arc::new(PendingActionStore::new()));
@@ -416,7 +410,7 @@ mod tests {
             workspace_id: "ws".into(),
             data_server: None,
             event_bus: None,
-            arbitration: Some(arbitration),
+            arbitration: Some(arbitration.clone()),
             holder: "test".into(),
             resources: None,
         });
@@ -429,9 +423,18 @@ mod tests {
         assert!(error.contains("busy"), "{error}");
         assert!(error.contains("other-run"), "{error}");
         assert!(!error.contains("__device__"), "{error}");
+
+        // resolver 未接线时整条链仍只按设备 claim 一次，结束后释放。
+        drop(held);
+        let out = t.execute(json!({"compositeId": "c4"})).await.unwrap();
+        let v: Value = serde_json::from_str(&out.output).unwrap();
+        assert_eq!(v["status"], "completed", "{v}");
+        arbitration
+            .try_acquire("t1", "next-run".into(), DEFAULT_LEASE_TTL)
+            .expect("composite must release the per-device lease");
     }
 
-    // ── E4c：每步按声明资源 claim ──────────────────────
+    // ── E4c：composite 全程按声明资源并集 claim 一次 ──────
 
     fn claim(id: &str, exclusive: bool, capacity: u32) -> ResourceClaim {
         ResourceClaim {
@@ -441,15 +444,11 @@ mod tests {
         }
     }
 
-    /// 测试用声明解析：按 action / 首个属性名返回资源；`grab` 用于在解析
-    /// 指定 action 时让外部持有者先抢下同一资源（模拟步骤间隙的竞争）。
+    /// 测试用声明解析：按 action / 首个属性名返回资源。
     #[derive(Default)]
     struct MapResolver {
         actions: std::collections::HashMap<String, Vec<ResourceClaim>>,
         properties: std::collections::HashMap<String, Vec<ResourceClaim>>,
-        grab: Option<(String, Vec<ResourceClaim>)>,
-        registry: Option<Arc<ArbitrationRegistry>>,
-        held: std::sync::Mutex<Vec<Lease>>,
     }
 
     #[async_trait]
@@ -457,19 +456,11 @@ mod tests {
         async fn resolve_action(
             &self,
             _ws: &str,
-            thing_id: &str,
+            _thing_id: &str,
             tool_name: &str,
         ) -> Result<Vec<ResourceClaim>, String> {
             if tool_name == "ghost" {
                 return Err("unknown resource 'ghost'".into());
-            }
-            if let (Some((action, claims)), Some(registry)) = (&self.grab, &self.registry)
-                && action.as_str() == tool_name
-            {
-                let lease = registry
-                    .try_acquire_resources(thing_id, "other-run".into(), &resource_specs(claims), DEFAULT_LEASE_TTL)
-                    .expect("test grab");
-                self.held.lock().unwrap().push(lease);
             }
             Ok(self.actions.get(tool_name).cloned().unwrap_or_default())
         }
@@ -504,8 +495,18 @@ mod tests {
         })
     }
 
+    fn exclusive_spec(id: &str) -> ResourceSpec {
+        ResourceSpec {
+            id: id.into(),
+            mode: ResourceMode::Exclusive,
+            capacity: 1,
+        }
+    }
+
+    /// 回归：同一 composite 的两个顺序步骤声明同一 exclusive 资源，必须
+    /// 一次 claim 后全程持有——不得因上一步的 worker 租约 self-conflict。
     #[tokio::test]
-    async fn busy_second_step_reports_holder_and_resource_keeping_first_result() {
+    async fn sequential_steps_same_exclusive_resource_do_not_self_conflict() {
         let pool = setup().await;
         insert_def(
             &pool,
@@ -518,26 +519,65 @@ mod tests {
         .await;
         let arbitration = Arc::new(ArbitrationRegistry::default());
         let mut resolver = MapResolver::default();
-        // 两步共享同一 exclusive 资源；第二步解析时外部持有者已抢到它。
+        for action in ["close", "lock"] {
+            resolver.actions.insert(action.into(), vec![claim("actuator", true, 1)]);
+        }
+
+        let mut t = tool(&pool, Arc::new(PendingActionStore::new()));
+        t.executor = executor_with(&pool, arbitration.clone(), Some(Arc::new(resolver)));
+
+        let out = t.execute(json!({"compositeId": "c5"})).await.unwrap();
+        let v: Value = serde_json::from_str(&out.output).unwrap();
+        assert_eq!(v["status"], "completed", "{v}");
+        assert_eq!(v["steps"].as_array().unwrap().len(), 2, "{v}");
+
+        // 全程租约随 composite 结束释放。
+        arbitration
+            .try_acquire_resources(
+                "t1",
+                "next-run".into(),
+                &[exclusive_spec("actuator")],
+                DEFAULT_LEASE_TTL,
+            )
+            .expect("composite must release the run-wide lease");
+    }
+
+    /// 并发 composite 抢同一资源：后者立即 busy，文案带持有者 + 资源 id，
+    /// 且不执行任何步骤。
+    #[tokio::test]
+    async fn concurrent_composite_overlapping_resource_is_busy_with_holder_and_resource() {
+        let pool = setup().await;
+        insert_def(
+            &pool,
+            "c5b",
+            json!([{"op": "call", "thing_id": "t1", "action": "close", "params": {}}]),
+        )
+        .await;
+        let arbitration = Arc::new(ArbitrationRegistry::default());
+        // 另一个同名 composite 已持有 actuator（holder 格式一致）。
+        let _first = arbitration
+            .try_acquire_resources(
+                "t1",
+                "composite:storm_guard:test".into(),
+                &[exclusive_spec("actuator")],
+                DEFAULT_LEASE_TTL,
+            )
+            .unwrap();
+        let mut resolver = MapResolver::default();
         resolver
             .actions
             .insert("close".into(), vec![claim("actuator", true, 1)]);
-        resolver.actions.insert("lock".into(), vec![claim("actuator", true, 1)]);
-        resolver.grab = Some(("lock".into(), vec![claim("actuator", true, 1)]));
-        resolver.registry = Some(arbitration.clone());
 
         let mut t = tool(&pool, Arc::new(PendingActionStore::new()));
         t.executor = executor_with(&pool, arbitration, Some(Arc::new(resolver)));
 
-        let out = t.execute(json!({"compositeId": "c5"})).await.unwrap();
+        let out = t.execute(json!({"compositeId": "c5b"})).await.unwrap();
         let v: Value = serde_json::from_str(&out.output).unwrap();
-        // 第一步成功保留；第二步 busy 且带持有者 + 资源 id。
-        assert_eq!(v["steps"][0]["status"], "ok", "{v}");
-        assert_eq!(v["steps"][1]["status"], "failed", "{v}");
-        let error = v["steps"][1]["error"].as_str().unwrap();
-        assert!(error.contains("other-run"), "{error}");
+        assert_eq!(v["status"], "failed", "{v}");
+        assert_eq!(v["steps"].as_array().unwrap().len(), 1, "claim 失败不得执行步骤: {v}");
+        let error = v["steps"][0]["error"].as_str().unwrap();
+        assert!(error.contains("composite:storm_guard:test"), "{error}");
         assert!(error.contains("actuator"), "{error}");
-        assert_ne!(v["status"], "completed");
     }
 
     #[tokio::test]
@@ -569,7 +609,6 @@ mod tests {
         for action in ["close", "lock"] {
             resolver.actions.insert(action.into(), vec![claim("stream", false, 2)]);
         }
-        resolver.registry = Some(arbitration.clone());
 
         let mut t = tool(&pool, Arc::new(PendingActionStore::new()));
         t.executor = executor_with(&pool, arbitration.clone(), Some(Arc::new(resolver)));
@@ -594,9 +633,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_step_releases_its_claims() {
+    async fn failed_composite_releases_its_claims() {
         let pool = setup().await;
-        // set 步骤在 event bus 缺失时失败——但 claim 已在 dispatch 前取得。
+        // set 步骤在 event bus 缺失时失败——composite 租约在 run 开始时取得。
         insert_def(
             &pool,
             "c7",
@@ -615,19 +654,63 @@ mod tests {
         let v: Value = serde_json::from_str(&out.output).unwrap();
         assert_eq!(v["status"], "failed", "{v}");
 
-        // 步骤失败即释放：同一 exclusive 资源可再次 claim。
+        // composite 结束即释放：同一 exclusive 资源可再次 claim。
         arbitration
             .try_acquire_resources(
                 "t1",
                 "next-run".into(),
-                &[ResourceSpec {
-                    id: "actuator".into(),
-                    mode: ResourceMode::Exclusive,
-                    capacity: 1,
-                }],
+                &[exclusive_spec("actuator")],
                 DEFAULT_LEASE_TTL,
             )
-            .expect("failed step must release its lease");
+            .expect("failed composite must release its lease");
+    }
+
+    /// 失败后的回滚也在同一份全程租约内执行；composite 结束后租约释放。
+    #[tokio::test]
+    async fn rollback_releases_composite_claims() {
+        let pool = setup().await;
+        insert_def(
+            &pool,
+            "c9",
+            json!([
+                {"op": "call", "thing_id": "t1", "action": "close", "params": {},
+                 "rollback": {"op": "call", "thing_id": "t1", "action": "open", "params": {}}},
+                // event bus 缺失 → set 失败，触发回滚
+                {"op": "set", "thing_id": "t1", "properties": {"level": 1}}
+            ]),
+        )
+        .await;
+        let arbitration = Arc::new(ArbitrationRegistry::default());
+        let mut resolver = MapResolver::default();
+        for action in ["close", "open"] {
+            resolver.actions.insert(action.into(), vec![claim("actuator", true, 1)]);
+        }
+        resolver
+            .properties
+            .insert("level".into(), vec![claim("actuator", true, 1)]);
+
+        let mut t = tool(&pool, Arc::new(PendingActionStore::new()));
+        t.executor = executor_with(&pool, arbitration.clone(), Some(Arc::new(resolver)));
+        let out = t.execute(json!({"compositeId": "c9"})).await.unwrap();
+        let v: Value = serde_json::from_str(&out.output).unwrap();
+        assert_eq!(v["status"], "rolled_back", "{v}");
+        assert!(
+            v["steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s["status"] == "rolled_back"),
+            "{v}"
+        );
+
+        arbitration
+            .try_acquire_resources(
+                "t1",
+                "next-run".into(),
+                &[exclusive_spec("actuator")],
+                DEFAULT_LEASE_TTL,
+            )
+            .expect("rolled-back composite must release its lease");
     }
 
     #[tokio::test]

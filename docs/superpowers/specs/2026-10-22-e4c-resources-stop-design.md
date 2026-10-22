@@ -13,7 +13,7 @@
 | 1 | 仲裁归属 | 扩展 agent `ArbitrationRegistry`：按 `(thing, resource)` 多资源 claim；工具从声明取 `resources`；未声明 resources 的变更类工具默认 claim 合成 `__device__` exclusive 资源（保留 E1 语义）；只读工具不 claim |
 | 2 | 多资源原子性 | 资源 id 排序后 all-or-nothing；任一失败释放已获 claim；busy 文案带持有者 + 资源 id |
 | 3 | stop | **立即返回** `cancellation_requested`：置闸门、释放全部 claim、设置当前调用 CancelToken；异步 outcome 落事件/账本；≤1s 退出=`cancelled`，超时=`cancelled_unknown` |
-| 4 | composite | 每步读取该步工具的声明 resources，排序后 all-or-nothing claim；未声明则合成 `__device__`；步骤 busy 人读得懂 |
+| 4 | composite | **整条 run 只 claim 一次**：开始时解析全部步骤（含回滚）的声明 resources，按 thing 分组合并去重后 all-or-nothing claim，租约持有到整条链（成功/失败/回滚）结束；Call 步不向 worker 移交每步租约（worker 异步执行，逐步骤移交会让后续步骤与同 holder 的未完成租约 self-conflict）。并发 composite 重叠资源立即 busy，文案带持有者 + 资源 id；未声明则合成 `__device__` |
 | 5 | 兼容 | 现有 `try_acquire(thing, holder, ttl)` 保留为单设备合成资源的便捷入口；E1 每设备互斥语义不变 |
 
 ## 1. 组件与边界
@@ -31,7 +31,7 @@ crates/runtime/src/data_server.rs
 apps/cloud/src/domains/agent/host/tools/thing/
   invoke_action.rs / device.rs SetDeviceTool / device.rs StopTool
 apps/cloud/src/domains/agent/host/composite.rs
-  per-step resource claim
+  run-wide resource claim (union of all steps incl. rollback)
 crates/agent/.../arbitration.rs tests
 ```
 
@@ -40,7 +40,7 @@ crates/agent/.../arbitration.rs tests
 1. **声明是资源规格来源**：`ManifestTool.resources` → `ResourceDecl`（package/instance declaration）→ `ResourceSpec`。工具在调用前解析并 claim；Hub 侧校验声明仍在 E4a/E4b。
 2. **驱动只协作式响应取消**：worker 共享当前 `CancelToken`；ABI v2 已把 `CancelHandle` 传给驱动；内置驱动在 IO/循环点检查。stop 不强杀 FFI。
 3. **stop 永远可用**：不要求持有者；置闸门后新 call/set 立即拒绝；已持有 claim 全部释放。
-4. **composite 与工具同构**：每一步的 claim 使用该步工具的 resources；步骤失败/部分成功语义沿用 E2 框架。
+4. **composite 与工具同构、按 run 聚合**：composite 开始时解析全部步骤（含回滚）的 resources，按 thing 合并为并集后 claim 一次，租约覆盖整条链；步骤失败/部分成功语义沿用 E2 框架，回滚在同一租约内执行。
 5. **多租户**：claim key = `(workspace_id, thing_id, resource_id)`（现有注册表按 thing_id 全局；E4c 保持 thing_id 全局键，workspace 鉴权在工具层）。
 
 ## 2. 契约
@@ -99,7 +99,13 @@ impl ArbitrationRegistry {
   4. 调用完成/失败即 drop lease（RAII）。
 - 只读工具（read_device/read_property/list 等）不 claim。
 - `stop` 不 claim；只置闸门 + cancel。
-- composite 每步同规则；步骤失败释放该步 lease。
+- composite 按 run 聚合：开始时解析全部步骤（含回滚）的 resources，同一
+  thing 上重复资源合并（exclusive 优先 / shared capacity 取更严格值），
+  按 thing id 排序 all-or-nothing claim 一次，全部租约持有到整条链结束
+  （成功/失败/回滚）；解析或 claim 失败时不执行任何步骤。Call 步下发时
+  不携带每步租约（`lease=None`），worker 的异步执行由 run 级租约覆盖。
+- stop 期间 composite 的 run 级租约被 `set_stop` 强制释放；每个步骤开始前
+  复检 `stop_reason`，返回 `stopped: <reason>` 并停止后续步骤/回滚。
 
 ### 2.3 stop 与取消
 
@@ -137,7 +143,8 @@ pub enum WorkerResult {
 | stop 立即响应 | `cancellation_requested`（工具成功返回，不代表已中止） |
 | 在途 ≤1s 退出 | 异步 `CommandCancelled outcome=cancelled` + 账本 |
 | 在途 >1s | 异步 `CommandCancelled outcome=cancelled_unknown` + 账本 + 指标 |
-| composite 步骤 busy | 步骤失败，带 holder/resource；已获资源释放 |
+| composite 资源 busy（run 开始） | composite 失败，不执行任何步骤；带 holder/resource；已获资源 all-or-nothing 释放 |
+| composite 执行中 stop | 后续步骤返回 `stopped: <reason>`（run 级租约已被强制释放） |
 | lease 持有者崩溃 | TTL 到期后可再 claim（现有语义） |
 
 指标：`arbitration_busy_total`、`stop_requests_total`、`stop_cancelled_total`、`stop_cancelled_unknown_total`、`stop_latency_ms`。
@@ -152,7 +159,8 @@ pub enum WorkerResult {
 - 两 run 并发操作同设备：后者收到带持有者的 busy；不同资源可并行（shared/capacity 正确）。
 - stop 立即返回 `cancellation_requested`；协作驱动 ≤1s 退出并产生 `cancelled` 事件/账本；不合作驱动产生 `cancelled_unknown`。
 - stop 后新 call/set 被 `stopped:` 拒绝；claim 已全部释放。
-- composite 步骤按声明 resources claim，busy 文案可读。
+- composite 按全部步骤声明 resources 的并集 claim 一次并持有全程；顺序
+  步骤不 self-conflict，并发 composite 重叠资源 busy 文案可读。
 - 默认无 resources 的变更工具仍保持 E1 每设备互斥。
 - E4b Hub stream/E3 live stream/现有 watch/derived 不回归。
 
