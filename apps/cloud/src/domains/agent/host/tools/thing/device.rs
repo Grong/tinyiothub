@@ -765,7 +765,7 @@ mod tests {
         };
 
         let out = tool
-            .execute(json!({"thingId": "dev-1", "reason": "ops emergency", "ttlSecs": 5}))
+            .execute(json!({"thingId": "dev-1", "reason": "ops emergency", "ttlSecs": 60}))
             .await
             .expect("execute");
         assert!(out.success, "{:?}", out.error);

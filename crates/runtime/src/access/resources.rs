@@ -17,11 +17,9 @@ use tinyiothub_core::driver::manifest::{
     ManifestTool, ResourceDecl, ResourceMode as DeclaredResourceMode, ToolKindDecl,
 };
 
-/// 未声明 resources 的变更类工具所 claim 的合成资源 id。值与
-/// `tinyiothub_agent::runtime::thing_agent::arbitration::DEVICE_RESOURCE`
-/// 保持一致（runtime 不依赖 agent crate，故此处独立定义；cloud 侧有测试
-/// 断言两者相等以防漂移）。
-pub const DEVICE_RESOURCE: &str = "__device__";
+/// 未声明 resources 的变更类工具所 claim 的合成资源 id。与仲裁注册表
+/// 同源（E4c 之后注册表也住在 runtime，不再有两份常量）。
+pub use crate::arbitration::DEVICE_RESOURCE;
 
 /// 一次调用的资源需求（声明解析结果）。`exclusive` 与 `capacity` 的语义
 /// 与 agent 的 `ResourceSpec` 一致，但 runtime 不引入 agent 的仲裁类型。

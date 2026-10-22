@@ -1,7 +1,11 @@
 //! Thing-agent wake/run loop — types shared by trigger, scheduler, runner, policy.
 
 pub mod active_runs;
-pub mod arbitration;
+/// E4c arbitration registry now lives in `runtime` (pure runtime logic, shared
+/// with the acceptance profiles). This module is a path-compatible facade.
+pub mod arbitration {
+    pub use tinyiothub_runtime::arbitration::*;
+}
 pub mod governor;
 pub mod manager;
 pub mod pushback;

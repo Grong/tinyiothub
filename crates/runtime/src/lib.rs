@@ -17,6 +17,7 @@
 
 pub mod acceptance;
 pub mod access;
+pub mod arbitration;
 pub mod cron_executors;
 pub mod data_server;
 pub mod driver;

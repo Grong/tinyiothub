@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::acceptance::profiles;
 use crate::acceptance::report::{AcceptanceReport, ProfileReport};
 
-pub const PROFILE_NAMES: &[&str] = &["all", "core", "materialization", "migration"];
+pub const PROFILE_NAMES: &[&str] = &["all", "core", "materialization", "migration", "resources", "cancel"];
 
 pub fn run_profiles(dir: &Path, profiles: &[&str]) -> AcceptanceReport {
     let pkg = crate::access::package::read_package(dir);
@@ -20,10 +20,14 @@ pub fn run_profiles(dir: &Path, profiles: &[&str]) -> AcceptanceReport {
                 reports.push(profiles::core::run(dir));
                 reports.push(profiles::materialization::run(dir));
                 reports.push(profiles::migration::run());
+                reports.push(profiles::resources::run(dir));
+                reports.push(profiles::cancel::run(dir));
             }
             "core" => reports.push(profiles::core::run(dir)),
             "materialization" => reports.push(profiles::materialization::run(dir)),
             "migration" => reports.push(profiles::migration::run()),
+            "resources" => reports.push(profiles::resources::run(dir)),
+            "cancel" => reports.push(profiles::cancel::run(dir)),
             other => panic!("unknown acceptance profile '{other}'"),
         }
     }
@@ -62,11 +66,25 @@ mod tests {
         assert_eq!(report.driver, "demo");
         assert_eq!(report.version, "1.0.0");
         assert_eq!(report.package, dir.path().display().to_string());
-        assert_eq!(report.profiles.len(), 3);
+        assert_eq!(report.profiles.len(), 5);
         assert!(report.passed(), "{report:?}");
         for p in &report.profiles {
             assert_eq!(p.level(), Level::Pass, "{p:?}");
         }
+    }
+
+    #[test]
+    fn resources_and_cancel_are_selectable_by_name() {
+        let dir = package(MANIFEST);
+        let resources = run_profiles(dir.path(), &["resources"]);
+        assert_eq!(resources.profiles.len(), 1);
+        assert_eq!(resources.profiles[0].profile, "resources");
+        assert_eq!(resources.profiles[0].level(), Level::Pass, "{resources:?}");
+
+        let cancel = run_profiles(dir.path(), &["cancel"]);
+        assert_eq!(cancel.profiles.len(), 1);
+        assert_eq!(cancel.profiles[0].profile, "cancel");
+        assert_eq!(cancel.profiles[0].level(), Level::Pass, "{cancel:?}");
     }
 
     #[test]

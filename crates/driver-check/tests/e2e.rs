@@ -14,11 +14,43 @@ fn demo_dir() -> PathBuf {
 }
 
 #[test]
-fn demo_declarative_passes_core_materialization_migration() {
+fn demo_declarative_passes_all_profiles() {
     let report = run_profiles(&demo_dir(), &["all"]);
     assert!(report.passed(), "{}", serde_json::to_string_pretty(&report).unwrap());
     assert_eq!(report.driver, "demo-declarative");
     assert_eq!(report.version, "1.0.0");
+    let names: Vec<&str> = report.profiles.iter().map(|p| p.profile.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["core", "materialization", "migration", "resources", "cancel"]
+    );
+}
+
+#[test]
+fn every_named_profile_runs_alone() {
+    use tinyiothub_runtime::acceptance::runner::PROFILE_NAMES;
+
+    for name in PROFILE_NAMES.iter().filter(|name| **name != "all") {
+        let report = run_profiles(&demo_dir(), &[name]);
+        assert_eq!(report.profiles.len(), 1, "{name}");
+        assert_eq!(&report.profiles[0].profile, name, "{name}");
+        assert_ne!(report.profiles[0].level(), Level::Fail, "{name}: {report:?}");
+    }
+}
+
+#[test]
+fn cli_help_lists_every_profile() {
+    use tinyiothub_runtime::acceptance::runner::PROFILE_NAMES;
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_driver-check"))
+        .arg("--help")
+        .output()
+        .expect("run driver-check --help");
+    assert!(out.status.success());
+    let help = String::from_utf8_lossy(&out.stdout);
+    for name in PROFILE_NAMES {
+        assert!(help.contains(name), "--help must list profile '{name}': {help}");
+    }
 }
 
 #[test]
