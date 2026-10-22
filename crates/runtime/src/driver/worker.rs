@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::{Mutex, RwLock};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use tinyiothub_core::driver::{CancelToken, DriverMode, DriverReading, PropertyChangeSource, ResultValue, ValueSink};
@@ -107,6 +107,17 @@ impl CancelSlot {
     }
 }
 
+/// 一条命令的执行终态（worker → 等待方，E4c）。
+///
+/// 由 worker 在驱动调用真正返回后发送一次；`cancelled` 表示调用被 stop
+/// 取消（此时不再产生 `WorkerResult::Command`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandOutcome {
+    pub success: bool,
+    pub error: Option<String>,
+    pub cancelled: bool,
+}
+
 /// worker 命令面（契约见 spec §2.3）。
 ///
 /// `Read` / `SetDemand` / `Stop` 走各自的无阻塞 `watch` 槽位；`Execute` 走
@@ -121,6 +132,9 @@ pub enum WorkerCommand {
         /// 与真实执行窗口，而不是在入队（`execute_command` 返回）时释放。
         /// worker 在调用结束（成功/失败/取消）后 Drop。
         lease: Option<ResourceLease>,
+        /// E4c：需要等待执行终态的调用方（composite Call 步骤）传入；
+        /// worker 在调用返回后发送一次。None = fire-and-forget。
+        done: Option<oneshot::Sender<CommandOutcome>>,
     },
     SetDemand {
         sources: Vec<String>,
@@ -234,9 +248,22 @@ impl WorkerHandle {
     ///
     /// 入队失败时租约随 `TrySendError` 立即释放，不会泄漏 claim。
     pub fn submit_execute_with_lease(&self, cmd: ThingCommand, lease: Option<ResourceLease>) -> Result<(), Error> {
+        self.submit_execute_with_lease_and_done(cmd, lease, None)
+    }
+
+    /// 同 [`Self::submit_execute_with_lease`]，并可选地在执行终态时通过
+    /// `done` 回报一次（composite Call 步骤据此等待 worker 真正完成）。
+    ///
+    /// 入队失败时租约与 `done` 随命令一起释放/丢弃，等待方得到 channel 关闭。
+    pub(crate) fn submit_execute_with_lease_and_done(
+        &self,
+        cmd: ThingCommand,
+        lease: Option<ResourceLease>,
+        done: Option<oneshot::Sender<CommandOutcome>>,
+    ) -> Result<(), Error> {
         // 先加再发：避免 worker 抢先取出并减计数导致瞬时下溢。
         self.queue_depth.fetch_add(1, Ordering::Relaxed);
-        match self.exec_tx.try_send(WorkerCommand::Execute { cmd, lease }) {
+        match self.exec_tx.try_send(WorkerCommand::Execute { cmd, lease, done }) {
             Ok(()) => Ok(()),
             Err(mpsc::error::TrySendError::Full(_)) => {
                 self.queue_depth.fetch_sub(1, Ordering::Relaxed);
@@ -446,8 +473,13 @@ async fn run_worker(
                     counters.queue_depth.fetch_sub(1, Ordering::Relaxed);
                 }
                 match cmd {
-                    Some(WorkerCommand::Execute { cmd, lease }) => {
-                        execute_and_report(&mut driver, &cmd, &results, &cancel, lease);
+                    Some(WorkerCommand::Execute { cmd, lease, done }) => {
+                        // `done` 在驱动调用真正返回后才发送（成功/失败/取消），
+                        // 等待方因此覆盖完整执行窗口。
+                        let outcome = execute_and_report(&mut driver, &cmd, &results, &cancel, lease);
+                        if let Some(done) = done {
+                            let _ = done.send(outcome);
+                        }
                         *status.write() = driver.overview();
                     }
                     Some(WorkerCommand::Reset) => {
@@ -626,20 +658,25 @@ fn report_if_cancelled(
 ///
 /// `lease` 是随命令移交的资源租约：held 到本函数返回（成功/失败/取消都
 /// 同一路径释放）——claim 因此覆盖真实执行窗口，而不只是入队瞬间。
+/// 返回的 [`CommandOutcome`] 供等待方（composite Call 步骤）判定终态。
 fn execute_and_report(
     driver: &mut DriverWrapper,
     cmd: &ThingCommand,
     results: &mpsc::UnboundedSender<WorkerResult>,
     cancel: &CancelSlot,
     lease: Option<ResourceLease>,
-) {
+) -> CommandOutcome {
     let _lease = lease;
     let thing_id = driver.thing().id.clone();
     let token = cancel.begin();
     let outcome = driver.execute_command_with(cmd, &token);
     if report_if_cancelled(cancel, &token, &thing_id, CancelKind::Execute, results) {
         // 已取消：只上报 Cancelled，不再产生 Command 结果。
-        return;
+        return CommandOutcome {
+            success: false,
+            error: None,
+            cancelled: true,
+        };
     }
     let success = outcome.result.is_ok();
     let error = outcome.result.as_ref().err().map(|err| err.to_string());
@@ -658,8 +695,13 @@ fn execute_and_report(
         cmd: cmd.clone(),
         success,
         elapsed_ms,
-        error,
+        error: error.clone(),
     });
+    CommandOutcome {
+        success,
+        error,
+        cancelled: false,
+    }
 }
 
 #[cfg(test)]
@@ -1474,6 +1516,77 @@ mod tests {
 
         h.handle.stop();
         wait_finished(&h.handle).await;
+    }
+
+    /// E4c：等待方（composite Call 步骤）的 `done` 必须在驱动真正返回后
+    /// 才收到成功终态——不得在入队时提前回报。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn waiting_submission_receives_outcome_only_after_execution() {
+        let h = make_cancel_with(CancelOptions {
+            gate_execute: true,
+            ..CancelOptions::default()
+        });
+        let (done_tx, mut done_rx) = oneshot::channel();
+        h.handle
+            .submit_execute_with_lease_and_done(cmd(0), None, Some(done_tx))
+            .expect("queue has room");
+
+        h.log.execute_started.notified().await;
+        assert!(
+            done_rx.try_recv().is_err(),
+            "驱动返回前 done 不得发送（否则 composite 会提前进入下一步）"
+        );
+
+        h.release.send(()).unwrap();
+        let outcome = tokio::time::timeout(Duration::from_secs(2), done_rx)
+            .await
+            .expect("done must arrive after execution")
+            .expect("worker must send exactly one outcome");
+        assert!(outcome.success);
+        assert!(!outcome.cancelled);
+        assert!(outcome.error.is_none());
+
+        h.handle.stop();
+        wait_finished(&h.handle).await;
+    }
+
+    /// E4c：取消终态同样经 `done` 回报（不产生 Command 结果）。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn waiting_submission_reports_cancelled_outcome() {
+        let mut h = make_cancel_with(CancelOptions {
+            gate_execute: true,
+            ..CancelOptions::default()
+        });
+        let (done_tx, done_rx) = oneshot::channel();
+        h.handle
+            .submit_execute_with_lease_and_done(cmd(0), None, Some(done_tx))
+            .expect("queue has room");
+
+        h.log.execute_started.notified().await;
+        assert!(h.handle.cancel_current());
+        h.release.send(()).unwrap();
+
+        let outcome = tokio::time::timeout(Duration::from_secs(2), done_rx)
+            .await
+            .expect("done must arrive after cancellation")
+            .expect("worker must send exactly one outcome");
+        assert!(!outcome.success);
+        assert!(outcome.cancelled, "取消终态必须标记 cancelled");
+
+        h.handle.stop();
+        wait_finished(&h.handle).await;
+        // 取消只上报 Cancelled，等待方的 done 不改变该契约。
+        let mut saw_cancelled = false;
+        while let Ok(result) = h.result_rx.try_recv() {
+            if matches!(result, WorkerResult::Cancelled { .. }) {
+                saw_cancelled = true;
+            }
+            assert!(
+                !matches!(result, WorkerResult::Command { .. }),
+                "cancelled execute must not emit a Command result"
+            );
+        }
+        assert!(saw_cancelled, "cancelled execute must report Cancelled");
     }
 
     /// E4c Issue 4：随命令移交的租约由 worker 持有到执行结束——在途期间

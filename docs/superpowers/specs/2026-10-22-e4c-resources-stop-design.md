@@ -103,7 +103,11 @@ impl ArbitrationRegistry {
   thing 上重复资源合并（exclusive 优先 / shared capacity 取更严格值），
   按 thing id 排序 all-or-nothing claim 一次，全部租约持有到整条链结束
   （成功/失败/回滚）；解析或 claim 失败时不执行任何步骤。Call 步下发时
-  不携带每步租约（`lease=None`），worker 的异步执行由 run 级租约覆盖。
+  不携带每步租约（`lease=None`），并通过
+  `DataServer::execute_command_with_lease_and_wait` 等待 worker 回报执行
+  终态后才进入下一步——run 级租约覆盖的是 worker 的**完整执行窗口**，而
+  不只是入队瞬间。等待返回错误时该步标记 failed，run 级租约保持到回滚/
+  整链结束（RAII 释放）。
 - stop 期间 composite 的 run 级租约被 `set_stop` 强制释放；每个步骤开始前
   复检 `stop_reason`，返回 `stopped: <reason>` 并停止后续步骤/回滚。
 
@@ -144,6 +148,8 @@ pub enum WorkerResult {
 | 在途 ≤1s 退出 | 异步 `CommandCancelled outcome=cancelled` + 账本 |
 | 在途 >1s | 异步 `CommandCancelled outcome=cancelled_unknown` + 账本 + 指标 |
 | composite 资源 busy（run 开始） | composite 失败，不执行任何步骤；带 holder/resource；已获资源 all-or-nothing 释放 |
+| composite Call 步骤执行 | 等待 worker 执行终态；成功则继续，失败/取消则标记该步 failed 并回滚 |
+| composite 执行期间并发 composite/call | busy（带 holder/resource）——run 级租约覆盖 worker 在途执行窗口 |
 | composite 执行中 stop | 后续步骤返回 `stopped: <reason>`（run 级租约已被强制释放） |
 | lease 持有者崩溃 | TTL 到期后可再 claim（现有语义） |
 
@@ -159,8 +165,9 @@ pub enum WorkerResult {
 - 两 run 并发操作同设备：后者收到带持有者的 busy；不同资源可并行（shared/capacity 正确）。
 - stop 立即返回 `cancellation_requested`；协作驱动 ≤1s 退出并产生 `cancelled` 事件/账本；不合作驱动产生 `cancelled_unknown`。
 - stop 后新 call/set 被 `stopped:` 拒绝；claim 已全部释放。
-- composite 按全部步骤声明 resources 的并集 claim 一次并持有全程；顺序
-  步骤不 self-conflict，并发 composite 重叠资源 busy 文案可读。
+- composite 按全部步骤声明 resources 的并集 claim 一次并持有全程（Call
+  步骤等待 worker 执行完成）；顺序步骤不 self-conflict，执行期间并发
+  composite/call 重叠资源得到 busy，文案可读。
 - 默认无 resources 的变更工具仍保持 E1 每设备互斥。
 - E4b Hub stream/E3 live stream/现有 watch/derived 不回归。
 

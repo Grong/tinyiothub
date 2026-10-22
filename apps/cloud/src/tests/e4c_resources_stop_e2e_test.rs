@@ -17,16 +17,17 @@
 //! 驱动均为 `DriverMode::Push`（execute-only worker）：临时轮询串不会提交
 //! Read，取消终态只可能来自被测命令本身（spec §2.3 "采样读也可能被取消"）。
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
 use tinyiothub_agent::port::tool::Tool;
 use tinyiothub_agent::runtime::thing_agent::arbitration::DEVICE_RESOURCE;
+use tinyiothub_agent::runtime::thing_agent::seams::composite::CompositeDef;
 use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL, ResourceMode, ResourceSpec};
-use tinyiothub_core::driver::{CancelToken, DriverMode, ResultValue, ThingDriver};
+use tinyiothub_core::driver::{CancelToken, DriverMode, ResultValue, RetryConfig, ThingDriver};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::models::event::{Event, EventType, ThingEventType};
 use tinyiothub_core::models::thing::Thing;
@@ -43,6 +44,7 @@ use tinyiothub_runtime::ports::HubLedger;
 use tinyiothub_skills::trust::ToolSafety;
 use tinyiothub_storage::cache::ThingCache;
 
+use crate::domains::agent::host::composite::CompositeExecutor;
 use crate::domains::agent::host::tools::thing::PendingActionStore;
 use crate::domains::agent::host::tools::{ThingToolContext, create_thing_tools};
 use crate::shared::access_ports::{DbAcceptanceStore, DbDeviceStore, DbDriverStore, DbProjectionStore, DbThingSource};
@@ -843,5 +845,325 @@ async fn stop_non_cooperative_driver_records_cancelled_unknown_after_grace() {
         Some(&json!("cancelled_unknown"))
     );
 
+    let _ = rig.shutdown_tx.send(());
+}
+
+// ── 3. composite run-wide lease 覆盖 worker 执行窗口 ──────────────────
+
+/// 可阻塞/可失败的假驱动：`block` 动作等到测试放行；`failures` 中的动作
+/// 返回 Err；其余动作成功并计数。
+struct CompositeGateDriver {
+    thing: Thing,
+    started: Arc<tokio::sync::Notify>,
+    release: Arc<AtomicBool>,
+    failures: Arc<Mutex<Vec<String>>>,
+    executions: Arc<AtomicUsize>,
+}
+
+impl ThingDriver for CompositeGateDriver {
+    fn thing(&self) -> &Thing {
+        &self.thing
+    }
+    fn thing_mut(&mut self) -> &mut Thing {
+        &mut self.thing
+    }
+    /// execute-only：轮询串不提交 Read。
+    fn mode(&self) -> DriverMode {
+        DriverMode::Push
+    }
+    /// 单次终态：失败用例不必等默认重试退避；短 timeout 让重试层在终态
+    /// 失败后重置状态，下一步（如回滚）能真正进入驱动而不是返回缓存错误。
+    fn retry_config(&self) -> RetryConfig {
+        RetryConfig {
+            max_attempts: 1,
+            base_interval: Duration::from_millis(1),
+            max_interval: Duration::from_millis(1),
+            timeout: Duration::from_millis(1),
+            ..RetryConfig::default()
+        }
+    }
+    fn read_data(&mut self, _cancel: &CancelToken) -> Result<Vec<ResultValue>, Error> {
+        Ok(Vec::new())
+    }
+    fn execute_command(&mut self, cmd: &ThingCommand, _cancel: &CancelToken) -> Result<bool, Error> {
+        self.started.notify_one();
+        if cmd.name == "block" {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !self.release.load(Ordering::SeqCst) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        if self.failures.lock().unwrap().iter().any(|action| action == &cmd.name) {
+            return Err(Error::IOError("driver exploded".to_string()));
+        }
+        self.executions.fetch_add(1, Ordering::SeqCst);
+        Ok(true)
+    }
+}
+
+fn composite_def(id: &str, name: &str, steps: Value) -> CompositeDef {
+    serde_json::from_value(json!({
+        "id": id,
+        "workspace_id": WS,
+        "name": name,
+        "description": "",
+        "v": 1,
+        "steps": steps,
+    }))
+    .expect("valid composite definition")
+}
+
+/// 核心回归：composite 的第一个 Call 步骤在 worker 内阻塞时，`execute`
+/// 不得提前返回；第二个 composite（以及直接 call）在同一资源上必须 busy；
+/// 放行后第一条完成并释放 run-wide 租约。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn composite_run_lease_covers_worker_execution_and_blocks_second_run() {
+    let pool = test_pool().await;
+    let thing_id = "dev-composite-block";
+    seed_device(&pool, thing_id, &[], &[]).await;
+
+    let started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(AtomicBool::new(false));
+    let executions = Arc::new(AtomicUsize::new(0));
+    let rig = stop_rig(
+        thing_id,
+        Box::new(CompositeGateDriver {
+            thing: stop_thing(thing_id),
+            started: started.clone(),
+            release: release.clone(),
+            failures: Arc::new(Mutex::new(Vec::new())),
+            executions: executions.clone(),
+        }),
+    )
+    .await;
+
+    let executor = Arc::new(CompositeExecutor {
+        pool: pool.clone(),
+        workspace_id: WS.into(),
+        data_server: Some(rig.server.clone()),
+        event_bus: None,
+        arbitration: Some(rig.registry.clone()),
+        holder: "test".into(),
+        resources: None,
+    });
+    let def = Arc::new(composite_def(
+        "c-block",
+        "blocker",
+        json!([{"op": "call", "thing_id": thing_id, "action": "block", "params": {}}]),
+    ));
+
+    let first_executor = executor.clone();
+    let first_def = def.clone();
+    let first = tokio::spawn(async move { first_executor.execute(&first_def).await });
+
+    tokio::time::timeout(Duration::from_secs(2), started.notified())
+        .await
+        .expect("first composite command must reach the driver");
+    assert!(
+        !first.is_finished(),
+        "composite 必须在 worker 执行完成前保持未返回（旧实现入队即返回）"
+    );
+
+    // 第二个 composite：run-wide 租约仍被第一条链持有 → 立即 busy，且不执行步骤。
+    let second = executor.execute(&def).await;
+    assert_eq!(second["status"], "failed", "{second}");
+    assert_eq!(second["steps"].as_array().unwrap().len(), 1, "{second}");
+    let error = second["steps"][0]["error"].as_str().unwrap_or_default();
+    assert!(error.contains("composite:blocker:test"), "busy 必须点名持有者: {error}");
+    assert!(error.contains("占用"), "busy 文案必须人读得懂: {error}");
+
+    // 直接 call 同一资源同样 busy（claim 覆盖 worker 执行窗口）。
+    let busy = rig
+        .registry
+        .try_acquire_default(thing_id, "late-run".into())
+        .expect_err("composite 执行期间资源必须仍被持有");
+    assert_eq!(busy.holder, "composite:blocker:test");
+
+    // 放行第一条：worker 完成 → composite 返回 → run-wide 租约释放。
+    release.store(true, Ordering::SeqCst);
+    let first_out = tokio::time::timeout(Duration::from_secs(5), first)
+        .await
+        .expect("first composite must complete after release")
+        .expect("first composite task");
+    assert_eq!(first_out["status"], "completed", "{first_out}");
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
+
+    rig.registry
+        .try_acquire_default(thing_id, "after-run".into())
+        .expect("composite must release the run-wide lease after completion");
+    let _ = rig.shutdown_tx.send(());
+}
+
+/// 顺序同资源步骤在真实 worker 下仍逐步通过（每步等待完成，run-wide
+/// 租约只 claim 一次，不 self-conflict）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn composite_sequential_same_resource_steps_still_complete() {
+    let pool = test_pool().await;
+    let thing_id = "dev-composite-seq";
+    seed_device(&pool, thing_id, &[], &[]).await;
+
+    let executions = Arc::new(AtomicUsize::new(0));
+    let rig = stop_rig(
+        thing_id,
+        Box::new(CompositeGateDriver {
+            thing: stop_thing(thing_id),
+            started: Arc::new(tokio::sync::Notify::new()),
+            release: Arc::new(AtomicBool::new(true)),
+            failures: Arc::new(Mutex::new(Vec::new())),
+            executions: executions.clone(),
+        }),
+    )
+    .await;
+
+    let executor = CompositeExecutor {
+        pool: pool.clone(),
+        workspace_id: WS.into(),
+        data_server: Some(rig.server.clone()),
+        event_bus: None,
+        arbitration: Some(rig.registry.clone()),
+        holder: "test".into(),
+        resources: None,
+    };
+    let def = composite_def(
+        "c-seq",
+        "sequential",
+        json!([
+            {"op": "call", "thing_id": thing_id, "action": "first", "params": {}},
+            {"op": "call", "thing_id": thing_id, "action": "second", "params": {}}
+        ]),
+    );
+
+    let out = executor.execute(&def).await;
+    assert_eq!(out["status"], "completed", "{out}");
+    assert_eq!(out["steps"].as_array().unwrap().len(), 2, "{out}");
+    assert_eq!(executions.load(Ordering::SeqCst), 2, "两步都必须真正执行");
+
+    rig.registry
+        .try_acquire_default(thing_id, "after-run".into())
+        .expect("composite must release the run-wide lease after completion");
+    let _ = rig.shutdown_tx.send(());
+}
+
+/// worker 回报失败终态：该步标记 failed（错误文案来自 driver），返回后
+/// run-wide 租约必须释放。driver 失败后不再下发任何命令，避免重试层的
+/// 终态错误缓存干扰本用例。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn composite_worker_failure_marks_step_failed_and_releases_run_lease() {
+    let pool = test_pool().await;
+    let thing_id = "dev-composite-driver-fail";
+    seed_device(&pool, thing_id, &[], &[]).await;
+
+    let executions = Arc::new(AtomicUsize::new(0));
+    let rig = stop_rig(
+        thing_id,
+        Box::new(CompositeGateDriver {
+            thing: stop_thing(thing_id),
+            started: Arc::new(tokio::sync::Notify::new()),
+            release: Arc::new(AtomicBool::new(true)),
+            failures: Arc::new(Mutex::new(vec!["boom".to_string()])),
+            executions: executions.clone(),
+        }),
+    )
+    .await;
+
+    let executor = CompositeExecutor {
+        pool: pool.clone(),
+        workspace_id: WS.into(),
+        data_server: Some(rig.server.clone()),
+        event_bus: None,
+        arbitration: Some(rig.registry.clone()),
+        holder: "test".into(),
+        resources: None,
+    };
+    let def = composite_def(
+        "c-driver-fail",
+        "driver_failure",
+        json!([{"op": "call", "thing_id": thing_id, "action": "boom", "params": {}}]),
+    );
+
+    let out = executor.execute(&def).await;
+    assert_eq!(out["status"], "failed", "{out}");
+    let error = out["steps"][0]["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("driver exploded"),
+        "等待到 worker 失败终态并标记该步 failed: {error}"
+    );
+    assert_eq!(executions.load(Ordering::SeqCst), 0, "失败的驱动调用不计成功次数");
+
+    rig.registry
+        .try_acquire_default(thing_id, "after-run".into())
+        .expect("failed composite must still release the run-wide lease");
+    let _ = rig.shutdown_tx.send(());
+}
+
+/// 步骤失败（等待路径返回 Err）：标记该步 failed → 回滚已完成步骤（回滚
+/// Call 在真实 worker 上真正执行），返回后 run-wide 租约必须释放。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn composite_step_failure_rolls_back_and_releases_run_lease() {
+    let pool = test_pool().await;
+    let thing_id = "dev-composite-fail";
+    let missing = "dev-composite-missing";
+    seed_device(&pool, thing_id, &[], &[]).await;
+
+    let executions = Arc::new(AtomicUsize::new(0));
+    let rig = stop_rig(
+        thing_id,
+        Box::new(CompositeGateDriver {
+            thing: stop_thing(thing_id),
+            started: Arc::new(tokio::sync::Notify::new()),
+            release: Arc::new(AtomicBool::new(true)),
+            failures: Arc::new(Mutex::new(Vec::new())),
+            executions: executions.clone(),
+        }),
+    )
+    .await;
+
+    let executor = CompositeExecutor {
+        pool: pool.clone(),
+        workspace_id: WS.into(),
+        data_server: Some(rig.server.clone()),
+        event_bus: None,
+        arbitration: Some(rig.registry.clone()),
+        holder: "test".into(),
+        resources: None,
+    };
+    // 第 2 步引用不在 DataServer 缓存中的物 → 等待路径返回 Err（不是入队成功）。
+    let def = composite_def(
+        "c-fail",
+        "failure",
+        json!([
+            {"op": "call", "thing_id": thing_id, "action": "good", "params": {},
+             "rollback": {"op": "call", "thing_id": thing_id, "action": "undo", "params": {}}},
+            {"op": "call", "thing_id": missing, "action": "anything", "params": {}}
+        ]),
+    );
+
+    let out = executor.execute(&def).await;
+    assert_eq!(out["status"], "rolled_back", "{out}");
+    let failed = out["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["index"] == 1)
+        .expect("failed step present");
+    let error = failed["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("not found"),
+        "等待路径的错误必须标记该步 failed: {error}"
+    );
+    assert!(
+        out["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|step| step["status"] == "rolled_back"),
+        "已完成步骤必须回滚: {out}"
+    );
+    // good + undo 在 worker 上真正执行；失败步骤未进入驱动。
+    assert_eq!(executions.load(Ordering::SeqCst), 2);
+
+    rig.registry
+        .try_acquire_default(thing_id, "after-run".into())
+        .expect("failure/rollback must still release the run-wide lease");
     let _ = rig.shutdown_tx.send(());
 }

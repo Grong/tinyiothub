@@ -168,6 +168,58 @@ pub(crate) fn dispatch_command_with_lease(
     }
 }
 
+/// 下发尾巴（等待执行完成）：供 composite 顺序步骤使用。
+///
+/// composite 的 run-wide 租约已由调用方全程持有（`lease` 通常为 `None`），
+/// 本函数等待 worker 回报执行终态——保证上一步命令真正离开驱动后才进入
+/// 下一步，且 run-wide claim 的覆盖范围包含 worker 执行窗口。
+pub(crate) async fn dispatch_command_with_lease_and_wait(
+    data_server: Option<&Arc<tinyiothub_runtime::DataServer>>,
+    thing_id: &str,
+    action_name: &str,
+    params: Option<&Value>,
+    lease: Option<tinyiothub_runtime::arbitration::ResourceLease>,
+) -> ToolResult {
+    let Some(data_server) = data_server.cloned() else {
+        // 模拟路径不执行任何驱动调用：租约随函数返回释放。
+        drop(lease);
+        tracing::warn!("DataServer not available, action execution is simulated");
+        return tool_ok(json!({
+            "thingId": thing_id,
+            "actionName": action_name,
+            "status": "simulated",
+            "message": "操作已记录（DataServer 未就绪，实际执行已模拟）"
+        }))
+        .expect("payload serializes");
+    };
+
+    let cmd = tinyiothub_core::models::thing_command::ThingCommand {
+        id: uuid::Uuid::new_v4().to_string(),
+        thing_id: thing_id.to_string(),
+        name: action_name.to_string(),
+        display_name: None,
+        description: None,
+        parameters: params.map(|p| p.to_string()),
+        created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+    };
+    match data_server.execute_command_with_lease_and_wait(cmd, lease).await {
+        Ok(outcome) if outcome.cancelled => tool_err(format!("操作已取消: {action_name}")).expect("static message"),
+        Ok(outcome) if !outcome.success => tool_err(format!(
+            "操作执行失败: {}",
+            outcome.error.unwrap_or_else(|| "driver reported failure".to_string())
+        ))
+        .expect("static message"),
+        Ok(_) => tool_ok(json!({
+            "thingId": thing_id,
+            "actionName": action_name,
+            "status": "executed",
+            "message": "操作已执行完成"
+        }))
+        .expect("payload serializes"),
+        Err(e) => tool_err(format!("操作执行失败: {}", e)).expect("static message"),
+    }
+}
+
 /// Swappable per-run context holder (O8: one autonomous agent per workspace,
 /// the run context is replaced every run). The factory swaps the inner Arc on
 /// each `get_or_create`; tools clone it out per execute.

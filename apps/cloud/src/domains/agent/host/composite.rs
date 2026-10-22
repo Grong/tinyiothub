@@ -16,7 +16,7 @@ use tinyiothub_runtime::access::resources::{ResourceClaim, ResourceResolver, dev
 use tinyiothub_runtime::event_bus::EventBus;
 use tinyiothub_runtime::ports::HubLedger;
 
-use super::tools::autonomous_invoke::dispatch_command_with_lease;
+use super::tools::autonomous_invoke::dispatch_command_with_lease_and_wait;
 use super::tools::thing::resource_specs;
 use crate::shared::runtime_ports::HubLedgerAdapter;
 
@@ -47,11 +47,12 @@ impl CompositeExecutor {
         let holder = format!("composite:{}:{}", def.name, self.holder);
 
         // E4c：整条 composite 只 claim 一次——并集覆盖所有步骤（含回滚）声明
-        // 的资源，并持有到本函数返回（成功/失败/回滚全部完成）。步骤之间不
-        // 释放、也不把每步租约移交给 worker：worker 是异步执行的，逐步骤
-        // 移交会让下一步在上一命令仍在执行时 self-conflict（同一 holder）。
-        // `_leases` 在作用域结束时 RAII 释放；claim 失败时已获租约同样在
-        // `claim_run` 内释放（all-or-nothing）。
+        // 的资源，并持有到本函数返回（成功/失败/回滚全部完成）。Call 步骤
+        // 等待 worker 回报执行终态后才继续，因此 run-wide 租约的覆盖范围
+        // 包含 worker 的真实执行窗口。步骤之间不释放、也不把每步租约移交
+        // 给 worker：逐步骤移交会在下一步开始时仍占用资源（同一 holder 也
+        // 不重入）。`_leases` 在作用域结束时 RAII 释放；claim 失败时已获
+        // 租约同样在 `claim_run` 内释放（all-or-nothing）。
         let _leases = match self.claim_run(def, &holder).await {
             Ok(leases) => leases,
             Err(e) => {
@@ -164,10 +165,17 @@ impl CompositeExecutor {
 
         let result = match op {
             CompositeOp::Call { action, params, .. } => {
-                // composite 租约由 `execute` 全程持有；worker 不再接收每步
-                // 租约（否则上一步的租约会在后续步骤期间仍占用资源）。
-                let dispatched =
-                    dispatch_command_with_lease(self.data_server.as_ref(), &thing_id, action, Some(params), None);
+                // composite 租约由 `execute` 全程持有；worker 不接收每步租约。
+                // 等待执行终态：上一条命令真正离开驱动后才进入下一步，run-wide
+                // 租约因此覆盖 worker 执行窗口（而不只是入队瞬间）。
+                let dispatched = dispatch_command_with_lease_and_wait(
+                    self.data_server.as_ref(),
+                    &thing_id,
+                    action,
+                    Some(params),
+                    None,
+                )
+                .await;
                 if dispatched.success {
                     Ok(serde_json::from_str(&dispatched.output)
                         .unwrap_or_else(|_| json!({ "output": dispatched.output })))

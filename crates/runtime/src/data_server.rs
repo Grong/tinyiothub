@@ -15,7 +15,7 @@ use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 
 use crate::access::sampler::{Sampler, SamplingWorkers};
 use crate::arbitration::ResourceLease;
-use crate::driver::worker::{CancelKind, WorkerHandle, WorkerResult, spawn_worker};
+use crate::driver::worker::{CancelKind, CommandOutcome, WorkerHandle, WorkerResult, spawn_worker};
 use crate::driver::{DriverWrapper, ThingOverview, create_driver};
 use crate::event_bus::{EventBus, publish_event_safe};
 use crate::ports::{HubLedger, ThingCacheSource};
@@ -690,6 +690,39 @@ impl DataServer {
             return Ok(());
         };
         worker.submit_execute_with_lease(cmd, lease)
+    }
+
+    /// 提交命令并等待 worker 回报执行终态（E4c）。
+    ///
+    /// composite Call 步骤用它保证上一条命令真正离开驱动后才进入下一步；
+    /// 运行期租约由 composite 全程持有，因此这里通常传 `None`。
+    ///
+    /// - 队列满：返回 `busy`；租约随被拒命令一起释放。
+    /// - worker 已停止/任务提前退出：`done` 通道关闭，返回 `worker stopped`。
+    /// - 无 worker 的物（无驱动/派生 owner）：命令视为已接受，返回成功终态
+    ///   （与 [`Self::execute_command_with_lease`] 的旧语义一致）。
+    pub async fn execute_command_with_lease_and_wait(
+        &self,
+        cmd: ThingCommand,
+        lease: Option<ResourceLease>,
+    ) -> Result<CommandOutcome, Error> {
+        if self.device_cache.get(&cmd.thing_id).is_none() {
+            return Err(Error::NotFound);
+        }
+        let Some(worker) = self.workers.get(&cmd.thing_id) else {
+            tracing::debug!(thing_id = %cmd.thing_id, command = %cmd.name, "command accepted without a driver worker");
+            drop(lease);
+            return Ok(CommandOutcome {
+                success: true,
+                error: None,
+                cancelled: false,
+            });
+        };
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        worker.submit_execute_with_lease_and_done(cmd, lease, Some(done_tx))?;
+        done_rx
+            .await
+            .map_err(|_| Error::DriverError("worker stopped".to_string()))
     }
 
     pub fn execute_commands(&self, cmds: Vec<ThingCommand>) -> Result<(), Error> {
