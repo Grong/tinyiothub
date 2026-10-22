@@ -109,9 +109,16 @@ impl ArbitrationRegistry {
         specs: &[ResourceSpec],
         ttl: Duration,
     ) -> Result<Lease, Busy> {
+        // stop 与 claim 互斥：闸门期间的 claim 直接拒绝（stop 优先）。
+        if let Some(reason) = self.stop_reason(thing_id) {
+            return Err(stop_busy(&reason));
+        }
+
         // 固定排序：并发 claim 重叠资源集时不会互相等成环（也不做排队）。
+        // 重复 id 去重：同一份声明重复出现不得 self-busy。
         let mut sorted: Vec<&ResourceSpec> = specs.iter().collect();
         sorted.sort_by(|a, b| a.id.cmp(&b.id));
+        sorted.dedup_by(|a, b| a.id == b.id);
 
         let mut held = Vec::with_capacity(sorted.len());
         for spec in sorted {
@@ -126,6 +133,11 @@ impl ArbitrationRegistry {
                     return Err(busy);
                 }
             }
+        }
+        // 复检 stop：关闭 retain（set_stop 释放）与新 insert 之间的 TOCTOU。
+        if let Some(reason) = self.stop_reason(thing_id) {
+            self.release_all(&held);
+            return Err(stop_busy(&reason));
         }
         Ok(Lease {
             claims: Arc::clone(&self.claims),
@@ -230,6 +242,14 @@ impl ArbitrationRegistry {
         for claim in held {
             release_claim(&self.claims, claim);
         }
+    }
+}
+
+/// stop 闸门期间的 claim 拒绝：holder 带 stop 原因，resource 为合成设备资源。
+fn stop_busy(reason: &str) -> Busy {
+    Busy {
+        holder: format!("stop:{reason}"),
+        resource: DEVICE_RESOURCE.to_string(),
     }
 }
 
@@ -452,6 +472,36 @@ mod tests {
             .expect("partial claim 必须已释放");
     }
 
+    /// 排序报错必须指向排序后的首个 busy 资源（而非入参首个）。
+    #[test]
+    fn sorted_order_reports_first_busy_resource() {
+        let reg = ArbitrationRegistry::default();
+        let _a = reg
+            .try_acquire_resources("dev_1", "run-A".into(), &[exclusive("res:a")], TTL)
+            .expect("run-A 占 a");
+        let _b = reg
+            .try_acquire_resources("dev_1", "run-B".into(), &[exclusive("res:b")], TTL)
+            .expect("run-B 占 b");
+
+        // 入参 [b, a]：不排序会先撞 b（holder B）；排序后先撞 a（holder A）。
+        let err = reg
+            .try_acquire_resources("dev_1", "run-C".into(), &[exclusive("res:b"), exclusive("res:a")], TTL)
+            .expect_err("两个资源都被占，必 busy");
+        assert_eq!(err.holder, "run-A");
+        assert_eq!(err.resource, "res:a");
+    }
+
+    /// 重复声明 id 去重，不得 self-busy。
+    #[test]
+    fn duplicate_spec_ids_do_not_self_busy() {
+        let reg = ArbitrationRegistry::default();
+        let _a = reg
+            .try_acquire_resources("dev_1", "run-A".into(), &[exclusive("res:a"), exclusive("res:a")], TTL)
+            .expect("重复 id 去重后不得 self-busy");
+        reg.try_acquire_resources("dev_1", "run-B".into(), &[exclusive("res:a")], TTL)
+            .expect_err("去重后仍只有一个持有者");
+    }
+
     #[test]
     fn reacquire_after_lease_drop() {
         let reg = ArbitrationRegistry::default();
@@ -565,23 +615,62 @@ mod tests {
         assert_eq!(wins, 1, "并发 acquire 只能有一个胜出");
     }
 
-    /// E2 stop：闸门命中带原因；释放该设备全部 claim；TTL 过期自动恢复。
+    /// E2 stop：闸门命中带原因；释放该设备全部 claim；期间 claim 一律拒绝；
+    /// 闸门过期后自动恢复。
     #[test]
-    fn stop_gate_releases_all_claims_and_expires() {
+    fn stop_gate_releases_all_claims_and_rejects_new_claims() {
         let reg = ArbitrationRegistry::default();
         let lease = reg
             .try_acquire_resources("dev_1", "run-A".into(), &[exclusive("res:a"), exclusive("res:b")], TTL)
             .expect("acquire");
         reg.set_stop("dev_1", "operator stop".into(), Duration::from_secs(60));
         assert_eq!(reg.stop_reason("dev_1").as_deref(), Some("operator stop"));
-        // stop 释放全部 claim：新持有者两个资源都可 claim。
+
+        // stop 与 claim 互斥：新 claim 被拒绝，holder 带 stop:<reason>。
+        let err = reg
+            .try_acquire_resources("dev_1", "run-B".into(), &[exclusive("res:a")], TTL)
+            .expect_err("stop 期间 claim 必须拒绝");
+        assert_eq!(
+            err,
+            Busy {
+                holder: "stop:operator stop".into(),
+                resource: DEVICE_RESOURCE.into(),
+            }
+        );
+        // 兼容入口同样被拒绝。
+        let err = reg
+            .try_acquire("dev_1", "run-B".into(), TTL)
+            .expect_err("stop 期间 try_acquire 必须拒绝");
+        assert_eq!(err.holder, "stop:operator stop");
+
+        // 迟到 Lease Drop 不改变闸门。
         drop(lease);
-        reg.try_acquire_resources("dev_1", "run-B".into(), &[exclusive("res:a"), exclusive("res:b")], TTL)
-            .expect("stop 后必须释放全部 claim");
+        assert_eq!(reg.stop_reason("dev_1").as_deref(), Some("operator stop"));
 
         // 零 TTL = 立即过期。
         reg.set_stop("dev_2", "x".into(), Duration::ZERO);
         assert_eq!(reg.stop_reason("dev_2"), None);
+    }
+
+    /// stop 拒绝的 claim 不得留下 partial claim：acquire res:a 后 stop，
+    /// 闸门过期时 res:a 与 res:b 都空闲。
+    #[test]
+    fn stopped_claim_leaves_no_partial_claims() {
+        let reg = ArbitrationRegistry::default();
+        let lease = reg
+            .try_acquire_resources("dev_1", "run-A".into(), &[exclusive("res:a")], TTL)
+            .expect("acquire");
+        reg.set_stop("dev_1", "operator stop".into(), Duration::from_millis(10));
+        let err = reg
+            .try_acquire_resources("dev_1", "run-B".into(), &[exclusive("res:a"), exclusive("res:b")], TTL)
+            .expect_err("stop 期间 claim 必须拒绝");
+        assert_eq!(err.holder, "stop:operator stop");
+
+        std::thread::sleep(Duration::from_millis(30));
+        // 闸门过期：stop 已释放 run-A 的 claim，失败的 run-B 也未留下 partial。
+        reg.try_acquire_resources("dev_1", "run-C".into(), &[exclusive("res:a"), exclusive("res:b")], TTL)
+            .expect("stop 过期后资源必须全部空闲");
+        drop(lease);
     }
 
     #[test]

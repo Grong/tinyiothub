@@ -14,7 +14,9 @@ pub mod trigger;
 pub mod types;
 pub mod watch_loop;
 pub use active_runs::{ActiveRunGuard, ActiveRunRegistry};
-pub use arbitration::{ArbitrationRegistry, Busy, DEFAULT_LEASE_TTL, Lease};
+pub use arbitration::{
+    ArbitrationRegistry, Busy, DEFAULT_LEASE_TTL, DEVICE_RESOURCE, Lease, ResourceLease, ResourceMode, ResourceSpec,
+};
 pub use manager::{AutonomousAgentProvider, HeartbeatDeps, ThingAgentManager, ThingAgentManagerConfig};
 pub use runner::{AgentHandle, RunContext, RunContextInner, RunOutcome, Runner, ToolTraceEntry, TruncationReason};
 pub use scheduler::{EnqueueError, Scheduler, SchedulerHandle};
