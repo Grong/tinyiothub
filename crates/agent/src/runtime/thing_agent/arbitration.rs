@@ -1,10 +1,15 @@
-//! E1 仲裁退化形态（spec §4 Hub 层）：每设备单一互斥资源，E4 声明制后细化。
+//! E4c 多资源 claim 注册表（spec §2.1）：把 E1 的每设备单互斥扩展为按
+//! `(thing, resource)` 的声明式仲裁。
 //!
-//! 多个执行体（chat agent、值守 run）可能同时想操作同一台设备——这里只
-//! 做最退化的一层互斥：同一 thing_id 同一时刻只允许一个持有者。持有者
-//! 崩溃不死锁：租约带 TTL（默认 10min，AGH 参照），过期后自动可再
-//! acquire。释放走 RAII——[`Lease`] 析构即还锁（token 校验，不会误删
-//! TTL 过期后被他人重 acquire 的新锁）。
+//! 多个执行体（chat agent、值守 run、composite 步骤）可能同时想操作同一台
+//! 设备的同一份能力——调用方按工具声明给出 [`ResourceSpec`]，注册表排序后
+//! all-or-nothing 地 claim 全部资源：任一 busy 则释放已获 claim 并拒绝。
+//! 未声明 resources 的变更类工具走兼容入口 [`ArbitrationRegistry::try_acquire`]，
+//! claim 合成的 [`DEVICE_RESOURCE`] exclusive 资源，保持 E1 每设备互斥语义。
+//!
+//! 持有者崩溃不死锁：每个 claim 带 TTL（默认 10min，AGH 参照），过期后自动
+//! 可再 claim。释放走 RAII——[`Lease`] 析构即还全部 claim（token 校验，不会
+//! 误删 TTL 过期后被他人重 claim 的新持有者）。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -14,80 +19,123 @@ use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 
 /// 默认租约 TTL（AGH 参照 10min）——覆盖一次 run 的执行窗口；持有者
-/// 崩溃后最长 10min 自动恢复可 acquire，不死锁。
+/// 崩溃后最长 10min 自动恢复可 claim，不死锁。
 pub const DEFAULT_LEASE_TTL: Duration = Duration::from_secs(10 * 60);
 
 /// E2 stop 闸门默认 TTL：阻断该设备后续 call/set 的窗口。
 pub const DEFAULT_STOP_TTL: Duration = Duration::from_secs(60);
 
-/// E1 仲裁退化形态（spec §4 Hub 层）：每设备单一互斥资源，E4 声明制后细化。
-/// busy 拒绝必须带持有者名（人读得懂的拒绝）。
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("busy: {holder}")]
-pub struct Busy {
-    pub holder: String,
+/// 未声明 resources 的变更类工具所 claim 的合成资源 id——exclusive，
+/// 等价于 E1 的每设备互斥。
+pub const DEVICE_RESOURCE: &str = "__device__";
+
+/// 资源占用模式。exclusive 单持有者；shared 最多 `capacity` 个存活持有者。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceMode {
+    Exclusive,
+    Shared,
 }
 
-struct LockEntry {
+/// 一次 claim 的资源声明：工具层从 device declaration 解析后传入。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceSpec {
+    pub id: String,
+    pub mode: ResourceMode,
+    /// shared 时有效（至少按 1 处理）；exclusive 恒为单持有者。
+    pub capacity: u32,
+}
+
+/// busy 拒绝必须带持有者名与资源 id（人读得懂的拒绝）。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("busy: {holder} holds {resource}")]
+pub struct Busy {
+    pub holder: String,
+    pub resource: String,
+}
+
+/// claim 的唯一键：`(thing_id, resource_id)`。E4c 仍按 thing 全局，workspace
+/// 鉴权在工具层。
+type ClaimKey = (String, String);
+
+struct HolderEntry {
     holder: String,
-    /// 每把锁的唯一令牌——Lease Drop 时按令牌校验，TTL 过期后被他人重
-    /// acquire 的锁不被旧 Lease 误删。
+    /// 每次 claim 的唯一令牌——Lease Drop 时按令牌校验，TTL 过期后被他人
+    /// 重 claim 的持有者不被旧 Lease 误删。
     token: u64,
     acquired_at: Instant,
     ttl: Duration,
 }
 
-impl LockEntry {
+impl HolderEntry {
+    fn new(holder: &str, token: u64, ttl: Duration) -> Self {
+        Self {
+            holder: holder.to_string(),
+            token,
+            acquired_at: Instant::now(),
+            ttl,
+        }
+    }
+
     fn alive(&self) -> bool {
         self.acquired_at.elapsed() < self.ttl
     }
 }
 
-/// 每设备互斥锁注册表。Cheap to clone —— 所有克隆共享同一张表（跨 run、
+struct ClaimEntry {
+    mode: ResourceMode,
+    capacity: u32,
+    holders: Vec<HolderEntry>,
+}
+
+/// 资源 claim 注册表。Cheap to clone —— 所有克隆共享同一张表（跨 run、
 /// 跨 chat/自治工具共享同一份仲裁状态）。
 #[derive(Clone, Default)]
 pub struct ArbitrationRegistry {
-    locks: Arc<DashMap<String, LockEntry>>,
+    claims: Arc<DashMap<ClaimKey, ClaimEntry>>,
     /// E2 stop 闸门：设备 → (原因, 截止时刻)。期间 call/set 一律拒绝。
     stops: Arc<DashMap<String, (String, Instant)>>,
     next_token: Arc<AtomicU64>,
 }
 
 impl ArbitrationRegistry {
-    /// 尝试占有 `thing_id` 的互斥锁。空闲或前任租约已过期 → 获得
-    /// [`Lease`]；否则返回 [`Busy`]（含当前持有者名）。
-    pub fn try_acquire(&self, thing_id: &str, holder: String, ttl: Duration) -> Result<Lease, Busy> {
-        let mint = |holder: String| {
-            let token = self.next_token.fetch_add(1, Ordering::Relaxed);
-            (
-                LockEntry {
-                    holder,
+    /// 按 `specs` claim 该设备的多个资源：按资源 id 排序后 all-or-nothing。
+    /// 任一资源 busy → 释放本次已获 claim，返回首个 [`Busy`]。
+    ///
+    /// `specs` 为空时不注入资源（合成 `__device__` 由工具层决定）。
+    pub fn try_acquire_resources(
+        &self,
+        thing_id: &str,
+        holder: String,
+        specs: &[ResourceSpec],
+        ttl: Duration,
+    ) -> Result<Lease, Busy> {
+        // 固定排序：并发 claim 重叠资源集时不会互相等成环（也不做排队）。
+        let mut sorted: Vec<&ResourceSpec> = specs.iter().collect();
+        sorted.sort_by(|a, b| a.id.cmp(&b.id));
+
+        let mut held = Vec::with_capacity(sorted.len());
+        for spec in sorted {
+            match self.claim(thing_id, &holder, spec, ttl) {
+                Ok(token) => held.push(HeldClaim {
+                    thing_id: thing_id.to_string(),
+                    resource: spec.id.clone(),
                     token,
-                    acquired_at: Instant::now(),
-                    ttl,
-                },
-                token,
-            )
-        };
-        // entry API：检查-插入原子，两个并发 acquire 只有一个胜出。
-        match self.locks.entry(thing_id.to_string()) {
-            Entry::Vacant(v) => {
-                let (entry, token) = mint(holder);
-                v.insert(entry);
-                Ok(self.lease(thing_id, token))
-            }
-            Entry::Occupied(mut o) => {
-                let current = o.get();
-                if current.alive() {
-                    return Err(Busy {
-                        holder: current.holder.clone(),
-                    });
+                }),
+                Err(busy) => {
+                    self.release_all(&held);
+                    return Err(busy);
                 }
-                let (entry, token) = mint(holder);
-                o.insert(entry);
-                Ok(self.lease(thing_id, token))
             }
         }
+        Ok(Lease {
+            claims: Arc::clone(&self.claims),
+            held,
+        })
+    }
+
+    /// 兼容入口（E1 语义）：claim 合成的 [`DEVICE_RESOURCE`] exclusive 资源。
+    pub fn try_acquire(&self, thing_id: &str, holder: String, ttl: Duration) -> Result<Lease, Busy> {
+        self.try_acquire_resources(thing_id, holder, &[device_spec()], ttl)
     }
 
     /// 默认 TTL（10min）的 acquire 便捷入口。
@@ -95,11 +143,11 @@ impl ArbitrationRegistry {
         self.try_acquire(thing_id, holder, DEFAULT_LEASE_TTL)
     }
 
-    /// E2 stop：置设备 stop 闸门并释放当前租约（在途单次调用不可中断）。
+    /// E2 stop：置设备 stop 闸门并释放该设备全部 claim（在途单次调用不可中断）。
     pub fn set_stop(&self, thing_id: &str, reason: String, ttl: Duration) {
         self.stops.insert(thing_id.to_string(), (reason, Instant::now() + ttl));
         // 释放占用：stop 是最高优先级的"让路"指令。
-        self.locks.remove(thing_id);
+        self.force_release_thing(thing_id);
     }
 
     /// stop 闸门命中返回原因；已过期/未设置返回 None。
@@ -115,41 +163,127 @@ impl ArbitrationRegistry {
         None
     }
 
-    /// 强制释放设备租约（不设 stop 闸门）。
-    pub fn force_release(&self, thing_id: &str) {
-        self.locks.remove(thing_id);
+    /// 强制释放设备全部 claim（不设 stop 闸门）。迟到 Lease Drop 按 token
+    /// 不会误删后续新持有者。
+    pub fn force_release_thing(&self, thing_id: &str) {
+        self.claims.retain(|key, _| key.0 != thing_id);
     }
 
-    fn lease(&self, thing_id: &str, token: u64) -> Lease {
-        Lease {
-            locks: Arc::clone(&self.locks),
-            thing_id: thing_id.to_string(),
-            token,
+    /// E1 命名的兼容别名。
+    pub fn force_release(&self, thing_id: &str) {
+        self.force_release_thing(thing_id);
+    }
+
+    fn mint(&self) -> u64 {
+        self.next_token.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// claim 单个资源。entry API 保证检查-插入原子。
+    fn claim(&self, thing_id: &str, holder: &str, spec: &ResourceSpec, ttl: Duration) -> Result<u64, Busy> {
+        // capacity=0 的声明是错误输入；按 1 处理（fail-closed 而非放行无限）。
+        let capacity = match spec.mode {
+            ResourceMode::Exclusive => 1,
+            ResourceMode::Shared => spec.capacity.max(1),
+        };
+        let key = (thing_id.to_string(), spec.id.clone());
+        match self.claims.entry(key) {
+            Entry::Vacant(v) => {
+                let token = self.mint();
+                v.insert(ClaimEntry {
+                    mode: spec.mode,
+                    capacity,
+                    holders: vec![HolderEntry::new(holder, token, ttl)],
+                });
+                Ok(token)
+            }
+            Entry::Occupied(mut o) => {
+                let entry = o.get_mut();
+                // 过期持有者不占位（崩溃恢复）。
+                entry.holders.retain(HolderEntry::alive);
+                if entry.holders.is_empty() {
+                    // 空 entry 的 mode/capacity 跟随本次声明。
+                    entry.mode = spec.mode;
+                    entry.capacity = capacity;
+                }
+                // 任一方声明 exclusive 即按 exclusive 冲突（fail-closed）。
+                let exclusive = entry.mode == ResourceMode::Exclusive || spec.mode == ResourceMode::Exclusive;
+                let full = if exclusive {
+                    !entry.holders.is_empty()
+                } else {
+                    entry.holders.len() as u32 >= entry.capacity.min(capacity)
+                };
+                if full {
+                    let current = &entry.holders[0];
+                    return Err(Busy {
+                        holder: current.holder.clone(),
+                        resource: spec.id.clone(),
+                    });
+                }
+                let token = self.mint();
+                entry.holders.push(HolderEntry::new(holder, token, ttl));
+                Ok(token)
+            }
+        }
+    }
+
+    fn release_all(&self, held: &[HeldClaim]) {
+        for claim in held {
+            release_claim(&self.claims, claim);
         }
     }
 }
 
-/// 互斥租约——析构即释放（RAII）。只删自己那把锁：token 不匹配（TTL
-/// 过期后已被他人重 acquire）时不动表。
+fn device_spec() -> ResourceSpec {
+    ResourceSpec {
+        id: DEVICE_RESOURCE.to_string(),
+        mode: ResourceMode::Exclusive,
+        capacity: 1,
+    }
+}
+
+/// 释放一条 claim：按 token 精确删除自己的持有者；entry 空了再删键。
+fn release_claim(claims: &DashMap<ClaimKey, ClaimEntry>, claim: &HeldClaim) {
+    let key = (claim.thing_id.clone(), claim.resource.clone());
+    if let Entry::Occupied(mut occupied) = claims.entry(key) {
+        let empty = {
+            let entry = occupied.get_mut();
+            entry.holders.retain(|h| h.token != claim.token);
+            entry.holders.is_empty()
+        };
+        if empty {
+            occupied.remove();
+        }
+    }
+}
+
+/// 多资源 claim 租约——析构即释放全部 claim（RAII）。只删自己的 token：
+/// TTL 过期后已被他人重 claim 的资源不动。
 pub struct Lease {
-    locks: Arc<DashMap<String, LockEntry>>,
+    claims: Arc<DashMap<ClaimKey, ClaimEntry>>,
+    held: Vec<HeldClaim>,
+}
+
+/// spec §2.1 的命名别名。
+pub type ResourceLease = Lease;
+
+struct HeldClaim {
     thing_id: String,
+    resource: String,
     token: u64,
 }
 
 impl std::fmt::Debug for Lease {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Lease")
-            .field("thing_id", &self.thing_id)
-            .field("token", &self.token)
-            .finish()
+        let held: Vec<_> = self.held.iter().map(|h| (&h.thing_id, &h.resource, h.token)).collect();
+        f.debug_struct("Lease").field("held", &held).finish()
     }
 }
 
 impl Drop for Lease {
     fn drop(&mut self) {
-        self.locks
-            .remove_if(&self.thing_id, |_, entry| entry.token == self.token);
+        for claim in &self.held {
+            release_claim(&self.claims, claim);
+        }
     }
 }
 
@@ -159,6 +293,22 @@ mod tests {
 
     const TTL: Duration = Duration::from_secs(60);
 
+    fn exclusive(id: &str) -> ResourceSpec {
+        ResourceSpec {
+            id: id.into(),
+            mode: ResourceMode::Exclusive,
+            capacity: 1,
+        }
+    }
+
+    fn shared(id: &str, capacity: u32) -> ResourceSpec {
+        ResourceSpec {
+            id: id.into(),
+            mode: ResourceMode::Shared,
+            capacity,
+        }
+    }
+
     #[test]
     fn mutual_exclusion_per_thing() {
         let reg = ArbitrationRegistry::default();
@@ -166,25 +316,140 @@ mod tests {
             .try_acquire("dev_1", "run-A".into(), TTL)
             .expect("首次 acquire 必成");
 
-        // 同设备第二个持有者 → busy，且带上当前持有者名。
+        // 同设备第二个持有者 → busy，且带上当前持有者名与合成资源 id。
         let err = reg
             .try_acquire("dev_1", "run-B".into(), TTL)
             .expect_err("同设备并发必须 busy");
-        assert_eq!(err, Busy { holder: "run-A".into() });
+        assert_eq!(
+            err,
+            Busy {
+                holder: "run-A".into(),
+                resource: DEVICE_RESOURCE.into(),
+            }
+        );
 
         // 不同设备互不影响。
         reg.try_acquire("dev_2", "run-B".into(), TTL).expect("不同设备不互斥");
     }
 
     #[test]
-    fn busy_message_carries_holder_name() {
+    fn busy_message_carries_holder_and_resource() {
         let reg = ArbitrationRegistry::default();
         let _a = reg
             .try_acquire("dev_1", "值守run#42".into(), TTL)
             .expect("首次 acquire 必成");
         let err = reg.try_acquire("dev_1", "chat".into(), TTL).expect_err("必 busy");
-        // 人读得懂的拒绝：错误文案必须带持有者名。
-        assert!(err.to_string().contains("值守run#42"), "busy 文案必须带持有者名: {err}");
+        // 人读得懂的拒绝：错误文案必须带持有者名与资源 id。
+        let msg = err.to_string();
+        assert!(msg.contains("值守run#42"), "busy 文案必须带持有者名: {msg}");
+        assert!(msg.contains(DEVICE_RESOURCE), "busy 文案必须带资源 id: {msg}");
+    }
+
+    /// 不同资源互不干扰：同设备上 action:reboot 与 action:calibrate 可并行。
+    #[test]
+    fn exclusive_claims_are_per_resource() {
+        let reg = ArbitrationRegistry::default();
+        let _a = reg
+            .try_acquire_resources("dev_1", "run-A".into(), &[exclusive("action:reboot")], TTL)
+            .expect("首个 claim 必成");
+        reg.try_acquire_resources("dev_1", "run-B".into(), &[exclusive("action:calibrate")], TTL)
+            .expect("不同资源可并行");
+
+        let err = reg
+            .try_acquire_resources("dev_1", "run-C".into(), &[exclusive("action:reboot")], TTL)
+            .expect_err("同名资源必须互斥");
+        assert_eq!(err.holder, "run-A");
+        assert_eq!(err.resource, "action:reboot");
+    }
+
+    /// exclusive 的 capacity 字段被忽略：恒为单持有者。
+    #[test]
+    fn exclusive_ignores_capacity() {
+        let reg = ArbitrationRegistry::default();
+        let _a = reg
+            .try_acquire_resources(
+                "dev_1",
+                "run-A".into(),
+                &[ResourceSpec {
+                    id: "x".into(),
+                    mode: ResourceMode::Exclusive,
+                    capacity: 8,
+                }],
+                TTL,
+            )
+            .expect("首个 claim 必成");
+        reg.try_acquire_resources(
+            "dev_1",
+            "run-B".into(),
+            &[ResourceSpec {
+                id: "x".into(),
+                mode: ResourceMode::Exclusive,
+                capacity: 8,
+            }],
+            TTL,
+        )
+        .expect_err("exclusive 只能有一个持有者");
+    }
+
+    #[test]
+    fn shared_capacity_counts_alive_holders() {
+        let reg = ArbitrationRegistry::default();
+        let a = reg
+            .try_acquire_resources("dev_1", "run-A".into(), &[shared("stream", 2)], TTL)
+            .expect("shared 首个必成");
+        let b = reg
+            .try_acquire_resources("dev_1", "run-B".into(), &[shared("stream", 2)], TTL)
+            .expect("capacity 内必成");
+
+        let err = reg
+            .try_acquire_resources("dev_1", "run-C".into(), &[shared("stream", 2)], TTL)
+            .expect_err("超出 capacity 必须 busy");
+        assert_eq!(err.resource, "stream");
+        assert_eq!(err.holder, "run-A");
+
+        // 释放一个 → capacity 复活。
+        drop(a);
+        reg.try_acquire_resources("dev_1", "run-C".into(), &[shared("stream", 2)], TTL)
+            .expect("释放后必须可再 claim");
+        drop(b);
+    }
+
+    /// shared 与 exclusive 声明同一资源时 fail-closed 冲突。
+    #[test]
+    fn shared_and_exclusive_conflict() {
+        let reg = ArbitrationRegistry::default();
+        let _shared = reg
+            .try_acquire_resources("dev_1", "run-A".into(), &[shared("stream", 4)], TTL)
+            .expect("shared claim");
+        reg.try_acquire_resources("dev_1", "run-B".into(), &[exclusive("stream")], TTL)
+            .expect_err("exclusive 必须与 shared 冲突");
+        drop(_shared);
+
+        let _exclusive = reg
+            .try_acquire_resources("dev_1", "run-A".into(), &[exclusive("stream")], TTL)
+            .expect("exclusive claim");
+        reg.try_acquire_resources("dev_1", "run-B".into(), &[shared("stream", 4)], TTL)
+            .expect_err("shared 必须与 exclusive 冲突");
+    }
+
+    /// 排序 + all-or-nothing：后面资源 busy 时，前面已获 claim 必须释放。
+    #[test]
+    fn sorted_all_or_nothing_releases_partial_claims() {
+        let reg = ArbitrationRegistry::default();
+        let _a = reg
+            .try_acquire_resources("dev_1", "run-A".into(), &[exclusive("res:b")], TTL)
+            .expect("run-A 占 b");
+
+        // 故意乱序传入：排序后先 a 后 b，在 b 上失败。
+        let err = reg
+            .try_acquire_resources("dev_1", "run-B".into(), &[exclusive("res:b"), exclusive("res:a")], TTL)
+            .expect_err("b 被占必须 busy");
+        assert_eq!(err.holder, "run-A");
+        assert_eq!(err.resource, "res:b");
+
+        // B 已获的 a 必须回滚 → C 可立即 claim。
+        reg.try_acquire_resources("dev_1", "run-C".into(), &[exclusive("res:a")], TTL)
+            .expect("partial claim 必须已释放");
     }
 
     #[test]
@@ -211,6 +476,17 @@ mod tests {
             .expect("TTL 过期后必须可再 acquire");
     }
 
+    /// shared capacity 不计已过期持有者。
+    #[test]
+    fn expired_shared_holders_do_not_count_toward_capacity() {
+        let reg = ArbitrationRegistry::default();
+        let _dead = reg
+            .try_acquire_resources("dev_1", "crashed".into(), &[shared("stream", 1)], Duration::ZERO)
+            .expect("首个 claim 必成");
+        reg.try_acquire_resources("dev_1", "run-B".into(), &[shared("stream", 1)], TTL)
+            .expect("过期持有者不得占用 capacity");
+    }
+
     #[test]
     fn stale_lease_drop_does_not_remove_new_owner() {
         let reg = ArbitrationRegistry::default();
@@ -224,6 +500,40 @@ mod tests {
             .try_acquire("dev_1", "run-C".into(), TTL)
             .expect_err("run-B 的锁必须仍在");
         assert_eq!(err.holder, "run-B");
+    }
+
+    /// 多资源 Lease 的迟到 Drop 只按 token 删自己的 claim。
+    #[test]
+    fn stale_multi_resource_drop_only_releases_own_tokens() {
+        let reg = ArbitrationRegistry::default();
+        let stale = reg
+            .try_acquire_resources(
+                "dev_1",
+                "crashed".into(),
+                &[exclusive("res:a"), exclusive("res:b")],
+                Duration::ZERO,
+            )
+            .expect("过期租约");
+        let _live = reg
+            .try_acquire_resources("dev_1", "run-B".into(), &[exclusive("res:a"), exclusive("res:b")], TTL)
+            .expect("过期接管");
+        drop(stale);
+        let err = reg
+            .try_acquire_resources("dev_1", "run-C".into(), &[exclusive("res:b")], TTL)
+            .expect_err("run-B 的 claim 必须仍在");
+        assert_eq!(err.holder, "run-B");
+    }
+
+    /// 空 specs：不注入资源（由工具层决定），返回空 Lease 且 Drop 安全。
+    #[test]
+    fn empty_specs_yield_empty_lease() {
+        let reg = ArbitrationRegistry::default();
+        let lease = reg
+            .try_acquire_resources("dev_1", "run-A".into(), &[], TTL)
+            .expect("空 specs 必成");
+        drop(lease);
+        reg.try_acquire("dev_1", "run-B".into(), TTL)
+            .expect("空 Lease 不占资源");
     }
 
     #[test]
@@ -255,16 +565,19 @@ mod tests {
         assert_eq!(wins, 1, "并发 acquire 只能有一个胜出");
     }
 
-    /// E2 stop：闸门命中带原因；释放占用；TTL 过期自动恢复。
+    /// E2 stop：闸门命中带原因；释放该设备全部 claim；TTL 过期自动恢复。
     #[test]
-    fn stop_gate_blocks_releases_and_expires() {
+    fn stop_gate_releases_all_claims_and_expires() {
         let reg = ArbitrationRegistry::default();
-        let lease = reg.try_acquire("dev_1", "run-A".into(), TTL).expect("acquire");
+        let lease = reg
+            .try_acquire_resources("dev_1", "run-A".into(), &[exclusive("res:a"), exclusive("res:b")], TTL)
+            .expect("acquire");
         reg.set_stop("dev_1", "operator stop".into(), Duration::from_secs(60));
         assert_eq!(reg.stop_reason("dev_1").as_deref(), Some("operator stop"));
-        // stop 释放占用：新持有者可 acquire。
+        // stop 释放全部 claim：新持有者两个资源都可 claim。
         drop(lease);
-        assert!(reg.try_acquire("dev_1", "run-B".into(), TTL).is_ok());
+        reg.try_acquire_resources("dev_1", "run-B".into(), &[exclusive("res:a"), exclusive("res:b")], TTL)
+            .expect("stop 后必须释放全部 claim");
 
         // 零 TTL = 立即过期。
         reg.set_stop("dev_2", "x".into(), Duration::ZERO);
@@ -272,11 +585,14 @@ mod tests {
     }
 
     #[test]
-    fn force_release_frees_device_without_stop_gate() {
+    fn force_release_thing_frees_all_resources_without_stop_gate() {
         let reg = ArbitrationRegistry::default();
-        let _lease = reg.try_acquire("dev_3", "run-A".into(), TTL).expect("acquire");
-        reg.force_release("dev_3");
-        assert!(reg.try_acquire("dev_3", "run-B".into(), TTL).is_ok());
+        let _lease = reg
+            .try_acquire_resources("dev_3", "run-A".into(), &[exclusive("res:a"), exclusive("res:b")], TTL)
+            .expect("acquire");
+        reg.force_release_thing("dev_3");
+        reg.try_acquire_resources("dev_3", "run-B".into(), &[exclusive("res:a"), exclusive("res:b")], TTL)
+            .expect("force_release 后必须可再 claim");
         assert_eq!(reg.stop_reason("dev_3"), None);
     }
 }
