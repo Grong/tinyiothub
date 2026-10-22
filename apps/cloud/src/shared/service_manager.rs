@@ -103,7 +103,8 @@ impl ServiceManager {
                 Arc::new(crate::shared::access_ports::DbAcceptanceStore(app_state.db.clone())),
                 demand_tracker.clone(),
             )
-            .with_map_store(map_store),
+            .with_map_store(map_store)
+            .with_zone_service(zone_service.clone()),
         );
         // Installed packages live on disk + DB; restore them before serving
         // so a restart does not silently lose everything but the built-ins.

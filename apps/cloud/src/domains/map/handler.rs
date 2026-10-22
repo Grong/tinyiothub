@@ -12,9 +12,10 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::{get, patch};
 use axum::{Json, Router};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Value, json};
 use tinyiothub_core::models::spatial::{Geometry, MapBounds, MapRecord, PlaceKind, PlaceRecord};
+use tinyiothub_runtime::maps::polygon_area;
 use tinyiothub_storage::Db;
 use tinyiothub_web::middleware::workspace::{AuthClaims, WorkspaceScope};
 use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder};
@@ -60,6 +61,23 @@ fn fail(status: StatusCode, message: impl Into<String>) -> ApiError {
 fn db_error(context: &str, error: impl std::fmt::Display) -> ApiError {
     tracing::error!(error = %error, context, "map API storage error");
     fail(StatusCode::INTERNAL_SERVER_ERROR, "storage error")
+}
+
+/// SQLite UNIQUE 约束（并发写绕过预检查）：`maps(workspace_id,name)` /
+/// `places(map_id,name)` 冲突必须映射为 409，而不是 500。
+fn is_unique_violation(error: &sqlx::Error) -> bool {
+    match error {
+        sqlx::Error::Database(db) => db.is_unique_violation() || db.message().contains("UNIQUE constraint failed"),
+        _ => false,
+    }
+}
+
+fn write_error(context: &str, error: sqlx::Error, conflict: &str) -> ApiError {
+    if is_unique_violation(&error) {
+        fail(StatusCode::CONFLICT, conflict)
+    } else {
+        db_error(context, error)
+    }
 }
 
 /// Admin gate（镜像 driver install）：角色读取失败按 500，未命中按 403。
@@ -160,12 +178,24 @@ pub struct CreateMapRequest {
     pub is_default: bool,
 }
 
+/// 三态反序列化：省略 → `None`，显式 `null` → `Some(None)`，值 →
+/// `Some(Some(v))`。`Option<T>` 默认无法区分“省略”与 `null`。
+fn double_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateMapRequest {
     pub name: Option<String>,
     pub bounds: Option<MapBounds>,
-    pub anchor_map_id: Option<String>,
+    /// PATCH 语义：省略 = 不变；`null` = 清空锚定。
+    #[serde(default, deserialize_with = "double_option")]
+    pub anchor_map_id: Option<Option<String>>,
     pub is_default: Option<bool>,
 }
 
@@ -184,7 +214,9 @@ pub struct UpdatePlaceRequest {
     pub name: Option<String>,
     pub kind: Option<PlaceKind>,
     pub geometry: Option<Geometry>,
-    pub heading: Option<f64>,
+    /// PATCH 语义：省略 = 不变；`null` = 清空朝向。
+    #[serde(default, deserialize_with = "double_option")]
+    pub heading: Option<Option<f64>>,
 }
 
 // ── 校验 ──────────────────────────────────────────────
@@ -206,6 +238,10 @@ fn validate_bounds(bounds: &MapBounds) -> Result<(), ApiError> {
             StatusCode::BAD_REQUEST,
             "bounds width and height must be positive",
         ));
+    }
+    // x+w / y+h 溢出成 inf 会让 within_bounds 恒真；显式拒绝。
+    if !(bounds.x + bounds.w).is_finite() || !(bounds.y + bounds.h).is_finite() {
+        return Err(fail(StatusCode::BAD_REQUEST, "bounds must not overflow"));
     }
     Ok(())
 }
@@ -229,6 +265,15 @@ fn validate_geometry(kind: PlaceKind, geometry: &Geometry) -> Result<(), ApiErro
             }
             if points.iter().any(|(x, y)| !x.is_finite() || !y.is_finite()) {
                 return Err(fail(StatusCode::BAD_REQUEST, "polygon coordinates must be finite"));
+            }
+            if points.windows(2).any(|pair| pair[0] == pair[1]) {
+                return Err(fail(
+                    StatusCode::BAD_REQUEST,
+                    "polygon must not contain duplicate consecutive points",
+                ));
+            }
+            if polygon_area(points) <= 0.0 {
+                return Err(fail(StatusCode::BAD_REQUEST, "zone polygon must have non-zero area"));
             }
             Ok(())
         }
@@ -329,7 +374,11 @@ async fn create_map(
         created_at: now.clone(),
         updated_at: now,
     };
-    state.db.upsert_map(&rec).await.map_err(|e| db_error("create map", e))?;
+    state
+        .db
+        .upsert_map(&rec)
+        .await
+        .map_err(|e| write_error("create map", e, "map name already exists in workspace"))?;
     invalidate_zones(&state, &ws);
     Ok(created(MapView::from(rec)))
 }
@@ -363,8 +412,9 @@ async fn update_map(
         validate_bounds(&bounds)?;
         rec.bounds = bounds;
     }
+    // 省略 = 不变；显式 null = 清空；值 = 替换。
     if let Some(anchor) = req.anchor_map_id {
-        rec.anchor_map_id = Some(anchor);
+        rec.anchor_map_id = anchor;
     }
     validate_anchor(&state.db, &ws, rec.anchor_map_id.as_deref(), Some(&rec.id)).await?;
 
@@ -386,7 +436,11 @@ async fn update_map(
     }
 
     rec.updated_at = tinyiothub_core::now_string();
-    state.db.upsert_map(&rec).await.map_err(|e| db_error("update map", e))?;
+    state
+        .db
+        .upsert_map(&rec)
+        .await
+        .map_err(|e| write_error("update map", e, "map name already exists in workspace"))?;
     invalidate_zones(&state, &ws);
     ok(MapView::from(rec))
 }
@@ -486,7 +540,7 @@ async fn create_place(
         .db
         .upsert_place(&ws, &rec)
         .await
-        .map_err(|e| db_error("create place", e))?;
+        .map_err(|e| write_error("create place", e, "place name already exists on this map"))?;
     invalidate_zones(&state, &ws);
     Ok(created(PlaceView::from(rec)))
 }
@@ -520,8 +574,9 @@ async fn update_place(
     if let Some(geometry) = req.geometry {
         rec.geometry = geometry;
     }
-    if req.heading.is_some() {
-        rec.heading = req.heading;
+    // 省略 = 不变；显式 null = 清空；值 = 替换。
+    if let Some(heading) = req.heading {
+        rec.heading = heading;
     }
     // kind/geometry 可能只改一项：按合并后的结果校验。
     validate_geometry(rec.kind, &rec.geometry)?;
@@ -541,7 +596,7 @@ async fn update_place(
         .db
         .upsert_place(&ws, &rec)
         .await
-        .map_err(|e| db_error("update place", e))?;
+        .map_err(|e| write_error("update place", e, "place name already exists on this map"))?;
     invalidate_zones(&state, &ws);
     ok(PlaceView::from(rec))
 }
@@ -562,5 +617,41 @@ async fn delete_place(
         }
         Ok(false) => Err(fail(StatusCode::NOT_FOUND, "place not found")),
         Err(e) => Err(db_error("delete place", e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_unique_violation;
+
+    /// 预检查之外的并发重名由 SQLite UNIQUE 承担；该错误必须可被识别并
+    /// 映射为 409（集成侧用并发建图验证 HTTP 状态）。
+    #[tokio::test]
+    async fn detects_sqlite_unique_violation() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory sqlite");
+        sqlx::query("CREATE TABLE t (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO t (id, name) VALUES ('1', 'a')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let duplicate = sqlx::query("INSERT INTO t (id, name) VALUES ('2', 'a')")
+            .execute(&pool)
+            .await
+            .unwrap_err();
+        assert!(is_unique_violation(&duplicate), "{duplicate:?}");
+
+        let other = sqlx::query("SELECT * FROM missing_table")
+            .execute(&pool)
+            .await
+            .unwrap_err();
+        assert!(!is_unique_violation(&other), "{other:?}");
     }
 }

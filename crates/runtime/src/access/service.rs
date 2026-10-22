@@ -43,6 +43,9 @@ pub struct AccessService {
     /// E4d placement 物化写面（fixed/declared → 坐标列/map_id/zone_ref）；
     /// None = 未接线，带引用的静态 placement 在 bind 时 fail-closed。
     pub map_store: Option<Arc<dyn MapStore>>,
+    /// E4d 空间读取缓存；物化/重绑后 invalidate，避免 5s TTL 内
+    /// DataServer/watch 读到旧坐标/zoneRef。
+    pub zones: Option<Arc<crate::maps::ZoneService>>,
 }
 
 /// Releases the dynamic-registry reference acquired by `create_driver` on
@@ -92,6 +95,7 @@ impl AccessService {
             acceptance_store,
             demand,
             map_store: None,
+            zones: None,
         }
     }
 
@@ -99,6 +103,18 @@ impl AccessService {
     pub fn with_map_store(mut self, map_store: Arc<dyn MapStore>) -> Self {
         self.map_store = Some(map_store);
         self
+    }
+
+    /// 注入共享 `ZoneService`：placement 物化/重绑后清缓存。
+    pub fn with_zone_service(mut self, zones: Arc<crate::maps::ZoneService>) -> Self {
+        self.zones = Some(zones);
+        self
+    }
+
+    fn invalidate_zones(&self, workspace_id: &str) {
+        if let Some(zones) = &self.zones {
+            zones.invalidate(workspace_id);
+        }
     }
 
     /// Record a recent read so `demandOnly` sources keep sampling it.
@@ -496,6 +512,7 @@ impl AccessService {
                     .map_err(AccessError::Store)?;
             }
             Self::materialize_ingest(store.as_ref(), workspace_id, thing, manifest).await?;
+            self.invalidate_zones(workspace_id);
             return Ok(());
         }
 
@@ -576,7 +593,9 @@ impl AccessService {
                 .await
                 .map_err(AccessError::Store)?;
         }
-        Self::materialize_ingest(store.as_ref(), workspace_id, thing, manifest).await
+        Self::materialize_ingest(store.as_ref(), workspace_id, thing, manifest).await?;
+        self.invalidate_zones(workspace_id);
+        Ok(())
     }
 
     /// 摄取门 = `runtime` 且 `fromSource` 指向 manifest 声明的 kind=position
@@ -1629,6 +1648,48 @@ mod tests {
             assert_eq!(store.zone_ref("t1").as_deref(), Some("机房"));
             assert!(!store.ingest(), "static placement 不得启用位置摄取");
         }
+    }
+
+    /// Task 4 follow-up：物化/重绑写穿共享 ZoneService 的缓存（否则 5s TTL
+    /// 内 watch/DataServer 仍读旧坐标与旧 zoneRef）。
+    #[tokio::test]
+    async fn bind_invalidates_zone_cache_after_materialization() {
+        use std::time::Duration;
+
+        use crate::maps::{TrustThresholds, ZoneService};
+
+        let t = thing_in("ws1", "demo");
+        let fx = fixture(Some(t.clone()));
+        let store = Arc::new(FakeMapStore::with_floor());
+        fx.service
+            .manifests
+            .seed_builtin(&placement_manifest(
+                "fixed",
+                Some("floor-1"),
+                Some("机房"),
+                Some(r#"{"x":1.5,"y":2.5}"#),
+            ))
+            .unwrap();
+
+        let zones = Arc::new(ZoneService::with_ttl(
+            store.clone(),
+            TrustThresholds::default(),
+            Duration::from_secs(60),
+        ));
+        let now = chrono::Utc::now();
+        // 绑定前先读一次：坐标/zoneRef 缺失进入 60s 缓存。
+        assert_eq!(zones.zone_for("ws1", "t1", None, now).await.unwrap(), None);
+
+        let mut service = fx.service;
+        service.map_store = Some(store.clone());
+        service.zones = Some(zones.clone());
+        service.bind_thing("ws1", &t).await.unwrap();
+
+        assert_eq!(
+            zones.zone_for("ws1", "t1", None, now).await.unwrap().as_deref(),
+            Some("机房"),
+            "bind 必须先失效缓存再供读"
+        );
     }
 
     /// 驱动升级 fixed → runtime（新清单移除 zoneRef/position）：旧静态

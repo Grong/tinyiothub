@@ -165,6 +165,48 @@ async fn map_crud_roundtrip_and_single_default() {
     assert_eq!(body["result"]["name"], json!("floor-1-renamed"));
     assert_eq!(body["result"]["bounds"]["w"], json!(20.0));
 
+    // PATCH 三态：省略锚图 = 不变；显式 null = 清空。
+    let r = app
+        .clone()
+        .oneshot(auth_request(
+            "PATCH",
+            &format!("/api/v1/maps/{first}"),
+            &token,
+            Some(json!({"anchorMapId": second})),
+        ))
+        .await
+        .unwrap();
+    let (status, body) = response_parts(r).await;
+    assert_eq!(status, StatusCode::OK, "set anchor failed: {body}");
+    assert_eq!(body["result"]["anchorMapId"], json!(second));
+
+    let r = app
+        .clone()
+        .oneshot(auth_request(
+            "PATCH",
+            &format!("/api/v1/maps/{first}"),
+            &token,
+            Some(json!({"name": "floor-1-renamed"})),
+        ))
+        .await
+        .unwrap();
+    let (_, body) = response_parts(r).await;
+    assert_eq!(body["result"]["anchorMapId"], json!(second), "omitted keeps anchor");
+
+    let r = app
+        .clone()
+        .oneshot(auth_request(
+            "PATCH",
+            &format!("/api/v1/maps/{first}"),
+            &token,
+            Some(json!({"anchorMapId": null})),
+        ))
+        .await
+        .unwrap();
+    let (status, body) = response_parts(r).await;
+    assert_eq!(status, StatusCode::OK, "clear anchor failed: {body}");
+    assert_eq!(body["result"]["anchorMapId"], Value::Null);
+
     // 默认图不能删除，直到另一张图被提升
     let r = app
         .clone()
@@ -213,6 +255,19 @@ async fn map_validation_rejects_invalid_input() {
             "/api/v1/maps",
             &token,
             Some(json!({"name": "bad", "bounds": {"x": 0.0, "y": 0.0, "w": 0.0, "h": 10.0}})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response_parts(r).await.0, StatusCode::BAD_REQUEST);
+
+    // x+w 溢出为 inf → 拒绝（否则 within_bounds 恒真）
+    let r = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/api/v1/maps",
+            &token,
+            Some(json!({"name": "overflow", "bounds": {"x": 1e308, "y": 0.0, "w": 1e308, "h": 10.0}})),
         ))
         .await
         .unwrap();
@@ -307,6 +362,40 @@ async fn place_crud_and_geometry_validation() {
         .unwrap();
     assert_eq!(response_parts(r).await.0, StatusCode::BAD_REQUEST);
 
+    // 共线 3 点 = 零面积 → 拒绝（否则该 zone 永不命中）
+    let r = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            &format!("/api/v1/maps/{map}/places"),
+            &token,
+            Some(json!({
+                "name": "collinear",
+                "kind": "zone",
+                "geometry": {"polygon": {"points": [[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]]}},
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response_parts(r).await.0, StatusCode::BAD_REQUEST);
+
+    // 相邻重复点 → 拒绝
+    let r = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            &format!("/api/v1/maps/{map}/places"),
+            &token,
+            Some(json!({
+                "name": "duplicate-point",
+                "kind": "zone",
+                "geometry": {"polygon": {"points": [[0.0, 0.0], [0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]}},
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response_parts(r).await.0, StatusCode::BAD_REQUEST);
+
     let r = app
         .clone()
         .oneshot(auth_request(
@@ -320,6 +409,27 @@ async fn place_crud_and_geometry_validation() {
     let (status, body) = response_parts(r).await;
     assert_eq!(status, StatusCode::CREATED, "place create failed: {body}");
     let place = body["result"]["id"].as_str().unwrap().to_string();
+
+    // heading 三态：值 → 设置；null → 清空；省略 → 不变。
+    for (patch, expected) in [
+        (json!({"heading": 30.0}), json!(30.0)),
+        (json!({"name": "zone-a"}), json!(30.0)),
+        (json!({"heading": null}), Value::Null),
+    ] {
+        let r = app
+            .clone()
+            .oneshot(auth_request(
+                "PATCH",
+                &format!("/api/v1/maps/{map}/places/{place}"),
+                &token,
+                Some(patch),
+            ))
+            .await
+            .unwrap();
+        let (status, body) = response_parts(r).await;
+        assert_eq!(status, StatusCode::OK, "heading patch failed: {body}");
+        assert_eq!(body["result"]["heading"], expected);
+    }
 
     // 同图重名
     let r = app
@@ -407,17 +517,37 @@ async fn writes_require_admin_but_reads_are_workspace_scoped() {
     let admin = admin_token("ws-a");
     let viewer = viewer_token("ws-a");
     let map = create_map(&app, &admin, map_body("floor-1", true)).await;
+    let place_body = zone_body("zone-a");
+    let r = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            &format!("/api/v1/maps/{map}/places"),
+            &admin,
+            Some(place_body),
+        ))
+        .await
+        .unwrap();
+    let (status, body) = response_parts(r).await;
+    assert_eq!(status, StatusCode::CREATED, "place seed failed: {body}");
+    let place = body["result"]["id"].as_str().unwrap().to_string();
 
     let cases = [
-        ("POST", "/api/v1/maps", Some(map_body("nope", false))),
-        ("PATCH", &format!("/api/v1/maps/{map}"), Some(json!({"name": "nope"}))),
-        ("DELETE", &format!("/api/v1/maps/{map}"), None),
-        ("POST", &format!("/api/v1/maps/{map}/places"), Some(zone_body("nope"))),
+        ("POST", "/api/v1/maps".to_string(), Some(map_body("nope", false))),
+        ("PATCH", format!("/api/v1/maps/{map}"), Some(json!({"name": "nope"}))),
+        ("DELETE", format!("/api/v1/maps/{map}"), None),
+        ("POST", format!("/api/v1/maps/{map}/places"), Some(zone_body("nope"))),
+        (
+            "PATCH",
+            format!("/api/v1/maps/{map}/places/{place}"),
+            Some(json!({"name": "nope"})),
+        ),
+        ("DELETE", format!("/api/v1/maps/{map}/places/{place}"), None),
     ];
     for (method, uri, body) in cases {
         let r = app
             .clone()
-            .oneshot(auth_request(method, uri, &viewer, body))
+            .oneshot(auth_request(method, &uri, &viewer, body))
             .await
             .unwrap();
         assert_eq!(
@@ -441,14 +571,33 @@ async fn maps_and_places_are_tenant_isolated() {
     let token_a = admin_token("ws-a");
     let token_b = admin_token("ws-b");
     let map = create_map(&app, &token_a, map_body("floor-1", true)).await;
+    let r = app
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            &format!("/api/v1/maps/{map}/places"),
+            &token_a,
+            Some(zone_body("zone-a")),
+        ))
+        .await
+        .unwrap();
+    let (status, body) = response_parts(r).await;
+    assert_eq!(status, StatusCode::CREATED, "place seed failed: {body}");
+    let place = body["result"]["id"].as_str().unwrap().to_string();
 
-    // ws-b 看不到 ws-a 的图
+    // ws-b 看不到 ws-a 的图/地点
     for (method, uri, body) in [
         ("GET", format!("/api/v1/maps/{map}"), None),
         ("PATCH", format!("/api/v1/maps/{map}"), Some(json!({"name": "hijack"}))),
         ("DELETE", format!("/api/v1/maps/{map}"), None),
         ("GET", format!("/api/v1/maps/{map}/places"), None),
         ("POST", format!("/api/v1/maps/{map}/places"), Some(zone_body("hijack"))),
+        (
+            "PATCH",
+            format!("/api/v1/maps/{map}/places/{place}"),
+            Some(json!({"name": "hijack"})),
+        ),
+        ("DELETE", format!("/api/v1/maps/{map}/places/{place}"), None),
     ] {
         let r = app
             .clone()
@@ -609,6 +758,78 @@ async fn position_put_requires_admin() {
         .await
         .unwrap();
     assert_eq!(response_parts(r).await.0, StatusCode::FORBIDDEN);
+}
+
+/// 物已有非默认 `map_id` 时，PUT 按该图校验（而非默认图）。
+#[tokio::test]
+async fn position_put_uses_thing_map_not_default() {
+    let (app, pool, _state) = setup().await;
+    let token = admin_token("ws-a");
+    let _ = create_map(&app, &token, map_body("floor-1", true)).await;
+    let annex = create_map(
+        &app,
+        &token,
+        json!({"name": "annex", "bounds": {"x": 1000.0, "y": 1000.0, "w": 50.0, "h": 50.0}}),
+    )
+    .await;
+    let thing = create_thing(&app, &token, "ws-a", "bot-annex").await;
+    sqlx::query("UPDATE things SET map_id = ? WHERE id = ?")
+        .bind(&annex)
+        .bind(&thing)
+        .execute(&pool)
+        .await
+        .expect("assign annex map");
+
+    // 默认图内、annex 外 → 400（证明按物所属图校验）
+    let r = app
+        .clone()
+        .oneshot(auth_request(
+            "PUT",
+            &format!("/api/v1/things/{thing}/position"),
+            &token,
+            Some(json!({"x": 10.0, "y": 10.0})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response_parts(r).await.0, StatusCode::BAD_REQUEST);
+
+    let r = app
+        .clone()
+        .oneshot(auth_request(
+            "PUT",
+            &format!("/api/v1/things/{thing}/position"),
+            &token,
+            Some(json!({"x": 1010.0, "y": 1010.0})),
+        ))
+        .await
+        .unwrap();
+    let (status, body) = response_parts(r).await;
+    assert_eq!(status, StatusCode::OK, "annex position rejected: {body}");
+    assert_eq!(body["result"]["mapId"], json!(annex));
+}
+
+/// 并发重名：预检查之外由 DB UNIQUE 兜底，HTTP 必须是一个 201 + 一个 409
+/// （不能出现 500）。
+#[tokio::test]
+async fn concurrent_duplicate_map_create_returns_conflict_not_500() {
+    let (app, _pool, _state) = setup().await;
+    let token = admin_token("ws-a");
+    let body = map_body("race", false);
+    let (first, second) = tokio::join!(
+        app.clone()
+            .oneshot(auth_request("POST", "/api/v1/maps", &token, Some(body.clone()))),
+        app.clone()
+            .oneshot(auth_request("POST", "/api/v1/maps", &token, Some(body)))
+    );
+    let a = response_parts(first.unwrap()).await.0;
+    let b = response_parts(second.unwrap()).await.0;
+    assert!(
+        matches!(
+            (a, b),
+            (StatusCode::CREATED, StatusCode::CONFLICT) | (StatusCode::CONFLICT, StatusCode::CREATED)
+        ),
+        "expected one create + one conflict, got {a} / {b}"
+    );
 }
 
 // ── 缓存失效 ──────────────────────────────────────────
