@@ -11,7 +11,7 @@
 //!    - 协作驱动：stop 立即返回 `cancellation_requested`（任务仍在途），随后
 //!      `CommandCancelled outcome=cancelled` + 恰好一条 `call_cancelled` 账本行；
 //!      闸门期间下一次调用被 `stopped:` 拒绝（claim 兜底文案为 `busy: stop:`）。
-//!    - 不合作驱动（阻塞 ~1.2s 无视 token）：stop 仍立即返回，迟到返回留痕
+//!    - 不合作驱动（阻塞 ~1.5s 无视 token）：stop 仍立即返回，迟到返回留痕
 //!      `cancelled_unknown` + `call_cancelled_unknown` 账本行。
 //!
 //! 驱动均为 `DriverMode::Push`（execute-only worker）：临时轮询串不会提交
@@ -456,7 +456,7 @@ impl ThingDriver for CooperativeExecuteDriver {
     }
 }
 
-/// 不合作驱动：阻塞 ~1.2s，无视 CancelToken；迟到返回触发 unknown。
+/// 不合作驱动：阻塞 ~1.5s，无视 CancelToken；迟到返回触发 unknown。
 struct NonCooperativeExecuteDriver {
     thing: Thing,
     started: Arc<tokio::sync::Notify>,
@@ -477,7 +477,7 @@ impl ThingDriver for NonCooperativeExecuteDriver {
     }
     fn execute_command(&mut self, _cmd: &ThingCommand, _cancel: &CancelToken) -> Result<bool, Error> {
         self.started.notify_one();
-        std::thread::sleep(Duration::from_millis(1200));
+        std::thread::sleep(Duration::from_millis(1500));
         Ok(true)
     }
 }
@@ -713,7 +713,7 @@ async fn stop_non_cooperative_driver_records_cancelled_unknown_after_grace() {
     assert_eq!(payload["status"], "cancellation_requested");
     assert_eq!(payload["inFlight"], 1);
 
-    // 阻塞 ~1.2s 的驱动迟到返回：>1s 宽限 → cancelled_unknown。
+    // 阻塞 ~1.5s 的驱动迟到返回：>1s 宽限 → cancelled_unknown。
     wait_until("call_cancelled_unknown 账本行", || !rig.ledger.rows().is_empty()).await;
     let rows = rig.ledger.rows();
     assert_eq!(rows.len(), 1, "不得同时留下 cancelled 行: {rows:?}");
