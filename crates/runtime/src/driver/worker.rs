@@ -29,7 +29,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::{mpsc, watch};
@@ -48,7 +48,7 @@ const EXEC_QUEUE_CAP: usize = 32;
 
 /// stop 宽限期：调用在取消后 ≤1s 内退出视为 `cancelled`，否则 `cancelled_unknown`
 /// （E4c spec §2.3）。
-const CANCEL_GRACE_MS: u64 = 1000;
+const CANCEL_GRACE: Duration = Duration::from_secs(1);
 
 /// 当前调用的取消槽（worker 与 [`WorkerHandle`] 共享）。
 ///
@@ -74,25 +74,29 @@ impl CancelSlot {
         token
     }
 
-    /// 结束当前调用：清空 token、置 in-flight=false。
+    /// 结束当前调用：原子取走 token、置 in-flight=false，再判定是否取消。
     ///
-    /// 若调用期间 token 被取消，返回自取消时刻起的耗时（毫秒；缺时刻时 0）。
-    fn finish(&self, token: &CancelToken) -> Option<u64> {
+    /// 取走发生在任何结果处理之前：此后的 `cancel_current` 看到空槽位返回
+    /// false，不会把已完成的调用误标为取消。若调用期间 token 被取消，返回自
+    /// 首次取消时刻起的耗时（缺时刻时 0）。
+    fn finish(&self, token: &CancelToken) -> Option<Duration> {
         let mut slot = self.current_token.lock();
-        let cancelled = token.is_cancelled();
-        let requested_at = self.cancel_requested_at.lock().take();
-        *slot = None;
+        let current = slot.take();
         self.in_flight.store(false, Ordering::SeqCst);
-        cancelled.then(|| requested_at.map_or(0, |at| at.elapsed().as_millis() as u64))
+        let cancelled = current.is_some_and(|installed| installed.is_cancelled()) && token.is_cancelled();
+        let requested_at = self.cancel_requested_at.lock().take();
+        cancelled.then(|| requested_at.map_or(Duration::ZERO, |at| at.elapsed()))
     }
 
     /// 取消在途调用；返回是否确有在途调用。
+    ///
+    /// 重复取消保留首次时刻，避免 elapsed/宽限期被后一次调用重置。
     fn cancel_current(&self) -> bool {
         let slot = self.current_token.lock();
         let Some(token) = slot.as_ref() else {
             return false;
         };
-        *self.cancel_requested_at.lock() = Some(Instant::now());
+        self.cancel_requested_at.lock().get_or_insert_with(Instant::now);
         token.cancel();
         self.in_flight.load(Ordering::SeqCst)
     }
@@ -445,7 +449,10 @@ async fn run_worker(
                 // 取消它，返回后至多上报一次 Cancelled。
                 let token = cancel.begin();
                 let outcome = driver.read_data_once_with(&token);
-                report_if_cancelled(&cancel, &token, &thing_id, &results);
+                if report_if_cancelled(&cancel, &token, &thing_id, &results) {
+                    // 已取消：本次调用只有 Cancelled 一个结果。
+                    continue;
+                }
                 match outcome.result {
                     Ok(values) => {
                         let address = driver.thing().address.clone();
@@ -558,20 +565,25 @@ fn send_reading(value_sink: &ValueSink, dropped: &AtomicU64, reading: DriverRead
     }
 }
 
-/// 调用返回后结束取消槽；若期间被取消，上报一次 `Cancelled`。
+/// 调用返回后结束取消槽；若期间被取消，上报一次 `Cancelled` 并返回 true。
+///
+/// 调用方必须在 true 时直接结束本次调用处理——一次调用只有一个结果，取消的
+/// 调用不得再产生读数、Connected/Disconnected、ReadFailed 或 Command。
 fn report_if_cancelled(
     cancel: &CancelSlot,
     token: &CancelToken,
     thing_id: &str,
     results: &mpsc::UnboundedSender<WorkerResult>,
-) {
-    if let Some(elapsed_ms) = cancel.finish(token) {
-        let _ = results.send(WorkerResult::Cancelled {
-            thing_id: thing_id.to_string(),
-            within_grace: elapsed_ms <= CANCEL_GRACE_MS,
-            elapsed_ms,
-        });
-    }
+) -> bool {
+    let Some(elapsed) = cancel.finish(token) else {
+        return false;
+    };
+    let _ = results.send(WorkerResult::Cancelled {
+        thing_id: thing_id.to_string(),
+        within_grace: elapsed <= CANCEL_GRACE,
+        elapsed_ms: elapsed.as_millis() as u64,
+    });
+    true
 }
 
 /// 执行一条命令并把结果上报给 DataServer（事件构造/发布归 DataServer）。
@@ -584,7 +596,10 @@ fn execute_and_report(
     let thing_id = driver.thing().id.clone();
     let token = cancel.begin();
     let outcome = driver.execute_command_with(cmd, &token);
-    report_if_cancelled(cancel, &token, &thing_id, results);
+    if report_if_cancelled(cancel, &token, &thing_id, results) {
+        // 已取消：只上报 Cancelled，不再产生 Command 结果。
+        return;
+    }
     let success = outcome.result.is_ok();
     let error = outcome.result.as_ref().err().map(|err| err.to_string());
     let elapsed_ms = outcome.elapsed.as_millis() as u64;
@@ -630,6 +645,7 @@ mod tests {
         /// 假驱动在 execute 时自报的 thing 属性当前值（验证 worker 写回）。
         observed_value: Mutex<Option<String>>,
         read_started: Notify,
+        execute_started: Notify,
     }
 
     /// 同步阻塞的假驱动：`read_data` 先记录并通知，再等测试放行。
@@ -767,14 +783,35 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
+    struct CancelOptions {
+        /// true：等待放行后检查 token；false：忽略 token 阻塞 `block` 时长。
+        cooperative: bool,
+        block: Duration,
+        /// execute 也阻塞等待放行（验证在途命令取消）。
+        gate_execute: bool,
+        max_attempts: u32,
+        retry_interval: Duration,
+    }
+
+    impl Default for CancelOptions {
+        fn default() -> Self {
+            Self {
+                cooperative: true,
+                block: Duration::ZERO,
+                gate_execute: false,
+                max_attempts: 1,
+                retry_interval: Duration::from_millis(1),
+            }
+        }
+    }
+
     /// 取消语义测试驱动：read 在测试放行/固定时长后才返回。
     struct CancelDriver {
         thing: Thing,
         log: Arc<FakeLog>,
         release_rx: Mutex<std_mpsc::Receiver<()>>,
-        /// true：等待放行后检查 token；false：忽略 token 阻塞 `block` 时长。
-        cooperative: bool,
-        block: Duration,
+        options: CancelOptions,
     }
 
     impl ThingDriver for CancelDriver {
@@ -790,10 +827,12 @@ mod tests {
             DriverMode::Poll
         }
 
-        /// 单次尝试、长超时：阻塞读不能被重试层的短超时提前截断。
+        /// 长超时：阻塞读不能被重试层的短超时提前截断。
         fn retry_config(&self) -> RetryConfig {
             RetryConfig {
-                max_attempts: 1,
+                max_attempts: self.options.max_attempts,
+                base_interval: self.options.retry_interval,
+                max_interval: self.options.retry_interval,
                 timeout: Duration::from_secs(300),
                 ..RetryConfig::default()
             }
@@ -802,7 +841,7 @@ mod tests {
         fn read_data(&mut self, cancel: &CancelToken) -> Result<Vec<ResultValue>, Error> {
             self.log.reads.fetch_add(1, Ordering::SeqCst);
             self.log.read_started.notify_one();
-            if self.cooperative {
+            if self.options.cooperative {
                 // 长 IO 阻塞点：测试放行后检查 token 并协作退出。
                 let _ = self.release_rx.lock().unwrap().recv();
                 if cancel.is_cancelled() {
@@ -810,7 +849,7 @@ mod tests {
                 }
             } else {
                 // 不合作驱动：完全忽略 token，直到阻塞时长结束。
-                std::thread::sleep(self.block);
+                std::thread::sleep(self.options.block);
             }
             Ok(vec![ResultValue::new(
                 "temp".to_string(),
@@ -820,6 +859,11 @@ mod tests {
         }
 
         fn execute_command(&mut self, _cmd: &ThingCommand, cancel: &CancelToken) -> Result<bool, Error> {
+            self.log.execute_started.notify_one();
+            if self.options.gate_execute {
+                // 在途命令：测试放行后检查 token。
+                let _ = self.release_rx.lock().unwrap().recv();
+            }
             if cancel.is_cancelled() {
                 return Err(Error::Cancelled);
             }
@@ -829,6 +873,14 @@ mod tests {
     }
 
     fn make_cancel(cooperative: bool, block: Duration) -> Harness {
+        make_cancel_with(CancelOptions {
+            cooperative,
+            block,
+            ..CancelOptions::default()
+        })
+    }
+
+    fn make_cancel_with(options: CancelOptions) -> Harness {
         let (release, release_rx) = std_mpsc::channel();
         let log = Arc::new(FakeLog::default());
         let property = ThingProperty {
@@ -846,8 +898,7 @@ mod tests {
             thing: thing.clone(),
             log: log.clone(),
             release_rx: Mutex::new(release_rx),
-            cooperative,
-            block,
+            options,
         }));
         let (sink_tx, sink_rx) = mpsc::channel(16);
         let (result_tx, result_rx) = mpsc::unbounded_channel();
@@ -1170,10 +1221,22 @@ mod tests {
         wait_finished(&h.handle).await;
     }
 
-    /// 协作式长读：cancel_current 命中在途调用，驱动退出后上报 within_grace。
+    /// 协作式长读：cancel_current 命中在途调用，驱动退出后上报唯一结果
+    /// `Cancelled`（不再产生读数/Connected/Disconnected/ReadFailed）。
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cancel_current_cancels_cooperative_read_within_grace() {
         let mut h = make_cancel(true, Duration::ZERO);
+
+        // 先成功读一次 → 设备在线；若取消调用误走失败分支会产生 Disconnected。
+        h.handle.submit_read(vec!["a".to_string()]);
+        h.log.read_started.notified().await;
+        h.release.send(()).unwrap();
+        match h.result_rx.recv().await.expect("first read result") {
+            WorkerResult::Connected { .. } => {}
+            other => panic!("expected Connected, got {other:?}"),
+        }
+        let first = h.sink_rx.recv().await.expect("first reading");
+        assert_eq!(first.values.first().and_then(|v| v.value.as_deref()), Some("42"));
 
         h.handle.submit_read(vec!["a".to_string()]);
         h.log.read_started.notified().await; // 驱动已进入长读
@@ -1189,7 +1252,7 @@ mod tests {
             } => {
                 assert_eq!(thing_id, "thing-1");
                 assert!(within_grace, "cooperative driver must exit within grace");
-                assert!(elapsed_ms <= CANCEL_GRACE_MS);
+                assert!(elapsed_ms <= 1000);
             }
             other => panic!("expected Cancelled, got {other:?}"),
         }
@@ -1198,9 +1261,15 @@ mod tests {
 
         h.handle.stop();
         wait_finished(&h.handle).await;
+        assert!(
+            h.result_rx.try_recv().is_err(),
+            "cancelled read must be the only outcome (no Disconnected/ReadFailed)"
+        );
+        assert!(h.sink_rx.try_recv().is_err(), "cancelled read must not emit a reading");
     }
 
-    /// 不合作驱动阻塞超过宽限期：迟到返回后仍上报一次 cancelled_unknown。
+    /// 不合作驱动阻塞超过宽限期：迟到返回后仍上报一次 cancelled_unknown，
+    /// 且不再补发正常结果。
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn non_cooperative_read_reports_cancelled_unknown_after_return() {
         let mut h = make_cancel(false, Duration::from_millis(1200));
@@ -1221,7 +1290,7 @@ mod tests {
                 ..
             } => {
                 assert!(!within_grace, "blocking driver exceeded grace");
-                assert!(elapsed_ms >= CANCEL_GRACE_MS, "elapsed_ms={elapsed_ms}");
+                assert!(elapsed_ms >= 1000, "elapsed_ms={elapsed_ms}");
             }
             other => panic!("expected Cancelled, got {other:?}"),
         }
@@ -1229,6 +1298,11 @@ mod tests {
 
         h.handle.stop();
         wait_finished(&h.handle).await;
+        assert!(
+            h.result_rx.try_recv().is_err(),
+            "cancelled read must not also emit Connected/ReadFailed"
+        );
+        assert!(h.sink_rx.try_recv().is_err(), "cancelled read must not emit a reading");
     }
 
     /// 空闲时取消：返回 false，且后续正常调用前不得出现 Cancelled。
@@ -1269,5 +1343,127 @@ mod tests {
 
         h.handle.stop();
         wait_finished(&h.handle).await;
+    }
+
+    /// 在途命令取消：唯一结果是 Cancelled，不再发 Command。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancel_current_cancels_in_flight_execute_without_command_result() {
+        let mut h = make_cancel_with(CancelOptions {
+            gate_execute: true,
+            ..CancelOptions::default()
+        });
+
+        h.handle.submit_execute(cmd(0)).expect("queue has room");
+        h.log.execute_started.notified().await; // 命令已进入驱动
+        assert!(h.handle.in_flight());
+        assert!(h.handle.cancel_current(), "在途命令应报告 true");
+
+        h.release.send(()).unwrap(); // 放行：驱动检查 token 后协作退出
+        match h.result_rx.recv().await.expect("cancelled result") {
+            WorkerResult::Cancelled {
+                thing_id, within_grace, ..
+            } => {
+                assert_eq!(thing_id, "thing-1");
+                assert!(within_grace);
+            }
+            other => panic!("expected Cancelled, got {other:?}"),
+        }
+        wait_until(|| !h.handle.in_flight()).await;
+
+        h.handle.stop();
+        wait_finished(&h.handle).await;
+        assert!(
+            h.result_rx.try_recv().is_err(),
+            "cancelled execute must not emit a Command result"
+        );
+        assert_eq!(
+            h.log.executes.load(Ordering::SeqCst),
+            0,
+            "command body must not complete"
+        );
+    }
+
+    /// 调用完成后再取消不算取消：返回 false，也不补发 Cancelled。
+    #[tokio::test]
+    async fn late_cancel_after_call_completed_is_not_reported() {
+        let mut h = make_cancel(true, Duration::ZERO);
+
+        h.handle.submit_execute(cmd(0)).expect("queue has room");
+        match h.result_rx.recv().await.expect("command result") {
+            WorkerResult::Command { success, .. } => assert!(success),
+            other => panic!("expected Command, got {other:?}"),
+        }
+        // Command 结果在 finish 之后才发送，此时槽位已原子取空。
+        assert!(!h.handle.in_flight());
+        assert!(!h.handle.cancel_current(), "已完成调用不应再接受取消");
+
+        h.handle.stop();
+        wait_finished(&h.handle).await;
+        assert!(h.result_rx.try_recv().is_err(), "late cancel must not emit Cancelled");
+    }
+
+    /// 重复取消保留首次时刻：elapsed 从第一次 cancel 起算。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn repeated_cancel_preserves_first_cancel_instant() {
+        let mut h = make_cancel(true, Duration::ZERO);
+
+        h.handle.submit_read(vec!["a".to_string()]);
+        h.log.read_started.notified().await;
+        assert!(h.handle.cancel_current());
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(h.handle.cancel_current(), "第二次取消仍命中同一在途调用");
+
+        h.release.send(()).unwrap();
+        match h.result_rx.recv().await.expect("cancelled result") {
+            WorkerResult::Cancelled {
+                within_grace,
+                elapsed_ms,
+                ..
+            } => {
+                assert!(within_grace);
+                assert!(
+                    elapsed_ms >= 250,
+                    "elapsed must count from the first cancel, got {elapsed_ms}ms"
+                );
+            }
+            other => panic!("expected Cancelled, got {other:?}"),
+        }
+
+        h.handle.stop();
+        wait_finished(&h.handle).await;
+    }
+
+    /// 可重试配置下的协作取消：取消是终态，驱动只被调用一次且仍在宽限期内。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cooperative_cancel_with_retrying_driver_stays_within_grace() {
+        let mut h = make_cancel_with(CancelOptions {
+            max_attempts: 5,
+            retry_interval: Duration::from_millis(200),
+            ..CancelOptions::default()
+        });
+
+        h.handle.submit_read(vec!["a".to_string()]);
+        h.log.read_started.notified().await;
+        assert!(h.handle.cancel_current());
+
+        h.release.send(()).unwrap();
+        match h.result_rx.recv().await.expect("cancelled result") {
+            WorkerResult::Cancelled { within_grace, .. } => {
+                assert!(within_grace, "cancellation must not enter retry backoff");
+            }
+            other => panic!("expected Cancelled, got {other:?}"),
+        }
+        assert_eq!(
+            h.log.reads.load(Ordering::SeqCst),
+            1,
+            "cancelled driver must not be retried"
+        );
+
+        h.handle.stop();
+        wait_finished(&h.handle).await;
+        assert!(
+            h.result_rx.try_recv().is_err(),
+            "cancelled read must be the only outcome"
+        );
     }
 }
