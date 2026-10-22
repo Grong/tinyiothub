@@ -27,7 +27,7 @@
 |---|---|---|
 | 1 | `cargo fmt --all`（评审修复后） | 已对 E4c 触及文件格式化；随后按“不混入无关格式变更”`git checkout` 还原了既有漂移 `crates/agent/src/runtime/thing_agent/scheduler.rs`、`crates/core/src/watch.rs`。`cargo fmt --all -- --check` 仍会因这两处存量漂移失败（见 §4 #9） |
 | 2 | `cargo clippy --workspace --all-targets -- -D warnings` | 通过（exit 0，56s）；仅 `redis v0.25.4` future-incompat 提示，非本次改动 |
-| 3 | `cargo test --workspace --lib --bins --tests` | **2338 passed / 0 failed / 4 ignored**（53 个测试二进制，exit 0）。E4b 基线 2326；`186be11c` 起净增 **12** 个测试（9 async + 3 sync；终审记录曾误写 11/9+2）。本次 completions 修复另加 **6** 个 async 测试（worker 2 + composite E2E 4），故 `186be11c→本记录提交` 净增 **18**（15 async + 3 sync） |
+| 3 | `cargo test --workspace --lib --bins --tests` | **2347 passed / 0 failed / 4 ignored**（53 个测试二进制，exit 0；最终 HEAD 复跑）。E4b 基线 2326；`186be11c` 起净增 **14** 个测试（11 async + 3 sync，按 git diff 属性审计；终审记录曾误写为 12/11）。本次 completions 修复另加 **6** 个 async 测试（worker 2 + composite E2E 4），故 `186be11c→本记录提交` 净增 **20**（17 async + 3 sync） |
 | 4 | `cargo build -p demo-declarative` | 通过（exit 0） |
 | 5 | `cargo test -p driver-check` | 4 passed / 0 failed（exit 0；lib 0 + e2e 4） |
 | 6 | `cargo run -p driver-check -- --package drivers/demo-declarative --profile all` | exit 0；`demo-declarative@1.0.0 -> PASS (5 profiles: core/materialization/migration/resources/cancel 全部 pass)` |
