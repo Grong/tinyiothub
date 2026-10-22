@@ -298,6 +298,8 @@ impl DataServer {
                     device_cache.update(device);
                 }
             }
+            // E4c：事件/账本由 Task 4 接管；本期先消费掉，避免未处理分支。
+            WorkerResult::Cancelled { .. } => {}
         }
     }
 

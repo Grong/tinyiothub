@@ -228,6 +228,10 @@ impl ThingDriver for SimulatedDriver {
 
         if !property_infos.is_empty() {
             for (prop_name, prop_data_type, min_value, max_value) in property_infos.iter() {
+                // 属性间检查点：stop 后长属性列表尽快协作退出（E4c）。
+                if cancel.is_cancelled() {
+                    return Err(Error::Cancelled);
+                }
                 let data_type = prop_data_type.as_deref().unwrap_or("float");
                 let behavior = match_property(prop_name, data_type);
 
