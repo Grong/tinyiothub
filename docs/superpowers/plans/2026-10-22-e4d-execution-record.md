@@ -2,7 +2,7 @@
 
 - 日期：2026-10-22
 - 分支：`ai-consolidation`
-- 提交范围：`c2a9f818..HEAD`。实施（Task 1–6）共 **10** 个提交；Task 7 增加 1 个 E2E/加固提交与 1 个本记录提交，`git rev-list --count c2a9f818..HEAD` = **12**。
+- 提交范围：`c2a9f818..HEAD`。实施（Task 1–6）共 **10** 个提交；Task 7 增加 1 个 E2E/加固提交与 1 个记录提交；最终评审修复增加 1 个代码提交与 1 个本记录提交，`git rev-list --count c2a9f818..HEAD` = **14**。
   - `5699aa4a` feat(e4d): maps/places/坐标持久化
   - `374e01c6` fix(e4d): harden spatial tenant isolation and zone_source contract
   - `709fb53a` feat(e4d): 几何/zone/trust 纯函数
@@ -14,7 +14,9 @@
   - `439e920d` feat(e4d): placement 验收 profile
   - `84e3f186` fix(e4d): placement 验收 profile 评审修正
   - `test(e4d): 空间 E2E + 并发 upsert 锁重试`（新增 5 个 E2E；见 §3.7）
-  - 本记录提交：`docs(e4d): 执行记录与验证结果`
+  - `docs(e4d): 执行记录与验证结果`
+  - `8498c6e8` `fix(e4d): 最终评审修复——zoneRef 按图解析/零空间数据回退/position 可轮询`（见 §3.12–§3.14）
+  - 本记录提交：`docs(e4d): 最终评审修复记录与结转更新`
 - 工具链：rustc 1.95.0 / cargo 1.95.0，macOS（darwin）；Node v24.14.0（web）
 - 计划：`docs/superpowers/plans/2026-10-22-e4d-spatial-model.md`
 - 子 spec：`docs/superpowers/specs/2026-10-22-e4d-spatial-model-design.md`
@@ -26,7 +28,7 @@
 |---|---|---|
 | 1 | `cargo fmt --all` | 已对 E4d 触及文件格式化；按“不混入无关格式变更”`git checkout` 还原既有漂移 `crates/agent/src/runtime/thing_agent/scheduler.rs`、`crates/core/src/watch.rs`。`cargo fmt --all -- --check` 仍 exit 1：仅上述 2 个文件、24 个 hunk 的存量漂移（见 §3.8） |
 | 2 | `cargo clippy --workspace --all-targets -- -D warnings` | 通过（exit 0，最终代码复跑）；仅 `redis v0.25.4` future-incompat 提示，非本次改动 |
-| 3 | `cargo test --workspace --lib --bins --tests` | **2440 passed / 0 failed / 4 ignored**（53 个测试二进制，exit 0；并发重试修复后复跑）。E4c 基线 2347；E4d 净增 **93**（实施提交 95 加/7 删 = +88，Task 7 新增 5 个 E2E） |
+| 3 | `cargo test --workspace --lib --bins --tests` | **2447 passed / 0 failed / 4 ignored**（2451 个 `: test` 条目，53 个测试二进制，exit 0；最终评审修复后复跑）。E4c 基线 2347；E4d 净增 **100**（实施提交 95 加/7 删 = +88，Task 7 新增 5 个 E2E，最终评审修复 +7） |
 | 4 | `cargo build -p demo-declarative` | 通过（exit 0） |
 | 5 | `cargo test -p driver-check` | 5 passed / 0 failed（exit 0；lib 0 + e2e 5） |
 | 6 | `cargo run -p driver-check -- --package drivers/demo-declarative --profile all` | exit 0；`demo-declarative@1.0.0 -> PASS (6 profile(s): core=pass, materialization=pass, migration=pass, resources=pass, placement=pass, cancel=pass)` |
@@ -54,6 +56,19 @@
 | `tinyiothub-cloud --lib e4c_resources_stop`（E4c 资源/stop） | 10 passed / 0 failed |
 | `web workbench-state.test.ts`（E3 工作台状态） | 4 passed / 0 failed |
 
+### 1.2 最终评审修复复跑（2026-10-22）
+
+| 命令 | 结果 |
+|---|---|
+| `cargo test -p runtime --lib maps::` | 38 passed / 0 failed（新增同名 zone 按 map 解析、`has_spatial_data`、预热图内解析） |
+| `cargo test -p runtime --lib watch` | 29 passed / 0 failed（新增无空间数据回退 hierarchy、点在图内 zone 外保持空） |
+| `cargo test -p runtime --lib access` | 93 passed / 0 failed（新增 mapRef 图内同名 zone 绑定） |
+| `cargo test -p runtime --lib sampler` | 20 passed / 0 failed（新增 `kind=position` 轮询） |
+| `cargo test -p tinyiothub-cloud spatial` | 15 passed / 0 failed |
+| `cargo test -p runtime acceptance` | 40 passed / 0 failed |
+| `cargo clippy --workspace --all-targets -- -D warnings` | 通过（exit 0；仅 `redis v0.25.4` future-incompat 提示） |
+| `cargo fmt --all -- --check` | 仅存量漂移 `scheduler.rs` / `watch.rs`（与 §3.8 一致；本次触及文件已格式化） |
+
 ## 2. 退出清单证据
 
 | 退出项 | 证据 | 结论 |
@@ -72,7 +87,10 @@
 | placement 验收 profile 通过 | `cargo run -p driver-check … --profile all` → `placement=pass`（6 profiles 全 pass）；runtime `acceptance::profiles::placement` 单测；demo 无地图声明时 map 检查 Skip 而非 Fail（`demo_placement_profile_skips_map_checks_without_failing`） | PASS |
 | API 校验/错误矩阵 | `spatial_api_tests` 15 个用例：bounds 溢出/非正尺寸、zone <3 点/共线/重复点、landmark 点形、默认图唯一、锚图同工作区、admin 403、跨工作区 404、越界 400、并发重名 201+409 | PASS |
 | E3 World zone 名称投影不回归 | E3 工作台云测试 2 passed；web `workbench-state` 4 passed；E2E 断言 `workspace_snapshot.devices[].zone` 在 maps/hierarchy 下分别为 `map-zone` / `Building A`（World 直接消费该字符串） | PASS |
-| E1b / E4b / E4c 不回归 | 定向回归表（§1.1）全部 0 failed；全量 2440 passed / 0 failed | PASS |
+| E1b / E4b / E4c 不回归 | 定向回归表（§1.1/§1.2）全部 0 failed；全量 2447 passed / 0 failed（4 ignored） | PASS |
+| 同名 zone 多图时绑定按 `mapRef` 解析 | `bind_resolves_zone_ref_within_map_ref_when_names_repeat`（floor-2 的「机房」不再被默认图同名 zone 误拒）；`explicit_zone_ref_is_scoped_to_thing_map`、`warm_workspace_resolves_zone_refs_within_thing_map`（图内 fail-closed） | PASS |
+| 新工作区默认 maps、配图前不丢 hierarchy zone | `maps_mode_without_spatial_data_falls_back_to_hierarchy`（summary + snapshot）；`has_spatial_data_requires_maps_and_zones`；`maps_mode_point_outside_zones_stays_empty`（有图但点在 zone 外 → 空，不回退） | PASS |
+| `kind=position` source 可被采样器轮询 | `position_source_is_sampled_like_poll`（按 interval 提交读；push 仍不读） | PASS |
 
 ## 3. 偏差与说明
 
@@ -87,6 +105,9 @@
 9. **demo 清单没有真实 `kind=position` source**：Task 6 评审修正后移除了悬空的 `fromSource: "position"`，demo 保持 PASS；驱动位置摄取由 E2E 合成读数 + `data_server` 单测覆盖，尚未有出厂驱动实际产生 `position_*`。
 10. **MSRV 声明滞后**：workspace `rust-version = 1.85`，但 E4d 使用的 let-chains 需要 1.88+；当前工具链 1.95 构建通过，声明值未更新（Task 1 既有 residual）。
 11. **`MapStore` 端口形状**：brief 列出的写方法最终并入 `MapStore`（读+写+位置+摄取门+`zone_source`），未拆出独立 `ZoneSource`；runtime 仍零 db/sqlx，cloud 经 `DbMapStore` 适配。属已记录的实现取舍。
+12. **`zoneRef` 按 `mapRef` 限定解析（最终评审 Important #1）**：`AccessService::materialize_placement` 有 `mapRef` 时经 `list_places(map_id)` 在该图内按 name+kind 解析，无 `mapRef` 时才用工作区级 `find_place_by_name`；`ZoneService` 的显式引用（参数/物化列）以物的 `map_id` 为图作用域，预热批量解析同样按图索引。zone 名称只保证 `UNIQUE(map_id,name)`，多楼层同名 zone 合法。
+13. **新工作区零空间数据回退 hierarchy（最终评审 Important #2）**：`zone_source='maps'` 但本工作区没有任何地图、或所有图都没有 Zone 地点时，LiveState 的 summary/快照回退 hierarchy（`ZoneService::has_spatial_data`）；只要存在空间数据，无位置/越界/不在任何 zone 仍为 None（不回退）。避免新工作区（默认 maps）在配图前把 E3/E4b 的 zone 字符串静默清空。spec §2.2 已同步。
+14. **`kind=position` 可轮询（最终评审 triage）**：采样器的可读 kind 从仅 `poll` 扩展为 `poll|position`；position 是驱动按 schedule 读取的数据源（保留字段由 DataServer 消费），`placement.fromSource` 指向 position 的 runtime 驱动因此可获得读数。原「position 不可 poll、E4e 必须解决」的结转项已解决；剩余仅「出厂 position 驱动」（§4 #10）。push/stream 仍只走 `set_demand`。
 
 ## 4. 结转
 
@@ -96,11 +117,15 @@
 | 2 | 地球锚定/帧旋转/坐标系换算 | spec §5；本文 §3.2 | 未排期 |
 | 3 | 位置热路径缓存/批量与 `ingests` 上界、快照 120ms 预算复测 | Task 3/4 评审；本文 §3.3 | E4e 性能 |
 | 4 | 非 `create_workspace` 路径的新工作区 `zone_source='maps'` | Task 1 residual；本文 §3.4 | E4e |
-| 5 | DB 层 `anchor_map_id` 同工作区校验 | Task 1 fix-review residual；本文 §3.5 | E4d 后续 |
+| 5 | DB 层 `anchor_map_id` 同工作区校验 + 锚环（cycle）校验 | Task 1 fix-review residual；最终评审 triage；本文 §3.5 | E4d 后续 |
 | 6 | `position_ingest` 回填/启动重绑，使存量 runtime 设备重启后恢复摄取 | Task 4 fix-review；本文 §3.6 | E4e 迁移 |
-| 7 | `upsert_place` 的并发锁重试（与 `upsert_map` 同类） | 本文 §3.7 | E4d 后续 |
+| 7 | `upsert_place` / `set_position`（含 `set_reading_position`）的 SQLITE_BUSY/LOCKED 重试（与 `upsert_map` 同类） | 本文 §3.7；最终评审 triage | E4d 后续 |
 | 8 | 内存共享缓存测试夹具的 `SQLITE_LOCKED` 根因（文件库/单连接夹具） | Task 5 minor；本文 §3.7 | 测试基建 |
 | 9 | fmt 基线漂移（scheduler.rs / watch.rs） | Task 1/5；本文 §3.8 | 单独 style 提交 |
 | 10 | 出厂 `kind=position` 驱动 source | Task 4/6；本文 §3.9 | E4e |
 | 11 | workspace MSRV 声明 1.85 → 1.88+ | Task 1 residual；本文 §3.10 | 仓库维护 |
-| 12 | 多 zone 同面积 tie-break 的 ID 次序契约测试 | Task 1 residual | E4d 后续 |
+| 12 | 多 zone 同面积 tie-break 的 ID 次序契约测试 | Task 1 residual | **已闭环**（`equal_area_ties_break_by_name_then_id`） |
+| 13 | admin helper 三处重复（maps/places/position handler） | 最终评审 triage | 后续整理 |
+| 14 | `MapStore` 未拆独立 `ZoneSource`（读写/位置/摄取门同端口） | 最终评审 triage；本文 §3.11 | 后续整理 |
+| 15 | placement 验收 profile 的 bounds/geometry 校验与 handler 重复 | 最终评审 Minor #4 | 后续（提为共享校验函数） |
+| 16 | `kind=position` 不可 poll | 最终评审 triage | **已解决**（本文 §3.14；仅余出厂 position 驱动 #10） |

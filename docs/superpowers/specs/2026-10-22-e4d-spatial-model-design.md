@@ -74,17 +74,17 @@ DB：
 ### 2.2 zone 与 trust
 
 - `resolve_zone(workspace, thing, now) -> Option<Place>`：
-  1. `placement.zoneRef`（实例声明/物列）命中同 workspace place（kind=Zone）→ 返回。
+  1. `placement.zoneRef`（实例声明/物列）：有 `mapRef`（物化到 `thing.map_id`）时**只在该图内**按 name+kind 解析（zone 名称仅保证每图唯一，多楼层可同名）；无 `mapRef` 时工作区级解析（默认图优先）；未知引用 → None（fail-closed）。
   2. `thing.map_id` 或默认图；position 缺失 → None。
   3. 所有 Zone 多边形 point-in-polygon（边界含入）；取面积最小；无命中 → None。
 - `derive_trust(placement_mode, position_updated_at, driver_trust, now)`：
   - fixed → Trusted；
   - runtime → age ≤30s Trusted / ≤5min Uncertain / >5min Lost；driver_trust 只能降级（取更差者）。
-- `zone_source='hierarchy'` 或无 maps 数据 → 现有 parent_id 层级派生；`maps` → ZoneService 结果（None 即 None，不回退层级）。
+- `zone_source='hierarchy'` 或本工作区**无空间数据**（没有任何地图，或所有地图都没有 Zone 地点）→ 现有 parent_id 层级派生。`maps` 且存在空间数据 → ZoneService 结果：无位置/越界/不在任何 zone → None（**不回退层级**）。判定由 `ZoneService::has_spatial_data(workspace)` 提供；新工作区默认 `maps`，但在配置第一张图/zone 前仍显示 hierarchy zone。
 
 ### 2.3 placement 物化与位置输入
 
-- 建物/绑定驱动时：manifest `placement.mode=fixed|declared` 且带 position/mapRef/zoneRef → 写坐标列；map/zone 名不存在 → 绑定失败/验收 fail（fail-closed）。
+- 建物/绑定驱动时：manifest `placement.mode=fixed|declared` 且带 position/mapRef/zoneRef → 写坐标列；有 `mapRef` 时 `zoneRef` 必须在**该图内**存在（同名 zone 可分布在多图）；map/zone 名不存在 → 绑定失败/验收 fail（fail-closed）。
 - `placement.mode=runtime` 且 `fromSource`：驱动 source kind=`position` 的读数保留字段写入坐标列：
   `position_x/position_y/position_level/position_heading/position_trust`；`position_updated_at=now`。
 - `PUT /v1/things/{id}/position`：body `{x,y,level?,heading?,trust?}`；越界/非默认图 → 400；写列并更新 updated_at。
