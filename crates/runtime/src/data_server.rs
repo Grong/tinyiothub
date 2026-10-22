@@ -14,7 +14,8 @@ use tinyiothub_core::models::thing_property::ThingProperty;
 use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 
 use crate::access::sampler::{Sampler, SamplingWorkers};
-use crate::driver::worker::{WorkerHandle, WorkerResult, spawn_worker};
+use crate::arbitration::ResourceLease;
+use crate::driver::worker::{CancelKind, WorkerHandle, WorkerResult, spawn_worker};
 use crate::driver::{DriverWrapper, ThingOverview, create_driver};
 use crate::event_bus::{EventBus, publish_event_safe};
 use crate::ports::{HubLedger, ThingCacheSource};
@@ -360,6 +361,7 @@ impl DataServer {
             // 事件 + 账本 + 指标（一次调用一个 outcome）。
             WorkerResult::Cancelled {
                 thing_id,
+                kind,
                 within_grace,
                 elapsed_ms,
             } => {
@@ -368,7 +370,7 @@ impl DataServer {
                     tracing::warn!(thing_id = %thing_id, "取消终态丢弃：物不在缓存（已删？）");
                     return;
                 };
-                if let Some(event) = Self::build_command_cancelled_event(&device, within_grace, elapsed_ms) {
+                if let Some(event) = Self::build_command_cancelled_event(&device, kind, within_grace, elapsed_ms) {
                     publish_event_safe(event_bus, event).await;
                 }
                 if let Some(ledger) = cancellation.ledger() {
@@ -377,7 +379,10 @@ impl DataServer {
                         return;
                     };
                     let outcome = if within_grace { "cancelled" } else { "cancelled_unknown" };
-                    let kind = if within_grace {
+                    // 账本 kind 保持 kind-agnostic（call_cancelled*），调用类型
+                    // 在 payload.kind 里显式区分（Issue 8：读取消不得看起来
+                    // 像命令取消）。
+                    let ledger_kind = if within_grace {
                         "call_cancelled"
                     } else {
                         "call_cancelled_unknown"
@@ -386,10 +391,11 @@ impl DataServer {
                         "v": 1,
                         "thingId": thing_id,
                         "outcome": outcome,
+                        "kind": kind.as_str(),
                         "elapsedMs": elapsed_ms,
                     });
-                    if let Err(e) = ledger.append(workspace_id, kind, Some(&thing_id), payload).await {
-                        tracing::warn!(thing_id = %thing_id, kind, error = %e, "取消终态账本写入失败");
+                    if let Err(e) = ledger.append(workspace_id, ledger_kind, Some(&thing_id), payload).await {
+                        tracing::warn!(thing_id = %thing_id, kind = ledger_kind, error = %e, "取消终态账本写入失败");
                     }
                 }
             }
@@ -560,22 +566,33 @@ impl DataServer {
         .ok()
     }
 
-    /// E4c 取消终态事件：`outcome` 区分宽限内退出与迟到返回（spec §2.4）。
-    fn build_command_cancelled_event(device: &Thing, within_grace: bool, elapsed_ms: u64) -> Option<DomainEvent> {
+    /// E4c 取消终态事件：`outcome` 区分宽限内退出与迟到返回（spec §2.4）；
+    /// `kind` 区分被取消的是采样读还是命令执行（Issue 8 审计保真）。
+    fn build_command_cancelled_event(
+        device: &Thing,
+        kind: CancelKind,
+        within_grace: bool,
+        elapsed_ms: u64,
+    ) -> Option<DomainEvent> {
         let outcome = if within_grace { "cancelled" } else { "cancelled_unknown" };
         let level = if within_grace {
             EventLevel::Info
         } else {
             EventLevel::Warning
         };
+        let call_kind = kind.as_str();
         let content = RichContent::new(
-            format!("Command on device '{}': {}", device.name, outcome),
+            format!("Command on device '{}': {} ({call_kind})", device.name, outcome),
             vec![ContentElement::Text {
-                content: format!("Cancellation outcome: {}, elapsed: {}ms", outcome, elapsed_ms),
+                content: format!(
+                    "Cancellation outcome: {}, kind: {call_kind}, elapsed: {}ms",
+                    outcome, elapsed_ms
+                ),
                 format: TextFormat::Plain,
             }],
         )
         .with_metadata("outcome".to_string(), serde_json::json!(outcome))
+        .with_metadata("kind".to_string(), serde_json::json!(call_kind))
         .with_metadata("elapsedMs".to_string(), serde_json::json!(elapsed_ms))
         .with_metadata("thingId".to_string(), serde_json::json!(device.id));
         DomainEvent::new_device_event(
@@ -655,6 +672,15 @@ impl DataServer {
     }
 
     pub fn execute_command(&self, cmd: ThingCommand) -> Result<(), Error> {
+        self.execute_command_with_lease(cmd, None)
+    }
+
+    /// 提交命令并把调用方已持有的资源租约移交给 worker（E4c Issue 4）。
+    ///
+    /// worker 在命令真正结束（成功/失败/取消）后才 Drop 租约，因此 claim
+    /// 覆盖排队 + 执行窗口；调用方不再需要在入队后立即释放。无法移交
+    /// （无 worker 的物）时租约随本函数返回释放。
+    pub fn execute_command_with_lease(&self, cmd: ThingCommand, lease: Option<ResourceLease>) -> Result<(), Error> {
         if self.device_cache.get(&cmd.thing_id).is_none() {
             return Err(Error::NotFound);
         }
@@ -663,7 +689,7 @@ impl DataServer {
             tracing::debug!(thing_id = %cmd.thing_id, command = %cmd.name, "command accepted without a driver worker");
             return Ok(());
         };
-        worker.submit_execute(cmd)
+        worker.submit_execute_with_lease(cmd, lease)
     }
 
     pub fn execute_commands(&self, cmds: Vec<ThingCommand>) -> Result<(), Error> {
@@ -1629,6 +1655,7 @@ mod tests {
         DataServer::consume_worker_result(
             WorkerResult::Cancelled {
                 thing_id: "dev-1".to_string(),
+                kind: CancelKind::Execute,
                 within_grace: true,
                 elapsed_ms: 42,
             },
@@ -1655,6 +1682,7 @@ mod tests {
         );
         assert_eq!(metadata.get("elapsedMs"), Some(&serde_json::json!(42)));
         assert_eq!(metadata.get("thingId"), Some(&serde_json::json!("dev-1")));
+        assert_eq!(metadata.get("kind"), Some(&serde_json::json!("execute")));
         assert_eq!(event.source().thing_id(), Some("dev-1"));
 
         let rows = ledger.rows();
@@ -1664,7 +1692,7 @@ mod tests {
         assert_eq!(rows[0].2.as_deref(), Some("dev-1"));
         assert_eq!(
             rows[0].3,
-            serde_json::json!({"v": 1, "thingId": "dev-1", "outcome": "cancelled", "elapsedMs": 42})
+            serde_json::json!({"v": 1, "thingId": "dev-1", "outcome": "cancelled", "kind": "execute", "elapsedMs": 42})
         );
         assert_eq!(server.cancelled_counts(), (1, 0));
 
@@ -1672,6 +1700,7 @@ mod tests {
         DataServer::consume_worker_result(
             WorkerResult::Cancelled {
                 thing_id: "dev-1".to_string(),
+                kind: CancelKind::Read,
                 within_grace: false,
                 elapsed_ms: 1500,
             },
@@ -1689,10 +1718,14 @@ mod tests {
             event.content().metadata().get("outcome"),
             Some(&serde_json::json!("cancelled_unknown"))
         );
+        // 读取消必须在审计里显式标记 kind=read（Issue 8）——账本 kind 仍是
+        // call_cancelled_unknown（kind-agnostic 路径保留）。
+        assert_eq!(event.content().metadata().get("kind"), Some(&serde_json::json!("read")));
         let rows = ledger.rows();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[1].1, "call_cancelled_unknown");
         assert_eq!(rows[1].3["outcome"], "cancelled_unknown");
+        assert_eq!(rows[1].3["kind"], "read");
         assert_eq!(rows[1].3["elapsedMs"], 1500);
         assert_eq!(server.cancelled_counts(), (1, 1));
     }

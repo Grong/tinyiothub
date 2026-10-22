@@ -236,7 +236,8 @@ async fn concurrent_call_same_exclusive_resource_second_busy_then_first_complete
     let mut tools = thing_tools(&pool, registry.clone(), Some(access), None, None);
     let call = take_tool(&mut tools, "call_device");
 
-    // run-A 在飞（工具执行窗口内持有的正是这条 lease）。
+    // run-A 持有一条外部 lease（真实工具调用在驱动执行期间持有 claim 的
+    // 覆盖见 `concurrent_real_tool_calls_second_busy_while_first_executes`）。
     let lease_a = registry
         .try_acquire_resources(
             "dev-1",
@@ -266,6 +267,110 @@ async fn concurrent_call_same_exclusive_resource_second_busy_then_first_complete
         .expect("call_device");
     assert!(ok.success, "持有者结束后必须放行: {:?}", ok.error);
     assert!(ok.output.contains("simulated"), "无 DataServer 走模拟: {ok:?}");
+}
+
+/// Issue 4：claim 必须覆盖真实执行窗口，而不是入队瞬间。
+///
+/// 慢驱动进入 execute 后阻塞；**两条真实 `call_device` 工具调用**并发——
+/// 第一条工具已返回 `executed`（命令已入队/在驱动内执行），第二条必须拿到
+/// `busy: <holder> holds <resource>`。旧实现（入队即释放租约）这里会双双
+/// 放行。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_real_tool_calls_second_busy_while_first_executes() {
+    struct GatedExecuteDriver {
+        thing: Thing,
+        started: Arc<tokio::sync::Notify>,
+        release: Arc<AtomicBool>,
+    }
+
+    impl ThingDriver for GatedExecuteDriver {
+        fn thing(&self) -> &Thing {
+            &self.thing
+        }
+        fn thing_mut(&mut self) -> &mut Thing {
+            &mut self.thing
+        }
+        fn mode(&self) -> DriverMode {
+            DriverMode::Push
+        }
+        fn read_data(&mut self, _cancel: &CancelToken) -> Result<Vec<ResultValue>, Error> {
+            Ok(Vec::new())
+        }
+        fn execute_command(&mut self, _cmd: &ThingCommand, _cancel: &CancelToken) -> Result<bool, Error> {
+            self.started.notify_one();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !self.release.load(Ordering::SeqCst) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Ok(true)
+        }
+    }
+
+    let pool = test_pool().await;
+    let thing_id = "dev-slow-call";
+    seed_device(&pool, thing_id, &[], &["reboot"]).await;
+    let access = resource_access(
+        &pool,
+        thing_id,
+        json!([{"name":"reboot","kind":"action","parameters":{"type":"object"},"resources":["actuator"]}]),
+    )
+    .await;
+
+    let started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(AtomicBool::new(false));
+    let rig = stop_rig(
+        thing_id,
+        Box::new(GatedExecuteDriver {
+            thing: stop_thing(thing_id),
+            started: started.clone(),
+            release: release.clone(),
+        }),
+    )
+    .await;
+    let mut tools = thing_tools(
+        &pool,
+        rig.registry.clone(),
+        Some(access),
+        Some(rig.server.clone()),
+        None,
+    );
+    let call = take_tool(&mut tools, "call_device");
+
+    // 第一条真实工具调用：入队后工具立即返回 executed。
+    let first = call
+        .execute(json!({"thingId": thing_id, "action": "reboot"}))
+        .await
+        .expect("call_device");
+    assert!(first.success, "第一条必须下发: {:?}", first.error);
+    tokio::time::timeout(Duration::from_secs(2), started.notified())
+        .await
+        .expect("driver must enter execute");
+    assert!(rig.worker.in_flight(), "第一条命令必须在驱动内执行（不是仅入队）");
+
+    // 第二条真实工具调用：第一条仍在执行 → busy 带持有者 + 资源 id。
+    let t0 = Instant::now();
+    let second = call
+        .execute(json!({"thingId": thing_id, "action": "reboot"}))
+        .await
+        .expect("call_device");
+    assert!(!second.success, "并发第二条必须 busy: {second:?}");
+    assert_eq!(
+        second.error.as_deref(),
+        Some("busy: chat:ws-e4c holds actuator"),
+        "busy 必须点名真实执行中的持有者与声明资源"
+    );
+    assert!(t0.elapsed() < Duration::from_secs(1), "busy 必须立即拒绝（不排队）");
+
+    // 放行第一条 → 执行结束释放租约 → 第三条可行。
+    release.store(true, Ordering::SeqCst);
+    wait_until("第一条命令执行结束", || !rig.worker.in_flight()).await;
+    let third = call
+        .execute(json!({"thingId": thing_id, "action": "reboot"}))
+        .await
+        .expect("call_device");
+    assert!(third.success, "执行结束后必须放行: {:?}", third.error);
+
+    let _ = rig.shutdown_tx.send(());
 }
 
 /// 不同声明资源互不冲突；TTL 过期的 claim 不再占位。
@@ -596,6 +701,8 @@ async fn stop_cooperative_in_flight_cancels_within_grace_and_gates_next_call() {
     .await;
 
     let pool = test_pool().await;
+    // StopTool 现按 workspace 解析物（Issue 2）——DB 里必须存在同一台设备。
+    seed_device(&pool, thing_id, &[], &["reboot"]).await;
     let mut tools = thing_tools(&pool, rig.registry.clone(), None, Some(rig.server.clone()), None);
     let stop = take_tool(&mut tools, "stop");
     let call = take_tool(&mut tools, "call_device");
@@ -687,6 +794,8 @@ async fn stop_non_cooperative_driver_records_cancelled_unknown_after_grace() {
     .await;
 
     let pool = test_pool().await;
+    // StopTool 现按 workspace 解析物（Issue 2）——DB 里必须存在同一台设备。
+    seed_device(&pool, thing_id, &[], &["reboot"]).await;
     let mut tools = thing_tools(&pool, rig.registry.clone(), None, Some(rig.server.clone()), None);
     let stop = take_tool(&mut tools, "stop");
 

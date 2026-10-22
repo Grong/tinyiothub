@@ -42,6 +42,7 @@ use tinyiothub_core::models::thing_command::ThingCommand;
 
 use super::status::ThingOverview;
 use super::wrapper::DriverWrapper;
+use crate::arbitration::ResourceLease;
 
 /// Execute 队列容量（spec §2.3 队列上限 32）。
 const EXEC_QUEUE_CAP: usize = 32;
@@ -116,6 +117,10 @@ pub enum WorkerCommand {
     },
     Execute {
         cmd: ThingCommand,
+        /// E4c：调用方已持有的资源租约随命令移交 worker——claim 覆盖排队
+        /// 与真实执行窗口，而不是在入队（`execute_command` 返回）时释放。
+        /// worker 在调用结束（成功/失败/取消）后 Drop。
+        lease: Option<ResourceLease>,
     },
     SetDemand {
         sources: Vec<String>,
@@ -149,11 +154,30 @@ pub enum WorkerResult {
     /// 调用返回时 token 已被取消（每次调用至多上报一次）。
     ///
     /// `within_grace` = 自取消时刻起 ≤1s 退出；`elapsed_ms` 为取消到返回的耗时。
+    /// `kind` 区分被取消的是采样读还是命令执行——stop 会取消两者，审计
+    /// （事件/账本）必须能分辨（Issue 8）。
     Cancelled {
         thing_id: String,
+        kind: CancelKind,
         within_grace: bool,
         elapsed_ms: u64,
     },
+}
+
+/// 被取消调用的类型（审计用）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelKind {
+    Read,
+    Execute,
+}
+
+impl CancelKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CancelKind::Read => "read",
+            CancelKind::Execute => "execute",
+        }
+    }
 }
 
 /// worker 计数器快照（atomics，无指标后端依赖）。
@@ -199,10 +223,20 @@ impl WorkerHandle {
     }
 
     /// 提交命令执行。队列（32）已满时返回 `DriverError("busy")`。
+    ///
+    /// 不携带资源租约：调用方在入队后自行释放（旧行为；claim 只覆盖准入）。
     pub fn submit_execute(&self, cmd: ThingCommand) -> Result<(), Error> {
+        self.submit_execute_with_lease(cmd, None)
+    }
+
+    /// 提交命令执行并移交资源租约（E4c）：worker 在调用真正结束（成功/
+    /// 失败/取消）后 Drop，claim 因此覆盖排队 + 执行窗口。
+    ///
+    /// 入队失败时租约随 `TrySendError` 立即释放，不会泄漏 claim。
+    pub fn submit_execute_with_lease(&self, cmd: ThingCommand, lease: Option<ResourceLease>) -> Result<(), Error> {
         // 先加再发：避免 worker 抢先取出并减计数导致瞬时下溢。
         self.queue_depth.fetch_add(1, Ordering::Relaxed);
-        match self.exec_tx.try_send(WorkerCommand::Execute { cmd }) {
+        match self.exec_tx.try_send(WorkerCommand::Execute { cmd, lease }) {
             Ok(()) => Ok(()),
             Err(mpsc::error::TrySendError::Full(_)) => {
                 self.queue_depth.fetch_sub(1, Ordering::Relaxed);
@@ -412,8 +446,8 @@ async fn run_worker(
                     counters.queue_depth.fetch_sub(1, Ordering::Relaxed);
                 }
                 match cmd {
-                    Some(WorkerCommand::Execute { cmd }) => {
-                        execute_and_report(&mut driver, &cmd, &results, &cancel);
+                    Some(WorkerCommand::Execute { cmd, lease }) => {
+                        execute_and_report(&mut driver, &cmd, &results, &cancel, lease);
                         *status.write() = driver.overview();
                     }
                     Some(WorkerCommand::Reset) => {
@@ -449,7 +483,7 @@ async fn run_worker(
                 // 取消它，返回后至多上报一次 Cancelled。
                 let token = cancel.begin();
                 let outcome = driver.read_data_once_with(&token);
-                if report_if_cancelled(&cancel, &token, &thing_id, &results) {
+                if report_if_cancelled(&cancel, &token, &thing_id, CancelKind::Read, &results) {
                     // 已取消：本次调用只有 Cancelled 一个结果。
                     continue;
                 }
@@ -573,6 +607,7 @@ fn report_if_cancelled(
     cancel: &CancelSlot,
     token: &CancelToken,
     thing_id: &str,
+    kind: CancelKind,
     results: &mpsc::UnboundedSender<WorkerResult>,
 ) -> bool {
     let Some(elapsed) = cancel.finish(token) else {
@@ -580,6 +615,7 @@ fn report_if_cancelled(
     };
     let _ = results.send(WorkerResult::Cancelled {
         thing_id: thing_id.to_string(),
+        kind,
         within_grace: elapsed <= CANCEL_GRACE,
         elapsed_ms: elapsed.as_millis() as u64,
     });
@@ -587,16 +623,21 @@ fn report_if_cancelled(
 }
 
 /// 执行一条命令并把结果上报给 DataServer（事件构造/发布归 DataServer）。
+///
+/// `lease` 是随命令移交的资源租约：held 到本函数返回（成功/失败/取消都
+/// 同一路径释放）——claim 因此覆盖真实执行窗口，而不只是入队瞬间。
 fn execute_and_report(
     driver: &mut DriverWrapper,
     cmd: &ThingCommand,
     results: &mpsc::UnboundedSender<WorkerResult>,
     cancel: &CancelSlot,
+    lease: Option<ResourceLease>,
 ) {
+    let _lease = lease;
     let thing_id = driver.thing().id.clone();
     let token = cancel.begin();
     let outcome = driver.execute_command_with(cmd, &token);
-    if report_if_cancelled(cancel, &token, &thing_id, results) {
+    if report_if_cancelled(cancel, &token, &thing_id, CancelKind::Execute, results) {
         // 已取消：只上报 Cancelled，不再产生 Command 结果。
         return;
     }
@@ -1247,10 +1288,12 @@ mod tests {
         match h.result_rx.recv().await.expect("cancelled result") {
             WorkerResult::Cancelled {
                 thing_id,
+                kind,
                 within_grace,
                 elapsed_ms,
             } => {
                 assert_eq!(thing_id, "thing-1");
+                assert_eq!(kind, CancelKind::Read, "读取消必须标记 kind=read");
                 assert!(within_grace, "cooperative driver must exit within grace");
                 assert!(elapsed_ms <= 1000);
             }
@@ -1427,6 +1470,49 @@ mod tests {
                 );
             }
             other => panic!("expected Cancelled, got {other:?}"),
+        }
+
+        h.handle.stop();
+        wait_finished(&h.handle).await;
+    }
+
+    /// E4c Issue 4：随命令移交的租约由 worker 持有到执行结束——在途期间
+    /// 第二个持有者 busy，完成后自动释放（不是入队即释放）。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn submitted_lease_covers_execution_then_is_released() {
+        let mut h = make_cancel_with(CancelOptions {
+            gate_execute: true,
+            ..CancelOptions::default()
+        });
+        let registry = crate::arbitration::ArbitrationRegistry::default();
+        let lease = registry
+            .try_acquire_default("thing-1", "run-A".to_string())
+            .expect("run-A lease");
+        h.handle
+            .submit_execute_with_lease(cmd(0), Some(lease))
+            .expect("queue has room");
+
+        h.log.execute_started.notified().await;
+        let busy = registry
+            .try_acquire_default("thing-1", "run-B".to_string())
+            .expect_err("命令在途期间租约必须仍被持有");
+        assert_eq!(busy.holder, "run-A");
+
+        h.release.send(()).unwrap();
+        match h.result_rx.recv().await.expect("command result") {
+            WorkerResult::Command { success, .. } => assert!(success),
+            other => panic!("expected Command, got {other:?}"),
+        }
+        // 结果发送在租约 Drop 之前：轮询到释放为止。
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match registry.try_acquire_default("thing-1", "run-C".to_string()) {
+                Ok(_) => break,
+                Err(_) if Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                Err(e) => panic!("执行结束后租约必须释放: {e}"),
+            }
         }
 
         h.handle.stop();

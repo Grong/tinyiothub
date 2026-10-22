@@ -440,25 +440,6 @@ impl AccessService {
         Ok(Some(decl))
     }
 
-    /// E4c: load the device declaration plus its package (the declaration
-    /// itself does not carry the package-level `resources[]`).
-    async fn declaration_with_package(
-        &self,
-        workspace_id: &str,
-        thing_id: &str,
-    ) -> Result<(DeviceDeclaration, Arc<InstalledPackage>), String> {
-        let decl = self
-            .load_declaration(workspace_id, thing_id)
-            .await
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("no declaration for thing '{thing_id}'"))?;
-        let package = self
-            .manifests
-            .get(workspace_id, &decl.driver)
-            .ok_or_else(|| format!("manifest for driver '{}' unavailable", decl.driver))?;
-        Ok((decl, package))
-    }
-
     /// Restore installed packages after a restart: re-read active DB rows,
     /// load their persisted binaries and repopulate the in-memory registry.
     ///
@@ -547,12 +528,26 @@ impl super::resources::ResourceResolver for AccessService {
         thing_id: &str,
         tool_name: &str,
     ) -> Result<Vec<super::resources::ResourceClaim>, String> {
-        let (decl, package) = self.declaration_with_package(workspace_id, thing_id).await?;
+        let decl = self
+            .load_declaration(workspace_id, thing_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("no declaration for thing '{thing_id}'"))?;
         let tool = decl
             .tools
             .iter()
             .find(|t| t.name == tool_name)
             .ok_or_else(|| format!("action '{tool_name}' not declared"))?;
+        // 未声明 resources 的工具回落合成 `__device__`——这一步不需要包
+        // 清单；先返回，避免“包暂不可用”把原本受 E1 互斥保护的调用判死
+        // （Issue 12）。
+        if tool.resources.is_empty() {
+            return Ok(vec![super::resources::device_claim()]);
+        }
+        let package = self
+            .manifests
+            .get(workspace_id, &decl.driver)
+            .ok_or_else(|| format!("manifest for driver '{}' unavailable", decl.driver))?;
         super::resources::resolve_tool_claims(&package.manifest.resources, tool)
     }
 
@@ -1481,5 +1476,50 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(claims, vec![super::super::resources::device_claim()]);
+    }
+
+    /// Issue 12：工具未声明 resources 时，合成 `__device__` 的解析不需要包
+    /// 清单——包暂不可用（未安装/加载失败）不得让原本受 E1 互斥保护的调用
+    /// 失败；真正声明了资源的工具仍 fail-closed。
+    #[tokio::test]
+    async fn resolve_action_without_package_uses_device_claim_for_empty_resources() {
+        use super::super::resources::ResourceResolver;
+
+        let fx = fixture(None);
+        // 故意不 seed manifest：包不可用。
+        let decl: DeviceDeclaration = serde_json::from_value(serde_json::json!({
+            "manifestVersion":"1.0",
+            "driver":"resource-demo",
+            "driverVersion":"1.0.0",
+            "stateFields":[],
+            "tools":[
+                {"name":"echo","kind":"action","parameters":{"type":"object"},"resources":[]},
+                {"name":"fire","kind":"action","parameters":{"type":"object"},
+                 "resources":["actuator"]}
+            ]
+        }))
+        .expect("declaration json");
+        fx.service
+            .device_store
+            .upsert(&DeviceDeclarationRecord {
+                workspace_id: "ws1".into(),
+                thing_id: "t1".into(),
+                driver_name: decl.driver.clone(),
+                driver_version: decl.driver_version.clone(),
+                declaration_json: serde_json::to_string(&decl).unwrap(),
+                declaration_hash: "hash".into(),
+                status: "active".into(),
+                updated_at: "2026-10-22T00:00:00Z".into(),
+            })
+            .await
+            .expect("device store");
+
+        let resolver: &dyn ResourceResolver = &fx.service;
+        let claims = resolver.resolve_action("ws1", "t1", "echo").await.unwrap();
+        assert_eq!(claims, vec![super::super::resources::device_claim()]);
+
+        // 声明了资源的工具仍要求清单（fail-closed）。
+        let err = resolver.resolve_action("ws1", "t1", "fire").await.unwrap_err();
+        assert!(err.contains("manifest for driver"), "{err}");
     }
 }

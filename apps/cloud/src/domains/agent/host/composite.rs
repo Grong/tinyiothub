@@ -15,7 +15,7 @@ use tinyiothub_runtime::access::resources::{ResourceClaim, ResourceResolver, dev
 use tinyiothub_runtime::event_bus::EventBus;
 use tinyiothub_runtime::ports::HubLedger;
 
-use super::tools::autonomous_invoke::dispatch_command;
+use super::tools::autonomous_invoke::dispatch_command_with_lease;
 use super::tools::thing::resource_specs;
 use crate::shared::runtime_ports::HubLedgerAdapter;
 
@@ -127,8 +127,9 @@ impl CompositeExecutor {
 
         // E4c：每步按该步工具的声明资源 claim（未声明/无 action → 合成
         // `__device__`），all-or-nothing；busy 文案带持有者 + 资源 id。
-        // Lease 覆盖本步执行窗口，成功/失败均在步骤结束时释放。
-        let _lease = match &self.arbitration {
+        // Call 步把租约移交给 worker（claim 覆盖真实执行窗口——评审 Issue 4）；
+        // Set 步在步骤结束时随作用域释放。
+        let mut lease = match &self.arbitration {
             Some(registry) => {
                 let acquired = match &self.resources {
                     Some(resolver) => match self.resolve_claims(resolver.as_ref(), &thing_id, op).await {
@@ -152,13 +153,13 @@ impl CompositeExecutor {
 
         let result = match op {
             CompositeOp::Call { action, params, .. } => {
-                let dispatched = dispatch_command(
+                // 本步租约已持有（上面 claim）——直接移交，避免嵌套 acquire。
+                let dispatched = dispatch_command_with_lease(
                     self.data_server.as_ref(),
                     &thing_id,
                     action,
                     Some(params),
-                    None, // 已在上面持有租约，避免嵌套 acquire
-                    &format!("composite:{}", def.name),
+                    lease.take(),
                 );
                 if dispatched.success {
                     Ok(serde_json::from_str(&dispatched.output)

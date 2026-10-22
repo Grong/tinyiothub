@@ -156,22 +156,31 @@ impl ArbitrationRegistry {
     }
 
     /// E2 stop：置设备 stop 闸门并释放该设备全部 claim（在途单次调用不可中断）。
+    ///
+    /// 截止时刻用 `checked_add`：超大 ttl 不得 panic（调用方还会自行 clamp）。
     pub fn set_stop(&self, thing_id: &str, reason: String, ttl: Duration) {
-        self.stops.insert(thing_id.to_string(), (reason, Instant::now() + ttl));
+        let until = Instant::now().checked_add(ttl).unwrap_or_else(|| {
+            // 溢出的 ttl 按最大可表示窗口处理，而不是 panic / 永不过期。
+            Instant::now() + Duration::from_secs(3600)
+        });
+        self.stops.insert(thing_id.to_string(), (reason, until));
         // 释放占用：stop 是最高优先级的"让路"指令。
         self.force_release_thing(thing_id);
     }
 
     /// stop 闸门命中返回原因；已过期/未设置返回 None。
+    ///
+    /// 过期清理必须与 `set_stop` 互斥：先读后删会让并发 `set_stop` 刚插入的
+    /// 新闸门被这次删除静默丢掉。`remove_if` 在分片锁内复检截止时刻——
+    /// 只删「此刻仍已过期」的条目。
     pub fn stop_reason(&self, thing_id: &str) -> Option<String> {
-        let expired = match self.stops.get(thing_id) {
-            Some(entry) if Instant::now() < entry.1 => return Some(entry.0.clone()),
-            Some(_) => true,
-            None => false,
-        };
-        if expired {
-            self.stops.remove(thing_id);
+        if let Some(entry) = self.stops.get(thing_id)
+            && Instant::now() < entry.1
+        {
+            return Some(entry.0.clone());
         }
+        let now = Instant::now();
+        self.stops.remove_if(thing_id, |_, (_, until)| *until <= now);
         None
     }
 
@@ -671,6 +680,53 @@ mod tests {
         reg.try_acquire_resources("dev_1", "run-C".into(), &[exclusive("res:a"), exclusive("res:b")], TTL)
             .expect("stop 过期后资源必须全部空闲");
         drop(lease);
+    }
+
+    /// Issue 1 回归：过期闸门的清理不得删除并发 `set_stop` 刚置的新闸门。
+    ///
+    /// 旧实现 get（看到过期）→ remove 之间若插入新闸门，remove 会把它删掉。
+    /// `remove_if` 在分片锁内复检截止时刻，因此新闸门（长 TTL）必须始终可见。
+    #[test]
+    fn expired_stop_sweep_never_deletes_freshly_set_gate() {
+        let reg = ArbitrationRegistry::default();
+        // 先放一个已过期条目，保证清扫路径被走到。
+        reg.set_stop("dev-1", "stale".into(), Duration::ZERO);
+
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let sweeper = {
+            let reg = reg.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                // 持续走「读 → 过期清扫」路径，与 set_stop 抢同一分片。
+                for _ in 0..5_000 {
+                    let _ = reg.stop_reason("dev-1");
+                }
+            })
+        };
+
+        barrier.wait();
+        for i in 0..5_000 {
+            reg.set_stop("dev-1", "fresh".into(), TTL);
+            assert_eq!(
+                reg.stop_reason("dev-1").as_deref(),
+                Some("fresh"),
+                "第 {i} 轮：新设置的闸门不得被并发过期清扫删除"
+            );
+            // 下一轮重新制造过期条目（0 TTL），让清扫路径保持活跃。
+            reg.set_stop("dev-1", "stale".into(), Duration::ZERO);
+        }
+        sweeper.join().expect("sweeper thread");
+        reg.set_stop("dev-1", "fresh".into(), TTL);
+        assert_eq!(reg.stop_reason("dev-1").as_deref(), Some("fresh"));
+    }
+
+    /// 超大 ttl 不得 panic（checked_add 兜底）。
+    #[test]
+    fn set_stop_with_huge_ttl_does_not_panic() {
+        let reg = ArbitrationRegistry::default();
+        reg.set_stop("dev-1", "huge".into(), Duration::MAX);
+        assert_eq!(reg.stop_reason("dev-1").as_deref(), Some("huge"));
     }
 
     #[test]

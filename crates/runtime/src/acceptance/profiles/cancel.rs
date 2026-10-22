@@ -350,9 +350,13 @@ async fn run_cancel(harness: &mut Harness) -> Result<CancelledOutcome, String> {
     match result {
         WorkerResult::Cancelled {
             thing_id,
+            kind,
             within_grace,
             elapsed_ms,
         } => {
+            if kind != crate::driver::worker::CancelKind::Execute {
+                return Err(format!("expected execute cancellation, got {kind:?}"));
+            }
             if thing_id != THING_ID {
                 return Err(format!("unexpected thing id '{thing_id}'"));
             }

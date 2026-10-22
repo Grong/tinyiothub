@@ -358,18 +358,21 @@ impl Tool for SetDeviceTool {
         if input.properties.is_empty() {
             return tool_err("properties 不能为空".to_string());
         }
-        if let Some(registry) = &self.arbitration
-            && let Some(reason) = registry.stop_reason(&input.thing_id)
-        {
-            return tool_err(format!("stopped: {reason}"));
-        }
 
+        // 先做工作区归属解析：stop 闸门按 thing_id 全局键，若先读闸门，
+        // 跨工作区同 id 的调用会看到 `stopped:` 而非 404（评审 Issue 2）。
         let thing = match self.thing_service.get_thing(&input.thing_id, &self.workspace_id).await {
             Ok(t) => t,
             Err(e) => return tool_err(format!("物不存在: {e}")),
         };
         if thing.thing_type != "device" {
             return tool_err(format!("操作不支持: 物类型为 '{}'", thing.thing_type));
+        }
+        // 归属确认后再暴露闸门原因；claim 路径仍会兜底拒绝（fail-closed）。
+        if let Some(registry) = &self.arbitration
+            && let Some(reason) = registry.stop_reason(&input.thing_id)
+        {
+            return tool_err(format!("stopped: {reason}"));
         }
         let Some(event_bus) = &self.event_bus else {
             return tool_err("event bus unavailable: property write NOT executed".to_string());
@@ -472,10 +475,19 @@ fn scalar_text(value: &Value) -> Option<String> {
 // ============================================================================
 
 pub(super) struct StopTool {
+    /// 工作区归属校验（评审 Issue 2）：stop 与 call/set 一样必须先按
+    /// `workspace_id` 解析到物，禁止跨租户置闸门/取消在途调用。
+    pub(super) thing_service: Arc<ThingService>,
+    pub(super) workspace_id: String,
     pub(super) arbitration: Option<Arc<ArbitrationRegistry>>,
     /// E4c：取消在途调用的入口（None = 只置闸门，无法协作取消）。
     pub(super) data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
 }
+
+/// stop 闸门时长边界（秒）：下限 1s 防止零/负窗口，上限 1h 防止
+/// `Instant` 溢出与闸门长期残留（评审 Issue 7）。
+pub(super) const MIN_STOP_TTL_SECS: u64 = 1;
+pub(super) const MAX_STOP_TTL_SECS: u64 = 3600;
 
 impl Attributable for StopTool {
     fn role(&self) -> Role {
@@ -523,13 +535,21 @@ impl Tool for StopTool {
         }
 
         let input: Input = serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
+        // 工作区归属优先：跨租户 id 返回正常的“物不存在”，不得置闸门或
+        // 取消别人的在途调用（评审 Issue 2）。
+        if let Err(e) = self.thing_service.get_thing(&input.thing_id, &self.workspace_id).await {
+            return tool_err(format!("物不存在: {e}"));
+        }
         let Some(registry) = &self.arbitration else {
             return tool_err("arbitration unavailable: stop NOT applied".to_string());
         };
-        let ttl = input
+        // ttlSecs 来自模型/用户输入：clamp 到 1..=3600s，避免超大值溢出
+        // （评审 Issue 7）。
+        let ttl_secs = input
             .ttl_secs
-            .map(std::time::Duration::from_secs)
-            .unwrap_or(DEFAULT_STOP_TTL);
+            .unwrap_or(DEFAULT_STOP_TTL.as_secs())
+            .clamp(MIN_STOP_TTL_SECS, MAX_STOP_TTL_SECS);
+        let ttl = std::time::Duration::from_secs(ttl_secs);
         let reason = input.reason.unwrap_or_else(|| "operator stop".to_string());
         // 1) 闸门 + 释放全部 claim；2) 协作式取消当前在途调用；3) 立即返回，
         // 不等待驱动退出（异步终态由 worker → DataServer 留痕）。
@@ -539,7 +559,7 @@ impl Tool for StopTool {
             .as_ref()
             .map(|server| server.cancel_calls(&input.thing_id))
             .unwrap_or(0);
-        let until = chrono::Utc::now() + chrono::Duration::seconds(ttl.as_secs() as i64);
+        let until = chrono::Utc::now() + chrono::Duration::seconds(ttl_secs as i64);
         tool_ok(json!({
             "v": 1,
             "thingId": input.thing_id,
@@ -759,7 +779,10 @@ mod tests {
     #[tokio::test]
     async fn stop_returns_cancellation_requested_and_gate_rejects_next_call() {
         let registry = Arc::new(ArbitrationRegistry::default());
+        let pool = pool_with_device().await;
         let tool = StopTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            workspace_id: "ws-set".into(),
             arbitration: Some(registry.clone()),
             data_server: None,
         };
@@ -778,7 +801,6 @@ mod tests {
         assert_eq!(registry.stop_reason("dev-1").as_deref(), Some("ops emergency"));
 
         // 后续调用：闸门优先于确认/claim，统一 `stopped:` 文案。
-        let pool = pool_with_device().await;
         let invoke = super::super::invoke_action::InvokeActionTool {
             thing_service: Arc::new(ThingService::new(pool.clone())),
             pool,
@@ -840,6 +862,124 @@ mod tests {
         assert!(!blocked.success, "闸门期间必须拒绝");
         assert_eq!(blocked.error.as_deref(), Some("stopped: ops emergency"));
         assert!(rx.try_recv().is_err(), "闸门拒绝不得发布属性变更事件");
+    }
+
+    // ── E4c 评审修复：stop 归属 / ttl clamp / 跨租户闸门 ──────────
+
+    /// Issue 2：stop 必须先按工作区解析物——跨工作区 id 返回正常的
+    /// “物不存在”，且不得置闸门或取消别的租户的在途调用。
+    #[tokio::test]
+    async fn stop_rejects_cross_workspace_thing_without_setting_gate() {
+        let pool = pool_with_device().await;
+        seed_test_workspace(&pool, "tenant-1", "ws-other").await;
+        sqlx::query(
+            "INSERT INTO things (id, name, workspace_id, thing_type) VALUES ('dev-2','Other','ws-other','device')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert other device");
+        let registry = Arc::new(ArbitrationRegistry::default());
+        let tool = StopTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            workspace_id: "ws-set".into(),
+            arbitration: Some(registry.clone()),
+            data_server: None,
+        };
+
+        let denied = tool
+            .execute(json!({"thingId": "dev-2", "reason": "cross tenant"}))
+            .await
+            .expect("execute");
+        assert!(!denied.success, "跨工作区 stop 必须拒绝");
+        assert!(
+            denied.error.unwrap_or_default().contains("物不存在"),
+            "必须是正常 not-found，而不是执行了控制动作"
+        );
+        assert_eq!(registry.stop_reason("dev-2"), None, "跨租户不得置闸门");
+
+        // 本工作区的物仍然可 stop。
+        let ok = tool
+            .execute(json!({"thingId": "dev-1", "reason": "ops"}))
+            .await
+            .expect("execute");
+        assert!(ok.success, "{:?}", ok.error);
+        assert_eq!(registry.stop_reason("dev-1").as_deref(), Some("ops"));
+    }
+
+    /// Issue 7：ttlSecs clamp 到 1..=3600s，超大/零值都不得溢出或留空窗。
+    #[tokio::test]
+    async fn stop_clamps_ttl_seconds() {
+        let pool = pool_with_device().await;
+        let registry = Arc::new(ArbitrationRegistry::default());
+        let tool = StopTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            workspace_id: "ws-set".into(),
+            arbitration: Some(registry),
+            data_server: None,
+        };
+
+        let until_secs = |payload: &Value| {
+            let until = chrono::DateTime::parse_from_rfc3339(payload["until"].as_str().unwrap()).unwrap();
+            (until.with_timezone(&chrono::Utc) - chrono::Utc::now()).num_seconds()
+        };
+
+        // 超大：clamp 到 3600，而不是 panic/溢出。
+        let out = tool
+            .execute(json!({"thingId": "dev-1", "ttlSecs": 999_999_999u64}))
+            .await
+            .expect("execute");
+        assert!(out.success, "{:?}", out.error);
+        let payload: Value = serde_json::from_str(&out.output).unwrap();
+        let secs = until_secs(&payload);
+        assert!((3599..=3600).contains(&secs), "上限必须 clamp 到 3600s: {secs}");
+
+        // 0：clamp 到 1s，闸门仍需存在。
+        let out = tool
+            .execute(json!({"thingId": "dev-1", "ttlSecs": 0}))
+            .await
+            .expect("execute");
+        assert!(out.success);
+        let payload: Value = serde_json::from_str(&out.output).unwrap();
+        let secs = until_secs(&payload);
+        assert!((0..=1).contains(&secs), "下限必须 clamp 到 1s: {secs}");
+    }
+
+    /// Issue 2：set_device 的 stop 闸门在 workspace 解析之后才暴露——
+    /// 跨租户 id 得到 not-found，而不是 `stopped: <reason>`。
+    #[tokio::test]
+    async fn set_device_cross_tenant_does_not_leak_stop_reason() {
+        let pool = pool_with_device().await;
+        seed_test_workspace(&pool, "tenant-1", "ws-other").await;
+        let access = resource_access(&pool, set_tools()).await;
+        let registry = Arc::new(ArbitrationRegistry::default());
+        let bus = Arc::new(EventBus::new());
+        // ws-other 的物被其工作区置闸门。
+        sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES ('dev-x','X','ws-other','device')")
+            .execute(&pool)
+            .await
+            .expect("insert other device");
+        registry.set_stop("dev-x", "other-tenant stop".into(), DEFAULT_STOP_TTL);
+
+        let tool = SetDeviceTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            pool: pool.clone(),
+            workspace_id: "ws-set".into(),
+            event_bus: Some(bus),
+            arbitration: Some(registry),
+            holder: "chat:ws-set".into(),
+            resources: Some(access as Arc<dyn ResourceResolver>),
+        };
+        let out = tool
+            .execute(json!({"thingId": "dev-x", "properties": {"level": 1}}))
+            .await
+            .expect("execute");
+        assert!(!out.success);
+        let msg = out.error.unwrap_or_default();
+        assert!(msg.contains("物不存在"), "跨租户必须是 not-found: {msg}");
+        assert!(
+            !msg.contains("other-tenant stop"),
+            "不得向跨租户调用者泄漏闸门原因: {msg}"
+        );
     }
 
     /// 未声明 resources 的 set 工具回落合成 `__device__`（E1 语义）。

@@ -99,15 +99,7 @@ impl Tool for InvokeActionTool {
         let raw_args = args.clone();
         let input: Input = serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
-        // 0. stop 闸门优先：闸门期间直接拒绝（`stopped: <reason>`），不再走
-        // 确认/claim（与 set_device 文案一致；claim 的 busy 文案只是兜底）。
-        if let Some(registry) = &self.arbitration
-            && let Some(reason) = registry.stop_reason(&input.thing_id)
-        {
-            return tool_err(format!("stopped: {reason}"));
-        }
-
-        // 1. Verify thing exists and check type
+        // 1. Verify thing exists (workspace-scoped) and check type.
         let thing = self
             .thing_service
             .get_thing(&input.thing_id, &self.workspace_id)
@@ -120,6 +112,14 @@ impl Tool for InvokeActionTool {
                  对于 space/line/building 类型，请使用其属性或知识库。",
                 thing.thing_type
             ));
+        }
+
+        // 1a. stop 闸门：归属确认后再拒绝（跨租户 id 不得看到闸门原因——
+        // 评审 Issue 2）；claim 路径仍会兜底拒绝（fail-closed）。
+        if let Some(registry) = &self.arbitration
+            && let Some(reason) = registry.stop_reason(&input.thing_id)
+        {
+            return tool_err(format!("stopped: {reason}"));
         }
 
         // 1b. E4a declaration validation（fail-closed when wired）：未声明
@@ -219,10 +219,11 @@ impl Tool for InvokeActionTool {
         // 已被另一持有者（chat 会话/值守 run）占用时拒绝，busy 文案带持有者
         // 名与资源 id；持有者崩溃不死锁（TTL 过期自动可再 acquire）。
         // 未接线资源解析时沿用 E1 合成 `__device__`（每设备互斥）。
-        // Lease RAII：本次调用返回即释放。
-        // 确认门路径：mint token 不持锁，但批准后的真实下发经
-        // dispatch_command 同样 acquire（autonomous_invoke.rs，Task 9 fix）。
-        let _lease = match &self.arbitration {
+        // Lease 生命周期：有 DataServer 时随命令移交 worker（claim 覆盖排队
+        // + 真实执行窗口——评审 Issue 4）；模拟路径在本次调用返回时释放。
+        // 确认门路径：mint token 不持锁，批准后的真实下发经 dispatch_command
+        // 同样 acquire（autonomous_invoke.rs）。
+        let lease = match &self.arbitration {
             Some(registry) => {
                 let acquired = match &self.resources {
                     Some(resolver) => match resolver
@@ -267,7 +268,8 @@ impl Tool for InvokeActionTool {
                     parameters: input.params.as_ref().map(|p| p.to_string()),
                     created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
                 };
-                match data_server.execute_command(cmd) {
+                // 租约移交给 worker：执行完成（成功/失败/取消）才释放。
+                match data_server.execute_command_with_lease(cmd, lease) {
                     Ok(()) => tool_ok(json!({
                         "thingId": input.thing_id,
                         "actionName": input.action_name,
@@ -637,6 +639,29 @@ mod tests {
         registry
             .try_acquire_default("dev-1", "after".to_string())
             .expect("失败解析不得留下 claim");
+    }
+
+    /// Issue 2：闸门检查在 workspace 归属解析之后——跨租户 id 得到 not-found，
+    /// 不得看到闸门原因（claim 兜底仍 fail-closed）。
+    #[tokio::test]
+    async fn cross_tenant_call_does_not_leak_stop_reason() {
+        let pool = test_pool().await;
+        seed_device(&pool, "ws-a", "dev-1").await;
+        let registry = Arc::new(ArbitrationRegistry::default());
+        registry.set_stop(
+            "dev-1",
+            "tenant-a stop".into(),
+            tinyiothub_agent::runtime::thing_agent::arbitration::DEFAULT_STOP_TTL,
+        );
+        let tool = tool(&pool, "ws-b", Some(registry), "chat:ws-b");
+
+        let err = tool
+            .execute(json!({"thingId": "dev-1", "actionName": "reboot"}))
+            .await
+            .expect_err("跨租户 id 必须 not-found");
+        let msg = err.to_string();
+        assert!(msg.contains("物不存在"), "必须是 not-found: {msg}");
+        assert!(!msg.contains("tenant-a stop"), "不得泄漏闸门原因: {msg}");
     }
 
     /// stop 闸门期间调用在确认/claim 之前直接拒绝，统一 `stopped: <reason>`

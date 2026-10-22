@@ -168,10 +168,9 @@ impl RetryManager {
                     return RetryResult::Success(result);
                 }
                 Err(error) => {
-                    self.state.record_failure(error.clone());
-
                     // 取消是终态：不重试、不 sleep，否则协作驱动会被再次调用并
-                    // 超出 stop 的 1s 宽限期（E4c）。
+                    // 超出 stop 的 1s 宽限期（E4c）。必须在 record_failure 之前
+                    // 判定——取消不计失败预算，current_attempt 保持未污染。
                     if matches!(error, Error::Cancelled) {
                         return RetryResult::Failed {
                             attempts: self.state.current_attempt,
@@ -179,6 +178,8 @@ impl RetryManager {
                             total_duration: self.state.start_time.elapsed(),
                         };
                     }
+
+                    self.state.record_failure(error.clone());
 
                     if !self.state.should_retry(&self.config) {
                         let total_elapsed = self.state.start_time.elapsed();
@@ -402,6 +403,11 @@ mod tests {
                 ..
             }
         ));
+        assert_eq!(
+            manager.state().current_attempt,
+            0,
+            "cancellation must not consume the failure budget"
+        );
 
         let mut manager = RetryManager::new(config);
         let mut calls = 0;

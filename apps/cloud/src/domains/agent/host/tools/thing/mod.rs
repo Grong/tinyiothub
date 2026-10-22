@@ -269,6 +269,8 @@ pub fn create_thing_tools(
             resources: runtime.resources.clone(),
         })),
         destructive(Box::new(device::StopTool {
+            thing_service: thing_service.clone(),
+            workspace_id: ws.clone(),
             arbitration: runtime.arbitration.clone(),
             data_server: runtime.data_server.clone(),
         })),
