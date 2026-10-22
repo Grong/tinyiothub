@@ -315,6 +315,7 @@ pub fn create_thing_tools(
                 event_bus: runtime.event_bus.clone(),
                 arbitration: runtime.arbitration.clone(),
                 holder: format!("chat:{ws}"),
+                resources: runtime.resources.clone(),
             }),
         })),
         // ── 旧 9 工具（隐藏别名：批准通道兼容，模型不可见）──

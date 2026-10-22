@@ -11,10 +11,12 @@ use sqlx::SqlitePool;
 use tinyiothub_agent::runtime::thing_agent::seams::composite::{CompositeDef, CompositeOp};
 use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL};
 use tinyiothub_core::models::event::{ContentElement, Event, EventSource, RichContent, TextFormat};
+use tinyiothub_runtime::access::resources::{ResourceClaim, ResourceResolver, device_claim};
 use tinyiothub_runtime::event_bus::EventBus;
 use tinyiothub_runtime::ports::HubLedger;
 
 use super::tools::autonomous_invoke::dispatch_command;
+use super::tools::thing::resource_specs;
 use crate::shared::runtime_ports::HubLedgerAdapter;
 
 /// 每步租约 TTL（覆盖单次动作窗口）。
@@ -27,6 +29,9 @@ pub struct CompositeExecutor {
     pub event_bus: Option<Arc<EventBus>>,
     pub arbitration: Option<Arc<ArbitrationRegistry>>,
     pub holder: String,
+    /// E4c 声明资源解析：每步按该步工具声明 claim。None = 未接线，沿用
+    /// E1 每设备合成资源 claim。
+    pub resources: Option<Arc<dyn ResourceResolver>>,
 }
 
 struct StepResult {
@@ -118,16 +123,28 @@ impl CompositeExecutor {
 
     async fn run_op(&self, def: &CompositeDef, index: usize, op: &CompositeOp) -> Result<Value, String> {
         let thing_id = op.thing_id().to_string();
+        let holder = format!("composite:{}:{}", def.name, self.holder);
+
+        // E4c：每步按该步工具的声明资源 claim（未声明/无 action → 合成
+        // `__device__`），all-or-nothing；busy 文案带持有者 + 资源 id。
+        // Lease 覆盖本步执行窗口，成功/失败均在步骤结束时释放。
         let _lease = match &self.arbitration {
-            Some(registry) => Some(
-                registry
-                    .try_acquire(
-                        &thing_id,
-                        format!("composite:{}:{}", def.name, self.holder),
-                        STEP_LEASE_TTL,
-                    )
-                    .map_err(|busy| format!("busy: 设备正被 {} 占用", busy.holder))?,
-            ),
+            Some(registry) => {
+                let acquired = match &self.resources {
+                    Some(resolver) => match self.resolve_claims(resolver.as_ref(), &thing_id, op).await {
+                        Ok(claims) => {
+                            registry.try_acquire_resources(&thing_id, holder, &resource_specs(&claims), STEP_LEASE_TTL)
+                        }
+                        Err(e) => return Err(format!("资源解析失败: {e}")),
+                    },
+                    None => registry.try_acquire(&thing_id, holder, STEP_LEASE_TTL),
+                };
+                match acquired {
+                    Ok(lease) => Some(lease),
+                    Err(busy) if self.resources.is_some() => return Err(busy.to_string()),
+                    Err(busy) => return Err(format!("busy: 设备正被 {} 占用", busy.holder)),
+                }
+            }
             None => None,
         };
 
@@ -161,6 +178,37 @@ impl CompositeExecutor {
             }
         }
         result
+    }
+
+    /// 解析一步的资源声明。空声明（或无法解析出资源）回落 E1 合成
+    /// `__device__` exclusive，保证未声明资源的变更步骤仍每设备互斥。
+    async fn resolve_claims(
+        &self,
+        resolver: &dyn ResourceResolver,
+        thing_id: &str,
+        op: &CompositeOp,
+    ) -> Result<Vec<ResourceClaim>, String> {
+        let claims = match op {
+            CompositeOp::Call { action, .. } if !action.trim().is_empty() => {
+                resolver.resolve_action(&self.workspace_id, thing_id, action).await?
+            }
+            CompositeOp::Set { properties, .. } => {
+                let names: Vec<String> = properties
+                    .as_object()
+                    .map(|m| m.keys().cloned().collect())
+                    .unwrap_or_default();
+                resolver
+                    .resolve_properties(&self.workspace_id, thing_id, &names)
+                    .await?
+            }
+            // 无 action 的步骤：无声明可解，按合成设备资源处理。
+            _ => return Ok(vec![device_claim()]),
+        };
+        Ok(if claims.is_empty() {
+            vec![device_claim()]
+        } else {
+            claims
+        })
     }
 
     async fn write_properties(&self, thing_id: &str, properties: &Value) -> Result<Value, String> {
