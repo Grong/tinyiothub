@@ -41,8 +41,15 @@ pub const SNAPSHOT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 /// 是空的，集合不变也必须定期重发。
 pub const DEMAND_RESEND_INTERVAL: Duration = Duration::from_secs(30);
 
-/// 只有 `poll` source 进入 worker 的 Read 路径。
+/// 只有 `poll` / `position` source 进入 worker 的 Read 路径。
+/// `position` 是驱动按 schedule 读取的数据源（位置保留字段由 DataServer
+/// 消费），轮询语义与 `poll` 相同。
 const POLL_KIND: &str = "poll";
+const POSITION_KIND: &str = "position";
+
+fn is_sampled_kind(kind: &str) -> bool {
+    kind == POLL_KIND || kind == POSITION_KIND
+}
 
 /// Sampler 提交读/需求的 worker 面（生产实现包住 DataServer 的 worker 表，
 /// 测试用 fake）。
@@ -195,7 +202,7 @@ impl Sampler {
                     continue;
                 }
                 active.push(source.id.clone());
-                if push || source.kind != POLL_KIND {
+                if push || !is_sampled_kind(&source.kind) {
                     continue;
                 }
                 let key = (thing.workspace_id.clone(), thing.thing_id.clone(), source.id.clone());
@@ -475,6 +482,33 @@ mod tests {
 
         sampler.tick_once(base + Duration::from_millis(1000));
         assert_eq!(workers.read_count(), 2);
+    }
+
+    /// E4d：`kind=position` 是驱动按 schedule 读取的数据源，采样器必须像
+    /// `poll` 一样轮询（否则 `placement.fromSource` 指向 position 的驱动
+    /// 永远拿不到读数，位置摄取形同虚设）。
+    #[test]
+    fn position_source_is_sampled_like_poll() {
+        let workers = Arc::new(FakeWorkers::default());
+        let mut position = src("gps", 1000, false, false);
+        position.kind = "position".into();
+        let position_sampler = sampler(vec![thing("ws", "t1", vec![position])], workers.clone());
+        let base = Instant::now();
+
+        position_sampler.tick_once(base);
+        assert_eq!(workers.last_read(), ("t1".into(), vec!["gps".into()]));
+        position_sampler.tick_once(base + Duration::from_millis(500));
+        assert_eq!(workers.read_count(), 1, "未到 interval 不重复采");
+        position_sampler.tick_once(base + Duration::from_millis(1000));
+        assert_eq!(workers.read_count(), 2);
+
+        // push/stream 仍只走 set_demand，绝不 submit_read。
+        let workers = Arc::new(FakeWorkers::default());
+        let mut push = src("events", 1000, false, false);
+        push.kind = "push".into();
+        let push_sampler = sampler(vec![thing("ws", "t1", vec![push])], workers.clone());
+        push_sampler.tick_once(base);
+        assert_eq!(workers.read_count(), 0);
     }
 
     #[test]

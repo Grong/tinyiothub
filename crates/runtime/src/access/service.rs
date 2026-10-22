@@ -530,24 +530,31 @@ impl AccessService {
 
         let zone = match &placement.zone_ref {
             Some(name) => {
-                let zone = store
-                    .find_place_by_name(workspace_id, name, Some(PlaceKind::Zone))
-                    .await
-                    .map_err(AccessError::Store)?
-                    .ok_or_else(|| {
-                        AccessError::Validation(format!(
-                            "placement zoneRef '{name}' not found in workspace '{workspace_id}'"
-                        ))
-                    })?;
-                if let Some(map) = &map
-                    && zone.map_id != map.id
-                {
-                    return Err(AccessError::Validation(format!(
-                        "placement zoneRef '{name}' is not on mapRef '{}'",
-                        map.name
-                    )));
-                }
-                Some(zone)
+                // zone 名称只保证「每图唯一」（UNIQUE(map_id,name)）：有
+                // mapRef 时必须在**该图内**解析，否则多楼层同名 zone 会先
+                // 命中默认图/更早的图，导致合法绑定被误拒。无 mapRef 时按
+                // 工作区级解析（默认图优先，与 ZoneService 一致）。
+                let found = match &map {
+                    Some(map) => store
+                        .list_places(workspace_id, &map.id)
+                        .await
+                        .map_err(AccessError::Store)?
+                        .into_iter()
+                        .find(|place| place.kind == PlaceKind::Zone && place.name == *name),
+                    None => store
+                        .find_place_by_name(workspace_id, name, Some(PlaceKind::Zone))
+                        .await
+                        .map_err(AccessError::Store)?,
+                };
+                Some(found.ok_or_else(|| {
+                    let scope = map
+                        .as_ref()
+                        .map(|map| format!(" map '{}'", map.name))
+                        .unwrap_or_default();
+                    AccessError::Validation(format!(
+                        "placement zoneRef '{name}' not found in workspace '{workspace_id}'{scope}"
+                    ))
+                })?)
             }
             None => None,
         };
@@ -1010,6 +1017,41 @@ mod tests {
 
         fn position(&self, thing_id: &str) -> Option<ThingPosition> {
             self.positions.lock().unwrap().get(thing_id).cloned()
+        }
+
+        /// 两张图 + 同名 zone（多楼层「机房」）；非默认图 floor-2 排在后面。
+        /// `find_place_by_name`（工作区级）会先返回默认图 m1 的 zone，正是
+        /// mapRef 未限定解析时误拒合法绑定的场景。
+        fn with_two_floors_same_zone() -> Self {
+            let store = Self::with_floor();
+            store.maps.lock().unwrap().push(MapRecord {
+                id: "m2".into(),
+                workspace_id: "ws1".into(),
+                name: "floor-2".into(),
+                bounds: MapBounds {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 10.0,
+                    h: 10.0,
+                },
+                anchor_map_id: None,
+                is_default: false,
+                created_at: "2026-10-22T00:00:00Z".into(),
+                updated_at: "2026-10-22T00:00:00Z".into(),
+            });
+            store.places.lock().unwrap().push(PlaceRecord {
+                id: "z2".into(),
+                map_id: "m2".into(),
+                name: "机房".into(),
+                kind: PlaceKind::Zone,
+                geometry: Geometry::Polygon {
+                    points: vec![(0.0, 0.0), (5.0, 0.0), (5.0, 5.0), (0.0, 5.0)],
+                },
+                heading: None,
+                created_at: "2026-10-22T00:00:00Z".into(),
+                updated_at: "2026-10-22T00:00:00Z".into(),
+            });
+            store
         }
 
         fn zone_ref(&self, thing_id: &str) -> Option<String> {
@@ -1650,6 +1692,35 @@ mod tests {
         }
     }
 
+    /// 同名 zone 出现在多张图时，`mapRef` 必须把 `zoneRef` 限定在该图内解析
+    ///（zone 名称只保证每图唯一；多楼层「机房」是合法配置）。
+    #[tokio::test]
+    async fn bind_resolves_zone_ref_within_map_ref_when_names_repeat() {
+        let t = thing_in("ws1", "demo");
+        let fx = fixture(Some(t.clone()));
+        let store = Arc::new(FakeMapStore::with_two_floors_same_zone());
+        fx.service
+            .manifests
+            .seed_builtin(&placement_manifest(
+                "fixed",
+                Some("floor-2"),
+                Some("机房"),
+                Some(r#"{"x":1.5,"y":2.5}"#),
+            ))
+            .expect("placement manifest must validate");
+        let mut service = fx.service;
+        service.map_store = Some(store.clone());
+
+        service
+            .bind_thing("ws1", &t)
+            .await
+            .expect("同名 zone 在 mapRef 图上存在，绑定必须成功");
+
+        let pos = store.position("t1").expect("materialized position");
+        assert_eq!(pos.map_id.as_deref(), Some("m2"), "必须落在 mapRef 指定的图");
+        assert_eq!(store.zone_ref("t1").as_deref(), Some("机房"));
+    }
+
     /// Task 4 follow-up：物化/重绑写穿共享 ZoneService 的缓存（否则 5s TTL
     /// 内 watch/DataServer 仍读旧坐标与旧 zoneRef）。
     #[tokio::test]
@@ -1849,7 +1920,10 @@ mod tests {
         service.map_store = Some(store);
 
         let err = service.bind_thing("ws1", &t).await.unwrap_err();
-        assert!(err.to_string().contains("not on mapRef"), "{err}");
+        assert!(
+            err.to_string().contains("not found in workspace 'ws1' map 'floor-1'"),
+            "zoneRef 必须在 mapRef 图内解析：{err}"
+        );
     }
 
     #[tokio::test]

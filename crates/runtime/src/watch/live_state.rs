@@ -8,9 +8,11 @@
 //! offline→Attention；否则 Ok；空洞期（状态未知）→Unknown。
 //!
 //! zone（E4d §2.2）：`workspaces.zone_source='maps'` 且注入了
-//! [`ZoneService`] 时由 maps 权威解析（无位置/无 zone → 空串，**不回退**层级）；
-//! `hierarchy` 或未注入 ZoneService（测试/降级形态）时保持 E1b 行为：沿
-//! parent_id 读 cache 拼祖先链名（根在前，`/` 连接），无祖先=空串。
+//! [`ZoneService`] 时由 maps 权威解析；本工作区**无空间数据**（无地图/无
+//! zone）时回退 hierarchy，有空间数据但无位置/越界/不在任何 zone → 空串
+//! （**不回退**层级）。`hierarchy` 或未注入 ZoneService（测试/降级形态）时
+//! 保持 E1b 行为：沿 parent_id 读 cache 拼祖先链名（根在前，`/` 连接），
+//! 无祖先=空串。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -185,7 +187,20 @@ impl LiveState {
             None => true,
             Some(zones) => match zones.zone_source(workspace_id).await {
                 Ok(source) if source == "maps" => match zones.warm_workspace(workspace_id).await {
-                    Ok(()) => false,
+                    Ok(()) => match zones.has_spatial_data(workspace_id).await {
+                        // 本工作区尚未配置任何地图/zone：回退 hierarchy，
+                        // 避免新工作区（默认 maps）的 zone 字符串静默变空。
+                        Ok(false) => true,
+                        Ok(true) => false,
+                        Err(e) => {
+                            tracing::warn!(
+                                workspace_id,
+                                error = %e,
+                                "空间数据探测失败，快照降级 hierarchy"
+                            );
+                            true
+                        }
+                    },
                     Err(e) => {
                         tracing::warn!(
                             workspace_id,
@@ -256,10 +271,15 @@ impl LiveState {
 
     /// E4d zone 权威切换：map 权威 → ZoneService；否则沿 parent_id 拼祖先链。
     ///
-    /// maps 模式返回 `None` 时保持空串（spec §2.2：不回退层级）。MapStore 读失败
-    /// 时降级为 hierarchy（可用性优先；maps 数据缺失不等于层级不存在）。显式
-    /// `placement.zoneRef` 已物化进物记录，由 `ZoneService` 内部优先解析
-    /// （与坐标无关），这里不再单独传参。
+    /// maps 模式下：
+    /// - 工作区**没有空间数据**（无地图或无 zone）→ 回退 hierarchy（新工作区
+    ///   默认 `zone_source=maps`，配图前不能把 E3/E4b 的 zone 字符串清空）；
+    /// - 有空间数据但返回 `None`（无位置/越界/不在任何 zone）→ 空串，**不回退**
+    ///   层级（spec §2.2）。
+    ///
+    /// MapStore 读失败时降级为 hierarchy（可用性优先）。显式 `placement.zoneRef`
+    /// 已物化进物记录，由 `ZoneService` 内部优先解析（与坐标无关），这里不再
+    /// 单独传参。
     async fn derive_zone(&self, thing_id: &str, workspace_hint: Option<&str>) -> String {
         let Some(zones) = &self.zones else {
             return self.hierarchy_zone(thing_id);
@@ -272,11 +292,18 @@ impl LiveState {
             },
         };
         match zones.zone_source(&workspace_id).await {
-            Ok(source) if source == "maps" => match zones.zone_for(&workspace_id, thing_id, None, Utc::now()).await {
-                Ok(Some(name)) => name,
-                Ok(None) => String::new(),
+            Ok(source) if source == "maps" => match zones.has_spatial_data(&workspace_id).await {
+                Ok(false) => self.hierarchy_zone(thing_id),
+                Ok(true) => match zones.zone_for(&workspace_id, thing_id, None, Utc::now()).await {
+                    Ok(Some(name)) => name,
+                    Ok(None) => String::new(),
+                    Err(e) => {
+                        tracing::warn!(workspace_id, thing_id, error = %e, "zone_source=maps 读取失败，降级 hierarchy");
+                        self.hierarchy_zone(thing_id)
+                    }
+                },
                 Err(e) => {
-                    tracing::warn!(workspace_id, thing_id, error = %e, "zone_source=maps 读取失败，降级 hierarchy");
+                    tracing::warn!(workspace_id, thing_id, error = %e, "空间数据探测失败，降级 hierarchy");
                     self.hierarchy_zone(thing_id)
                 }
             },
@@ -587,6 +614,13 @@ mod tests {
             self
         }
 
+        /// 新工作区默认 `zone_source=maps` 但尚未配置任何地图/zone。
+        fn without_spatial_data(mut self) -> Self {
+            self.maps.clear();
+            self.places.clear();
+            self
+        }
+
         fn fail_position_reads(&self) {
             self.fail_list_positions
                 .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -762,11 +796,52 @@ mod tests {
         assert_eq!(t1.zone, "车间A");
     }
 
-    /// maps 模式无位置 → 空串，**不回退**层级（spec §2.2）。
+    /// maps 模式无位置但**已有空间数据** → 空串，**不回退**层级（spec §2.2）。
     #[tokio::test]
     async fn maps_mode_without_position_does_not_fall_back_to_hierarchy() {
         let cache = hierarchy_cache();
         let store = StubMapStore::with_zone_location().without_position();
+        let mut live = LiveState::with_zone_service(cache, zone_service(store, Duration::from_secs(60)));
+        live.handle_lagged();
+        assert_eq!(live.summary("t1").await.unwrap().zone, "");
+    }
+
+    /// 新工作区默认 `zone_source=maps` 但零 maps/零 zone：回退 hierarchy，
+    /// 不能把 E3/E4b 的 zone 字符串静默清空（summary 与快照同语义）。
+    #[tokio::test]
+    async fn maps_mode_without_spatial_data_falls_back_to_hierarchy() {
+        let cache = hierarchy_cache();
+        let store = StubMapStore::with_zone_location().without_spatial_data();
+        let mut live = LiveState::with_zone_service(cache, zone_service(store, Duration::from_secs(60)));
+        live.handle_lagged();
+        assert_eq!(live.summary("t1").await.unwrap().zone, "楼A");
+
+        let snapshot = live.workspace_snapshot("ws1").await;
+        let t1 = snapshot
+            .devices
+            .iter()
+            .find(|device| device.thing_id == "t1")
+            .expect("t1 在快照内");
+        assert_eq!(t1.zone, "楼A", "无空间数据的 maps 工作区回退 hierarchy");
+    }
+
+    /// 有空间数据但点在所有 zone 之外 → 空串（保持 None，不回退 hierarchy）。
+    #[tokio::test]
+    async fn maps_mode_point_outside_zones_stays_empty() {
+        let cache = hierarchy_cache();
+        let mut store = StubMapStore::with_zone_location();
+        store.positions.insert(
+            "t1".to_string(),
+            ThingPosition {
+                map_id: None,
+                x: Some(50.0),
+                y: Some(50.0),
+                level: None,
+                heading: None,
+                trust: LocationTrust::Trusted,
+                updated_at: None,
+            },
+        );
         let mut live = LiveState::with_zone_service(cache, zone_service(store, Duration::from_secs(60)));
         live.handle_lagged();
         assert_eq!(live.summary("t1").await.unwrap().zone, "");

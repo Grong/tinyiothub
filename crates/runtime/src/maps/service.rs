@@ -4,7 +4,9 @@
 //! - `zone_source='maps'` 时才应由调用方（LiveState）使用；
 //! - 位置缺失 / trust=Lost → `None`（不回退层级）；
 //! - 图 = `position.map_id`（未知图 fail-closed）或 workspace 默认图；
-//! - 显式 `zoneRef` 优先，未知引用 → `None`（fail-closed）；
+//! - 显式 `zoneRef` 优先，未知引用 → `None`（fail-closed）；有 `map_id`
+//!   （placement `mapRef`）时只在该图内解析，无 map 时工作区级解析
+//!   （默认图优先）；
 //! - 多 zone 命中取面积最小（`zone::resolve_zone_for`）。
 //!
 //! maps/places 与**坐标**分别按工作区/物短 TTL 缓存（默认 5s），避免每次摘要
@@ -114,11 +116,31 @@ impl ZoneService {
             .unwrap_or_else(|| "hierarchy".to_string()))
     }
 
+    /// 工作区是否已有 maps 空间数据（至少一张图 + 至少一个 `kind=Zone`
+    /// 地点）。`false` = 尚未配置地图/区域：新工作区默认 `zone_source=maps`
+    /// 时，LiveState 据此回退 hierarchy（区分「本区没有空间数据」与「有图
+    /// 但点不在任何 zone」——后者保持 `None`，不回退）。
+    pub async fn has_spatial_data(&self, workspace_id: &str) -> Result<bool, String> {
+        let maps = self.maps(workspace_id).await?;
+        for map in &maps {
+            if self
+                .places(workspace_id, &map.id)
+                .await?
+                .iter()
+                .any(|place| place.kind == PlaceKind::Zone)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// maps 权威下的 zone 名称。`None` = 无位置 / trust Lost / 位置越界 /
     /// 无默认图 / 未知显式 zoneRef（fail-closed，不回退层级）。
     ///
-    /// 显式 `zoneRef`（参数或物化列）在工作区内按 `kind=Zone` 独立解析，
-    /// **不依赖坐标**；未知引用返回 `None`。
+    /// 显式 `zoneRef`（参数或物化列）按 `kind=Zone` 独立解析，**不依赖
+    /// 坐标**；未知引用返回 `None`。物有 `map_id`（placement `mapRef`）时
+    /// 只在该图内解析（zone 名称每图唯一），否则工作区级（默认图优先）。
     pub async fn zone_for(
         &self,
         workspace_id: &str,
@@ -127,17 +149,21 @@ impl ZoneService {
         now: DateTime<Utc>,
     ) -> Result<Option<String>, String> {
         let location = self.location(workspace_id, thing_id).await?;
+        let map_id = location
+            .position
+            .as_ref()
+            .and_then(|position| position.map_id.as_deref());
 
         // 1. 显式引用优先（placement/物化列），与坐标无关。
         //    参数引用（来自调用方）直接解析；物化列结果可命中预热缓存。
         if let Some(name) = explicit_zone {
-            return self.resolve_zone_ref(workspace_id, name).await;
+            return self.resolve_zone_ref(workspace_id, name, map_id).await;
         }
         if let Some(name) = location.zone_ref.as_deref() {
             if let Some(resolved) = location.resolved_zone.clone() {
                 return Ok(resolved);
             }
-            let resolved = self.resolve_zone_ref(workspace_id, name).await?;
+            let resolved = self.resolve_zone_ref(workspace_id, name, map_id).await?;
             if self.position_ttl > Duration::ZERO
                 && let Some(entry) = self
                     .positions
@@ -270,17 +296,25 @@ impl ZoneService {
             return Ok(());
         }
 
-        // 名称 → zone 名（workspace 全量，取确定性首项）。预热已加载所有
-        // 图的 places，显式引用在这里一次解析，快照循环不再逐物查库。
+        // zone 名按图索引（zone 名称只保证每图唯一）；无 map_id 的显式
+        // 引用按工作区级解析，默认图优先（与 find_place_by_name 的
+        // `ORDER BY m.is_default DESC` 一致）。预热已加载所有图的 places，
+        // 显式引用在这里一次解析，快照循环不再逐物查库。
+        let mut names_by_map: HashMap<String, HashMap<String, String>> = HashMap::new();
         let mut zone_names: HashMap<String, String> = HashMap::new();
-        for map in &maps {
+        let mut ordered: Vec<&MapRecord> = maps.iter().collect();
+        ordered.sort_by_key(|map| !map.is_default);
+        for map in ordered {
+            let mut names = HashMap::new();
             for place in self.places(workspace_id, &map.id).await? {
                 if place.kind == PlaceKind::Zone {
+                    names.insert(place.name.clone(), place.name.clone());
                     zone_names
                         .entry(place.name.clone())
                         .or_insert_with(|| place.name.clone());
                 }
             }
+            names_by_map.insert(map.id.clone(), names);
         }
 
         let positions = self.store.list_positions(workspace_id).await?;
@@ -304,15 +338,34 @@ impl ZoneService {
         }
         for (thing_id, zone_ref) in zone_refs {
             if let Some(entry) = cache.get_mut(&(workspace_id.to_string(), thing_id)) {
-                entry.resolved_zone = Some(zone_names.get(&zone_ref).cloned());
+                let map_id = entry.position.as_ref().and_then(|position| position.map_id.as_deref());
+                entry.resolved_zone = Some(match map_id {
+                    Some(map_id) => names_by_map.get(map_id).and_then(|names| names.get(&zone_ref)).cloned(),
+                    None => zone_names.get(&zone_ref).cloned(),
+                });
                 entry.zone_ref = Some(zone_ref);
             }
         }
         Ok(())
     }
 
-    /// 显式 `zoneRef` 工作区内解析（`kind=Zone`；未知 → `None`，fail-closed）。
-    async fn resolve_zone_ref(&self, workspace_id: &str, name: &str) -> Result<Option<String>, String> {
+    /// 显式 `zoneRef` 解析（`kind=Zone`；未知 → `None`，fail-closed）。
+    /// `map_id` 存在时只在该图内查（placement `mapRef` / 物化 map_id）；
+    /// 否则工作区级（默认图优先）。
+    async fn resolve_zone_ref(
+        &self,
+        workspace_id: &str,
+        name: &str,
+        map_id: Option<&str>,
+    ) -> Result<Option<String>, String> {
+        if let Some(map_id) = map_id {
+            return Ok(self
+                .places(workspace_id, map_id)
+                .await?
+                .into_iter()
+                .find(|place| place.kind == PlaceKind::Zone && place.name == name)
+                .map(|place| place.name));
+        }
         Ok(self
             .store
             .find_place_by_name(workspace_id, name, Some(PlaceKind::Zone))
@@ -867,6 +920,71 @@ mod tests {
         assert_eq!(zone_for(&service, "t1", Some("不存在")).await, None);
     }
 
+    /// 显式 zoneRef 按物的 map_id（placement mapRef）限定解析：同名 zone
+    /// 可存在于多图；不在本图的引用必须 fail-closed，不得回落到工作区级。
+    #[tokio::test]
+    async fn explicit_zone_ref_is_scoped_to_thing_map() {
+        let mut on_m2 = position(1.0, 1.0);
+        on_m2.map_id = Some("m2".into());
+        let store = StubMapStore::new(
+            "maps",
+            vec![map_rec("m1", "ws1", true), map_rec("m2", "ws1", false)],
+            vec![
+                zone("z1", "m1", "机房", &square(2.0)),
+                zone("z1b", "m1", "仅一层", &square(4.0)),
+                zone("z2", "m2", "机房", &square(10.0)),
+            ],
+        )
+        .with_position("t1", on_m2.clone())
+        .with_zone_ref("t1", "仅一层")
+        .with_position("t2", on_m2)
+        .with_zone_ref("t2", "机房");
+        let service = ZoneService::with_ttl(Arc::new(store), TrustThresholds::default(), Duration::ZERO);
+
+        // 同名 zone 在 m1/m2 都存在：t2 在 m2 → 解析成功（m2 的那份）。
+        assert_eq!(zone_for(&service, "t2", None).await.as_deref(), Some("机房"));
+        // 「仅一层」只在 m1；t1 的 map_id=m2 → 图内解析 fail-closed。
+        assert_eq!(zone_for(&service, "t1", None).await, None);
+        assert_eq!(zone_for(&service, "t1", Some("仅一层")).await, None);
+        assert_eq!(zone_for(&service, "t2", Some("机房")).await.as_deref(), Some("机房"));
+    }
+
+    /// 空间数据探测：无图 / 有图无 zone → false；有 zone → true。
+    #[tokio::test]
+    async fn has_spatial_data_requires_maps_and_zones() {
+        let empty = ZoneService::with_ttl(
+            Arc::new(StubMapStore::new("maps", vec![], vec![])),
+            TrustThresholds::default(),
+            Duration::ZERO,
+        );
+        assert!(!empty.has_spatial_data("ws1").await.unwrap());
+
+        let landmark_only = ZoneService::with_ttl(
+            Arc::new(StubMapStore::new(
+                "maps",
+                vec![map_rec("m1", "ws1", true)],
+                vec![place("l1", "m1", "门口", PlaceKind::Landmark, &[(0.0, 0.0)])],
+            )),
+            TrustThresholds::default(),
+            Duration::ZERO,
+        );
+        assert!(
+            !landmark_only.has_spatial_data("ws1").await.unwrap(),
+            "只有 landmark 不算空间数据"
+        );
+
+        let with_zone = ZoneService::with_ttl(
+            Arc::new(StubMapStore::new(
+                "maps",
+                vec![map_rec("m1", "ws1", true)],
+                vec![zone("z1", "m1", "车间A", &square(10.0))],
+            )),
+            TrustThresholds::default(),
+            Duration::ZERO,
+        );
+        assert!(with_zone.has_spatial_data("ws1").await.unwrap());
+    }
+
     #[tokio::test]
     async fn lost_trust_yields_none() {
         let mut lost = position(1.0, 1.0);
@@ -1067,6 +1185,42 @@ mod tests {
         assert_eq!(zone_for(&service, "t2", None).await, None);
         // 参数显式引用仍优先于物化列
         assert_eq!(zone_for(&service, "t1", Some("机房")).await.as_deref(), Some("机房"));
+    }
+
+    /// 快照预热同样按物的 map_id 解析显式 zoneRef（不回落工作区级）。
+    #[tokio::test]
+    async fn warm_workspace_resolves_zone_refs_within_thing_map() {
+        let mut on_m2 = position(1.0, 1.0);
+        on_m2.map_id = Some("m2".into());
+        let store = Arc::new(
+            StubMapStore::new(
+                "maps",
+                vec![map_rec("m1", "ws1", true), map_rec("m2", "ws1", false)],
+                vec![
+                    zone("z1", "m1", "仅一层", &square(2.0)),
+                    zone("z2", "m2", "仅二层", &square(10.0)),
+                ],
+            )
+            .with_position("t1", on_m2.clone())
+            .with_position("t2", on_m2)
+            .with_zone_ref("t1", "仅一层")
+            .with_zone_ref("t2", "仅二层"),
+        );
+        let service = ZoneService::with_ttls(
+            store.clone(),
+            TrustThresholds::default(),
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        );
+
+        service.warm_workspace("ws1").await.unwrap();
+        assert_eq!(store.find_place_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            zone_for(&service, "t1", None).await,
+            None,
+            "t1 的「仅一层」在 m1，不在 m2"
+        );
+        assert_eq!(zone_for(&service, "t2", None).await.as_deref(), Some("仅二层"));
     }
 
     /// 快照预热：list_positions 一次取全量，N 个 zone_for 不再逐物查询。
