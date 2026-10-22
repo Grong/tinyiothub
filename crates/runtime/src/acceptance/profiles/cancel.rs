@@ -6,7 +6,7 @@
 //!
 //! These checks exercise the real worker/registry/DataServer with fake
 //! drivers, so they are package-independent. The non-cooperative scenario
-//! blocks for 1.2s — no longer than the grace window it is designed to exceed.
+//! blocks for 1.5s — 500ms beyond the 1s grace window it is designed to exceed.
 //! Cloud `StopTool` composition (auth/approval/response shape) is Task 7's job.
 
 use std::path::Path;
