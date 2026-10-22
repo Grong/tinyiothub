@@ -791,6 +791,28 @@ mod tests {
         assert_eq!(live.summary("t1").await.unwrap().zone, "楼A");
     }
 
+    /// 权威门在 LiveState 而不是 ZoneService：maps 数据一直存在时，起手
+    /// hierarchy 仍走祖先链；切 maps 用多边形；切回 hierarchy 恢复祖先链。
+    #[tokio::test]
+    async fn zone_source_gate_starts_on_hierarchy_even_with_maps_data() {
+        let cache = hierarchy_cache();
+        let store = Arc::new(StubMapStore::with_zone_location());
+        store.set_source("hierarchy");
+        let zones = Arc::new(ZoneService::with_ttl(
+            store.clone(),
+            TrustThresholds::default(),
+            Duration::ZERO,
+        ));
+        let mut live = LiveState::with_zone_service(cache, zones);
+        live.handle_lagged();
+
+        assert_eq!(live.summary("t1").await.unwrap().zone, "楼A");
+        store.set_source("maps");
+        assert_eq!(live.summary("t1").await.unwrap().zone, "车间A");
+        store.set_source("hierarchy");
+        assert_eq!(live.summary("t1").await.unwrap().zone, "楼A");
+    }
+
     /// 未注入 ZoneService 时保持 hierarchy（降级形态）。
     #[tokio::test]
     async fn absent_zone_service_keeps_hierarchy() {

@@ -54,9 +54,9 @@ fn demo_placement_profile_skips_map_checks_without_failing() {
     // The demo declares no mapRef/zoneRef/position: map-dependent checks skip
     // with evidence while structural checks still run.
     for name in [
-        "maps.bounds",
-        "places.geometry",
-        "maps.default_unique",
+        "validator.maps_bounds",
+        "validator.zone_geometry",
+        "validator.default_unique",
         "placement.refs",
     ] {
         let check = profile

@@ -30,6 +30,6 @@
   "sources": [{ "id": "telemetry", "kind": "poll", "fields": ["level"],
                 "intervalMs": 1000, "minIntervalMs": 200, "demandOnly": false, "health": true }],
   "resources": [{ "id": "actuator", "mode": "exclusive", "capacity": 1 }],
-  "placement": { "mode": "runtime", "fromSource": "position", "trust": "trusted" },
+  "placement": { "mode": "runtime", "trust": "trusted" },
   "limits": { "maxConcurrentJobs": 1, "maxCallsPerMin": 60 }
 }

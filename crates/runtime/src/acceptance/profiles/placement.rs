@@ -18,6 +18,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
 use tinyiothub_core::driver::manifest::{DriverManifest, PlacementDecl, PlacementMode};
+use tinyiothub_core::models::thing::Thing;
 
 use crate::acceptance::report::{CheckResult, Level, ProfileReport};
 use crate::maps::ZoneService;
@@ -25,7 +26,8 @@ use crate::maps::model::{
     Geometry, LocationTrust, MapBounds, MapRecord, PlaceKind, PlaceRecord, ThingPosition, TrustThresholds,
 };
 use crate::maps::zone::{derive_trust, point_in_polygon, polygon_area};
-use crate::ports::MapStore;
+use crate::ports::{MapStore, ThingCacheSource};
+use crate::watch::live_state::LiveState;
 
 const PROFILE: &str = "placement";
 const WS: &str = "acceptance-ws";
@@ -139,14 +141,14 @@ fn bounds_check() -> CheckResult {
     });
     if valid_errors.is_empty() && undetected == 0 {
         check(
-            "maps.bounds",
+            "validator.maps_bounds",
             Level::Pass,
             "synthetic map bounds are finite with positive width/height; invalid bounds rejected",
             evidence,
         )
     } else {
         check(
-            "maps.bounds",
+            "validator.maps_bounds",
             Level::Fail,
             format!("invalid bounds not rejected ({undetected}) or valid maps rejected: {valid_errors:?}"),
             evidence,
@@ -183,14 +185,14 @@ fn geometry_check() -> CheckResult {
     });
     if valid_errors.is_empty() && undetected == 0 {
         check(
-            "places.geometry",
+            "validator.zone_geometry",
             Level::Pass,
             "synthetic zone polygons have >=3 finite points and positive area; invalid geometry rejected",
             evidence,
         )
     } else {
         check(
-            "places.geometry",
+            "validator.zone_geometry",
             Level::Fail,
             format!("zone geometry validation incomplete (undetected={undetected}): {valid_errors:?}"),
             evidence,
@@ -225,14 +227,14 @@ fn default_unique_check() -> CheckResult {
     });
     if valid && rejected {
         check(
-            "maps.default_unique",
+            "validator.default_unique",
             Level::Pass,
             "synthetic workspace has exactly one default map; duplicate defaults rejected",
             evidence,
         )
     } else {
         check(
-            "maps.default_unique",
+            "validator.default_unique",
             Level::Fail,
             format!("default map uniqueness not enforced (valid={valid}, duplicate_rejected={rejected})"),
             evidence,
@@ -306,6 +308,19 @@ fn refs_check(manifest: &DriverManifest) -> CheckResult {
     if placement.mode == PlacementMode::Runtime && has_map_data(placement) {
         warnings.push("runtime placement ignores static mapRef/zoneRef/position (cleared at bind)".to_string());
     }
+    // 摄取门要求 `fromSource` 指向已声明的 kind=position source；悬空/错误类型
+    // 会让 placement 静默失效，按 fail 处理而不是放过（demand 驱动使用者在验收
+    // 阶段就能发现）。
+    if let Some(source_id) = placement.from_source.as_deref() {
+        match manifest.sources.iter().find(|source| source.id == source_id) {
+            None => errors.push(format!("placement.fromSource '{source_id}' is not a declared source")),
+            Some(source) if source.kind != "position" => errors.push(format!(
+                "placement.fromSource '{source_id}' must declare kind=position (got '{}')",
+                source.kind
+            )),
+            Some(_) => {}
+        }
+    }
 
     let evidence = serde_json::json!({
         "mode": match placement.mode {
@@ -316,6 +331,7 @@ fn refs_check(manifest: &DriverManifest) -> CheckResult {
         "mapRef": placement.map_ref,
         "zoneRef": placement.zone_ref,
         "position": placement.position,
+        "fromSource": placement.from_source,
         "errors": errors,
         "warnings": warnings,
     });
@@ -472,6 +488,8 @@ async fn unknown_ref_check() -> CheckResult {
     let store = Arc::new(
         SyntheticStore::world("maps")
             .with_position("thing", runtime_position(1.0, 1.0, 0))
+            // `stored` sits inside `room`: a fallback would be observable.
+            .with_position("stored", runtime_position(1.0, 1.0, 0))
             .with_zone_ref("stored", "ghost"),
     );
     let zones = zone_service(store);
@@ -538,12 +556,15 @@ async fn fixed_trust_check() -> CheckResult {
 
 fn thresholds_check() -> CheckResult {
     let thresholds = TrustThresholds::default();
+    let trusted_max = thresholds.trusted_max.num_seconds();
+    let uncertain_max = thresholds.uncertain_max.num_seconds();
+    // Probe both inclusive boundaries and the first second past them.
     let cases = [
         (0, LocationTrust::Trusted),
-        (30, LocationTrust::Trusted),
-        (31, LocationTrust::Uncertain),
-        (300, LocationTrust::Uncertain),
-        (301, LocationTrust::Lost),
+        (trusted_max, LocationTrust::Trusted),
+        (trusted_max + 1, LocationTrust::Uncertain),
+        (uncertain_max, LocationTrust::Uncertain),
+        (uncertain_max + 1, LocationTrust::Lost),
     ];
     let results: Vec<(i64, LocationTrust, LocationTrust)> = cases
         .iter()
@@ -572,14 +593,14 @@ fn thresholds_check() -> CheckResult {
             "got": got,
             "expected": expected,
         })).collect::<Vec<_>>(),
-        "trusted_max_secs": 30,
-        "uncertain_max_secs": 300,
+        "trusted_max_secs": trusted_max,
+        "uncertain_max_secs": uncertain_max,
     });
     if failures.is_empty() {
         check(
             "trust.thresholds",
             Level::Pass,
-            "runtime trust: <=30s trusted, <=5min uncertain, >5min lost",
+            format!("runtime trust: <={trusted_max}s trusted, <={uncertain_max}s uncertain, >{uncertain_max}s lost"),
             evidence,
         )
     } else {
@@ -666,13 +687,12 @@ async fn out_of_bounds_check() -> CheckResult {
         "out_of_bounds": out_of_bounds,
         "position": retained,
         "coordinates_retained": retained_ok,
-        "runtime_warns": true,
     });
     if zone.is_none() && out_of_bounds == Some(true) && retained_ok {
         check(
             "zone.out_of_bounds",
             Level::Pass,
-            "out-of-bounds position keeps coordinates but yields zone None (runtime warns)",
+            "out-of-bounds position keeps coordinates but yields zone None",
             evidence,
         )
     } else {
@@ -687,41 +707,107 @@ async fn out_of_bounds_check() -> CheckResult {
     }
 }
 
+/// Exercises the real authority gate in [`LiveState::derive_zone`]: maps data is
+/// present the whole time, so only `zone_source` decides between polygons and
+/// the hierarchy ancestor chain.
 async fn zone_source_check() -> CheckResult {
-    let maps = zone_service(Arc::new(
-        SyntheticStore::world("maps").with_position("thing", runtime_position(1.0, 1.0, 0)),
-    ));
-    let maps_source = maps.zone_source(WS).await.unwrap();
-    let maps_zone = maps.zone_for(WS, "thing", None, now()).await.unwrap();
+    // Static position (no updated_at): LiveState uses the wall clock for trust,
+    // so a fixed timestamp would age out of the test window.
+    let store = Arc::new(SyntheticStore::world("hierarchy").with_position("gate-thing", static_position(1.0, 1.0)));
+    let mut live =
+        LiveState::with_zone_service(Arc::new(GateCache::hierarchy()), Arc::new(zone_service(store.clone())));
+    live.handle_lagged();
 
-    let hierarchy = zone_service(Arc::new(
-        SyntheticStore::new("hierarchy", Vec::new(), Vec::new()).with_position("thing", runtime_position(1.0, 1.0, 0)),
-    ));
-    let hierarchy_source = hierarchy.zone_source(WS).await.unwrap();
-    let hierarchy_zone = hierarchy.zone_for(WS, "thing", None, now()).await.unwrap();
+    let hierarchy = live.summary("gate-thing").await.expect("gate thing is cached").zone;
+    store.set_source("maps");
+    let maps = live.summary("gate-thing").await.expect("gate thing is cached").zone;
+    store.set_source("hierarchy");
+    let hierarchy_restored = live.summary("gate-thing").await.expect("gate thing is cached").zone;
 
     let evidence = serde_json::json!({
-        "maps": {"source": maps_source, "zone": maps_zone},
-        "hierarchy": {"source": hierarchy_source, "zone": hierarchy_zone},
+        "gate": "LiveState::derive_zone",
+        "maps_data_present_throughout": true,
+        "hierarchy": hierarchy,
+        "maps": maps,
+        "hierarchy_restored": hierarchy_restored,
+        "expected_hierarchy": "hierarchy-site",
+        "expected_maps": "room",
     });
-    if maps_source == "maps"
-        && maps_zone.as_deref() == Some("room")
-        && hierarchy_source == "hierarchy"
-        && hierarchy_zone.is_none()
-    {
+    if hierarchy == "hierarchy-site" && maps == "room" && hierarchy_restored == "hierarchy-site" {
         check(
             "zone.source_modes",
             Level::Pass,
-            "zone_source=maps uses polygons; hierarchy reports the legacy source and does not consult maps",
+            "LiveState gate: hierarchy source uses ancestors even with maps data; maps source uses polygons; switching back restores hierarchy",
             evidence,
         )
     } else {
         check(
             "zone.source_modes",
             Level::Fail,
-            "zone_source switching behavior is wrong",
+            format!(
+                "LiveState zone-authority gate wrong (hierarchy={hierarchy:?}, maps={maps:?}, restored={hierarchy_restored:?})"
+            ),
             evidence,
         )
+    }
+}
+
+/// Minimal cache for the gate check: child `gate-thing` under `gate-parent`,
+/// both in [`WS`]. Hierarchy zone = parent display name.
+struct GateCache(Mutex<HashMap<String, Thing>>);
+
+impl GateCache {
+    fn hierarchy() -> Self {
+        let parent = Thing {
+            id: "gate-parent".into(),
+            name: "gate-parent".into(),
+            display_name: Some("hierarchy-site".into()),
+            workspace_id: Some(WS.into()),
+            ..Thing::default()
+        };
+        let child = Thing {
+            id: "gate-thing".into(),
+            name: "gate-thing".into(),
+            display_name: Some("gate-thing".into()),
+            workspace_id: Some(WS.into()),
+            parent_id: Some("gate-parent".into()),
+            ..Thing::default()
+        };
+        Self(Mutex::new(HashMap::from([
+            (parent.id.clone(), parent),
+            (child.id.clone(), child),
+        ])))
+    }
+}
+
+impl ThingCacheSource for GateCache {
+    fn all(&self) -> Vec<Thing> {
+        self.0.lock().unwrap().values().cloned().collect()
+    }
+
+    fn get(&self, id: &str) -> Option<Thing> {
+        self.0.lock().unwrap().get(id).cloned()
+    }
+
+    fn get_by_name(&self, name: &str) -> Option<Thing> {
+        self.0
+            .lock()
+            .unwrap()
+            .values()
+            .find(|thing| thing.name == name)
+            .cloned()
+    }
+
+    fn insert(&self, device: Thing) {
+        self.0.lock().unwrap().insert(device.id.clone(), device);
+    }
+
+    fn update(&self, device: Thing) {
+        self.0.lock().unwrap().insert(device.id.clone(), device);
+    }
+
+    fn remove(&self, id: &str) {
+        self.0.lock().unwrap().remove(id);
     }
 }
 
@@ -851,7 +937,7 @@ fn zone_service(store: Arc<SyntheticStore>) -> ZoneService {
 
 /// 内存 MapStore：maps/places/position/zone_ref/ingest 全部可变，零外部依赖。
 struct SyntheticStore {
-    source: String,
+    source: Mutex<String>,
     maps: Vec<MapRecord>,
     places: Vec<PlaceRecord>,
     positions: Mutex<HashMap<String, ThingPosition>>,
@@ -866,7 +952,7 @@ impl SyntheticStore {
 
     fn new(source: &str, maps: Vec<MapRecord>, places: Vec<PlaceRecord>) -> Self {
         Self {
-            source: source.into(),
+            source: Mutex::new(source.into()),
             maps,
             places,
             positions: Mutex::new(HashMap::new()),
@@ -887,6 +973,10 @@ impl SyntheticStore {
 
     fn position(&self, thing_id: &str) -> Option<ThingPosition> {
         self.positions.lock().unwrap().get(thing_id).cloned()
+    }
+
+    fn set_source(&self, source: &str) {
+        *self.source.lock().unwrap() = source.into();
     }
 }
 
@@ -1004,7 +1094,7 @@ impl MapStore for SyntheticStore {
     }
 
     async fn zone_source(&self, _workspace_id: &str) -> Result<String, String> {
-        Ok(self.source.clone())
+        Ok(self.source.lock().unwrap().clone())
     }
 }
 
@@ -1047,9 +1137,9 @@ mod tests {
         let report = run(dir.path());
         assert_eq!(report.level(), Level::Pass, "{report:?}");
         for name in [
-            "maps.bounds",
-            "places.geometry",
-            "maps.default_unique",
+            "validator.maps_bounds",
+            "validator.zone_geometry",
+            "validator.default_unique",
             "placement.refs",
             "zone.point_in_polygon",
             "zone.smallest_area",
@@ -1072,9 +1162,9 @@ mod tests {
         let dir = package(RUNTIME_MANIFEST);
         let report = run(dir.path());
         assert_eq!(report.level(), Level::Pass, "{report:?}");
-        assert_eq!(level_of(&report, "maps.bounds"), Some(Level::Pass));
-        assert_eq!(level_of(&report, "places.geometry"), Some(Level::Pass));
-        assert_eq!(level_of(&report, "maps.default_unique"), Some(Level::Pass));
+        assert_eq!(level_of(&report, "validator.maps_bounds"), Some(Level::Pass));
+        assert_eq!(level_of(&report, "validator.zone_geometry"), Some(Level::Pass));
+        assert_eq!(level_of(&report, "validator.default_unique"), Some(Level::Pass));
         assert_eq!(level_of(&report, "placement.refs"), Some(Level::Pass));
         for name in MAP_CHECKS {
             let check = report.checks.iter().find(|c| c.check == *name).unwrap();
@@ -1105,6 +1195,51 @@ mod tests {
         let report = run(dir.path());
         assert_eq!(report.level(), Level::Fail, "{report:?}");
         assert_eq!(level_of(&report, "placement.refs"), Some(Level::Fail));
+    }
+
+    #[test]
+    fn dangling_from_source_fails_refs_check() {
+        let manifest = RUNTIME_MANIFEST.replace(
+            "\"placement\":{\"mode\":\"runtime\"}",
+            "\"placement\":{\"mode\":\"runtime\",\"fromSource\":\"position\"}",
+        );
+        let dir = package(&manifest);
+        let report = run(dir.path());
+        assert_eq!(report.level(), Level::Fail, "{report:?}");
+        assert_eq!(level_of(&report, "placement.refs"), Some(Level::Fail));
+        let refs = report.checks.iter().find(|c| c.check == "placement.refs").unwrap();
+        assert!(refs.detail.contains("not a declared source"), "{refs:?}");
+    }
+
+    #[test]
+    fn from_source_with_wrong_kind_fails_refs_check() {
+        let manifest = RUNTIME_MANIFEST.replace(
+            "\"placement\":{\"mode\":\"runtime\"}",
+            "\"placement\":{\"mode\":\"runtime\",\"fromSource\":\"telemetry\"}",
+        );
+        let dir = package(&manifest);
+        let report = run(dir.path());
+        assert_eq!(report.level(), Level::Fail, "{report:?}");
+        assert_eq!(level_of(&report, "placement.refs"), Some(Level::Fail));
+        let refs = report.checks.iter().find(|c| c.check == "placement.refs").unwrap();
+        assert!(refs.detail.contains("kind=position"), "{refs:?}");
+    }
+
+    #[test]
+    fn declared_position_source_passes_refs_check() {
+        let manifest = RUNTIME_MANIFEST
+            .replace(
+                r#""sources":[{"id":"telemetry","kind":"poll","fields":[]}]"#,
+                r#""sources":[{"id":"position","kind":"position","fields":["position_x","position_y"]}]"#,
+            )
+            .replace(
+                "\"placement\":{\"mode\":\"runtime\"}",
+                "\"placement\":{\"mode\":\"runtime\",\"fromSource\":\"position\"}",
+            );
+        let dir = package(&manifest);
+        let report = run(dir.path());
+        assert_eq!(level_of(&report, "placement.refs"), Some(Level::Pass), "{report:?}");
+        assert_eq!(report.level(), Level::Pass, "{report:?}");
     }
 
     #[test]
