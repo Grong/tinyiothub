@@ -246,6 +246,16 @@ impl ZoneService {
         Ok(())
     }
 
+    /// 丢弃某工作区的全部缓存（maps/places、坐标 + 解析结果、摄取门）。
+    ///
+    /// CRUD 写穿（Task 5）：maps/places/position 写成功后调用，下一次读取
+    /// 回源，避免 5s TTL 窗口内读到旧地图/地点/zone 解析。
+    pub fn invalidate(&self, workspace_id: &str) {
+        self.cache.lock().remove(workspace_id);
+        self.positions.lock().retain(|key, _| key.0 != workspace_id);
+        self.ingests.lock().retain(|key, _| key.0 != workspace_id);
+    }
+
     /// 快照批量预热：maps/places/坐标/显式 zone 引用各一次查询，
     /// 随后 N 个 `zone_for` 全部命中缓存（120ms 预算；spec §2.2 carry-forward）。
     pub async fn warm_workspace(&self, workspace_id: &str) -> Result<(), String> {
@@ -592,7 +602,7 @@ mod tests {
     struct StubMapStore {
         source: Mutex<String>,
         maps: Vec<MapRecord>,
-        places: Vec<PlaceRecord>,
+        places: Mutex<Vec<PlaceRecord>>,
         positions: HashMap<String, ThingPosition>,
         zone_refs: HashMap<String, String>,
         zone_source_calls: AtomicUsize,
@@ -609,7 +619,7 @@ mod tests {
             Self {
                 source: Mutex::new(source.into()),
                 maps,
-                places,
+                places: Mutex::new(places),
                 positions: HashMap::new(),
                 zone_refs: HashMap::new(),
                 zone_source_calls: AtomicUsize::new(0),
@@ -630,6 +640,11 @@ mod tests {
         fn with_zone_ref(mut self, thing_id: &str, zone_ref: &str) -> Self {
             self.zone_refs.insert(thing_id.into(), zone_ref.into());
             self
+        }
+
+        /// 模拟 CRUD 写入后库内容变化（配合 `invalidate` 测试）。
+        fn add_place(&self, place: PlaceRecord) {
+            self.places.lock().push(place);
         }
     }
 
@@ -655,6 +670,7 @@ mod tests {
             self.list_places_calls.fetch_add(1, Ordering::Relaxed);
             Ok(self
                 .places
+                .lock()
                 .iter()
                 .filter(|place| place.map_id == map_id)
                 .cloned()
@@ -670,6 +686,7 @@ mod tests {
             self.find_place_calls.fetch_add(1, Ordering::Relaxed);
             Ok(self
                 .places
+                .lock()
                 .iter()
                 .find(|place| place.name == name && kind.is_none_or(|k| place.kind == k))
                 .cloned())
@@ -774,6 +791,31 @@ mod tests {
 
         assert_eq!(service.zone_source("ws1").await.unwrap(), "maps");
         assert_eq!(zone_for(&service, "t1", None).await.as_deref(), Some("车间A"));
+    }
+
+    #[tokio::test]
+    async fn invalidate_clears_workspace_caches() {
+        let store = Arc::new(
+            StubMapStore::new("maps", vec![map_rec("m1", "ws1", true)], vec![]).with_position("t1", position(1.0, 1.0)),
+        );
+        let service = ZoneService::with_ttl(store.clone(), TrustThresholds::default(), Duration::from_secs(60));
+
+        assert_eq!(zone_for(&service, "t1", None).await, None);
+        store.add_place(zone("z1", "m1", "车间A", &square(10.0)));
+        assert_eq!(
+            zone_for(&service, "t1", None).await,
+            None,
+            "TTL 窗口内仍读缓存（模拟 CRUD 未失效）"
+        );
+
+        service.invalidate("ws1");
+
+        assert_eq!(zone_for(&service, "t1", None).await.as_deref(), Some("车间A"));
+        assert_eq!(
+            service.zone_source("ws1").await.unwrap(),
+            "maps",
+            "invalidate 后回源而非沿用旧缓存"
+        );
     }
 
     #[tokio::test]

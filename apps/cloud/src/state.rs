@@ -55,6 +55,11 @@ pub struct AppState {
     /// 启动时注入；None = 未装配（测试/降级路径），相关路由返回错误。
     pub access: Option<Arc<tinyiothub_runtime::access::service::AccessService>>,
 
+    /// E4d 空间读取服务（maps/places/position → zone）。CRUD 写入后经
+    /// [`tinyiothub_runtime::maps::ZoneService::invalidate`] 清工作区缓存；
+    /// None = 未装配（测试/降级路径），CRUD 直接落库并依赖 5s TTL。
+    pub zones: Option<Arc<tinyiothub_runtime::maps::ZoneService>>,
+
     /// === 领域服务层 ===
     /// 设备基础服务 - CRUD 操作
     pub device_service: Arc<ThingService>,
@@ -513,6 +518,7 @@ impl AppState {
             data_server: None,     // DataServer 由 ServiceManager 设置
             derived_manager: None, // DerivedDriverManager 由 ServiceManager 设置
             access: None,          // AccessService 由 ServiceManager 设置
+            zones: None,           // ZoneService 由 ServiceManager 设置
             device_service,
             device_query_service,
             monitoring_service,
@@ -569,6 +575,12 @@ impl AppState {
     /// 设置 E4a 驱动访问服务（由 ServiceManager 启动时调用）
     pub fn set_access(&mut self, access: Arc<tinyiothub_runtime::access::service::AccessService>) {
         self.access = Some(access);
+    }
+
+    /// 设置 E4d 空间读取服务（由 ServiceManager 启动时调用；与 DataServer
+    /// / AI watch 共用同一实例，CRUD 失效才可见）。
+    pub fn set_zones(&mut self, zones: Arc<tinyiothub_runtime::maps::ZoneService>) {
+        self.zones = Some(zones);
     }
 
     /// 获取数据服务器

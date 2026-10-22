@@ -118,6 +118,7 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
         .nest("/agents", crate::domains::agent::host::handler::create_router())
         .nest("/driver-health", crate::domains::driver::driver_health_router())
         .nest("/things", crate::domains::thing::router())
+        .nest("/maps", crate::domains::map::router())
         .route(
             "/resources/{id}/file",
             get(crate::domains::thing::handler::resources::serve_resource_file),

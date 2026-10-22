@@ -89,6 +89,9 @@ impl ServiceManager {
             map_store.clone(),
             tinyiothub_runtime::maps::TrustThresholds::default(),
         ));
+        // CRUD（Task 5）写穿同一实例：写成功后 invalidate，DataServer/watch
+        // 的下一次读取立即看到新地图/地点。
+        app_state.set_zones(zone_service.clone());
         let access = Arc::new(
             tinyiothub_runtime::access::service::AccessService::new(
                 crate::shared::paths::api_data_dir(),

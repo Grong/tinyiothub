@@ -8,6 +8,7 @@ pub mod brain_event;
 pub mod driver;
 pub mod event;
 pub mod judgment;
+pub mod map;
 pub mod marketplace;
 pub mod mcp;
 pub mod notify;
