@@ -351,7 +351,8 @@ impl DataServer {
                 .find(|value| value.name == name)
                 .and_then(|value| value.value.as_deref())
         };
-        let parse_f64 = |raw: Option<&str>| raw.and_then(|raw| raw.trim().parse::<f64>().ok());
+        let parse_f64 =
+            |raw: Option<&str>| raw.and_then(|raw| raw.trim().parse::<f64>().ok().filter(|v| v.is_finite()));
         let (Some(x), Some(y)) = (parse_f64(field(POSITION_X)), parse_f64(field(POSITION_Y))) else {
             tracing::warn!(thing_id = %device.id, "位置读数缺少合法的 position_x/position_y，跳过");
             return;
@@ -361,7 +362,7 @@ impl DataServer {
                 raw.trim()
                     .parse::<f64>()
                     .ok()
-                    .filter(|v| v.fract() == 0.0)
+                    .filter(|v| v.is_finite() && v.fract() == 0.0)
                     .map(|v| v as i64)
             })
         });
@@ -390,7 +391,30 @@ impl DataServer {
             );
             return;
         };
-        match zones.position_out_of_bounds(workspace_id, &position).await {
+        // 摄取门：仅 placement.mode=runtime 且 fromSource 指向已声明的 position
+        // source 才允许保留字段写坐标；fixed/declared 设备上报位置一律忽略。
+        match zones.position_ingest(workspace_id, &device.id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::debug!(
+                    thing_id = %device.id,
+                    workspace_id,
+                    "位置读数忽略：placement 未启用 position 摄取"
+                );
+                return;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    thing_id = %device.id,
+                    workspace_id,
+                    error = %e,
+                    "位置摄取门读取失败，忽略本次位置读数"
+                );
+                return;
+            }
+        }
+        // 越界判定用物已存的地图（placement 的 map_id），不是一律默认图。
+        match zones.position_out_of_bounds_for(workspace_id, &device.id, x, y).await {
             Ok(Some(true)) => tracing::warn!(
                 thing_id = %device.id,
                 workspace_id,
@@ -1911,6 +1935,7 @@ mod tests {
         maps: Vec<MapRecord>,
         places: Vec<PlaceRecord>,
         written: Mutex<Vec<(String, ThingPosition)>>,
+        ingest: std::sync::atomic::AtomicBool,
     }
 
     impl PositionStore {
@@ -1939,7 +1964,13 @@ mod tests {
                     updated_at: "2026-10-22T00:00:00Z".into(),
                 }],
                 written: Mutex::new(Vec::new()),
+                ingest: std::sync::atomic::AtomicBool::new(false),
             }
+        }
+
+        fn with_ingest(self) -> Self {
+            self.ingest.store(true, std::sync::atomic::Ordering::Relaxed);
+            self
         }
 
         fn written(&self) -> Vec<(String, ThingPosition)> {
@@ -2033,6 +2064,13 @@ mod tests {
         async fn list_zone_refs(&self, _workspace_id: &str) -> Result<Vec<(String, String)>, String> {
             Ok(Vec::new())
         }
+        async fn get_position_ingest(&self, _workspace_id: &str, _thing_id: &str) -> Result<bool, String> {
+            Ok(self.ingest.load(std::sync::atomic::Ordering::Relaxed))
+        }
+        async fn set_position_ingest(&self, _workspace_id: &str, _thing_id: &str, ingest: bool) -> Result<(), String> {
+            self.ingest.store(ingest, std::sync::atomic::Ordering::Relaxed);
+            Ok(())
+        }
         async fn zone_source(&self, _workspace_id: &str) -> Result<String, String> {
             Ok("maps".into())
         }
@@ -2058,12 +2096,15 @@ mod tests {
     /// 驱动保留字段 → 坐标列 + updated_at + trust；随后 maps zone 解析命中。
     #[tokio::test]
     async fn driver_position_reading_persists_reserved_fields() {
-        let store = Arc::new(PositionStore::new(MapBounds {
-            x: 0.0,
-            y: 0.0,
-            w: 10.0,
-            h: 10.0,
-        }));
+        let store = Arc::new(
+            PositionStore::new(MapBounds {
+                x: 0.0,
+                y: 0.0,
+                w: 10.0,
+                h: 10.0,
+            })
+            .with_ingest(),
+        );
         let zones = Arc::new(ZoneService::new(store.clone(), TrustThresholds::default()));
         let cache: Arc<dyn ThingCacheSource> = Arc::new(VecCache::new(vec![worker_thing("dev-1")]));
 
@@ -2104,12 +2145,15 @@ mod tests {
     /// 越界：坐标仍落库（不拒绝读数），zone 读取侧为 None。
     #[tokio::test]
     async fn out_of_bounds_driver_position_is_kept_but_zone_is_none() {
-        let store = Arc::new(PositionStore::new(MapBounds {
-            x: 0.0,
-            y: 0.0,
-            w: 10.0,
-            h: 10.0,
-        }));
+        let store = Arc::new(
+            PositionStore::new(MapBounds {
+                x: 0.0,
+                y: 0.0,
+                w: 10.0,
+                h: 10.0,
+            })
+            .with_ingest(),
+        );
         let zones = Arc::new(ZoneService::new(store.clone(), TrustThresholds::default()));
         let cache: Arc<dyn ThingCacheSource> = Arc::new(VecCache::new(vec![worker_thing("dev-1")]));
 
@@ -2133,6 +2177,64 @@ mod tests {
             None,
             "越界 → zone=None"
         );
+    }
+
+    /// fixed/declared（摄取门关闭）设备上报 position_* 一律忽略：不得破坏
+    /// "fixed always trusted"，也不得让设备漂出静态 zone。
+    #[tokio::test]
+    async fn position_readings_ignored_when_ingest_disabled() {
+        let store = Arc::new(PositionStore::new(MapBounds {
+            x: 0.0,
+            y: 0.0,
+            w: 10.0,
+            h: 10.0,
+        }));
+        let zones = Arc::new(ZoneService::new(store.clone(), TrustThresholds::default()));
+        let cache: Arc<dyn ThingCacheSource> = Arc::new(VecCache::new(vec![worker_thing("dev-1")]));
+
+        DataServer::consume_driver_reading_with(
+            DriverReading {
+                thing_id: "dev-1".into(),
+                values: position_values("1", "1", None),
+            },
+            false,
+            &cache,
+            Arc::new(EventBus::new()),
+            Some(&zones),
+        )
+        .await;
+
+        assert!(store.written().is_empty(), "摄取门关闭时保留字段不得写坐标列");
+    }
+
+    /// 非有限坐标（NaN/Inf）不得落库。
+    #[tokio::test]
+    async fn non_finite_position_reading_is_rejected() {
+        let store = Arc::new(
+            PositionStore::new(MapBounds {
+                x: 0.0,
+                y: 0.0,
+                w: 10.0,
+                h: 10.0,
+            })
+            .with_ingest(),
+        );
+        let zones = Arc::new(ZoneService::new(store.clone(), TrustThresholds::default()));
+        let cache: Arc<dyn ThingCacheSource> = Arc::new(VecCache::new(vec![worker_thing("dev-1")]));
+
+        DataServer::consume_driver_reading_with(
+            DriverReading {
+                thing_id: "dev-1".into(),
+                values: position_values("NaN", "1", None),
+            },
+            false,
+            &cache,
+            Arc::new(EventBus::new()),
+            Some(&zones),
+        )
+        .await;
+
+        assert!(store.written().is_empty(), "NaN 坐标必须丢弃");
     }
 
     #[test]

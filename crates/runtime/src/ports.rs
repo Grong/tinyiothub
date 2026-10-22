@@ -183,6 +183,10 @@ pub trait MapStore: Send + Sync {
     async fn set_zone_ref(&self, workspace_id: &str, thing_id: &str, zone_ref: Option<&str>) -> Result<(), String>;
     /// 工作区全部非空显式 zone 引用（快照批量预热）。
     async fn list_zone_refs(&self, workspace_id: &str) -> Result<Vec<(String, String)>, String>;
+    /// placement 是否允许驱动 position 保留字段写坐标
+    ///（`mode=runtime` 且 `fromSource` 指向已声明的 kind=position source）。
+    async fn get_position_ingest(&self, workspace_id: &str, thing_id: &str) -> Result<bool, String>;
+    async fn set_position_ingest(&self, workspace_id: &str, thing_id: &str, ingest: bool) -> Result<(), String>;
     async fn zone_source(&self, workspace_id: &str) -> Result<String, String>;
 }
 

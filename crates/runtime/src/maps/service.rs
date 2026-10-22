@@ -65,6 +65,8 @@ pub struct ZoneService {
     position_ttl: Duration,
     cache: Mutex<HashMap<String, WorkspaceCache>>,
     positions: Mutex<HashMap<(String, String), CachedLocation>>,
+    /// 位置摄取门短 TTL 缓存（DataServer 每条位置读数都要查）。
+    ingests: Mutex<HashMap<(String, String), (Instant, bool)>>,
 }
 
 impl ZoneService {
@@ -91,6 +93,7 @@ impl ZoneService {
             position_ttl,
             cache: Mutex::new(HashMap::new()),
             positions: Mutex::new(HashMap::new()),
+            ingests: Mutex::new(HashMap::new()),
         }
     }
 
@@ -196,6 +199,51 @@ impl ZoneService {
             return Ok(None);
         };
         Ok(Some(!within_bounds(&map.bounds, x, y)))
+    }
+
+    /// 读写侧越界判定：用**物已存的地图**（placement 写入的 `map_id`），
+    /// 而不是一律按默认图；无坐标/地图 → `None`。
+    pub async fn position_out_of_bounds_for(
+        &self,
+        workspace_id: &str,
+        thing_id: &str,
+        x: f64,
+        y: f64,
+    ) -> Result<Option<bool>, String> {
+        let location = self.location(workspace_id, thing_id).await?;
+        let map_id = location.position.and_then(|position| position.map_id);
+        let maps = self.maps(workspace_id).await?;
+        let map = match map_id.as_deref() {
+            Some(id) => maps.iter().find(|map| map.id == id),
+            None => maps.iter().find(|map| map.is_default),
+        };
+        Ok(map.map(|map| !within_bounds(&map.bounds, x, y)))
+    }
+
+    /// placement 是否启用驱动位置摄取（缓存 5s，DataServer 热路径）。
+    pub async fn position_ingest(&self, workspace_id: &str, thing_id: &str) -> Result<bool, String> {
+        let key = (workspace_id.to_string(), thing_id.to_string());
+        if self.position_ttl > Duration::ZERO
+            && let Some((fetched_at, ingest)) = self.ingests.lock().get(&key).copied()
+            && fetched_at.elapsed() < self.position_ttl
+        {
+            return Ok(ingest);
+        }
+        let ingest = self.store.get_position_ingest(workspace_id, thing_id).await?;
+        if self.position_ttl > Duration::ZERO {
+            self.ingests.lock().insert(key, (Instant::now(), ingest));
+        }
+        Ok(ingest)
+    }
+
+    /// placement 物化时写位置摄取门（组合根/AccessService 用）。
+    pub async fn set_position_ingest(&self, workspace_id: &str, thing_id: &str, ingest: bool) -> Result<(), String> {
+        self.store.set_position_ingest(workspace_id, thing_id, ingest).await?;
+        self.ingests.lock().insert(
+            (workspace_id.to_string(), thing_id.to_string()),
+            (Instant::now(), ingest),
+        );
+        Ok(())
     }
 
     /// 快照批量预热：maps/places/坐标/显式 zone 引用各一次查询，
@@ -553,6 +601,7 @@ mod tests {
         list_positions_calls: AtomicUsize,
         find_place_calls: AtomicUsize,
         fail_list_positions: AtomicBool,
+        ingest: AtomicBool,
     }
 
     impl StubMapStore {
@@ -569,6 +618,7 @@ mod tests {
                 list_positions_calls: AtomicUsize::new(0),
                 find_place_calls: AtomicUsize::new(0),
                 fail_list_positions: AtomicBool::new(false),
+                ingest: AtomicBool::new(false),
             }
         }
 
@@ -687,6 +737,15 @@ mod tests {
                 .iter()
                 .map(|(thing_id, zone_ref)| (thing_id.clone(), zone_ref.clone()))
                 .collect())
+        }
+
+        async fn get_position_ingest(&self, _workspace_id: &str, _thing_id: &str) -> Result<bool, String> {
+            Ok(self.ingest.load(Ordering::Relaxed))
+        }
+
+        async fn set_position_ingest(&self, _workspace_id: &str, _thing_id: &str, ingest: bool) -> Result<(), String> {
+            self.ingest.store(ingest, Ordering::Relaxed);
+            Ok(())
         }
 
         async fn zone_source(&self, _workspace_id: &str) -> Result<String, String> {
@@ -1015,6 +1074,37 @@ mod tests {
             store.list_places_calls.load(Ordering::Relaxed),
             1,
             "地点按图缓存，不随物数量增长"
+        );
+    }
+
+    /// 写侧越界判定使用物已存的地图（placement 的 map_id），不是默认图。
+    #[tokio::test]
+    async fn bounds_check_uses_stored_map_not_default() {
+        let mut second = map_rec("m2", "ws1", false);
+        second.bounds = MapBounds {
+            x: 100.0,
+            y: 100.0,
+            w: 100.0,
+            h: 100.0,
+        };
+        let mut stored = position(150.0, 150.0);
+        stored.map_id = Some("m2".into());
+        let store =
+            StubMapStore::new("maps", vec![map_rec("m1", "ws1", true), second], vec![]).with_position("t1", stored);
+        let service = ZoneService::with_ttl(Arc::new(store), TrustThresholds::default(), Duration::ZERO);
+
+        assert_eq!(
+            service
+                .position_out_of_bounds_for("ws1", "t1", 150.0, 150.0)
+                .await
+                .unwrap(),
+            Some(false),
+            "在 m2 边界内（默认图 m1 之外）"
+        );
+        assert_eq!(
+            service.position_out_of_bounds_for("ws1", "t1", 1.0, 1.0).await.unwrap(),
+            Some(true),
+            "m2 上的物越出 m2 边界，与默认图无关"
         );
     }
 

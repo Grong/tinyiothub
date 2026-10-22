@@ -237,6 +237,21 @@ impl MapStore for DbMapStore {
             .map_err(|e| e.to_string())
     }
 
+    async fn get_position_ingest(&self, workspace_id: &str, thing_id: &str) -> Result<bool, String> {
+        self.0
+            .get_thing_position_ingest(workspace_id, thing_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn set_position_ingest(&self, workspace_id: &str, thing_id: &str, ingest: bool) -> Result<(), String> {
+        self.0
+            .set_thing_position_ingest(workspace_id, thing_id, ingest)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
     /// 缺失/未知归一化为 `hierarchy`（迁移期回退，与端口文档一致）。
     async fn zone_source(&self, workspace_id: &str) -> Result<String, String> {
         Ok(self

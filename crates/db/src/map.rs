@@ -427,6 +427,37 @@ pub async fn set_thing_zone_ref(
     Ok(r.rows_affected() > 0)
 }
 
+// ── 位置摄取门 ─────────────────────────────────────────
+
+/// placement 是否允许驱动 position 保留字段写坐标（`runtime` + 声明 position source）。
+pub async fn get_thing_position_ingest(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    thing_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let row: Option<i64> = sqlx::query_scalar("SELECT position_ingest FROM things WHERE id = ? AND workspace_id = ?")
+        .bind(thing_id)
+        .bind(workspace_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.unwrap_or(0) != 0)
+}
+
+pub async fn set_thing_position_ingest(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    thing_id: &str,
+    ingest: bool,
+) -> Result<bool, sqlx::Error> {
+    let r = sqlx::query("UPDATE things SET position_ingest = ? WHERE id = ? AND workspace_id = ?")
+        .bind(i64::from(ingest))
+        .bind(thing_id)
+        .bind(workspace_id)
+        .execute(pool)
+        .await?;
+    Ok(r.rows_affected() > 0)
+}
+
 /// 工作区全部非空显式 zone 引用（快照批量预热）。
 pub async fn list_thing_zone_refs(pool: &SqlitePool, workspace_id: &str) -> Result<Vec<(String, String)>, sqlx::Error> {
     let rows: Vec<(String, String)> = sqlx::query_as(
@@ -592,6 +623,19 @@ impl Db {
 
     pub async fn list_thing_zone_refs(&self, workspace_id: &str) -> Result<Vec<(String, String)>, sqlx::Error> {
         list_thing_zone_refs(self.pool(), workspace_id).await
+    }
+
+    pub async fn get_thing_position_ingest(&self, workspace_id: &str, thing_id: &str) -> Result<bool, sqlx::Error> {
+        get_thing_position_ingest(self.pool(), workspace_id, thing_id).await
+    }
+
+    pub async fn set_thing_position_ingest(
+        &self,
+        workspace_id: &str,
+        thing_id: &str,
+        ingest: bool,
+    ) -> Result<bool, sqlx::Error> {
+        set_thing_position_ingest(self.pool(), workspace_id, thing_id, ingest).await
     }
 
     pub async fn get_zone_source(&self, workspace_id: &str) -> Result<Option<String>, sqlx::Error> {
@@ -940,6 +984,15 @@ mod tests {
         // 清除
         assert!(db.set_thing_zone_ref("ws1", "t1", None).await.unwrap());
         assert_eq!(db.get_thing_zone_ref("ws1", "t1").await.unwrap(), None);
+
+        // 位置摄取门：默认关，按工作区隔离
+        assert!(!db.get_thing_position_ingest("ws1", "t1").await.unwrap());
+        assert!(db.set_thing_position_ingest("ws1", "t1", true).await.unwrap());
+        assert!(db.get_thing_position_ingest("ws1", "t1").await.unwrap());
+        assert!(!db.get_thing_position_ingest("ws2", "t1").await.unwrap());
+        assert!(!db.set_thing_position_ingest("ws2", "t1", true).await.unwrap());
+        assert!(db.set_thing_position_ingest("ws1", "t1", false).await.unwrap());
+        assert!(!db.get_thing_position_ingest("ws1", "t1").await.unwrap());
     }
 
     #[tokio::test]

@@ -712,6 +712,14 @@ mod tests {
                 .collect())
         }
 
+        async fn get_position_ingest(&self, _workspace_id: &str, _thing_id: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        async fn set_position_ingest(&self, _workspace_id: &str, _thing_id: &str, _ingest: bool) -> Result<(), String> {
+            Ok(())
+        }
+
         async fn zone_source(&self, _workspace_id: &str) -> Result<String, String> {
             Ok(self.source.lock().unwrap().clone())
         }

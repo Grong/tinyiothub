@@ -11,7 +11,7 @@ use chrono::Utc;
 use tinyiothub_core::driver::declaration::{
     DeviceDeclaration, DeviceDeclarationRecord, DriverDeclarationRecord, fixed_declaration, validate_device_declaration,
 };
-use tinyiothub_core::driver::manifest::{LocationTrustDecl, MANIFEST_FILE, PlacementDecl, PlacementMode};
+use tinyiothub_core::driver::manifest::{DriverManifest, LocationTrustDecl, MANIFEST_FILE, PlacementMode};
 use tinyiothub_core::models::spatial::{LocationTrust, PlaceKind, ThingPosition};
 use tinyiothub_core::models::thing::Thing;
 
@@ -413,8 +413,7 @@ impl AccessService {
         // E4d §2.3：static placement 在建物/绑定驱动时物化；引用不存在则
         // fail-closed（绑定失败），不落半套坐标。放在声明校验之后，避免
         // 非法声明留下已物化的坐标。
-        self.materialize_placement(workspace_id, thing, &pkg.manifest.placement)
-            .await?;
+        self.materialize_placement(workspace_id, thing, &pkg.manifest).await?;
         let json = serde_json::to_string(&decl)?;
         let rec = DeviceDeclarationRecord {
             workspace_id: workspace_id.into(),
@@ -434,38 +433,81 @@ impl AccessService {
         Ok(decl)
     }
 
-    /// 物化 manifest `placement.mode=fixed|declared`：
-    /// `position`/`mapRef`/`zoneRef` → things 坐标列 + `map_id` + `zone_ref`。
-    ///
-    /// - `runtime`：不做静态物化（坐标由驱动 source/API 写入）。
+    /// 物化 manifest placement：
+    /// - `fixed|declared`：`position`/`mapRef`/`zoneRef` → 坐标列 + `map_id`
+    ///   + `zone_ref`；清掉清单已移除的旧引用/静态坐标。
+    /// - `runtime`：清掉旧静态 placement 状态（`zone_ref`、placement-owned
+    ///   `map_id`、静态坐标），保留 runtime 坐标（继续按 age 派生）。
+    /// - 位置摄取门：仅 runtime + 已声明 `kind=position` 的 `fromSource` 置 1。
     /// - 地图/区域名不存在、区域不属于 `mapRef`、坐标越界 → 绑定失败。
     /// - 静态位置不写 `position_updated_at`（读时恒 Trusted，不随 age 失效）。
     async fn materialize_placement(
         &self,
         workspace_id: &str,
         thing: &Thing,
-        placement: &PlacementDecl,
+        manifest: &DriverManifest,
     ) -> Result<(), AccessError> {
-        if placement.mode == PlacementMode::Runtime {
-            return Ok(());
-        }
+        let placement = &manifest.placement;
+        let static_mode = placement.mode != PlacementMode::Runtime;
         let has_refs = placement.position.is_some() || placement.map_ref.is_some() || placement.zone_ref.is_some();
-        if !has_refs {
-            return Ok(());
-        }
+
         let Some(store) = &self.map_store else {
-            return Err(AccessError::Validation(
-                "placement materialization requires a map store".into(),
-            ));
+            return if static_mode && has_refs {
+                Err(AccessError::Validation(
+                    "placement materialization requires a map store".into(),
+                ))
+            } else {
+                Ok(())
+            };
         };
 
-        let maps = store.list_maps(workspace_id).await.map_err(AccessError::Store)?;
+        // 重绑/驱动升级：旧 placement 状态可能已被新清单移除。
+        let current = store
+            .get_position(workspace_id, &thing.id)
+            .await
+            .map_err(AccessError::Store)?;
+        let current_zone_ref = store
+            .get_zone_ref(workspace_id, &thing.id)
+            .await
+            .map_err(AccessError::Store)?;
+
+        if !static_mode {
+            // runtime：显式 zoneRef 优先级最高，必须清掉；placement-owned
+            // map_id 清空；旧静态坐标整组清空（否则它们永不 aging）。
+            if current_zone_ref.is_some() {
+                store
+                    .set_zone_ref(workspace_id, &thing.id, None)
+                    .await
+                    .map_err(AccessError::Store)?;
+            }
+            let next = match current.clone() {
+                Some(mut position) if position.updated_at.is_some() => {
+                    // runtime 坐标保留，只清 placement-owned 地图。
+                    position.map_id = None;
+                    position
+                }
+                // 旧静态坐标（updated_at=None）或从未定位：清空。
+                _ => ThingPosition::default(),
+            };
+            if current.is_some() && current.as_ref() != Some(&next) {
+                store
+                    .set_position(workspace_id, &thing.id, &next)
+                    .await
+                    .map_err(AccessError::Store)?;
+            }
+            Self::materialize_ingest(store.as_ref(), workspace_id, thing, manifest).await?;
+            return Ok(());
+        }
+
         let map = match &placement.map_ref {
-            Some(name) => Some(maps.iter().find(|map| &map.name == name).cloned().ok_or_else(|| {
-                AccessError::Validation(format!(
-                    "placement mapRef '{name}' not found in workspace '{workspace_id}'"
-                ))
-            })?),
+            Some(name) => {
+                let maps = store.list_maps(workspace_id).await.map_err(AccessError::Store)?;
+                Some(maps.iter().find(|map| &map.name == name).cloned().ok_or_else(|| {
+                    AccessError::Validation(format!(
+                        "placement mapRef '{name}' not found in workspace '{workspace_id}'"
+                    ))
+                })?)
+            }
             None => None,
         };
 
@@ -493,13 +535,12 @@ impl AccessService {
             None => None,
         };
 
-        let mut position = ThingPosition {
-            map_id: map.as_ref().map(|map| map.id.clone()),
-            trust: trust_from_decl(placement.trust),
-            // 静态位置：无时间戳 = 读时恒 Trusted。
-            updated_at: None,
-            ..Default::default()
-        };
+        // 静态 placement 是权威：清单没有 position 时清空旧坐标（重绑不得
+        // 遗留旧静态坐标或旧 map_id）。
+        let mut next = current.clone().unwrap_or_default();
+        next.map_id = map.as_ref().map(|map| map.id.clone());
+        next.trust = trust_from_decl(placement.trust);
+        next.updated_at = None;
         if let Some(raw) = &placement.position {
             let (x, y, level, heading) = parse_placement_position(raw)?;
             if let Some(map) = &map
@@ -510,21 +551,57 @@ impl AccessService {
                     map.name
                 )));
             }
-            position.x = Some(x);
-            position.y = Some(y);
-            position.level = level;
-            position.heading = heading;
+            next.x = Some(x);
+            next.y = Some(y);
+            next.level = level;
+            next.heading = heading;
+        } else {
+            next.x = None;
+            next.y = None;
+            next.level = None;
+            next.heading = None;
         }
-
-        if position.x.is_some() || position.y.is_some() || position.map_id.is_some() {
+        let has_position = next.x.is_some() || next.y.is_some() || next.map_id.is_some();
+        if current.as_ref() != Some(&next) && (current.is_some() || has_position) {
             store
-                .set_position(workspace_id, &thing.id, &position)
+                .set_position(workspace_id, &thing.id, &next)
                 .await
                 .map_err(AccessError::Store)?;
         }
-        if let Some(zone) = zone {
+
+        let target_zone = zone.map(|zone| zone.name);
+        if target_zone != current_zone_ref {
             store
-                .set_zone_ref(workspace_id, &thing.id, Some(&zone.name))
+                .set_zone_ref(workspace_id, &thing.id, target_zone.as_deref())
+                .await
+                .map_err(AccessError::Store)?;
+        }
+        Self::materialize_ingest(store.as_ref(), workspace_id, thing, manifest).await
+    }
+
+    /// 摄取门 = `runtime` 且 `fromSource` 指向 manifest 声明的 kind=position
+    /// source；其余一律关闭（fixed/declared 恒 trusted，位置不随驱动漂移）。
+    async fn materialize_ingest(
+        store: &dyn MapStore,
+        workspace_id: &str,
+        thing: &Thing,
+        manifest: &DriverManifest,
+    ) -> Result<(), AccessError> {
+        let placement = &manifest.placement;
+        let ingest = placement.mode == PlacementMode::Runtime
+            && placement.from_source.as_deref().is_some_and(|source_id| {
+                manifest
+                    .sources
+                    .iter()
+                    .any(|source| source.id == source_id && source.kind == "position")
+            });
+        let current = store
+            .get_position_ingest(workspace_id, &thing.id)
+            .await
+            .map_err(AccessError::Store)?;
+        if current != ingest {
+            store
+                .set_position_ingest(workspace_id, &thing.id, ingest)
                 .await
                 .map_err(AccessError::Store)?;
         }
@@ -626,8 +703,11 @@ fn parse_placement_position(raw: &serde_json::Value) -> Result<(f64, f64, Option
     let number = |key: &str| object.get(key).and_then(serde_json::Value::as_f64);
     let x = number("x").ok_or_else(|| AccessError::Validation("placement.position.x must be a number".into()))?;
     let y = number("y").ok_or_else(|| AccessError::Validation("placement.position.y must be a number".into()))?;
+    if !x.is_finite() || !y.is_finite() {
+        return Err(AccessError::Validation("placement.position x/y must be finite".into()));
+    }
     let level = object.get("level").and_then(serde_json::Value::as_i64);
-    let heading = number("heading");
+    let heading = number("heading").filter(|value| value.is_finite());
     Ok((x, y, level, heading))
 }
 
@@ -870,6 +950,7 @@ mod tests {
         places: Mutex<Vec<PlaceRecord>>,
         positions: Mutex<HashMap<String, ThingPosition>>,
         zone_refs: Mutex<HashMap<String, String>>,
+        ingest: Mutex<bool>,
     }
 
     impl FakeMapStore {
@@ -914,6 +995,10 @@ mod tests {
 
         fn zone_ref(&self, thing_id: &str) -> Option<String> {
             self.zone_refs.lock().unwrap().get(thing_id).cloned()
+        }
+
+        fn ingest(&self) -> bool {
+            *self.ingest.lock().unwrap()
         }
     }
 
@@ -1023,6 +1108,13 @@ mod tests {
                 .iter()
                 .map(|(id, name)| (id.clone(), name.clone()))
                 .collect())
+        }
+        async fn get_position_ingest(&self, _workspace_id: &str, _thing_id: &str) -> Result<bool, String> {
+            Ok(self.ingest())
+        }
+        async fn set_position_ingest(&self, _workspace_id: &str, _thing_id: &str, ingest: bool) -> Result<(), String> {
+            *self.ingest.lock().unwrap() = ingest;
+            Ok(())
         }
         async fn zone_source(&self, _workspace_id: &str) -> Result<String, String> {
             Ok("maps".into())
@@ -1535,7 +1627,88 @@ mod tests {
             assert_eq!(pos.trust, LocationTrust::Trusted);
             assert_eq!(pos.updated_at, None, "静态位置不得写入 updated_at");
             assert_eq!(store.zone_ref("t1").as_deref(), Some("机房"));
+            assert!(!store.ingest(), "static placement 不得启用位置摄取");
         }
+    }
+
+    /// 驱动升级 fixed → runtime（新清单移除 zoneRef/position）：旧静态
+    /// placement 状态必须清空，否则显式 zoneRef 会把设备永久钉在旧区域。
+    #[tokio::test]
+    async fn rebind_to_runtime_clears_stale_static_placement() {
+        let t = thing_in("ws1", "demo");
+        let fx = fixture(Some(t.clone()));
+        let store = Arc::new(FakeMapStore::with_floor());
+        fx.service
+            .manifests
+            .seed_builtin(&placement_manifest(
+                "fixed",
+                Some("floor-1"),
+                Some("机房"),
+                Some(r#"{"x":1.5,"y":2.5,"level":1}"#),
+            ))
+            .unwrap();
+        let mut service = fx.service;
+        service.map_store = Some(store.clone());
+
+        service.bind_thing("ws1", &t).await.unwrap();
+        assert!(store.position("t1").is_some());
+        assert_eq!(store.zone_ref("t1").as_deref(), Some("机房"));
+
+        // 新 manifest：runtime，无 zoneRef/position。
+        service
+            .manifests
+            .seed_builtin(&placement_manifest("runtime", None, None, None))
+            .unwrap();
+        service.bind_thing("ws1", &t).await.unwrap();
+
+        assert_eq!(
+            store.position("t1"),
+            Some(ThingPosition::default()),
+            "旧静态坐标（含 map_id）必须清空"
+        );
+        assert_eq!(store.zone_ref("t1"), None, "旧 zoneRef 必须清空");
+        assert!(!store.ingest());
+    }
+
+    /// 摄取门：仅 runtime + fromSource 指向已声明的 kind=position source。
+    #[tokio::test]
+    async fn position_ingest_requires_runtime_and_declared_position_source() {
+        let cases = [
+            (
+                placement_manifest("fixed", None, None, Some(r#"{"x":1,"y":1}"#)),
+                false,
+                "fixed",
+            ),
+            (
+                placement_manifest("runtime", None, None, None),
+                false,
+                "runtime without source",
+            ),
+            (runtime_position_manifest(), true, "runtime + position source"),
+        ];
+        for (manifest, expected, label) in cases {
+            let t = thing_in("ws1", "demo");
+            let fx = fixture(Some(t.clone()));
+            let store = Arc::new(FakeMapStore::with_floor());
+            fx.service.manifests.seed_builtin(&manifest).expect("manifest");
+            let mut service = fx.service;
+            service.map_store = Some(store.clone());
+            service.bind_thing("ws1", &t).await.unwrap();
+            assert_eq!(store.ingest(), expected, "{label}");
+        }
+    }
+
+    /// runtime + fromSource 指向已声明的 position source。
+    fn runtime_position_manifest() -> String {
+        FIXED_MANIFEST
+            .replace(
+                "\"placement\":{\"mode\":\"runtime\"}",
+                "\"placement\":{\"mode\":\"runtime\",\"fromSource\":\"position\"}",
+            )
+            .replace(
+                "\"sources\":[{",
+                "\"sources\":[{\"id\":\"position\",\"kind\":\"position\",\"fields\":[]}, {",
+            )
     }
 
     /// 无效 mapRef / zoneRef / 越界坐标 / 未接线 map store → bind 失败
