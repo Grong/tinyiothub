@@ -36,4 +36,5 @@ ALTER TABLE things ADD COLUMN position_heading REAL;
 ALTER TABLE things ADD COLUMN position_trust TEXT;
 ALTER TABLE things ADD COLUMN position_updated_at TEXT;
 
-ALTER TABLE workspaces ADD COLUMN zone_source TEXT NOT NULL DEFAULT 'hierarchy';
+ALTER TABLE workspaces ADD COLUMN zone_source TEXT NOT NULL DEFAULT 'hierarchy'
+    CHECK (zone_source IN ('hierarchy', 'maps'));

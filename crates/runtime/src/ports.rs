@@ -12,7 +12,7 @@ use async_trait::async_trait;
 
 use tinyiothub_core::driver::declaration::{AcceptanceReportRecord, DeviceDeclarationRecord, DriverDeclarationRecord};
 use tinyiothub_core::driver::manifest::{ManifestTool, StateFieldDecl};
-use tinyiothub_core::models::spatial::{MapRecord, PlaceRecord, ThingPosition};
+use tinyiothub_core::models::spatial::{MapRecord, PlaceKind, PlaceRecord, ThingPosition};
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
 use tinyiothub_core::models::thing_property::ThingProperty;
@@ -154,8 +154,18 @@ pub trait DemandSource: Send + Sync {
 pub trait MapStore: Send + Sync {
     async fn list_maps(&self, workspace_id: &str) -> Result<Vec<MapRecord>, String>;
     async fn default_map(&self, workspace_id: &str) -> Result<Option<MapRecord>, String>;
-    async fn list_places(&self, map_id: &str) -> Result<Vec<PlaceRecord>, String>;
-    async fn find_place_by_name(&self, workspace_id: &str, name: &str) -> Result<Option<PlaceRecord>, String>;
+    async fn upsert_map(&self, map: &MapRecord) -> Result<(), String>;
+    async fn delete_map(&self, workspace_id: &str, id: &str) -> Result<bool, String>;
+    async fn list_places(&self, workspace_id: &str, map_id: &str) -> Result<Vec<PlaceRecord>, String>;
+    /// `kind` filters zoneRef resolution (`Some(PlaceKind::Zone)`).
+    async fn find_place_by_name(
+        &self,
+        workspace_id: &str,
+        name: &str,
+        kind: Option<PlaceKind>,
+    ) -> Result<Option<PlaceRecord>, String>;
+    async fn upsert_place(&self, workspace_id: &str, place: &PlaceRecord) -> Result<(), String>;
+    async fn delete_place(&self, workspace_id: &str, map_id: &str, id: &str) -> Result<bool, String>;
     async fn get_position(&self, workspace_id: &str, thing_id: &str) -> Result<Option<ThingPosition>, String>;
     async fn set_position(&self, workspace_id: &str, thing_id: &str, position: &ThingPosition) -> Result<(), String>;
     async fn zone_source(&self, workspace_id: &str) -> Result<String, String>;

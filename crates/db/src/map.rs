@@ -81,6 +81,11 @@ fn encode_err(e: serde_json::Error) -> sqlx::Error {
     sqlx::Error::Encode(Box::new(e))
 }
 
+/// 跨工作区引用一律作错误返回（不是静默 no-op）：防越权读写与重归属。
+fn isolation_err(msg: &str) -> sqlx::Error {
+    sqlx::Error::Configuration(msg.to_string().into())
+}
+
 // ── Maps ───────────────────────────────────────────────
 
 pub async fn list_maps(pool: &SqlitePool, workspace_id: &str) -> Result<Vec<MapRecord>, sqlx::Error> {
@@ -119,9 +124,19 @@ pub async fn find_default_map(pool: &SqlitePool, workspace_id: &str) -> Result<O
 }
 
 /// upsert 地图；`is_default=true` 时在同一事务内清掉同工作区其他默认标记。
+/// id 已存在时只允许同工作区更新，禁止跨工作区重归属。
 pub async fn upsert_map(pool: &SqlitePool, rec: &MapRecord) -> Result<(), sqlx::Error> {
     let bounds_json = serde_json::to_string(&rec.bounds).map_err(encode_err)?;
     let mut tx = pool.begin().await?;
+    let existing_ws: Option<String> = sqlx::query_scalar("SELECT workspace_id FROM maps WHERE id = ?")
+        .bind(&rec.id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if let Some(existing_ws) = existing_ws
+        && existing_ws != rec.workspace_id
+    {
+        return Err(isolation_err("map id belongs to another workspace"));
+    }
     if rec.is_default {
         sqlx::query("UPDATE maps SET is_default = 0 WHERE workspace_id = ? AND id <> ?")
             .bind(&rec.workspace_id)
@@ -133,7 +148,6 @@ pub async fn upsert_map(pool: &SqlitePool, rec: &MapRecord) -> Result<(), sqlx::
         "INSERT INTO maps (id, workspace_id, name, bounds_json, anchor_map_id, is_default, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
-             workspace_id = excluded.workspace_id,
              name = excluded.name,
              bounds_json = excluded.bounds_json,
              anchor_map_id = excluded.anchor_map_id,
@@ -165,22 +179,32 @@ pub async fn delete_map(pool: &SqlitePool, workspace_id: &str, id: &str) -> Resu
 
 // ── Places ─────────────────────────────────────────────
 
-pub async fn list_places(pool: &SqlitePool, map_id: &str) -> Result<Vec<PlaceRecord>, sqlx::Error> {
+pub async fn list_places(pool: &SqlitePool, workspace_id: &str, map_id: &str) -> Result<Vec<PlaceRecord>, sqlx::Error> {
     let rows: Vec<PlaceRow> = sqlx::query_as(
-        "SELECT id, map_id, name, kind, geometry_json, heading, created_at, updated_at
-         FROM places WHERE map_id = ? ORDER BY name ASC",
+        "SELECT p.id, p.map_id, p.name, p.kind, p.geometry_json, p.heading, p.created_at, p.updated_at
+         FROM places p JOIN maps m ON m.id = p.map_id
+         WHERE m.workspace_id = ? AND p.map_id = ?
+         ORDER BY p.name ASC",
     )
+    .bind(workspace_id)
     .bind(map_id)
     .fetch_all(pool)
     .await?;
     rows.into_iter().map(PlaceRecord::try_from).collect()
 }
 
-pub async fn find_place(pool: &SqlitePool, map_id: &str, id: &str) -> Result<Option<PlaceRecord>, sqlx::Error> {
+pub async fn find_place(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    map_id: &str,
+    id: &str,
+) -> Result<Option<PlaceRecord>, sqlx::Error> {
     let row: Option<PlaceRow> = sqlx::query_as(
-        "SELECT id, map_id, name, kind, geometry_json, heading, created_at, updated_at
-         FROM places WHERE map_id = ? AND id = ?",
+        "SELECT p.id, p.map_id, p.name, p.kind, p.geometry_json, p.heading, p.created_at, p.updated_at
+         FROM places p JOIN maps m ON m.id = p.map_id
+         WHERE m.workspace_id = ? AND p.map_id = ? AND p.id = ?",
     )
+    .bind(workspace_id)
     .bind(map_id)
     .bind(id)
     .fetch_optional(pool)
@@ -188,8 +212,31 @@ pub async fn find_place(pool: &SqlitePool, map_id: &str, id: &str) -> Result<Opt
     row.map(PlaceRecord::try_from).transpose()
 }
 
-pub async fn upsert_place(pool: &SqlitePool, rec: &PlaceRecord) -> Result<(), sqlx::Error> {
+/// upsert 地点：目标地图必须属于 `workspace_id`；已存在的同 id 地点也不得
+/// 跨工作区重归属。
+pub async fn upsert_place(pool: &SqlitePool, workspace_id: &str, rec: &PlaceRecord) -> Result<(), sqlx::Error> {
     let geometry_json = serde_json::to_string(&rec.geometry).map_err(encode_err)?;
+    let mut tx = pool.begin().await?;
+
+    let map_owner: Option<String> = sqlx::query_scalar("SELECT workspace_id FROM maps WHERE id = ?")
+        .bind(&rec.map_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if map_owner.as_deref() != Some(workspace_id) {
+        return Err(isolation_err("place map does not belong to workspace"));
+    }
+
+    let place_owner: Option<String> =
+        sqlx::query_scalar("SELECT m.workspace_id FROM places p JOIN maps m ON m.id = p.map_id WHERE p.id = ?")
+            .bind(&rec.id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if let Some(place_owner) = place_owner
+        && place_owner != workspace_id
+    {
+        return Err(isolation_err("place id belongs to another workspace"));
+    }
+
     sqlx::query(
         "INSERT INTO places (id, map_id, name, kind, geometry_json, heading, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -209,35 +256,47 @@ pub async fn upsert_place(pool: &SqlitePool, rec: &PlaceRecord) -> Result<(), sq
     .bind(rec.heading)
     .bind(&rec.created_at)
     .bind(&rec.updated_at)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(())
 }
 
-pub async fn delete_place(pool: &SqlitePool, map_id: &str, id: &str) -> Result<bool, sqlx::Error> {
-    let r = sqlx::query("DELETE FROM places WHERE map_id = ? AND id = ?")
-        .bind(map_id)
-        .bind(id)
-        .execute(pool)
-        .await?;
+pub async fn delete_place(pool: &SqlitePool, workspace_id: &str, map_id: &str, id: &str) -> Result<bool, sqlx::Error> {
+    let r = sqlx::query(
+        "DELETE FROM places
+         WHERE id = ? AND map_id = ?
+           AND EXISTS (SELECT 1 FROM maps WHERE id = ? AND workspace_id = ?)",
+    )
+    .bind(id)
+    .bind(map_id)
+    .bind(map_id)
+    .bind(workspace_id)
+    .execute(pool)
+    .await?;
     Ok(r.rows_affected() > 0)
 }
 
-/// 按名称在工作区内找地点：默认图优先（zoneRef 名称解析）。
+/// 按名称在工作区内找地点：默认图优先、`kind` 可选过滤（zoneRef 解析应传
+/// `Some(PlaceKind::Zone)`），`p.id` 作最终确定性 tiebreak。
 pub async fn find_place_by_name(
     pool: &SqlitePool,
     workspace_id: &str,
     name: &str,
+    kind: Option<PlaceKind>,
 ) -> Result<Option<PlaceRecord>, sqlx::Error> {
+    let kind = kind.map(PlaceKind::as_str);
     let row: Option<PlaceRow> = sqlx::query_as(
         "SELECT p.id, p.map_id, p.name, p.kind, p.geometry_json, p.heading, p.created_at, p.updated_at
          FROM places p JOIN maps m ON m.id = p.map_id
-         WHERE m.workspace_id = ? AND p.name = ?
-         ORDER BY m.is_default DESC, p.created_at ASC
+         WHERE m.workspace_id = ? AND p.name = ? AND (? IS NULL OR p.kind = ?)
+         ORDER BY m.is_default DESC, p.created_at ASC, p.id ASC
          LIMIT 1",
     )
     .bind(workspace_id)
     .bind(name)
+    .bind(kind)
+    .bind(kind)
     .fetch_optional(pool)
     .await?;
     row.map(PlaceRecord::try_from).transpose()
@@ -282,12 +341,23 @@ pub async fn get_thing_position(
 }
 
 /// 写回物坐标列（同一 workspace 才命中）。返回是否找到该物。
+/// `position.map_id` 必须属于该 workspace（且存在），否则拒绝。
 pub async fn set_thing_position(
     pool: &SqlitePool,
     workspace_id: &str,
     thing_id: &str,
     position: &ThingPosition,
 ) -> Result<bool, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    if let Some(map_id) = &position.map_id {
+        let map_owner: Option<String> = sqlx::query_scalar("SELECT workspace_id FROM maps WHERE id = ?")
+            .bind(map_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if map_owner.as_deref() != Some(workspace_id) {
+            return Err(isolation_err("position map does not belong to workspace"));
+        }
+    }
     let r = sqlx::query(
         "UPDATE things SET
              map_id = ?, position_x = ?, position_y = ?, position_level = ?,
@@ -303,8 +373,9 @@ pub async fn set_thing_position(
     .bind(&position.updated_at)
     .bind(thing_id)
     .bind(workspace_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(r.rows_affected() > 0)
 }
 
@@ -317,7 +388,13 @@ pub async fn get_zone_source(pool: &SqlitePool, workspace_id: &str) -> Result<Op
         .await
 }
 
+/// 只接受 `hierarchy` / `maps`（与 migration CHECK 双保险）。
 pub async fn set_zone_source(pool: &SqlitePool, workspace_id: &str, source: &str) -> Result<bool, sqlx::Error> {
+    if !matches!(source, "hierarchy" | "maps") {
+        return Err(sqlx::Error::Configuration(
+            format!("invalid zone_source: {source}").into(),
+        ));
+    }
     let r = sqlx::query("UPDATE workspaces SET zone_source = ? WHERE id = ?")
         .bind(source)
         .bind(workspace_id)
@@ -349,20 +426,25 @@ impl Db {
         delete_map(self.pool(), workspace_id, id).await
     }
 
-    pub async fn list_places(&self, map_id: &str) -> Result<Vec<PlaceRecord>, sqlx::Error> {
-        list_places(self.pool(), map_id).await
+    pub async fn list_places(&self, workspace_id: &str, map_id: &str) -> Result<Vec<PlaceRecord>, sqlx::Error> {
+        list_places(self.pool(), workspace_id, map_id).await
     }
 
-    pub async fn find_place(&self, map_id: &str, id: &str) -> Result<Option<PlaceRecord>, sqlx::Error> {
-        find_place(self.pool(), map_id, id).await
+    pub async fn find_place(
+        &self,
+        workspace_id: &str,
+        map_id: &str,
+        id: &str,
+    ) -> Result<Option<PlaceRecord>, sqlx::Error> {
+        find_place(self.pool(), workspace_id, map_id, id).await
     }
 
-    pub async fn upsert_place(&self, rec: &PlaceRecord) -> Result<(), sqlx::Error> {
-        upsert_place(self.pool(), rec).await
+    pub async fn upsert_place(&self, workspace_id: &str, rec: &PlaceRecord) -> Result<(), sqlx::Error> {
+        upsert_place(self.pool(), workspace_id, rec).await
     }
 
-    pub async fn delete_place(&self, map_id: &str, id: &str) -> Result<bool, sqlx::Error> {
-        delete_place(self.pool(), map_id, id).await
+    pub async fn delete_place(&self, workspace_id: &str, map_id: &str, id: &str) -> Result<bool, sqlx::Error> {
+        delete_place(self.pool(), workspace_id, map_id, id).await
     }
 
     pub async fn get_thing_position(
@@ -390,8 +472,13 @@ impl Db {
         set_zone_source(self.pool(), workspace_id, source).await
     }
 
-    pub async fn find_place_by_name(&self, workspace_id: &str, name: &str) -> Result<Option<PlaceRecord>, sqlx::Error> {
-        find_place_by_name(self.pool(), workspace_id, name).await
+    pub async fn find_place_by_name(
+        &self,
+        workspace_id: &str,
+        name: &str,
+        kind: Option<PlaceKind>,
+    ) -> Result<Option<PlaceRecord>, sqlx::Error> {
+        find_place_by_name(self.pool(), workspace_id, name, kind).await
     }
 }
 
@@ -476,10 +563,13 @@ mod tests {
         assert_eq!(db.list_maps("ws1").await.unwrap(), vec![m.clone()]);
 
         let p = place_rec("p1", "m1", "kitchen", PlaceKind::Zone, zone_geometry());
-        db.upsert_place(&p).await.unwrap();
-        assert_eq!(db.find_place("m1", "p1").await.unwrap(), Some(p.clone()));
-        assert_eq!(db.list_places("m1").await.unwrap(), vec![p.clone()]);
-        assert_eq!(db.find_place_by_name("ws1", "kitchen").await.unwrap(), Some(p.clone()));
+        db.upsert_place("ws1", &p).await.unwrap();
+        assert_eq!(db.find_place("ws1", "m1", "p1").await.unwrap(), Some(p.clone()));
+        assert_eq!(db.list_places("ws1", "m1").await.unwrap(), vec![p.clone()]);
+        assert_eq!(
+            db.find_place_by_name("ws1", "kitchen", None).await.unwrap(),
+            Some(p.clone())
+        );
 
         // point geometry 也走 JSON round-trip
         let landmark = place_rec(
@@ -489,11 +579,11 @@ mod tests {
             PlaceKind::Landmark,
             Geometry::Point { x: 1.5, y: 2.5 },
         );
-        db.upsert_place(&landmark).await.unwrap();
-        assert_eq!(db.find_place("m1", "p2").await.unwrap(), Some(landmark));
+        db.upsert_place("ws1", &landmark).await.unwrap();
+        assert_eq!(db.find_place("ws1", "m1", "p2").await.unwrap(), Some(landmark));
 
-        assert!(db.delete_place("m1", "p1").await.unwrap());
-        assert!(db.find_place("m1", "p1").await.unwrap().is_none());
+        assert!(db.delete_place("ws1", "m1", "p1").await.unwrap());
+        assert!(db.find_place("ws1", "m1", "p1").await.unwrap().is_none());
         assert!(db.delete_map("ws1", "m1").await.unwrap());
         assert!(db.find_map("ws1", "m1").await.unwrap().is_none());
     }
@@ -516,10 +606,10 @@ mod tests {
         let db = setup().await;
         db.upsert_map(&map_rec("m1", "ws1", "floor-1", true)).await.unwrap();
         let p = place_rec("p1", "m1", "kitchen", PlaceKind::Zone, zone_geometry());
-        db.upsert_place(&p).await.unwrap();
+        db.upsert_place("ws1", &p).await.unwrap();
         let mut dup = p.clone();
         dup.id = "p2".into();
-        let err = db.upsert_place(&dup).await.unwrap_err();
+        let err = db.upsert_place("ws1", &dup).await.unwrap_err();
         assert!(err.to_string().contains("UNIQUE"), "unexpected: {err}");
     }
 
@@ -562,9 +652,9 @@ mod tests {
         db.set_thing_position("ws1", "t1", &next).await.unwrap();
         assert_eq!(db.get_thing_position("ws1", "t1").await.unwrap(), Some(next));
 
-        // 跨工作区不可见/不可写
+        // 跨工作区不可见；外部工作区写坐标（map m1 属 ws1）被拒绝
         assert!(db.get_thing_position("ws2", "t1").await.unwrap().is_none());
-        assert!(!db.set_thing_position("ws2", "t1", &pos).await.unwrap());
+        assert!(db.set_thing_position("ws2", "t1", &pos).await.is_err());
     }
 
     #[tokio::test]
@@ -581,15 +671,156 @@ mod tests {
     async fn workspace_scoping_isolates_maps_places_positions() {
         let db = setup().await;
         db.upsert_map(&map_rec("m1", "ws1", "floor-1", true)).await.unwrap();
-        db.upsert_place(&place_rec("p1", "m1", "kitchen", PlaceKind::Zone, zone_geometry()))
-            .await
-            .unwrap();
+        db.upsert_place(
+            "ws1",
+            &place_rec("p1", "m1", "kitchen", PlaceKind::Zone, zone_geometry()),
+        )
+        .await
+        .unwrap();
 
         assert!(db.list_maps("ws2").await.unwrap().is_empty());
         assert!(db.find_map("ws2", "m1").await.unwrap().is_none());
         assert!(!db.delete_map("ws2", "m1").await.unwrap());
         // place 通过 map 归属工作区
-        assert!(db.find_place_by_name("ws2", "kitchen").await.unwrap().is_none());
-        assert!(db.find_place_by_name("ws1", "kitchen").await.unwrap().is_some());
+        assert!(db.find_place_by_name("ws2", "kitchen", None).await.unwrap().is_none());
+        assert!(db.find_place_by_name("ws1", "kitchen", None).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn place_reads_and_writes_are_workspace_scoped() {
+        let db = setup().await;
+        db.upsert_map(&map_rec("m1", "ws1", "floor-1", true)).await.unwrap();
+        db.upsert_map(&map_rec("m2", "ws2", "floor-1", true)).await.unwrap();
+        let p = place_rec("p2", "m2", "kitchen", PlaceKind::Zone, zone_geometry());
+        db.upsert_place("ws2", &p).await.unwrap();
+
+        // ws1 不能通过 ws2 的 map_id 列举/读取/删除地点
+        assert!(db.list_places("ws1", "m2").await.unwrap().is_empty());
+        assert!(db.find_place("ws1", "m2", "p2").await.unwrap().is_none());
+        assert!(!db.delete_place("ws1", "m2", "p2").await.unwrap());
+        assert!(db.find_place("ws2", "m2", "p2").await.unwrap().is_some());
+
+        // 向外部 map 插入地点被拒绝
+        let foreign = place_rec("p3", "m2", "garage", PlaceKind::Zone, zone_geometry());
+        assert!(db.upsert_place("ws1", &foreign).await.is_err());
+        assert!(db.find_place("ws2", "m2", "p3").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn upserts_cannot_rehome_across_workspaces() {
+        let db = setup().await;
+        db.upsert_map(&map_rec("m1", "ws1", "floor-1", true)).await.unwrap();
+        db.upsert_map(&map_rec("m2", "ws2", "floor-1", true)).await.unwrap();
+
+        // map id 跨工作区冲突被拒绝，原行不变
+        let mut rehome = map_rec("m1", "ws2", "stolen", false);
+        rehome.bounds.x = 9.0;
+        assert!(db.upsert_map(&rehome).await.is_err());
+        let original = db.find_map("ws1", "m1").await.unwrap().unwrap();
+        assert_eq!(original.name, "floor-1");
+        assert!(db.find_map("ws2", "m1").await.unwrap().is_none());
+
+        // place id 跨工作区冲突被拒绝
+        db.upsert_place(
+            "ws1",
+            &place_rec("p1", "m1", "kitchen", PlaceKind::Zone, zone_geometry()),
+        )
+        .await
+        .unwrap();
+        let stolen = place_rec("p1", "m2", "kitchen", PlaceKind::Zone, zone_geometry());
+        assert!(db.upsert_place("ws2", &stolen).await.is_err());
+        let original = db.find_place("ws1", "m1", "p1").await.unwrap().unwrap();
+        assert_eq!(original.map_id, "m1");
+        assert!(db.find_place("ws2", "m2", "p1").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn set_position_rejects_foreign_or_missing_map() {
+        let db = setup().await;
+        db.upsert_map(&map_rec("m1", "ws1", "floor-1", true)).await.unwrap();
+        db.upsert_map(&map_rec("m2", "ws2", "floor-1", true)).await.unwrap();
+        insert_thing(&db, "t1", "ws1").await;
+
+        let mut pos = ThingPosition {
+            map_id: Some("m2".into()),
+            x: Some(1.0),
+            y: Some(2.0),
+            ..Default::default()
+        };
+        assert!(db.set_thing_position("ws1", "t1", &pos).await.is_err());
+        assert_eq!(
+            db.get_thing_position("ws1", "t1").await.unwrap().unwrap(),
+            ThingPosition::default()
+        );
+
+        pos.map_id = Some("missing".into());
+        assert!(db.set_thing_position("ws1", "t1", &pos).await.is_err());
+
+        pos.map_id = Some("m1".into());
+        assert!(db.set_thing_position("ws1", "t1", &pos).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn zone_source_rejects_unknown_values_and_new_workspaces_use_maps() {
+        let db = setup().await;
+        assert!(db.set_zone_source("ws1", "bogus").await.is_err());
+        assert_eq!(db.get_zone_source("ws1").await.unwrap().as_deref(), Some("hierarchy"));
+
+        // CHECK 约束兜底（绕过 app 校验的直写也被拒）
+        let err = sqlx::query("UPDATE workspaces SET zone_source = 'bogus' WHERE id = 'ws1'")
+            .execute(db.pool())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("CHECK"), "unexpected: {err}");
+
+        // 新建工作区默认 maps；存量工作区保持 hierarchy
+        let ws = db
+            .create_workspace("tenant-default-001", "new-ws", None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(db.get_zone_source(&ws.id).await.unwrap().as_deref(), Some("maps"));
+    }
+
+    #[tokio::test]
+    async fn find_place_by_name_filters_kind_for_zone_ref() {
+        let db = setup().await;
+        db.upsert_map(&map_rec("m1", "ws1", "floor-1", true)).await.unwrap();
+        db.upsert_map(&map_rec("m2", "ws1", "floor-2", false)).await.unwrap();
+        db.upsert_place(
+            "ws1",
+            &place_rec(
+                "p1",
+                "m1",
+                "gate",
+                PlaceKind::Landmark,
+                Geometry::Point { x: 0.0, y: 0.0 },
+            ),
+        )
+        .await
+        .unwrap();
+        db.upsert_place("ws1", &place_rec("p2", "m2", "gate", PlaceKind::Zone, zone_geometry()))
+            .await
+            .unwrap();
+
+        let zone = db
+            .find_place_by_name("ws1", "gate", Some(PlaceKind::Zone))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(zone.id, "p2");
+        assert_eq!(zone.kind, PlaceKind::Zone);
+
+        let landmark = db
+            .find_place_by_name("ws1", "gate", Some(PlaceKind::Landmark))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(landmark.id, "p1");
+
+        // 不带过滤时默认图优先
+        assert_eq!(
+            db.find_place_by_name("ws1", "gate", None).await.unwrap().unwrap().id,
+            "p1"
+        );
     }
 }

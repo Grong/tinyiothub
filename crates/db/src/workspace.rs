@@ -412,8 +412,8 @@ pub(crate) async fn create_workspace(
 
     sqlx::query(
         r#"
-        INSERT INTO workspaces (id, name, description, tenant_id, agent_id, agent_config, require_action_confirm, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+        INSERT INTO workspaces (id, name, description, tenant_id, agent_id, agent_config, require_action_confirm, zone_source, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 1, 'maps', ?, ?)
         "#,
     )
     .bind(&id)
