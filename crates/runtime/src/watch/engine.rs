@@ -94,12 +94,12 @@ impl WatchEngine {
     /// 注册/覆盖规则（幂等：同 id 重注册先摘旧索引）。规则非法 → Err。
     /// 存在性校验单点在 API 层（DB 真相）；engine 不查实时态——only-new-data
     /// 语义天然容错：无实时态 = 不成立 = armed，首次事件进场即正常求值（C-1）。
-    pub fn upsert_rule(&mut self, rule: WatchRule) -> Result<(), String> {
+    pub async fn upsert_rule(&mut self, rule: WatchRule) -> Result<(), String> {
         rule.validate()?;
         let key = rule.condition.index_key();
         self.remove_rule(&rule.id);
         // only-new-data：注册时已成立 → 不武装，须先不成立再成立才命中。
-        let armed = !self.current_match(&rule.condition);
+        let armed = !self.current_match(&rule.condition).await;
         self.index.entry(key).or_default().insert(rule.id.clone());
         self.rules.insert(
             rule.id.clone(),
@@ -136,6 +136,7 @@ impl WatchEngine {
         let old = self
             .live
             .summary(thing_id)
+            .await
             .and_then(|s| s.values.get(property).cloned());
         self.append_ledger(
             workspace_id,
@@ -152,7 +153,7 @@ impl WatchEngine {
     /// 可用性事件：落 state_change 账（field=__availability）后更新 LiveState
     /// 并求值该物的 __availability/__health。
     pub async fn on_availability(&mut self, workspace_id: &str, thing_id: &str, online: bool) {
-        let old = self.live.summary(thing_id).map(|s| s.online);
+        let old = self.live.summary(thing_id).await.map(|s| s.online);
         self.append_ledger(
             workspace_id,
             "state_change",
@@ -223,13 +224,13 @@ impl WatchEngine {
 
     /// 单物实时摘要（Task 10 工具读面；委托 LiveState::summary，
     /// 无实时态 → None）。
-    pub fn summary(&self, thing_id: &str) -> Option<ThingLiveSummary> {
-        self.live.summary(thing_id)
+    pub async fn summary(&self, thing_id: &str) -> Option<ThingLiveSummary> {
+        self.live.summary(thing_id).await
     }
 
     /// E2 turn 开头快照（spec §4）：本工作区实时态，health worst-first。
-    pub fn workspace_snapshot(&self, workspace_id: &str) -> super::live_state::WorkspaceSnapshot {
-        self.live.workspace_snapshot(workspace_id)
+    pub async fn workspace_snapshot(&self, workspace_id: &str) -> super::live_state::WorkspaceSnapshot {
+        self.live.workspace_snapshot(workspace_id).await
     }
 
     /// 账本写彻底失败计数（metric 兜底）。
@@ -244,7 +245,7 @@ impl WatchEngine {
 
     /// 对该物的给定字段逐一求值：从 LiveState 摘要取当前值，走倒排索引。
     async fn evaluate_thing(&mut self, thing_id: &str, fields: &[&str]) {
-        let Some(summary) = self.live.summary(thing_id) else {
+        let Some(summary) = self.live.summary(thing_id).await else {
             return;
         };
         for field in fields {
@@ -290,7 +291,7 @@ impl WatchEngine {
         };
         let thing_id = condition_thing_id(&rule.condition).to_string();
         // spec §4.3：摘要装配异常降级为空摘要，值守链路不炸。
-        let summary = self.live.summary(&thing_id).unwrap_or(ThingLiveSummary {
+        let summary = self.live.summary(&thing_id).await.unwrap_or(ThingLiveSummary {
             health: Health::Unknown,
             zone: String::new(),
             online: false,
@@ -356,9 +357,9 @@ impl WatchEngine {
     }
 
     /// 注册时初始成立判定（only-new-data）：无实时态/无当前值视为不成立。
-    fn current_match(&self, condition: &WatchCondition) -> bool {
+    async fn current_match(&self, condition: &WatchCondition) -> bool {
         let (thing_id, field) = condition.index_key();
-        let Some(summary) = self.live.summary(&thing_id) else {
+        let Some(summary) = self.live.summary(&thing_id).await else {
             return false;
         };
         let Some(value) = Self::field_value(&summary, &field) else {
@@ -568,7 +569,7 @@ mod tests {
     #[tokio::test]
     async fn hit_sends_channel_and_logs_ledger() {
         let (_cache, mut engine, mut rx, ledger, _store) = setup(vec![thing("t1")]);
-        engine.upsert_rule(rule("r1", gt30("t1"), false)).unwrap();
+        engine.upsert_rule(rule("r1", gt30("t1"), false)).await.unwrap();
         engine.on_property_change("w1", "t1", "温度", "31.5").await;
         let hit = rx.try_recv().unwrap();
         assert_eq!(hit.rule_id, "r1");
@@ -590,7 +591,7 @@ mod tests {
     async fn only_new_data_requires_toggle_before_hit() {
         let (_cache, mut engine, mut rx, _ledger, _store) = setup(vec![thing("t1")]);
         engine.on_property_change("w1", "t1", "温度", "31").await; // 注册前条件已成立
-        engine.upsert_rule(rule("r1", gt30("t1"), false)).unwrap();
+        engine.upsert_rule(rule("r1", gt30("t1"), false)).await.unwrap();
         engine.on_property_change("w1", "t1", "温度", "32").await; // 仍成立 → 不命中
         assert!(rx.try_recv().is_err());
         engine.on_property_change("w1", "t1", "温度", "25").await; // 不成立 → rearm
@@ -605,7 +606,7 @@ mod tests {
         let (_cache, mut engine, mut rx, _ledger, store) = setup(vec![thing("t1")]);
         let r = rule("r1", gt30("t1"), false);
         store.insert(&r).await.unwrap(); // 模拟 API 写穿后的 DB 行
-        engine.upsert_rule(r).unwrap();
+        engine.upsert_rule(r).await.unwrap();
         engine.on_property_change("w1", "t1", "温度", "31").await;
         assert!(rx.try_recv().is_ok());
         assert!(!engine.rules.contains_key("r1"));
@@ -619,7 +620,7 @@ mod tests {
     #[tokio::test]
     async fn persistent_merges_hits_within_1s() {
         let (_cache, mut engine, mut rx, ledger, _store) = setup(vec![thing("t1")]);
-        engine.upsert_rule(rule("r1", gt30("t1"), true)).unwrap();
+        engine.upsert_rule(rule("r1", gt30("t1"), true)).await.unwrap();
         engine.on_property_change("w1", "t1", "温度", "31").await;
         assert!(rx.try_recv().is_ok()); // 第一次命中
         engine.on_property_change("w1", "t1", "温度", "20").await; // 不成立 → rearm
@@ -653,7 +654,7 @@ mod tests {
         let (_cache, mut engine, mut rx, ledger, store) = setup(vec![thing("t1")]);
         let r = rule("r1", gt30("t1"), false);
         store.insert(&r).await.unwrap();
-        engine.upsert_rule(r).unwrap();
+        engine.upsert_rule(r).await.unwrap();
         engine.sweep_timeouts(Utc::now() + chrono::Duration::seconds(599)).await;
         assert!(engine.rules.contains_key("r1")); // 未到期不动
         assert!(store.contains("r1"));
@@ -677,7 +678,7 @@ mod tests {
     #[tokio::test]
     async fn persistent_rules_are_not_swept() {
         let (_cache, mut engine, mut rx, ledger, _store) = setup(vec![thing("t1")]);
-        engine.upsert_rule(rule("r1", gt30("t1"), true)).unwrap();
+        engine.upsert_rule(rule("r1", gt30("t1"), true)).await.unwrap();
         engine
             .sweep_timeouts(Utc::now() + chrono::Duration::seconds(3601))
             .await;
@@ -693,11 +694,11 @@ mod tests {
     #[tokio::test]
     async fn upsert_unknown_thing_arms_and_hits_on_first_event() {
         let (_cache, mut engine, mut rx, _ledger, _store) = setup(vec![]);
-        engine.upsert_rule(rule("r1", gt30("ghost"), false)).unwrap();
+        engine.upsert_rule(rule("r1", gt30("ghost"), false)).await.unwrap();
         assert!(engine.rules["r1"].armed, "无实时态 = 不成立 = armed");
         let mut bad = rule("r2", gt30("t1"), false);
         bad.timeout_secs = 0;
-        assert!(engine.upsert_rule(bad).is_err());
+        assert!(engine.upsert_rule(bad).await.is_err());
         assert_eq!(engine.active_rule_count(), 1);
         // 首次事件进场即正常求值命中
         engine.on_property_change("w1", "ghost", "温度", "31").await;
@@ -733,7 +734,7 @@ mod tests {
         let store = Arc::new(StubRuleStore::default());
         let (tx, mut rx) = mpsc::channel(16);
         let mut engine = WatchEngine::new(live, ledger.clone(), store, tx);
-        engine.upsert_rule(rule("r1", gt30("t1"), false)).unwrap();
+        engine.upsert_rule(rule("r1", gt30("t1"), false)).await.unwrap();
         engine.on_property_change("w1", "t1", "温度", "31").await;
         assert!(rx.try_recv().is_ok()); // 值守链路不因账本故障中断
         assert_eq!(ledger.attempts.load(Ordering::Relaxed), 2 * LEDGER_MAX_ATTEMPTS);
@@ -758,7 +759,7 @@ mod tests {
             rule("r3", gt30("t2"), false),
         ] {
             store.insert(&r).await.unwrap();
-            engine.upsert_rule(r).unwrap();
+            engine.upsert_rule(r).await.unwrap();
         }
         engine.invalidate_thing("t1").await;
         assert!(!engine.rules.contains_key("r1"));
@@ -794,6 +795,7 @@ mod tests {
                 },
                 false,
             ))
+            .await
             .unwrap();
         engine.on_property_change("w1", "t1", "温度", "20").await; // 仍 Online → 不命中
         assert!(rx.try_recv().is_err());
@@ -821,6 +823,7 @@ mod tests {
                 },
                 false,
             ))
+            .await
             .unwrap();
         engine.on_availability("w1", "t1", true).await; // 在线事件 → 不命中
         assert!(rx.try_recv().is_err());
@@ -838,7 +841,7 @@ mod tests {
     #[tokio::test]
     async fn upsert_same_id_replaces_without_duplicate() {
         let (_cache, mut engine, mut rx, _ledger, _store) = setup(vec![thing("t1")]);
-        engine.upsert_rule(rule("r1", gt30("t1"), false)).unwrap();
+        engine.upsert_rule(rule("r1", gt30("t1"), false)).await.unwrap();
         engine
             .upsert_rule(rule(
                 "r1",
@@ -850,6 +853,7 @@ mod tests {
                 },
                 false,
             ))
+            .await
             .unwrap();
         assert_eq!(engine.active_rule_count(), 1);
         engine.on_property_change("w1", "t1", "温度", "31").await; // 旧条件已摘除

@@ -6,13 +6,19 @@
 //!
 //! health v1（spec §2.2，E4 声明制后细化）：ThingStatus error→Bad；
 //! offline→Attention；否则 Ok；空洞期（状态未知）→Unknown。
-//! zone v1：沿 parent_id 读 cache 拼祖先链名（根在前，`/` 连接），无祖先=空串。
+//!
+//! zone（E4d §2.2）：`workspaces.zone_source='maps'` 且注入了
+//! [`ZoneService`] 时由 maps 权威解析（无位置/无 zone → 空串，**不回退**层级）；
+//! `hierarchy` 或未注入 ZoneService（测试/降级形态）时保持 E1b 行为：沿
+//! parent_id 读 cache 拼祖先链名（根在前，`/` 连接），无祖先=空串。
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use chrono::Utc;
 use tinyiothub_core::models::thing::ThingStatus;
 
+use crate::maps::ZoneService;
 use crate::ports::ThingCacheSource;
 
 /// 物健康度（v1 派生，非存储）。
@@ -77,16 +83,29 @@ struct ThingLive {
     values: HashMap<String, String>,
 }
 
-/// 实时态中枢。纯逻辑、零 sqlx；持久化读面只经 `ThingCacheSource`。
+/// 实时态中枢。纯逻辑、零 sqlx；持久化读面只经 port（cache / ZoneService）。
 pub struct LiveState {
     cache: Arc<dyn ThingCacheSource>,
+    /// E4d maps 权威；None = 未接线（测试/降级）→ hierarchy。
+    zones: Option<Arc<ZoneService>>,
     states: HashMap<String, ThingLive>,
 }
 
 impl LiveState {
+    /// hierarchy-only 形态（E1b 行为，测试/未接线）。
     pub fn new(cache: Arc<dyn ThingCacheSource>) -> Self {
         Self {
             cache,
+            zones: None,
+            states: HashMap::new(),
+        }
+    }
+
+    /// 注入 ZoneService：`zone_source=maps` 的工作区走 maps 权威。
+    pub fn with_zone_service(cache: Arc<dyn ThingCacheSource>, zones: Arc<ZoneService>) -> Self {
+        Self {
+            cache,
+            zones: Some(zones),
             states: HashMap::new(),
         }
     }
@@ -145,11 +164,11 @@ impl LiveState {
 
     /// 单物摘要；无实时态（未见过该物事件且未经重同步）返回 None。
     /// health/zone 在读时即时派生，永远与 cache 真相一致。
-    pub fn summary(&self, thing_id: &str) -> Option<ThingLiveSummary> {
+    pub async fn summary(&self, thing_id: &str) -> Option<ThingLiveSummary> {
         let live = self.states.get(thing_id)?;
         Some(ThingLiveSummary {
             health: Self::derive_health(live),
-            zone: self.derive_zone(thing_id),
+            zone: self.derive_zone(thing_id, None).await,
             online: live.online,
             values: live.values.clone(),
         })
@@ -157,30 +176,29 @@ impl LiveState {
 
     /// E2：工作区实时快照。只含 cache 确知属于该工作区的物
     /// （Lagged 重同步读全局 cache，必须在此按工作区隔离）。
-    pub fn workspace_snapshot(&self, workspace_id: &str) -> WorkspaceSnapshot {
-        let mut devices: Vec<DeviceSnapshot> = self
-            .states
-            .iter()
-            .filter_map(|(id, live)| {
-                let cached = self.cache.get(id)?;
-                if cached.workspace_id.as_deref() != Some(workspace_id) {
-                    return None;
-                }
-                Some(DeviceSnapshot {
-                    thing_id: id.clone(),
-                    name: cached.get_display_name().to_string(),
-                    health: Self::derive_health(live),
-                    online: live.online,
-                    zone: self.derive_zone(id),
-                    values: live.values.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-                    properties: cached
-                        .properties
-                        .as_ref()
-                        .map(|props| props.iter().map(|p| p.name.clone()).collect())
-                        .unwrap_or_default(),
-                })
-            })
-            .collect();
+    pub async fn workspace_snapshot(&self, workspace_id: &str) -> WorkspaceSnapshot {
+        let mut devices: Vec<DeviceSnapshot> = Vec::with_capacity(self.states.len());
+        for (id, live) in &self.states {
+            let Some(cached) = self.cache.get(id) else {
+                continue;
+            };
+            if cached.workspace_id.as_deref() != Some(workspace_id) {
+                continue;
+            }
+            devices.push(DeviceSnapshot {
+                thing_id: id.clone(),
+                name: cached.get_display_name().to_string(),
+                health: Self::derive_health(live),
+                online: live.online,
+                zone: self.derive_zone(id, Some(workspace_id)).await,
+                values: live.values.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                properties: cached
+                    .properties
+                    .as_ref()
+                    .map(|props| props.iter().map(|p| p.name.clone()).collect())
+                    .unwrap_or_default(),
+            });
+        }
         devices.sort_by(|a, b| {
             a.health
                 .rank()
@@ -205,9 +223,42 @@ impl LiveState {
         }
     }
 
-    /// zone v1：沿 parent_id 读 cache 拼祖先链名（根在前，`/` 连接），无祖先=空串。
-    /// 祖先不在 cache（悬空 parent）时以 id 原文充段；深度上限防环。
-    fn derive_zone(&self, thing_id: &str) -> String {
+    /// E4d zone 权威切换：map 权威 → ZoneService；否则沿 parent_id 拼祖先链。
+    ///
+    /// maps 模式返回 `None` 时保持空串（spec §2.2：不回退层级）。MapStore 读失败
+    /// 时降级为 hierarchy（可用性优先；maps 数据缺失不等于层级不存在）。显式
+    /// `placement.zoneRef` 待 Task 4 物化进物记录后接入，当前传 None。
+    async fn derive_zone(&self, thing_id: &str, workspace_hint: Option<&str>) -> String {
+        let Some(zones) = &self.zones else {
+            return self.hierarchy_zone(thing_id);
+        };
+        let workspace_id = match workspace_hint {
+            Some(ws) => ws.to_string(),
+            None => match self.cache.get(thing_id).and_then(|thing| thing.workspace_id) {
+                Some(ws) => ws,
+                None => return self.hierarchy_zone(thing_id),
+            },
+        };
+        match zones.zone_source(&workspace_id).await {
+            Ok(source) if source == "maps" => match zones.zone_for(&workspace_id, thing_id, None, Utc::now()).await {
+                Ok(Some(name)) => name,
+                Ok(None) => String::new(),
+                Err(e) => {
+                    tracing::warn!(workspace_id, thing_id, error = %e, "zone_source=maps 读取失败，降级 hierarchy");
+                    self.hierarchy_zone(thing_id)
+                }
+            },
+            Ok(_) => self.hierarchy_zone(thing_id),
+            Err(e) => {
+                tracing::warn!(workspace_id, error = %e, "zone_source 读取失败，降级 hierarchy");
+                self.hierarchy_zone(thing_id)
+            }
+        }
+    }
+
+    /// zone v1（hierarchy 回退）：沿 parent_id 读 cache 拼祖先链名（根在前，`/` 连接），
+    /// 无祖先=空串。祖先不在 cache（悬空 parent）时以 id 原文充段；深度上限防环。
+    fn hierarchy_zone(&self, thing_id: &str) -> String {
         const MAX_DEPTH: usize = 10;
         let mut segments = Vec::new();
         let mut cursor = self.cache.get(thing_id).and_then(|t| t.parent_id);
@@ -302,8 +353,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn lagged_triggers_full_resync_from_cache() {
+    #[tokio::test]
+    async fn lagged_triggers_full_resync_from_cache() {
         let cache = Arc::new(StubCache::with_things(vec![thing_with_prop(
             "t1",
             "温度",
@@ -312,17 +363,17 @@ mod tests {
         )]));
         let mut live = LiveState::new(cache.clone());
         // 空洞：live 里 t1 无值
-        assert_eq!(live.summary("t1"), None);
+        assert_eq!(live.summary("t1").await, None);
         live.handle_lagged();
-        let s = live.summary("t1").unwrap();
+        let s = live.summary("t1").await.unwrap();
         assert_eq!(s.values.get("温度").map(String::as_str), Some("31.5"));
         assert_eq!(s.zone, "楼A");
         assert_eq!(s.health, Health::Ok);
     }
 
     /// health v1 降级顺序：Bad > Attention > Ok；cache 真相压过可用性信号。
-    #[test]
-    fn health_degrades_bad_over_attention_over_ok() {
+    #[tokio::test]
+    async fn health_degrades_bad_over_attention_over_ok() {
         let base = |id: &str, status: ThingStatus| Thing {
             id: id.into(),
             name: id.into(),
@@ -336,19 +387,19 @@ mod tests {
         ]));
         let mut live = LiveState::new(cache);
         live.handle_lagged();
-        assert_eq!(live.summary("t-ok").unwrap().health, Health::Ok);
-        assert_eq!(live.summary("t-off").unwrap().health, Health::Attention);
-        assert_eq!(live.summary("t-err").unwrap().health, Health::Bad);
+        assert_eq!(live.summary("t-ok").await.unwrap().health, Health::Ok);
+        assert_eq!(live.summary("t-off").await.unwrap().health, Health::Attention);
+        assert_eq!(live.summary("t-err").await.unwrap().health, Health::Bad);
 
         // error 物收到在线信号后，下一次属性事件刷新回 cache 真相仍 Bad。
         live.set_availability("t-err", true);
         live.apply_property_change("t-err", "温度", "30");
-        assert_eq!(live.summary("t-err").unwrap().health, Health::Bad);
+        assert_eq!(live.summary("t-err").await.unwrap().health, Health::Bad);
     }
 
     /// zone v1：多级祖先链按根在前拼接，用显示名。
-    #[test]
-    fn zone_joins_ancestor_chain_root_first() {
+    #[tokio::test]
+    async fn zone_joins_ancestor_chain_root_first() {
         let base = |id: &str, display: &str, parent: Option<&str>| Thing {
             id: id.into(),
             name: id.into(),
@@ -363,54 +414,54 @@ mod tests {
         ]));
         let mut live = LiveState::new(cache);
         live.handle_lagged();
-        assert_eq!(live.summary("t1").unwrap().zone, "园区A/3号楼");
+        assert_eq!(live.summary("t1").await.unwrap().zone, "园区A/3号楼");
     }
 
     /// zone v1：无祖先=空串。
-    #[test]
-    fn zone_empty_for_root_thing() {
+    #[tokio::test]
+    async fn zone_empty_for_root_thing() {
         let cache = Arc::new(StubCache::with_things(vec![thing_with_prop(
             "t1", "温度", "31.5", None,
         )]));
         let mut live = LiveState::new(cache);
         live.handle_lagged();
-        assert_eq!(live.summary("t1").unwrap().zone, "");
+        assert_eq!(live.summary("t1").await.unwrap().zone, "");
     }
 
     /// 空洞期（事件先于 cache 真相到达）→Unknown；cache 补上后重同步恢复。
-    #[test]
-    fn unknown_health_recovers_after_resync() {
+    #[tokio::test]
+    async fn unknown_health_recovers_after_resync() {
         let cache = Arc::new(StubCache::with_things(vec![]));
         let mut live = LiveState::new(cache.clone());
         live.apply_property_change("ghost", "温度", "20");
-        assert_eq!(live.summary("ghost").unwrap().health, Health::Unknown);
+        assert_eq!(live.summary("ghost").await.unwrap().health, Health::Unknown);
 
         cache.insert(thing_with_prop("ghost", "温度", "21", None));
         live.handle_lagged();
-        let s = live.summary("ghost").unwrap();
+        let s = live.summary("ghost").await.unwrap();
         assert_eq!(s.health, Health::Ok);
         assert_eq!(s.values.get("温度").map(String::as_str), Some("21"));
     }
 
     /// 可用性事件即可建条目：online 标记与离线 Attention 派生。
-    #[test]
-    fn availability_alone_creates_entry() {
+    #[tokio::test]
+    async fn availability_alone_creates_entry() {
         let cache = Arc::new(StubCache::with_things(vec![]));
         let mut live = LiveState::new(cache);
         live.set_availability("t1", true);
-        let s = live.summary("t1").unwrap();
+        let s = live.summary("t1").await.unwrap();
         assert!(s.online);
         assert_eq!(s.health, Health::Ok);
         live.set_availability("t1", false);
-        let s = live.summary("t1").unwrap();
+        let s = live.summary("t1").await.unwrap();
         assert!(!s.online);
         assert_eq!(s.health, Health::Attention);
     }
 
     /// Error 物收到可用性事件仍 Bad：cache 真相压过可用性信号，
     /// 不得被无条件覆写成 Online/Offline（与 apply_property_change 对称）。
-    #[test]
-    fn error_thing_stays_bad_on_availability_event() {
+    #[tokio::test]
+    async fn error_thing_stays_bad_on_availability_event() {
         let cache = Arc::new(StubCache::with_things(vec![Thing {
             id: "t-err".into(),
             name: "t-err".into(),
@@ -419,10 +470,226 @@ mod tests {
         }]));
         let mut live = LiveState::new(cache);
         live.handle_lagged();
-        assert_eq!(live.summary("t-err").unwrap().health, Health::Bad);
+        assert_eq!(live.summary("t-err").await.unwrap().health, Health::Bad);
         live.set_availability("t-err", true);
-        assert_eq!(live.summary("t-err").unwrap().health, Health::Bad);
+        assert_eq!(live.summary("t-err").await.unwrap().health, Health::Bad);
         live.set_availability("t-err", false);
-        assert_eq!(live.summary("t-err").unwrap().health, Health::Bad);
+        assert_eq!(live.summary("t-err").await.unwrap().health, Health::Bad);
+    }
+
+    // ── E4d zone 权威切换 ────────────────────────────────────────────
+
+    use std::time::Duration;
+
+    use async_trait::async_trait;
+
+    use crate::maps::{
+        Geometry, LocationTrust, MapBounds, MapRecord, PlaceKind, PlaceRecord, ThingPosition, TrustThresholds,
+        ZoneService,
+    };
+    use crate::ports::MapStore;
+
+    /// 可切换 zone_source 的 MapStore 桩。
+    struct StubMapStore {
+        source: Mutex<String>,
+        maps: Vec<MapRecord>,
+        places: Vec<PlaceRecord>,
+        positions: HashMap<String, ThingPosition>,
+    }
+
+    impl StubMapStore {
+        fn with_zone_location() -> Self {
+            Self {
+                source: Mutex::new("maps".into()),
+                maps: vec![MapRecord {
+                    id: "m1".into(),
+                    workspace_id: "ws1".into(),
+                    name: "一楼".into(),
+                    bounds: MapBounds {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 100.0,
+                        h: 100.0,
+                    },
+                    anchor_map_id: None,
+                    is_default: true,
+                    created_at: "2026-10-22T00:00:00Z".into(),
+                    updated_at: "2026-10-22T00:00:00Z".into(),
+                }],
+                places: vec![PlaceRecord {
+                    id: "z1".into(),
+                    map_id: "m1".into(),
+                    name: "车间A".into(),
+                    kind: PlaceKind::Zone,
+                    geometry: Geometry::Polygon {
+                        points: vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)],
+                    },
+                    heading: None,
+                    created_at: "2026-10-22T00:00:00Z".into(),
+                    updated_at: "2026-10-22T00:00:00Z".into(),
+                }],
+                positions: HashMap::from([(
+                    "t1".to_string(),
+                    ThingPosition {
+                        map_id: None,
+                        x: Some(1.0),
+                        y: Some(1.0),
+                        level: None,
+                        heading: None,
+                        trust: LocationTrust::Trusted,
+                        updated_at: Some("2026-10-22T00:00:00Z".into()),
+                    },
+                )]),
+            }
+        }
+
+        fn without_position(mut self) -> Self {
+            self.positions.clear();
+            self
+        }
+
+        fn set_source(&self, source: &str) {
+            *self.source.lock().unwrap() = source.into();
+        }
+    }
+
+    #[async_trait]
+    impl MapStore for StubMapStore {
+        async fn list_maps(&self, _workspace_id: &str) -> Result<Vec<MapRecord>, String> {
+            Ok(self.maps.clone())
+        }
+
+        async fn default_map(&self, _workspace_id: &str) -> Result<Option<MapRecord>, String> {
+            Ok(self.maps.iter().find(|map| map.is_default).cloned())
+        }
+
+        async fn upsert_map(&self, _map: &MapRecord) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn delete_map(&self, _workspace_id: &str, _id: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        async fn list_places(&self, _workspace_id: &str, map_id: &str) -> Result<Vec<PlaceRecord>, String> {
+            Ok(self
+                .places
+                .iter()
+                .filter(|place| place.map_id == map_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn find_place_by_name(
+            &self,
+            _workspace_id: &str,
+            name: &str,
+            kind: Option<PlaceKind>,
+        ) -> Result<Option<PlaceRecord>, String> {
+            Ok(self
+                .places
+                .iter()
+                .find(|place| place.name == name && kind.is_none_or(|k| place.kind == k))
+                .cloned())
+        }
+
+        async fn upsert_place(&self, _workspace_id: &str, _place: &PlaceRecord) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn delete_place(&self, _workspace_id: &str, _map_id: &str, _id: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        async fn get_position(&self, _workspace_id: &str, thing_id: &str) -> Result<Option<ThingPosition>, String> {
+            Ok(self.positions.get(thing_id).cloned())
+        }
+
+        async fn set_position(
+            &self,
+            _workspace_id: &str,
+            _thing_id: &str,
+            _position: &ThingPosition,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn zone_source(&self, _workspace_id: &str) -> Result<String, String> {
+            Ok(self.source.lock().unwrap().clone())
+        }
+    }
+
+    /// 带层级（p1←t1）且属于 ws1 的缓存。
+    fn hierarchy_cache() -> Arc<StubCache> {
+        let parent = Thing {
+            id: "p1".into(),
+            name: "p1".into(),
+            display_name: Some("楼A".into()),
+            workspace_id: Some("ws1".into()),
+            ..Thing::default()
+        };
+        let mut child = thing_with_prop("t1", "温度", "31.5", Some("p1"));
+        child.workspace_id = Some("ws1".into());
+        Arc::new(StubCache::with_things(vec![parent, child]))
+    }
+
+    fn zone_service(store: StubMapStore, ttl: Duration) -> Arc<ZoneService> {
+        Arc::new(ZoneService::with_ttl(Arc::new(store), TrustThresholds::default(), ttl))
+    }
+
+    #[tokio::test]
+    async fn maps_zone_authority_replaces_hierarchy() {
+        let cache = hierarchy_cache();
+        let mut live = LiveState::with_zone_service(
+            cache,
+            zone_service(StubMapStore::with_zone_location(), Duration::from_secs(60)),
+        );
+        live.handle_lagged();
+        assert_eq!(live.summary("t1").await.unwrap().zone, "车间A");
+
+        let snapshot = live.workspace_snapshot("ws1").await;
+        let t1 = snapshot
+            .devices
+            .iter()
+            .find(|device| device.thing_id == "t1")
+            .expect("t1 在快照内");
+        assert_eq!(t1.zone, "车间A");
+    }
+
+    /// maps 模式无位置 → 空串，**不回退**层级（spec §2.2）。
+    #[tokio::test]
+    async fn maps_mode_without_position_does_not_fall_back_to_hierarchy() {
+        let cache = hierarchy_cache();
+        let store = StubMapStore::with_zone_location().without_position();
+        let mut live = LiveState::with_zone_service(cache, zone_service(store, Duration::from_secs(60)));
+        live.handle_lagged();
+        assert_eq!(live.summary("t1").await.unwrap().zone, "");
+    }
+
+    /// zone_source 切回 hierarchy 后恢复 E1b 祖先链（迁移期回退）。
+    #[tokio::test]
+    async fn switching_zone_source_back_to_hierarchy_restores_ancestor_chain() {
+        let cache = hierarchy_cache();
+        let store = Arc::new(StubMapStore::with_zone_location());
+        // TTL 0：每次摘要都重读 flag，模拟切换即时生效。
+        let zones = Arc::new(ZoneService::with_ttl(
+            store.clone(),
+            TrustThresholds::default(),
+            Duration::ZERO,
+        ));
+        let mut live = LiveState::with_zone_service(cache, zones);
+        live.handle_lagged();
+        assert_eq!(live.summary("t1").await.unwrap().zone, "车间A");
+
+        store.set_source("hierarchy");
+        assert_eq!(live.summary("t1").await.unwrap().zone, "楼A");
+    }
+
+    /// 未注入 ZoneService 时保持 hierarchy（降级形态）。
+    #[tokio::test]
+    async fn absent_zone_service_keeps_hierarchy() {
+        let mut live = LiveState::new(hierarchy_cache());
+        live.handle_lagged();
+        assert_eq!(live.summary("t1").await.unwrap().zone, "楼A");
     }
 }

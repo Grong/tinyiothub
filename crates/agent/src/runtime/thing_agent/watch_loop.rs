@@ -43,6 +43,8 @@ pub struct WatchDeps {
     pub rules: Arc<dyn WatchRuleStore>,
     /// DataServer 领域事件总线。
     pub events: Arc<EventBus>,
+    /// E4d maps 权威（zone_source=maps）；None = 未接线 → hierarchy 降级。
+    pub zones: Option<Arc<tinyiothub_runtime::maps::ZoneService>>,
 }
 
 /// API 写穿命令（D11-⑤：调用方已写 DB 成功）。经每工作区命令通道投递给
@@ -72,8 +74,12 @@ pub async fn watch_engine_loop(
 ) {
     // 先订阅再重织：重织窗口内的事件经 broadcast 缓冲，不丢。
     let mut rx = deps.events.subscribe();
+    let live = match deps.zones.clone() {
+        Some(zones) => LiveState::with_zone_service(deps.cache.clone(), zones),
+        None => LiveState::new(deps.cache.clone()),
+    };
     let mut engine = WatchEngine::new(
-        LiveState::new(deps.cache.clone()),
+        live,
         deps.ledger.clone(),
         deps.rules.clone(), // C-2：退役路径（one-shot 命中/超时/物失效）写穿删除 DB 行
         hit_tx,
@@ -84,7 +90,7 @@ pub async fn watch_engine_loop(
     match deps.rules.list_all().await {
         Ok(rules) => {
             for rule in rules.into_iter().filter(|r| r.workspace_id == workspace_id) {
-                if let Err(e) = engine.upsert_rule(rule) {
+                if let Err(e) = engine.upsert_rule(rule).await {
                     tracing::warn!(workspace_id = %workspace_id, error = %e, "watch 启动重织跳过非法规则");
                 }
             }
@@ -99,7 +105,7 @@ pub async fn watch_engine_loop(
                 let Some(cmd) = cmd else { break }; // sender 随 stop 丢弃
                 match cmd {
                     WatchCommand::Upsert(rule) => {
-                        if let Err(e) = engine.upsert_rule(rule) {
+                        if let Err(e) = engine.upsert_rule(rule).await {
                             tracing::warn!(workspace_id = %workspace_id, error = %e, "watch 规则 upsert 拒绝");
                         }
                     }
@@ -108,10 +114,10 @@ pub async fn watch_engine_loop(
                     }
                     WatchCommand::Summary { thing_id, reply } => {
                         // 读面查询：调用方已脱离（工具超时应答），send 失败只丢本次。
-                        let _ = reply.send(engine.summary(&thing_id));
+                        let _ = reply.send(engine.summary(&thing_id).await);
                     }
                     WatchCommand::Snapshot { reply } => {
-                        let _ = reply.send(Some(engine.workspace_snapshot(&workspace_id)));
+                        let _ = reply.send(Some(engine.workspace_snapshot(&workspace_id).await));
                     }
                 }
             }

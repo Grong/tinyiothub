@@ -580,6 +580,11 @@ impl ServiceManager {
             //
             // E1 Task 8 bootstrap 硬顺序：set_wake_ledger / set_watch_deps /
             // 限速预热全部先于 start——三者都只影响其后 start 的工作区。
+            // E4d：maps/places/position 读面（runtime 经 MapStore 端口，零 db）。
+            let zone_service = Arc::new(tinyiothub_runtime::maps::ZoneService::new(
+                Arc::new(crate::shared::runtime_ports::DbMapStore((*app_state.db).clone())),
+                tinyiothub_runtime::maps::TrustThresholds::default(),
+            ));
             thing_agent_manager.set_wake_ledger(hub_ledger.clone());
             thing_agent_manager.set_watch_deps(tinyiothub_agent::runtime::thing_agent::WatchDeps {
                 cache: Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(
@@ -590,6 +595,7 @@ impl ServiceManager {
                     (*app_state.db).clone(),
                 )),
                 events: app_state.event_bus.clone(),
+                zones: Some(zone_service),
             });
             // E1 同键限速预热：DB heartbeat_config JSON 的
             // rate_limit_per_key_per_min → scheduler 共享表（spec §3 热改

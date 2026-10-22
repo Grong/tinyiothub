@@ -221,6 +221,7 @@ async fn assemble(
         ledger: Arc::new(HubLedgerAdapter::new((*app_state.db).clone())),
         rules: Arc::new(WatchRuleStoreAdapter((*app_state.db).clone())),
         events: app_state.event_bus.clone(),
+        zones: None,
     });
     app_state.thing_agents = Some(manager);
     runtime.thing_agents().start(WS);

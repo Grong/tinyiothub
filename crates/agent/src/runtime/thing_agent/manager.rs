@@ -2464,6 +2464,7 @@ pub(crate) mod tests {
             ledger,
             rules: Arc::new(StubWatchRuleStore { rules }),
             events: Arc::new(tinyiothub_runtime::EventBus::new()),
+            zones: None, // E4d：测试保持 hierarchy
         }
     }
 

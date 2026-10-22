@@ -7,10 +7,13 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use tinyiothub_core::models::spatial::{MapRecord, PlaceKind, PlaceRecord, ThingPosition};
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
 use tinyiothub_core::models::thing_property::ThingProperty;
-use tinyiothub_runtime::ports::{DerivedPropertyQueries, EventRetentionStore, ThingCacheSource, ThingCommandQueries};
+use tinyiothub_runtime::ports::{
+    DerivedPropertyQueries, EventRetentionStore, MapStore, ThingCacheSource, ThingCommandQueries,
+};
 use tinyiothub_storage::Db;
 use tinyiothub_storage::cache::ThingCache;
 
@@ -119,6 +122,87 @@ impl DerivedPropertyQueries for DbDerivedPropertyQueries {
         .await
         .map_err(|e| e.to_string())?;
         Ok(row.0)
+    }
+}
+
+/// E4d：`Db` → `MapStore`（ZoneService 的 maps/places/position 读面）。
+/// runtime 仍零 db；workspace 隔离由 db 层 SQL 保证。
+pub struct DbMapStore(pub Db);
+
+#[async_trait]
+impl MapStore for DbMapStore {
+    async fn list_maps(&self, workspace_id: &str) -> Result<Vec<MapRecord>, String> {
+        self.0.list_maps(workspace_id).await.map_err(|e| e.to_string())
+    }
+
+    async fn default_map(&self, workspace_id: &str) -> Result<Option<MapRecord>, String> {
+        self.0.find_default_map(workspace_id).await.map_err(|e| e.to_string())
+    }
+
+    async fn upsert_map(&self, map: &MapRecord) -> Result<(), String> {
+        self.0.upsert_map(map).await.map_err(|e| e.to_string())
+    }
+
+    async fn delete_map(&self, workspace_id: &str, id: &str) -> Result<bool, String> {
+        self.0.delete_map(workspace_id, id).await.map_err(|e| e.to_string())
+    }
+
+    async fn list_places(&self, workspace_id: &str, map_id: &str) -> Result<Vec<PlaceRecord>, String> {
+        self.0
+            .list_places(workspace_id, map_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn find_place_by_name(
+        &self,
+        workspace_id: &str,
+        name: &str,
+        kind: Option<PlaceKind>,
+    ) -> Result<Option<PlaceRecord>, String> {
+        self.0
+            .find_place_by_name(workspace_id, name, kind)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn upsert_place(&self, workspace_id: &str, place: &PlaceRecord) -> Result<(), String> {
+        self.0
+            .upsert_place(workspace_id, place)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn delete_place(&self, workspace_id: &str, map_id: &str, id: &str) -> Result<bool, String> {
+        self.0
+            .delete_place(workspace_id, map_id, id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn get_position(&self, workspace_id: &str, thing_id: &str) -> Result<Option<ThingPosition>, String> {
+        self.0
+            .get_thing_position(workspace_id, thing_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn set_position(&self, workspace_id: &str, thing_id: &str, position: &ThingPosition) -> Result<(), String> {
+        self.0
+            .set_thing_position(workspace_id, thing_id, position)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    /// 缺失/未知归一化为 `hierarchy`（迁移期回退，与端口文档一致）。
+    async fn zone_source(&self, workspace_id: &str) -> Result<String, String> {
+        Ok(self
+            .0
+            .get_zone_source(workspace_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .unwrap_or_else(|| "hierarchy".to_string()))
     }
 }
 
