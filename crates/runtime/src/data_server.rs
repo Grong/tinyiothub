@@ -18,7 +18,22 @@ use crate::arbitration::ResourceLease;
 use crate::driver::worker::{CancelKind, CommandOutcome, WorkerHandle, WorkerResult, spawn_worker};
 use crate::driver::{DriverWrapper, ThingOverview, create_driver};
 use crate::event_bus::{EventBus, publish_event_safe};
+use crate::maps::{LocationTrust, ThingPosition, ZoneService};
 use crate::ports::{HubLedger, ThingCacheSource};
+
+/// E4d 位置读数保留字段（spec §2.3）。
+const POSITION_X: &str = "position_x";
+const POSITION_Y: &str = "position_y";
+const POSITION_LEVEL: &str = "position_level";
+const POSITION_HEADING: &str = "position_heading";
+const POSITION_TRUST: &str = "position_trust";
+
+fn is_position_field(name: &str) -> bool {
+    matches!(
+        name,
+        POSITION_X | POSITION_Y | POSITION_LEVEL | POSITION_HEADING | POSITION_TRUST
+    )
+}
 
 /// worker 表：每个物一个独占驱动的 worker（E4b spec §1/§2.3）。
 pub type WorkerCache = Cache<String, Arc<WorkerHandle>>;
@@ -49,6 +64,8 @@ pub struct DataServer {
     /// 中央 sampler（由 ServiceManager 在 `run()` 前注入）。为 None 时保留
     /// 临时 100ms 全量轮询（旧测试/降级路径）。
     sampler: Arc<parking_lot::Mutex<Option<Arc<Sampler>>>>,
+    /// E4d 位置读数写面/边界检查（组合根注入 `DbMapStore`）；None = 不落坐标。
+    zones: Arc<parking_lot::Mutex<Option<Arc<ZoneService>>>>,
     /// E4c 取消留痕：可选账本（组合根注入）+ 进程内计数。
     cancellation: Arc<CancellationRecorder>,
 }
@@ -89,10 +106,16 @@ impl DataServer {
             worker_result_tx,
             poll_started: Arc::new(AtomicBool::new(false)),
             sampler: Arc::new(parking_lot::Mutex::new(None)),
+            zones: Arc::new(parking_lot::Mutex::new(None)),
             cancellation: Arc::new(CancellationRecorder::default()),
         };
         server.initialize_drivers();
         server
+    }
+
+    /// 注入 E4d 位置服务（保留字段 `position_*` 写坐标列 + 越界检查）。
+    pub fn set_zone_service(&self, zones: Arc<ZoneService>) {
+        *self.zones.lock() = Some(zones);
     }
 
     /// 推送驱动的上报句柄（Task 7 注册推送驱动时注入给 `start_push`）。
@@ -217,6 +240,7 @@ impl DataServer {
             let device_cache = self.device_cache.clone();
             let event_bus = self.event_bus.clone();
             let cancellation = self.cancellation.clone();
+            let zones = self.zones.lock().clone();
             let mut shutdown_rx_consumers = shutdown_rx.resubscribe();
             tokio::spawn(async move {
                 Self::consume_loop(
@@ -224,6 +248,7 @@ impl DataServer {
                     workers,
                     device_cache,
                     event_bus,
+                    zones,
                     cancellation,
                     &mut shutdown_rx_consumers,
                 )
@@ -238,6 +263,7 @@ impl DataServer {
         workers: WorkerCache,
         device_cache: Arc<dyn ThingCacheSource>,
         event_bus: Arc<EventBus>,
+        zones: Option<Arc<ZoneService>>,
         cancellation: Arc<CancellationRecorder>,
         shutdown_rx: &mut tokio::sync::broadcast::Receiver<()>,
     ) {
@@ -258,6 +284,7 @@ impl DataServer {
                         worker_online,
                         &device_cache,
                         event_bus.clone(),
+                        zones.as_ref(),
                     )
                     .await;
                 }
@@ -281,7 +308,7 @@ impl DataServer {
         device_cache: &Arc<dyn ThingCacheSource>,
         event_bus: Arc<EventBus>,
     ) {
-        Self::consume_driver_reading_with(reading, false, device_cache, event_bus).await;
+        Self::consume_driver_reading_with(reading, false, device_cache, event_bus, None).await;
     }
 
     async fn consume_driver_reading_with(
@@ -289,6 +316,7 @@ impl DataServer {
         heartbeat: bool,
         device_cache: &Arc<dyn ThingCacheSource>,
         event_bus: Arc<EventBus>,
+        zones: Option<&Arc<ZoneService>>,
     ) {
         let Some(mut device) = device_cache.get(&reading.thing_id) else {
             tracing::warn!(thing_id = %reading.thing_id, "sink 读数丢弃：物不在缓存（已删？）");
@@ -302,7 +330,90 @@ impl DataServer {
         }
         let thing_name = device.name.clone();
         let events = Self::apply_property_values(&mut device, &thing_name, &reading.values);
+        Self::apply_position_reading(zones, &device, &reading.values).await;
         Self::cache_and_publish(device, events, device_cache, Some(event_bus)).await;
+    }
+
+    /// 驱动位置读数（spec §2.3）：保留字段写坐标列 + `position_updated_at=now`。
+    /// 越界保留坐标、仅告警（zone 读取侧因边界检查变 None）；地图不在读数里，
+    /// 写 `set_reading_position` 以保留 placement 写入的 `map_id`。
+    async fn apply_position_reading(zones: Option<&Arc<ZoneService>>, device: &Thing, values: &[ResultValue]) {
+        if !values.iter().any(|value| is_position_field(&value.name)) {
+            return;
+        }
+        let Some(workspace_id) = device.workspace_id.as_deref() else {
+            tracing::warn!(thing_id = %device.id, "位置读数无 workspace_id，跳过");
+            return;
+        };
+        let field = |name: &str| -> Option<&str> {
+            values
+                .iter()
+                .find(|value| value.name == name)
+                .and_then(|value| value.value.as_deref())
+        };
+        let parse_f64 = |raw: Option<&str>| raw.and_then(|raw| raw.trim().parse::<f64>().ok());
+        let (Some(x), Some(y)) = (parse_f64(field(POSITION_X)), parse_f64(field(POSITION_Y))) else {
+            tracing::warn!(thing_id = %device.id, "位置读数缺少合法的 position_x/position_y，跳过");
+            return;
+        };
+        let level = field(POSITION_LEVEL).and_then(|raw| {
+            raw.trim().parse::<i64>().ok().or_else(|| {
+                raw.trim()
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|v| v.fract() == 0.0)
+                    .map(|v| v as i64)
+            })
+        });
+        let heading = parse_f64(field(POSITION_HEADING));
+        let trust = match field(POSITION_TRUST).map(str::trim) {
+            Some("lost") => LocationTrust::Lost,
+            Some("uncertain") => LocationTrust::Uncertain,
+            // 未上报 = 不降级（驱动 trust 只作上限）。
+            Some("trusted") | None => LocationTrust::Trusted,
+            Some(_) => LocationTrust::Uncertain,
+        };
+        let position = ThingPosition {
+            map_id: None,
+            x: Some(x),
+            y: Some(y),
+            level,
+            heading,
+            trust,
+            updated_at: Some(chrono::Utc::now().to_rfc3339()),
+        };
+
+        let Some(zones) = zones else {
+            tracing::warn!(
+                thing_id = %device.id,
+                "位置读数未接线 MapStore（DataServer::set_zone_service），坐标未落库"
+            );
+            return;
+        };
+        match zones.position_out_of_bounds(workspace_id, &position).await {
+            Ok(Some(true)) => tracing::warn!(
+                thing_id = %device.id,
+                workspace_id,
+                x,
+                y,
+                "位置读数越界：保留坐标，zone=None"
+            ),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(
+                thing_id = %device.id,
+                workspace_id,
+                error = %e,
+                "位置读数边界检查失败（坐标仍落库）"
+            ),
+        }
+        if let Err(e) = zones.set_reading_position(workspace_id, &device.id, &position).await {
+            tracing::warn!(
+                thing_id = %device.id,
+                workspace_id,
+                error = %e,
+                "位置读数落库失败"
+            );
+        }
     }
 
     /// 消费一条 worker 结果：命令完成/失败与连接迁移翻译成领域事件，并刷新
@@ -888,6 +999,7 @@ impl Clone for DataServer {
             worker_result_tx: self.worker_result_tx.clone(),
             poll_started: self.poll_started.clone(),
             sampler: self.sampler.clone(),
+            zones: self.zones.clone(),
             cancellation: self.cancellation.clone(),
         }
     }
@@ -1783,6 +1895,244 @@ mod tests {
         fn execute_command(&mut self, _cmd: &ThingCommand, _cancel: &CancelToken) -> Result<bool, Error> {
             Err(Error::Cancelled)
         }
+    }
+
+    // ── E4d Task 4：驱动位置保留字段 ───────────────────────────────
+
+    use std::sync::Mutex;
+
+    use tinyiothub_core::models::spatial::{Geometry, MapBounds, MapRecord, PlaceKind, PlaceRecord, ThingPosition};
+
+    use crate::maps::{LocationTrust as MapTrust, TrustThresholds, ZoneService};
+    use crate::ports::MapStore;
+
+    /// 内存 MapStore：记录 `set_reading_position` 写入，供 zone 解析。
+    struct PositionStore {
+        maps: Vec<MapRecord>,
+        places: Vec<PlaceRecord>,
+        written: Mutex<Vec<(String, ThingPosition)>>,
+    }
+
+    impl PositionStore {
+        fn new(bounds: MapBounds) -> Self {
+            Self {
+                maps: vec![MapRecord {
+                    id: "m1".into(),
+                    workspace_id: "ws-1".into(),
+                    name: "一楼".into(),
+                    bounds,
+                    anchor_map_id: None,
+                    is_default: true,
+                    created_at: "2026-10-22T00:00:00Z".into(),
+                    updated_at: "2026-10-22T00:00:00Z".into(),
+                }],
+                places: vec![PlaceRecord {
+                    id: "z1".into(),
+                    map_id: "m1".into(),
+                    name: "车间A".into(),
+                    kind: PlaceKind::Zone,
+                    geometry: Geometry::Polygon {
+                        points: vec![(0.0, 0.0), (200.0, 0.0), (200.0, 200.0), (0.0, 200.0)],
+                    },
+                    heading: None,
+                    created_at: "2026-10-22T00:00:00Z".into(),
+                    updated_at: "2026-10-22T00:00:00Z".into(),
+                }],
+                written: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn written(&self) -> Vec<(String, ThingPosition)> {
+            self.written.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MapStore for PositionStore {
+        async fn list_maps(&self, _workspace_id: &str) -> Result<Vec<MapRecord>, String> {
+            Ok(self.maps.clone())
+        }
+        async fn default_map(&self, _workspace_id: &str) -> Result<Option<MapRecord>, String> {
+            Ok(self.maps.iter().find(|m| m.is_default).cloned())
+        }
+        async fn upsert_map(&self, _map: &MapRecord) -> Result<(), String> {
+            Ok(())
+        }
+        async fn delete_map(&self, _workspace_id: &str, _id: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+        async fn list_places(&self, _workspace_id: &str, map_id: &str) -> Result<Vec<PlaceRecord>, String> {
+            Ok(self.places.iter().filter(|p| p.map_id == map_id).cloned().collect())
+        }
+        async fn find_place_by_name(
+            &self,
+            _workspace_id: &str,
+            name: &str,
+            kind: Option<PlaceKind>,
+        ) -> Result<Option<PlaceRecord>, String> {
+            Ok(self
+                .places
+                .iter()
+                .find(|p| p.name == name && kind.is_none_or(|k| p.kind == k))
+                .cloned())
+        }
+        async fn upsert_place(&self, _workspace_id: &str, _place: &PlaceRecord) -> Result<(), String> {
+            Ok(())
+        }
+        async fn delete_place(&self, _workspace_id: &str, _map_id: &str, _id: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+        async fn get_position(&self, _workspace_id: &str, thing_id: &str) -> Result<Option<ThingPosition>, String> {
+            Ok(self
+                .written
+                .lock()
+                .unwrap()
+                .iter()
+                .rev()
+                .find(|(id, _)| id == thing_id)
+                .map(|(_, pos)| pos.clone()))
+        }
+        async fn set_position(
+            &self,
+            _workspace_id: &str,
+            thing_id: &str,
+            position: &ThingPosition,
+        ) -> Result<(), String> {
+            self.written
+                .lock()
+                .unwrap()
+                .push((thing_id.to_string(), position.clone()));
+            Ok(())
+        }
+        async fn set_reading_position(
+            &self,
+            _workspace_id: &str,
+            thing_id: &str,
+            position: &ThingPosition,
+        ) -> Result<(), String> {
+            self.written
+                .lock()
+                .unwrap()
+                .push((thing_id.to_string(), position.clone()));
+            Ok(())
+        }
+        async fn list_positions(&self, _workspace_id: &str) -> Result<Vec<(String, ThingPosition)>, String> {
+            Ok(self.written.lock().unwrap().clone())
+        }
+        async fn get_zone_ref(&self, _workspace_id: &str, _thing_id: &str) -> Result<Option<String>, String> {
+            Ok(None)
+        }
+        async fn set_zone_ref(
+            &self,
+            _workspace_id: &str,
+            _thing_id: &str,
+            _zone_ref: Option<&str>,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+        async fn list_zone_refs(&self, _workspace_id: &str) -> Result<Vec<(String, String)>, String> {
+            Ok(Vec::new())
+        }
+        async fn zone_source(&self, _workspace_id: &str) -> Result<String, String> {
+            Ok("maps".into())
+        }
+    }
+
+    fn position_values(x: &str, y: &str, trust: Option<&str>) -> Vec<ResultValue> {
+        let mut values = vec![
+            ResultValue::new(POSITION_X.into(), "float".into(), Some(x.into())),
+            ResultValue::new(POSITION_Y.into(), "float".into(), Some(y.into())),
+            ResultValue::new(POSITION_LEVEL.into(), "int".into(), Some("2".into())),
+            ResultValue::new(POSITION_HEADING.into(), "float".into(), Some("90".into())),
+        ];
+        if let Some(trust) = trust {
+            values.push(ResultValue::new(
+                POSITION_TRUST.into(),
+                "string".into(),
+                Some(trust.into()),
+            ));
+        }
+        values
+    }
+
+    /// 驱动保留字段 → 坐标列 + updated_at + trust；随后 maps zone 解析命中。
+    #[tokio::test]
+    async fn driver_position_reading_persists_reserved_fields() {
+        let store = Arc::new(PositionStore::new(MapBounds {
+            x: 0.0,
+            y: 0.0,
+            w: 10.0,
+            h: 10.0,
+        }));
+        let zones = Arc::new(ZoneService::new(store.clone(), TrustThresholds::default()));
+        let cache: Arc<dyn ThingCacheSource> = Arc::new(VecCache::new(vec![worker_thing("dev-1")]));
+
+        DataServer::consume_driver_reading_with(
+            DriverReading {
+                thing_id: "dev-1".into(),
+                values: position_values("1.5", "2.5", Some("uncertain")),
+            },
+            false,
+            &cache,
+            Arc::new(EventBus::new()),
+            Some(&zones),
+        )
+        .await;
+
+        let written = store.written();
+        assert_eq!(written.len(), 1, "保留字段必须写坐标列");
+        let (thing_id, pos) = &written[0];
+        assert_eq!(thing_id, "dev-1");
+        assert_eq!((pos.x, pos.y), (Some(1.5), Some(2.5)));
+        assert_eq!(pos.level, Some(2));
+        assert_eq!(pos.heading, Some(90.0));
+        assert_eq!(pos.trust, MapTrust::Uncertain);
+        assert!(pos.updated_at.is_some(), "position_updated_at=now");
+        assert_eq!(pos.map_id, None, "读数不写 map_id");
+
+        // 坐标可被 maps zone 解析（车间A 覆盖 0..200，但地图边界 0..10）。
+        assert_eq!(
+            zones
+                .zone_for("ws-1", "dev-1", None, chrono::Utc::now())
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("车间A")
+        );
+    }
+
+    /// 越界：坐标仍落库（不拒绝读数），zone 读取侧为 None。
+    #[tokio::test]
+    async fn out_of_bounds_driver_position_is_kept_but_zone_is_none() {
+        let store = Arc::new(PositionStore::new(MapBounds {
+            x: 0.0,
+            y: 0.0,
+            w: 10.0,
+            h: 10.0,
+        }));
+        let zones = Arc::new(ZoneService::new(store.clone(), TrustThresholds::default()));
+        let cache: Arc<dyn ThingCacheSource> = Arc::new(VecCache::new(vec![worker_thing("dev-1")]));
+
+        DataServer::consume_driver_reading_with(
+            DriverReading {
+                thing_id: "dev-1".into(),
+                values: position_values("50", "50", None),
+            },
+            false,
+            &cache,
+            Arc::new(EventBus::new()),
+            Some(&zones),
+        )
+        .await;
+
+        let written = store.written();
+        assert_eq!(written.len(), 1, "越界读数不得被拒绝");
+        assert_eq!((written[0].1.x, written[0].1.y), (Some(50.0), Some(50.0)));
+        assert_eq!(
+            zones.zone_for("ws-1", "dev-1", None, chrono::Utc::now()).await.unwrap(),
+            None,
+            "越界 → zone=None"
+        );
     }
 
     #[test]

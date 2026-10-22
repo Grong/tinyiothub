@@ -306,6 +306,7 @@ pub async fn find_place_by_name(
 
 #[derive(Debug, FromRow)]
 struct PositionRow {
+    id: String,
     map_id: Option<String>,
     position_x: Option<f64>,
     position_y: Option<f64>,
@@ -315,13 +316,27 @@ struct PositionRow {
     position_updated_at: Option<String>,
 }
 
+impl PositionRow {
+    fn into_position(self) -> ThingPosition {
+        ThingPosition {
+            map_id: self.map_id,
+            x: self.position_x,
+            y: self.position_y,
+            level: self.position_level,
+            heading: self.position_heading,
+            trust: LocationTrust::from_db(self.position_trust.as_deref()),
+            updated_at: self.position_updated_at,
+        }
+    }
+}
+
 pub async fn get_thing_position(
     pool: &SqlitePool,
     workspace_id: &str,
     thing_id: &str,
 ) -> Result<Option<ThingPosition>, sqlx::Error> {
     let row: Option<PositionRow> = sqlx::query_as(
-        "SELECT map_id, position_x, position_y, position_level, position_heading,
+        "SELECT id, map_id, position_x, position_y, position_level, position_heading,
                 position_trust, position_updated_at
          FROM things WHERE id = ? AND workspace_id = ?",
     )
@@ -329,15 +344,100 @@ pub async fn get_thing_position(
     .bind(workspace_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(|r| ThingPosition {
-        map_id: r.map_id,
-        x: r.position_x,
-        y: r.position_y,
-        level: r.position_level,
-        heading: r.position_heading,
-        trust: LocationTrust::from_db(r.position_trust.as_deref()),
-        updated_at: r.position_updated_at,
-    }))
+    Ok(row.map(PositionRow::into_position))
+}
+
+/// 工作区全量坐标（快照批量预热：避免逐物 N 次查询）。
+pub async fn list_thing_positions(
+    pool: &SqlitePool,
+    workspace_id: &str,
+) -> Result<Vec<(String, ThingPosition)>, sqlx::Error> {
+    let rows: Vec<PositionRow> = sqlx::query_as(
+        "SELECT id, map_id, position_x, position_y, position_level, position_heading,
+                position_trust, position_updated_at
+         FROM things WHERE workspace_id = ? ORDER BY id ASC",
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let id = row.id.clone();
+            (id, row.into_position())
+        })
+        .collect())
+}
+
+/// 写回**驱动读数**坐标列：不改 `map_id`（地图由 placement/API 维护，读数
+/// 只报坐标），也不动 `zone_ref`。
+pub async fn set_thing_reading_position(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    thing_id: &str,
+    position: &ThingPosition,
+) -> Result<bool, sqlx::Error> {
+    let r = sqlx::query(
+        "UPDATE things SET
+             position_x = ?, position_y = ?, position_level = ?,
+             position_heading = ?, position_trust = ?, position_updated_at = ?
+         WHERE id = ? AND workspace_id = ?",
+    )
+    .bind(position.x)
+    .bind(position.y)
+    .bind(position.level)
+    .bind(position.heading)
+    .bind(position.trust.as_str())
+    .bind(&position.updated_at)
+    .bind(thing_id)
+    .bind(workspace_id)
+    .execute(pool)
+    .await?;
+    Ok(r.rows_affected() > 0)
+}
+
+// ── 显式 zone 引用 ─────────────────────────────────────
+
+pub async fn get_thing_zone_ref(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    thing_id: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let row: Option<Option<String>> =
+        sqlx::query_scalar("SELECT zone_ref FROM things WHERE id = ? AND workspace_id = ?")
+            .bind(thing_id)
+            .bind(workspace_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.flatten())
+}
+
+pub async fn set_thing_zone_ref(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    thing_id: &str,
+    zone_ref: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    let r = sqlx::query("UPDATE things SET zone_ref = ? WHERE id = ? AND workspace_id = ?")
+        .bind(zone_ref)
+        .bind(thing_id)
+        .bind(workspace_id)
+        .execute(pool)
+        .await?;
+    Ok(r.rows_affected() > 0)
+}
+
+/// 工作区全部非空显式 zone 引用（快照批量预热）。
+pub async fn list_thing_zone_refs(pool: &SqlitePool, workspace_id: &str) -> Result<Vec<(String, String)>, sqlx::Error> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, zone_ref FROM things
+         WHERE workspace_id = ? AND zone_ref IS NOT NULL AND zone_ref <> ''
+         ORDER BY id ASC",
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
 }
 
 /// 写回物坐标列（同一 workspace 才命中）。返回是否找到该物。
@@ -462,6 +562,36 @@ impl Db {
         position: &ThingPosition,
     ) -> Result<bool, sqlx::Error> {
         set_thing_position(self.pool(), workspace_id, thing_id, position).await
+    }
+
+    pub async fn list_thing_positions(&self, workspace_id: &str) -> Result<Vec<(String, ThingPosition)>, sqlx::Error> {
+        list_thing_positions(self.pool(), workspace_id).await
+    }
+
+    pub async fn set_thing_reading_position(
+        &self,
+        workspace_id: &str,
+        thing_id: &str,
+        position: &ThingPosition,
+    ) -> Result<bool, sqlx::Error> {
+        set_thing_reading_position(self.pool(), workspace_id, thing_id, position).await
+    }
+
+    pub async fn get_thing_zone_ref(&self, workspace_id: &str, thing_id: &str) -> Result<Option<String>, sqlx::Error> {
+        get_thing_zone_ref(self.pool(), workspace_id, thing_id).await
+    }
+
+    pub async fn set_thing_zone_ref(
+        &self,
+        workspace_id: &str,
+        thing_id: &str,
+        zone_ref: Option<&str>,
+    ) -> Result<bool, sqlx::Error> {
+        set_thing_zone_ref(self.pool(), workspace_id, thing_id, zone_ref).await
+    }
+
+    pub async fn list_thing_zone_refs(&self, workspace_id: &str) -> Result<Vec<(String, String)>, sqlx::Error> {
+        list_thing_zone_refs(self.pool(), workspace_id).await
     }
 
     pub async fn get_zone_source(&self, workspace_id: &str) -> Result<Option<String>, sqlx::Error> {
@@ -779,6 +909,77 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(db.get_zone_source(&ws.id).await.unwrap().as_deref(), Some("maps"));
+    }
+
+    #[tokio::test]
+    async fn zone_ref_round_trip_and_workspace_isolation() {
+        let db = setup().await;
+        insert_thing(&db, "t1", "ws1").await;
+        insert_thing(&db, "t2", "ws2").await;
+
+        assert_eq!(db.get_thing_zone_ref("ws1", "t1").await.unwrap(), None);
+        assert!(db.set_thing_zone_ref("ws1", "t1", Some("车间A")).await.unwrap());
+        assert_eq!(
+            db.get_thing_zone_ref("ws1", "t1").await.unwrap().as_deref(),
+            Some("车间A")
+        );
+        assert_eq!(
+            db.list_thing_zone_refs("ws1").await.unwrap(),
+            vec![("t1".into(), "车间A".into())]
+        );
+
+        // 跨工作区不可见/不可写
+        assert_eq!(db.get_thing_zone_ref("ws2", "t1").await.unwrap(), None);
+        assert!(!db.set_thing_zone_ref("ws2", "t1", Some("stolen")).await.unwrap());
+        assert_eq!(
+            db.get_thing_zone_ref("ws1", "t1").await.unwrap().as_deref(),
+            Some("车间A")
+        );
+        assert!(db.list_thing_zone_refs("ws2").await.unwrap().is_empty());
+
+        // 清除
+        assert!(db.set_thing_zone_ref("ws1", "t1", None).await.unwrap());
+        assert_eq!(db.get_thing_zone_ref("ws1", "t1").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn list_positions_batches_and_reading_write_preserves_map() {
+        let db = setup().await;
+        db.upsert_map(&map_rec("m1", "ws1", "floor-1", true)).await.unwrap();
+        insert_thing(&db, "t1", "ws1").await;
+        insert_thing(&db, "t2", "ws1").await;
+        insert_thing(&db, "t3", "ws2").await;
+
+        // 先由 placement 写 map_id，再由驱动读数写坐标：map_id 必须保留。
+        let placed = ThingPosition {
+            map_id: Some("m1".into()),
+            x: Some(1.0),
+            y: Some(2.0),
+            ..Default::default()
+        };
+        db.set_thing_position("ws1", "t1", &placed).await.unwrap();
+        let reading = ThingPosition {
+            map_id: None,
+            x: Some(9.0),
+            y: Some(8.0),
+            level: Some(2),
+            heading: Some(45.0),
+            trust: LocationTrust::Lost,
+            updated_at: Some("2026-10-22T12:00:00Z".into()),
+        };
+        assert!(db.set_thing_reading_position("ws1", "t1", &reading).await.unwrap());
+        let got = db.get_thing_position("ws1", "t1").await.unwrap().unwrap();
+        assert_eq!(got.map_id.as_deref(), Some("m1"), "读数不得清空 map_id");
+        assert_eq!((got.x, got.y), (Some(9.0), Some(8.0)));
+        assert_eq!(got.trust, LocationTrust::Lost);
+
+        let all = db.list_thing_positions("ws1").await.unwrap();
+        assert_eq!(all.len(), 2, "只返回本工作区的物: {all:?}");
+        assert_eq!(all[0].0, "t1");
+        assert_eq!(all[1].0, "t2");
+        assert!(all[0].1.x.is_some());
+        assert!(all[1].1.x.is_none());
+        assert_eq!(db.list_thing_positions("ws2").await.unwrap().len(), 1);
     }
 
     #[tokio::test]

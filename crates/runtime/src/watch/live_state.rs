@@ -176,7 +176,33 @@ impl LiveState {
 
     /// E2：工作区实时快照。只含 cache 确知属于该工作区的物
     /// （Lagged 重同步读全局 cache，必须在此按工作区隔离）。
+    ///
+    /// maps 模式先批量预热坐标/地点（`ZoneService::warm_workspace`），
+    /// 避免 N 个物产生 N 次串行查询；预热失败降级 hierarchy（读面可用性
+    /// 优先，spec §2.2）。
     pub async fn workspace_snapshot(&self, workspace_id: &str) -> WorkspaceSnapshot {
+        let use_hierarchy = match &self.zones {
+            None => true,
+            Some(zones) => match zones.zone_source(workspace_id).await {
+                Ok(source) if source == "maps" => match zones.warm_workspace(workspace_id).await {
+                    Ok(()) => false,
+                    Err(e) => {
+                        tracing::warn!(
+                            workspace_id,
+                            error = %e,
+                            "maps 批量预热失败，快照降级 hierarchy"
+                        );
+                        true
+                    }
+                },
+                Ok(_) => true,
+                Err(e) => {
+                    tracing::warn!(workspace_id, error = %e, "zone_source 读取失败，快照降级 hierarchy");
+                    true
+                }
+            },
+        };
+
         let mut devices: Vec<DeviceSnapshot> = Vec::with_capacity(self.states.len());
         for (id, live) in &self.states {
             let Some(cached) = self.cache.get(id) else {
@@ -185,12 +211,17 @@ impl LiveState {
             if cached.workspace_id.as_deref() != Some(workspace_id) {
                 continue;
             }
+            let zone = if use_hierarchy {
+                self.hierarchy_zone(id)
+            } else {
+                self.derive_zone(id, Some(workspace_id)).await
+            };
             devices.push(DeviceSnapshot {
                 thing_id: id.clone(),
                 name: cached.get_display_name().to_string(),
                 health: Self::derive_health(live),
                 online: live.online,
-                zone: self.derive_zone(id, Some(workspace_id)).await,
+                zone,
                 values: live.values.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
                 properties: cached
                     .properties
@@ -227,7 +258,8 @@ impl LiveState {
     ///
     /// maps 模式返回 `None` 时保持空串（spec §2.2：不回退层级）。MapStore 读失败
     /// 时降级为 hierarchy（可用性优先；maps 数据缺失不等于层级不存在）。显式
-    /// `placement.zoneRef` 待 Task 4 物化进物记录后接入，当前传 None。
+    /// `placement.zoneRef` 已物化进物记录，由 `ZoneService` 内部优先解析
+    /// （与坐标无关），这里不再单独传参。
     async fn derive_zone(&self, thing_id: &str, workspace_hint: Option<&str>) -> String {
         let Some(zones) = &self.zones else {
             return self.hierarchy_zone(thing_id);
@@ -495,6 +527,9 @@ mod tests {
         maps: Vec<MapRecord>,
         places: Vec<PlaceRecord>,
         positions: HashMap<String, ThingPosition>,
+        zone_refs: Mutex<HashMap<String, String>>,
+        /// 模拟 list_positions（快照批量预热）读失败。
+        fail_list_positions: std::sync::atomic::AtomicBool,
     }
 
     impl StubMapStore {
@@ -537,15 +572,24 @@ mod tests {
                         level: None,
                         heading: None,
                         trust: LocationTrust::Trusted,
-                        updated_at: Some("2026-10-22T00:00:00Z".into()),
+                        // 静态位置（fixed/declared）：读时恒 Trusted，不随
+                        // 测试运行时刻 aging。
+                        updated_at: None,
                     },
                 )]),
+                zone_refs: Mutex::new(HashMap::new()),
+                fail_list_positions: std::sync::atomic::AtomicBool::new(false),
             }
         }
 
         fn without_position(mut self) -> Self {
             self.positions.clear();
             self
+        }
+
+        fn fail_position_reads(&self) {
+            self.fail_list_positions
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
 
         fn set_source(&self, source: &str) {
@@ -612,6 +656,60 @@ mod tests {
             _position: &ThingPosition,
         ) -> Result<(), String> {
             Ok(())
+        }
+
+        async fn set_reading_position(
+            &self,
+            _workspace_id: &str,
+            _thing_id: &str,
+            _position: &ThingPosition,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn list_positions(&self, _workspace_id: &str) -> Result<Vec<(String, ThingPosition)>, String> {
+            if self.fail_list_positions.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err("db down".into());
+            }
+            Ok(self
+                .positions
+                .iter()
+                .map(|(thing_id, position)| (thing_id.clone(), position.clone()))
+                .collect())
+        }
+
+        async fn get_zone_ref(&self, _workspace_id: &str, thing_id: &str) -> Result<Option<String>, String> {
+            Ok(self.zone_refs.lock().unwrap().get(thing_id).cloned())
+        }
+
+        async fn set_zone_ref(
+            &self,
+            _workspace_id: &str,
+            thing_id: &str,
+            zone_ref: Option<&str>,
+        ) -> Result<(), String> {
+            match zone_ref {
+                Some(name) => {
+                    self.zone_refs
+                        .lock()
+                        .unwrap()
+                        .insert(thing_id.to_string(), name.to_string());
+                }
+                None => {
+                    self.zone_refs.lock().unwrap().remove(thing_id);
+                }
+            }
+            Ok(())
+        }
+
+        async fn list_zone_refs(&self, _workspace_id: &str) -> Result<Vec<(String, String)>, String> {
+            Ok(self
+                .zone_refs
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(id, name)| (id.clone(), name.clone()))
+                .collect())
         }
 
         async fn zone_source(&self, _workspace_id: &str) -> Result<String, String> {
@@ -691,5 +789,37 @@ mod tests {
         let mut live = LiveState::new(hierarchy_cache());
         live.handle_lagged();
         assert_eq!(live.summary("t1").await.unwrap().zone, "楼A");
+    }
+
+    /// 快照批量预热读失败（MapStore error）→ 快照降级 hierarchy，不返回
+    /// 错误/空 zone（可用性优先，Task 3 评审 carry-forward）。
+    #[tokio::test]
+    async fn snapshot_degrades_to_hierarchy_when_map_store_errors() {
+        let cache = hierarchy_cache();
+        let store = StubMapStore::with_zone_location();
+        store.fail_position_reads();
+        let mut live = LiveState::with_zone_service(cache, zone_service(store, Duration::from_secs(60)));
+        live.handle_lagged();
+        let snapshot = live.workspace_snapshot("ws1").await;
+        let t1 = snapshot
+            .devices
+            .iter()
+            .find(|device| device.thing_id == "t1")
+            .expect("t1 在快照内");
+        assert_eq!(t1.zone, "楼A", "MapStore 读失败必须降级 hierarchy");
+    }
+
+    /// 显式 zoneRef 物化后无坐标也参与摘要（ZoneService 内部优先解析）。
+    #[tokio::test]
+    async fn snapshot_uses_materialized_zone_ref_without_position() {
+        let cache = hierarchy_cache();
+        let zones = zone_service(
+            StubMapStore::with_zone_location().without_position(),
+            Duration::from_secs(60),
+        );
+        zones.set_zone_ref("ws1", "t1", Some("车间A")).await.unwrap();
+        let mut live = LiveState::with_zone_service(cache, zones);
+        live.handle_lagged();
+        assert_eq!(live.summary("t1").await.unwrap().zone, "车间A");
     }
 }

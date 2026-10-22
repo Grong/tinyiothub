@@ -168,6 +168,21 @@ pub trait MapStore: Send + Sync {
     async fn delete_place(&self, workspace_id: &str, map_id: &str, id: &str) -> Result<bool, String>;
     async fn get_position(&self, workspace_id: &str, thing_id: &str) -> Result<Option<ThingPosition>, String>;
     async fn set_position(&self, workspace_id: &str, thing_id: &str, position: &ThingPosition) -> Result<(), String>;
+    /// 驱动读数坐标写入：只更新坐标列，不触碰 `map_id` / `zone_ref`
+    /// （地图与显式 zone 由 placement/API 维护）。
+    async fn set_reading_position(
+        &self,
+        workspace_id: &str,
+        thing_id: &str,
+        position: &ThingPosition,
+    ) -> Result<(), String>;
+    /// 工作区全量坐标（快照批量预热；避免逐物 N 次查询）。
+    async fn list_positions(&self, workspace_id: &str) -> Result<Vec<(String, ThingPosition)>, String>;
+    /// 物显式 `placement.zoneRef`（物化列）；`None` = 无显式引用。
+    async fn get_zone_ref(&self, workspace_id: &str, thing_id: &str) -> Result<Option<String>, String>;
+    async fn set_zone_ref(&self, workspace_id: &str, thing_id: &str, zone_ref: Option<&str>) -> Result<(), String>;
+    /// 工作区全部非空显式 zone 引用（快照批量预热）。
+    async fn list_zone_refs(&self, workspace_id: &str) -> Result<Vec<(String, String)>, String>;
     async fn zone_source(&self, workspace_id: &str) -> Result<String, String>;
 }
 

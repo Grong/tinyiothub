@@ -81,16 +81,27 @@ impl ServiceManager {
         // Demand tracker 先于 AccessService 建立：读工具经 AccessService 写入、
         // sampler（下方）与 Hub 订阅共享同一实例。
         let demand_tracker = Arc::new(tinyiothub_runtime::access::demand::DemandTracker::new());
-        let access = Arc::new(tinyiothub_runtime::access::service::AccessService::new(
-            crate::shared::paths::api_data_dir(),
-            manifests,
-            Arc::new(crate::shared::access_ports::DbDriverStore(app_state.db.clone())),
-            Arc::new(crate::shared::access_ports::DbDeviceStore(app_state.db.clone())),
-            Arc::new(crate::shared::access_ports::DbProjectionStore(app_state.db.clone())),
-            Arc::new(crate::shared::access_ports::DbThingSource(app_state.db.clone())),
-            Arc::new(crate::shared::access_ports::DbAcceptanceStore(app_state.db.clone())),
-            demand_tracker.clone(),
+        // E4d 空间读/写面：ZoneService 同时服务 DataServer（位置读数落库 +
+        // 边界告警）与 AI watch（zone 权威），共用同一坐标缓存。
+        let map_store: Arc<dyn tinyiothub_runtime::ports::MapStore> =
+            Arc::new(crate::shared::runtime_ports::DbMapStore((*app_state.db).clone()));
+        let zone_service = Arc::new(tinyiothub_runtime::maps::ZoneService::new(
+            map_store.clone(),
+            tinyiothub_runtime::maps::TrustThresholds::default(),
         ));
+        let access = Arc::new(
+            tinyiothub_runtime::access::service::AccessService::new(
+                crate::shared::paths::api_data_dir(),
+                manifests,
+                Arc::new(crate::shared::access_ports::DbDriverStore(app_state.db.clone())),
+                Arc::new(crate::shared::access_ports::DbDeviceStore(app_state.db.clone())),
+                Arc::new(crate::shared::access_ports::DbProjectionStore(app_state.db.clone())),
+                Arc::new(crate::shared::access_ports::DbThingSource(app_state.db.clone())),
+                Arc::new(crate::shared::access_ports::DbAcceptanceStore(app_state.db.clone())),
+                demand_tracker.clone(),
+            )
+            .with_map_store(map_store),
+        );
         // Installed packages live on disk + DB; restore them before serving
         // so a restart does not silently lose everything but the built-ins.
         if let Err(e) = access.rehydrate().await {
@@ -110,6 +121,7 @@ impl ServiceManager {
         ));
         let data_server = Arc::new(DataServer::new(device_cache.clone(), app_state.event_bus.clone()));
         data_server.set_hub_ledger(hub_ledger.clone());
+        data_server.set_zone_service(zone_service.clone());
 
         // 2.1 中央 sampler：catalog = device_cache ∪ 已安装 manifest；
         // 需求 = 本地订阅/近期读取（DemandTracker）+ 持久规则快照
@@ -580,11 +592,8 @@ impl ServiceManager {
             //
             // E1 Task 8 bootstrap 硬顺序：set_wake_ledger / set_watch_deps /
             // 限速预热全部先于 start——三者都只影响其后 start 的工作区。
-            // E4d：maps/places/position 读面（runtime 经 MapStore 端口，零 db）。
-            let zone_service = Arc::new(tinyiothub_runtime::maps::ZoneService::new(
-                Arc::new(crate::shared::runtime_ports::DbMapStore((*app_state.db).clone())),
-                tinyiothub_runtime::maps::TrustThresholds::default(),
-            ));
+            // E4d：maps/places/position 读面（runtime 经 MapStore 端口，零 db）；
+            // 与 DataServer 共用启动时建立的 ZoneService/坐标缓存。
             thing_agent_manager.set_wake_ledger(hub_ledger.clone());
             thing_agent_manager.set_watch_deps(tinyiothub_agent::runtime::thing_agent::WatchDeps {
                 cache: Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(

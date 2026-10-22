@@ -195,6 +195,48 @@ impl MapStore for DbMapStore {
             .map_err(|e| e.to_string())
     }
 
+    async fn set_reading_position(
+        &self,
+        workspace_id: &str,
+        thing_id: &str,
+        position: &ThingPosition,
+    ) -> Result<(), String> {
+        self.0
+            .set_thing_reading_position(workspace_id, thing_id, position)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    async fn list_positions(&self, workspace_id: &str) -> Result<Vec<(String, ThingPosition)>, String> {
+        self.0
+            .list_thing_positions(workspace_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn get_zone_ref(&self, workspace_id: &str, thing_id: &str) -> Result<Option<String>, String> {
+        self.0
+            .get_thing_zone_ref(workspace_id, thing_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn set_zone_ref(&self, workspace_id: &str, thing_id: &str, zone_ref: Option<&str>) -> Result<(), String> {
+        self.0
+            .set_thing_zone_ref(workspace_id, thing_id, zone_ref)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    async fn list_zone_refs(&self, workspace_id: &str) -> Result<Vec<(String, String)>, String> {
+        self.0
+            .list_thing_zone_refs(workspace_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
     /// 缺失/未知归一化为 `hierarchy`（迁移期回退，与端口文档一致）。
     async fn zone_source(&self, workspace_id: &str) -> Result<String, String> {
         Ok(self

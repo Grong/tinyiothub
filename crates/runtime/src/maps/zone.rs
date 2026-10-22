@@ -8,7 +8,16 @@
 
 use chrono::{DateTime, Utc};
 
-use super::model::{Geometry, LocationTrust, PlaceKind, PlaceRecord, PlacementMode, TrustThresholds};
+use super::model::{Geometry, LocationTrust, MapBounds, PlaceKind, PlaceRecord, PlacementMode, TrustThresholds};
+
+/// 点是否在地图边界内（边界含入；w/h 为负时按端点归一化）。
+pub fn within_bounds(bounds: &MapBounds, x: f64, y: f64) -> bool {
+    let x2 = bounds.x + bounds.w;
+    let y2 = bounds.y + bounds.h;
+    let (min_x, max_x) = if bounds.x <= x2 { (bounds.x, x2) } else { (x2, bounds.x) };
+    let (min_y, max_y) = if bounds.y <= y2 { (bounds.y, y2) } else { (y2, bounds.y) };
+    x >= min_x && x <= max_x && y >= min_y && y <= max_y
+}
 
 /// 判断点是否在多边形内（射线法），边界/顶点含入。
 ///

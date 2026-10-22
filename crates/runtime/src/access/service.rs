@@ -11,7 +11,8 @@ use chrono::Utc;
 use tinyiothub_core::driver::declaration::{
     DeviceDeclaration, DeviceDeclarationRecord, DriverDeclarationRecord, fixed_declaration, validate_device_declaration,
 };
-use tinyiothub_core::driver::manifest::MANIFEST_FILE;
+use tinyiothub_core::driver::manifest::{LocationTrustDecl, MANIFEST_FILE, PlacementDecl, PlacementMode};
+use tinyiothub_core::models::spatial::{LocationTrust, PlaceKind, ThingPosition};
 use tinyiothub_core::models::thing::Thing;
 
 use super::AccessError;
@@ -22,8 +23,9 @@ use super::materialize::materialize_declaration;
 use super::package::{hex_sha256, read_package};
 use super::registry::{InstalledPackage, ManifestRegistry};
 use crate::driver::validator::DriverValidator;
+use crate::maps::zone::within_bounds;
 use crate::ports::{
-    AcceptanceReportStore, DeclarationProjectionStore, DeviceDeclarationStore, DriverDeclarationStore,
+    AcceptanceReportStore, DeclarationProjectionStore, DeviceDeclarationStore, DriverDeclarationStore, MapStore,
     ThingDeclarationSource,
 };
 
@@ -38,6 +40,9 @@ pub struct AccessService {
     pub acceptance_store: Arc<dyn AcceptanceReportStore>,
     /// Shared demand tracker (sampler + read tools + Hub stream).
     pub demand: Arc<DemandTracker>,
+    /// E4d placement 物化写面（fixed/declared → 坐标列/map_id/zone_ref）；
+    /// None = 未接线，带引用的静态 placement 在 bind 时 fail-closed。
+    pub map_store: Option<Arc<dyn MapStore>>,
 }
 
 /// Releases the dynamic-registry reference acquired by `create_driver` on
@@ -86,7 +91,14 @@ impl AccessService {
             things,
             acceptance_store,
             demand,
+            map_store: None,
         }
+    }
+
+    /// 注入 E4d 空间写面（组合根在 `bind_thing` 前调用）。
+    pub fn with_map_store(mut self, map_store: Arc<dyn MapStore>) -> Self {
+        self.map_store = Some(map_store);
+        self
     }
 
     /// Record a recent read so `demandOnly` sources keep sampling it.
@@ -398,6 +410,11 @@ impl AccessService {
             fixed_declaration(&pkg.manifest)
         };
         validate_device_declaration(&pkg.manifest, &decl)?;
+        // E4d §2.3：static placement 在建物/绑定驱动时物化；引用不存在则
+        // fail-closed（绑定失败），不落半套坐标。放在声明校验之后，避免
+        // 非法声明留下已物化的坐标。
+        self.materialize_placement(workspace_id, thing, &pkg.manifest.placement)
+            .await?;
         let json = serde_json::to_string(&decl)?;
         let rec = DeviceDeclarationRecord {
             workspace_id: workspace_id.into(),
@@ -415,6 +432,103 @@ impl AccessService {
             .map_err(AccessError::Store)?;
         self.devices.upsert(workspace_id, &thing.id, decl.clone());
         Ok(decl)
+    }
+
+    /// 物化 manifest `placement.mode=fixed|declared`：
+    /// `position`/`mapRef`/`zoneRef` → things 坐标列 + `map_id` + `zone_ref`。
+    ///
+    /// - `runtime`：不做静态物化（坐标由驱动 source/API 写入）。
+    /// - 地图/区域名不存在、区域不属于 `mapRef`、坐标越界 → 绑定失败。
+    /// - 静态位置不写 `position_updated_at`（读时恒 Trusted，不随 age 失效）。
+    async fn materialize_placement(
+        &self,
+        workspace_id: &str,
+        thing: &Thing,
+        placement: &PlacementDecl,
+    ) -> Result<(), AccessError> {
+        if placement.mode == PlacementMode::Runtime {
+            return Ok(());
+        }
+        let has_refs = placement.position.is_some() || placement.map_ref.is_some() || placement.zone_ref.is_some();
+        if !has_refs {
+            return Ok(());
+        }
+        let Some(store) = &self.map_store else {
+            return Err(AccessError::Validation(
+                "placement materialization requires a map store".into(),
+            ));
+        };
+
+        let maps = store.list_maps(workspace_id).await.map_err(AccessError::Store)?;
+        let map = match &placement.map_ref {
+            Some(name) => Some(maps.iter().find(|map| &map.name == name).cloned().ok_or_else(|| {
+                AccessError::Validation(format!(
+                    "placement mapRef '{name}' not found in workspace '{workspace_id}'"
+                ))
+            })?),
+            None => None,
+        };
+
+        let zone = match &placement.zone_ref {
+            Some(name) => {
+                let zone = store
+                    .find_place_by_name(workspace_id, name, Some(PlaceKind::Zone))
+                    .await
+                    .map_err(AccessError::Store)?
+                    .ok_or_else(|| {
+                        AccessError::Validation(format!(
+                            "placement zoneRef '{name}' not found in workspace '{workspace_id}'"
+                        ))
+                    })?;
+                if let Some(map) = &map
+                    && zone.map_id != map.id
+                {
+                    return Err(AccessError::Validation(format!(
+                        "placement zoneRef '{name}' is not on mapRef '{}'",
+                        map.name
+                    )));
+                }
+                Some(zone)
+            }
+            None => None,
+        };
+
+        let mut position = ThingPosition {
+            map_id: map.as_ref().map(|map| map.id.clone()),
+            trust: trust_from_decl(placement.trust),
+            // 静态位置：无时间戳 = 读时恒 Trusted。
+            updated_at: None,
+            ..Default::default()
+        };
+        if let Some(raw) = &placement.position {
+            let (x, y, level, heading) = parse_placement_position(raw)?;
+            if let Some(map) = &map
+                && !within_bounds(&map.bounds, x, y)
+            {
+                return Err(AccessError::Validation(format!(
+                    "placement position ({x}, {y}) is outside map '{}' bounds",
+                    map.name
+                )));
+            }
+            position.x = Some(x);
+            position.y = Some(y);
+            position.level = level;
+            position.heading = heading;
+        }
+
+        if position.x.is_some() || position.y.is_some() || position.map_id.is_some() {
+            store
+                .set_position(workspace_id, &thing.id, &position)
+                .await
+                .map_err(AccessError::Store)?;
+        }
+        if let Some(zone) = zone {
+            store
+                .set_zone_ref(workspace_id, &thing.id, Some(&zone.name))
+                .await
+                .map_err(AccessError::Store)?;
+        }
+        Ok(())
     }
 
     /// Load a persisted declaration, falling back from the in-process cache
@@ -494,6 +608,27 @@ impl AccessService {
         self.manifests.install(&row.workspace_id, pkg)?;
         Ok(())
     }
+}
+
+fn trust_from_decl(decl: LocationTrustDecl) -> LocationTrust {
+    match decl {
+        LocationTrustDecl::Trusted => LocationTrust::Trusted,
+        LocationTrustDecl::Uncertain => LocationTrust::Uncertain,
+        LocationTrustDecl::Lost => LocationTrust::Lost,
+    }
+}
+
+/// placement.position：`{x, y, level?, heading?}`（米 / 整数层 / 度）。
+fn parse_placement_position(raw: &serde_json::Value) -> Result<(f64, f64, Option<i64>, Option<f64>), AccessError> {
+    let object = raw
+        .as_object()
+        .ok_or_else(|| AccessError::Validation("placement.position must be an object".into()))?;
+    let number = |key: &str| object.get(key).and_then(serde_json::Value::as_f64);
+    let x = number("x").ok_or_else(|| AccessError::Validation("placement.position.x must be a number".into()))?;
+    let y = number("y").ok_or_else(|| AccessError::Validation("placement.position.y must be a number".into()))?;
+    let level = object.get("level").and_then(serde_json::Value::as_i64);
+    let heading = number("heading");
+    Ok((x, y, level, heading))
 }
 
 impl DemandRecorder for AccessService {
@@ -719,6 +854,198 @@ mod tests {
         async fn load_thing(&self, _thing_id: &str) -> Result<Option<Thing>, String> {
             Ok(self.0.clone())
         }
+    }
+
+    // ── E4d placement 物化桩 ─────────────────────────────────────────
+
+    use std::collections::HashMap;
+
+    use tinyiothub_core::models::spatial::{Geometry, MapBounds, MapRecord, PlaceKind, PlaceRecord};
+
+    use crate::ports::MapStore;
+
+    #[derive(Default)]
+    struct FakeMapStore {
+        maps: Mutex<Vec<MapRecord>>,
+        places: Mutex<Vec<PlaceRecord>>,
+        positions: Mutex<HashMap<String, ThingPosition>>,
+        zone_refs: Mutex<HashMap<String, String>>,
+    }
+
+    impl FakeMapStore {
+        fn with_floor() -> Self {
+            let map = MapRecord {
+                id: "m1".into(),
+                workspace_id: "ws1".into(),
+                name: "floor-1".into(),
+                bounds: MapBounds {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 10.0,
+                    h: 10.0,
+                },
+                anchor_map_id: None,
+                is_default: true,
+                created_at: "2026-10-22T00:00:00Z".into(),
+                updated_at: "2026-10-22T00:00:00Z".into(),
+            };
+            let zone = PlaceRecord {
+                id: "z1".into(),
+                map_id: "m1".into(),
+                name: "机房".into(),
+                kind: PlaceKind::Zone,
+                geometry: Geometry::Polygon {
+                    points: vec![(0.0, 0.0), (5.0, 0.0), (5.0, 5.0), (0.0, 5.0)],
+                },
+                heading: None,
+                created_at: "2026-10-22T00:00:00Z".into(),
+                updated_at: "2026-10-22T00:00:00Z".into(),
+            };
+            Self {
+                maps: Mutex::new(vec![map]),
+                places: Mutex::new(vec![zone]),
+                ..Default::default()
+            }
+        }
+
+        fn position(&self, thing_id: &str) -> Option<ThingPosition> {
+            self.positions.lock().unwrap().get(thing_id).cloned()
+        }
+
+        fn zone_ref(&self, thing_id: &str) -> Option<String> {
+            self.zone_refs.lock().unwrap().get(thing_id).cloned()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MapStore for FakeMapStore {
+        async fn list_maps(&self, _workspace_id: &str) -> Result<Vec<MapRecord>, String> {
+            Ok(self.maps.lock().unwrap().clone())
+        }
+        async fn default_map(&self, _workspace_id: &str) -> Result<Option<MapRecord>, String> {
+            Ok(self.maps.lock().unwrap().iter().find(|m| m.is_default).cloned())
+        }
+        async fn upsert_map(&self, _map: &MapRecord) -> Result<(), String> {
+            Ok(())
+        }
+        async fn delete_map(&self, _workspace_id: &str, _id: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+        async fn list_places(&self, _workspace_id: &str, map_id: &str) -> Result<Vec<PlaceRecord>, String> {
+            Ok(self
+                .places
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|p| p.map_id == map_id)
+                .cloned()
+                .collect())
+        }
+        async fn find_place_by_name(
+            &self,
+            _workspace_id: &str,
+            name: &str,
+            kind: Option<PlaceKind>,
+        ) -> Result<Option<PlaceRecord>, String> {
+            Ok(self
+                .places
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|p| p.name == name && kind.is_none_or(|k| p.kind == k))
+                .cloned())
+        }
+        async fn upsert_place(&self, _workspace_id: &str, _place: &PlaceRecord) -> Result<(), String> {
+            Ok(())
+        }
+        async fn delete_place(&self, _workspace_id: &str, _map_id: &str, _id: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+        async fn get_position(&self, _workspace_id: &str, thing_id: &str) -> Result<Option<ThingPosition>, String> {
+            Ok(self.position(thing_id))
+        }
+        async fn set_position(
+            &self,
+            _workspace_id: &str,
+            thing_id: &str,
+            position: &ThingPosition,
+        ) -> Result<(), String> {
+            self.positions
+                .lock()
+                .unwrap()
+                .insert(thing_id.to_string(), position.clone());
+            Ok(())
+        }
+        async fn set_reading_position(
+            &self,
+            _workspace_id: &str,
+            _thing_id: &str,
+            _position: &ThingPosition,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+        async fn list_positions(&self, _workspace_id: &str) -> Result<Vec<(String, ThingPosition)>, String> {
+            Ok(self
+                .positions
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(id, pos)| (id.clone(), pos.clone()))
+                .collect())
+        }
+        async fn get_zone_ref(&self, _workspace_id: &str, thing_id: &str) -> Result<Option<String>, String> {
+            Ok(self.zone_ref(thing_id))
+        }
+        async fn set_zone_ref(
+            &self,
+            _workspace_id: &str,
+            thing_id: &str,
+            zone_ref: Option<&str>,
+        ) -> Result<(), String> {
+            match zone_ref {
+                Some(name) => {
+                    self.zone_refs
+                        .lock()
+                        .unwrap()
+                        .insert(thing_id.to_string(), name.to_string());
+                }
+                None => {
+                    self.zone_refs.lock().unwrap().remove(thing_id);
+                }
+            }
+            Ok(())
+        }
+        async fn list_zone_refs(&self, _workspace_id: &str) -> Result<Vec<(String, String)>, String> {
+            Ok(self
+                .zone_refs
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(id, name)| (id.clone(), name.clone()))
+                .collect())
+        }
+        async fn zone_source(&self, _workspace_id: &str) -> Result<String, String> {
+            Ok("maps".into())
+        }
+    }
+
+    /// 把 FIXED_MANIFEST 的 placement 替换为静态 placement。
+    fn placement_manifest(mode: &str, map_ref: Option<&str>, zone_ref: Option<&str>, position: Option<&str>) -> String {
+        let mut fields = vec![format!("\"mode\":\"{mode}\"")];
+        if let Some(map_ref) = map_ref {
+            fields.push(format!("\"mapRef\":\"{map_ref}\""));
+        }
+        if let Some(zone_ref) = zone_ref {
+            fields.push(format!("\"zoneRef\":\"{zone_ref}\""));
+        }
+        if let Some(position) = position {
+            fields.push(format!("\"position\":{position}"));
+        }
+        let placement = format!("{{{}}}", fields.join(","));
+        FIXED_MANIFEST.replace(
+            "\"placement\":{\"mode\":\"runtime\"}",
+            &format!("\"placement\":{placement}"),
+        )
     }
 
     struct FakeAcceptance;
@@ -1177,6 +1504,118 @@ mod tests {
         let fx = fixture(Some(t.clone()));
         let err = fx.service.bind_thing("ws1", &t).await.unwrap_err();
         assert!(matches!(err, AccessError::NotFound(_, _)), "{err:?}");
+    }
+
+    /// fixed / declared placement → 坐标列 + map_id + zone_ref；静态位置不写
+    /// updated_at（读时恒 Trusted）。
+    #[tokio::test]
+    async fn bind_materializes_fixed_and_declared_placement() {
+        for mode in ["fixed", "declared"] {
+            let t = thing_in("ws1", "demo");
+            let fx = fixture(Some(t.clone()));
+            let store = Arc::new(FakeMapStore::with_floor());
+            fx.service
+                .manifests
+                .seed_builtin(&placement_manifest(
+                    mode,
+                    Some("floor-1"),
+                    Some("机房"),
+                    Some(r#"{"x":1.5,"y":2.5,"level":1}"#),
+                ))
+                .expect("placement manifest must validate");
+            let mut service = fx.service;
+            service.map_store = Some(store.clone());
+
+            service.bind_thing("ws1", &t).await.unwrap();
+
+            let pos = store.position("t1").expect("materialized position");
+            assert_eq!((pos.x, pos.y), (Some(1.5), Some(2.5)), "mode={mode}");
+            assert_eq!(pos.level, Some(1));
+            assert_eq!(pos.map_id.as_deref(), Some("m1"));
+            assert_eq!(pos.trust, LocationTrust::Trusted);
+            assert_eq!(pos.updated_at, None, "静态位置不得写入 updated_at");
+            assert_eq!(store.zone_ref("t1").as_deref(), Some("机房"));
+        }
+    }
+
+    /// 无效 mapRef / zoneRef / 越界坐标 / 未接线 map store → bind 失败
+    ///（fail-closed，且不落声明行）。
+    #[tokio::test]
+    async fn bind_rejects_invalid_or_unwired_placement() {
+        let cases = [
+            (
+                placement_manifest("fixed", Some("missing-map"), None, Some(r#"{"x":1,"y":1}"#)),
+                "mapRef",
+                true,
+            ),
+            (
+                placement_manifest("fixed", None, Some("missing-zone"), Some(r#"{"x":1,"y":1}"#)),
+                "zoneRef",
+                true,
+            ),
+            (
+                placement_manifest("fixed", Some("floor-1"), None, Some(r#"{"x":99,"y":1}"#)),
+                "outside",
+                true,
+            ),
+            (
+                placement_manifest("fixed", Some("floor-1"), None, Some(r#"{"x":1,"y":1}"#)),
+                "map store",
+                false,
+            ),
+        ];
+        for (manifest, needle, wire_store) in cases {
+            let t = thing_in("ws1", "demo");
+            let fx = fixture(Some(t.clone()));
+            fx.service.manifests.seed_builtin(&manifest).expect("manifest");
+            let mut service = fx.service;
+            if wire_store {
+                service.map_store = Some(Arc::new(FakeMapStore::with_floor()));
+            }
+            let err = service.bind_thing("ws1", &t).await.unwrap_err();
+            assert!(
+                err.to_string().contains(needle),
+                "expected error containing {needle:?}, got: {err}"
+            );
+            assert!(
+                service.device_store.list_by_workspace("ws1").await.unwrap().is_empty(),
+                "fail-closed：绑定失败不得落声明行"
+            );
+        }
+    }
+
+    /// zoneRef 与 mapRef 不一致（区域在别的图）→ bind 失败。
+    #[tokio::test]
+    async fn bind_rejects_zone_ref_on_another_map() {
+        let t = thing_in("ws1", "demo");
+        let fx = fixture(Some(t.clone()));
+        fx.service
+            .manifests
+            .seed_builtin(&placement_manifest(
+                "fixed",
+                Some("floor-1"),
+                Some("机房"),
+                Some(r#"{"x":1,"y":1}"#),
+            ))
+            .unwrap();
+        let store = Arc::new(FakeMapStore::with_floor());
+        // 区域挪到另一张图
+        {
+            let mut maps = store.maps.lock().unwrap();
+            let template = maps[0].clone();
+            maps.push(MapRecord {
+                id: "m2".into(),
+                name: "floor-2".into(),
+                is_default: false,
+                ..template
+            });
+        }
+        store.places.lock().unwrap()[0].map_id = "m2".into();
+        let mut service = fx.service;
+        service.map_store = Some(store);
+
+        let err = service.bind_thing("ws1", &t).await.unwrap_err();
+        assert!(err.to_string().contains("not on mapRef"), "{err}");
     }
 
     #[tokio::test]
