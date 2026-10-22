@@ -12,6 +12,7 @@ use async_trait::async_trait;
 
 use tinyiothub_core::driver::declaration::{AcceptanceReportRecord, DeviceDeclarationRecord, DriverDeclarationRecord};
 use tinyiothub_core::driver::manifest::{ManifestTool, StateFieldDecl};
+use tinyiothub_core::models::spatial::{MapRecord, PlaceRecord, ThingPosition};
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
 use tinyiothub_core::models::thing_property::ThingProperty;
@@ -144,6 +145,20 @@ pub struct DemandPropertyRef {
 #[async_trait]
 pub trait DemandSource: Send + Sync {
     async fn snapshot(&self) -> Result<Vec<DemandPropertyRef>, String>;
+}
+
+/// E4d spatial source (ZoneService): maps/places + thing position, workspace-scoped.
+/// `zone_source` returns `'hierarchy'` or `'maps'`; unknown/missing normalizes to
+/// `hierarchy` so callers keep the migration-era fallback.
+#[async_trait]
+pub trait MapStore: Send + Sync {
+    async fn list_maps(&self, workspace_id: &str) -> Result<Vec<MapRecord>, String>;
+    async fn default_map(&self, workspace_id: &str) -> Result<Option<MapRecord>, String>;
+    async fn list_places(&self, map_id: &str) -> Result<Vec<PlaceRecord>, String>;
+    async fn find_place_by_name(&self, workspace_id: &str, name: &str) -> Result<Option<PlaceRecord>, String>;
+    async fn get_position(&self, workspace_id: &str, thing_id: &str) -> Result<Option<ThingPosition>, String>;
+    async fn set_position(&self, workspace_id: &str, thing_id: &str, position: &ThingPosition) -> Result<(), String>;
+    async fn zone_source(&self, workspace_id: &str) -> Result<String, String>;
 }
 
 /// Thing cache used by `DataServer`. Sync because every call site is sync

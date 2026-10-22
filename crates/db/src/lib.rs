@@ -51,6 +51,8 @@ pub mod event;
 /// Heartbeat task/result/trust persistence and row types.
 pub mod heartbeat;
 pub mod judgment;
+/// E4d spatial persistence (maps / places / thing position / zone_source).
+pub mod map;
 /// Agent memory persistence.
 pub mod memory;
 /// Embedded migrations runner.

@@ -7,6 +7,7 @@ pub mod job;
 pub mod notification_channel;
 pub mod permission;
 pub mod role;
+pub mod spatial;
 pub mod tag;
 pub mod template_error;
 pub mod tenant;
