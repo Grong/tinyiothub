@@ -22,7 +22,14 @@ fn demo_declarative_passes_all_profiles() {
     let names: Vec<&str> = report.profiles.iter().map(|p| p.profile.as_str()).collect();
     assert_eq!(
         names,
-        vec!["core", "materialization", "migration", "resources", "cancel"]
+        vec![
+            "core",
+            "materialization",
+            "migration",
+            "resources",
+            "placement",
+            "cancel"
+        ]
     );
 }
 
@@ -36,6 +43,37 @@ fn every_named_profile_runs_alone() {
         assert_eq!(&report.profiles[0].profile, name, "{name}");
         assert_ne!(report.profiles[0].level(), Level::Fail, "{name}: {report:?}");
     }
+}
+
+#[test]
+fn demo_placement_profile_skips_map_checks_without_failing() {
+    let report = run_profiles(&demo_dir(), &["placement"]);
+    let profile = &report.profiles[0];
+    assert_eq!(profile.profile, "placement");
+    assert_ne!(profile.level(), Level::Fail, "{report:?}");
+    // The demo declares no mapRef/zoneRef/position: map-dependent checks skip
+    // with evidence while structural checks still run.
+    for name in [
+        "maps.bounds",
+        "places.geometry",
+        "maps.default_unique",
+        "placement.refs",
+    ] {
+        let check = profile
+            .checks
+            .iter()
+            .find(|c| c.check == name)
+            .unwrap_or_else(|| panic!("{name}: {report:?}"));
+        assert_eq!(check.level, Level::Pass, "{name}: {report:?}");
+    }
+    let skipped: Vec<&str> = profile
+        .checks
+        .iter()
+        .filter(|c| c.level == Level::Skip)
+        .map(|c| c.check.as_str())
+        .collect();
+    assert!(skipped.contains(&"zone.smallest_area"), "{report:?}");
+    assert!(skipped.contains(&"trust.thresholds"), "{report:?}");
 }
 
 #[test]

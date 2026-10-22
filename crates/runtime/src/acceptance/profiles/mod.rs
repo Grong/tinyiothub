@@ -4,4 +4,5 @@ pub mod cancel;
 pub mod core;
 pub mod materialization;
 pub mod migration;
+pub mod placement;
 pub mod resources;
