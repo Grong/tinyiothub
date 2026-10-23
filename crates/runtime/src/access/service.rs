@@ -1462,25 +1462,53 @@ mod tests {
         let ws = unique_workspace("ws-corrupt");
         let fx = fixture(None);
         let src = demo_package().expect("demo package");
-        fx.service.install_dir(&ws, src.path()).await.unwrap();
+        let working = fx.service.install_dir(&ws, src.path()).await.unwrap();
         let dest = fx
             .service
             .data_dir
             .join("drivers/workspaces")
             .join(&ws)
             .join("demo-declarative/1.0.0");
+        // Snapshot the working package by content. The binary's file name is
+        // platform-dependent (`driver.so` on Linux, `driver.dylib` on macOS),
+        // so asserting on a hard-coded name would silently pass on macOS: the
+        // rejected payload is named `driver.so` and would collide with the
+        // working binary on Linux.
+        let working_binary = working.binary_path.clone().expect("binary package");
+        let working_binary_bytes = std::fs::read(&working_binary).unwrap();
+        let working_manifest_bytes = std::fs::read(dest.join(MANIFEST_FILE)).unwrap();
 
+        let bad_payload = b"not a shared library";
         let bad = tempfile::tempdir().unwrap();
         std::fs::write(bad.path().join(MANIFEST_FILE), DEMO_REAL_MANIFEST).unwrap();
-        std::fs::write(bad.path().join("driver.so"), b"not a shared library").unwrap();
+        std::fs::write(bad.path().join("driver.so"), bad_payload).unwrap();
         assert!(fx.service.install_dir(&ws, bad.path()).await.is_err());
 
         assert!(
             fx.service.get_manifest(&ws, "demo-declarative").is_some(),
             "working manifest must remain installed"
         );
-        assert!(dest.join(MANIFEST_FILE).is_file());
-        assert!(!dest.join("driver.so").exists(), "rejected binary must not be copied");
+        assert_eq!(
+            std::fs::read(dest.join(MANIFEST_FILE)).unwrap(),
+            working_manifest_bytes,
+            "working manifest must be byte-identical after a rejected install"
+        );
+        assert_eq!(
+            std::fs::read(&working_binary).unwrap(),
+            working_binary_bytes,
+            "working binary must be byte-identical after a rejected install"
+        );
+        for entry in std::fs::read_dir(&dest).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_file() {
+                assert_ne!(
+                    std::fs::read(&path).unwrap(),
+                    bad_payload,
+                    "rejected binary must not be copied: {}",
+                    path.display()
+                );
+            }
+        }
     }
 
     #[tokio::test]
