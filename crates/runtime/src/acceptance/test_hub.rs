@@ -21,7 +21,7 @@ use tinyiothub_core::models::thing_command::ThingCommand;
 use tinyiothub_core::models::thing_property::ThingProperty;
 
 use crate::driver::status::ThingOverview;
-use crate::driver::worker::{WorkerHandle, WorkerResult, spawn_worker};
+use crate::driver::worker::{CommandOutcome, WorkerHandle, WorkerResult, spawn_worker};
 use crate::driver::{create_driver, driver_registry};
 use crate::event_bus::EventBus;
 use crate::ports::{DeclarationProjectionStore, ThingCacheSource};
@@ -414,6 +414,47 @@ impl TestHub {
             }
         }
         Ok(reading.values)
+    }
+
+    /// Submit one command and wait for the worker's terminal outcome through
+    /// the `done` channel (the same path composite Call steps use).
+    ///
+    /// Returns `Err` when the handle was not spawned by this hub, the execute
+    /// queue is full/closed, the worker stops before reporting, or `timeout`
+    /// elapses. A rejected/failed command is reported as
+    /// [`CommandOutcome::success`]` == false`, not an `Err`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when called from inside a Tokio runtime; use a sync context.
+    pub fn execute_and_wait(
+        &self,
+        handle: &WorkerHandle,
+        cmd: ThingCommand,
+        timeout: Duration,
+    ) -> Result<CommandOutcome, String> {
+        {
+            let handles = self.handles.lock().unwrap();
+            if !handles.iter().any(|m| std::ptr::eq(m.handle.as_ref(), handle)) {
+                return Err("worker was not spawned by this TestHub".to_string());
+            }
+        }
+
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        handle
+            .submit_execute_with_lease_and_done(cmd, None, Some(done_tx))
+            .map_err(|e| format!("submit execute: {e}"))?;
+        self.rt().block_on(async move {
+            tokio::time::timeout(timeout, done_rx)
+                .await
+                .map_err(|_| {
+                    format!(
+                        "timed out after {}ms waiting for the command outcome",
+                        timeout.as_millis()
+                    )
+                })?
+                .map_err(|_| "worker dropped the command outcome channel (stopped?)".to_string())
+        })
     }
 
     pub fn status(&self, handle: &WorkerHandle) -> ThingOverview {
