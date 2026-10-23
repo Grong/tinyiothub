@@ -57,11 +57,17 @@ extern "C" fn demo_read(
 ) -> c_int {
     let state = unsafe { &*(ctx as *const DemoState) };
     // Field name must match `tinyiothub_core::driver::ResultValue` (value_type).
+    // `level2` belongs to the demand-only `slow` source and stays inside the
+    // declared 0..=100 range.
+    let level2 = (state.level + 1).min(100);
     emit(
         done,
         user,
         0,
-        format!(r#"[{{"name":"level","value_type":"int","value":"{}"}}]"#, state.level),
+        format!(
+            r#"[{{"name":"level","value_type":"int","value":"{}"}},{{"name":"level2","value_type":"int","value":"{}"}}]"#,
+            state.level, level2
+        ),
     );
     0
 }
@@ -262,10 +268,13 @@ mod tests {
         let (status, body) = call_read(ctx);
         assert_eq!(status, 0);
         let values: Vec<tinyiothub_core::driver::ResultValue> = serde_json::from_str(&body).unwrap();
-        assert_eq!(values.len(), 1);
+        assert_eq!(values.len(), 2);
         assert_eq!(values[0].name, "level");
         assert_eq!(values[0].value_type, "int");
         assert_eq!(values[0].value.as_deref(), Some("0"));
+        assert_eq!(values[1].name, "level2");
+        assert_eq!(values[1].value_type, "int");
+        assert_eq!(values[1].value.as_deref(), Some("1"));
         tinyiothub_driver_destroy(ctx);
     }
 

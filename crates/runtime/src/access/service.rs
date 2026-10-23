@@ -1641,7 +1641,7 @@ mod tests {
 
         assert_eq!(decl.driver, "demo-declarative");
         assert_eq!(decl.state_fields[0].name, "level");
-        assert_eq!(fx.projection.props.lock().unwrap().as_slice(), ["level"]);
+        assert_eq!(fx.projection.props.lock().unwrap().as_slice(), ["level", "level2"]);
         let rows = fx.device_store.list_by_workspace(&ws).await.unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].declaration_hash.len(), 64);

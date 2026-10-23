@@ -7,5 +7,6 @@ pub mod materialization;
 pub mod migration;
 pub mod placement;
 pub mod resources;
+pub mod streaming;
 pub mod telemetry;
 pub mod tools;

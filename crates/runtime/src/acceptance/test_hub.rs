@@ -755,17 +755,19 @@ mod tests {
         let loaded = hub.load_package(&demo_package_dir()).expect("load demo package");
         assert_eq!(loaded.driver, "demo-declarative");
         assert_eq!(loaded.version, "1.0.0");
-        assert_eq!(loaded.source_ids(), vec!["telemetry".to_string()]);
+        assert_eq!(loaded.source_ids(), vec!["telemetry".to_string(), "slow".to_string()]);
 
         let thing = hub.make_thing(&loaded, ThingOptions::default());
         assert_eq!(thing.driver_name.as_deref(), Some("demo-declarative"));
         assert_eq!(thing.workspace_id.as_deref(), Some(hub.workspace_id()));
-        assert_eq!(thing.properties.as_ref().map(Vec::len), Some(1));
+        assert_eq!(thing.properties.as_ref().map(Vec::len), Some(2));
 
         let handle = hub.spawn(&loaded.driver, thing.clone()).expect("spawn worker");
         let values = hub.read_and_wait(&handle, Duration::from_secs(5)).expect("worker read");
         let level = values.iter().find(|v| v.name == "level").expect("level reading");
         assert_eq!(level.value.as_deref(), Some("0"));
+        let level2 = values.iter().find(|v| v.name == "level2").expect("level2 reading");
+        assert_eq!(level2.value.as_deref(), Some("1"));
         assert!(
             hub.status(&handle).health.connection.is_online(),
             "worker must be online"
