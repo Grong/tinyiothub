@@ -51,6 +51,11 @@ jobs:
         run: cargo clippy --workspace -- -W clippy::all
         continue-on-error: true
 
+      # driver-check e2e stages the reference cdylib; build it before tests
+      # (kept out of workspace test deps so it is not rebuilt per test target).
+      - name: Build reference cdylib
+        run: cargo build -p demo-declarative
+
       - name: Test workspace
         run: cargo test --workspace --lib --bins --tests
 
