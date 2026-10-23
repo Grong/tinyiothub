@@ -6,13 +6,29 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
+use tinyiothub_runtime::access::DemandRecorder;
+use tinyiothub_runtime::watch::live_state::Health;
 
-use super::{tool_err, tool_ok};
+use super::{LiveSummarySource, tool_err, tool_ok};
 use crate::domains::thing::service::ThingService;
 
 pub struct GetThingProfileTool {
     pub(super) thing_service: Arc<ThingService>,
     pub(super) workspace_id: String,
+    /// E1 值守读面（Task 10）：LiveState 摘要源；None = 未接线（live=null）。
+    pub(super) live: Option<Arc<dyn LiveSummarySource>>,
+    /// E4b：快照读取成功后把全部声明属性写入 DemandTracker（None = 未接线）。
+    pub(super) demand: Option<Arc<dyn DemandRecorder>>,
+}
+
+/// health 序列化词表（spec 接口契约）。
+pub(super) fn health_str(health: Health) -> &'static str {
+    match health {
+        Health::Ok => "ok",
+        Health::Attention => "attention",
+        Health::Bad => "bad",
+        Health::Unknown => "unknown",
+    }
 }
 
 impl Attributable for GetThingProfileTool {
@@ -49,14 +65,200 @@ impl Tool for GetThingProfileTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
+        // thing_id 兜底：提案/报告的 parameters 常随模板写成蛇形键。
         let thing_id = args
             .get("thingId")
+            .or_else(|| args.get("thing_id"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("缺少必需参数: thingId"))?;
 
         match self.thing_service.get_thing_profile(thing_id, &self.workspace_id).await {
-            Ok(result) => tool_ok(result),
+            Ok(result) => {
+                // E4b §3.2：快照装配即读取——记录全部声明属性，供
+                // demandOnly source 下一轮采样。
+                if let Some(demand) = &self.demand {
+                    for property in result.properties.iter().flatten() {
+                        if let Some(name) = property.get("name").and_then(|v| v.as_str()) {
+                            demand.record_read(&self.workspace_id, thing_id, name);
+                        }
+                    }
+                }
+                let mut payload = serde_json::to_value(&result).unwrap_or_default();
+                // E1 Task 10：附 LiveState 摘要；无该物/未接线 → live=null（不炸）。
+                let summary = match &self.live {
+                    Some(source) => source.summary(&self.workspace_id, thing_id).await,
+                    None => None,
+                };
+                let live = summary.map_or(Value::Null, |s| {
+                    json!({
+                        "health": health_str(s.health),
+                        "zone": s.zone,
+                        "online": s.online,
+                    })
+                });
+                if let Some(map) = payload.as_object_mut() {
+                    map.insert("live".to_string(), live);
+                }
+                tool_ok(payload)
+            }
             Err(e) => tool_err(e.to_string()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::LiveSummarySource;
+    use super::*;
+    use crate::domains::thing::types::CreateThingRequest;
+    use sqlx::SqlitePool;
+    use tinyiothub_runtime::watch::live_state::{Health, ThingLiveSummary};
+
+    /// 内存桩：固定摘要的 LiveSummarySource。
+    struct StubLive(Option<ThingLiveSummary>);
+
+    #[async_trait]
+    impl LiveSummarySource for StubLive {
+        async fn summary(&self, _workspace_id: &str, _thing_id: &str) -> Option<ThingLiveSummary> {
+            self.0.clone()
+        }
+    }
+
+    /// 造一个工作区物，返回 (service, thing_id)。
+    async fn seed_thing() -> (Arc<ThingService>, String) {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
+        // things.workspace_id → workspaces → tenants FK 链：seed 系统租户后落工作区行。
+        tinyiothub_storage::seed::seed_system(&tinyiothub_storage::Db::new(pool.clone()))
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) \
+             VALUES ('ws','ws','tenant-default-001','2026-01-01','2026-01-01')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let svc = Arc::new(ThingService::new(pool.clone()));
+        let req: CreateThingRequest = serde_json::from_value(json!({"name": "温感-1", "thingType": "device"})).unwrap();
+        let created = svc.create_thing(&req, Some("ws")).await.unwrap();
+        sqlx::query(
+            "INSERT INTO thing_properties (id, thing_id, name, data_type) VALUES ('prop-1', ?, '温度', 'float')",
+        )
+        .bind(&created.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        (svc, created.id)
+    }
+
+    /// E1 Task 10：LiveState 有该物摘要 → profile 附 live（health/zone/online）。
+    #[tokio::test]
+    async fn profile_includes_live_summary_when_available() {
+        let (svc, id) = seed_thing().await;
+        let tool = GetThingProfileTool {
+            thing_service: svc,
+            workspace_id: "ws".into(),
+            live: Some(Arc::new(StubLive(Some(ThingLiveSummary {
+                health: Health::Attention,
+                zone: "园区A/3号楼".into(),
+                online: false,
+                values: Default::default(),
+            })))),
+            demand: None,
+        };
+        let out = tool.execute(json!({"thingId": id})).await.unwrap();
+        assert!(out.success, "{}", out.error.unwrap_or_default());
+        let v: Value = serde_json::from_str(&out.output).unwrap();
+        assert_eq!(v["live"]["zone"], "园区A/3号楼");
+        assert_eq!(v["live"]["health"], "attention");
+        assert_eq!(v["live"]["online"], false);
+    }
+
+    /// LiveState 无该物 / 读面未接线 → live 键存在且为 null（不炸）。
+    #[tokio::test]
+    async fn profile_live_null_when_summary_missing() {
+        // 形态一：源已接线但该物无实时摘要。
+        let (svc, id) = seed_thing().await;
+        let tool = GetThingProfileTool {
+            thing_service: svc,
+            workspace_id: "ws".into(),
+            live: Some(Arc::new(StubLive(None))),
+            demand: None,
+        };
+        let out = tool.execute(json!({"thingId": id})).await.unwrap();
+        assert!(out.success, "{}", out.error.unwrap_or_default());
+        let v: Value = serde_json::from_str(&out.output).unwrap();
+        assert!(
+            v.as_object().unwrap().contains_key("live"),
+            "live 键必须存在（无摘要时为 null 而非缺省）"
+        );
+        assert!(v["live"].is_null());
+
+        // 形态二：读面未接线（ThingToolContext.live=None）。
+        let (svc, id) = seed_thing().await;
+        let tool = GetThingProfileTool {
+            thing_service: svc,
+            workspace_id: "ws".into(),
+            live: None,
+            demand: None,
+        };
+        let out = tool.execute(json!({"thingId": id})).await.unwrap();
+        assert!(out.success, "{}", out.error.unwrap_or_default());
+        let v: Value = serde_json::from_str(&out.output).unwrap();
+        assert!(v["live"].is_null());
+    }
+
+    // ── E4b：快照装配记录声明属性 ─────────────────────────
+
+    #[derive(Default)]
+    struct RecordingDemand(std::sync::Mutex<Vec<(String, String, String)>>);
+
+    impl DemandRecorder for RecordingDemand {
+        fn record_read(&self, workspace_id: &str, thing_id: &str, property: &str) {
+            self.0
+                .lock()
+                .unwrap()
+                .push((workspace_id.into(), thing_id.into(), property.into()));
+        }
+    }
+
+    #[tokio::test]
+    async fn profile_records_all_declared_properties_on_success() {
+        let (svc, id) = seed_thing().await;
+        let demand = Arc::new(RecordingDemand::default());
+        let tool = GetThingProfileTool {
+            thing_service: svc,
+            workspace_id: "ws".into(),
+            live: None,
+            demand: Some(demand.clone()),
+        };
+
+        let out = tool.execute(json!({"thingId": id})).await.unwrap();
+        assert!(out.success, "{}", out.error.unwrap_or_default());
+        assert_eq!(
+            demand.0.lock().unwrap().as_slice(),
+            [("ws".to_string(), id.clone(), "温度".to_string())]
+        );
+
+        // Not-found → tool error, no demand recorded.
+        demand.0.lock().unwrap().clear();
+        let out = tool.execute(json!({"thingId": "missing"})).await.unwrap();
+        assert!(!out.success);
+        assert!(
+            demand.0.lock().unwrap().is_empty(),
+            "failed profile must not record demand"
+        );
+    }
+
+    /// health 词表序列化（spec 接口契约：ok/attention/bad/unknown）。
+    #[test]
+    fn health_serializes_to_spec_vocabulary() {
+        assert_eq!(health_str(Health::Ok), "ok");
+        assert_eq!(health_str(Health::Attention), "attention");
+        assert_eq!(health_str(Health::Bad), "bad");
+        assert_eq!(health_str(Health::Unknown), "unknown");
     }
 }

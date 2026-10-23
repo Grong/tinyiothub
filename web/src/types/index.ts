@@ -155,6 +155,18 @@ export interface ThingProperty {
   isReadOnly?: boolean;
   minValue?: number;
   maxValue?: number;
+  /** 属性来源：'template'（默认）| 'derived'（派生，园区物派生属性） */
+  source?: string;
+  /** 派生表达式原文（仅 derived） */
+  expression?: string;
+  /** 解析后引用 JSON 字符串：[{"thing_id":"...","property_name":"..."}]（仅 derived） */
+  refs?: string;
+  /** 派生运行状态（runtime 注入，不落库；仅 derived） */
+  derivedStatus?: {
+    stale: boolean;
+    staleReason?: string | null;
+    lastEvalAt?: string | null;
+  };
 }
 
 export interface ThingCommand {

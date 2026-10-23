@@ -12,11 +12,19 @@ GRANDFATHERED="20260825000001_rename_device_to_thing.sql
 20260826000001_thing_contract_data.sql
 20260828000001_policy_action_rename.sql
 20260831000001_tool_override_rename.sql"
+# spec 裁定的一次性数据迁移（2026-10-12 ai-consolidation §4 N4/埋伏③，
+# docs/superpowers/specs/2026-10-12-ai-consolidation-design.md）：心跳历史
+# trace 回填合成 agent_runs + 提案 tick_id 改锚 run_id + 读侧映射视图。
+# 幂等形态（INSERT OR IGNORE / EXISTS+前缀守卫 / CREATE VIEW IF NOT
+# EXISTS），TDD 迁移测试锁定语义与重跑零副作用
+# （crates/db/tests/heartbeat_migration_tests.rs）。此清单是例外不是先例——
+# 新迁移仍一律 DDL-only，数据回填默认走应用层，不得未经 spec 裁定加入。
+SPEC_APPROVED="20261013000001_heartbeat_runs_backfill.sql"
 set -u
 cd "$(git rev-parse --show-toplevel)"
 
 NON_BASELINE=$(ls crates/db/migrations/*.sql | grep -v baseline || true)
-for g in $GRANDFATHERED; do
+for g in $GRANDFATHERED $SPEC_APPROVED; do
   NON_BASELINE=$(echo "$NON_BASELINE" | grep -v "/$g\$" || true)
 done
 NON_BASELINE=$(echo "$NON_BASELINE" | grep -v '^\s*$' || true)
@@ -24,7 +32,24 @@ if [ -z "$NON_BASELINE" ]; then
   echo "✅ Migration DDL-only guard passed (no non-baseline migrations)"
   exit 0
 fi
-OFFENDERS=$(echo "$NON_BASELINE" | xargs -I{} sh -c 'grep -vE "^\s*--" "{}" | grep -qiE "\b(INSERT|REPLACE|UPDATE|DELETE)\b" && echo "{}"' || true)
+# 白名单（2026-09-30，CI 政策裁定）：重建表自拷贝 `INSERT INTO <x>_new SELECT
+# …FROM <x>` 不算违规——SQLite 改 CHECK 约束的唯一合法路径就是建新表+拷
+# 数据+换名（20260914000001 先例），它是确定性 DDL 变体，不是环境/数据相关
+# 的真实 DML。裸 INSERT（非 _new 目标）依然一律拒绝。
+# 实现注：用循环而非 xargs -I{}——macOS xargs -I 的替换命令行有 255 字节
+# 上限，过滤链一长就报 "cannot be assembled, too long" 并静默空结果（2026-09-30 实测）。
+OFFENDERS=""
+for f in $NON_BASELINE; do
+  # `ON DELETE CASCADE|SET NULL` is a foreign-key referential action (DDL),
+  # not a DELETE statement; strip it before looking for DML.
+  if grep -vE "^\s*--" "$f" \
+    | sed -E 's/[Oo][Nn][[:space:]]+[Dd][Ee][Ll][Ee][Tt][Ee]/ON_REF_ACTION/g' \
+    | grep -vE "\bINSERT[[:space:]]+INTO[[:space:]]+[A-Za-z0-9_]+_new\b" \
+    | grep -qiE "\b(INSERT|REPLACE|UPDATE|DELETE)\b"; then
+    OFFENDERS="${OFFENDERS:+$OFFENDERS
+}$f"
+  fi
+done
 if [ -n "$OFFENDERS" ]; then
   echo "$OFFENDERS"
   echo "❌ migrations must be DDL-only (seeds go to seed.rs; INSERT/UPDATE/DELETE/REPLACE incl. INSERT OR IGNORE are forbidden)"

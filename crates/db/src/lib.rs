@@ -24,6 +24,8 @@ pub mod audit_log;
 pub mod auth;
 /// Batch command persistence (batch_commands / batch_command_items) and row types.
 pub mod batch_command;
+/// brain_events 投影查询（AI 大脑 P0）：feed/summary/detail 读 brain_events 视图。
+pub mod brain_event;
 /// Thing cache (in-memory).
 pub mod cache;
 /// Db connection configuration.
@@ -34,6 +36,10 @@ pub mod cron_job;
 pub mod cron_run;
 /// Db facade (connection + domain accessors).
 pub mod database;
+/// E4b sampling demand snapshot (watch rules, derived refs, alarm rules).
+pub mod demand;
+/// E4a driver/device declarations + projection writes.
+pub mod driver_declaration;
 /// Driver installation persistence.
 pub mod driver_installation;
 /// Edge 网关本地持久化（offline_buffer / config_meta，edge 专有表）。
@@ -45,9 +51,12 @@ pub mod event;
 /// Heartbeat task/result/trust persistence and row types.
 pub mod heartbeat;
 pub mod judgment;
+/// E4d spatial persistence (maps / places / thing position / zone_source).
+pub mod map;
 /// Agent memory persistence.
 pub mod memory;
 /// Embedded migrations runner.
+// 20260917000001_brain_events_view.sql：brain_events 只读投影视图（改此行使 cargo 重嵌迁移集）。
 pub mod migrations;
 /// Shared query model types.
 pub mod models;
@@ -72,6 +81,9 @@ pub mod session;
 /// system_settings key-value storage (event security config).
 pub mod ticket;
 
+/// Thing row mapping helpers.
+/// E2 composite 声明持久源（agent_composites）。
+pub mod composite;
 pub mod settings;
 /// SQL escaping helpers.
 pub mod sql_security;
@@ -85,7 +97,6 @@ pub mod thing;
 pub mod thing_command;
 /// Thing property persistence.
 pub mod thing_property;
-/// Thing row mapping helpers.
 pub mod thing_row_mapper;
 /// Thing template persistence (thing_templates / template_categories).
 pub mod thing_template;
@@ -93,6 +104,8 @@ pub mod thing_template;
 pub mod thing_trace;
 /// User persistence and row types.
 pub mod user;
+/// E1 值守中枢持久源：watch_rules + hub_ledger。
+pub mod watch;
 /// Workspace + knowledge resource persistence and row types.
 pub mod workspace;
 
@@ -102,6 +115,7 @@ pub mod test_helpers;
 
 // 公共面显式化（Task 13）：只re-export 跨crate 常用的入口类型；
 // 各领域行类型/函数一律经 `tinyiothub_storage::<domain>::...` 模块路径访问。
+pub use brain_event::{BrainEvent, BrainEventDetail, BrainEventTab, BrainEventsSummary};
 pub use cache::ThingCache;
 pub use config::DatabaseConfig;
 pub use database::Db;

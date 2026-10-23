@@ -39,13 +39,15 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
-use tinyiothub_agent::runtime::thing_agent::RunContextInner;
+use tinyiothub_agent::runtime::thing_agent::seams::policy::{DefaultPolicy, PolicyDecision, PolicyInput, PolicySeam};
+use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL, RunContextInner};
 use tinyiothub_core::models::event::EventLevel;
-use tinyiothub_policy::autonomy::{GateVerdict, gate_check};
+use tinyiothub_policy::autonomy::AutonomyPolicy;
+use tinyiothub_runtime::access::resources::ResourceResolver;
 use tinyiothub_storage::Db;
 use tokio::sync::RwLock;
 
-use super::thing::{InvokeActionTool, take_pending_action, tool_err, tool_ok};
+use super::thing::{InvokeActionTool, resource_specs, take_pending_action, tool_err, tool_ok};
 use crate::domains::event::{
     bus::ThingEventBus,
     router::{ThingEventInput, ThrottleState, route_thing_event},
@@ -55,20 +57,79 @@ use crate::domains::event::{
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Input {
+    // alias：提案/报告的 parameters 常随模板写成蛇形键（thing_id）。
+    #[serde(alias = "thing_id")]
     thing_id: String,
+    #[serde(alias = "action_name", alias = "action")]
     action_name: String,
     params: Option<Value>,
 }
 
 /// Dispatch a device command through the DataServer command queue.
-/// Mirrors the dispatch tail in thing.rs:666-700 — keep in sync (O18 forbids
+/// Mirrors the dispatch tail in thing.rs — keep in sync (O18 forbids
 /// editing thing.rs). Returns the executed/simulated payload, or an error
 /// result when the queue rejects it.
-fn dispatch_command(
+///
+/// E1/E4c 仲裁：确认门之后的真实下发同样 claim 资源——
+/// - `resources` 接线时按工具声明 claim（与 chat 工具路径一致，评审 Issue 3）；
+///   `None` 时沿用 E1 合成 `__device__` 每设备互斥。
+/// - stop 闸门在归属已确认的调用点先行拒绝（`stopped: <reason>`）。
+/// - 租约移交给 worker（`execute_command_with_lease`），claim 覆盖真实执行
+///   窗口而不是入队瞬间（评审 Issue 4）。
+///
+/// pub(crate)：提案批准执行（workspace_heartbeat）的 invoke_action 自动确认
+/// 复用同一下发尾巴，避免第三份拷贝。
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn dispatch_command(
+    data_server: Option<&Arc<tinyiothub_runtime::DataServer>>,
+    workspace_id: &str,
+    thing_id: &str,
+    action_name: &str,
+    params: Option<&Value>,
+    arbitration: Option<&ArbitrationRegistry>,
+    resources: Option<&dyn ResourceResolver>,
+    holder: &str,
+) -> ToolResult {
+    let lease = match arbitration {
+        Some(registry) => {
+            if let Some(reason) = registry.stop_reason(thing_id) {
+                return tool_err(format!("stopped: {reason}")).expect("static message");
+            }
+            let acquired = match resources {
+                Some(resolver) => match resolver.resolve_action(workspace_id, thing_id, action_name).await {
+                    Ok(claims) => registry.try_acquire_resources(
+                        thing_id,
+                        holder.to_string(),
+                        &resource_specs(&claims),
+                        DEFAULT_LEASE_TTL,
+                    ),
+                    Err(e) => return tool_err(format!("资源解析失败: {e}")).expect("static message"),
+                },
+                None => registry.try_acquire_default(thing_id, holder.to_string()),
+            };
+            match acquired {
+                Ok(lease) => Some(lease),
+                Err(busy) if resources.is_some() => return tool_err(busy.to_string()).expect("static message"),
+                Err(busy) => {
+                    return tool_err(format!("busy: 设备正被 {} 占用，请稍后重试", busy.holder))
+                        .expect("static message");
+                }
+            }
+        }
+        None => None,
+    };
+    dispatch_command_with_lease(data_server, thing_id, action_name, params, lease)
+}
+
+/// 下发尾巴：调用方已持有租约（或 `None`），租约随命令移交 worker。
+///
+/// 无 DataServer（模拟路径）时租约在本函数返回时释放。
+pub(crate) fn dispatch_command_with_lease(
     data_server: Option<&Arc<tinyiothub_runtime::DataServer>>,
     thing_id: &str,
     action_name: &str,
     params: Option<&Value>,
+    lease: Option<tinyiothub_runtime::arbitration::ResourceLease>,
 ) -> ToolResult {
     match data_server.cloned() {
         Some(data_server) => {
@@ -81,7 +142,7 @@ fn dispatch_command(
                 parameters: params.map(|p| p.to_string()),
                 created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
             };
-            match data_server.execute_command(cmd) {
+            match data_server.execute_command_with_lease(cmd, lease) {
                 Ok(()) => tool_ok(json!({
                     "thingId": thing_id,
                     "actionName": action_name,
@@ -93,6 +154,8 @@ fn dispatch_command(
             }
         }
         None => {
+            // 模拟路径不执行任何驱动调用：租约随函数返回释放。
+            drop(lease);
             tracing::warn!("DataServer not available, action execution is simulated");
             tool_ok(json!({
                 "thingId": thing_id,
@@ -102,6 +165,58 @@ fn dispatch_command(
             }))
             .expect("payload serializes")
         }
+    }
+}
+
+/// 下发尾巴（等待执行完成）：供 composite 顺序步骤使用。
+///
+/// composite 的 run-wide 租约已由调用方全程持有（`lease` 通常为 `None`），
+/// 本函数等待 worker 回报执行终态——保证上一步命令真正离开驱动后才进入
+/// 下一步，且 run-wide claim 的覆盖范围包含 worker 执行窗口。
+pub(crate) async fn dispatch_command_with_lease_and_wait(
+    data_server: Option<&Arc<tinyiothub_runtime::DataServer>>,
+    thing_id: &str,
+    action_name: &str,
+    params: Option<&Value>,
+    lease: Option<tinyiothub_runtime::arbitration::ResourceLease>,
+) -> ToolResult {
+    let Some(data_server) = data_server.cloned() else {
+        // 模拟路径不执行任何驱动调用：租约随函数返回释放。
+        drop(lease);
+        tracing::warn!("DataServer not available, action execution is simulated");
+        return tool_ok(json!({
+            "thingId": thing_id,
+            "actionName": action_name,
+            "status": "simulated",
+            "message": "操作已记录（DataServer 未就绪，实际执行已模拟）"
+        }))
+        .expect("payload serializes");
+    };
+
+    let cmd = tinyiothub_core::models::thing_command::ThingCommand {
+        id: uuid::Uuid::new_v4().to_string(),
+        thing_id: thing_id.to_string(),
+        name: action_name.to_string(),
+        display_name: None,
+        description: None,
+        parameters: params.map(|p| p.to_string()),
+        created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+    };
+    match data_server.execute_command_with_lease_and_wait(cmd, lease).await {
+        Ok(outcome) if outcome.cancelled => tool_err(format!("操作已取消: {action_name}")).expect("static message"),
+        Ok(outcome) if !outcome.success => tool_err(format!(
+            "操作执行失败: {}",
+            outcome.error.unwrap_or_else(|| "driver reported failure".to_string())
+        ))
+        .expect("static message"),
+        Ok(_) => tool_ok(json!({
+            "thingId": thing_id,
+            "actionName": action_name,
+            "status": "executed",
+            "message": "操作已执行完成"
+        }))
+        .expect("payload serializes"),
+        Err(e) => tool_err(format!("操作执行失败: {}", e)).expect("static message"),
     }
 }
 
@@ -123,6 +238,8 @@ pub struct AutonomousInvokeActionTool {
     workspace_id: String,
     event_bus: Arc<ThingEventBus>,
     throttle: Arc<ThrottleState>,
+    /// E2 Policy 接缝（None = 内置 gate_check）。
+    policy_seam: Option<Arc<dyn PolicySeam>>,
 }
 
 impl AutonomousInvokeActionTool {
@@ -143,7 +260,14 @@ impl AutonomousInvokeActionTool {
             workspace_id,
             event_bus,
             throttle,
+            policy_seam: None,
         }
+    }
+
+    /// E2：注入 Policy 接缝替换实现（只能收窄）。
+    pub fn with_policy_seam(mut self, seam: Arc<dyn PolicySeam>) -> Self {
+        self.policy_seam = Some(seam);
+        self
     }
 
     /// Consume the confirmation token minted by the inner tool and dispatch
@@ -152,7 +276,7 @@ impl AutonomousInvokeActionTool {
     /// practically unreachable; the caller maps None to a tool error rather
     /// than leaking the confirmation_required payload (and its token) to the
     /// LLM.
-    fn auto_confirm(&self, inner_output: &str, input: &Input) -> Option<ToolResult> {
+    async fn auto_confirm(&self, inner_output: &str, input: &Input) -> Option<ToolResult> {
         let token = serde_json::from_str::<Value>(inner_output)
             .ok()?
             .get("token")?
@@ -165,12 +289,19 @@ impl AutonomousInvokeActionTool {
         {
             return None;
         }
-        Some(dispatch_command(
-            self.inner.data_server.as_ref(),
-            &pending.thing_id,
-            &pending.action_name,
-            pending.params.as_ref(),
-        ))
+        Some(
+            dispatch_command(
+                self.inner.data_server.as_ref(),
+                &self.workspace_id,
+                &pending.thing_id,
+                &pending.action_name,
+                pending.params.as_ref(),
+                self.inner.arbitration.as_deref(),
+                self.inner.resources.as_deref(),
+                &self.inner.arbitration_holder,
+            )
+            .await,
+        )
     }
 
     /// Record the dispatched action in the events table with actor="agent"
@@ -215,9 +346,9 @@ impl Attributable for AutonomousInvokeActionTool {
 #[async_trait]
 impl Tool for AutonomousInvokeActionTool {
     fn name(&self) -> &str {
-        // MUST stay "invoke_action": the T9 runner trajectory matching and
-        // the T10 prompt refer to this name.
-        "invoke_action"
+        // E2：模型可见的固定设备动作名。runner 轨迹匹配同时接受旧名
+        // `invoke_action`（隐藏别名，兼容存量报告）。
+        "call_device"
     }
 
     fn description(&self) -> &str {
@@ -235,7 +366,7 @@ impl Tool for AutonomousInvokeActionTool {
                     "type": "string",
                     "description": "物ID（必需）"
                 },
-                "actionName": {
+                "action": {
                     "type": "string",
                     "description": "操作名称（必需）"
                 },
@@ -244,7 +375,7 @@ impl Tool for AutonomousInvokeActionTool {
                     "description": "操作参数（可选，JSON 键值对）"
                 }
             },
-            "required": ["thingId", "actionName"]
+            "required": ["thingId", "action"]
         })
     }
 
@@ -316,8 +447,16 @@ impl Tool for AutonomousInvokeActionTool {
             None => 0,
         };
 
-        if let GateVerdict::Deny { reason } = gate_check(policy.as_ref(), &input.action_name, prior_actions, hourly) {
-            return denied(&reason);
+        let seam: Arc<dyn PolicySeam> = self.policy_seam.clone().unwrap_or_else(|| Arc::new(DefaultPolicy));
+        let policy_ref: Option<&AutonomyPolicy> = policy.as_ref();
+        if let PolicyDecision::Deny { code, .. } = seam.evaluate(&PolicyInput {
+            workspace_id: &self.workspace_id,
+            action_name: &input.action_name,
+            actions_this_run: prior_actions,
+            actions_last_hour: hourly,
+            policy: policy_ref,
+        }) {
+            return denied(&code);
         }
 
         // 3. Validation + dispatch via the inner tool (thing.rs reuse).
@@ -337,7 +476,7 @@ impl Tool for AutonomousInvokeActionTool {
         let final_result = if status == "confirmation_required" {
             // Never pass the confirmation_required payload through on
             // auto-confirm failure: it carries a live token to the LLM.
-            match self.auto_confirm(&result.output, &input) {
+            match self.auto_confirm(&result.output, &input).await {
                 Some(r) => r,
                 None => tool_err("auto-confirm failed: token mismatch or expired; action NOT dispatched".to_string())
                     .expect("static message"),
@@ -454,6 +593,11 @@ mod tests {
             workspace_id: workspace_id.to_string(),
             data_server: None,
             pending_actions: self_pending_actions(),
+            arbitration: None,
+            arbitration_holder: "test".to_string(),
+            approval: None,
+            access: None,
+            resources: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -540,6 +684,42 @@ mod tests {
         let out = output_json(&result);
         assert_eq!(out["denied"], true);
         assert_eq!(out["reason"], "autonomy_not_act");
+    }
+
+    /// E2 替换证明：Policy 接缝替换实现走真实工具路径生效（只能收窄）。
+    struct DenyAllSeam;
+
+    impl PolicySeam for DenyAllSeam {
+        fn evaluate(&self, _input: &PolicyInput<'_>) -> PolicyDecision {
+            PolicyDecision::Deny {
+                code: "seam_deny".to_string(),
+                message: "replacement seam denies everything".to_string(),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn replacement_policy_seam_is_consulted() {
+        let fx = fixture("ws-seam").await;
+        seed_thing(&fx.pool, "ws-seam", "dev-1", "device").await;
+        register_action(&fx.pool, "dev-1", "reboot").await;
+        fx.policy_repo
+            .save_autonomy_policy("ws-seam", &act_policy(), "test")
+            .await
+            .unwrap();
+
+        let tool = fx.tool.with_policy_seam(Arc::new(DenyAllSeam));
+        *fx.ctx
+            .write()
+            .await
+            .action_counts
+            .entry("dev-1".to_string())
+            .or_insert(0) += 1;
+        let result = tool.execute(args("dev-1", "reboot")).await.expect("execute");
+        let out = output_json(&result);
+        assert_eq!(out["denied"], true);
+        assert_eq!(out["reason"], "seam_deny");
+        assert_eq!(agent_event_count(&fx.pool, "dev-1").await, 0);
     }
 
     #[tokio::test]
@@ -658,6 +838,11 @@ mod tests {
             workspace_id: "ws-err".to_string(),
             data_server: None,
             pending_actions: self_pending_actions(),
+            arbitration: None,
+            arbitration_holder: "test".to_string(),
+            approval: None,
+            access: None,
+            resources: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -675,6 +860,57 @@ mod tests {
         let out = output_json(&result);
         assert_eq!(out["denied"], true);
         assert_eq!(out["reason"], "policy_read_failed");
+    }
+
+    #[tokio::test]
+    async fn autonomous_invoke_policy_gate_reads_fresh_per_call() {
+        // O7 锁定(本文件 execute 第 1 步,autonomous_invoke.rs:278-280:
+        // 「Policy gate — fresh read on EVERY call (O7: kill switch takes
+        // effect immediately)」)+ R1(spec §2 读门时机):两次调用之间只翻
+        // 持久层的 policy 行,不重建 tool、不走任何内存缓存——下一次调用
+        // 必须立即按新档位裁决。防有人把 load_autonomy_policy 「优化」成
+        // run 触发时快照。
+        let fx = fixture("ws-o7").await;
+        seed_thing(&fx.pool, "ws-o7", "dev-1", "device").await;
+        register_action(&fx.pool, "dev-1", "reboot").await;
+        fx.policy_repo
+            .save_autonomy_policy("ws-o7", &act_policy(), "test")
+            .await
+            .unwrap();
+
+        // Act 档:放行。
+        let result = dispatch(&fx, "dev-1", "reboot").await;
+        let out = output_json(&result);
+        assert!(out.get("denied").is_none(), "Act mode must allow: {out}");
+
+        // kill switch:同一 DB 行翻成 Off —— 下一次调用立即拒。
+        let mut off = act_policy();
+        off.mode = AutonomyMode::Off;
+        fx.policy_repo
+            .save_autonomy_policy("ws-o7", &off, "test")
+            .await
+            .unwrap();
+        let result = dispatch(&fx, "dev-1", "reboot").await;
+        let out = output_json(&result);
+        assert_eq!(out["denied"], true);
+        assert_eq!(out["reason"], "autonomy_not_act");
+
+        // 翻回 Act:立即恢复放行(双向都锁,无快照窗口)。
+        fx.policy_repo
+            .save_autonomy_policy("ws-o7", &act_policy(), "test")
+            .await
+            .unwrap();
+        let result = dispatch(&fx, "dev-1", "reboot").await;
+        let out = output_json(&result);
+        assert!(
+            out.get("denied").is_none(),
+            "flipping back to Act must allow immediately: {out}"
+        );
+        assert_eq!(
+            agent_event_count(&fx.pool, "dev-1").await,
+            2,
+            "only the two allowed dispatches write events"
+        );
     }
 
     // ── allow path ─────────────────────────────────────────────
@@ -769,6 +1005,11 @@ mod tests {
             workspace_id: inner_ws.to_string(),
             data_server: None,
             pending_actions: self_pending_actions(),
+            arbitration: None,
+            arbitration_holder: "test".to_string(),
+            approval: None,
+            access: None,
+            resources: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -825,7 +1066,7 @@ mod tests {
             params: None,
         };
         let fake = json!({"status": "confirmation_required", "token": "no-such-token"}).to_string();
-        assert!(tool.auto_confirm(&fake, &input).is_none());
+        assert!(tool.auto_confirm(&fake, &input).await.is_none());
     }
 
     // ── inner behavior reuse ───────────────────────────────────
@@ -860,6 +1101,163 @@ mod tests {
         assert_eq!(agent_event_count(&fx.pool, "dev-1").await, 0);
     }
 
+    /// E1 仲裁（Task 9 fix）：开确认门的 workspace 里，auto-confirm 的
+    /// 真实下发同样抢设备互斥锁——他人持锁时 busy 拒绝（带持有者名），
+    /// 释放后放行。
+    #[tokio::test]
+    async fn auto_confirm_dispatch_respects_arbitration_lock() {
+        let pool = test_pool().await;
+        seed_thing(&pool, "ws-arb-ac", "dev-1", "device").await;
+        register_action(&pool, "dev-1", "reboot").await;
+        let policy_repo = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
+        policy_repo
+            .save_autonomy_policy("ws-arb-ac", &act_policy(), "test")
+            .await
+            .unwrap();
+        let ctx = Arc::new(RwLock::new(RunContextInner::default()));
+        let registry = Arc::new(ArbitrationRegistry::default());
+        let inner = InvokeActionTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            pool: pool.clone(),
+            workspace_id: "ws-arb-ac".to_string(),
+            data_server: None,
+            pending_actions: self_pending_actions(),
+            arbitration: Some(registry.clone()),
+            arbitration_holder: "autonomous:ws-arb-ac".to_string(),
+            approval: None,
+            access: None,
+            resources: None,
+        };
+        let tool = AutonomousInvokeActionTool::new(
+            inner,
+            policy_repo,
+            new_run_context_slot(Arc::clone(&ctx)),
+            pool.clone(),
+            "ws-arb-ac".to_string(),
+            Arc::new(ThingEventBus::new()),
+            Arc::new(ThrottleState::new(60)),
+        );
+        // 测试前置：确认门默认 ON（走 auto-confirm 路径，评审 Issue 1 的漏洞路径）。
+        let require: i64 = sqlx::query_scalar("SELECT require_action_confirm FROM workspaces WHERE id = 'ws-arb-ac'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(require, 1, "test precondition: confirm gate defaults ON");
+
+        // 另一执行体持锁 → auto-confirm 下发被 busy 拒绝（带持有者名）。
+        let lease = registry
+            .try_acquire_default("dev-1", "watch-run-A".to_string())
+            .expect("run-A acquire");
+        *ctx.write().await.action_counts.entry("dev-1".to_string()).or_insert(0) += 1;
+        let busy = tool.execute(args("dev-1", "reboot")).await.expect("execute");
+        assert!(!busy.success, "持锁期间必须 busy: {busy:?}");
+        let msg = busy.error.unwrap_or_default();
+        assert!(msg.contains("watch-run-A"), "busy 必须带持有者名: {msg}");
+
+        // 释放后放行（无 DataServer → simulated）。
+        drop(lease);
+        *ctx.write().await.action_counts.entry("dev-1".to_string()).or_insert(0) += 1;
+        let ok = tool.execute(args("dev-1", "reboot")).await.expect("execute");
+        assert!(ok.success, "释放后必须放行: {:?}", ok.error);
+        let out = output_json(&ok);
+        assert!(out["status"] == "simulated" || out["status"] == "executed", "{out}");
+    }
+
+    /// Issue 3：确认门路径（auto-confirm）也按工具声明 claim 资源，而不是
+    /// 只拿合成 `__device__`。声明资源被占时 busy 点名 holder + resource。
+    #[tokio::test]
+    async fn auto_confirm_claims_declared_resources() {
+        struct ActuatorResolver;
+
+        #[async_trait::async_trait]
+        impl ResourceResolver for ActuatorResolver {
+            async fn resolve_action(
+                &self,
+                _ws: &str,
+                _thing_id: &str,
+                _tool_name: &str,
+            ) -> Result<Vec<tinyiothub_runtime::access::resources::ResourceClaim>, String> {
+                Ok(vec![tinyiothub_runtime::access::resources::ResourceClaim {
+                    id: "actuator".into(),
+                    exclusive: true,
+                    capacity: 1,
+                }])
+            }
+
+            async fn resolve_properties(
+                &self,
+                _ws: &str,
+                _thing_id: &str,
+                _properties: &[String],
+            ) -> Result<Vec<tinyiothub_runtime::access::resources::ResourceClaim>, String> {
+                Ok(vec![])
+            }
+        }
+
+        let pool = test_pool().await;
+        seed_thing(&pool, "ws-res-ac", "dev-1", "device").await;
+        register_action(&pool, "dev-1", "reboot").await;
+        let policy_repo = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
+        policy_repo
+            .save_autonomy_policy("ws-res-ac", &act_policy(), "test")
+            .await
+            .unwrap();
+        let ctx = Arc::new(RwLock::new(RunContextInner::default()));
+        let registry = Arc::new(ArbitrationRegistry::default());
+        let inner = InvokeActionTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            pool: pool.clone(),
+            workspace_id: "ws-res-ac".to_string(),
+            data_server: None,
+            pending_actions: self_pending_actions(),
+            arbitration: Some(registry.clone()),
+            arbitration_holder: "autonomous:ws-res-ac".to_string(),
+            approval: None,
+            access: None,
+            resources: Some(Arc::new(ActuatorResolver)),
+        };
+        let tool = AutonomousInvokeActionTool::new(
+            inner,
+            policy_repo,
+            new_run_context_slot(Arc::clone(&ctx)),
+            pool.clone(),
+            "ws-res-ac".to_string(),
+            Arc::new(ThingEventBus::new()),
+            Arc::new(ThrottleState::new(60)),
+        );
+
+        // 确认门 ON（走 auto-confirm 路径）。
+        let require: i64 = sqlx::query_scalar("SELECT require_action_confirm FROM workspaces WHERE id = 'ws-res-ac'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(require, 1, "test precondition: confirm gate defaults ON");
+
+        // 另一执行体占住声明的 actuator → auto-confirm 下发 busy。
+        let held = registry
+            .try_acquire_resources(
+                "dev-1",
+                "watch-run-A".into(),
+                &[tinyiothub_agent::runtime::thing_agent::ResourceSpec {
+                    id: "actuator".into(),
+                    mode: tinyiothub_agent::runtime::thing_agent::ResourceMode::Exclusive,
+                    capacity: 1,
+                }],
+                DEFAULT_LEASE_TTL,
+            )
+            .expect("run-A 占 actuator");
+        *ctx.write().await.action_counts.entry("dev-1".to_string()).or_insert(0) += 1;
+        let busy = tool.execute(args("dev-1", "reboot")).await.expect("execute");
+        assert!(!busy.success, "声明资源被占必须 busy: {busy:?}");
+        assert_eq!(busy.error.as_deref(), Some("busy: watch-run-A holds actuator"));
+
+        // 释放后放行（无 DataServer → simulated）。
+        drop(held);
+        *ctx.write().await.action_counts.entry("dev-1".to_string()).or_insert(0) += 1;
+        let ok = tool.execute(args("dev-1", "reboot")).await.expect("execute");
+        assert!(ok.success, "释放后必须放行: {:?}", ok.error);
+    }
+
     #[tokio::test]
     async fn missing_run_context_treated_as_zero_prior_actions() {
         // Defensive: the factory always binds a context, but an unbound slot
@@ -878,6 +1276,11 @@ mod tests {
             workspace_id: "ws-norun".to_string(),
             data_server: None,
             pending_actions: self_pending_actions(),
+            arbitration: None,
+            arbitration_holder: "test".to_string(),
+            approval: None,
+            access: None,
+            resources: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,

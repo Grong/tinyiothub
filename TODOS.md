@@ -3,10 +3,63 @@
 > **最新完整 TODO 清单已迁移至:** `docs/superpowers/plans/2026-04-14-todo-audit-and-cleanup-plan.md`
 > 本文档保留 Edge Intelligence Agent 历史记录，新项目 TODO 请查阅上方计划。
 
+## Hub 运行时架构 — Deferred (from /plan-ceo-review 2026-10-20, spec: docs/superpowers/specs/2026-10-20-hub-runtime-architecture-design.md)
+
+### P2 — X5 云边两级 Hub（edge 断网自治）
+- **What:** edge 节点作为 Hub 运行时的下游：云端断连时边缘本地 watch 值守，复连后同步。
+- **Why:** CEO 评审 D2.5 裁定 Defer——架构预留（P5 版本化契约+分层边界），但 edge 运行时自身未成年（do_scan stub）时不该升级部署形态假设。
+- **Context:** 启动条件=edge do_scan/驱动运行时落地（见 Thing Rename P2）+ E1-E4 就位。spec §6 有「X5 方向预留」段。
+- **Effort:** XL (human: ~2w+ / CC: ~2-3d) | **Depends on:** E1-E4 + edge 驱动运行时
+
+### P2 — watch 命中推送进 AI 中心「需要你」区
+- **What:** watch 命中唤醒的 run 产出的提案经 SSE 实时出现在 #/ai 置顶区（复用 run_recorded 推送通道）。
+- **Why:** 值守价值最后一公里——条件命中但运维没刷新就看不见，反射弧在人这端断了（CEO 评审 D6）。
+- **Context:** ai-consolidation spec F10/E6 已定义 run_recorded 推送；watch 唤醒 run 只是新 trigger 来源。
+- **Effort:** S (human: ~0.5d / CC: ~30min) | **Depends on:** E1 + ai-consolidation E6
+
+### P3 — E2 结转：旧设备工具别名删除 + 审批 reason 前端展示 + composite 声明 API
+- **What:** (1) 删除 `list_things/get_thing/get_thing_profile/read_property/invoke_action` 隐藏别名（保留一个版本后）；(2) BrainEvent 投影透出 `decisionReason`，`#/ai` 对 unavailable/expired/cancelled 显示"未执行"；(3) `GET/POST/DELETE /workspaces/{id}/composites` 声明写入 API（E3 场景包导入前置）。
+- **Why:** E2 已交付后端能力；这三项是显式延后的收尾，不处理会留下双名工具集与不可见的审批语义。
+- **Context:** spec `docs/superpowers/specs/2026-10-21-e2-brain-seams-design.md` §3.2/§5/§6.1。
+- **Effort:** M (human: ~2d / CC: ~2h) | **Depends on:** E2 合入 + E3 工作台
+
+### P3 — E3 结转：Flow 缺口精确定位、模板映射建议、模板编辑器、World 坐标
+- **What:** (1) Flow 缺口在时间轴上的精确 id→像素映射（当前 query_cap 只能横幅+首尾近似）；(2) 模板引用映射按已实例化节点自动建议；(3) 模板可视化编辑器；(4) World 坐标/地图帧（E4 数据模型后）。
+- **Why:** E3 已交付回放/模板主路径；这些是精度与效率收尾，不阻塞退出标准。
+- **Context:** spec `docs/superpowers/specs/2026-10-21-e3-presentation-workbench-design.md` §3.3/§5/§9；计划执行记录。
+- **Effort:** M (human: ~2d / CC: ~2h) | **Depends on:** E3 合入 + E4（仅坐标项）
+
+### ~~P3 — E2 结转：stop 不中断在途单次调用~~（E4c 已交付，2026-10-23）
+- **What:** ~~stop 只阻断后续~~ → E4c 起 stop 置闸门/释放 claim/取消在途，≤1s cancelled，超时 cancelled_unknown。已关闭。
+- **Why:** 架构要求"stop 永远可用"，双通道中断语义留到 E4 声明制 resources 一并细化。
+- **Context:** E2 spec §3.1 / §11 非目标。
+- **Effort:** M | **Depends on:** E4 接入层
+
+
+## Hub 运行时架构 — E4 结转（2026-10-23）
+
+### P3 — 未来协议驱动开发（空壳已退役）
+- **What:** `drivers/{bacnet,modbus,mqtt,mqtt-bridge,onvif,opcua,snmp}` 经盘点均为空壳，已于 2026-10-23 退役；未来真实协议驱动按 `drivers/demo-declarative` 模板新建（mqtt → modbus/bacnet/opcua/snmp → onvif → mqtt-bridge），逐包验收后合入。
+- **Why:** 空壳无功能、无 manifest/ABI v2，迁移只会产生假驱动；真实驱动是独立产品工作。
+- **Context:** `docs/superpowers/plans/2026-10-23-e4e-migration-plan.md` §1.2/§3；`drivers/README.md`。
+- **Effort:** XL（按协议拆分） | **Depends on:** 实际设备/协议栈需求
+
+### P2 — 存量物声明回填与直连调用收口
+- **What:** (1) 场景包/MCP 模板建物走 `describe`/物化；(2) UI 直连 `POST /things/{id}/actions/{name}/invoke` 接入 AccessService 声明校验；(3) pre-E4a 存量物声明回填/开关。
+- **Why:** E4a 只覆盖 REST 建物与 agent 工具；旁路仍可绕过声明/校验或产生无声明物。
+- **Context:** E4a 执行记录开放项；E4e 迁移计划 §5。
+- **Effort:** M | **Depends on:** E4 合入
+
+### P3 — E4d 空间模型收尾
+- **What:** World 2D 渲染（地图/多边形/设备点/楼层）；位置热路径批量化与 ingests 上界；anchor_map 环/同区校验；非 create_workspace 的 zone_source；出厂 kind=position 驱动。
+- **Why:** E4d 数据/API/zone 权威已交付，渲染与性能/边角校验留有结转。
+- **Context:** E4d spec/执行记录；E3 World TODO (4)。
+- **Effort:** L (UI) + M (backend) | **Depends on:** E4 合入
+
 ## Thing Rename Follow-ups — Deferred (PR-3, from /superpowers plan 2026-08-31)
 
-### P2 — examples/* 与 drivers/* 不在 workspace members，未受编译门禁保护
-- **What:** `examples/bacnet-driver`、`examples/example-plugin`、`drivers/*` 均未列入 workspace members，`cargo test/clippy --workspace` 不覆盖；评估纳入 workspace 或 CI 单独构建。
+### P2 — examples/* 不在 workspace members，未受编译门禁保护
+- **What:** `examples/bacnet-driver`、`examples/example-plugin` 未列入 workspace members，`cargo test/clippy --workspace` 不覆盖；评估纳入 workspace 或 CI 单独构建。`drivers/*` 空壳已退役，`drivers/demo-declarative` 是 workspace 成员。
 - **Why:** PR-2 遗留；更名类重构无法触达这些 crate，漂移静默累积。
 - **Context:** examples manifest 仍指向已不存在的 `sdks/driver-sdk`（crates 重组遗留）。
 - **Effort:** M | **Depends on:** —
@@ -492,8 +545,8 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 ## CI Resurrection Follow-ups (PR #89, 2026-09-04)
 
 ### P3 — 4 个 grandfathered DML 迁移并入下次 baseline
-- **What:** `scripts/guards/ddl-only.sh` 的 GRANDFATHERED 清单（20260825/20260826/20260828/20260831 共 4 个 device→thing 数据迁移）在下一次迁移基线化时并入 baseline，随后从清单移除。
-- **Why:** 这些迁移在 CI 瘫痪窗口（2026-08-21 ~ 09-04，ci.yml YAML 语法错误）合入，已随 v0.5.0.0 应用；sqlx 校验 checksum，改写会炸存量库，只能豁免不能修。
+- **What:** `scripts/guards/ddl-only.sh` 的 GRANDFATHERED 清单（20260825/20260826/20260828/20260831 共 4 个 device→thing 数据迁移）在下一次迁移基线化时并入 baseline，随后从清单移除。**2026-09-30 已解决（政策修复）：** 守卫加白重建表自拷贝模式（`INSERT INTO <x>_new SELECT…FROM <x>`——SQLite 改 CHECK 的唯一合法路径），20260912000003/20260914000001/20260928000001 三个重建迁移不再报红；裸 INSERT 依然拒绝（负向用例验证）。
+- **Why:** 这些迁移在 CI 瘫痪窗口（2026-08-21 ~ 09-04，ci.yml YAML 语法错误）合入或沿用重建表先例，已随版本应用；sqlx 校验 checksum，改写会炸存量库，只能豁免不能修。
 - **Effort:** M（随下次基线化一起做） | **Depends on:** 下一次迁移基线化
 
 ## Marketplace API Review Follow-ups (2026-09-08, /plan-eng-review)
@@ -560,6 +613,18 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 
 ## AI 大脑 P0 — Deferred (from /plan-ceo-review + /plan-eng-review 2026-09-14, PR #96)
 
+### P2 — AI 工作台移动端最小规格
+- **What:** <768px 单列全宽（徽章与标题同行）、统计行折行、tab 可横滑、批准/拒绝/反馈按钮最小 44px 触摸目标。设计评审 Pass 6 规格，dispositions.css 当前零 media query。
+- **Why:** 运维值班不在电脑前；手机打开工作台当前体验未知。2026-09-28 CEO 评审（PR #99）用户裁定桌面先行、单独 PR。
+- **Context:** v3 设计稿响应式节（含色盲安全/键盘 tab 序列/对比度规格）；web/src/ui/views/dispositions.{ts,css}。
+- **Effort:** S/M (human: ~1d / CC: ~1h) | **Depends on:** PR #99 合并
+
+### P2 — notify 扇出聚合/限流（风暴防护）
+- **What:** X1「需要你」通知按事件逐条 SSE 广播——报警风暴下 N 事件=N 广播。设计聚合（同 workspace 窗口内合并为一条「N 件需要你」）或限流。
+- **Why:** 风暴场景通知洪峰会淹没「需要你」信号本身；P1 接真实渠道（sms/email/webhook）前必须有此设计，否则风暴=真实短信轰炸。
+- **Context:** 派发点 judgment_subscriber.rs spawn_needs_you_notify + runtime_ports escalate_one（eng 评审 F-3，2026-09-29 裁定 defer）。影子期预发布规模无实际风暴，故 defer 不阻塞 PR #99。
+- **Effort:** M (human: ~1d / CC: ~1h) | **Depends on:** P1 真实通知渠道设计
+
 ### P2 — 日预算 workspace 可配 + 内存计数器 + 严重级分池
 - **What:** DAILY_JUDGMENT_BUDGET 从 const 100 改为 workspace 可配（heartbeat_config JSON 先例）；预算查询改内存计数器+每日重置；按严重级分池或 Critical 豁免。
 - **Why:** 不同规模工作区合理预算差一个数量级；每报警两次 SQL 在报警风暴时自身成负载；Info 抖动可吃光额度让 Critical 裸奔（外部声音 #13/#15）。
@@ -608,3 +673,138 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 - **What:** exec 回滚后重批，若 dedup_key 窗口过期，物理动作（如重启设备）可能执行第二次。记录该风险；长期方案是 exec run 幂等键穿透到设备层。
 - **Why:** 对抗审查 I3：每次都是人批准的，但物理副作用非幂等。
 - **Effort:** S（记录）/ M（设备层幂等） | **Depends on:** —
+
+### P2 — 知觉权立项：大脑直接消费遥测流、自主发现规则未覆盖异常
+- **What:** 让 AI 大脑直接读原始遥测流做异常发现（不再只分诊规则引擎标记的集合）的设计与实现——异常检测质量、LLM 调用成本、风暴控制。
+- **Why:** 这是「真正 AI 大脑」承诺的另一半。AI 大脑 v3 设计稿（2026-09-17）只交付地基（可见+审计+分诊权移交），知觉权经用户确认推迟至本立项。
+- **Pros:** 大脑从「规则说什么我评什么」变成「我自己看出问题」——产品的核心差异化。
+- **Cons:** 大工程：检测质量、调用成本、误报风暴都要定价。
+- **Context:** 外部声音（eng review 2026-09-17）指出「P0–P3 后系统决策方式与今天几乎一样」——知觉权是缺的另一半。设计稿：~/.gstack/projects/Grong-tinyiothub/chenguorong-fix-dispositions-ui-design-20260917-103834.md。
+- **Depends on:** AI 大脑 P1 完成（brain_events 物理表落地）。
+
+### P2 — 学习闭环独立设计稿：记忆检索与注入
+- **What:** ✓✕反馈/工单结果/用户纠正 → 记忆 → 注入后续循环上下文的完整设计——哪些记忆进哪个循环、token 成本、陈旧/冲突处理、「越用越准」的度量指标。
+- **Why:** P2 是产品承诺（越用越准）的兑现期，但 v3 设计稿里只有两句话。外部声音：「检索与注入才是硬问题，P2 开工前需要自己的设计稿」。
+- **Pros:** 大脑开始从用户纠正中学习；处置中心 ✓✕ 反馈第一次真正影响行为。
+- **Cons:** 检索质量差 = 越用越偏；需要可度量的成功指标。
+- **Context:** 复用现有 write_feedback_memory（judgment handler）+ crates/agent/src/memory——接线不是新建。拒绝原因已从 P0 起落 evidence_json.dismiss_reason，是本设计的输入信号。
+- **Depends on:** AI 大脑 P1 完成。
+
+## AI 运行透明化 — Deferred (from /plan-ceo-review 2026-10-08, spec: docs/superpowers/specs/2026-10-08-ai-run-transparency-design.md)
+
+### P2 — #1 trace→eval 反馈闭环
+- **What:** judgment_feedback 的 ✓/✕ 与逐步 trace 关联——反馈"错"时能定位到哪一步错（误读数据/工具选错/推理错），喂回提示词调优与 eval 用例库。
+- **Why:** trace 数据落地后反馈才有可操作的颗粒度；现在 ✓/✕ 只知道结果不对，不知道哪步错。
+- **Context:** trace 随 RunReport 落库（本期 ①）；judgment_feedback 表已有。依赖本期 trace 数据积累后再设计。
+- **Effort:** M（human）/ S（CC+gstack） | **Depends on:** 本期 trace 落库
+
+### P2 — #2 对话链路接入 trace 端点
+- **What:** 用户指令 run（chat SSE 回推的 assistant 消息）也暴露逐步轨迹——chat 侧"正在调用工具…"进度 + 事后轨迹。
+- **Why:** 本期聚焦巡检/处置链路；对话链路的黑盒感是同一类问题的另一面。
+- **Context:** 用户指令 run 走同一 thing_agent runner，trace 随 RunReport 已有；chat 回推通道在 chat/service.rs。registry/端点本期就绪，接入成本低。
+- **Effort:** M（human）/ S（CC+gstack） | **Depends on:** 本期 trace 端点
+
+### P3 — #4 SSE 推送轨迹替代轮询
+- **What:** trace 步骤经 AgentEventBus 新变体 + SSE 推送，替代 3s 轮询。
+- **Why:** 秒级实时；轮询对分钟级分析已够，升级属优化不是补缺。
+- **Context:** 初版方案被作者以复杂度否决改走 registry+轮询；升级路径在 spec 架构决策节有案。
+- **Effort:** M（human）/ S（CC+gstack） | **Depends on:** 本期 registry
+
+### P3 — #5 AI 运维页 trace 统计面板
+- **What:** 今日工具调用分布、平均轮数、预算触顶率等聚合视图。
+- **Why:** 锦上添花；数据已在 agent_runs.report，纯查询层。
+- **Effort:** S（human）/ S（CC+gstack） | **Depends on:** 本期 trace 落库
+
+### P3 — #7 run 重放调试
+- **What:** 运营从详情页一键重放某个 run（同 trigger 再跑一次对比轨迹）。
+- **Why:** 排障深化；但二次触发自治动作需要单独威胁建模（重放可能再次 invoke_action）。
+- **Context:** 涉及自治策略门（workspace_autonomy_policy）的二次执行语义，不可随手做。
+- **Effort:** M（human）/ S（CC+gstack） | **Depends on:** 本期详情页 + 威胁建模
+
+### P2 — 心跳 tick 实时进度轮询
+- **What:** 进行中 tick 的实时进度（HeartbeatRunner 注册 ActiveRunRegistry + ai-ops 页轮询）。
+- **Why:** D7 裁定心跳 trace 本期只做事后（落库+详情透出）；实时属 ai-ops 页体验升级。
+- **Effort:** S（human）/ S（CC+gstack） | **Depends on:** 本期 HeartbeatRunner trace 仪表化
+
+### P3 — trace 存储护栏（若体积成问题）
+- **What:** assemble_report / tick anchor 落库前的单条 output 体积上限（如 64KB/条）。
+- **Why:** D4 裁定不截断守 F11、接受大遥测 blob 落库风险；若 report/tick 列体积真成问题再启动。
+- **Context:** 触发条件=DB 体积或可观测到的膨胀；届时独立决策，不违反 F11（护栏非展示截断，需重新裁定）。
+- **Effort:** S（human）/ S（CC+gstack） | **Depends on:** 体积问题实际出现
+
+## Critical 告警在 ready queue 满时被丢 (from ai-consolidation T11 评审结转, 2026-10-14)
+- **What:** scheduler ready queue cap 50 满时,Critical 告警信号仍被 warn 丢弃(绕 merge window 与节流但不绕容量)
+- **Why:** N3 的直觉承诺是「Critical 告警不丢」;容量满+告警风暴同时发生时,最该到的信号反而丢
+- **Context:** crates/agent/src/runtime/thing_agent/scheduler.rs ready queue 容量语义;评审记录在 .superpowers/sdd/2026-10-12-ai-consolidation-phase1-2/task-11-review.md
+- **Depends on:** 无;可独立做(如:Critical 溢出时降级为最旧 Normal 出队,或独立高优队列)
+
+## 园区物（派生属性）— Deferred (from /plan-ceo-review 2026-10-19, D2 裁定)
+
+### P3 — 派生属性挂告警规则的集成测试
+- **What:** 园区派生属性（如 total_power）作为告警规则目标的端到端集成测试（阈值触发 → 告警产生）。
+- **Why:** 2026-10-19 CEO 审查 SCOPE REDUCTION 裁定递延——告警读的是属性值缓存，走既有路径，派生属性对它无特殊性，风险低；能力本身不受影响，随时可挂。
+- **Context:** docs/superpowers/specs/2026-10-19-park-thing-design.md §3 事件流注明告警免费生效；补测试时验证告警规则评估读到派生写回值。
+- **Effort:** S | **Depends on:** 派生属性引擎落地
+
+### P3 — 链式派生集成测试
+- **What:** 楼栋派生属性被园区派生属性引用的逐级触发集成测试（电表→楼栋用电→园区用电）。
+- **Why:** 2026-10-19 CEO 审查 SCOPE REDUCTION 裁定递延——DAG 环检测在配置侧已兜底防死循环，链式是纯增量场景；能力本身保留（事件链天然成立）。
+- **Context:** docs/superpowers/specs/2026-10-19-park-thing-design.md §1 链式派生；补测试时构造三级树逐级断言。
+- **Effort:** S | **Depends on:** 派生属性引擎落地
+
+## 园区物（派生属性）终审分诊 — Deferred (from SDD final review 2026-10-20)
+
+### P3 — core/Cargo.toml tokio 改 workspace 继承
+- **What:** core 的 tokio 依赖直写 `version = "1.22.0"`（features=["sync"]，因 ValueSink/PropertyChangeSource 签名需要）；改 workspace 继承并保持 sync-only。
+- **Why:** 直写版本未来会与 workspace 漂移（分诊 #3）。workspace 版 feature 集含 I/O 且 default-features 不可覆盖，需单独处理。
+- **Effort:** S | **Depends on:** —
+
+### P3 — DerivedDriver 订阅生命周期收口（CancellationToken）
+- **What:** ①被删 owner 的订阅任务在 EventBus 不 Closed 时永不退出（泄漏）；②末条派生定义删除时驱动不摘除（空 defs 驻留）；③ensure_driver 防御性检查（Poll 跳过）在 start_push 之后，产生僵尸订阅——防御检查应前移到 spawn 订阅之前。
+- **Why:** 终审分诊 #5/#6 + 修复复审残留观察；owner 删除低频故延期，但删除高频场景是 O(已删物数×事件数) 常驻浪费。
+- **Context:** crates/runtime/src/driver/derived.rs start_push；derived_manager.rs ensure_driver/notify_thing_deleted。
+- **Effort:** M | **Depends on:** —
+
+### P3 — 模板改动必须 JSON 源 + system.sql 双写（流程约束）
+- **What:** 内置模板运行时来源是 `crates/db/src/seed/system.sql` 的 INSERT（templates/builtin/ 仅测试引用，无运行时加载器扫描）。后续任何模板改动必须双写两处；注意 `INSERT OR IGNORE` 使**存量库拿不到新骨架**（仅新库生效）。
+- **Why:** Task 9 评审 Important 已证明漂移不拦（无平价测试）；分诊 #9。
+- **Effort:** —（流程） | **Depends on:** —
+
+### P3 — 派生编辑器 spec F-D 状态表增强×4
+- **What:** 物选择器加载骨架、空态"+引导"动作、"部分引用失效"保存前黄条、空态语义细化（"还没有带数值属性的物" vs 无物）。
+- **Why:** spec §四交互状态表承诺（Task 11 评审 Minor，分诊 #11）；主链路不受影响。
+- **Effort:** M | **Depends on:** —
+
+### P2 — serve_resource_file 大文件流式化
+- **What:** `GET /api/v1/resources/{id}/file` 目前 tokio::fs::read 整文件读内存；GLB 三维模型可达数十~数百 MB。改 `tokio::fs::File` + `ReaderStream`（或加 size guard）。
+- **Why:** 并发大文件请求内存线性放大（Task 12 评审 Minor，分诊 #12）；GLB 上线前必修。
+- **Context:** apps/cloud/src/domains/thing/handler/resources.rs serve_resource_file。
+- **Effort:** S | **Depends on:** —
+
+### P3 — 派生值变更的 events 表历史可见性（策略项）
+- **What:** 派生值变更事件（Info 级 PropertyChange）被 persistence_handler 防噪过滤不落 events 表——实时走 SSE/缓存不受影响，告警走 EventBus 订阅不受影响，但历史查询不可见。是否给派生变更开落库口子（如 metadata 标记派生）另立策略裁定。
+- **Why:** Task 13 评审取舍#2 落档；生产防噪策略是有意的，不视为缺陷。
+- **Effort:** S | **Depends on:** 产品裁定
+
+## 园区物体验修复包（X1-X4）终审分诊 — Deferred (from SDD final review 2026-10-20)
+
+### P2 — loadDevices 分页参数名惰性 bug（page/pageSize → limit/offset）
+- **What:** `web/src/ui/views/things.ts` 既有 `loadDevices` 与已修的 `loadThingTree` 犯同样的错：传 `page`/`pageSize`，后端 `ListThingsParams` 读 `limit`/`offset`——静默丢弃，limit 缺省 50。超 50 物时列表分页 UI 掩盖但数据同样截断。
+- **Why:** 2026-10-20 UX 包终审 I-1 修了树视图并留注释钉坑；loadDevices 是第二批露点（终审声明不在本包范围）。
+- **Context:** 后端 `crates/db/src/thing.rs:65` camelCase serde；clamp 上限 200。
+- **Effort:** S | **Depends on:** —
+
+### P3 — 物树视图三项产品取舍（UX 包 T9 遗留）
+- **What:** ①树节点「+」hover vs 常显（产品确认）；②拖到空白处=移到根（当前无根落点）；③树模式忽略列表筛选条件——建议在树视图加一行说明文字。
+- **Why:** T9 评审记录为范围外交代/产品取向，需产品确认后统一处理。
+- **Effort:** S | **Depends on:** 产品确认
+
+### P3 — 前端一致性小项（M-c/M-d/M-f）
+- **What:** ①树视图切换按钮 emoji 🌲 与兄弟按钮 HTML 实体（☰/▦）统一；②`openWizard(parentId?: string | Event)` 重载 hack 改包一层 `() => openWizard(null)`（things.ts:1532）；③`parseTreePreview` 名称含 ` (...)` 误切（scene-tree.ts 正则，预览名来自后端 sanitize 风险低）。
+- **Why:** 终审 Minor 分诊可延期项，均一行级修复。
+- **Effort:** S | **Depends on:** —
+
+### P3 — 派生前端收紧（UX 包 T5/T6 遗留）
+- **What:** ①`updatePropertyDef` 签名放宽 `expression: string | null` 并移除调用侧 cast（things-detail.ts:287）；②解绑弹窗 expando 状态改正式 state（T5 M-4）；③extra 属性缺 name 时跳过+告警（scene_instantiator parse_extra_properties，当前静默落空串）；④显式 driver 的 driver_options IS NULL 断言锁（scene_instantiate_test）。
+- **Why:** 各任务评审 Minor 分诊可延期；②④为测试/状态健壮性收紧。
+- **Effort:** S | **Depends on:** —

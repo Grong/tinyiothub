@@ -193,12 +193,10 @@ export class GatewayPairingDialog extends LitElement {
 
     .btn:hover {
       background: var(--bg-hover);
-      transform: translateY(-1px);
     }
 
     .btn:active {
       background: var(--secondary);
-      transform: translateY(0);
     }
 
     .btn.primary {
@@ -210,7 +208,6 @@ export class GatewayPairingDialog extends LitElement {
     .btn.primary:hover {
       background: var(--accent-gradient-soft);
       box-shadow: 0 4px 16px var(--accent-glow-strong);
-      transform: translateY(-1px);
     }
 
     .btn:disabled {

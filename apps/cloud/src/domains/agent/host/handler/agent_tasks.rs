@@ -27,13 +27,9 @@ use crate::domains::agent::AgentState;
 use crate::verify_workspace_access;
 
 /// admin 角色判定：用户持有任一 is_administrator 角色。DB 错误 fail-closed。
+/// 共享实现收敛在 handler::is_admin（F9），此处保签名不动宏体。
 async fn is_admin(state: &AgentState, user_id: &str) -> bool {
-    state
-        .db
-        .count_user_admin_roles(user_id)
-        .await
-        .map(|n| n > 0)
-        .unwrap_or(false)
+    super::is_admin(&state.db, user_id).await
 }
 
 /// workspace 隔离 + admin 角色组合守卫（V5 先例：越权 403 / 不存在 404）。

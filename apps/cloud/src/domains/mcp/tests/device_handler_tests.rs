@@ -223,6 +223,66 @@ async fn test_read_properties_accepts_advertised_thing_id_key() {
     }
 }
 
+/// E4b §3.2：MCP read_properties 成功读取写入共享 DemandTracker；失败不写。
+#[tokio::test]
+async fn read_properties_records_successful_reads_as_demand() {
+    use crate::domains::mcp::handlers::{McpAuthContext, with_mcp_context};
+    use crate::domains::mcp::tool_registry::ToolHandler;
+    use crate::shared::access_ports::{
+        DbAcceptanceStore, DbDeviceStore, DbDriverStore, DbProjectionStore, DbThingSource,
+    };
+    use axum::extract::FromRef;
+    use std::sync::Arc;
+    use tinyiothub_runtime::access::demand::DemandTracker;
+    use tinyiothub_runtime::access::registry::ManifestRegistry;
+    use tinyiothub_runtime::access::service::AccessService;
+
+    let (mut app_state, pool) = crate::test_utils::setup_test_app_with_pool().await;
+    crate::test_utils::seed_test_workspace(&pool, "tenant-1", "ws").await;
+    sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES ('t1','T1','ws','device')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO thing_properties (id, thing_id, name) VALUES ('p1','t1','温度')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let demand = Arc::new(DemandTracker::new());
+    let db = app_state.db.clone();
+    let data = tempfile::tempdir().unwrap();
+    app_state.set_access(Arc::new(AccessService::new(
+        data.path().to_path_buf(),
+        Arc::new(ManifestRegistry::new()),
+        Arc::new(DbDriverStore(db.clone())),
+        Arc::new(DbDeviceStore(db.clone())),
+        Arc::new(DbProjectionStore(db.clone())),
+        Arc::new(DbThingSource(db.clone())),
+        Arc::new(DbAcceptanceStore(db)),
+        demand.clone(),
+    )));
+
+    let mcp_state = Arc::new(<crate::domains::mcp::McpState as FromRef<crate::state::AppState>>::from_ref(&app_state));
+    let handler = crate::domains::mcp::tools::thing::ThingPropertyGetHandler::new(Some(mcp_state));
+
+    let result = with_mcp_context(McpAuthContext::for_jwt("ws".into(), "u1".into()), || {
+        handler.execute(json!({"thingId": "t1", "propertyName": "温度"}))
+    })
+    .await;
+    assert!(result.is_ok(), "{:?}", result.err());
+    assert!(demand.has_demand_for_property("ws", "t1", "温度"));
+
+    // Unknown property → NotFound and no demand (clear the successful read first).
+    demand.gc_at(std::time::Instant::now() + std::time::Duration::from_secs(120));
+    assert!(!demand.has_demand_for_property("ws", "t1", "温度"));
+    let result = with_mcp_context(McpAuthContext::for_jwt("ws".into(), "u1".into()), || {
+        handler.execute(json!({"thingId": "t1", "propertyName": "不存在"}))
+    })
+    .await;
+    assert!(matches!(result, Err(crate::domains::mcp::ToolError::NotFound(_))));
+    assert!(!demand.has_demand_for_property("ws", "t1", "温度"));
+}
+
 #[tokio::test]
 async fn test_write_properties_accepts_advertised_thing_id_key() {
     crate::domains::mcp::register_tools(None).await;

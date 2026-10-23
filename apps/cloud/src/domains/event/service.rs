@@ -229,6 +229,8 @@ impl EventSpecification for EventLevelMatchesTypeSpec {
                 | (EventType::Device(ThingEventType::CommandStarted), EventLevel::Info)
                 | (EventType::Device(ThingEventType::CommandCompleted), EventLevel::Info)
                 | (EventType::Device(ThingEventType::CommandFailed), EventLevel::Error)
+                | (EventType::Device(ThingEventType::CommandCancelled), EventLevel::Info)
+                | (EventType::Device(ThingEventType::CommandCancelled), EventLevel::Warning)
                 | (EventType::Ai(_), EventLevel::Debug)
                 | (EventType::Ai(_), EventLevel::Info)
                 | (EventType::Ai(_), EventLevel::Warning)

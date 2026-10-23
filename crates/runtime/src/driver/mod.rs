@@ -1,6 +1,6 @@
 pub use drivers::{ModbusDriver, SimulatedDriver, snmp_driver::SnmpDriver};
 pub use status::ThingOverview;
-pub use tinyiothub_core::driver::{DriverConfig, ResultValue, ThingDriver};
+pub use tinyiothub_core::driver::{CancelToken, DeviceDeclaration, DriverConfig, ResultValue, ThingDriver};
 pub use tinyiothub_plugin_sdk::{ComponentInfo, ComponentOption, CreateComponentRequest};
 pub use wrapper::DriverWrapper;
 
@@ -10,6 +10,9 @@ use parking_lot::RwLock;
 use tinyiothub_core::error::Error;
 use tinyiothub_core::models::thing::Thing;
 
+pub mod derived;
+pub mod derived_manager;
+pub mod describe;
 pub mod drivers;
 pub mod dynamic_adapter;
 pub mod loader;
@@ -18,7 +21,10 @@ pub mod retry;
 pub mod status;
 pub mod validation;
 pub mod validator;
+pub mod worker;
 pub mod wrapper;
+
+pub use worker::{CommandOutcome, WorkerCommand, WorkerHandle, spawn_worker};
 
 // Register all drivers via macro
 tinyiothub_macros::register_drivers! {

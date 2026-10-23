@@ -100,6 +100,16 @@ pub enum ActionResult {
     UnknownCancelled,
 }
 
+/// 一次工具调用轨迹（自 agent runner.rs 下放；output=None = 配对 ToolResult 未到）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ToolTraceEntry {
+    pub id: String,
+    pub name: String,
+    pub args: serde_json::Value,
+    /// `None` = no paired ToolResult (cancelled in flight / stream ended).
+    pub output: Option<String>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RunReport {
     pub run_id: String,
@@ -119,9 +129,74 @@ pub struct RunReport {
     /// 首个 invoke_action 的目标 thing；workspace 级 run（无动作）为 None。
     #[serde(default)]
     pub thing_id: Option<String>,
+    /// 完整工具调用轨迹（到达序）。serde(default) 向后兼容已落库的旧 report JSON。
+    #[serde(default)]
+    pub trace: Vec<ToolTraceEntry>,
+    /// 巡检任务数（读侧 parity 元数据，Task 10 修复轮 1）：heartbeat 源 run 由
+    /// manager 装配点写入 tasks.len()（对齐旧 HeartbeatResult.task_count 语义）；
+    /// 其余源 None。serde(default) 向后兼容已落库的旧 report JSON。
+    #[serde(default)]
+    pub task_count: Option<u32>,
+    /// E2 快照注入实测指标（bytes/chars/设备数/估算 token）；
+    /// None = 未注入（空快照/装配失败/旧报告）。
+    #[serde(default)]
+    pub snapshot: Option<SnapshotMetrics>,
+}
+
+/// E2 turn 开头快照的实测指标（T5：中文预算基线进 run trace）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct SnapshotMetrics {
+    pub bytes: u32,
+    pub chars: u32,
+    pub devices: u32,
+    pub omitted: u32,
+    /// 估算 token（中文按 chars / 1.5 保守折算；只作观测，不作硬闸门）。
+    pub est_tokens: u32,
 }
 
 /// 记忆/历史段统一条目格式：`"[acted] 调低设定值成功"`。
 pub fn format_summary(outcome: &str, summary: &str) -> String {
     format!("[{outcome}] {summary}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 向后兼容：已落库的旧 report JSON（无 trace/end_reason/thing_id 字段）
+    /// 必须仍能反序列化，trace 默认为空。
+    #[test]
+    fn old_report_json_without_trace_deserializes() {
+        let old = r#"{
+            "run_id": "r1",
+            "workspace_id": "ws1",
+            "trigger": "timer:ws1",
+            "outcome": "acted",
+            "summary": "[acted] 调低设定值成功",
+            "actions": [],
+            "verified": true,
+            "duration_ms": 1200,
+            "tool_calls": 3,
+            "tokens": 456
+        }"#;
+        let report: RunReport = serde_json::from_str(old).expect("旧 report JSON 必须可反序列化");
+        assert!(report.trace.is_empty());
+        assert_eq!(report.end_reason, None);
+        assert_eq!(report.thing_id, None);
+    }
+
+    /// trace 字段的序列化往返：含未配对 output=None 的条目。
+    #[test]
+    fn trace_roundtrip() {
+        let entry = ToolTraceEntry {
+            id: "c1".into(),
+            name: "read_property".into(),
+            args: serde_json::json!({"p": "temperature"}),
+            output: None,
+        };
+        let v = serde_json::to_value(&entry).expect("serialize");
+        assert_eq!(v["output"], serde_json::Value::Null);
+        let back: ToolTraceEntry = serde_json::from_value(v).expect("deserialize");
+        assert_eq!(back.output, None);
+    }
 }

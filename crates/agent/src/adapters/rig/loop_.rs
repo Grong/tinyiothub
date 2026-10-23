@@ -227,11 +227,15 @@ pub fn rig_loop_factory(cfg: AgentLoopConfig) -> anyhow::Result<AgentLoopHandle>
     let provider = (cfg.provider_factory)()?;
     let model = PortModelAsRig::new(Arc::from(provider), cfg.model_name.clone());
 
+    // E2：隐藏别名（旧设备工具等）保留注册但绝不进模型工具列表/提示词。
+    let exposed_tools: Vec<Box<dyn crate::port::tool::Tool>> = cfg.tools.into_iter().filter(|t| t.exposed()).collect();
+    let tool_specs: Vec<crate::port::tool::ToolSpec> = exposed_tools.iter().map(|t| t.spec()).collect();
+
     let preamble = cfg.prompt_builder.build(&crate::port::prompt::PromptContext {
         workspace_dir: &cfg.workspace_dir,
         agent_workspace_dir: &cfg.workspace_dir,
         model_name: &cfg.model_name,
-        tool_specs: cfg.tools.iter().map(|t| t.spec()).collect(),
+        tool_specs,
         security_summary: cfg.security_summary.clone(),
     })?;
 
@@ -250,11 +254,16 @@ pub fn rig_loop_factory(cfg: AgentLoopConfig) -> anyhow::Result<AgentLoopHandle>
         builder = builder.memory(Arc::clone(m)).conversation(CONVERSATION_ID);
     }
 
-    let agent = if cfg.tools.is_empty() {
+    let agent = if exposed_tools.is_empty() {
         builder.build()
     } else {
         builder
-            .dynamic_tools(cfg.tools.into_iter().map(|t| to_dynamic_tool(Arc::from(t))).collect())
+            .dynamic_tools(
+                exposed_tools
+                    .into_iter()
+                    .map(|t| to_dynamic_tool(Arc::from(t)))
+                    .collect(),
+            )
             .build()
     };
 

@@ -1,14 +1,13 @@
 //! AI subsystem orchestrator -- top-level coordinator.
 //!
 //! Cross-domain communication flows through the Orchestrator:
-//! AlarmCreated       --> EventBus --> Orchestrator --> HeartbeatRunner.signal()
+//! AlarmCreated       --> EventBus --> Orchestrator --> HeartbeatBridge.dispatch()
+//!                    (TriggerSource::Heartbeat 变体入统一循环)
 //! (Chat reflection is handled directly in chat/service.rs)
-//! HeartbeatCompleted --> EventBus --> Orchestrator --> AgentEventBus
-//!                    (HeartbeatResultReady, Task 8 持久化订阅者落库） +
-//!                    HeartbeatBridge.dispatch_proposals()
-//! WorkspaceCreated    --> EventBus --> Orchestrator --> HeartbeatRunner.start() +
-//! ThingAgentManager.start() WorkspaceDeleted    --> EventBus --> Orchestrator -->
-//! HeartbeatRunner.remove_workspace() + ThingAgentManager.stop()
+//! HeartbeatCompleted --> 无订阅臂（X6 心跳桥自动派发 2026-10-16 退役：提案
+//!                    一律走审批队列；事件枚举保留供 DLQ 重放兼容）
+//! WorkspaceCreated    --> EventBus --> Orchestrator --> ThingAgentManager.start()
+//! WorkspaceDeleted    --> EventBus --> Orchestrator --> ThingAgentManager.stop()
 
 pub mod callbacks;
 
@@ -19,8 +18,6 @@ use tinyiothub_runtime::EventBus;
 use tracing::{info, warn};
 
 use crate::runtime::event::bus::{AiEventPublisher, DropNotifier};
-use crate::runtime::events::AgentEventBus;
-use crate::runtime::heartbeat::runner::HeartbeatRunner;
 use crate::runtime::thing_agent::manager::ThingAgentManager;
 
 use callbacks::AiEventHandler;
@@ -36,8 +33,6 @@ pub struct Orchestrator {
 impl Orchestrator {
     pub fn new(
         event_bus: Arc<EventBus>,
-        heartbeat_runner: Arc<HeartbeatRunner>,
-        agent_events: Arc<AgentEventBus>,
         drop_notifier: Option<Arc<dyn DropNotifier>>,
         thing_agent_manager: Option<Arc<ThingAgentManager>>,
         heartbeat_bridge: Option<Arc<callbacks::HeartbeatBridge>>,
@@ -51,8 +46,6 @@ impl Orchestrator {
         let shutting_down = Arc::new(AtomicBool::new(false));
 
         let handler = Arc::new(AiEventHandler::new(
-            heartbeat_runner,
-            agent_events,
             thing_agent_manager,
             heartbeat_bridge,
             shutting_down.clone(),
@@ -99,66 +92,82 @@ impl Orchestrator {
     pub fn mark_problem_acked(&self, workspace_id: &str, problem_key: &str, run_id: &str) {
         self.handler.mark_problem_acked(workspace_id, problem_key, run_id);
     }
-
-    pub fn heartbeat_runner(&self) -> &Arc<HeartbeatRunner> {
-        self.handler.heartbeat_runner()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
     use std::time::Duration;
 
     use crate::runtime::event::types::AiEvent;
-    use crate::runtime::events::AgentEventKind;
-    use crate::runtime::heartbeat::types::{HeartbeatConfig, HeartbeatResult, HeartbeatStatus};
+    use crate::runtime::orchestrator::callbacks::HeartbeatBridge;
+    use crate::runtime::thing_agent::governor::HeartbeatGovernor;
+    use crate::runtime::thing_agent::registry::RunRegistry;
+    use crate::runtime::thing_agent::scheduler::EnqueueError;
+    use crate::runtime::thing_agent::traits::DirectiveSink;
+    use crate::runtime::thing_agent::types::WakeSignal;
 
-    fn sample_result() -> HeartbeatResult {
-        HeartbeatResult {
-            id: "test-tick".to_string(),
+    /// 告警事件夹具（X6 退役后观测量改走 AlarmCreated 告警路径投递）。
+    fn sample_alarm() -> tinyiothub_core::models::event::AlarmEvent {
+        tinyiothub_core::models::event::AlarmEvent {
+            id: "a1".into(),
             workspace_id: "ws_1".into(),
-            status: HeartbeatStatus::Complete,
-            summary: "done".into(),
-            task_count: 1,
-            executed_actions: vec![],
-            proposals: vec![],
-            error: None,
+            thing_id: "dev-1".into(),
+            alarm_type: "offline".into(),
+            severity: "critical".into(),
+            message: "设备离线".into(),
+            rule_id: None,
+            condition_desc: None,
+            resolved: false,
+            created_at: chrono::Utc::now(),
         }
     }
 
-    fn make_orchestrator(bus: Arc<EventBus>, events: Arc<AgentEventBus>) -> Orchestrator {
-        let runner = Arc::new(HeartbeatRunner::new(
-            Arc::new(AiEventPublisher::new(bus.clone())),
-            HeartbeatConfig::default(),
-        ));
-        Orchestrator::new(bus, runner, events, None, None, None)
+    /// 计数 sink：重复注册 handler 会让同一事件处理两次——enqueue 计数即
+    /// 观测量（替代旧事件发射断言，T15 后该事件退役）。
+    #[derive(Default)]
+    struct CountingSink {
+        signals: Mutex<Vec<WakeSignal>>,
+    }
+
+    #[async_trait::async_trait]
+    impl DirectiveSink for CountingSink {
+        fn enqueue(&self, signal: WakeSignal) -> Result<(), EnqueueError> {
+            self.signals.lock().unwrap().push(signal);
+            Ok(())
+        }
+
+        async fn drain(&self, _workspace_id: &str) {}
     }
 
     #[tokio::test]
     async fn start_is_idempotent() {
         let bus = Arc::new(EventBus::new());
-        let events = Arc::new(AgentEventBus::new(16));
-        let mut rx = events.subscribe();
-        let orch = make_orchestrator(bus, events);
+        let sink = Arc::new(CountingSink::default());
+        let bridge = Arc::new(HeartbeatBridge::new(
+            RunRegistry::new(),
+            sink.clone(),
+            HeartbeatGovernor::default(),
+        ));
+        let orch = Orchestrator::new(bus, None, None, Some(bridge));
 
         orch.start();
         orch.start();
 
-        orch.event_publisher().publish(AiEvent::HeartbeatCompleted {
-            workspace_id: "ws_1".into(),
-            result: sample_result(),
-        });
-        // publisher→worker→bus→handler→emit 为异步链，轮询等待首个事件。
-        let first = tokio::time::timeout(Duration::from_secs(2), rx.recv())
-            .await
-            .expect("HeartbeatResultReady emitted")
-            .expect("channel open");
-        assert!(matches!(first.kind, AgentEventKind::HeartbeatResultReady { .. }));
-        // 重复 start() 不得二次注册 handler → 不再有第二个事件。
+        orch.event_publisher().publish(AiEvent::AlarmCreated(sample_alarm()));
+        // publisher→worker→bus→handler→bridge 为异步链，轮询等待首次投递。
+        for _ in 0..100 {
+            if !sink.signals.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        // 重复 start() 不得二次注册 handler → 同一事件只投递一次。
         tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(
-            rx.try_recv().is_err(),
+        assert_eq!(
+            sink.signals.lock().unwrap().len(),
+            1,
             "duplicate start() must not double-register the handler"
         );
         orch.shutdown().await;

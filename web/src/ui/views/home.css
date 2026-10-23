@@ -235,7 +235,6 @@ view-home .btn--primary {
 }
 
 view-home .btn--primary:hover {
-  transform: translateY(-2px);
   box-shadow: 0 6px 32px rgba(123, 97, 255, 0.5);
 }
 
@@ -636,7 +635,6 @@ view-home .stats-item {
 
 view-home .stats-item:hover {
   background: var(--home-surface-dark-hover);
-  transform: translateY(-4px);
   box-shadow:
     var(--home-shadow-hover-1),
     var(--home-shadow-hover-2),
@@ -711,7 +709,6 @@ view-home .feature-card {
 
 view-home .feature-card:hover {
   background: var(--home-surface-dark-hover);
-  transform: translateY(-4px);
   box-shadow:
     var(--home-shadow-hover-1),
     var(--home-shadow-hover-2),
@@ -793,7 +790,6 @@ view-home .ai-native-card::before {
 }
 
 view-home .ai-native-card:hover {
-  transform: translateY(-6px);
   border-color: rgba(0, 212, 255, 0.22);
   box-shadow:
     0 8px 30px rgba(0, 0, 0, 0.45),
@@ -992,7 +988,6 @@ view-home .showcase-item {
 
 view-home .showcase-item:hover {
   background: var(--home-surface-dark-hover);
-  transform: translateY(-4px);
   box-shadow:
     var(--home-shadow-hover-1),
     var(--home-shadow-hover-2),
@@ -1058,7 +1053,6 @@ view-home .cta-inner {
 
 view-home .cta-inner:hover {
   background: var(--home-surface-dark-hover);
-  transform: translateY(-4px);
   box-shadow:
     var(--home-shadow-hover-1),
     var(--home-shadow-hover-2),
@@ -1242,7 +1236,6 @@ view-home .reveal-delay-3 { transition-delay: 0.3s; }
 }
 
 :root[data-theme="light"] view-home .btn--primary:hover {
-  transform: translateY(-2px);
   background: linear-gradient(135deg, #00b3e6 0%, #8b75ff 100%);
   box-shadow: 0 8px 28px rgba(0, 130, 160, 0.3), 0 2px 8px rgba(0, 0, 0, 0.12);
 }
@@ -1367,7 +1360,6 @@ view-home .reveal-delay-3 { transition-delay: 0.3s; }
 
 :root[data-theme="light"] view-home .stats-item:hover {
   background: var(--home-surface-light-hover);
-  transform: translateY(-4px);
   box-shadow:
     var(--home-shadow-light-hover-1),
     var(--home-shadow-light-hover-2),

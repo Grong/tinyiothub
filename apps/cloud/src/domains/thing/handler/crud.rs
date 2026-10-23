@@ -1,5 +1,7 @@
 // Thing CRUD handlers
 
+use std::sync::Arc;
+
 use crate::state::AppState;
 use axum::{
     Json,
@@ -17,8 +19,14 @@ use super::super::{
 use tinyiothub_web::middleware::workspace::WorkspaceScope;
 use tinyiothub_web::response::ApiResponseBuilder;
 
-fn thing_service(pool: &sqlx::SqlitePool) -> ThingService {
-    ThingService::new(pool.clone())
+fn thing_service(state: &AppState) -> ThingService {
+    let svc = ThingService::new(state.db.pool().clone());
+    if let Some(access) = &state.access {
+        svc.set_declaration_hook(Arc::new(crate::domains::driver::declaration::AccessDeclarationHook {
+            access: access.clone(),
+        }));
+    }
+    svc
 }
 
 // ──────────────────────────────────────────────
@@ -30,8 +38,7 @@ pub async fn list_things(
     WorkspaceScope(workspace_id): WorkspaceScope,
     Query(params): Query<ListThingsParams>,
 ) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
-    let pool = state.db.pool().clone();
-    let svc = thing_service(&pool);
+    let svc = thing_service(&state);
 
     let ws = workspace_id.unwrap_or_default();
 
@@ -60,13 +67,20 @@ pub async fn create_thing(
     WorkspaceScope(ws): WorkspaceScope,
     Json(req): Json<CreateThingRequest>,
 ) -> (StatusCode, Json<ApiResponse<ThingResponse>>) {
-    let pool = state.db.pool().clone();
-    let svc = thing_service(&pool);
+    let svc = thing_service(&state);
 
     let workspace_id = ws.unwrap_or_default();
 
     match svc.create_thing(&req, Some(workspace_id.as_str())).await {
         Ok(thing) => {
+            // Task 7 评审 ⚠️ 钩子②：新增子物 → 含 descendant_count 的派生重算
+            // （空串 parent 视为无父，评审 Minor 3）
+            if let (Some(manager), Some(parent)) = (
+                &state.derived_manager,
+                req.parent_id.as_deref().filter(|p| !p.is_empty()),
+            ) {
+                manager.notify_tree_changed(parent).await;
+            }
             let resp = ApiResponseBuilder::success(thing);
             (StatusCode::CREATED, resp)
         }
@@ -87,8 +101,7 @@ pub async fn get_thing(
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<ThingResponse>>) {
-    let pool = state.db.pool().clone();
-    let svc = thing_service(&pool);
+    let svc = thing_service(&state);
     let ws = workspace_id.unwrap_or_default();
 
     match svc.get_thing(&id, &ws).await {
@@ -114,12 +127,34 @@ pub async fn update_thing(
     Path(id): Path<String>,
     Json(req): Json<UpdateThingRequest>,
 ) -> (StatusCode, Json<ApiResponse<ThingResponse>>) {
-    let pool = state.db.pool().clone();
-    let svc = thing_service(&pool);
+    let svc = thing_service(&state);
     let ws = workspace_id.unwrap_or_default();
 
+    // 换父 diff（Task 7 评审 ⚠️ 钩子②）：只有请求带 parent_id 才可能换父，
+    // 先取旧值，更新成功后比对。
+    let old_parent = if req.parent_id.is_some() {
+        svc.get_thing(&id, &ws).await.ok().and_then(|t| t.parent_id)
+    } else {
+        None
+    };
+
     match svc.update_thing(&id, &req, &ws).await {
-        Ok(thing) => (StatusCode::OK, ApiResponseBuilder::success(thing)),
+        Ok(thing) => {
+            let parent_changed = req.parent_id.is_some() && req.parent_id != old_parent;
+            if parent_changed && let Some(manager) = &state.derived_manager {
+                // 新父/旧父两侧子树都变了；Manager 内部对全部含 dc 的 owner
+                // 重算（不按 root 过滤），以新父（缺省回退旧父）作 root 记日志。
+                let root = req
+                    .parent_id
+                    .as_deref()
+                    .filter(|p| !p.is_empty())
+                    .or(old_parent.as_deref());
+                if let Some(root) = root {
+                    manager.notify_tree_changed(root).await;
+                }
+            }
+            (StatusCode::OK, ApiResponseBuilder::success(thing))
+        }
         Err(e) => {
             let status = e.status_code();
             tracing::error!(?e, "Failed to update thing");
@@ -140,12 +175,25 @@ pub async fn delete_thing(
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<()>>) {
-    let pool = state.db.pool().clone();
-    let svc = thing_service(&pool);
+    let svc = thing_service(&state);
     let ws = workspace_id.unwrap_or_default();
 
+    // 删除前取 parent（F-B 钩子③ + 树变更钩子② 要用；物不存在时 delete 会
+    // 报 NotFound，此处拿不到 parent 也无妨）
+    let old_parent = svc.get_thing(&id, &ws).await.ok().and_then(|t| t.parent_id);
+
     match svc.delete_thing(&id, &ws).await {
-        Ok(()) => (StatusCode::OK, ApiResponseBuilder::success(())),
+        Ok(()) => {
+            // Task 7 评审 ⚠️ 钩子③：受影响派生标 stale + 索引/refs 热更新；
+            // 删除子物同时是树变更（含 descendant_count 的派生重算）。
+            if let Some(manager) = &state.derived_manager {
+                manager.notify_thing_deleted(&id).await;
+                if let Some(parent) = &old_parent {
+                    manager.notify_tree_changed(parent).await;
+                }
+            }
+            (StatusCode::OK, ApiResponseBuilder::success(()))
+        }
         Err(e) => {
             let status = e.status_code();
             tracing::error!(?e, "Failed to delete thing");
@@ -179,12 +227,35 @@ pub async fn get_thing_profile(
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<ThingProfileResponse>>) {
-    let pool = state.db.pool().clone();
-    let svc = thing_service(&pool);
+    let svc = thing_service(&state);
     let ws = workspace_id.unwrap_or_default();
 
     match svc.get_thing_profile(&id, &ws).await {
-        Ok(profile) => {
+        Ok(mut profile) => {
+            // 终审 C-1：详情页派生 stale 灰点/徽标的唯一数据源——派生行注入
+            // 运行状态（与 admin GET 同模式，内存态不落库，spec §二 E4）。
+            if let (Some(manager), Some(props)) = (&state.derived_manager, profile.properties.as_mut()) {
+                for p in props
+                    .iter_mut()
+                    .filter(|p| p.get("source").and_then(|s| s.as_str()) == Some("derived"))
+                {
+                    let Some(prop_id) = p.get("id").and_then(|i| i.as_str()).map(str::to_string) else {
+                        continue;
+                    };
+                    if let Some(s) = manager.derived_status(&prop_id)
+                        && let Some(obj) = p.as_object_mut()
+                    {
+                        obj.insert(
+                            "derivedStatus".to_string(),
+                            serde_json::json!({
+                                "stale": s.stale,
+                                "staleReason": s.stale_reason,
+                                "lastEvalAt": s.last_eval_at,
+                            }),
+                        );
+                    }
+                }
+            }
             tracing::info!(
                 thing_id = %id,
                 props = profile.properties.as_ref().map_or(0, |v| v.len()),
@@ -221,8 +292,7 @@ pub async fn get_thing_tree(
     Path(id): Path<String>,
     Query(query): Query<TreeQuery>,
 ) -> (StatusCode, Json<ApiResponse<Vec<ThingTreeNode>>>) {
-    let pool = state.db.pool().clone();
-    let svc = thing_service(&pool);
+    let svc = thing_service(&state);
 
     let ws = workspace_id.unwrap_or_default();
 

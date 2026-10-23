@@ -51,6 +51,11 @@ jobs:
         run: cargo clippy --workspace -- -W clippy::all
         continue-on-error: true
 
+      # driver-check e2e stages the reference cdylib; build it before tests
+      # (kept out of workspace test deps so it is not rebuilt per test target).
+      - name: Build reference cdylib
+        run: cargo build -p demo-declarative
+
       - name: Test workspace
         run: cargo test --workspace --lib --bins --tests
 
@@ -149,6 +154,13 @@ jobs:
       - name: Guard Self-Test (deliberate violations must fire)
         run: bash scripts/guards/selftest.sh
 
+      # E3 概念模型 lint：异名扫描（docs/ai-concept-model.md 词汇表右列）。
+      # 首版 warn-only——脚本本身 exit 0，continue-on-error 双保险；baseline
+      # 清零或逐个豁免后转 fail（T19 门禁裁定）。
+      - name: Concept Model Lint (E3, warn-only)
+        run: bash scripts/concept-lint.sh
+        continue-on-error: true
+
   # -----------------------------------------------------------------------------
   # 前端检查
   # -----------------------------------------------------------------------------
@@ -229,8 +241,8 @@ jobs:
                 ;;
             esac
 
-            # 新增的 API 文件必须有导出
-            if echo "$file" | grep -qE "^web/src/api/.*\.ts$"; then
+            # 新增的 API 文件必须有导出（测试文件不是 API 模块——豁免 *.test.ts）
+            if echo "$file" | grep -qE "^web/src/api/.*\.ts$" && ! echo "$file" | grep -qE "\.test\.ts$"; then
               if ! grep -qE "^export " "$rel" 2>/dev/null; then
                 echo "❌ VIOLATION: API file has no exports: $file"
                 exit 1

@@ -7,6 +7,9 @@
 //!   expand() ──▶ ExpansionResult (nodes 拓扑序, tree_preview, warnings)
 //!        │
 //!        ▼
+//!   extra_nodes 并入统一节点列表（模板/parent_path/count 校验 + 属性命令内联）
+//!        │ driver 决策（显式 driver_name 优先，attach_simulated_driver 补 simulator）
+//!        ▼
 //!   配额校验 (count_things_by_workspace + node_count ≤ thing_limit)
 //!   parent_id 校验（dry-run 与 commit 一致执行，SELECT 只读）
 //!        │
@@ -27,28 +30,55 @@
 //! 可聚合设计）。
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 
 use sqlx::{Sqlite, Transaction};
-use tinyiothub_core::models::thing::CreateThingRequest;
+use tinyiothub_core::models::event::{
+    ContentElement, Event as DomainEvent, EventLevel, EventSource, RichContent, TextFormat, ThingEventType,
+};
+use tinyiothub_core::models::thing::{CreateThingRequest, Thing};
 use tinyiothub_core::models::thing_command::CreateThingCommandRequest;
 use tinyiothub_core::models::thing_property::CreateThingPropertyRequest;
+use tinyiothub_runtime::event_bus::{EventBus, publish_event_safe};
 use tinyiothub_storage::Db;
 use tinyiothub_storage::alarm::AlarmLevel;
 use tinyiothub_storage::alarm_rule::{AlarmCondition, AlarmRule, NotificationConfig, RuleType};
 use tinyiothub_storage::scene_template::{
-    ExpandError, ExpandedNode, ExpansionResult, MAX_SCENE_REF_DEPTH, SceneTemplateFile, ThingNodeDef, expand,
-    localized, sanitize_label,
+    ExpandError, ExpandedNode, ExpansionResult, MAX_NODES, MAX_SCENE_REF_DEPTH, SceneTemplateFile, ThingNodeDef,
+    expand, localized, sanitize_label,
 };
 use tinyiothub_storage::thing::thing_name_candidates;
-use tinyiothub_storage::thing_template::ThingTemplate;
+use tinyiothub_storage::thing_template::{CommandTemplate, PropertyTemplate, ThingTemplate};
 use tracing::{error, info, instrument, warn};
 
 use super::error::{MarketplaceError, Result};
+use super::template_rules::resolve_template_rules;
+use crate::domains::thing::service::ThingService;
 
 /// 唯一约束兜底重试上限（TOCTOU：SELECT 探测与 INSERT 之间被并发抢占）。
 const MAX_NAME_RETRIES: usize = 10;
 /// SQLite 单写者锁竞争下的整事务重试上限。
 const MAX_TX_RETRIES: usize = 5;
+/// extra_nodes 单条 count 上限。
+const MAX_EXTRA_NODE_COUNT: u32 = 20;
+/// attach_simulated_driver 填充的模拟驱动名与默认上报间隔。
+const SIMULATOR_DRIVER: &str = "simulator";
+const SIMULATOR_OPTIONS: &str = r#"{"interval":"3000"}"#;
+
+/// 实例化时额外挂接的设备节点（与场景节点同一展开列表 → 同事务/同配额/同预览）。
+#[derive(Debug, Clone)]
+pub struct ExtraNode {
+    /// 设备模板 id（必须存在且非场景包）
+    pub template_id: String,
+    /// 场景节点 key 路径（[] = 挂到根节点下）
+    pub parent_path: Vec<String>,
+    /// 节点名（count > 1 时自动追加 1..=N 序号）
+    pub name: String,
+    /// 份数（1..=20）
+    pub count: u32,
+    /// 显式驱动名；缺省时 attach_simulated_driver=true 才填 simulator
+    pub driver_name: Option<String>,
+}
 
 #[derive(Debug)]
 pub struct InstantiateParams {
@@ -56,6 +86,9 @@ pub struct InstantiateParams {
     pub parent_id: Option<String>,
     pub parameter_values: HashMap<String, i64>,
     pub dry_run: bool,
+    /// true 时叶节点设备（thing_type=device 且无显式 driver）统一挂 simulator 开箱出数
+    pub attach_simulated_driver: bool,
+    pub extra_nodes: Vec<ExtraNode>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -83,12 +116,36 @@ pub struct QuotaInfo {
 pub struct SceneInstantiator;
 
 impl SceneInstantiator {
-    #[instrument(skip(db, params), fields(dry_run = params.dry_run))]
+    /// 实例化（不发热加载事件）；REST 入口走 `instantiate_with_events`。
     pub async fn instantiate(
         db: &Db,
         workspace_id: &str,
         template_id: &str,
         params: &InstantiateParams,
+    ) -> Result<InstantiateOutcome> {
+        Self::run(db, workspace_id, template_id, params, None).await
+    }
+
+    /// 实例化并在提交成功后为带驱动的节点发布 DeviceCreated（metadata 带完整物）——
+    /// DataServer 事件处理器据此热建驱动（与 REST 建物同一热路径，X3a），
+    /// driver_name 非空的新物不重启即注册进 data_server 并出数。
+    pub async fn instantiate_with_events(
+        db: &Db,
+        workspace_id: &str,
+        template_id: &str,
+        params: &InstantiateParams,
+        event_bus: &Arc<EventBus>,
+    ) -> Result<InstantiateOutcome> {
+        Self::run(db, workspace_id, template_id, params, Some(event_bus)).await
+    }
+
+    #[instrument(skip(db, params, event_bus), fields(dry_run = params.dry_run))]
+    async fn run(
+        db: &Db,
+        workspace_id: &str,
+        template_id: &str,
+        params: &InstantiateParams,
+        event_bus: Option<&Arc<EventBus>>,
     ) -> Result<InstantiateOutcome> {
         let started = std::time::Instant::now();
         info!(
@@ -99,7 +156,7 @@ impl SceneInstantiator {
             parent_id = ?params.parent_id,
             "场景包实例化开始"
         );
-        let outcome = Self::do_instantiate(db, workspace_id, template_id, params).await;
+        let outcome = Self::do_instantiate(db, workspace_id, template_id, params, event_bus).await;
         let duration_ms = started.elapsed().as_millis() as u64;
         match &outcome {
             Ok(o) => info!(
@@ -127,6 +184,7 @@ impl SceneInstantiator {
         workspace_id: &str,
         template_id: &str,
         params: &InstantiateParams,
+        event_bus: Option<&Arc<EventBus>>,
     ) -> Result<InstantiateOutcome> {
         // 0. scene_name 校验：trim 后非空、无控制字符、≤128 字符（防垃圾传播到整棵树每个节点名）
         validate_scene_name(&params.scene_name)?;
@@ -149,13 +207,18 @@ impl SceneInstantiator {
         let (device_templates, scene_templates) = preload_refs(db, workspace_id, &scene).await?;
 
         // 3. 展开（纯函数）
-        let result = expand(
+        let mut result = expand(
             &scene,
             &params.scene_name,
             &params.parameter_values,
             &device_templates,
             &scene_templates,
         )?;
+
+        // 3.5 extra_nodes 校验并并入统一节点列表（场景节点+挂接设备同列表 →
+        // 同事务落库、同配额口径、dry-run 预览同树）；driver 决策在合并后统一计算
+        let explicit_drivers = merge_extra_nodes(db, workspace_id, &params.extra_nodes, &mut result).await?;
+        let drivers = resolve_node_drivers(&result.nodes, &explicit_drivers, params.attach_simulated_driver);
 
         // 4. 配额校验（真实行数，不用缓存计数）
         let current = db
@@ -210,13 +273,24 @@ impl SceneInstantiator {
 
         // 7. 单事务落库；SQLite 单写者锁竞争时整体回滚重试
         let mut attempt = 0usize;
-        let (root_id, final_names, warnings) = loop {
+        let persisted = loop {
             let mut tx = db.pool().begin().await.map_err(|e| db_err("开启事务", e))?;
-            match persist_tree(db, &mut tx, workspace_id, template_id, params, &result).await {
-                Ok((root_id, final_names, mut persist_warnings)) => {
+            match persist_tree(
+                db,
+                &mut tx,
+                workspace_id,
+                template_id,
+                params,
+                &result,
+                &drivers,
+                &scene,
+            )
+            .await
+            {
+                Ok(mut persisted) => {
                     tx.commit().await.map_err(|e| db_err("提交事务", e))?;
-                    persist_warnings.extend(result.warnings.clone());
-                    break (root_id, final_names, persist_warnings);
+                    persisted.warnings.extend(result.warnings.clone());
+                    break persisted;
                 }
                 Err(e) if is_lock_contention(&e) && attempt < MAX_TX_RETRIES => {
                     attempt += 1;
@@ -232,11 +306,18 @@ impl SceneInstantiator {
             }
         };
 
+        // 8. 驱动热加载（X3a）：提交成功后为带驱动的节点发布 DeviceCreated，
+        // DataServer 事件处理器热建驱动——新物不重启即出数。best-effort：
+        // 发布失败只记 warn，不影响已提交的实例化结果。
+        if let Some(bus) = event_bus {
+            publish_driver_things_created(db, workspace_id, &persisted.driver_thing_ids, bus).await;
+        }
+
         Ok(InstantiateOutcome {
             node_count: result.node_count,
-            root_thing_id: Some(root_id),
-            tree_preview: rebuild_tree_preview(&result.nodes, &final_names),
-            warnings,
+            root_thing_id: Some(persisted.root_id),
+            tree_preview: rebuild_tree_preview(&result.nodes, &persisted.final_names),
+            warnings: persisted.warnings,
             quota,
         })
     }
@@ -446,8 +527,268 @@ fn collect_refs(scene: &SceneTemplateFile) -> (Vec<String>, Vec<String>) {
     (device, scenes)
 }
 
+// ──────────────────────────────────────────────
+// extra_nodes：挂接设备并入统一节点列表（X3a）
+// ──────────────────────────────────────────────
+
+/// 落库 driver 决策结果（仅 thing_type=device 的节点可能有值）。
+#[derive(Debug, Clone)]
+struct NodeDriver {
+    name: String,
+    options: Option<String>,
+}
+
+/// extra_nodes 校验并并入展开结果：模板存在且非场景包、parent_path 命中场景节点 key、
+/// count ≤20；属性/命令/事件内联（属性/命令解析对齐 Fix A：列 JSON 优先 + device_info
+/// 场景段回退 + snake_case/camelCase 键兼容）。dry-run 与 commit 同路径（只读校验）。
+/// 返回 temp_id → 显式 driver_name 映射（attach_simulated_driver 决策的输入）。
+async fn merge_extra_nodes(
+    db: &Db,
+    workspace_id: &str,
+    extras: &[ExtraNode],
+    result: &mut ExpansionResult,
+) -> Result<HashMap<usize, String>> {
+    let mut explicit_drivers: HashMap<usize, String> = HashMap::new();
+    for (n, extra) in extras.iter().enumerate() {
+        validate_extra_node(n, extra)?;
+        let tpl = db
+            .find_thing_template_by_id(&extra.template_id, workspace_id)
+            .await
+            .map_err(|e| MarketplaceError::Template(e.to_string()))?
+            .ok_or_else(|| {
+                MarketplaceError::Validation(format!("extra_nodes[{n}] 模板不存在: {}", extra.template_id))
+            })?;
+        // 服务端兜底：场景包不能作为挂接设备（前端已过滤，API 直调必须拦住）
+        if tpl.category == "scenes" || tpl.is_composition() {
+            return Err(MarketplaceError::Validation(format!(
+                "extra_nodes[{n}] 模板 {} 是场景包（category=scenes），请改用设备模板",
+                extra.template_id
+            )));
+        }
+        let parent_temp_id =
+            resolve_parent_path(&result.nodes, &extra.parent_path, &mut result.warnings).ok_or_else(|| {
+                MarketplaceError::Validation(format!(
+                    "extra_nodes[{n}] 的 parent_path [{}] 未命中任何场景节点 key",
+                    extra.parent_path.join("/")
+                ))
+            })?;
+
+        // 属性/命令内联（Fix A 路径）；事件与展开器 template_ref 分支同口径内联
+        let props_json = ThingService::nonempty_json(&Some(tpl.properties.clone()))
+            .or_else(|| ThingService::scene_section(&Some(tpl.device_info.clone()), "properties"));
+        let properties = parse_extra_properties(props_json.as_deref(), &extra.template_id, &mut result.warnings);
+        let acts_json = ThingService::nonempty_json(&Some(tpl.actions.clone()))
+            .or_else(|| ThingService::scene_section(&Some(tpl.device_info.clone()), "commands"));
+        let commands = parse_extra_commands(acts_json.as_deref(), &extra.template_id, &mut result.warnings);
+        let events: Vec<serde_json::Value> = match serde_json::from_str(&tpl.events_json_for_inline()) {
+            Ok(v) => v,
+            Err(e) => {
+                result
+                    .warnings
+                    .push(format!("模板 {} 的 events 解析失败（{e}），已跳过", extra.template_id));
+                Vec::new()
+            }
+        };
+
+        let base_name = extra.name.trim();
+        for i in 1..=extra.count {
+            if result.nodes.len() >= MAX_NODES {
+                return Err(MarketplaceError::Validation(format!(
+                    "展开节点数超过上限 {MAX_NODES}（含 extra_nodes）"
+                )));
+            }
+            let temp_id = result.nodes.len();
+            // count > 1 时序号后缀保证基本可区分；残留冲突由名称解析加 -N 兜底
+            let name = if extra.count == 1 {
+                base_name.to_string()
+            } else {
+                format!("{base_name}{i}")
+            };
+            result.nodes.push(ExpandedNode {
+                temp_id,
+                parent_temp_id: Some(parent_temp_id),
+                key: None,
+                display_name: Some(name.clone()),
+                name,
+                category: tpl.category.clone(),
+                thing_type: "device".to_string(),
+                properties: properties.clone(),
+                commands: commands.clone(),
+                event_defs: events.clone(),
+                knowledge: None,
+                resources: Vec::new(),
+                dashboard: None,
+                alarm_rules: Vec::new(),
+            });
+            if let Some(d) = &extra.driver_name {
+                explicit_drivers.insert(temp_id, d.clone());
+            }
+        }
+    }
+    // node_count 并入统一口径：配额校验与响应计数都含 extra_nodes
+    result.node_count = result.nodes.len();
+    Ok(explicit_drivers)
+}
+
+/// extra_nodes 单条校验：name 合法（与 scene_name 同规则）+ count ∈ 1..=20。
+fn validate_extra_node(index: usize, extra: &ExtraNode) -> Result<()> {
+    validate_scene_name(&extra.name).map_err(|e| match e {
+        MarketplaceError::Validation(msg) => {
+            MarketplaceError::Validation(format!("extra_nodes[{index}] name 非法: {msg}"))
+        }
+        other => other,
+    })?;
+    if extra.count == 0 || extra.count > MAX_EXTRA_NODE_COUNT {
+        return Err(MarketplaceError::Validation(format!(
+            "extra_nodes[{index}] count 须在 1..={MAX_EXTRA_NODE_COUNT} 之间（实际 {}）",
+            extra.count
+        )));
+    }
+    Ok(())
+}
+
+/// parent_path 解析：[] = 根节点；逐段在当前节点子级中按场景节点 key 匹配，
+/// key 重名（count 多份展开）取拓扑序首个并记 warning。未命中返回 None。
+fn resolve_parent_path(nodes: &[ExpandedNode], path: &[String], warnings: &mut Vec<String>) -> Option<usize> {
+    let mut current = nodes.iter().find(|n| n.parent_temp_id.is_none())?.temp_id;
+    for seg in path {
+        let mut matches = nodes
+            .iter()
+            .filter(|n| n.parent_temp_id == Some(current) && n.key.as_deref() == Some(seg.as_str()));
+        let first = matches.next()?;
+        if matches.next().is_some() {
+            warnings.push(format!("parent_path 段「{seg}」命中多个场景节点，已取首个"));
+        }
+        current = first.temp_id;
+    }
+    Some(current)
+}
+
+/// driver 决策：显式 driver_name（extra_nodes 声明）优先；其次 attach_simulated_driver
+/// 对叶设备（thing_type=device 且无显式 driver）统一填 simulator 开箱出数；
+/// 空间/楼栋等非设备节点恒无 driver。
+fn resolve_node_drivers(
+    nodes: &[ExpandedNode],
+    explicit: &HashMap<usize, String>,
+    attach_simulated: bool,
+) -> Vec<Option<NodeDriver>> {
+    nodes
+        .iter()
+        .map(|n| {
+            if n.thing_type != "device" {
+                return None;
+            }
+            if let Some(name) = explicit.get(&n.temp_id) {
+                return Some(NodeDriver {
+                    name: name.clone(),
+                    options: None,
+                });
+            }
+            attach_simulated.then(|| NodeDriver {
+                name: SIMULATOR_DRIVER.to_string(),
+                options: Some(SIMULATOR_OPTIONS.to_string()),
+            })
+        })
+        .collect()
+}
+
+/// i18n 字段归一化为多语言 map：对象原样保留字符串值，裸字符串按 zh 收纳。
+/// Fix A i18n_pick 的形状适配——实例化器走类型化 PropertyTemplate（persist 路径复用），
+/// 而非 Fix A 的拍平直接写行；取值语义一致（zh > en 由下游 localized 回退承担）。
+fn i18n_map(v: Option<&serde_json::Value>) -> HashMap<String, String> {
+    match v {
+        Some(serde_json::Value::Object(o)) => o
+            .iter()
+            .filter_map(|(k, val)| val.as_str().map(|s| (k.clone(), s.to_string())))
+            .collect(),
+        Some(serde_json::Value::String(s)) => HashMap::from([("zh".to_string(), s.clone())]),
+        _ => HashMap::new(),
+    }
+}
+
+fn i18n_map_opt(v: Option<&serde_json::Value>) -> Option<HashMap<String, String>> {
+    let m = i18n_map(v);
+    if m.is_empty() { None } else { Some(m) }
+}
+
+/// 模板属性 JSON → PropertyTemplate（Fix A 键兼容：snake_case 优先、camelCase 兜底）。
+/// 解析失败记 warning 后按空块继续——与展开器 template_ref 分支同策略。
+fn parse_extra_properties(json: Option<&str>, template_id: &str, warnings: &mut Vec<String>) -> Vec<PropertyTemplate> {
+    let Some(json) = json else {
+        return Vec::new();
+    };
+    let values: Vec<serde_json::Value> = match serde_json::from_str(json) {
+        Ok(v) => v,
+        Err(e) => {
+            warnings.push(format!("模板 {template_id} 的 properties 解析失败（{e}），已跳过"));
+            return Vec::new();
+        }
+    };
+    values
+        .iter()
+        .map(|p| PropertyTemplate {
+            name: p["name"].as_str().unwrap_or_default().to_string(),
+            display_name: i18n_map(ThingService::key(p, "display_name", "displayName")),
+            description: i18n_map_opt(p.get("description")),
+            data_type: ThingService::key(p, "data_type", "dataType")
+                .and_then(|v| v.as_str())
+                .unwrap_or("string")
+                .to_string(),
+            unit: p.get("unit").and_then(|v| v.as_str()).map(str::to_string),
+            min_value: ThingService::key(p, "min_value", "minValue").and_then(|v| v.as_f64()),
+            max_value: ThingService::key(p, "max_value", "maxValue").and_then(|v| v.as_f64()),
+            default_value: ThingService::key(p, "default_value", "defaultValue").map(|v| match v.as_str() {
+                Some(s) => s.to_string(),
+                None => v.to_string(),
+            }),
+            is_read_only: ThingService::key(p, "is_read_only", "isReadOnly")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            is_required: ThingService::key(p, "is_required", "isRequired")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            validation_rules: None,
+        })
+        .collect()
+}
+
+/// 模板命令 JSON → CommandTemplate（Fix A 键兼容 + parameters 原样 JSON 字符串）。
+fn parse_extra_commands(json: Option<&str>, template_id: &str, warnings: &mut Vec<String>) -> Vec<CommandTemplate> {
+    let Some(json) = json else {
+        return Vec::new();
+    };
+    let values: Vec<serde_json::Value> = match serde_json::from_str(json) {
+        Ok(v) => v,
+        Err(e) => {
+            warnings.push(format!("模板 {template_id} 的 actions 解析失败（{e}），已跳过"));
+            return Vec::new();
+        }
+    };
+    values
+        .iter()
+        .map(|a| CommandTemplate {
+            name: a["name"].as_str().unwrap_or_default().to_string(),
+            display_name: i18n_map(ThingService::key(a, "display_name", "displayName")),
+            description: i18n_map_opt(a.get("description")),
+            parameters: a.get("parameters").map(|v| v.to_string()),
+            parameter_schema: None,
+            is_required: false,
+        })
+        .collect()
+}
+
+/// 落库产物：根 id、最终名称、warnings，以及带驱动节点的真实 thing id
+/// （提交后热加载事件的输入——DataServer 按 DeviceCreated 热建驱动）。
+struct PersistedTree {
+    root_id: String,
+    final_names: Vec<String>,
+    warnings: Vec<String>,
+    driver_thing_ids: Vec<String>,
+}
+
 /// 事务内落库：名称解析（与 dry-run 共用步骤）→ 拓扑序创建本体 → 子表。
-/// 返回 (root_thing_id, 最终名称列表, warnings)。任何一步失败即返回 Err，由调用方回滚整个事务。
+/// 任何一步失败即返回 Err，由调用方回滚整个事务。
+#[allow(clippy::too_many_arguments)]
 async fn persist_tree(
     db: &Db,
     tx: &mut Transaction<'_, Sqlite>,
@@ -455,12 +796,15 @@ async fn persist_tree(
     template_id: &str,
     params: &InstantiateParams,
     result: &ExpansionResult,
-) -> Result<(String, Vec<String>, Vec<String>)> {
+    drivers: &[Option<NodeDriver>],
+    scene: &SceneTemplateFile,
+) -> Result<PersistedTree> {
     // 事务内名称解析（与 dry-run 同算法）：事务可见自身写入，计划名即落库名（无并发干预下）
     let planned = resolve_node_names(db, Some(tx), workspace_id, &result.nodes).await?;
     let mut warnings = name_warnings(&result.nodes, &planned);
     let mut final_names: Vec<String> = Vec::with_capacity(result.nodes.len());
     let mut real_ids: HashMap<usize, String> = HashMap::new();
+    let mut driver_thing_ids: Vec<String> = Vec::new();
     let mut root_id = String::new();
 
     for (i, node) in result.nodes.iter().enumerate() {
@@ -474,7 +818,14 @@ async fn persist_tree(
         let mut tries = 0usize;
         let mut candidate = planned[i].clone();
         let (resolved, id) = loop {
-            let req = build_thing_request(node, candidate.clone(), real_parent.clone(), template_id, workspace_id);
+            let req = build_thing_request(
+                node,
+                candidate.clone(),
+                real_parent.clone(),
+                template_id,
+                workspace_id,
+                &drivers[i],
+            );
             match insert_thing_node_tx(db, tx, &req, &node.thing_type).await {
                 Ok(id) => break (candidate, id),
                 Err(e) if is_name_unique_violation(&e) => {
@@ -505,13 +856,104 @@ async fn persist_tree(
 
         final_names.push(resolved);
         real_ids.insert(node.temp_id, id.clone());
+        if drivers[i].is_some() {
+            driver_thing_ids.push(id.clone());
+        }
         if node.temp_id == 0 {
             root_id = id.clone();
         }
 
         persist_children_tables(db, tx, workspace_id, &id, node, &mut warnings).await?;
     }
-    Ok((root_id, final_names, warnings))
+
+    // E3：场景包自带的 watch_rules/composites 同事务落地（"装完即自带值守"）。
+    apply_scene_rules_tx(tx, workspace_id, result, &real_ids, scene).await?;
+
+    Ok(PersistedTree {
+        root_id,
+        final_names,
+        warnings,
+        driver_thing_ids,
+    })
+}
+
+/// E3：场景包自带 watch_rules/composites 的同事务落地。
+/// 引用映射 = 节点 key → 新建 thing_id；任一引用/冲突失败 → 整包回滚。
+async fn apply_scene_rules_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    workspace_id: &str,
+    result: &ExpansionResult,
+    real_ids: &HashMap<usize, String>,
+    scene: &SceneTemplateFile,
+) -> Result<()> {
+    if scene.watch_rules.is_empty() && scene.composites.is_empty() {
+        return Ok(());
+    }
+    let mut mapping: HashMap<String, String> = HashMap::new();
+    for node in &result.nodes {
+        if let Some(key) = &node.key
+            && let Some(id) = real_ids.get(&node.temp_id)
+        {
+            mapping.entry(key.clone()).or_insert_with(|| id.clone());
+        }
+    }
+    let template = serde_json::json!({
+        "watch_rules": scene.watch_rules,
+        "composites": scene.composites,
+    });
+    let existing = tinyiothub_storage::composite::list_composite_names_tx(tx, workspace_id)
+        .await
+        .map_err(|e| db_err("读取 composite 名称", e))?;
+    let (resolved, report) = resolve_template_rules(&template, workspace_id, &mapping, &existing);
+    if !report.ok {
+        let detail = report
+            .references
+            .iter()
+            .map(|r| format!("{}:{}", r.path, r.status))
+            .chain(report.conflicts.iter().map(|c| format!("{}:{}", c.kind, c.ref_id)))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(MarketplaceError::Validation(format!(
+            "场景包值守规则校验失败（整包回滚）：{detail}"
+        )));
+    }
+    for rule in &resolved.watch_rules {
+        let condition = serde_json::to_value(&rule.condition)
+            .map_err(|e| MarketplaceError::Template(format!("watch 条件序列化失败: {e}")))?;
+        let kind = condition.get("type").and_then(|t| t.as_str()).unwrap_or("property");
+        tinyiothub_storage::watch::insert_rule_tx(
+            tx,
+            &tinyiothub_storage::watch::WatchRuleRow {
+                id: rule.id.clone(),
+                workspace_id: rule.workspace_id.clone(),
+                kind: kind.to_string(),
+                condition: condition.to_string(),
+                persistent: i64::from(rule.persistent),
+                timeout_secs: i64::from(rule.timeout_secs),
+                created_at: rule.created_at.clone(),
+            },
+        )
+        .await
+        .map_err(|e| db_err("watch 规则落库", e))?;
+    }
+    for def in &resolved.composites {
+        let definition =
+            serde_json::to_string(def).map_err(|e| MarketplaceError::Template(format!("composite 序列化失败: {e}")))?;
+        tinyiothub_storage::composite::insert_composite_tx(
+            tx,
+            &tinyiothub_storage::composite::CompositeRow {
+                id: def.id.clone(),
+                workspace_id: def.workspace_id.clone(),
+                name: def.name.clone(),
+                description: def.description.clone(),
+                definition,
+                created_at: chrono::Utc::now().to_rfc3339(),
+            },
+        )
+        .await
+        .map_err(|e| db_err("composite 落库", e))?;
+    }
+    Ok(())
 }
 
 /// 名称插入（persist_tree 唯一调用点）。生产路径直通
@@ -582,6 +1024,7 @@ fn build_thing_request(
     parent_id: Option<String>,
     template_id: &str,
     workspace_id: &str,
+    driver: &Option<NodeDriver>,
 ) -> CreateThingRequest {
     // linked_data：knowledge / event_defs / dashboard 按顶层键合并（v1 新建，无既有键）
     let mut linked = serde_json::Map::new();
@@ -611,12 +1054,12 @@ fn build_thing_request(
         address: None,
         description: None,
         position: None,
-        driver_name: None,
+        driver_name: driver.as_ref().map(|d| d.name.clone()),
         device_model: None,
         protocol_type: None,
         factory_name: None,
         linked_data,
-        driver_options: None,
+        driver_options: driver.as_ref().and_then(|d| d.options.clone()),
         parent_id,
         linked_gateway: None,
         fingerprint: None,
@@ -648,6 +1091,9 @@ async fn persist_children_tables(
             max_value: p.max_value,
             default_value: p.default_value.clone(),
             is_read_only: Some(p.is_read_only as i32),
+            expression: None,
+            source: None,
+            refs: None,
         })
         .collect();
     db.create_thing_properties_batch_tx(tx, &props)
@@ -762,6 +1208,55 @@ fn parse_alarm_level(s: &str) -> Option<AlarmLevel> {
         "critical" => Some(AlarmLevel::Critical),
         _ => None,
     }
+}
+
+/// 提交成功后为带驱动的节点发布 DeviceCreated（metadata 带完整物，与 REST 建物
+/// 同形状）——DataServer 事件处理器据此热建驱动并插入 device_cache（复用既有
+/// 热路径，不重写注册逻辑）。best-effort：加载/构造失败只记 warn，不影响已提交
+/// 的实例化结果（与 REST 路径 `let _ =` 同语义）。
+async fn publish_driver_things_created(db: &Db, workspace_id: &str, thing_ids: &[String], event_bus: &Arc<EventBus>) {
+    for id in thing_ids {
+        match load_complete_thing(db, workspace_id, id).await {
+            Ok(Some(device)) => {
+                let device_json = serde_json::to_value(&device).unwrap_or(serde_json::Value::Null);
+                let content = RichContent::new(
+                    format!("Thing Created: {}", device.name),
+                    vec![ContentElement::Text {
+                        content: format!("Thing '{}' has been created successfully", device.name),
+                        format: TextFormat::Plain,
+                    }],
+                )
+                .with_metadata("device".to_string(), device_json);
+                match DomainEvent::new_device_event(
+                    ThingEventType::DeviceCreated,
+                    EventLevel::Info,
+                    EventSource::device(device.id.clone(), Some("scene_instantiator".to_string())),
+                    content,
+                ) {
+                    Ok(event) => publish_event_safe(event_bus.clone(), event).await,
+                    Err(e) => warn!(thing_id = %id, error = %e, "实例化热加载：DeviceCreated 事件构造失败"),
+                }
+            }
+            Ok(None) => warn!(thing_id = %id, "实例化热加载：提交后读不到新物"),
+            Err(e) => warn!(thing_id = %id, error = %e, "实例化热加载：加载完整物失败"),
+        }
+    }
+}
+
+/// 加载完整物（含属性——模拟驱动按属性产值；DataServer 的 device_cache 插入同用）。
+async fn load_complete_thing(db: &Db, workspace_id: &str, thing_id: &str) -> Result<Option<Thing>> {
+    let mut thing = db
+        .find_thing_by_id(Some(workspace_id), thing_id)
+        .await
+        .map_err(|e| MarketplaceError::Template(format!("加载实例化物失败: {e}")))?;
+    if let Some(t) = &mut thing {
+        t.properties = Some(
+            db.find_thing_properties_by_thing_id(thing_id)
+                .await
+                .map_err(|e| MarketplaceError::Template(format!("加载实例化物属性失败: {e}")))?,
+        );
+    }
+    Ok(thing)
 }
 
 /// 测试故障注入（不进生产二进制）：arming 后下一次名称插入先在本事务内

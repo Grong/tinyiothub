@@ -15,7 +15,7 @@ use tinyiothub_storage::Db;
 use tower::ServiceExt;
 
 use crate::domains::marketplace::error::MarketplaceError;
-use crate::domains::marketplace::scene_instantiator::{InstantiateParams, SceneInstantiator, toctou_fault};
+use crate::domains::marketplace::scene_instantiator::{ExtraNode, InstantiateParams, SceneInstantiator, toctou_fault};
 use crate::test_utils::{
     auth_header, create_test_token_with_workspace, response_parts, seed_test_workspace, setup_test_app_with_pool,
 };
@@ -141,6 +141,8 @@ fn params(building_count: i64, floor_count: i64, dry_run: bool) -> InstantiatePa
             ("floor_count".to_string(), floor_count),
         ]),
         dry_run,
+        attach_simulated_driver: false,
+        extra_nodes: vec![],
     }
 }
 
@@ -151,6 +153,8 @@ fn no_params(dry_run: bool) -> InstantiateParams {
         parent_id: None,
         parameter_values: HashMap::new(),
         dry_run,
+        attach_simulated_driver: false,
+        extra_nodes: vec![],
     }
 }
 
@@ -1525,4 +1529,413 @@ async fn api_list_and_detail_return_localized_fields() {
         result["description"]["en"], "Building with N floors",
         "detail description: {result}"
     );
+}
+
+// ──────────────────────────────────────────────────────────────
+// X3a：extra_nodes 同事务挂接 + attach_simulated_driver 开箱出数
+// ──────────────────────────────────────────────────────────────
+
+/// 电表设备模板属性（energy 单属性）。
+const METER_PROPERTIES: &str = r#"[
+    {"name": "energy", "display_name": {"zh": "电量"}, "description": null,
+     "data_type": "float", "unit": "kWh", "min_value": null, "max_value": null,
+     "default_value": null, "is_read_only": true, "is_required": true, "validation_rules": null}
+]"#;
+
+/// 播种电表设备模板，返回模板 id。
+async fn seed_meter_template(pool: &SqlitePool) -> String {
+    seed_template(
+        pool,
+        "electric_meter",
+        "meters",
+        r#"{"default_name_pattern": "meter_{index}", "required_fields": []}"#,
+        METER_PROPERTIES,
+        "[]",
+    )
+    .await
+}
+
+fn extra_meter(template_id: &str, parent_path: Vec<String>, count: u32) -> ExtraNode {
+    ExtraNode {
+        template_id: template_id.to_string(),
+        parent_path,
+        name: "电表".to_string(),
+        count,
+        driver_name: None,
+    }
+}
+
+/// extra_nodes 与场景节点同一事务落库：smart_campus(1×1)=4 节点 + 2 电表挂根下 = 6；
+/// 电表带 energy 属性、attach_simulated_driver=true 时 driver_name='simulator'；
+/// dry-run 预览计数与树同步含 extra_nodes 且零写入。
+#[tokio::test]
+async fn instantiate_with_extra_nodes_same_transaction() {
+    let (pool, db) = setup_db().await;
+    let scene_id = seed_standard_templates(&pool).await;
+    let meter_id = seed_meter_template(&pool).await;
+
+    // dry-run 同步：同一展开列表，只读不写
+    let mut p = params(1, 1, true);
+    p.attach_simulated_driver = true;
+    p.extra_nodes = vec![extra_meter(&meter_id, vec![], 2)];
+    let dry = SceneInstantiator::instantiate(&db, WS, &scene_id, &p)
+        .await
+        .expect("dry-run with extra_nodes should succeed");
+    assert_eq!(dry.node_count, 6, "dry-run 计数须含 extra_nodes");
+    assert!(
+        dry.tree_preview.contains("电表1"),
+        "dry-run 树须含电表1: {}",
+        dry.tree_preview
+    );
+    assert!(
+        dry.tree_preview.contains("电表2"),
+        "dry-run 树须含电表2: {}",
+        dry.tree_preview
+    );
+    assert_eq!(thing_count(&pool).await, 0, "dry-run 不写库");
+
+    let mut p = params(1, 1, false);
+    p.attach_simulated_driver = true;
+    p.extra_nodes = vec![extra_meter(&meter_id, vec![], 2)];
+    let outcome = SceneInstantiator::instantiate(&db, WS, &scene_id, &p)
+        .await
+        .expect("instantiate with extra_nodes should succeed");
+
+    assert_eq!(outcome.node_count, 6);
+    assert_eq!(thing_count(&pool).await, 6);
+
+    // 2 电表挂在根节点下（parent_path=[] = 根）
+    let root_id = outcome.root_thing_id.clone().expect("root thing id");
+    let meters_under_root: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM things WHERE parent_id = ? AND category = 'meters'")
+            .bind(&root_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(meters_under_root, 2);
+
+    // 电表带 energy 属性（模板属性拷贝）
+    let energy_props: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM thing_properties p JOIN things t ON p.thing_id = t.id \
+         WHERE t.workspace_id = ? AND p.name = 'energy'",
+    )
+    .bind(WS)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(energy_props, 2);
+
+    // extra 未显式给 driver + attach_simulated_driver=true → simulator
+    let sim_meters: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM things WHERE workspace_id = ? AND category = 'meters' AND driver_name = 'simulator'",
+    )
+    .bind(WS)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(sim_meters, 2);
+}
+
+/// parent_path 未命中场景节点 key → 400，错误明细含路径。
+#[tokio::test]
+async fn instantiate_extra_nodes_invalid_path_400() {
+    let (pool, db) = setup_db().await;
+    let scene_id = seed_standard_templates(&pool).await;
+    let meter_id = seed_meter_template(&pool).await;
+
+    let mut p = params(1, 1, false);
+    p.extra_nodes = vec![extra_meter(&meter_id, vec!["不存在的楼".to_string()], 1)];
+    let err = SceneInstantiator::instantiate(&db, WS, &scene_id, &p)
+        .await
+        .expect_err("invalid parent_path must fail");
+    match err {
+        MarketplaceError::Validation(msg) => {
+            assert!(msg.contains("不存在的楼"), "错误明细须含路径: {msg}");
+        }
+        other => panic!("expected Validation (400), got: {other:?}"),
+    }
+    assert_eq!(thing_count(&pool).await, 0);
+}
+
+/// extra_nodes 模板指向 scenes 类模板 → 400（服务端兜底，不依赖前端过滤）。
+#[tokio::test]
+async fn instantiate_extra_nodes_scene_template_rejected() {
+    let (pool, db) = setup_db().await;
+    let scene_id = seed_standard_templates(&pool).await;
+
+    let mut p = params(1, 1, false);
+    p.extra_nodes = vec![extra_meter(&scene_id, vec![], 1)];
+    let err = SceneInstantiator::instantiate(&db, WS, &scene_id, &p)
+        .await
+        .expect_err("scenes template as extra node must fail");
+    match err {
+        MarketplaceError::Validation(msg) => {
+            assert!(msg.contains("场景包"), "错误须指出场景包不可挂接: {msg}");
+        }
+        other => panic!("expected Validation (400), got: {other:?}"),
+    }
+    assert_eq!(thing_count(&pool).await, 0);
+}
+
+/// extra_nodes 第二个模板不存在 → 整事务回滚，场景节点也不落库（无半棵树）。
+#[tokio::test]
+async fn instantiate_rollback_on_extra_node_failure() {
+    let (pool, db) = setup_db().await;
+    let scene_id = seed_standard_templates(&pool).await;
+    let meter_id = seed_meter_template(&pool).await;
+
+    let mut p = params(1, 1, false);
+    p.extra_nodes = vec![extra_meter(&meter_id, vec![], 1), extra_meter("tpl-ghost", vec![], 1)];
+    let err = SceneInstantiator::instantiate(&db, WS, &scene_id, &p)
+        .await
+        .expect_err("missing extra template must fail");
+    match err {
+        MarketplaceError::Validation(msg) => {
+            assert!(msg.contains("tpl-ghost"), "错误须指出缺失模板: {msg}");
+        }
+        other => panic!("expected Validation (400), got: {other:?}"),
+    }
+    // 整体回滚：场景节点 + 第一个电表都无残留
+    assert_eq!(thing_count(&pool).await, 0);
+    let props: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM thing_properties p JOIN things t ON p.thing_id = t.id WHERE t.workspace_id = ?",
+    )
+    .bind(WS)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(props, 0);
+}
+
+/// attach_simulated_driver=true：叶节点设备（thing_type=device 且无显式 driver）
+/// 统一 driver_name='simulator'、driver_options.interval='3000'；空间/楼栋不挂 driver。
+#[tokio::test]
+async fn attach_simulated_driver_fills_leaf_devices() {
+    let (pool, db) = setup_db().await;
+    let scene_id = seed_standard_templates(&pool).await;
+
+    let mut p = params(1, 1, false);
+    p.attach_simulated_driver = true;
+    SceneInstantiator::instantiate(&db, WS, &scene_id, &p)
+        .await
+        .expect("instantiate with simulator should succeed");
+
+    // 1×1 → 唯一传感器设备
+    let (driver, options): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT driver_name, driver_options FROM things WHERE workspace_id = ? AND thing_type = 'device'",
+    )
+    .bind(WS)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(driver.as_deref(), Some("simulator"));
+    let options = options.expect("driver_options must be filled");
+    assert!(options.contains("\"interval\""), "options: {options}");
+    assert!(options.contains("3000"), "options: {options}");
+
+    // 根/楼/层（非 device）不挂 driver
+    let non_device_with_driver: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM things WHERE workspace_id = ? AND thing_type != 'device' AND driver_name IS NOT NULL",
+    )
+    .bind(WS)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(non_device_with_driver, 0);
+}
+
+/// 显式 driver_name 尊重原值：attach_simulated_driver=true 时 extra_nodes 声明的
+/// driver 不被 simulator 覆盖；未声明的场景叶设备仍填 simulator。
+#[tokio::test]
+async fn instantiate_extra_node_explicit_driver_respected() {
+    let (pool, db) = setup_db().await;
+    let scene_id = seed_standard_templates(&pool).await;
+    let meter_id = seed_meter_template(&pool).await;
+
+    let mut p = params(1, 1, false);
+    p.attach_simulated_driver = true;
+    let mut meter = extra_meter(&meter_id, vec![], 1);
+    meter.driver_name = Some("modbus".to_string());
+    p.extra_nodes = vec![meter];
+    SceneInstantiator::instantiate(&db, WS, &scene_id, &p)
+        .await
+        .expect("instantiate should succeed");
+
+    let meter_driver: Option<String> =
+        sqlx::query_scalar("SELECT driver_name FROM things WHERE workspace_id = ? AND category = 'meters'")
+            .bind(WS)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(meter_driver.as_deref(), Some("modbus"), "显式 driver 须尊重原值");
+    let sensor_driver: Option<String> = sqlx::query_scalar(
+        "SELECT driver_name FROM things WHERE workspace_id = ? AND thing_type = 'device' AND category = 'sensors'",
+    )
+    .bind(WS)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(sensor_driver.as_deref(), Some("simulator"));
+}
+
+/// API 端到端：extraNodes + attachSimulatedDriver camelCase 契约。
+#[tokio::test]
+async fn api_instantiate_with_extra_nodes_and_simulator() {
+    let (app, pool) = setup_app().await;
+    let scene_id = seed_standard_templates(&pool).await;
+    let meter_id = seed_meter_template(&pool).await;
+    let token = create_test_token_with_workspace("user-1", TENANT, WS);
+
+    let response = app
+        .oneshot(api_request(
+            "POST",
+            &format!("/api/v1/marketplace/thing-templates/{scene_id}/instantiate"),
+            &token,
+            Some(json!({
+                "sceneName": "测试园区",
+                "parameterValues": {"building_count": 1, "floor_count": 1},
+                "attachSimulatedDriver": true,
+                "extraNodes": [
+                    {"templateId": meter_id, "parentPath": ["building"], "name": "电表", "count": 2}
+                ]
+            })),
+        ))
+        .await
+        .unwrap();
+
+    let (status, body) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "expected 200, got: {body}");
+    let result = &body["result"];
+    assert_eq!(result["nodeCount"], 6, "nodeCount 须含 extra_nodes: {result}");
+    assert_eq!(thing_count(&pool).await, 6);
+
+    // parentPath=["building"]：电表挂在楼栋下（重名取首个：1×1 仅一栋）
+    let building_id: String =
+        sqlx::query_scalar("SELECT id FROM things WHERE workspace_id = ? AND category = 'building'")
+            .bind(WS)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let meters_under_building: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM things WHERE parent_id = ? AND category = 'meters'")
+            .bind(&building_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(meters_under_building, 2);
+}
+
+// ──────────────────────────────────────────────────────────────
+// E3：场景包自带值守规则（watch_rules/composites）同事务落地
+// ──────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn scene_pack_watch_and_composite_rules_land_in_same_tx() {
+    let (pool, db) = setup_db().await;
+    let template_id = seed_scene(
+        &pool,
+        "e3_rules",
+        r#"{
+        "name": "e3_rules", "display_name": {"zh": "E3规则"}, "category": "scenes",
+        "thing_category": "campus",
+        "device_info": {"default_name_pattern": "{scene_name}"},
+        "watch_rules": [
+            {"ref": "temp_high", "thing": "sensor", "kind": "property",
+             "property": "temperature", "op": "gt", "value": 30,
+             "persistent": true, "timeout_secs": 3600}
+        ],
+        "composites": [
+            {"name": "reboot_sensor", "steps": [
+                {"op": "call", "thing": "sensor", "action": "reboot", "params": {}}
+            ]}
+        ],
+        "children": [
+            {"key": "sensor", "thing_type": "device", "count": 1,
+             "device_info": {"default_name_pattern": "传感器"}}
+        ]
+    }"#,
+    )
+    .await;
+    let p = InstantiateParams {
+        scene_name: "E3园区".into(),
+        parent_id: None,
+        parameter_values: HashMap::new(),
+        dry_run: false,
+        attach_simulated_driver: false,
+        extra_nodes: vec![],
+    };
+    SceneInstantiator::instantiate(&db, WS, &template_id, &p)
+        .await
+        .expect("scene with rules must instantiate");
+
+    let sensor_id: String =
+        sqlx::query_scalar("SELECT id FROM things WHERE workspace_id = ? AND thing_type = 'device'")
+            .bind(WS)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let rule_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM watch_rules WHERE workspace_id = ?")
+        .bind(WS)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rule_count, 1, "watch 规则必须在实例化事务内落库");
+    let condition: String = sqlx::query_scalar("SELECT condition FROM watch_rules WHERE workspace_id = ?")
+        .bind(WS)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(condition.contains(&sensor_id), "规则必须引用新建节点: {condition}");
+
+    let definition: String =
+        sqlx::query_scalar("SELECT definition FROM agent_composites WHERE workspace_id = ? AND name = 'reboot_sensor'")
+            .bind(WS)
+            .fetch_one(&pool)
+            .await
+            .expect("composite must land");
+    assert!(
+        definition.contains(&sensor_id),
+        "composite 必须引用新建节点: {definition}"
+    );
+}
+
+#[tokio::test]
+async fn scene_pack_bad_rule_reference_rolls_back_whole_instantiation() {
+    let (pool, db) = setup_db().await;
+    let template_id = seed_scene(
+        &pool,
+        "e3_bad_rules",
+        r#"{
+        "name": "e3_bad_rules", "display_name": {"zh": "E3坏规则"}, "category": "scenes",
+        "thing_category": "campus",
+        "device_info": {"default_name_pattern": "{scene_name}"},
+        "watch_rules": [
+            {"ref": "ghost", "thing": "ghost", "kind": "health", "level": "bad"}
+        ],
+        "children": [
+            {"key": "sensor", "thing_type": "device", "count": 1,
+             "device_info": {"default_name_pattern": "传感器"}}
+        ]
+    }"#,
+    )
+    .await;
+    let p = InstantiateParams {
+        scene_name: "E3坏规则园区".into(),
+        parent_id: None,
+        parameter_values: HashMap::new(),
+        dry_run: false,
+        attach_simulated_driver: false,
+        extra_nodes: vec![],
+    };
+    let err = SceneInstantiator::instantiate(&db, WS, &template_id, &p)
+        .await
+        .expect_err("missing rule ref must fail the whole pack");
+    assert!(format!("{err:?}").contains("值守规则校验失败"), "{err:?}");
+    assert_eq!(thing_count(&pool).await, 0, "整包回滚：不得留下部分本体");
+    let rule_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM watch_rules WHERE workspace_id = ?")
+        .bind(WS)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rule_count, 0);
 }

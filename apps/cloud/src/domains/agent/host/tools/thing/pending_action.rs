@@ -1,5 +1,6 @@
 // Confirmation token store for invoke_action
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
@@ -20,6 +21,9 @@ pub struct PendingAction {
 pub type PendingActionStore = DashMap<String, PendingAction>;
 
 const CONFIRMATION_TTL: Duration = Duration::from_secs(30 * 60);
+
+/// 周期清扫间隔（生产）——远小于 TTL，滞留上限 = TTL + interval。
+const SWEEP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// Store a pending action and return its confirmation token.
 pub fn store_pending_action(
@@ -42,17 +46,134 @@ pub fn store_pending_action(
     token
 }
 
+/// Why a confirmation token could not be consumed（E2 审批六分类）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TakeError {
+    NotFound,
+    Expired,
+    /// 调用方工作区与 token 绑定的工作区不一致（跨区绑定，E2 归为 unavailable：
+    /// 不是用户否决，且不执行）。
+    WorkspaceMismatch,
+}
+
+impl TakeError {
+    pub fn reason_code(&self) -> &'static str {
+        match self {
+            Self::NotFound | Self::WorkspaceMismatch => "unavailable",
+            Self::Expired => "expired",
+        }
+    }
+}
+
 /// Retrieve and consume a pending action by token (returns None if expired or not found).
 pub fn take_pending_action(store: &PendingActionStore, token: &str) -> Option<PendingAction> {
-    cleanup_expired_tokens(store);
-    let entry = store.remove(token)?;
+    take_pending_action_reasoned(store, token).ok()
+}
+
+/// E2：消费 token 并区分原因（过期 ≠ 不存在；跨区由调用方校验后映射）。
+pub fn take_pending_action_reasoned(store: &PendingActionStore, token: &str) -> Result<PendingAction, TakeError> {
+    // 注意：先 remove 再判过期——过期 token 也必须被消费掉（防重放）。
+    let entry = store.remove(token).ok_or(TakeError::NotFound)?;
     if entry.1.created_at.elapsed() > CONFIRMATION_TTL {
-        return None;
+        return Err(TakeError::Expired);
     }
-    Some(entry.1)
+    Ok(entry.1)
 }
 
 /// Cleanup expired tokens (called on every take — keeps the map bounded).
 pub fn cleanup_expired_tokens(store: &PendingActionStore) {
     store.retain(|_, v| v.created_at.elapsed() <= CONFIRMATION_TTL);
+}
+
+/// 周期清扫超期确认 token（F7）：take 时的懒清扫只覆盖有确认流量的路径，
+/// 无流量的工作区条目会永久滞留（DashMap 无界增长）。返回的 JoinHandle 由
+/// 调用方持有；任务无状态，关停 = abort handle（retain 按分片原子，无半截态）。
+pub fn spawn_pending_action_sweeper(store: Arc<PendingActionStore>, interval: Duration) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        loop {
+            ticker.tick().await;
+            let before = store.len();
+            cleanup_expired_tokens(&store);
+            let swept = before - store.len();
+            if swept > 0 {
+                tracing::info!(
+                    swept,
+                    remaining = store.len(),
+                    "pending-action sweeper removed expired tokens"
+                );
+            }
+        }
+    })
+}
+
+/// 生产接线的默认间隔清扫（state.rs 组装点调用，进程级生命周期）。
+pub fn spawn_pending_action_sweeper_default(store: Arc<PendingActionStore>) -> tokio::task::JoinHandle<()> {
+    spawn_pending_action_sweeper(store, SWEEP_INTERVAL)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 构造一个 created_at 已超期的条目（Instant 可回拨构造，无需等待真实 30min）。
+    fn insert_entry(store: &PendingActionStore, token: &str, age: Duration) {
+        store.insert(
+            token.to_string(),
+            PendingAction {
+                token: token.to_string(),
+                thing_id: "dev_1".to_string(),
+                action_name: "reboot".to_string(),
+                params: None,
+                workspace_id: "ws_1".to_string(),
+                created_at: Instant::now() - age,
+            },
+        );
+    }
+
+    /// E2 审批六分类：过期 ≠ 不存在（都未执行，但原因不同）。
+    #[test]
+    fn reasoned_take_distinguishes_expired_from_missing() {
+        let store = PendingActionStore::new();
+        insert_entry(&store, "old", CONFIRMATION_TTL + Duration::from_secs(60));
+        assert!(matches!(
+            take_pending_action_reasoned(&store, "old"),
+            Err(TakeError::Expired)
+        ));
+        assert!(matches!(
+            take_pending_action_reasoned(&store, "nope"),
+            Err(TakeError::NotFound)
+        ));
+        assert_eq!(TakeError::Expired.reason_code(), "expired");
+        assert_eq!(TakeError::NotFound.reason_code(), "unavailable");
+    }
+
+    #[tokio::test]
+    async fn sweeper_removes_expired_keeps_fresh() {
+        let store = Arc::new(PendingActionStore::new());
+        insert_entry(&store, "expired", CONFIRMATION_TTL + Duration::from_secs(60));
+        insert_entry(&store, "fresh", Duration::from_secs(5));
+
+        let handle = spawn_pending_action_sweeper(store.clone(), Duration::from_millis(10));
+        // 短间隔轮询直到清扫发生（上限 ~1s，无长 sleep）
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while store.contains_key("expired") && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        handle.abort();
+
+        assert!(!store.contains_key("expired"), "超期条目应被周期清扫");
+        assert!(store.contains_key("fresh"), "未超期条目必须保留");
+    }
+
+    #[tokio::test]
+    async fn take_consumes_and_rejects_expired() {
+        let store = PendingActionStore::new();
+        insert_entry(&store, "old", CONFIRMATION_TTL + Duration::from_secs(1));
+        assert!(take_pending_action(&store, "old").is_none(), "超期 token 不得取出");
+
+        let token = store_pending_action(&store, "dev_1".into(), "reboot".into(), None, "ws_1".into());
+        assert!(take_pending_action(&store, &token).is_some(), "新 token 应可取");
+        assert!(take_pending_action(&store, &token).is_none(), "取出即消费");
+    }
 }

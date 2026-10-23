@@ -37,6 +37,7 @@ const lazyViews: Record<string, () => Promise<void>> = {
   workspace: () => import('./views/workspace.js').then(() => {}),
   heartbeat: () => import('./views/heartbeat.js').then(() => {}),
   'ai-ops': () => import('./views/ai-ops.js').then(() => {}),
+  'run-detail': () => import('./views/run-detail.js').then(() => {}),
 };
 
 interface NavItem {
@@ -96,7 +97,7 @@ const NAV_GROUPS: NavGroup[] = [
       },
       {
         route: 'dispositions',
-        label: '处置中心',
+        label: 'AI 工作台',
         icon: 'M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm-1 5h2v6h-2zm0 8h2v2h-2z',
       },
       {
@@ -170,6 +171,8 @@ export class TinyIoTHubApp extends LitElement {
   @state() userRole = '';
   @state() loadingRoute: string | null = null;
   @state() loadError: string | null = null;
+  /** T13：run 详情页 hash 路由参数（#/ai-ops/runs/{id}；id 容忍冒号如 patrol:p1） */
+  @state() runDetailId = '';
   /** E4：处置中心未读角标（needsYou 计数；「例外响亮」的前提是例外能到人） */
   @state() dispositionNeedsYou = 0;
 
@@ -223,6 +226,7 @@ export class TinyIoTHubApp extends LitElement {
     super.disconnectedCallback();
     if (this.dispositionBadgeTimer !== null) window.clearInterval(this.dispositionBadgeTimer);
     window.removeEventListener('popstate', this.boundHandleRoute);
+    window.removeEventListener('hashchange', this.boundHandleRoute);
     window.removeEventListener('auth-error', this.handleAuthError);
     if (this.themeMediaQuery) {
       this.themeMediaQuery.removeEventListener('change', this.themeChangeHandler);
@@ -309,10 +313,25 @@ export class TinyIoTHubApp extends LitElement {
 
   setupRouter() {
     window.addEventListener('popstate', this.boundHandleRoute);
+    window.addEventListener('hashchange', this.boundHandleRoute);
     this.handleRoute();
   }
 
   handleRoute() {
+    // T13：hash 路由 #/ai-ops/runs/{id}（卡片层「查看完整轨迹」链接）。
+    // id 容忍冒号（patrol 提案兜底用 brain event id，如 patrol:p1——T12 评审 M-1）。
+    const runMatch = window.location.hash.match(/^#\/ai-ops\/runs\/(.+)$/);
+    if (runMatch) {
+      if (!this.isAuthenticated) {
+        this.navigate('login');
+        return;
+      }
+      this.currentRoute = 'run-detail';
+      this.runDetailId = runMatch[1];
+      this._ensureViewLoaded('run-detail');
+      return;
+    }
+
     const path = window.location.pathname.slice(1) || '';
 
     // Redirect old /devices routes to /things
@@ -397,7 +416,7 @@ export class TinyIoTHubApp extends LitElement {
       things: '物列表',
       alarms: '告警中心',
       tickets: '工单',
-      dispositions: '处置中心',
+      dispositions: 'AI 工作台',
       events: '事件日志',
       monitoring: '系统监控',
       users: '用户管理',
@@ -424,7 +443,7 @@ export class TinyIoTHubApp extends LitElement {
       things: '浏览和管理物层级结构',
       alarms: '查看和管理物告警',
       tickets: '处理 Agent 升级的人工工单',
-      dispositions: 'AI 值班处置报警，你只处理例外',
+      dispositions: '大脑的完整工作日志——巡检、报警理解、指令执行，你只处理例外',
       events: '查看物事件日志',
       monitoring: '系统资源和性能监控',
       users: '管理系统用户和权限',
@@ -483,7 +502,7 @@ export class TinyIoTHubApp extends LitElement {
           ${this.renderNav()}
         </nav>
         <div class="content ${this.currentRoute === 'workspace' ? 'content--workspace' : this.currentRoute === 'ai-ops' ? 'content--heartbeat' : ''}" role="main" id="main-content">
-          ${this.currentRoute.startsWith('things/') || this.currentRoute === 'chat' || this.currentRoute === 'workspace' || this.currentRoute === 'ai-ops'
+          ${this.currentRoute.startsWith('things/') || this.currentRoute === 'chat' || this.currentRoute === 'workspace' || this.currentRoute === 'ai-ops' || this.currentRoute === 'run-detail'
             ? nothing
             : html`
                 <section class="content-header">
@@ -657,6 +676,8 @@ export class TinyIoTHubApp extends LitElement {
     if (base === 'memory-dashboard') return html`<view-memory-dashboard></view-memory-dashboard>`;
     if (base === 'workspace') return html`<view-workspace></view-workspace>`;
     if (base === 'ai-ops') return html`<view-ai-ops></view-ai-ops>`;
+    if (base === 'run-detail')
+      return html`<view-run-detail .runId=${this.runDetailId}></view-run-detail>`;
     return html`<div style="padding: 40px; text-align: center; color: var(--muted);">
       页面不存在
     </div>`;

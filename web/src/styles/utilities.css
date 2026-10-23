@@ -177,7 +177,6 @@
 .platform-checkbox:hover {
   background: var(--bg-hover);
   box-shadow: var(--shadow-sm);
-  transform: translateY(-1px);
 }
 
 .platform-checkbox input[type="checkbox"] {
@@ -294,7 +293,6 @@
 
 .model-card:hover {
   box-shadow: var(--shadow-md);
-  transform: translateY(-2px);
 }
 
 .model-card.selected {

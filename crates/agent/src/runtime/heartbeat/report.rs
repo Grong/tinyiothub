@@ -24,6 +24,8 @@ pub fn parse_healing_report(raw: &str, workspace_id: &str) -> HeartbeatResult {
             executed_actions: parse_executed_actions(&value),
             proposals: parse_proposals(&value, workspace_id),
             error: value["error"].as_str().map(|s| s.to_string()),
+            // LLM 报告不含轨迹；tick 从框架侧工具记录填入。
+            trace: vec![],
         },
         Err(e) => {
             warn!(workspace_id, error = %e, "Failed to parse heartbeat report JSON");
@@ -36,6 +38,7 @@ pub fn parse_healing_report(raw: &str, workspace_id: &str) -> HeartbeatResult {
                 executed_actions: vec![],
                 proposals: vec![],
                 error: Some(format!("JSON parse error: {}", e)),
+                trace: vec![],
             }
         }
     }

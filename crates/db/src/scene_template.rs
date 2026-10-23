@@ -43,6 +43,12 @@ pub struct SceneTemplateFile {
     pub alarm_rules: Vec<SceneAlarmRule>,
     #[serde(default)]
     pub children: Vec<ThingNodeDef>,
+    /// E3：场景包自带的 watch 条件（模板超集，未知字段忽略）。
+    #[serde(default)]
+    pub watch_rules: Vec<serde_json::Value>,
+    /// E3：场景包自带的 composite 动作链。
+    #[serde(default)]
+    pub composites: Vec<serde_json::Value>,
 }
 
 fn default_version() -> String {
@@ -243,6 +249,9 @@ pub enum ExpandError {
 pub struct ExpandedNode {
     pub temp_id: usize,
     pub parent_temp_id: Option<usize>,
+    /// 场景节点 key（实例化 extra_nodes 的 parent_path 匹配用；
+    /// 模板未声明 key 或实例化器直接构造的挂接节点为 None）
+    pub key: Option<String>,
     pub name: String,
     pub display_name: Option<String>,
     pub category: String,
@@ -311,6 +320,7 @@ impl<'a> Expander<'a> {
         self.nodes.push(ExpandedNode {
             temp_id,
             parent_temp_id,
+            key: node.key.clone(),
             name: name.clone(),
             display_name: display_name.clone(),
             category: category.clone(),

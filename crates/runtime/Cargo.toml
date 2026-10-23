@@ -37,6 +37,9 @@ tracing = { workspace = true }
 # Collections
 dashmap = { workspace = true }
 
+# Hashing (driver package integrity)
+sha2 = { workspace = true }
+
 # Random
 rand = { workspace = true }
 
@@ -64,6 +67,7 @@ regex = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
+tempfile = { workspace = true }
 
 # FFI/动态加载例外：unsafe 仅限 driver/plugin 加载路径；
 # 其余规则继承 workspace（此处需完整列出，无法部分继承）

@@ -230,7 +230,7 @@ impl ToolHandler for ThingPropertyGetHandler {
             .as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        let _workspace_id = crate::domains::mcp::handlers::get_mcp_context()
+        let workspace_id = crate::domains::mcp::handlers::get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
@@ -254,6 +254,11 @@ impl ToolHandler for ThingPropertyGetHandler {
                     input.property_name, input.thing_id
                 ))
             })?;
+
+        // E4b §3.2：读取成功即记录需求（失败/未找到在上方已 return）。
+        if let Some(access) = &state.access {
+            access.record_read(&workspace_id, &input.thing_id, &prop.name);
+        }
 
         let current_value = state
             .device_cache
@@ -662,6 +667,10 @@ impl ToolHandler for CreateThingHandler {
 
         let tenant_device_service = state.tenant_device_service_str(&workspace_id);
 
+        // Task 8 评审 Important：MCP 是活的物管理面，带 parent 创建必须接
+        // notify_tree_changed（含 descendant_count 的派生重算），与 REST 面同源。
+        let parent_id = input.parent_id.clone().filter(|p: &String| !p.is_empty());
+
         if let Some(template_id) = input.template_id.clone() {
             let thing_input = ThingCreationInput {
                 name: input.name,
@@ -686,7 +695,12 @@ impl ToolHandler for CreateThingHandler {
                 .create_thing_from_template(state.template_engine(), &request.template_id, &request.thing_input)
                 .await
             {
-                Ok(device) => Ok(serde_json::to_value(device).unwrap()),
+                Ok(device) => {
+                    if let (Some(m), Some(p)) = (&state.derived_manager, &parent_id) {
+                        m.notify_tree_changed(p).await;
+                    }
+                    Ok(serde_json::to_value(device).unwrap())
+                }
                 Err(e) => Err(ToolError::Internal(format!(
                     "Failed to create thing from template: {}",
                     e
@@ -713,7 +727,12 @@ impl ToolHandler for CreateThingHandler {
                 workspace_id: None,
             };
             match tenant_device_service.create_thing(&request).await {
-                Ok(device) => Ok(serde_json::to_value(device).unwrap()),
+                Ok(device) => {
+                    if let (Some(m), Some(p)) = (&state.derived_manager, &parent_id) {
+                        m.notify_tree_changed(p).await;
+                    }
+                    Ok(serde_json::to_value(device).unwrap())
+                }
                 Err(e) => Err(ToolError::Internal(format!("Failed to create thing: {}", e))),
             }
         }
@@ -768,8 +787,25 @@ impl ToolHandler for DeleteThingHandler {
 
         let tenant_device_service = state.tenant_device_service_str(&workspace_id);
 
+        // Task 8 评审 Important：删除被派生引用的物必须接 notify_thing_deleted
+        // （标 stale + 索引/refs 热更新），删除子物同时是树变更——先取旧 parent。
+        let old_parent = tenant_device_service
+            .get_thing_by_id(&input.id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|t| t.parent_id);
+
         match tenant_device_service.delete_thing(&input.id).await {
-            Ok(true) => Ok(serde_json::json!({"success": true, "thing_id": input.id})),
+            Ok(true) => {
+                if let Some(m) = &state.derived_manager {
+                    m.notify_thing_deleted(&input.id).await;
+                    if let Some(p) = &old_parent {
+                        m.notify_tree_changed(p).await;
+                    }
+                }
+                Ok(serde_json::json!({"success": true, "thing_id": input.id}))
+            }
             Ok(false) => Err(ToolError::NotFound(format!(
                 "Thing {} not found or does not belong to workspace",
                 input.id

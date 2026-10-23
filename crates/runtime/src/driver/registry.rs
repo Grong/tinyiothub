@@ -8,10 +8,23 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use chrono::{DateTime, Utc};
 use libloading::Library;
 use parking_lot::RwLock;
-use tinyiothub_core::driver::dynamic::{DriverVTable, SYMBOL_DESTROY, SYMBOL_INIT, SYMBOL_VTABLE};
+use tinyiothub_core::driver::dynamic::{
+    DriverVTableV2, SYMBOL_DESTROY, SYMBOL_INIT, SYMBOL_VTABLE_V2, v1_unsupported_message, verify_v2_version,
+};
 use tinyiothub_core::error::Error;
 
 use super::dynamic_adapter::DynamicEntry;
+
+type V2VTableFn = unsafe extern "C" fn() -> *const DriverVTableV2;
+
+/// Resolve the ABI v2 vtable symbol, mapping absence to the v1 migration
+/// message. Factored out so the rejection path is testable without a `.so`.
+fn v2_vtable_or_v1_error<'lib>(
+    symbol: Option<libloading::Symbol<'lib, V2VTableFn>>,
+    path: &std::path::Path,
+) -> Result<libloading::Symbol<'lib, V2VTableFn>, Error> {
+    symbol.ok_or_else(|| Error::DriverError(v1_unsupported_message(path)))
+}
 
 /// Registry of all drivers: built-in (static) + dynamic (per-workspace).
 pub struct DriverRegistry {
@@ -45,50 +58,50 @@ impl DriverRegistry {
     }
 
     /// Load a dynamic library driver from disk and register it for a workspace.
+    ///
+    /// The registered name is derived from the file stem (`lib` prefix
+    /// stripped). Use [`Self::load_named`] when the package manifest names
+    /// the driver explicitly.
     pub fn load(&self, path: &PathBuf, workspace_id: &str) -> Result<String, Error> {
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.strip_prefix("lib").unwrap_or(s))
+            .unwrap_or("unknown")
+            .to_string();
+        self.load_named(path, workspace_id, &name)
+    }
+
+    /// Load a dynamic library driver under an explicit driver name.
+    pub fn load_named(&self, path: &PathBuf, workspace_id: &str, driver_name: &str) -> Result<String, Error> {
         let lib =
             unsafe { Library::new(path).map_err(|e| Error::DriverError(format!("failed to load library: {}", e)))? };
         let lib = Arc::new(lib);
+
+        // ABI v2 is the only loadable ABI. Check the v2 vtable symbol before
+        // anything else so any non-v2 artifact gets migration guidance.
+        let vtable_fn: libloading::Symbol<V2VTableFn> =
+            v2_vtable_or_v1_error(unsafe { lib.get(SYMBOL_VTABLE_V2) }.ok(), path)?;
 
         let init: libloading::Symbol<unsafe extern "C" fn() -> *mut std::ffi::c_void> = unsafe {
             lib.get(SYMBOL_INIT)
                 .map_err(|e| Error::DriverError(format!("missing symbol tinyiothub_driver_init: {}", e)))?
         };
 
-        let vtable_fn: libloading::Symbol<unsafe extern "C" fn() -> *const DriverVTable> = unsafe {
-            lib.get(SYMBOL_VTABLE)
-                .map_err(|e| Error::DriverError(format!("missing symbol tinyiothub_driver_vtable: {}", e)))?
-        };
+        let vtable_ptr = unsafe { vtable_fn() };
+        if vtable_ptr.is_null() {
+            return Err(Error::DriverError("driver vtable v2 is null".into()));
+        }
+        let vtable: &'static DriverVTableV2 = unsafe { &*vtable_ptr };
+        verify_v2_version(vtable.version).map_err(Error::DriverError)?;
 
         let ctx = unsafe { init() };
         if ctx.is_null() {
             return Err(Error::DriverError("driver init returned null".into()));
         }
 
-        let vtable_ptr: *const DriverVTable = unsafe { vtable_fn() };
-        if vtable_ptr.is_null() {
-            return Err(Error::DriverError("driver vtable is null".into()));
-        }
-
-        let vtable: &'static DriverVTable = unsafe { &*vtable_ptr };
-
-        if vtable.version != tinyiothub_core::driver::dynamic::DRIVER_ABI_VERSION {
-            return Err(Error::DriverError(format!(
-                "ABI version mismatch: expected {}, got {}",
-                tinyiothub_core::driver::dynamic::DRIVER_ABI_VERSION,
-                vtable.version
-            )));
-        }
-
-        let driver_name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(|s| s.strip_prefix("lib").unwrap_or(s))
-            .unwrap_or("unknown")
-            .to_string();
-
         let entry = DynamicEntry {
-            name: driver_name.clone(),
+            name: driver_name.to_string(),
             version: "0.0.0".to_string(),
             path: path.clone(),
             library: Arc::clone(&lib),
@@ -110,21 +123,21 @@ impl DriverRegistry {
                 drivers: HashMap::new(),
             });
 
-        if ws.drivers.contains_key(&driver_name) {
+        if ws.drivers.contains_key(driver_name) {
             return Err(Error::DriverError(format!(
                 "driver '{}' already loaded in workspace '{}'",
                 driver_name, workspace_id
             )));
         }
 
-        ws.drivers.insert(driver_name.clone(), loaded);
+        ws.drivers.insert(driver_name.to_string(), loaded);
         tracing::info!(
             "loaded dynamic driver '{}' for workspace '{}'",
             driver_name,
             workspace_id
         );
 
-        Ok(driver_name)
+        Ok(driver_name.to_string())
     }
 
     /// Unload a driver from a workspace. Fails if ref_count > 0.
@@ -324,5 +337,14 @@ mod tests {
             .load(&PathBuf::from("/nonexistent/driver.so"), "ws1")
             .unwrap_err();
         assert!(err.to_string().contains("failed to load library"));
+    }
+
+    #[test]
+    fn missing_v2_symbol_yields_v1_migration_message() {
+        let err = v2_vtable_or_v1_error(None, std::path::Path::new("/tmp/liblegacy.so")).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("ABI v1 is unsupported"), "{message}");
+        assert!(message.contains("tinyiothub_driver_vtable_v2"), "{message}");
+        assert!(message.contains("liblegacy.so"), "{message}");
     }
 }

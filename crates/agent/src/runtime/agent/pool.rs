@@ -24,6 +24,10 @@ pub struct ToolCallRecord {
 pub struct AgentRunOutput {
     pub text: String,
     pub tool_calls: Vec<ToolCallRecord>,
+    /// 完整工具调用轨迹（Task 9，心跳 tick 的事后轨迹来源）：与
+    /// `agent_runs::ToolTraceEntry` 同一契约——id 配对 ToolResult，
+    /// output=None = 在途/取消。
+    pub trace: Vec<tinyiothub_core::agent_runs::ToolTraceEntry>,
 }
 
 /// Interface for the agent pool — allows PatrolManager to accept either

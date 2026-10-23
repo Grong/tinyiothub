@@ -2,7 +2,21 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { SignalWatcher } from "@lit-labs/signals";
 import { thingApi } from "../../api/things.js";
+import { getWorkspaceId } from "../../api/client.js";
+import { ledgerApi, type LedgerDeviceState } from "../../api/ledger.js";
 import "./confirm-modal.js";
+import "./flow.js";
+import "./world.js";
+import "./live-devices.js";
+import "./template-library.js";
+import "./workbench.css";
+import {
+  backToNow,
+  isHistorical,
+  parseWorkbenchUrl,
+  toWorkbenchUrl,
+  type WorkbenchState,
+} from "./workbench-state.js";
 import {
   renderDeviceDetail as renderDeviceDetailFn,
   renderDetailProperties as renderDetailPropertiesFn,
@@ -18,6 +32,7 @@ import {
   renderWizardTemplateSelection as renderWizardTemplateSelectionFn,
   renderWizardDeviceInfo as renderWizardDeviceInfoFn,
   renderWizardConfigField as renderWizardConfigFieldFn,
+  wizardSelectableTemplates,
 } from "./things-wizard.js";
 import { driverApi } from "../../api/drivers.js";
 import { sceneApi } from "../../api/marketplace.js";
@@ -31,6 +46,12 @@ import type { Thing, ThingProfile, DriverConfigOption, Tag } from "../../types/i
 import type { AlarmRule, AlarmLevel, RuleType, AlarmCondition, ComparisonOperator, ChangeType, LogicalOperator, NotificationChannelType, CreateAlarmRuleRequest, UpdateAlarmRuleRequest } from "../../types/index.js";
 import { success, error as toastError, warn } from "../components/toast.js";
 import { icons } from "../icons.js";
+import {
+  renderSceneTree,
+  reparentTreeNode,
+  type SceneTreeHost,
+  type SceneTreeNode,
+} from "./scene-tree.js";
 import "./gateway-pairing.js";
 
 // Template with parsed JSON fields (backend returns JSON-as-string)
@@ -102,6 +123,42 @@ export function getLocalizedText(obj: Record<string, string> | undefined, fallba
   return obj["en"] || obj["zh"] || Object.values(obj)[0] || fallback;
 }
 
+/**
+ * 物列表平铺数据 → 交互树森林（Task 9）。
+ * keyPath = 根到自身的 thing id 路径（「+」回调末位即该节点 id，向导预填用）；
+ * parentId 悬空（父不在本批/已删）按根处理，不丢节点。
+ */
+export function buildThingForest(items: Thing[]): SceneTreeNode[] {
+  const byId = new Map<string, SceneTreeNode>();
+  for (const t of items) {
+    byId.set(t.id, {
+      id: t.id,
+      name: t.displayName || t.name,
+      category: t.category || "",
+      children: [],
+      keyPath: null,
+      mountBlocked: null,
+      propertyCount: null,
+      isDevice: false, // 物树中任意节点都可挂子节点（「+」入口）
+      countParam: null,
+      driver: null,
+    });
+  }
+  const roots: SceneTreeNode[] = [];
+  for (const t of items) {
+    const node = byId.get(t.id)!;
+    const parent = t.parentId ? byId.get(t.parentId) : undefined;
+    if (parent) parent.children.push(node);
+    else roots.push(node);
+  }
+  const assignPath = (node: SceneTreeNode, base: string[]) => {
+    node.keyPath = [...base, node.id];
+    for (const c of node.children) assignPath(c, node.keyPath);
+  };
+  for (const r of roots) assignPath(r, []);
+  return roots;
+}
+
 export const CATEGORY_LABELS: Record<string, string> = {
   sensors: "传感器",
   controllers: "控制器",
@@ -154,13 +211,26 @@ export const CATEGORY_ICONS: Record<string, ReturnType<typeof html>> = {
   `,
 };
 
-type ViewMode = "table" | "grid";
+type ViewMode = "table" | "grid" | "tree";
 
 @customElement("view-things")
 export class DevicesView extends SignalWatcher(LitElement) {
   @state() loading = true;
 
   @state() error = "";
+  /** E3 工作台状态（tab/历史锚点），由 URL 驱动。 */
+  @state() private wb: WorkbenchState = parseWorkbenchUrl(
+    typeof window !== 'undefined' ? window.location.search : '',
+  );
+  @state() private showTemplates = false;
+  /** 设备 tab 视图：传统列表/网格/树 或 E3 实时健康卡。 */
+  @state() private deviceView: 'list' | 'health' = 'list';
+  /** 历史模式下设备 tab 的只读快照（账本重建）。 */
+  @state() private historicDevices: LedgerDeviceState[] = [];
+  @state() private historicLoading = false;
+  @state() private historicError = '';
+  private historicSeq = 0;
+  private _boundPopState?: () => void;
 
   @state() devices: Thing[] = [];
 
@@ -185,6 +255,20 @@ export class DevicesView extends SignalWatcher(LitElement) {
   // View mode
 
   @state() viewMode: ViewMode = "grid";
+
+  // 树视图（Task 9，D12：拖拽换父 + 树上「+」新增设备）
+
+  @state() treeNodes: SceneTreeNode[] = [];
+
+  @state() treeLoading = false;
+
+  @state() treeError = "";
+
+  /** 树被后端列表上限截断（total > 已加载条数）时置 true，树顶部出提示 */
+  @state() treeTruncated = false;
+
+  /** 树上「+」入口的建物向导 parent_id 预填（null = 无父） */
+  @state() wizParentId: string | null = null;
 
 
   // Filters
@@ -395,6 +479,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   private historyDeviceId = "";
 
+  // 派生属性编辑器 drawer（园区物派生属性 Task 11；行为见 derived-editor.ts）
+
+  @state() derivedEditor: import("./derived-editor.js").DerivedEditorState | null = null;
+
   private _boundHandleDeviceUpdated: EventListener = () => {};
 
 
@@ -468,10 +556,16 @@ export class DevicesView extends SignalWatcher(LitElement) {
     // SSE 推送时刷新当前分页数据
     this._boundHandleDeviceUpdated = () => {
       if (!this.selectedDevice) {
-        this.loadDevices();
+        if (this.viewMode === "tree") void this.loadThingTree();
+        else this.loadDevices();
       }
     };
     document.addEventListener("thing-updated", this._boundHandleDeviceUpdated);
+    this._boundPopState = () => {
+      this.wb = parseWorkbenchUrl(window.location.search);
+      this.syncHistoricDevices();
+    };
+    window.addEventListener("popstate", this._boundPopState);
     const path = window.location.pathname;
     if (path.startsWith("/things/")) {
       const id = path.split("/")[2];
@@ -484,6 +578,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.loadDevices();
     this.loadDriverNames();
     this.loadAllTags();
+    this.syncHistoricDevices();
   }
 
 
@@ -493,6 +588,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     // 不断开 SSE — 缓存层管理连接生命周期
     document.removeEventListener("click", this._boundCloseTagEditor);
     document.removeEventListener("thing-updated", this._boundHandleDeviceUpdated);
+    if (this._boundPopState) window.removeEventListener("popstate", this._boundPopState);
   }
 
 
@@ -524,6 +620,56 @@ export class DevicesView extends SignalWatcher(LitElement) {
     } finally {
       this.loading = false;
     }
+  }
+
+
+  // ── 树视图（Task 9，D12：拖拽换父 + 树上「+」新增设备）──────────────
+
+  /** 树视图单次拉取上限 = 后端 limit clamp 上限（crates/db/src/thing.rs ListThingsParams） */
+  private static readonly TREE_LIST_LIMIT = 200;
+
+  /** 物列表全量拉取（树视图不分页）。
+   *  注意：后端 ListThingsParams 的分页参数名是 limit/offset（camelCase），
+   *  不是 page/pageSize——后者会被 serde 静默丢弃，limit 缺省 50、clamp 上限 200。
+   *  （loadDevices 的表格分页有同款历史坑；终审 I-1，2026-10-20） */
+  async loadThingTree() {
+    this.treeLoading = true;
+    this.treeError = "";
+    try {
+      const res = await thingApi.list({ limit: String(DevicesView.TREE_LIST_LIMIT) });
+      const data: any = res.result;
+      const items: Thing[] = data?.items || [];
+      this.treeTruncated = typeof data?.total === "number" && data.total > items.length;
+      this.treeNodes = buildThingForest(items);
+    } catch (err: any) {
+      this.treeError = err.message || "加载物树失败";
+      this.treeNodes = [];
+      this.treeTruncated = false;
+    } finally {
+      this.treeLoading = false;
+    }
+  }
+
+  /** 交互树宿主适配：「+」→ 向导预填 parent_id；合法落点 → 换父编排 */
+  private thingTreeHost: SceneTreeHost = {
+    onTreeParamStep: () => {},
+    onTreeAddDevice: (keyPath) => {
+      const pid = keyPath[keyPath.length - 1];
+      if (pid) this.openWizard(pid);
+    },
+    onTreeRemovePending: () => {},
+    onTreePendingDriver: () => {},
+    onTreeReparent: (dragId, newParentId) => {
+      void this.reparentThing(dragId, newParentId);
+    },
+  };
+
+  /** 换父：PUT parent_id；成功局部刷新，失败 toast + 树回滚原位（reparentTreeNode 语义） */
+  async reparentThing(dragId: string, newParentId: string) {
+    this.treeNodes = await reparentTreeNode(this.treeNodes, dragId, newParentId, {
+      updateParent: (id, pid) => thingApi.update(id, { parentId: pid }),
+      onError: (m) => toastError(`移动失败：${m}`),
+    });
   }
 
 
@@ -1425,7 +1571,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   renderUpgradeBanner() {
     if (this.upgradeBannerDismissed || this.selectedDevice) return nothing;
     return html`
-      <div class="card" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;border-left:3px solid var(--cyan,#00d4ff);">
+      <div class="card" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
         <span>设备已升级为「物」，全部数据已迁移。物可以是设备，也可以是车间、产线、园区等概念节点。</span>
         <button class="btn btn--icon" aria-label="关闭提示" @click=${this.dismissUpgradeBanner}>&times;</button>
       </div>
@@ -1436,7 +1582,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   // === Wizard (2-step template-based) ===
 
 
-  openWizard() {
+  openWizard(parentId?: string | Event) {
     this.wizardLastFocus = document.activeElement ?? undefined;
     this.wizardStep = "template";
     this.wizSelectedTemplate = null;
@@ -1452,6 +1598,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.wizardSaving = false;
     this.wizUnassignedResources = [];
     this.wizSelectedResourceIds = new Set();
+    // 树上「+」入口预填父节点；工具栏按钮走 click（Event 入参）不预填
+    this.wizParentId = typeof parentId === "string" && parentId ? parentId : null;
     this.showWizard = true;
     this.loadTemplates();
     this.loadUnassignedResources();
@@ -1539,9 +1687,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
 
   get filteredWizardTemplates(): ProcessedTemplate[] {
+    const selectable = wizardSelectableTemplates(this.wizTemplates);
     const q = this.wizTemplateSearch.trim().toLowerCase();
-    if (!q) return this.wizTemplates;
-    return this.wizTemplates.filter(t => {
+    if (!q) return selectable;
+    return selectable.filter(t => {
       const name = t.name?.toLowerCase() || "";
       const displayName = getLocalizedText(t.displayName, "").toLowerCase();
       const desc = t.description ? Object.values(t.description).join(" ").toLowerCase() : "";
@@ -1630,6 +1779,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
         driverOptions: Object.keys(finalDriverConfig).length > 0 ? JSON.stringify(finalDriverConfig) : undefined,
         propertyValues: {},
         enabledCommands: this.wizSelectedTemplate.commands?.map((c: any) => c.name) || [],
+        // 树上「+」入口预填的父节点（Task 9）
+        parentId: this.wizParentId || undefined,
       };
 
       const res = await thingApi.createFromTemplate({
@@ -1650,7 +1801,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
       success("物创建成功");
       this.closeWizard();
-      await this.loadDevices();
+      // 树上「+」建物后树局部刷新（Task 9）
+      if (this.viewMode === "tree") await this.loadThingTree();
+      else await this.loadDevices();
     } catch (err: any) {
       toastError(err.message || "物创建失败");
     } finally {
@@ -1685,7 +1838,192 @@ export class DevicesView extends SignalWatcher(LitElement) {
       return html`${this.renderDeviceDetail()}${this.renderConfirmModal()}`;
     }
 
-    return html`${this.renderUpgradeBanner()}${this.renderDeviceList()}${this.renderConfirmModal()}`;
+    const ws = getWorkspaceId() ?? '';
+    const historical = isHistorical(this.wb);
+    return html`
+      <div class="wb ${historical ? 'wb--history' : ''}">
+        ${this.renderWorkbenchHeader()}
+        ${
+          this.wb.tab === 'devices'
+            ? historical
+              ? this.renderHistoricDevices()
+              : this.deviceView === 'health'
+                ? html`<live-devices
+                    .workspaceId=${ws}
+                    @device-open=${(e: CustomEvent<{ thingId: string }>) => {
+                      void this.loadDeviceDetail(e.detail.thingId);
+                    }}
+                  ></live-devices>`
+                : html`${this.renderUpgradeBanner()}${this.renderDeviceList()}`
+            : nothing
+        }
+        ${
+          this.wb.tab === 'flow'
+            ? html`<flow-timeline
+                .workspaceId=${ws}
+                .at=${this.wb.at}
+                .eventId=${this.wb.event}
+                .historical=${historical}
+              ></flow-timeline>`
+            : nothing
+        }
+        ${
+          this.wb.tab === 'world'
+            ? html`<world-view .workspaceId=${ws}></world-view>`
+            : nothing
+        }
+      </div>
+      ${
+        this.showTemplates
+          ? html`<template-library
+              .workspaceId=${ws}
+              @templates-closed=${() => {
+                this.showTemplates = false;
+              }}
+            ></template-library>`
+          : nothing
+      }
+      ${this.renderConfirmModal()}
+    `;
+  }
+
+  private setWorkbench(next: WorkbenchState): void {
+    this.wb = next;
+    window.history.pushState({}, '', `/things${toWorkbenchUrl(next)}`);
+    if (next.tab === 'devices' && !this.devices.length && !this.loading) {
+      void this.loadDevices();
+    }
+    this.syncHistoricDevices();
+  }
+
+  /** 历史 + 设备 tab → 载入账本重建的只读快照；否则清空。 */
+  private syncHistoricDevices(): void {
+    if (this.wb.tab === 'devices' && isHistorical(this.wb)) {
+      void this.loadHistoricDevices();
+    } else {
+      this.historicDevices = [];
+      this.historicError = '';
+    }
+  }
+
+  private async loadHistoricDevices(): Promise<void> {
+    const ws = getWorkspaceId();
+    if (!ws) return;
+    const seq = ++this.historicSeq;
+    this.historicLoading = true;
+    this.historicError = '';
+    try {
+      const at = this.wb.at ?? new Date().toISOString();
+      const state = await ledgerApi.stateAt(ws, at);
+      if (seq !== this.historicSeq) return;
+      this.historicDevices = [...state.devices].sort((a, b) => {
+        if (a.online !== b.online) return a.online ? -1 : 1;
+        return a.thingId.localeCompare(b.thingId);
+      });
+    } catch (e) {
+      if (seq !== this.historicSeq) return;
+      this.historicError = e instanceof Error ? e.message : String(e);
+    } finally {
+      if (seq === this.historicSeq) this.historicLoading = false;
+    }
+  }
+
+  private renderHistoricDevices() {
+    if (this.historicLoading) {
+      return html`<div class="wb-history-state">正在从账本重建该时刻设备状态…</div>`;
+    }
+    if (this.historicError) {
+      return html`
+        <div class="wb-history-state wb-history-state--error">
+          历史状态重建失败：${this.historicError}
+          <button class="btn btn--primary btn--sm" @click=${() => this.loadHistoricDevices()}>重试</button>
+        </div>
+      `;
+    }
+    if (!this.historicDevices.length) {
+      return html`
+        <div class="wb-history-state">
+          该时刻没有可重建的设备状态。
+          <div class="wb-history-state__hint">回放精度=状态变更粒度；可尝试调整时间点。</div>
+        </div>
+      `;
+    }
+    return html`
+      <div class="wb-history-note">
+        历史模式：以下为账本重建值，只读。health / zone 不在账本中，标记为不可得。
+      </div>
+      <div class="wb-history-grid">
+        ${this.historicDevices.map(
+          (d) => html`
+            <article class="wb-history-card">
+              <header>
+                <span class="wb-history-card__name">${d.thingId}</span>
+                <span class="wb-history-card__online ${d.online ? 'is-online' : ''}">
+                  ${d.online == null ? '连接未知' : d.online ? '在线' : '离线'}
+                </span>
+              </header>
+              <dl class="wb-history-card__values">
+                ${Object.entries(d.state).map(
+                  ([k, v]) => html`<dt>${k}</dt><dd>${String(v)}</dd>`,
+                )}
+              </dl>
+              <footer>最后变更 ${d.lastChangeAt}</footer>
+            </article>
+          `,
+        )}
+      </div>
+    `;
+  }
+
+  private renderWorkbenchHeader() {
+    const tab = (id: WorkbenchState['tab'], label: string) => html`
+      <button
+        class="wb-tab ${this.wb.tab === id ? 'wb-tab--active' : ''}"
+        role="tab"
+        aria-selected=${this.wb.tab === id ? 'true' : 'false'}
+        @click=${() => this.setWorkbench({ ...this.wb, tab: id })}
+      >
+        ${label}
+      </button>
+    `;
+    return html`
+      <div class="wb-header">
+        <div class="wb-header__title">
+          <h2>设备工作台</h2>
+          ${this.wb.at ? html`<span class="wb-history-chip">历史回放 · ${this.wb.at}</span>` : nothing}
+        </div>
+        <div class="wb-tabs" role="tablist" aria-label="工作台视图">
+          ${tab('devices', '设备')} ${tab('flow', 'Flow')} ${tab('world', 'World')}
+        </div>
+        <div class="wb-header__actions">
+          ${
+            isHistorical(this.wb)
+              ? html`<button
+                  class="btn btn--primary btn--sm"
+                  @click=${() => this.setWorkbench(backToNow(this.wb))}
+                >
+                  回到现在
+                </button>`
+              : html`<span class="wb-live" role="status"><span class="wb-live__dot"></span>实时</span>`
+          }
+          ${
+            this.wb.tab === 'devices' && !isHistorical(this.wb)
+              ? html`<button
+                  class="btn btn--ghost btn--sm"
+                  @click=${() => {
+                    this.deviceView = this.deviceView === 'health' ? 'list' : 'health';
+                  }}
+                >
+                  ${this.deviceView === 'health' ? '列表视图' : '健康卡'}
+                </button>`
+              : nothing
+          }
+          <button class="btn btn--outline btn--sm" @click=${() => { this.showTemplates = true; }}>
+            模板库
+          </button>
+        </div>
+      </div>
+    `;
   }
 
 
@@ -1728,6 +2066,11 @@ export class DevicesView extends SignalWatcher(LitElement) {
             @click=${() => { this.viewMode = "grid"; }}
             title="卡片视图"
           >&#9638;</button>
+          <button
+            class="btn btn--ghost btn--sm view-toggle__btn ${this.viewMode === 'tree' ? 'view-toggle__btn--active' : ''}"
+            @click=${() => { this.viewMode = "tree"; void this.loadThingTree(); }}
+            title="树视图"
+          >🌲</button>
         </div>
         <button class="btn btn--primary" @click=${this.openWizard}>新建物</button>
         <button class="btn btn--outline" @click=${() => { this.showPairingDialog = true; }}>${t("gatewayPairing.addGateway")}</button>
@@ -1741,9 +2084,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
       <div class="device-list">
         ${this.renderToolbar()}
         <div class="device-list__content">
-          ${this.viewMode === "table" ? this.renderTableView() : this.renderGridView()}
+          ${this.viewMode === "tree" ? this.renderTreeView() : this.viewMode === "table" ? this.renderTableView() : this.renderGridView()}
         </div>
-        ${this.renderPagination()}
+        ${this.viewMode === "tree" ? nothing : this.renderPagination()}
         ${this.showModal ? this.renderModal() : nothing}
         ${this.showWizard ? this.renderWizard() : nothing}
         ${this.showPairingDialog
@@ -1794,6 +2137,29 @@ export class DevicesView extends SignalWatcher(LitElement) {
         <span class="pagination__meta">${this.page} / ${this.totalPages}</span>
       </div>
     `;
+  }
+
+
+  /** 树视图（Task 9，D12）：拖拽换父 + 节点「+」新增设备（向导预填 parent_id） */
+  renderTreeView() {
+    if (this.treeLoading) {
+      return html`<div class="page-loading"><span class="loading-spinner"></span><span>加载物树中...</span></div>`;
+    }
+    if (this.treeError) {
+      return html`<div class="page-error">
+        <div class="page-error__message">${this.treeError}</div>
+        <button class="btn btn--primary" @click=${() => this.loadThingTree()}>重试</button>
+      </div>`;
+    }
+    if (!this.treeNodes.length) {
+      return html`<div class="empty-hint--sm">暂无物，点击「新建物」创建根节点</div>`;
+    }
+    return html`<div class="card" style="padding: var(--space-3, 12px);">
+      ${this.treeTruncated
+        ? html`<div class="empty-hint--sm" style="margin-bottom: var(--space-2, 8px);">仅显示前 ${DevicesView.TREE_LIST_LIMIT} 个物（超出部分未加载）</div>`
+        : nothing}
+      ${renderSceneTree(this.thingTreeHost, this.treeNodes, { editable: true })}
+    </div>`;
   }
 
 

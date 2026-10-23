@@ -257,6 +257,42 @@ pub(crate) async fn find_thing_row_by_name(
         .await
 }
 
+/// Workspace-scoped id lookup by name (derived-expression ref resolution).
+pub async fn thing_id_by_name(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    name: &str,
+) -> std::result::Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar("SELECT id FROM things WHERE workspace_id = ? AND name = ?")
+        .bind(workspace_id)
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+}
+
+/// Recursive descendant count (depth ≤ 10), optionally filtered by thing_type.
+pub async fn count_descendants(
+    pool: &SqlitePool,
+    root_thing_id: &str,
+    thing_type: Option<&str>,
+) -> std::result::Result<i64, sqlx::Error> {
+    let (count,): (i64,) = sqlx::query_as(
+        r#"WITH RECURSIVE sub(id, depth) AS (
+             SELECT id, 0 FROM things WHERE parent_id = ?1
+             UNION ALL
+             SELECT d.id, s.depth + 1 FROM things d JOIN sub s ON d.parent_id = s.id
+             WHERE s.depth < 10
+           )
+           SELECT COUNT(*) FROM things d JOIN sub s ON d.id = s.id
+           WHERE (?2 IS NULL OR d.thing_type = ?2)"#,
+    )
+    .bind(root_thing_id)
+    .bind(thing_type)
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
 /// List things with dynamic WHERE + pagination.
 pub(crate) async fn list_things(
     pool: &SqlitePool,
@@ -1891,6 +1927,9 @@ mod tests {
                 max_value: None,
                 default_value: None,
                 is_read_only: Some(1),
+                expression: None,
+                source: None,
+                refs: None,
             }],
         )
         .await
@@ -1947,6 +1986,9 @@ mod tests {
                 max_value: None,
                 default_value: None,
                 is_read_only: None,
+                expression: None,
+                source: None,
+                refs: None,
             }],
         )
         .await

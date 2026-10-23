@@ -1,7 +1,7 @@
 //! TinyIoTHub ticket domain — Agent→人 升级原语（工单模块 M1）。
 //!
 //! 自治 run 失败（outcome∈{failed, budget_exceeded, rejected}）由
-//! `agent::host::ticket_subscriber` 开票；本域提供人工消费面：
+//! `agent::host::notify::ticket_subscriber` 开票；本域提供人工消费面：
 //! 列表/详情/认领/开始处理/解决/关闭/放弃认领。
 //!
 //! 设计契约（设计文档）：

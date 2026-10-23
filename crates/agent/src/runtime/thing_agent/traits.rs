@@ -11,6 +11,13 @@
 /// loop on those (resonance guard, O21).
 pub use tinyiothub_core::models::event::ThingEventSignal;
 
+/// E4b §3.2: sink for "the turn-start workspace snapshot read these
+/// properties" signals. Cloud injects its demand-tracker adapter; this crate
+/// never names the access service.
+pub trait SnapshotDemandSink: Send + Sync {
+    fn record_read(&self, workspace_id: &str, thing_id: &str, property: &str);
+}
+
 /// 工作区自治策略读取端口（Task 13：斩断 runtime → 存储实现边）。
 ///
 /// 运行时需要按工作区读取自治策略（mode/配额）做 gate；具体持久化实现住
@@ -159,6 +166,37 @@ impl TicketResolutionProvider for NoopTicketResolutions {
         Ok(vec![])
     }
 }
+
+/// 心跳任务读取端口（Task 6 统一循环接线）：heartbeat 源 run 的 prompt
+/// 装配注入源。同步读共享内存表（对齐 loop_.rs parking_lot 同步读先例；
+/// DashMap 读路径无 await，不进 async trait）。
+pub trait HeartbeatTaskReader: Send + Sync {
+    /// 工作区当前活动（未暂停）巡检任务；无配置/全暂停返回空。
+    fn active_tasks(&self, workspace_id: &str) -> Vec<tinyiothub_core::heartbeat::HeartbeatTask>;
+}
+
+/// 心跳信任配置读取端口（Task 6）：heartbeat 源 prompt 的信任段注入源。
+pub trait TrustConfigReader: Send + Sync {
+    /// 工作区信任配置；无配置回退安全默认（[`TrustConfig::default`]）。
+    ///
+    /// [`TrustConfig::default`]: tinyiothub_core::heartbeat::TrustConfig::default
+    fn get(&self, workspace_id: &str) -> tinyiothub_core::heartbeat::TrustConfig;
+}
+
+impl HeartbeatTaskReader for dashmap::DashMap<String, Vec<tinyiothub_core::heartbeat::HeartbeatTask>> {
+    fn active_tasks(&self, workspace_id: &str) -> Vec<tinyiothub_core::heartbeat::HeartbeatTask> {
+        self.get(workspace_id)
+            .map(|ts| ts.iter().filter(|t| !t.paused).cloned().collect())
+            .unwrap_or_default()
+    }
+}
+
+impl TrustConfigReader for dashmap::DashMap<String, tinyiothub_core::heartbeat::TrustConfig> {
+    fn get(&self, workspace_id: &str) -> tinyiothub_core::heartbeat::TrustConfig {
+        // DashMap 固有 get 优先于本 trait 方法被解析，返回 Option<Ref>。
+        self.get(workspace_id).map(|r| r.value().clone()).unwrap_or_default()
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,12 +277,16 @@ mod tests {
         use crate::runtime::thing_agent::types::{Priority, TriggerSource, WakeSignal};
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let handle = Scheduler::spawn("ws_01".to_string(), move |sig| {
-            let tx = tx.clone();
-            Box::pin(async move {
-                let _ = tx.send(sig);
-            })
-        });
+        let handle = Scheduler::spawn(
+            "ws_01".to_string(),
+            move |sig| {
+                let tx = tx.clone();
+                Box::pin(async move {
+                    let _ = tx.send(sig);
+                })
+            },
+            std::sync::Arc::new(dashmap::DashMap::new()),
+        );
 
         let sink: &dyn DirectiveSink = &handle;
         sink.enqueue(WakeSignal {

@@ -1,7 +1,8 @@
 // Heartbeat module — per-workspace HEARTBEAT.md task parsing utilities.
 //
-// The heartbeat_loop and HeartbeatManager have been replaced by
-// tinyiothub_agent::runtime::heartbeat (HeartbeatRunner + heartbeat_loop).
+// The legacy heartbeat loop has been retired (T15) — ticks run inside the
+// unified thing-agent Run loop; this module keeps only task file parsing and
+// the one-time HEARTBEAT.md → DB migration.
 
 use serde::{Deserialize, Serialize};
 
@@ -38,7 +39,7 @@ pub(crate) fn get_default_tasks() -> Vec<HeartbeatTask> {
         },
         HeartbeatTask {
             priority: "medium".into(),
-            text: "生成设备状态日报摘要".into(),
+            text: "生成设备状态摘要（聚焦异常与离线设备，正常设备一行带过，不逐台深挖）".into(),
             paused: false,
         },
         HeartbeatTask {

@@ -1,5 +1,16 @@
 use serde::{Deserialize, Serialize};
 
+/// 派生属性运行状态（runtime-only 镜像 DTO，spec §二 E4：内存态不落库）。
+/// 真身定义在 runtime 的 derived::DerivedStatus（core 不依赖 runtime），
+/// cloud admin GET 注入时逐字段拷贝。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DerivedStatusInfo {
+    pub stale: bool,
+    pub stale_reason: Option<String>,
+    pub last_eval_at: Option<String>,
+}
+
 /// 设备属性实体
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -15,12 +26,24 @@ pub struct ThingProperty {
     pub max_value: Option<f64>,
     pub default_value: Option<String>,
     pub is_read_only: i32,
+    /// 属性来源：'template'（默认）| 'derived'（派生，spec §二）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// 派生表达式原文（仅 derived）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression: Option<String>,
+    /// 解析后引用 JSON：[{"thing_id":"...","property_name":"..."}]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
     /// 运行时属性（不存储在数据库中）
     pub current_value: Option<String>,
     /// 告警状态（不存储在数据库中）
     pub alarm_status: Option<i32>,
+    /// 派生运行状态（不存储在数据库中；admin GET 由 DerivedDriverManager 注入）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived_status: Option<DerivedStatusInfo>,
 }
 
 /// 设备属性查询参数
@@ -50,6 +73,16 @@ pub struct CreateThingPropertyRequest {
     pub max_value: Option<f64>,
     pub default_value: Option<String>,
     pub is_read_only: Option<i32>,
+    /// 派生表达式原文（仅派生属性；serde default）
+    #[serde(default)]
+    pub expression: Option<String>,
+    /// 属性来源：None → INSERT 落 'template'；派生创建路径显式传 'derived'
+    /// （Task 4 评审：batch INSERT 默认 'template'，派生须显式写穿）
+    #[serde(default)]
+    pub source: Option<String>,
+    /// 解析后引用 JSON；派生保存路径恒写非空（无引用写 '[]'，Task 6 评审）
+    #[serde(default)]
+    pub refs: Option<String>,
 }
 
 /// 更新设备属性请求
@@ -194,10 +227,14 @@ impl Default for ThingProperty {
             max_value: None,
             default_value: None,
             is_read_only: 0,
+            source: None,
+            expression: None,
+            refs: None,
             created_at: Some(now.clone()),
             updated_at: Some(now),
             current_value: None,
             alarm_status: None,
+            derived_status: None,
         }
     }
 }

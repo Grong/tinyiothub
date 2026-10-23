@@ -4,7 +4,10 @@
  * 设计规格（设计文档 Design Review Addendum）：
  * - 布局：≥768px 左列表(320px)+右详情；<768px 列表/详情全宽互斥切换+返回键。
  * - 简报是信任锚点：problem 置顶加粗，steps 编号列表（失败波浪线），
- *   suggestedNextSteps 为空时隐藏该节。一律纯文本渲染（禁 unsafeHTML）。
+ *   suggestedNextSteps 为空时隐藏该节。长文本（problem/建议/解决方案/
+ *   对话）经共享 md()（marked + DOMPurify）渲 Markdown——2026-09-27 起
+ *   替代纯文本（设计 Addendum 的禁 unsafeHTML 约定随之更新：只许经
+ *   md() 消毒后的 unsafeHTML）。
  * - 交互状态：loading 骨架 / 空态「暂无待办工单——Agent 都搞定了」/
  *   错误 toast+重试 / 认领冲突 toast「已被 X 认领」/ SSE 断线细条。
  * - 状态色复用 alarms 语义：待认领 #f97316 / 处理中 #eab308 / 已解决 绿 / 已关闭 灰。
@@ -12,6 +15,8 @@
 
 import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { unsafeHTML } from "lit/directives/unsafe-html.js";
+import { md } from "../shared/markdown.js";
 import {
   ticketApi,
   type Ticket,
@@ -406,7 +411,9 @@ export class TicketsView extends LitElement {
     return html`
       <section class="ticket-panel briefing">
         <h4 class="ticket-panel__title">Agent 简报 · 我试过了这些</h4>
-        <div class="briefing__problem">${b.problem ?? "（无问题描述）"}</div>
+        <div class="briefing__problem markdown-body">
+          ${b.problem ? unsafeHTML(md(b.problem)) : "（无问题描述）"}
+        </div>
         ${steps.length > 0
           ? html`
               <ol class="briefing__steps">
@@ -433,7 +440,9 @@ export class TicketsView extends LitElement {
           ? html`
               <div class="briefing__suggest">
                 <div class="briefing__k">建议</div>
-                ${b.suggestedNextSteps!.map((s) => html`<p>${s}</p>`)}
+                ${b.suggestedNextSteps!.map(
+                  (s) => html`<div class="briefing__suggest-item markdown-body">${unsafeHTML(md(s))}</div>`,
+                )}
               </div>
             `
           : nothing}
@@ -454,14 +463,14 @@ export class TicketsView extends LitElement {
             (m) => html`
               <div class=${isAgentMessage(m) ? "chat__msg chat__msg--agent" : "chat__msg chat__msg--human"}>
                 <div class="chat__who">${isAgentMessage(m) ? "Agent" : "我"}</div>
-                <div class="chat__text">${messageText(m)}</div>
+                <div class="chat__text markdown-body">${unsafeHTML(md(messageText(m)))}</div>
               </div>
             `,
           )}
           ${cs.chatSending
             ? html`<div class="chat__msg chat__msg--agent chat__msg--thinking">
                 <div class="chat__who">Agent</div>
-                <div class="chat__text">${cs.chatStream || "正在思考…"}</div>
+                <div class="chat__text markdown-body">${unsafeHTML(md(cs.chatStream || "正在思考…"))}</div>
               </div>`
             : nothing}
         </div>
@@ -507,7 +516,7 @@ export class TicketsView extends LitElement {
       return html`
         <section class="ticket-panel">
           <h4 class="ticket-panel__title">解决方案（已回流 Agent 知识）</h4>
-          <p class="resolution-text">${d.resolutionText}</p>
+          <div class="resolution-text markdown-body">${unsafeHTML(md(d.resolutionText))}</div>
         </section>
       `;
     }

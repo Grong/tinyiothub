@@ -1,0 +1,211 @@
+/**
+ * run-timeline 样式（AI 运行透明化 T11）。
+ *
+ * D7：view-scoped --timeline-* 令牌定义在组件根选择器下，初值取自
+ * base.css 既有调色板（--ok/--accent/--danger/--border-strong/--space-2）；
+ * 其余一律走 DESIGN_SYSTEM.md 令牌，禁硬编码色值/像素。
+ * 进行中 = 旋转 spinner（评审裁定：禁脉冲点）。
+ */
+
+run-timeline {
+  /* view-scoped 令牌层（可被宿主视图覆盖） */
+  --timeline-done: var(--ok);
+  --timeline-active: var(--accent);
+  --timeline-failed: var(--danger);
+  --timeline-connector: var(--border-strong);
+  --timeline-gap: var(--space-2);
+  --timeline-text-dim: var(--muted-foreground);
+  --timeline-icon-size: var(--space-4);
+
+  display: block;
+  color: var(--text);
+}
+
+run-timeline .rt-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--timeline-gap);
+  margin-bottom: var(--space-2);
+}
+
+run-timeline .rt-title {
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+run-timeline .rt-budget {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  color: var(--timeline-text-dim);
+  white-space: nowrap; /* n 略超 budgetMax 也不截断 */
+}
+
+run-timeline .rt-empty {
+  color: var(--timeline-text-dim);
+  padding: var(--space-2) 0;
+}
+
+run-timeline .rt-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--timeline-gap);
+}
+
+/* 步间连接线 */
+run-timeline .rt-step {
+  position: relative;
+  padding-left: calc(var(--timeline-icon-size) + var(--space-2));
+}
+
+run-timeline .rt-step:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--timeline-icon-size) / 2);
+  top: calc(var(--timeline-icon-size) + var(--space-1));
+  bottom: calc(-1 * var(--timeline-gap));
+  border-left: 1px solid var(--timeline-connector);
+}
+
+run-timeline .rt-mark,
+run-timeline .rt-spinner {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--timeline-icon-size);
+  height: var(--timeline-icon-size);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  font-size: 0.75em;
+  flex-shrink: 0;
+}
+
+run-timeline .rt-mark-done {
+  color: var(--timeline-done);
+  border: 1px solid var(--timeline-done);
+}
+
+run-timeline .rt-mark-failed {
+  color: var(--timeline-failed);
+  border: 1px solid var(--timeline-failed);
+}
+
+/* 旋转 spinner（禁脉冲点） */
+run-timeline .rt-spinner {
+  border: calc(var(--space-1) / 2) solid var(--timeline-connector);
+  border-top-color: var(--timeline-active);
+  animation: rt-spin 0.8s linear infinite;
+}
+
+@keyframes rt-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+run-timeline .rt-name {
+  font-weight: 500;
+}
+
+run-timeline .rt-args {
+  margin-left: var(--space-2);
+  font-family: var(--mono);
+  font-size: 0.8em;
+  color: var(--timeline-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* live 精简行：单行横排 */
+run-timeline .rt-list--live .rt-step {
+  display: flex;
+  align-items: center;
+  min-height: var(--timeline-icon-size);
+}
+
+/* full 模式：可展开步 */
+run-timeline details.rt-step {
+  padding-left: 0;
+}
+
+run-timeline details.rt-step .rt-step-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: calc(var(--timeline-icon-size) + var(--space-2));
+  min-height: var(--timeline-icon-size);
+  cursor: pointer;
+  list-style: none;
+}
+
+run-timeline details.rt-step .rt-step-head::-webkit-details-marker {
+  display: none;
+}
+
+run-timeline details.rt-step .rt-mark,
+run-timeline details.rt-step .rt-spinner {
+  left: 0;
+}
+
+run-timeline .rt-idx {
+  font-family: var(--mono);
+  font-size: 0.8em;
+  color: var(--timeline-text-dim);
+}
+
+run-timeline .rt-hint {
+  font-size: 0.8em;
+  color: var(--timeline-active);
+}
+
+run-timeline .rt-step-body {
+  margin-left: calc(var(--timeline-icon-size) + var(--space-2));
+  padding: var(--space-2) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+run-timeline .rt-field-label {
+  display: block;
+  font-size: 0.8em;
+  color: var(--timeline-text-dim);
+  margin-bottom: var(--space-1);
+}
+
+run-timeline .rt-json {
+  margin: 0;
+  padding: var(--space-2);
+  background: var(--bg-subtle);
+  border: 1px solid var(--timeline-connector);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 0.8em;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 240px;
+  overflow: auto;
+}
+
+run-timeline .rt-output-none {
+  font-size: 0.85em;
+  color: var(--timeline-text-dim);
+}
+
+run-timeline .rt-meta {
+  font-size: 0.75em;
+  color: var(--timeline-text-dim);
+  font-family: var(--mono);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  run-timeline .rt-spinner {
+    animation-duration: 2s;
+  }
+}

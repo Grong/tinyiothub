@@ -15,12 +15,19 @@
 //!   持久化一律经 `ports` trait 注入，D15）
 //! - unsafe 仅限驱动/plugin 动态加载路径（manifest lint 例外已标注）
 
+pub mod acceptance;
+pub mod access;
+pub mod arbitration;
 pub mod cron_executors;
 pub mod data_server;
 pub mod driver;
 pub mod event_bus;
+pub mod expression;
+pub mod hub_stream;
+pub mod maps;
 pub mod plugin;
 pub mod ports;
+pub mod watch;
 
 // Re-exports for convenience
 pub use cron_executors::{ApprovalTimeoutExecutor, EventRetentionExecutor, ThingCommandExecutor};

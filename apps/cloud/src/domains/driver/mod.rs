@@ -25,6 +25,7 @@
 //! ## 设计不变量
 //! - 只许 driver→{thing,event,alarm} 单向边；写数据经 thing，不反向
 
+pub mod declaration;
 pub mod driver_health;
 pub mod drivers;
 pub mod gateway;
@@ -32,15 +33,12 @@ pub mod heartbeat;
 pub mod legacy;
 pub mod plugin;
 
-/// Driver domain state slice — Arc'd services only, derived from the
-/// composition layer's `AppState` via `FromRef` (cloud/src/state.rs).
-/// Drivers metadata API router (`/drivers`). Stateless — driver metadata
-/// comes from the runtime registry.
-pub fn router<S>() -> axum::Router<S>
-where
-    S: Clone + Send + Sync + 'static,
-{
-    drivers::handler::create_router()
+/// Driver metadata + E4a declaration API router (`/drivers`).
+///
+/// The declaration routes need `AppState` (the access service), so this
+/// router is no longer generic over the composition state.
+pub fn router() -> axum::Router<crate::state::AppState> {
+    drivers::handler::create_router().merge(declaration::handler::create_router())
 }
 
 /// Driver health API router (`/driver-health`). Stateless beyond the

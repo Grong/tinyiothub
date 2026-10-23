@@ -7,6 +7,10 @@
 /// # 示例
 ///
 /// ```rust,ignore
+/// use tinyiothub_core::driver::{CancelToken, ResultValue, ThingDriver};
+/// use tinyiothub_core::error::Error;
+/// use tinyiothub_core::models::thing::Thing;
+/// use tinyiothub_core::models::thing_command::ThingCommand;
 /// use tinyiothub_plugin_sdk::*;
 ///
 /// pub struct MyDriver {
@@ -35,13 +39,16 @@
 ///     // 实现trait方法...
 /// #   fn thing(&self) -> &Thing { &self.device }
 /// #   fn thing_mut(&mut self) -> &mut Thing { &mut self.device }
-/// #   fn read_data(&mut self) -> Result<Vec<ResultValue>> { Ok(vec![]) }
-/// #   fn execute_command(&mut self, _cmd: &ThingCommand) -> Result<bool> { Ok(true) }
+/// #   fn read_data(&mut self, _cancel: &CancelToken) -> std::result::Result<Vec<ResultValue>, Error> { Ok(vec![]) }
+/// #   fn execute_command(&mut self, _cmd: &ThingCommand, _cancel: &CancelToken) -> std::result::Result<bool, Error> { Ok(true) }
 /// }
 ///
 /// // 导出驱动
 /// export_driver!(MyDriver);
 /// ```
+///
+/// > 注：SDK 自带的 `ThingDriver` trait 目前仍是 v1 签名，迁移到 ABI v2 见后续任务；
+/// > 上面的 import 显式选用 core 的 v2 trait。
 #[macro_export]
 macro_rules! export_driver {
     ($driver_type:ty) => {

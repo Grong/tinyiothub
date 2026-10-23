@@ -193,6 +193,21 @@ export const thingApi = {
     return apiPut<void>(`/things/admin/${thingId}/properties/${propertyId}/value`, { value });
   },
 
+  /** 属性定义列表（派生行带运行状态；园区物派生属性 Task 11） */
+  async getProperties(thingId: string) {
+    return apiGet<any[]>(`/things/admin/${thingId}/properties`);
+  },
+
+  /** 创建属性定义（带 expression 即派生，Task 8 管理面） */
+  async createProperty(thingId: string, data: { name: string; displayName?: string; unit?: string; dataType?: string; expression?: string }) {
+    return apiPost<any>(`/things/admin/${thingId}/properties`, data);
+  },
+
+  /** 更新属性定义（部分更新；expression 给出则全量重新校验） */
+  async updatePropertyDef(thingId: string, propertyId: string, data: { name?: string; displayName?: string; unit?: string; dataType?: string; expression?: string }) {
+    return apiPut<any>(`/things/admin/${thingId}/properties/${propertyId}`, data);
+  },
+
   async exportAsTemplate(id: string) {
     return apiGet<any>(`/things/templates/${id}/export/dtdl`);
   },

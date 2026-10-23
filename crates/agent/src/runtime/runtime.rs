@@ -1,49 +1,46 @@
 //! AgentRuntime — agent loop 子系统的门面（Task 3）。
 //!
-//! 聚合现有 `ThingAgentManager` / `HeartbeatRunner` / `Orchestrator`（不重写其
-//! 逻辑），持有 `AgentEventBus`（Task 2）与恢复快照状态。启动顺序（Task 9）：
-//! bus 由调用方先建并经 [`RuntimeDeps::agent_events`] 注入 restore（Task 3
+//! 聚合 `ThingAgentManager` / `Orchestrator`（不重写其逻辑），持有
+//! `AgentEventBus`（Task 2）与恢复快照状态。启动顺序（Task 9）：bus 由
+//! 调用方先建并经 [`RuntimeDeps::agent_events`] 注入 restore（Task 3
 //! 评审指针：restore 内部建 bus 则"先 subscribe 再 restore"不可能实现——
 //! 采用选项 a，bus 外建注入），调用方在 restore 前 `bus.subscribe()` 取得
 //! receiver，保证 restore 期间及之后的事件不丢。
 //!
-//! 状态真源（Task 5 起）：heartbeat 段（tasks/trust/interval）由
-//! `HeartbeatRunner` 内存持有 —— restore 预热注入，命令方法同步更新内存并
-//! 发射事件（DB 写由 cloud 侧 service 在调命令前完成，D11-⑤ 写序）；
-//! recent_runs 段自 Task 4 起由 `RunRegistry` 承接；O11 dedup 元数据段
-//! （problem_meta）自 Task 9 起由快照预热恢复（行级 ack 保真）。
+//! 状态真源：heartbeat 段（tasks/trust/interval/enabled）由统一 Run 循环的
+//! `HeartbeatDeps` 共享表持有（T15 起唯一真源，旧 runner 已退役）——
+//! restore 预热注入，命令方法同步更新共享表并发射事件（DB 写由 cloud 侧
+//! service 在调命令前完成，D11-⑤ 写序）；recent_runs 段自 Task 4 起由
+//! `RunRegistry` 承接；O11 dedup 元数据段（problem_meta）自 Task 9 起由
+//! 快照预热恢复（行级 ack 保真）。
 
 use std::sync::Arc;
 
 use tokio::sync::broadcast;
-use tracing::warn;
 
 use tinyiothub_core::agent_runs::RunReport;
 use tinyiothub_core::heartbeat::{HeartbeatTask, TrustConfig};
 use tinyiothub_runtime::EventBus;
 
-use super::event::bus::{AiEventPublisher, DropNotifier};
+use super::event::bus::DropNotifier;
 use super::events::{AgentEvent, AgentEventBus, AgentEventKind};
-use super::heartbeat::runner::HeartbeatRunner;
 use super::heartbeat::types::HeartbeatConfig;
 use super::orchestrator::Orchestrator;
 use super::orchestrator::callbacks::HeartbeatBridge;
-use super::snapshot::RestoreSnapshot;
-use super::thing_agent::manager::{AutonomousAgentProvider, ThingAgentManager, ThingAgentManagerConfig};
+use super::snapshot::{RestoreSnapshot, WorkspaceHeartbeatState};
+use super::thing_agent::manager::{AutonomousAgentProvider, HeartbeatDeps, ThingAgentManager, ThingAgentManagerConfig};
 use super::thing_agent::registry::RunRegistry;
 use super::thing_agent::runner::Runner;
 use super::thing_agent::traits::{AutonomyPolicyReader, ThingAgentHost};
 
-/// RuntimeDeps — 聚合三大组件现有构造所需依赖（收集自 service_manager.rs
+/// RuntimeDeps — 聚合组件现有构造所需依赖（收集自 service_manager.rs
 /// 现有接线；本任务只聚已有件，不造新依赖）。
 ///
-/// Task 6 起不再聚合任何 storage/memory 句柄：心跳结果落库经
-/// HeartbeatResultReady 事件（Task 8 订阅者），O11 dedup 走 RunRegistry
-/// 内存，MemoryService 由 cloud 侧自持（AgentState.memory_service）。
+/// Task 6 起不聚合任何 storage/memory 句柄：心跳结果落库经统一循环的
+/// RunRecorded 事件（持久化订阅者心跳支路，T15 起唯一通道），O11 dedup
+/// 走 RunRegistry 内存，MemoryService 由 cloud 侧自持
+/// （AgentState.memory_service）。
 pub struct RuntimeDeps {
-    // HeartbeatRunner 构造件（Task 5 起 repo 不再进 runner）
-    pub event_publisher: Arc<AiEventPublisher>,
-    pub heartbeat_config: HeartbeatConfig,
     // ThingAgentManager 构造件
     pub thing_agent_host: Arc<dyn ThingAgentHost>,
     pub policy_repo: Arc<dyn AutonomyPolicyReader>,
@@ -64,7 +61,9 @@ pub struct RuntimeDeps {
 /// 成功，再调命令；命令失败告警。
 pub struct AgentRuntime {
     thing_agents: Arc<ThingAgentManager>,
-    heartbeat: Arc<HeartbeatRunner>,
+    /// heartbeat 共享表（与 ThingAgentManager 同一实例）：内存真源——
+    /// restore 预热、命令写穿、dump_state 导出都走这组表。
+    heartbeat_deps: HeartbeatDeps,
     orchestrator: Arc<Orchestrator>,
     events: Arc<AgentEventBus>,
     /// run 记录内存真相源（Task 4 RunRegistry）：restore 时由快照预热，
@@ -73,8 +72,8 @@ pub struct AgentRuntime {
 }
 
 impl AgentRuntime {
-    /// 用快照构造运行时：聚合三大组件（接线同 service_manager.rs），并将
-    /// heartbeat 段预热进 runner 内存（Task 5 内存真源）。
+    /// 用快照构造运行时：聚合组件（接线同 service_manager.rs），并将
+    /// heartbeat 段预热进统一循环共享表（内存真源）。
     /// 只做构造与预热，不启动任何 loop —— 启动顺序由 Task 11 编排。
     pub fn restore(snapshot: RestoreSnapshot, deps: RuntimeDeps) -> Self {
         let events = deps.agent_events;
@@ -83,13 +82,26 @@ impl AgentRuntime {
         run_registry.prewarm(snapshot.recent_runs);
         // O11 dedup 元数据段（Task 9）：行级 ack 随预热恢复。
         run_registry.prewarm_problem_meta(snapshot.problem_meta);
-        let heartbeat = Arc::new(HeartbeatRunner::new(deps.event_publisher, deps.heartbeat_config));
-        // 预热：快照 heartbeat 段注入 runner 内存（命令路径之外的唯一注入口）。
+        // 预热：快照 heartbeat 段注入统一循环共享表（命令路径之外的唯一
+        // 注入口）；last_ticks/governor 空态起步（连败治理不持久化）。
+        let heartbeat_deps = super::thing_agent::HeartbeatDeps::default();
         for state in &snapshot.heartbeat {
-            heartbeat.set_tasks(&state.workspace_id, state.tasks.clone());
-            heartbeat.update_trust_config(&state.workspace_id, state.trust_config.clone());
-            heartbeat.set_interval_minutes(&state.workspace_id, state.interval_minutes);
+            heartbeat_deps
+                .tasks
+                .insert(state.workspace_id.clone(), state.tasks.clone());
+            heartbeat_deps
+                .trust_configs
+                .insert(state.workspace_id.clone(), state.trust_config.clone());
+            heartbeat_deps
+                .intervals
+                .insert(state.workspace_id.clone(), state.interval_minutes);
+            // 终审 I-1：enabled 开关随快照预热进统一循环共享表——禁用工作区
+            // 重启后 trigger 仍不 tick。
+            heartbeat_deps.enabled.insert(state.workspace_id.clone(), state.enabled);
         }
+        // Task 11：桥与统一循环共享同一 governor——告警信号 resume 的暂停态
+        // 必须作用于 trigger 读的那一份（克隆共享同一 DashMap 真源）。
+        let heartbeat_governor = heartbeat_deps.governor.clone();
         let thing_agents = Arc::new(ThingAgentManager::new(
             deps.thing_agent_host,
             deps.policy_repo,
@@ -99,14 +111,18 @@ impl AgentRuntime {
             Arc::new(Runner::new()),
             deps.thing_agent_config,
             deps.ticket_resolutions,
+            heartbeat_deps.clone(),
         ));
-        // T18 X6 心跳桥：HeartbeatCompleted 的结构化 proposals 投递 UserDirective。
-        // Task 6 起 O11 dedup 走 RunRegistry 内存（与 thing_agents 共享同一实例）。
-        let bridge = Arc::new(HeartbeatBridge::new(run_registry.clone(), thing_agents.clone()));
+        // 告警桥（原 T18 X6 心跳桥）：AlarmCreated 转 Heartbeat 变体入统一
+        // 循环。X6 自动派发已退役（2026-10-16 裁定：提案走审批队列）；
+        // registry 仍共享同一实例（ack 回写链 + 回推窗口读）。
+        let bridge = Arc::new(HeartbeatBridge::new(
+            run_registry.clone(),
+            thing_agents.clone(),
+            heartbeat_governor,
+        ));
         let orchestrator = Arc::new(Orchestrator::new(
             deps.event_bus,
-            heartbeat.clone(),
-            events.clone(),
             deps.drop_notifier,
             Some(thing_agents.clone()),
             Some(bridge),
@@ -114,7 +130,7 @@ impl AgentRuntime {
 
         Self {
             thing_agents,
-            heartbeat,
+            heartbeat_deps,
             orchestrator,
             events,
             run_registry,
@@ -129,11 +145,12 @@ impl AgentRuntime {
     }
 
     /// 导出当前状态快照（Lagged resync + 周期对账出口）。
-    /// heartbeat 段读 runner 内存真源（Task 5）；recent_runs 段读
-    /// RunRegistry 内存真源（Task 4）。
+    /// heartbeat 段读统一循环共享表真源；recent_runs 段读 RunRegistry
+    /// 内存真源（Task 4）。
     pub fn dump_state(&self) -> RestoreSnapshot {
-        let mut heartbeat = self.heartbeat.snapshot_states();
+        let heartbeat = self.heartbeat_snapshot_states();
         // 排序保证导出确定性（DashMap 迭代序不稳定），便于对账 diff。
+        let mut heartbeat = heartbeat;
         heartbeat.sort_by(|a, b| a.workspace_id.cmp(&b.workspace_id));
         let mut recent_runs = self.run_registry.active();
         // 同理排序（RunReport 无时间戳，run_id 字典序保证确定性）。
@@ -147,38 +164,75 @@ impl AgentRuntime {
             recent_runs,
             problem_meta: Vec::new(),
             recent_run_meta: self.run_registry.all_run_keys(),
-            heartbeat_results: self.heartbeat.recent_results(),
         }
     }
 
-    /// trust config 变更命令：更新 runner 内存 + 发射事件（Task 5）。
+    /// heartbeat 段导出：tasks/trust/intervals/enabled 四表 key 的并集，
+    /// 缺省字段回退 default（interval 缺省=HeartbeatConfig::default，
+    /// enabled 缺省=true——与 trigger 判定集同口径）。
+    fn heartbeat_snapshot_states(&self) -> Vec<WorkspaceHeartbeatState> {
+        let mut ws_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for r in self.heartbeat_deps.tasks.iter() {
+            ws_ids.insert(r.key().clone());
+        }
+        for r in self.heartbeat_deps.trust_configs.iter() {
+            ws_ids.insert(r.key().clone());
+        }
+        for r in self.heartbeat_deps.intervals.iter() {
+            ws_ids.insert(r.key().clone());
+        }
+        for r in self.heartbeat_deps.enabled.iter() {
+            ws_ids.insert(r.key().clone());
+        }
+        ws_ids
+            .into_iter()
+            .map(|ws| WorkspaceHeartbeatState {
+                tasks: self.heartbeat_tasks(&ws),
+                trust_config: self
+                    .heartbeat_deps
+                    .trust_configs
+                    .get(&ws)
+                    .map(|r| r.value().clone())
+                    .unwrap_or_default(),
+                interval_minutes: self
+                    .heartbeat_deps
+                    .intervals
+                    .get(&ws)
+                    .map(|r| *r.value())
+                    .unwrap_or(HeartbeatConfig::default().interval_minutes),
+                enabled: self.heartbeat_deps.enabled.get(&ws).map(|r| *r.value()).unwrap_or(true),
+                workspace_id: ws,
+            })
+            .collect()
+    }
+
+    /// trust config 变更命令：更新共享表 + 发射事件（Task 5）。
     /// DB 写由 cloud 侧 service 在调本命令前完成（D11-⑤ 写序）。
     pub fn update_trust_config(&self, workspace_id: &str, config: TrustConfig) {
-        self.heartbeat.update_trust_config(workspace_id, config.clone());
+        self.heartbeat_deps
+            .trust_configs
+            .insert(workspace_id.to_string(), config.clone());
         self.events.emit(AgentEventKind::TrustConfigChanged {
             workspace_id: workspace_id.to_string(),
             config: Box::new(config),
         });
     }
 
-    /// 心跳间隔变更命令：更新 runner 内存；运行中的 loop 重启使新间隔生效
-    /// （`HeartbeatRunner::start` 幂等：先 stop 再起）。入站校验与 DB 写
-    /// （含 enabled 归并）由 cloud 侧 handler 先做。
+    /// 心跳间隔变更命令：更新共享表并唤醒 trigger 立即重读（统一循环
+    /// trigger 每轮读 intervals 表，notify 闭合生效延迟）。入站校验与
+    /// DB 写（含 enabled 归并）由 cloud 侧 handler 先做。
     pub fn update_heartbeat_interval(&self, workspace_id: &str, interval_minutes: u32) {
-        self.heartbeat.set_interval_minutes(workspace_id, interval_minutes);
-        if self.heartbeat.active_workspaces().iter().any(|w| w == workspace_id) {
-            let runner = self.heartbeat.clone();
-            let ws = workspace_id.to_string();
-            spawn_delegate(async move {
-                runner.start(&ws).await;
-            });
-        }
+        self.heartbeat_deps
+            .intervals
+            .insert(workspace_id.to_string(), interval_minutes);
+        self.thing_agents.heartbeat_reload_notify(workspace_id).notify_one();
     }
 
-    /// 心跳任务全量替换命令：更新 runner 内存（运行中 loop 经 ReloadTasks
-    /// 信号重读内存）+ 发射事件。调用方已写 DB（D11-⑤）。
+    /// 心跳任务全量替换命令：更新共享表 + 唤醒 trigger 立即重读 + 发射
+    /// 事件。调用方已写 DB（D11-⑤）。
     pub fn reload_heartbeat_tasks(&self, workspace_id: &str, tasks: Vec<HeartbeatTask>) {
-        self.heartbeat.set_tasks(workspace_id, tasks);
+        self.heartbeat_deps.tasks.insert(workspace_id.to_string(), tasks);
+        self.thing_agents.heartbeat_reload_notify(workspace_id).notify_one();
         self.events.emit(AgentEventKind::HeartbeatTasksChanged {
             workspace_id: workspace_id.to_string(),
         });
@@ -189,29 +243,31 @@ impl AgentRuntime {
         self.run_registry.active()
     }
 
-    /// 工作区心跳任务：读 runner 内存真源（Task 5）。
+    /// 工作区心跳任务：读统一循环共享表真源。
     pub fn heartbeat_tasks(&self, workspace_id: &str) -> Vec<HeartbeatTask> {
-        self.heartbeat.tasks(workspace_id)
+        self.heartbeat_deps
+            .tasks
+            .get(workspace_id)
+            .map(|r| r.value().clone())
+            .unwrap_or_default()
     }
 
-    /// 工作区删除清理命令：停 loop + 清 runner 内存三表，防止已删工作区
-    /// 在内存与 dump_state 快照中残留（Task 5 fix round 1）。
+    /// 工作区删除清理命令：清心跳共享表（tasks/trust/intervals/enabled/
+    /// last_ticks）并解除 governor 暂停态，防止已删工作区在内存与
+    /// dump_state 快照中残留（Task 5 fix round 1 语义）。loop 停止由
+    /// orchestrator 的 WorkspaceDeleted 臂承担。
     pub fn remove_workspace(&self, workspace_id: &str) {
-        let runner = self.heartbeat.clone();
-        let ws = workspace_id.to_string();
-        spawn_delegate(async move {
-            runner.remove_workspace(&ws).await;
-        });
+        self.heartbeat_deps.tasks.remove(workspace_id);
+        self.heartbeat_deps.trust_configs.remove(workspace_id);
+        self.heartbeat_deps.intervals.remove(workspace_id);
+        self.heartbeat_deps.enabled.remove(workspace_id);
+        self.heartbeat_deps.last_ticks.remove(workspace_id);
+        self.heartbeat_deps.governor.resume(workspace_id);
     }
 
     /// 事件总线句柄 —— 测试经 bus().emit(...) 注入事件（Task 8）。
     pub fn bus(&self) -> &AgentEventBus {
         &self.events
-    }
-
-    /// 组件句柄（Task 11 启动编排用：start/stop 各工作区 loop）。
-    pub fn heartbeat_runner(&self) -> &Arc<HeartbeatRunner> {
-        &self.heartbeat
     }
 
     pub fn thing_agents(&self) -> &Arc<ThingAgentManager> {
@@ -226,20 +282,6 @@ impl AgentRuntime {
     /// 元数据预热；clone 与门面共享同一实例）。
     pub fn run_registry(&self) -> &RunRegistry {
         &self.run_registry
-    }
-}
-
-/// 命令委托派发：同步命令 API 桥到现有异步路径。无 tokio 上下文时（正常
-/// 调用方均为 async handler，不应发生）记 warning 跳过 —— 门面状态已先行更新。
-fn spawn_delegate<F>(fut: F)
-where
-    F: std::future::Future<Output = ()> + Send + 'static,
-{
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) => {
-            handle.spawn(fut);
-        }
-        Err(_) => warn!("AgentRuntime command delegate skipped: no tokio runtime"),
     }
 }
 
@@ -298,8 +340,6 @@ impl RuntimeDeps {
     pub fn test_stub() -> Self {
         let event_bus = Arc::new(EventBus::new());
         Self {
-            event_publisher: Arc::new(AiEventPublisher::new(event_bus.clone())),
-            heartbeat_config: HeartbeatConfig::default(),
             thing_agent_host: Arc::new(stubs::NoopThingAgentHost),
             policy_repo: Arc::new(super::thing_agent::traits::test_stubs::StubAutonomyPolicyReader::new()),
             agent_provider: Arc::new(stubs::NoopAgentProvider),
@@ -340,11 +380,11 @@ mod tests {
                 tasks: vec![task_fixture()],
                 trust_config: TrustConfig::default(),
                 interval_minutes: 30,
+                enabled: true,
             }],
             recent_runs: vec![],
             problem_meta: vec![],
             recent_run_meta: Default::default(),
-            heartbeat_results: vec![],
         }
     }
 
@@ -355,7 +395,6 @@ mod tests {
             recent_runs: vec![],
             problem_meta: vec![],
             recent_run_meta: Default::default(),
-            heartbeat_results: vec![],
         }
     }
 
@@ -393,6 +432,23 @@ mod tests {
         let rt = AgentRuntime::restore(snapshot_with_ws1(), RuntimeDeps::test_stub());
         assert_eq!(rt.heartbeat_tasks("ws1").len(), 1);
         assert!(rt.heartbeat_tasks("unknown").is_empty());
+    }
+
+    /// 终审 I-1：restore 预热把快照 enabled 写入统一循环共享表——禁用工作区
+    /// 重启后 trigger 仍不 tick（此前 enabled 只在旧 runner 生效，重启后统一
+    /// 循环无视持久化的开关）。缺省语义（快照 true）预热后读出口为 true。
+    #[tokio::test]
+    async fn restore_prewarms_heartbeat_enabled_into_unified_loop() {
+        let mut snap = snapshot_with_ws1();
+        snap.heartbeat[0].enabled = false;
+        let rt = AgentRuntime::restore(snap, RuntimeDeps::test_stub());
+        assert!(
+            !rt.thing_agents().heartbeat_enabled("ws1"),
+            "快照 enabled=false 必须预热进统一循环共享表"
+        );
+
+        let rt = AgentRuntime::restore(snapshot_with_ws1(), RuntimeDeps::test_stub());
+        assert!(rt.thing_agents().heartbeat_enabled("ws1"));
     }
 
     #[tokio::test]
@@ -443,6 +499,9 @@ mod tests {
             tokens: 0,
             end_reason: None,
             thing_id: None,
+            trace: vec![],
+            task_count: None,
+            snapshot: None,
         }];
         let rt = AgentRuntime::restore(snap, RuntimeDeps::test_stub());
 
@@ -474,6 +533,9 @@ mod tests {
             tokens: 0,
             end_reason: None,
             thing_id: None,
+            trace: vec![],
+            task_count: None,
+            snapshot: None,
         });
         rt.run_registry().set_run_keys(
             "run_keys",
@@ -490,5 +552,74 @@ mod tests {
             .expect("dump_state must export run keys");
         assert_eq!(keys.problem_key.as_deref(), Some("漏水"));
         assert_eq!(keys.dedup_key.as_deref(), Some("t:1"));
+    }
+
+    // Value card
+    // - 覆盖路径：remove_workspace 清五张心跳共享表（tasks/trust/intervals/
+    //   enabled/last_ticks）+ governor.resume + dump_state 不残留。
+    // - 真实回归场景：T15 把清表从旧 runner 迁到门面时漏清某张表——工作区
+    //   删除后重建，残留的 enabled=false / 旧任务表 / 旧 last_tick 直接生效，
+    //   dump_state 对账还把幽灵工作区写回 DB。
+    // - 失败信号：任一表未清即断言失败；enabled 读出口回缺省 true 证明表已清。
+    // - 覆盖理由：orchestrator 生命周期测试只断言 manager.start/stop，门面
+    //   清表命令无任何直接断言。
+    #[tokio::test]
+    async fn remove_workspace_clears_heartbeat_shared_tables() {
+        let rt = AgentRuntime::restore(snapshot_with_ws1(), RuntimeDeps::test_stub());
+        // 前置：预热态非空 + last_ticks 有值。
+        assert_eq!(rt.heartbeat_tasks("ws1").len(), 1);
+        rt.thing_agents()
+            .heartbeat_last_ticks()
+            .insert("ws1".to_string(), chrono::Utc::now());
+
+        rt.remove_workspace("ws1");
+
+        assert!(rt.heartbeat_tasks("ws1").is_empty(), "tasks 表须清");
+        assert!(
+            rt.thing_agents().heartbeat_trust_config("ws1").is_none(),
+            "trust 表须清"
+        );
+        assert_eq!(
+            rt.thing_agents().heartbeat_interval_minutes("ws1"),
+            None,
+            "intervals 表须清"
+        );
+        assert!(
+            rt.thing_agents().heartbeat_enabled("ws1"),
+            "enabled 表清后读出口回缺省 true"
+        );
+        assert!(
+            !rt.thing_agents().heartbeat_last_ticks().contains_key("ws1"),
+            "last_ticks 表须清"
+        );
+        assert!(rt.dump_state().heartbeat.is_empty(), "dump_state 不得残留已删工作区");
+    }
+
+    // Value card
+    // - 覆盖路径：update_heartbeat_interval / reload_heartbeat_tasks 命令在
+    //   更新共享表后调用 heartbeat_reload_notify().notify_one()（行为保持
+    //   清单第 3 行：配置/任务变更立即 tick，不等下个周期间隔）。
+    // - 真实回归场景：有人删掉 notify_one 调用——间隔热改与任务变更退化为
+    //   「下一个周期才生效」，最长延迟一个 interval（默认 15min），trigger
+    //   侧 reload_notify_forces_immediate_tick 测试依旧绿（它直接 notify）。
+    // - 失败信号：notified() 超时即 notify 断链。
+    // - 覆盖理由：既有 commands_update_facade_state 只断言表值，不覆盖
+    //   notify 副作用。
+    #[tokio::test]
+    async fn interval_and_task_commands_notify_unified_trigger() {
+        let rt = AgentRuntime::restore(snapshot_with_ws1(), RuntimeDeps::test_stub());
+        let notify = rt.thing_agents().heartbeat_reload_notify("ws1");
+
+        let waited = notify.notified();
+        rt.update_heartbeat_interval("ws1", 45);
+        tokio::time::timeout(std::time::Duration::from_millis(100), waited)
+            .await
+            .expect("interval 命令必须 notify 统一 trigger");
+
+        let waited = notify.notified();
+        rt.reload_heartbeat_tasks("ws1", vec![]);
+        tokio::time::timeout(std::time::Duration::from_millis(100), waited)
+            .await
+            .expect("任务替换命令必须 notify 统一 trigger");
     }
 }

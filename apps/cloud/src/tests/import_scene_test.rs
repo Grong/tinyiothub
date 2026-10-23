@@ -142,6 +142,8 @@ async fn import_scene_template_round_trips() {
         parent_id: None,
         parameter_values: HashMap::from([("room_count".to_string(), 2i64)]),
         dry_run: false,
+        attach_simulated_driver: false,
+        extra_nodes: vec![],
     };
     let outcome = SceneInstantiator::instantiate(&db, WS, &template_id, &params)
         .await

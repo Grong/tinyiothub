@@ -20,6 +20,7 @@ pub mod notification_types;
 pub mod policy;
 pub mod types;
 pub mod version;
+pub mod watch;
 
 pub use error::{Error, Result};
 

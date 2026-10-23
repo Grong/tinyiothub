@@ -42,6 +42,8 @@ interface RequestOptions {
   headers?: Record<string, string>;
   body?: any;
   params?: Record<string, any>;
+  /** 取消令牌（T12：live 轮询 AbortController——收起/切换展开卡时中止在飞请求） */
+  signal?: AbortSignal;
 }
 
 // 获取认证 token（供其他模块复用）
@@ -67,7 +69,7 @@ export const buildUrl = (endpoint: string): string => {
 
 // 底层 HTTP 请求
 async function request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, params, headers = {} } = options;
+  const { method = 'GET', body, params, headers = {}, signal } = options;
 
   const urlPath = buildUrl(endpoint);
   const url = urlPath.startsWith('http')
@@ -89,6 +91,7 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   const config: RequestInit = {
     method,
     credentials: 'include',
+    signal,
     headers: {
       'Content-Type': 'application/json',
       ...headers,
@@ -140,11 +143,13 @@ export class ApiClient {
   static async get<T>(
     endpoint: string,
     params?: Record<string, any>,
+    signal?: AbortSignal,
   ): Promise<ApiResponse<KeysToCamelCase<T>>> {
     const snakeParams = params ? keysToSnakeCase(params) : undefined;
     const response = await request<ApiResponse<T>>(endpoint, {
       method: 'GET',
       params: snakeParams,
+      signal,
     });
     if (response.code !== 0) {
       throw new ApiError(response.code, response.msg || '请求失败', response);

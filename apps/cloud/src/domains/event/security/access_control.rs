@@ -92,7 +92,8 @@ impl EventAccessControl for RoleBasedAccessControl {
                 | tinyiothub_core::models::event::ThingEventType::PropertyNormal => "device_property",
                 tinyiothub_core::models::event::ThingEventType::CommandStarted
                 | tinyiothub_core::models::event::ThingEventType::CommandCompleted
-                | tinyiothub_core::models::event::ThingEventType::CommandFailed => "device_command",
+                | tinyiothub_core::models::event::ThingEventType::CommandFailed
+                | tinyiothub_core::models::event::ThingEventType::CommandCancelled => "device_command",
                 tinyiothub_core::models::event::ThingEventType::DeviceAlarm
                 | tinyiothub_core::models::event::ThingEventType::DeviceNormal => "device_alarm",
                 tinyiothub_core::models::event::ThingEventType::DeviceCreated
@@ -126,7 +127,8 @@ impl EventAccessControl for RoleBasedAccessControl {
                 | tinyiothub_core::models::event::ThingEventType::PropertyNormal => "device_property",
                 tinyiothub_core::models::event::ThingEventType::CommandStarted
                 | tinyiothub_core::models::event::ThingEventType::CommandCompleted
-                | tinyiothub_core::models::event::ThingEventType::CommandFailed => "device_command",
+                | tinyiothub_core::models::event::ThingEventType::CommandFailed
+                | tinyiothub_core::models::event::ThingEventType::CommandCancelled => "device_command",
                 tinyiothub_core::models::event::ThingEventType::DeviceAlarm
                 | tinyiothub_core::models::event::ThingEventType::DeviceNormal => "device_alarm",
                 tinyiothub_core::models::event::ThingEventType::DeviceCreated

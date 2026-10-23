@@ -51,7 +51,6 @@
 
 .card:hover {
   box-shadow: var(--glass-shadow-hover);
-  transform: translateY(-2px);
 }
 
 .card-title {
@@ -100,7 +99,6 @@
 
 .stat:hover {
   box-shadow: var(--glass-shadow-hover);
-  transform: translateY(-2px);
 }
 
 .stat-label {
@@ -182,7 +180,6 @@
 
 .account-card:hover {
   box-shadow: var(--shadow-md);
-  transform: translateY(-2px);
 }
 
 .account-card-header {
@@ -442,7 +439,6 @@
 
 .list-item-clickable:hover {
   box-shadow: var(--shadow-md);
-  transform: translateY(-2px);
 }
 
 .list-item-selected {
@@ -685,7 +681,6 @@
 
 .chip:hover {
   box-shadow: var(--shadow-sm);
-  transform: translateY(-1px);
 }
 
 .chip input {
@@ -1414,7 +1409,6 @@
 
 .usage-action-btn:hover {
   background: var(--bg-hover);
-  transform: translateY(-1px);
 }
 
 .usage-primary-btn {
@@ -1452,7 +1446,6 @@
 }
 
 .usage-summary-card:hover {
-  transform: translateY(-2px);
   box-shadow: var(--shadow-md);
 }
 
@@ -1684,7 +1677,6 @@
 
 .usage-stat:hover {
   box-shadow: var(--shadow-md);
-  transform: translateY(-2px);
 }
 
 .usage-stat.highlight {

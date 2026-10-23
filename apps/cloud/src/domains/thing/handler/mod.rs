@@ -17,6 +17,7 @@ use crate::state::AppState;
 pub mod actions;
 pub mod crud;
 pub mod import_export;
+pub mod position;
 pub mod resources;
 
 /// Create the thing API router at /api/v1/things.
@@ -38,6 +39,11 @@ where
         .route("/{id}/ontology", get(crud::get_thing_ontology))
         .route("/{id}/profile", get(crud::get_thing_profile))
         .route("/{id}/tree", get(crud::get_thing_tree))
+        // E4d 物坐标：读取走工作区作用域，PUT 在 handler 内做 admin 闸门。
+        .route(
+            "/{id}/position",
+            get(position::get_position).put(position::put_position),
+        )
         .route("/{id}/export-as-template", post(export_as_template))
         .route("/{id}/actions/{action_name}/invoke", post(actions::invoke_action))
         .route("/{id}/actions/{action_name}/confirm", post(actions::confirm_action))

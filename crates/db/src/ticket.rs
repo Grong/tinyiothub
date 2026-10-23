@@ -566,6 +566,7 @@ impl Db {
         let rows: Vec<(String,)> = sqlx::query_as(
             "SELECT report FROM agent_runs
              WHERE outcome IN ('failed','budget_exceeded','rejected')
+               AND trigger_type != 'heartbeat'
                AND created_at > ?
                AND id NOT IN (SELECT agent_run_id FROM tickets)",
         )
@@ -830,6 +831,9 @@ mod tests {
             tokens: 10,
             end_reason: Some(tinyiothub_core::agent_runs::EndReason::Policy),
             thing_id: Some("t1".to_string()),
+            trace: vec![],
+            task_count: None,
+            snapshot: None,
         };
         db.insert_agent_run(&report, None, None).await.unwrap();
         let unticketed = db.unticketed_failed_runs("2000-01-01").await.unwrap();
@@ -839,6 +843,51 @@ mod tests {
             .await
             .unwrap();
         assert!(db.unticketed_failed_runs("2000-01-01").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn unticketed_failed_runs_excludes_heartbeat_trigger() {
+        // 心跳失败(周期 tick LLM 错误等)走 G3 事件通道,不开票——对账扫描
+        // 不得把 heartbeat 源的 failed run 当漏开票(2026-10-14 事故:T9 迁移
+        // 合成行被对账批量误捞)。
+        let db = test_db().await;
+        use tinyiothub_core::agent_runs::{Outcome, RunReport};
+        let heartbeat_failure = RunReport {
+            run_id: "hbm_deadbeef".to_string(),
+            workspace_id: "ws1".to_string(),
+            trigger: "heartbeat:ws1".to_string(),
+            outcome: Outcome::Failed,
+            summary: "JSON parse error: ...".to_string(),
+            actions: vec![],
+            verified: false,
+            duration_ms: 100,
+            tool_calls: 0,
+            tokens: 0,
+            end_reason: Some(tinyiothub_core::agent_runs::EndReason::Llm),
+            thing_id: None,
+            trace: vec![],
+            task_count: None,
+            snapshot: None,
+        };
+        db.insert_agent_run(&heartbeat_failure, None, None).await.unwrap();
+        assert!(
+            db.unticketed_failed_runs("2000-01-01").await.unwrap().is_empty(),
+            "heartbeat 源失败 run 不进对账补票扫描"
+        );
+
+        // RT-1:merged heartbeat run(trigger_type 剥前缀后为 heartbeat)同样排除——
+        // 否则 30s 合并窗内的心跳失败会绕开心跳不开票守卫。
+        let merged_failure = RunReport {
+            run_id: "run_merged_hb".to_string(),
+            trigger: "merged:heartbeat:ws1".to_string(),
+            summary: "merged tick failed".to_string(),
+            ..heartbeat_failure
+        };
+        db.insert_agent_run(&merged_failure, None, None).await.unwrap();
+        assert!(
+            db.unticketed_failed_runs("2000-01-01").await.unwrap().is_empty(),
+            "merged heartbeat 失败 run 同样不进对账补票扫描(RT-1)"
+        );
     }
 }
 
@@ -964,6 +1013,9 @@ mod statistics_tests {
                 tokens: 0,
                 end_reason: Some(tinyiothub_core::agent_runs::EndReason::Policy),
                 thing_id: None,
+                trace: vec![],
+                task_count: None,
+                snapshot: None,
             };
             db.insert_agent_run(&report, None, None).await.unwrap();
         }

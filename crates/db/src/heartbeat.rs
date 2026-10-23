@@ -22,6 +22,12 @@ pub struct WorkspaceHeartbeatConfig {
     /// 报警；Critical/Error 永不抑制）。旧行无此字段 → annotate（保守默认）。
     #[serde(default = "default_triage_mode")]
     pub triage_mode: String,
+    /// E1 同键限速覆盖（spec §3：`workspaces.heartbeat_config` JSON 加键
+    /// `rate_limit_per_key_per_min`，复用配置先例）：每 dedup_key 每分钟最多
+    /// N 次唤醒；None = 缺省 3（scheduler DEFAULT_RATE_LIMIT_PER_MIN）。
+    /// 旧行无此字段 → None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit_per_key_per_min: Option<u32>,
 }
 
 fn default_ai_triage_enabled() -> bool {
@@ -45,6 +51,7 @@ impl WorkspaceHeartbeatConfig {
             interval_minutes,
             ai_triage_enabled: true,
             triage_mode: default_triage_mode(),
+            rate_limit_per_key_per_min: None,
         })
     }
 
@@ -76,6 +83,8 @@ pub enum RepoError {
 // ──────────────────────────────────────────────
 
 use sqlx::SqlitePool;
+
+use tinyiothub_core::policy::Proposal;
 
 use crate::database::Db;
 
@@ -345,12 +354,12 @@ pub(crate) async fn insert_result(
         let message = result.error.as_deref().unwrap_or(&result.summary);
         (
             "error",
-            serde_json::json!({"taskCount": result.task_count, "error": message}),
+            serde_json::json!({"taskCount": result.task_count, "error": message, "trace": result.trace}),
         )
     } else {
         (
             "summary",
-            serde_json::json!({"taskCount": result.task_count, "result": result.summary}),
+            serde_json::json!({"taskCount": result.task_count, "result": result.summary, "trace": result.trace}),
         )
     };
     // CEO review T22：锚行带 tick_id 幂等写入；已落库（事件重放/重试/
@@ -393,17 +402,39 @@ pub(crate) async fn insert_result(
             "auto_executed",
             &content.to_string(),
             &now,
+            tick_id,
         )
         .await?;
     }
 
-    for proposal in &result.proposals {
+    upsert_proposal_rows(&mut tx, workspace_id, &agent_id, &result.proposals, tick_id, &now).await?;
+
+    tx.commit().await.map_err(|e| RepoError::Database(e.to_string()))?;
+    Ok(())
+}
+
+/// 提案行 upsert（Task 8 抽取，insert_result 与 persist 心跳支路共用）。
+///
+/// problem_key 折叠（2026-09-23 实测：同一 tool:thing 的提案每 tick 换皮
+/// 重提，134 条 pending 里 26/20/18 条同一 key）：已有同 key 的 pending
+/// 提案 → 就地刷新最新表述（保留行 id/proposalId/首次发现时间），不再新增。
+/// `created_at` 由调用方给——insert_result 路径要求与锚行/动作行同戳
+/// （读侧按 created_at 分组到 tick）。
+pub(crate) async fn upsert_proposal_rows(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    workspace_id: &str,
+    agent_id: &str,
+    proposals: &[Proposal],
+    tick_id: Option<&str>,
+    created_at: &str,
+) -> Result<(), RepoError> {
+    for proposal in proposals {
         let proposal_id = if proposal.id.is_empty() {
             uuid::Uuid::new_v4().to_string()
         } else {
             proposal.id.clone()
         };
-        let content = serde_json::json!({
+        let mut content = serde_json::json!({
             "proposalId": proposal_id,
             "status": proposal.status.to_string(),
             "toolName": proposal.tool_name,
@@ -414,10 +445,58 @@ pub(crate) async fn insert_result(
             "risk": proposal.risk,
             "parameters": proposal.parameters,
         });
-        insert_action_row(&mut tx, workspace_id, &agent_id, "proposal", &content.to_string(), &now).await?;
-    }
 
-    tx.commit().await.map_err(|e| RepoError::Database(e.to_string()))?;
+        // problem_key 折叠（2026-09-23 实测：同一 tool:thing 的提案每 tick 换皮
+        // 重提，134 条 pending 里 26/20/18 条同一 key）：已有同 key 的 pending
+        // 提案 → 就地刷新最新表述（保留行 id/proposalId/首次发现时间），不再新增。
+        let existing: Option<(String, String)> = sqlx::query_as(
+            "SELECT id, content FROM agent_actions
+             WHERE workspace_id = ? AND action_type = 'proposal'
+               AND json_extract(content, '$.toolName') = ?
+               AND COALESCE(json_extract(content, '$.thingId'), '') = COALESCE(?, '')
+               AND json_extract(content, '$.status') = 'pending'
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(workspace_id)
+        .bind(&proposal.tool_name)
+        .bind(proposal.thing_id.as_deref())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        if let Some((row_id, old_content)) = existing {
+            // 保留原 proposalId（身份稳定，审批/去重链接不断）；内容用最新表述。
+            if let Some(old_id) = serde_json::from_str::<serde_json::Value>(&old_content)
+                .ok()
+                .and_then(|v| v["proposalId"].as_str().map(str::to_string))
+            {
+                content["proposalId"] = serde_json::Value::String(old_id);
+            }
+            sqlx::query("UPDATE agent_actions SET content = ? WHERE id = ?")
+                .bind(content.to_string())
+                .bind(&row_id)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| RepoError::Database(e.to_string()))?;
+            tracing::debug!(
+                workspace_id,
+                tool = %proposal.tool_name,
+                thing = ?proposal.thing_id,
+                "pending proposal refreshed in place (problem_key dedup)"
+            );
+        } else {
+            insert_action_row(
+                tx,
+                workspace_id,
+                agent_id,
+                "proposal",
+                &content.to_string(),
+                created_at,
+                tick_id,
+            )
+            .await?;
+        }
+    }
     Ok(())
 }
 
@@ -525,6 +604,31 @@ impl Db {
     pub async fn insert_heartbeat_result(&self, workspace_id: &str, result: &HeartbeatResult) -> Result<(), RepoError> {
         insert_result(self.pool(), workspace_id, result).await
     }
+
+    /// persist 心跳支路（Task 8）：统一 Run 路径的提案落 agent_actions，
+    /// tick_id 位写 run_id（C3 联结，提案可回溯到产生它的 run）。
+    /// problem_key 就地刷新语义与 insert_heartbeat_result 同一家
+    /// （[`upsert_proposal_rows`]）。
+    pub async fn upsert_heartbeat_proposals(
+        &self,
+        workspace_id: &str,
+        agent_id: &str,
+        proposals: &[Proposal],
+        tick_id: Option<&str>,
+    ) -> Result<(), RepoError> {
+        if proposals.is_empty() {
+            return Ok(());
+        }
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let mut tx = self
+            .pool()
+            .begin()
+            .await
+            .map_err(|e| RepoError::Database(e.to_string()))?;
+        upsert_proposal_rows(&mut tx, workspace_id, agent_id, proposals, tick_id, &now).await?;
+        tx.commit().await.map_err(|e| RepoError::Database(e.to_string()))?;
+        Ok(())
+    }
 }
 
 pub(crate) async fn insert_action_row(
@@ -534,10 +638,11 @@ pub(crate) async fn insert_action_row(
     action_type: &str,
     content: &str,
     created_at: &str,
+    tick_id: Option<&str>,
 ) -> Result<(), RepoError> {
     sqlx::query(
-        "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at)
-         VALUES (?, ?, ?, 'heartbeat', ?, ?, ?)",
+        "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at, tick_id)
+         VALUES (?, ?, ?, 'heartbeat', ?, ?, ?, ?)",
     )
     .bind(uuid::Uuid::new_v4().to_string())
     .bind(workspace_id)
@@ -545,6 +650,7 @@ pub(crate) async fn insert_action_row(
     .bind(action_type)
     .bind(content)
     .bind(created_at)
+    .bind(tick_id)
     .execute(&mut **tx)
     .await
     .map_err(|e| RepoError::Database(e.to_string()))?;
@@ -630,6 +736,7 @@ mod tests {
             interval_minutes: 30,
             ai_triage_enabled: true,
             triage_mode: default_triage_mode(),
+            rate_limit_per_key_per_min: None,
         };
         let json = cfg.to_db_json();
         let loaded = WorkspaceHeartbeatConfig::from_db_json(Some(&json)).expect("parse");
@@ -719,6 +826,7 @@ mod tests {
                 status: ProposalStatus::Pending,
             }],
             error: None,
+            trace: vec![],
         }
     }
 
@@ -731,7 +839,8 @@ mod tests {
             .await
             .expect("insert_result must succeed against the real schema");
 
-        // Same query as workspace/handler/heartbeat.rs get_logs
+        // Same query as the legacy fallback branch of get_logs
+        // (workspace_heartbeat.rs legacy_logs_from_agent_actions, Task 10)
         let rows: Vec<(String, String, String)> = sqlx::query_as(
             "SELECT action_type, content, created_at FROM agent_actions \
              WHERE workspace_id = ? AND event_type = 'heartbeat' \
@@ -809,6 +918,49 @@ mod tests {
         assert_eq!(parsed["parameters"]["version"], "1.2.3");
     }
 
+    /// Task 9：提案/auto_executed 行携带 tick_id（== result.id），tick anchor
+    /// content 含全量 trace（F11 不截断）。索引收窄（20261009000001）后
+    /// anchor+提案同 tick_id 共存——旧全域唯一索引下提案行插入即撞 UNIQUE。
+    #[tokio::test]
+    pub async fn proposal_row_carries_tick_id() {
+        let pool = test_pool().await;
+        let db = Db::new(pool.clone());
+
+        let mut result = sample_result();
+        result.id = "tick-trace-1".into();
+        result.trace = vec![tinyiothub_core::agent_runs::ToolTraceEntry {
+            id: "c1".into(),
+            name: "read_property".into(),
+            args: serde_json::json!({"thingId": "dev_1", "p": "temperature"}),
+            output: Some("26.5".into()),
+        }];
+        db.insert_heartbeat_result("ws_1", &result)
+            .await
+            .expect("insert_result");
+
+        let rows: Vec<(String, Option<String>)> =
+            sqlx::query_as("SELECT action_type, tick_id FROM agent_actions WHERE workspace_id = 'ws_1'")
+                .fetch_all(&pool)
+                .await
+                .expect("rows");
+        let tick_of = |t: &str| rows.iter().find(|(at, _)| at == t).and_then(|(_, tid)| tid.clone());
+        assert_eq!(tick_of("summary").as_deref(), Some("tick-trace-1"));
+        assert_eq!(tick_of("auto_executed").as_deref(), Some("tick-trace-1"));
+        assert_eq!(tick_of("proposal").as_deref(), Some("tick-trace-1"));
+
+        // anchor content 携带全量 trace。
+        let (content,): (String,) =
+            sqlx::query_as("SELECT content FROM agent_actions WHERE workspace_id = 'ws_1' AND action_type = 'summary'")
+                .fetch_one(&pool)
+                .await
+                .expect("anchor row");
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["trace"][0]["id"], "c1");
+        assert_eq!(parsed["trace"][0]["name"], "read_property");
+        assert_eq!(parsed["trace"][0]["args"]["p"], "temperature");
+        assert_eq!(parsed["trace"][0]["output"], "26.5");
+    }
+
     #[tokio::test]
     pub async fn insert_result_error_status_writes_error_row() {
         let pool = test_pool().await;
@@ -823,6 +975,7 @@ mod tests {
             executed_actions: vec![],
             proposals: vec![],
             error: Some("llm timeout".to_string()),
+            trace: vec![],
         };
         db.insert_heartbeat_result("ws_1", &result)
             .await
@@ -873,6 +1026,7 @@ mod tests {
             interval_minutes: 30,
             ai_triage_enabled: true,
             triage_mode: default_triage_mode(),
+            rate_limit_per_key_per_min: None,
         };
         db.save_heartbeat_config("ws_c", &cfg).await.expect("save");
         let loaded = db
@@ -1077,6 +1231,7 @@ mod tick_id_tests {
             }],
             proposals: vec![],
             error: None,
+            trace: vec![],
         };
         db.insert_heartbeat_result("ws_1", &result).await.expect("first insert");
         db.insert_heartbeat_result("ws_1", &result)
@@ -1084,14 +1239,46 @@ mod tick_id_tests {
             .expect("second insert (idempotent)");
 
         let (anchors, actions): (i64, i64) = sqlx::query_as(
-            "SELECT (SELECT COUNT(*) FROM agent_actions WHERE tick_id = 'tick-1'), \
+            "SELECT (SELECT COUNT(*) FROM agent_actions WHERE tick_id = 'tick-1' AND action_type = 'summary'), \
              (SELECT COUNT(*) FROM agent_actions WHERE action_type = 'auto_executed')",
         )
         .fetch_one(&pool)
         .await
         .expect("counts");
+        // Task 9 起提案/动作行也写 tick_id（同值共存是新语义）——anchor 计数
+        // 须按 action_type 收窄，断言的仍是"锚行不重复"。
         assert_eq!(anchors, 1, "anchor row must not duplicate");
         assert_eq!(actions, 1, "action rows must not duplicate on retry");
+    }
+
+    /// Task 9 索引收窄（20261009000001，谓词含 summary+error 两类锚行）：
+    /// error 锚行同样受唯一约束保护——同一 error tick 的重复投影仍幂等跳过。
+    /// （若谓词只含 'summary'，OR IGNORE 无约束可撞，error tick 会重复落行。）
+    #[tokio::test]
+    async fn error_anchor_with_tick_id_is_idempotent() {
+        let pool = test_pool().await;
+        let db = Db::new(pool.clone());
+        let result = crate::heartbeat::HeartbeatResult {
+            id: "tick-err".into(),
+            workspace_id: "ws_1".into(),
+            status: crate::heartbeat::HeartbeatStatus::Error,
+            summary: String::new(),
+            task_count: 0,
+            executed_actions: vec![],
+            proposals: vec![],
+            error: Some("llm timeout".into()),
+            trace: vec![],
+        };
+        db.insert_heartbeat_result("ws_1", &result).await.expect("first insert");
+        db.insert_heartbeat_result("ws_1", &result)
+            .await
+            .expect("second insert (idempotent)");
+
+        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agent_actions WHERE tick_id = 'tick-err'")
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+        assert_eq!(n, 1, "duplicate error tick must be skipped");
     }
 }
 

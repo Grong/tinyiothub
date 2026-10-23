@@ -78,6 +78,13 @@ pub trait Tool: Send + Sync + crate::port::attribution::Attributable {
     /// Execute the tool with given arguments
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult>;
 
+    /// Whether this tool is advertised to the model. Hidden tools stay
+    /// registered (approval paths can resolve them) but never enter the
+    /// model's tool list or catalog. E2: legacy device tools are hidden.
+    fn exposed(&self) -> bool {
+        true
+    }
+
     /// Get the full spec for LLM registration
     fn spec(&self) -> ToolSpec {
         ToolSpec {

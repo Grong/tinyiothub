@@ -5,17 +5,17 @@
 //! real ThingAgentManager wiring:
 //!
 //! 1. MQTT 路径同款 `route_thing_event` 上报 warning 事件 → 广播 → T7 触发器
-//!    → T8 合并窗口 → Run（T10 prompt → T11 工厂 → T9 runner）→ invoke_action
+//!    → T8 调度器 → Run（T10 prompt → T11 工厂 → T9 runner）→ invoke_action
 //!    过 T4 策略门 → 模拟驱动下发（status simulated/executed）→ T12 落库
 //!    verified=true（read_property 回读）→ T13 回推（无会话 → 告警）。
-//! 2. 同物 30s 内 5 事件 → 仅 1 次唤醒（合并窗口）。
+//! 2. 同物同键事件即来即醒（E1 D3/D4 合并窗已废），同键限速 3/min：5 事件
+//!    → 3 次唤醒，第 4/5 次 RateLimited。
 //! 3. actor='agent' 的事件不唤醒（共振防护 O21）——包括 agent 自己动作产生的事件。
 //! 4. T14 用户指令 → DirectiveSink → Run → T13 append_message 回推会话。
 //!
-//! 时间控制：真实时间 + 亚秒合并窗口（ThingAgentManagerConfig.merge_window）。
-//! 不用 tokio 暂停时钟：auto-advance 会在每个 runtime 空闲点（sqlx-sqlite
-//! 工作线程往返）跳到最近的定时器，时钟竞速无法控制（acquire 超时误触发、
-//! 24h 巡检 tick 狂奔、事件窗口被时钟跳跃撕裂）。
+//! 时间控制：真实时间。不用 tokio 暂停时钟：auto-advance 会在每个 runtime
+//! 空闲点（sqlx-sqlite 工作线程往返）跳到最近的定时器，时钟竞速无法控制
+//! （acquire 超时误触发、24h 巡检 tick 狂奔）。
 
 use std::{
     sync::{Arc, Mutex},
@@ -100,21 +100,22 @@ impl tinyiothub_agent::port::provider::ModelProvider for LoopScriptedProvider {
             reasoning_content: None,
         };
 
-        if any("\"currentValue\"") || any("currentValue") {
+        // E2：read_device 的输出含 health 键——作为"已回读"的稳定信号
+        //（rig 消息里 JSON 被转义，不能匹配带引号的 needle）。
+        if any("health") {
             Ok(text("已开启风扇并确认温度回落"))
         } else if any("simulated") || any("\"executed\"") {
-            // invoke_action 已下发（模拟/真实驱动）→ 回读验证。
-            // 工具结果在消息流中的序列化间距不可依赖，匹配裸子串。
+            // call_device 已下发（模拟/真实驱动）→ read_device 回读验证。
             Ok(call(
                 "c-read",
-                "read_property",
-                serde_json::json!({"thingId": THING, "propertyName": "temp"}),
+                "read_device",
+                serde_json::json!({"thingId": THING, "properties": ["temp"]}),
             ))
         } else if current_user.contains("temp_high") {
             Ok(call(
                 "c-invoke",
-                "invoke_action",
-                serde_json::json!({"thingId": THING, "actionName": "set_fan", "params": {"speed": 3}}),
+                "call_device",
+                serde_json::json!({"thingId": THING, "action": "set_fan", "params": {"speed": 3}}),
             ))
         } else {
             Ok(text("done"))
@@ -218,8 +219,8 @@ impl tinyiothub_agent::port::provider::ModelProvider for InjectionProvider {
                 text: None,
                 tool_calls: vec![ToolCall {
                     id: "c-inject".to_string(),
-                    name: "invoke_action".to_string(),
-                    arguments: serde_json::json!({"thingId": THING, "actionName": "factory_reset"}).to_string(),
+                    name: "call_device".to_string(),
+                    arguments: serde_json::json!({"thingId": THING, "action": "factory_reset"}).to_string(),
                 }],
                 usage: None,
                 reasoning_content: None,
@@ -319,7 +320,6 @@ async fn build_fixture(
     name: &str,
     policy: AutonomyPolicy,
     timer_interval: Duration,
-    merge_window: Duration,
     runner: Arc<Runner>,
     provider_factory: ProviderFactory,
 ) -> FixtureParts {
@@ -388,13 +388,15 @@ async fn build_fixture(
         agent_events,
         runner,
         ThingAgentManagerConfig {
-            // 定时巡检不干扰断言（首 tick 停在合并窗口；按 dedup_key 过滤）。
+            // 定时巡检不干扰断言（timer 首 tick 即醒即跑成 timer:{ws} run；
+            // 断言按 dedup_key 过滤）。
             timer_interval,
             min_wake_level: 3,
-            // 亚秒合并窗口：真实时间下测试快速收敛。
-            merge_window,
+            ..Default::default()
         },
         Arc::new(tinyiothub_agent::runtime::thing_agent::traits::NoopTicketResolutions),
+        // Task 6：空表默认——heartbeat trigger 空任务抑制不 tick。
+        tinyiothub_agent::runtime::thing_agent::HeartbeatDeps::default(),
     ));
 
     FixtureParts {
@@ -418,7 +420,6 @@ async fn fixture(name: &str) -> LoopFixture {
         name,
         act_policy(),
         Duration::from_secs(24 * 3600),
-        Duration::from_millis(150),
         Arc::new(Runner::new()),
         scripted_provider_factory(&provider),
     )
@@ -553,7 +554,7 @@ async fn warning_event_runs_full_loop_and_persists_verified_report() {
 
     route(&fx, "device").await;
 
-    // 150ms 合并窗口到期 → 唤醒 → Run 全链路（无定时器依赖，轮询收敛）。
+    // 合并窗已废（E1 D3/D4）：事件即来即醒 → Run 全链路（无定时器依赖，轮询收敛）。
     wait_for("run persisted", || run_count_is(&fx.pool, EVENT_KEY, 1)).await;
 
     // T12 落库：acted + verified（invoke 后 read_property 回读）。
@@ -661,11 +662,12 @@ async fn warning_event_runs_full_loop_and_persists_verified_report() {
     assert!(fx.provider.call_count() >= 3, "LLM 至少三轮：invoke → read → 总结");
 }
 
-// ── 2. merge window: 5 events in 30s → exactly 1 wake ───────────────
+// ── 2. 同键限速（E1 D3/D4）：5 个同键事件 → 前 3 个即来即醒各自成 run，
+//    第 4/5 个被限速（默认 3/min，metric agent_wake_rate_limited）──────
 
 #[tokio::test]
-async fn five_events_in_30s_merge_into_one_wake() {
-    let fx = fixture("loop_merge").await;
+async fn same_key_events_rate_limited_to_default_three_per_minute() {
+    let fx = fixture("loop_rate_limit").await;
     fx.manager.start(WS);
     wait_subscribed(&fx.bus).await;
 
@@ -673,13 +675,13 @@ async fn five_events_in_30s_merge_into_one_wake() {
         route(&fx, "device").await;
     }
 
-    wait_for("merged run", || run_count_is(&fx.pool, EVENT_KEY, 1)).await;
+    wait_for("3 admitted runs", || run_count_is(&fx.pool, EVENT_KEY, 3)).await;
 
-    // 窗口已关闭：预算期内无重复唤醒（fail-fast 轮询，T18 去抖；
-    // 合并窗口本身是墙钟语义，预算即窗口周期余量）。
-    assert_never("duplicate wake after merge window", Duration::from_millis(500), || {
+    // 第 4/5 次唤醒被限速丢弃（fail-fast 轮询，T18 去抖）：预算期内计数
+    // 不得超过 3。
+    assert_never("rate-limited 4th/5th wake", Duration::from_millis(500), || {
         let pool = fx.pool.clone();
-        Box::pin(async move { run_count(&pool, EVENT_KEY).await > 1 })
+        Box::pin(async move { run_count(&pool, EVENT_KEY).await > 3 })
     })
     .await;
 }
@@ -824,6 +826,9 @@ async fn policy_denial_streak_triggers_relax_hint_with_registry() {
         tokens: 0,
         end_reason: None,
         thing_id: None,
+        trace: vec![],
+        task_count: None,
+        snapshot: None,
     };
 
     // 当前 run 在 alert 之前已 record → recent_by_dedup 窗口第一条即当前 run。
@@ -934,7 +939,7 @@ async fn duplicate_directive_via_dispatch_tool_yields_single_run() {
         dup.error
     );
 
-    // 第一条指令不进合并窗口 → 立即执行落库。
+    // 第一条指令即来即醒（不过调度门槛）→ 立即执行落库。
     wait_for("user run persisted", || {
         let pool = fx.pool.clone();
         Box::pin(async move { user_run_count(&pool).await == 1 })
@@ -946,18 +951,17 @@ async fn duplicate_directive_via_dispatch_tool_yields_single_run() {
     assert_eq!(user_run_count(&fx.pool).await, 1, "60s 内同文本指令仅产生 1 个 Run");
 }
 
-// ── 行2: Critical 绕过合并 —— 合并窗口设为 spec 值 30s，critical 事件
-//    必须在窗口零头（5s 上限）内完成全链路落库。scheduler 单测见 T8
-//    critical_bypasses_merge_window，manager stub 链路见 T15。
+// ── 行2: Critical 即来即醒（绕过限速与预算，O10）——critical 事件必须
+//    立即完成全链路落库（5s 上限）。scheduler 单测见 T8
+//    critical_bypasses_rate_limit，manager stub 链路见 T15。
 
 #[tokio::test]
-async fn critical_event_bypasses_30s_merge_window_end_to_end() {
+async fn critical_event_runs_immediately_end_to_end() {
     let provider = LoopScriptedProvider::default();
     let parts = build_fixture(
         "loop_critical_bypass",
         act_policy(),
         Duration::from_secs(24 * 3600),
-        Duration::from_secs(30), // spec 合并窗口
         Arc::new(Runner::new()),
         scripted_provider_factory(&provider),
     )
@@ -975,7 +979,7 @@ async fn critical_event_bypasses_30s_merge_window_end_to_end() {
     )
     .await;
 
-    // 5s ≪ 30s 合并窗口：若 critical 误入窗口，这里必然超时。
+    // Critical 不过任何调度门槛：唤醒延迟必须是亚秒级。
     let deadline = started + Duration::from_secs(5);
     loop {
         if run_count(&parts.pool, EVENT_KEY).await == 1 {
@@ -983,14 +987,14 @@ async fn critical_event_bypasses_30s_merge_window_end_to_end() {
         }
         assert!(
             Instant::now() < deadline,
-            "critical 事件未在合并窗口零头内唤醒（>5s）——疑似走了 30s 窗口"
+            "critical 事件未立即唤醒（>5s）——疑似误入调度门槛"
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let wake_latency = started.elapsed();
     assert!(
         wake_latency < Duration::from_secs(5),
-        "唤醒延迟 {wake_latency:?} 必须远小于 30s 合并窗口"
+        "唤醒延迟 {wake_latency:?} 必须是亚秒级"
     );
 
     let (outcome, trigger_type): (String, String) =
@@ -1016,10 +1020,15 @@ async fn queue_full_51st_directive_rejected_and_user_informed() {
     };
     let parts = build_fixture(
         "loop_queue_full",
-        act_policy(),
+        // mode=off 门控 timer 首 tick（E1 合并窗已废，timer 即来即醒会占
+        // ready 队列一个槽位，干扰"50 条指令投满"的精确计数）；指令路径
+        // 不过策略门（DirectiveSink → scheduler 直投），hung LLM 也不会
+        // 走到 invoke_action 门。
+        AutonomyPolicy {
+            mode: AutonomyMode::Off,
+            ..act_policy()
+        },
         Duration::from_secs(24 * 3600),
-        // 大合并窗口：timer 首 tick 停在窗口内不占 ready 队列。
-        Duration::from_secs(30),
         Arc::new(Runner::with_budget(25, Duration::from_secs(60))),
         provider_factory,
     )
@@ -1074,7 +1083,6 @@ async fn mode_off_suppresses_event_and_timer_wakes_end_to_end() {
         off_policy,
         // 短巡检间隔：若 timer 门控失效，100ms 内就会有信号漏出。
         Duration::from_millis(100),
-        Duration::from_millis(150),
         Arc::new(Runner::new()),
         scripted_provider_factory(&provider),
     )
@@ -1092,9 +1100,8 @@ async fn mode_off_suppresses_event_and_timer_wakes_end_to_end() {
     )
     .await;
 
-    // 观察窗 ≥ 5 个 timer tick + 合并窗口（fail-fast 轮询，T18 去抖；
-    // tick 调度本身是墙钟语义，预算即 5 tick + 窗口余量）：任何漏网信号
-    // 都会落成 Run 或 LLM 调用。
+    // 观察窗 ≥ 5 个 timer tick（fail-fast 轮询，T18 去抖；tick 调度本身
+    // 是墙钟语义，预算即 5 tick 余量）：任何漏网信号都会落成 Run 或 LLM 调用。
     let pool_for_never = parts.pool.clone();
     let provider_for_never = provider.clone();
     assert_never(
@@ -1144,7 +1151,6 @@ async fn hung_llm_run_forced_closed_as_budget_exceeded() {
         "loop_hung_llm",
         act_policy(),
         Duration::from_secs(24 * 3600),
-        Duration::from_millis(150),
         // 1s 时长预算代替 5min：等比验证强制收尾（10s 轮询上限 ≫ 1s
         // deadline + cancel 传播，远小于 30s backstop grace）。
         Arc::new(Runner::with_budget(25, Duration::from_secs(1))),
@@ -1197,7 +1203,6 @@ async fn injected_event_payload_cannot_bypass_denylist() {
         "loop_injection",
         deny_policy,
         Duration::from_secs(24 * 3600),
-        Duration::from_millis(150),
         Arc::new(Runner::new()),
         provider_factory,
     )

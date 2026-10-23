@@ -1,0 +1,29 @@
+{
+  "manifestVersion": "1.0",
+  "identity": {
+    "driver": "simulator",
+    "version": "2.0.0",
+    "protocol": "simulator",
+    "displayName": "Simulated Thing Driver",
+    "abiVersion": 2,
+    "dynamicCapabilities": true
+  },
+  "config": { "type": "object", "additionalProperties": true },
+  "capabilities": { "cancel": true, "push": false, "streaming": false },
+  "tools": [],
+  "stateFields": [],
+  "sources": [
+    {
+      "id": "telemetry",
+      "kind": "poll",
+      "fields": [],
+      "intervalMs": 1000,
+      "minIntervalMs": 200,
+      "demandOnly": false,
+      "health": true
+    }
+  ],
+  "resources": [],
+  "placement": { "mode": "runtime" },
+  "limits": { "maxConcurrentJobs": 1, "maxCallsPerMin": 60 }
+}

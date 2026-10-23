@@ -29,7 +29,6 @@
 
 .cron-stat-card:hover {
   box-shadow: var(--shadow-md);
-  transform: translateY(-2px);
 }
 
 .cron-stat-icon {

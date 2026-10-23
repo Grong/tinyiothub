@@ -83,6 +83,9 @@ pub struct AdminState {
     pub sysinfo_system: Arc<std::sync::Mutex<sysinfo::System>>,
     /// 管理员角色检查（event-security seam）
     pub role_checker: Arc<dyn AdminRoleChecker>,
+    /// 派生驱动管理器（Task 7/8）——属性管理面 notify 钩子 + GET derived_status 注入读源。
+    /// None = 未装配（测试/降级路径），handler 跳过钩子与注入。
+    pub derived_manager: Option<Arc<tinyiothub_runtime::driver::derived_manager::DerivedDriverManager>>,
     /// 网络默认配置切片（/system/network）
     pub network_defaults: tinyiothub_core::config::NetworkDefaultsConfig,
     /// MQTT 主 broker 配置切片（/system/mqtt）

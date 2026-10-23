@@ -47,6 +47,11 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
         .nest("/alarms", crate::domains::alarm::router())
         .nest("/tickets", crate::domains::ticket::router())
         .nest("/judgments", crate::domains::judgment::router())
+        .nest("/brain-events", crate::domains::brain_event::router())
+        .nest(
+            "/agent-runs",
+            crate::domains::agent::trace_handler::create_agent_runs_router(),
+        )
         .nest("/alarm-rules", crate::domains::alarm::rule_router())
         .nest(
             "/monitoring",
@@ -76,7 +81,7 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
         .nest("/workspaces", crate::domains::tenant::workspace_router())
         .nest(
             "/workspaces",
-            crate::domains::agent::host::memory::handler::create_router(),
+            crate::domains::agent::host::persist::memory::handler::create_router(),
         )
         .nest(
             "/workspaces",
@@ -86,8 +91,24 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
             "/workspaces",
             crate::domains::agent::host::handler::workspace_heartbeat::create_router(),
         )
+        .nest(
+            "/workspaces",
+            crate::domains::agent::host::handler::watch::create_router(),
+        )
+        .nest(
+            "/workspaces",
+            crate::domains::agent::host::handler::ledger::create_router(),
+        )
+        .nest(
+            "/workspaces",
+            crate::domains::agent::host::handler::live_stream::create_router(),
+        )
+        .nest(
+            "/workspaces",
+            crate::domains::agent::host::handler::hub_stream::create_router(),
+        )
         .nest("/mcp", crate::domains::mcp::router())
-        .nest("/chat", crate::domains::agent::chat::handler::create_router())
+        .nest("/chat", crate::domains::agent::host::chat::handler::create_router())
         .nest(
             "/agents/skills",
             crate::domains::agent::host::handler::skills::create_router(),
@@ -97,18 +118,23 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
         .nest("/agents", crate::domains::agent::host::handler::create_router())
         .nest("/driver-health", crate::domains::driver::driver_health_router())
         .nest("/things", crate::domains::thing::router())
+        .nest("/maps", crate::domains::map::router())
+        .route(
+            "/resources/{id}/file",
+            get(crate::domains::thing::handler::resources::serve_resource_file),
+        )
         .nest("/things/admin", crate::domains::admin::thing::create_router())
         .route(
             "/tools/catalog",
-            get(crate::domains::agent::chat::handler::proxy::tools_catalog),
+            get(crate::domains::agent::host::chat::handler::proxy::tools_catalog),
         )
         .route(
             "/tools/effective",
-            get(crate::domains::agent::chat::handler::proxy::tools_effective),
+            get(crate::domains::agent::host::chat::handler::proxy::tools_effective),
         )
         .route(
             "/tools/toggle",
-            post(crate::domains::agent::chat::handler::proxy::tools_toggle),
+            post(crate::domains::agent::host::chat::handler::proxy::tools_toggle),
         )
         .nest("/auth", crate::domains::auth::router())
         .route("/test-auth", get(test_auth_endpoint))

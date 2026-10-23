@@ -30,6 +30,9 @@ pub struct ThingService {
     workspace_scope: Option<String>,
     event_bus: Option<Arc<EventBus>>,
     tag_db: Option<Arc<Db>>,
+    /// E4a 声明钩子：MCP 的 create_thing 是 AI 建物的主路径，必须与 REST
+    /// 面一样做 prepare_creation + materialize。
+    declaration_hook: Option<Arc<dyn crate::domains::thing::hooks::ThingDeclarationHook>>,
 }
 
 impl ThingService {
@@ -39,6 +42,7 @@ impl ThingService {
             workspace_scope: None,
             event_bus: None,
             tag_db: None,
+            declaration_hook: None,
         }
     }
 
@@ -48,7 +52,18 @@ impl ThingService {
             workspace_scope: None,
             event_bus: Some(event_bus),
             tag_db: None,
+            declaration_hook: None,
         }
+    }
+
+    pub fn set_declaration_hook(&mut self, hook: Arc<dyn crate::domains::thing::hooks::ThingDeclarationHook>) {
+        self.declaration_hook = Some(hook);
+    }
+
+    /// Whether a declaration hook is attached (MCP wiring regression test).
+    #[cfg(test)]
+    pub(crate) fn has_declaration_hook(&self) -> bool {
+        self.declaration_hook.is_some()
     }
 
     /// 返回带租户作用域的副本：所有设备查询/写操作限定到该 workspace。
@@ -76,7 +91,27 @@ impl ThingService {
         {
             return Err(Error::ValidationError(ERROR_DEVICE_NAME_EXISTS.to_string()));
         }
+        // E4a：非法 driver_options 必须在插入前拒绝，避免半绑定物。
+        let workspace = self.ws().unwrap_or_default().to_string();
+        if let (Some(hook), Some(driver)) = (&self.declaration_hook, &request.driver_name) {
+            hook.prepare_creation(&workspace, driver, request.driver_options.as_deref())
+                .await
+                .map_err(Error::ValidationError)?;
+        }
         let created_device = self.db.create_thing(self.ws(), request).await?;
+        // E4a：物化失败回滚刚创建的物（MCP 是 AI 建物的主路径）。
+        if let (Some(hook), Some(_)) = (&self.declaration_hook, &request.driver_name)
+            && let Err(e) = hook.materialize(&workspace, &created_device.id).await
+        {
+            if let Err(cleanup) = self.db.delete_thing_row(&created_device.id).await {
+                tracing::error!(
+                    thing_id = %created_device.id,
+                    error = %cleanup,
+                    "failed to roll back MCP-created thing after declaration materialization failure"
+                );
+            }
+            return Err(Error::ValidationError(e));
+        }
         // 加载完整设备信息（含属性、指令）再发布事件
         let complete_device = self
             .load_complete_device(&created_device.id)

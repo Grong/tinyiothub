@@ -10,11 +10,13 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 use tinyiothub_agent::AgentError;
 use tinyiothub_agent::port::tool::Tool;
+use tinyiothub_agent::runtime::thing_agent::ArbitrationRegistry;
+use tinyiothub_agent::runtime::thing_agent::seams::tool_exec::{SeamTool, ToolExecSeam};
 use tinyiothub_agent::tools::{ToolProvider, ToolRegistry, ToolRuntimeContext, filter_by_denylist};
 use tinyiothub_skills::trust::{ToolSafety, classify_tool_safety};
 use tinyiothub_storage::cache::ThingCache;
 
-use super::thing::{PendingActionStore, ThingToolContext, create_thing_tools};
+use super::thing::{LiveSummarySource, ManagerSlot, PendingActionStore, ThingToolContext, create_thing_tools};
 use super::{canvas::CanvasTool, dispatch_task::DispatchThingTaskTool, get_skill::GetSkillTool};
 use crate::domains::agent::host::config::service as config_service;
 
@@ -25,10 +27,19 @@ use crate::domains::agent::host::config::service as config_service;
 /// 由闭包捕获（D2 —— 这些类型不进 agent crate）；`data_server` /
 /// `directive_sink` 走 `ToolRuntimeContext` 晚绑定（启动后经
 /// `AgentPool::set_runtime_context` 注入）。
+#[allow(clippy::too_many_arguments)] // 组合根 provider：参数即依赖清单，收敛于此一处
 pub fn chat_builtin_tools_provider(
     db_pool: SqlitePool,
     device_cache: Option<Arc<ThingCache>>,
     pending_actions: Arc<PendingActionStore>,
+    arbitration: Arc<ArbitrationRegistry>,
+    live: Arc<dyn LiveSummarySource>,
+    tool_exec: Arc<dyn ToolExecSeam>,
+    event_bus: Option<Arc<tinyiothub_runtime::event_bus::EventBus>>,
+    manager: ManagerSlot,
+    access: Option<Arc<dyn tinyiothub_runtime::access::validator::AccessCallValidator>>,
+    resources: Option<Arc<dyn tinyiothub_runtime::access::resources::ResourceResolver>>,
+    demand: Option<Arc<dyn tinyiothub_runtime::access::DemandRecorder>>,
 ) -> ToolProvider {
     Arc::new(move |workspace_id: &str, runtime: &ToolRuntimeContext| {
         let mut tools: Vec<(Box<dyn Tool>, ToolSafety)> = Vec::new();
@@ -43,6 +54,13 @@ pub fn chat_builtin_tools_provider(
                 device_cache: device_cache.clone(),
                 data_server: runtime.data_server.clone(),
                 pending_actions: Some(pending_actions.clone()),
+                arbitration: Some(arbitration.clone()),
+                live: Some(live.clone()),
+                event_bus: event_bus.clone(),
+                manager: Some(manager.clone()),
+                access: access.clone(),
+                resources: resources.clone(),
+                demand: demand.clone(),
             },
         ));
 
@@ -53,7 +71,14 @@ pub fn chat_builtin_tools_provider(
             classify_tool_safety("dispatch_thing_task"),
         ));
 
+        // E2 ToolExec 接缝：所有内建工具经统一执行外壳（默认直通）。
         tools
+            .into_iter()
+            .map(|(tool, safety)| {
+                let wrapped: Box<dyn Tool> = Box::new(SeamTool::new(tool, Arc::clone(&tool_exec), workspace_id));
+                (wrapped, safety)
+            })
+            .collect()
     })
 }
 

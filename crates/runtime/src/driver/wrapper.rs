@@ -89,8 +89,15 @@ impl DriverWrapper {
     }
 
     pub fn read_data_once(&mut self) -> DriverExecutionResult<Vec<ResultValue>> {
+        self.read_data_once_with(&crate::driver::CancelToken::new())
+    }
+
+    pub fn read_data_once_with(
+        &mut self,
+        cancel: &crate::driver::CancelToken,
+    ) -> DriverExecutionResult<Vec<ResultValue>> {
         let start_time = Instant::now();
-        let result = self.retry_manager.execute_once(|| self.inner_driver.read_data());
+        let result = self.retry_manager.execute_once(|| self.inner_driver.read_data(cancel));
         let elapsed = start_time.elapsed();
         self.update_status(&result, elapsed);
         self.convert_result(result, elapsed)
@@ -101,10 +108,18 @@ impl DriverWrapper {
     }
 
     pub fn execute_command(&mut self, cmd: &ThingCommand) -> DriverExecutionResult<bool> {
+        self.execute_command_with(cmd, &crate::driver::CancelToken::new())
+    }
+
+    pub fn execute_command_with(
+        &mut self,
+        cmd: &ThingCommand,
+        cancel: &crate::driver::CancelToken,
+    ) -> DriverExecutionResult<bool> {
         let start_time = Instant::now();
         let result = self
             .retry_manager
-            .execute_once(|| self.inner_driver.execute_command(cmd));
+            .execute_once(|| self.inner_driver.execute_command(cmd, cancel));
         let elapsed = start_time.elapsed();
         self.update_status(&result, elapsed);
         self.convert_result(result, elapsed)
@@ -115,6 +130,12 @@ impl DriverWrapper {
             RetryResult::Success(_) => {
                 self.status_manager.record_success(elapsed);
             }
+            // E4c：取消是 stop 的协作结果，不是驱动故障——不得计失败预算
+            // 或把设备标离线（重试层已把 Cancelled 视为终态）。
+            RetryResult::Failed {
+                last_error: Error::Cancelled,
+                ..
+            } => {}
             RetryResult::Failed { .. } | RetryResult::Timeout { .. } => {
                 self.status_manager.record_failure();
             }
@@ -290,11 +311,12 @@ impl DriverWrapper {
     }
 
     pub fn direct_read_data(&mut self) -> Result<Vec<ResultValue>, Error> {
-        self.inner_driver.read_data()
+        self.inner_driver.read_data(&crate::driver::CancelToken::new())
     }
 
     pub fn direct_execute_command(&mut self, cmd: &ThingCommand) -> Result<bool, Error> {
-        self.inner_driver.execute_command(cmd)
+        self.inner_driver
+            .execute_command(cmd, &crate::driver::CancelToken::new())
     }
 
     fn display_name(&self) -> String {

@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-19T00:00:00+08:00",
+  "title": "Design System: TinyIoTHub",
+  "extensions": {
+    "colorMeta": {
+      "signal-blue": { "role": "primary", "displayName": "信号蓝 Signal Blue", "canonical": "#0098FF", "tonalRamp": ["oklch(0.25 0.07 250)", "oklch(0.35 0.12 250)", "oklch(0.45 0.16 250)", "oklch(0.55 0.19 250)", "oklch(0.65 0.19 250)", "oklch(0.75 0.15 250)", "oklch(0.85 0.09 250)", "oklch(0.95 0.03 250)"] },
+      "signal-blue-hover": { "role": "primary", "displayName": "信号蓝·悬停", "canonical": "#33B0FF", "tonalRamp": ["oklch(0.28 0.08 250)", "oklch(0.38 0.13 250)", "oklch(0.48 0.17 250)", "oklch(0.58 0.19 250)", "oklch(0.69 0.18 250)", "oklch(0.78 0.14 250)", "oklch(0.87 0.08 250)", "oklch(0.96 0.03 250)"] },
+      "aurora-cyan": { "role": "primary", "displayName": "极光青 Aurora Cyan", "canonical": "#00d4ff", "tonalRamp": ["oklch(0.30 0.05 215)", "oklch(0.40 0.08 215)", "oklch(0.50 0.10 215)", "oklch(0.60 0.12 215)", "oklch(0.70 0.13 215)", "oklch(0.80 0.13 215)", "oklch(0.88 0.08 215)", "oklch(0.95 0.03 215)"] },
+      "nebula-violet": { "role": "primary", "displayName": "星云紫 Nebula Violet", "canonical": "#7b61ff", "tonalRamp": ["oklch(0.22 0.06 285)", "oklch(0.32 0.12 285)", "oklch(0.42 0.18 285)", "oklch(0.50 0.21 285)", "oklch(0.56 0.22 285)", "oklch(0.68 0.16 285)", "oklch(0.80 0.09 285)", "oklch(0.92 0.03 285)"] },
+      "teal-secondary": { "role": "secondary", "displayName": "深潭青 Teal", "canonical": "#14b8a6", "tonalRamp": ["oklch(0.25 0.04 178)", "oklch(0.36 0.07 178)", "oklch(0.48 0.09 178)", "oklch(0.60 0.11 178)", "oklch(0.70 0.11 178)", "oklch(0.79 0.08 178)", "oklch(0.88 0.05 178)", "oklch(0.95 0.02 178)"] },
+      "deep-space": { "role": "neutral", "displayName": "深空蓝黑 Deep Space", "canonical": "#12141a", "tonalRamp": ["oklch(0.15 0.010 260)", "oklch(0.22 0.012 260)", "oklch(0.30 0.012 260)", "oklch(0.40 0.012 260)", "oklch(0.52 0.010 260)", "oklch(0.65 0.008 260)", "oklch(0.80 0.006 260)", "oklch(0.94 0.004 260)"] },
+      "surface-card": { "role": "neutral", "displayName": "舱面卡 Surface Card", "canonical": "#181b22", "tonalRamp": ["oklch(0.17 0.012 260)", "oklch(0.24 0.012 260)", "oklch(0.32 0.012 260)", "oklch(0.42 0.012 260)", "oklch(0.54 0.010 260)", "oklch(0.66 0.008 260)", "oklch(0.81 0.006 260)", "oklch(0.94 0.004 260)"] },
+      "surface-elevated": { "role": "neutral", "displayName": "高架面 Elevated", "canonical": "#1a1d25", "tonalRamp": ["oklch(0.18 0.012 260)", "oklch(0.25 0.012 260)", "oklch(0.33 0.012 260)", "oklch(0.43 0.012 260)", "oklch(0.55 0.010 260)", "oklch(0.67 0.008 260)", "oklch(0.81 0.006 260)", "oklch(0.94 0.004 260)"] },
+      "surface-hover": { "role": "neutral", "displayName": "悬停面 Hover", "canonical": "#262a35", "tonalRamp": ["oklch(0.21 0.012 260)", "oklch(0.28 0.012 260)", "oklch(0.36 0.012 260)", "oklch(0.46 0.012 260)", "oklch(0.57 0.010 260)", "oklch(0.69 0.008 260)", "oklch(0.83 0.006 260)", "oklch(0.95 0.004 260)"] },
+      "glass-surface": { "role": "neutral", "displayName": "玻璃面 Glass", "canonical": "rgba(26, 29, 37, 0.65)", "tonalRamp": ["rgba(26,29,37,0.85)", "rgba(26,29,37,0.75)", "rgba(26,29,37,0.65)", "rgba(26,29,37,0.55)", "rgba(26,29,37,0.45)", "rgba(26,29,37,0.35)", "rgba(26,29,37,0.25)", "rgba(26,29,37,0.15)"] },
+      "text-primary": { "role": "neutral", "displayName": "正文 Text Primary", "canonical": "#e4e4e7", "tonalRamp": ["oklch(0.20 0.008 260)", "oklch(0.30 0.008 260)", "oklch(0.42 0.008 260)", "oklch(0.55 0.008 260)", "oklch(0.68 0.006 260)", "oklch(0.80 0.005 260)", "oklch(0.90 0.004 260)", "oklch(0.97 0.002 260)"] },
+      "text-strong": { "role": "neutral", "displayName": "强文本 Text Strong", "canonical": "#fafafa", "tonalRamp": ["oklch(0.22 0.006 260)", "oklch(0.33 0.006 260)", "oklch(0.45 0.006 260)", "oklch(0.58 0.006 260)", "oklch(0.70 0.005 260)", "oklch(0.82 0.004 260)", "oklch(0.91 0.003 260)", "oklch(0.98 0.002 260)"] },
+      "text-muted": { "role": "neutral", "displayName": "弱化文本 Muted", "canonical": "#71717a", "tonalRamp": ["oklch(0.18 0.008 260)", "oklch(0.28 0.008 260)", "oklch(0.38 0.008 260)", "oklch(0.52 0.008 260)", "oklch(0.65 0.006 260)", "oklch(0.77 0.005 260)", "oklch(0.88 0.004 260)", "oklch(0.96 0.002 260)"] },
+      "border-subtle": { "role": "neutral", "displayName": "细分隔 Border Subtle", "canonical": "#27272a", "tonalRamp": ["oklch(0.19 0.006 260)", "oklch(0.27 0.006 260)", "oklch(0.36 0.006 260)", "oklch(0.47 0.006 260)", "oklch(0.59 0.005 260)", "oklch(0.71 0.004 260)", "oklch(0.84 0.003 260)", "oklch(0.95 0.002 260)"] },
+      "ok-green": { "role": "semantic", "displayName": "OK 绿", "canonical": "#22c55e", "tonalRamp": ["oklch(0.25 0.06 150)", "oklch(0.35 0.10 150)", "oklch(0.45 0.14 150)", "oklch(0.58 0.17 150)", "oklch(0.70 0.18 150)", "oklch(0.78 0.14 150)", "oklch(0.87 0.08 150)", "oklch(0.95 0.03 150)"] },
+      "warn-amber": { "role": "semantic", "displayName": "警戒琥珀", "canonical": "#f59e0b", "tonalRamp": ["oklch(0.28 0.06 75)", "oklch(0.38 0.10 75)", "oklch(0.50 0.13 75)", "oklch(0.62 0.15 75)", "oklch(0.76 0.15 75)", "oklch(0.84 0.11 75)", "oklch(0.90 0.07 75)", "oklch(0.96 0.03 75)"] },
+      "danger-red": { "role": "semantic", "displayName": "危险红", "canonical": "#ef4444", "tonalRamp": ["oklch(0.25 0.07 28)", "oklch(0.35 0.12 28)", "oklch(0.45 0.17 28)", "oklch(0.55 0.20 28)", "oklch(0.63 0.21 28)", "oklch(0.74 0.14 28)", "oklch(0.85 0.08 28)", "oklch(0.94 0.03 28)"] },
+      "info-blue": { "role": "semantic", "displayName": "信息蓝", "canonical": "#3b82f6", "tonalRamp": ["oklch(0.24 0.06 258)", "oklch(0.34 0.11 258)", "oklch(0.44 0.16 258)", "oklch(0.52 0.19 258)", "oklch(0.60 0.19 258)", "oklch(0.72 0.14 258)", "oklch(0.84 0.08 258)", "oklch(0.94 0.03 258)"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "h1/h2/h3 与品牌标题；700 字重 + -0.03em 负字距是不变量。" },
+      "title": { "displayName": "Title", "purpose": "卡片标题、面板标题 (15px/600)。" },
+      "body": { "displayName": "Body", "purpose": "全局正文基准 (14px/1.55)，紧凑运维密度。" },
+      "label": { "displayName": "Label", "purpose": "统计标签、表头、分组小标题 (11px 大写 +0.04em)。" },
+      "mono": { "displayName": "Mono", "purpose": "机器字符串专用：命令、ID、topic、键帽徽章 (JetBrains Mono 13px)。" }
+    },
+    "shadows": [
+      { "name": "resting-card", "value": "0 1px 4px rgba(0,0,0,0.12)", "purpose": "卡片/输入默认静止态，几乎不可察觉。" },
+      { "name": "hover-card", "value": "0 4px 24px rgba(0,0,0,0.24)", "purpose": "hover 时深度加深一档。" },
+      { "name": "elevated", "value": "0 12px 28px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.03)", "purpose": "模态、下拉等高架面。" },
+      { "name": "topmost", "value": "0 24px 48px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.03)", "purpose": "全屏对话、关键弹层。" },
+      { "name": "floating-card", "value": "0 4px 20px rgba(0,0,0,0.35), 0 16px 60px rgba(0,0,0,0.28), 0 40px 100px rgba(0,212,255,0.04), inset 0 0 0 1px rgba(255,255,255,0.04)", "purpose": "落地页悬浮卡四层堆叠；无边框，inset 高光塑造边缘。" },
+      { "name": "focus-ring", "value": "0 0 0 2px #12141a, 0 0 0 4px #0098FF", "purpose": "双层描边式键盘焦点环。" },
+      { "name": "focus-glow", "value": "0 0 0 2px #12141a, 0 0 0 4px #0098FF, 0 0 20px rgba(0,152,255,0.25)", "purpose": "焦点加强版，追加信号蓝光晕。" },
+      { "name": "accent-glow", "value": "0 2px 10px rgba(0,152,255,0.25)", "purpose": "主要按钮静止态光晕；hover 加深为 0 4px 16px rgba(0,212,255,0.45)。" },
+      { "name": "semantic-glow-sm", "value": "0 0 8px <语义色 50%>", "purpose": "状态点、开关、在线指示的语义光晕（ok/warn/danger/info/accent 各一份）。" }
+    ],
+    "motion": [
+      { "name": "ease-out", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "入场、揭示、壳层折叠。" },
+      { "name": "ease-in-out", "value": "cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "通用过渡。" },
+      { "name": "ease-spring", "value": "cubic-bezier(0.34, 1.56, 0.64, 1)", "purpose": "俏皮交互（谨慎使用）。" },
+      { "name": "duration-fast", "value": "120ms", "purpose": "hover/focus 微交互。" },
+      { "name": "duration-normal", "value": "200ms", "purpose": "默认过渡、模态 scale-in、导航折叠。" },
+      { "name": "duration-slow", "value": "350ms", "purpose": "页面过渡、开关滑块。" },
+      { "name": "pulse-glow", "value": "2s ease-in-out infinite", "purpose": "状态点呼吸；reduced-motion 禁用。" },
+      { "name": "bar-shine", "value": "3s ease-in-out infinite", "purpose": "度量条扫光；reduced-motion 禁用。" }
+    ],
+    "breakpoints": [
+      { "name": "shell-collapse", "value": "1100px" },
+      { "name": "mobile", "value": "600px" },
+      { "name": "mobile-sm", "value": "400px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "唯一品牌渐变主按钮：青→蓝→紫 135deg + 信号蓝光晕；主要动作专用。",
+      "html": "<button class=\"ds-btn-primary\">创建物</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: none; background: linear-gradient(135deg, #00d4ff 0%, #0098FF 50%, #7b61ff 100%); color: #ffffff; padding: 9px 16px; border-radius: 10px; font-size: 13px; font-weight: 500; letter-spacing: -0.01em; cursor: pointer; box-shadow: 0 2px 10px rgba(0,152,255,0.25); transition: background 120ms cubic-bezier(0.16,1,0.3,1), box-shadow 120ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-primary:hover { background: linear-gradient(135deg, rgba(0,212,255,0.9) 0%, rgba(0,152,255,0.9) 60%, rgba(123,97,255,0.8) 100%); box-shadow: 0 4px 16px rgba(0,212,255,0.45); } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 2px #12141a, 0 0 0 4px #0098FF, 0 0 20px rgba(0,152,255,0.25); } .ds-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }"
+    },
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button-default",
+      "description": "无边框灰底默认按钮，悬停面底色，次要动作用。",
+      "html": "<button class=\"ds-btn-default\">取消</button>",
+      "css": ".ds-btn-default { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: none; background: #262a35; color: #e4e4e7; padding: 9px 16px; border-radius: 10px; font-size: 13px; font-weight: 500; letter-spacing: -0.01em; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,0.2); transition: background 120ms cubic-bezier(0.16,1,0.3,1), box-shadow 120ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-default:hover { background: #2e333f; } .ds-btn-default:active { background: #1e2028; } .ds-btn-default:focus-visible { outline: none; box-shadow: 0 0 0 2px #12141a, 0 0 0 4px #0098FF; } .ds-btn-default:disabled { opacity: 0.5; cursor: not-allowed; }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "12% 危险红填充 + 红字，破坏性动作；hover 填充加深至 15%。",
+      "html": "<button class=\"ds-btn-danger\">删除</button>",
+      "css": ".ds-btn-danger { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: none; background: rgba(239,68,68,0.12); color: #ef4444; padding: 9px 16px; border-radius: 10px; font-size: 13px; font-weight: 500; letter-spacing: -0.01em; cursor: pointer; box-shadow: 0 1px 3px rgba(239,68,68,0.12); transition: background 120ms cubic-bezier(0.16,1,0.3,1), box-shadow 120ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-danger:hover { background: rgba(239,68,68,0.15); box-shadow: 0 2px 8px rgba(239,68,68,0.12); } .ds-btn-danger:focus-visible { outline: none; box-shadow: 0 0 0 2px #12141a, 0 0 0 4px #ef4444; } .ds-btn-danger:disabled { opacity: 0.5; cursor: not-allowed; }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "无边框舱面卡：静止几乎无影，hover 深度加深一档，边缘靠内高光。",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-title\">产线 A 温控器</div><div class=\"ds-card-sub\">MQTT · 12 个属性 · 最近心跳 8 秒前</div></div>",
+      "css": ".ds-card { border: none; background: #181b22; border-radius: 14px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.12); backdrop-filter: blur(4px); transition: box-shadow 200ms cubic-bezier(0.16,1,0.3,1); } .ds-card:hover { box-shadow: 0 4px 24px rgba(0,0,0,0.24); } .ds-card-title { font-size: 15px; font-weight: 600; letter-spacing: -0.02em; color: #fafafa; } .ds-card-sub { color: #71717a; font-size: 13px; margin-top: 6px; line-height: 1.5; }"
+    },
+    {
+      "name": "Stat Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "大写小标签 + 24px 粗体数值；数值可用品牌渐变文字。",
+      "html": "<div class=\"ds-stat\"><span class=\"ds-stat-label\">在线设备</span><span class=\"ds-stat-value\">1,284</span></div>",
+      "css": ".ds-stat { display: grid; gap: 6px; background: #181b22; border: none; border-radius: 14px; padding: 12px 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.12); transition: box-shadow 200ms cubic-bezier(0.16,1,0.3,1); } .ds-stat:hover { box-shadow: 0 4px 24px rgba(0,0,0,0.24); } .ds-stat-label { color: #71717a; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; } .ds-stat-value { font-size: 24px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; color: #fafafa; background: linear-gradient(135deg, #00d4ff 0%, #0098FF 50%, #7b61ff 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "舱面卡底 + 1px 细分隔线（全系统唯一保留边框的控件）；focus 变信号蓝 + 光晕环。",
+      "html": "<label class=\"ds-field\"><span class=\"ds-field-label\">设备名称</span><input class=\"ds-input\" type=\"text\" placeholder=\"例如：车间 3 号温控器\" /></label>",
+      "css": ".ds-field { display: grid; gap: 6px; } .ds-field-label { color: #71717a; font-size: 13px; font-weight: 500; } .ds-input { width: 100%; background: #181b22; border: 1px solid #27272a; border-radius: 10px; padding: 11px 12px; outline: none; box-shadow: 0 1px 4px rgba(0,0,0,0.12); font-size: 14px; line-height: 1.5; color: #e4e4e7; transition: border-color 120ms ease, box-shadow 120ms ease; } .ds-input::placeholder { color: #71717a; } .ds-input:hover:not(:focus):not(:disabled) { border-color: #52525b; } .ds-input:focus { border-color: #0098FF; box-shadow: 0 0 0 3px rgba(0,152,255,0.15); } .ds-input:disabled { opacity: 0.5; cursor: not-allowed; }"
+    },
+    {
+      "name": "Toggle Switch",
+      "kind": "input",
+      "refersTo": "toggle-switch",
+      "description": "药丸轨道开关：关态弱化灰，开态 OK 绿 + 绿光晕，滑块 350ms 平移。",
+      "html": "<span class=\"ds-toggle\"><span class=\"ds-toggle-slider\"></span></span>",
+      "css": ".ds-toggle { position: relative; display: inline-block; width: 48px; height: 24px; cursor: pointer; } .ds-toggle-slider { position: absolute; inset: 0; background-color: #22c55e; border-radius: 9999px; box-shadow: 0 2px 8px rgba(34,197,94,0.5); transition: all 350ms ease; } .ds-toggle-slider::before { content: ''; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: #ffffff; border-radius: 50%; transform: translateX(24px); box-shadow: 0 1px 2px rgba(0,0,0,0.2); transition: all 350ms ease; } .ds-toggle:hover .ds-toggle-slider { box-shadow: 0 3px 10px rgba(34,197,94,0.5); }"
+    },
+    {
+      "name": "Status Dot",
+      "kind": "chip",
+      "refersTo": "status-dot",
+      "description": "在线状态签名：青→绿渐变 + 青光晕 + 2s 脉冲；禁用平涂色。",
+      "html": "<span class=\"ds-status\"><span class=\"ds-status-dot\"></span>在线</span>",
+      "css": ".ds-status { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: #e4e4e7; } .ds-status-dot { width: 8px; height: 8px; border-radius: 9999px; background: linear-gradient(135deg, #00d4ff 0%, #22c55e 100%); box-shadow: 0 0 8px rgba(0,212,255,0.5); animation: ds-pulse-glow 2s ease-in-out infinite; } @keyframes ds-pulse-glow { 0%, 100% { box-shadow: 0 0 8px rgba(0,212,255,0.5); } 50% { box-shadow: 0 0 12px rgba(0,212,255,0.7); } } @media (prefers-reduced-motion: reduce) { .ds-status-dot { animation: none; } }"
+    }
+  ],
+  "narrative": {
+    "northStar": "自治机舱 (The Autonomous Cockpit)",
+    "overview": "运维者坐在深空中的机舱控制台前：舱外是设备星云（深空蓝黑画布上的极光青与星云紫微光），舱内每个「物」都是可操控的终端。AI 是舱内的自动驾驶仪——它巡检、决策、执行，仪表盘的光晕与脉冲是它的呼吸；人保留接管权，审批与确认是仅剩的手动操纵杆。\n\n氛围基调是全面沉浸：深空玻璃拟态与发光语言不分页面类型，工具页与沉浸页共享同一套深空画布、玻璃表面与信号蓝渐变。沉浸不等于喧闹——动效有节制，持续动画只属于状态指示与沉浸场景，且全部服从 prefers-reduced-motion。\n\n交互性格是精致且克制：表面静止，反馈通过颜色与光晕变化传达，不做位移动画。",
+    "keyCharacteristics": [
+      "深空蓝黑画布 + 双层径向微光（青在左上、紫在右下，透明度 4–6%，数据永远是主角）",
+      "信号蓝为主角动作色，极光青→信号蓝→星云紫三段品牌渐变为高级表面的签名",
+      "无边框悬浮：表面无可见 border，阴影堆叠 + 内描边高光定义层级",
+      "玻璃拟态浮动层：65–72% 透明度 + 20px 模糊 + 180% 饱和",
+      "发光状态语言：状态点、开关、度量条用渐变 + 光晕 + 脉冲，禁用平涂",
+      "中英双语对等：字体栈内置 PingFang SC / Microsoft YaHei，数字与代码用 JetBrains Mono"
+    ],
+    "rules": [
+      { "name": "The One Gradient Rule", "body": "品牌渐变只有一条：极光青 → 信号蓝 → 星云紫（135deg）。主要按钮、度量条、统计数字、状态点共用它；不得发明第二条品牌渐变，亮色主题不得砍掉紫端点。", "section": "colors" },
+      { "name": "The Signal Conservation Rule", "body": "信号蓝只标记\"可交互/可聚焦\"——按钮、链接、选中、焦点环。装饰性着色用弱化语义色，不让信号蓝贬值。", "section": "colors" },
+      { "name": "The Mono-for-Machine Rule", "body": "凡机器产出或机器消费的字符串（命令、ID、topic、时间戳、快捷键）用 JetBrains Mono；凡人话用系统栈。两种字体不混排在同一句子里。", "section": "typography" },
+      { "name": "The Borderless Levitation Rule", "body": "卡片、面板、按钮永不画可见 border；边缘由 inset 高光 + 阴影堆叠塑造。输入框是唯一例外（保留 1px 细分隔线，focus 时变为信号蓝 + 3px 光晕环）。", "section": "elevation" },
+      { "name": "The Glow-Means-State Rule", "body": "光晕只在表达状态时出现：hover 加深、focus 环绕、状态点脉冲、开关导通。静态装饰元素不发光。", "section": "elevation" }
+    ],
+    "dos": [
+      "Do 所有新表面走无边框悬浮：阴影堆叠 + inset 高光，不画 border（输入框除外）。",
+      "Do 状态指示用渐变 + 光晕 + 脉冲的状态点，语义色三件套（fill/muted/glow）配套使用。",
+      "Do 主要动作、统计大数字、度量条复用唯一品牌渐变 (135deg, #00d4ff → #0098FF → #7b61ff)。",
+      "Do 持续动画（脉冲/扫光/粒子）包进 @media (prefers-reduced-motion: reduce) 禁用块。",
+      "Do 机器字符串（命令、ID、topic）用 JetBrains Mono，键帽徽章用 .btn-kbd 样式。",
+      "Do 新视图把重复 5 次以上的颜色/阴影抽成视图作用域 token（view-name --name-*），全局 token 优先复用 --space-* / --radius-* / --duration-*。"
+    ],
+    "donts": [
+      "Don't 给卡片/按钮/面板加可见边框或平涂灰边——层级靠阴影与内高光。",
+      "Don't 发明第二条品牌渐变，或在亮色主题丢弃星云紫端点。",
+      "Don't 用平涂色做状态点、开关、度量条——渐变 + 光晕是状态语言。",
+      "Don't 在静态装饰上使用光晕或持续动画；动效有节制，工具页仅限状态过渡。",
+      "Don't 使用 hover 位移（translateY）动画——反馈仅通过颜色与光晕变化。",
+      "Don't 在视图 CSS 中硬编码间距/圆角/时长像素值（1px 边框、断点、画布尺寸除外）。"
+    ]
+  }
+}

@@ -7,9 +7,14 @@
 // - /agents/{id}/files/* - workspace files
 
 pub mod agent_tasks;
+pub mod execution_record;
 pub mod files;
+pub mod hub_stream;
+pub mod ledger;
+pub mod live_stream;
 pub mod skills;
 pub mod types;
+pub mod watch;
 pub mod workspace_heartbeat;
 
 #[cfg(test)]
@@ -19,7 +24,13 @@ use crate::domains::agent::AgentState;
 use axum::{Router, routing::get};
 use tinyiothub_web::security::Claims;
 
-use crate::domains::agent::chat::handler::proxy as chat_proxy;
+/// admin 角色判定（F9）：用户持有任一 is_administrator 角色。DB 错误 fail-closed
+/// （查不出来 = 不是 admin = 403，批准链不在权限未知时放行物理动作）。
+pub(crate) async fn is_admin(db: &tinyiothub_storage::Db, user_id: &str) -> bool {
+    db.count_user_admin_roles(user_id).await.map(|n| n > 0).unwrap_or(false)
+}
+
+use crate::domains::agent::host::chat::handler::proxy as chat_proxy;
 
 pub fn create_router<S>() -> Router<S>
 where

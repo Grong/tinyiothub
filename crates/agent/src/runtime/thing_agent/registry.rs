@@ -349,6 +349,9 @@ mod fixtures {
             tokens: 0,
             end_reason: None,
             thing_id: None,
+            trace: vec![],
+            task_count: None,
+            snapshot: None,
         }
     }
 

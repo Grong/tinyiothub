@@ -20,7 +20,7 @@ use crate::{
     domains::marketplace::{
         client::MarketplaceClient,
         error::MarketplaceError,
-        scene_instantiator::{InstantiateParams, SceneInstantiator},
+        scene_instantiator::{ExtraNode, InstantiateParams, SceneInstantiator},
         template_installer::TemplateInstaller,
         thing_template_installer::{ThingTemplateInstaller, localized_column},
     },
@@ -41,6 +41,127 @@ pub fn create_router() -> Router<AppState> {
         .route("/thing-templates/{id}", get(get_thing_template_detail))
         .route("/thing-templates/{id}/install", post(install_thing_template))
         .route("/thing-templates/{id}/instantiate", post(instantiate_thing_template))
+        .route("/template-rules/validate", post(validate_template_rules))
+        .route("/template-rules/apply", post(apply_template_rules))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateRulesRequest {
+    /// 场景包模板 JSON（含 watch_rules/composites；未知字段忽略）。
+    pub template: serde_json::Value,
+    /// slug → 真实 thing_id。
+    #[serde(default)]
+    pub mapping: std::collections::HashMap<String, String>,
+}
+
+/// POST /marketplace/template-rules/validate（E3：只校验，不落库）。
+async fn validate_template_rules(
+    State(state): State<AppState>,
+    claims: Claims,
+    Json(req): Json<TemplateRulesRequest>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    let workspace_id = claims.workspace_id;
+    let existing = existing_composite_names(&state, &workspace_id).await;
+    let (_resolved, report) = crate::domains::marketplace::template_rules::resolve_template_rules(
+        &req.template,
+        &workspace_id,
+        &req.mapping,
+        &existing,
+    );
+    ApiResponseBuilder::success(serde_json::to_value(report).unwrap_or_default())
+}
+
+/// POST /marketplace/template-rules/apply（E3：校验通过后同事务落库；失败整包拒绝）。
+async fn apply_template_rules(
+    State(state): State<AppState>,
+    claims: Claims,
+    Json(req): Json<TemplateRulesRequest>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    let workspace_id = claims.workspace_id;
+    let existing = existing_composite_names(&state, &workspace_id).await;
+    let (resolved, report) = crate::domains::marketplace::template_rules::resolve_template_rules(
+        &req.template,
+        &workspace_id,
+        &req.mapping,
+        &existing,
+    );
+    if !report.ok {
+        return ApiResponseBuilder::success(serde_json::json!({
+            "applied": false,
+            "report": report,
+        }));
+    }
+
+    let pool = state.db.pool();
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => return ApiResponseBuilder::error(format!("事务开启失败: {e}")),
+    };
+    for rule in &resolved.watch_rules {
+        let condition = match serde_json::to_value(&rule.condition) {
+            Ok(v) => v,
+            Err(e) => return ApiResponseBuilder::error(format!("条件序列化失败: {e}")),
+        };
+        let kind = condition.get("type").and_then(|t| t.as_str()).unwrap_or("property");
+        if let Err(e) = tinyiothub_storage::watch::insert_rule_tx(
+            &mut tx,
+            &tinyiothub_storage::watch::WatchRuleRow {
+                id: rule.id.clone(),
+                workspace_id: rule.workspace_id.clone(),
+                kind: kind.to_string(),
+                condition: condition.to_string(),
+                persistent: i64::from(rule.persistent),
+                timeout_secs: i64::from(rule.timeout_secs),
+                created_at: rule.created_at.clone(),
+            },
+        )
+        .await
+        {
+            let _ = tx.rollback().await;
+            return ApiResponseBuilder::error(format!("watch 规则落库失败（整包回滚）: {e}"));
+        }
+    }
+    for def in &resolved.composites {
+        let definition = match serde_json::to_string(def) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = tx.rollback().await;
+                return ApiResponseBuilder::error(format!("composite 序列化失败: {e}"));
+            }
+        };
+        if let Err(e) = tinyiothub_storage::composite::insert_composite_tx(
+            &mut tx,
+            &tinyiothub_storage::composite::CompositeRow {
+                id: def.id.clone(),
+                workspace_id: def.workspace_id.clone(),
+                name: def.name.clone(),
+                description: def.description.clone(),
+                definition,
+                created_at: chrono::Utc::now().to_rfc3339(),
+            },
+        )
+        .await
+        {
+            let _ = tx.rollback().await;
+            return ApiResponseBuilder::error(format!("composite 落库失败（整包回滚）: {e}"));
+        }
+    }
+    if let Err(e) = tx.commit().await {
+        return ApiResponseBuilder::error(format!("事务提交失败: {e}"));
+    }
+
+    ApiResponseBuilder::success(serde_json::json!({
+        "applied": true,
+        "report": report,
+    }))
+}
+
+async fn existing_composite_names(state: &AppState, workspace_id: &str) -> Vec<String> {
+    tinyiothub_storage::composite::list_composites(state.db.pool(), workspace_id)
+        .await
+        .map(|rows| rows.into_iter().map(|r| r.name).collect())
+        .unwrap_or_default()
 }
 
 /// 市场未启用或未配置 api_url 时返回 None——不静默回退到公网地址，
@@ -567,7 +688,7 @@ async fn get_thing_template_detail(
     };
 
     let is_composition = template.is_composition();
-    let (parameters, structure_summary) = if is_composition {
+    let (parameters, structure_summary, watch_rules, composites) = if is_composition {
         match SceneTemplateFile::from_json(&template.device_info) {
             Ok(scene) => {
                 let max_depth = scene_max_depth(&scene.children, 1);
@@ -577,6 +698,8 @@ async fn get_thing_template_detail(
                         "parameterCount": scene.parameters.len(),
                         "maxDepth": max_depth,
                     }),
+                    scene.watch_rules,
+                    scene.composites,
                 )
             }
             Err(e) => {
@@ -588,6 +711,8 @@ async fn get_thing_template_detail(
         (
             serde_json::json!([]),
             serde_json::json!({"parameterCount": 0, "maxDepth": 1}),
+            Vec::new(),
+            Vec::new(),
         )
     };
 
@@ -605,8 +730,30 @@ async fn get_thing_template_detail(
         "createdAt": template.created_at,
         "parameters": parameters,
         "structureSummary": structure_summary,
+        // E3 模板库：只透出规则段，正文仍走模板实例化接口。
+        "watchRules": watch_rules,
+        "composites": composites,
     });
     (StatusCode::OK, ApiResponseBuilder::success(result))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtraNodeBody {
+    pub template_id: String,
+    /// 场景节点 key 路径（[] = 挂到根节点下）
+    #[serde(default)]
+    pub parent_path: Vec<String>,
+    pub name: String,
+    /// 份数（1..=20，缺省 1）
+    #[serde(default = "default_extra_count")]
+    pub count: u32,
+    /// 显式驱动名；缺省时由 attach_simulated_driver 决定是否填 simulator
+    pub driver_name: Option<String>,
+}
+
+fn default_extra_count() -> u32 {
+    1
 }
 
 #[derive(Debug, Deserialize)]
@@ -618,6 +765,12 @@ pub struct InstantiateRequestBody {
     pub parameter_values: std::collections::HashMap<String, i64>,
     #[serde(default)]
     pub dry_run: bool,
+    /// true 时叶节点设备统一挂 simulator 驱动开箱出数（默认 false）
+    #[serde(default)]
+    pub attach_simulated_driver: bool,
+    /// 实例化时额外挂接的设备节点（与场景节点同一事务）
+    #[serde(default)]
+    pub extra_nodes: Vec<ExtraNodeBody>,
 }
 
 /// 实例化场景包：展开 → 配额校验 → 单事务落库；dry_run 只读预览。
@@ -633,14 +786,39 @@ async fn instantiate_thing_template(
         return marketplace_error_response(&MarketplaceError::Validation("需要指定工作空间".to_string()));
     }
 
+    let parent_id = body.parent_id.clone();
+    let dry_run = body.dry_run;
     let params = InstantiateParams {
         scene_name: body.scene_name,
         parent_id: body.parent_id,
         parameter_values: body.parameter_values,
         dry_run: body.dry_run,
+        attach_simulated_driver: body.attach_simulated_driver,
+        extra_nodes: body
+            .extra_nodes
+            .into_iter()
+            .map(|e| ExtraNode {
+                template_id: e.template_id,
+                parent_path: e.parent_path,
+                name: e.name,
+                count: e.count,
+                driver_name: e.driver_name,
+            })
+            .collect(),
     };
-    match SceneInstantiator::instantiate(state.db.as_ref(), ws, &id, &params).await {
+    // instantiate_with_events：提交成功后为带驱动的节点发 DeviceCreated——
+    // DataServer 热建驱动，新模拟物不重启即出数（X3a 收尾，Task 7）
+    match SceneInstantiator::instantiate_with_events(state.db.as_ref(), ws, &id, &params, &state.event_bus).await {
         Ok(outcome) => {
+            // 终审 I-3：实例化挂到既有父下 = 子树变更，必须通知 Manager（含
+            // descendant_count 的派生重算）——漏接则 device_count 静默陈旧到
+            // 重启。与 thing 域 crud.rs create_thing 的钩子②同模式。
+            if !dry_run
+                && let (Some(manager), Some(parent)) =
+                    (&state.derived_manager, parent_id.as_deref().filter(|p| !p.is_empty()))
+            {
+                manager.notify_tree_changed(parent).await;
+            }
             let result = serde_json::to_value(&outcome).unwrap_or(serde_json::Value::Null);
             (StatusCode::OK, ApiResponseBuilder::success(result))
         }

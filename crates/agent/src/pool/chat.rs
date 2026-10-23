@@ -23,6 +23,10 @@ pub struct StreamingRunResult {
 /// Tool call captured during streaming execution
 #[derive(Debug, Clone)]
 pub struct StreamingToolCall {
+    /// Stable correlation ID shared with the matching ToolResult event
+    /// (Task 9：轨迹条目的 id；配对从 name 启发式改为 id 精确匹配，
+    /// 与 thing_agent runner 同一契约）。
+    pub id: String,
     pub name: String,
     pub args: serde_json::Value,
     pub result: Option<String>,
@@ -104,18 +108,23 @@ impl AgentPool {
         let collector = tokio::spawn(async move {
             while let Some(evt) = event_rx.recv().await {
                 match evt {
-                    TurnEvent::ToolCall { name, args, .. } => {
+                    TurnEvent::ToolCall { id, name, args, .. } => {
                         let mut calls = tool_calls_clone.lock().unwrap();
                         calls.push(StreamingToolCall {
+                            id,
                             name,
                             args,
                             result: None,
                             success: true,
                         });
                     }
-                    TurnEvent::ToolResult { name, output, .. } => {
+                    TurnEvent::ToolResult { id, output, .. } => {
                         let mut calls = tool_calls_clone.lock().unwrap();
-                        if let Some(last) = calls.iter_mut().rev().find(|c| c.name == name) {
+                        // Pair by stable correlation id; latest unpaired wins
+                        // (ids are unique per call — exact matching, not the
+                        // old name heuristic which mis-paired concurrent
+                        // same-name calls).
+                        if let Some(last) = calls.iter_mut().rev().find(|c| c.id == id && c.result.is_none()) {
                             last.result = Some(output.clone());
                             // NOTE: TurnEvent::ToolResult doesn't carry ToolResult.success.
                             // Trust enforcement is handled by TrustAwareTool wrapping;
@@ -127,9 +136,9 @@ impl AgentPool {
             }
         });
 
-        // No inner timeout here: the heartbeat tick bounds the whole run (see
-        // heartbeat::loop_ TICK_TIMEOUT). A shorter inner timeout fires first
-        // every time, making the tick-level bound unreachable.
+        // No inner timeout here: the run's deadline bounds the whole turn (see
+        // thing_agent::runner backstop timeout). A shorter inner timeout fires
+        // first every time, making the run-level bound unreachable.
         let ag = agent.lock().await;
         let result = ag.turn_streamed(message, event_tx, None).await;
         drop(ag);

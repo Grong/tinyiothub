@@ -1307,7 +1307,6 @@ input[type="range"]::-moz-range-thumb:hover {
 
 .health-badge-clickable:hover {
   box-shadow: var(--shadow-md);
-  transform: translateY(-1px);
 }
 
 /* Modal Animations */
@@ -1471,7 +1470,6 @@ input[type="range"]::-moz-range-thumb:hover {
 .btn-retry:hover {
   background: var(--accent-hover);
   box-shadow: var(--shadow-md);
-  transform: translateY(-1px);
 }
 
 .stat-icon {

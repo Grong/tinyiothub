@@ -1,19 +1,8 @@
 import { html, nothing } from "lit";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { repeat } from "lit/directives/repeat.js";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
+import { md } from "../shared/markdown.js";
 import type { AgentsState } from "../controllers/agents.js";
-
-marked.setOptions({ async: false, gfm: true });
-
-function md(text: string): string {
-  try {
-    return DOMPurify.sanitize(marked.parse(text) as string);
-  } catch {
-    return DOMPurify.sanitize(text);
-  }
-}
 
 export interface HeartbeatConfig {
   enabled: boolean;

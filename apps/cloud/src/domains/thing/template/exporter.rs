@@ -214,10 +214,14 @@ mod tests {
             max_value: Some(80.0),
             default_value: Some("25.0".to_string()),
             is_read_only: 1,
+            source: None,
+            expression: None,
+            refs: None,
             created_at: None,
             updated_at: None,
             current_value: None,
             alarm_status: None,
+            derived_status: None,
         }];
         let result = TemplateExporter::map_properties(Some(&props));
         assert_eq!(result.len(), 1);

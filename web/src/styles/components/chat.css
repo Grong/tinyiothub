@@ -810,11 +810,10 @@
 .chat-suggestion-chip:hover {
   border-color: var(--accent);
   background: var(--glass-chat-input-bg, rgba(40, 40, 55, 0.85));
-  transform: translateY(-1px);
 }
 
 .chat-suggestion-chip:active {
-  transform: translateY(0) scale(0.98);
+  transform: scale(0.98);
 }
 
 .chat-suggestion-chip__icon {

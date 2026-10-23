@@ -59,6 +59,9 @@ fn report_json(run_id: &str, workspace_id: &str) -> String {
         tokens: 0,
         end_reason: None,
         thing_id: None,
+        trace: vec![],
+        task_count: None,
+        snapshot: None,
     })
     .expect("serialize report")
 }
@@ -163,6 +166,7 @@ async fn build_snapshot_prewarms_heartbeat_state_and_recent_runs_oldest_first() 
             interval_minutes: 45,
             ai_triage_enabled: true,
             triage_mode: "annotate".to_string(),
+            rate_limit_per_key_per_min: None,
         },
     )
     .await
@@ -257,6 +261,113 @@ async fn build_snapshot_restores_problem_dedup_metadata() {
     assert_eq!(outcome, Outcome::Acted);
     assert!(verified);
     assert!(acked, "最新 run 的行级 ack 标记必须随预热恢复");
+}
+
+/// Task 13 bootstrap 装配（T15 起唯一路径）：restore 后统一循环
+/// （ThingAgentManager）持有 heartbeat 依赖——任务表/trust/intervals 自
+/// 快照预热，last_ticks 共享表可注入。workspace start 后统一 loop 运行；
+/// reload_notify 为每工作区独立实例（单一全局 Notify 的 notify_one 只
+/// 唤醒一个等待者，多工作区会叫错/叫漏）。
+#[tokio::test]
+async fn restore_prewarms_unified_loop_heartbeat_deps() {
+    let (db, pool) = test_db().await;
+    seed_test_workspace(&pool, "tenant1", "ws1").await;
+
+    db.insert_heartbeat_task("ws1", "P1", "巡检设备在线率")
+        .await
+        .expect("insert task");
+    let trust = TrustConfig {
+        max_auto_actions_per_tick: 7,
+        ..Default::default()
+    };
+    db.save_heartbeat_trust_config("ws1", &trust).await.expect("save trust");
+    db.save_heartbeat_config(
+        "ws1",
+        &WorkspaceHeartbeatConfig {
+            enabled: true,
+            interval_minutes: 45,
+            ai_triage_enabled: true,
+            triage_mode: "annotate".to_string(),
+            rate_limit_per_key_per_min: None,
+        },
+    )
+    .await
+    .expect("save heartbeat config");
+
+    let runtime = bootstrap_test_runtime(&db).await;
+
+    // 门面读出口与统一循环共享同一内存真源（T15 起唯一）。
+    assert_eq!(runtime.heartbeat_tasks("ws1").len(), 1, "门面 heartbeat_tasks 读共享表");
+    // 统一循环持有同一快照的 heartbeat 依赖。
+    let manager = runtime.thing_agents();
+    assert_eq!(
+        manager.heartbeat_tasks("ws1").len(),
+        1,
+        "统一循环任务表须自同一快照预热"
+    );
+    assert_eq!(manager.heartbeat_interval_minutes("ws1"), Some(45));
+    // 终审 I-1：enabled 自同一快照预热（本用例 DB 配置 enabled=true；
+    // 禁用路径见 restore_prewarms_heartbeat_enabled_from_db_config）。
+    assert!(manager.heartbeat_enabled("ws1"));
+    assert_eq!(
+        manager
+            .heartbeat_trust_config("ws1")
+            .map(|t| t.max_auto_actions_per_tick),
+        Some(7)
+    );
+    // last_ticks 共享表句柄可注入 AppState（启动时尚无 tick，表为空）。
+    assert!(manager.heartbeat_last_ticks().is_empty());
+
+    // workspace start 后统一 loop 运行（heartbeat trigger 挂载的断言在
+    // agent crate manager 单测：WorkspaceLoop.tasks 含 4 个任务）。
+    manager.start("ws1");
+    assert!(manager.is_running("ws1"));
+    // reload_notify 每工作区独立且稳定（handler 写穿后 notify_one 的接线点）。
+    let n1 = manager.heartbeat_reload_notify("ws1");
+    assert!(
+        Arc::ptr_eq(&n1, &manager.heartbeat_reload_notify("ws1")),
+        "同一工作区必须返回同一 Notify"
+    );
+    assert!(
+        !Arc::ptr_eq(&n1, &manager.heartbeat_reload_notify("ws2")),
+        "不同工作区不得共享 Notify"
+    );
+    manager.stop("ws1").await;
+}
+
+/// 终审 I-1：restore 预热把 DB `workspaces.heartbeat_config` 的 enabled 读进
+/// 统一循环共享表——禁用工作区重启后统一 trigger 不 tick（此前 enabled 只
+/// 停旧 runner，统一循环无视持久化开关，禁用的心跳在「执行历史」继续出 run）。
+/// 无配置行的工作区缺省 true（对齐 HeartbeatConfig::default enabled:true）。
+#[tokio::test]
+async fn restore_prewarms_heartbeat_enabled_from_db_config() {
+    let (db, pool) = test_db().await;
+    seed_test_workspace(&pool, "tenant1", "ws_off").await;
+    seed_test_workspace(&pool, "tenant1", "ws_default").await;
+
+    db.save_heartbeat_config(
+        "ws_off",
+        &WorkspaceHeartbeatConfig {
+            enabled: false,
+            interval_minutes: 30,
+            ai_triage_enabled: true,
+            triage_mode: "annotate".to_string(),
+            rate_limit_per_key_per_min: None,
+        },
+    )
+    .await
+    .expect("save disabled heartbeat config");
+
+    let runtime = bootstrap_test_runtime(&db).await;
+    let manager = runtime.thing_agents();
+    assert!(
+        !manager.heartbeat_enabled("ws_off"),
+        "DB enabled=false 必须预热进统一循环共享表"
+    );
+    assert!(
+        manager.heartbeat_enabled("ws_default"),
+        "无配置行缺省 true（HeartbeatConfig::default enabled:true）"
+    );
 }
 
 /// CEO review T21：启动快照 fail-closed——DB 读失败必须 Err（中止启动），

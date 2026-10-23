@@ -168,6 +168,17 @@ impl RetryManager {
                     return RetryResult::Success(result);
                 }
                 Err(error) => {
+                    // 取消是终态：不重试、不 sleep，否则协作驱动会被再次调用并
+                    // 超出 stop 的 1s 宽限期（E4c）。必须在 record_failure 之前
+                    // 判定——取消不计失败预算，current_attempt 保持未污染。
+                    if matches!(error, Error::Cancelled) {
+                        return RetryResult::Failed {
+                            attempts: self.state.current_attempt,
+                            last_error: error,
+                            total_duration: self.state.start_time.elapsed(),
+                        };
+                    }
+
                     self.state.record_failure(error.clone());
 
                     if !self.state.should_retry(&self.config) {
@@ -247,6 +258,17 @@ impl RetryManager {
                 RetryResult::Success(result)
             }
             Err(error) => {
+                // 取消是终态：即使 max_attempts 未用尽也立即失败，不再调用驱动、
+                // 不进入退避（E4c stop 宽限期约束）。取消不计入失败预算——
+                // 否则 stop 会把驱动推向退避/离线，等于把协作取消当故障。
+                if matches!(error, Error::Cancelled) {
+                    return RetryResult::Failed {
+                        attempts: self.state.current_attempt,
+                        last_error: error,
+                        total_duration: self.state.start_time.elapsed(),
+                    };
+                }
+
                 self.state.record_failure(error.clone());
 
                 if self.state.current_attempt >= self.config.max_attempts
@@ -354,5 +376,52 @@ mod tests {
         };
         state.calculate_next_retry(&config);
         assert!(state.next_retry_at.is_some());
+    }
+
+    /// E4c：取消是终态——两条执行路径都只调用一次、不重试、不 sleep。
+    #[test]
+    fn cancelled_error_is_never_retried() {
+        let config = RetryConfig {
+            max_attempts: 5,
+            base_interval: Duration::from_millis(50),
+            max_interval: Duration::from_millis(50),
+            timeout: Duration::from_secs(300),
+            ..RetryConfig::default()
+        };
+
+        let mut manager = RetryManager::new(config.clone());
+        let mut calls = 0;
+        let result = manager.execute_with_retry(|| {
+            calls += 1;
+            Err::<(), _>(Error::Cancelled)
+        });
+        assert_eq!(calls, 1, "execute_with_retry must not retry cancellation");
+        assert!(matches!(
+            result,
+            RetryResult::Failed {
+                last_error: Error::Cancelled,
+                ..
+            }
+        ));
+        assert_eq!(
+            manager.state().current_attempt,
+            0,
+            "cancellation must not consume the failure budget"
+        );
+
+        let mut manager = RetryManager::new(config);
+        let mut calls = 0;
+        let result = manager.execute_once(|| {
+            calls += 1;
+            Err::<(), _>(Error::Cancelled)
+        });
+        assert_eq!(calls, 1, "execute_once must not enter retry backoff");
+        assert!(matches!(
+            result,
+            RetryResult::Failed {
+                last_error: Error::Cancelled,
+                ..
+            }
+        ));
     }
 }

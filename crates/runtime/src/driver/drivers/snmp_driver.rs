@@ -1,4 +1,4 @@
-use tinyiothub_core::driver::{ResultValue, ThingDriver};
+use tinyiothub_core::driver::{CancelToken, ResultValue, ThingDriver};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 
@@ -62,7 +62,18 @@ impl ThingDriver for SnmpDriver {
         &mut self.device
     }
 
-    fn read_data(&mut self) -> Result<Vec<ResultValue>, Error> {
+    fn describe(&mut self) -> Result<tinyiothub_core::driver::declaration::DeviceDeclaration, Error> {
+        Ok(crate::driver::describe::declaration_from_thing(
+            &self.device,
+            "snmp",
+            "1.0.0",
+        ))
+    }
+
+    fn read_data(&mut self, cancel: &CancelToken) -> Result<Vec<ResultValue>, Error> {
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
         let results = vec![
             ResultValue::string("system_name".to_string(), "SNMP Thing".to_string()),
             ResultValue::integer("uptime".to_string(), 86400),
@@ -72,7 +83,10 @@ impl ThingDriver for SnmpDriver {
         Ok(results)
     }
 
-    fn execute_command(&mut self, cmd: &ThingCommand) -> Result<bool, Error> {
+    fn execute_command(&mut self, cmd: &ThingCommand, cancel: &CancelToken) -> Result<bool, Error> {
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
         tracing::info!("Executing SNMP command: {} on device {}", cmd.name, self.device.name);
         match cmd.name.as_str() {
             "get_system_info" | "restart" => Ok(true),

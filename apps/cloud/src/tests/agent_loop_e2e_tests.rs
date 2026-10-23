@@ -12,7 +12,8 @@
 //! （与 loop 共享同一文件库），断言事件 → DB → API 三段一致。
 //!
 //! 确定性：无裸 sleep 依赖——事件经 timeout recv 捕获，DB 投影经真实时间
-//! 轮询收敛；timer 首 tick 停在 30s 合并窗口内，测试窗口内仅指令 run 落库。
+//! 轮询收敛；policy=Off 门控 timer 首 tick（E1 合并窗已废，timer 即来即
+//! 醒），测试窗口内仅指令 run 落库（指令 run 无工具调用，不过策略门）。
 
 use std::{
     sync::{Arc, Mutex},
@@ -34,16 +35,14 @@ use tinyiothub_storage::Db;
 
 use crate::bootstrap::{build_agent_snapshot, reconcile_zombie_runs};
 use crate::domains::agent::host::{
-    autonomous_factory::AutonomousAgentFactory, persist::run_persistence_subscriber,
+    autonomous_factory::AutonomousAgentFactory, persist::persist::run_persistence_subscriber,
     thing_agent_host::CloudThingAgentHost, tools::ThingToolContext,
 };
 use crate::domains::event::{bus::ThingEventBus, router::ThrottleState};
 use crate::test_utils::{auth_header, create_test_token, response_parts, seed_test_workspace, test_app_state_on_pool};
 use tinyiothub_agent::pool::ProviderFactory;
 use tinyiothub_agent::runtime::{
-    event::bus::AiEventPublisher,
     events::{AgentEventBus, AgentEventKind},
-    heartbeat::types::HeartbeatConfig,
     runtime::{AgentRuntime, RuntimeDeps},
     thing_agent::{DirectiveSink, Priority, ThingAgentManagerConfig, TriggerSource, WakeSignal},
 };
@@ -204,7 +203,17 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
 
     let policy_repo = db.clone();
     policy_repo
-        .save_autonomy_policy(WS, &act_policy(), "test")
+        // mode=Off：门控 timer 首 tick（E1 合并窗已废，timer 即来即醒即跑），
+        // "仅 1 行"断言因此确定。指令 run 无工具调用（provider 直接回文本），
+        // 不过 invoke_action 策略门，Off 不影响被测链路。
+        .save_autonomy_policy(
+            WS,
+            &AutonomyPolicy {
+                mode: AutonomyMode::Off,
+                ..act_policy()
+            },
+            "test",
+        )
         .await
         .expect("save policy");
 
@@ -242,8 +251,6 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
 
     let event_bus = Arc::new(tinyiothub_runtime::EventBus::new());
     let deps = RuntimeDeps {
-        event_publisher: Arc::new(AiEventPublisher::new(event_bus.clone())),
-        heartbeat_config: HeartbeatConfig::default(),
         thing_agent_host: Arc::new(CloudThingAgentHost::new(pool.clone(), thing_bus)),
         policy_repo: Arc::new(crate::domains::agent::host::ports::StorageAutonomyPolicyReader::new(
             policy_repo,
@@ -252,9 +259,7 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
         thing_agent_config: ThingAgentManagerConfig {
             timer_interval: Duration::from_secs(24 * 3600),
             min_wake_level: 3,
-            // 30s 合并窗口：timer 首 tick 停在窗口内，测试时长（≪30s）内仅
-            // 指令 run 落库——"仅 1 行"的断言因此确定。
-            merge_window: Duration::from_secs(30),
+            ..Default::default()
         },
         event_bus,
         drop_notifier: None,
@@ -336,7 +341,7 @@ async fn thing_agent_run_flows_event_to_db_to_read_api() {
     assert_eq!(
         runs.len(),
         1,
-        "仅指令 run 一行（timer 首 tick 停在 30s 合并窗口）: {runs:?}"
+        "仅指令 run 一行（policy=Off 门控 timer 首 tick）: {runs:?}"
     );
     assert_eq!(runs[0]["id"].as_str().unwrap(), report.run_id);
     assert_eq!(runs[0]["triggerType"], "user");

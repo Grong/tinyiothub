@@ -3,7 +3,7 @@ use std::time::Instant;
 use tinyiothub_core::models::{thing::Thing, thing_command::ThingCommand};
 
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use tinyiothub_core::driver::{BackoffStrategy, ResultValue, RetryConfig, ThingDriver};
+use tinyiothub_core::driver::{BackoffStrategy, CancelToken, ResultValue, RetryConfig, ThingDriver};
 use tinyiothub_core::error::Error;
 
 use super::simulated::anomaly::AnomalyEngine;
@@ -181,8 +181,19 @@ impl ThingDriver for SimulatedDriver {
         }
     }
 
+    fn describe(&mut self) -> Result<tinyiothub_core::driver::declaration::DeviceDeclaration, Error> {
+        Ok(crate::driver::describe::declaration_from_thing(
+            &self.device,
+            "simulator",
+            "2.0.0",
+        ))
+    }
+
     #[allow(clippy::collapsible_if)]
-    fn read_data(&mut self) -> Result<Vec<ResultValue>, Error> {
+    fn read_data(&mut self, cancel: &CancelToken) -> Result<Vec<ResultValue>, Error> {
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
         // Respect the configured interval — skip regeneration if not enough time has passed
         let interval_ms = self.get_config_number("interval", 1000.0) as u64;
         let elapsed = self.last_read.elapsed().as_millis() as u64;
@@ -217,6 +228,10 @@ impl ThingDriver for SimulatedDriver {
 
         if !property_infos.is_empty() {
             for (prop_name, prop_data_type, min_value, max_value) in property_infos.iter() {
+                // 属性间检查点：stop 后长属性列表尽快协作退出（E4c）。
+                if cancel.is_cancelled() {
+                    return Err(Error::Cancelled);
+                }
                 let data_type = prop_data_type.as_deref().unwrap_or("float");
                 let behavior = match_property(prop_name, data_type);
 
@@ -277,7 +292,10 @@ impl ThingDriver for SimulatedDriver {
         Ok(results)
     }
 
-    fn execute_command(&mut self, cmd: &ThingCommand) -> Result<bool, Error> {
+    fn execute_command(&mut self, cmd: &ThingCommand, cancel: &CancelToken) -> Result<bool, Error> {
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
         tracing::info!(
             "Executing Simulated command: {} on device {}",
             cmd.name,
@@ -328,10 +346,14 @@ mod tests {
                 max_value: None,
                 default_value: None,
                 is_read_only: 1,
+                source: None,
+                expression: None,
+                refs: None,
                 created_at: None,
                 updated_at: None,
                 current_value: None,
                 alarm_status: None,
+                derived_status: None,
             }]),
             commands: None,
             created_at: Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
@@ -364,10 +386,14 @@ mod tests {
                     max_value: None,
                     default_value: None,
                     is_read_only: 1,
+                    source: None,
+                    expression: None,
+                    refs: None,
                     created_at: None,
                     updated_at: None,
                     current_value: None,
                     alarm_status: None,
+                    derived_status: None,
                 },
                 ThingProperty {
                     id: "prop-current".to_string(),
@@ -381,10 +407,14 @@ mod tests {
                     max_value: None,
                     default_value: None,
                     is_read_only: 1,
+                    source: None,
+                    expression: None,
+                    refs: None,
                     created_at: None,
                     updated_at: None,
                     current_value: None,
                     alarm_status: None,
+                    derived_status: None,
                 },
                 ThingProperty {
                     id: "prop-power".to_string(),
@@ -398,10 +428,14 @@ mod tests {
                     max_value: None,
                     default_value: None,
                     is_read_only: 1,
+                    source: None,
+                    expression: None,
+                    refs: None,
                     created_at: None,
                     updated_at: None,
                     current_value: None,
                     alarm_status: None,
+                    derived_status: None,
                 },
             ]),
             commands: None,
@@ -433,10 +467,30 @@ mod tests {
     fn test_read_data_with_config() {
         let device = create_test_device();
         let mut driver = SimulatedDriver::new(device);
-        let result = driver.read_data();
+        let result = driver.read_data(&CancelToken::new());
         assert!(result.is_ok());
         let values = result.unwrap();
         assert!(!values.is_empty());
+    }
+
+    #[test]
+    fn test_cancelled_token_short_circuits_read_and_command() {
+        let mut driver = SimulatedDriver::new(create_test_device());
+        let cancel = CancelToken::new();
+        cancel.cancel();
+
+        assert!(matches!(driver.read_data(&cancel), Err(Error::Cancelled)));
+
+        let cmd = ThingCommand {
+            id: "cmd-1".to_string(),
+            thing_id: "test-device-1".to_string(),
+            name: "noop".to_string(),
+            display_name: None,
+            description: None,
+            parameters: None,
+            created_at: String::new(),
+        };
+        assert!(matches!(driver.execute_command(&cmd, &cancel), Err(Error::Cancelled)));
     }
 
     #[test]
@@ -446,7 +500,7 @@ mod tests {
 
         let mut prev_temp: Option<f64> = None;
         for _ in 0..20 {
-            let values = driver.read_data().unwrap();
+            let values = driver.read_data(&CancelToken::new()).unwrap();
             let temp = values
                 .iter()
                 .find(|v| v.name == "temperature")
@@ -472,8 +526,8 @@ mod tests {
         fixed_device.driver_options = Some(r#"{"mode": "fixed"}"#.to_string());
         let mut fixed_driver = SimulatedDriver::new(fixed_device);
 
-        let values1 = fixed_driver.read_data().unwrap();
-        let values2 = fixed_driver.read_data().unwrap();
+        let values1 = fixed_driver.read_data(&CancelToken::new()).unwrap();
+        let values2 = fixed_driver.read_data(&CancelToken::new()).unwrap();
 
         let temp1 = values1
             .iter()
@@ -507,7 +561,7 @@ mod tests {
         let mut max_change: f64 = 0.0;
         let mut prev: Option<f64> = None;
         for _ in 0..50 {
-            let values = driver.read_data().unwrap();
+            let values = driver.read_data(&CancelToken::new()).unwrap();
             let temp = values
                 .iter()
                 .find(|v| v.name == "temperature")
@@ -533,7 +587,7 @@ mod tests {
         let device = create_device_with_multiple_properties();
         let mut driver = SimulatedDriver::new(device);
 
-        let values = driver.read_data().unwrap();
+        let values = driver.read_data(&CancelToken::new()).unwrap();
 
         // Should have 3 properties: temperature, current, power_status
         assert_eq!(values.len(), 3);
@@ -574,7 +628,7 @@ mod tests {
         );
         let mut driver = SimulatedDriver::new(device);
 
-        let values = driver.read_data().unwrap();
+        let values = driver.read_data(&CancelToken::new()).unwrap();
         assert!(!values.is_empty());
 
         let temp = values
@@ -606,7 +660,7 @@ mod tests {
         let mut max_change: f64 = 0.0;
         let mut prev: Option<f64> = None;
         for _ in 0..50 {
-            let values = driver.read_data().unwrap();
+            let values = driver.read_data(&CancelToken::new()).unwrap();
             let temp = values
                 .iter()
                 .find(|v| v.name == "temperature")

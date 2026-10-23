@@ -4,6 +4,8 @@
 //! concrete driver implementations depend on.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -12,8 +14,16 @@ use crate::error::Error;
 use crate::models::thing::Thing;
 use crate::models::thing_command::ThingCommand;
 
+pub mod declaration;
 pub mod dynamic;
+pub mod manifest;
+pub mod schema;
+pub use declaration::{
+    AcceptanceReportRecord, DeviceDeclaration, DeviceDeclarationRecord, DriverDeclarationRecord, fixed_declaration,
+    validate_device_declaration,
+};
 pub use dynamic::{DRIVER_ABI_VERSION, DriverDestroyFn, DriverInitFn, DriverVTable, DriverVTableFn};
+pub use manifest::{DriverManifest, ManifestError, validate_manifest};
 
 // ─── Retry configuration ────────────────────────────────────────────
 
@@ -246,6 +256,58 @@ impl ResultValue {
     }
 }
 
+// ─── 驱动双模（spec 2026-10-19 §一）───
+
+/// 驱动数据获取模式：Poll=运行时轮询拉取；Push=驱动内部订阅数据源主动上报。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DriverMode {
+    #[default]
+    Poll,
+    Push,
+}
+
+/// 推送驱动的一次上报：某物的一批属性读数。
+#[derive(Debug, Clone)]
+pub struct DriverReading {
+    pub thing_id: String,
+    pub values: Vec<ResultValue>,
+}
+
+/// 运行时交给推送驱动的上报句柄（spec §一 ValueSink）。
+pub type ValueSink = tokio::sync::mpsc::Sender<DriverReading>;
+
+/// 属性变更事件源抽象（core 不依赖 runtime 的 EventBus，spec 伪签名按依赖方向微调）。
+pub trait PropertyChangeSource: Send + Sync {
+    fn subscribe(&self) -> tokio::sync::broadcast::Receiver<crate::models::event::Event>;
+}
+
+// ─── Cancellation ──────────────────────────────────────────────────
+
+/// 协作式取消令牌。驱动在长操作入口/循环中检查，取消后返回
+/// [`Error::Cancelled`](crate::error::Error::Cancelled)。
+#[derive(Clone, Default)]
+pub struct CancelToken(Arc<AtomicBool>);
+
+impl CancelToken {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    /// 当前共享该取消状态的句柄数。用于诊断与适配器生命周期测试。
+    #[doc(hidden)]
+    pub fn strong_count(&self) -> usize {
+        Arc::strong_count(&self.0)
+    }
+}
+
 // ─── ThingDriver trait ─────────────────────────────────────────────
 
 /// 设备驱动特征
@@ -308,10 +370,28 @@ pub trait ThingDriver: Send + Sync {
         config.get_string(key, default)
     }
 
+    // === 双模（默认轮询，存量驱动零改动） ===
+
+    fn mode(&self) -> DriverMode {
+        DriverMode::Poll
+    }
+
+    /// 推送驱动启动钩子：实现方在此订阅数据源，数据到达后经 sink 上报。
+    /// 默认空实现（轮询驱动永不调用）。
+    fn start_push(&mut self, _sink: ValueSink, _events: std::sync::Arc<dyn PropertyChangeSource>) {}
+
     // === 核心功能接口 ===
 
-    fn read_data(&mut self) -> Result<Vec<ResultValue>, Error>;
-    fn execute_command(&mut self, cmd: &ThingCommand) -> Result<bool, Error>;
+    fn read_data(&mut self, cancel: &CancelToken) -> Result<Vec<ResultValue>, Error>;
+    fn execute_command(&mut self, cmd: &ThingCommand, cancel: &CancelToken) -> Result<bool, Error>;
+
+    /// 推送/流式驱动按活跃 source 集合起停订阅。默认空实现。
+    fn set_demand(&mut self, _sources: &[String]) {}
+
+    /// 返回实例声明。未实现 `describe` 的驱动返回 `Unsupported`。
+    fn describe(&mut self) -> Result<crate::driver::declaration::DeviceDeclaration, Error> {
+        Err(Error::Unsupported("driver does not implement describe".into()))
+    }
 
     // === 配置接口 ===
 
@@ -446,5 +526,16 @@ mod tests {
         let config = RetryConfig::default();
         assert_eq!(config.max_attempts, 3);
         assert_eq!(config.base_interval, Duration::from_millis(500));
+    }
+
+    #[test]
+    fn cancel_token_defaults_to_not_cancelled_and_propagates_to_clones() {
+        let token = CancelToken::new();
+        assert!(!token.is_cancelled());
+
+        let clone = token.clone();
+        token.cancel();
+        assert!(token.is_cancelled());
+        assert!(clone.is_cancelled(), "clone 共享同一取消状态");
     }
 }

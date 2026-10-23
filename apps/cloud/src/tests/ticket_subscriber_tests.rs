@@ -8,7 +8,7 @@ use tinyiothub_agent::runtime::events::{AgentEventBus, AgentEventKind};
 use tinyiothub_core::agent_runs::{ActionRecord, ActionResult, EndReason, Outcome, RunReport};
 use tinyiothub_storage::Db;
 
-use crate::domains::agent::host::ticket_subscriber::{
+use crate::domains::agent::host::notify::ticket_subscriber::{
     build_briefing, failure_hash, normalize, run_ticket_subscriber, should_ticket, synthesize_title, ticket_for_run,
 };
 use crate::domains::event::sse_manager::SseConnectionManager;
@@ -43,6 +43,9 @@ fn report(run_id: &str, outcome: Outcome, end_reason: Option<EndReason>, thing: 
         tokens: 10,
         end_reason,
         thing_id: thing.map(str::to_string),
+        trace: vec![],
+        task_count: None,
+        snapshot: None,
     }
 }
 
@@ -60,8 +63,8 @@ async fn tickets_for_rejected_run_and_dedups_recurrence() {
     assert_eq!(tickets.len(), 1);
     assert_eq!(tickets[0].state, "open");
     assert_eq!(
-        tickets[0].title, "thing:t1:event:temp_high",
-        "title 去「触发:」前缀取首行"
+        tickets[0].title, "设备事件(t1:event:temp_high)失败: t1.reboot 失败（E-401 闸阀执行器超时）",
+        "裸触发标签人话化：触发源 + 失败动作（2026-09-27 起）"
     );
 
     // 同一故障复发 → 不开新票，复发折叠带 run_id
@@ -184,7 +187,7 @@ fn title_strips_trigger_prefix_and_truncates() {
 #[tokio::test]
 async fn closure_chain_resolution_flows_into_next_prompt() {
     use crate::domains::agent::host::ports::DbTicketResolutionProvider;
-    use tinyiothub_agent::runtime::thing_agent::prompt::build_prompt;
+    use tinyiothub_agent::prompt::runtime::build_prompt;
     use tinyiothub_agent::runtime::thing_agent::traits::TicketResolutionProvider;
     use tinyiothub_agent::runtime::thing_agent::types::{Priority, TriggerSource, WakeSignal};
 
@@ -227,7 +230,7 @@ async fn closure_chain_resolution_flows_into_next_prompt() {
         },
         dedup_key: Some("thing:t1:event:temp_high".to_string()),
     };
-    let prompt = build_prompt(&signal, &[], &[], &["reboot".to_string()], &resolutions);
+    let prompt = build_prompt(&signal, "", &[], &[], &["reboot".to_string()], &resolutions);
     assert!(prompt.contains("<ticket_resolutions>"));
     assert!(prompt.contains("现场更换轴承 NSK-6205"), "解法应出现在 prompt 里");
     assert!(prompt.contains("不可信人工输入"), "注入段必须带不可信标注");
@@ -295,4 +298,34 @@ async fn reopen_retires_stale_resolution_memory() {
             .is_empty(),
         "reopen 后过期解法必须退役"
     );
+}
+
+#[tokio::test]
+async fn heartbeat_run_failure_does_not_ticket() {
+    // 语义保持(G3):周期 tick 失败只产 system_error 事件,从不开票。
+    // 统一循环后 heartbeat 源 run 也走 RunRecorded——ticket_for_run 漏斗守卫
+    // 把这类失败挡在工单系统外(事件路径+对账路径共用此漏斗)。
+    // T9 迁移合成行(hbm_ 前缀 id)trigger 同样带 heartbeat: 前缀,对账不误捞。
+    let db = test_db_async().await;
+    let sse = sse();
+    let mut r = report("run_hb_1", Outcome::Failed, Some(EndReason::Llm), None);
+    r.trigger = "heartbeat:ws1".to_string();
+    ticket_for_run(&db, &sse, &r, None, Some("heartbeat:ws1")).await;
+    let tickets = db.list_tickets("ws1", None, 20, 0).await.unwrap();
+    assert!(tickets.is_empty(), "心跳失败不开票——走 G3 事件通道");
+
+    // RT-1:merged heartbeat run(合并窗内)同样不开票——标签是 merged: 前缀。
+    let mut rm = report("run_hb_merged", Outcome::Failed, Some(EndReason::Llm), None);
+    rm.trigger = "merged:heartbeat:ws1".to_string();
+    ticket_for_run(&db, &sse, &rm, None, Some("heartbeat:ws1")).await;
+    assert!(
+        db.list_tickets("ws1", None, 20, 0).await.unwrap().is_empty(),
+        "merged heartbeat 失败同样不开票(RT-1)"
+    );
+
+    // 对照:非心跳源(thing event)失败照常开票——守卫不误伤
+    let r2 = report("run_te_1", Outcome::Rejected, Some(EndReason::Policy), Some("t1"));
+    ticket_for_run(&db, &sse, &r2, None, Some("thing:t1:event:temp_high")).await;
+    let tickets = db.list_tickets("ws1", None, 20, 0).await.unwrap();
+    assert_eq!(tickets.len(), 1, "非心跳源的失败 run 照常开票");
 }

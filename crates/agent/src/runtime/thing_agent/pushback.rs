@@ -356,6 +356,9 @@ mod tests {
             tokens: 500,
             end_reason: None,
             thing_id: None,
+            trace: vec![],
+            task_count: None,
+            snapshot: None,
         }
     }
 
@@ -446,6 +449,9 @@ mod tests {
             tokens: 500,
             end_reason: None,
             thing_id: None,
+            trace: vec![],
+            task_count: None,
+            snapshot: None,
         }
     }
 

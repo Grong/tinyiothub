@@ -39,6 +39,9 @@ pub enum Error {
 
     #[error("driver error: {0}")]
     DriverError(String),
+
+    #[error("cancelled")]
+    Cancelled,
 }
 
 /// Unified Result type alias.

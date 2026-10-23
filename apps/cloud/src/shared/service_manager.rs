@@ -36,14 +36,11 @@ pub struct ServiceManager {
     /// AI orchestrator (set during start_all)
     orchestrator: Option<Arc<tinyiothub_agent::runtime::orchestrator::Orchestrator>>,
 
-    /// AI heartbeat runner (set during start_all)
-    heartbeat_runner: Option<Arc<tinyiothub_agent::runtime::heartbeat::runner::HeartbeatRunner>>,
-
     /// Shared AI event publisher (set during start_all, drained on shutdown)
     event_publisher: Option<Arc<tinyiothub_agent::runtime::event::bus::AiEventPublisher>>,
 
     /// Agent 持久化订阅者关停令牌（Task 9）：cancel 后主循环退出、
-    /// 心跳重试任务中止；句柄在 service_handles 中随关停排空。
+    /// 落库重试任务中止；句柄在 service_handles 中随关停排空。
     persistence_shutdown: Option<tokio_util::sync::CancellationToken>,
 }
 
@@ -59,7 +56,6 @@ impl ServiceManager {
             service_handles: Arc::new(RwLock::new(Vec::new())),
             cron_scheduler: Arc::new(RwLock::new(None)),
             orchestrator: None,
-            heartbeat_runner: None,
             event_publisher: None,
             persistence_shutdown: None,
         }
@@ -72,13 +68,81 @@ impl ServiceManager {
         // 更新状态为启动中
         *self.status.write().await = ServiceStatus::Starting;
 
-        // 1. 创建并启动数据服务器（device_cache 经 D15 端口适配器注入）
-        let data_server = Arc::new(DataServer::new(
-            Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(
-                app_state.device_cache.clone(),
-            )),
-            app_state.event_bus.clone(),
+        // 1. E4a 驱动访问服务（声明协议）：内置 manifest 播种 + Db 端口
+        // 适配器注入（runtime 不依赖 db/sqlx）。必须先于 DataServer::new：
+        // 后者在构造时按缓存物 create_driver，E4a 动态驱动只有 rehydrate
+        // 之后才在注册表里，否则重启后这些物要再重启一次才开始轮询。
+        let manifests = Arc::new(tinyiothub_runtime::access::registry::ManifestRegistry::new());
+        for (_, json) in tinyiothub_runtime::driver::describe::builtin_manifest_jsons() {
+            manifests
+                .seed_builtin(json)
+                .map_err(|e| Error::IOError(e.to_string()))?;
+        }
+        // Demand tracker 先于 AccessService 建立：读工具经 AccessService 写入、
+        // sampler（下方）与 Hub 订阅共享同一实例。
+        let demand_tracker = Arc::new(tinyiothub_runtime::access::demand::DemandTracker::new());
+        // E4d 空间读/写面：ZoneService 同时服务 DataServer（位置读数落库 +
+        // 边界告警）与 AI watch（zone 权威），共用同一坐标缓存。
+        let map_store: Arc<dyn tinyiothub_runtime::ports::MapStore> =
+            Arc::new(crate::shared::runtime_ports::DbMapStore((*app_state.db).clone()));
+        let zone_service = Arc::new(tinyiothub_runtime::maps::ZoneService::new(
+            map_store.clone(),
+            tinyiothub_runtime::maps::TrustThresholds::default(),
         ));
+        // CRUD（Task 5）写穿同一实例：写成功后 invalidate，DataServer/watch
+        // 的下一次读取立即看到新地图/地点。
+        app_state.set_zones(zone_service.clone());
+        let access = Arc::new(
+            tinyiothub_runtime::access::service::AccessService::new(
+                crate::shared::paths::api_data_dir(),
+                manifests,
+                Arc::new(crate::shared::access_ports::DbDriverStore(app_state.db.clone())),
+                Arc::new(crate::shared::access_ports::DbDeviceStore(app_state.db.clone())),
+                Arc::new(crate::shared::access_ports::DbProjectionStore(app_state.db.clone())),
+                Arc::new(crate::shared::access_ports::DbThingSource(app_state.db.clone())),
+                Arc::new(crate::shared::access_ports::DbAcceptanceStore(app_state.db.clone())),
+                demand_tracker.clone(),
+            )
+            .with_map_store(map_store)
+            .with_zone_service(zone_service.clone()),
+        );
+        // Installed packages live on disk + DB; restore them before serving
+        // so a restart does not silently lose everything but the built-ins.
+        if let Err(e) = access.rehydrate().await {
+            tracing::warn!(error = %e, "E4a driver package rehydrate failed");
+        }
+        app_state.set_access(access.clone());
+        info!("✅ AccessService started");
+
+        // 2. 创建并启动数据服务器（device_cache 经 D15 端口适配器注入）
+        let device_cache: Arc<dyn tinyiothub_runtime::ports::ThingCacheSource> = Arc::new(
+            crate::shared::runtime_ports::ThingCacheAdapter(app_state.device_cache.clone()),
+        );
+        // E1/E4c 账本适配器：取消终态（call_cancelled*）与 wake/watch 账本
+        // 共用同一实例（含日增观测计数）。
+        let hub_ledger = Arc::new(crate::shared::runtime_ports::HubLedgerAdapter::new(
+            (*app_state.db).clone(),
+        ));
+        let data_server = Arc::new(DataServer::new(device_cache.clone(), app_state.event_bus.clone()));
+        data_server.set_hub_ledger(hub_ledger.clone());
+        data_server.set_zone_service(zone_service.clone());
+
+        // 2.1 中央 sampler：catalog = device_cache ∪ 已安装 manifest；
+        // 需求 = 本地订阅/近期读取（DemandTracker）+ 持久规则快照
+        // （DbDemandSource：watch/派生/告警，每秒刷新一次）。
+        let sampling_catalog = Arc::new(tinyiothub_runtime::access::catalog::CachedManifestCatalog::new(
+            device_cache,
+            access.manifests.clone(),
+        ));
+        let sampler = Arc::new(tinyiothub_runtime::access::sampler::Sampler::new(
+            sampling_catalog,
+            demand_tracker.clone(),
+            data_server.sampling_workers(),
+            Some(Arc::new(crate::shared::access_ports::DbDemandSource(
+                app_state.db.clone(),
+            ))),
+        ));
+        data_server.set_sampler(sampler);
 
         // 启动数据服务器
         let shutdown_rx = self.shutdown_tx.subscribe();
@@ -127,6 +191,27 @@ impl ServiceManager {
 
         info!("✅ DataServer started and registered");
 
+        // 2.5 派生引擎管理器（Task 7 + X4 单引擎化，spec §三）：启动索引重建 +
+        // 全 workspace 单 EventBus 订阅 + 首值补偿。读数经 data_server.value_sink()
+        // → 共享管线回流（consume_driver_reading 的 device_cache 回退写 owner 物，
+        // 不再注册任何 driver wrapper）。list_derived 失败 = 启动期 DB 读失败，
+        // 中止启动（与 T21 fail-closed 同源）。三类触发源
+        // （notify_config_changed / notify_tree_changed / notify_thing_deleted）
+        // 由 Task 8 物管理面钩子接线。
+        let derived_manager = Arc::new(tinyiothub_runtime::driver::derived_manager::DerivedDriverManager::new(
+            Arc::new(crate::shared::runtime_ports::DbDerivedPropertyQueries(
+                (*app_state.db).clone(),
+            )),
+            Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(
+                app_state.device_cache.clone(),
+            )),
+            data_server.value_sink(),
+            app_state.event_bus.clone(),
+        ));
+        derived_manager.start().await.map_err(Error::IOError)?;
+        app_state.derived_manager = Some(derived_manager);
+        info!("✅ DerivedDriverManager started");
+
         // 2. 启动 Cron 调度器
         #[cfg(not(feature = "harmonyos"))]
         {
@@ -147,6 +232,8 @@ impl ServiceManager {
                 crate::shared::runtime_ports::ApprovalTimeoutAdapter {
                     db: (*app_state.db).clone(),
                     sse: app_state.sse_manager.clone(),
+                    alarm_service: app_state.alarm_service.clone(),
+                    notify: app_state.notification_manager.clone(),
                 },
             ))));
             let cron_scheduler = tinyiothub_scheduler::CronSchedulerService::new(app_state.db.clone(), registry);
@@ -166,10 +253,12 @@ impl ServiceManager {
         {
             let heartbeat_task_db = app_state.db.clone();
 
-            let heartbeat_config = tinyiothub_agent::runtime::heartbeat::types::HeartbeatConfig {
-                enabled: true,
-                interval_minutes: 15,
-            };
+            // 统一循环心跳默认间隔（HeartbeatConfig::default 同源）；每工作区
+            // 覆盖走统一循环 intervals 共享表。
+            let heartbeat_default_interval = std::time::Duration::from_secs(
+                u64::from(tinyiothub_agent::runtime::heartbeat::types::HeartbeatConfig::default().interval_minutes)
+                    * 60,
+            );
             let event_publisher = Arc::new(
                 tinyiothub_agent::runtime::event::bus::AiEventPublisher::new(app_state.event_bus.clone())
                     .with_drop_notifier(Arc::new(tinyiothub_agent::runtime::event::bus::LoggingDropNotifier)),
@@ -215,10 +304,39 @@ impl ServiceManager {
             // 捕获。外部（MCP）工具工厂按需从 MCP_REGISTRY 派生（G3 —
             // 单一事实源，无第二注册静态）。
             let tool_registry = app_state.agent_pool.tool_registry();
+            // E1 Task 10：LiveState 读面迟绑定槽——此处注入 chat/自治两侧工具
+            // 上下文，manager 就绪（runtime.thing_agents() 之后）set；未 set 时
+            // get_thing_profile 的 live=null。
+            let live_summary_slot = crate::domains::agent::host::tools::thing::LiveSummarySlot::default();
+            let live_summary: Arc<dyn crate::domains::agent::host::tools::thing::LiveSummarySource> =
+                Arc::new(live_summary_slot.clone());
+            // E2 watch/unwatch：manager 迟绑定槽（与 live_summary_slot 同点 set）。
+            let manager_slot = crate::domains::agent::host::tools::thing::ManagerSlot::default();
             tool_registry.register_provider(crate::domains::agent::host::tools::chat_builtin_tools_provider(
                 app_state.db.pool().clone(),
                 Some(app_state.device_cache.clone()),
                 app_state.pending_actions.clone(),
+                app_state.arbitration.clone(),
+                live_summary.clone(),
+                // E2 ToolExec 接缝默认实现（直通内层工具）。
+                std::sync::Arc::new(tinyiothub_agent::runtime::thing_agent::seams::tool_exec::DefaultToolExec),
+                Some(app_state.event_bus.clone()),
+                manager_slot.clone(),
+                // E4a：调用边界校验（声明缺失/未声明操作/参数越界 → 拒绝）。
+                app_state
+                    .access
+                    .clone()
+                    .map(|a| a as Arc<dyn tinyiothub_runtime::access::validator::AccessCallValidator>),
+                // E4c：call/set 按声明 resources 解析并 claim。
+                app_state
+                    .access
+                    .clone()
+                    .map(|a| a as Arc<dyn tinyiothub_runtime::access::resources::ResourceResolver>),
+                // E4b：读取需求写入 sampler 共享的 DemandTracker。
+                app_state
+                    .access
+                    .clone()
+                    .map(|a| a as Arc<dyn tinyiothub_runtime::access::DemandRecorder>),
             ));
             tool_registry.set_external_tool_factory(Arc::new(|| {
                 crate::domains::agent::host::ports::external_tool_registry()
@@ -241,8 +359,6 @@ impl ServiceManager {
             let runtime = Arc::new(tinyiothub_agent::runtime::runtime::AgentRuntime::restore(
                 snapshot,
                 tinyiothub_agent::runtime::runtime::RuntimeDeps {
-                    event_publisher: event_publisher.clone(),
-                    heartbeat_config,
                     thing_agent_host: Arc::new(
                         crate::domains::agent::host::thing_agent_host::CloudThingAgentHost::new(
                             pool.clone(),
@@ -266,10 +382,29 @@ impl ServiceManager {
                                 device_cache: Some(app_state.device_cache.clone()),
                                 data_server: app_state.data_server.clone(),
                                 pending_actions: Some(app_state.pending_actions.clone()),
+                                arbitration: Some(app_state.arbitration.clone()),
+                                live: Some(live_summary.clone()),
+                                event_bus: Some(app_state.event_bus.clone()),
+                                manager: Some(manager_slot.clone()),
+                                access: app_state
+                                    .access
+                                    .clone()
+                                    .map(|a| a as Arc<dyn tinyiothub_runtime::access::validator::AccessCallValidator>),
+                                resources: app_state
+                                    .access
+                                    .clone()
+                                    .map(|a| a as Arc<dyn tinyiothub_runtime::access::resources::ResourceResolver>),
+                                demand: app_state
+                                    .access
+                                    .clone()
+                                    .map(|a| a as Arc<dyn tinyiothub_runtime::access::DemandRecorder>),
                             },
                         ),
                     ),
-                    thing_agent_config: tinyiothub_agent::runtime::thing_agent::ThingAgentManagerConfig::default(),
+                    thing_agent_config: tinyiothub_agent::runtime::thing_agent::ThingAgentManagerConfig {
+                        heartbeat_default_interval,
+                        ..Default::default()
+                    },
                     event_bus: app_state.event_bus.clone(),
                     drop_notifier: Some(Arc::new(tinyiothub_agent::runtime::event::bus::LoggingDropNotifier)),
                     agent_events,
@@ -293,7 +428,7 @@ impl ServiceManager {
                     let db = app_state.db.clone();
                     let token = persist_shutdown.clone();
                     async move {
-                        crate::domains::agent::host::persist::supervise_persistence_subscriber(
+                        crate::domains::agent::host::persist::persist::supervise_persistence_subscriber(
                             runtime,
                             db,
                             agent_events_supervisor,
@@ -318,7 +453,7 @@ impl ServiceManager {
                 let bus = agent_events_ticket.clone();
                 let token = ticket_shutdown.clone();
                 let handle = tokio::spawn(async move {
-                    crate::domains::agent::host::ticket_subscriber::supervise_ticket_subscriber(
+                    crate::domains::agent::host::notify::ticket_subscriber::supervise_ticket_subscriber(
                         ticket_rx,
                         move || bus.subscribe(),
                         db,
@@ -339,15 +474,17 @@ impl ServiceManager {
                 let db = app_state.db.clone();
                 let sse = app_state.sse_manager.clone();
                 let alarm_service = app_state.alarm_service.clone();
+                let notify = app_state.notification_manager.clone();
                 let bus = agent_events_judgment.clone();
                 let token = judgment_shutdown.clone();
                 let handle = tokio::spawn(async move {
-                    crate::domains::agent::host::judgment_subscriber::supervise_judgment_subscriber(
+                    crate::domains::agent::host::judge::judgment_subscriber::supervise_judgment_subscriber(
                         judgment_rx,
                         move || bus.subscribe(),
                         db,
                         sse,
                         alarm_service,
+                        notify,
                         token,
                     )
                     .await;
@@ -357,8 +494,15 @@ impl ServiceManager {
                 info!("✅ Judgment subscriber started (supervised)");
             }
 
-            let heartbeat_runner = runtime.heartbeat_runner().clone();
             let thing_agent_manager = runtime.thing_agents().clone();
+            // E4b §3.2：turn 开头工作区快照的声明属性读取也计入需求。
+            thing_agent_manager.set_snapshot_demand_sink(Arc::new(
+                crate::shared::access_ports::AccessSnapshotDemandSink(access.clone()),
+            ));
+            // E1 Task 10：manager 就绪，LiveState 读面槽封口——此后工具查询
+            // 经 watch 命令通道生效（此前 live=null）。
+            live_summary_slot.set(thing_agent_manager.clone());
+            manager_slot.set(thing_agent_manager.clone());
             let orchestrator = runtime.orchestrator().clone();
 
             // Wire event publisher to services that need cross-domain dispatching
@@ -372,19 +516,15 @@ impl ServiceManager {
                 .workspace_service
                 .set_heartbeat_task_db(heartbeat_task_db.clone());
             // Task 9：runtime 注入 agent hooks —— WorkspaceCreated 种子任务
-            // 在发布事件前同步推入 runner 内存真源（D11-⑤：DB 已先写），
-            // 随后的 heartbeat start 才能读到任务集。
+            // 在发布事件前同步推入统一循环共享表（D11-⑤：DB 已先写），随后
+            // 的 trigger tick 才能读到任务集。
             app_state.workspace_service.set_agent_hooks(Arc::new(
-                crate::domains::agent::host::agent_hooks::AgentHooksImpl::new().with_runtime(runtime.clone()),
+                crate::domains::agent::host::trigger::agent_hooks::AgentHooksImpl::new().with_runtime(runtime.clone()),
             ));
 
-            // Wire agent pool via adapter
-            let ai_adapter = Arc::new(crate::domains::agent::host::pool_adapter::HostAgentPoolAdapter::new(
-                app_state.agent_pool.clone(),
-                app_state.db.pool().clone(),
-            ));
-            heartbeat_runner.set_agent_pool(ai_adapter).await;
-
+            // T15 退役接线：Metrics 所有权自旧 runner 迁出——MemoryService
+            // 的反射统计继续落同一类型实例（由此处持有并注入）。
+            let agent_metrics = Arc::new(tinyiothub_agent::memory::metrics::Metrics::new());
             let memory_service = Arc::new(
                 tinyiothub_memory::service::MemoryService::new(
                     Arc::new(crate::shared::llm_provider::MinimaxLlmProvider::new(
@@ -392,18 +532,18 @@ impl ServiceManager {
                     )),
                     app_state.memory_store.clone(),
                 )
-                // Share the runner's Metrics so reflection stats land in the same snapshot.
-                .with_metrics(heartbeat_runner.metrics.clone()),
+                .with_metrics(agent_metrics),
             );
 
             // Task 7 起 AgentPool 不再持有 MemoryService：chat 反射路径由
             // proxy handler 从 AgentState.memory_service 注入。
             app_state.agent_pool.set_event_publisher(event_publisher.clone()).await;
 
-            // Task 6 起 orchestrator 不再持有 repo/MemoryService：心跳结果经
-            // AgentEventBus(HeartbeatResultReady) 出口（持久化订阅者落库）；
-            // MemoryService 由 cloud 侧自持（AgentState.memory_service，
-            // memory profile compile/weekly digest handler 使用）。
+            // Task 6 起 orchestrator 不再持有 repo/MemoryService：统一循环的
+            // run/心跳提案经 AgentEventBus(RunRecorded) 出口（持久化订阅者
+            // 落库，T15 起唯一通道）；MemoryService 由 cloud 侧自持
+            // （AgentState.memory_service，memory profile compile/weekly
+            // digest handler 使用）。
             app_state.memory_service = Some(memory_service);
 
             orchestrator.start();
@@ -411,23 +551,100 @@ impl ServiceManager {
             // T14 用户指令入口：chat 工具 / HTTP 端点经 directive_sink 投递到
             // 对应工作区的 thing-agent 调度器。
             app_state.set_directive_sink(thing_agent_manager.clone());
+            // AI 运行透明化 T5：/agent-runs/{id}/trace 实时分支数据源——与
+            // manager 内 PipelineDeps 同一实例（克隆共享 DashMap）。
+            app_state.set_active_runs(thing_agent_manager.active_run_registry());
 
-            // Start heartbeat loops for existing workspaces（内存真源已由
-            // restore 预热：tasks 非空，start 不再跳过）。
+            // 启动补种（2026-09-16）：老工作区（早于 WorkspaceCreated 播种
+            // 功能）heartbeat_tasks 为 0，心跳永不 tick（统一循环 trigger
+            // 空任务抑制）——AI 巡检完全空转。0 任务时补种默认任务：先写
+            // DB，再 reload 统一循环共享表，trigger 随即能读到任务集。
             for ws_id in &ws_ids {
-                heartbeat_runner.start(ws_id).await;
+                match app_state.db.list_heartbeat_tasks(ws_id).await {
+                    Ok(tasks) if tasks.is_empty() => {
+                        let defaults: Vec<tinyiothub_core::heartbeat::NewHeartbeatTask> =
+                            crate::domains::agent::host::heartbeat::get_default_tasks()
+                                .into_iter()
+                                .map(|t| tinyiothub_core::heartbeat::NewHeartbeatTask {
+                                    priority: t.priority,
+                                    text: t.text,
+                                    paused: t.paused,
+                                })
+                                .collect();
+                        match app_state.db.replace_heartbeat_tasks(ws_id, &defaults).await {
+                            Ok(()) => match app_state.db.list_heartbeat_tasks(ws_id).await {
+                                Ok(seeded) => {
+                                    runtime.reload_heartbeat_tasks(ws_id, seeded);
+                                    info!(%ws_id, "seeded default heartbeat tasks at boot");
+                                }
+                                Err(e) => {
+                                    tracing::warn!(%ws_id, error = %e, "read back seeded heartbeat tasks failed")
+                                }
+                            },
+                            Err(e) => {
+                                tracing::warn!(%ws_id, error = %e, "seed default heartbeat tasks failed")
+                            }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(%ws_id, error = %e, "list heartbeat tasks failed"),
+                }
+            }
+
+            // Start unified agent loops for existing workspaces（heartbeat
+            // 共享表已由 restore 预热：tasks 非空，trigger 不抑制）。
+            //
+            // E1 Task 8 bootstrap 硬顺序：set_wake_ledger / set_watch_deps /
+            // 限速预热全部先于 start——三者都只影响其后 start 的工作区。
+            // E4d：maps/places/position 读面（runtime 经 MapStore 端口，零 db）；
+            // 与 DataServer 共用启动时建立的 ZoneService/坐标缓存。
+            thing_agent_manager.set_wake_ledger(hub_ledger.clone());
+            thing_agent_manager.set_watch_deps(tinyiothub_agent::runtime::thing_agent::WatchDeps {
+                cache: Arc::new(crate::shared::runtime_ports::ThingCacheAdapter(
+                    app_state.device_cache.clone(),
+                )),
+                ledger: hub_ledger,
+                rules: Arc::new(crate::shared::runtime_ports::WatchRuleStoreAdapter(
+                    (*app_state.db).clone(),
+                )),
+                events: app_state.event_bus.clone(),
+                zones: Some(zone_service),
+            });
+            // E1 同键限速预热：DB heartbeat_config JSON 的
+            // rate_limit_per_key_per_min → scheduler 共享表（spec §3 热改
+            // 生效；读失败只记日志，缺省 3/min 兜底）。
+            for ws_id in &ws_ids {
+                match app_state.db.load_heartbeat_config(ws_id).await {
+                    Ok(Some(cfg)) => {
+                        if let Some(per_min) = cfg.rate_limit_per_key_per_min {
+                            thing_agent_manager.set_wake_rate_limit_per_min(ws_id, per_min);
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => tracing::warn!(%ws_id, error = %e, "load heartbeat config for rate-limit prewarm failed"),
+                }
+            }
+            for ws_id in &ws_ids {
                 thing_agent_manager.start(ws_id);
             }
             info!("✅ AI Orchestrator started ({} workspaces)", ws_ids.len());
 
+            // Boot race 恢复：AI 接线完成前创建的报警（publisher 未接线时
+            // AlarmCreated 被丢弃）留下的 investigating judgment 重派调查。
+            for ws_id in &ws_ids {
+                app_state.alarm_service.redispatch_pending_investigations(ws_id).await;
+            }
+
             // Store in ServiceManager for shutdown
             self.orchestrator = Some(orchestrator);
-            self.heartbeat_runner = Some(heartbeat_runner);
             self.event_publisher = Some(event_publisher);
 
             // Also store in AppState for potential access by other subsystems
             app_state.orchestrator = self.orchestrator.clone();
-            app_state.heartbeat_runner = self.heartbeat_runner.clone();
+            // T13 bootstrap 装配：统一循环管理器 + last_ticks 共享表注入
+            // （T15 起 handler 的唯一读源）。
+            app_state.thing_agents = Some(thing_agent_manager.clone());
+            app_state.heartbeat_last_ticks = Some(thing_agent_manager.heartbeat_last_ticks());
         }
 
         // 5. Start SSE token cleanup to prevent expired tokens from accumulating in memory.
@@ -544,15 +761,10 @@ impl ServiceManager {
             info!("CronSchedulerService shutdown signal sent");
         }
 
-        // 关闭 AI subsystem — Orchestrator 先关闭停止接收事件，
-        // 再关闭 HeartbeatRunner 停止循环，避免中间窗口事件丢失。
+        // 关闭 AI subsystem — Orchestrator 先关闭停止接收事件。
         if let Some(ref orchestrator) = self.orchestrator {
             orchestrator.shutdown().await;
             info!("Orchestrator shut down");
-        }
-        if let Some(ref heartbeat_runner) = self.heartbeat_runner {
-            heartbeat_runner.shutdown().await;
-            info!("HeartbeatRunner shut down");
         }
         // Drain queued events after all producers have stopped.
         if let Some(ref event_publisher) = self.event_publisher {
@@ -560,7 +772,7 @@ impl ServiceManager {
             info!("AiEventPublisher drained");
         }
         // 持久化订阅者退出：生产者已全部关停，cancel 后主循环退出、
-        // 在飞心跳重试任务中止（句柄在下方 service_handles 排空中等待）。
+        // 在飞落库重试任务中止（句柄在下方 service_handles 排空中等待）。
         if let Some(ref token) = self.persistence_shutdown {
             token.cancel();
             info!("Agent persistence subscriber shutdown signal sent");

@@ -18,8 +18,42 @@ struct Scenario {
 /// F-E/T-11：eval 与生产同一解析函数（不再手抄副本——改解析规则时
 /// eval 自动跟随，漂移在编译期暴露）。
 fn parse_verdict_loose(text: &str) -> Option<String> {
-    crate::domains::agent::host::judgment_subscriber::parse_verdict(text)
+    crate::domains::agent::host::judge::judgment_subscriber::parse_verdict(text)
         .map(|(p, _fallback)| p.verdict_str().to_string())
+}
+
+/// Task 7 夹具（离线，不需 LLM）：verdict 协议 narrative 字段——
+/// 带 narrative 的样例必须解析出 narrative；缺 narrative（旧协议）不炸。
+#[test]
+fn verdict_with_narrative_parsed_out() {
+    let text = "```json\n{\"verdict\": \"noise\", \"reason\": \"正常波动\", \"suggested_action\": null, \"action_category\": \"other\", \"narrative\": \"我检查了温度曲线，看到 24 小时内三次尖峰都自行回落，所以判定是噪声。\"}\n```";
+    let (p, fallback) = crate::domains::agent::host::judge::judgment_subscriber::parse_verdict(text)
+        .expect("带 narrative 的 verdict 必须解析成功");
+    assert!(!fallback, "围栏块不应走宽松 fallback");
+    assert_eq!(p.verdict_str(), "noise");
+    assert_eq!(
+        p.narrative_str(),
+        Some("我检查了温度曲线，看到 24 小时内三次尖峰都自行回落，所以判定是噪声。"),
+        "narrative 必须解析出"
+    );
+}
+
+#[test]
+fn verdict_without_narrative_still_parses() {
+    // 严格路径：围栏块、无 narrative → 解析成功、非 fallback、narrative None。
+    let fenced = "```json\n{\"verdict\": \"needs_human\", \"reason\": \"根因不明\", \"suggested_action\": null, \"action_category\": \"other\"}\n```";
+    let (p, fallback) = crate::domains::agent::host::judge::judgment_subscriber::parse_verdict(fenced)
+        .expect("旧协议（无 narrative）不得炸");
+    assert!(!fallback);
+    assert_eq!(p.verdict_str(), "needs_human");
+    assert_eq!(p.narrative_str(), None, "缺 narrative → None 兜底");
+
+    // 宽松路径：裸 JSON、无 narrative → 命中 fallback 标记且不炸。
+    let bare = "调查完成 {\"verdict\": \"self_healable\", \"reason\": \"重连可恢复\", \"suggested_action\": \"重启模块\", \"action_category\": \"device_reboot\"}";
+    let (p2, fallback2) = crate::domains::agent::host::judge::judgment_subscriber::parse_verdict(bare)
+        .expect("裸 JSON 无 narrative 不得炸");
+    assert!(fallback2, "裸 JSON 必须标 fallback");
+    assert_eq!(p2.narrative_str(), None);
 }
 
 #[tokio::test]
@@ -47,7 +81,16 @@ async fn judgment_eval_verdict_accuracy() {
     let mut noise_misses = 0usize; // needs_human 误判 noise —— 0 容忍
     let mut failures: Vec<String> = vec![];
 
-    for s in &scenarios {
+    // EVAL_ONLY=noise-07,edge-02 只跑指定场景——排查 miss 时不必全量 24 条。
+    let only: Option<Vec<String>> = std::env::var("EVAL_ONLY")
+        .ok()
+        .map(|v| v.split(',').map(|s| s.trim().to_string()).collect());
+    let selected: Vec<&Scenario> = scenarios
+        .iter()
+        .filter(|s| only.as_ref().is_none_or(|o| o.contains(&s.id)))
+        .collect();
+
+    for s in &selected {
         // F-E/T-11：与生产同一 prompt 模板（alarm_investigation_text；
         // 场景事实注入 message 字段）。改调查 prompt 会直接进入本 eval——
         // 基线永远是生产管线的度量，不是手抄副本。
@@ -59,22 +102,34 @@ async fn judgment_eval_verdict_accuracy() {
             severity: "warning".to_string(),
             message: s.facts.clone(),
             rule_id: Some(format!("eval-rule-{}", s.id)),
+            condition_desc: None,
             resolved: false,
             created_at: chrono::Utc::now(),
         };
-        let prompt = tinyiothub_agent::runtime::orchestrator::callbacks::alarm_investigation_text(&alarm);
+        let prompt = tinyiothub_agent::prompt::investigation::alarm_investigation_text(&alarm);
         let messages = [ChatMessage::user(prompt)];
         let resp = provider
             .chat(
                 ChatRequest {
                     messages: &messages,
                     tools: None,
+                    // 显式给足输出预算：推理模型（M2.5）服务端默认预算会被
+                    // reasoning 吃光，正文在 verdict 块前截断（2026-09-28
+                    // 实测 RAW tail 只有开场白）。
+                    max_tokens: Some(4096),
                 },
                 "MiniMax-M2.5",
                 Some(0.0),
             )
-            .await
-            .expect("chat");
+            .await;
+        // 单次调用失败不再中止整个 eval（rig 偶发 HttpError）——记 miss 继续。
+        let resp = match resp {
+            Ok(r) => r,
+            Err(e) => {
+                failures.push(format!("{}: chat error: {e}", s.id));
+                continue;
+            }
+        };
         let text = resp.text.unwrap_or_default();
         match parse_verdict_loose(&text) {
             Some(v) if v == s.expected => correct += 1,
@@ -84,12 +139,18 @@ async fn judgment_eval_verdict_accuracy() {
                 }
                 failures.push(format!("{}: expected={} got={}", s.id, s.expected, v));
             }
-            None => failures.push(format!("{}: unparseable output", s.id)),
+            None => {
+                // 解析失败必须可见原始输出（2026-09-27：baseline 红灯排查时
+                // 发现无 raw 可诊）——尾部 400 字符足够看清围栏/字段形状。
+                let tail: String = text.chars().rev().take(400).collect::<String>().chars().rev().collect();
+                println!("  RAW[{}] tail: {}", s.id, tail);
+                failures.push(format!("{}: unparseable output", s.id));
+            }
         }
     }
 
-    let total = scenarios.len();
-    let accuracy = correct as f64 / total as f64;
+    let total = selected.len();
+    let accuracy = correct as f64 / total.max(1) as f64;
     println!("\n=== judgment eval baseline ===");
     println!(
         "scenarios: {total}, correct: {correct}, accuracy: {:.1}%, noise_misses: {noise_misses}",
@@ -99,5 +160,8 @@ async fn judgment_eval_verdict_accuracy() {
         println!("  MISS: {f}");
     }
     assert!(noise_misses == 0, "needs_human→noise 误判 0 容忍：{noise_misses} 例");
-    assert!(accuracy >= 0.85, "verdict 准确率 {:.1}% < 85% 门槛", accuracy * 100.0);
+    // 门槛断言只在全量跑时生效——EVAL_ONLY 是诊断模式。
+    if only.is_none() {
+        assert!(accuracy >= 0.85, "verdict 准确率 {:.1}% < 85% 门槛", accuracy * 100.0);
+    }
 }

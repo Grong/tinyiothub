@@ -71,3 +71,6 @@ deploy/docker/data/
 
 # Personal AI tooling (per-developer, not project assets)
 .claude/
+
+# Superpowers SDD scratch workspaces
+.superpowers/

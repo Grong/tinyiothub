@@ -151,6 +151,9 @@ pub async fn export_subtree_as_template(
         resources: ctx.resources.get(&root.id).cloned().unwrap_or_default(),
         dashboard: linked.get("dashboard").cloned(),
         alarm_rules: ctx.alarm_rules.get(&root.id).cloned().unwrap_or_default(),
+        // E3：导出不带值守规则（规则由用户在模板库单独声明/应用）。
+        watch_rules: vec![],
+        composites: vec![],
         children: build_children(&root, &ctx, &mut warnings),
     };
     Ok(ExportOutcome { file, warnings })

@@ -29,28 +29,32 @@ view-dispositions .disp-learn {
   margin: var(--space-1) 0 0;
 }
 
-/* 下划线 tab：active 下划线与容器边框重叠，无魔法数 */
+/* tab：与工单页（tickets.css .tab）同一模式——独立描边胶囊，
+   active 用页面信号色（琥珀）描边 + 同色文字；背景用 --card 修正
+   工单页 --surface 未定义回退纯白的问题，保证双主题安全 */
 view-dispositions .disp-tabs {
   display: flex;
-  gap: var(--space-4);
+  gap: var(--space-2);
   margin-bottom: var(--space-4);
-  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
 }
 
 view-dispositions .disp-tab {
-  font-size: 13px;
-  color: var(--muted-foreground);
-  background: none;
-  border: none;
-  border-bottom: 1px solid transparent;
+  border: 1px solid var(--border);
+  background: var(--card);
+  border-radius: var(--radius-sm, 6px);
+  padding: var(--space-2) var(--space-4);
   cursor: pointer;
-  padding: 0 0 var(--space-2);
-  margin-bottom: -1px;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  min-height: 44px;
 }
 
 view-dispositions .disp-tab.active {
-  color: var(--text-strong);
-  border-bottom-color: var(--text-strong);
+  border-color: var(--warning);
+  color: var(--warning);
+  font-weight: 600;
 }
 
 view-dispositions .disp-tab .count {
@@ -71,6 +75,21 @@ view-dispositions .j-item {
 view-dispositions .j-item.needs-you {
   border-color: var(--border-strong);
   box-shadow: inset 2px 0 0 var(--warning);
+}
+
+/* 行可点（展开证据 / tick 聚合行跳巡检历史） */
+view-dispositions .j-item.clickable {
+  cursor: pointer;
+}
+
+/* SSE 断连细条：与工单页 .sse-banner 同一模式 */
+view-dispositions .sse-banner {
+  background: var(--warn-subtle);
+  color: var(--warn);
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  border-radius: var(--radius-sm, 6px);
+  font-size: 12px;
+  margin-bottom: var(--space-3, 12px);
 }
 
 view-dispositions .j-row1 {
@@ -98,9 +117,19 @@ view-dispositions .j-verdict.action::before {
   font-size: 10px;
 }
 
+/* 标题行：事件标题（alarm 消息/提案摘要/指令原文）——两行结构的第一行 */
+view-dispositions .j-title {
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 view-dispositions .j-device {
   font-size: 13px;
   color: var(--muted-foreground);
+  flex-shrink: 0;
 }
 
 view-dispositions .j-time {
@@ -114,6 +143,16 @@ view-dispositions .j-reason {
   color: var(--muted-foreground);
   margin-top: 3px;
   line-height: 1.55;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 建议行：块级独占一行（不占按钮行，长文本不换行挤压操作区） */
+view-dispositions .j-suggestion {
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+  margin: var(--space-1) 0 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -241,15 +280,63 @@ view-dispositions .j-empty a {
   margin-top: var(--space-2);
 }
 
-/* 证据展开 */
-view-dispositions .j-evidence {
+/* 展开区统一为进度时间线（T12，设计 D3/D5）：限高内滚，全量步骤可滚完，列表不被撑爆 */
+view-dispositions .j-expand {
   margin-top: var(--space-2);
   padding-top: var(--space-2);
   border-top: 1px solid var(--border);
   font-size: 12px;
   color: var(--muted-foreground);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+/* 展开区加载中骨架 / 轨迹不可用（404 有限重试用尽） */
+view-dispositions .j-expand-note {
+  font-size: 12px;
+  color: var(--muted-strong);
+  padding: var(--space-1) 0;
+}
+
+/* detail 加载失败内联重试 */
+view-dispositions .j-expand-error {
+  font-size: 12px;
+  color: var(--muted-strong);
+}
+
+/* narrative（大白话结论；缺失时降级为 reason 文本） */
+view-dispositions .j-narrative {
+  margin: var(--space-2) 0 0;
+  font-size: 12.5px;
+  color: var(--text);
+  line-height: 1.55;
   white-space: pre-wrap;
-  word-break: break-all;
+  word-break: break-word;
+}
+
+view-dispositions .j-trace-link {
+  display: inline-block;
+  margin-top: var(--space-1);
+}
+
+/* 排队中（investigating 无 runId：无展开入口的说明行） */
+view-dispositions .j-queue {
+  font-size: 12.5px;
+  color: var(--muted-strong);
+  margin: var(--space-1) 0 0;
+}
+
+/* aria-live 播报区（D9）：视觉隐藏，屏幕阅读器可读 */
+view-dispositions .j-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 view-dispositions .disp-loading,
@@ -258,4 +345,14 @@ view-dispositions .disp-error {
   text-align: center;
   color: var(--muted-foreground);
   font-size: 13px;
+}
+
+/* X7：键盘焦点环可见（设计 Pass 6）——用设计系统 --focus-ring 预设 */
+view-dispositions .j-item:focus-visible,
+view-dispositions .disp-tab:focus-visible,
+view-dispositions .j-item button:focus-visible,
+view-dispositions .j-fb button:focus-visible,
+view-dispositions .j-wrong-panel textarea:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }

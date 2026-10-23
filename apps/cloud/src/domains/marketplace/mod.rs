@@ -7,6 +7,7 @@ pub mod metadata;
 pub mod publisher;
 pub mod scene_instantiator;
 pub mod template_installer;
+pub mod template_rules;
 pub mod thing_template_installer;
 
 pub use client::MarketplaceClient;

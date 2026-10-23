@@ -303,6 +303,7 @@ mod tests {
             severity: "critical".into(),
             message: "test".into(),
             rule_id: None,
+            condition_desc: None,
             resolved: false,
             created_at: chrono::Utc::now(),
         });
@@ -319,6 +320,7 @@ mod tests {
                 executed_actions: vec![],
                 proposals: vec![],
                 error: None,
+                trace: vec![],
             },
         };
         assert_eq!(hc.variant_name(), "HeartbeatCompleted");

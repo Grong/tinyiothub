@@ -1,13 +1,17 @@
 // Thing service — business logic layer
 
+pub mod derived_validation;
 pub mod export_template;
 pub mod import_export;
+
+use std::sync::Arc;
 
 use sqlx::SqlitePool;
 use tinyiothub_core::models::{thing_command::CreateThingCommandRequest, thing_property::CreateThingPropertyRequest};
 
 use super::{
     errors::ThingError,
+    hooks::CreationMode,
     summary::{self, StubLlmClient, SummaryComputer},
 };
 use crate::domains::thing::types::CreateThingRequest;
@@ -26,6 +30,9 @@ pub struct ThingService {
     db: Db,
     pool: SqlitePool,
     summary_computer: SummaryComputer,
+    /// E4a declaration seam — injected by the composition layer. None means
+    /// the access service is not wired (tests / degraded paths).
+    declaration_hook: parking_lot::RwLock<Option<Arc<dyn super::hooks::ThingDeclarationHook>>>,
 }
 
 impl ThingService {
@@ -34,7 +41,12 @@ impl ThingService {
             db: Db::new(pool.clone()),
             pool,
             summary_computer: SummaryComputer::new(),
+            declaration_hook: parking_lot::RwLock::new(None),
         }
+    }
+
+    pub fn set_declaration_hook(&self, hook: Arc<dyn super::hooks::ThingDeclarationHook>) {
+        *self.declaration_hook.write() = Some(hook);
     }
 
     // ──────────────────────────────────────────
@@ -174,6 +186,19 @@ impl ThingService {
             return Err(ThingError::NameConflict(req.name.clone()));
         }
 
+        // E4a: validate driver options and decide the capability bootstrap
+        // mode before inserting anything (invalid config must not create a
+        // half-bound thing).
+        let hook = self.declaration_hook.read().clone();
+        let mut creation_mode = None;
+        if let (Some(hook), Some(driver)) = (&hook, &req.driver_name) {
+            creation_mode = Some(
+                hook.prepare_creation(workspace_id.unwrap_or_default(), driver, req.driver_options.as_deref())
+                    .await
+                    .map_err(ThingError::Validation)?,
+            );
+        }
+
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let row = ThingRow {
             id: uuid::Uuid::new_v4().to_string(),
@@ -189,7 +214,7 @@ impl ThingService {
             protocol_type: req.protocol_type.clone(),
             factory_name: None,
             linked_data: None,
-            driver_options: None,
+            driver_options: req.driver_options.clone(),
             state: 0,
             parent_id: req.parent_id.clone(),
             organization_id: None,
@@ -206,14 +231,84 @@ impl ThingService {
 
         let created = self.db.create_thing_row(&row).await?;
         if let Some(ref tid) = req.template_id {
-            let _ = self.copy_template_props(&created.id, tid).await;
-            let _ = self.copy_template_acts(&created.id, tid).await;
+            // Fixed-capability drivers declare their own capability set, so
+            // template rows must not pollute it. Dynamic-capability drivers
+            // use template rows as the bootstrap that `describe()` then
+            // refines during materialization.
+            let bootstrap = !matches!(creation_mode, Some(CreationMode::Declarative));
+            if bootstrap {
+                let _ = self.copy_template_props(&created.id, tid).await;
+                let _ = self.copy_template_acts(&created.id, tid).await;
+            }
+        }
+        if let (Some(hook), Some(_)) = (&hook, &req.driver_name)
+            && let Err(e) = hook.materialize(workspace_id.unwrap_or_default(), &created.id).await
+        {
+            // No orphan devices: the row (and its template rows, via FK
+            // cascade) is removed before surfacing the rejection, otherwise
+            // retrying the same name fails with NameConflict.
+            if let Err(cleanup) = self.db.delete_thing_row(&created.id).await {
+                tracing::error!(
+                    thing_id = %created.id,
+                    error = %cleanup,
+                    "failed to roll back thing after declaration materialization failure"
+                );
+            }
+            return Err(ThingError::Validation(e));
         }
         Ok(Self::row_to_response(&created, vec![]))
     }
 
+    /// 模板三段定义一次取回（properties/actions/device_info），避免动态列名（SqlSafeStr）。
+    async fn template_parts(&self, tid: &str) -> Result<(Option<String>, Option<String>, Option<String>), sqlx::Error> {
+        tinyiothub_storage::thing_template::template_parts(&self.pool, tid).await
+    }
+
+    /// 列 JSON 非空判定：空串/"[]"/"null" 视为无定义。（Fix A）
+    /// pub(crate)：场景实例化器 extra_nodes 属性/命令拷贝复用同一路径。
+    pub(crate) fn nonempty_json(j: &Option<String>) -> Option<String> {
+        j.as_ref().and_then(|s| {
+            let t = s.trim();
+            if t.is_empty() || t == "[]" || t == "null" {
+                None
+            } else {
+                Some(s.clone())
+            }
+        })
+    }
+
+    /// 场景包回退：device_info 内嵌场景 JSON 的指定段（properties/commands）。（Fix A）
+    /// pub(crate)：场景实例化器 extra_nodes 复用。
+    pub(crate) fn scene_section(device_info: &Option<String>, key: &str) -> Option<String> {
+        let info = device_info.as_deref()?;
+        let v: serde_json::Value = serde_json::from_str(info).ok()?;
+        v.get(key).map(|s| s.to_string())
+    }
+
+    /// i18n 字段取值：字符串直接用；对象按 zh > en > 首值；缺失 None。（Fix A）
+    fn i18n_pick(v: Option<&serde_json::Value>) -> Option<String> {
+        let v = v?;
+        if let Some(s) = v.as_str() {
+            return Some(s.to_string());
+        }
+        let obj = v.as_object()?;
+        obj.get("zh")
+            .or_else(|| obj.get("en"))
+            .or_else(|| obj.values().next())
+            .and_then(|s| s.as_str())
+            .map(|s| s.to_string())
+    }
+
+    /// 键兼容读取：snake_case 优先，camelCase 兜底。（Fix A）
+    /// pub(crate)：场景实例化器 extra_nodes 复用。
+    pub(crate) fn key<'a>(p: &'a serde_json::Value, snake: &str, camel: &str) -> Option<&'a serde_json::Value> {
+        p.get(snake).or_else(|| p.get(camel))
+    }
+
     async fn copy_template_props(&self, thing_id: &str, tid: &str) -> Result<(), sqlx::Error> {
-        let Some(json) = self.db.find_thing_template_properties(tid).await? else {
+        let (props_col, _, device_info) = self.template_parts(tid).await?;
+        let json = Self::nonempty_json(&props_col).or_else(|| Self::scene_section(&device_info, "properties"));
+        let Some(json) = json else {
             return Ok(());
         };
         // Inserts go through the storage layer (single source of SQL for
@@ -224,19 +319,31 @@ impl ThingService {
             .map(|p| CreateThingPropertyRequest {
                 thing_id: thing_id.to_string(),
                 name: p["name"].as_str().unwrap_or("").to_string(),
-                display_name: p.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                description: None,
+                display_name: Self::i18n_pick(Self::key(&p, "display_name", "displayName")),
+                description: Self::i18n_pick(p.get("description")),
                 data_type: Some(
-                    p.get("dataType")
+                    Self::key(&p, "data_type", "dataType")
                         .and_then(|v| v.as_str())
                         .unwrap_or("string")
                         .to_string(),
                 ),
-                unit: Some(p.get("unit").and_then(|v| v.as_str()).unwrap_or("").to_string()),
-                min_value: p.get("minValue").and_then(|v| v.as_f64()),
-                max_value: p.get("maxValue").and_then(|v| v.as_f64()),
-                default_value: p.get("defaultValue").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                is_read_only: Some(p.get("isReadOnly").and_then(|v| v.as_bool()).unwrap_or(false) as i32),
+                unit: Self::key(&p, "unit", "unit")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                min_value: Self::key(&p, "min_value", "minValue").and_then(|v| v.as_f64()),
+                max_value: Self::key(&p, "max_value", "maxValue").and_then(|v| v.as_f64()),
+                default_value: Self::key(&p, "default_value", "defaultValue").map(|v| match v.as_str() {
+                    Some(s) => s.to_string(),
+                    None => v.to_string(),
+                }),
+                is_read_only: Some(
+                    Self::key(&p, "is_read_only", "isReadOnly")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false) as i32,
+                ),
+                expression: None,
+                source: None,
+                refs: None,
             })
             .collect();
         let db = Db::new(self.pool.clone());
@@ -245,7 +352,10 @@ impl ThingService {
     }
 
     async fn copy_template_acts(&self, thing_id: &str, tid: &str) -> Result<(), sqlx::Error> {
-        let Some(json) = self.db.find_thing_template_actions(tid).await? else {
+        // 场景包的命令定义在场景 JSON 的 commands 段（模板 actions 列为空）（Fix A）
+        let (_, acts_col, device_info) = self.template_parts(tid).await?;
+        let json = Self::nonempty_json(&acts_col).or_else(|| Self::scene_section(&device_info, "commands"));
+        let Some(json) = json else {
             return Ok(());
         };
         let db = Db::new(self.pool.clone());
@@ -253,8 +363,8 @@ impl ThingService {
             let req = CreateThingCommandRequest {
                 thing_id: thing_id.to_string(),
                 name: a["name"].as_str().unwrap_or("").to_string(),
-                display_name: a.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                description: None,
+                display_name: Self::i18n_pick(Self::key(&a, "display_name", "displayName")),
+                description: Self::i18n_pick(a.get("description")),
                 parameters: a.get("parameters").map(|v| v.to_string()),
             };
             db.create_thing_command(&req).await?;
@@ -426,6 +536,20 @@ impl ThingService {
         }
     }
 
+    /// Declared property names for a thing (E4b demand recording).
+    ///
+    /// Best-effort: a storage error yields an empty list — demand bookkeeping
+    /// must never fail the read tool whose output is already built.
+    pub async fn load_property_names(&self, thing_id: &str) -> Vec<String> {
+        match self.db.find_thing_properties_by_thing_id(thing_id).await {
+            Ok(props) => props.into_iter().map(|p| p.name).collect(),
+            Err(e) => {
+                tracing::warn!(thing_id, error = %e, "failed to load declared property names for demand tracking");
+                Vec::new()
+            }
+        }
+    }
+
     /// Load properties from the storage layer (single source of SQL for
     /// thing_properties — eng-review T9). No template fallback: the blueprint
     /// model means a thing with no instances has no properties (D6).
@@ -452,6 +576,11 @@ impl ThingService {
                         "maxValue": p.max_value,
                         "defaultValue": p.default_value,
                         "isReadOnly": p.is_read_only != 0,
+                        // 派生三件套（终审 C-1：详情页派生徽标/表达式展开依赖
+                        // 这些字段；缺了它们前端 derived 恒 false，展示链路是死路）
+                        "source": p.source,
+                        "expression": p.expression,
+                        "refs": p.refs,
                         "createdAt": p.created_at,
                         "updatedAt": p.updated_at,
                     })
@@ -521,6 +650,19 @@ impl ThingService {
         if rows.is_empty() {
             return None;
         }
-        Some(rows.into_iter().filter_map(|r| serde_json::to_value(r).ok()).collect())
+        Some(
+            rows.into_iter()
+                .filter_map(|r| {
+                    let mut v = serde_json::to_value(r).ok()?;
+                    // T6：补可访问 url（与 search_knowledge 工具一致），Agent 据此加载资源。
+                    let id = v.get("id")?.as_str()?.to_string();
+                    v.as_object_mut()?.insert(
+                        "url".to_string(),
+                        serde_json::json!(super::handler::resources::resource_file_url(&id)),
+                    );
+                    Some(v)
+                })
+                .collect(),
+        )
     }
 }

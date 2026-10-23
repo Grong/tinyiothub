@@ -17,9 +17,13 @@ pub use tinyiothub_core::agent_runs::*;
 // ──────────────────────────────────────────────
 
 /// trigger 串前缀作为 trigger_type（"thing:t1:event:x" → "thing"）；无 ':'
-/// 时用整串。
-pub(crate) fn trigger_type_of(trigger: &str) -> &str {
-    trigger.split(':').next().unwrap_or(trigger)
+/// 时用整串。pub：cloud persist 心跳支路（Task 8）按此前缀识别 heartbeat run。
+/// Merged 标签（"merged:{dedup_key}"）先剥前缀还原源类型——否则 merged heartbeat
+/// run 的 trigger_type='merged'，下游按 heartbeat 分类的消费者（提案投影/读侧/
+/// 对账排除）全部静默漏掉（2026-10-15 ship 评审 RT-1）。
+pub fn trigger_type_of(trigger: &str) -> &str {
+    let t = trigger.strip_prefix("merged:").unwrap_or(trigger);
+    t.split(':').next().unwrap_or(t)
 }
 
 pub(crate) async fn insert_run(
@@ -129,6 +133,44 @@ pub(crate) async fn recent_runs_by_dedup_key(
     rows.into_iter()
         .map(|(json,)| serde_json::from_str::<RunReport>(&json).map_err(Into::into))
         .collect()
+}
+
+/// 某 problem_key 的最新 RunReport（SLA sweep 对账用：调查 judgment 卡住时
+/// 从已完成的 run 恢复投影——事件丢失（Lagged/重启间隙）不该让判断永远
+/// 卡在 investigating）。
+pub(crate) async fn latest_run_report_by_problem_key(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    problem_key: &str,
+) -> Result<Option<RunReport>> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT report FROM agent_runs
+             WHERE workspace_id = ? AND problem_key = ?
+             ORDER BY created_at DESC, rowid DESC
+             LIMIT 1",
+    )
+    .bind(workspace_id)
+    .bind(problem_key)
+    .fetch_optional(pool)
+    .await?;
+    row.map(|(json,)| serde_json::from_str::<RunReport>(&json).map_err(Into::into))
+        .transpose()
+}
+
+/// 单条 run 的 report 原始 JSON（AI 运行透明化 T5 trace 端点 live:false 分支；
+/// workspace 隔离）。返回原始串——反序列化归调用方（失败按 500 + error log
+/// 处理），此处不写 SQL JSON 函数。
+pub(crate) async fn find_run_report_json(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    run_id: &str,
+) -> Result<Option<String>> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT report FROM agent_runs WHERE id = ? AND workspace_id = ?")
+        .bind(run_id)
+        .bind(workspace_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.map(|(json,)| json))
 }
 
 pub(crate) async fn ack_run(pool: &SqlitePool, run_id: &str, actor: &str) -> Result<bool> {
@@ -254,6 +296,21 @@ impl Db {
         recent_runs_by_dedup_key(self.pool(), workspace_id, key, limit).await
     }
 
+    /// 某 problem_key 的最新 RunReport（SLA sweep 对账恢复用）。
+    pub async fn latest_agent_run_report_by_problem_key(
+        &self,
+        workspace_id: &str,
+        problem_key: &str,
+    ) -> Result<Option<RunReport>> {
+        latest_run_report_by_problem_key(self.pool(), workspace_id, problem_key).await
+    }
+
+    /// 单条 run 的 report 原始 JSON（trace 端点 live:false 分支；workspace 隔离，
+    /// 反序列化归调用方）。
+    pub async fn find_agent_run_report_json(&self, workspace_id: &str, run_id: &str) -> Result<Option<String>> {
+        find_run_report_json(self.pool(), workspace_id, run_id).await
+    }
+
     /// 幂等确认 run（仅首认生效；返回是否本次写入）。
     pub async fn ack_agent_run(&self, run_id: &str, actor: &str) -> Result<bool> {
         ack_run(self.pool(), run_id, actor).await
@@ -326,6 +383,9 @@ mod tests {
             tokens: 6789,
             end_reason: None,
             thing_id: Some("t1".to_string()),
+            trace: vec![],
+            task_count: None,
+            snapshot: None,
         }
     }
 
@@ -358,6 +418,47 @@ mod tests {
         .execute(pool)
         .await
         .expect("raw insert agent_run");
+    }
+
+    /// T5：find_run_report_json —— 命中返回原始 report JSON（含 trace），
+    /// 未命中/跨 workspace 为 None。
+    #[tokio::test]
+    pub async fn find_run_report_json_hit_miss_and_workspace_isolation() {
+        let pool = test_pool().await;
+        let db = Db::new(pool.clone());
+
+        let mut report = sample_report("run_t5", "ws_1", "trace 源");
+        report.trace = vec![tinyiothub_core::agent_runs::ToolTraceEntry {
+            id: "c1".to_string(),
+            name: "read_property".to_string(),
+            args: serde_json::json!({"p": "temp"}),
+            output: Some("26.5".to_string()),
+        }];
+        db.insert_agent_run(&report, None, None).await.expect("insert");
+
+        let json = db
+            .find_agent_run_report_json("ws_1", "run_t5")
+            .await
+            .expect("query")
+            .expect("hit");
+        let back: RunReport = serde_json::from_str(&json).expect("report json parses");
+        assert_eq!(back.trace.len(), 1);
+        assert_eq!(back.trace[0].output.as_deref(), Some("26.5"));
+
+        assert!(
+            db.find_agent_run_report_json("ws_1", "run_nope")
+                .await
+                .expect("query")
+                .is_none(),
+            "未命中 → None"
+        );
+        assert!(
+            db.find_agent_run_report_json("ws_other", "run_t5")
+                .await
+                .expect("query")
+                .is_none(),
+            "跨 workspace → None"
+        );
     }
 
     #[tokio::test]
@@ -769,6 +870,9 @@ mod tests {
             tokens: 6789,
             end_reason: None,
             thing_id: Some("t1".to_string()),
+            trace: vec![],
+            task_count: None,
+            snapshot: None,
         };
 
         let json = serde_json::to_string(&report).expect("serialize");
@@ -801,6 +905,50 @@ mod tests {
         );
         assert_eq!(serde_json::to_string(&Outcome::Acted).expect("serialize"), "\"acted\"");
     }
+
+    // RT-1(2026-10-15 ship 评审):merged heartbeat run 的标签是
+    // 'merged:heartbeat:{ws}',下游按 heartbeat 分类的消费者必须仍命中——
+    // trigger_type_of 剥 merged: 前缀 + list_heartbeat_run_rows 匹配 merged:heartbeat:%。
+    #[test]
+    fn trigger_type_of_strips_merged_prefix() {
+        assert_eq!(trigger_type_of("merged:heartbeat:ws1"), "heartbeat");
+        assert_eq!(trigger_type_of("heartbeat:ws1"), "heartbeat");
+        assert_eq!(trigger_type_of("merged:timer:ws1"), "timer");
+        assert_eq!(trigger_type_of("merged:thing:t1:event:x"), "thing");
+        assert_eq!(trigger_type_of("thing:t1:event:x"), "thing");
+    }
+
+    #[tokio::test]
+    async fn list_heartbeat_run_rows_matches_merged_heartbeat() {
+        let pool = test_pool().await;
+        let db = Db::new(pool.clone());
+        let mut merged = sample_report("run_merged_hb", "ws1", "merged tick");
+        merged.trigger = "merged:heartbeat:ws1".to_string();
+        merged.outcome = Outcome::NoActionNeeded;
+        db.insert_agent_run(&merged, None, Some("heartbeat:ws1")).await.unwrap();
+        let mut plain = sample_report("run_plain_hb", "ws1", "plain tick");
+        plain.trigger = "heartbeat:ws1".to_string();
+        plain.outcome = Outcome::NoActionNeeded;
+        db.insert_agent_run(&plain, None, Some("heartbeat:ws1")).await.unwrap();
+
+        let rows = list_heartbeat_run_rows(&pool, "ws1", 50).await.unwrap();
+        let ids: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+        assert!(
+            ids.contains(&"run_merged_hb"),
+            "merged heartbeat run 必须出现在心跳读侧"
+        );
+        assert!(ids.contains(&"run_plain_hb"));
+
+        // trigger_type 列:merged 前缀剥落后存 heartbeat(对账排除/统计同源)。
+        let (t,): (String,) = sqlx::query_as("SELECT trigger_type FROM agent_runs WHERE id = 'run_merged_hb'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            t, "heartbeat",
+            "merged heartbeat 的 trigger_type 列须为 heartbeat(RT-1)"
+        );
+    }
 }
 
 // ──────────────────────────────────────────────
@@ -823,6 +971,30 @@ pub struct AgentRunRow {
     pub acked_at: Option<String>,
     pub acked_by: Option<String>,
     pub created_at: String,
+}
+
+/// 心跳 run 行（get_logs 读侧新源，Task 10/C6）：workspace 内 trigger 前缀
+/// `heartbeat:` 的 run，最新在前，limit 截断。列元组 = (id, trigger,
+/// outcome, summary, report_json, created_at)——适配器
+/// run_row_to_execution_record 的输入契约。
+pub(crate) async fn list_heartbeat_run_rows(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    limit: i64,
+) -> std::result::Result<Vec<(String, String, String, String, String, String)>, sqlx::Error> {
+    // rowid 决胜：created_at 秒级精度，同秒批量插入仍保持插入序（recent_summaries 先例）。
+    sqlx::query_as(
+        "SELECT id, COALESCE(trigger_context, ''), outcome, summary, report, created_at
+         FROM agent_runs
+         WHERE workspace_id = ?
+           AND (trigger_context LIKE 'heartbeat:%' OR trigger_context LIKE 'merged:heartbeat:%')
+         ORDER BY created_at DESC, rowid DESC
+         LIMIT ?",
+    )
+    .bind(workspace_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
 }
 
 /// 检查 agent_run 是否存在。
@@ -863,6 +1035,15 @@ pub(crate) async fn find_agent_run_owner(
 }
 
 impl Db {
+    /// 心跳 run 行（get_logs 新源，最新在前，limit 截断）。
+    pub async fn list_heartbeat_run_rows(
+        &self,
+        workspace_id: &str,
+        limit: i64,
+    ) -> std::result::Result<Vec<(String, String, String, String, String, String)>, sqlx::Error> {
+        list_heartbeat_run_rows(self.pool(), workspace_id, limit).await
+    }
+
     /// 检查 agent_run 是否存在。
     pub async fn agent_run_exists(&self, run_id: &str) -> std::result::Result<bool, sqlx::Error> {
         agent_run_exists(self.pool(), run_id).await

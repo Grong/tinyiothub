@@ -1,0 +1,164 @@
+/* E3 工作台壳（spec §2/§8）——只用 DESIGN_SYSTEM tokens。 */
+
+.wb {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.wb--history {
+  border-top: 2px solid rgba(245, 158, 11, 0.7);
+  padding-top: var(--space-3);
+}
+
+.wb-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.wb-header__title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.wb-header__title h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.wb-tabs {
+  display: inline-flex;
+  gap: var(--space-1);
+  padding: 3px;
+  border-radius: var(--radius-full);
+  background: var(--bg-subtle);
+  border: 1px solid var(--glass-border);
+}
+
+.wb-tab {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-full);
+  font-size: 13px;
+  cursor: pointer;
+  min-height: 32px;
+}
+
+.wb-tab--active {
+  color: var(--text);
+  background: rgba(0, 152, 255, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(0, 152, 255, 0.35);
+}
+
+.wb-tab:focus-visible {
+  outline: 2px solid var(--accent-glow-strong);
+  outline-offset: 1px;
+}
+
+.wb-header__actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.wb-history-chip {
+  font-size: 12px;
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius-full);
+  padding: 2px 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.wb-live {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.wb-live__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(135deg, #00d4ff 0%, #22c55e 100%);
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.5);
+  animation: wb-pulse 2s ease-in-out infinite;
+}
+
+@keyframes wb-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-live__dot { animation: none; }
+}
+
+.wb-history-note {
+  color: #fbbf24;
+  font-size: 12px;
+}
+
+.wb-history-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-3);
+}
+
+.wb-history-card {
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.wb-history-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.wb-history-card__name { font-size: 14px; }
+.wb-history-card__online { color: var(--muted); font-size: 11px; }
+.wb-history-card__online.is-online { color: #22c55e; }
+
+.wb-history-card__values {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--space-2);
+  margin: 0;
+  font-size: 12px;
+}
+
+.wb-history-card__values dt { color: var(--muted); }
+.wb-history-card__values dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+.wb-history-card footer { color: var(--muted); font-size: 11px; }
+
+.wb-history-state {
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--muted);
+}
+
+.wb-history-state--error { color: #f87171; }
+.wb-history-state__hint { margin-top: var(--space-2); font-size: 12px; }
+
+@media (max-width: 767px) {
+  .wb-header { gap: var(--space-2); }
+  .wb-header__actions { margin-left: 0; width: 100%; justify-content: flex-end; }
+  .wb-tab { min-height: 44px; padding: 0 var(--space-4); }
+}

@@ -8,6 +8,8 @@ import { customElement, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { apiGet, apiPost, apiPut } from "../../api/client.js";
 import { md } from "../shared/markdown.js";
+import { renderRunTimeline } from "../shared/run-timeline.js";
+import type { TraceEntry } from "../../api/agent-runs.js";
 
 // ── Types ──
 
@@ -50,6 +52,8 @@ interface ExecutionRecord {
   result?: string;
   autoExecuted: ActionDetail[];
   pendingProposals: ProposalDetail[];
+  /** tick 的逐步工具轨迹（T9 起后端记录；旧 tick 为空）。 */
+  trace?: TraceEntry[];
 }
 
 interface PendingProposal {
@@ -352,6 +356,12 @@ export class ViewAiOps extends LitElement {
                   </span>
                 </summary>
                 <div class="ao-timeline__body">
+                  ${log.trace && log.trace.length > 0 ? html`
+                    <div class="ao-actions">
+                      <div class="ao-actions__title">执行过程</div>
+                      ${renderRunTimeline({ entries: log.trace, live: false, budgetMax: 0, mode: "full" })}
+                    </div>
+                  ` : nothing}
                   ${log.autoExecuted.length > 0 ? html`
                     <div class="ao-actions">
                       <div class="ao-actions__title">执行动作</div>

@@ -11,7 +11,10 @@ description = "Core types, traits and utilities for TinyIoTHub"
 name = "tinyiothub_core"
 
 # 守门：core 只许 trait + 值类型，禁止逻辑函数与 I/O。
-# NO tokio, NO axum, NO reqwest —— zero-I/O；sqlx 仅 feature 门控的错误转换。
+# NO axum, NO reqwest —— zero-I/O；sqlx 仅 feature 门控的错误转换。
+# tokio 例外：仅 "sync" 原语（mpsc/broadcast 通道类型，无 I/O、无 runtime 绑定），
+# 供 driver 契约的 ValueSink/PropertyChangeSource 使用（spec 2026-10-19 §一）。
+# 不继承 workspace（其 feature 集含 net/fs 等 I/O）；版本须与 workspace 保持一致。
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -19,6 +22,8 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
+schemars = { version = "1", features = ["derive"] }
+tokio = { version = "1.22.0", default-features = false, features = ["sync"] }
 sqlx = { workspace = true, optional = true }
 
 [features]

@@ -1,0 +1,28 @@
+{
+  "name": "water_meter",
+  "display_name": { "zh": "水表", "en": "Water Meter" },
+  "description": {
+    "zh": "水表，监测累计用水量与瞬时流量，适用于园区/楼栋用水计量",
+    "en": "Water meter, monitors total water usage and instantaneous flow, for campus/building water metering"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "sensors",
+  "manufacturer": "TinyIoT",
+  "device_type": "sensor",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["water", "meter", "flow", "usage"],
+  "device_info": {
+    "default_name_pattern": "water_meter_{index}",
+    "default_display_name_pattern": {"zh": "水表 {index}", "en": "Water Meter {index}"},
+    "required_fields": ["name", "address"]
+  },
+  "properties": [
+    {"name": "water_usage", "display_name": { "zh": "用水数", "en": "Water Usage" }, "description": { "zh": "累计用水量", "en": "Total water consumption" }, "data_type": "number", "unit": "m³", "min_value": 0.0, "max_value": 99999999.0, "default_value": "0.0", "is_read_only": true, "is_required": true},
+    {"name": "flow_rate", "display_name": { "zh": "瞬时流量", "en": "Flow Rate" }, "description": { "zh": "当前瞬时流量", "en": "Current instantaneous flow" }, "data_type": "number", "unit": "m³/h", "min_value": 0.0, "max_value": 1000.0, "default_value": "0.0", "is_read_only": true, "is_required": false}
+  ],
+  "commands": [
+    {"name": "read_all", "display_name": { "zh": "读取全部", "en": "Read All" }, "description": { "zh": "读取全部用水数据", "en": "Read all water data" }, "parameters": "{}", "is_required": true}
+  ]
+}

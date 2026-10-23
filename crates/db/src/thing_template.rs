@@ -1572,6 +1572,19 @@ pub(crate) async fn find_thing_template_row(
     .await
 }
 
+/// 模板三段定义一次取回（properties/actions/device_info）。
+pub async fn template_parts(
+    pool: &SqlitePool,
+    id: &str,
+) -> std::result::Result<(Option<String>, Option<String>, Option<String>), sqlx::Error> {
+    let row: Option<(Option<String>, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT properties, actions, device_info FROM thing_templates WHERE id=?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.unwrap_or((None, None, None)))
+}
+
 // ──────────────────────────────────────────────
 // Db 委托
 // ──────────────────────────────────────────────

@@ -157,6 +157,31 @@ pub async fn seed_test_workspace(pool: &sqlx::SqlitePool, tenant_id: &str, works
     .expect("Failed to seed test workspace");
 }
 
+/// Seed an admin role grant for a test user（F9：批准端点 admin 闸的夹具）。
+/// FK on：user_roles 引用 users/roles，故先补 users 行。
+pub async fn seed_admin_role(pool: &sqlx::SqlitePool, user_id: &str) {
+    sqlx::query("INSERT OR IGNORE INTO users (id, username, password_hash) VALUES (?, ?, 'x')")
+        .bind(user_id)
+        .bind(format!("user-{user_id}"))
+        .execute(pool)
+        .await
+        .expect("Failed to seed test user");
+    let role_id = format!("role-admin-{user_id}");
+    sqlx::query("INSERT OR IGNORE INTO roles (id, name, is_administrator) VALUES (?, ?, 1)")
+        .bind(&role_id)
+        .bind(format!("admin-{user_id}"))
+        .execute(pool)
+        .await
+        .expect("Failed to seed admin role");
+    sqlx::query("INSERT OR IGNORE INTO user_roles (id, user_id, role_id) VALUES (?, ?, ?)")
+        .bind(format!("ur-admin-{user_id}"))
+        .bind(user_id)
+        .bind(&role_id)
+        .execute(pool)
+        .await
+        .expect("Failed to seed admin grant");
+}
+
 /// Create an AppState backed by in-memory SQLite with the baseline schema.
 ///
 /// Applies the pure-DDL baseline via the migration runner; seed data lives in
