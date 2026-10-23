@@ -444,6 +444,16 @@ impl TestHub {
         handle
             .submit_execute_with_lease_and_done(cmd, None, Some(done_tx))
             .map_err(|e| format!("submit execute: {e}"))?;
+        self.wait_command_outcome(done_rx, timeout)
+    }
+
+    /// Wait for a worker `done` outcome with a deadline. Split out so the
+    /// timeout/closed-channel paths are testable without a live driver.
+    fn wait_command_outcome(
+        &self,
+        done_rx: tokio::sync::oneshot::Receiver<CommandOutcome>,
+        timeout: Duration,
+    ) -> Result<CommandOutcome, String> {
         self.rt().block_on(async move {
             tokio::time::timeout(timeout, done_rx)
                 .await
@@ -801,6 +811,27 @@ mod tests {
         let hub = TestHub::new();
         let err = hub.load_package(dir.path()).unwrap_err();
         assert!(err.contains("cargo build -p demo"), "{err}");
+    }
+
+    #[test]
+    fn execute_wait_times_out_when_the_outcome_never_arrives() {
+        let hub = TestHub::new();
+        // Keep the sender alive: the wait must expire, not observe closure.
+        let (_done_tx, done_rx) = tokio::sync::oneshot::channel();
+        let err = hub
+            .wait_command_outcome(done_rx, Duration::from_millis(20))
+            .unwrap_err();
+        assert!(err.contains("timed out"), "{err}");
+    }
+
+    #[test]
+    fn execute_wait_reports_a_closed_outcome_channel() {
+        let hub = TestHub::new();
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<CommandOutcome>();
+        // The worker dropping `done` (stop/exit) closes the channel.
+        drop(done_tx);
+        let err = hub.wait_command_outcome(done_rx, Duration::from_secs(1)).unwrap_err();
+        assert!(err.contains("dropped"), "{err}");
     }
 
     #[tokio::test]

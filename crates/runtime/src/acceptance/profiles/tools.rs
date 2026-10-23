@@ -6,9 +6,10 @@
 //!   object parameter schemas, declared resources, valid set targets).
 //! - `tools.safe_roundtrip`: every short-running `safe` tool is invoked through
 //!   a spawned worker with parameters that satisfy its schema; the worker's
-//!   `done` outcome must report success. Long-running safe tools (declared
-//!   default timeout above [`AUTO_EXECUTE_MAX_DEFAULT_MS`]) are skipped with
-//!   the reason in evidence — the suite never auto-runs them.
+//!   `done` outcome must report success. Tools whose declared **default or max**
+//!   timeout exceeds [`AUTO_EXECUTE_MAX_MS`] are skipped with the reason in
+//!   evidence — the suite never auto-runs them and never waits past
+//!   [`AUTO_EXECUTE_WAIT`].
 //! - `tools.invalid_params`: a synthesized invalid value (out of range,
 //!   wrong type, or missing required field) is rejected by `validate_params`.
 //!   Invalid parameters are never dispatched to the driver.
@@ -30,15 +31,15 @@ use tinyiothub_core::models::thing_command::ThingCommand;
 
 use crate::acceptance::report::{CheckResult, Level, ProfileReport};
 use crate::acceptance::test_hub::{LoadedTestDriver, TestHub, ThingOptions};
-use crate::access::validator::{CallError, validate_call};
+use crate::access::validator::{CallError, ValidatedCall, validate_call};
 
 const PROFILE: &str = "tools";
-/// Safe tools with a declared default timeout above this bound are treated as
-/// long-running and never auto-executed (`long_task` declares 10s).
-const AUTO_EXECUTE_MAX_DEFAULT_MS: u64 = 2_000;
-/// Minimum deadline for one command round trip; the declared max timeout can
-/// extend it (plus scheduling margin).
-const EXECUTE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Both the declared default timeout and the declared max timeout must stay
+/// within this bound for a safe tool to be auto-executed. A 1s default with a
+/// 10-minute max could otherwise block the suite (`long_task` declares 10s).
+const AUTO_EXECUTE_MAX_MS: u64 = 2_000;
+/// Hard cap for one auto-executed round trip: the bound plus scheduling slack.
+const AUTO_EXECUTE_WAIT: Duration = Duration::from_millis(AUTO_EXECUTE_MAX_MS + 1_000);
 /// Sentinel name used to prove undeclared tools are rejected.
 const UNDECLARED_TOOL: &str = "__acceptance_undeclared__";
 const CHECKS: &[&str] = &[
@@ -152,33 +153,64 @@ fn declared_check(manifest: &DriverManifest, decl: &DeviceDeclaration) -> CheckR
     }
 }
 
-/// Execute short-running safe tools, waiting on the worker's `done` outcome.
-fn safe_roundtrip_checks(hub: &TestHub, loaded: &LoadedTestDriver) -> Vec<CheckResult> {
-    let mut plan: Vec<(&ManifestTool, Value)> = Vec::new();
+/// A safe tool selected for auto-execution with schema-valid parameters.
+struct PlannedCall {
+    tool: ManifestTool,
+    params: Value,
+}
+
+/// Safe-tool selection, split from execution so the bounds can be unit-tested
+/// without a live driver.
+struct SafeExecutionPlan {
+    calls: Vec<PlannedCall>,
+    excluded: Vec<Value>,
+}
+
+fn plan_safe_tools(tools: &[ManifestTool]) -> SafeExecutionPlan {
+    let mut calls = Vec::new();
     let mut excluded = Vec::new();
-    for tool in &loaded.manifest.tools {
+    for tool in tools {
         if tool.safety != ToolSafetyDecl::Safe {
             // control/dangerous are reported by `tools.control_skip`.
             continue;
         }
-        if tool.timeout.default_ms > AUTO_EXECUTE_MAX_DEFAULT_MS {
+        if tool.timeout.default_ms > AUTO_EXECUTE_MAX_MS || tool.timeout.max_ms > AUTO_EXECUTE_MAX_MS {
             excluded.push(json!({
                 "name": tool.name,
                 "reason": format!(
-                    "declared default timeout {}ms exceeds the {}ms auto-execute bound",
-                    tool.timeout.default_ms, AUTO_EXECUTE_MAX_DEFAULT_MS
+                    "declared timeout (default {}ms, max {}ms) exceeds the {}ms auto-execute bound",
+                    tool.timeout.default_ms, tool.timeout.max_ms, AUTO_EXECUTE_MAX_MS
                 ),
             }));
             continue;
         }
-        match valid_params(&tool.parameters) {
-            Some(params) => plan.push((tool, params)),
-            None => excluded.push(json!({
+        let Some(params) = valid_params(&tool.parameters) else {
+            excluded.push(json!({
                 "name": tool.name,
                 "reason": "profile could not synthesize parameters that satisfy the declared schema",
-            })),
+            }));
+            continue;
+        };
+        // Re-validate: synthesized values must satisfy the schema before the
+        // tool is ever considered for dispatch.
+        if let Err(err) = validate_params(&tool.parameters, &params) {
+            excluded.push(json!({
+                "name": tool.name,
+                "reason": format!("profile synthesized parameters the schema rejects: {err}"),
+            }));
+            continue;
         }
+        calls.push(PlannedCall {
+            tool: tool.clone(),
+            params,
+        });
     }
+    SafeExecutionPlan { calls, excluded }
+}
+
+/// Execute short-running safe tools, waiting on the worker's `done` outcome.
+fn safe_roundtrip_checks(hub: &TestHub, loaded: &LoadedTestDriver) -> Vec<CheckResult> {
+    let SafeExecutionPlan { calls: plan, excluded } = plan_safe_tools(&loaded.manifest.tools);
 
     if plan.is_empty() {
         return vec![check(
@@ -199,7 +231,7 @@ fn safe_roundtrip_checks(hub: &TestHub, loaded: &LoadedTestDriver) -> Vec<CheckR
                 format!("worker spawn failed: {err}"),
                 json!({
                     "error": err,
-                    "planned": plan.iter().map(|(tool, _)| tool.name.clone()).collect::<Vec<_>>(),
+                    "planned": plan.iter().map(|call| call.tool.name.clone()).collect::<Vec<_>>(),
                 }),
             )];
         }
@@ -207,8 +239,11 @@ fn safe_roundtrip_checks(hub: &TestHub, loaded: &LoadedTestDriver) -> Vec<CheckR
 
     let mut executed = Vec::new();
     let mut failed = Vec::new();
-    for (tool, params) in &plan {
-        // Never dispatch parameters that do not satisfy the schema.
+    for call in &plan {
+        let tool = &call.tool;
+        let params = &call.params;
+        // Never dispatch parameters that do not satisfy the schema (planning
+        // already re-validated; this is defense in depth).
         if let Err(err) = validate_params(&tool.parameters, params) {
             failed.push(tool.name.clone());
             executed.push(json!({
@@ -219,8 +254,9 @@ fn safe_roundtrip_checks(hub: &TestHub, loaded: &LoadedTestDriver) -> Vec<CheckR
             }));
             continue;
         }
-        let timeout = Duration::from_millis(tool.timeout.max_ms.saturating_add(2_000)).max(EXECUTE_TIMEOUT);
-        match hub.execute_and_wait(&handle, command(&thing.id, &tool.name, params), timeout) {
+        // The declared max is bounded by AUTO_EXECUTE_MAX_MS, so a fixed cap
+        // here cannot outlive the selection bound by more than the slack.
+        match hub.execute_and_wait(&handle, command(&thing.id, &tool.name, params), AUTO_EXECUTE_WAIT) {
             Ok(outcome) if outcome.success && !outcome.cancelled => executed.push(json!({
                 "tool": tool.name,
                 "params": params,
@@ -348,7 +384,15 @@ fn undeclared_check(decl: &DeviceDeclaration) -> CheckResult {
             json!({"tool": UNDECLARED_TOOL}),
         );
     }
-    match validate_call(decl, UNDECLARED_TOOL, None, None) {
+    undeclared_result_check(validate_call(decl, UNDECLARED_TOOL, None, None))
+}
+
+/// Only [`CallError::UndeclaredTool`] proves the undeclared-tool rejection.
+/// Any other outcome (a different `CallError` variant or a successful
+/// validation) fails the check with the actual error: it means the expected
+/// rejection was not exercised, and must not be reported as a pass.
+fn undeclared_result_check(result: Result<ValidatedCall, CallError>) -> CheckResult {
+    match result {
         Err(CallError::UndeclaredTool(name)) if name == UNDECLARED_TOOL => check(
             "tools.undeclared",
             Level::Pass,
@@ -361,9 +405,13 @@ fn undeclared_check(decl: &DeviceDeclaration) -> CheckResult {
         ),
         Err(err) => check(
             "tools.undeclared",
-            Level::Pass,
-            format!("undeclared tool '{UNDECLARED_TOOL}' was rejected: {err}"),
-            json!({"tool": UNDECLARED_TOOL, "rejected": true, "error": err.to_string()}),
+            Level::Fail,
+            format!("expected UndeclaredTool for '{UNDECLARED_TOOL}', got: {err}"),
+            json!({
+                "tool": UNDECLARED_TOOL,
+                "rejected": false,
+                "error": err.to_string(),
+            }),
         ),
         Ok(call) => check(
             "tools.undeclared",
@@ -433,13 +481,43 @@ fn example_value(property: &Value) -> Option<Value> {
     }
     match property.get("type").and_then(Value::as_str)? {
         "string" => Some(json!("acceptance")),
-        "integer" => Some(json!(property.get("minimum").and_then(Value::as_i64).unwrap_or(0))),
-        "number" => Some(json!(property.get("minimum").and_then(Value::as_f64).unwrap_or(0.0))),
+        // JSON Schema numbers may be written in float form (`1.0`), so parse
+        // with `as_f64`. Round integers and clamp to the declared bounds; a
+        // `maximum` without a `minimum` must not fall back to 0.
+        "integer" => {
+            let min = property.get("minimum").and_then(Value::as_f64);
+            let max = property.get("maximum").and_then(Value::as_f64);
+            Some(json!(integer_example(min, max)))
+        }
+        "number" => {
+            let min = property.get("minimum").and_then(Value::as_f64).unwrap_or(0.0);
+            let value = property
+                .get("maximum")
+                .and_then(Value::as_f64)
+                .map_or(min, |max| min.min(max));
+            Some(json!(value))
+        }
         "boolean" => Some(json!(false)),
         "array" => Some(json!([])),
         "object" => Some(json!({})),
         _ => None,
     }
+}
+
+fn integer_example(min: Option<f64>, max: Option<f64>) -> i64 {
+    let mut value = min.unwrap_or(0.0);
+    if let Some(max) = max {
+        value = value.min(max);
+    }
+    let mut rounded = value.round() as i64;
+    // Rounding up must not escape a fractional maximum.
+    if let Some(max) = max {
+        let max_integer = max.floor() as i64;
+        if rounded > max_integer {
+            rounded = max_integer;
+        }
+    }
+    rounded
 }
 
 /// Build an invalid parameter object plus a short description of the expected
@@ -564,6 +642,12 @@ mod tests {
         })
     }
 
+    fn tool_with_timeout(name: &str, safety: &str, parameters: Value, default_ms: u64, max_ms: u64) -> Value {
+        let mut tool = tool(name, safety, parameters);
+        tool["timeout"] = json!({"defaultMs": default_ms, "maxMs": max_ms});
+        tool
+    }
+
     #[test]
     fn no_tools_manifest_skips_every_check_with_a_reason() {
         let manifest = manifest_with_tools(json!([]));
@@ -678,9 +762,85 @@ mod tests {
     }
 
     #[test]
+    fn plan_excludes_a_safe_tool_with_a_long_max_timeout() {
+        let manifest = manifest_with_tools(json!([
+            // 1s default but a 10-minute max: could block the suite.
+            tool_with_timeout("blocking", "safe", json!({"type": "object"}), 1_000, 600_000),
+            tool_with_timeout(
+                "echo",
+                "safe",
+                json!({
+                    "type": "object",
+                    "properties": {"message": {"type": "string"}},
+                    "required": ["message"],
+                }),
+                1_000,
+                2_000,
+            ),
+        ]));
+        let plan = plan_safe_tools(&manifest.tools);
+        assert_eq!(plan.calls.len(), 1, "excluded: {:?}", plan.excluded);
+        assert_eq!(plan.calls[0].tool.name, "echo");
+        let excluded: Vec<&str> = plan
+            .excluded
+            .iter()
+            .filter_map(|entry| entry["name"].as_str())
+            .collect();
+        assert_eq!(excluded, vec!["blocking"]);
+        let reason = plan.excluded[0]["reason"].as_str().expect("reason");
+        assert!(reason.contains("max 600000ms"), "{reason}");
+    }
+
+    #[test]
+    fn synthesized_params_clamp_to_maximum_and_parse_float_minimum() {
+        // `maximum` without `minimum` used to fall back to 0 and violate the
+        // schema; the valid example must clamp to -1.
+        let only_max = json!({
+            "type": "object",
+            "properties": {"n": {"type": "integer", "maximum": -1}},
+            "required": ["n"],
+        });
+        let params = valid_params(&only_max).expect("synthesize");
+        assert_eq!(params["n"], json!(-1), "{params}");
+        validate_params(&only_max, &params).expect("clamped params must validate");
+
+        // A float-form minimum (`1.0`) must still produce an integer payload.
+        let float_min = json!({
+            "type": "object",
+            "properties": {"n": {"type": "integer", "minimum": 1.0}},
+            "required": ["n"],
+        });
+        let params = valid_params(&float_min).expect("synthesize");
+        assert_eq!(params["n"], json!(1), "{params}");
+        assert!(params["n"].is_i64(), "integer payload expected: {params}");
+        validate_params(&float_min, &params).expect("float-minimum params must validate");
+
+        let manifest = manifest_with_tools(json!([tool_with_timeout("bounded", "safe", only_max, 1_000, 2_000,)]));
+        let plan = plan_safe_tools(&manifest.tools);
+        assert_eq!(plan.calls.len(), 1, "excluded: {:?}", plan.excluded);
+        assert_eq!(plan.calls[0].params["n"], json!(-1));
+    }
+
+    #[test]
+    fn undeclared_check_fails_on_a_non_undeclared_error() {
+        for err in [
+            CallError::NoDeclaration("thing".into()),
+            CallError::InvalidParams("missing required field".into()),
+            CallError::Unavailable("declaration store".into()),
+        ] {
+            let result = undeclared_result_check(Err(err));
+            assert_eq!(result.level, Level::Fail, "{result:?}");
+            assert_eq!(result.evidence["rejected"], json!(false));
+        }
+    }
+
+    #[test]
     fn demo_package_executes_echo_and_withholds_set_level() {
         if !demo_built() {
-            eprintln!("skipping tools test: cargo build -p demo-declarative");
+            eprintln!(
+                "SKIP tools demo test: real cdylib absent; run `cargo build -p demo-declarative` \
+                 (Task 6 E2E must exercise the real .so path)"
+            );
             return;
         }
         let report = run(&demo_package_dir());
