@@ -26,9 +26,13 @@ fn demo_declarative_passes_all_profiles() {
             "core",
             "materialization",
             "migration",
+            "lifecycle",
+            "telemetry",
+            "tools",
+            "streaming",
             "resources",
+            "cancel",
             "placement",
-            "cancel"
         ]
     );
 }

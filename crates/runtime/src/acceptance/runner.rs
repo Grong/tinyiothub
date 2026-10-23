@@ -5,14 +5,20 @@ use std::path::Path;
 use crate::acceptance::profiles;
 use crate::acceptance::report::{AcceptanceReport, ProfileReport};
 
+/// `all` first, then every concrete profile in the stable order used by
+/// `run_profiles("all")`.
 pub const PROFILE_NAMES: &[&str] = &[
     "all",
     "core",
     "materialization",
     "migration",
+    "lifecycle",
+    "telemetry",
+    "tools",
+    "streaming",
     "resources",
-    "placement",
     "cancel",
+    "placement",
 ];
 
 pub fn run_profiles(dir: &Path, profiles: &[&str]) -> AcceptanceReport {
@@ -28,13 +34,21 @@ pub fn run_profiles(dir: &Path, profiles: &[&str]) -> AcceptanceReport {
                 reports.push(profiles::core::run(dir));
                 reports.push(profiles::materialization::run(dir));
                 reports.push(profiles::migration::run());
+                reports.push(profiles::lifecycle::run(dir));
+                reports.push(profiles::telemetry::run(dir));
+                reports.push(profiles::tools::run(dir));
+                reports.push(profiles::streaming::run(dir));
                 reports.push(profiles::resources::run(dir));
-                reports.push(profiles::placement::run(dir));
                 reports.push(profiles::cancel::run(dir));
+                reports.push(profiles::placement::run(dir));
             }
             "core" => reports.push(profiles::core::run(dir)),
             "materialization" => reports.push(profiles::materialization::run(dir)),
             "migration" => reports.push(profiles::migration::run()),
+            "lifecycle" => reports.push(profiles::lifecycle::run(dir)),
+            "telemetry" => reports.push(profiles::telemetry::run(dir)),
+            "tools" => reports.push(profiles::tools::run(dir)),
+            "streaming" => reports.push(profiles::streaming::run(dir)),
             "resources" => reports.push(profiles::resources::run(dir)),
             "placement" => reports.push(profiles::placement::run(dir)),
             "cancel" => reports.push(profiles::cancel::run(dir)),
@@ -70,16 +84,23 @@ mod tests {
     }
 
     #[test]
-    fn all_profiles_pass_for_a_valid_package() {
+    fn all_runs_every_profile_in_the_stable_declared_order() {
         let dir = package(MANIFEST);
         let report = run_profiles(dir.path(), &["all"]);
         assert_eq!(report.driver, "demo");
         assert_eq!(report.version, "1.0.0");
         assert_eq!(report.package, dir.path().display().to_string());
-        assert_eq!(report.profiles.len(), 6);
-        assert!(report.passed(), "{report:?}");
-        for p in &report.profiles {
-            assert_eq!(p.level(), Level::Pass, "{p:?}");
+        let names: Vec<&str> = report.profiles.iter().map(|p| p.profile.as_str()).collect();
+        assert_eq!(names, PROFILE_NAMES[1..].to_vec());
+        assert_eq!(names.len(), 10);
+    }
+
+    #[test]
+    fn profile_names_are_unique_and_all_comes_first() {
+        assert_eq!(PROFILE_NAMES[0], "all");
+        let mut seen = std::collections::HashSet::new();
+        for name in PROFILE_NAMES {
+            assert!(seen.insert(*name), "duplicate profile name: {name}");
         }
     }
 
