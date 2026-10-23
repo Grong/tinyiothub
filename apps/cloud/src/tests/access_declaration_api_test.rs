@@ -7,7 +7,7 @@ use std::sync::Arc;
 use axum::{
     Router,
     body::Body,
-    extract::FromRef,
+    extract::{DefaultBodyLimit, FromRef},
     http::{Request, StatusCode},
 };
 use serde_json::{Value, json};
@@ -62,6 +62,13 @@ fn access_service(db: Arc<tinyiothub_storage::Db>, data_dir: PathBuf) -> Arc<Acc
 /// Build a test app with the E4a access service wired to an in-memory DB and
 /// a temp package store. `user-1` is an admin.
 async fn setup_in(workspace: &str) -> (Router, sqlx::SqlitePool, tempfile::TempDir) {
+    // Mirror the production router's upload limit (router.rs): the default
+    // 2 MiB body limit rejects a debug Linux cdylib (measured ~13 MiB)
+    // before the manifest part is read.
+    setup_in_with_limit(workspace, 50 * 1024 * 1024).await
+}
+
+async fn setup_in_with_limit(workspace: &str, body_limit: usize) -> (Router, sqlx::SqlitePool, tempfile::TempDir) {
     let (mut app_state, pool) = crate::test_utils::setup_test_app_with_pool().await;
     seed_test_workspace(&pool, "tenant-1", workspace).await;
     seed_admin_role(&pool, ADMIN_USER).await;
@@ -79,6 +86,7 @@ async fn setup_in(workspace: &str) -> (Router, sqlx::SqlitePool, tempfile::TempD
 
     let router = Router::new()
         .nest("/api", crate::api::create_router(&app_state))
+        .layer(DefaultBodyLimit::max(body_limit))
         .with_state(app_state);
     (router, pool, data)
 }
@@ -260,6 +268,22 @@ async fn install_without_manifest_field_is_rejected_with_400() {
     assert!(
         body["error"].as_str().unwrap_or_default().contains("missing manifest"),
         "unexpected error: {body}"
+    );
+}
+
+#[tokio::test]
+async fn multipart_parse_failure_is_not_reported_as_missing_manifest() {
+    let ws = unique_workspace("ws-body-limit");
+    let (app, _pool, _data) = setup_in_with_limit(&ws, 256).await;
+    let token = create_test_token_with_workspace(ADMIN_USER, "tenant-1", &ws);
+
+    let response = app.oneshot(install_request(&token, DEMO_MANIFEST)).await.unwrap();
+    let (status, body) = response_parts(response).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "unexpected: {body}");
+    assert_ne!(
+        body["error"].as_str().unwrap_or_default(),
+        "missing manifest field",
+        "a multipart parse failure must not be reported as a missing field: {body}"
     );
 }
 

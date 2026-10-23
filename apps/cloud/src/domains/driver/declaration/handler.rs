@@ -96,7 +96,14 @@ async fn install_driver(
         Err(e) => return fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };
     let mut manifest_seen = false;
-    while let Ok(Some(field)) = multipart.next_field().await {
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(field)) => field,
+            Ok(None) => break,
+            // A multipart parse failure (body limit, malformed framing) must
+            // not be reported as a missing manifest field.
+            Err(e) => return fail(StatusCode::BAD_REQUEST, e.to_string()),
+        };
         match field.name() {
             Some("manifest") => match field.text().await {
                 Ok(text) => {
