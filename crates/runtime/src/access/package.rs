@@ -47,7 +47,10 @@ pub fn read_package(dir: &Path) -> Result<LoadedPackage, AccessError> {
     })
 }
 
-pub(crate) fn find_binary(dir: &Path) -> Option<PathBuf> {
+/// Locate the package binary without validating the manifest. Public so
+/// read-only inventory tooling can classify a binary even when the manifest
+/// itself is rejected (e.g. a real v1 install).
+pub fn find_binary(dir: &Path) -> Option<PathBuf> {
     let candidates = [
         "driver.so",
         "driver.dylib",

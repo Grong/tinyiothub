@@ -35,6 +35,16 @@ fn demo_declarative_passes_all_profiles() {
             "placement",
         ]
     );
+    // Every required profile must actually pass: a regression that turns a
+    // profile into all-Skip must not look green.
+    for profile in &report.profiles {
+        assert_eq!(
+            profile.level(),
+            Level::Pass,
+            "profile '{}' must pass: {profile:?}",
+            profile.profile
+        );
+    }
 }
 
 #[test]
@@ -45,7 +55,11 @@ fn every_named_profile_runs_alone() {
         let report = run_profiles(&demo_dir(), &[name]);
         assert_eq!(report.profiles.len(), 1, "{name}");
         assert_eq!(&report.profiles[0].profile, name, "{name}");
-        assert_ne!(report.profiles[0].level(), Level::Fail, "{name}: {report:?}");
+        assert_eq!(
+            report.profiles[0].level(),
+            Level::Pass,
+            "profile '{name}' must pass, not merely avoid fail: {report:?}"
+        );
     }
 }
 

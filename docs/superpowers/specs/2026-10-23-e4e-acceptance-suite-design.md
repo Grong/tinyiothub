@@ -10,7 +10,7 @@
 
 | # | 主题 | 裁定 |
 |---|---|---|
-| 1 | Test hub | **真实驱动包 + 内存 Hub**：加载包 `.so` 到真实 DriverRegistry，用内存 ThingCache/EventBus/DemandTracker/DataServer/worker 搭隔离环境；lifecycle/telemetry/tools/streaming 对真实驱动执行 |
+| 1 | Test hub | **真实驱动包 + 内存 Hub**：加载包 `.so` 到真实 DriverRegistry，用内存 ThingCache/EventBus/DemandTracker/DataServer/worker 搭隔离环境；lifecycle/telemetry/tools 对真实驱动执行。streaming 的 demand 门控用确定性 `Sampler` + fake worker 契约测试（无 sleep），另加 `streaming.driver_source`：TestHub 加载真实 `.so`、spawn 真实 worker、读取 `demandOnly` 源并校验其声明字段，补齐真实驱动执行证据 |
 | 2 | Manual/交互 | **不做 manual profile、不做 `--interactive`**（显式覆盖上位 spec §4.2 的 AGH 全套 manual 项）；`--no-hardware` 无需实现；所有验收为自动检查 |
 | 3 | 范围 | 补齐 lifecycle/telemetry/tools/streaming 四个自动 profile；保留 core/materialization/migration/resources/cancel/placement；全套 `all` 对 demo-declarative 通过 |
 | 4 | Streaming 证明 | demo-declarative manifest 增加一个 `demandOnly:true` 的 `slow` source 与一个 `level2` state field（驱动 read 返回两者），使 streaming profile 能验证 demand 起停 + health/telemetry 常开 |
@@ -50,7 +50,7 @@ drivers/demo-declarative/  manifest + read 返回 level/level2
 
 ### telemetry
 - 一次 read 后 required state fields 均出现；类型/range 符合声明。
-- interval 生效（两次 read 时间差 ≥ interval，允许调度余量）。
+- interval 生效：**cadence 归 sampler 所有**——驱动只在 `submit_read` 时读，profile 自身两次 read 的时间差不能证明驱动 interval。由 `access::sampler` 的 `always_source_samples_every_interval` / `interval_is_clamped_to_min_interval` 覆盖；telemetry profile 的 `telemetry.interval` 记 **skip 并注明归属**（不 sleep、不做假声明）。
 - push 驱动（若包声明）经 ValueSink 送达；poll 驱动跳过 push 检查（skip）。
 
 ### tools
@@ -60,8 +60,9 @@ drivers/demo-declarative/  manifest + read 返回 level/level2
 
 ### streaming
 - `demandOnly` 源（demo `slow`）：无 demand → 不采样（submit_read 不含 slow）；订阅/近期读取 → 采样；撤销 + 30s 宽限 → 停采。
-- `health:true`/普通源持续采样。
+- `health:true`/普通源持续采样；常开源只认 sampler 会 `submit_read` 的 `poll`/`position` 类型（`health` 的 push 源不能证明连续性）；无任何常开采样源时 quiet/stop 记 skip 并注明。
 - push/stream 驱动 set_demand 变化（若包声明；否则 skip）。
+- `streaming.driver_source`：TestHub 加载真实包 `.so`、spawn 真实 worker、只读 `demandOnly` 源，断言其声明字段全部返回（push worker 记 skip，读由 sink 驱动）。
 
 ### 既有 profiles
 - core/materialization/migration/resources/cancel/placement 保持；`all` 顺序稳定。

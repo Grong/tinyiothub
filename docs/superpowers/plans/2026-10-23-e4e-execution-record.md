@@ -74,10 +74,15 @@
 2. **迁移计划与执行分离**：E4e 只交计划 + inventory 工具；`drivers/*` 仍是桩/注释（4 个 `driver_init`、3 个仅注释），未纳入 workspace；外部 v1 `.so` 未重建；维护窗口切换/数据回填未执行（计划 §8）。
 3. **fmt 基线漂移仍在**：`scheduler.rs`/`watch.rs` 不符合 `cargo fmt --all -- --check`（24 hunks），按「surgical changes」回滚，建议单独 `style:` 提交清偿（见 §4）。
 4. **E2E 前置构建**：`inventory_lists_installed_demo_package_as_v2` 与 `demo_declarative_binary_passes_core_when_built` 需要 `cargo build -p demo-declarative` 先完成；缺失时直接失败并提示构建命令，不静默跳过。全量 `cargo test --workspace` 会先构建 workspace 内的 demo cdylib，但 driver-check 集成测试不保证顺序，故验证按 #5→#6 执行。
-5. **inventory 的 v1 判定依赖可加载**：v1 `.so` 若完全无法加载会归类 `invalid`（仍被 `--strict` 拒绝）；只有「可加载但缺少 `tinyiothub_driver_vtable_v2`」才归类 `v1/unsupported`。两者都进入拒绝清单，迁移计划 §1.3/§7.1 已说明。
+5. **inventory 的 v1 判定依赖可加载**：v1 `.so` 若完全无法加载会归类 `invalid`（仍被 `--strict` 拒绝）；只有「可加载但缺少 `tinyiothub_driver_vtable_v2`」才归类 `v1/unsupported`。两者都进入拒绝清单，迁移计划 §1.3/§7.1 已说明。final review 后，v1 manifest（`abiVersion:1`）不再让整包退化为 `unreadable`：manifest 校验失败路径也独立定位/哈希/分类二进制（§3 #11）。
 6. **`inventory` 只扫规范目录**：`<data-dir>/drivers/workspaces/<ws>/<driver>/<version>/`；非规范路径的 `.so` 与「DB 有 active 行但目录缺失」不在静态盘点内，迁移计划 §7.1 要求全盘扫描 + `driver_declarations` 对账。
 7. **测试计数基线**：E4d 记录 2447 passed（4 ignored）；本期 2507 passed（4 ignored），净增 60，与 Task 1–5 的 profile/TestHub/runner/inventory 测试 + Task 6 的 2 个 E2E 相符。
 8. **inventory 空目录可 OK**：命令 #8 对空临时目录 `--strict` exit 0 是预期（无 v1 残留 = 无问题）；但 data-dir 不存在/不是目录/不可读会 exit 2，避免空盘点假通过（Task 5 加固）。
+9. **streaming 的真实驱动证据（final review 修正）**：demand 门控仍由确定性 `Sampler` + fake worker 契约测试覆盖（无 sleep）；新增 `streaming.driver_source` 用 TestHub 加载真实 `.so`、spawn 真实 worker、只读 `demandOnly` 源并校验声明字段。spec §0 #1/§2 已同步说明。
+10. **`telemetry.interval` 是显式 skip（final review 修正）**：cadence 归 sampler 所有，驱动仅在 `submit_read` 时读取，profile 自身两次 read 的时间差不能证明 interval。spec §2 与 plan Task 2 已正式把 cadence 归属写到 `sampler::always_source_samples_every_interval` / `interval_is_clamped_to_min_interval`，skip 带理由，不再是无说明偏差。
+11. **inventory v1 分类独立于 manifest 校验（final review 修正）**：`read_package` 因 `abiVersion:1` 失败时仍 `find_binary` + 分类/哈希；真实 v1 包（v1 manifest + v1 `.so`）报 `v1/unsupported` 并保留 manifest 错误为次级证据，新增真实 cdylib 回归测试。
+12. **Task 6/ledger 状态**：Task 6（迁移计划 + 全套 E2E + 执行记录）已完成；`.superpowers/sdd/2026-10-23-e4e-acceptance-suite/progress.md` 已补 Task 6 与 Task 1/2/4 residual 处置。
+13. **同批加固（final review cheap hardenings）**：`worker.read_failure` Pass 要求 `alive`；TestHub 拒绝与内置驱动同名的包；`parse_builtin` 执行 `validate_manifest`；streaming 常开源按 sampled kind 过滤、无常开源时 quiet/stop 记 skip；E2E 断言必需 profile 为 `Pass` 而非仅「无 fail」。
 
 ## 4. 结转（E4e 之后）
 
@@ -93,7 +98,25 @@
 | 8 | 场景/MCP 建物的声明物化回填（模板路径） | E4a 记录 §3.5 | 后续 |
 | 9 | E3 World 2D 地图渲染、地球锚定/帧旋转 | E4d 结转 #1/#2 | 另立 |
 | 10 | `upsert_place`/`set_position` 的 SQLITE_BUSY/LOCKED 重试、`anchor_map_id` DB 层校验、`MapStore` 端口整理 | E4d 结转 #5/#7/#14 | E4d 后续 |
+| 11 | telemetry `u64` 载荷 > `i64::MAX` 被拒（假失败，非假通过）；按声明宽度解析或文档化范围 | E4e final review Minor #11 | 后续 |
+| 12 | inventory 扫描安全：`sorted_dirs` 跟随 symlink、`classify` 在进程内 dlopen 每个 `.so`；在 staging 副本上运行或改 out-of-process/`nm` | E4e final review Minor #12 | 后续 |
+| 13 | async 上下文 `TestHub::drop` 有意保留 registry 条目（文档化例外）；今日仅 sync runner 使用，安全 | E4e final review Minor #9 | 后续 |
+| 14 | TestHub `target/debug` 回退可能掩盖 staging 缺失打包 `.so`；考虑显式 dev/test 开关 | E4e final review Minor #7 | 后续 |
+| 15 | streaming grace 可被 `SUBSCRIPTION_TTL == DEMAND_GRACE` 掩盖（未真正 unsubscribe）；断言 `has_demand_at` 或拉长 TTL | E4e final review Minor #2 | 后续 |
+| 16 | inventory `classify_error` 仍按错误文案匹配 v1；改为结构化 variant | E4e final review Minor #6 | 后续 |
 
 ## 5. 结论
 
 E4e 退出标准中的自动项全部满足：demo-declarative 10/10 自动 profile 通过，`inventory` 可盘点内置/安装/v1 产物且 `--strict` 可用于 CI，迁移计划覆盖内置、`drivers/*`、外部 `.so`、数据/空间切换与回滚 runbook，全量 Rust/Web 回归 0 failed。manual/交互按裁定未实现；迁移执行按裁定另立阶段。
+
+## 6. Final review 修正验证（2026-10-23）
+
+| # | 命令 | 结果 |
+|---|---|---|
+| 1 | `cargo fmt --all` | 已格式化；回滚无关存量漂移 `scheduler.rs`/`watch.rs` |
+| 2 | `cargo build -p demo-declarative` | exit 0 |
+| 3 | `cargo test -p runtime acceptance` | **85 passed / 0 failed**（新增 streaming 无常开源 skip 测试、TestHub 内置名冲突测试） |
+| 4 | `cargo test -p driver-check` | **24 passed / 0 failed**（lib 11 + e2e 7 + inventory 6；新增真实 v1 cdylib 与内置 manifest 校验测试） |
+| 5 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0（仅 `redis v0.25.4` future-incompat 提示） |
+| 6 | `cargo test --workspace --lib --bins --tests` | exit 0，**0 failed** |
+| 7 | `cargo run -p driver-check -- --package drivers/demo-declarative --profile all` | exit 0，10/10 profile `pass`；`streaming` 6 checks（含 `driver_source=pass`） |

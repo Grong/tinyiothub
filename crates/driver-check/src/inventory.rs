@@ -11,6 +11,11 @@
 //! `invalid`; a package without a binary is `none`; an unreadable manifest is
 //! `unreadable`.
 //!
+//! Classification is independent of manifest validation: a realistic v1
+//! install (v1 manifest + v1 `.so`) takes `read_package`'s error path, but the
+//! binary is still located, hashed, and classified so migration baselines show
+//! `v1/unsupported` rather than a generic `unreadable`.
+//!
 //! Inventory is informational: the CLI exits 0 even when problems are found.
 //! `--strict` turns a `v1/unsupported`, `invalid`, or `unreadable` entry into
 //! exit code 1 (for CI migration gates). An explicitly provided data-dir that
@@ -20,7 +25,8 @@
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
-use tinyiothub_runtime::access::package::{hex_sha256, read_package, read_package_raw};
+use tinyiothub_core::driver::manifest::{DriverManifest, validate_manifest};
+use tinyiothub_runtime::access::package::{find_binary, hex_sha256, read_package, read_package_raw};
 use tinyiothub_runtime::driver::describe::builtin_manifest_jsons;
 use tinyiothub_runtime::driver::validator::DriverValidator;
 
@@ -163,14 +169,27 @@ fn parse_builtin(name: &str, json: &str) -> BuiltinEntry {
         Err(err) => return invalid(format!("built-in manifest '{name}' is malformed: {err}")),
     };
     let identity = &value["identity"];
-    let (Some(driver), Some(version)) = (identity["driver"].as_str(), identity["version"].as_str()) else {
+    let (Some(driver), Some(version)) = (
+        identity["driver"].as_str().map(str::to_string),
+        identity["version"].as_str().map(str::to_string),
+    ) else {
         return invalid(format!(
             "built-in manifest '{name}' is missing identity.driver/identity.version"
         ));
     };
+    // Parse and validate the full manifest, not just the identity: a
+    // compiled-in manifest with schema errors (wrong ABI version, duplicate
+    // tools, undeclared source fields) must not report `errors=0`.
+    let manifest: DriverManifest = match serde_json::from_value(value) {
+        Ok(manifest) => manifest,
+        Err(err) => return invalid(format!("built-in manifest '{name}' is malformed: {err}")),
+    };
+    if let Err(err) = validate_manifest(&manifest) {
+        return invalid(format!("built-in manifest '{name}' is invalid: {err}"));
+    }
     BuiltinEntry {
-        driver: driver.to_string(),
-        version: version.to_string(),
+        driver,
+        version,
         source: "builtin",
         error: None,
     }
@@ -246,8 +265,8 @@ fn entry_for(workspace: &str, driver_dir: &str, version_dir: &str, path: &Path) 
             }
         }
         Err(err) => {
-            // The manifest may still parse (e.g. an unsupported schema
-            // version); keep the authoritative identity/hash when it does.
+            // The manifest may still parse (e.g. an unsupported ABI version);
+            // keep the authoritative identity/hash when it does.
             let raw = read_package_raw(path).ok();
             let (driver, version, manifest_hash) = match raw {
                 Some((json, manifest)) => (
@@ -257,6 +276,25 @@ fn entry_for(workspace: &str, driver_dir: &str, version_dir: &str, path: &Path) 
                 ),
                 None => (driver_dir.to_string(), version_dir.to_string(), None),
             };
+            // A realistic v1 install (v1 manifest + v1 `.so`) never reaches the
+            // `Ok` arm. Classify/hash the binary independently so migration
+            // baselines show `v1/unsupported`, not a generic `unreadable`.
+            let binary_path = find_binary(path);
+            let binary_hash = binary_path
+                .as_ref()
+                .and_then(|binary| std::fs::read(binary).ok())
+                .map(|bytes| hex_sha256(&bytes));
+            let (binary_abi, binary_error) = classify(binary_path.as_deref());
+            // An unusable manifest still makes the package unrunnable, even if
+            // the binary itself is a valid v2 library or absent.
+            let abi = match binary_abi {
+                Abi::V1Unsupported | Abi::Invalid => binary_abi,
+                Abi::V2 | Abi::None | Abi::Unreadable => Abi::Unreadable,
+            };
+            let error = match binary_error {
+                Some(binary_error) => format!("{err}; binary: {binary_error}"),
+                None => err.to_string(),
+            };
             let identity = path_identity(&driver, &version);
             InstalledEntry {
                 workspace: workspace.to_string(),
@@ -264,11 +302,11 @@ fn entry_for(workspace: &str, driver_dir: &str, version_dir: &str, path: &Path) 
                 version,
                 path: path.display().to_string(),
                 manifest_hash,
-                binary_path: None,
-                binary_hash: None,
-                abi: Abi::Unreadable,
+                binary_path: binary_path.as_ref().map(|p| p.display().to_string()),
+                binary_hash,
+                abi,
                 path_identity: identity,
-                error: Some(err.to_string()),
+                error: Some(error),
             }
         }
     }
@@ -439,6 +477,73 @@ mod tests {
         assert!(entry.is_problem(), "{entry:?}");
         assert!(entry.error.is_some(), "{entry:?}");
         assert!(report.summary().contains("ATTENTION"), "{}", report.summary());
+    }
+
+    /// Build a loadable cdylib that deliberately lacks the ABI v2 vtable
+    /// symbol — the shape of a real v1 driver. `rustc` is always available to
+    /// a cargo test, unlike a C compiler.
+    fn compile_v1_binary(dir: &Path) -> bool {
+        let src = dir.join("v1_fixture.rs");
+        std::fs::write(&src, "pub extern \"C\" fn tinyiothub_fixture_v1() -> i32 { 1 }\n").unwrap();
+        let out = dir.join("driver.so");
+        let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+        let output = std::process::Command::new(rustc)
+            .args(["--crate-type", "cdylib", "--edition", "2021", "-o"])
+            .arg(&out)
+            .arg(&src)
+            .output();
+        matches!(output, Ok(output) if output.status.success()) && out.is_file()
+    }
+
+    #[test]
+    fn v1_manifest_with_v1_binary_is_classified_v1_unsupported() {
+        let data = tempfile::tempdir().unwrap();
+        let dir = data.path().join("drivers/workspaces/ws1/legacy/1.0.0");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("driver.manifest.json"),
+            MANIFEST.replace("\"abiVersion\":2", "\"abiVersion\":1"),
+        )
+        .unwrap();
+        if !compile_v1_binary(&dir) {
+            eprintln!("skipping v1 classification test: rustc could not build the fixture cdylib");
+            return;
+        }
+
+        let report = collect(data.path()).unwrap();
+        assert_eq!(report.installed.len(), 1);
+        let entry = &report.installed[0];
+        assert_eq!(entry.driver, "demo", "raw manifest identity stays authoritative");
+        assert_eq!(entry.abi, Abi::V1Unsupported, "{entry:?}");
+        let expected_binary = dir.join("driver.so").to_string_lossy().to_string();
+        assert_eq!(
+            entry.binary_path.as_deref(),
+            Some(expected_binary.as_str()),
+            "{entry:?}"
+        );
+        assert_eq!(entry.binary_hash.as_ref().map(String::len), Some(64), "{entry:?}");
+        assert!(
+            entry
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("ABI v1 is unsupported")),
+            "manifest error is preserved alongside the v1 migration guidance: {entry:?}"
+        );
+        assert!(entry.is_problem());
+        assert!(report.summary().contains("v1/unsupported=1"), "{}", report.summary());
+    }
+
+    #[test]
+    fn schema_invalid_builtin_manifest_is_surfaced() {
+        let entry = parse_builtin("bad-abi", &MANIFEST.replace("\"abiVersion\":2", "\"abiVersion\":1"));
+        assert_eq!(entry.driver, "bad-abi");
+        assert!(
+            entry
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("unsupported ABI version 1")),
+            "{entry:?}"
+        );
     }
 
     #[test]

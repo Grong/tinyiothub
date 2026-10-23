@@ -16,6 +16,11 @@
 //! - `streaming.push_demand`: a package declaring a `push`/`stream` source gets
 //!   `set_demand` updates for the active source set (never `submit_read`).
 //!   Packages without one skip with a reason.
+//! - `streaming.driver_source`: the real package `.so` is loaded into a
+//!   [`TestHub`], a real worker is spawned, and a read of the `demandOnly`
+//!   source must return its declared fields. This closes the gap between the
+//!   deterministic sampler contract and the real driver; a push worker skips
+//!   because reads are sink-driven.
 //!
 //! A package without a `demandOnly` source skips every check with a reason;
 //! skip is never reported as a pass.
@@ -27,6 +32,7 @@ use std::time::{Duration, Instant};
 use tinyiothub_core::driver::manifest::{DriverManifest, SourceDecl};
 
 use crate::acceptance::report::{CheckResult, Level, ProfileReport};
+use crate::acceptance::test_hub::{TestHub, ThingOptions};
 use crate::access::catalog::{SampledThing, SamplingCatalog};
 use crate::access::demand::{DemandTracker, SUBSCRIPTION_TTL};
 use crate::access::sampler::{DEMAND_GRACE, Sampler, SamplingWorkers};
@@ -40,7 +46,10 @@ const CHECKS: &[&str] = &[
     "streaming.grace",
     "streaming.stop",
     "streaming.push_demand",
+    "streaming.driver_source",
 ];
+/// Bound for the real-worker read of the demand-gated source.
+const DRIVER_READ_TIMEOUT: Duration = Duration::from_secs(5);
 /// A first tick has no `due_at`, so the quiet tick submits the always-on
 /// sources immediately; the next tick is one interval later.
 const SUBSCRIBE_AFTER: Duration = Duration::from_secs(1);
@@ -92,9 +101,13 @@ pub fn run(dir: &Path) -> ProfileReport {
         }
     };
 
+    let mut checks = streaming_checks(&manifest);
+    if let Some(demand_only) = manifest.sources.iter().find(|source| source.demand_only) {
+        checks.push(driver_source_check(dir, demand_only));
+    }
     ProfileReport {
         profile: PROFILE.into(),
-        checks: streaming_checks(&manifest),
+        checks,
     }
 }
 
@@ -229,12 +242,16 @@ fn subscribe(demand: &DemandTracker, source: &str, at: Instant) -> u64 {
 /// sampling while the demand-only source stops. `health: true` wins; otherwise
 /// any non-demand-only sampled source.
 fn continuous_source(manifest: &DriverManifest) -> Option<&SourceDecl> {
-    manifest.sources.iter().find(|source| source.health).or_else(|| {
-        manifest
-            .sources
-            .iter()
-            .find(|source| !source.demand_only && is_sampled_kind(&source.kind))
-    })
+    manifest
+        .sources
+        .iter()
+        .find(|source| source.health && is_sampled_kind(&source.kind))
+        .or_else(|| {
+            manifest
+                .sources
+                .iter()
+                .find(|source| !source.demand_only && is_sampled_kind(&source.kind))
+        })
 }
 
 fn contains(batches: &[Vec<String>], source: &str) -> bool {
@@ -252,24 +269,33 @@ fn read_gating_checks(manifest: &DriverManifest, demand_only: &SourceDecl) -> Ve
     let before = workers.read_count();
     sampler.tick_once(base);
     let quiet = workers.reads_since(before);
-    let quiet_ok = !contains(&quiet, &demand_only.id) && continuous.is_none_or(|source| contains(&quiet, &source.id));
-    checks.push(check(
-        "streaming.quiet",
-        if quiet_ok { Level::Pass } else { Level::Fail },
-        if quiet_ok {
+    let quiet_evidence = serde_json::json!({
+        "demandOnly": demand_only.id,
+        "continuous": continuous.map(|source| source.id.clone()),
+        "submitted": quiet,
+    });
+    checks.push(match continuous {
+        None => skip(
+            "streaming.quiet",
+            "manifest declares no always-on sampled source; continuity cannot be asserted",
+            quiet_evidence,
+        ),
+        Some(source) if !contains(&quiet, &demand_only.id) && contains(&quiet, &source.id) => check(
+            "streaming.quiet",
+            Level::Pass,
             format!(
                 "no demand: '{}' was not submitted while always-on sources continued",
                 demand_only.id
-            )
-        } else {
-            format!("no demand: expected only always-on sources, got {:?}", quiet)
-        },
-        serde_json::json!({
-            "demandOnly": demand_only.id,
-            "continuous": continuous.map(|source| source.id.clone()),
-            "submitted": quiet,
-        }),
-    ));
+            ),
+            quiet_evidence,
+        ),
+        Some(_) => check(
+            "streaming.quiet",
+            Level::Fail,
+            format!("no demand: expected only always-on sources, got {:?}", quiet),
+            quiet_evidence,
+        ),
+    });
 
     // b) Subscription demand: the next due tick submits the demand-only source.
     let subscription = subscribe(&demand, &demand_only.id, base);
@@ -326,36 +352,38 @@ fn read_gating_checks(manifest: &DriverManifest, demand_only: &SourceDecl) -> Ve
     let before = workers.read_count();
     sampler.tick_once(dropped_at + STOP_AFTER_DROP);
     let stopped = workers.reads_since(before);
-    let stopped_ok =
-        !contains(&stopped, &demand_only.id) && continuous.is_none_or(|source| contains(&stopped, &source.id));
-    checks.push(check(
-        "streaming.stop",
-        if stopped_ok { Level::Pass } else { Level::Fail },
-        if stopped_ok {
-            match continuous {
-                Some(source) => format!(
-                    "'{}' stopped after the grace window while '{}' continued",
-                    demand_only.id, source.id
-                ),
-                None => format!(
-                    "'{}' stopped after the grace window (no always-on source declared)",
-                    demand_only.id
-                ),
-            }
-        } else {
+    let stop_evidence = serde_json::json!({
+        "source": demand_only.id,
+        "elapsedAfterDropMs": STOP_AFTER_DROP.as_millis() as u64,
+        "graceMs": DEMAND_GRACE.as_millis() as u64,
+        "continuous": continuous.map(|source| source.id.clone()),
+        "submitted": stopped,
+    });
+    checks.push(match continuous {
+        None => skip(
+            "streaming.stop",
+            "manifest declares no always-on sampled source; continuity cannot be asserted",
+            stop_evidence,
+        ),
+        Some(source) if !contains(&stopped, &demand_only.id) && contains(&stopped, &source.id) => check(
+            "streaming.stop",
+            Level::Pass,
+            format!(
+                "'{}' stopped after the grace window while '{}' continued",
+                demand_only.id, source.id
+            ),
+            stop_evidence,
+        ),
+        Some(_) => check(
+            "streaming.stop",
+            Level::Fail,
             format!(
                 "past the grace window: expected '{}' to stop, got {:?}",
                 demand_only.id, stopped
-            )
-        },
-        serde_json::json!({
-            "source": demand_only.id,
-            "elapsedAfterDropMs": STOP_AFTER_DROP.as_millis() as u64,
-            "graceMs": DEMAND_GRACE.as_millis() as u64,
-            "continuous": continuous.map(|source| source.id.clone()),
-            "submitted": stopped,
-        }),
-    ));
+            ),
+            stop_evidence,
+        ),
+    });
 
     checks
 }
@@ -420,6 +448,95 @@ fn push_demand_check(manifest: &DriverManifest, demand_only: &SourceDecl) -> Che
     )
 }
 
+/// Real-package evidence: spawn the packaged driver in a [`TestHub`] and read
+/// only the demand-gated source. The deterministic checks above prove sampler
+/// gating; this proves the `.so` actually implements the source it declares.
+fn driver_source_check(dir: &Path, demand_only: &SourceDecl) -> CheckResult {
+    let hub = TestHub::new();
+    let loaded = match hub.load_package(dir) {
+        Ok(loaded) => loaded,
+        Err(err) => {
+            return check(
+                "streaming.driver_source",
+                Level::Fail,
+                format!("real driver load failed: {err}"),
+                serde_json::json!({"error": err}),
+            );
+        }
+    };
+    let thing = hub.make_thing(&loaded, ThingOptions::default());
+    let handle = match hub.spawn(&loaded.driver, thing.clone()) {
+        Ok(handle) => handle,
+        Err(err) => {
+            let _ = hub.unload(&loaded.driver);
+            return check(
+                "streaming.driver_source",
+                Level::Fail,
+                format!("real worker spawn failed: {err}"),
+                serde_json::json!({"error": err}),
+            );
+        }
+    };
+
+    if handle.is_push() {
+        let _ = hub.unload(&loaded.driver);
+        return skip(
+            "streaming.driver_source",
+            "push worker: reads are sink-driven; demand is exercised through set_demand",
+            serde_json::json!({"source": demand_only.id, "push": true}),
+        );
+    }
+
+    let result = hub.read_sources_and_wait(&handle, vec![demand_only.id.clone()], DRIVER_READ_TIMEOUT);
+    let _ = hub.unload(&loaded.driver);
+
+    match result {
+        Ok(values) => {
+            let missing: Vec<&String> = demand_only
+                .fields
+                .iter()
+                .filter(|field| !values.iter().any(|value| &value.name == *field))
+                .collect();
+            let level = if missing.is_empty() && !values.is_empty() {
+                Level::Pass
+            } else {
+                Level::Fail
+            };
+            check(
+                "streaming.driver_source",
+                level,
+                if level == Level::Pass {
+                    format!(
+                        "real worker read demand-gated source '{}' and returned its declared field(s)",
+                        demand_only.id
+                    )
+                } else {
+                    format!(
+                        "real worker read of '{}' is missing declared field(s): {missing:?}",
+                        demand_only.id
+                    )
+                },
+                serde_json::json!({
+                    "source": demand_only.id,
+                    "declared": demand_only.fields,
+                    "values": values.iter().map(|value| value.name.clone()).collect::<Vec<_>>(),
+                    "binary": loaded.path.display().to_string(),
+                }),
+            )
+        }
+        Err(err) => check(
+            "streaming.driver_source",
+            Level::Fail,
+            format!("real worker read of '{}' failed: {err}", demand_only.id),
+            serde_json::json!({
+                "source": demand_only.id,
+                "error": err,
+                "binary": loaded.path.display().to_string(),
+            }),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -430,6 +547,15 @@ mod tests {
 
     fn demo_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../drivers/demo-declarative")
+    }
+
+    fn demo_built() -> bool {
+        let target = std::env::var_os("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"));
+        let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+        target.join(profile).join("libdemo_declarative.dylib").is_file()
+            || target.join(profile).join("libdemo_declarative.so").is_file()
     }
 
     fn demo_manifest() -> DriverManifest {
@@ -498,6 +624,10 @@ mod tests {
 
     #[test]
     fn demo_streaming_profile_passes_and_skips_push() {
+        if !demo_built() {
+            eprintln!("skipping streaming profile test: cargo build -p demo-declarative");
+            return;
+        }
         let report = run(&demo_dir());
         assert_eq!(report.profile, "streaming");
         assert_eq!(report.level(), Level::Pass, "{report:?}");
@@ -506,6 +636,7 @@ mod tests {
             "streaming.subscription",
             "streaming.grace",
             "streaming.stop",
+            "streaming.driver_source",
         ] {
             assert_eq!(level_of(&report.checks, name), Some(Level::Pass), "{name}: {report:?}");
         }
@@ -563,6 +694,26 @@ mod tests {
             assert!(!check.detail.is_empty(), "{check:?}");
             assert!(check.detail.contains("no demandOnly source"), "{check:?}");
         }
+    }
+
+    #[test]
+    fn demand_only_without_an_always_on_sampled_source_skips_continuity() {
+        let manifest = synthetic_manifest(serde_json::json!([
+            {"id":"slow","kind":"poll","fields":["level"],"demandOnly":true,"intervalMs":1000},
+            {"id":"events","kind":"push","fields":["level"],"health":true}
+        ]));
+        // A health push source never reaches `submit_read`, so it cannot prove
+        // continuity.
+        assert!(continuous_source(&manifest).is_none());
+        let slow = manifest.sources.iter().find(|s| s.id == "slow").unwrap();
+        let checks = read_gating_checks(&manifest, slow);
+        for name in ["streaming.quiet", "streaming.stop"] {
+            let result = checks.iter().find(|c| c.check == name).expect(name);
+            assert_eq!(result.level, Level::Skip, "{name}: {result:?}");
+            assert!(result.detail.contains("no always-on sampled source"), "{result:?}");
+        }
+        assert_eq!(level_of(&checks, "streaming.subscription"), Some(Level::Pass));
+        assert_eq!(level_of(&checks, "streaming.grace"), Some(Level::Pass));
     }
 
     #[test]

@@ -37,7 +37,7 @@
 **Files:** `profiles/telemetry.rs`, tests.
 
 - [ ] Read once via TestHub; required state fields present (demo level); type/range check.
-- [ ] Interval: two reads with the manifest interval; second read not before interval (allow scheduling slack).
+- [ ] Interval: cadence is sampler-owned (the driver only reads on `submit_read`). Covered by `sampler::always_source_samples_every_interval` / `interval_is_clamped_to_min_interval`; `telemetry.interval` records a reasoned skip (spec §2, 2026-10-23 amendment). No self-sleeping measurement.
 - [ ] Push driver: if manifest has push source, use ValueSink; else Skip with reason.
 - [ ] Commit `feat(e4e): telemetry profile`.
 
@@ -60,7 +60,8 @@
 
 - [ ] Add `level2` state field and `slow` source (`kind=poll`, `demandOnly=true`, `intervalMs`, `minIntervalMs`); health telemetry remains.
 - [ ] Driver read returns both level and level2.
-- [ ] Profile: no demand -> slow not submitted/read; subscription protects -> slow read; drop + 30s grace -> stop; telemetry/health continues.
+- [ ] Profile: no demand -> slow not submitted/read; subscription protects -> slow read; drop + 30s grace -> stop; telemetry/health continues (deterministic fake-worker tick).
+- [ ] `streaming.driver_source`: TestHub loads the real `.so`, spawns a real worker, reads only `slow`, and asserts `level2` is returned (real-driver evidence; push workers skip).
 - [ ] Update E4a acceptance counts/tests if needed.
 - [ ] Commit `feat(e4e): streaming profile + demo demandOnly source`.
 

@@ -217,6 +217,14 @@ impl TestHub {
         let pkg = crate::access::package::read_package(dir).map_err(|e| e.to_string())?;
         let driver = pkg.manifest.identity.driver.clone();
         let version = pkg.manifest.identity.version.clone();
+        // `create_driver` prefers built-ins, so a package using a built-in name
+        // would silently accept-test the built-in instead of the packaged
+        // binary (`driver-check --package` skips the install-time guard).
+        if crate::driver::is_driver_supported(&driver) {
+            return Err(format!(
+                "package declares built-in driver '{driver}'; refusing to shadow a built-in in the acceptance hub"
+            ));
+        }
         let path = pkg
             .binary_path
             .clone()
@@ -378,13 +386,37 @@ impl TestHub {
     ///
     /// Panics when called from inside a Tokio runtime; use a sync context.
     pub fn read_and_wait(&self, handle: &WorkerHandle, timeout: Duration) -> Result<Vec<ResultValue>, String> {
-        let (thing_id, sources) = {
+        let sources = {
             let handles = self.handles.lock().unwrap();
             let managed = handles
                 .iter()
                 .find(|m| std::ptr::eq(m.handle.as_ref(), handle))
                 .ok_or_else(|| "worker was not spawned by this TestHub".to_string())?;
-            (managed.thing_id.clone(), managed.sources.clone())
+            managed.sources.clone()
+        };
+        self.read_sources_and_wait(handle, sources, timeout)
+    }
+
+    /// Submit a read for an explicit source subset and wait for its reading.
+    /// Used by the streaming profile to exercise a `demandOnly` source on the
+    /// real driver without pulling in the always-on sources.
+    ///
+    /// # Panics
+    ///
+    /// Panics when called from inside a Tokio runtime; use a sync context.
+    pub fn read_sources_and_wait(
+        &self,
+        handle: &WorkerHandle,
+        sources: Vec<String>,
+        timeout: Duration,
+    ) -> Result<Vec<ResultValue>, String> {
+        let thing_id = {
+            let handles = self.handles.lock().unwrap();
+            handles
+                .iter()
+                .find(|m| std::ptr::eq(m.handle.as_ref(), handle))
+                .map(|m| m.thing_id.clone())
+                .ok_or_else(|| "worker was not spawned by this TestHub".to_string())?
         };
 
         // Subscribe before submitting so the reading cannot slip past us.
@@ -813,6 +845,27 @@ mod tests {
         let hub = TestHub::new();
         let err = hub.load_package(dir.path()).unwrap_err();
         assert!(err.contains("cargo build -p demo"), "{err}");
+    }
+
+    #[test]
+    fn rejects_a_package_that_shadows_a_builtin_driver() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("driver.manifest.json"),
+            r#"{
+              "manifestVersion":"1.0",
+              "identity":{"driver":"simulator","version":"1.0.0","protocol":"sim","abiVersion":2,"dynamicCapabilities":false},
+              "config":{"type":"object"},"tools":[],"stateFields":[],
+              "sources":[{"id":"telemetry","kind":"poll","fields":[]}],
+              "resources":[],"placement":{"mode":"runtime"},
+              "limits":{"maxConcurrentJobs":1,"maxCallsPerMin":60}
+            }"#,
+        )
+        .unwrap();
+        let hub = TestHub::new();
+        let err = hub.load_package(dir.path()).unwrap_err();
+        assert!(err.contains("built-in driver 'simulator'"), "{err}");
+        assert!(err.contains("refusing to shadow"), "{err}");
     }
 
     #[test]

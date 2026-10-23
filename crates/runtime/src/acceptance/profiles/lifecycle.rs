@@ -316,7 +316,7 @@ fn failed_read_check(hub: &TestHub, driver: &str) -> CheckResult {
     let _ = hub.stop(&handle);
 
     match second_failures {
-        Some(second) => check(
+        Some(second) if alive => check(
             "worker.read_failure",
             Level::Pass,
             format!(
@@ -328,6 +328,19 @@ fn failed_read_check(hub: &TestHub, driver: &str) -> CheckResult {
                 "read_error": timed_out,
                 "worker_alive": alive,
                 "config": "NUL byte in driver_options",
+            }),
+        ),
+        Some(second) => check(
+            "worker.read_failure",
+            Level::Fail,
+            format!(
+                "failures were processed (total_failures {first_failures} -> {second}) but the worker exited (worker_alive=false)"
+            ),
+            serde_json::json!({
+                "first_failures": first_failures,
+                "second_failures": second,
+                "read_error": timed_out,
+                "worker_alive": alive,
             }),
         ),
         None => check(
