@@ -13,7 +13,7 @@
 | 对象 | 现状 | 迁移动作 | 门禁 |
 |---|---|---|---|
 | 内置驱动（native） | E4a 已迁 ABI v2 + manifest + `describe()` | 无需改代码；每版本复跑验收 | `driver-check inventory` 内置清单 + demo 全套 |
-| `drivers/*`（7 个 cdylib 包） | 4 个只有 `driver_init` 桩，3 个只有注释；无 manifest；不在 workspace | 纳入 workspace/CI → 补 manifest → 实现 v2 trait/FFI → 逐包验收 | `cargo build/test` + 逐包 `driver-check --profile all` |
+| `drivers/*`（7 个 cdylib 包） | **2026-10-23 盘点：均为空壳**（`driver_init` 桩或仅注释），无 manifest/无 v2；已退役 | 不再迁移；未来真实协议驱动按 §3 新建，模板=`drivers/demo-declarative` | 新包 `driver-check --profile all` |
 | 外部已部署 v1 `.so` | 由旧 SDK 构建；安装布局见 §1.3 | 盘点 → v2 SDK 重建 → staging 验收 → 维护窗口原子替换 Hub+驱动 | `inventory --strict` = 0 问题 + 设备在线/read/tools |
 | 数据（声明/模板/zone/position_ingest） | E4a/E4d 迁移为 additive | 重绑重物化、drift 报告、zone 切换、摄取门回填 | 验收 `migration`/`materialization`/`placement` + 数据核对 |
 | 回滚 | — | 整包回退旧 Hub + 旧驱动；DB 不回滚（additive） | 回滚演练记录 |
@@ -36,25 +36,18 @@
 
 - 上位文档写作 `simulated`，代码/清单实际 driver 名为 **`simulator`**；盘点与安装校验以代码为准。
 - 三个内置 manifest 均为 `dynamicCapabilities: true`、`abiVersion: 2`，`inventory` 应报告 `errors=0`。
-- 内置实现不可被 workspace 包遮蔽：`AccessService::install_dir` 按 `is_driver_supported` 拒绝内置名。`drivers/modbus` 必须使用与 `modbus_rtu` 不同的 driver 名（见 §3.2）。
+- 内置实现不可被 workspace 包遮蔽：`AccessService::install_dir` 按 `is_driver_supported` 拒绝内置名。未来新建协议驱动必须使用与内置不同的 driver 名（见 §3.2）。
 
-### 1.2 `drivers/*`（动态驱动源码）
+### 1.2 `drivers/*`（动态驱动源码，2026-10-23 退役）
 
-| 包 | crate | 当前源码状态 | manifest | v2 导出 | workspace 成员 |
-|---|---|---|---|---|---|
-| `drivers/mqtt` | `tinyiothub-driver-mqtt` | 仅 `driver_init()` 桩 | 无 | 无 | 否 |
-| `drivers/modbus` | `tinyiothub-driver-modbus` | 仅 `driver_init()` 桩 | 无 | 无 | 否 |
-| `drivers/bacnet` | `tinyiothub-driver-bacnet` | 仅模块注释 | 无 | 无 | 否 |
-| `drivers/opcua` | `tinyiothub-driver-opcua` | 仅模块注释 | 无 | 无 | 否 |
-| `drivers/snmp` | `tinyiothub-driver-snmp` | 仅 `driver_init()` 桩 | 无 | 无 | 否 |
-| `drivers/onvif` | `tinyiothub-driver-onvif` | 仅 `driver_init()` 桩 | 无 | 无 | 否 |
-| `drivers/mqtt-bridge` | `tinyiothub-driver-mqtt-bridge` | 仅模块注释 | 无 | 无 | 否 |
+盘点发现 7 个包**没有可迁移实现**：
 
-共同点：
+| 包 | 实际内容 |
+|---|---|
+| `drivers/mqtt` / `modbus` / `onvif` / `snmp` | 单个 `driver_init() -> i32` 桩，无 vtable/读写/manifest |
+| `drivers/bacnet` / `opcua` / `mqtt-bridge` | 仅一行模块注释 |
 
-- 均声明 `[lib] crate-type = ["cdylib"]`，依赖 workspace 的 `plugin-sdk`。
-- 使用 `version.workspace = true` 等继承字段，但**不在** `[workspace].members`，因此当前无法解析、也不受 `cargo check/clippy/test --workspace` 保护（`TODOS.md` P2「examples/* 与 drivers/* 不在 workspace members」）。
-- 只有 `drivers/demo-declarative` 是 workspace 成员且具备 manifest/v2 导出，可作迁移模板。
+因此它们已从仓库退役（`git rm`）；真实存量驱动只有 3 个内置（§1.1），已在 E4a 迁到 v2 + manifest。`drivers/demo-declarative` 保留为 workspace 内的参考驱动/模板。未来实现真实协议驱动时按 §3 新建，而不是复活空壳。
 
 另外两个仓内 v1 参考物（不在 workspace，无 manifest）：
 
@@ -103,25 +96,15 @@ cargo run -p driver-check -- inventory --data-dir /var/lib/tinyiothub --strict
    - `migration` profile 的 `v1.rejected`/`v2.version` 为 pass。
 5. **风险**：内置名与 `drivers/*` 重名会被安装拒绝（§3.2），属于预期 fail-closed。
 
-## 3. `drivers/*` 迁移（执行另立阶段）
+## 3. 未来协议驱动开发（原 `drivers/*` 迁移，另立阶段）
 
-目标：7 个仓内动态驱动进入 workspace 编译门禁，具备 manifest + ABI v2（async/cancel/describe）、可被逐包验收，并按使用度排序交付。
+目标：未来新增真实协议驱动时，按 `drivers/demo-declarative` 模板进入 workspace 编译门禁，具备 manifest + ABI v2（async/cancel/describe）并通过逐包验收。空壳已退役，不再按 7 个包批量迁移。
 
-### 3.1 纳入 workspace 与 CI（第一步，独立提交）
+### 3.1 新建一个协议驱动包（一次一个，独立提交）
 
-1. `Cargo.toml` 的 `members` 增加 `drivers/*`（或逐包加入；`demo-declarative` 已在内）。加入后 `version.workspace = true` 可解析。
+1. 从 `drivers/demo-declarative` 复制结构，新建 `drivers/<protocol>/` 并加入根 `Cargo.toml` 的 `members`（一次只加一个包）。
 2. 修正各包 lint/依赖，使 `cargo check --workspace`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace --lib --bins --tests` 通过。
-3. CI（`.github/workflows/ci.yml` 的 `rust-check`）增加显式门禁：
-
-```yaml
-- name: Build drivers
-  run: cargo build -p tinyiothub-driver-mqtt -p tinyiothub-driver-modbus -p tinyiothub-driver-bacnet \
-       -p tinyiothub-driver-opcua -p tinyiothub-driver-snmp -p tinyiothub-driver-onvif -p tinyiothub-driver-mqtt-bridge
-- name: Demo acceptance
-  run: cargo run -p driver-check -- --package drivers/demo-declarative --profile all
-```
-
-逐包验收见 §6.2；未完成的包在 CI 中先只 build，完成一包再挂一条验收 job，避免「全部红」。
+3. CI 已有 workspace build/test；新包合并后必须通过 `cargo build -p <pkg>` 与 §3.4 的逐包验收。未完成的协议不要提前合并空壳。
 
 ### 3.2 每包迁移模板（以 `drivers/demo-declarative` 为准）
 
@@ -139,12 +122,12 @@ pub extern "C" fn tinyiothub_driver_vtable_v2() -> *const DriverVTableV2 { /* ..
 5. **单元/协议测试**：协议编解码、超时/cancel、非法参数拒绝、describe 超时/上限；无硬件时用本地 mock server 或录制的报文，不假装 PASS。
 6. **打包产物**：`driver.manifest.json` + `driver.<ext>` 放入规范目录（§1.3）后再跑验收；仓内源码通过 `cargo build` 得到 cdylib。
 
-### 3.3 迁移顺序与理由
+### 3.3 未来协议驱动优先级（不是存量迁移）
 
 | 顺序 | 包 | 理由 | 前置 |
 |---|---|---|---|
-| 1 | `mqtt` | 使用面最广、协议最简单（poll/push 明确），先验证 manifest + source/demand 模型 | workspace 接入 |
-| 2 | `modbus` | 与内置 `modbus_rtu` 共享协议知识，可复用字段映射；注意改名 | mqtt 模板 |
+| 1 | `mqtt` | 使用面最广、协议最简单（poll/push 明确），先验证 manifest + source/demand 模型 | 模板复制 |
+| 2 | `modbus` | 与内置 `modbus_rtu` 共享协议知识，可复用字段映射；注意 driver 名不能叫 `modbus_rtu` | mqtt 模板 |
 | 3 | `bacnet` | 读点模型成熟；需对象/属性映射 | 同上 |
 | 4 | `opcua` | 会话/订阅语义较重，需显式 cancel | 同上 |
 | 5 | `snmp` | 与内置 snmp 对齐 OID 映射 | 同上 |

@@ -38,11 +38,11 @@
 
 ## Hub 运行时架构 — E4 结转（2026-10-23）
 
-### P2 — `drivers/*` 纳入 workspace 与 v2/manifest 迁移
-- **What:** 将 `drivers/{bacnet,modbus,mqtt,mqtt-bridge,onvif,opcua,snmp}` 纳入 workspace 编译门禁，补 ABI v2 + manifest，按 mqtt → modbus/bacnet/opcua/snmp → onvif → mqtt-bridge 迁移；外部 v1 `.so` 硬切重建。
-- **Why:** E4 接入协议已就位；这 7 个驱动不在编译/验收覆盖内，漂移静默累积。
-- **Context:** `docs/superpowers/plans/2026-10-23-e4e-migration-plan.md` §3-§5；执行可另立阶段。
-- **Effort:** L | **Depends on:** E4 合入
+### P3 — 未来协议驱动开发（空壳已退役）
+- **What:** `drivers/{bacnet,modbus,mqtt,mqtt-bridge,onvif,opcua,snmp}` 经盘点均为空壳，已于 2026-10-23 退役；未来真实协议驱动按 `drivers/demo-declarative` 模板新建（mqtt → modbus/bacnet/opcua/snmp → onvif → mqtt-bridge），逐包验收后合入。
+- **Why:** 空壳无功能、无 manifest/ABI v2，迁移只会产生假驱动；真实驱动是独立产品工作。
+- **Context:** `docs/superpowers/plans/2026-10-23-e4e-migration-plan.md` §1.2/§3；`drivers/README.md`。
+- **Effort:** XL（按协议拆分） | **Depends on:** 实际设备/协议栈需求
 
 ### P2 — 存量物声明回填与直连调用收口
 - **What:** (1) 场景包/MCP 模板建物走 `describe`/物化；(2) UI 直连 `POST /things/{id}/actions/{name}/invoke` 接入 AccessService 声明校验；(3) pre-E4a 存量物声明回填/开关。
@@ -58,8 +58,8 @@
 
 ## Thing Rename Follow-ups — Deferred (PR-3, from /superpowers plan 2026-08-31)
 
-### P2 — examples/* 与 drivers/* 不在 workspace members，未受编译门禁保护
-- **What:** `examples/bacnet-driver`、`examples/example-plugin`、`drivers/*` 均未列入 workspace members，`cargo test/clippy --workspace` 不覆盖；评估纳入 workspace 或 CI 单独构建。
+### P2 — examples/* 不在 workspace members，未受编译门禁保护
+- **What:** `examples/bacnet-driver`、`examples/example-plugin` 未列入 workspace members，`cargo test/clippy --workspace` 不覆盖；评估纳入 workspace 或 CI 单独构建。`drivers/*` 空壳已退役，`drivers/demo-declarative` 是 workspace 成员。
 - **Why:** PR-2 遗留；更名类重构无法触达这些 crate，漂移静默累积。
 - **Context:** examples manifest 仍指向已不存在的 `sdks/driver-sdk`（crates 重组遗留）。
 - **Effort:** M | **Depends on:** —

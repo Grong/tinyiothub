@@ -91,7 +91,7 @@
 | 1 | `drivers/*` 7 包迁移执行：纳入 workspace/CI、补 manifest、v2 导出、逐包验收（顺序 mqtt → modbus/bacnet/opcua/snmp → onvif → mqtt-bridge） | 迁移计划 §3 | 独立执行阶段 |
 | 2 | 外部 v1 `.so` 盘点→v2 重建→staging 验收→维护窗口原子替换→回滚演练 | 迁移计划 §4 | 独立执行阶段 |
 | 3 | 数据迁移执行：全量重绑重物化 + drift 报告、模板/场景能力回写、`zone_source` 切换管理入口、`position_ingest` 回填与启动重绑 | 迁移计划 §5；E4d 结转 #4/#6 | 独立执行阶段 |
-| 4 | `drivers/modbus` 与内置 `modbus_rtu` 命名区分；`examples/bacnet-driver`（引用不存在的 `sdks/driver-sdk`）与 `examples/example-plugin`（旧 `iot_edge_driver_sdk`）删除或重建 | 迁移计划 §1.2/§3.2 | 执行阶段 |
+| 4 | `drivers/*` 7 个包经盘点均为空壳，已退役（2026-10-23）；`examples/bacnet-driver`（引用不存在的 `sdks/driver-sdk`）与 `examples/example-plugin`（旧 `iot_edge_driver_sdk`）删除或重建 | `drivers/README.md`；迁移计划 §1.2 | 已完成（空壳退役）/ examples 后续 |
 | 5 | fmt 存量漂移（`scheduler.rs` / `watch.rs`）单独 `style:` 提交 | 本文 §3 第 3 条；E4a/E4d 结转 | 仓库维护 |
 | 6 | workspace `rust-version = 1.85` 与 let-chains（1.88+）不符；CI 固定 1.95 | 迁移计划 §7.4；E4d 结转 #11 | 仓库维护 |
 | 7 | UI 直连 `POST /v1/things/{id}/actions/{name}/invoke` 仍绕过 `AccessService` 声明校验 | E4a 记录 §3.6（原定 E4e/final） | 后续 |
