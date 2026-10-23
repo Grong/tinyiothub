@@ -72,7 +72,7 @@ fn inventory_lists_builtins_and_installed_manifest_only_packages() {
     assert!(entry["error"].is_null());
 
     assert!(
-        summary.contains("3 builtin manifest(s), 1 installed package(s)"),
+        summary.contains("3 builtin manifest(s) (errors=0), 1 installed package(s)"),
         "{summary}"
     );
     assert!(summary.ends_with("-> OK"), "{summary}");
@@ -102,15 +102,37 @@ fn inventory_reports_non_driver_binaries_and_strict_turns_them_into_exit_1() {
 }
 
 #[test]
-fn inventory_missing_data_dir_still_lists_builtins() {
+fn inventory_missing_data_dir_is_an_error_not_a_vacuous_ok() {
     let data = tempfile::tempdir().unwrap();
     let missing = data.path().join("does-not-exist");
-    let out = run(&["inventory", "--data-dir", missing.to_str().unwrap()]);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    let (json, summary) = split_output(&out);
-    assert_eq!(json["builtin"].as_array().unwrap().len(), 3);
-    assert!(json["installed"].as_array().unwrap().is_empty());
-    assert!(summary.contains("0 installed package(s)"), "{summary}");
+    for extra in [None, Some("--strict")] {
+        let mut args = vec!["inventory", "--data-dir", missing.to_str().unwrap()];
+        if let Some(extra) = extra {
+            args.push(extra);
+        }
+        let out = run(&args);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{args:?}: missing data-dir must be a usage error"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("not accessible"), "{stderr}");
+        assert!(!String::from_utf8_lossy(&out.stdout).contains("-> OK"));
+    }
+}
+
+#[test]
+fn inventory_data_dir_that_is_a_file_is_an_error() {
+    let data = tempfile::tempdir().unwrap();
+    let file = data.path().join("data.file");
+    std::fs::write(&file, b"not a directory").unwrap();
+
+    let out = run(&["inventory", "--data-dir", file.to_str().unwrap(), "--strict"]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("is not a directory"), "{stderr}");
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("-> OK"));
 }
 
 #[test]

@@ -108,6 +108,7 @@ fn run_inventory(args: &[String]) -> ExitCode {
             "-h" | "--help" => {
                 println!("usage: driver-check inventory --data-dir <dir> [--strict]");
                 println!("Lists built-in manifests and installed driver packages (manifest/binary hashes, ABI).");
+                println!("The data-dir must exist and be a readable directory (exit 2 otherwise).");
                 println!("Informational: exits 0 when problems are found unless --strict is set.");
                 return ExitCode::SUCCESS;
             }
@@ -123,7 +124,13 @@ fn run_inventory(args: &[String]) -> ExitCode {
         inventory_usage();
     };
 
-    let report = inventory::collect(&data_dir);
+    let report = match inventory::collect(&data_dir) {
+        Ok(report) => report,
+        Err(err) => {
+            eprintln!("inventory error: {err}");
+            return ExitCode::from(2);
+        }
+    };
     println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
     println!("{}", report.summary());
 

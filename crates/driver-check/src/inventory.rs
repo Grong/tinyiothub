@@ -13,7 +13,9 @@
 //!
 //! Inventory is informational: the CLI exits 0 even when problems are found.
 //! `--strict` turns a `v1/unsupported`, `invalid`, or `unreadable` entry into
-//! exit code 1 (for CI migration gates).
+//! exit code 1 (for CI migration gates). An explicitly provided data-dir that
+//! does not exist or is not a readable directory is an invocation error (exit
+//! 2) instead of a vacuous empty inventory.
 
 use std::path::{Path, PathBuf};
 
@@ -42,6 +44,18 @@ pub struct BuiltinEntry {
     pub driver: String,
     pub version: String,
     pub source: &'static str,
+    /// Set when the compiled-in manifest cannot be parsed or lacks identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Directory-derived identity, included only when it disagrees with the
+/// manifest (the manifest stays authoritative in `driver`/`version`).
+#[derive(Debug, Clone, Serialize)]
+pub struct PathIdentity {
+    pub workspace: String,
+    pub driver: String,
+    pub version: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,6 +72,9 @@ pub struct InstalledEntry {
     pub binary_hash: Option<String>,
     #[serde(rename = "abi")]
     pub abi: Abi,
+    /// Path-derived identity evidence when it differs from the manifest.
+    #[serde(rename = "pathIdentity", skip_serializing_if = "Option::is_none")]
+    pub path_identity: Option<PathIdentity>,
     pub error: Option<String>,
 }
 
@@ -81,6 +98,7 @@ pub struct InventoryReport {
 impl InventoryReport {
     pub fn problems(&self) -> usize {
         self.installed.iter().filter(|entry| entry.is_problem()).count()
+            + self.builtin.iter().filter(|entry| entry.error.is_some()).count()
     }
 
     pub fn has_problems(&self) -> bool {
@@ -90,9 +108,10 @@ impl InventoryReport {
     /// One-line human summary printed after the JSON.
     pub fn summary(&self) -> String {
         let count = |abi: Abi| self.installed.iter().filter(|e| e.abi == abi).count();
+        let builtin_errors = self.builtin.iter().filter(|e| e.error.is_some()).count();
         let verdict = if self.has_problems() { "ATTENTION" } else { "OK" };
         format!(
-            "inventory: {} builtin manifest(s), {} installed package(s): v2={}, v1/unsupported={}, invalid={}, none={}, unreadable={} -> {verdict}",
+            "inventory: {} builtin manifest(s) (errors={builtin_errors}), {} installed package(s): v2={}, v1/unsupported={}, invalid={}, none={}, unreadable={} -> {verdict}",
             self.builtin.len(),
             self.installed.len(),
             count(Abi::V2),
@@ -104,60 +123,94 @@ impl InventoryReport {
     }
 }
 
-/// Scan the built-in manifests and the installed package tree. A missing
-/// data-dir is not an error: the inventory still lists built-ins.
-pub fn collect(data_dir: &Path) -> InventoryReport {
-    InventoryReport {
+/// Scan the built-in manifests and the installed package tree.
+///
+/// The data-dir is explicitly provided, so it must exist and be a readable
+/// directory: otherwise a CI `--strict` gate would pass vacuously on an empty
+/// inventory.
+pub fn collect(data_dir: &Path) -> Result<InventoryReport, String> {
+    let metadata = std::fs::metadata(data_dir)
+        .map_err(|err| format!("data-dir '{}' is not accessible: {err}", data_dir.display()))?;
+    if !metadata.is_dir() {
+        return Err(format!("data-dir '{}' is not a directory", data_dir.display()));
+    }
+    std::fs::read_dir(data_dir).map_err(|err| format!("data-dir '{}' is not readable: {err}", data_dir.display()))?;
+    Ok(InventoryReport {
         data_dir: data_dir.display().to_string(),
         builtin: builtin_entries(),
-        installed: installed_entries(data_dir),
-    }
+        installed: installed_entries(data_dir)?,
+    })
 }
 
 fn builtin_entries() -> Vec<BuiltinEntry> {
     builtin_manifest_jsons()
         .iter()
-        .filter_map(|(name, json)| {
-            let value: serde_json::Value = serde_json::from_str(json).ok()?;
-            let identity = &value["identity"];
-            Some(BuiltinEntry {
-                driver: identity["driver"].as_str().unwrap_or(name).to_string(),
-                version: identity["version"].as_str().unwrap_or("<unknown>").to_string(),
-                source: "builtin",
-            })
-        })
+        .map(|(name, json)| parse_builtin(name, json))
         .collect()
 }
 
-fn installed_entries(data_dir: &Path) -> Vec<InstalledEntry> {
+/// A malformed or identity-less built-in manifest is surfaced as an `invalid`
+/// entry (with `error`), never silently dropped.
+fn parse_builtin(name: &str, json: &str) -> BuiltinEntry {
+    let invalid = |error: String| BuiltinEntry {
+        driver: name.to_string(),
+        version: "<unknown>".to_string(),
+        source: "builtin",
+        error: Some(error),
+    };
+    let value: serde_json::Value = match serde_json::from_str(json) {
+        Ok(value) => value,
+        Err(err) => return invalid(format!("built-in manifest '{name}' is malformed: {err}")),
+    };
+    let identity = &value["identity"];
+    let (Some(driver), Some(version)) = (identity["driver"].as_str(), identity["version"].as_str()) else {
+        return invalid(format!(
+            "built-in manifest '{name}' is missing identity.driver/identity.version"
+        ));
+    };
+    BuiltinEntry {
+        driver: driver.to_string(),
+        version: version.to_string(),
+        source: "builtin",
+        error: None,
+    }
+}
+
+fn installed_entries(data_dir: &Path) -> Result<Vec<InstalledEntry>, String> {
     let root = data_dir.join("drivers/workspaces");
     let mut entries = Vec::new();
-    for workspace in sorted_dirs(&root) {
+    for workspace in sorted_dirs(&root)? {
         let workspace_name = dir_name(&workspace);
-        for driver_dir in sorted_dirs(&workspace) {
+        for driver_dir in sorted_dirs(&workspace)? {
             let driver_name = dir_name(&driver_dir);
-            for version_dir in sorted_dirs(&driver_dir) {
+            for version_dir in sorted_dirs(&driver_dir)? {
                 let version_name = dir_name(&version_dir);
                 entries.push(entry_for(&workspace_name, &driver_name, &version_name, &version_dir));
             }
         }
     }
-    entries
+    Ok(entries)
 }
 
 /// Sorted, non-hidden sub-directories (`.backup-*` install leftovers are not
-/// packages).
-fn sorted_dirs(dir: &Path) -> Vec<PathBuf> {
-    let Ok(read) = std::fs::read_dir(dir) else {
-        return Vec::new();
+/// packages). A missing directory is empty; any other read error is surfaced,
+/// so an unreadable subtree cannot silently shrink the inventory.
+fn sorted_dirs(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let read = match std::fs::read_dir(dir) {
+        Ok(read) => read,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(format!("'{}' is not readable: {err}", dir.display())),
     };
-    let mut dirs: Vec<PathBuf> = read
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+    let entries: Result<Vec<_>, _> = read.collect();
+    let entries = entries.map_err(|err| format!("'{}' is not readable: {err}", dir.display()))?;
+    let mut dirs: Vec<PathBuf> = entries
+        .into_iter()
+        .map(|entry| entry.path())
         .filter(|path| path.is_dir())
         .filter(|path| !dir_name(path).starts_with('.'))
         .collect();
     dirs.sort();
-    dirs
+    Ok(dirs)
 }
 
 fn dir_name(path: &Path) -> String {
@@ -168,9 +221,17 @@ fn dir_name(path: &Path) -> String {
 }
 
 fn entry_for(workspace: &str, driver_dir: &str, version_dir: &str, path: &Path) -> InstalledEntry {
+    let path_identity = |driver: &str, version: &str| {
+        (driver != driver_dir || version != version_dir).then(|| PathIdentity {
+            workspace: workspace.to_string(),
+            driver: driver_dir.to_string(),
+            version: version_dir.to_string(),
+        })
+    };
     match read_package(path) {
         Ok(pkg) => {
             let (abi, error) = classify(pkg.binary_path.as_deref());
+            let identity = path_identity(&pkg.manifest.identity.driver, &pkg.manifest.identity.version);
             InstalledEntry {
                 workspace: workspace.to_string(),
                 driver: pkg.manifest.identity.driver,
@@ -180,6 +241,7 @@ fn entry_for(workspace: &str, driver_dir: &str, version_dir: &str, path: &Path) 
                 binary_path: pkg.binary_path.as_ref().map(|p| p.display().to_string()),
                 binary_hash: pkg.binary_hash,
                 abi,
+                path_identity: identity,
                 error,
             }
         }
@@ -195,6 +257,7 @@ fn entry_for(workspace: &str, driver_dir: &str, version_dir: &str, path: &Path) 
                 ),
                 None => (driver_dir.to_string(), version_dir.to_string(), None),
             };
+            let identity = path_identity(&driver, &version);
             InstalledEntry {
                 workspace: workspace.to_string(),
                 driver,
@@ -204,6 +267,7 @@ fn entry_for(workspace: &str, driver_dir: &str, version_dir: &str, path: &Path) 
                 binary_path: None,
                 binary_hash: None,
                 abi: Abi::Unreadable,
+                path_identity: identity,
                 error: Some(err.to_string()),
             }
         }
@@ -256,9 +320,9 @@ mod tests {
     }
 
     #[test]
-    fn lists_builtin_manifests_even_without_a_data_dir() {
+    fn lists_builtin_manifests() {
         let dir = tempfile::tempdir().unwrap();
-        let report = collect(&dir.path().join("missing"));
+        let report = collect(dir.path()).unwrap();
         let names: Vec<(&str, &str)> = report
             .builtin
             .iter()
@@ -269,15 +333,41 @@ mod tests {
             vec![("simulator", "2.0.0"), ("modbus_rtu", "1.0.0"), ("snmp", "1.0.0")]
         );
         assert!(report.builtin.iter().all(|entry| entry.source == "builtin"));
+        assert!(report.builtin.iter().all(|entry| entry.error.is_none()));
         assert!(report.installed.is_empty());
         assert!(!report.has_problems());
+    }
+
+    #[test]
+    fn missing_or_non_directory_data_dir_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        let err = collect(&missing).unwrap_err();
+        assert!(err.contains("not accessible"), "{err}");
+
+        let file = dir.path().join("data.file");
+        std::fs::write(&file, b"not a directory").unwrap();
+        let err = collect(&file).unwrap_err();
+        assert!(err.contains("is not a directory"), "{err}");
+    }
+
+    #[test]
+    fn malformed_builtin_manifest_is_surfaced_as_an_invalid_entry() {
+        let entry = parse_builtin("broken", "{not json");
+        assert_eq!(entry.driver, "broken");
+        assert_eq!(entry.version, "<unknown>");
+        assert_eq!(entry.source, "builtin");
+        assert!(entry.error.as_deref().is_some_and(|e| e.contains("malformed")));
+
+        let entry = parse_builtin("no-identity", r#"{"manifestVersion":"1.0"}"#);
+        assert!(entry.error.as_deref().is_some_and(|e| e.contains("identity.driver")));
     }
 
     #[test]
     fn lists_installed_manifest_only_packages_with_hashes() {
         let data = tempfile::tempdir().unwrap();
         let path = package(data.path(), "ws1", "demo", "1.0.0");
-        let report = collect(data.path());
+        let report = collect(data.path()).unwrap();
 
         assert_eq!(report.builtin.len(), 3);
         assert_eq!(report.installed.len(), 1);
@@ -290,8 +380,25 @@ mod tests {
         assert!(entry.binary_path.is_none());
         assert!(entry.binary_hash.is_none());
         assert_eq!(entry.abi, Abi::None);
+        assert!(entry.path_identity.is_none());
         assert!(entry.error.is_none());
         assert!(!entry.is_problem(), "manifest-only packages are informational");
+    }
+
+    #[test]
+    fn path_identity_is_reported_when_it_disagrees_with_the_manifest() {
+        let data = tempfile::tempdir().unwrap();
+        // MANIFEST declares demo@1.0.0, the directory says demo@2.0.0.
+        package(data.path(), "ws1", "demo", "2.0.0");
+        let report = collect(data.path()).unwrap();
+
+        let entry = &report.installed[0];
+        assert_eq!(entry.driver, "demo");
+        assert_eq!(entry.version, "1.0.0", "manifest identity stays authoritative");
+        let identity = entry.path_identity.as_ref().expect("path identity evidence");
+        assert_eq!(identity.workspace, "ws1");
+        assert_eq!(identity.driver, "demo");
+        assert_eq!(identity.version, "2.0.0");
     }
 
     #[test]
@@ -299,7 +406,7 @@ mod tests {
         let data = tempfile::tempdir().unwrap();
         let dir = data.path().join("drivers/workspaces/ws1/broken/9.9.9");
         std::fs::create_dir_all(&dir).unwrap();
-        let report = collect(data.path());
+        let report = collect(data.path()).unwrap();
 
         assert_eq!(report.installed.len(), 1);
         let entry = &report.installed[0];
@@ -317,7 +424,7 @@ mod tests {
         package(data.path(), "ws1", "demo", "1.0.0");
         let backup = data.path().join("drivers/workspaces/ws1/demo/.backup-1.0.0-1");
         std::fs::create_dir_all(&backup).unwrap();
-        assert_eq!(collect(data.path()).installed.len(), 1);
+        assert_eq!(collect(data.path()).unwrap().installed.len(), 1);
     }
 
     #[test]
@@ -326,7 +433,7 @@ mod tests {
         let dir = package(data.path(), "ws1", "legacy", "0.9.0");
         std::fs::write(dir.join("driver.so"), b"not a driver library").unwrap();
 
-        let report = collect(data.path());
+        let report = collect(data.path()).unwrap();
         let entry = &report.installed[0];
         assert_ne!(entry.abi, Abi::V2, "{entry:?}");
         assert!(entry.is_problem(), "{entry:?}");
