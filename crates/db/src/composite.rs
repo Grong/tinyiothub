@@ -1,6 +1,6 @@
 //! E2 composite 声明持久源（spec 2026-10-21-e2 §6.1）。
 
-use sqlx::SqlitePool;
+use sqlx::{Sqlite, SqlitePool, Transaction};
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct CompositeRow {
@@ -27,6 +27,34 @@ pub async fn insert_composite(pool: &SqlitePool, row: &CompositeRow) -> Result<(
     .execute(pool)
     .await?;
     Ok(())
+}
+
+/// 事务内插入（场景包实例化与 market 导入整包回滚）。
+pub async fn insert_composite_tx(tx: &mut Transaction<'_, Sqlite>, row: &CompositeRow) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO agent_composites (id, workspace_id, name, description, definition, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&row.id)
+    .bind(&row.workspace_id)
+    .bind(&row.name)
+    .bind(&row.description)
+    .bind(&row.definition)
+    .bind(&row.created_at)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// 事务内列出现有 composite 名称（模板引用冲突校验）。
+pub async fn list_composite_names_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    workspace_id: &str,
+) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar("SELECT name FROM agent_composites WHERE workspace_id = ?")
+        .bind(workspace_id)
+        .fetch_all(&mut **tx)
+        .await
 }
 
 pub async fn list_composites(pool: &SqlitePool, workspace_id: &str) -> Result<Vec<CompositeRow>, sqlx::Error> {

@@ -274,6 +274,31 @@ pub(crate) async fn delete_thing_property(pool: &SqlitePool, id: &str, thing_id:
     Ok(r.rows_affected())
 }
 
+/// 物是否声明了指定名称的属性（派生表达式引用校验）。
+pub async fn thing_property_exists(pool: &SqlitePool, thing_id: &str, name: &str) -> Result<bool, sqlx::Error> {
+    let id: Option<String> = sqlx::query_scalar("SELECT id FROM thing_properties WHERE thing_id = ? AND name = ?")
+        .bind(thing_id)
+        .bind(name)
+        .fetch_optional(pool)
+        .await?;
+    Ok(id.is_some())
+}
+
+/// Workspace 内既有派生属性的引用边（owner thing_id, refs JSON）。
+pub async fn list_derived_property_edges(
+    pool: &SqlitePool,
+    workspace_id: &str,
+) -> Result<Vec<(String, String)>, sqlx::Error> {
+    sqlx::query_as(
+        r#"SELECT p.thing_id, COALESCE(p.refs, '[]') FROM thing_properties p
+           JOIN things d ON d.id = p.thing_id
+           WHERE d.workspace_id = ? AND p.expression IS NOT NULL"#,
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await
+}
+
 impl Db {
     /// 按 ID 查物属性（清除运行时字段）。
     pub async fn find_thing_property_by_id(&self, id: &str) -> Result<Option<ThingProperty>, sqlx::Error> {

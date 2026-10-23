@@ -104,18 +104,18 @@ async fn apply_template_rules(
             Err(e) => return ApiResponseBuilder::error(format!("条件序列化失败: {e}")),
         };
         let kind = condition.get("type").and_then(|t| t.as_str()).unwrap_or("property");
-        if let Err(e) = sqlx::query(
-            "INSERT INTO watch_rules (id, workspace_id, kind, condition, persistent, timeout_secs, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        if let Err(e) = tinyiothub_storage::watch::insert_rule_tx(
+            &mut tx,
+            &tinyiothub_storage::watch::WatchRuleRow {
+                id: rule.id.clone(),
+                workspace_id: rule.workspace_id.clone(),
+                kind: kind.to_string(),
+                condition: condition.to_string(),
+                persistent: i64::from(rule.persistent),
+                timeout_secs: i64::from(rule.timeout_secs),
+                created_at: rule.created_at.clone(),
+            },
         )
-        .bind(&rule.id)
-        .bind(&rule.workspace_id)
-        .bind(kind)
-        .bind(condition.to_string())
-        .bind(i64::from(rule.persistent))
-        .bind(i64::from(rule.timeout_secs))
-        .bind(&rule.created_at)
-        .execute(&mut *tx)
         .await
         {
             let _ = tx.rollback().await;
@@ -130,17 +130,17 @@ async fn apply_template_rules(
                 return ApiResponseBuilder::error(format!("composite 序列化失败: {e}"));
             }
         };
-        if let Err(e) = sqlx::query(
-            "INSERT INTO agent_composites (id, workspace_id, name, description, definition, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
+        if let Err(e) = tinyiothub_storage::composite::insert_composite_tx(
+            &mut tx,
+            &tinyiothub_storage::composite::CompositeRow {
+                id: def.id.clone(),
+                workspace_id: def.workspace_id.clone(),
+                name: def.name.clone(),
+                description: def.description.clone(),
+                definition,
+                created_at: chrono::Utc::now().to_rfc3339(),
+            },
         )
-        .bind(&def.id)
-        .bind(&def.workspace_id)
-        .bind(&def.name)
-        .bind(&def.description)
-        .bind(definition)
-        .bind(chrono::Utc::now().to_rfc3339())
-        .execute(&mut *tx)
         .await
         {
             let _ = tx.rollback().await;

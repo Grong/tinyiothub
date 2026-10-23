@@ -21,23 +21,16 @@ pub async fn validate_derived_expression(
     let mut resolved = Vec::with_capacity(refs.len());
     let mut invalid = Vec::new();
     for r in &refs {
-        // 物名 → id（workspace 作用域；表名 things，20260825000001 改名）；属性须存在于该物
-        let thing = sqlx::query_as::<_, (String,)>("SELECT id FROM things WHERE workspace_id = ? AND name = ?")
-            .bind(workspace_id)
-            .bind(&r.thing_name)
-            .fetch_optional(pool)
+        // 物名 → id（workspace 作用域）；属性须存在于该物（SQL 住 crates/db）。
+        let thing = tinyiothub_storage::thing::thing_id_by_name(pool, workspace_id, &r.thing_name)
             .await
             .map_err(|e| e.to_string())?;
         match thing {
-            Some((id,)) => {
-                let exists: Option<(String,)> =
-                    sqlx::query_as("SELECT id FROM thing_properties WHERE thing_id = ? AND name = ?")
-                        .bind(&id)
-                        .bind(&r.property_name)
-                        .fetch_optional(pool)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                if exists.is_none() {
+            Some(id) => {
+                let exists = tinyiothub_storage::thing_property::thing_property_exists(pool, &id, &r.property_name)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if !exists {
                     invalid.push(format!("{} 无属性 {}", r.thing_name, r.property_name));
                 } else {
                     resolved.push(ResolvedRef {
@@ -65,15 +58,9 @@ async fn detect_cycle(
 ) -> Result<(), String> {
     // 既有边：workspace 内所有派生属性 thing_id -> refs.thing_id（refs 为 JSON）
     // COALESCE 双保险（Task 6 评审）：历史行 refs 可能为 NULL，按 '[]' 处理不炸行。
-    let rows: Vec<(String, String)> = sqlx::query_as(
-        r#"SELECT p.thing_id, COALESCE(p.refs, '[]') FROM thing_properties p
-           JOIN things d ON d.id = p.thing_id
-           WHERE d.workspace_id = ? AND p.expression IS NOT NULL"#,
-    )
-    .bind(workspace_id)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+    let rows = tinyiothub_storage::thing_property::list_derived_property_edges(pool, workspace_id)
+        .await
+        .map_err(|e| e.to_string())?;
     let mut graph: std::collections::HashMap<String, Vec<String>> = Default::default();
     for (owner, refs_json) in rows {
         let ids: Vec<serde_json::Value> = serde_json::from_str(&refs_json).unwrap_or_default();

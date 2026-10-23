@@ -40,7 +40,12 @@ fi
 # 上限，过滤链一长就报 "cannot be assembled, too long" 并静默空结果（2026-09-30 实测）。
 OFFENDERS=""
 for f in $NON_BASELINE; do
-  if grep -vE "^\s*--" "$f" | grep -vE "\bINSERT[[:space:]]+INTO[[:space:]]+[A-Za-z0-9_]+_new\b" | grep -qiE "\b(INSERT|REPLACE|UPDATE|DELETE)\b"; then
+  # `ON DELETE CASCADE|SET NULL` is a foreign-key referential action (DDL),
+  # not a DELETE statement; strip it before looking for DML.
+  if grep -vE "^\s*--" "$f" \
+    | sed -E 's/[Oo][Nn][[:space:]]+[Dd][Ee][Ll][Ee][Tt][Ee]/ON_REF_ACTION/g' \
+    | grep -vE "\bINSERT[[:space:]]+INTO[[:space:]]+[A-Za-z0-9_]+_new\b" \
+    | grep -qiE "\b(INSERT|REPLACE|UPDATE|DELETE)\b"; then
     OFFENDERS="${OFFENDERS:+$OFFENDERS
 }$f"
   fi

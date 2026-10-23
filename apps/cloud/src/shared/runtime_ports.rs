@@ -105,23 +105,10 @@ impl DerivedPropertyQueries for DbDerivedPropertyQueries {
     }
 
     async fn count_descendants(&self, root_thing_id: &str, thing_type: Option<&str>) -> Result<i64, String> {
-        // 递归 CTE，深度上限 10（spec §二 防环兜底）；表名 things（20260825000001 改名）
-        let row: (i64,) = sqlx::query_as(
-            r#"WITH RECURSIVE sub(id, depth) AS (
-                 SELECT id, 0 FROM things WHERE parent_id = ?1
-                 UNION ALL
-                 SELECT d.id, s.depth + 1 FROM things d JOIN sub s ON d.parent_id = s.id
-                 WHERE s.depth < 10
-               )
-               SELECT COUNT(*) FROM things d JOIN sub s ON d.id = s.id
-               WHERE (?2 IS NULL OR d.thing_type = ?2)"#,
-        )
-        .bind(root_thing_id)
-        .bind(thing_type)
-        .fetch_one(self.0.pool())
-        .await
-        .map_err(|e| e.to_string())?;
-        Ok(row.0)
+        // 递归 CTE，深度上限 10（spec §二 防环兜底）；SQL 住 crates/db。
+        tinyiothub_storage::thing::count_descendants(self.0.pool(), root_thing_id, thing_type)
+            .await
+            .map_err(|e| e.to_string())
     }
 }
 

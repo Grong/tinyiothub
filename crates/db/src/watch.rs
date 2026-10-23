@@ -1,6 +1,6 @@
 //! E1 值守中枢持久源（spec 2026-10-20-e1 §4）：watch_rules + hub_ledger。
 
-use sqlx::SqlitePool;
+use sqlx::{Sqlite, SqlitePool, Transaction};
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct WatchRuleRow {
@@ -26,6 +26,24 @@ pub async fn insert_rule(pool: &SqlitePool, row: &WatchRuleRow) -> Result<(), sq
     .bind(row.timeout_secs)
     .bind(&row.created_at)
     .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// 事务内插入（场景包实例化与 market 导入整包回滚）。
+pub async fn insert_rule_tx(tx: &mut Transaction<'_, Sqlite>, row: &WatchRuleRow) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO watch_rules (id, workspace_id, kind, condition, persistent, timeout_secs, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&row.id)
+    .bind(&row.workspace_id)
+    .bind(&row.kind)
+    .bind(&row.condition)
+    .bind(row.persistent)
+    .bind(row.timeout_secs)
+    .bind(&row.created_at)
+    .execute(&mut **tx)
     .await?;
     Ok(())
 }

@@ -261,12 +261,7 @@ impl ThingService {
 
     /// 模板三段定义一次取回（properties/actions/device_info），避免动态列名（SqlSafeStr）。
     async fn template_parts(&self, tid: &str) -> Result<(Option<String>, Option<String>, Option<String>), sqlx::Error> {
-        let row: Option<(Option<String>, Option<String>, Option<String>)> =
-            sqlx::query_as("SELECT properties, actions, device_info FROM thing_templates WHERE id=?")
-                .bind(tid)
-                .fetch_optional(&self.pool)
-                .await?;
-        Ok(row.unwrap_or((None, None, None)))
+        tinyiothub_storage::thing_template::template_parts(&self.pool, tid).await
     }
 
     /// 列 JSON 非空判定：空串/"[]"/"null" 视为无定义。（Fix A）

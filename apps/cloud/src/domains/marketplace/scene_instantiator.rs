@@ -901,9 +901,7 @@ async fn apply_scene_rules_tx(
         "watch_rules": scene.watch_rules,
         "composites": scene.composites,
     });
-    let existing: Vec<String> = sqlx::query_scalar("SELECT name FROM agent_composites WHERE workspace_id = ?")
-        .bind(workspace_id)
-        .fetch_all(&mut **tx)
+    let existing = tinyiothub_storage::composite::list_composite_names_tx(tx, workspace_id)
         .await
         .map_err(|e| db_err("读取 composite 名称", e))?;
     let (resolved, report) = resolve_template_rules(&template, workspace_id, &mapping, &existing);
@@ -923,35 +921,35 @@ async fn apply_scene_rules_tx(
         let condition = serde_json::to_value(&rule.condition)
             .map_err(|e| MarketplaceError::Template(format!("watch 条件序列化失败: {e}")))?;
         let kind = condition.get("type").and_then(|t| t.as_str()).unwrap_or("property");
-        sqlx::query(
-            "INSERT INTO watch_rules (id, workspace_id, kind, condition, persistent, timeout_secs, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        tinyiothub_storage::watch::insert_rule_tx(
+            tx,
+            &tinyiothub_storage::watch::WatchRuleRow {
+                id: rule.id.clone(),
+                workspace_id: rule.workspace_id.clone(),
+                kind: kind.to_string(),
+                condition: condition.to_string(),
+                persistent: i64::from(rule.persistent),
+                timeout_secs: i64::from(rule.timeout_secs),
+                created_at: rule.created_at.clone(),
+            },
         )
-        .bind(&rule.id)
-        .bind(&rule.workspace_id)
-        .bind(kind)
-        .bind(condition.to_string())
-        .bind(i64::from(rule.persistent))
-        .bind(i64::from(rule.timeout_secs))
-        .bind(&rule.created_at)
-        .execute(&mut **tx)
         .await
         .map_err(|e| db_err("watch 规则落库", e))?;
     }
     for def in &resolved.composites {
         let definition =
             serde_json::to_string(def).map_err(|e| MarketplaceError::Template(format!("composite 序列化失败: {e}")))?;
-        sqlx::query(
-            "INSERT INTO agent_composites (id, workspace_id, name, description, definition, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
+        tinyiothub_storage::composite::insert_composite_tx(
+            tx,
+            &tinyiothub_storage::composite::CompositeRow {
+                id: def.id.clone(),
+                workspace_id: def.workspace_id.clone(),
+                name: def.name.clone(),
+                description: def.description.clone(),
+                definition,
+                created_at: chrono::Utc::now().to_rfc3339(),
+            },
         )
-        .bind(&def.id)
-        .bind(&def.workspace_id)
-        .bind(&def.name)
-        .bind(&def.description)
-        .bind(definition)
-        .bind(chrono::Utc::now().to_rfc3339())
-        .execute(&mut **tx)
         .await
         .map_err(|e| db_err("composite 落库", e))?;
     }
