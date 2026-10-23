@@ -2,6 +2,7 @@
 
 pub mod cancel;
 pub mod core;
+pub mod lifecycle;
 pub mod materialization;
 pub mod migration;
 pub mod placement;
