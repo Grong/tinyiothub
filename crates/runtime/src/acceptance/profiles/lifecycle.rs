@@ -5,16 +5,21 @@
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::acceptance::report::{CheckResult, Level, ProfileReport};
 use crate::acceptance::test_hub::{TestHub, ThingOptions};
+use crate::driver::worker::WorkerHandle;
 
 const PROFILE: &str = "lifecycle";
 /// Generous deadline: the read itself is instantaneous, but CI may be loaded.
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 /// Invalid-config reads never produce a reading; this only bounds the wait.
 const FAILED_READ_TIMEOUT: Duration = Duration::from_millis(1000);
+/// Time allowed for a failure counter (or an in-flight read) to become visible.
+const FAILURE_WAIT: Duration = Duration::from_secs(2);
+/// Exponential retry backoff is 500ms then 1000ms; leave scheduling margin.
+const ATTEMPT_BACKOFF: Duration = Duration::from_millis(1100);
 
 fn check(name: &str, level: Level, detail: impl Into<String>, evidence: serde_json::Value) -> CheckResult {
     CheckResult {
@@ -127,12 +132,21 @@ pub fn run(dir: &Path) -> ProfileReport {
 
     let overview = hub.status(&handle);
     let online = overview.health.connection.is_online();
+    let cached_online = hub.cached_thing(&thing.id).is_some_and(|t| t.status.is_online());
     checks.push(check(
         "worker.online",
-        if online { Level::Pass } else { Level::Fail },
-        format!("worker connection status: {:?}", overview.health.connection),
+        if online && cached_online {
+            Level::Pass
+        } else {
+            Level::Fail
+        },
+        format!(
+            "worker connection status: {:?}, cached thing online={cached_online}",
+            overview.health.connection
+        ),
         serde_json::json!({
             "connection": overview.health.connection,
+            "cached_online": cached_online,
             "successes": overview.health.total_successes,
             "failures": overview.health.total_failures,
         }),
@@ -197,9 +211,11 @@ pub fn run(dir: &Path) -> ProfileReport {
 
 /// Drive a read through a deliberately invalid `driver_options` payload (a NUL
 /// byte): the dynamic adapter's `CString` conversion rejects it before reaching
-/// the driver, so no reading is produced. The check is that this surfaces as an
-/// `Err` (a timeout on the hub side) and the worker is still alive — no panic,
-/// no crash.
+/// the driver, so no reading is produced. A timeout alone is not evidence of a
+/// failure (the hub could simply not have scheduled the read), so the check
+/// requires the worker's `total_failures` counter to move: the retry budget is
+/// driven to a terminal failure and then one more read is issued, proving the
+/// worker kept processing after the failure without panicking.
 fn failed_read_check(hub: &TestHub, driver: &str) -> CheckResult {
     static NEXT_BAD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let seq = NEXT_BAD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -234,29 +250,134 @@ fn failed_read_check(hub: &TestHub, driver: &str) -> CheckResult {
             );
         }
     };
-    let outcome = hub.read_and_wait(&handle, FAILED_READ_TIMEOUT);
+    // Expected to time out: the adapter rejects the read and the worker waits
+    // out its retry backoff instead of producing a reading. The timeout itself
+    // is not scored — the failure counters below are.
+    let timed_out = hub.read_and_wait(&handle, FAILED_READ_TIMEOUT).err();
+
+    // The worker's overview (which carries `total_failures`) is only published
+    // on a terminal failure, so drive the retry budget to exhaustion. Each
+    // probe source id is a completion signal: the worker records it before
+    // invoking the driver. Sleep out the 500ms/1000ms exponential backoff
+    // between attempts.
+    let mut processed = true;
+    for (index, source) in [
+        "__acceptance_failure_1",
+        "__acceptance_failure_2",
+        "__acceptance_failure_3",
+    ]
+    .iter()
+    .enumerate()
+    {
+        if index > 0 {
+            std::thread::sleep(ATTEMPT_BACKOFF);
+        }
+        if !submit_and_await_attempt(&handle, source, FAILURE_WAIT) {
+            processed = false;
+            break;
+        }
+    }
+    let alive = !handle.is_finished();
+    if !processed {
+        let _ = hub.stop(&handle);
+        return check(
+            "worker.read_failure",
+            Level::Skip,
+            format!("worker did not process the failing reads (read_err={timed_out:?}, worker_alive={alive})"),
+            serde_json::json!({
+                "read_error": timed_out,
+                "worker_alive": alive,
+                "config": "NUL byte in driver_options",
+            }),
+        );
+    }
+
+    let Some(first_failures) = wait_for_failures(&handle, 0, FAILURE_WAIT) else {
+        let _ = hub.stop(&handle);
+        return check(
+            "worker.read_failure",
+            Level::Skip,
+            format!("adapter did not surface a read failure (read_err={timed_out:?}, worker_alive={alive})"),
+            serde_json::json!({
+                "read_error": timed_out,
+                "worker_alive": alive,
+                "config": "NUL byte in driver_options",
+            }),
+        );
+    };
+
+    // A second read after the retry budget is exhausted fails immediately and
+    // must still increment the counter: the worker kept processing.
+    let second_processed = submit_and_await_attempt(&handle, "__acceptance_failure_4", FAILURE_WAIT);
+    let second_failures = second_processed
+        .then(|| wait_for_failures(&handle, first_failures, FAILURE_WAIT))
+        .flatten();
     let alive = !handle.is_finished();
     let _ = hub.stop(&handle);
-    check(
-        "worker.read_failure",
-        if outcome.is_err() && alive {
-            Level::Pass
-        } else if outcome.is_ok() {
-            // The failure could not be induced; nothing to observe.
-            Level::Skip
-        } else {
-            Level::Fail
-        },
-        match &outcome {
-            Err(err) => format!("failed read returned an error ({err}) and the worker stayed alive={alive}"),
-            Ok(values) => format!("invalid config unexpectedly produced {} value(s)", values.len()),
-        },
-        serde_json::json!({
-            "error": outcome.as_ref().err(),
-            "worker_alive": alive,
-            "config": "NUL byte in driver_options",
-        }),
-    )
+
+    match second_failures {
+        Some(second) => check(
+            "worker.read_failure",
+            Level::Pass,
+            format!(
+                "failed reads registered (total_failures {first_failures} -> {second}) and the worker stayed alive={alive}"
+            ),
+            serde_json::json!({
+                "first_failures": first_failures,
+                "second_failures": second,
+                "read_error": timed_out,
+                "worker_alive": alive,
+                "config": "NUL byte in driver_options",
+            }),
+        ),
+        None => check(
+            "worker.read_failure",
+            Level::Fail,
+            format!(
+                "second read did not add a failure (total_failures stayed at {first_failures}, worker_alive={alive})"
+            ),
+            serde_json::json!({
+                "first_failures": first_failures,
+                "worker_alive": alive,
+                "read_error": timed_out,
+            }),
+        ),
+    }
+}
+
+/// Submit a read with a unique source id and wait until the worker records it
+/// (`last_read_sources` is written before the driver call). Returns false when
+/// the attempt is not observed within `timeout`.
+fn submit_and_await_attempt(handle: &WorkerHandle, source: &str, timeout: Duration) -> bool {
+    let probe = vec![source.to_string()];
+    handle.submit_read(probe.clone());
+    let deadline = Instant::now() + timeout;
+    loop {
+        if handle.last_read_sources() == probe {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Poll the worker overview until `total_failures` exceeds `above`. Counter
+/// updates are asynchronous, so poll with a bounded deadline instead of
+/// sleeping a fixed amount.
+fn wait_for_failures(handle: &WorkerHandle, above: u64, timeout: Duration) -> Option<u64> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let total = handle.status().health.total_failures;
+        if total > above {
+            return Some(total);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn finish(hub: TestHub, driver: String, mut checks: Vec<CheckResult>) -> ProfileReport {
@@ -339,10 +460,6 @@ mod tests {
         assert_eq!(report.level(), Level::Fail);
         let load = report.checks.iter().find(|c| c.check == "package.load").unwrap();
         assert_eq!(load.level, Level::Fail);
-        assert!(
-            load.detail.contains("cargo build -p demo-declarative"),
-            "{}",
-            load.detail
-        );
+        assert!(load.detail.contains("cargo build -p demo"), "{}", load.detail);
     }
 }

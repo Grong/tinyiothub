@@ -26,8 +26,11 @@ use crate::driver::{create_driver, driver_registry};
 use crate::event_bus::EventBus;
 use crate::ports::{DeclarationProjectionStore, ThingCacheSource};
 
-/// Shown whenever the package ships no binary and no built cdylib is found.
-pub const BUILD_HINT: &str = "build the reference cdylib first: cargo build -p demo-declarative";
+/// Build guidance for a package without a shipped binary and without a built
+/// cdylib. The crate/package name is derived from the driver identity.
+pub fn build_hint(driver: &str) -> String {
+    format!("build the reference cdylib first: cargo build -p {driver}")
+}
 
 #[derive(Default)]
 struct InMemoryProjection {
@@ -118,6 +121,18 @@ struct ManagedHandle {
     handle: Arc<WorkerHandle>,
 }
 
+/// In-memory acceptance environment for a real driver package.
+///
+/// # Sync-only contract
+///
+/// The API is synchronous: [`TestHub::spawn`] creates a private multi-thread
+/// runtime and [`TestHub::read_and_wait`] / [`TestHub::stop`] drive it with
+/// `block_on`. Call them from a sync context (the acceptance runner is sync).
+/// Calling `read_and_wait`/`stop` from inside another Tokio runtime panics.
+/// `Drop` detects that situation and shuts the private runtime down in the
+/// background instead of blocking; in-flight workers are then abandoned (their
+/// registry entries are intentionally left loaded, since unloading while the
+/// driver code may still run would be unsafe).
 pub struct TestHub {
     projection: InMemoryProjection,
     cache: Arc<InMemoryThingCache>,
@@ -197,7 +212,7 @@ impl TestHub {
     ///
     /// A package without a shipped binary falls back to the built cdylib in
     /// `target/debug` (`lib<driver>.dylib`/`.so`); if that is missing the
-    /// error carries [`BUILD_HINT`] rather than skipping silently.
+    /// error carries [`build_hint`] rather than skipping silently.
     pub fn load_package(&self, dir: &Path) -> Result<LoadedTestDriver, String> {
         let pkg = crate::access::package::read_package(dir).map_err(|e| e.to_string())?;
         let driver = pkg.manifest.identity.driver.clone();
@@ -208,9 +223,10 @@ impl TestHub {
             .or_else(|| locate_built_library(dir, &driver))
             .ok_or_else(|| {
                 format!(
-                    "{driver}: no cdylib in {} and none built in {}/{{debug,release}}; {BUILD_HINT}",
+                    "{driver}: no cdylib in {} and none built in {}/{{debug,release}}; {}",
                     dir.display(),
-                    target_root().display()
+                    target_root().display(),
+                    build_hint(&driver)
                 )
             })?;
 
@@ -357,6 +373,10 @@ impl TestHub {
 
     /// Submit one read and wait (asynchronously, with a deadline) for the
     /// corresponding reading to arrive through the value sink.
+    ///
+    /// # Panics
+    ///
+    /// Panics when called from inside a Tokio runtime; use a sync context.
     pub fn read_and_wait(&self, handle: &WorkerHandle, timeout: Duration) -> Result<Vec<ResultValue>, String> {
         let (thing_id, sources) = {
             let handles = self.handles.lock().unwrap();
@@ -403,6 +423,10 @@ impl TestHub {
     /// Stop the worker, wait for its task to exit and release the registry
     /// reference acquired by `create_driver`. The cached thing is marked
     /// offline.
+    ///
+    /// # Panics
+    ///
+    /// Panics when called from inside a Tokio runtime; use a sync context.
     pub fn stop(&self, handle: &WorkerHandle) -> Result<(), String> {
         let managed = {
             let handles = self.handles.lock().unwrap();
@@ -490,6 +514,22 @@ impl TestHub {
 impl Drop for TestHub {
     fn drop(&mut self) {
         let workers: Vec<Arc<WorkerHandle>> = self.handles.lock().unwrap().iter().map(|m| m.handle.clone()).collect();
+
+        // `block_on` (stop/unload) must not run inside another Tokio runtime:
+        // that panics. Signal stop and shut our private runtime down in the
+        // background instead. The registry entries are deliberately left in
+        // place — releasing/unloading them while a worker task may still be
+        // executing driver code would be unsafe.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            for worker in workers {
+                worker.stop();
+            }
+            if let Some(runtime) = self.runtime.take() {
+                runtime.shutdown_background();
+            }
+            return;
+        }
+
         for worker in workers {
             let _ = self.stop(&worker);
         }
@@ -657,7 +697,7 @@ mod tests {
     #[test]
     fn loads_reads_stops_and_unloads_the_demo_driver() {
         if demo_cdylib().is_none() {
-            eprintln!("skipping test hub test: {BUILD_HINT}");
+            eprintln!("skipping test hub test: {}", build_hint("demo-declarative"));
             return;
         }
         let hub = TestHub::new();
@@ -719,6 +759,19 @@ mod tests {
         .unwrap();
         let hub = TestHub::new();
         let err = hub.load_package(dir.path()).unwrap_err();
-        assert!(err.contains("cargo build -p demo-declarative"), "{err}");
+        assert!(err.contains("cargo build -p demo"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn dropping_a_hub_with_a_worker_inside_an_async_context_does_not_panic() {
+        if demo_cdylib().is_none() {
+            eprintln!("skipping async drop test: {}", build_hint("demo-declarative"));
+            return;
+        }
+        let hub = TestHub::new();
+        let loaded = hub.load_package(&demo_package_dir()).expect("load demo package");
+        let thing = hub.make_thing(&loaded, ThingOptions::default());
+        let _handle = hub.spawn(&loaded.driver, thing).expect("spawn worker");
+        drop(hub);
     }
 }
