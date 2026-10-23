@@ -29,11 +29,32 @@
 - **Context:** spec `docs/superpowers/specs/2026-10-21-e3-presentation-workbench-design.md` §3.3/§5/§9；计划执行记录。
 - **Effort:** M (human: ~2d / CC: ~2h) | **Depends on:** E3 合入 + E4（仅坐标项）
 
-### P3 — E2 结转：stop 不中断在途单次调用
-- **What:** `stop` 目前只阻断后续 call/set 并释放租约；在途的单次设备调用完成才返回。
+### ~~P3 — E2 结转：stop 不中断在途单次调用~~（E4c 已交付，2026-10-23）
+- **What:** ~~stop 只阻断后续~~ → E4c 起 stop 置闸门/释放 claim/取消在途，≤1s cancelled，超时 cancelled_unknown。已关闭。
 - **Why:** 架构要求"stop 永远可用"，双通道中断语义留到 E4 声明制 resources 一并细化。
 - **Context:** E2 spec §3.1 / §11 非目标。
 - **Effort:** M | **Depends on:** E4 接入层
+
+
+## Hub 运行时架构 — E4 结转（2026-10-23）
+
+### P2 — `drivers/*` 纳入 workspace 与 v2/manifest 迁移
+- **What:** 将 `drivers/{bacnet,modbus,mqtt,mqtt-bridge,onvif,opcua,snmp}` 纳入 workspace 编译门禁，补 ABI v2 + manifest，按 mqtt → modbus/bacnet/opcua/snmp → onvif → mqtt-bridge 迁移；外部 v1 `.so` 硬切重建。
+- **Why:** E4 接入协议已就位；这 7 个驱动不在编译/验收覆盖内，漂移静默累积。
+- **Context:** `docs/superpowers/plans/2026-10-23-e4e-migration-plan.md` §3-§5；执行可另立阶段。
+- **Effort:** L | **Depends on:** E4 合入
+
+### P2 — 存量物声明回填与直连调用收口
+- **What:** (1) 场景包/MCP 模板建物走 `describe`/物化；(2) UI 直连 `POST /things/{id}/actions/{name}/invoke` 接入 AccessService 声明校验；(3) pre-E4a 存量物声明回填/开关。
+- **Why:** E4a 只覆盖 REST 建物与 agent 工具；旁路仍可绕过声明/校验或产生无声明物。
+- **Context:** E4a 执行记录开放项；E4e 迁移计划 §5。
+- **Effort:** M | **Depends on:** E4 合入
+
+### P3 — E4d 空间模型收尾
+- **What:** World 2D 渲染（地图/多边形/设备点/楼层）；位置热路径批量化与 ingests 上界；anchor_map 环/同区校验；非 create_workspace 的 zone_source；出厂 kind=position 驱动。
+- **Why:** E4d 数据/API/zone 权威已交付，渲染与性能/边角校验留有结转。
+- **Context:** E4d spec/执行记录；E3 World TODO (4)。
+- **Effort:** L (UI) + M (backend) | **Depends on:** E4 合入
 
 ## Thing Rename Follow-ups — Deferred (PR-3, from /superpowers plan 2026-08-31)
 

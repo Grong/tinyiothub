@@ -48,9 +48,10 @@ P4+P5+P6 合起来是"架构可以演进"的具体机制：**接缝让替换有�
 │             双通道事件:有序不丢(控制/事件) + latest-wins(遥测流)
 │             ★新核心；设备对 brain 的唯一入口，模型永不直连设备
 ├─ 接入层 ── 声明式注册(identity+tools+state fields+sources+resources+placement)
-│            Hub 按声明校验+钳制每次调用(越界 Hub 侧拦截)
-│            需求驱动采样(无订阅者/无 watch 的源不采数)
-│            一致性验收(pass/fail/warn/skip/manual 五级 profile 化)
+│            E4 实交付：独立 driver.manifest.json + 双层实例声明(describe)
+│            Hub 按声明校验：业务参数拒绝、超时钳制、未声明工具拒绝
+│            采样：默认全采，仅 demandOnly 源门控；health 慢通道常开
+│            验收：自动 profile 全套(pass/fail/warn/skip；manual 未做)
 ├─ 治理层 ── 包信任 / Skills 治理 / 审计账本——各自独立显式边界
 │            架构留位，实现等触发条件(§6 E5)
 └─ 持久层 ── 事件账本(append-only) + 报告
@@ -96,7 +97,7 @@ P4+P5+P6 合起来是"架构可以演进"的具体机制：**接缝让替换有�
 | **E1 值守中枢**（原 Hub 运行时内核，扩张后） | P1/P2 地基 + 值守产品形态 | 内部子阶段：**E1a** 引擎内核（LiveState 实时态 + Watch 引擎注册表式条件词表 + one-shot 唤醒通道 + 双通道事件语义）；**E1b** 派生摘要（health + **zone 空间归属**（X4）+ 预算化快照的数据源）；**E1c** **GoalWatch 目标维持**（X2：目标表/达成判定/长期记忆/周期报告，GoalTrigger 正式落地；**目标→watch 的编译发生在设目标时刻（可用模型），watch 运行期为纯比较器**（R1-3-3），与 P2 自洽）；**E1d** **知觉权**（X1：brain 直接消费遥测流，发现规则未覆盖异常；**架构位置=TrendAnomalyTrigger 式 Trigger 接缝实现，输出 WakeSignal，配额由 Budget 接缝钳制**（R1-2-3；**E1 阶段退化形态：配置化 token 上限挂在现有 runner 硬预算（runner.rs:25-28）旁，E2 接缝化后迁入 Budget 接缝**——R2-2-2）；范围锁定「单类异常 + 成本闸门」，不建通用异常检测平台） | E1a-c：设目标 → watch 网自动织出 → 越限唤醒 run → run 读到含空间归属的摘要 → 周期报告；且**账本足以回放该场景全程**（R1-1-2）；**E1a 另验：两 run 并发操作同设备时后者收到带持有者的 busy 拒绝；E1c 另验：重启后 watch 网由目标表重织、值守无需人工介入继续**（R2-1-1）；**E1d：一个遥测异常被 brain 端到端发现，且该子阶段 token 成本有硬顶并实测不超**（R1-1-1） |
 | **E2 Brain 接缝层** | P4 接缝化 | Run Loop 五接缝封闭契约；固定设备工具补齐（watch/stop）；turn 开头快照注入（预算化，AGH ≤6KB 参照）；审批原因六分类（unavailable≠rejected）；**composite 编排原语框架**（X3：多设备动作链声明为可复用工具，失败/部分成功/回滚语义以 E1 真实协同场景为设计输入）。**现有 9 工具→目标态映射**（R1-3-1）：设备类 list_things/get_thing/get_thing_profile/read_property/invoke_action 折叠进 list_devices/read_device/call_device/set_device 形态；非设备类 query_events/search_knowledge/read_document/get_thing_tree 保留为独立类别（知识/文档/事件工具），不进设备工具集 | 接缝各有一个真实替换实现（证明可换）；快照注入上线且 AI 不再逐物查 profile；一条 composite 链端到端可审批可溯源 |
 | **E3 呈现层** | 投影化 | Devices 工作台三 tab（设备卡/Flow/World，前端只订阅 Hub 投影）；**Flow 时间机器**（X6：拖时间轴回看任意时刻设备状态+事件链，依赖持久层事件账本回放能力；**回放精度=状态变更粒度，遥测毛刺不保证回放**，见 §4 账本捕获策略——R2-3-1）；**watch/协同规则模板库**（X7：场景包携带 watch 条件与目标模板，实例化含规则引用解析与校验） | 多设备协同链（watch→job→结果）在 Flow 中可见可溯可回放；装一个场景包即自带值守规则 |
-| **E4 接入层声明制** | P3 最优解 | 驱动声明式注册（目标态直连，协议内不留共存包袱）；Hub 校验钳制；需求驱动采样；一致性验收雏形 | 一个新驱动纯声明接入（零 Hub 代码变更）并通过验收 profile；**并附存量驱动迁移计划（迁移执行可另立阶段）**（R2-2-1，与 §3 例外条款对齐） |
+| **E4 接入层声明制**（已交付 E4a-E4e） | P3 最优解 | 独立 manifest + ABI v2（async/cancel/describe，v1 硬切）+ 双层声明；Hub 校验/超时钳制；保守需求驱动采样；多资源仲裁 + stop 在途取消；maps/place/zone 空间模型；自动验收 profile 全套 + inventory + 迁移计划 | demo-declarative 纯声明接入（Hub 零代码）并通过全部自动 profile；v1 `.so` 拒载；stop ≤1s cancelled/unknown；maps 为 zone 权威；迁移计划覆盖内置/`drivers/*`/外部 `.so`/数据/回滚 |
 | **E5 治理层** | 信任边界显式化 | 包/Skills 治理、审计账本 | **架构已留位，启动等触发条件** |
 
 **顺序逻辑**：E1 立起"Hub 是运行时"（watch+摘要是一切协同的地基）→ E2 让 brain 通过接缝消费运行时 → E3 把运行时投影给人看（Flow 的数据正是 E1 的 watch/job 事件链）→ E4 动接入协议（运行时价值已验证，改造有底气）→ E5 等真实需求触发。
@@ -201,7 +202,7 @@ pre-alpha 无发布承诺；公网部署未验证；进程内插件无隔离；�
 |---|---|---|---|
 | 1 | watch 条件唤醒 | **采纳，最高优先级** | E1 Watch 引擎 |
 | 2 | turn 开头设备/健康快照注入 | **采纳** | E1 LiveState 派生 + E2 快照注入 |
-| 3 | 空间语义（zone/坐标/朝向） | **改造采纳**（不搬 maps 帧概念，叠加现有层级树） | ~~E3 Hub 派生能力~~ **已被 #19（X4）前移至 E1b** |
+| 3 | 空间语义（zone/坐标/朝向） | **完整采纳（改写）**：maps/place/zone 为权威（改名/坐标/多边形/trust），层级树降为组织用途与迁移期回退 | E4d（E1b 层级派生降为回退） |
 | 4 | Devices 工作台（设备卡+Flow+2D 地图） | **采纳，依赖 E1** | E3 呈现层 |
 | 5 | 审批原因分类（unavailable≠rejected） | **采纳，小项** | E2 Approval 接缝 |
 | 6 | 资源占用/仲裁（busy 带持有者、同设备互斥） | **改造采纳**（人接管打断不做——楼宇固定设备弱需求） | E1 Job 仲裁 + E4 resources 声明 |
@@ -274,7 +275,7 @@ pre-alpha 无发布承诺；公网部署未验证；进程内插件无隔离；�
 - **HOUR 2-3（核心逻辑）**：watch 条件字段路径映射（AGH state field/source field → 我们 thing property/遥测流的词表对齐）；GoalWatch 目标→watch 编译的模型输出 schema；快照 6KB 是英文参数，中文字节预算 E2 实测重定 [estimated]。
 - **HOUR 4-5（集成）**：E1d 检测算法选型（基线漂移/阈值学习——E1d spec 前置调研）；X7 模板规则引用与场景包 `{index}` 计数参数的解析交互。
 - **HOUR 6+（打磨）**：watch 命中率/误唤醒率/唤醒延迟指标；账本体积增长估算（状态变更全量落；参照 agent_runs 480 行/天/工作区先例）。
-- **估计**：human ~2-3 月（E1-E4）/ CC+gstack ~2-3 周 [estimated]。
+- **估计**：E1 主体已交付；E4 单独 human ~3-4 周 / CC+gstack ~4-6 天 [estimated]（含 E4a-e 扩张）。
 
 ## 评审节发现（Sections 1-11，strategy-only 深度）
 
