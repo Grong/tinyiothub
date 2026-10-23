@@ -349,7 +349,10 @@ impl RateLimiter {
     fn allow(&mut self, key: &str, limit: u32) -> bool {
         let now = Instant::now();
         let hits = self.hits.entry(key.to_string()).or_default();
-        while hits.front().is_some_and(|&t| now.duration_since(t) >= RATE_LIMIT_WINDOW) {
+        while hits
+            .front()
+            .is_some_and(|&t| now.duration_since(t) >= RATE_LIMIT_WINDOW)
+        {
             hits.pop_front();
         }
         if hits.len() >= limit as usize {
@@ -619,7 +622,9 @@ mod tests {
         let (handle, mut runs) = spawn_collector();
 
         for id in 1..=5 {
-            handle.enqueue(critical_signal(id)).expect("critical bypasses rate limit");
+            handle
+                .enqueue(critical_signal(id))
+                .expect("critical bypasses rate limit");
         }
         for want in 1..=5 {
             let sig = runs.recv().await.expect("critical runs immediately");
@@ -629,7 +634,9 @@ mod tests {
 
         // Critical 不碰限速器：普通信号仍享完整 3/min 配额。
         for id in 1..=3 {
-            handle.enqueue(event_signal(id)).expect("limiter untouched by criticals");
+            handle
+                .enqueue(event_signal(id))
+                .expect("limiter untouched by criticals");
         }
         assert_eq!(handle.enqueue(event_signal(4)), Err(EnqueueError::RateLimited));
     }
@@ -641,7 +648,9 @@ mod tests {
         let (handle, _runs) = spawn_collector();
 
         for tick in 0..5 {
-            handle.enqueue(heartbeat(tick)).expect("keyless signal unaffected by rate limit");
+            handle
+                .enqueue(heartbeat(tick))
+                .expect("keyless signal unaffected by rate limit");
         }
     }
 
@@ -684,13 +693,7 @@ mod tests {
         struct FailingLedger;
         #[async_trait::async_trait]
         impl HubLedger for FailingLedger {
-            async fn append(
-                &self,
-                _: &str,
-                _: &str,
-                _: Option<&str>,
-                _: serde_json::Value,
-            ) -> Result<(), String> {
+            async fn append(&self, _: &str, _: &str, _: Option<&str>, _: serde_json::Value) -> Result<(), String> {
                 Err("db down".into())
             }
         }
