@@ -4,12 +4,18 @@
 //! Checks:
 //! - `telemetry.required_fields`: one read; every `required` state field carries
 //!   a value (missing optional fields warn).
-//! - `telemetry.types`: the reading's `value_type` matches the declared type.
-//! - `telemetry.range`: numeric readings fall inside the declared `min`/`max`.
-//! - `telemetry.interval`: two reads spaced by the poll source's interval; the
-//!   second reading must not be observed before the interval elapsed.
-//! - `telemetry.push`: a push driver must deliver a reading through the value
-//!   sink (populated from the hub's sink consumer); poll-only drivers skip.
+//! - `telemetry.types`: the reading's `value_type` **and payload** match the
+//!   declared type (a numeric declaration with a non-numeric payload fails).
+//! - `telemetry.range`: numeric readings fall inside the declared `min`/`max`;
+//!   unparseable/NaN payloads for numeric declarations fail, unbounded
+//!   `range: {}` declarations are skipped with a reason.
+//! - `telemetry.second_read`: a second, fresh poll read is serviced.
+//! - `telemetry.interval`: always a skip — cadence is sampler-owned and
+//!   covered by the sampler/streaming tests, not measured here.
+//! - `telemetry.push`: a push driver must deliver a complete required batch
+//!   through the value sink. The loaded driver's `is_push()` is authoritative;
+//!   a manifest-only push declaration on a poll driver warns (ABI v2 dynamic
+//!   drivers cannot push), and poll-only manifests skip.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -23,10 +29,10 @@ use crate::acceptance::test_hub::{TestHub, ThingOptions};
 const PROFILE: &str = "telemetry";
 /// A single poll read is near-instantaneous; CI scheduling may be noisy.
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
-/// Bounded wait for a push driver's first value-sink reading.
+/// Bounded wait for a push driver's first complete value-sink reading.
 const PUSH_TIMEOUT: Duration = Duration::from_secs(5);
-/// Scheduling tolerance for the interval check.
-const INTERVAL_SLACK: Duration = Duration::from_millis(50);
+/// Poll period for the push snapshot helper (and tests).
+const PUSH_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 fn check(name: &str, level: Level, detail: impl Into<String>, evidence: serde_json::Value) -> CheckResult {
     CheckResult {
@@ -58,15 +64,17 @@ pub fn run(dir: &Path) -> ProfileReport {
         }
     };
 
-    let push_declared = declares_push(&loaded.manifest);
+    let manifest_declares_push = declares_push(&loaded.manifest);
     let poll_source = primary_poll_source(&loaded.manifest).cloned();
+    let required = declared_required(&loaded.manifest.state_fields);
 
-    if !push_declared && poll_source.is_none() {
+    if !manifest_declares_push && poll_source.is_none() {
         let reason = "manifest declares neither a poll source nor a push source; telemetry cannot be observed";
         for name in [
             "telemetry.required_fields",
             "telemetry.types",
             "telemetry.range",
+            "telemetry.second_read",
             "telemetry.interval",
             "telemetry.push",
         ] {
@@ -94,15 +102,20 @@ pub fn run(dir: &Path) -> ProfileReport {
             };
         }
     };
+    // The worker is the authority on push mode: a manifest may over-declare
+    // (ABI v2 dynamic drivers never push), and a built-in push driver may not
+    // carry the declaration at all.
+    let driver_is_push = handle.is_push();
 
-    // Push drivers are serviced by `start_push` (a submitted poll read is
-    // ignored by the worker), so acquire the first reading from the sink path.
-    let first = if push_declared {
-        wait_for_push_reading(&hub, &thing.id, PUSH_TIMEOUT)
+    // Push workers ignore submitted reads (`start_push` owns the sink), so a
+    // push driver's initial reading must come from the value-sink path.
+    let first = if driver_is_push {
+        wait_for_push_values(&required, PUSH_TIMEOUT, || {
+            hub.cached_values(&thing.id).into_values().collect()
+        })
     } else {
         hub.read_and_wait(&handle, READ_TIMEOUT)
     };
-    let first_at = Instant::now();
 
     match &first {
         Ok(values) => {
@@ -132,36 +145,41 @@ pub fn run(dir: &Path) -> ProfileReport {
         }
     }
 
-    checks.push(interval_check(
+    checks.push(second_read_check(
         &hub,
         &handle,
-        poll_source.as_ref(),
-        push_declared,
+        driver_is_push,
+        poll_source.is_some(),
         first.is_ok(),
-        first_at,
     ));
-    checks.push(push_check(push_declared, &first));
+    checks.push(interval_check(driver_is_push, poll_source.is_some()));
+    checks.push(push_check(manifest_declares_push, driver_is_push, &first));
 
-    let _ = hub.stop(&handle);
+    if let Err(err) = hub.stop(&handle) {
+        checks.push(check(
+            "telemetry.stop",
+            Level::Fail,
+            format!("worker cleanup failed: {err}"),
+            serde_json::json!({"error": err}),
+        ));
+    }
+
     ProfileReport {
         profile: PROFILE.into(),
         checks,
     }
 }
 
-/// A push driver is declared by the manifest capability or a `push`/`stream`
-/// source kind.
+/// A push driver is declared by the manifest capability or a `push` source
+/// kind. `stream` is a separate capability (`capabilities.streaming`), not a
+/// value-sink source kind, so it is deliberately not treated as push.
 fn declares_push(manifest: &DriverManifest) -> bool {
-    manifest.capabilities.push
-        || manifest
-            .sources
-            .iter()
-            .any(|source| matches!(source.kind.as_str(), "push" | "stream"))
+    manifest.capabilities.push || manifest.sources.iter().any(|source| source.kind == "push")
 }
 
-/// The poll source whose interval the profile drives. Non-demand-only sources
-/// win (the `slow` source added for streaming is demand-gated); fall back to
-/// the first poll source.
+/// The poll source whose readings the profile exercises. Non-demand-only
+/// sources win (the `slow` source added for streaming is demand-gated); fall
+/// back to the first poll source.
 fn primary_poll_source(manifest: &DriverManifest) -> Option<&SourceDecl> {
     manifest
         .sources
@@ -275,6 +293,19 @@ fn reading_type_matches(kind: ValueKind, value_type: &str) -> bool {
     )
 }
 
+/// Whether the payload is consistent with the declared kind. Integers must be
+/// integral (`"1.5"` is not an int payload); floats may be integer-valued but
+/// must parse and be finite (`NaN`/`inf` are rejected).
+fn payload_matches(kind: ValueKind, raw: &str) -> bool {
+    let raw = raw.trim();
+    match kind {
+        ValueKind::Integer => raw.parse::<i64>().is_ok(),
+        ValueKind::Float => raw.parse::<f64>().is_ok_and(f64::is_finite),
+        ValueKind::Boolean => matches!(raw.to_ascii_lowercase().as_str(), "true" | "false" | "1" | "0"),
+        ValueKind::String => true,
+    }
+}
+
 fn types_check(fields: &[StateFieldDecl], values: &[ResultValue]) -> CheckResult {
     if fields.is_empty() {
         return check(
@@ -292,22 +323,31 @@ fn types_check(fields: &[StateFieldDecl], values: &[ResultValue]) -> CheckResult
         let Some(value) = values.iter().find(|value| value.name == field.name) else {
             continue;
         };
-        match declared_kind(&field.data_type) {
-            None => unknown.push(serde_json::json!({
+        let Some(kind) = declared_kind(&field.data_type) else {
+            unknown.push(serde_json::json!({
                 "field": field.name,
                 "declared": field.data_type,
                 "reading": value.value_type,
-            })),
-            Some(kind) if reading_type_matches(kind, &value.value_type) => matched.push(serde_json::json!({
-                "field": field.name,
-                "declared": field.data_type,
-                "reading": value.value_type,
-            })),
-            Some(_) => mismatched.push(serde_json::json!({
-                "field": field.name,
-                "declared": field.data_type,
-                "reading": value.value_type,
-            })),
+            }));
+            continue;
+        };
+
+        let type_ok = reading_type_matches(kind, &value.value_type);
+        // A missing payload is scored by `required_fields`; only validate a
+        // payload that is actually present.
+        let payload_ok = value.value.as_deref().is_none_or(|raw| payload_matches(kind, raw));
+        let entry = serde_json::json!({
+            "field": field.name,
+            "declared": field.data_type,
+            "reading": value.value_type,
+            "value": value.value,
+            "type_match": type_ok,
+            "payload_match": payload_ok,
+        });
+        if type_ok && payload_ok {
+            matched.push(entry);
+        } else {
+            mismatched.push(entry);
         }
     }
 
@@ -321,7 +361,7 @@ fn types_check(fields: &[StateFieldDecl], values: &[ResultValue]) -> CheckResult
         check(
             "telemetry.types",
             Level::Fail,
-            format!("reading type does not match the declaration: {mismatched:?}"),
+            format!("reading type/payload does not match the declaration: {mismatched:?}"),
             evidence,
         )
     } else if !unknown.is_empty() {
@@ -342,7 +382,10 @@ fn types_check(fields: &[StateFieldDecl], values: &[ResultValue]) -> CheckResult
         check(
             "telemetry.types",
             Level::Pass,
-            format!("{} declared field(s) match the reading value_type", matched.len()),
+            format!(
+                "{} declared field(s) match the reading value_type and payload",
+                matched.len()
+            ),
             evidence,
         )
     }
@@ -351,26 +394,49 @@ fn types_check(fields: &[StateFieldDecl], values: &[ResultValue]) -> CheckResult
 fn range_check(fields: &[StateFieldDecl], values: &[ResultValue]) -> CheckResult {
     let mut in_range = Vec::new();
     let mut out_of_range = Vec::new();
-    let mut skipped = Vec::new();
+    let mut invalid = Vec::new();
+    let mut skipped_non_numeric = Vec::new();
+    let mut unbounded = Vec::new();
 
     for field in fields {
         let Some(range) = &field.range else {
             continue;
         };
+        if range.min.is_none() && range.max.is_none() {
+            // `range: {}` used to pass any numeric value: there is no bound to
+            // check, so report the declaration as skipped instead of a pass.
+            unbounded.push(field.name.clone());
+            continue;
+        }
         let Some(value) = values.iter().find(|value| value.name == field.name) else {
             continue;
         };
+        let numeric_decl = matches!(
+            declared_kind(&field.data_type),
+            Some(ValueKind::Integer | ValueKind::Float)
+        );
         let raw = value.value.as_deref().unwrap_or("");
-        let Ok(number) = raw.trim().parse::<f64>() else {
-            // Declared non-numeric fields (or unparseable payloads) are not a
-            // range failure; record the skip in evidence.
-            skipped.push(field.name.clone());
-            continue;
+        let parsed = raw.trim().parse::<f64>();
+        let number = match parsed {
+            Ok(number) if number.is_finite() => number,
+            _ if numeric_decl => {
+                // A numeric declaration with a non-numeric/NaN payload is a
+                // contract violation, never a silent skip.
+                invalid.push(serde_json::json!({
+                    "field": field.name,
+                    "value_type": value.value_type,
+                    "value": value.value,
+                    "reason": "numeric declaration with a non-numeric or non-finite payload",
+                }));
+                continue;
+            }
+            _ => {
+                // Declared non-numeric fields (or unparseable string payloads)
+                // are outside range checking; record the skip in evidence.
+                skipped_non_numeric.push(field.name.clone());
+                continue;
+            }
         };
-        if !number.is_finite() {
-            skipped.push(field.name.clone());
-            continue;
-        }
 
         let below = range.min.is_some_and(|min| number < min);
         let above = range.max.is_some_and(|max| number > max);
@@ -390,23 +456,25 @@ fn range_check(fields: &[StateFieldDecl], values: &[ResultValue]) -> CheckResult
     let evidence = serde_json::json!({
         "in_range": in_range,
         "out_of_range": out_of_range,
-        "skipped_non_numeric": skipped,
+        "invalid": invalid,
+        "skipped_non_numeric": skipped_non_numeric,
+        "unbounded": unbounded,
     });
 
-    if !out_of_range.is_empty() {
+    if !invalid.is_empty() || !out_of_range.is_empty() {
         check(
             "telemetry.range",
             Level::Fail,
-            format!("reading(s) outside the declared range: {out_of_range:?}"),
+            format!("invalid and/or out-of-range reading(s): invalid={invalid:?}, out_of_range={out_of_range:?}"),
             evidence,
         )
     } else if in_range.is_empty() {
-        check(
-            "telemetry.range",
-            Level::Skip,
-            "no numeric reading carries a declared min/max range",
-            evidence,
-        )
+        let reason = if !unbounded.is_empty() && skipped_non_numeric.is_empty() {
+            format!("declared range has no min/max bound(s): {unbounded:?}")
+        } else {
+            "no numeric reading carries a bounded min/max range".to_string()
+        };
+        check("telemetry.range", Level::Skip, reason, evidence)
     } else {
         check(
             "telemetry.range",
@@ -417,143 +485,171 @@ fn range_check(fields: &[StateFieldDecl], values: &[ResultValue]) -> CheckResult
     }
 }
 
-/// Two reads separated by the poll source's interval. The second reading must
-/// not be observed before the interval elapsed (small scheduling slack allowed).
-fn interval_check(
+/// A second poll read must be serviced with a fresh, non-empty reading.
+fn second_read_check(
     hub: &TestHub,
     handle: &crate::driver::worker::WorkerHandle,
-    source: Option<&SourceDecl>,
-    push_driver: bool,
+    driver_is_push: bool,
+    has_poll_source: bool,
     first_ok: bool,
-    first_at: Instant,
 ) -> CheckResult {
-    if push_driver {
-        // Push workers ignore submitted reads; the sampler owns the cadence, so
-        // a poll-interval measurement would time out for a legitimate driver.
+    if driver_is_push {
         return check(
-            "telemetry.interval",
+            "telemetry.second_read",
             Level::Skip,
-            "push driver: interval applies to poll sources only",
+            "push driver: reads are sink-driven, not submitted",
             serde_json::json!({}),
         );
     }
-    let Some(source) = source else {
+    if !has_poll_source {
         return check(
-            "telemetry.interval",
+            "telemetry.second_read",
             Level::Skip,
-            "manifest declares no poll source; interval is not applicable",
+            "manifest declares no poll source",
             serde_json::json!({}),
-        );
-    };
-    let interval = Duration::from_millis(source.interval_ms.max(source.min_interval_ms));
-    if interval.is_zero() {
-        return check(
-            "telemetry.interval",
-            Level::Skip,
-            format!("poll source '{}' declares a zero interval", source.id),
-            serde_json::json!({"source": source.id}),
         );
     }
     if !first_ok {
         return check(
-            "telemetry.interval",
+            "telemetry.second_read",
             Level::Skip,
-            "initial read failed; interval was not measured",
-            serde_json::json!({"source": source.id, "interval_ms": interval.as_millis()}),
-        );
-    }
-
-    std::thread::sleep(interval);
-    match hub.read_and_wait(handle, READ_TIMEOUT) {
-        Ok(values) => {
-            let gap = first_at.elapsed();
-            let on_time = gap + INTERVAL_SLACK >= interval;
-            check(
-                "telemetry.interval",
-                if on_time && !values.is_empty() {
-                    Level::Pass
-                } else {
-                    Level::Fail
-                },
-                format!(
-                    "second read observed after {}ms (interval {}ms, slack {}ms)",
-                    gap.as_millis(),
-                    interval.as_millis(),
-                    INTERVAL_SLACK.as_millis()
-                ),
-                serde_json::json!({
-                    "source": source.id,
-                    "interval_ms": interval.as_millis(),
-                    "observed_gap_ms": gap.as_millis(),
-                    "slack_ms": INTERVAL_SLACK.as_millis(),
-                    "second_read_values": values.len(),
-                }),
-            )
-        }
-        Err(err) => check(
-            "telemetry.interval",
-            Level::Fail,
-            format!("second read did not return: {err}"),
-            serde_json::json!({
-                "source": source.id,
-                "interval_ms": interval.as_millis(),
-                "error": err,
-            }),
-        ),
-    }
-}
-
-fn push_check(push_declared: bool, first: &Result<Vec<ResultValue>, String>) -> CheckResult {
-    if !push_declared {
-        return check(
-            "telemetry.push",
-            Level::Skip,
-            "manifest declares no push source (poll-only driver); value sink not exercised",
+            "initial read failed; second read not attempted",
             serde_json::json!({}),
         );
     }
-    match first {
-        Ok(values) => check(
-            "telemetry.push",
+
+    match hub.read_and_wait(handle, READ_TIMEOUT) {
+        Ok(values) if !values.is_empty() => check(
+            "telemetry.second_read",
             Level::Pass,
-            format!("push driver delivered {} value(s) through the value sink", values.len()),
-            serde_json::json!({
-                "values": values.iter().map(|value| serde_json::json!({
-                    "name": value.name,
-                    "value_type": value.value_type,
-                    "value": value.value,
-                })).collect::<Vec<_>>(),
-            }),
+            format!("a second fresh read returned {} value(s)", values.len()),
+            serde_json::json!({"values": values.len()}),
+        ),
+        Ok(_) => check(
+            "telemetry.second_read",
+            Level::Fail,
+            "second read returned no values",
+            serde_json::json!({"values": 0}),
         ),
         Err(err) => check(
-            "telemetry.push",
+            "telemetry.second_read",
             Level::Fail,
-            format!("no value-sink reading within {}ms: {err}", PUSH_TIMEOUT.as_millis()),
-            serde_json::json!({"timeout_ms": PUSH_TIMEOUT.as_millis(), "error": err}),
+            format!("second read did not return: {err}"),
+            serde_json::json!({"error": err}),
         ),
     }
 }
 
-/// Wait for a push driver's first reading to reach the sink consumer, which
-/// records it in the hub's per-thing value map. Polling (not `read_and_wait`)
-/// because push workers ignore submitted reads and may emit before we
-/// subscribe; the map closes that race.
-fn wait_for_push_reading(hub: &TestHub, thing_id: &str, timeout: Duration) -> Result<Vec<ResultValue>, String> {
+/// Cadence is owned by the sampler, not the driver; this profile cannot make
+/// an honest interval assertion by sleeping itself.
+fn interval_check(driver_is_push: bool, has_poll_source: bool) -> CheckResult {
+    let reason = if driver_is_push {
+        "push driver: delivery cadence is sink-owned; covered by sampler/streaming tests"
+    } else if !has_poll_source {
+        "manifest declares no poll source; covered by sampler/streaming tests"
+    } else {
+        "cadence is sampler-owned; covered by sampler/streaming tests"
+    };
+    check(
+        "telemetry.interval",
+        Level::Skip,
+        reason,
+        serde_json::json!({"sampler_owned": true}),
+    )
+}
+
+fn push_check(
+    manifest_declares_push: bool,
+    driver_is_push: bool,
+    first: &Result<Vec<ResultValue>, String>,
+) -> CheckResult {
+    if driver_is_push {
+        return match first {
+            Ok(values) => check(
+                "telemetry.push",
+                Level::Pass,
+                format!("push driver delivered {} value(s) through the value sink", values.len()),
+                serde_json::json!({
+                    "values": values.iter().map(|value| serde_json::json!({
+                        "name": value.name,
+                        "value_type": value.value_type,
+                        "value": value.value,
+                    })).collect::<Vec<_>>(),
+                }),
+            ),
+            Err(err) => check(
+                "telemetry.push",
+                Level::Fail,
+                format!(
+                    "no complete value-sink reading within {}ms: {err}",
+                    PUSH_TIMEOUT.as_millis()
+                ),
+                serde_json::json!({"timeout_ms": PUSH_TIMEOUT.as_millis(), "error": err}),
+            ),
+        };
+    }
+
+    if manifest_declares_push {
+        // ABI v2 dynamic drivers cannot push. Do not wait for a sink reading
+        // that can never arrive; surface the declaration mismatch instead.
+        return check(
+            "telemetry.push",
+            Level::Warn,
+            "manifest declares a push source but the loaded driver runs in poll mode (ABI v2 dynamic drivers cannot push); value sink not exercised",
+            serde_json::json!({"manifest_declares_push": true, "driver_is_push": false}),
+        );
+    }
+
+    check(
+        "telemetry.push",
+        Level::Skip,
+        "manifest declares no push source (poll-only driver); value sink not exercised",
+        serde_json::json!({"manifest_declares_push": false, "driver_is_push": false}),
+    )
+}
+
+/// Wait for a push driver's first complete reading through the sink consumer.
+///
+/// Completeness means every `required` state field carries a value; when the
+/// manifest declares none, any non-empty batch completes. The snapshot closure
+/// keeps the polling logic unit-testable without a live driver.
+fn wait_for_push_values(
+    required: &[String],
+    timeout: Duration,
+    mut snapshot: impl FnMut() -> Vec<ResultValue>,
+) -> Result<Vec<ResultValue>, String> {
     let deadline = Instant::now() + timeout;
     loop {
-        let cached = hub.cached_values(thing_id);
-        if !cached.is_empty() {
-            let mut values: Vec<ResultValue> = cached.into_values().collect();
-            values.sort_by(|left, right| left.name.cmp(&right.name));
+        let mut values = snapshot();
+        values.sort_by(|left, right| left.name.cmp(&right.name));
+        let complete = if required.is_empty() {
+            !values.is_empty()
+        } else {
+            required
+                .iter()
+                .all(|name| values.iter().find(|value| &value.name == name).is_some_and(has_value))
+        };
+        if complete {
             return Ok(values);
         }
         if Instant::now() >= deadline {
-            return Err(format!(
-                "no reading arrived through the value sink within {}ms",
-                timeout.as_millis()
-            ));
+            let missing: Vec<&String> = required
+                .iter()
+                .filter(|name| !values.iter().find(|value| &value.name == *name).is_some_and(has_value))
+                .collect();
+            return Err(if missing.is_empty() {
+                format!(
+                    "no reading arrived through the value sink within {}ms",
+                    timeout.as_millis()
+                )
+            } else {
+                format!(
+                    "incomplete push reading after {}ms; missing required field(s): {missing:?}",
+                    timeout.as_millis()
+                )
+            });
         }
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(PUSH_POLL_INTERVAL);
     }
 }
 
@@ -561,6 +657,7 @@ fn wait_for_push_reading(hub: &TestHub, thing_id: &str, timeout: Duration) -> Re
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use tinyiothub_core::driver::manifest::NumericRange;
 
@@ -625,7 +722,7 @@ mod tests {
         ];
         let values = vec![
             reading("count", "int", "1"),
-            reading("speed", "number", "1.5"),
+            reading("speed", "number", "1"),
             reading("armed", "bool", "true"),
             reading("label", "string", "ok"),
         ];
@@ -648,20 +745,115 @@ mod tests {
     }
 
     #[test]
+    fn types_fail_on_a_non_numeric_payload_for_a_numeric_declaration() {
+        let result = types_check(
+            &[field("level", "integer", true, None)],
+            &[reading("level", "int", "abc")],
+        );
+        assert_eq!(result.level, Level::Fail, "{result:?}");
+
+        let nan = types_check(
+            &[field("level", "float", true, None)],
+            &[reading("level", "float", "NaN")],
+        );
+        assert_eq!(nan.level, Level::Fail, "{nan:?}");
+    }
+
+    #[test]
+    fn types_fail_on_a_fractional_integer_payload() {
+        let result = types_check(
+            &[field("level", "integer", true, None)],
+            &[reading("level", "int", "1.5")],
+        );
+        assert_eq!(result.level, Level::Fail, "{result:?}");
+    }
+
+    #[test]
     fn range_fails_outside_bounds_and_skips_non_numeric_values() {
-        let fields = vec![field("level", "integer", true, Some((0.0, 100.0)))];
+        let fields = vec![
+            field("level", "integer", true, Some((0.0, 100.0))),
+            field("label", "string", false, Some((0.0, 100.0))),
+        ];
         assert_eq!(
-            range_check(&fields, &[reading("level", "int", "42")]).level,
+            range_check(
+                &fields,
+                &[reading("level", "int", "42"), reading("label", "string", "n/a")]
+            )
+            .level,
             Level::Pass
         );
         assert_eq!(
             range_check(&fields, &[reading("level", "int", "101")]).level,
             Level::Fail
         );
-        assert_eq!(
-            range_check(&fields, &[reading("level", "int", "n/a")]).level,
-            Level::Skip
-        );
+    }
+
+    #[test]
+    fn range_fails_on_unparseable_or_non_finite_numeric_payloads() {
+        let fields = vec![field("level", "integer", true, Some((0.0, 100.0)))];
+        for payload in ["abc", "NaN", "inf"] {
+            let result = range_check(&fields, &[reading("level", "int", payload)]);
+            assert_eq!(result.level, Level::Fail, "payload {payload}: {result:?}");
+        }
+    }
+
+    #[test]
+    fn range_skips_when_no_bound_is_declared() {
+        let unbounded = StateFieldDecl {
+            range: Some(NumericRange { min: None, max: None }),
+            ..field("level", "integer", true, None)
+        };
+        let result = range_check(&[unbounded], &[reading("level", "int", "42")]);
+        assert_eq!(result.level, Level::Skip, "{result:?}");
+        assert!(result.detail.contains("no min/max"), "{}", result.detail);
+    }
+
+    #[test]
+    fn push_wait_requires_a_complete_required_batch() {
+        let required = vec!["level".to_string(), "level2".to_string()];
+        let calls = AtomicUsize::new(0);
+        let values = wait_for_push_values(&required, Duration::from_millis(500), || {
+            let call = calls.fetch_add(1, Ordering::SeqCst);
+            match call {
+                0 => vec![],
+                1 => vec![reading("level", "int", "1")],
+                _ => vec![reading("level", "int", "1"), reading("level2", "int", "2")],
+            }
+        })
+        .expect("complete batch");
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0].name, "level");
+        assert_eq!(values[1].name, "level2");
+    }
+
+    #[test]
+    fn push_wait_times_out_with_the_missing_fields() {
+        let required = vec!["level".to_string(), "level2".to_string()];
+        let err = wait_for_push_values(&required, Duration::from_millis(60), || {
+            vec![reading("level", "int", "1")]
+        })
+        .unwrap_err();
+        assert!(err.contains("level2"), "{err}");
+    }
+
+    #[test]
+    fn push_check_warns_when_the_manifest_over_declares() {
+        let result = push_check(true, false, &Ok(vec![reading("level", "int", "0")]));
+        assert_eq!(result.level, Level::Warn, "{result:?}");
+        assert!(result.detail.contains("poll mode"), "{}", result.detail);
+    }
+
+    #[test]
+    fn push_check_passes_for_a_push_driver_reading() {
+        let result = push_check(false, true, &Ok(vec![reading("level", "int", "0")]));
+        assert_eq!(result.level, Level::Pass, "{result:?}");
+    }
+
+    #[test]
+    fn interval_is_a_skip_not_a_claim() {
+        let result = interval_check(false, true);
+        assert_eq!(result.level, Level::Skip);
+        assert!(result.detail.contains("sampler-owned"), "{}", result.detail);
     }
 
     fn demo_package_dir() -> PathBuf {
@@ -689,10 +881,15 @@ mod tests {
             "telemetry.required_fields",
             "telemetry.types",
             "telemetry.range",
-            "telemetry.interval",
+            "telemetry.second_read",
         ] {
             assert_eq!(level_of(&report, name), Some(Level::Pass), "check {name}: {report:?}");
         }
+        assert_eq!(
+            level_of(&report, "telemetry.interval"),
+            Some(Level::Skip),
+            "interval is sampler-owned: {report:?}"
+        );
         assert_eq!(
             level_of(&report, "telemetry.push"),
             Some(Level::Skip),
