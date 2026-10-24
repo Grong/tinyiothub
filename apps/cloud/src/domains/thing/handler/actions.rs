@@ -9,6 +9,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
+use tinyiothub_runtime::access::validator::{AccessCallValidator, CallError};
 use tinyiothub_web::response::ApiResponse;
 
 use super::super::service::ThingService;
@@ -228,6 +229,45 @@ pub async fn invoke_action(
             StatusCode::UNPROCESSABLE_ENTITY,
             ApiResponseBuilder::error_with_code(422, msg),
         );
+    }
+
+    // 2c. E4a declaration validation (fail-closed when wired): undeclared
+    // tools and declaration-level parameter violations are rejected. During
+    // the migration window a workspace may disable enforcement, in which case
+    // a *missing declaration* is tolerated; undeclared tools on declared
+    // things are still rejected.
+    let enforce_declarations = state
+        .db
+        .get_workspace_declaration_enforcement(&ws)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(1)
+        != 0;
+    if let Some(access) = &state.access {
+        match access.validate(&ws, &thing_id, &action_name, req.params.as_ref()).await {
+            Ok(_) => {}
+            Err(CallError::NoDeclaration(_)) if !enforce_declarations => {
+                tracing::warn!(
+                    workspace_id = %ws,
+                    thing_id = %thing_id,
+                    action = %action_name,
+                    "declaration enforcement disabled; allowing a thing without a declaration"
+                );
+            }
+            Err(e) if e.is_user_actionable() => {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    ApiResponseBuilder::error_with_code(422, e.to_string()),
+                );
+            }
+            Err(e) => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ApiResponseBuilder::error_with_code(503, e.to_string()),
+                );
+            }
+        }
     }
 
     // 3. Unified policy gate (X3/T16): a Block rule denies before any confirm

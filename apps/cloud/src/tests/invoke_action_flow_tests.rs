@@ -337,3 +337,47 @@ async fn test_invoke_action_rejects_missing_declaration_when_access_wired() {
         "rejection must explain the missing declaration"
     );
 }
+
+#[tokio::test]
+async fn test_invoke_action_allows_missing_declaration_when_enforcement_disabled() {
+    use tinyiothub_agent::port::tool::Tool;
+
+    let (tool, thing) = seeded_tool("ws-nodecl-off", AccessRejection::NoDeclaration).await;
+    tinyiothub_storage::Db::new(tool.pool.clone())
+        .set_workspace_declaration_enforcement("ws-nodecl-off", false)
+        .await
+        .expect("disable enforcement");
+
+    let result = tool
+        .execute(json!({"thingId": thing, "actionName": "reboot"}))
+        .await
+        .expect("legacy invocation must not error");
+    assert!(
+        result.success,
+        "a thing without a declaration must be allowed while enforcement is off: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_invoke_action_still_rejects_undeclared_tool_when_enforcement_disabled() {
+    use tinyiothub_agent::port::tool::Tool;
+
+    let (tool, thing) = seeded_tool("ws-decl-off", AccessRejection::UndeclaredTool).await;
+    tinyiothub_storage::Db::new(tool.pool.clone())
+        .set_workspace_declaration_enforcement("ws-decl-off", false)
+        .await
+        .expect("disable enforcement");
+
+    let result = tool
+        .execute(json!({"thingId": thing, "actionName": "reboot"}))
+        .await
+        .expect("user-actionable rejection must be Ok(success=false)");
+    assert!(
+        !result.success,
+        "undeclared tools on declared things stay rejected with enforcement off: {result:?}"
+    );
+    assert!(
+        result.error.unwrap_or_default().contains("not declared"),
+        "rejection must name the undeclared tool"
+    );
+}

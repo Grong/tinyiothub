@@ -861,6 +861,33 @@ pub(crate) async fn get_workspace_require_action_confirm(
         .await
 }
 
+/// 查询 workspace 的声明强制开关（1=强制，0=迁移期放行缺声明；原始 i32 语义）。
+pub(crate) async fn get_workspace_declaration_enforcement(
+    pool: &SqlitePool,
+    workspace_id: &str,
+) -> std::result::Result<Option<i32>, sqlx::Error> {
+    sqlx::query_scalar("SELECT declaration_enforcement FROM workspaces WHERE id = ?")
+        .bind(workspace_id)
+        .fetch_optional(pool)
+        .await
+}
+
+/// 设置声明强制开关；返回受影响行数（0 = workspace 不存在）。
+pub(crate) async fn set_workspace_declaration_enforcement(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    enabled: bool,
+) -> std::result::Result<u64, sqlx::Error> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let r = sqlx::query("UPDATE workspaces SET declaration_enforcement = ?, updated_at = ? WHERE id = ?")
+        .bind(i32::from(enabled))
+        .bind(now)
+        .bind(workspace_id)
+        .execute(pool)
+        .await?;
+    Ok(r.rows_affected())
+}
+
 // ──────────────────────────────────────────────
 // Db 委托（Workspace 领域）
 // ──────────────────────────────────────────────
@@ -872,6 +899,23 @@ impl Db {
         workspace_id: &str,
     ) -> std::result::Result<Option<i32>, sqlx::Error> {
         get_workspace_require_action_confirm(self.pool(), workspace_id).await
+    }
+
+    /// 查询 workspace 的声明强制开关（原始 i32 语义）。
+    pub async fn get_workspace_declaration_enforcement(
+        &self,
+        workspace_id: &str,
+    ) -> std::result::Result<Option<i32>, sqlx::Error> {
+        get_workspace_declaration_enforcement(self.pool(), workspace_id).await
+    }
+
+    /// 设置 workspace 的声明强制开关；返回受影响行数（0 = workspace 不存在）。
+    pub async fn set_workspace_declaration_enforcement(
+        &self,
+        workspace_id: &str,
+        enabled: bool,
+    ) -> std::result::Result<u64, sqlx::Error> {
+        set_workspace_declaration_enforcement(self.pool(), workspace_id, enabled).await
     }
 
     /// 按 ID 查询工作空间（含设备数）。

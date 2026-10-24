@@ -44,10 +44,10 @@
 - **Context:** `docs/superpowers/plans/2026-10-23-e4e-migration-plan.md` §1.2/§3；`drivers/README.md`。
 - **Effort:** XL（按协议拆分） | **Depends on:** 实际设备/协议栈需求
 
-### P2 — 存量物声明回填与直连调用收口
-- **What:** (1) 场景包/MCP 模板建物走 `describe`/物化；(2) UI 直连 `POST /things/{id}/actions/{name}/invoke` 接入 AccessService 声明校验；(3) pre-E4a 存量物声明回填/开关。
+### ~~P2 — 存量物声明回填与直连调用收口~~（2026-10-24 已交付）
+- **What:** ~~(1) 场景包/MCP 模板建物走 `describe`/物化；(2) UI 直连 `POST /things/{id}/actions/{name}/invoke` 接入 AccessService 声明校验；(3) pre-E4a 存量物声明回填/开关。~~ → 已交付：UI invoke 接入 `AccessService::validate`；MCP 模板与场景包驱动节点走 materialize（固定能力驱动跳过模板能力拷贝；场景包提交后 best-effort，失败进 warnings）；`POST /v1/drivers/rematerialize` 回填、`GET/PUT /v1/drivers/enforcement` 迁移期开关（`workspaces.declaration_enforcement`，默认 1）。无声明物的资源 claim 回落合成 `__device__`。
 - **Why:** E4a 只覆盖 REST 建物与 agent 工具；旁路仍可绕过声明/校验或产生无声明物。
-- **Context:** E4a 执行记录开放项；E4e 迁移计划 §5。
+- **Context:** E4a 执行记录开放项；E4e 迁移计划 §5；实现见 `docs/superpowers/plans/2026-10-24-e4-p2-declaration-closeout.md`。
 - **Effort:** M | **Depends on:** E4 合入
 
 ### P3 — E4d 空间模型收尾
