@@ -40,7 +40,7 @@ const DYNAMIC_NO_BINARY_MANIFEST: &str = r#"{
   "limits": { "maxConcurrentJobs": 1, "maxCallsPerMin": 60 }
 }"#;
 
-fn access_service(db: Arc<tinyiothub_storage::Db>, data_dir: PathBuf) -> Arc<AccessService> {
+pub(crate) fn access_service(db: Arc<tinyiothub_storage::Db>, data_dir: PathBuf) -> Arc<AccessService> {
     let manifests = Arc::new(ManifestRegistry::new());
     for (_, manifest) in tinyiothub_runtime::driver::describe::builtin_manifest_jsons() {
         manifests
@@ -110,6 +110,15 @@ fn demo_cdylib() -> Option<PathBuf> {
     .iter()
     .map(|name| target.join(profile).join(name))
     .find(|path| path.is_file())
+}
+
+pub(crate) fn demo_package() -> Option<tempfile::TempDir> {
+    let lib = demo_cdylib()?;
+    let dir = tempfile::tempdir().ok()?;
+    std::fs::write(dir.path().join("driver.manifest.json"), DEMO_MANIFEST).ok()?;
+    let ext = lib.extension().and_then(|e| e.to_str()).unwrap_or("so");
+    std::fs::copy(&lib, dir.path().join(format!("driver.{ext}"))).ok()?;
+    Some(dir)
 }
 
 fn skip_without_demo_cdylib(test: &str) -> bool {
@@ -549,4 +558,366 @@ async fn mcp_device_services_carry_the_declaration_hook() {
             .has_declaration_hook(),
         "MCP optional-workspace path bypasses declaration materialization"
     );
+}
+
+// ──────────────────────────────────────────────
+// P2: UI invoke declaration validation + migration switch + backfill
+// ──────────────────────────────────────────────
+
+fn legacy_thing_request(name: &str, ws: &str) -> tinyiothub_core::models::thing::CreateThingRequest {
+    tinyiothub_core::models::thing::CreateThingRequest {
+        name: name.to_string(),
+        display_name: None,
+        category: None,
+        address: None,
+        description: None,
+        position: None,
+        driver_name: Some("simulator".to_string()),
+        device_model: None,
+        protocol_type: None,
+        factory_name: None,
+        linked_data: None,
+        driver_options: None,
+        parent_id: None,
+        linked_gateway: None,
+        fingerprint: None,
+        template_id: None,
+        workspace_id: Some(ws.to_string()),
+    }
+}
+
+async fn register_action(pool: &sqlx::SqlitePool, thing_id: &str, action: &str) {
+    sqlx::query("INSERT INTO thing_actions (id, thing_id, name, display_name) VALUES (?, ?, ?, ?)")
+        .bind(format!("act-{thing_id}-{action}"))
+        .bind(thing_id)
+        .bind(action)
+        .bind(action)
+        .execute(pool)
+        .await
+        .expect("register action");
+}
+
+async fn invoke_ui(app: &Router, token: &str, thing_id: &str, action: &str) -> (StatusCode, Value) {
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            &format!("/api/v1/things/{thing_id}/actions/{action}/invoke"),
+            token,
+            Some(json!({"params": {}})),
+        ))
+        .await
+        .unwrap();
+    response_parts(response).await
+}
+
+#[tokio::test]
+async fn ui_invoke_rejects_action_not_declared_by_fixed_driver() {
+    let ws = unique_workspace("ws-ui-decl");
+    let (app, pool, _data) = setup_in(&ws).await;
+    let token = create_test_token_with_workspace(ADMIN_USER, "tenant-1", &ws);
+
+    // Declarative driver (builtin simulator declares no tools) → materialized
+    // declaration exists, so any registered action must be rejected.
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/api/v1/things",
+            &token,
+            Some(json!({"name": "ui-decl-thing", "thingType": "device", "driverName": "simulator"})),
+        ))
+        .await
+        .unwrap();
+    let (status, body) = response_parts(response).await;
+    assert_eq!(status, StatusCode::CREATED, "create failed: {body}");
+    let thing_id = body["result"]["id"].as_str().expect("thing id").to_string();
+    register_action(&pool, &thing_id, "reboot").await;
+
+    let (status, body) = invoke_ui(&app, &token, &thing_id, "reboot").await;
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "undeclared action must be rejected: {body}"
+    );
+    assert!(
+        body["msg"].as_str().unwrap_or_default().contains("not declared"),
+        "rejection must name the undeclared tool: {body}"
+    );
+}
+
+#[tokio::test]
+async fn ui_invoke_allows_undeclared_thing_only_when_enforcement_disabled() {
+    let ws = unique_workspace("ws-ui-legacy");
+    let (app, pool, _data) = setup_in(&ws).await;
+    let token = create_test_token_with_workspace(ADMIN_USER, "tenant-1", &ws);
+
+    // Legacy path: insert through Db (no declaration materialization).
+    let db = tinyiothub_storage::Db::new(pool.clone());
+    let thing = db
+        .create_thing(Some(&ws), &legacy_thing_request("legacy-thing", &ws))
+        .await
+        .expect("legacy thing");
+    register_action(&pool, &thing.id, "reboot").await;
+
+    // Default enforcement ON → fail closed.
+    let (status, body) = invoke_ui(&app, &token, &thing.id, "reboot").await;
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "missing declaration must be rejected while enforcement is on: {body}"
+    );
+    assert!(
+        body["msg"].as_str().unwrap_or_default().contains("no declaration"),
+        "rejection must explain the missing declaration: {body}"
+    );
+
+    db.set_workspace_declaration_enforcement(&ws, false)
+        .await
+        .expect("disable enforcement");
+
+    let (status, body) = invoke_ui(&app, &token, &thing.id, "reboot").await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "legacy invoke must be allowed while enforcement is off: {body}"
+    );
+    assert_eq!(body["result"]["status"], json!("confirmation_required"));
+}
+
+#[tokio::test]
+async fn rematerialize_backfills_things_without_declarations() {
+    let ws = unique_workspace("ws-backfill");
+    let (app, pool, _data) = setup_in(&ws).await;
+    let token = create_test_token_with_workspace(ADMIN_USER, "tenant-1", &ws);
+    let db = tinyiothub_storage::Db::new(pool.clone());
+
+    let thing = db
+        .create_thing(Some(&ws), &legacy_thing_request("backfill-thing", &ws))
+        .await
+        .expect("legacy thing");
+
+    let response = app
+        .clone()
+        .oneshot(json_request("POST", "/api/v1/drivers/rematerialize", &token, None))
+        .await
+        .unwrap();
+    let (status, body) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "rematerialize failed: {body}");
+    assert_eq!(body["bound"], json!(1), "one legacy thing must be bound: {body}");
+    assert_eq!(body["failed"], json!([]));
+    let declarations = db.list_device_declarations(&ws).await.unwrap();
+    assert!(
+        declarations.iter().any(|d| d.thing_id == thing.id),
+        "backfill must persist the device declaration"
+    );
+
+    // Idempotent: a second default run skips the already-declared thing.
+    let response = app
+        .clone()
+        .oneshot(json_request("POST", "/api/v1/drivers/rematerialize", &token, None))
+        .await
+        .unwrap();
+    let (_, body) = response_parts(response).await;
+    assert_eq!(body["bound"], json!(0));
+    assert_eq!(body["skipped"], json!(1));
+
+    // all=true rebinds even already-declared things.
+    let response = app
+        .oneshot(json_request(
+            "POST",
+            "/api/v1/drivers/rematerialize?all=true",
+            &token,
+            None,
+        ))
+        .await
+        .unwrap();
+    let (_, body) = response_parts(response).await;
+    assert_eq!(body["bound"], json!(1));
+}
+
+async fn seed_declarative_template(pool: &sqlx::SqlitePool, id: &str, driver: &str) {
+    sqlx::query(
+        "INSERT OR IGNORE INTO template_categories (name, display_name, created_at)
+         VALUES ('devices', '{\"zh\":\"设备\"}', '2026-01-01 00:00:00')",
+    )
+    .execute(pool)
+    .await
+    .expect("seed template category");
+    let properties = r#"[{"name":"tpl_prop","display_name":{"zh":"模板属性"},"data_type":"number","unit":"","is_read_only":false,"is_required":false}]"#;
+    let actions = r#"[{"name":"tpl_cmd","display_name":{"zh":"模板命令"},"is_required":false}]"#;
+    sqlx::query(
+        r#"INSERT INTO thing_templates
+           (id, name, display_name, description, version, author, category, manufacturer,
+            thing_type, protocol_type, driver_name, tags, device_info, properties, actions,
+            events, default_knowledge, is_builtin, is_active, workspace_id, created_at, updated_at)
+           VALUES (?, ?, '{"zh":"t"}', NULL, '1.0.0', 'test', 'devices', 'test',
+                   'device', NULL, ?, '[]', '{"default_name_pattern":"{name}","required_fields":[]}', ?, ?,
+                   '[]', NULL, 1, 1, NULL, datetime('now'), datetime('now'))"#,
+    )
+    .bind(id)
+    .bind(id)
+    .bind(driver)
+    .bind(properties)
+    .bind(actions)
+    .execute(pool)
+    .await
+    .expect("insert template");
+}
+
+fn template_input(
+    name: &str,
+    ws: &str,
+    template_id: &str,
+) -> crate::domains::thing::template::types::ThingCreationInput {
+    crate::domains::thing::template::types::ThingCreationInput {
+        name: name.to_string(),
+        display_name: None,
+        description: None,
+        position: None,
+        address: None,
+        driver_name: None,
+        driver_options: None,
+        parent_id: None,
+        template_id: Some(template_id.to_string()),
+        property_values: Default::default(),
+        enabled_commands: vec![],
+        tenant_id: None,
+        workspace_id: Some(ws.to_string()),
+    }
+}
+
+#[tokio::test]
+async fn mcp_template_creation_materializes_declaration_without_template_capabilities() {
+    if skip_without_demo_cdylib("mcp_template_creation_materializes_declaration_without_template_capabilities") {
+        return;
+    }
+    let ws = unique_workspace("ws-mcp-template");
+    let (_app_state, pool) = crate::test_utils::setup_test_app_with_pool().await;
+    seed_test_workspace(&pool, "tenant-1", &ws).await;
+    seed_declarative_template(&pool, "tpl-decl", "demo-declarative").await;
+
+    let db = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
+    let data = tempfile::tempdir().expect("temp data dir");
+    let access = access_service(db.clone(), data.path().to_path_buf());
+    let src = demo_package().expect("demo package");
+    access.install_dir(&ws, src.path()).await.expect("install demo package");
+    let mut svc = crate::domains::driver::legacy::service::ThingService::new(db.clone()).for_workspace(ws.clone());
+    svc.set_declaration_hook(Arc::new(crate::domains::driver::declaration::AccessDeclarationHook {
+        access,
+    }));
+    let engine = crate::domains::thing::template::TemplateEngine::new(
+        db.clone(),
+        Arc::new(crate::domains::thing::template::TemplateValidator::new()),
+    );
+
+    let thing = svc
+        .create_thing_from_template(
+            &engine,
+            "tpl-decl",
+            &template_input("mcp-template-thing", &ws, "tpl-decl"),
+        )
+        .await
+        .expect("template creation");
+    assert_eq!(thing.driver_name.as_deref(), Some("demo-declarative"));
+
+    // Fixed-capability driver: template rows must not pollute the declaration.
+    let copied: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM thing_properties WHERE thing_id = ? AND name = 'tpl_prop'")
+            .bind(&thing.id)
+            .fetch_one(&pool)
+            .await
+            .expect("count properties");
+    assert_eq!(copied, 0, "declarative driver must not copy template properties");
+    let copied_cmd: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM thing_actions WHERE thing_id = ? AND name = 'tpl_cmd'")
+            .bind(&thing.id)
+            .fetch_one(&pool)
+            .await
+            .expect("count actions");
+    assert_eq!(copied_cmd, 0, "declarative driver must not copy template commands");
+
+    let declarations = db.list_device_declarations(&ws).await.expect("list declarations");
+    assert!(
+        declarations.iter().any(|d| d.thing_id == thing.id),
+        "MCP template creation must materialize the declaration"
+    );
+}
+
+#[tokio::test]
+async fn mcp_template_materialize_failure_rolls_back_the_created_thing() {
+    let ws = unique_workspace("ws-mcp-template-fail");
+    let (_app_state, pool) = crate::test_utils::setup_test_app_with_pool().await;
+    seed_test_workspace(&pool, "tenant-1", &ws).await;
+    seed_declarative_template(&pool, "tpl-decl-fail", "simulator").await;
+
+    let db = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
+    let mut svc = crate::domains::driver::legacy::service::ThingService::new(db.clone()).for_workspace(ws.clone());
+    svc.set_declaration_hook(Arc::new(FailingMaterializeHook));
+    let engine = crate::domains::thing::template::TemplateEngine::new(
+        db.clone(),
+        Arc::new(crate::domains::thing::template::TemplateValidator::new()),
+    );
+
+    let err = svc
+        .create_thing_from_template(
+            &engine,
+            "tpl-decl-fail",
+            &template_input("mcp-template-rollback", &ws, "tpl-decl-fail"),
+        )
+        .await
+        .expect_err("materialization must fail");
+    assert!(err.to_string().contains("describe exploded"), "{err}");
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM things WHERE name = 'mcp-template-rollback'")
+        .fetch_one(&pool)
+        .await
+        .expect("count things");
+    assert_eq!(count, 0, "failed materialization must roll back the thing");
+}
+
+#[tokio::test]
+async fn enforcement_switch_round_trip_and_admin_gate() {
+    let ws = unique_workspace("ws-enforce");
+    let (app, _pool, _data) = setup_in(&ws).await;
+    let admin = create_test_token_with_workspace(ADMIN_USER, "tenant-1", &ws);
+    let non_admin = create_test_token_with_workspace(NON_ADMIN_USER, "tenant-1", &ws);
+
+    let response = app
+        .clone()
+        .oneshot(json_request("GET", "/api/v1/drivers/enforcement", &admin, None))
+        .await
+        .unwrap();
+    let (status, body) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "get enforcement failed: {body}");
+    assert_eq!(body["enabled"], json!(true), "default must be fail-closed");
+
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "PUT",
+            "/api/v1/drivers/enforcement",
+            &admin,
+            Some(json!({"enabled": false})),
+        ))
+        .await
+        .unwrap();
+    let (status, body) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK, "set enforcement failed: {body}");
+    assert_eq!(body["enabled"], json!(false));
+
+    let response = app
+        .clone()
+        .oneshot(json_request("GET", "/api/v1/drivers/enforcement", &admin, None))
+        .await
+        .unwrap();
+    let (_, body) = response_parts(response).await;
+    assert_eq!(body["enabled"], json!(false));
+
+    let response = app
+        .oneshot(json_request("GET", "/api/v1/drivers/enforcement", &non_admin, None))
+        .await
+        .unwrap();
+    let (status, _) = response_parts(response).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "non-admin must be rejected");
 }

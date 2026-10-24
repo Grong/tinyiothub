@@ -53,6 +53,7 @@ use tracing::{error, info, instrument, warn};
 
 use super::error::{MarketplaceError, Result};
 use super::template_rules::resolve_template_rules;
+use crate::domains::thing::hooks::{CreationMode, ThingDeclarationHook};
 use crate::domains::thing::service::ThingService;
 
 /// 唯一约束兜底重试上限（TOCTOU：SELECT 探测与 INSERT 之间被并发抢占）。
@@ -123,7 +124,7 @@ impl SceneInstantiator {
         template_id: &str,
         params: &InstantiateParams,
     ) -> Result<InstantiateOutcome> {
-        Self::run(db, workspace_id, template_id, params, None).await
+        Self::run(db, workspace_id, template_id, params, None, None).await
     }
 
     /// 实例化并在提交成功后为带驱动的节点发布 DeviceCreated（metadata 带完整物）——
@@ -136,16 +137,31 @@ impl SceneInstantiator {
         params: &InstantiateParams,
         event_bus: &Arc<EventBus>,
     ) -> Result<InstantiateOutcome> {
-        Self::run(db, workspace_id, template_id, params, Some(event_bus)).await
+        Self::run(db, workspace_id, template_id, params, Some(event_bus), None).await
     }
 
-    #[instrument(skip(db, params, event_bus), fields(dry_run = params.dry_run))]
+    /// 实例化并把带驱动节点接入 E4a 声明物化：固定能力驱动跳过模板能力
+    /// 拷贝；提交后对带驱动节点 `materialize`（失败记 warning，不回滚已提交
+    /// 的树——与安装/升级的 drift-not-rollback 语义一致）。
+    pub async fn instantiate_with_declarations(
+        db: &Db,
+        workspace_id: &str,
+        template_id: &str,
+        params: &InstantiateParams,
+        event_bus: Option<&Arc<EventBus>>,
+        declaration_hook: Option<&dyn ThingDeclarationHook>,
+    ) -> Result<InstantiateOutcome> {
+        Self::run(db, workspace_id, template_id, params, event_bus, declaration_hook).await
+    }
+
+    #[instrument(skip(db, params, event_bus, declaration_hook), fields(dry_run = params.dry_run))]
     async fn run(
         db: &Db,
         workspace_id: &str,
         template_id: &str,
         params: &InstantiateParams,
         event_bus: Option<&Arc<EventBus>>,
+        declaration_hook: Option<&dyn ThingDeclarationHook>,
     ) -> Result<InstantiateOutcome> {
         let started = std::time::Instant::now();
         info!(
@@ -156,7 +172,7 @@ impl SceneInstantiator {
             parent_id = ?params.parent_id,
             "场景包实例化开始"
         );
-        let outcome = Self::do_instantiate(db, workspace_id, template_id, params, event_bus).await;
+        let outcome = Self::do_instantiate(db, workspace_id, template_id, params, event_bus, declaration_hook).await;
         let duration_ms = started.elapsed().as_millis() as u64;
         match &outcome {
             Ok(o) => info!(
@@ -185,6 +201,7 @@ impl SceneInstantiator {
         template_id: &str,
         params: &InstantiateParams,
         event_bus: Option<&Arc<EventBus>>,
+        declaration_hook: Option<&dyn ThingDeclarationHook>,
     ) -> Result<InstantiateOutcome> {
         // 0. scene_name 校验：trim 后非空、无控制字符、≤128 字符（防垃圾传播到整棵树每个节点名）
         validate_scene_name(&params.scene_name)?;
@@ -219,6 +236,27 @@ impl SceneInstantiator {
         // 同事务落库、同配额口径、dry-run 预览同树）；driver 决策在合并后统一计算
         let explicit_drivers = merge_extra_nodes(db, workspace_id, &params.extra_nodes, &mut result).await?;
         let drivers = resolve_node_drivers(&result.nodes, &explicit_drivers, params.attach_simulated_driver);
+
+        // 3.6 E4a：预判每个驱动节点的创建模式。固定能力驱动（Declarative）
+        // 跳过模板能力拷贝；声明不可用只记 warning（保持旧场景对未安装
+        // 驱动的兼容，不整包失败）。
+        let mut skip_caps = vec![false; result.nodes.len()];
+        let mut declaration_warnings: Vec<String> = Vec::new();
+        if let Some(hook) = declaration_hook {
+            for (i, driver) in drivers.iter().enumerate() {
+                let Some(driver) = driver else { continue };
+                match hook
+                    .prepare_creation(workspace_id, &driver.name, driver.options.as_deref())
+                    .await
+                {
+                    Ok(CreationMode::Declarative) => skip_caps[i] = true,
+                    Ok(_) => {}
+                    Err(e) => {
+                        declaration_warnings.push(format!("驱动 '{}' 声明不可用（{e}），保留模板能力", driver.name))
+                    }
+                }
+            }
+        }
 
         // 4. 配额校验（真实行数，不用缓存计数）
         let current = db
@@ -261,6 +299,7 @@ impl SceneInstantiator {
             let resolved = resolve_node_names(db, None, workspace_id, &result.nodes).await?;
             let mut warnings = name_warnings(&result.nodes, &resolved);
             warnings.extend(result.warnings.clone());
+            warnings.extend(declaration_warnings);
             let tree_preview = rebuild_tree_preview(&result.nodes, &resolved);
             return Ok(InstantiateOutcome {
                 node_count: result.node_count,
@@ -273,7 +312,7 @@ impl SceneInstantiator {
 
         // 7. 单事务落库；SQLite 单写者锁竞争时整体回滚重试
         let mut attempt = 0usize;
-        let persisted = loop {
+        let mut persisted = loop {
             let mut tx = db.pool().begin().await.map_err(|e| db_err("开启事务", e))?;
             match persist_tree(
                 db,
@@ -283,6 +322,7 @@ impl SceneInstantiator {
                 params,
                 &result,
                 &drivers,
+                &skip_caps,
                 &scene,
             )
             .await
@@ -290,6 +330,7 @@ impl SceneInstantiator {
                 Ok(mut persisted) => {
                     tx.commit().await.map_err(|e| db_err("提交事务", e))?;
                     persisted.warnings.extend(result.warnings.clone());
+                    persisted.warnings.extend(declaration_warnings.clone());
                     break persisted;
                 }
                 Err(e) if is_lock_contention(&e) && attempt < MAX_TX_RETRIES => {
@@ -306,7 +347,19 @@ impl SceneInstantiator {
             }
         };
 
-        // 8. 驱动热加载（X3a）：提交成功后为带驱动的节点发布 DeviceCreated，
+        // 8a. E4a：提交后物化带驱动节点的声明。失败记 warning，不回滚已提交
+        // 的树（与安装/升级的 drift-not-rollback 语义一致）。
+        if let Some(hook) = declaration_hook {
+            for thing_id in &persisted.driver_thing_ids {
+                if let Err(e) = hook.materialize(workspace_id, thing_id).await {
+                    persisted
+                        .warnings
+                        .push(format!("物 {thing_id} 声明物化失败（模板能力已保留）: {e}"));
+                }
+            }
+        }
+
+        // 8b. 驱动热加载（X3a）：提交成功后为带驱动的节点发布 DeviceCreated，
         // DataServer 事件处理器热建驱动——新物不重启即出数。best-effort：
         // 发布失败只记 warn，不影响已提交的实例化结果。
         if let Some(bus) = event_bus {
@@ -797,6 +850,7 @@ async fn persist_tree(
     params: &InstantiateParams,
     result: &ExpansionResult,
     drivers: &[Option<NodeDriver>],
+    skip_caps: &[bool],
     scene: &SceneTemplateFile,
 ) -> Result<PersistedTree> {
     // 事务内名称解析（与 dry-run 同算法）：事务可见自身写入，计划名即落库名（无并发干预下）
@@ -863,7 +917,16 @@ async fn persist_tree(
             root_id = id.clone();
         }
 
-        persist_children_tables(db, tx, workspace_id, &id, node, &mut warnings).await?;
+        persist_children_tables(
+            db,
+            tx,
+            workspace_id,
+            &id,
+            node,
+            skip_caps.get(i).copied().unwrap_or(false),
+            &mut warnings,
+        )
+        .await?;
     }
 
     // E3：场景包自带的 watch_rules/composites 同事务落地（"装完即自带值守"）。
@@ -1074,47 +1137,51 @@ async fn persist_children_tables(
     workspace_id: &str,
     thing_id: &str,
     node: &ExpandedNode,
+    skip_capabilities: bool,
     warnings: &mut Vec<String>,
 ) -> Result<()> {
-    // 属性（display_name 多语言回退 zh → en → name，spec §2.4）
-    let props: Vec<CreateThingPropertyRequest> = node
-        .properties
-        .iter()
-        .map(|p| CreateThingPropertyRequest {
-            thing_id: thing_id.to_string(),
-            name: p.name.clone(),
-            display_name: localized(&p.display_name).or_else(|| Some(p.name.clone())),
-            description: p.description.as_ref().and_then(localized),
-            data_type: Some(p.data_type.clone()),
-            unit: p.unit.clone(),
-            min_value: p.min_value,
-            max_value: p.max_value,
-            default_value: p.default_value.clone(),
-            is_read_only: Some(p.is_read_only as i32),
-            expression: None,
-            source: None,
-            refs: None,
-        })
-        .collect();
-    db.create_thing_properties_batch_tx(tx, &props)
-        .await
-        .map_err(|e| db_err("创建属性失败", e))?;
+    // 固定能力驱动（Declarative）：能力来自 manifest，模板属性/命令不得污染。
+    if !skip_capabilities {
+        // 属性（display_name 多语言回退 zh → en → name，spec §2.4）
+        let props: Vec<CreateThingPropertyRequest> = node
+            .properties
+            .iter()
+            .map(|p| CreateThingPropertyRequest {
+                thing_id: thing_id.to_string(),
+                name: p.name.clone(),
+                display_name: localized(&p.display_name).or_else(|| Some(p.name.clone())),
+                description: p.description.as_ref().and_then(localized),
+                data_type: Some(p.data_type.clone()),
+                unit: p.unit.clone(),
+                min_value: p.min_value,
+                max_value: p.max_value,
+                default_value: p.default_value.clone(),
+                is_read_only: Some(p.is_read_only as i32),
+                expression: None,
+                source: None,
+                refs: None,
+            })
+            .collect();
+        db.create_thing_properties_batch_tx(tx, &props)
+            .await
+            .map_err(|e| db_err("创建属性失败", e))?;
 
-    // 命令（display_name 回退同属性）
-    let cmds: Vec<CreateThingCommandRequest> = node
-        .commands
-        .iter()
-        .map(|c| CreateThingCommandRequest {
-            thing_id: thing_id.to_string(),
-            name: c.name.clone(),
-            display_name: localized(&c.display_name).or_else(|| Some(c.name.clone())),
-            description: c.description.as_ref().and_then(localized),
-            parameters: c.parameters.clone(),
-        })
-        .collect();
-    db.bulk_create_thing_commands_tx(tx, &cmds)
-        .await
-        .map_err(|e| db_err("创建命令失败", e))?;
+        // 命令（display_name 回退同属性）
+        let cmds: Vec<CreateThingCommandRequest> = node
+            .commands
+            .iter()
+            .map(|c| CreateThingCommandRequest {
+                thing_id: thing_id.to_string(),
+                name: c.name.clone(),
+                display_name: localized(&c.display_name).or_else(|| Some(c.name.clone())),
+                description: c.description.as_ref().and_then(localized),
+                parameters: c.parameters.clone(),
+            })
+            .collect();
+        db.bulk_create_thing_commands_tx(tx, &cmds)
+            .await
+            .map_err(|e| db_err("创建命令失败", e))?;
+    }
 
     // 资源（file_path = uri 原样记录，v1 无真实托管）
     for r in &node.resources {
@@ -1125,6 +1192,13 @@ async fn persist_children_tables(
 
     // 告警规则：property_ref → 本节点真实 property_id
     for rule in &node.alarm_rules {
+        if skip_capabilities && rule.property_ref.is_some() {
+            warnings.push(format!(
+                "告警规则 {} 引用的模板属性未拷贝（声明式驱动），已跳过",
+                rule.name
+            ));
+            continue;
+        }
         let property_id = match &rule.property_ref {
             Some(ref_name) => {
                 let found = db

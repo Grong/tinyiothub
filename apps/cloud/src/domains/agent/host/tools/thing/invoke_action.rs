@@ -124,8 +124,16 @@ impl Tool for InvokeActionTool {
 
         // 1b. E4a declaration validation（fail-closed when wired）：未声明
         // 操作、参数 schema/范围不符、声明缺失都在此拒绝；仲裁/确认门不动。
-        if let Some(access) = &self.access
-            && let Err(e) = access
+        // 迁移期开关关闭时，仅“声明缺失”放行（存量物）；声明存在时的
+        // 未声明操作/参数越界仍然拒绝。
+        let enforce_declarations = tinyiothub_storage::Db::new(self.pool.clone())
+            .get_workspace_declaration_enforcement(&self.workspace_id)
+            .await
+            .map(|v| v.unwrap_or(1) != 0)
+            // Lookup failure keeps declarations mandatory.
+            .unwrap_or(true);
+        if let Some(access) = &self.access {
+            match access
                 .validate(
                     &self.workspace_id,
                     &input.thing_id,
@@ -133,14 +141,26 @@ impl Tool for InvokeActionTool {
                     input.params.as_ref(),
                 )
                 .await
-        {
-            // Declaration rejections are user-actionable → failed ToolResult
-            // (the model can correct/retry); only true infrastructure errors
-            // surface as Err.
-            if e.is_user_actionable() {
-                return tool_err(e.to_string());
+            {
+                Ok(_) => {}
+                Err(tinyiothub_runtime::access::validator::CallError::NoDeclaration(_)) if !enforce_declarations => {
+                    tracing::warn!(
+                        workspace_id = %self.workspace_id,
+                        thing_id = %input.thing_id,
+                        action = %input.action_name,
+                        "declaration enforcement disabled; allowing a thing without a declaration"
+                    );
+                }
+                Err(e) => {
+                    // Declaration rejections are user-actionable → failed ToolResult
+                    // (the model can correct/retry); only true infrastructure errors
+                    // surface as Err.
+                    if e.is_user_actionable() {
+                        return tool_err(e.to_string());
+                    }
+                    return Err(anyhow::anyhow!(e.to_string()));
+                }
             }
-            return Err(anyhow::anyhow!(e.to_string()));
         }
 
         // 2. Check require_action_confirm from workspace
