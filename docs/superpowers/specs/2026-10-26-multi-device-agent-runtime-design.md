@@ -4,7 +4,9 @@
 - 分支：`e4-p2-declaration-closeout`
 - 状态：架构、Task/Job/Watch、媒体、两栏工作台、错误恢复、验收六节已与作者逐节确认；待作者文本审阅
 - 上位文档：`docs/superpowers/specs/2026-10-20-hub-runtime-architecture-design.md`
-- 定位：以通用 Task Runtime 为产品主线，把现有 Run Loop、Device Hub、事件账本和实时投影连接成多设备协同闭环；不是 GoalWatch 管理页，也不是任何单一场景的定制 Agent
+- 定位：以通用 Task Runtime 为产品主线，把现有 Run Loop、Device Hub、事件账本和
+  实时投影连接成多设备协同闭环；不是 GoalWatch 管理页，也不是任何单一场景的
+  定制 Agent
 
 ## 1. 目标与非目标
 
@@ -18,9 +20,12 @@
   → 通用两栏 Workbench 实时投影
 ```
 
-设备类型只提供声明、数据和工具。Runtime、prompt 和 Workbench 不得出现 `if storm`、`if fire`、`if camera_model_x` 一类业务分支。
+设备类型只提供声明、数据和工具。Runtime、prompt 和 Workbench 不得出现
+`if storm`、`if fire`、`if camera_model_x` 一类业务分支。
 
-**通用性判据**：两套仅 manifest、声明和模拟数据不同的设备夹具，使用同一 Runtime、同一 prompt 框架和同一 Workbench 完成多设备 Task，核心代码与 prompt 零场景改动。
+**通用性判据**：两套仅 manifest、声明和模拟数据不同的设备夹具，使用同一
+Runtime、同一 prompt 框架和同一 Workbench 完成多设备 Task，核心代码与
+prompt 零场景改动。
 
 ### 1.2 非目标
 
@@ -36,12 +41,25 @@
 
 参考 `AgnesAI-Labs/agnes-harness` main 快照（2026-10-26）及作者提供的视频/截图：
 
-- `docs/develop/architecture.md`：Host 装配能力，Core 推进 model/tool loop，session/task/event 保存事实。
-- `packages/mhs/server/hub-api.md`：固定设备工具、job/watch 唤醒、快照、image/video 分流。
-- `packages/mhs/plugin/client/src/cards/cards.tsx`：通用 `read_device/call_device` ToolCard；运行中的调用通过 `toolUseId` 关联设备 job，图片嵌入结果。
-- `layout/overview.tsx`：设备卡优先展示声明的图片/视频，没有媒体时展示关键字段。
-- `hosts/agnes/index.tsx`：右侧 dock 可拖拽调宽、折叠/展开；点击工具设备可打开并定位设备。
-- `layout/flow.tsx`：MHS 控制通道与 MOS 数据通道的总线、端口和粒子。
+- [docs/develop/architecture.md][agh-architecture]：Host 装配能力，Core 推进
+  model/tool loop，session/task/event 保存事实。
+- [packages/mhs/server/hub-api.md][agh-hub-api]：固定设备工具、job/watch 唤醒、
+  快照、image/video 分流。
+- [packages/mhs/plugin/client/src/cards/cards.tsx][agh-cards]：通用
+  `read_device/call_device` ToolCard；运行中的调用通过 `toolUseId` 关联设备
+  job，图片嵌入结果。
+- [layout/overview.tsx][agh-overview]：设备卡优先展示声明的图片/视频，
+  没有媒体时展示关键字段。
+- [hosts/agnes/index.tsx][agh-host]：右侧 dock 可拖拽调宽、折叠/展开；
+  点击工具设备可打开并定位设备。
+- [layout/flow.tsx][agh-flow]：MHS 控制通道与 MOS 数据通道的总线、端口和粒子。
+
+[agh-architecture]: https://github.com/AgnesAI-Labs/agnes-harness/blob/main/docs/develop/architecture.md
+[agh-hub-api]: https://github.com/AgnesAI-Labs/agnes-harness/blob/main/packages/mhs/server/hub-api.md
+[agh-cards]: https://github.com/AgnesAI-Labs/agnes-harness/blob/main/packages/mhs/plugin/client/src/cards/cards.tsx
+[agh-overview]: https://github.com/AgnesAI-Labs/agnes-harness/blob/main/packages/mhs/plugin/client/src/layout/overview.tsx
+[agh-host]: https://github.com/AgnesAI-Labs/agnes-harness/blob/main/packages/mhs/plugin/client/src/hosts/agnes/index.tsx
+[agh-flow]: https://github.com/AgnesAI-Labs/agnes-harness/blob/main/packages/mhs/plugin/client/src/layout/flow.tsx
 
 本设计借用这些**通用信息结构与运行时语义**，不复制其代码，也不虚构协议兼容。
 
@@ -103,7 +121,11 @@
 ### 4.1 Task 与 Run
 
 - **Task 是持续任务，Run 是一次推进。** 一个 Task 可因 job 结果、watch 或设备事件产生多个 Run。
-- Task 状态：`active | waiting_job | waiting_watch | needs_approval | completed | failed | cancelled`。
+- Task 状态：`active | waiting_job | waiting_watch | needs_approval | paused |
+  completed | failed | cancelled`。
+- 人工 `paused` 优先于所有非终态；未暂停时，等待状态按
+  `needs_approval > waiting_job > waiting_watch > active` 归并，
+  因而同一 Task 等待多种事件也有确定含义。
 - Run 终态单独包含 `interrupted`，用于进程重启；Task 不因此直接失败。
 - Task 的 `state_version` 每次状态迁移递增，DB 使用 CAS 防止旧 Run 覆盖新状态。
 - Task 终止后，其 watch 被清理；关联历史 job、Run 和证据保留用于审计。
@@ -122,8 +144,12 @@
 
 ### 4.3 完成、审批与取消
 
-- Run 结束且没有 pending job/watch/approval → Task `completed`。
+- Run 正常结束（模型给出阶段结论且未报告失败）且没有
+  pending job/watch/approval → Task `completed`；Run 失败、无效输出或预算耗尽
+  按失败/重试规则处理，不得进入 `completed`。
 - 仍有等待项 → Task 保持对应等待状态，最终文本只作为阶段输出。
+- `paused` 保留 job/watch 与事件记录但不再启动新 Run；恢复时按当时等待关系
+  回到 `waiting_job`、`waiting_watch`、`needs_approval` 或启动恢复 Run。
 - 审批请求 → `needs_approval`；批准、拒绝、过期、不可用分别处理，批准后沿原 Task 继续并使用批准时权限。
 - 用户暂停/取消 Task 与 `Stop all` 不同：前者停止推进；后者停止设备并把取消结果交给相关 Task。
 - Task 终止采用幂等迁移；重复取消不重复发出设备副作用。
@@ -136,7 +162,9 @@
 task_id / run_id / tool_call_id / job_id / device_id
 ```
 
-状态：`accepted | running | paused | done | failed | rejected | cancelled | cancelled_unknown | interrupted`。`accepted/running/paused` 为活跃态，其余为终态；每个 job 最多一个终态。
+状态：`accepted | running | paused | done | failed | rejected | cancelled |
+cancelled_unknown | interrupted`。`accepted/running/paused` 为活跃态，
+其余为终态；每个 job 最多一个终态。
 
 执行顺序：
 
@@ -144,28 +172,37 @@ task_id / run_id / tool_call_id / job_id / device_id
 2. 持久化 job `accepted` 后再向 worker 派发，保证返回 `running` 前可追溯。
 3. `accepted/progress/result/rejected` 全部落账；progress 只更新投影，不唤醒模型。
 4. 声明的 `ValidatedCall.timeout_ms` 必须成为真实执行 deadline，覆盖排队与在途阶段。
-5. 工具等待窗口为 `min(50s, 剩余 Run 预算, job deadline)`；完成则直接返回结果，窗口耗尽但 job 仍活跃则返回 `{status:"running", job_id}`。
+5. 工具等待窗口为 `min(50s, 剩余 Run 预算, job deadline)`；
+   完成则直接返回结果，窗口耗尽但 job 仍活跃则返回
+   `{status:"running", job_id}`。
 6. job deadline 先于等待窗口到达时，返回真实 timeout/cancelled 结果，而不是 `running`。
 7. 最终结果唤醒原 Task；重复终态只落一次事实、最多唤醒一次。
 
-`stop` 必须覆盖在途与已排队 Execute；stop 前入队的命令不得继续绕过闸门执行。迟到结果保留账本但按 `job_id` 去重。`cancelled_unknown` 表示物理结果未知，Agent 重试前必须先读设备状态，禁止盲目重复副作用。
+`stop` 必须覆盖在途与已排队 Execute；stop 前入队的命令不得继续绕过闸门执行。
+迟到结果保留账本但按 `job_id` 去重。`cancelled_unknown` 表示物理结果未知，
+Agent 重试前必须先读设备状态，禁止盲目重复副作用。
 
 ### 4.5 Task-owned Watch
 
 - Agent 可为 Task 注册 watch，包含 `owner_task_id`。
 - `persistent` 继续表示“是否免超时”，不表示是否可重启恢复。
 - Task-owned one-shot watch 可持久保存并参与启动重织；命中、超时或失效后删除并唤醒原 Task。
-- active Task 的 watch 在重启后重建；terminal Task 的 watch 不重建。
+- 非 terminal Task（含 `active`、等待态与 `paused`）的 watch 在重启后重建；
+  terminal Task 的 watch 不重建。
 - 原有临时 session watch 保持不持久语义。
 - watch 求值仍是确定性比较器，不运行模型。
 
 ### 4.6 Wake Router 与 Task 级恢复
 
-唤醒以 `task_id + event_id` 幂等去重：
+唤醒以 `task_id + event_id` 幂等去重。Task 状态迁移与 `task_wake_outbox`
+写入必须在同一 DB 事务中完成；dispatcher 在提交后投递 pending 信号。
+`agent_runs` 另以 `wake_event_id` 做第二道去重，覆盖“已投递、未标记”后的
+崩溃重试。
 
 - job 最终 result、watch 命中/超时/失效、明确设备错误可唤醒 Task。
 - job progress、普通遥测和视频帧只更新投影。
 - 唤醒到达时，若 Task 正在 Run 中，作为 steer 输入；若空闲，创建下一 Run。
+- `paused` 只记录事件和投影，不启动或 steer Run；恢复后按当时等待关系处理已到期事件。
 - 重启时，未结束模型 Run 标记 `interrupted`。Task 根据持久等待关系恢复；无等待项的 active Task 创建恢复 Run。
 - 对重启前仍活跃的 job，首版若没有可恢复的 driver 调用，将其标记 `interrupted` 并唤醒 Task；不得静默重复派发。
 - 迟到的终态若与已持久化 job 匹配，只按幂等规则处理一次。
@@ -187,6 +224,9 @@ values | detections | image | video | x_<custom>
 - `image`：Agent 按需读取的低频图片。
 - `video`：供人观看的实时流。
 - `stateFields[].key` 可选；设备卡优先展示 key 字段，缺省取前三个字段。
+
+新增字段将 Hub 当前 `manifestVersion` 升至 `1.1`；`1.0` 声明按默认值解释，
+旧消费者忽略新字段，新消费者不得要求存量清单补写 `dataKind` 或 `key`。
 
 未知 `dataKind` 不使 Hub 崩溃；运行时和 UI 保留原始元数据并以通用详情展示。
 
@@ -227,7 +267,7 @@ values | detections | image | video | x_<custom>
 
 - 首版支持 Hub 鉴权代理后的 MJPEG 与 HLS；MJPEG 使用图片帧播放，HLS 使用原生播放器或 hls.js。
 - 视频只在用户观看时启用，离开设备、切换 Task 或超时后停止。
-- 播放票据按 `workspace/device/source` 限定且短时有效，不把长期 JWT 放入 URL。
+- 播放票据按 `workspace/device/source` 限定且 5 分钟有效，到期前由主会话刷新；不把长期 JWT 放入 URL。
 - 其他协议明确返回不支持；不得显示假播放器或静态图冒充实时视频。
 - 视频不默认录像，历史回放展示保存的图片证据与设备状态。
 
@@ -267,13 +307,26 @@ data
 **`agent_tasks`**
 
 ```text
-id, workspace_id, objective, status, current_run_id,
-state_version, created_at, updated_at, completed_at
+id, workspace_id, objective, session_key, created_by, status, current_run_id,
+state_version, created_at, updated_at, ended_at
 ```
 
-索引：`(workspace_id, status, updated_at)`。
+索引：`(workspace_id, status, updated_at)`。`session_key` 用于 Chat 与
+Workbench 指向同一 Task，API 创建时可为空；`created_by` 记录创建者供审批与
+审计使用。
 
-**`agent_runs`**：新增可空 `task_id` 与索引，旧行保持 NULL。
+**`agent_runs`**：新增可空 `task_id` 与 `wake_event_id`；分别为其建索引，
+并对非空 `(task_id,wake_event_id)` 建唯一约束，旧行保持 NULL。
+
+**`task_wake_outbox`（持久唤醒与去重）**
+
+```text
+task_id, event_id, signal_json, dispatch_state,
+created_at, dispatched_at
+```
+
+主键 `(task_id,event_id)`；`dispatch_state` 为 `pending | dispatched | dead`。
+dispatcher 扫描 pending，崩溃后重试；连续失败按现有 DLQ 模式处理并保留告警。
 
 **`watch_rules`**：新增可空 `owner_task_id` 与索引。
 
@@ -285,7 +338,9 @@ progress_json, result_json, task_id, run_id, tool_call_id,
 driver_call_id, started_at, ended_at
 ```
 
-约束：`tool_call_id` 唯一；索引 `(task_id, state)`、`(workspace_id, device_id, state)`。
+约束：`tool_call_id` 唯一；索引 `(task_id, state)`、
+`(workspace_id, device_id, state)`。人工 UI 直接调用产生的 job 允许
+`task_id/run_id/tool_call_id` 为 NULL；SQLite 的 UNIQUE 不限制多个 NULL。
 
 **`media_evidence`**
 
@@ -295,11 +350,14 @@ device_id, source_id, source_seq, media_time,
 mime, size_bytes, sha256, storage_path, created_at, expires_at
 ```
 
+关联字段 `task_id/run_id/tool_call_id/job_id` 可空，便于设备独立图片复用同一存储；
+Task 证据至少包含 `task_id`，Run 证据至少同时包含 `task_id/run_id`。
+
 所有新持久化都经 ports；capability crate 不得直接写 SQL。
 
 ### 6.3 主要 ports
 
-- `TaskStore`：创建、读取、列表、CAS 状态迁移、当前 Run 绑定。
+- `TaskStore`：创建、读取、列表、CAS 状态迁移、当前 Run 绑定，以及“状态迁移 + outbox”事务和 pending 唤醒领取/标记。
 - `DeviceJobStore`：accepted/progress/result 投影、活跃列表、按 tool_call/job 查询。
 - `MediaStore`：写入受限二进制、读取、删除过期内容。
 - `MediaEvidenceStore`：证据元数据与关联查询。
@@ -310,15 +368,19 @@ mime, size_bytes, sha256, storage_path, created_at, expires_at
 
 复用现有 Task 创建入口，不另建重复 API：
 
-- `POST /workspaces/{id}/agent/tasks`：`{text}` → 持久 Task，返回 `{taskId,status:"accepted"}`；返回的 UUID 不再是与 Run 无关的受理号。
+- `POST /workspaces/{id}/agent/tasks`：`{text}` → 持久 Task，返回
+  `{taskId,status:"accepted"}`；返回的 UUID 不再是与 Run 无关的受理号。
 - `GET /workspaces/{id}/agent/tasks`：分页列表。
 - `GET /workspaces/{id}/agent/tasks/{task_id}`：Task、Run、job、watch 与关联摘要。
 - `POST /workspaces/{id}/agent/tasks/{task_id}/cancel`：幂等取消。
-- `GET /workspaces/{id}/runtime/stream?taskId=...&after=...`：snapshot/event/resync。
+- `GET /workspaces/{id}/runtime/stream?taskId=...&after=...`：
+  snapshot/event/resync。
 - `GET /workspaces/{id}/evidence/{evidence_id}`：鉴权图片证据。
-- `GET /workspaces/{id}/devices/{device_id}/sources/{source_id}/video`：短时票据鉴权的 MJPEG/HLS 入口。
+- `GET /workspaces/{id}/devices/{device_id}/sources/{source_id}/video`：
+  5 分钟票据鉴权的 MJPEG/HLS 入口。
 
-Task 创建、取消、设备调用和停止沿用 Agent 管理权限；读取 Task/Devices/证据沿用 workspace 权限，所有路径做 workspace 隔离。
+Task 创建、取消、设备调用和停止沿用 Agent 管理权限；读取 Task/Devices/证据
+沿用 workspace 权限，所有路径做 workspace 隔离。
 
 ## 7. 两栏 Agent Runtime Workbench
 
@@ -366,7 +428,8 @@ Task 创建、取消、设备调用和停止沿用 Agent 管理权限；读取 T
 
 ### 7.5 状态与可访问性
 
-覆盖 loading、empty、error、offline、partial、expired evidence、unsupported media、waiting、approval、cancelled。
+覆盖 loading、empty、error、offline、partial、expired evidence、
+unsupported media、waiting、approval、cancelled。
 
 设备链接、详情、折叠、停止均可键盘操作；seam 有 separator 语义和宽度说明；视频有暂停与断线状态；图片有可理解的替代文本。
 
@@ -391,13 +454,19 @@ Task 创建、取消、设备调用和停止沿用 Agent 管理权限；读取 T
 
 ### 9.2 核心端到端
 
-1. **持续推进**：数值感知 → 图片 → 调用 → job progress → result 唤醒原 Task → 验证 → completed；完整断言关联 ID。
+1. **持续推进**：数值感知 → 图片 → 调用 → job progress → result 唤醒原 Task
+   → 验证 → completed；完整断言关联 ID。
 2. **Watch**：注册后等待；命中唤醒原 Task；重复事件不重复推进；重启重织。
-3. **审批与停止**：pending/approve/reject/unavailable；stop 覆盖在途与排队；`cancelled_unknown` 后先读状态再决定重试。
-4. **重启恢复**：accepted 后、result 前重启，不重复执行设备动作；Task 恢复，迟到结果最多唤醒一次。
-5. **媒体**：大小/类型/新鲜度、非 vision、视频需求生命周期、断流重连、证据过期全部有明确结果。
-6. **Workbench**：关联设备出现规则、Loop 定位、seam 拖拽/折叠/键盘、Flow、减少动态效果、图片/视频、SSE resync、历史只读。
-7. **性能与隔离**：测试环境 watch 命中到 Run 入队 `<2s`，job progress 到面板 `<1s`；所有跨区访问拒绝。
+3. **审批与停止**：pending/approve/reject/unavailable；stop 覆盖在途与排队；
+   `cancelled_unknown` 后先读状态再决定重试。
+4. **重启恢复**：accepted 后、result 前重启，不重复执行设备动作；Task 恢复，
+   迟到结果最多唤醒一次。
+5. **媒体**：大小/类型/新鲜度、非 vision、视频需求生命周期、断流重连、证据过期
+   全部有明确结果。
+6. **Workbench**：关联设备出现规则、Loop 定位、seam 拖拽/折叠/键盘、Flow、
+   减少动态效果、图片/视频、SSE resync、历史只读。
+7. **性能与隔离**：测试环境 watch 命中到 Run 入队 `<2s`，job progress 到面板
+   `<1s`；所有跨区访问拒绝。
 
 ### 9.3 测试分层
 
