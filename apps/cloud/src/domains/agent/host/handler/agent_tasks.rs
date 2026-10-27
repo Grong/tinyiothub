@@ -14,7 +14,8 @@
 use axum::{
     Json, Router,
     extract::{Extension, Path, Query, State},
-    http::HeaderMap,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
@@ -25,7 +26,6 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use tinyiothub_web::security::Claims;
 
 use crate::domains::agent::AgentState;
-use crate::verify_workspace_access;
 
 /// admin 角色判定：用户持有任一 is_administrator 角色。DB 错误 fail-closed。
 /// 共享实现收敛在 handler::is_admin（F9），此处保签名不动宏体。
@@ -36,11 +36,34 @@ async fn is_admin(state: &AgentState, user_id: &str) -> bool {
 /// workspace 隔离 + admin 角色组合守卫（V5 先例：越权 403 / 不存在 404）。
 macro_rules! verify_agent_admin {
     ($state:expr, $claims:expr, $id:expr) => {{
-        verify_workspace_access!($state, $claims, $id);
-        if !is_admin(&$state, &$claims.user_id).await {
-            return ApiResponseBuilder::error_with_code(403, "需要管理员权限");
+        if let Err(error) = check_agent_admin(&$state, &$claims, &$id).await {
+            return error;
         }
     }};
+}
+
+async fn check_agent_admin<T>(
+    state: &AgentState,
+    claims: &Claims,
+    workspace_id: &str,
+) -> Result<(), Json<ApiResponse<T>>> {
+    match state.workspace_service.find_by_id(workspace_id).await {
+        Ok(Some(workspace)) if workspace.tenant_id == claims.tenant_id => {}
+        Ok(Some(_)) => {
+            return Err(ApiResponseBuilder::error_with_code(403, "无权访问此工作空间"));
+        }
+        Ok(None) => {
+            return Err(ApiResponseBuilder::error_with_code(404, "工作空间不存在"));
+        }
+        Err(error) => {
+            tracing::error!("Failed to get workspace: {error}");
+            return Err(ApiResponseBuilder::error("获取工作空间失败"));
+        }
+    }
+    if !is_admin(state, &claims.user_id).await {
+        return Err(ApiResponseBuilder::error_with_code(403, "需要管理员权限"));
+    }
+    Ok(())
 }
 
 // ── POST /{id}/agent/tasks ──
@@ -78,19 +101,20 @@ pub async fn create_task(
     Path(workspace_id): Path<String>,
     headers: HeaderMap,
     Json(req): Json<CreateTaskRequest>,
-) -> Json<ApiResponse<serde_json::Value>> {
-    verify_agent_admin!(state, claims, workspace_id);
-
-    let text = req.text.trim();
-    if text.is_empty() {
-        return ApiResponseBuilder::error_with_code(400, "指令内容不能为空");
+) -> Response {
+    if let Err(error) = check_agent_admin::<serde_json::Value>(&state, &claims, &workspace_id).await {
+        return error.into_response();
     }
 
+    let text = req.text.trim();
     let heartbeat_json = match state.db.load_heartbeat_config_json(&workspace_id).await {
         Ok(json) => json,
         Err(error) => {
             tracing::error!(%workspace_id, %error, "load runtime task flag failed");
-            return ApiResponseBuilder::error_with_code(503, "Task 配置不可用");
+            return crate::domains::agent::runtime::tasks::error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Task 配置不可用",
+            );
         }
     };
     let flags = heartbeat_json
@@ -109,8 +133,11 @@ pub async fn create_task(
         .await;
     }
 
+    if text.is_empty() {
+        return ApiResponseBuilder::error_with_code::<serde_json::Value>(400, "指令内容不能为空").into_response();
+    }
     let Some(ref sink) = state.directive_sink else {
-        return ApiResponseBuilder::error_with_code(503, "Agent 任务服务未启动");
+        return ApiResponseBuilder::error_with_code::<serde_json::Value>(503, "Agent 任务服务未启动").into_response();
     };
 
     let signal = WakeSignal {
@@ -131,13 +158,20 @@ pub async fn create_task(
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({
             "taskId": uuid::Uuid::new_v4().to_string(),
             "status": "accepted",
-        })),
-        Err(EnqueueError::Rejected) => ApiResponseBuilder::error_with_code(429, "任务队列已满，请稍后重试"),
-        Err(EnqueueError::Duplicate) => ApiResponseBuilder::error_with_code(409, "相同指令已在队列中，请稍候"),
-        Err(EnqueueError::Closed) => ApiResponseBuilder::error_with_code(503, "Agent 任务服务已停止"),
+        }))
+        .into_response(),
+        Err(EnqueueError::Rejected) => {
+            ApiResponseBuilder::error_with_code::<serde_json::Value>(429, "任务队列已满，请稍后重试").into_response()
+        }
+        Err(EnqueueError::Duplicate) => {
+            ApiResponseBuilder::error_with_code::<serde_json::Value>(409, "相同指令已在队列中，请稍候").into_response()
+        }
+        Err(EnqueueError::Closed) => {
+            ApiResponseBuilder::error_with_code::<serde_json::Value>(503, "Agent 任务服务已停止").into_response()
+        }
         Err(other) => {
             tracing::error!(%workspace_id, "directive enqueue failed: {}", other);
-            ApiResponseBuilder::error("指令投递失败")
+            ApiResponseBuilder::error::<serde_json::Value>("指令投递失败").into_response()
         }
     }
 }

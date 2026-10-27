@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use axum::{Router, body::Body, http::Request};
+use axum::{
+    Router,
+    body::Body,
+    http::{Request, StatusCode},
+};
 use serde_json::{Value, json};
 use tinyiothub_core::agent_task::TaskStatus;
 use tinyiothub_storage::Db;
@@ -58,7 +62,7 @@ async fn set_task_flag(pool: &sqlx::SqlitePool, enabled: bool) {
         .expect("set runtime task flag");
 }
 
-async fn post_task(app: &Router, token: &str, text: &str, key: Option<&str>) -> (u16, Value) {
+async fn post_task(app: &Router, token: &str, text: &str, key: Option<&str>) -> (StatusCode, Value) {
     let mut builder = Request::builder()
         .method("POST")
         .uri(format!("/api/v1/workspaces/{WS}/agent/tasks"))
@@ -71,7 +75,7 @@ async fn post_task(app: &Router, token: &str, text: &str, key: Option<&str>) -> 
         .body(Body::from(json!({"text": text}).to_string()))
         .expect("request");
     let (status, body) = response_parts(app.clone().oneshot(request).await.expect("response")).await;
-    (status.as_u16(), body)
+    (status, body)
 }
 
 async fn get_json(app: &Router, token: &str, uri: &str) -> Value {
@@ -100,10 +104,17 @@ async fn create_persistent(fixture: &RuntimeFixture, text: &str, key: &str) -> V
     body
 }
 
+#[test]
+fn db_task_store_implements_task_store_port() {
+    fn assert_task_store<T: tinyiothub_agent::port::task::TaskStore>() {}
+    assert_task_store::<crate::domains::agent::runtime::DbTaskStore>();
+}
+
 #[tokio::test]
 async fn persistent_create_requires_idempotency_key() {
     let fixture = runtime_test_app(true).await;
-    let (_, body) = post_task(&fixture.app, &fixture.token, "inspect pump", None).await;
+    let (status, body) = post_task(&fixture.app, &fixture.token, "inspect pump", None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["code"], 400);
     assert_eq!(count_rows(fixture.db.pool(), "agent_tasks").await, 0);
     assert!(fixture.legacy_sink.signals().is_empty());
@@ -113,7 +124,8 @@ async fn persistent_create_requires_idempotency_key() {
 async fn persistent_create_rejects_blank_key_and_objective_without_writes() {
     let fixture = runtime_test_app(true).await;
     for (text, key) in [("inspect", Some("  ")), ("  ", Some("key"))] {
-        let (_, body) = post_task(&fixture.app, &fixture.token, text, key).await;
+        let (status, body) = post_task(&fixture.app, &fixture.token, text, key).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "text={text:?}, key={key:?}: {body}");
         assert_eq!(body["code"], 400, "text={text:?}, key={key:?}: {body}");
     }
     assert_eq!(count_rows(fixture.db.pool(), "agent_tasks").await, 0);
@@ -144,7 +156,8 @@ async fn persistent_create_replays_task_and_wake_without_provider_call() {
 async fn persistent_create_same_key_different_objective_returns_409_without_new_wake() {
     let fixture = runtime_test_app(true).await;
     create_persistent(&fixture, "inspect A", "key-1").await;
-    let (_, body) = post_task(&fixture.app, &fixture.token, "inspect B", Some("key-1")).await;
+    let (status, body) = post_task(&fixture.app, &fixture.token, "inspect B", Some("key-1")).await;
+    assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["code"], 409);
     assert_eq!(count_rows(fixture.db.pool(), "agent_tasks").await, 1);
     assert_eq!(count_rows(fixture.db.pool(), "task_wake_outbox").await, 1);
@@ -202,7 +215,22 @@ async fn persistent_create_storage_failure_returns_503() {
         .execute(fixture.db.pool())
         .await
         .expect("hide task table");
-    let (_, body) = post_task(&fixture.app, &fixture.token, "inspect", Some("key-1")).await;
+    let (status, body) = post_task(&fixture.app, &fixture.token, "inspect", Some("key-1")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["code"], 503);
     assert!(fixture.legacy_sink.signals().is_empty());
+}
+
+#[tokio::test]
+async fn persistent_create_flag_load_failure_returns_503() {
+    let fixture = runtime_test_app(true).await;
+    sqlx::query("ALTER TABLE workspaces DROP COLUMN heartbeat_config")
+        .execute(fixture.db.pool())
+        .await
+        .expect("remove heartbeat config column");
+    let (status, body) = post_task(&fixture.app, &fixture.token, "inspect", Some("key-1")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["code"], 503);
+    assert!(fixture.legacy_sink.signals().is_empty());
+    assert_eq!(count_rows(fixture.db.pool(), "agent_tasks").await, 0);
 }

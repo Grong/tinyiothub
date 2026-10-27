@@ -1,17 +1,25 @@
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::HeaderMap,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
 };
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tinyiothub_agent::port::task::TaskStore;
 use tinyiothub_agent::runtime::thing_agent::{Priority, TriggerSource, WakeSignal};
 use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskStoreError, TaskWake, WakeDispatchState};
 use tinyiothub_web::{api_response::ApiResponse, response::ApiResponseBuilder, security::Claims};
 
+use super::DbTaskStore;
 use crate::domains::agent::AgentState;
 use crate::verify_workspace_access;
+
+pub(crate) fn error_response(status: StatusCode, message: impl Into<String>) -> Response {
+    let code = i32::from(status.as_u16());
+    (status, ApiResponseBuilder::error_with_code::<Value>(code, message)).into_response()
+}
 
 pub async fn create_persistent(
     state: &AgentState,
@@ -19,17 +27,17 @@ pub async fn create_persistent(
     workspace_id: &str,
     headers: &HeaderMap,
     text: &str,
-) -> Json<ApiResponse<Value>> {
+) -> Response {
     let Some(idempotency_key) = headers
         .get("idempotency-key")
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
         .filter(|value| !value.is_empty())
     else {
-        return ApiResponseBuilder::error_with_code(400, "Idempotency-Key 不能为空");
+        return error_response(StatusCode::BAD_REQUEST, "Idempotency-Key 不能为空");
     };
     if text.is_empty() {
-        return ApiResponseBuilder::error_with_code(400, "指令内容不能为空");
+        return error_response(StatusCode::BAD_REQUEST, "指令内容不能为空");
     }
 
     let now = Utc::now();
@@ -51,7 +59,7 @@ pub async fn create_persistent(
         Ok(json) => json,
         Err(error) => {
             tracing::error!(%workspace_id, %error, "serialize task wake failed");
-            return ApiResponseBuilder::error_with_code(503, "Task 存储不可用");
+            return error_response(StatusCode::SERVICE_UNAVAILABLE, "Task 存储不可用");
         }
     };
     let task = AgentTask {
@@ -77,20 +85,22 @@ pub async fn create_persistent(
         dispatched_at: None,
         resolved_at: None,
     };
-    match state.db.create_task_with_wake(&task, &wake).await {
+    let store = DbTaskStore::new(state.db.clone());
+    match store.create_task_with_wake(&task, &wake).await {
         Ok(outcome) => ApiResponseBuilder::success(json!({
             "taskId": outcome.task.id,
             "status": "accepted",
             "deduplicated": outcome.deduplicated,
-        })),
+        }))
+        .into_response(),
         Err(TaskStoreError::ObjectiveConflict) => {
-            ApiResponseBuilder::error_with_code(409, "Idempotency-Key 已用于不同指令")
+            error_response(StatusCode::CONFLICT, "Idempotency-Key 已用于不同指令")
         }
-        Err(TaskStoreError::Validation(message)) => ApiResponseBuilder::error_with_code(400, message),
-        Err(TaskStoreError::ConcurrentUpdate) => ApiResponseBuilder::error_with_code(409, "Task 已并发更新"),
+        Err(TaskStoreError::Validation(message)) => error_response(StatusCode::BAD_REQUEST, message),
+        Err(TaskStoreError::ConcurrentUpdate) => error_response(StatusCode::CONFLICT, "Task 已并发更新"),
         Err(TaskStoreError::Unavailable(error)) => {
             tracing::error!(%workspace_id, %error, "persistent task create failed");
-            ApiResponseBuilder::error_with_code(503, "Task 存储不可用")
+            error_response(StatusCode::SERVICE_UNAVAILABLE, "Task 存储不可用")
         }
     }
 }
@@ -110,7 +120,8 @@ pub async fn list_tasks(
     verify_workspace_access!(state, claims, workspace_id);
     let limit = i64::from(params.limit.unwrap_or(50).clamp(1, 200));
     let offset = i64::from(params.offset.unwrap_or(0));
-    match state.db.list_tasks(&workspace_id, limit, offset).await {
+    let store = DbTaskStore::new(state.db.clone());
+    match store.list_tasks(&workspace_id, limit, offset).await {
         Ok(tasks) => ApiResponseBuilder::success(json!({
             "tasks": tasks,
             "limit": limit,
@@ -129,7 +140,8 @@ pub async fn get_task(
     Path((workspace_id, task_id)): Path<(String, String)>,
 ) -> Json<ApiResponse<Value>> {
     verify_workspace_access!(state, claims, workspace_id);
-    match state.db.get_task(&workspace_id, &task_id).await {
+    let store = DbTaskStore::new(state.db.clone());
+    match store.get_task(&workspace_id, &task_id).await {
         Ok(Some(task)) => ApiResponseBuilder::success(json!({"task": task})),
         Ok(None) => ApiResponseBuilder::error_with_code(404, "Task 不存在"),
         Err(error) => {
