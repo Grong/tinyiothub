@@ -231,7 +231,9 @@ pub(crate) fn build_autonomous_tools(
 ) -> Vec<Box<dyn Tool>> {
     // The 9 ontology tools minus the chat invoke_action (confirmation-token
     // flow), plus the autonomous invoke_action (policy-gated).
-    let mut tools: Vec<Box<dyn Tool>> = create_thing_tools(pool.clone(), workspace_id, runtime)
+    let mut task_runtime = runtime.clone();
+    task_runtime.run_ctx = Some(run_ctx.clone());
+    let mut tools: Vec<Box<dyn Tool>> = create_thing_tools(pool.clone(), workspace_id, &task_runtime)
         .into_iter()
         .filter(|(tool, _)| tool.name() != "call_device")
         .map(|(tool, _)| tool)

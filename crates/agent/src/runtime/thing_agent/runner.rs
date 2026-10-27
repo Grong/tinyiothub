@@ -107,6 +107,9 @@ pub struct RunContextInner {
     /// past the budget in one shot, so the summary must report this, not
     /// `tool_calls - 1`.
     pub tool_call_budget: Option<u32>,
+    /// Owning persistent Task and its authenticated session, when this is a Task Run.
+    pub task_id: Option<String>,
+    pub task_session_key: Option<String>,
     /// E2：turn 开头工作区快照的实测指标（manager 注入）。
     pub snapshot: Option<tinyiothub_core::agent_runs::SnapshotMetrics>,
 }
@@ -119,6 +122,8 @@ pub struct RunContext {
     /// Live-run registry this run registers into (T3). `None` = 不注册
     /// （既有构造点默认）；manager 在 run_pipeline 装配后由 T4 接线。
     pub active_runs: Option<crate::runtime::thing_agent::active_runs::ActiveRunRegistry>,
+    pub task_id: Option<String>,
+    pub wake_event_id: Option<String>,
 }
 
 impl RunContext {
@@ -133,6 +138,8 @@ impl RunContext {
             run_id,
             workspace_id,
             active_runs: None,
+            task_id: None,
+            wake_event_id: None,
         }
     }
 }
@@ -177,10 +184,15 @@ impl Runner {
         Self { budget }
     }
 
-    pub async fn execute(&self, agent: AgentHandle, prompt: String, ctx: RunContext) -> RunOutcome {
+    pub async fn execute(
+        &self,
+        agent: AgentHandle,
+        prompt: String,
+        ctx: RunContext,
+        cancel: CancellationToken,
+    ) -> RunOutcome {
         let start = Instant::now();
         let (event_tx, event_rx) = mpsc::channel::<TurnEvent>(32);
-        let cancel = CancellationToken::new();
         let consume = tokio::spawn(consume_events(
             event_rx,
             Arc::clone(&ctx.inner),
@@ -550,6 +562,8 @@ fn assemble_report(ctx: &RunContext, end: TurnEnd, duration_ms: u64, inner: &Run
             // heartbeat 源的 task_count 由 manager 装配点回写（它持有任务表）；
             // runner 不感知源类型，此处 None。
             task_count: None,
+            task_id: ctx.task_id.clone(),
+            wake_event_id: ctx.wake_event_id.clone(),
         },
         llm_text,
     }
@@ -585,7 +599,54 @@ fn decide_end_reason(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::port::runtime::AgentLoop;
     use crate::runtime::thing_agent::types::ActionResult;
+
+    struct CancelObserver {
+        observed: Arc<std::sync::Mutex<Option<bool>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentLoop for CancelObserver {
+        async fn turn_streamed(
+            &self,
+            _user_message: &str,
+            _event_tx: mpsc::Sender<TurnEvent>,
+            cancel_token: Option<CancellationToken>,
+        ) -> anyhow::Result<String> {
+            let observed = cancel_token.as_ref().is_some_and(CancellationToken::is_cancelled);
+            *self.observed.lock().expect("observation lock") = Some(observed);
+            Err(anyhow::Error::new(crate::port::outcome::ToolLoopCancelled))
+        }
+
+        async fn run_single(&self, _message: &str) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+
+        async fn clear_history(&self) {}
+
+        async fn seed_history(&self, _messages: &[crate::port::provider::ChatMessage]) {}
+    }
+
+    #[tokio::test]
+    async fn execute_passes_the_callers_cancellation_token_to_the_agent() {
+        let observed = Arc::new(std::sync::Mutex::new(None));
+        let agent: AgentHandle = Arc::new(tokio::sync::Mutex::new(CancelObserver {
+            observed: Arc::clone(&observed),
+        }));
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let ctx = RunContext {
+            task_id: Some("task_1".into()),
+            wake_event_id: Some("event_1".into()),
+            ..RunContext::new("run_cancel".into(), "ws".into(), "task".into())
+        };
+        let outcome = Runner::new().execute(agent, "prompt".into(), ctx, cancel).await;
+        assert_eq!(*observed.lock().expect("observation lock"), Some(true));
+        assert_eq!(outcome.report.outcome, Outcome::NoActionNeeded);
+        assert_eq!(outcome.report.task_id.as_deref(), Some("task_1"));
+        assert_eq!(outcome.report.wake_event_id.as_deref(), Some("event_1"));
+    }
 
     fn call(id: &str, name: &str, args: serde_json::Value) -> TurnEvent {
         TurnEvent::ToolCall {
@@ -891,6 +952,8 @@ mod tests {
             workspace_id: "ws_1".to_string(),
             inner: Arc::new(RwLock::new(RunContextInner::default())),
             active_runs: None,
+            task_id: None,
+            wake_event_id: None,
         };
         (ctx, RunContextInner::default())
     }

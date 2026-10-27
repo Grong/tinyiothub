@@ -223,6 +223,8 @@ async fn brain_events_detail_carries_trace_and_narrative() {
         }],
         task_count: None,
         snapshot: None,
+        task_id: None,
+        wake_event_id: None,
     };
     app_state
         .db

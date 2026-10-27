@@ -994,6 +994,7 @@ async fn apply_scene_rules_tx(
                 persistent: i64::from(rule.persistent),
                 timeout_secs: i64::from(rule.timeout_secs),
                 created_at: rule.created_at.clone(),
+                owner_task_id: rule.owner_task_id.clone(),
             },
         )
         .await

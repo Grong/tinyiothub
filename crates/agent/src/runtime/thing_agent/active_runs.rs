@@ -5,15 +5,22 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use tokio_util::sync::CancellationToken;
 
 use crate::runtime::thing_agent::manager::ACTIVE_RUNS_CAPACITY;
 use crate::runtime::thing_agent::runner::RunContext;
+
+#[derive(Clone)]
+pub struct ActiveRun {
+    pub ctx: RunContext,
+    pub cancel: CancellationToken,
+}
 
 /// Registry of currently-running runs, keyed by `run_id`. Cheap to clone —
 /// all clones share the same map.
 #[derive(Clone)]
 pub struct ActiveRunRegistry {
-    runs: Arc<DashMap<String, RunContext>>,
+    runs: Arc<DashMap<String, ActiveRun>>,
     max: usize,
 }
 
@@ -32,7 +39,7 @@ impl ActiveRunRegistry {
 
     /// Register a run; returns the RAII guard whose drop deregisters it.
     /// At capacity the registration is refused (`None`) with a warn metric.
-    pub fn register(&self, ctx: RunContext) -> Option<ActiveRunGuard> {
+    pub fn register(&self, ctx: RunContext, cancel: CancellationToken) -> Option<ActiveRunGuard> {
         if self.runs.len() >= self.max {
             tracing::warn!(
                 metric = "active_run_registry_full",
@@ -43,7 +50,7 @@ impl ActiveRunRegistry {
             return None;
         }
         let run_id = ctx.run_id.clone();
-        self.runs.insert(run_id.clone(), ctx);
+        self.runs.insert(run_id.clone(), ActiveRun { ctx, cancel });
         Some(ActiveRunGuard {
             runs: Arc::clone(&self.runs),
             run_id,
@@ -51,14 +58,18 @@ impl ActiveRunRegistry {
     }
 
     pub fn get(&self, run_id: &str) -> Option<RunContext> {
-        self.runs.get(run_id).map(|r| r.clone())
+        self.runs.get(run_id).map(|r| r.ctx.clone())
+    }
+
+    pub fn cancel(&self, run_id: &str) -> bool {
+        self.runs.get(run_id).map(|run| run.cancel.cancel()).is_some()
     }
 }
 
 /// RAII deregistration: dropping removes the run from the registry, so the
 /// cancel path needs no explicit unregister call.
 pub struct ActiveRunGuard {
-    runs: Arc<DashMap<String, RunContext>>,
+    runs: Arc<DashMap<String, ActiveRun>>,
     run_id: String,
 }
 
@@ -71,6 +82,8 @@ impl Drop for ActiveRunGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio_util::sync::CancellationToken;
+
     use crate::runtime::thing_agent::runner::RunContext;
 
     #[tokio::test]
@@ -78,19 +91,37 @@ mod tests {
         let reg = ActiveRunRegistry::new(2);
         let ctx = RunContext::new("r1".into(), "ws1".into(), "t".into());
         {
-            let _g = reg.register(ctx.clone()).expect("容量内");
+            let _g = reg.register(ctx.clone(), CancellationToken::new()).expect("容量内");
             assert!(reg.get("r1").is_some());
         } // guard drop
         assert!(reg.get("r1").is_none());
     }
 
     #[tokio::test]
+    async fn cancel_uses_the_callers_shared_token() {
+        let reg = ActiveRunRegistry::new(1);
+        let cancel = CancellationToken::new();
+        let _guard = reg
+            .register(RunContext::new("r1".into(), "ws".into(), "t".into()), cancel.clone())
+            .expect("register");
+        assert!(reg.cancel("r1"));
+        assert!(cancel.is_cancelled());
+        assert!(!reg.cancel("missing"));
+    }
+
+    #[tokio::test]
     async fn over_capacity_refuses_with_warn() {
         let reg = ActiveRunRegistry::new(1);
-        let _g1 = reg.register(RunContext::new("r1".into(), "ws".into(), "t".into()));
+        let _g1 = reg.register(
+            RunContext::new("r1".into(), "ws".into(), "t".into()),
+            CancellationToken::new(),
+        );
         assert!(
-            reg.register(RunContext::new("r2".into(), "ws".into(), "t".into()))
-                .is_none()
+            reg.register(
+                RunContext::new("r2".into(), "ws".into(), "t".into()),
+                CancellationToken::new()
+            )
+            .is_none()
         );
     }
 }

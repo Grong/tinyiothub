@@ -107,6 +107,7 @@ pub async fn create_rule(
         persistent: req.persistent,
         timeout_secs: req.timeout_secs,
         created_at: chrono::Utc::now().to_rfc3339(),
+        owner_task_id: None,
     };
     // 2. 规则校验（timeout_secs 1..=3600，fail-loud 400）。
     if let Err(e) = rule.validate() {

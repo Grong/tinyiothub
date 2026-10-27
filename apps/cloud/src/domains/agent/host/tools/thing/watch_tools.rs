@@ -23,6 +23,7 @@ pub(super) struct WatchTool {
     pub(super) pool: SqlitePool,
     pub(super) workspace_id: String,
     pub(super) manager: ManagerSlot,
+    pub(super) run_ctx: Option<super::super::RunContextSlot>,
 }
 
 impl Attributable for WatchTool {
@@ -125,6 +126,36 @@ impl Tool for WatchTool {
             Err(e) => return tool_err(format!("物查询失败：{e}")),
         }
 
+        let owner_task_id = if let Some(slot) = &self.run_ctx {
+            let ctx = slot.read().await.clone();
+            if let Some(ctx) = ctx {
+                let (task_id, session_key) = {
+                    let inner = ctx.read().await;
+                    (inner.task_id.clone(), inner.task_session_key.clone())
+                };
+                if let Some(task_id) = task_id {
+                    let task = match db.get_task(&self.workspace_id, &task_id).await {
+                        Ok(Some(task)) => task,
+                        Ok(None) => return tool_err("watch owner Task does not exist in this workspace"),
+                        Err(error) => return tool_err(format!("watch owner Task 查询失败：{error}")),
+                    };
+                    if task.status.is_terminal() {
+                        return tool_err("watch owner Task is terminal");
+                    }
+                    if task.session_key != session_key {
+                        return tool_err("watch Task session ownership mismatch");
+                    }
+                    Some(task_id)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // 每工作区活跃 watch 上限。
         let active = match tinyiothub_storage::watch::list_rules(&self.pool).await {
             Ok(rows) => rows.iter().filter(|r| r.workspace_id == self.workspace_id).count(),
@@ -143,6 +174,7 @@ impl Tool for WatchTool {
             persistent: false,
             timeout_secs: input.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS),
             created_at: chrono::Utc::now().to_rfc3339(),
+            owner_task_id,
         };
         if let Err(e) = rule.validate() {
             return tool_err(e);
@@ -166,6 +198,7 @@ impl Tool for WatchTool {
             persistent: 0,
             timeout_secs: i64::from(rule.timeout_secs),
             created_at: rule.created_at.clone(),
+            owner_task_id: rule.owner_task_id.clone(),
         };
         if let Err(e) = tinyiothub_storage::watch::insert_rule(&self.pool, &row).await {
             return tool_err(format!("watch 注册失败：{e}"));

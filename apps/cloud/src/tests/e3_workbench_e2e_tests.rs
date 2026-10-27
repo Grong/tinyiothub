@@ -147,6 +147,7 @@ async fn template_rules_resolve_then_land_as_watch_and_composite() {
         persistent: i64::from(rule.persistent),
         timeout_secs: i64::from(rule.timeout_secs),
         created_at: rule.created_at.clone(),
+        owner_task_id: rule.owner_task_id.clone(),
     };
     tinyiothub_storage::watch::insert_rule(&pool, &row).await.unwrap();
 

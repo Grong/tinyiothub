@@ -141,6 +141,11 @@ pub struct RunReport {
     /// None = 未注入（空快照/装配失败/旧报告）。
     #[serde(default)]
     pub snapshot: Option<SnapshotMetrics>,
+    /// Persistent Task and wake identity; legacy autonomous Runs have neither.
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub wake_event_id: Option<String>,
 }
 
 /// E2 turn 开头快照的实测指标（T5：中文预算基线进 run trace）。
@@ -183,6 +188,8 @@ mod tests {
         assert!(report.trace.is_empty());
         assert_eq!(report.end_reason, None);
         assert_eq!(report.thing_id, None);
+        assert_eq!(report.task_id, None);
+        assert_eq!(report.wake_event_id, None);
     }
 
     /// trace 字段的序列化往返：含未配对 output=None 的条目。

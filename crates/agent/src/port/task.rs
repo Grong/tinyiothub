@@ -14,6 +14,9 @@ pub trait TaskStore: Send + Sync {
     async fn get_task(&self, workspace_id: &str, task_id: &str) -> Result<Option<AgentTask>, TaskStoreError>;
     async fn list_tasks(&self, workspace_id: &str, limit: i64, offset: i64) -> Result<Vec<AgentTask>, TaskStoreError>;
     async fn wake_by_id(&self, task_id: &str, event_id: &str) -> Result<Option<TaskWake>, TaskStoreError>;
+    async fn record_wake(&self, wake: &TaskWake) -> Result<bool, TaskStoreError>;
+    async fn resolve_task_wakes(&self, task_id: &str) -> Result<usize, TaskStoreError>;
+    async fn interrupt_unfinished_runs(&self) -> Result<usize, TaskStoreError>;
     async fn transition_task(
         &self,
         workspace_id: &str,
@@ -30,6 +33,7 @@ pub trait TaskStore: Send + Sync {
     ) -> Result<AgentTask, TaskStoreError>;
     async fn begin_run(&self, task: &AgentTask, wake_event_id: &str, run_id: &str) -> Result<bool, TaskStoreError>;
     async fn finish_run(&self, report: &RunReport) -> Result<(), TaskStoreError>;
+    async fn latest_task_run(&self, task_id: &str) -> Result<Option<RunReport>, TaskStoreError>;
     async fn claim_pending_wakes(&self, limit: i64) -> Result<Vec<TaskWake>, TaskStoreError>;
     async fn mark_wake(&self, task_id: &str, event_id: &str, state: WakeDispatchState) -> Result<(), TaskStoreError>;
     async fn retry_dead_wake(&self, workspace_id: &str, event_id: &str) -> Result<bool, TaskStoreError>;

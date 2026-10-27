@@ -54,6 +54,8 @@ fn ended_report(
         trace,
         task_count: None,
         snapshot: None,
+        task_id: None,
+        wake_event_id: None,
     }
 }
 
@@ -71,7 +73,9 @@ async fn trace_live_from_registry() {
         .trace
         .push(entry("c1", "read_property", Some("26.5")));
     ctx.inner.write().await.trace.push(entry("c2", "invoke_action", None));
-    let _guard = registry.register(ctx).expect("容量内");
+    let _guard = registry
+        .register(ctx, tokio_util::sync::CancellationToken::new())
+        .expect("容量内");
     app_state.set_active_runs(registry);
 
     let app = crate::api::create_router(&app_state);
@@ -158,7 +162,9 @@ async fn trace_cross_workspace_404() {
 
     let registry = ActiveRunRegistry::new(8);
     let ctx = RunContext::new("run_live_x".into(), "ws-other-999".into(), "timer".into());
-    let _guard = registry.register(ctx).expect("容量内");
+    let _guard = registry
+        .register(ctx, tokio_util::sync::CancellationToken::new())
+        .expect("容量内");
     app_state.set_active_runs(registry);
     let report = ended_report("run_done_x", "ws-other-999", vec![entry("c1", "t", None)]);
     app_state.db.insert_agent_run(&report, None, None).await.unwrap();

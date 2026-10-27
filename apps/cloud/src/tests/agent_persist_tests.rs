@@ -56,6 +56,8 @@ fn report(run_id: &str, workspace_id: &str, summary: &str) -> RunReport {
         trace: vec![],
         task_count: None,
         snapshot: None,
+        task_id: None,
+        wake_event_id: None,
     }
 }
 

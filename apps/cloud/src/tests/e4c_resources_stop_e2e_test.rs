@@ -181,6 +181,7 @@ fn thing_tools(
             access: access.as_ref().map(|a| a.clone() as Arc<dyn AccessCallValidator>),
             demand: None,
             resources: access.map(|a| a as Arc<dyn ResourceResolver>),
+            run_ctx: None,
         },
     )
 }

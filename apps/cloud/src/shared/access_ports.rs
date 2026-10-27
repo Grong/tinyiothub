@@ -165,6 +165,7 @@ mod tests {
                     persistent: 0,
                     timeout_secs: 600,
                     created_at: "2026-10-21T00:00:00Z".into(),
+                    owner_task_id: None,
                 },
             )
             .await

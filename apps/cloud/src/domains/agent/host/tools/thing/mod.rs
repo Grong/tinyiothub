@@ -197,6 +197,8 @@ pub struct ThingToolContext {
     /// E4c 声明资源解析：call/set 在 claim 前从声明解析资源规格。
     /// None = 未接线（沿用 E1 每设备合成资源 claim）。
     pub resources: Option<Arc<dyn ResourceResolver>>,
+    /// Persistent Task identity for Task-owned watch tools; chat runs leave this unset.
+    pub run_ctx: Option<super::RunContextSlot>,
 }
 
 /// E4c：runtime 的声明解析结果 → agent 仲裁规格（agent 资源类型不进
@@ -278,6 +280,7 @@ pub fn create_thing_tools(
             pool: pool.clone(),
             workspace_id: ws.clone(),
             manager: manager.clone(),
+            run_ctx: runtime.run_ctx.clone(),
         })),
         read_only(Box::new(watch_tools::UnwatchTool {
             pool: pool.clone(),
@@ -602,6 +605,7 @@ mod tests {
             pool: pool.clone(),
             workspace_id: "ws".into(),
             manager: ManagerSlot::default(),
+            run_ctx: None,
         };
         let out = watch
             .execute(serde_json::json!({
@@ -628,6 +632,58 @@ mod tests {
         let out = unwatch.execute(serde_json::json!({"ruleId": rule_id})).await.unwrap();
         assert!(out.success, "{}", out.error.unwrap_or_default());
         assert!(tinyiothub_storage::watch::list_rules(&pool).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn task_watch_binds_only_to_the_matching_task_session() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
+        crate::domains::agent::host::test_utils::seed_test_workspace(&pool, "tenant-1", "ws").await;
+        sqlx::query("INSERT INTO things (id, name, workspace_id, thing_type) VALUES ('t1','T1','ws','device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO agent_tasks
+                 (id, workspace_id, idempotency_key, objective, session_key, created_by,
+                  status, current_run_id, state_version, created_at, updated_at, ended_at)
+             VALUES ('task_1','ws','idem_1','inspect','session_1','user_1','active',NULL,0,'2026-10-27T00:00:00Z','2026-10-27T00:00:00Z',NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let inner = Arc::new(tokio::sync::RwLock::new(
+            tinyiothub_agent::runtime::thing_agent::RunContextInner {
+                task_id: Some("task_1".into()),
+                task_session_key: Some("session_1".into()),
+                ..Default::default()
+            },
+        ));
+        let run_ctx = crate::domains::agent::host::tools::new_run_context_slot(inner.clone());
+        let watch = watch_tools::WatchTool {
+            pool: pool.clone(),
+            workspace_id: "ws".into(),
+            manager: ManagerSlot::default(),
+            run_ctx: Some(run_ctx),
+        };
+        let out = watch
+            .execute(serde_json::json!({"thingId":"t1","online":true}))
+            .await
+            .unwrap();
+        assert!(out.success, "{}", out.error.unwrap_or_default());
+        let rows = tinyiothub_storage::watch::list_rules(&pool).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].owner_task_id.as_deref(), Some("task_1"));
+
+        inner.write().await.task_session_key = Some("other_session".into());
+        let out = watch
+            .execute(serde_json::json!({"thingId":"t1","online":false}))
+            .await
+            .unwrap();
+        assert!(!out.success);
+        assert_eq!(tinyiothub_storage::watch::list_rules(&pool).await.unwrap().len(), 1);
     }
 
     /// E2 read_device：live 摘要存在时一次返回 state+health+zone+text。

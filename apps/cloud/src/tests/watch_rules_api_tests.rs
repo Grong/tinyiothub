@@ -232,6 +232,7 @@ async fn active_watch_limit_20_returns_400() {
             persistent: 0,
             timeout_secs: 600,
             created_at: "2026-10-20T00:00:00Z".into(),
+            owner_task_id: None,
         };
         tinyiothub_storage::watch::insert_rule(&pool, &row).await.unwrap();
     }
@@ -243,6 +244,7 @@ async fn active_watch_limit_20_returns_400() {
         persistent: 0,
         timeout_secs: 600,
         created_at: "2026-10-20T00:00:00Z".into(),
+        owner_task_id: None,
     };
     tinyiothub_storage::watch::insert_rule(&pool, &foreign).await.unwrap();
 

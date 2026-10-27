@@ -224,6 +224,53 @@ impl Db {
         .transpose()
     }
 
+    pub async fn record_task_wake(&self, wake: &TaskWake) -> Result<bool, TaskStoreError> {
+        let signal: serde_json::Value = serde_json::from_str(&wake.signal_json)
+            .map_err(|error| TaskStoreError::Validation(format!("invalid wake signal: {error}")))?;
+        let workspace_id = signal
+            .get("workspace_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| TaskStoreError::Validation("wake signal has no workspace_id".to_string()))?;
+        let mut tx = self.pool().begin().await.map_err(unavailable)?;
+        let task = find_task(&mut tx, workspace_id, &wake.task_id)
+            .await?
+            .ok_or_else(|| TaskStoreError::Validation("wake task or workspace does not match".to_string()))?;
+        if task.workspace_id != workspace_id {
+            return Err(TaskStoreError::Validation("wake task workspace differs".to_string()));
+        }
+        let inserted = sqlx::query(
+            "INSERT INTO task_wake_outbox
+                 (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(task_id, event_id) DO NOTHING",
+        )
+        .bind(&wake.task_id)
+        .bind(&wake.event_id)
+        .bind(&wake.signal_json)
+        .bind(wake.dispatch_state.as_str())
+        .bind(wake.created_at)
+        .bind(wake.dispatched_at)
+        .bind(wake.resolved_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?
+        .rows_affected();
+        tx.commit().await.map_err(unavailable)?;
+        Ok(inserted == 1)
+    }
+
+    pub async fn resolve_task_wakes(&self, task_id: &str) -> Result<usize, TaskStoreError> {
+        let affected =
+            sqlx::query("UPDATE task_wake_outbox SET resolved_at = ? WHERE task_id = ? AND resolved_at IS NULL")
+                .bind(Utc::now())
+                .bind(task_id)
+                .execute(self.pool())
+                .await
+                .map_err(unavailable)?
+                .rows_affected();
+        Ok(affected as usize)
+    }
+
     pub async fn transition_task(
         &self,
         workspace_id: &str,
@@ -360,6 +407,23 @@ impl Db {
         Ok(())
     }
 
+    pub async fn latest_task_run(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<tinyiothub_core::agent_runs::RunReport>, TaskStoreError> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT report FROM agent_runs
+             WHERE task_id = ? AND status = 'completed' AND report IS NOT NULL
+             ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        )
+        .bind(task_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(unavailable)?;
+        row.map(|(json,)| serde_json::from_str(&json).map_err(unavailable))
+            .transpose()
+    }
+
     pub async fn claim_pending_wakes(&self, limit: i64) -> Result<Vec<TaskWake>, TaskStoreError> {
         let now = Utc::now();
         sqlx::query_as::<_, TaskWakeRow>(
@@ -367,7 +431,7 @@ impl Db {
              SET dispatch_state = 'dispatched', dispatched_at = ?
              WHERE (task_id, event_id) IN (
                  SELECT task_id, event_id FROM task_wake_outbox
-                 WHERE dispatch_state = 'pending'
+                 WHERE dispatch_state = 'pending' AND resolved_at IS NULL
                  ORDER BY created_at, task_id, event_id LIMIT ?
              )
              RETURNING task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at",
@@ -394,7 +458,7 @@ impl Db {
             "UPDATE task_wake_outbox
              SET dispatch_state = ?,
                  dispatched_at = CASE ? WHEN 'dispatched' THEN ? WHEN 'pending' THEN NULL ELSE dispatched_at END,
-                 resolved_at = CASE ? WHEN 'dead' THEN ? WHEN 'pending' THEN NULL WHEN 'dispatched' THEN NULL ELSE resolved_at END
+                 resolved_at = CASE ? WHEN 'dead' THEN ? WHEN 'pending' THEN NULL ELSE resolved_at END
              WHERE task_id = ? AND event_id = ?",
         )
         .bind(state)
@@ -722,6 +786,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn recorded_wakes_are_idempotent_and_resolved_wakes_are_not_claimed() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws_1").await;
+        let db = Db::new(pool);
+        let task = sample_task("task_1", "ws_1", "key_1", "inspect");
+        db.create_task_with_wake(&task, &sample_wake("task_1", "event_1", "ws_1"))
+            .await
+            .expect("create");
+        let wake = sample_wake("task_1", "event_2", "ws_1");
+        assert!(db.record_task_wake(&wake).await.expect("record"));
+        assert!(!db.record_task_wake(&wake).await.expect("duplicate"));
+        assert_eq!(db.resolve_task_wakes("task_1").await.expect("resolve"), 2);
+        assert!(db.claim_pending_wakes(10).await.expect("claim").is_empty());
+        assert!(
+            db.wake_by_id("task_1", "event_2")
+                .await
+                .expect("wake")
+                .expect("stored")
+                .resolved_at
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
     async fn run_insert_deduplicates_task_wake_and_finish_updates_same_row() {
         let pool = crate::test_helpers::test_pool().await;
         seed_workspace(&pool, "ws_1").await;
@@ -749,6 +837,8 @@ mod tests {
             trace: vec![],
             task_count: None,
             snapshot: None,
+            task_id: Some("task_1".into()),
+            wake_event_id: Some("event_1".into()),
         };
         db.finish_run(&report).await.expect("finish");
 
@@ -775,6 +865,10 @@ mod tests {
             .expect("report json");
         let stored: tinyiothub_core::agent_runs::RunReport = serde_json::from_str(&report_json).expect("report parses");
         assert_eq!(stored.summary, "inspection complete");
+
+        assert!(db.begin_run(&task, "event_2", "run_2").await.expect("next run"));
+        let latest = db.latest_task_run("task_1").await.expect("latest completed report");
+        assert_eq!(latest.expect("completed report").run_id, "run_1");
     }
 
     #[tokio::test]

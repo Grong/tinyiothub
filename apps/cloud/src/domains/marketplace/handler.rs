@@ -114,6 +114,7 @@ async fn apply_template_rules(
                 persistent: i64::from(rule.persistent),
                 timeout_secs: i64::from(rule.timeout_secs),
                 created_at: rule.created_at.clone(),
+                owner_task_id: rule.owner_task_id.clone(),
             },
         )
         .await

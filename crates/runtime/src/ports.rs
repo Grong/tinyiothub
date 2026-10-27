@@ -116,6 +116,8 @@ pub trait WatchRuleStore: Send + Sync {
     async fn list_all(&self) -> Result<Vec<WatchRule>, String>;
     async fn insert(&self, rule: &WatchRule) -> Result<(), String>;
     async fn delete(&self, workspace_id: &str, id: &str) -> Result<bool, String>;
+    async fn complete_task_watch(&self, workspace_id: &str, id: &str, wake: &TaskWake) -> Result<bool, String>;
+    async fn delete_task_watches(&self, workspace_id: &str, task_id: &str) -> Result<usize, String>;
 }
 
 /// E4a 包级声明持久源：安装/升级写穿，启动重织读全量。

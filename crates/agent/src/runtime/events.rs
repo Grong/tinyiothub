@@ -33,6 +33,8 @@ pub enum AgentEventKind {
         run_id: String,
         workspace_id: String,
         problem_keys: Vec<String>,
+        task_id: Option<String>,
+        wake_event_id: Option<String>,
     },
     /// thing_agent run 完成记录（含完整 RunReport，幂等 insert-or-ignore by run_id）
     RunRecorded {

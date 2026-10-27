@@ -756,6 +756,8 @@ mod tests {
             }],
             task_count: None,
             snapshot: None,
+            task_id: None,
+            wake_event_id: None,
         };
         db.insert_agent_run(&report, Some("alarm:t1:-"), None).await.unwrap();
 

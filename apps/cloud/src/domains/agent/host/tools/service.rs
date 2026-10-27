@@ -61,6 +61,7 @@ pub fn chat_builtin_tools_provider(
                 access: access.clone(),
                 resources: resources.clone(),
                 demand: demand.clone(),
+                run_ctx: None,
             },
         ));
 

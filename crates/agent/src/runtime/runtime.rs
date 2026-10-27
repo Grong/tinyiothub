@@ -502,6 +502,8 @@ mod tests {
             trace: vec![],
             task_count: None,
             snapshot: None,
+            task_id: None,
+            wake_event_id: None,
         }];
         let rt = AgentRuntime::restore(snap, RuntimeDeps::test_stub());
 
@@ -536,6 +538,8 @@ mod tests {
             trace: vec![],
             task_count: None,
             snapshot: None,
+            task_id: None,
+            wake_event_id: None,
         });
         rt.run_registry().set_run_keys(
             "run_keys",

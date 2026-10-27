@@ -173,6 +173,7 @@ pub fn resolve_template_rules(
                 persistent: rule.persistent,
                 timeout_secs: rule.timeout_secs,
                 created_at: chrono::Utc::now().to_rfc3339(),
+                owner_task_id: None,
             };
             if let Err(e) = watch.validate() {
                 report.references.push(ReferenceIssue {

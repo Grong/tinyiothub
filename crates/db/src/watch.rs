@@ -11,12 +11,13 @@ pub struct WatchRuleRow {
     pub persistent: i64,
     pub timeout_secs: i64,
     pub created_at: String,
+    pub owner_task_id: Option<String>,
 }
 
 pub async fn insert_rule(pool: &SqlitePool, row: &WatchRuleRow) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO watch_rules (id, workspace_id, kind, condition, persistent, timeout_secs, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO watch_rules (id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&row.id)
     .bind(&row.workspace_id)
@@ -25,6 +26,7 @@ pub async fn insert_rule(pool: &SqlitePool, row: &WatchRuleRow) -> Result<(), sq
     .bind(row.persistent)
     .bind(row.timeout_secs)
     .bind(&row.created_at)
+    .bind(&row.owner_task_id)
     .execute(pool)
     .await?;
     Ok(())
@@ -33,8 +35,8 @@ pub async fn insert_rule(pool: &SqlitePool, row: &WatchRuleRow) -> Result<(), sq
 /// 事务内插入（场景包实例化与 market 导入整包回滚）。
 pub async fn insert_rule_tx(tx: &mut Transaction<'_, Sqlite>, row: &WatchRuleRow) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO watch_rules (id, workspace_id, kind, condition, persistent, timeout_secs, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO watch_rules (id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&row.id)
     .bind(&row.workspace_id)
@@ -43,13 +45,64 @@ pub async fn insert_rule_tx(tx: &mut Transaction<'_, Sqlite>, row: &WatchRuleRow
     .bind(row.persistent)
     .bind(row.timeout_secs)
     .bind(&row.created_at)
+    .bind(&row.owner_task_id)
     .execute(&mut **tx)
     .await?;
     Ok(())
 }
 
 pub async fn list_rules(pool: &SqlitePool) -> Result<Vec<WatchRuleRow>, sqlx::Error> {
-    sqlx::query_as("SELECT * FROM watch_rules").fetch_all(pool).await
+    sqlx::query_as(
+        "SELECT id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id
+         FROM watch_rules",
+    )
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn complete_task_watch(
+    pool: &SqlitePool,
+    workspace_id: &str,
+    id: &str,
+    wake: &tinyiothub_core::agent_task::TaskWake,
+) -> Result<bool, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let deleted = sqlx::query("DELETE FROM watch_rules WHERE workspace_id = ? AND id = ? AND owner_task_id = ?")
+        .bind(workspace_id)
+        .bind(id)
+        .bind(&wake.task_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if deleted == 0 {
+        return Ok(false);
+    }
+    sqlx::query(
+        "INSERT INTO task_wake_outbox
+             (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(task_id, event_id) DO NOTHING",
+    )
+    .bind(&wake.task_id)
+    .bind(&wake.event_id)
+    .bind(&wake.signal_json)
+    .bind(wake.dispatch_state.as_str())
+    .bind(wake.created_at)
+    .bind(wake.dispatched_at)
+    .bind(wake.resolved_at)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
+pub async fn delete_task_watches(pool: &SqlitePool, workspace_id: &str, task_id: &str) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM watch_rules WHERE workspace_id = ? AND owner_task_id = ?")
+        .bind(workspace_id)
+        .bind(task_id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
 }
 
 pub async fn delete_rule(pool: &SqlitePool, workspace_id: &str, id: &str) -> Result<u64, sqlx::Error> {
@@ -178,12 +231,151 @@ mod tests {
             persistent: 0,
             timeout_secs: 600,
             created_at: "2026-10-20T00:00:00Z".into(),
+            owner_task_id: None,
         };
         insert_rule(&pool, &row).await.unwrap();
         assert_eq!(list_rules(&pool).await.unwrap().len(), 1);
         // 跨工作区删除必须落空（多租户隔离）
         assert_eq!(delete_rule(&pool, "ws2", "r1").await.unwrap(), 0);
         assert_eq!(delete_rule(&pool, "ws1", "r1").await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn task_watch_completion_deletes_rule_and_commits_one_wake_atomically() {
+        let pool = test_pool().await;
+        sqlx::query(
+            "INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free','free','Free')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed plan");
+        sqlx::query("INSERT INTO tenants (id, name, slug) VALUES ('t1','tenant','t1')")
+            .execute(&pool)
+            .await
+            .expect("seed tenant");
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws1','ws1','t1','now','now')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed workspace");
+        sqlx::query(
+            "INSERT INTO agent_tasks
+                 (id, workspace_id, idempotency_key, objective, session_key, created_by,
+                  status, current_run_id, state_version, created_at, updated_at, ended_at)
+             VALUES ('task1','ws1','idem1','inspect','session1','user1','waiting_watch',NULL,0,'now','now',NULL)",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed task");
+        let row = WatchRuleRow {
+            id: "r1".into(),
+            workspace_id: "ws1".into(),
+            kind: "property".into(),
+            condition: r#"{"v":1}"#.into(),
+            persistent: 0,
+            timeout_secs: 600,
+            created_at: "2026-10-20T00:00:00Z".into(),
+            owner_task_id: Some("task1".into()),
+        };
+        insert_rule(&pool, &row).await.expect("insert owned watch");
+        assert_eq!(
+            list_rules(&pool).await.expect("list")[0].owner_task_id.as_deref(),
+            Some("task1")
+        );
+        let wake = tinyiothub_core::agent_task::TaskWake {
+            task_id: "task1".into(),
+            event_id: "watch:r1:hit".into(),
+            signal_json: r#"{"workspace_id":"ws1"}"#.into(),
+            dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+            created_at: chrono::Utc::now(),
+            dispatched_at: None,
+            resolved_at: None,
+        };
+        assert!(
+            complete_task_watch(&pool, "ws1", "r1", &wake)
+                .await
+                .expect("complete watch")
+        );
+        assert!(list_rules(&pool).await.expect("deleted").is_empty());
+        assert!(
+            crate::Db::new(pool.clone())
+                .wake_by_id("task1", "watch:r1:hit")
+                .await
+                .expect("wake")
+                .is_some()
+        );
+        assert!(
+            !complete_task_watch(&pool, "ws1", "r1", &wake)
+                .await
+                .expect("idempotent completion")
+        );
+        let wakes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_wake_outbox")
+            .fetch_one(&pool)
+            .await
+            .expect("wake count");
+        assert_eq!(wakes, 1);
+    }
+
+    #[tokio::test]
+    async fn delete_task_watches_is_scoped_to_workspace_and_owner() {
+        let pool = test_pool().await;
+        sqlx::query(
+            "INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free','free','Free')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed plan");
+        sqlx::query("INSERT INTO tenants (id, name, slug) VALUES ('t1','tenant','t1')")
+            .execute(&pool)
+            .await
+            .expect("seed tenant");
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws1','ws1','t1','now','now')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed workspace");
+        sqlx::query(
+            "INSERT INTO agent_tasks
+                 (id, workspace_id, idempotency_key, objective, session_key, created_by,
+                  status, current_run_id, state_version, created_at, updated_at, ended_at)
+             VALUES ('task1','ws1','idem1','inspect','session1','user1','active',NULL,0,'now','now',NULL)",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed task");
+        let base = WatchRuleRow {
+            id: "r1".into(),
+            workspace_id: "ws1".into(),
+            kind: "property".into(),
+            condition: r#"{"v":1}"#.into(),
+            persistent: 0,
+            timeout_secs: 600,
+            created_at: "2026-10-20T00:00:00Z".into(),
+            owner_task_id: Some("task1".into()),
+        };
+        insert_rule(&pool, &base).await.expect("owned");
+        insert_rule(
+            &pool,
+            &WatchRuleRow {
+                id: "r2".into(),
+                owner_task_id: None,
+                ..base.clone()
+            },
+        )
+        .await
+        .expect("unowned");
+        assert_eq!(
+            delete_task_watches(&pool, "ws2", "task1")
+                .await
+                .expect("other workspace"),
+            0
+        );
+        assert_eq!(delete_task_watches(&pool, "ws1", "task1").await.expect("owner"), 1);
+        let remaining = list_rules(&pool).await.expect("remaining");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, "r2");
     }
 
     #[tokio::test]

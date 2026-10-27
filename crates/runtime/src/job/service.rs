@@ -381,6 +381,24 @@ impl JobService {
         }
     }
 
+    pub async fn task_jobs(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        unknown_only: bool,
+    ) -> Result<Vec<DeviceJob>, DeviceJobError> {
+        let mut jobs = self
+            .inner
+            .store
+            .active_jobs(Some(workspace_id), unknown_only)
+            .await?
+            .into_iter()
+            .filter(|job| job.task_id.as_deref() == Some(task_id))
+            .collect::<Vec<_>>();
+        jobs.sort_by(|left, right| left.id.cmp(&right.id));
+        Ok(jobs)
+    }
+
     pub async fn recover(&self) -> Result<RecoveryReport, DeviceJobError> {
         let mut report = RecoveryReport::default();
         for job in self.inner.store.active_jobs(None, false).await? {
@@ -788,6 +806,38 @@ mod tests {
                 self.arbitration.clone(),
             );
         }
+    }
+
+    #[tokio::test]
+    async fn task_jobs_filters_workspace_task_and_unknown_state() {
+        let fixture = JobFixture::new().await;
+        fixture.accepted_job("job_1", "task_1").await;
+        fixture.accepted_job("job_2", "task_2").await;
+        let active = fixture
+            .service
+            .task_jobs("ws_1", "task_1", false)
+            .await
+            .expect("active");
+        assert_eq!(active.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(), ["job_1"]);
+        fixture
+            .service
+            .finish("job_1", JobFinal::Cancelled { within_grace: false })
+            .await
+            .expect("cancel unknown");
+        assert!(
+            fixture
+                .service
+                .task_jobs("ws_1", "task_1", false)
+                .await
+                .expect("active")
+                .is_empty()
+        );
+        let unknown = fixture
+            .service
+            .task_jobs("ws_1", "task_1", true)
+            .await
+            .expect("unknown");
+        assert_eq!(unknown.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(), ["job_1"]);
     }
 
     #[tokio::test]

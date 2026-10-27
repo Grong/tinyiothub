@@ -46,6 +46,8 @@ fn report(run_id: &str, outcome: Outcome, end_reason: Option<EndReason>, thing: 
         trace: vec![],
         task_count: None,
         snapshot: None,
+        task_id: None,
+        wake_event_id: None,
     }
 }
 

@@ -385,6 +385,8 @@ mod tests {
             trace: vec![],
             task_count: None,
             snapshot: None,
+            task_id: None,
+            wake_event_id: None,
         }
     }
 

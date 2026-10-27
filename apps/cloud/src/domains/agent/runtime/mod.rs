@@ -44,6 +44,22 @@ impl TaskStore for DbTaskStore {
         self.db.wake_by_id(task_id, event_id).await
     }
 
+    async fn record_wake(&self, wake: &TaskWake) -> Result<bool, TaskStoreError> {
+        self.db.record_task_wake(wake).await
+    }
+
+    async fn resolve_task_wakes(&self, task_id: &str) -> Result<usize, TaskStoreError> {
+        self.db.resolve_task_wakes(task_id).await
+    }
+
+    async fn interrupt_unfinished_runs(&self) -> Result<usize, TaskStoreError> {
+        self.db
+            .interrupt_zombie_running_agent_runs(&[])
+            .await
+            .map(|count| count as usize)
+            .map_err(|error| TaskStoreError::Unavailable(error.to_string()))
+    }
+
     async fn transition_task(
         &self,
         workspace_id: &str,
@@ -72,6 +88,10 @@ impl TaskStore for DbTaskStore {
 
     async fn finish_run(&self, report: &RunReport) -> Result<(), TaskStoreError> {
         self.db.finish_run(report).await
+    }
+
+    async fn latest_task_run(&self, task_id: &str) -> Result<Option<RunReport>, TaskStoreError> {
+        self.db.latest_task_run(task_id).await
     }
 
     async fn claim_pending_wakes(&self, limit: i64) -> Result<Vec<TaskWake>, TaskStoreError> {

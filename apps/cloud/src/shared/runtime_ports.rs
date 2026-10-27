@@ -641,7 +641,20 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
         let rows = tinyiothub_storage::watch::list_rules(self.0.pool())
             .await
             .map_err(|e| e.to_string())?;
+        let task_workspaces: std::collections::HashMap<String, String> = self
+            .0
+            .list_nonterminal_tasks(None)
+            .await
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|task| (task.id, task.workspace_id))
+            .collect();
         rows.iter()
+            .filter(|row| {
+                row.owner_task_id
+                    .as_ref()
+                    .is_none_or(|task_id| task_workspaces.get(task_id) == Some(&row.workspace_id))
+            })
             .map(|row| {
                 let condition: tinyiothub_core::watch::WatchCondition = serde_json::from_str(&row.condition)
                     .map_err(|e| format!("watch_rule {} condition JSON 损坏: {e}", row.id))?;
@@ -652,12 +665,24 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
                     persistent: row.persistent != 0,
                     timeout_secs: row.timeout_secs as u32,
                     created_at: row.created_at.clone(),
+                    owner_task_id: row.owner_task_id.clone(),
                 })
             })
             .collect()
     }
 
     async fn insert(&self, rule: &tinyiothub_core::watch::WatchRule) -> Result<(), String> {
+        if let Some(task_id) = rule.owner_task_id.as_deref() {
+            let task = self
+                .0
+                .get_task(&rule.workspace_id, task_id)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| "watch owner Task does not exist in this workspace".to_string())?;
+            if task.status.is_terminal() {
+                return Err("watch owner Task is terminal".to_string());
+            }
+        }
         let condition = serde_json::to_value(&rule.condition).map_err(|e| e.to_string())?;
         let kind = condition
             .get("type")
@@ -672,6 +697,7 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
             persistent: i64::from(rule.persistent),
             timeout_secs: i64::from(rule.timeout_secs),
             created_at: rule.created_at.clone(),
+            owner_task_id: rule.owner_task_id.clone(),
         };
         tinyiothub_storage::watch::insert_rule(self.0.pool(), &row)
             .await
@@ -683,6 +709,24 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
             .await
             .map_err(|e| e.to_string())?;
         Ok(affected > 0)
+    }
+
+    async fn complete_task_watch(
+        &self,
+        workspace_id: &str,
+        id: &str,
+        wake: &tinyiothub_core::agent_task::TaskWake,
+    ) -> Result<bool, String> {
+        tinyiothub_storage::watch::complete_task_watch(self.0.pool(), workspace_id, id, wake)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn delete_task_watches(&self, workspace_id: &str, task_id: &str) -> Result<usize, String> {
+        tinyiothub_storage::watch::delete_task_watches(self.0.pool(), workspace_id, task_id)
+            .await
+            .map(|count| count as usize)
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -1126,6 +1170,8 @@ mod approval_timeout_tests {
             trace: vec![],
             task_count: None,
             snapshot: None,
+            task_id: None,
+            wake_event_id: None,
         };
         db.insert_agent_run(&report, Some("alarm:t1:r1"), None).await.unwrap();
 
@@ -1216,6 +1262,7 @@ mod watch_ports_tests {
             persistent: true,
             timeout_secs: 600,
             created_at: "2026-10-20T00:00:00Z".into(),
+            owner_task_id: None,
         }
     }
 
@@ -1333,6 +1380,77 @@ mod watch_ports_tests {
         assert!(got.persistent);
         assert_eq!(got.timeout_secs, 600);
         assert_eq!(got.created_at, "2026-10-20T00:00:00Z");
+    }
+
+    #[tokio::test]
+    async fn rebuild_lists_only_watches_whose_owner_task_is_nonterminal() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
+        let db = tinyiothub_storage::Db::new(pool);
+        tinyiothub_storage::seed::seed_system(&db).await.unwrap();
+        sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws1','ws1','tenant-default-001','2025-01-01','2025-01-01')")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        for (task_id, status) in [
+            ("task-active", tinyiothub_core::agent_task::TaskStatus::Active),
+            ("task-paused", tinyiothub_core::agent_task::TaskStatus::Paused),
+            ("task-terminal", tinyiothub_core::agent_task::TaskStatus::Completed),
+        ] {
+            let now = chrono::Utc::now();
+            let task = tinyiothub_core::agent_task::AgentTask {
+                id: task_id.into(),
+                workspace_id: "ws1".into(),
+                idempotency_key: task_id.into(),
+                objective: "watch pump".into(),
+                session_key: Some(format!("agent:ws1:default/{task_id}")),
+                created_by: "user-1".into(),
+                status: tinyiothub_core::agent_task::TaskStatus::Active,
+                current_run_id: None,
+                state_version: 0,
+                created_at: now,
+                updated_at: now,
+                ended_at: None,
+            };
+            let wake = tinyiothub_core::agent_task::TaskWake {
+                task_id: task_id.into(),
+                event_id: format!("create:{task_id}"),
+                signal_json: serde_json::json!({"workspace_id": "ws1"}).to_string(),
+                dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+                created_at: now,
+                dispatched_at: None,
+                resolved_at: None,
+            };
+            db.create_task_with_wake(&task, &wake).await.unwrap();
+            if status != tinyiothub_core::agent_task::TaskStatus::Active {
+                db.transition_task("ws1", task_id, 0, status, None).await.unwrap();
+            }
+            let mut rule = sample_rule(&format!("rule-{task_id}"), "ws1");
+            rule.owner_task_id = Some(task_id.into());
+            let condition = serde_json::to_value(&rule.condition).unwrap();
+            tinyiothub_storage::watch::insert_rule(
+                db.pool(),
+                &tinyiothub_storage::watch::WatchRuleRow {
+                    id: rule.id,
+                    workspace_id: rule.workspace_id,
+                    kind: "property".into(),
+                    condition: condition.to_string(),
+                    persistent: 1,
+                    timeout_secs: 600,
+                    created_at: rule.created_at,
+                    owner_task_id: rule.owner_task_id,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        let adapter = WatchRuleStoreAdapter(db);
+        let restored = WatchRuleStore::list_all(&adapter).await.unwrap();
+        let ids: Vec<&str> = restored.iter().map(|rule| rule.id.as_str()).collect();
+        assert_eq!(ids, ["rule-task-active", "rule-task-paused"]);
     }
 
     /// delete 跨工作区落空（多租户隔离），本工作区删得掉。

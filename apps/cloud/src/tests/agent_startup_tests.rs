@@ -62,6 +62,8 @@ fn report_json(run_id: &str, workspace_id: &str) -> String {
         trace: vec![],
         task_count: None,
         snapshot: None,
+        task_id: None,
+        wake_event_id: None,
     })
     .expect("serialize report")
 }

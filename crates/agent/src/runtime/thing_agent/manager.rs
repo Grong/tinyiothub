@@ -681,7 +681,7 @@ fn record_heartbeat_outcome(
 }
 
 /// E2：向 engine actor 要本工作区实时快照（120ms 超时，fail-soft）。
-async fn fetch_workspace_snapshot(
+pub(crate) async fn fetch_workspace_snapshot(
     cmds: &Arc<DashMap<String, mpsc::Sender<WatchCommand>>>,
     workspace_id: &str,
     demand: Option<&dyn SnapshotDemandSink>,
@@ -732,11 +732,17 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
     // （judgment_subscriber）回填 judgment.run_id 后前端轮询必命中注册表，
     // 消除"回填快于注册→轮询 404"窗。guard 生命周期横跨整个 execute，
     // run 结束（含 agent 不可用的早退）自动注销。
-    let _guard = ctx.active_runs.as_ref().and_then(|r| r.register(ctx.clone()));
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let _guard = ctx
+        .active_runs
+        .as_ref()
+        .and_then(|r| r.register(ctx.clone(), cancel.clone()));
     deps.events.emit(AgentEventKind::RunStarted {
         run_id: run_id.clone(),
         workspace_id: ws.clone(),
         problem_keys: collect_problem_keys(&signal.source),
+        task_id: None,
+        wake_event_id: None,
     });
 
     // T10 injection sources: 内存 registry（Task 4 替代 T12 repo 读取）。
@@ -867,6 +873,8 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
                 // 与旧 error 锚行 taskCount=0 同显）。
                 task_count: None,
                 snapshot: None,
+                task_id: None,
+                wake_event_id: None,
             };
             deps.registry.record_with_keys(
                 report.clone(),
@@ -888,7 +896,7 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
         }
     };
 
-    let outcome = deps.runner.execute(agent, prompt, ctx).await;
+    let outcome = deps.runner.execute(agent, prompt, ctx, cancel).await;
     let mut report = outcome.report;
     // 读侧 parity（Task 10 修复轮 1）：heartbeat 源 run 把任务表大小写进
     // report.task_count——get_logs ExecutionRecord.taskCount 的数据源，对齐旧
@@ -2404,6 +2412,17 @@ pub(crate) mod tests {
         async fn delete(&self, _workspace_id: &str, _id: &str) -> Result<bool, String> {
             Ok(true)
         }
+        async fn complete_task_watch(
+            &self,
+            _workspace_id: &str,
+            _id: &str,
+            _wake: &tinyiothub_core::agent_task::TaskWake,
+        ) -> Result<bool, String> {
+            Ok(true)
+        }
+        async fn delete_task_watches(&self, _workspace_id: &str, _task_id: &str) -> Result<usize, String> {
+            Ok(0)
+        }
     }
 
     /// 内存桩：记录全部 append 的 HubLedger。
@@ -2453,6 +2472,7 @@ pub(crate) mod tests {
             persistent: false,
             timeout_secs: 600,
             created_at: "2026-10-20T00:00:00Z".into(),
+            owner_task_id: None,
         }
     }
 

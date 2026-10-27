@@ -122,6 +122,7 @@ pub(crate) async fn project(
         run_id,
         workspace_id,
         problem_keys,
+        ..
     } = &event.kind
     {
         backfill_run_started(db, workspace_id, run_id, problem_keys).await;
@@ -788,6 +789,8 @@ mod tests {
             trace: vec![],
             task_count: None,
             snapshot: None,
+            task_id: None,
+            wake_event_id: None,
         }
     }
 
@@ -844,6 +847,8 @@ mod tests {
                 run_id: run_id.to_string(),
                 workspace_id: "ws1".to_string(),
                 problem_keys,
+                task_id: None,
+                wake_event_id: None,
             },
         }
     }

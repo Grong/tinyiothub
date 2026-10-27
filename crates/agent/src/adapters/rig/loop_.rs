@@ -66,8 +66,11 @@ struct BudgetHook {
     cancel: Option<CancellationToken>,
 }
 
-impl AgentHook for BudgetHook {
-    async fn on_tool_call(&self, _ctx: &HookContext, _event: ToolCallEvent<'_>) -> ToolCallAction {
+impl BudgetHook {
+    fn action(&self) -> ToolCallAction {
+        if self.cancel.as_ref().is_some_and(CancellationToken::is_cancelled) {
+            return ToolCallAction::stop("run cancelled");
+        }
         let n = self.count.fetch_add(1, Ordering::SeqCst) + 1;
         if n > self.budget {
             if let Some(token) = &self.cancel {
@@ -77,6 +80,12 @@ impl AgentHook for BudgetHook {
         } else {
             ToolCallAction::Run
         }
+    }
+}
+
+impl AgentHook for BudgetHook {
+    async fn on_tool_call(&self, _ctx: &HookContext, _event: ToolCallEvent<'_>) -> ToolCallAction {
+        self.action()
     }
 }
 
@@ -269,4 +278,22 @@ pub fn rig_loop_factory(cfg: AgentLoopConfig) -> anyhow::Result<AgentLoopHandle>
 
     let handle: AgentLoopHandle = Arc::new(tokio::sync::Mutex::new(RigAgentLoop::new(agent, memory)));
     Ok(handle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cancelled_token_stops_before_tool_dispatch() {
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let hook = BudgetHook {
+            budget: 25,
+            count: AtomicUsize::new(0),
+            cancel: Some(cancel),
+        };
+        assert_eq!(hook.action(), ToolCallAction::Stop("run cancelled".into()));
+        assert_eq!(hook.count.load(Ordering::SeqCst), 0);
+    }
 }
