@@ -10,6 +10,8 @@
 
 use async_trait::async_trait;
 
+use tinyiothub_core::agent_task::TaskWake;
+use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
 use tinyiothub_core::driver::declaration::{AcceptanceReportRecord, DeviceDeclarationRecord, DriverDeclarationRecord};
 use tinyiothub_core::driver::manifest::{ManifestTool, StateFieldDecl};
 use tinyiothub_core::models::spatial::{MapRecord, PlaceKind, PlaceRecord, ThingPosition};
@@ -17,6 +19,35 @@ use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
 use tinyiothub_core::models::thing_property::ThingProperty;
 use tinyiothub_core::watch::WatchRule;
+
+/// Persistent Device Job lifecycle. Terminal updates and their Task wake are
+/// one storage transaction; active stop requests survive process restart.
+#[async_trait]
+pub trait DeviceJobStore: Send + Sync {
+    async fn create_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError>;
+    async fn get_job(&self, workspace_id: &str, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError>;
+    async fn get_task_job(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        job_id: &str,
+    ) -> Result<Option<DeviceJob>, DeviceJobError>;
+    async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError>;
+    async fn finish_job(
+        &self,
+        job_id: &str,
+        state: DeviceJobState,
+        result: &serde_json::Value,
+        wake: Option<&TaskWake>,
+    ) -> Result<bool, DeviceJobError>;
+    async fn update_progress(&self, job_id: &str, progress: &serde_json::Value) -> Result<bool, DeviceJobError>;
+    async fn request_stop(&self, workspace_id: &str, task_id: &str, job_id: &str) -> Result<DeviceJob, DeviceJobError>;
+    async fn active_jobs(
+        &self,
+        workspace_id: Option<&str>,
+        unknown_only: bool,
+    ) -> Result<Vec<DeviceJob>, DeviceJobError>;
+}
 
 /// Read-side queries for device commands (cron `device_command` executor).
 #[async_trait]

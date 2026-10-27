@@ -1,0 +1,571 @@
+use chrono::{DateTime, Utc};
+use serde_json::Value;
+use sqlx::{Sqlite, Transaction};
+use tinyiothub_core::agent_task::TaskWake;
+use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
+
+use crate::Db;
+
+#[derive(Debug, sqlx::FromRow)]
+struct DeviceJobRow {
+    id: String,
+    workspace_id: String,
+    device_id: String,
+    tool: String,
+    args_json: String,
+    state: String,
+    stop_requested_at: Option<DateTime<Utc>>,
+    progress_json: Option<String>,
+    result_json: Option<String>,
+    task_id: Option<String>,
+    run_id: Option<String>,
+    tool_call_id: Option<String>,
+    driver_call_id: Option<String>,
+    started_at: DateTime<Utc>,
+    ended_at: Option<DateTime<Utc>>,
+}
+
+impl TryFrom<DeviceJobRow> for DeviceJob {
+    type Error = DeviceJobError;
+
+    fn try_from(row: DeviceJobRow) -> Result<Self, Self::Error> {
+        let state = DeviceJobState::from_db(&row.state)
+            .ok_or_else(|| DeviceJobError::Storage(format!("unknown device job state: {}", row.state)))?;
+        Ok(Self {
+            id: row.id,
+            workspace_id: row.workspace_id,
+            device_id: row.device_id,
+            tool: row.tool,
+            args_json: parse_json(&row.args_json)?,
+            state,
+            stop_requested_at: row.stop_requested_at,
+            progress_json: row.progress_json.as_deref().map(parse_json).transpose()?,
+            result_json: row.result_json.as_deref().map(parse_json).transpose()?,
+            task_id: row.task_id,
+            run_id: row.run_id,
+            tool_call_id: row.tool_call_id,
+            driver_call_id: row.driver_call_id,
+            started_at: row.started_at,
+            ended_at: row.ended_at,
+        })
+    }
+}
+
+fn parse_json(raw: &str) -> Result<Value, DeviceJobError> {
+    serde_json::from_str(raw).map_err(|error| DeviceJobError::Storage(error.to_string()))
+}
+
+fn storage(error: impl std::fmt::Display) -> DeviceJobError {
+    DeviceJobError::Storage(error.to_string())
+}
+
+fn create_error(error: sqlx::Error) -> DeviceJobError {
+    if matches!(&error, sqlx::Error::Database(db) if db.is_unique_violation()) {
+        DeviceJobError::Conflict(error.to_string())
+    } else {
+        storage(error)
+    }
+}
+
+async fn find_job_by_id(
+    executor: &mut sqlx::SqliteConnection,
+    job_id: &str,
+) -> Result<Option<DeviceJob>, DeviceJobError> {
+    sqlx::query_as::<_, DeviceJobRow>(
+        "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+                progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, started_at, ended_at
+         FROM device_jobs WHERE id = ?",
+    )
+    .bind(job_id)
+    .fetch_optional(executor)
+    .await
+    .map_err(storage)?
+    .map(DeviceJob::try_from)
+    .transpose()
+}
+
+async fn insert_job_wake(tx: &mut Transaction<'_, Sqlite>, wake: &TaskWake) -> Result<(), DeviceJobError> {
+    sqlx::query(
+        "INSERT INTO task_wake_outbox
+             (task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&wake.task_id)
+    .bind(&wake.event_id)
+    .bind(&wake.signal_json)
+    .bind(wake.dispatch_state.as_str())
+    .bind(wake.created_at)
+    .bind(wake.dispatched_at)
+    .bind(wake.resolved_at)
+    .execute(&mut **tx)
+    .await
+    .map_err(storage)?;
+    Ok(())
+}
+
+fn validate_job_wake(job: &DeviceJob, wake: &TaskWake) -> Result<(), DeviceJobError> {
+    if job.task_id.as_deref() != Some(wake.task_id.as_str()) {
+        return Err(DeviceJobError::Validation("job and wake task id differ".to_string()));
+    }
+    let signal: Value = serde_json::from_str(&wake.signal_json)
+        .map_err(|error| DeviceJobError::Validation(format!("invalid wake signal: {error}")))?;
+    if signal.get("workspace_id").and_then(Value::as_str) != Some(job.workspace_id.as_str()) {
+        return Err(DeviceJobError::Validation(
+            "job and wake workspace id differ".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+impl Db {
+    pub async fn create_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError> {
+        sqlx::query(
+            "INSERT INTO device_jobs
+                 (id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+                  progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, started_at, ended_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&job.id)
+        .bind(&job.workspace_id)
+        .bind(&job.device_id)
+        .bind(&job.tool)
+        .bind(serde_json::to_string(&job.args_json).map_err(storage)?)
+        .bind(job.state.as_str())
+        .bind(job.stop_requested_at)
+        .bind(
+            job.progress_json
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(storage)?,
+        )
+        .bind(
+            job.result_json
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(storage)?,
+        )
+        .bind(&job.task_id)
+        .bind(&job.run_id)
+        .bind(&job.tool_call_id)
+        .bind(&job.driver_call_id)
+        .bind(job.started_at)
+        .bind(job.ended_at)
+        .execute(self.pool())
+        .await
+        .map_err(create_error)?;
+        Ok(())
+    }
+
+    pub async fn get_job(&self, workspace_id: &str, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+        sqlx::query_as::<_, DeviceJobRow>(
+            "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+                    progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, started_at, ended_at
+             FROM device_jobs WHERE workspace_id = ? AND id = ?",
+        )
+        .bind(workspace_id)
+        .bind(job_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(storage)?
+        .map(DeviceJob::try_from)
+        .transpose()
+    }
+
+    pub async fn get_task_job(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        job_id: &str,
+    ) -> Result<Option<DeviceJob>, DeviceJobError> {
+        sqlx::query_as::<_, DeviceJobRow>(
+            "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+                    progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, started_at, ended_at
+             FROM device_jobs WHERE workspace_id = ? AND task_id = ? AND id = ?",
+        )
+        .bind(workspace_id)
+        .bind(task_id)
+        .bind(job_id)
+        .fetch_optional(self.pool())
+        .await
+        .map_err(storage)?
+        .map(DeviceJob::try_from)
+        .transpose()
+    }
+
+    pub async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
+        let mut tx = self.pool().begin().await.map_err(storage)?;
+        let updated = sqlx::query_as::<_, DeviceJobRow>(
+            "UPDATE device_jobs SET state = 'running', driver_call_id = ?
+             WHERE id = ? AND state = 'accepted'
+             RETURNING id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+                       progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, started_at, ended_at",
+        )
+        .bind(driver_call_id)
+        .bind(job_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(storage)?
+        .map(DeviceJob::try_from)
+        .transpose()?;
+        if let Some(job) = updated {
+            tx.commit().await.map_err(storage)?;
+            return Ok(job);
+        }
+        let current = find_job_by_id(&mut tx, job_id).await?.ok_or(DeviceJobError::NotFound)?;
+        Err(DeviceJobError::Conflict(format!(
+            "job '{}' is {} rather than accepted",
+            current.id,
+            current.state.as_str()
+        )))
+    }
+
+    pub async fn finish_job(
+        &self,
+        job_id: &str,
+        state: DeviceJobState,
+        result: &Value,
+        wake: Option<&TaskWake>,
+    ) -> Result<bool, DeviceJobError> {
+        if !state.is_terminal() {
+            return Err(DeviceJobError::Validation(
+                "terminal result has an active state".to_string(),
+            ));
+        }
+        let mut tx = self.pool().begin().await.map_err(storage)?;
+        let current = find_job_by_id(&mut tx, job_id).await?.ok_or(DeviceJobError::NotFound)?;
+        if current.state.is_terminal() {
+            return Ok(false);
+        }
+        if let Some(wake) = wake {
+            validate_job_wake(&current, wake)?;
+        }
+        let updated = sqlx::query(
+            "UPDATE device_jobs SET state = ?, result_json = ?, ended_at = ?
+             WHERE id = ? AND state IN ('accepted', 'running')",
+        )
+        .bind(state.as_str())
+        .bind(serde_json::to_string(result).map_err(storage)?)
+        .bind(Utc::now())
+        .bind(job_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(storage)?
+        .rows_affected();
+        if updated == 0 {
+            return Ok(false);
+        }
+        if let Some(wake) = wake {
+            insert_job_wake(&mut tx, wake).await?;
+        }
+        tx.commit().await.map_err(storage)?;
+        Ok(true)
+    }
+
+    pub async fn update_progress(&self, job_id: &str, progress: &Value) -> Result<bool, DeviceJobError> {
+        let updated =
+            sqlx::query("UPDATE device_jobs SET progress_json = ? WHERE id = ? AND state IN ('accepted', 'running')")
+                .bind(serde_json::to_string(progress).map_err(storage)?)
+                .bind(job_id)
+                .execute(self.pool())
+                .await
+                .map_err(storage)?
+                .rows_affected();
+        if updated == 0 {
+            let mut connection = self.pool().acquire().await.map_err(storage)?;
+            if find_job_by_id(&mut connection, job_id).await?.is_none() {
+                return Err(DeviceJobError::NotFound);
+            }
+        }
+        Ok(updated > 0)
+    }
+
+    pub async fn request_stop(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        job_id: &str,
+    ) -> Result<DeviceJob, DeviceJobError> {
+        let mut tx = self.pool().begin().await.map_err(storage)?;
+        let updated = sqlx::query_as::<_, DeviceJobRow>(
+            "UPDATE device_jobs SET stop_requested_at = COALESCE(stop_requested_at, ?)
+             WHERE id = ? AND workspace_id = ? AND task_id = ? AND state IN ('accepted', 'running')
+             RETURNING id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+                       progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, started_at, ended_at",
+        )
+        .bind(Utc::now())
+        .bind(job_id)
+        .bind(workspace_id)
+        .bind(task_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(storage)?
+        .map(DeviceJob::try_from)
+        .transpose()?;
+        let job = match updated {
+            Some(job) => job,
+            None => sqlx::query_as::<_, DeviceJobRow>(
+                "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+                        progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, started_at, ended_at
+                 FROM device_jobs WHERE id = ? AND workspace_id = ? AND task_id = ?",
+            )
+            .bind(job_id)
+            .bind(workspace_id)
+            .bind(task_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(storage)?
+            .map(DeviceJob::try_from)
+            .transpose()?
+            .ok_or(DeviceJobError::NotFound)?,
+        };
+        tx.commit().await.map_err(storage)?;
+        Ok(job)
+    }
+
+    pub async fn active_jobs(
+        &self,
+        workspace_id: Option<&str>,
+        unknown_only: bool,
+    ) -> Result<Vec<DeviceJob>, DeviceJobError> {
+        let rows = if unknown_only {
+            sqlx::query_as::<_, DeviceJobRow>(
+                "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+                        progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, started_at, ended_at
+                 FROM device_jobs
+                 WHERE (? IS NULL OR workspace_id = ?) AND state = 'cancelled_unknown'
+                 ORDER BY started_at, id",
+            )
+            .bind(workspace_id)
+            .bind(workspace_id)
+            .fetch_all(self.pool())
+            .await
+        } else {
+            sqlx::query_as::<_, DeviceJobRow>(
+                "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+                        progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, started_at, ended_at
+                 FROM device_jobs
+                 WHERE (? IS NULL OR workspace_id = ?) AND state IN ('accepted', 'running')
+                 ORDER BY started_at, id",
+            )
+            .bind(workspace_id)
+            .bind(workspace_id)
+            .fetch_all(self.pool())
+            .await
+        }
+        .map_err(storage)?;
+        rows.into_iter().map(DeviceJob::try_from).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+    use serde_json::json;
+    use sqlx::SqlitePool;
+    use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
+    use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
+
+    use crate::Db;
+
+    async fn seed_workspace(pool: &SqlitePool, workspace_id: &str) {
+        sqlx::query(
+            "INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free','free','Free')",
+        )
+        .execute(pool)
+        .await
+        .expect("seed plan");
+        sqlx::query("INSERT OR IGNORE INTO tenants (id, name, slug) VALUES ('t1','tenant','t1')")
+            .execute(pool)
+            .await
+            .expect("seed tenant");
+        sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES (?, 'workspace', 't1', 'now', 'now')")
+            .bind(workspace_id)
+            .execute(pool)
+            .await
+            .expect("seed workspace");
+    }
+
+    async fn seed_task(db: &Db, task_id: &str, workspace_id: &str) {
+        let now = Utc::now();
+        let task = AgentTask {
+            id: task_id.to_string(),
+            workspace_id: workspace_id.to_string(),
+            idempotency_key: format!("key_{task_id}"),
+            objective: "exercise device jobs".to_string(),
+            session_key: None,
+            created_by: "user_1".to_string(),
+            status: TaskStatus::Active,
+            current_run_id: None,
+            state_version: 0,
+            created_at: now,
+            updated_at: now,
+            ended_at: None,
+        };
+        let wake = TaskWake {
+            task_id: task_id.to_string(),
+            event_id: format!("create_{task_id}"),
+            signal_json: json!({"workspace_id":workspace_id}).to_string(),
+            dispatch_state: WakeDispatchState::Pending,
+            created_at: now,
+            dispatched_at: None,
+            resolved_at: None,
+        };
+        db.create_task_with_wake(&task, &wake).await.expect("seed task");
+    }
+
+    fn sample_job(job_id: &str, task_id: &str) -> DeviceJob {
+        DeviceJob {
+            id: job_id.to_string(),
+            workspace_id: "ws_1".to_string(),
+            device_id: "dev_1".to_string(),
+            tool: "set_speed".to_string(),
+            args_json: json!({"speed":2}),
+            state: DeviceJobState::Accepted,
+            stop_requested_at: None,
+            progress_json: None,
+            result_json: None,
+            task_id: Some(task_id.to_string()),
+            run_id: Some("run_1".to_string()),
+            tool_call_id: Some(format!("call_{job_id}")),
+            driver_call_id: None,
+            started_at: Utc::now(),
+            ended_at: None,
+        }
+    }
+
+    fn result_wake(job_id: &str, task_id: &str) -> TaskWake {
+        TaskWake {
+            task_id: task_id.to_string(),
+            event_id: format!("job:{job_id}:terminal"),
+            signal_json: json!({"workspace_id":"ws_1","job_id":job_id}).to_string(),
+            dispatch_state: WakeDispatchState::Pending,
+            created_at: Utc::now(),
+            dispatched_at: None,
+            resolved_at: None,
+        }
+    }
+
+    async fn fixture() -> Db {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws_1").await;
+        let db = Db::new(pool);
+        seed_task(&db, "task_1", "ws_1").await;
+        seed_task(&db, "task_2", "ws_1").await;
+        db
+    }
+
+    #[tokio::test]
+    async fn terminal_fact_and_wake_commit_once() {
+        let db = fixture().await;
+        let job = sample_job("job_1", "task_1");
+        db.create_job(&job).await.expect("create job");
+        assert!(
+            db.finish_job(
+                &job.id,
+                DeviceJobState::Done,
+                &json!({"ok":true}),
+                Some(&result_wake(&job.id, "task_1"))
+            )
+            .await
+            .expect("first terminal")
+        );
+        assert!(
+            !db.finish_job(
+                &job.id,
+                DeviceJobState::Done,
+                &json!({"ok":true}),
+                Some(&result_wake(&job.id, "task_1"))
+            )
+            .await
+            .expect("duplicate terminal")
+        );
+        let stored = db.get_job("ws_1", &job.id).await.expect("get").expect("job");
+        assert_eq!(stored.state, DeviceJobState::Done);
+        assert!(stored.ended_at.is_some());
+        let wakes: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_wake_outbox WHERE task_id = 'task_1' AND event_id = 'job:job_1:terminal'",
+        )
+        .fetch_one(db.pool())
+        .await
+        .expect("wake count");
+        assert_eq!(wakes, 1);
+    }
+
+    #[tokio::test]
+    async fn invalid_wake_rolls_back_terminal_fact() {
+        let db = fixture().await;
+        let job = sample_job("job_rollback", "task_1");
+        db.create_job(&job).await.expect("create job");
+        let error = db
+            .finish_job(
+                &job.id,
+                DeviceJobState::Done,
+                &json!({"ok":true}),
+                Some(&result_wake(&job.id, "task_2")),
+            )
+            .await
+            .expect_err("mismatched wake must fail");
+        assert!(matches!(error, DeviceJobError::Validation(_)));
+        assert_eq!(
+            db.get_job("ws_1", &job.id).await.expect("get").expect("job").state,
+            DeviceJobState::Accepted
+        );
+    }
+
+    #[tokio::test]
+    async fn persistent_stop_is_owned_active_and_idempotent() {
+        let db = fixture().await;
+        let job = sample_job("job_stop", "task_1");
+        let other = sample_job("job_other", "task_2");
+        db.create_job(&job).await.expect("create job");
+        db.create_job(&other).await.expect("create other");
+        let first = db.request_stop("ws_1", "task_1", &job.id).await.expect("stop");
+        let second = db.request_stop("ws_1", "task_1", &job.id).await.expect("repeat");
+        assert_eq!(first.stop_requested_at, second.stop_requested_at);
+        assert!(first.stop_requested_at.is_some());
+        assert!(matches!(
+            db.request_stop("ws_1", "task_2", &job.id).await,
+            Err(DeviceJobError::NotFound)
+        ));
+        assert_eq!(
+            db.get_job("ws_1", &other.id)
+                .await
+                .expect("get")
+                .expect("other")
+                .stop_requested_at,
+            None
+        );
+        db.finish_job(&job.id, DeviceJobState::Cancelled, &json!({}), None)
+            .await
+            .expect("finish");
+        let terminal = db.request_stop("ws_1", "task_1", &job.id).await.expect("terminal stop");
+        assert_eq!(terminal.stop_requested_at, first.stop_requested_at);
+    }
+
+    #[tokio::test]
+    async fn running_and_active_queries_preserve_recovery_states() {
+        let db = fixture().await;
+        let job = sample_job("job_active", "task_1");
+        db.create_job(&job).await.expect("create job");
+        let running = db.mark_running(&job.id, "driver_1").await.expect("running");
+        assert_eq!(running.state, DeviceJobState::Running);
+        assert_eq!(running.driver_call_id.as_deref(), Some("driver_1"));
+        assert!(matches!(
+            db.mark_running(&job.id, "driver_2").await,
+            Err(DeviceJobError::Conflict(_))
+        ));
+        assert!(
+            db.update_progress(&job.id, &json!({"message":"working"}))
+                .await
+                .expect("progress")
+        );
+        assert_eq!(db.active_jobs(None, false).await.expect("active").len(), 1);
+        db.finish_job(&job.id, DeviceJobState::CancelledUnknown, &json!({}), None)
+            .await
+            .expect("unknown");
+        assert!(db.active_jobs(None, false).await.expect("active").is_empty());
+        assert_eq!(db.active_jobs(None, true).await.expect("unknown").len(), 1);
+    }
+}

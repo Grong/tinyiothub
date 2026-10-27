@@ -68,6 +68,7 @@ pub struct DataServer {
     zones: Arc<parking_lot::Mutex<Option<Arc<ZoneService>>>>,
     /// E4c 取消留痕：可选账本（组合根注入）+ 进程内计数。
     cancellation: Arc<CancellationRecorder>,
+    job_results: Arc<parking_lot::Mutex<Option<Arc<dyn crate::job::worker_adapter::JobResultSink>>>>,
 }
 
 /// 取消终态的留痕面：账本迟绑定（`run()` 的消费任务在 spawn 前持有 clone），
@@ -108,6 +109,7 @@ impl DataServer {
             sampler: Arc::new(parking_lot::Mutex::new(None)),
             zones: Arc::new(parking_lot::Mutex::new(None)),
             cancellation: Arc::new(CancellationRecorder::default()),
+            job_results: Arc::new(parking_lot::Mutex::new(None)),
         };
         server.initialize_drivers();
         server
@@ -145,6 +147,10 @@ impl DataServer {
     /// 事件/指标，不落账。
     pub fn set_hub_ledger(&self, ledger: Arc<dyn HubLedger>) {
         *self.cancellation.ledger.write() = Some(ledger);
+    }
+
+    pub fn set_job_result_sink(&self, sink: Arc<dyn crate::job::worker_adapter::JobResultSink>) {
+        *self.job_results.lock() = Some(sink);
     }
 
     /// E4c stop：取消该设备当前在途调用（协作式，不等待）。返回取消到的
@@ -240,6 +246,7 @@ impl DataServer {
             let device_cache = self.device_cache.clone();
             let event_bus = self.event_bus.clone();
             let cancellation = self.cancellation.clone();
+            let job_results = self.job_results.clone();
             let zones = self.zones.lock().clone();
             let mut shutdown_rx_consumers = shutdown_rx.resubscribe();
             tokio::spawn(async move {
@@ -250,6 +257,7 @@ impl DataServer {
                     event_bus,
                     zones,
                     cancellation,
+                    job_results,
                     &mut shutdown_rx_consumers,
                 )
                 .await;
@@ -265,6 +273,7 @@ impl DataServer {
         event_bus: Arc<EventBus>,
         zones: Option<Arc<ZoneService>>,
         cancellation: Arc<CancellationRecorder>,
+        job_results: Arc<parking_lot::Mutex<Option<Arc<dyn crate::job::worker_adapter::JobResultSink>>>>,
         shutdown_rx: &mut tokio::sync::broadcast::Receiver<()>,
     ) {
         loop {
@@ -290,7 +299,15 @@ impl DataServer {
                 }
                 maybe = consumers.results.recv() => {
                     let Some(result) = maybe else { break };
-                    Self::consume_worker_result(result, &device_cache, event_bus.clone(), &cancellation).await;
+                    let job_result_sink = { job_results.lock().clone() };
+                    Self::consume_worker_result(
+                        result,
+                        &device_cache,
+                        event_bus.clone(),
+                        &cancellation,
+                        job_result_sink,
+                    )
+                    .await;
                 }
             }
         }
@@ -447,6 +464,7 @@ impl DataServer {
         device_cache: &Arc<dyn ThingCacheSource>,
         event_bus: Arc<EventBus>,
         cancellation: &CancellationRecorder,
+        job_results: Option<Arc<dyn crate::job::worker_adapter::JobResultSink>>,
     ) {
         match result {
             WorkerResult::Command {
@@ -456,6 +474,9 @@ impl DataServer {
                 elapsed_ms,
                 error,
             } => {
+                if let Some(sink) = job_results.as_ref() {
+                    sink.command_finished(&cmd.id, success, error.as_deref()).await;
+                }
                 let Some(device) = device_cache.get(&thing_id) else {
                     return;
                 };
@@ -496,10 +517,14 @@ impl DataServer {
             // 事件 + 账本 + 指标（一次调用一个 outcome）。
             WorkerResult::Cancelled {
                 thing_id,
+                job_id,
                 kind,
                 within_grace,
                 elapsed_ms,
             } => {
+                if let (Some(sink), Some(job_id)) = (job_results.as_ref(), job_id.as_deref()) {
+                    sink.command_cancelled(job_id, within_grace).await;
+                }
                 cancellation.record(within_grace);
                 let Some(device) = device_cache.get(&thing_id) else {
                     tracing::warn!(thing_id = %thing_id, "取消终态丢弃：物不在缓存（已删？）");
@@ -1025,6 +1050,7 @@ impl Clone for DataServer {
             sampler: self.sampler.clone(),
             zones: self.zones.clone(),
             cancellation: self.cancellation.clone(),
+            job_results: self.job_results.clone(),
         }
     }
 }
@@ -1824,6 +1850,7 @@ mod tests {
         DataServer::consume_worker_result(
             WorkerResult::Cancelled {
                 thing_id: "dev-1".to_string(),
+                job_id: None,
                 kind: CancelKind::Execute,
                 within_grace: true,
                 elapsed_ms: 42,
@@ -1831,6 +1858,7 @@ mod tests {
             &cache,
             bus.clone(),
             &server.cancellation,
+            None,
         )
         .await;
 
@@ -1869,6 +1897,7 @@ mod tests {
         DataServer::consume_worker_result(
             WorkerResult::Cancelled {
                 thing_id: "dev-1".to_string(),
+                job_id: None,
                 kind: CancelKind::Read,
                 within_grace: false,
                 elapsed_ms: 1500,
@@ -1876,6 +1905,7 @@ mod tests {
             &cache,
             bus,
             &server.cancellation,
+            None,
         )
         .await;
         let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())

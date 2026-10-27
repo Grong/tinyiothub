@@ -24,6 +24,7 @@ pub mod driver;
 pub mod event_bus;
 pub mod expression;
 pub mod hub_stream;
+pub mod job;
 pub mod maps;
 pub mod plugin;
 pub mod ports;

@@ -11,6 +11,7 @@ pub mod agent_task;
 pub mod config;
 pub mod constants;
 pub mod cron;
+pub mod device_job;
 pub mod driver;
 pub mod error;
 pub mod event;

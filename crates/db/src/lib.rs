@@ -38,6 +38,8 @@ pub mod cron_run;
 pub mod database;
 /// E4b sampling demand snapshot (watch rules, derived refs, alarm rules).
 pub mod demand;
+/// Persistent Device Job lifecycle and terminal wake outbox.
+pub mod device_job;
 /// E4a driver/device declarations + projection writes.
 pub mod driver_declaration;
 /// Driver installation persistence.

@@ -1,0 +1,909 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+
+use chrono::Utc;
+use dashmap::DashMap;
+use parking_lot::Mutex;
+use serde_json::{Value, json};
+use tinyiothub_core::agent_task::{TaskWake, WakeDispatchState};
+use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
+use tinyiothub_core::error::Error;
+use tinyiothub_core::models::thing_command::ThingCommand;
+use tokio::sync::watch;
+
+use super::worker_adapter::{JobResultSink, JobWorkerLocator};
+use crate::access::resources::ResourceResolver;
+use crate::access::validator::AccessCallValidator;
+use crate::arbitration::{ArbitrationRegistry, ResourceMode, ResourceSpec};
+use crate::ports::DeviceJobStore;
+
+#[derive(Debug)]
+pub struct JobRequest {
+    pub job_id: Option<String>,
+    pub workspace_id: String,
+    pub device_id: String,
+    pub tool: String,
+    pub args_json: Value,
+    pub task_id: Option<String>,
+    pub run_id: Option<String>,
+    pub tool_call_id: Option<String>,
+}
+
+#[derive(Debug)]
+pub enum JobFinal {
+    Done(Value),
+    Failed(String),
+    Rejected(String),
+    Cancelled { within_grace: bool },
+    Interrupted(String),
+}
+
+#[allow(clippy::large_enum_variant)] // Public wait contract keeps the terminal Job inline.
+#[derive(Debug)]
+pub enum JobWait {
+    Final(DeviceJob),
+    Running { job_id: String },
+}
+
+#[derive(Debug, Default)]
+pub struct FinishOutcome {
+    pub wake_created: bool,
+    pub transitioned: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct RecoveryReport {
+    pub stop_reasserted: usize,
+    pub interrupted: usize,
+}
+
+struct Inner {
+    store: Arc<dyn DeviceJobStore>,
+    workers: Arc<dyn JobWorkerLocator>,
+    validator: Arc<dyn AccessCallValidator>,
+    resources: Arc<dyn ResourceResolver>,
+    arbitration: Arc<ArbitrationRegistry>,
+    deadlines: DashMap<String, tokio::time::Instant>,
+    notifications: DashMap<String, watch::Sender<u64>>,
+    workspaces: DashMap<String, String>,
+    terminal_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+}
+
+#[derive(Clone)]
+pub struct JobService {
+    inner: Arc<Inner>,
+}
+
+impl JobService {
+    pub fn new(
+        store: Arc<dyn DeviceJobStore>,
+        workers: Arc<dyn JobWorkerLocator>,
+        validator: Arc<dyn AccessCallValidator>,
+        resources: Arc<dyn ResourceResolver>,
+        arbitration: Arc<ArbitrationRegistry>,
+    ) -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                store,
+                workers,
+                validator,
+                resources,
+                arbitration,
+                deadlines: DashMap::new(),
+                notifications: DashMap::new(),
+                workspaces: DashMap::new(),
+                terminal_locks: Mutex::new(HashMap::new()),
+            }),
+        }
+    }
+
+    fn terminal_lock(&self, job_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.inner
+            .terminal_locks
+            .lock()
+            .entry(job_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    }
+
+    fn notification(&self, job_id: &str) -> watch::Receiver<u64> {
+        self.inner
+            .notifications
+            .entry(job_id.to_string())
+            .or_insert_with(|| watch::channel(0).0)
+            .subscribe()
+    }
+
+    fn notify(&self, job_id: &str) {
+        if let Some(sender) = self.inner.notifications.get(job_id) {
+            sender.send_modify(|version| *version += 1);
+        }
+    }
+
+    pub async fn submit(&self, request: JobRequest) -> Result<DeviceJob, DeviceJobError> {
+        let validated = self
+            .inner
+            .validator
+            .validate(
+                &request.workspace_id,
+                &request.device_id,
+                &request.tool,
+                Some(&request.args_json),
+            )
+            .await
+            .map_err(|error| DeviceJobError::Validation(error.to_string()))?;
+        let claims = self
+            .inner
+            .resources
+            .resolve_action(&request.workspace_id, &request.device_id, &request.tool)
+            .await
+            .map_err(DeviceJobError::Validation)?;
+        let specs = claims
+            .into_iter()
+            .map(|claim| ResourceSpec {
+                id: claim.id,
+                mode: if claim.exclusive {
+                    ResourceMode::Exclusive
+                } else {
+                    ResourceMode::Shared
+                },
+                capacity: claim.capacity,
+            })
+            .collect::<Vec<_>>();
+        let job_id = request.job_id.unwrap_or_else(tinyiothub_core::generate_id);
+        let timeout = Duration::from_millis(validated.timeout_ms);
+        let lease = self
+            .inner
+            .arbitration
+            .try_acquire_resources(&request.device_id, format!("device_job:{job_id}"), &specs, timeout)
+            .map_err(|_| DeviceJobError::ExecutionConflict)?;
+        let now = Utc::now();
+        let job = DeviceJob {
+            id: job_id.clone(),
+            workspace_id: request.workspace_id,
+            device_id: request.device_id,
+            tool: request.tool,
+            args_json: request.args_json,
+            state: DeviceJobState::Accepted,
+            stop_requested_at: None,
+            progress_json: None,
+            result_json: None,
+            task_id: request.task_id,
+            run_id: request.run_id,
+            tool_call_id: request.tool_call_id,
+            driver_call_id: None,
+            started_at: now,
+            ended_at: None,
+        };
+        self.inner.store.create_job(&job).await?;
+        self.inner.workspaces.insert(job.id.clone(), job.workspace_id.clone());
+        self.notification(&job.id);
+        self.inner
+            .deadlines
+            .insert(job.id.clone(), tokio::time::Instant::now() + timeout);
+        let cmd = ThingCommand {
+            id: job.id.clone(),
+            thing_id: job.device_id.clone(),
+            name: job.tool.clone(),
+            display_name: None,
+            description: None,
+            parameters: Some(job.args_json.to_string()),
+            created_at: job.started_at.to_rfc3339(),
+        };
+        let submission = self
+            .inner
+            .workers
+            .worker_for(&job.device_id)
+            .ok_or_else(|| Error::Internal("device worker unavailable".into()))
+            .and_then(|worker| worker.submit(cmd, &job.id, Some(lease)));
+        if let Err(error) = submission {
+            let result = json!({"error": error.to_string()});
+            self.inner
+                .store
+                .finish_job(&job.id, DeviceJobState::Rejected, &result, self.wake_for(&job).as_ref())
+                .await?;
+            return Err(DeviceJobError::Validation(error.to_string()));
+        }
+        Ok(job)
+    }
+
+    fn wake_for(&self, job: &DeviceJob) -> Option<TaskWake> {
+        let task_id = job.task_id.clone()?;
+        Some(TaskWake {
+            task_id,
+            event_id: format!("device_job:{}:{}", job.id, job.state.as_str()),
+            signal_json: json!({"kind":"device_job_terminal","job_id":job.id}).to_string(),
+            dispatch_state: WakeDispatchState::Pending,
+            created_at: Utc::now(),
+            dispatched_at: None,
+            resolved_at: None,
+        })
+    }
+
+    pub async fn finish(&self, job_id: &str, final_result: JobFinal) -> Result<FinishOutcome, DeviceJobError> {
+        let terminal_lock = self.terminal_lock(job_id);
+        let _guard = terminal_lock.lock().await;
+        let workspace_id = self
+            .inner
+            .workspaces
+            .get(job_id)
+            .map(|value| value.clone())
+            .ok_or(DeviceJobError::NotFound)?;
+        let job = self
+            .inner
+            .store
+            .get_job(&workspace_id, job_id)
+            .await?
+            .ok_or(DeviceJobError::NotFound)?;
+        self.finish_known(&job, final_result).await
+    }
+
+    async fn finish_known(&self, job: &DeviceJob, final_result: JobFinal) -> Result<FinishOutcome, DeviceJobError> {
+        let (state, result) = match final_result {
+            JobFinal::Done(value) => (DeviceJobState::Done, value),
+            JobFinal::Failed(error) => (DeviceJobState::Failed, json!({"error":error})),
+            JobFinal::Rejected(error) => (DeviceJobState::Rejected, json!({"error":error})),
+            JobFinal::Cancelled { within_grace: true } => (DeviceJobState::Cancelled, json!({"cancelled":true})),
+            JobFinal::Cancelled { within_grace: false } => (
+                DeviceJobState::CancelledUnknown,
+                json!({"cancelled":true,"outcome":"unknown"}),
+            ),
+            JobFinal::Interrupted(error) => (DeviceJobState::Interrupted, json!({"error":error})),
+        };
+        let mut terminal = job.clone();
+        terminal.state = state;
+        let wake = self.wake_for(&terminal);
+        let wake_created = wake.is_some();
+        let transitioned = self
+            .inner
+            .store
+            .finish_job(&job.id, state, &result, wake.as_ref())
+            .await?;
+        if transitioned {
+            self.notify(&job.id);
+        }
+        Ok(FinishOutcome {
+            wake_created: transitioned && wake_created,
+            transitioned,
+        })
+    }
+
+    pub async fn stop(&self, workspace_id: &str, task_id: &str, job_id: &str) -> Result<DeviceJob, DeviceJobError> {
+        let previous = self
+            .inner
+            .store
+            .get_task_job(workspace_id, task_id, job_id)
+            .await?
+            .ok_or(DeviceJobError::NotFound)?;
+        let job = self.inner.store.request_stop(workspace_id, task_id, job_id).await?;
+        if previous.state.is_active()
+            && previous.stop_requested_at.is_none()
+            && let Some(worker) = self.inner.workers.worker_for(&job.device_id)
+        {
+            worker.cancel_job(job_id);
+        }
+        Ok(job)
+    }
+
+    pub async fn progress(&self, job_id: &str, progress: &Value) -> Result<bool, DeviceJobError> {
+        self.inner.store.update_progress(job_id, progress).await
+    }
+
+    pub async fn wait(&self, job_id: &str, run_remaining: Duration) -> JobWait {
+        let Some(workspace_id) = self.inner.workspaces.get(job_id).map(|value| value.clone()) else {
+            return JobWait::Running {
+                job_id: job_id.to_string(),
+            };
+        };
+        if let Ok(Some(job)) = self.inner.store.get_job(&workspace_id, job_id).await
+            && job.state.is_terminal()
+        {
+            return JobWait::Final(job);
+        }
+        let deadline = self
+            .inner
+            .deadlines
+            .get(job_id)
+            .map(|value| *value)
+            .unwrap_or_else(tokio::time::Instant::now);
+        let wait_for = Duration::from_secs(50)
+            .min(run_remaining)
+            .min(deadline.saturating_duration_since(tokio::time::Instant::now()));
+        let mut notification = self.notification(job_id);
+        let notified = async {
+            loop {
+                if notification.changed().await.is_err() {
+                    std::future::pending::<()>().await;
+                }
+                if let Ok(Some(job)) = self.inner.store.get_job(&workspace_id, job_id).await
+                    && job.state.is_terminal()
+                {
+                    return job;
+                }
+            }
+        };
+        match tokio::time::timeout(wait_for, notified).await {
+            Ok(job) => JobWait::Final(job),
+            Err(_) if tokio::time::Instant::now() >= deadline => {
+                let job = match self.inner.store.get_job(&workspace_id, job_id).await {
+                    Ok(Some(job)) if job.state.is_active() => {
+                        if let Some(worker) = self.inner.workers.worker_for(&job.device_id) {
+                            worker.cancel_job(&job.id);
+                        }
+                        match self.finish_known(&job, JobFinal::Failed("timeout".into())).await {
+                            Ok(_) => match self.inner.store.get_job(&workspace_id, job_id).await {
+                                Ok(Some(job)) => job,
+                                _ => {
+                                    return JobWait::Running {
+                                        job_id: job_id.to_string(),
+                                    };
+                                }
+                            },
+                            Err(_) => {
+                                return JobWait::Running {
+                                    job_id: job_id.to_string(),
+                                };
+                            }
+                        }
+                    }
+                    Ok(Some(job)) => job,
+                    _ => {
+                        return JobWait::Running {
+                            job_id: job_id.to_string(),
+                        };
+                    }
+                };
+                JobWait::Final(job)
+            }
+            Err(_) => JobWait::Running {
+                job_id: job_id.to_string(),
+            },
+        }
+    }
+
+    pub async fn recover(&self) -> Result<RecoveryReport, DeviceJobError> {
+        let mut report = RecoveryReport::default();
+        for job in self.inner.store.active_jobs(None, false).await? {
+            self.inner.workspaces.insert(job.id.clone(), job.workspace_id.clone());
+            self.notification(&job.id);
+            let worker = self.inner.workers.worker_for(&job.device_id);
+            let recoverable = worker
+                .as_ref()
+                .is_some_and(|worker| worker.has_recoverable_call(&job.id));
+            if job.stop_requested_at.is_some() && recoverable {
+                if let Some(worker) = worker {
+                    worker.cancel_job(&job.id);
+                }
+                report.stop_reasserted += 1;
+            } else if !recoverable {
+                let terminal_lock = self.terminal_lock(&job.id);
+                let _guard = terminal_lock.lock().await;
+                let outcome = self
+                    .finish_known(&job, JobFinal::Interrupted("worker call lost".into()))
+                    .await?;
+                if outcome.transitioned {
+                    report.interrupted += 1;
+                }
+            }
+        }
+        Ok(report)
+    }
+
+    async fn command_finished(&self, driver_call_id: &str, success: bool, error: Option<&str>) {
+        // Device Jobs use the Job ID as ThingCommand ID, which is also the
+        // driver call ID on the existing worker path.
+        match self.inner.store.mark_running(driver_call_id, driver_call_id).await {
+            Ok(_) => {}
+            Err(DeviceJobError::Conflict(_)) if self.inner.workspaces.contains_key(driver_call_id) => {}
+            Err(_) => return,
+        }
+        let final_result = if success {
+            JobFinal::Done(json!({"ok":true}))
+        } else {
+            JobFinal::Failed(error.unwrap_or("device command failed").to_string())
+        };
+        if let Err(error) = self.finish(driver_call_id, final_result).await {
+            tracing::warn!(job_id = driver_call_id, %error, "device job terminal handoff failed");
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl JobResultSink for JobService {
+    async fn command_finished(&self, driver_call_id: &str, success: bool, error: Option<&str>) {
+        JobService::command_finished(self, driver_call_id, success, error).await;
+    }
+
+    async fn command_cancelled(&self, job_id: &str, within_grace: bool) {
+        if let Err(error) = self.finish(job_id, JobFinal::Cancelled { within_grace }).await {
+            tracing::warn!(job_id, %error, "device job cancellation handoff failed");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use async_trait::async_trait;
+    use chrono::Utc;
+    use serde_json::{Value, json};
+    use tinyiothub_core::agent_task::TaskWake;
+    use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
+    use tinyiothub_core::driver::manifest::{ManifestTool, ToolKindDecl, ToolSafetyDecl, ToolTimeout};
+    use tinyiothub_core::error::Error;
+    use tinyiothub_core::models::thing_command::ThingCommand;
+
+    use super::super::worker_adapter::{JobDeviceWorker, JobWorkerLocator};
+    use super::{JobFinal, JobRequest, JobService, JobWait};
+    use crate::access::resources::{ResourceClaim, ResourceResolver, device_claim};
+    use crate::access::validator::{AccessCallValidator, CallError, ValidatedCall};
+    use crate::arbitration::{ArbitrationRegistry, ResourceLease};
+    use crate::ports::DeviceJobStore;
+
+    #[derive(Default)]
+    struct MemoryStore {
+        jobs: Mutex<BTreeMap<String, DeviceJob>>,
+        wakes: Mutex<Vec<TaskWake>>,
+    }
+
+    impl MemoryStore {
+        fn job(&self, job_id: &str) -> DeviceJob {
+            self.jobs
+                .lock()
+                .expect("jobs lock")
+                .get(job_id)
+                .cloned()
+                .expect("job exists")
+        }
+
+        fn wake_count(&self, task_id: &str) -> usize {
+            self.wakes
+                .lock()
+                .expect("wakes lock")
+                .iter()
+                .filter(|wake| wake.task_id == task_id)
+                .count()
+        }
+    }
+
+    #[async_trait]
+    impl DeviceJobStore for MemoryStore {
+        async fn create_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError> {
+            let mut jobs = self.jobs.lock().expect("jobs lock");
+            if jobs.contains_key(&job.id) {
+                return Err(DeviceJobError::Conflict("duplicate job".into()));
+            }
+            jobs.insert(job.id.clone(), job.clone());
+            Ok(())
+        }
+
+        async fn get_job(&self, workspace_id: &str, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+            Ok(self
+                .jobs
+                .lock()
+                .expect("jobs lock")
+                .get(job_id)
+                .filter(|job| job.workspace_id == workspace_id)
+                .cloned())
+        }
+
+        async fn get_task_job(
+            &self,
+            workspace_id: &str,
+            task_id: &str,
+            job_id: &str,
+        ) -> Result<Option<DeviceJob>, DeviceJobError> {
+            Ok(self
+                .jobs
+                .lock()
+                .expect("jobs lock")
+                .get(job_id)
+                .filter(|job| job.workspace_id == workspace_id && job.task_id.as_deref() == Some(task_id))
+                .cloned())
+        }
+
+        async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
+            let mut jobs = self.jobs.lock().expect("jobs lock");
+            let job = jobs.get_mut(job_id).ok_or(DeviceJobError::NotFound)?;
+            if job.state != DeviceJobState::Accepted {
+                return Err(DeviceJobError::Conflict("job is not accepted".into()));
+            }
+            job.state = DeviceJobState::Running;
+            job.driver_call_id = Some(driver_call_id.to_string());
+            Ok(job.clone())
+        }
+
+        async fn finish_job(
+            &self,
+            job_id: &str,
+            state: DeviceJobState,
+            result: &Value,
+            wake: Option<&TaskWake>,
+        ) -> Result<bool, DeviceJobError> {
+            let mut jobs = self.jobs.lock().expect("jobs lock");
+            let job = jobs.get_mut(job_id).ok_or(DeviceJobError::NotFound)?;
+            if !job.state.is_active() {
+                return Ok(false);
+            }
+            job.state = state;
+            job.result_json = Some(result.clone());
+            job.ended_at = Some(Utc::now());
+            if let Some(wake) = wake {
+                self.wakes.lock().expect("wakes lock").push(wake.clone());
+            }
+            Ok(true)
+        }
+
+        async fn update_progress(&self, job_id: &str, progress: &Value) -> Result<bool, DeviceJobError> {
+            let mut jobs = self.jobs.lock().expect("jobs lock");
+            let job = jobs.get_mut(job_id).ok_or(DeviceJobError::NotFound)?;
+            if !job.state.is_active() {
+                return Ok(false);
+            }
+            job.progress_json = Some(progress.clone());
+            Ok(true)
+        }
+
+        async fn request_stop(
+            &self,
+            workspace_id: &str,
+            task_id: &str,
+            job_id: &str,
+        ) -> Result<DeviceJob, DeviceJobError> {
+            let mut jobs = self.jobs.lock().expect("jobs lock");
+            let job = jobs
+                .get_mut(job_id)
+                .filter(|job| job.workspace_id == workspace_id && job.task_id.as_deref() == Some(task_id))
+                .ok_or(DeviceJobError::NotFound)?;
+            if job.state.is_active() {
+                job.stop_requested_at.get_or_insert_with(Utc::now);
+            }
+            Ok(job.clone())
+        }
+
+        async fn active_jobs(
+            &self,
+            workspace_id: Option<&str>,
+            unknown_only: bool,
+        ) -> Result<Vec<DeviceJob>, DeviceJobError> {
+            Ok(self
+                .jobs
+                .lock()
+                .expect("jobs lock")
+                .values()
+                .filter(|job| workspace_id.is_none_or(|id| job.workspace_id == id))
+                .filter(|job| {
+                    if unknown_only {
+                        job.state == DeviceJobState::CancelledUnknown
+                    } else {
+                        job.state.is_active()
+                    }
+                })
+                .cloned()
+                .collect())
+        }
+    }
+
+    struct FakeValidator {
+        timeout_ms: u64,
+    }
+
+    #[async_trait]
+    impl AccessCallValidator for FakeValidator {
+        async fn validate(
+            &self,
+            _workspace_id: &str,
+            _thing_id: &str,
+            tool: &str,
+            _params: Option<&Value>,
+        ) -> Result<ValidatedCall, CallError> {
+            Ok(ValidatedCall {
+                tool: ManifestTool {
+                    name: tool.to_string(),
+                    kind: ToolKindDecl::Action,
+                    target_field: None,
+                    parameters: json!({"type":"object"}),
+                    timeout: ToolTimeout {
+                        default_ms: self.timeout_ms,
+                        max_ms: self.timeout_ms,
+                    },
+                    safety: ToolSafetyDecl::Control,
+                    resources: vec![],
+                    cancellable: true,
+                },
+                timeout_ms: self.timeout_ms,
+                clamped: false,
+            })
+        }
+    }
+
+    struct FakeResources;
+
+    #[async_trait]
+    impl ResourceResolver for FakeResources {
+        async fn resolve_action(
+            &self,
+            _workspace_id: &str,
+            _thing_id: &str,
+            _tool_name: &str,
+        ) -> Result<Vec<ResourceClaim>, String> {
+            Ok(vec![device_claim()])
+        }
+
+        async fn resolve_properties(
+            &self,
+            _workspace_id: &str,
+            _thing_id: &str,
+            _properties: &[String],
+        ) -> Result<Vec<ResourceClaim>, String> {
+            Ok(vec![device_claim()])
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeWorker {
+        submitted: Mutex<Vec<String>>,
+        cancelled: Mutex<Vec<String>>,
+        recoverable: Mutex<Vec<String>>,
+    }
+
+    impl JobDeviceWorker for FakeWorker {
+        fn submit(&self, cmd: ThingCommand, job_id: &str, _lease: Option<ResourceLease>) -> Result<(), Error> {
+            self.submitted.lock().expect("submitted lock").push(job_id.to_string());
+            self.recoverable
+                .lock()
+                .expect("recoverable lock")
+                .push(job_id.to_string());
+            assert_eq!(cmd.thing_id, "dev_1");
+            Ok(())
+        }
+
+        fn cancel_job(&self, job_id: &str) -> bool {
+            self.cancelled.lock().expect("cancelled lock").push(job_id.to_string());
+            false
+        }
+
+        fn has_recoverable_call(&self, job_id: &str) -> bool {
+            self.recoverable
+                .lock()
+                .expect("recoverable lock")
+                .iter()
+                .any(|id| id == job_id)
+        }
+    }
+
+    struct FakeWorkers {
+        worker: Arc<FakeWorker>,
+        available: bool,
+    }
+
+    impl JobWorkerLocator for FakeWorkers {
+        fn worker_for(&self, _device_id: &str) -> Option<Arc<dyn JobDeviceWorker>> {
+            self.available.then(|| self.worker.clone() as Arc<dyn JobDeviceWorker>)
+        }
+    }
+
+    struct JobFixture {
+        service: JobService,
+        store: Arc<MemoryStore>,
+        worker: Arc<FakeWorker>,
+        workers: Arc<FakeWorkers>,
+        arbitration: Arc<ArbitrationRegistry>,
+        timeout_ms: u64,
+    }
+
+    impl JobFixture {
+        async fn new() -> Self {
+            Self::with_timeout(5_000).await
+        }
+
+        async fn with_timeout(timeout_ms: u64) -> Self {
+            let store = Arc::new(MemoryStore::default());
+            let worker = Arc::new(FakeWorker::default());
+            let workers = Arc::new(FakeWorkers {
+                worker: worker.clone(),
+                available: true,
+            });
+            let arbitration = Arc::new(ArbitrationRegistry::default());
+            let service = JobService::new(
+                store.clone(),
+                workers.clone(),
+                Arc::new(FakeValidator { timeout_ms }),
+                Arc::new(FakeResources),
+                arbitration.clone(),
+            );
+            Self {
+                service,
+                store,
+                worker,
+                workers,
+                arbitration,
+                timeout_ms,
+            }
+        }
+
+        async fn accepted_job(&self, job_id: &str, task_id: &str) -> DeviceJob {
+            self.service
+                .submit(JobRequest {
+                    job_id: Some(job_id.to_string()),
+                    workspace_id: "ws_1".to_string(),
+                    device_id: "dev_1".to_string(),
+                    tool: "set_speed".to_string(),
+                    args_json: json!({"speed": 2}),
+                    task_id: Some(task_id.to_string()),
+                    run_id: Some(format!("run_{task_id}")),
+                    tool_call_id: Some(format!("call_{job_id}")),
+                })
+                .await
+                .expect("submit job")
+        }
+
+        async fn job(&self, job_id: &str) -> DeviceJob {
+            self.store.job(job_id)
+        }
+
+        async fn wake_count(&self, task_id: &str) -> usize {
+            self.store.wake_count(task_id)
+        }
+
+        fn restart(&mut self) {
+            self.service = JobService::new(
+                self.store.clone(),
+                self.workers.clone(),
+                Arc::new(FakeValidator {
+                    timeout_ms: self.timeout_ms,
+                }),
+                Arc::new(FakeResources),
+                self.arbitration.clone(),
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn duplicate_terminal_result_does_not_create_second_wake() {
+        let fixture = JobFixture::new().await;
+        let job = fixture.accepted_job("job_1", "task_1").await;
+        assert!(
+            fixture
+                .service
+                .finish(&job.id, JobFinal::Done(json!({"ok":true})))
+                .await
+                .expect("first final")
+                .wake_created
+        );
+        assert!(
+            !fixture
+                .service
+                .finish(&job.id, JobFinal::Done(json!({"ok":true})))
+                .await
+                .expect("duplicate final")
+                .wake_created
+        );
+        assert_eq!(fixture.wake_count("task_1").await, 1);
+    }
+
+    #[tokio::test]
+    async fn stop_is_scoped_to_task_and_survives_repeated_requests() {
+        let fixture = JobFixture::new().await;
+        fixture.accepted_job("job_a", "task_a").await;
+        fixture.accepted_job("job_b", "task_b").await;
+        let first = fixture.service.stop("ws_1", "task_a", "job_a").await.expect("stop");
+        let second = fixture.service.stop("ws_1", "task_a", "job_a").await.expect("repeat");
+        assert_eq!(first.stop_requested_at, second.stop_requested_at);
+        assert!(fixture.service.stop("ws_1", "task_b", "job_a").await.is_err());
+        assert_eq!(fixture.job("job_b").await.stop_requested_at, None);
+        assert_eq!(*fixture.worker.cancelled.lock().expect("cancelled lock"), vec!["job_a"]);
+        fixture
+            .arbitration
+            .try_acquire_default("dev_1", "later-claim".to_string())
+            .expect("later claim executes normally");
+    }
+
+    #[tokio::test]
+    async fn deadline_covers_queue_time_and_finishes_failed_timeout() {
+        let fixture = JobFixture::with_timeout(30).await;
+        let job = fixture.accepted_job("job_timeout", "task_timeout").await;
+        assert_eq!(job.state, DeviceJobState::Accepted);
+        let final_state = fixture.service.wait(&job.id, Duration::from_secs(1)).await;
+        let JobWait::Final(final_job) = final_state else {
+            panic!("deadline must produce a final result");
+        };
+        assert_eq!(final_job.state, DeviceJobState::Failed);
+        assert_eq!(final_job.result_json, Some(json!({"error":"timeout"})));
+        assert_eq!(*fixture.worker.cancelled.lock().expect("cancelled lock"), vec![job.id]);
+        assert_eq!(fixture.wake_count("task_timeout").await, 1);
+    }
+
+    #[tokio::test]
+    async fn wait_returns_running_when_only_model_window_expires() {
+        let fixture = JobFixture::new().await;
+        let job = fixture.accepted_job("job_running", "task_running").await;
+        let waited = fixture.service.wait(&job.id, Duration::from_millis(10)).await;
+        assert!(matches!(waited, JobWait::Running { ref job_id } if job_id == &job.id));
+        assert_eq!(fixture.job(&job.id).await.state, DeviceJobState::Accepted);
+    }
+
+    #[tokio::test]
+    async fn progress_updates_projection_without_waking_task() {
+        let fixture = JobFixture::new().await;
+        let job = fixture.accepted_job("job_progress", "task_progress").await;
+        assert!(
+            fixture
+                .service
+                .progress(&job.id, &json!({"message":"calibrating"}))
+                .await
+                .expect("progress")
+        );
+        assert_eq!(
+            fixture.job(&job.id).await.progress_json,
+            Some(json!({"message":"calibrating"}))
+        );
+        assert_eq!(fixture.wake_count("task_progress").await, 0);
+    }
+
+    #[tokio::test]
+    async fn worker_command_result_marks_running_then_finishes_job() {
+        use super::super::worker_adapter::JobResultSink;
+
+        let fixture = JobFixture::new().await;
+        let job = fixture.accepted_job("job_result", "task_result").await;
+        JobResultSink::command_finished(&fixture.service, &job.id, true, None).await;
+        assert_eq!(fixture.job(&job.id).await.state, DeviceJobState::Done);
+        assert_eq!(fixture.wake_count("task_result").await, 1);
+    }
+
+    #[tokio::test]
+    async fn restart_reasserts_persistent_stop_without_replay() {
+        let mut fixture = JobFixture::new().await;
+        let job = fixture.accepted_job("job_restart", "task_restart").await;
+        fixture
+            .service
+            .stop("ws_1", "task_restart", &job.id)
+            .await
+            .expect("stop");
+        fixture.worker.cancelled.lock().expect("cancelled lock").clear();
+        fixture.restart();
+        let report = fixture.service.recover().await.expect("recover");
+        assert_eq!(report.stop_reasserted, 1);
+        assert_eq!(report.interrupted, 0);
+        assert_eq!(*fixture.worker.cancelled.lock().expect("cancelled lock"), vec![job.id]);
+        assert_eq!(fixture.worker.submitted.lock().expect("submitted lock").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn restart_marks_unrecoverable_job_interrupted_once() {
+        let mut fixture = JobFixture::new().await;
+        let job = fixture.accepted_job("job_lost", "task_lost").await;
+        fixture
+            .worker
+            .recoverable
+            .lock()
+            .expect("recoverable lock")
+            .retain(|id| id != &job.id);
+        fixture.restart();
+        let report = fixture.service.recover().await.expect("recover");
+        assert_eq!(report.interrupted, 1);
+        assert_eq!(fixture.job(&job.id).await.state, DeviceJobState::Interrupted);
+        assert_eq!(fixture.wake_count("task_lost").await, 1);
+        let second = fixture.service.recover().await.expect("repeat recovery");
+        assert_eq!(second.interrupted, 0);
+        assert_eq!(fixture.wake_count("task_lost").await, 1);
+    }
+
+    #[tokio::test]
+    async fn late_cancellation_is_unknown_and_never_replayed() {
+        let fixture = JobFixture::new().await;
+        let job = fixture.accepted_job("job_unknown", "task_unknown").await;
+        fixture
+            .service
+            .finish(&job.id, JobFinal::Cancelled { within_grace: false })
+            .await
+            .expect("unknown terminal");
+        assert_eq!(fixture.job(&job.id).await.state, DeviceJobState::CancelledUnknown);
+        assert_eq!(fixture.worker.submitted.lock().expect("submitted lock").len(), 1);
+    }
+}
