@@ -46,6 +46,11 @@ pub(crate) const MAX_JSON_OUTPUT_BYTES: usize = 256 * 1024;
 /// 8 MiB decoded-image run budget after base64 expansion plus JSON envelope.
 const MAX_READ_RESPONSE_BYTES: usize = 12 * 1024 * 1024;
 
+#[cfg(test)]
+thread_local! {
+    static OWNED_SOURCE_RESPONSE_CONVERSIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SourceResponsePreflight<'a> {
@@ -224,7 +229,11 @@ extern "C" fn done_cb(user_data: *mut c_void, status: i32, out_json: *mut c_char
             return;
         }
         let body = if status == 0 && max_output_bytes.is_some() {
-            own_source_response(bytes, |bytes| String::from_utf8_lossy(bytes).into_owned())
+            own_source_response(bytes, |bytes| {
+                #[cfg(test)]
+                OWNED_SOURCE_RESPONSE_CONVERSIONS.with(|count| count.set(count.get() + 1));
+                String::from_utf8_lossy(bytes).into_owned()
+            })
         } else {
             Ok(String::from_utf8_lossy(bytes).into_owned())
         };
@@ -686,6 +695,20 @@ mod tests {
         0
     }
 
+    extern "C" fn read_source_image_response(
+        ctx: *mut c_void,
+        _config: *const c_char,
+        _sources: *const c_char,
+        _cancel: *mut CancelHandle,
+        done: DriverDone,
+        user_data: *mut c_void,
+    ) -> i32 {
+        // SAFETY: each test keeps the response String alive for the synchronous call.
+        let response = unsafe { &*(ctx as *const String) };
+        done(user_data, 0, leak_json(response));
+        0
+    }
+
     static SOURCE_VTABLE: DriverVTableV2 = DriverVTableV2 {
         version: 2,
         read_async: read_source_items,
@@ -698,6 +721,15 @@ mod tests {
     static HUGE_SOURCE_VTABLE: DriverVTableV2 = DriverVTableV2 {
         version: 2,
         read_async: read_source_items_huge,
+        execute_async: read_ok,
+        set_demand: stub_set_demand,
+        describe: stub_describe,
+        free_string: stub_free_string,
+    };
+
+    static SOURCE_IMAGE_VTABLE: DriverVTableV2 = DriverVTableV2 {
+        version: 2,
+        read_async: read_source_image_response,
         execute_async: read_ok,
         set_demand: stub_set_demand,
         describe: stub_describe,
@@ -869,6 +901,84 @@ mod tests {
 
         assert!(error.to_string().contains("2 MiB"), "{error}");
         assert!(!owned.get(), "the owned response conversion must not run");
+    }
+
+    fn source_image_response(bytes: &[u8], byte_array: bool) -> String {
+        use base64::Engine as _;
+
+        let encoded = if byte_array {
+            serde_json::to_string(bytes).expect("byte array")
+        } else {
+            format!("\"{}\"", base64::engine::general_purpose::STANDARD.encode(bytes))
+        };
+        format!(
+            r#"[{{"v":1,"source":"camera.front","dataKind":"image","seq":7,"time":"2026-10-27T10:00:00Z","data":{{}},"media":{{"mime":"image/png","bytes":{encoded}}}}}]"#
+        )
+    }
+
+    fn source_image_driver(response: &String) -> DynamicThingDriver {
+        let thing = Thing {
+            id: "stub-1".to_string(),
+            name: "stub-1".to_string(),
+            ..Thing::default()
+        };
+        DynamicThingDriver::for_test(
+            thing,
+            (response as *const String).cast_mut().cast(),
+            &SOURCE_IMAGE_VTABLE,
+        )
+    }
+
+    #[test]
+    fn read_sources_preserves_exactly_two_mib_base64_image() {
+        let mut expected = vec![0xa5; crate::media::evidence::MAX_IMAGE_BYTES];
+        expected[..8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
+        let response = source_image_response(&expected, false);
+        assert!(response.len() <= MAX_READ_RESPONSE_BYTES);
+        OWNED_SOURCE_RESPONSE_CONVERSIONS.with(|count| count.set(0));
+        let mut driver = source_image_driver(&response);
+
+        let items = driver
+            .read_sources(&["camera.front".to_string()], &CancelToken::new())
+            .expect("an exactly 2 MiB base64 image must reach final SourceItem deserialization");
+
+        let actual = items[0].media.as_ref().expect("image media");
+        assert_eq!(actual.bytes, expected);
+        OWNED_SOURCE_RESPONSE_CONVERSIONS.with(|count| assert_eq!(count.get(), 1));
+    }
+
+    #[test]
+    fn read_sources_rejects_two_mib_plus_one_before_owned_allocation() {
+        let response = source_image_response(&vec![0xa5; crate::media::evidence::MAX_IMAGE_BYTES + 1], false);
+        assert!(response.len() <= MAX_READ_RESPONSE_BYTES);
+        OWNED_SOURCE_RESPONSE_CONVERSIONS.with(|count| count.set(0));
+        let mut driver = source_image_driver(&response);
+
+        let error = driver
+            .read_sources(&["camera.front".to_string()], &CancelToken::new())
+            .expect_err("a 2 MiB+1 image must be rejected");
+
+        assert!(error.to_string().contains("2 MiB"), "{error}");
+        OWNED_SOURCE_RESPONSE_CONVERSIONS.with(|count| {
+            assert_eq!(
+                count.get(),
+                0,
+                "response ownership and final image allocation must not run"
+            );
+        });
+    }
+
+    #[test]
+    fn read_sources_rejects_noncanonical_byte_array_before_owned_allocation() {
+        let response = source_image_response(&[0x89, b'P', b'N', b'G'], true);
+        OWNED_SOURCE_RESPONSE_CONVERSIONS.with(|count| count.set(0));
+        let mut driver = source_image_driver(&response);
+
+        driver
+            .read_sources(&["camera.front".to_string()], &CancelToken::new())
+            .expect_err("Source image bytes have one canonical base64 representation");
+
+        OWNED_SOURCE_RESPONSE_CONVERSIONS.with(|count| assert_eq!(count.get(), 0));
     }
 
     #[test]

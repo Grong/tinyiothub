@@ -39,10 +39,51 @@ impl<'de> Deserialize<'de> for DataKind {
     }
 }
 
+pub const MAX_IMAGE_BYTES: usize = 2 * 1024 * 1024;
+
+mod source_image_bytes {
+    use base64::Engine as _;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&base64::engine::general_purpose::STANDARD.encode(bytes))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        let encoded = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
+        let padding = encoded
+            .as_bytes()
+            .iter()
+            .rev()
+            .take_while(|byte| **byte == b'=')
+            .count();
+        let significant = encoded
+            .len()
+            .checked_sub(padding)
+            .ok_or_else(|| serde::de::Error::custom("invalid base64 image length"))?;
+        let decoded = (significant / 4)
+            .checked_mul(3)
+            .ok_or_else(|| serde::de::Error::custom("invalid base64 image length"))?;
+        let decoded = match significant % 4 {
+            0 => decoded,
+            2 => decoded + 1,
+            3 => decoded + 2,
+            _ => return Err(serde::de::Error::custom("invalid base64 image length")),
+        };
+        if decoded > super::MAX_IMAGE_BYTES {
+            return Err(serde::de::Error::custom(super::MediaError::ImageTooLarge));
+        }
+        base64::engine::general_purpose::STANDARD
+            .decode(encoded.as_bytes())
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaPayload {
     pub mime: String,
+    #[serde(with = "source_image_bytes")]
     pub bytes: Vec<u8>,
 }
 
@@ -164,6 +205,18 @@ pub enum MediaError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn media_payload_uses_canonical_base64_json() {
+        let payload = super::MediaPayload {
+            mime: "image/png".into(),
+            bytes: vec![0, 1, 2, 253, 254, 255],
+        };
+        let encoded = serde_json::to_value(&payload).expect("serialize media payload");
+        assert!(encoded["bytes"].is_string(), "media bytes must be base64 text");
+        let decoded: super::MediaPayload = serde_json::from_value(encoded).expect("deserialize media payload");
+        assert_eq!(decoded, payload);
+    }
+
     #[test]
     fn data_kind_schema_matches_its_string_wire_format() {
         let schema = serde_json::to_value(schemars::schema_for!(super::DataKind)).expect("schema");

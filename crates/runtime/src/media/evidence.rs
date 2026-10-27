@@ -14,7 +14,7 @@ use tinyiothub_core::media::{EvidenceRef, ImageInput, MediaAttachment, MediaErro
 
 use crate::ports::MediaEvidenceStore;
 
-pub const MAX_IMAGE_BYTES: usize = 2 * 1024 * 1024;
+pub use tinyiothub_core::media::MAX_IMAGE_BYTES;
 pub const MAX_IMAGE_PIXELS: u64 = 16_000_000;
 
 #[async_trait]

@@ -633,6 +633,7 @@ name = "core"
 version = "0.4.6"
 dependencies = [
  "async-trait",
+ "base64 0.21.7",
  "chrono",
  "schemars",
  "serde",
@@ -3894,6 +3895,7 @@ version = "0.4.6"
 dependencies = [
  "arc-swap",
  "async-trait",
+ "base64 0.21.7",
  "chrono",
  "core",
  "dashmap",
