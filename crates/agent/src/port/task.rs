@@ -35,6 +35,7 @@ pub trait TaskStore: Send + Sync {
     async fn finish_run(&self, report: &RunReport) -> Result<(), TaskStoreError>;
     async fn latest_task_run(&self, task_id: &str) -> Result<Option<RunReport>, TaskStoreError>;
     async fn claim_pending_wakes(&self, limit: i64) -> Result<Vec<TaskWake>, TaskStoreError>;
+    async fn recover_claimed_wakes(&self) -> Result<usize, TaskStoreError>;
     async fn mark_wake(&self, task_id: &str, event_id: &str, state: WakeDispatchState) -> Result<(), TaskStoreError>;
     async fn retry_dead_wake(&self, workspace_id: &str, event_id: &str) -> Result<bool, TaskStoreError>;
     async fn list_nonterminal_tasks(&self, workspace_id: Option<&str>) -> Result<Vec<AgentTask>, TaskStoreError>;

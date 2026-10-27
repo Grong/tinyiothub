@@ -611,6 +611,16 @@ impl ServiceManager {
                 events: app_state.event_bus.clone(),
                 zones: Some(zone_service),
             });
+            thing_agent_manager
+                .start_task_runtime(tinyiothub_agent::runtime::thing_agent::manager::TaskRuntimeDeps {
+                    store: Arc::new(crate::domains::agent::runtime::DbTaskStore::new(app_state.db.clone())),
+                    watches: Arc::new(crate::shared::runtime_ports::WatchRuleStoreAdapter(
+                        (*app_state.db).clone(),
+                    )),
+                    jobs: None,
+                })
+                .await
+                .map_err(|error| Error::Internal(format!("Task runtime startup failed: {error}")))?;
             // E1 同键限速预热：DB heartbeat_config JSON 的
             // rate_limit_per_key_per_min → scheduler 共享表（spec §3 热改
             // 生效；读失败只记日志，缺省 3/min 兜底）。

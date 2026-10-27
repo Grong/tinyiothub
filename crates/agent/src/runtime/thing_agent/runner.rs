@@ -124,6 +124,8 @@ pub struct RunContext {
     pub active_runs: Option<crate::runtime::thing_agent::active_runs::ActiveRunRegistry>,
     pub task_id: Option<String>,
     pub wake_event_id: Option<String>,
+    /// Facts targeted at this in-flight Run, consumed by the next model call.
+    pub steering: crate::port::runtime::SteeringBuffer,
 }
 
 impl RunContext {
@@ -140,6 +142,7 @@ impl RunContext {
             active_runs: None,
             task_id: None,
             wake_event_id: None,
+            steering: crate::port::runtime::SteeringBuffer::default(),
         }
     }
 }
@@ -207,7 +210,7 @@ impl Runner {
             let ag = agent.lock().await;
             tokio::time::timeout(
                 self.budget.duration_cap().unwrap_or(MAX_RUN_DURATION) + TURN_TIMEOUT_GRACE,
-                ag.turn_streamed(&prompt, event_tx, Some(cancel)),
+                ag.turn_streamed_with_steering(&prompt, event_tx, Some(cancel), Some(ctx.steering.clone())),
             )
             .await
         };
@@ -954,6 +957,7 @@ mod tests {
             active_runs: None,
             task_id: None,
             wake_event_id: None,
+            steering: crate::port::runtime::SteeringBuffer::default(),
         };
         (ctx, RunContextInner::default())
     }

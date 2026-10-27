@@ -32,6 +32,9 @@ impl Trigger for WatchTrigger {
                 rx.recv().await
             };
             let Some(hit) = hit else { return Ok(()) }; // channel 关闭=shutdown
+            if hit.owner_task_id.is_some() {
+                continue;
+            }
             let signal = WakeSignal {
                 workspace_id: hit.workspace_id.clone(),
                 priority: Priority::Normal,
@@ -71,6 +74,7 @@ mod tests {
         WatchHit {
             workspace_id: ws.into(),
             rule_id: rule.into(),
+            owner_task_id: None,
             summary: ThingLiveSummary {
                 health: Health::Bad,
                 zone: "车间/产线".into(),
@@ -127,6 +131,20 @@ mod tests {
 
         drop(hit_tx); // 关命中通道放行 run 退出（否则阻塞在 recv）
         drop(rx);
+        handle.await.expect("run task").expect("run result");
+    }
+
+    #[tokio::test]
+    async fn task_owned_hit_does_not_emit_legacy_workspace_wake() {
+        let (hit_tx, hit_rx) = mpsc::channel(4);
+        let trig = trigger(hit_rx);
+        let (tx, mut rx) = mpsc::channel(16);
+        let handle = tokio::spawn(async move { trig.run(tx).await });
+        let mut owned = hit("ws_01", "rule_task");
+        owned.owner_task_id = Some("task_1".into());
+        hit_tx.send(owned).await.expect("owned hit");
+        assert!(rx.try_recv().is_err(), "Task wake router is the only consumer");
+        drop(hit_tx);
         handle.await.expect("run task").expect("run result");
     }
 

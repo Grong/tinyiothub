@@ -209,6 +209,24 @@ async fn task_list_and_detail_return_persisted_projections_with_read_access() {
 }
 
 #[tokio::test]
+async fn persistent_task_control_routes_reach_the_runtime() {
+    let fixture = runtime_test_app(true).await;
+    let created = create_persistent(&fixture, "inspect", "control-key").await;
+    let task_id = created["result"]["taskId"].as_str().expect("task id");
+    for action in ["pause", "resume", "cancel"] {
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/api/v1/workspaces/{WS}/agent/tasks/{task_id}/{action}"))
+            .header("Authorization", auth_header(&fixture.token))
+            .body(Body::empty())
+            .expect("request");
+        let (status, body) = response_parts(fixture.app.clone().oneshot(request).await.expect("response")).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{action}: {body}");
+        assert_eq!(body["code"], 503, "{action}: {body}");
+    }
+}
+
+#[tokio::test]
 async fn persistent_create_storage_failure_returns_503() {
     let fixture = runtime_test_app(true).await;
     sqlx::query("ALTER TABLE agent_tasks RENAME TO agent_tasks_hidden")

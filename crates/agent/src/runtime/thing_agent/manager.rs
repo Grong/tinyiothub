@@ -40,6 +40,8 @@ use crate::runtime::thing_agent::pushback::deliver;
 use crate::runtime::thing_agent::registry::RunRegistry;
 use crate::runtime::thing_agent::runner::{AgentHandle, RunContext, RunContextInner, Runner};
 use crate::runtime::thing_agent::scheduler::{EnqueueError, Scheduler, SchedulerHandle};
+use crate::runtime::thing_agent::task::coordinator::{CancelOutcome, TaskCoordinator, TaskError};
+use crate::runtime::thing_agent::task::wake::WakeRouter;
 use crate::runtime::thing_agent::traits::{
     AutonomyPolicyReader, DirectiveSink, HeartbeatTaskReader, SnapshotDemandSink, ThingAgentHost, TrustConfigReader,
 };
@@ -73,6 +75,12 @@ pub trait AutonomousAgentProvider: Send + Sync {
     /// 失效该工作区的缓存 agent（loop 停止时调用，避免 WorkspaceDeleted
     /// 后缓存实例泄漏）。
     fn invalidate(&self, workspace_id: &str);
+}
+
+pub struct TaskRuntimeDeps {
+    pub store: Arc<dyn crate::port::task::TaskStore>,
+    pub watches: Arc<dyn tinyiothub_runtime::ports::WatchRuleStore>,
+    pub jobs: Option<tinyiothub_runtime::job::service::JobService>,
 }
 
 /// Tunables for [`ThingAgentManager`].
@@ -200,6 +208,8 @@ pub struct ThingAgentManager {
     /// E1 watch API 写穿命令通道（每工作区）：start 时建立，stop 时丢弃；
     /// handler 经 `watch_command_sink` 取 sender 投递 Upsert/Remove。
     watch_cmds: Arc<DashMap<String, mpsc::Sender<WatchCommand>>>,
+    task_runtime: std::sync::Mutex<Option<Arc<TaskCoordinator>>>,
+    task_router: std::sync::Mutex<Option<JoinHandle<()>>>,
 }
 
 impl ThingAgentManager {
@@ -249,7 +259,76 @@ impl ThingAgentManager {
             snapshot_demand,
             watch_deps: std::sync::Mutex::new(None),
             watch_cmds,
+            task_runtime: std::sync::Mutex::new(None),
+            task_router: std::sync::Mutex::new(None),
         }
+    }
+
+    pub async fn start_task_runtime(self: &Arc<Self>, deps: TaskRuntimeDeps) -> Result<(), TaskError> {
+        if self
+            .task_runtime
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .is_some()
+        {
+            return Ok(());
+        }
+        let coordinator = Arc::new(TaskCoordinator::new(
+            deps.store.clone(),
+            deps.jobs,
+            deps.watches,
+            self.watch_cmds.clone(),
+            self.clone(),
+            self.deps.events.clone(),
+            self.deps.active_runs.clone(),
+            self.deps.runner.clone(),
+            self.deps.agent_provider.clone(),
+        ));
+        coordinator.recover().await?;
+        let router = Arc::new(WakeRouter::new(deps.store, coordinator.clone()));
+        let router_task = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(25));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                if let Err(error) = router.run(64).await {
+                    tracing::warn!(%error, "Task wake routing failed");
+                }
+            }
+        });
+        *self.task_router.lock().unwrap_or_else(|error| error.into_inner()) = Some(router_task);
+        *self.task_runtime.lock().unwrap_or_else(|error| error.into_inner()) = Some(coordinator);
+        Ok(())
+    }
+
+    fn task_coordinator(&self) -> Result<Arc<TaskCoordinator>, TaskError> {
+        self.task_runtime
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+            .ok_or_else(|| {
+                tinyiothub_core::agent_task::TaskStoreError::Unavailable("Task runtime is not started".into()).into()
+            })
+    }
+
+    pub async fn pause_task(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+    ) -> Result<tinyiothub_core::agent_task::AgentTask, TaskError> {
+        self.task_coordinator()?.pause(workspace_id, task_id).await
+    }
+
+    pub async fn resume_task(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+    ) -> Result<tinyiothub_core::agent_task::AgentTask, TaskError> {
+        self.task_coordinator()?.resume(workspace_id, task_id).await
+    }
+
+    pub async fn cancel_task(&self, workspace_id: &str, task_id: &str) -> Result<CancelOutcome, TaskError> {
+        self.task_coordinator()?.cancel(workspace_id, task_id).await
     }
 
     /// Start the loop for a workspace: scheduler + thing-event trigger +
@@ -541,6 +620,19 @@ impl ThingAgentManager {
             .await
             .ok()?
             .ok()?
+    }
+}
+
+impl Drop for ThingAgentManager {
+    fn drop(&mut self) {
+        if let Some(task) = self
+            .task_router
+            .get_mut()
+            .unwrap_or_else(|error| error.into_inner())
+            .take()
+        {
+            task.abort();
+        }
     }
 }
 
@@ -2372,6 +2464,75 @@ pub(crate) mod tests {
 
     // ── E1 Task 8：watch 值守装配（engine 重织 + 事件接线 + 命令写穿）────
 
+    #[tokio::test]
+    async fn production_task_runtime_dispatches_a_persisted_wake_through_manager() {
+        use chrono::Utc;
+        use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
+
+        let parts = stub_manager().await;
+        let store = Arc::new(crate::runtime::thing_agent::task::coordinator::tests::MemoryTasks::default());
+        let task = AgentTask {
+            id: "task_production".into(),
+            workspace_id: WS.into(),
+            idempotency_key: "production-key".into(),
+            objective: "inspect the device".into(),
+            session_key: None,
+            created_by: "user_1".into(),
+            status: TaskStatus::Active,
+            current_run_id: None,
+            state_version: 0,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            ended_at: None,
+        };
+        let wake = TaskWake {
+            task_id: task.id.clone(),
+            event_id: "event_production".into(),
+            signal_json: serde_json::to_string(&WakeSignal {
+                workspace_id: WS.into(),
+                priority: Priority::High,
+                source: TriggerSource::UserDirective {
+                    user_id: "user_1".into(),
+                    text: task.objective.clone(),
+                    session_key: None,
+                    source: None,
+                    problem_key: None,
+                },
+                dedup_key: None,
+            })
+            .expect("wake json"),
+            dispatch_state: WakeDispatchState::Pending,
+            created_at: Utc::now(),
+            dispatched_at: None,
+            resolved_at: None,
+        };
+        crate::port::task::TaskStore::create_task_with_wake(store.as_ref(), &task, &wake)
+            .await
+            .expect("persist task wake");
+        parts
+            .manager
+            .start_task_runtime(crate::runtime::thing_agent::manager::TaskRuntimeDeps {
+                store,
+                watches: Arc::new(StubWatchRuleStore { rules: vec![] }),
+                jobs: None,
+            })
+            .await
+            .expect("start production task runtime");
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if parts.agents.llm.prompts.lock().expect("prompts").len() == 1 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("persisted wake dispatched by production router");
+        assert_eq!(parts.agents.llm.prompts.lock().expect("prompts").len(), 1);
+    }
+
+    // ── E1 Task 8：watch 值守装配（engine 重织 + 事件接线 + 命令写穿）────
+
     use tinyiothub_core::models::thing::{Thing, ThingStatus};
     use tinyiothub_core::watch::{CompareOp, WatchCondition, WatchRule};
     use tinyiothub_runtime::ports::{HubLedger, ThingCacheSource, WatchRuleStore};
@@ -2488,6 +2649,112 @@ pub(crate) mod tests {
         }
     }
 
+    struct TaskWatchStore {
+        tasks: Arc<crate::runtime::thing_agent::task::coordinator::tests::MemoryTasks>,
+        rules: Mutex<Vec<WatchRule>>,
+    }
+
+    #[async_trait::async_trait]
+    impl WatchRuleStore for TaskWatchStore {
+        async fn list_all(&self) -> Result<Vec<WatchRule>, String> {
+            Ok(self.rules.lock().expect("rules").clone())
+        }
+        async fn insert(&self, rule: &WatchRule) -> Result<(), String> {
+            self.rules.lock().expect("rules").push(rule.clone());
+            Ok(())
+        }
+        async fn delete(&self, workspace_id: &str, id: &str) -> Result<bool, String> {
+            let mut rules = self.rules.lock().expect("rules");
+            let before = rules.len();
+            rules.retain(|rule| rule.workspace_id != workspace_id || rule.id != id);
+            Ok(rules.len() != before)
+        }
+        async fn complete_task_watch(
+            &self,
+            workspace_id: &str,
+            id: &str,
+            wake: &tinyiothub_core::agent_task::TaskWake,
+        ) -> Result<bool, String> {
+            let deleted = self.delete(workspace_id, id).await?;
+            if deleted {
+                crate::port::task::TaskStore::record_wake(self.tasks.as_ref(), wake)
+                    .await
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(deleted)
+        }
+        async fn delete_task_watches(&self, workspace_id: &str, task_id: &str) -> Result<usize, String> {
+            let mut rules = self.rules.lock().expect("rules");
+            let before = rules.len();
+            rules.retain(|rule| rule.workspace_id != workspace_id || rule.owner_task_id.as_deref() != Some(task_id));
+            Ok(before - rules.len())
+        }
+    }
+
+    struct BlockingLoop {
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::port::runtime::AgentLoop for BlockingLoop {
+        async fn turn_streamed(
+            &self,
+            _user_message: &str,
+            _event_tx: mpsc::Sender<crate::port::events::TurnEvent>,
+            _cancel_token: Option<tokio_util::sync::CancellationToken>,
+        ) -> anyhow::Result<String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.entered.notify_one();
+            self.release.notified().await;
+            Ok("done".into())
+        }
+        async fn run_single(&self, _message: &str) -> anyhow::Result<String> {
+            Ok("done".into())
+        }
+        async fn clear_history(&self) {}
+        async fn seed_history(&self, _messages: &[crate::port::provider::ChatMessage]) {}
+    }
+
+    struct BlockingProvider {
+        handle: AgentHandle,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    impl BlockingProvider {
+        fn new() -> Self {
+            let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let entered = Arc::new(tokio::sync::Notify::new());
+            let release = Arc::new(tokio::sync::Notify::new());
+            let handle = Arc::new(tokio::sync::Mutex::new(BlockingLoop {
+                calls: calls.clone(),
+                entered: entered.clone(),
+                release: release.clone(),
+            }));
+            Self {
+                handle,
+                calls,
+                entered,
+                release,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AutonomousAgentProvider for BlockingProvider {
+        async fn get_or_create(
+            &self,
+            _workspace_id: &str,
+            _ctx: Arc<tokio::sync::RwLock<RunContextInner>>,
+        ) -> anyhow::Result<AgentHandle> {
+            Ok(self.handle.clone())
+        }
+        fn invalidate(&self, _workspace_id: &str) {}
+    }
+
     /// 发布一条 PropertyChange 领域事件（data_server cache_and_publish 同款
     /// 载荷：metadata property_name/value + device_property source）。
     async fn publish_property_change(bus: &tinyiothub_runtime::EventBus, thing_id: &str, value: &str) {
@@ -2506,6 +2773,113 @@ pub(crate) mod tests {
         )
         .expect("event");
         bus.publish(event).await.expect("publish");
+    }
+
+    #[tokio::test]
+    async fn task_watch_hit_produces_one_task_execution_and_no_legacy_run_end_to_end() {
+        use chrono::Utc;
+        use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
+
+        let host = Arc::new(StubHost::new());
+        let registry = RunRegistry::new();
+        let events = Arc::new(AgentEventBus::new(64));
+        let runs = RunsProbe {
+            registry: registry.clone(),
+            rx: Mutex::new(events.subscribe()),
+            seen: Mutex::new(vec![]),
+        };
+        let provider = Arc::new(BlockingProvider::new());
+        let manager = Arc::new(ThingAgentManager::new(
+            host,
+            stub_policy_reader(WS),
+            provider.clone(),
+            registry,
+            events,
+            Arc::new(Runner::new()),
+            ThingAgentManagerConfig {
+                timer_interval: Duration::from_secs(24 * 3600),
+                min_wake_level: 3,
+                heartbeat_default_interval: Duration::from_secs(24 * 3600),
+            },
+            Arc::new(crate::runtime::thing_agent::traits::NoopTicketResolutions),
+            HeartbeatDeps::default(),
+        ));
+        let store = Arc::new(crate::runtime::thing_agent::task::coordinator::tests::MemoryTasks::default());
+        let mut rule = watch_rule("task_watch", "t1");
+        rule.owner_task_id = Some("task_watch_owner".into());
+        let watches = Arc::new(TaskWatchStore {
+            tasks: store.clone(),
+            rules: Mutex::new(vec![rule]),
+        });
+        let ledger = Arc::new(RecordingLedger::default());
+        let mut deps = watch_deps(vec![], ledger);
+        deps.rules = watches.clone();
+        let bus = deps.events.clone();
+        manager.set_watch_deps(deps);
+        let now = Utc::now();
+        let task = AgentTask {
+            id: "task_watch_owner".into(),
+            workspace_id: WS.into(),
+            idempotency_key: "watch-e2e".into(),
+            objective: "inspect".into(),
+            session_key: None,
+            created_by: "user_1".into(),
+            status: TaskStatus::Active,
+            current_run_id: None,
+            state_version: 0,
+            created_at: now,
+            updated_at: now,
+            ended_at: None,
+        };
+        let wake = TaskWake {
+            task_id: task.id.clone(),
+            event_id: "initial_watch_e2e".into(),
+            signal_json: serde_json::to_string(&WakeSignal {
+                workspace_id: WS.into(),
+                priority: Priority::High,
+                source: TriggerSource::UserDirective {
+                    user_id: "user_1".into(),
+                    text: "inspect".into(),
+                    session_key: None,
+                    source: None,
+                    problem_key: None,
+                },
+                dedup_key: None,
+            })
+            .expect("wake"),
+            dispatch_state: WakeDispatchState::Pending,
+            created_at: now,
+            dispatched_at: None,
+            resolved_at: None,
+        };
+        crate::port::task::TaskStore::create_task_with_wake(store.as_ref(), &task, &wake)
+            .await
+            .expect("task");
+        manager
+            .start_task_runtime(TaskRuntimeDeps {
+                store: store.clone(),
+                watches,
+                jobs: None,
+            })
+            .await
+            .expect("task runtime");
+        manager.start(WS);
+        tokio::time::timeout(Duration::from_secs(2), provider.entered.notified())
+            .await
+            .expect("initial task run");
+
+        publish_property_change(&bus, "t1", "31").await;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while store.wake_count() != 2 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("task watch wake persisted");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(runs.runs_with_dedup("watch:task_watch"), 0);
+        provider.release.notify_one();
     }
 
     // Value card

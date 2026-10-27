@@ -98,6 +98,10 @@ impl TaskStore for DbTaskStore {
         self.db.claim_pending_wakes(limit).await
     }
 
+    async fn recover_claimed_wakes(&self) -> Result<usize, TaskStoreError> {
+        self.db.recover_claimed_wakes().await
+    }
+
     async fn mark_wake(&self, task_id: &str, event_id: &str, state: WakeDispatchState) -> Result<(), TaskStoreError> {
         self.db.mark_wake(task_id, event_id, state).await
     }

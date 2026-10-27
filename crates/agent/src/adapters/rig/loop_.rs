@@ -9,13 +9,16 @@ use tokio_util::sync::CancellationToken;
 
 use futures::StreamExt;
 use rig_agent::agent::hook::ToolCall as ToolCallEvent;
-use rig_agent::agent::{Agent, AgentBuilder, AgentHook, HookContext, MultiTurnStreamItem, ToolCallAction};
-use rig_agent::completion::Prompt;
+use rig_agent::agent::{
+    Agent, AgentBuilder, AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, MultiTurnStreamItem,
+    RequestPatch, ToolCallAction,
+};
+use rig_agent::completion::{Document, Prompt};
 use rig_agent::streaming::StreamingPrompt;
 use rig_core::streaming::{StreamedAssistantContent, StreamedUserContent};
 
 use crate::port::events::TurnEvent;
-use crate::port::runtime::{AgentLoop, AgentLoopConfig, AgentLoopHandle, MAX_LOOP_TURNS};
+use crate::port::runtime::{AgentLoop, AgentLoopConfig, AgentLoopHandle, MAX_LOOP_TURNS, SteeringBuffer};
 
 use super::memory::PortMemoryAsConversation;
 use super::provider::{PortModelAsRig, port_messages_to_rig};
@@ -64,6 +67,24 @@ struct BudgetHook {
     budget: usize,
     count: AtomicUsize,
     cancel: Option<CancellationToken>,
+    steering: Option<SteeringBuffer>,
+}
+
+fn take_steering_patch(steering: &SteeringBuffer) -> Option<RequestPatch> {
+    let facts = {
+        let mut queued = steering.lock().unwrap_or_else(|error| error.into_inner());
+        if queued.is_empty() {
+            return None;
+        }
+        std::mem::take(&mut *queued)
+    };
+    Some(
+        RequestPatch::new().extra_context(facts.into_iter().enumerate().map(|(index, text)| Document {
+            id: format!("task-wake-{index}"),
+            text,
+            additional_props: Default::default(),
+        })),
+    )
 }
 
 impl BudgetHook {
@@ -84,6 +105,13 @@ impl BudgetHook {
 }
 
 impl AgentHook for BudgetHook {
+    async fn on_completion_call(&self, _ctx: &HookContext, _event: CompletionCallEvent<'_>) -> CompletionCallAction {
+        self.steering
+            .as_ref()
+            .and_then(take_steering_patch)
+            .map_or_else(CompletionCallAction::continue_run, CompletionCallAction::patch)
+    }
+
     async fn on_tool_call(&self, _ctx: &HookContext, _event: ToolCallEvent<'_>) -> ToolCallAction {
         self.action()
     }
@@ -104,6 +132,17 @@ impl AgentLoop for RigAgentLoop {
         event_tx: mpsc::Sender<TurnEvent>,
         cancel_token: Option<CancellationToken>,
     ) -> anyhow::Result<String> {
+        self.turn_streamed_with_steering(user_message, event_tx, cancel_token, None)
+            .await
+    }
+
+    async fn turn_streamed_with_steering(
+        &self,
+        user_message: &str,
+        event_tx: mpsc::Sender<TurnEvent>,
+        cancel_token: Option<CancellationToken>,
+        steering: Option<SteeringBuffer>,
+    ) -> anyhow::Result<String> {
         let mut request = self
             .agent
             .stream_prompt(user_message.to_string())
@@ -113,6 +152,7 @@ impl AgentLoop for RigAgentLoop {
                 budget: MAX_LOOP_TURNS,
                 count: AtomicUsize::new(0),
                 cancel: cancel_token.clone(),
+                steering,
             });
         // conversation_memory=false：历史由 cloud DB 每轮 seed，经 .history() 传入。
         let seeded = self.seeded_history().await;
@@ -285,6 +325,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn queued_task_wake_becomes_next_completion_context_exactly_once() {
+        let steering = Arc::new(std::sync::Mutex::new(vec![
+            "wake_event_id: event_2\nfacts: continue".into(),
+        ]));
+        let patch = take_steering_patch(&steering).expect("queued wake patch");
+        assert_eq!(patch.extra_context.len(), 1);
+        assert_eq!(patch.extra_context[0].text, "wake_event_id: event_2\nfacts: continue");
+        assert!(steering.lock().expect("steering").is_empty());
+        assert!(take_steering_patch(&steering).is_none());
+    }
+
+    #[test]
     fn cancelled_token_stops_before_tool_dispatch() {
         let cancel = CancellationToken::new();
         cancel.cancel();
@@ -292,6 +344,7 @@ mod tests {
             budget: 25,
             count: AtomicUsize::new(0),
             cancel: Some(cancel),
+            steering: None,
         };
         assert_eq!(hook.action(), ToolCallAction::Stop("run cancelled".into()));
         assert_eq!(hook.count.load(Ordering::SeqCst), 0);

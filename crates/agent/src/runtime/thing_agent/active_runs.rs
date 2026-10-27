@@ -64,6 +64,19 @@ impl ActiveRunRegistry {
     pub fn cancel(&self, run_id: &str) -> bool {
         self.runs.get(run_id).map(|run| run.cancel.cancel()).is_some()
     }
+
+    pub fn steer(&self, run_id: &str, facts: String) -> bool {
+        self.runs
+            .get(run_id)
+            .map(|run| {
+                run.ctx
+                    .steering
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .push(facts);
+            })
+            .is_some()
+    }
 }
 
 /// RAII deregistration: dropping removes the run from the registry, so the

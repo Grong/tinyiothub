@@ -24,6 +24,41 @@ impl TaskStatus {
         !self.is_terminal()
     }
 
+    pub fn can_transition_to(self, next: Self) -> bool {
+        match self {
+            Self::Active => matches!(
+                next,
+                Self::Active
+                    | Self::WaitingJob
+                    | Self::WaitingWatch
+                    | Self::Paused
+                    | Self::Cancelling
+                    | Self::Completed
+                    | Self::Failed
+            ),
+            Self::WaitingJob | Self::WaitingWatch => matches!(
+                next,
+                Self::Active | Self::Paused | Self::Cancelling | Self::Completed | Self::Failed
+            ),
+            Self::Paused => matches!(
+                next,
+                Self::Active | Self::WaitingJob | Self::WaitingWatch | Self::Cancelling
+            ),
+            Self::Cancelling => matches!(next, Self::Cancelling | Self::Cancelled | Self::Failed),
+            Self::NeedsApproval => matches!(
+                next,
+                Self::Active
+                    | Self::WaitingJob
+                    | Self::WaitingWatch
+                    | Self::Paused
+                    | Self::Cancelling
+                    | Self::Completed
+                    | Self::Failed
+            ),
+            Self::Completed | Self::Failed | Self::Cancelled => false,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Active => "active",

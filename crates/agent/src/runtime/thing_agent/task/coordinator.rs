@@ -12,7 +12,7 @@ use super::prompt::build_task_prompt;
 use super::state::validate_transition;
 use crate::port::task::TaskStore;
 use crate::runtime::events::{AgentEventBus, AgentEventKind};
-use crate::runtime::thing_agent::active_runs::ActiveRunRegistry;
+use crate::runtime::thing_agent::active_runs::{ActiveRunGuard, ActiveRunRegistry};
 use crate::runtime::thing_agent::manager::{AutonomousAgentProvider, fetch_workspace_snapshot};
 use crate::runtime::thing_agent::runner::{RunContext, Runner};
 use crate::runtime::thing_agent::traits::DirectiveSink;
@@ -53,7 +53,7 @@ pub struct TaskCoordinator {
     jobs: Option<JobService>,
     watches: Arc<dyn WatchRuleStore>,
     watch_cmds: Arc<DashMap<String, tokio::sync::mpsc::Sender<WatchCommand>>>,
-    directives: Arc<dyn DirectiveSink>,
+    _directives: Arc<dyn DirectiveSink>,
     events: Arc<AgentEventBus>,
     active_runs: ActiveRunRegistry,
     runner: Arc<Runner>,
@@ -79,7 +79,7 @@ impl TaskCoordinator {
             jobs,
             watches,
             watch_cmds,
-            directives,
+            _directives: directives,
             events,
             active_runs,
             runner,
@@ -164,6 +164,19 @@ impl TaskCoordinator {
         if let Some(run_id) = task.current_run_id.as_deref() {
             self.active_runs.cancel(run_id);
         }
+        let owned_rules = self
+            .watches
+            .list_all()
+            .await
+            .map_err(TaskStoreError::Unavailable)?
+            .into_iter()
+            .filter(|rule| rule.workspace_id == workspace_id && rule.owner_task_id.as_deref() == Some(task_id))
+            .collect::<Vec<_>>();
+        if let Some(commands) = self.watch_cmds.get(workspace_id) {
+            for rule in &owned_rules {
+                let _ = commands.send(WatchCommand::Remove(rule.id.clone())).await;
+            }
+        }
         self.watches
             .delete_task_watches(workspace_id, task_id)
             .await
@@ -221,6 +234,7 @@ impl TaskCoordinator {
     }
 
     pub async fn recover(&self) -> Result<usize, TaskError> {
+        self.store.recover_claimed_wakes().await?;
         self.store.interrupt_unfinished_runs().await?;
         if let Some(jobs) = &self.jobs {
             jobs.recover()
@@ -305,20 +319,26 @@ impl TaskCoordinator {
             self.finish_cancellation(&task).await?;
             return Ok(Advance::Recorded);
         }
-        if task.current_run_id.is_some() {
-            return self.steer_existing(signal).await;
+        if let Some(run_id) = task.current_run_id.as_deref() {
+            return self.steer_existing(run_id, wake_event_id, signal).await;
         }
         let run_id = format!("run_{}", uuid::Uuid::new_v4().simple());
-        if !self.store.begin_run(&task, wake_event_id, &run_id).await? {
-            return Ok(Advance::Duplicate);
-        }
         self.start_run(task, wake, signal, run_id).await
     }
 
-    async fn steer_existing(&self, signal: WakeSignal) -> Result<Advance, TaskError> {
-        self.directives
-            .enqueue(signal)
-            .map_err(|error| TaskStoreError::Unavailable(format!("steer failed: {error}")))?;
+    async fn steer_existing(
+        &self,
+        run_id: &str,
+        wake_event_id: &str,
+        signal: WakeSignal,
+    ) -> Result<Advance, TaskError> {
+        let facts = serde_json::to_string_pretty(&signal)
+            .map_err(|error| TaskStoreError::Unavailable(format!("steer encoding failed: {error}")))?;
+        let targeted =
+            format!("wake_event_id: {wake_event_id}\n<untrusted_task_context>\n{facts}\n</untrusted_task_context>");
+        if !self.active_runs.steer(run_id, targeted) {
+            return Err(TaskStoreError::Unavailable(format!("active Task Run {run_id} is not registered")).into());
+        }
         Ok(Advance::Steered)
     }
 
@@ -329,19 +349,6 @@ impl TaskCoordinator {
         signal: WakeSignal,
         run_id: String,
     ) -> Result<Advance, TaskError> {
-        let task = self
-            .store
-            .bind_current_run(&task.id, task.state_version, Some(&run_id))
-            .await?;
-        let coordinator = self.clone();
-        let spawned_run_id = run_id.clone();
-        tokio::spawn(async move {
-            coordinator.execute_run(task, wake, signal, spawned_run_id).await;
-        });
-        Ok(Advance::Started { run_id })
-    }
-
-    async fn execute_run(&self, task: AgentTask, wake: TaskWake, signal: WakeSignal, run_id: String) {
         let ctx = RunContext {
             active_runs: Some(self.active_runs.clone()),
             task_id: Some(task.id.clone()),
@@ -354,7 +361,37 @@ impl TaskCoordinator {
             inner.task_id = Some(task.id.clone());
             inner.task_session_key = task.session_key.clone();
         }
-        let _guard = self.active_runs.register(ctx.clone(), cancel.clone());
+        let guard = self
+            .active_runs
+            .register(ctx.clone(), cancel.clone())
+            .ok_or_else(|| TaskStoreError::Unavailable("active Run registry is at capacity".into()))?;
+        if !self.store.begin_run(&task, &wake.event_id, &run_id).await? {
+            return Ok(Advance::Duplicate);
+        }
+        let task = self
+            .store
+            .bind_current_run(&task.id, task.state_version, Some(&run_id))
+            .await?;
+        let coordinator = self.clone();
+        let spawned_run_id = run_id.clone();
+        tokio::spawn(async move {
+            coordinator
+                .execute_run(task, wake, signal, spawned_run_id, ctx, cancel, guard)
+                .await;
+        });
+        Ok(Advance::Started { run_id })
+    }
+
+    async fn execute_run(
+        &self,
+        task: AgentTask,
+        wake: TaskWake,
+        signal: WakeSignal,
+        run_id: String,
+        ctx: RunContext,
+        cancel: CancellationToken,
+        _guard: ActiveRunGuard,
+    ) {
         self.events.emit(AgentEventKind::RunStarted {
             run_id: run_id.clone(),
             workspace_id: task.workspace_id.clone(),
@@ -408,31 +445,53 @@ impl TaskCoordinator {
             snapshot.as_deref().unwrap_or(""),
             Some(&signal),
         );
-        let report = match self
-            .agent_provider
-            .get_or_create(&task.workspace_id, Arc::clone(&ctx.inner))
-            .await
-        {
-            Ok(agent) => self.runner.execute(agent, prompt, ctx, cancel).await.report,
-            Err(error) => RunReport {
+        let report = if cancel.is_cancelled() {
+            RunReport {
                 run_id: run_id.clone(),
                 workspace_id: task.workspace_id.clone(),
                 trigger: format!("task:{}", task.id),
                 outcome: Outcome::Failed,
-                summary: format!("Task agent unavailable: {error}"),
+                summary: "Task run cancelled before model execution".into(),
                 actions: vec![],
                 verified: false,
                 duration_ms: 0,
                 tool_calls: 0,
                 tokens: 0,
-                end_reason: Some(EndReason::AgentUnavailable),
+                end_reason: None,
                 thing_id: None,
                 trace: vec![],
                 task_count: None,
                 snapshot: None,
                 task_id: Some(task.id.clone()),
                 wake_event_id: Some(wake.event_id.clone()),
-            },
+            }
+        } else {
+            match self
+                .agent_provider
+                .get_or_create(&task.workspace_id, Arc::clone(&ctx.inner))
+                .await
+            {
+                Ok(agent) => self.runner.execute(agent, prompt, ctx, cancel).await.report,
+                Err(error) => RunReport {
+                    run_id: run_id.clone(),
+                    workspace_id: task.workspace_id.clone(),
+                    trigger: format!("task:{}", task.id),
+                    outcome: Outcome::Failed,
+                    summary: format!("Task agent unavailable: {error}"),
+                    actions: vec![],
+                    verified: false,
+                    duration_ms: 0,
+                    tool_calls: 0,
+                    tokens: 0,
+                    end_reason: Some(EndReason::AgentUnavailable),
+                    thing_id: None,
+                    trace: vec![],
+                    task_count: None,
+                    snapshot: None,
+                    task_id: Some(task.id.clone()),
+                    wake_event_id: Some(wake.event_id.clone()),
+                },
+            }
         };
         if let Err(error) = self.store.finish_run(&report).await {
             tracing::warn!(run_id = %report.run_id, %error, "Task run final report persistence failed");
@@ -476,6 +535,10 @@ impl TaskCoordinator {
                 }
             }
         };
+        if let Err(error) = validate_transition(current.status, next) {
+            tracing::warn!(task_id = %current.id, from = ?current.status, to = ?next, %error, "Task completion requested an illegal transition");
+            return;
+        }
         if let Err(error) = self
             .store
             .transition_task(&current.workspace_id, &current.id, current.state_version, next, None)
@@ -487,19 +550,20 @@ impl TaskCoordinator {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::collections::{BTreeMap, HashMap, HashSet};
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
     use chrono::Utc;
     use serde_json::json;
-    use tinyiothub_core::agent_runs::RunReport;
+    use tinyiothub_core::agent_runs::{Outcome, RunReport};
     use tinyiothub_core::agent_task::{
         AgentTask, CreateTaskOutcome, TaskStatus, TaskStoreError, TaskWake, WakeDispatchState,
     };
     use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
     use tinyiothub_core::error::Error;
+    use tinyiothub_core::models::thing::Thing;
     use tinyiothub_core::models::thing_command::ThingCommand;
     use tinyiothub_core::watch::WatchRule;
     use tinyiothub_runtime::access::resources::ResourceResolver;
@@ -507,7 +571,9 @@ mod tests {
     use tinyiothub_runtime::arbitration::{ArbitrationRegistry, ResourceLease};
     use tinyiothub_runtime::job::service::JobService;
     use tinyiothub_runtime::job::worker_adapter::{JobDeviceWorker, JobWorkerLocator};
-    use tinyiothub_runtime::ports::{DeviceJobStore, WatchRuleStore};
+    use tinyiothub_runtime::ports::{DeviceJobStore, HubLedger, ThingCacheSource, WatchRuleStore};
+    use tinyiothub_runtime::watch::engine::WatchEngine;
+    use tinyiothub_runtime::watch::live_state::LiveState;
     use tokio::sync::mpsc;
     use tokio_util::sync::CancellationToken;
 
@@ -533,8 +599,9 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryTasks {
+    pub(crate) struct MemoryTasks {
         state: Mutex<MemoryState>,
+        bind_gate: Mutex<Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
     }
 
     impl MemoryTasks {
@@ -552,6 +619,10 @@ mod tests {
 
         fn task(&self, id: &str) -> AgentTask {
             self.state.lock().expect("tasks").tasks[id].clone()
+        }
+
+        pub(crate) fn wake_count(&self) -> usize {
+            self.state.lock().expect("tasks").wakes.len()
         }
 
         fn wake(&self, task_id: &str, event_id: &str) -> TaskWake {
@@ -675,14 +746,22 @@ mod tests {
             expected_version: i64,
             run_id: Option<&str>,
         ) -> Result<AgentTask, TaskStoreError> {
-            let mut state = self.state.lock().expect("tasks");
-            let task = state.tasks.get_mut(task_id).ok_or(TaskStoreError::ConcurrentUpdate)?;
-            if task.state_version != expected_version {
-                return Err(TaskStoreError::ConcurrentUpdate);
+            let task = {
+                let mut state = self.state.lock().expect("tasks");
+                let task = state.tasks.get_mut(task_id).ok_or(TaskStoreError::ConcurrentUpdate)?;
+                if task.state_version != expected_version {
+                    return Err(TaskStoreError::ConcurrentUpdate);
+                }
+                task.current_run_id = run_id.map(str::to_string);
+                task.state_version += 1;
+                task.clone()
+            };
+            let gate = self.bind_gate.lock().expect("bind gate").clone();
+            if let Some((entered, release)) = gate {
+                entered.notify_one();
+                release.notified().await;
             }
-            task.current_run_id = run_id.map(str::to_string);
-            task.state_version += 1;
-            Ok(task.clone())
+            Ok(task)
         }
 
         async fn begin_run(
@@ -721,7 +800,11 @@ mod tests {
             let mut claimed = state
                 .wakes
                 .values()
-                .filter(|wake| wake.dispatch_state == WakeDispatchState::Pending && wake.resolved_at.is_none())
+                .filter(|wake| {
+                    wake.dispatch_state == WakeDispatchState::Pending
+                        && wake.dispatched_at.is_none()
+                        && wake.resolved_at.is_none()
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             claimed.sort_by(|a, b| {
@@ -733,10 +816,24 @@ mod tests {
             claimed.truncate(limit.max(0) as usize);
             for wake in &claimed {
                 if let Some(stored) = state.wakes.get_mut(&(wake.task_id.clone(), wake.event_id.clone())) {
-                    stored.dispatch_state = WakeDispatchState::Dispatched;
+                    stored.dispatched_at = Some(Utc::now());
                 }
             }
             Ok(claimed)
+        }
+
+        async fn recover_claimed_wakes(&self) -> Result<usize, TaskStoreError> {
+            let mut state = self.state.lock().expect("tasks");
+            let mut recovered = 0;
+            for wake in state
+                .wakes
+                .values_mut()
+                .filter(|wake| wake.dispatch_state == WakeDispatchState::Pending && wake.dispatched_at.is_some())
+            {
+                wake.dispatched_at = None;
+                recovered += 1;
+            }
+            Ok(recovered)
         }
 
         async fn mark_wake(
@@ -753,6 +850,11 @@ mod tests {
                 .get_mut(&(task_id.into(), event_id.into()))
             {
                 wake.dispatch_state = next;
+                wake.dispatched_at = match next {
+                    WakeDispatchState::Dispatched => Some(Utc::now()),
+                    WakeDispatchState::Pending => None,
+                    WakeDispatchState::Dead => wake.dispatched_at,
+                };
             }
             Ok(())
         }
@@ -821,6 +923,38 @@ mod tests {
     impl DirectiveSink for RecordingSink {
         fn enqueue(&self, signal: WakeSignal) -> Result<(), crate::runtime::thing_agent::scheduler::EnqueueError> {
             self.signals.lock().expect("signals").push(signal);
+            Ok(())
+        }
+    }
+
+    struct EmptyCache;
+
+    impl ThingCacheSource for EmptyCache {
+        fn all(&self) -> Vec<Thing> {
+            vec![]
+        }
+        fn get(&self, _id: &str) -> Option<Thing> {
+            None
+        }
+        fn get_by_name(&self, _name: &str) -> Option<Thing> {
+            None
+        }
+        fn insert(&self, _device: Thing) {}
+        fn update(&self, _device: Thing) {}
+        fn remove(&self, _id: &str) {}
+    }
+
+    struct NoopLedger;
+
+    #[async_trait]
+    impl HubLedger for NoopLedger {
+        async fn append(
+            &self,
+            _workspace_id: &str,
+            _kind: &str,
+            _thing_id: Option<&str>,
+            _payload: serde_json::Value,
+        ) -> Result<(), String> {
             Ok(())
         }
     }
@@ -1067,6 +1201,10 @@ mod tests {
         }
 
         fn new_with_jobs(task: AgentTask, jobs: Option<JobService>) -> Self {
+            Self::new_with_jobs_and_capacity(task, jobs, 4)
+        }
+
+        fn new_with_jobs_and_capacity(task: AgentTask, jobs: Option<JobService>, capacity: usize) -> Self {
             let store = Arc::new(MemoryTasks::default());
             store.insert(task.clone());
             let sink = Arc::new(RecordingSink::default());
@@ -1074,7 +1212,7 @@ mod tests {
             let watches = Arc::new(MemoryWatches::default());
             let watch_cmds = Arc::new(dashmap::DashMap::new());
             let events = Arc::new(AgentEventBus::new(16));
-            let active = ActiveRunRegistry::new(4);
+            let active = ActiveRunRegistry::new(capacity);
             let mut guard = None;
             let mut token = None;
             if let Some(run_id) = task.current_run_id.clone() {
@@ -1554,6 +1692,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancel_removes_owned_rule_from_a_running_watch_engine() {
+        let fixture = Fixture::new(task(TaskStatus::Active));
+        let rule = owned_watch("watch_live");
+        fixture.watches.insert(&rule).await.expect("persisted watch");
+        let (hit_tx, mut hit_rx) = mpsc::channel(4);
+        let live = LiveState::new(Arc::new(EmptyCache));
+        let mut engine = WatchEngine::new(live, Arc::new(NoopLedger), fixture.watches.clone(), hit_tx);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(8);
+        fixture.watch_cmds.insert("ws_1".into(), cmd_tx.clone());
+        let (change_tx, mut change_rx) = mpsc::channel::<(bool, tokio::sync::oneshot::Sender<()>)>(2);
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let engine_task = tokio::spawn(async move {
+            engine.upsert_rule(rule).await.expect("live rule");
+            ready_tx.send(()).expect("ready");
+            loop {
+                tokio::select! {
+                    cmd = cmd_rx.recv() => {
+                        let Some(cmd) = cmd else { break };
+                        match cmd {
+                            crate::runtime::thing_agent::WatchCommand::Remove(id) => {
+                                engine.remove_rule(&id);
+                            }
+                            crate::runtime::thing_agent::WatchCommand::Snapshot { reply } => {
+                                let _ = reply.send(None);
+                            }
+                            _ => {}
+                        }
+                    }
+                    change = change_rx.recv() => {
+                        let Some((online, done)) = change else { break };
+                        engine.on_availability("ws_1", "thing_1", online).await;
+                        let _ = done.send(());
+                    }
+                }
+            }
+        });
+        ready_rx.await.expect("engine ready");
+        fixture.coordinator.cancel("ws_1", "task_1").await.expect("cancel");
+        let (snapshot_tx, snapshot_rx) = tokio::sync::oneshot::channel();
+        cmd_tx
+            .send(crate::runtime::thing_agent::WatchCommand::Snapshot { reply: snapshot_tx })
+            .await
+            .expect("snapshot command");
+        snapshot_rx.await.expect("snapshot processed");
+        let (changed_tx, changed_rx) = tokio::sync::oneshot::channel();
+        change_tx.send((false, changed_tx)).await.expect("availability change");
+        changed_rx.await.expect("change processed");
+        assert!(
+            hit_rx.try_recv().is_err(),
+            "cancelled live rule must not emit another hit"
+        );
+        assert!(fixture.watches.rules.lock().expect("watches").is_empty());
+        engine_task.abort();
+    }
+
+    #[tokio::test]
     async fn task_run_started_and_report_share_wake_identity() {
         let fixture = Fixture::new(task(TaskStatus::Active));
         fixture.add_wake("event_1");
@@ -1612,6 +1806,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_completion_rejects_waiting_watch_to_waiting_job() {
+        let (jobs, job_store, _worker) = jobs();
+        job_store
+            .create_job(&job("job_1", "task_1", DeviceJobState::Running))
+            .await
+            .expect("active job");
+        let mut running = task(TaskStatus::WaitingWatch);
+        running.current_run_id = Some("run_existing".into());
+        let fixture = Fixture::new_with_jobs(running.clone(), Some(jobs));
+        fixture
+            .coordinator
+            .finish_task_run(&running, "run_existing", Outcome::Acted)
+            .await;
+        assert_eq!(fixture.store.task("task_1").status, TaskStatus::WaitingWatch);
+    }
+
+    #[tokio::test]
+    async fn run_completion_rejects_waiting_job_to_waiting_watch() {
+        let mut running = task(TaskStatus::WaitingJob);
+        running.current_run_id = Some("run_existing".into());
+        let fixture = Fixture::new(running.clone());
+        fixture.watches.insert(&owned_watch("watch_1")).await.expect("watch");
+        fixture
+            .coordinator
+            .finish_task_run(&running, "run_existing", Outcome::Acted)
+            .await;
+        assert_eq!(fixture.store.task("task_1").status, TaskStatus::WaitingJob);
+    }
+
+    #[tokio::test]
+    async fn cancel_after_run_binding_before_registration_still_prevents_model_execution() {
+        let fixture = Fixture::new(task(TaskStatus::Active));
+        fixture.add_wake("event_cancel_window");
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        *fixture.store.bind_gate.lock().expect("bind gate") = Some((entered.clone(), release.clone()));
+        let coordinator = fixture.coordinator.clone();
+        let advancing = tokio::spawn(async move { coordinator.advance("task_1", "event_cancel_window").await });
+        entered.notified().await;
+        fixture.coordinator.cancel("ws_1", "task_1").await.expect("cancel");
+        fixture.store.bind_gate.lock().expect("bind gate").take();
+        release.notify_one();
+        advancing.await.expect("advance join").expect("advance result");
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        assert!(fixture.provider.prompts.lock().expect("prompts").is_empty());
+        assert_eq!(fixture.store.task("task_1").status, TaskStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn registry_capacity_refusal_never_executes_an_unregistered_task_run() {
+        let fixture = Fixture::new_with_jobs_and_capacity(task(TaskStatus::Active), None, 0);
+        fixture.add_wake("event_capacity");
+        assert!(fixture.coordinator.advance("task_1", "event_capacity").await.is_err());
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        assert!(fixture.provider.prompts.lock().expect("prompts").is_empty());
+    }
+
+    #[tokio::test]
     async fn active_task_wake_steers_without_starting_another_run() {
         let mut running = task(TaskStatus::Active);
         running.current_run_id = Some("run_existing".into());
@@ -1621,8 +1873,13 @@ mod tests {
             fixture.coordinator.advance("task_1", "event_2").await,
             Ok(Advance::Steered)
         );
-        assert_eq!(fixture.sink.signals.lock().expect("signals").len(), 1);
+        assert_eq!(fixture.sink.signals.lock().expect("signals").len(), 0);
         assert_eq!(*fixture.provider.calls.lock().expect("calls"), 0);
+        let active = fixture.active.get("run_existing").expect("registered Task Run");
+        let steering = active.steering.lock().expect("steering buffer");
+        assert_eq!(steering.len(), 1);
+        assert!(steering[0].contains("event_2"));
+        assert!(steering[0].contains("continue"));
     }
 
     #[tokio::test]

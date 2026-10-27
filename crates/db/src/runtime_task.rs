@@ -285,6 +285,19 @@ impl Db {
         let now = Utc::now();
         let ended_at = next.is_terminal().then_some(now);
         let mut tx = self.pool().begin().await.map_err(unavailable)?;
+        let current = find_task(&mut tx, workspace_id, task_id)
+            .await?
+            .ok_or(TaskStoreError::ConcurrentUpdate)?;
+        if current.state_version != expected_version {
+            return Err(TaskStoreError::ConcurrentUpdate);
+        }
+        if !current.status.can_transition_to(next) {
+            return Err(TaskStoreError::Validation(format!(
+                "task state transition {} -> {} is forbidden",
+                current.status.as_str(),
+                next.as_str()
+            )));
+        }
         let affected = sqlx::query(
             "UPDATE agent_tasks
              SET status = ?, state_version = state_version + 1, updated_at = ?, ended_at = ?
@@ -428,10 +441,10 @@ impl Db {
         let now = Utc::now();
         sqlx::query_as::<_, TaskWakeRow>(
             "UPDATE task_wake_outbox
-             SET dispatch_state = 'dispatched', dispatched_at = ?
+             SET dispatched_at = ?
              WHERE (task_id, event_id) IN (
                  SELECT task_id, event_id FROM task_wake_outbox
-                 WHERE dispatch_state = 'pending' AND resolved_at IS NULL
+                 WHERE dispatch_state = 'pending' AND dispatched_at IS NULL AND resolved_at IS NULL
                  ORDER BY created_at, task_id, event_id LIMIT ?
              )
              RETURNING task_id, event_id, signal_json, dispatch_state, created_at, dispatched_at, resolved_at",
@@ -444,6 +457,18 @@ impl Db {
         .into_iter()
         .map(TaskWake::try_from)
         .collect()
+    }
+
+    pub async fn recover_claimed_wakes(&self) -> Result<usize, TaskStoreError> {
+        let affected = sqlx::query(
+            "UPDATE task_wake_outbox SET dispatched_at = NULL
+             WHERE dispatch_state = 'pending' AND dispatched_at IS NOT NULL",
+        )
+        .execute(self.pool())
+        .await
+        .map_err(unavailable)?
+        .rows_affected();
+        Ok(affected as usize)
     }
 
     pub async fn mark_wake(
@@ -872,7 +897,80 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn claiming_marks_dispatched_and_dead_wake_retry_is_workspace_scoped() {
+    async fn claimed_active_and_waiting_task_wakes_retry_after_real_db_restart() {
+        for (index, status) in [TaskStatus::Active, TaskStatus::WaitingWatch].into_iter().enumerate() {
+            let path =
+                std::env::temp_dir().join(format!("tinyiothub-wake-restart-{}-{index}.db", uuid::Uuid::new_v4()));
+            let options = sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true);
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .connect_with(options.clone())
+                .await
+                .expect("file-backed sqlite");
+            crate::test_helpers::run_all_migrations(&pool)
+                .await
+                .expect("migrations");
+            seed_workspace(&pool, "ws_1").await;
+            let db = Db::new(pool.clone());
+            let mut task = sample_task("task_1", "ws_1", "key_1", "inspect");
+            task.status = status;
+            db.create_task_with_wake(&task, &sample_wake("task_1", "event_original", "ws_1"))
+                .await
+                .expect("create");
+            assert_eq!(db.claim_pending_wakes(10).await.expect("claim before crash").len(), 1);
+            pool.close().await;
+            drop(db);
+
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .connect_with(options)
+                .await
+                .expect("restart sqlite");
+            let db = Db::new(pool.clone());
+            db.recover_claimed_wakes().await.expect("release crashed claims");
+            let retried = db.claim_pending_wakes(10).await.expect("retry after restart");
+            assert_eq!(retried.len(), 1, "status {status:?} must not strand its wake");
+            assert_eq!(retried[0].event_id, "event_original");
+            assert!(
+                db.begin_run(&task, "event_original", "run_1")
+                    .await
+                    .expect("first dispatch")
+            );
+            assert!(
+                !db.begin_run(&task, "event_original", "run_2")
+                    .await
+                    .expect("dedup replay")
+            );
+            pool.close().await;
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    #[tokio::test]
+    async fn storage_rejects_illegal_waiting_state_transition() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws_1").await;
+        let db = Db::new(pool);
+        let task = sample_task("task_1", "ws_1", "key_1", "inspect");
+        db.create_task_with_wake(&task, &sample_wake("task_1", "event_1", "ws_1"))
+            .await
+            .expect("create");
+        db.transition_task("ws_1", "task_1", 0, TaskStatus::WaitingWatch, None)
+            .await
+            .expect("waiting watch");
+        let error = db
+            .transition_task("ws_1", "task_1", 1, TaskStatus::WaitingJob, None)
+            .await
+            .expect_err("illegal transition");
+        assert!(matches!(error, TaskStoreError::Validation(_)));
+        assert_eq!(
+            db.get_task("ws_1", "task_1").await.expect("get").expect("task").status,
+            TaskStatus::WaitingWatch
+        );
+    }
+
+    #[tokio::test]
+    async fn claiming_leases_pending_wake_and_dead_wake_retry_is_workspace_scoped() {
         let pool = crate::test_helpers::test_pool().await;
         seed_workspace(&pool, "ws_1").await;
         let db = Db::new(pool);
@@ -883,7 +981,7 @@ mod tests {
 
         let claimed = db.claim_pending_wakes(10).await.expect("claim");
         assert_eq!(claimed.len(), 1);
-        assert_eq!(claimed[0].dispatch_state, WakeDispatchState::Dispatched);
+        assert_eq!(claimed[0].dispatch_state, WakeDispatchState::Pending);
         assert!(claimed[0].dispatched_at.is_some());
         assert!(db.claim_pending_wakes(10).await.expect("second claim").is_empty());
         db.mark_wake("task_1", "event_1", WakeDispatchState::Dead)

@@ -9,6 +9,8 @@ use tokio_util::sync::CancellationToken;
 /// 与 runner::MAX_TOOL_CALLS_PER_RUN 对齐的模型调用预算（含初始调用）。
 pub const MAX_LOOP_TURNS: usize = 25;
 
+pub type SteeringBuffer = Arc<std::sync::Mutex<Vec<String>>>;
+
 pub struct AgentLoopConfig {
     pub model_name: String,
     pub prompt_builder: crate::port::prompt::SystemPromptBuilder,
@@ -39,6 +41,16 @@ pub trait AgentLoop: Send + Sync {
         event_tx: mpsc::Sender<crate::port::events::TurnEvent>,
         cancel_token: Option<CancellationToken>,
     ) -> anyhow::Result<String>;
+
+    async fn turn_streamed_with_steering(
+        &self,
+        user_message: &str,
+        event_tx: mpsc::Sender<crate::port::events::TurnEvent>,
+        cancel_token: Option<CancellationToken>,
+        _steering: Option<SteeringBuffer>,
+    ) -> anyhow::Result<String> {
+        self.turn_streamed(user_message, event_tx, cancel_token).await
+    }
 
     /// zeroclaw run_single = turn()（zeroclaw-runtime/src/agent/agent.rs:2520），
     /// 即完整工具循环，对应 rig 的 `.prompt()`。

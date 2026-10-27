@@ -39,6 +39,7 @@ const LEDGER_MAX_ATTEMPTS: usize = 3;
 pub struct WatchHit {
     pub workspace_id: String,
     pub rule_id: String,
+    pub owner_task_id: Option<String>,
     pub summary: ThingLiveSummary,
     pub current_value: serde_json::Value,
     pub health: Health,
@@ -313,6 +314,7 @@ impl WatchEngine {
         let hit = WatchHit {
             workspace_id: rule.workspace_id.clone(),
             rule_id: rule.id.clone(),
+            owner_task_id: rule.owner_task_id.clone(),
             health: summary.health,
             zone: summary.zone.clone(),
             summary,
@@ -706,7 +708,8 @@ mod tests {
         store.insert(&rule).await.unwrap();
         engine.upsert_rule(rule).await.unwrap();
         engine.on_property_change("w1", "t1", "温度", "31").await;
-        assert!(rx.try_recv().is_ok());
+        let hit = rx.try_recv().expect("task watch hit");
+        assert_eq!(hit.owner_task_id.as_deref(), Some("task1"));
         let wakes = store.wakes.lock().unwrap();
         assert_eq!(wakes.len(), 1);
         assert_eq!(wakes[0].task_id, "task1");
