@@ -5,7 +5,7 @@ use tinyiothub_core::error::Error;
 use tinyiothub_core::models::thing_command::ThingCommand;
 
 use crate::arbitration::ResourceLease;
-use crate::data_server::DataServer;
+use crate::data_server::{DataServer, WorkerCache};
 use crate::driver::worker::WorkerHandle;
 
 pub trait JobDeviceWorker: Send + Sync {
@@ -27,19 +27,20 @@ pub trait JobResultSink: Send + Sync {
 
 #[derive(Clone)]
 pub struct DataServerJobWorkers {
-    data_server: DataServer,
+    workers: WorkerCache,
 }
 
 impl DataServerJobWorkers {
     pub fn new(data_server: DataServer) -> Self {
-        Self { data_server }
+        Self {
+            workers: data_server.workers(),
+        }
     }
 }
 
 impl JobWorkerLocator for DataServerJobWorkers {
     fn worker_for(&self, device_id: &str) -> Option<Arc<dyn JobDeviceWorker>> {
-        self.data_server
-            .workers()
+        self.workers
             .get(device_id)
             .map(|worker| Arc::new(WorkerJobAdapter { worker }) as Arc<dyn JobDeviceWorker>)
     }

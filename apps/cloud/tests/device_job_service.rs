@@ -9,13 +9,16 @@ use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
 use tinyiothub_core::driver::manifest::{ManifestTool, ToolKindDecl, ToolSafetyDecl, ToolTimeout};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::models::thing_command::ThingCommand;
+use tinyiothub_runtime::DataServer;
 use tinyiothub_runtime::access::resources::{ResourceClaim, ResourceResolver, device_claim};
 use tinyiothub_runtime::access::validator::{AccessCallValidator, CallError, ValidatedCall};
 use tinyiothub_runtime::arbitration::{ArbitrationRegistry, ResourceLease};
+use tinyiothub_runtime::event_bus::EventBus;
 use tinyiothub_runtime::job::service::{JobFinal, JobRequest, JobService, JobWait};
-use tinyiothub_runtime::job::worker_adapter::{JobDeviceWorker, JobWorkerLocator};
+use tinyiothub_runtime::job::worker_adapter::{DataServerJobWorkers, JobDeviceWorker, JobWorkerLocator};
 use tinyiothub_runtime::ports::DeviceJobStore;
 use tinyiothub_storage::Db;
+use tinyiothub_storage::cache::ThingCache;
 
 struct DbStore(Db);
 
@@ -267,4 +270,33 @@ async fn service_terminal_results_and_wakes_use_real_db() {
     };
     assert_eq!(expired.state, DeviceJobState::Failed);
     assert_eq!(wake_count(&db, "task_timeout").await, 1);
+}
+
+#[tokio::test]
+async fn production_data_server_and_job_service_do_not_retain_each_other() {
+    let db = Db::new(tinyiothub_storage::test_helpers::test_pool().await);
+    let data_server = Arc::new(DataServer::new(
+        Arc::new(tinyiothub_cloud::shared::runtime_ports::ThingCacheAdapter(Arc::new(
+            ThingCache::new(),
+        ))),
+        Arc::new(EventBus::new()),
+    ));
+    let service = Arc::new(JobService::new(
+        Arc::new(DbStore(db)),
+        Arc::new(DataServerJobWorkers::new(data_server.as_ref().clone())),
+        Arc::new(Validator(30)),
+        Arc::new(Resources),
+        Arc::new(ArbitrationRegistry::default()),
+    ));
+    data_server.set_job_result_sink(service.clone());
+    let weak_server = Arc::downgrade(&data_server);
+    let weak_service = Arc::downgrade(&service);
+
+    drop(service);
+    drop(data_server);
+
+    assert!(
+        weak_server.upgrade().is_none() && weak_service.upgrade().is_none(),
+        "the production DataServer/JobService pair must be released with its external owners"
+    );
 }
