@@ -272,6 +272,7 @@ impl RunContextInner {
                     name: name.clone(),
                     args: args.clone(),
                     output: None,
+                    evidence: vec![],
                 });
                 // Fire-and-forget (O1): the tool is already dispatched when we
                 // see the event, so the budget stops the NEXT call, not this
@@ -279,11 +280,20 @@ impl RunContextInner {
                 // UnknownCancelled once the abort drops it). The budget seam
                 // decides after recording (consume loop).
             }
-            TurnEvent::ToolResult { id, output, .. } => {
+            TurnEvent::ToolResult {
+                id,
+                output,
+                attachments,
+                ..
+            } => {
                 // Pair by stable id; latest unpaired wins (ids are unique per
                 // call, so this is exact matching, not heuristic).
                 if let Some(entry) = self.trace.iter_mut().rev().find(|e| e.id == *id && e.output.is_none()) {
                     entry.output = Some(output.clone());
+                    entry.evidence = attachments
+                        .iter()
+                        .map(tinyiothub_core::media::EvidenceRef::from)
+                        .collect();
                 }
             }
             TurnEvent::Usage {
@@ -664,7 +674,36 @@ mod tests {
             id: id.to_string(),
             name: name.to_string(),
             output: output.to_string(),
+            attachments: vec![],
         }
+    }
+
+    #[test]
+    fn tool_result_trace_keeps_only_evidence_references() {
+        let mut inner = RunContextInner::default();
+        inner.record_event(&call(
+            "c1",
+            "read_device",
+            serde_json::json!({"thingId":"d1","sources":["front"]}),
+        ));
+        let attachment = tinyiothub_core::media::MediaAttachment {
+            evidence_id: "e1".into(),
+            mime: "image/png".into(),
+            bytes: vec![1, 2, 3],
+            source_seq: 7,
+            media_time: chrono::Utc::now(),
+        };
+        inner.record_event(&TurnEvent::ToolResult {
+            id: "c1".into(),
+            name: "read_device".into(),
+            output: "captured".into(),
+            attachments: vec![attachment],
+        });
+        assert_eq!(inner.trace[0].evidence.len(), 1);
+        assert_eq!(inner.trace[0].evidence[0].evidence_id, "e1");
+        let json = serde_json::to_string(&inner.trace[0]).expect("trace JSON");
+        assert!(!json.contains("bytes"));
+        assert!(!json.contains("base64"));
     }
 
     fn invoke(id: &str, thing: &str, action: &str) -> TurnEvent {
@@ -689,6 +728,7 @@ mod tests {
             name: name.to_string(),
             args,
             output: output.map(str::to_string),
+            evidence: vec![],
         }
     }
 
@@ -1108,6 +1148,7 @@ mod tests {
             name: TOOL_INVOKE_ACTION.to_string(),
             args: serde_json::json!({"thingId": thing, "actionName": action}),
             output: Some(format!(r#"{{"denied":true,"reason":"{reason}"}}"#)),
+            evidence: vec![],
         }
     }
 

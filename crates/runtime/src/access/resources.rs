@@ -167,6 +167,7 @@ mod tests {
             state_fields: ["level", "mode", "temp"]
                 .iter()
                 .map(|name| StateFieldDecl {
+                    key: None,
                     name: name.to_string(),
                     data_type: "integer".into(),
                     unit: None,

@@ -59,6 +59,7 @@ impl Tool for GetSkillTool {
                     "skill_name is required. Available skills: {}",
                     available_skills()
                 )),
+                attachments: vec![],
             });
         }
 
@@ -71,6 +72,7 @@ impl Tool for GetSkillTool {
                     "Invalid skill_name: '{}'. Use only letters, digits, hyphens, underscores.",
                     skill_name
                 )),
+                attachments: vec![],
             });
         }
 
@@ -80,6 +82,7 @@ impl Tool for GetSkillTool {
                 success: false,
                 output: String::new(),
                 error: Some(format!("Invalid skill_name: '{}'", skill_name)),
+                attachments: vec![],
             });
         }
 
@@ -92,12 +95,14 @@ impl Tool for GetSkillTool {
                         success: false,
                         output: String::new(),
                         error: Some(format!("Skill '{}' is empty", skill_name)),
+                        attachments: vec![],
                     });
                 }
                 Ok(ToolResult {
                     success: true,
                     output: content,
                     error: None,
+                    attachments: vec![],
                 })
             }
             Err(_) => Ok(ToolResult {
@@ -108,6 +113,7 @@ impl Tool for GetSkillTool {
                     skill_name,
                     available_skills()
                 )),
+                attachments: vec![],
             }),
         }
     }

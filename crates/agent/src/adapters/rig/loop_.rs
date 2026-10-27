@@ -104,8 +104,43 @@ impl BudgetHook {
     }
 }
 
+fn request_media_within_budget(
+    prompt: &rig_core::message::Message,
+    history: &[rig_core::message::Message],
+) -> Result<(), tinyiothub_core::media::MediaError> {
+    let mut budget = tinyiothub_runtime::media::evidence::RunMediaBudget::default();
+    for message in history.iter().chain(std::iter::once(prompt)) {
+        let rig_core::message::Message::User { content } = message else {
+            continue;
+        };
+        for block in content {
+            match block {
+                rig_core::message::UserContent::Image(image) => {
+                    if let rig_core::message::DocumentSourceKind::Raw(bytes) = &image.data {
+                        budget.record(bytes.len())?;
+                    }
+                }
+                rig_core::message::UserContent::ToolResult(result) => {
+                    for block in &result.content {
+                        if let rig_core::message::ToolResultContent::Image(image) = block
+                            && let rig_core::message::DocumentSourceKind::Raw(bytes) = &image.data
+                        {
+                            budget.record(bytes.len())?;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
 impl AgentHook for BudgetHook {
-    async fn on_completion_call(&self, _ctx: &HookContext, _event: CompletionCallEvent<'_>) -> CompletionCallAction {
+    async fn on_completion_call(&self, _ctx: &HookContext, event: CompletionCallEvent<'_>) -> CompletionCallAction {
+        if let Err(error) = request_media_within_budget(event.prompt, event.history) {
+            return CompletionCallAction::stop(error.to_string());
+        }
         self.steering
             .as_ref()
             .and_then(take_steering_patch)
@@ -206,10 +241,15 @@ impl AgentLoop for RigAgentLoop {
                             ..
                         }) => {
                             let output = super::provider::tool_result_text(&tool_result);
+                            let attachments = match super::provider::tool_result_attachments(&tool_result) {
+                                Ok(attachments) => attachments,
+                                Err(error) => return Err(anyhow::Error::new(error)),
+                            };
                             let _ = event_tx.send(TurnEvent::ToolResult {
                                 id: tool_result.call.to_string(),
                                 name: tool_result.name.clone(),
                                 output,
+                                attachments,
                             }).await;
                         }
                         MultiTurnStreamItem::CompletionCall(call) => {
@@ -323,6 +363,22 @@ pub fn rig_loop_factory(cfg: AgentLoopConfig) -> anyhow::Result<AgentLoopHandle>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_fifth_two_mib_image_before_model_call() {
+        let image = rig_core::message::Image {
+            data: rig_core::message::DocumentSourceKind::Raw(vec![0; 2 * 1024 * 1024]),
+            media_type: Some(rig_core::message::ImageMediaType::PNG),
+            detail: None,
+            additional_params: None,
+        };
+        let history = vec![rig_core::message::Message::User {
+            content: (0..5)
+                .map(|_| rig_core::message::UserContent::Image(image.clone()))
+                .collect(),
+        }];
+        assert!(request_media_within_budget(&rig_core::message::Message::user("inspect"), &history).is_err());
+    }
 
     #[test]
     fn queued_task_wake_becomes_next_completion_context_exactly_once() {

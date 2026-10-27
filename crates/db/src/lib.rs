@@ -55,6 +55,7 @@ pub mod heartbeat;
 pub mod judgment;
 /// E4d spatial persistence (maps / places / thing position / zone_source).
 pub mod map;
+pub mod media_evidence;
 /// Agent memory persistence.
 pub mod memory;
 /// Embedded migrations runner.

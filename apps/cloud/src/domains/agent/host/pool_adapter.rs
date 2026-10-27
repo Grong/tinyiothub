@@ -105,6 +105,7 @@ fn map_tool_call(c: StreamingToolCall) -> (ToolCallRecord, tinyiothub_core::agen
         name: c.name.clone(),
         args: c.args,
         output: c.result.clone(),
+        evidence: vec![],
     };
     let record = ToolCallRecord {
         tool_name: c.name,

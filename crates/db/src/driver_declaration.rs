@@ -417,6 +417,7 @@ mod tests {
 
     fn field(name: &str) -> StateFieldDecl {
         StateFieldDecl {
+            key: None,
             name: name.into(),
             data_type: "integer".into(),
             unit: Some("%".into()),

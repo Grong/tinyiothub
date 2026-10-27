@@ -4,6 +4,14 @@ use serde::{Deserialize, Serialize};
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<tinyiothub_core::media::MediaAttachment>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ProviderError {
+    #[error("image_unavailable")]
+    ImageUnavailable,
 }
 
 impl ChatMessage {
@@ -11,24 +19,28 @@ impl ChatMessage {
         Self {
             role: "system".into(),
             content: content.into(),
+            attachments: Vec::new(),
         }
     }
     pub fn user(content: impl Into<String>) -> Self {
         Self {
             role: "user".into(),
             content: content.into(),
+            attachments: Vec::new(),
         }
     }
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
             role: "assistant".into(),
             content: content.into(),
+            attachments: Vec::new(),
         }
     }
     pub fn tool(content: impl Into<String>) -> Self {
         Self {
             role: "tool".into(),
             content: content.into(),
+            attachments: Vec::new(),
         }
     }
 }
@@ -69,6 +81,9 @@ pub struct ChatRequest<'a> {
 /// 极简 provider 抽象：agent loop 只走 `chat`。
 #[async_trait::async_trait]
 pub trait ModelProvider: Send + Sync + crate::port::attribution::Attributable {
+    fn supports_vision(&self) -> bool {
+        false
+    }
     async fn chat(
         &self,
         request: ChatRequest<'_>,

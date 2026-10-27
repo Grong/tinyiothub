@@ -56,12 +56,14 @@ impl Tool for CanvasTool {
                 success: true,
                 output: format!("A2UI pushed: {} bytes", jsonl.len()),
                 error: None,
+                attachments: vec![],
             })
         } else {
             Ok(ToolResult {
                 success: false,
                 output: String::new(),
                 error: Some("Unknown action".into()),
+                attachments: vec![],
             })
         }
     }

@@ -16,6 +16,7 @@ pub mod driver;
 pub mod error;
 pub mod event;
 pub mod heartbeat;
+pub mod media;
 pub mod memory;
 pub mod models;
 pub mod notification_types;

@@ -98,6 +98,7 @@ impl Tool for SlowTool {
             success: true,
             output: "slow tool finished".into(),
             error: None,
+            attachments: vec![],
         })
     }
 }

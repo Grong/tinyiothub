@@ -663,6 +663,7 @@ mod tests {
 
     fn field(name: &str, data_type: &str, required: bool, range: Option<(f64, f64)>) -> StateFieldDecl {
         StateFieldDecl {
+            key: None,
             name: name.into(),
             data_type: data_type.into(),
             unit: None,
@@ -800,6 +801,7 @@ mod tests {
     #[test]
     fn range_skips_when_no_bound_is_declared() {
         let unbounded = StateFieldDecl {
+            key: None,
             range: Some(NumericRange { min: None, max: None }),
             ..field("level", "integer", true, None)
         };

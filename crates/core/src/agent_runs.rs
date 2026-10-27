@@ -108,6 +108,8 @@ pub struct ToolTraceEntry {
     pub args: serde_json::Value,
     /// `None` = no paired ToolResult (cancelled in flight / stream ended).
     pub output: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<crate::media::EvidenceRef>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -200,6 +202,7 @@ mod tests {
             name: "read_property".into(),
             args: serde_json::json!({"p": "temperature"}),
             output: None,
+            evidence: vec![],
         };
         let v = serde_json::to_value(&entry).expect("serialize");
         assert_eq!(v["output"], serde_json::Value::Null);

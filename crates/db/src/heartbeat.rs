@@ -963,6 +963,7 @@ mod tests {
             name: "read_property".into(),
             args: serde_json::json!({"thingId": "dev_1", "p": "temperature"}),
             output: Some("26.5".into()),
+            evidence: vec![],
         }];
         db.insert_heartbeat_result("ws_1", &result)
             .await

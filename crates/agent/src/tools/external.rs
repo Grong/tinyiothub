@@ -128,11 +128,13 @@ impl Tool for IoTToolAdapter {
                 success: true,
                 output: serde_json::to_string(&output).unwrap_or_default(),
                 error: None,
+                attachments: vec![],
             }),
             Err(err) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
                 error: Some(err.to_string()),
+                attachments: vec![],
             }),
         }
     }

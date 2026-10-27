@@ -39,6 +39,8 @@ dashmap = { workspace = true }
 
 # Hashing (driver package integrity)
 sha2 = { workspace = true }
+hex = "0.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 # Random
 rand = { workspace = true }

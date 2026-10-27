@@ -5,6 +5,182 @@ use std::sync::{Arc, Mutex};
 use crate::port::attribution::{Attributable, Role, ToolKind};
 use crate::port::tool::{Tool, ToolResult};
 
+#[test]
+fn rig_forwards_real_image_and_trace_keeps_only_reference() {
+    use chrono::{TimeZone, Utc};
+    use rig_core::message::{DocumentSourceKind, ToolResultContent};
+    use tinyiothub_core::media::{EvidenceRef, MediaAttachment};
+
+    let bytes = vec![0x89, b'P', b'N', b'G', 1, 2, 3];
+    let attachment = MediaAttachment {
+        evidence_id: "evidence_1".into(),
+        mime: "image/png".into(),
+        bytes: bytes.clone(),
+        source_seq: 7,
+        media_time: Utc
+            .with_ymd_and_hms(2026, 10, 27, 10, 0, 0)
+            .single()
+            .expect("fixed time"),
+    };
+    let result = ToolResult {
+        success: true,
+        output: "image captured".into(),
+        error: None,
+        attachments: vec![attachment],
+    };
+    let content = crate::adapters::rig::provider::tool_result_to_rig(&result).expect("image mapping");
+    let Some(image) = content.iter().find_map(|item| match item {
+        ToolResultContent::Image(image) => Some(image),
+        _ => None,
+    }) else {
+        panic!("image attachment missing")
+    };
+    assert_eq!(image.data, DocumentSourceKind::Raw(bytes));
+    let rig_result = rig_core::message::ToolResult {
+        call: rig_core::message::ToolCallId::new_or_mint("call_1"),
+        provider: None,
+        name: "read_device".into(),
+        content,
+    };
+    let round_tripped = crate::adapters::rig::provider::tool_result_attachments(&rig_result).expect("attachments");
+    assert_eq!(round_tripped[0].evidence_id, "evidence_1");
+    assert_eq!(round_tripped[0].source_seq, 7);
+    assert_eq!(round_tripped[0].media_time, result.attachments[0].media_time);
+    let trace = EvidenceRef::from(&result.attachments[0]);
+    assert!(!serde_json::to_string(&trace).expect("trace").contains("base64"));
+    let mut two = result;
+    two.attachments.push(two.attachments[0].clone());
+    assert!(matches!(
+        crate::adapters::rig::provider::tool_result_to_rig(&two),
+        Err(tinyiothub_core::media::MediaError::TooManyImages)
+    ));
+}
+
+#[tokio::test]
+async fn non_vision_provider_returns_image_unavailable() {
+    use crate::port::attribution::ProviderKind;
+    use crate::port::provider::{ChatMessage, ChatRequest, ChatResponse, ModelProvider, ProviderError};
+    use tinyiothub_core::media::MediaAttachment;
+
+    struct TextOnly;
+    impl Attributable for TextOnly {
+        fn role(&self) -> Role {
+            Role::Provider(ProviderKind::Model(
+                crate::port::attribution::ModelProviderKind::Minimax,
+            ))
+        }
+        fn alias(&self) -> &str {
+            "text-only"
+        }
+    }
+    #[async_trait::async_trait]
+    impl ModelProvider for TextOnly {
+        async fn chat(
+            &self,
+            _request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: Option<f64>,
+        ) -> anyhow::Result<ChatResponse> {
+            panic!("non-vision provider must not receive image bytes")
+        }
+    }
+    let provider = TextOnly;
+    let mut message = ChatMessage::user("inspect");
+    message.attachments.push(MediaAttachment {
+        evidence_id: "e".into(),
+        mime: "image/png".into(),
+        bytes: vec![1],
+        source_seq: 1,
+        media_time: chrono::Utc::now(),
+    });
+    let messages = vec![message];
+    let error =
+        crate::adapters::rig::provider::check_vision_request(&provider, &messages).expect_err("vision required");
+    assert_eq!(
+        error.downcast_ref::<ProviderError>(),
+        Some(&ProviderError::ImageUnavailable)
+    );
+}
+
+#[tokio::test]
+async fn vision_rig_provider_receives_exact_image_bytes() {
+    use crate::port::provider::{ChatMessage, ChatRequest, ModelProvider};
+    use rig_core::message::{DocumentSourceKind, UserContent};
+    use tinyiothub_core::media::MediaAttachment;
+
+    let (model, provider) = recording_rig_model(vec![]);
+    let bytes = vec![0x89, b'P', b'N', b'G', 4, 3, 2, 1];
+    let mut message = ChatMessage::user("inspect");
+    message.attachments.push(MediaAttachment {
+        evidence_id: "e".into(),
+        mime: "image/png".into(),
+        bytes: bytes.clone(),
+        source_seq: 1,
+        media_time: chrono::Utc::now(),
+    });
+    let messages = vec![message];
+    provider
+        .chat(
+            ChatRequest {
+                messages: &messages,
+                tools: None,
+                max_tokens: None,
+            },
+            "m",
+            None,
+        )
+        .await
+        .expect("vision request");
+    let seen = model.seen.lock().unwrap().take().expect("request recorded");
+    let rig_core::message::Message::User { content } = &seen.chat_history[0] else {
+        panic!("user message")
+    };
+    let image = content
+        .iter()
+        .find_map(|block| match block {
+            UserContent::Image(image) => Some(image),
+            _ => None,
+        })
+        .expect("image attachment");
+    assert_eq!(image.data, DocumentSourceKind::Raw(bytes));
+    assert_eq!(image.additional_params, None);
+}
+
+#[tokio::test]
+async fn direct_provider_rejects_run_image_budget_before_delivery() {
+    use crate::port::provider::{ChatMessage, ChatRequest, ModelProvider};
+    use tinyiothub_core::media::{MediaAttachment, MediaError};
+
+    let (model, provider) = recording_rig_model(vec![]);
+    let messages: Vec<_> = (0..5)
+        .map(|index| {
+            let mut message = ChatMessage::user("inspect");
+            message.attachments.push(MediaAttachment {
+                evidence_id: format!("e{index}"),
+                mime: "image/png".into(),
+                bytes: vec![0; 2 * 1024 * 1024],
+                source_seq: index,
+                media_time: chrono::Utc::now(),
+            });
+            message
+        })
+        .collect();
+    let error = provider
+        .chat(
+            ChatRequest {
+                messages: &messages,
+                tools: None,
+                max_tokens: None,
+            },
+            "m",
+            None,
+        )
+        .await
+        .expect_err("8 MiB run budget");
+    assert_eq!(error.downcast_ref::<MediaError>(), Some(&MediaError::RunImageBudget));
+    assert!(model.seen.lock().unwrap().is_none());
+}
+
 // ── canonical 拍平 round-trip ───────────────────────────────
 
 /// port ChatMessage 历史 ↔ rig Message 往返：assistant 工具调用 JSON、
@@ -505,6 +681,7 @@ impl Tool for RecordingTool {
             success: true,
             output: "recorded".into(),
             error: None,
+            attachments: vec![],
         })
     }
 }
@@ -566,7 +743,7 @@ async fn rig_loop_forwards_tool_and_usage_events() {
     assert_eq!(*args, serde_json::json!({"x": 1}));
 
     let tool_result = events.iter().find_map(|e| match e {
-        TurnEvent::ToolResult { id, name, output } => Some((id, name, output)),
+        TurnEvent::ToolResult { id, name, output, .. } => Some((id, name, output)),
         _ => None,
     });
     let (rid, rname, output) = tool_result.expect("a ToolResult event");
@@ -616,6 +793,7 @@ async fn failing_tool_result_is_delivered_as_text_not_retried() {
                 success: false,
                 output: String::new(),
                 error: Some("boom".into()),
+                attachments: vec![],
             })
         }
     }

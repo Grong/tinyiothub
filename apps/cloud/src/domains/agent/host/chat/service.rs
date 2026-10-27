@@ -261,7 +261,11 @@ pub async fn send_message(
             seed.extend(
                 prior
                     .into_iter()
-                    .map(|(role, content)| tinyiothub_agent::port::provider::ChatMessage { role, content }),
+                    .map(|(role, content)| tinyiothub_agent::port::provider::ChatMessage {
+                        role,
+                        content,
+                        attachments: vec![],
+                    }),
             );
             ag.seed_history(&seed).await;
         }
@@ -459,6 +463,7 @@ mod tests {
             name: "bad_tool".to_string(),
             output: "error output".to_string(),
             id: "tc1".to_string(),
+            attachments: vec![],
         };
         let chat_evt = turn_event_to_chat_event(&evt, "r", "s");
         match chat_evt {

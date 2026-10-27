@@ -1098,6 +1098,7 @@ mod tests {
                     success: false,
                     output: String::new(),
                     error: Some("device offline".into()),
+                    attachments: vec![],
                 });
             }
             if let Some((store, ws)) = &self.confirm_store {
@@ -1116,6 +1117,7 @@ mod tests {
                     })
                     .to_string(),
                     error: None,
+                    attachments: vec![],
                 });
             }
             if self.bare_confirm {
@@ -1123,12 +1125,14 @@ mod tests {
                     success: true,
                     output: serde_json::json!({"status": "confirmation_required"}).to_string(),
                     error: None,
+                    attachments: vec![],
                 });
             }
             Ok(ToolResult {
                 success: true,
                 output: serde_json::json!({"applied": true}).to_string(),
                 error: None,
+                attachments: vec![],
             })
         }
     }

@@ -20,7 +20,12 @@ pub fn to_dynamic_tool(tool: Arc<dyn Tool>) -> DynamicTool {
         let tool = Arc::clone(&tool);
         Box::pin(async move {
             match tool.execute(args).await {
-                Ok(res) if res.success => Ok(ToolOutput::text(res.output)),
+                Ok(res) if res.success => {
+                    let content = super::provider::tool_result_to_rig(&res)
+                        .map_err(|error| ToolExecutionError::new(ToolErrorKind::Other, error.to_string()))?;
+                    ToolOutput::content(content)
+                        .map_err(|error| ToolExecutionError::new(ToolErrorKind::Other, error.to_string()))
+                }
                 Ok(res) => Ok(ToolOutput::text(
                     serde_json::json!({
                         "success": false,

@@ -293,6 +293,10 @@
     "SourceDecl": {
       "type": "object",
       "properties": {
+        "dataKind": {
+          "type": "string",
+          "default": "values"
+        },
         "demandOnly": {
           "type": "boolean",
           "default": false
@@ -335,6 +339,13 @@
     "StateFieldDecl": {
       "type": "object",
       "properties": {
+        "key": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "name": {
           "type": "string"
         },

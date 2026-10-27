@@ -20,12 +20,110 @@ use std::sync::Arc;
 
 use rig_core::completion::{CompletionError, CompletionModel, CompletionRequest, CompletionResponse, Usage};
 use rig_core::message::{
-    AssistantContent, Message, Reasoning, ReasoningContent, Text, ToolCallId, ToolFunction,
-    ToolResult as RigToolResult, ToolResultContent, UserContent,
+    AssistantContent, DocumentSourceKind, Image, ImageMediaType, Message, Reasoning, ReasoningContent, Text,
+    ToolCallId, ToolFunction, ToolResult as RigToolResult, ToolResultContent, UserContent,
 };
 use rig_core::streaming::{RawStreamingChoice, RawStreamingToolCall, StreamFinal, StreamingCompletionResponse};
 
-use crate::port::provider::{ChatMessage, ChatRequest, ModelProvider, ToolCall as PortToolCall};
+use crate::port::provider::{ChatMessage, ChatRequest, ModelProvider, ProviderError, ToolCall as PortToolCall};
+use tinyiothub_core::media::{MediaAttachment, MediaError};
+
+pub(crate) fn check_vision_request(provider: &dyn ModelProvider, messages: &[ChatMessage]) -> anyhow::Result<()> {
+    let has_images = messages.iter().any(|message| !message.attachments.is_empty());
+    if has_images && !provider.supports_vision() {
+        return Err(anyhow::Error::new(ProviderError::ImageUnavailable));
+    }
+    let mut run_budget = tinyiothub_runtime::media::evidence::RunMediaBudget::default();
+    for message in messages {
+        if message.attachments.len() > 1 {
+            return Err(MediaError::TooManyImages.into());
+        }
+        for attachment in &message.attachments {
+            media_attachment_to_rig(attachment)?;
+            run_budget.record(attachment.bytes.len())?;
+        }
+    }
+    Ok(())
+}
+
+fn media_attachment_to_rig(attachment: &MediaAttachment) -> Result<ToolResultContent, MediaError> {
+    if attachment.bytes.len() > tinyiothub_runtime::media::evidence::MAX_IMAGE_BYTES {
+        return Err(MediaError::ImageTooLarge);
+    }
+    Ok(ToolResultContent::Image(Image {
+        data: DocumentSourceKind::Raw(attachment.bytes.clone()),
+        media_type: Some(match attachment.mime.as_str() {
+            "image/jpeg" => ImageMediaType::JPEG,
+            "image/png" => ImageMediaType::PNG,
+            other => return Err(MediaError::UnsupportedMime(other.to_owned())),
+        }),
+        detail: None,
+        additional_params: rig_core::message::AdditionalParams::from_entries([(
+            "tinyiothub_evidence",
+            serde_json::to_value(tinyiothub_core::media::EvidenceRef::from(attachment))
+                .map_err(|error| MediaError::Validation(error.to_string()))?,
+        )]),
+    }))
+}
+
+fn media_attachment_to_model_rig(attachment: &MediaAttachment) -> Result<ToolResultContent, MediaError> {
+    let mut content = media_attachment_to_rig(attachment)?;
+    if let ToolResultContent::Image(image) = &mut content {
+        image.additional_params = None;
+    }
+    Ok(content)
+}
+
+pub(crate) fn tool_result_to_rig(result: &crate::port::tool::ToolResult) -> Result<Vec<ToolResultContent>, MediaError> {
+    if result.attachments.len() > 1 {
+        return Err(MediaError::TooManyImages);
+    }
+    let mut content = vec![ToolResultContent::Text(Text::new(result.output.clone()))];
+    for attachment in &result.attachments {
+        content.push(media_attachment_to_rig(attachment)?);
+    }
+    Ok(content)
+}
+
+pub(crate) fn tool_result_attachments(result: &RigToolResult) -> Result<Vec<MediaAttachment>, MediaError> {
+    let mut attachments = Vec::new();
+    for item in &result.content {
+        if let ToolResultContent::Image(image) = item {
+            let DocumentSourceKind::Raw(bytes) = &image.data else {
+                return Err(MediaError::InvalidImage);
+            };
+            if bytes.len() > tinyiothub_runtime::media::evidence::MAX_IMAGE_BYTES {
+                return Err(MediaError::ImageTooLarge);
+            }
+            let mime = match image.media_type {
+                Some(ImageMediaType::JPEG) => "image/jpeg",
+                Some(ImageMediaType::PNG) => "image/png",
+                _ => return Err(MediaError::UnsupportedMime("unknown".into())),
+            };
+            let reference = image
+                .additional_params
+                .as_ref()
+                .and_then(|params| params.get("tinyiothub_evidence"))
+                .cloned()
+                .map(serde_json::from_value::<tinyiothub_core::media::EvidenceRef>)
+                .transpose()
+                .map_err(|error| MediaError::Validation(error.to_string()))?;
+            attachments.push(MediaAttachment {
+                evidence_id: reference
+                    .as_ref()
+                    .map_or_else(String::new, |item| item.evidence_id.clone()),
+                mime: mime.into(),
+                bytes: bytes.clone(),
+                source_seq: reference.as_ref().map_or(0, |item| item.source_seq),
+                media_time: reference.map_or_else(chrono::Utc::now, |item| item.media_time),
+            });
+        }
+    }
+    if attachments.len() > 1 {
+        return Err(MediaError::TooManyImages);
+    }
+    Ok(attachments)
+}
 
 /// port ModelProvider → rig CompletionModel。
 ///
@@ -75,18 +173,29 @@ pub(crate) fn rig_messages_to_port(messages: &[Message]) -> Vec<ChatMessage> {
                 for block in content {
                     match block {
                         UserContent::Text(t) => out.push(ChatMessage::user(t.text.clone())),
-                        UserContent::ToolResult(tool_result) => out.push(ChatMessage::tool(
-                            serde_json::json!({
-                                "tool_call_id": tool_result.call.to_string(),
-                                "content": tool_result_text(tool_result),
-                            })
-                            .to_string(),
-                        )),
-                        // 多媒体块：跳过（文档化差异）。
-                        UserContent::Image(_)
-                        | UserContent::Audio(_)
-                        | UserContent::Video(_)
-                        | UserContent::Document(_) => {}
+                        UserContent::ToolResult(tool_result) => {
+                            let mut message = ChatMessage::tool(
+                                serde_json::json!({
+                                    "tool_call_id": tool_result.call.to_string(),
+                                    "content": tool_result_text(tool_result),
+                                })
+                                .to_string(),
+                            );
+                            message.attachments = tool_result_attachments(tool_result).unwrap_or_default();
+                            out.push(message);
+                        }
+                        UserContent::Image(image) => {
+                            let mut message = ChatMessage::user("");
+                            let rig_result = RigToolResult {
+                                call: ToolCallId::new_or_mint("image"),
+                                provider: None,
+                                name: String::new(),
+                                content: vec![ToolResultContent::Image(image.clone())],
+                            };
+                            message.attachments = tool_result_attachments(&rig_result).unwrap_or_default();
+                            out.push(message);
+                        }
+                        UserContent::Audio(_) | UserContent::Video(_) | UserContent::Document(_) => {}
                     }
                 }
             }
@@ -134,7 +243,8 @@ pub(crate) fn rig_messages_to_port(messages: &[Message]) -> Vec<ChatMessage> {
 
 // ── port → rig 复原 ─────────────────────────────────────────
 
-fn port_tool_message_to_rig(content: &str) -> Message {
+fn port_tool_message_to_rig(message: &ChatMessage) -> Message {
+    let content = &message.content;
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(content) {
         let id = v.get("tool_call_id").and_then(|x| x.as_str());
         let content_field = v.get("content");
@@ -143,13 +253,20 @@ fn port_tool_message_to_rig(content: &str) -> Message {
                 .as_str()
                 .map(str::to_string)
                 .unwrap_or_else(|| content_field.to_string());
+            let mut blocks = vec![ToolResultContent::Text(Text::new(text))];
+            blocks.extend(
+                message
+                    .attachments
+                    .iter()
+                    .filter_map(|item| media_attachment_to_model_rig(item).ok()),
+            );
             return Message::User {
                 content: vec![UserContent::ToolResult(RigToolResult {
                     call: ToolCallId::new_or_mint(id),
                     provider: None,
                     // name 不在 canonical 编码内；回程拍平不读取该字段。
                     name: String::new(),
-                    content: vec![ToolResultContent::Text(Text::new(text))],
+                    content: blocks,
                 })],
             };
         }
@@ -204,9 +321,24 @@ pub(crate) fn port_messages_to_rig(messages: &[ChatMessage]) -> Vec<Message> {
         .iter()
         .map(|m| match m.role.as_str() {
             "system" => Message::system(m.content.clone()),
-            "tool" => port_tool_message_to_rig(&m.content),
+            "tool" => port_tool_message_to_rig(m),
             "assistant" => port_assistant_message_to_rig(&m.content),
-            _ => Message::user(m.content.clone()),
+            _ => {
+                if m.attachments.is_empty() {
+                    Message::user(m.content.clone())
+                } else {
+                    let mut content = vec![UserContent::Text(Text::new(m.content.clone()))];
+                    content.extend(
+                        m.attachments
+                            .iter()
+                            .filter_map(|item| match media_attachment_to_model_rig(item) {
+                                Ok(ToolResultContent::Image(image)) => Some(UserContent::Image(image)),
+                                _ => None,
+                            }),
+                    );
+                    Message::User { content }
+                }
+            }
         })
         .collect()
 }
@@ -403,12 +535,17 @@ fn rig_response_to_port(resp: CompletionResponse) -> crate::port::provider::Chat
 
 #[async_trait::async_trait]
 impl<M: CompletionModel> ModelProvider for RigMinimaxAsPort<M> {
+    fn supports_vision(&self) -> bool {
+        true
+    }
+
     async fn chat(
         &self,
         request: ChatRequest<'_>,
         model: &str,
         temperature: Option<f64>,
     ) -> anyhow::Result<crate::port::provider::ChatResponse> {
+        check_vision_request(self, request.messages)?;
         let tools: Vec<rig_core::completion::ToolDefinition> = request
             .tools
             .map(|specs| {
@@ -454,6 +591,8 @@ impl CompletionModel for PortModelAsRig {
             messages.push(ChatMessage::system(preamble.clone()));
         }
         messages.extend(rig_messages_to_port(&request.chat_history));
+        check_vision_request(self.inner.as_ref(), &messages)
+            .map_err(|error| CompletionError::ProviderError(error.to_string()))?;
 
         let tool_specs: Vec<crate::port::tool::ToolSpec> = request
             .tools

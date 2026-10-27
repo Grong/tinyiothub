@@ -753,6 +753,7 @@ mod tests {
                 name: "read_property".to_string(),
                 args: serde_json::json!({"p": "temp"}),
                 output: Some("26.5".to_string()),
+                evidence: vec![],
             }],
             task_count: None,
             snapshot: None,

@@ -420,6 +420,7 @@ mod tests {
 
     fn src(id: &str, interval_ms: u64, demand_only: bool, health: bool) -> SourceDecl {
         SourceDecl {
+            data_kind: Default::default(),
             id: id.into(),
             kind: "poll".into(),
             fields: vec!["level".into()],

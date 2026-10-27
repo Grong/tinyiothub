@@ -88,6 +88,7 @@ fn source(id: &str, interval_ms: u64, demand_only: bool, health: bool) -> Source
     SourceDecl {
         id: id.into(),
         kind: "poll".into(),
+        data_kind: Default::default(),
         fields: vec!["level".into()],
         interval_ms,
         min_interval_ms: 200,

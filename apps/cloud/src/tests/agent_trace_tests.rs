@@ -30,6 +30,7 @@ fn entry(id: &str, name: &str, output: Option<&str>) -> ToolTraceEntry {
         name: name.to_string(),
         args: serde_json::json!({"k": 1}),
         output: output.map(str::to_owned),
+        evidence: vec![],
     }
 }
 

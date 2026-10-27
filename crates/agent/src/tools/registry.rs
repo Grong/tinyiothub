@@ -206,6 +206,7 @@ mod tests {
                 success: true,
                 output: "ran".into(),
                 error: None,
+                attachments: vec![],
             })
         }
     }

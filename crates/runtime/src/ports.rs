@@ -14,11 +14,20 @@ use tinyiothub_core::agent_task::TaskWake;
 use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
 use tinyiothub_core::driver::declaration::{AcceptanceReportRecord, DeviceDeclarationRecord, DriverDeclarationRecord};
 use tinyiothub_core::driver::manifest::{ManifestTool, StateFieldDecl};
+use tinyiothub_core::media::{MediaError, MediaEvidenceRecord};
 use tinyiothub_core::models::spatial::{MapRecord, PlaceKind, PlaceRecord, ThingPosition};
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
 use tinyiothub_core::models::thing_property::ThingProperty;
 use tinyiothub_core::watch::WatchRule;
+
+#[async_trait]
+pub trait MediaEvidenceStore: Send + Sync {
+    async fn insert_or_get(&self, row: &MediaEvidenceRecord) -> Result<MediaEvidenceRecord, MediaError>;
+    async fn get(&self, evidence_id: &str) -> Result<Option<MediaEvidenceRecord>, MediaError>;
+    async fn delete_expired(&self, now: chrono::DateTime<chrono::Utc>) -> Result<Vec<MediaEvidenceRecord>, MediaError>;
+    async fn storage_is_referenced(&self, path: &str) -> Result<bool, MediaError>;
+}
 
 /// Persistent Device Job lifecycle. Terminal updates and their Task wake are
 /// one storage transaction; active stop requests survive process restart.

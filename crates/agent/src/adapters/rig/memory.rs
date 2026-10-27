@@ -61,6 +61,7 @@ impl ConversationMemory for PortMemoryAsConversation {
                 .map(|e| crate::port::provider::ChatMessage {
                     role: e.key,
                     content: e.content,
+                    attachments: vec![],
                 })
                 .collect();
             // recall 窗口切断 tool_call/tool_result 配对会产生孤儿引用，

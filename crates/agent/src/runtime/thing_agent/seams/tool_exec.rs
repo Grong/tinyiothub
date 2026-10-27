@@ -120,6 +120,7 @@ mod tests {
                 success: true,
                 output: args.to_string(),
                 error: None,
+                attachments: vec![],
             })
         }
     }

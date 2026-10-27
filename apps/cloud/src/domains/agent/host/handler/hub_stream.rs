@@ -355,6 +355,7 @@ mod tests {
         SourceDecl {
             id: id.into(),
             kind: "poll".into(),
+            data_kind: Default::default(),
             fields: fields.iter().map(|field| (*field).to_string()).collect(),
             interval_ms: 1000,
             min_interval_ms: 200,

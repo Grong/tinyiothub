@@ -661,6 +661,7 @@ mod tests {
             name: "invoke_action".to_string(),
             args: serde_json::json!({"thingId": "t1", "actionName": "reboot"}),
             output: Some(r#"{"denied":true,"reason":"action_not_allowed"}"#.to_string()),
+            evidence: vec![],
         };
         // runner 纯函数链路：trajectory → actions → outcome。
         let actions = build_actions(&[denied_entry("c1"), denied_entry("c2")]);

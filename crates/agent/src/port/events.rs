@@ -22,6 +22,7 @@ pub enum TurnEvent {
         id: String,
         name: String,
         output: String,
+        attachments: Vec<tinyiothub_core::media::MediaAttachment>,
     },
     /// The agent is waiting for the operator to approve, deny, or always-allow
     /// a tool call. The transport (e.g. gateway WebSocket) is expected to

@@ -113,6 +113,7 @@ pub(crate) fn tool_ok(payload: impl serde::Serialize) -> anyhow::Result<ToolResu
         success: true,
         output: serde_json::to_string(&payload).unwrap_or_default(),
         error: None,
+        attachments: vec![],
     })
 }
 
@@ -122,6 +123,7 @@ pub(crate) fn tool_err(msg: impl Into<String>) -> anyhow::Result<ToolResult> {
         success: false,
         output: String::new(),
         error: Some(msg.into()),
+        attachments: vec![],
     })
 }
 

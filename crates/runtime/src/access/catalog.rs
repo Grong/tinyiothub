@@ -126,6 +126,7 @@ mod tests {
 
     fn src(id: &str, kind: &str, fields: &[&str]) -> SourceDecl {
         SourceDecl {
+            data_kind: Default::default(),
             id: id.into(),
             kind: kind.into(),
             fields: fields.iter().map(|field| (*field).into()).collect(),
@@ -138,6 +139,7 @@ mod tests {
 
     fn health_src(id: &str, fields: &[&str]) -> SourceDecl {
         SourceDecl {
+            data_kind: Default::default(),
             health: true,
             ..src(id, "poll", fields)
         }

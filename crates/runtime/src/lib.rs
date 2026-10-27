@@ -26,6 +26,7 @@ pub mod expression;
 pub mod hub_stream;
 pub mod job;
 pub mod maps;
+pub mod media;
 pub mod plugin;
 pub mod ports;
 pub mod watch;

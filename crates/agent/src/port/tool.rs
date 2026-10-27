@@ -46,6 +46,8 @@ pub struct ToolResult {
     pub success: bool,
     pub output: String,
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<tinyiothub_core::media::MediaAttachment>,
 }
 
 /// Description of a tool for the LLM

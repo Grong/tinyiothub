@@ -67,11 +67,13 @@ impl Tool for TrustAwareTool {
                 success: false,
                 output: String::new(),
                 error: Some(reason),
+                attachments: vec![],
             }),
             TrustDecision::Propose { reason } => Ok(ToolResult {
                 success: false,
                 output: String::new(),
                 error: Some(reason),
+                attachments: vec![],
             }),
         }
     }
@@ -111,6 +113,7 @@ mod tests {
                 success: true,
                 output: "ran".into(),
                 error: None,
+                attachments: vec![],
             })
         }
     }

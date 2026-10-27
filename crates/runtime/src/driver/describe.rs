@@ -11,6 +11,7 @@ pub fn declaration_from_thing(thing: &Thing, driver: &str, version: &str) -> Dev
         .unwrap_or_default()
         .iter()
         .map(|p| StateFieldDecl {
+            key: None,
             name: p.name.clone(),
             data_type: p.data_type.clone().unwrap_or_else(|| "string".into()),
             unit: p.unit.clone(),
