@@ -278,7 +278,6 @@ impl ThingAgentManager {
             deps.jobs,
             deps.watches,
             self.watch_cmds.clone(),
-            self.clone(),
             self.deps.events.clone(),
             self.deps.active_runs.clone(),
             self.deps.runner.clone(),
@@ -2529,6 +2528,41 @@ pub(crate) mod tests {
         .await
         .expect("persisted wake dispatched by production router");
         assert_eq!(parts.agents.llm.prompts.lock().expect("prompts").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn dropping_manager_terminates_task_router() {
+        let parts = stub_manager().await;
+        let store = Arc::new(crate::runtime::thing_agent::task::coordinator::tests::MemoryTasks::default());
+        parts
+            .manager
+            .start_task_runtime(TaskRuntimeDeps {
+                store,
+                watches: Arc::new(StubWatchRuleStore { rules: vec![] }),
+                jobs: None,
+            })
+            .await
+            .expect("start task runtime");
+        let router = parts
+            .manager
+            .task_router
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .as_ref()
+            .expect("router task")
+            .abort_handle();
+        let weak = Arc::downgrade(&parts.manager);
+
+        drop(parts.manager);
+
+        assert!(weak.upgrade().is_none(), "Task runtime must not retain the manager");
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !router.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("router terminates when manager drops");
     }
 
     // ── E1 Task 8：watch 值守装配（engine 重织 + 事件接线 + 命令写穿）────

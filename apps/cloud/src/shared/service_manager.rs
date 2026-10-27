@@ -144,6 +144,17 @@ impl ServiceManager {
         ));
         data_server.set_sampler(sampler);
 
+        let task_jobs = tinyiothub_runtime::job::service::JobService::new(
+            Arc::new(crate::shared::runtime_ports::DbDeviceJobStore((*app_state.db).clone())),
+            Arc::new(tinyiothub_runtime::job::worker_adapter::DataServerJobWorkers::new(
+                data_server.as_ref().clone(),
+            )),
+            access.clone(),
+            access.clone(),
+            app_state.arbitration.clone(),
+        );
+        data_server.set_job_result_sink(Arc::new(task_jobs.clone()));
+
         // 启动数据服务器
         let shutdown_rx = self.shutdown_tx.subscribe();
         data_server.run(shutdown_rx).await?;
@@ -617,7 +628,7 @@ impl ServiceManager {
                     watches: Arc::new(crate::shared::runtime_ports::WatchRuleStoreAdapter(
                         (*app_state.db).clone(),
                     )),
-                    jobs: None,
+                    jobs: Some(task_jobs),
                 })
                 .await
                 .map_err(|error| Error::Internal(format!("Task runtime startup failed: {error}")))?;
@@ -887,4 +898,172 @@ pub async fn setup_graceful_shutdown() {
     }
 
     info!("Graceful shutdown signal received");
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+    use serde_json::json;
+    use tinyiothub_core::agent_task::{AgentTask, TaskStatus, TaskWake, WakeDispatchState};
+    use tinyiothub_core::device_job::{DeviceJob, DeviceJobState};
+
+    use super::ServiceManager;
+
+    async fn seed_task(db: &tinyiothub_storage::Db, task_id: &str, status: TaskStatus) {
+        let now = Utc::now();
+        let task = AgentTask {
+            id: task_id.into(),
+            workspace_id: "ws_1".into(),
+            idempotency_key: format!("key_{task_id}"),
+            objective: "exercise production Task Job composition".into(),
+            session_key: None,
+            created_by: "user-1".into(),
+            status,
+            current_run_id: None,
+            state_version: 0,
+            created_at: now,
+            updated_at: now,
+            ended_at: None,
+        };
+        let wake = TaskWake {
+            task_id: task_id.into(),
+            event_id: format!("seed_{task_id}"),
+            signal_json: json!({"workspace_id":"ws_1"}).to_string(),
+            dispatch_state: WakeDispatchState::Dispatched,
+            created_at: now,
+            dispatched_at: Some(now),
+            resolved_at: Some(now),
+        };
+        db.create_task_with_wake(&task, &wake).await.expect("seed Task");
+    }
+
+    fn job(job_id: &str, task_id: &str) -> DeviceJob {
+        DeviceJob {
+            id: job_id.into(),
+            workspace_id: "ws_1".into(),
+            device_id: "missing_worker".into(),
+            tool: "set_speed".into(),
+            args_json: json!({"speed":2}),
+            state: DeviceJobState::Running,
+            stop_requested_at: None,
+            progress_json: None,
+            result_json: None,
+            task_id: Some(task_id.into()),
+            run_id: Some(format!("run_{task_id}")),
+            tool_call_id: Some(format!("call_{job_id}")),
+            driver_call_id: Some(job_id.into()),
+            timeout_ms: 30_000,
+            started_at: Utc::now(),
+            ended_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn production_task_runtime_recovers_stops_and_fails_on_unknown_owned_jobs() {
+        let pool = tinyiothub_storage::test_helpers::test_pool().await;
+        sqlx::query(
+            "INSERT OR IGNORE INTO subscription_plans (id, name, display_name) VALUES ('plan_free','free','Free')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed plan");
+        sqlx::query("INSERT OR IGNORE INTO tenants (id, name, slug) VALUES ('t1','tenant','t1')")
+            .execute(&pool)
+            .await
+            .expect("seed tenant");
+        sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws_1', 'workspace', 't1', 'now', 'now')")
+            .execute(&pool)
+            .await
+            .expect("seed workspace");
+        let mut app_state = crate::test_utils::test_app_state_on_pool(pool).await;
+        seed_task(&app_state.db, "task_recovery", TaskStatus::Active).await;
+        seed_task(&app_state.db, "task_cancel", TaskStatus::WaitingJob).await;
+        app_state
+            .db
+            .create_job(&job("job_recovery", "task_recovery"))
+            .await
+            .expect("seed recovery Job");
+
+        let mut services = ServiceManager::new();
+        services
+            .start_all(&mut app_state)
+            .await
+            .expect("start production services");
+
+        let recovered = app_state
+            .db
+            .get_job("ws_1", "job_recovery")
+            .await
+            .expect("read recovered Job")
+            .expect("recovered Job");
+        assert_eq!(
+            recovered.state,
+            DeviceJobState::Interrupted,
+            "production startup must recover owned Jobs through the real JobService"
+        );
+
+        app_state
+            .db
+            .create_job(&job("job_cancel", "task_cancel"))
+            .await
+            .expect("seed active cancellation Job");
+        let manager = app_state.thing_agents.clone().expect("production ThingAgentManager");
+        assert!(
+            manager
+                .cancel_task("ws_1", "task_cancel")
+                .await
+                .expect("cancel Task")
+                .accepted
+        );
+        let stopping = app_state
+            .db
+            .get_job("ws_1", "job_cancel")
+            .await
+            .expect("read stopping Job")
+            .expect("stopping Job");
+        assert!(
+            stopping.stop_requested_at.is_some(),
+            "Task cancellation must issue Job-scoped Stop"
+        );
+        assert_eq!(
+            app_state
+                .db
+                .get_task("ws_1", "task_cancel")
+                .await
+                .expect("read Task")
+                .expect("Task")
+                .status,
+            TaskStatus::Cancelling,
+            "Task must wait for active physical work"
+        );
+
+        app_state
+            .db
+            .finish_job(
+                "job_cancel",
+                DeviceJobState::CancelledUnknown,
+                &json!({"reason":"driver outcome unknown"}),
+                None,
+            )
+            .await
+            .expect("record unknown physical outcome");
+        assert!(
+            !manager
+                .cancel_task("ws_1", "task_cancel")
+                .await
+                .expect("finish cancellation")
+                .accepted
+        );
+        assert_eq!(
+            app_state
+                .db
+                .get_task("ws_1", "task_cancel")
+                .await
+                .expect("read Task")
+                .expect("Task")
+                .status,
+            TaskStatus::Failed,
+            "cancelled_unknown must fail the owning Task"
+        );
+    }
 }

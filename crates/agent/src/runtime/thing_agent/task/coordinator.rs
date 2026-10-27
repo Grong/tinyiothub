@@ -15,7 +15,6 @@ use crate::runtime::events::{AgentEventBus, AgentEventKind};
 use crate::runtime::thing_agent::active_runs::{ActiveRunGuard, ActiveRunRegistry};
 use crate::runtime::thing_agent::manager::{AutonomousAgentProvider, fetch_workspace_snapshot};
 use crate::runtime::thing_agent::runner::{RunContext, Runner};
-use crate::runtime::thing_agent::traits::DirectiveSink;
 use crate::runtime::thing_agent::types::WakeSignal;
 use crate::runtime::thing_agent::watch_loop::WatchCommand;
 
@@ -53,7 +52,6 @@ pub struct TaskCoordinator {
     jobs: Option<JobService>,
     watches: Arc<dyn WatchRuleStore>,
     watch_cmds: Arc<DashMap<String, tokio::sync::mpsc::Sender<WatchCommand>>>,
-    _directives: Arc<dyn DirectiveSink>,
     events: Arc<AgentEventBus>,
     active_runs: ActiveRunRegistry,
     runner: Arc<Runner>,
@@ -68,7 +66,6 @@ impl TaskCoordinator {
         jobs: Option<JobService>,
         watches: Arc<dyn WatchRuleStore>,
         watch_cmds: Arc<DashMap<String, tokio::sync::mpsc::Sender<WatchCommand>>>,
-        directives: Arc<dyn DirectiveSink>,
         events: Arc<AgentEventBus>,
         active_runs: ActiveRunRegistry,
         runner: Arc<Runner>,
@@ -79,7 +76,6 @@ impl TaskCoordinator {
             jobs,
             watches,
             watch_cmds,
-            _directives: directives,
             events,
             active_runs,
             runner,
@@ -293,37 +289,43 @@ impl TaskCoordinator {
         Ok(started)
     }
 
-    pub async fn advance(&self, task_id: &str, wake_event_id: &str) -> Result<Advance, TaskError> {
-        let wake = self
-            .store
-            .wake_by_id(task_id, wake_event_id)
-            .await?
-            .ok_or(TaskError::WakeNotFound)?;
-        let signal: WakeSignal =
-            serde_json::from_str(&wake.signal_json).map_err(|error| TaskError::InvalidWake(error.to_string()))?;
-        let task = self
-            .store
-            .get_task(&signal.workspace_id, task_id)
-            .await?
-            .ok_or(TaskError::NotFound)?;
-        if signal.workspace_id != task.workspace_id {
-            return Err(TaskError::CrossWorkspace);
-        }
-        if task.status == TaskStatus::Paused {
-            return Ok(Advance::Deferred);
-        }
-        if task.status.is_terminal() {
-            return Ok(Advance::Recorded);
-        }
-        if task.status == TaskStatus::Cancelling {
-            self.finish_cancellation(&task).await?;
-            return Ok(Advance::Recorded);
-        }
-        if let Some(run_id) = task.current_run_id.as_deref() {
-            return self.steer_existing(run_id, wake_event_id, signal).await;
-        }
-        let run_id = format!("run_{}", uuid::Uuid::new_v4().simple());
-        self.start_run(task, wake, signal, run_id).await
+    pub fn advance<'a>(
+        &'a self,
+        task_id: &'a str,
+        wake_event_id: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Advance, TaskError>> + Send + 'a>> {
+        Box::pin(async move {
+            let wake = self
+                .store
+                .wake_by_id(task_id, wake_event_id)
+                .await?
+                .ok_or(TaskError::WakeNotFound)?;
+            let signal: WakeSignal =
+                serde_json::from_str(&wake.signal_json).map_err(|error| TaskError::InvalidWake(error.to_string()))?;
+            let task = self
+                .store
+                .get_task(&signal.workspace_id, task_id)
+                .await?
+                .ok_or(TaskError::NotFound)?;
+            if signal.workspace_id != task.workspace_id {
+                return Err(TaskError::CrossWorkspace);
+            }
+            if task.status == TaskStatus::Paused {
+                return Ok(Advance::Deferred);
+            }
+            if task.status.is_terminal() {
+                return Ok(Advance::Recorded);
+            }
+            if task.status == TaskStatus::Cancelling {
+                self.finish_cancellation(&task).await?;
+                return Ok(Advance::Recorded);
+            }
+            if let Some(run_id) = task.current_run_id.as_deref() {
+                return self.steer_existing(run_id, wake_event_id, signal).await;
+            }
+            let run_id = format!("run_{}", uuid::Uuid::new_v4().simple());
+            self.start_run(task, wake, signal, run_id).await
+        })
     }
 
     async fn steer_existing(
@@ -390,8 +392,9 @@ impl TaskCoordinator {
         run_id: String,
         ctx: RunContext,
         cancel: CancellationToken,
-        _guard: ActiveRunGuard,
+        guard: ActiveRunGuard,
     ) {
+        let steering = ctx.steering.clone();
         self.events.emit(AgentEventKind::RunStarted {
             run_id: run_id.clone(),
             workspace_id: task.workspace_id.clone(),
@@ -493,6 +496,11 @@ impl TaskCoordinator {
                 },
             }
         };
+        drop(guard);
+        let undelivered = {
+            let mut steering = steering.lock().unwrap_or_else(|error| error.into_inner());
+            std::mem::take(&mut *steering)
+        };
         if let Err(error) = self.store.finish_run(&report).await {
             tracing::warn!(run_id = %report.run_id, %error, "Task run final report persistence failed");
         }
@@ -502,10 +510,23 @@ impl TaskCoordinator {
             problem_key: None,
             dedup_key: signal.dedup_key.clone(),
         });
-        self.finish_task_run(&task, &run_id, report.outcome).await;
+        self.finish_task_run_with_steering(&task, &run_id, report.outcome, undelivered)
+            .await;
     }
 
+    #[cfg(test)]
     async fn finish_task_run(&self, task: &AgentTask, run_id: &str, outcome: Outcome) {
+        self.finish_task_run_with_steering(task, run_id, outcome, Vec::new())
+            .await;
+    }
+
+    async fn finish_task_run_with_steering(
+        &self,
+        task: &AgentTask,
+        run_id: &str,
+        outcome: Outcome,
+        undelivered: Vec<String>,
+    ) {
         let Ok(Some(current)) = self.store.get_task(&task.workspace_id, &task.id).await else {
             return;
         };
@@ -520,7 +541,70 @@ impl TaskCoordinator {
                 return;
             }
         };
-        if current.status.is_terminal() || matches!(current.status, TaskStatus::Paused | TaskStatus::Cancelling) {
+        if current.status.is_terminal() {
+            return;
+        }
+        if matches!(current.status, TaskStatus::Paused | TaskStatus::Cancelling) {
+            for facts in undelivered {
+                if let Some(event_id) = facts
+                    .strip_prefix("wake_event_id: ")
+                    .and_then(|facts| facts.lines().next())
+                    && let Err(error) = self
+                        .store
+                        .mark_wake(
+                            &current.id,
+                            event_id,
+                            tinyiothub_core::agent_task::WakeDispatchState::Pending,
+                        )
+                        .await
+                {
+                    tracing::warn!(task_id = %current.id, event_id, %error, "Undelivered Task wake restore failed");
+                }
+            }
+            return;
+        }
+        let mut follow_up_started = false;
+        for facts in undelivered {
+            let Some(event_id) = facts
+                .strip_prefix("wake_event_id: ")
+                .and_then(|facts| facts.lines().next())
+            else {
+                tracing::warn!(task_id = %current.id, "Undelivered Task steering had no wake ID");
+                continue;
+            };
+            match Box::pin(self.advance(&current.id, event_id)).await {
+                Ok(Advance::Started { .. } | Advance::Steered) => follow_up_started = true,
+                Ok(Advance::Deferred) => {
+                    if let Err(error) = self
+                        .store
+                        .mark_wake(
+                            &current.id,
+                            event_id,
+                            tinyiothub_core::agent_task::WakeDispatchState::Pending,
+                        )
+                        .await
+                    {
+                        tracing::warn!(task_id = %current.id, event_id, %error, "Deferred Task wake restore failed");
+                    }
+                }
+                Ok(Advance::Duplicate | Advance::Recorded) => {}
+                Err(error) => {
+                    tracing::warn!(task_id = %current.id, event_id, %error, "Undelivered Task wake dispatch failed");
+                    if let Err(error) = self
+                        .store
+                        .mark_wake(
+                            &current.id,
+                            event_id,
+                            tinyiothub_core::agent_task::WakeDispatchState::Pending,
+                        )
+                        .await
+                    {
+                        tracing::warn!(task_id = %current.id, event_id, %error, "Failed Task wake restore failed");
+                    }
+                }
+            }
+        }
+        if follow_up_started {
             return;
         }
         let next = if outcome == Outcome::Failed {
@@ -1003,6 +1087,69 @@ pub(crate) mod tests {
     }
 
     #[derive(Default)]
+    struct LateSteeringProvider {
+        calls: Mutex<usize>,
+        prompts: Arc<Mutex<Vec<String>>>,
+        coordinator: Mutex<Option<std::sync::Weak<TaskCoordinator>>>,
+        injected: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    struct LateSteeringAgent {
+        prompts: Arc<Mutex<Vec<String>>>,
+        coordinator: std::sync::Weak<TaskCoordinator>,
+        injected: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    #[async_trait]
+    impl AgentLoop for LateSteeringAgent {
+        async fn turn_streamed(
+            &self,
+            user_message: &str,
+            _event_tx: mpsc::Sender<TurnEvent>,
+            _cancel_token: Option<CancellationToken>,
+        ) -> anyhow::Result<String> {
+            self.prompts.lock().expect("prompts").push(user_message.into());
+            if !self.injected.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                let coordinator = self.coordinator.upgrade().expect("coordinator");
+                assert_eq!(coordinator.advance("task_1", "event_late").await, Ok(Advance::Steered));
+                coordinator
+                    .store
+                    .mark_wake("task_1", "event_late", WakeDispatchState::Dispatched)
+                    .await
+                    .expect("acknowledge steered wake");
+            }
+            Ok("done".into())
+        }
+        async fn run_single(&self, _message: &str) -> anyhow::Result<String> {
+            Ok("done".into())
+        }
+        async fn clear_history(&self) {}
+        async fn seed_history(&self, _messages: &[crate::port::provider::ChatMessage]) {}
+    }
+
+    #[async_trait]
+    impl AutonomousAgentProvider for LateSteeringProvider {
+        async fn get_or_create(
+            &self,
+            _workspace_id: &str,
+            _ctx: Arc<tokio::sync::RwLock<RunContextInner>>,
+        ) -> anyhow::Result<AgentHandle> {
+            *self.calls.lock().expect("calls") += 1;
+            Ok(Arc::new(tokio::sync::Mutex::new(LateSteeringAgent {
+                prompts: self.prompts.clone(),
+                coordinator: self
+                    .coordinator
+                    .lock()
+                    .expect("coordinator")
+                    .clone()
+                    .expect("coordinator installed"),
+                injected: self.injected.clone(),
+            })))
+        }
+        fn invalidate(&self, _workspace_id: &str) {}
+    }
+
+    #[derive(Default)]
     struct MemoryJobs {
         jobs: Mutex<BTreeMap<String, DeviceJob>>,
     }
@@ -1226,7 +1373,6 @@ pub(crate) mod tests {
                 jobs,
                 watches.clone(),
                 watch_cmds.clone(),
-                sink.clone(),
                 events,
                 active.clone(),
                 Arc::new(Runner::new()),
@@ -1880,6 +2026,56 @@ pub(crate) mod tests {
         assert_eq!(steering.len(), 1);
         assert!(steering[0].contains("event_2"));
         assert!(steering[0].contains("continue"));
+    }
+
+    #[tokio::test]
+    async fn steering_after_final_completion_is_dispatched_with_original_wake_id() {
+        let mut fixture = Fixture::new(task(TaskStatus::Active));
+        let provider = Arc::new(LateSteeringProvider::default());
+        fixture.coordinator = Arc::new(TaskCoordinator::new(
+            fixture.store.clone(),
+            None,
+            fixture.watches.clone(),
+            fixture.watch_cmds.clone(),
+            Arc::new(AgentEventBus::new(16)),
+            fixture.active.clone(),
+            Arc::new(Runner::new()),
+            provider.clone(),
+        ));
+        *provider.coordinator.lock().expect("coordinator") = Some(Arc::downgrade(&fixture.coordinator));
+        fixture.add_wake("event_initial");
+        fixture.add_wake("event_late");
+
+        assert!(matches!(
+            fixture.coordinator.advance("task_1", "event_initial").await,
+            Ok(Advance::Started { .. })
+        ));
+        for _ in 0..100 {
+            if *provider.calls.lock().expect("calls") == 2
+                && fixture.store.task("task_1").status == TaskStatus::Completed
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        assert_eq!(
+            *provider.calls.lock().expect("calls"),
+            2,
+            "an acknowledged late wake must start a follow-up Run"
+        );
+        let prompts = provider.prompts.lock().expect("prompts");
+        assert_eq!(prompts.len(), 2);
+        assert!(prompts[1].contains("event_late"));
+        assert!(
+            fixture
+                .store
+                .state
+                .lock()
+                .expect("tasks")
+                .runs
+                .contains(&("task_1".into(), "event_late".into()))
+        );
     }
 
     #[tokio::test]

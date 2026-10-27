@@ -7,12 +7,14 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use tinyiothub_core::agent_task::TaskWake;
+use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
 use tinyiothub_core::models::spatial::{MapRecord, PlaceKind, PlaceRecord, ThingPosition};
 use tinyiothub_core::models::thing::Thing;
 use tinyiothub_core::models::thing_command::ThingCommand;
 use tinyiothub_core::models::thing_property::ThingProperty;
 use tinyiothub_runtime::ports::{
-    DerivedPropertyQueries, EventRetentionStore, MapStore, ThingCacheSource, ThingCommandQueries,
+    DerivedPropertyQueries, DeviceJobStore, EventRetentionStore, MapStore, ThingCacheSource, ThingCommandQueries,
 };
 use tinyiothub_storage::Db;
 use tinyiothub_storage::cache::ThingCache;
@@ -56,6 +58,59 @@ impl ThingCommandQueries for ThingCommandQueriesAdapter {
             .find_thing_command_by_thing_and_name(thing_id, name)
             .await
             .map_err(|e| e.to_string())
+    }
+}
+
+/// `Db` → `DeviceJobStore`，供组合根的同一个 `JobService` 服务 Task 与 DataServer。
+pub struct DbDeviceJobStore(pub Db);
+
+#[async_trait]
+impl DeviceJobStore for DbDeviceJobStore {
+    async fn create_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError> {
+        self.0.create_job(job).await
+    }
+
+    async fn get_job(&self, workspace_id: &str, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+        self.0.get_job(workspace_id, job_id).await
+    }
+
+    async fn get_task_job(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        job_id: &str,
+    ) -> Result<Option<DeviceJob>, DeviceJobError> {
+        self.0.get_task_job(workspace_id, task_id, job_id).await
+    }
+
+    async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
+        self.0.mark_running(job_id, driver_call_id).await
+    }
+
+    async fn finish_job(
+        &self,
+        job_id: &str,
+        state: DeviceJobState,
+        result: &serde_json::Value,
+        wake: Option<&TaskWake>,
+    ) -> Result<bool, DeviceJobError> {
+        self.0.finish_job(job_id, state, result, wake).await
+    }
+
+    async fn update_progress(&self, job_id: &str, progress: &serde_json::Value) -> Result<bool, DeviceJobError> {
+        self.0.update_progress(job_id, progress).await
+    }
+
+    async fn request_stop(&self, workspace_id: &str, task_id: &str, job_id: &str) -> Result<DeviceJob, DeviceJobError> {
+        self.0.request_stop(workspace_id, task_id, job_id).await
+    }
+
+    async fn active_jobs(
+        &self,
+        workspace_id: Option<&str>,
+        unknown_only: bool,
+    ) -> Result<Vec<DeviceJob>, DeviceJobError> {
+        self.0.active_jobs(workspace_id, unknown_only).await
     }
 }
 
