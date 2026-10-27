@@ -1052,7 +1052,7 @@ async fn failing_tool_result_is_delivered_as_text_not_retried() {
 /// DescMemory：recall 按 zeroclaw 后端的 `ORDER BY updated_at DESC`
 /// 预置 3 条（最新在前）。
 struct DescMemory {
-    entries: Vec<crate::port::memory::MemoryEntry>,
+    entries: Mutex<Vec<crate::port::memory::MemoryEntry>>,
 }
 
 impl Attributable for DescMemory {
@@ -1088,11 +1088,12 @@ impl crate::port::memory::Memory for DescMemory {
     }
     async fn store(
         &self,
-        _key: &str,
-        _content: &str,
+        key: &str,
+        content: &str,
         _category: crate::port::memory::MemoryCategory,
         _session_id: Option<&str>,
     ) -> anyhow::Result<()> {
+        self.entries.lock().unwrap().insert(0, desc_entry(key, content));
         Ok(())
     }
     async fn recall(
@@ -1103,7 +1104,7 @@ impl crate::port::memory::Memory for DescMemory {
         _since: Option<&str>,
         _until: Option<&str>,
     ) -> anyhow::Result<Vec<crate::port::memory::MemoryEntry>> {
-        Ok(self.entries.clone())
+        Ok(self.entries.lock().unwrap().clone())
     }
     async fn get(&self, _key: &str) -> anyhow::Result<Option<crate::port::memory::MemoryEntry>> {
         Ok(None)
@@ -1122,7 +1123,7 @@ impl crate::port::memory::Memory for DescMemory {
         Ok(false)
     }
     async fn count(&self) -> anyhow::Result<usize> {
-        Ok(self.entries.len())
+        Ok(self.entries.lock().unwrap().len())
     }
     async fn health_check(&self) -> bool {
         true
@@ -1160,11 +1161,11 @@ async fn conversation_load_reverses_desc_recall_to_ascending() {
     use rig_core::message::{Message, UserContent};
 
     let memory = Arc::new(DescMemory {
-        entries: vec![
+        entries: Mutex::new(vec![
             desc_entry("user", "third"),
             desc_entry("assistant", r#"{"content":"second","tool_calls":[]}"#),
             desc_entry("user", "first"),
-        ],
+        ]),
     });
     let bridge = PortMemoryAsConversation::new(memory);
 
@@ -1185,6 +1186,72 @@ async fn conversation_load_reverses_desc_recall_to_ascending() {
         })
         .collect();
     assert_eq!(texts, vec!["first", "second", "third"]);
+}
+
+#[tokio::test]
+async fn conversation_append_load_preserves_exact_image_evidence() {
+    use crate::adapters::rig::memory::PortMemoryAsConversation;
+    use crate::adapters::rig::provider::{rig_messages_to_port, tool_result_to_rig};
+    use chrono::{TimeZone, Utc};
+    use rig_core::memory::ConversationMemory;
+    use rig_core::message::{
+        AssistantContent, Message, ToolCall, ToolCallId, ToolFunction, ToolResult as RigToolResult, UserContent,
+    };
+    use tinyiothub_core::media::MediaAttachment;
+
+    let memory = Arc::new(DescMemory {
+        entries: Mutex::new(vec![]),
+    });
+    let bridge = PortMemoryAsConversation::new(memory);
+    let expected = MediaAttachment {
+        evidence_id: "evidence-camera-1".into(),
+        mime: "image/jpeg".into(),
+        bytes: vec![0xff, 0xd8, 0xff, 1, 2, 3, 0xff, 0xd9],
+        source_seq: 42,
+        media_time: Utc
+            .with_ymd_and_hms(2026, 10, 27, 10, 0, 0)
+            .single()
+            .expect("fixed media time"),
+    };
+    let content = tool_result_to_rig(&ToolResult {
+        success: true,
+        output: "captured".into(),
+        error: None,
+        attachments: vec![expected.clone()],
+    })
+    .expect("tool image content");
+    let messages = vec![
+        Message::Assistant {
+            id: None,
+            content: vec![AssistantContent::ToolCall(ToolCall::new(
+                ToolCallId::new_or_mint("call-camera"),
+                ToolFunction::new("read_device".into(), serde_json::json!({})),
+            ))],
+        },
+        Message::User {
+            content: vec![UserContent::ToolResult(RigToolResult {
+                call: ToolCallId::new_or_mint("call-camera"),
+                provider: None,
+                name: "read_device".into(),
+                content,
+            })],
+        },
+    ];
+
+    bridge.append("default", messages).await.expect("append image history");
+    let loaded = bridge.load("default").await.expect("load image history");
+    let port = rig_messages_to_port(&loaded).expect("reload as port history");
+    let actual = &port
+        .iter()
+        .find(|message| message.role == "tool")
+        .expect("stored tool result")
+        .attachments[0];
+
+    assert_eq!(actual.bytes, expected.bytes);
+    assert_eq!(actual.mime, expected.mime);
+    assert_eq!(actual.evidence_id, expected.evidence_id);
+    assert_eq!(actual.source_seq, expected.source_seq);
+    assert_eq!(actual.media_time, expected.media_time);
 }
 
 // ── I-2：stream 结束后 token 已 cancel 的归一化 ─────────────

@@ -13,8 +13,8 @@
 //!
 //! 反向（port → rig）按同一编码解析；非 canonical 文本（旧 zeroclaw 持久化
 //! 的纯文本 assistant 等）按原样回退为对应角色的纯文本消息。
-//! 多媒体块（Image/Audio/Video/Document）无 canonical 文本位——拍平时跳过，
-//! 反向不可恢复（文档化差异）。
+//! 图像块经 `ChatMessage.attachments` 另存；Audio/Video/Document 无 canonical
+//! 文本位——拍平时跳过，反向不可恢复（文档化差异）。
 
 use std::sync::Arc;
 
@@ -62,14 +62,6 @@ fn media_attachment_to_rig(attachment: &MediaAttachment) -> Result<ToolResultCon
                 .map_err(|error| MediaError::Validation(error.to_string()))?,
         )]),
     }))
-}
-
-fn media_attachment_to_model_rig(attachment: &MediaAttachment) -> Result<ToolResultContent, MediaError> {
-    let mut content = media_attachment_to_rig(attachment)?;
-    if let ToolResultContent::Image(image) = &mut content {
-        image.additional_params = None;
-    }
-    Ok(content)
 }
 
 pub(crate) fn tool_result_to_rig(result: &crate::port::tool::ToolResult) -> Result<Vec<ToolResultContent>, MediaError> {
@@ -253,7 +245,7 @@ fn port_tool_message_to_rig(message: &ChatMessage) -> Result<Message, MediaError
                 .unwrap_or_else(|| content_field.to_string());
             let mut blocks = vec![ToolResultContent::Text(Text::new(text))];
             for attachment in &message.attachments {
-                blocks.push(media_attachment_to_model_rig(attachment)?);
+                blocks.push(media_attachment_to_rig(attachment)?);
             }
             return Ok(Message::User {
                 content: vec![UserContent::ToolResult(RigToolResult {
@@ -275,7 +267,7 @@ fn user_message_with_attachments(content: &str, attachments: &[MediaAttachment])
     }
     let mut blocks = vec![UserContent::Text(Text::new(content))];
     for attachment in attachments {
-        let ToolResultContent::Image(image) = media_attachment_to_model_rig(attachment)? else {
+        let ToolResultContent::Image(image) = media_attachment_to_rig(attachment)? else {
             return Err(MediaError::InvalidImage);
         };
         blocks.push(UserContent::Image(image));
@@ -345,6 +337,29 @@ pub(crate) fn port_messages_to_rig(messages: &[ChatMessage]) -> Result<Vec<Messa
         out.push(converted);
     }
     Ok(out)
+}
+
+fn port_messages_to_model_rig(messages: &[ChatMessage]) -> Result<Vec<Message>, MediaError> {
+    let mut converted = port_messages_to_rig(messages)?;
+    for message in &mut converted {
+        let Message::User { content } = message else {
+            continue;
+        };
+        for block in content {
+            match block {
+                UserContent::Image(image) => image.additional_params = None,
+                UserContent::ToolResult(result) => {
+                    for block in &mut result.content {
+                        if let ToolResultContent::Image(image) = block {
+                            image.additional_params = None;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(converted)
 }
 
 /// 历史回放前的工具配对清洗（2026-09-16 实测全灭事故）：thing-agent 全部
@@ -567,7 +582,7 @@ impl<M: CompletionModel> ModelProvider for RigMinimaxAsPort<M> {
             model: Some(model.to_string()),
             // canonical 编码里 system 是首条 Message::System，不走 legacy preamble。
             preamble: None,
-            chat_history: port_messages_to_rig(request.messages)?,
+            chat_history: port_messages_to_model_rig(request.messages)?,
             documents: vec![],
             tools,
             temperature,

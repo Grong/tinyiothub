@@ -46,6 +46,52 @@ pub(crate) const MAX_JSON_OUTPUT_BYTES: usize = 256 * 1024;
 /// 8 MiB decoded-image run budget after base64 expansion plus JSON envelope.
 const MAX_READ_RESPONSE_BYTES: usize = 12 * 1024 * 1024;
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SourceResponsePreflight<'a> {
+    #[serde(default)]
+    data_kind: tinyiothub_core::media::DataKind,
+    #[serde(default, borrow)]
+    media: Option<SourceMediaPreflight<'a>>,
+}
+
+#[derive(serde::Deserialize)]
+struct SourceMediaPreflight<'a> {
+    bytes: &'a str,
+}
+
+fn decoded_base64_len(encoded: &str) -> Option<usize> {
+    let padding = encoded
+        .as_bytes()
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'=')
+        .count();
+    let significant = encoded.len().checked_sub(padding)?;
+    let decoded = (significant / 4).checked_mul(3)?;
+    match significant % 4 {
+        0 => Some(decoded),
+        2 => decoded.checked_add(1),
+        3 => decoded.checked_add(2),
+        _ => None,
+    }
+}
+
+fn own_source_response(bytes: &[u8], own: impl FnOnce(&[u8]) -> String) -> Result<String, Error> {
+    let items: Vec<SourceResponsePreflight<'_>> = serde_json::from_slice(bytes)?;
+    for item in &items {
+        if item.data_kind == tinyiothub_core::media::DataKind::Image
+            && let Some(media) = &item.media
+            && decoded_base64_len(media.bytes).is_some_and(|size| size > crate::media::evidence::MAX_IMAGE_BYTES)
+        {
+            return Err(Error::ValidationError(
+                tinyiothub_core::media::MediaError::ImageTooLarge.to_string(),
+            ));
+        }
+    }
+    Ok(own(bytes))
+}
+
 /// Convert a driver-allocated out-string into an owned `String`, enforcing
 /// the output cap and always releasing the driver's allocation.
 fn take_json_out(out_ptr: *mut c_char, free: extern "C" fn(*mut c_char), desc: &str) -> Result<String, Error> {
@@ -177,9 +223,20 @@ extern "C" fn done_cb(user_data: *mut c_void, status: i32, out_json: *mut c_char
             ))));
             return;
         }
-        let body = String::from_utf8_lossy(bytes).into_owned();
+        let body = if status == 0 && max_output_bytes.is_some() {
+            own_source_response(bytes, |bytes| String::from_utf8_lossy(bytes).into_owned())
+        } else {
+            Ok(String::from_utf8_lossy(bytes).into_owned())
+        };
         free(out_json);
-        Some(body)
+        match body {
+            Ok(body) => Some(body),
+            Err(error) => {
+                drop(token);
+                let _ = tx.send(Err(error));
+                return;
+            }
+        }
     };
     let result = match (status, json) {
         (0, Some(body)) => Ok(body),
@@ -791,6 +848,27 @@ mod tests {
         assert_eq!(items[0].seq, 7);
         assert_eq!(items[1].source, "camera.rear");
         assert_eq!(items[1].data["count"], 2);
+    }
+
+    #[test]
+    fn source_image_limit_is_enforced_before_owned_response_allocation() {
+        use std::cell::Cell;
+
+        let encoded = "A".repeat((crate::media::evidence::MAX_IMAGE_BYTES / 3 + 1) * 4);
+        let response = format!(
+            r#"[{{"v":1,"source":"camera.front","dataKind":"image","seq":7,"time":"2026-10-27T10:00:00Z","data":{{}},"media":{{"mime":"image/png","bytes":"{encoded}"}}}}]"#
+        );
+        assert!(response.len() <= MAX_READ_RESPONSE_BYTES);
+        let owned = Cell::new(false);
+
+        let error = own_source_response(response.as_bytes(), |bytes| {
+            owned.set(true);
+            String::from_utf8_lossy(bytes).into_owned()
+        })
+        .expect_err("an oversized image must be rejected before response ownership");
+
+        assert!(error.to_string().contains("2 MiB"), "{error}");
+        assert!(!owned.get(), "the owned response conversion must not run");
     }
 
     #[test]
