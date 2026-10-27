@@ -311,16 +311,25 @@ pub(crate) async fn save_trust_config_fenced(
     Ok(result.rows_affected() > 0)
 }
 
+pub(crate) async fn load_heartbeat_config_json(
+    pool: &SqlitePool,
+    workspace_id: &str,
+) -> Result<Option<String>, RepoError> {
+    sqlx::query_scalar("SELECT heartbeat_config FROM workspaces WHERE id = ?")
+        .bind(workspace_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| RepoError::Database(e.to_string()))
+}
+
 pub(crate) async fn load_heartbeat_config(
     pool: &SqlitePool,
     workspace_id: &str,
 ) -> Result<Option<crate::heartbeat::WorkspaceHeartbeatConfig>, RepoError> {
-    let row: Option<(String,)> = sqlx::query_as("SELECT heartbeat_config FROM workspaces WHERE id = ?")
-        .bind(workspace_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| RepoError::Database(e.to_string()))?;
-    Ok(row.and_then(|(json,)| crate::heartbeat::WorkspaceHeartbeatConfig::from_db_json(Some(&json))))
+    let json = load_heartbeat_config_json(pool, workspace_id).await?;
+    Ok(crate::heartbeat::WorkspaceHeartbeatConfig::from_db_json(
+        json.as_deref(),
+    ))
 }
 
 pub(crate) async fn save_heartbeat_config(
@@ -328,8 +337,24 @@ pub(crate) async fn save_heartbeat_config(
     workspace_id: &str,
     config: &crate::heartbeat::WorkspaceHeartbeatConfig,
 ) -> Result<(), RepoError> {
+    let existing = load_heartbeat_config_json(pool, workspace_id).await?;
+    let mut merged = serde_json::to_value(config).map_err(|e| RepoError::Serialization(e.to_string()))?;
+    if let Some(existing) = existing
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+    {
+        for key in [
+            "runtime_tasks_enabled",
+            "runtime_media_enabled",
+            "runtime_workbench_enabled",
+        ] {
+            if let Some(value) = existing.get(key) {
+                merged[key] = value.clone();
+            }
+        }
+    }
     sqlx::query("UPDATE workspaces SET heartbeat_config = ? WHERE id = ?")
-        .bind(config.to_db_json())
+        .bind(merged.to_string())
         .bind(workspace_id)
         .execute(pool)
         .await
@@ -588,6 +613,11 @@ impl Db {
         workspace_id: &str,
     ) -> Result<Option<crate::heartbeat::WorkspaceHeartbeatConfig>, RepoError> {
         load_heartbeat_config(self.pool(), workspace_id).await
+    }
+
+    /// 读取原始心跳 JSON，供运行时功能开关使用。
+    pub async fn load_heartbeat_config_json(&self, workspace_id: &str) -> Result<Option<String>, RepoError> {
+        load_heartbeat_config_json(self.pool(), workspace_id).await
     }
 
     /// 写入工作区心跳开关/间隔配置。
@@ -1018,6 +1048,18 @@ mod tests {
         .await
         .expect("insert workspace");
         let db = Db::new(pool.clone());
+        sqlx::query("UPDATE workspaces SET heartbeat_config = ? WHERE id = 'ws_c'")
+            .bind(
+                serde_json::json!({
+                    "runtime_tasks_enabled": true,
+                    "runtime_media_enabled": true,
+                    "runtime_workbench_enabled": true
+                })
+                .to_string(),
+            )
+            .execute(&pool)
+            .await
+            .expect("seed runtime flags");
 
         assert!(db.load_heartbeat_config("ws_c").await.expect("load").is_none());
 
@@ -1036,6 +1078,19 @@ mod tests {
             .expect("persisted");
         assert_eq!(loaded.interval_minutes, 30);
         assert!(loaded.enabled);
+        let raw = db
+            .load_heartbeat_config_json("ws_c")
+            .await
+            .expect("load raw config")
+            .expect("persisted raw config");
+        let raw: serde_json::Value = serde_json::from_str(&raw).expect("raw config parses");
+        for key in [
+            "runtime_tasks_enabled",
+            "runtime_media_enabled",
+            "runtime_workbench_enabled",
+        ] {
+            assert_eq!(raw[key], true, "{key} must survive heartbeat config writes");
+        }
     }
 
     #[tokio::test]

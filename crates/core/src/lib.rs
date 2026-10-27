@@ -7,6 +7,7 @@
 //! - 新类型必须论证为何不属于某个领域 crate
 
 pub mod agent_runs;
+pub mod agent_task;
 pub mod config;
 pub mod constants;
 pub mod cron;

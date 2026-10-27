@@ -14,6 +14,7 @@
 use axum::{
     Json, Router,
     extract::{Extension, Path, Query, State},
+    http::HeaderMap,
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
@@ -53,7 +54,14 @@ where
     AgentState: axum::extract::FromRef<S>,
 {
     Router::new()
-        .route("/{id}/agent/tasks", post(create_task))
+        .route(
+            "/{id}/agent/tasks",
+            post(create_task).get(crate::domains::agent::runtime::tasks::list_tasks),
+        )
+        .route(
+            "/{id}/agent/tasks/{task_id}",
+            get(crate::domains::agent::runtime::tasks::get_task),
+        )
         .route("/{id}/agent/runs", get(list_runs))
         .route("/{id}/agent/runs/{run_id}/ack", post(ack_run))
         .route("/{id}/agent/policy", get(get_policy).put(update_policy))
@@ -68,6 +76,7 @@ pub async fn create_task(
     State(state): State<AgentState>,
     Extension(claims): Extension<Claims>,
     Path(workspace_id): Path<String>,
+    headers: HeaderMap,
     Json(req): Json<CreateTaskRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     verify_agent_admin!(state, claims, workspace_id);
@@ -75,6 +84,29 @@ pub async fn create_task(
     let text = req.text.trim();
     if text.is_empty() {
         return ApiResponseBuilder::error_with_code(400, "指令内容不能为空");
+    }
+
+    let heartbeat_json = match state.db.load_heartbeat_config_json(&workspace_id).await {
+        Ok(json) => json,
+        Err(error) => {
+            tracing::error!(%workspace_id, %error, "load runtime task flag failed");
+            return ApiResponseBuilder::error_with_code(503, "Task 配置不可用");
+        }
+    };
+    let flags = heartbeat_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+        .map(|json| crate::domains::agent::runtime::types::RuntimeFlags::from_heartbeat_json(&json))
+        .unwrap_or_default();
+    if flags.tasks {
+        return crate::domains::agent::runtime::tasks::create_persistent(
+            &state,
+            &claims,
+            &workspace_id,
+            &headers,
+            text,
+        )
+        .await;
     }
 
     let Some(ref sink) = state.directive_sink else {

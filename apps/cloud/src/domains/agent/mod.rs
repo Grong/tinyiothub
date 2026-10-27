@@ -19,6 +19,7 @@
 //!   tinyiothub_skills 的真实住所导入。
 
 pub mod host;
+pub mod runtime;
 pub mod trace_handler;
 
 use std::sync::Arc;

@@ -1,7 +1,7 @@
 // 值类型住 core（Task 1）；re-export 维持本模块路径组织。
 pub use tinyiothub_core::agent_runs::{ActionRecord, ActionResult, Outcome, RunReport};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum Priority {
     Low,
     Normal,
@@ -9,7 +9,7 @@ pub enum Priority {
     Critical,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum TriggerSource {
     ThingEvent {
         thing_id: String,
@@ -54,7 +54,7 @@ pub enum TriggerSource {
 
 /// 告警驱动心跳 run 的上下文（D11）：定时 tick 为 None；告警触发时携带
 /// 命中的物/告警类型/规则与人读原因，`context` 为告警规则评估快照 JSON。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HeartbeatAlarmContext {
     pub thing_id: Option<String>,
     pub alarm_type: Option<String>,
@@ -63,7 +63,7 @@ pub struct HeartbeatAlarmContext {
     pub context: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WakeSignal {
     pub workspace_id: String,
     pub priority: Priority,

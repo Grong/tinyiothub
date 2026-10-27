@@ -72,6 +72,8 @@ pub mod policy;
 pub mod pool;
 /// Role persistence and row types.
 pub mod role;
+/// Persistent agent Task and wake outbox storage.
+pub mod runtime_task;
 /// Scene package template types (recursive thing node definitions, name-pattern renderer).
 pub mod scene_template;
 /// Two-tier seed module (system + demo), applied at bootstrap.

@@ -9,6 +9,7 @@ pub mod prompt;
 pub mod prompt_sections;
 pub mod provider;
 pub mod runtime;
+pub mod task;
 pub mod tool;
 
 #[cfg(test)]
