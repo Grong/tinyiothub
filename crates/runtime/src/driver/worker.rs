@@ -376,6 +376,11 @@ impl WorkerHandle {
         self.cancel.has_job(job_id)
     }
 
+    /// Acknowledge that the Job's terminal projection has been persisted.
+    pub(crate) fn complete_job(&self, job_id: &str) {
+        self.cancel.complete_job(job_id);
+    }
+
     /// 是否有 read/execute 正在驱动内执行。
     pub fn in_flight(&self) -> bool {
         self.cancel.in_flight()
@@ -550,9 +555,6 @@ async fn run_worker(
                         };
                         if let Some(done) = done {
                             let _ = done.send(outcome);
-                        }
-                        if let Some(id) = job_id {
-                            cancel.complete_job(&id);
                         }
                         *status.write() = driver.overview();
                     }
@@ -1745,6 +1747,12 @@ mod tests {
             calls_before_stop + 1,
             "only the blocking command may enter the driver; the stopped queued job must not"
         );
+        assert!(
+            h.handle.has_job("job_1"),
+            "tracking must survive until projection acknowledgment"
+        );
+        h.handle.complete_job("job_1");
+        assert!(!h.handle.has_job("job_1"));
         h.handle.stop();
         wait_finished(&h.handle).await;
     }

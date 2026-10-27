@@ -67,6 +67,7 @@ pub struct DeviceJob {
     pub run_id: Option<String>,
     pub tool_call_id: Option<String>,
     pub driver_call_id: Option<String>,
+    pub timeout_ms: u64,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
 }

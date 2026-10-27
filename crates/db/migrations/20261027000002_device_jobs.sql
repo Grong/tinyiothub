@@ -12,6 +12,7 @@ CREATE TABLE device_jobs (
     run_id TEXT,
     tool_call_id TEXT UNIQUE,
     driver_call_id TEXT,
+    timeout_ms INTEGER NOT NULL,
     started_at TEXT NOT NULL,
     ended_at TEXT
 );

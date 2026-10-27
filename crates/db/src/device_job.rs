@@ -21,6 +21,7 @@ struct DeviceJobRow {
     run_id: Option<String>,
     tool_call_id: Option<String>,
     driver_call_id: Option<String>,
+    timeout_ms: i64,
     started_at: DateTime<Utc>,
     ended_at: Option<DateTime<Utc>>,
 }
@@ -45,6 +46,8 @@ impl TryFrom<DeviceJobRow> for DeviceJob {
             run_id: row.run_id,
             tool_call_id: row.tool_call_id,
             driver_call_id: row.driver_call_id,
+            timeout_ms: u64::try_from(row.timeout_ms)
+                .map_err(|_| DeviceJobError::Storage("negative device job timeout".to_string()))?,
             started_at: row.started_at,
             ended_at: row.ended_at,
         })
@@ -73,7 +76,7 @@ async fn find_job_by_id(
 ) -> Result<Option<DeviceJob>, DeviceJobError> {
     sqlx::query_as::<_, DeviceJobRow>(
         "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
-                progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, started_at, ended_at
+                progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, timeout_ms, started_at, ended_at
          FROM device_jobs WHERE id = ?",
     )
     .bind(job_id)
@@ -122,8 +125,8 @@ impl Db {
         sqlx::query(
             "INSERT INTO device_jobs
                  (id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
-                  progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, started_at, ended_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, timeout_ms, started_at, ended_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&job.id)
         .bind(&job.workspace_id)
@@ -150,6 +153,7 @@ impl Db {
         .bind(&job.run_id)
         .bind(&job.tool_call_id)
         .bind(&job.driver_call_id)
+        .bind(i64::try_from(job.timeout_ms).map_err(|_| DeviceJobError::Validation("timeout is too large".to_string()))?)
         .bind(job.started_at)
         .bind(job.ended_at)
         .execute(self.pool())
@@ -161,7 +165,7 @@ impl Db {
     pub async fn get_job(&self, workspace_id: &str, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
         sqlx::query_as::<_, DeviceJobRow>(
             "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
-                    progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, started_at, ended_at
+                    progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, timeout_ms, started_at, ended_at
              FROM device_jobs WHERE workspace_id = ? AND id = ?",
         )
         .bind(workspace_id)
@@ -181,7 +185,7 @@ impl Db {
     ) -> Result<Option<DeviceJob>, DeviceJobError> {
         sqlx::query_as::<_, DeviceJobRow>(
             "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
-                    progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, started_at, ended_at
+                    progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, timeout_ms, started_at, ended_at
              FROM device_jobs WHERE workspace_id = ? AND task_id = ? AND id = ?",
         )
         .bind(workspace_id)
@@ -200,7 +204,7 @@ impl Db {
             "UPDATE device_jobs SET state = 'running', driver_call_id = ?
              WHERE id = ? AND state = 'accepted'
              RETURNING id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
-                       progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, started_at, ended_at",
+                       progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, timeout_ms, started_at, ended_at",
         )
         .bind(driver_call_id)
         .bind(job_id)
@@ -292,7 +296,7 @@ impl Db {
             "UPDATE device_jobs SET stop_requested_at = COALESCE(stop_requested_at, ?)
              WHERE id = ? AND workspace_id = ? AND task_id = ? AND state IN ('accepted', 'running')
              RETURNING id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
-                       progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, started_at, ended_at",
+                       progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, timeout_ms, started_at, ended_at",
         )
         .bind(Utc::now())
         .bind(job_id)
@@ -307,7 +311,7 @@ impl Db {
             Some(job) => job,
             None => sqlx::query_as::<_, DeviceJobRow>(
                 "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
-                        progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, started_at, ended_at
+                        progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, timeout_ms, started_at, ended_at
                  FROM device_jobs WHERE id = ? AND workspace_id = ? AND task_id = ?",
             )
             .bind(job_id)
@@ -332,7 +336,7 @@ impl Db {
         let rows = if unknown_only {
             sqlx::query_as::<_, DeviceJobRow>(
                 "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
-                        progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, started_at, ended_at
+                        progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, timeout_ms, started_at, ended_at
                  FROM device_jobs
                  WHERE (? IS NULL OR workspace_id = ?) AND state = 'cancelled_unknown'
                  ORDER BY started_at, id",
@@ -344,7 +348,7 @@ impl Db {
         } else {
             sqlx::query_as::<_, DeviceJobRow>(
                 "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
-                        progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, started_at, ended_at
+                        progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id, timeout_ms, started_at, ended_at
                  FROM device_jobs
                  WHERE (? IS NULL OR workspace_id = ?) AND state IN ('accepted', 'running')
                  ORDER BY started_at, id",
@@ -430,6 +434,7 @@ mod tests {
             run_id: Some("run_1".to_string()),
             tool_call_id: Some(format!("call_{job_id}")),
             driver_call_id: None,
+            timeout_ms: 5_000,
             started_at: Utc::now(),
             ended_at: None,
         }

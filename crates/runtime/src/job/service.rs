@@ -121,6 +121,18 @@ impl JobService {
         }
     }
 
+    fn restore_deadline(&self, job: &DeviceJob) {
+        let timeout = Duration::from_millis(job.timeout_ms);
+        let elapsed = Utc::now()
+            .signed_duration_since(job.started_at)
+            .to_std()
+            .unwrap_or(Duration::ZERO);
+        self.inner.deadlines.insert(
+            job.id.clone(),
+            tokio::time::Instant::now() + timeout.saturating_sub(elapsed),
+        );
+    }
+
     pub async fn submit(&self, request: JobRequest) -> Result<DeviceJob, DeviceJobError> {
         let validated = self
             .inner
@@ -173,15 +185,14 @@ impl JobService {
             run_id: request.run_id,
             tool_call_id: request.tool_call_id,
             driver_call_id: None,
+            timeout_ms: validated.timeout_ms,
             started_at: now,
             ended_at: None,
         };
         self.inner.store.create_job(&job).await?;
         self.inner.workspaces.insert(job.id.clone(), job.workspace_id.clone());
         self.notification(&job.id);
-        self.inner
-            .deadlines
-            .insert(job.id.clone(), tokio::time::Instant::now() + timeout);
+        self.restore_deadline(&job);
         let cmd = ThingCommand {
             id: job.id.clone(),
             thing_id: job.device_id.clone(),
@@ -213,7 +224,12 @@ impl JobService {
         Some(TaskWake {
             task_id,
             event_id: format!("device_job:{}:{}", job.id, job.state.as_str()),
-            signal_json: json!({"kind":"device_job_terminal","job_id":job.id}).to_string(),
+            signal_json: json!({
+                "kind":"device_job_terminal",
+                "job_id":job.id,
+                "workspace_id":job.workspace_id
+            })
+            .to_string(),
             dispatch_state: WakeDispatchState::Pending,
             created_at: Utc::now(),
             dispatched_at: None,
@@ -261,6 +277,9 @@ impl JobService {
             .finish_job(&job.id, state, &result, wake.as_ref())
             .await?;
         if transitioned {
+            if let Some(worker) = self.inner.workers.worker_for(&job.device_id) {
+                worker.complete_job(&job.id);
+            }
             self.notify(&job.id);
         }
         Ok(FinishOutcome {
@@ -367,6 +386,7 @@ impl JobService {
         for job in self.inner.store.active_jobs(None, false).await? {
             self.inner.workspaces.insert(job.id.clone(), job.workspace_id.clone());
             self.notification(&job.id);
+            self.restore_deadline(&job);
             let worker = self.inner.workers.worker_for(&job.device_id);
             let recoverable = worker
                 .as_ref()
@@ -674,6 +694,13 @@ mod tests {
                 .iter()
                 .any(|id| id == job_id)
         }
+
+        fn complete_job(&self, job_id: &str) {
+            self.recoverable
+                .lock()
+                .expect("recoverable lock")
+                .retain(|id| id != job_id);
+        }
     }
 
     struct FakeWorkers {
@@ -854,6 +881,37 @@ mod tests {
         JobResultSink::command_finished(&fixture.service, &job.id, true, None).await;
         assert_eq!(fixture.job(&job.id).await.state, DeviceJobState::Done);
         assert_eq!(fixture.wake_count("task_result").await, 1);
+    }
+
+    #[tokio::test]
+    async fn terminal_projection_acknowledges_worker_handoff() {
+        let fixture = JobFixture::new().await;
+        let job = fixture.accepted_job("job_ack", "task_ack").await;
+        assert!(fixture.worker.has_recoverable_call(&job.id));
+        fixture
+            .service
+            .finish(&job.id, JobFinal::Done(json!({"ok":true})))
+            .await
+            .expect("terminal projection");
+        assert!(!fixture.worker.has_recoverable_call(&job.id));
+    }
+
+    #[tokio::test]
+    async fn recover_then_wait_preserves_original_deadline() {
+        let mut fixture = JobFixture::with_timeout(80).await;
+        let job = fixture
+            .accepted_job("job_recovered_deadline", "task_recovered_deadline")
+            .await;
+        fixture.restart();
+        fixture.service.recover().await.expect("recover");
+        let before = fixture.service.wait(&job.id, Duration::from_millis(5)).await;
+        assert!(
+            matches!(before, JobWait::Running { .. }),
+            "recovery must not expire the original deadline early"
+        );
+        tokio::time::sleep(Duration::from_millis(90)).await;
+        let after = fixture.service.wait(&job.id, Duration::from_secs(1)).await;
+        assert!(matches!(after, JobWait::Final(ref final_job) if final_job.state == DeviceJobState::Failed));
     }
 
     #[tokio::test]

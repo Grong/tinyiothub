@@ -12,6 +12,7 @@ pub trait JobDeviceWorker: Send + Sync {
     fn submit(&self, cmd: ThingCommand, job_id: &str, lease: Option<ResourceLease>) -> Result<(), Error>;
     fn cancel_job(&self, job_id: &str) -> bool;
     fn has_recoverable_call(&self, job_id: &str) -> bool;
+    fn complete_job(&self, job_id: &str);
 }
 
 pub trait JobWorkerLocator: Send + Sync {
@@ -59,5 +60,9 @@ impl JobDeviceWorker for WorkerJobAdapter {
 
     fn has_recoverable_call(&self, job_id: &str) -> bool {
         self.worker.has_job(job_id)
+    }
+
+    fn complete_job(&self, job_id: &str) {
+        self.worker.complete_job(job_id);
     }
 }
