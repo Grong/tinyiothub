@@ -336,6 +336,7 @@ impl ServiceManager {
                     app_state.db.as_ref().clone(),
                 )),
             ));
+            app_state.evidence = Some(evidence.clone());
             tool_registry.register_provider(crate::domains::agent::host::tools::chat_builtin_tools_provider(
                 app_state.db.pool().clone(),
                 Some(app_state.device_cache.clone()),

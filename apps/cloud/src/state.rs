@@ -55,6 +55,10 @@ pub struct AppState {
     /// 启动时注入；None = 未装配（测试/降级路径），相关路由返回错误。
     pub access: Option<Arc<tinyiothub_runtime::access::service::AccessService>>,
 
+    /// Runtime image evidence and browser-direct playback composition.
+    pub evidence: Option<Arc<tinyiothub_runtime::media::evidence::EvidenceService>>,
+    pub playback_provider: Arc<dyn crate::domains::media::playback::PlaybackProvider>,
+
     /// E4d 空间读取服务（maps/places/position → zone）。CRUD 写入后经
     /// [`tinyiothub_runtime::maps::ZoneService::invalidate`] 清工作区缓存；
     /// None = 未装配（测试/降级路径），CRUD 直接落库并依赖 5s TTL。
@@ -218,6 +222,17 @@ pub struct AppState {
         std::sync::Arc<tokio::sync::RwLock<crate::domains::driver::heartbeat::types::HeartbeatStatus>>,
     pub driver_heartbeat_config:
         std::sync::Arc<tokio::sync::RwLock<crate::domains::driver::heartbeat::types::HeartbeatConfig>>,
+}
+
+impl axum::extract::FromRef<AppState> for crate::domains::media::MediaState {
+    fn from_ref(state: &AppState) -> Self {
+        crate::domains::media::MediaState {
+            db: state.db.clone(),
+            workspace_access: state.workspace_access.clone(),
+            evidence: state.evidence.clone(),
+            playback_provider: state.playback_provider.clone(),
+        }
+    }
 }
 
 impl axum::extract::FromRef<AppState> for std::sync::Arc<tinyiothub_authn::jwt::JwtService> {
@@ -518,7 +533,9 @@ impl AppState {
             data_server: None,     // DataServer 由 ServiceManager 设置
             derived_manager: None, // DerivedDriverManager 由 ServiceManager 设置
             access: None,          // AccessService 由 ServiceManager 设置
-            zones: None,           // ZoneService 由 ServiceManager 设置
+            evidence: None,
+            playback_provider: Arc::new(crate::domains::media::playback::UnavailablePlaybackProvider),
+            zones: None, // ZoneService 由 ServiceManager 设置
             device_service,
             device_query_service,
             monitoring_service,

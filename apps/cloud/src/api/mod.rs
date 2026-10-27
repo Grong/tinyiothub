@@ -79,6 +79,7 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
         .nest("/batch", crate::domains::admin::batch::handler::create_router())
         .nest("/heartbeat", crate::domains::driver::heartbeat_router())
         .nest("/workspaces", crate::domains::tenant::workspace_router())
+        .nest("/workspaces", crate::domains::media::create_router())
         .nest(
             "/workspaces",
             crate::domains::agent::host::persist::memory::handler::create_router(),

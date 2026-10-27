@@ -18,6 +18,7 @@
     "@types/three": "^0.184.0",
     "dompurify": "^3.3.3",
     "highlight.js": "^11.11.1",
+    "hls.js": "1.7.3",
     "lit": "^3.3.2",
     "marked": "^17.0.4",
     "signal-polyfill": "^0.2.2",
