@@ -19,7 +19,37 @@ use tinyiothub_runtime::ports::{
 use tinyiothub_storage::Db;
 use tinyiothub_storage::cache::ThingCache;
 
-/// `ThingCache` → `ThingCacheSource`（全部方法同步直转）。
+/// `Db` → `MediaEvidenceStore`；SQL 仅留在 db crate。
+pub struct DbMediaEvidenceStore(pub Db);
+
+#[async_trait]
+impl tinyiothub_runtime::ports::MediaEvidenceStore for DbMediaEvidenceStore {
+    async fn insert_or_get(
+        &self,
+        row: &tinyiothub_core::media::MediaEvidenceRecord,
+    ) -> Result<tinyiothub_core::media::MediaEvidenceRecord, tinyiothub_core::media::MediaError> {
+        self.0.put_media_evidence(row).await
+    }
+
+    async fn get(
+        &self,
+        evidence_id: &str,
+    ) -> Result<Option<tinyiothub_core::media::MediaEvidenceRecord>, tinyiothub_core::media::MediaError> {
+        self.0.get_media_evidence(evidence_id).await
+    }
+
+    async fn delete_expired(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<tinyiothub_core::media::MediaEvidenceRecord>, tinyiothub_core::media::MediaError> {
+        self.0.delete_expired_media(now).await
+    }
+
+    async fn storage_is_referenced(&self, path: &str) -> Result<bool, tinyiothub_core::media::MediaError> {
+        self.0.media_storage_is_referenced(path).await
+    }
+}
+
 pub struct ThingCacheAdapter(pub Arc<ThingCache>);
 
 impl ThingCacheSource for ThingCacheAdapter {

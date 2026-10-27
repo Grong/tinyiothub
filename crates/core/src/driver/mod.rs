@@ -385,6 +385,16 @@ pub trait ThingDriver: Send + Sync {
     fn read_data(&mut self, cancel: &CancelToken) -> Result<Vec<ResultValue>, Error>;
     fn execute_command(&mut self, cmd: &ThingCommand, cancel: &CancelToken) -> Result<bool, Error>;
 
+    /// Read the requested sources and return their correlated source items.
+    /// Drivers without Source 1.1 support retain the default `Unsupported` result.
+    fn read_sources(
+        &mut self,
+        _sources: &[String],
+        _cancel: &CancelToken,
+    ) -> Result<Vec<crate::media::SourceItem>, Error> {
+        Err(Error::Unsupported("driver does not implement read_sources".into()))
+    }
+
     /// 推送/流式驱动按活跃 source 集合起停订阅。默认空实现。
     fn set_demand(&mut self, _sources: &[String]) {}
 

@@ -11,7 +11,10 @@ pub fn select_model_sources<'a>(
     if selected.iter().any(|item| item.data_kind == DataKind::Video) {
         return Err(MediaError::VideoIsForHumanNotModel);
     }
-    Ok(selected)
+    Ok(selected
+        .into_iter()
+        .filter(|item| matches!(item.data_kind, DataKind::Detections | DataKind::Image))
+        .collect())
 }
 
 #[cfg(test)]
@@ -41,6 +44,21 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn requested_values_and_custom_sources_are_not_model_media() {
+        let items: Vec<SourceItem> = serde_json::from_value(json!([
+            {"v":1,"source":"temperature","dataKind":"values","seq":1,"time":"2026-10-27T10:00:00Z","data":21},
+            {"v":1,"source":"lidar","dataKind":"x_lidar","seq":2,"time":"2026-10-27T10:00:00Z","data":{"points":3}},
+            {"v":1,"source":"objects","dataKind":"detections","seq":3,"time":"2026-10-27T10:00:00Z","data":[]}
+        ]))
+        .expect("source items");
+        assert_eq!(items[1].data_kind, DataKind::Custom("x_lidar".into()));
+        let selected = super::select_model_sources(&items, &["temperature".into(), "lidar".into(), "objects".into()])
+            .expect("selected model sources");
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].source, "objects");
     }
 
     #[test]

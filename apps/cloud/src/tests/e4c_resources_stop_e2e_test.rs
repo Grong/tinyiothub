@@ -182,6 +182,7 @@ fn thing_tools(
             demand: None,
             resources: access.map(|a| a as Arc<dyn ResourceResolver>),
             run_ctx: None,
+            evidence: None,
         },
     )
 }

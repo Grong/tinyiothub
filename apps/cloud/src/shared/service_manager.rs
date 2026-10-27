@@ -323,6 +323,19 @@ impl ServiceManager {
                 Arc::new(live_summary_slot.clone());
             // E2 watch/unwatch：manager 迟绑定槽（与 live_summary_slot 同点 set）。
             let manager_slot = crate::domains::agent::host::tools::thing::ManagerSlot::default();
+            let media_store = Arc::new(
+                tinyiothub_runtime::media::evidence::LocalMediaStore::new(
+                    crate::shared::paths::api_data_dir().join("media"),
+                )
+                .await
+                .map_err(|error| Error::IOError(error.to_string()))?,
+            );
+            let evidence = Arc::new(tinyiothub_runtime::media::evidence::EvidenceService::new(
+                media_store,
+                Arc::new(crate::shared::runtime_ports::DbMediaEvidenceStore(
+                    app_state.db.as_ref().clone(),
+                )),
+            ));
             tool_registry.register_provider(crate::domains::agent::host::tools::chat_builtin_tools_provider(
                 app_state.db.pool().clone(),
                 Some(app_state.device_cache.clone()),
@@ -348,6 +361,7 @@ impl ServiceManager {
                     .access
                     .clone()
                     .map(|a| a as Arc<dyn tinyiothub_runtime::access::DemandRecorder>),
+                Some(evidence.clone()),
             ));
             tool_registry.set_external_tool_factory(Arc::new(|| {
                 crate::domains::agent::host::ports::external_tool_registry()
@@ -410,6 +424,7 @@ impl ServiceManager {
                                     .clone()
                                     .map(|a| a as Arc<dyn tinyiothub_runtime::access::DemandRecorder>),
                                 run_ctx: None,
+                                evidence: Some(evidence.clone()),
                             },
                         ),
                     ),

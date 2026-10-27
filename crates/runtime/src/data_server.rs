@@ -6,6 +6,7 @@ use moka::sync::Cache;
 use tinyiothub_core::driver::{DriverReading, ResultValue, ValueSink};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::event::EventHandler;
+use tinyiothub_core::media::SourceItem;
 use tinyiothub_core::models::event::{
     ContentElement, Event as DomainEvent, EventLevel, EventSource, RichContent, TextFormat, ThingEventType,
 };
@@ -123,6 +124,15 @@ impl DataServer {
     /// 推送驱动的上报句柄（Task 7 注册推送驱动时注入给 `start_push`）。
     pub fn value_sink(&self) -> ValueSink {
         self.value_sink_tx.clone()
+    }
+
+    /// Read source items through the device's exclusive driver worker.
+    pub async fn read_sources(&self, thing_id: &str, sources: Vec<String>) -> Result<Vec<SourceItem>, Error> {
+        let worker = self.workers.get(thing_id).ok_or(Error::NotFound)?;
+        let reply = worker.read_sources(sources)?;
+        reply
+            .await
+            .map_err(|_| Error::DriverError("worker stopped before source read completed".into()))?
     }
 
     /// worker 表句柄（诊断/测试用）。moka `Cache` 克隆是廉价句柄。
@@ -1256,11 +1266,73 @@ mod tests {
             self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(vec![])
         }
+        fn read_sources(
+            &mut self,
+            sources: &[String],
+            cancel: &CancelToken,
+        ) -> Result<Vec<tinyiothub_core::media::SourceItem>, Error> {
+            if cancel.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
+            Ok(sources
+                .iter()
+                .map(|source| tinyiothub_core::media::SourceItem {
+                    v: 1,
+                    source: source.clone(),
+                    data_kind: tinyiothub_core::media::DataKind::Values,
+                    seq: 3,
+                    time: chrono::Utc::now(),
+                    text: None,
+                    data: serde_json::Value::Null,
+                    media: None,
+                    error: None,
+                })
+                .collect())
+        }
         fn execute_command(&mut self, _cmd: &ThingCommand, cancel: &CancelToken) -> Result<bool, Error> {
             if cancel.is_cancelled() {
                 return Err(Error::Cancelled);
             }
             Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn read_sources_returns_not_found_for_a_missing_worker() {
+        let server = DataServer::new(Arc::new(VecCache::new(vec![])), Arc::new(EventBus::new()));
+
+        let error = server
+            .read_sources("missing", vec!["camera.front".to_string()])
+            .await
+            .expect_err("missing worker must be reported");
+
+        assert!(matches!(error, Error::NotFound));
+    }
+
+    #[tokio::test]
+    async fn read_sources_locates_the_worker_and_awaits_its_items() {
+        let server = DataServer::new(Arc::new(VecCache::new(vec![])), Arc::new(EventBus::new()));
+        let thing = worker_thing("thing-1");
+        server.register_worker(
+            "thing-1",
+            DriverWrapper::new(Box::new(CountingDriver {
+                thing,
+                mode: DriverMode::Poll,
+                reads: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            })),
+        );
+
+        let items = server
+            .read_sources("thing-1", vec!["camera.front".to_string(), "camera.rear".to_string()])
+            .await
+            .expect("registered worker should return source items");
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].source, "camera.front");
+        assert_eq!(items[0].seq, 3);
+        assert_eq!(items[1].source, "camera.rear");
+        if let Some(worker) = server.workers.get("thing-1") {
+            worker.stop();
         }
     }
 

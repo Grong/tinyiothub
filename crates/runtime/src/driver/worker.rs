@@ -38,6 +38,7 @@ use tokio::task::JoinHandle;
 
 use tinyiothub_core::driver::{CancelToken, DriverMode, DriverReading, PropertyChangeSource, ResultValue, ValueSink};
 use tinyiothub_core::error::Error;
+use tinyiothub_core::media::SourceItem;
 use tinyiothub_core::models::thing::{Thing, ThingStatus};
 use tinyiothub_core::models::thing_command::ThingCommand;
 
@@ -155,6 +156,10 @@ pub enum WorkerCommand {
     Read {
         sources: Vec<String>,
     },
+    ReadSources {
+        sources: Vec<String>,
+        done: oneshot::Sender<Result<Vec<SourceItem>, Error>>,
+    },
     Execute {
         job_id: Option<String>,
         cmd: ThingCommand,
@@ -265,6 +270,26 @@ impl WorkerHandle {
             self.reads_coalesced.fetch_add(1, Ordering::Relaxed);
         }
         self.read_tx.send_replace(Some(sources));
+    }
+
+    /// Queue a correlated source read without coalescing it with polling reads.
+    pub fn read_sources(
+        &self,
+        sources: Vec<String>,
+    ) -> Result<oneshot::Receiver<Result<Vec<SourceItem>, Error>>, Error> {
+        let (done, reply) = oneshot::channel();
+        self.queue_depth.fetch_add(1, Ordering::Relaxed);
+        match self.exec_tx.try_send(WorkerCommand::ReadSources { sources, done }) {
+            Ok(()) => Ok(reply),
+            Err(error) => {
+                self.queue_depth.fetch_sub(1, Ordering::Relaxed);
+                let message = match error {
+                    mpsc::error::TrySendError::Full(_) => "busy",
+                    mpsc::error::TrySendError::Closed(_) => "worker stopped",
+                };
+                Err(Error::DriverError(message.to_string()))
+            }
+        }
     }
 
     /// 提交命令执行。队列（32）已满时返回 `DriverError("busy")`。
@@ -536,6 +561,23 @@ async fn run_worker(
                     counters.queue_depth.fetch_sub(1, Ordering::Relaxed);
                 }
                 match cmd {
+                    Some(WorkerCommand::ReadSources { sources, done }) => {
+                        let token = cancel.begin(None);
+                        let result = driver.inner_driver_mut().read_sources(&sources, &token);
+                        let result = if report_if_cancelled(
+                            &cancel,
+                            &token,
+                            &thing_id,
+                            None,
+                            CancelKind::Read,
+                            &results,
+                        ) {
+                            Err(Error::Cancelled)
+                        } else {
+                            result
+                        };
+                        let _ = done.send(result);
+                    }
                     Some(WorkerCommand::Execute { job_id, cmd, lease, done }) => {
                         let outcome = if job_id.as_deref().is_some_and(|id| cancel.was_stopped(id)) {
                             let _ = results.send(WorkerResult::Cancelled {
@@ -806,7 +848,10 @@ mod tests {
         events: Mutex<Vec<String>>,
         /// 假驱动在 execute 时自报的 thing 属性当前值（验证 worker 写回）。
         observed_value: Mutex<Option<String>>,
+        source_requests: Mutex<Vec<Vec<String>>>,
+        source_error: AtomicBool,
         read_started: Notify,
+        source_read_started: Notify,
         execute_started: Notify,
     }
 
@@ -866,6 +911,36 @@ mod tests {
                 "float".to_string(),
                 Some("42".to_string()),
             )])
+        }
+
+        fn read_sources(
+            &mut self,
+            sources: &[String],
+            cancel: &CancelToken,
+        ) -> Result<Vec<tinyiothub_core::media::SourceItem>, Error> {
+            self.log.source_requests.lock().unwrap().push(sources.to_vec());
+            self.log.source_read_started.notify_one();
+            let _ = self.release_rx.lock().unwrap().recv();
+            if cancel.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
+            if self.log.source_error.load(Ordering::SeqCst) {
+                return Err(Error::DriverError("source read failed".into()));
+            }
+            Ok(sources
+                .iter()
+                .map(|source| tinyiothub_core::media::SourceItem {
+                    v: 1,
+                    source: source.clone(),
+                    data_kind: tinyiothub_core::media::DataKind::Values,
+                    seq: 1,
+                    time: chrono::Utc::now(),
+                    text: None,
+                    data: serde_json::Value::Null,
+                    media: None,
+                    error: None,
+                })
+                .collect())
         }
 
         fn execute_command(&mut self, _cmd: &ThingCommand, cancel: &CancelToken) -> Result<bool, Error> {
@@ -1099,6 +1174,80 @@ mod tests {
         })
         .await
         .expect("condition should become true");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn source_reads_have_independent_correlated_replies() {
+        let h = make(DriverMode::Poll);
+
+        let first = h
+            .handle
+            .read_sources(vec!["camera.front".to_string()])
+            .expect("first source read should queue");
+        h.log.source_read_started.notified().await;
+        let second = h
+            .handle
+            .read_sources(vec!["camera.rear".to_string()])
+            .expect("second source read should queue independently");
+
+        h.release.send(()).unwrap();
+        let first_items = first.await.expect("first reply").expect("first items");
+        assert_eq!(first_items.len(), 1);
+        assert_eq!(first_items[0].source, "camera.front");
+
+        h.release.send(()).unwrap();
+        let second_items = second.await.expect("second reply").expect("second items");
+        assert_eq!(second_items.len(), 1);
+        assert_eq!(second_items[0].source, "camera.rear");
+        assert_eq!(
+            *h.log.source_requests.lock().unwrap(),
+            vec![vec!["camera.front".to_string()], vec!["camera.rear".to_string()]]
+        );
+        assert_eq!(
+            h.log.reads.load(Ordering::SeqCst),
+            0,
+            "source reads must not poll read_data"
+        );
+        assert_eq!(h.handle.reads_coalesced(), 0);
+
+        h.handle.stop();
+        wait_finished(&h.handle).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn source_read_returns_the_driver_error_to_its_caller() {
+        let h = make(DriverMode::Poll);
+        h.log.source_error.store(true, Ordering::SeqCst);
+        let reply = h
+            .handle
+            .read_sources(vec!["camera.front".to_string()])
+            .expect("source read should queue");
+        h.log.source_read_started.notified().await;
+        h.release.send(()).unwrap();
+
+        let error = reply.await.expect("reply").expect_err("driver failure");
+        assert!(matches!(error, Error::DriverError(message) if message == "source read failed"));
+
+        h.handle.stop();
+        wait_finished(&h.handle).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn source_read_observes_worker_cancellation() {
+        let h = make(DriverMode::Poll);
+        let reply = h
+            .handle
+            .read_sources(vec!["camera.front".to_string()])
+            .expect("source read should queue");
+        h.log.source_read_started.notified().await;
+
+        assert!(h.handle.cancel_current());
+        h.release.send(()).unwrap();
+        let error = reply.await.expect("reply").expect_err("cancelled source read");
+        assert!(matches!(error, Error::Cancelled));
+
+        h.handle.stop();
+        wait_finished(&h.handle).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

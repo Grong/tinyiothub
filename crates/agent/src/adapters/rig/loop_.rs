@@ -16,6 +16,7 @@ use rig_agent::agent::{
 use rig_agent::completion::{Document, Prompt};
 use rig_agent::streaming::StreamingPrompt;
 use rig_core::streaming::{StreamedAssistantContent, StreamedUserContent};
+use sha2::Digest;
 
 use crate::port::events::TurnEvent;
 use crate::port::runtime::{AgentLoop, AgentLoopConfig, AgentLoopHandle, MAX_LOOP_TURNS, SteeringBuffer};
@@ -68,6 +69,7 @@ struct BudgetHook {
     count: AtomicUsize,
     cancel: Option<CancellationToken>,
     steering: Option<SteeringBuffer>,
+    media: tokio::sync::Mutex<RunMediaAccountant>,
 }
 
 fn take_steering_patch(steering: &SteeringBuffer) -> Option<RequestPatch> {
@@ -104,41 +106,64 @@ impl BudgetHook {
     }
 }
 
-fn request_media_within_budget(
-    prompt: &rig_core::message::Message,
-    history: &[rig_core::message::Message],
-) -> Result<(), tinyiothub_core::media::MediaError> {
-    let mut budget = tinyiothub_runtime::media::evidence::RunMediaBudget::default();
-    for message in history.iter().chain(std::iter::once(prompt)) {
-        let rig_core::message::Message::User { content } = message else {
-            continue;
-        };
-        for block in content {
-            match block {
-                rig_core::message::UserContent::Image(image) => {
-                    if let rig_core::message::DocumentSourceKind::Raw(bytes) = &image.data {
-                        budget.record(bytes.len())?;
-                    }
-                }
-                rig_core::message::UserContent::ToolResult(result) => {
-                    for block in &result.content {
-                        if let rig_core::message::ToolResultContent::Image(image) = block
-                            && let rig_core::message::DocumentSourceKind::Raw(bytes) = &image.data
-                        {
-                            budget.record(bytes.len())?;
+#[derive(Default)]
+struct RunMediaAccountant {
+    budget: tinyiothub_runtime::media::evidence::RunMediaBudget,
+    seen: std::collections::HashSet<String>,
+}
+
+impl RunMediaAccountant {
+    fn check(
+        &mut self,
+        prompt: &rig_core::message::Message,
+        history: &[rig_core::message::Message],
+    ) -> Result<(), tinyiothub_core::media::MediaError> {
+        for message in history.iter().chain(std::iter::once(prompt)) {
+            let rig_core::message::Message::User { content } = message else {
+                continue;
+            };
+            for block in content {
+                match block {
+                    rig_core::message::UserContent::Image(image) => self.record_image(image)?,
+                    rig_core::message::UserContent::ToolResult(result) => {
+                        for block in &result.content {
+                            if let rig_core::message::ToolResultContent::Image(image) = block {
+                                self.record_image(image)?;
+                            }
                         }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
         }
+        Ok(())
     }
-    Ok(())
+
+    fn record_image(&mut self, image: &rig_core::message::Image) -> Result<(), tinyiothub_core::media::MediaError> {
+        let rig_core::message::DocumentSourceKind::Raw(bytes) = &image.data else {
+            return Err(tinyiothub_core::media::MediaError::InvalidImage);
+        };
+        let identity = image
+            .additional_params
+            .as_ref()
+            .and_then(|params| params.get("tinyiothub_evidence"))
+            .and_then(|reference| reference.get("evidenceId"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| hex::encode(sha2::Sha256::digest(bytes)));
+        if self.seen.contains(&identity) {
+            return Ok(());
+        }
+        self.budget.record(bytes.len())?;
+        self.seen.insert(identity);
+        Ok(())
+    }
 }
 
 impl AgentHook for BudgetHook {
     async fn on_completion_call(&self, _ctx: &HookContext, event: CompletionCallEvent<'_>) -> CompletionCallAction {
-        if let Err(error) = request_media_within_budget(event.prompt, event.history) {
+        let error = self.media.lock().await.check(event.prompt, event.history).err();
+        if let Some(error) = error {
             return CompletionCallAction::stop(error.to_string());
         }
         self.steering
@@ -188,6 +213,7 @@ impl AgentLoop for RigAgentLoop {
                 count: AtomicUsize::new(0),
                 cancel: cancel_token.clone(),
                 steering,
+                media: tokio::sync::Mutex::new(RunMediaAccountant::default()),
             });
         // conversation_memory=false：历史由 cloud DB 每轮 seed，经 .history() 传入。
         let seeded = self.seeded_history().await;
@@ -283,7 +309,13 @@ impl AgentLoop for RigAgentLoop {
     }
 
     async fn run_single(&self, message: &str) -> anyhow::Result<String> {
-        let mut request = self.agent.prompt(message.to_string());
+        let mut request = self.agent.prompt(message.to_string()).add_hook(BudgetHook {
+            budget: MAX_LOOP_TURNS,
+            count: AtomicUsize::new(0),
+            cancel: None,
+            steering: None,
+            media: tokio::sync::Mutex::new(RunMediaAccountant::default()),
+        });
         let seeded = self.seeded_history().await;
         if !seeded.is_empty() {
             request = request.history(seeded);
@@ -300,13 +332,16 @@ impl AgentLoop for RigAgentLoop {
         }
     }
 
-    async fn seed_history(&self, messages: &[crate::port::provider::ChatMessage]) {
-        let rig_messages = port_messages_to_rig(messages);
+    async fn seed_history(&self, messages: &[crate::port::provider::ChatMessage]) -> anyhow::Result<()> {
+        let rig_messages = port_messages_to_rig(messages)?;
         if let Some(memory) = &self.memory {
-            let _ = rig_core::memory::ConversationMemory::append(memory.as_ref(), CONVERSATION_ID, rig_messages).await;
+            rig_core::memory::ConversationMemory::append(memory.as_ref(), CONVERSATION_ID, rig_messages)
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         } else {
             *self.seeded.lock().await = rig_messages;
         }
+        Ok(())
     }
 }
 
@@ -365,19 +400,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rejects_fifth_two_mib_image_before_model_call() {
-        let image = rig_core::message::Image {
-            data: rig_core::message::DocumentSourceKind::Raw(vec![0; 2 * 1024 * 1024]),
-            media_type: Some(rig_core::message::ImageMediaType::PNG),
-            detail: None,
-            additional_params: None,
-        };
-        let history = vec![rig_core::message::Message::User {
-            content: (0..5)
-                .map(|_| rig_core::message::UserContent::Image(image.clone()))
-                .collect(),
-        }];
-        assert!(request_media_within_budget(&rig_core::message::Message::user("inspect"), &history).is_err());
+    fn run_budget_charges_distinct_evidence_once_across_completions() {
+        fn image(id: &str, byte: u8) -> rig_core::message::Message {
+            rig_core::message::Message::User {
+                content: vec![rig_core::message::UserContent::Image(rig_core::message::Image {
+                    data: rig_core::message::DocumentSourceKind::Raw(vec![byte; 2 * 1024 * 1024]),
+                    media_type: Some(rig_core::message::ImageMediaType::PNG),
+                    detail: None,
+                    additional_params: rig_core::message::AdditionalParams::from_entries([(
+                        "tinyiothub_evidence",
+                        serde_json::json!({
+                            "evidenceId": id,
+                            "mime": "image/png",
+                            "sourceSeq": 1,
+                            "mediaTime": "2026-10-27T10:00:00Z"
+                        }),
+                    )]),
+                })],
+            }
+        }
+
+        let mut run = RunMediaAccountant::default();
+        let prompt = rig_core::message::Message::user("inspect");
+        let mut history = vec![image("a", 1)];
+        run.check(&prompt, &history).expect("A");
+        history.push(image("a", 1));
+        history.push(image("b", 2));
+        run.check(&prompt, &history).expect("repeated A and B");
+        history.push(image("c", 3));
+        run.check(&prompt, &history).expect("A+B+C");
+        history.push(image("d", 4));
+        run.check(&prompt, &history).expect("four distinct images");
+        history.push(image("e", 5));
+        assert!(matches!(
+            run.check(&prompt, &history),
+            Err(tinyiothub_core::media::MediaError::RunImageBudget)
+        ));
+
+        RunMediaAccountant::default()
+            .check(&prompt, std::slice::from_ref(&history[0]))
+            .expect("a fresh Run has a fresh budget");
     }
 
     #[test]
@@ -401,6 +463,7 @@ mod tests {
             count: AtomicUsize::new(0),
             cancel: Some(cancel),
             steering: None,
+            media: tokio::sync::Mutex::new(RunMediaAccountant::default()),
         };
         assert_eq!(hook.action(), ToolCallAction::Stop("run cancelled".into()));
         assert_eq!(hook.count.load(Ordering::SeqCst), 0);

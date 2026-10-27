@@ -1062,7 +1062,9 @@ pub(crate) mod tests {
             Ok("done".into())
         }
         async fn clear_history(&self) {}
-        async fn seed_history(&self, _messages: &[crate::port::provider::ChatMessage]) {}
+        async fn seed_history(&self, _messages: &[crate::port::provider::ChatMessage]) -> anyhow::Result<()> {
+            Ok(())
+        }
     }
 
     #[derive(Default)]
@@ -1124,7 +1126,9 @@ pub(crate) mod tests {
             Ok("done".into())
         }
         async fn clear_history(&self) {}
-        async fn seed_history(&self, _messages: &[crate::port::provider::ChatMessage]) {}
+        async fn seed_history(&self, _messages: &[crate::port::provider::ChatMessage]) -> anyhow::Result<()> {
+            Ok(())
+        }
     }
 
     #[async_trait]

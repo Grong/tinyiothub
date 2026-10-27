@@ -201,6 +201,8 @@ pub struct ThingToolContext {
     pub resources: Option<Arc<dyn ResourceResolver>>,
     /// Persistent Task identity for Task-owned watch tools; chat runs leave this unset.
     pub run_ctx: Option<super::RunContextSlot>,
+    /// T4 durable model-image evidence; chat/autonomous share one service.
+    pub evidence: Option<Arc<tinyiothub_runtime::media::evidence::EvidenceService>>,
 }
 
 /// E4c：runtime 的声明解析结果 → agent 仲裁规格（agent 资源类型不进
@@ -250,6 +252,12 @@ pub fn create_thing_tools(
             live: runtime.live.clone(),
             device_cache: runtime.device_cache.clone(),
             demand: runtime.demand.clone(),
+            source_reader: runtime
+                .data_server
+                .clone()
+                .map(|server| server as Arc<dyn device::DeviceSourceReader>),
+            evidence: runtime.evidence.clone(),
+            run_ctx: runtime.run_ctx.clone(),
         })),
         destructive(device::call_device_tool(Box::new(InvokeActionTool {
             thing_service: thing_service.clone(),
@@ -738,6 +746,9 @@ mod tests {
             }))),
             device_cache: None,
             demand: None,
+            source_reader: None,
+            evidence: None,
+            run_ctx: None,
         };
         let out = tool
             .execute(serde_json::json!({"thingId": created.id, "properties": ["温度"]}))
@@ -836,6 +847,9 @@ mod tests {
             live: Some(live),
             device_cache: None,
             demand: Some(demand.clone()),
+            source_reader: None,
+            evidence: None,
+            run_ctx: None,
         };
 
         // Explicit properties: every requested name is recorded — including

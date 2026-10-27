@@ -267,7 +267,17 @@ pub async fn send_message(
                         attachments: vec![],
                     }),
             );
-            ag.seed_history(&seed).await;
+            if let Err(error) = ag.seed_history(&seed).await {
+                let _ = tx
+                    .send(ChatEvent::Error {
+                        run_id: run_id.clone(),
+                        session_key: session_key.clone(),
+                        error: error.to_string(),
+                    })
+                    .await;
+                chat_handles_inner.lock().await.remove(&run_id_for_remove);
+                return;
+            }
         }
         if let Err(e) = super::history::append_message(&db_pool, &session_key, "user", &reflect_message, &run_id).await
         {

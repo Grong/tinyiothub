@@ -1,5 +1,5 @@
 {
-  "manifestVersion": "1.0",
+  "manifestVersion": "1.1",
   "identity": {
     "driver": "simulator",
     "version": "2.0.0",

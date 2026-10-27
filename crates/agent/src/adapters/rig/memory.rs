@@ -66,7 +66,8 @@ impl ConversationMemory for PortMemoryAsConversation {
                 .collect();
             // recall 窗口切断 tool_call/tool_result 配对会产生孤儿引用，
             // 严格 provider（MiniMax/Anthropic）400 拒整轮——回放前清洗。
-            Ok(port_messages_to_rig(&super::provider::sanitize_tool_pairing(port)))
+            port_messages_to_rig(&super::provider::sanitize_tool_pairing(port))
+                .map_err(|error| MemoryError::backend(error.to_string()))
         })
     }
 
@@ -76,7 +77,7 @@ impl ConversationMemory for PortMemoryAsConversation {
         messages: Vec<Message>,
     ) -> WasmBoxedFuture<'a, Result<(), MemoryError>> {
         Box::pin(async move {
-            for port in rig_messages_to_port(&messages) {
+            for port in rig_messages_to_port(&messages).map_err(|error| MemoryError::backend(error.to_string()))? {
                 self.inner
                     .store(
                         conversation_key(&port.role),

@@ -1,5 +1,5 @@
 {
-  "manifestVersion": "1.0",
+  "manifestVersion": "1.1",
   "identity": { "driver": "demo-declarative", "version": "1.0.0", "protocol": "demo",
                 "displayName": "Demo Declarative Driver", "abiVersion": 2,
                 "dynamicCapabilities": false },

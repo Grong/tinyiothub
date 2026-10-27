@@ -7,6 +7,21 @@ use rig_core::tool::{ToolErrorKind, ToolExecutionError, ToolOutput};
 
 use crate::port::tool::Tool;
 
+pub(crate) fn tool_output_from_result(
+    mut result: crate::port::tool::ToolResult,
+) -> Result<ToolOutput, ToolExecutionError> {
+    if !result.success {
+        result.output = serde_json::json!({
+            "success": false,
+            "error": result.error.take().unwrap_or_default(),
+        })
+        .to_string();
+    }
+    let content = super::provider::tool_result_to_rig(&result)
+        .map_err(|error| ToolExecutionError::new(ToolErrorKind::Other, error.to_string()))?;
+    ToolOutput::content(content).map_err(|error| ToolExecutionError::new(ToolErrorKind::Other, error.to_string()))
+}
+
 /// port Tool → rig DynamicTool。每个 port 工具在构建期包一个 DynamicTool。
 ///
 /// success=false 的 port ToolResult 以 JSON 文本（{"success":false,"error":...}）
@@ -20,21 +35,45 @@ pub fn to_dynamic_tool(tool: Arc<dyn Tool>) -> DynamicTool {
         let tool = Arc::clone(&tool);
         Box::pin(async move {
             match tool.execute(args).await {
-                Ok(res) if res.success => {
-                    let content = super::provider::tool_result_to_rig(&res)
-                        .map_err(|error| ToolExecutionError::new(ToolErrorKind::Other, error.to_string()))?;
-                    ToolOutput::content(content)
-                        .map_err(|error| ToolExecutionError::new(ToolErrorKind::Other, error.to_string()))
-                }
-                Ok(res) => Ok(ToolOutput::text(
-                    serde_json::json!({
-                        "success": false,
-                        "error": res.error.unwrap_or_default(),
-                    })
-                    .to_string(),
-                )),
+                Ok(result) => tool_output_from_result(result),
                 Err(e) => Err(ToolExecutionError::new(ToolErrorKind::Other, e.to_string())),
             }
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn failed_result_preserves_error_semantics_and_image_attachment() {
+        let attachment = tinyiothub_core::media::MediaAttachment {
+            evidence_id: "e1".into(),
+            mime: "image/png".into(),
+            bytes: vec![1, 2, 3],
+            source_seq: 4,
+            media_time: chrono::Utc::now(),
+        };
+        let output = super::tool_output_from_result(crate::port::tool::ToolResult {
+            success: false,
+            output: String::new(),
+            error: Some("camera failed".into()),
+            attachments: vec![attachment],
+        })
+        .expect("failed tool output");
+        let text = output
+            .as_content()
+            .iter()
+            .find_map(|block| match block {
+                rig_core::message::ToolResultContent::Text(text) => Some(text.text.as_str()),
+                _ => None,
+            })
+            .expect("error text");
+        assert!(text.contains("\"success\":false"));
+        assert!(text.contains("camera failed"));
+        assert!(output.as_content().iter().any(|block| matches!(
+            block,
+            rig_core::message::ToolResultContent::Image(image)
+                if image.data == rig_core::message::DocumentSourceKind::Raw(vec![1, 2, 3])
+        )));
+    }
 }

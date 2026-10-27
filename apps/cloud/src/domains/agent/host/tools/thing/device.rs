@@ -156,6 +156,28 @@ pub(super) fn call_device_tool(inner: Box<dyn Tool>) -> Box<dyn Tool> {
 // read_device：一次返回 state + health + zone + text（AI 不再逐物查 profile）
 // ============================================================================
 
+#[async_trait]
+pub(super) trait DeviceSourceReader: Send + Sync {
+    async fn read_sources(
+        &self,
+        thing_id: &str,
+        sources: Vec<String>,
+    ) -> anyhow::Result<Vec<tinyiothub_core::media::SourceItem>>;
+}
+
+#[async_trait]
+impl DeviceSourceReader for tinyiothub_runtime::DataServer {
+    async fn read_sources(
+        &self,
+        thing_id: &str,
+        sources: Vec<String>,
+    ) -> anyhow::Result<Vec<tinyiothub_core::media::SourceItem>> {
+        self.read_sources(thing_id, sources)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))
+    }
+}
+
 pub(super) struct ReadDeviceTool {
     pub(super) thing_service: Arc<ThingService>,
     pub(super) workspace_id: String,
@@ -164,6 +186,115 @@ pub(super) struct ReadDeviceTool {
     pub(super) device_cache: Option<Arc<tinyiothub_storage::cache::ThingCache>>,
     /// E4b：读取成功后写入 DemandTracker（None = 未接线）。
     pub(super) demand: Option<Arc<dyn DemandRecorder>>,
+    pub(super) source_reader: Option<Arc<dyn DeviceSourceReader>>,
+    pub(super) evidence: Option<Arc<tinyiothub_runtime::media::evidence::EvidenceService>>,
+    pub(super) run_ctx: Option<super::super::RunContextSlot>,
+}
+
+#[derive(Default)]
+struct ModelSourceOutput {
+    sources: Vec<Value>,
+    errors: Vec<Value>,
+    attachments: Vec<tinyiothub_core::media::MediaAttachment>,
+}
+
+impl ReadDeviceTool {
+    async fn read_model_sources(&self, thing_id: &str, requested: &[String]) -> Result<ModelSourceOutput, String> {
+        use tinyiothub_core::media::{DataKind, ImageInput, MediaError};
+
+        let Some(reader) = &self.source_reader else {
+            return Err("source reads unavailable".into());
+        };
+        let items = reader
+            .read_sources(thing_id, requested.to_vec())
+            .await
+            .map_err(|error| format!("source read failed: {error}"))?;
+        let selected = tinyiothub_runtime::media::source::select_model_sources(&items, requested)
+            .map_err(|error| error.to_string())?;
+        if selected.iter().filter(|item| item.data_kind == DataKind::Image).count() > 1 {
+            return Err(MediaError::TooManyImages.to_string());
+        }
+
+        let (task_id, run_id) = match &self.run_ctx {
+            Some(slot) => {
+                let context = slot.read().await.clone();
+                match context {
+                    Some(context) => {
+                        let context = context.read().await;
+                        (context.task_id.clone(), Some(context.run_id.clone()))
+                    }
+                    None => (None, None),
+                }
+            }
+            None => (None, None),
+        };
+        let mut output = ModelSourceOutput::default();
+        for item in selected {
+            match item.data_kind {
+                DataKind::Detections => output.sources.push(json!({
+                    "source": item.source,
+                    "dataKind": item.data_kind,
+                    "seq": item.seq,
+                    "time": item.time,
+                    "text": item.text,
+                    "data": item.data,
+                    "error": item.error,
+                })),
+                DataKind::Image => {
+                    let result = async {
+                        let evidence = self
+                            .evidence
+                            .as_ref()
+                            .ok_or(MediaError::Storage("media evidence unavailable".into()))?;
+                        let media = item.media.as_ref().ok_or(MediaError::InvalidImage)?;
+                        if media.bytes.len() > tinyiothub_runtime::media::evidence::MAX_IMAGE_BYTES {
+                            return Err(MediaError::ImageTooLarge);
+                        }
+                        let reference = evidence
+                            .put_image(ImageInput {
+                                workspace_id: self.workspace_id.clone(),
+                                task_id: task_id.clone(),
+                                run_id: run_id.clone(),
+                                tool_call_id: None,
+                                job_id: None,
+                                device_id: thing_id.to_string(),
+                                source_id: item.source.clone(),
+                                source_seq: item.seq,
+                                media_time: item.time,
+                                mime: media.mime.clone(),
+                                bytes: media.bytes.clone(),
+                                max_age: std::time::Duration::from_secs(60),
+                            })
+                            .await?;
+                        let attachment = evidence
+                            .get_image(&reference.evidence_id)
+                            .await?
+                            .ok_or_else(|| MediaError::Storage("stored evidence disappeared".into()))?;
+                        Ok::<_, MediaError>((reference, attachment))
+                    }
+                    .await;
+                    match result {
+                        Ok((reference, attachment)) => {
+                            output.sources.push(json!({
+                                "source": item.source,
+                                "dataKind": item.data_kind,
+                                "seq": item.seq,
+                                "time": item.time,
+                                "evidence": reference,
+                            }));
+                            output.attachments.push(attachment);
+                        }
+                        Err(error) => output.errors.push(json!({
+                            "source": item.source,
+                            "error": error.to_string(),
+                        })),
+                    }
+                }
+                DataKind::Values | DataKind::Video | DataKind::Custom(_) => {}
+            }
+        }
+        Ok(output)
+    }
 }
 
 impl Attributable for ReadDeviceTool {
@@ -184,7 +315,8 @@ impl Tool for ReadDeviceTool {
     fn description(&self) -> &str {
         "读取单个设备的实时摘要：state（属性值）+ health（ok/attention/bad/unknown）\
          + zone（空间归属）+ online，并附一句给模型的 text。\
-         properties 可选——只回指定属性；缺省回全部已上报值。"
+         properties 可选——只回指定属性；缺省回全部已上报值。\
+         sources 可选——按 Source ID 读取 detections 或一张图片。"
     }
 
     fn parameters_schema(&self) -> Value {
@@ -196,6 +328,11 @@ impl Tool for ReadDeviceTool {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "只返回这些属性名（可选）"
+                },
+                "sources": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "按 Source ID 读取 detections 或一张 JPEG/PNG 图片；video 不供模型读取"
                 }
             },
             "required": ["thingId"]
@@ -209,6 +346,7 @@ impl Tool for ReadDeviceTool {
             #[serde(alias = "thing_id")]
             thing_id: String,
             properties: Option<Vec<String>>,
+            sources: Option<Vec<String>>,
         }
 
         let input: Input = serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
@@ -280,7 +418,7 @@ impl Tool for ReadDeviceTool {
             if online { "在线" } else { "离线" }
         );
 
-        tool_ok(json!({
+        let mut payload = json!({
             "v": 1,
             "thingId": input.thing_id,
             "name": display,
@@ -291,7 +429,23 @@ impl Tool for ReadDeviceTool {
             "position": thing.address,
             "state": state,
             "text": text,
-        }))
+        });
+        let mut attachments = Vec::new();
+        if let Some(requested) = input.sources.as_deref().filter(|sources| !sources.is_empty()) {
+            match self.read_model_sources(&input.thing_id, requested).await {
+                Ok(source_output) => {
+                    payload["sources"] = Value::Array(source_output.sources);
+                    if !source_output.errors.is_empty() {
+                        payload["sourceErrors"] = Value::Array(source_output.errors);
+                    }
+                    attachments = source_output.attachments;
+                }
+                Err(error) => return tool_err(error),
+            }
+        }
+        let mut result = tool_ok(payload)?;
+        result.attachments = attachments;
+        Ok(result)
     }
 }
 
@@ -980,6 +1134,218 @@ mod tests {
             !msg.contains("other-tenant stop"),
             "不得向跨租户调用者泄漏闸门原因: {msg}"
         );
+    }
+
+    struct StubSources {
+        items: Vec<tinyiothub_core::media::SourceItem>,
+        calls: std::sync::Mutex<Vec<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl super::DeviceSourceReader for StubSources {
+        async fn read_sources(
+            &self,
+            _thing_id: &str,
+            sources: Vec<String>,
+        ) -> anyhow::Result<Vec<tinyiothub_core::media::SourceItem>> {
+            self.calls.lock().expect("source calls").push(sources);
+            Ok(self.items.clone())
+        }
+    }
+
+    fn source(source: &str, kind: &str, seq: u64) -> tinyiothub_core::media::SourceItem {
+        serde_json::from_value(json!({
+            "v": 1,
+            "source": source,
+            "dataKind": kind,
+            "seq": seq,
+            "time": chrono::Utc::now(),
+            "data": [{"label": "person", "confidence": 0.9}]
+        }))
+        .expect("source item")
+    }
+
+    fn png() -> Vec<u8> {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9WQAAAABJRU5ErkJggg==")
+            .expect("PNG fixture")
+    }
+
+    fn evidence_service(
+        pool: &sqlx::SqlitePool,
+        store: Arc<dyn tinyiothub_runtime::media::evidence::MediaStore>,
+    ) -> Arc<tinyiothub_runtime::media::evidence::EvidenceService> {
+        Arc::new(tinyiothub_runtime::media::evidence::EvidenceService::new(
+            store,
+            Arc::new(crate::shared::runtime_ports::DbMediaEvidenceStore(
+                tinyiothub_storage::Db::new(pool.clone()),
+            )),
+        ))
+    }
+
+    #[tokio::test]
+    async fn read_device_persists_only_explicit_model_sources_and_attaches_exact_image() {
+        let pool = pool_with_device().await;
+        let root = tempfile::tempdir().expect("media root");
+        let store = Arc::new(
+            tinyiothub_runtime::media::evidence::LocalMediaStore::new(root.path())
+                .await
+                .expect("media store"),
+        );
+        let mut image = source("front", "image", 4);
+        image.media = Some(tinyiothub_core::media::MediaPayload {
+            mime: "image/png".into(),
+            bytes: png(),
+        });
+        let reader = Arc::new(StubSources {
+            items: vec![
+                source("temperature", "values", 1),
+                source("lidar", "x_lidar", 2),
+                source("objects", "detections", 3),
+                image,
+            ],
+            calls: std::sync::Mutex::new(Vec::new()),
+        });
+        let tool = ReadDeviceTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            workspace_id: "ws-set".into(),
+            live: None,
+            device_cache: None,
+            demand: None,
+            source_reader: Some(reader.clone()),
+            evidence: Some(evidence_service(&pool, store)),
+            run_ctx: None,
+        };
+        let requested = vec!["temperature", "lidar", "objects", "front"];
+        let result = tool
+            .execute(json!({"thingId":"dev-1", "sources":requested}))
+            .await
+            .expect("execute");
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.attachments.len(), 1);
+        assert_eq!(result.attachments[0].bytes, png());
+        assert!(!result.attachments[0].evidence_id.is_empty());
+        let output: Value = serde_json::from_str(&result.output).expect("tool JSON");
+        let sources = output["sources"].as_array().expect("source results");
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0]["source"], "objects");
+        assert_eq!(sources[1]["source"], "front");
+        assert!(sources[1]["evidence"]["evidenceId"].as_str().is_some());
+        assert!(sources.iter().all(|item| item.get("media").is_none()));
+        assert_eq!(
+            reader.calls.lock().expect("calls").as_slice(),
+            &[requested.into_iter().map(String::from).collect::<Vec<String>>()]
+        );
+        tool.execute(json!({"thingId":"dev-1"})).await.expect("legacy read");
+        assert_eq!(
+            reader.calls.lock().expect("calls").len(),
+            1,
+            "omitted sources must not read driver media"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_device_rejects_selected_video_and_multiple_images() {
+        let pool = pool_with_device().await;
+        let root = tempfile::tempdir().expect("media root");
+        let store = Arc::new(
+            tinyiothub_runtime::media::evidence::LocalMediaStore::new(root.path())
+                .await
+                .expect("media store"),
+        );
+        let mut first = source("first", "image", 1);
+        first.media = Some(tinyiothub_core::media::MediaPayload {
+            mime: "image/png".into(),
+            bytes: png(),
+        });
+        let mut second = source("second", "image", 2);
+        second.media = first.media.clone();
+        let reader = Arc::new(StubSources {
+            items: vec![source("live", "video", 1), first, second],
+            calls: std::sync::Mutex::new(Vec::new()),
+        });
+        let tool = ReadDeviceTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            workspace_id: "ws-set".into(),
+            live: None,
+            device_cache: None,
+            demand: None,
+            source_reader: Some(reader),
+            evidence: Some(evidence_service(&pool, store)),
+            run_ctx: None,
+        };
+        let video = tool
+            .execute(json!({"thingId":"dev-1", "sources":["live"]}))
+            .await
+            .expect("execute");
+        assert!(!video.success);
+        assert_eq!(video.error.as_deref(), Some("video_is_for_human_not_model"));
+        let multiple = tool
+            .execute(json!({"thingId":"dev-1", "sources":["first", "second"]}))
+            .await
+            .expect("execute");
+        assert!(!multiple.success);
+        assert!(multiple.error.unwrap_or_default().contains("at most one image"));
+    }
+
+    struct FailingStore;
+    #[async_trait]
+    impl tinyiothub_runtime::media::evidence::MediaStore for FailingStore {
+        async fn put(
+            &self,
+            _workspace_id: &str,
+            _sha256: &str,
+            _bytes: &[u8],
+        ) -> Result<String, tinyiothub_core::media::MediaError> {
+            Err(tinyiothub_core::media::MediaError::Storage("injected".into()))
+        }
+        async fn read(&self, _storage_path: &str) -> Result<Vec<u8>, tinyiothub_core::media::MediaError> {
+            Err(tinyiothub_core::media::MediaError::Storage("injected".into()))
+        }
+        async fn list(&self) -> Result<Vec<String>, tinyiothub_core::media::MediaError> {
+            Ok(Vec::new())
+        }
+        async fn delete(
+            &self,
+            _storage_path: &str,
+            _grace: std::time::Duration,
+        ) -> Result<(), tinyiothub_core::media::MediaError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn read_device_isolates_media_store_failure_and_preserves_detections() {
+        let pool = pool_with_device().await;
+        let mut image = source("front", "image", 4);
+        image.media = Some(tinyiothub_core::media::MediaPayload {
+            mime: "image/png".into(),
+            bytes: png(),
+        });
+        let reader = Arc::new(StubSources {
+            items: vec![source("objects", "detections", 3), image],
+            calls: std::sync::Mutex::new(Vec::new()),
+        });
+        let tool = ReadDeviceTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            workspace_id: "ws-set".into(),
+            live: None,
+            device_cache: None,
+            demand: None,
+            source_reader: Some(reader),
+            evidence: Some(evidence_service(&pool, Arc::new(FailingStore))),
+            run_ctx: None,
+        };
+        let result = tool
+            .execute(json!({"thingId":"dev-1", "sources":["objects", "front"]}))
+            .await
+            .expect("execute");
+        assert!(result.success, "{:?}", result.error);
+        assert!(result.attachments.is_empty());
+        let output: Value = serde_json::from_str(&result.output).expect("tool JSON");
+        assert_eq!(output["sources"][0]["source"], "objects");
+        assert_eq!(output["sourceErrors"][0]["source"], "front");
     }
 
     /// 未声明 resources 的 set 工具回落合成 `__device__`（E1 语义）。

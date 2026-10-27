@@ -21,6 +21,7 @@ pub const MAX_IMAGE_PIXELS: u64 = 16_000_000;
 pub trait MediaStore: Send + Sync {
     async fn put(&self, workspace_id: &str, sha256: &str, bytes: &[u8]) -> Result<String, MediaError>;
     async fn read(&self, storage_path: &str) -> Result<Vec<u8>, MediaError>;
+    async fn list(&self) -> Result<Vec<String>, MediaError>;
     async fn delete(&self, storage_path: &str, grace: Duration) -> Result<(), MediaError>;
 }
 
@@ -51,6 +52,8 @@ impl LocalMediaStore {
 fn storage_error(error: std::io::Error) -> MediaError {
     MediaError::Storage(error.to_string())
 }
+
+static MEDIA_IO_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[async_trait]
 impl MediaStore for LocalMediaStore {
@@ -83,6 +86,30 @@ impl MediaStore for LocalMediaStore {
         tokio::fs::read(self.checked_path(storage_path)?)
             .await
             .map_err(storage_error)
+    }
+
+    async fn list(&self) -> Result<Vec<String>, MediaError> {
+        let mut paths = Vec::new();
+        let mut workspaces = tokio::fs::read_dir(&self.root).await.map_err(storage_error)?;
+        while let Some(workspace) = workspaces.next_entry().await.map_err(storage_error)? {
+            if !workspace.file_type().await.map_err(storage_error)?.is_dir() {
+                continue;
+            }
+            let mut objects = tokio::fs::read_dir(workspace.path()).await.map_err(storage_error)?;
+            while let Some(object) = objects.next_entry().await.map_err(storage_error)? {
+                if !object.file_type().await.map_err(storage_error)?.is_file() {
+                    continue;
+                }
+                let relative = object
+                    .path()
+                    .strip_prefix(&self.root)
+                    .map_err(|error| MediaError::Storage(error.to_string()))?
+                    .to_string_lossy()
+                    .into_owned();
+                paths.push(relative);
+            }
+        }
+        Ok(paths)
     }
 
     async fn delete(&self, storage_path: &str, grace: Duration) -> Result<(), MediaError> {
@@ -121,6 +148,7 @@ impl EvidenceService {
         validate_image(&input)?;
         let sha256 = hex::encode(Sha256::digest(&input.bytes));
         let dedup_key = evidence_dedup_key(&input, &sha256)?;
+        let _guard = MEDIA_IO_LOCK.lock().await;
         let storage_path = self.store.put(&input.workspace_id, &sha256, &input.bytes).await?;
         let now = Utc::now();
         let row = MediaEvidenceRecord {
@@ -169,9 +197,15 @@ impl EvidenceService {
     }
 
     pub async fn cleanup_expired(&self, now: DateTime<Utc>, grace: Duration) -> Result<(), MediaError> {
+        let _guard = MEDIA_IO_LOCK.lock().await;
         for row in self.evidence.delete_expired(now).await? {
             if !self.evidence.storage_is_referenced(&row.storage_path).await? {
                 self.store.delete(&row.storage_path, grace).await?;
+            }
+        }
+        for storage_path in self.store.list().await? {
+            if !self.evidence.storage_is_referenced(&storage_path).await? {
+                self.store.delete(&storage_path, grace).await?;
             }
         }
         Ok(())
@@ -238,7 +272,14 @@ impl RunMediaBudget {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc, time::Duration};
+    use std::{
+        collections::HashMap,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
 
     use async_trait::async_trait;
     use chrono::Utc;
@@ -250,11 +291,15 @@ mod tests {
     #[derive(Default)]
     struct MemoryEvidence {
         rows: tokio::sync::Mutex<HashMap<String, MediaEvidenceRecord>>,
+        fail_insert: AtomicBool,
     }
 
     #[async_trait]
     impl MediaEvidenceStore for MemoryEvidence {
         async fn insert_or_get(&self, row: &MediaEvidenceRecord) -> Result<MediaEvidenceRecord, MediaError> {
+            if self.fail_insert.load(Ordering::SeqCst) {
+                return Err(MediaError::Storage("injected metadata failure".into()));
+            }
             let mut rows = self.rows.lock().await;
             if let Some(existing) = rows.values().find(|item| item.dedup_key == row.dedup_key) {
                 return Ok(existing.clone());
@@ -309,6 +354,41 @@ mod tests {
                 }
             }
             count
+        }
+    }
+
+    struct ControlledStore {
+        inner: Arc<LocalMediaStore>,
+        delete_started: Arc<tokio::sync::Notify>,
+        allow_delete: Arc<tokio::sync::Notify>,
+        pause_delete: AtomicBool,
+        fail_deletes: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl super::MediaStore for ControlledStore {
+        async fn put(&self, workspace_id: &str, sha256: &str, bytes: &[u8]) -> Result<String, MediaError> {
+            self.inner.put(workspace_id, sha256, bytes).await
+        }
+
+        async fn read(&self, storage_path: &str) -> Result<Vec<u8>, MediaError> {
+            self.inner.read(storage_path).await
+        }
+
+        async fn list(&self) -> Result<Vec<String>, MediaError> {
+            self.inner.list().await
+        }
+
+        async fn delete(&self, storage_path: &str, grace: Duration) -> Result<(), MediaError> {
+            if self.pause_delete.load(Ordering::SeqCst) {
+                self.delete_started.notify_one();
+                self.allow_delete.notified().await;
+            }
+            if self.fail_deletes.load(Ordering::SeqCst) > 0 {
+                self.fail_deletes.fetch_sub(1, Ordering::SeqCst);
+                return Err(MediaError::Storage("injected delete failure".into()));
+            }
+            self.inner.delete(storage_path, grace).await
         }
     }
 
@@ -427,6 +507,107 @@ mod tests {
                 .expect("gone")
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn failed_metadata_insert_leaves_retryable_orphan_for_cleanup() {
+        let fixture = EvidenceFixture::new().await;
+        fixture.evidence.fail_insert.store(true, Ordering::SeqCst);
+        assert!(fixture.service.put_image(image_input("image/png", 1024)).await.is_err());
+        assert_eq!(fixture.evidence_row_count().await, 0);
+        assert_eq!(fixture.stored_object_count().await, 1);
+
+        fixture.evidence.fail_insert.store(false, Ordering::SeqCst);
+        fixture
+            .service
+            .cleanup_expired(Utc::now(), Duration::ZERO)
+            .await
+            .expect("orphan cleanup");
+        assert_eq!(fixture.stored_object_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn failed_delete_is_discovered_by_later_orphan_cleanup() {
+        let root = Arc::new(tempfile::tempdir().expect("media tempdir"));
+        let local = Arc::new(LocalMediaStore::new(root.path()).await.expect("media store"));
+        let store = Arc::new(ControlledStore {
+            inner: local,
+            delete_started: Arc::new(tokio::sync::Notify::new()),
+            allow_delete: Arc::new(tokio::sync::Notify::new()),
+            pause_delete: AtomicBool::new(false),
+            fail_deletes: AtomicUsize::new(1),
+        });
+        let evidence = Arc::new(MemoryEvidence::default());
+        let service = Arc::new(EvidenceService::new(store, evidence.clone()));
+        service.put_image(image_input("image/png", 1024)).await.expect("stored");
+
+        assert!(
+            service
+                .cleanup_expired(Utc::now() + chrono::Duration::days(8), Duration::ZERO)
+                .await
+                .is_err()
+        );
+        assert_eq!(evidence.rows.lock().await.len(), 0);
+        let mut workspaces = tokio::fs::read_dir(root.path()).await.expect("root");
+        let workspace = workspaces
+            .next_entry()
+            .await
+            .expect("workspace")
+            .expect("workspace dir");
+        let mut objects = tokio::fs::read_dir(workspace.path()).await.expect("objects");
+        assert!(objects.next_entry().await.expect("object").is_some());
+
+        service
+            .cleanup_expired(Utc::now() + chrono::Duration::days(8), Duration::ZERO)
+            .await
+            .expect("retry cleanup");
+        let mut objects = tokio::fs::read_dir(workspace.path()).await.expect("objects");
+        assert!(objects.next_entry().await.expect("object").is_none());
+    }
+
+    #[tokio::test]
+    async fn cleanup_cannot_delete_new_live_cross_task_evidence() {
+        let root = tempfile::tempdir().expect("media tempdir");
+        let local = Arc::new(LocalMediaStore::new(root.path()).await.expect("media store"));
+        let delete_started = Arc::new(tokio::sync::Notify::new());
+        let allow_delete = Arc::new(tokio::sync::Notify::new());
+        let store = Arc::new(ControlledStore {
+            inner: local,
+            delete_started: delete_started.clone(),
+            allow_delete: allow_delete.clone(),
+            pause_delete: AtomicBool::new(true),
+            fail_deletes: AtomicUsize::new(0),
+        });
+        let evidence = Arc::new(MemoryEvidence::default());
+        let service = Arc::new(EvidenceService::new(store.clone(), evidence.clone()));
+        service.put_image(image_input("image/png", 1024)).await.expect("stored");
+        for row in evidence.rows.lock().await.values_mut() {
+            row.expires_at = Utc::now() - chrono::Duration::days(1);
+        }
+
+        let cleanup = {
+            let service = service.clone();
+            tokio::spawn(async move { service.cleanup_expired(Utc::now(), Duration::ZERO).await })
+        };
+        delete_started.notified().await;
+        let mut live_input = image_input("image/png", 1024);
+        live_input.task_id = Some("task-2".into());
+        let expected = live_input.bytes.clone();
+        let put = {
+            let service = service.clone();
+            tokio::spawn(async move { service.put_image(live_input).await })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        store.pause_delete.store(false, Ordering::SeqCst);
+        allow_delete.notify_one();
+        cleanup.await.expect("cleanup task").expect("cleanup");
+        let live = put.await.expect("put task").expect("live evidence");
+        let loaded = service
+            .get_image(&live.evidence_id)
+            .await
+            .expect("live read")
+            .expect("live object retained");
+        assert_eq!(loaded.bytes, expected);
     }
 
     #[tokio::test]

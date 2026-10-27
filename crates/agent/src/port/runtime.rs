@@ -61,7 +61,7 @@ pub trait AgentLoop: Send + Sync {
     async fn clear_history(&self);
 
     /// 用会话持久化消息水合内存历史（zeroclaw Agent::seed_history）。
-    async fn seed_history(&self, messages: &[crate::port::provider::ChatMessage]);
+    async fn seed_history(&self, messages: &[crate::port::provider::ChatMessage]) -> anyhow::Result<()>;
 }
 
 pub type AgentLoopHandle = Arc<tokio::sync::Mutex<dyn AgentLoop>>;

@@ -147,9 +147,9 @@ async fn vision_rig_provider_receives_exact_image_bytes() {
 }
 
 #[tokio::test]
-async fn direct_provider_rejects_run_image_budget_before_delivery() {
+async fn direct_provider_validation_does_not_own_run_budget() {
     use crate::port::provider::{ChatMessage, ChatRequest, ModelProvider};
-    use tinyiothub_core::media::{MediaAttachment, MediaError};
+    use tinyiothub_core::media::MediaAttachment;
 
     let (model, provider) = recording_rig_model(vec![]);
     let messages: Vec<_> = (0..5)
@@ -165,7 +165,7 @@ async fn direct_provider_rejects_run_image_budget_before_delivery() {
             message
         })
         .collect();
-    let error = provider
+    provider
         .chat(
             ChatRequest {
                 messages: &messages,
@@ -176,9 +176,66 @@ async fn direct_provider_rejects_run_image_budget_before_delivery() {
             None,
         )
         .await
-        .expect_err("8 MiB run budget");
-    assert_eq!(error.downcast_ref::<MediaError>(), Some(&MediaError::RunImageBudget));
-    assert!(model.seen.lock().unwrap().is_none());
+        .expect("provider validation is stateless; the Run hook owns cumulative accounting");
+    assert!(model.seen.lock().unwrap().is_some());
+}
+
+#[test]
+fn malformed_and_multiple_rig_images_are_conversion_errors() {
+    use crate::adapters::rig::provider::rig_messages_to_port;
+    use rig_core::message::{DocumentSourceKind, Image, ImageMediaType, Message, ToolResultContent, UserContent};
+    use tinyiothub_core::media::MediaError;
+
+    let malformed = Image {
+        data: DocumentSourceKind::Url("file:///not-raw".into()),
+        media_type: Some(ImageMediaType::PNG),
+        detail: None,
+        additional_params: None,
+    };
+    assert!(matches!(
+        rig_messages_to_port(&[Message::User {
+            content: vec![UserContent::Image(malformed.clone())],
+        }]),
+        Err(MediaError::InvalidImage)
+    ));
+
+    let raw = Image {
+        data: DocumentSourceKind::Raw(vec![1]),
+        media_type: Some(ImageMediaType::PNG),
+        detail: None,
+        additional_params: None,
+    };
+    let result = rig_core::message::ToolResult {
+        call: rig_core::message::ToolCallId::new_or_mint("call_1"),
+        provider: None,
+        name: "read_device".into(),
+        content: vec![ToolResultContent::Image(raw.clone()), ToolResultContent::Image(raw)],
+    };
+    assert!(matches!(
+        rig_messages_to_port(&[Message::User {
+            content: vec![UserContent::ToolResult(result)],
+        }]),
+        Err(MediaError::TooManyImages)
+    ));
+}
+
+#[test]
+fn invalid_port_attachment_is_not_silently_dropped() {
+    use crate::adapters::rig::provider::port_messages_to_rig;
+    use tinyiothub_core::media::{MediaAttachment, MediaError};
+
+    let mut message = crate::port::provider::ChatMessage::user("inspect");
+    message.attachments.push(MediaAttachment {
+        evidence_id: "e".into(),
+        mime: "image/svg+xml".into(),
+        bytes: vec![1],
+        source_seq: 1,
+        media_time: chrono::Utc::now(),
+    });
+    assert!(matches!(
+        port_messages_to_rig(&[message]),
+        Err(MediaError::UnsupportedMime(mime)) if mime == "image/svg+xml"
+    ));
 }
 
 // ── canonical 拍平 round-trip ───────────────────────────────
@@ -199,7 +256,7 @@ fn canonical_flatten_round_trip_assistant_tool_call_turn() {
         crate::port::provider::ChatMessage::tool(r#"{"content":"{\"value\":21}","tool_call_id":"call_1"}"#),
     ];
 
-    let rig = port_messages_to_rig(&port);
+    let rig = port_messages_to_rig(&port).expect("rig history");
 
     assert!(matches!(&rig[0], Message::System { content } if content == "sys"));
     match &rig[1] {
@@ -249,7 +306,7 @@ fn canonical_flatten_round_trip_assistant_tool_call_turn() {
     }
 
     // 回程：rig → port 必须与原始 canonical 字符串逐字一致。
-    let back = rig_messages_to_port(&rig);
+    let back = rig_messages_to_port(&rig).expect("port history");
     assert_eq!(back.len(), port.len());
     for (original, round_tripped) in port.iter().zip(back.iter()) {
         assert_eq!(original.role, round_tripped.role, "role must survive round-trip");
@@ -347,7 +404,7 @@ fn rig_assistant_flattens_to_canonical_json() {
         },
     ];
 
-    let port = rig_messages_to_port(&rig);
+    let port = rig_messages_to_port(&rig).expect("port history");
 
     assert_eq!(port.len(), 2);
     assert_eq!(port[0].role, "assistant");
@@ -376,7 +433,7 @@ fn rig_tool_result_flattens_to_canonical_json() {
         )],
     }];
 
-    let port = rig_messages_to_port(&rig);
+    let port = rig_messages_to_port(&rig).expect("port history");
 
     assert_eq!(port.len(), 1);
     assert_eq!(port[0].role, "tool");
@@ -541,7 +598,8 @@ async fn rig_minimax_as_port_round_trip_tool_call() {
                 serde_json::json!({"thingId": "t1", "value": 42}),
             ),
         ))],
-    }]);
+    }])
+    .expect("flattened response");
     assert_eq!(flat.len(), 1);
     assert_eq!(flat[0].role, "assistant");
     let v: serde_json::Value = serde_json::from_str(&flat[0].content).unwrap();
@@ -768,7 +826,117 @@ async fn rig_loop_forwards_tool_and_usage_events() {
     assert_eq!(usages, vec![(Some(10), Some(0), Some(5)), (Some(20), Some(3), Some(7))]);
 }
 
-/// success=false 的 port ToolResult 作为普通 tool result 回传（JSON error 形状），
+#[tokio::test]
+async fn run_budget_rejects_fifth_distinct_image_before_provider_delivery() {
+    use crate::adapters::rig::loop_::rig_loop_factory;
+    use crate::port::provider::{ChatResponse, ModelProvider};
+    use crate::port::runtime::AgentLoopConfig;
+    use tinyiothub_core::media::MediaAttachment;
+
+    struct ImageTool;
+    crate::mock_tool_attribution!(ImageTool);
+    #[async_trait::async_trait]
+    impl Tool for ImageTool {
+        fn name(&self) -> &str {
+            "image_tool"
+        }
+        fn description(&self) -> &str {
+            "Returns one image"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type":"object"})
+        }
+        async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+            let index = args["index"].as_u64().unwrap_or(0);
+            Ok(ToolResult {
+                success: true,
+                output: "image".into(),
+                error: None,
+                attachments: vec![MediaAttachment {
+                    evidence_id: format!("e{index}"),
+                    mime: "image/png".into(),
+                    bytes: vec![index as u8; 2 * 1024 * 1024],
+                    source_seq: index,
+                    media_time: chrono::Utc::now(),
+                }],
+            })
+        }
+    }
+
+    struct ImageModel {
+        calls: Arc<Mutex<usize>>,
+    }
+    impl Attributable for ImageModel {
+        fn role(&self) -> Role {
+            Role::Provider(crate::port::attribution::ProviderKind::Model(
+                crate::port::attribution::ModelProviderKind::Custom,
+            ))
+        }
+        fn alias(&self) -> &str {
+            "ImageModel"
+        }
+    }
+    #[async_trait::async_trait]
+    impl ModelProvider for ImageModel {
+        fn supports_vision(&self) -> bool {
+            true
+        }
+        async fn chat(
+            &self,
+            _request: crate::port::provider::ChatRequest<'_>,
+            _model: &str,
+            _temperature: Option<f64>,
+        ) -> anyhow::Result<ChatResponse> {
+            let mut calls = self.calls.lock().expect("model calls");
+            *calls += 1;
+            let index = *calls as u64;
+            Ok(ChatResponse {
+                text: None,
+                tool_calls: vec![crate::port::provider::ToolCall {
+                    id: format!("call_{index}"),
+                    name: "image_tool".into(),
+                    arguments: serde_json::json!({"index":index}).to_string(),
+                }],
+                usage: None,
+                reasoning_content: None,
+            })
+        }
+    }
+
+    let calls = Arc::new(Mutex::new(0));
+    let provider_calls = Arc::clone(&calls);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let loop_ = rig_loop_factory(AgentLoopConfig {
+        model_name: "image-model".into(),
+        prompt_builder: crate::port::prompt::SystemPromptBuilder::with_defaults(),
+        tools: vec![Box::new(ImageTool)],
+        memory: Arc::new(crate::port::memory::NoopMemory),
+        observer: Arc::new(crate::port::observer::NoopObserver),
+        workspace_dir: dir.path().to_path_buf(),
+        security_summary: None,
+        provider_factory: Arc::new(move || {
+            Ok(Box::new(ImageModel {
+                calls: Arc::clone(&provider_calls),
+            }))
+        }),
+        conversation_memory: false,
+    })
+    .expect("loop");
+    let (tx, _rx) = tokio::sync::mpsc::channel(64);
+    let error = loop_
+        .lock()
+        .await
+        .turn_streamed("inspect", tx, None)
+        .await
+        .expect_err("fifth image exceeds the Run budget");
+    assert!(error.to_string().contains("8 MiB"), "{error}");
+    assert_eq!(
+        *calls.lock().expect("calls"),
+        5,
+        "the sixth completion must not reach the provider"
+    );
+}
+
 /// 不走 rig 错误重试路径；模型照常收 tool result 并给出最终文本。
 #[tokio::test]
 async fn failing_tool_result_is_delivered_as_text_not_retried() {
