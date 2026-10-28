@@ -405,7 +405,7 @@ async fn task_detail_uses_the_single_runtime_projection_surface() {
     assert!(detail["result"]["jobs"].is_array(), "jobs: {detail}");
     assert!(detail["result"]["watches"].is_array(), "watches: {detail}");
     assert!(detail["result"]["evidence"].is_array(), "evidence: {detail}");
-    assert!(detail["result"]["events"].is_array(), "events: {detail}");
+    assert!(detail["result"].get("events").is_none(), "events: {detail}");
     assert!(detail["result"]["cursor"].is_i64(), "cursor: {detail}");
 }
 

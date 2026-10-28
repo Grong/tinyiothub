@@ -5,6 +5,7 @@ use tinyiothub_core::agent_task::TaskWake;
 use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
 
 use crate::Db;
+use crate::runtime_event::{append_runtime_event_tx, job_event};
 
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct DeviceJobRow {
@@ -122,6 +123,7 @@ fn validate_job_wake(job: &DeviceJob, wake: &TaskWake) -> Result<(), DeviceJobEr
 
 impl Db {
     pub async fn create_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError> {
+        let mut tx = self.pool().begin().await.map_err(storage)?;
         sqlx::query(
             "INSERT INTO device_jobs
                  (id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
@@ -156,9 +158,20 @@ impl Db {
         .bind(i64::try_from(job.timeout_ms).map_err(|_| DeviceJobError::Validation("timeout is too large".to_string()))?)
         .bind(job.started_at)
         .bind(job.ended_at)
-        .execute(self.pool())
+        .execute(&mut *tx)
         .await
         .map_err(create_error)?;
+        append_runtime_event_tx(
+            &mut tx,
+            job_event(
+                job,
+                job.state.as_str(),
+                serde_json::json!({"state": job.state.as_str()}),
+            ),
+        )
+        .await
+        .map_err(storage)?;
+        tx.commit().await.map_err(storage)?;
         Ok(())
     }
 
@@ -219,6 +232,12 @@ impl Db {
         .map(DeviceJob::try_from)
         .transpose()?;
         if let Some(job) = updated {
+            append_runtime_event_tx(
+                &mut tx,
+                job_event(&job, "running", serde_json::json!({"state":"running"})),
+            )
+            .await
+            .map_err(storage)?;
             tx.commit().await.map_err(storage)?;
             return Ok(job);
         }
@@ -268,26 +287,62 @@ impl Db {
         if let Some(wake) = wake {
             insert_job_wake(&mut tx, wake).await?;
         }
+        append_runtime_event_tx(
+            &mut tx,
+            job_event(&current, state.as_str(), serde_json::json!({"state":state.as_str()})),
+        )
+        .await
+        .map_err(storage)?;
         tx.commit().await.map_err(storage)?;
         Ok(true)
     }
 
     pub async fn update_progress(&self, job_id: &str, progress: &Value) -> Result<bool, DeviceJobError> {
-        let updated =
-            sqlx::query("UPDATE device_jobs SET progress_json = ? WHERE id = ? AND state IN ('accepted', 'running')")
-                .bind(serde_json::to_string(progress).map_err(storage)?)
-                .bind(job_id)
-                .execute(self.pool())
-                .await
-                .map_err(storage)?
-                .rows_affected();
+        Ok(self.update_progress_revision(job_id, progress).await?.is_some())
+    }
+
+    pub async fn update_progress_revision(
+        &self,
+        job_id: &str,
+        progress: &Value,
+    ) -> Result<Option<i64>, DeviceJobError> {
+        let progress_json = serde_json::to_string(progress).map_err(storage)?;
+        let mut tx = self.pool().begin().await.map_err(storage)?;
+        let updated = sqlx::query(
+            "UPDATE device_jobs
+             SET progress_json = ?, progress_revision = progress_revision + 1
+             WHERE id = ? AND state IN ('accepted', 'running')
+               AND (progress_json IS NULL OR progress_json != ?)",
+        )
+        .bind(&progress_json)
+        .bind(job_id)
+        .bind(&progress_json)
+        .execute(&mut *tx)
+        .await
+        .map_err(storage)?
+        .rows_affected();
         if updated == 0 {
-            let mut connection = self.pool().acquire().await.map_err(storage)?;
-            if find_job_by_id(&mut connection, job_id).await?.is_none() {
+            if find_job_by_id(&mut tx, job_id).await?.is_none() {
                 return Err(DeviceJobError::NotFound);
             }
+            tx.commit().await.map_err(storage)?;
+            return Ok(None);
         }
-        Ok(updated > 0)
+        let job = find_job_by_id(&mut tx, job_id).await?.ok_or(DeviceJobError::NotFound)?;
+        let revision = sqlx::query_scalar::<_, i64>("SELECT progress_revision FROM device_jobs WHERE id = ?")
+            .bind(job_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(storage)?;
+        let mut input = job_event(
+            &job,
+            &format!("progress:v{revision}"),
+            serde_json::json!({"revision":revision,"progress":progress}),
+        );
+        input.event_type = "job.progress".into();
+        append_runtime_event_tx(&mut tx, input).await.map_err(storage)?;
+        tx.commit().await.map_err(storage)?;
+        Ok(Some(revision))
     }
 
     pub async fn request_stop(
@@ -329,6 +384,16 @@ impl Db {
             .transpose()?
             .ok_or(DeviceJobError::NotFound)?,
         };
+        append_runtime_event_tx(
+            &mut tx,
+            job_event(
+                &job,
+                "stop_requested",
+                serde_json::json!({"stopRequestedAt":job.stop_requested_at}),
+            ),
+        )
+        .await
+        .map_err(storage)?;
         tx.commit().await.map_err(storage)?;
         Ok(job)
     }

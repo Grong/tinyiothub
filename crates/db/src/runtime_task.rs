@@ -3,6 +3,7 @@ use sqlx::{Sqlite, Transaction};
 use tinyiothub_core::agent_task::{AgentTask, CreateTaskOutcome, TaskStoreError, TaskWake};
 
 use crate::Db;
+use crate::runtime_event::{RuntimeEventInput, append_runtime_event_tx, task_event};
 
 #[derive(Debug, sqlx::FromRow)]
 struct AgentTaskRow {
@@ -164,6 +165,12 @@ impl Db {
             if original.objective != task.objective {
                 return Err(TaskStoreError::ObjectiveConflict);
             }
+            append_runtime_event_tx(
+                &mut tx,
+                task_event(&original, "task.created", format!("task:{}:created", original.id)),
+            )
+            .await
+            .map_err(unavailable)?;
             tx.commit().await.map_err(unavailable)?;
             return Ok(CreateTaskOutcome {
                 task: original,
@@ -175,6 +182,12 @@ impl Db {
             return Err(TaskStoreError::Validation("task and wake task id differ".to_string()));
         }
         insert_wake(&mut tx, wake).await?;
+        append_runtime_event_tx(
+            &mut tx,
+            task_event(task, "task.created", format!("task:{}:created", task.id)),
+        )
+        .await
+        .map_err(unavailable)?;
         tx.commit().await.map_err(unavailable)?;
         Ok(CreateTaskOutcome {
             task: task.clone(),
@@ -322,6 +335,16 @@ impl Db {
         let task = find_task(&mut tx, workspace_id, task_id)
             .await?
             .ok_or_else(|| TaskStoreError::Unavailable("updated task disappeared".to_string()))?;
+        append_runtime_event_tx(
+            &mut tx,
+            task_event(
+                &task,
+                &format!("task.{}", task.status.as_str()),
+                format!("task:{}:v{}:{}", task.id, task.state_version, task.status.as_str()),
+            ),
+        )
+        .await
+        .map_err(unavailable)?;
         tx.commit().await.map_err(unavailable)?;
         Ok(task)
     }
@@ -352,11 +375,22 @@ impl Db {
         let task = find_task_by_id(&mut tx, task_id)
             .await?
             .ok_or_else(|| TaskStoreError::Unavailable("updated task disappeared".to_string()))?;
+        append_runtime_event_tx(
+            &mut tx,
+            task_event(
+                &task,
+                "task.run_bound",
+                format!("task:{}:v{}:run_bound", task.id, task.state_version),
+            ),
+        )
+        .await
+        .map_err(unavailable)?;
         tx.commit().await.map_err(unavailable)?;
         Ok(task)
     }
 
     pub async fn begin_run(&self, task: &AgentTask, wake_event_id: &str, run_id: &str) -> Result<bool, TaskStoreError> {
+        let mut tx = self.pool().begin().await.map_err(unavailable)?;
         let inserted = sqlx::query(
             "INSERT INTO agent_runs
                  (id, workspace_id, trigger_type, trigger_context, outcome, summary, report,
@@ -369,21 +403,44 @@ impl Db {
         .bind(wake_event_id)
         .bind(&task.id)
         .bind(wake_event_id)
-        .execute(self.pool())
+        .execute(&mut *tx)
         .await
         .map_err(unavailable)?
         .rows_affected();
         if inserted == 1 {
+            append_runtime_event_tx(
+                &mut tx,
+                RuntimeEventInput {
+                    event_id: format!("run:{run_id}:started"),
+                    event_type: "run.started".into(),
+                    occurred_at: Utc::now(),
+                    workspace_id: task.workspace_id.clone(),
+                    task_id: Some(task.id.clone()),
+                    run_id: Some(run_id.to_string()),
+                    tool_call_id: None,
+                    job_id: None,
+                    approval_id: None,
+                    device_id: None,
+                    source_id: None,
+                    source_seq: None,
+                    evidence_id: None,
+                    data: serde_json::json!({}),
+                },
+            )
+            .await
+            .map_err(unavailable)?;
+            tx.commit().await.map_err(unavailable)?;
             return Ok(true);
         }
         let duplicate: Option<(String,)> =
             sqlx::query_as("SELECT id FROM agent_runs WHERE task_id = ? AND wake_event_id = ?")
                 .bind(&task.id)
                 .bind(wake_event_id)
-                .fetch_optional(self.pool())
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(unavailable)?;
         if duplicate.is_some() {
+            tx.commit().await.map_err(unavailable)?;
             Ok(false)
         } else {
             Err(TaskStoreError::Unavailable(
@@ -395,6 +452,7 @@ impl Db {
     pub async fn finish_run(&self, report: &tinyiothub_core::agent_runs::RunReport) -> Result<(), TaskStoreError> {
         let mut report_json = serde_json::to_value(report).map_err(unavailable)?;
         report_json["action_count"] = serde_json::json!(report.actions.len());
+        let mut tx = self.pool().begin().await.map_err(unavailable)?;
         let affected = sqlx::query(
             "UPDATE agent_runs
              SET outcome = ?, summary = ?, report = ?, verified = ?, tool_calls = ?,
@@ -410,13 +468,35 @@ impl Db {
         .bind(report.duration_ms as i64)
         .bind(&report.run_id)
         .bind(&report.workspace_id)
-        .execute(self.pool())
+        .execute(&mut *tx)
         .await
         .map_err(unavailable)?
         .rows_affected();
         if affected == 0 {
             return Err(TaskStoreError::ConcurrentUpdate);
         }
+        append_runtime_event_tx(
+            &mut tx,
+            RuntimeEventInput {
+                event_id: format!("run:{}:finished", report.run_id),
+                event_type: "run.finished".into(),
+                occurred_at: Utc::now(),
+                workspace_id: report.workspace_id.clone(),
+                task_id: report.task_id.clone(),
+                run_id: Some(report.run_id.clone()),
+                tool_call_id: None,
+                job_id: None,
+                approval_id: None,
+                device_id: report.thing_id.clone(),
+                source_id: None,
+                source_seq: None,
+                evidence_id: None,
+                data: serde_json::json!({"outcome": report.outcome.as_str()}),
+            },
+        )
+        .await
+        .map_err(unavailable)?;
+        tx.commit().await.map_err(unavailable)?;
         Ok(())
     }
 
@@ -783,6 +863,58 @@ mod tests {
             .expect("complete");
         assert_eq!(completed.state_version, 3);
         assert!(completed.ended_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn ledger_append_failure_rolls_back_task_fact() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws_1").await;
+        let db = Db::new(pool);
+        let task = sample_task("task_1", "ws_1", "key_1", "inspect");
+        db.create_task_with_wake(&task, &sample_wake("task_1", "event_1", "ws_1"))
+            .await
+            .expect("create");
+        let events_before = db
+            .runtime_events_after("ws_1", None, Some("task_1"), 10)
+            .await
+            .expect("events before")
+            .len();
+        sqlx::query(
+            "CREATE TRIGGER reject_runtime_event BEFORE INSERT ON hub_ledger
+             WHEN NEW.kind = 'runtime.v1' BEGIN SELECT RAISE(ABORT, 'injected ledger failure'); END",
+        )
+        .execute(db.pool())
+        .await
+        .expect("install failure injector");
+
+        db.transition_task("ws_1", "task_1", 0, TaskStatus::Paused, None)
+            .await
+            .expect_err("ledger failure must reject the owning transition");
+        let stored = db.get_task("ws_1", "task_1").await.expect("get").expect("task");
+        assert_eq!(stored.status, TaskStatus::Active);
+        assert_eq!(stored.state_version, 0);
+        assert_eq!(
+            db.runtime_events_after("ws_1", None, Some("task_1"), 10)
+                .await
+                .expect("events after")
+                .len(),
+            events_before
+        );
+        sqlx::query("DROP TRIGGER reject_runtime_event")
+            .execute(db.pool())
+            .await
+            .expect("remove failure injector");
+        db.transition_task("ws_1", "task_1", 0, TaskStatus::Paused, None)
+            .await
+            .expect("retry after ledger recovery");
+        let events = db
+            .runtime_events_after("ws_1", None, Some("task_1"), 10)
+            .await
+            .expect("replayed events");
+        assert_eq!(
+            events.last().map(|event| event.event_id.as_str()),
+            Some("task:task_1:v1:paused")
+        );
     }
 
     #[tokio::test]

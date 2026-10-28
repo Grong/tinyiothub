@@ -1,0 +1,1 @@
+ALTER TABLE device_jobs ADD COLUMN progress_revision INTEGER NOT NULL DEFAULT 0;

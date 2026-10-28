@@ -7,7 +7,6 @@ use tinyiothub_core::agent_task::{
     AgentTask, CreateTaskOutcome, TaskStatus, TaskStoreError, TaskWake, WakeDispatchState,
 };
 use tinyiothub_storage::Db;
-use tinyiothub_storage::runtime_event::RuntimeEventInput;
 
 pub mod admin;
 pub mod controls;
@@ -32,33 +31,9 @@ impl DbTaskStore {
         self
     }
 
-    async fn record_task(&self, task: &AgentTask, event_type: &str, event_id: String) {
-        let input = RuntimeEventInput {
-            event_id,
-            event_type: event_type.to_string(),
-            occurred_at: chrono::Utc::now(),
-            workspace_id: task.workspace_id.clone(),
-            task_id: Some(task.id.clone()),
-            run_id: task.current_run_id.clone(),
-            tool_call_id: None,
-            job_id: None,
-            approval_id: None,
-            device_id: None,
-            source_id: None,
-            source_seq: None,
-            evidence_id: None,
-            data: serde_json::json!({"stateVersion": task.state_version}),
-        };
-        self.record(input).await;
-    }
-
-    async fn record(&self, input: RuntimeEventInput) {
-        let Some(recorder) = &self.recorder else {
-            return;
-        };
-        let event_id = input.event_id.clone();
-        if let Err(error) = recorder.record(input).await {
-            tracing::error!(%event_id, %error, "record Task runtime event failed");
+    async fn publish(&self, workspace_id: &str, event_id: String) {
+        if let Some(recorder) = &self.recorder {
+            recorder.publish_persisted(workspace_id, &event_id).await;
         }
     }
 }
@@ -71,12 +46,8 @@ impl TaskStore for DbTaskStore {
         wake: &TaskWake,
     ) -> Result<CreateTaskOutcome, TaskStoreError> {
         let outcome = self.db.create_task_with_wake(task, wake).await?;
-        self.record_task(
-            &outcome.task,
-            "task.created",
-            format!("task:{}:created", outcome.task.id),
-        )
-        .await;
+        self.publish(&outcome.task.workspace_id, format!("task:{}:created", outcome.task.id))
+            .await;
         Ok(outcome)
     }
 
@@ -120,9 +91,8 @@ impl TaskStore for DbTaskStore {
             .db
             .transition_task(workspace_id, task_id, expected_version, next, wake)
             .await?;
-        self.record_task(
-            &task,
-            &format!("task.{}", task.status.as_str()),
+        self.publish(
+            &task.workspace_id,
             format!("task:{}:v{}:{}", task.id, task.state_version, task.status.as_str()),
         )
         .await;
@@ -136,9 +106,8 @@ impl TaskStore for DbTaskStore {
         run_id: Option<&str>,
     ) -> Result<AgentTask, TaskStoreError> {
         let task = self.db.bind_current_run(task_id, expected_version, run_id).await?;
-        self.record_task(
-            &task,
-            "task.run_bound",
+        self.publish(
+            &task.workspace_id,
             format!("task:{}:v{}:run_bound", task.id, task.state_version),
         )
         .await;
@@ -148,46 +117,15 @@ impl TaskStore for DbTaskStore {
     async fn begin_run(&self, task: &AgentTask, wake_event_id: &str, run_id: &str) -> Result<bool, TaskStoreError> {
         let started = self.db.begin_run(task, wake_event_id, run_id).await?;
         if started {
-            self.record(RuntimeEventInput {
-                event_id: format!("run:{run_id}:started"),
-                event_type: "run.started".into(),
-                occurred_at: chrono::Utc::now(),
-                workspace_id: task.workspace_id.clone(),
-                task_id: Some(task.id.clone()),
-                run_id: Some(run_id.to_string()),
-                tool_call_id: None,
-                job_id: None,
-                approval_id: None,
-                device_id: None,
-                source_id: None,
-                source_seq: None,
-                evidence_id: None,
-                data: serde_json::json!({}),
-            })
-            .await;
+            self.publish(&task.workspace_id, format!("run:{run_id}:started")).await;
         }
         Ok(started)
     }
 
     async fn finish_run(&self, report: &RunReport) -> Result<(), TaskStoreError> {
         self.db.finish_run(report).await?;
-        self.record(RuntimeEventInput {
-            event_id: format!("run:{}:finished", report.run_id),
-            event_type: "run.finished".into(),
-            occurred_at: chrono::Utc::now(),
-            workspace_id: report.workspace_id.clone(),
-            task_id: report.task_id.clone(),
-            run_id: Some(report.run_id.clone()),
-            tool_call_id: None,
-            job_id: None,
-            approval_id: None,
-            device_id: report.thing_id.clone(),
-            source_id: None,
-            source_seq: None,
-            evidence_id: None,
-            data: serde_json::json!({"outcome": report.outcome.as_str()}),
-        })
-        .await;
+        self.publish(&report.workspace_id, format!("run:{}:finished", report.run_id))
+            .await;
         Ok(())
     }
 

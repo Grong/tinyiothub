@@ -107,39 +107,9 @@ impl DbDeviceJobStore {
         self
     }
 
-    async fn record(&self, job: &DeviceJob, suffix: &str, data: serde_json::Value) {
-        let Some(recorder) = &self.recorder else {
-            return;
-        };
-        let input = tinyiothub_storage::runtime_event::RuntimeEventInput {
-            event_id: format!("job:{}:{suffix}", job.id),
-            event_type: format!("job.{suffix}"),
-            occurred_at: chrono::Utc::now(),
-            workspace_id: job.workspace_id.clone(),
-            task_id: job.task_id.clone(),
-            run_id: job.run_id.clone(),
-            tool_call_id: job.tool_call_id.clone(),
-            job_id: Some(job.id.clone()),
-            approval_id: None,
-            device_id: Some(job.device_id.clone()),
-            source_id: None,
-            source_seq: None,
-            evidence_id: None,
-            data,
-        };
-        if let Err(error) = recorder.record(input).await {
-            tracing::error!(job_id = %job.id, %error, "record Job runtime event failed");
-        }
-    }
-
-    async fn record_by_id(&self, job_id: &str, suffix: &str, data: serde_json::Value) {
-        if self.recorder.is_none() {
-            return;
-        }
-        match self.db.get_job_by_id(job_id).await {
-            Ok(Some(job)) => self.record(&job, suffix, data).await,
-            Ok(None) => tracing::error!(job_id, "record Job runtime event failed: Job missing"),
-            Err(error) => tracing::error!(job_id, %error, "load Job for runtime event failed"),
+    async fn publish(&self, workspace_id: &str, event_id: String) {
+        if let Some(recorder) = &self.recorder {
+            recorder.publish_persisted(workspace_id, &event_id).await;
         }
     }
 }
@@ -148,12 +118,8 @@ impl DbDeviceJobStore {
 impl DeviceJobStore for DbDeviceJobStore {
     async fn create_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError> {
         self.db.create_job(job).await?;
-        self.record(
-            job,
-            job.state.as_str(),
-            serde_json::json!({"state": job.state.as_str()}),
-        )
-        .await;
+        self.publish(&job.workspace_id, format!("job:{}:{}", job.id, job.state.as_str()))
+            .await;
         Ok(())
     }
 
@@ -172,8 +138,7 @@ impl DeviceJobStore for DbDeviceJobStore {
 
     async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
         let job = self.db.mark_running(job_id, driver_call_id).await?;
-        self.record(&job, "running", serde_json::json!({"state": "running"}))
-            .await;
+        self.publish(&job.workspace_id, format!("job:{}:running", job.id)).await;
         Ok(job)
     }
 
@@ -186,28 +151,37 @@ impl DeviceJobStore for DbDeviceJobStore {
     ) -> Result<bool, DeviceJobError> {
         let finished = self.db.finish_job(job_id, state, result, wake).await?;
         if finished {
-            self.record_by_id(job_id, state.as_str(), serde_json::json!({"state": state.as_str()}))
-                .await;
+            match self.db.get_job_by_id(job_id).await {
+                Ok(Some(job)) => {
+                    self.publish(&job.workspace_id, format!("job:{}:{}", job.id, state.as_str()))
+                        .await
+                }
+                Ok(None) => tracing::error!(job_id, "persisted Job missing during runtime publish"),
+                Err(error) => tracing::error!(job_id, %error, "load Job for runtime publish failed"),
+            }
         }
         Ok(finished)
     }
 
     async fn update_progress(&self, job_id: &str, progress: &serde_json::Value) -> Result<bool, DeviceJobError> {
-        let updated = self.db.update_progress(job_id, progress).await?;
-        if updated {
-            self.record_by_id(job_id, "progress", serde_json::json!({})).await;
+        let revision = self.db.update_progress_revision(job_id, progress).await?;
+        if let Some(revision) = revision {
+            match self.db.get_job_by_id(job_id).await {
+                Ok(Some(job)) => {
+                    self.publish(&job.workspace_id, format!("job:{}:progress:v{revision}", job.id))
+                        .await;
+                }
+                Ok(None) => tracing::error!(job_id, "persisted Job missing during progress publish"),
+                Err(error) => tracing::error!(job_id, %error, "load Job for progress publish failed"),
+            }
         }
-        Ok(updated)
+        Ok(revision.is_some())
     }
 
     async fn request_stop(&self, workspace_id: &str, task_id: &str, job_id: &str) -> Result<DeviceJob, DeviceJobError> {
         let job = self.db.request_stop(workspace_id, task_id, job_id).await?;
-        self.record(
-            &job,
-            "stop_requested",
-            serde_json::json!({"stopRequestedAt": job.stop_requested_at}),
-        )
-        .await;
+        self.publish(&job.workspace_id, format!("job:{}:stop_requested", job.id))
+            .await;
         Ok(job)
     }
 
@@ -809,35 +783,9 @@ impl WatchRuleStoreAdapter {
         self
     }
 
-    async fn record_watch(
-        &self,
-        workspace_id: &str,
-        task_id: Option<&str>,
-        watch_id: &str,
-        device_id: Option<&str>,
-        suffix: &str,
-    ) {
-        let Some(recorder) = &self.recorder else {
-            return;
-        };
-        let input = tinyiothub_storage::runtime_event::RuntimeEventInput {
-            event_id: format!("watch:{watch_id}:{suffix}"),
-            event_type: format!("watch.{suffix}"),
-            occurred_at: chrono::Utc::now(),
-            workspace_id: workspace_id.to_string(),
-            task_id: task_id.map(str::to_string),
-            run_id: None,
-            tool_call_id: None,
-            job_id: None,
-            approval_id: None,
-            device_id: device_id.map(str::to_string),
-            source_id: None,
-            source_seq: None,
-            evidence_id: None,
-            data: serde_json::json!({}),
-        };
-        if let Err(error) = recorder.record(input).await {
-            tracing::error!(watch_id, %error, "record watch runtime event failed");
+    async fn publish(&self, workspace_id: &str, event_id: String) {
+        if let Some(recorder) = &self.recorder {
+            recorder.publish_persisted(workspace_id, &event_id).await;
         }
     }
 }
@@ -909,14 +857,8 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
         tinyiothub_storage::watch::insert_rule(self.db.pool(), &row)
             .await
             .map_err(|e| e.to_string())?;
-        self.record_watch(
-            &rule.workspace_id,
-            rule.owner_task_id.as_deref(),
-            &rule.id,
-            condition.get("thing_id").and_then(serde_json::Value::as_str),
-            "created",
-        )
-        .await;
+        self.publish(&rule.workspace_id, format!("watch:{}:created", rule.id))
+            .await;
         Ok(())
     }
 
@@ -937,8 +879,7 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
             .await
             .map_err(|e| e.to_string())?;
         if completed {
-            self.record_watch(workspace_id, Some(&wake.task_id), id, None, "completed")
-                .await;
+            self.publish(workspace_id, format!("watch:{id}:completed")).await;
         }
         Ok(completed)
     }
@@ -956,7 +897,11 @@ mod runtime_job_event_tests {
     use super::*;
     use tinyiothub_runtime::ports::{DeviceJobStore, WatchRuleStore};
 
-    async fn fixture() -> (Arc<Db>, crate::domains::agent::runtime::stream::RuntimeRecorder) {
+    async fn fixture() -> (
+        Arc<Db>,
+        crate::domains::agent::runtime::stream::RuntimeRecorder,
+        Arc<crate::domains::agent::runtime::stream::RuntimeStreamHub>,
+    ) {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.expect("pool");
         tinyiothub_storage::test_helpers::run_all_migrations(&pool)
             .await
@@ -996,8 +941,8 @@ mod runtime_job_event_tests {
         .await
         .expect("task");
         let hub = Arc::new(crate::domains::agent::runtime::stream::RuntimeStreamHub::default());
-        let recorder = crate::domains::agent::runtime::stream::RuntimeRecorder::new(db.clone(), hub);
-        (db, recorder)
+        let recorder = crate::domains::agent::runtime::stream::RuntimeRecorder::new(db.clone(), hub.clone());
+        (db, recorder, hub)
     }
 
     fn job() -> DeviceJob {
@@ -1023,7 +968,15 @@ mod runtime_job_event_tests {
 
     #[tokio::test]
     async fn shared_job_adapter_records_ordered_facts_with_stable_ids() {
-        let (db, recorder) = fixture().await;
+        let (db, recorder, hub) = fixture().await;
+        let mut connection = hub
+            .connect(db.clone(), "ws-job", "task-1", None)
+            .await
+            .expect("connect runtime stream");
+        assert!(matches!(
+            connection.next_frame().await,
+            Some(crate::domains::agent::runtime::stream::RuntimeFrame::Snapshot { .. })
+        ));
         let store = DbDeviceJobStore::new((*db).clone()).with_recorder(recorder);
         store.create_job(&job()).await.expect("create");
         store.mark_running("job-event", "driver-1").await.expect("running");
@@ -1031,6 +984,16 @@ mod runtime_job_event_tests {
             .update_progress("job-event", &serde_json::json!({"percent":50}))
             .await
             .expect("progress");
+        store
+            .update_progress("job-event", &serde_json::json!({"percent":75}))
+            .await
+            .expect("next progress revision");
+        assert!(
+            !store
+                .update_progress("job-event", &serde_json::json!({"percent":75}))
+                .await
+                .expect("same revision retry")
+        );
         let first_stop = store.request_stop("ws-job", "task-1", "job-event").await.expect("stop");
         let second_stop = store
             .request_stop("ws-job", "task-1", "job-event")
@@ -1062,18 +1025,36 @@ mod runtime_job_event_tests {
         let events = db
             .runtime_events_after("ws-job", None, Some("task-1"), 20)
             .await
-            .expect("events");
+            .expect("events")
+            .into_iter()
+            .filter(|event| event.job_id.is_some())
+            .collect::<Vec<_>>();
         let ids: Vec<&str> = events.iter().map(|event| event.event_id.as_str()).collect();
         assert_eq!(
             ids,
             [
                 "job:job-event:accepted",
                 "job:job-event:running",
-                "job:job-event:progress",
+                "job:job-event:progress:v1",
+                "job:job-event:progress:v2",
                 "job:job-event:stop_requested",
                 "job:job-event:cancelled_unknown",
             ]
         );
+        assert_eq!(events[2].data["revision"], 1);
+        assert_eq!(events[2].data["progress"]["percent"], 50);
+        assert_eq!(events[3].data["revision"], 2);
+        assert_eq!(events[3].data["progress"]["percent"], 75);
+        let mut streamed_ids = Vec::new();
+        for _ in 0..events.len() {
+            let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event }) =
+                connection.next_frame().await
+            else {
+                panic!("expected every persisted revision on the live stream");
+            };
+            streamed_ids.push(event.event_id.to_string());
+        }
+        assert_eq!(streamed_ids, ids);
         assert!(events.iter().all(|event| event.task_id.as_deref() == Some("task-1")));
         assert!(events.iter().all(|event| event.job_id.as_deref() == Some("job-event")));
         assert!(
@@ -1085,7 +1066,7 @@ mod runtime_job_event_tests {
 
     #[tokio::test]
     async fn watch_adapter_records_create_and_completion_for_owner_task() {
-        let (db, recorder) = fixture().await;
+        let (db, recorder, _hub) = fixture().await;
         let store = WatchRuleStoreAdapter::new((*db).clone()).with_recorder(recorder);
         let rule = tinyiothub_core::watch::WatchRule {
             id: "watch-event".into(),
@@ -1118,7 +1099,10 @@ mod runtime_job_event_tests {
         let events = db
             .runtime_events_after("ws-job", None, Some("task-1"), 20)
             .await
-            .expect("events");
+            .expect("events")
+            .into_iter()
+            .filter(|event| event.event_type.starts_with("watch."))
+            .collect::<Vec<_>>();
         let ids: Vec<&str> = events.iter().map(|event| event.event_id.as_str()).collect();
         assert_eq!(ids, ["watch:watch-event:created", "watch:watch-event:completed"]);
         assert_eq!(events[0].event_type, "watch.created");

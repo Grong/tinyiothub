@@ -15,20 +15,34 @@ pub struct WatchRuleRow {
 }
 
 pub async fn insert_rule(pool: &SqlitePool, row: &WatchRuleRow) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO watch_rules (id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    let mut tx = pool.begin().await?;
+    insert_rule_tx(&mut tx, row).await?;
+    let condition: serde_json::Value = serde_json::from_str(&row.condition).unwrap_or(serde_json::Value::Null);
+    crate::runtime_event::append_runtime_event_tx(
+        &mut tx,
+        crate::runtime_event::RuntimeEventInput {
+            event_id: format!("watch:{}:created", row.id),
+            event_type: "watch.created".into(),
+            occurred_at: chrono::Utc::now(),
+            workspace_id: row.workspace_id.clone(),
+            task_id: row.owner_task_id.clone(),
+            run_id: None,
+            tool_call_id: None,
+            job_id: None,
+            approval_id: None,
+            device_id: condition
+                .get("thing_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            source_id: None,
+            source_seq: None,
+            evidence_id: None,
+            data: serde_json::json!({}),
+        },
     )
-    .bind(&row.id)
-    .bind(&row.workspace_id)
-    .bind(&row.kind)
-    .bind(&row.condition)
-    .bind(row.persistent)
-    .bind(row.timeout_secs)
-    .bind(&row.created_at)
-    .bind(&row.owner_task_id)
-    .execute(pool)
-    .await?;
+    .await
+    .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -92,6 +106,27 @@ pub async fn complete_task_watch(
     .bind(wake.resolved_at)
     .execute(&mut *tx)
     .await?;
+    crate::runtime_event::append_runtime_event_tx(
+        &mut tx,
+        crate::runtime_event::RuntimeEventInput {
+            event_id: format!("watch:{id}:completed"),
+            event_type: "watch.completed".into(),
+            occurred_at: chrono::Utc::now(),
+            workspace_id: workspace_id.to_string(),
+            task_id: Some(wake.task_id.clone()),
+            run_id: None,
+            tool_call_id: None,
+            job_id: None,
+            approval_id: None,
+            device_id: None,
+            source_id: None,
+            source_seq: None,
+            evidence_id: None,
+            data: serde_json::json!({}),
+        },
+    )
+    .await
+    .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
     tx.commit().await?;
     Ok(true)
 }

@@ -124,6 +124,14 @@ impl RuntimeRecorder {
         self.hub.publish(event.clone());
         Ok(event)
     }
+
+    pub async fn publish_persisted(&self, workspace_id: &str, event_id: &str) {
+        match self.db.runtime_event_by_id(workspace_id, event_id).await {
+            Ok(Some(event)) => self.hub.publish(event),
+            Ok(None) => tracing::error!(workspace_id, event_id, "persisted runtime event missing during publish"),
+            Err(error) => tracing::error!(workspace_id, event_id, %error, "load persisted runtime event failed"),
+        }
+    }
 }
 
 pub struct RuntimeStreamHub {
@@ -497,6 +505,131 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reconnect_replay_preserves_commit_order_when_recorders_finish_in_reverse() {
+        let (db, hub) = fixture(16).await;
+        let created_cursor = db
+            .runtime_projection("ws-1", "task-1")
+            .await
+            .expect("projection")
+            .expect("task")
+            .cursor;
+        let first = db
+            .transition_task("ws-1", "task-1", 1, TaskStatus::Paused, None)
+            .await
+            .expect("commit version two");
+        let second = db
+            .transition_task("ws-1", "task-1", 2, TaskStatus::Active, None)
+            .await
+            .expect("commit version three");
+        let recorder = RuntimeRecorder::new(db.clone(), hub.clone());
+        let mut second_input = input("task:task-1:v3:active");
+        second_input.event_type = "task.active".into();
+        second_input.data = json!({"stateVersion":second.state_version});
+        recorder.record(second_input).await.expect("record newer version first");
+        let mut first_input = input("task:task-1:v2:paused");
+        first_input.event_type = "task.paused".into();
+        first_input.data = json!({"stateVersion":first.state_version});
+        recorder.record(first_input).await.expect("record older version second");
+
+        let mut connection = hub
+            .connect(db, "ws-1", "task-1", Some(created_cursor))
+            .await
+            .expect("reconnect");
+        let Some(RuntimeFrame::Snapshot { snapshot, .. }) = connection.next_frame().await else {
+            panic!("expected snapshot");
+        };
+        assert_eq!(snapshot.task.state_version, 3);
+        let mut replayed_versions = Vec::new();
+        for _ in 0..2 {
+            let Some(RuntimeFrame::Event { event }) = connection.next_frame().await else {
+                panic!("expected two committed versions");
+            };
+            replayed_versions.push(event.data["stateVersion"].as_i64());
+        }
+        assert_eq!(replayed_versions, [Some(2), Some(3)]);
+    }
+
+    #[tokio::test]
+    async fn fresh_connection_retries_projection_when_task_commits_during_snapshot() {
+        let (db, hub) = fixture(16).await;
+        let probe = Arc::new(tinyiothub_storage::runtime_event::RuntimeProjectionProbe::default());
+        let db = Arc::new(db.with_runtime_projection_probe(probe.clone()));
+        probe.arm();
+        let connecting = tokio::spawn({
+            let db = db.clone();
+            let hub = hub.clone();
+            async move { hub.connect(db, "ws-1", "task-1", None).await }
+        });
+        probe.wait_for_task_read().await;
+        let paused = db
+            .transition_task("ws-1", "task-1", 1, TaskStatus::Paused, None)
+            .await
+            .expect("commit next Task version");
+        let mut correction_input = input("task:task-1:v2:paused");
+        correction_input.event_type = "task.paused".into();
+        correction_input.data = json!({"stateVersion":paused.state_version});
+        let correction = db
+            .append_runtime_event(correction_input)
+            .await
+            .expect("persist correction");
+        hub.publish(correction.clone());
+        probe.release();
+        let mut connection = connecting.await.expect("join connection").expect("connect");
+        let Some(RuntimeFrame::Snapshot { snapshot, cursor }) = connection.next_frame().await else {
+            panic!("expected initial snapshot");
+        };
+        assert_eq!(snapshot.task.state_version, paused.state_version);
+        assert_eq!(snapshot.task.status, TaskStatus::Paused);
+        assert_eq!(cursor, correction.cursor);
+    }
+
+    #[tokio::test]
+    async fn resync_retries_projection_when_task_commits_during_resync() {
+        let (db, hub) = fixture(1).await;
+        let probe = Arc::new(tinyiothub_storage::runtime_event::RuntimeProjectionProbe::default());
+        let db = Arc::new(db.with_runtime_projection_probe(probe.clone()));
+        let mut connection = hub.connect(db.clone(), "ws-1", "task-1", None).await.expect("connect");
+        assert!(matches!(
+            connection.next_frame().await,
+            Some(RuntimeFrame::Snapshot { .. })
+        ));
+        probe.arm();
+        hub.publish(db.append_runtime_event(input("lag-1")).await.expect("first lag event"));
+        hub.publish(db.append_runtime_event(input("lag-2")).await.expect("second lag event"));
+        let resyncing = tokio::spawn(async move {
+            let frame = connection.next_frame().await;
+            (connection, frame)
+        });
+        probe.wait_for_task_read().await;
+        let paused = db
+            .transition_task("ws-1", "task-1", 1, TaskStatus::Paused, None)
+            .await
+            .expect("commit next Task version");
+        let mut correction_input = input("task:task-1:v2:paused");
+        correction_input.event_type = "task.paused".into();
+        correction_input.data = json!({"stateVersion":paused.state_version});
+        let correction = db
+            .append_runtime_event(correction_input)
+            .await
+            .expect("persist correction");
+        hub.publish(correction.clone());
+        probe.release();
+        let (_connection, frame) = resyncing.await.expect("join resync");
+        let Some(RuntimeFrame::Resync {
+            snapshot,
+            cursor,
+            reason,
+        }) = frame
+        else {
+            panic!("expected resync");
+        };
+        assert_eq!(reason, "lagged");
+        assert_eq!(snapshot.task.state_version, paused.state_version);
+        assert_eq!(snapshot.task.status, TaskStatus::Paused);
+        assert_eq!(cursor, correction.cursor);
+    }
+
+    #[tokio::test]
     async fn sse_endpoint_emits_snapshot_after_workspace_read_authorization() {
         use axum::body::Body;
         use axum::http::{Request, StatusCode};
@@ -590,7 +723,7 @@ mod tests {
                 .await
                 .expect("events")
                 .len(),
-            1
+            2
         );
     }
 

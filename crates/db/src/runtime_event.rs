@@ -10,6 +10,36 @@ use crate::error::{DbError, Result};
 
 pub const RUNTIME_EVENT_KIND: &str = "runtime.v1";
 
+#[cfg(feature = "testing")]
+#[derive(Debug, Default)]
+pub struct RuntimeProjectionProbe {
+    armed: std::sync::atomic::AtomicBool,
+    task_read: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[cfg(feature = "testing")]
+impl RuntimeProjectionProbe {
+    pub fn arm(&self) {
+        self.armed.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub async fn wait_for_task_read(&self) {
+        self.task_read.notified().await;
+    }
+
+    pub fn release(&self) {
+        self.release.notify_one();
+    }
+
+    async fn after_task_read(&self) {
+        if self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            self.task_read.notify_one();
+            self.release.notified().await;
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeEvent {
@@ -49,6 +79,44 @@ pub struct RuntimeEventInput {
     pub data: Value,
 }
 
+pub(crate) fn task_event(task: &AgentTask, event_type: &str, event_id: String) -> RuntimeEventInput {
+    RuntimeEventInput {
+        event_id,
+        event_type: event_type.to_string(),
+        occurred_at: Utc::now(),
+        workspace_id: task.workspace_id.clone(),
+        task_id: Some(task.id.clone()),
+        run_id: task.current_run_id.clone(),
+        tool_call_id: None,
+        job_id: None,
+        approval_id: None,
+        device_id: None,
+        source_id: None,
+        source_seq: None,
+        evidence_id: None,
+        data: serde_json::json!({"stateVersion": task.state_version}),
+    }
+}
+
+pub(crate) fn job_event(job: &DeviceJob, suffix: &str, data: Value) -> RuntimeEventInput {
+    RuntimeEventInput {
+        event_id: format!("job:{}:{suffix}", job.id),
+        event_type: format!("job.{suffix}"),
+        occurred_at: Utc::now(),
+        workspace_id: job.workspace_id.clone(),
+        task_id: job.task_id.clone(),
+        run_id: job.run_id.clone(),
+        tool_call_id: job.tool_call_id.clone(),
+        job_id: Some(job.id.clone()),
+        approval_id: None,
+        device_id: Some(job.device_id.clone()),
+        source_id: None,
+        source_seq: None,
+        evidence_id: None,
+        data,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskRunProjection {
@@ -77,7 +145,6 @@ pub struct TaskProjection {
     pub jobs: Vec<DeviceJob>,
     pub watches: Vec<TaskWatchProjection>,
     pub evidence: Vec<EvidenceRef>,
-    pub events: Vec<RuntimeEvent>,
     pub summary: Option<String>,
     pub cursor: i64,
 }
@@ -130,78 +197,98 @@ fn decode_event(row: RuntimeLedgerRow) -> Result<RuntimeEvent> {
     Ok(event)
 }
 
-impl Db {
-    pub async fn append_runtime_event(&self, input: RuntimeEventInput) -> Result<RuntimeEvent> {
-        if input.event_id.trim().is_empty()
-            || input.event_type.trim().is_empty()
-            || input.workspace_id.trim().is_empty()
-        {
-            return Err(DbError::Validation {
-                message: "runtime event id, type, and workspace are required".into(),
-            });
-        }
-        let event = RuntimeEvent {
-            cursor: 0,
-            event_id: input.event_id,
-            event_type: input.event_type,
-            occurred_at: input.occurred_at,
-            workspace_id: input.workspace_id,
-            task_id: input.task_id,
-            run_id: input.run_id,
-            tool_call_id: input.tool_call_id,
-            job_id: input.job_id,
-            approval_id: input.approval_id,
-            device_id: input.device_id,
-            source_id: input.source_id,
-            source_seq: input.source_seq,
-            evidence_id: input.evidence_id,
-            data: input.data,
-        };
-        let mut payload = serde_json::to_value(&event)?;
-        let object = payload
-            .as_object_mut()
-            .ok_or_else(|| DbError::Internal("event was not an object".into()))?;
-        object.remove("cursor");
-        object.insert("v".into(), Value::from(1));
-        let payload = serde_json::to_string(&payload)?;
-        let mut tx = self.pool().begin().await?;
-        let inserted = sqlx::query_as::<_, RuntimeLedgerRow>(
-            "INSERT INTO hub_ledger (workspace_id, ts, kind, thing_id, payload)
-             SELECT ?, ?, ?, ?, ?
-             WHERE NOT EXISTS (
-                 SELECT 1 FROM hub_ledger
-                 WHERE workspace_id = ? AND kind = ?
-                   AND json_extract(payload, '$.eventId') = ?
-             )
-             RETURNING id, workspace_id, ts, payload",
-        )
-        .bind(&event.workspace_id)
-        .bind(event.occurred_at.to_rfc3339())
-        .bind(RUNTIME_EVENT_KIND)
-        .bind(&event.device_id)
-        .bind(&payload)
-        .bind(&event.workspace_id)
-        .bind(RUNTIME_EVENT_KIND)
-        .bind(&event.event_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let row = match inserted {
-            Some(row) => row,
-            None => {
-                sqlx::query_as::<_, RuntimeLedgerRow>(
-                    "SELECT id, workspace_id, ts, payload FROM hub_ledger
+pub(crate) async fn append_runtime_event_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    input: RuntimeEventInput,
+) -> Result<RuntimeEvent> {
+    if input.event_id.trim().is_empty() || input.event_type.trim().is_empty() || input.workspace_id.trim().is_empty() {
+        return Err(DbError::Validation {
+            message: "runtime event id, type, and workspace are required".into(),
+        });
+    }
+    let event = RuntimeEvent {
+        cursor: 0,
+        event_id: input.event_id,
+        event_type: input.event_type,
+        occurred_at: input.occurred_at,
+        workspace_id: input.workspace_id,
+        task_id: input.task_id,
+        run_id: input.run_id,
+        tool_call_id: input.tool_call_id,
+        job_id: input.job_id,
+        approval_id: input.approval_id,
+        device_id: input.device_id,
+        source_id: input.source_id,
+        source_seq: input.source_seq,
+        evidence_id: input.evidence_id,
+        data: input.data,
+    };
+    let mut payload = serde_json::to_value(&event)?;
+    let object = payload
+        .as_object_mut()
+        .ok_or_else(|| DbError::Internal("event was not an object".into()))?;
+    object.remove("cursor");
+    object.insert("v".into(), Value::from(1));
+    let payload = serde_json::to_string(&payload)?;
+    let inserted = sqlx::query_as::<_, RuntimeLedgerRow>(
+        "INSERT INTO hub_ledger (workspace_id, ts, kind, thing_id, payload)
+         SELECT ?, ?, ?, ?, ?
+         WHERE NOT EXISTS (
+             SELECT 1 FROM hub_ledger
+             WHERE workspace_id = ? AND kind = ?
+               AND json_extract(payload, '$.eventId') = ?
+         )
+         RETURNING id, workspace_id, ts, payload",
+    )
+    .bind(&event.workspace_id)
+    .bind(event.occurred_at.to_rfc3339())
+    .bind(RUNTIME_EVENT_KIND)
+    .bind(&event.device_id)
+    .bind(&payload)
+    .bind(&event.workspace_id)
+    .bind(RUNTIME_EVENT_KIND)
+    .bind(&event.event_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let row = match inserted {
+        Some(row) => row,
+        None => {
+            sqlx::query_as::<_, RuntimeLedgerRow>(
+                "SELECT id, workspace_id, ts, payload FROM hub_ledger
                  WHERE workspace_id = ? AND kind = ? AND json_extract(payload, '$.eventId') = ?
                  ORDER BY id LIMIT 1",
-                )
-                .bind(&event.workspace_id)
-                .bind(RUNTIME_EVENT_KIND)
-                .bind(&event.event_id)
-                .fetch_one(&mut *tx)
-                .await?
-            }
-        };
+            )
+            .bind(&event.workspace_id)
+            .bind(RUNTIME_EVENT_KIND)
+            .bind(&event.event_id)
+            .fetch_one(&mut **tx)
+            .await?
+        }
+    };
+    decode_event(row)
+}
+
+impl Db {
+    pub async fn append_runtime_event(&self, input: RuntimeEventInput) -> Result<RuntimeEvent> {
+        let mut tx = self.pool().begin().await?;
+        let event = append_runtime_event_tx(&mut tx, input).await?;
         tx.commit().await?;
-        decode_event(row)
+        Ok(event)
+    }
+
+    pub async fn runtime_event_by_id(&self, workspace_id: &str, event_id: &str) -> Result<Option<RuntimeEvent>> {
+        sqlx::query_as::<_, RuntimeLedgerRow>(
+            "SELECT id, workspace_id, ts, payload FROM hub_ledger
+             WHERE workspace_id = ? AND kind = ? AND json_extract(payload, '$.eventId') = ?
+             ORDER BY id LIMIT 1",
+        )
+        .bind(workspace_id)
+        .bind(RUNTIME_EVENT_KIND)
+        .bind(event_id)
+        .fetch_optional(self.pool())
+        .await?
+        .map(decode_event)
+        .transpose()
     }
 
     pub async fn runtime_events_after(
@@ -244,89 +331,95 @@ impl Db {
     }
 
     pub async fn runtime_projection(&self, workspace_id: &str, task_id: &str) -> Result<Option<TaskProjection>> {
-        let Some(task) = self.get_task(workspace_id, task_id).await.map_err(internal)? else {
-            return Ok(None);
-        };
-        let runs = sqlx::query_as::<_, TaskRunProjection>(
-            "SELECT id, status, outcome, summary, created_at FROM agent_runs
+        loop {
+            let started_cursor = crate::watch::max_ledger_id(self.pool(), workspace_id).await?;
+            let Some(task) = self.get_task(workspace_id, task_id).await.map_err(internal)? else {
+                return Ok(None);
+            };
+            #[cfg(feature = "testing")]
+            if let Some(probe) = &self.runtime_projection_probe {
+                probe.after_task_read().await;
+            }
+            let runs = sqlx::query_as::<_, TaskRunProjection>(
+                "SELECT id, status, outcome, summary, created_at FROM agent_runs
              WHERE workspace_id = ? AND task_id = ? ORDER BY created_at, rowid",
-        )
-        .bind(workspace_id)
-        .bind(task_id)
-        .fetch_all(self.pool())
-        .await?;
-        let jobs = sqlx::query_as::<_, crate::device_job::DeviceJobRow>(
-            "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
+            )
+            .bind(workspace_id)
+            .bind(task_id)
+            .fetch_all(self.pool())
+            .await?;
+            let jobs = sqlx::query_as::<_, crate::device_job::DeviceJobRow>(
+                "SELECT id, workspace_id, device_id, tool, args_json, state, stop_requested_at,
                     progress_json, result_json, task_id, run_id, tool_call_id, driver_call_id,
                     timeout_ms, started_at, ended_at
              FROM device_jobs WHERE workspace_id = ? AND task_id = ? ORDER BY started_at, id",
-        )
-        .bind(workspace_id)
-        .bind(task_id)
-        .fetch_all(self.pool())
-        .await?
-        .into_iter()
-        .map(DeviceJob::try_from)
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(internal)?;
-        let watch_rows = sqlx::query_as::<_, crate::watch::WatchRuleRow>(
-            "SELECT id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id
+            )
+            .bind(workspace_id)
+            .bind(task_id)
+            .fetch_all(self.pool())
+            .await?
+            .into_iter()
+            .map(DeviceJob::try_from)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(internal)?;
+            let watch_rows = sqlx::query_as::<_, crate::watch::WatchRuleRow>(
+                "SELECT id, workspace_id, kind, condition, persistent, timeout_secs, created_at, owner_task_id
              FROM watch_rules WHERE workspace_id = ? AND owner_task_id = ? ORDER BY created_at, id",
-        )
-        .bind(workspace_id)
-        .bind(task_id)
-        .fetch_all(self.pool())
-        .await?;
-        let watches = watch_rows
-            .into_iter()
-            .map(|row| {
-                Ok(TaskWatchProjection {
-                    id: row.id,
-                    condition: serde_json::from_str(&row.condition)?,
-                    persistent: row.persistent != 0,
-                    timeout_secs: row.timeout_secs,
-                    created_at: row.created_at,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let evidence_rows = sqlx::query_as::<_, (String, String, i64, DateTime<Utc>)>(
-            "SELECT id, mime, source_seq, media_time FROM media_evidence
-             WHERE workspace_id = ? AND task_id = ? ORDER BY created_at, id",
-        )
-        .bind(workspace_id)
-        .bind(task_id)
-        .fetch_all(self.pool())
-        .await?;
-        let evidence = evidence_rows
-            .into_iter()
-            .map(|(evidence_id, mime, source_seq, media_time)| {
-                Ok(EvidenceRef {
-                    evidence_id,
-                    mime,
-                    source_seq: u64::try_from(source_seq).map_err(internal)?,
-                    media_time,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let events = self
-            .runtime_events_after(workspace_id, None, Some(task_id), i64::MAX)
+            )
+            .bind(workspace_id)
+            .bind(task_id)
+            .fetch_all(self.pool())
             .await?;
-        let summary = runs
-            .iter()
-            .rev()
-            .find(|run| run.status == "completed")
-            .map(|run| run.summary.clone());
-        let cursor = crate::watch::max_ledger_id(self.pool(), workspace_id).await?;
-        Ok(Some(TaskProjection {
-            task,
-            runs,
-            jobs,
-            watches,
-            evidence,
-            events,
-            summary,
-            cursor,
-        }))
+            let watches = watch_rows
+                .into_iter()
+                .map(|row| {
+                    Ok(TaskWatchProjection {
+                        id: row.id,
+                        condition: serde_json::from_str(&row.condition)?,
+                        persistent: row.persistent != 0,
+                        timeout_secs: row.timeout_secs,
+                        created_at: row.created_at,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let evidence_rows = sqlx::query_as::<_, (String, String, i64, DateTime<Utc>)>(
+                "SELECT id, mime, source_seq, media_time FROM media_evidence
+             WHERE workspace_id = ? AND task_id = ? ORDER BY created_at, id",
+            )
+            .bind(workspace_id)
+            .bind(task_id)
+            .fetch_all(self.pool())
+            .await?;
+            let evidence = evidence_rows
+                .into_iter()
+                .map(|(evidence_id, mime, source_seq, media_time)| {
+                    Ok(EvidenceRef {
+                        evidence_id,
+                        mime,
+                        source_seq: u64::try_from(source_seq).map_err(internal)?,
+                        media_time,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let summary = runs
+                .iter()
+                .rev()
+                .find(|run| run.status == "completed")
+                .map(|run| run.summary.clone());
+            let cursor = crate::watch::max_ledger_id(self.pool(), workspace_id).await?;
+            if cursor != started_cursor {
+                continue;
+            }
+            return Ok(Some(TaskProjection {
+                task,
+                runs,
+                jobs,
+                watches,
+                evidence,
+                summary,
+                cursor,
+            }));
+        }
     }
 
     pub async fn runtime_outbox(
@@ -619,10 +712,10 @@ mod tests {
         assert_eq!(projection.watches.len(), 1);
         assert_eq!(projection.evidence.len(), 1);
         assert_eq!(projection.evidence[0].evidence_id, "evidence-1");
-        assert_eq!(projection.events.len(), 1);
         assert_eq!(projection.summary.as_deref(), Some("pump is healthy"));
         assert_eq!(projection.cursor, appended.cursor);
         let serialized = serde_json::to_value(&projection).expect("serialize");
+        assert!(serialized.get("events").is_none());
         assert!(serialized.get("storagePath").is_none());
         assert!(serialized["evidence"][0].get("storagePath").is_none());
         assert!(
@@ -631,6 +724,46 @@ mod tests {
                 .expect("missing")
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn projection_snapshots_exclude_history_while_cursor_replay_paginates() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws-1").await;
+        let db = Db::new(pool);
+        seed_task(&db, "ws-1", "task-1").await;
+        for index in 0..300 {
+            db.append_runtime_event(event(&format!("history-{index}"), "task-1"))
+                .await
+                .expect("append history");
+        }
+
+        let projection = db
+            .runtime_projection("ws-1", "task-1")
+            .await
+            .expect("projection")
+            .expect("task");
+        let snapshot_json = serde_json::to_value(&projection).expect("serialize snapshot");
+        assert!(snapshot_json.get("events").is_none());
+        assert!(!snapshot_json.to_string().contains("history-299"));
+
+        let mut replayed = Vec::new();
+        let mut after = 0;
+        loop {
+            let page = db
+                .runtime_events_after("ws-1", Some(after), Some("task-1"), 64)
+                .await
+                .expect("history page");
+            let count = page.len();
+            let next_cursor = page.last().map(|event| event.cursor);
+            replayed.extend(page.into_iter().map(|event| event.event_id));
+            if count < 64 {
+                break;
+            }
+            after = next_cursor.expect("full page has a cursor");
+        }
+        assert_eq!(replayed.len(), 301);
+        assert_eq!(replayed.last().map(String::as_str), Some("history-299"));
     }
 
     #[tokio::test]
