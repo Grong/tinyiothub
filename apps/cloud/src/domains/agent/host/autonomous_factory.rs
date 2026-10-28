@@ -258,15 +258,18 @@ pub(crate) fn build_autonomous_tools(
         // E4c：与 chat 路径共享声明资源解析。
         resources: runtime.resources.clone(),
     };
-    tools.push(Box::new(AutonomousInvokeActionTool::new(
-        inner,
-        policy_repo,
-        run_ctx,
-        pool.clone(),
-        workspace_id.to_string(),
-        event_bus,
-        throttle,
-    )));
+    tools.push(Box::new(
+        AutonomousInvokeActionTool::new(
+            inner,
+            policy_repo,
+            run_ctx,
+            pool.clone(),
+            workspace_id.to_string(),
+            event_bus,
+            throttle,
+        )
+        .with_task_approvals(runtime.task_approvals.clone()),
+    ));
     tools
 }
 

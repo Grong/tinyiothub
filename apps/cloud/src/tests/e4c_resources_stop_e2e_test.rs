@@ -174,6 +174,7 @@ fn thing_tools(
             device_cache: None,
             data_server,
             pending_actions: Some(Arc::new(PendingActionStore::new())),
+            task_approvals: None,
             arbitration: Some(registry),
             live: None,
             event_bus,

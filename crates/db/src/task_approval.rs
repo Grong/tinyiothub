@@ -428,6 +428,25 @@ impl Db {
         finish_immediate(connection, result).await
     }
 
+    pub async fn list_task_approvals(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+    ) -> Result<Vec<TaskApproval>, TaskApprovalStoreError> {
+        sqlx::query_as::<_, TaskApprovalRow>(sqlx::AssertSqlSafe(format!(
+            "SELECT {APPROVAL_COLUMNS} FROM task_approvals
+             WHERE workspace_id = ? AND task_id = ? ORDER BY requested_at, id"
+        )))
+        .bind(workspace_id)
+        .bind(task_id)
+        .fetch_all(self.pool())
+        .await
+        .map_err(storage)?
+        .into_iter()
+        .map(TaskApproval::try_from)
+        .collect()
+    }
+
     pub async fn list_recoverable_task_approvals(
         &self,
         workspace_id: Option<&str>,
@@ -549,6 +568,32 @@ impl Db {
                     return Err(DeviceJobError::ExecutionConflict);
                 }
                 return Ok((Some(existing), false, Vec::new()));
+            }
+            let approval = sqlx::query_as::<_, TaskApprovalRow>(sqlx::AssertSqlSafe(format!(
+                "SELECT {APPROVAL_COLUMNS} FROM task_approvals WHERE tool_call_id = ?"
+            )))
+            .bind(tool_call_id)
+            .fetch_optional(&mut connection)
+            .await
+            .map_err(crate::device_job::storage)?
+            .map(TaskApproval::try_from)
+            .transpose()
+            .map_err(crate::device_job::storage)?;
+            let Some(approval) = approval else {
+                return Ok((None, false, Vec::new()));
+            };
+            if approval.state != ApprovalState::Approved {
+                return Ok((None, false, Vec::new()));
+            }
+            let matches = approval.workspace_id == job.workspace_id
+                && approval.task_id == task_id
+                && approval.run_id == run_id
+                && approval.tool_call_id == tool_call_id
+                && approval.device_id == job.device_id
+                && approval.tool == job.tool
+                && approval.args_json == job.args_json;
+            if !matches {
+                return Err(DeviceJobError::ExecutionConflict);
             }
             let task = crate::runtime_task::find_task(&mut connection, &job.workspace_id, task_id)
                 .await
@@ -1140,6 +1185,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn approved_job_requires_current_approval_state_and_frozen_identity() {
+        for state in [
+            ApprovalState::Rejected,
+            ApprovalState::Expired,
+            ApprovalState::Unavailable,
+        ] {
+            let mut fixture = Fixture::new().await;
+            let pending = fixture.pending_approval().await;
+            match state {
+                ApprovalState::Rejected => {
+                    fixture
+                        .decide(&pending, ApprovalDecision::Reject)
+                        .await
+                        .expect("reject");
+                }
+                ApprovalState::Expired => {
+                    fixture
+                        .db
+                        .expire_task_approvals_and_events(Utc::now() + Duration::hours(2))
+                        .await
+                        .expect("expire");
+                }
+                ApprovalState::Unavailable => {
+                    sqlx::query("UPDATE task_approvals SET state = 'unavailable' WHERE id = ?")
+                        .bind(&pending.id)
+                        .execute(fixture.db.pool())
+                        .await
+                        .expect("make unavailable");
+                }
+                ApprovalState::Pending | ApprovalState::Approved => unreachable!("test states are decided"),
+            }
+            let (job, inserted, events) = fixture
+                .db
+                .submit_approved_job_and_events(&fixture.job(&pending))
+                .await
+                .expect("non-approved submission");
+            assert!(job.is_none(), "{state:?} inserted a Job");
+            assert!(!inserted);
+            assert!(events.is_empty());
+            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_jobs WHERE tool_call_id = ?")
+                .bind(&pending.tool_call_id)
+                .fetch_one(fixture.db.pool())
+                .await
+                .expect("job count");
+            assert_eq!(count, 0, "{state:?} inserted a Job");
+        }
+
+        let mut fixture = Fixture::new().await;
+        let pending = fixture.pending_approval().await;
+        fixture
+            .decide(&pending, ApprovalDecision::Approve)
+            .await
+            .expect("approve");
+        let mut mismatched = fixture.job(&pending);
+        mismatched.args_json = json!({"speed": 999});
+        assert!(matches!(
+            fixture.db.submit_approved_job_and_events(&mismatched).await,
+            Err(tinyiothub_core::device_job::DeviceJobError::ExecutionConflict)
+        ));
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_jobs WHERE tool_call_id = ?")
+            .bind(&pending.tool_call_id)
+            .fetch_one(fixture.db.pool())
+            .await
+            .expect("job count");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
     async fn paused_or_cancelled_approval_does_not_insert_a_job() {
         let mut fixture = Fixture::new().await;
         let pending = fixture.pending_approval().await;
@@ -1196,6 +1309,63 @@ mod tests {
                 .await
                 .expect("cancelled decision wake");
         assert!(resolved.is_some());
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_jobs WHERE tool_call_id = ?")
+            .bind(&pending.tool_call_id)
+            .fetch_one(fixture.db.pool())
+            .await
+            .expect("job count");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn claimed_approved_wake_cancel_race_stays_resolved_without_a_job() {
+        let mut fixture = Fixture::new().await;
+        let pending = fixture.pending_approval().await;
+        fixture
+            .decide(&pending, ApprovalDecision::Approve)
+            .await
+            .expect("approve");
+        let claimed = fixture.db.claim_pending_wakes(10).await.expect("claim decision");
+        assert!(claimed.iter().any(|wake| wake.event_id == pending.decision_event_id));
+        fixture
+            .db
+            .cancel_task_approvals_and_events("ws_1", &pending.task_id, 1, Utc::now())
+            .await
+            .expect("cancel claimed decision");
+        let (job, _, _) = fixture
+            .db
+            .submit_approved_job_and_events(&fixture.job(&pending))
+            .await
+            .expect("cancelled submission");
+        assert!(job.is_none());
+
+        fixture
+            .db
+            .mark_wake(&pending.task_id, &pending.decision_event_id, WakeDispatchState::Pending)
+            .await
+            .expect("deferred dispatch restoration");
+        let (resolved, dispatched): (Option<chrono::DateTime<Utc>>, Option<chrono::DateTime<Utc>>) = sqlx::query_as(
+            "SELECT resolved_at, dispatched_at FROM task_wake_outbox WHERE task_id = ? AND event_id = ?",
+        )
+        .bind(&pending.task_id)
+        .bind(&pending.decision_event_id)
+        .fetch_one(fixture.db.pool())
+        .await
+        .expect("decision wake");
+        assert!(
+            resolved.is_some(),
+            "deferred restoration resurrected the cancelled wake"
+        );
+        assert!(dispatched.is_some(), "the original claim should remain recorded");
+        assert!(
+            fixture
+                .db
+                .claim_pending_wakes(10)
+                .await
+                .expect("claim after cancellation")
+                .iter()
+                .all(|wake| wake.event_id != pending.decision_event_id)
+        );
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_jobs WHERE tool_call_id = ?")
             .bind(&pending.tool_call_id)
             .fetch_one(fixture.db.pool())

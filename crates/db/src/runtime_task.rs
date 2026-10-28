@@ -622,7 +622,7 @@ impl Db {
              SET dispatch_state = ?,
                  dispatched_at = CASE ? WHEN 'dispatched' THEN ? WHEN 'pending' THEN NULL ELSE dispatched_at END,
                  resolved_at = CASE ? WHEN 'dead' THEN ? WHEN 'pending' THEN NULL ELSE resolved_at END
-             WHERE task_id = ? AND event_id = ?",
+             WHERE task_id = ? AND event_id = ? AND resolved_at IS NULL",
         )
         .bind(state)
         .bind(state)

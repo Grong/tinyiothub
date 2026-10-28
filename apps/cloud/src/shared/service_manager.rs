@@ -412,6 +412,12 @@ impl ServiceManager {
                                 device_cache: Some(app_state.device_cache.clone()),
                                 data_server: app_state.data_server.clone(),
                                 pending_actions: Some(app_state.pending_actions.clone()),
+                                task_approvals: Some(Arc::new(
+                                    crate::domains::agent::runtime::approvals::DbApprovalStore::new(
+                                        app_state.db.clone(),
+                                    )
+                                    .with_recorder(app_state.runtime_recorder.clone()),
+                                )),
                                 arbitration: Some(app_state.arbitration.clone()),
                                 live: Some(live_summary.clone()),
                                 event_bus: Some(app_state.event_bus.clone()),

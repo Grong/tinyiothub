@@ -56,6 +56,7 @@ pub fn chat_builtin_tools_provider(
                 device_cache: device_cache.clone(),
                 data_server: runtime.data_server.clone(),
                 pending_actions: Some(pending_actions.clone()),
+                task_approvals: None,
                 arbitration: Some(arbitration.clone()),
                 live: Some(live.clone()),
                 event_bus: event_bus.clone(),

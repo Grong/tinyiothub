@@ -20,7 +20,7 @@ pub struct PendingAction {
 /// Pending-action confirmation store type (G3 — injected, no global).
 pub type PendingActionStore = DashMap<String, PendingAction>;
 
-const CONFIRMATION_TTL: Duration = Duration::from_secs(30 * 60);
+pub(crate) const CONFIRMATION_TTL: Duration = Duration::from_secs(30 * 60);
 
 /// 周期清扫间隔（生产）——远小于 TTL，滞留上限 = TTL + interval。
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5 * 60);

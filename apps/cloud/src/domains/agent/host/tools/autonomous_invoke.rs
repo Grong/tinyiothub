@@ -37,17 +37,19 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
+use tinyiothub_agent::port::approval::TaskApprovalStore;
 use tinyiothub_agent::port::attribution::{Attributable, Role, ToolKind};
 use tinyiothub_agent::port::tool::{Tool, ToolResult};
 use tinyiothub_agent::runtime::thing_agent::seams::policy::{DefaultPolicy, PolicyDecision, PolicyInput, PolicySeam};
 use tinyiothub_agent::runtime::thing_agent::{ArbitrationRegistry, DEFAULT_LEASE_TTL, RunContextInner};
 use tinyiothub_core::models::event::EventLevel;
+use tinyiothub_core::task_approval::{ApprovalState, TaskApproval};
 use tinyiothub_policy::autonomy::AutonomyPolicy;
 use tinyiothub_runtime::access::resources::ResourceResolver;
 use tinyiothub_storage::Db;
 use tokio::sync::RwLock;
 
-use super::thing::{InvokeActionTool, resource_specs, take_pending_action, tool_err, tool_ok};
+use super::thing::{CONFIRMATION_TTL, InvokeActionTool, resource_specs, take_pending_action, tool_err, tool_ok};
 use crate::domains::event::{
     bus::ThingEventBus,
     router::{ThingEventInput, ThrottleState, route_thing_event},
@@ -238,6 +240,7 @@ pub struct AutonomousInvokeActionTool {
     workspace_id: String,
     event_bus: Arc<ThingEventBus>,
     throttle: Arc<ThrottleState>,
+    task_approvals: Option<Arc<dyn TaskApprovalStore>>,
     /// E2 Policy 接缝（None = 内置 gate_check）。
     policy_seam: Option<Arc<dyn PolicySeam>>,
 }
@@ -260,6 +263,7 @@ impl AutonomousInvokeActionTool {
             workspace_id,
             event_bus,
             throttle,
+            task_approvals: None,
             policy_seam: None,
         }
     }
@@ -268,6 +272,78 @@ impl AutonomousInvokeActionTool {
     pub fn with_policy_seam(mut self, seam: Arc<dyn PolicySeam>) -> Self {
         self.policy_seam = Some(seam);
         self
+    }
+
+    pub fn with_task_approvals(mut self, store: Option<Arc<dyn TaskApprovalStore>>) -> Self {
+        self.task_approvals = store;
+        self
+    }
+
+    async fn task_identity(&self) -> Option<(String, String)> {
+        let slot = self.run_ctx.read().await.clone()?;
+        let ctx = slot.read().await;
+        Some((ctx.task_id.clone()?, ctx.run_id.clone()))
+    }
+
+    async fn request_task_approval(
+        &self,
+        inner_output: &str,
+        input: &Input,
+        task_id: String,
+        run_id: String,
+    ) -> anyhow::Result<ToolResult> {
+        let Some(store) = &self.task_approvals else {
+            return tool_err("Task approval unavailable; action NOT dispatched".to_string());
+        };
+        // The inner legacy token must not remain usable through the chat confirmation
+        // endpoint. Task identity and frozen execution fields come from this validated
+        // tool call, never from the in-memory PendingActionStore.
+        if let Some(token) = serde_json::from_str::<Value>(inner_output)
+            .ok()
+            .and_then(|value| value.get("token").and_then(Value::as_str).map(str::to_string))
+        {
+            self.inner.pending_actions.remove(&token);
+        }
+        let task = self.policy_repo.get_task(&self.workspace_id, &task_id).await;
+        let Ok(Some(task)) = task else {
+            return tool_err("Task approval unavailable; action NOT dispatched".to_string());
+        };
+        if task.workspace_id != self.workspace_id || task.current_run_id.as_deref() != Some(run_id.as_str()) {
+            return tool_err("Task Run changed; action NOT dispatched".to_string());
+        }
+        let now = chrono::Utc::now();
+        let approval = TaskApproval {
+            id: tinyiothub_core::generate_id(),
+            workspace_id: self.workspace_id.clone(),
+            task_id,
+            run_id,
+            tool_call_id: tinyiothub_core::generate_id(),
+            device_id: input.thing_id.clone(),
+            tool: input.action_name.clone(),
+            args_json: input.params.clone().unwrap_or_else(|| json!({})),
+            reason: "workspace action confirmation required".into(),
+            state: ApprovalState::Pending,
+            decision: None,
+            decider_id: None,
+            requested_at: now,
+            decided_at: None,
+            expires_at: now + chrono::Duration::from_std(CONFIRMATION_TTL)?,
+            decision_event_id: tinyiothub_core::generate_id(),
+            updated_at: now,
+        };
+        store
+            .create_pending(&approval, task.state_version)
+            .await
+            .map_err(|error| {
+                tracing::warn!(task_id = %task.id, approval_id = %approval.id, %error, "Task approval creation failed");
+                anyhow::anyhow!("Task approval creation failed; action NOT dispatched")
+            })?;
+        tool_ok(json!({
+            "status": "approval_pending",
+            "approvalId": approval.id,
+            "taskId": approval.task_id,
+            "message": "操作已提交人工审批，批准后才会执行。"
+        }))
     }
 
     /// Consume the confirmation token minted by the inner tool and dispatch
@@ -474,12 +550,20 @@ impl Tool for AutonomousInvokeActionTool {
             .and_then(|v| v.get("status").and_then(|s| s.as_str()).map(str::to_string))
             .unwrap_or_default();
         let final_result = if status == "confirmation_required" {
-            // Never pass the confirmation_required payload through on
-            // auto-confirm failure: it carries a live token to the LLM.
-            match self.auto_confirm(&result.output, &input).await {
-                Some(r) => r,
-                None => tool_err("auto-confirm failed: token mismatch or expired; action NOT dispatched".to_string())
-                    .expect("static message"),
+            if let Some((task_id, run_id)) = self.task_identity().await {
+                self.request_task_approval(&result.output, &input, task_id, run_id)
+                    .await?
+            } else {
+                // Non-Task autonomous/heartbeat behavior retains policy auto-confirm.
+                // Never pass the confirmation_required payload through on
+                // auto-confirm failure: it carries a live token to the LLM.
+                match self.auto_confirm(&result.output, &input).await {
+                    Some(r) => r,
+                    None => {
+                        tool_err("auto-confirm failed: token mismatch or expired; action NOT dispatched".to_string())
+                            .expect("static message")
+                    }
+                }
             }
         } else {
             result
@@ -951,6 +1035,118 @@ mod tests {
         assert_eq!(signal.actor, "agent");
         assert_eq!(signal.thing_id, "dev-1");
         assert_eq!(signal.event_name, "reboot");
+    }
+
+    #[tokio::test]
+    async fn task_tool_call_creates_durable_approval_before_any_dispatch() {
+        let dir = tempfile::tempdir().expect("Task approval test directory");
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(dir.path().join("task-approval.db"))
+            .create_if_missing(true)
+            .foreign_keys(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(options)
+            .await
+            .expect("Task approval pool");
+        tinyiothub_storage::migrations::run_migrations(&pool)
+            .await
+            .expect("Task approval migrations");
+        let db = Arc::new(Db::new(pool.clone()));
+        seed_thing(&pool, "ws-task-approval", "dev-task", "device").await;
+        register_action(&pool, "dev-task", "reboot").await;
+        db.save_autonomy_policy("ws-task-approval", &act_policy(), "test")
+            .await
+            .expect("policy");
+        let now = chrono::Utc::now();
+        let task = tinyiothub_core::agent_task::AgentTask {
+            id: "task-tool-approval".into(),
+            workspace_id: "ws-task-approval".into(),
+            idempotency_key: "task-tool-approval-key".into(),
+            objective: "approval boundary test".into(),
+            session_key: None,
+            created_by: "user-1".into(),
+            status: tinyiothub_core::agent_task::TaskStatus::Active,
+            current_run_id: Some("run-tool-approval".into()),
+            state_version: 0,
+            created_at: now,
+            updated_at: now,
+            ended_at: None,
+        };
+        let wake = tinyiothub_core::agent_task::TaskWake {
+            task_id: task.id.clone(),
+            event_id: "task-tool-created".into(),
+            signal_json: json!({"workspace_id":task.workspace_id}).to_string(),
+            dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Dispatched,
+            created_at: now,
+            dispatched_at: Some(now),
+            resolved_at: Some(now),
+        };
+        db.create_task_with_wake(&task, &wake).await.expect("Task");
+        let ctx = Arc::new(RwLock::new(RunContextInner {
+            run_id: "run-tool-approval".into(),
+            workspace_id: "ws-task-approval".into(),
+            task_id: Some(task.id.clone()),
+            ..Default::default()
+        }));
+        ctx.write().await.action_counts.insert("dev-task".into(), 1);
+        let pending_actions = self_pending_actions();
+        let tools = crate::domains::agent::host::autonomous_factory::build_autonomous_tools(
+            &pool,
+            "ws-task-approval",
+            db.clone(),
+            new_run_context_slot(ctx),
+            Arc::new(ThingEventBus::new()),
+            Arc::new(ThrottleState::new(60)),
+            &super::super::ThingToolContext {
+                pending_actions: Some(pending_actions.clone()),
+                task_approvals: Some(Arc::new(
+                    crate::domains::agent::runtime::approvals::DbApprovalStore::new(db.clone()),
+                )),
+                ..Default::default()
+            },
+        );
+        let call_device = tools
+            .iter()
+            .find(|tool| tool.name() == "call_device")
+            .expect("call_device");
+        let result = call_device
+            .execute(json!({"thingId":"dev-task","action":"reboot","params":{"speed":1}}))
+            .await
+            .expect("tool call");
+        let approvals = db
+            .list_task_approvals("ws-task-approval", &task.id)
+            .await
+            .expect("approvals");
+        assert_eq!(
+            approvals.len(),
+            1,
+            "tool call must originate a durable approval: {}",
+            result.output
+        );
+        let approval = &approvals[0];
+        assert_eq!(approval.run_id, "run-tool-approval");
+        assert_eq!(approval.device_id, "dev-task");
+        assert_eq!(approval.tool, "reboot");
+        assert_eq!(approval.args_json, json!({"speed":1}));
+        assert!(!approval.id.is_empty());
+        assert!(!approval.tool_call_id.is_empty());
+        assert!(!approval.decision_event_id.is_empty());
+        let task = db
+            .get_task("ws-task-approval", &task.id)
+            .await
+            .expect("Task")
+            .expect("Task row");
+        assert_eq!(task.status, tinyiothub_core::agent_task::TaskStatus::NeedsApproval);
+        let output = output_json(&result);
+        assert_eq!(output["status"], "approval_pending");
+        assert!(result.output.find("token").is_none());
+        assert!(
+            pending_actions.is_empty(),
+            "legacy confirmation token must be invalidated"
+        );
+        assert_eq!(agent_event_count(&pool, "dev-task").await, 0);
     }
 
     #[tokio::test]

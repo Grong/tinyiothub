@@ -130,6 +130,24 @@ impl TaskCoordinator {
     }
 
     async fn waiting_status(&self, workspace_id: &str, task_id: &str) -> Result<Option<TaskStatus>, TaskError> {
+        if let Some(approvals) = &self.approvals {
+            let pending = approvals
+                .list_for_task(workspace_id, task_id)
+                .await
+                .map_err(|error| TaskStoreError::Unavailable(error.to_string()))?
+                .iter()
+                .any(|approval| approval.state == tinyiothub_core::task_approval::ApprovalState::Pending);
+            let decided = !pending
+                && approvals
+                    .list_recoverable(Some(workspace_id))
+                    .await
+                    .map_err(|error| TaskStoreError::Unavailable(error.to_string()))?
+                    .iter()
+                    .any(|approval| approval.task_id == task_id);
+            if pending || decided {
+                return Ok(Some(TaskStatus::NeedsApproval));
+            }
+        }
         if let Some(jobs) = &self.jobs
             && !jobs
                 .task_jobs(workspace_id, task_id, false)
@@ -138,16 +156,6 @@ impl TaskCoordinator {
                 .is_empty()
         {
             return Ok(Some(TaskStatus::WaitingJob));
-        }
-        if let Some(approvals) = &self.approvals
-            && approvals
-                .list_recoverable(Some(workspace_id))
-                .await
-                .map_err(|error| TaskStoreError::Unavailable(error.to_string()))?
-                .iter()
-                .any(|approval| approval.task_id == task_id)
-        {
-            return Ok(Some(TaskStatus::NeedsApproval));
         }
         let watches = self.watches.list_all().await.map_err(TaskStoreError::Unavailable)?;
         if watches
@@ -509,12 +517,32 @@ impl TaskCoordinator {
         if let Some(metrics) = snapshot_metrics {
             ctx.inner.write().await.snapshot = Some(metrics);
         }
+        let approval_facts = match &self.approvals {
+            Some(approvals) => approvals
+                .list_for_task(&task.workspace_id, &task.id)
+                .await
+                .map(|records| {
+                    records
+                        .into_iter()
+                        .map(|approval| super::prompt::TaskPromptApproval {
+                            approval_id: approval.id,
+                            status: approval.state.as_str().into(),
+                            detail: format!("{}: {}", approval.tool, approval.reason),
+                        })
+                        .collect()
+                })
+                .unwrap_or_else(|error| {
+                    tracing::warn!(task_id = %task.id, %error, "Task approval context read failed");
+                    vec![]
+                }),
+            None => vec![],
+        };
         let prompt = build_task_prompt(
             &task,
             &runs,
             &jobs,
             &watches,
-            &[],
+            &approval_facts,
             snapshot.as_deref().unwrap_or(""),
             Some(&signal),
         );

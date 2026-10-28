@@ -43,7 +43,7 @@ impl TaskStatus {
             ),
             Self::Paused => matches!(
                 next,
-                Self::Active | Self::WaitingJob | Self::WaitingWatch | Self::Cancelling
+                Self::Active | Self::WaitingJob | Self::WaitingWatch | Self::NeedsApproval | Self::Cancelling
             ),
             Self::Cancelling => matches!(next, Self::Cancelling | Self::Cancelled | Self::Failed),
             Self::NeedsApproval => matches!(
@@ -160,4 +160,14 @@ pub struct TaskWake {
     pub created_at: DateTime<Utc>,
     pub dispatched_at: Option<DateTime<Utc>>,
     pub resolved_at: Option<DateTime<Utc>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TaskStatus;
+
+    #[test]
+    fn paused_task_resumes_to_outstanding_approval() {
+        assert!(TaskStatus::Paused.can_transition_to(TaskStatus::NeedsApproval));
+    }
 }

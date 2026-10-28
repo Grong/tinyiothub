@@ -47,6 +47,7 @@ use tinyiothub_skills::trust::ToolSafety;
 pub use get::GetThingTool;
 pub use invoke_action::InvokeActionTool;
 pub use list::ListThingsTool;
+pub(crate) use pending_action::CONFIRMATION_TTL;
 pub use pending_action::{
     PendingAction, PendingActionStore, TakeError, cleanup_expired_tokens, spawn_pending_action_sweeper,
     spawn_pending_action_sweeper_default, store_pending_action, take_pending_action, take_pending_action_reasoned,
@@ -181,6 +182,8 @@ pub struct ThingToolContext {
     pub device_cache: Option<Arc<tinyiothub_storage::cache::ThingCache>>,
     pub data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
     pub pending_actions: Option<Arc<PendingActionStore>>,
+    /// Durable approval origination for confirmation-gated Task tool calls.
+    pub task_approvals: Option<Arc<dyn tinyiothub_agent::port::approval::TaskApprovalStore>>,
     /// E1 仲裁（Task 9）：跨 chat/自治 run 共享的每设备互斥锁注册表；
     /// None = 不仲裁。
     pub arbitration: Option<Arc<ArbitrationRegistry>>,

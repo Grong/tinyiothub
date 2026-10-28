@@ -83,17 +83,7 @@ impl ApprovalExecutor {
 
     pub async fn recover(&self, workspace_id: Option<&str>) -> Result<usize, ApprovalError> {
         self.store.expire_due(Utc::now()).await?;
-        let approvals = self.store.list_recoverable(workspace_id).await?;
-        let mut recovered = 0;
-        for approval in approvals {
-            if !matches!(
-                self.execute_decision(&approval.decision_event_id).await?,
-                ExecutionOutcome::Deferred
-            ) {
-                recovered += 1;
-            }
-        }
-        Ok(recovered)
+        Ok(self.store.list_recoverable(workspace_id).await?.len())
     }
 }
 
@@ -128,6 +118,9 @@ mod tests {
         }
         async fn get_by_decision_event(&self, event_id: &str) -> Result<Option<TaskApproval>, ApprovalError> {
             Ok((event_id == self.approval.decision_event_id).then(|| self.approval.clone()))
+        }
+        async fn list_for_task(&self, _: &str, _: &str) -> Result<Vec<TaskApproval>, ApprovalError> {
+            Ok(vec![self.approval.clone()])
         }
         async fn decide(
             &self,
@@ -246,16 +239,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recovery_replays_decided_wake_without_changing_identity() {
+    async fn recovery_preserves_decision_identity_for_router_dispatch() {
         let store = Arc::new(Store {
             approval: approval(ApprovalState::Approved),
         });
         let jobs = Arc::new(Jobs::default());
         let executor = ApprovalExecutor::new(store.clone(), jobs.clone(), Arc::new(Tasks::default()));
         assert_eq!(executor.recover(None).await.expect("recover"), 1);
+        assert!(jobs.calls.lock().expect("calls").is_empty());
+        executor
+            .execute_decision(&store.approval.decision_event_id)
+            .await
+            .expect("router dispatch");
         let calls = jobs.calls.lock().expect("calls");
+        assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].tool_call_id, "call_1");
         assert_eq!(store.approval.decision_event_id, "decision_1");
+    }
+
+    #[tokio::test]
+    async fn recovery_leaves_decision_dispatch_to_the_wake_router() {
+        let store = Arc::new(Store {
+            approval: approval(ApprovalState::Approved),
+        });
+        let jobs = Arc::new(Jobs::default());
+        let executor = ApprovalExecutor::new(store, jobs.clone(), Arc::new(Tasks::default()));
+        assert_eq!(executor.recover(None).await.expect("recover"), 1);
+        assert_eq!(executor.recover(None).await.expect("repeat recovery"), 1);
+        assert!(jobs.calls.lock().expect("calls").is_empty());
+        assert!(matches!(
+            executor.execute_decision("decision_1").await.expect("router dispatch"),
+            ExecutionOutcome::Job(_)
+        ));
+        assert_eq!(jobs.calls.lock().expect("calls").len(), 1);
     }
 
     #[tokio::test]
