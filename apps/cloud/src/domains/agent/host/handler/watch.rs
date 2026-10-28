@@ -82,7 +82,7 @@ fn to_response(rule: &WatchRule) -> WatchRuleResponse {
 }
 
 fn rule_store(state: &AgentState) -> WatchRuleStoreAdapter {
-    WatchRuleStoreAdapter((*state.db).clone())
+    WatchRuleStoreAdapter::new((*state.db).clone()).with_recorder(state.runtime_recorder.clone())
 }
 
 // ── POST /{id}/watch-rules ──

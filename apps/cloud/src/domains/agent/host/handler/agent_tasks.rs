@@ -42,7 +42,7 @@ macro_rules! verify_agent_admin {
     }};
 }
 
-async fn check_agent_admin<T>(
+pub(crate) async fn check_agent_admin<T>(
     state: &AgentState,
     claims: &Claims,
     workspace_id: &str,
@@ -66,6 +66,19 @@ async fn check_agent_admin<T>(
     Ok(())
 }
 
+pub(crate) async fn check_agent_admin_response(
+    state: &AgentState,
+    claims: &Claims,
+    workspace_id: &str,
+) -> Result<(), Response> {
+    if let Err(error) = check_agent_admin::<serde_json::Value>(state, claims, workspace_id).await {
+        let status =
+            StatusCode::from_u16(error.0.code.clamp(400, 599) as u16).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        return Err((status, error).into_response());
+    }
+    Ok(())
+}
+
 // ── POST /{id}/agent/tasks ──
 
 /// Workspace-scoped agent directive routes (`/workspaces/{id}/agent/*`).
@@ -85,9 +98,26 @@ where
             "/{id}/agent/tasks/{task_id}",
             get(crate::domains::agent::runtime::tasks::get_task),
         )
-        .route("/{id}/agent/tasks/{task_id}/pause", post(pause_persistent_task))
-        .route("/{id}/agent/tasks/{task_id}/resume", post(resume_persistent_task))
-        .route("/{id}/agent/tasks/{task_id}/cancel", post(cancel_persistent_task))
+        .route(
+            "/{id}/agent/tasks/{task_id}/stream",
+            get(crate::domains::agent::runtime::stream::stream_task),
+        )
+        .route(
+            "/{id}/agent/tasks/{task_id}/pause",
+            post(crate::domains::agent::runtime::controls::pause),
+        )
+        .route(
+            "/{id}/agent/tasks/{task_id}/resume",
+            post(crate::domains::agent::runtime::controls::resume),
+        )
+        .route(
+            "/{id}/agent/tasks/{task_id}/cancel",
+            post(crate::domains::agent::runtime::controls::cancel),
+        )
+        .route(
+            "/{id}/agent/tasks/{task_id}/jobs/{job_id}/stop",
+            post(crate::domains::agent::runtime::controls::stop_job),
+        )
         .route("/{id}/agent/runs", get(list_runs))
         .route("/{id}/agent/runs/{run_id}/ack", post(ack_run))
         .route("/{id}/agent/policy", get(get_policy).put(update_policy))
@@ -178,65 +208,6 @@ pub async fn create_task(
         }
     }
 }
-
-fn persistent_task_error(error: tinyiothub_agent::runtime::thing_agent::task::coordinator::TaskError) -> Response {
-    use tinyiothub_agent::runtime::thing_agent::task::coordinator::TaskError;
-    use tinyiothub_core::agent_task::TaskStoreError;
-
-    match error {
-        TaskError::NotFound => {
-            crate::domains::agent::runtime::tasks::error_response(StatusCode::NOT_FOUND, "Task 不存在")
-        }
-        TaskError::Store(TaskStoreError::Validation(message)) => {
-            crate::domains::agent::runtime::tasks::error_response(StatusCode::CONFLICT, message)
-        }
-        TaskError::Store(TaskStoreError::ConcurrentUpdate) => {
-            crate::domains::agent::runtime::tasks::error_response(StatusCode::CONFLICT, "Task 已并发更新")
-        }
-        other => {
-            tracing::warn!(%other, "persistent task control failed");
-            crate::domains::agent::runtime::tasks::error_response(StatusCode::SERVICE_UNAVAILABLE, "Task 服务不可用")
-        }
-    }
-}
-
-macro_rules! persistent_task_control {
-    ($name:ident, $method:ident, $response:expr) => {
-        pub async fn $name(
-            State(state): State<AgentState>,
-            Extension(claims): Extension<Claims>,
-            Path((workspace_id, task_id)): Path<(String, String)>,
-        ) -> Response {
-            if let Err(error) = check_agent_admin::<serde_json::Value>(&state, &claims, &workspace_id).await {
-                return error.into_response();
-            }
-            let Some(manager) = state.thing_agents else {
-                return crate::domains::agent::runtime::tasks::error_response(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Task 服务不可用",
-                );
-            };
-            match manager.$method(&workspace_id, &task_id).await {
-                Ok(result) => ($response)(result),
-                Err(error) => persistent_task_error(error),
-            }
-        }
-    };
-}
-
-persistent_task_control!(pause_persistent_task, pause_task, |task| {
-    ApiResponseBuilder::success(serde_json::json!({"task": task})).into_response()
-});
-persistent_task_control!(resume_persistent_task, resume_task, |task| {
-    ApiResponseBuilder::success(serde_json::json!({"task": task})).into_response()
-});
-persistent_task_control!(
-    cancel_persistent_task,
-    cancel_task,
-    |outcome: tinyiothub_agent::runtime::thing_agent::task::coordinator::CancelOutcome| {
-        ApiResponseBuilder::success(serde_json::json!({"accepted": outcome.accepted})).into_response()
-    }
-);
 
 // ── GET /{id}/agent/runs ──
 

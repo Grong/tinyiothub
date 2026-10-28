@@ -102,6 +102,11 @@ pub struct AppState {
     /// 事件总线 - 事件发布和订阅
     pub event_bus: Arc<EventBus>,
 
+    /// Durable Task runtime stream hub.
+    pub runtime_stream: Arc<crate::domains::agent::runtime::stream::RuntimeStreamHub>,
+    /// Shared runtime event recorder for Task/Run/Job/watch facts.
+    pub runtime_recorder: crate::domains::agent::runtime::stream::RuntimeRecorder,
+
     /// 报警服务 - 报警规则和报警管理
     pub alarm_service: Arc<crate::domains::alarm::service::AlarmService>,
 
@@ -285,6 +290,9 @@ impl AppState {
 
         // 创建事件总线
         let event_bus = Arc::new(EventBus::new());
+        let runtime_stream = Arc::new(crate::domains::agent::runtime::stream::RuntimeStreamHub::default());
+        let runtime_recorder =
+            crate::domains::agent::runtime::stream::RuntimeRecorder::new(database.clone(), runtime_stream.clone());
 
         // 创建报警服务
         let alarm_service = Arc::new(crate::domains::alarm::service::AlarmService::new(database.clone()));
@@ -545,6 +553,8 @@ impl AppState {
             notification_manager,
             redis,
             event_bus,
+            runtime_stream,
+            runtime_recorder,
             sse_manager,
             sse_token_manager,
             secure_event_service,
@@ -1078,6 +1088,8 @@ impl axum::extract::FromRef<AppState> for crate::domains::agent::AgentState {
             access: state.access.clone(),
             data_server: state.data_server.clone(),
             event_bus: state.event_bus.clone(),
+            runtime_stream: state.runtime_stream.clone(),
+            runtime_recorder: state.runtime_recorder.clone(),
         }
     }
 }

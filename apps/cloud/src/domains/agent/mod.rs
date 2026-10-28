@@ -76,6 +76,10 @@ pub struct AgentState {
     pub data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
     /// 事件总线 - Hub stream 的 reading/control 增量源。
     pub event_bus: Arc<tinyiothub_runtime::event_bus::EventBus>,
+    /// Ledger-backed Task runtime deltas for cursor SSE.
+    pub runtime_stream: Arc<runtime::stream::RuntimeStreamHub>,
+    /// Shared durable recorder used by the existing runtime stores.
+    pub runtime_recorder: runtime::stream::RuntimeRecorder,
 }
 
 impl AgentState {

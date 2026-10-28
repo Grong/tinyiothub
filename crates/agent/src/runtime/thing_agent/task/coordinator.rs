@@ -90,6 +90,9 @@ impl TaskCoordinator {
             .get_task(workspace_id, task_id)
             .await?
             .ok_or(TaskError::NotFound)?;
+        if task.status == TaskStatus::Paused {
+            return Ok(task);
+        }
         validate_transition(task.status, TaskStatus::Paused)
             .map_err(|error| TaskStoreError::Validation(error.to_string()))?;
         Ok(self
@@ -227,6 +230,19 @@ impl TaskCoordinator {
             .transition_task(&task.workspace_id, &task.id, task.state_version, terminal, None)
             .await?;
         Ok(())
+    }
+
+    pub async fn stop_task_job(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        job_id: &str,
+    ) -> Result<tinyiothub_core::device_job::DeviceJob, tinyiothub_core::device_job::DeviceJobError> {
+        self.jobs
+            .as_ref()
+            .ok_or_else(|| tinyiothub_core::device_job::DeviceJobError::Storage("Job service is not started".into()))?
+            .stop(workspace_id, task_id, job_id)
+            .await
     }
 
     pub async fn recover(&self) -> Result<usize, TaskError> {
@@ -1544,6 +1560,34 @@ pub(crate) mod tests {
         fixture.coordinator.cancel("ws_1", "task_1").await.expect("cancel");
         assert!(worker.cancelled.lock().expect("cancelled").is_empty());
         assert_eq!(fixture.store.task("task_1").status, TaskStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn repeated_pause_returns_the_current_task_without_advancing() {
+        let fixture = Fixture::new(task(TaskStatus::Active));
+        let paused = fixture.coordinator.pause("ws_1", "task_1").await.expect("first pause");
+        let replay = fixture
+            .coordinator
+            .pause("ws_1", "task_1")
+            .await
+            .expect("idempotent pause");
+        assert_eq!(replay, paused);
+        assert_eq!(*fixture.provider.calls.lock().expect("calls"), 0);
+    }
+
+    #[tokio::test]
+    async fn result_before_cancel_preserves_the_terminal_task_projection() {
+        let mut running = task(TaskStatus::Active);
+        running.current_run_id = Some("run_existing".into());
+        let fixture = Fixture::new(running.clone());
+        fixture
+            .coordinator
+            .finish_task_run(&running, "run_existing", Outcome::Acted)
+            .await;
+        assert_eq!(fixture.store.task("task_1").status, TaskStatus::Completed);
+        let outcome = fixture.coordinator.cancel("ws_1", "task_1").await.expect("late cancel");
+        assert!(!outcome.accepted);
+        assert_eq!(fixture.store.task("task_1").status, TaskStatus::Completed);
     }
 
     #[tokio::test]

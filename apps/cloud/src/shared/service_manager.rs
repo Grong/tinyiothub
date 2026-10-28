@@ -145,7 +145,10 @@ impl ServiceManager {
         data_server.set_sampler(sampler);
 
         let task_jobs = tinyiothub_runtime::job::service::JobService::new(
-            Arc::new(crate::shared::runtime_ports::DbDeviceJobStore((*app_state.db).clone())),
+            Arc::new(
+                crate::shared::runtime_ports::DbDeviceJobStore::new((*app_state.db).clone())
+                    .with_recorder(app_state.runtime_recorder.clone()),
+            ),
             Arc::new(tinyiothub_runtime::job::worker_adapter::DataServerJobWorkers::new(
                 data_server.as_ref().clone(),
             )),
@@ -632,18 +635,23 @@ impl ServiceManager {
                     app_state.device_cache.clone(),
                 )),
                 ledger: hub_ledger,
-                rules: Arc::new(crate::shared::runtime_ports::WatchRuleStoreAdapter(
-                    (*app_state.db).clone(),
-                )),
+                rules: Arc::new(
+                    crate::shared::runtime_ports::WatchRuleStoreAdapter::new((*app_state.db).clone())
+                        .with_recorder(app_state.runtime_recorder.clone()),
+                ),
                 events: app_state.event_bus.clone(),
                 zones: Some(zone_service),
             });
             thing_agent_manager
                 .start_task_runtime(tinyiothub_agent::runtime::thing_agent::manager::TaskRuntimeDeps {
-                    store: Arc::new(crate::domains::agent::runtime::DbTaskStore::new(app_state.db.clone())),
-                    watches: Arc::new(crate::shared::runtime_ports::WatchRuleStoreAdapter(
-                        (*app_state.db).clone(),
-                    )),
+                    store: Arc::new(
+                        crate::domains::agent::runtime::DbTaskStore::new(app_state.db.clone())
+                            .with_recorder(app_state.runtime_recorder.clone()),
+                    ),
+                    watches: Arc::new(
+                        crate::shared::runtime_ports::WatchRuleStoreAdapter::new((*app_state.db).clone())
+                            .with_recorder(app_state.runtime_recorder.clone()),
+                    ),
                     jobs: Some(task_jobs),
                 })
                 .await

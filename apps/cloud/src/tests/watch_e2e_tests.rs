@@ -219,7 +219,7 @@ async fn assemble(
     manager.set_watch_deps(WatchDeps {
         cache: cache_src.clone(),
         ledger: Arc::new(HubLedgerAdapter::new((*app_state.db).clone())),
-        rules: Arc::new(WatchRuleStoreAdapter((*app_state.db).clone())),
+        rules: Arc::new(WatchRuleStoreAdapter::new((*app_state.db).clone())),
         events: app_state.event_bus.clone(),
         zones: None,
     });

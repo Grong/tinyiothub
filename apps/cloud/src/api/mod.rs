@@ -76,6 +76,10 @@ pub fn create_router(app_state: &AppState) -> Router<AppState> {
             crate::domains::event::router().merge(crate::domains::event::http::create_router()),
         )
         .nest("/jobs", crate::domains::admin::jobs::handler::create_router())
+        .nest(
+            "/admin/runtime",
+            crate::domains::agent::runtime::admin::create_router(),
+        )
         .nest("/batch", crate::domains::admin::batch::handler::create_router())
         .nest("/heartbeat", crate::domains::driver::heartbeat_router())
         .nest("/workspaces", crate::domains::tenant::workspace_router())

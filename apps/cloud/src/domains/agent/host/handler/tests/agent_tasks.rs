@@ -153,6 +153,133 @@ async fn persistent_create_replays_task_and_wake_without_provider_call() {
 }
 
 #[tokio::test]
+async fn persistent_create_records_one_stable_task_runtime_event() {
+    let fixture = runtime_test_app(true).await;
+    let first = create_persistent(&fixture, "inspect", "event-key").await;
+    let second = create_persistent(&fixture, "inspect", "event-key").await;
+    assert_eq!(second["result"]["deduplicated"], true);
+    let task_id = first["result"]["taskId"].as_str().expect("task id");
+    let events = fixture
+        .db
+        .runtime_events_after(WS, None, Some(task_id), 10)
+        .await
+        .expect("runtime events");
+    assert_eq!(events.len(), 1, "create replay must not append a duplicate event");
+    assert_eq!(events[0].event_id, format!("task:{task_id}:created"));
+    assert_eq!(events[0].event_type, "task.created");
+    assert_eq!(events[0].data["stateVersion"], 0);
+}
+
+#[tokio::test]
+async fn task_store_records_versioned_transition_events() {
+    let fixture = runtime_test_app(true).await;
+    let created = create_persistent(&fixture, "inspect", "transition-event").await;
+    let task_id = created["result"]["taskId"].as_str().expect("task id");
+    let recorder = crate::domains::agent::runtime::stream::RuntimeRecorder::new(
+        fixture.db.clone(),
+        Arc::new(crate::domains::agent::runtime::stream::RuntimeStreamHub::default()),
+    );
+    let store = crate::domains::agent::runtime::DbTaskStore::new(fixture.db.clone()).with_recorder(recorder);
+    let paused =
+        tinyiothub_agent::port::task::TaskStore::transition_task(&store, WS, task_id, 0, TaskStatus::Paused, None)
+            .await
+            .expect("pause");
+    assert_eq!(paused.state_version, 1);
+    let events = fixture
+        .db
+        .runtime_events_after(WS, None, Some(task_id), 10)
+        .await
+        .expect("runtime events");
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[1].event_id, format!("task:{task_id}:v1:paused"));
+    assert_eq!(events[1].event_type, "task.paused");
+    assert_eq!(events[1].data["stateVersion"], 1);
+}
+
+#[tokio::test]
+async fn task_store_records_current_run_binding() {
+    let fixture = runtime_test_app(true).await;
+    let created = create_persistent(&fixture, "inspect", "bind-event").await;
+    let task_id = created["result"]["taskId"].as_str().expect("task id");
+    let recorder = crate::domains::agent::runtime::stream::RuntimeRecorder::new(
+        fixture.db.clone(),
+        Arc::new(crate::domains::agent::runtime::stream::RuntimeStreamHub::default()),
+    );
+    let store = crate::domains::agent::runtime::DbTaskStore::new(fixture.db.clone()).with_recorder(recorder);
+    let bound = tinyiothub_agent::port::task::TaskStore::bind_current_run(&store, task_id, 0, Some("run-bound"))
+        .await
+        .expect("bind run");
+    assert_eq!(bound.state_version, 1);
+    let events = fixture
+        .db
+        .runtime_events_after(WS, None, Some(task_id), 10)
+        .await
+        .expect("runtime events");
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[1].event_id, format!("task:{task_id}:v1:run_bound"));
+    assert_eq!(events[1].event_type, "task.run_bound");
+    assert_eq!(events[1].run_id.as_deref(), Some("run-bound"));
+    assert_eq!(events[1].data["stateVersion"], 1);
+}
+
+#[tokio::test]
+async fn task_store_records_run_start_and_finish_events() {
+    let fixture = runtime_test_app(true).await;
+    let created = create_persistent(&fixture, "inspect", "run-event").await;
+    let task_id = created["result"]["taskId"].as_str().expect("task id");
+    let task = fixture.db.get_task(WS, task_id).await.expect("task").expect("present");
+    let wake_id = sqlx::query_scalar::<_, String>("SELECT event_id FROM task_wake_outbox WHERE task_id = ?")
+        .bind(task_id)
+        .fetch_one(fixture.db.pool())
+        .await
+        .expect("wake id");
+    let recorder = crate::domains::agent::runtime::stream::RuntimeRecorder::new(
+        fixture.db.clone(),
+        Arc::new(crate::domains::agent::runtime::stream::RuntimeStreamHub::default()),
+    );
+    let store = crate::domains::agent::runtime::DbTaskStore::new(fixture.db.clone()).with_recorder(recorder);
+    assert!(
+        tinyiothub_agent::port::task::TaskStore::begin_run(&store, &task, &wake_id, "run-event-1")
+            .await
+            .expect("begin run")
+    );
+    tinyiothub_agent::port::task::TaskStore::finish_run(
+        &store,
+        &tinyiothub_core::agent_runs::RunReport {
+            run_id: "run-event-1".into(),
+            workspace_id: WS.into(),
+            trigger: format!("task:{wake_id}"),
+            outcome: tinyiothub_core::agent_runs::Outcome::NoActionNeeded,
+            summary: "healthy".into(),
+            actions: vec![],
+            verified: true,
+            duration_ms: 1,
+            tool_calls: 0,
+            tokens: 0,
+            end_reason: None,
+            thing_id: None,
+            trace: vec![],
+            task_count: None,
+            snapshot: None,
+            task_id: Some(task_id.into()),
+            wake_event_id: Some(wake_id),
+        },
+    )
+    .await
+    .expect("finish run");
+    let events = fixture
+        .db
+        .runtime_events_after(WS, None, Some(task_id), 10)
+        .await
+        .expect("runtime events");
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[1].event_id, "run:run-event-1:started");
+    assert_eq!(events[1].event_type, "run.started");
+    assert_eq!(events[2].event_id, "run:run-event-1:finished");
+    assert_eq!(events[2].event_type, "run.finished");
+}
+
+#[tokio::test]
 async fn persistent_create_same_key_different_objective_returns_409_without_new_wake() {
     let fixture = runtime_test_app(true).await;
     create_persistent(&fixture, "inspect A", "key-1").await;
@@ -224,6 +351,62 @@ async fn persistent_task_control_routes_reach_the_runtime() {
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{action}: {body}");
         assert_eq!(body["code"], 503, "{action}: {body}");
     }
+}
+
+#[tokio::test]
+async fn runtime_controls_use_http_auth_statuses_and_expose_scoped_job_stop() {
+    let fixture = runtime_test_app(true).await;
+    let created = create_persistent(&fixture, "inspect", "control-auth").await;
+    let task_id = created["result"]["taskId"].as_str().expect("task id");
+    let reader = create_test_token("user-2", "tenant-1");
+    let pause = Request::builder()
+        .method("POST")
+        .uri(format!("/api/v1/workspaces/{WS}/agent/tasks/{task_id}/pause"))
+        .header("Authorization", auth_header(&reader))
+        .body(Body::empty())
+        .expect("request");
+    let (status, body) = response_parts(fixture.app.clone().oneshot(pause).await.expect("response")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "reader pause: {body}");
+    assert_eq!(body["code"], 403);
+
+    let stop = Request::builder()
+        .method("POST")
+        .uri(format!("/api/v1/workspaces/{WS}/agent/tasks/{task_id}/jobs/job-1/stop"))
+        .header("Authorization", auth_header(&fixture.token))
+        .body(Body::empty())
+        .expect("request");
+    let (status, body) = response_parts(fixture.app.clone().oneshot(stop).await.expect("response")).await;
+    assert_ne!(
+        status,
+        StatusCode::NOT_FOUND,
+        "single-Job stop route must exist: {body}"
+    );
+    assert_ne!(
+        status,
+        StatusCode::METHOD_NOT_ALLOWED,
+        "single-Job stop route must exist: {body}"
+    );
+}
+
+#[tokio::test]
+async fn task_detail_uses_the_single_runtime_projection_surface() {
+    let fixture = runtime_test_app(true).await;
+    let created = create_persistent(&fixture, "inspect", "projection").await;
+    let task_id = created["result"]["taskId"].as_str().expect("task id");
+    let detail = get_json(
+        &fixture.app,
+        &fixture.token,
+        &format!("/api/v1/workspaces/{WS}/agent/tasks/{task_id}"),
+    )
+    .await;
+    assert_eq!(detail["code"], 0, "detail: {detail}");
+    assert_eq!(detail["result"]["task"]["id"], task_id);
+    assert!(detail["result"]["runs"].is_array(), "runs: {detail}");
+    assert!(detail["result"]["jobs"].is_array(), "jobs: {detail}");
+    assert!(detail["result"]["watches"].is_array(), "watches: {detail}");
+    assert!(detail["result"]["evidence"].is_array(), "evidence: {detail}");
+    assert!(detail["result"]["events"].is_array(), "events: {detail}");
+    assert!(detail["result"]["cursor"].is_i64(), "cursor: {detail}");
 }
 
 #[tokio::test]

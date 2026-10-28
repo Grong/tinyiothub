@@ -7,7 +7,7 @@ use tinyiothub_core::device_job::{DeviceJob, DeviceJobError, DeviceJobState};
 use crate::Db;
 
 #[derive(Debug, sqlx::FromRow)]
-struct DeviceJobRow {
+pub(crate) struct DeviceJobRow {
     id: String,
     workspace_id: String,
     device_id: String,
@@ -175,6 +175,11 @@ impl Db {
         .map_err(storage)?
         .map(DeviceJob::try_from)
         .transpose()
+    }
+
+    pub async fn get_job_by_id(&self, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
+        let mut connection = self.pool().acquire().await.map_err(storage)?;
+        find_job_by_id(&mut connection, job_id).await
     }
 
     pub async fn get_task_job(

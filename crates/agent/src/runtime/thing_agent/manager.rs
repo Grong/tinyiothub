@@ -330,6 +330,18 @@ impl ThingAgentManager {
         self.task_coordinator()?.cancel(workspace_id, task_id).await
     }
 
+    pub async fn stop_task_job(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        job_id: &str,
+    ) -> Result<tinyiothub_core::device_job::DeviceJob, tinyiothub_core::device_job::DeviceJobError> {
+        self.task_coordinator()
+            .map_err(|error| tinyiothub_core::device_job::DeviceJobError::Storage(error.to_string()))?
+            .stop_task_job(workspace_id, task_id, job_id)
+            .await
+    }
+
     /// Start the loop for a workspace: scheduler + thing-event trigger +
     /// timer trigger + forward task. Idempotent — a running workspace is
     /// left untouched (Orchestrator duplicate-start precedent).

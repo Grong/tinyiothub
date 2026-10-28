@@ -92,16 +92,73 @@ impl ThingCommandQueries for ThingCommandQueriesAdapter {
 }
 
 /// `Db` → `DeviceJobStore`，供组合根的同一个 `JobService` 服务 Task 与 DataServer。
-pub struct DbDeviceJobStore(pub Db);
+pub struct DbDeviceJobStore {
+    db: Db,
+    recorder: Option<crate::domains::agent::runtime::stream::RuntimeRecorder>,
+}
+
+impl DbDeviceJobStore {
+    pub fn new(db: Db) -> Self {
+        Self { db, recorder: None }
+    }
+
+    pub fn with_recorder(mut self, recorder: crate::domains::agent::runtime::stream::RuntimeRecorder) -> Self {
+        self.recorder = Some(recorder);
+        self
+    }
+
+    async fn record(&self, job: &DeviceJob, suffix: &str, data: serde_json::Value) {
+        let Some(recorder) = &self.recorder else {
+            return;
+        };
+        let input = tinyiothub_storage::runtime_event::RuntimeEventInput {
+            event_id: format!("job:{}:{suffix}", job.id),
+            event_type: format!("job.{suffix}"),
+            occurred_at: chrono::Utc::now(),
+            workspace_id: job.workspace_id.clone(),
+            task_id: job.task_id.clone(),
+            run_id: job.run_id.clone(),
+            tool_call_id: job.tool_call_id.clone(),
+            job_id: Some(job.id.clone()),
+            approval_id: None,
+            device_id: Some(job.device_id.clone()),
+            source_id: None,
+            source_seq: None,
+            evidence_id: None,
+            data,
+        };
+        if let Err(error) = recorder.record(input).await {
+            tracing::error!(job_id = %job.id, %error, "record Job runtime event failed");
+        }
+    }
+
+    async fn record_by_id(&self, job_id: &str, suffix: &str, data: serde_json::Value) {
+        if self.recorder.is_none() {
+            return;
+        }
+        match self.db.get_job_by_id(job_id).await {
+            Ok(Some(job)) => self.record(&job, suffix, data).await,
+            Ok(None) => tracing::error!(job_id, "record Job runtime event failed: Job missing"),
+            Err(error) => tracing::error!(job_id, %error, "load Job for runtime event failed"),
+        }
+    }
+}
 
 #[async_trait]
 impl DeviceJobStore for DbDeviceJobStore {
     async fn create_job(&self, job: &DeviceJob) -> Result<(), DeviceJobError> {
-        self.0.create_job(job).await
+        self.db.create_job(job).await?;
+        self.record(
+            job,
+            job.state.as_str(),
+            serde_json::json!({"state": job.state.as_str()}),
+        )
+        .await;
+        Ok(())
     }
 
     async fn get_job(&self, workspace_id: &str, job_id: &str) -> Result<Option<DeviceJob>, DeviceJobError> {
-        self.0.get_job(workspace_id, job_id).await
+        self.db.get_job(workspace_id, job_id).await
     }
 
     async fn get_task_job(
@@ -110,11 +167,14 @@ impl DeviceJobStore for DbDeviceJobStore {
         task_id: &str,
         job_id: &str,
     ) -> Result<Option<DeviceJob>, DeviceJobError> {
-        self.0.get_task_job(workspace_id, task_id, job_id).await
+        self.db.get_task_job(workspace_id, task_id, job_id).await
     }
 
     async fn mark_running(&self, job_id: &str, driver_call_id: &str) -> Result<DeviceJob, DeviceJobError> {
-        self.0.mark_running(job_id, driver_call_id).await
+        let job = self.db.mark_running(job_id, driver_call_id).await?;
+        self.record(&job, "running", serde_json::json!({"state": "running"}))
+            .await;
+        Ok(job)
     }
 
     async fn finish_job(
@@ -124,15 +184,31 @@ impl DeviceJobStore for DbDeviceJobStore {
         result: &serde_json::Value,
         wake: Option<&TaskWake>,
     ) -> Result<bool, DeviceJobError> {
-        self.0.finish_job(job_id, state, result, wake).await
+        let finished = self.db.finish_job(job_id, state, result, wake).await?;
+        if finished {
+            self.record_by_id(job_id, state.as_str(), serde_json::json!({"state": state.as_str()}))
+                .await;
+        }
+        Ok(finished)
     }
 
     async fn update_progress(&self, job_id: &str, progress: &serde_json::Value) -> Result<bool, DeviceJobError> {
-        self.0.update_progress(job_id, progress).await
+        let updated = self.db.update_progress(job_id, progress).await?;
+        if updated {
+            self.record_by_id(job_id, "progress", serde_json::json!({})).await;
+        }
+        Ok(updated)
     }
 
     async fn request_stop(&self, workspace_id: &str, task_id: &str, job_id: &str) -> Result<DeviceJob, DeviceJobError> {
-        self.0.request_stop(workspace_id, task_id, job_id).await
+        let job = self.db.request_stop(workspace_id, task_id, job_id).await?;
+        self.record(
+            &job,
+            "stop_requested",
+            serde_json::json!({"stopRequestedAt": job.stop_requested_at}),
+        )
+        .await;
+        Ok(job)
     }
 
     async fn active_jobs(
@@ -140,7 +216,7 @@ impl DeviceJobStore for DbDeviceJobStore {
         workspace_id: Option<&str>,
         unknown_only: bool,
     ) -> Result<Vec<DeviceJob>, DeviceJobError> {
-        self.0.active_jobs(workspace_id, unknown_only).await
+        self.db.active_jobs(workspace_id, unknown_only).await
     }
 }
 
@@ -718,16 +794,62 @@ impl tinyiothub_runtime::ports::HubLedger for HubLedgerAdapter {
 /// tag（property|health|availability），condition 列存完整 condition JSON；
 /// 读回按 JSON 反序列化重构 `WatchCondition`（core 的 WatchRule 无 serde
 /// derive，按字段映射，不回改 core）。
-pub struct WatchRuleStoreAdapter(pub Db);
+pub struct WatchRuleStoreAdapter {
+    db: Db,
+    recorder: Option<crate::domains::agent::runtime::stream::RuntimeRecorder>,
+}
+
+impl WatchRuleStoreAdapter {
+    pub fn new(db: Db) -> Self {
+        Self { db, recorder: None }
+    }
+
+    pub fn with_recorder(mut self, recorder: crate::domains::agent::runtime::stream::RuntimeRecorder) -> Self {
+        self.recorder = Some(recorder);
+        self
+    }
+
+    async fn record_watch(
+        &self,
+        workspace_id: &str,
+        task_id: Option<&str>,
+        watch_id: &str,
+        device_id: Option<&str>,
+        suffix: &str,
+    ) {
+        let Some(recorder) = &self.recorder else {
+            return;
+        };
+        let input = tinyiothub_storage::runtime_event::RuntimeEventInput {
+            event_id: format!("watch:{watch_id}:{suffix}"),
+            event_type: format!("watch.{suffix}"),
+            occurred_at: chrono::Utc::now(),
+            workspace_id: workspace_id.to_string(),
+            task_id: task_id.map(str::to_string),
+            run_id: None,
+            tool_call_id: None,
+            job_id: None,
+            approval_id: None,
+            device_id: device_id.map(str::to_string),
+            source_id: None,
+            source_seq: None,
+            evidence_id: None,
+            data: serde_json::json!({}),
+        };
+        if let Err(error) = recorder.record(input).await {
+            tracing::error!(watch_id, %error, "record watch runtime event failed");
+        }
+    }
+}
 
 #[async_trait]
 impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
     async fn list_all(&self) -> Result<Vec<tinyiothub_core::watch::WatchRule>, String> {
-        let rows = tinyiothub_storage::watch::list_rules(self.0.pool())
+        let rows = tinyiothub_storage::watch::list_rules(self.db.pool())
             .await
             .map_err(|e| e.to_string())?;
         let task_workspaces: std::collections::HashMap<String, String> = self
-            .0
+            .db
             .list_nonterminal_tasks(None)
             .await
             .map_err(|e| e.to_string())?
@@ -759,7 +881,7 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
     async fn insert(&self, rule: &tinyiothub_core::watch::WatchRule) -> Result<(), String> {
         if let Some(task_id) = rule.owner_task_id.as_deref() {
             let task = self
-                .0
+                .db
                 .get_task(&rule.workspace_id, task_id)
                 .await
                 .map_err(|e| e.to_string())?
@@ -784,13 +906,22 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
             created_at: rule.created_at.clone(),
             owner_task_id: rule.owner_task_id.clone(),
         };
-        tinyiothub_storage::watch::insert_rule(self.0.pool(), &row)
+        tinyiothub_storage::watch::insert_rule(self.db.pool(), &row)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        self.record_watch(
+            &rule.workspace_id,
+            rule.owner_task_id.as_deref(),
+            &rule.id,
+            condition.get("thing_id").and_then(serde_json::Value::as_str),
+            "created",
+        )
+        .await;
+        Ok(())
     }
 
     async fn delete(&self, workspace_id: &str, id: &str) -> Result<bool, String> {
-        let affected = tinyiothub_storage::watch::delete_rule(self.0.pool(), workspace_id, id)
+        let affected = tinyiothub_storage::watch::delete_rule(self.db.pool(), workspace_id, id)
             .await
             .map_err(|e| e.to_string())?;
         Ok(affected > 0)
@@ -802,16 +933,197 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
         id: &str,
         wake: &tinyiothub_core::agent_task::TaskWake,
     ) -> Result<bool, String> {
-        tinyiothub_storage::watch::complete_task_watch(self.0.pool(), workspace_id, id, wake)
+        let completed = tinyiothub_storage::watch::complete_task_watch(self.db.pool(), workspace_id, id, wake)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        if completed {
+            self.record_watch(workspace_id, Some(&wake.task_id), id, None, "completed")
+                .await;
+        }
+        Ok(completed)
     }
 
     async fn delete_task_watches(&self, workspace_id: &str, task_id: &str) -> Result<usize, String> {
-        tinyiothub_storage::watch::delete_task_watches(self.0.pool(), workspace_id, task_id)
+        tinyiothub_storage::watch::delete_task_watches(self.db.pool(), workspace_id, task_id)
             .await
             .map(|count| count as usize)
             .map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod runtime_job_event_tests {
+    use super::*;
+    use tinyiothub_runtime::ports::{DeviceJobStore, WatchRuleStore};
+
+    async fn fixture() -> (Arc<Db>, crate::domains::agent::runtime::stream::RuntimeRecorder) {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.expect("pool");
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool)
+            .await
+            .expect("migrations");
+        let db = Arc::new(Db::new(pool));
+        tinyiothub_storage::seed::seed_system(&db).await.expect("seed");
+        sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES ('ws-job','ws-job','tenant-default-001','2025-01-01','2025-01-01')")
+            .execute(db.pool())
+            .await
+            .expect("workspace");
+        let now = chrono::Utc::now();
+        db.create_task_with_wake(
+            &tinyiothub_core::agent_task::AgentTask {
+                id: "task-1".into(),
+                workspace_id: "ws-job".into(),
+                idempotency_key: "job-event".into(),
+                objective: "inspect".into(),
+                session_key: None,
+                created_by: "user-1".into(),
+                status: tinyiothub_core::agent_task::TaskStatus::Active,
+                current_run_id: None,
+                state_version: 0,
+                created_at: now,
+                updated_at: now,
+                ended_at: None,
+            },
+            &tinyiothub_core::agent_task::TaskWake {
+                task_id: "task-1".into(),
+                event_id: "job-event-create".into(),
+                signal_json: serde_json::json!({"workspace_id":"ws-job"}).to_string(),
+                dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+                created_at: now,
+                dispatched_at: None,
+                resolved_at: None,
+            },
+        )
+        .await
+        .expect("task");
+        let hub = Arc::new(crate::domains::agent::runtime::stream::RuntimeStreamHub::default());
+        let recorder = crate::domains::agent::runtime::stream::RuntimeRecorder::new(db.clone(), hub);
+        (db, recorder)
+    }
+
+    fn job() -> DeviceJob {
+        DeviceJob {
+            id: "job-event".into(),
+            workspace_id: "ws-job".into(),
+            device_id: "device-1".into(),
+            tool: "inspect".into(),
+            args_json: serde_json::json!({}),
+            state: DeviceJobState::Accepted,
+            stop_requested_at: None,
+            progress_json: None,
+            result_json: None,
+            task_id: Some("task-1".into()),
+            run_id: None,
+            tool_call_id: Some("call-1".into()),
+            driver_call_id: None,
+            timeout_ms: 1_000,
+            started_at: chrono::Utc::now(),
+            ended_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn shared_job_adapter_records_ordered_facts_with_stable_ids() {
+        let (db, recorder) = fixture().await;
+        let store = DbDeviceJobStore::new((*db).clone()).with_recorder(recorder);
+        store.create_job(&job()).await.expect("create");
+        store.mark_running("job-event", "driver-1").await.expect("running");
+        store
+            .update_progress("job-event", &serde_json::json!({"percent":50}))
+            .await
+            .expect("progress");
+        let first_stop = store.request_stop("ws-job", "task-1", "job-event").await.expect("stop");
+        let second_stop = store
+            .request_stop("ws-job", "task-1", "job-event")
+            .await
+            .expect("stop replay");
+        assert_eq!(first_stop.stop_requested_at, second_stop.stop_requested_at);
+        assert!(
+            store
+                .finish_job(
+                    "job-event",
+                    DeviceJobState::CancelledUnknown,
+                    &serde_json::json!({"reason":"cancel_unknown"}),
+                    None,
+                )
+                .await
+                .expect("finish")
+        );
+        assert!(
+            !store
+                .finish_job(
+                    "job-event",
+                    DeviceJobState::CancelledUnknown,
+                    &serde_json::json!({"reason":"cancel_unknown"}),
+                    None,
+                )
+                .await
+                .expect("finish replay")
+        );
+        let events = db
+            .runtime_events_after("ws-job", None, Some("task-1"), 20)
+            .await
+            .expect("events");
+        let ids: Vec<&str> = events.iter().map(|event| event.event_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "job:job-event:accepted",
+                "job:job-event:running",
+                "job:job-event:progress",
+                "job:job-event:stop_requested",
+                "job:job-event:cancelled_unknown",
+            ]
+        );
+        assert!(events.iter().all(|event| event.task_id.as_deref() == Some("task-1")));
+        assert!(events.iter().all(|event| event.job_id.as_deref() == Some("job-event")));
+        assert!(
+            events
+                .iter()
+                .all(|event| event.device_id.as_deref() == Some("device-1"))
+        );
+    }
+
+    #[tokio::test]
+    async fn watch_adapter_records_create_and_completion_for_owner_task() {
+        let (db, recorder) = fixture().await;
+        let store = WatchRuleStoreAdapter::new((*db).clone()).with_recorder(recorder);
+        let rule = tinyiothub_core::watch::WatchRule {
+            id: "watch-event".into(),
+            workspace_id: "ws-job".into(),
+            condition: tinyiothub_core::watch::WatchCondition::Availability {
+                thing_id: "device-1".into(),
+                online: true,
+            },
+            persistent: false,
+            timeout_secs: 60,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            owner_task_id: Some("task-1".into()),
+        };
+        store.insert(&rule).await.expect("insert watch");
+        let wake = tinyiothub_core::agent_task::TaskWake {
+            task_id: "task-1".into(),
+            event_id: "watch-complete".into(),
+            signal_json: serde_json::json!({"workspace_id":"ws-job"}).to_string(),
+            dispatch_state: tinyiothub_core::agent_task::WakeDispatchState::Pending,
+            created_at: chrono::Utc::now(),
+            dispatched_at: None,
+            resolved_at: None,
+        };
+        assert!(
+            store
+                .complete_task_watch("ws-job", "watch-event", &wake)
+                .await
+                .expect("complete")
+        );
+        let events = db
+            .runtime_events_after("ws-job", None, Some("task-1"), 20)
+            .await
+            .expect("events");
+        let ids: Vec<&str> = events.iter().map(|event| event.event_id.as_str()).collect();
+        assert_eq!(ids, ["watch:watch-event:created", "watch:watch-event:completed"]);
+        assert_eq!(events[0].event_type, "watch.created");
+        assert_eq!(events[1].event_type, "watch.completed");
+        assert!(events.iter().all(|event| event.task_id.as_deref() == Some("task-1")));
     }
 }
 
@@ -1445,7 +1757,7 @@ mod watch_ports_tests {
     #[tokio::test]
     async fn rule_insert_then_list_all_visible() {
         let db = fixture_db().await;
-        let adapter = WatchRuleStoreAdapter(db.clone());
+        let adapter = WatchRuleStoreAdapter::new(db.clone());
         let rule = sample_rule("r1", "ws1");
         WatchRuleStore::insert(&adapter, &rule).await.unwrap();
 
@@ -1532,7 +1844,7 @@ mod watch_ports_tests {
             .unwrap();
         }
 
-        let adapter = WatchRuleStoreAdapter(db);
+        let adapter = WatchRuleStoreAdapter::new(db);
         let restored = WatchRuleStore::list_all(&adapter).await.unwrap();
         let ids: Vec<&str> = restored.iter().map(|rule| rule.id.as_str()).collect();
         assert_eq!(ids, ["rule-task-active", "rule-task-paused"]);
@@ -1542,7 +1854,7 @@ mod watch_ports_tests {
     #[tokio::test]
     async fn rule_delete_cross_workspace_misses() {
         let db = fixture_db().await;
-        let adapter = WatchRuleStoreAdapter(db.clone());
+        let adapter = WatchRuleStoreAdapter::new(db.clone());
         WatchRuleStore::insert(&adapter, &sample_rule("r1", "ws1"))
             .await
             .unwrap();

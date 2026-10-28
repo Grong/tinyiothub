@@ -85,7 +85,7 @@ pub async fn create_persistent(
         dispatched_at: None,
         resolved_at: None,
     };
-    let store = DbTaskStore::new(state.db.clone());
+    let store = DbTaskStore::new(state.db.clone()).with_recorder(state.runtime_recorder.clone());
     match store.create_task_with_wake(&task, &wake).await {
         Ok(outcome) => ApiResponseBuilder::success(json!({
             "taskId": outcome.task.id,
@@ -138,15 +138,15 @@ pub async fn get_task(
     State(state): State<AgentState>,
     axum::Extension(claims): axum::Extension<Claims>,
     Path((workspace_id, task_id)): Path<(String, String)>,
-) -> Json<ApiResponse<Value>> {
-    verify_workspace_access!(state, claims, workspace_id);
-    let store = DbTaskStore::new(state.db.clone());
-    match store.get_task(&workspace_id, &task_id).await {
-        Ok(Some(task)) => ApiResponseBuilder::success(json!({"task": task})),
-        Ok(None) => ApiResponseBuilder::error_with_code(404, "Task 不存在"),
+) -> Response {
+    match state.workspace_access.workspace_tenant_id(&workspace_id).await {
+        Ok(Some(tenant_id)) if tenant_id == claims.tenant_id => {}
+        Ok(Some(_)) => return error_response(StatusCode::FORBIDDEN, "无权访问此工作空间"),
+        Ok(None) => return error_response(StatusCode::NOT_FOUND, "工作空间不存在"),
         Err(error) => {
-            tracing::error!(%workspace_id, %task_id, %error, "get persistent task failed");
-            ApiResponseBuilder::error_with_code(503, "Task 存储不可用")
+            tracing::error!(%workspace_id, %error, "check Task workspace failed");
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, "获取工作空间失败");
         }
     }
+    super::projection::response(&state, &workspace_id, &task_id).await
 }
