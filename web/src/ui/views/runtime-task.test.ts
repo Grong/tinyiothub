@@ -43,6 +43,7 @@ afterEach(() => {
   view?.remove();
   localStorage.clear();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 async function mount(history: { event?: string; at?: string } | null = null): Promise<void> {
@@ -67,7 +68,7 @@ describe('Runtime Task detail shell', () => {
     expect(view.querySelector('summary')?.textContent).toContain('Details');
     expect(view.textContent).toContain('run_1');
     expect(view.querySelector('slot[name="task-actions"]')).not.toBeNull();
-    expect(view.querySelector('[data-projection="steps"]')).not.toBeNull();
+    expect(view.querySelector('runtime-loop')).not.toBeNull();
     expect(connect).toHaveBeenCalledOnce();
     expect(connect.mock.calls[0][0]).toMatchObject({ workspaceId: 'ws_1', taskId: 'task_1', after: 0 });
 
@@ -77,7 +78,7 @@ describe('Runtime Task detail shell', () => {
       approvalId: null, deviceId: 'dev_1', sourceId: null, sourceSeq: null, evidenceId: null, data: {},
     } satisfies RuntimeEvent);
     await view.updateComplete;
-    expect(view.querySelector('[data-projection="devices"]')?.textContent).toContain('dev_1');
+    expect(view.querySelector('runtime-devices')?.textContent).toContain('dev_1');
   });
 
   it('closes SSE and destroys playback before replacing a switched Task projection', async () => {
@@ -124,8 +125,8 @@ describe('Runtime Task detail shell', () => {
       approvalId: null, deviceId: 'dev_stale', sourceId: null, sourceSeq: null, evidenceId: null, data: {},
     } satisfies RuntimeEvent);
     await view.updateComplete;
-    expect(view.querySelector('[data-projection="steps"]')?.textContent).toBe('Steps: 0');
-    expect(view.querySelector('[data-projection="devices"]')?.textContent).not.toContain('dev_stale');
+    expect(view.querySelector('runtime-loop')?.textContent).toContain('No agent activity yet');
+    expect(view.querySelector('runtime-devices')?.textContent).not.toContain('dev_stale');
   });
 
   it('reloads a live projection and opens fresh SSE when leaving same-Task history', async () => {
@@ -155,5 +156,151 @@ describe('Runtime Task detail shell', () => {
     const destroy = vi.spyOn(playback, 'destroy');
     view.remove();
     expect(destroy).toHaveBeenCalledOnce();
+  });
+
+  it('keeps Devices mounted across same-level Loop and Flow tab navigation', async () => {
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
+    await mount();
+    const devices = view.querySelector('runtime-devices');
+    expect(devices).not.toBeNull();
+    expect(view.querySelector('runtime-loop')).not.toBeNull();
+
+    view.querySelector<HTMLButtonElement>('button[data-view="flow"]')!.click();
+    await view.updateComplete;
+
+    expect(view.querySelector('runtime-devices')).toBe(devices);
+    expect(view.querySelector('runtime-flow')).not.toBeNull();
+    expect(view.querySelector('runtime-loop')).toBeNull();
+    expect(window.location.hash).toBe('#/runtime/tasks/task_1?view=flow');
+  });
+
+  it('shares clamping, ARIA values, and persistence across seam keyboard input and collapse', async () => {
+    vi.stubGlobal('innerWidth', 1200);
+    localStorage.setItem('runtime.devices.width', '360');
+    localStorage.setItem('runtime.devices.expanded', 'true');
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
+    await mount();
+    const seam = view.querySelector<HTMLElement>('[role="separator"]')!;
+    const key = async (key: string) => {
+      seam.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      await view.updateComplete;
+    };
+
+    expect(seam.getAttribute('aria-orientation')).toBe('vertical');
+    expect(seam.getAttribute('aria-valuemin')).toBe('360');
+    expect(seam.getAttribute('aria-valuemax')).toBe('900');
+    await key('ArrowRight');
+    expect(seam.getAttribute('aria-valuenow')).toBe('384');
+    expect(localStorage.getItem('runtime.devices.width')).toBe('384');
+    await key('ArrowLeft');
+    await key('ArrowLeft');
+    expect(seam.getAttribute('aria-valuenow')).toBe('360');
+    for (let index = 0; index < 30; index += 1) await key('ArrowRight');
+    expect(seam.getAttribute('aria-valuenow')).toBe('900');
+    expect(localStorage.getItem('runtime.devices.width')).toBe('900');
+    const input = document.createElement('input');
+    view.append(input);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    await view.updateComplete;
+    expect(localStorage.getItem('runtime.devices.width')).toBe('900');
+    input.remove();
+
+    view.querySelector<HTMLButtonElement>('button[aria-controls="runtime-devices-panel"]')!.click();
+    await view.updateComplete;
+    expect(localStorage.getItem('runtime.devices.expanded')).toBe('false');
+    expect(view.querySelector('runtime-devices')).not.toBeNull();
+    expect(view.querySelector<HTMLElement>('#runtime-devices-panel')!.style.width).toBe('36px');
+  });
+
+  it('clamps pointer drags and releases pointer capture on completion and cancellation', async () => {
+    vi.stubGlobal('innerWidth', 1200);
+    localStorage.setItem('runtime.devices.width', '400');
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
+    await mount();
+    const seam = view.querySelector<HTMLElement>('[role="separator"]')!;
+    const setCapture = vi.fn();
+    const releaseCapture = vi.fn();
+    seam.setPointerCapture = setCapture;
+    seam.releasePointerCapture = releaseCapture;
+    const pointer = (type: string, clientX: number) => {
+      const event = new Event(type, { bubbles: true });
+      Object.defineProperties(event, { pointerId: { value: 7 }, clientX: { value: clientX }, button: { value: 0 } });
+      seam.dispatchEvent(event);
+    };
+
+    pointer('pointerdown', 400);
+    pointer('pointermove', 350);
+    pointer('pointerup', 350);
+    expect(setCapture).toHaveBeenCalledWith(7);
+    expect(releaseCapture).toHaveBeenCalledWith(7);
+    expect(localStorage.getItem('runtime.devices.width')).toBe('450');
+
+    pointer('pointerdown', 350);
+    pointer('pointermove', 1000);
+    pointer('pointercancel', 1000);
+    expect(localStorage.getItem('runtime.devices.width')).toBe('360');
+    expect(releaseCapture).toHaveBeenCalledTimes(2);
+    pointer('pointermove', 0);
+    expect(localStorage.getItem('runtime.devices.width')).toBe('360');
+  });
+
+  it('expands and focuses a located device without entering history', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({
+      matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    }));
+    localStorage.setItem('runtime.devices.expanded', 'false');
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
+    await mount();
+    streamCallbacks.event({
+      cursor: 1, eventId: 'event_1', eventType: 'read_device', occurredAt: '2026-10-27T10:01:00Z',
+      workspaceId: 'ws_1', taskId: 'task_1', runId: null, toolCallId: null, jobId: null,
+      approvalId: null, deviceId: 'dev_1', sourceId: null, sourceSeq: null, evidenceId: null, data: {},
+    } satisfies RuntimeEvent);
+    await view.updateComplete;
+    const card = view.querySelector<HTMLElement>('[data-device-card][data-device-id="dev_1"]')!;
+    const scroll = vi.fn();
+    card.scrollIntoView = scroll;
+    const focus = vi.spyOn(card.querySelector<HTMLElement>('h3')!, 'focus');
+
+    view.querySelector<HTMLButtonElement>('runtime-loop button[data-device-id="dev_1"]')!.click();
+    await view.updateComplete;
+
+    expect(localStorage.getItem('runtime.devices.expanded')).toBe('true');
+    expect(window.location.hash).toContain('device=dev_1');
+    expect(window.location.hash).not.toContain('event=');
+    expect(scroll).toHaveBeenCalledWith({ behavior: 'auto', block: 'nearest' });
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it('sets event only for a selected Flow event', async () => {
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
+    await mount();
+    streamCallbacks.event({
+      cursor: 1, eventId: 'event_1', eventType: 'read_device', occurredAt: '2026-10-27T10:01:00Z',
+      workspaceId: 'ws_1', taskId: 'task_1', runId: null, toolCallId: null, jobId: null,
+      approvalId: null, deviceId: 'dev_1', sourceId: null, sourceSeq: null, evidenceId: null, data: {},
+    } satisfies RuntimeEvent);
+    await view.updateComplete;
+    view.querySelector<HTMLButtonElement>('button[data-view="flow"]')!.click();
+    await view.updateComplete;
+    view.querySelector<HTMLButtonElement>('runtime-flow button[data-event-id="event_1"]')!.click();
+
+    expect(window.location.hash).toContain('view=flow');
+    expect(window.location.hash).toContain('event=event_1');
+    await view.updateComplete;
+    await Promise.resolve();
+    await view.updateComplete;
+    expect(connect).toHaveBeenCalledOnce();
+  });
+
+  it('refreshes through the existing API without opening a second stream', async () => {
+    get.mockResolvedValue({ code: 0, msg: '', result: snapshot() });
+    await mount();
+    view.querySelector('runtime-loop')!.dispatchEvent(new CustomEvent('refresh-request', { bubbles: true, composed: true }));
+    await Promise.resolve();
+    await view.updateComplete;
+
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(connect).toHaveBeenCalledOnce();
   });
 });

@@ -1,0 +1,27 @@
+runtime-loop { display: block; min-width: 0; }
+.runtime-loop { display: grid; gap: var(--space-3); }
+.runtime-loop h2 { margin: 0; font-size: 18px; }
+.runtime-loop__jobs, .runtime-loop__steps { display: grid; gap: var(--space-2); }
+.tool-card, .runtime-loop__step {
+  padding: var(--space-3);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: var(--glass-bg);
+}
+.tool-card > header, .runtime-loop__step > header { display: flex; justify-content: space-between; gap: var(--space-3); }
+.tool-card > header span, .runtime-loop__step > header span { color: var(--muted); font-size: 12px; }
+.runtime-loop__device, .runtime-loop__evidence {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  text-align: left;
+}
+.runtime-loop__evidence-list { display: grid; gap: var(--space-2); }
+.runtime-loop__evidence { display: grid; gap: var(--space-1); padding: var(--space-2); }
+.runtime-loop__evidence small, .runtime-loop__empty { color: var(--muted); }
+.runtime-loop pre { max-width: 100%; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) {
+  runtime-loop *, runtime-loop *::before, runtime-loop *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
