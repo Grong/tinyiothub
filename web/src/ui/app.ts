@@ -8,6 +8,7 @@ import './components/theme-toggle.js';
 import './components/toast.js';
 import { error as toastError } from './components/toast.js';
 import { thingCache } from '../stores/thing-cache.js';
+import { parseRuntimeHash, type RuntimeRoute } from './views/runtime-url-state.js';
 
 // Public / first-screen views — eagerly loaded
 import './views/login.js';
@@ -38,6 +39,9 @@ const lazyViews: Record<string, () => Promise<void>> = {
   heartbeat: () => import('./views/heartbeat.js').then(() => {}),
   'ai-ops': () => import('./views/ai-ops.js').then(() => {}),
   'run-detail': () => import('./views/run-detail.js').then(() => {}),
+  runtime: () => import('./views/runtime-list.js').then(() => {}),
+  'runtime-new': () => import('./views/runtime-new.js').then(() => {}),
+  'runtime-task': () => import('./views/runtime-task.js').then(() => {}),
 };
 
 interface NavItem {
@@ -173,6 +177,9 @@ export class TinyIoTHubApp extends LitElement {
   @state() loadError: string | null = null;
   /** T13：run 详情页 hash 路由参数（#/ai-ops/runs/{id}；id 容忍冒号如 patrol:p1） */
   @state() runDetailId = '';
+  /** Runtime Workbench remains default-off until its host supplies the workspace flag. */
+  @state() runtimeWorkbenchEnabled = false;
+  @state() runtimeRoute: RuntimeRoute | null = null;
   /** E4：处置中心未读角标（needsYou 计数；「例外响亮」的前提是例外能到人） */
   @state() dispositionNeedsYou = 0;
 
@@ -318,6 +325,24 @@ export class TinyIoTHubApp extends LitElement {
   }
 
   handleRoute() {
+    // Runtime uses explicit hash routes so query-only history state never enters pathname routing.
+    const runtimeRoute = parseRuntimeHash(window.location.hash);
+    if (runtimeRoute && this.runtimeWorkbenchEnabled) {
+      if (!this.isAuthenticated) {
+        this.navigate('login');
+        return;
+      }
+      this.runtimeRoute = runtimeRoute;
+      this.currentRoute = runtimeRoute.name === 'task'
+        ? 'runtime-task'
+        : runtimeRoute.name === 'new'
+          ? 'runtime-new'
+          : 'runtime';
+      this._ensureViewLoaded(this.currentRoute);
+      return;
+    }
+    this.runtimeRoute = null;
+
     // T13：hash 路由 #/ai-ops/runs/{id}（卡片层「查看完整轨迹」链接）。
     // id 容忍冒号（patrol 提案兜底用 brain event id，如 patrol:p1——T12 评审 M-1）。
     const runMatch = window.location.hash.match(/^#\/ai-ops\/runs\/(.+)$/);
@@ -502,7 +527,7 @@ export class TinyIoTHubApp extends LitElement {
           ${this.renderNav()}
         </nav>
         <div class="content ${this.currentRoute === 'workspace' ? 'content--workspace' : this.currentRoute === 'ai-ops' ? 'content--heartbeat' : ''}" role="main" id="main-content">
-          ${this.currentRoute.startsWith('things/') || this.currentRoute === 'chat' || this.currentRoute === 'workspace' || this.currentRoute === 'ai-ops' || this.currentRoute === 'run-detail'
+          ${this.currentRoute.startsWith('things/') || this.currentRoute === 'chat' || this.currentRoute === 'workspace' || this.currentRoute === 'ai-ops' || this.currentRoute === 'run-detail' || this.currentRoute.startsWith('runtime')
             ? nothing
             : html`
                 <section class="content-header">
@@ -675,9 +700,19 @@ export class TinyIoTHubApp extends LitElement {
     if (base === 'driver-health') return html`<view-driver-health></view-driver-health>`;
     if (base === 'memory-dashboard') return html`<view-memory-dashboard></view-memory-dashboard>`;
     if (base === 'workspace') return html`<view-workspace></view-workspace>`;
-    if (base === 'ai-ops') return html`<view-ai-ops></view-ai-ops>`;
+    if (base === 'ai-ops') return html`<view-ai-ops .runtimeWorkbenchEnabled=${this.runtimeWorkbenchEnabled}></view-ai-ops>`;
     if (base === 'run-detail')
       return html`<view-run-detail .runId=${this.runDetailId}></view-run-detail>`;
+    if (base === 'runtime') return html`<view-runtime-list></view-runtime-list>`;
+    if (base === 'runtime-new') return html`<view-runtime-new></view-runtime-new>`;
+    if (base === 'runtime-task' && this.runtimeRoute?.name === 'task') {
+      return html`<view-runtime-task
+        .taskId=${this.runtimeRoute.taskId}
+        .view=${this.runtimeRoute.view}
+        .device=${this.runtimeRoute.device}
+        .history=${this.runtimeRoute.history}
+      ></view-runtime-task>`;
+    }
     return html`<div style="padding: 40px; text-align: center; color: var(--muted);">
       页面不存在
     </div>`;

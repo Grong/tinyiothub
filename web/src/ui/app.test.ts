@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import "./app.js";
+import "./views/runtime-list.js";
+import "./views/runtime-new.js";
+import "./views/runtime-task.js";
 
 function makeApp(authenticated: boolean) {
   // Not connected to the DOM: connectedCallback (auth check, user info fetch)
@@ -28,6 +31,52 @@ describe("app router root path", () => {
   it("still guards protected routes for anonymous users", () => {
     window.history.pushState({}, "", "/dashboard");
     const el = makeApp(false);
+    el.handleRoute();
+    expect(el.currentRoute).toBe("login");
+  });
+});
+
+describe("app router · Runtime hash routes (default-off Workbench)", () => {
+  afterEach(() => {
+    window.history.pushState({}, "", "/");
+  });
+
+  it("does not register #/runtime while runtime_workbench_enabled is false", () => {
+    window.history.pushState({}, "", "/dashboard");
+    window.location.hash = "#/runtime";
+    const el = makeApp(true);
+    el.handleRoute();
+    expect(el.runtimeWorkbenchEnabled).toBe(false);
+    expect(el.currentRoute).toBe("dashboard");
+    expect(el.runtimeRoute).toBeNull();
+  });
+
+  it("routes list/new/detail explicitly only when the Workbench flag is true", () => {
+    const el = makeApp(true);
+    el.runtimeWorkbenchEnabled = true;
+
+    window.history.pushState({}, "", "/dashboard");
+    window.location.hash = "#/runtime";
+    el.handleRoute();
+    expect(el.currentRoute).toBe("runtime");
+
+    window.location.hash = "#/runtime/new";
+    el.handleRoute();
+    expect(el.currentRoute).toBe("runtime-new");
+
+    window.location.hash = "#/runtime/tasks/task%3A1?view=flow&device=dev%2F1&event=event_2";
+    el.handleRoute();
+    expect(el.currentRoute).toBe("runtime-task");
+    expect(el.runtimeRoute).toMatchObject({
+      name: "task", taskId: "task:1", view: "flow", device: "dev/1", history: { event: "event_2" },
+    });
+  });
+
+  it("still requires authentication when Runtime is enabled", () => {
+    window.history.pushState({}, "", "/dashboard");
+    window.location.hash = "#/runtime";
+    const el = makeApp(false);
+    el.runtimeWorkbenchEnabled = true;
     el.handleRoute();
     expect(el.currentRoute).toBe("login");
   });

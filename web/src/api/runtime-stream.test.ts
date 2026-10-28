@@ -1,0 +1,202 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { connectRuntimeStream, type RuntimeStreamCallbacks } from './runtime-stream.js';
+import type { RuntimeEvent, RuntimeTask, TaskProjection } from '../types/runtime.js';
+
+function task(over: Partial<RuntimeTask> = {}): RuntimeTask {
+  return {
+    id: 'task_1', workspaceId: 'ws_1', idempotencyKey: 'key_1', objective: 'Inspect pumps',
+    sessionKey: null, createdBy: 'user_1', status: 'active', currentRunId: null, stateVersion: 0,
+    createdAt: '2026-10-27T10:00:00Z', updatedAt: '2026-10-27T10:00:00Z', endedAt: null, ...over,
+  };
+}
+
+function snapshotWithNoDevices(over: Partial<TaskProjection> = {}): TaskProjection {
+  return {
+    task: task(), runs: [], jobs: [], approvals: [], watches: [], evidence: [], summary: null,
+    cursor: 0, ...over,
+  };
+}
+
+function runtimeEvent(eventId: string, eventType: string, data: Record<string, unknown> = {},
+  over: Partial<RuntimeEvent> = {}): RuntimeEvent {
+  return {
+    cursor: Number(eventId.replace(/\D/g, '')) || 1, eventId, eventType,
+    occurredAt: '2026-10-27T10:01:00Z', workspaceId: 'ws_1', taskId: 'task_1', runId: null,
+    toolCallId: null, jobId: null, approvalId: null, deviceId: null, sourceId: null,
+    sourceSeq: null, evidenceId: null, data, ...over,
+  };
+}
+
+function frame(name: string, data: unknown): string {
+  return `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+function controlledResponse() {
+  const encoder = new TextEncoder();
+  let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    start(value) { controller = value; },
+    cancel() { cancelled = true; },
+  });
+  return {
+    response: new Response(body, { status: 200 }),
+    push(text: string) { controller?.enqueue(encoder.encode(text)); },
+    error() { controller?.error(new Error('aborted')); },
+    get cancelled() { return cancelled; },
+  };
+}
+
+function streamingFetch() {
+  const streams: ReturnType<typeof controlledResponse>[] = [];
+  const mock = vi.fn((_url: string, init?: RequestInit) => {
+    const stream = controlledResponse();
+    streams.push(stream);
+    init?.signal?.addEventListener('abort', () => stream.error());
+    return Promise.resolve(stream.response);
+  });
+  return { mock, streams };
+}
+
+function callbacks(): RuntimeStreamCallbacks & { calls: string[] } {
+  const calls: string[] = [];
+  return {
+    calls,
+    snapshot: (_projection, cursor) => calls.push(`snapshot:${cursor}`),
+    event: (event) => calls.push(`event:${event.eventId}`),
+    resync: (_projection, cursor) => calls.push(`resync:${cursor}`),
+    connection: (state) => calls.push(`connection:${state}`),
+  };
+}
+
+async function flush(): Promise<void> {
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+beforeEach(() => {
+  sessionStorage.setItem('auth-token', 'secret-token');
+  localStorage.setItem('workspace-id', 'header-workspace');
+});
+
+afterEach(() => {
+  sessionStorage.clear();
+  localStorage.clear();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+describe('Runtime SSE cursor client', () => {
+  it('sends auth/workspace headers and handles split snapshot, event and resync frames', async () => {
+    const { mock, streams } = streamingFetch();
+    vi.stubGlobal('fetch', mock);
+    const handler = callbacks();
+    const close = connectRuntimeStream({
+      workspaceId: 'ws/1', taskId: 'task:1', after: 3, callbacks: handler,
+    });
+    await flush();
+
+    const [url, init] = mock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/v1/workspaces/ws%2F1/agent/tasks/task%3A1/stream?after=3');
+    expect(new Headers(init.headers).get('Authorization')).toBe('Bearer secret-token');
+    expect(new Headers(init.headers).get('X-Workspace-Id')).toBe('header-workspace');
+
+    const snapshot = snapshotWithNoDevices({ task: task({ id: 'task:1' }), cursor: 4 });
+    streams[0].push(`event: snapshot\ndata: ${JSON.stringify({ snapshot, cursor: 4 }).slice(0, 40)}`);
+    await flush();
+    expect(handler.calls.filter((call) => call.startsWith('snapshot'))).toEqual([]);
+    // Send a complete frame instead: the partial frame above intentionally remains buffered.
+    const remainder = JSON.stringify({ snapshot, cursor: 4 }).slice(40);
+    streams[0].push(`${remainder}\n\n`);
+    const first = runtimeEvent('event_5', 'read_device', {}, { cursor: 5, taskId: 'task:1' });
+    streams[0].push(frame('event', { event: first }) + frame('event', { event: first }));
+    streams[0].push(frame('resync', {
+      snapshot: snapshotWithNoDevices({ task: task({ id: 'task:1' }), cursor: 8 }), cursor: 8, reason: 'lagged',
+    }));
+    await flush();
+
+    expect(handler.calls).toEqual([
+      'connection:connecting', 'connection:online', 'snapshot:4', 'event:event_5', 'resync:8',
+    ]);
+    close();
+    expect((mock.mock.calls[0] as unknown as [string, RequestInit])[1].signal?.aborted).toBe(true);
+  });
+
+  it('reconnects from the last cursor with bounded exponential backoff', async () => {
+    vi.useFakeTimers();
+    const first = controlledResponse();
+    const second = controlledResponse();
+    const mock = vi.fn()
+      .mockImplementationOnce(() => Promise.resolve(first.response))
+      .mockImplementation(() => Promise.resolve(second.response));
+    vi.stubGlobal('fetch', mock);
+    const close = connectRuntimeStream({
+      workspaceId: 'ws', taskId: 'task_1', callbacks: callbacks(),
+      baseDelayMs: 1000, maxDelayMs: 2000, jitterMs: 0,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    first.push(frame('event', { event: runtimeEvent('event_7', 'task.paused', {}, { cursor: 7 }) }));
+    await vi.advanceTimersByTimeAsync(0);
+    first.error();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(mock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(mock).toHaveBeenCalledTimes(2);
+    expect(mock.mock.calls[1][0]).toContain('after=7');
+    close();
+  });
+
+  it('drops stale-generation responses and events after a Task switch', async () => {
+    const { mock, streams } = streamingFetch();
+    vi.stubGlobal('fetch', mock);
+    let current = true;
+    const handler = callbacks();
+    const close = connectRuntimeStream({
+      workspaceId: 'ws', taskId: 'old', callbacks: handler, isCurrent: () => current,
+    });
+    await flush();
+    current = false;
+    streams[0].push(frame('snapshot', { snapshot: snapshotWithNoDevices(), cursor: 0 }));
+    streams[0].push(frame('event', { event: runtimeEvent('event_1', 'read_device') }));
+    await flush();
+
+    expect(handler.calls).toEqual(['connection:connecting', 'connection:online']);
+    close();
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops frames for another Task without logging credentials or objectives', async () => {
+    const { mock, streams } = streamingFetch();
+    vi.stubGlobal('fetch', mock);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const handler = callbacks();
+    const close = connectRuntimeStream({ workspaceId: 'ws', taskId: 'task_1', callbacks: handler });
+    await flush();
+    streams[0].push(frame('snapshot', {
+      snapshot: snapshotWithNoDevices({ task: { ...snapshotWithNoDevices().task, id: 'other', objective: 'private objective' } }),
+      cursor: 0,
+    }));
+    streams[0].push(frame('event', {
+      event: runtimeEvent('event_1', 'read_device', { text: 'private objective' }, { taskId: 'other' }),
+    }));
+    await flush();
+
+    expect(handler.calls).toEqual(['connection:connecting', 'connection:online']);
+    expect(log).not.toHaveBeenCalled();
+    close();
+  });
+
+  it('aborts reconnect sleep and reader work on close', async () => {
+    vi.useFakeTimers();
+    const mock = vi.fn(() => Promise.reject(new Error('offline')));
+    vi.stubGlobal('fetch', mock);
+    const close = connectRuntimeStream({
+      workspaceId: 'ws', taskId: 'task', callbacks: callbacks(), jitterMs: 0,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    close();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+});

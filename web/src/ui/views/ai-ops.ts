@@ -4,7 +4,7 @@
 // Sections: 今日摘要 + 实时 Feed | 待审批 + 执行历史 | 信任配置 + 知识/记忆
 
 import { LitElement, html, nothing } from "lit";
-import { customElement, state } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { apiGet, apiPost, apiPut } from "../../api/client.js";
 import { md } from "../shared/markdown.js";
@@ -80,6 +80,7 @@ interface AISummary {
 
 @customElement("view-ai-ops")
 export class ViewAiOps extends LitElement {
+  @property({ type: Boolean }) runtimeWorkbenchEnabled = false;
   @state() private selectedWsId = "";
   @state() private wsLoading = true;
 
@@ -476,6 +477,9 @@ export class ViewAiOps extends LitElement {
 
     return html`
       <div class="ao-page">
+        ${this.runtimeWorkbenchEnabled
+          ? html`<a class="ao-btn" href="#/runtime" style="display: inline-block; margin-bottom: 16px; text-decoration: none;">Runtime tasks</a>`
+          : nothing}
         <!-- Top row: summary stats -->
         <div class="ao-top-row">
           ${this.renderSummaryCard()}
