@@ -14,6 +14,7 @@ function snapshot(jobs: RuntimeJob[] = []): TaskProjection {
       createdAt: '2026-10-27T10:00:00Z', updatedAt: '2026-10-27T10:00:00Z', endedAt: null,
     },
     runs: [], jobs, approvals: [], watches: [], evidence: [], summary: null, cursor: 0,
+    associations: [], devices: [],
   };
 }
 
@@ -99,5 +100,46 @@ describe('runtime-loop', () => {
     expect(evidence?.textContent).toContain('Image evidence');
     evidence!.click();
     expect(locate.mock.calls[0][0].detail).toEqual({ deviceId: 'dev_1', evidenceId: 'evidence_1' });
+  });
+
+  it('fills ToolCard details from production-shaped live accepted and terminal events', async () => {
+    const projection = new RuntimeProjection(snapshot());
+    projection.apply(event({
+      eventId: 'job:job_live:accepted', eventType: 'job.accepted', cursor: 1,
+      jobId: 'job_live', deviceId: 'dev_1', toolCallId: 'call_live',
+      data: { state: 'accepted', tool: 'set_device', argsJson: { value: 21 } },
+    }));
+    projection.apply(event({
+      eventId: 'job:job_live:done', eventType: 'job.done', cursor: 2,
+      jobId: 'job_live', deviceId: 'dev_1', toolCallId: 'call_live',
+      data: { state: 'done', tool: 'set_device', argsJson: { value: 21 }, resultJson: { actual: 21 } },
+    }));
+    const loop = await mount(projection);
+    const card = loop.querySelector<HTMLElement>('[data-job-id="job_live"]');
+
+    expect(card?.querySelector('strong')?.textContent).toBe('set_device');
+    expect(card?.textContent).toContain('"value": 21');
+    expect(card?.textContent).toContain('"actual": 21');
+    expect(card?.textContent).not.toContain('Device job');
+  });
+
+  it('renders linked persisted image evidence after a snapshot reload without a transient event', async () => {
+    const projection = new RuntimeProjection(snapshot());
+    projection.replaceWithSnapshot({
+      ...projection.snapshot,
+      associations: [{ deviceId: 'dev_1', sourceIds: ['camera'] }],
+      evidence: [{
+        evidenceId: 'evidence_reload', mime: 'image/png', sourceSeq: 9, mediaTime: '2026-10-27T10:03:00Z',
+        deviceId: 'dev_1', sourceId: 'camera', taskId: 'task_1', runId: 'run_1', toolCallId: null, jobId: null,
+      }],
+    });
+    const loop = await mount(projection);
+    const locate = vi.fn();
+    loop.addEventListener('locate-device', locate);
+    const evidence = loop.querySelector<HTMLButtonElement>('button[data-evidence-id="evidence_reload"]');
+
+    expect(evidence).not.toBeNull();
+    evidence!.click();
+    expect(locate.mock.calls[0][0].detail).toEqual({ deviceId: 'dev_1', evidenceId: 'evidence_reload' });
   });
 });

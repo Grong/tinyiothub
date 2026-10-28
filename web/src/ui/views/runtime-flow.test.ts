@@ -13,7 +13,7 @@ function projectionWithEdges(): RuntimeProjection {
       sessionKey: null, createdBy: 'user_1', status: 'active', currentRunId: 'run_1', stateVersion: 0,
       createdAt: '2026-10-27T10:00:00Z', updatedAt: '2026-10-27T10:00:00Z', endedAt: null,
     },
-    runs: [], jobs: [], approvals: [], watches: [], evidence: [], summary: null, cursor: 0,
+    runs: [], jobs: [], approvals: [], watches: [], evidence: [], associations: [], devices: [], summary: null, cursor: 0,
   };
   const projection = new RuntimeProjection(snapshot);
   const base: RuntimeEvent = {

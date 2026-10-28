@@ -13,7 +13,24 @@ function projectionFromFixtureB(): RuntimeProjection {
       sessionKey: null, createdBy: 'user_1', status: 'active', currentRunId: null, stateVersion: 0,
       createdAt: '2026-10-27T10:00:00Z', updatedAt: '2026-10-27T10:00:00Z', endedAt: null,
     },
-    runs: [], jobs: [], approvals: [], watches: [], evidence: [], summary: null, cursor: 0,
+    runs: [], jobs: [], approvals: [], watches: [], evidence: [{
+      evidenceId: 'evidence_camera', mime: 'image/jpeg', sourceSeq: 4, mediaTime: '2026-10-27T10:01:30Z',
+      deviceId: 'fixture-b-camera', sourceId: 'still', taskId: 'task_b', runId: null, toolCallId: null, jobId: null,
+    }], summary: null, cursor: 0,
+    associations: [
+      { deviceId: 'fixture-b-camera', sourceIds: ['live'] },
+      { deviceId: 'fixture-b-valve', sourceIds: ['still'] },
+    ],
+    devices: [
+      {
+        deviceId: 'fixture-b-camera', health: 'ok', zone: 'North', position: 'rack-7',
+        sources: [{ id: 'live', dataKind: 'video' }, { id: 'still', dataKind: 'image' }], fields: [],
+      },
+      {
+        deviceId: 'fixture-b-valve', health: 'attention', zone: 'South', position: 'rack-8',
+        sources: [{ id: 'still', dataKind: 'image' }], fields: [],
+      },
+    ],
   };
   const projection = new RuntimeProjection(snapshot);
   const base: RuntimeEvent = {
@@ -51,7 +68,7 @@ describe('runtime-devices', () => {
     expect(devices.textContent).not.toContain('list-only-device');
   });
 
-  it('shows active job state and Ready/Busy without fake progress or invented declarations', async () => {
+  it('shows declaration-priority media, health/location, recent evidence, and active Job facts', async () => {
     const projection = projectionFromFixtureB();
     const running: RuntimeJob = {
       id: 'job_camera', workspaceId: 'ws_1', deviceId: 'fixture-b-camera', tool: 'read_device',
@@ -61,19 +78,52 @@ describe('runtime-devices', () => {
     };
     projection.replaceWithSnapshot({
       ...projection.snapshot,
-      jobs: [running, { ...running, id: 'job_valve_done', deviceId: 'fixture-b-valve', state: 'done' }],
+      jobs: [running],
     });
     const devices = await mount(projection);
-    const camera = devices.querySelector<HTMLElement>('[data-device-id="fixture-b-camera"]');
-    const valve = devices.querySelector<HTMLElement>('[data-device-id="fixture-b-valve"]');
+    const camera = devices.querySelector<HTMLElement>('[data-device-card][data-device-id="fixture-b-camera"]');
+    const valve = devices.querySelector<HTMLElement>('[data-device-card][data-device-id="fixture-b-valve"]');
 
     expect(camera?.textContent).toContain('Busy');
     expect(camera?.textContent).toContain('running');
+    expect(camera?.textContent).toContain('ok');
+    expect(camera?.textContent).toContain('North');
+    expect(camera?.textContent).toContain('rack-7');
+    expect(camera?.querySelector('[data-declaration-source]')?.textContent).toContain('live');
+    expect(camera?.querySelector('[data-declaration-source]')?.textContent).toContain('Video');
+    expect(camera?.querySelector('[data-recent-evidence]')?.textContent).toContain('evidence_camera');
     expect(valve?.textContent).toContain('Ready');
+    expect(valve?.querySelector('[data-declaration-source]')?.textContent).toContain('still');
+    expect(valve?.querySelector('[data-declaration-source]')?.textContent).toContain('Image');
     expect(devices.textContent).not.toContain('%');
-    expect(devices.textContent).toContain('Health unavailable');
-    expect(devices.textContent).toContain('Location unavailable');
-    expect(devices.textContent).toContain('Declaration media unavailable');
+  });
+
+  it('falls back to declared key fields, or the first three fields, without media', async () => {
+    const projection = projectionFromFixtureB();
+    projection.replaceWithSnapshot({
+      ...projection.snapshot,
+      jobs: [], evidence: [],
+      associations: [{ deviceId: 'fixture-b-fields', sourceIds: [] }],
+      devices: [{
+        deviceId: 'fixture-b-fields', health: 'bad', zone: null, position: 'panel-3',
+        sources: [{ id: 'telemetry', dataKind: 'values' }],
+        fields: [
+          { name: 'temperature', value: '21.5', unit: 'C' },
+          { name: 'humidity', value: '40', unit: '%RH' },
+          { name: 'pressure', value: null, unit: 'kPa' },
+        ],
+      }],
+    });
+    const devices = await mount(projection);
+    const card = devices.querySelector<HTMLElement>('[data-device-card]');
+
+    expect(card?.querySelector('[data-declaration-source]')).toBeNull();
+    expect(card?.textContent).toContain('temperature');
+    expect(card?.textContent).toContain('21.5 C');
+    expect(card?.textContent).toContain('humidity');
+    expect(card?.textContent).toContain('pressure');
+    expect(card?.textContent).toContain('Not reported');
+    expect(card?.textContent).toContain('panel-3');
   });
 
   it('emits device location and focuses the card heading with reduced-motion scrolling', async () => {

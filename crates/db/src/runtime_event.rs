@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tinyiothub_core::agent_task::{AgentTask, WakeDispatchState};
 use tinyiothub_core::device_job::DeviceJob;
-use tinyiothub_core::media::EvidenceRef;
+use tinyiothub_core::driver::declaration::DeviceDeclaration;
+use tinyiothub_core::driver::manifest::DriverManifest;
+use tinyiothub_core::media::DataKind;
 
 use crate::Db;
 use crate::error::{DbError, Result};
@@ -105,6 +107,29 @@ pub(crate) fn task_event(task: &AgentTask, event_type: &str, event_id: String) -
 }
 
 pub(crate) fn job_event(job: &DeviceJob, suffix: &str, data: Value) -> RuntimeEventInput {
+    let mut payload = serde_json::json!({
+        "id": job.id,
+        "workspaceId": job.workspace_id,
+        "deviceId": job.device_id,
+        "tool": job.tool,
+        "argsJson": job.args_json,
+        "state": job.state.as_str(),
+        "stopRequestedAt": job.stop_requested_at,
+        "progressJson": job.progress_json,
+        "resultJson": job.result_json,
+        "taskId": job.task_id,
+        "runId": job.run_id,
+        "toolCallId": job.tool_call_id,
+        "driverCallId": job.driver_call_id,
+        "timeoutMs": job.timeout_ms,
+        "startedAt": job.started_at,
+        "endedAt": job.ended_at,
+    });
+    if let (Some(payload), Some(data)) = (payload.as_object_mut(), data.as_object()) {
+        for (key, value) in data {
+            payload.insert(key.clone(), value.clone());
+        }
+    }
     RuntimeEventInput {
         event_id: format!("job:{}:{suffix}", job.id),
         event_type: format!("job.{suffix}"),
@@ -119,7 +144,7 @@ pub(crate) fn job_event(job: &DeviceJob, suffix: &str, data: Value) -> RuntimeEv
         source_id: None,
         source_seq: None,
         evidence_id: None,
-        data,
+        data: payload,
     }
 }
 
@@ -145,13 +170,107 @@ pub struct TaskWatchProjection {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TaskEvidenceProjection {
+    pub evidence_id: String,
+    pub mime: String,
+    pub source_seq: u64,
+    pub media_time: DateTime<Utc>,
+    pub device_id: String,
+    pub source_id: String,
+    pub task_id: Option<String>,
+    pub run_id: Option<String>,
+    pub tool_call_id: Option<String>,
+    pub job_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeDeviceAssociation {
+    pub device_id: String,
+    pub source_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeDeviceSource {
+    pub id: String,
+    pub data_kind: DataKind,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeDeviceField {
+    pub name: String,
+    pub value: Option<String>,
+    pub unit: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeDeviceProjection {
+    pub device_id: String,
+    pub health: String,
+    pub zone: Option<String>,
+    pub position: Option<String>,
+    pub sources: Vec<RuntimeDeviceSource>,
+    pub fields: Vec<RuntimeDeviceField>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskJobProjection {
+    pub id: String,
+    pub workspace_id: String,
+    pub device_id: String,
+    pub tool: String,
+    pub args_json: Value,
+    pub state: tinyiothub_core::device_job::DeviceJobState,
+    pub stop_requested_at: Option<DateTime<Utc>>,
+    pub progress_json: Option<Value>,
+    pub result_json: Option<Value>,
+    pub task_id: Option<String>,
+    pub run_id: Option<String>,
+    pub tool_call_id: Option<String>,
+    pub driver_call_id: Option<String>,
+    pub timeout_ms: u64,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: Option<DateTime<Utc>>,
+}
+
+impl From<DeviceJob> for TaskJobProjection {
+    fn from(job: DeviceJob) -> Self {
+        Self {
+            id: job.id,
+            workspace_id: job.workspace_id,
+            device_id: job.device_id,
+            tool: job.tool,
+            args_json: job.args_json,
+            state: job.state,
+            stop_requested_at: job.stop_requested_at,
+            progress_json: job.progress_json,
+            result_json: job.result_json,
+            task_id: job.task_id,
+            run_id: job.run_id,
+            tool_call_id: job.tool_call_id,
+            driver_call_id: job.driver_call_id,
+            timeout_ms: job.timeout_ms,
+            started_at: job.started_at,
+            ended_at: job.ended_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskProjection {
     pub task: AgentTask,
     pub runs: Vec<TaskRunProjection>,
-    pub jobs: Vec<DeviceJob>,
+    pub jobs: Vec<TaskJobProjection>,
     pub approvals: Vec<tinyiothub_core::task_approval::TaskApproval>,
     pub watches: Vec<TaskWatchProjection>,
-    pub evidence: Vec<EvidenceRef>,
+    pub evidence: Vec<TaskEvidenceProjection>,
+    pub associations: Vec<RuntimeDeviceAssociation>,
+    pub devices: Vec<RuntimeDeviceProjection>,
     pub summary: Option<String>,
     pub cursor: i64,
 }
@@ -175,6 +294,43 @@ struct RuntimeLedgerRow {
     workspace_id: String,
     ts: String,
     payload: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct RuntimeThingFactsRow {
+    id: String,
+    state: i32,
+    zone_ref: Option<String>,
+    position: Option<String>,
+}
+
+fn add_device_reference(
+    associations: &mut Vec<RuntimeDeviceAssociation>,
+    positions: &mut std::collections::HashMap<String, usize>,
+    device_id: &str,
+    source_id: Option<&str>,
+) {
+    if device_id.trim().is_empty() {
+        return;
+    }
+    let index = match positions.get(device_id).copied() {
+        Some(index) => index,
+        None => {
+            let index = associations.len();
+            positions.insert(device_id.to_string(), index);
+            associations.push(RuntimeDeviceAssociation {
+                device_id: device_id.to_string(),
+                source_ids: Vec::new(),
+            });
+            index
+        }
+    };
+    if let Some(source_id) = source_id.filter(|id| !id.trim().is_empty()) {
+        let sources = &mut associations[index].source_ids;
+        if !sources.iter().any(|existing| existing == source_id) {
+            sources.push(source_id.to_string());
+        }
+    }
 }
 
 fn internal(error: impl std::fmt::Display) -> DbError {
@@ -407,9 +563,23 @@ impl Db {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        let evidence_rows = sqlx::query_as::<_, (String, String, i64, DateTime<Utc>)>(
-            "SELECT id, mime, source_seq, media_time FROM media_evidence
-             WHERE workspace_id = ? AND task_id = ? ORDER BY created_at, id",
+        let evidence_rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                i64,
+                DateTime<Utc>,
+                String,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+            ),
+        >(
+            "SELECT id, mime, source_seq, media_time, device_id, source_id, task_id, run_id, tool_call_id, job_id
+             FROM media_evidence WHERE workspace_id = ? AND task_id = ? ORDER BY created_at, id",
         )
         .bind(workspace_id)
         .bind(task_id)
@@ -417,15 +587,200 @@ impl Db {
         .await?;
         let evidence = evidence_rows
             .into_iter()
-            .map(|(evidence_id, mime, source_seq, media_time)| {
-                Ok(EvidenceRef {
+            .map(
+                |(
                     evidence_id,
                     mime,
-                    source_seq: u64::try_from(source_seq).map_err(internal)?,
+                    source_seq,
                     media_time,
-                })
-            })
+                    device_id,
+                    source_id,
+                    task_id,
+                    run_id,
+                    tool_call_id,
+                    job_id,
+                )| {
+                    Ok(TaskEvidenceProjection {
+                        evidence_id,
+                        mime,
+                        source_seq: u64::try_from(source_seq).map_err(internal)?,
+                        media_time,
+                        device_id,
+                        source_id,
+                        task_id,
+                        run_id,
+                        tool_call_id,
+                        job_id,
+                    })
+                },
+            )
             .collect::<Result<Vec<_>>>()?;
+
+        let event_rows = sqlx::query_as::<_, RuntimeLedgerRow>(
+            "SELECT id, workspace_id, ts, payload FROM hub_ledger
+             WHERE workspace_id = ? AND kind = ? AND json_extract(payload, '$.taskId') = ? ORDER BY id",
+        )
+        .bind(workspace_id)
+        .bind(RUNTIME_EVENT_KIND)
+        .bind(task_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let mut associations = Vec::new();
+        let mut association_positions = std::collections::HashMap::new();
+        let mut current_values = std::collections::HashMap::new();
+        for row in event_rows {
+            let event = decode_event(row)?;
+            if let Some(device_id) = event.device_id.as_deref() {
+                add_device_reference(
+                    &mut associations,
+                    &mut association_positions,
+                    device_id,
+                    event.source_id.as_deref(),
+                );
+                if let Some(source_ids) = event.data.get("sourceIds").and_then(Value::as_array) {
+                    for source_id in source_ids.iter().filter_map(Value::as_str) {
+                        add_device_reference(
+                            &mut associations,
+                            &mut association_positions,
+                            device_id,
+                            Some(source_id),
+                        );
+                    }
+                }
+                if let Some(state) = event.data.get("state").and_then(Value::as_object) {
+                    for (name, value) in state {
+                        let value = match value {
+                            Value::String(value) => Some(value.clone()),
+                            Value::Null => None,
+                            value => Some(value.to_string()),
+                        };
+                        if let Some(value) = value {
+                            current_values.insert((device_id.to_string(), name.clone()), value);
+                        }
+                    }
+                }
+            }
+        }
+        // Compatibility fallback for facts written before their reference events existed.
+        for job in &jobs {
+            add_device_reference(&mut associations, &mut association_positions, &job.device_id, None);
+        }
+        for approval in &approvals {
+            add_device_reference(&mut associations, &mut association_positions, &approval.device_id, None);
+        }
+        for watch in &watches {
+            if let Some(device_id) = watch.condition.get("thingId").and_then(Value::as_str) {
+                add_device_reference(&mut associations, &mut association_positions, device_id, None);
+            }
+        }
+        for item in &evidence {
+            add_device_reference(
+                &mut associations,
+                &mut association_positions,
+                &item.device_id,
+                Some(&item.source_id),
+            );
+        }
+
+        let thing_rows = sqlx::query_as::<_, RuntimeThingFactsRow>(
+            "SELECT id, state, zone_ref, position FROM things WHERE workspace_id = ?",
+        )
+        .bind(workspace_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let thing_facts = thing_rows
+            .into_iter()
+            .map(|row| (row.id.clone(), row))
+            .collect::<std::collections::HashMap<_, _>>();
+        let declaration_rows = sqlx::query_as::<_, (String, String)>(
+            "SELECT thing_id, declaration_json FROM device_declarations WHERE workspace_id = ? AND status = 'active' ORDER BY thing_id, updated_at DESC",
+        )
+        .bind(workspace_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let mut declarations = std::collections::HashMap::new();
+        for (device_id, raw) in declaration_rows {
+            if let std::collections::hash_map::Entry::Vacant(entry) = declarations.entry(device_id)
+                && let Ok(declaration) = serde_json::from_str::<DeviceDeclaration>(&raw)
+            {
+                entry.insert(declaration);
+            }
+        }
+        let manifest_rows = sqlx::query_as::<_, (String, String, String)>(
+            "SELECT driver_name, driver_version, manifest_json FROM driver_declarations WHERE workspace_id = ? AND status = 'active'",
+        )
+        .bind(workspace_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let manifests = manifest_rows
+            .into_iter()
+            .filter_map(|(driver, version, raw)| {
+                serde_json::from_str::<DriverManifest>(&raw)
+                    .ok()
+                    .map(|manifest| ((driver, version), manifest))
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        let devices = associations
+            .iter()
+            .map(|association| {
+                let facts = thing_facts.get(&association.device_id);
+                let health = match facts.map(|facts| facts.state) {
+                    Some(1) => "ok",
+                    Some(0) => "attention",
+                    Some(2 | 3) => "bad",
+                    _ => "unknown",
+                }
+                .to_string();
+                let declaration = declarations.get(&association.device_id);
+                let sources = declaration
+                    .and_then(|declaration| {
+                        manifests.get(&(declaration.driver.clone(), declaration.driver_version.clone()))
+                    })
+                    .map(|manifest| {
+                        manifest
+                            .sources
+                            .iter()
+                            .map(|source| RuntimeDeviceSource {
+                                id: source.id.clone(),
+                                data_kind: source.data_kind.clone(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let selected_fields = declaration
+                    .map(|declaration| {
+                        let key_fields = declaration
+                            .state_fields
+                            .iter()
+                            .filter(|field| field.key.is_some())
+                            .collect::<Vec<_>>();
+                        if key_fields.is_empty() {
+                            declaration.state_fields.iter().take(3).collect::<Vec<_>>()
+                        } else {
+                            key_fields
+                        }
+                    })
+                    .unwrap_or_default();
+                let fields = selected_fields
+                    .into_iter()
+                    .map(|field| RuntimeDeviceField {
+                        name: field.name.clone(),
+                        value: current_values
+                            .get(&(association.device_id.clone(), field.name.clone()))
+                            .cloned(),
+                        unit: field.unit.clone(),
+                    })
+                    .collect();
+                RuntimeDeviceProjection {
+                    device_id: association.device_id.clone(),
+                    health,
+                    zone: facts.and_then(|facts| facts.zone_ref.clone()),
+                    position: facts.and_then(|facts| facts.position.clone()),
+                    sources,
+                    fields,
+                }
+            })
+            .collect();
         let summary = runs
             .iter()
             .rev()
@@ -435,10 +790,12 @@ impl Db {
         Ok(Some(TaskProjection {
             task,
             runs,
-            jobs,
+            jobs: jobs.into_iter().map(TaskJobProjection::from).collect(),
             approvals,
             watches,
             evidence,
+            associations,
+            devices,
             summary,
             cursor,
         }))
@@ -746,6 +1103,193 @@ mod tests {
                 .expect("missing")
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn projection_enriches_declaration_cards_and_preserves_cross_type_first_references() {
+        let pool = crate::test_helpers::test_pool().await;
+        seed_workspace(&pool, "ws-1").await;
+        let db = Db::new(pool);
+        seed_task(&db, "ws-1", "task-1").await;
+        for (device_id, state, zone, position) in [
+            ("dev-direct", 1, "North", "rack-1"),
+            ("dev-watch", 0, "South", "rack-2"),
+            ("dev-approval", 1, "West", "rack-3"),
+            ("dev-job", 2, "East", "rack-4"),
+            ("dev-evidence", 1, "West", "rack-5"),
+        ] {
+            sqlx::query(
+                "INSERT INTO things (id, name, workspace_id, thing_type, state, zone_ref, position, driver_name)
+                 VALUES (?, ?, 'ws-1', 'device', ?, ?, ?, 'camera')",
+            )
+            .bind(device_id)
+            .bind(device_id)
+            .bind(state)
+            .bind(zone)
+            .bind(position)
+            .execute(db.pool())
+            .await
+            .expect("device");
+        }
+        let manifest = json!({
+            "manifestVersion":"1.0",
+            "identity":{"driver":"camera","version":"1.0.0","protocol":"demo","abiVersion":2},
+            "config":{"type":"object"},
+            "tools":[],
+            "stateFields":[
+                {"name":"temperature","type":"number","unit":"C","key":"primary"},
+                {"name":"humidity","type":"number"}
+            ],
+            "sources":[
+                {"id":"telemetry","kind":"poll","fields":["temperature"],"dataKind":"values"},
+                {"id":"preview","kind":"poll","fields":[],"dataKind":"image"},
+                {"id":"live","kind":"push","fields":[],"dataKind":"video"}
+            ],
+            "resources":[],"placement":{"mode":"runtime"},
+            "limits":{"maxConcurrentJobs":1,"maxCallsPerMin":60}
+        });
+        db.upsert_driver_declaration(&tinyiothub_core::driver::declaration::DriverDeclarationRecord {
+            workspace_id: "ws-1".into(),
+            driver_name: "camera".into(),
+            driver_version: "1.0.0".into(),
+            manifest_version: "1.0".into(),
+            manifest_json: manifest.to_string(),
+            manifest_hash: "hash".into(),
+            binary_hash: None,
+            status: "active".into(),
+            installed_at: "now".into(),
+        })
+        .await
+        .expect("manifest");
+        let declaration = tinyiothub_core::driver::declaration::DeviceDeclaration {
+            manifest_version: "1.0".into(),
+            driver: "camera".into(),
+            driver_version: "1.0.0".into(),
+            state_fields: serde_json::from_value(manifest["stateFields"].clone()).expect("fields"),
+            tools: vec![],
+        };
+        for device_id in ["dev-direct", "dev-watch", "dev-approval", "dev-job", "dev-evidence"] {
+            db.upsert_device_declaration(&tinyiothub_core::driver::declaration::DeviceDeclarationRecord {
+                workspace_id: "ws-1".into(),
+                thing_id: device_id.into(),
+                driver_name: "camera".into(),
+                driver_version: "1.0.0".into(),
+                declaration_json: serde_json::to_string(&declaration).expect("declaration"),
+                declaration_hash: "hash".into(),
+                status: "active".into(),
+                updated_at: "now".into(),
+            })
+            .await
+            .expect("device declaration");
+        }
+
+        let mut direct = event("direct-read", "task-1");
+        direct.event_type = "read_device".into();
+        direct.device_id = Some("dev-direct".into());
+        direct.source_id = Some("telemetry".into());
+        direct.data = json!({"state":{"temperature":"21.5"}});
+        db.append_runtime_event(direct).await.expect("direct read");
+        let mut watch = event("watch-reference", "task-1");
+        watch.event_type = "watch.created".into();
+        watch.device_id = Some("dev-watch".into());
+        watch.data = json!({"watchId":"watch-1"});
+        db.append_runtime_event(watch).await.expect("watch reference");
+        let mut approval = event("approval-reference", "task-1");
+        approval.event_type = "approval.requested".into();
+        approval.approval_id = Some("approval-1".into());
+        approval.device_id = Some("dev-approval".into());
+        db.append_runtime_event(approval).await.expect("approval reference");
+        db.create_job(&DeviceJob {
+            id: "job-first-reference".into(),
+            workspace_id: "ws-1".into(),
+            device_id: "dev-job".into(),
+            tool: "inspect".into(),
+            args_json: json!({"mode":"brief"}),
+            state: DeviceJobState::Accepted,
+            stop_requested_at: None,
+            progress_json: None,
+            result_json: None,
+            task_id: Some("task-1".into()),
+            run_id: None,
+            tool_call_id: None,
+            driver_call_id: None,
+            timeout_ms: 1000,
+            started_at: Utc::now(),
+            ended_at: None,
+        })
+        .await
+        .expect("job");
+        let now = Utc::now();
+        db.put_media_evidence(&MediaEvidenceRecord {
+            id: "evidence-only".into(),
+            workspace_id: "ws-1".into(),
+            task_id: Some("task-1".into()),
+            run_id: None,
+            tool_call_id: None,
+            job_id: None,
+            device_id: "dev-evidence".into(),
+            source_id: "preview".into(),
+            source_seq: 8,
+            media_time: now,
+            mime: "image/jpeg".into(),
+            size_bytes: 12,
+            sha256: "abc".into(),
+            storage_path: "private/path".into(),
+            dedup_key: "dedup-evidence-only".into(),
+            created_at: now,
+            expires_at: now + chrono::Duration::days(1),
+        })
+        .await
+        .expect("evidence");
+
+        let projection = db
+            .runtime_projection("ws-1", "task-1")
+            .await
+            .expect("projection")
+            .expect("task");
+        let device_ids = projection
+            .associations
+            .iter()
+            .map(|association| association.device_id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            device_ids,
+            ["dev-direct", "dev-watch", "dev-approval", "dev-job", "dev-evidence"]
+        );
+        assert_eq!(projection.associations[0].source_ids, ["telemetry"]);
+        assert_eq!(projection.associations[4].source_ids, ["preview"]);
+        assert_eq!(projection.evidence[0].device_id, "dev-evidence");
+        assert_eq!(projection.evidence[0].source_id, "preview");
+        assert_eq!(projection.evidence[0].task_id.as_deref(), Some("task-1"));
+        let direct = projection
+            .devices
+            .iter()
+            .find(|device| device.device_id == "dev-direct")
+            .expect("facts");
+        assert_eq!(direct.health, "ok");
+        assert_eq!(direct.zone.as_deref(), Some("North"));
+        assert_eq!(direct.position.as_deref(), Some("rack-1"));
+        assert_eq!(
+            direct
+                .sources
+                .iter()
+                .map(|source| source.id.as_str())
+                .collect::<Vec<_>>(),
+            ["telemetry", "preview", "live"]
+        );
+        assert_eq!(direct.fields.len(), 1);
+        assert_eq!(direct.fields[0].name, "temperature");
+        assert_eq!(direct.fields[0].value.as_deref(), Some("21.5"));
+        let persisted = db
+            .runtime_event_by_id("ws-1", "evidence:evidence-only:created")
+            .await
+            .expect("event")
+            .expect("persisted");
+        assert_eq!(persisted.event_type, "evidence.created");
+        assert_eq!(persisted.device_id.as_deref(), Some("dev-evidence"));
+        assert_eq!(persisted.source_id.as_deref(), Some("preview"));
+        assert_eq!(persisted.evidence_id.as_deref(), Some("evidence-only"));
+        assert!(persisted.data.get("storagePath").is_none());
     }
 
     #[tokio::test]

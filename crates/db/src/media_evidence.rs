@@ -56,6 +56,13 @@ fn storage(error: impl std::fmt::Display) -> MediaError {
 
 impl Db {
     pub async fn put_media_evidence(&self, row: &MediaEvidenceRecord) -> Result<MediaEvidenceRecord, MediaError> {
+        self.put_media_evidence_and_event(row).await.map(|(stored, _)| stored)
+    }
+
+    pub async fn put_media_evidence_and_event(
+        &self,
+        row: &MediaEvidenceRecord,
+    ) -> Result<(MediaEvidenceRecord, Option<crate::runtime_event::RuntimeEvent>), MediaError> {
         let mut tx = self.pool().begin().await.map_err(storage)?;
         sqlx::query(
             "INSERT INTO media_evidence (id, workspace_id, task_id, run_id, tool_call_id, job_id, device_id, source_id, source_seq, media_time, mime, size_bytes, sha256, storage_path, dedup_key, created_at, expires_at)
@@ -70,8 +77,43 @@ impl Db {
         .execute(&mut *tx).await.map_err(storage)?;
         let stored = sqlx::query_as::<_, EvidenceRow>("SELECT id, workspace_id, task_id, run_id, tool_call_id, job_id, device_id, source_id, source_seq, media_time, mime, size_bytes, sha256, storage_path, dedup_key, created_at, expires_at FROM media_evidence WHERE dedup_key = ?")
             .bind(&row.dedup_key).fetch_one(&mut *tx).await.map_err(storage)?;
+        let stored = MediaEvidenceRecord::try_from(stored)?;
+        let event = if stored.task_id.is_some() {
+            Some(
+                crate::runtime_event::append_runtime_event_tx(
+                    &mut tx,
+                    crate::runtime_event::RuntimeEventInput {
+                        event_id: format!("evidence:{}:created", stored.id),
+                        event_type: "evidence.created".into(),
+                        occurred_at: stored.created_at,
+                        workspace_id: stored.workspace_id.clone(),
+                        task_id: stored.task_id.clone(),
+                        run_id: stored.run_id.clone(),
+                        tool_call_id: stored.tool_call_id.clone(),
+                        job_id: stored.job_id.clone(),
+                        approval_id: None,
+                        device_id: Some(stored.device_id.clone()),
+                        source_id: Some(stored.source_id.clone()),
+                        source_seq: Some(
+                            i64::try_from(stored.source_seq)
+                                .map_err(|_| MediaError::Validation("source sequence is too large".into()))?,
+                        ),
+                        evidence_id: Some(stored.id.clone()),
+                        data: serde_json::json!({
+                            "mime": stored.mime,
+                            "mediaTime": stored.media_time,
+                            "sourceSeq": stored.source_seq,
+                        }),
+                    },
+                )
+                .await
+                .map_err(storage)?,
+            )
+        } else {
+            None
+        };
         tx.commit().await.map_err(storage)?;
-        stored.try_into()
+        Ok((stored, event))
     }
 
     pub async fn get_media_evidence(&self, evidence_id: &str) -> Result<Option<MediaEvidenceRecord>, MediaError> {

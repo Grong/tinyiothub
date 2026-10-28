@@ -20,7 +20,21 @@ use tinyiothub_storage::Db;
 use tinyiothub_storage::cache::ThingCache;
 
 /// `Db` → `MediaEvidenceStore`；SQL 仅留在 db crate。
-pub struct DbMediaEvidenceStore(pub Db);
+pub struct DbMediaEvidenceStore {
+    db: Db,
+    recorder: Option<crate::domains::agent::runtime::stream::RuntimeRecorder>,
+}
+
+impl DbMediaEvidenceStore {
+    pub fn new(db: Db) -> Self {
+        Self { db, recorder: None }
+    }
+
+    pub fn with_recorder(mut self, recorder: crate::domains::agent::runtime::stream::RuntimeRecorder) -> Self {
+        self.recorder = Some(recorder);
+        self
+    }
+}
 
 #[async_trait]
 impl tinyiothub_runtime::ports::MediaEvidenceStore for DbMediaEvidenceStore {
@@ -28,25 +42,29 @@ impl tinyiothub_runtime::ports::MediaEvidenceStore for DbMediaEvidenceStore {
         &self,
         row: &tinyiothub_core::media::MediaEvidenceRecord,
     ) -> Result<tinyiothub_core::media::MediaEvidenceRecord, tinyiothub_core::media::MediaError> {
-        self.0.put_media_evidence(row).await
+        let (stored, event) = self.db.put_media_evidence_and_event(row).await?;
+        if let (Some(recorder), Some(event)) = (&self.recorder, event) {
+            recorder.publish(event);
+        }
+        Ok(stored)
     }
 
     async fn get(
         &self,
         evidence_id: &str,
     ) -> Result<Option<tinyiothub_core::media::MediaEvidenceRecord>, tinyiothub_core::media::MediaError> {
-        self.0.get_media_evidence(evidence_id).await
+        self.db.get_media_evidence(evidence_id).await
     }
 
     async fn delete_expired(
         &self,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<Vec<tinyiothub_core::media::MediaEvidenceRecord>, tinyiothub_core::media::MediaError> {
-        self.0.delete_expired_media(now).await
+        self.db.delete_expired_media(now).await
     }
 
     async fn storage_is_referenced(&self, path: &str) -> Result<bool, tinyiothub_core::media::MediaError> {
-        self.0.media_storage_is_referenced(path).await
+        self.db.media_storage_is_referenced(path).await
     }
 }
 
@@ -899,7 +917,7 @@ impl tinyiothub_runtime::ports::WatchRuleStore for WatchRuleStoreAdapter {
 #[cfg(test)]
 mod runtime_job_event_tests {
     use super::*;
-    use tinyiothub_runtime::ports::{DeviceJobStore, WatchRuleStore};
+    use tinyiothub_runtime::ports::{DeviceJobStore, MediaEvidenceStore, WatchRuleStore};
 
     async fn fixture() -> (
         Arc<Db>,
@@ -968,6 +986,57 @@ mod runtime_job_event_tests {
             started_at: chrono::Utc::now(),
             ended_at: None,
         }
+    }
+
+    #[tokio::test]
+    async fn shared_evidence_adapter_publishes_the_exact_persisted_event() {
+        let (db, recorder, hub) = fixture().await;
+        let mut connection = hub
+            .connect(db.clone(), "ws-job", "task-1", None)
+            .await
+            .expect("connect runtime stream");
+        assert!(matches!(
+            connection.next_frame().await,
+            Some(crate::domains::agent::runtime::stream::RuntimeFrame::Snapshot { .. })
+        ));
+        let store = DbMediaEvidenceStore::new((*db).clone()).with_recorder(recorder);
+        let now = chrono::Utc::now();
+        store
+            .insert_or_get(&tinyiothub_core::media::MediaEvidenceRecord {
+                id: "evidence-live".into(),
+                workspace_id: "ws-job".into(),
+                task_id: Some("task-1".into()),
+                run_id: None,
+                tool_call_id: Some("call-1".into()),
+                job_id: None,
+                device_id: "device-1".into(),
+                source_id: "camera".into(),
+                source_seq: 4,
+                media_time: now,
+                mime: "image/jpeg".into(),
+                size_bytes: 12,
+                sha256: "abc".into(),
+                storage_path: "private/evidence-live".into(),
+                dedup_key: "evidence-live-dedup".into(),
+                created_at: now,
+                expires_at: now + chrono::Duration::days(1),
+            })
+            .await
+            .expect("persist evidence");
+
+        let persisted = db
+            .runtime_event_by_id("ws-job", "evidence:evidence-live:created")
+            .await
+            .expect("query persisted event")
+            .expect("persisted event");
+        let Some(crate::domains::agent::runtime::stream::RuntimeFrame::Event { event }) = connection.next_frame().await
+        else {
+            panic!("expected live evidence event");
+        };
+        assert_eq!(*event, persisted);
+        assert_eq!(event.device_id.as_deref(), Some("device-1"));
+        assert_eq!(event.source_id.as_deref(), Some("camera"));
+        assert!(event.data.get("storagePath").is_none());
     }
 
     #[tokio::test]

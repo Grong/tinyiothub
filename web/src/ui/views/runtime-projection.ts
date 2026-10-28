@@ -3,6 +3,8 @@ import type {
   DeviceJobState,
   EvidenceRef,
   RuntimeApproval,
+  RuntimeDeviceAssociation,
+  RuntimeDeviceFacts,
   RuntimeEvent,
   RuntimeJob,
   RuntimeTask,
@@ -22,10 +24,7 @@ const jobStates = new Set<DeviceJobState>([
 ]);
 const approvalStates = new Set<ApprovalState>(['pending', 'approved', 'rejected', 'expired', 'unavailable']);
 
-export interface RuntimeDeviceRef {
-  deviceId: string;
-  sourceIds: string[];
-}
+export type RuntimeDeviceRef = RuntimeDeviceAssociation & Partial<Omit<RuntimeDeviceFacts, 'deviceId'>>;
 
 export type RuntimeProjectedJob = Partial<RuntimeJob> & Pick<RuntimeJob, 'id' | 'state'>;
 export type RuntimeProjectedApproval = Partial<RuntimeApproval> & Pick<RuntimeApproval, 'id' | 'state'>;
@@ -35,15 +34,6 @@ function watchId(event: RuntimeEvent): string | null {
   if (typeof event.data.watchId === 'string') return event.data.watchId;
   const match = event.eventId.match(/^watch:(.+):(created|completed|deleted)$/);
   return match?.[1] ?? null;
-}
-
-function watchDevice(watch: RuntimeWatch): string | null {
-  if (watch.condition === null || typeof watch.condition !== 'object' || Array.isArray(watch.condition)) {
-    return null;
-  }
-  const condition = watch.condition as Record<string, unknown>;
-  const deviceId = condition.thingId ?? condition.thing_id;
-  return typeof deviceId === 'string' ? deviceId : null;
 }
 
 export function groupRuntimeTasks(tasks: RuntimeTask[]): { current: RuntimeTask[]; recent: RuntimeTask[] } {
@@ -87,6 +77,8 @@ export class RuntimeProjection {
       approvals: this.approvals.filter((approval): approval is RuntimeApproval => this.isCompleteApproval(approval)),
       watches: [...this.watches],
       evidence: [...this.evidence],
+      associations: this.devices.map(({ deviceId, sourceIds }) => ({ deviceId, sourceIds: [...sourceIds] })),
+      devices: this.baseSnapshot.devices.map((device) => ({ ...device, sources: [...device.sources], fields: [...device.fields] })),
       cursor: this.cursor,
     };
   }
@@ -109,6 +101,9 @@ export class RuntimeProjection {
   }
 
   replaceWithSnapshot(snapshot: TaskProjection, cursor = snapshot.cursor): void {
+    const postSnapshotSteps = this.steps
+      .filter((event) => event.cursor > cursor)
+      .sort((a, b) => a.cursor - b.cursor || a.eventId.localeCompare(b.eventId));
     this.baseSnapshot = {
       ...snapshot,
       task: { ...snapshot.task },
@@ -117,12 +112,16 @@ export class RuntimeProjection {
       approvals: snapshot.approvals.map((approval) => ({ ...approval })),
       watches: snapshot.watches.map((watch) => ({ ...watch })),
       evidence: snapshot.evidence.map((evidence) => ({ ...evidence })),
+      associations: snapshot.associations.map((association) => ({ ...association, sourceIds: [...association.sourceIds] })),
+      devices: snapshot.devices.map((device) => ({
+        ...device, sources: device.sources.map((source) => ({ ...source })), fields: device.fields.map((field) => ({ ...field })),
+      })),
       cursor,
     };
     this.baseCursor = cursor;
-    this.cursor = cursor;
-    this.eventIds.clear();
-    this.steps = [];
+    this.cursor = Math.max(cursor, postSnapshotSteps.at(-1)?.cursor ?? cursor);
+    this.eventIds = new Set(postSnapshotSteps.map((event) => event.eventId));
+    this.steps = postSnapshotSteps;
     this.rebuild();
   }
 
@@ -134,9 +133,19 @@ export class RuntimeProjection {
     this.evidence = this.baseSnapshot.evidence.map((evidence) => ({ ...evidence }));
     this.devices = [];
 
-    for (const job of this.baseSnapshot.jobs) this.associate(job.deviceId);
-    for (const approval of this.baseSnapshot.approvals) this.associate(approval.deviceId);
-    for (const watch of this.baseSnapshot.watches) this.associate(watchDevice(watch));
+    for (const association of this.baseSnapshot.associations) {
+      this.associate(association.deviceId);
+      for (const sourceId of association.sourceIds) this.associate(association.deviceId, sourceId);
+      const facts = this.baseSnapshot.devices.find((device) => device.deviceId === association.deviceId);
+      const device = this.devices.find((item) => item.deviceId === association.deviceId);
+      if (device && facts) Object.assign(device, {
+        health: facts.health,
+        zone: facts.zone,
+        position: facts.position,
+        sources: facts.sources.map((source) => ({ ...source })),
+        fields: facts.fields.map((field) => ({ ...field })),
+      });
+    }
 
     for (const event of this.steps) {
       const deviceId = event.deviceId ??
@@ -148,6 +157,11 @@ export class RuntimeProjection {
         event.eventType.startsWith('watch.') || event.sourceId || event.evidenceId
       ) {
         this.associate(deviceId, event.sourceId);
+        if (deviceId && Array.isArray(event.data.sourceIds)) {
+          for (const sourceId of event.data.sourceIds) {
+            if (typeof sourceId === 'string') this.associate(deviceId, sourceId);
+          }
+        }
       }
       if (event.cursor <= this.baseCursor) continue;
 
@@ -186,11 +200,27 @@ export class RuntimeProjection {
     }
     if (!job) return;
     if (state && jobStates.has(state)) job.state = state;
+    job.workspaceId = event.workspaceId;
     if (event.deviceId) job.deviceId = event.deviceId;
     job.taskId = event.taskId;
     job.runId = event.runId;
     job.toolCallId = event.toolCallId;
-    if (jobStates.has(job.state) && !['accepted', 'running'].includes(job.state)) {
+    if (typeof event.data.tool === 'string') job.tool = event.data.tool;
+    if ('argsJson' in event.data) job.argsJson = event.data.argsJson;
+    if ('progressJson' in event.data) job.progressJson = event.data.progressJson;
+    if ('resultJson' in event.data) job.resultJson = event.data.resultJson as RuntimeJob['resultJson'];
+    if (typeof event.data.driverCallId === 'string' || event.data.driverCallId === null) {
+      job.driverCallId = event.data.driverCallId as string | null;
+    }
+    if (typeof event.data.stopRequestedAt === 'string' || event.data.stopRequestedAt === null) {
+      job.stopRequestedAt = event.data.stopRequestedAt as string | null;
+    }
+    if (typeof event.data.timeoutMs === 'number') job.timeoutMs = event.data.timeoutMs;
+    if (typeof event.data.startedAt === 'string') job.startedAt = event.data.startedAt;
+    if (typeof event.data.endedAt === 'string' || event.data.endedAt === null) {
+      job.endedAt = event.data.endedAt as string | null;
+    }
+    if (jobStates.has(job.state) && !['accepted', 'running'].includes(job.state) && !job.endedAt) {
       job.endedAt = event.occurredAt;
     }
   }
@@ -240,8 +270,14 @@ export class RuntimeProjection {
     this.evidence.push({
       evidenceId: event.evidenceId!,
       mime: event.data.mime,
-      sourceSeq: event.sourceSeq ?? 0,
+      sourceSeq: event.sourceSeq ?? (typeof event.data.sourceSeq === 'number' ? event.data.sourceSeq : 0),
       mediaTime: typeof event.data.mediaTime === 'string' ? event.data.mediaTime : event.occurredAt,
+      deviceId: event.deviceId ?? '',
+      sourceId: event.sourceId ?? '',
+      taskId: event.taskId,
+      runId: event.runId,
+      toolCallId: event.toolCallId,
+      jobId: event.jobId,
     });
   }
 

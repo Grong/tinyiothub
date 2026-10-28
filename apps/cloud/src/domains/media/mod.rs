@@ -206,7 +206,7 @@ mod tests {
             let store = Arc::new(LocalMediaStore::new(media_dir.path()).await.expect("media store"));
             let evidence = Arc::new(EvidenceService::new(
                 store.clone(),
-                Arc::new(crate::shared::runtime_ports::DbMediaEvidenceStore(db)),
+                Arc::new(crate::shared::runtime_ports::DbMediaEvidenceStore::new(db)),
             ));
             state.evidence = Some(evidence);
             let provider = Arc::new(FakePlayback::new(Ok(upstream(

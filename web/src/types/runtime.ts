@@ -97,6 +97,37 @@ export interface EvidenceRef {
   mime: string;
   sourceSeq: number;
   mediaTime: string;
+  deviceId: string;
+  sourceId: string;
+  taskId: string | null;
+  runId: string | null;
+  toolCallId: string | null;
+  jobId: string | null;
+}
+
+export interface RuntimeDeviceAssociation {
+  deviceId: string;
+  sourceIds: string[];
+}
+
+export interface RuntimeDeviceSource {
+  id: string;
+  dataKind: 'video' | 'image' | 'values' | string;
+}
+
+export interface RuntimeDeviceField {
+  name: string;
+  value: string | null;
+  unit: string | null;
+}
+
+export interface RuntimeDeviceFacts {
+  deviceId: string;
+  health: 'ok' | 'attention' | 'bad' | 'unknown' | string;
+  zone: string | null;
+  position: string | null;
+  sources: RuntimeDeviceSource[];
+  fields: RuntimeDeviceField[];
 }
 
 export interface RuntimeEvent {
@@ -124,6 +155,8 @@ export interface TaskProjection {
   approvals: RuntimeApproval[];
   watches: RuntimeWatch[];
   evidence: EvidenceRef[];
+  associations: RuntimeDeviceAssociation[];
+  devices: RuntimeDeviceFacts[];
   summary: string | null;
   cursor: number;
 }

@@ -70,9 +70,9 @@ export class RuntimeLoop extends LitElement {
     </section>`;
   }
 
-  private renderEvidence(event: RuntimeEvent, evidence: EvidenceRef): TemplateResult {
+  private renderEvidence(evidence: EvidenceRef): TemplateResult {
     return html`<button class="runtime-loop__evidence" type="button" data-evidence-id=${evidence.evidenceId}
-      @click=${() => this.locate(event.deviceId!, evidence.evidenceId)}>
+      @click=${() => this.locate(evidence.deviceId, evidence.evidenceId)}>
       <span>Image evidence</span><span>${evidence.evidenceId}</span><small>${evidence.mediaTime}</small>
     </button>`;
   }
@@ -81,17 +81,14 @@ export class RuntimeLoop extends LitElement {
     void this.revision;
     const projection = this.projection;
     if (!projection) return nothing;
-    const imageEvents = projection.steps.filter((event) => event.deviceId && event.evidenceId &&
-      projection.evidence.some((evidence) => evidence.evidenceId === event.evidenceId && evidence.mime.startsWith('image/')));
+    const imageEvidence = projection.evidence.filter((evidence) => evidence.deviceId && evidence.mime.startsWith('image/'));
     return html`<section class="runtime-loop" aria-label="Agent Loop">
       <h2>Agent Loop</h2>
-      ${projection.jobs.length || projection.steps.length ? nothing : html`<p class="runtime-loop__empty">No agent activity yet</p>`}
+      ${projection.jobs.length || projection.steps.length || projection.evidence.length ? nothing : html`<p class="runtime-loop__empty">No agent activity yet</p>`}
       <div class="runtime-loop__jobs">${projection.jobs.map((job) => this.renderJob(job))}</div>
       <div class="runtime-loop__steps">${projection.steps.map((event) => this.renderEvent(event))}</div>
-      ${imageEvents.length ? html`<section aria-label="Image evidence" class="runtime-loop__evidence-list">
-        ${imageEvents.map((event) => this.renderEvidence(event, projection.evidence.find(
-          (evidence) => evidence.evidenceId === event.evidenceId,
-        )!))}
+      ${imageEvidence.length ? html`<section aria-label="Image evidence" class="runtime-loop__evidence-list">
+        ${imageEvidence.map((evidence) => this.renderEvidence(evidence))}
       </section>` : nothing}
     </section>`;
   }

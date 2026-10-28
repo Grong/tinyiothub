@@ -263,6 +263,7 @@ pub fn create_thing_tools(
                 .map(|server| server as Arc<dyn device::DeviceSourceReader>),
             evidence: runtime.evidence.clone(),
             run_ctx: runtime.run_ctx.clone(),
+            runtime_recorder: runtime.runtime_recorder.clone(),
         })),
         destructive(device::call_device_tool(Box::new(InvokeActionTool {
             thing_service: thing_service.clone(),
@@ -843,6 +844,7 @@ mod tests {
             source_reader: None,
             evidence: None,
             run_ctx: None,
+            runtime_recorder: None,
         };
         let out = tool
             .execute(serde_json::json!({"thingId": created.id, "properties": ["温度"]}))
@@ -944,6 +946,7 @@ mod tests {
             source_reader: None,
             evidence: None,
             run_ctx: None,
+            runtime_recorder: None,
         };
 
         // Explicit properties: every requested name is recorded — including

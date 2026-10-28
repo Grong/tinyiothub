@@ -28,6 +28,8 @@ export function snapshotWithNoDevices(over: Partial<TaskProjection> = {}): TaskP
     approvals: [],
     watches: [],
     evidence: [],
+    associations: [],
+    devices: [],
     summary: null,
     cursor: 0,
     ...over,
@@ -109,14 +111,30 @@ describe('RuntimeProjection', () => {
     expect(projection.approvals[0]).toMatchObject({ id: 'approval_1', state: 'pending' });
   });
 
-  it('derives snapshot watch devices from the camel-converted condition', () => {
+  it('consumes authoritative snapshot associations instead of regrouping entity arrays', () => {
     const projection = new RuntimeProjection(snapshotWithNoDevices({
       watches: [{
         id: 'watch_1', condition: { thingId: 'dev_watch' }, persistent: true,
         timeoutSecs: 30, createdAt: '2026-10-27T10:00:00Z',
       }],
+      associations: [
+        { deviceId: 'dev_read', sourceIds: ['telemetry'] },
+        { deviceId: 'dev_watch', sourceIds: [] },
+        { deviceId: 'dev_evidence', sourceIds: ['camera'] },
+      ],
+      evidence: [{
+        evidenceId: 'evidence_only', mime: 'image/jpeg', sourceSeq: 3, mediaTime: '2026-10-27T10:02:00Z',
+        deviceId: 'dev_evidence', sourceId: 'camera', taskId: 'task_1', runId: null, toolCallId: null, jobId: null,
+      }],
     }));
-    expect(projection.devices.map((device) => device.deviceId)).toEqual(['dev_watch']);
+
+    expect(projection.devices.map((device) => device.deviceId)).toEqual(['dev_read', 'dev_watch', 'dev_evidence']);
+    expect(projection.devices[0].sourceIds).toEqual(['telemetry']);
+    expect(projection.devices[2].sourceIds).toEqual(['camera']);
+
+    projection.replaceWithSnapshot(projection.snapshot);
+    expect(projection.devices.map((device) => device.deviceId)).toEqual(['dev_read', 'dev_watch', 'dev_evidence']);
+    expect(projection.evidence[0].deviceId).toBe('dev_evidence');
   });
 
   it('replaceWithSnapshot clears all prior Task-owned ordering and associations', () => {

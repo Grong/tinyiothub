@@ -189,6 +189,7 @@ pub(super) struct ReadDeviceTool {
     pub(super) source_reader: Option<Arc<dyn DeviceSourceReader>>,
     pub(super) evidence: Option<Arc<tinyiothub_runtime::media::evidence::EvidenceService>>,
     pub(super) run_ctx: Option<super::super::RunContextSlot>,
+    pub(super) runtime_recorder: Option<crate::domains::agent::runtime::stream::RuntimeRecorder>,
 }
 
 #[derive(Default)]
@@ -294,6 +295,37 @@ impl ReadDeviceTool {
             }
         }
         Ok(output)
+    }
+
+    async fn record_read(&self, thing_id: &str, state: Value, source_ids: Vec<String>) {
+        let (Some(recorder), Some(slot)) = (&self.runtime_recorder, &self.run_ctx) else {
+            return;
+        };
+        let context = slot.read().await.clone();
+        let Some(context) = context else { return };
+        let context = context.read().await;
+        let Some(task_id) = context.task_id.clone() else { return };
+        let run_id = context.run_id.clone();
+        drop(context);
+        let input = tinyiothub_storage::runtime_event::RuntimeEventInput {
+            event_id: format!("read_device:{run_id}:{thing_id}:{}", tinyiothub_core::generate_id()),
+            event_type: "read_device".into(),
+            occurred_at: chrono::Utc::now(),
+            workspace_id: self.workspace_id.clone(),
+            task_id: Some(task_id),
+            run_id: Some(run_id),
+            tool_call_id: None,
+            job_id: None,
+            approval_id: None,
+            device_id: Some(thing_id.to_string()),
+            source_id: source_ids.first().cloned(),
+            source_seq: None,
+            evidence_id: None,
+            data: json!({"state": state, "sourceIds": source_ids}),
+        };
+        if let Err(error) = recorder.record(input).await {
+            tracing::warn!(workspace_id = %self.workspace_id, %thing_id, %error, "persist runtime device read failed");
+        }
     }
 }
 
@@ -443,6 +475,12 @@ impl Tool for ReadDeviceTool {
                 Err(error) => return tool_err(error),
             }
         }
+        self.record_read(
+            &input.thing_id,
+            payload["state"].clone(),
+            input.sources.clone().unwrap_or_default(),
+        )
+        .await;
         let mut result = tool_ok(payload)?;
         result.attachments = attachments;
         Ok(result)
@@ -1178,7 +1216,7 @@ mod tests {
     ) -> Arc<tinyiothub_runtime::media::evidence::EvidenceService> {
         Arc::new(tinyiothub_runtime::media::evidence::EvidenceService::new(
             store,
-            Arc::new(crate::shared::runtime_ports::DbMediaEvidenceStore(
+            Arc::new(crate::shared::runtime_ports::DbMediaEvidenceStore::new(
                 tinyiothub_storage::Db::new(pool.clone()),
             )),
         ))
@@ -1216,6 +1254,7 @@ mod tests {
             source_reader: Some(reader.clone()),
             evidence: Some(evidence_service(&pool, store)),
             run_ctx: None,
+            runtime_recorder: None,
         };
         let requested = vec!["temperature", "lidar", "objects", "front"];
         let result = tool
@@ -1274,6 +1313,7 @@ mod tests {
             source_reader: Some(reader),
             evidence: Some(evidence_service(&pool, store)),
             run_ctx: None,
+            runtime_recorder: None,
         };
         let video = tool
             .execute(json!({"thingId":"dev-1", "sources":["live"]}))
@@ -1287,6 +1327,48 @@ mod tests {
             .expect("execute");
         assert!(!multiple.success);
         assert!(multiple.error.unwrap_or_default().contains("at most one image"));
+    }
+
+    #[tokio::test]
+    async fn read_device_persists_task_first_reference_and_state() {
+        let pool = pool_with_device().await;
+        let db = Arc::new(tinyiothub_storage::Db::new(pool.clone()));
+        let recorder = crate::domains::agent::runtime::stream::RuntimeRecorder::new(
+            db.clone(),
+            Arc::new(crate::domains::agent::runtime::stream::RuntimeStreamHub::default()),
+        );
+        let run_ctx = crate::domains::agent::host::tools::new_run_context_slot(Arc::new(tokio::sync::RwLock::new(
+            tinyiothub_agent::runtime::thing_agent::RunContextInner {
+                run_id: "run-read".into(),
+                workspace_id: "ws-set".into(),
+                task_id: Some("task-read".into()),
+                ..Default::default()
+            },
+        )));
+        let tool = ReadDeviceTool {
+            thing_service: Arc::new(ThingService::new(pool)),
+            workspace_id: "ws-set".into(),
+            live: None,
+            device_cache: None,
+            demand: None,
+            source_reader: None,
+            evidence: None,
+            run_ctx: Some(run_ctx),
+            runtime_recorder: Some(recorder),
+        };
+
+        let result = tool.execute(json!({"thingId":"dev-1"})).await.expect("execute");
+        assert!(result.success, "{:?}", result.error);
+        let events = db
+            .runtime_events_after("ws-set", None, Some("task-read"), 10)
+            .await
+            .expect("runtime events");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "read_device");
+        assert_eq!(events[0].device_id.as_deref(), Some("dev-1"));
+        assert_eq!(events[0].run_id.as_deref(), Some("run-read"));
+        assert!(events[0].data["state"].is_object());
+        assert!(events[0].data.get("text").is_none());
     }
 
     struct FailingStore;
@@ -1336,6 +1418,7 @@ mod tests {
             source_reader: Some(reader),
             evidence: Some(evidence_service(&pool, Arc::new(FailingStore))),
             run_ctx: None,
+            runtime_recorder: None,
         };
         let result = tool
             .execute(json!({"thingId":"dev-1", "sources":["objects", "front"]}))

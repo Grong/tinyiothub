@@ -330,9 +330,14 @@ impl Db {
         if let Some(wake) = wake {
             insert_job_wake(&mut tx, wake).await?;
         }
+        let updated_job = find_job_by_id(&mut tx, job_id).await?.ok_or(DeviceJobError::NotFound)?;
         let event = append_runtime_event_tx(
             &mut tx,
-            job_event(&current, state.as_str(), serde_json::json!({"state":state.as_str()})),
+            job_event(
+                &updated_job,
+                state.as_str(),
+                serde_json::json!({"state":state.as_str()}),
+            ),
         )
         .await
         .map_err(storage)?;
@@ -681,6 +686,44 @@ mod tests {
             .expect("finish");
         let terminal = db.request_stop("ws_1", "task_1", &job.id).await.expect("terminal stop");
         assert_eq!(terminal.stop_requested_at, first.stop_requested_at);
+    }
+
+    #[tokio::test]
+    async fn live_job_events_carry_tool_arguments_and_terminal_result() {
+        let db = fixture().await;
+        let job = sample_job("job_live_details", "task_1");
+        let accepted = db.create_job_and_event(&job).await.expect("accepted event");
+        assert_eq!(accepted.data["state"], "accepted");
+        assert_eq!(accepted.data["tool"], "set_speed");
+        assert_eq!(accepted.data["argsJson"], json!({"speed":2}));
+
+        let (_, terminal) = db
+            .finish_job_and_event(&job.id, DeviceJobState::Done, &json!({"actualSpeed":2}), None)
+            .await
+            .expect("terminal event");
+        let terminal = terminal.expect("new terminal event");
+        assert_eq!(terminal.data["state"], "done");
+        assert_eq!(terminal.data["tool"], "set_speed");
+        assert_eq!(terminal.data["argsJson"], json!({"speed":2}));
+        assert_eq!(terminal.data["resultJson"], json!({"actualSpeed":2}));
+        assert_eq!(
+            db.runtime_event_by_id("ws_1", &terminal.event_id)
+                .await
+                .expect("persisted event")
+                .expect("event exists")
+                .data,
+            terminal.data
+        );
+        let projection = db
+            .runtime_projection("ws_1", "task_1")
+            .await
+            .expect("reload projection")
+            .expect("task");
+        let snapshot = serde_json::to_value(projection).expect("snapshot JSON");
+        assert_eq!(snapshot["jobs"][0]["tool"], "set_speed");
+        assert_eq!(snapshot["jobs"][0]["argsJson"], json!({"speed":2}));
+        assert_eq!(snapshot["jobs"][0]["resultJson"], json!({"actualSpeed":2}));
+        assert!(snapshot["jobs"][0].get("args_json").is_none());
     }
 
     #[tokio::test]

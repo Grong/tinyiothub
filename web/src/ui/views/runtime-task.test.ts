@@ -25,7 +25,7 @@ function snapshot(id = 'task_1'): TaskProjection {
       sessionKey: 'agent:ws:user/session', createdBy: 'user_1', status: 'active', currentRunId: 'run_1',
       stateVersion: 0, createdAt: '2026-10-27T10:00:00Z', updatedAt: '2026-10-27T10:00:00Z', endedAt: null,
     },
-    runs: [], jobs: [], approvals: [], watches: [], evidence: [], summary: null, cursor: 0,
+    runs: [], jobs: [], approvals: [], watches: [], evidence: [], associations: [], devices: [], summary: null, cursor: 0,
   };
 }
 
@@ -302,5 +302,29 @@ describe('Runtime Task detail shell', () => {
 
     expect(get).toHaveBeenCalledTimes(2);
     expect(connect).toHaveBeenCalledOnce();
+  });
+
+  it('preserves an SSE event delivered while an older manual refresh snapshot is in flight', async () => {
+    get.mockResolvedValueOnce({ code: 0, msg: '', result: snapshot() });
+    let resolveRefresh!: (value: { code: number; msg: string; result: TaskProjection }) => void;
+    get.mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = resolve; }));
+    await mount();
+    view.querySelector('runtime-loop')!.dispatchEvent(new CustomEvent('refresh-request', { bubbles: true, composed: true }));
+    await Promise.resolve();
+
+    streamCallbacks.event({
+      cursor: 101, eventId: 'event_during_refresh', eventType: 'read_device', occurredAt: '2026-10-27T10:01:00Z',
+      workspaceId: 'ws_1', taskId: 'task_1', runId: null, toolCallId: null, jobId: null,
+      approvalId: null, deviceId: 'dev_live', sourceId: 'telemetry', sourceSeq: null, evidenceId: null, data: {},
+    } satisfies RuntimeEvent);
+    await view.updateComplete;
+    resolveRefresh({ code: 0, msg: '', result: { ...snapshot(), cursor: 100 } });
+    await Promise.resolve();
+    await view.updateComplete;
+
+    expect(view.querySelector('runtime-loop [data-event-id="event_during_refresh"]')).not.toBeNull();
+    expect(view.querySelector('runtime-devices')?.textContent).toContain('dev_live');
+    expect(connect).toHaveBeenCalledOnce();
+    expect(get).toHaveBeenCalledTimes(2);
   });
 });

@@ -335,9 +335,10 @@ impl ServiceManager {
             );
             let evidence = Arc::new(tinyiothub_runtime::media::evidence::EvidenceService::new(
                 media_store,
-                Arc::new(crate::shared::runtime_ports::DbMediaEvidenceStore(
-                    app_state.db.as_ref().clone(),
-                )),
+                Arc::new(
+                    crate::shared::runtime_ports::DbMediaEvidenceStore::new(app_state.db.as_ref().clone())
+                        .with_recorder(app_state.runtime_recorder.clone()),
+                ),
             ));
             app_state.evidence = Some(evidence.clone());
             tool_registry.register_provider(crate::domains::agent::host::tools::chat_builtin_tools_provider(

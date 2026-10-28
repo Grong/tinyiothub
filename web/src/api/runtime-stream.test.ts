@@ -12,7 +12,7 @@ function task(over: Partial<RuntimeTask> = {}): RuntimeTask {
 
 function snapshotWithNoDevices(over: Partial<TaskProjection> = {}): TaskProjection {
   return {
-    task: task(), runs: [], jobs: [], approvals: [], watches: [], evidence: [], summary: null,
+    task: task(), runs: [], jobs: [], approvals: [], watches: [], evidence: [], associations: [], devices: [], summary: null,
     cursor: 0, ...over,
   };
 }
